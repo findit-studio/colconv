@@ -70,11 +70,70 @@ pub(crate) unsafe fn yuv_420_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller-checked NEON availability + slice bounds — see
+  // [`yuv_420_to_rgb_or_rgba_row`] safety contract.
+  unsafe {
+    yuv_420_to_rgb_or_rgba_row::<false>(y, u_half, v_half, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// NEON YUV 4:2:0 → packed **RGBA** (8-bit). Same contract as
+/// [`yuv_420_to_rgb_row`] but writes 4 bytes per pixel (R, G, B,
+/// `0xFF`).
+///
+/// # Safety
+///
+/// 1. NEON must be available on the current CPU.
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `u_half.len() >= width / 2`,
+///    `v_half.len() >= width / 2`, `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_420_to_rgba_row(
+  y: &[u8],
+  u_half: &[u8],
+  v_half: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller-checked NEON availability + slice bounds — see
+  // [`yuv_420_to_rgb_or_rgba_row`] safety contract.
+  unsafe {
+    yuv_420_to_rgb_or_rgba_row::<true>(y, u_half, v_half, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared NEON kernel for [`yuv_420_to_rgb_row`] (`ALPHA = false`,
+/// `vst3q_u8`) and [`yuv_420_to_rgba_row`] (`ALPHA = true`,
+/// `vst4q_u8` with constant `0xFF` alpha). Math is byte-identical to
+/// `scalar::yuv_420_to_rgb_or_rgba_row::<ALPHA>`; only the per-block
+/// store intrinsic differs. `const` generic monomorphizes per call
+/// site, so the `if ALPHA` branches are eliminated.
+///
+/// # Safety
+///
+/// Same as [`yuv_420_to_rgb_row`] / [`yuv_420_to_rgba_row`]; the
+/// `out` slice must be `>= width * (if ALPHA { 4 } else { 3 })`
+/// bytes long.
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn yuv_420_to_rgb_or_rgba_row<const ALPHA: bool>(
+  y: &[u8],
+  u_half: &[u8],
+  v_half: &[u8],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
   debug_assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
   debug_assert!(y.len() >= width);
   debug_assert!(u_half.len() >= width / 2);
   debug_assert!(v_half.len() >= width / 2);
-  debug_assert!(rgb_out.len() >= width * 3);
+  let bpp: usize = if ALPHA { 4 } else { 3 };
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params(full_range);
@@ -97,6 +156,10 @@ pub(crate) unsafe fn yuv_420_to_rgb_row(
     let cgv = vdupq_n_s32(coeffs.g_v());
     let cbu = vdupq_n_s32(coeffs.b_u());
     let cbv = vdupq_n_s32(coeffs.b_v());
+    // Constant opaque-alpha vector for the RGBA path. Materializing
+    // it outside the loop costs one `vdupq_n_u8` regardless of
+    // ALPHA; the compiler DCE's it when ALPHA = false.
+    let alpha_u8 = vdupq_n_u8(0xFF);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -158,9 +221,16 @@ pub(crate) unsafe fn yuv_420_to_rgb_row(
         vqmovun_s16(vqaddq_s16(y_scaled_hi, r_dup_hi)),
       );
 
-      // vst3q_u8 writes 48 bytes as interleaved R, G, B triples.
-      let rgb = uint8x16x3_t(r_u8, g_u8, b_u8);
-      vst3q_u8(rgb_out.as_mut_ptr().add(x * 3), rgb);
+      if ALPHA {
+        // vst4q_u8 writes 64 bytes as interleaved R, G, B, A
+        // quadruplets — native AArch64 4-channel store.
+        let rgba = uint8x16x4_t(r_u8, g_u8, b_u8, alpha_u8);
+        vst4q_u8(out.as_mut_ptr().add(x * 4), rgba);
+      } else {
+        // vst3q_u8 writes 48 bytes as interleaved R, G, B triples.
+        let rgb = uint8x16x3_t(r_u8, g_u8, b_u8);
+        vst3q_u8(out.as_mut_ptr().add(x * 3), rgb);
+      }
 
       x += 16;
     }
@@ -168,11 +238,11 @@ pub(crate) unsafe fn yuv_420_to_rgb_row(
     // Scalar tail for the 0..14 leftover pixels (always even, 4:2:0
     // requires even width so x/2 and width/2 are well‑defined).
     if x < width {
-      scalar::yuv_420_to_rgb_row(
+      scalar::yuv_420_to_rgb_or_rgba_row::<ALPHA>(
         &y[x..width],
         &u_half[x / 2..width / 2],
         &v_half[x / 2..width / 2],
-        &mut rgb_out[x * 3..width * 3],
+        &mut out[x * bpp..width * bpp],
         width - x,
         matrix,
         full_range,
@@ -1008,12 +1078,21 @@ pub(crate) unsafe fn p_n_to_rgb_u16_row<const BITS: u32>(
   }
 }
 
-/// NEON NV12 → packed RGB (UV-ordered chroma). Thin wrapper over the
-/// shared [`nv12_or_nv21_to_rgb_row_impl`] with `SWAP_UV = false`.
+/// NEON NV12 → packed RGB (UV-ordered chroma). Thin wrapper over
+/// [`nv12_or_nv21_to_rgb_or_rgba_row_impl`] with
+/// `SWAP_UV = false, ALPHA = false`.
 ///
 /// # Safety
 ///
-/// Same as [`nv12_or_nv21_to_rgb_row_impl`].
+/// Same contract as [`nv12_or_nv21_to_rgb_or_rgba_row_impl`]:
+///
+/// 1. **NEON must be available on the current CPU.** Direct callers
+///    are responsible for verifying this; the dispatcher in
+///    [`crate::row::nv12_to_rgb_row`] checks it.
+/// 2. `width & 1 == 0` (4:2:0 requires even width).
+/// 3. `y.len() >= width`.
+/// 4. `uv_half.len() >= width` (interleaved UV bytes, 2 per chroma pair).
+/// 5. `rgb_out.len() >= 3 * width`.
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn nv12_to_rgb_row(
@@ -1026,16 +1105,21 @@ pub(crate) unsafe fn nv12_to_rgb_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    nv12_or_nv21_to_rgb_row_impl::<false>(y, uv_half, rgb_out, width, matrix, full_range);
+    nv12_or_nv21_to_rgb_or_rgba_row_impl::<false, false>(
+      y, uv_half, rgb_out, width, matrix, full_range,
+    );
   }
 }
 
 /// NEON NV21 → packed RGB (VU-ordered chroma). Thin wrapper over
-/// [`nv12_or_nv21_to_rgb_row_impl`] with `SWAP_UV = true`.
+/// [`nv12_or_nv21_to_rgb_or_rgba_row_impl`] with
+/// `SWAP_UV = true, ALPHA = false`.
 ///
 /// # Safety
 ///
-/// Same as [`nv12_or_nv21_to_rgb_row_impl`].
+/// Same contract as [`nv12_to_rgb_row`]; `vu_half` carries the same
+/// number of bytes (`>= width`) but in V-then-U order per chroma
+/// pair.
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn nv21_to_rgb_row(
@@ -1048,15 +1132,73 @@ pub(crate) unsafe fn nv21_to_rgb_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    nv12_or_nv21_to_rgb_row_impl::<true>(y, vu_half, rgb_out, width, matrix, full_range);
+    nv12_or_nv21_to_rgb_or_rgba_row_impl::<true, false>(
+      y, vu_half, rgb_out, width, matrix, full_range,
+    );
   }
 }
 
-/// Shared NEON NV12/NV21 kernel. `SWAP_UV = false` selects NV12
-/// (even byte = U, odd = V); `SWAP_UV = true` selects NV21 (even =
-/// V, odd = U). The const generic drives monomorphization — the
-/// branch is eliminated in each instantiation and both wrappers
-/// produce byte‑identical output to the scalar reference.
+/// NEON NV12 → packed RGBA (R, G, B, `0xFF` per pixel). Same
+/// contract as [`nv12_to_rgb_row`] but writes 4 bytes per pixel via
+/// `vst4q_u8`. `rgba_out.len() >= 4 * width`.
+///
+/// # Safety
+///
+/// Same as [`nv12_to_rgb_row`] except the output slice must be
+/// `>= 4 * width` bytes (one extra byte per pixel for the opaque
+/// alpha).
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn nv12_to_rgba_row(
+  y: &[u8],
+  uv_half: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    nv12_or_nv21_to_rgb_or_rgba_row_impl::<false, true>(
+      y, uv_half, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// NEON NV21 → packed RGBA (R, G, B, `0xFF` per pixel). Same
+/// contract as [`nv21_to_rgb_row`] but writes 4 bytes per pixel via
+/// `vst4q_u8`. `rgba_out.len() >= 4 * width`.
+///
+/// # Safety
+///
+/// Same as [`nv21_to_rgb_row`] except the output slice must be
+/// `>= 4 * width` bytes.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn nv21_to_rgba_row(
+  y: &[u8],
+  vu_half: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    nv12_or_nv21_to_rgb_or_rgba_row_impl::<true, true>(
+      y, vu_half, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// Shared NEON NV12/NV21 kernel at 3 bpp (RGB) or 4 bpp + opaque
+/// alpha (RGBA). `SWAP_UV = false` selects NV12 (even byte = U, odd =
+/// V); `SWAP_UV = true` selects NV21 (even = V, odd = U). `ALPHA =
+/// true` writes via `vst4q_u8` with constant `0xFF` alpha; `ALPHA =
+/// false` writes via `vst3q_u8`. Both const generics drive
+/// compile-time monomorphization — branches are eliminated and each
+/// of the four wrappers produces byte‑identical output to the scalar
+/// reference.
 ///
 /// # Safety
 ///
@@ -1065,17 +1207,17 @@ pub(crate) unsafe fn nv21_to_rgb_row(
 /// 2. `width & 1 == 0`.
 /// 3. `y.len() >= width`.
 /// 4. `uv_or_vu_half.len() >= width` (2 × (width / 2) interleaved bytes).
-/// 5. `rgb_out.len() >= 3 * width`.
+/// 5. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 ///
 /// Bounds are `debug_assert`-checked; release builds trust the caller
 /// because the kernel uses unchecked pointer arithmetic (`vld1q_u8`,
-/// `vld2_u8`, `vst3q_u8`).
+/// `vld2_u8`, `vst3q_u8` / `vst4q_u8`).
 #[inline]
 #[target_feature(enable = "neon")]
-unsafe fn nv12_or_nv21_to_rgb_row_impl<const SWAP_UV: bool>(
+unsafe fn nv12_or_nv21_to_rgb_or_rgba_row_impl<const SWAP_UV: bool, const ALPHA: bool>(
   y: &[u8],
   uv_or_vu_half: &[u8],
-  rgb_out: &mut [u8],
+  out: &mut [u8],
   width: usize,
   matrix: ColorMatrix,
   full_range: bool,
@@ -1083,7 +1225,8 @@ unsafe fn nv12_or_nv21_to_rgb_row_impl<const SWAP_UV: bool>(
   debug_assert_eq!(width & 1, 0, "NV12/NV21 require even width");
   debug_assert!(y.len() >= width);
   debug_assert!(uv_or_vu_half.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  let bpp: usize = if ALPHA { 4 } else { 3 };
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params(full_range);
@@ -1104,6 +1247,9 @@ unsafe fn nv12_or_nv21_to_rgb_row_impl<const SWAP_UV: bool>(
     let cgv = vdupq_n_s32(coeffs.g_v());
     let cbu = vdupq_n_s32(coeffs.b_u());
     let cbv = vdupq_n_s32(coeffs.b_v());
+    // Constant opaque-alpha vector for the RGBA path; DCE'd when
+    // ALPHA = false.
+    let alpha_u8 = vdupq_n_u8(0xFF);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -1163,44 +1309,56 @@ unsafe fn nv12_or_nv21_to_rgb_row_impl<const SWAP_UV: bool>(
         vqmovun_s16(vqaddq_s16(y_scaled_hi, r_dup_hi)),
       );
 
-      let rgb = uint8x16x3_t(r_u8, g_u8, b_u8);
-      vst3q_u8(rgb_out.as_mut_ptr().add(x * 3), rgb);
+      if ALPHA {
+        let rgba = uint8x16x4_t(r_u8, g_u8, b_u8, alpha_u8);
+        vst4q_u8(out.as_mut_ptr().add(x * 4), rgba);
+      } else {
+        let rgb = uint8x16x3_t(r_u8, g_u8, b_u8);
+        vst3q_u8(out.as_mut_ptr().add(x * 3), rgb);
+      }
 
       x += 16;
     }
 
     // Scalar tail for the 0..14 leftover pixels. Dispatch to the
-    // matching scalar kernel based on SWAP_UV.
+    // matching scalar kernel based on SWAP_UV × ALPHA.
     if x < width {
-      if SWAP_UV {
-        scalar::nv21_to_rgb_row(
-          &y[x..width],
-          &uv_or_vu_half[x..width],
-          &mut rgb_out[x * 3..width * 3],
-          width - x,
-          matrix,
-          full_range,
-        );
-      } else {
-        scalar::nv12_to_rgb_row(
-          &y[x..width],
-          &uv_or_vu_half[x..width],
-          &mut rgb_out[x * 3..width * 3],
-          width - x,
-          matrix,
-          full_range,
-        );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_or_vu_half[x..width];
+      let tail_w = width - x;
+      let tail_out = &mut out[x * bpp..width * bpp];
+      match (SWAP_UV, ALPHA) {
+        (false, false) => {
+          scalar::nv12_to_rgb_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range)
+        }
+        (true, false) => {
+          scalar::nv21_to_rgb_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range)
+        }
+        (false, true) => {
+          scalar::nv12_to_rgba_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range)
+        }
+        (true, true) => {
+          scalar::nv21_to_rgba_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range)
+        }
       }
     }
   }
 }
 
 /// NEON NV24 → packed RGB (UV-ordered, 4:4:4). Thin wrapper over
-/// [`nv24_or_nv42_to_rgb_row_impl`] with `SWAP_UV = false`.
+/// [`nv24_or_nv42_to_rgb_or_rgba_row_impl`] with
+/// `SWAP_UV = false, ALPHA = false`.
 ///
 /// # Safety
 ///
-/// Same as [`nv24_or_nv42_to_rgb_row_impl`].
+/// Same contract as [`nv24_or_nv42_to_rgb_or_rgba_row_impl`] with
+/// `ALPHA = false` (so `out.len() >= width * 3` specializes to
+/// `rgb_out.len() >= 3 * width`):
+///
+/// 1. **NEON must be available on the current CPU.**
+/// 2. `y.len() >= width`.
+/// 3. `uv.len() >= 2 * width`.
+/// 4. `rgb_out.len() >= 3 * width`.
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn nv24_to_rgb_row(
@@ -1213,16 +1371,18 @@ pub(crate) unsafe fn nv24_to_rgb_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    nv24_or_nv42_to_rgb_row_impl::<false>(y, uv, rgb_out, width, matrix, full_range);
+    nv24_or_nv42_to_rgb_or_rgba_row_impl::<false, false>(y, uv, rgb_out, width, matrix, full_range);
   }
 }
 
 /// NEON NV42 → packed RGB (VU-ordered, 4:4:4). Thin wrapper over
-/// [`nv24_or_nv42_to_rgb_row_impl`] with `SWAP_UV = true`.
+/// [`nv24_or_nv42_to_rgb_or_rgba_row_impl`] with
+/// `SWAP_UV = true, ALPHA = false`.
 ///
 /// # Safety
 ///
-/// Same as [`nv24_or_nv42_to_rgb_row_impl`].
+/// Same contract as [`nv24_to_rgb_row`]; `vu` carries the same
+/// `2 * width` bytes but in V-then-U order per chroma pair.
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn nv42_to_rgb_row(
@@ -1235,40 +1395,93 @@ pub(crate) unsafe fn nv42_to_rgb_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    nv24_or_nv42_to_rgb_row_impl::<true>(y, vu, rgb_out, width, matrix, full_range);
+    nv24_or_nv42_to_rgb_or_rgba_row_impl::<true, false>(y, vu, rgb_out, width, matrix, full_range);
   }
 }
 
-/// Shared NEON NV24/NV42 kernel (4:4:4 semi-planar). Unlike
-/// [`nv12_or_nv21_to_rgb_row_impl`], chroma is not subsampled — one
-/// UV pair per Y pixel, so the chroma-duplication step (`vzip*`)
-/// disappears: compute 16 chroma values per 16 Y pixels directly.
+/// NEON NV24 → packed RGBA (R, G, B, `0xFF` per pixel). Same
+/// contract as [`nv24_to_rgb_row`] but writes 4 bytes per pixel via
+/// `vst4q_u8`. `rgba_out.len() >= 4 * width`.
+///
+/// # Safety
+///
+/// Same as [`nv24_to_rgb_row`] except the output slice must be
+/// `>= 4 * width` bytes.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn nv24_to_rgba_row(
+  y: &[u8],
+  uv: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    nv24_or_nv42_to_rgb_or_rgba_row_impl::<false, true>(y, uv, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// NEON NV42 → packed RGBA (R, G, B, `0xFF` per pixel). Same
+/// contract as [`nv42_to_rgb_row`] but writes 4 bytes per pixel via
+/// `vst4q_u8`. `rgba_out.len() >= 4 * width`.
+///
+/// # Safety
+///
+/// Same as [`nv42_to_rgb_row`] except the output slice must be
+/// `>= 4 * width` bytes.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn nv42_to_rgba_row(
+  y: &[u8],
+  vu: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    nv24_or_nv42_to_rgb_or_rgba_row_impl::<true, true>(y, vu, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared NEON NV24/NV42 kernel (4:4:4 semi-planar) at 3 bpp (RGB)
+/// or 4 bpp + opaque alpha (RGBA). Unlike
+/// [`nv12_or_nv21_to_rgb_or_rgba_row_impl`], chroma is not
+/// subsampled — one UV pair per Y pixel, so the chroma-duplication
+/// step (`vzip*`) disappears: compute 16 chroma values per 16 Y
+/// pixels directly.
 ///
 /// `SWAP_UV = false` selects NV24 (even byte = U, odd = V);
-/// `SWAP_UV = true` selects NV42 (even = V, odd = U).
+/// `SWAP_UV = true` selects NV42 (even = V, odd = U). `ALPHA = true`
+/// writes via `vst4q_u8` with constant `0xFF` alpha; `ALPHA = false`
+/// writes via `vst3q_u8`. Both const generics drive compile-time
+/// monomorphization.
 ///
 /// # Safety
 ///
 /// 1. **NEON must be available on the current CPU.**
 /// 2. `y.len() >= width`.
-/// 3. `uv_or_vu.len() >= 2 * width` (one UV pair per Y pixel =
-///    `2 * width` bytes).
-/// 4. `rgb_out.len() >= 3 * width`.
+/// 3. `uv_or_vu.len() >= 2 * width` (one UV pair per Y pixel).
+/// 4. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 ///
 /// No width parity constraint (4:4:4).
 #[inline]
 #[target_feature(enable = "neon")]
-unsafe fn nv24_or_nv42_to_rgb_row_impl<const SWAP_UV: bool>(
+unsafe fn nv24_or_nv42_to_rgb_or_rgba_row_impl<const SWAP_UV: bool, const ALPHA: bool>(
   y: &[u8],
   uv_or_vu: &[u8],
-  rgb_out: &mut [u8],
+  out: &mut [u8],
   width: usize,
   matrix: ColorMatrix,
   full_range: bool,
 ) {
   debug_assert!(y.len() >= width);
   debug_assert!(uv_or_vu.len() >= 2 * width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  let bpp: usize = if ALPHA { 4 } else { 3 };
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params(full_range);
@@ -1289,6 +1502,7 @@ unsafe fn nv24_or_nv42_to_rgb_row_impl<const SWAP_UV: bool>(
     let cgv = vdupq_n_s32(coeffs.g_v());
     let cbu = vdupq_n_s32(coeffs.b_u());
     let cbv = vdupq_n_s32(coeffs.b_v());
+    let alpha_u8 = vdupq_n_u8(0xFF);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -1357,32 +1571,36 @@ unsafe fn nv24_or_nv42_to_rgb_row_impl<const SWAP_UV: bool>(
         vqmovun_s16(vqaddq_s16(y_scaled_hi, r_chroma_hi)),
       );
 
-      let rgb = uint8x16x3_t(r_u8, g_u8, b_u8);
-      vst3q_u8(rgb_out.as_mut_ptr().add(x * 3), rgb);
+      if ALPHA {
+        let rgba = uint8x16x4_t(r_u8, g_u8, b_u8, alpha_u8);
+        vst4q_u8(out.as_mut_ptr().add(x * 4), rgba);
+      } else {
+        let rgb = uint8x16x3_t(r_u8, g_u8, b_u8);
+        vst3q_u8(out.as_mut_ptr().add(x * 3), rgb);
+      }
 
       x += 16;
     }
 
     // Scalar tail for 0..15 leftover pixels.
     if x < width {
-      if SWAP_UV {
-        scalar::nv42_to_rgb_row(
-          &y[x..width],
-          &uv_or_vu[x * 2..width * 2],
-          &mut rgb_out[x * 3..width * 3],
-          width - x,
-          matrix,
-          full_range,
-        );
-      } else {
-        scalar::nv24_to_rgb_row(
-          &y[x..width],
-          &uv_or_vu[x * 2..width * 2],
-          &mut rgb_out[x * 3..width * 3],
-          width - x,
-          matrix,
-          full_range,
-        );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_or_vu[x * 2..width * 2];
+      let tail_w = width - x;
+      let tail_out = &mut out[x * bpp..width * bpp];
+      match (SWAP_UV, ALPHA) {
+        (false, false) => {
+          scalar::nv24_to_rgb_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range)
+        }
+        (true, false) => {
+          scalar::nv42_to_rgb_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range)
+        }
+        (false, true) => {
+          scalar::nv24_to_rgba_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range)
+        }
+        (true, true) => {
+          scalar::nv42_to_rgba_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range)
+        }
       }
     }
   }
@@ -1394,6 +1612,10 @@ unsafe fn nv24_or_nv42_to_rgb_row_impl<const SWAP_UV: bool>(
 /// an interleaved UV stream.
 ///
 /// # Safety
+///
+/// Same contract as [`yuv_444_to_rgb_or_rgba_row`] with
+/// `ALPHA = false` (so `out.len() >= width * 3` specializes to
+/// `rgb_out.len() >= 3 * width`):
 ///
 /// 1. **NEON must be available on the current CPU.**
 /// 2. `y.len() >= width`, `u.len() >= width`, `v.len() >= width`.
@@ -1411,10 +1633,68 @@ pub(crate) unsafe fn yuv_444_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller-checked NEON availability + slice bounds — see
+  // [`yuv_444_to_rgb_or_rgba_row`] safety contract.
+  unsafe {
+    yuv_444_to_rgb_or_rgba_row::<false>(y, u, v, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// NEON YUV 4:4:4 planar → packed **RGBA** (8-bit). Same contract
+/// as [`yuv_444_to_rgb_row`] but writes 4 bytes per pixel via
+/// `vst4q_u8` (R, G, B, `0xFF`).
+///
+/// # Safety
+///
+/// Same as [`yuv_444_to_rgb_row`] except the output slice must be
+/// `>= 4 * width` bytes.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_444_to_rgba_row(
+  y: &[u8],
+  u: &[u8],
+  v: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller-checked NEON availability + slice bounds — see
+  // [`yuv_444_to_rgb_or_rgba_row`] safety contract.
+  unsafe {
+    yuv_444_to_rgb_or_rgba_row::<true>(y, u, v, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared NEON YUV 4:4:4 kernel for [`yuv_444_to_rgb_row`]
+/// (`ALPHA = false`, `vst3q_u8`) and [`yuv_444_to_rgba_row`]
+/// (`ALPHA = true`, `vst4q_u8` with constant `0xFF` alpha). Math is
+/// byte-identical to `scalar::yuv_444_to_rgb_or_rgba_row::<ALPHA>`;
+/// only the per-block store intrinsic differs.
+///
+/// # Safety
+///
+/// 1. **NEON must be available on the current CPU.**
+/// 2. `y.len() >= width`, `u.len() >= width`, `v.len() >= width`.
+/// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
+///
+/// No width parity constraint (4:4:4).
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn yuv_444_to_rgb_or_rgba_row<const ALPHA: bool>(
+  y: &[u8],
+  u: &[u8],
+  v: &[u8],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
   debug_assert!(y.len() >= width);
   debug_assert!(u.len() >= width);
   debug_assert!(v.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  let bpp: usize = if ALPHA { 4 } else { 3 };
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params(full_range);
@@ -1435,6 +1715,7 @@ pub(crate) unsafe fn yuv_444_to_rgb_row(
     let cgv = vdupq_n_s32(coeffs.g_v());
     let cbu = vdupq_n_s32(coeffs.b_u());
     let cbv = vdupq_n_s32(coeffs.b_v());
+    let alpha_u8 = vdupq_n_u8(0xFF);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -1493,22 +1774,28 @@ pub(crate) unsafe fn yuv_444_to_rgb_row(
         vqmovun_s16(vqaddq_s16(y_scaled_hi, r_chroma_hi)),
       );
 
-      let rgb = uint8x16x3_t(r_u8, g_u8, b_u8);
-      vst3q_u8(rgb_out.as_mut_ptr().add(x * 3), rgb);
+      if ALPHA {
+        let rgba = uint8x16x4_t(r_u8, g_u8, b_u8, alpha_u8);
+        vst4q_u8(out.as_mut_ptr().add(x * 4), rgba);
+      } else {
+        let rgb = uint8x16x3_t(r_u8, g_u8, b_u8);
+        vst3q_u8(out.as_mut_ptr().add(x * 3), rgb);
+      }
 
       x += 16;
     }
 
     if x < width {
-      scalar::yuv_444_to_rgb_row(
-        &y[x..width],
-        &u[x..width],
-        &v[x..width],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_u = &u[x..width];
+      let tail_v = &v[x..width];
+      let tail_w = width - x;
+      let tail_out = &mut out[x * bpp..width * bpp];
+      if ALPHA {
+        scalar::yuv_444_to_rgba_row(tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range);
+      } else {
+        scalar::yuv_444_to_rgb_row(tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
@@ -3272,1646 +3559,4 @@ pub(crate) unsafe fn bgr_rgb_swap_row(input: &[u8], output: &mut [u8], width: us
 }
 
 #[cfg(all(test, feature = "std"))]
-mod tests {
-  use super::*;
-
-  /// Deterministic scalar‑equivalence fixture. Fills Y/U/V with a
-  /// hash‑like sequence so every byte varies, then compares byte‑exact.
-  fn check_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
-    let u: std::vec::Vec<u8> = (0..width / 2)
-      .map(|i| ((i * 53 + 23) & 0xFF) as u8)
-      .collect();
-    let v: std::vec::Vec<u8> = (0..width / 2)
-      .map(|i| ((i * 71 + 91) & 0xFF) as u8)
-      .collect();
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_neon = std::vec![0u8; width * 3];
-
-    scalar::yuv_420_to_rgb_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_420_to_rgb_row(&y, &u, &v, &mut rgb_neon, width, matrix, full_range);
-    }
-
-    if rgb_scalar != rgb_neon {
-      let first_diff = rgb_scalar
-        .iter()
-        .zip(rgb_neon.iter())
-        .position(|(a, b)| a != b)
-        .unwrap();
-      panic!(
-        "NEON diverges from scalar at byte {first_diff} (width={width}, matrix={matrix:?}, full_range={full_range}): scalar={} neon={}",
-        rgb_scalar[first_diff], rgb_neon[first_diff]
-      );
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_matches_scalar_all_matrices_16() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_matches_scalar_width_32() {
-    check_equivalence(32, ColorMatrix::Bt601, true);
-    check_equivalence(32, ColorMatrix::Bt709, false);
-    check_equivalence(32, ColorMatrix::YCgCo, true);
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_matches_scalar_width_1920() {
-    check_equivalence(1920, ColorMatrix::Bt709, false);
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_matches_scalar_odd_tail_widths() {
-    // Widths that leave a non‑trivial scalar tail (non‑multiple of 16).
-    for w in [18usize, 30, 34, 1922] {
-      check_equivalence(w, ColorMatrix::Bt601, false);
-    }
-  }
-
-  // ---- nv12_to_rgb_row equivalence ------------------------------------
-
-  /// Scalar‑equivalence fixture for NV12. Builds an interleaved UV row
-  /// from the same U/V byte sequences used by the yuv420p fixture so a
-  /// single NV12 call should produce byte‑identical output to the
-  /// scalar NV12 reference.
-  fn check_nv12_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
-    let uv: std::vec::Vec<u8> = (0..width / 2)
-      .flat_map(|i| {
-        [
-          ((i * 53 + 23) & 0xFF) as u8, // U_i
-          ((i * 71 + 91) & 0xFF) as u8, // V_i
-        ]
-      })
-      .collect();
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_neon = std::vec![0u8; width * 3];
-
-    scalar::nv12_to_rgb_row(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      nv12_to_rgb_row(&y, &uv, &mut rgb_neon, width, matrix, full_range);
-    }
-
-    if rgb_scalar != rgb_neon {
-      let first_diff = rgb_scalar
-        .iter()
-        .zip(rgb_neon.iter())
-        .position(|(a, b)| a != b)
-        .unwrap();
-      panic!(
-        "NEON NV12 diverges from scalar at byte {first_diff} (width={width}, matrix={matrix:?}, full_range={full_range}): scalar={} neon={}",
-        rgb_scalar[first_diff], rgb_neon[first_diff]
-      );
-    }
-  }
-
-  /// Cross-format equivalence: the NV12 output must match the YUV420P
-  /// output when fed the same U / V bytes interleaved. Guards against
-  /// any stray deinterleave bug.
-  fn check_nv12_matches_yuv420p(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
-    let u: std::vec::Vec<u8> = (0..width / 2)
-      .map(|i| ((i * 53 + 23) & 0xFF) as u8)
-      .collect();
-    let v: std::vec::Vec<u8> = (0..width / 2)
-      .map(|i| ((i * 71 + 91) & 0xFF) as u8)
-      .collect();
-    let uv: std::vec::Vec<u8> = u.iter().zip(v.iter()).flat_map(|(a, b)| [*a, *b]).collect();
-
-    let mut rgb_yuv420p = std::vec![0u8; width * 3];
-    let mut rgb_nv12 = std::vec![0u8; width * 3];
-    unsafe {
-      yuv_420_to_rgb_row(&y, &u, &v, &mut rgb_yuv420p, width, matrix, full_range);
-      nv12_to_rgb_row(&y, &uv, &mut rgb_nv12, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_yuv420p, rgb_nv12,
-      "NV12 and YUV420P must produce byte-identical output for equivalent UV (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn nv12_neon_matches_scalar_all_matrices_16() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_nv12_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn nv12_neon_matches_scalar_width_1920() {
-    check_nv12_equivalence(1920, ColorMatrix::Bt709, false);
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn nv12_neon_matches_scalar_odd_tail_widths() {
-    for w in [18usize, 30, 34, 1922] {
-      check_nv12_equivalence(w, ColorMatrix::Bt601, false);
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn nv12_neon_matches_yuv420p_neon() {
-    for w in [16usize, 30, 64, 1920] {
-      check_nv12_matches_yuv420p(w, ColorMatrix::Bt709, false);
-      check_nv12_matches_yuv420p(w, ColorMatrix::YCgCo, true);
-    }
-  }
-
-  // ---- nv21_to_rgb_row equivalence ------------------------------------
-
-  /// Scalar-equivalence for NV21. Same pseudo-random byte stream as
-  /// the NV12 fixture, just handed to the VU-ordered kernel.
-  fn check_nv21_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
-    let vu: std::vec::Vec<u8> = (0..width / 2)
-      .flat_map(|i| {
-        [
-          ((i * 53 + 23) & 0xFF) as u8, // V_i
-          ((i * 71 + 91) & 0xFF) as u8, // U_i
-        ]
-      })
-      .collect();
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_neon = std::vec![0u8; width * 3];
-
-    scalar::nv21_to_rgb_row(&y, &vu, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      nv21_to_rgb_row(&y, &vu, &mut rgb_neon, width, matrix, full_range);
-    }
-
-    if rgb_scalar != rgb_neon {
-      let first_diff = rgb_scalar
-        .iter()
-        .zip(rgb_neon.iter())
-        .position(|(a, b)| a != b)
-        .unwrap();
-      panic!(
-        "NEON NV21 diverges from scalar at byte {first_diff} (width={width}, matrix={matrix:?}, full_range={full_range}): scalar={} neon={}",
-        rgb_scalar[first_diff], rgb_neon[first_diff]
-      );
-    }
-  }
-
-  /// Cross-format invariant: NV21 kernel on a VU-swapped byte stream
-  /// must produce byte-identical output to the NV12 kernel on the
-  /// UV-ordered original — proves the const-generic `SWAP_UV` path
-  /// actually inverts the byte order.
-  fn check_nv21_matches_nv12_with_swapped_uv(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
-    // Build the UV stream (NV12 order), then the VU stream as the
-    // same pairs byte-swapped.
-    let uv: std::vec::Vec<u8> = (0..width / 2)
-      .flat_map(|i| {
-        [
-          ((i * 53 + 23) & 0xFF) as u8, // U_i
-          ((i * 71 + 91) & 0xFF) as u8, // V_i
-        ]
-      })
-      .collect();
-    let mut vu = std::vec![0u8; width];
-    for i in 0..width / 2 {
-      vu[2 * i] = uv[2 * i + 1]; // V_i
-      vu[2 * i + 1] = uv[2 * i]; // U_i
-    }
-
-    let mut rgb_nv12 = std::vec![0u8; width * 3];
-    let mut rgb_nv21 = std::vec![0u8; width * 3];
-    unsafe {
-      nv12_to_rgb_row(&y, &uv, &mut rgb_nv12, width, matrix, full_range);
-      nv21_to_rgb_row(&y, &vu, &mut rgb_nv21, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_nv12, rgb_nv21,
-      "NV21 should produce identical output to NV12 with byte-swapped chroma (width={width}, matrix={matrix:?})"
-    );
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn nv21_neon_matches_scalar_all_matrices_16() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_nv21_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn nv21_neon_matches_scalar_widths() {
-    for w in [32usize, 1920, 18, 30, 34, 1922] {
-      check_nv21_equivalence(w, ColorMatrix::Bt709, false);
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn nv21_neon_matches_nv12_swapped() {
-    for w in [16usize, 30, 64, 1920] {
-      check_nv21_matches_nv12_with_swapped_uv(w, ColorMatrix::Bt709, false);
-      check_nv21_matches_nv12_with_swapped_uv(w, ColorMatrix::YCgCo, true);
-    }
-  }
-
-  // ---- nv24_to_rgb_row / nv42_to_rgb_row equivalence ------------------
-
-  fn check_nv24_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
-    // NV24: 1 UV pair per Y pixel → 2*width bytes.
-    let uv: std::vec::Vec<u8> = (0..width)
-      .flat_map(|i| {
-        [
-          ((i * 53 + 23) & 0xFF) as u8, // U_i
-          ((i * 71 + 91) & 0xFF) as u8, // V_i
-        ]
-      })
-      .collect();
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_neon = std::vec![0u8; width * 3];
-
-    scalar::nv24_to_rgb_row(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      nv24_to_rgb_row(&y, &uv, &mut rgb_neon, width, matrix, full_range);
-    }
-
-    if rgb_scalar != rgb_neon {
-      let first_diff = rgb_scalar
-        .iter()
-        .zip(rgb_neon.iter())
-        .position(|(a, b)| a != b)
-        .unwrap();
-      panic!(
-        "NEON NV24 diverges from scalar at byte {first_diff} (width={width}, matrix={matrix:?}, full_range={full_range}): scalar={} neon={}",
-        rgb_scalar[first_diff], rgb_neon[first_diff]
-      );
-    }
-  }
-
-  fn check_nv42_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
-    // NV42: V first, then U (byte-swapped).
-    let vu: std::vec::Vec<u8> = (0..width)
-      .flat_map(|i| {
-        [
-          ((i * 53 + 23) & 0xFF) as u8, // V_i
-          ((i * 71 + 91) & 0xFF) as u8, // U_i
-        ]
-      })
-      .collect();
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_neon = std::vec![0u8; width * 3];
-
-    scalar::nv42_to_rgb_row(&y, &vu, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      nv42_to_rgb_row(&y, &vu, &mut rgb_neon, width, matrix, full_range);
-    }
-
-    if rgb_scalar != rgb_neon {
-      let first_diff = rgb_scalar
-        .iter()
-        .zip(rgb_neon.iter())
-        .position(|(a, b)| a != b)
-        .unwrap();
-      panic!(
-        "NEON NV42 diverges from scalar at byte {first_diff} (width={width}, matrix={matrix:?}, full_range={full_range}): scalar={} neon={}",
-        rgb_scalar[first_diff], rgb_neon[first_diff]
-      );
-    }
-  }
-
-  /// NV42 kernel on a byte-swapped UV stream must match NV24 on the
-  /// original — validates the `SWAP_UV` const generic.
-  fn check_nv42_matches_nv24_with_swapped_uv(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
-    let uv: std::vec::Vec<u8> = (0..width)
-      .flat_map(|i| [((i * 53 + 23) & 0xFF) as u8, ((i * 71 + 91) & 0xFF) as u8])
-      .collect();
-    let mut vu = std::vec![0u8; 2 * width];
-    for i in 0..width {
-      vu[2 * i] = uv[2 * i + 1];
-      vu[2 * i + 1] = uv[2 * i];
-    }
-
-    let mut rgb_nv24 = std::vec![0u8; width * 3];
-    let mut rgb_nv42 = std::vec![0u8; width * 3];
-    unsafe {
-      nv24_to_rgb_row(&y, &uv, &mut rgb_nv24, width, matrix, full_range);
-      nv42_to_rgb_row(&y, &vu, &mut rgb_nv42, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_nv24, rgb_nv42,
-      "NV42 should produce identical output to NV24 with byte-swapped chroma (width={width}, matrix={matrix:?})"
-    );
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn nv24_neon_matches_scalar_all_matrices_16() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_nv24_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn nv24_neon_matches_scalar_widths() {
-    // Odd widths validate the no-parity-constraint contract (NV24 is
-    // 4:4:4, no chroma pairing) and force non-multiple-of-16 scalar
-    // tails.
-    for w in [1usize, 3, 15, 17, 32, 33, 1920, 1921] {
-      check_nv24_equivalence(w, ColorMatrix::Bt709, false);
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn nv42_neon_matches_scalar_all_matrices_16() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_nv42_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn nv42_neon_matches_scalar_widths() {
-    for w in [1usize, 3, 15, 17, 32, 33, 1920, 1921] {
-      check_nv42_equivalence(w, ColorMatrix::Bt709, false);
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn nv42_neon_matches_nv24_swapped() {
-    for w in [16usize, 17, 33, 64, 1920] {
-      check_nv42_matches_nv24_with_swapped_uv(w, ColorMatrix::Bt709, false);
-      check_nv42_matches_nv24_with_swapped_uv(w, ColorMatrix::YCgCo, true);
-    }
-  }
-
-  // ---- yuv_444_to_rgb_row equivalence ---------------------------------
-
-  fn check_yuv_444_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
-    let u: std::vec::Vec<u8> = (0..width).map(|i| ((i * 53 + 23) & 0xFF) as u8).collect();
-    let v: std::vec::Vec<u8> = (0..width).map(|i| ((i * 71 + 91) & 0xFF) as u8).collect();
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_neon = std::vec![0u8; width * 3];
-
-    scalar::yuv_444_to_rgb_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_444_to_rgb_row(&y, &u, &v, &mut rgb_neon, width, matrix, full_range);
-    }
-
-    if rgb_scalar != rgb_neon {
-      let first_diff = rgb_scalar
-        .iter()
-        .zip(rgb_neon.iter())
-        .position(|(a, b)| a != b)
-        .unwrap();
-      panic!(
-        "NEON yuv_444 diverges from scalar at byte {first_diff} (width={width}, matrix={matrix:?}, full_range={full_range}): scalar={} neon={}",
-        rgb_scalar[first_diff], rgb_neon[first_diff]
-      );
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn yuv_444_neon_matches_scalar_all_matrices_16() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_yuv_444_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn yuv_444_neon_matches_scalar_widths() {
-    // Odd widths validate the no-parity-constraint contract (4:4:4
-    // chroma is 1:1 with Y, not paired) and force non-multiple-of-16
-    // scalar tails.
-    for w in [1usize, 3, 15, 17, 32, 33, 1920, 1921] {
-      check_yuv_444_equivalence(w, ColorMatrix::Bt709, false);
-    }
-  }
-
-  // ---- rgb_to_hsv_row equivalence ------------------------------------
-
-  fn check_hsv_equivalence(rgb: &[u8], width: usize) {
-    let mut h_scalar = std::vec![0u8; width];
-    let mut s_scalar = std::vec![0u8; width];
-    let mut v_scalar = std::vec![0u8; width];
-    let mut h_neon = std::vec![0u8; width];
-    let mut s_neon = std::vec![0u8; width];
-    let mut v_neon = std::vec![0u8; width];
-
-    scalar::rgb_to_hsv_row(rgb, &mut h_scalar, &mut s_scalar, &mut v_scalar, width);
-    unsafe {
-      rgb_to_hsv_row(rgb, &mut h_neon, &mut s_neon, &mut v_neon, width);
-    }
-
-    // Scalar uses integer LUT (matches OpenCV byte-exact), NEON uses
-    // true f32 division. They can disagree by ±1 LSB at boundary
-    // pixels — identical tolerance to what OpenCV reports between
-    // their own scalar and SIMD HSV paths. Hue uses *circular*
-    // distance since 0 and 179 are neighbors on the hue wheel: a pixel
-    // at 360°≈0 in one path can land at 358°≈179 in the other due to
-    // sign flips in delta with tiny f32 rounding.
-    for (i, (a, b)) in h_scalar.iter().zip(h_neon.iter()).enumerate() {
-      let d = a.abs_diff(*b);
-      let circ = d.min(180 - d);
-      assert!(circ <= 1, "H divergence at pixel {i}: scalar={a} neon={b}");
-    }
-    for (i, (a, b)) in s_scalar.iter().zip(s_neon.iter()).enumerate() {
-      assert!(
-        a.abs_diff(*b) <= 1,
-        "S divergence at pixel {i}: scalar={a} neon={b}"
-      );
-    }
-    for (i, (a, b)) in v_scalar.iter().zip(v_neon.iter()).enumerate() {
-      assert!(
-        a.abs_diff(*b) <= 1,
-        "V divergence at pixel {i}: scalar={a} neon={b}"
-      );
-    }
-  }
-
-  fn pseudo_random_bgr(width: usize) -> std::vec::Vec<u8> {
-    let n = width * 3;
-    let mut out = std::vec::Vec::with_capacity(n);
-    let mut state: u32 = 0x9E37_79B9;
-    for _ in 0..n {
-      state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-      out.push((state >> 8) as u8);
-    }
-    out
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn hsv_neon_matches_scalar_pseudo_random_16() {
-    let rgb = pseudo_random_bgr(16);
-    check_hsv_equivalence(&rgb, 16);
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn hsv_neon_matches_scalar_pseudo_random_1920() {
-    let rgb = pseudo_random_bgr(1920);
-    check_hsv_equivalence(&rgb, 1920);
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn hsv_neon_matches_scalar_tail_widths() {
-    // Widths that force a non‑trivial scalar tail (non‑multiple of 16).
-    for w in [1usize, 7, 15, 17, 31, 1921] {
-      let rgb = pseudo_random_bgr(w);
-      check_hsv_equivalence(&rgb, w);
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn hsv_neon_matches_scalar_primaries_and_edges() {
-    // Primary colors, grays, near‑saturation — exercise each hue branch
-    // and the v==0, delta==0, h<0 wrap paths.
-    let rgb: std::vec::Vec<u8> = [
-      (0, 0, 0),       // black: v = 0 → s = 0, h = 0
-      (255, 255, 255), // white: delta = 0 → s = 0, h = 0
-      (128, 128, 128), // gray: delta = 0
-      (255, 0, 0),     // pure red: v == r path
-      (0, 255, 0),     // pure green: v == g path
-      (0, 0, 255),     // pure blue: v == b path
-      (255, 127, 0),   // red→yellow transition
-      (0, 127, 255),   // blue→cyan
-      (255, 0, 127),   // red→magenta
-      (1, 2, 3),       // near black: small delta
-      (254, 253, 252), // near white
-      (150, 200, 10),  // arbitrary: v == g path, h > 0
-      (150, 10, 200),  // arbitrary: v == b path
-      (10, 200, 150),  // arbitrary: v == g
-      (200, 100, 50),  // arbitrary: v == r
-      (0, 64, 128),    // arbitrary: v == b
-    ]
-    .iter()
-    .flat_map(|&(r, g, b)| [r, g, b])
-    .collect();
-    check_hsv_equivalence(&rgb, 16);
-  }
-
-  // ---- bgr_rgb_swap_row equivalence -----------------------------------
-
-  fn check_swap_equivalence(width: usize) {
-    let input = pseudo_random_bgr(width);
-    let mut out_scalar = std::vec![0u8; width * 3];
-    let mut out_neon = std::vec![0u8; width * 3];
-
-    scalar::bgr_rgb_swap_row(&input, &mut out_scalar, width);
-    unsafe {
-      bgr_rgb_swap_row(&input, &mut out_neon, width);
-    }
-
-    assert_eq!(out_scalar, out_neon, "NEON swap diverges from scalar");
-
-    // Byte 0 ↔ byte 2 should be swapped, byte 1 unchanged. Verify
-    // the semantic directly.
-    for x in 0..width {
-      assert_eq!(
-        out_scalar[x * 3],
-        input[x * 3 + 2],
-        "byte 0 != input byte 2"
-      );
-      assert_eq!(
-        out_scalar[x * 3 + 1],
-        input[x * 3 + 1],
-        "middle byte changed"
-      );
-      assert_eq!(
-        out_scalar[x * 3 + 2],
-        input[x * 3],
-        "byte 2 != input byte 0"
-      );
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn swap_neon_matches_scalar_widths() {
-    for w in [1usize, 15, 16, 17, 31, 32, 1920, 1921] {
-      check_swap_equivalence(w);
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn swap_is_self_inverse() {
-    let input = pseudo_random_bgr(64);
-    let mut round_trip = std::vec![0u8; 64 * 3];
-    let mut back = std::vec![0u8; 64 * 3];
-
-    scalar::bgr_rgb_swap_row(&input, &mut round_trip, 64);
-    scalar::bgr_rgb_swap_row(&round_trip, &mut back, 64);
-
-    assert_eq!(input, back, "swap is not self-inverse");
-  }
-
-  // ---- yuv420p10 scalar-equivalence -----------------------------------
-
-  /// Deterministic pseudo‑random `u16` samples in `[0, 1023]` — the
-  /// 10‑bit range. Upper 6 bits always zero, so the generator matches
-  /// real `yuv420p10le` bit patterns.
-  fn p10_plane(n: usize, seed: usize) -> std::vec::Vec<u16> {
-    (0..n)
-      .map(|i| ((i * seed + seed * 3) & 0x3FF) as u16)
-      .collect()
-  }
-
-  fn check_p10_u8_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p10_plane(width, 37);
-    let u = p10_plane(width / 2, 53);
-    let v = p10_plane(width / 2, 71);
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_neon = std::vec![0u8; width * 3];
-
-    scalar::yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb_neon, width, matrix, full_range);
-    }
-
-    if rgb_scalar != rgb_neon {
-      let first_diff = rgb_scalar
-        .iter()
-        .zip(rgb_neon.iter())
-        .position(|(a, b)| a != b)
-        .unwrap();
-      panic!(
-        "NEON 10→u8 diverges from scalar at byte {first_diff} (width={width}, matrix={matrix:?}, full_range={full_range}): scalar={} neon={}",
-        rgb_scalar[first_diff], rgb_neon[first_diff]
-      );
-    }
-  }
-
-  fn check_p10_u16_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p10_plane(width, 37);
-    let u = p10_plane(width / 2, 53);
-    let v = p10_plane(width / 2, 71);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_neon = std::vec![0u16; width * 3];
-
-    scalar::yuv_420p_n_to_rgb_u16_row::<10>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_420p_n_to_rgb_u16_row::<10>(&y, &u, &v, &mut rgb_neon, width, matrix, full_range);
-    }
-
-    if rgb_scalar != rgb_neon {
-      let first_diff = rgb_scalar
-        .iter()
-        .zip(rgb_neon.iter())
-        .position(|(a, b)| a != b)
-        .unwrap();
-      panic!(
-        "NEON 10→u16 diverges from scalar at elem {first_diff} (width={width}, matrix={matrix:?}, full_range={full_range}): scalar={} neon={}",
-        rgb_scalar[first_diff], rgb_neon[first_diff]
-      );
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p10_u8_matches_scalar_all_matrices_16() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_p10_u8_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p10_u16_matches_scalar_all_matrices_16() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_p10_u16_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p10_matches_scalar_odd_tail_widths() {
-    for w in [18usize, 30, 34, 1922] {
-      check_p10_u8_equivalence(w, ColorMatrix::Bt601, false);
-      check_p10_u16_equivalence(w, ColorMatrix::Bt709, true);
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p10_matches_scalar_1920() {
-    check_p10_u8_equivalence(1920, ColorMatrix::Bt709, false);
-    check_p10_u16_equivalence(1920, ColorMatrix::Bt2020Ncl, false);
-  }
-
-  // ---- yuv420p_n<BITS> scalar-equivalence (BITS=9 coverage) -------------
-  //
-  // Const-generic siblings of the BITS=10 helpers above. Used to pin
-  // the BITS=9 4:2:0 SIMD path against scalar — Yuv420p9 / Yuv422p9
-  // both dispatch into the same `yuv_420p_n_to_rgb_*<9>` kernels.
-
-  fn p_n_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
-    let mask = ((1u32 << BITS) - 1) as u16;
-    (0..n)
-      .map(|i| ((i.wrapping_mul(seed).wrapping_add(seed * 3)) as u16) & mask)
-      .collect()
-  }
-
-  fn check_p_n_u8_equivalence<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    let y = p_n_plane::<BITS>(width, 37);
-    let u = p_n_plane::<BITS>(width / 2, 53);
-    let v = p_n_plane::<BITS>(width / 2, 71);
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_neon = std::vec![0u8; width * 3];
-
-    scalar::yuv_420p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_420p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_neon, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_neon,
-      "NEON yuv_420p_n<{BITS}>→u8 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  fn check_p_n_u16_equivalence<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    let y = p_n_plane::<BITS>(width, 37);
-    let u = p_n_plane::<BITS>(width / 2, 53);
-    let v = p_n_plane::<BITS>(width / 2, 71);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_neon = std::vec![0u16; width * 3];
-
-    scalar::yuv_420p_n_to_rgb_u16_row::<BITS>(
-      &y,
-      &u,
-      &v,
-      &mut rgb_scalar,
-      width,
-      matrix,
-      full_range,
-    );
-    unsafe {
-      yuv_420p_n_to_rgb_u16_row::<BITS>(&y, &u, &v, &mut rgb_neon, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_neon,
-      "NEON yuv_420p_n<{BITS}>→u16 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_yuv420p9_matches_scalar_all_matrices_and_ranges() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_p_n_u8_equivalence::<9>(16, m, full);
-        check_p_n_u16_equivalence::<9>(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_yuv420p9_matches_scalar_tail_and_large_widths() {
-    // Tail widths force scalar fallback past the SIMD main loop;
-    // 1920 is one full HD luma row.
-    for w in [18usize, 30, 34, 1922] {
-      check_p_n_u8_equivalence::<9>(w, ColorMatrix::Bt601, false);
-      check_p_n_u16_equivalence::<9>(w, ColorMatrix::Bt709, true);
-    }
-    check_p_n_u8_equivalence::<9>(1920, ColorMatrix::Bt709, false);
-    check_p_n_u16_equivalence::<9>(1920, ColorMatrix::Bt2020Ncl, false);
-  }
-
-  /// Out‑of‑range regression: every kernel AND‑masks each `u16` load
-  /// to the low `BITS` bits, so **arbitrary** upper‑bit corruption
-  /// (not just p010 packing) produces scalar/NEON bit‑identical
-  /// output. This test sweeps three adversarial input shapes:
-  ///
-  /// - `p010`: 10 active bits in the high 10 of each `u16`
-  ///   (`sample << 6`) — the canonical mispacking mistake.
-  /// - `ycgco_worst`: `Y=[0x8000; W]`, `U=[0; W/2]`, `V=[0x8000; W/2]`
-  ///   — the specific Codex‑identified case that used to produce
-  ///   `(1023, 0, 0)` on scalar vs `(0, 0, 0)` on NEON before the
-  ///   load‑time mask was added.
-  /// - `random`: arbitrary upper‑bit flips with no particular pattern.
-  ///
-  /// Each variant runs through every color matrix × range × both
-  /// output paths (u8 + native‑depth u16) and asserts byte equality.
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p10_matches_scalar_on_out_of_range_samples() {
-    let width = 32;
-
-    let p010_variant =
-      |i: usize, seed: u16| 0xFC00u16.wrapping_add(((i as u16).wrapping_mul(seed)) << 6);
-    let random_variant = |i: usize, seed: u16| {
-      let x = (i as u32)
-        .wrapping_mul(seed as u32)
-        .wrapping_add(0xDEAD_BEEF) as u16;
-      x ^ 0xA5A5
-    };
-
-    for variant_name in ["p010", "ycgco_worst", "random"] {
-      let y: std::vec::Vec<u16> = match variant_name {
-        "ycgco_worst" => std::vec![0x8000u16; width],
-        "p010" => (0..width).map(|i| p010_variant(i, 37)).collect(),
-        _ => (0..width).map(|i| random_variant(i, 37)).collect(),
-      };
-      let u: std::vec::Vec<u16> = match variant_name {
-        "ycgco_worst" => std::vec![0x0u16; width / 2],
-        "p010" => (0..width / 2).map(|i| p010_variant(i, 53)).collect(),
-        _ => (0..width / 2).map(|i| random_variant(i, 53)).collect(),
-      };
-      let v: std::vec::Vec<u16> = match variant_name {
-        "ycgco_worst" => std::vec![0x8000u16; width / 2],
-        "p010" => (0..width / 2).map(|i| p010_variant(i, 71)).collect(),
-        _ => (0..width / 2).map(|i| random_variant(i, 71)).collect(),
-      };
-
-      for matrix in [ColorMatrix::Bt601, ColorMatrix::Bt709, ColorMatrix::YCgCo] {
-        for full_range in [true, false] {
-          let mut rgb_scalar = std::vec![0u8; width * 3];
-          let mut rgb_neon = std::vec![0u8; width * 3];
-          scalar::yuv_420p_n_to_rgb_row::<10>(
-            &y,
-            &u,
-            &v,
-            &mut rgb_scalar,
-            width,
-            matrix,
-            full_range,
-          );
-          unsafe {
-            yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb_neon, width, matrix, full_range);
-          }
-          assert_eq!(
-            rgb_scalar, rgb_neon,
-            "scalar and NEON diverge on {variant_name} input (matrix={matrix:?}, full_range={full_range})"
-          );
-
-          let mut rgb16_scalar = std::vec![0u16; width * 3];
-          let mut rgb16_neon = std::vec![0u16; width * 3];
-          scalar::yuv_420p_n_to_rgb_u16_row::<10>(
-            &y,
-            &u,
-            &v,
-            &mut rgb16_scalar,
-            width,
-            matrix,
-            full_range,
-          );
-          unsafe {
-            yuv_420p_n_to_rgb_u16_row::<10>(&y, &u, &v, &mut rgb16_neon, width, matrix, full_range);
-          }
-          assert_eq!(
-            rgb16_scalar, rgb16_neon,
-            "scalar and NEON diverge on {variant_name} u16 output (matrix={matrix:?}, full_range={full_range})"
-          );
-        }
-      }
-    }
-  }
-
-  // ---- P010 NEON scalar-equivalence --------------------------------------
-
-  /// P010 test samples: 10‑bit values shifted into the high 10 bits
-  /// (`value << 6`). Deterministic pseudo‑random generator keyed by
-  /// index × seed so U, V, Y vectors are mutually distinct.
-  fn p010_plane(n: usize, seed: usize) -> std::vec::Vec<u16> {
-    (0..n)
-      .map(|i| (((i * seed + seed * 3) & 0x3FF) as u16) << 6)
-      .collect()
-  }
-
-  /// Interleaves per‑pair U, V samples into P010's semi‑planar UV
-  /// layout: `[U0, V0, U1, V1, …]`.
-  fn p010_uv_interleave(u: &[u16], v: &[u16]) -> std::vec::Vec<u16> {
-    let pairs = u.len();
-    debug_assert_eq!(u.len(), v.len());
-    let mut out = std::vec::Vec::with_capacity(pairs * 2);
-    for i in 0..pairs {
-      out.push(u[i]);
-      out.push(v[i]);
-    }
-    out
-  }
-
-  fn check_p010_u8_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p010_plane(width, 37);
-    let u_plane = p010_plane(width / 2, 53);
-    let v_plane = p010_plane(width / 2, 71);
-    let uv = p010_uv_interleave(&u_plane, &v_plane);
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_neon = std::vec![0u8; width * 3];
-
-    scalar::p_n_to_rgb_row::<10>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      p_n_to_rgb_row::<10>(&y, &uv, &mut rgb_neon, width, matrix, full_range);
-    }
-    if rgb_scalar != rgb_neon {
-      let diff = rgb_scalar
-        .iter()
-        .zip(rgb_neon.iter())
-        .position(|(a, b)| a != b)
-        .unwrap();
-      panic!(
-        "NEON P010→u8 diverges at byte {diff} (width={width}, matrix={matrix:?}, full_range={full_range}): scalar={} neon={}",
-        rgb_scalar[diff], rgb_neon[diff]
-      );
-    }
-  }
-
-  fn check_p010_u16_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p010_plane(width, 37);
-    let u_plane = p010_plane(width / 2, 53);
-    let v_plane = p010_plane(width / 2, 71);
-    let uv = p010_uv_interleave(&u_plane, &v_plane);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_neon = std::vec![0u16; width * 3];
-
-    scalar::p_n_to_rgb_u16_row::<10>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      p_n_to_rgb_u16_row::<10>(&y, &uv, &mut rgb_neon, width, matrix, full_range);
-    }
-    if rgb_scalar != rgb_neon {
-      let diff = rgb_scalar
-        .iter()
-        .zip(rgb_neon.iter())
-        .position(|(a, b)| a != b)
-        .unwrap();
-      panic!(
-        "NEON P010→u16 diverges at elem {diff} (width={width}, matrix={matrix:?}, full_range={full_range}): scalar={} neon={}",
-        rgb_scalar[diff], rgb_neon[diff]
-      );
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p010_u8_matches_scalar_all_matrices_16() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_p010_u8_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p010_u16_matches_scalar_all_matrices_16() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_p010_u16_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p010_matches_scalar_odd_tail_widths() {
-    for w in [18usize, 30, 34, 1922] {
-      check_p010_u8_equivalence(w, ColorMatrix::Bt601, false);
-      check_p010_u16_equivalence(w, ColorMatrix::Bt709, true);
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p010_matches_scalar_1920() {
-    check_p010_u8_equivalence(1920, ColorMatrix::Bt709, false);
-    check_p010_u16_equivalence(1920, ColorMatrix::Bt2020Ncl, false);
-  }
-
-  /// Adversarial regression: mispacked input — `yuv420p10le` values
-  /// (10 bits in low 10) accidentally handed to the P010 kernel, or
-  /// arbitrary bit corruption — must still produce bit‑identical
-  /// output on scalar and NEON. The kernel's `>> 6` load extracts
-  /// only the high 10 bits, so any low‑6‑bits data gets deterministically
-  /// discarded in both paths.
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p010_matches_scalar_on_mispacked_input() {
-    let width = 32;
-
-    // Three input variants:
-    //   - `yuv420p10le_style`: values in low 10 bits (wrong packing
-    //     for P010 — `>> 6` drops the actual data, producing near‑black).
-    //   - `noise`: arbitrary 16‑bit noise, no particular pattern.
-    //   - `every_bit`: each sample has every bit set (0xFFFF).
-    for variant in ["yuv420p10le_style", "noise", "every_bit"] {
-      let y: std::vec::Vec<u16> = match variant {
-        "every_bit" => std::vec![0xFFFFu16; width],
-        "yuv420p10le_style" => (0..width).map(|i| ((i * 37 + 11) & 0x3FF) as u16).collect(),
-        _ => (0..width)
-          .map(|i| ((i as u32 * 53 + 0xDEAD) as u16) ^ 0xA5A5)
-          .collect(),
-      };
-      let uv: std::vec::Vec<u16> = match variant {
-        "every_bit" => std::vec![0xFFFFu16; width],
-        "yuv420p10le_style" => (0..width).map(|i| ((i * 71 + 23) & 0x3FF) as u16).collect(),
-        _ => (0..width)
-          .map(|i| ((i as u32 * 91 + 0xBEEF) as u16) ^ 0x5A5A)
-          .collect(),
-      };
-
-      for matrix in [ColorMatrix::Bt601, ColorMatrix::Bt709, ColorMatrix::YCgCo] {
-        for full_range in [true, false] {
-          let mut rgb_scalar = std::vec![0u8; width * 3];
-          let mut rgb_neon = std::vec![0u8; width * 3];
-          scalar::p_n_to_rgb_row::<10>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-          unsafe {
-            p_n_to_rgb_row::<10>(&y, &uv, &mut rgb_neon, width, matrix, full_range);
-          }
-          assert_eq!(
-            rgb_scalar, rgb_neon,
-            "scalar and NEON diverge on {variant} P010 input (matrix={matrix:?}, full_range={full_range})"
-          );
-
-          let mut rgb16_scalar = std::vec![0u16; width * 3];
-          let mut rgb16_neon = std::vec![0u16; width * 3];
-          scalar::p_n_to_rgb_u16_row::<10>(&y, &uv, &mut rgb16_scalar, width, matrix, full_range);
-          unsafe {
-            p_n_to_rgb_u16_row::<10>(&y, &uv, &mut rgb16_neon, width, matrix, full_range);
-          }
-          assert_eq!(
-            rgb16_scalar, rgb16_neon,
-            "scalar and NEON diverge on {variant} P010 u16 output (matrix={matrix:?}, full_range={full_range})"
-          );
-        }
-      }
-    }
-  }
-
-  // ---- Generic BITS equivalence (12/14-bit coverage) ------------------
-
-  fn planar_n_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
-    let mask = (1u32 << BITS) - 1;
-    (0..n)
-      .map(|i| ((i * seed + seed * 3) as u32 & mask) as u16)
-      .collect()
-  }
-
-  fn p_n_packed_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
-    let mask = (1u32 << BITS) - 1;
-    let shift = 16 - BITS;
-    (0..n)
-      .map(|i| (((i * seed + seed * 3) as u32 & mask) as u16) << shift)
-      .collect()
-  }
-
-  fn check_planar_u8_neon_equivalence_n<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    let y = planar_n_plane::<BITS>(width, 37);
-    let u = planar_n_plane::<BITS>(width / 2, 53);
-    let v = planar_n_plane::<BITS>(width / 2, 71);
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_neon = std::vec![0u8; width * 3];
-    scalar::yuv_420p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_420p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_neon, width, matrix, full_range);
-    }
-    assert_eq!(rgb_scalar, rgb_neon, "NEON planar {BITS}-bit → u8 diverges");
-  }
-
-  fn check_planar_u16_neon_equivalence_n<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    let y = planar_n_plane::<BITS>(width, 37);
-    let u = planar_n_plane::<BITS>(width / 2, 53);
-    let v = planar_n_plane::<BITS>(width / 2, 71);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_neon = std::vec![0u16; width * 3];
-    scalar::yuv_420p_n_to_rgb_u16_row::<BITS>(
-      &y,
-      &u,
-      &v,
-      &mut rgb_scalar,
-      width,
-      matrix,
-      full_range,
-    );
-    unsafe {
-      yuv_420p_n_to_rgb_u16_row::<BITS>(&y, &u, &v, &mut rgb_neon, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_neon,
-      "NEON planar {BITS}-bit → u16 diverges"
-    );
-  }
-
-  fn check_pn_u8_neon_equivalence_n<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    let y = p_n_packed_plane::<BITS>(width, 37);
-    let u = p_n_packed_plane::<BITS>(width / 2, 53);
-    let v = p_n_packed_plane::<BITS>(width / 2, 71);
-    let uv = p010_uv_interleave(&u, &v);
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_neon = std::vec![0u8; width * 3];
-    scalar::p_n_to_rgb_row::<BITS>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      p_n_to_rgb_row::<BITS>(&y, &uv, &mut rgb_neon, width, matrix, full_range);
-    }
-    assert_eq!(rgb_scalar, rgb_neon, "NEON Pn {BITS}-bit → u8 diverges");
-  }
-
-  fn check_pn_u16_neon_equivalence_n<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    let y = p_n_packed_plane::<BITS>(width, 37);
-    let u = p_n_packed_plane::<BITS>(width / 2, 53);
-    let v = p_n_packed_plane::<BITS>(width / 2, 71);
-    let uv = p010_uv_interleave(&u, &v);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_neon = std::vec![0u16; width * 3];
-    scalar::p_n_to_rgb_u16_row::<BITS>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      p_n_to_rgb_u16_row::<BITS>(&y, &uv, &mut rgb_neon, width, matrix, full_range);
-    }
-    assert_eq!(rgb_scalar, rgb_neon, "NEON Pn {BITS}-bit → u16 diverges");
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p12_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_planar_u8_neon_equivalence_n::<12>(16, m, full);
-        check_planar_u16_neon_equivalence_n::<12>(16, m, full);
-        check_pn_u8_neon_equivalence_n::<12>(16, m, full);
-        check_pn_u16_neon_equivalence_n::<12>(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p14_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_planar_u8_neon_equivalence_n::<14>(16, m, full);
-        check_planar_u16_neon_equivalence_n::<14>(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p12_matches_scalar_tail_widths() {
-    for w in [18usize, 30, 34, 1922] {
-      check_planar_u8_neon_equivalence_n::<12>(w, ColorMatrix::Bt601, false);
-      check_planar_u16_neon_equivalence_n::<12>(w, ColorMatrix::Bt709, true);
-      check_pn_u8_neon_equivalence_n::<12>(w, ColorMatrix::Bt601, false);
-      check_pn_u16_neon_equivalence_n::<12>(w, ColorMatrix::Bt2020Ncl, false);
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p14_matches_scalar_tail_widths() {
-    for w in [18usize, 30, 34, 1922] {
-      check_planar_u8_neon_equivalence_n::<14>(w, ColorMatrix::Bt601, false);
-      check_planar_u16_neon_equivalence_n::<14>(w, ColorMatrix::Bt709, true);
-    }
-  }
-
-  // ---- Yuv444p_n NEON equivalence (10/12/14) --------------------------
-
-  fn check_yuv444p_n_u8_neon_equivalence<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    // 4:4:4 — chroma is full-width, 1:1 with Y.
-    let y = planar_n_plane::<BITS>(width, 37);
-    let u = planar_n_plane::<BITS>(width, 53);
-    let v = planar_n_plane::<BITS>(width, 71);
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_neon = std::vec![0u8; width * 3];
-    scalar::yuv_444p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_444p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_neon, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_neon,
-      "NEON Yuv444p {BITS}-bit → u8 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  fn check_yuv444p_n_u16_neon_equivalence<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    let y = planar_n_plane::<BITS>(width, 37);
-    let u = planar_n_plane::<BITS>(width, 53);
-    let v = planar_n_plane::<BITS>(width, 71);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_neon = std::vec![0u16; width * 3];
-    scalar::yuv_444p_n_to_rgb_u16_row::<BITS>(
-      &y,
-      &u,
-      &v,
-      &mut rgb_scalar,
-      width,
-      matrix,
-      full_range,
-    );
-    unsafe {
-      yuv_444p_n_to_rgb_u16_row::<BITS>(&y, &u, &v, &mut rgb_neon, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_neon,
-      "NEON Yuv444p {BITS}-bit → u16 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_yuv444p9_matches_scalar_all_matrices() {
-    // BITS=9 reuses the same const-generic kernel as 10/12/14; this
-    // test pins the AND-mask + Q15 scale path at the lowest legal depth.
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-    ] {
-      for full in [true, false] {
-        check_yuv444p_n_u8_neon_equivalence::<9>(16, m, full);
-        check_yuv444p_n_u16_neon_equivalence::<9>(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_yuv444p10_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_yuv444p_n_u8_neon_equivalence::<10>(16, m, full);
-        check_yuv444p_n_u16_neon_equivalence::<10>(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_yuv444p12_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-    ] {
-      for full in [true, false] {
-        check_yuv444p_n_u8_neon_equivalence::<12>(16, m, full);
-        check_yuv444p_n_u16_neon_equivalence::<12>(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_yuv444p14_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-    ] {
-      for full in [true, false] {
-        check_yuv444p_n_u8_neon_equivalence::<14>(16, m, full);
-        check_yuv444p_n_u16_neon_equivalence::<14>(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_yuv444p_n_matches_scalar_widths() {
-    // Odd widths validate the 4:4:4 no-parity contract and force
-    // non-trivial scalar tails.
-    for w in [1usize, 3, 15, 17, 32, 33, 1920, 1921] {
-      check_yuv444p_n_u8_neon_equivalence::<10>(w, ColorMatrix::Bt709, false);
-      check_yuv444p_n_u16_neon_equivalence::<10>(w, ColorMatrix::Bt2020Ncl, true);
-    }
-  }
-
-  // ---- Yuv444p16 NEON equivalence -------------------------------------
-
-  fn p16_plane_neon(n: usize, seed: usize) -> std::vec::Vec<u16> {
-    (0..n)
-      .map(|i| ((i.wrapping_mul(seed).wrapping_add(seed * 3)) & 0xFFFF) as u16)
-      .collect()
-  }
-
-  fn check_yuv444p16_u8_neon_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p16_plane_neon(width, 37);
-    let u = p16_plane_neon(width, 53);
-    let v = p16_plane_neon(width, 71);
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_neon = std::vec![0u8; width * 3];
-    scalar::yuv_444p16_to_rgb_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_444p16_to_rgb_row(&y, &u, &v, &mut rgb_neon, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_neon,
-      "NEON Yuv444p16 → u8 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  fn check_yuv444p16_u16_neon_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p16_plane_neon(width, 37);
-    let u = p16_plane_neon(width, 53);
-    let v = p16_plane_neon(width, 71);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_neon = std::vec![0u16; width * 3];
-    scalar::yuv_444p16_to_rgb_u16_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_444p16_to_rgb_u16_row(&y, &u, &v, &mut rgb_neon, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_neon,
-      "NEON Yuv444p16 → u16 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_yuv444p16_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_yuv444p16_u8_neon_equivalence(16, m, full);
-        check_yuv444p16_u16_neon_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_yuv444p16_matches_scalar_widths() {
-    for w in [1usize, 3, 7, 8, 9, 15, 16, 17, 32, 33, 1920, 1921] {
-      check_yuv444p16_u8_neon_equivalence(w, ColorMatrix::Bt709, false);
-      check_yuv444p16_u16_neon_equivalence(w, ColorMatrix::Bt2020Ncl, true);
-    }
-  }
-
-  // ---- Pn 4:4:4 (P410 / P412 / P416) NEON equivalence -----------------
-
-  /// Generates a high-bit-packed `u16` plane: random `BITS`-bit values
-  /// shifted left by `16 - BITS` (P410/P412 convention).
-  fn high_bit_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
-    let mask = ((1u32 << BITS) - 1) as u16;
-    let shift = 16 - BITS;
-    (0..n)
-      .map(|i| (((i.wrapping_mul(seed).wrapping_add(seed * 3)) as u16) & mask) << shift)
-      .collect()
-  }
-
-  fn interleave_uv(u_full: &[u16], v_full: &[u16]) -> std::vec::Vec<u16> {
-    debug_assert_eq!(u_full.len(), v_full.len());
-    let mut out = std::vec::Vec::with_capacity(u_full.len() * 2);
-    for i in 0..u_full.len() {
-      out.push(u_full[i]);
-      out.push(v_full[i]);
-    }
-    out
-  }
-
-  fn check_p_n_444_u8_neon_equivalence<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    let y = high_bit_plane::<BITS>(width, 37);
-    let u = high_bit_plane::<BITS>(width, 53);
-    let v = high_bit_plane::<BITS>(width, 71);
-    let uv = interleave_uv(&u, &v);
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_neon = std::vec![0u8; width * 3];
-    scalar::p_n_444_to_rgb_row::<BITS>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      p_n_444_to_rgb_row::<BITS>(&y, &uv, &mut rgb_neon, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_neon,
-      "NEON Pn4:4:4 {BITS}-bit → u8 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  fn check_p_n_444_u16_neon_equivalence<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    let y = high_bit_plane::<BITS>(width, 37);
-    let u = high_bit_plane::<BITS>(width, 53);
-    let v = high_bit_plane::<BITS>(width, 71);
-    let uv = interleave_uv(&u, &v);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_neon = std::vec![0u16; width * 3];
-    scalar::p_n_444_to_rgb_u16_row::<BITS>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      p_n_444_to_rgb_u16_row::<BITS>(&y, &uv, &mut rgb_neon, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_neon,
-      "NEON Pn4:4:4 {BITS}-bit → u16 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  fn check_p_n_444_16_u8_neon_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p16_plane_neon(width, 37);
-    let u = p16_plane_neon(width, 53);
-    let v = p16_plane_neon(width, 71);
-    let uv = interleave_uv(&u, &v);
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_neon = std::vec![0u8; width * 3];
-    scalar::p_n_444_16_to_rgb_row(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      p_n_444_16_to_rgb_row(&y, &uv, &mut rgb_neon, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_neon,
-      "NEON P416 → u8 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  fn check_p_n_444_16_u16_neon_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p16_plane_neon(width, 37);
-    let u = p16_plane_neon(width, 53);
-    let v = p16_plane_neon(width, 71);
-    let uv = interleave_uv(&u, &v);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_neon = std::vec![0u16; width * 3];
-    scalar::p_n_444_16_to_rgb_u16_row(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      p_n_444_16_to_rgb_u16_row(&y, &uv, &mut rgb_neon, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_neon,
-      "NEON P416 → u16 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p410_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_p_n_444_u8_neon_equivalence::<10>(16, m, full);
-        check_p_n_444_u16_neon_equivalence::<10>(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p412_matches_scalar_all_matrices() {
-    for m in [ColorMatrix::Bt709, ColorMatrix::Bt2020Ncl] {
-      for full in [true, false] {
-        check_p_n_444_u8_neon_equivalence::<12>(16, m, full);
-        check_p_n_444_u16_neon_equivalence::<12>(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p410_p412_matches_scalar_tail_widths() {
-    // Tail widths force scalar fallback past the SIMD main loop.
-    // 4:4:4 has no width-parity constraint.
-    for w in [1usize, 3, 7, 15, 17, 31, 33, 1920, 1921] {
-      check_p_n_444_u8_neon_equivalence::<10>(w, ColorMatrix::Bt601, false);
-      check_p_n_444_u16_neon_equivalence::<10>(w, ColorMatrix::Bt709, true);
-      check_p_n_444_u8_neon_equivalence::<12>(w, ColorMatrix::Bt2020Ncl, false);
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p416_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_p_n_444_16_u8_neon_equivalence(16, m, full);
-        check_p_n_444_16_u16_neon_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
-  fn neon_p416_matches_scalar_tail_widths() {
-    for w in [1usize, 3, 7, 8, 9, 15, 16, 17, 31, 33, 1920, 1921] {
-      check_p_n_444_16_u8_neon_equivalence(w, ColorMatrix::Bt709, false);
-      check_p_n_444_16_u16_neon_equivalence(w, ColorMatrix::Bt2020Ncl, true);
-    }
-  }
-}
+mod tests;

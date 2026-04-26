@@ -74,11 +74,69 @@ pub(crate) unsafe fn yuv_420_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller-checked simd128 availability + slice bounds —
+  // see [`yuv_420_to_rgb_or_rgba_row`] safety contract.
+  unsafe {
+    yuv_420_to_rgb_or_rgba_row::<false>(y, u_half, v_half, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// WASM simd128 YUV 4:2:0 → packed **RGBA** (8-bit). Same contract
+/// as [`yuv_420_to_rgb_row`] but writes 4 bytes per pixel (R, G, B,
+/// `0xFF`).
+///
+/// # Safety
+///
+/// 1. simd128 must be enabled at compile time.
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `u_half.len() >= width / 2`,
+///    `v_half.len() >= width / 2`, `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn yuv_420_to_rgba_row(
+  y: &[u8],
+  u_half: &[u8],
+  v_half: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller-checked simd128 availability + slice bounds —
+  // see [`yuv_420_to_rgb_or_rgba_row`] safety contract.
+  unsafe {
+    yuv_420_to_rgb_or_rgba_row::<true>(y, u_half, v_half, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared WASM simd128 kernel for [`yuv_420_to_rgb_row`]
+/// (`ALPHA = false`, [`write_rgb_16`]) and [`yuv_420_to_rgba_row`]
+/// (`ALPHA = true`, [`write_rgba_16`] with constant `0xFF` alpha).
+/// Math is byte-identical to
+/// `scalar::yuv_420_to_rgb_or_rgba_row::<ALPHA>`.
+///
+/// # Safety
+///
+/// Same as [`yuv_420_to_rgb_row`] / [`yuv_420_to_rgba_row`]; the
+/// `out` slice must be `>= width * (if ALPHA { 4 } else { 3 })`
+/// bytes long.
+#[inline]
+#[target_feature(enable = "simd128")]
+unsafe fn yuv_420_to_rgb_or_rgba_row<const ALPHA: bool>(
+  y: &[u8],
+  u_half: &[u8],
+  v_half: &[u8],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
   debug_assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
   debug_assert!(y.len() >= width);
   debug_assert!(u_half.len() >= width / 2);
   debug_assert!(v_half.len() >= width / 2);
-  debug_assert!(rgb_out.len() >= width * 3);
+  let bpp: usize = if ALPHA { 4 } else { 3 };
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params(full_range);
@@ -100,6 +158,9 @@ pub(crate) unsafe fn yuv_420_to_rgb_row(
     let cgv = i32x4_splat(coeffs.g_v());
     let cbu = i32x4_splat(coeffs.b_u());
     let cbv = i32x4_splat(coeffs.b_v());
+    // Constant opaque-alpha vector for the RGBA path; DCE'd when
+    // ALPHA = false.
+    let alpha_u8 = u8x16_splat(0xFF);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -160,19 +221,24 @@ pub(crate) unsafe fn yuv_420_to_rgb_row(
       let g_u8 = u8x16_narrow_i16x8(g_lo, g_hi);
       let r_u8 = u8x16_narrow_i16x8(r_lo, r_hi);
 
-      // 3‑way interleave → packed RGB (48 bytes).
-      write_rgb_16(r_u8, g_u8, b_u8, rgb_out.as_mut_ptr().add(x * 3));
+      if ALPHA {
+        // 4‑way interleave → packed RGBA (64 bytes).
+        write_rgba_16(r_u8, g_u8, b_u8, alpha_u8, out.as_mut_ptr().add(x * 4));
+      } else {
+        // 3‑way interleave → packed RGB (48 bytes).
+        write_rgb_16(r_u8, g_u8, b_u8, out.as_mut_ptr().add(x * 3));
+      }
 
       x += 16;
     }
 
     // Scalar tail for the 0..14 leftover pixels.
     if x < width {
-      scalar::yuv_420_to_rgb_row(
+      scalar::yuv_420_to_rgb_or_rgba_row::<ALPHA>(
         &y[x..width],
         &u_half[x / 2..width / 2],
         &v_half[x / 2..width / 2],
-        &mut rgb_out[x * 3..width * 3],
+        &mut out[x * bpp..width * bpp],
         width - x,
         matrix,
         full_range,
@@ -1251,12 +1317,21 @@ unsafe fn deinterleave_uv_u16_wasm(ptr: *const u16) -> (v128, v128) {
   }
 }
 
-/// WASM simd128 NV12 → packed RGB (UV-ordered chroma). Thin wrapper
-/// over [`nv12_or_nv21_to_rgb_row_impl`] with `SWAP_UV = false`.
+/// WASM simd128 NV12 → packed RGB. Thin wrapper over
+/// [`nv12_or_nv21_to_rgb_or_rgba_row_impl`] with
+/// `SWAP_UV = false, ALPHA = false`.
 ///
 /// # Safety
 ///
-/// Same as [`nv12_or_nv21_to_rgb_row_impl`].
+/// Same contract as [`nv12_or_nv21_to_rgb_or_rgba_row_impl`]:
+///
+/// 1. **simd128 must be enabled at compile time.** WASM has no
+///    runtime CPU detection — the module's SIMD support is fixed at
+///    produce time.
+/// 2. `width & 1 == 0` (4:2:0 requires even width).
+/// 3. `y.len() >= width`.
+/// 4. `uv_half.len() >= width` (interleaved UV bytes, 2 per chroma pair).
+/// 5. `rgb_out.len() >= 3 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn nv12_to_rgb_row(
@@ -1267,18 +1342,22 @@ pub(crate) unsafe fn nv12_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    nv12_or_nv21_to_rgb_row_impl::<false>(y, uv_half, rgb_out, width, matrix, full_range);
+    nv12_or_nv21_to_rgb_or_rgba_row_impl::<false, false>(
+      y, uv_half, rgb_out, width, matrix, full_range,
+    );
   }
 }
 
-/// WASM simd128 NV21 → packed RGB (VU-ordered chroma). Thin wrapper
-/// over [`nv12_or_nv21_to_rgb_row_impl`] with `SWAP_UV = true`.
+/// WASM simd128 NV21 → packed RGB. Thin wrapper over
+/// [`nv12_or_nv21_to_rgb_or_rgba_row_impl`] with
+/// `SWAP_UV = true, ALPHA = false`.
 ///
 /// # Safety
 ///
-/// Same as [`nv12_or_nv21_to_rgb_row_impl`].
+/// Same contract as [`nv12_to_rgb_row`]; `vu_half` carries the same
+/// number of bytes (`>= width`) but in V-then-U order per chroma
+/// pair.
 #[inline]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn nv21_to_rgb_row(
@@ -1289,29 +1368,83 @@ pub(crate) unsafe fn nv21_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    nv12_or_nv21_to_rgb_row_impl::<true>(y, vu_half, rgb_out, width, matrix, full_range);
+    nv12_or_nv21_to_rgb_or_rgba_row_impl::<true, false>(
+      y, vu_half, rgb_out, width, matrix, full_range,
+    );
   }
 }
 
-/// Shared wasm simd128 NV12/NV21 kernel. `SWAP_UV` selects chroma
-/// byte order at compile time.
+/// WASM simd128 NV12 → packed RGBA. Same contract as
+/// [`nv12_to_rgb_row`] but writes 4 bytes per pixel via
+/// [`write_rgba_16`]. `rgba_out.len() >= 4 * width`.
 ///
 /// # Safety
 ///
-/// 1. **simd128 must be enabled at compile time** (same obligation as
-///    [`yuv_420_to_rgb_row`]).
+/// Same as [`nv12_to_rgb_row`] except the output slice must be
+/// `>= 4 * width` bytes (one extra byte per pixel for the opaque
+/// alpha).
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn nv12_to_rgba_row(
+  y: &[u8],
+  uv_half: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    nv12_or_nv21_to_rgb_or_rgba_row_impl::<false, true>(
+      y, uv_half, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// WASM simd128 NV21 → packed RGBA. Same contract as
+/// [`nv21_to_rgb_row`] but writes 4 bytes per pixel via
+/// [`write_rgba_16`]. `rgba_out.len() >= 4 * width`.
+///
+/// # Safety
+///
+/// Same as [`nv21_to_rgb_row`] except the output slice must be
+/// `>= 4 * width` bytes.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn nv21_to_rgba_row(
+  y: &[u8],
+  vu_half: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    nv12_or_nv21_to_rgb_or_rgba_row_impl::<true, true>(
+      y, vu_half, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// Shared wasm simd128 NV12/NV21 kernel at 3 bpp (RGB) or 4 bpp +
+/// opaque alpha (RGBA). `SWAP_UV` selects chroma byte order;
+/// `ALPHA = true` writes via [`write_rgba_16`], `ALPHA = false` via
+/// [`write_rgb_16`]. Both const generics drive compile-time
+/// monomorphization.
+///
+/// # Safety
+///
+/// 1. **simd128 must be enabled at compile time.**
 /// 2. `width & 1 == 0`.
 /// 3. `y.len() >= width`.
 /// 4. `uv_or_vu_half.len() >= width` (16 interleaved bytes per 16 Y pixels).
-/// 5. `rgb_out.len() >= 3 * width`.
+/// 5. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "simd128")]
-unsafe fn nv12_or_nv21_to_rgb_row_impl<const SWAP_UV: bool>(
+unsafe fn nv12_or_nv21_to_rgb_or_rgba_row_impl<const SWAP_UV: bool, const ALPHA: bool>(
   y: &[u8],
   uv_or_vu_half: &[u8],
-  rgb_out: &mut [u8],
+  out: &mut [u8],
   width: usize,
   matrix: ColorMatrix,
   full_range: bool,
@@ -1319,7 +1452,8 @@ unsafe fn nv12_or_nv21_to_rgb_row_impl<const SWAP_UV: bool>(
   debug_assert_eq!(width & 1, 0, "NV12/NV21 require even width");
   debug_assert!(y.len() >= width);
   debug_assert!(uv_or_vu_half.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  let bpp: usize = if ALPHA { 4 } else { 3 };
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params(full_range);
@@ -1341,6 +1475,7 @@ unsafe fn nv12_or_nv21_to_rgb_row_impl<const SWAP_UV: bool>(
     let cgv = i32x4_splat(coeffs.g_v());
     let cbu = i32x4_splat(coeffs.b_u());
     let cbv = i32x4_splat(coeffs.b_v());
+    let alpha_u8 = u8x16_splat(0xFF);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -1436,41 +1571,43 @@ unsafe fn nv12_or_nv21_to_rgb_row_impl<const SWAP_UV: bool>(
       let g_u8 = u8x16_narrow_i16x8(g_lo, g_hi);
       let r_u8 = u8x16_narrow_i16x8(r_lo, r_hi);
 
-      write_rgb_16(r_u8, g_u8, b_u8, rgb_out.as_mut_ptr().add(x * 3));
+      if ALPHA {
+        write_rgba_16(r_u8, g_u8, b_u8, alpha_u8, out.as_mut_ptr().add(x * 4));
+      } else {
+        write_rgb_16(r_u8, g_u8, b_u8, out.as_mut_ptr().add(x * 3));
+      }
 
       x += 16;
     }
 
     if x < width {
-      if SWAP_UV {
-        scalar::nv21_to_rgb_row(
-          &y[x..width],
-          &uv_or_vu_half[x..width],
-          &mut rgb_out[x * 3..width * 3],
-          width - x,
-          matrix,
-          full_range,
-        );
-      } else {
-        scalar::nv12_to_rgb_row(
-          &y[x..width],
-          &uv_or_vu_half[x..width],
-          &mut rgb_out[x * 3..width * 3],
-          width - x,
-          matrix,
-          full_range,
-        );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_or_vu_half[x..width];
+      let tail_w = width - x;
+      let tail_out = &mut out[x * bpp..width * bpp];
+      match (SWAP_UV, ALPHA) {
+        (false, false) => {
+          scalar::nv12_to_rgb_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range)
+        }
+        (true, false) => {
+          scalar::nv21_to_rgb_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range)
+        }
+        (false, true) => {
+          scalar::nv12_to_rgba_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range)
+        }
+        (true, true) => {
+          scalar::nv21_to_rgba_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range)
+        }
       }
     }
   }
 }
 
-/// wasm simd128 NV24 → packed RGB (UV-ordered, 4:4:4). Thin wrapper
-/// over [`nv24_or_nv42_to_rgb_row_impl`] with `SWAP_UV = false`.
+/// wasm simd128 NV24 → packed RGB (UV-ordered, 4:4:4).
 ///
 /// # Safety
 ///
-/// Same as [`nv24_or_nv42_to_rgb_row_impl`].
+/// Same as [`nv24_or_nv42_to_rgb_or_rgba_row_impl`].
 #[inline]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn nv24_to_rgb_row(
@@ -1483,7 +1620,7 @@ pub(crate) unsafe fn nv24_to_rgb_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    nv24_or_nv42_to_rgb_row_impl::<false>(y, uv, rgb_out, width, matrix, full_range);
+    nv24_or_nv42_to_rgb_or_rgba_row_impl::<false, false>(y, uv, rgb_out, width, matrix, full_range);
   }
 }
 
@@ -1491,7 +1628,7 @@ pub(crate) unsafe fn nv24_to_rgb_row(
 ///
 /// # Safety
 ///
-/// Same as [`nv24_or_nv42_to_rgb_row_impl`].
+/// Same as [`nv24_or_nv42_to_rgb_or_rgba_row_impl`].
 #[inline]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn nv42_to_rgb_row(
@@ -1504,7 +1641,49 @@ pub(crate) unsafe fn nv42_to_rgb_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    nv24_or_nv42_to_rgb_row_impl::<true>(y, vu, rgb_out, width, matrix, full_range);
+    nv24_or_nv42_to_rgb_or_rgba_row_impl::<true, false>(y, vu, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// wasm simd128 NV24 → packed RGBA (UV-ordered, 4:4:4, opaque alpha).
+///
+/// # Safety
+///
+/// Same as [`nv24_or_nv42_to_rgb_or_rgba_row_impl`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn nv24_to_rgba_row(
+  y: &[u8],
+  uv: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    nv24_or_nv42_to_rgb_or_rgba_row_impl::<false, true>(y, uv, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// wasm simd128 NV42 → packed RGBA (VU-ordered, 4:4:4, opaque alpha).
+///
+/// # Safety
+///
+/// Same as [`nv24_or_nv42_to_rgb_or_rgba_row_impl`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn nv42_to_rgba_row(
+  y: &[u8],
+  vu: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    nv24_or_nv42_to_rgb_or_rgba_row_impl::<true, true>(y, vu, rgba_out, width, matrix, full_range);
   }
 }
 
@@ -1517,20 +1696,21 @@ pub(crate) unsafe fn nv42_to_rgb_row(
 ///
 /// 1. **simd128 must be available** (compile-time `target_feature`).
 /// 2. `y.len() >= width`, `uv_or_vu.len() >= 2 * width`,
-///    `rgb_out.len() >= 3 * width`.
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
 #[inline]
 #[target_feature(enable = "simd128")]
-unsafe fn nv24_or_nv42_to_rgb_row_impl<const SWAP_UV: bool>(
+unsafe fn nv24_or_nv42_to_rgb_or_rgba_row_impl<const SWAP_UV: bool, const ALPHA: bool>(
   y: &[u8],
   uv_or_vu: &[u8],
-  rgb_out: &mut [u8],
+  out: &mut [u8],
   width: usize,
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(uv_or_vu.len() >= 2 * width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params(full_range);
@@ -1550,6 +1730,7 @@ unsafe fn nv24_or_nv42_to_rgb_row_impl<const SWAP_UV: bool>(
     let cgv = i32x4_splat(coeffs.g_v());
     let cbu = i32x4_splat(coeffs.b_u());
     let cbv = i32x4_splat(coeffs.b_v());
+    let alpha_u8 = u8x16_splat(0xFF);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -1687,38 +1868,40 @@ unsafe fn nv24_or_nv42_to_rgb_row_impl<const SWAP_UV: bool>(
       let g_u8 = u8x16_narrow_i16x8(g_lo, g_hi);
       let r_u8 = u8x16_narrow_i16x8(r_lo, r_hi);
 
-      write_rgb_16(r_u8, g_u8, b_u8, rgb_out.as_mut_ptr().add(x * 3));
+      if ALPHA {
+        write_rgba_16(r_u8, g_u8, b_u8, alpha_u8, out.as_mut_ptr().add(x * 4));
+      } else {
+        write_rgb_16(r_u8, g_u8, b_u8, out.as_mut_ptr().add(x * 3));
+      }
 
       x += 16;
     }
 
     if x < width {
-      if SWAP_UV {
-        scalar::nv42_to_rgb_row(
-          &y[x..width],
-          &uv_or_vu[x * 2..width * 2],
-          &mut rgb_out[x * 3..width * 3],
-          width - x,
-          matrix,
-          full_range,
-        );
-      } else {
-        scalar::nv24_to_rgb_row(
-          &y[x..width],
-          &uv_or_vu[x * 2..width * 2],
-          &mut rgb_out[x * 3..width * 3],
-          width - x,
-          matrix,
-          full_range,
-        );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_or_vu[x * 2..width * 2];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      match (SWAP_UV, ALPHA) {
+        (false, false) => {
+          scalar::nv24_to_rgb_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range)
+        }
+        (true, false) => {
+          scalar::nv42_to_rgb_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range)
+        }
+        (false, true) => {
+          scalar::nv24_to_rgba_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range)
+        }
+        (true, true) => {
+          scalar::nv42_to_rgba_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range)
+        }
       }
     }
   }
 }
 
-/// wasm simd128 YUV 4:4:4 planar → packed RGB. 16 Y + 16 U + 16 V
-/// per iteration. Same arithmetic as [`nv24_to_rgb_row`] but U and V
-/// come from separate planes (no deinterleave).
+/// wasm simd128 YUV 4:4:4 planar → packed RGB. Thin wrapper over
+/// [`yuv_444_to_rgb_or_rgba_row`] with `ALPHA = false`.
 ///
 /// # Safety
 ///
@@ -1736,10 +1919,64 @@ pub(crate) unsafe fn yuv_444_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller-checked simd128 availability + slice bounds — see
+  // [`yuv_444_to_rgb_or_rgba_row`] safety contract.
+  unsafe {
+    yuv_444_to_rgb_or_rgba_row::<false>(y, u, v, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// wasm simd128 YUV 4:4:4 planar → packed **RGBA** (8-bit). Same
+/// contract as [`yuv_444_to_rgb_row`] but writes 4 bytes per pixel
+/// via [`write_rgba_16`] (R, G, B, `0xFF`).
+///
+/// # Safety
+///
+/// Same as [`yuv_444_to_rgb_row`] except the output slice must be
+/// `>= 4 * width` bytes.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn yuv_444_to_rgba_row(
+  y: &[u8],
+  u: &[u8],
+  v: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller-checked simd128 availability + slice bounds — see
+  // [`yuv_444_to_rgb_or_rgba_row`] safety contract.
+  unsafe {
+    yuv_444_to_rgb_or_rgba_row::<true>(y, u, v, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared wasm simd128 YUV 4:4:4 kernel for [`yuv_444_to_rgb_row`]
+/// (`ALPHA = false`, [`write_rgb_16`]) and [`yuv_444_to_rgba_row`]
+/// (`ALPHA = true`, [`write_rgba_16`] with constant `0xFF` alpha).
+///
+/// # Safety
+///
+/// 1. **simd128 must be enabled at compile time.**
+/// 2. `y.len() >= width`, `u.len() >= width`, `v.len() >= width`.
+/// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
+#[inline]
+#[target_feature(enable = "simd128")]
+unsafe fn yuv_444_to_rgb_or_rgba_row<const ALPHA: bool>(
+  y: &[u8],
+  u: &[u8],
+  v: &[u8],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
   debug_assert!(y.len() >= width);
   debug_assert!(u.len() >= width);
   debug_assert!(v.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  let bpp: usize = if ALPHA { 4 } else { 3 };
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params(full_range);
@@ -1757,6 +1994,7 @@ pub(crate) unsafe fn yuv_444_to_rgb_row(
     let cgv = i32x4_splat(coeffs.g_v());
     let cbu = i32x4_splat(coeffs.b_u());
     let cbv = i32x4_splat(coeffs.b_v());
+    let alpha_u8 = u8x16_splat(0xFF);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -1812,21 +2050,26 @@ pub(crate) unsafe fn yuv_444_to_rgb_row(
       let g_u8 = u8x16_narrow_i16x8(g_lo, g_hi);
       let r_u8 = u8x16_narrow_i16x8(r_lo, r_hi);
 
-      write_rgb_16(r_u8, g_u8, b_u8, rgb_out.as_mut_ptr().add(x * 3));
+      if ALPHA {
+        write_rgba_16(r_u8, g_u8, b_u8, alpha_u8, out.as_mut_ptr().add(x * 4));
+      } else {
+        write_rgb_16(r_u8, g_u8, b_u8, out.as_mut_ptr().add(x * 3));
+      }
 
       x += 16;
     }
 
     if x < width {
-      scalar::yuv_444_to_rgb_row(
-        &y[x..width],
-        &u[x..width],
-        &v[x..width],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_u = &u[x..width];
+      let tail_v = &v[x..width];
+      let tail_w = width - x;
+      let tail_out = &mut out[x * bpp..width * bpp];
+      if ALPHA {
+        scalar::yuv_444_to_rgba_row(tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range);
+      } else {
+        scalar::yuv_444_to_rgb_row(tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
@@ -1955,6 +2198,75 @@ unsafe fn write_rgb_16(r: v128, g: v128, b: v128, ptr: *mut u8) {
     v128_store(ptr.cast(), out0);
     v128_store(ptr.add(16).cast(), out1);
     v128_store(ptr.add(32).cast(), out2);
+  }
+}
+
+/// Writes 16 pixels of packed RGBA (64 bytes) from four u8x16 channel
+/// vectors. Mirror of [`write_rgb_16`] for the 4-channel output path.
+///
+/// The 4-byte stride aligns cleanly with the 16-byte register width:
+/// each output block holds exactly 4 RGBA quads (16 bytes), with R,
+/// G, B, A interleaved at positions `(0, 1, 2, 3)`, `(4, 5, 6, 7)`,
+/// etc. `u8x16_swizzle` indices ≥ 16 zero the lane.
+///
+/// # Safety
+///
+/// `ptr` must point to at least 64 writable bytes.
+#[inline(always)]
+unsafe fn write_rgba_16(r: v128, g: v128, b: v128, a: v128, ptr: *mut u8) {
+  unsafe {
+    // Block 0 (bytes 0..16): pixels 0..3, source bytes 0..3.
+    let r0 = i8x16(0, -1, -1, -1, 1, -1, -1, -1, 2, -1, -1, -1, 3, -1, -1, -1);
+    let g0 = i8x16(-1, 0, -1, -1, -1, 1, -1, -1, -1, 2, -1, -1, -1, 3, -1, -1);
+    let b0 = i8x16(-1, -1, 0, -1, -1, -1, 1, -1, -1, -1, 2, -1, -1, -1, 3, -1);
+    let a0 = i8x16(-1, -1, -1, 0, -1, -1, -1, 1, -1, -1, -1, 2, -1, -1, -1, 3);
+    let out0 = v128_or(
+      v128_or(u8x16_swizzle(r, r0), u8x16_swizzle(g, g0)),
+      v128_or(u8x16_swizzle(b, b0), u8x16_swizzle(a, a0)),
+    );
+
+    // Block 1 (bytes 16..32): pixels 4..7, source bytes 4..7.
+    let r1 = i8x16(4, -1, -1, -1, 5, -1, -1, -1, 6, -1, -1, -1, 7, -1, -1, -1);
+    let g1 = i8x16(-1, 4, -1, -1, -1, 5, -1, -1, -1, 6, -1, -1, -1, 7, -1, -1);
+    let b1 = i8x16(-1, -1, 4, -1, -1, -1, 5, -1, -1, -1, 6, -1, -1, -1, 7, -1);
+    let a1 = i8x16(-1, -1, -1, 4, -1, -1, -1, 5, -1, -1, -1, 6, -1, -1, -1, 7);
+    let out1 = v128_or(
+      v128_or(u8x16_swizzle(r, r1), u8x16_swizzle(g, g1)),
+      v128_or(u8x16_swizzle(b, b1), u8x16_swizzle(a, a1)),
+    );
+
+    // Block 2 (bytes 32..48): pixels 8..11, source bytes 8..11.
+    let r2 = i8x16(8, -1, -1, -1, 9, -1, -1, -1, 10, -1, -1, -1, 11, -1, -1, -1);
+    let g2 = i8x16(-1, 8, -1, -1, -1, 9, -1, -1, -1, 10, -1, -1, -1, 11, -1, -1);
+    let b2 = i8x16(-1, -1, 8, -1, -1, -1, 9, -1, -1, -1, 10, -1, -1, -1, 11, -1);
+    let a2 = i8x16(-1, -1, -1, 8, -1, -1, -1, 9, -1, -1, -1, 10, -1, -1, -1, 11);
+    let out2 = v128_or(
+      v128_or(u8x16_swizzle(r, r2), u8x16_swizzle(g, g2)),
+      v128_or(u8x16_swizzle(b, b2), u8x16_swizzle(a, a2)),
+    );
+
+    // Block 3 (bytes 48..64): pixels 12..15, source bytes 12..15.
+    let r3 = i8x16(
+      12, -1, -1, -1, 13, -1, -1, -1, 14, -1, -1, -1, 15, -1, -1, -1,
+    );
+    let g3 = i8x16(
+      -1, 12, -1, -1, -1, 13, -1, -1, -1, 14, -1, -1, -1, 15, -1, -1,
+    );
+    let b3 = i8x16(
+      -1, -1, 12, -1, -1, -1, 13, -1, -1, -1, 14, -1, -1, -1, 15, -1,
+    );
+    let a3 = i8x16(
+      -1, -1, -1, 12, -1, -1, -1, 13, -1, -1, -1, 14, -1, -1, -1, 15,
+    );
+    let out3 = v128_or(
+      v128_or(u8x16_swizzle(r, r3), u8x16_swizzle(g, g3)),
+      v128_or(u8x16_swizzle(b, b3), u8x16_swizzle(a, a3)),
+    );
+
+    v128_store(ptr.cast(), out0);
+    v128_store(ptr.add(16).cast(), out1);
+    v128_store(ptr.add(32).cast(), out2);
+    v128_store(ptr.add(48).cast(), out3);
   }
 }
 
@@ -3239,1253 +3551,4 @@ fn hsv_group(r: v128, g: v128, b: v128) -> (v128, v128, v128) {
 }
 
 #[cfg(all(test, feature = "std", target_feature = "simd128"))]
-mod tests {
-  use super::*;
-
-  fn check_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
-    let u: std::vec::Vec<u8> = (0..width / 2)
-      .map(|i| ((i * 53 + 23) & 0xFF) as u8)
-      .collect();
-    let v: std::vec::Vec<u8> = (0..width / 2)
-      .map(|i| ((i * 71 + 91) & 0xFF) as u8)
-      .collect();
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_wasm = std::vec![0u8; width * 3];
-
-    scalar::yuv_420_to_rgb_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_420_to_rgb_row(&y, &u, &v, &mut rgb_wasm, width, matrix, full_range);
-    }
-
-    assert_eq!(rgb_scalar, rgb_wasm, "simd128 diverges from scalar");
-  }
-
-  #[test]
-  fn simd128_matches_scalar_all_matrices_16() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_matches_scalar_tail_widths() {
-    for w in [18usize, 30, 34, 1922] {
-      check_equivalence(w, ColorMatrix::Bt601, false);
-    }
-  }
-
-  // ---- nv12_to_rgb_row equivalence ------------------------------------
-
-  fn check_nv12_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
-    let uv: std::vec::Vec<u8> = (0..width / 2)
-      .flat_map(|i| [((i * 53 + 23) & 0xFF) as u8, ((i * 71 + 91) & 0xFF) as u8])
-      .collect();
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_wasm = std::vec![0u8; width * 3];
-
-    scalar::nv12_to_rgb_row(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      nv12_to_rgb_row(&y, &uv, &mut rgb_wasm, width, matrix, full_range);
-    }
-    assert_eq!(rgb_scalar, rgb_wasm, "simd128 NV12 ≠ scalar");
-  }
-
-  #[test]
-  fn simd128_nv12_matches_scalar_all_matrices_16() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_nv12_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_nv12_matches_scalar_widths() {
-    for w in [32usize, 1920, 18, 30, 34, 1922] {
-      check_nv12_equivalence(w, ColorMatrix::Bt709, false);
-    }
-  }
-
-  // ---- nv24_to_rgb_row / nv42_to_rgb_row equivalence ------------------
-
-  fn check_nv24_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
-    let uv: std::vec::Vec<u8> = (0..width)
-      .flat_map(|i| [((i * 53 + 23) & 0xFF) as u8, ((i * 71 + 91) & 0xFF) as u8])
-      .collect();
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_wasm = std::vec![0u8; width * 3];
-
-    scalar::nv24_to_rgb_row(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      nv24_to_rgb_row(&y, &uv, &mut rgb_wasm, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_wasm,
-      "simd128 NV24 ≠ scalar (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  fn check_nv42_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
-    let vu: std::vec::Vec<u8> = (0..width)
-      .flat_map(|i| [((i * 53 + 23) & 0xFF) as u8, ((i * 71 + 91) & 0xFF) as u8])
-      .collect();
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_wasm = std::vec![0u8; width * 3];
-
-    scalar::nv42_to_rgb_row(&y, &vu, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      nv42_to_rgb_row(&y, &vu, &mut rgb_wasm, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_wasm,
-      "simd128 NV42 ≠ scalar (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  #[test]
-  fn simd128_nv24_matches_scalar_all_matrices_16() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_nv24_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_nv24_matches_scalar_widths() {
-    for w in [1usize, 3, 15, 17, 32, 33, 1920, 1921] {
-      check_nv24_equivalence(w, ColorMatrix::Bt709, false);
-    }
-  }
-
-  #[test]
-  fn simd128_nv42_matches_scalar_all_matrices_16() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_nv42_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_nv42_matches_scalar_widths() {
-    for w in [1usize, 3, 15, 17, 32, 33, 1920, 1921] {
-      check_nv42_equivalence(w, ColorMatrix::Bt709, false);
-    }
-  }
-
-  // ---- yuv_444_to_rgb_row equivalence ---------------------------------
-
-  fn check_yuv_444_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
-    let u: std::vec::Vec<u8> = (0..width).map(|i| ((i * 53 + 23) & 0xFF) as u8).collect();
-    let v: std::vec::Vec<u8> = (0..width).map(|i| ((i * 71 + 91) & 0xFF) as u8).collect();
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_wasm = std::vec![0u8; width * 3];
-
-    scalar::yuv_444_to_rgb_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_444_to_rgb_row(&y, &u, &v, &mut rgb_wasm, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_wasm,
-      "simd128 yuv_444 ≠ scalar (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  #[test]
-  fn simd128_yuv_444_matches_scalar_all_matrices_16() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_yuv_444_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_yuv_444_matches_scalar_widths() {
-    // Odd widths validate the 4:4:4 no-parity contract.
-    for w in [1usize, 3, 15, 17, 32, 33, 1920, 1921] {
-      check_yuv_444_equivalence(w, ColorMatrix::Bt709, false);
-    }
-  }
-
-  // ---- yuv_444p_n<BITS> + yuv_444p16 equivalence ----------------------
-
-  fn check_yuv_444p_n_equivalence<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    let max_val = (1u16 << BITS) - 1;
-    let y: std::vec::Vec<u16> = (0..width)
-      .map(|i| ((i * 37 + 11) as u16) & max_val)
-      .collect();
-    let u: std::vec::Vec<u16> = (0..width)
-      .map(|i| ((i * 53 + 23) as u16) & max_val)
-      .collect();
-    let v: std::vec::Vec<u16> = (0..width)
-      .map(|i| ((i * 71 + 91) as u16) & max_val)
-      .collect();
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_wasm = std::vec![0u8; width * 3];
-    let mut u16_scalar = std::vec![0u16; width * 3];
-    let mut u16_wasm = std::vec![0u16; width * 3];
-
-    scalar::yuv_444p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    scalar::yuv_444p_n_to_rgb_u16_row::<BITS>(
-      &y,
-      &u,
-      &v,
-      &mut u16_scalar,
-      width,
-      matrix,
-      full_range,
-    );
-    unsafe {
-      yuv_444p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_wasm, width, matrix, full_range);
-      yuv_444p_n_to_rgb_u16_row::<BITS>(&y, &u, &v, &mut u16_wasm, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_wasm,
-      "simd128 yuv_444p_n<{BITS}> u8 ≠ scalar"
-    );
-    assert_eq!(
-      u16_scalar, u16_wasm,
-      "simd128 yuv_444p_n<{BITS}> u16 ≠ scalar"
-    );
-  }
-
-  #[test]
-  fn simd128_yuv_444p9_matches_scalar_all_matrices() {
-    for m in [ColorMatrix::Bt709, ColorMatrix::Bt2020Ncl] {
-      for full in [true, false] {
-        check_yuv_444p_n_equivalence::<9>(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_yuv_444p10_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_yuv_444p_n_equivalence::<10>(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_yuv_444p12_matches_scalar_all_matrices() {
-    for m in [ColorMatrix::Bt709, ColorMatrix::Bt2020Ncl] {
-      for full in [true, false] {
-        check_yuv_444p_n_equivalence::<12>(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_yuv_444p14_matches_scalar_all_matrices() {
-    for m in [ColorMatrix::Bt709, ColorMatrix::Bt2020Ncl] {
-      for full in [true, false] {
-        check_yuv_444p_n_equivalence::<14>(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_yuv_444p_n_matches_scalar_widths() {
-    for w in [1usize, 3, 15, 17, 32, 33, 1920, 1921] {
-      check_yuv_444p_n_equivalence::<10>(w, ColorMatrix::Bt709, false);
-    }
-  }
-
-  fn check_yuv_444p16_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y: std::vec::Vec<u16> = (0..width).map(|i| (i * 2027 + 11) as u16).collect();
-    let u: std::vec::Vec<u16> = (0..width).map(|i| (i * 2671 + 23) as u16).collect();
-    let v: std::vec::Vec<u16> = (0..width).map(|i| (i * 3329 + 91) as u16).collect();
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_wasm = std::vec![0u8; width * 3];
-
-    scalar::yuv_444p16_to_rgb_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_444p16_to_rgb_row(&y, &u, &v, &mut rgb_wasm, width, matrix, full_range);
-    }
-    assert_eq!(rgb_scalar, rgb_wasm, "simd128 yuv_444p16 u8 ≠ scalar");
-    // u16-output path delegates to scalar on wasm — no SIMD to compare
-    // against beyond the direct passthrough.
-  }
-
-  #[test]
-  fn simd128_yuv_444p16_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_yuv_444p16_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_yuv_444p16_matches_scalar_widths() {
-    for w in [1usize, 3, 15, 17, 32, 33, 1920, 1921] {
-      check_yuv_444p16_equivalence(w, ColorMatrix::Bt709, false);
-    }
-  }
-
-  // ---- bgr_rgb_swap_row equivalence -----------------------------------
-
-  fn check_swap_equivalence(width: usize) {
-    let input: std::vec::Vec<u8> = (0..width * 3)
-      .map(|i| ((i * 17 + 41) & 0xFF) as u8)
-      .collect();
-    let mut out_scalar = std::vec![0u8; width * 3];
-    let mut out_wasm = std::vec![0u8; width * 3];
-
-    scalar::bgr_rgb_swap_row(&input, &mut out_scalar, width);
-    unsafe {
-      bgr_rgb_swap_row(&input, &mut out_wasm, width);
-    }
-    assert_eq!(out_scalar, out_wasm, "simd128 swap diverges from scalar");
-  }
-
-  #[test]
-  fn simd128_swap_matches_scalar() {
-    for w in [1usize, 15, 16, 17, 31, 32, 1920, 1921] {
-      check_swap_equivalence(w);
-    }
-  }
-
-  // ---- nv21_to_rgb_row equivalence ------------------------------------
-
-  fn check_nv21_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
-    let vu: std::vec::Vec<u8> = (0..width / 2)
-      .flat_map(|i| [((i * 53 + 23) & 0xFF) as u8, ((i * 71 + 91) & 0xFF) as u8])
-      .collect();
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_wasm = std::vec![0u8; width * 3];
-
-    scalar::nv21_to_rgb_row(&y, &vu, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      nv21_to_rgb_row(&y, &vu, &mut rgb_wasm, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_wasm,
-      "simd128 NV21 ≠ scalar (width={width}, matrix={matrix:?})"
-    );
-  }
-
-  fn check_nv21_matches_nv12_swapped(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
-    let uv: std::vec::Vec<u8> = (0..width / 2)
-      .flat_map(|i| [((i * 53 + 23) & 0xFF) as u8, ((i * 71 + 91) & 0xFF) as u8])
-      .collect();
-    let mut vu = std::vec![0u8; width];
-    for i in 0..width / 2 {
-      vu[2 * i] = uv[2 * i + 1];
-      vu[2 * i + 1] = uv[2 * i];
-    }
-
-    let mut rgb_nv12 = std::vec![0u8; width * 3];
-    let mut rgb_nv21 = std::vec![0u8; width * 3];
-    unsafe {
-      nv12_to_rgb_row(&y, &uv, &mut rgb_nv12, width, matrix, full_range);
-      nv21_to_rgb_row(&y, &vu, &mut rgb_nv21, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_nv12, rgb_nv21,
-      "simd128 NV21 ≠ NV12 with byte-swapped chroma"
-    );
-  }
-
-  #[test]
-  fn nv21_wasm_matches_scalar_all_matrices_16() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_nv21_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn nv21_wasm_matches_scalar_widths() {
-    for w in [32usize, 1920, 18, 30, 34, 1922] {
-      check_nv21_equivalence(w, ColorMatrix::Bt709, false);
-    }
-  }
-
-  #[test]
-  fn nv21_wasm_matches_nv12_swapped() {
-    for w in [16usize, 30, 64, 1920] {
-      check_nv21_matches_nv12_swapped(w, ColorMatrix::Bt709, false);
-      check_nv21_matches_nv12_swapped(w, ColorMatrix::YCgCo, true);
-    }
-  }
-  // ---- rgb_to_hsv_row equivalence --------------------------------------
-
-  fn check_hsv_equivalence(rgb: &[u8], width: usize) {
-    let mut h_s = std::vec![0u8; width];
-    let mut s_s = std::vec![0u8; width];
-    let mut v_s = std::vec![0u8; width];
-    let mut h_k = std::vec![0u8; width];
-    let mut s_k = std::vec![0u8; width];
-    let mut v_k = std::vec![0u8; width];
-    scalar::rgb_to_hsv_row(rgb, &mut h_s, &mut s_s, &mut v_s, width);
-    unsafe {
-      rgb_to_hsv_row(rgb, &mut h_k, &mut s_k, &mut v_k, width);
-    }
-    for (i, (a, b)) in h_s.iter().zip(h_k.iter()).enumerate() {
-      assert!(
-        a.abs_diff(*b) <= 1,
-        "H divergence at pixel {i}: scalar={a} simd={b}"
-      );
-    }
-    for (i, (a, b)) in s_s.iter().zip(s_k.iter()).enumerate() {
-      assert!(
-        a.abs_diff(*b) <= 1,
-        "S divergence at pixel {i}: scalar={a} simd={b}"
-      );
-    }
-    for (i, (a, b)) in v_s.iter().zip(v_k.iter()).enumerate() {
-      assert!(
-        a.abs_diff(*b) <= 1,
-        "V divergence at pixel {i}: scalar={a} simd={b}"
-      );
-    }
-  }
-
-  #[test]
-  fn simd128_hsv_matches_scalar() {
-    let rgb: std::vec::Vec<u8> = (0..1921 * 3)
-      .map(|i| ((i * 37 + 11) & 0xFF) as u8)
-      .collect();
-    for w in [1usize, 15, 16, 17, 31, 1920, 1921] {
-      check_hsv_equivalence(&rgb[..w * 3], w);
-    }
-  }
-
-  // ---- yuv420p10 scalar-equivalence -----------------------------------
-  //
-  // These tests compile only for `target_arch = "wasm32"` (via the
-  // outer `target_feature = "simd128"` gate on the module). CI
-  // executes them under wasmtime in the `test-wasm-simd128` job
-  // (see `.github/workflows/ci.yml`): the lib is compiled for
-  // `wasm32-wasip1` with `-C target-feature=+simd128` and
-  // `CARGO_TARGET_WASM32_WASIP1_RUNNER=wasmtime run --` passes each
-  // compiled `.wasm` test binary to wasmtime. Every scalar‑
-  // equivalence check below runs on real SIMD instructions, not
-  // just a compile check.
-
-  fn p10_plane(n: usize, seed: usize) -> std::vec::Vec<u16> {
-    (0..n)
-      .map(|i| ((i * seed + seed * 3) & 0x3FF) as u16)
-      .collect()
-  }
-
-  fn check_p10_u8_simd128_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p10_plane(width, 37);
-    let u = p10_plane(width / 2, 53);
-    let v = p10_plane(width / 2, 71);
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_simd = std::vec![0u8; width * 3];
-
-    scalar::yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
-    }
-
-    if rgb_scalar != rgb_simd {
-      let first_diff = rgb_scalar
-        .iter()
-        .zip(rgb_simd.iter())
-        .position(|(a, b)| a != b)
-        .unwrap();
-      panic!(
-        "simd128 10→u8 diverges at byte {first_diff} (width={width}, matrix={matrix:?}, full_range={full_range}): scalar={} simd={}",
-        rgb_scalar[first_diff], rgb_simd[first_diff]
-      );
-    }
-  }
-
-  fn check_p10_u16_simd128_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p10_plane(width, 37);
-    let u = p10_plane(width / 2, 53);
-    let v = p10_plane(width / 2, 71);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_simd = std::vec![0u16; width * 3];
-
-    scalar::yuv_420p_n_to_rgb_u16_row::<10>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_420p_n_to_rgb_u16_row::<10>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
-    }
-
-    if rgb_scalar != rgb_simd {
-      let first_diff = rgb_scalar
-        .iter()
-        .zip(rgb_simd.iter())
-        .position(|(a, b)| a != b)
-        .unwrap();
-      panic!(
-        "simd128 10→u16 diverges at elem {first_diff} (width={width}, matrix={matrix:?}, full_range={full_range}): scalar={} simd={}",
-        rgb_scalar[first_diff], rgb_simd[first_diff]
-      );
-    }
-  }
-
-  #[test]
-  fn simd128_p10_u8_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_p10_u8_simd128_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_p10_u16_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_p10_u16_simd128_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_p10_matches_scalar_tail_widths() {
-    for w in [18usize, 30, 34, 1922] {
-      check_p10_u8_simd128_equivalence(w, ColorMatrix::Bt601, false);
-      check_p10_u16_simd128_equivalence(w, ColorMatrix::Bt709, true);
-    }
-  }
-
-  #[test]
-  fn simd128_p10_matches_scalar_1920() {
-    check_p10_u8_simd128_equivalence(1920, ColorMatrix::Bt709, false);
-    check_p10_u16_simd128_equivalence(1920, ColorMatrix::Bt2020Ncl, false);
-  }
-
-  // ---- yuv420p_n<BITS> simd128 scalar-equivalence (BITS=9 coverage) ---
-
-  fn p_n_plane_simd128<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
-    let mask = ((1u32 << BITS) - 1) as u16;
-    (0..n)
-      .map(|i| ((i.wrapping_mul(seed).wrapping_add(seed * 3)) as u16) & mask)
-      .collect()
-  }
-
-  fn check_p_n_u8_simd128_equivalence<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    let y = p_n_plane_simd128::<BITS>(width, 37);
-    let u = p_n_plane_simd128::<BITS>(width / 2, 53);
-    let v = p_n_plane_simd128::<BITS>(width / 2, 71);
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_simd = std::vec![0u8; width * 3];
-    scalar::yuv_420p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_420p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_simd,
-      "simd128 yuv_420p_n<{BITS}>→u8 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  fn check_p_n_u16_simd128_equivalence<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    let y = p_n_plane_simd128::<BITS>(width, 37);
-    let u = p_n_plane_simd128::<BITS>(width / 2, 53);
-    let v = p_n_plane_simd128::<BITS>(width / 2, 71);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_simd = std::vec![0u16; width * 3];
-    scalar::yuv_420p_n_to_rgb_u16_row::<BITS>(
-      &y,
-      &u,
-      &v,
-      &mut rgb_scalar,
-      width,
-      matrix,
-      full_range,
-    );
-    unsafe {
-      yuv_420p_n_to_rgb_u16_row::<BITS>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_simd,
-      "simd128 yuv_420p_n<{BITS}>→u16 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  #[test]
-  fn simd128_yuv420p9_matches_scalar_all_matrices_and_ranges() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_p_n_u8_simd128_equivalence::<9>(16, m, full);
-        check_p_n_u16_simd128_equivalence::<9>(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_yuv420p9_matches_scalar_tail_and_large_widths() {
-    for w in [18usize, 30, 34, 1922] {
-      check_p_n_u8_simd128_equivalence::<9>(w, ColorMatrix::Bt601, false);
-      check_p_n_u16_simd128_equivalence::<9>(w, ColorMatrix::Bt709, true);
-    }
-    check_p_n_u8_simd128_equivalence::<9>(1920, ColorMatrix::Bt709, false);
-    check_p_n_u16_simd128_equivalence::<9>(1920, ColorMatrix::Bt2020Ncl, false);
-  }
-
-  // ---- P010 simd128 scalar-equivalence --------------------------------
-
-  fn p010_plane(n: usize, seed: usize) -> std::vec::Vec<u16> {
-    (0..n)
-      .map(|i| (((i * seed + seed * 3) & 0x3FF) as u16) << 6)
-      .collect()
-  }
-
-  fn p010_uv_interleave(u: &[u16], v: &[u16]) -> std::vec::Vec<u16> {
-    let pairs = u.len();
-    debug_assert_eq!(u.len(), v.len());
-    let mut out = std::vec::Vec::with_capacity(pairs * 2);
-    for i in 0..pairs {
-      out.push(u[i]);
-      out.push(v[i]);
-    }
-    out
-  }
-
-  fn check_p010_u8_simd128_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p010_plane(width, 37);
-    let u = p010_plane(width / 2, 53);
-    let v = p010_plane(width / 2, 71);
-    let uv = p010_uv_interleave(&u, &v);
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_simd = std::vec![0u8; width * 3];
-    scalar::p_n_to_rgb_row::<10>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      p_n_to_rgb_row::<10>(&y, &uv, &mut rgb_simd, width, matrix, full_range);
-    }
-    assert_eq!(rgb_scalar, rgb_simd, "simd128 P010→u8 diverges");
-  }
-
-  fn check_p010_u16_simd128_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p010_plane(width, 37);
-    let u = p010_plane(width / 2, 53);
-    let v = p010_plane(width / 2, 71);
-    let uv = p010_uv_interleave(&u, &v);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_simd = std::vec![0u16; width * 3];
-    scalar::p_n_to_rgb_u16_row::<10>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      p_n_to_rgb_u16_row::<10>(&y, &uv, &mut rgb_simd, width, matrix, full_range);
-    }
-    assert_eq!(rgb_scalar, rgb_simd, "simd128 P010→u16 diverges");
-  }
-
-  #[test]
-  fn simd128_p010_u8_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_p010_u8_simd128_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_p010_u16_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_p010_u16_simd128_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_p010_matches_scalar_tail_widths() {
-    for w in [18usize, 30, 34, 1922] {
-      check_p010_u8_simd128_equivalence(w, ColorMatrix::Bt601, false);
-      check_p010_u16_simd128_equivalence(w, ColorMatrix::Bt709, true);
-    }
-  }
-
-  #[test]
-  fn simd128_p010_matches_scalar_1920() {
-    check_p010_u8_simd128_equivalence(1920, ColorMatrix::Bt709, false);
-    check_p010_u16_simd128_equivalence(1920, ColorMatrix::Bt2020Ncl, false);
-  }
-
-  // ---- Generic BITS equivalence (12/14-bit coverage) ------------------
-
-  fn planar_n_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
-    let mask = (1u32 << BITS) - 1;
-    (0..n)
-      .map(|i| ((i * seed + seed * 3) as u32 & mask) as u16)
-      .collect()
-  }
-
-  fn p_n_packed_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
-    let mask = (1u32 << BITS) - 1;
-    let shift = 16 - BITS;
-    (0..n)
-      .map(|i| (((i * seed + seed * 3) as u32 & mask) as u16) << shift)
-      .collect()
-  }
-
-  fn check_planar_u8_simd128_equivalence_n<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    let y = planar_n_plane::<BITS>(width, 37);
-    let u = planar_n_plane::<BITS>(width / 2, 53);
-    let v = planar_n_plane::<BITS>(width / 2, 71);
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_simd = std::vec![0u8; width * 3];
-    scalar::yuv_420p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_420p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_simd,
-      "simd128 planar {BITS}-bit → u8 diverges"
-    );
-  }
-
-  fn check_planar_u16_simd128_equivalence_n<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    let y = planar_n_plane::<BITS>(width, 37);
-    let u = planar_n_plane::<BITS>(width / 2, 53);
-    let v = planar_n_plane::<BITS>(width / 2, 71);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_simd = std::vec![0u16; width * 3];
-    scalar::yuv_420p_n_to_rgb_u16_row::<BITS>(
-      &y,
-      &u,
-      &v,
-      &mut rgb_scalar,
-      width,
-      matrix,
-      full_range,
-    );
-    unsafe {
-      yuv_420p_n_to_rgb_u16_row::<BITS>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_simd,
-      "simd128 planar {BITS}-bit → u16 diverges"
-    );
-  }
-
-  fn check_pn_u8_simd128_equivalence_n<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    let y = p_n_packed_plane::<BITS>(width, 37);
-    let u = p_n_packed_plane::<BITS>(width / 2, 53);
-    let v = p_n_packed_plane::<BITS>(width / 2, 71);
-    let uv = p010_uv_interleave(&u, &v);
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_simd = std::vec![0u8; width * 3];
-    scalar::p_n_to_rgb_row::<BITS>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      p_n_to_rgb_row::<BITS>(&y, &uv, &mut rgb_simd, width, matrix, full_range);
-    }
-    assert_eq!(rgb_scalar, rgb_simd, "simd128 Pn {BITS}-bit → u8 diverges");
-  }
-
-  fn check_pn_u16_simd128_equivalence_n<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    let y = p_n_packed_plane::<BITS>(width, 37);
-    let u = p_n_packed_plane::<BITS>(width / 2, 53);
-    let v = p_n_packed_plane::<BITS>(width / 2, 71);
-    let uv = p010_uv_interleave(&u, &v);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_simd = std::vec![0u16; width * 3];
-    scalar::p_n_to_rgb_u16_row::<BITS>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      p_n_to_rgb_u16_row::<BITS>(&y, &uv, &mut rgb_simd, width, matrix, full_range);
-    }
-    assert_eq!(rgb_scalar, rgb_simd, "simd128 Pn {BITS}-bit → u16 diverges");
-  }
-
-  #[test]
-  fn simd128_p12_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_planar_u8_simd128_equivalence_n::<12>(16, m, full);
-        check_planar_u16_simd128_equivalence_n::<12>(16, m, full);
-        check_pn_u8_simd128_equivalence_n::<12>(16, m, full);
-        check_pn_u16_simd128_equivalence_n::<12>(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_p14_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_planar_u8_simd128_equivalence_n::<14>(16, m, full);
-        check_planar_u16_simd128_equivalence_n::<14>(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_p12_matches_scalar_tail_widths() {
-    for w in [18usize, 30, 34, 1922] {
-      check_planar_u8_simd128_equivalence_n::<12>(w, ColorMatrix::Bt601, false);
-      check_planar_u16_simd128_equivalence_n::<12>(w, ColorMatrix::Bt709, true);
-      check_pn_u8_simd128_equivalence_n::<12>(w, ColorMatrix::Bt601, false);
-      check_pn_u16_simd128_equivalence_n::<12>(w, ColorMatrix::Bt2020Ncl, false);
-    }
-  }
-
-  #[test]
-  fn simd128_p14_matches_scalar_tail_widths() {
-    for w in [18usize, 30, 34, 1922] {
-      check_planar_u8_simd128_equivalence_n::<14>(w, ColorMatrix::Bt601, false);
-      check_planar_u16_simd128_equivalence_n::<14>(w, ColorMatrix::Bt709, true);
-    }
-  }
-
-  // ---- 16-bit (full-range u16 samples) simd128 equivalence ------------
-
-  fn p16_plane_wasm(n: usize, seed: usize) -> std::vec::Vec<u16> {
-    (0..n)
-      .map(|i| ((i.wrapping_mul(seed).wrapping_add(seed * 3)) & 0xFFFF) as u16)
-      .collect()
-  }
-
-  fn check_yuv420p16_u8_simd128_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p16_plane_wasm(width, 37);
-    let u = p16_plane_wasm(width / 2, 53);
-    let v = p16_plane_wasm(width / 2, 71);
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_simd = std::vec![0u8; width * 3];
-    scalar::yuv_420p16_to_rgb_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_420p16_to_rgb_row(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_simd,
-      "simd128 yuv420p16→u8 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  fn check_p16_u8_simd128_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p16_plane_wasm(width, 37);
-    let u = p16_plane_wasm(width / 2, 53);
-    let v = p16_plane_wasm(width / 2, 71);
-    let uv = p010_uv_interleave(&u, &v);
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_simd = std::vec![0u8; width * 3];
-    scalar::p16_to_rgb_row(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      p16_to_rgb_row(&y, &uv, &mut rgb_simd, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_simd,
-      "simd128 p016→u8 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  /// u16-output equivalence for the 4:2:0 16-bit kernel. Uses
-  /// **exact-sized** chroma planes (`width / 2` samples) to catch
-  /// any over-read past the end of tight chroma rows — the
-  /// specific failure mode that originally shipped as a `v128_load`
-  /// (16-byte) read for only 4 u16 needed, now fixed via
-  /// `v128_load64_zero`.
-  fn check_yuv420p16_u16_simd128_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p16_plane_wasm(width, 37);
-    let u = p16_plane_wasm(width / 2, 53);
-    let v = p16_plane_wasm(width / 2, 71);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_simd = std::vec![0u16; width * 3];
-    scalar::yuv_420p16_to_rgb_u16_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_420p16_to_rgb_u16_row(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_simd,
-      "simd128 yuv420p16→u16 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  fn check_p16_u16_simd128_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p16_plane_wasm(width, 37);
-    let u = p16_plane_wasm(width / 2, 53);
-    let v = p16_plane_wasm(width / 2, 71);
-    let uv = p010_uv_interleave(&u, &v);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_simd = std::vec![0u16; width * 3];
-    scalar::p16_to_rgb_u16_row(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      p16_to_rgb_u16_row(&y, &uv, &mut rgb_simd, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_simd,
-      "simd128 p016→u16 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  fn check_yuv444p16_u16_simd128_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p16_plane_wasm(width, 37);
-    let u = p16_plane_wasm(width, 53);
-    let v = p16_plane_wasm(width, 71);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_simd = std::vec![0u16; width * 3];
-    scalar::yuv_444p16_to_rgb_u16_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      yuv_444p16_to_rgb_u16_row(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_simd,
-      "simd128 yuv444p16→u16 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  #[test]
-  fn simd128_p16_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_yuv420p16_u8_simd128_equivalence(16, m, full);
-        check_p16_u8_simd128_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_p16_matches_scalar_tail_widths() {
-    for w in [18usize, 30, 34, 1922] {
-      check_yuv420p16_u8_simd128_equivalence(w, ColorMatrix::Bt601, false);
-      check_p16_u8_simd128_equivalence(w, ColorMatrix::Bt709, true);
-    }
-  }
-
-  #[test]
-  fn simd128_p16_matches_scalar_1920() {
-    check_yuv420p16_u8_simd128_equivalence(1920, ColorMatrix::Bt709, false);
-    check_p16_u8_simd128_equivalence(1920, ColorMatrix::Bt2020Ncl, false);
-  }
-
-  #[test]
-  fn simd128_16bit_u16_matches_scalar_all_matrices() {
-    // Every new 16-bit u16-output path at the smallest block-aligned
-    // width (8 pixels for 420/p16, which matches the native SIMD
-    // iteration; 4:4:4 uses 8 too).
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_yuv420p16_u16_simd128_equivalence(16, m, full);
-        check_p16_u16_simd128_equivalence(16, m, full);
-        check_yuv444p16_u16_simd128_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_yuv420p16_u16_matches_scalar_tight_widths() {
-    // Tight widths explicitly stress over-read of half-width chroma
-    // planes (8 samples at width=16 → second 8-pixel SIMD iter reads
-    // chroma from offset 4, formerly `v128_load` of 8 samples = 8
-    // bytes past plane-end).
-    for w in [8usize, 10, 16, 18, 24, 26, 1920, 1922] {
-      check_yuv420p16_u16_simd128_equivalence(w, ColorMatrix::Bt709, false);
-      check_p16_u16_simd128_equivalence(w, ColorMatrix::Bt2020Ncl, true);
-      check_yuv444p16_u16_simd128_equivalence(w, ColorMatrix::Bt601, false);
-    }
-  }
-
-  // ---- Pn 4:4:4 (P410 / P412 / P416) wasm simd128 equivalence ---------
-
-  fn high_bit_plane_wasm<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
-    let mask = ((1u32 << BITS) - 1) as u16;
-    let shift = 16 - BITS;
-    (0..n)
-      .map(|i| (((i.wrapping_mul(seed).wrapping_add(seed * 3)) as u16) & mask) << shift)
-      .collect()
-  }
-
-  fn interleave_uv_wasm(u_full: &[u16], v_full: &[u16]) -> std::vec::Vec<u16> {
-    debug_assert_eq!(u_full.len(), v_full.len());
-    let mut out = std::vec::Vec::with_capacity(u_full.len() * 2);
-    for i in 0..u_full.len() {
-      out.push(u_full[i]);
-      out.push(v_full[i]);
-    }
-    out
-  }
-
-  fn check_p_n_444_u8_simd128_equivalence<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    let y = high_bit_plane_wasm::<BITS>(width, 37);
-    let u = high_bit_plane_wasm::<BITS>(width, 53);
-    let v = high_bit_plane_wasm::<BITS>(width, 71);
-    let uv = interleave_uv_wasm(&u, &v);
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_simd = std::vec![0u8; width * 3];
-    scalar::p_n_444_to_rgb_row::<BITS>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      p_n_444_to_rgb_row::<BITS>(&y, &uv, &mut rgb_simd, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_simd,
-      "simd128 Pn4:4:4 {BITS}-bit → u8 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  fn check_p_n_444_u16_simd128_equivalence<const BITS: u32>(
-    width: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) {
-    let y = high_bit_plane_wasm::<BITS>(width, 37);
-    let u = high_bit_plane_wasm::<BITS>(width, 53);
-    let v = high_bit_plane_wasm::<BITS>(width, 71);
-    let uv = interleave_uv_wasm(&u, &v);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_simd = std::vec![0u16; width * 3];
-    scalar::p_n_444_to_rgb_u16_row::<BITS>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      p_n_444_to_rgb_u16_row::<BITS>(&y, &uv, &mut rgb_simd, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_simd,
-      "simd128 Pn4:4:4 {BITS}-bit → u16 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  fn check_p_n_444_16_u8_simd128_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p16_plane_wasm(width, 37);
-    let u = p16_plane_wasm(width, 53);
-    let v = p16_plane_wasm(width, 71);
-    let uv = interleave_uv_wasm(&u, &v);
-    let mut rgb_scalar = std::vec![0u8; width * 3];
-    let mut rgb_simd = std::vec![0u8; width * 3];
-    scalar::p_n_444_16_to_rgb_row(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      p_n_444_16_to_rgb_row(&y, &uv, &mut rgb_simd, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_simd,
-      "simd128 P416 → u8 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  fn check_p_n_444_16_u16_simd128_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-    let y = p16_plane_wasm(width, 37);
-    let u = p16_plane_wasm(width, 53);
-    let v = p16_plane_wasm(width, 71);
-    let uv = interleave_uv_wasm(&u, &v);
-    let mut rgb_scalar = std::vec![0u16; width * 3];
-    let mut rgb_simd = std::vec![0u16; width * 3];
-    scalar::p_n_444_16_to_rgb_u16_row(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
-    unsafe {
-      p_n_444_16_to_rgb_u16_row(&y, &uv, &mut rgb_simd, width, matrix, full_range);
-    }
-    assert_eq!(
-      rgb_scalar, rgb_simd,
-      "simd128 P416 → u16 diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
-    );
-  }
-
-  #[test]
-  fn simd128_p410_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_p_n_444_u8_simd128_equivalence::<10>(16, m, full);
-        check_p_n_444_u16_simd128_equivalence::<10>(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_p412_matches_scalar_all_matrices() {
-    for m in [ColorMatrix::Bt709, ColorMatrix::Bt2020Ncl] {
-      for full in [true, false] {
-        check_p_n_444_u8_simd128_equivalence::<12>(16, m, full);
-        check_p_n_444_u16_simd128_equivalence::<12>(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_p410_p412_matches_scalar_tail_widths() {
-    for w in [1usize, 3, 7, 15, 17, 31, 33, 1920, 1921] {
-      check_p_n_444_u8_simd128_equivalence::<10>(w, ColorMatrix::Bt601, false);
-      check_p_n_444_u16_simd128_equivalence::<10>(w, ColorMatrix::Bt709, true);
-      check_p_n_444_u8_simd128_equivalence::<12>(w, ColorMatrix::Bt2020Ncl, false);
-    }
-  }
-
-  #[test]
-  fn simd128_p416_matches_scalar_all_matrices() {
-    for m in [
-      ColorMatrix::Bt601,
-      ColorMatrix::Bt709,
-      ColorMatrix::Bt2020Ncl,
-      ColorMatrix::Smpte240m,
-      ColorMatrix::Fcc,
-      ColorMatrix::YCgCo,
-    ] {
-      for full in [true, false] {
-        check_p_n_444_16_u8_simd128_equivalence(16, m, full);
-        check_p_n_444_16_u16_simd128_equivalence(16, m, full);
-      }
-    }
-  }
-
-  #[test]
-  fn simd128_p416_matches_scalar_tail_widths() {
-    for w in [1usize, 3, 7, 8, 9, 15, 16, 17, 31, 33, 1920, 1921] {
-      check_p_n_444_16_u8_simd128_equivalence(w, ColorMatrix::Bt709, false);
-      check_p_n_444_16_u16_simd128_equivalence(w, ColorMatrix::Bt2020Ncl, true);
-    }
-  }
-}
+mod tests;
