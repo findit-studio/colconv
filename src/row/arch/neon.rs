@@ -282,8 +282,10 @@ unsafe fn yuv_420_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// 2. `width & 1 == 0`.
 /// 3. `y.len() >= width`, `u_half.len() >= width / 2`,
 ///    `v_half.len() >= width / 2`, `rgb_out.len() >= 3 * width`.
-/// 4. `BITS` must be one of `{10, 12, 14}` — the Q15 pipeline
+/// 4. `BITS` must be one of `{9, 10, 12, 14}` — the Q15 pipeline
 ///    overflows i32 at 16 bits; see [`scalar::range_params_n`].
+///
+/// Thin wrapper over [`yuv_420p_n_to_rgb_or_rgba_row`] with `ALPHA = false`.
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn yuv_420p_n_to_rgb_row<const BITS: u32>(
@@ -295,12 +297,75 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_420p_n_to_rgb_or_rgba_row::<BITS, false>(
+      y, u_half, v_half, rgb_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// NEON high-bit-depth YUV 4:2:0 → packed **8-bit RGBA** (`R, G, B, 0xFF`).
+///
+/// Same numerical contract as [`yuv_420p_n_to_rgb_row`]; the only
+/// differences are the per-pixel stride (4 vs 3) and the constant
+/// alpha byte (`0xFF`, opaque).
+///
+/// Thin wrapper over [`yuv_420p_n_to_rgb_or_rgba_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`yuv_420p_n_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_420p_n_to_rgba_row<const BITS: u32>(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_420p_n_to_rgb_or_rgba_row::<BITS, true>(
+      y, u_half, v_half, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// Shared NEON high-bit-depth YUV 4:2:0 kernel for
+/// [`yuv_420p_n_to_rgb_row`] (`ALPHA = false`, `vst3q_u8`) and
+/// [`yuv_420p_n_to_rgba_row`] (`ALPHA = true`, `vst4q_u8` with
+/// constant `0xFF` alpha vector).
+///
+/// # Safety
+///
+/// 1. **NEON must be available on the current CPU.**
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `u_half.len() >= width / 2`,
+///    `v_half.len() >= width / 2`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+/// 4. `BITS` must be one of `{9, 10, 12, 14}`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
   const { assert!(BITS == 9 || BITS == 10 || BITS == 12 || BITS == 14) };
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert_eq!(width & 1, 0);
   debug_assert!(y.len() >= width);
   debug_assert!(u_half.len() >= width / 2);
   debug_assert!(v_half.len() >= width / 2);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<BITS, 8>(full_range);
@@ -324,6 +389,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_row<const BITS: u32>(
     let cgv = vdupq_n_s32(coeffs.g_v());
     let cbu = vdupq_n_s32(coeffs.b_u());
     let cbv = vdupq_n_s32(coeffs.b_v());
+    let alpha_u8 = vdupq_n_u8(0xFF);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -385,23 +451,33 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_row<const BITS: u32>(
         vqmovun_s16(vqaddq_s16(y_scaled_hi, r_dup_hi)),
       );
 
-      let rgb = uint8x16x3_t(r_u8, g_u8, b_u8);
-      vst3q_u8(rgb_out.as_mut_ptr().add(x * 3), rgb);
+      if ALPHA {
+        let rgba = uint8x16x4_t(r_u8, g_u8, b_u8, alpha_u8);
+        vst4q_u8(out.as_mut_ptr().add(x * 4), rgba);
+      } else {
+        let rgb = uint8x16x3_t(r_u8, g_u8, b_u8);
+        vst3q_u8(out.as_mut_ptr().add(x * 3), rgb);
+      }
 
       x += 16;
     }
 
     // Scalar tail — remaining < 16 pixels (always even per 4:2:0).
     if x < width {
-      scalar::yuv_420p_n_to_rgb_row::<BITS>(
-        &y[x..width],
-        &u_half[x / 2..width / 2],
-        &v_half[x / 2..width / 2],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_u = &u_half[x / 2..width / 2];
+      let tail_v = &v_half[x / 2..width / 2];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::yuv_420p_n_to_rgba_row::<BITS>(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      } else {
+        scalar::yuv_420p_n_to_rgb_row::<BITS>(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      }
     }
   }
 }
@@ -444,12 +520,69 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_u16_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  unsafe {
+    yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, false>(
+      y, u_half, v_half, rgb_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// NEON sibling of [`yuv_420p_n_to_rgba_row`] for native-depth `u16`
+/// output. Alpha samples are `(1 << BITS) - 1` (opaque maximum at the
+/// input bit depth) — matches `scalar::yuv_420p_n_to_rgba_u16_row`.
+///
+/// # Safety
+///
+/// Same as [`yuv_420p_n_to_rgb_u16_row`], plus
+/// `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_420p_n_to_rgba_u16_row<const BITS: u32>(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, true>(
+      y, u_half, v_half, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// Shared NEON high-bit YUV 4:2:0 → native-depth `u16` kernel.
+/// `ALPHA = false` writes RGB triples via `vst3q_u16`; `ALPHA = true`
+/// writes RGBA quads via `vst4q_u16` with constant alpha
+/// `(1 << BITS) - 1`.
+///
+/// # Safety
+///
+/// 1. **NEON must be available.**
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `u_half.len() >= width / 2`,
+///    `v_half.len() >= width / 2`, `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+/// 4. `BITS` ∈ `{9, 10, 12, 14}`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
   const { assert!(BITS == 9 || BITS == 10 || BITS == 12 || BITS == 14) };
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert_eq!(width & 1, 0);
   debug_assert!(y.len() >= width);
   debug_assert!(u_half.len() >= width / 2);
   debug_assert!(v_half.len() >= width / 2);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<BITS, BITS>(full_range);
@@ -476,6 +609,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_u16_row<const BITS: u32>(
     let cgv = vdupq_n_s32(coeffs.g_v());
     let cbu = vdupq_n_s32(coeffs.b_u());
     let cbv = vdupq_n_s32(coeffs.b_v());
+    let alpha_u16 = vdupq_n_u16(out_max as u16);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -529,33 +663,47 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_u16_row<const BITS: u32>(
       let b_lo = clamp_u16_max(vqaddq_s16(y_scaled_lo, b_dup_lo), zero_v, max_v);
       let b_hi = clamp_u16_max(vqaddq_s16(y_scaled_hi, b_dup_hi), zero_v, max_v);
 
-      // Two interleaved u16 writes — each `vst3q_u16` covers 8 pixels.
-      let rgb_lo = uint16x8x3_t(r_lo, g_lo, b_lo);
-      let rgb_hi = uint16x8x3_t(r_hi, g_hi, b_hi);
-      vst3q_u16(rgb_out.as_mut_ptr().add(x * 3), rgb_lo);
-      vst3q_u16(rgb_out.as_mut_ptr().add(x * 3 + 24), rgb_hi);
+      if ALPHA {
+        let rgba_lo = uint16x8x4_t(r_lo, g_lo, b_lo, alpha_u16);
+        let rgba_hi = uint16x8x4_t(r_hi, g_hi, b_hi, alpha_u16);
+        vst4q_u16(out.as_mut_ptr().add(x * 4), rgba_lo);
+        vst4q_u16(out.as_mut_ptr().add(x * 4 + 32), rgba_hi);
+      } else {
+        // Two interleaved u16 writes — each `vst3q_u16` covers 8 pixels.
+        let rgb_lo = uint16x8x3_t(r_lo, g_lo, b_lo);
+        let rgb_hi = uint16x8x3_t(r_hi, g_hi, b_hi);
+        vst3q_u16(out.as_mut_ptr().add(x * 3), rgb_lo);
+        vst3q_u16(out.as_mut_ptr().add(x * 3 + 24), rgb_hi);
+      }
 
       x += 16;
     }
 
     if x < width {
-      scalar::yuv_420p_n_to_rgb_u16_row::<BITS>(
-        &y[x..width],
-        &u_half[x / 2..width / 2],
-        &v_half[x / 2..width / 2],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_u = &u_half[x / 2..width / 2];
+      let tail_v = &v_half[x / 2..width / 2];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::yuv_420p_n_to_rgba_u16_row::<BITS>(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      } else {
+        scalar::yuv_420p_n_to_rgb_u16_row::<BITS>(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      }
     }
   }
 }
 
 /// NEON YUV 4:4:4 planar high-bit-depth → **u8** RGB.
-/// Const-generic over `BITS ∈ {10, 12, 14}`. Same structure as
+/// Const-generic over `BITS ∈ {9, 10, 12, 14}`. Same structure as
 /// [`yuv_420p_n_to_rgb_row`] but with full-width U/V (no chroma
 /// duplication) and no width parity constraint.
+///
+/// Thin wrapper over [`yuv_444p_n_to_rgb_or_rgba_row`] with `ALPHA = false`.
 ///
 /// # Safety
 ///
@@ -571,11 +719,67 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, false>(y, u, v, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// NEON YUV 4:4:4 planar high-bit-depth → packed **8-bit RGBA**
+/// (`R, G, B, 0xFF`). Same numerical contract as
+/// [`yuv_444p_n_to_rgb_row`]; the only differences are the per-pixel
+/// stride (4 vs 3) and the constant alpha byte (`0xFF`, opaque).
+///
+/// Thin wrapper over [`yuv_444p_n_to_rgb_or_rgba_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`yuv_444p_n_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_444p_n_to_rgba_row<const BITS: u32>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true>(y, u, v, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared NEON high-bit-depth YUV 4:4:4 kernel for
+/// [`yuv_444p_n_to_rgb_row`] (`ALPHA = false`, `vst3q_u8`) and
+/// [`yuv_444p_n_to_rgba_row`] (`ALPHA = true`, `vst4q_u8` with
+/// constant `0xFF` alpha vector).
+///
+/// # Safety
+///
+/// 1. **NEON must be available.**
+/// 2. `y.len() >= width`, `u.len() >= width`, `v.len() >= width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+/// 3. `BITS` must be one of `{9, 10, 12, 14}`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
   const { assert!(BITS == 9 || BITS == 10 || BITS == 12 || BITS == 14) };
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(u.len() >= width);
   debug_assert!(v.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<BITS, 8>(full_range);
@@ -595,6 +799,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_row<const BITS: u32>(
     let cgv = vdupq_n_s32(coeffs.g_v());
     let cbu = vdupq_n_s32(coeffs.b_u());
     let cbv = vdupq_n_s32(coeffs.b_v());
+    let alpha_u8 = vdupq_n_u8(0xFF);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -657,28 +862,41 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_row<const BITS: u32>(
         vqmovun_s16(vqaddq_s16(y_scaled_hi, r_chroma_hi)),
       );
 
-      let rgb = uint8x16x3_t(r_u8, g_u8, b_u8);
-      vst3q_u8(rgb_out.as_mut_ptr().add(x * 3), rgb);
+      if ALPHA {
+        vst4q_u8(
+          out.as_mut_ptr().add(x * 4),
+          uint8x16x4_t(r_u8, g_u8, b_u8, alpha_u8),
+        );
+      } else {
+        vst3q_u8(out.as_mut_ptr().add(x * 3), uint8x16x3_t(r_u8, g_u8, b_u8));
+      }
 
       x += 16;
     }
 
     if x < width {
-      scalar::yuv_444p_n_to_rgb_row::<BITS>(
-        &y[x..width],
-        &u[x..width],
-        &v[x..width],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_u = &u[x..width];
+      let tail_v = &v[x..width];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::yuv_444p_n_to_rgba_row::<BITS>(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      } else {
+        scalar::yuv_444p_n_to_rgb_row::<BITS>(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      }
     }
   }
 }
 
 /// NEON YUV 4:4:4 planar high-bit-depth → **native-depth u16** RGB.
-/// Const-generic over `BITS ∈ {10, 12, 14}`.
+/// Const-generic over `BITS ∈ {9, 10, 12, 14}`.
+///
+/// Thin wrapper over [`yuv_444p_n_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.
 ///
 /// # Safety
 ///
@@ -694,14 +912,70 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_u16_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, false>(y, u, v, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// NEON sibling of [`yuv_444p_n_to_rgba_row`] for native-depth `u16`
+/// output. Alpha samples are `(1 << BITS) - 1` (opaque maximum at the
+/// input bit depth) — matches `scalar::yuv_444p_n_to_rgba_u16_row`.
+///
+/// Thin wrapper over [`yuv_444p_n_to_rgb_or_rgba_u16_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`yuv_444p_n_to_rgb_u16_row`], plus
+/// `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_row<const BITS: u32>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true>(y, u, v, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared NEON high-bit YUV 4:4:4 → native-depth `u16` kernel.
+/// `ALPHA = false` writes RGB triples via `vst3q_u16`; `ALPHA = true`
+/// writes RGBA quads via `vst4q_u16` with constant alpha
+/// `(1 << BITS) - 1`.
+///
+/// # Safety
+///
+/// 1. **NEON must be available.**
+/// 2. `y.len() >= width`, `u.len() >= width`, `v.len() >= width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+/// 3. `BITS` ∈ `{9, 10, 12, 14}`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
   // Compile-time guard — `out_max = ((1 << BITS) - 1) as i16` below
   // silently wraps to -1 at BITS=16, corrupting the u16 clamp. The
   // dedicated 16-bit u16-output path is `yuv_444p16_to_rgb_u16_row`.
   const { assert!(BITS == 9 || BITS == 10 || BITS == 12 || BITS == 14) };
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(u.len() >= width);
   debug_assert!(v.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<BITS, BITS>(full_range);
@@ -724,6 +998,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_u16_row<const BITS: u32>(
     let cgv = vdupq_n_s32(coeffs.g_v());
     let cbu = vdupq_n_s32(coeffs.b_u());
     let cbv = vdupq_n_s32(coeffs.b_v());
+    let alpha_u16 = vdupq_n_u16(out_max as u16);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -777,24 +1052,36 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_u16_row<const BITS: u32>(
       let b_lo = clamp_u16_max(vqaddq_s16(y_scaled_lo, b_chroma_lo), zero_v, max_v);
       let b_hi = clamp_u16_max(vqaddq_s16(y_scaled_hi, b_chroma_hi), zero_v, max_v);
 
-      let rgb_lo = uint16x8x3_t(r_lo, g_lo, b_lo);
-      let rgb_hi = uint16x8x3_t(r_hi, g_hi, b_hi);
-      vst3q_u16(rgb_out.as_mut_ptr().add(x * 3), rgb_lo);
-      vst3q_u16(rgb_out.as_mut_ptr().add(x * 3 + 24), rgb_hi);
+      if ALPHA {
+        let rgba_lo = uint16x8x4_t(r_lo, g_lo, b_lo, alpha_u16);
+        let rgba_hi = uint16x8x4_t(r_hi, g_hi, b_hi, alpha_u16);
+        vst4q_u16(out.as_mut_ptr().add(x * 4), rgba_lo);
+        vst4q_u16(out.as_mut_ptr().add(x * 4 + 32), rgba_hi);
+      } else {
+        let rgb_lo = uint16x8x3_t(r_lo, g_lo, b_lo);
+        let rgb_hi = uint16x8x3_t(r_hi, g_hi, b_hi);
+        vst3q_u16(out.as_mut_ptr().add(x * 3), rgb_lo);
+        vst3q_u16(out.as_mut_ptr().add(x * 3 + 24), rgb_hi);
+      }
 
       x += 16;
     }
 
     if x < width {
-      scalar::yuv_444p_n_to_rgb_u16_row::<BITS>(
-        &y[x..width],
-        &u[x..width],
-        &v[x..width],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_u = &u[x..width];
+      let tail_v = &v[x..width];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::yuv_444p_n_to_rgba_u16_row::<BITS>(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      } else {
+        scalar::yuv_444p_n_to_rgb_u16_row::<BITS>(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      }
     }
   }
 }
@@ -837,6 +1124,8 @@ fn clamp_u16_max(v: int16x8_t, zero_v: int16x8_t, max_v: int16x8_t) -> uint16x8_
 /// 3. `y.len() >= width`, `uv_half.len() >= width`,
 ///    `rgb_out.len() >= 3 * width`.
 /// 4. `BITS` must be one of `{10, 12}`.
+///
+/// Thin wrapper over [`p_n_to_rgb_or_rgba_row`] with `ALPHA = false`.
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn p_n_to_rgb_row<const BITS: u32>(
@@ -847,10 +1136,66 @@ pub(crate) unsafe fn p_n_to_rgb_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_to_rgb_or_rgba_row::<BITS, false>(y, uv_half, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// NEON high-bit-packed semi-planar 4:2:0 → packed **8-bit RGBA**
+/// (`R, G, B, 0xFF`). Same numerical contract as [`p_n_to_rgb_row`];
+/// 4 bpp store with constant alpha.
+///
+/// Thin wrapper over [`p_n_to_rgb_or_rgba_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`p_n_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn p_n_to_rgba_row<const BITS: u32>(
+  y: &[u16],
+  uv_half: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_to_rgb_or_rgba_row::<BITS, true>(y, uv_half, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared NEON kernel for [`p_n_to_rgb_row`] (`ALPHA = false`,
+/// `vst3q_u8`) and [`p_n_to_rgba_row`] (`ALPHA = true`, `vst4q_u8`
+/// with constant `0xFF` alpha vector).
+///
+/// # Safety
+///
+/// 1. **NEON must be available on the current CPU.**
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `uv_half.len() >= width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+/// 4. `BITS` must be one of `{10, 12}`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // P016 (BITS=16) routes through `p16_to_rgb_or_rgba_row` (i64 chroma);
+  // attempting `::<16, _>` here would silently overflow on high chroma.
+  const { assert!(BITS == 10 || BITS == 12) };
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert_eq!(width & 1, 0);
   debug_assert!(y.len() >= width);
   debug_assert!(uv_half.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<BITS, 8>(full_range);
@@ -873,6 +1218,7 @@ pub(crate) unsafe fn p_n_to_rgb_row<const BITS: u32>(
     let cgv = vdupq_n_s32(coeffs.g_v());
     let cbu = vdupq_n_s32(coeffs.b_u());
     let cbv = vdupq_n_s32(coeffs.b_v());
+    let alpha_u8 = vdupq_n_u8(0xFF);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -930,21 +1276,27 @@ pub(crate) unsafe fn p_n_to_rgb_row<const BITS: u32>(
         vqmovun_s16(vqaddq_s16(y_scaled_hi, r_dup_hi)),
       );
 
-      let rgb = uint8x16x3_t(r_u8, g_u8, b_u8);
-      vst3q_u8(rgb_out.as_mut_ptr().add(x * 3), rgb);
+      if ALPHA {
+        let rgba = uint8x16x4_t(r_u8, g_u8, b_u8, alpha_u8);
+        vst4q_u8(out.as_mut_ptr().add(x * 4), rgba);
+      } else {
+        let rgb = uint8x16x3_t(r_u8, g_u8, b_u8);
+        vst3q_u8(out.as_mut_ptr().add(x * 3), rgb);
+      }
 
       x += 16;
     }
 
     if x < width {
-      scalar::p_n_to_rgb_row::<BITS>(
-        &y[x..width],
-        &uv_half[x..width],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_half[x..width];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::p_n_to_rgba_row::<BITS>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      } else {
+        scalar::p_n_to_rgb_row::<BITS>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
@@ -984,10 +1336,62 @@ pub(crate) unsafe fn p_n_to_rgb_u16_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  unsafe {
+    p_n_to_rgb_or_rgba_u16_row::<BITS, false>(y, uv_half, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// NEON sibling of [`p_n_to_rgba_row`] for native-depth `u16` output.
+/// Alpha samples are `(1 << BITS) - 1` (opaque maximum at the input
+/// bit depth) — matches `scalar::p_n_to_rgba_u16_row`. P016 has its
+/// own kernel family — never routed here.
+///
+/// # Safety
+///
+/// Same as [`p_n_to_rgb_u16_row`], plus `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn p_n_to_rgba_u16_row<const BITS: u32>(
+  y: &[u16],
+  uv_half: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    p_n_to_rgb_or_rgba_u16_row::<BITS, true>(y, uv_half, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared NEON Pn → native-depth `u16` kernel. `ALPHA = false` writes
+/// RGB triples via `vst3q_u16`; `ALPHA = true` writes RGBA quads via
+/// `vst4q_u16` with constant alpha `(1 << BITS) - 1`. P016 has its
+/// own kernel family — never routed here.
+///
+/// # Safety
+///
+/// 1. **NEON must be available on the current CPU.**
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `uv_half.len() >= width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+/// 4. `BITS` ∈ `{10, 12}`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  const { assert!(BITS == 10 || BITS == 12) };
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert_eq!(width & 1, 0);
   debug_assert!(y.len() >= width);
   debug_assert!(uv_half.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<BITS, BITS>(full_range);
@@ -1011,6 +1415,7 @@ pub(crate) unsafe fn p_n_to_rgb_u16_row<const BITS: u32>(
     let cgv = vdupq_n_s32(coeffs.g_v());
     let cbu = vdupq_n_s32(coeffs.b_u());
     let cbv = vdupq_n_s32(coeffs.b_v());
+    let alpha_u16 = vdupq_n_u16(out_max as u16);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -1057,23 +1462,31 @@ pub(crate) unsafe fn p_n_to_rgb_u16_row<const BITS: u32>(
       let b_lo = clamp_u16_max(vqaddq_s16(y_scaled_lo, b_dup_lo), zero_v, max_v);
       let b_hi = clamp_u16_max(vqaddq_s16(y_scaled_hi, b_dup_hi), zero_v, max_v);
 
-      let rgb_lo = uint16x8x3_t(r_lo, g_lo, b_lo);
-      let rgb_hi = uint16x8x3_t(r_hi, g_hi, b_hi);
-      vst3q_u16(rgb_out.as_mut_ptr().add(x * 3), rgb_lo);
-      vst3q_u16(rgb_out.as_mut_ptr().add(x * 3 + 24), rgb_hi);
+      if ALPHA {
+        let rgba_lo = uint16x8x4_t(r_lo, g_lo, b_lo, alpha_u16);
+        let rgba_hi = uint16x8x4_t(r_hi, g_hi, b_hi, alpha_u16);
+        vst4q_u16(out.as_mut_ptr().add(x * 4), rgba_lo);
+        vst4q_u16(out.as_mut_ptr().add(x * 4 + 32), rgba_hi);
+      } else {
+        let rgb_lo = uint16x8x3_t(r_lo, g_lo, b_lo);
+        let rgb_hi = uint16x8x3_t(r_hi, g_hi, b_hi);
+        vst3q_u16(out.as_mut_ptr().add(x * 3), rgb_lo);
+        vst3q_u16(out.as_mut_ptr().add(x * 3 + 24), rgb_hi);
+      }
 
       x += 16;
     }
 
     if x < width {
-      scalar::p_n_to_rgb_u16_row::<BITS>(
-        &y[x..width],
-        &uv_half[x..width],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_half[x..width];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::p_n_to_rgba_u16_row::<BITS>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      } else {
+        scalar::p_n_to_rgb_u16_row::<BITS>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
@@ -1869,7 +2282,7 @@ fn scale_y(
 
 // ===== 16-bit YUV → RGB ==================================================
 //
-// At 16-bit, two precision issues arise compared to the 10/12/14-bit generic:
+// At 16-bit, two precision issues arise compared to the 9/10/12/14-bit generic:
 //
 // 1. The chroma bias (32768) and full-range u16 values (0..65535) do not fit
 //    in i16, so all bias-subtractions happen in i32 after unsigned widening
@@ -1892,6 +2305,8 @@ fn scale_y(
 /// 2. `width & 1 == 0`.
 /// 3. `y.len() >= width`, `u_half.len() >= width / 2`,
 ///    `v_half.len() >= width / 2`, `rgb_out.len() >= 3 * width`.
+///
+/// Thin wrapper over [`yuv_420p16_to_rgb_or_rgba_row`] with `ALPHA = false`.
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn yuv_420p16_to_rgb_row(
@@ -1903,11 +2318,64 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_420p16_to_rgb_or_rgba_row::<false>(y, u_half, v_half, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// NEON 16-bit YUV 4:2:0 → packed **8-bit RGBA** (`R, G, B, 0xFF`).
+///
+/// Thin wrapper over [`yuv_420p16_to_rgb_or_rgba_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`yuv_420p16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_420p16_to_rgba_row(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_420p16_to_rgb_or_rgba_row::<true>(y, u_half, v_half, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared NEON 16-bit YUV 4:2:0 kernel for [`yuv_420p16_to_rgb_row`]
+/// (`ALPHA = false`, `vst3q_u8`) and [`yuv_420p16_to_rgba_row`]
+/// (`ALPHA = true`, `vst4q_u8` with constant `0xFF` alpha).
+///
+/// # Safety
+///
+/// 1. NEON must be available on the current CPU.
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `u_half.len() >= width / 2`,
+///    `v_half.len() >= width / 2`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_row<const ALPHA: bool>(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert_eq!(width & 1, 0);
   debug_assert!(y.len() >= width);
   debug_assert!(u_half.len() >= width / 2);
   debug_assert!(v_half.len() >= width / 2);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<16, 8>(full_range);
@@ -1926,6 +2394,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_row(
     let cgv = vdupq_n_s32(coeffs.g_v());
     let cbu = vdupq_n_s32(coeffs.b_u());
     let cbv = vdupq_n_s32(coeffs.b_v());
+    let alpha_u8 = vdupq_n_u8(0xFF);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -1985,23 +2454,30 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_row(
         vqmovun_s16(vqaddq_s16(y_scaled_hi, b_dup_hi)),
       );
 
-      vst3q_u8(
-        rgb_out.as_mut_ptr().add(x * 3),
-        uint8x16x3_t(r_u8, g_u8, b_u8),
-      );
+      if ALPHA {
+        vst4q_u8(
+          out.as_mut_ptr().add(x * 4),
+          uint8x16x4_t(r_u8, g_u8, b_u8, alpha_u8),
+        );
+      } else {
+        vst3q_u8(out.as_mut_ptr().add(x * 3), uint8x16x3_t(r_u8, g_u8, b_u8));
+      }
       x += 16;
     }
 
     if x < width {
-      scalar::yuv_420p16_to_rgb_row(
-        &y[x..width],
-        &u_half[x / 2..width / 2],
-        &v_half[x / 2..width / 2],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_u = &u_half[x / 2..width / 2];
+      let tail_v = &v_half[x / 2..width / 2];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::yuv_420p16_to_rgba_row(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      } else {
+        scalar::yuv_420p16_to_rgb_row(tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
@@ -2029,11 +2505,65 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  unsafe {
+    yuv_420p16_to_rgb_or_rgba_u16_row::<false>(
+      y, u_half, v_half, rgb_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// NEON sibling of [`yuv_420p16_to_rgba_row`] for native-depth `u16`
+/// output. Alpha is `0xFFFF` — matches `scalar::yuv_420p16_to_rgba_u16_row`.
+///
+/// # Safety
+///
+/// Same as [`yuv_420p16_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_420p16_to_rgba_u16_row(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    yuv_420p16_to_rgb_or_rgba_u16_row::<true>(
+      y, u_half, v_half, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// Shared NEON 16-bit YUV 4:2:0 → native-depth `u16` kernel.
+/// `ALPHA = false` writes RGB triples via `vst3q_u16`; `ALPHA = true`
+/// writes RGBA quads via `vst4q_u16` with constant alpha `0xFFFF`.
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `u_half.len() >= width / 2`,
+///    `v_half.len() >= width / 2`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert_eq!(width & 1, 0);
   debug_assert!(y.len() >= width);
   debug_assert!(u_half.len() >= width / 2);
   debug_assert!(v_half.len() >= width / 2);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<16, 16>(full_range);
@@ -2041,6 +2571,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_u16_row(
   const RND: i32 = 1 << 14;
 
   unsafe {
+    let alpha_u16 = vdupq_n_u16(0xFFFF);
     let rnd_v = vdupq_n_s32(RND);
     let rnd64 = vdupq_n_s64(RND as i64);
     let y_off_v = vdupq_n_s32(y_off);
@@ -2141,27 +2672,43 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_u16_row(
         vqmovun_s32(vaddq_s32(ys_hi_1, b_cd_hi1)),
       );
 
-      vst3q_u16(
-        rgb_out.as_mut_ptr().add(x * 3),
-        uint16x8x3_t(r_lo_u16, g_lo_u16, b_lo_u16),
-      );
-      vst3q_u16(
-        rgb_out.as_mut_ptr().add(x * 3 + 24),
-        uint16x8x3_t(r_hi_u16, g_hi_u16, b_hi_u16),
-      );
+      if ALPHA {
+        vst4q_u16(
+          out.as_mut_ptr().add(x * 4),
+          uint16x8x4_t(r_lo_u16, g_lo_u16, b_lo_u16, alpha_u16),
+        );
+        vst4q_u16(
+          out.as_mut_ptr().add(x * 4 + 32),
+          uint16x8x4_t(r_hi_u16, g_hi_u16, b_hi_u16, alpha_u16),
+        );
+      } else {
+        vst3q_u16(
+          out.as_mut_ptr().add(x * 3),
+          uint16x8x3_t(r_lo_u16, g_lo_u16, b_lo_u16),
+        );
+        vst3q_u16(
+          out.as_mut_ptr().add(x * 3 + 24),
+          uint16x8x3_t(r_hi_u16, g_hi_u16, b_hi_u16),
+        );
+      }
       x += 16;
     }
 
     if x < width {
-      scalar::yuv_420p16_to_rgb_u16_row(
-        &y[x..width],
-        &u_half[x / 2..width / 2],
-        &v_half[x / 2..width / 2],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_u = &u_half[x / 2..width / 2];
+      let tail_v = &v_half[x / 2..width / 2];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::yuv_420p16_to_rgba_u16_row(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      } else {
+        scalar::yuv_420p16_to_rgb_u16_row(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      }
     }
   }
 }
@@ -2169,6 +2716,8 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_u16_row(
 /// NEON YUV 4:4:4 planar **16-bit** → packed **8-bit** RGB. Same i32
 /// chroma pipeline as 10/12/14 (u8 output clamps `c_scale` down);
 /// 1:1 chroma per Y pixel, no width parity.
+///
+/// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_row`] with `ALPHA = false`.
 ///
 /// # Safety
 ///
@@ -2184,10 +2733,63 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p16_to_rgb_or_rgba_row::<false>(y, u, v, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// NEON YUV 4:4:4 planar **16-bit** → packed **8-bit RGBA**
+/// (`R, G, B, 0xFF`). Same numerical contract as
+/// [`yuv_444p16_to_rgb_row`].
+///
+/// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`yuv_444p16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_444p16_to_rgba_row(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p16_to_rgb_or_rgba_row::<true>(y, u, v, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared NEON 16-bit YUV 4:4:4 kernel for [`yuv_444p16_to_rgb_row`]
+/// (`ALPHA = false`, `vst3q_u8`) and [`yuv_444p16_to_rgba_row`]
+/// (`ALPHA = true`, `vst4q_u8` with constant `0xFF` alpha).
+///
+/// # Safety
+///
+/// 1. NEON must be available on the current CPU.
+/// 2. `y.len() >= width`, `u.len() >= width`, `v.len() >= width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_row<const ALPHA: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(u.len() >= width);
   debug_assert!(v.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<16, 8>(full_range);
@@ -2206,6 +2808,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_row(
     let cgv = vdupq_n_s32(coeffs.g_v());
     let cbu = vdupq_n_s32(coeffs.b_u());
     let cbv = vdupq_n_s32(coeffs.b_v());
+    let alpha_u8 = vdupq_n_u8(0xFF);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -2282,23 +2885,30 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_row(
         vqmovun_s16(vqaddq_s16(y_scaled_hi, b_chroma_hi)),
       );
 
-      vst3q_u8(
-        rgb_out.as_mut_ptr().add(x * 3),
-        uint8x16x3_t(r_u8, g_u8, b_u8),
-      );
+      if ALPHA {
+        vst4q_u8(
+          out.as_mut_ptr().add(x * 4),
+          uint8x16x4_t(r_u8, g_u8, b_u8, alpha_u8),
+        );
+      } else {
+        vst3q_u8(out.as_mut_ptr().add(x * 3), uint8x16x3_t(r_u8, g_u8, b_u8));
+      }
       x += 16;
     }
 
     if x < width {
-      scalar::yuv_444p16_to_rgb_row(
-        &y[x..width],
-        &u[x..width],
-        &v[x..width],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_u = &u[x..width];
+      let tail_v = &v[x..width];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::yuv_444p16_to_rgba_row(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      } else {
+        scalar::yuv_444p16_to_rgb_row(tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
@@ -2306,6 +2916,8 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_row(
 /// NEON YUV 4:4:4 planar **16-bit** → packed **native-depth u16** RGB.
 /// i64 chroma + i64 Y (same widening as `yuv_420p16_to_rgb_u16_row`);
 /// full-width U/V (no chroma duplication step).
+///
+/// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.
 ///
 /// # Safety
 ///
@@ -2321,10 +2933,63 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p16_to_rgb_or_rgba_u16_row::<false>(y, u, v, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// NEON sibling of [`yuv_444p16_to_rgba_row`] for native-depth `u16`
+/// output. Alpha samples are `0xFFFF` (opaque maximum at u16 range) —
+/// matches `scalar::yuv_444p16_to_rgba_u16_row`.
+///
+/// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_u16_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`yuv_444p16_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_444p16_to_rgba_u16_row(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p16_to_rgb_or_rgba_u16_row::<true>(y, u, v, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared NEON 16-bit YUV 4:4:4 → native-depth `u16` kernel.
+/// `ALPHA = false` writes RGB triples via `vst3q_u16`; `ALPHA = true`
+/// writes RGBA quads via `vst4q_u16` with constant alpha `0xFFFF`.
+///
+/// # Safety
+///
+/// 1. **NEON must be available.**
+/// 2. `y.len() >= width`, `u.len() >= width`, `v.len() >= width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(u.len() >= width);
   debug_assert!(v.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<16, 16>(full_range);
@@ -2344,6 +3009,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_u16_row(
     let cgv = vdupq_n_s32(coeffs.g_v());
     let cbu = vdupq_n_s32(coeffs.b_u());
     let cbv = vdupq_n_s32(coeffs.b_v());
+    let alpha_u16 = vdupq_n_u16(0xFFFF);
 
     let mut x = 0usize;
     while x + 8 <= width {
@@ -2404,23 +3070,35 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_u16_row(
         vqmovun_s32(vaddq_s32(ys_hi, b_ch_hi)),
       );
 
-      vst3q_u16(
-        rgb_out.as_mut_ptr().add(x * 3),
-        uint16x8x3_t(r_u16, g_u16, b_u16),
-      );
+      if ALPHA {
+        vst4q_u16(
+          out.as_mut_ptr().add(x * 4),
+          uint16x8x4_t(r_u16, g_u16, b_u16, alpha_u16),
+        );
+      } else {
+        vst3q_u16(
+          out.as_mut_ptr().add(x * 3),
+          uint16x8x3_t(r_u16, g_u16, b_u16),
+        );
+      }
       x += 8;
     }
 
     if x < width {
-      scalar::yuv_444p16_to_rgb_u16_row(
-        &y[x..width],
-        &u[x..width],
-        &v[x..width],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_u = &u[x..width];
+      let tail_v = &v[x..width];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::yuv_444p16_to_rgba_u16_row(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      } else {
+        scalar::yuv_444p16_to_rgb_u16_row(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      }
     }
   }
 }
@@ -2435,6 +3113,8 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_u16_row(
 /// 1. NEON must be available.
 /// 2. `width & 1 == 0`.
 /// 3. `y.len() >= width`, `uv_half.len() >= width`, `rgb_out.len() >= 3 * width`.
+///
+/// Thin wrapper over [`p16_to_rgb_or_rgba_row`] with `ALPHA = false`.
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn p16_to_rgb_row(
@@ -2445,10 +3125,61 @@ pub(crate) unsafe fn p16_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p16_to_rgb_or_rgba_row::<false>(y, uv_half, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// NEON P016 (semi-planar 4:2:0, full 16-bit) → packed **8-bit RGBA**
+/// (`R, G, B, 0xFF`).
+///
+/// Thin wrapper over [`p16_to_rgb_or_rgba_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`p16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn p16_to_rgba_row(
+  y: &[u16],
+  uv_half: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p16_to_rgb_or_rgba_row::<true>(y, uv_half, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared NEON P016 kernel for [`p16_to_rgb_row`] (`ALPHA = false`,
+/// `vst3q_u8`) and [`p16_to_rgba_row`] (`ALPHA = true`, `vst4q_u8`
+/// with constant `0xFF` alpha).
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `uv_half.len() >= width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn p16_to_rgb_or_rgba_row<const ALPHA: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert_eq!(width & 1, 0);
   debug_assert!(y.len() >= width);
   debug_assert!(uv_half.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<16, 8>(full_range);
@@ -2467,6 +3198,7 @@ pub(crate) unsafe fn p16_to_rgb_row(
     let cgv = vdupq_n_s32(coeffs.g_v());
     let cbu = vdupq_n_s32(coeffs.b_u());
     let cbv = vdupq_n_s32(coeffs.b_v());
+    let alpha_u8 = vdupq_n_u8(0xFF);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -2525,22 +3257,27 @@ pub(crate) unsafe fn p16_to_rgb_row(
         vqmovun_s16(vqaddq_s16(y_scaled_hi, b_dup_hi)),
       );
 
-      vst3q_u8(
-        rgb_out.as_mut_ptr().add(x * 3),
-        uint8x16x3_t(r_u8, g_u8, b_u8),
-      );
+      if ALPHA {
+        vst4q_u8(
+          out.as_mut_ptr().add(x * 4),
+          uint8x16x4_t(r_u8, g_u8, b_u8, alpha_u8),
+        );
+      } else {
+        vst3q_u8(out.as_mut_ptr().add(x * 3), uint8x16x3_t(r_u8, g_u8, b_u8));
+      }
       x += 16;
     }
 
     if x < width {
-      scalar::p16_to_rgb_row(
-        &y[x..width],
-        &uv_half[x..width],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_half[x..width];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::p16_to_rgba_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      } else {
+        scalar::p16_to_rgb_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
@@ -2564,10 +3301,57 @@ pub(crate) unsafe fn p16_to_rgb_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  unsafe {
+    p16_to_rgb_or_rgba_u16_row::<false>(y, uv_half, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// NEON sibling of [`p16_to_rgba_row`] for native-depth `u16` output.
+/// Alpha is `0xFFFF` — matches `scalar::p16_to_rgba_u16_row`.
+///
+/// # Safety
+///
+/// Same as [`p16_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn p16_to_rgba_u16_row(
+  y: &[u16],
+  uv_half: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    p16_to_rgb_or_rgba_u16_row::<true>(y, uv_half, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared NEON 16-bit P016 → native-depth `u16` kernel.
+/// `ALPHA = false` writes RGB triples via `vst3q_u16`; `ALPHA = true`
+/// writes RGBA quads via `vst4q_u16` with constant alpha `0xFFFF`.
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `uv_half.len() >= width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert_eq!(width & 1, 0);
   debug_assert!(y.len() >= width);
   debug_assert!(uv_half.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<16, 16>(full_range);
@@ -2575,6 +3359,7 @@ pub(crate) unsafe fn p16_to_rgb_u16_row(
   const RND: i32 = 1 << 14;
 
   unsafe {
+    let alpha_u16 = vdupq_n_u16(0xFFFF);
     let rnd_v = vdupq_n_s32(RND);
     let rnd64 = vdupq_n_s64(RND as i64);
     let y_off_v = vdupq_n_s32(y_off);
@@ -2672,26 +3457,38 @@ pub(crate) unsafe fn p16_to_rgb_u16_row(
         vqmovun_s32(vaddq_s32(ys_hi_1, b_cd_hi1)),
       );
 
-      vst3q_u16(
-        rgb_out.as_mut_ptr().add(x * 3),
-        uint16x8x3_t(r_lo_u16, g_lo_u16, b_lo_u16),
-      );
-      vst3q_u16(
-        rgb_out.as_mut_ptr().add(x * 3 + 24),
-        uint16x8x3_t(r_hi_u16, g_hi_u16, b_hi_u16),
-      );
+      if ALPHA {
+        vst4q_u16(
+          out.as_mut_ptr().add(x * 4),
+          uint16x8x4_t(r_lo_u16, g_lo_u16, b_lo_u16, alpha_u16),
+        );
+        vst4q_u16(
+          out.as_mut_ptr().add(x * 4 + 32),
+          uint16x8x4_t(r_hi_u16, g_hi_u16, b_hi_u16, alpha_u16),
+        );
+      } else {
+        vst3q_u16(
+          out.as_mut_ptr().add(x * 3),
+          uint16x8x3_t(r_lo_u16, g_lo_u16, b_lo_u16),
+        );
+        vst3q_u16(
+          out.as_mut_ptr().add(x * 3 + 24),
+          uint16x8x3_t(r_hi_u16, g_hi_u16, b_hi_u16),
+        );
+      }
       x += 16;
     }
 
     if x < width {
-      scalar::p16_to_rgb_u16_row(
-        &y[x..width],
-        &uv_half[x..width],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_half[x..width];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::p16_to_rgba_u16_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      } else {
+        scalar::p16_to_rgb_u16_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
@@ -2708,6 +3505,8 @@ pub(crate) unsafe fn p16_to_rgb_u16_row(
 
 /// NEON Pn 4:4:4 high-bit-packed (BITS ∈ {10, 12}) → packed **u8** RGB.
 ///
+/// Thin wrapper over [`p_n_444_to_rgb_or_rgba_row`] with `ALPHA = false`.
+///
 /// # Safety
 ///
 /// 1. NEON must be available on the current CPU.
@@ -2723,10 +3522,62 @@ pub(crate) unsafe fn p_n_444_to_rgb_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_444_to_rgb_or_rgba_row::<BITS, false>(y, uv_full, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// NEON Pn 4:4:4 high-bit-packed (BITS ∈ {10, 12}) → packed **8-bit
+/// RGBA** (`R, G, B, 0xFF`).
+///
+/// Thin wrapper over [`p_n_444_to_rgb_or_rgba_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`p_n_444_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn p_n_444_to_rgba_row<const BITS: u32>(
+  y: &[u16],
+  uv_full: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_444_to_rgb_or_rgba_row::<BITS, true>(y, uv_full, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared NEON Pn 4:4:4 high-bit-packed kernel for
+/// [`p_n_444_to_rgb_row`] (`ALPHA = false`, `vst3q_u8`) and
+/// [`p_n_444_to_rgba_row`] (`ALPHA = true`, `vst4q_u8` with constant
+/// `0xFF` alpha).
+///
+/// # Safety
+///
+/// 1. NEON must be available on the current CPU.
+/// 2. `y.len() >= width`, `uv_full.len() >= 2 * width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+/// 3. `BITS` must be one of `{10, 12}`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn p_n_444_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
+  y: &[u16],
+  uv_full: &[u16],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
   const { assert!(BITS == 10 || BITS == 12) };
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(uv_full.len() >= 2 * width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<BITS, 8>(full_range);
@@ -2750,6 +3601,7 @@ pub(crate) unsafe fn p_n_444_to_rgb_row<const BITS: u32>(
     let cgv = vdupq_n_s32(coeffs.g_v());
     let cbu = vdupq_n_s32(coeffs.b_u());
     let cbv = vdupq_n_s32(coeffs.b_v());
+    let alpha_u8 = vdupq_n_u8(0xFF);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -2818,27 +3670,36 @@ pub(crate) unsafe fn p_n_444_to_rgb_row<const BITS: u32>(
         vqmovun_s16(vqaddq_s16(y_scaled_hi, r_chroma_hi)),
       );
 
-      let rgb = uint8x16x3_t(r_u8, g_u8, b_u8);
-      vst3q_u8(rgb_out.as_mut_ptr().add(x * 3), rgb);
+      if ALPHA {
+        vst4q_u8(
+          out.as_mut_ptr().add(x * 4),
+          uint8x16x4_t(r_u8, g_u8, b_u8, alpha_u8),
+        );
+      } else {
+        vst3q_u8(out.as_mut_ptr().add(x * 3), uint8x16x3_t(r_u8, g_u8, b_u8));
+      }
 
       x += 16;
     }
 
     if x < width {
-      scalar::p_n_444_to_rgb_row::<BITS>(
-        &y[x..width],
-        &uv_full[x * 2..width * 2],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_full[x * 2..width * 2];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::p_n_444_to_rgba_row::<BITS>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      } else {
+        scalar::p_n_444_to_rgb_row::<BITS>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
 
 /// NEON Pn 4:4:4 high-bit-packed (BITS ∈ {10, 12}) → packed
 /// **native-depth `u16`** RGB. Output is low-bit-packed.
+///
+/// Thin wrapper over [`p_n_444_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.
 ///
 /// # Safety
 ///
@@ -2855,10 +3716,63 @@ pub(crate) unsafe fn p_n_444_to_rgb_u16_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_444_to_rgb_or_rgba_u16_row::<BITS, false>(y, uv_full, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// NEON sibling of [`p_n_444_to_rgba_row`] for native-depth `u16`
+/// output. Alpha samples are `(1 << BITS) - 1` (opaque maximum at the
+/// input bit depth) — matches `scalar::p_n_444_to_rgba_u16_row`.
+///
+/// Thin wrapper over [`p_n_444_to_rgb_or_rgba_u16_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`p_n_444_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn p_n_444_to_rgba_u16_row<const BITS: u32>(
+  y: &[u16],
+  uv_full: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_444_to_rgb_or_rgba_u16_row::<BITS, true>(y, uv_full, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared NEON Pn 4:4:4 high-bit-packed → native-depth `u16` kernel.
+/// `ALPHA = false` writes RGB triples via `vst3q_u16`; `ALPHA = true`
+/// writes RGBA quads via `vst4q_u16` with constant alpha
+/// `(1 << BITS) - 1`.
+///
+/// # Safety
+///
+/// 1. NEON must be available on the current CPU.
+/// 2. `y.len() >= width`, `uv_full.len() >= 2 * width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+/// 3. `BITS` ∈ `{10, 12}`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn p_n_444_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
+  y: &[u16],
+  uv_full: &[u16],
+  out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
   const { assert!(BITS == 10 || BITS == 12) };
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(uv_full.len() >= 2 * width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<BITS, BITS>(full_range);
@@ -2881,6 +3795,7 @@ pub(crate) unsafe fn p_n_444_to_rgb_u16_row<const BITS: u32>(
     let cgv = vdupq_n_s32(coeffs.g_v());
     let cbu = vdupq_n_s32(coeffs.b_u());
     let cbv = vdupq_n_s32(coeffs.b_v());
+    let alpha_u16 = vdupq_n_u16(out_max as u16);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -2939,23 +3854,35 @@ pub(crate) unsafe fn p_n_444_to_rgb_u16_row<const BITS: u32>(
       let b_lo = clamp_u16_max(vaddq_s16(y_scaled_lo, b_chroma_lo), zero_v, max_v);
       let b_hi = clamp_u16_max(vaddq_s16(y_scaled_hi, b_chroma_hi), zero_v, max_v);
 
-      let rgb_lo = uint16x8x3_t(r_lo, g_lo, b_lo);
-      let rgb_hi = uint16x8x3_t(r_hi, g_hi, b_hi);
-      vst3q_u16(rgb_out.as_mut_ptr().add(x * 3), rgb_lo);
-      vst3q_u16(rgb_out.as_mut_ptr().add(x * 3 + 24), rgb_hi);
+      if ALPHA {
+        let rgba_lo = uint16x8x4_t(r_lo, g_lo, b_lo, alpha_u16);
+        let rgba_hi = uint16x8x4_t(r_hi, g_hi, b_hi, alpha_u16);
+        vst4q_u16(out.as_mut_ptr().add(x * 4), rgba_lo);
+        vst4q_u16(out.as_mut_ptr().add(x * 4 + 32), rgba_hi);
+      } else {
+        let rgb_lo = uint16x8x3_t(r_lo, g_lo, b_lo);
+        let rgb_hi = uint16x8x3_t(r_hi, g_hi, b_hi);
+        vst3q_u16(out.as_mut_ptr().add(x * 3), rgb_lo);
+        vst3q_u16(out.as_mut_ptr().add(x * 3 + 24), rgb_hi);
+      }
 
       x += 16;
     }
 
     if x < width {
-      scalar::p_n_444_to_rgb_u16_row::<BITS>(
-        &y[x..width],
-        &uv_full[x * 2..width * 2],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_full[x * 2..width * 2];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::p_n_444_to_rgba_u16_row::<BITS>(
+          tail_y, tail_uv, tail_out, tail_w, matrix, full_range,
+        );
+      } else {
+        scalar::p_n_444_to_rgb_u16_row::<BITS>(
+          tail_y, tail_uv, tail_out, tail_w, matrix, full_range,
+        );
+      }
     }
   }
 }
@@ -2964,6 +3891,8 @@ pub(crate) unsafe fn p_n_444_to_rgb_u16_row<const BITS: u32>(
 /// Y and chroma both stay on i32 (output-range scaling keeps `coeff
 /// × u_d` within i32 for u8 output). Mirror `yuv_444p16_to_rgb_row`
 /// with full-width interleaved UV via `vld2q_u16`.
+///
+/// Thin wrapper over [`p_n_444_16_to_rgb_or_rgba_row`] with `ALPHA = false`.
 ///
 /// # Safety
 ///
@@ -2980,9 +3909,61 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_444_16_to_rgb_or_rgba_row::<false>(y, uv_full, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// NEON P416 (semi-planar 4:4:4, 16-bit) → packed **8-bit RGBA**
+/// (`R, G, B, 0xFF`). Same numerical contract as
+/// [`p_n_444_16_to_rgb_row`].
+///
+/// Thin wrapper over [`p_n_444_16_to_rgb_or_rgba_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`p_n_444_16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn p_n_444_16_to_rgba_row(
+  y: &[u16],
+  uv_full: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_444_16_to_rgb_or_rgba_row::<true>(y, uv_full, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared NEON P416 (semi-planar 4:4:4, 16-bit) kernel for
+/// [`p_n_444_16_to_rgb_row`] (`ALPHA = false`, `vst3q_u8`) and
+/// [`p_n_444_16_to_rgba_row`] (`ALPHA = true`, `vst4q_u8` with constant
+/// `0xFF` alpha).
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `y.len() >= width`, `uv_full.len() >= 2 * width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn p_n_444_16_to_rgb_or_rgba_row<const ALPHA: bool>(
+  y: &[u16],
+  uv_full: &[u16],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(uv_full.len() >= 2 * width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<16, 8>(full_range);
@@ -3001,6 +3982,7 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_row(
     let cgv = vdupq_n_s32(coeffs.g_v());
     let cbu = vdupq_n_s32(coeffs.b_u());
     let cbv = vdupq_n_s32(coeffs.b_v());
+    let alpha_u8 = vdupq_n_u8(0xFF);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -3083,22 +4065,27 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_row(
         vqmovun_s16(vqaddq_s16(y_scaled_hi, b_chroma_hi)),
       );
 
-      vst3q_u8(
-        rgb_out.as_mut_ptr().add(x * 3),
-        uint8x16x3_t(r_u8, g_u8, b_u8),
-      );
+      if ALPHA {
+        vst4q_u8(
+          out.as_mut_ptr().add(x * 4),
+          uint8x16x4_t(r_u8, g_u8, b_u8, alpha_u8),
+        );
+      } else {
+        vst3q_u8(out.as_mut_ptr().add(x * 3), uint8x16x3_t(r_u8, g_u8, b_u8));
+      }
       x += 16;
     }
 
     if x < width {
-      scalar::p_n_444_16_to_rgb_row(
-        &y[x..width],
-        &uv_full[x * 2..width * 2],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_full[x * 2..width * 2];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::p_n_444_16_to_rgba_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      } else {
+        scalar::p_n_444_16_to_rgb_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
@@ -3106,6 +4093,8 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_row(
 /// NEON P416 (semi-planar 4:4:4, 16-bit) → packed **native-depth u16**
 /// RGB. i64 chroma + i64 Y (chroma matrix multiply-add overflows i32
 /// at u16 output for the BT.2020 blue coefficient). 8 pixels per iter.
+///
+/// Thin wrapper over [`p_n_444_16_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.
 ///
 /// # Safety
 ///
@@ -3120,9 +4109,61 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_444_16_to_rgb_or_rgba_u16_row::<false>(y, uv_full, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// NEON sibling of [`p_n_444_16_to_rgba_row`] for native-depth `u16`
+/// output. Alpha samples are `0xFFFF` (opaque maximum at u16 range) —
+/// matches `scalar::p_n_444_16_to_rgba_u16_row`.
+///
+/// Thin wrapper over [`p_n_444_16_to_rgb_or_rgba_u16_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`p_n_444_16_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn p_n_444_16_to_rgba_u16_row(
+  y: &[u16],
+  uv_full: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_444_16_to_rgb_or_rgba_u16_row::<true>(y, uv_full, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared NEON P416 (semi-planar 4:4:4, 16-bit) → native-depth `u16`
+/// kernel. `ALPHA = false` writes RGB triples via `vst3q_u16`;
+/// `ALPHA = true` writes RGBA quads via `vst4q_u16` with constant alpha
+/// `0xFFFF`.
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `y.len() >= width`, `uv_full.len() >= 2 * width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn p_n_444_16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
+  y: &[u16],
+  uv_full: &[u16],
+  out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(uv_full.len() >= 2 * width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<16, 16>(full_range);
@@ -3142,6 +4183,7 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_u16_row(
     let cgv = vdupq_n_s32(coeffs.g_v());
     let cbu = vdupq_n_s32(coeffs.b_u());
     let cbv = vdupq_n_s32(coeffs.b_v());
+    let alpha_u16 = vdupq_n_u16(0xFFFF);
 
     let mut x = 0usize;
     while x + 8 <= width {
@@ -3200,22 +4242,30 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_u16_row(
         vqmovun_s32(vaddq_s32(ys_hi, b_ch_hi)),
       );
 
-      vst3q_u16(
-        rgb_out.as_mut_ptr().add(x * 3),
-        uint16x8x3_t(r_u16, g_u16, b_u16),
-      );
+      if ALPHA {
+        vst4q_u16(
+          out.as_mut_ptr().add(x * 4),
+          uint16x8x4_t(r_u16, g_u16, b_u16, alpha_u16),
+        );
+      } else {
+        vst3q_u16(
+          out.as_mut_ptr().add(x * 3),
+          uint16x8x3_t(r_u16, g_u16, b_u16),
+        );
+      }
       x += 8;
     }
 
     if x < width {
-      scalar::p_n_444_16_to_rgb_u16_row(
-        &y[x..width],
-        &uv_full[x * 2..width * 2],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_full[x * 2..width * 2];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::p_n_444_16_to_rgba_u16_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      } else {
+        scalar::p_n_444_16_to_rgb_u16_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }

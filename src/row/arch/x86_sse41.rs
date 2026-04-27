@@ -42,6 +42,7 @@ use crate::{
   row::{
     arch::x86_common::{
       rgb_to_hsv_16_pixels, swap_rb_16_pixels, write_rgb_16, write_rgb_u16_8, write_rgba_16,
+      write_rgba_u16_8,
     },
     scalar,
   },
@@ -281,6 +282,8 @@ unsafe fn yuv_420_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// 2. `width & 1 == 0`.
 /// 3. `y.len() >= width`, `uv_half.len() >= width`,
 ///    `rgb_out.len() >= 3 * width`.
+///
+/// Thin wrapper over [`p_n_to_rgb_or_rgba_row`] with `ALPHA = false`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn p_n_to_rgb_row<const BITS: u32>(
@@ -291,10 +294,63 @@ pub(crate) unsafe fn p_n_to_rgb_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_to_rgb_or_rgba_row::<BITS, false>(y, uv_half, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// SSE4.1 high-bit-packed semi-planar 4:2:0 → packed **8-bit RGBA**
+/// (`R, G, B, 0xFF`).
+///
+/// Thin wrapper over [`p_n_to_rgb_or_rgba_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`p_n_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn p_n_to_rgba_row<const BITS: u32>(
+  y: &[u16],
+  uv_half: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_to_rgb_or_rgba_row::<BITS, true>(y, uv_half, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared SSE4.1 P010/P012 kernel for [`p_n_to_rgb_row`] (`ALPHA = false`,
+/// `write_rgb_16`) and [`p_n_to_rgba_row`] (`ALPHA = true`, `write_rgba_16`
+/// with constant `0xFF` alpha).
+///
+/// # Safety
+///
+/// 1. **SSE4.1 must be available on the current CPU.**
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `uv_half.len() >= width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+/// 4. `BITS` ∈ `{10, 12}` — P016 has its own kernel family.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  const { assert!(BITS == 10 || BITS == 12) };
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert_eq!(width & 1, 0);
   debug_assert!(y.len() >= width);
   debug_assert!(uv_half.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<BITS, 8>(full_range);
@@ -318,6 +374,7 @@ pub(crate) unsafe fn p_n_to_rgb_row<const BITS: u32>(
     let cgv = _mm_set1_epi32(coeffs.g_v());
     let cbu = _mm_set1_epi32(coeffs.b_u());
     let cbv = _mm_set1_epi32(coeffs.b_v());
+    let alpha_u8 = _mm_set1_epi8(-1);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -369,20 +426,25 @@ pub(crate) unsafe fn p_n_to_rgb_row<const BITS: u32>(
       let g_u8 = _mm_packus_epi16(g_lo, g_hi);
       let r_u8 = _mm_packus_epi16(r_lo, r_hi);
 
-      write_rgb_16(r_u8, g_u8, b_u8, rgb_out.as_mut_ptr().add(x * 3));
+      if ALPHA {
+        write_rgba_16(r_u8, g_u8, b_u8, alpha_u8, out.as_mut_ptr().add(x * 4));
+      } else {
+        write_rgb_16(r_u8, g_u8, b_u8, out.as_mut_ptr().add(x * 3));
+      }
 
       x += 16;
     }
 
     if x < width {
-      scalar::p_n_to_rgb_row::<BITS>(
-        &y[x..width],
-        &uv_half[x..width],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_half[x..width];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::p_n_to_rgba_row::<BITS>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      } else {
+        scalar::p_n_to_rgb_row::<BITS>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
@@ -412,10 +474,62 @@ pub(crate) unsafe fn p_n_to_rgb_u16_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  unsafe {
+    p_n_to_rgb_or_rgba_u16_row::<BITS, false>(y, uv_half, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// SSE4.1 sibling of [`p_n_to_rgba_row`] for native-depth `u16` output.
+/// Alpha samples are `(1 << BITS) - 1` (opaque maximum at the input
+/// bit depth). P016 has its own kernel family — never routed here.
+///
+/// # Safety
+///
+/// Same as [`p_n_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn p_n_to_rgba_u16_row<const BITS: u32>(
+  y: &[u16],
+  uv_half: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    p_n_to_rgb_or_rgba_u16_row::<BITS, true>(y, uv_half, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared SSE4.1 Pn → native-depth `u16` kernel. `ALPHA = false`
+/// writes RGB triples via `write_rgb_u16_8`; `ALPHA = true` writes
+/// RGBA quads via `write_rgba_u16_8` with constant alpha
+/// `(1 << BITS) - 1`. P016 has its own kernel family — never routed
+/// here.
+///
+/// # Safety
+///
+/// 1. **SSE4.1 must be available on the current CPU.**
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `uv_half.len() >= width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+/// 4. `BITS` ∈ `{10, 12}`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  const { assert!(BITS == 10 || BITS == 12) };
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert_eq!(width & 1, 0);
   debug_assert!(y.len() >= width);
   debug_assert!(uv_half.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<BITS, BITS>(full_range);
@@ -441,6 +555,7 @@ pub(crate) unsafe fn p_n_to_rgb_u16_row<const BITS: u32>(
     let cgv = _mm_set1_epi32(coeffs.g_v());
     let cbu = _mm_set1_epi32(coeffs.b_u());
     let cbv = _mm_set1_epi32(coeffs.b_v());
+    let alpha_u16 = _mm_set1_epi16(out_max);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -484,21 +599,33 @@ pub(crate) unsafe fn p_n_to_rgb_u16_row<const BITS: u32>(
       let b_lo = clamp_u16_max(_mm_adds_epi16(y_scaled_lo, b_dup_lo), zero_v, max_v);
       let b_hi = clamp_u16_max(_mm_adds_epi16(y_scaled_hi, b_dup_hi), zero_v, max_v);
 
-      write_rgb_u16_8(r_lo, g_lo, b_lo, rgb_out.as_mut_ptr().add(x * 3));
-      write_rgb_u16_8(r_hi, g_hi, b_hi, rgb_out.as_mut_ptr().add(x * 3 + 24));
+      if ALPHA {
+        write_rgba_u16_8(r_lo, g_lo, b_lo, alpha_u16, out.as_mut_ptr().add(x * 4));
+        write_rgba_u16_8(
+          r_hi,
+          g_hi,
+          b_hi,
+          alpha_u16,
+          out.as_mut_ptr().add(x * 4 + 32),
+        );
+      } else {
+        write_rgb_u16_8(r_lo, g_lo, b_lo, out.as_mut_ptr().add(x * 3));
+        write_rgb_u16_8(r_hi, g_hi, b_hi, out.as_mut_ptr().add(x * 3 + 24));
+      }
 
       x += 16;
     }
 
     if x < width {
-      scalar::p_n_to_rgb_u16_row::<BITS>(
-        &y[x..width],
-        &uv_half[x..width],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_half[x..width];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::p_n_to_rgba_u16_row::<BITS>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      } else {
+        scalar::p_n_to_rgb_u16_row::<BITS>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
@@ -554,6 +681,8 @@ unsafe fn deinterleave_uv_u16(ptr: *const u16) -> (__m128i, __m128i) {
 ///
 /// Byte‑identical to [`scalar::yuv_420p_n_to_rgb_row::<10>`].
 ///
+/// Thin wrapper over [`yuv_420p_n_to_rgb_or_rgba_row`] with `ALPHA = false`.
+///
 /// # Safety
 ///
 /// 1. **SSE4.1 must be available on the current CPU.**
@@ -571,12 +700,70 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_420p_n_to_rgb_or_rgba_row::<BITS, false>(
+      y, u_half, v_half, rgb_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// SSE4.1 high-bit-depth YUV 4:2:0 → packed **8-bit RGBA** (`R, G, B, 0xFF`).
+///
+/// Thin wrapper over [`yuv_420p_n_to_rgb_or_rgba_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`yuv_420p_n_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_420p_n_to_rgba_row<const BITS: u32>(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_420p_n_to_rgb_or_rgba_row::<BITS, true>(
+      y, u_half, v_half, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// Shared SSE4.1 high-bit YUV 4:2:0 kernel for `yuv_420p_n_to_rgb_row`
+/// (`ALPHA = false`, `write_rgb_16`) and `yuv_420p_n_to_rgba_row`
+/// (`ALPHA = true`, `write_rgba_16` with constant `0xFF` alpha).
+///
+/// # Safety
+///
+/// 1. **SSE4.1 must be available on the current CPU.**
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `u_half.len() >= width / 2`,
+///    `v_half.len() >= width / 2`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+/// 4. `BITS` ∈ `{9, 10, 12, 14}`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
   const { assert!(BITS == 9 || BITS == 10 || BITS == 12 || BITS == 14) };
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert_eq!(width & 1, 0);
   debug_assert!(y.len() >= width);
   debug_assert!(u_half.len() >= width / 2);
   debug_assert!(v_half.len() >= width / 2);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<BITS, 8>(full_range);
@@ -600,6 +787,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_row<const BITS: u32>(
     let cgv = _mm_set1_epi32(coeffs.g_v());
     let cbu = _mm_set1_epi32(coeffs.b_u());
     let cbv = _mm_set1_epi32(coeffs.b_v());
+    let alpha_u8 = _mm_set1_epi8(-1);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -650,21 +838,30 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_row<const BITS: u32>(
       let g_u8 = _mm_packus_epi16(g_lo, g_hi);
       let r_u8 = _mm_packus_epi16(r_lo, r_hi);
 
-      write_rgb_16(r_u8, g_u8, b_u8, rgb_out.as_mut_ptr().add(x * 3));
+      if ALPHA {
+        write_rgba_16(r_u8, g_u8, b_u8, alpha_u8, out.as_mut_ptr().add(x * 4));
+      } else {
+        write_rgb_16(r_u8, g_u8, b_u8, out.as_mut_ptr().add(x * 3));
+      }
 
       x += 16;
     }
 
     if x < width {
-      scalar::yuv_420p_n_to_rgb_row::<BITS>(
-        &y[x..width],
-        &u_half[x / 2..width / 2],
-        &v_half[x / 2..width / 2],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_u = &u_half[x / 2..width / 2];
+      let tail_v = &v_half[x / 2..width / 2];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::yuv_420p_n_to_rgba_row::<BITS>(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      } else {
+        scalar::yuv_420p_n_to_rgb_row::<BITS>(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      }
     }
   }
 }
@@ -700,12 +897,69 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_u16_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  unsafe {
+    yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, false>(
+      y, u_half, v_half, rgb_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// SSE4.1 sibling of [`yuv_420p_n_to_rgba_row`] for native-depth `u16`
+/// output. Alpha samples are `(1 << BITS) - 1` (opaque maximum at the
+/// input bit depth).
+///
+/// # Safety
+///
+/// Same as [`yuv_420p_n_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_420p_n_to_rgba_u16_row<const BITS: u32>(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, true>(
+      y, u_half, v_half, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// Shared SSE4.1 high-bit YUV 4:2:0 → native-depth `u16` kernel.
+/// `ALPHA = false` writes RGB triples via `write_rgb_u16_8`;
+/// `ALPHA = true` writes RGBA quads via `write_rgba_u16_8` with
+/// constant alpha `(1 << BITS) - 1`.
+///
+/// # Safety
+///
+/// 1. **SSE4.1 must be available on the current CPU.**
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `u_half.len() >= width / 2`,
+///    `v_half.len() >= width / 2`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+/// 4. `BITS` ∈ `{9, 10, 12, 14}`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
   const { assert!(BITS == 9 || BITS == 10 || BITS == 12 || BITS == 14) };
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert_eq!(width & 1, 0);
   debug_assert!(y.len() >= width);
   debug_assert!(u_half.len() >= width / 2);
   debug_assert!(v_half.len() >= width / 2);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<BITS, BITS>(full_range);
@@ -729,6 +983,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_u16_row<const BITS: u32>(
     let cgv = _mm_set1_epi32(coeffs.g_v());
     let cbu = _mm_set1_epi32(coeffs.b_u());
     let cbv = _mm_set1_epi32(coeffs.b_v());
+    let alpha_u16 = _mm_set1_epi16(out_max);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -779,22 +1034,38 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_u16_row<const BITS: u32>(
       let b_hi = clamp_u16_max(_mm_adds_epi16(y_scaled_hi, b_dup_hi), zero_v, max_v);
 
       // Two 8‑pixel u16 writes cover the 16‑pixel block.
-      write_rgb_u16_8(r_lo, g_lo, b_lo, rgb_out.as_mut_ptr().add(x * 3));
-      write_rgb_u16_8(r_hi, g_hi, b_hi, rgb_out.as_mut_ptr().add(x * 3 + 24));
+      if ALPHA {
+        write_rgba_u16_8(r_lo, g_lo, b_lo, alpha_u16, out.as_mut_ptr().add(x * 4));
+        write_rgba_u16_8(
+          r_hi,
+          g_hi,
+          b_hi,
+          alpha_u16,
+          out.as_mut_ptr().add(x * 4 + 32),
+        );
+      } else {
+        write_rgb_u16_8(r_lo, g_lo, b_lo, out.as_mut_ptr().add(x * 3));
+        write_rgb_u16_8(r_hi, g_hi, b_hi, out.as_mut_ptr().add(x * 3 + 24));
+      }
 
       x += 16;
     }
 
     if x < width {
-      scalar::yuv_420p_n_to_rgb_u16_row::<BITS>(
-        &y[x..width],
-        &u_half[x / 2..width / 2],
-        &v_half[x / 2..width / 2],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_u = &u_half[x / 2..width / 2];
+      let tail_v = &v_half[x / 2..width / 2];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::yuv_420p_n_to_rgba_u16_row::<BITS>(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      } else {
+        scalar::yuv_420p_n_to_rgb_u16_row::<BITS>(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      }
     }
   }
 }
@@ -807,14 +1078,16 @@ fn clamp_u16_max(v: __m128i, zero_v: __m128i, max_v: __m128i) -> __m128i {
   unsafe { _mm_min_epi16(_mm_max_epi16(v, zero_v), max_v) }
 }
 
-/// SSE4.1 YUV 4:4:4 planar 10/12/14-bit → packed **u8** RGB.
-/// Const-generic over `BITS ∈ {10, 12, 14}`.
+/// SSE4.1 YUV 4:4:4 planar 9/10/12/14-bit → packed **u8** RGB.
+/// Const-generic over `BITS ∈ {9, 10, 12, 14}`.
 ///
 /// Block size: 16 pixels per iteration (same as the 4:2:0 sibling).
 /// Differs from [`yuv_420p_n_to_rgb_row`] by loading full-width U/V
 /// (16 samples each) and computing two chroma-per-Y-half vectors,
 /// skipping the horizontal chroma-duplication step (4:4:4 chroma is
 /// 1:1 with Y, not paired).
+///
+/// Thin wrapper over [`yuv_444p_n_to_rgb_or_rgba_row`] with `ALPHA = false`.
 ///
 /// # Numerical contract
 ///
@@ -836,11 +1109,66 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, false>(y, u, v, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// SSE4.1 YUV 4:4:4 planar 9/10/12/14-bit → packed **8-bit RGBA**
+/// (`R, G, B, 0xFF`). Same numerical contract as
+/// [`yuv_444p_n_to_rgb_row`].
+///
+/// Thin wrapper over [`yuv_444p_n_to_rgb_or_rgba_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`yuv_444p_n_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_444p_n_to_rgba_row<const BITS: u32>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true>(y, u, v, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared SSE4.1 high-bit-depth YUV 4:4:4 kernel for
+/// [`yuv_444p_n_to_rgb_row`] (`ALPHA = false`, `write_rgb_16`) and
+/// [`yuv_444p_n_to_rgba_row`] (`ALPHA = true`, `write_rgba_16` with
+/// constant `0xFF` alpha vector).
+///
+/// # Safety
+///
+/// 1. **SSE4.1 must be available on the current CPU.**
+/// 2. `y.len() >= width`, `u.len() >= width`, `v.len() >= width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+/// 3. `BITS` must be one of `{9, 10, 12, 14}`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
   const { assert!(BITS == 9 || BITS == 10 || BITS == 12 || BITS == 14) };
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(u.len() >= width);
   debug_assert!(v.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<BITS, 8>(full_range);
@@ -860,6 +1188,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_row<const BITS: u32>(
     let cgv = _mm_set1_epi32(coeffs.g_v());
     let cbu = _mm_set1_epi32(coeffs.b_u());
     let cbv = _mm_set1_epi32(coeffs.b_v());
+    let alpha_u8 = _mm_set1_epi8(-1);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -918,27 +1247,38 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_row<const BITS: u32>(
       let g_u8 = _mm_packus_epi16(g_lo, g_hi);
       let r_u8 = _mm_packus_epi16(r_lo, r_hi);
 
-      write_rgb_16(r_u8, g_u8, b_u8, rgb_out.as_mut_ptr().add(x * 3));
+      if ALPHA {
+        write_rgba_16(r_u8, g_u8, b_u8, alpha_u8, out.as_mut_ptr().add(x * 4));
+      } else {
+        write_rgb_16(r_u8, g_u8, b_u8, out.as_mut_ptr().add(x * 3));
+      }
 
       x += 16;
     }
 
     if x < width {
-      scalar::yuv_444p_n_to_rgb_row::<BITS>(
-        &y[x..width],
-        &u[x..width],
-        &v[x..width],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_u = &u[x..width];
+      let tail_v = &v[x..width];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::yuv_444p_n_to_rgba_row::<BITS>(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      } else {
+        scalar::yuv_444p_n_to_rgb_row::<BITS>(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      }
     }
   }
 }
 
-/// SSE4.1 YUV 4:4:4 planar 10/12/14-bit → **native-depth u16** RGB.
-/// Const-generic over `BITS ∈ {10, 12, 14}`.
+/// SSE4.1 YUV 4:4:4 planar 9/10/12/14-bit → **native-depth u16** RGB.
+/// Const-generic over `BITS ∈ {9, 10, 12, 14}`.
+///
+/// Thin wrapper over [`yuv_444p_n_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.
 ///
 /// # Safety
 ///
@@ -954,14 +1294,69 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_u16_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, false>(y, u, v, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// SSE4.1 sibling of [`yuv_444p_n_to_rgba_row`] for native-depth `u16`
+/// output. Alpha samples are `(1 << BITS) - 1` (opaque maximum at the
+/// input bit depth).
+///
+/// Thin wrapper over [`yuv_444p_n_to_rgb_or_rgba_u16_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`yuv_444p_n_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_row<const BITS: u32>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true>(y, u, v, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared SSE4.1 high-bit YUV 4:4:4 → native-depth `u16` kernel.
+/// `ALPHA = false` writes RGB triples via `write_rgb_u16_8`;
+/// `ALPHA = true` writes RGBA quads via `write_rgba_u16_8` with
+/// constant alpha `(1 << BITS) - 1`.
+///
+/// # Safety
+///
+/// 1. **SSE4.1 must be available on the current CPU.**
+/// 2. `y.len() >= width`, `u.len() >= width`, `v.len() >= width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+/// 3. `BITS` ∈ `{9, 10, 12, 14}`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
   // Compile-time guard — `out_max = ((1 << BITS) - 1) as i16` below
   // silently wraps to -1 at BITS=16, corrupting the u16 clamp. The
   // dedicated 16-bit u16-output path is `yuv_444p16_to_rgb_u16_row`.
   const { assert!(BITS == 9 || BITS == 10 || BITS == 12 || BITS == 14) };
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(u.len() >= width);
   debug_assert!(v.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<BITS, BITS>(full_range);
@@ -984,6 +1379,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_u16_row<const BITS: u32>(
     let cgv = _mm_set1_epi32(coeffs.g_v());
     let cbu = _mm_set1_epi32(coeffs.b_u());
     let cbv = _mm_set1_epi32(coeffs.b_v());
+    let alpha_u16 = _mm_set1_epi16(out_max);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -1034,22 +1430,38 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_u16_row<const BITS: u32>(
       let b_lo = clamp_u16_max(_mm_adds_epi16(y_scaled_lo, b_chroma_lo), zero_v, max_v);
       let b_hi = clamp_u16_max(_mm_adds_epi16(y_scaled_hi, b_chroma_hi), zero_v, max_v);
 
-      write_rgb_u16_8(r_lo, g_lo, b_lo, rgb_out.as_mut_ptr().add(x * 3));
-      write_rgb_u16_8(r_hi, g_hi, b_hi, rgb_out.as_mut_ptr().add(x * 3 + 24));
+      if ALPHA {
+        write_rgba_u16_8(r_lo, g_lo, b_lo, alpha_u16, out.as_mut_ptr().add(x * 4));
+        write_rgba_u16_8(
+          r_hi,
+          g_hi,
+          b_hi,
+          alpha_u16,
+          out.as_mut_ptr().add(x * 4 + 32),
+        );
+      } else {
+        write_rgb_u16_8(r_lo, g_lo, b_lo, out.as_mut_ptr().add(x * 3));
+        write_rgb_u16_8(r_hi, g_hi, b_hi, out.as_mut_ptr().add(x * 3 + 24));
+      }
 
       x += 16;
     }
 
     if x < width {
-      scalar::yuv_444p_n_to_rgb_u16_row::<BITS>(
-        &y[x..width],
-        &u[x..width],
-        &v[x..width],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_u = &u[x..width];
+      let tail_v = &v[x..width];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::yuv_444p_n_to_rgba_u16_row::<BITS>(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      } else {
+        scalar::yuv_444p_n_to_rgb_u16_row::<BITS>(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      }
     }
   }
 }
@@ -1057,6 +1469,8 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_u16_row<const BITS: u32>(
 /// SSE4.1 YUV 4:4:4 planar **16-bit** → packed **u8** RGB. Stays on
 /// the i32 Q15 pipeline — output-range scaling keeps `coeff × u_d`
 /// within i32 for u8 output.
+///
+/// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_row`] with `ALPHA = false`.
 ///
 /// # Safety
 ///
@@ -1074,10 +1488,63 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p16_to_rgb_or_rgba_row::<false>(y, u, v, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// SSE4.1 YUV 4:4:4 planar **16-bit** → packed **8-bit RGBA**
+/// (`R, G, B, 0xFF`). Same numerical contract as
+/// [`yuv_444p16_to_rgb_row`].
+///
+/// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`yuv_444p16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_444p16_to_rgba_row(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p16_to_rgb_or_rgba_row::<true>(y, u, v, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared SSE4.1 16-bit YUV 4:4:4 kernel for [`yuv_444p16_to_rgb_row`]
+/// (`ALPHA = false`, `write_rgb_16`) and [`yuv_444p16_to_rgba_row`]
+/// (`ALPHA = true`, `write_rgba_16` with constant `0xFF` alpha).
+///
+/// # Safety
+///
+/// 1. **SSE4.1 must be available.**
+/// 2. `y.len() >= width`, `u.len() >= width`, `v.len() >= width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_row<const ALPHA: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(u.len() >= width);
   debug_assert!(v.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<16, 8>(full_range);
@@ -1095,6 +1562,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_row(
     let cgv = _mm_set1_epi32(coeffs.g_v());
     let cbu = _mm_set1_epi32(coeffs.b_u());
     let cbv = _mm_set1_epi32(coeffs.b_v());
+    let alpha_u8 = _mm_set1_epi8(-1);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -1149,20 +1617,27 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_row(
       let g_u8 = _mm_packus_epi16(g_lo, g_hi);
       let b_u8 = _mm_packus_epi16(b_lo, b_hi);
 
-      write_rgb_16(r_u8, g_u8, b_u8, rgb_out.as_mut_ptr().add(x * 3));
+      if ALPHA {
+        write_rgba_16(r_u8, g_u8, b_u8, alpha_u8, out.as_mut_ptr().add(x * 4));
+      } else {
+        write_rgb_16(r_u8, g_u8, b_u8, out.as_mut_ptr().add(x * 3));
+      }
       x += 16;
     }
 
     if x < width {
-      scalar::yuv_444p16_to_rgb_row(
-        &y[x..width],
-        &u[x..width],
-        &v[x..width],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_u = &u[x..width];
+      let tail_v = &v[x..width];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::yuv_444p16_to_rgba_row(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      } else {
+        scalar::yuv_444p16_to_rgb_row(tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
@@ -1176,6 +1651,8 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_row(
 /// Differs from [`yuv_420p16_to_rgb_u16_row`] by loading 8 full-width
 /// U/V (vs 4 half-width), computing 8 chroma values (vs 4 + dup), and
 /// skipping the chroma-duplication step.
+///
+/// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.
 ///
 /// # Safety
 ///
@@ -1191,16 +1668,69 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p16_to_rgb_or_rgba_u16_row::<false>(y, u, v, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// SSE4.1 sibling of [`yuv_444p16_to_rgba_row`] for native-depth `u16`
+/// output. Alpha samples are `0xFFFF`.
+///
+/// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_u16_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`yuv_444p16_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_444p16_to_rgba_u16_row(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_444p16_to_rgb_or_rgba_u16_row::<true>(y, u, v, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared SSE4.1 16-bit YUV 4:4:4 → native-depth `u16` kernel.
+/// `ALPHA = false` writes RGB triples; `ALPHA = true` writes RGBA
+/// quads with constant alpha `0xFFFF`.
+///
+/// # Safety
+///
+/// 1. **SSE4.1 must be available on the current CPU.**
+/// 2. `y.len() >= width`, `u.len() >= width`, `v.len() >= width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(u.len() >= width);
   debug_assert!(v.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<16, 16>(full_range);
   const RND: i64 = 1 << 14;
 
   unsafe {
+    let alpha_u16 = _mm_set1_epi16(-1i16);
     let rnd_v = _mm_set1_epi64x(RND);
     let y_off_v = _mm_set1_epi32(y_off);
     let y_scale_v = _mm_set1_epi32(y_scale);
@@ -1318,20 +1848,29 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_u16_row(
         _mm_add_epi32(y_hi_i32, b_ch_hi_i32),
       );
 
-      write_rgb_u16_8(r_u16, g_u16, b_u16, rgb_out.as_mut_ptr().add(x * 3));
+      if ALPHA {
+        write_rgba_u16_8(r_u16, g_u16, b_u16, alpha_u16, out.as_mut_ptr().add(x * 4));
+      } else {
+        write_rgb_u16_8(r_u16, g_u16, b_u16, out.as_mut_ptr().add(x * 3));
+      }
       x += 8;
     }
 
     if x < width {
-      scalar::yuv_444p16_to_rgb_u16_row(
-        &y[x..width],
-        &u[x..width],
-        &v[x..width],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_u = &u[x..width];
+      let tail_v = &v[x..width];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::yuv_444p16_to_rgba_u16_row(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      } else {
+        scalar::yuv_444p16_to_rgb_u16_row(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      }
     }
   }
 }
@@ -2146,6 +2685,8 @@ fn scale_y16_i64(y_minus_off: __m128i, y_scale_v: __m128i, rnd_v: __m128i) -> __
 /// 2. `width & 1 == 0`.
 /// 3. `y.len() >= width`, `u_half.len() >= width / 2`,
 ///    `v_half.len() >= width / 2`, `rgb_out.len() >= 3 * width`.
+///
+/// Thin wrapper over [`yuv_420p16_to_rgb_or_rgba_row`] with `ALPHA = false`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn yuv_420p16_to_rgb_row(
@@ -2157,11 +2698,64 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_420p16_to_rgb_or_rgba_row::<false>(y, u_half, v_half, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// SSE4.1 16-bit YUV 4:2:0 → packed **8-bit RGBA** (`R, G, B, 0xFF`).
+///
+/// Thin wrapper over [`yuv_420p16_to_rgb_or_rgba_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`yuv_420p16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_420p16_to_rgba_row(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    yuv_420p16_to_rgb_or_rgba_row::<true>(y, u_half, v_half, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared SSE4.1 16-bit YUV 4:2:0 kernel for [`yuv_420p16_to_rgb_row`]
+/// (`ALPHA = false`, `write_rgb_16`) and [`yuv_420p16_to_rgba_row`]
+/// (`ALPHA = true`, `write_rgba_16` with constant `0xFF` alpha).
+///
+/// # Safety
+///
+/// 1. **SSE4.1 must be available on the current CPU.**
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `u_half.len() >= width / 2`,
+///    `v_half.len() >= width / 2`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_row<const ALPHA: bool>(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert_eq!(width & 1, 0);
   debug_assert!(y.len() >= width);
   debug_assert!(u_half.len() >= width / 2);
   debug_assert!(v_half.len() >= width / 2);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<16, 8>(full_range);
@@ -2180,6 +2774,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_row(
     let cgv = _mm_set1_epi32(coeffs.g_v());
     let cbu = _mm_set1_epi32(coeffs.b_u());
     let cbv = _mm_set1_epi32(coeffs.b_v());
+    let alpha_u8 = _mm_set1_epi8(-1);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -2228,20 +2823,27 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_row(
       let g_u8 = _mm_packus_epi16(g_lo, g_hi);
       let b_u8 = _mm_packus_epi16(b_lo, b_hi);
 
-      write_rgb_16(r_u8, g_u8, b_u8, rgb_out.as_mut_ptr().add(x * 3));
+      if ALPHA {
+        write_rgba_16(r_u8, g_u8, b_u8, alpha_u8, out.as_mut_ptr().add(x * 4));
+      } else {
+        write_rgb_16(r_u8, g_u8, b_u8, out.as_mut_ptr().add(x * 3));
+      }
       x += 16;
     }
 
     if x < width {
-      scalar::yuv_420p16_to_rgb_row(
-        &y[x..width],
-        &u_half[x / 2..width / 2],
-        &v_half[x / 2..width / 2],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_u = &u_half[x / 2..width / 2];
+      let tail_v = &v_half[x / 2..width / 2];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::yuv_420p16_to_rgba_row(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      } else {
+        scalar::yuv_420p16_to_rgb_row(tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
@@ -2266,17 +2868,72 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  unsafe {
+    yuv_420p16_to_rgb_or_rgba_u16_row::<false>(
+      y, u_half, v_half, rgb_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// SSE4.1 sibling of [`yuv_420p16_to_rgba_row`] for native-depth `u16`
+/// output. Alpha is `0xFFFF`.
+///
+/// # Safety
+///
+/// Same as [`yuv_420p16_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_420p16_to_rgba_u16_row(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    yuv_420p16_to_rgb_or_rgba_u16_row::<true>(
+      y, u_half, v_half, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// Shared SSE4.1 16-bit YUV 4:2:0 → native-depth `u16` kernel.
+/// `ALPHA = false` writes RGB triples; `ALPHA = true` writes RGBA
+/// quads with constant alpha `0xFFFF`.
+///
+/// # Safety
+///
+/// 1. **SSE4.1 must be available on the current CPU.**
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `u_half.len() >= width / 2`,
+///    `v_half.len() >= width / 2`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert_eq!(width & 1, 0);
   debug_assert!(y.len() >= width);
   debug_assert!(u_half.len() >= width / 2);
   debug_assert!(v_half.len() >= width / 2);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<16, 16>(full_range);
   const RND: i64 = 1 << 14;
 
   unsafe {
+    let alpha_u16 = _mm_set1_epi16(-1i16);
     let rnd_v = _mm_set1_epi64x(RND);
     let y_off_v = _mm_set1_epi32(y_off);
     let y_scale_v = _mm_set1_epi32(y_scale);
@@ -2386,25 +3043,35 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_u16_row(
         _mm_add_epi32(y_hi_i32, b_dup_hi),
       );
 
-      write_rgb_u16_8(
-        r_lo_u16,
-        g_lo_u16,
-        b_lo_u16,
-        rgb_out.as_mut_ptr().add(x * 3),
-      );
+      if ALPHA {
+        write_rgba_u16_8(
+          r_lo_u16,
+          g_lo_u16,
+          b_lo_u16,
+          alpha_u16,
+          out.as_mut_ptr().add(x * 4),
+        );
+      } else {
+        write_rgb_u16_8(r_lo_u16, g_lo_u16, b_lo_u16, out.as_mut_ptr().add(x * 3));
+      }
       x += 8;
     }
 
     if x < width {
-      scalar::yuv_420p16_to_rgb_u16_row(
-        &y[x..width],
-        &u_half[x / 2..width / 2],
-        &v_half[x / 2..width / 2],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_u = &u_half[x / 2..width / 2];
+      let tail_v = &v_half[x / 2..width / 2];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::yuv_420p16_to_rgba_u16_row(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      } else {
+        scalar::yuv_420p16_to_rgb_u16_row(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
+      }
     }
   }
 }
@@ -2419,6 +3086,8 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_u16_row(
 /// 1. **SSE4.1 must be available on the current CPU.**
 /// 2. `width & 1 == 0`.
 /// 3. `y.len() >= width`, `uv_half.len() >= width`, `rgb_out.len() >= 3 * width`.
+///
+/// Thin wrapper over [`p16_to_rgb_or_rgba_row`] with `ALPHA = false`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn p16_to_rgb_row(
@@ -2429,10 +3098,60 @@ pub(crate) unsafe fn p16_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p16_to_rgb_or_rgba_row::<false>(y, uv_half, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// SSE4.1 P016 → packed **8-bit RGBA** (`R, G, B, 0xFF`).
+///
+/// Thin wrapper over [`p16_to_rgb_or_rgba_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`p16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn p16_to_rgba_row(
+  y: &[u16],
+  uv_half: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p16_to_rgb_or_rgba_row::<true>(y, uv_half, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared SSE4.1 P016 kernel for [`p16_to_rgb_row`] (`ALPHA = false`,
+/// `write_rgb_16`) and [`p16_to_rgba_row`] (`ALPHA = true`,
+/// `write_rgba_16` with constant `0xFF` alpha).
+///
+/// # Safety
+///
+/// 1. **SSE4.1 must be available on the current CPU.**
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `uv_half.len() >= width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn p16_to_rgb_or_rgba_row<const ALPHA: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert_eq!(width & 1, 0);
   debug_assert!(y.len() >= width);
   debug_assert!(uv_half.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<16, 8>(full_range);
@@ -2450,6 +3169,7 @@ pub(crate) unsafe fn p16_to_rgb_row(
     let cgv = _mm_set1_epi32(coeffs.g_v());
     let cbu = _mm_set1_epi32(coeffs.b_u());
     let cbv = _mm_set1_epi32(coeffs.b_v());
+    let alpha_u8 = _mm_set1_epi8(-1);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -2495,19 +3215,24 @@ pub(crate) unsafe fn p16_to_rgb_row(
       let g_u8 = _mm_packus_epi16(g_lo, g_hi);
       let b_u8 = _mm_packus_epi16(b_lo, b_hi);
 
-      write_rgb_16(r_u8, g_u8, b_u8, rgb_out.as_mut_ptr().add(x * 3));
+      if ALPHA {
+        write_rgba_16(r_u8, g_u8, b_u8, alpha_u8, out.as_mut_ptr().add(x * 4));
+      } else {
+        write_rgb_16(r_u8, g_u8, b_u8, out.as_mut_ptr().add(x * 3));
+      }
       x += 16;
     }
 
     if x < width {
-      scalar::p16_to_rgb_row(
-        &y[x..width],
-        &uv_half[x..width],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_half[x..width];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::p16_to_rgba_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      } else {
+        scalar::p16_to_rgb_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
@@ -2527,16 +3252,64 @@ pub(crate) unsafe fn p16_to_rgb_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  unsafe {
+    p16_to_rgb_or_rgba_u16_row::<false>(y, uv_half, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// SSE4.1 sibling of [`p16_to_rgba_row`] for native-depth `u16` output.
+/// Alpha is `0xFFFF`.
+///
+/// # Safety
+///
+/// Same as [`p16_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn p16_to_rgba_u16_row(
+  y: &[u16],
+  uv_half: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    p16_to_rgb_or_rgba_u16_row::<true>(y, uv_half, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared SSE4.1 16-bit P016 → native-depth `u16` kernel.
+/// `ALPHA = false` writes RGB triples; `ALPHA = true` writes RGBA
+/// quads with constant alpha `0xFFFF`.
+///
+/// # Safety
+///
+/// 1. **SSE4.1 must be available on the current CPU.**
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `uv_half.len() >= width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert_eq!(width & 1, 0);
   debug_assert!(y.len() >= width);
   debug_assert!(uv_half.len() >= width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<16, 16>(full_range);
   const RND: i64 = 1 << 14;
 
   unsafe {
+    let alpha_u16 = _mm_set1_epi16(-1i16);
     let rnd_v = _mm_set1_epi64x(RND);
     let y_off_v = _mm_set1_epi32(y_off);
     let y_scale_v = _mm_set1_epi32(y_scale);
@@ -2634,19 +3407,24 @@ pub(crate) unsafe fn p16_to_rgb_u16_row(
         _mm_add_epi32(y_hi_i32, b_dup_hi),
       );
 
-      write_rgb_u16_8(r_u16, g_u16, b_u16, rgb_out.as_mut_ptr().add(x * 3));
+      if ALPHA {
+        write_rgba_u16_8(r_u16, g_u16, b_u16, alpha_u16, out.as_mut_ptr().add(x * 4));
+      } else {
+        write_rgb_u16_8(r_u16, g_u16, b_u16, out.as_mut_ptr().add(x * 3));
+      }
       x += 8;
     }
 
     if x < width {
-      scalar::p16_to_rgb_u16_row(
-        &y[x..width],
-        &uv_half[x..width],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_half[x..width];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::p16_to_rgba_u16_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      } else {
+        scalar::p16_to_rgb_u16_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
@@ -2661,6 +3439,8 @@ pub(crate) unsafe fn p16_to_rgb_u16_row(
 // `deinterleave_uv_u16` calls).
 
 /// SSE4.1 Pn 4:4:4 high-bit-packed (BITS ∈ {10, 12}) → packed **u8** RGB.
+///
+/// Thin wrapper over [`p_n_444_to_rgb_or_rgba_row`] with `ALPHA = false`.
 ///
 /// # Safety
 ///
@@ -2677,10 +3457,62 @@ pub(crate) unsafe fn p_n_444_to_rgb_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_444_to_rgb_or_rgba_row::<BITS, false>(y, uv_full, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// SSE4.1 Pn 4:4:4 high-bit-packed (BITS ∈ {10, 12}) → packed **8-bit
+/// RGBA** (`R, G, B, 0xFF`).
+///
+/// Thin wrapper over [`p_n_444_to_rgb_or_rgba_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`p_n_444_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn p_n_444_to_rgba_row<const BITS: u32>(
+  y: &[u16],
+  uv_full: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_444_to_rgb_or_rgba_row::<BITS, true>(y, uv_full, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared SSE4.1 Pn 4:4:4 high-bit-packed kernel for
+/// [`p_n_444_to_rgb_row`] (`ALPHA = false`, `write_rgb_16`) and
+/// [`p_n_444_to_rgba_row`] (`ALPHA = true`, `write_rgba_16` with
+/// constant `0xFF` alpha).
+///
+/// # Safety
+///
+/// 1. SSE4.1 must be available on the current CPU.
+/// 2. `y.len() >= width`, `uv_full.len() >= 2 * width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+/// 3. `BITS` must be one of `{10, 12}`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn p_n_444_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
+  y: &[u16],
+  uv_full: &[u16],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
   const { assert!(BITS == 10 || BITS == 12) };
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(uv_full.len() >= 2 * width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<BITS, 8>(full_range);
@@ -2700,6 +3532,7 @@ pub(crate) unsafe fn p_n_444_to_rgb_row<const BITS: u32>(
     let cgv = _mm_set1_epi32(coeffs.g_v());
     let cbu = _mm_set1_epi32(coeffs.b_u());
     let cbv = _mm_set1_epi32(coeffs.b_v());
+    let alpha_u8 = _mm_set1_epi8(-1);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -2758,26 +3591,33 @@ pub(crate) unsafe fn p_n_444_to_rgb_row<const BITS: u32>(
       let g_u8 = _mm_packus_epi16(g_lo, g_hi);
       let r_u8 = _mm_packus_epi16(r_lo, r_hi);
 
-      write_rgb_16(r_u8, g_u8, b_u8, rgb_out.as_mut_ptr().add(x * 3));
+      if ALPHA {
+        write_rgba_16(r_u8, g_u8, b_u8, alpha_u8, out.as_mut_ptr().add(x * 4));
+      } else {
+        write_rgb_16(r_u8, g_u8, b_u8, out.as_mut_ptr().add(x * 3));
+      }
 
       x += 16;
     }
 
     if x < width {
-      scalar::p_n_444_to_rgb_row::<BITS>(
-        &y[x..width],
-        &uv_full[x * 2..width * 2],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_full[x * 2..width * 2];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::p_n_444_to_rgba_row::<BITS>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      } else {
+        scalar::p_n_444_to_rgb_row::<BITS>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
 
 /// SSE4.1 Pn 4:4:4 high-bit-packed (BITS ∈ {10, 12}) → packed
 /// **native-depth `u16`** RGB. Output is low-bit-packed.
+///
+/// Thin wrapper over [`p_n_444_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.
 ///
 /// # Safety
 ///
@@ -2794,10 +3634,63 @@ pub(crate) unsafe fn p_n_444_to_rgb_u16_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_444_to_rgb_or_rgba_u16_row::<BITS, false>(y, uv_full, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// SSE4.1 sibling of [`p_n_444_to_rgba_row`] for native-depth `u16`
+/// output. Alpha samples are `(1 << BITS) - 1` (opaque maximum at the
+/// input bit depth).
+///
+/// Thin wrapper over [`p_n_444_to_rgb_or_rgba_u16_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`p_n_444_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn p_n_444_to_rgba_u16_row<const BITS: u32>(
+  y: &[u16],
+  uv_full: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_444_to_rgb_or_rgba_u16_row::<BITS, true>(y, uv_full, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared SSE4.1 Pn 4:4:4 high-bit-packed → native-depth `u16` kernel.
+/// `ALPHA = false` writes RGB triples via `write_rgb_u16_8`;
+/// `ALPHA = true` writes RGBA quads via `write_rgba_u16_8` with
+/// constant alpha `(1 << BITS) - 1`.
+///
+/// # Safety
+///
+/// 1. SSE4.1 must be available on the current CPU.
+/// 2. `y.len() >= width`, `uv_full.len() >= 2 * width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+/// 3. `BITS` ∈ `{10, 12}`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn p_n_444_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
+  y: &[u16],
+  uv_full: &[u16],
+  out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
   const { assert!(BITS == 10 || BITS == 12) };
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(uv_full.len() >= 2 * width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<BITS, BITS>(full_range);
@@ -2820,6 +3713,7 @@ pub(crate) unsafe fn p_n_444_to_rgb_u16_row<const BITS: u32>(
     let cgv = _mm_set1_epi32(coeffs.g_v());
     let cbu = _mm_set1_epi32(coeffs.b_u());
     let cbv = _mm_set1_epi32(coeffs.b_v());
+    let alpha_u16 = _mm_set1_epi16(out_max);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -2873,21 +3767,37 @@ pub(crate) unsafe fn p_n_444_to_rgb_u16_row<const BITS: u32>(
       let b_lo = clamp_u16_max(_mm_adds_epi16(y_scaled_lo, b_chroma_lo), zero_v, max_v);
       let b_hi = clamp_u16_max(_mm_adds_epi16(y_scaled_hi, b_chroma_hi), zero_v, max_v);
 
-      write_rgb_u16_8(r_lo, g_lo, b_lo, rgb_out.as_mut_ptr().add(x * 3));
-      write_rgb_u16_8(r_hi, g_hi, b_hi, rgb_out.as_mut_ptr().add(x * 3 + 24));
+      if ALPHA {
+        write_rgba_u16_8(r_lo, g_lo, b_lo, alpha_u16, out.as_mut_ptr().add(x * 4));
+        write_rgba_u16_8(
+          r_hi,
+          g_hi,
+          b_hi,
+          alpha_u16,
+          out.as_mut_ptr().add(x * 4 + 32),
+        );
+      } else {
+        write_rgb_u16_8(r_lo, g_lo, b_lo, out.as_mut_ptr().add(x * 3));
+        write_rgb_u16_8(r_hi, g_hi, b_hi, out.as_mut_ptr().add(x * 3 + 24));
+      }
 
       x += 16;
     }
 
     if x < width {
-      scalar::p_n_444_to_rgb_u16_row::<BITS>(
-        &y[x..width],
-        &uv_full[x * 2..width * 2],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_full[x * 2..width * 2];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::p_n_444_to_rgba_u16_row::<BITS>(
+          tail_y, tail_uv, tail_out, tail_w, matrix, full_range,
+        );
+      } else {
+        scalar::p_n_444_to_rgb_u16_row::<BITS>(
+          tail_y, tail_uv, tail_out, tail_w, matrix, full_range,
+        );
+      }
     }
   }
 }
@@ -2896,6 +3806,8 @@ pub(crate) unsafe fn p_n_444_to_rgb_u16_row<const BITS: u32>(
 /// chroma both stay on i32 (output-range scaling keeps `coeff × u_d`
 /// within i32 for u8 output). Mirrors `yuv_444p16_to_rgb_row` with
 /// full-width interleaved UV via `deinterleave_uv_u16`.
+///
+/// Thin wrapper over [`p_n_444_16_to_rgb_or_rgba_row`] with `ALPHA = false`.
 ///
 /// # Safety
 ///
@@ -2912,9 +3824,60 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_444_16_to_rgb_or_rgba_row::<false>(y, uv_full, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// SSE4.1 P416 (semi-planar 4:4:4, 16-bit) → packed **8-bit RGBA**
+/// (`R, G, B, 0xFF`). Same numerical contract as
+/// [`p_n_444_16_to_rgb_row`].
+///
+/// Thin wrapper over [`p_n_444_16_to_rgb_or_rgba_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`p_n_444_16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn p_n_444_16_to_rgba_row(
+  y: &[u16],
+  uv_full: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_444_16_to_rgb_or_rgba_row::<true>(y, uv_full, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared SSE4.1 P416 kernel for [`p_n_444_16_to_rgb_row`]
+/// (`ALPHA = false`, `write_rgb_16`) and [`p_n_444_16_to_rgba_row`]
+/// (`ALPHA = true`, `write_rgba_16` with constant `0xFF` alpha).
+///
+/// # Safety
+///
+/// 1. SSE4.1 must be available.
+/// 2. `y.len() >= width`, `uv_full.len() >= 2 * width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn p_n_444_16_to_rgb_or_rgba_row<const ALPHA: bool>(
+  y: &[u16],
+  uv_full: &[u16],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(uv_full.len() >= 2 * width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<16, 8>(full_range);
@@ -2932,6 +3895,7 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_row(
     let cgv = _mm_set1_epi32(coeffs.g_v());
     let cbu = _mm_set1_epi32(coeffs.b_u());
     let cbv = _mm_set1_epi32(coeffs.b_v());
+    let alpha_u8 = _mm_set1_epi8(-1);
 
     let mut x = 0usize;
     while x + 16 <= width {
@@ -2986,19 +3950,24 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_row(
       let g_u8 = _mm_packus_epi16(g_lo, g_hi);
       let b_u8 = _mm_packus_epi16(b_lo, b_hi);
 
-      write_rgb_16(r_u8, g_u8, b_u8, rgb_out.as_mut_ptr().add(x * 3));
+      if ALPHA {
+        write_rgba_16(r_u8, g_u8, b_u8, alpha_u8, out.as_mut_ptr().add(x * 4));
+      } else {
+        write_rgb_16(r_u8, g_u8, b_u8, out.as_mut_ptr().add(x * 3));
+      }
       x += 16;
     }
 
     if x < width {
-      scalar::p_n_444_16_to_rgb_row(
-        &y[x..width],
-        &uv_full[x * 2..width * 2],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_full[x * 2..width * 2];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::p_n_444_16_to_rgba_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      } else {
+        scalar::p_n_444_16_to_rgb_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
@@ -3006,6 +3975,8 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_row(
 /// SSE4.1 P416 → packed **native-depth u16** RGB. i64 chroma via
 /// `_mm_mul_epi32` + `srai64_15` bias trick (mirroring
 /// `yuv_444p16_to_rgb_u16_row`). 8 pixels per iter.
+///
+/// Thin wrapper over [`p_n_444_16_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.
 ///
 /// # Safety
 ///
@@ -3020,15 +3991,66 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_444_16_to_rgb_or_rgba_u16_row::<false>(y, uv_full, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// SSE4.1 sibling of [`p_n_444_16_to_rgba_row`] for native-depth `u16`
+/// output. Alpha samples are `0xFFFF`.
+///
+/// Thin wrapper over [`p_n_444_16_to_rgb_or_rgba_u16_row`] with `ALPHA = true`.
+///
+/// # Safety
+///
+/// Same as [`p_n_444_16_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn p_n_444_16_to_rgba_u16_row(
+  y: &[u16],
+  uv_full: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_444_16_to_rgb_or_rgba_u16_row::<true>(y, uv_full, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// Shared SSE4.1 P416 (semi-planar 4:4:4, 16-bit) → native-depth `u16`
+/// kernel. `ALPHA = false` writes RGB triples; `ALPHA = true` writes
+/// RGBA quads with constant alpha `0xFFFF`.
+///
+/// # Safety
+///
+/// 1. SSE4.1 must be available.
+/// 2. `y.len() >= width`, `uv_full.len() >= 2 * width`,
+///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn p_n_444_16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
+  y: &[u16],
+  uv_full: &[u16],
+  out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(y.len() >= width);
   debug_assert!(uv_full.len() >= 2 * width);
-  debug_assert!(rgb_out.len() >= width * 3);
+  debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = scalar::range_params_n::<16, 16>(full_range);
   const RND: i64 = 1 << 14;
 
   unsafe {
+    let alpha_u16 = _mm_set1_epi16(-1i16);
     let rnd_v = _mm_set1_epi64x(RND);
     let y_off_v = _mm_set1_epi32(y_off);
     let y_scale_v = _mm_set1_epi32(y_scale);
@@ -3141,19 +4163,24 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_u16_row(
         _mm_add_epi32(y_hi_i32, b_ch_hi_i32),
       );
 
-      write_rgb_u16_8(r_u16, g_u16, b_u16, rgb_out.as_mut_ptr().add(x * 3));
+      if ALPHA {
+        write_rgba_u16_8(r_u16, g_u16, b_u16, alpha_u16, out.as_mut_ptr().add(x * 4));
+      } else {
+        write_rgb_u16_8(r_u16, g_u16, b_u16, out.as_mut_ptr().add(x * 3));
+      }
       x += 8;
     }
 
     if x < width {
-      scalar::p_n_444_16_to_rgb_u16_row(
-        &y[x..width],
-        &uv_full[x * 2..width * 2],
-        &mut rgb_out[x * 3..width * 3],
-        width - x,
-        matrix,
-        full_range,
-      );
+      let tail_y = &y[x..width];
+      let tail_uv = &uv_full[x * 2..width * 2];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      let tail_w = width - x;
+      if ALPHA {
+        scalar::p_n_444_16_to_rgba_u16_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      } else {
+        scalar::p_n_444_16_to_rgb_u16_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+      }
     }
   }
 }
