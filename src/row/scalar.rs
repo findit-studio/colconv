@@ -3261,6 +3261,83 @@ pub(crate) fn rgb_to_hsv_row(
   }
 }
 
+/// Q15 RGB → luma coefficients `(k_r, k_g, k_b)` for a given color
+/// matrix. `k_r + k_g + k_b ≈ 32768` (1.0 in Q15) — minor rounding
+/// imbalance is below quantization noise. Used by
+/// [`rgb_to_luma_row`] to derive the Y' channel from packed RGB
+/// sources (Tier 6 / Ship 9a).
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(super) const fn luma_coefficients_q15(matrix: ColorMatrix) -> (i32, i32, i32) {
+  match matrix {
+    // BT.601: Kr=0.299, Kg=0.587, Kb=0.114.
+    ColorMatrix::Bt601 | ColorMatrix::Fcc => (9798, 19235, 3735),
+    // BT.709: Kr=0.2126, Kg=0.7152, Kb=0.0722.
+    ColorMatrix::Bt709 => (6966, 23436, 2366),
+    // BT.2020-NCL: Kr=0.2627, Kg=0.6780, Kb=0.0593.
+    ColorMatrix::Bt2020Ncl => (8607, 22217, 1944),
+    // SMPTE 240M: Kr=0.212, Kg=0.701, Kb=0.087.
+    ColorMatrix::Smpte240m => (6947, 22971, 2851),
+    // YCgCo: Y = 0.25 R + 0.5 G + 0.25 B (lossless integer).
+    ColorMatrix::YCgCo => (8192, 16384, 8192),
+  }
+}
+
+/// Derives luma (Y') from packed RGB into a single-channel `u8`
+/// plane.
+///
+/// `matrix` selects the BT.* coefficient set;
+/// `full_range = true` produces full-range Y' in `[0, 255]`,
+/// `full_range = false` produces limited-range Y' in `[16, 235]`
+/// (the standard YUV studio range).
+///
+/// # Panics
+///
+/// Panics (in any build profile, not just debug) if
+/// `rgb.len() < 3 * width` or `luma_out.len() < width` — the inner
+/// loop indexes `rgb[x * 3 + i]` and `luma_out[x]` directly, so
+/// undersized slices fault on bounds-check rather than producing
+/// undefined output. The `debug_assert!`s below add a clearer
+/// message in debug builds; the bounds check is unconditional.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgb_to_luma_row(
+  rgb: &[u8],
+  luma_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(rgb.len() >= width * 3, "rgb row too short");
+  debug_assert!(luma_out.len() >= width, "luma row too short");
+  let (k_r, k_g, k_b) = luma_coefficients_q15(matrix);
+  const RND: i32 = 1 << 14;
+
+  if full_range {
+    for x in 0..width {
+      let r = rgb[x * 3] as i32;
+      let g = rgb[x * 3 + 1] as i32;
+      let b = rgb[x * 3 + 2] as i32;
+      // Q15 weighted sum: each k_x ≤ 32768, sample ≤ 255, so each
+      // term ≤ 8.4M; sum ≤ 32768 * 255 ≈ 8.4M ≪ i32::MAX.
+      let y = (k_r * r + k_g * g + k_b * b + RND) >> 15;
+      luma_out[x] = y.clamp(0, 255) as u8;
+    }
+  } else {
+    // Limited range: Y_lim = 16 + (Y_full * 219 / 255).
+    // 219 / 255 ≈ 0.85882; * 2^15 ≈ 28142 (Q15).
+    // (`round(219 * 32768 / 255)` evaluates to 28142.)
+    const LIMITED_SCALE_Q15: i32 = 28142;
+    for x in 0..width {
+      let r = rgb[x * 3] as i32;
+      let g = rgb[x * 3 + 1] as i32;
+      let b = rgb[x * 3 + 2] as i32;
+      let y_full = (k_r * r + k_g * g + k_b * b + RND) >> 15;
+      let y_full_clamped = y_full.clamp(0, 255);
+      let y_lim = 16 + ((y_full_clamped * LIMITED_SCALE_Q15 + RND) >> 15);
+      luma_out[x] = y_lim.clamp(0, 255) as u8;
+    }
+  }
+}
+
 /// Scalar RGB → HSV for a single pixel, using the shared division LUTs.
 /// All arithmetic is integer; the two divisions `s = 255*delta/v` and
 /// `h = 30*diff/delta` become `(operand * table[divisor] + RND) >> 12`.
@@ -3310,6 +3387,277 @@ pub(crate) fn bgr_rgb_swap_row(input: &[u8], output: &mut [u8], width: usize) {
     output[i] = input[i + 2];
     output[i + 1] = input[i + 1];
     output[i + 2] = input[i];
+  }
+}
+
+// ---- Tier 6 packed-RGBA helpers (Ship 9b) ------------------------------
+//
+// Compact byte-rearrangement kernels behind the [`Rgba`] / [`Bgra`]
+// source-side sinker family. This file provides the scalar reference /
+// fallback implementations; SIMD dispatch and the per-arch backends
+// (NEON / SSE4.1 / AVX2 / AVX-512 / wasm-simd128) live in
+// `row::dispatch::rgb_ops` and `row::arch::*`.
+
+/// Drops the alpha byte from packed `R, G, B, A` input, producing
+/// packed `R, G, B` output (`4 * width` → `3 * width` bytes).
+///
+/// # Panics
+///
+/// Panics (any build profile) if `rgba.len() < 4 * width` or
+/// `rgb_out.len() < 3 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgba_to_rgb_row(rgba: &[u8], rgb_out: &mut [u8], width: usize) {
+  debug_assert!(rgba.len() >= width * 4, "rgba row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+  for x in 0..width {
+    let src = x * 4;
+    let dst = x * 3;
+    rgb_out[dst] = rgba[src];
+    rgb_out[dst + 1] = rgba[src + 1];
+    rgb_out[dst + 2] = rgba[src + 2];
+  }
+}
+
+/// Swaps R↔B in packed `B, G, R, A` input, producing packed
+/// `R, G, B, A` (alpha lane preserved). The transformation is
+/// self‑inverse, so the same routine can be used for
+/// `BGRA → RGBA` and `RGBA → BGRA`.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `bgra.len() < 4 * width` or
+/// `rgba_out.len() < 4 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn bgra_to_rgba_row(bgra: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(bgra.len() >= width * 4, "bgra row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+  for x in 0..width {
+    let i = x * 4;
+    rgba_out[i] = bgra[i + 2];
+    rgba_out[i + 1] = bgra[i + 1];
+    rgba_out[i + 2] = bgra[i];
+    rgba_out[i + 3] = bgra[i + 3];
+  }
+}
+
+/// Swaps R↔B and drops alpha from packed `B, G, R, A` input,
+/// producing packed `R, G, B` (`4 * width` → `3 * width` bytes).
+/// Used by [`Bgra`](crate::yuv::Bgra) sinker's RGB / luma / HSV
+/// paths — stages a single RGB scratch row that all three reuse.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `bgra.len() < 4 * width` or
+/// `rgb_out.len() < 3 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn bgra_to_rgb_row(bgra: &[u8], rgb_out: &mut [u8], width: usize) {
+  debug_assert!(bgra.len() >= width * 4, "bgra row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+  for x in 0..width {
+    let src = x * 4;
+    let dst = x * 3;
+    rgb_out[dst] = bgra[src + 2];
+    rgb_out[dst + 1] = bgra[src + 1];
+    rgb_out[dst + 2] = bgra[src];
+  }
+}
+
+// ---- Tier 6 leading-alpha helpers (Ship 9c) ----------------------------
+//
+// Compact byte-rearrangement kernels behind the [`Argb`] / [`Abgr`]
+// source-side sinker family. Like Ship 9b, this file provides the
+// scalar reference / fallback implementations; SIMD dispatch and the
+// per-arch backends live in `row::dispatch::rgb_ops` and
+// `row::arch::*`.
+//
+// `Argb` and `Abgr` differ from `Rgba` / `Bgra` only in alpha
+// position — the 4th byte for the trailing-alpha pair, the **0th**
+// byte for the leading-alpha pair. The inner three RGB bytes still
+// follow each format's marker name.
+
+/// Drops the leading alpha byte from packed `A, R, G, B` input,
+/// producing packed `R, G, B` output (`4 * width` → `3 * width`
+/// bytes).
+///
+/// # Panics
+///
+/// Panics (any build profile) if `argb.len() < 4 * width` or
+/// `rgb_out.len() < 3 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn argb_to_rgb_row(argb: &[u8], rgb_out: &mut [u8], width: usize) {
+  debug_assert!(argb.len() >= width * 4, "argb row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+  for x in 0..width {
+    let src = x * 4;
+    let dst = x * 3;
+    rgb_out[dst] = argb[src + 1];
+    rgb_out[dst + 1] = argb[src + 2];
+    rgb_out[dst + 2] = argb[src + 3];
+  }
+}
+
+/// Swaps R↔B and drops the leading alpha byte from packed
+/// `A, B, G, R` input, producing packed `R, G, B`. Used by
+/// [`Abgr`](crate::yuv::Abgr) sinker's RGB / luma / HSV paths —
+/// stages a single RGB scratch row that all three reuse.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `abgr.len() < 4 * width` or
+/// `rgb_out.len() < 3 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn abgr_to_rgb_row(abgr: &[u8], rgb_out: &mut [u8], width: usize) {
+  debug_assert!(abgr.len() >= width * 4, "abgr row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+  for x in 0..width {
+    let src = x * 4;
+    let dst = x * 3;
+    rgb_out[dst] = abgr[src + 3];
+    rgb_out[dst + 1] = abgr[src + 2];
+    rgb_out[dst + 2] = abgr[src + 1];
+  }
+}
+
+/// Rotates the alpha byte from leading position to trailing position
+/// in packed `A, R, G, B` input, producing packed `R, G, B, A`.
+/// Alpha pass-through — the rotation is the only mutation per pixel.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `argb.len() < 4 * width` or
+/// `rgba_out.len() < 4 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn argb_to_rgba_row(argb: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(argb.len() >= width * 4, "argb row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+  for x in 0..width {
+    let i = x * 4;
+    rgba_out[i] = argb[i + 1];
+    rgba_out[i + 1] = argb[i + 2];
+    rgba_out[i + 2] = argb[i + 3];
+    rgba_out[i + 3] = argb[i];
+  }
+}
+
+/// Reverses byte order in packed `A, B, G, R` input, producing
+/// packed `R, G, B, A`. Combines the leading-alpha → trailing-alpha
+/// rotation with an R↔B swap. Self-inverse: the same routine
+/// converts `RGBA → ABGR`.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `abgr.len() < 4 * width` or
+/// `rgba_out.len() < 4 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn abgr_to_rgba_row(abgr: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(abgr.len() >= width * 4, "abgr row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+  for x in 0..width {
+    let i = x * 4;
+    rgba_out[i] = abgr[i + 3];
+    rgba_out[i + 1] = abgr[i + 2];
+    rgba_out[i + 2] = abgr[i + 1];
+    rgba_out[i + 3] = abgr[i];
+  }
+}
+
+// ---- Tier 6 padding-byte helpers (Ship 9d) -----------------------------
+//
+// Compact byte-rearrangement kernels behind the [`Xrgb`] / [`Rgbx`] /
+// [`Xbgr`] / [`Bgrx`] source-side sinker family. The 4th byte position
+// (leading or trailing) is **ignored padding** — its value is undefined,
+// so the `*_to_rgba` kernels force alpha to `0xFF` rather than passing
+// through.
+//
+// `*_to_rgb` paths reuse the Ship 9b/9c kernels (`argb_to_rgb_row`,
+// `rgba_to_rgb_row`, `abgr_to_rgb_row`, `bgra_to_rgb_row`) — at the byte
+// level, "drop alpha" and "drop padding" are identical operations
+// because both ignore the same byte position.
+//
+// As with Ships 9b/9c, this file holds the scalar reference / fallback
+// implementations; SIMD dispatch lives in `row::dispatch::rgb_ops`
+// and the per-arch backends in `row::arch::*`.
+
+/// Drops the leading padding byte from packed `X, R, G, B` input,
+/// producing packed `R, G, B, A` with `A = 0xFF` (the source has no
+/// real alpha — `X` is undefined padding).
+///
+/// # Panics
+///
+/// Panics (any build profile) if `xrgb.len() < 4 * width` or
+/// `rgba_out.len() < 4 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn xrgb_to_rgba_row(xrgb: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(xrgb.len() >= width * 4, "xrgb row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+  for x in 0..width {
+    let i = x * 4;
+    rgba_out[i] = xrgb[i + 1];
+    rgba_out[i + 1] = xrgb[i + 2];
+    rgba_out[i + 2] = xrgb[i + 3];
+    rgba_out[i + 3] = 0xFF;
+  }
+}
+
+/// Drops the trailing padding byte from packed `R, G, B, X` input,
+/// producing packed `R, G, B, A` with `A = 0xFF`.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `rgbx.len() < 4 * width` or
+/// `rgba_out.len() < 4 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbx_to_rgba_row(rgbx: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(rgbx.len() >= width * 4, "rgbx row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+  for x in 0..width {
+    let i = x * 4;
+    rgba_out[i] = rgbx[i];
+    rgba_out[i + 1] = rgbx[i + 1];
+    rgba_out[i + 2] = rgbx[i + 2];
+    rgba_out[i + 3] = 0xFF;
+  }
+}
+
+/// Reverses the inner three bytes and drops the leading padding byte
+/// from packed `X, B, G, R` input, producing packed `R, G, B, A` with
+/// `A = 0xFF`.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `xbgr.len() < 4 * width` or
+/// `rgba_out.len() < 4 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn xbgr_to_rgba_row(xbgr: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(xbgr.len() >= width * 4, "xbgr row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+  for x in 0..width {
+    let i = x * 4;
+    rgba_out[i] = xbgr[i + 3];
+    rgba_out[i + 1] = xbgr[i + 2];
+    rgba_out[i + 2] = xbgr[i + 1];
+    rgba_out[i + 3] = 0xFF;
+  }
+}
+
+/// Reverses the inner three bytes and drops the trailing padding
+/// byte from packed `B, G, R, X` input, producing packed `R, G, B, A`
+/// with `A = 0xFF`.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `bgrx.len() < 4 * width` or
+/// `rgba_out.len() < 4 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn bgrx_to_rgba_row(bgrx: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(bgrx.len() >= width * 4, "bgrx row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+  for x in 0..width {
+    let i = x * 4;
+    rgba_out[i] = bgrx[i + 2];
+    rgba_out[i + 1] = bgrx[i + 1];
+    rgba_out[i + 2] = bgrx[i];
+    rgba_out[i + 3] = 0xFF;
   }
 }
 

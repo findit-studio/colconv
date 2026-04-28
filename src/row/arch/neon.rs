@@ -5361,5 +5361,402 @@ pub(crate) unsafe fn bgr_rgb_swap_row(input: &[u8], output: &mut [u8], width: us
   }
 }
 
+// ===== Packed-RGBA shuffles (Ship 9b) ====================================
+
+/// Drops the alpha byte from packed `R, G, B, A` input, producing
+/// packed `R, G, B` output. NEON makes this nearly free: `vld4q_u8`
+/// deinterleaves 16 RGBA pixels into four u8x16 channel vectors
+/// `(R, G, B, A)`, and `vst3q_u8` re-interleaves three of them as
+/// RGB triples — the alpha vector is simply discarded.
+///
+/// # Safety
+///
+/// 1. NEON must be available (caller obligation, same as the other
+///    NEON kernels).
+/// 2. `rgba.len() >= 4 * width`.
+/// 3. `rgb_out.len() >= 3 * width`.
+/// 4. `rgba` / `rgb_out` must not alias.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn rgba_to_rgb_row(rgba: &[u8], rgb_out: &mut [u8], width: usize) {
+  debug_assert!(rgba.len() >= width * 4, "rgba row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+
+  // SAFETY: NEON availability is the caller's obligation. All pointer
+  // adds are bounded by the `while x + 16 <= width` condition and the
+  // caller-promised slice lengths.
+  unsafe {
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let quad = vld4q_u8(rgba.as_ptr().add(x * 4));
+      let triple = uint8x16x3_t(quad.0, quad.1, quad.2);
+      vst3q_u8(rgb_out.as_mut_ptr().add(x * 3), triple);
+      x += 16;
+    }
+    if x < width {
+      scalar::rgba_to_rgb_row(
+        &rgba[x * 4..width * 4],
+        &mut rgb_out[x * 3..width * 3],
+        width - x,
+      );
+    }
+  }
+}
+
+/// Swaps R↔B in packed `B, G, R, A` input, producing packed
+/// `R, G, B, A` (alpha lane preserved). `vld4q_u8` deinterleaves
+/// 16 BGRA pixels into channel vectors `(B, G, R, A)`; `vst4q_u8`
+/// interleaves them back as `(R, G, B, A)` simply by reordering
+/// the channel-vector tuple.
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `bgra.len() >= 4 * width`.
+/// 3. `rgba_out.len() >= 4 * width`.
+/// 4. `bgra` / `rgba_out` must not alias.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn bgra_to_rgba_row(bgra: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(bgra.len() >= width * 4, "bgra row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  // SAFETY: NEON availability is the caller's obligation.
+  unsafe {
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let quad = vld4q_u8(bgra.as_ptr().add(x * 4));
+      let swapped = uint8x16x4_t(quad.2, quad.1, quad.0, quad.3);
+      vst4q_u8(rgba_out.as_mut_ptr().add(x * 4), swapped);
+      x += 16;
+    }
+    if x < width {
+      scalar::bgra_to_rgba_row(
+        &bgra[x * 4..width * 4],
+        &mut rgba_out[x * 4..width * 4],
+        width - x,
+      );
+    }
+  }
+}
+
+/// Swaps R↔B and drops alpha from packed `B, G, R, A` input,
+/// producing packed `R, G, B`. Combines [`rgba_to_rgb_row`]'s
+/// alpha drop with [`bgra_to_rgba_row`]'s channel swap in one pass:
+/// `vld4q_u8` → reorder vectors → `vst3q_u8` (alpha discarded).
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `bgra.len() >= 4 * width`.
+/// 3. `rgb_out.len() >= 3 * width`.
+/// 4. `bgra` / `rgb_out` must not alias.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn bgra_to_rgb_row(bgra: &[u8], rgb_out: &mut [u8], width: usize) {
+  debug_assert!(bgra.len() >= width * 4, "bgra row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+
+  // SAFETY: NEON availability is the caller's obligation.
+  unsafe {
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let quad = vld4q_u8(bgra.as_ptr().add(x * 4));
+      let triple = uint8x16x3_t(quad.2, quad.1, quad.0);
+      vst3q_u8(rgb_out.as_mut_ptr().add(x * 3), triple);
+      x += 16;
+    }
+    if x < width {
+      scalar::bgra_to_rgb_row(
+        &bgra[x * 4..width * 4],
+        &mut rgb_out[x * 3..width * 3],
+        width - x,
+      );
+    }
+  }
+}
+
+// ===== Leading-alpha shuffles (Ship 9c) ==================================
+
+/// Drops the leading alpha byte from packed `A, R, G, B` input,
+/// producing packed `R, G, B`. `vld4q_u8` deinterleaves 16 ARGB
+/// pixels into channel vectors `(A, R, G, B)`; `vst3q_u8` interleaves
+/// channels 1..3 (R, G, B) — the alpha vector is discarded.
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `argb.len() >= 4 * width`.
+/// 3. `rgb_out.len() >= 3 * width`.
+/// 4. `argb` / `rgb_out` must not alias.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn argb_to_rgb_row(argb: &[u8], rgb_out: &mut [u8], width: usize) {
+  debug_assert!(argb.len() >= width * 4, "argb row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+
+  unsafe {
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let quad = vld4q_u8(argb.as_ptr().add(x * 4));
+      let triple = uint8x16x3_t(quad.1, quad.2, quad.3);
+      vst3q_u8(rgb_out.as_mut_ptr().add(x * 3), triple);
+      x += 16;
+    }
+    if x < width {
+      scalar::argb_to_rgb_row(
+        &argb[x * 4..width * 4],
+        &mut rgb_out[x * 3..width * 3],
+        width - x,
+      );
+    }
+  }
+}
+
+/// Swaps R↔B and drops leading alpha from packed `A, B, G, R`
+/// input, producing packed `R, G, B`. `vld4q_u8` deinterleaves into
+/// `(A, B, G, R)` channel vectors; `vst3q_u8` interleaves
+/// `(channel 3, channel 2, channel 1)` = `(R, G, B)`.
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `abgr.len() >= 4 * width`.
+/// 3. `rgb_out.len() >= 3 * width`.
+/// 4. `abgr` / `rgb_out` must not alias.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn abgr_to_rgb_row(abgr: &[u8], rgb_out: &mut [u8], width: usize) {
+  debug_assert!(abgr.len() >= width * 4, "abgr row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+
+  unsafe {
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let quad = vld4q_u8(abgr.as_ptr().add(x * 4));
+      let triple = uint8x16x3_t(quad.3, quad.2, quad.1);
+      vst3q_u8(rgb_out.as_mut_ptr().add(x * 3), triple);
+      x += 16;
+    }
+    if x < width {
+      scalar::abgr_to_rgb_row(
+        &abgr[x * 4..width * 4],
+        &mut rgb_out[x * 3..width * 3],
+        width - x,
+      );
+    }
+  }
+}
+
+/// Rotates leading alpha to trailing position in packed `A, R, G, B`
+/// input, producing packed `R, G, B, A`. `vld4q_u8` deinterleaves
+/// into `(A, R, G, B)` channel vectors; `vst4q_u8` interleaves
+/// `(R, G, B, A)` = `(channel 1, 2, 3, 0)`.
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `argb.len() >= 4 * width`.
+/// 3. `rgba_out.len() >= 4 * width`.
+/// 4. `argb` / `rgba_out` must not alias.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn argb_to_rgba_row(argb: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(argb.len() >= width * 4, "argb row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  unsafe {
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let quad = vld4q_u8(argb.as_ptr().add(x * 4));
+      let rotated = uint8x16x4_t(quad.1, quad.2, quad.3, quad.0);
+      vst4q_u8(rgba_out.as_mut_ptr().add(x * 4), rotated);
+      x += 16;
+    }
+    if x < width {
+      scalar::argb_to_rgba_row(
+        &argb[x * 4..width * 4],
+        &mut rgba_out[x * 4..width * 4],
+        width - x,
+      );
+    }
+  }
+}
+
+/// Reverses byte order in packed `A, B, G, R` input, producing
+/// packed `R, G, B, A`. `vld4q_u8` deinterleaves into `(A, B, G, R)`
+/// channel vectors; `vst4q_u8` interleaves them in reverse
+/// `(R, G, B, A)` = `(channel 3, 2, 1, 0)`.
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `abgr.len() >= 4 * width`.
+/// 3. `rgba_out.len() >= 4 * width`.
+/// 4. `abgr` / `rgba_out` must not alias.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn abgr_to_rgba_row(abgr: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(abgr.len() >= width * 4, "abgr row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  unsafe {
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let quad = vld4q_u8(abgr.as_ptr().add(x * 4));
+      let reversed = uint8x16x4_t(quad.3, quad.2, quad.1, quad.0);
+      vst4q_u8(rgba_out.as_mut_ptr().add(x * 4), reversed);
+      x += 16;
+    }
+    if x < width {
+      scalar::abgr_to_rgba_row(
+        &abgr[x * 4..width * 4],
+        &mut rgba_out[x * 4..width * 4],
+        width - x,
+      );
+    }
+  }
+}
+
+// ===== Padding-byte to RGBA shuffles (Ship 9d) ===========================
+
+/// Drops the leading padding byte from packed `X, R, G, B` input,
+/// producing packed `R, G, B, A` with `A = 0xFF`. `vld4q_u8`
+/// deinterleaves into channel vectors `(X, R, G, B)`; we reinterleave
+/// `(R, G, B, splat(0xFF))` via `vst4q_u8`.
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `xrgb.len() >= 4 * width`.
+/// 3. `rgba_out.len() >= 4 * width`.
+/// 4. `xrgb` / `rgba_out` must not alias.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn xrgb_to_rgba_row(xrgb: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(xrgb.len() >= width * 4, "xrgb row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  unsafe {
+    let alpha = vdupq_n_u8(0xFF);
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let quad = vld4q_u8(xrgb.as_ptr().add(x * 4));
+      let out = uint8x16x4_t(quad.1, quad.2, quad.3, alpha);
+      vst4q_u8(rgba_out.as_mut_ptr().add(x * 4), out);
+      x += 16;
+    }
+    if x < width {
+      scalar::xrgb_to_rgba_row(
+        &xrgb[x * 4..width * 4],
+        &mut rgba_out[x * 4..width * 4],
+        width - x,
+      );
+    }
+  }
+}
+
+/// Drops the trailing padding byte from packed `R, G, B, X` input,
+/// producing packed `R, G, B, A` with `A = 0xFF`.
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `rgbx.len() >= 4 * width`.
+/// 3. `rgba_out.len() >= 4 * width`.
+/// 4. `rgbx` / `rgba_out` must not alias.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn rgbx_to_rgba_row(rgbx: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(rgbx.len() >= width * 4, "rgbx row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  unsafe {
+    let alpha = vdupq_n_u8(0xFF);
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let quad = vld4q_u8(rgbx.as_ptr().add(x * 4));
+      let out = uint8x16x4_t(quad.0, quad.1, quad.2, alpha);
+      vst4q_u8(rgba_out.as_mut_ptr().add(x * 4), out);
+      x += 16;
+    }
+    if x < width {
+      scalar::rgbx_to_rgba_row(
+        &rgbx[x * 4..width * 4],
+        &mut rgba_out[x * 4..width * 4],
+        width - x,
+      );
+    }
+  }
+}
+
+/// Reverses RGB and drops leading padding from packed `X, B, G, R`
+/// input, producing packed `R, G, B, A` with `A = 0xFF`.
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `xbgr.len() >= 4 * width`.
+/// 3. `rgba_out.len() >= 4 * width`.
+/// 4. `xbgr` / `rgba_out` must not alias.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn xbgr_to_rgba_row(xbgr: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(xbgr.len() >= width * 4, "xbgr row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  unsafe {
+    let alpha = vdupq_n_u8(0xFF);
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let quad = vld4q_u8(xbgr.as_ptr().add(x * 4));
+      let out = uint8x16x4_t(quad.3, quad.2, quad.1, alpha);
+      vst4q_u8(rgba_out.as_mut_ptr().add(x * 4), out);
+      x += 16;
+    }
+    if x < width {
+      scalar::xbgr_to_rgba_row(
+        &xbgr[x * 4..width * 4],
+        &mut rgba_out[x * 4..width * 4],
+        width - x,
+      );
+    }
+  }
+}
+
+/// Reverses RGB and drops trailing padding from packed `B, G, R, X`
+/// input, producing packed `R, G, B, A` with `A = 0xFF`.
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `bgrx.len() >= 4 * width`.
+/// 3. `rgba_out.len() >= 4 * width`.
+/// 4. `bgrx` / `rgba_out` must not alias.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn bgrx_to_rgba_row(bgrx: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(bgrx.len() >= width * 4, "bgrx row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  unsafe {
+    let alpha = vdupq_n_u8(0xFF);
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let quad = vld4q_u8(bgrx.as_ptr().add(x * 4));
+      let out = uint8x16x4_t(quad.2, quad.1, quad.0, alpha);
+      vst4q_u8(rgba_out.as_mut_ptr().add(x * 4), out);
+      x += 16;
+    }
+    if x < width {
+      scalar::bgrx_to_rgba_row(
+        &bgrx[x * 4..width * 4],
+        &mut rgba_out[x * 4..width * 4],
+        width - x,
+      );
+    }
+  }
+}
+
 #[cfg(all(test, feature = "std"))]
 mod tests;

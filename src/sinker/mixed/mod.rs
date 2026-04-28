@@ -42,6 +42,28 @@
 //! - **10/12/16‑bit semi‑planar high‑bit‑packed 4:4:4**:
 //!   [`P410`](crate::yuv::P410), [`P412`](crate::yuv::P412),
 //!   [`P416`](crate::yuv::P416).
+//! - **YUVA (alpha-bearing planar)**: the entire FFmpeg-shipped
+//!   YUVA family — `Yuva420p` / `Yuva420p9/10/16`, `Yuva422p` /
+//!   `Yuva422p9/10/12/16`, `Yuva444p` / `Yuva444p9/10/12/14/16`.
+//!   Source-side alpha pass-through to `with_rgba` /
+//!   `with_rgba_u16`, with native SIMD on every backend.
+//! - **8‑bit packed RGB sources** (Tier 6):
+//!   [`Rgb24`](crate::yuv::Rgb24) (`R, G, B` bytes),
+//!   [`Bgr24`](crate::yuv::Bgr24) (`B, G, R` bytes),
+//!   [`Rgba`](crate::yuv::Rgba) (`R, G, B, A` bytes),
+//!   [`Bgra`](crate::yuv::Bgra) (`B, G, R, A` bytes),
+//!   [`Argb`](crate::yuv::Argb) (`A, R, G, B` bytes — leading alpha),
+//!   [`Abgr`](crate::yuv::Abgr) (`A, B, G, R` bytes — leading alpha),
+//!   [`Xrgb`](crate::yuv::Xrgb) / [`Rgbx`](crate::yuv::Rgbx) /
+//!   [`Xbgr`](crate::yuv::Xbgr) / [`Bgrx`](crate::yuv::Bgrx)
+//!   (4-byte packed RGB with one ignored padding byte at the leading
+//!   or trailing position).
+//!   The source row is already RGB — `with_rgb` is an identity copy /
+//!   channel swap / drop-alpha-or-padding, `with_rgba` is a memcpy /
+//!   channel reorder (alpha passed through for the alpha-bearing
+//!   4-byte sources, forced to `0xFF` for the 3-byte sources and the
+//!   padding-byte family), `with_luma` derives Y' from R/G/B,
+//!   `with_hsv` reuses the existing kernel.
 //!
 //! High‑bit‑depth source impls expose both `with_rgb` (u8 output) and
 //! `with_rgb_u16` (native‑depth u16 output). Calling `with_rgb_u16` on
@@ -494,6 +516,54 @@ pub enum RowSlice {
   /// (`below == mid`) only when `height < 2`.
   #[display("Bayer16 Below")]
   Bayer16Below,
+  /// Packed `R, G, B` row of an [`Rgb24`](crate::yuv::Rgb24) source.
+  /// `3 * width` `u8` bytes.
+  #[display("RGB packed")]
+  RgbPacked,
+  /// Packed `B, G, R` row of a [`Bgr24`](crate::yuv::Bgr24) source.
+  /// `3 * width` `u8` bytes (channel-order swapped relative to
+  /// [`RgbPacked`](Self::RgbPacked)).
+  #[display("BGR packed")]
+  BgrPacked,
+  /// Packed `R, G, B, A` row of an [`Rgba`](crate::yuv::Rgba) source.
+  /// `4 * width` `u8` bytes — alpha is real (not padding).
+  #[display("RGBA packed")]
+  RgbaPacked,
+  /// Packed `B, G, R, A` row of a [`Bgra`](crate::yuv::Bgra) source.
+  /// `4 * width` `u8` bytes — alpha lane preserved, channel order
+  /// swapped on the first three bytes relative to
+  /// [`RgbaPacked`](Self::RgbaPacked).
+  #[display("BGRA packed")]
+  BgraPacked,
+  /// Packed `A, R, G, B` row of an [`Argb`](crate::yuv::Argb) source.
+  /// `4 * width` `u8` bytes — alpha at the **leading** position vs
+  /// [`RgbaPacked`](Self::RgbaPacked).
+  #[display("ARGB packed")]
+  ArgbPacked,
+  /// Packed `A, B, G, R` row of an [`Abgr`](crate::yuv::Abgr) source.
+  /// `4 * width` `u8` bytes — leading alpha + reversed RGB order vs
+  /// [`ArgbPacked`](Self::ArgbPacked).
+  #[display("ABGR packed")]
+  AbgrPacked,
+  /// Packed `X, R, G, B` row of an [`Xrgb`](crate::yuv::Xrgb) source
+  /// (FFmpeg `0rgb`). `4 * width` `u8` bytes — leading **padding**
+  /// byte (not alpha).
+  #[display("XRGB packed")]
+  XrgbPacked,
+  /// Packed `R, G, B, X` row of an [`Rgbx`](crate::yuv::Rgbx) source
+  /// (FFmpeg `rgb0`). `4 * width` `u8` bytes — trailing padding byte.
+  #[display("RGBX packed")]
+  RgbxPacked,
+  /// Packed `X, B, G, R` row of an [`Xbgr`](crate::yuv::Xbgr) source
+  /// (FFmpeg `0bgr`). `4 * width` `u8` bytes — leading padding byte
+  /// + reversed RGB order vs [`XrgbPacked`](Self::XrgbPacked).
+  #[display("XBGR packed")]
+  XbgrPacked,
+  /// Packed `B, G, R, X` row of a [`Bgrx`](crate::yuv::Bgrx) source
+  /// (FFmpeg `bgr0`). `4 * width` `u8` bytes — trailing padding byte
+  /// + reversed RGB order vs [`RgbxPacked`](Self::RgbxPacked).
+  #[display("BGRX packed")]
+  BgrxPacked,
 }
 
 /// A sink that writes any subset of `{RGB, Luma, HSV}` into
@@ -1291,6 +1361,7 @@ pub(super) fn rgb_row_to_luma_row(rgb: &[u8], luma: &mut [u8], coeffs_q8: (u32, 
 // and `PixelSink` impls live in the child modules below.
 
 mod bayer;
+mod packed_rgb_8bit;
 mod planar_8bit;
 mod semi_planar_8bit;
 mod subsampled_4_2_0_high_bit;

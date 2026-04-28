@@ -5099,6 +5099,544 @@ pub(crate) unsafe fn bgr_rgb_swap_row(input: &[u8], output: &mut [u8], width: us
   }
 }
 
+// ===== Packed-RGBA shuffles (Ship 9b) ====================================
+
+/// WASM simd128 RGBA→RGB drop-alpha. 16 pixels per iteration via the
+/// same 6-shuffle + 3-OR pattern as the x86 backends. Mask values are
+/// identical because `u8x16_swizzle` matches `_mm_shuffle_epi8`
+/// semantics (indices ≥ 16 zero the output lane).
+///
+/// # Safety
+///
+/// 1. simd128 must be enabled at compile time.
+/// 2. `rgba.len() >= 4 * width`; `rgb_out.len() >= 3 * width`.
+/// 3. `rgba` / `rgb_out` must not alias.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn rgba_to_rgb_row(rgba: &[u8], rgb_out: &mut [u8], width: usize) {
+  debug_assert!(rgba.len() >= width * 4, "rgba row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+
+  unsafe {
+    let m00 = i8x16(0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, -1, -1, -1, -1);
+    let m01 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 2, 4);
+    let m11 = i8x16(5, 6, 8, 9, 10, 12, 13, 14, -1, -1, -1, -1, -1, -1, -1, -1);
+    let m12 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 2, 4, 5, 6, 8, 9);
+    let m22 = i8x16(
+      10, 12, 13, 14, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    );
+    let m23 = i8x16(-1, -1, -1, -1, 0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14);
+
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let in0 = v128_load(rgba.as_ptr().add(x * 4).cast());
+      let in1 = v128_load(rgba.as_ptr().add(x * 4 + 16).cast());
+      let in2 = v128_load(rgba.as_ptr().add(x * 4 + 32).cast());
+      let in3 = v128_load(rgba.as_ptr().add(x * 4 + 48).cast());
+
+      let out0 = v128_or(u8x16_swizzle(in0, m00), u8x16_swizzle(in1, m01));
+      let out1 = v128_or(u8x16_swizzle(in1, m11), u8x16_swizzle(in2, m12));
+      let out2 = v128_or(u8x16_swizzle(in2, m22), u8x16_swizzle(in3, m23));
+
+      v128_store(rgb_out.as_mut_ptr().add(x * 3).cast(), out0);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3 + 16).cast(), out1);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3 + 32).cast(), out2);
+
+      x += 16;
+    }
+    if x < width {
+      scalar::rgba_to_rgb_row(
+        &rgba[x * 4..width * 4],
+        &mut rgb_out[x * 3..width * 3],
+        width - x,
+      );
+    }
+  }
+}
+
+/// WASM simd128 BGRA→RGBA R↔B swap with alpha pass-through. 16 pixels
+/// per iteration via four `u8x16_swizzle` calls (one per 16-byte
+/// vector, four pixels each). Within each 4-byte pixel, byte 0 ↔
+/// byte 2; alpha at byte 3 is unchanged.
+///
+/// # Safety
+///
+/// 1. simd128 must be enabled at compile time.
+/// 2. `bgra.len() >= 4 * width`; `rgba_out.len() >= 4 * width`.
+/// 3. `bgra` / `rgba_out` must not alias.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn bgra_to_rgba_row(bgra: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(bgra.len() >= width * 4, "bgra row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  unsafe {
+    let mask = i8x16(2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15);
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let base_in = bgra.as_ptr().add(x * 4);
+      let base_out = rgba_out.as_mut_ptr().add(x * 4);
+      let v0 = v128_load(base_in.cast());
+      let v1 = v128_load(base_in.add(16).cast());
+      let v2 = v128_load(base_in.add(32).cast());
+      let v3 = v128_load(base_in.add(48).cast());
+      v128_store(base_out.cast(), u8x16_swizzle(v0, mask));
+      v128_store(base_out.add(16).cast(), u8x16_swizzle(v1, mask));
+      v128_store(base_out.add(32).cast(), u8x16_swizzle(v2, mask));
+      v128_store(base_out.add(48).cast(), u8x16_swizzle(v3, mask));
+      x += 16;
+    }
+    if x < width {
+      scalar::bgra_to_rgba_row(
+        &bgra[x * 4..width * 4],
+        &mut rgba_out[x * 4..width * 4],
+        width - x,
+      );
+    }
+  }
+}
+
+/// WASM simd128 BGRA→RGB combined R↔B swap and alpha drop. 16 pixels
+/// per iteration via the same compaction shape as
+/// [`rgba_to_rgb_row`], with each pixel triple read from the input as
+/// `(byte+2, byte+1, byte+0)` to flip channel order while dropping
+/// alpha at `byte+3`.
+///
+/// # Safety
+///
+/// 1. simd128 must be enabled at compile time.
+/// 2. `bgra.len() >= 4 * width`; `rgb_out.len() >= 3 * width`.
+/// 3. `bgra` / `rgb_out` must not alias.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn bgra_to_rgb_row(bgra: &[u8], rgb_out: &mut [u8], width: usize) {
+  debug_assert!(bgra.len() >= width * 4, "bgra row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+
+  unsafe {
+    let m00 = i8x16(2, 1, 0, 6, 5, 4, 10, 9, 8, 14, 13, 12, -1, -1, -1, -1);
+    let m01 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 2, 1, 0, 6);
+    let m11 = i8x16(5, 4, 10, 9, 8, 14, 13, 12, -1, -1, -1, -1, -1, -1, -1, -1);
+    let m12 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, 2, 1, 0, 6, 5, 4, 10, 9);
+    let m22 = i8x16(
+      8, 14, 13, 12, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    );
+    let m23 = i8x16(-1, -1, -1, -1, 2, 1, 0, 6, 5, 4, 10, 9, 8, 14, 13, 12);
+
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let in0 = v128_load(bgra.as_ptr().add(x * 4).cast());
+      let in1 = v128_load(bgra.as_ptr().add(x * 4 + 16).cast());
+      let in2 = v128_load(bgra.as_ptr().add(x * 4 + 32).cast());
+      let in3 = v128_load(bgra.as_ptr().add(x * 4 + 48).cast());
+
+      let out0 = v128_or(u8x16_swizzle(in0, m00), u8x16_swizzle(in1, m01));
+      let out1 = v128_or(u8x16_swizzle(in1, m11), u8x16_swizzle(in2, m12));
+      let out2 = v128_or(u8x16_swizzle(in2, m22), u8x16_swizzle(in3, m23));
+
+      v128_store(rgb_out.as_mut_ptr().add(x * 3).cast(), out0);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3 + 16).cast(), out1);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3 + 32).cast(), out2);
+
+      x += 16;
+    }
+    if x < width {
+      scalar::bgra_to_rgb_row(
+        &bgra[x * 4..width * 4],
+        &mut rgb_out[x * 3..width * 3],
+        width - x,
+      );
+    }
+  }
+}
+
+// ===== Leading-alpha shuffles (Ship 9c) ==================================
+
+/// WASM simd128 ARGB→RGB drop-leading-alpha. 16 pixels per iteration
+/// using the same compaction shape as [`rgba_to_rgb_row`] but with
+/// pixel triple offsets `(+1, +2, +3)`.
+///
+/// # Safety
+///
+/// 1. simd128 must be enabled at compile time.
+/// 2. `argb.len() >= 4 * width`; `rgb_out.len() >= 3 * width`.
+/// 3. `argb` / `rgb_out` must not alias.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn argb_to_rgb_row(argb: &[u8], rgb_out: &mut [u8], width: usize) {
+  debug_assert!(argb.len() >= width * 4, "argb row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+
+  unsafe {
+    let m00 = i8x16(1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15, -1, -1, -1, -1);
+    let m01 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1, 2, 3, 5);
+    let m11 = i8x16(6, 7, 9, 10, 11, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1);
+    let m12 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, 1, 2, 3, 5, 6, 7, 9, 10);
+    let m22 = i8x16(
+      11, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    );
+    let m23 = i8x16(-1, -1, -1, -1, 1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15);
+
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let in0 = v128_load(argb.as_ptr().add(x * 4).cast());
+      let in1 = v128_load(argb.as_ptr().add(x * 4 + 16).cast());
+      let in2 = v128_load(argb.as_ptr().add(x * 4 + 32).cast());
+      let in3 = v128_load(argb.as_ptr().add(x * 4 + 48).cast());
+
+      let out0 = v128_or(u8x16_swizzle(in0, m00), u8x16_swizzle(in1, m01));
+      let out1 = v128_or(u8x16_swizzle(in1, m11), u8x16_swizzle(in2, m12));
+      let out2 = v128_or(u8x16_swizzle(in2, m22), u8x16_swizzle(in3, m23));
+
+      v128_store(rgb_out.as_mut_ptr().add(x * 3).cast(), out0);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3 + 16).cast(), out1);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3 + 32).cast(), out2);
+
+      x += 16;
+    }
+    if x < width {
+      scalar::argb_to_rgb_row(
+        &argb[x * 4..width * 4],
+        &mut rgb_out[x * 3..width * 3],
+        width - x,
+      );
+    }
+  }
+}
+
+/// WASM simd128 ABGR→RGB combined drop-leading-alpha + R↔B swap.
+/// Per-pixel input offsets are read in reverse order `(+3, +2, +1)`.
+///
+/// # Safety
+///
+/// 1. simd128 must be enabled at compile time.
+/// 2. `abgr.len() >= 4 * width`; `rgb_out.len() >= 3 * width`.
+/// 3. `abgr` / `rgb_out` must not alias.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn abgr_to_rgb_row(abgr: &[u8], rgb_out: &mut [u8], width: usize) {
+  debug_assert!(abgr.len() >= width * 4, "abgr row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+
+  unsafe {
+    let m00 = i8x16(3, 2, 1, 7, 6, 5, 11, 10, 9, 15, 14, 13, -1, -1, -1, -1);
+    let m01 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 3, 2, 1, 7);
+    let m11 = i8x16(6, 5, 11, 10, 9, 15, 14, 13, -1, -1, -1, -1, -1, -1, -1, -1);
+    let m12 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, 3, 2, 1, 7, 6, 5, 11, 10);
+    let m22 = i8x16(
+      9, 15, 14, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    );
+    let m23 = i8x16(-1, -1, -1, -1, 3, 2, 1, 7, 6, 5, 11, 10, 9, 15, 14, 13);
+
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let in0 = v128_load(abgr.as_ptr().add(x * 4).cast());
+      let in1 = v128_load(abgr.as_ptr().add(x * 4 + 16).cast());
+      let in2 = v128_load(abgr.as_ptr().add(x * 4 + 32).cast());
+      let in3 = v128_load(abgr.as_ptr().add(x * 4 + 48).cast());
+
+      let out0 = v128_or(u8x16_swizzle(in0, m00), u8x16_swizzle(in1, m01));
+      let out1 = v128_or(u8x16_swizzle(in1, m11), u8x16_swizzle(in2, m12));
+      let out2 = v128_or(u8x16_swizzle(in2, m22), u8x16_swizzle(in3, m23));
+
+      v128_store(rgb_out.as_mut_ptr().add(x * 3).cast(), out0);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3 + 16).cast(), out1);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3 + 32).cast(), out2);
+
+      x += 16;
+    }
+    if x < width {
+      scalar::abgr_to_rgb_row(
+        &abgr[x * 4..width * 4],
+        &mut rgb_out[x * 3..width * 3],
+        width - x,
+      );
+    }
+  }
+}
+
+/// WASM simd128 ARGB→RGBA leading-alpha rotation. 16 pixels per
+/// iteration via four `u8x16_swizzle` calls.
+///
+/// # Safety
+///
+/// 1. simd128 must be enabled at compile time.
+/// 2. `argb.len() >= 4 * width`; `rgba_out.len() >= 4 * width`.
+/// 3. `argb` / `rgba_out` must not alias.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn argb_to_rgba_row(argb: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(argb.len() >= width * 4, "argb row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  unsafe {
+    let mask = i8x16(1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12);
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let base_in = argb.as_ptr().add(x * 4);
+      let base_out = rgba_out.as_mut_ptr().add(x * 4);
+      let v0 = v128_load(base_in.cast());
+      let v1 = v128_load(base_in.add(16).cast());
+      let v2 = v128_load(base_in.add(32).cast());
+      let v3 = v128_load(base_in.add(48).cast());
+      v128_store(base_out.cast(), u8x16_swizzle(v0, mask));
+      v128_store(base_out.add(16).cast(), u8x16_swizzle(v1, mask));
+      v128_store(base_out.add(32).cast(), u8x16_swizzle(v2, mask));
+      v128_store(base_out.add(48).cast(), u8x16_swizzle(v3, mask));
+      x += 16;
+    }
+    if x < width {
+      scalar::argb_to_rgba_row(
+        &argb[x * 4..width * 4],
+        &mut rgba_out[x * 4..width * 4],
+        width - x,
+      );
+    }
+  }
+}
+
+/// WASM simd128 ABGR→RGBA full byte reverse. 16 pixels per iteration
+/// via four `u8x16_swizzle` calls.
+///
+/// # Safety
+///
+/// 1. simd128 must be enabled at compile time.
+/// 2. `abgr.len() >= 4 * width`; `rgba_out.len() >= 4 * width`.
+/// 3. `abgr` / `rgba_out` must not alias.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn abgr_to_rgba_row(abgr: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(abgr.len() >= width * 4, "abgr row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  unsafe {
+    let mask = i8x16(3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12);
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let base_in = abgr.as_ptr().add(x * 4);
+      let base_out = rgba_out.as_mut_ptr().add(x * 4);
+      let v0 = v128_load(base_in.cast());
+      let v1 = v128_load(base_in.add(16).cast());
+      let v2 = v128_load(base_in.add(32).cast());
+      let v3 = v128_load(base_in.add(48).cast());
+      v128_store(base_out.cast(), u8x16_swizzle(v0, mask));
+      v128_store(base_out.add(16).cast(), u8x16_swizzle(v1, mask));
+      v128_store(base_out.add(32).cast(), u8x16_swizzle(v2, mask));
+      v128_store(base_out.add(48).cast(), u8x16_swizzle(v3, mask));
+      x += 16;
+    }
+    if x < width {
+      scalar::abgr_to_rgba_row(
+        &abgr[x * 4..width * 4],
+        &mut rgba_out[x * 4..width * 4],
+        width - x,
+      );
+    }
+  }
+}
+
+// ===== Padding-byte to RGBA shuffles (Ship 9d) ===========================
+
+/// WASM simd128 XRGB→RGBA. 16 pixels per iteration via four
+/// `u8x16_swizzle` + `v128_or` calls. Each pixel: bytes 1,2,3 → R,G,B
+/// output positions; alpha lane forced to `0xFF` via OR.
+///
+/// # Safety
+///
+/// 1. simd128 must be enabled at compile time.
+/// 2. `xrgb.len() >= 4 * width`; `rgba_out.len() >= 4 * width`.
+/// 3. `xrgb` / `rgba_out` must not alias.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn xrgb_to_rgba_row(xrgb: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(xrgb.len() >= width * 4, "xrgb row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  unsafe {
+    let mask = i8x16(1, 2, 3, -1, 5, 6, 7, -1, 9, 10, 11, -1, 13, 14, 15, -1);
+    // Sentinel `-1` after `as i8` becomes `0xFF` — exactly what we
+    // need in the alpha lanes.
+    let alpha = i8x16(0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1);
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let base_in = xrgb.as_ptr().add(x * 4);
+      let base_out = rgba_out.as_mut_ptr().add(x * 4);
+      let v0 = v128_load(base_in.cast());
+      let v1 = v128_load(base_in.add(16).cast());
+      let v2 = v128_load(base_in.add(32).cast());
+      let v3 = v128_load(base_in.add(48).cast());
+      v128_store(base_out.cast(), v128_or(u8x16_swizzle(v0, mask), alpha));
+      v128_store(
+        base_out.add(16).cast(),
+        v128_or(u8x16_swizzle(v1, mask), alpha),
+      );
+      v128_store(
+        base_out.add(32).cast(),
+        v128_or(u8x16_swizzle(v2, mask), alpha),
+      );
+      v128_store(
+        base_out.add(48).cast(),
+        v128_or(u8x16_swizzle(v3, mask), alpha),
+      );
+      x += 16;
+    }
+    if x < width {
+      scalar::xrgb_to_rgba_row(
+        &xrgb[x * 4..width * 4],
+        &mut rgba_out[x * 4..width * 4],
+        width - x,
+      );
+    }
+  }
+}
+
+/// WASM simd128 RGBX→RGBA. 16 pixels per iteration.
+///
+/// # Safety
+///
+/// 1. simd128 must be enabled at compile time.
+/// 2. `rgbx.len() >= 4 * width`; `rgba_out.len() >= 4 * width`.
+/// 3. `rgbx` / `rgba_out` must not alias.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn rgbx_to_rgba_row(rgbx: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(rgbx.len() >= width * 4, "rgbx row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  unsafe {
+    let mask = i8x16(0, 1, 2, -1, 4, 5, 6, -1, 8, 9, 10, -1, 12, 13, 14, -1);
+    let alpha = i8x16(0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1);
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let base_in = rgbx.as_ptr().add(x * 4);
+      let base_out = rgba_out.as_mut_ptr().add(x * 4);
+      let v0 = v128_load(base_in.cast());
+      let v1 = v128_load(base_in.add(16).cast());
+      let v2 = v128_load(base_in.add(32).cast());
+      let v3 = v128_load(base_in.add(48).cast());
+      v128_store(base_out.cast(), v128_or(u8x16_swizzle(v0, mask), alpha));
+      v128_store(
+        base_out.add(16).cast(),
+        v128_or(u8x16_swizzle(v1, mask), alpha),
+      );
+      v128_store(
+        base_out.add(32).cast(),
+        v128_or(u8x16_swizzle(v2, mask), alpha),
+      );
+      v128_store(
+        base_out.add(48).cast(),
+        v128_or(u8x16_swizzle(v3, mask), alpha),
+      );
+      x += 16;
+    }
+    if x < width {
+      scalar::rgbx_to_rgba_row(
+        &rgbx[x * 4..width * 4],
+        &mut rgba_out[x * 4..width * 4],
+        width - x,
+      );
+    }
+  }
+}
+
+/// WASM simd128 XBGR→RGBA. 16 pixels per iteration.
+///
+/// # Safety
+///
+/// 1. simd128 must be enabled at compile time.
+/// 2. `xbgr.len() >= 4 * width`; `rgba_out.len() >= 4 * width`.
+/// 3. `xbgr` / `rgba_out` must not alias.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn xbgr_to_rgba_row(xbgr: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(xbgr.len() >= width * 4, "xbgr row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  unsafe {
+    let mask = i8x16(3, 2, 1, -1, 7, 6, 5, -1, 11, 10, 9, -1, 15, 14, 13, -1);
+    let alpha = i8x16(0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1);
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let base_in = xbgr.as_ptr().add(x * 4);
+      let base_out = rgba_out.as_mut_ptr().add(x * 4);
+      let v0 = v128_load(base_in.cast());
+      let v1 = v128_load(base_in.add(16).cast());
+      let v2 = v128_load(base_in.add(32).cast());
+      let v3 = v128_load(base_in.add(48).cast());
+      v128_store(base_out.cast(), v128_or(u8x16_swizzle(v0, mask), alpha));
+      v128_store(
+        base_out.add(16).cast(),
+        v128_or(u8x16_swizzle(v1, mask), alpha),
+      );
+      v128_store(
+        base_out.add(32).cast(),
+        v128_or(u8x16_swizzle(v2, mask), alpha),
+      );
+      v128_store(
+        base_out.add(48).cast(),
+        v128_or(u8x16_swizzle(v3, mask), alpha),
+      );
+      x += 16;
+    }
+    if x < width {
+      scalar::xbgr_to_rgba_row(
+        &xbgr[x * 4..width * 4],
+        &mut rgba_out[x * 4..width * 4],
+        width - x,
+      );
+    }
+  }
+}
+
+/// WASM simd128 BGRX→RGBA. 16 pixels per iteration.
+///
+/// # Safety
+///
+/// 1. simd128 must be enabled at compile time.
+/// 2. `bgrx.len() >= 4 * width`; `rgba_out.len() >= 4 * width`.
+/// 3. `bgrx` / `rgba_out` must not alias.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn bgrx_to_rgba_row(bgrx: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(bgrx.len() >= width * 4, "bgrx row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  unsafe {
+    let mask = i8x16(2, 1, 0, -1, 6, 5, 4, -1, 10, 9, 8, -1, 14, 13, 12, -1);
+    let alpha = i8x16(0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1);
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let base_in = bgrx.as_ptr().add(x * 4);
+      let base_out = rgba_out.as_mut_ptr().add(x * 4);
+      let v0 = v128_load(base_in.cast());
+      let v1 = v128_load(base_in.add(16).cast());
+      let v2 = v128_load(base_in.add(32).cast());
+      let v3 = v128_load(base_in.add(48).cast());
+      v128_store(base_out.cast(), v128_or(u8x16_swizzle(v0, mask), alpha));
+      v128_store(
+        base_out.add(16).cast(),
+        v128_or(u8x16_swizzle(v1, mask), alpha),
+      );
+      v128_store(
+        base_out.add(32).cast(),
+        v128_or(u8x16_swizzle(v2, mask), alpha),
+      );
+      v128_store(
+        base_out.add(48).cast(),
+        v128_or(u8x16_swizzle(v3, mask), alpha),
+      );
+      x += 16;
+    }
+    if x < width {
+      scalar::bgrx_to_rgba_row(
+        &bgrx[x * 4..width * 4],
+        &mut rgba_out[x * 4..width * 4],
+        width - x,
+      );
+    }
+  }
+}
+
 // ===== RGB → HSV =========================================================
 
 /// WASM simd128 RGB → planar HSV. 16 pixels per iteration using
