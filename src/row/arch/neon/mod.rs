@@ -37,6 +37,7 @@ use core::arch::aarch64::*;
 #[allow(unused_imports)]
 pub(super) use crate::{ColorMatrix, row::scalar};
 
+mod alpha_extract;
 mod ayuv64;
 mod hsv;
 mod packed_rgb;

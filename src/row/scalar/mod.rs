@@ -35,7 +35,7 @@ use crate::ColorMatrix;
 // cluster of scalar reference kernels; `mod.rs` retains only the
 // cross-cutting helpers (`clamp_u8`, `q15_*`, `bits_mask`,
 // `Coefficients`, …) that every family pulls in.
-mod alpha_extract;
+pub(crate) mod alpha_extract;
 mod ayuv64;
 mod bayer;
 mod hsv;
