@@ -388,8 +388,10 @@ unsafe fn yuv422_packed_to_luma_u16_row<const Y_LSB: bool>(
 
   // SAFETY: AVX2 availability is the caller's obligation.
   unsafe {
-    // Shuffle within each 128-bit lane — moves Y bytes to the low 8
-    // positions. The AVX2 shuffle operates per 128-bit lane independently.
+    // Per-lane shuffle: moves Y bytes to the low 8 positions of each
+    // 128-bit lane. The AVX2 shuffle operates per 128-bit lane
+    // independently, so each loaded 32-byte chunk yields 8 + 8 = 16 Y
+    // bytes (8 per lane), with the upper 8 of each lane zeroed.
     let split_mask = if Y_LSB {
       _mm256_setr_epi8(
         0, 2, 4, 6, 8, 10, 12, 14, -1, -1, -1, -1, -1, -1, -1, -1, 0, 2, 4, 6, 8, 10, 12, 14, -1,
@@ -405,21 +407,30 @@ unsafe fn yuv422_packed_to_luma_u16_row<const Y_LSB: bool>(
     let mut x = 0usize;
     while x + 32 <= width {
       // Load 32 px worth of packed data (2 × 32-byte AVX2 loads; each
-      // covers 16 packed pixels).
+      // covers 16 packed pixels = 16 Y bytes split 8 / 8 across lanes).
       let p0 = _mm256_loadu_si256(packed.as_ptr().add(x * 2).cast());
       let p1 = _mm256_loadu_si256(packed.as_ptr().add(x * 2 + 32).cast());
-      // After shuffle: low 8 bytes of each 128-bit lane = Y values.
+      // After shuffle: bytes [0..8) of each 128-bit lane = Y values
+      // (low 8 of each lane). Bytes [8..16) of each lane are zeroed.
       let p0s = _mm256_shuffle_epi8(p0, split_mask);
       let p1s = _mm256_shuffle_epi8(p1, split_mask);
-      // Extract the packed 8-byte Y halves from each 256-bit vector.
-      // _mm256_cvtepu8_epi16 takes a __m128i and zero-extends 16 u8 → 16 u16.
-      // We need the low 128-bit lane (low 8 Y bytes from each load).
-      let lo_src = _mm256_castsi256_si128(p0s);
-      let hi_src = _mm256_castsi256_si128(p1s);
-      let lo = _mm256_cvtepu8_epi16(lo_src);
-      let hi = _mm256_cvtepu8_epi16(hi_src);
-      _mm256_storeu_si256(out.as_mut_ptr().add(x).cast(), lo);
-      _mm256_storeu_si256(out.as_mut_ptr().add(x + 16).cast(), hi);
+      // Extract BOTH 128-bit halves of each shuffled vector — each
+      // half holds 8 valid Y bytes in its low 8 lanes. `_mm_cvtepu8_epi16`
+      // widens the low 8 u8 → 8 u16 (one __m128i = 16 bytes), discarding
+      // the (zeroed) high 8 bytes; this matches the Y-bytes-only contract.
+      let p0_lo = _mm256_castsi256_si128(p0s); // 8 Y bytes from p0 lane 0
+      let p0_hi = _mm256_extracti128_si256::<1>(p0s); // 8 Y bytes from p0 lane 1
+      let p1_lo = _mm256_castsi256_si128(p1s); // 8 Y bytes from p1 lane 0
+      let p1_hi = _mm256_extracti128_si256::<1>(p1s); // 8 Y bytes from p1 lane 1
+      let w0_lo = _mm_cvtepu8_epi16(p0_lo); // 8 u16
+      let w0_hi = _mm_cvtepu8_epi16(p0_hi); // 8 u16
+      let w1_lo = _mm_cvtepu8_epi16(p1_lo); // 8 u16
+      let w1_hi = _mm_cvtepu8_epi16(p1_hi); // 8 u16
+      // Combine each pair into a __m256i (16 u16 = 32 bytes) for stores.
+      let w_lo = _mm256_inserti128_si256::<1>(_mm256_castsi128_si256(w0_lo), w0_hi);
+      let w_hi = _mm256_inserti128_si256::<1>(_mm256_castsi128_si256(w1_lo), w1_hi);
+      _mm256_storeu_si256(out.as_mut_ptr().add(x).cast(), w_lo);
+      _mm256_storeu_si256(out.as_mut_ptr().add(x + 16).cast(), w_hi);
       x += 32;
     }
     if x < width {

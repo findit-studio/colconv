@@ -411,6 +411,12 @@ unsafe fn yuv422_packed_to_luma_u16_row<const Y_LSB: bool>(
 
   // SAFETY: AVX-512BW availability is the caller's obligation.
   unsafe {
+    // Reuse the same 512-bit gather pipeline as the u8 luma kernel:
+    // shuffle each 64-byte chunk per-128-bit-lane, then permute the
+    // 64-bit chunks across lanes (`pack_fixup`) and merge across the
+    // two vectors (`merge_low`) so all 64 Y bytes land contiguously in
+    // a single __m512i. Then widen 64 u8 → 64 u16 via two
+    // `_mm512_cvtepu8_epi16` calls on the two 256-bit halves.
     let pack_fixup = _mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7);
     let merge_low = _mm512_setr_epi64(0, 1, 2, 3, 8, 9, 10, 11);
     let split_mask = if Y_LSB {
@@ -420,39 +426,25 @@ unsafe fn yuv422_packed_to_luma_u16_row<const Y_LSB: bool>(
     };
 
     let mut x = 0usize;
-    while x + 32 <= width {
-      // Load 32 px of packed YUV422 (2 × 64-byte 512-bit loads covering
-      // 32 pixels each at 2 bytes/pixel would be 64 bytes; we use the
-      // existing 512-bit shuffle which covers 64 px at once but we only
-      // advance by 32 to keep the implementation simple using the 256-bit
-      // widening path). Each 256-bit load covers 16 packed pixels.
-      let p0 = _mm256_loadu_si256(packed.as_ptr().add(x * 2).cast());
-      let p1 = _mm256_loadu_si256(packed.as_ptr().add(x * 2 + 32).cast());
-      // Zero-extend extracted Y bytes to u16 (32 pixels per iteration).
-      // First extract Y from each 256-bit chunk using the shuffle approach:
-      // shuffle within 128-bit lanes to pack Y bytes, then cvtepu8_epi16.
-      let split_mask_256 = if Y_LSB {
-        _mm256_setr_epi8(
-          0, 2, 4, 6, 8, 10, 12, 14, -1, -1, -1, -1, -1, -1, -1, -1, 0, 2, 4, 6, 8, 10, 12, 14, -1,
-          -1, -1, -1, -1, -1, -1, -1,
-        )
-      } else {
-        _mm256_setr_epi8(
-          1, 3, 5, 7, 9, 11, 13, 15, -1, -1, -1, -1, -1, -1, -1, -1, 1, 3, 5, 7, 9, 11, 13, 15, -1,
-          -1, -1, -1, -1, -1, -1, -1,
-        )
-      };
-      let p0s = _mm256_shuffle_epi8(p0, split_mask_256);
-      let p1s = _mm256_shuffle_epi8(p1, split_mask_256);
-      // Extract the low 128-bit lane containing the 8 packed Y bytes from
-      // each 256-bit result, then zero-extend to 16 u16 via cvtepu8_epi16.
-      let lo_src = _mm256_castsi256_si128(p0s);
-      let hi_src = _mm256_castsi256_si128(p1s);
-      let lo = _mm256_cvtepu8_epi16(lo_src);
-      let hi = _mm256_cvtepu8_epi16(hi_src);
-      _mm256_storeu_si256(out.as_mut_ptr().add(x).cast(), lo);
-      _mm256_storeu_si256(out.as_mut_ptr().add(x + 16).cast(), hi);
-      x += 32;
+    while x + 64 <= width {
+      // Load 128 packed bytes (64 px × 2 bytes/px).
+      let p0 = _mm512_loadu_si512(packed.as_ptr().add(x * 2).cast());
+      let p1 = _mm512_loadu_si512(packed.as_ptr().add(x * 2 + 64).cast());
+      let p0s = _mm512_shuffle_epi8(p0, split_mask);
+      let p1s = _mm512_shuffle_epi8(p1, split_mask);
+      let p0p = _mm512_permutexvar_epi64(pack_fixup, p0s);
+      let p1p = _mm512_permutexvar_epi64(pack_fixup, p1s);
+      // y_vec holds 64 contiguous Y bytes — same layout as the u8 kernel.
+      let y_vec = _mm512_permutex2var_epi64(p0p, merge_low, p1p);
+      // Widen 64 u8 → 64 u16: split y_vec into two 256-bit halves and
+      // zero-extend each via _mm512_cvtepu8_epi16 (32 u8 → 32 u16).
+      let y_lo_256 = _mm512_castsi512_si256(y_vec);
+      let y_hi_256 = _mm512_extracti64x4_epi64::<1>(y_vec);
+      let w_lo = _mm512_cvtepu8_epi16(y_lo_256); // 32 u16
+      let w_hi = _mm512_cvtepu8_epi16(y_hi_256); // 32 u16
+      _mm512_storeu_si512(out.as_mut_ptr().add(x).cast(), w_lo);
+      _mm512_storeu_si512(out.as_mut_ptr().add(x + 32).cast(), w_hi);
+      x += 64;
     }
     if x < width {
       if Y_LSB {
@@ -461,12 +453,6 @@ unsafe fn yuv422_packed_to_luma_u16_row<const Y_LSB: bool>(
         scalar::uyvy422_to_luma_u16_row(&packed[x * 2..width * 2], &mut out[x..width], width - x);
       }
     }
-
-    // Suppress unused variable warnings for the 512-bit constants used only
-    // by the u8 kernel below.
-    let _ = pack_fixup;
-    let _ = merge_low;
-    let _ = split_mask;
   }
 }
 

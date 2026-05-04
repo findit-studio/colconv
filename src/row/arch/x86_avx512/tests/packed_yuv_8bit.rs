@@ -168,3 +168,47 @@ fn avx512_packed_yuv422_luma_matches_scalar_widths() {
     check_luma(w, 'v');
   }
 }
+
+// ===== u16 luma extraction (3 formats; YUYV / UYVY / YVYU) =====
+
+fn check_luma_u16(width: usize, format: char) {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  let p = packed_yuv422_buffer(width, 71);
+  let mut s = std::vec![0u16; width];
+  let mut k = std::vec![0u16; width];
+  match format {
+    'y' => unsafe {
+      scalar::yuyv422_to_luma_u16_row(&p, &mut s, width);
+      yuyv422_to_luma_u16_row(&p, &mut k, width);
+    },
+    'u' => unsafe {
+      scalar::uyvy422_to_luma_u16_row(&p, &mut s, width);
+      uyvy422_to_luma_u16_row(&p, &mut k, width);
+    },
+    'v' => unsafe {
+      scalar::yvyu422_to_luma_u16_row(&p, &mut s, width);
+      yvyu422_to_luma_u16_row(&p, &mut k, width);
+    },
+    _ => unreachable!(),
+  }
+  assert_eq!(
+    s, k,
+    "AVX-512 luma_u16 diverges (format={format}, width={width})"
+  );
+}
+
+#[test]
+fn avx512_packed_yuv422_luma_u16_matches_scalar_widths() {
+  // Sweep covers the 64-px AVX-512 main loop boundary plus tails on
+  // both sides (63 / 65 / 95 / 127 / 129).
+  for w in [
+    1usize, 2, 4, 8, 14, 16, 30, 32, 34, 62, 63, 64, 65, 66, 95, 126, 127, 128, 129, 130, 1920,
+    1922,
+  ] {
+    check_luma_u16(w, 'y');
+    check_luma_u16(w, 'u');
+    check_luma_u16(w, 'v');
+  }
+}

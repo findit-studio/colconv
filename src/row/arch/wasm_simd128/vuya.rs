@@ -470,7 +470,14 @@ pub(crate) unsafe fn vuya_to_luma_u16_row(packed: &[u8], out: &mut [u16], width:
 /// 1. **`simd128` must be enabled at compile time.**
 /// 2. `packed.len() >= width * 4`.
 /// 3. `out.len() >= width`.
-#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+//
+// Always dead-code: the dispatcher (`row::dispatch::vuyx`) re-uses the
+// shared VUYA luma_u16 kernel directly via `vuya_to_luma_u16_row`,
+// rather than calling this per-arch shim. Keep it for symmetry with
+// the other backends and to document the equivalence. The
+// `not(std/alloc)` gate previously here did not cover wasm32-emscripten
+// builds with std enabled.
+#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn vuyx_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {

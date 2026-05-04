@@ -219,3 +219,40 @@ fn neon_packed_yuv422_luma_matches_scalar_widths() {
     check_luma(w, 'v');
   }
 }
+
+// ===== u16 luma extraction (3 formats; YUYV / UYVY / YVYU) =====
+
+fn check_luma_u16(width: usize, format: char) {
+  let p = packed_yuv422_buffer(width, 71);
+  let mut s = std::vec![0u16; width];
+  let mut n = std::vec![0u16; width];
+  match format {
+    'y' => unsafe {
+      scalar::yuyv422_to_luma_u16_row(&p, &mut s, width);
+      yuyv422_to_luma_u16_row(&p, &mut n, width);
+    },
+    'u' => unsafe {
+      scalar::uyvy422_to_luma_u16_row(&p, &mut s, width);
+      uyvy422_to_luma_u16_row(&p, &mut n, width);
+    },
+    'v' => unsafe {
+      scalar::yvyu422_to_luma_u16_row(&p, &mut s, width);
+      yvyu422_to_luma_u16_row(&p, &mut n, width);
+    },
+    _ => unreachable!(),
+  }
+  assert_eq!(s, n, "NEON {format}xyz luma_u16 diverges (width={width})");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn neon_packed_yuv422_luma_u16_matches_scalar_widths() {
+  // Sweep covers the 16-px NEON main loop boundary plus tails (15 / 17 / 31 / 33).
+  for w in [
+    1usize, 2, 4, 8, 14, 15, 16, 17, 18, 30, 31, 32, 33, 34, 62, 63, 64, 66, 1920, 1922,
+  ] {
+    check_luma_u16(w, 'y');
+    check_luma_u16(w, 'u');
+    check_luma_u16(w, 'v');
+  }
+}
