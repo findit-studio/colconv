@@ -8,7 +8,7 @@
 //! `crate::row::*` (e.g. `crate::row::yuv_420_to_rgb_row`). Callers
 //! see no API change from the split.
 
-pub(crate) mod alpha_extract;
+pub mod alpha_extract;
 pub(super) mod ayuv64;
 pub(super) mod bayer;
 pub(super) mod nv;

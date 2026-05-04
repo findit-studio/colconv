@@ -42,7 +42,7 @@ use crate::row::{avx2_available, avx512_available, sse41_available};
 /// When `use_simd` is `false` (`MixedSinker::with_simd(false)`), the
 /// SIMD cascade is bypassed and scalar runs directly.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn copy_alpha_packed_u8x4_at_3(
+pub fn copy_alpha_packed_u8x4_at_3(
   packed: &[u8],
   rgba_out: &mut [u8],
   width: usize,
@@ -98,7 +98,7 @@ pub(crate) fn copy_alpha_packed_u8x4_at_3(
 /// Selects the highest available SIMD backend; falls back to scalar.
 /// When `use_simd` is `false`, calls scalar directly.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0(
+pub fn copy_alpha_packed_u16x4_to_u8_at_0(
   packed: &[u16],
   rgba_out: &mut [u8],
   width: usize,
@@ -155,7 +155,7 @@ pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0(
 /// Selects the highest available SIMD backend; falls back to scalar.
 /// When `use_simd` is `false`, calls scalar directly.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn copy_alpha_packed_u16x4_at_0(
+pub fn copy_alpha_packed_u16x4_at_0(
   packed: &[u16],
   rgba_out: &mut [u16],
   width: usize,

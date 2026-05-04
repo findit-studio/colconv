@@ -25,7 +25,7 @@
 // `cargo clippy -- -D warnings` on CI) would fail the build.
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn expand_rgb_to_rgba_row(rgb: &[u8], rgba_out: &mut [u8], width: usize) {
+pub fn expand_rgb_to_rgba_row(rgb: &[u8], rgba_out: &mut [u8], width: usize) {
   debug_assert!(rgb.len() >= width * 3, "rgb row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
   // `chunks_exact` lets the compiler hoist the bounds checks out of the
@@ -67,7 +67,7 @@ pub(crate) fn expand_rgb_to_rgba_row(rgb: &[u8], rgba_out: &mut [u8], width: usi
 // site.
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn expand_rgb_u16_to_rgba_u16_row<const BITS: u32>(
+pub fn expand_rgb_u16_to_rgba_u16_row<const BITS: u32>(
   rgb: &[u16],
   rgba_out: &mut [u16],
   width: usize,
