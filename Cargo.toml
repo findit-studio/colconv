@@ -144,6 +144,18 @@ harness = false
 name = "ayuv64_a_plus_combo"
 harness = false
 
+[[bench]]
+name = "yuva_4_2_0_a_plus_combo"
+harness = false
+
+[[bench]]
+name = "yuva_4_2_2_a_plus_combo"
+harness = false
+
+[[bench]]
+name = "yuva_4_4_4_a_plus_combo"
+harness = false
+
 [features]
 default = ["std"]
 alloc = ["libm"]
