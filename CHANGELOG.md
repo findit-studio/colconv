@@ -1,5 +1,40 @@
 # CHANGELOG
 
+## 0.18.0 — Strategy A+ across all source-α formats (Tier 5 closure megaship PR 4 / final)
+
+**Performance improvement; no public API change; output byte-identical to v0.17.x.**
+
+For source-α formats (VUYA, AYUV64, Yuva420p / 422p / 444p, Yuva*p9 / 10 / 12 / 14 / 16),
+the `with_rgb + with_rgba` combo case previously ran the chroma kernel
+TWICE — once for RGB output, once for RGBA-with-source-α. Strategy A+
+now runs the chroma kernel ONCE, expands RGB → RGBA via the existing
+`expand_rgb_to_rgba_row` helper, then overwrites the α slot with a cheap
+α-extract pass from the source. Cost: 1× chroma + 1× expand + 1× α-overwrite
+instead of 2× chroma. Impact is largest at u16 (i64 chroma kernel runs
+once instead of twice).
+
+The standalone `with_rgba`-only path is unchanged — it already runs a
+single inline-α kernel, which remains optimal.
+
+New module: `src/row/scalar/alpha_extract.rs` with 6 helpers, plus per-arch
+SIMD parity in `src/row/arch/{neon,x86_sse41,x86_avx2,x86_avx512,wasm_simd128}/alpha_extract.rs`
+(30 SIMD impls total) plus the runtime dispatcher
+`src/row/dispatch/alpha_extract.rs`.
+
+Output is byte-identical to v0.17.x — verified by 30 per-format A+
+correctness tests asserting `sinker(combo) == inline-α-kernel-direct`
+for every (range, ColorMatrix) combination.
+
+This is **PR 4 of the 4-PR Tier 5 closure megaship — the final PR**:
+- ✅ PR 1 (v0.16.0): AYUV64 + Tier 5 closure
+- ✅ PR 2 (v0.16.1): Multi-channel lane-order test backport
+- ✅ PR 3 (v0.17.0): 8-bit planar scale-constant migration
+- ✅ PR 4 (this release): Strategy A+ across source-α formats — **closes the megaship**
+
+After this release the source-α format family shares a uniform combo-case
+optimization with the rest of the wired families. The Tier 5 (packed
+YUV 4:4:4 + α) family is now feature-complete and performance-optimized.
+
 ## 0.17.0 — 8-bit planar scale-constant migration (Tier 5 closure megaship PR 3)
 
 **Behavior change at limited-range:** all 8-bit YUV→RGB paths now use
