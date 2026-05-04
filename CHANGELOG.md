@@ -10,8 +10,9 @@ TWICE — once for RGB output, once for RGBA-with-source-α. Strategy A+
 now runs the chroma kernel ONCE, expands RGB → RGBA via the existing
 `expand_rgb_to_rgba_row` helper, then overwrites the α slot with a cheap
 α-extract pass from the source. Cost: 1× chroma + 1× expand + 1× α-overwrite
-instead of 2× chroma. Impact is largest at u16 (i64 chroma kernel runs
-once instead of twice).
+instead of 2× chroma. Impact is largest for 16-bit (u16) outputs, where
+the chroma kernel uses i64 arithmetic (Q15 sums overflow i32 at 16-bit
+input) — that kernel now runs once instead of twice.
 
 The standalone `with_rgba`-only path is unchanged — it already runs a
 single inline-α kernel, which remains optimal.

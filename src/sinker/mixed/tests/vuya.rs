@@ -602,7 +602,7 @@ fn vuya_strategy_a_plus_matches_independent_kernel() {
 // `MixedSinker::with_simd(false)` is a documented public knob (used by
 // benchmarks, fuzzers, and differential testing). All existing kernel
 // calls thread `use_simd = self.simd` to row-level dispatchers; the
-// new dispatch::alpha_extract::* helpers introduced in PR #63 also
+// new alpha_extract::* helpers introduced in PR #63 also
 // accept the flag now (previously they always selected the highest
 // available SIMD backend, silently bypassing the knob for the α-extract
 // step of A+).

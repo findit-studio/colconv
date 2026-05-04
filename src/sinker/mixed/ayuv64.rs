@@ -35,7 +35,7 @@
 //!   combo — `with_rgb` calls `ayuv64_to_rgb_row` (chroma kernel runs
 //!   ONCE); `with_rgba` is derived by `expand_rgb_to_rgba_row` (writes
 //!   α=`0xFF`) followed by
-//!   `dispatch::alpha_extract::copy_alpha_packed_u16x4_to_u8_at_0` to
+//!   `alpha_extract::copy_alpha_packed_u16x4_to_u8_at_0` to
 //!   overwrite the α slot from the packed source (slot 0, depth-conv
 //!   `>> 8`). Output is byte-identical to calling `ayuv64_to_rgba_row`
 //!   directly (spec § 3.2 / § 7.2).
@@ -74,7 +74,7 @@ impl<'a> MixedSinker<'a, Ayuv64> {
   /// `with_rgb` / `with_hsv`), `ayuv64_to_rgba_row` runs directly.
   /// When combined with `with_rgb`, Strategy A+ applies:
   /// `expand_rgb_to_rgba_row` fans out the RGB row (α=`0xFF`) and
-  /// `dispatch::alpha_extract::copy_alpha_packed_u16x4_to_u8_at_0`
+  /// `alpha_extract::copy_alpha_packed_u16x4_to_u8_at_0`
   /// overwrites the α slot — output is byte-identical to the standalone
   /// path (spec § 3.2 / § 7.2).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -139,7 +139,7 @@ impl<'a> MixedSinker<'a, Ayuv64> {
   /// When standalone (no `with_rgb_u16`), `ayuv64_to_rgba_u16_row` runs
   /// directly. When combined with `with_rgb_u16`, Strategy A+ applies:
   /// `expand_rgb_u16_to_rgba_u16_row::<16>` fans out the u16 RGB row and
-  /// `dispatch::alpha_extract::copy_alpha_packed_u16x4_at_0` overwrites
+  /// `alpha_extract::copy_alpha_packed_u16x4_at_0` overwrites
   /// the α slot — output is byte-identical to the standalone path (spec
   /// § 3.2 / § 7.2).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -350,7 +350,7 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         let rgba_buf = rgba.as_deref_mut().unwrap();
         let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
         expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
-        crate::row::dispatch::alpha_extract::copy_alpha_packed_u16x4_to_u8_at_0(
+        crate::row::alpha_extract::copy_alpha_packed_u16x4_to_u8_at_0(
           packed, rgba_row, w, use_simd,
         );
       }
@@ -404,7 +404,7 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         let rgba_u16_row =
           rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
         expand_rgb_u16_to_rgba_u16_row::<16>(rgb_u16_row, rgba_u16_row, w);
-        crate::row::dispatch::alpha_extract::copy_alpha_packed_u16x4_at_0(
+        crate::row::alpha_extract::copy_alpha_packed_u16x4_at_0(
           packed,
           rgba_u16_row,
           w,
