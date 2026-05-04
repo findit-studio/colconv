@@ -2,8 +2,13 @@
 //! the highest-available SIMD backend per platform; falls back to scalar.
 //!
 //! Each dispatcher function has the same signature as its scalar
-//! counterpart and is `pub(crate)` so the sinker impls can call it
-//! without going through the public row API.
+//! counterpart plus a `use_simd: bool` flag, and is `pub(crate)` so the
+//! sinker impls can call it without going through the public row API.
+//! The `use_simd` flag mirrors `MixedSinker::with_simd(false)` — when
+//! `false`, the dispatcher skips feature detection and calls scalar
+//! directly. This is required for benchmarking, fuzzing, and
+//! differential-testing parity with the rest of the kernel call sites
+//! that already accept `use_simd`.
 //!
 //! Dispatch follows the standard `cfg_select!` pattern used everywhere
 //! in `dispatch::*`: the platform arm is selected at compile time, and
@@ -34,8 +39,18 @@ use crate::row::{avx2_available, avx512_available, sse41_available};
 /// `packed[3 + 4*n]` into `rgba_out[3 + 4*n]`.
 ///
 /// Selects the highest available SIMD backend; falls back to scalar.
+/// When `use_simd` is `false` (`MixedSinker::with_simd(false)`), the
+/// SIMD cascade is bypassed and scalar runs directly.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn copy_alpha_packed_u8x4_at_3(packed: &[u8], rgba_out: &mut [u8], width: usize) {
+pub(crate) fn copy_alpha_packed_u8x4_at_3(
+  packed: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  use_simd: bool,
+) {
+  if !use_simd {
+    return scalar::copy_alpha_packed_u8x4_at_3(packed, rgba_out, width);
+  }
   cfg_select! {
     target_arch = "aarch64" => {
       if neon_available() {
@@ -81,12 +96,17 @@ pub(crate) fn copy_alpha_packed_u8x4_at_3(packed: &[u8], rgba_out: &mut [u8], wi
 /// `packed[0 + 4*n]` (u16) into `rgba_out[3 + 4*n]` (u8) via `>> 8`.
 ///
 /// Selects the highest available SIMD backend; falls back to scalar.
+/// When `use_simd` is `false`, calls scalar directly.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0(
   packed: &[u16],
   rgba_out: &mut [u8],
   width: usize,
+  use_simd: bool,
 ) {
+  if !use_simd {
+    return scalar::copy_alpha_packed_u16x4_to_u8_at_0(packed, rgba_out, width);
+  }
   cfg_select! {
     target_arch = "aarch64" => {
       if neon_available() {
@@ -133,8 +153,17 @@ pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0(
 /// conversion.
 ///
 /// Selects the highest available SIMD backend; falls back to scalar.
+/// When `use_simd` is `false`, calls scalar directly.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn copy_alpha_packed_u16x4_at_0(packed: &[u16], rgba_out: &mut [u16], width: usize) {
+pub(crate) fn copy_alpha_packed_u16x4_at_0(
+  packed: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  use_simd: bool,
+) {
+  if !use_simd {
+    return scalar::copy_alpha_packed_u16x4_at_0(packed, rgba_out, width);
+  }
   cfg_select! {
     target_arch = "aarch64" => {
       if neon_available() {
@@ -180,8 +209,12 @@ pub(crate) fn copy_alpha_packed_u16x4_at_0(packed: &[u16], rgba_out: &mut [u16],
 /// into `rgba_out[3 + 4*n]`.
 ///
 /// Selects the highest available SIMD backend; falls back to scalar.
+/// When `use_simd` is `false`, calls scalar directly.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usize) {
+pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usize, use_simd: bool) {
+  if !use_simd {
+    return scalar::copy_alpha_plane_u8(alpha, rgba_out, width);
+  }
   cfg_select! {
     target_arch = "aarch64" => {
       if neon_available() {
@@ -228,12 +261,17 @@ pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usiz
 /// depth-conv `>> (BITS - 8)`.
 ///
 /// Selects the highest available SIMD backend; falls back to scalar.
+/// When `use_simd` is `false`, calls scalar directly.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
   alpha: &[u16],
   rgba_out: &mut [u8],
   width: usize,
+  use_simd: bool,
 ) {
+  if !use_simd {
+    return scalar::copy_alpha_plane_u16_to_u8::<BITS>(alpha, rgba_out, width);
+  }
   cfg_select! {
     target_arch = "aarch64" => {
       if neon_available() {
@@ -280,12 +318,17 @@ pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
 /// conversion.
 ///
 /// Selects the highest available SIMD backend; falls back to scalar.
+/// When `use_simd` is `false`, calls scalar directly.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn copy_alpha_plane_u16<const BITS: u32>(
   alpha: &[u16],
   rgba_out: &mut [u16],
   width: usize,
+  use_simd: bool,
 ) {
+  if !use_simd {
+    return scalar::copy_alpha_plane_u16::<BITS>(alpha, rgba_out, width);
+  }
   cfg_select! {
     target_arch = "aarch64" => {
       if neon_available() {

@@ -394,13 +394,17 @@ pub(crate) unsafe fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
   // `alpha` has `width` u16 elements, `rgba_out` has `width * 4` bytes.
   unsafe {
     let shr_count = _mm_cvtsi32_si128((BITS as i32) - 8);
+    // BITS-bit canonicalization mask: AND'd before shift so over-range
+    // source α samples don't leak through (matches scalar parity).
+    let bits_mask = _mm256_set1_epi16(((1u32 << BITS) - 1) as i16);
     // α-slot bitmask for u8 RGBA (16 px / iter).
     const ALPHA_MASK_U8: __mmask64 = 0x8888_8888_8888_8888u64;
 
     let mut x = 0usize;
     while x + 16 <= width {
-      // Load 16 u16 α values (32 bytes) into a __m256i.
-      let a_u16 = _mm256_loadu_si256(alpha.as_ptr().add(x).cast());
+      // Load 16 u16 α values (32 bytes) into a __m256i, then canonicalize
+      // over-range bits (matches scalar parity).
+      let a_u16 = _mm256_and_si256(_mm256_loadu_si256(alpha.as_ptr().add(x).cast()), bits_mask);
       // Right-shift by (BITS - 8). `_mm256_srl_epi16` uses the low 64
       // bits of the count vector as a single shift amount applied to
       // every 16-bit lane.
@@ -472,13 +476,13 @@ pub(crate) unsafe fn copy_alpha_plane_u16<const BITS: u32>(
   }
   debug_assert!(alpha.len() >= width, "alpha plane too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
-  // BITS is validated above for caller safety but is not used at runtime:
-  // no depth conversion is performed (u16 -> u16 is a direct scatter).
-  let _ = BITS;
 
   // SAFETY: caller obligation — AVX-512F + AVX-512BW are available;
   // `alpha` has `width` u16, `rgba_out` has `width * 4` u16.
   unsafe {
+    // BITS-bit canonicalization mask: AND'd before scatter so over-range
+    // source α samples don't leak through (matches scalar parity).
+    let bits_mask = _mm256_set1_epi16(((1u32 << BITS) - 1) as i16);
     // u16-granularity α-slot bitmask: each `__m512i` holds 32 u16 = 8
     // pixels; α u16 is at u16 lane 3 of each 4-u16 pixel — lanes 3,
     // 7, 11, 15, 19, 23, 27, 31. As a 32-bit bitmask: 0x8888_8888.
@@ -486,8 +490,9 @@ pub(crate) unsafe fn copy_alpha_plane_u16<const BITS: u32>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      // Load 16 u16 α values (32 bytes) into a __m256i.
-      let a_raw_256 = _mm256_loadu_si256(alpha.as_ptr().add(x).cast());
+      // Load 16 u16 α values (32 bytes) into a __m256i, then canonicalize
+      // over-range bits (matches scalar parity).
+      let a_raw_256 = _mm256_and_si256(_mm256_loadu_si256(alpha.as_ptr().add(x).cast()), bits_mask);
       // Split into two 8-u16 halves.
       let a_lo_128 = _mm256_castsi256_si128(a_raw_256); // α0..α7
       let a_hi_128 = _mm256_extracti128_si256::<1>(a_raw_256); // α8..α15

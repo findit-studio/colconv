@@ -320,6 +320,9 @@ pub(crate) unsafe fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
 
   unsafe {
     let shr_count = _mm_cvtsi32_si128((BITS as i32) - 8);
+    // BITS-bit canonicalization mask: AND'd before shift so over-range
+    // source α samples don't leak through (matches scalar parity).
+    let bits_mask = _mm_set1_epi16(((1u32 << BITS) - 1) as i16);
     // α-slot mask for u8 RGBA output.
     let alpha_mask = _mm_set_epi8(-1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0);
     // Scatter 4 u8 α values (in low 4 bytes after pack) into α slots.
@@ -336,8 +339,10 @@ pub(crate) unsafe fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
     while x + 4 <= width {
       // Load 4 u16 α values (8 bytes).
       let a_u16 = _mm_loadl_epi64(alpha.as_ptr().add(x).cast()); // [a0,a1,a2,a3, 0,0,0,0]
+      // Mask to low BITS before shift (over-range α canonicalization).
+      let a_masked = _mm_and_si128(a_u16, bits_mask);
       // Right-shift by (BITS - 8).
-      let a_shifted = _mm_srl_epi16(a_u16, shr_count);
+      let a_shifted = _mm_srl_epi16(a_masked, shr_count);
       // Narrow u16→u8 (values are in [0,255] after shift).
       let a_u8_vec = _mm_packus_epi16(a_shifted, _mm_setzero_si128()); // [a0,a1,a2,a3, 0,...]
       // Scatter into α slots.
@@ -385,11 +390,11 @@ pub(crate) unsafe fn copy_alpha_plane_u16<const BITS: u32>(
   }
   debug_assert!(alpha.len() >= width, "alpha plane too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
-  // BITS is validated above for caller safety but is not used at runtime:
-  // no depth conversion is performed (u16 → u16 is a direct scatter).
-  let _ = BITS;
 
   unsafe {
+    // BITS-bit canonicalization mask: AND'd before scatter so over-range
+    // source α samples don't leak through (matches scalar parity).
+    let bits_mask = _mm_set1_epi16(((1u32 << BITS) - 1) as i16);
     // u16 α-slot mask: 0xFFFF at u16 slot 3 and 7 (= 2 pixels per __m128i).
     // In bytes: mask bytes 6,7 and 14,15.
     let alpha_mask_u16 = _mm_set_epi16(-1, 0, 0, 0, -1, 0, 0, 0);
@@ -411,8 +416,12 @@ pub(crate) unsafe fn copy_alpha_plane_u16<const BITS: u32>(
 
     let mut x = 0usize;
     while x + 4 <= width {
-      // Load 4 α u16 = 8 bytes into low 64 bits of a register.
-      let a_raw = _mm_loadl_epi64(alpha.as_ptr().add(x).cast()); // [a0,a1,a2,a3, 0,0,0,0]
+      // Load 4 α u16 = 8 bytes into low 64 bits of a register, then
+      // canonicalize over-range bits (matches scalar parity).
+      let a_raw = _mm_and_si128(
+        _mm_loadl_epi64(alpha.as_ptr().add(x).cast()), // [a0,a1,a2,a3, 0,0,0,0]
+        bits_mask,
+      );
 
       // Scatter into the two __m128i blocks (lo covers px0,px1; hi covers px2,px3).
       let a_lo = _mm_shuffle_epi8(a_raw, shuf_lo);

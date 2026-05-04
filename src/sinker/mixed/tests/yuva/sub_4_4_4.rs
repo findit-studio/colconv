@@ -1967,3 +1967,131 @@ fn yuva444p16_strategy_a_plus_u16_matches_independent_kernel() {
     }
   }
 }
+
+// ---- Yuva444p10 A+ overrange-α regression (Codex PR #63 review fix #1) ----
+//
+// `Yuva444p10Frame::try_new` admits raw u16 α samples without per-pixel
+// validation, so over-range values (e.g., 0x0500 at BITS=10) can reach
+// the row kernels. The inline-α scalar templates already mask α with
+// `bits_mask::<BITS>()` to canonicalize over-range bits before shift /
+// copy; this fix extends the same masking to the new BITS-generic A+
+// α-extract helpers (scalar + every SIMD backend). Without the mask,
+// unmasked over-range α would diverge between scalar and SIMD outputs
+// (e.g., 0x0500 >> 2 = 320 → narrowed `as u8` = 64 in scalar but
+// saturated to 255 in some SIMD narrow-with-saturation paths).
+//
+// These tests build mixed in-range / over-range α planes and pin
+// byte-identity between A+ and the inline-α reference kernel.
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva444p10_strategy_a_plus_overrange_alpha_matches_inline_alpha() {
+  // Width chosen to cover SIMD main loop (NEON/SSE 16, AVX2 32, AVX-512 64)
+  // plus a scalar tail.
+  let width = 67usize;
+  let height = 2usize;
+
+  // Y/U/V at canonical 10-bit values; α deliberately mixes in-range and
+  // over-range samples so the BITS mask is exercised on every pixel.
+  let yp = std::vec![512u16; width * height];
+  let up = std::vec![512u16; width * height];
+  let vp = std::vec![512u16; width * height];
+  let mut ap = std::vec![0u16; width * height];
+  let pattern: [u16; 8] = [
+    0x0100, 0x0200, 0x0500, 0x07FF, 0xFFFF, 0x03FF, 0x0000, 0x0800,
+  ];
+  for (i, slot) in ap.iter_mut().enumerate() {
+    *slot = pattern[i % pattern.len()];
+  }
+
+  let frame = Yuva444p10Frame::try_new(
+    &yp,
+    &up,
+    &vp,
+    &ap,
+    width as u32,
+    height as u32,
+    width as u32,
+    width as u32,
+    width as u32,
+    width as u32,
+  )
+  .unwrap();
+
+  // A+ flow (with_rgb + with_rgba triggers the combo + α-extract path).
+  let mut sinker_rgb = std::vec![0u8; width * height * 3];
+  let mut sinker_rgba = std::vec![0u8; width * height * 4];
+  {
+    let mut sink = MixedSinker::<Yuva444p10>::new(width, height)
+      .with_rgb(&mut sinker_rgb)
+      .unwrap()
+      .with_rgba(&mut sinker_rgba)
+      .unwrap();
+    yuva444p10_to(&frame, true, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+
+  // Reference: scalar inline-α kernel per row (already masks via bits_mask).
+  let mut inline_rgba = std::vec![0u8; width * height * 4];
+  for r in 0..height {
+    let y_row = &yp[r * width..(r + 1) * width];
+    let u_row = &up[r * width..(r + 1) * width];
+    let v_row = &vp[r * width..(r + 1) * width];
+    let a_row = &ap[r * width..(r + 1) * width];
+    crate::row::scalar::yuv_444p_n_to_rgba_with_alpha_src_row::<10>(
+      y_row,
+      u_row,
+      v_row,
+      a_row,
+      &mut inline_rgba[r * width * 4..(r + 1) * width * 4],
+      width,
+      ColorMatrix::Bt709,
+      true,
+    );
+  }
+
+  assert_eq!(
+    sinker_rgba, inline_rgba,
+    "Yuva444p10 A+ u8 RGBA must mask over-range α to BITS-bit range \
+     (parity with inline-α scalar reference)"
+  );
+
+  // u16 RGBA path: mirror the same regression with `with_rgb_u16 + with_rgba_u16`
+  // which exercises copy_alpha_plane_u16::<BITS> in the dispatcher.
+  let mut sinker_rgb_u16 = std::vec![0u16; width * height * 3];
+  let mut sinker_rgba_u16 = std::vec![0u16; width * height * 4];
+  {
+    let mut sink = MixedSinker::<Yuva444p10>::new(width, height)
+      .with_rgb_u16(&mut sinker_rgb_u16)
+      .unwrap()
+      .with_rgba_u16(&mut sinker_rgba_u16)
+      .unwrap();
+    yuva444p10_to(&frame, true, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+
+  let mut inline_rgba_u16 = std::vec![0u16; width * height * 4];
+  for r in 0..height {
+    let y_row = &yp[r * width..(r + 1) * width];
+    let u_row = &up[r * width..(r + 1) * width];
+    let v_row = &vp[r * width..(r + 1) * width];
+    let a_row = &ap[r * width..(r + 1) * width];
+    crate::row::scalar::yuv_444p_n_to_rgba_u16_with_alpha_src_row::<10>(
+      y_row,
+      u_row,
+      v_row,
+      a_row,
+      &mut inline_rgba_u16[r * width * 4..(r + 1) * width * 4],
+      width,
+      ColorMatrix::Bt709,
+      true,
+    );
+  }
+
+  assert_eq!(
+    sinker_rgba_u16, inline_rgba_u16,
+    "Yuva444p10 A+ u16 RGBA must mask over-range α to BITS-bit range \
+     (parity with inline-α scalar reference)"
+  );
+}

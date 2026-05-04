@@ -63,6 +63,15 @@ pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usiz
 /// `rgba_out[3 + 4*n]` (u8) with depth-conv `>> (BITS - 8)`.
 ///
 /// `BITS` is the source α bit depth (9, 10, 12, or 14).
+///
+/// α is masked with `(1 << BITS) - 1` BEFORE the shift to canonicalize
+/// over-range source samples. Frame constructors admit raw u16 input
+/// (e.g., p010-style buffers store the 10 active bits in the HIGH bits
+/// of u16), so an unmasked over-range value would otherwise leak through
+/// the shift and produce divergent output between scalar and SIMD paths.
+/// See sibling inline-α kernels (`yuva_4_*` row impls) for the same
+/// pattern with comment "silently turning over-range alpha into
+/// transparent output".
 pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
   alpha: &[u16],
   rgba_out: &mut [u8],
@@ -73,16 +82,18 @@ pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
   }
   debug_assert!(alpha.len() >= width, "alpha plane too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+  let mask: u16 = ((1u32 << BITS) - 1) as u16;
   let shift = BITS - 8;
   for n in 0..width {
-    rgba_out[n * 4 + 3] = (alpha[n] >> shift) as u8;
+    rgba_out[n * 4 + 3] = ((alpha[n] & mask) >> shift) as u8;
   }
 }
 
 /// Yuva*p9/10/12/14/16 → u16 RGBA: scatter α plane (u16) into
-/// `rgba_out[3 + 4*n]` (u16). `BITS` is unused at runtime — kept as a
-/// const generic for symmetry with the `_to_u8` sibling and future
-/// validation. The α value is written natively at source bit depth.
+/// `rgba_out[3 + 4*n]` (u16). The α value is written at source bit
+/// depth, masked to `(1 << BITS) - 1` so over-range source samples
+/// don't leak through (parity with the inline-α kernels — frame
+/// constructors admit raw u16 input above the BITS-bit native range).
 pub(crate) fn copy_alpha_plane_u16<const BITS: u32>(
   alpha: &[u16],
   rgba_out: &mut [u16],
@@ -93,10 +104,9 @@ pub(crate) fn copy_alpha_plane_u16<const BITS: u32>(
   }
   debug_assert!(alpha.len() >= width, "alpha plane too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
-  // BITS is informational — no shift applied, output preserves source depth.
-  let _ = BITS;
+  let mask: u16 = ((1u32 << BITS) - 1) as u16;
   for n in 0..width {
-    rgba_out[n * 4 + 3] = alpha[n];
+    rgba_out[n * 4 + 3] = alpha[n] & mask;
   }
 }
 
@@ -161,13 +171,41 @@ mod tests {
   }
 
   #[test]
-  fn copy_alpha_plane_u16_preserves_native_u16() {
-    let alpha: std::vec::Vec<u16> = std::vec![0x3FF, 0x1FF, 0xFFFF];
+  fn copy_alpha_plane_u16_preserves_native_u16_within_bits_range() {
+    // In-range values pass through unchanged.
+    let alpha: std::vec::Vec<u16> = std::vec![0x3FF, 0x1FF, 0x000];
     let mut rgba = std::vec![1u16; 12];
     copy_alpha_plane_u16::<10>(&alpha, &mut rgba, 3);
     assert_eq!(
       rgba,
-      std::vec![1, 1, 1, 0x3FF, 1, 1, 1, 0x1FF, 1, 1, 1, 0xFFFF]
+      std::vec![1, 1, 1, 0x3FF, 1, 1, 1, 0x1FF, 1, 1, 1, 0x000]
     );
+  }
+
+  #[test]
+  fn copy_alpha_plane_u16_masks_overrange_to_bits_range() {
+    // Over-range α (e.g., 0xFFFF at BITS=10) must be masked to low BITS.
+    // Without the mask, raw u16 0xFFFF would leak straight to output and
+    // exceed the documented [0, (1 << BITS) - 1] native-depth range,
+    // diverging from the inline-α scalar reference.
+    let alpha: std::vec::Vec<u16> = std::vec![0xFFFF, 0x0500, 0x07FF];
+    let mut rgba = std::vec![1u16; 12];
+    copy_alpha_plane_u16::<10>(&alpha, &mut rgba, 3);
+    assert_eq!(
+      rgba,
+      std::vec![1, 1, 1, 0x3FF, 1, 1, 1, 0x100, 1, 1, 1, 0x3FF]
+    );
+  }
+
+  #[test]
+  fn copy_alpha_plane_u16_to_u8_masks_overrange_then_shifts() {
+    // Without the BITS mask, 0x0500 at BITS=10 would shift `>> 2` to
+    // 320 and either narrow as u8 to 64 (scalar `as u8`) or saturate to
+    // 255 (some SIMD narrow-with-saturation paths). With masking, 0x0500
+    // & 0x3FF = 0x100 → 0x100 >> 2 = 64 consistently across all paths.
+    let alpha: std::vec::Vec<u16> = std::vec![0x0500, 0xFFFF, 0x03FF];
+    let mut rgba = std::vec![1u8; 12];
+    copy_alpha_plane_u16_to_u8::<10>(&alpha, &mut rgba, 3);
+    assert_eq!(rgba, std::vec![1, 1, 1, 64, 1, 1, 1, 0xFF, 1, 1, 1, 0xFF]);
   }
 }

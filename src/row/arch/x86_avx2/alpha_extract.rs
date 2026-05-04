@@ -405,6 +405,9 @@ pub(crate) unsafe fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
 
   unsafe {
     let shr_count = _mm_cvtsi32_si128((BITS as i32) - 8);
+    // BITS-bit canonicalization mask: AND'd before shift so over-range
+    // source α samples don't leak through (matches scalar parity).
+    let bits_mask = _mm_set1_epi16(((1u32 << BITS) - 1) as i16);
     // α-slot mask for u8 RGBA (8 px wide).
     let alpha_mask = _mm256_set_epi8(
       -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, // hi lane
@@ -425,8 +428,9 @@ pub(crate) unsafe fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
 
     let mut x = 0usize;
     while x + 8 <= width {
-      // Load 8 u16 α values (16 bytes) into a __m128i.
-      let a_u16 = _mm_loadu_si128(alpha.as_ptr().add(x).cast());
+      // Load 8 u16 α values (16 bytes) into a __m128i, then canonicalize
+      // over-range bits (matches scalar parity).
+      let a_u16 = _mm_and_si128(_mm_loadu_si128(alpha.as_ptr().add(x).cast()), bits_mask);
       // Right-shift by (BITS - 8).
       let a_shifted = _mm_srl_epi16(a_u16, shr_count);
       // Narrow u16 -> u8 (values fit in [0, 255] after shift). One
@@ -482,11 +486,11 @@ pub(crate) unsafe fn copy_alpha_plane_u16<const BITS: u32>(
   }
   debug_assert!(alpha.len() >= width, "alpha plane too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
-  // BITS is validated above for caller safety but is not used at runtime:
-  // no depth conversion is performed (u16 -> u16 is a direct scatter).
-  let _ = BITS;
 
   unsafe {
+    // BITS-bit canonicalization mask: AND'd before scatter so over-range
+    // source α samples don't leak through (matches scalar parity).
+    let bits_mask_256 = _mm256_set1_epi16(((1u32 << BITS) - 1) as i16);
     // u16 α-slot mask (4 pixels per __m256i; α at u16 lanes 3, 7, 11, 15).
     // `_mm256_set_epi16` takes args high-to-low (lane 15 first, lane 0 last).
     let alpha_mask_u16 = _mm256_set_epi16(
@@ -527,8 +531,11 @@ pub(crate) unsafe fn copy_alpha_plane_u16<const BITS: u32>(
     let mut x = 0usize;
     while x + 8 <= width {
       // Load 8 u16 α values = 16 bytes into a __m128i, then broadcast.
+      // After broadcast, both 128-bit lanes hold α0..α7; we AND with
+      // bits_mask_256 to canonicalize over-range source α (matches
+      // scalar parity).
       let a_raw_128 = _mm_loadu_si128(alpha.as_ptr().add(x).cast());
-      let a_raw_256 = _mm256_broadcastsi128_si256(a_raw_128);
+      let a_raw_256 = _mm256_and_si256(_mm256_broadcastsi128_si256(a_raw_128), bits_mask_256);
 
       // Two output __m256i cover 8 pixels of u16 RGBA (16 u16 each).
       let off = x * 4;

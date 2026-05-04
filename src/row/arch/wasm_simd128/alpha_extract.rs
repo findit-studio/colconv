@@ -329,11 +329,17 @@ pub(crate) unsafe fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
   // Compile-time shift count as u32 for u16x8_shr (runtime variable accepted).
   let shr_count: u32 = BITS - 8;
 
+  // BITS-bit canonicalization mask: AND'd before shift so over-range
+  // source α samples don't leak through (matches scalar parity).
+  let bits_mask = u16x8_splat(((1u32 << BITS) - 1) as u16);
+
   unsafe {
     let mut x = 0usize;
     while x + 4 <= width {
       // Load 4 u16 α values (8 bytes) via v128_load64_zero (loads u64, zeroes upper).
-      let a_u16 = v128_load64_zero(alpha.as_ptr().add(x).cast());
+      let a_u16_raw = v128_load64_zero(alpha.as_ptr().add(x).cast());
+      // Mask to low BITS before shift (over-range α canonicalization).
+      let a_u16 = v128_and(a_u16_raw, bits_mask);
       // Logical right-shift — u16x8_shr, NOT i16x8_shr (arithmetic would corrupt
       // α values ≥ 0x8000 by sign-extending).
       let a_shifted = u16x8_shr(a_u16, shr_count);
@@ -386,8 +392,6 @@ pub(crate) unsafe fn copy_alpha_plane_u16<const BITS: u32>(
   }
   debug_assert!(alpha.len() >= width, "alpha plane too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
-  // BITS is informational — no shift (matches scalar).
-  let _ = BITS;
 
   // u16 α-slot mask: 0xFFFF at u16 slot 3 and 7 within each v128 (2 pixels).
   // Bytes 6,7 and 14,15 are 0xFF; all others 0x00.
@@ -406,11 +410,16 @@ pub(crate) unsafe fn copy_alpha_plane_u16<const BITS: u32>(
     -1, -1, -1, -1, -1, -1, 6, 7, // px3: bytes 6,7 → bytes 14,15
   );
 
+  // BITS-bit canonicalization mask: AND'd before scatter so over-range
+  // source α samples don't leak through (matches scalar parity).
+  let bits_mask = u16x8_splat(((1u32 << BITS) - 1) as u16);
+
   unsafe {
     let mut x = 0usize;
     while x + 4 <= width {
-      // Load 4 α u16 = 8 bytes into low 64 bits; upper 64 bits zero.
-      let a_raw = v128_load64_zero(alpha.as_ptr().add(x).cast());
+      // Load 4 α u16 = 8 bytes into low 64 bits; upper 64 bits zero,
+      // then AND with bits_mask (over-range α canonicalization).
+      let a_raw = v128_and(v128_load64_zero(alpha.as_ptr().add(x).cast()), bits_mask);
 
       // Scatter into the two v128 blocks (lo covers px0,px1; hi covers px2,px3).
       let a_lo = u8x16_swizzle(a_raw, shuf_lo);

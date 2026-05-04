@@ -221,10 +221,15 @@ pub(crate) unsafe fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
   // shift count is loop-invariant and built before the loop.
   unsafe {
     let shr_count = vdupq_n_s16(-((BITS as i16) - 8));
+    // BITS-bit canonicalization mask: AND'd before shift so over-range
+    // source α samples don't leak through (matches scalar parity).
+    let bits_mask = vdupq_n_u16(((1u32 << BITS) - 1) as u16);
     while x + 8 <= width {
       let a_u16 = vld1q_u16(alpha.as_ptr().add(x));
+      // Mask to low BITS before the shift (over-range α canonicalization).
+      let a_masked = vandq_u16(a_u16, bits_mask);
       // Right shift by (BITS - 8) via vshlq_u16 with negative count.
-      let a_shifted = vshlq_u16(a_u16, shr_count);
+      let a_shifted = vshlq_u16(a_masked, shr_count);
       // Truncating narrow to u8 — matches scalar `as u8` (no saturation).
       let a_u8 = vmovn_u16(a_shifted);
       let off = x * 4;
@@ -262,15 +267,16 @@ pub(crate) unsafe fn copy_alpha_plane_u16<const BITS: u32>(
   }
   debug_assert!(alpha.len() >= width, "alpha plane too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
-  // BITS is informational — no shift applied (matches scalar).
-  let _ = BITS;
 
   let mut x = 0usize;
   // SAFETY: loop guard `x + 8 <= width` plus debug_asserts cover both
   // the 16-byte α load and the 64-byte RGBA round-trip.
   unsafe {
+    // BITS-bit canonicalization mask: AND'd before scatter so over-range
+    // source α samples don't leak through (matches scalar parity).
+    let bits_mask = vdupq_n_u16(((1u32 << BITS) - 1) as u16);
     while x + 8 <= width {
-      let a_vec = vld1q_u16(alpha.as_ptr().add(x));
+      let a_vec = vandq_u16(vld1q_u16(alpha.as_ptr().add(x)), bits_mask);
       let off = x * 4;
       let dst = vld4q_u16(rgba_out.as_ptr().add(off));
       let merged = uint16x8x4_t(dst.0, dst.1, dst.2, a_vec);

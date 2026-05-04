@@ -195,7 +195,7 @@ impl PixelSink for MixedSinker<'_, Yuva444p> {
       // Expand RGB → RGBA (fills α with 0xFF), then overwrite α slot
       // from the source alpha plane — avoids a second chroma kernel.
       expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
-      crate::row::dispatch::alpha_extract::copy_alpha_plane_u8(row.a(), rgba_row, w);
+      crate::row::dispatch::alpha_extract::copy_alpha_plane_u8(row.a(), rgba_row, w, use_simd);
     }
 
     Ok(())
@@ -868,7 +868,12 @@ fn yuva444p_high_bit_process<
       let rgba_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row = rgba_u16_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
       expand_rgb_u16_to_rgba_u16_row::<BITS>(rgb_u16_row, rgba_u16_row, w);
-      crate::row::dispatch::alpha_extract::copy_alpha_plane_u16::<BITS>(a_row, rgba_u16_row, w);
+      crate::row::dispatch::alpha_extract::copy_alpha_plane_u16::<BITS>(
+        a_row,
+        rgba_u16_row,
+        w,
+        use_simd,
+      );
     }
   } else if want_rgba_u16 {
     // Standalone rgba_u16: delegate to the alpha-source-aware dispatcher.
@@ -938,7 +943,9 @@ fn yuva444p_high_bit_process<
     let rgba_buf = rgba.as_deref_mut().unwrap();
     let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
     expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
-    crate::row::dispatch::alpha_extract::copy_alpha_plane_u16_to_u8::<BITS>(a_row, rgba_row, w);
+    crate::row::dispatch::alpha_extract::copy_alpha_plane_u16_to_u8::<BITS>(
+      a_row, rgba_row, w, use_simd,
+    );
   }
 
   Ok(())

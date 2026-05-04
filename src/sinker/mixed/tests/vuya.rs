@@ -596,3 +596,67 @@ fn vuya_strategy_a_plus_matches_independent_kernel() {
     }
   }
 }
+
+// ---- 15: Strategy A+ honors with_simd(false) (Codex PR #63 review fix #2) ----
+//
+// `MixedSinker::with_simd(false)` is a documented public knob (used by
+// benchmarks, fuzzers, and differential testing). All existing kernel
+// calls thread `use_simd = self.simd` to row-level dispatchers; the
+// new dispatch::alpha_extract::* helpers introduced in PR #63 also
+// accept the flag now (previously they always selected the highest
+// available SIMD backend, silently bypassing the knob for the α-extract
+// step of A+).
+//
+// This test exercises the scalar-fallback path through the dispatcher
+// and pins that with_simd(false) still produces correct output when
+// combined with the A+ flow. The dispatcher's scalar branch is
+// validated against the SIMD-default A+ output (which itself is
+// byte-identical to the inline-α reference per test #14).
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn vuya_strategy_a_plus_with_simd_false_uses_scalar_path() {
+  let width = 67usize; // covers SIMD main loop + scalar tail
+  let height = 2usize;
+
+  let mut packed = std::vec![0u8; width * height * 4];
+  pseudo_random_u8(&mut packed, 0xFEED_BABE);
+  let frame = VuyaFrame::try_new(&packed, width as u32, height as u32, (width * 4) as u32).unwrap();
+
+  // Default A+ (SIMD-on, when available).
+  let mut simd_rgb = std::vec![0u8; width * height * 3];
+  let mut simd_rgba = std::vec![0u8; width * height * 4];
+  {
+    let mut sink = MixedSinker::<Vuya>::new(width, height)
+      .with_rgb(&mut simd_rgb)
+      .unwrap()
+      .with_rgba(&mut simd_rgba)
+      .unwrap();
+    vuya_to(&frame, false, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+
+  // A+ with with_simd(false): scalar path through the α-extract dispatcher.
+  let mut scalar_rgb = std::vec![0u8; width * height * 3];
+  let mut scalar_rgba = std::vec![0u8; width * height * 4];
+  {
+    let mut sink = MixedSinker::<Vuya>::new(width, height)
+      .with_rgb(&mut scalar_rgb)
+      .unwrap()
+      .with_rgba(&mut scalar_rgba)
+      .unwrap()
+      .with_simd(false);
+    vuya_to(&frame, false, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+
+  assert_eq!(
+    simd_rgb, scalar_rgb,
+    "VUYA A+ RGB diverges between SIMD and with_simd(false) paths"
+  );
+  assert_eq!(
+    simd_rgba, scalar_rgba,
+    "VUYA A+ RGBA diverges between SIMD and with_simd(false) paths"
+  );
+}
