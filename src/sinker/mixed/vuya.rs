@@ -24,13 +24,13 @@
 //! - **Standalone RGBA** (`with_rgba` attached, no `with_rgb`, no
 //!   `with_hsv`): `vuya_to_rgba_row` runs directly — source α passes
 //!   through via the kernel.
-//! - **RGB + RGBA** (both attached, with or without HSV): each output
-//!   runs its own independent kernel call reading from the same packed
-//!   input. `with_rgb` calls `vuya_to_rgb_row` (α discarded);
-//!   `with_rgba` calls `vuya_to_rgba_row` directly (source α preserved,
-//!   per spec § 7.2). Strategy A fan-out (`expand_rgb_to_rgba_row`) is
-//!   **never** used for VUYA — that path is reserved for VUYX where
-//!   α = `0xFF` is the correct semantic.
+//! - **RGB + RGBA** (both attached, with or without HSV): Strategy A+
+//!   combo — `with_rgb` calls `vuya_to_rgb_row` (chroma kernel runs
+//!   ONCE); `with_rgba` is derived by `expand_rgb_to_rgba_row` (writes
+//!   α=`0xFF`) followed by
+//!   `alpha_extract::copy_alpha_packed_u8x4_at_3` to overwrite
+//!   the α slot from the packed source (slot 3). Output is byte-identical
+//!   to calling `vuya_to_rgba_row` directly (spec § 3.2 / § 7.2).
 
 use super::{
   MixedSinker, MixedSinkerError, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch,
@@ -38,7 +38,9 @@ use super::{
 };
 use crate::{
   PixelSink,
-  row::{rgb_to_hsv_row, vuya_to_luma_row, vuya_to_rgb_row, vuya_to_rgba_row},
+  row::{
+    expand_rgb_to_rgba_row, rgb_to_hsv_row, vuya_to_luma_row, vuya_to_rgb_row, vuya_to_rgba_row,
+  },
   yuv::{Vuya, VuyaRow, VuyaSink},
 };
 
@@ -54,9 +56,13 @@ impl<'a> MixedSinker<'a, Vuya> {
   /// ## Strategy note
   ///
   /// Source-α pass-through is guaranteed in **all** paths (standalone or
-  /// combined with `with_rgb` / `with_hsv`). When combined, `with_rgba`
-  /// runs its own `vuya_to_rgba_row` kernel call directly from the packed
-  /// source — it is never derived from the RGB output (spec § 7.2).
+  /// combined with `with_rgb` / `with_hsv`). When standalone (no
+  /// `with_rgb` / `with_hsv`), `vuya_to_rgba_row` runs directly from the
+  /// packed source. When combined with `with_rgb`, Strategy A+ applies:
+  /// `expand_rgb_to_rgba_row` fans out the RGB row (α=`0xFF`) and
+  /// `alpha_extract::copy_alpha_packed_u8x4_at_3` overwrites
+  /// the α slot — output is byte-identical to the standalone path (spec
+  /// § 3.2 / § 7.2).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
     self.set_rgba(buf)?;
@@ -167,13 +173,25 @@ impl PixelSink for MixedSinker<'_, Vuya> {
           use_simd,
         );
       }
+
+      // Strategy A+ combo: RGBA both attached — derive from the just-computed
+      // RGB row (writes α=0xFF), then overwrite α slot from packed source.
+      // Output is byte-identical to vuya_to_rgba_row directly (spec § 3.2).
+      // See spec docs/superpowers/specs/2026-05-04-pr4-strategy-a-plus-design.md.
+      if want_rgba {
+        let rgba_buf = rgba.as_deref_mut().unwrap();
+        let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
+        expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
+        crate::row::alpha_extract::copy_alpha_packed_u8x4_at_3(
+          packed, rgba_row, w, use_simd,
+        );
+      }
     }
 
-    // RGBA direct path — spec § 7.2: always run vuya_to_rgba_row directly
-    // from the packed source, preserving source α verbatim. This applies
-    // whether or not with_rgb / with_hsv are also attached. Strategy A
-    // fan-out (expand_rgb_to_rgba_row, α=0xFF) is NEVER used for VUYA.
-    if want_rgba {
+    // Standalone RGBA path — no RGB/HSV requested. Run vuya_to_rgba_row
+    // directly from the packed source; source α passes through in the
+    // kernel. This path is already optimal — unchanged (spec § 7.2).
+    if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
       vuya_to_rgba_row(

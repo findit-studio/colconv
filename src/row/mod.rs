@@ -41,7 +41,7 @@
 //! see no API change from the split.
 
 pub(crate) mod arch;
-mod dispatch;
+pub(crate) mod dispatch;
 pub(crate) mod scalar;
 
 // Re-exported only when a caller is compiled. The `MixedSinker` Strategy A
@@ -53,6 +53,12 @@ pub(crate) mod scalar;
 pub(crate) use scalar::expand_rgb_to_rgba_row;
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub(crate) use scalar::expand_rgb_u16_to_rgba_u16_row;
+
+// Strategy A+ α-extract dispatcher — re-exported at `crate::row::alpha_extract`
+// so source-α sinkers don't have to reach into `dispatch::` internals. Same
+// `feature = "std" | "alloc"` gating as the expand helpers above.
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) use dispatch::alpha_extract;
 
 pub use dispatch::{
   ayuv64::*, bayer::*, nv::*, packed_yuv422::*, pn::*, rgb_ops::*, v30x::*, v210::*, v410::*,

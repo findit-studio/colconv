@@ -17,6 +17,8 @@
 //! 13. `vuya_planar_parity_with_yuva444p` — VUYA packed ↔ Yuva444p
 //!     planar cross-format oracle (RGB + RGBA byte-identical for the
 //!     same logical YUVA samples).
+//! 14. `vuya_strategy_a_plus_matches_independent_kernel` — Strategy A+
+//!     correctness: combo path output == scalar inline-α kernel output.
 
 #[cfg(all(test, feature = "std"))]
 use super::*;
@@ -515,4 +517,146 @@ fn vuya_planar_parity_with_yuva444p() {
       );
     }
   }
+}
+
+// ---- 14: Strategy A+ correctness (spec § 6.1) ----------------------------
+
+/// Strategy A+ correctness: combo path output == inline-α kernel output
+/// at all (range, matrix) combinations. See spec § 6.1.
+///
+/// Validates byte-identity by running the sinker combo path (which uses
+/// A+ post-PR4) against the scalar inline-α kernel directly.
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn vuya_strategy_a_plus_matches_independent_kernel() {
+  let width = 128usize;
+  let height = 4usize;
+
+  // Pseudo-random source.
+  let mut packed = std::vec![0u8; width * height * 4];
+  pseudo_random_u8(&mut packed, 0xC0FFEE);
+  let frame = VuyaFrame::try_new(&packed, width as u32, height as u32, (width * 4) as u32).unwrap();
+
+  for full_range in [true, false] {
+    for matrix in [
+      ColorMatrix::Bt601,
+      ColorMatrix::Bt709,
+      ColorMatrix::Bt2020Ncl,
+      ColorMatrix::Smpte240m,
+      ColorMatrix::Fcc,
+      ColorMatrix::YCgCo,
+    ] {
+      // Sinker path (uses A+ post-PR4).
+      let mut sinker_rgb = std::vec![0u8; width * height * 3];
+      let mut sinker_rgba = std::vec![0u8; width * height * 4];
+      {
+        let mut sink = MixedSinker::<Vuya>::new(width, height)
+          .with_rgb(&mut sinker_rgb)
+          .unwrap()
+          .with_rgba(&mut sinker_rgba)
+          .unwrap();
+        vuya_to(&frame, full_range, matrix, &mut sink).unwrap();
+      }
+
+      // Reference: scalar inline-α kernel directly (per row).
+      let mut inline_rgba = std::vec![0u8; width * height * 4];
+      let mut inline_rgb = std::vec![0u8; width * height * 3];
+      for r in 0..height {
+        let row_off_packed = r * width * 4;
+        let row_off_rgb = r * width * 3;
+        let row_off_rgba = r * width * 4;
+        crate::row::scalar::vuya_to_rgb_row(
+          &packed[row_off_packed..row_off_packed + width * 4],
+          &mut inline_rgb[row_off_rgb..row_off_rgb + width * 3],
+          width,
+          matrix,
+          full_range,
+        );
+        crate::row::scalar::vuya_to_rgba_row(
+          &packed[row_off_packed..row_off_packed + width * 4],
+          &mut inline_rgba[row_off_rgba..row_off_rgba + width * 4],
+          width,
+          matrix,
+          full_range,
+        );
+      }
+
+      assert_eq!(
+        sinker_rgb, inline_rgb,
+        "VUYA A+ RGB diverges (range={full_range}, matrix={matrix:?})"
+      );
+      assert_eq!(
+        sinker_rgba, inline_rgba,
+        "VUYA A+ RGBA diverges from scalar inline-α (range={full_range}, matrix={matrix:?})"
+      );
+    }
+  }
+}
+
+// ---- 15: Strategy A+ honors with_simd(false) (Codex PR #63 review fix #2) ----
+//
+// `MixedSinker::with_simd(false)` is a documented public knob (used by
+// benchmarks, fuzzers, and differential testing). All existing kernel
+// calls thread `use_simd = self.simd` to row-level dispatchers; the
+// new alpha_extract::* helpers introduced in PR #63 also
+// accept the flag now (previously they always selected the highest
+// available SIMD backend, silently bypassing the knob for the α-extract
+// step of A+).
+//
+// This test exercises the scalar-fallback path through the dispatcher
+// and pins that with_simd(false) still produces correct output when
+// combined with the A+ flow. The dispatcher's scalar branch is
+// validated against the SIMD-default A+ output (which itself is
+// byte-identical to the inline-α reference per test #14).
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn vuya_strategy_a_plus_with_simd_false_uses_scalar_path() {
+  let width = 67usize; // covers SIMD main loop + scalar tail
+  let height = 2usize;
+
+  let mut packed = std::vec![0u8; width * height * 4];
+  pseudo_random_u8(&mut packed, 0xFEED_BABE);
+  let frame = VuyaFrame::try_new(&packed, width as u32, height as u32, (width * 4) as u32).unwrap();
+
+  // Default A+ (SIMD-on, when available).
+  let mut simd_rgb = std::vec![0u8; width * height * 3];
+  let mut simd_rgba = std::vec![0u8; width * height * 4];
+  {
+    let mut sink = MixedSinker::<Vuya>::new(width, height)
+      .with_rgb(&mut simd_rgb)
+      .unwrap()
+      .with_rgba(&mut simd_rgba)
+      .unwrap();
+    vuya_to(&frame, false, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+
+  // A+ with with_simd(false): scalar path through the α-extract dispatcher.
+  let mut scalar_rgb = std::vec![0u8; width * height * 3];
+  let mut scalar_rgba = std::vec![0u8; width * height * 4];
+  {
+    let mut sink = MixedSinker::<Vuya>::new(width, height)
+      .with_rgb(&mut scalar_rgb)
+      .unwrap()
+      .with_rgba(&mut scalar_rgba)
+      .unwrap()
+      .with_simd(false);
+    vuya_to(&frame, false, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+
+  assert_eq!(
+    simd_rgb, scalar_rgb,
+    "VUYA A+ RGB diverges between SIMD and with_simd(false) paths"
+  );
+  assert_eq!(
+    simd_rgba, scalar_rgba,
+    "VUYA A+ RGBA diverges between SIMD and with_simd(false) paths"
+  );
 }

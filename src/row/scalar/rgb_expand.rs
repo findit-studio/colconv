@@ -66,7 +66,6 @@ pub(crate) fn expand_rgb_to_rgba_row(rgb: &[u8], rgba_out: &mut [u8], width: usi
 // allow lets this prep PR ship the foundation without the eventual call
 // site.
 #[cfg(any(feature = "std", feature = "alloc"))]
-#[allow(dead_code)]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn expand_rgb_u16_to_rgba_u16_row<const BITS: u32>(
   rgb: &[u16],

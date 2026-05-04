@@ -57,6 +57,7 @@ pub(super) use crate::{
   },
 };
 
+mod alpha_extract;
 mod ayuv64;
 mod hsv;
 mod packed_rgb;
@@ -75,6 +76,7 @@ mod yuv_planar_16bit;
 mod yuv_planar_8bit;
 mod yuv_planar_high_bit;
 
+pub(crate) use alpha_extract::*;
 pub(crate) use ayuv64::*;
 pub(crate) use hsv::*;
 pub(crate) use packed_rgb::*;
