@@ -31,14 +31,17 @@
 //! - **Standalone RGBA u16** (`with_rgba_u16` attached, no
 //!   `with_rgb_u16`): `ayuv64_to_rgba_u16_row` runs directly — source
 //!   α is written direct as u16.
-//! - **RGB + RGBA** (both attached, with or without HSV): each output
-//!   runs its own **independent kernel call** reading from the same
-//!   packed input. `with_rgb` calls `ayuv64_to_rgb_row` (α discarded);
-//!   `with_rgba` calls `ayuv64_to_rgba_row` directly (source α
-//!   preserved, per spec § 7.2). Strategy A fan-out
-//!   (`expand_rgb_to_rgba_row`) is **never** used for AYUV64 — that
-//!   path would discard the source α (see spec § 3.4).
-//! - The same independence rule applies on the u16 path.
+//! - **RGB + RGBA** (both attached, with or without HSV): Strategy A+
+//!   combo — `with_rgb` calls `ayuv64_to_rgb_row` (chroma kernel runs
+//!   ONCE); `with_rgba` is derived by `expand_rgb_to_rgba_row` (writes
+//!   α=`0xFF`) followed by
+//!   `dispatch::alpha_extract::copy_alpha_packed_u16x4_to_u8_at_0` to
+//!   overwrite the α slot from the packed source (slot 0, depth-conv
+//!   `>> 8`). Output is byte-identical to calling `ayuv64_to_rgba_row`
+//!   directly (spec § 3.2 / § 7.2).
+//! - **RGB u16 + RGBA u16** (both attached): same A+ pattern on the u16
+//!   path — `expand_rgb_u16_to_rgba_u16_row::<16>` fans out, then
+//!   `copy_alpha_packed_u16x4_at_0` overwrites α from packed slot 0.
 
 use super::{
   MixedSinker, MixedSinkerError, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch,
@@ -48,7 +51,8 @@ use crate::{
   PixelSink,
   row::{
     ayuv64_to_luma_row, ayuv64_to_luma_u16_row, ayuv64_to_rgb_row, ayuv64_to_rgb_u16_row,
-    ayuv64_to_rgba_row, ayuv64_to_rgba_u16_row, rgb_to_hsv_row,
+    ayuv64_to_rgba_row, ayuv64_to_rgba_u16_row, expand_rgb_to_rgba_row,
+    expand_rgb_u16_to_rgba_u16_row, rgb_to_hsv_row,
   },
   yuv::{Ayuv64, Ayuv64Row, Ayuv64Sink},
 };
@@ -66,10 +70,13 @@ impl<'a> MixedSinker<'a, Ayuv64> {
   /// ## Strategy note
   ///
   /// Source-α pass-through is guaranteed in **all** paths (standalone or
-  /// combined with `with_rgb` / `with_hsv`). When combined, `with_rgba`
-  /// runs its own `ayuv64_to_rgba_row` kernel call directly from the
-  /// packed source — it is never derived from the RGB output (spec
-  /// § 7.2). `expand_rgb_to_rgba_row` is **never** used for AYUV64.
+  /// combined with `with_rgb` / `with_hsv`). When standalone (no
+  /// `with_rgb` / `with_hsv`), `ayuv64_to_rgba_row` runs directly.
+  /// When combined with `with_rgb`, Strategy A+ applies:
+  /// `expand_rgb_to_rgba_row` fans out the RGB row (α=`0xFF`) and
+  /// `dispatch::alpha_extract::copy_alpha_packed_u16x4_to_u8_at_0`
+  /// overwrites the α slot — output is byte-identical to the standalone
+  /// path (spec § 3.2 / § 7.2).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
     self.set_rgba(buf)?;
@@ -129,10 +136,12 @@ impl<'a> MixedSinker<'a, Ayuv64> {
   /// ## Strategy note
   ///
   /// Source-α pass-through (u16 direct) is guaranteed in **all** paths.
-  /// When `with_rgba_u16` and `with_rgb_u16` are both attached, each
-  /// runs its own independent `ayuv64_to_rgba_u16_row` /
-  /// `ayuv64_to_rgb_u16_row` kernel call. `expand_rgb_u16_to_rgba_u16_row`
-  /// is **never** used for AYUV64 (spec § 3.4 / § 7.2).
+  /// When standalone (no `with_rgb_u16`), `ayuv64_to_rgba_u16_row` runs
+  /// directly. When combined with `with_rgb_u16`, Strategy A+ applies:
+  /// `expand_rgb_u16_to_rgba_u16_row::<16>` fans out the u16 RGB row and
+  /// `dispatch::alpha_extract::copy_alpha_packed_u16x4_at_0` overwrites
+  /// the α slot — output is byte-identical to the standalone path (spec
+  /// § 3.2 / § 7.2).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -307,8 +316,6 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
     //
     // Reached when at least two of {rgb, rgba, hsv, rgb_u16, rgba_u16}
     // are attached, or when the single standalone fast paths didn't fire.
-    // Each output runs its own independent kernel call — `expand_*` is
-    // NEVER used for AYUV64 (spec § 3.4 / § 7.2).
 
     // u8 RGB path — write into the user's RGB buffer (if attached) or the
     // internal scratch buffer. Required when with_rgb or with_hsv is set.
@@ -333,12 +340,26 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
           use_simd,
         );
       }
+
+      // Strategy A+ combo (u8): RGBA also attached — derive from the
+      // just-computed RGB row (writes α=0xFF), then overwrite α slot from
+      // packed source (slot 0, depth-conv >> 8). Output is byte-identical
+      // to ayuv64_to_rgba_row directly (spec § 3.2 / § 7.2).
+      // See spec docs/superpowers/specs/2026-05-04-pr4-strategy-a-plus-design.md.
+      if want_rgba {
+        let rgba_buf = rgba.as_deref_mut().unwrap();
+        let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
+        expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
+        crate::row::dispatch::alpha_extract::copy_alpha_packed_u16x4_to_u8_at_0(
+          packed, rgba_row, w,
+        );
+      }
     }
 
-    // RGBA u8 path — spec § 7.2: always run ayuv64_to_rgba_row directly
-    // from the packed source, preserving source α (depth-converted >> 8).
-    // Applies whether or not with_rgb / with_hsv are also attached.
-    if want_rgba {
+    // Standalone RGBA u8 path — want_rgba without need_rgb_kernel (so
+    // want_rgba must be combined with want_rgb_u16 or want_rgba_u16 only).
+    // Run ayuv64_to_rgba_row directly; source α depth-converted >> 8.
+    if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
       ayuv64_to_rgba_row(
@@ -372,12 +393,25 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         row.full_range(),
         use_simd,
       );
+
+      // Strategy A+ combo (u16): RGBA u16 also attached — derive from the
+      // just-computed u16 RGB row (writes α=max at 16 bits), then overwrite
+      // α slot from packed source (slot 0, u16 direct). Output is
+      // byte-identical to ayuv64_to_rgba_u16_row directly (spec § 3.2).
+      // See spec docs/superpowers/specs/2026-05-04-pr4-strategy-a-plus-design.md.
+      if want_rgba_u16 {
+        let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
+        let rgba_u16_row =
+          rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
+        expand_rgb_u16_to_rgba_u16_row::<16>(rgb_u16_row, rgba_u16_row, w);
+        crate::row::dispatch::alpha_extract::copy_alpha_packed_u16x4_at_0(packed, rgba_u16_row, w);
+      }
     }
 
-    // RGBA u16 path — spec § 3.4 / § 7.2: always run ayuv64_to_rgba_u16_row
-    // directly from the packed source; source α u16 is written direct.
-    // NOT derived from the u16 RGB row.
-    if want_rgba_u16 {
+    // Standalone RGBA u16 path — want_rgba_u16 without want_rgb_u16 (so
+    // want_rgba_u16 must be combined with need_rgb_kernel or want_rgba).
+    // Run ayuv64_to_rgba_u16_row directly; source α u16 written direct.
+    if want_rgba_u16 && !want_rgb_u16 {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;

@@ -10,9 +10,6 @@
 //! (offset 3 of every 4-element tuple) of `rgba_out`. Other slots are
 //! untouched.
 
-// Functions are integrated in Task 7; suppress dead_code until then.
-#![allow(dead_code)]
-
 /// VUYA → u8 RGBA: gather α from `packed[3 + 4*n]` into `rgba_out[3 + 4*n]`.
 ///
 /// VUYA layout per pixel: `[V(8), U(8), Y(8), A(8)]` — α is at slot 3.

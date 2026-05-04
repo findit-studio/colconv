@@ -55,7 +55,10 @@ mod yuv_planar_16bit;
 mod yuv_planar_8bit;
 mod yuv_planar_high_bit;
 
-// Integrated in Task 7; allow until then.
+// alpha_extract functions are imported directly by dispatch::alpha_extract
+// via `crate::row::scalar::alpha_extract as scalar` (the module path).
+// This glob re-exports into `crate::row::scalar::*` for Task 8+ callers;
+// suppress unused-imports until then.
 #[allow(unused_imports)]
 pub(crate) use alpha_extract::*;
 pub(crate) use ayuv64::*;

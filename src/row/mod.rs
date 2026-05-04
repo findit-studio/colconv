@@ -41,7 +41,7 @@
 //! see no API change from the split.
 
 pub(crate) mod arch;
-mod dispatch;
+pub(crate) mod dispatch;
 pub(crate) mod scalar;
 
 // Re-exported only when a caller is compiled. The `MixedSinker` Strategy A
