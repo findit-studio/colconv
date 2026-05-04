@@ -8,33 +8,38 @@
 //! Two Criterion groups are used — `ayuv64_a_plus_combo_u8` and
 //! `ayuv64_a_plus_combo_u16` — so Criterion's report separates the two paths.
 //!
-//! Compares the v0.18+ Strategy A+ flow (single chroma kernel → `expand_*_row`
-//! → α-overwrite from source) against the simulated v0.17 baseline (two independent
-//! chroma kernels — runs chroma math TWICE). Both paths at `use_simd = true/false`.
+//! Compares the v0.18+ Strategy A+ flow (single chroma kernel → expand → α-overwrite
+//! from source) against the simulated v0.17 baseline (two independent chroma kernels
+//! — runs chroma math TWICE). Both paths at `use_simd = true/false`.
 //!
-//! **Approach: Option A** — `expand_rgb_to_rgba_row`, `expand_rgb_u16_to_rgba_u16_row`,
-//! and `alpha_extract` helpers are exposed as `#[doc(hidden)] pub` in `crate::row` so
-//! bench binaries can import them directly. This isolates per-row cost rather than
-//! measuring sinker overhead.
+//! **Approach: only public APIs.** The A+ side runs through the real `MixedSinker`
+//! flow (`ayuv64_to(&frame, .., &mut sinker)` with `with_rgb + with_rgba` attached
+//! for u8, or `with_rgb_u16 + with_rgba_u16` for u16). The 2-kernel side hits the
+//! public per-row dispatchers directly. Trade-off: the A+ side now includes constant
+//! per-frame sinker setup/dispatch overhead (~1-2 µs at 1080p), but the per-row
+//! chroma + α work dominates from 1080p upward.
 //!
-//! Per-row throughput at 720p (1280), 1080p (1920), and 4K (3840).
+//! Multi-row frames (height = `FRAME_HEIGHT`) amortize the per-frame setup across
+//! several row dispatches.
 //!
 //! Bench paths (per group):
-//! - `a_plus_simd`      — rgb_row(simd) + expand + α_extract(simd)
-//! - `a_plus_scalar`    — rgb_row(scalar) + expand + α_extract(scalar)
-//! - `two_kernel_simd`  — rgb_row(simd) + rgba_row(simd)
-//! - `two_kernel_scalar`— rgb_row(scalar) + rgba_row(scalar)
+//! - `a_plus_simd`      — `MixedSinker` with both buffers, simd dispatch
+//! - `a_plus_scalar`    — same, with `with_simd(false)`
+//! - `two_kernel_simd`  — direct `ayuv64_to_rgb_(u16_)row + ayuv64_to_rgba_(u16_)row`
+//! - `two_kernel_scalar`— same, with `use_simd = false`
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 
 use colconv::{
-  ColorMatrix,
-  row::{
-    alpha_extract, ayuv64_to_rgb_row, ayuv64_to_rgb_u16_row, ayuv64_to_rgba_row,
-    ayuv64_to_rgba_u16_row, expand_rgb_to_rgba_row, expand_rgb_u16_to_rgba_u16_row,
-  },
+  Ayuv64, Ayuv64Frame, ColorMatrix, ayuv64_to,
+  row::{ayuv64_to_rgb_row, ayuv64_to_rgb_u16_row, ayuv64_to_rgba_row, ayuv64_to_rgba_u16_row},
+  sinker::MixedSinker,
 };
+
+/// Multi-row frame so per-frame `MixedSinker` setup is amortized across
+/// several row dispatches.
+const FRAME_HEIGHT: u32 = 4;
 
 fn fill_pseudo_random_u16(buf: &mut [u16], seed: u32) {
   let mut state = seed;
@@ -48,74 +53,79 @@ fn fill_pseudo_random_u16(buf: &mut [u16], seed: u32) {
 // ---- u8 RGBA group ----------------------------------------------------------
 
 fn bench_u8(c: &mut Criterion) {
-  const WIDTHS: &[usize] = &[1280, 1920, 3840];
+  const WIDTHS: &[u32] = &[1280, 1920, 3840];
   const MATRIX: ColorMatrix = ColorMatrix::Bt709;
   const FULL_RANGE: bool = false;
 
   let mut group = c.benchmark_group("ayuv64_a_plus_combo_u8");
 
   for &w in WIDTHS {
-    let mut packed = std::vec![0u16; w * 4];
-    fill_pseudo_random_u16(&mut packed, 0x1111);
-    let mut rgb = std::vec![0u8; w * 3];
-    let mut rgba = std::vec![0u8; w * 4];
+    let w_us = w as usize;
+    let h_us = FRAME_HEIGHT as usize;
+    let row_elems = w_us * 4; // u16 elements per row
+    let stride = w * 4;
 
-    // Throughput: RGB (u8, 3 bytes/px) + RGBA (u8, 4 bytes/px) = 7 bytes/px.
-    group.throughput(Throughput::Bytes((w * 7) as u64));
+    // AYUV64 frame: width × height × 4 u16 elements.
+    let mut packed = std::vec![0u16; row_elems * h_us];
+    fill_pseudo_random_u16(&mut packed, 0x1111);
+
+    // Throughput: u8 RGB (3 bytes/px) + u8 RGBA (4 bytes/px) = 7 bytes/px,
+    // multiplied by rows.
+    group.throughput(Throughput::Bytes((w_us * 7 * h_us) as u64));
 
     for use_simd in [false, true] {
       let simd_label = if use_simd { "simd" } else { "scalar" };
 
-      // ---- A+ combo: rgb kernel → expand → α-overwrite (u16→u8 depth conv) --
+      // ---- A+ via the public `MixedSinker` API (u8 RGBA) -------------------
       group.bench_with_input(
         BenchmarkId::new(format!("a_plus_{simd_label}"), w),
         &w,
-        |b, &w| {
+        |b, &_w| {
+          let mut rgb = std::vec![0u8; w_us * 3 * h_us];
+          let mut rgba = std::vec![0u8; w_us * 4 * h_us];
           b.iter(|| {
-            ayuv64_to_rgb_row(
-              black_box(&packed),
-              black_box(&mut rgb),
-              w,
-              MATRIX,
-              FULL_RANGE,
-              use_simd,
-            );
-            // Expand u8 RGB → u8 RGBA with opaque α (scalar, L1-hot).
-            expand_rgb_to_rgba_row(black_box(&rgb), black_box(&mut rgba), w);
-            // Overwrite α channel: AYUV64 slot-0 u16 → u8 via >> 8.
-            alpha_extract::copy_alpha_packed_u16x4_to_u8_at_0(
-              black_box(&packed),
-              black_box(&mut rgba),
-              w,
-              use_simd,
-            );
+            let frame = Ayuv64Frame::new(black_box(&packed), w, FRAME_HEIGHT, stride);
+            let mut sinker = MixedSinker::<Ayuv64>::new(w_us, h_us)
+              .with_simd(use_simd)
+              .with_rgb(&mut rgb)
+              .unwrap()
+              .with_rgba(&mut rgba)
+              .unwrap();
+            ayuv64_to(&frame, FULL_RANGE, MATRIX, &mut sinker).unwrap();
             black_box((&rgb, &rgba));
           });
         },
       );
 
-      // ---- 2-kernel combo: rgb kernel + rgba-with-α-src kernel ---------------
+      // ---- 2-kernel combo: direct per-row dispatchers (u8 RGBA) ------------
       group.bench_with_input(
         BenchmarkId::new(format!("two_kernel_{simd_label}"), w),
         &w,
-        |b, &w| {
+        |b, &_w| {
+          let mut rgb = std::vec![0u8; w_us * 3 * h_us];
+          let mut rgba = std::vec![0u8; w_us * 4 * h_us];
           b.iter(|| {
-            ayuv64_to_rgb_row(
-              black_box(&packed),
-              black_box(&mut rgb),
-              w,
-              MATRIX,
-              FULL_RANGE,
-              use_simd,
-            );
-            ayuv64_to_rgba_row(
-              black_box(&packed),
-              black_box(&mut rgba),
-              w,
-              MATRIX,
-              FULL_RANGE,
-              use_simd,
-            );
+            for row in 0..h_us {
+              let p_off = row * row_elems;
+              let rgb_off = row * w_us * 3;
+              let rgba_off = row * w_us * 4;
+              ayuv64_to_rgb_row(
+                black_box(&packed[p_off..p_off + row_elems]),
+                black_box(&mut rgb[rgb_off..rgb_off + w_us * 3]),
+                w_us,
+                MATRIX,
+                FULL_RANGE,
+                use_simd,
+              );
+              ayuv64_to_rgba_row(
+                black_box(&packed[p_off..p_off + row_elems]),
+                black_box(&mut rgba[rgba_off..rgba_off + w_us * 4]),
+                w_us,
+                MATRIX,
+                FULL_RANGE,
+                use_simd,
+              );
+            }
             black_box((&rgb, &rgba));
           });
         },
@@ -129,78 +139,78 @@ fn bench_u8(c: &mut Criterion) {
 // ---- u16 RGBA group ---------------------------------------------------------
 
 fn bench_u16(c: &mut Criterion) {
-  const WIDTHS: &[usize] = &[1280, 1920, 3840];
+  const WIDTHS: &[u32] = &[1280, 1920, 3840];
   const MATRIX: ColorMatrix = ColorMatrix::Bt709;
   const FULL_RANGE: bool = false;
-
-  // AYUV64 native output depth is 16-bit; the A+ path uses BITS=16 for the α
-  // max constant in expand_rgb_u16_to_rgba_u16_row.
-  const BITS: u32 = 16;
 
   let mut group = c.benchmark_group("ayuv64_a_plus_combo_u16");
 
   for &w in WIDTHS {
-    let mut packed = std::vec![0u16; w * 4];
-    fill_pseudo_random_u16(&mut packed, 0x2222);
-    let mut rgb = std::vec![0u16; w * 3];
-    let mut rgba = std::vec![0u16; w * 4];
+    let w_us = w as usize;
+    let h_us = FRAME_HEIGHT as usize;
+    let row_elems = w_us * 4;
+    let stride = w * 4;
 
-    // Throughput: u16 RGB (6 bytes/px) + u16 RGBA (8 bytes/px) = 14 bytes/px.
-    group.throughput(Throughput::Bytes((w * 14) as u64));
+    let mut packed = std::vec![0u16; row_elems * h_us];
+    fill_pseudo_random_u16(&mut packed, 0x2222);
+
+    // Throughput: u16 RGB (6 bytes/px) + u16 RGBA (8 bytes/px) = 14 bytes/px,
+    // multiplied by rows.
+    group.throughput(Throughput::Bytes((w_us * 14 * h_us) as u64));
 
     for use_simd in [false, true] {
       let simd_label = if use_simd { "simd" } else { "scalar" };
 
-      // ---- A+ combo: u16 rgb kernel → u16 expand → u16 α-overwrite ----------
+      // ---- A+ via the public `MixedSinker` API (u16 RGBA) ------------------
       group.bench_with_input(
         BenchmarkId::new(format!("a_plus_{simd_label}"), w),
         &w,
-        |b, &w| {
+        |b, &_w| {
+          let mut rgb = std::vec![0u16; w_us * 3 * h_us];
+          let mut rgba = std::vec![0u16; w_us * 4 * h_us];
           b.iter(|| {
-            ayuv64_to_rgb_u16_row(
-              black_box(&packed),
-              black_box(&mut rgb),
-              w,
-              MATRIX,
-              FULL_RANGE,
-              use_simd,
-            );
-            // Expand u16 RGB → u16 RGBA with opaque α at BITS-bit max (scalar).
-            expand_rgb_u16_to_rgba_u16_row::<BITS>(black_box(&rgb), black_box(&mut rgba), w);
-            // Overwrite α channel: AYUV64 slot-0 u16 → u16 RGBA slot-3 (no conv).
-            alpha_extract::copy_alpha_packed_u16x4_at_0(
-              black_box(&packed),
-              black_box(&mut rgba),
-              w,
-              use_simd,
-            );
+            let frame = Ayuv64Frame::new(black_box(&packed), w, FRAME_HEIGHT, stride);
+            let mut sinker = MixedSinker::<Ayuv64>::new(w_us, h_us)
+              .with_simd(use_simd)
+              .with_rgb_u16(&mut rgb)
+              .unwrap()
+              .with_rgba_u16(&mut rgba)
+              .unwrap();
+            ayuv64_to(&frame, FULL_RANGE, MATRIX, &mut sinker).unwrap();
             black_box((&rgb, &rgba));
           });
         },
       );
 
-      // ---- 2-kernel combo: u16 rgb kernel + u16 rgba-with-α-src kernel -------
+      // ---- 2-kernel combo: direct per-row dispatchers (u16 RGBA) -----------
       group.bench_with_input(
         BenchmarkId::new(format!("two_kernel_{simd_label}"), w),
         &w,
-        |b, &w| {
+        |b, &_w| {
+          let mut rgb = std::vec![0u16; w_us * 3 * h_us];
+          let mut rgba = std::vec![0u16; w_us * 4 * h_us];
           b.iter(|| {
-            ayuv64_to_rgb_u16_row(
-              black_box(&packed),
-              black_box(&mut rgb),
-              w,
-              MATRIX,
-              FULL_RANGE,
-              use_simd,
-            );
-            ayuv64_to_rgba_u16_row(
-              black_box(&packed),
-              black_box(&mut rgba),
-              w,
-              MATRIX,
-              FULL_RANGE,
-              use_simd,
-            );
+            for row in 0..h_us {
+              let p_off = row * row_elems;
+              let rgb_off = row * w_us * 3;
+              let rgba_off = row * w_us * 4;
+              ayuv64_to_rgb_u16_row(
+                black_box(&packed[p_off..p_off + row_elems]),
+                black_box(&mut rgb[rgb_off..rgb_off + w_us * 3]),
+                w_us,
+                MATRIX,
+                FULL_RANGE,
+                use_simd,
+              );
+              ayuv64_to_rgba_u16_row(
+                black_box(&packed[p_off..p_off + row_elems]),
+                black_box(&mut rgba[rgba_off..rgba_off + w_us * 4]),
+                w_us,
+                MATRIX,
+                FULL_RANGE,
+                use_simd,
+              );
+            }
             black_box((&rgb, &rgba));
           });
         },

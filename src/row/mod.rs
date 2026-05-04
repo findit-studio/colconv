@@ -44,75 +44,21 @@ pub(crate) mod arch;
 pub(crate) mod dispatch;
 pub(crate) mod scalar;
 
-// `#[doc(hidden)] pub` wrappers so that Criterion bench binaries in `benches/`
-// can import the Strategy A+ expand helpers directly for per-row micro-benchmarks.
-// `scalar` is `pub(crate)` so its items cannot be `pub use`-re-exported at `pub`
-// visibility — we forward through thin wrappers instead. The extra call is
-// inlined away by `#[inline(always)]`.
-//
-// These are NOT stable API: `#[doc(hidden)]` keeps them out of public rustdoc,
-// and callers should be sinker impls and bench files only.
-
-/// Expand a packed `u8` RGB row to `u8` RGBA with `α = 0xFF` (opaque).
-///
-/// This is the first stage of the Strategy A+ fan-out for formats with source α:
-/// the chroma kernel writes to the RGB buffer; this helper fans out to RGBA; then
-/// an α-extract dispatcher overwrites the α channel from the source buffer.
-///
-/// `#[doc(hidden)]` — not stable public API; exposed for bench accessibility.
-///
-/// # Panics
-///
-/// Panics if `rgb.len() < width * 3` or `rgba_out.len() < width * 4`, or if
-/// `width * 4` overflows `usize`. Release-mode guards protecting the public
-/// entry point (the scalar implementation only `debug_assert!`s).
-#[doc(hidden)]
+// Re-exported only when a caller is compiled. The `MixedSinker` Strategy A
+// fan-out is the sole consumer, and it lives in `crate::sinker::mixed` which
+// is gated on `feature = "std"` / `feature = "alloc"` (needs `Vec`). Without
+// either feature both this re-export and the underlying scalar function would
+// be unused, which is a hard error under `cargo clippy -- -D warnings`.
 #[cfg(any(feature = "std", feature = "alloc"))]
-#[cfg_attr(not(tarpaulin), inline(always))]
-pub fn expand_rgb_to_rgba_row(rgb: &[u8], rgba_out: &mut [u8], width: usize) {
-  let rgb_min = rgb_row_bytes(width);
-  let rgba_min = rgba_row_bytes(width);
-  assert!(rgb.len() >= rgb_min, "rgb row too short");
-  assert!(rgba_out.len() >= rgba_min, "rgba_out row too short");
-  scalar::expand_rgb_to_rgba_row(rgb, rgba_out, width);
-}
-
-/// Expand a packed `u16` RGB row to `u16` RGBA with `α = (1 << BITS) - 1` (opaque).
-///
-/// `BITS` is the input bit depth (e.g. 16 for AYUV64). Same A+ fan-out rationale
-/// as [`expand_rgb_to_rgba_row`].
-///
-/// `#[doc(hidden)]` — not stable public API; exposed for bench accessibility.
-///
-/// # Panics
-///
-/// Panics if `rgb.len() < width * 3` (in `u16` elements) or
-/// `rgba_out.len() < width * 4` (in `u16` elements), or if `width * 4`
-/// overflows `usize`. Release-mode guards protecting the public entry point
-/// (the scalar implementation only `debug_assert!`s).
-#[doc(hidden)]
+pub(crate) use scalar::expand_rgb_to_rgba_row;
 #[cfg(any(feature = "std", feature = "alloc"))]
-#[cfg_attr(not(tarpaulin), inline(always))]
-pub fn expand_rgb_u16_to_rgba_u16_row<const BITS: u32>(
-  rgb: &[u16],
-  rgba_out: &mut [u16],
-  width: usize,
-) {
-  let rgb_min = rgb_row_elems(width);
-  let rgba_min = rgba_row_elems(width);
-  assert!(rgb.len() >= rgb_min, "rgb row too short");
-  assert!(rgba_out.len() >= rgba_min, "rgba_out row too short");
-  scalar::expand_rgb_u16_to_rgba_u16_row::<BITS>(rgb, rgba_out, width);
-}
+pub(crate) use scalar::expand_rgb_u16_to_rgba_u16_row;
 
 // Strategy A+ α-extract dispatcher — re-exported at `crate::row::alpha_extract`
 // so source-α sinkers don't have to reach into `dispatch::` internals. Same
 // `feature = "std" | "alloc"` gating as the expand helpers above.
-// Also exposed as `#[doc(hidden)] pub` for bench accessibility (same rationale
-// as `expand_rgb_to_rgba_row` above).
 #[cfg(any(feature = "std", feature = "alloc"))]
-#[doc(hidden)]
-pub use dispatch::alpha_extract;
+pub(crate) use dispatch::alpha_extract;
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub(crate) use dispatch::y_plane_to_luma_u16::y_plane_to_luma_u16_row;
 

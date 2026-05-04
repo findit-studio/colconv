@@ -41,22 +41,13 @@ use crate::row::{avx2_available, avx512_available, sse41_available};
 /// Selects the highest available SIMD backend; falls back to scalar.
 /// When `use_simd` is `false` (`MixedSinker::with_simd(false)`), the
 /// SIMD cascade is bypassed and scalar runs directly.
-///
-/// # Panics
-///
-/// Panics if `packed.len() < width * 4` or `rgba_out.len() < width * 4`,
-/// or if `width * 4` overflows `usize`. These are release-mode assertions
-/// that protect the `unsafe` SIMD backends, which only `debug_assert!`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn copy_alpha_packed_u8x4_at_3(
+pub(crate) fn copy_alpha_packed_u8x4_at_3(
   packed: &[u8],
   rgba_out: &mut [u8],
   width: usize,
   use_simd: bool,
 ) {
-  let min_len = width.checked_mul(4).expect("width * 4 overflows usize");
-  assert!(packed.len() >= min_len, "packed too short");
-  assert!(rgba_out.len() >= min_len, "rgba_out too short");
   if !use_simd {
     return scalar::copy_alpha_packed_u8x4_at_3(packed, rgba_out, width);
   }
@@ -106,23 +97,13 @@ pub fn copy_alpha_packed_u8x4_at_3(
 ///
 /// Selects the highest available SIMD backend; falls back to scalar.
 /// When `use_simd` is `false`, calls scalar directly.
-///
-/// # Panics
-///
-/// Panics if `packed.len() < width * 4` (in `u16` elements) or
-/// `rgba_out.len() < width * 4` (in `u8` bytes), or if `width * 4`
-/// overflows `usize`. These are release-mode assertions that protect
-/// the `unsafe` SIMD backends, which only `debug_assert!`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn copy_alpha_packed_u16x4_to_u8_at_0(
+pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0(
   packed: &[u16],
   rgba_out: &mut [u8],
   width: usize,
   use_simd: bool,
 ) {
-  let min_len = width.checked_mul(4).expect("width * 4 overflows usize");
-  assert!(packed.len() >= min_len, "packed too short");
-  assert!(rgba_out.len() >= min_len, "rgba_out too short");
   if !use_simd {
     return scalar::copy_alpha_packed_u16x4_to_u8_at_0(packed, rgba_out, width);
   }
@@ -173,23 +154,13 @@ pub fn copy_alpha_packed_u16x4_to_u8_at_0(
 ///
 /// Selects the highest available SIMD backend; falls back to scalar.
 /// When `use_simd` is `false`, calls scalar directly.
-///
-/// # Panics
-///
-/// Panics if `packed.len() < width * 4` (in `u16` elements) or
-/// `rgba_out.len() < width * 4` (in `u16` elements), or if `width * 4`
-/// overflows `usize`. These are release-mode assertions that protect
-/// the `unsafe` SIMD backends, which only `debug_assert!`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn copy_alpha_packed_u16x4_at_0(
+pub(crate) fn copy_alpha_packed_u16x4_at_0(
   packed: &[u16],
   rgba_out: &mut [u16],
   width: usize,
   use_simd: bool,
 ) {
-  let min_len = width.checked_mul(4).expect("width * 4 overflows usize");
-  assert!(packed.len() >= min_len, "packed too short");
-  assert!(rgba_out.len() >= min_len, "rgba_out too short");
   if !use_simd {
     return scalar::copy_alpha_packed_u16x4_at_0(packed, rgba_out, width);
   }
@@ -393,71 +364,4 @@ pub(crate) fn copy_alpha_plane_u16<const BITS: u32>(
     _ => {}
   }
   scalar::copy_alpha_plane_u16::<BITS>(alpha, rgba_out, width);
-}
-
-// ---------------------------------------------------------------------------
-// Regression tests — verify that the release-mode assert guards fire on
-// undersized slices. `#[should_panic]` tests protect against the safety gap
-// reopening if more dispatchers are widened to `pub` without adding guards.
-// ---------------------------------------------------------------------------
-
-#[cfg(all(test, any(feature = "std", feature = "alloc")))]
-mod tests {
-  use super::*;
-
-  // --- copy_alpha_packed_u8x4_at_3 ---
-
-  #[test]
-  #[should_panic(expected = "packed too short")]
-  fn packed_u8x4_at_3_panics_short_packed() {
-    // width = 8 needs 32 bytes; supply only 4.
-    let packed = std::vec![0u8; 4];
-    let mut rgba = std::vec![0u8; 32];
-    copy_alpha_packed_u8x4_at_3(&packed, &mut rgba, 8, false);
-  }
-
-  #[test]
-  #[should_panic(expected = "rgba_out too short")]
-  fn packed_u8x4_at_3_panics_short_rgba_out() {
-    let packed = std::vec![0u8; 32];
-    let mut rgba = std::vec![0u8; 4];
-    copy_alpha_packed_u8x4_at_3(&packed, &mut rgba, 8, false);
-  }
-
-  // --- copy_alpha_packed_u16x4_to_u8_at_0 ---
-
-  #[test]
-  #[should_panic(expected = "packed too short")]
-  fn packed_u16x4_to_u8_at_0_panics_short_packed() {
-    // width = 8 needs 32 u16 elements; supply only 4.
-    let packed = std::vec![0u16; 4];
-    let mut rgba = std::vec![0u8; 32];
-    copy_alpha_packed_u16x4_to_u8_at_0(&packed, &mut rgba, 8, false);
-  }
-
-  #[test]
-  #[should_panic(expected = "rgba_out too short")]
-  fn packed_u16x4_to_u8_at_0_panics_short_rgba_out() {
-    let packed = std::vec![0u16; 32];
-    let mut rgba = std::vec![0u8; 4];
-    copy_alpha_packed_u16x4_to_u8_at_0(&packed, &mut rgba, 8, false);
-  }
-
-  // --- copy_alpha_packed_u16x4_at_0 ---
-
-  #[test]
-  #[should_panic(expected = "packed too short")]
-  fn packed_u16x4_at_0_panics_short_packed() {
-    let packed = std::vec![0u16; 4];
-    let mut rgba = std::vec![0u16; 32];
-    copy_alpha_packed_u16x4_at_0(&packed, &mut rgba, 8, false);
-  }
-
-  #[test]
-  #[should_panic(expected = "rgba_out too short")]
-  fn packed_u16x4_at_0_panics_short_rgba_out() {
-    let packed = std::vec![0u16; 32];
-    let mut rgba = std::vec![0u16; 4];
-    copy_alpha_packed_u16x4_at_0(&packed, &mut rgba, 8, false);
-  }
 }

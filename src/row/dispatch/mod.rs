@@ -3,12 +3,14 @@
 //! shared helpers, runtime CPU feature detection, and crate-private
 //! `arch` / `scalar` glue.
 //!
-//! Submodules are gated `pub(super) mod` and re-exported via
-//! `pub use` in `row::mod`, so the public API still appears at
-//! `crate::row::*` (e.g. `crate::row::yuv_420_to_rgb_row`). Callers
-//! see no API change from the split.
+//! Submodules are crate-private (`pub(super)` for purely re-exported
+//! kernel families, `pub(crate)` for the few that sinker code reaches
+//! into directly — currently `alpha_extract` and `y_plane_to_luma_u16`)
+//! and re-exported via `pub use` in `row::mod`, so the public API still
+//! appears at `crate::row::*` (e.g. `crate::row::yuv_420_to_rgb_row`).
+//! Callers see no API change from the split.
 
-pub mod alpha_extract;
+pub(crate) mod alpha_extract;
 pub(super) mod ayuv64;
 pub(super) mod bayer;
 pub(super) mod nv;
