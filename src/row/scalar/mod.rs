@@ -51,6 +51,7 @@ mod vuya;
 mod xv36;
 mod y216;
 mod y2xx;
+pub(crate) mod y_plane_to_luma_u16;
 mod yuv_planar_16bit;
 mod yuv_planar_8bit;
 mod yuv_planar_high_bit;
