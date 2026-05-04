@@ -27,6 +27,14 @@ use crate::row::{avx2_available, avx512_available, sse41_available};
 #[allow(dead_code)]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn y_plane_to_luma_u16_row(plane: &[u8], out: &mut [u16], width: usize, use_simd: bool) {
+  // Release-mode safety boundary before any `unsafe` SIMD dispatch.
+  // Per-arch helpers only `debug_assert!` these bounds; without these
+  // unconditional checks, a short caller slice would silently turn
+  // into out-of-bounds reads/writes in release builds. Mirrors the
+  // guard pattern in `dispatch::packed_yuv422` and `dispatch::vuya`.
+  assert!(plane.len() >= width, "plane too short");
+  assert!(out.len() >= width, "out too short");
+
   if !use_simd {
     return scalar::y_plane_to_luma_u16_row(plane, out, width);
   }
@@ -65,4 +73,34 @@ pub(crate) fn y_plane_to_luma_u16_row(plane: &[u8], out: &mut [u16], width: usiz
     _ => {}
   }
   scalar::y_plane_to_luma_u16_row(plane, out, width);
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+  use super::*;
+
+  #[test]
+  #[should_panic(expected = "plane too short")]
+  fn dispatcher_panics_on_short_plane() {
+    let plane = std::vec![0u8; 4];
+    let mut out = std::vec![0u16; 8];
+    y_plane_to_luma_u16_row(&plane, &mut out, 8, true);
+  }
+
+  #[test]
+  #[should_panic(expected = "out too short")]
+  fn dispatcher_panics_on_short_out() {
+    let plane = std::vec![0u8; 8];
+    let mut out = std::vec![0u16; 4];
+    y_plane_to_luma_u16_row(&plane, &mut out, 8, true);
+  }
+
+  #[test]
+  #[should_panic(expected = "plane too short")]
+  fn dispatcher_panics_on_short_plane_use_simd_false() {
+    // Same guard fires before the use_simd shortcut.
+    let plane = std::vec![0u8; 4];
+    let mut out = std::vec![0u16; 8];
+    y_plane_to_luma_u16_row(&plane, &mut out, 8, false);
+  }
 }
