@@ -178,8 +178,6 @@ pub(crate) fn copy_alpha_packed_u16x4_at_0(packed: &[u16], rgba_out: &mut [u16],
 /// into `rgba_out[3 + 4*n]`.
 ///
 /// Selects the highest available SIMD backend; falls back to scalar.
-// Integrated in Task 8 (Yuva sinkers); suppress dead_code until then.
-#[allow(dead_code)]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usize) {
   cfg_select! {
@@ -228,8 +226,6 @@ pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usiz
 /// depth-conv `>> (BITS - 8)`.
 ///
 /// Selects the highest available SIMD backend; falls back to scalar.
-// Integrated in Task 8 (Yuva sinkers); suppress dead_code until then.
-#[allow(dead_code)]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
   alpha: &[u16],
@@ -282,8 +278,6 @@ pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
 /// conversion.
 ///
 /// Selects the highest available SIMD backend; falls back to scalar.
-// Integrated in Task 8 (Yuva sinkers); suppress dead_code until then.
-#[allow(dead_code)]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn copy_alpha_plane_u16<const BITS: u32>(
   alpha: &[u16],

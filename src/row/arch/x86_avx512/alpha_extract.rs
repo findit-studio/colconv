@@ -62,8 +62,6 @@
 //! `_mm512_shuffle_epi8` (BW). Mask blends use
 //! `_mm512_mask_blend_epi8` (BW) and `_mm512_mask_blend_epi16` (BW).
 
-#![allow(dead_code)]
-
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 

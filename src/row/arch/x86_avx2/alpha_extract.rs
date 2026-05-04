@@ -37,8 +37,6 @@
 //! confine each pixel inside a 128-bit lane and therefore use only
 //! per-lane `_mm256_shuffle_epi8` / `_mm256_blendv_epi8`, which is safe.
 
-#![allow(dead_code)]
-
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 

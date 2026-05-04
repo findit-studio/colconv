@@ -28,8 +28,6 @@
 //! This avoids per-BITS monomorphization with match and a const-generic
 //! `_mm_srli_epi16` literal.
 
-#![allow(dead_code)]
-
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
