@@ -17,6 +17,8 @@
 ///
 /// VUYA layout per pixel: `[V(8), U(8), Y(8), A(8)]` — α is at slot 3.
 pub(crate) fn copy_alpha_packed_u8x4_at_3(packed: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(packed.len() >= width * 4, "packed too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   for n in 0..width {
     rgba_out[n * 4 + 3] = packed[n * 4 + 3];
   }
@@ -31,6 +33,8 @@ pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0(
   rgba_out: &mut [u8],
   width: usize,
 ) {
+  debug_assert!(packed.len() >= width * 4, "packed too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   for n in 0..width {
     rgba_out[n * 4 + 3] = (packed[n * 4] >> 8) as u8;
   }
@@ -39,6 +43,8 @@ pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0(
 /// AYUV64 → u16 RGBA: gather α from `packed[0 + 4*n]` (u16) into
 /// `rgba_out[3 + 4*n]` (u16). No depth conversion.
 pub(crate) fn copy_alpha_packed_u16x4_at_0(packed: &[u16], rgba_out: &mut [u16], width: usize) {
+  debug_assert!(packed.len() >= width * 4, "packed too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   for n in 0..width {
     rgba_out[n * 4 + 3] = packed[n * 4];
   }
@@ -47,6 +53,8 @@ pub(crate) fn copy_alpha_packed_u16x4_at_0(packed: &[u16], rgba_out: &mut [u16],
 /// Yuva420p / 422p / 444p u8 → u8 RGBA: scatter α plane into
 /// `rgba_out[3 + 4*n]`.
 pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(alpha.len() >= width, "alpha plane too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   for n in 0..width {
     rgba_out[n * 4 + 3] = alpha[n];
   }
@@ -61,6 +69,11 @@ pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
   rgba_out: &mut [u8],
   width: usize,
 ) {
+  const {
+    assert!(BITS >= 8 && BITS <= 16, "BITS must be in [8, 16]");
+  }
+  debug_assert!(alpha.len() >= width, "alpha plane too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   let shift = BITS - 8;
   for n in 0..width {
     rgba_out[n * 4 + 3] = (alpha[n] >> shift) as u8;
@@ -76,6 +89,11 @@ pub(crate) fn copy_alpha_plane_u16<const BITS: u32>(
   rgba_out: &mut [u16],
   width: usize,
 ) {
+  const {
+    assert!(BITS > 0 && BITS <= 16, "BITS must be in [1, 16]");
+  }
+  debug_assert!(alpha.len() >= width, "alpha plane too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   // BITS is informational — no shift applied, output preserves source depth.
   let _ = BITS;
   for n in 0..width {
