@@ -367,3 +367,53 @@ fn nv16_odd_width_sink_returns_err_at_begin_frame() {
   let err = nv16_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap_err();
   assert!(matches!(err, MixedSinkerError::OddWidth { width: 15 }));
 }
+
+// ---- with_luma_u16 (Task 2) -----------------------------------------------
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn nv16_with_luma_u16_extracts_y_zero_extended() {
+  let width = 64usize;
+  let height = 4usize;
+  let n = width * height;
+
+  let mut yp = std::vec![0u8; n];
+  // NV16: UV plane is full-height, half-width pairs → width bytes per row × height rows.
+  let mut uvp = std::vec![0u8; width * height];
+  pseudo_random_u8(&mut yp, 0xC0FFEE);
+  pseudo_random_u8(&mut uvp, 0xBADF00D);
+
+  let src = Nv16Frame::new(
+    &yp,
+    &uvp,
+    width as u32,
+    height as u32,
+    width as u32,
+    width as u32,
+  );
+
+  let mut luma_out = std::vec![0u16; n];
+  let mut sink = MixedSinker::<Nv16>::new(width, height)
+    .with_luma_u16(&mut luma_out)
+    .unwrap();
+  nv16_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  let expected: std::vec::Vec<u16> = yp.iter().map(|&y| y as u16).collect();
+  assert_eq!(luma_out, expected, "Nv16 luma_u16 mismatch");
+}
+
+#[test]
+fn nv16_luma_u16_buffer_too_short_returns_err() {
+  let mut buf = std::vec![0u16; 16 * 8 - 1];
+  let result = MixedSinker::<Nv16>::new(16, 8).with_luma_u16(&mut buf);
+  assert!(matches!(
+    result,
+    Err(MixedSinkerError::LumaU16BufferTooShort {
+      expected: 128,
+      actual: 127,
+    })
+  ));
+}

@@ -182,9 +182,7 @@ impl PixelSink for MixedSinker<'_, Vuya> {
         let rgba_buf = rgba.as_deref_mut().unwrap();
         let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
         expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
-        crate::row::alpha_extract::copy_alpha_packed_u8x4_at_3(
-          packed, rgba_row, w, use_simd,
-        );
+        crate::row::alpha_extract::copy_alpha_packed_u8x4_at_3(packed, rgba_row, w, use_simd);
       }
     }
 

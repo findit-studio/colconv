@@ -470,3 +470,56 @@ fn stride_padded_source_reads_correct_pixels() {
     "padding bytes leaked into output"
   );
 }
+
+// ---- with_luma_u16 tests (Task 2) ----------------------------------------
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv420p_with_luma_u16_extracts_y_zero_extended() {
+  let width = 64usize;
+  let height = 4usize;
+  let n = width * height;
+
+  let mut yp = std::vec![0u8; n];
+  let mut up = std::vec![0u8; (width / 2) * (height / 2)];
+  let mut vp = std::vec![0u8; (width / 2) * (height / 2)];
+  pseudo_random_u8(&mut yp, 0xC0FFEE);
+  pseudo_random_u8(&mut up, 0xBADF00D);
+  pseudo_random_u8(&mut vp, 0xFEEDFACE);
+
+  let src = Yuv420pFrame::new(
+    &yp,
+    &up,
+    &vp,
+    width as u32,
+    height as u32,
+    width as u32,
+    (width / 2) as u32,
+    (width / 2) as u32,
+  );
+
+  let mut luma_out = std::vec![0u16; n];
+  let mut sink = MixedSinker::<Yuv420p>::new(width, height)
+    .with_luma_u16(&mut luma_out)
+    .unwrap();
+  yuv420p_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  let expected: std::vec::Vec<u16> = yp.iter().map(|&y| y as u16).collect();
+  assert_eq!(luma_out, expected, "Yuv420p luma_u16 mismatch");
+}
+
+#[test]
+fn yuv420p_luma_u16_buffer_too_short_returns_err() {
+  let mut buf = std::vec![0u16; 16 * 8 - 1];
+  let result = MixedSinker::<Yuv420p>::new(16, 8).with_luma_u16(&mut buf);
+  assert!(matches!(
+    result,
+    Err(MixedSinkerError::LumaU16BufferTooShort {
+      expected: 128,
+      actual: 127,
+    })
+  ));
+}

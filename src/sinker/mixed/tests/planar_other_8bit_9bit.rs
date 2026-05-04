@@ -1463,3 +1463,160 @@ fn yuv422p9_walker_simd_matches_scalar_with_random_chroma() {
     );
   }
 }
+
+// ---- with_luma_u16 tests for 8-bit planar formats (Task 2) ---------------
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv422p_with_luma_u16_extracts_y_zero_extended() {
+  let width = 64usize;
+  let height = 4usize;
+  let n = width * height;
+
+  let mut yp = std::vec![0u8; n];
+  let mut up = std::vec![0u8; (width / 2) * height];
+  let mut vp = std::vec![0u8; (width / 2) * height];
+  pseudo_random_u8(&mut yp, 0xC0FFEE);
+  pseudo_random_u8(&mut up, 0xBADF00D);
+  pseudo_random_u8(&mut vp, 0xFEEDFACE);
+
+  let src = Yuv422pFrame::new(
+    &yp,
+    &up,
+    &vp,
+    width as u32,
+    height as u32,
+    width as u32,
+    (width / 2) as u32,
+    (width / 2) as u32,
+  );
+
+  let mut luma_out = std::vec![0u16; n];
+  let mut sink = MixedSinker::<Yuv422p>::new(width, height)
+    .with_luma_u16(&mut luma_out)
+    .unwrap();
+  yuv422p_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  let expected: std::vec::Vec<u16> = yp.iter().map(|&y| y as u16).collect();
+  assert_eq!(luma_out, expected, "Yuv422p luma_u16 mismatch");
+}
+
+#[test]
+fn yuv422p_luma_u16_buffer_too_short_returns_err() {
+  let mut buf = std::vec![0u16; 16 * 8 - 1];
+  let result = MixedSinker::<Yuv422p>::new(16, 8).with_luma_u16(&mut buf);
+  assert!(matches!(
+    result,
+    Err(MixedSinkerError::LumaU16BufferTooShort {
+      expected: 128,
+      actual: 127,
+    })
+  ));
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv444p_with_luma_u16_extracts_y_zero_extended() {
+  let width = 64usize;
+  let height = 4usize;
+  let n = width * height;
+
+  let mut yp = std::vec![0u8; n];
+  let mut up = std::vec![0u8; n];
+  let mut vp = std::vec![0u8; n];
+  pseudo_random_u8(&mut yp, 0xC0FFEE);
+  pseudo_random_u8(&mut up, 0xBADF00D);
+  pseudo_random_u8(&mut vp, 0xFEEDFACE);
+
+  let src = Yuv444pFrame::new(
+    &yp,
+    &up,
+    &vp,
+    width as u32,
+    height as u32,
+    width as u32,
+    width as u32,
+    width as u32,
+  );
+
+  let mut luma_out = std::vec![0u16; n];
+  let mut sink = MixedSinker::<Yuv444p>::new(width, height)
+    .with_luma_u16(&mut luma_out)
+    .unwrap();
+  yuv444p_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  let expected: std::vec::Vec<u16> = yp.iter().map(|&y| y as u16).collect();
+  assert_eq!(luma_out, expected, "Yuv444p luma_u16 mismatch");
+}
+
+#[test]
+fn yuv444p_luma_u16_buffer_too_short_returns_err() {
+  let mut buf = std::vec![0u16; 16 * 8 - 1];
+  let result = MixedSinker::<Yuv444p>::new(16, 8).with_luma_u16(&mut buf);
+  assert!(matches!(
+    result,
+    Err(MixedSinkerError::LumaU16BufferTooShort {
+      expected: 128,
+      actual: 127,
+    })
+  ));
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv440p_with_luma_u16_extracts_y_zero_extended() {
+  let width = 64usize;
+  let height = 4usize;
+  let n = width * height;
+
+  let mut yp = std::vec![0u8; n];
+  // 4:4:0: chroma is full-width, half-height (rounded up).
+  let ch = height.div_ceil(2);
+  let mut up = std::vec![0u8; width * ch];
+  let mut vp = std::vec![0u8; width * ch];
+  pseudo_random_u8(&mut yp, 0xC0FFEE);
+  pseudo_random_u8(&mut up, 0xBADF00D);
+  pseudo_random_u8(&mut vp, 0xFEEDFACE);
+
+  let src = Yuv440pFrame::new(
+    &yp,
+    &up,
+    &vp,
+    width as u32,
+    height as u32,
+    width as u32,
+    width as u32,
+    width as u32,
+  );
+
+  let mut luma_out = std::vec![0u16; n];
+  let mut sink = MixedSinker::<Yuv440p>::new(width, height)
+    .with_luma_u16(&mut luma_out)
+    .unwrap();
+  yuv440p_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  let expected: std::vec::Vec<u16> = yp.iter().map(|&y| y as u16).collect();
+  assert_eq!(luma_out, expected, "Yuv440p luma_u16 mismatch");
+}
+
+#[test]
+fn yuv440p_luma_u16_buffer_too_short_returns_err() {
+  let mut buf = std::vec![0u16; 16 * 8 - 1];
+  let result = MixedSinker::<Yuv440p>::new(16, 8).with_luma_u16(&mut buf);
+  assert!(matches!(
+    result,
+    Err(MixedSinkerError::LumaU16BufferTooShort {
+      expected: 128,
+      actual: 127,
+    })
+  ));
+}
