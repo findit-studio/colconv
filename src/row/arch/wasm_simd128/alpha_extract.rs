@@ -27,6 +27,8 @@
 //! or const-generic-literal workaround needed (unlike SSE4.1's
 //! `_mm_srli_epi16::<IMM8>`).
 
+#![cfg_attr(not(feature = "std"), allow(dead_code))]
+
 use core::arch::wasm32::*;
 
 use crate::row::scalar::alpha_extract as scalar;

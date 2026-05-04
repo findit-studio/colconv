@@ -32,6 +32,8 @@
 //! `vmovn_u16` (truncating) — not `vqmovn_u16` (saturating) — to match
 //! the scalar `as u8` truncation byte-for-byte at over-range inputs.
 
+#![cfg_attr(not(feature = "std"), allow(dead_code))]
+
 use core::arch::aarch64::*;
 
 use crate::row::scalar::alpha_extract as scalar;

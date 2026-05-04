@@ -10,6 +10,8 @@
 //! the best available backend is selected at runtime via the
 //! `*_available()` helpers in [`crate::row`].
 
+#![cfg_attr(not(feature = "std"), allow(dead_code))]
+
 #[cfg(any(
   target_arch = "aarch64",
   target_arch = "x86_64",
