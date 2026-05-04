@@ -60,10 +60,20 @@ pub(crate) mod scalar;
 /// an α-extract dispatcher overwrites the α channel from the source buffer.
 ///
 /// `#[doc(hidden)]` — not stable public API; exposed for bench accessibility.
+///
+/// # Panics
+///
+/// Panics if `rgb.len() < width * 3` or `rgba_out.len() < width * 4`, or if
+/// `width * 4` overflows `usize`. Release-mode guards protecting the public
+/// entry point (the scalar implementation only `debug_assert!`s).
 #[doc(hidden)]
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub fn expand_rgb_to_rgba_row(rgb: &[u8], rgba_out: &mut [u8], width: usize) {
+  let rgb_min = rgb_row_bytes(width);
+  let rgba_min = rgba_row_bytes(width);
+  assert!(rgb.len() >= rgb_min, "rgb row too short");
+  assert!(rgba_out.len() >= rgba_min, "rgba_out row too short");
   scalar::expand_rgb_to_rgba_row(rgb, rgba_out, width);
 }
 
@@ -73,6 +83,13 @@ pub fn expand_rgb_to_rgba_row(rgb: &[u8], rgba_out: &mut [u8], width: usize) {
 /// as [`expand_rgb_to_rgba_row`].
 ///
 /// `#[doc(hidden)]` — not stable public API; exposed for bench accessibility.
+///
+/// # Panics
+///
+/// Panics if `rgb.len() < width * 3` (in `u16` elements) or
+/// `rgba_out.len() < width * 4` (in `u16` elements), or if `width * 4`
+/// overflows `usize`. Release-mode guards protecting the public entry point
+/// (the scalar implementation only `debug_assert!`s).
 #[doc(hidden)]
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -81,6 +98,10 @@ pub fn expand_rgb_u16_to_rgba_u16_row<const BITS: u32>(
   rgba_out: &mut [u16],
   width: usize,
 ) {
+  let rgb_min = rgb_row_elems(width);
+  let rgba_min = rgba_row_elems(width);
+  assert!(rgb.len() >= rgb_min, "rgb row too short");
+  assert!(rgba_out.len() >= rgba_min, "rgba_out row too short");
   scalar::expand_rgb_u16_to_rgba_u16_row::<BITS>(rgb, rgba_out, width);
 }
 
