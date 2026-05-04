@@ -860,3 +860,141 @@ fn yvyu422_reconstructed_from_yuv422p_matches_yuv422p_to_rgb() {
 
   assert_eq!(rgb_planar, rgb_packed);
 }
+
+// ---- with_luma_u16 tests -----------------------------------------------
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuyv422_with_luma_u16_extracts_y_zero_extended() {
+  let width = 64usize;
+  let height = 4usize;
+  let n = width * height;
+
+  let mut packed = std::vec![0u8; n * 2];
+  pseudo_random_u8(&mut packed, 0xC0FFEE);
+
+  // Force even width (YUYV422 constraint is already satisfied by width = 64).
+  let src = Yuyv422Frame::new(&packed, width as u32, height as u32, (width * 2) as u32);
+
+  let mut luma = std::vec![0u16; n];
+  let mut sink = MixedSinker::<Yuyv422>::new(width, height)
+    .with_luma_u16(&mut luma)
+    .unwrap();
+  yuyv422_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  // Reference: Y bytes at even offsets within each 2-byte per-pixel stride.
+  let expected: std::vec::Vec<u16> = (0..n).map(|i| packed[i * 2] as u16).collect();
+  assert_eq!(luma, expected);
+}
+
+#[test]
+fn yuyv422_luma_u16_buffer_too_short_returns_err() {
+  let mut luma = std::vec![0u16; 4 * 4 - 1];
+  let result = MixedSinker::<Yuyv422>::new(4, 4).with_luma_u16(&mut luma);
+  let Err(err) = result else {
+    panic!("expected LumaU16BufferTooShort");
+  };
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::LumaU16BufferTooShort {
+        expected: 16,
+        actual: 15
+      }
+    ),
+    "unexpected error: {err:?}"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn uyvy422_with_luma_u16_extracts_y_zero_extended() {
+  let width = 64usize;
+  let height = 4usize;
+  let n = width * height;
+
+  let mut packed = std::vec![0u8; n * 2];
+  pseudo_random_u8(&mut packed, 0xDEADBEEF);
+
+  let src = Uyvy422Frame::new(&packed, width as u32, height as u32, (width * 2) as u32);
+
+  let mut luma = std::vec![0u16; n];
+  let mut sink = MixedSinker::<Uyvy422>::new(width, height)
+    .with_luma_u16(&mut luma)
+    .unwrap();
+  uyvy422_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  // Reference: Y bytes at odd offsets (offset 1 per pixel).
+  let expected: std::vec::Vec<u16> = (0..n).map(|i| packed[i * 2 + 1] as u16).collect();
+  assert_eq!(luma, expected);
+}
+
+#[test]
+fn uyvy422_luma_u16_buffer_too_short_returns_err() {
+  let mut luma = std::vec![0u16; 4 * 4 - 1];
+  let result = MixedSinker::<Uyvy422>::new(4, 4).with_luma_u16(&mut luma);
+  let Err(err) = result else {
+    panic!("expected LumaU16BufferTooShort");
+  };
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::LumaU16BufferTooShort {
+        expected: 16,
+        actual: 15
+      }
+    ),
+    "unexpected error: {err:?}"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yvyu422_with_luma_u16_extracts_y_zero_extended() {
+  let width = 64usize;
+  let height = 4usize;
+  let n = width * height;
+
+  let mut packed = std::vec![0u8; n * 2];
+  pseudo_random_u8(&mut packed, 0xFEEDBEEF);
+
+  let src = Yvyu422Frame::new(&packed, width as u32, height as u32, (width * 2) as u32);
+
+  let mut luma = std::vec![0u16; n];
+  let mut sink = MixedSinker::<Yvyu422>::new(width, height)
+    .with_luma_u16(&mut luma)
+    .unwrap();
+  yvyu422_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  // Reference: Y bytes at even offsets (same as YUYV422 — Y is at byte 0, 2).
+  let expected: std::vec::Vec<u16> = (0..n).map(|i| packed[i * 2] as u16).collect();
+  assert_eq!(luma, expected);
+}
+
+#[test]
+fn yvyu422_luma_u16_buffer_too_short_returns_err() {
+  let mut luma = std::vec![0u16; 4 * 4 - 1];
+  let result = MixedSinker::<Yvyu422>::new(4, 4).with_luma_u16(&mut luma);
+  let Err(err) = result else {
+    panic!("expected LumaU16BufferTooShort");
+  };
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::LumaU16BufferTooShort {
+        expected: 16,
+        actual: 15
+      }
+    ),
+    "unexpected error: {err:?}"
+  );
+}

@@ -39,9 +39,10 @@ use super::{
 use crate::{
   PixelSink,
   row::{
-    expand_rgb_to_rgba_row, rgb_to_hsv_row, uyvy422_to_luma_row, uyvy422_to_rgb_row,
-    uyvy422_to_rgba_row, yuyv422_to_luma_row, yuyv422_to_rgb_row, yuyv422_to_rgba_row,
-    yvyu422_to_luma_row, yvyu422_to_rgb_row, yvyu422_to_rgba_row,
+    expand_rgb_to_rgba_row, rgb_to_hsv_row, uyvy422_to_luma_row, uyvy422_to_luma_u16_row,
+    uyvy422_to_rgb_row, uyvy422_to_rgba_row, yuyv422_to_luma_row, yuyv422_to_luma_u16_row,
+    yuyv422_to_rgb_row, yuyv422_to_rgba_row, yvyu422_to_luma_row, yvyu422_to_luma_u16_row,
+    yvyu422_to_rgb_row, yvyu422_to_rgba_row,
   },
   yuv::{
     Uyvy422, Uyvy422Row, Uyvy422Sink, Yuyv422, Yuyv422Row, Yuyv422Sink, Yvyu422, Yvyu422Row,
@@ -74,6 +75,28 @@ impl<'a> MixedSinker<'a, Yuyv422> {
       });
     }
     self.rgba = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a **`u16`** luma output buffer. Y bytes are zero-extended
+  /// to u16 (`out[x] = Y_byte as u16`). Length in u16 **elements**
+  /// (`width × height`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(1)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::LumaU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.luma_u16 = Some(buf);
     Ok(self)
   }
 }
@@ -126,6 +149,7 @@ impl PixelSink for MixedSinker<'_, Yuyv422> {
       rgb,
       rgba,
       luma,
+      luma_u16,
       hsv,
       rgb_scratch,
       ..
@@ -134,11 +158,20 @@ impl PixelSink for MixedSinker<'_, Yuyv422> {
     let one_plane_end = one_plane_start + w;
     let packed = row.yuyv();
 
-    // Luma — extract Y bytes from packed plane via dedicated kernel.
+    // Luma u8 — extract Y bytes from packed plane via dedicated kernel.
     if let Some(luma) = luma.as_deref_mut() {
       yuyv422_to_luma_row(
         packed,
         &mut luma[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+    }
+    // Luma u16 — zero-extend Y bytes to u16.
+    if let Some(buf) = luma_u16.as_deref_mut() {
+      yuyv422_to_luma_u16_row(
+        packed,
+        &mut buf[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -230,6 +263,28 @@ impl<'a> MixedSinker<'a, Uyvy422> {
     self.rgba = Some(buf);
     Ok(self)
   }
+
+  /// Attaches a **`u16`** luma output buffer. Y bytes (at offset 1 of
+  /// each UYVY pair) are zero-extended to u16. Length in u16 **elements**
+  /// (`width × height`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(1)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::LumaU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
 }
 
 impl Uyvy422Sink for MixedSinker<'_, Uyvy422> {}
@@ -280,6 +335,7 @@ impl PixelSink for MixedSinker<'_, Uyvy422> {
       rgb,
       rgba,
       luma,
+      luma_u16,
       hsv,
       rgb_scratch,
       ..
@@ -292,6 +348,15 @@ impl PixelSink for MixedSinker<'_, Uyvy422> {
       uyvy422_to_luma_row(
         packed,
         &mut luma[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+    }
+    // Luma u16 — zero-extend Y bytes to u16.
+    if let Some(buf) = luma_u16.as_deref_mut() {
+      uyvy422_to_luma_u16_row(
+        packed,
+        &mut buf[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -377,6 +442,28 @@ impl<'a> MixedSinker<'a, Yvyu422> {
     self.rgba = Some(buf);
     Ok(self)
   }
+
+  /// Attaches a **`u16`** luma output buffer. Y bytes are zero-extended
+  /// to u16 (`out[x] = Y_byte as u16`). Length in u16 **elements**
+  /// (`width × height`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(1)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::LumaU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
 }
 
 impl Yvyu422Sink for MixedSinker<'_, Yvyu422> {}
@@ -427,6 +514,7 @@ impl PixelSink for MixedSinker<'_, Yvyu422> {
       rgb,
       rgba,
       luma,
+      luma_u16,
       hsv,
       rgb_scratch,
       ..
@@ -439,6 +527,15 @@ impl PixelSink for MixedSinker<'_, Yvyu422> {
       yvyu422_to_luma_row(
         packed,
         &mut luma[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+    }
+    // Luma u16 — zero-extend Y bytes to u16.
+    if let Some(buf) = luma_u16.as_deref_mut() {
+      yvyu422_to_luma_u16_row(
+        packed,
+        &mut buf[one_plane_start..one_plane_end],
         w,
         use_simd,
       );

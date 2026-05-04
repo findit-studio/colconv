@@ -346,6 +346,92 @@ pub(crate) unsafe fn yvyu422_to_luma_row(packed: &[u8], luma_out: &mut [u8], wid
   }
 }
 
+/// AVX2 YUYV422 → u16 luma extraction. Block size: 32 px / iter.
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn yuyv422_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  // SAFETY: AVX2 availability is the caller's obligation.
+  unsafe {
+    yuv422_packed_to_luma_u16_row::<true>(packed, out, width);
+  }
+}
+
+/// AVX2 UYVY422 → u16 luma extraction. Block size: 32 px / iter.
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn uyvy422_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  // SAFETY: AVX2 availability is the caller's obligation.
+  unsafe {
+    yuv422_packed_to_luma_u16_row::<false>(packed, out, width);
+  }
+}
+
+/// AVX2 YVYU422 → u16 luma extraction (Y positions same as YUYV).
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn yvyu422_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  // SAFETY: AVX2 availability is the caller's obligation.
+  unsafe {
+    yuv422_packed_to_luma_u16_row::<true>(packed, out, width);
+  }
+}
+
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn yuv422_packed_to_luma_u16_row<const Y_LSB: bool>(
+  packed: &[u8],
+  out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width);
+
+  // SAFETY: AVX2 availability is the caller's obligation.
+  unsafe {
+    // Shuffle within each 128-bit lane — moves Y bytes to the low 8
+    // positions. The AVX2 shuffle operates per 128-bit lane independently.
+    let split_mask = if Y_LSB {
+      _mm256_setr_epi8(
+        0, 2, 4, 6, 8, 10, 12, 14, -1, -1, -1, -1, -1, -1, -1, -1, 0, 2, 4, 6, 8, 10, 12, 14, -1,
+        -1, -1, -1, -1, -1, -1, -1,
+      )
+    } else {
+      _mm256_setr_epi8(
+        1, 3, 5, 7, 9, 11, 13, 15, -1, -1, -1, -1, -1, -1, -1, -1, 1, 3, 5, 7, 9, 11, 13, 15, -1,
+        -1, -1, -1, -1, -1, -1, -1,
+      )
+    };
+
+    let mut x = 0usize;
+    while x + 32 <= width {
+      // Load 32 px worth of packed data (2 × 32-byte AVX2 loads; each
+      // covers 16 packed pixels).
+      let p0 = _mm256_loadu_si256(packed.as_ptr().add(x * 2).cast());
+      let p1 = _mm256_loadu_si256(packed.as_ptr().add(x * 2 + 32).cast());
+      // After shuffle: low 8 bytes of each 128-bit lane = Y values.
+      let p0s = _mm256_shuffle_epi8(p0, split_mask);
+      let p1s = _mm256_shuffle_epi8(p1, split_mask);
+      // Extract the packed 8-byte Y halves from each 256-bit vector.
+      // _mm256_cvtepu8_epi16 takes a __m128i and zero-extends 16 u8 → 16 u16.
+      // We need the low 128-bit lane (low 8 Y bytes from each load).
+      let lo_src = _mm256_castsi256_si128(p0s);
+      let hi_src = _mm256_castsi256_si128(p1s);
+      let lo = _mm256_cvtepu8_epi16(lo_src);
+      let hi = _mm256_cvtepu8_epi16(hi_src);
+      _mm256_storeu_si256(out.as_mut_ptr().add(x).cast(), lo);
+      _mm256_storeu_si256(out.as_mut_ptr().add(x + 16).cast(), hi);
+      x += 32;
+    }
+    if x < width {
+      if Y_LSB {
+        scalar::yuyv422_to_luma_u16_row(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+      } else {
+        scalar::uyvy422_to_luma_u16_row(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+      }
+    }
+  }
+}
+
 #[inline]
 #[target_feature(enable = "avx2")]
 unsafe fn yuv422_packed_to_luma_row<const Y_LSB: bool>(
