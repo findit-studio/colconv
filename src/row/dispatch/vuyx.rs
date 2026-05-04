@@ -38,6 +38,13 @@ pub use super::vuya::vuya_to_rgb_row as vuyx_to_rgb_row;
 /// regardless of α semantics. See that function for full documentation.
 pub use super::vuya::vuya_to_luma_row as vuyx_to_luma_row;
 
+/// Extracts one row of u16 luma (zero-extended Y bytes) from a packed VUYX
+/// buffer. Identical to [`crate::row::vuya_to_luma_u16_row`] — Y is at byte
+/// offset 2 of each quadruple regardless of α semantics. The X (padding) byte
+/// is discarded. See that function for full documentation.
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) use super::vuya::vuya_to_luma_u16_row as vuyx_to_luma_u16_row;
+
 // ---- VUYX-specific RGBA dispatcher -----------------------------------------
 
 /// Converts one row of VUYX to packed RGBA (u8). The padding byte (offset 3

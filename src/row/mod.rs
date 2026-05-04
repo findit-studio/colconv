@@ -71,6 +71,12 @@ pub(crate) use dispatch::packed_yuv422::{
   uyvy422_to_luma_u16_row, yuyv422_to_luma_u16_row, yvyu422_to_luma_u16_row,
 };
 
+// Task 4 — packed YUV 4:4:4 (VUYA / VUYX) luma_u16 dispatchers.
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) use dispatch::vuya::vuya_to_luma_u16_row;
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) use dispatch::vuyx::vuyx_to_luma_u16_row;
+
 pub use dispatch::{
   ayuv64::*, bayer::*, nv::*, packed_yuv422::*, pn::*, rgb_ops::*, v30x::*, v210::*, v410::*,
   vuya::*, vuyx::*, xv36::*, y210::*, y212::*, y216::*, yuv420::*, yuv444::*, yuva::*,

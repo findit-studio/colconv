@@ -597,6 +597,55 @@ fn vuya_strategy_a_plus_matches_independent_kernel() {
   }
 }
 
+// ---- with_luma_u16 tests -----------------------------------------------
+
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn vuya_with_luma_u16_extracts_y_zero_extended() {
+  let width = 64usize;
+  let height = 4usize;
+  let n = width * height;
+
+  let mut packed = std::vec![0u8; n * 4];
+  pseudo_random_u8(&mut packed, 0xC0FFEE);
+
+  let frame = VuyaFrame::try_new(&packed, width as u32, height as u32, (width * 4) as u32).unwrap();
+
+  let mut luma = std::vec![0u16; n];
+  let mut sink = MixedSinker::<Vuya>::new(width, height)
+    .with_luma_u16(&mut luma)
+    .unwrap();
+  vuya_to(&frame, false, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  // Reference: Y bytes at offset 2 of each 4-byte pixel quadruple.
+  let expected: std::vec::Vec<u16> = (0..n).map(|i| packed[i * 4 + 2] as u16).collect();
+  assert_eq!(luma, expected);
+}
+
+#[test]
+#[cfg(all(test, feature = "std"))]
+fn vuya_luma_u16_buffer_too_short_returns_err() {
+  let mut luma = std::vec![0u16; 4 * 4 - 1];
+  let result = MixedSinker::<Vuya>::new(4, 4).with_luma_u16(&mut luma);
+  let Err(err) = result else {
+    panic!("expected LumaU16BufferTooShort");
+  };
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::LumaU16BufferTooShort {
+        expected: 16,
+        actual: 15
+      }
+    ),
+    "unexpected error: {err:?}"
+  );
+}
+
 // ---- 15: Strategy A+ honors with_simd(false) (Codex PR #63 review fix #2) ----
 //
 // `MixedSinker::with_simd(false)` is a documented public knob (used by

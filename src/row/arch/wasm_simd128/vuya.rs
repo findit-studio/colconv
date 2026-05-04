@@ -399,3 +399,82 @@ pub(crate) unsafe fn vuya_to_luma_row(packed: &[u8], luma_out: &mut [u8], width:
     }
   }
 }
+
+/// wasm-simd128 VUYA → u16 luma (zero-extended Y bytes). Y is the third
+/// byte (offset 2) of each pixel quadruple. 16 pixels per SIMD iteration.
+///
+/// Strategy: same 4-load + swizzle cascade as the u8 path to collect 16 Y
+/// bytes into a `v128`, then `u16x8_extend_low_u8x16` and
+/// `u16x8_extend_high_u8x16` widen the two halves to u16x8 each.
+///
+/// Byte-identical to `scalar::vuya_to_luma_u16_row`.
+///
+/// # Safety
+///
+/// 1. **`simd128` must be enabled at compile time.**
+/// 2. `packed.len() >= width * 4`.
+/// 3. `out.len() >= width`.
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn vuya_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  debug_assert!(packed.len() >= width * 4, "packed row too short");
+  debug_assert!(out.len() >= width, "out too short");
+
+  unsafe {
+    // Y is at byte offset 2 within each 4-byte pixel quadruple.
+    // Within a 16-byte v128 (4 pixels): positions 2, 6, 10, 14.
+    let y_idx = i8x16(2, 6, 10, 14, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let ptr = packed.as_ptr().add(x * 4);
+      let raw0 = v128_load(ptr.cast()); // pixels 0-3
+      let raw1 = v128_load(ptr.add(16).cast()); // pixels 4-7
+      let raw2 = v128_load(ptr.add(32).cast()); // pixels 8-11
+      let raw3 = v128_load(ptr.add(48).cast()); // pixels 12-15
+
+      // Extract Y from each 4-pixel register → 4 bytes in low 4 bytes.
+      let y0 = u8x16_swizzle(raw0, y_idx);
+      let y1 = u8x16_swizzle(raw1, y_idx);
+      let y2 = u8x16_swizzle(raw2, y_idx);
+      let y3 = u8x16_swizzle(raw3, y_idx);
+
+      // Concatenate pairs into 8-byte fragments.
+      let y01 = i8x16_shuffle::<0, 1, 2, 3, 16, 17, 18, 19, 0, 0, 0, 0, 0, 0, 0, 0>(y0, y1);
+      let y23 = i8x16_shuffle::<0, 1, 2, 3, 16, 17, 18, 19, 0, 0, 0, 0, 0, 0, 0, 0>(y2, y3);
+      // Full 16-lane Y vector.
+      let y_vec = i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23>(y01, y23);
+
+      // Zero-extend low 8 bytes → u16x8, high 8 bytes → u16x8.
+      let low = u16x8_extend_low_u8x16(y_vec);
+      let high = u16x8_extend_high_u8x16(y_vec);
+      v128_store(out.as_mut_ptr().add(x).cast(), low);
+      v128_store(out.as_mut_ptr().add(x + 8).cast(), high);
+      x += 16;
+    }
+
+    // Scalar tail.
+    if x < width {
+      scalar::vuya_to_luma_u16_row(&packed[x * 4..], &mut out[x..], width - x);
+    }
+  }
+}
+
+/// wasm-simd128 VUYX → u16 luma (zero-extended Y bytes). Byte-identical
+/// to [`vuya_to_luma_u16_row`] — Y is at byte offset 2 of each quadruple
+/// regardless of α semantics; the X byte is discarded.
+///
+/// # Safety
+///
+/// 1. **`simd128` must be enabled at compile time.**
+/// 2. `packed.len() >= width * 4`.
+/// 3. `out.len() >= width`.
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn vuyx_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  unsafe {
+    vuya_to_luma_u16_row(packed, out, width);
+  }
+}

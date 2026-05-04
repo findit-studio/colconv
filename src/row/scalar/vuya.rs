@@ -133,6 +133,29 @@ pub(crate) fn vuya_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize)
   }
 }
 
+/// Extract Y as u16 (zero-extended) from a packed VUYA `[V, U, Y, A]` row.
+/// Y is at byte offset 2 of each 4-byte pixel quadruple; the V, U, and A
+/// bytes are ignored. Output is `Y_byte as u16` — no shift, just widening.
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn vuya_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  debug_assert!(packed.len() >= width * 4, "packed too short");
+  debug_assert!(out.len() >= width, "out too short");
+  for x in 0..width {
+    out[x] = packed[x * 4 + 2] as u16;
+  }
+}
+
+/// Extract Y as u16 (zero-extended) from a packed VUYX `[V, U, Y, X]` row.
+/// Byte-identical to [`vuya_to_luma_u16_row`] — Y is at byte offset 2 of
+/// each 4-byte pixel quadruple regardless of α semantics; the X byte is
+/// ignored. Output is `Y_byte as u16`.
+#[allow(dead_code)]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn vuyx_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  vuya_to_luma_u16_row(packed, out, width);
+}
+
 // ---- Tests -------------------------------------------------------------
 
 #[cfg(all(test, feature = "std"))]
