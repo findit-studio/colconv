@@ -54,11 +54,13 @@ pub(crate) unsafe fn copy_alpha_packed_u8x4_at_3(packed: &[u8], rgba_out: &mut [
 
   unsafe {
     // Mask: 0xFF in α (byte 3 of every pixel quadruple), 0x00 elsewhere.
+    // _mm_set_epi8 takes args high-to-low (byte 15 first, byte 0 last).
+    // 0xFF positions align to RGBA α slots: bytes 15, 11, 7, 3.
     let alpha_mask = _mm_set_epi8(
-      -1, 0, 0, 0, // px3
-      -1, 0, 0, 0, // px2
-      -1, 0, 0, 0, // px1
-      -1, 0, 0, 0, // px0  (setr would be reversed)
+      -1, 0, 0, 0, // bytes 15..12 (px3: α at byte 15)
+      -1, 0, 0, 0, // bytes 11..8  (px2: α at byte 11)
+      -1, 0, 0, 0, // bytes  7..4  (px1: α at byte  7)
+      -1, 0, 0, 0, // bytes  3..0  (px0: α at byte  3)
     );
 
     let mut x = 0usize;
@@ -131,11 +133,13 @@ pub(crate) unsafe fn copy_alpha_packed_u16x4_to_u8_at_0(
       // Shuffle to place α at slot 3 of each output pixel:
       // out[3+4*n] = packed_u8[0+4*n]. Shuffle: for each 4-byte output px,
       // take byte 0 from packed_u8 and place at byte 3.
+      // _mm_set_epi8 takes args high-to-low (byte 15 first, byte 0 last).
+      // Each group places one α byte at the high position of a 4-byte output pixel.
       let shuf_mask = _mm_set_epi8(
-        12, -1, -1, -1, // px3: take byte 12 → slot 3; others don't care (use 0x80=zero)
-        8, -1, -1, -1, // px2: take byte 8
-        4, -1, -1, -1, // px1: take byte 4
-        0, -1, -1, -1, // px0: take byte 0
+        12, -1, -1, -1, // bytes 15..12 (px3): src[12] → out[15]
+        8, -1, -1, -1, // bytes 11..8  (px2): src[ 8] → out[11]
+        4, -1, -1, -1, // bytes  7..4  (px1): src[ 4] → out[ 7]
+        0, -1, -1, -1, // bytes  3..0  (px0): src[ 0] → out[ 3]
       );
       let a_scattered = _mm_shuffle_epi8(packed_u8, shuf_mask);
 
@@ -192,9 +196,12 @@ pub(crate) unsafe fn copy_alpha_packed_u16x4_at_0(
     // In byte indices (u16 slot k = bytes 2k, 2k+1):
     //   slot 0 = bytes 0,1 → slot 3 = bytes 6,7
     //   slot 4 = bytes 8,9 → slot 7 = bytes 14,15
+    // _mm_set_epi8 takes args high-to-low (byte 15 first, byte 0 last).
+    // Each __m128i holds 2 pixels (px0 = slots 0-3, px1 = slots 4-7).
+    // α (slot 0) → slot 3: src[0,1] → dst[6,7]; src[8,9] → dst[14,15].
     let shuf_mask = _mm_set_epi8(
-      9, 8, -1, -1, -1, -1, -1, -1, // px1: bytes 8,9 → bytes 14,15; rest zeroed
-      1, 0, -1, -1, -1, -1, -1, -1, // px0: bytes 0,1 → bytes 6,7; rest zeroed
+      9, 8, -1, -1, -1, -1, -1, -1, // bytes 15..8 (px1): src[8,9] → bytes 14,15
+      1, 0, -1, -1, -1, -1, -1, -1, // bytes  7..0 (px0): src[0,1] → bytes  6,7
     );
 
     let mut x = 0usize;
@@ -378,6 +385,8 @@ pub(crate) unsafe fn copy_alpha_plane_u16<const BITS: u32>(
   }
   debug_assert!(alpha.len() >= width, "alpha plane too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+  // BITS is validated above for caller safety but is not used at runtime:
+  // no depth conversion is performed (u16 → u16 is a direct scatter).
   let _ = BITS;
 
   unsafe {
