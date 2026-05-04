@@ -46,7 +46,9 @@ use crate::row::scalar::alpha_extract as scalar;
 /// `packed.3` substituted into the α slot.
 ///
 /// Block size: 16 px / iter (one `vld4q_u8` = 64 bytes).
-pub(crate) fn copy_alpha_packed_u8x4_at_3(packed: &[u8], rgba_out: &mut [u8], width: usize) {
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn copy_alpha_packed_u8x4_at_3(packed: &[u8], rgba_out: &mut [u8], width: usize) {
   debug_assert!(packed.len() >= width * 4, "packed too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
 
@@ -86,7 +88,9 @@ pub(crate) fn copy_alpha_packed_u8x4_at_3(packed: &[u8], rgba_out: &mut [u8], wi
 ///
 /// Block size: 8 px / iter (one `vld4q_u16` for src = 64 bytes,
 /// one `vld4_u8` / `vst4_u8` for dst = 32 bytes).
-pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0(
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn copy_alpha_packed_u16x4_to_u8_at_0(
   packed: &[u16],
   rgba_out: &mut [u8],
   width: usize,
@@ -124,7 +128,13 @@ pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0(
 /// `rgba_out[3 + 4*n]` (u16). No depth conversion.
 ///
 /// Block size: 8 px / iter (`vld4q_u16` × 2 = 128 bytes round-trip).
-pub(crate) fn copy_alpha_packed_u16x4_at_0(packed: &[u16], rgba_out: &mut [u16], width: usize) {
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn copy_alpha_packed_u16x4_at_0(
+  packed: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4, "packed too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
 
@@ -158,7 +168,9 @@ pub(crate) fn copy_alpha_packed_u16x4_at_0(packed: &[u16], rgba_out: &mut [u16],
 /// Block size: 16 px / iter. `vld1q_u8` loads 16 contiguous α bytes;
 /// `vld4q_u8` deinterleaves 16 px of RGBA; we substitute `.3` and
 /// `vst4q_u8` writes back.
-pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usize) {
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usize) {
   debug_assert!(alpha.len() >= width, "alpha plane too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
 
@@ -191,7 +203,9 @@ pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usiz
 /// `vqmovn_u16` would diverge there).
 ///
 /// Block size: 8 px / iter.
-pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
   alpha: &[u16],
   rgba_out: &mut [u8],
   width: usize,
@@ -236,7 +250,9 @@ pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
 /// symmetry with the scalar API).
 ///
 /// Block size: 8 px / iter.
-pub(crate) fn copy_alpha_plane_u16<const BITS: u32>(
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn copy_alpha_plane_u16<const BITS: u32>(
   alpha: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -310,7 +326,7 @@ mod tests {
       // accidentally clobbered non-α bytes.
       pseudo_random_u8(&mut rgba_simd, 0xDECAF);
       rgba_scalar.copy_from_slice(&rgba_simd);
-      super::copy_alpha_packed_u8x4_at_3(&packed, &mut rgba_simd, w);
+      unsafe { super::copy_alpha_packed_u8x4_at_3(&packed, &mut rgba_simd, w) };
       scalar::copy_alpha_packed_u8x4_at_3(&packed, &mut rgba_scalar, w);
       assert_eq!(rgba_simd, rgba_scalar, "width={w}");
     }
@@ -328,7 +344,7 @@ mod tests {
       let mut rgba_simd = std::vec![1u8; w * 4];
       pseudo_random_u8(&mut rgba_simd, 0xFEED);
       let mut rgba_scalar = rgba_simd.clone();
-      super::copy_alpha_packed_u16x4_to_u8_at_0(&packed, &mut rgba_simd, w);
+      unsafe { super::copy_alpha_packed_u16x4_to_u8_at_0(&packed, &mut rgba_simd, w) };
       scalar::copy_alpha_packed_u16x4_to_u8_at_0(&packed, &mut rgba_scalar, w);
       assert_eq!(rgba_simd, rgba_scalar, "width={w}");
     }
@@ -346,7 +362,7 @@ mod tests {
       let mut rgba_simd = std::vec![1u16; w * 4];
       pseudo_random_u16(&mut rgba_simd, 0x1337);
       let mut rgba_scalar = rgba_simd.clone();
-      super::copy_alpha_packed_u16x4_at_0(&packed, &mut rgba_simd, w);
+      unsafe { super::copy_alpha_packed_u16x4_at_0(&packed, &mut rgba_simd, w) };
       scalar::copy_alpha_packed_u16x4_at_0(&packed, &mut rgba_scalar, w);
       assert_eq!(rgba_simd, rgba_scalar, "width={w}");
     }
@@ -364,7 +380,7 @@ mod tests {
       let mut rgba_simd = std::vec![1u8; w * 4];
       pseudo_random_u8(&mut rgba_simd, 0x123456);
       let mut rgba_scalar = rgba_simd.clone();
-      super::copy_alpha_plane_u8(&alpha, &mut rgba_simd, w);
+      unsafe { super::copy_alpha_plane_u8(&alpha, &mut rgba_simd, w) };
       scalar::copy_alpha_plane_u8(&alpha, &mut rgba_scalar, w);
       assert_eq!(rgba_simd, rgba_scalar, "width={w}");
     }
@@ -386,7 +402,7 @@ mod tests {
       let mut rgba_simd = std::vec![1u8; w * 4];
       pseudo_random_u8(&mut rgba_simd, 0xBABE);
       let mut rgba_scalar = rgba_simd.clone();
-      super::copy_alpha_plane_u16_to_u8::<10>(&alpha, &mut rgba_simd, w);
+      unsafe { super::copy_alpha_plane_u16_to_u8::<10>(&alpha, &mut rgba_simd, w) };
       scalar::copy_alpha_plane_u16_to_u8::<10>(&alpha, &mut rgba_scalar, w);
       assert_eq!(rgba_simd, rgba_scalar, "width={w}");
     }
@@ -407,7 +423,7 @@ mod tests {
       let mut rgba_simd = std::vec![1u8; w * 4];
       pseudo_random_u8(&mut rgba_simd, 0x5EED);
       let mut rgba_scalar = rgba_simd.clone();
-      super::copy_alpha_plane_u16_to_u8::<12>(&alpha, &mut rgba_simd, w);
+      unsafe { super::copy_alpha_plane_u16_to_u8::<12>(&alpha, &mut rgba_simd, w) };
       scalar::copy_alpha_plane_u16_to_u8::<12>(&alpha, &mut rgba_scalar, w);
       assert_eq!(rgba_simd, rgba_scalar, "width={w}");
     }
@@ -425,7 +441,7 @@ mod tests {
       let mut rgba_simd = std::vec![1u16; w * 4];
       pseudo_random_u16(&mut rgba_simd, 0xFADE);
       let mut rgba_scalar = rgba_simd.clone();
-      super::copy_alpha_plane_u16::<10>(&alpha, &mut rgba_simd, w);
+      unsafe { super::copy_alpha_plane_u16::<10>(&alpha, &mut rgba_simd, w) };
       scalar::copy_alpha_plane_u16::<10>(&alpha, &mut rgba_scalar, w);
       assert_eq!(rgba_simd, rgba_scalar, "width={w}");
     }
