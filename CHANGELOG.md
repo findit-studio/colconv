@@ -1,5 +1,35 @@
 # CHANGELOG
 
+## 0.19.0 — `with_luma_u16` for all 8-bit source formats
+
+**Additive feature; no public API change for existing accessors.**
+
+All 14 8-bit source formats now uniformly support `with_luma_u16` /
+`set_luma_u16` accessors, matching the convention already established
+by 16-bit and high-bit formats (Y216, XV36, AYUV64, Yuva*p9/10/12/14/16,
+etc.). Output is mechanically `out[x] = src_y_byte[x] as u16` —
+zero-extension at the type level, no shift, no scaling.
+
+Formats wired:
+
+- **Planar:** Yuv420p, Yuv422p, Yuv440p, Yuv444p
+- **Semi-planar:** Nv12, Nv16, Nv21, Nv24, Nv42
+- **Packed YUV 4:2:2:** Yuyv422, Uyvy422, Yvyu422
+- **Packed YUV 4:4:4:** Vuya, Vuyx
+
+The 9 planar/semi-planar formats share a single
+`y_plane_to_luma_u16_row` kernel (Y is a contiguous u8 plane in all of
+them); the 5 packed formats each get their own format-specific kernel
+that gathers Y from the right byte offset (`packed[x*2]` / `packed[x*2+1]`
+for 4:2:2, `packed[x*4 + 2]` for 4:4:4). All kernels are scalar +
+5-backend SIMD (NEON, SSE4.1, AVX2, AVX-512, wasm-simd128) with byte-
+identical scalar-equivalence per backend.
+
+This closes a long-standing asymmetry where downstream consumers
+operating on `&mut [u16]` luma (scene-detect, bilateral filters,
+percentile/histogram work) had to special-case 8-bit sources or drop
+u16 luma support entirely. Surfaced from Ship 12c plan-time discussion.
+
 ## 0.18.0 — Strategy A+ across all source-α formats (Tier 5 closure megaship PR 4 / final)
 
 **Performance improvement; no public API change; output byte-identical to v0.17.x.**
