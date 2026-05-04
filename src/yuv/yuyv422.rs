@@ -17,80 +17,23 @@
 //! the same const-generic `yuv422_packed_to_rgb_or_rgba_row` template
 //! across scalar + every SIMD backend.
 
-use crate::{ColorMatrix, PixelSink, SourceFormat, frame::Yuyv422Frame, sealed::Sealed};
+use crate::frame::Yuyv422Frame;
 
-/// Zero‑sized marker for the packed **YUYV422** source format. Used
-/// as the `F` type parameter on [`crate::sinker::MixedSinker`].
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct Yuyv422;
-
-impl Sealed for Yuyv422 {}
-impl SourceFormat for Yuyv422 {}
-
-/// One output row of a [`Yuyv422`] source — `2 * width` packed
-/// `Y0, U0, Y1, V0, …` bytes.
-#[derive(Debug, Clone, Copy)]
-pub struct Yuyv422Row<'a> {
-  yuyv: &'a [u8],
-  row: usize,
-  matrix: ColorMatrix,
-  full_range: bool,
-}
-
-impl<'a> Yuyv422Row<'a> {
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub(crate) fn new(yuyv: &'a [u8], row: usize, matrix: ColorMatrix, full_range: bool) -> Self {
-    Self {
-      yuyv,
-      row,
-      matrix,
-      full_range,
-    }
+walker! {
+  packed {
+    /// Zero‑sized marker for the packed **YUYV422** source format. Used
+    /// as the `F` type parameter on [`crate::sinker::MixedSinker`].
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+    marker: Yuyv422,
+    frame: Yuyv422Frame<'_>,
+    row: Yuyv422Row,
+    sink: Yuyv422Sink,
+    walker: yuyv422_to,
+    buf_field: yuyv,
+    elem_type: u8,
+    row_elems: |w| w * 2,
+    row_doc: "One output row of a [`Yuyv422`] source — `2 * width` packed\n\
+              `Y0, U0, Y1, V0, …` bytes.",
+    walker_doc: "Walks a [`Yuyv422Frame`] row by row into the sink.",
   }
-  /// Packed `Y0, U0, Y1, V0, …` row — `2 * width` bytes.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub fn yuyv(&self) -> &'a [u8] {
-    self.yuyv
-  }
-  /// Row index.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn row(&self) -> usize {
-    self.row
-  }
-  /// YUV → RGB matrix carried through from the kernel call.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn matrix(&self) -> ColorMatrix {
-    self.matrix
-  }
-  /// `true` iff Y ∈ `[0, 255]` (full range); `false` for limited.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn full_range(&self) -> bool {
-    self.full_range
-  }
-}
-
-/// Sinks that consume [`Yuyv422Row`].
-pub trait Yuyv422Sink: for<'a> PixelSink<Input<'a> = Yuyv422Row<'a>> {}
-
-/// Walks a [`Yuyv422Frame`] row by row into the sink.
-pub fn yuyv422_to<S: Yuyv422Sink>(
-  src: &Yuyv422Frame<'_>,
-  full_range: bool,
-  matrix: ColorMatrix,
-  sink: &mut S,
-) -> Result<(), S::Error> {
-  sink.begin_frame(src.width(), src.height())?;
-
-  let w = src.width() as usize;
-  let h = src.height() as usize;
-  let stride = src.stride() as usize;
-  let row_bytes = w * 2;
-  let plane = src.yuyv();
-
-  for row in 0..h {
-    let start = row * stride;
-    let yuyv = &plane[start..start + row_bytes];
-    sink.process(Yuyv422Row::new(yuyv, row, matrix, full_range))?;
-  }
-  Ok(())
 }

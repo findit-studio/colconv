@@ -15,95 +15,24 @@
 //!
 //! VUYA has no u16 output paths — it is an 8-bit source.
 
-use crate::{ColorMatrix, PixelSink, SourceFormat, frame::VuyaFrame, sealed::Sealed};
+use crate::frame::VuyaFrame;
 
-/// Zero-sized marker for the packed **VUYA** source format.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct Vuya;
-
-impl Sealed for Vuya {}
-impl SourceFormat for Vuya {}
-
-/// One row of a [`Vuya`] source — `width × 4` bytes (4 channels per
-/// pixel: V, U, Y, A; the A byte is real source alpha).
-///
-/// Byte layout per pixel:
-///
-/// | Byte offset | Field |
-/// |-------------|-------|
-/// | 0           | V     |
-/// | 1           | U     |
-/// | 2           | Y     |
-/// | 3           | A     |
-///
-/// The walker does not interpret the bytes — it passes the raw packed
-/// slice to the sink. Byte-level channel extraction happens in the
-/// row-kernel layer.
-#[derive(Debug, Clone, Copy)]
-pub struct VuyaRow<'a> {
-  packed: &'a [u8],
-  row: usize,
-  matrix: ColorMatrix,
-  full_range: bool,
-}
-
-impl<'a> VuyaRow<'a> {
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub(crate) fn new(packed: &'a [u8], row: usize, matrix: ColorMatrix, full_range: bool) -> Self {
-    Self {
-      packed,
-      row,
-      matrix,
-      full_range,
-    }
+walker! {
+  packed {
+    /// Zero-sized marker for the packed **VUYA** source format.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+    marker: Vuya,
+    frame: VuyaFrame<'_>,
+    row: VuyaRow,
+    sink: VuyaSink,
+    walker: vuya_to,
+    buf_field: packed,
+    elem_type: u8,
+    row_elems: |w| w * 4,
+    row_doc: "One row of a [`Vuya`] source — `width × 4` bytes (4 channels per\n\
+              pixel: V, U, Y, A; the A byte is real source alpha).",
+    walker_doc: "Walks a [`VuyaFrame`] row by row into the sink.",
   }
-  /// Packed VUYA row — `width × 4` bytes (4 channels per pixel:
-  /// V, U, Y, A).
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub fn packed(&self) -> &'a [u8] {
-    self.packed
-  }
-  /// Row index.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn row(&self) -> usize {
-    self.row
-  }
-  /// YUV → RGB matrix carried through.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn matrix(&self) -> ColorMatrix {
-    self.matrix
-  }
-  /// `true` iff Y ∈ `[0, 255]` full range (8-bit). Limited range is
-  /// Y `[16, 235]`, chroma `[16, 240]`.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn full_range(&self) -> bool {
-    self.full_range
-  }
-}
-
-/// Sinks that consume [`VuyaRow`].
-pub trait VuyaSink: for<'a> PixelSink<Input<'a> = VuyaRow<'a>> {}
-
-/// Walks a [`VuyaFrame`] row by row into the sink.
-pub fn vuya_to<S: VuyaSink>(
-  src: &VuyaFrame<'_>,
-  full_range: bool,
-  matrix: ColorMatrix,
-  sink: &mut S,
-) -> Result<(), S::Error> {
-  sink.begin_frame(src.width(), src.height())?;
-
-  let h = src.height() as usize;
-  let stride = src.stride() as usize;
-  let row_bytes = (src.width() as usize) * 4;
-  let plane = src.packed();
-
-  for row in 0..h {
-    let start = row * stride;
-    let packed = &plane[start..start + row_bytes];
-    sink.process(VuyaRow::new(packed, row, matrix, full_range))?;
-  }
-  Ok(())
 }
 
 #[cfg(all(test, feature = "std"))]

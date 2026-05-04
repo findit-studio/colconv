@@ -17,82 +17,24 @@
 //! - `with_hsv` — stages an internal RGB scratch and runs the
 //!   existing `rgb_to_hsv_row` kernel.
 
-use crate::{ColorMatrix, PixelSink, SourceFormat, frame::Y212Frame, sealed::Sealed};
+use crate::frame::Y212Frame;
 
-/// Zero-sized marker for the packed **Y212** source format.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct Y212;
-
-impl Sealed for Y212 {}
-impl SourceFormat for Y212 {}
-
-/// One row of a [`Y212`] source — `width × 2` u16 elements
-/// (`Y₀, U, Y₁, V` quadruples per 2-pixel block).
-#[derive(Debug, Clone, Copy)]
-pub struct Y212Row<'a> {
-  packed: &'a [u16],
-  row: usize,
-  matrix: ColorMatrix,
-  full_range: bool,
-}
-
-impl<'a> Y212Row<'a> {
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub(crate) fn new(packed: &'a [u16], row: usize, matrix: ColorMatrix, full_range: bool) -> Self {
-    Self {
-      packed,
-      row,
-      matrix,
-      full_range,
-    }
+walker! {
+  packed {
+    /// Zero-sized marker for the packed **Y212** source format.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+    marker: Y212,
+    frame: Y212Frame<'_>,
+    row: Y212Row,
+    sink: Y212Sink,
+    walker: y212_to,
+    buf_field: packed,
+    elem_type: u16,
+    row_elems: |w| w * 2,
+    row_doc: "One row of a [`Y212`] source — `width × 2` u16 elements\n\
+              (`Y₀, U, Y₁, V` quadruples per 2-pixel block).",
+    walker_doc: "Walks a [`Y212Frame`] row by row into the sink.",
   }
-  /// Packed Y212 row — `width × 2` u16 elements (`Y₀, U, Y₁, V`,
-  /// active 12 bits MSB-aligned per sample).
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub fn packed(&self) -> &'a [u16] {
-    self.packed
-  }
-  /// Row index.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn row(&self) -> usize {
-    self.row
-  }
-  /// YUV → RGB matrix carried through.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn matrix(&self) -> ColorMatrix {
-    self.matrix
-  }
-  /// `true` iff Y ∈ `[0, 4095]` full range (12-bit). Limited range
-  /// is `[256, 3760]`.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn full_range(&self) -> bool {
-    self.full_range
-  }
-}
-
-/// Sinks that consume [`Y212Row`].
-pub trait Y212Sink: for<'a> PixelSink<Input<'a> = Y212Row<'a>> {}
-
-/// Walks a [`Y212Frame`] row by row into the sink.
-pub fn y212_to<S: Y212Sink>(
-  src: &Y212Frame<'_>,
-  full_range: bool,
-  matrix: ColorMatrix,
-  sink: &mut S,
-) -> Result<(), S::Error> {
-  sink.begin_frame(src.width(), src.height())?;
-
-  let h = src.height() as usize;
-  let stride = src.stride() as usize;
-  let row_elems = src.width() as usize * 2;
-  let plane = src.packed();
-
-  for row in 0..h {
-    let start = row * stride;
-    let packed = &plane[start..start + row_elems];
-    sink.process(Y212Row::new(packed, row, matrix, full_range))?;
-  }
-  Ok(())
 }
 
 #[cfg(all(test, feature = "std"))]

@@ -14,80 +14,23 @@
 //! - `with_hsv` — stages an internal RGB scratch and runs the
 //!   existing `rgb_to_hsv_row` kernel.
 
-use crate::{ColorMatrix, PixelSink, SourceFormat, frame::V210Frame, sealed::Sealed};
+use crate::frame::V210Frame;
 
-/// Zero-sized marker for the packed **v210** source format.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct V210;
-
-impl Sealed for V210 {}
-impl SourceFormat for V210 {}
-
-/// One row of a [`V210`] source — `(width / 6) * 16` packed bytes.
-#[derive(Debug, Clone, Copy)]
-pub struct V210Row<'a> {
-  v210: &'a [u8],
-  row: usize,
-  matrix: ColorMatrix,
-  full_range: bool,
-}
-
-impl<'a> V210Row<'a> {
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub(crate) fn new(v210: &'a [u8], row: usize, matrix: ColorMatrix, full_range: bool) -> Self {
-    Self {
-      v210,
-      row,
-      matrix,
-      full_range,
-    }
+walker! {
+  packed {
+    /// Zero-sized marker for the packed **v210** source format.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+    marker: V210,
+    frame: V210Frame<'_>,
+    row: V210Row,
+    sink: V210Sink,
+    walker: v210_to,
+    buf_field: v210,
+    elem_type: u8,
+    row_elems: |w| w.div_ceil(6) * 16,
+    row_doc: "One row of a [`V210`] source — `(width / 6) * 16` packed bytes.",
+    walker_doc: "Walks a [`V210Frame`] row by row into the sink.",
   }
-  /// Packed v210 row — `(width / 6) * 16` bytes.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub fn v210(&self) -> &'a [u8] {
-    self.v210
-  }
-  /// Row index.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn row(&self) -> usize {
-    self.row
-  }
-  /// YUV → RGB matrix carried through.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn matrix(&self) -> ColorMatrix {
-    self.matrix
-  }
-  /// `true` iff Y ∈ `[0, 1023]` full range (10-bit). Limited range
-  /// is `[64, 940]`.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn full_range(&self) -> bool {
-    self.full_range
-  }
-}
-
-/// Sinks that consume [`V210Row`].
-pub trait V210Sink: for<'a> PixelSink<Input<'a> = V210Row<'a>> {}
-
-/// Walks a [`V210Frame`] row by row into the sink.
-pub fn v210_to<S: V210Sink>(
-  src: &V210Frame<'_>,
-  full_range: bool,
-  matrix: ColorMatrix,
-  sink: &mut S,
-) -> Result<(), S::Error> {
-  sink.begin_frame(src.width(), src.height())?;
-
-  let h = src.height() as usize;
-  let stride = src.stride() as usize;
-  let row_bytes = (src.width() as usize).div_ceil(6) * 16;
-  let plane = src.v210();
-
-  for row in 0..h {
-    let start = row * stride;
-    let v210 = &plane[start..start + row_bytes];
-    sink.process(V210Row::new(v210, row, matrix, full_range))?;
-  }
-  Ok(())
 }
 
 #[cfg(all(test, feature = "std"))]
