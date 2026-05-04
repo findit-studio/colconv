@@ -17,6 +17,8 @@
 //! 13. `vuya_planar_parity_with_yuva444p` — VUYA packed ↔ Yuva444p
 //!     planar cross-format oracle (RGB + RGBA byte-identical for the
 //!     same logical YUVA samples).
+//! 14. `vuya_strategy_a_plus_matches_independent_kernel` — Strategy A+
+//!     correctness: combo path output == scalar inline-α kernel output.
 
 #[cfg(all(test, feature = "std"))]
 use super::*;
@@ -512,6 +514,84 @@ fn vuya_planar_parity_with_yuva444p() {
         alpha_out, src_a,
         "VUYA RGBA alpha at pixel {i}: expected {src_a:#X}, got {alpha_out:#X} \
          (full_range={full_range})"
+      );
+    }
+  }
+}
+
+// ---- 14: Strategy A+ correctness (spec § 6.1) ----------------------------
+
+/// Strategy A+ correctness: combo path output == inline-α kernel output
+/// at all (range, matrix) combinations. See spec § 6.1.
+///
+/// Validates byte-identity by running the sinker combo path (which uses
+/// A+ post-PR4) against the scalar inline-α kernel directly.
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn vuya_strategy_a_plus_matches_independent_kernel() {
+  let width = 128usize;
+  let height = 4usize;
+
+  // Pseudo-random source.
+  let mut packed = std::vec![0u8; width * height * 4];
+  pseudo_random_u8(&mut packed, 0xC0FFEE);
+  let frame = VuyaFrame::try_new(&packed, width as u32, height as u32, (width * 4) as u32).unwrap();
+
+  for full_range in [true, false] {
+    for matrix in [
+      ColorMatrix::Bt601,
+      ColorMatrix::Bt709,
+      ColorMatrix::Bt2020Ncl,
+      ColorMatrix::Smpte240m,
+      ColorMatrix::Fcc,
+      ColorMatrix::YCgCo,
+    ] {
+      // Sinker path (uses A+ post-PR4).
+      let mut sinker_rgb = std::vec![0u8; width * height * 3];
+      let mut sinker_rgba = std::vec![0u8; width * height * 4];
+      {
+        let mut sink = MixedSinker::<Vuya>::new(width, height)
+          .with_rgb(&mut sinker_rgb)
+          .unwrap()
+          .with_rgba(&mut sinker_rgba)
+          .unwrap();
+        vuya_to(&frame, full_range, matrix, &mut sink).unwrap();
+      }
+
+      // Reference: scalar inline-α kernel directly (per row).
+      let mut inline_rgba = std::vec![0u8; width * height * 4];
+      let mut inline_rgb = std::vec![0u8; width * height * 3];
+      for r in 0..height {
+        let row_off_packed = r * width * 4;
+        let row_off_rgb = r * width * 3;
+        let row_off_rgba = r * width * 4;
+        crate::row::scalar::vuya_to_rgb_row(
+          &packed[row_off_packed..row_off_packed + width * 4],
+          &mut inline_rgb[row_off_rgb..row_off_rgb + width * 3],
+          width,
+          matrix,
+          full_range,
+        );
+        crate::row::scalar::vuya_to_rgba_row(
+          &packed[row_off_packed..row_off_packed + width * 4],
+          &mut inline_rgba[row_off_rgba..row_off_rgba + width * 4],
+          width,
+          matrix,
+          full_range,
+        );
+      }
+
+      assert_eq!(
+        sinker_rgb, inline_rgb,
+        "VUYA A+ RGB diverges (range={full_range}, matrix={matrix:?})"
+      );
+      assert_eq!(
+        sinker_rgba, inline_rgba,
+        "VUYA A+ RGBA diverges from scalar inline-α (range={full_range}, matrix={matrix:?})"
       );
     }
   }

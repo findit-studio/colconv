@@ -3,6 +3,9 @@
 //! Coverage:
 //! 1.  `ayuv64_with_rgb_smoke` — limited-range white Y + neutral chroma → near-white u8 RGB.
 //! 2.  `ayuv64_with_rgba_passes_source_alpha_depth_converted` — α u16=0xABCD → output α u8=0xAB.
+//!     (items 3–21 are existing tests)
+//! 22. `ayuv64_strategy_a_plus_matches_independent_kernel` — u8 A+ correctness.
+//! 23. `ayuv64_strategy_a_plus_u16_matches_independent_kernel` — u16 A+ correctness.
 //! 3.  `ayuv64_with_rgb_u16_smoke` — gray + neutral chroma → near-white u16 RGB.
 //! 4.  `ayuv64_with_rgba_u16_passes_source_alpha_direct` — α u16=0xABCD → output α u16=0xABCD.
 //! 5.  `ayuv64_with_luma_extracts_y_high_byte` — Y u16=0xABCD → luma u8=0xAB.
@@ -803,5 +806,155 @@ fn ayuv64_planar_parity_with_yuva444p16() {
       ayuv64_alpha, src_a,
       "AYUV64 u16 RGBA alpha at pixel {i}: expected {src_a:#X}, got {ayuv64_alpha:#X}"
     );
+  }
+}
+
+// ---- 22: Strategy A+ correctness u8 (spec § 6.1) -------------------------
+
+/// Strategy A+ correctness: u8 combo path output == scalar inline-α kernel
+/// at all (range, matrix) combinations. See spec § 6.1.
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn ayuv64_strategy_a_plus_matches_independent_kernel() {
+  let width = 128usize;
+  let height = 4usize;
+
+  let mut packed = std::vec![0u16; width * height * 4];
+  pseudo_random_u16_low_n_bits(&mut packed, 0xC0FFEE, 16);
+  let frame =
+    Ayuv64Frame::try_new(&packed, width as u32, height as u32, (width * 4) as u32).unwrap();
+
+  for full_range in [true, false] {
+    for matrix in [
+      ColorMatrix::Bt601,
+      ColorMatrix::Bt709,
+      ColorMatrix::Bt2020Ncl,
+      ColorMatrix::Smpte240m,
+      ColorMatrix::Fcc,
+      ColorMatrix::YCgCo,
+    ] {
+      // Sinker combo path (A+).
+      let mut sinker_rgb = std::vec![0u8; width * height * 3];
+      let mut sinker_rgba = std::vec![0u8; width * height * 4];
+      {
+        let mut sink = MixedSinker::<Ayuv64>::new(width, height)
+          .with_rgb(&mut sinker_rgb)
+          .unwrap()
+          .with_rgba(&mut sinker_rgba)
+          .unwrap();
+        ayuv64_to(&frame, full_range, matrix, &mut sink).unwrap();
+      }
+
+      // Reference: scalar inline-α kernel per row.
+      let mut inline_rgb = std::vec![0u8; width * height * 3];
+      let mut inline_rgba = std::vec![0u8; width * height * 4];
+      for r in 0..height {
+        let row_off_packed = r * width * 4;
+        let row_off_rgb = r * width * 3;
+        let row_off_rgba = r * width * 4;
+        crate::row::scalar::ayuv64_to_rgb_row(
+          &packed[row_off_packed..row_off_packed + width * 4],
+          &mut inline_rgb[row_off_rgb..row_off_rgb + width * 3],
+          width,
+          matrix,
+          full_range,
+        );
+        crate::row::scalar::ayuv64_to_rgba_row(
+          &packed[row_off_packed..row_off_packed + width * 4],
+          &mut inline_rgba[row_off_rgba..row_off_rgba + width * 4],
+          width,
+          matrix,
+          full_range,
+        );
+      }
+
+      assert_eq!(
+        sinker_rgb, inline_rgb,
+        "AYUV64 A+ u8 RGB diverges (range={full_range}, matrix={matrix:?})"
+      );
+      assert_eq!(
+        sinker_rgba, inline_rgba,
+        "AYUV64 A+ u8 RGBA diverges from scalar inline-α (range={full_range}, matrix={matrix:?})"
+      );
+    }
+  }
+}
+
+// ---- 23: Strategy A+ correctness u16 (spec § 6.1) ------------------------
+
+/// Strategy A+ correctness: u16 combo path output == scalar inline-α kernel
+/// at all (range, matrix) combinations. See spec § 6.1.
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn ayuv64_strategy_a_plus_u16_matches_independent_kernel() {
+  let width = 128usize;
+  let height = 4usize;
+
+  let mut packed = std::vec![0u16; width * height * 4];
+  pseudo_random_u16_low_n_bits(&mut packed, 0xDEADBEEF, 16);
+  let frame =
+    Ayuv64Frame::try_new(&packed, width as u32, height as u32, (width * 4) as u32).unwrap();
+
+  for full_range in [true, false] {
+    for matrix in [
+      ColorMatrix::Bt601,
+      ColorMatrix::Bt709,
+      ColorMatrix::Bt2020Ncl,
+      ColorMatrix::Smpte240m,
+      ColorMatrix::Fcc,
+      ColorMatrix::YCgCo,
+    ] {
+      // Sinker combo path (A+): rgb_u16 + rgba_u16.
+      let mut sinker_rgb = std::vec![0u16; width * height * 3];
+      let mut sinker_rgba = std::vec![0u16; width * height * 4];
+      {
+        let mut sink = MixedSinker::<Ayuv64>::new(width, height)
+          .with_rgb_u16(&mut sinker_rgb)
+          .unwrap()
+          .with_rgba_u16(&mut sinker_rgba)
+          .unwrap();
+        ayuv64_to(&frame, full_range, matrix, &mut sink).unwrap();
+      }
+
+      // Reference: scalar inline-α kernel per row.
+      let mut inline_rgb = std::vec![0u16; width * height * 3];
+      let mut inline_rgba = std::vec![0u16; width * height * 4];
+      for r in 0..height {
+        let row_off_packed = r * width * 4;
+        let row_off_rgb = r * width * 3;
+        let row_off_rgba = r * width * 4;
+        crate::row::scalar::ayuv64_to_rgb_u16_row(
+          &packed[row_off_packed..row_off_packed + width * 4],
+          &mut inline_rgb[row_off_rgb..row_off_rgb + width * 3],
+          width,
+          matrix,
+          full_range,
+        );
+        crate::row::scalar::ayuv64_to_rgba_u16_row(
+          &packed[row_off_packed..row_off_packed + width * 4],
+          &mut inline_rgba[row_off_rgba..row_off_rgba + width * 4],
+          width,
+          matrix,
+          full_range,
+        );
+      }
+
+      assert_eq!(
+        sinker_rgb, inline_rgb,
+        "AYUV64 A+ u16 RGB diverges (range={full_range}, matrix={matrix:?})"
+      );
+      assert_eq!(
+        sinker_rgba, inline_rgba,
+        "AYUV64 A+ u16 RGBA diverges from inline-α (range={full_range}, matrix={matrix:?})"
+      );
+    }
   }
 }
