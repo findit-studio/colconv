@@ -494,3 +494,69 @@ pub(crate) unsafe fn vuya_to_luma_row(packed: &[u8], luma_out: &mut [u8], width:
     }
   }
 }
+
+/// AVX2 VUYA → u16 luma (zero-extended Y bytes). Y is the third byte
+/// (offset 2) of each pixel quadruple. 16 pixels per SIMD iteration.
+///
+/// Strategy: reuse the 4-channel deinterleave to get a `__m256i` of 32
+/// Y u8 bytes. The low 128-bit lane (pixels 0-15) is zero-extended to
+/// u16x16 via `_mm256_cvtepu8_epi16`; the high lane (pixels 16-31) is
+/// extracted and widened the same way. Two `_mm256_storeu_si256` writes
+/// produce 32 u16 values.
+///
+/// Byte-identical to `scalar::vuya_to_luma_u16_row`.
+///
+/// # Safety
+///
+/// 1. **AVX2 must be available.**
+/// 2. `packed.len() >= width * 4`.
+/// 3. `out.len() >= width`.
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn vuya_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  debug_assert!(packed.len() >= width * 4, "packed row too short");
+  debug_assert!(out.len() >= width, "out too short");
+
+  // SAFETY: AVX2 availability is the caller's obligation.
+  unsafe {
+    let mut x = 0usize;
+    while x + 32 <= width {
+      // Deinterleave 32 VUYA quadruples; channel 2 = Y (u8x32 in natural order).
+      let (_v, _u, y_u8, _a) = deinterleave_vuya_avx2(packed.as_ptr().add(x * 4));
+
+      // Widen low 16 Y bytes → u16x16 (pixels 0-15).
+      let lo_u16 = _mm256_cvtepu8_epi16(_mm256_castsi256_si128(y_u8));
+      // Widen high 16 Y bytes → u16x16 (pixels 16-31).
+      let hi_u16 = _mm256_cvtepu8_epi16(_mm256_extracti128_si256::<1>(y_u8));
+
+      _mm256_storeu_si256(out.as_mut_ptr().add(x).cast(), lo_u16);
+      _mm256_storeu_si256(out.as_mut_ptr().add(x + 16).cast(), hi_u16);
+      x += 32;
+    }
+
+    // Scalar tail — remaining < 32 pixels.
+    if x < width {
+      scalar::vuya_to_luma_u16_row(&packed[x * 4..], &mut out[x..], width - x);
+    }
+  }
+}
+
+/// AVX2 VUYX → u16 luma (zero-extended Y bytes). Byte-identical to
+/// [`vuya_to_luma_u16_row`] — Y is at byte offset 2 of each quadruple
+/// regardless of α semantics; the X byte is discarded.
+///
+/// # Safety
+///
+/// 1. **AVX2 must be available.**
+/// 2. `packed.len() >= width * 4`.
+/// 3. `out.len() >= width`.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn vuyx_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  // SAFETY: AVX2 availability is the caller's obligation.
+  unsafe {
+    vuya_to_luma_u16_row(packed, out, width);
+  }
+}

@@ -375,6 +375,56 @@ fn vuyx_hsv_buffer_too_short_returns_error() {
   ));
 }
 
+// ---- with_luma_u16 tests -----------------------------------------------
+
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn vuyx_with_luma_u16_extracts_y_zero_extended() {
+  let width = 64usize;
+  let height = 4usize;
+  let n = width * height;
+
+  let mut packed = std::vec![0u8; n * 4];
+  pseudo_random_u8(&mut packed, 0xDEADBEEF);
+
+  let frame = VuyxFrame::try_new(&packed, width as u32, height as u32, (width * 4) as u32).unwrap();
+
+  let mut luma = std::vec![0u16; n];
+  let mut sink = MixedSinker::<Vuyx>::new(width, height)
+    .with_luma_u16(&mut luma)
+    .unwrap();
+  vuyx_to(&frame, false, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  // Reference: Y bytes at offset 2 of each 4-byte pixel quadruple.
+  // The X byte at offset 3 must be completely ignored.
+  let expected: std::vec::Vec<u16> = (0..n).map(|i| packed[i * 4 + 2] as u16).collect();
+  assert_eq!(luma, expected);
+}
+
+#[test]
+#[cfg(all(test, feature = "std"))]
+fn vuyx_luma_u16_buffer_too_short_returns_err() {
+  let mut luma = std::vec![0u16; 4 * 4 - 1];
+  let result = MixedSinker::<Vuyx>::new(4, 4).with_luma_u16(&mut luma);
+  let Err(err) = result else {
+    panic!("expected LumaU16BufferTooShort");
+  };
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::LumaU16BufferTooShort {
+        expected: 16,
+        actual: 15
+      }
+    ),
+    "unexpected error: {err:?}"
+  );
+}
+
 // ---- 14: Force α=0xFF independent of source (headline VUYX invariant) ----
 
 #[test]

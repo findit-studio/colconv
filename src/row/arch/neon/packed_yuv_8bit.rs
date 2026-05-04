@@ -326,6 +326,71 @@ pub(crate) unsafe fn yvyu422_to_luma_row(packed: &[u8], luma_out: &mut [u8], wid
   }
 }
 
+/// NEON YUYV422 → u16 luma extraction (zero-extends Y bytes via `vmovl_u8`).
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuyv422_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  // SAFETY: NEON availability is the caller's obligation.
+  unsafe {
+    yuv422_packed_to_luma_u16_row::<true>(packed, out, width);
+  }
+}
+
+/// NEON UYVY422 → u16 luma extraction.
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn uyvy422_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  // SAFETY: NEON availability is the caller's obligation.
+  unsafe {
+    yuv422_packed_to_luma_u16_row::<false>(packed, out, width);
+  }
+}
+
+/// NEON YVYU422 → u16 luma extraction (Y positions same as YUYV).
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yvyu422_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  // SAFETY: NEON availability is the caller's obligation.
+  unsafe {
+    yuv422_packed_to_luma_u16_row::<true>(packed, out, width);
+  }
+}
+
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn yuv422_packed_to_luma_u16_row<const Y_LSB: bool>(
+  packed: &[u8],
+  out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width);
+
+  // SAFETY: NEON availability is the caller's obligation.
+  unsafe {
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let pair = vld2q_u8(packed.as_ptr().add(x * 2));
+      let y_vec = if Y_LSB { pair.0 } else { pair.1 };
+      let y_lo = vmovl_u8(vget_low_u8(y_vec));
+      let y_hi = vmovl_u8(vget_high_u8(y_vec));
+      vst1q_u16(out.as_mut_ptr().add(x), y_lo);
+      vst1q_u16(out.as_mut_ptr().add(x + 8), y_hi);
+      x += 16;
+    }
+    if x < width {
+      if Y_LSB {
+        scalar::yuyv422_to_luma_u16_row(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+      } else {
+        scalar::uyvy422_to_luma_u16_row(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+      }
+    }
+  }
+}
+
 #[inline]
 #[target_feature(enable = "neon")]
 unsafe fn yuv422_packed_to_luma_row<const Y_LSB: bool>(

@@ -14,10 +14,10 @@
 //!   substituted with `0xFF`).
 //! - `with_luma` — extracts the Y byte at offset 2 of each pixel
 //!   directly (no YUV→RGB pipeline).
+//! - `with_luma_u16` — zero-extends the Y byte to u16
+//!   (`out[x] = Y_byte as u16`).
 //! - `with_hsv` — stages u8 RGB into the user's RGB buffer (if
 //!   attached) or a scratch buffer, then runs `rgb_to_hsv_row`.
-//!
-//! VUYA is an 8-bit source. There are no u16 output variants.
 //!
 //! ## Alpha semantics (`§ 7.2` / `§ 7.3` rules)
 //!
@@ -39,12 +39,39 @@ use super::{
 use crate::{
   PixelSink,
   row::{
-    expand_rgb_to_rgba_row, rgb_to_hsv_row, vuya_to_luma_row, vuya_to_rgb_row, vuya_to_rgba_row,
+    expand_rgb_to_rgba_row, rgb_to_hsv_row, vuya_to_luma_row, vuya_to_luma_u16_row,
+    vuya_to_rgb_row, vuya_to_rgba_row,
   },
   yuv::{Vuya, VuyaRow, VuyaSink},
 };
 
 impl<'a> MixedSinker<'a, Vuya> {
+  /// Attaches a **`u16`** luma output buffer. Y bytes from the packed VUYA
+  /// `[V, U, Y, A]` layout are zero-extended to u16
+  /// (`out[x] = Y_byte as u16`). Length in u16 **elements**
+  /// (`width × height`).
+  ///
+  /// Returns `Err(LumaU16BufferTooShort)` if `buf.len() < width × height`,
+  /// or `Err(GeometryOverflow)` on 32-bit targets.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(1)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::LumaU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
+
   /// Attaches a packed **8-bit** RGBA output buffer. When VUYA is the
   /// source, the per-pixel alpha byte is **sourced from the A byte of
   /// each pixel quadruple** — not forced to `0xFF`.
@@ -126,6 +153,7 @@ impl PixelSink for MixedSinker<'_, Vuya> {
       rgb,
       rgba,
       luma,
+      luma_u16,
       hsv,
       rgb_scratch,
       ..
@@ -134,9 +162,19 @@ impl PixelSink for MixedSinker<'_, Vuya> {
     let one_plane_end = one_plane_start + w;
     let packed = row.packed();
 
-    // Luma — extract Y byte (offset 2 in each VUYA quadruple) directly.
+    // Luma u8 — extract Y byte (offset 2 in each VUYA quadruple) directly.
     if let Some(buf) = luma.as_deref_mut() {
       vuya_to_luma_row(
+        packed,
+        &mut buf[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+    }
+
+    // Luma u16 — extract Y bytes and zero-extend to u16.
+    if let Some(buf) = luma_u16.as_deref_mut() {
+      vuya_to_luma_u16_row(
         packed,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -182,9 +220,7 @@ impl PixelSink for MixedSinker<'_, Vuya> {
         let rgba_buf = rgba.as_deref_mut().unwrap();
         let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
         expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
-        crate::row::alpha_extract::copy_alpha_packed_u8x4_at_3(
-          packed, rgba_row, w, use_simd,
-        );
+        crate::row::alpha_extract::copy_alpha_packed_u8x4_at_3(packed, rgba_row, w, use_simd);
       }
     }
 

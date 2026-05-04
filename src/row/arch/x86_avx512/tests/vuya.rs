@@ -44,6 +44,17 @@ fn check_luma(width: usize) {
   assert_eq!(s, k, "AVX-512 vuya→luma diverges (width={width})");
 }
 
+fn check_luma_u16(width: usize) {
+  let p = pseudo_random_vuya(width, 0xBEEF);
+  let mut s = std::vec![0u16; width];
+  let mut k = std::vec![0u16; width];
+  scalar::vuya_to_luma_u16_row(&p, &mut s, width);
+  unsafe {
+    vuya_to_luma_u16_row(&p, &mut k, width);
+  }
+  assert_eq!(s, k, "AVX-512 vuya→luma_u16 diverges (width={width})");
+}
+
 /// Build a VUYA packed stream with Y[n] = n+1, A[n] = 2n+1, V=U=128.
 ///
 /// VUYA layout per pixel: `[V(8), U(8), Y(8), A(8)]`. Source α is real
@@ -127,6 +138,7 @@ fn avx512_vuya_matches_scalar_widths() {
     check_rgb::<true, true>(w, ColorMatrix::Bt709, true);
     check_rgb::<true, false>(w, ColorMatrix::Bt2020Ncl, true);
     check_luma(w);
+    check_luma_u16(w);
   }
 }
 

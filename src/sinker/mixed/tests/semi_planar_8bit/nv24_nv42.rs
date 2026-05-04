@@ -1033,3 +1033,101 @@ fn strategy_a_rgb_u16_and_rgba_u16_byte_identical_for_all_wired_families() {
     assert_match_u16(&rgb, &rgba, "Xv36", 0x0FFF);
   }
 }
+
+// ---- with_luma_u16 (Task 2) -----------------------------------------------
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn nv24_with_luma_u16_extracts_y_zero_extended() {
+  let width = 64usize;
+  let height = 4usize;
+  let n = width * height;
+
+  let mut yp = std::vec![0u8; n];
+  // NV24: UV row is 2 * width bytes (one U/V pair per Y pixel).
+  let mut uvp = std::vec![0u8; 2 * width * height];
+  pseudo_random_u8(&mut yp, 0xC0FFEE);
+  pseudo_random_u8(&mut uvp, 0xBADF00D);
+
+  let src = Nv24Frame::new(
+    &yp,
+    &uvp,
+    width as u32,
+    height as u32,
+    width as u32,
+    (2 * width) as u32,
+  );
+
+  let mut luma_out = std::vec![0u16; n];
+  let mut sink = MixedSinker::<Nv24>::new(width, height)
+    .with_luma_u16(&mut luma_out)
+    .unwrap();
+  nv24_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  let expected: std::vec::Vec<u16> = yp.iter().map(|&y| y as u16).collect();
+  assert_eq!(luma_out, expected, "Nv24 luma_u16 mismatch");
+}
+
+#[test]
+fn nv24_luma_u16_buffer_too_short_returns_err() {
+  let mut buf = std::vec![0u16; 16 * 8 - 1];
+  let result = MixedSinker::<Nv24>::new(16, 8).with_luma_u16(&mut buf);
+  assert!(matches!(
+    result,
+    Err(MixedSinkerError::LumaU16BufferTooShort {
+      expected: 128,
+      actual: 127,
+    })
+  ));
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn nv42_with_luma_u16_extracts_y_zero_extended() {
+  let width = 64usize;
+  let height = 4usize;
+  let n = width * height;
+
+  let mut yp = std::vec![0u8; n];
+  // NV42: VU row is 2 * width bytes (one V/U pair per Y pixel).
+  let mut vup = std::vec![0u8; 2 * width * height];
+  pseudo_random_u8(&mut yp, 0xC0FFEE);
+  pseudo_random_u8(&mut vup, 0xBADF00D);
+
+  let src = Nv42Frame::new(
+    &yp,
+    &vup,
+    width as u32,
+    height as u32,
+    width as u32,
+    (2 * width) as u32,
+  );
+
+  let mut luma_out = std::vec![0u16; n];
+  let mut sink = MixedSinker::<Nv42>::new(width, height)
+    .with_luma_u16(&mut luma_out)
+    .unwrap();
+  nv42_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  let expected: std::vec::Vec<u16> = yp.iter().map(|&y| y as u16).collect();
+  assert_eq!(luma_out, expected, "Nv42 luma_u16 mismatch");
+}
+
+#[test]
+fn nv42_luma_u16_buffer_too_short_returns_err() {
+  let mut buf = std::vec![0u16; 16 * 8 - 1];
+  let result = MixedSinker::<Nv42>::new(16, 8).with_luma_u16(&mut buf);
+  assert!(matches!(
+    result,
+    Err(MixedSinkerError::LumaU16BufferTooShort {
+      expected: 128,
+      actual: 127,
+    })
+  ));
+}

@@ -369,6 +369,93 @@ pub(crate) unsafe fn yvyu422_to_luma_row(packed: &[u8], luma_out: &mut [u8], wid
   }
 }
 
+/// AVX-512 YUYV422 → u16 luma extraction. Block size: 32 px / iter.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn yuyv422_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  // SAFETY: AVX-512BW availability is the caller's obligation.
+  unsafe {
+    yuv422_packed_to_luma_u16_row::<true>(packed, out, width);
+  }
+}
+
+/// AVX-512 UYVY422 → u16 luma extraction. Block size: 32 px / iter.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn uyvy422_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  // SAFETY: AVX-512BW availability is the caller's obligation.
+  unsafe {
+    yuv422_packed_to_luma_u16_row::<false>(packed, out, width);
+  }
+}
+
+/// AVX-512 YVYU422 → u16 luma extraction (Y positions same as YUYV).
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn yvyu422_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  // SAFETY: AVX-512BW availability is the caller's obligation.
+  unsafe {
+    yuv422_packed_to_luma_u16_row::<true>(packed, out, width);
+  }
+}
+
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn yuv422_packed_to_luma_u16_row<const Y_LSB: bool>(
+  packed: &[u8],
+  out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width);
+
+  // SAFETY: AVX-512BW availability is the caller's obligation.
+  unsafe {
+    // Reuse the same 512-bit gather pipeline as the u8 luma kernel:
+    // shuffle each 64-byte chunk per-128-bit-lane, then permute the
+    // 64-bit chunks across lanes (`pack_fixup`) and merge across the
+    // two vectors (`merge_low`) so all 64 Y bytes land contiguously in
+    // a single __m512i. Then widen 64 u8 → 64 u16 via two
+    // `_mm512_cvtepu8_epi16` calls on the two 256-bit halves.
+    let pack_fixup = _mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7);
+    let merge_low = _mm512_setr_epi64(0, 1, 2, 3, 8, 9, 10, 11);
+    let split_mask = if Y_LSB {
+      _mm512_loadu_si512(SPLIT_MASK_Y_LSB.as_ptr().cast())
+    } else {
+      _mm512_loadu_si512(SPLIT_MASK_Y_MSB.as_ptr().cast())
+    };
+
+    let mut x = 0usize;
+    while x + 64 <= width {
+      // Load 128 packed bytes (64 px × 2 bytes/px).
+      let p0 = _mm512_loadu_si512(packed.as_ptr().add(x * 2).cast());
+      let p1 = _mm512_loadu_si512(packed.as_ptr().add(x * 2 + 64).cast());
+      let p0s = _mm512_shuffle_epi8(p0, split_mask);
+      let p1s = _mm512_shuffle_epi8(p1, split_mask);
+      let p0p = _mm512_permutexvar_epi64(pack_fixup, p0s);
+      let p1p = _mm512_permutexvar_epi64(pack_fixup, p1s);
+      // y_vec holds 64 contiguous Y bytes — same layout as the u8 kernel.
+      let y_vec = _mm512_permutex2var_epi64(p0p, merge_low, p1p);
+      // Widen 64 u8 → 64 u16: split y_vec into two 256-bit halves and
+      // zero-extend each via _mm512_cvtepu8_epi16 (32 u8 → 32 u16).
+      let y_lo_256 = _mm512_castsi512_si256(y_vec);
+      let y_hi_256 = _mm512_extracti64x4_epi64::<1>(y_vec);
+      let w_lo = _mm512_cvtepu8_epi16(y_lo_256); // 32 u16
+      let w_hi = _mm512_cvtepu8_epi16(y_hi_256); // 32 u16
+      _mm512_storeu_si512(out.as_mut_ptr().add(x).cast(), w_lo);
+      _mm512_storeu_si512(out.as_mut_ptr().add(x + 32).cast(), w_hi);
+      x += 64;
+    }
+    if x < width {
+      if Y_LSB {
+        scalar::yuyv422_to_luma_u16_row(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+      } else {
+        scalar::uyvy422_to_luma_u16_row(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+      }
+    }
+  }
+}
+
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 unsafe fn yuv422_packed_to_luma_row<const Y_LSB: bool>(

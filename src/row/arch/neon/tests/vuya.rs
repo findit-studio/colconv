@@ -63,6 +63,17 @@ fn check_luma(width: usize) {
   assert_eq!(s, k, "NEON vuya→luma diverges (width={width})");
 }
 
+fn check_luma_u16(width: usize) {
+  let p = pseudo_random_vuya(width, 0xBEEF);
+  let mut s = std::vec![0u16; width];
+  let mut k = std::vec![0u16; width];
+  scalar::vuya_to_luma_u16_row(&p, &mut s, width);
+  unsafe {
+    vuya_to_luma_u16_row(&p, &mut k, width);
+  }
+  assert_eq!(s, k, "NEON vuya→luma_u16 diverges (width={width})");
+}
+
 #[test]
 #[cfg_attr(
   miri,
@@ -99,6 +110,7 @@ fn neon_vuya_matches_scalar_widths() {
     check_rgb::<true, true>(w, ColorMatrix::Bt709, true);
     check_rgb::<true, false>(w, ColorMatrix::Bt2020Ncl, true);
     check_luma(w);
+    check_luma_u16(w);
   }
 }
 

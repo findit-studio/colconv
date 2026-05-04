@@ -311,6 +311,79 @@ pub(crate) unsafe fn yvyu422_to_luma_row(packed: &[u8], luma_out: &mut [u8], wid
   }
 }
 
+/// wasm simd128 YUYV422 → u16 luma extraction. Block size: 16 px / iter.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn yuyv422_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  // SAFETY: simd128 is compile-time enabled.
+  unsafe {
+    yuv422_packed_to_luma_u16_row::<true>(packed, out, width);
+  }
+}
+
+/// wasm simd128 UYVY422 → u16 luma extraction. Block size: 16 px / iter.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn uyvy422_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  // SAFETY: simd128 is compile-time enabled.
+  unsafe {
+    yuv422_packed_to_luma_u16_row::<false>(packed, out, width);
+  }
+}
+
+/// wasm simd128 YVYU422 → u16 luma extraction (Y positions same as YUYV).
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn yvyu422_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  // SAFETY: simd128 is compile-time enabled.
+  unsafe {
+    yuv422_packed_to_luma_u16_row::<true>(packed, out, width);
+  }
+}
+
+#[inline]
+#[target_feature(enable = "simd128")]
+unsafe fn yuv422_packed_to_luma_u16_row<const Y_LSB: bool>(
+  packed: &[u8],
+  out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width);
+
+  // SAFETY: simd128 is compile-time enabled.
+  unsafe {
+    let split_mask = if Y_LSB {
+      u8x16(0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15)
+    } else {
+      u8x16(1, 3, 5, 7, 9, 11, 13, 15, 0, 2, 4, 6, 8, 10, 12, 14)
+    };
+
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let p0 = v128_load(packed.as_ptr().add(x * 2).cast());
+      let p1 = v128_load(packed.as_ptr().add(x * 2 + 16).cast());
+      let p0s = u8x16_swizzle(p0, split_mask);
+      let p1s = u8x16_swizzle(p1, split_mask);
+      // Combine low 8 bytes from p0s and p1s into one 16-byte vector
+      // containing the 16 packed Y bytes, then zero-extend low/high halves.
+      let y_vec = i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23>(p0s, p1s);
+      let low = u16x8_extend_low_u8x16(y_vec);
+      let high = u16x8_extend_high_u8x16(y_vec);
+      v128_store(out.as_mut_ptr().add(x).cast(), low);
+      v128_store(out.as_mut_ptr().add(x + 8).cast(), high);
+      x += 16;
+    }
+    if x < width {
+      if Y_LSB {
+        scalar::yuyv422_to_luma_u16_row(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+      } else {
+        scalar::uyvy422_to_luma_u16_row(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+      }
+    }
+  }
+}
+
 #[inline]
 #[target_feature(enable = "simd128")]
 unsafe fn yuv422_packed_to_luma_row<const Y_LSB: bool>(

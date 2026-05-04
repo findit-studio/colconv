@@ -59,6 +59,21 @@ pub(crate) use scalar::expand_rgb_u16_to_rgba_u16_row;
 // `feature = "std" | "alloc"` gating as the expand helpers above.
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub(crate) use dispatch::alpha_extract;
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) use dispatch::y_plane_to_luma_u16::y_plane_to_luma_u16_row;
+
+// Task 3 — packed YUV 4:2:2 luma_u16 dispatchers (pub(crate) because they are
+// consumed only by the MixedSinker impls, not the public API).
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) use dispatch::packed_yuv422::{
+  uyvy422_to_luma_u16_row, yuyv422_to_luma_u16_row, yvyu422_to_luma_u16_row,
+};
+
+// Task 4 — packed YUV 4:4:4 (VUYA / VUYX) luma_u16 dispatchers.
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) use dispatch::vuya::vuya_to_luma_u16_row;
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) use dispatch::vuyx::vuyx_to_luma_u16_row;
 
 pub use dispatch::{
   ayuv64::*, bayer::*, nv::*, packed_yuv422::*, pn::*, rgb_ops::*, v30x::*, v210::*, v410::*,

@@ -371,3 +371,81 @@ pub(crate) unsafe fn vuya_to_luma_row(packed: &[u8], luma_out: &mut [u8], width:
     }
   }
 }
+
+/// SSE4.1 VUYA → u16 luma (zero-extended Y bytes). Y is the third byte
+/// (offset 2) of each pixel quadruple. 16 pixels per SIMD iteration.
+///
+/// Strategy: same 4-load + shuffle cascade as the u8 path to gather 16 Y
+/// bytes into a `__m128i`, then `_mm_cvtepu8_epi16` widens the low 8 to
+/// u16x8 and the high 8 (after `_mm_srli_si128::<8>`) to a second u16x8.
+/// Two `_mm_storeu_si128` stores write 16 u16 elements.
+///
+/// Byte-identical to `scalar::vuya_to_luma_u16_row`.
+///
+/// # Safety
+///
+/// 1. **SSE4.1 must be available.**
+/// 2. `packed.len() >= width * 4`.
+/// 3. `out.len() >= width`.
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn vuya_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  debug_assert!(packed.len() >= width * 4, "packed row too short");
+  debug_assert!(out.len() >= width, "out too short");
+
+  unsafe {
+    // Y bytes are at positions 2, 6, 10, 14 within each 16-byte chunk.
+    let y_mask = _mm_setr_epi8(2, 6, 10, 14, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let raw0 = _mm_loadu_si128(packed.as_ptr().add(x * 4).cast());
+      let raw1 = _mm_loadu_si128(packed.as_ptr().add(x * 4 + 16).cast());
+      let raw2 = _mm_loadu_si128(packed.as_ptr().add(x * 4 + 32).cast());
+      let raw3 = _mm_loadu_si128(packed.as_ptr().add(x * 4 + 48).cast());
+
+      // Gather Y bytes: 4 per register → low 4 bytes.
+      let y0 = _mm_shuffle_epi8(raw0, y_mask);
+      let y1 = _mm_shuffle_epi8(raw1, y_mask);
+      let y2 = _mm_shuffle_epi8(raw2, y_mask);
+      let y3 = _mm_shuffle_epi8(raw3, y_mask);
+
+      // Merge into a single 16-byte register of Y u8 values.
+      let y_01 = _mm_unpacklo_epi32(y0, y1); // Y[0..7]  in low 8 bytes
+      let y_23 = _mm_unpacklo_epi32(y2, y3); // Y[8..15] in low 8 bytes
+      let y_vec = _mm_unpacklo_epi64(y_01, y_23); // Y[0..15]
+
+      // Zero-extend low 8 bytes → u16x8; high 8 bytes → u16x8.
+      let lo_u16 = _mm_cvtepu8_epi16(y_vec);
+      let hi_u16 = _mm_cvtepu8_epi16(_mm_srli_si128::<8>(y_vec));
+      _mm_storeu_si128(out.as_mut_ptr().add(x).cast(), lo_u16);
+      _mm_storeu_si128(out.as_mut_ptr().add(x + 8).cast(), hi_u16);
+      x += 16;
+    }
+
+    // Scalar tail.
+    if x < width {
+      scalar::vuya_to_luma_u16_row(&packed[x * 4..], &mut out[x..], width - x);
+    }
+  }
+}
+
+/// SSE4.1 VUYX → u16 luma (zero-extended Y bytes). Byte-identical to
+/// [`vuya_to_luma_u16_row`] — Y is at byte offset 2 of each quadruple
+/// regardless of α semantics; the X byte is discarded.
+///
+/// # Safety
+///
+/// 1. **SSE4.1 must be available.**
+/// 2. `packed.len() >= width * 4`.
+/// 3. `out.len() >= width`.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn vuyx_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  // SAFETY: SSE4.1 availability is the caller's obligation.
+  unsafe {
+    vuya_to_luma_u16_row(packed, out, width);
+  }
+}

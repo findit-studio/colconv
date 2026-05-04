@@ -44,6 +44,29 @@ impl<'a> MixedSinker<'a, Nv12> {
     self.rgba = Some(buf);
     Ok(self)
   }
+
+  /// Attaches a `u16` luma output buffer. The 8-bit Y plane samples
+  /// are zero-extended into `u16`. Length is measured in `u16`
+  /// elements (`width × height`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(1)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::LumaU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
 }
 
 impl Nv12Sink for MixedSinker<'_, Nv12> {}
@@ -103,6 +126,7 @@ impl PixelSink for MixedSinker<'_, Nv12> {
       rgb,
       rgba,
       luma,
+      luma_u16,
       hsv,
       rgb_scratch,
       ..
@@ -117,6 +141,16 @@ impl PixelSink for MixedSinker<'_, Nv12> {
     // Luma — NV12 luma is the Y plane. Copy verbatim.
     if let Some(luma) = luma.as_deref_mut() {
       luma[one_plane_start..one_plane_end].copy_from_slice(&row.y()[..w]);
+    }
+
+    // Luma u16 — zero-extend the 8-bit Y plane into u16.
+    if let Some(buf) = luma_u16.as_deref_mut() {
+      crate::row::y_plane_to_luma_u16_row(
+        row.y(),
+        &mut buf[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
     }
 
     // Strategy A output mode resolution — see Yuv420p impl above.
@@ -222,6 +256,29 @@ impl<'a> MixedSinker<'a, Nv16> {
     self.rgba = Some(buf);
     Ok(self)
   }
+
+  /// Attaches a `u16` luma output buffer. The 8-bit Y plane samples
+  /// are zero-extended into `u16`. Length is measured in `u16`
+  /// elements (`width × height`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(1)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::LumaU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
 }
 
 impl Nv16Sink for MixedSinker<'_, Nv16> {}
@@ -275,6 +332,7 @@ impl PixelSink for MixedSinker<'_, Nv16> {
       rgb,
       rgba,
       luma,
+      luma_u16,
       hsv,
       rgb_scratch,
       ..
@@ -285,6 +343,16 @@ impl PixelSink for MixedSinker<'_, Nv16> {
 
     if let Some(luma) = luma.as_deref_mut() {
       luma[one_plane_start..one_plane_end].copy_from_slice(&row.y()[..w]);
+    }
+
+    // Luma u16 — zero-extend the 8-bit Y plane into u16.
+    if let Some(buf) = luma_u16.as_deref_mut() {
+      crate::row::y_plane_to_luma_u16_row(
+        row.y(),
+        &mut buf[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
     }
 
     // Strategy A output mode resolution — see Yuv420p impl above.
@@ -390,6 +458,29 @@ impl<'a> MixedSinker<'a, Nv21> {
     self.rgba = Some(buf);
     Ok(self)
   }
+
+  /// Attaches a `u16` luma output buffer. The 8-bit Y plane samples
+  /// are zero-extended into `u16`. Length is measured in `u16`
+  /// elements (`width × height`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(1)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::LumaU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
 }
 
 impl Nv21Sink for MixedSinker<'_, Nv21> {}
@@ -444,6 +535,7 @@ impl PixelSink for MixedSinker<'_, Nv21> {
       rgb,
       rgba,
       luma,
+      luma_u16,
       hsv,
       rgb_scratch,
       ..
@@ -454,6 +546,16 @@ impl PixelSink for MixedSinker<'_, Nv21> {
 
     if let Some(luma) = luma.as_deref_mut() {
       luma[one_plane_start..one_plane_end].copy_from_slice(&row.y()[..w]);
+    }
+
+    // Luma u16 — zero-extend the 8-bit Y plane into u16.
+    if let Some(buf) = luma_u16.as_deref_mut() {
+      crate::row::y_plane_to_luma_u16_row(
+        row.y(),
+        &mut buf[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
     }
 
     // Strategy A output mode resolution — see Yuv420p impl above.
@@ -559,6 +661,29 @@ impl<'a> MixedSinker<'a, Nv24> {
     self.rgba = Some(buf);
     Ok(self)
   }
+
+  /// Attaches a `u16` luma output buffer. The 8-bit Y plane samples
+  /// are zero-extended into `u16`. Length is measured in `u16`
+  /// elements (`width × height`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(1)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::LumaU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
 }
 
 impl Nv24Sink for MixedSinker<'_, Nv24> {}
@@ -612,6 +737,7 @@ impl PixelSink for MixedSinker<'_, Nv24> {
       rgb,
       rgba,
       luma,
+      luma_u16,
       hsv,
       rgb_scratch,
       ..
@@ -622,6 +748,16 @@ impl PixelSink for MixedSinker<'_, Nv24> {
 
     if let Some(luma) = luma.as_deref_mut() {
       luma[one_plane_start..one_plane_end].copy_from_slice(&row.y()[..w]);
+    }
+
+    // Luma u16 — zero-extend the 8-bit Y plane into u16.
+    if let Some(buf) = luma_u16.as_deref_mut() {
+      crate::row::y_plane_to_luma_u16_row(
+        row.y(),
+        &mut buf[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
     }
 
     let want_rgb = rgb.is_some();
@@ -726,6 +862,29 @@ impl<'a> MixedSinker<'a, Nv42> {
     self.rgba = Some(buf);
     Ok(self)
   }
+
+  /// Attaches a `u16` luma output buffer. The 8-bit Y plane samples
+  /// are zero-extended into `u16`. Length is measured in `u16`
+  /// elements (`width × height`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(1)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::LumaU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
 }
 
 impl Nv42Sink for MixedSinker<'_, Nv42> {}
@@ -776,6 +935,7 @@ impl PixelSink for MixedSinker<'_, Nv42> {
       rgb,
       rgba,
       luma,
+      luma_u16,
       hsv,
       rgb_scratch,
       ..
@@ -786,6 +946,16 @@ impl PixelSink for MixedSinker<'_, Nv42> {
 
     if let Some(luma) = luma.as_deref_mut() {
       luma[one_plane_start..one_plane_end].copy_from_slice(&row.y()[..w]);
+    }
+
+    // Luma u16 — zero-extend the 8-bit Y plane into u16.
+    if let Some(buf) = luma_u16.as_deref_mut() {
+      crate::row::y_plane_to_luma_u16_row(
+        row.y(),
+        &mut buf[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
     }
 
     let want_rgb = rgb.is_some();
