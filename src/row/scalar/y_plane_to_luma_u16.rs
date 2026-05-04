@@ -7,8 +7,6 @@
 
 #![cfg_attr(not(feature = "std"), allow(dead_code))]
 
-// Task 2 will wire the 9 sinkers; allow until then.
-#[allow(dead_code)]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn y_plane_to_luma_u16_row(plane: &[u8], out: &mut [u16], width: usize) {
   debug_assert!(plane.len() >= width, "plane too short");

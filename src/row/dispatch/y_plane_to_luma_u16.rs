@@ -23,8 +23,6 @@ use crate::row::{avx2_available, avx512_available, sse41_available};
 /// Selects the highest available SIMD backend; falls back to scalar.
 /// When `use_simd` is `false` (`MixedSinker::with_simd(false)`), the
 /// SIMD cascade is bypassed and scalar runs directly.
-// Task 2 will wire the 9 sinkers; allow until then.
-#[allow(dead_code)]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn y_plane_to_luma_u16_row(plane: &[u8], out: &mut [u16], width: usize, use_simd: bool) {
   // Release-mode safety boundary before any `unsafe` SIMD dispatch.

@@ -59,9 +59,7 @@ pub(crate) use scalar::expand_rgb_u16_to_rgba_u16_row;
 // `feature = "std" | "alloc"` gating as the expand helpers above.
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub(crate) use dispatch::alpha_extract;
-// Task 2 will wire the 9 sinkers; allow until then.
 #[cfg(any(feature = "std", feature = "alloc"))]
-#[allow(unused_imports)]
 pub(crate) use dispatch::y_plane_to_luma_u16::y_plane_to_luma_u16_row;
 
 // Task 3 — packed YUV 4:2:2 luma_u16 dispatchers (pub(crate) because they are
