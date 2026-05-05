@@ -39,7 +39,6 @@ use super::*;
 #[cfg(target_feature = "simd128")]
 #[inline]
 #[target_feature(enable = "simd128")]
-#[allow(dead_code)]
 pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
   g: &[u16],
   b: &[u16],
@@ -108,7 +107,6 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
 #[cfg(target_feature = "simd128")]
 #[inline]
 #[target_feature(enable = "simd128")]
-#[allow(dead_code)]
 pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
   g: &[u16],
   b: &[u16],
@@ -173,7 +171,6 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
 #[cfg(target_feature = "simd128")]
 #[inline]
 #[target_feature(enable = "simd128")]
-#[allow(dead_code)]
 pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
   g: &[u16],
   b: &[u16],
@@ -242,7 +239,6 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
 #[cfg(target_feature = "simd128")]
 #[inline]
 #[target_feature(enable = "simd128")]
-#[allow(dead_code)]
 pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
   g: &[u16],
   b: &[u16],
@@ -290,7 +286,6 @@ pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
 #[cfg(target_feature = "simd128")]
 #[inline]
 #[target_feature(enable = "simd128")]
-#[allow(dead_code)]
 pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
   g: &[u16],
   b: &[u16],
@@ -343,7 +338,6 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
 #[cfg(target_feature = "simd128")]
 #[inline]
 #[target_feature(enable = "simd128")]
-#[allow(dead_code)]
 pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
   g: &[u16],
   b: &[u16],

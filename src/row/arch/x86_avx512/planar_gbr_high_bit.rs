@@ -37,7 +37,6 @@ use super::*;
 /// 3. `rgb_out.len()` ≥ `3 * width`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-#[allow(dead_code)]
 pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
   g: &[u16],
   b: &[u16],
@@ -161,7 +160,6 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
 /// 3. `rgba_out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-#[allow(dead_code)]
 pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
   g: &[u16],
   b: &[u16],
@@ -281,7 +279,6 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
 /// 3. `rgba_out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-#[allow(dead_code)]
 pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
   g: &[u16],
   b: &[u16],
@@ -416,7 +413,6 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
 /// 3. `rgb_u16_out.len()` ≥ `3 * width`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-#[allow(dead_code)]
 pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
   g: &[u16],
   b: &[u16],
@@ -491,7 +487,6 @@ pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
 /// 3. `rgba_u16_out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-#[allow(dead_code)]
 pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
   g: &[u16],
   b: &[u16],
@@ -588,7 +583,6 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
 /// 3. `rgba_u16_out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-#[allow(dead_code)]
 pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
   g: &[u16],
   b: &[u16],
