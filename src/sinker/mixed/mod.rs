@@ -212,6 +212,18 @@ pub enum MixedSinkerError {
     actual: usize,
   },
 
+  /// `half::f16` RGB buffer attached via per-format `with_rgb_f16` /
+  /// `set_rgb_f16` is shorter than `width × height × 3` `f16` elements.
+  /// Only half-float-source impls (currently
+  /// [`Rgbf16`](crate::yuv::Rgbf16)) write into this buffer.
+  #[error("MixedSinker rgb_f16 buffer too short: expected >= {expected} elements, got {actual}")]
+  RgbF16BufferTooShort {
+    /// Minimum `f16` elements required (`width × height × 3`).
+    expected: usize,
+    /// `f16` elements supplied.
+    actual: usize,
+  },
+
   /// Luma buffer is shorter than `width × height`.
   #[error("MixedSinker luma buffer too short: expected >= {expected} bytes, got {actual}")]
   LumaBufferTooShort {
@@ -696,6 +708,11 @@ pub enum RowSlice {
   /// elements (= `12 * width` bytes).
   #[display("RGBF32 packed")]
   RgbF32Packed,
+  /// Packed `R, G, B` row of an [`Rgbf16`](crate::yuv::Rgbf16) source —
+  /// Tier 9 16-bit half-precision float per channel. Row length:
+  /// `3 * width` `half::f16` elements (= `6 * width` bytes).
+  #[display("RGBF16 packed")]
+  RgbF16Packed,
   /// Green plane row of an 8-bit planar GBR source
   /// ([`Gbrp`](crate::yuv::Gbrp) /
   /// [`Gbrap`](crate::yuv::Gbrap)). `u8` samples, `width` elements.
@@ -735,6 +752,7 @@ pub struct MixedSinker<'a, F: SourceFormat> {
   rgb: Option<&'a mut [u8]>,
   rgb_u16: Option<&'a mut [u16]>,
   rgb_f32: Option<&'a mut [f32]>,
+  rgb_f16: Option<&'a mut [half::f16]>,
   rgba: Option<&'a mut [u8]>,
   rgba_u16: Option<&'a mut [u16]>,
   luma: Option<&'a mut [u8]>,
@@ -1084,6 +1102,7 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
       rgb: None,
       rgb_u16: None,
       rgb_f32: None,
+      rgb_f16: None,
       rgba: None,
       rgba_u16: None,
       luma: None,
@@ -1125,6 +1144,14 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn produces_rgb_f32(&self) -> bool {
     self.rgb_f32.is_some()
+  }
+
+  /// Returns `true` iff the sinker will write `half::f16` RGB. Only
+  /// half-float-source impls (currently [`Rgbf16`](crate::yuv::Rgbf16))
+  /// honor this buffer.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn produces_rgb_f16(&self) -> bool {
+    self.rgb_f16.is_some()
   }
 
   /// Returns `true` iff the sinker will write 8‑bit RGBA. The
@@ -1530,6 +1557,7 @@ mod bayer;
 mod gray;
 mod packed_rgb_10bit;
 mod packed_rgb_8bit;
+mod packed_rgb_f16;
 mod packed_rgb_float;
 mod packed_yuv_8bit;
 mod planar_8bit;

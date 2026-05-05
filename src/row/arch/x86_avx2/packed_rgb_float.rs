@@ -315,7 +315,6 @@ unsafe fn widen_f16x8_avx(ptr: *const half::f16) -> __m256 {
 /// 1. AVX2 and F16C must be available.
 /// 2. `rgb_in.len() >= 3 * width`; `rgb_out.len() >= 3 * width`.
 /// 3. `rgb_in` / `rgb_out` must not alias.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2,f16c")]
 pub(crate) unsafe fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8], width: usize) {
@@ -353,7 +352,6 @@ pub(crate) unsafe fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8],
 /// # Safety
 ///
 /// Same as [`rgbf16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2,f16c")]
 pub(crate) unsafe fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8], width: usize) {
@@ -392,7 +390,6 @@ pub(crate) unsafe fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8
 ///
 /// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [u16]` with
 /// `len() >= 3 * width` u16 elements.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2,f16c")]
 pub(crate) unsafe fn rgbf16_to_rgb_u16_row(
@@ -433,7 +430,6 @@ pub(crate) unsafe fn rgbf16_to_rgb_u16_row(
 /// # Safety
 ///
 /// Same as [`rgbf16_to_rgb_u16_row`] but `rgba_out.len() >= 4 * width`.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2,f16c")]
 pub(crate) unsafe fn rgbf16_to_rgba_u16_row(
@@ -476,7 +472,6 @@ pub(crate) unsafe fn rgbf16_to_rgba_u16_row(
 ///
 /// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [f32]` with
 /// `len() >= 3 * width` f32 elements.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2,f16c")]
 pub(crate) unsafe fn rgbf16_to_rgb_f32_row(
@@ -510,7 +505,6 @@ pub(crate) unsafe fn rgbf16_to_rgb_f32_row(
 ///
 /// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [half::f16]` with
 /// `len() >= 3 * width` f16 elements.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2,f16c")]
 pub(crate) unsafe fn rgbf16_to_rgb_f16_row(

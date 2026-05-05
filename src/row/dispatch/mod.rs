@@ -18,6 +18,7 @@ pub(super) mod nv;
 pub(super) mod packed_yuv422;
 pub(super) mod planar_gbr;
 pub(super) mod pn;
+pub(super) mod rgb_f16_ops;
 pub(super) mod rgb_float_ops;
 pub(super) mod rgb_ops;
 pub(super) mod v210;

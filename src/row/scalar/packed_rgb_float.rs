@@ -177,9 +177,6 @@ pub(crate) fn rgbf32_to_rgb_f32_row(rgb_in: &[f32], rgb_out: &mut [f32], width: 
 ///
 /// Panics (any build profile) if `rgb_in.len() < 3 * width` or
 /// `rgb_out.len() < 3 * width`.
-// Task 3 prep: dispatcher (Task 8) is not wired up yet; suppress until
-// the call site lands.
-#[allow(dead_code)]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8], width: usize) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
@@ -200,7 +197,6 @@ pub(crate) fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8], width:
 ///
 /// Panics (any build profile) if `rgb_in.len() < 3 * width` or
 /// `rgba_out.len() < 4 * width`.
-#[allow(dead_code)]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8], width: usize) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
@@ -223,7 +219,6 @@ pub(crate) fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8], widt
 ///
 /// Panics (any build profile) if `rgb_in.len() < 3 * width` or
 /// `rgb_out.len() < 3 * width`.
-#[allow(dead_code)]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn rgbf16_to_rgb_u16_row(rgb_in: &[half::f16], rgb_out: &mut [u16], width: usize) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
@@ -243,7 +238,6 @@ pub(crate) fn rgbf16_to_rgb_u16_row(rgb_in: &[half::f16], rgb_out: &mut [u16], w
 ///
 /// Panics (any build profile) if `rgb_in.len() < 3 * width` or
 /// `rgba_out.len() < 4 * width`.
-#[allow(dead_code)]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn rgbf16_to_rgba_u16_row(rgb_in: &[half::f16], rgba_out: &mut [u16], width: usize) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
@@ -266,7 +260,6 @@ pub(crate) fn rgbf16_to_rgba_u16_row(rgb_in: &[half::f16], rgba_out: &mut [u16],
 ///
 /// Panics (any build profile) if `rgb_in.len() < 3 * width` or
 /// `rgb_out.len() < 3 * width`.
-#[allow(dead_code)]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn rgbf16_to_rgb_f32_row(rgb_in: &[half::f16], rgb_out: &mut [f32], width: usize) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
@@ -284,7 +277,6 @@ pub(crate) fn rgbf16_to_rgb_f32_row(rgb_in: &[half::f16], rgb_out: &mut [f32], w
 ///
 /// Panics (any build profile) if `rgb_in.len() < 3 * width` or
 /// `rgb_out.len() < 3 * width`.
-#[allow(dead_code)]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn rgbf16_to_rgb_f16_row(rgb_in: &[half::f16], rgb_out: &mut [half::f16], width: usize) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");

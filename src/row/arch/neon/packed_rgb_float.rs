@@ -356,7 +356,6 @@ unsafe fn widen_f16_tail(src: &[half::f16], dst: &mut [f32], n: usize) {
 /// 1. NEON must be available.
 /// 2. `rgb_in.len() >= 3 * width`; `rgb_out.len() >= 3 * width`.
 /// 3. `rgb_in` / `rgb_out` must not alias.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8], width: usize) {
@@ -391,7 +390,6 @@ pub(crate) unsafe fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8],
 /// # Safety
 ///
 /// Same as [`rgbf16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8], width: usize) {
@@ -427,7 +425,6 @@ pub(crate) unsafe fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8
 ///
 /// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [u16]` with
 /// `len() >= 3 * width` u16 elements.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn rgbf16_to_rgb_u16_row(
@@ -466,7 +463,6 @@ pub(crate) unsafe fn rgbf16_to_rgb_u16_row(
 ///
 /// Same as [`rgbf16_to_rgb_u16_row`] but the output is `&mut [u16]` with
 /// `len() >= 4 * width` u16 elements.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn rgbf16_to_rgba_u16_row(
@@ -506,7 +502,6 @@ pub(crate) unsafe fn rgbf16_to_rgba_u16_row(
 ///
 /// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [f32]` with
 /// `len() >= 3 * width` f32 elements.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn rgbf16_to_rgb_f32_row(
@@ -527,7 +522,11 @@ pub(crate) unsafe fn rgbf16_to_rgb_f32_row(
   }
   // Scalar tail for the last 0-3 lanes (partial pixel at most).
   unsafe {
-    widen_f16_tail(rgb_in.get_unchecked(lane..), rgb_out.get_unchecked_mut(lane..), total_lanes - lane);
+    widen_f16_tail(
+      rgb_in.get_unchecked(lane..),
+      rgb_out.get_unchecked_mut(lane..),
+      total_lanes - lane,
+    );
   }
 }
 
@@ -537,7 +536,6 @@ pub(crate) unsafe fn rgbf16_to_rgb_f32_row(
 ///
 /// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [half::f16]` with
 /// `len() >= 3 * width` f16 elements.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn rgbf16_to_rgb_f16_row(
