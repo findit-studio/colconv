@@ -57,6 +57,8 @@ mod xv36;
 mod y216;
 mod y2xx;
 pub(crate) mod y_plane_to_luma_u16;
+pub(crate) mod ya16;
+pub(crate) mod ya8;
 mod yuv_planar_16bit;
 mod yuv_planar_8bit;
 mod yuv_planar_high_bit;
@@ -92,6 +94,10 @@ pub(crate) use vuya::*;
 pub(crate) use xv36::*;
 pub(crate) use y2xx::*;
 pub(crate) use y216::*;
+#[allow(unused_imports)]
+pub(crate) use ya8::*;
+#[allow(unused_imports)]
+pub(crate) use ya16::*;
 pub(crate) use yuv_planar_8bit::*;
 pub(crate) use yuv_planar_16bit::*;
 pub(crate) use yuv_planar_high_bit::*;

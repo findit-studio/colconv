@@ -209,3 +209,39 @@ mod tests {
     assert_eq!(rgba, std::vec![1, 1, 1, 64, 1, 1, 1, 0xFF, 1, 1, 1, 0xFF]);
   }
 }
+
+/// Ya8 → u8 RGBA: gather A from `packed[1 + 2*n]` into `rgba_out[3 + 4*n]`.
+///
+/// Ya8 layout per pixel: `[Y(8), A(8)]` — α is at odd byte offsets (slot 1).
+#[allow(dead_code)]
+pub(crate) fn copy_alpha_ya_u8(packed: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(packed.len() >= width * 2, "packed too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+  for n in 0..width {
+    rgba_out[n * 4 + 3] = packed[n * 2 + 1];
+  }
+}
+
+/// Ya16 → u8 RGBA: gather A from `packed[1 + 2*n]` (u16), depth-conv `>> 8`,
+/// into `rgba_out[3 + 4*n]` (u8).
+///
+/// Ya16 layout per pixel: `[Y(16), A(16)]` — α is at odd u16 offsets (slot 1).
+#[allow(dead_code)]
+pub(crate) fn copy_alpha_ya_u16_to_u8(packed: &[u16], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(packed.len() >= width * 2, "packed too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+  for n in 0..width {
+    rgba_out[n * 4 + 3] = (packed[n * 2 + 1] >> 8) as u8;
+  }
+}
+
+/// Ya16 → u16 RGBA: gather A from `packed[1 + 2*n]` (u16) into
+/// `rgba_out[3 + 4*n]` (u16). No depth conversion.
+#[allow(dead_code)]
+pub(crate) fn copy_alpha_ya_u16(packed: &[u16], rgba_out: &mut [u16], width: usize) {
+  debug_assert!(packed.len() >= width * 2, "packed too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+  for n in 0..width {
+    rgba_out[n * 4 + 3] = packed[n * 2 + 1];
+  }
+}
