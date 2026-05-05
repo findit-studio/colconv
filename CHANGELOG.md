@@ -1,5 +1,38 @@
 # CHANGELOG
 
+## 0.21.0 — Tier 9 finish — Rgbf16 packed half-precision float RGB source
+
+**Additive feature; no public API change for existing source formats.**
+
+One new source format:
+
+- `Rgbf16` (`AV_PIX_FMT_RGBF16`) — packed `R, G, B` 16-bit half-precision float.
+  Linear-RGB convention; HDR > 1.0 saturates on integer outputs and is preserved
+  bit-exact on `with_rgb_f16` / `with_rgb_f32`.
+
+Architecture:
+- f16 → f32 widening at row entry via hardware (`vcvt_f32_f16` on AArch64,
+  `_mm{,256,512}_cvtph_ps` on x86 + F16C) or scalar `half::f16::to_f32`.
+- All downstream conversions (u8/u16/f32) reuse the existing `rgbf32_to_*_row`
+  kernels — zero math duplication.
+
+Accessors on `MixedSinker<'_, Rgbf16>`:
+- `with_rgb` / `with_rgba` (clamp [0,1] × 255 → u8)
+- `with_rgb_u16` / `with_rgba_u16` (clamp [0,1] × 65535 → u16; full-range scaling
+  — same divergence-from-integer-source-family note as `Rgbf32`)
+- `with_rgb_f16` (NEW — lossless half-float pass-through)
+- `with_rgb_f32` (lossless widening)
+- `with_luma` / `with_luma_u16` / `with_hsv` (staged through u8 RGB scratch)
+
+Test coverage:
+- 9 frame constructor tests (mirroring Rgbf32Frame).
+- 6 scalar parity tests (rgbf16 vs rgbf32-after-widen, bit-exact).
+- 6 SIMD scalar-equivalence tests per backend × 5 backends = 30 SIMD tests.
+- Sinker integration tests mirroring the Rgbf32 sinker pattern.
+
+F16C runtime detection on x86 with scalar fallback when F16C is unavailable
+(very rare on shipping hardware — Ivy Bridge 2012+ has F16C).
+
 ## 0.20.0 — Tier 10 — Gbrp + Gbrap planar GBR sources (8-bit MVP)
 
 **Additive feature; no public API change for existing source formats.**

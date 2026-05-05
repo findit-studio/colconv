@@ -1,6 +1,10 @@
 [package]
 name = "colconv"
+<<<<<<< HEAD
 version = "0.20.0"
+=======
+version = "0.21.0"
+>>>>>>> 4d1a794 (chore(0.21.0): bump version + CHANGELOG for Tier 9 Rgbf16)
 edition = "2024"
 repository = "https://github.com/findit-ai/colconv"
 homepage = "https://github.com/findit-ai/colconv"
