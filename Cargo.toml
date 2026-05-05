@@ -163,6 +163,7 @@ std = ["thiserror/default"]
 
 [dependencies]
 derive_more = { version = "2", default-features = false, features = ["display", "is_variant"] }
+half = { version = "2", default-features = false }
 thiserror = { version = "2", default-features = false }
 libm = { version = "0.2", optional = true }
 
