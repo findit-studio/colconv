@@ -224,6 +224,16 @@ pub enum MixedSinkerError {
     actual: usize,
   },
 
+  /// `f32` luma buffer attached via `with_luma_f32` / `set_luma_f32` is
+  /// shorter than `width × height` `f32` elements.
+  #[error("MixedSinker luma_f32 buffer too short: expected >= {expected} elements, got {actual}")]
+  LumaF32BufferTooShort {
+    /// Minimum `f32` elements required (`width × height`).
+    expected: usize,
+    /// `f32` elements supplied.
+    actual: usize,
+  },
+
   /// Luma buffer is shorter than `width × height`.
   #[error("MixedSinker luma buffer too short: expected >= {expected} bytes, got {actual}")]
   LumaBufferTooShort {
@@ -757,6 +767,7 @@ pub struct MixedSinker<'a, F: SourceFormat> {
   rgba_u16: Option<&'a mut [u16]>,
   luma: Option<&'a mut [u8]>,
   luma_u16: Option<&'a mut [u16]>,
+  luma_f32: Option<&'a mut [f32]>,
   hsv: Option<HsvBuffers<'a>>,
   width: usize,
   height: usize,
@@ -1107,6 +1118,7 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
       rgba_u16: None,
       luma: None,
       luma_u16: None,
+      luma_f32: None,
       hsv: None,
       width,
       height,
@@ -1184,6 +1196,20 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn produces_luma_u16(&self) -> bool {
     self.luma_u16.is_some()
+  }
+
+  /// Returns `true` iff the sinker will write `f32` RGB.
+  /// Only honored by `Grayf32` source impls.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn produces_rgb_f32(&self) -> bool {
+    self.rgb_f32.is_some()
+  }
+
+  /// Returns `true` iff the sinker will write `f32` luma.
+  /// Only honored by `Grayf32` source impls.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn produces_luma_f32(&self) -> bool {
+    self.luma_f32.is_some()
   }
 
   /// Returns `true` iff the sinker will write HSV.
@@ -1268,6 +1294,50 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
       });
     }
     self.rgb = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a packed f32 RGB output buffer (lossless replicate, Grayf32 only).
+  /// Returns `Err(RgbF32BufferTooShort)` if `buf.len() < width × height × 3`.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgb_f32(mut self, buf: &'a mut [f32]) -> Result<Self, MixedSinkerError> {
+    self.set_rgb_f32(buf)?;
+    Ok(self)
+  }
+
+  /// In-place variant of [`with_rgb_f32`](Self::with_rgb_f32).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgb_f32(&mut self, buf: &'a mut [f32]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(3)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::RgbF32BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.rgb_f32 = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches an f32 luma output buffer (lossless pass-through, Grayf32 only).
+  /// Returns `Err(LumaF32BufferTooShort)` if `buf.len() < width × height`.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_f32(mut self, buf: &'a mut [f32]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_f32(buf)?;
+    Ok(self)
+  }
+
+  /// In-place variant of [`with_luma_f32`](Self::with_luma_f32).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_f32(&mut self, buf: &'a mut [f32]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(1)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::LumaF32BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.luma_f32 = Some(buf);
     Ok(self)
   }
 
