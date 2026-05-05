@@ -65,6 +65,15 @@
 //!   sources, forced to `0xFF` for the 3-byte sources and the
 //!   padding-byte family), `with_luma` derives Y' from R/G/B,
 //!   `with_hsv` reuses the existing kernel.
+//! - **8‑bit planar GBR sources** (Tier 10):
+//!   [`Gbrp`](crate::yuv::Gbrp) (three planes: G, B, R) and
+//!   [`Gbrap`](crate::yuv::Gbrap) (four planes: G, B, R, A — real
+//!   per-pixel α). Both reuse the standard `with_rgb` / `with_rgba` /
+//!   `with_luma` / `with_luma_u16` / `with_hsv` channels via dedicated
+//!   `gbr_to_rgb_row` / `gbra_to_rgba_row` / `gbr_to_rgba_opaque_row`
+//!   SIMD kernels (no chroma matrix — the source is already component
+//!   RGB). `Gbrap`'s `with_rgb + with_rgba` combo uses Strategy A+
+//!   (expand RGB → RGBA, then α-overwrite from the source plane).
 //! - **10‑bit packed RGB sources** (Tier 6 — Ship 9e):
 //!   [`X2Rgb10`](crate::yuv::X2Rgb10) and
 //!   [`X2Bgr10`](crate::yuv::X2Bgr10). Each pixel is a 32-bit LE word
@@ -687,6 +696,19 @@ pub enum RowSlice {
   /// elements (= `12 * width` bytes).
   #[display("RGBF32 packed")]
   RgbF32Packed,
+  /// Green plane row of an 8-bit planar GBR source
+  /// ([`Gbrp`](crate::yuv::Gbrp) /
+  /// [`Gbrap`](crate::yuv::Gbrap)). `u8` samples, `width` elements.
+  #[display("G plane")]
+  GPlane,
+  /// Blue plane row of an 8-bit planar GBR source. `u8` samples,
+  /// `width` elements.
+  #[display("B plane")]
+  BPlane,
+  /// Red plane row of an 8-bit planar GBR source. `u8` samples,
+  /// `width` elements.
+  #[display("R plane")]
+  RPlane,
 }
 
 /// A sink that writes any subset of `{RGB, Luma, HSV}` into
@@ -1510,6 +1532,7 @@ mod packed_rgb_8bit;
 mod packed_rgb_float;
 mod packed_yuv_8bit;
 mod planar_8bit;
+mod planar_gbr_8bit;
 mod semi_planar_8bit;
 mod subsampled_4_2_0_high_bit;
 mod subsampled_4_2_2_high_bit;

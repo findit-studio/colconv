@@ -75,6 +75,8 @@
 //! | [`Vuya`]         |  8        | 4:4:4       | packed byte quadruple, source α | `vuya`         |
 //! | [`Vuyx`]         |  8        | 4:4:4       | packed byte quadruple, α-as-padding | `vuyx`     |
 //! | [`Ayuv64`]       | 16        | 4:4:4       | packed u16 quadruple, source α  | `ayuv64le`     |
+//! | [`Gbrp`]         |  8        | 4:4:4       | planar GBR (3 planes)            | `gbrp`        |
+//! | [`Gbrap`]        |  8        | 4:4:4       | planar GBR + A (4 planes, source α) | `gbrap`   |
 //!
 //! ## RAW (Bayer) sources
 //!
@@ -215,6 +217,8 @@
 //! [`Vuya`]: crate::yuv::Vuya
 //! [`Vuyx`]: crate::yuv::Vuyx
 //! [`Ayuv64`]: crate::yuv::Ayuv64
+//! [`Gbrp`]: crate::yuv::Gbrp
+//! [`Gbrap`]: crate::yuv::Gbrap
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]

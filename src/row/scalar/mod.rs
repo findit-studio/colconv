@@ -42,6 +42,7 @@ mod hsv;
 mod packed_rgb;
 mod packed_rgb_float;
 mod packed_yuv_8bit;
+mod planar_gbr;
 mod rgb_expand;
 mod semi_planar_8bit;
 mod subsampled_high_bit_pn;
@@ -69,6 +70,7 @@ pub(crate) use hsv::*;
 pub(crate) use packed_rgb::*;
 pub(crate) use packed_rgb_float::*;
 pub(crate) use packed_yuv_8bit::*;
+pub(crate) use planar_gbr::*;
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub(crate) use rgb_expand::*;
 pub(crate) use semi_planar_8bit::*;
