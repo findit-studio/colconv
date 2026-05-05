@@ -38,6 +38,10 @@ fn random_alpha(width: usize, height: usize, seed: u32) -> Vec<u8> {
 // ---- Gbrp tests --------------------------------------------------------
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn gbrp_with_rgb_reorders_planes_to_packed_rgb() {
   let w = 16usize;
   let h = 4usize;
@@ -67,6 +71,10 @@ fn gbrp_with_rgb_reorders_planes_to_packed_rgb() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn gbrp_with_rgba_appends_opaque_alpha() {
   let w = 16usize;
   let h = 4usize;
@@ -86,6 +94,10 @@ fn gbrp_with_rgba_appends_opaque_alpha() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn gbrp_planar_parity_with_rgb24() {
   // Convert the same pixel data through both the Rgb24 and Gbrp source
   // paths; outputs (RGB, RGBA, luma, HSV) must be byte-identical.
@@ -146,6 +158,10 @@ fn gbrp_planar_parity_with_rgb24() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn gbrp_with_luma_u16_zero_extends_u8_luma() {
   let w = 16usize;
   let h = 4usize;
@@ -171,6 +187,10 @@ fn gbrp_with_luma_u16_zero_extends_u8_luma() {
 // ---- Gbrap tests -------------------------------------------------------
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn gbrap_with_rgba_passes_source_alpha() {
   let w = 16usize;
   let h = 4usize;
@@ -199,6 +219,10 @@ fn gbrap_with_rgba_passes_source_alpha() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn gbrap_with_rgb_drops_alpha() {
   let w = 16usize;
   let h = 4usize;
@@ -224,6 +248,10 @@ fn gbrap_with_rgb_drops_alpha() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn gbrap_with_rgb_and_with_rgba_strategy_a_plus_matches_independent() {
   // Strategy A+ correctness: the combo path (with_rgb + with_rgba)
   // should produce byte-identical output to running each request
@@ -271,6 +299,10 @@ fn gbrap_with_rgb_and_with_rgba_strategy_a_plus_matches_independent() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn gbrap_planar_parity_with_rgb24_when_alpha_drop() {
   // Same pixel data fed through Rgb24 and Gbrap (with α discarded
   // via with_rgb): outputs must be byte-identical.
@@ -315,6 +347,10 @@ fn gbrap_planar_parity_with_rgb24_when_alpha_drop() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn gbrp_simd_matches_scalar() {
   // Differential test: SIMD vs scalar fan-out across {RGB, RGBA, luma,
   // luma_u16, HSV} on random GBR data.
@@ -382,6 +418,10 @@ fn gbrp_simd_matches_scalar() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn gbrap_simd_matches_scalar() {
   let w = 64usize;
   let h = 8usize;
@@ -470,6 +510,10 @@ fn assert_hsv_within_one_lsb(h1: &[u8], s1: &[u8], v1: &[u8], h2: &[u8], s2: &[u
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn gbrp_with_luma_bt709_pure_red() {
   // Pure red full-range BT.709: Y = 0.2126 * 255 ≈ 54.21 → 54.
   let w = 16usize;
