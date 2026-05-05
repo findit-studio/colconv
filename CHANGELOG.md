@@ -1,5 +1,23 @@
 # CHANGELOG
 
+## 0.22.0 — Tier 10b — Gbrp/Gbrap 9/10/12/14/16-bit high-bit-depth planar GBR
+
+**Additive feature; no public API change for existing source formats.**
+
+### Added
+
+- `Gbrp9`, `Gbrp10`, `Gbrp12`, `Gbrp14`, `Gbrp16` — planar GBR high-bit-depth
+  formats (`AV_PIX_FMT_GBRP{9,10,12,14,16}LE`) with native u16 planes. Accessors:
+  `with_rgb`, `with_rgb_u16`, `with_rgba`, `with_rgba_u16`, `with_luma`,
+  `with_luma_u16`, `with_hsv`.
+- `Gbrap9`, `Gbrap10`, `Gbrap12`, `Gbrap14`, `Gbrap16` — planar GBR+A
+  high-bit-depth formats (`AV_PIX_FMT_GBRAP{9,10,12,14,16}LE`) with source alpha
+  plane. Same accessors; alpha sourced from the A plane at native depth. Strategy
+  A+ combo path for simultaneous RGB + RGBA output.
+- 5 SIMD backends (NEON, SSE4.1, AVX2, AVX-512, wasm_simd128) for all new
+  high-bit kernels. Each backend is byte-identical to the scalar reference for
+  these pure-shuffle / right-shift kernels.
+
 ## 0.21.0 — Tier 9 finish — Rgbf16 packed half-precision float RGB source
 
 **Additive feature; no public API change for existing source formats.**

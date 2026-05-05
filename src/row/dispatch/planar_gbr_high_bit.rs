@@ -22,11 +22,11 @@
 use crate::row::arch;
 #[cfg(target_arch = "aarch64")]
 use crate::row::neon_available;
+use crate::row::scalar;
 #[cfg(target_arch = "wasm32")]
 use crate::row::simd128_available;
 #[cfg(target_arch = "x86_64")]
 use crate::row::{avx2_available, avx512_available, sse41_available};
-use crate::row::scalar;
 
 // ---------------------------------------------------------------------------
 // 1. G/B/R → packed R,G,B  (u8 output)
@@ -250,7 +250,10 @@ pub fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
-  assert!(rgba_u16_out.len() >= width * 4, "rgba_u16_out row too short");
+  assert!(
+    rgba_u16_out.len() >= width * 4,
+    "rgba_u16_out row too short"
+  );
 
   if use_simd {
     cfg_select! {
@@ -408,7 +411,10 @@ pub fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
   assert!(a.len() >= width, "a row too short");
-  assert!(rgba_u16_out.len() >= width * 4, "rgba_u16_out row too short");
+  assert!(
+    rgba_u16_out.len() >= width * 4,
+    "rgba_u16_out row too short"
+  );
 
   if use_simd {
     cfg_select! {

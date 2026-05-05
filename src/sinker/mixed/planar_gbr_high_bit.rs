@@ -44,8 +44,8 @@ use super::{
 use crate::{
   PixelSink,
   row::{
-    alpha_extract, expand_rgb_to_rgba_row, expand_rgb_u16_to_rgba_u16_row,
-    gbr_to_rgb_high_bit_row, gbr_to_rgb_u16_high_bit_row, gbr_to_rgba_opaque_high_bit_row,
+    alpha_extract, expand_rgb_to_rgba_row, expand_rgb_u16_to_rgba_u16_row, gbr_to_rgb_high_bit_row,
+    gbr_to_rgb_u16_high_bit_row, gbr_to_rgba_opaque_high_bit_row,
     gbr_to_rgba_opaque_u16_high_bit_row, gbra_to_rgba_high_bit_row, gbra_to_rgba_u16_high_bit_row,
     rgb_to_hsv_row, rgb_to_luma_row,
   },
@@ -663,7 +663,7 @@ macro_rules! impl_gbrap_high_bit {
 
 // ---- Gbrp formats (no alpha) -------------------------------------------
 
-impl_gbrp_high_bit!(Gbrp9,  Gbrp9Sink,  Gbrp9Row,   9);
+impl_gbrp_high_bit!(Gbrp9, Gbrp9Sink, Gbrp9Row, 9);
 impl_gbrp_high_bit!(Gbrp10, Gbrp10Sink, Gbrp10Row, 10);
 impl_gbrp_high_bit!(Gbrp12, Gbrp12Sink, Gbrp12Row, 12);
 impl_gbrp_high_bit!(Gbrp14, Gbrp14Sink, Gbrp14Row, 14);
@@ -671,7 +671,7 @@ impl_gbrp_high_bit!(Gbrp16, Gbrp16Sink, Gbrp16Row, 16);
 
 // ---- Gbrap formats (with real α plane) ---------------------------------
 
-impl_gbrap_high_bit!(Gbrap9,  Gbrap9Sink,  Gbrap9Row,   9);
+impl_gbrap_high_bit!(Gbrap9, Gbrap9Sink, Gbrap9Row, 9);
 impl_gbrap_high_bit!(Gbrap10, Gbrap10Sink, Gbrap10Row, 10);
 impl_gbrap_high_bit!(Gbrap12, Gbrap12Sink, Gbrap12Row, 12);
 impl_gbrap_high_bit!(Gbrap14, Gbrap14Sink, Gbrap14Row, 14);

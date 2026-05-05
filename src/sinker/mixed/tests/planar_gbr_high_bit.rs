@@ -63,11 +63,11 @@ macro_rules! test_gbrp_saturation_u16 {
   };
 }
 
-test_gbrp_saturation_u16!(gbrp9_all_max_u16_saturates,   Gbrp9,  gbrp9_to,   9);
-test_gbrp_saturation_u16!(gbrp10_all_max_u16_saturates,  Gbrp10, gbrp10_to, 10);
-test_gbrp_saturation_u16!(gbrp12_all_max_u16_saturates,  Gbrp12, gbrp12_to, 12);
-test_gbrp_saturation_u16!(gbrp14_all_max_u16_saturates,  Gbrp14, gbrp14_to, 14);
-test_gbrp_saturation_u16!(gbrp16_all_max_u16_saturates,  Gbrp16, gbrp16_to, 16);
+test_gbrp_saturation_u16!(gbrp9_all_max_u16_saturates, Gbrp9, gbrp9_to, 9);
+test_gbrp_saturation_u16!(gbrp10_all_max_u16_saturates, Gbrp10, gbrp10_to, 10);
+test_gbrp_saturation_u16!(gbrp12_all_max_u16_saturates, Gbrp12, gbrp12_to, 12);
+test_gbrp_saturation_u16!(gbrp14_all_max_u16_saturates, Gbrp14, gbrp14_to, 14);
+test_gbrp_saturation_u16!(gbrp16_all_max_u16_saturates, Gbrp16, gbrp16_to, 16);
 
 // ---- Bit-depth saturation: u8 output downshifted to 0xFF -------------------
 
@@ -95,11 +95,11 @@ macro_rules! test_gbrp_saturation_u8 {
   };
 }
 
-test_gbrp_saturation_u8!(gbrp9_all_max_u8_is_0xff,   Gbrp9,  gbrp9_to,   9);
-test_gbrp_saturation_u8!(gbrp10_all_max_u8_is_0xff,  Gbrp10, gbrp10_to, 10);
-test_gbrp_saturation_u8!(gbrp12_all_max_u8_is_0xff,  Gbrp12, gbrp12_to, 12);
-test_gbrp_saturation_u8!(gbrp14_all_max_u8_is_0xff,  Gbrp14, gbrp14_to, 14);
-test_gbrp_saturation_u8!(gbrp16_all_max_u8_is_0xff,  Gbrp16, gbrp16_to, 16);
+test_gbrp_saturation_u8!(gbrp9_all_max_u8_is_0xff, Gbrp9, gbrp9_to, 9);
+test_gbrp_saturation_u8!(gbrp10_all_max_u8_is_0xff, Gbrp10, gbrp10_to, 10);
+test_gbrp_saturation_u8!(gbrp12_all_max_u8_is_0xff, Gbrp12, gbrp12_to, 12);
+test_gbrp_saturation_u8!(gbrp14_all_max_u8_is_0xff, Gbrp14, gbrp14_to, 14);
+test_gbrp_saturation_u8!(gbrp16_all_max_u8_is_0xff, Gbrp16, gbrp16_to, 16);
 
 // ---- Channel reorder: G=100, B=50, R=200 → (R=200, G=100, B=50) -----------
 
@@ -130,11 +130,11 @@ macro_rules! test_gbrp_channel_reorder {
   };
 }
 
-test_gbrp_channel_reorder!(gbrp9_channel_reorder,   Gbrp9,  gbrp9_to,   9);
-test_gbrp_channel_reorder!(gbrp10_channel_reorder,  Gbrp10, gbrp10_to, 10);
-test_gbrp_channel_reorder!(gbrp12_channel_reorder,  Gbrp12, gbrp12_to, 12);
-test_gbrp_channel_reorder!(gbrp14_channel_reorder,  Gbrp14, gbrp14_to, 14);
-test_gbrp_channel_reorder!(gbrp16_channel_reorder,  Gbrp16, gbrp16_to, 16);
+test_gbrp_channel_reorder!(gbrp9_channel_reorder, Gbrp9, gbrp9_to, 9);
+test_gbrp_channel_reorder!(gbrp10_channel_reorder, Gbrp10, gbrp10_to, 10);
+test_gbrp_channel_reorder!(gbrp12_channel_reorder, Gbrp12, gbrp12_to, 12);
+test_gbrp_channel_reorder!(gbrp14_channel_reorder, Gbrp14, gbrp14_to, 14);
+test_gbrp_channel_reorder!(gbrp16_channel_reorder, Gbrp16, gbrp16_to, 16);
 
 // ---- Strategy A+: Gbrap combo RGB+RGBA matches standalone RGBA --------------
 
@@ -183,11 +183,36 @@ macro_rules! test_gbrap_strategy_a_plus {
   };
 }
 
-test_gbrap_strategy_a_plus!(gbrap9_strategy_a_plus_matches_standalone,   Gbrap9,  gbrap9_to,   9);
-test_gbrap_strategy_a_plus!(gbrap10_strategy_a_plus_matches_standalone,  Gbrap10, gbrap10_to, 10);
-test_gbrap_strategy_a_plus!(gbrap12_strategy_a_plus_matches_standalone,  Gbrap12, gbrap12_to, 12);
-test_gbrap_strategy_a_plus!(gbrap14_strategy_a_plus_matches_standalone,  Gbrap14, gbrap14_to, 14);
-test_gbrap_strategy_a_plus!(gbrap16_strategy_a_plus_matches_standalone,  Gbrap16, gbrap16_to, 16);
+test_gbrap_strategy_a_plus!(
+  gbrap9_strategy_a_plus_matches_standalone,
+  Gbrap9,
+  gbrap9_to,
+  9
+);
+test_gbrap_strategy_a_plus!(
+  gbrap10_strategy_a_plus_matches_standalone,
+  Gbrap10,
+  gbrap10_to,
+  10
+);
+test_gbrap_strategy_a_plus!(
+  gbrap12_strategy_a_plus_matches_standalone,
+  Gbrap12,
+  gbrap12_to,
+  12
+);
+test_gbrap_strategy_a_plus!(
+  gbrap14_strategy_a_plus_matches_standalone,
+  Gbrap14,
+  gbrap14_to,
+  14
+);
+test_gbrap_strategy_a_plus!(
+  gbrap16_strategy_a_plus_matches_standalone,
+  Gbrap16,
+  gbrap16_to,
+  16
+);
 
 // ---- Gbrap alpha downshift correctness -------------------------------------
 
@@ -229,11 +254,11 @@ macro_rules! test_gbrap_alpha_downshift {
   };
 }
 
-test_gbrap_alpha_downshift!(gbrap9_alpha_downshift_correct,   Gbrap9,  gbrap9_to,   9);
-test_gbrap_alpha_downshift!(gbrap10_alpha_downshift_correct,  Gbrap10, gbrap10_to, 10);
-test_gbrap_alpha_downshift!(gbrap12_alpha_downshift_correct,  Gbrap12, gbrap12_to, 12);
-test_gbrap_alpha_downshift!(gbrap14_alpha_downshift_correct,  Gbrap14, gbrap14_to, 14);
-test_gbrap_alpha_downshift!(gbrap16_alpha_downshift_correct,  Gbrap16, gbrap16_to, 16);
+test_gbrap_alpha_downshift!(gbrap9_alpha_downshift_correct, Gbrap9, gbrap9_to, 9);
+test_gbrap_alpha_downshift!(gbrap10_alpha_downshift_correct, Gbrap10, gbrap10_to, 10);
+test_gbrap_alpha_downshift!(gbrap12_alpha_downshift_correct, Gbrap12, gbrap12_to, 12);
+test_gbrap_alpha_downshift!(gbrap14_alpha_downshift_correct, Gbrap14, gbrap14_to, 14);
+test_gbrap_alpha_downshift!(gbrap16_alpha_downshift_correct, Gbrap16, gbrap16_to, 16);
 
 // ---- SIMD vs scalar equivalence (width 128 + tail width 130) ---------------
 
@@ -279,16 +304,16 @@ macro_rules! test_gbrp_simd_matches_scalar {
   };
 }
 
-test_gbrp_simd_matches_scalar!(gbrp9_w128_simd_matches_scalar,   Gbrp9,  gbrp9_to,   9, 128);
-test_gbrp_simd_matches_scalar!(gbrp9_w130_simd_matches_scalar,   Gbrp9,  gbrp9_to,   9, 130);
-test_gbrp_simd_matches_scalar!(gbrp10_w128_simd_matches_scalar,  Gbrp10, gbrp10_to, 10, 128);
-test_gbrp_simd_matches_scalar!(gbrp10_w130_simd_matches_scalar,  Gbrp10, gbrp10_to, 10, 130);
-test_gbrp_simd_matches_scalar!(gbrp12_w128_simd_matches_scalar,  Gbrp12, gbrp12_to, 12, 128);
-test_gbrp_simd_matches_scalar!(gbrp12_w130_simd_matches_scalar,  Gbrp12, gbrp12_to, 12, 130);
-test_gbrp_simd_matches_scalar!(gbrp14_w128_simd_matches_scalar,  Gbrp14, gbrp14_to, 14, 128);
-test_gbrp_simd_matches_scalar!(gbrp14_w130_simd_matches_scalar,  Gbrp14, gbrp14_to, 14, 130);
-test_gbrp_simd_matches_scalar!(gbrp16_w128_simd_matches_scalar,  Gbrp16, gbrp16_to, 16, 128);
-test_gbrp_simd_matches_scalar!(gbrp16_w130_simd_matches_scalar,  Gbrp16, gbrp16_to, 16, 130);
+test_gbrp_simd_matches_scalar!(gbrp9_w128_simd_matches_scalar, Gbrp9, gbrp9_to, 9, 128);
+test_gbrp_simd_matches_scalar!(gbrp9_w130_simd_matches_scalar, Gbrp9, gbrp9_to, 9, 130);
+test_gbrp_simd_matches_scalar!(gbrp10_w128_simd_matches_scalar, Gbrp10, gbrp10_to, 10, 128);
+test_gbrp_simd_matches_scalar!(gbrp10_w130_simd_matches_scalar, Gbrp10, gbrp10_to, 10, 130);
+test_gbrp_simd_matches_scalar!(gbrp12_w128_simd_matches_scalar, Gbrp12, gbrp12_to, 12, 128);
+test_gbrp_simd_matches_scalar!(gbrp12_w130_simd_matches_scalar, Gbrp12, gbrp12_to, 12, 130);
+test_gbrp_simd_matches_scalar!(gbrp14_w128_simd_matches_scalar, Gbrp14, gbrp14_to, 14, 128);
+test_gbrp_simd_matches_scalar!(gbrp14_w130_simd_matches_scalar, Gbrp14, gbrp14_to, 14, 130);
+test_gbrp_simd_matches_scalar!(gbrp16_w128_simd_matches_scalar, Gbrp16, gbrp16_to, 16, 128);
+test_gbrp_simd_matches_scalar!(gbrp16_w130_simd_matches_scalar, Gbrp16, gbrp16_to, 16, 130);
 
 macro_rules! test_gbrap_simd_matches_scalar {
   ($name:ident, $marker:ident, $walker:ident, $bits:literal, $w:literal) => {
@@ -329,13 +354,61 @@ macro_rules! test_gbrap_simd_matches_scalar {
   };
 }
 
-test_gbrap_simd_matches_scalar!(gbrap9_w128_simd_matches_scalar,   Gbrap9,  gbrap9_to,   9, 128);
-test_gbrap_simd_matches_scalar!(gbrap9_w130_simd_matches_scalar,   Gbrap9,  gbrap9_to,   9, 130);
-test_gbrap_simd_matches_scalar!(gbrap10_w128_simd_matches_scalar,  Gbrap10, gbrap10_to, 10, 128);
-test_gbrap_simd_matches_scalar!(gbrap10_w130_simd_matches_scalar,  Gbrap10, gbrap10_to, 10, 130);
-test_gbrap_simd_matches_scalar!(gbrap12_w128_simd_matches_scalar,  Gbrap12, gbrap12_to, 12, 128);
-test_gbrap_simd_matches_scalar!(gbrap12_w130_simd_matches_scalar,  Gbrap12, gbrap12_to, 12, 130);
-test_gbrap_simd_matches_scalar!(gbrap14_w128_simd_matches_scalar,  Gbrap14, gbrap14_to, 14, 128);
-test_gbrap_simd_matches_scalar!(gbrap14_w130_simd_matches_scalar,  Gbrap14, gbrap14_to, 14, 130);
-test_gbrap_simd_matches_scalar!(gbrap16_w128_simd_matches_scalar,  Gbrap16, gbrap16_to, 16, 128);
-test_gbrap_simd_matches_scalar!(gbrap16_w130_simd_matches_scalar,  Gbrap16, gbrap16_to, 16, 130);
+test_gbrap_simd_matches_scalar!(gbrap9_w128_simd_matches_scalar, Gbrap9, gbrap9_to, 9, 128);
+test_gbrap_simd_matches_scalar!(gbrap9_w130_simd_matches_scalar, Gbrap9, gbrap9_to, 9, 130);
+test_gbrap_simd_matches_scalar!(
+  gbrap10_w128_simd_matches_scalar,
+  Gbrap10,
+  gbrap10_to,
+  10,
+  128
+);
+test_gbrap_simd_matches_scalar!(
+  gbrap10_w130_simd_matches_scalar,
+  Gbrap10,
+  gbrap10_to,
+  10,
+  130
+);
+test_gbrap_simd_matches_scalar!(
+  gbrap12_w128_simd_matches_scalar,
+  Gbrap12,
+  gbrap12_to,
+  12,
+  128
+);
+test_gbrap_simd_matches_scalar!(
+  gbrap12_w130_simd_matches_scalar,
+  Gbrap12,
+  gbrap12_to,
+  12,
+  130
+);
+test_gbrap_simd_matches_scalar!(
+  gbrap14_w128_simd_matches_scalar,
+  Gbrap14,
+  gbrap14_to,
+  14,
+  128
+);
+test_gbrap_simd_matches_scalar!(
+  gbrap14_w130_simd_matches_scalar,
+  Gbrap14,
+  gbrap14_to,
+  14,
+  130
+);
+test_gbrap_simd_matches_scalar!(
+  gbrap16_w128_simd_matches_scalar,
+  Gbrap16,
+  gbrap16_to,
+  16,
+  128
+);
+test_gbrap_simd_matches_scalar!(
+  gbrap16_w130_simd_matches_scalar,
+  Gbrap16,
+  gbrap16_to,
+  16,
+  130
+);
