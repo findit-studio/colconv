@@ -656,6 +656,7 @@ fn rgbf16_test_inputs() -> (Vec<half::f16>, Vec<f32>, usize) {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri")]
 fn rgbf16_scalar_rgb_matches_widen_then_rgbf32() {
   let (rgb_in, widened, width) = rgbf16_test_inputs();
   let mut out_f16 = std::vec![0u8; width * 3];
@@ -666,6 +667,7 @@ fn rgbf16_scalar_rgb_matches_widen_then_rgbf32() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri")]
 fn rgbf16_scalar_rgba_matches_widen_then_rgbf32() {
   let (rgb_in, widened, width) = rgbf16_test_inputs();
   let mut out_f16 = std::vec![0u8; width * 4];
@@ -676,6 +678,7 @@ fn rgbf16_scalar_rgba_matches_widen_then_rgbf32() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri")]
 fn rgbf16_scalar_rgb_u16_matches_widen_then_rgbf32() {
   let (rgb_in, widened, width) = rgbf16_test_inputs();
   let mut out_f16 = std::vec![0u16; width * 3];
@@ -686,6 +689,7 @@ fn rgbf16_scalar_rgb_u16_matches_widen_then_rgbf32() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri")]
 fn rgbf16_scalar_rgba_u16_matches_widen_then_rgbf32() {
   let (rgb_in, widened, width) = rgbf16_test_inputs();
   let mut out_f16 = std::vec![0u16; width * 4];
@@ -696,6 +700,7 @@ fn rgbf16_scalar_rgba_u16_matches_widen_then_rgbf32() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri")]
 fn rgbf16_scalar_rgb_f32_matches_element_wise_widen() {
   let (rgb_in, widened, width) = rgbf16_test_inputs();
   let mut out = std::vec![0.0f32; width * 3];
@@ -708,6 +713,7 @@ fn rgbf16_scalar_rgb_f32_matches_element_wise_widen() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri")]
 fn rgbf16_scalar_rgb_f16_is_copy() {
   let (rgb_in, _widened, width) = rgbf16_test_inputs();
   let mut out = std::vec![half::f16::ZERO; width * 3];
