@@ -2,6 +2,53 @@ use core::arch::wasm32::*;
 
 use super::*;
 
+// ===== Shared 16-pixel RGB deinterleave =================================
+
+/// Deinterleaves 16 packed RGB pixels (48 bytes at `ptr`) into three
+/// 16-lane `v128`s holding contiguous R / G / B byte planes. Mirrors
+/// the x86 SSE4.1 `_mm_shuffle_epi8` 9-mask pattern. Used by every
+/// RGB-input wasm kernel in this module (`rgb_to_hsv_row`,
+/// `rgb_to_luma_row`).
+///
+/// # Safety
+///
+/// `ptr` must point to at least 48 readable bytes (16 px × 3 ch).
+#[inline]
+#[target_feature(enable = "simd128")]
+unsafe fn deinterleave_rgb_16px(ptr: *const u8) -> (v128, v128, v128) {
+  unsafe {
+    let in0 = v128_load(ptr.cast());
+    let in1 = v128_load(ptr.add(16).cast());
+    let in2 = v128_load(ptr.add(32).cast());
+
+    let mr0 = i8x16(0, 3, 6, 9, 12, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+    let mr1 = i8x16(-1, -1, -1, -1, -1, -1, 2, 5, 8, 11, 14, -1, -1, -1, -1, -1);
+    let mr2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1, 4, 7, 10, 13);
+    let r_u8 = v128_or(
+      v128_or(u8x16_swizzle(in0, mr0), u8x16_swizzle(in1, mr1)),
+      u8x16_swizzle(in2, mr2),
+    );
+
+    let mg0 = i8x16(1, 4, 7, 10, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+    let mg1 = i8x16(-1, -1, -1, -1, -1, 0, 3, 6, 9, 12, 15, -1, -1, -1, -1, -1);
+    let mg2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 2, 5, 8, 11, 14);
+    let g_u8 = v128_or(
+      v128_or(u8x16_swizzle(in0, mg0), u8x16_swizzle(in1, mg1)),
+      u8x16_swizzle(in2, mg2),
+    );
+
+    let mb0 = i8x16(2, 5, 8, 11, 14, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+    let mb1 = i8x16(-1, -1, -1, -1, -1, 1, 4, 7, 10, 13, -1, -1, -1, -1, -1, -1);
+    let mb2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 3, 6, 9, 12, 15);
+    let b_u8 = v128_or(
+      v128_or(u8x16_swizzle(in0, mb0), u8x16_swizzle(in1, mb1)),
+      u8x16_swizzle(in2, mb2),
+    );
+
+    (r_u8, g_u8, b_u8)
+  }
+}
+
 // ===== RGB → HSV =========================================================
 
 /// WASM simd128 RGB → planar HSV. 16 pixels per iteration using
@@ -31,34 +78,7 @@ pub(crate) unsafe fn rgb_to_hsv_row(
   unsafe {
     let mut x = 0usize;
     while x + 16 <= width {
-      let in0 = v128_load(rgb.as_ptr().add(x * 3).cast());
-      let in1 = v128_load(rgb.as_ptr().add(x * 3 + 16).cast());
-      let in2 = v128_load(rgb.as_ptr().add(x * 3 + 32).cast());
-
-      // 3‑channel deinterleave — mirror of the x86 mask pattern.
-      let mr0 = i8x16(0, 3, 6, 9, 12, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
-      let mr1 = i8x16(-1, -1, -1, -1, -1, -1, 2, 5, 8, 11, 14, -1, -1, -1, -1, -1);
-      let mr2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1, 4, 7, 10, 13);
-      let r_u8 = v128_or(
-        v128_or(u8x16_swizzle(in0, mr0), u8x16_swizzle(in1, mr1)),
-        u8x16_swizzle(in2, mr2),
-      );
-
-      let mg0 = i8x16(1, 4, 7, 10, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
-      let mg1 = i8x16(-1, -1, -1, -1, -1, 0, 3, 6, 9, 12, 15, -1, -1, -1, -1, -1);
-      let mg2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 2, 5, 8, 11, 14);
-      let g_u8 = v128_or(
-        v128_or(u8x16_swizzle(in0, mg0), u8x16_swizzle(in1, mg1)),
-        u8x16_swizzle(in2, mg2),
-      );
-
-      let mb0 = i8x16(2, 5, 8, 11, 14, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
-      let mb1 = i8x16(-1, -1, -1, -1, -1, 1, 4, 7, 10, 13, -1, -1, -1, -1, -1, -1);
-      let mb2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 3, 6, 9, 12, 15);
-      let b_u8 = v128_or(
-        v128_or(u8x16_swizzle(in0, mb0), u8x16_swizzle(in1, mb1)),
-        u8x16_swizzle(in2, mb2),
-      );
+      let (r_u8, g_u8, b_u8) = deinterleave_rgb_16px(rgb.as_ptr().add(x * 3));
 
       // Widen each u8x16 to 4 f32x4 groups.
       let (r0, r1, r2, r3) = u8x16_to_f32x4_quad(r_u8);
@@ -225,36 +245,9 @@ pub(crate) unsafe fn rgb_to_luma_row(
   // `x + 16 <= width` keeps the 48‑byte read and 16‑byte write inside
   // the caller‑promised slice lengths.
   unsafe {
-    // Deinterleave masks — identical to the HSV kernel above (mirror
-    // of the x86 SSSE3 byte‑shuffle pattern).
-    let mr0 = i8x16(0, 3, 6, 9, 12, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
-    let mr1 = i8x16(-1, -1, -1, -1, -1, -1, 2, 5, 8, 11, 14, -1, -1, -1, -1, -1);
-    let mr2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1, 4, 7, 10, 13);
-    let mg0 = i8x16(1, 4, 7, 10, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
-    let mg1 = i8x16(-1, -1, -1, -1, -1, 0, 3, 6, 9, 12, 15, -1, -1, -1, -1, -1);
-    let mg2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 2, 5, 8, 11, 14);
-    let mb0 = i8x16(2, 5, 8, 11, 14, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
-    let mb1 = i8x16(-1, -1, -1, -1, -1, 1, 4, 7, 10, 13, -1, -1, -1, -1, -1, -1);
-    let mb2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 3, 6, 9, 12, 15);
-
     let mut x = 0usize;
     while x + 16 <= width {
-      let in0 = v128_load(rgb.as_ptr().add(x * 3).cast());
-      let in1 = v128_load(rgb.as_ptr().add(x * 3 + 16).cast());
-      let in2 = v128_load(rgb.as_ptr().add(x * 3 + 32).cast());
-
-      let r_u8 = v128_or(
-        v128_or(u8x16_swizzle(in0, mr0), u8x16_swizzle(in1, mr1)),
-        u8x16_swizzle(in2, mr2),
-      );
-      let g_u8 = v128_or(
-        v128_or(u8x16_swizzle(in0, mg0), u8x16_swizzle(in1, mg1)),
-        u8x16_swizzle(in2, mg2),
-      );
-      let b_u8 = v128_or(
-        v128_or(u8x16_swizzle(in0, mb0), u8x16_swizzle(in1, mb1)),
-        u8x16_swizzle(in2, mb2),
-      );
+      let (r_u8, g_u8, b_u8) = deinterleave_rgb_16px(rgb.as_ptr().add(x * 3));
 
       // Widen u8x16 → i16x8 lo/hi (zero‑extend; samples in [0, 255]).
       let r_lo_i16 = i16x8_extend_low_u8x16(r_u8);
