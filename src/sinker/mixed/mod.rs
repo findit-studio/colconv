@@ -191,6 +191,18 @@ pub enum MixedSinkerError {
     actual: usize,
   },
 
+  /// `f32` RGB buffer attached via per-format `with_rgb_f32` /
+  /// `set_rgb_f32` is shorter than `width × height × 3` `f32` elements.
+  /// Only float-source impls (currently
+  /// [`Rgbf32`](crate::yuv::Rgbf32)) write into this buffer.
+  #[error("MixedSinker rgb_f32 buffer too short: expected >= {expected} elements, got {actual}")]
+  RgbF32BufferTooShort {
+    /// Minimum `f32` elements required (`width × height × 3`).
+    expected: usize,
+    /// `f32` elements supplied.
+    actual: usize,
+  },
+
   /// Luma buffer is shorter than `width × height`.
   #[error("MixedSinker luma buffer too short: expected >= {expected} bytes, got {actual}")]
   LumaBufferTooShort {
@@ -670,6 +682,11 @@ pub enum RowSlice {
   /// bytes).
   #[display("AYUV64 packed")]
   Ayuv64Packed,
+  /// Packed `R, G, B` row of an [`Rgbf32`](crate::yuv::Rgbf32) source —
+  /// Tier 9 32-bit float per channel. Row length: `3 * width` `f32`
+  /// elements (= `12 * width` bytes).
+  #[display("RGBF32 packed")]
+  RgbF32Packed,
 }
 
 /// A sink that writes any subset of `{RGB, Luma, HSV}` into
@@ -695,6 +712,7 @@ pub enum RowSlice {
 pub struct MixedSinker<'a, F: SourceFormat> {
   rgb: Option<&'a mut [u8]>,
   rgb_u16: Option<&'a mut [u16]>,
+  rgb_f32: Option<&'a mut [f32]>,
   rgba: Option<&'a mut [u8]>,
   rgba_u16: Option<&'a mut [u16]>,
   luma: Option<&'a mut [u8]>,
@@ -1043,6 +1061,7 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
     Self {
       rgb: None,
       rgb_u16: None,
+      rgb_f32: None,
       rgba: None,
       rgba_u16: None,
       luma: None,
@@ -1076,6 +1095,14 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn produces_rgb_u16(&self) -> bool {
     self.rgb_u16.is_some()
+  }
+
+  /// Returns `true` iff the sinker will write `f32` RGB. Only
+  /// float-source impls (currently [`Rgbf32`](crate::yuv::Rgbf32))
+  /// honor this buffer.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn produces_rgb_f32(&self) -> bool {
+    self.rgb_f32.is_some()
   }
 
   /// Returns `true` iff the sinker will write 8‑bit RGBA. The
@@ -1480,6 +1507,7 @@ mod ayuv64;
 mod bayer;
 mod packed_rgb_10bit;
 mod packed_rgb_8bit;
+mod packed_rgb_float;
 mod packed_yuv_8bit;
 mod planar_8bit;
 mod semi_planar_8bit;

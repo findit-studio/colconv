@@ -169,6 +169,30 @@ pub fn rgb_to_luma_row(
   scalar::rgb_to_luma_row(rgb, luma_out, width, matrix, full_range);
 }
 
+/// `u16` luma analogue of [`rgb_to_luma_row`]. Y' is computed at
+/// 8-bit precision and zero-extended to `u16` — same dynamic range
+/// (`[0, 255]` or `[16, 235]`) as the `u8` path, matching the convention
+/// the packed-YUV `*_to_luma_u16` kernels follow.
+///
+/// `use_simd` is currently a no-op — scalar is the only available path
+/// (matches `rgb_to_luma_row`'s SIMD status).
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn rgb_to_luma_u16_row(
+  rgb: &[u8],
+  luma_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  _use_simd: bool,
+) {
+  let rgb_min = rgb_row_bytes(width);
+  assert!(rgb.len() >= rgb_min, "rgb row too short");
+  assert!(luma_out.len() >= width, "luma row too short");
+
+  scalar::rgb_to_luma_u16_row(rgb, luma_out, width, matrix, full_range);
+}
+
 /// Drops the alpha byte from packed `R, G, B, A` input, producing
 /// packed `R, G, B` output (`4 * width` → `3 * width` bytes). Used
 /// by [`Rgba`](crate::yuv::Rgba) sinker's RGB / luma / HSV paths

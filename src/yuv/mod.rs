@@ -147,6 +147,13 @@
 //!   (down-shifted 10→8) and native u16 outputs (`with_rgb_u16`,
 //!   value range `[0, 1023]`) are supported (Ship 9e — closes
 //!   Tier 6).
+//! - [`Rgbf32`] — packed `R, G, B` 32-bit float (FFmpeg
+//!   `AV_PIX_FMT_RGBF32`). Linear-RGB convention; HDR values > 1.0
+//!   are saturated when targeting integer outputs and preserved
+//!   bit-exact when targeting `with_rgb_f32`. Integer u8 / u16
+//!   paths apply `[0, 1]` clamp + full-range scaling (×255 / ×65535)
+//!   — distinct from the integer-source `with_rgb_u16` family which
+//!   preserves the source's native precision range (Tier 9 MVP).
 //!
 //! # Not yet shipped
 //!
@@ -191,6 +198,7 @@ mod p412;
 mod p416;
 mod rgb24;
 mod rgba;
+mod rgbf32;
 mod rgbx;
 mod uyvy422;
 mod v210;
@@ -267,6 +275,7 @@ pub use p412::{P412, P412Row, P412Sink, p412_to};
 pub use p416::{P416, P416Row, P416Sink, p416_to};
 pub use rgb24::{Rgb24, Rgb24Row, Rgb24Sink, rgb24_to};
 pub use rgba::{Rgba, RgbaRow, RgbaSink, rgba_to};
+pub use rgbf32::{Rgbf32, Rgbf32Row, Rgbf32Sink, rgbf32_to};
 pub use rgbx::{Rgbx, RgbxRow, RgbxSink, rgbx_to};
 pub use uyvy422::{Uyvy422, Uyvy422Row, Uyvy422Sink, uyvy422_to};
 pub use v30x::{V30X, V30XRow, V30XSink, v30x_to};
