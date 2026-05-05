@@ -1527,6 +1527,7 @@ pub(super) fn rgb_row_to_luma_row(rgb: &[u8], luma: &mut [u8], coeffs_q8: (u32, 
 
 mod ayuv64;
 mod bayer;
+mod gray;
 mod packed_rgb_10bit;
 mod packed_rgb_8bit;
 mod packed_rgb_float;

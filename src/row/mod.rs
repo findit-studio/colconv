@@ -80,6 +80,9 @@ pub use dispatch::{
   v30x::*, v210::*, v410::*, vuya::*, vuyx::*, xv36::*, y210::*, y212::*, y216::*, yuv420::*,
   yuv444::*, yuva::*,
 };
+// Gray dispatchers are pub(crate) — sinker code uses them via crate::row::gray*_row.
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) use dispatch::gray::*;
 
 // `yuv_444p_n_to_rgb_u16_row` is consumed by the 32-bit overflow test
 // `yuv_444p_n_u16_dispatcher_rejects_width_times_3_overflow` below —

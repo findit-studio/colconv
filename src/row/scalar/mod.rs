@@ -38,6 +38,7 @@ use crate::ColorMatrix;
 pub(crate) mod alpha_extract;
 mod ayuv64;
 mod bayer;
+pub(crate) mod gray;
 mod hsv;
 mod packed_rgb;
 mod packed_rgb_float;
@@ -66,6 +67,10 @@ mod yuv_planar_high_bit;
 pub(crate) use alpha_extract::*;
 pub(crate) use ayuv64::*;
 pub(crate) use bayer::*;
+// gray functions are consumed by dispatch::gray via `crate::row::scalar::gray as scalar`.
+// This glob re-exports them into the scalar namespace for direct callers (SIMD tails, tests).
+#[allow(unused_imports)]
+pub(crate) use gray::*;
 pub(crate) use hsv::*;
 pub(crate) use packed_rgb::*;
 pub(crate) use packed_rgb_float::*;
