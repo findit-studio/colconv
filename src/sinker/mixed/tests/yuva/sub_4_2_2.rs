@@ -353,3 +353,814 @@ fn yuva422p12_rgba_u16_simd_matches_scalar_with_random_yuva() {
     }
   }
 }
+
+// ---- Yuva422p Strategy A+ correctness (spec § 6.1) ----------------------
+
+/// Strategy A+ correctness: combo path output == scalar inline-α kernel output
+/// at all (range, matrix) combinations. See spec § 6.1.
+///
+/// Yuva422p uses the same per-row chroma layout as Yuva420p (half-width U/V)
+/// but chroma is full-height. The A+ path uses expand_rgb_to_rgba_row +
+/// copy_alpha_plane_u8 which must be byte-identical to yuv_420_to_rgba_with_alpha_src_row.
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva422p_strategy_a_plus_matches_independent_kernel() {
+  let width = 128usize;
+  let height = 4usize;
+  let cw = width / 2;
+
+  let mut yp = std::vec![0u8; width * height];
+  let mut up = std::vec![0u8; cw * height];
+  let mut vp = std::vec![0u8; cw * height];
+  let mut ap = std::vec![0u8; width * height];
+  pseudo_random_u8(&mut yp, 0xC0FFEE_u32);
+  pseudo_random_u8(&mut up, 0xBADF00D_u32);
+  pseudo_random_u8(&mut vp, 0xFEEDFACE_u32);
+  pseudo_random_u8(&mut ap, 0xA1FA5EED_u32);
+
+  let frame = Yuva422pFrame::try_new(
+    &yp,
+    &up,
+    &vp,
+    &ap,
+    width as u32,
+    height as u32,
+    width as u32,
+    cw as u32,
+    cw as u32,
+    width as u32,
+  )
+  .unwrap();
+
+  for full_range in [true, false] {
+    for matrix in [
+      ColorMatrix::Bt601,
+      ColorMatrix::Bt709,
+      ColorMatrix::Bt2020Ncl,
+      ColorMatrix::Smpte240m,
+      ColorMatrix::Fcc,
+      ColorMatrix::YCgCo,
+    ] {
+      // Sinker combo path (A+).
+      let mut sinker_rgb = std::vec![0u8; width * height * 3];
+      let mut sinker_rgba = std::vec![0u8; width * height * 4];
+      {
+        let mut sink = MixedSinker::<Yuva422p>::new(width, height)
+          .with_rgb(&mut sinker_rgb)
+          .unwrap()
+          .with_rgba(&mut sinker_rgba)
+          .unwrap();
+        yuva422p_to(&frame, full_range, matrix, &mut sink).unwrap();
+      }
+
+      // Reference: scalar inline-α kernel per row.
+      // Yuva422p chroma is full-height (row r uses u_row = &up[r*cw..]).
+      let mut inline_rgb = std::vec![0u8; width * height * 3];
+      let mut inline_rgba = std::vec![0u8; width * height * 4];
+      for r in 0..height {
+        let y_row = &yp[r * width..(r + 1) * width];
+        let u_row = &up[r * cw..(r + 1) * cw];
+        let v_row = &vp[r * cw..(r + 1) * cw];
+        let a_row = &ap[r * width..(r + 1) * width];
+        crate::row::scalar::yuv_420_to_rgb_row(
+          y_row,
+          u_row,
+          v_row,
+          &mut inline_rgb[r * width * 3..(r + 1) * width * 3],
+          width,
+          matrix,
+          full_range,
+        );
+        crate::row::scalar::yuv_420_to_rgba_with_alpha_src_row(
+          y_row,
+          u_row,
+          v_row,
+          a_row,
+          &mut inline_rgba[r * width * 4..(r + 1) * width * 4],
+          width,
+          matrix,
+          full_range,
+        );
+      }
+
+      assert_eq!(
+        sinker_rgb, inline_rgb,
+        "Yuva422p A+ RGB diverges (range={full_range}, matrix={matrix:?})"
+      );
+      assert_eq!(
+        sinker_rgba, inline_rgba,
+        "Yuva422p A+ RGBA diverges from scalar inline-α (range={full_range}, matrix={matrix:?})"
+      );
+    }
+  }
+}
+
+// ---- Yuva422p9/10/12/16 Strategy A+ correctness (spec § 6.1) ------------
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva422p9_strategy_a_plus_matches_independent_kernel() {
+  let width = 128usize;
+  let height = 4usize;
+  let cw = width / 2;
+  let mut yp = std::vec![0u16; width * height];
+  let mut up = std::vec![0u16; cw * height];
+  let mut vp = std::vec![0u16; cw * height];
+  let mut ap = std::vec![0u16; width * height];
+  pseudo_random_u16_low_n_bits(&mut yp, 0xC0FFEE_u32, 9);
+  pseudo_random_u16_low_n_bits(&mut up, 0xBADF00D_u32, 9);
+  pseudo_random_u16_low_n_bits(&mut vp, 0xFEEDFACE_u32, 9);
+  pseudo_random_u16_low_n_bits(&mut ap, 0xA1FA5EED_u32, 9);
+  let frame = Yuva422p9Frame::try_new(
+    &yp,
+    &up,
+    &vp,
+    &ap,
+    width as u32,
+    height as u32,
+    width as u32,
+    cw as u32,
+    cw as u32,
+    width as u32,
+  )
+  .unwrap();
+  for full_range in [true, false] {
+    for matrix in [
+      ColorMatrix::Bt601,
+      ColorMatrix::Bt709,
+      ColorMatrix::Bt2020Ncl,
+      ColorMatrix::Smpte240m,
+      ColorMatrix::Fcc,
+      ColorMatrix::YCgCo,
+    ] {
+      let mut sinker_rgb = std::vec![0u8; width * height * 3];
+      let mut sinker_rgba = std::vec![0u8; width * height * 4];
+      {
+        let mut sink = MixedSinker::<Yuva422p9>::new(width, height)
+          .with_rgb(&mut sinker_rgb)
+          .unwrap()
+          .with_rgba(&mut sinker_rgba)
+          .unwrap();
+        yuva422p9_to(&frame, full_range, matrix, &mut sink).unwrap();
+      }
+      let mut inline_rgb = std::vec![0u8; width * height * 3];
+      let mut inline_rgba = std::vec![0u8; width * height * 4];
+      for r in 0..height {
+        let y_row = &yp[r * width..(r + 1) * width];
+        let u_row = &up[r * cw..(r + 1) * cw];
+        let v_row = &vp[r * cw..(r + 1) * cw];
+        let a_row = &ap[r * width..(r + 1) * width];
+        crate::row::scalar::yuv_420p_n_to_rgb_row::<9>(
+          y_row,
+          u_row,
+          v_row,
+          &mut inline_rgb[r * width * 3..(r + 1) * width * 3],
+          width,
+          matrix,
+          full_range,
+        );
+        crate::row::scalar::yuv_420p_n_to_rgba_with_alpha_src_row::<9>(
+          y_row,
+          u_row,
+          v_row,
+          a_row,
+          &mut inline_rgba[r * width * 4..(r + 1) * width * 4],
+          width,
+          matrix,
+          full_range,
+        );
+      }
+      assert_eq!(
+        sinker_rgb, inline_rgb,
+        "Yuva422p9 A+ u8 RGB diverges (range={full_range}, matrix={matrix:?})"
+      );
+      assert_eq!(
+        sinker_rgba, inline_rgba,
+        "Yuva422p9 A+ u8 RGBA diverges (range={full_range}, matrix={matrix:?})"
+      );
+    }
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva422p9_strategy_a_plus_u16_matches_independent_kernel() {
+  let width = 128usize;
+  let height = 4usize;
+  let cw = width / 2;
+  let mut yp = std::vec![0u16; width * height];
+  let mut up = std::vec![0u16; cw * height];
+  let mut vp = std::vec![0u16; cw * height];
+  let mut ap = std::vec![0u16; width * height];
+  pseudo_random_u16_low_n_bits(&mut yp, 0xDEADBEEF_u32, 9);
+  pseudo_random_u16_low_n_bits(&mut up, 0xBAADC0DE_u32, 9);
+  pseudo_random_u16_low_n_bits(&mut vp, 0xCAFEBABE_u32, 9);
+  pseudo_random_u16_low_n_bits(&mut ap, 0x1337C0DE_u32, 9);
+  let frame = Yuva422p9Frame::try_new(
+    &yp,
+    &up,
+    &vp,
+    &ap,
+    width as u32,
+    height as u32,
+    width as u32,
+    cw as u32,
+    cw as u32,
+    width as u32,
+  )
+  .unwrap();
+  for full_range in [true, false] {
+    for matrix in [
+      ColorMatrix::Bt601,
+      ColorMatrix::Bt709,
+      ColorMatrix::Bt2020Ncl,
+      ColorMatrix::Smpte240m,
+      ColorMatrix::Fcc,
+      ColorMatrix::YCgCo,
+    ] {
+      let mut sinker_rgb = std::vec![0u16; width * height * 3];
+      let mut sinker_rgba = std::vec![0u16; width * height * 4];
+      {
+        let mut sink = MixedSinker::<Yuva422p9>::new(width, height)
+          .with_rgb_u16(&mut sinker_rgb)
+          .unwrap()
+          .with_rgba_u16(&mut sinker_rgba)
+          .unwrap();
+        yuva422p9_to(&frame, full_range, matrix, &mut sink).unwrap();
+      }
+      let mut inline_rgb = std::vec![0u16; width * height * 3];
+      let mut inline_rgba = std::vec![0u16; width * height * 4];
+      for r in 0..height {
+        let y_row = &yp[r * width..(r + 1) * width];
+        let u_row = &up[r * cw..(r + 1) * cw];
+        let v_row = &vp[r * cw..(r + 1) * cw];
+        let a_row = &ap[r * width..(r + 1) * width];
+        crate::row::scalar::yuv_420p_n_to_rgb_u16_row::<9>(
+          y_row,
+          u_row,
+          v_row,
+          &mut inline_rgb[r * width * 3..(r + 1) * width * 3],
+          width,
+          matrix,
+          full_range,
+        );
+        crate::row::scalar::yuv_420p_n_to_rgba_u16_with_alpha_src_row::<9>(
+          y_row,
+          u_row,
+          v_row,
+          a_row,
+          &mut inline_rgba[r * width * 4..(r + 1) * width * 4],
+          width,
+          matrix,
+          full_range,
+        );
+      }
+      assert_eq!(
+        sinker_rgb, inline_rgb,
+        "Yuva422p9 A+ u16 RGB diverges (range={full_range}, matrix={matrix:?})"
+      );
+      assert_eq!(
+        sinker_rgba, inline_rgba,
+        "Yuva422p9 A+ u16 RGBA diverges (range={full_range}, matrix={matrix:?})"
+      );
+    }
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva422p10_strategy_a_plus_matches_independent_kernel() {
+  let width = 128usize;
+  let height = 4usize;
+  let cw = width / 2;
+  let mut yp = std::vec![0u16; width * height];
+  let mut up = std::vec![0u16; cw * height];
+  let mut vp = std::vec![0u16; cw * height];
+  let mut ap = std::vec![0u16; width * height];
+  pseudo_random_u16_low_n_bits(&mut yp, 0xC0FFEE_u32, 10);
+  pseudo_random_u16_low_n_bits(&mut up, 0xBADF00D_u32, 10);
+  pseudo_random_u16_low_n_bits(&mut vp, 0xFEEDFACE_u32, 10);
+  pseudo_random_u16_low_n_bits(&mut ap, 0xA1FA5EED_u32, 10);
+  let frame = Yuva422p10Frame::try_new(
+    &yp,
+    &up,
+    &vp,
+    &ap,
+    width as u32,
+    height as u32,
+    width as u32,
+    cw as u32,
+    cw as u32,
+    width as u32,
+  )
+  .unwrap();
+  for full_range in [true, false] {
+    for matrix in [
+      ColorMatrix::Bt601,
+      ColorMatrix::Bt709,
+      ColorMatrix::Bt2020Ncl,
+      ColorMatrix::Smpte240m,
+      ColorMatrix::Fcc,
+      ColorMatrix::YCgCo,
+    ] {
+      let mut sinker_rgb = std::vec![0u8; width * height * 3];
+      let mut sinker_rgba = std::vec![0u8; width * height * 4];
+      {
+        let mut sink = MixedSinker::<Yuva422p10>::new(width, height)
+          .with_rgb(&mut sinker_rgb)
+          .unwrap()
+          .with_rgba(&mut sinker_rgba)
+          .unwrap();
+        yuva422p10_to(&frame, full_range, matrix, &mut sink).unwrap();
+      }
+      let mut inline_rgb = std::vec![0u8; width * height * 3];
+      let mut inline_rgba = std::vec![0u8; width * height * 4];
+      for r in 0..height {
+        let y_row = &yp[r * width..(r + 1) * width];
+        let u_row = &up[r * cw..(r + 1) * cw];
+        let v_row = &vp[r * cw..(r + 1) * cw];
+        let a_row = &ap[r * width..(r + 1) * width];
+        crate::row::scalar::yuv_420p_n_to_rgb_row::<10>(
+          y_row,
+          u_row,
+          v_row,
+          &mut inline_rgb[r * width * 3..(r + 1) * width * 3],
+          width,
+          matrix,
+          full_range,
+        );
+        crate::row::scalar::yuv_420p_n_to_rgba_with_alpha_src_row::<10>(
+          y_row,
+          u_row,
+          v_row,
+          a_row,
+          &mut inline_rgba[r * width * 4..(r + 1) * width * 4],
+          width,
+          matrix,
+          full_range,
+        );
+      }
+      assert_eq!(
+        sinker_rgb, inline_rgb,
+        "Yuva422p10 A+ u8 RGB diverges (range={full_range}, matrix={matrix:?})"
+      );
+      assert_eq!(
+        sinker_rgba, inline_rgba,
+        "Yuva422p10 A+ u8 RGBA diverges (range={full_range}, matrix={matrix:?})"
+      );
+    }
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva422p10_strategy_a_plus_u16_matches_independent_kernel() {
+  let width = 128usize;
+  let height = 4usize;
+  let cw = width / 2;
+  let mut yp = std::vec![0u16; width * height];
+  let mut up = std::vec![0u16; cw * height];
+  let mut vp = std::vec![0u16; cw * height];
+  let mut ap = std::vec![0u16; width * height];
+  pseudo_random_u16_low_n_bits(&mut yp, 0xDEADBEEF_u32, 10);
+  pseudo_random_u16_low_n_bits(&mut up, 0xBAADC0DE_u32, 10);
+  pseudo_random_u16_low_n_bits(&mut vp, 0xCAFEBABE_u32, 10);
+  pseudo_random_u16_low_n_bits(&mut ap, 0x1337C0DE_u32, 10);
+  let frame = Yuva422p10Frame::try_new(
+    &yp,
+    &up,
+    &vp,
+    &ap,
+    width as u32,
+    height as u32,
+    width as u32,
+    cw as u32,
+    cw as u32,
+    width as u32,
+  )
+  .unwrap();
+  for full_range in [true, false] {
+    for matrix in [
+      ColorMatrix::Bt601,
+      ColorMatrix::Bt709,
+      ColorMatrix::Bt2020Ncl,
+      ColorMatrix::Smpte240m,
+      ColorMatrix::Fcc,
+      ColorMatrix::YCgCo,
+    ] {
+      let mut sinker_rgb = std::vec![0u16; width * height * 3];
+      let mut sinker_rgba = std::vec![0u16; width * height * 4];
+      {
+        let mut sink = MixedSinker::<Yuva422p10>::new(width, height)
+          .with_rgb_u16(&mut sinker_rgb)
+          .unwrap()
+          .with_rgba_u16(&mut sinker_rgba)
+          .unwrap();
+        yuva422p10_to(&frame, full_range, matrix, &mut sink).unwrap();
+      }
+      let mut inline_rgb = std::vec![0u16; width * height * 3];
+      let mut inline_rgba = std::vec![0u16; width * height * 4];
+      for r in 0..height {
+        let y_row = &yp[r * width..(r + 1) * width];
+        let u_row = &up[r * cw..(r + 1) * cw];
+        let v_row = &vp[r * cw..(r + 1) * cw];
+        let a_row = &ap[r * width..(r + 1) * width];
+        crate::row::scalar::yuv_420p_n_to_rgb_u16_row::<10>(
+          y_row,
+          u_row,
+          v_row,
+          &mut inline_rgb[r * width * 3..(r + 1) * width * 3],
+          width,
+          matrix,
+          full_range,
+        );
+        crate::row::scalar::yuv_420p_n_to_rgba_u16_with_alpha_src_row::<10>(
+          y_row,
+          u_row,
+          v_row,
+          a_row,
+          &mut inline_rgba[r * width * 4..(r + 1) * width * 4],
+          width,
+          matrix,
+          full_range,
+        );
+      }
+      assert_eq!(
+        sinker_rgb, inline_rgb,
+        "Yuva422p10 A+ u16 RGB diverges (range={full_range}, matrix={matrix:?})"
+      );
+      assert_eq!(
+        sinker_rgba, inline_rgba,
+        "Yuva422p10 A+ u16 RGBA diverges (range={full_range}, matrix={matrix:?})"
+      );
+    }
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva422p12_strategy_a_plus_matches_independent_kernel() {
+  let width = 128usize;
+  let height = 4usize;
+  let cw = width / 2;
+  let mut yp = std::vec![0u16; width * height];
+  let mut up = std::vec![0u16; cw * height];
+  let mut vp = std::vec![0u16; cw * height];
+  let mut ap = std::vec![0u16; width * height];
+  pseudo_random_u16_low_n_bits(&mut yp, 0xC0FFEE_u32, 12);
+  pseudo_random_u16_low_n_bits(&mut up, 0xBADF00D_u32, 12);
+  pseudo_random_u16_low_n_bits(&mut vp, 0xFEEDFACE_u32, 12);
+  pseudo_random_u16_low_n_bits(&mut ap, 0xA1FA5EED_u32, 12);
+  let frame = Yuva422p12Frame::try_new(
+    &yp,
+    &up,
+    &vp,
+    &ap,
+    width as u32,
+    height as u32,
+    width as u32,
+    cw as u32,
+    cw as u32,
+    width as u32,
+  )
+  .unwrap();
+  for full_range in [true, false] {
+    for matrix in [
+      ColorMatrix::Bt601,
+      ColorMatrix::Bt709,
+      ColorMatrix::Bt2020Ncl,
+      ColorMatrix::Smpte240m,
+      ColorMatrix::Fcc,
+      ColorMatrix::YCgCo,
+    ] {
+      let mut sinker_rgb = std::vec![0u8; width * height * 3];
+      let mut sinker_rgba = std::vec![0u8; width * height * 4];
+      {
+        let mut sink = MixedSinker::<Yuva422p12>::new(width, height)
+          .with_rgb(&mut sinker_rgb)
+          .unwrap()
+          .with_rgba(&mut sinker_rgba)
+          .unwrap();
+        yuva422p12_to(&frame, full_range, matrix, &mut sink).unwrap();
+      }
+      let mut inline_rgb = std::vec![0u8; width * height * 3];
+      let mut inline_rgba = std::vec![0u8; width * height * 4];
+      for r in 0..height {
+        let y_row = &yp[r * width..(r + 1) * width];
+        let u_row = &up[r * cw..(r + 1) * cw];
+        let v_row = &vp[r * cw..(r + 1) * cw];
+        let a_row = &ap[r * width..(r + 1) * width];
+        crate::row::scalar::yuv_420p_n_to_rgb_row::<12>(
+          y_row,
+          u_row,
+          v_row,
+          &mut inline_rgb[r * width * 3..(r + 1) * width * 3],
+          width,
+          matrix,
+          full_range,
+        );
+        crate::row::scalar::yuv_420p_n_to_rgba_with_alpha_src_row::<12>(
+          y_row,
+          u_row,
+          v_row,
+          a_row,
+          &mut inline_rgba[r * width * 4..(r + 1) * width * 4],
+          width,
+          matrix,
+          full_range,
+        );
+      }
+      assert_eq!(
+        sinker_rgb, inline_rgb,
+        "Yuva422p12 A+ u8 RGB diverges (range={full_range}, matrix={matrix:?})"
+      );
+      assert_eq!(
+        sinker_rgba, inline_rgba,
+        "Yuva422p12 A+ u8 RGBA diverges (range={full_range}, matrix={matrix:?})"
+      );
+    }
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva422p12_strategy_a_plus_u16_matches_independent_kernel() {
+  let width = 128usize;
+  let height = 4usize;
+  let cw = width / 2;
+  let mut yp = std::vec![0u16; width * height];
+  let mut up = std::vec![0u16; cw * height];
+  let mut vp = std::vec![0u16; cw * height];
+  let mut ap = std::vec![0u16; width * height];
+  pseudo_random_u16_low_n_bits(&mut yp, 0xDEADBEEF_u32, 12);
+  pseudo_random_u16_low_n_bits(&mut up, 0xBAADC0DE_u32, 12);
+  pseudo_random_u16_low_n_bits(&mut vp, 0xCAFEBABE_u32, 12);
+  pseudo_random_u16_low_n_bits(&mut ap, 0x1337C0DE_u32, 12);
+  let frame = Yuva422p12Frame::try_new(
+    &yp,
+    &up,
+    &vp,
+    &ap,
+    width as u32,
+    height as u32,
+    width as u32,
+    cw as u32,
+    cw as u32,
+    width as u32,
+  )
+  .unwrap();
+  for full_range in [true, false] {
+    for matrix in [
+      ColorMatrix::Bt601,
+      ColorMatrix::Bt709,
+      ColorMatrix::Bt2020Ncl,
+      ColorMatrix::Smpte240m,
+      ColorMatrix::Fcc,
+      ColorMatrix::YCgCo,
+    ] {
+      let mut sinker_rgb = std::vec![0u16; width * height * 3];
+      let mut sinker_rgba = std::vec![0u16; width * height * 4];
+      {
+        let mut sink = MixedSinker::<Yuva422p12>::new(width, height)
+          .with_rgb_u16(&mut sinker_rgb)
+          .unwrap()
+          .with_rgba_u16(&mut sinker_rgba)
+          .unwrap();
+        yuva422p12_to(&frame, full_range, matrix, &mut sink).unwrap();
+      }
+      let mut inline_rgb = std::vec![0u16; width * height * 3];
+      let mut inline_rgba = std::vec![0u16; width * height * 4];
+      for r in 0..height {
+        let y_row = &yp[r * width..(r + 1) * width];
+        let u_row = &up[r * cw..(r + 1) * cw];
+        let v_row = &vp[r * cw..(r + 1) * cw];
+        let a_row = &ap[r * width..(r + 1) * width];
+        crate::row::scalar::yuv_420p_n_to_rgb_u16_row::<12>(
+          y_row,
+          u_row,
+          v_row,
+          &mut inline_rgb[r * width * 3..(r + 1) * width * 3],
+          width,
+          matrix,
+          full_range,
+        );
+        crate::row::scalar::yuv_420p_n_to_rgba_u16_with_alpha_src_row::<12>(
+          y_row,
+          u_row,
+          v_row,
+          a_row,
+          &mut inline_rgba[r * width * 4..(r + 1) * width * 4],
+          width,
+          matrix,
+          full_range,
+        );
+      }
+      assert_eq!(
+        sinker_rgb, inline_rgb,
+        "Yuva422p12 A+ u16 RGB diverges (range={full_range}, matrix={matrix:?})"
+      );
+      assert_eq!(
+        sinker_rgba, inline_rgba,
+        "Yuva422p12 A+ u16 RGBA diverges (range={full_range}, matrix={matrix:?})"
+      );
+    }
+  }
+}
+
+// Yuva422p16 uses the dedicated 16-bit scalar family.
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva422p16_strategy_a_plus_matches_independent_kernel() {
+  let width = 128usize;
+  let height = 4usize;
+  let cw = width / 2;
+  let mut yp = std::vec![0u16; width * height];
+  let mut up = std::vec![0u16; cw * height];
+  let mut vp = std::vec![0u16; cw * height];
+  let mut ap = std::vec![0u16; width * height];
+  pseudo_random_u16_low_n_bits(&mut yp, 0xC0FFEE_u32, 16);
+  pseudo_random_u16_low_n_bits(&mut up, 0xBADF00D_u32, 16);
+  pseudo_random_u16_low_n_bits(&mut vp, 0xFEEDFACE_u32, 16);
+  pseudo_random_u16_low_n_bits(&mut ap, 0xA1FA5EED_u32, 16);
+  let frame = Yuva422p16Frame::try_new(
+    &yp,
+    &up,
+    &vp,
+    &ap,
+    width as u32,
+    height as u32,
+    width as u32,
+    cw as u32,
+    cw as u32,
+    width as u32,
+  )
+  .unwrap();
+  for full_range in [true, false] {
+    for matrix in [
+      ColorMatrix::Bt601,
+      ColorMatrix::Bt709,
+      ColorMatrix::Bt2020Ncl,
+      ColorMatrix::Smpte240m,
+      ColorMatrix::Fcc,
+      ColorMatrix::YCgCo,
+    ] {
+      let mut sinker_rgb = std::vec![0u8; width * height * 3];
+      let mut sinker_rgba = std::vec![0u8; width * height * 4];
+      {
+        let mut sink = MixedSinker::<Yuva422p16>::new(width, height)
+          .with_rgb(&mut sinker_rgb)
+          .unwrap()
+          .with_rgba(&mut sinker_rgba)
+          .unwrap();
+        yuva422p16_to(&frame, full_range, matrix, &mut sink).unwrap();
+      }
+      let mut inline_rgb = std::vec![0u8; width * height * 3];
+      let mut inline_rgba = std::vec![0u8; width * height * 4];
+      for r in 0..height {
+        let y_row = &yp[r * width..(r + 1) * width];
+        let u_row = &up[r * cw..(r + 1) * cw];
+        let v_row = &vp[r * cw..(r + 1) * cw];
+        let a_row = &ap[r * width..(r + 1) * width];
+        crate::row::scalar::yuv_420p16_to_rgb_row(
+          y_row,
+          u_row,
+          v_row,
+          &mut inline_rgb[r * width * 3..(r + 1) * width * 3],
+          width,
+          matrix,
+          full_range,
+        );
+        crate::row::scalar::yuv_420p16_to_rgba_with_alpha_src_row(
+          y_row,
+          u_row,
+          v_row,
+          a_row,
+          &mut inline_rgba[r * width * 4..(r + 1) * width * 4],
+          width,
+          matrix,
+          full_range,
+        );
+      }
+      assert_eq!(
+        sinker_rgb, inline_rgb,
+        "Yuva422p16 A+ u8 RGB diverges (range={full_range}, matrix={matrix:?})"
+      );
+      assert_eq!(
+        sinker_rgba, inline_rgba,
+        "Yuva422p16 A+ u8 RGBA diverges (range={full_range}, matrix={matrix:?})"
+      );
+    }
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva422p16_strategy_a_plus_u16_matches_independent_kernel() {
+  let width = 128usize;
+  let height = 4usize;
+  let cw = width / 2;
+  let mut yp = std::vec![0u16; width * height];
+  let mut up = std::vec![0u16; cw * height];
+  let mut vp = std::vec![0u16; cw * height];
+  let mut ap = std::vec![0u16; width * height];
+  pseudo_random_u16_low_n_bits(&mut yp, 0xDEADBEEF_u32, 16);
+  pseudo_random_u16_low_n_bits(&mut up, 0xBAADC0DE_u32, 16);
+  pseudo_random_u16_low_n_bits(&mut vp, 0xCAFEBABE_u32, 16);
+  pseudo_random_u16_low_n_bits(&mut ap, 0x1337C0DE_u32, 16);
+  let frame = Yuva422p16Frame::try_new(
+    &yp,
+    &up,
+    &vp,
+    &ap,
+    width as u32,
+    height as u32,
+    width as u32,
+    cw as u32,
+    cw as u32,
+    width as u32,
+  )
+  .unwrap();
+  for full_range in [true, false] {
+    for matrix in [
+      ColorMatrix::Bt601,
+      ColorMatrix::Bt709,
+      ColorMatrix::Bt2020Ncl,
+      ColorMatrix::Smpte240m,
+      ColorMatrix::Fcc,
+      ColorMatrix::YCgCo,
+    ] {
+      let mut sinker_rgb = std::vec![0u16; width * height * 3];
+      let mut sinker_rgba = std::vec![0u16; width * height * 4];
+      {
+        let mut sink = MixedSinker::<Yuva422p16>::new(width, height)
+          .with_rgb_u16(&mut sinker_rgb)
+          .unwrap()
+          .with_rgba_u16(&mut sinker_rgba)
+          .unwrap();
+        yuva422p16_to(&frame, full_range, matrix, &mut sink).unwrap();
+      }
+      let mut inline_rgb = std::vec![0u16; width * height * 3];
+      let mut inline_rgba = std::vec![0u16; width * height * 4];
+      for r in 0..height {
+        let y_row = &yp[r * width..(r + 1) * width];
+        let u_row = &up[r * cw..(r + 1) * cw];
+        let v_row = &vp[r * cw..(r + 1) * cw];
+        let a_row = &ap[r * width..(r + 1) * width];
+        crate::row::scalar::yuv_420p16_to_rgb_u16_row(
+          y_row,
+          u_row,
+          v_row,
+          &mut inline_rgb[r * width * 3..(r + 1) * width * 3],
+          width,
+          matrix,
+          full_range,
+        );
+        crate::row::scalar::yuv_420p16_to_rgba_u16_with_alpha_src_row(
+          y_row,
+          u_row,
+          v_row,
+          a_row,
+          &mut inline_rgba[r * width * 4..(r + 1) * width * 4],
+          width,
+          matrix,
+          full_range,
+        );
+      }
+      assert_eq!(
+        sinker_rgb, inline_rgb,
+        "Yuva422p16 A+ u16 RGB diverges (range={full_range}, matrix={matrix:?})"
+      );
+      assert_eq!(
+        sinker_rgba, inline_rgba,
+        "Yuva422p16 A+ u16 RGBA diverges (range={full_range}, matrix={matrix:?})"
+      );
+    }
+  }
+}

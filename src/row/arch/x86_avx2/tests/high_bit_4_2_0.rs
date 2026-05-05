@@ -46,6 +46,46 @@ fn avx2_hsv_matches_scalar() {
   }
 }
 
+// ---- rgb_to_luma_row equivalence -------------------------------------
+
+fn check_luma_equivalence(rgb: &[u8], width: usize, matrix: ColorMatrix, full_range: bool) {
+  let mut y_s = std::vec![0u8; width];
+  let mut y_k = std::vec![0u8; width];
+  scalar::rgb_to_luma_row(rgb, &mut y_s, width, matrix, full_range);
+  unsafe {
+    rgb_to_luma_row(rgb, &mut y_k, width, matrix, full_range);
+  }
+  assert_eq!(
+    y_s, y_k,
+    "AVX2 rgb_to_luma diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
+  );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+fn avx2_rgb_to_luma_row_matches_scalar_widths() {
+  if !std::arch::is_x86_feature_detected!("avx2") {
+    return;
+  }
+  let rgb: std::vec::Vec<u8> = (0..1921 * 3)
+    .map(|i| ((i * 37 + 11) & 0xFF) as u8)
+    .collect();
+  for &matrix in &[
+    ColorMatrix::Bt601,
+    ColorMatrix::Fcc,
+    ColorMatrix::Bt709,
+    ColorMatrix::Bt2020Ncl,
+    ColorMatrix::Smpte240m,
+    ColorMatrix::YCgCo,
+  ] {
+    for full_range in [true, false] {
+      for &w in &[1usize, 7, 16, 31, 32, 33, 47, 63, 64, 65, 128, 130] {
+        check_luma_equivalence(&rgb[..w * 3], w, matrix, full_range);
+      }
+    }
+  }
+}
+
 // ---- yuv420p10 AVX2 scalar-equivalence ------------------------------
 
 fn p10_plane(n: usize, seed: usize) -> std::vec::Vec<u16> {

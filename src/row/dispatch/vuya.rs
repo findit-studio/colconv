@@ -222,6 +222,61 @@ pub fn vuya_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize, use_si
   scalar::vuya_to_luma_row(packed, luma_out, width);
 }
 
+/// Extracts one row of u16 luma (zero-extended Y bytes) from a packed VUYA
+/// or VUYX buffer. Y is at byte offset 2 of each pixel quadruple; the V, U,
+/// and A/X bytes are ignored. `use_simd = false` forces scalar.
+///
+/// This dispatcher is shared between VUYA and VUYX (Y position is identical).
+/// `vuyx_to_luma_u16_row` in `dispatch::vuyx` re-exports this function.
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn vuya_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize, use_simd: bool) {
+  assert!(
+    packed.len() >= vuya_packed_bytes(width),
+    "packed row too short"
+  );
+  assert!(out.len() >= width, "out too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified at runtime.
+          unsafe { arch::neon::vuya_to_luma_u16_row(packed, out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512BW verified.
+          unsafe { arch::x86_avx512::vuya_to_luma_u16_row(packed, out, width); }
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          unsafe { arch::x86_avx2::vuya_to_luma_u16_row(packed, out, width); }
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          unsafe { arch::x86_sse41::vuya_to_luma_u16_row(packed, out, width); }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile-time verified.
+          unsafe { arch::wasm_simd128::vuya_to_luma_u16_row(packed, out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  scalar::vuya_to_luma_u16_row(packed, out, width);
+}
+
 #[cfg(all(test, feature = "std"))]
 mod tests {
   //! Smoke tests for the public VUYA dispatchers. Walker / kernel

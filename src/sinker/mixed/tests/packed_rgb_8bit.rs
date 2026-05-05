@@ -43,6 +43,10 @@ fn rgb24_with_rgba_appends_opaque_alpha() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn rgb24_with_luma_derives_bt709_full_range() {
   // Pure red full-range BT.709: Y = 0.2126 * 255 ≈ 54.21 → rounded
   // to 54 by Q15 math.
@@ -62,6 +66,10 @@ fn rgb24_with_luma_derives_bt709_full_range() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn rgb24_with_luma_derives_bt601_full_range() {
   // Pure green BT.601: Y = 0.587 * 255 ≈ 149.685 → 150 rounded.
   let pix = solid_rgb24_frame(16, 4, 0, 255, 0);
@@ -79,6 +87,10 @@ fn rgb24_with_luma_derives_bt601_full_range() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn rgb24_with_luma_limited_range_falls_in_studio_band() {
   // Pure white full-range maps to Y=255 full → 235 limited.
   let pix = solid_rgb24_frame(16, 4, 255, 255, 255);

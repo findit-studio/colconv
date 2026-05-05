@@ -2,6 +2,53 @@ use core::arch::wasm32::*;
 
 use super::*;
 
+// ===== Shared 16-pixel RGB deinterleave =================================
+
+/// Deinterleaves 16 packed RGB pixels (48 bytes at `ptr`) into three
+/// 16-lane `v128`s holding contiguous R / G / B byte planes. Mirrors
+/// the x86 SSE4.1 `_mm_shuffle_epi8` 9-mask pattern. Used by every
+/// RGB-input wasm kernel in this module (`rgb_to_hsv_row`,
+/// `rgb_to_luma_row`).
+///
+/// # Safety
+///
+/// `ptr` must point to at least 48 readable bytes (16 px × 3 ch).
+#[inline]
+#[target_feature(enable = "simd128")]
+unsafe fn deinterleave_rgb_16px(ptr: *const u8) -> (v128, v128, v128) {
+  unsafe {
+    let in0 = v128_load(ptr.cast());
+    let in1 = v128_load(ptr.add(16).cast());
+    let in2 = v128_load(ptr.add(32).cast());
+
+    let mr0 = i8x16(0, 3, 6, 9, 12, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+    let mr1 = i8x16(-1, -1, -1, -1, -1, -1, 2, 5, 8, 11, 14, -1, -1, -1, -1, -1);
+    let mr2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1, 4, 7, 10, 13);
+    let r_u8 = v128_or(
+      v128_or(u8x16_swizzle(in0, mr0), u8x16_swizzle(in1, mr1)),
+      u8x16_swizzle(in2, mr2),
+    );
+
+    let mg0 = i8x16(1, 4, 7, 10, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+    let mg1 = i8x16(-1, -1, -1, -1, -1, 0, 3, 6, 9, 12, 15, -1, -1, -1, -1, -1);
+    let mg2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 2, 5, 8, 11, 14);
+    let g_u8 = v128_or(
+      v128_or(u8x16_swizzle(in0, mg0), u8x16_swizzle(in1, mg1)),
+      u8x16_swizzle(in2, mg2),
+    );
+
+    let mb0 = i8x16(2, 5, 8, 11, 14, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+    let mb1 = i8x16(-1, -1, -1, -1, -1, 1, 4, 7, 10, 13, -1, -1, -1, -1, -1, -1);
+    let mb2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 3, 6, 9, 12, 15);
+    let b_u8 = v128_or(
+      v128_or(u8x16_swizzle(in0, mb0), u8x16_swizzle(in1, mb1)),
+      u8x16_swizzle(in2, mb2),
+    );
+
+    (r_u8, g_u8, b_u8)
+  }
+}
+
 // ===== RGB → HSV =========================================================
 
 /// WASM simd128 RGB → planar HSV. 16 pixels per iteration using
@@ -31,34 +78,7 @@ pub(crate) unsafe fn rgb_to_hsv_row(
   unsafe {
     let mut x = 0usize;
     while x + 16 <= width {
-      let in0 = v128_load(rgb.as_ptr().add(x * 3).cast());
-      let in1 = v128_load(rgb.as_ptr().add(x * 3 + 16).cast());
-      let in2 = v128_load(rgb.as_ptr().add(x * 3 + 32).cast());
-
-      // 3‑channel deinterleave — mirror of the x86 mask pattern.
-      let mr0 = i8x16(0, 3, 6, 9, 12, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
-      let mr1 = i8x16(-1, -1, -1, -1, -1, -1, 2, 5, 8, 11, 14, -1, -1, -1, -1, -1);
-      let mr2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1, 4, 7, 10, 13);
-      let r_u8 = v128_or(
-        v128_or(u8x16_swizzle(in0, mr0), u8x16_swizzle(in1, mr1)),
-        u8x16_swizzle(in2, mr2),
-      );
-
-      let mg0 = i8x16(1, 4, 7, 10, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
-      let mg1 = i8x16(-1, -1, -1, -1, -1, 0, 3, 6, 9, 12, 15, -1, -1, -1, -1, -1);
-      let mg2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 2, 5, 8, 11, 14);
-      let g_u8 = v128_or(
-        v128_or(u8x16_swizzle(in0, mg0), u8x16_swizzle(in1, mg1)),
-        u8x16_swizzle(in2, mg2),
-      );
-
-      let mb0 = i8x16(2, 5, 8, 11, 14, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
-      let mb1 = i8x16(-1, -1, -1, -1, -1, 1, 4, 7, 10, 13, -1, -1, -1, -1, -1, -1);
-      let mb2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 3, 6, 9, 12, 15);
-      let b_u8 = v128_or(
-        v128_or(u8x16_swizzle(in0, mb0), u8x16_swizzle(in1, mb1)),
-        u8x16_swizzle(in2, mb2),
-      );
+      let (r_u8, g_u8, b_u8) = deinterleave_rgb_16px(rgb.as_ptr().add(x * 3));
 
       // Widen each u8x16 to 4 f32x4 groups.
       let (r0, r1, r2, r3) = u8x16_to_f32x4_quad(r_u8);
@@ -188,4 +208,150 @@ fn hsv_group(r: v128, g: v128, b: v128) -> (v128, v128, v128) {
   let v_quant = f32x4_min(f32x4_max(f32x4_add(v, half), zero), two_fifty_five);
 
   (h_quant, s_quant, v_quant)
+}
+
+// ===== RGB → luma (Y') ===================================================
+
+/// WASM simd128 RGB → planar luma (Y'). Byte‑identical to
+/// [`scalar::rgb_to_luma_row`]. 16 pixels per iteration using the same
+/// byte‑shuffle deinterleave pattern as the HSV kernel above; the
+/// per‑pixel math is the integer Q15 weighted sum (`i32x4_mul` +
+/// `i32x4_add` + `i32x4_shr<15>`).
+///
+/// # Safety
+///
+/// 1. simd128 must be enabled at compile time.
+/// 2. `rgb.len() >= 3 * width`.
+/// 3. `luma_out.len() >= width`.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn rgb_to_luma_row(
+  rgb: &[u8],
+  luma_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(rgb.len() >= width * 3);
+  debug_assert!(luma_out.len() >= width);
+
+  let (k_r, k_g, k_b) = scalar::luma_coefficients_q15(matrix);
+  let kr_v = i32x4_splat(k_r);
+  let kg_v = i32x4_splat(k_g);
+  let kb_v = i32x4_splat(k_b);
+  let rnd_v = i32x4_splat(1 << 14);
+
+  // SAFETY: simd128 verified at compile time; loop guard
+  // `x + 16 <= width` keeps the 48‑byte read and 16‑byte write inside
+  // the caller‑promised slice lengths.
+  unsafe {
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let (r_u8, g_u8, b_u8) = deinterleave_rgb_16px(rgb.as_ptr().add(x * 3));
+
+      // Widen u8x16 → i16x8 lo/hi (zero‑extend; samples in [0, 255]).
+      let r_lo_i16 = i16x8_extend_low_u8x16(r_u8);
+      let r_hi_i16 = i16x8_extend_high_u8x16(r_u8);
+      let g_lo_i16 = i16x8_extend_low_u8x16(g_u8);
+      let g_hi_i16 = i16x8_extend_high_u8x16(g_u8);
+      let b_lo_i16 = i16x8_extend_low_u8x16(b_u8);
+      let b_hi_i16 = i16x8_extend_high_u8x16(b_u8);
+
+      // Y_full per i32x4 quarter: (k_r·R + k_g·G + k_b·B + RND) >> 15.
+      let y0 = q15_luma(r_lo_i16, g_lo_i16, b_lo_i16, false, kr_v, kg_v, kb_v, rnd_v);
+      let y1 = q15_luma(r_lo_i16, g_lo_i16, b_lo_i16, true, kr_v, kg_v, kb_v, rnd_v);
+      let y2 = q15_luma(r_hi_i16, g_hi_i16, b_hi_i16, false, kr_v, kg_v, kb_v, rnd_v);
+      let y3 = q15_luma(r_hi_i16, g_hi_i16, b_hi_i16, true, kr_v, kg_v, kb_v, rnd_v);
+
+      // i32x4×2 → i16x8 (signed‑saturating); two i16x8 → u8x16
+      // (unsigned‑saturating). Both saturating narrows match the
+      // scalar's `clamp(0, 255)`.
+      let y_lo_i16 = i16x8_narrow_i32x4(y0, y1);
+      let y_hi_i16 = i16x8_narrow_i32x4(y2, y3);
+
+      let y_u8 = if full_range {
+        u8x16_narrow_i16x8(y_lo_i16, y_hi_i16)
+      } else {
+        // Limited range: (Y_full_clamped * 28142 + RND) >> 15 + 16.
+        let y_clamp_u8 = u8x16_narrow_i16x8(y_lo_i16, y_hi_i16);
+        limited_range_scale_16(y_clamp_u8, rnd_v)
+      };
+
+      v128_store(luma_out.as_mut_ptr().add(x).cast(), y_u8);
+      x += 16;
+    }
+
+    if x < width {
+      scalar::rgb_to_luma_row(
+        &rgb[x * 3..width * 3],
+        &mut luma_out[x..width],
+        width - x,
+        matrix,
+        full_range,
+      );
+    }
+  }
+}
+
+/// Q15 weighted sum for 4 pixels. `high` selects the lo/hi i32x4 half
+/// of the i16x8 channel inputs. Returns
+/// `(k_r·R + k_g·G + k_b·B + RND) >> 15` as i32x4.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn q15_luma(
+  r_i16: v128,
+  g_i16: v128,
+  b_i16: v128,
+  high: bool,
+  kr_v: v128,
+  kg_v: v128,
+  kb_v: v128,
+  rnd_v: v128,
+) -> v128 {
+  let (r, g, b) = if high {
+    (
+      i32x4_extend_high_i16x8(r_i16),
+      i32x4_extend_high_i16x8(g_i16),
+      i32x4_extend_high_i16x8(b_i16),
+    )
+  } else {
+    (
+      i32x4_extend_low_i16x8(r_i16),
+      i32x4_extend_low_i16x8(g_i16),
+      i32x4_extend_low_i16x8(b_i16),
+    )
+  };
+  let acc = i32x4_mul(r, kr_v);
+  let acc = i32x4_add(acc, i32x4_mul(g, kg_v));
+  let acc = i32x4_add(acc, i32x4_mul(b, kb_v));
+  let acc = i32x4_add(acc, rnd_v);
+  i32x4_shr(acc, 15)
+}
+
+/// Limited‑range post‑scale: `16 + ((y_clamped * 28142 + RND) >> 15)`.
+/// Input is u8x16 already clamped to `[0, 255]`; output is u8x16 in
+/// `[16, 235]`.
+#[inline(always)]
+fn limited_range_scale_16(y_clamp_u8: v128, rnd_v: v128) -> v128 {
+  let scale = i32x4_splat(28142);
+  let off = i16x8_splat(16);
+  let y_lo_i16 = i16x8_extend_low_u8x16(y_clamp_u8);
+  let y_hi_i16 = i16x8_extend_high_u8x16(y_clamp_u8);
+  let y_lim_lo = limited_range_quarter(y_lo_i16, scale, rnd_v);
+  let y_lim_hi = limited_range_quarter(y_hi_i16, scale, rnd_v);
+  let y_lim_lo = i16x8_add(y_lim_lo, off);
+  let y_lim_hi = i16x8_add(y_lim_hi, off);
+  u8x16_narrow_i16x8(y_lim_lo, y_lim_hi)
+}
+
+/// Q15 multiply of i16x8 (8 Y' samples in `[0, 255]`) by 28142,
+/// returned as i16x8. `(y * 28142 + RND) >> 15`. `y * 28142 ≤ 7.18M`
+/// well inside i32.
+#[inline(always)]
+fn limited_range_quarter(y_i16: v128, scale_i32: v128, rnd_v: v128) -> v128 {
+  let lo_i32 = i32x4_extend_low_i16x8(y_i16);
+  let hi_i32 = i32x4_extend_high_i16x8(y_i16);
+  let lo = i32x4_shr(i32x4_add(i32x4_mul(lo_i32, scale_i32), rnd_v), 15);
+  let hi = i32x4_shr(i32x4_add(i32x4_mul(hi_i32, scale_i32), rnd_v), 15);
+  i16x8_narrow_i32x4(lo, hi)
 }

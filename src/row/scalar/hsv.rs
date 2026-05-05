@@ -79,9 +79,11 @@ pub(crate) fn rgb_to_hsv_row(
 /// matrix. `k_r + k_g + k_b ≈ 32768` (1.0 in Q15) — minor rounding
 /// imbalance is below quantization noise. Used by
 /// [`rgb_to_luma_row`] to derive the Y' channel from packed RGB
-/// sources (Tier 6 / Ship 9a).
+/// sources (Tier 6 / Ship 9a) — also re-exported via
+/// `crate::row::scalar` so the per-arch SIMD backends can hoist the
+/// per-matrix constants outside their main loops.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(super) const fn luma_coefficients_q15(matrix: ColorMatrix) -> (i32, i32, i32) {
+pub(crate) const fn luma_coefficients_q15(matrix: ColorMatrix) -> (i32, i32, i32) {
   match matrix {
     // BT.601: Kr=0.299, Kg=0.587, Kb=0.114.
     ColorMatrix::Bt601 | ColorMatrix::Fcc => (9798, 19235, 3735),

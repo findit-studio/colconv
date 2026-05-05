@@ -15,82 +15,39 @@
 //! - `with_hsv` — stages an internal RGB scratch and runs the
 //!   existing `rgb_to_hsv_row` kernel.
 
-use crate::{ColorMatrix, PixelSink, SourceFormat, frame::Y216Frame, sealed::Sealed};
+use crate::frame::Y216Frame;
 
-/// Zero-sized marker for the packed **Y216** source format.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct Y216;
-
-impl Sealed for Y216 {}
-impl SourceFormat for Y216 {}
-
-/// One row of a [`Y216`] source — `width × 2` u16 elements
-/// (`Y₀, U, Y₁, V` quadruples per 2-pixel block).
-#[derive(Debug, Clone, Copy)]
-pub struct Y216Row<'a> {
-  packed: &'a [u16],
-  row: usize,
-  matrix: ColorMatrix,
-  full_range: bool,
-}
-
-impl<'a> Y216Row<'a> {
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub(crate) fn new(packed: &'a [u16], row: usize, matrix: ColorMatrix, full_range: bool) -> Self {
-    Self {
-      packed,
-      row,
-      matrix,
-      full_range,
-    }
+walker! {
+  packed {
+    /// Zero-sized marker for the packed **Y216** source format.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+    marker: Y216,
+    frame: Y216Frame<'_>,
+    row: Y216Row,
+    sink: Y216Sink,
+    walker: y216_to,
+    buf_field: packed,
+    elem_type: u16,
+    row_elems: |w| w * 2,
+    row_doc: concat!(
+      "One row of a [`Y216`] source — `width × 2` u16 elements\n",
+      "(`Y₀, U, Y₁, V` quadruples per 2-pixel block).\n",
+      "\n",
+      "Each u16 sample is 16-bit native — all 16 bits active (no\n",
+      "padding). Per 2-pixel block layout (4 u16 elements):\n",
+      "\n",
+      "| u16 slot | Field | Active bits           |\n",
+      "|----------|-------|-----------------------|\n",
+      "| 0        | Y₀    | bits `15:0` (16-bit) |\n",
+      "| 1        | U     | bits `15:0` (16-bit) |\n",
+      "| 2        | Y₁    | bits `15:0` (16-bit) |\n",
+      "| 3        | V     | bits `15:0` (16-bit) |\n",
+      "\n",
+      "Full range Y: `[0, 65535]` (16-bit). Limited range Y: `[4096,\n",
+      "60160]`, limited range chroma: `[4096, 61440]`.",
+    ),
+    walker_doc: "Walks a [`Y216Frame`] row by row into the sink.",
   }
-  /// Packed Y216 row — `width × 2` u16 elements (`Y₀, U, Y₁, V`,
-  /// all 16 bits active per sample).
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub fn packed(&self) -> &'a [u16] {
-    self.packed
-  }
-  /// Row index.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn row(&self) -> usize {
-    self.row
-  }
-  /// YUV → RGB matrix carried through.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn matrix(&self) -> ColorMatrix {
-    self.matrix
-  }
-  /// `true` iff Y ∈ `[0, 65535]` full range (16-bit). Limited range
-  /// is `[4096, 60160]`.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn full_range(&self) -> bool {
-    self.full_range
-  }
-}
-
-/// Sinks that consume [`Y216Row`].
-pub trait Y216Sink: for<'a> PixelSink<Input<'a> = Y216Row<'a>> {}
-
-/// Walks a [`Y216Frame`] row by row into the sink.
-pub fn y216_to<S: Y216Sink>(
-  src: &Y216Frame<'_>,
-  full_range: bool,
-  matrix: ColorMatrix,
-  sink: &mut S,
-) -> Result<(), S::Error> {
-  sink.begin_frame(src.width(), src.height())?;
-
-  let h = src.height() as usize;
-  let stride = src.stride() as usize;
-  let row_elems = src.width() as usize * 2;
-  let plane = src.packed();
-
-  for row in 0..h {
-    let start = row * stride;
-    let packed = &plane[start..start + row_elems];
-    sink.process(Y216Row::new(packed, row, matrix, full_range))?;
-  }
-  Ok(())
 }
 
 #[cfg(all(test, feature = "std"))]

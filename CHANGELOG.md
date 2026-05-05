@@ -1,5 +1,150 @@
 # CHANGELOG
 
+## 0.19.0 — `with_luma_u16` for all 8-bit source formats
+
+**Additive feature; no public API change for existing accessors.**
+
+All 14 8-bit source formats now uniformly support `with_luma_u16` /
+`set_luma_u16` accessors, matching the convention already established
+by 16-bit and high-bit formats (Y216, XV36, AYUV64, Yuva*p9/10/12/14/16,
+etc.). Output is mechanically `out[x] = src_y_byte[x] as u16` —
+zero-extension at the type level, no shift, no scaling.
+
+Formats wired:
+
+- **Planar:** Yuv420p, Yuv422p, Yuv440p, Yuv444p
+- **Semi-planar:** Nv12, Nv16, Nv21, Nv24, Nv42
+- **Packed YUV 4:2:2:** Yuyv422, Uyvy422, Yvyu422
+- **Packed YUV 4:4:4:** Vuya, Vuyx
+
+The 9 planar/semi-planar formats share a single
+`y_plane_to_luma_u16_row` kernel (Y is a contiguous u8 plane in all of
+them); the 5 packed formats each get their own format-specific kernel
+that gathers Y from the right byte offset (`packed[x*2]` / `packed[x*2+1]`
+for 4:2:2, `packed[x*4 + 2]` for 4:4:4). All kernels are scalar +
+5-backend SIMD (NEON, SSE4.1, AVX2, AVX-512, wasm-simd128) with byte-
+identical scalar-equivalence per backend.
+
+This closes a long-standing asymmetry where downstream consumers
+operating on `&mut [u16]` luma (scene-detect, bilateral filters,
+percentile/histogram work) had to special-case 8-bit sources or drop
+u16 luma support entirely. Surfaced from Ship 12c plan-time discussion.
+
+## 0.18.0 — Strategy A+ across all source-α formats (Tier 5 closure megaship PR 4 / final)
+
+**Performance improvement; no public API change; output byte-identical to v0.17.x.**
+
+For source-α formats (VUYA, AYUV64, Yuva420p / 422p / 444p, Yuva*p9 / 10 / 12 / 14 / 16),
+the `with_rgb + with_rgba` combo case previously ran the chroma kernel
+TWICE — once for RGB output, once for RGBA-with-source-α. Strategy A+
+now runs the chroma kernel ONCE, expands RGB → RGBA via the existing
+`expand_rgb_to_rgba_row` helper, then overwrites the α slot with a cheap
+α-extract pass from the source. Cost: 1× chroma + 1× expand + 1× α-overwrite
+instead of 2× chroma. Impact is largest for 16-bit (u16) outputs, where
+the chroma kernel uses i64 arithmetic (Q15 sums overflow i32 at 16-bit
+input) — that kernel now runs once instead of twice.
+
+The standalone `with_rgba`-only path is unchanged — it already runs a
+single inline-α kernel, which remains optimal.
+
+New module: `src/row/scalar/alpha_extract.rs` with 6 helpers, plus per-arch
+SIMD parity in `src/row/arch/{neon,x86_sse41,x86_avx2,x86_avx512,wasm_simd128}/alpha_extract.rs`
+(30 SIMD impls total) plus the runtime dispatcher
+`src/row/dispatch/alpha_extract.rs`.
+
+Output is byte-identical to v0.17.x — verified by 30 per-format A+
+correctness tests asserting `sinker(combo) == inline-α-kernel-direct`
+for every (range, ColorMatrix) combination.
+
+This is **PR 4 of the 4-PR Tier 5 closure megaship — the final PR**:
+- ✅ PR 1 (v0.16.0): AYUV64 + Tier 5 closure
+- ✅ PR 2 (v0.16.1): Multi-channel lane-order test backport
+- ✅ PR 3 (v0.17.0): 8-bit planar scale-constant migration
+- ✅ PR 4 (this release): Strategy A+ across source-α formats — **closes the megaship**
+
+After this release the source-α format family shares a uniform combo-case
+optimization with the rest of the wired families. The Tier 5 (packed
+YUV 4:4:4 + α) family is now feature-complete and performance-optimized.
+
+## 0.17.0 — 8-bit planar scale-constant migration (Tier 5 closure megaship PR 3)
+
+**Behavior change at limited-range:** all 8-bit YUV→RGB paths now use
+`range_params_n::<8, 8>(...)` for scale constants, replacing the legacy
+hardcoded `range_params(...)` (Ship 8 era). The new constants are
+derived from BITS_IN/BITS_OUT and match the rest of the
+10/12/16-bit family.
+
+For limited-range output, individual channel bytes may differ from
+v0.16.x by ≤1 LSB. Full-range output is byte-identical (both functions
+reduce to scale=1<<15 at full range).
+
+This unifies scale-constant computation across all bit depths into a
+single source of truth. Cross-format planar parity tests
+(`Vuya ↔ Yuva444p`) now exercise both full-range AND limited-range
+without the prior workaround.
+
+Migrated kernels: `yuv_planar_8bit`, `semi_planar_8bit`,
+`packed_yuv_8bit` across the scalar reference and all 5 SIMD backends
+(NEON, SSE4.1, AVX2, AVX-512, wasm-simd128) — 30 call sites total.
+
+The legacy `range_params` function (hardcoded 8-bit constants) has been
+removed; all callers now use `range_params_n::<8, 8>`.
+
+This is **PR 3 of the 4-PR Tier 5 closure megaship**:
+- ✅ PR 1 (v0.16.0): AYUV64 + Tier 5 closure
+- ✅ PR 2 (v0.16.1): Multi-channel lane-order test backport
+- ✅ PR 3 (this release): 8-bit planar scale-constant migration
+- PR 4 (queued): Strategy A+ design + impl across source-α formats
+
+## 0.16.1 — Multi-channel lane-order regression test backport
+
+Pure test additions; no public API or behavior change.
+
+Backports the multi-channel lane-order regression test pattern from
+Ship 12d (AYUV64) to all existing SIMD-deinterleave formats × every
+backend. The new pattern encodes the pixel index in TWO channels
+independently (Y + U for non-α formats, Y + A for VUYA) and asserts:
+
+- Luma output is in natural pixel order (catches Y-channel reorder bugs)
+- SIMD RGB output is byte-identical to scalar RGB output (catches
+  per-channel asymmetric mask bugs that would diverge from scalar)
+
+Formats covered: V210, V410, V30X, XV36, VUYA, Y210, Y212, Y216.
+(VUYX is excluded — its deinterleave kernel is shared with VUYA via
+`vuya_to_rgb_or_rgba_row<ALPHA, ALPHA_SRC>`.)
+
+Two real bugs were caught in this PR's audit:
+- V410 SSE4.1 lane-order test was using W=4 but the SSE4.1 V410 kernel
+  main loop is `while x + 8 <= width` — the test never entered the
+  SIMD path. Fixed by bumping W to 16 (≥2 SIMD iterations).
+- V30X SSE4.1 had the same issue and was fixed identically.
+
+All lane-order tests now use W = 2× SIMD entry threshold, so each
+test exercises ≥2 full SIMD main-loop iterations rather than only
+the scalar tail.
+
+This is **PR 2 of the 4-PR Tier 5 closure megaship**:
+- ✅ PR 1 (Ship 12d v0.16.0): AYUV64 + Tier 5 closure
+- ✅ PR 2 (this release): Multi-channel lane-order test backport
+- PR 3 (next): 8-bit planar `range_params` → `range_params_n::<8, 8>` migration
+- PR 4 (queued): Strategy A+ design + impl across source-α formats
+
+After this release, all SIMD-deinterleave families share the same
+lane-order regression test discipline. Asymmetric per-channel mask
+bugs are now catchable across the entire packed-YUV family.
+
+### Follow-up — coverage gap (not blocking)
+
+Code-quality reviewers noted that for 4:2:2 formats (Y2xx, Y216) the
+encoded values `Y[2k] = 2k+1` and `U[k] = 2k+1` happen to be equal,
+so Part 1 (luma assertion) alone cannot distinguish a Y0↔U slot swap
+bug. Part 2 (SIMD-vs-scalar parity) catches this bug class fully, so
+the tests are correct, but a future cleanup could change the U-encoding
+formula to a non-overlapping range (e.g. `U[k] = 0x80 + k`) so Part 1
+provides additional coverage independent of the scalar reference.
+
+---
+
 ## 0.16.0 — Tier 5 closed: AYUV64 (16-bit packed YUV 4:4:4 + α)
 
 - Added `Ayuv64` source marker (FFmpeg `AV_PIX_FMT_AYUV64LE`).

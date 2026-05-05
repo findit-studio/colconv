@@ -144,7 +144,7 @@ unsafe fn yuv422_packed_to_rgb_or_rgba_row<
   debug_assert!(out.len() >= width * bpp);
 
   let coeffs = scalar::Coefficients::for_matrix(matrix);
-  let (y_off, y_scale, c_scale) = scalar::range_params(full_range);
+  let (y_off, y_scale, c_scale) = scalar::range_params_n::<8, 8>(full_range);
   const RND: i32 = 1 << 14;
 
   // SAFETY: SSE4.1 availability is the caller's obligation.
@@ -312,6 +312,83 @@ pub(crate) unsafe fn yvyu422_to_luma_row(packed: &[u8], luma_out: &mut [u8], wid
   // SAFETY: SSE4.1 availability is the caller's obligation.
   unsafe {
     yuv422_packed_to_luma_row::<true>(packed, luma_out, width);
+  }
+}
+
+/// SSE4.1 YUYV422 → u16 luma extraction (zero-extends Y bytes via
+/// `_mm_cvtepu8_epi16`). Block size: 16 px / iter.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuyv422_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  // SAFETY: SSE4.1 availability is the caller's obligation.
+  unsafe {
+    yuv422_packed_to_luma_u16_row::<true>(packed, out, width);
+  }
+}
+
+/// SSE4.1 UYVY422 → u16 luma extraction.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn uyvy422_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  // SAFETY: SSE4.1 availability is the caller's obligation.
+  unsafe {
+    yuv422_packed_to_luma_u16_row::<false>(packed, out, width);
+  }
+}
+
+/// SSE4.1 YVYU422 → u16 luma extraction (Y positions same as YUYV).
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yvyu422_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  // SAFETY: SSE4.1 availability is the caller's obligation.
+  unsafe {
+    yuv422_packed_to_luma_u16_row::<true>(packed, out, width);
+  }
+}
+
+#[inline]
+#[target_feature(enable = "sse4.1")]
+unsafe fn yuv422_packed_to_luma_u16_row<const Y_LSB: bool>(
+  packed: &[u8],
+  out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width);
+
+  // SAFETY: SSE4.1 availability is the caller's obligation.
+  unsafe {
+    // Shuffle extracts Y bytes into the low 8 lanes of each 128-bit register:
+    //   Y_LSB=true  → bytes 0,2,4,6,8,10,12,14 (YUYV / YVYU layout)
+    //   Y_LSB=false → bytes 1,3,5,7,9,11,13,15 (UYVY layout)
+    let split_mask = if Y_LSB {
+      _mm_setr_epi8(0, 2, 4, 6, 8, 10, 12, 14, -1, -1, -1, -1, -1, -1, -1, -1)
+    } else {
+      _mm_setr_epi8(1, 3, 5, 7, 9, 11, 13, 15, -1, -1, -1, -1, -1, -1, -1, -1)
+    };
+
+    let mut x = 0usize;
+    while x + 16 <= width {
+      // Each 128-bit load covers 8 packed pixels (16 bytes of YUV422).
+      let p0 = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast());
+      let p1 = _mm_loadu_si128(packed.as_ptr().add(x * 2 + 16).cast());
+      // After shuffle: low 8 bytes = Y values, high 8 bytes = garbage.
+      let p0s = _mm_shuffle_epi8(p0, split_mask);
+      let p1s = _mm_shuffle_epi8(p1, split_mask);
+      // Zero-extend the 8 Y u8 bytes to 8 u16 lanes each.
+      let lo = _mm_cvtepu8_epi16(p0s);
+      let hi = _mm_cvtepu8_epi16(p1s);
+      _mm_storeu_si128(out.as_mut_ptr().add(x).cast(), lo);
+      _mm_storeu_si128(out.as_mut_ptr().add(x + 8).cast(), hi);
+      x += 16;
+    }
+    if x < width {
+      if Y_LSB {
+        scalar::yuyv422_to_luma_u16_row(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+      } else {
+        scalar::uyvy422_to_luma_u16_row(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+      }
+    }
   }
 }
 

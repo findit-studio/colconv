@@ -1,6 +1,6 @@
 [package]
 name = "colconv"
-version = "0.16.0"
+version = "0.19.0"
 edition = "2024"
 repository = "https://github.com/findit-ai/colconv"
 homepage = "https://github.com/findit-ai/colconv"
@@ -134,6 +134,26 @@ harness = false
 
 [[bench]]
 name = "rgb_to_hsv"
+harness = false
+
+[[bench]]
+name = "vuya_a_plus_combo"
+harness = false
+
+[[bench]]
+name = "ayuv64_a_plus_combo"
+harness = false
+
+[[bench]]
+name = "yuva_4_2_0_a_plus_combo"
+harness = false
+
+[[bench]]
+name = "yuva_4_2_2_a_plus_combo"
+harness = false
+
+[[bench]]
+name = "yuva_4_4_4_a_plus_combo"
 harness = false
 
 [features]

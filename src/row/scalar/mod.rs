@@ -4,6 +4,30 @@
 //! to these as their tail fallback. Per-call dispatch in
 //! [`super`]`::{yuv_420_to_rgb_row, rgb_to_hsv_row}` picks the best
 //! backend at the module boundary.
+//!
+//! # Rounding convention
+//!
+//! The crate uses two distinct rounding strategies — choose based on
+//! whether the operation is *precision-critical* or *bookkeeping*:
+//!
+//! - **Q15 chroma + Y arithmetic (final RGB output)**: round-to-nearest,
+//!   implemented as `(value + (1 << 14)) >> 15` (or via the `q15_shift`
+//!   helper). Maximum error: ±0.5 LSB symmetric. Used in every YUV→RGB
+//!   pixel computation across all formats × backends.
+//!
+//! - **Narrow→wider depth conversions** (e.g., 16-bit luma → 8-bit
+//!   luma via `Y_u16 >> 8`, or 10-bit packed → 8-bit RGB via `>> 2`):
+//!   plain truncation, no rounding bias. Maximum error: -0.5 to 0 LSB
+//!   (uniformly downward bias). Used in every `*_to_luma_row` (u8
+//!   variant) for high-bit-depth sources, and in the `X2RGB10`/`X2BGR10`
+//!   → u8 RGB conversion at the last narrow step.
+//!
+//! The asymmetry is intentional: precision-critical arithmetic earns
+//! the rounding bias's symmetric error bound; depth-conversion is
+//! bookkeeping where consistent downward-truncation matches FFmpeg's
+//! `swscale` behavior and preserves "no-clip-into-overflow" guarantees.
+//! Cross-format consistency on this distinction is verified by the
+//! per-arch SIMD-vs-scalar parity tests.
 
 use crate::ColorMatrix;
 
@@ -11,6 +35,7 @@ use crate::ColorMatrix;
 // cluster of scalar reference kernels; `mod.rs` retains only the
 // cross-cutting helpers (`clamp_u8`, `q15_*`, `bits_mask`,
 // `Coefficients`, …) that every family pulls in.
+pub(crate) mod alpha_extract;
 mod ayuv64;
 mod bayer;
 mod hsv;
@@ -26,10 +51,17 @@ mod vuya;
 mod xv36;
 mod y216;
 mod y2xx;
+pub(crate) mod y_plane_to_luma_u16;
 mod yuv_planar_16bit;
 mod yuv_planar_8bit;
 mod yuv_planar_high_bit;
 
+// alpha_extract functions are imported directly by dispatch::alpha_extract
+// via `crate::row::scalar::alpha_extract as scalar` (the module path).
+// This glob re-exports into `crate::row::scalar::*` for Task 8+ callers;
+// suppress unused-imports until then.
+#[allow(unused_imports)]
+pub(crate) use alpha_extract::*;
 pub(crate) use ayuv64::*;
 pub(crate) use bayer::*;
 pub(crate) use hsv::*;
@@ -150,24 +182,6 @@ pub(super) const fn range_params_n<const BITS: u32, const OUT_BITS: u32>(
   }
 }
 
-/// Range-scaling params: `(y_off, y_scale_q15, c_scale_q15)`.
-///
-/// Full range: no offset, unit scales (Q15 = 2^15).
-///
-/// Limited range: map Y from `[16, 235]` to `[0, 255]` via
-/// `y_scaled = (y - 16) * (255 / 219)`; map chroma from `[16, 240]`
-/// to `[0, 255]` via `c_scaled = (c - 128) * (255 / 224)`.
-#[cfg_attr(not(tarpaulin), inline(always))]
-pub(super) const fn range_params(full_range: bool) -> (i32, i32, i32) {
-  if full_range {
-    (0, 1 << 15, 1 << 15)
-  } else {
-    //  255 / 219 ≈ 1.164383; * 2^15 ≈ 38142.
-    //  255 / 224 ≈ 1.138393; * 2^15 ≈ 37306.
-    (16, 38142, 37306)
-  }
-}
-
 /// Q15 YUV → RGB coefficients for a given matrix.
 ///
 /// Full generalized 3×3 matrix:
@@ -219,6 +233,13 @@ impl Coefficients {
         b_v: 0,
       },
       // SMPTE 240M: r_v=1.576, g_u=-0.2253, g_v=-0.4767, b_u=1.826.
+      // Coefficients are taken from the SMPTE 240M-1999 published rounded
+      // table values, NOT re-derived from KR/KB. Re-derivation from
+      // KR=0.212, KB=0.087, KG=0.701 yields g_u ≈ -0.2266 (Q15 ≈ -7423),
+      // which differs by ~0.13% (~43 LSB pre-Q15-shift). This is well
+      // within rounding tolerance and matches the standard's published
+      // text — do not "fix" to the analytic value without coordinating
+      // with downstream pipelines that also use the published table.
       ColorMatrix::Smpte240m => Self {
         r_u: 0,
         r_v: 51642,

@@ -60,17 +60,18 @@ pub(super) use crate::{
   row::{
     arch::x86_common::{
       abgr_to_rgb_16_pixels, abgr_to_rgba_4_pixels, argb_to_rgb_16_pixels, argb_to_rgba_4_pixels,
-      bgra_to_rgb_16_pixels, bgrx_to_rgba_4_pixels, drop_alpha_16_pixels, rgb_to_hsv_16_pixels,
-      rgbx_to_rgba_4_pixels, swap_rb_16_pixels, swap_rb_alpha_4_pixels, write_rgb_16,
-      write_rgb_u16_8, write_rgba_16, write_rgba_u16_8, x2bgr10_to_rgb_16_pixels,
-      x2bgr10_to_rgb_u16_8_pixels, x2bgr10_to_rgba_16_pixels, x2rgb10_to_rgb_16_pixels,
-      x2rgb10_to_rgb_u16_8_pixels, x2rgb10_to_rgba_16_pixels, xbgr_to_rgba_4_pixels,
-      xrgb_to_rgba_4_pixels,
+      bgra_to_rgb_16_pixels, bgrx_to_rgba_4_pixels, deinterleave_rgb_16, drop_alpha_16_pixels,
+      rgb_to_hsv_16_pixels, rgb_to_luma_16_pixels, rgbx_to_rgba_4_pixels, swap_rb_16_pixels,
+      swap_rb_alpha_4_pixels, write_rgb_16, write_rgb_u16_8, write_rgba_16, write_rgba_u16_8,
+      x2bgr10_to_rgb_16_pixels, x2bgr10_to_rgb_u16_8_pixels, x2bgr10_to_rgba_16_pixels,
+      x2rgb10_to_rgb_16_pixels, x2rgb10_to_rgb_u16_8_pixels, x2rgb10_to_rgba_16_pixels,
+      xbgr_to_rgba_4_pixels, xrgb_to_rgba_4_pixels,
     },
     scalar,
   },
 };
 
+mod alpha_extract;
 mod ayuv64;
 mod hsv;
 mod packed_rgb;
@@ -85,10 +86,12 @@ mod vuya;
 mod xv36;
 mod y216;
 mod y2xx;
+mod y_plane_to_luma_u16;
 mod yuv_planar_16bit;
 mod yuv_planar_8bit;
 mod yuv_planar_high_bit;
 
+pub(crate) use alpha_extract::*;
 pub(crate) use ayuv64::*;
 pub(crate) use hsv::*;
 pub(crate) use packed_rgb::*;
@@ -101,6 +104,7 @@ pub(crate) use v210::*;
 pub(crate) use v410::*;
 pub(crate) use vuya::*;
 pub(crate) use xv36::*;
+pub(crate) use y_plane_to_luma_u16::*;
 pub(crate) use y2xx::*;
 pub(crate) use y216::*;
 pub(crate) use yuv_planar_8bit::*;

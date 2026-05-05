@@ -17,6 +17,8 @@
 //! 13. `vuya_planar_parity_with_yuva444p` — VUYA packed ↔ Yuva444p
 //!     planar cross-format oracle (RGB + RGBA byte-identical for the
 //!     same logical YUVA samples).
+//! 14. `vuya_strategy_a_plus_matches_independent_kernel` — Strategy A+
+//!     correctness: combo path output == scalar inline-α kernel output.
 
 #[cfg(all(test, feature = "std"))]
 use super::*;
@@ -399,18 +401,13 @@ fn vuya_planar_parity_with_yuva444p() {
   // carry identical logical YUVA 8-bit samples. Both sinks run with
   // `with_rgb` AND `with_rgba` attached (plus the standalone-RGBA path).
   //
-  // Design note on byte-identity vs 1-LSB tolerance:
+  // Design note on byte-identity:
   //
-  //   The Yuva444p sinker uses `yuv_444_to_rgb_or_rgba_row` (which calls
-  //   `range_params` → limited-range scales `38142 / 37306`), while VUYA
-  //   uses `vuya_to_rgb_or_rgba_row` (which calls `range_params_n::<8,8>`
-  //   → limited-range scales computed from first principles, yielding
-  //   slightly different constants). These two implementations are
-  //   semantically equivalent but *not* bit-identical under limited range.
-  //
-  //   Full-range (full_range=true) avoids the issue: at 8-bit full-range
-  //   both kernels reduce to scale = 1 << 15 (exact), making the math
-  //   path bit-identical. We therefore use full_range=true.
+  //   After the range_params_n::<8, 8> migration (v0.17.0), both the
+  //   Yuva444p sinker (`yuv_444_to_rgb_or_rgba_row`) and the VUYA sinker
+  //   (`vuya_to_rgb_or_rgba_row`) use `range_params_n::<8, 8>` for scale
+  //   constants. Both paths are now byte-identical at full range AND limited
+  //   range. The prior full_range=true workaround has been removed.
   //
   // Alpha semantics:
   //   - VUYA with_rgb + with_rgba → each runs its own independent kernel
@@ -463,54 +460,252 @@ fn vuya_planar_parity_with_yuva444p() {
   let packed_frame =
     VuyaFrame::try_new(&vuya_buf, width as u32, height as u32, (width * 4) as u32).unwrap();
 
-  // full_range=true so both kernels use scale = 1 << 15 (bit-identical).
-  let full_range = true;
+  // Both kernels now use `range_params_n::<8, 8>` so we exercise BOTH
+  // full-range AND limited-range — the prior `full_range=true`-only
+  // workaround is gone. Both ranges must be byte-identical between the
+  // VUYA and Yuva444p paths.
+  for full_range in [true, false] {
+    // --- Part 1: RGB parity (`with_rgb` only — no RGBA, no alpha divergence) ---
+    let mut p_rgb = std::vec![0u8; n * 3];
+    let mut x_rgb = std::vec![0u8; n * 3];
 
-  // --- Part 1: RGB parity (`with_rgb` only — no RGBA, no alpha divergence) ---
-  let mut p_rgb = std::vec![0u8; n * 3];
-  let mut x_rgb = std::vec![0u8; n * 3];
+    let mut p_sink = MixedSinker::<Yuva444p>::new(width, height)
+      .with_rgb(&mut p_rgb)
+      .unwrap();
+    yuva444p_to(&planar, full_range, ColorMatrix::Bt709, &mut p_sink).unwrap();
 
-  let mut p_sink = MixedSinker::<Yuva444p>::new(width, height)
-    .with_rgb(&mut p_rgb)
+    let mut x_sink = MixedSinker::<Vuya>::new(width, height)
+      .with_rgb(&mut x_rgb)
+      .unwrap();
+    vuya_to(&packed_frame, full_range, ColorMatrix::Bt709, &mut x_sink).unwrap();
+
+    assert_eq!(
+      p_rgb, x_rgb,
+      "VUYA ↔ Yuva444p u8 RGB diverges (full_range={full_range})"
+    );
+
+    // --- Part 2: Standalone RGBA source-alpha pass-through parity ---
+    // Both formats run the standalone-RGBA path (no RGB, no HSV attached),
+    // which invokes the source-alpha-aware kernel for each. The RGB channels
+    // must be bit-identical (same math); the alpha channels must equal the
+    // source A bytes (`ap`).
+    let mut p_rgba = std::vec![0u8; n * 4];
+    let mut x_rgba = std::vec![0u8; n * 4];
+
+    let mut p_sink2 = MixedSinker::<Yuva444p>::new(width, height)
+      .with_rgba(&mut p_rgba)
+      .unwrap();
+    yuva444p_to(&planar, full_range, ColorMatrix::Bt709, &mut p_sink2).unwrap();
+
+    let mut x_sink2 = MixedSinker::<Vuya>::new(width, height)
+      .with_rgba(&mut x_rgba)
+      .unwrap();
+    vuya_to(&packed_frame, full_range, ColorMatrix::Bt709, &mut x_sink2).unwrap();
+
+    assert_eq!(
+      p_rgba, x_rgba,
+      "VUYA ↔ Yuva444p u8 RGBA diverges (source-alpha path, full_range={full_range})"
+    );
+
+    // Spot-check alpha bytes equal the source alpha plane.
+    for (i, &src_a) in ap.iter().enumerate() {
+      let alpha_out = x_rgba[i * 4 + 3];
+      assert_eq!(
+        alpha_out, src_a,
+        "VUYA RGBA alpha at pixel {i}: expected {src_a:#X}, got {alpha_out:#X} \
+         (full_range={full_range})"
+      );
+    }
+  }
+}
+
+// ---- 14: Strategy A+ correctness (spec § 6.1) ----------------------------
+
+/// Strategy A+ correctness: combo path output == inline-α kernel output
+/// at all (range, matrix) combinations. See spec § 6.1.
+///
+/// Validates byte-identity by running the sinker combo path (which uses
+/// A+ post-PR4) against the scalar inline-α kernel directly.
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn vuya_strategy_a_plus_matches_independent_kernel() {
+  let width = 128usize;
+  let height = 4usize;
+
+  // Pseudo-random source.
+  let mut packed = std::vec![0u8; width * height * 4];
+  pseudo_random_u8(&mut packed, 0xC0FFEE);
+  let frame = VuyaFrame::try_new(&packed, width as u32, height as u32, (width * 4) as u32).unwrap();
+
+  for full_range in [true, false] {
+    for matrix in [
+      ColorMatrix::Bt601,
+      ColorMatrix::Bt709,
+      ColorMatrix::Bt2020Ncl,
+      ColorMatrix::Smpte240m,
+      ColorMatrix::Fcc,
+      ColorMatrix::YCgCo,
+    ] {
+      // Sinker path (uses A+ post-PR4).
+      let mut sinker_rgb = std::vec![0u8; width * height * 3];
+      let mut sinker_rgba = std::vec![0u8; width * height * 4];
+      {
+        let mut sink = MixedSinker::<Vuya>::new(width, height)
+          .with_rgb(&mut sinker_rgb)
+          .unwrap()
+          .with_rgba(&mut sinker_rgba)
+          .unwrap();
+        vuya_to(&frame, full_range, matrix, &mut sink).unwrap();
+      }
+
+      // Reference: scalar inline-α kernel directly (per row).
+      let mut inline_rgba = std::vec![0u8; width * height * 4];
+      let mut inline_rgb = std::vec![0u8; width * height * 3];
+      for r in 0..height {
+        let row_off_packed = r * width * 4;
+        let row_off_rgb = r * width * 3;
+        let row_off_rgba = r * width * 4;
+        crate::row::scalar::vuya_to_rgb_row(
+          &packed[row_off_packed..row_off_packed + width * 4],
+          &mut inline_rgb[row_off_rgb..row_off_rgb + width * 3],
+          width,
+          matrix,
+          full_range,
+        );
+        crate::row::scalar::vuya_to_rgba_row(
+          &packed[row_off_packed..row_off_packed + width * 4],
+          &mut inline_rgba[row_off_rgba..row_off_rgba + width * 4],
+          width,
+          matrix,
+          full_range,
+        );
+      }
+
+      assert_eq!(
+        sinker_rgb, inline_rgb,
+        "VUYA A+ RGB diverges (range={full_range}, matrix={matrix:?})"
+      );
+      assert_eq!(
+        sinker_rgba, inline_rgba,
+        "VUYA A+ RGBA diverges from scalar inline-α (range={full_range}, matrix={matrix:?})"
+      );
+    }
+  }
+}
+
+// ---- with_luma_u16 tests -----------------------------------------------
+
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn vuya_with_luma_u16_extracts_y_zero_extended() {
+  let width = 64usize;
+  let height = 4usize;
+  let n = width * height;
+
+  let mut packed = std::vec![0u8; n * 4];
+  pseudo_random_u8(&mut packed, 0xC0FFEE);
+
+  let frame = VuyaFrame::try_new(&packed, width as u32, height as u32, (width * 4) as u32).unwrap();
+
+  let mut luma = std::vec![0u16; n];
+  let mut sink = MixedSinker::<Vuya>::new(width, height)
+    .with_luma_u16(&mut luma)
     .unwrap();
-  yuva444p_to(&planar, full_range, ColorMatrix::Bt709, &mut p_sink).unwrap();
+  vuya_to(&frame, false, ColorMatrix::Bt709, &mut sink).unwrap();
 
-  let mut x_sink = MixedSinker::<Vuya>::new(width, height)
-    .with_rgb(&mut x_rgb)
-    .unwrap();
-  vuya_to(&packed_frame, full_range, ColorMatrix::Bt709, &mut x_sink).unwrap();
+  // Reference: Y bytes at offset 2 of each 4-byte pixel quadruple.
+  let expected: std::vec::Vec<u16> = (0..n).map(|i| packed[i * 4 + 2] as u16).collect();
+  assert_eq!(luma, expected);
+}
 
-  assert_eq!(p_rgb, x_rgb, "VUYA ↔ Yuva444p u8 RGB diverges");
+#[test]
+#[cfg(all(test, feature = "std"))]
+fn vuya_luma_u16_buffer_too_short_returns_err() {
+  let mut luma = std::vec![0u16; 4 * 4 - 1];
+  let result = MixedSinker::<Vuya>::new(4, 4).with_luma_u16(&mut luma);
+  let Err(err) = result else {
+    panic!("expected LumaU16BufferTooShort");
+  };
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::LumaU16BufferTooShort {
+        expected: 16,
+        actual: 15
+      }
+    ),
+    "unexpected error: {err:?}"
+  );
+}
 
-  // --- Part 2: Standalone RGBA source-alpha pass-through parity ---
-  // Both formats run the standalone-RGBA path (no RGB, no HSV attached),
-  // which invokes the source-alpha-aware kernel for each. The RGB channels
-  // must be bit-identical (same math); the alpha channels must equal the
-  // source A bytes (`ap`).
-  let mut p_rgba = std::vec![0u8; n * 4];
-  let mut x_rgba = std::vec![0u8; n * 4];
+// ---- 15: Strategy A+ honors with_simd(false) (Codex PR #63 review fix #2) ----
+//
+// `MixedSinker::with_simd(false)` is a documented public knob (used by
+// benchmarks, fuzzers, and differential testing). All existing kernel
+// calls thread `use_simd = self.simd` to row-level dispatchers; the
+// new alpha_extract::* helpers introduced in PR #63 also
+// accept the flag now (previously they always selected the highest
+// available SIMD backend, silently bypassing the knob for the α-extract
+// step of A+).
+//
+// This test exercises the scalar-fallback path through the dispatcher
+// and pins that with_simd(false) still produces correct output when
+// combined with the A+ flow. The dispatcher's scalar branch is
+// validated against the SIMD-default A+ output (which itself is
+// byte-identical to the inline-α reference per test #14).
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn vuya_strategy_a_plus_with_simd_false_uses_scalar_path() {
+  let width = 67usize; // covers SIMD main loop + scalar tail
+  let height = 2usize;
 
-  let mut p_sink2 = MixedSinker::<Yuva444p>::new(width, height)
-    .with_rgba(&mut p_rgba)
-    .unwrap();
-  yuva444p_to(&planar, full_range, ColorMatrix::Bt709, &mut p_sink2).unwrap();
+  let mut packed = std::vec![0u8; width * height * 4];
+  pseudo_random_u8(&mut packed, 0xFEED_BABE);
+  let frame = VuyaFrame::try_new(&packed, width as u32, height as u32, (width * 4) as u32).unwrap();
 
-  let mut x_sink2 = MixedSinker::<Vuya>::new(width, height)
-    .with_rgba(&mut x_rgba)
-    .unwrap();
-  vuya_to(&packed_frame, full_range, ColorMatrix::Bt709, &mut x_sink2).unwrap();
+  // Default A+ (SIMD-on, when available).
+  let mut simd_rgb = std::vec![0u8; width * height * 3];
+  let mut simd_rgba = std::vec![0u8; width * height * 4];
+  {
+    let mut sink = MixedSinker::<Vuya>::new(width, height)
+      .with_rgb(&mut simd_rgb)
+      .unwrap()
+      .with_rgba(&mut simd_rgba)
+      .unwrap();
+    vuya_to(&frame, false, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+
+  // A+ with with_simd(false): scalar path through the α-extract dispatcher.
+  let mut scalar_rgb = std::vec![0u8; width * height * 3];
+  let mut scalar_rgba = std::vec![0u8; width * height * 4];
+  {
+    let mut sink = MixedSinker::<Vuya>::new(width, height)
+      .with_rgb(&mut scalar_rgb)
+      .unwrap()
+      .with_rgba(&mut scalar_rgba)
+      .unwrap()
+      .with_simd(false);
+    vuya_to(&frame, false, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
 
   assert_eq!(
-    p_rgba, x_rgba,
-    "VUYA ↔ Yuva444p u8 RGBA diverges (source-alpha path)"
+    simd_rgb, scalar_rgb,
+    "VUYA A+ RGB diverges between SIMD and with_simd(false) paths"
   );
-
-  // Spot-check alpha bytes equal the source alpha plane.
-  for (i, &src_a) in ap.iter().enumerate() {
-    let alpha_out = x_rgba[i * 4 + 3];
-    assert_eq!(
-      alpha_out, src_a,
-      "VUYA RGBA alpha at pixel {i}: expected {src_a:#X}, got {alpha_out:#X}"
-    );
-  }
+  assert_eq!(
+    simd_rgba, scalar_rgba,
+    "VUYA A+ RGBA diverges between SIMD and with_simd(false) paths"
+  );
 }

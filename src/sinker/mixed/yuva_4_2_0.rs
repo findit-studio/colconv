@@ -187,24 +187,15 @@ impl PixelSink for MixedSinker<'_, Yuva420p> {
       );
     }
 
-    // Both rgb and rgba attached: run the RGBA kernel for the
-    // alpha-aware buffer (cannot reuse rgb_row's RGB output because
-    // alpha must come from the source plane; expand-to-rgba would
-    // splat 0xFF). Strategy B forks per buffer when alpha is present.
+    // Both rgb and rgba attached (combo case): Strategy A+ — expand the
+    // already-computed rgb_row → rgba_row (fills α = 0xFF), then
+    // overwrite α slot from the source alpha plane. Avoids a second
+    // chroma kernel.
     if want_rgba {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      yuva420p_to_rgba_row(
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        row.a(),
-        rgba_row,
-        w,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
-      );
+      expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
+      crate::row::alpha_extract::copy_alpha_plane_u8(row.a(), rgba_row, w, use_simd);
     }
 
     Ok(())
@@ -632,11 +623,16 @@ fn yuva420p_high_bit_process<
   }
 
   // ---- u16 RGB / RGBA path --------------------------------------
-  // rgb_u16 (alpha-drop) reuses the non-alpha dispatcher. rgba_u16
-  // routes through the alpha-source-aware dispatcher. Both attached
-  // → run separately (Strategy B fork — alpha must come from source
-  // plane, so cheap pad won't work).
-  if let Some(buf) = rgb_u16.as_deref_mut() {
+  // rgb_u16 (alpha-drop) reuses the non-alpha dispatcher.
+  // rgba_u16 — when rgb_u16 is also present (combo case), Strategy A+:
+  // expand the already-computed rgb_u16_row → rgba_u16_row then
+  // overwrite α slot from the source plane (avoids a second chroma
+  // kernel). When rgba_u16 is alone, delegate to the alpha-source-aware
+  // dispatcher directly (standalone path — already optimal).
+  let want_rgb_u16 = rgb_u16.is_some();
+  let want_rgba_u16 = rgba_u16.is_some();
+  if want_rgb_u16 {
+    let buf = rgb_u16.as_deref_mut().unwrap();
     let rgb_plane_end = one_plane_end
       .checked_mul(3)
       .ok_or(MixedSinkerError::GeometryOverflow {
@@ -656,9 +652,17 @@ fn yuva420p_high_bit_process<
       full_range,
       use_simd,
     );
-  }
-  if let Some(buf) = rgba_u16.as_deref_mut() {
-    let rgba_u16_row = rgba_u16_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
+    if want_rgba_u16 {
+      // Combo: expand rgb_u16_row → rgba_u16_row, then overwrite α slot.
+      let rgba_buf = rgba_u16.as_deref_mut().unwrap();
+      let rgba_u16_row = rgba_u16_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
+      expand_rgb_u16_to_rgba_u16_row::<BITS>(rgb_u16_row, rgba_u16_row, w);
+      crate::row::alpha_extract::copy_alpha_plane_u16::<BITS>(a_row, rgba_u16_row, w, use_simd);
+    }
+  } else if want_rgba_u16 {
+    // Standalone rgba_u16: delegate to the alpha-source-aware dispatcher.
+    let rgba_buf = rgba_u16.as_deref_mut().unwrap();
+    let rgba_u16_row = rgba_u16_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
     rgba_u16_dispatch(
       y_row,
       u_half_row,
@@ -715,14 +719,15 @@ fn yuva420p_high_bit_process<
     );
   }
 
-  // Both rgb and rgba attached: run the RGBA kernel for the
-  // alpha-aware buffer.
+  // Both rgb and rgba attached (combo case): Strategy A+ — expand the
+  // already-computed rgb_row → rgba_row (fills α = 0xFF), then
+  // overwrite α slot from the source alpha plane with depth-conv
+  // `>> (BITS - 8)`. Avoids a second chroma kernel.
   if want_rgba {
     let rgba_buf = rgba.as_deref_mut().unwrap();
     let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-    rgba_dispatch(
-      y_row, u_half_row, v_half_row, a_row, rgba_row, w, matrix, full_range, use_simd,
-    );
+    expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
+    crate::row::alpha_extract::copy_alpha_plane_u16_to_u8::<BITS>(a_row, rgba_row, w, use_simd);
   }
 
   Ok(())

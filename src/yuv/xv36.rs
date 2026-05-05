@@ -21,95 +21,39 @@
 //! - `with_hsv` — stages an internal RGB scratch and runs the
 //!   existing `rgb_to_hsv_row` kernel.
 
-use crate::{ColorMatrix, PixelSink, SourceFormat, frame::Xv36Frame, sealed::Sealed};
+use crate::frame::Xv36Frame;
 
-/// Zero-sized marker for the packed **XV36** source format.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct Xv36;
-
-impl Sealed for Xv36 {}
-impl SourceFormat for Xv36 {}
-
-/// One row of an [`Xv36`] source — `width × 4` u16 elements (4
-/// channels per pixel: U, Y, V, A; the A slot is padding).
-///
-/// Each u16 channel holds a 12-bit MSB-aligned sample with the low 4
-/// bits zero. Channel layout per pixel:
-///
-/// | u16 slot | Field | Active bits           |
-/// |----------|-------|-----------------------|
-/// | 0        | U     | bits\[15:4\] (12-bit) |
-/// | 1        | Y     | bits\[15:4\] (12-bit) |
-/// | 2        | V     | bits\[15:4\] (12-bit) |
-/// | 3        | A     | bits\[15:4\] (padding)|
-///
-/// Full range: `[0, 4095]` (12-bit). Limited range Y: `[256, 3760]`,
-/// limited range chroma: `[256, 3840]`.
-#[derive(Debug, Clone, Copy)]
-pub struct Xv36Row<'a> {
-  packed: &'a [u16],
-  row: usize,
-  matrix: ColorMatrix,
-  full_range: bool,
-}
-
-impl<'a> Xv36Row<'a> {
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub(crate) fn new(packed: &'a [u16], row: usize, matrix: ColorMatrix, full_range: bool) -> Self {
-    Self {
-      packed,
-      row,
-      matrix,
-      full_range,
-    }
+walker! {
+  packed {
+    /// Zero-sized marker for the packed **XV36** source format.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+    marker: Xv36,
+    frame: Xv36Frame<'_>,
+    row: Xv36Row,
+    sink: Xv36Sink,
+    walker: xv36_to,
+    buf_field: packed,
+    elem_type: u16,
+    row_elems: |w| w * 4,
+    row_doc: concat!(
+      "One row of an [`Xv36`] source — `width × 4` u16 elements (4\n",
+      "channels per pixel: U, Y, V, A; the A slot is padding).\n",
+      "\n",
+      "Each u16 channel holds a 12-bit MSB-aligned sample with the low 4\n",
+      "bits zero. Channel layout per pixel:\n",
+      "\n",
+      "| u16 slot | Field | Active bits           |\n",
+      "|----------|-------|-----------------------|\n",
+      "| 0        | U     | bits `15:4` (12-bit) |\n",
+      "| 1        | Y     | bits `15:4` (12-bit) |\n",
+      "| 2        | V     | bits `15:4` (12-bit) |\n",
+      "| 3        | A     | bits `15:4` (padding)|\n",
+      "\n",
+      "Full range: `[0, 4095]` (12-bit). Limited range Y: `[256, 3760]`,\n",
+      "limited range chroma: `[256, 3840]`.",
+    ),
+    walker_doc: "Walks an [`Xv36Frame`] row by row into the sink.",
   }
-  /// Packed XV36 row — `width × 4` u16 elements (4 channels per
-  /// pixel: U, Y, V, A; the A slot is padding).
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub fn packed(&self) -> &'a [u16] {
-    self.packed
-  }
-  /// Row index.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn row(&self) -> usize {
-    self.row
-  }
-  /// YUV → RGB matrix carried through.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn matrix(&self) -> ColorMatrix {
-    self.matrix
-  }
-  /// `true` iff Y ∈ `[0, 4095]` full range (12-bit). Limited range
-  /// is Y `[256, 3760]`, chroma `[256, 3840]`.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn full_range(&self) -> bool {
-    self.full_range
-  }
-}
-
-/// Sinks that consume [`Xv36Row`].
-pub trait Xv36Sink: for<'a> PixelSink<Input<'a> = Xv36Row<'a>> {}
-
-/// Walks an [`Xv36Frame`] row by row into the sink.
-pub fn xv36_to<S: Xv36Sink>(
-  src: &Xv36Frame<'_>,
-  full_range: bool,
-  matrix: ColorMatrix,
-  sink: &mut S,
-) -> Result<(), S::Error> {
-  sink.begin_frame(src.width(), src.height())?;
-
-  let h = src.height() as usize;
-  let stride = src.stride() as usize;
-  let row_elems = (src.width() as usize) * 4;
-  let plane = src.packed();
-
-  for row in 0..h {
-    let start = row * stride;
-    let packed = &plane[start..start + row_elems];
-    sink.process(Xv36Row::new(packed, row, matrix, full_range))?;
-  }
-  Ok(())
 }
 
 #[cfg(all(test, feature = "std"))]

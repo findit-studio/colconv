@@ -46,17 +46,18 @@ pub(super) use crate::{
   row::{
     arch::x86_common::{
       abgr_to_rgb_16_pixels, abgr_to_rgba_4_pixels, argb_to_rgb_16_pixels, argb_to_rgba_4_pixels,
-      bgra_to_rgb_16_pixels, bgrx_to_rgba_4_pixels, drop_alpha_16_pixels, rgb_to_hsv_16_pixels,
-      rgbx_to_rgba_4_pixels, swap_rb_16_pixels, swap_rb_alpha_4_pixels, write_rgb_16,
-      write_rgb_u16_8, write_rgba_16, write_rgba_u16_8, x2bgr10_to_rgb_16_pixels,
-      x2bgr10_to_rgb_u16_8_pixels, x2bgr10_to_rgba_16_pixels, x2rgb10_to_rgb_16_pixels,
-      x2rgb10_to_rgb_u16_8_pixels, x2rgb10_to_rgba_16_pixels, xbgr_to_rgba_4_pixels,
-      xrgb_to_rgba_4_pixels,
+      bgra_to_rgb_16_pixels, bgrx_to_rgba_4_pixels, deinterleave_rgb_16, drop_alpha_16_pixels,
+      rgb_to_hsv_16_pixels, rgb_to_luma_16_pixels, rgbx_to_rgba_4_pixels, swap_rb_16_pixels,
+      swap_rb_alpha_4_pixels, write_rgb_16, write_rgb_u16_8, write_rgba_16, write_rgba_u16_8,
+      x2bgr10_to_rgb_16_pixels, x2bgr10_to_rgb_u16_8_pixels, x2bgr10_to_rgba_16_pixels,
+      x2rgb10_to_rgb_16_pixels, x2rgb10_to_rgb_u16_8_pixels, x2rgb10_to_rgba_16_pixels,
+      xbgr_to_rgba_4_pixels, xrgb_to_rgba_4_pixels,
     },
     scalar,
   },
 };
 
+mod alpha_extract;
 mod ayuv64;
 mod hsv;
 mod packed_rgb;
@@ -71,10 +72,12 @@ mod vuya;
 mod xv36;
 mod y216;
 mod y2xx;
+mod y_plane_to_luma_u16;
 mod yuv_planar_16bit;
 mod yuv_planar_8bit;
 mod yuv_planar_high_bit;
 
+pub(crate) use alpha_extract::*;
 pub(crate) use ayuv64::*;
 pub(crate) use hsv::*;
 pub(crate) use packed_rgb::*;
@@ -87,6 +90,7 @@ pub(crate) use v210::*;
 pub(crate) use v410::*;
 pub(crate) use vuya::*;
 pub(crate) use xv36::*;
+pub(crate) use y_plane_to_luma_u16::*;
 pub(crate) use y2xx::*;
 pub(crate) use y216::*;
 pub(crate) use yuv_planar_8bit::*;
@@ -346,11 +350,52 @@ pub(super) fn scale_y_u16_avx2(
 /// Arithmetic right shift by 15 on an `i64x4` vector via the
 /// "bias trick" — AVX2 lacks `_mm256_srai_epi64` until AVX-512VL, so
 /// we add `2^32` before an unsigned shift and subtract the resulting
-/// `2^17` offset. Valid for `|x| < 2^32`, which easily holds for our
-/// chroma and Y products at 16-bit limited range.
+/// `2^17` offset.
+///
+/// # Validity bound
+///
+/// Each i64 lane MUST satisfy `|x| < 2^32`. The bias `+ (1 << 32)`
+/// turns the sign-bit-aware right shift into an unsigned shift; if any
+/// lane exceeds the bound, the bias overflows and the post-subtract
+/// value is wrong (silently produces garbage chroma — visible color
+/// corruption on output).
+///
+/// ## Worst-case bound table for the supported matrix × range × bit-depth grid
+///
+/// The currently-shipped matrices stay well below `2^32 ≈ 4.29·10^9`,
+/// but the headroom is only ~1.8× at 16-bit limited range with BT.2020:
+///
+/// | Source bit-depth | Matrix    | Range    | Worst-case |x| | Headroom |
+/// |------------------|-----------|----------|----------------|----------|
+/// | 16 (Y216/AYUV64) | BT.2020   | limited  | ~2.45·10^9     | 1.75×    |
+/// | 16 (Y216/AYUV64) | BT.709    | limited  | ~2.30·10^9     | 1.87×    |
+/// | 16 (Y216/AYUV64) | BT.601    | limited  | ~2.20·10^9     | 1.95×    |
+/// | 14 / 12 / 10     | (any)     | (any)    | ≤ 4·10^8       | ≥ 10×    |
+///
+/// **Future-warning**: if a new matrix adds coefficients larger than
+/// ~96k (Q15) OR a new format expands the chroma range past ±32768,
+/// the worst case may overflow. Add a coverage row above when
+/// extending the matrix set or introducing a wider chroma range.
+///
+/// In debug builds, a sample of the input lanes is asserted under the
+/// bound to catch regressions early.
 #[inline(always)]
 pub(super) fn srai64_15_x4(x: __m256i) -> __m256i {
   unsafe {
+    // Debug-only sanity check: spot-check the first lane against the
+    // 2^32 bound. We can't `debug_assert!` on every lane without
+    // extracting all 4 (which would defeat the inlining), so just
+    // verify lane 0 — production usage should keep all lanes within
+    // the same order of magnitude per the worst-case table above.
+    #[cfg(debug_assertions)]
+    {
+      let lane0 = _mm256_extract_epi64::<0>(x);
+      debug_assert!(
+        lane0.unsigned_abs() < (1u64 << 32),
+        "srai64_15_x4: lane 0 = {lane0} exceeds the 2^32 bias-trick bound \
+         (see worst-case table in helper docstring)",
+      );
+    }
     let biased = _mm256_add_epi64(x, _mm256_set1_epi64x(1i64 << 32));
     let shifted = _mm256_srli_epi64::<15>(biased);
     _mm256_sub_epi64(shifted, _mm256_set1_epi64x(1i64 << 17))

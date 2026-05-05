@@ -1156,3 +1156,141 @@ pub(super) unsafe fn rgb_to_hsv_16_pixels(
     _mm_storeu_si128(v_ptr.cast(), f32x4_quad_to_u8x16(v0, v1, v2, v3));
   }
 }
+
+// ---- RGB → luma (Y') support --------------------------------------------
+//
+// Q15 weighted sum across all 5 ColorMatrix variants. Coefficients are
+// hoisted by the caller into pre‑broadcast i32x4 vectors; the per‑pixel
+// math is `(k_r·R + k_g·G + k_b·B + RND) >> 15`. Limited‑range output
+// applies a second Q15 multiply (`28142 / 32768`) plus the +16 offset.
+//
+// Bit‑identical to scalar `rgb_to_luma_row`. Shared by SSE4.1 / AVX2 /
+// AVX‑512 backends — each calls [`rgb_to_luma_16_pixels`] 1× / 2× / 4×
+// per iteration.
+
+/// Computes Y' for 16 RGB pixels (48 input bytes, 16 output bytes).
+///
+/// `kr_v` / `kg_v` / `kb_v` are pre‑broadcast i32x4 coefficient vectors
+/// (one matrix value splatted to all 4 lanes); `rnd_v` is
+/// `_mm_set1_epi32(1 << 14)`. `full_range` selects between full‑range
+/// `[0, 255]` and limited‑range `[16, 235]` Y' output.
+///
+/// # Safety
+///
+/// - `input_ptr` must point to at least 48 readable bytes.
+/// - `output_ptr` must point to at least 16 writable bytes.
+/// - The two ranges must not alias.
+/// - SSE4.1 must be available (caller's `target_feature` includes it
+///   or a superset like AVX2 / AVX‑512BW).
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+pub(super) unsafe fn rgb_to_luma_16_pixels(
+  input_ptr: *const u8,
+  output_ptr: *mut u8,
+  kr_v: __m128i,
+  kg_v: __m128i,
+  kb_v: __m128i,
+  rnd_v: __m128i,
+  full_range: bool,
+) {
+  unsafe {
+    // Deinterleave 16 RGB pixels → 3 × u8x16 channel vectors.
+    let (r_u8, g_u8, b_u8) = deinterleave_rgb_16(input_ptr);
+
+    // Y_full per i32x4 quarter: (k_r·R + k_g·G + k_b·B + RND) >> 15.
+    // Widen each u8 channel to i32 in 4 quarters via `_mm_cvtepu8_epi32`,
+    // then `_mm_mullo_epi32` for the Q15 multiply (full 32‑bit product
+    // since `255 * 32768 < 2^23` ≪ i32::MAX).
+    let y0 = q15_luma_quarter::<0>(r_u8, g_u8, b_u8, kr_v, kg_v, kb_v, rnd_v);
+    let y1 = q15_luma_quarter::<4>(r_u8, g_u8, b_u8, kr_v, kg_v, kb_v, rnd_v);
+    let y2 = q15_luma_quarter::<8>(r_u8, g_u8, b_u8, kr_v, kg_v, kb_v, rnd_v);
+    let y3 = q15_luma_quarter::<12>(r_u8, g_u8, b_u8, kr_v, kg_v, kb_v, rnd_v);
+
+    // Pack i32x4×2 → i16x8 (saturating); two i16x8 then pack → u8x16
+    // (saturating). The i32 → i16 step preserves the [0, 255] window
+    // (negatives clamp to 0, > 32767 clamp to 32767). The i16 → u8
+    // step performs the final [0, 255] clamp.
+    let y_lo_i16 = _mm_packs_epi32(y0, y1);
+    let y_hi_i16 = _mm_packs_epi32(y2, y3);
+
+    let y_u8 = if full_range {
+      _mm_packus_epi16(y_lo_i16, y_hi_i16)
+    } else {
+      // Limited range: (Y_full_clamped * 28142 + RND) >> 15 + 16.
+      // Clamp to [0, 255] first (matches scalar `y_full_clamped`),
+      // then apply the 28142/32768 Q15 multiply and add 16.
+      let y_clamp_u8 = _mm_packus_epi16(y_lo_i16, y_hi_i16);
+      limited_range_scale_16(y_clamp_u8, rnd_v)
+    };
+
+    _mm_storeu_si128(output_ptr.cast(), y_u8);
+  }
+}
+
+/// Q15 weighted sum for 4 pixels. `LANE` ∈ {0, 4, 8, 12} selects the
+/// 32‑bit slot in each u8x16 channel vector to widen → i32x4. Returns
+/// `(k_r·R + k_g·G + k_b·B + RND) >> 15` as i32x4.
+///
+/// The const generic encodes the lane offset so `_mm_srli_si128` (which
+/// requires a literal const) works without runtime branches.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn q15_luma_quarter<const LANE: i32>(
+  r_u8: __m128i,
+  g_u8: __m128i,
+  b_u8: __m128i,
+  kr_v: __m128i,
+  kg_v: __m128i,
+  kb_v: __m128i,
+  rnd_v: __m128i,
+) -> __m128i {
+  unsafe {
+    // Shift the desired 4‑byte lane down to position 0; cvtepu8_epi32
+    // then zero‑extends 4 u8 → 4 i32 (reads only the low 4 bytes).
+    let r_shifted = _mm_srli_si128::<LANE>(r_u8);
+    let g_shifted = _mm_srli_si128::<LANE>(g_u8);
+    let b_shifted = _mm_srli_si128::<LANE>(b_u8);
+    let r = _mm_cvtepu8_epi32(r_shifted);
+    let g = _mm_cvtepu8_epi32(g_shifted);
+    let b = _mm_cvtepu8_epi32(b_shifted);
+    let acc = _mm_mullo_epi32(r, kr_v);
+    let acc = _mm_add_epi32(acc, _mm_mullo_epi32(g, kg_v));
+    let acc = _mm_add_epi32(acc, _mm_mullo_epi32(b, kb_v));
+    let acc = _mm_add_epi32(acc, rnd_v);
+    _mm_srai_epi32::<15>(acc)
+  }
+}
+
+/// Limited‑range post‑scale: `16 + ((y_clamped * 28142 + RND) >> 15)`.
+/// Input is u8x16 already clamped to `[0, 255]` (the saturating pack
+/// from `_mm_packus_epi16`); output is u8x16 in `[16, 235]`.
+#[inline(always)]
+fn limited_range_scale_16(y_clamp_u8: __m128i, rnd_v: __m128i) -> __m128i {
+  unsafe {
+    let scale = _mm_set1_epi32(28142);
+    let off = _mm_set1_epi16(16);
+    // Widen u8x16 → i16x8×2 (zero‑extend; samples are in [0, 255]).
+    let y_lo_i16 = _mm_cvtepu8_epi16(y_clamp_u8);
+    let y_hi_i16 = _mm_cvtepu8_epi16(_mm_srli_si128::<8>(y_clamp_u8));
+    let y_lim_lo = limited_range_quarter(y_lo_i16, scale, rnd_v);
+    let y_lim_hi = limited_range_quarter(y_hi_i16, scale, rnd_v);
+    // i16 add 16 (offset), then saturating pack to u8.
+    let y_lim_lo = _mm_add_epi16(y_lim_lo, off);
+    let y_lim_hi = _mm_add_epi16(y_lim_hi, off);
+    _mm_packus_epi16(y_lim_lo, y_lim_hi)
+  }
+}
+
+/// Q15 multiply of one i16x8 (8 Y' samples in `[0, 255]`) by 28142,
+/// returned as i16x8. `(y * 28142 + RND) >> 15`. `y * 28142` reaches
+/// at most `255 * 28142 ≈ 7.18M`, well inside i32.
+#[inline(always)]
+fn limited_range_quarter(y_i16: __m128i, scale_i32: __m128i, rnd_v: __m128i) -> __m128i {
+  unsafe {
+    let lo_i32 = _mm_cvtepi16_epi32(y_i16);
+    let hi_i32 = _mm_cvtepi16_epi32(_mm_srli_si128::<8>(y_i16));
+    let lo = _mm_srai_epi32::<15>(_mm_add_epi32(_mm_mullo_epi32(lo_i32, scale_i32), rnd_v));
+    let hi = _mm_srai_epi32::<15>(_mm_add_epi32(_mm_mullo_epi32(hi_i32, scale_i32), rnd_v));
+    _mm_packs_epi32(lo, hi)
+  }
+}

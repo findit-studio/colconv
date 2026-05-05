@@ -101,9 +101,8 @@ pub fn rgb_to_hsv_row(
 /// BT.* coefficient set, `full_range` chooses Y' ∈ `[0, 255]` vs
 /// `[16, 235]`.
 ///
-/// `use_simd` is currently a no-op — scalar is the only available
-/// path for this kernel today. SIMD wiring lands in a follow-up
-/// once enough Tier 6 callers exist to justify the per-arch work.
+/// `use_simd = false` forces the scalar reference path, bypassing any
+/// SIMD backend (same semantics as `yuv_420_to_rgb_row`).
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
 pub fn rgb_to_luma_row(
@@ -112,11 +111,60 @@ pub fn rgb_to_luma_row(
   width: usize,
   matrix: ColorMatrix,
   full_range: bool,
-  _use_simd: bool,
+  use_simd: bool,
 ) {
   let rgb_min = rgb_row_bytes(width);
   assert!(rgb.len() >= rgb_min, "rgb row too short");
   assert!(luma_out.len() >= width, "luma row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: `neon_available()` verified NEON is present.
+          unsafe {
+            arch::neon::rgb_to_luma_row(rgb, luma_out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512BW verified.
+          unsafe {
+            arch::x86_avx512::rgb_to_luma_row(rgb, luma_out, width, matrix, full_range);
+          }
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          unsafe {
+            arch::x86_avx2::rgb_to_luma_row(rgb, luma_out, width, matrix, full_range);
+          }
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          unsafe {
+            arch::x86_sse41::rgb_to_luma_row(rgb, luma_out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile-time verified.
+          unsafe {
+            arch::wasm_simd128::rgb_to_luma_row(rgb, luma_out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      _ => {
+        // Targets without a SIMD backend fall through to scalar.
+      }
+    }
+  }
 
   scalar::rgb_to_luma_row(rgb, luma_out, width, matrix, full_range);
 }

@@ -49,7 +49,7 @@ pub(crate) fn yuv422_packed_to_rgb_or_rgba_row<const Y_LSB: bool, const SWAP_UV:
   debug_assert!(out.len() >= width * bpp, "out row too short for {bpp}bpp");
 
   let coeffs = Coefficients::for_matrix(matrix);
-  let (y_off, y_scale, c_scale) = range_params(full_range);
+  let (y_off, y_scale, c_scale) = range_params_n::<8, 8>(full_range);
 
   // Round-to-nearest Q15.
   const RND: i32 = 1 << 14;
@@ -213,4 +213,37 @@ pub(crate) fn uyvy422_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usi
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn yvyu422_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize) {
   yuv422_packed_to_luma_row::<true>(packed, luma_out, width);
+}
+
+/// Extract Y as u16 (zero-extended) from `Yuyv422` packed `[Y, U, Y, V]` layout.
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn yuyv422_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  debug_assert!(packed.len() >= width * 2, "packed too short");
+  debug_assert!(out.len() >= width, "out too short");
+  for x in 0..width {
+    out[x] = packed[x * 2] as u16;
+  }
+}
+
+/// Extract Y as u16 from `Uyvy422` packed `[U, Y, V, Y]` layout (Y at offset 1).
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn uyvy422_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  debug_assert!(packed.len() >= width * 2, "packed too short");
+  debug_assert!(out.len() >= width, "out too short");
+  for x in 0..width {
+    out[x] = packed[x * 2 + 1] as u16;
+  }
+}
+
+/// Extract Y as u16 from `Yvyu422` packed `[Y, V, Y, U]` layout.
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn yvyu422_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  debug_assert!(packed.len() >= width * 2, "packed too short");
+  debug_assert!(out.len() >= width, "out too short");
+  for x in 0..width {
+    out[x] = packed[x * 2] as u16;
+  }
 }

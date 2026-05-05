@@ -270,3 +270,58 @@ pub(crate) unsafe fn vuya_to_luma_row(packed: &[u8], luma_out: &mut [u8], width:
     }
   }
 }
+
+/// NEON VUYA → u16 luma (zero-extended Y bytes). Y is the third byte
+/// (offset 2) of each pixel quadruple; `vld4q_u8`'s channel 2 delivers
+/// 16 Y bytes. Each is widened to u16 via `vmovl_u8`.
+///
+/// Byte-identical to `scalar::vuya_to_luma_u16_row`. 16 pixels per iter.
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `packed.len() >= width * 4`.
+/// 3. `out.len() >= width`.
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn vuya_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  debug_assert!(packed.len() >= width * 4, "packed row too short");
+  debug_assert!(out.len() >= width, "out too short");
+
+  unsafe {
+    let mut x = 0usize;
+    while x + 16 <= width {
+      // vld4q_u8 deinterleaves; channel 2 (.2) = 16 Y bytes.
+      let q = vld4q_u8(packed.as_ptr().add(x * 4));
+      let y_lo = vmovl_u8(vget_low_u8(q.2)); // lanes 0-7 → u16x8
+      let y_hi = vmovl_u8(vget_high_u8(q.2)); // lanes 8-15 → u16x8
+      vst1q_u16(out.as_mut_ptr().add(x), y_lo);
+      vst1q_u16(out.as_mut_ptr().add(x + 8), y_hi);
+      x += 16;
+    }
+    // Scalar tail.
+    if x < width {
+      scalar::vuya_to_luma_u16_row(&packed[x * 4..], &mut out[x..], width - x);
+    }
+  }
+}
+
+/// NEON VUYX → u16 luma (zero-extended Y bytes). Byte-identical to
+/// [`vuya_to_luma_u16_row`] — Y is at byte offset 2 of each quadruple
+/// regardless of α semantics; the X byte is discarded.
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `packed.len() >= width * 4`.
+/// 3. `out.len() >= width`.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn vuyx_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  // SAFETY: NEON availability is the caller's obligation.
+  unsafe {
+    vuya_to_luma_u16_row(packed, out, width);
+  }
+}
