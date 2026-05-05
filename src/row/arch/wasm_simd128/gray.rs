@@ -538,6 +538,7 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
 /// simd128 must be enabled.
 #[inline]
 #[target_feature(enable = "simd128")]
+#[allow(dead_code)] // dispatcher always uses scalar; function is exercised by tests only
 pub(crate) unsafe fn grayf32_to_rgb_f32_row(y_plane: &[f32], out: &mut [f32], width: usize) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
@@ -606,9 +607,10 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
       // Narrow i32x4 → u16x8 via unsigned saturation, then store 4 u16.
       let narrow16 = u16x8_narrow_i32x4(rounded, zero16);
       let val = i64x2_extract_lane::<0>(narrow16) as u64;
-      out[x..x + 4].copy_from_slice(unsafe {
-        core::slice::from_raw_parts(val.to_le_bytes().as_ptr().cast::<u16>(), 4)
-      });
+      out[x..x + 4].copy_from_slice(core::slice::from_raw_parts(
+        val.to_le_bytes().as_ptr().cast::<u16>(),
+        4,
+      ));
       x += 4;
     }
   }
@@ -623,6 +625,7 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
 /// simd128 must be enabled.
 #[inline]
 #[target_feature(enable = "simd128")]
+#[allow(dead_code)] // dispatcher always uses scalar; function is exercised by tests only
 pub(crate) unsafe fn grayf32_to_luma_f32_row(y_plane: &[f32], out: &mut [f32], width: usize) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
@@ -775,7 +778,6 @@ pub(crate) unsafe fn ya8_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: 
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width);
   let shuf = i8x16(0, 2, 4, 6, 8, 10, 12, 14, -1, -1, -1, -1, -1, -1, -1, -1);
-  let zero16 = i64x2(0, 0);
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {

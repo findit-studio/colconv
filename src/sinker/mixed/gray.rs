@@ -2088,6 +2088,10 @@ mod tests {
   }
 
   #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
   fn grayf32_width_128_and_130_smoke() {
     for &w in &[128usize, 130usize] {
       let data: std::vec::Vec<f32> = (0..w).map(|i| i as f32 / w as f32).collect();
@@ -2173,6 +2177,10 @@ mod tests {
   }
 
   #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
   fn ya8_width_128_and_130_smoke() {
     for &w in &[128usize, 130usize] {
       let packed: std::vec::Vec<u8> = (0..w).flat_map(|i| [i as u8, (255 - i as u8)]).collect();
@@ -2264,6 +2272,10 @@ mod tests {
   }
 
   #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
   fn ya16_width_128_and_130_smoke() {
     for &w in &[128usize, 130usize] {
       let packed: std::vec::Vec<u16> = (0..w)

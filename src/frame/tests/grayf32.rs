@@ -68,6 +68,7 @@ fn grayf32_frame_try_new_rejects_plane_too_short() {
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))] // wasm uses panic=abort; catch_unwind requires unwinding
 fn grayf32_frame_new_panics_on_invalid() {
   let result = std::panic::catch_unwind(|| {
     let buf = [0.0f32; 1];
