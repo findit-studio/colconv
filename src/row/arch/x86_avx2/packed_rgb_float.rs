@@ -280,3 +280,245 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row(rgb_in: &[f32], rgb_out: &mut [f32], 
     }
   }
 }
+
+// ---- Tier 9 — Rgbf16 AVX2 + F16C entry points ------------------------------
+//
+// `_mm256_cvtph_ps` (F16C) widens 8 × f16 (stored as 8 × i16 in a __m128i)
+// to 8 × f32 in a __m256.  We load 16 bytes (8 f16 values) via
+// `_mm_loadu_si128`.
+//
+// Downstream: after widening a 24-lane chunk (= 8 pixels) to f32, we call the
+// existing AVX2 Rgbf32 kernels. The scalar tail uses
+// `crate::row::scalar::rgbf16_to_*_row`.
+//
+// `#[target_feature(enable = "avx2,f16c")]` ensures both features are active.
+
+/// Widen 8 × f16 (at `ptr`, 16 bytes) to 8 × f32 (returned as `__m256`).
+///
+/// # Safety
+///
+/// * AVX2 + F16C must be available.
+/// * `ptr` must be valid for 16 bytes (8 × u16 / f16).
+#[inline]
+#[target_feature(enable = "avx2,f16c")]
+unsafe fn widen_f16x8_avx(ptr: *const half::f16) -> __m256 {
+  unsafe {
+    let raw = _mm_loadu_si128(ptr as *const __m128i);
+    _mm256_cvtph_ps(raw)
+  }
+}
+
+/// f16 RGB → u8 RGB (AVX2 + F16C).
+///
+/// # Safety
+///
+/// 1. AVX2 and F16C must be available.
+/// 2. `rgb_in.len() >= 3 * width`; `rgb_out.len() >= 3 * width`.
+/// 3. `rgb_in` / `rgb_out` must not alias.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx2,f16c")]
+pub(crate) unsafe fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+
+  // Process 8 pixels (24 f16 lanes) per iteration.
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  while lane + 24 <= total_lanes {
+    let mut buf = [0.0f32; 24];
+    unsafe {
+      let f0 = widen_f16x8_avx(rgb_in.as_ptr().add(lane));
+      let f1 = widen_f16x8_avx(rgb_in.as_ptr().add(lane + 8));
+      let f2 = widen_f16x8_avx(rgb_in.as_ptr().add(lane + 16));
+      _mm256_storeu_ps(buf.as_mut_ptr(), f0);
+      _mm256_storeu_ps(buf.as_mut_ptr().add(8), f1);
+      _mm256_storeu_ps(buf.as_mut_ptr().add(16), f2);
+      rgbf32_to_rgb_row(&buf, rgb_out.get_unchecked_mut(lane..lane + 24), 8);
+    }
+    lane += 24;
+  }
+  let pix_done = lane / 3;
+  if pix_done < width {
+    scalar::rgbf16_to_rgb_row(
+      &rgb_in[pix_done * 3..width * 3],
+      &mut rgb_out[pix_done * 3..width * 3],
+      width - pix_done,
+    );
+  }
+}
+
+/// f16 RGB → u8 RGBA (alpha `0xFF`) (AVX2 + F16C).
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx2,f16c")]
+pub(crate) unsafe fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  let mut pix = 0usize;
+  while lane + 24 <= total_lanes {
+    let mut buf = [0.0f32; 24];
+    unsafe {
+      let f0 = widen_f16x8_avx(rgb_in.as_ptr().add(lane));
+      let f1 = widen_f16x8_avx(rgb_in.as_ptr().add(lane + 8));
+      let f2 = widen_f16x8_avx(rgb_in.as_ptr().add(lane + 16));
+      _mm256_storeu_ps(buf.as_mut_ptr(), f0);
+      _mm256_storeu_ps(buf.as_mut_ptr().add(8), f1);
+      _mm256_storeu_ps(buf.as_mut_ptr().add(16), f2);
+      rgbf32_to_rgba_row(&buf, rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 32), 8);
+    }
+    lane += 24;
+    pix += 8;
+  }
+  if pix < width {
+    scalar::rgbf16_to_rgba_row(
+      &rgb_in[pix * 3..width * 3],
+      &mut rgba_out[pix * 4..width * 4],
+      width - pix,
+    );
+  }
+}
+
+/// f16 RGB → u16 RGB (AVX2 + F16C).
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [u16]` with
+/// `len() >= 3 * width` u16 elements.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx2,f16c")]
+pub(crate) unsafe fn rgbf16_to_rgb_u16_row(
+  rgb_in: &[half::f16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_u16_out row too short");
+
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  while lane + 24 <= total_lanes {
+    let mut buf = [0.0f32; 24];
+    unsafe {
+      let f0 = widen_f16x8_avx(rgb_in.as_ptr().add(lane));
+      let f1 = widen_f16x8_avx(rgb_in.as_ptr().add(lane + 8));
+      let f2 = widen_f16x8_avx(rgb_in.as_ptr().add(lane + 16));
+      _mm256_storeu_ps(buf.as_mut_ptr(), f0);
+      _mm256_storeu_ps(buf.as_mut_ptr().add(8), f1);
+      _mm256_storeu_ps(buf.as_mut_ptr().add(16), f2);
+      rgbf32_to_rgb_u16_row(&buf, rgb_out.get_unchecked_mut(lane..lane + 24), 8);
+    }
+    lane += 24;
+  }
+  let pix_done = lane / 3;
+  if pix_done < width {
+    scalar::rgbf16_to_rgb_u16_row(
+      &rgb_in[pix_done * 3..width * 3],
+      &mut rgb_out[pix_done * 3..width * 3],
+      width - pix_done,
+    );
+  }
+}
+
+/// f16 RGB → u16 RGBA (alpha `0xFFFF`) (AVX2 + F16C).
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_u16_row`] but `rgba_out.len() >= 4 * width`.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx2,f16c")]
+pub(crate) unsafe fn rgbf16_to_rgba_u16_row(
+  rgb_in: &[half::f16],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_u16_out row too short");
+
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  let mut pix = 0usize;
+  while lane + 24 <= total_lanes {
+    let mut buf = [0.0f32; 24];
+    unsafe {
+      let f0 = widen_f16x8_avx(rgb_in.as_ptr().add(lane));
+      let f1 = widen_f16x8_avx(rgb_in.as_ptr().add(lane + 8));
+      let f2 = widen_f16x8_avx(rgb_in.as_ptr().add(lane + 16));
+      _mm256_storeu_ps(buf.as_mut_ptr(), f0);
+      _mm256_storeu_ps(buf.as_mut_ptr().add(8), f1);
+      _mm256_storeu_ps(buf.as_mut_ptr().add(16), f2);
+      rgbf32_to_rgba_u16_row(&buf, rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 32), 8);
+    }
+    lane += 24;
+    pix += 8;
+  }
+  if pix < width {
+    scalar::rgbf16_to_rgba_u16_row(
+      &rgb_in[pix * 3..width * 3],
+      &mut rgba_out[pix * 4..width * 4],
+      width - pix,
+    );
+  }
+}
+
+/// f16 RGB → f32 RGB (lossless widen) (AVX2 + F16C).
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [f32]` with
+/// `len() >= 3 * width` f32 elements.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx2,f16c")]
+pub(crate) unsafe fn rgbf16_to_rgb_f32_row(
+  rgb_in: &[half::f16],
+  rgb_out: &mut [f32],
+  width: usize,
+) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_f32_out row too short");
+
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  while lane + 8 <= total_lanes {
+    unsafe {
+      let f = widen_f16x8_avx(rgb_in.as_ptr().add(lane));
+      _mm256_storeu_ps(rgb_out.as_mut_ptr().add(lane), f);
+    }
+    lane += 8;
+  }
+  // Scalar tail for the last 0-7 lanes.
+  for i in lane..total_lanes {
+    unsafe {
+      *rgb_out.get_unchecked_mut(i) = rgb_in.get_unchecked(i).to_f32();
+    }
+  }
+}
+
+/// f16 RGB → f16 RGB lossless pass-through (AVX2 + F16C).
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [half::f16]` with
+/// `len() >= 3 * width` f16 elements.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx2,f16c")]
+pub(crate) unsafe fn rgbf16_to_rgb_f16_row(
+  rgb_in: &[half::f16],
+  rgb_out: &mut [half::f16],
+  width: usize,
+) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_f16_out row too short");
+  scalar::rgbf16_to_rgb_f16_row(rgb_in, rgb_out, width);
+}
