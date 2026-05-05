@@ -31,9 +31,20 @@ walker! {
     buf_field: packed,
     elem_type: u32,
     row_elems: |w| w,
-    row_doc: "One row of a [`V410`] source — `width` u32 elements (one pixel\n\
-              per word; 32-bit word with 10-bit U / Y / V channels and 2-bit\n\
-              padding).",
+    row_doc: concat!(
+      "One row of a [`V410`] source — `width` u32 elements (one pixel\n",
+      "per word; 32-bit word with 10-bit U / Y / V channels and 2-bit\n",
+      "padding at the MSB).\n",
+      "\n",
+      "Bit layout per 32-bit word (LE):\n",
+      "\n",
+      "```text\n",
+      "(msb) 2X | 10V | 10Y | 10U (lsb)\n",
+      "```\n",
+      "\n",
+      "Full range: `[0, 1023]` (10-bit). Limited range Y: `[64, 940]`,\n",
+      "limited range chroma: `[64, 960]`.",
+    ),
     walker_doc: "Walks a [`V410Frame`] row by row into the sink.",
   }
 }

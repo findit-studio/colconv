@@ -27,9 +27,24 @@ walker! {
     buf_field: x2rgb10,
     elem_type: u8,
     row_elems: |w| w * 4,
-    row_doc: "One output row of an [`X2Rgb10`] source — `width * 4` bytes\n\
-              laid out as `width` little-endian `u32` pixels with packing\n\
-              `(MSB) 2X | 10R | 10G | 10B (LSB)`.",
+    row_doc: concat!(
+      "One output row of an [`X2Rgb10`] source — `width * 4` bytes\n",
+      "laid out as `width` little-endian `u32` pixels with packing\n",
+      "`(MSB) 2X | 10R | 10G | 10B (LSB)`.\n",
+      "\n",
+      "Bit layout per 32-bit word (LE):\n",
+      "\n",
+      "| Bits   | Field |\n",
+      "|--------|-------|\n",
+      "| 31:30  | padding (ignored on read; RGBA outputs force α=`0xFF`) |\n",
+      "| 29:20  | R (10 bits) |\n",
+      "| 19:10  | G (10 bits) |\n",
+      "| 9:0    | B (10 bits) |\n",
+      "\n",
+      "Sink authors: each pixel is one little-endian `u32` reconstructed\n",
+      "from 4 consecutive bytes of the slice. Each 10-bit channel ranges\n",
+      "`[0, 1023]`.",
+    ),
     walker_doc: "Walks an [`X2Rgb10Frame`] row by row into the sink.",
   }
 }

@@ -29,8 +29,26 @@ walker! {
     buf_field: packed,
     elem_type: u8,
     row_elems: |w| w * 4,
-    row_doc: "One row of a [`Vuya`] source — `width × 4` bytes (4 channels per\n\
-              pixel: V, U, Y, A; the A byte is real source alpha).",
+    row_doc: concat!(
+      "One row of a [`Vuya`] source — `width × 4` bytes (4 channels per\n",
+      "pixel: V, U, Y, A; the A byte is real source alpha).\n",
+      "\n",
+      "Byte layout per pixel:\n",
+      "\n",
+      "| Byte offset | Field |\n",
+      "|-------------|-------|\n",
+      "| 0           | V     |\n",
+      "| 1           | U     |\n",
+      "| 2           | Y     |\n",
+      "| 3           | A (real source α — passed through to RGBA outputs) |\n",
+      "\n",
+      "The walker does not interpret the bytes — it passes the raw packed\n",
+      "slice to the sink. Byte-level channel extraction happens in the\n",
+      "row-kernel layer.\n",
+      "\n",
+      "Full range: `[0, 255]` (8-bit). Limited range Y: `[16, 235]`,\n",
+      "limited range chroma: `[16, 240]`.",
+    ),
     walker_doc: "Walks a [`VuyaFrame`] row by row into the sink.",
   }
 }

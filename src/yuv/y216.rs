@@ -29,8 +29,23 @@ walker! {
     buf_field: packed,
     elem_type: u16,
     row_elems: |w| w * 2,
-    row_doc: "One row of a [`Y216`] source — `width × 2` u16 elements\n\
-              (`Y₀, U, Y₁, V` quadruples per 2-pixel block).",
+    row_doc: concat!(
+      "One row of a [`Y216`] source — `width × 2` u16 elements\n",
+      "(`Y₀, U, Y₁, V` quadruples per 2-pixel block).\n",
+      "\n",
+      "Each u16 sample is 16-bit native — all 16 bits active (no\n",
+      "padding). Per 2-pixel block layout (4 u16 elements):\n",
+      "\n",
+      "| u16 slot | Field | Active bits           |\n",
+      "|----------|-------|-----------------------|\n",
+      "| 0        | Y₀    | bits `15:0` (16-bit) |\n",
+      "| 1        | U     | bits `15:0` (16-bit) |\n",
+      "| 2        | Y₁    | bits `15:0` (16-bit) |\n",
+      "| 3        | V     | bits `15:0` (16-bit) |\n",
+      "\n",
+      "Full range Y: `[0, 65535]` (16-bit). Limited range Y: `[4096,\n",
+      "60160]`, limited range chroma: `[4096, 61440]`.",
+    ),
     walker_doc: "Walks a [`Y216Frame`] row by row into the sink.",
   }
 }

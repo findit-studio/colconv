@@ -35,8 +35,23 @@ walker! {
     buf_field: packed,
     elem_type: u16,
     row_elems: |w| w * 4,
-    row_doc: "One row of an [`Xv36`] source — `width × 4` u16 elements (4\n\
-              channels per pixel: U, Y, V, A; the A slot is padding).",
+    row_doc: concat!(
+      "One row of an [`Xv36`] source — `width × 4` u16 elements (4\n",
+      "channels per pixel: U, Y, V, A; the A slot is padding).\n",
+      "\n",
+      "Each u16 channel holds a 12-bit MSB-aligned sample with the low 4\n",
+      "bits zero. Channel layout per pixel:\n",
+      "\n",
+      "| u16 slot | Field | Active bits           |\n",
+      "|----------|-------|-----------------------|\n",
+      "| 0        | U     | bits `15:4` (12-bit) |\n",
+      "| 1        | Y     | bits `15:4` (12-bit) |\n",
+      "| 2        | V     | bits `15:4` (12-bit) |\n",
+      "| 3        | A     | bits `15:4` (padding)|\n",
+      "\n",
+      "Full range: `[0, 4095]` (12-bit). Limited range Y: `[256, 3760]`,\n",
+      "limited range chroma: `[256, 3840]`.",
+    ),
     walker_doc: "Walks an [`Xv36Frame`] row by row into the sink.",
   }
 }
