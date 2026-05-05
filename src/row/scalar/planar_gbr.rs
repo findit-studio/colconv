@@ -5,8 +5,8 @@
 //! - [`gbr_to_rgb_row`] — interleave G/B/R planes into packed `R, G, B`
 //!   bytes. Reorders G/B/R → R/G/B per pixel (no chroma matrix).
 //! - [`gbra_to_rgba_row`] — same plus alpha plane → `R, G, B, A`.
-//! - [`gbr_to_luma_row`] — derive luma directly from the planar G/B/R
-//!   inputs (skips the staged-RGB intermediate).
+//! - [`gbr_to_rgba_opaque_row`] — same interleave into `R, G, B, A` with α
+//!   forced to `0xFF` (for `Gbrp` sources with no alpha plane).
 //!
 //! HSV reuses the existing `rgb_to_hsv_row` kernel after a staged RGB
 //! pass via `gbr_to_rgb_row`.

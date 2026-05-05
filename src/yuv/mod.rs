@@ -168,13 +168,13 @@
 //!   plane (1:1 with G); kernel `gbra_to_rgba_row` interleaves all
 //!   four planes into packed RGBA in one pass.
 //!
-//! High-bit-depth GBR (`Gbrp9` / `Gbrp10` / `Gbrp12` / `Gbrp14` /
-//! `Gbrp16`, `Gbrap10` / `Gbrap12` / `Gbrap14` / `Gbrap16`) ships in
-//! Tier 10b — the BITS-generic planar shape from `YuvNp` carries
-//! over directly.
-//!
 //! # Not yet shipped
 //!
+//! - **High-bit-depth GBR** (`Gbrp9` / `Gbrp10` / `Gbrp12` / `Gbrp14` /
+//!   `Gbrp16`, `Gbrap10` / `Gbrap12` / `Gbrap14` / `Gbrap16`) — queued for
+//!   Tier 10b. The BITS-generic planar shape from `YuvNp` carries over
+//!   directly; these high-bit variants are not yet exposed in this release
+//!   and ship in a follow-up PR.
 //! - **Legacy planar** (`Yuv411p`, `Yuv410p`) — DV / Cinepak only;
 //!   uncommon enough that adding them would be speculative.
 //! - **Big-endian 10-bit packed RGB** (`X2RGB10BE` / `X2BGR10BE`).
