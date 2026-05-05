@@ -154,6 +154,53 @@ pub(crate) fn rgb_to_luma_row(
   }
 }
 
+/// `u16` luma analogue of [`rgb_to_luma_row`]. Y' is computed at
+/// 8-bit precision (the source is 8-bit RGB) and zero-extended to
+/// `u16`, matching the convention used by the packed-YUV `*_to_luma_u16`
+/// kernels (`yuyv422_to_luma_u16_row` etc.) — the `u16` carrier
+/// preserves the same dynamic range as the `u8` path, which is the
+/// invariant downstream callers expect when consuming a
+/// "native-depth" luma plane from an 8-bit-RGB-equivalent source.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `rgb.len() < 3 * width` or
+/// `luma_out.len() < width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgb_to_luma_u16_row(
+  rgb: &[u8],
+  luma_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(rgb.len() >= width * 3, "rgb row too short");
+  debug_assert!(luma_out.len() >= width, "luma row too short");
+  let (k_r, k_g, k_b) = luma_coefficients_q15(matrix);
+  const RND: i32 = 1 << 14;
+
+  if full_range {
+    for x in 0..width {
+      let r = rgb[x * 3] as i32;
+      let g = rgb[x * 3 + 1] as i32;
+      let b = rgb[x * 3 + 2] as i32;
+      let y = (k_r * r + k_g * g + k_b * b + RND) >> 15;
+      luma_out[x] = y.clamp(0, 255) as u16;
+    }
+  } else {
+    const LIMITED_SCALE_Q15: i32 = 28142;
+    for x in 0..width {
+      let r = rgb[x * 3] as i32;
+      let g = rgb[x * 3 + 1] as i32;
+      let b = rgb[x * 3 + 2] as i32;
+      let y_full = (k_r * r + k_g * g + k_b * b + RND) >> 15;
+      let y_full_clamped = y_full.clamp(0, 255);
+      let y_lim = 16 + ((y_full_clamped * LIMITED_SCALE_Q15 + RND) >> 15);
+      luma_out[x] = y_lim.clamp(0, 255) as u16;
+    }
+  }
+}
+
 /// Scalar RGB → HSV for a single pixel, using the shared division LUTs.
 /// All arithmetic is integer; the two divisions `s = 255*delta/v` and
 /// `h = 30*diff/delta` become `(operand * table[divisor] + RND) >> 12`.

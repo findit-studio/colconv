@@ -1,0 +1,252 @@
+//! AVX-512 (F + BW) kernels for the Tier 9 packed-float-RGB
+//! (`Rgbf32`) source. 16-lane `__m512` registers; same lane-aligned
+//! pixel chunking as the AVX2 backend at twice the throughput.
+//!
+//! Process 16 pixels = 48 lanes per iteration so the loop boundary
+//! lands on a pixel boundary; the scalar tail handles the leftover
+//! 0–15 pixels.
+
+use core::arch::x86_64::*;
+
+use super::scalar;
+
+#[inline(always)]
+unsafe fn clamp_scale_to_u32_512(v: __m512, zero: __m512, one: __m512, scale: __m512) -> __m512i {
+  unsafe {
+    let clamped = _mm512_min_ps(_mm512_max_ps(v, zero), one);
+    let scaled = _mm512_mul_ps(clamped, scale);
+    // `_mm512_cvtps_epi32` rounds per the embedded MXCSR rounding mode
+    // (round-to-nearest-even by default).
+    _mm512_cvtps_epi32(scaled)
+  }
+}
+
+/// f32 RGB → u8 RGB.
+///
+/// # Safety
+///
+/// 1. AVX-512F + AVX-512BW must be available.
+/// 2. `rgb_in.len() >= 3 * width`; `rgb_out.len() >= 3 * width`.
+/// 3. `rgb_in` / `rgb_out` must not alias.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn rgbf32_to_rgb_row(rgb_in: &[f32], rgb_out: &mut [u8], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf32 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+
+  unsafe {
+    let zero = _mm512_setzero_ps();
+    let one = _mm512_set1_ps(1.0);
+    let scale = _mm512_set1_ps(255.0);
+
+    let total_lanes = width * 3;
+    let mut lane = 0usize;
+    // 16 pixels = 48 lanes per iter (3 × 16-lane f32 loads).
+    while lane + 48 <= total_lanes {
+      let v0 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane));
+      let v1 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane + 16));
+      let v2 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane + 32));
+
+      let i0 = clamp_scale_to_u32_512(v0, zero, one, scale);
+      let i1 = clamp_scale_to_u32_512(v1, zero, one, scale);
+      let i2 = clamp_scale_to_u32_512(v2, zero, one, scale);
+
+      // i32x16 → u8x16 saturating narrow via `_mm512_cvtusepi32_epi8`
+      // (AVX-512F). Each result is a 128-bit vector of 16 bytes — write
+      // 16 bytes for each of i0/i1/i2 sequentially → 48 bytes total.
+      let b0 = _mm512_cvtusepi32_epi8(i0);
+      let b1 = _mm512_cvtusepi32_epi8(i1);
+      let b2 = _mm512_cvtusepi32_epi8(i2);
+
+      _mm_storeu_si128(rgb_out.as_mut_ptr().add(lane) as *mut __m128i, b0);
+      _mm_storeu_si128(rgb_out.as_mut_ptr().add(lane + 16) as *mut __m128i, b1);
+      _mm_storeu_si128(rgb_out.as_mut_ptr().add(lane + 32) as *mut __m128i, b2);
+
+      lane += 48;
+    }
+    let pix_done = lane / 3;
+    if pix_done < width {
+      scalar::rgbf32_to_rgb_row(
+        &rgb_in[pix_done * 3..width * 3],
+        &mut rgb_out[pix_done * 3..width * 3],
+        width - pix_done,
+      );
+    }
+  }
+}
+
+/// f32 RGB → u8 RGBA (alpha forced to `0xFF`).
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn rgbf32_to_rgba_row(rgb_in: &[f32], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf32 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  unsafe {
+    let zero = _mm512_setzero_ps();
+    let one = _mm512_set1_ps(1.0);
+    let scale = _mm512_set1_ps(255.0);
+
+    let total_lanes = width * 3;
+    let mut lane = 0usize;
+    let mut pix = 0usize;
+    while lane + 48 <= total_lanes {
+      let v0 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane));
+      let v1 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane + 16));
+      let v2 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane + 32));
+
+      let i0 = clamp_scale_to_u32_512(v0, zero, one, scale);
+      let i1 = clamp_scale_to_u32_512(v1, zero, one, scale);
+      let i2 = clamp_scale_to_u32_512(v2, zero, one, scale);
+
+      let b0 = _mm512_cvtusepi32_epi8(i0);
+      let b1 = _mm512_cvtusepi32_epi8(i1);
+      let b2 = _mm512_cvtusepi32_epi8(i2);
+
+      let mut tmp = [0u8; 48];
+      _mm_storeu_si128(tmp.as_mut_ptr() as *mut __m128i, b0);
+      _mm_storeu_si128(tmp.as_mut_ptr().add(16) as *mut __m128i, b1);
+      _mm_storeu_si128(tmp.as_mut_ptr().add(32) as *mut __m128i, b2);
+      // tmp[0..48] = 16 RGB pixels. Interleave alpha at trailing slot
+      // of each 4-byte group → 64 RGBA bytes.
+      let dst = rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 64);
+      for p in 0..16 {
+        dst[p * 4] = tmp[p * 3];
+        dst[p * 4 + 1] = tmp[p * 3 + 1];
+        dst[p * 4 + 2] = tmp[p * 3 + 2];
+        dst[p * 4 + 3] = 0xFF;
+      }
+
+      lane += 48;
+      pix += 16;
+    }
+    if pix < width {
+      scalar::rgbf32_to_rgba_row(
+        &rgb_in[pix * 3..width * 3],
+        &mut rgba_out[pix * 4..width * 4],
+        width - pix,
+      );
+    }
+  }
+}
+
+/// f32 RGB → u16 RGB.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn rgbf32_to_rgb_u16_row(rgb_in: &[f32], rgb_out: &mut [u16], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf32 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_u16_out row too short");
+
+  unsafe {
+    let zero = _mm512_setzero_ps();
+    let one = _mm512_set1_ps(1.0);
+    let scale = _mm512_set1_ps(65535.0);
+
+    let total_lanes = width * 3;
+    let mut lane = 0usize;
+    while lane + 48 <= total_lanes {
+      let v0 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane));
+      let v1 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane + 16));
+      let v2 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane + 32));
+
+      let i0 = clamp_scale_to_u32_512(v0, zero, one, scale);
+      let i1 = clamp_scale_to_u32_512(v1, zero, one, scale);
+      let i2 = clamp_scale_to_u32_512(v2, zero, one, scale);
+
+      // i32x16 → u16x16 saturating narrow via `_mm512_cvtusepi32_epi16`
+      // (AVX-512F). Output is a 256-bit vector of 16 u16 elements.
+      let h0 = _mm512_cvtusepi32_epi16(i0);
+      let h1 = _mm512_cvtusepi32_epi16(i1);
+      let h2 = _mm512_cvtusepi32_epi16(i2);
+
+      _mm256_storeu_si256(rgb_out.as_mut_ptr().add(lane) as *mut __m256i, h0);
+      _mm256_storeu_si256(rgb_out.as_mut_ptr().add(lane + 16) as *mut __m256i, h1);
+      _mm256_storeu_si256(rgb_out.as_mut_ptr().add(lane + 32) as *mut __m256i, h2);
+
+      lane += 48;
+    }
+    let pix_done = lane / 3;
+    if pix_done < width {
+      scalar::rgbf32_to_rgb_u16_row(
+        &rgb_in[pix_done * 3..width * 3],
+        &mut rgb_out[pix_done * 3..width * 3],
+        width - pix_done,
+      );
+    }
+  }
+}
+
+/// f32 RGB → u16 RGBA (alpha forced to `0xFFFF`).
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn rgbf32_to_rgba_u16_row(rgb_in: &[f32], rgba_out: &mut [u16], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf32 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_u16_out row too short");
+
+  unsafe {
+    let zero = _mm512_setzero_ps();
+    let one = _mm512_set1_ps(1.0);
+    let scale = _mm512_set1_ps(65535.0);
+
+    let total_lanes = width * 3;
+    let mut lane = 0usize;
+    let mut pix = 0usize;
+    while lane + 48 <= total_lanes {
+      let v0 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane));
+      let v1 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane + 16));
+      let v2 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane + 32));
+
+      let i0 = clamp_scale_to_u32_512(v0, zero, one, scale);
+      let i1 = clamp_scale_to_u32_512(v1, zero, one, scale);
+      let i2 = clamp_scale_to_u32_512(v2, zero, one, scale);
+
+      let h0 = _mm512_cvtusepi32_epi16(i0);
+      let h1 = _mm512_cvtusepi32_epi16(i1);
+      let h2 = _mm512_cvtusepi32_epi16(i2);
+
+      let mut tmp = [0u16; 48];
+      _mm256_storeu_si256(tmp.as_mut_ptr() as *mut __m256i, h0);
+      _mm256_storeu_si256(tmp.as_mut_ptr().add(16) as *mut __m256i, h1);
+      _mm256_storeu_si256(tmp.as_mut_ptr().add(32) as *mut __m256i, h2);
+      let dst = rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 64);
+      for p in 0..16 {
+        dst[p * 4] = tmp[p * 3];
+        dst[p * 4 + 1] = tmp[p * 3 + 1];
+        dst[p * 4 + 2] = tmp[p * 3 + 2];
+        dst[p * 4 + 3] = 0xFFFF;
+      }
+
+      lane += 48;
+      pix += 16;
+    }
+    if pix < width {
+      scalar::rgbf32_to_rgba_u16_row(
+        &rgb_in[pix * 3..width * 3],
+        &mut rgba_out[pix * 4..width * 4],
+        width - pix,
+      );
+    }
+  }
+}
+
+/// f32 RGB → f32 RGB lossless pass-through.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn rgbf32_to_rgb_f32_row(rgb_in: &[f32], rgb_out: &mut [f32], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf32 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_f32_out row too short");
+
+  unsafe {
+    let total = width * 3;
+    let mut i = 0usize;
+    while i + 16 <= total {
+      let v = _mm512_loadu_ps(rgb_in.as_ptr().add(i));
+      _mm512_storeu_ps(rgb_out.as_mut_ptr().add(i), v);
+      i += 16;
+    }
+    while i < total {
+      *rgb_out.get_unchecked_mut(i) = *rgb_in.get_unchecked(i);
+      i += 1;
+    }
+  }
+}

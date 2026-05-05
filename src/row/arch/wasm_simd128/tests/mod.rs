@@ -5,6 +5,7 @@ use super::*;
 mod ayuv64;
 mod high_bit_4_2_0;
 mod high_bit_4_4_4_and_pn;
+mod packed_rgb_float;
 mod packed_yuv_8bit;
 mod planar_8bit_and_nv;
 mod v210;
