@@ -30,20 +30,7 @@ use crate::row::{rgb_row_bytes, rgb_row_elems, rgba_row_bytes, rgba_row_elems, s
 ///
 /// `use_simd = false` forces the scalar reference path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn rgbf32_to_rgb_row(rgb_in: &[f32], rgb_out: &mut [u8], width: usize) {
-  rgbf32_to_rgb_row_with_simd(rgb_in, rgb_out, width, true);
-}
-
-/// Internal entry point taking an explicit `use_simd` flag. The
-/// public convenience wrappers in this file always pass `true`; the
-/// `MixedSinker` plumbs `self.simd` through.
-#[cfg_attr(not(tarpaulin), inline(always))]
-pub fn rgbf32_to_rgb_row_with_simd(
-  rgb_in: &[f32],
-  rgb_out: &mut [u8],
-  width: usize,
-  use_simd: bool,
-) {
+pub fn rgbf32_to_rgb_row(rgb_in: &[f32], rgb_out: &mut [u8], width: usize, use_simd: bool) {
   let rgb_in_min = rgb_row_elems(width);
   let rgb_out_min = rgb_row_bytes(width);
   assert!(rgb_in.len() >= rgb_in_min, "rgbf32 row too short");
@@ -90,13 +77,10 @@ pub fn rgbf32_to_rgb_row_with_simd(
 
 /// Converts packed `R, G, B` `f32` input to packed `R, G, B, A` `u8`
 /// output (`A = 0xFF`).
+///
+/// `use_simd = false` forces the scalar reference path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn rgbf32_to_rgba_row_with_simd(
-  rgb_in: &[f32],
-  rgba_out: &mut [u8],
-  width: usize,
-  use_simd: bool,
-) {
+pub fn rgbf32_to_rgba_row(rgb_in: &[f32], rgba_out: &mut [u8], width: usize, use_simd: bool) {
   let rgb_in_min = rgb_row_elems(width);
   let rgba_out_min = rgba_row_bytes(width);
   assert!(rgb_in.len() >= rgb_in_min, "rgbf32 row too short");
@@ -138,13 +122,10 @@ pub fn rgbf32_to_rgba_row_with_simd(
 
 /// Converts packed `R, G, B` `f32` input to packed `R, G, B` `u16`
 /// output with `[0, 1]` saturation and ×65535 scaling.
+///
+/// `use_simd = false` forces the scalar reference path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn rgbf32_to_rgb_u16_row_with_simd(
-  rgb_in: &[f32],
-  rgb_out: &mut [u16],
-  width: usize,
-  use_simd: bool,
-) {
+pub fn rgbf32_to_rgb_u16_row(rgb_in: &[f32], rgb_out: &mut [u16], width: usize, use_simd: bool) {
   let rgb_in_min = rgb_row_elems(width);
   let rgb_out_min = rgb_row_elems(width);
   assert!(rgb_in.len() >= rgb_in_min, "rgbf32 row too short");
@@ -186,13 +167,10 @@ pub fn rgbf32_to_rgb_u16_row_with_simd(
 
 /// Converts packed `R, G, B` `f32` input to packed `R, G, B, A` `u16`
 /// output (`A = 0xFFFF`).
+///
+/// `use_simd = false` forces the scalar reference path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn rgbf32_to_rgba_u16_row_with_simd(
-  rgb_in: &[f32],
-  rgba_out: &mut [u16],
-  width: usize,
-  use_simd: bool,
-) {
+pub fn rgbf32_to_rgba_u16_row(rgb_in: &[f32], rgba_out: &mut [u16], width: usize, use_simd: bool) {
   let rgb_in_min = rgb_row_elems(width);
   let rgba_out_min = rgba_row_elems(width);
   assert!(rgb_in.len() >= rgb_in_min, "rgbf32 row too short");
@@ -235,13 +213,10 @@ pub fn rgbf32_to_rgba_u16_row_with_simd(
 /// **Lossless** float pass-through: copies packed `R, G, B` `f32`
 /// from input into output verbatim. HDR values > 1.0 and negatives
 /// are preserved bit-exact.
+///
+/// `use_simd = false` forces the scalar reference path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn rgbf32_to_rgb_f32_row_with_simd(
-  rgb_in: &[f32],
-  rgb_out: &mut [f32],
-  width: usize,
-  use_simd: bool,
-) {
+pub fn rgbf32_to_rgb_f32_row(rgb_in: &[f32], rgb_out: &mut [f32], width: usize, use_simd: bool) {
   let rgb_in_min = rgb_row_elems(width);
   let rgb_out_min = rgb_row_elems(width);
   assert!(rgb_in.len() >= rgb_in_min, "rgbf32 row too short");

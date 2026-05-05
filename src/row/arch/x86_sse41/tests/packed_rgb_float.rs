@@ -2,6 +2,36 @@ use super::super::*;
 
 // ---- Tier 9 Rgbf32 SIMD-vs-scalar parity tests --------------------------
 
+// MXCSR access via inline asm. `_mm_getcsr` / `_mm_setcsr` are deprecated
+// (the deprecation message itself points at inline assembly), so we use the
+// underlying `stmxcsr` / `ldmxcsr` instructions directly. Only used by the
+// regression test below.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+unsafe fn read_mxcsr() -> u32 {
+  let mut v: u32 = 0;
+  unsafe {
+    core::arch::asm!(
+      "stmxcsr [{p}]",
+      p = in(reg) &mut v,
+      options(nostack, preserves_flags),
+    );
+  }
+  v
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+unsafe fn write_mxcsr(v: u32) {
+  unsafe {
+    core::arch::asm!(
+      "ldmxcsr [{p}]",
+      p = in(reg) &v,
+      options(nostack, preserves_flags),
+    );
+  }
+}
+
 #[test]
 #[cfg(target_arch = "x86_64")]
 #[cfg_attr(miri, ignore = "MXCSR + SIMD intrinsics unsupported by Miri")]
@@ -10,9 +40,9 @@ fn rgbf32_to_rgb_row_simd_matches_scalar_under_truncate_mxcsr() {
     return;
   }
   // Save ambient MXCSR and set round-toward-zero (bits 13-14 = 0b11 = 0x6000).
-  let saved = unsafe { core::arch::x86_64::_mm_getcsr() };
+  let saved = unsafe { read_mxcsr() };
   let mxcsr_rz = (saved & !0x6000) | 0x6000;
-  unsafe { core::arch::x86_64::_mm_setcsr(mxcsr_rz) };
+  unsafe { write_mxcsr(mxcsr_rz) };
 
   // Input: every channel is exactly 0.5 → after ×255 = 127.5, a half-boundary
   // value. Scalar (round-ties-even) → 128. SIMD without the fix → 127 under
@@ -26,7 +56,7 @@ fn rgbf32_to_rgb_row_simd_matches_scalar_under_truncate_mxcsr() {
   scalar::rgbf32_to_rgb_row(&rgb, &mut scalar_out, width);
 
   // Restore MXCSR before any assertion so panic formatting doesn't misfire.
-  unsafe { core::arch::x86_64::_mm_setcsr(saved) };
+  unsafe { write_mxcsr(saved) };
 
   assert_eq!(
     simd_out, scalar_out,

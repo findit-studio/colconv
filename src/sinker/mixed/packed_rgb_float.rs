@@ -25,9 +25,8 @@ use super::{
 use crate::{
   PixelSink,
   row::{
-    rgb_to_hsv_row, rgb_to_luma_row, rgb_to_luma_u16_row, rgbf32_to_rgb_f32_row_with_simd,
-    rgbf32_to_rgb_row_with_simd, rgbf32_to_rgb_u16_row_with_simd, rgbf32_to_rgba_row_with_simd,
-    rgbf32_to_rgba_u16_row_with_simd,
+    rgb_to_hsv_row, rgb_to_luma_row, rgb_to_luma_u16_row, rgbf32_to_rgb_f32_row, rgbf32_to_rgb_row,
+    rgbf32_to_rgb_u16_row, rgbf32_to_rgba_row, rgbf32_to_rgba_u16_row,
   },
   yuv::{Rgbf32, Rgbf32Row, Rgbf32Sink},
 };
@@ -58,8 +57,17 @@ impl<'a> MixedSinker<'a, Rgbf32> {
   }
 
   /// Attaches a `u16` RGB output buffer (`width × height × 3`
-  /// elements). Each `f32` channel is clamped to `[0, 1]` and scaled
-  /// by 65535.
+  /// elements). Each `f32` channel is clamped to `[0, 1]` and **scaled
+  /// to the full u16 range** (×65535).
+  ///
+  /// # Naming consistency note
+  ///
+  /// Other source families' `with_rgb_u16` accessor preserves the
+  /// source's *native integer precision* in a u16 carrier (e.g.
+  /// 10-bit YUV stays in `[0, 1023]`). The `Rgbf32` variant has no
+  /// native integer range to preserve, so it instead applies full-
+  /// range scaling — a deliberate divergence to give callers a useful
+  /// u16 output rather than refusing the operation.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;
@@ -79,9 +87,12 @@ impl<'a> MixedSinker<'a, Rgbf32> {
     Ok(self)
   }
 
-  /// Attaches a `u16` RGBA output buffer. Same conversion as
+  /// Attaches a `u16` RGBA output buffer. Same `[0, 1]` × 65535
+  /// **full-range scaling** as
   /// [`with_rgb_u16`](Self::with_rgb_u16); alpha is forced to `0xFFFF`
-  /// (the float source has no alpha channel).
+  /// (the float source has no alpha channel). See
+  /// [`with_rgb_u16`](Self::with_rgb_u16) for the divergence note vs
+  /// integer-source families.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -199,20 +210,20 @@ impl PixelSink for MixedSinker<'_, Rgbf32> {
     if let Some(buf) = rgb_f32.as_deref_mut() {
       let f32_start = one_plane_start * 3;
       let f32_end = one_plane_end * 3;
-      rgbf32_to_rgb_f32_row_with_simd(rgb_in, &mut buf[f32_start..f32_end], w, use_simd);
+      rgbf32_to_rgb_f32_row(rgb_in, &mut buf[f32_start..f32_end], w, use_simd);
     }
 
     // u16 RGB output — direct float→u16 conversion (no staging).
     if let Some(buf) = rgb_u16.as_deref_mut() {
       let u16_start = one_plane_start * 3;
       let u16_end = one_plane_end * 3;
-      rgbf32_to_rgb_u16_row_with_simd(rgb_in, &mut buf[u16_start..u16_end], w, use_simd);
+      rgbf32_to_rgb_u16_row(rgb_in, &mut buf[u16_start..u16_end], w, use_simd);
     }
 
     // u16 RGBA output — direct float→u16 conversion (no staging).
     if let Some(buf) = rgba_u16.as_deref_mut() {
       let rgba_row = rgba_u16_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
-      rgbf32_to_rgba_u16_row_with_simd(rgb_in, rgba_row, w, use_simd);
+      rgbf32_to_rgba_u16_row(rgb_in, rgba_row, w, use_simd);
     }
 
     // u8 RGBA standalone fast path — direct float→u8 conversion when
@@ -227,7 +238,7 @@ impl PixelSink for MixedSinker<'_, Rgbf32> {
     if want_rgba_u8 && !need_u8_rgb {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      rgbf32_to_rgba_row_with_simd(rgb_in, rgba_row, w, use_simd);
+      rgbf32_to_rgba_row(rgb_in, rgba_row, w, use_simd);
       return Ok(());
     }
 
@@ -247,7 +258,7 @@ impl PixelSink for MixedSinker<'_, Rgbf32> {
       w,
       h,
     )?;
-    rgbf32_to_rgb_row_with_simd(rgb_in, rgb_row, w, use_simd);
+    rgbf32_to_rgb_row(rgb_in, rgb_row, w, use_simd);
 
     if let Some(luma) = luma.as_deref_mut() {
       rgb_to_luma_row(
@@ -289,7 +300,7 @@ impl PixelSink for MixedSinker<'_, Rgbf32> {
     // less memory pass for combined `with_rgb + with_rgba` callers.
     if let Some(buf) = rgba.as_deref_mut() {
       let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
-      rgbf32_to_rgba_row_with_simd(rgb_in, rgba_row, w, use_simd);
+      rgbf32_to_rgba_row(rgb_in, rgba_row, w, use_simd);
     }
 
     Ok(())

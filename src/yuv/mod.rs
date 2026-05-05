@@ -147,6 +147,13 @@
 //!   (down-shifted 10→8) and native u16 outputs (`with_rgb_u16`,
 //!   value range `[0, 1023]`) are supported (Ship 9e — closes
 //!   Tier 6).
+//! - [`Rgbf32`] — packed `R, G, B` 32-bit float (FFmpeg
+//!   `AV_PIX_FMT_RGBF32`). Linear-RGB convention; HDR values > 1.0
+//!   are saturated when targeting integer outputs and preserved
+//!   bit-exact when targeting `with_rgb_f32`. Integer u8 / u16
+//!   paths apply `[0, 1]` clamp + full-range scaling (×255 / ×65535)
+//!   — distinct from the integer-source `with_rgb_u16` family which
+//!   preserves the source's native precision range (Tier 9 MVP).
 //!
 //! # Not yet shipped
 //!
