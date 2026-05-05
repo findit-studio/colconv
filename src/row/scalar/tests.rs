@@ -634,3 +634,86 @@ fn p416_rgba_u16_gray_alpha_is_ffff() {
     assert_eq!(a, 0xFFFF, "alpha must be 0xFFFF at px {x}");
   }
 }
+
+// ---- Rgbf16 scalar row kernel parity tests ------------------------------
+//
+// Each test builds a `half::f16` input from a set of representative f32
+// values, calls the `rgbf16_to_*_row` kernel, and then calls the matching
+// `rgbf32_to_*_row` kernel with the widened f32 slice.  The outputs must
+// be identical, proving that widening is the only difference.
+
+/// 9 representative half-float inputs: normal [0,1] range, HDR, subnormal-
+/// ish, negative, and over-range.  Replicated across 9 pixels × 3 channels
+/// so that every channel position sees every value at some pixel.
+fn rgbf16_test_inputs() -> (Vec<half::f16>, Vec<f32>, usize) {
+  let inputs_f32: [f32; 9] = [0.0, 1.0, 0.5, 65504.0, 1e-5, -0.5, 2.5, 0.999, 0.001];
+  let width = inputs_f32.len();
+  let rgb_in: Vec<half::f16> = (0..width * 3)
+    .map(|i| half::f16::from_f32(inputs_f32[i % width]))
+    .collect();
+  let widened: Vec<f32> = rgb_in.iter().map(|&h| h.to_f32()).collect();
+  (rgb_in, widened, width)
+}
+
+#[test]
+fn rgbf16_scalar_rgb_matches_widen_then_rgbf32() {
+  let (rgb_in, widened, width) = rgbf16_test_inputs();
+  let mut out_f16 = std::vec![0u8; width * 3];
+  let mut out_via_f32 = std::vec![0u8; width * 3];
+  rgbf16_to_rgb_row(&rgb_in, &mut out_f16, width);
+  rgbf32_to_rgb_row(&widened, &mut out_via_f32, width);
+  assert_eq!(out_f16, out_via_f32, "rgbf16_to_rgb scalar parity");
+}
+
+#[test]
+fn rgbf16_scalar_rgba_matches_widen_then_rgbf32() {
+  let (rgb_in, widened, width) = rgbf16_test_inputs();
+  let mut out_f16 = std::vec![0u8; width * 4];
+  let mut out_via_f32 = std::vec![0u8; width * 4];
+  rgbf16_to_rgba_row(&rgb_in, &mut out_f16, width);
+  rgbf32_to_rgba_row(&widened, &mut out_via_f32, width);
+  assert_eq!(out_f16, out_via_f32, "rgbf16_to_rgba scalar parity");
+}
+
+#[test]
+fn rgbf16_scalar_rgb_u16_matches_widen_then_rgbf32() {
+  let (rgb_in, widened, width) = rgbf16_test_inputs();
+  let mut out_f16 = std::vec![0u16; width * 3];
+  let mut out_via_f32 = std::vec![0u16; width * 3];
+  rgbf16_to_rgb_u16_row(&rgb_in, &mut out_f16, width);
+  rgbf32_to_rgb_u16_row(&widened, &mut out_via_f32, width);
+  assert_eq!(out_f16, out_via_f32, "rgbf16_to_rgb_u16 scalar parity");
+}
+
+#[test]
+fn rgbf16_scalar_rgba_u16_matches_widen_then_rgbf32() {
+  let (rgb_in, widened, width) = rgbf16_test_inputs();
+  let mut out_f16 = std::vec![0u16; width * 4];
+  let mut out_via_f32 = std::vec![0u16; width * 4];
+  rgbf16_to_rgba_u16_row(&rgb_in, &mut out_f16, width);
+  rgbf32_to_rgba_u16_row(&widened, &mut out_via_f32, width);
+  assert_eq!(out_f16, out_via_f32, "rgbf16_to_rgba_u16 scalar parity");
+}
+
+#[test]
+fn rgbf16_scalar_rgb_f32_matches_element_wise_widen() {
+  let (rgb_in, widened, width) = rgbf16_test_inputs();
+  let mut out = std::vec![0.0f32; width * 3];
+  rgbf16_to_rgb_f32_row(&rgb_in, &mut out, width);
+  // Each output must equal the bit-exact widening of the input f16.
+  assert_eq!(
+    out, widened,
+    "rgbf16_to_rgb_f32 must widen without clamping"
+  );
+}
+
+#[test]
+fn rgbf16_scalar_rgb_f16_is_copy() {
+  let (rgb_in, _widened, width) = rgbf16_test_inputs();
+  let mut out = std::vec![half::f16::ZERO; width * 3];
+  rgbf16_to_rgb_f16_row(&rgb_in, &mut out, width);
+  assert_eq!(
+    out, rgb_in,
+    "rgbf16_to_rgb_f16 must be a byte-identical copy"
+  );
+}
