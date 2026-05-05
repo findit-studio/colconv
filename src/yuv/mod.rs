@@ -172,13 +172,24 @@
 //!   plane (1:1 with G); kernel `gbra_to_rgba_row` interleaves all
 //!   four planes into packed RGBA in one pass.
 //!
+//! # Shipped (planar GBR high-bit-depth sources — Tier 10b)
+//!
+//! - [`Gbrp9`](crate::yuv::Gbrp9) / [`Gbrp10`](crate::yuv::Gbrp10) /
+//!   [`Gbrp12`](crate::yuv::Gbrp12) / [`Gbrp14`](crate::yuv::Gbrp14) /
+//!   [`Gbrp16`](crate::yuv::Gbrp16) — three full-resolution `u16` planes
+//!   in G, B, R order at 9 / 10 / 12 / 14 / 16 bits per sample
+//!   (`AV_PIX_FMT_GBRP{9,10,12,14,16}LE`). Samples in the low `BITS`
+//!   bits of each `u16`. Const-generic `BITS` kernel family; scalar
+//!   kernels in `planar_gbr_high_bit.rs`.
+//! - [`Gbrap9`](crate::yuv::Gbrap9) / [`Gbrap10`](crate::yuv::Gbrap10) /
+//!   [`Gbrap12`](crate::yuv::Gbrap12) / [`Gbrap14`](crate::yuv::Gbrap14) /
+//!   [`Gbrap16`](crate::yuv::Gbrap16) — four planes (G, B, R, A) at 9 /
+//!   10 / 12 / 14 / 16 bits (`AV_PIX_FMT_GBRAP{9,10,12,14,16}LE`). Alpha
+//!   is real per-pixel α at native depth; Strategy A+ sinker path for
+//!   simultaneous RGB + RGBA output.
+//!
 //! # Not yet shipped
 //!
-//! - **High-bit-depth GBR** (`Gbrp9` / `Gbrp10` / `Gbrp12` / `Gbrp14` /
-//!   `Gbrp16`, `Gbrap10` / `Gbrap12` / `Gbrap14` / `Gbrap16`) — queued for
-//!   Tier 10b. The BITS-generic planar shape from `YuvNp` carries over
-//!   directly; these high-bit variants are not yet exposed in this release
-//!   and ship in a follow-up PR.
 //! - **Legacy planar** (`Yuv411p`, `Yuv410p`) — DV / Cinepak only;
 //!   uncommon enough that adding them would be speculative.
 //! - **Big-endian 10-bit packed RGB** (`X2RGB10BE` / `X2BGR10BE`).
@@ -205,7 +216,17 @@ mod bgr24;
 mod bgra;
 mod bgrx;
 mod gbrap;
+mod gbrap9;
+mod gbrap10;
+mod gbrap12;
+mod gbrap14;
+mod gbrap16;
 mod gbrp;
+mod gbrp9;
+mod gbrp10;
+mod gbrp12;
+mod gbrp14;
+mod gbrp16;
 mod gray10;
 mod gray12;
 mod gray14;
@@ -291,7 +312,17 @@ pub use bgr24::{Bgr24, Bgr24Row, Bgr24Sink, bgr24_to};
 pub use bgra::{Bgra, BgraRow, BgraSink, bgra_to};
 pub use bgrx::{Bgrx, BgrxRow, BgrxSink, bgrx_to};
 pub use gbrap::{Gbrap, GbrapRow, GbrapSink, gbrap_to};
+pub use gbrap9::{Gbrap9, Gbrap9Row, Gbrap9Sink, gbrap9_to};
+pub use gbrap10::{Gbrap10, Gbrap10Row, Gbrap10Sink, gbrap10_to};
+pub use gbrap12::{Gbrap12, Gbrap12Row, Gbrap12Sink, gbrap12_to};
+pub use gbrap14::{Gbrap14, Gbrap14Row, Gbrap14Sink, gbrap14_to};
+pub use gbrap16::{Gbrap16, Gbrap16Row, Gbrap16Sink, gbrap16_to};
 pub use gbrp::{Gbrp, GbrpRow, GbrpSink, gbrp_to};
+pub use gbrp9::{Gbrp9, Gbrp9Row, Gbrp9Sink, gbrp9_to};
+pub use gbrp10::{Gbrp10, Gbrp10Row, Gbrp10Sink, gbrp10_to};
+pub use gbrp12::{Gbrp12, Gbrp12Row, Gbrp12Sink, gbrp12_to};
+pub use gbrp14::{Gbrp14, Gbrp14Row, Gbrp14Sink, gbrp14_to};
+pub use gbrp16::{Gbrp16, Gbrp16Row, Gbrp16Sink, gbrp16_to};
 pub use gray8::{Gray8, Gray8Row, Gray8Sink, gray8_to};
 pub use gray9::{Gray9, Gray9Row, Gray9Sink, gray9_to};
 pub use gray10::{Gray10, Gray10Row, Gray10Sink, gray10_to};
