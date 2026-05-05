@@ -116,9 +116,13 @@ fn pseudo_random_rgbf16(width: usize) -> std::vec::Vec<half::f16> {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri")]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn avx512_rgbf16_to_rgb_matches_scalar() {
-  if !std::arch::is_x86_feature_detected!("avx512bw") || !std::arch::is_x86_feature_detected!("f16c")
+  if !std::arch::is_x86_feature_detected!("avx512bw")
+    || !std::arch::is_x86_feature_detected!("f16c")
   {
     return;
   }
@@ -135,9 +139,13 @@ fn avx512_rgbf16_to_rgb_matches_scalar() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri")]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn avx512_rgbf16_to_rgba_matches_scalar() {
-  if !std::arch::is_x86_feature_detected!("avx512bw") || !std::arch::is_x86_feature_detected!("f16c")
+  if !std::arch::is_x86_feature_detected!("avx512bw")
+    || !std::arch::is_x86_feature_detected!("f16c")
   {
     return;
   }
@@ -149,14 +157,21 @@ fn avx512_rgbf16_to_rgba_matches_scalar() {
     unsafe {
       rgbf16_to_rgba_row(&input, &mut out_simd, w);
     }
-    assert_eq!(out_scalar, out_simd, "AVX-512+F16C rgbf16_to_rgba width {w}");
+    assert_eq!(
+      out_scalar, out_simd,
+      "AVX-512+F16C rgbf16_to_rgba width {w}"
+    );
   }
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri")]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn avx512_rgbf16_to_rgb_u16_matches_scalar() {
-  if !std::arch::is_x86_feature_detected!("avx512bw") || !std::arch::is_x86_feature_detected!("f16c")
+  if !std::arch::is_x86_feature_detected!("avx512bw")
+    || !std::arch::is_x86_feature_detected!("f16c")
   {
     return;
   }
@@ -168,14 +183,21 @@ fn avx512_rgbf16_to_rgb_u16_matches_scalar() {
     unsafe {
       rgbf16_to_rgb_u16_row(&input, &mut out_simd, w);
     }
-    assert_eq!(out_scalar, out_simd, "AVX-512+F16C rgbf16_to_rgb_u16 width {w}");
+    assert_eq!(
+      out_scalar, out_simd,
+      "AVX-512+F16C rgbf16_to_rgb_u16 width {w}"
+    );
   }
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri")]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn avx512_rgbf16_to_rgba_u16_matches_scalar() {
-  if !std::arch::is_x86_feature_detected!("avx512bw") || !std::arch::is_x86_feature_detected!("f16c")
+  if !std::arch::is_x86_feature_detected!("avx512bw")
+    || !std::arch::is_x86_feature_detected!("f16c")
   {
     return;
   }
@@ -187,14 +209,21 @@ fn avx512_rgbf16_to_rgba_u16_matches_scalar() {
     unsafe {
       rgbf16_to_rgba_u16_row(&input, &mut out_simd, w);
     }
-    assert_eq!(out_scalar, out_simd, "AVX-512+F16C rgbf16_to_rgba_u16 width {w}");
+    assert_eq!(
+      out_scalar, out_simd,
+      "AVX-512+F16C rgbf16_to_rgba_u16 width {w}"
+    );
   }
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri")]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn avx512_rgbf16_to_rgb_f32_matches_scalar() {
-  if !std::arch::is_x86_feature_detected!("avx512bw") || !std::arch::is_x86_feature_detected!("f16c")
+  if !std::arch::is_x86_feature_detected!("avx512bw")
+    || !std::arch::is_x86_feature_detected!("f16c")
   {
     return;
   }
@@ -206,14 +235,21 @@ fn avx512_rgbf16_to_rgb_f32_matches_scalar() {
     unsafe {
       rgbf16_to_rgb_f32_row(&input, &mut out_simd, w);
     }
-    assert_eq!(out_scalar, out_simd, "AVX-512+F16C rgbf16_to_rgb_f32 width {w}");
+    assert_eq!(
+      out_scalar, out_simd,
+      "AVX-512+F16C rgbf16_to_rgb_f32 width {w}"
+    );
   }
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri")]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn avx512_rgbf16_to_rgb_f16_matches_scalar() {
-  if !std::arch::is_x86_feature_detected!("avx512bw") || !std::arch::is_x86_feature_detected!("f16c")
+  if !std::arch::is_x86_feature_detected!("avx512bw")
+    || !std::arch::is_x86_feature_detected!("f16c")
   {
     return;
   }
@@ -225,7 +261,10 @@ fn avx512_rgbf16_to_rgb_f16_matches_scalar() {
     unsafe {
       rgbf16_to_rgb_f16_row(&input, &mut out_simd, w);
     }
-    assert_eq!(out_scalar, out_simd, "AVX-512+F16C rgbf16_to_rgb_f16 width {w}");
+    assert_eq!(
+      out_scalar, out_simd,
+      "AVX-512+F16C rgbf16_to_rgb_f16 width {w}"
+    );
     assert_eq!(out_simd, input[..w * 3], "lossless width {w}");
   }
 }
