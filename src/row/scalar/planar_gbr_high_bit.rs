@@ -495,9 +495,9 @@ mod tests {
   fn rgb_high_bit_bits10_parity_with_scaled_8bit() {
     // val=128 in 8-bit; in 10-bit: 128 << 2 = 512. 512 >> 2 = 128.
     let val: u16 = 128u16 << 2;
-    let g = vec![val; 8];
-    let b = vec![val; 8];
-    let r = vec![val; 8];
+    let g = [val; 8];
+    let b = [val; 8];
+    let r = [val; 8];
     let mut out = [0u8; 24];
     gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut out, 8);
     assert!(out.iter().all(|&v| v == 128));
@@ -507,9 +507,9 @@ mod tests {
   fn rgb_high_bit_bits12_parity_with_scaled_8bit() {
     // val=200 in 8-bit; in 12-bit: 200 << 4 = 3200. 3200 >> 4 = 200.
     let val: u16 = 200u16 << 4;
-    let g = vec![val; 4];
-    let b = vec![val; 4];
-    let r = vec![val; 4];
+    let g = [val; 4];
+    let b = [val; 4];
+    let r = [val; 4];
     let mut out = [0u8; 12];
     gbr_to_rgb_high_bit_row::<12>(&g, &b, &r, &mut out, 4);
     assert!(out.iter().all(|&v| v == 200));
