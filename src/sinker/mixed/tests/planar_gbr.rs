@@ -184,6 +184,38 @@ fn gbrp_with_luma_u16_zero_extends_u8_luma() {
   }
 }
 
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn gbrp_with_luma_u16_wide_row_no_alloc_regression() {
+  // Regression for the prior `STACK_CAP = 8192` heap-fallback path:
+  // verify a wider row produces the same byte-zero-extended luma as a
+  // narrower row would, exercising the direct `rgb_to_luma_u16_row`
+  // path that replaced the per-row `Vec<u8>` allocation.
+  let w = 9000usize;
+  let h = 1usize;
+  let rgb_seed = random_rgb(w, h, 0x1234_5678);
+  let (g, b, r) = planes_from_packed_rgb(&rgb_seed, w, h);
+  let src =
+    GbrpFrame::try_new(&g, &b, &r, w as u32, h as u32, w as u32, w as u32, w as u32).unwrap();
+
+  let mut luma_u8 = std::vec![0u8; w * h];
+  let mut luma_u16 = std::vec![0u16; w * h];
+  let mut sink = MixedSinker::<Gbrp>::new(w, h)
+    .with_luma(&mut luma_u8)
+    .unwrap()
+    .with_luma_u16(&mut luma_u16)
+    .unwrap();
+  gbrp_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  // u16 luma == u8 luma zero-extended (same byte values, native u16).
+  for i in 0..w * h {
+    assert_eq!(luma_u16[i], luma_u8[i] as u16, "px {i}");
+  }
+}
+
 // ---- Gbrap tests -------------------------------------------------------
 
 #[test]

@@ -33,7 +33,7 @@ use crate::{
   PixelSink,
   row::{
     expand_rgb_to_rgba_row, gbr_to_rgb_row, gbr_to_rgba_opaque_row, gbra_to_rgba_row,
-    rgb_to_hsv_row, rgb_to_luma_row,
+    rgb_to_hsv_row, rgb_to_luma_row, rgb_to_luma_u16_row,
   },
   yuv::{Gbrap, GbrapRow, GbrapSink, Gbrp, GbrpRow, GbrpSink},
 };
@@ -204,47 +204,17 @@ impl PixelSink for MixedSinker<'_, Gbrp> {
     }
 
     if let Some(luma_u16) = luma_u16.as_deref_mut() {
-      // Compute u8 luma into a per-row scratch on the stack, then
-      // zero-extend into the u16 output. The double-pass costs one
-      // extra `width`-sized buffer (small) but keeps both luma and
-      // luma_u16 byte-identical with luma's u8 path. Stack-allocated
-      // scratch up to a fixed cap; fall back to a heap Vec for very
-      // wide rows (rare — > 8K width).
-      const STACK_CAP: usize = 8192;
-      if w <= STACK_CAP {
-        let mut scratch = [0u8; STACK_CAP];
-        let scratch = &mut scratch[..w];
-        rgb_to_luma_row(
-          rgb_row,
-          scratch,
-          w,
-          row.matrix(),
-          row.full_range(),
-          use_simd,
-        );
-        for (d, &s) in luma_u16[one_plane_start..one_plane_end]
-          .iter_mut()
-          .zip(scratch.iter())
-        {
-          *d = s as u16;
-        }
-      } else {
-        let mut scratch = std::vec![0u8; w];
-        rgb_to_luma_row(
-          rgb_row,
-          &mut scratch,
-          w,
-          row.matrix(),
-          row.full_range(),
-          use_simd,
-        );
-        for (d, &s) in luma_u16[one_plane_start..one_plane_end]
-          .iter_mut()
-          .zip(scratch.iter())
-        {
-          *d = s as u16;
-        }
-      }
+      // Direct u8-RGB → u16 luma — `rgb_to_luma_u16_row` produces the
+      // same byte values as the staged u8-luma + zero-extend path but
+      // without any per-row scratch (no stack array, no heap alloc).
+      rgb_to_luma_u16_row(
+        rgb_row,
+        &mut luma_u16[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
     }
 
     if let Some(hsv) = hsv.as_mut() {
@@ -432,41 +402,17 @@ impl PixelSink for MixedSinker<'_, Gbrap> {
     }
 
     if let Some(luma_u16) = luma_u16.as_deref_mut() {
-      const STACK_CAP: usize = 8192;
-      if w <= STACK_CAP {
-        let mut scratch = [0u8; STACK_CAP];
-        let scratch = &mut scratch[..w];
-        rgb_to_luma_row(
-          rgb_row,
-          scratch,
-          w,
-          row.matrix(),
-          row.full_range(),
-          use_simd,
-        );
-        for (d, &s) in luma_u16[one_plane_start..one_plane_end]
-          .iter_mut()
-          .zip(scratch.iter())
-        {
-          *d = s as u16;
-        }
-      } else {
-        let mut scratch = std::vec![0u8; w];
-        rgb_to_luma_row(
-          rgb_row,
-          &mut scratch,
-          w,
-          row.matrix(),
-          row.full_range(),
-          use_simd,
-        );
-        for (d, &s) in luma_u16[one_plane_start..one_plane_end]
-          .iter_mut()
-          .zip(scratch.iter())
-        {
-          *d = s as u16;
-        }
-      }
+      // Direct u8-RGB → u16 luma — see Gbrp `with_luma_u16` above for
+      // the rationale (no per-row scratch, byte-identical to the
+      // staged u8-luma + zero-extend equivalent).
+      rgb_to_luma_u16_row(
+        rgb_row,
+        &mut luma_u16[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
     }
 
     if let Some(hsv) = hsv.as_mut() {
