@@ -65,3 +65,84 @@ pub(crate) unsafe fn rgb_to_hsv_row(
     }
   }
 }
+
+// ===== RGB → luma (Y') ===================================================
+
+/// AVX‑512 RGB → planar luma (Y'). 64 pixels per iteration via four
+/// calls to the shared [`super::x86_common::rgb_to_luma_16_pixels`]
+/// helper (SSE4.1‑level compute under AVX‑512 target_feature). The
+/// SSE4.1 helper inlines into this AVX‑512 caller's `target_feature`
+/// context so the underlying intrinsics still execute at AVX‑512
+/// dispatch latency.
+///
+/// # Safety
+///
+/// 1. AVX‑512BW must be available (dispatcher obligation).
+/// 2. `rgb.len() >= 3 * width`; `luma_out.len() >= width`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn rgb_to_luma_row(
+  rgb: &[u8],
+  luma_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(rgb.len() >= width * 3);
+  debug_assert!(luma_out.len() >= width);
+
+  let (k_r, k_g, k_b) = scalar::luma_coefficients_q15(matrix);
+  // SAFETY: AVX‑512BW verified at the dispatcher; loop guard `x + 64 <=
+  // width` keeps all four 48‑byte reads and 16‑byte writes inside the
+  // caller‑promised slice lengths.
+  unsafe {
+    let kr_v = _mm_set1_epi32(k_r);
+    let kg_v = _mm_set1_epi32(k_g);
+    let kb_v = _mm_set1_epi32(k_b);
+    let rnd_v = _mm_set1_epi32(1 << 14);
+
+    let mut x = 0usize;
+    while x + 64 <= width {
+      let base_in = rgb.as_ptr().add(x * 3);
+      let base_y = luma_out.as_mut_ptr().add(x);
+      rgb_to_luma_16_pixels(base_in, base_y, kr_v, kg_v, kb_v, rnd_v, full_range);
+      rgb_to_luma_16_pixels(
+        base_in.add(48),
+        base_y.add(16),
+        kr_v,
+        kg_v,
+        kb_v,
+        rnd_v,
+        full_range,
+      );
+      rgb_to_luma_16_pixels(
+        base_in.add(96),
+        base_y.add(32),
+        kr_v,
+        kg_v,
+        kb_v,
+        rnd_v,
+        full_range,
+      );
+      rgb_to_luma_16_pixels(
+        base_in.add(144),
+        base_y.add(48),
+        kr_v,
+        kg_v,
+        kb_v,
+        rnd_v,
+        full_range,
+      );
+      x += 64;
+    }
+    if x < width {
+      scalar::rgb_to_luma_row(
+        &rgb[x * 3..width * 3],
+        &mut luma_out[x..width],
+        width - x,
+        matrix,
+        full_range,
+      );
+    }
+  }
+}

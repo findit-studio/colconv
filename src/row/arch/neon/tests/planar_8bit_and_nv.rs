@@ -1116,3 +1116,45 @@ fn swap_is_self_inverse() {
 
   assert_eq!(input, back, "swap is not self-inverse");
 }
+
+// ---- rgb_to_luma_row equivalence ------------------------------------
+//
+// The NEON luma kernel uses pure integer Q15 arithmetic (no f32 ops),
+// so output is byte‑identical to the scalar reference for every
+// input. Sweeps cover both main loop (mult‑of‑16 widths) and scalar
+// tail (non‑multiples), all 5 ColorMatrix variants, and both ranges.
+
+fn check_luma_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
+  let rgb = pseudo_random_bgr(width);
+  let mut y_scalar = std::vec![0u8; width];
+  let mut y_neon = std::vec![0u8; width];
+
+  scalar::rgb_to_luma_row(&rgb, &mut y_scalar, width, matrix, full_range);
+  unsafe {
+    rgb_to_luma_row(&rgb, &mut y_neon, width, matrix, full_range);
+  }
+
+  assert_eq!(
+    y_scalar, y_neon,
+    "NEON rgb_to_luma diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
+  );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn neon_rgb_to_luma_row_matches_scalar_widths() {
+  for &matrix in &[
+    ColorMatrix::Bt601,
+    ColorMatrix::Fcc,
+    ColorMatrix::Bt709,
+    ColorMatrix::Bt2020Ncl,
+    ColorMatrix::Smpte240m,
+    ColorMatrix::YCgCo,
+  ] {
+    for full_range in [true, false] {
+      for &w in &[1usize, 7, 8, 15, 16, 17, 31, 32, 33, 47, 64, 128, 130] {
+        check_luma_equivalence(w, matrix, full_range);
+      }
+    }
+  }
+}
