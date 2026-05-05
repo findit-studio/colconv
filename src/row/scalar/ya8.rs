@@ -17,8 +17,6 @@
 //! Gray sources are achromatic (S = 0 identically). H=0, S=0, V=Y.
 //! α is dropped for HSV output.
 
-#![allow(dead_code)]
-
 /// Ya8 → packed u8 RGB. Broadcast Y to R=G=B; α dropped.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn ya8_to_rgb_row(packed: &[u8], rgb_out: &mut [u8], width: usize) {

@@ -23,8 +23,6 @@
 //! Gray sources are achromatic (S = 0 identically). H is fixed to 0 to match
 //! OpenCV's `cv2.COLOR_GRAY2HSV` convention. V is the clamped Y in u8.
 
-#![allow(dead_code)]
-
 // ---- shared helpers ---------------------------------------------------------
 
 /// Round-to-nearest f32 → u8, MXCSR-independent.

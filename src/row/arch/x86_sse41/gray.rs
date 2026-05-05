@@ -519,16 +519,15 @@ pub(crate) unsafe fn gray16_to_hsv_row(
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: usize) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  let scale = unsafe { _mm_set1_ps(255.0) };
-  let zero = unsafe { _mm_setzero_ps() };
-  let one = unsafe { _mm_set1_ps(1.0) };
+  let scale = _mm_set1_ps(255.0);
+  let zero = _mm_setzero_ps();
+  let one = _mm_set1_ps(1.0);
   let mut x = 0usize;
   unsafe {
     while x + 4 <= width {
@@ -570,16 +569,15 @@ pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: 
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width: usize) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  let scale = unsafe { _mm_set1_ps(255.0) };
-  let zero = unsafe { _mm_setzero_ps() };
-  let one = unsafe { _mm_set1_ps(1.0) };
+  let scale = _mm_set1_ps(255.0);
+  let zero = _mm_setzero_ps();
+  let one = _mm_set1_ps(1.0);
   let mut x = 0usize;
   unsafe {
     while x + 4 <= width {
@@ -624,16 +622,15 @@ pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width:
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  let scale = unsafe { _mm_set1_ps(65535.0) };
-  let zero = unsafe { _mm_setzero_ps() };
-  let one = unsafe { _mm_set1_ps(1.0) };
+  let scale = _mm_set1_ps(65535.0);
+  let zero = _mm_setzero_ps();
+  let one = _mm_set1_ps(1.0);
   let mut x = 0usize;
   unsafe {
     while x + 4 <= width {
@@ -669,16 +666,15 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  let scale = unsafe { _mm_set1_ps(65535.0) };
-  let zero = unsafe { _mm_setzero_ps() };
-  let one = unsafe { _mm_set1_ps(1.0) };
+  let scale = _mm_set1_ps(65535.0);
+  let zero = _mm_setzero_ps();
+  let one = _mm_set1_ps(1.0);
   let mut x = 0usize;
   unsafe {
     while x + 4 <= width {
@@ -713,7 +709,7 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
+#[allow(dead_code)] // dispatcher uses scalar directly for lossless f32 paths
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn grayf32_to_rgb_f32_row(y_plane: &[f32], out: &mut [f32], width: usize) {
@@ -728,16 +724,15 @@ pub(crate) unsafe fn grayf32_to_rgb_f32_row(y_plane: &[f32], out: &mut [f32], wi
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width: usize) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
-  let scale = unsafe { _mm_set1_ps(255.0) };
-  let zero = unsafe { _mm_setzero_ps() };
-  let one = unsafe { _mm_set1_ps(1.0) };
+  let scale = _mm_set1_ps(255.0);
+  let zero = _mm_setzero_ps();
+  let one = _mm_set1_ps(1.0);
   let mut x = 0usize;
   unsafe {
     while x + 4 <= width {
@@ -764,16 +759,15 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
-  let scale = unsafe { _mm_set1_ps(65535.0) };
-  let zero = unsafe { _mm_setzero_ps() };
-  let one = unsafe { _mm_set1_ps(1.0) };
+  let scale = _mm_set1_ps(65535.0);
+  let zero = _mm_setzero_ps();
+  let one = _mm_set1_ps(1.0);
   let mut x = 0usize;
   unsafe {
     while x + 4 <= width {
@@ -800,7 +794,7 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
+#[allow(dead_code)] // dispatcher uses scalar directly for lossless f32 paths
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn grayf32_to_luma_f32_row(y_plane: &[f32], out: &mut [f32], width: usize) {
@@ -814,7 +808,6 @@ pub(crate) unsafe fn grayf32_to_luma_f32_row(y_plane: &[f32], out: &mut [f32], w
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn grayf32_to_hsv_row(
@@ -826,10 +819,10 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
 ) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
-  let scale = unsafe { _mm_set1_ps(255.0) };
-  let zero = unsafe { _mm_setzero_ps() };
-  let one = unsafe { _mm_set1_ps(1.0) };
-  let zero128 = unsafe { _mm_setzero_si128() };
+  let scale = _mm_set1_ps(255.0);
+  let zero = _mm_setzero_ps();
+  let one = _mm_set1_ps(1.0);
+  let zero128 = _mm_setzero_si128();
   let mut x = 0usize;
   unsafe {
     while x + 4 <= width {
@@ -870,7 +863,6 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn ya8_to_rgb_row(packed: &[u8], out: &mut [u8], width: usize) {
@@ -906,7 +898,6 @@ pub(crate) unsafe fn ya8_to_rgb_row(packed: &[u8], out: &mut [u8], width: usize)
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn ya8_to_rgba_row(packed: &[u8], out: &mut [u8], width: usize) {
@@ -948,7 +939,6 @@ pub(crate) unsafe fn ya8_to_rgba_row(packed: &[u8], out: &mut [u8], width: usize
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn ya8_to_rgb_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
@@ -962,7 +952,6 @@ pub(crate) unsafe fn ya8_to_rgb_u16_row(packed: &[u8], out: &mut [u16], width: u
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn ya8_to_rgba_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
@@ -976,7 +965,6 @@ pub(crate) unsafe fn ya8_to_rgba_u16_row(packed: &[u8], out: &mut [u16], width: 
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn ya8_to_luma_row(packed: &[u8], out: &mut [u8], width: usize) {
@@ -1003,7 +991,6 @@ pub(crate) unsafe fn ya8_to_luma_row(packed: &[u8], out: &mut [u8], width: usize
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn ya8_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
@@ -1017,7 +1004,6 @@ pub(crate) unsafe fn ya8_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: 
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn ya8_to_hsv_row(
@@ -1062,7 +1048,6 @@ pub(crate) unsafe fn ya8_to_hsv_row(
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usize) {
@@ -1099,7 +1084,6 @@ pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usiz
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usize) {
@@ -1146,7 +1130,6 @@ pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usi
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn ya16_to_rgb_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
@@ -1160,7 +1143,6 @@ pub(crate) unsafe fn ya16_to_rgb_u16_row(packed: &[u16], out: &mut [u16], width:
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn ya16_to_rgba_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
@@ -1174,7 +1156,6 @@ pub(crate) unsafe fn ya16_to_rgba_u16_row(packed: &[u16], out: &mut [u16], width
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usize) {
@@ -1203,7 +1184,6 @@ pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn ya16_to_luma_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
@@ -1217,7 +1197,6 @@ pub(crate) unsafe fn ya16_to_luma_u16_row(packed: &[u16], out: &mut [u16], width
 ///
 /// # Safety
 /// SSE4.1 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn ya16_to_hsv_row(

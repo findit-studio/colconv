@@ -499,14 +499,13 @@ pub(crate) unsafe fn gray16_to_hsv_row(
 ///
 /// # Safety
 /// AVX-512F must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: usize) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  let scale = unsafe { _mm512_set1_ps(255.0) };
+  let scale = _mm512_set1_ps(255.0);
   let mut x = 0usize;
   unsafe {
     while x + 16 <= width {
@@ -518,9 +517,10 @@ pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: 
       );
       // 16×i32 → 16×u8 via saturating narrow.
       let pack8: __m128i = _mm512_cvtusepi32_epi8(int32);
-      // Scatter 16 bytes to RGB triples.
-      for i in 0..16usize {
-        let v = _mm_extract_epi8(pack8, i as i32) as u8;
+      // Store 16 bytes then scatter to RGB triples.
+      let mut ybuf = [0u8; 16];
+      _mm_storeu_si128(ybuf.as_mut_ptr().cast(), pack8);
+      for (i, &v) in ybuf.iter().enumerate() {
         let base = (x + i) * 3;
         out[base] = v;
         out[base + 1] = v;
@@ -538,14 +538,13 @@ pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: 
 ///
 /// # Safety
 /// AVX-512F must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width: usize) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  let scale = unsafe { _mm512_set1_ps(255.0) };
+  let scale = _mm512_set1_ps(255.0);
   let mut x = 0usize;
   unsafe {
     while x + 16 <= width {
@@ -555,8 +554,9 @@ pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width:
         _mm512_mul_ps(clamped, scale),
       );
       let pack8: __m128i = _mm512_cvtusepi32_epi8(int32);
-      for i in 0..16usize {
-        let v = _mm_extract_epi8(pack8, i as i32) as u8;
+      let mut ybuf = [0u8; 16];
+      _mm_storeu_si128(ybuf.as_mut_ptr().cast(), pack8);
+      for (i, &v) in ybuf.iter().enumerate() {
         let base = (x + i) * 4;
         out[base] = v;
         out[base + 1] = v;
@@ -575,14 +575,13 @@ pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width:
 ///
 /// # Safety
 /// AVX-512F must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  let scale = unsafe { _mm512_set1_ps(65535.0) };
+  let scale = _mm512_set1_ps(65535.0);
   let mut x = 0usize;
   unsafe {
     while x + 16 <= width {
@@ -594,17 +593,10 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
       );
       // 16×i32 → 16×u16 via _mm512_cvtusepi32_epi16 (saturating, but values in [0,65535]).
       let pack16: __m256i = _mm512_cvtusepi32_epi16(int32);
-      // Scatter 16 u16 values to 3-channel output (scalar loop).
-      for i in 0..16usize {
-        // Extract u16 via _mm256 path.
-        let lane_idx = i as i32 % 8;
-        let v: u16 = if i < 8 {
-          let lo = _mm256_castsi256_si128(pack16);
-          _mm_extract_epi16(lo, lane_idx) as u16
-        } else {
-          let hi = _mm256_extracti128_si256::<1>(pack16);
-          _mm_extract_epi16(hi, lane_idx) as u16
-        };
+      // Store 16 u16 values then scatter to 3-channel output.
+      let mut vbuf = [0u16; 16];
+      _mm256_storeu_si256(vbuf.as_mut_ptr().cast(), pack16);
+      for (i, &v) in vbuf.iter().enumerate() {
         let base = (x + i) * 3;
         out[base] = v;
         out[base + 1] = v;
@@ -626,14 +618,13 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
 ///
 /// # Safety
 /// AVX-512F must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  let scale = unsafe { _mm512_set1_ps(65535.0) };
+  let scale = _mm512_set1_ps(65535.0);
   let mut x = 0usize;
   unsafe {
     while x + 16 <= width {
@@ -643,15 +634,9 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
         _mm512_mul_ps(clamped, scale),
       );
       let pack16: __m256i = _mm512_cvtusepi32_epi16(int32);
-      for i in 0..16usize {
-        let lane_idx = i as i32 % 8;
-        let v: u16 = if i < 8 {
-          let lo = _mm256_castsi256_si128(pack16);
-          _mm_extract_epi16(lo, lane_idx) as u16
-        } else {
-          let hi = _mm256_extracti128_si256::<1>(pack16);
-          _mm_extract_epi16(hi, lane_idx) as u16
-        };
+      let mut vbuf = [0u16; 16];
+      _mm256_storeu_si256(vbuf.as_mut_ptr().cast(), pack16);
+      for (i, &v) in vbuf.iter().enumerate() {
         let base = (x + i) * 4;
         out[base] = v;
         out[base + 1] = v;
@@ -674,7 +659,7 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
 ///
 /// # Safety
 /// AVX-512F must be available.
-#[allow(dead_code)]
+#[allow(dead_code)] // dispatcher uses scalar directly for lossless f32 paths
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn grayf32_to_rgb_f32_row(y_plane: &[f32], out: &mut [f32], width: usize) {
@@ -688,14 +673,13 @@ pub(crate) unsafe fn grayf32_to_rgb_f32_row(y_plane: &[f32], out: &mut [f32], wi
 ///
 /// # Safety
 /// AVX-512F must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width: usize) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
-  let scale = unsafe { _mm512_set1_ps(255.0) };
+  let scale = _mm512_set1_ps(255.0);
   let mut x = 0usize;
   unsafe {
     while x + 16 <= width {
@@ -718,14 +702,13 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
 ///
 /// # Safety
 /// AVX-512F must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
-  let scale = unsafe { _mm512_set1_ps(65535.0) };
+  let scale = _mm512_set1_ps(65535.0);
   let mut x = 0usize;
   unsafe {
     while x + 16 <= width {
@@ -748,7 +731,7 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
 ///
 /// # Safety
 /// AVX-512F must be available.
-#[allow(dead_code)]
+#[allow(dead_code)] // dispatcher uses scalar directly for lossless f32 paths
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn grayf32_to_luma_f32_row(y_plane: &[f32], out: &mut [f32], width: usize) {
@@ -762,7 +745,6 @@ pub(crate) unsafe fn grayf32_to_luma_f32_row(y_plane: &[f32], out: &mut [f32], w
 ///
 /// # Safety
 /// AVX-512F must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn grayf32_to_hsv_row(
@@ -774,7 +756,7 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
 ) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
-  let scale = unsafe { _mm512_set1_ps(255.0) };
+  let scale = _mm512_set1_ps(255.0);
   let mut x = 0usize;
   unsafe {
     while x + 16 <= width {
@@ -808,7 +790,6 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
 ///
 /// # Safety
 /// AVX-512F+BW must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn ya8_to_rgb_row(packed: &[u8], out: &mut [u8], width: usize) {
@@ -841,7 +822,6 @@ pub(crate) unsafe fn ya8_to_rgb_row(packed: &[u8], out: &mut [u8], width: usize)
 ///
 /// # Safety
 /// AVX-512F+BW must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn ya8_to_rgba_row(packed: &[u8], out: &mut [u8], width: usize) {
@@ -883,7 +863,6 @@ pub(crate) unsafe fn ya8_to_rgba_row(packed: &[u8], out: &mut [u8], width: usize
 ///
 /// # Safety
 /// AVX-512F+BW must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn ya8_to_rgb_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
@@ -897,7 +876,6 @@ pub(crate) unsafe fn ya8_to_rgb_u16_row(packed: &[u8], out: &mut [u16], width: u
 ///
 /// # Safety
 /// AVX-512F+BW must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn ya8_to_rgba_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
@@ -911,7 +889,6 @@ pub(crate) unsafe fn ya8_to_rgba_u16_row(packed: &[u8], out: &mut [u16], width: 
 ///
 /// # Safety
 /// AVX-512F+BW must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn ya8_to_luma_row(packed: &[u8], out: &mut [u8], width: usize) {
@@ -938,7 +915,6 @@ pub(crate) unsafe fn ya8_to_luma_row(packed: &[u8], out: &mut [u8], width: usize
 ///
 /// # Safety
 /// AVX-512F+BW must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn ya8_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
@@ -952,7 +928,6 @@ pub(crate) unsafe fn ya8_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: 
 ///
 /// # Safety
 /// AVX-512F+BW must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn ya8_to_hsv_row(
@@ -995,7 +970,6 @@ pub(crate) unsafe fn ya8_to_hsv_row(
 ///
 /// # Safety
 /// AVX-512F+BW must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usize) {
@@ -1030,7 +1004,6 @@ pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usiz
 ///
 /// # Safety
 /// AVX-512F+BW must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usize) {
@@ -1077,7 +1050,6 @@ pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usi
 ///
 /// # Safety
 /// AVX-512F+BW must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn ya16_to_rgb_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
@@ -1091,7 +1063,6 @@ pub(crate) unsafe fn ya16_to_rgb_u16_row(packed: &[u16], out: &mut [u16], width:
 ///
 /// # Safety
 /// AVX-512F+BW must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn ya16_to_rgba_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
@@ -1105,7 +1076,6 @@ pub(crate) unsafe fn ya16_to_rgba_u16_row(packed: &[u16], out: &mut [u16], width
 ///
 /// # Safety
 /// AVX-512F+BW must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usize) {
@@ -1134,7 +1104,6 @@ pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
 ///
 /// # Safety
 /// AVX-512F+BW must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn ya16_to_luma_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
@@ -1148,7 +1117,6 @@ pub(crate) unsafe fn ya16_to_luma_u16_row(packed: &[u16], out: &mut [u16], width
 ///
 /// # Safety
 /// AVX-512F+BW must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 pub(crate) unsafe fn ya16_to_hsv_row(

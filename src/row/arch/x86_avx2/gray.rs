@@ -526,16 +526,15 @@ pub(crate) unsafe fn gray16_to_hsv_row(
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: usize) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  let scale = unsafe { _mm256_set1_ps(255.0) };
-  let zero = unsafe { _mm256_setzero_ps() };
-  let one = unsafe { _mm256_set1_ps(1.0) };
+  let scale = _mm256_set1_ps(255.0);
+  let zero = _mm256_setzero_ps();
+  let one = _mm256_set1_ps(1.0);
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
@@ -571,16 +570,15 @@ pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: 
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width: usize) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  let scale = unsafe { _mm256_set1_ps(255.0) };
-  let zero = unsafe { _mm256_setzero_ps() };
-  let one = unsafe { _mm256_set1_ps(1.0) };
+  let scale = _mm256_set1_ps(255.0);
+  let zero = _mm256_setzero_ps();
+  let one = _mm256_set1_ps(1.0);
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
@@ -615,16 +613,15 @@ pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width:
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  let scale = unsafe { _mm256_set1_ps(65535.0) };
-  let zero = unsafe { _mm256_setzero_ps() };
-  let one = unsafe { _mm256_set1_ps(1.0) };
+  let scale = _mm256_set1_ps(65535.0);
+  let zero = _mm256_setzero_ps();
+  let one = _mm256_set1_ps(1.0);
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
@@ -672,16 +669,15 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  let scale = unsafe { _mm256_set1_ps(65535.0) };
-  let zero = unsafe { _mm256_setzero_ps() };
-  let one = unsafe { _mm256_set1_ps(1.0) };
+  let scale = _mm256_set1_ps(65535.0);
+  let zero = _mm256_setzero_ps();
+  let one = _mm256_set1_ps(1.0);
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
@@ -727,7 +723,7 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
+#[allow(dead_code)] // dispatcher uses scalar directly for lossless f32 paths
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn grayf32_to_rgb_f32_row(y_plane: &[f32], out: &mut [f32], width: usize) {
@@ -741,16 +737,15 @@ pub(crate) unsafe fn grayf32_to_rgb_f32_row(y_plane: &[f32], out: &mut [f32], wi
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width: usize) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
-  let scale = unsafe { _mm256_set1_ps(255.0) };
-  let zero = unsafe { _mm256_setzero_ps() };
-  let one = unsafe { _mm256_set1_ps(1.0) };
+  let scale = _mm256_set1_ps(255.0);
+  let zero = _mm256_setzero_ps();
+  let one = _mm256_set1_ps(1.0);
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
@@ -778,16 +773,15 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
-  let scale = unsafe { _mm256_set1_ps(65535.0) };
-  let zero = unsafe { _mm256_setzero_ps() };
-  let one = unsafe { _mm256_set1_ps(1.0) };
+  let scale = _mm256_set1_ps(65535.0);
+  let zero = _mm256_setzero_ps();
+  let one = _mm256_set1_ps(1.0);
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
@@ -813,7 +807,7 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
+#[allow(dead_code)] // dispatcher uses scalar directly for lossless f32 paths
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn grayf32_to_luma_f32_row(y_plane: &[f32], out: &mut [f32], width: usize) {
@@ -827,7 +821,6 @@ pub(crate) unsafe fn grayf32_to_luma_f32_row(y_plane: &[f32], out: &mut [f32], w
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn grayf32_to_hsv_row(
@@ -839,9 +832,9 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
 ) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
-  let scale = unsafe { _mm256_set1_ps(255.0) };
-  let zero = unsafe { _mm256_setzero_ps() };
-  let one = unsafe { _mm256_set1_ps(1.0) };
+  let scale = _mm256_set1_ps(255.0);
+  let zero = _mm256_setzero_ps();
+  let one = _mm256_set1_ps(1.0);
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
@@ -883,7 +876,6 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn ya8_to_rgb_row(packed: &[u8], out: &mut [u8], width: usize) {
@@ -916,7 +908,6 @@ pub(crate) unsafe fn ya8_to_rgb_row(packed: &[u8], out: &mut [u8], width: usize)
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn ya8_to_rgba_row(packed: &[u8], out: &mut [u8], width: usize) {
@@ -958,7 +949,6 @@ pub(crate) unsafe fn ya8_to_rgba_row(packed: &[u8], out: &mut [u8], width: usize
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn ya8_to_rgb_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
@@ -972,7 +962,6 @@ pub(crate) unsafe fn ya8_to_rgb_u16_row(packed: &[u8], out: &mut [u16], width: u
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn ya8_to_rgba_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
@@ -986,7 +975,6 @@ pub(crate) unsafe fn ya8_to_rgba_u16_row(packed: &[u8], out: &mut [u16], width: 
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn ya8_to_luma_row(packed: &[u8], out: &mut [u8], width: usize) {
@@ -1013,7 +1001,6 @@ pub(crate) unsafe fn ya8_to_luma_row(packed: &[u8], out: &mut [u8], width: usize
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn ya8_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
@@ -1027,7 +1014,6 @@ pub(crate) unsafe fn ya8_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: 
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn ya8_to_hsv_row(
@@ -1072,7 +1058,6 @@ pub(crate) unsafe fn ya8_to_hsv_row(
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usize) {
@@ -1107,7 +1092,6 @@ pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usiz
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usize) {
@@ -1154,7 +1138,6 @@ pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usi
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn ya16_to_rgb_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
@@ -1168,7 +1151,6 @@ pub(crate) unsafe fn ya16_to_rgb_u16_row(packed: &[u16], out: &mut [u16], width:
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn ya16_to_rgba_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
@@ -1182,7 +1164,6 @@ pub(crate) unsafe fn ya16_to_rgba_u16_row(packed: &[u16], out: &mut [u16], width
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usize) {
@@ -1211,7 +1192,6 @@ pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn ya16_to_luma_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
@@ -1225,7 +1205,6 @@ pub(crate) unsafe fn ya16_to_luma_u16_row(packed: &[u16], out: &mut [u16], width
 ///
 /// # Safety
 /// AVX2 must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn ya16_to_hsv_row(

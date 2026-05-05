@@ -54,7 +54,6 @@ unsafe fn store_rgba_16x(v: uint8x16_t, out: &mut [u8], x: usize) {
 ///
 /// # Safety
 /// NEON must be available. `y_plane.len() >= width`. `out.len() >= width * 3`.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn gray8_to_rgb_row(
@@ -92,7 +91,6 @@ pub(crate) unsafe fn gray8_to_rgb_row(
 ///
 /// # Safety
 /// NEON must be available. `y_plane.len() >= width`. `out.len() >= width * 4`.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn gray8_to_rgba_row(
@@ -131,7 +129,6 @@ pub(crate) unsafe fn gray8_to_rgba_row(
 ///
 /// # Safety
 /// NEON must be available. All slices `>= width`.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn gray8_to_hsv_row(
@@ -180,7 +177,6 @@ pub(crate) unsafe fn gray8_to_hsv_row(
 ///
 /// # Safety
 /// NEON must be available. Slices sized correctly for `width`.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32>(
@@ -227,7 +223,6 @@ pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32>(
 ///
 /// # Safety
 /// NEON must be available. Slices sized correctly for `width`.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32>(
@@ -273,7 +268,6 @@ pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32>(
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32>(
@@ -315,7 +309,6 @@ pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32>(
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32>(
@@ -358,7 +351,6 @@ pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32>(
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32>(
@@ -393,7 +385,6 @@ pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32>(
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn gray_n_to_luma_u16_row<const BITS: u32>(
@@ -426,7 +417,6 @@ pub(crate) unsafe fn gray_n_to_luma_u16_row<const BITS: u32>(
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
@@ -481,7 +471,6 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn gray16_to_rgb_row(
@@ -521,7 +510,6 @@ pub(crate) unsafe fn gray16_to_rgb_row(
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn gray16_to_rgba_row(
@@ -562,7 +550,6 @@ pub(crate) unsafe fn gray16_to_rgba_row(
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn gray16_to_rgb_u16_row(
@@ -601,7 +588,6 @@ pub(crate) unsafe fn gray16_to_rgb_u16_row(
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn gray16_to_rgba_u16_row(
@@ -641,7 +627,6 @@ pub(crate) unsafe fn gray16_to_rgba_u16_row(
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn gray16_to_luma_row(y_plane: &[u16], out: &mut [u8], width: usize) {
@@ -667,7 +652,6 @@ pub(crate) unsafe fn gray16_to_luma_row(y_plane: &[u16], out: &mut [u8], width: 
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn gray16_to_luma_u16_row(y_plane: &[u16], out: &mut [u16], width: usize) {
@@ -693,7 +677,6 @@ pub(crate) unsafe fn gray16_to_luma_u16_row(y_plane: &[u16], out: &mut [u16], wi
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn gray16_to_hsv_row(
@@ -743,7 +726,6 @@ pub(crate) unsafe fn gray16_to_hsv_row(
 ///
 /// # Safety
 /// NEON must be available. `y_plane.len() >= width`. `out.len() >= width * 3`.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: usize) {
@@ -780,7 +762,6 @@ pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: 
 ///
 /// # Safety
 /// NEON must be available. `y_plane.len() >= width`. `out.len() >= width * 4`.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width: usize) {
@@ -815,7 +796,6 @@ pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width:
 ///
 /// # Safety
 /// NEON must be available. `y_plane.len() >= width`. `out.len() >= width * 3`.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
@@ -846,7 +826,6 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
 ///
 /// # Safety
 /// NEON must be available. `y_plane.len() >= width`. `out.len() >= width * 4`.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
@@ -881,7 +860,7 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
+#[allow(dead_code)] // dispatcher uses scalar directly for lossless f32 paths
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn grayf32_to_rgb_f32_row(y_plane: &[f32], out: &mut [f32], width: usize) {
@@ -906,7 +885,6 @@ pub(crate) unsafe fn grayf32_to_rgb_f32_row(y_plane: &[f32], out: &mut [f32], wi
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width: usize) {
@@ -937,7 +915,6 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
@@ -966,7 +943,7 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
+#[allow(dead_code)] // dispatcher uses scalar directly for lossless f32 paths
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn grayf32_to_luma_f32_row(y_plane: &[f32], out: &mut [f32], width: usize) {
@@ -990,7 +967,6 @@ pub(crate) unsafe fn grayf32_to_luma_f32_row(y_plane: &[f32], out: &mut [f32], w
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn grayf32_to_hsv_row(
@@ -1039,7 +1015,6 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
 ///
 /// # Safety
 /// NEON must be available. `packed.len() >= width * 2`. `out.len() >= width * 3`.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn ya8_to_rgb_row(packed: &[u8], out: &mut [u8], width: usize) {
@@ -1065,7 +1040,6 @@ pub(crate) unsafe fn ya8_to_rgb_row(packed: &[u8], out: &mut [u8], width: usize)
 ///
 /// # Safety
 /// NEON must be available. `packed.len() >= width * 2`. `out.len() >= width * 4`.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn ya8_to_rgba_row(packed: &[u8], out: &mut [u8], width: usize) {
@@ -1092,7 +1066,6 @@ pub(crate) unsafe fn ya8_to_rgba_row(packed: &[u8], out: &mut [u8], width: usize
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn ya8_to_rgb_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
@@ -1129,7 +1102,6 @@ pub(crate) unsafe fn ya8_to_rgb_u16_row(packed: &[u8], out: &mut [u16], width: u
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn ya8_to_rgba_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
@@ -1166,7 +1138,6 @@ pub(crate) unsafe fn ya8_to_rgba_u16_row(packed: &[u8], out: &mut [u16], width: 
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn ya8_to_luma_row(packed: &[u8], out: &mut [u8], width: usize) {
@@ -1190,7 +1161,6 @@ pub(crate) unsafe fn ya8_to_luma_row(packed: &[u8], out: &mut [u8], width: usize
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn ya8_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
@@ -1215,7 +1185,6 @@ pub(crate) unsafe fn ya8_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: 
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn ya8_to_hsv_row(
@@ -1257,7 +1226,6 @@ pub(crate) unsafe fn ya8_to_hsv_row(
 ///
 /// # Safety
 /// NEON must be available. `packed.len() >= width * 2`. `out.len() >= width * 3`.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usize) {
@@ -1283,7 +1251,6 @@ pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usiz
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usize) {
@@ -1314,7 +1281,6 @@ pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usi
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn ya16_to_rgb_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
@@ -1347,7 +1313,6 @@ pub(crate) unsafe fn ya16_to_rgb_u16_row(packed: &[u16], out: &mut [u16], width:
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn ya16_to_rgba_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
@@ -1382,7 +1347,6 @@ pub(crate) unsafe fn ya16_to_rgba_u16_row(packed: &[u16], out: &mut [u16], width
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usize) {
@@ -1407,7 +1371,6 @@ pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn ya16_to_luma_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
@@ -1431,7 +1394,6 @@ pub(crate) unsafe fn ya16_to_luma_u16_row(packed: &[u16], out: &mut [u16], width
 ///
 /// # Safety
 /// NEON must be available.
-#[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn ya16_to_hsv_row(
