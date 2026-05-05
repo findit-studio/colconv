@@ -39,6 +39,7 @@ pub(crate) mod alpha_extract;
 mod ayuv64;
 mod bayer;
 pub(crate) mod gray;
+pub(crate) mod grayf32;
 mod hsv;
 mod packed_rgb;
 mod packed_rgb_float;
@@ -72,6 +73,8 @@ pub(crate) use bayer::*;
 // This glob re-exports them into the scalar namespace for direct callers (SIMD tails, tests).
 #[allow(unused_imports)]
 pub(crate) use gray::*;
+#[allow(unused_imports)]
+pub(crate) use grayf32::*;
 pub(crate) use hsv::*;
 pub(crate) use packed_rgb::*;
 pub(crate) use packed_rgb_float::*;
