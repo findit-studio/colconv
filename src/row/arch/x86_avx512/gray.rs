@@ -606,11 +606,7 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
     }
   }
   if x < width {
-    scalar::grayf32_to_rgb_u16_row(
-      &y_plane[x..width],
-      &mut out[x * 3..width * 3],
-      width - x,
-    );
+    scalar::grayf32_to_rgb_u16_row(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
   }
 }
 
@@ -647,11 +643,7 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
     }
   }
   if x < width {
-    scalar::grayf32_to_rgba_u16_row(
-      &y_plane[x..width],
-      &mut out[x * 4..width * 4],
-      width - x,
-    );
+    scalar::grayf32_to_rgba_u16_row(&y_plane[x..width], &mut out[x * 4..width * 4], width - x);
   }
 }
 
@@ -798,7 +790,9 @@ pub(crate) unsafe fn ya8_to_rgb_row(packed: &[u8], out: &mut [u8], width: usize)
   debug_assert!(out.len() >= width * 3);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0,
+    );
     while x + 8 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast());
       let y_bytes = _mm_shuffle_epi8(chunk, y_mask);
@@ -814,7 +808,11 @@ pub(crate) unsafe fn ya8_to_rgb_row(packed: &[u8], out: &mut [u8], width: usize)
     }
   }
   if x < width {
-    scalar::ya8_to_rgb_row(&packed[x * 2..width * 2], &mut out[x * 3..width * 3], width - x);
+    scalar::ya8_to_rgb_row(
+      &packed[x * 2..width * 2],
+      &mut out[x * 3..width * 3],
+      width - x,
+    );
   }
 }
 
@@ -830,8 +828,12 @@ pub(crate) unsafe fn ya8_to_rgba_row(packed: &[u8], out: &mut [u8], width: usize
   debug_assert!(out.len() >= width * 4);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0);
-    let a_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 15, 13, 11, 9, 7, 5, 3, 1);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0,
+    );
+    let a_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 15, 13, 11, 9, 7, 5, 3, 1,
+    );
     while x + 8 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast());
       let y_bytes = _mm_shuffle_epi8(chunk, y_mask);
@@ -897,7 +899,9 @@ pub(crate) unsafe fn ya8_to_luma_row(packed: &[u8], out: &mut [u8], width: usize
   debug_assert!(out.len() >= width);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0,
+    );
     while x + 8 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast());
       let y_bytes = _mm_shuffle_epi8(chunk, y_mask);
@@ -941,7 +945,9 @@ pub(crate) unsafe fn ya8_to_hsv_row(
   debug_assert!(packed.len() >= width * 2);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0,
+    );
     while x + 8 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast());
       let y_bytes = _mm_shuffle_epi8(chunk, y_mask);
@@ -978,7 +984,9 @@ pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usiz
   debug_assert!(out.len() >= width * 3);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0,
+    );
     while x + 4 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast::<__m128i>());
       let y_words = _mm_shuffle_epi8(chunk, y_mask);
@@ -996,7 +1004,11 @@ pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usiz
     }
   }
   if x < width {
-    scalar::ya16_to_rgb_row(&packed[x * 2..width * 2], &mut out[x * 3..width * 3], width - x);
+    scalar::ya16_to_rgb_row(
+      &packed[x * 2..width * 2],
+      &mut out[x * 3..width * 3],
+      width - x,
+    );
   }
 }
 
@@ -1012,8 +1024,12 @@ pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usi
   debug_assert!(out.len() >= width * 4);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0);
-    let a_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 15, 14, 11, 10, 7, 6, 3, 2);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0,
+    );
+    let a_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 15, 14, 11, 10, 7, 6, 3, 2,
+    );
     while x + 4 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast::<__m128i>());
       let y_words = _mm_shuffle_epi8(chunk, y_mask);
@@ -1084,7 +1100,9 @@ pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
   debug_assert!(out.len() >= width);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0,
+    );
     while x + 4 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast::<__m128i>());
       let y_words = _mm_shuffle_epi8(chunk, y_mask);
@@ -1130,7 +1148,9 @@ pub(crate) unsafe fn ya16_to_hsv_row(
   debug_assert!(packed.len() >= width * 2);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0,
+    );
     while x + 4 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast::<__m128i>());
       let y_words = _mm_shuffle_epi8(chunk, y_mask);
@@ -1189,7 +1209,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_grayf32_to_rgb_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::grayf32 as sf;
     for &w in WIDTHS {
       let mut plane = std::vec![0.0f32; w];
@@ -1205,7 +1227,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_grayf32_to_rgba_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::grayf32 as sf;
     for &w in WIDTHS {
       let mut plane = std::vec![0.0f32; w];
@@ -1221,7 +1245,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_grayf32_to_rgb_u16_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::grayf32 as sf;
     for &w in WIDTHS {
       let mut plane = std::vec![0.0f32; w];
@@ -1237,7 +1263,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_grayf32_to_rgba_u16_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::grayf32 as sf;
     for &w in WIDTHS {
       let mut plane = std::vec![0.0f32; w];
@@ -1253,7 +1281,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_grayf32_to_rgb_f32_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::grayf32 as sf;
     for &w in WIDTHS {
       let mut plane = std::vec![0.0f32; w];
@@ -1269,7 +1299,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_grayf32_to_luma_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::grayf32 as sf;
     for &w in WIDTHS {
       let mut plane = std::vec![0.0f32; w];
@@ -1285,7 +1317,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_grayf32_to_luma_u16_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::grayf32 as sf;
     for &w in WIDTHS {
       let mut plane = std::vec![0.0f32; w];
@@ -1301,7 +1335,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_grayf32_to_luma_f32_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::grayf32 as sf;
     for &w in WIDTHS {
       let mut plane = std::vec![0.0f32; w];
@@ -1317,7 +1353,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_grayf32_to_hsv_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::grayf32 as sf;
     for &w in WIDTHS {
       let mut plane = std::vec![0.0f32; w];
@@ -1349,7 +1387,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_ya8_to_rgb_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::ya8 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u8; w * 2];
@@ -1365,7 +1405,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_ya8_to_rgba_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::ya8 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u8; w * 2];
@@ -1381,7 +1423,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_ya8_to_rgb_u16_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::ya8 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u8; w * 2];
@@ -1397,7 +1441,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_ya8_to_rgba_u16_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::ya8 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u8; w * 2];
@@ -1413,7 +1459,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_ya8_to_luma_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::ya8 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u8; w * 2];
@@ -1429,7 +1477,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_ya8_to_luma_u16_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::ya8 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u8; w * 2];
@@ -1445,7 +1495,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_ya8_to_hsv_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::ya8 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u8; w * 2];
@@ -1477,7 +1529,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_ya16_to_rgb_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::ya16 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u16; w * 2];
@@ -1493,7 +1547,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_ya16_to_rgba_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::ya16 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u16; w * 2];
@@ -1509,7 +1565,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_ya16_to_rgb_u16_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::ya16 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u16; w * 2];
@@ -1525,7 +1583,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_ya16_to_rgba_u16_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::ya16 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u16; w * 2];
@@ -1541,7 +1601,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_ya16_to_luma_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::ya16 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u16; w * 2];
@@ -1557,7 +1619,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_ya16_to_luma_u16_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::ya16 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u16; w * 2];
@@ -1573,7 +1637,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx512_ya16_to_hsv_matches_scalar() {
-    if !is_x86_feature_detected!("avx512bw") { return; }
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
     use crate::row::scalar::ya16 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u16; w * 2];

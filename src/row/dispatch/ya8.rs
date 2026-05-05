@@ -108,12 +108,7 @@ pub(crate) fn ya8_to_rgba_row(packed: &[u8], out: &mut [u8], width: usize, use_s
 
 /// Dispatch `ya8_to_rgb_u16_row`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn ya8_to_rgb_u16_row(
-  packed: &[u8],
-  out: &mut [u16],
-  width: usize,
-  use_simd: bool,
-) {
+pub(crate) fn ya8_to_rgb_u16_row(packed: &[u8], out: &mut [u16], width: usize, use_simd: bool) {
   assert!(packed.len() >= width * 2, "packed too short");
   assert!(out.len() >= width * 3, "out too short");
   if !use_simd {
@@ -155,12 +150,7 @@ pub(crate) fn ya8_to_rgb_u16_row(
 
 /// Dispatch `ya8_to_rgba_u16_row`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn ya8_to_rgba_u16_row(
-  packed: &[u8],
-  out: &mut [u16],
-  width: usize,
-  use_simd: bool,
-) {
+pub(crate) fn ya8_to_rgba_u16_row(packed: &[u8], out: &mut [u16], width: usize, use_simd: bool) {
   assert!(packed.len() >= width * 2, "packed too short");
   assert!(out.len() >= width * 4, "out too short");
   if !use_simd {
@@ -244,12 +234,7 @@ pub(crate) fn ya8_to_luma_row(packed: &[u8], out: &mut [u8], width: usize, use_s
 
 /// Dispatch `ya8_to_luma_u16_row`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn ya8_to_luma_u16_row(
-  packed: &[u8],
-  out: &mut [u16],
-  width: usize,
-  use_simd: bool,
-) {
+pub(crate) fn ya8_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize, use_simd: bool) {
   assert!(packed.len() >= width * 2, "packed too short");
   assert!(out.len() >= width, "out too short");
   if !use_simd {

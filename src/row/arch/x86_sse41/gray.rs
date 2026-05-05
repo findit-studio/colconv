@@ -534,8 +534,7 @@ pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: 
       let y = _mm_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm_min_ps(_mm_max_ps(y, zero), one);
       let scaled = _mm_mul_ps(clamped, scale);
-      let rounded =
-        _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
+      let rounded = _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
       let int32 = _mm_cvttps_epi32(rounded);
       let pack16 = _mm_packs_epi32(int32, int32);
       let pack8 = _mm_packus_epi16(pack16, pack16);
@@ -584,8 +583,7 @@ pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width:
       let y = _mm_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm_min_ps(_mm_max_ps(y, zero), one);
       let scaled = _mm_mul_ps(clamped, scale);
-      let rounded =
-        _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
+      let rounded = _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
       let int32 = _mm_cvttps_epi32(rounded);
       let pack16 = _mm_packs_epi32(int32, int32);
       let pack8 = _mm_packus_epi16(pack16, pack16);
@@ -637,8 +635,7 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
       let y = _mm_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm_min_ps(_mm_max_ps(y, zero), one);
       let scaled = _mm_mul_ps(clamped, scale);
-      let rounded =
-        _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
+      let rounded = _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
       let int32 = _mm_cvttps_epi32(rounded);
       // Extract 4 u16 values (unrolled — _mm_extract_epi32 needs const lane).
       let base = x * 3;
@@ -646,19 +643,23 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
       let v1 = _mm_extract_epi32::<1>(int32) as u16;
       let v2 = _mm_extract_epi32::<2>(int32) as u16;
       let v3 = _mm_extract_epi32::<3>(int32) as u16;
-      out[base] = v0; out[base + 1] = v0; out[base + 2] = v0;
-      out[base + 3] = v1; out[base + 4] = v1; out[base + 5] = v1;
-      out[base + 6] = v2; out[base + 7] = v2; out[base + 8] = v2;
-      out[base + 9] = v3; out[base + 10] = v3; out[base + 11] = v3;
+      out[base] = v0;
+      out[base + 1] = v0;
+      out[base + 2] = v0;
+      out[base + 3] = v1;
+      out[base + 4] = v1;
+      out[base + 5] = v1;
+      out[base + 6] = v2;
+      out[base + 7] = v2;
+      out[base + 8] = v2;
+      out[base + 9] = v3;
+      out[base + 10] = v3;
+      out[base + 11] = v3;
       x += 4;
     }
   }
   if x < width {
-    scalar::grayf32_to_rgb_u16_row(
-      &y_plane[x..width],
-      &mut out[x * 3..width * 3],
-      width - x,
-    );
+    scalar::grayf32_to_rgb_u16_row(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
   }
 }
 
@@ -681,27 +682,34 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
       let y = _mm_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm_min_ps(_mm_max_ps(y, zero), one);
       let scaled = _mm_mul_ps(clamped, scale);
-      let rounded =
-        _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
+      let rounded = _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
       let int32 = _mm_cvttps_epi32(rounded);
       let base = x * 4;
       let v0 = _mm_extract_epi32::<0>(int32) as u16;
       let v1 = _mm_extract_epi32::<1>(int32) as u16;
       let v2 = _mm_extract_epi32::<2>(int32) as u16;
       let v3 = _mm_extract_epi32::<3>(int32) as u16;
-      out[base] = v0; out[base + 1] = v0; out[base + 2] = v0; out[base + 3] = 0xFFFF;
-      out[base + 4] = v1; out[base + 5] = v1; out[base + 6] = v1; out[base + 7] = 0xFFFF;
-      out[base + 8] = v2; out[base + 9] = v2; out[base + 10] = v2; out[base + 11] = 0xFFFF;
-      out[base + 12] = v3; out[base + 13] = v3; out[base + 14] = v3; out[base + 15] = 0xFFFF;
+      out[base] = v0;
+      out[base + 1] = v0;
+      out[base + 2] = v0;
+      out[base + 3] = 0xFFFF;
+      out[base + 4] = v1;
+      out[base + 5] = v1;
+      out[base + 6] = v1;
+      out[base + 7] = 0xFFFF;
+      out[base + 8] = v2;
+      out[base + 9] = v2;
+      out[base + 10] = v2;
+      out[base + 11] = 0xFFFF;
+      out[base + 12] = v3;
+      out[base + 13] = v3;
+      out[base + 14] = v3;
+      out[base + 15] = 0xFFFF;
       x += 4;
     }
   }
   if x < width {
-    scalar::grayf32_to_rgba_u16_row(
-      &y_plane[x..width],
-      &mut out[x * 4..width * 4],
-      width - x,
-    );
+    scalar::grayf32_to_rgba_u16_row(&y_plane[x..width], &mut out[x * 4..width * 4], width - x);
   }
 }
 
@@ -739,8 +747,7 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
       let y = _mm_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm_min_ps(_mm_max_ps(y, zero), one);
       let scaled = _mm_mul_ps(clamped, scale);
-      let rounded =
-        _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
+      let rounded = _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
       let int32 = _mm_cvttps_epi32(rounded);
       let pack16 = _mm_packs_epi32(int32, int32);
       let pack8 = _mm_packus_epi16(pack16, pack16);
@@ -774,8 +781,7 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
       let y = _mm_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm_min_ps(_mm_max_ps(y, zero), one);
       let scaled = _mm_mul_ps(clamped, scale);
-      let rounded =
-        _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
+      let rounded = _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
       let int32 = _mm_cvttps_epi32(rounded);
       // Narrow i32x4 → u16x4 via packus (values in [0, 65535] so no saturation clipping).
       let pack16 = _mm_packus_epi32(int32, int32);
@@ -829,8 +835,7 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
       let y = _mm_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm_min_ps(_mm_max_ps(y, zero), one);
       let scaled = _mm_mul_ps(clamped, scale);
-      let rounded =
-        _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
+      let rounded = _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
       let int32 = _mm_cvttps_epi32(rounded);
       let pack16 = _mm_packs_epi32(int32, int32);
       let pack8 = _mm_packus_epi16(pack16, pack16);
@@ -874,7 +879,9 @@ pub(crate) unsafe fn ya8_to_rgb_row(packed: &[u8], out: &mut [u8], width: usize)
   unsafe {
     // Mask to extract Y bytes (even bytes) from 16-byte Ya8 block (8 pixels).
     // Positions 0,2,4,6,8,10,12,14 are Y; set upper 8 bytes to 0x80 (=zero pad).
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0,
+    );
     while x + 8 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast());
       let y_bytes = _mm_shuffle_epi8(chunk, y_mask); // 8 Y values in low 8 bytes
@@ -890,7 +897,11 @@ pub(crate) unsafe fn ya8_to_rgb_row(packed: &[u8], out: &mut [u8], width: usize)
     }
   }
   if x < width {
-    scalar::ya8_to_rgb_row(&packed[x * 2..width * 2], &mut out[x * 3..width * 3], width - x);
+    scalar::ya8_to_rgb_row(
+      &packed[x * 2..width * 2],
+      &mut out[x * 3..width * 3],
+      width - x,
+    );
   }
 }
 
@@ -906,8 +917,12 @@ pub(crate) unsafe fn ya8_to_rgba_row(packed: &[u8], out: &mut [u8], width: usize
   debug_assert!(out.len() >= width * 4);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0);
-    let a_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 15, 13, 11, 9, 7, 5, 3, 1);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0,
+    );
+    let a_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 15, 13, 11, 9, 7, 5, 3, 1,
+    );
     while x + 8 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast());
       let y_bytes = _mm_shuffle_epi8(chunk, y_mask);
@@ -973,7 +988,9 @@ pub(crate) unsafe fn ya8_to_luma_row(packed: &[u8], out: &mut [u8], width: usize
   debug_assert!(out.len() >= width);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0,
+    );
     while x + 8 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast());
       let y_bytes = _mm_shuffle_epi8(chunk, y_mask);
@@ -1017,7 +1034,9 @@ pub(crate) unsafe fn ya8_to_hsv_row(
   debug_assert!(packed.len() >= width * 2);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0,
+    );
     while x + 8 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast());
       let y_bytes = _mm_shuffle_epi8(chunk, y_mask);
@@ -1058,7 +1077,9 @@ pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usiz
   unsafe {
     // Extract Y words (positions 0,2,4,6 in u16 terms = bytes 0,4,8,12).
     // We load 16 bytes (4 Ya16 pixels), shuffle Y to low 4 words, shift >> 8.
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0,
+    );
     while x + 4 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast::<__m128i>());
       let y_words = _mm_shuffle_epi8(chunk, y_mask); // 4 Y u16 in low 8 bytes
@@ -1076,7 +1097,11 @@ pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usiz
     }
   }
   if x < width {
-    scalar::ya16_to_rgb_row(&packed[x * 2..width * 2], &mut out[x * 3..width * 3], width - x);
+    scalar::ya16_to_rgb_row(
+      &packed[x * 2..width * 2],
+      &mut out[x * 3..width * 3],
+      width - x,
+    );
   }
 }
 
@@ -1092,8 +1117,12 @@ pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usi
   debug_assert!(out.len() >= width * 4);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0);
-    let a_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 15, 14, 11, 10, 7, 6, 3, 2);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0,
+    );
+    let a_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 15, 14, 11, 10, 7, 6, 3, 2,
+    );
     while x + 4 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast::<__m128i>());
       let y_words = _mm_shuffle_epi8(chunk, y_mask);
@@ -1164,7 +1193,9 @@ pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
   debug_assert!(out.len() >= width);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0,
+    );
     while x + 4 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast::<__m128i>());
       let y_words = _mm_shuffle_epi8(chunk, y_mask);
@@ -1210,7 +1241,9 @@ pub(crate) unsafe fn ya16_to_hsv_row(
   debug_assert!(packed.len() >= width * 2);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0,
+    );
     while x + 4 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast::<__m128i>());
       let y_words = _mm_shuffle_epi8(chunk, y_mask);

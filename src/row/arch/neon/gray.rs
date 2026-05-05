@@ -848,11 +848,7 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
     }
   }
   if x < width {
-    scalar::grayf32_to_rgba_u16_row(
-      &y_plane[x..width],
-      &mut out[x * 4..width * 4],
-      width - x,
-    );
+    scalar::grayf32_to_rgba_u16_row(&y_plane[x..width], &mut out[x * 4..width * 4], width - x);
   }
 }
 
@@ -901,7 +897,10 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
       let y1 = vld1q_f32(y_plane.as_ptr().add(x + 4));
       let c0 = vmulq_f32(vmaxq_f32(vminq_f32(y0, one), zero), scale);
       let c1 = vmulq_f32(vmaxq_f32(vminq_f32(y1, one), zero), scale);
-      let n8 = vmovn_u16(vcombine_u16(vmovn_u32(vcvtaq_u32_f32(c0)), vmovn_u32(vcvtaq_u32_f32(c1))));
+      let n8 = vmovn_u16(vcombine_u16(
+        vmovn_u32(vcvtaq_u32_f32(c0)),
+        vmovn_u32(vcvtaq_u32_f32(c1)),
+      ));
       vst1_u8(out.as_mut_ptr().add(x), n8);
       x += 8;
     }
@@ -989,7 +988,10 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
       let y1 = vld1q_f32(y_plane.as_ptr().add(x + 4));
       let c0 = vmulq_f32(vmaxq_f32(vminq_f32(y0, one), zero_f), scale);
       let c1 = vmulq_f32(vmaxq_f32(vminq_f32(y1, one), zero_f), scale);
-      let v8 = vmovn_u16(vcombine_u16(vmovn_u32(vcvtaq_u32_f32(c0)), vmovn_u32(vcvtaq_u32_f32(c1))));
+      let v8 = vmovn_u16(vcombine_u16(
+        vmovn_u32(vcvtaq_u32_f32(c0)),
+        vmovn_u32(vcvtaq_u32_f32(c1)),
+      ));
       vst1_u8(h_out.as_mut_ptr().add(x), zero_u8);
       vst1_u8(s_out.as_mut_ptr().add(x), zero_u8);
       vst1_u8(v_out.as_mut_ptr().add(x), v8);
@@ -1032,7 +1034,11 @@ pub(crate) unsafe fn ya8_to_rgb_row(packed: &[u8], out: &mut [u8], width: usize)
     }
   }
   if x < width {
-    scalar::ya8_to_rgb_row(&packed[x * 2..width * 2], &mut out[x * 3..width * 3], width - x);
+    scalar::ya8_to_rgb_row(
+      &packed[x * 2..width * 2],
+      &mut out[x * 3..width * 3],
+      width - x,
+    );
   }
 }
 
@@ -1058,7 +1064,11 @@ pub(crate) unsafe fn ya8_to_rgba_row(packed: &[u8], out: &mut [u8], width: usize
     }
   }
   if x < width {
-    scalar::ya8_to_rgba_row(&packed[x * 2..width * 2], &mut out[x * 4..width * 4], width - x);
+    scalar::ya8_to_rgba_row(
+      &packed[x * 2..width * 2],
+      &mut out[x * 4..width * 4],
+      width - x,
+    );
   }
 }
 
@@ -1243,7 +1253,11 @@ pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usiz
     }
   }
   if x < width {
-    scalar::ya16_to_rgb_row(&packed[x * 2..width * 2], &mut out[x * 3..width * 3], width - x);
+    scalar::ya16_to_rgb_row(
+      &packed[x * 2..width * 2],
+      &mut out[x * 3..width * 3],
+      width - x,
+    );
   }
 }
 

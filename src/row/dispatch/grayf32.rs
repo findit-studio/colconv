@@ -107,12 +107,7 @@ pub(crate) fn grayf32_to_rgba_row(plane: &[f32], out: &mut [u8], width: usize, u
 
 /// Dispatch `grayf32_to_rgb_u16_row`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn grayf32_to_rgb_u16_row(
-  plane: &[f32],
-  out: &mut [u16],
-  width: usize,
-  use_simd: bool,
-) {
+pub(crate) fn grayf32_to_rgb_u16_row(plane: &[f32], out: &mut [u16], width: usize, use_simd: bool) {
   assert!(plane.len() >= width, "plane too short");
   assert!(out.len() >= width * 3, "out too short");
   if !use_simd {

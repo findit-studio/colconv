@@ -909,8 +909,13 @@ pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
       let y0 = i8x16_swizzle(src0, shuf_lo); // 4 Y words in low 8 bytes
       let y1 = i8x16_swizzle(src1, shuf_lo); // 4 Y words in low 8 bytes
       // Combine into 8 u16 in one vector.
-      let y_words = v128_or(y0, i8x16_swizzle(y1, i8x16(
-        -1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 2, 3, 4, 5, 6, 7)));
+      let y_words = v128_or(
+        y0,
+        i8x16_swizzle(
+          y1,
+          i8x16(-1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 2, 3, 4, 5, 6, 7),
+        ),
+      );
       // Shift right 8 to get u8 values, narrow to u8.
       let shifted = u16x8_shr(y_words, 8);
       let narrowed = u8x16_narrow_i16x8(shifted, zero16);
@@ -942,8 +947,13 @@ pub(crate) unsafe fn ya16_to_luma_u16_row(packed: &[u16], out: &mut [u16], width
       let src1 = v128_load(packed.as_ptr().add(x * 2 + 8).cast::<v128>());
       let y0 = i8x16_swizzle(src0, shuf_lo);
       let y1 = i8x16_swizzle(src1, shuf_lo);
-      let y_words = v128_or(y0, i8x16_swizzle(y1, i8x16(
-        -1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 2, 3, 4, 5, 6, 7)));
+      let y_words = v128_or(
+        y0,
+        i8x16_swizzle(
+          y1,
+          i8x16(-1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 2, 3, 4, 5, 6, 7),
+        ),
+      );
       v128_store(out.as_mut_ptr().add(x).cast(), y_words);
       x += 8;
     }
@@ -976,8 +986,13 @@ pub(crate) unsafe fn ya16_to_hsv_row(
       let src1 = v128_load(packed.as_ptr().add(x * 2 + 8).cast::<v128>());
       let y0 = i8x16_swizzle(src0, shuf_lo);
       let y1 = i8x16_swizzle(src1, shuf_lo);
-      let y_words = v128_or(y0, i8x16_swizzle(y1, i8x16(
-        -1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 2, 3, 4, 5, 6, 7)));
+      let y_words = v128_or(
+        y0,
+        i8x16_swizzle(
+          y1,
+          i8x16(-1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 2, 3, 4, 5, 6, 7),
+        ),
+      );
       let shifted = u16x8_shr(y_words, 8);
       let narrowed = u8x16_narrow_i16x8(shifted, zero16);
       let val = i64x2_extract_lane::<0>(narrowed) as u64;

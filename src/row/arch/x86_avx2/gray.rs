@@ -541,8 +541,7 @@ pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: 
       let y = _mm256_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm256_min_ps(_mm256_max_ps(y, zero), one);
       let scaled = _mm256_mul_ps(clamped, scale);
-      let rounded =
-        _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
+      let rounded = _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
       let int32 = _mm256_cvttps_epi32(rounded);
       // Narrow 8×i32 → 8×u8 via two pack steps.
       let lo = _mm256_castsi256_si128(int32);
@@ -585,8 +584,7 @@ pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width:
       let y = _mm256_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm256_min_ps(_mm256_max_ps(y, zero), one);
       let scaled = _mm256_mul_ps(clamped, scale);
-      let rounded =
-        _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
+      let rounded = _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
       let int32 = _mm256_cvttps_epi32(rounded);
       let lo = _mm256_castsi256_si128(int32);
       let hi = _mm256_extracti128_si256::<1>(int32);
@@ -628,8 +626,7 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
       let y = _mm256_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm256_min_ps(_mm256_max_ps(y, zero), one);
       let scaled = _mm256_mul_ps(clamped, scale);
-      let rounded =
-        _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
+      let rounded = _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
       let int32 = _mm256_cvttps_epi32(rounded);
       // Narrow 8×i32 → 8×u16 using AVX2 packus path.
       let lo = _mm256_castsi256_si128(int32);
@@ -645,23 +642,35 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
       let v5 = _mm_extract_epi16::<5>(pack16) as u16;
       let v6 = _mm_extract_epi16::<6>(pack16) as u16;
       let v7 = _mm_extract_epi16::<7>(pack16) as u16;
-      out[base] = v0; out[base + 1] = v0; out[base + 2] = v0;
-      out[base + 3] = v1; out[base + 4] = v1; out[base + 5] = v1;
-      out[base + 6] = v2; out[base + 7] = v2; out[base + 8] = v2;
-      out[base + 9] = v3; out[base + 10] = v3; out[base + 11] = v3;
-      out[base + 12] = v4; out[base + 13] = v4; out[base + 14] = v4;
-      out[base + 15] = v5; out[base + 16] = v5; out[base + 17] = v5;
-      out[base + 18] = v6; out[base + 19] = v6; out[base + 20] = v6;
-      out[base + 21] = v7; out[base + 22] = v7; out[base + 23] = v7;
+      out[base] = v0;
+      out[base + 1] = v0;
+      out[base + 2] = v0;
+      out[base + 3] = v1;
+      out[base + 4] = v1;
+      out[base + 5] = v1;
+      out[base + 6] = v2;
+      out[base + 7] = v2;
+      out[base + 8] = v2;
+      out[base + 9] = v3;
+      out[base + 10] = v3;
+      out[base + 11] = v3;
+      out[base + 12] = v4;
+      out[base + 13] = v4;
+      out[base + 14] = v4;
+      out[base + 15] = v5;
+      out[base + 16] = v5;
+      out[base + 17] = v5;
+      out[base + 18] = v6;
+      out[base + 19] = v6;
+      out[base + 20] = v6;
+      out[base + 21] = v7;
+      out[base + 22] = v7;
+      out[base + 23] = v7;
       x += 8;
     }
   }
   if x < width {
-    scalar::grayf32_to_rgb_u16_row(
-      &y_plane[x..width],
-      &mut out[x * 3..width * 3],
-      width - x,
-    );
+    scalar::grayf32_to_rgb_u16_row(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
   }
 }
 
@@ -684,8 +693,7 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
       let y = _mm256_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm256_min_ps(_mm256_max_ps(y, zero), one);
       let scaled = _mm256_mul_ps(clamped, scale);
-      let rounded =
-        _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
+      let rounded = _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
       let int32 = _mm256_cvttps_epi32(rounded);
       let lo = _mm256_castsi256_si128(int32);
       let hi = _mm256_extracti128_si256::<1>(int32);
@@ -699,23 +707,43 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
       let v5 = _mm_extract_epi16::<5>(pack16) as u16;
       let v6 = _mm_extract_epi16::<6>(pack16) as u16;
       let v7 = _mm_extract_epi16::<7>(pack16) as u16;
-      out[base] = v0; out[base + 1] = v0; out[base + 2] = v0; out[base + 3] = 0xFFFF;
-      out[base + 4] = v1; out[base + 5] = v1; out[base + 6] = v1; out[base + 7] = 0xFFFF;
-      out[base + 8] = v2; out[base + 9] = v2; out[base + 10] = v2; out[base + 11] = 0xFFFF;
-      out[base + 12] = v3; out[base + 13] = v3; out[base + 14] = v3; out[base + 15] = 0xFFFF;
-      out[base + 16] = v4; out[base + 17] = v4; out[base + 18] = v4; out[base + 19] = 0xFFFF;
-      out[base + 20] = v5; out[base + 21] = v5; out[base + 22] = v5; out[base + 23] = 0xFFFF;
-      out[base + 24] = v6; out[base + 25] = v6; out[base + 26] = v6; out[base + 27] = 0xFFFF;
-      out[base + 28] = v7; out[base + 29] = v7; out[base + 30] = v7; out[base + 31] = 0xFFFF;
+      out[base] = v0;
+      out[base + 1] = v0;
+      out[base + 2] = v0;
+      out[base + 3] = 0xFFFF;
+      out[base + 4] = v1;
+      out[base + 5] = v1;
+      out[base + 6] = v1;
+      out[base + 7] = 0xFFFF;
+      out[base + 8] = v2;
+      out[base + 9] = v2;
+      out[base + 10] = v2;
+      out[base + 11] = 0xFFFF;
+      out[base + 12] = v3;
+      out[base + 13] = v3;
+      out[base + 14] = v3;
+      out[base + 15] = 0xFFFF;
+      out[base + 16] = v4;
+      out[base + 17] = v4;
+      out[base + 18] = v4;
+      out[base + 19] = 0xFFFF;
+      out[base + 20] = v5;
+      out[base + 21] = v5;
+      out[base + 22] = v5;
+      out[base + 23] = 0xFFFF;
+      out[base + 24] = v6;
+      out[base + 25] = v6;
+      out[base + 26] = v6;
+      out[base + 27] = 0xFFFF;
+      out[base + 28] = v7;
+      out[base + 29] = v7;
+      out[base + 30] = v7;
+      out[base + 31] = 0xFFFF;
       x += 8;
     }
   }
   if x < width {
-    scalar::grayf32_to_rgba_u16_row(
-      &y_plane[x..width],
-      &mut out[x * 4..width * 4],
-      width - x,
-    );
+    scalar::grayf32_to_rgba_u16_row(&y_plane[x..width], &mut out[x * 4..width * 4], width - x);
   }
 }
 
@@ -752,8 +780,7 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
       let y = _mm256_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm256_min_ps(_mm256_max_ps(y, zero), one);
       let scaled = _mm256_mul_ps(clamped, scale);
-      let rounded =
-        _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
+      let rounded = _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
       let int32 = _mm256_cvttps_epi32(rounded);
       let lo = _mm256_castsi256_si128(int32);
       let hi = _mm256_extracti128_si256::<1>(int32);
@@ -788,8 +815,7 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
       let y = _mm256_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm256_min_ps(_mm256_max_ps(y, zero), one);
       let scaled = _mm256_mul_ps(clamped, scale);
-      let rounded =
-        _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
+      let rounded = _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
       let int32 = _mm256_cvttps_epi32(rounded);
       let lo = _mm256_castsi256_si128(int32);
       let hi = _mm256_extracti128_si256::<1>(int32);
@@ -841,8 +867,7 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
       let y = _mm256_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm256_min_ps(_mm256_max_ps(y, zero), one);
       let scaled = _mm256_mul_ps(clamped, scale);
-      let rounded =
-        _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
+      let rounded = _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
       let int32 = _mm256_cvttps_epi32(rounded);
       let lo = _mm256_castsi256_si128(int32);
       let hi = _mm256_extracti128_si256::<1>(int32);
@@ -884,7 +909,9 @@ pub(crate) unsafe fn ya8_to_rgb_row(packed: &[u8], out: &mut [u8], width: usize)
   debug_assert!(out.len() >= width * 3);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0,
+    );
     while x + 8 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast());
       let y_bytes = _mm_shuffle_epi8(chunk, y_mask);
@@ -900,7 +927,11 @@ pub(crate) unsafe fn ya8_to_rgb_row(packed: &[u8], out: &mut [u8], width: usize)
     }
   }
   if x < width {
-    scalar::ya8_to_rgb_row(&packed[x * 2..width * 2], &mut out[x * 3..width * 3], width - x);
+    scalar::ya8_to_rgb_row(
+      &packed[x * 2..width * 2],
+      &mut out[x * 3..width * 3],
+      width - x,
+    );
   }
 }
 
@@ -916,8 +947,12 @@ pub(crate) unsafe fn ya8_to_rgba_row(packed: &[u8], out: &mut [u8], width: usize
   debug_assert!(out.len() >= width * 4);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0);
-    let a_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 15, 13, 11, 9, 7, 5, 3, 1);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0,
+    );
+    let a_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 15, 13, 11, 9, 7, 5, 3, 1,
+    );
     while x + 8 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast());
       let y_bytes = _mm_shuffle_epi8(chunk, y_mask);
@@ -983,7 +1018,9 @@ pub(crate) unsafe fn ya8_to_luma_row(packed: &[u8], out: &mut [u8], width: usize
   debug_assert!(out.len() >= width);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0,
+    );
     while x + 8 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast());
       let y_bytes = _mm_shuffle_epi8(chunk, y_mask);
@@ -1027,7 +1064,9 @@ pub(crate) unsafe fn ya8_to_hsv_row(
   debug_assert!(packed.len() >= width * 2);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 14, 12, 10, 8, 6, 4, 2, 0,
+    );
     while x + 8 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast());
       let y_bytes = _mm_shuffle_epi8(chunk, y_mask);
@@ -1066,7 +1105,9 @@ pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usiz
   debug_assert!(out.len() >= width * 3);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0,
+    );
     while x + 4 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast::<__m128i>());
       let y_words = _mm_shuffle_epi8(chunk, y_mask);
@@ -1084,7 +1125,11 @@ pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usiz
     }
   }
   if x < width {
-    scalar::ya16_to_rgb_row(&packed[x * 2..width * 2], &mut out[x * 3..width * 3], width - x);
+    scalar::ya16_to_rgb_row(
+      &packed[x * 2..width * 2],
+      &mut out[x * 3..width * 3],
+      width - x,
+    );
   }
 }
 
@@ -1100,8 +1145,12 @@ pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usi
   debug_assert!(out.len() >= width * 4);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0);
-    let a_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 15, 14, 11, 10, 7, 6, 3, 2);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0,
+    );
+    let a_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 15, 14, 11, 10, 7, 6, 3, 2,
+    );
     while x + 4 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast::<__m128i>());
       let y_words = _mm_shuffle_epi8(chunk, y_mask);
@@ -1172,7 +1221,9 @@ pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
   debug_assert!(out.len() >= width);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0,
+    );
     while x + 4 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast::<__m128i>());
       let y_words = _mm_shuffle_epi8(chunk, y_mask);
@@ -1218,7 +1269,9 @@ pub(crate) unsafe fn ya16_to_hsv_row(
   debug_assert!(packed.len() >= width * 2);
   let mut x = 0usize;
   unsafe {
-    let y_mask = _mm_set_epi8(-128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0);
+    let y_mask = _mm_set_epi8(
+      -128, -128, -128, -128, -128, -128, -128, -128, 13, 12, 9, 8, 5, 4, 1, 0,
+    );
     while x + 4 <= width {
       let chunk = _mm_loadu_si128(packed.as_ptr().add(x * 2).cast::<__m128i>());
       let y_words = _mm_shuffle_epi8(chunk, y_mask);
@@ -1276,7 +1329,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_grayf32_to_rgb_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::grayf32 as sf;
     for &w in WIDTHS {
       let mut plane = std::vec![0.0f32; w];
@@ -1292,7 +1347,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_grayf32_to_rgba_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::grayf32 as sf;
     for &w in WIDTHS {
       let mut plane = std::vec![0.0f32; w];
@@ -1308,7 +1365,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_grayf32_to_rgb_u16_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::grayf32 as sf;
     for &w in WIDTHS {
       let mut plane = std::vec![0.0f32; w];
@@ -1324,7 +1383,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_grayf32_to_rgba_u16_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::grayf32 as sf;
     for &w in WIDTHS {
       let mut plane = std::vec![0.0f32; w];
@@ -1340,7 +1401,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_grayf32_to_luma_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::grayf32 as sf;
     for &w in WIDTHS {
       let mut plane = std::vec![0.0f32; w];
@@ -1356,7 +1419,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_grayf32_to_luma_u16_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::grayf32 as sf;
     for &w in WIDTHS {
       let mut plane = std::vec![0.0f32; w];
@@ -1372,7 +1437,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_grayf32_to_hsv_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::grayf32 as sf;
     for &w in WIDTHS {
       let mut plane = std::vec![0.0f32; w];
@@ -1394,7 +1461,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_grayf32_to_rgb_f32_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::grayf32 as sf;
     for &w in WIDTHS {
       let mut plane = std::vec![0.0f32; w];
@@ -1410,7 +1479,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_grayf32_to_luma_f32_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::grayf32 as sf;
     for &w in WIDTHS {
       let mut plane = std::vec![0.0f32; w];
@@ -1426,7 +1497,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_ya8_to_rgb_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::ya8 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u8; w * 2];
@@ -1442,7 +1515,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_ya8_to_rgba_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::ya8 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u8; w * 2];
@@ -1458,7 +1533,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_ya8_to_rgb_u16_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::ya8 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u8; w * 2];
@@ -1474,7 +1551,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_ya8_to_rgba_u16_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::ya8 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u8; w * 2];
@@ -1490,7 +1569,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_ya8_to_luma_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::ya8 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u8; w * 2];
@@ -1506,7 +1587,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_ya8_to_luma_u16_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::ya8 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u8; w * 2];
@@ -1522,7 +1605,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_ya8_to_hsv_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::ya8 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u8; w * 2];
@@ -1544,7 +1629,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_ya16_to_rgb_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::ya16 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u16; w * 2];
@@ -1560,7 +1647,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_ya16_to_rgba_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::ya16 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u16; w * 2];
@@ -1576,7 +1665,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_ya16_to_rgb_u16_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::ya16 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u16; w * 2];
@@ -1592,7 +1683,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_ya16_to_rgba_u16_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::ya16 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u16; w * 2];
@@ -1608,7 +1701,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_ya16_to_luma_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::ya16 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u16; w * 2];
@@ -1624,7 +1719,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_ya16_to_luma_u16_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::ya16 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u16; w * 2];
@@ -1640,7 +1737,9 @@ mod tests {
   #[test]
   #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
   fn avx2_ya16_to_hsv_matches_scalar() {
-    if !is_x86_feature_detected!("avx2") { return; }
+    if !is_x86_feature_detected!("avx2") {
+      return;
+    }
     use crate::row::scalar::ya16 as sy;
     for &w in WIDTHS {
       let mut packed = std::vec![0u16; w * 2];
