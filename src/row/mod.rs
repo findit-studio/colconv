@@ -462,6 +462,49 @@ mod overflow_tests {
     bgr_to_rgb_row(&input, &mut output, OVERFLOW_WIDTH, false);
   }
 
+  // ---- Tier 10 planar GBR dispatchers — `width × {3, 4}` overflow ----
+  //
+  // The Tier 10 GBR sources interleave G/B/R (and optional A) planes
+  // into packed RGB / RGBA. The dispatcher uses [`rgb_row_bytes`] /
+  // [`rgba_row_bytes`] to compute the minimum output buffer length;
+  // an unchecked multiplication on 32-bit could admit an undersized
+  // buffer to unsafe SIMD. Each public entry point gets a regression
+  // so a future drop of either guard surfaces independently.
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gbr_to_rgb_dispatcher_rejects_width_times_3_overflow() {
+    let g: [u8; 0] = [];
+    let b: [u8; 0] = [];
+    let r: [u8; 0] = [];
+    let mut rgb: [u8; 0] = [];
+    gbr_to_rgb_row(&g, &b, &r, &mut rgb, OVERFLOW_WIDTH, false);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gbr_to_rgba_opaque_dispatcher_rejects_width_times_4_overflow() {
+    let g: [u8; 0] = [];
+    let b: [u8; 0] = [];
+    let r: [u8; 0] = [];
+    let mut rgba: [u8; 0] = [];
+    gbr_to_rgba_opaque_row(&g, &b, &r, &mut rgba, OVERFLOW_WIDTH, false);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gbra_to_rgba_dispatcher_rejects_width_times_4_overflow() {
+    let g: [u8; 0] = [];
+    let b: [u8; 0] = [];
+    let r: [u8; 0] = [];
+    let a: [u8; 0] = [];
+    let mut rgba: [u8; 0] = [];
+    gbra_to_rgba_row(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
+  }
+
   #[cfg(target_pointer_width = "32")]
   #[test]
   #[should_panic(expected = "overflows usize")]
