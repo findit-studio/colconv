@@ -12,102 +12,27 @@
 //! horizontal duplication step). Differs from the 4:2:0 / 4:2:2
 //! `p_n_to_rgb_*<10>` family in the chroma layout only.
 
-use crate::{ColorMatrix, PixelSink, SourceFormat, frame::P410Frame, sealed::Sealed};
+use crate::frame::P410Frame;
 
-/// Zero‑sized marker for the P410 source format.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct P410;
-
-impl Sealed for P410 {}
-impl SourceFormat for P410 {}
-
-/// One output row of a P410 source handed to a [`P410Sink`].
-#[derive(Debug, Clone, Copy)]
-pub struct P410Row<'a> {
-  y: &'a [u16],
-  uv_full: &'a [u16],
-  row: usize,
-  matrix: ColorMatrix,
-  full_range: bool,
-}
-
-impl<'a> P410Row<'a> {
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub(crate) fn new(
-    y: &'a [u16],
-    uv_full: &'a [u16],
-    row: usize,
-    matrix: ColorMatrix,
-    full_range: bool,
-  ) -> Self {
-    Self {
-      y,
-      uv_full,
-      row,
-      matrix,
-      full_range,
-    }
+walker! {
+  semi_planar {
+    /// Zero‑sized marker for the P410 source format.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+    marker: P410,
+    frame: P410Frame<'_>,
+    row: P410Row,
+    sink: P410Sink,
+    walker: p410_to,
+    elem_type: u16,
+    chroma_field: uv_full,
+    chroma_plane: uv,
+    chroma_stride: uv_stride,
+    chroma_elems_per_row: |w| 2 * w,
+    chroma_v: full,
+    row_doc: "One output row of a P410 source handed to a [`P410Sink`].\n\n\
+              Carries borrows to the source slices (full-width Y, full-width interleaved\n\
+              UV — `2 * width` u16 elements) plus the row index and matrix/range\n\
+              carry-throughs. Each `u16` element is high-bit-packed (10 bits).",
+    walker_doc: "Walks a [`P410Frame`] row by row into the sink.",
   }
-  /// Full‑width Y row — `width` `u16` samples, high‑bit‑packed.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub fn y(&self) -> &'a [u16] {
-    self.y
-  }
-  /// Full-width interleaved UV row — `2 * width` `u16` elements laid
-  /// out as `U0, V0, U1, V1, …, U_{w-1}, V_{w-1}`.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub fn uv_full(&self) -> &'a [u16] {
-    self.uv_full
-  }
-  /// Output row index.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn row(&self) -> usize {
-    self.row
-  }
-  /// YUV → RGB matrix.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn matrix(&self) -> ColorMatrix {
-    self.matrix
-  }
-  /// Full-range flag.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn full_range(&self) -> bool {
-    self.full_range
-  }
-}
-
-/// Sinks that consume [`P410Row`].
-pub trait P410Sink: for<'a> PixelSink<Input<'a> = P410Row<'a>> {}
-
-/// Walks a [`P410Frame`] row by row into the sink.
-pub fn p410_to<S: P410Sink>(
-  src: &P410Frame<'_>,
-  full_range: bool,
-  matrix: ColorMatrix,
-  sink: &mut S,
-) -> Result<(), S::Error> {
-  sink.begin_frame(src.width(), src.height())?;
-
-  let w = src.width() as usize;
-  let h = src.height() as usize;
-  let y_stride = src.y_stride() as usize;
-  let uv_stride = src.uv_stride() as usize;
-  // 4:4:4 semi-planar: full-width × 2 elements per pair. The
-  // PnFrame444 validator already rejects geometries where `2 * width`
-  // overflows, so a plain multiplication is safe here.
-  let uv_row_elems = 2 * w;
-
-  let y_plane = src.y();
-  let uv_plane = src.uv();
-
-  for row in 0..h {
-    let y_start = row * y_stride;
-    let y = &y_plane[y_start..y_start + w];
-
-    let uv_start = row * uv_stride;
-    let uv_full = &uv_plane[uv_start..uv_start + uv_row_elems];
-
-    sink.process(P410Row::new(y, uv_full, row, matrix, full_range))?;
-  }
-  Ok(())
 }

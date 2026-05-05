@@ -32,96 +32,43 @@
 //! AYUV64 is type-distinct: it has real alpha at slot 0. There is no
 //! α-as-padding sibling in scope.
 
-use crate::{ColorMatrix, PixelSink, SourceFormat, frame::Ayuv64Frame, sealed::Sealed};
+use crate::frame::Ayuv64Frame;
 
-/// Zero-sized marker for the packed **AYUV64** source format.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct Ayuv64;
-
-impl Sealed for Ayuv64 {}
-impl SourceFormat for Ayuv64 {}
-
-/// One row of an [`Ayuv64`] source — `width × 4` u16 elements (4
-/// channels per pixel: A, Y, U, V; the A slot is real source alpha).
-///
-/// Each u16 channel holds a 16-bit native sample (all bits active).
-/// Channel layout per pixel:
-///
-/// | u16 slot | Field | Notes                         |
-/// |----------|-------|-------------------------------|
-/// | 0        | A     | Source α — real, 16-bit native|
-/// | 1        | Y     | Luma                          |
-/// | 2        | U     | Cb chroma                     |
-/// | 3        | V     | Cr chroma                     |
-///
-/// The walker does not interpret the u16 elements — it passes the raw
-/// packed slice to the sink. Channel extraction happens in the
-/// row-kernel layer.
-#[derive(Debug, Clone, Copy)]
-pub struct Ayuv64Row<'a> {
-  packed: &'a [u16],
-  row: usize,
-  matrix: ColorMatrix,
-  full_range: bool,
-}
-
-impl<'a> Ayuv64Row<'a> {
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub(crate) fn new(packed: &'a [u16], row: usize, matrix: ColorMatrix, full_range: bool) -> Self {
-    Self {
-      packed,
-      row,
-      matrix,
-      full_range,
-    }
+walker! {
+  packed {
+    /// Zero-sized marker for the packed **AYUV64** source format.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+    marker: Ayuv64,
+    frame: Ayuv64Frame<'_>,
+    row: Ayuv64Row,
+    sink: Ayuv64Sink,
+    walker: ayuv64_to,
+    buf_field: packed,
+    elem_type: u16,
+    row_elems: |w| w * 4,
+    row_doc: concat!(
+      "One row of an [`Ayuv64`] source — `width × 4` u16 elements (4\n",
+      "channels per pixel: A, Y, U, V; the A slot is real source alpha).\n",
+      "\n",
+      "Each u16 channel holds a 16-bit native sample (all bits active).\n",
+      "Channel layout per pixel:\n",
+      "\n",
+      "| u16 slot | Field | Notes                         |\n",
+      "|----------|-------|-------------------------------|\n",
+      "| 0        | A     | Source α — real, 16-bit native|\n",
+      "| 1        | Y     | Luma                          |\n",
+      "| 2        | U     | Cb chroma                     |\n",
+      "| 3        | V     | Cr chroma                     |\n",
+      "\n",
+      "The walker does not interpret the u16 elements — it passes the raw\n",
+      "packed slice to the sink. Channel extraction happens in the\n",
+      "row-kernel layer.\n",
+      "\n",
+      "Full range: `[0, 65535]` (16-bit). Limited range Y: `[4096, 60160]`,\n",
+      "limited range chroma: `[4096, 61440]`.",
+    ),
+    walker_doc: "Walks an [`Ayuv64Frame`] row by row into the sink.",
   }
-  /// Packed AYUV64 row — `width × 4` u16 elements (4 channels per
-  /// pixel: A, Y, U, V).
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub fn packed(&self) -> &'a [u16] {
-    self.packed
-  }
-  /// Row index.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn row(&self) -> usize {
-    self.row
-  }
-  /// YUV → RGB matrix carried through.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn matrix(&self) -> ColorMatrix {
-    self.matrix
-  }
-  /// `true` iff Y ∈ `[0, 65535]` full range (16-bit). Limited range
-  /// is Y `[4096, 60160]`, chroma `[4096, 61440]`.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn full_range(&self) -> bool {
-    self.full_range
-  }
-}
-
-/// Sinks that consume [`Ayuv64Row`].
-pub trait Ayuv64Sink: for<'a> PixelSink<Input<'a> = Ayuv64Row<'a>> {}
-
-/// Walks an [`Ayuv64Frame`] row by row into the sink.
-pub fn ayuv64_to<S: Ayuv64Sink>(
-  src: &Ayuv64Frame<'_>,
-  full_range: bool,
-  matrix: ColorMatrix,
-  sink: &mut S,
-) -> Result<(), S::Error> {
-  sink.begin_frame(src.width(), src.height())?;
-
-  let h = src.height() as usize;
-  let stride = src.stride() as usize;
-  let row_elems = (src.width() as usize) * 4;
-  let plane = src.packed();
-
-  for row in 0..h {
-    let start = row * stride;
-    let packed = &plane[start..start + row_elems];
-    sink.process(Ayuv64Row::new(packed, row, matrix, full_range))?;
-  }
-  Ok(())
 }
 
 #[cfg(all(test, feature = "std"))]
