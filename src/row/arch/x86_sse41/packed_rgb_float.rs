@@ -2,10 +2,11 @@
 //!
 //! Each kernel processes 4 `f32` lanes per `__m128` register; the
 //! integer-output kernels use `_mm_min_ps` / `_mm_max_ps` for the
-//! `[0, 1]` clamp, `_mm_mul_ps` for the scale, `_mm_cvtps_epi32` for
-//! the round-to-nearest-even cast (uses the current MXCSR rounding
-//! mode — round-to-nearest-even is the default), and `_mm_packus_*`
-//! for the saturating narrow.
+//! `[0, 1]` clamp, `_mm_mul_ps` for the scale,
+//! `_mm_round_ps::<TO_NEAREST_INT | NO_EXC>` followed by
+//! `_mm_cvttps_epi32` (truncate — MXCSR-independent) for the
+//! round-to-nearest-even cast, and `_mm_packus_*` for the saturating
+//! narrow.
 //!
 //! Pixel-aligned chunks (4 pixels = 12 lanes per iter for the u8/u16
 //! integer-output paths) keep the loop boundary on a pixel boundary
@@ -20,10 +21,14 @@ unsafe fn clamp_scale_to_u32(v: __m128, zero: __m128, one: __m128, scale: __m128
   unsafe {
     let clamped = _mm_min_ps(_mm_max_ps(v, zero), one);
     let scaled = _mm_mul_ps(clamped, scale);
-    // `_mm_cvtps_epi32` uses MXCSR rounding (round-to-nearest-even by
-    // default). After clamping to `[0, scale]` the result fits in i32
-    // safely (0..=scale, scale ≤ 65535).
-    _mm_cvtps_epi32(scaled)
+    // Round nearest-even independent of the ambient MXCSR rounding mode:
+    // `_mm_round_ps` with `TO_NEAREST_INT | NO_EXC` forces banker's
+    // rounding and suppresses inexact exceptions; `_mm_cvttps_epi32`
+    // (truncate) then converts the already-rounded value to i32 without
+    // re-reading MXCSR.
+    _mm_cvttps_epi32(_mm_round_ps::<
+      { _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC },
+    >(scaled))
   }
 }
 

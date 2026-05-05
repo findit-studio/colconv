@@ -15,9 +15,10 @@ unsafe fn clamp_scale_to_u32_512(v: __m512, zero: __m512, one: __m512, scale: __
   unsafe {
     let clamped = _mm512_min_ps(_mm512_max_ps(v, zero), one);
     let scaled = _mm512_mul_ps(clamped, scale);
-    // `_mm512_cvtps_epi32` rounds per the embedded MXCSR rounding mode
-    // (round-to-nearest-even by default).
-    _mm512_cvtps_epi32(scaled)
+    // AVX-512 embedded rounding: `_mm512_cvt_roundps_epi32` with
+    // `TO_NEAREST_INT | NO_EXC` forces banker's rounding in a single
+    // instruction, independent of the ambient MXCSR rounding mode.
+    _mm512_cvt_roundps_epi32::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled)
   }
 }
 

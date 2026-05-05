@@ -2,6 +2,38 @@ use super::super::*;
 
 // ---- Tier 9 Rgbf32 SIMD-vs-scalar parity tests --------------------------
 
+#[test]
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(miri, ignore = "MXCSR + SIMD intrinsics unsupported by Miri")]
+fn rgbf32_to_rgb_row_simd_matches_scalar_under_truncate_mxcsr() {
+  if !std::arch::is_x86_feature_detected!("sse4.1") {
+    return;
+  }
+  // Save ambient MXCSR and set round-toward-zero (bits 13-14 = 0b11 = 0x6000).
+  let saved = unsafe { core::arch::x86_64::_mm_getcsr() };
+  let mxcsr_rz = (saved & !0x6000) | 0x6000;
+  unsafe { core::arch::x86_64::_mm_setcsr(mxcsr_rz) };
+
+  // Input: every channel is exactly 0.5 → after ×255 = 127.5, a half-boundary
+  // value. Scalar (round-ties-even) → 128. SIMD without the fix → 127 under
+  // truncate MXCSR. Use 16 pixels so the SIMD loop body executes at least once.
+  let width = 16usize;
+  let rgb = std::vec![0.5_f32; width * 3];
+  let mut simd_out = std::vec![0u8; width * 3];
+  let mut scalar_out = std::vec![0u8; width * 3];
+
+  unsafe { rgbf32_to_rgb_row(&rgb, &mut simd_out, width) };
+  scalar::rgbf32_to_rgb_row(&rgb, &mut scalar_out, width);
+
+  // Restore MXCSR before any assertion so panic formatting doesn't misfire.
+  unsafe { core::arch::x86_64::_mm_setcsr(saved) };
+
+  assert_eq!(
+    simd_out, scalar_out,
+    "SSE4.1 SIMD diverged from scalar under truncate MXCSR (Codex #69)"
+  );
+}
+
 fn pseudo_random_rgbf32(width: usize) -> std::vec::Vec<f32> {
   let n = width * 3;
   let mut out = std::vec::Vec::with_capacity(n);

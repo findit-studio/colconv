@@ -18,8 +18,12 @@ unsafe fn clamp_scale_to_u32_256(v: __m256, zero: __m256, one: __m256, scale: __
   unsafe {
     let clamped = _mm256_min_ps(_mm256_max_ps(v, zero), one);
     let scaled = _mm256_mul_ps(clamped, scale);
-    // `_mm256_cvtps_epi32` rounds to nearest-even by default.
-    _mm256_cvtps_epi32(scaled)
+    // Round nearest-even independent of MXCSR: `_mm256_round_ps` with
+    // `TO_NEAREST_INT | NO_EXC` forces banker's rounding; `_mm256_cvttps_epi32`
+    // (truncate) converts the already-rounded value without re-reading MXCSR.
+    _mm256_cvttps_epi32(_mm256_round_ps::<
+      { _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC },
+    >(scaled))
   }
 }
 
