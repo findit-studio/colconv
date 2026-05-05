@@ -1,6 +1,6 @@
 use core::arch::aarch64::*;
 
-use crate::row::scalar;
+use crate::{ColorMatrix, row::scalar};
 
 // ===== RGB → HSV =========================================================
 
@@ -213,5 +213,196 @@ fn f32x4_quad_to_u8x16(
     let ab_u16 = vcombine_u16(vmovn_u32(a_u32), vmovn_u32(b_u32));
     let cd_u16 = vcombine_u16(vmovn_u32(c_u32), vmovn_u32(d_u32));
     vcombine_u8(vmovn_u16(ab_u16), vmovn_u16(cd_u16))
+  }
+}
+
+// ===== RGB → luma (Y') ===================================================
+
+/// NEON RGB → planar luma (Y'). Byte‑identical to
+/// [`scalar::rgb_to_luma_row`] (Q15 weighted sum, optional limited‑range
+/// post‑scale to `[16, 235]`).
+///
+/// Block size: 16 px / iter (one `vld3q_u8` deinterleave = 48 input
+/// bytes, one `vst1q_u8` luma store = 16 output bytes). Coefficients
+/// are hoisted outside the loop — `matrix` is selected once via
+/// `luma_coefficients_q15`, then splatted to i16x4 vectors so the
+/// in‑loop multiplies use `vmull_s16` (i16 × i16 → i32 widening).
+///
+/// # Safety
+///
+/// 1. **NEON must be available on the current CPU** (caller obligation).
+/// 2. `rgb.len() >= 3 * width`.
+/// 3. `luma_out.len() >= width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn rgb_to_luma_row(
+  rgb: &[u8],
+  luma_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(rgb.len() >= width * 3, "rgb row too short");
+  debug_assert!(luma_out.len() >= width, "luma row too short");
+
+  let (k_r, k_g, k_b) = scalar::luma_coefficients_q15(matrix);
+  // SAFETY block carries unchecked NEON intrinsics; the splats below
+  // are safe (only register operations) but live inside the same
+  // unsafe context as the load/multiply chain.
+  // All matrix coefficients fit in i16 (max ≈ 23436 ≪ 32767), so we
+  // can use the cheap i16×i16 → i32 widening multiply (`vmull_s16`).
+  let kr_v = vdup_n_s16(k_r as i16);
+  let kg_v = vdup_n_s16(k_g as i16);
+  let kb_v = vdup_n_s16(k_b as i16);
+  let rnd_v = vdupq_n_s32(1 << 14);
+  // Limited‑range post‑scale constants. Hoisted once even when unused;
+  // unused branches inline as dead and the splats don't cost anything.
+  let lim_scale_v = vdup_n_s16(28142);
+  let lim_off_v = vdupq_n_s16(16);
+
+  // SAFETY: NEON availability is the caller's obligation; loop guard
+  // `x + 16 <= width` keeps the 48‑byte read and 16‑byte write inside
+  // the caller‑promised slice lengths.
+  unsafe {
+    let mut x = 0usize;
+    while x + 16 <= width {
+      // Deinterleave 16 RGB pixels (48 bytes) → 3 × u8x16 channels.
+      let rgb_vec = vld3q_u8(rgb.as_ptr().add(x * 3));
+      let r_u8 = rgb_vec.0;
+      let g_u8 = rgb_vec.1;
+      let b_u8 = rgb_vec.2;
+
+      // Widen each u8x16 to two i16x8 halves (zero‑extend), since
+      // every sample is in [0, 255] and the multiply target is i16 × i16.
+      let r_lo_u16 = vmovl_u8(vget_low_u8(r_u8));
+      let r_hi_u16 = vmovl_u8(vget_high_u8(r_u8));
+      let g_lo_u16 = vmovl_u8(vget_low_u8(g_u8));
+      let g_hi_u16 = vmovl_u8(vget_high_u8(g_u8));
+      let b_lo_u16 = vmovl_u8(vget_low_u8(b_u8));
+      let b_hi_u16 = vmovl_u8(vget_high_u8(b_u8));
+      let r_lo = vreinterpretq_s16_u16(r_lo_u16);
+      let r_hi = vreinterpretq_s16_u16(r_hi_u16);
+      let g_lo = vreinterpretq_s16_u16(g_lo_u16);
+      let g_hi = vreinterpretq_s16_u16(g_hi_u16);
+      let b_lo = vreinterpretq_s16_u16(b_lo_u16);
+      let b_hi = vreinterpretq_s16_u16(b_hi_u16);
+
+      // Y_full per i32x4 quarter: (k_r·R + k_g·G + k_b·B + RND) >> 15.
+      let y0 = q15_luma(
+        vget_low_s16(r_lo),
+        vget_low_s16(g_lo),
+        vget_low_s16(b_lo),
+        kr_v,
+        kg_v,
+        kb_v,
+        rnd_v,
+      );
+      let y1 = q15_luma(
+        vget_high_s16(r_lo),
+        vget_high_s16(g_lo),
+        vget_high_s16(b_lo),
+        kr_v,
+        kg_v,
+        kb_v,
+        rnd_v,
+      );
+      let y2 = q15_luma(
+        vget_low_s16(r_hi),
+        vget_low_s16(g_hi),
+        vget_low_s16(b_hi),
+        kr_v,
+        kg_v,
+        kb_v,
+        rnd_v,
+      );
+      let y3 = q15_luma(
+        vget_high_s16(r_hi),
+        vget_high_s16(g_hi),
+        vget_high_s16(b_hi),
+        kr_v,
+        kg_v,
+        kb_v,
+        rnd_v,
+      );
+
+      // Saturate‑narrow to i16x8 (clamps negatives → 0 and >32767 → 32767;
+      // both extremes are well outside our [0,255] expected range and
+      // can only occur when coefficient sums round slightly above 1.0).
+      let y_lo_i16 = vcombine_s16(vqmovn_s32(y0), vqmovn_s32(y1));
+      let y_hi_i16 = vcombine_s16(vqmovn_s32(y2), vqmovn_s32(y3));
+
+      let y_u8 = if full_range {
+        // Saturate‑narrow i16x8×2 → u8x16 ([0,255] clamp).
+        vcombine_u8(vqmovun_s16(y_lo_i16), vqmovun_s16(y_hi_i16))
+      } else {
+        // Limited‑range post‑scale: clamp Y_full to [0,255] first
+        // (matches the scalar's `y_full_clamped` step), then apply the
+        // 28142/32768 Q15 multiply and add 16. Re‑use Q15 widening
+        // multiply via vmull_s16.
+        let y_clamp_u8_lo = vqmovun_s16(y_lo_i16);
+        let y_clamp_u8_hi = vqmovun_s16(y_hi_i16);
+        // Re‑widen u8 → i16 (always non‑negative, so signed and
+        // unsigned widen produce the same bit pattern).
+        let yc_lo_i16 = vreinterpretq_s16_u16(vmovl_u8(y_clamp_u8_lo));
+        let yc_hi_i16 = vreinterpretq_s16_u16(vmovl_u8(y_clamp_u8_hi));
+        let y_lim_lo = limited_range_scale(yc_lo_i16, lim_scale_v, lim_off_v, rnd_v);
+        let y_lim_hi = limited_range_scale(yc_hi_i16, lim_scale_v, lim_off_v, rnd_v);
+        vcombine_u8(vqmovun_s16(y_lim_lo), vqmovun_s16(y_lim_hi))
+      };
+
+      vst1q_u8(luma_out.as_mut_ptr().add(x), y_u8);
+      x += 16;
+    }
+
+    if x < width {
+      scalar::rgb_to_luma_row(
+        &rgb[x * 3..width * 3],
+        &mut luma_out[x..width],
+        width - x,
+        matrix,
+        full_range,
+      );
+    }
+  }
+}
+
+/// Q15 weighted sum for one 4‑pixel group.
+/// Returns `(k_r·R + k_g·G + k_b·B + RND) >> 15` as i32x4.
+#[inline(always)]
+fn q15_luma(
+  r: int16x4_t,
+  g: int16x4_t,
+  b: int16x4_t,
+  kr: int16x4_t,
+  kg: int16x4_t,
+  kb: int16x4_t,
+  rnd: int32x4_t,
+) -> int32x4_t {
+  unsafe {
+    let acc = vmull_s16(r, kr);
+    let acc = vmlal_s16(acc, g, kg);
+    let acc = vmlal_s16(acc, b, kb);
+    let acc = vaddq_s32(acc, rnd);
+    vshrq_n_s32::<15>(acc)
+  }
+}
+
+/// Limited‑range post‑scale: `16 + ((y_clamped * 28142 + RND) >> 15)`,
+/// applied in i16 arithmetic. `y_clamped` is in `[0, 255]` (already
+/// clamped by the caller), so `y_clamped * 28142 ≤ 7.18M` fits in i32.
+#[inline(always)]
+fn limited_range_scale(
+  yc: int16x8_t,
+  scale: int16x4_t,
+  off: int16x8_t,
+  rnd: int32x4_t,
+) -> int16x8_t {
+  unsafe {
+    let lo = vmull_s16(vget_low_s16(yc), scale);
+    let hi = vmull_s16(vget_high_s16(yc), scale);
+    let lo = vshrq_n_s32::<15>(vaddq_s32(lo, rnd));
+    let hi = vshrq_n_s32::<15>(vaddq_s32(hi, rnd));
+    let scaled_i16 = vcombine_s16(vqmovn_s32(lo), vqmovn_s32(hi));
+    vaddq_s16(scaled_i16, off)
   }
 }
