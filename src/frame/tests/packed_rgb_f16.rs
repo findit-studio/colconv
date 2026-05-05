@@ -20,6 +20,10 @@ fn rgbf16_frame_try_new_accepts_oversized_stride() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
+)]
 fn rgbf16_frame_try_new_accepts_hdr_and_negative_values() {
   // Out-of-[0,1] f16 values are permitted; only shape is validated.
   let buf = std::vec![half::f16::from_f32(10.0); 16 * 4 * 3];
@@ -115,6 +119,10 @@ fn rgbf16_frame_new_panics_on_invalid() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
+)]
 fn rgbf16_frame_accessors_round_trip() {
   let val = half::f16::from_f32(0.25);
   let buf = std::vec![val; 8 * 2 * 3];
