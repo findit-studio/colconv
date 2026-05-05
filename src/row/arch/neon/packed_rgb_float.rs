@@ -308,3 +308,246 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row(rgb_in: &[f32], rgb_out: &mut [f32], 
     }
   }
 }
+
+// ---- Tier 9 — Rgbf16 NEON entry points ------------------------------------
+//
+// Strategy: widen a chunk of `f16` lanes to `f32` into a stack buffer, then
+// delegate to the existing NEON Rgbf32 downstream kernels. The chunk size is
+// 4 pixels (= 12 f16 values) which matches the Rgbf32 loop granularity.
+//
+// `vcvt_f32_f16` widens 4 × f16 to 4 × f32 in a single FCVT instruction.
+// We load the raw u16 bits with `vld1_u16` and reinterpret the result as
+// `float16x4_t` before calling `vcvt_f32_f16`.
+
+/// Widen 4 half-precision floats (`f16x4`, i.e. 8 bytes starting at `ptr`)
+/// to 4 single-precision floats into `out[0..4]`.
+///
+/// # Safety
+///
+/// * NEON must be available.
+/// * `ptr` must be valid for 4 × u16 reads (8 bytes, no alignment required
+///   because `vld1_u16` accepts unaligned pointers on AArch64).
+/// * `out` must be valid for 4 × f32 writes.
+#[inline(always)]
+unsafe fn widen_f16x4(ptr: *const half::f16, out: *mut f32) {
+  unsafe {
+    let u16s = vld1_u16(ptr as *const u16);
+    let f16s = vreinterpret_f16_u16(u16s);
+    let f32s = vcvt_f32_f16(f16s);
+    vst1q_f32(out, f32s);
+  }
+}
+
+/// Widen `n` half-precision floats (at most 4) from `src` to `f32` in `dst`.
+/// `n` must be in `[1, 4]`.
+#[inline(always)]
+unsafe fn widen_f16_tail(src: &[half::f16], dst: &mut [f32], n: usize) {
+  for i in 0..n {
+    unsafe {
+      *dst.get_unchecked_mut(i) = src.get_unchecked(i).to_f32();
+    }
+  }
+}
+
+/// f16 RGB → u8 RGB.
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `rgb_in.len() >= 3 * width`; `rgb_out.len() >= 3 * width`.
+/// 3. `rgb_in` / `rgb_out` must not alias.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+
+  // Process 4 pixels (12 f16 lanes = 12 f32 lanes) per iteration.
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  while lane + 12 <= total_lanes {
+    let mut buf = [0.0f32; 12];
+    unsafe {
+      widen_f16x4(rgb_in.as_ptr().add(lane), buf.as_mut_ptr());
+      widen_f16x4(rgb_in.as_ptr().add(lane + 4), buf.as_mut_ptr().add(4));
+      widen_f16x4(rgb_in.as_ptr().add(lane + 8), buf.as_mut_ptr().add(8));
+      rgbf32_to_rgb_row(&buf, rgb_out.get_unchecked_mut(lane..lane + 12), 4);
+    }
+    lane += 12;
+  }
+  let pix_done = lane / 3;
+  if pix_done < width {
+    scalar::rgbf16_to_rgb_row(
+      &rgb_in[pix_done * 3..width * 3],
+      &mut rgb_out[pix_done * 3..width * 3],
+      width - pix_done,
+    );
+  }
+}
+
+/// f16 RGB → u8 RGBA (alpha forced to `0xFF`).
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  let mut pix = 0usize;
+  while lane + 12 <= total_lanes {
+    let mut buf = [0.0f32; 12];
+    unsafe {
+      widen_f16x4(rgb_in.as_ptr().add(lane), buf.as_mut_ptr());
+      widen_f16x4(rgb_in.as_ptr().add(lane + 4), buf.as_mut_ptr().add(4));
+      widen_f16x4(rgb_in.as_ptr().add(lane + 8), buf.as_mut_ptr().add(8));
+      rgbf32_to_rgba_row(&buf, rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 16), 4);
+    }
+    lane += 12;
+    pix += 4;
+  }
+  if pix < width {
+    scalar::rgbf16_to_rgba_row(
+      &rgb_in[pix * 3..width * 3],
+      &mut rgba_out[pix * 4..width * 4],
+      width - pix,
+    );
+  }
+}
+
+/// f16 RGB → u16 RGB.
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [u16]` with
+/// `len() >= 3 * width` u16 elements.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn rgbf16_to_rgb_u16_row(
+  rgb_in: &[half::f16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_u16_out row too short");
+
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  while lane + 12 <= total_lanes {
+    let mut buf = [0.0f32; 12];
+    unsafe {
+      widen_f16x4(rgb_in.as_ptr().add(lane), buf.as_mut_ptr());
+      widen_f16x4(rgb_in.as_ptr().add(lane + 4), buf.as_mut_ptr().add(4));
+      widen_f16x4(rgb_in.as_ptr().add(lane + 8), buf.as_mut_ptr().add(8));
+      rgbf32_to_rgb_u16_row(&buf, rgb_out.get_unchecked_mut(lane..lane + 12), 4);
+    }
+    lane += 12;
+  }
+  let pix_done = lane / 3;
+  if pix_done < width {
+    scalar::rgbf16_to_rgb_u16_row(
+      &rgb_in[pix_done * 3..width * 3],
+      &mut rgb_out[pix_done * 3..width * 3],
+      width - pix_done,
+    );
+  }
+}
+
+/// f16 RGB → u16 RGBA (alpha forced to `0xFFFF`).
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_u16_row`] but the output is `&mut [u16]` with
+/// `len() >= 4 * width` u16 elements.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn rgbf16_to_rgba_u16_row(
+  rgb_in: &[half::f16],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_u16_out row too short");
+
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  let mut pix = 0usize;
+  while lane + 12 <= total_lanes {
+    let mut buf = [0.0f32; 12];
+    unsafe {
+      widen_f16x4(rgb_in.as_ptr().add(lane), buf.as_mut_ptr());
+      widen_f16x4(rgb_in.as_ptr().add(lane + 4), buf.as_mut_ptr().add(4));
+      widen_f16x4(rgb_in.as_ptr().add(lane + 8), buf.as_mut_ptr().add(8));
+      rgbf32_to_rgba_u16_row(&buf, rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 16), 4);
+    }
+    lane += 12;
+    pix += 4;
+  }
+  if pix < width {
+    scalar::rgbf16_to_rgba_u16_row(
+      &rgb_in[pix * 3..width * 3],
+      &mut rgba_out[pix * 4..width * 4],
+      width - pix,
+    );
+  }
+}
+
+/// f16 RGB → f32 RGB (lossless widen).
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [f32]` with
+/// `len() >= 3 * width` f32 elements.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn rgbf16_to_rgb_f32_row(
+  rgb_in: &[half::f16],
+  rgb_out: &mut [f32],
+  width: usize,
+) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_f32_out row too short");
+
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  while lane + 4 <= total_lanes {
+    unsafe {
+      widen_f16x4(rgb_in.as_ptr().add(lane), rgb_out.as_mut_ptr().add(lane));
+    }
+    lane += 4;
+  }
+  // Scalar tail for the last 0-3 lanes (partial pixel at most).
+  unsafe {
+    widen_f16_tail(rgb_in.get_unchecked(lane..), rgb_out.get_unchecked_mut(lane..), total_lanes - lane);
+  }
+}
+
+/// f16 RGB → f16 RGB lossless pass-through.
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [half::f16]` with
+/// `len() >= 3 * width` f16 elements.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn rgbf16_to_rgb_f16_row(
+  rgb_in: &[half::f16],
+  rgb_out: &mut [half::f16],
+  width: usize,
+) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_f16_out row too short");
+
+  // Bit-exact copy: reuse scalar which is already just copy_from_slice.
+  scalar::rgbf16_to_rgb_f16_row(rgb_in, rgb_out, width);
+}
