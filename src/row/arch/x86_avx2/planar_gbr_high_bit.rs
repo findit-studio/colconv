@@ -138,8 +138,8 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
     let shr_count = _mm_cvtsi32_si128((BITS - 8) as i32);
     let zero256 = _mm256_setzero_si256();
     let zero = _mm_setzero_si128();
-    let opaque_u16 = _mm_set1_epi16(0x00FF_u16 as i16);
-    let opaque_u8 = _mm_packus_epi16(opaque_u16, zero);
+    // All 16 alpha bytes must be 0xFF; _mm_set1_epi8(-1) fills all lanes.
+    let opaque_u8 = _mm_set1_epi8(-1i8);
 
     let mut x = 0usize;
     while x + 16 <= width {

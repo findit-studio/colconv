@@ -504,7 +504,9 @@ impl<'a, const BITS: u32> GbrapHighBitFrame<'a, BITS> {
     r_stride: u32,
     a_stride: u32,
   ) -> Self {
-    match Self::try_new(g, b, r, a, width, height, g_stride, b_stride, r_stride, a_stride) {
+    match Self::try_new(
+      g, b, r, a, width, height, g_stride, b_stride, r_stride, a_stride,
+    ) {
       Ok(frame) => frame,
       Err(_) => panic!("invalid GbrapHighBitFrame dimensions or plane lengths"),
     }

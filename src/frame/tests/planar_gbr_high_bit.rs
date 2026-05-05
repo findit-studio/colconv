@@ -138,12 +138,7 @@ fn gbrp16_bits_accessor() {
 
 fn gbrap10_planes(w: u32, h: u32) -> (Vec<u16>, Vec<u16>, Vec<u16>, Vec<u16>) {
   let n = (w * h) as usize;
-  (
-    vec![0u16; n],
-    vec![0u16; n],
-    vec![0u16; n],
-    vec![0u16; n],
-  )
+  (vec![0u16; n], vec![0u16; n], vec![0u16; n], vec![0u16; n])
 }
 
 #[test]

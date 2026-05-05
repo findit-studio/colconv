@@ -17,13 +17,10 @@
 //! Use the existing `write_rgb_u16_8` / `write_rgba_u16_8` helpers from
 //! this backend's mod.rs which interleave 8 u16 lanes per channel.
 
-#[cfg(target_feature = "simd128")]
 use core::arch::wasm32::*;
 
-#[cfg(target_feature = "simd128")]
 use crate::row::scalar;
 
-#[cfg(target_feature = "simd128")]
 use super::*;
 
 // ---- u8 output, 3-channel (RGB) -----------------------------------------
@@ -36,7 +33,6 @@ use super::*;
 /// 1. simd128 must be enabled at compile time (caller obligation).
 /// 2. `g.len()`, `b.len()`, `r.len()` ≥ `width`.
 /// 3. `rgb_out.len()` ≥ `3 * width`.
-#[cfg(target_feature = "simd128")]
 #[inline]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
@@ -104,7 +100,6 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
 /// 1. simd128 must be enabled at compile time.
 /// 2. `g.len()`, `b.len()`, `r.len()` ≥ `width`.
 /// 3. `rgba_out.len()` ≥ `4 * width`.
-#[cfg(target_feature = "simd128")]
 #[inline]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
@@ -168,7 +163,6 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
 /// 1. simd128 must be enabled at compile time.
 /// 2. `g.len()`, `b.len()`, `r.len()`, `a.len()` ≥ `width`.
 /// 3. `rgba_out.len()` ≥ `4 * width`.
-#[cfg(target_feature = "simd128")]
 #[inline]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
@@ -236,7 +230,6 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
 /// 1. simd128 must be enabled at compile time.
 /// 2. `g.len()`, `b.len()`, `r.len()` ≥ `width`.
 /// 3. `rgb_u16_out.len()` ≥ `3 * width`.
-#[cfg(target_feature = "simd128")]
 #[inline]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
@@ -283,7 +276,6 @@ pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
 /// 1. simd128 must be enabled at compile time.
 /// 2. `g.len()`, `b.len()`, `r.len()` ≥ `width`.
 /// 3. `rgba_u16_out.len()` ≥ `4 * width`.
-#[cfg(target_feature = "simd128")]
 #[inline]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
@@ -335,7 +327,6 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
 /// 1. simd128 must be enabled at compile time.
 /// 2. `g.len()`, `b.len()`, `r.len()`, `a.len()` ≥ `width`.
 /// 3. `rgba_u16_out.len()` ≥ `4 * width`.
-#[cfg(target_feature = "simd128")]
 #[inline]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
