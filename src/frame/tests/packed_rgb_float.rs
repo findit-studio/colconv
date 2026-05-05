@@ -85,21 +85,26 @@ fn rgbf32_frame_try_new_rejects_width_overflow() {
 #[cfg(target_pointer_width = "32")]
 #[test]
 fn rgbf32_frame_try_new_rejects_geometry_overflow() {
-  // Only meaningful on 32-bit targets where stride * height can exceed
-  // usize::MAX. width * 3 must still fit in u32 to reach the geometry
-  // check, so pick a width that gives a clean stride.
+  // Only meaningful on 32-bit targets (wasm32, i686) where
+  // `stride * height` as `usize` can overflow. Pick a width small
+  // enough that `3 * width <= stride` so we pass the StrideTooSmall
+  // check and reach the geometry-overflow check.
   let buf: [f32; 0] = [];
-  let big: u32 = 0x1_0000;
-  let stride: u32 = 0x1_0000; // 0x1_0000 * 3 = 0x3_0000 < u32::MAX
+  let width: u32 = 0x5555; // 3 * width = 0xFFFF, ≤ stride
+  let stride: u32 = 0x1_0000;
   let height: u32 = 0x1_0000; // stride * height = 2^32 → overflows usize on 32-bit
-  let res = Rgbf32Frame::try_new(&buf, big, height, stride);
-  assert!(matches!(
-    res,
-    Err(Rgbf32FrameError::GeometryOverflow {
-      stride: 0x1_0000,
-      rows: 0x1_0000,
-    })
-  ));
+  let res = Rgbf32Frame::try_new(&buf, width, height, stride);
+  assert!(
+    matches!(
+      res,
+      Err(Rgbf32FrameError::GeometryOverflow {
+        stride: 0x1_0000,
+        rows: 0x1_0000,
+      })
+    ),
+    "expected GeometryOverflow, got {:?}",
+    res
+  );
 }
 
 #[test]
