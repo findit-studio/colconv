@@ -508,6 +508,107 @@ mod overflow_tests {
     gbra_to_rgba_row(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
   }
 
+  // ---- Tier 11 gray dispatchers — `width × {3, 4}` overflow ----
+  //
+  // The gray RGB / RGBA / RGB-u16 / RGBA-u16 dispatchers route through
+  // [`rgb_row_bytes`] / [`rgba_row_bytes`] / [`rgb_row_elems`] /
+  // [`rgba_row_elems`] for output bounds-checking. Without these
+  // helpers an `out.len() >= width * N` assert could pass on 32-bit
+  // for wrapped multiplications and admit an undersized buffer to
+  // unsafe SIMD. Each format family gets a regression for the *3
+  // (RGB) and *4 (RGBA) paths so a future regression on any one of
+  // them surfaces independently.
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gray8_to_rgb_dispatcher_rejects_width_times_3_overflow() {
+    let y: [u8; 0] = [];
+    let mut rgb: [u8; 0] = [];
+    gray8_to_rgb_row(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gray8_to_rgba_dispatcher_rejects_width_times_4_overflow() {
+    let y: [u8; 0] = [];
+    let mut rgba: [u8; 0] = [];
+    gray8_to_rgba_row(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gray_n_to_rgb_dispatcher_rejects_width_times_3_overflow() {
+    let y: [u16; 0] = [];
+    let mut rgb: [u8; 0] = [];
+    gray_n_to_rgb_row::<10>(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gray_n_to_rgba_dispatcher_rejects_width_times_4_overflow() {
+    let y: [u16; 0] = [];
+    let mut rgba: [u8; 0] = [];
+    gray_n_to_rgba_row::<10>(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gray_n_to_rgb_u16_dispatcher_rejects_width_times_3_overflow() {
+    let y: [u16; 0] = [];
+    let mut rgb: [u16; 0] = [];
+    gray_n_to_rgb_u16_row::<10>(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gray_n_to_rgba_u16_dispatcher_rejects_width_times_4_overflow() {
+    let y: [u16; 0] = [];
+    let mut rgba: [u16; 0] = [];
+    gray_n_to_rgba_u16_row::<10>(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gray16_to_rgb_dispatcher_rejects_width_times_3_overflow() {
+    let y: [u16; 0] = [];
+    let mut rgb: [u8; 0] = [];
+    gray16_to_rgb_row(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gray16_to_rgba_dispatcher_rejects_width_times_4_overflow() {
+    let y: [u16; 0] = [];
+    let mut rgba: [u8; 0] = [];
+    gray16_to_rgba_row(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gray16_to_rgb_u16_dispatcher_rejects_width_times_3_overflow() {
+    let y: [u16; 0] = [];
+    let mut rgb: [u16; 0] = [];
+    gray16_to_rgb_u16_row(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gray16_to_rgba_u16_dispatcher_rejects_width_times_4_overflow() {
+    let y: [u16; 0] = [];
+    let mut rgba: [u16; 0] = [];
+    gray16_to_rgba_u16_row(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
+  }
+
   #[cfg(target_pointer_width = "32")]
   #[test]
   #[should_panic(expected = "overflows usize")]

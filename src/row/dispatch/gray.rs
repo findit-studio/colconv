@@ -14,11 +14,13 @@
 use crate::row::arch;
 #[cfg(target_arch = "aarch64")]
 use crate::row::neon_available;
-use crate::row::scalar::gray as scalar;
 #[cfg(target_arch = "wasm32")]
 use crate::row::simd128_available;
 #[cfg(target_arch = "x86_64")]
 use crate::row::{avx2_available, avx512_available, sse41_available};
+use crate::row::{
+  rgb_row_bytes, rgb_row_elems, rgba_row_bytes, rgba_row_elems, scalar::gray as scalar,
+};
 
 // ---- Gray8 ------------------------------------------------------------------
 
@@ -32,7 +34,7 @@ pub(crate) fn gray8_to_rgb_row(
   full_range: bool,
 ) {
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= width * 3, "out too short");
+  assert!(out.len() >= rgb_row_bytes(width), "out too short");
   if !use_simd {
     return scalar::gray8_to_rgb_row(y_plane, out, width, full_range);
   }
@@ -78,7 +80,7 @@ pub(crate) fn gray8_to_rgba_row(
   full_range: bool,
 ) {
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= width * 4, "out too short");
+  assert!(out.len() >= rgba_row_bytes(width), "out too short");
   if !use_simd {
     return scalar::gray8_to_rgba_row(y_plane, out, width, full_range);
   }
@@ -178,7 +180,7 @@ pub(crate) fn gray_n_to_rgb_row<const BITS: u32>(
   full_range: bool,
 ) {
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= width * 3, "out too short");
+  assert!(out.len() >= rgb_row_bytes(width), "out too short");
   if !use_simd {
     return scalar::gray_n_to_rgb_row::<BITS>(y_plane, out, width, full_range);
   }
@@ -224,7 +226,7 @@ pub(crate) fn gray_n_to_rgba_row<const BITS: u32>(
   full_range: bool,
 ) {
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= width * 4, "out too short");
+  assert!(out.len() >= rgba_row_bytes(width), "out too short");
   if !use_simd {
     return scalar::gray_n_to_rgba_row::<BITS>(y_plane, out, width, full_range);
   }
@@ -270,7 +272,7 @@ pub(crate) fn gray_n_to_rgb_u16_row<const BITS: u32>(
   full_range: bool,
 ) {
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= width * 3, "out too short");
+  assert!(out.len() >= rgb_row_elems(width), "out too short");
   if !use_simd {
     return scalar::gray_n_to_rgb_u16_row::<BITS>(y_plane, out, width, full_range);
   }
@@ -318,7 +320,7 @@ pub(crate) fn gray_n_to_rgba_u16_row<const BITS: u32>(
   full_range: bool,
 ) {
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= width * 4, "out too short");
+  assert!(out.len() >= rgba_row_elems(width), "out too short");
   if !use_simd {
     return scalar::gray_n_to_rgba_u16_row::<BITS>(y_plane, out, width, full_range);
   }
@@ -528,7 +530,7 @@ pub(crate) fn gray16_to_rgb_row(
   full_range: bool,
 ) {
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= width * 3, "out too short");
+  assert!(out.len() >= rgb_row_bytes(width), "out too short");
   if !use_simd {
     return scalar::gray16_to_rgb_row(y_plane, out, width, full_range);
   }
@@ -574,7 +576,7 @@ pub(crate) fn gray16_to_rgba_row(
   full_range: bool,
 ) {
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= width * 4, "out too short");
+  assert!(out.len() >= rgba_row_bytes(width), "out too short");
   if !use_simd {
     return scalar::gray16_to_rgba_row(y_plane, out, width, full_range);
   }
@@ -620,7 +622,7 @@ pub(crate) fn gray16_to_rgb_u16_row(
   full_range: bool,
 ) {
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= width * 3, "out too short");
+  assert!(out.len() >= rgb_row_elems(width), "out too short");
   if !use_simd {
     return scalar::gray16_to_rgb_u16_row(y_plane, out, width, full_range);
   }
@@ -666,7 +668,7 @@ pub(crate) fn gray16_to_rgba_u16_row(
   full_range: bool,
 ) {
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= width * 4, "out too short");
+  assert!(out.len() >= rgba_row_elems(width), "out too short");
   if !use_simd {
     return scalar::gray16_to_rgba_u16_row(y_plane, out, width, full_range);
   }
