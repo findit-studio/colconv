@@ -47,6 +47,8 @@ mod packed_rgb_float;
 mod packed_yuv_8bit;
 pub(crate) mod pal8;
 mod planar_gbr;
+pub(crate) mod planar_gbr_f16;
+pub(crate) mod planar_gbr_float;
 pub(crate) mod planar_gbr_high_bit;
 mod rgb_expand;
 mod semi_planar_8bit;
@@ -87,6 +89,10 @@ pub(crate) use packed_rgb::*;
 pub(crate) use packed_rgb_float::*;
 pub(crate) use packed_yuv_8bit::*;
 pub(crate) use planar_gbr::*;
+#[allow(unused_imports)]
+pub(crate) use planar_gbr_f16::*;
+#[allow(unused_imports)]
+pub(crate) use planar_gbr_float::*;
 pub(crate) use planar_gbr_high_bit::*;
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub(crate) use rgb_expand::*;
