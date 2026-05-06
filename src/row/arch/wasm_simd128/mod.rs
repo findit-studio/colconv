@@ -42,6 +42,7 @@ pub(super) use crate::{ColorMatrix, row::scalar};
 
 pub(crate) mod alpha_extract;
 mod ayuv64;
+mod gray;
 mod hsv;
 mod packed_rgb;
 mod packed_rgb_float;
@@ -64,6 +65,7 @@ mod yuv_planar_high_bit;
 
 pub(crate) use alpha_extract::*;
 pub(crate) use ayuv64::*;
+pub(crate) use gray::*;
 pub(crate) use hsv::*;
 pub(crate) use packed_rgb::*;
 pub(crate) use packed_rgb_float::*;
