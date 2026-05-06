@@ -195,11 +195,11 @@ mod tests {
     let data = [0b11110000u8];
     let mut out = vec![0u16; 8];
     scalar::monoblack_to_luma_u16_row(&data, &mut out, 8);
-    for i in 0..4 {
-      assert_eq!(out[i], 0xFFFF); // white
+    for val in &out[0..4] {
+      assert_eq!(val, &0xFFFF); // white
     }
-    for i in 4..8 {
-      assert_eq!(out[i], 0x0000); // black
+    for val in &out[4..8] {
+      assert_eq!(val, &0x0000); // black
     }
   }
 
@@ -208,11 +208,11 @@ mod tests {
     let data = [0x00u8];
     let mut out = vec![0u16; 8 * 4];
     scalar::monowhite_to_rgba_u16_row(&data, &mut out, 8);
-    for i in 0..8 {
-      assert_eq!(out[i * 4], 0xFFFF); // R (inverted: 0 → 255)
-      assert_eq!(out[i * 4 + 1], 0xFFFF); // G
-      assert_eq!(out[i * 4 + 2], 0xFFFF); // B
-      assert_eq!(out[i * 4 + 3], 0xFFFF); // A
+    for chunk in out.chunks_exact(4) {
+      assert_eq!(chunk[0], 0xFFFF); // R (inverted: 0 → 255)
+      assert_eq!(chunk[1], 0xFFFF); // G
+      assert_eq!(chunk[2], 0xFFFF); // B
+      assert_eq!(chunk[3], 0xFFFF); // A
     }
   }
 

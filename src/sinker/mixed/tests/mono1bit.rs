@@ -47,11 +47,11 @@ mod tests {
       monoblack_to(&frame, true, ColorMatrix::Bt709, &mut sinker).expect("walk ok");
     }
 
-    for i in 0..8 {
-      assert_eq!(rgba[i * 4], 255);
-      assert_eq!(rgba[i * 4 + 1], 255);
-      assert_eq!(rgba[i * 4 + 2], 255);
-      assert_eq!(rgba[i * 4 + 3], 0xFF);
+    for chunk in rgba.chunks_exact(4) {
+      assert_eq!(chunk[0], 255);
+      assert_eq!(chunk[1], 255);
+      assert_eq!(chunk[2], 255);
+      assert_eq!(chunk[3], 0xFF);
     }
   }
 
@@ -85,8 +85,8 @@ mod tests {
     }
 
     assert_eq!(luma_u16[0], 0xFFFF);
-    for i in 1..8 {
-      assert_eq!(luma_u16[i], 0);
+    for val in &luma_u16[1..8] {
+      assert_eq!(val, &0);
     }
   }
 
@@ -103,10 +103,10 @@ mod tests {
       monoblack_to(&frame, true, ColorMatrix::Bt709, &mut sinker).expect("walk ok");
     }
 
-    for i in 0..8 {
-      assert_eq!(rgb_u16[i * 3], 0xFFFF);
-      assert_eq!(rgb_u16[i * 3 + 1], 0xFFFF);
-      assert_eq!(rgb_u16[i * 3 + 2], 0xFFFF);
+    for chunk in rgb_u16.chunks_exact(3) {
+      assert_eq!(chunk[0], 0xFFFF);
+      assert_eq!(chunk[1], 0xFFFF);
+      assert_eq!(chunk[2], 0xFFFF);
     }
   }
 
@@ -123,11 +123,11 @@ mod tests {
       monoblack_to(&frame, true, ColorMatrix::Bt709, &mut sinker).expect("walk ok");
     }
 
-    for i in 0..8 {
-      assert_eq!(rgba_u16[i * 4], 0);
-      assert_eq!(rgba_u16[i * 4 + 1], 0);
-      assert_eq!(rgba_u16[i * 4 + 2], 0);
-      assert_eq!(rgba_u16[i * 4 + 3], 0xFFFF);
+    for chunk in rgba_u16.chunks_exact(4) {
+      assert_eq!(chunk[0], 0);
+      assert_eq!(chunk[1], 0);
+      assert_eq!(chunk[2], 0);
+      assert_eq!(chunk[3], 0xFFFF);
     }
   }
 
@@ -180,15 +180,15 @@ mod tests {
       monowhite_to(&frame, true, ColorMatrix::Bt709, &mut sinker).expect("walk ok");
     }
 
-    for i in 0..4 {
-      assert_eq!(rgb[i * 3], 0);
-      assert_eq!(rgb[i * 3 + 1], 0);
-      assert_eq!(rgb[i * 3 + 2], 0);
+    for chunk in rgb[0..12].chunks_exact(3) {
+      assert_eq!(chunk[0], 0);
+      assert_eq!(chunk[1], 0);
+      assert_eq!(chunk[2], 0);
     }
-    for i in 4..8 {
-      assert_eq!(rgb[i * 3], 255);
-      assert_eq!(rgb[i * 3 + 1], 255);
-      assert_eq!(rgb[i * 3 + 2], 255);
+    for chunk in rgb[12..24].chunks_exact(3) {
+      assert_eq!(chunk[0], 255);
+      assert_eq!(chunk[1], 255);
+      assert_eq!(chunk[2], 255);
     }
   }
 
@@ -205,11 +205,11 @@ mod tests {
       monowhite_to(&frame, true, ColorMatrix::Bt709, &mut sinker).expect("walk ok");
     }
 
-    for i in 0..8 {
-      assert_eq!(rgba[i * 4], 255);
-      assert_eq!(rgba[i * 4 + 1], 255);
-      assert_eq!(rgba[i * 4 + 2], 255);
-      assert_eq!(rgba[i * 4 + 3], 0xFF);
+    for chunk in rgba.chunks_exact(4) {
+      assert_eq!(chunk[0], 255);
+      assert_eq!(chunk[1], 255);
+      assert_eq!(chunk[2], 255);
+      assert_eq!(chunk[3], 0xFF);
     }
   }
 
@@ -226,8 +226,8 @@ mod tests {
       monowhite_to(&frame, true, ColorMatrix::Bt709, &mut sinker).expect("walk ok");
     }
 
-    for i in 0..8 {
-      assert_eq!(luma_u16[i], 0);
+    for val in &luma_u16 {
+      assert_eq!(val, &0);
     }
   }
 
@@ -247,10 +247,10 @@ mod tests {
     assert_eq!(rgb_u16[0], 0);
     assert_eq!(rgb_u16[1], 0);
     assert_eq!(rgb_u16[2], 0);
-    for i in 1..8 {
-      assert_eq!(rgb_u16[i * 3], 0xFFFF);
-      assert_eq!(rgb_u16[i * 3 + 1], 0xFFFF);
-      assert_eq!(rgb_u16[i * 3 + 2], 0xFFFF);
+    for chunk in rgb_u16[3..].chunks_exact(3) {
+      assert_eq!(chunk[0], 0xFFFF);
+      assert_eq!(chunk[1], 0xFFFF);
+      assert_eq!(chunk[2], 0xFFFF);
     }
   }
 
@@ -267,11 +267,11 @@ mod tests {
       monowhite_to(&frame, true, ColorMatrix::Bt709, &mut sinker).expect("walk ok");
     }
 
-    for i in 0..8 {
-      assert_eq!(rgba_u16[i * 4], 0xFFFF);
-      assert_eq!(rgba_u16[i * 4 + 1], 0xFFFF);
-      assert_eq!(rgba_u16[i * 4 + 2], 0xFFFF);
-      assert_eq!(rgba_u16[i * 4 + 3], 0xFFFF);
+    for chunk in rgba_u16.chunks_exact(4) {
+      assert_eq!(chunk[0], 0xFFFF);
+      assert_eq!(chunk[1], 0xFFFF);
+      assert_eq!(chunk[2], 0xFFFF);
+      assert_eq!(chunk[3], 0xFFFF);
     }
   }
 
