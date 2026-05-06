@@ -357,7 +357,7 @@ unsafe fn widen_f16_tail(src: &[half::f16], dst: &mut [f32], n: usize) {
 /// 2. `rgb_in.len() >= 3 * width`; `rgb_out.len() >= 3 * width`.
 /// 3. `rgb_in` / `rgb_out` must not alias.
 #[inline]
-#[target_feature(enable = "neon")]
+#[target_feature(enable = "neon,fp16")]
 pub(crate) unsafe fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8], width: usize) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
@@ -391,7 +391,7 @@ pub(crate) unsafe fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8],
 ///
 /// Same as [`rgbf16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
 #[inline]
-#[target_feature(enable = "neon")]
+#[target_feature(enable = "neon,fp16")]
 pub(crate) unsafe fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8], width: usize) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
@@ -426,7 +426,7 @@ pub(crate) unsafe fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8
 /// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [u16]` with
 /// `len() >= 3 * width` u16 elements.
 #[inline]
-#[target_feature(enable = "neon")]
+#[target_feature(enable = "neon,fp16")]
 pub(crate) unsafe fn rgbf16_to_rgb_u16_row(
   rgb_in: &[half::f16],
   rgb_out: &mut [u16],
@@ -464,7 +464,7 @@ pub(crate) unsafe fn rgbf16_to_rgb_u16_row(
 /// Same as [`rgbf16_to_rgb_u16_row`] but the output is `&mut [u16]` with
 /// `len() >= 4 * width` u16 elements.
 #[inline]
-#[target_feature(enable = "neon")]
+#[target_feature(enable = "neon,fp16")]
 pub(crate) unsafe fn rgbf16_to_rgba_u16_row(
   rgb_in: &[half::f16],
   rgba_out: &mut [u16],
@@ -503,7 +503,7 @@ pub(crate) unsafe fn rgbf16_to_rgba_u16_row(
 /// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [f32]` with
 /// `len() >= 3 * width` f32 elements.
 #[inline]
-#[target_feature(enable = "neon")]
+#[target_feature(enable = "neon,fp16")]
 pub(crate) unsafe fn rgbf16_to_rgb_f32_row(
   rgb_in: &[half::f16],
   rgb_out: &mut [f32],

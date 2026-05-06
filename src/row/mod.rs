@@ -301,6 +301,28 @@ pub(crate) const fn neon_available() -> bool {
   !cfg!(colconv_force_scalar) && cfg!(target_feature = "neon")
 }
 
+/// FP16 conversion-instruction availability on aarch64. Required for
+/// `vcvt_f32_f16` / FCVTL — a separate CPU feature from NEON. Older
+/// AArch64 cores (e.g. Cortex-A53/A57 base, some embedded SoCs) ship
+/// NEON without `fp16`; calling `vcvt_f32_f16` there raises SIGILL.
+/// The Rgbf16 NEON dispatchers gate on `neon_available() &&
+/// fp16_available()` and fall back to scalar when this returns false.
+#[cfg(all(target_arch = "aarch64", feature = "std"))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn fp16_available() -> bool {
+  if cfg!(colconv_force_scalar) {
+    return false;
+  }
+  std::arch::is_aarch64_feature_detected!("fp16")
+}
+
+/// FP16 availability on aarch64 — no‑std variant (compile‑time).
+#[cfg(all(target_arch = "aarch64", not(feature = "std")))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) const fn fp16_available() -> bool {
+  !cfg!(colconv_force_scalar) && cfg!(target_feature = "fp16")
+}
+
 /// AVX2 availability on x86_64.
 #[cfg(all(target_arch = "x86_64", feature = "std"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
