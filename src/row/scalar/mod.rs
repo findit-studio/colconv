@@ -41,6 +41,7 @@ mod bayer;
 pub(crate) mod gray;
 pub(crate) mod grayf32;
 mod hsv;
+pub(crate) mod legacy_rgb;
 pub(crate) mod mono1bit;
 mod packed_rgb;
 mod packed_rgb_float;
@@ -75,6 +76,11 @@ mod yuv_planar_high_bit;
 pub(crate) use alpha_extract::*;
 pub(crate) use ayuv64::*;
 pub(crate) use bayer::*;
+// legacy_rgb functions are consumed by dispatch::legacy_rgb via
+// `crate::row::scalar::legacy_rgb as scalar` (the module path).
+// This glob re-exports them into the scalar namespace for direct callers (SIMD tails, tests).
+#[allow(unused_imports)]
+pub(crate) use legacy_rgb::*;
 // gray functions are consumed by dispatch::gray via `crate::row::scalar::gray as scalar`.
 // This glob re-exports them into the scalar namespace for direct callers (SIMD tails, tests).
 #[allow(unused_imports)]
