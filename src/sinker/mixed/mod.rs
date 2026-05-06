@@ -585,6 +585,11 @@ pub enum RowSlice {
   /// (`below == mid`) only when `height < 2`.
   #[display("Bayer16 Below")]
   Bayer16Below,
+  /// Pixel-index row of a [`Pal8`](crate::raw::Pal8) source.
+  /// `u8` samples, `width` elements — each value is an index into
+  /// the 256-entry BGRA palette carried alongside in `Pal8Row`.
+  #[display("Pal8 index row")]
+  Pal8IndexRow,
   /// Packed `R, G, B` row of an [`Rgb24`](crate::yuv::Rgb24) source.
   /// `3 * width` `u8` bytes.
   #[display("RGB packed")]
@@ -1589,6 +1594,7 @@ mod packed_rgb_8bit;
 mod packed_rgb_f16;
 mod packed_rgb_float;
 mod packed_yuv_8bit;
+mod pal8;
 mod planar_8bit;
 mod planar_gbr_8bit;
 mod planar_gbr_high_bit;
