@@ -73,9 +73,9 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
       // pack to u8, and write 8 pixels (24 bytes) per quarter.
       // Quarter 0
       {
-        let r_q = _mm512_extracti32x4_epi32(r_sh, 0);
-        let g_q = _mm512_extracti32x4_epi32(g_sh, 0);
-        let b_q = _mm512_extracti32x4_epi32(b_sh, 0);
+        let r_q = _mm512_extracti32x4_epi32::<0>(r_sh);
+        let g_q = _mm512_extracti32x4_epi32::<0>(g_sh);
+        let b_q = _mm512_extracti32x4_epi32::<0>(b_sh);
         let r_u8 = _mm_packus_epi16(r_q, zero128);
         let g_u8 = _mm_packus_epi16(g_q, zero128);
         let b_u8 = _mm_packus_epi16(b_q, zero128);
@@ -85,9 +85,9 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
       }
       // Quarter 1
       {
-        let r_q = _mm512_extracti32x4_epi32(r_sh, 1);
-        let g_q = _mm512_extracti32x4_epi32(g_sh, 1);
-        let b_q = _mm512_extracti32x4_epi32(b_sh, 1);
+        let r_q = _mm512_extracti32x4_epi32::<1>(r_sh);
+        let g_q = _mm512_extracti32x4_epi32::<1>(g_sh);
+        let b_q = _mm512_extracti32x4_epi32::<1>(b_sh);
         let r_u8 = _mm_packus_epi16(r_q, zero128);
         let g_u8 = _mm_packus_epi16(g_q, zero128);
         let b_u8 = _mm_packus_epi16(b_q, zero128);
@@ -97,9 +97,9 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
       }
       // Quarter 2
       {
-        let r_q = _mm512_extracti32x4_epi32(r_sh, 2);
-        let g_q = _mm512_extracti32x4_epi32(g_sh, 2);
-        let b_q = _mm512_extracti32x4_epi32(b_sh, 2);
+        let r_q = _mm512_extracti32x4_epi32::<2>(r_sh);
+        let g_q = _mm512_extracti32x4_epi32::<2>(g_sh);
+        let b_q = _mm512_extracti32x4_epi32::<2>(b_sh);
         let r_u8 = _mm_packus_epi16(r_q, zero128);
         let g_u8 = _mm_packus_epi16(g_q, zero128);
         let b_u8 = _mm_packus_epi16(b_q, zero128);
@@ -109,9 +109,9 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
       }
       // Quarter 3
       {
-        let r_q = _mm512_extracti32x4_epi32(r_sh, 3);
-        let g_q = _mm512_extracti32x4_epi32(g_sh, 3);
-        let b_q = _mm512_extracti32x4_epi32(b_sh, 3);
+        let r_q = _mm512_extracti32x4_epi32::<3>(r_sh);
+        let g_q = _mm512_extracti32x4_epi32::<3>(g_sh);
+        let b_q = _mm512_extracti32x4_epi32::<3>(b_sh);
         let r_u8 = _mm_packus_epi16(r_q, zero128);
         let g_u8 = _mm_packus_epi16(g_q, zero128);
         let b_u8 = _mm_packus_epi16(b_q, zero128);
@@ -195,9 +195,9 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
 
       // Quarter 0
       {
-        let r_q = _mm512_extracti32x4_epi32(r_sh, 0);
-        let g_q = _mm512_extracti32x4_epi32(g_sh, 0);
-        let b_q = _mm512_extracti32x4_epi32(b_sh, 0);
+        let r_q = _mm512_extracti32x4_epi32::<0>(r_sh);
+        let g_q = _mm512_extracti32x4_epi32::<0>(g_sh);
+        let b_q = _mm512_extracti32x4_epi32::<0>(b_sh);
         let r_u8 = _mm_packus_epi16(r_q, zero128);
         let g_u8 = _mm_packus_epi16(g_q, zero128);
         let b_u8 = _mm_packus_epi16(b_q, zero128);
@@ -207,9 +207,9 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
       }
       // Quarter 1
       {
-        let r_q = _mm512_extracti32x4_epi32(r_sh, 1);
-        let g_q = _mm512_extracti32x4_epi32(g_sh, 1);
-        let b_q = _mm512_extracti32x4_epi32(b_sh, 1);
+        let r_q = _mm512_extracti32x4_epi32::<1>(r_sh);
+        let g_q = _mm512_extracti32x4_epi32::<1>(g_sh);
+        let b_q = _mm512_extracti32x4_epi32::<1>(b_sh);
         let r_u8 = _mm_packus_epi16(r_q, zero128);
         let g_u8 = _mm_packus_epi16(g_q, zero128);
         let b_u8 = _mm_packus_epi16(b_q, zero128);
@@ -219,9 +219,9 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
       }
       // Quarter 2
       {
-        let r_q = _mm512_extracti32x4_epi32(r_sh, 2);
-        let g_q = _mm512_extracti32x4_epi32(g_sh, 2);
-        let b_q = _mm512_extracti32x4_epi32(b_sh, 2);
+        let r_q = _mm512_extracti32x4_epi32::<2>(r_sh);
+        let g_q = _mm512_extracti32x4_epi32::<2>(g_sh);
+        let b_q = _mm512_extracti32x4_epi32::<2>(b_sh);
         let r_u8 = _mm_packus_epi16(r_q, zero128);
         let g_u8 = _mm_packus_epi16(g_q, zero128);
         let b_u8 = _mm_packus_epi16(b_q, zero128);
@@ -231,9 +231,9 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
       }
       // Quarter 3
       {
-        let r_q = _mm512_extracti32x4_epi32(r_sh, 3);
-        let g_q = _mm512_extracti32x4_epi32(g_sh, 3);
-        let b_q = _mm512_extracti32x4_epi32(b_sh, 3);
+        let r_q = _mm512_extracti32x4_epi32::<3>(r_sh);
+        let g_q = _mm512_extracti32x4_epi32::<3>(g_sh);
+        let b_q = _mm512_extracti32x4_epi32::<3>(b_sh);
         let r_u8 = _mm_packus_epi16(r_q, zero128);
         let g_u8 = _mm_packus_epi16(g_q, zero128);
         let b_u8 = _mm_packus_epi16(b_q, zero128);
@@ -318,10 +318,10 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
 
       // Quarter 0
       {
-        let r_q = _mm512_extracti32x4_epi32(r_sh, 0);
-        let g_q = _mm512_extracti32x4_epi32(g_sh, 0);
-        let b_q = _mm512_extracti32x4_epi32(b_sh, 0);
-        let a_q = _mm512_extracti32x4_epi32(a_sh, 0);
+        let r_q = _mm512_extracti32x4_epi32::<0>(r_sh);
+        let g_q = _mm512_extracti32x4_epi32::<0>(g_sh);
+        let b_q = _mm512_extracti32x4_epi32::<0>(b_sh);
+        let a_q = _mm512_extracti32x4_epi32::<0>(a_sh);
         let r_u8 = _mm_packus_epi16(r_q, zero128);
         let g_u8 = _mm_packus_epi16(g_q, zero128);
         let b_u8 = _mm_packus_epi16(b_q, zero128);
@@ -332,10 +332,10 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
       }
       // Quarter 1
       {
-        let r_q = _mm512_extracti32x4_epi32(r_sh, 1);
-        let g_q = _mm512_extracti32x4_epi32(g_sh, 1);
-        let b_q = _mm512_extracti32x4_epi32(b_sh, 1);
-        let a_q = _mm512_extracti32x4_epi32(a_sh, 1);
+        let r_q = _mm512_extracti32x4_epi32::<1>(r_sh);
+        let g_q = _mm512_extracti32x4_epi32::<1>(g_sh);
+        let b_q = _mm512_extracti32x4_epi32::<1>(b_sh);
+        let a_q = _mm512_extracti32x4_epi32::<1>(a_sh);
         let r_u8 = _mm_packus_epi16(r_q, zero128);
         let g_u8 = _mm_packus_epi16(g_q, zero128);
         let b_u8 = _mm_packus_epi16(b_q, zero128);
@@ -346,10 +346,10 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
       }
       // Quarter 2
       {
-        let r_q = _mm512_extracti32x4_epi32(r_sh, 2);
-        let g_q = _mm512_extracti32x4_epi32(g_sh, 2);
-        let b_q = _mm512_extracti32x4_epi32(b_sh, 2);
-        let a_q = _mm512_extracti32x4_epi32(a_sh, 2);
+        let r_q = _mm512_extracti32x4_epi32::<2>(r_sh);
+        let g_q = _mm512_extracti32x4_epi32::<2>(g_sh);
+        let b_q = _mm512_extracti32x4_epi32::<2>(b_sh);
+        let a_q = _mm512_extracti32x4_epi32::<2>(a_sh);
         let r_u8 = _mm_packus_epi16(r_q, zero128);
         let g_u8 = _mm_packus_epi16(g_q, zero128);
         let b_u8 = _mm_packus_epi16(b_q, zero128);
@@ -360,10 +360,10 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
       }
       // Quarter 3
       {
-        let r_q = _mm512_extracti32x4_epi32(r_sh, 3);
-        let g_q = _mm512_extracti32x4_epi32(g_sh, 3);
-        let b_q = _mm512_extracti32x4_epi32(b_sh, 3);
-        let a_q = _mm512_extracti32x4_epi32(a_sh, 3);
+        let r_q = _mm512_extracti32x4_epi32::<3>(r_sh);
+        let g_q = _mm512_extracti32x4_epi32::<3>(g_sh);
+        let b_q = _mm512_extracti32x4_epi32::<3>(b_sh);
+        let a_q = _mm512_extracti32x4_epi32::<3>(a_sh);
         let r_u8 = _mm_packus_epi16(r_q, zero128);
         let g_u8 = _mm_packus_epi16(g_q, zero128);
         let b_u8 = _mm_packus_epi16(b_q, zero128);

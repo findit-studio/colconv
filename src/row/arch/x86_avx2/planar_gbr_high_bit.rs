@@ -10,7 +10,7 @@
 //! SSE4.1 high-bit kernels, since `_mm256_srli_epi16::<IMM8>` requires a
 //! literal const not yet stable for `BITS - 8`). After shifting, the 16
 //! u16 lanes are packed to 16 u8 bytes via `_mm256_packus_epi16(lo, zero256)`
-//! and then `_mm256_permute4x64_epi64(packed, 0xD8)` to fix the AVX2
+//! and then `_mm256_permute4x64_epi64::<0xD8>(packed)` to fix the AVX2
 //! cross-lane ordering. The resulting 128-bit low half holds 16 valid u8
 //! pixels and is fed to `write_rgb_16` / `write_rgba_16` (16-pixel helpers).
 //!
@@ -69,9 +69,9 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
 
       // Pack 16 u16 → 16 u8. AVX2 packus_epi16 interleaves per 128-bit
       // lane; permute to fix ordering → low 128 bits = 16 valid u8 pixels.
-      let r_packed = _mm256_permute4x64_epi64(_mm256_packus_epi16(r_sh, zero256), 0xD8);
-      let g_packed = _mm256_permute4x64_epi64(_mm256_packus_epi16(g_sh, zero256), 0xD8);
-      let b_packed = _mm256_permute4x64_epi64(_mm256_packus_epi16(b_sh, zero256), 0xD8);
+      let r_packed = _mm256_permute4x64_epi64::<0xD8>(_mm256_packus_epi16(r_sh, zero256));
+      let g_packed = _mm256_permute4x64_epi64::<0xD8>(_mm256_packus_epi16(g_sh, zero256));
+      let b_packed = _mm256_permute4x64_epi64::<0xD8>(_mm256_packus_epi16(b_sh, zero256));
 
       let r_u8 = _mm256_castsi256_si128(r_packed);
       let g_u8 = _mm256_castsi256_si128(g_packed);
@@ -155,9 +155,9 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
       let g_sh = _mm256_srl_epi16(g_v, shr_count);
       let b_sh = _mm256_srl_epi16(b_v, shr_count);
 
-      let r_packed = _mm256_permute4x64_epi64(_mm256_packus_epi16(r_sh, zero256), 0xD8);
-      let g_packed = _mm256_permute4x64_epi64(_mm256_packus_epi16(g_sh, zero256), 0xD8);
-      let b_packed = _mm256_permute4x64_epi64(_mm256_packus_epi16(b_sh, zero256), 0xD8);
+      let r_packed = _mm256_permute4x64_epi64::<0xD8>(_mm256_packus_epi16(r_sh, zero256));
+      let g_packed = _mm256_permute4x64_epi64::<0xD8>(_mm256_packus_epi16(g_sh, zero256));
+      let b_packed = _mm256_permute4x64_epi64::<0xD8>(_mm256_packus_epi16(b_sh, zero256));
 
       let r_u8 = _mm256_castsi256_si128(r_packed);
       let g_u8 = _mm256_castsi256_si128(g_packed);
@@ -246,10 +246,10 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
       let b_sh = _mm256_srl_epi16(b_v, shr_count);
       let a_sh = _mm256_srl_epi16(a_v, shr_count);
 
-      let r_packed = _mm256_permute4x64_epi64(_mm256_packus_epi16(r_sh, zero256), 0xD8);
-      let g_packed = _mm256_permute4x64_epi64(_mm256_packus_epi16(g_sh, zero256), 0xD8);
-      let b_packed = _mm256_permute4x64_epi64(_mm256_packus_epi16(b_sh, zero256), 0xD8);
-      let a_packed = _mm256_permute4x64_epi64(_mm256_packus_epi16(a_sh, zero256), 0xD8);
+      let r_packed = _mm256_permute4x64_epi64::<0xD8>(_mm256_packus_epi16(r_sh, zero256));
+      let g_packed = _mm256_permute4x64_epi64::<0xD8>(_mm256_packus_epi16(g_sh, zero256));
+      let b_packed = _mm256_permute4x64_epi64::<0xD8>(_mm256_packus_epi16(b_sh, zero256));
+      let a_packed = _mm256_permute4x64_epi64::<0xD8>(_mm256_packus_epi16(a_sh, zero256));
 
       let r_u8 = _mm256_castsi256_si128(r_packed);
       let g_u8 = _mm256_castsi256_si128(g_packed);
