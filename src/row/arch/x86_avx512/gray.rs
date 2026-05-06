@@ -285,7 +285,6 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
   unsafe {
     let mask_v = _mm512_set1_epi16(mask as i16);
     let shr = _mm_cvtsi32_si128((BITS - 8) as i32);
-    let zero512 = _mm512_setzero_si512();
     let zero256 = _mm256_setzero_si256();
     while x + 32 <= width {
       let raw = _mm512_loadu_si512(y_plane.as_ptr().add(x).cast());
@@ -296,7 +295,6 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
       _mm256_storeu_si256(h_out.as_mut_ptr().add(x).cast(), zero256);
       _mm256_storeu_si256(s_out.as_mut_ptr().add(x).cast(), zero256);
       _mm256_storeu_si256(v_out.as_mut_ptr().add(x).cast(), packed);
-      let _ = zero512;
       x += 32;
     }
   }
