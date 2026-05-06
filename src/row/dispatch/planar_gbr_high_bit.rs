@@ -1,6 +1,6 @@
 //! Runtime SIMD dispatchers for high-bit-depth planar GBR sources (Tier 10b).
 //!
-//! Six kernel variants, all const-generic over `BITS ∈ {9, 10, 12, 14, 16}`:
+//! Seven kernel variants, all const-generic over `BITS ∈ {9, 10, 12, 14, 16}`:
 //! - [`gbr_to_rgb_high_bit_row`] — interleave G/B/R → packed `R, G, B` bytes.
 //! - [`gbr_to_rgb_u16_high_bit_row`] — interleave G/B/R → packed `R, G, B` u16.
 //! - [`gbr_to_rgba_opaque_high_bit_row`] — interleave G/B/R → packed
@@ -10,6 +10,8 @@
 //! - [`gbra_to_rgba_high_bit_row`] — interleave G/B/R/A → packed
 //!   `R, G, B, A` bytes (real source α, downshifted by `BITS - 8`).
 //! - [`gbra_to_rgba_u16_high_bit_row`] — same, u16 output (no depth conv).
+//! - [`gbr_to_luma_u16_high_bit_row`] — native-precision luma from planar
+//!   G/B/R u16 inputs; scalar-only for now (SIMD can follow later).
 //!
 //! Each function follows the `cfg_select!` pattern from `dispatch::planar_gbr`:
 //! platform arm at compile time, best available backend at runtime.
@@ -22,11 +24,14 @@
 use crate::row::arch;
 #[cfg(target_arch = "aarch64")]
 use crate::row::neon_available;
-use crate::row::scalar;
 #[cfg(target_arch = "wasm32")]
 use crate::row::simd128_available;
 #[cfg(target_arch = "x86_64")]
 use crate::row::{avx2_available, avx512_available, sse41_available};
+use crate::{
+  ColorMatrix,
+  row::{rgb_row_bytes, rgb_row_elems, rgba_row_bytes, rgba_row_elems, scalar},
+};
 
 // ---------------------------------------------------------------------------
 // 1. G/B/R → packed R,G,B  (u8 output)
@@ -43,10 +48,11 @@ pub fn gbr_to_rgb_high_bit_row<const BITS: u32>(
   width: usize,
   use_simd: bool,
 ) {
+  let out_min = rgb_row_bytes(width);
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
-  assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+  assert!(rgb_out.len() >= out_min, "rgb_out row too short");
 
   if use_simd {
     cfg_select! {
@@ -104,10 +110,11 @@ pub fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
   width: usize,
   use_simd: bool,
 ) {
+  let out_min = rgb_row_elems(width);
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
-  assert!(rgb_u16_out.len() >= width * 3, "rgb_u16_out row too short");
+  assert!(rgb_u16_out.len() >= out_min, "rgb_u16_out row too short");
 
   if use_simd {
     cfg_select! {
@@ -175,10 +182,11 @@ pub fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
   width: usize,
   use_simd: bool,
 ) {
+  let out_min = rgba_row_bytes(width);
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
-  assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+  assert!(rgba_out.len() >= out_min, "rgba_out row too short");
 
   if use_simd {
     cfg_select! {
@@ -247,13 +255,11 @@ pub fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
   width: usize,
   use_simd: bool,
 ) {
+  let out_min = rgba_row_elems(width);
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
-  assert!(
-    rgba_u16_out.len() >= width * 4,
-    "rgba_u16_out row too short"
-  );
+  assert!(rgba_u16_out.len() >= out_min, "rgba_u16_out row too short");
 
   if use_simd {
     cfg_select! {
@@ -333,11 +339,12 @@ pub fn gbra_to_rgba_high_bit_row<const BITS: u32>(
   width: usize,
   use_simd: bool,
 ) {
+  let out_min = rgba_row_bytes(width);
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
   assert!(a.len() >= width, "a row too short");
-  assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+  assert!(rgba_out.len() >= out_min, "rgba_out row too short");
 
   if use_simd {
     cfg_select! {
@@ -407,14 +414,12 @@ pub fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
   width: usize,
   use_simd: bool,
 ) {
+  let out_min = rgba_row_elems(width);
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
   assert!(a.len() >= width, "a row too short");
-  assert!(
-    rgba_u16_out.len() >= width * 4,
-    "rgba_u16_out row too short"
-  );
+  assert!(rgba_u16_out.len() >= out_min, "rgba_u16_out row too short");
 
   if use_simd {
     cfg_select! {
@@ -472,4 +477,32 @@ pub fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
   }
 
   scalar::gbra_to_rgba_u16_high_bit_row::<BITS>(g, b, r, a, rgba_u16_out, width);
+}
+
+// ---------------------------------------------------------------------------
+// 7. G/B/R → luma Y'  (u16 output, native depth)
+// ---------------------------------------------------------------------------
+
+/// Derives luma (Y') from three planar G/B/R `u16` rows at native bit
+/// depth. Scalar-only for now — SIMD can be added later.
+///
+/// `matrix` selects the BT.* coefficient set. `full_range = true`
+/// produces Y' ∈ `[0, (1 << BITS) - 1]`; `full_range = false` produces
+/// limited-range Y' ∈ `[16 << (BITS - 8), 235 << (BITS - 8)]`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn gbr_to_luma_u16_high_bit_row<const BITS: u32>(
+  g: &[u16],
+  b: &[u16],
+  r: &[u16],
+  luma_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  assert!(g.len() >= width, "g row too short");
+  assert!(b.len() >= width, "b row too short");
+  assert!(r.len() >= width, "r row too short");
+  assert!(luma_out.len() >= width, "luma_out row too short");
+  scalar::gbr_to_luma_u16_high_bit_row::<BITS>(g, b, r, luma_out, width, matrix, full_range);
 }

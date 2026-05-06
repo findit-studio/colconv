@@ -550,6 +550,82 @@ mod overflow_tests {
     gbra_to_rgba_row(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
   }
 
+  // ---- Tier 10b planar GBR high-bit dispatchers — `width × {3,4}` overflow
+  //
+  // The high-bit (`GbrpN` / `GbrapN`) dispatchers must guard their output
+  // buffer sizes against `width * {3, 4}` wrapping on 32-bit targets.
+  // Each entry point — including the new native-depth luma kernel — gets
+  // an independent regression test so future guard removals surface
+  // individually.
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gbr_to_rgb_high_bit_dispatcher_rejects_width_times_3_overflow() {
+    let g: [u16; 0] = [];
+    let b: [u16; 0] = [];
+    let r: [u16; 0] = [];
+    let mut rgb: [u8; 0] = [];
+    gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut rgb, OVERFLOW_WIDTH, false);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gbr_to_rgb_u16_high_bit_dispatcher_rejects_width_times_3_overflow() {
+    let g: [u16; 0] = [];
+    let b: [u16; 0] = [];
+    let r: [u16; 0] = [];
+    let mut rgb: [u16; 0] = [];
+    gbr_to_rgb_u16_high_bit_row::<10>(&g, &b, &r, &mut rgb, OVERFLOW_WIDTH, false);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gbr_to_rgba_opaque_high_bit_dispatcher_rejects_width_times_4_overflow() {
+    let g: [u16; 0] = [];
+    let b: [u16; 0] = [];
+    let r: [u16; 0] = [];
+    let mut rgba: [u8; 0] = [];
+    gbr_to_rgba_opaque_high_bit_row::<10>(&g, &b, &r, &mut rgba, OVERFLOW_WIDTH, false);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gbr_to_rgba_opaque_u16_high_bit_dispatcher_rejects_width_times_4_overflow() {
+    let g: [u16; 0] = [];
+    let b: [u16; 0] = [];
+    let r: [u16; 0] = [];
+    let mut rgba: [u16; 0] = [];
+    gbr_to_rgba_opaque_u16_high_bit_row::<10>(&g, &b, &r, &mut rgba, OVERFLOW_WIDTH, false);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gbra_to_rgba_high_bit_dispatcher_rejects_width_times_4_overflow() {
+    let g: [u16; 0] = [];
+    let b: [u16; 0] = [];
+    let r: [u16; 0] = [];
+    let a: [u16; 0] = [];
+    let mut rgba: [u8; 0] = [];
+    gbra_to_rgba_high_bit_row::<10>(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gbra_to_rgba_u16_high_bit_dispatcher_rejects_width_times_4_overflow() {
+    let g: [u16; 0] = [];
+    let b: [u16; 0] = [];
+    let r: [u16; 0] = [];
+    let a: [u16; 0] = [];
+    let mut rgba: [u16; 0] = [];
+    gbra_to_rgba_u16_high_bit_row::<10>(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
+  }
+
   // ---- Tier 11 gray dispatchers — `width × {3, 4}` overflow ----
   //
   // The gray RGB / RGBA / RGB-u16 / RGBA-u16 dispatchers route through

@@ -21,10 +21,10 @@
 //! - `with_rgba_u16` — same as above but u16 output; opaque α =
 //!   `(1 << BITS) - 1` for `GbrpN`; real α at native depth for `GbrapN`.
 //! - `with_luma` — derived from staged RGB (u8) via `rgb_to_luma_row`.
-//! - `with_luma_u16` — derived from staged RGB via a u8 intermediary:
-//!   downshift to u8, compute luma, then upshift result back to native depth
-//!   (`luma_u16[i] = (y_u8 as u16) << (BITS - 8)`). This preserves the same
-//!   relative luma precision as the u8 path without a new BITS-generic kernel.
+//! - `with_luma_u16` — derived directly from native-precision G/B/R planes via
+//!   `gbr_to_luma_u16_high_bit_row`. Uses Q15 coefficients and i64 intermediates
+//!   (required for BITS=16). Produces full native-precision output — no 256-level
+//!   banding from the old u8-intermediate approach.
 //! - `with_hsv` — derived from staged RGB via `rgb_to_hsv_row`.
 //!
 //! # Strategy A+ (Gbrap combo path)
@@ -45,10 +45,10 @@ use super::{
 use crate::{
   PixelSink,
   row::{
-    alpha_extract, expand_rgb_to_rgba_row, expand_rgb_u16_to_rgba_u16_row, gbr_to_rgb_high_bit_row,
-    gbr_to_rgb_u16_high_bit_row, gbr_to_rgba_opaque_high_bit_row,
-    gbr_to_rgba_opaque_u16_high_bit_row, gbra_to_rgba_high_bit_row, gbra_to_rgba_u16_high_bit_row,
-    rgb_to_hsv_row, rgb_to_luma_row,
+    alpha_extract, expand_rgb_to_rgba_row, expand_rgb_u16_to_rgba_u16_row,
+    gbr_to_luma_u16_high_bit_row, gbr_to_rgb_high_bit_row, gbr_to_rgb_u16_high_bit_row,
+    gbr_to_rgba_opaque_high_bit_row, gbr_to_rgba_opaque_u16_high_bit_row,
+    gbra_to_rgba_high_bit_row, gbra_to_rgba_u16_high_bit_row, rgb_to_hsv_row, rgb_to_luma_row,
   },
 };
 
@@ -79,10 +79,7 @@ macro_rules! impl_gbrp_high_bit {
       }
       /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
       #[cfg_attr(not(tarpaulin), inline(always))]
-      pub fn set_rgb_u16(
-        &mut self,
-        buf: &'a mut [u16],
-      ) -> Result<&mut Self, MixedSinkerError> {
+      pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
         let expected = self.frame_bytes(3)?;
         if buf.len() < expected {
           return Err(MixedSinkerError::RgbU16BufferTooShort {
@@ -125,10 +122,7 @@ macro_rules! impl_gbrp_high_bit {
       }
       /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
       #[cfg_attr(not(tarpaulin), inline(always))]
-      pub fn set_rgba_u16(
-        &mut self,
-        buf: &'a mut [u16],
-      ) -> Result<&mut Self, MixedSinkerError> {
+      pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
         let expected = self.frame_bytes(4)?;
         if buf.len() < expected {
           return Err(MixedSinkerError::RgbaU16BufferTooShort {
@@ -140,11 +134,12 @@ macro_rules! impl_gbrp_high_bit {
         Ok(self)
       }
 
-      /// Attaches a `u16` luma output buffer. Luma is derived from G/B/R
-      /// via the staged-RGB path: downshift to u8, compute luma with
-      /// `rgb_to_luma_row`, then upshift result back to native depth
-      /// (`y_u16[i] = (y_u8 as u16) << (BITS - 8)`). Length in `u16`
-      /// elements (`width × height`).
+      /// Attaches a `u16` luma output buffer. Luma is computed directly from
+      /// the native-precision G/B/R planes via Q15 coefficients, avoiding the
+      /// 256-level banding that the old u8-intermediate path produced. Values
+      /// are in `[0, (1 << BITS) - 1]` (full-range) or
+      /// `[16 << (BITS - 8), 235 << (BITS - 8)]` (limited-range). Length in
+      /// `u16` elements (`width × height`).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
         self.set_luma_u16(buf)?;
@@ -152,10 +147,7 @@ macro_rules! impl_gbrp_high_bit {
       }
       /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
       #[cfg_attr(not(tarpaulin), inline(always))]
-      pub fn set_luma_u16(
-        &mut self,
-        buf: &'a mut [u16],
-      ) -> Result<&mut Self, MixedSinkerError> {
+      pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
         let expected = self.frame_bytes(1)?;
         if buf.len() < expected {
           return Err(MixedSinkerError::LumaU16BufferTooShort {
@@ -248,9 +240,14 @@ macro_rules! impl_gbrp_high_bit {
           gbr_to_rgba_opaque_u16_high_bit_row::<BITS>(g_in, b_in, r_in, rgba_u16_row, w, use_simd);
         } else if want_rgb_u16 {
           let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
-          let rgb_plane_end = one_plane_end
-            .checked_mul(3)
-            .ok_or(MixedSinkerError::GeometryOverflow { width: w, height: h, channels: 3 })?;
+          let rgb_plane_end =
+            one_plane_end
+              .checked_mul(3)
+              .ok_or(MixedSinkerError::GeometryOverflow {
+                width: w,
+                height: h,
+                channels: 3,
+              })?;
           let rgb_plane_start = one_plane_start * 3;
           let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
           gbr_to_rgb_u16_high_bit_row::<BITS>(g_in, b_in, r_in, rgb_u16_row, w, use_simd);
@@ -262,19 +259,33 @@ macro_rules! impl_gbrp_high_bit {
           }
         }
 
+        // ---- native-depth luma output (no RGB staging needed) -----------
+        // Compute luma_u16 first — it reads G/B/R planes directly without
+        // going through the u8 staging path, so it is independent of whether
+        // RGB staging happens below.
+        if let Some(luma_u16_buf) = luma_u16.as_deref_mut() {
+          gbr_to_luma_u16_high_bit_row::<BITS>(
+            g_in,
+            b_in,
+            r_in,
+            &mut luma_u16_buf[one_plane_start..one_plane_end],
+            w,
+            row.matrix(),
+            row.full_range(),
+          );
+        }
+
         // ---- u8 RGB / RGBA / luma / HSV output (Strategy A) -----------
         let want_rgb = rgb.is_some();
         let want_rgba = rgba.is_some();
         let want_luma = luma.is_some();
-        let want_luma_u16 = luma_u16.is_some();
         let want_hsv = hsv.is_some();
-        let need_rgb_staging = want_rgb || want_luma || want_luma_u16 || want_hsv;
+        let need_rgb_staging = want_rgb || want_luma || want_hsv;
 
         // RGBA-only fast path: use the 4-channel opaque kernel directly.
         if want_rgba && !need_rgb_staging {
           let rgba_buf = rgba.as_deref_mut().unwrap();
-          let rgba_row =
-            rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
+          let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
           gbr_to_rgba_opaque_high_bit_row::<BITS>(g_in, b_in, r_in, rgba_row, w, use_simd);
           return Ok(());
         }
@@ -305,35 +316,6 @@ macro_rules! impl_gbrp_high_bit {
           );
         }
 
-        if let Some(luma_u16_buf) = luma_u16.as_deref_mut() {
-          // Derive luma via u8 intermediate, then upshift to native depth.
-          // This preserves luma-precision parity with the u8 path and avoids
-          // a new BITS-generic luma kernel.
-          const STACK_CAP: usize = 8192;
-          let luma_out = &mut luma_u16_buf[one_plane_start..one_plane_end];
-          if w <= STACK_CAP {
-            let mut scratch = [0u8; STACK_CAP];
-            let scratch = &mut scratch[..w];
-            rgb_to_luma_row(rgb_row, scratch, w, row.matrix(), row.full_range(), use_simd);
-            for (d, &s) in luma_out.iter_mut().zip(scratch.iter()) {
-              *d = (s as u16) << (BITS - 8);
-            }
-          } else {
-            let mut scratch = std::vec![0u8; w];
-            rgb_to_luma_row(
-              rgb_row,
-              &mut scratch,
-              w,
-              row.matrix(),
-              row.full_range(),
-              use_simd,
-            );
-            for (d, &s) in luma_out.iter_mut().zip(scratch.iter()) {
-              *d = (s as u16) << (BITS - 8);
-            }
-          }
-        }
-
         if let Some(hsv) = hsv.as_mut() {
           rgb_to_hsv_row(
             rgb_row,
@@ -347,8 +329,7 @@ macro_rules! impl_gbrp_high_bit {
 
         if let Some(buf) = rgba.as_deref_mut() {
           // Strategy A: expand already-computed rgb_row → rgba (opaque).
-          let rgba_row =
-            rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
+          let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
           expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
         }
 
@@ -371,10 +352,7 @@ macro_rules! impl_gbrap_high_bit {
       }
       /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
       #[cfg_attr(not(tarpaulin), inline(always))]
-      pub fn set_rgb_u16(
-        &mut self,
-        buf: &'a mut [u16],
-      ) -> Result<&mut Self, MixedSinkerError> {
+      pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
         let expected = self.frame_bytes(3)?;
         if buf.len() < expected {
           return Err(MixedSinkerError::RgbU16BufferTooShort {
@@ -418,10 +396,7 @@ macro_rules! impl_gbrap_high_bit {
       }
       /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
       #[cfg_attr(not(tarpaulin), inline(always))]
-      pub fn set_rgba_u16(
-        &mut self,
-        buf: &'a mut [u16],
-      ) -> Result<&mut Self, MixedSinkerError> {
+      pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
         let expected = self.frame_bytes(4)?;
         if buf.len() < expected {
           return Err(MixedSinkerError::RgbaU16BufferTooShort {
@@ -434,8 +409,9 @@ macro_rules! impl_gbrap_high_bit {
       }
 
       /// Attaches a `u16` luma output buffer. Same derivation as `GbrpN` —
-      /// downshift to u8, compute luma, upshift: `y_u16[i] = (y_u8 as u16) <<
-      /// (BITS - 8)`. Length in `u16` elements (`width × height`).
+      /// computed directly from native-precision G/B/R planes via Q15
+      /// coefficients (native-depth, no banding). Length in `u16` elements
+      /// (`width × height`).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
         self.set_luma_u16(buf)?;
@@ -443,10 +419,7 @@ macro_rules! impl_gbrap_high_bit {
       }
       /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
       #[cfg_attr(not(tarpaulin), inline(always))]
-      pub fn set_luma_u16(
-        &mut self,
-        buf: &'a mut [u16],
-      ) -> Result<&mut Self, MixedSinkerError> {
+      pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
         let expected = self.frame_bytes(1)?;
         if buf.len() < expected {
           return Err(MixedSinkerError::LumaU16BufferTooShort {
@@ -545,14 +518,17 @@ macro_rules! impl_gbrap_high_bit {
           let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
           let rgba_u16_row =
             rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-          gbra_to_rgba_u16_high_bit_row::<BITS>(
-            g_in, b_in, r_in, a_in, rgba_u16_row, w, use_simd,
-          );
+          gbra_to_rgba_u16_high_bit_row::<BITS>(g_in, b_in, r_in, a_in, rgba_u16_row, w, use_simd);
         } else if want_rgb_u16 {
           let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
-          let rgb_plane_end = one_plane_end
-            .checked_mul(3)
-            .ok_or(MixedSinkerError::GeometryOverflow { width: w, height: h, channels: 3 })?;
+          let rgb_plane_end =
+            one_plane_end
+              .checked_mul(3)
+              .ok_or(MixedSinkerError::GeometryOverflow {
+                width: w,
+                height: h,
+                channels: 3,
+              })?;
           let rgb_plane_start = one_plane_start * 3;
           let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
           gbr_to_rgb_u16_high_bit_row::<BITS>(g_in, b_in, r_in, rgb_u16_row, w, use_simd);
@@ -567,19 +543,33 @@ macro_rules! impl_gbrap_high_bit {
           }
         }
 
+        // ---- native-depth luma output (no RGB staging needed) -----------
+        // Compute luma_u16 first — it reads G/B/R planes directly without
+        // going through the u8 staging path, so it is independent of whether
+        // RGB staging happens below.
+        if let Some(luma_u16_buf) = luma_u16.as_deref_mut() {
+          gbr_to_luma_u16_high_bit_row::<BITS>(
+            g_in,
+            b_in,
+            r_in,
+            &mut luma_u16_buf[one_plane_start..one_plane_end],
+            w,
+            row.matrix(),
+            row.full_range(),
+          );
+        }
+
         // ---- u8 RGB / RGBA / luma / HSV output --------------------------
         let want_rgb = rgb.is_some();
         let want_rgba = rgba.is_some();
         let want_luma = luma.is_some();
-        let want_luma_u16 = luma_u16.is_some();
         let want_hsv = hsv.is_some();
-        let need_rgb_staging = want_rgb || want_luma || want_luma_u16 || want_hsv;
+        let need_rgb_staging = want_rgb || want_luma || want_hsv;
 
         // RGBA-only fast path — direct 4-channel kernel with real α.
         if want_rgba && !need_rgb_staging {
           let rgba_buf = rgba.as_deref_mut().unwrap();
-          let rgba_row =
-            rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
+          let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
           gbra_to_rgba_high_bit_row::<BITS>(g_in, b_in, r_in, a_in, rgba_row, w, use_simd);
           return Ok(());
         }
@@ -610,32 +600,6 @@ macro_rules! impl_gbrap_high_bit {
           );
         }
 
-        if let Some(luma_u16_buf) = luma_u16.as_deref_mut() {
-          const STACK_CAP: usize = 8192;
-          let luma_out = &mut luma_u16_buf[one_plane_start..one_plane_end];
-          if w <= STACK_CAP {
-            let mut scratch = [0u8; STACK_CAP];
-            let scratch = &mut scratch[..w];
-            rgb_to_luma_row(rgb_row, scratch, w, row.matrix(), row.full_range(), use_simd);
-            for (d, &s) in luma_out.iter_mut().zip(scratch.iter()) {
-              *d = (s as u16) << (BITS - 8);
-            }
-          } else {
-            let mut scratch = std::vec![0u8; w];
-            rgb_to_luma_row(
-              rgb_row,
-              &mut scratch,
-              w,
-              row.matrix(),
-              row.full_range(),
-              use_simd,
-            );
-            for (d, &s) in luma_out.iter_mut().zip(scratch.iter()) {
-              *d = (s as u16) << (BITS - 8);
-            }
-          }
-        }
-
         if let Some(hsv) = hsv.as_mut() {
           rgb_to_hsv_row(
             rgb_row,
@@ -650,8 +614,7 @@ macro_rules! impl_gbrap_high_bit {
         if let Some(buf) = rgba.as_deref_mut() {
           // Strategy A+: expand rgb_row → RGBA (opaque stub), then
           // overwrite α bytes from the source A plane.
-          let rgba_row =
-            rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
+          let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
           expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
           alpha_extract::copy_alpha_plane_u16_to_u8::<BITS>(a_in, rgba_row, w, use_simd);
         }

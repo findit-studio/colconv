@@ -228,11 +228,81 @@ pub(crate) fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
   }
 }
 
+/// Derives luma (Y') from three planar G/B/R `u16` rows directly at
+/// native bit depth, avoiding the 256-level banding that would result
+/// from staging through u8.
+///
+/// Uses i64 intermediates throughout so the BITS=16 case
+/// (`max R = 65535`, product ≈ 1.54 B) does not overflow. The
+/// performance cost relative to a separate i32 path for lower
+/// bit-depths is negligible at the per-row level.
+///
+/// `full_range = true` → Y' ∈ `[0, (1 << BITS) - 1]` (full).
+/// `full_range = false` → Y' ∈ `[16 << (BITS - 8), 235 << (BITS - 8)]`
+/// (limited / studio swing). The limited-range formula mirrors
+/// `rgb_to_luma_row` but scaled to native depth.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn gbr_to_luma_u16_high_bit_row<const BITS: u32>(
+  g: &[u16],
+  b: &[u16],
+  r: &[u16],
+  luma_out: &mut [u16],
+  width: usize,
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(g.len() >= width, "g row too short");
+  debug_assert!(b.len() >= width, "b row too short");
+  debug_assert!(r.len() >= width, "r row too short");
+  debug_assert!(luma_out.len() >= width, "luma row too short");
+
+  let (k_r, k_g, k_b) = super::luma_coefficients_q15(matrix);
+  let k_r = k_r as i64;
+  let k_g = k_g as i64;
+  let k_b = k_b as i64;
+  const RND: i64 = 1 << 14;
+  let native_max: u16 = ((1u32 << BITS) - 1) as u16;
+  let mask: u16 = native_max;
+
+  if full_range {
+    for x in 0..width {
+      let rv = (r[x] & mask) as i64;
+      let gv = (g[x] & mask) as i64;
+      let bv = (b[x] & mask) as i64;
+      let y = ((k_r * rv + k_g * gv + k_b * bv + RND) >> 15) as i32;
+      luma_out[x] = y.clamp(0, native_max as i32) as u16;
+    }
+  } else {
+    // Limited-range luma:
+    //   Y_lim = (16 << (BITS - 8)) + (Y_full * 219) / 255
+    // Implemented as:
+    //   Y_lim = Y_off + (Y_full * LIMITED_SCALE_Q15 + RND) >> 15
+    // where LIMITED_SCALE_Q15 = round(219 * 32768 / 255) = 28142 (same
+    // constant as the 8-bit path — the Q15 ratio 219/255 is depth-
+    // independent). This correctly maps the native-depth full-range
+    // Y_full into the native-depth limited-range window.
+    const LIMITED_SCALE_Q15: i64 = 28142;
+    let y_off = (16i32 << (BITS - 8)) as i64;
+    let y_max = (235i32 << (BITS - 8)) as i64;
+    let y_min = y_off;
+    for x in 0..width {
+      let rv = (r[x] & mask) as i64;
+      let gv = (g[x] & mask) as i64;
+      let bv = (b[x] & mask) as i64;
+      let y_full = (k_r * rv + k_g * gv + k_b * bv + RND) >> 15;
+      let y_full_clamped = y_full.clamp(0, native_max as i64);
+      let y_lim = y_off + ((y_full_clamped * LIMITED_SCALE_Q15 + RND) >> 15);
+      luma_out[x] = y_lim.clamp(y_min, y_max) as u16;
+    }
+  }
+}
+
 // ---- Unit tests -----------------------------------------------------------
 
 #[cfg(all(test, any(feature = "std", feature = "alloc")))]
 mod tests {
   use super::*;
+  use crate::ColorMatrix;
 
   // ---- gbr_to_rgb_high_bit_row: u8 output, downshift ----------------------
 
@@ -728,5 +798,136 @@ mod tests {
       "direct GBRA path must match manually-masked alpha path"
     );
     assert_eq!(out_direct[3], expected_a_u8, "alpha channel value");
+  }
+
+  // ---- gbr_to_luma_u16_high_bit_row: native-depth luma --------------------
+
+  #[test]
+  fn luma_u16_high_bit_bits10_max_white_not_banded() {
+    // BITS=10: max = 1023. Old path gave (255 as u16) << 2 = 1020, not 1023.
+    // New kernel must produce a value near 1023 for all-white input.
+    let max = (1u16 << 10) - 1; // 1023
+    let g = [max; 1];
+    let b = [max; 1];
+    let r = [max; 1];
+    let mut out = [0u16; 1];
+    gbr_to_luma_u16_high_bit_row::<10>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, true);
+    // For BT.709 full-range all-white: Y = round(Kr*max + Kg*max + Kb*max).
+    // = round((6966 + 23436 + 2366) / 32768 * 1023) ≈ round(32768/32768 * 1023) = 1023.
+    assert!(
+      out[0] >= 1020,
+      "max-white luma_u16 must be near 1023 (was {}, old banded path gives 1020)",
+      out[0]
+    );
+    assert!(
+      out[0] <= 1023,
+      "max-white luma_u16 must not exceed native max"
+    );
+  }
+
+  #[test]
+  fn luma_u16_high_bit_bits12_max_white_not_banded() {
+    // BITS=12: max = 4095. Old path: (255 as u16) << 4 = 4080.
+    // New kernel should give a value in [4090, 4095].
+    let max = (1u16 << 12) - 1; // 4095
+    let g = [max; 1];
+    let b = [max; 1];
+    let r = [max; 1];
+    let mut out = [0u16; 1];
+    gbr_to_luma_u16_high_bit_row::<12>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt601, true);
+    assert!(
+      out[0] >= 4090,
+      "max-white luma_u16 bits12 must be near 4095 (was {})",
+      out[0]
+    );
+    assert!(out[0] <= 4095, "must not exceed native max");
+  }
+
+  #[test]
+  fn luma_u16_high_bit_bits16_max_white_not_banded() {
+    // BITS=16: max = 65535. Old path: (255 as u16) << 8 = 65280.
+    // New kernel (i64 path) should give a value in [65520, 65535].
+    let max = u16::MAX;
+    let g = [max; 1];
+    let b = [max; 1];
+    let r = [max; 1];
+    let mut out = [0u16; 1];
+    gbr_to_luma_u16_high_bit_row::<16>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, true);
+    assert!(
+      out[0] >= 65520,
+      "max-white luma_u16 bits16 must be near 65535 (was {}), old banded gives 65280",
+      out[0]
+    );
+    // u16 is bounded by type; kernel clamp ensures value stays in [0, native_max].
+  }
+
+  #[test]
+  fn luma_u16_high_bit_bits10_neutral_gray_midrange() {
+    // BITS=10: mid = 512. Luma of neutral gray ≈ 512.
+    let mid = 512u16;
+    let g = [mid; 1];
+    let b = [mid; 1];
+    let r = [mid; 1];
+    let mut out = [0u16; 1];
+    gbr_to_luma_u16_high_bit_row::<10>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, true);
+    assert!(
+      out[0] >= 510 && out[0] <= 514,
+      "neutral gray luma_u16 must be ~512 (was {})",
+      out[0]
+    );
+  }
+
+  #[test]
+  fn luma_u16_high_bit_bits10_zero_gives_zero() {
+    let g = [0u16; 2];
+    let b = [0u16; 2];
+    let r = [0u16; 2];
+    let mut out = [0xFFFFu16; 2];
+    gbr_to_luma_u16_high_bit_row::<10>(&g, &b, &r, &mut out, 2, ColorMatrix::Bt709, true);
+    assert!(out.iter().all(|&v| v == 0), "all-black must give zero luma");
+  }
+
+  #[test]
+  fn luma_u16_high_bit_bits10_full_range_vs_limited_range() {
+    // For mid-gray input, limited-range luma should be in [16<<2, 235<<2] = [64, 940].
+    let mid = 512u16;
+    let g = [mid; 1];
+    let b = [mid; 1];
+    let r = [mid; 1];
+    let mut out_full = [0u16; 1];
+    let mut out_lim = [0u16; 1];
+    gbr_to_luma_u16_high_bit_row::<10>(&g, &b, &r, &mut out_full, 1, ColorMatrix::Bt601, true);
+    gbr_to_luma_u16_high_bit_row::<10>(&g, &b, &r, &mut out_lim, 1, ColorMatrix::Bt601, false);
+    let y_off = 16u16 << 2; // 64
+    let y_max = 235u16 << 2; // 940
+    assert!(
+      out_full[0] >= out_lim[0],
+      "limited-range luma <= full-range luma for mid gray"
+    );
+    assert!(
+      out_lim[0] >= y_off,
+      "limited-range must be >= 64 (was {})",
+      out_lim[0]
+    );
+    assert!(
+      out_lim[0] <= y_max,
+      "limited-range must be <= 940 (was {})",
+      out_lim[0]
+    );
+  }
+
+  #[test]
+  fn luma_u16_high_bit_bits16_limited_range_black_gives_min_offset() {
+    // BITS=16: all-black limited-range should give Y_off = 16 << 8 = 4096.
+    let g = [0u16; 1];
+    let b = [0u16; 1];
+    let r = [0u16; 1];
+    let mut out = [0u16; 1];
+    gbr_to_luma_u16_high_bit_row::<16>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, false);
+    let y_off = 16u16 << 8; // 4096
+    assert_eq!(
+      out[0], y_off,
+      "all-black limited-range must give Y_off={y_off}"
+    );
   }
 }
