@@ -356,7 +356,8 @@ pub type Gbrp16Frame<'a> = GbrpHighBitFrame<'a, 16>;
 /// in **samples** (`u16` elements); each plane requires
 /// `*_stride >= width` and `len >= *_stride * height`.
 ///
-/// Use the per-depth aliases [`Gbrap9Frame`] through [`Gbrap16Frame`].
+/// Use the per-depth aliases [`Gbrap10Frame`] through [`Gbrap16Frame`].
+/// (FFmpeg has no GBRAP9 variant — only the 3-plane GBRP9 exists at 9 bits.)
 #[derive(Debug, Clone, Copy)]
 pub struct GbrapHighBitFrame<'a, const BITS: u32> {
   g: &'a [u16],
@@ -390,8 +391,8 @@ impl<'a, const BITS: u32> GbrapHighBitFrame<'a, BITS> {
   ) -> Result<Self, GbrapHighBitFrameError> {
     const {
       assert!(
-        matches!(BITS, 9 | 10 | 12 | 14 | 16),
-        "BITS must be one of 9, 10, 12, 14, or 16",
+        matches!(BITS, 10 | 12 | 14 | 16),
+        "BITS must be one of 10, 12, 14, or 16 (FFmpeg has no GBRAP9 variant)",
       );
     }
 
@@ -684,9 +685,6 @@ pub enum GbrapHighBitFrameError {
   },
 }
 
-/// Type alias for a validated planar GBR+A 9-bit frame
-/// (`AV_PIX_FMT_GBRAP9LE`). Samples in the low 9 bits of each `u16`.
-pub type Gbrap9Frame<'a> = GbrapHighBitFrame<'a, 9>;
 /// Type alias for a validated planar GBR+A 10-bit frame
 /// (`AV_PIX_FMT_GBRAP10LE`). Samples in the low 10 bits of each `u16`.
 pub type Gbrap10Frame<'a> = GbrapHighBitFrame<'a, 10>;

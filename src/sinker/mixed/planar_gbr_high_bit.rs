@@ -1,10 +1,11 @@
 //! Sinker impls for high-bit-depth planar GBR source formats (Tier 10b).
 //!
-//! Covers all ten high-bit formats:
+//! Covers all nine high-bit formats:
 //! - `Gbrp9` / `Gbrp10` / `Gbrp12` / `Gbrp14` / `Gbrp16` — three planes
 //!   (G, B, R), no alpha. `AV_PIX_FMT_GBRP{9,10,12,14,16}LE`.
-//! - `Gbrap9` / `Gbrap10` / `Gbrap12` / `Gbrap14` / `Gbrap16` — four planes
-//!   (G, B, R, A), real per-pixel α. `AV_PIX_FMT_GBRAP{9,10,12,14,16}LE`.
+//! - `Gbrap10` / `Gbrap12` / `Gbrap14` / `Gbrap16` — four planes
+//!   (G, B, R, A), real per-pixel α. `AV_PIX_FMT_GBRAP{10,12,14,16}LE`.
+//!   (FFmpeg has no 9-bit Gbrap variant.)
 //!
 //! # Output paths
 //!
@@ -671,7 +672,6 @@ impl_gbrp_high_bit!(Gbrp16, Gbrp16Sink, Gbrp16Row, 16);
 
 // ---- Gbrap formats (with real α plane) ---------------------------------
 
-impl_gbrap_high_bit!(Gbrap9, Gbrap9Sink, Gbrap9Row, 9);
 impl_gbrap_high_bit!(Gbrap10, Gbrap10Sink, Gbrap10Row, 10);
 impl_gbrap_high_bit!(Gbrap12, Gbrap12Sink, Gbrap12Row, 12);
 impl_gbrap_high_bit!(Gbrap14, Gbrap14Sink, Gbrap14Row, 14);

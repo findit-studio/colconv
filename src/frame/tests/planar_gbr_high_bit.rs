@@ -192,13 +192,6 @@ fn gbrap10_new_panics_on_invalid() {
 // ---- Per-BITS sanity for Gbrap family -------------------------------------
 
 #[test]
-fn gbrap9_bits_accessor() {
-  let p = vec![0u16; 4];
-  let f = Gbrap9Frame::try_new(&p, &p, &p, &p, 2, 2, 2, 2, 2, 2).unwrap();
-  assert_eq!(f.bits(), 9);
-}
-
-#[test]
 fn gbrap12_bits_accessor() {
   let p = vec![0u16; 4];
   let f = Gbrap12Frame::try_new(&p, &p, &p, &p, 2, 2, 2, 2, 2, 2).unwrap();

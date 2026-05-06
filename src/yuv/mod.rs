@@ -181,12 +181,12 @@
 //!   (`AV_PIX_FMT_GBRP{9,10,12,14,16}LE`). Samples in the low `BITS`
 //!   bits of each `u16`. Const-generic `BITS` kernel family; scalar
 //!   kernels in `planar_gbr_high_bit.rs`.
-//! - [`Gbrap9`](crate::yuv::Gbrap9) / [`Gbrap10`](crate::yuv::Gbrap10) /
-//!   [`Gbrap12`](crate::yuv::Gbrap12) / [`Gbrap14`](crate::yuv::Gbrap14) /
-//!   [`Gbrap16`](crate::yuv::Gbrap16) — four planes (G, B, R, A) at 9 /
-//!   10 / 12 / 14 / 16 bits (`AV_PIX_FMT_GBRAP{9,10,12,14,16}LE`). Alpha
-//!   is real per-pixel α at native depth; Strategy A+ sinker path for
-//!   simultaneous RGB + RGBA output.
+//! - [`Gbrap10`](crate::yuv::Gbrap10) / [`Gbrap12`](crate::yuv::Gbrap12) /
+//!   [`Gbrap14`](crate::yuv::Gbrap14) / [`Gbrap16`](crate::yuv::Gbrap16) —
+//!   four planes (G, B, R, A) at 10 / 12 / 14 / 16 bits
+//!   (`AV_PIX_FMT_GBRAP{10,12,14,16}LE`). Alpha is real per-pixel α at
+//!   native depth; Strategy A+ sinker path for simultaneous RGB + RGBA
+//!   output. (No 9-bit Gbrap variant exists in FFmpeg.)
 //!
 //! # Not yet shipped
 //!
@@ -220,7 +220,6 @@ mod gbrap10;
 mod gbrap12;
 mod gbrap14;
 mod gbrap16;
-mod gbrap9;
 mod gbrp;
 mod gbrp10;
 mod gbrp12;
@@ -312,7 +311,6 @@ pub use bgr24::{Bgr24, Bgr24Row, Bgr24Sink, bgr24_to};
 pub use bgra::{Bgra, BgraRow, BgraSink, bgra_to};
 pub use bgrx::{Bgrx, BgrxRow, BgrxSink, bgrx_to};
 pub use gbrap::{Gbrap, GbrapRow, GbrapSink, gbrap_to};
-pub use gbrap9::{Gbrap9, Gbrap9Row, Gbrap9Sink, gbrap9_to};
 pub use gbrap10::{Gbrap10, Gbrap10Row, Gbrap10Sink, gbrap10_to};
 pub use gbrap12::{Gbrap12, Gbrap12Row, Gbrap12Sink, gbrap12_to};
 pub use gbrap14::{Gbrap14, Gbrap14Row, Gbrap14Sink, gbrap14_to};

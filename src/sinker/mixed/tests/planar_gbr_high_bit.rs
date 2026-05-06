@@ -184,12 +184,6 @@ macro_rules! test_gbrap_strategy_a_plus {
 }
 
 test_gbrap_strategy_a_plus!(
-  gbrap9_strategy_a_plus_matches_standalone,
-  Gbrap9,
-  gbrap9_to,
-  9
-);
-test_gbrap_strategy_a_plus!(
   gbrap10_strategy_a_plus_matches_standalone,
   Gbrap10,
   gbrap10_to,
@@ -254,7 +248,6 @@ macro_rules! test_gbrap_alpha_downshift {
   };
 }
 
-test_gbrap_alpha_downshift!(gbrap9_alpha_downshift_correct, Gbrap9, gbrap9_to, 9);
 test_gbrap_alpha_downshift!(gbrap10_alpha_downshift_correct, Gbrap10, gbrap10_to, 10);
 test_gbrap_alpha_downshift!(gbrap12_alpha_downshift_correct, Gbrap12, gbrap12_to, 12);
 test_gbrap_alpha_downshift!(gbrap14_alpha_downshift_correct, Gbrap14, gbrap14_to, 14);
@@ -354,8 +347,6 @@ macro_rules! test_gbrap_simd_matches_scalar {
   };
 }
 
-test_gbrap_simd_matches_scalar!(gbrap9_w128_simd_matches_scalar, Gbrap9, gbrap9_to, 9, 128);
-test_gbrap_simd_matches_scalar!(gbrap9_w130_simd_matches_scalar, Gbrap9, gbrap9_to, 9, 130);
 test_gbrap_simd_matches_scalar!(
   gbrap10_w128_simd_matches_scalar,
   Gbrap10,
