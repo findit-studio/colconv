@@ -16,6 +16,13 @@ fn gbr_plane_u16<const BITS: u32>(width: usize, seed: u32) -> std::vec::Vec<u16>
     .collect()
 }
 
+fn gbr_plane_u16_dirty<const BITS: u32>(width: usize, dirty_upper: u16) -> std::vec::Vec<u16> {
+  let clean_mask = ((1u32 << BITS) - 1) as u16;
+  (0..width)
+    .map(|i| (i as u16 & clean_mask) | dirty_upper)
+    .collect()
+}
+
 // ---- u8 output -----------------------------------------------------------
 
 #[test]
@@ -296,6 +303,102 @@ fn sse41_gbra_to_rgba_u16_high_bit_matches_scalar_bits16() {
     assert_eq!(
       out_scalar, out_sse,
       "SSE4.1 gbra_to_rgba_u16_high_bit<16> diverges (width={w})"
+    );
+  }
+}
+
+// ---- Upper-bits masking: SSE4.1 must match scalar for dirty inputs --------
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn sse41_gbr_to_rgb_high_bit_upper_bits_masked_bits10() {
+  if !std::arch::is_x86_feature_detected!("sse4.1") {
+    return;
+  }
+  for w in [1usize, 7, 8, 16, 17, 32, 33, 64, 128, 130] {
+    let g = gbr_plane_u16_dirty::<10>(w, 0x0C00);
+    let b = gbr_plane_u16_dirty::<10>(w, 0x0800);
+    let r = gbr_plane_u16_dirty::<10>(w, 0x0400);
+    let mut out_scalar = std::vec![0u8; w * 3];
+    let mut out_sse = std::vec![0u8; w * 3];
+    scalar::gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut out_scalar, w);
+    unsafe {
+      gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut out_sse, w);
+    }
+    assert_eq!(
+      out_scalar, out_sse,
+      "SSE4.1 gbr_to_rgb_high_bit<10> dirty-input diverges (width={w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn sse41_gbra_to_rgba_high_bit_upper_bits_masked_bits10() {
+  if !std::arch::is_x86_feature_detected!("sse4.1") {
+    return;
+  }
+  for w in [1usize, 7, 8, 16, 17, 32, 33, 64, 128, 130] {
+    let g = gbr_plane_u16_dirty::<10>(w, 0x0C00);
+    let b = gbr_plane_u16_dirty::<10>(w, 0x0800);
+    let r = gbr_plane_u16_dirty::<10>(w, 0x0400);
+    let a = gbr_plane_u16_dirty::<10>(w, 0x0C00);
+    let mut out_scalar = std::vec![0u8; w * 4];
+    let mut out_sse = std::vec![0u8; w * 4];
+    scalar::gbra_to_rgba_high_bit_row::<10>(&g, &b, &r, &a, &mut out_scalar, w);
+    unsafe {
+      gbra_to_rgba_high_bit_row::<10>(&g, &b, &r, &a, &mut out_sse, w);
+    }
+    assert_eq!(
+      out_scalar, out_sse,
+      "SSE4.1 gbra_to_rgba_high_bit<10> dirty-input diverges (width={w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn sse41_gbr_to_rgb_u16_high_bit_upper_bits_masked_bits10() {
+  if !std::arch::is_x86_feature_detected!("sse4.1") {
+    return;
+  }
+  for w in [1usize, 7, 8, 16, 17, 32, 33, 64, 128, 130] {
+    let g = gbr_plane_u16_dirty::<10>(w, 0x0C00);
+    let b = gbr_plane_u16_dirty::<10>(w, 0x0800);
+    let r = gbr_plane_u16_dirty::<10>(w, 0x0400);
+    let mut out_scalar = std::vec![0u16; w * 3];
+    let mut out_sse = std::vec![0u16; w * 3];
+    scalar::gbr_to_rgb_u16_high_bit_row::<10>(&g, &b, &r, &mut out_scalar, w);
+    unsafe {
+      gbr_to_rgb_u16_high_bit_row::<10>(&g, &b, &r, &mut out_sse, w);
+    }
+    assert_eq!(
+      out_scalar, out_sse,
+      "SSE4.1 gbr_to_rgb_u16_high_bit<10> dirty-input diverges (width={w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn sse41_gbra_to_rgba_u16_high_bit_upper_bits_masked_bits10() {
+  if !std::arch::is_x86_feature_detected!("sse4.1") {
+    return;
+  }
+  for w in [1usize, 7, 8, 16, 17, 32, 33, 64, 128, 130] {
+    let g = gbr_plane_u16_dirty::<10>(w, 0x0C00);
+    let b = gbr_plane_u16_dirty::<10>(w, 0x0800);
+    let r = gbr_plane_u16_dirty::<10>(w, 0x0400);
+    let a = gbr_plane_u16_dirty::<10>(w, 0x0C00);
+    let mut out_scalar = std::vec![0u16; w * 4];
+    let mut out_sse = std::vec![0u16; w * 4];
+    scalar::gbra_to_rgba_u16_high_bit_row::<10>(&g, &b, &r, &a, &mut out_scalar, w);
+    unsafe {
+      gbra_to_rgba_u16_high_bit_row::<10>(&g, &b, &r, &a, &mut out_sse, w);
+    }
+    assert_eq!(
+      out_scalar, out_sse,
+      "SSE4.1 gbra_to_rgba_u16_high_bit<10> dirty-input diverges (width={w})"
     );
   }
 }

@@ -54,13 +54,15 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
     // Variable-count shift using a 128-bit count vector (F+BW pattern).
     let shr_count = _mm_cvtsi32_si128((BITS - 8) as i32);
     let zero128 = _mm_setzero_si128();
+    let mask512 = _mm512_set1_epi16(((1u32 << BITS) - 1) as u16 as i16);
+    let mask128 = _mm_set1_epi16(((1u32 << BITS) - 1) as u16 as i16);
 
     let mut x = 0usize;
     while x + 32 <= width {
-      // Load 32 u16 pixels per plane via 512-bit loads.
-      let r_v = _mm512_loadu_si512(r.as_ptr().add(x).cast());
-      let g_v = _mm512_loadu_si512(g.as_ptr().add(x).cast());
-      let b_v = _mm512_loadu_si512(b.as_ptr().add(x).cast());
+      // Load 32 u16 pixels per plane via 512-bit loads, then mask.
+      let r_v = _mm512_and_si512(_mm512_loadu_si512(r.as_ptr().add(x).cast()), mask512);
+      let g_v = _mm512_and_si512(_mm512_loadu_si512(g.as_ptr().add(x).cast()), mask512);
+      let b_v = _mm512_and_si512(_mm512_loadu_si512(b.as_ptr().add(x).cast()), mask512);
 
       // Shift all 32 u16 lanes right by BITS-8.
       let r_sh = _mm512_srl_epi16(r_v, shr_count);
@@ -122,9 +124,9 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
     }
     // Drain remaining 8-pixel blocks before scalar tail.
     while x + 8 <= width {
-      let r_v = _mm_loadu_si128(r.as_ptr().add(x).cast());
-      let g_v = _mm_loadu_si128(g.as_ptr().add(x).cast());
-      let b_v = _mm_loadu_si128(b.as_ptr().add(x).cast());
+      let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask128);
+      let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask128);
+      let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask128);
       let r_sh = _mm_srl_epi16(r_v, shr_count);
       let g_sh = _mm_srl_epi16(g_v, shr_count);
       let b_sh = _mm_srl_epi16(b_v, shr_count);
@@ -176,14 +178,16 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
   unsafe {
     let shr_count = _mm_cvtsi32_si128((BITS - 8) as i32);
     let zero128 = _mm_setzero_si128();
+    let mask512 = _mm512_set1_epi16(((1u32 << BITS) - 1) as u16 as i16);
+    let mask128 = _mm_set1_epi16(((1u32 << BITS) - 1) as u16 as i16);
     let opaque_u16 = _mm_set1_epi16(0x00FF_u16 as i16);
     let opaque_u8 = _mm_packus_epi16(opaque_u16, zero128);
 
     let mut x = 0usize;
     while x + 32 <= width {
-      let r_v = _mm512_loadu_si512(r.as_ptr().add(x).cast());
-      let g_v = _mm512_loadu_si512(g.as_ptr().add(x).cast());
-      let b_v = _mm512_loadu_si512(b.as_ptr().add(x).cast());
+      let r_v = _mm512_and_si512(_mm512_loadu_si512(r.as_ptr().add(x).cast()), mask512);
+      let g_v = _mm512_and_si512(_mm512_loadu_si512(g.as_ptr().add(x).cast()), mask512);
+      let b_v = _mm512_and_si512(_mm512_loadu_si512(b.as_ptr().add(x).cast()), mask512);
 
       let r_sh = _mm512_srl_epi16(r_v, shr_count);
       let g_sh = _mm512_srl_epi16(g_v, shr_count);
@@ -241,9 +245,9 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
       x += 32;
     }
     while x + 8 <= width {
-      let r_v = _mm_loadu_si128(r.as_ptr().add(x).cast());
-      let g_v = _mm_loadu_si128(g.as_ptr().add(x).cast());
-      let b_v = _mm_loadu_si128(b.as_ptr().add(x).cast());
+      let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask128);
+      let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask128);
+      let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask128);
       let r_sh = _mm_srl_epi16(r_v, shr_count);
       let g_sh = _mm_srl_epi16(g_v, shr_count);
       let b_sh = _mm_srl_epi16(b_v, shr_count);
@@ -297,13 +301,15 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
   unsafe {
     let shr_count = _mm_cvtsi32_si128((BITS - 8) as i32);
     let zero128 = _mm_setzero_si128();
+    let mask512 = _mm512_set1_epi16(((1u32 << BITS) - 1) as u16 as i16);
+    let mask128 = _mm_set1_epi16(((1u32 << BITS) - 1) as u16 as i16);
 
     let mut x = 0usize;
     while x + 32 <= width {
-      let r_v = _mm512_loadu_si512(r.as_ptr().add(x).cast());
-      let g_v = _mm512_loadu_si512(g.as_ptr().add(x).cast());
-      let b_v = _mm512_loadu_si512(b.as_ptr().add(x).cast());
-      let a_v = _mm512_loadu_si512(a.as_ptr().add(x).cast());
+      let r_v = _mm512_and_si512(_mm512_loadu_si512(r.as_ptr().add(x).cast()), mask512);
+      let g_v = _mm512_and_si512(_mm512_loadu_si512(g.as_ptr().add(x).cast()), mask512);
+      let b_v = _mm512_and_si512(_mm512_loadu_si512(b.as_ptr().add(x).cast()), mask512);
+      let a_v = _mm512_and_si512(_mm512_loadu_si512(a.as_ptr().add(x).cast()), mask512);
 
       let r_sh = _mm512_srl_epi16(r_v, shr_count);
       let g_sh = _mm512_srl_epi16(g_v, shr_count);
@@ -370,10 +376,10 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
       x += 32;
     }
     while x + 8 <= width {
-      let r_v = _mm_loadu_si128(r.as_ptr().add(x).cast());
-      let g_v = _mm_loadu_si128(g.as_ptr().add(x).cast());
-      let b_v = _mm_loadu_si128(b.as_ptr().add(x).cast());
-      let a_v = _mm_loadu_si128(a.as_ptr().add(x).cast());
+      let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask128);
+      let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask128);
+      let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask128);
+      let a_v = _mm_and_si128(_mm_loadu_si128(a.as_ptr().add(x).cast()), mask128);
       let r_sh = _mm_srl_epi16(r_v, shr_count);
       let g_sh = _mm_srl_epi16(g_v, shr_count);
       let b_sh = _mm_srl_epi16(b_v, shr_count);
@@ -427,39 +433,40 @@ pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
   debug_assert!(rgb_u16_out.len() >= width * 3, "rgb_u16_out row too short");
 
   unsafe {
+    let mask128 = _mm_set1_epi16(((1u32 << BITS) - 1) as u16 as i16);
     let mut x = 0usize;
     while x + 32 <= width {
       // Four 8-pixel blocks (offsets 0, 8, 16, 24).
       {
-        let r_v = _mm_loadu_si128(r.as_ptr().add(x).cast());
-        let g_v = _mm_loadu_si128(g.as_ptr().add(x).cast());
-        let b_v = _mm_loadu_si128(b.as_ptr().add(x).cast());
+        let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask128);
+        let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask128);
+        let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask128);
         write_rgb_u16_8(r_v, g_v, b_v, rgb_u16_out.as_mut_ptr().add(x * 3));
       }
       {
-        let r_v = _mm_loadu_si128(r.as_ptr().add(x + 8).cast());
-        let g_v = _mm_loadu_si128(g.as_ptr().add(x + 8).cast());
-        let b_v = _mm_loadu_si128(b.as_ptr().add(x + 8).cast());
+        let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x + 8).cast()), mask128);
+        let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x + 8).cast()), mask128);
+        let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x + 8).cast()), mask128);
         write_rgb_u16_8(r_v, g_v, b_v, rgb_u16_out.as_mut_ptr().add((x + 8) * 3));
       }
       {
-        let r_v = _mm_loadu_si128(r.as_ptr().add(x + 16).cast());
-        let g_v = _mm_loadu_si128(g.as_ptr().add(x + 16).cast());
-        let b_v = _mm_loadu_si128(b.as_ptr().add(x + 16).cast());
+        let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x + 16).cast()), mask128);
+        let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x + 16).cast()), mask128);
+        let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x + 16).cast()), mask128);
         write_rgb_u16_8(r_v, g_v, b_v, rgb_u16_out.as_mut_ptr().add((x + 16) * 3));
       }
       {
-        let r_v = _mm_loadu_si128(r.as_ptr().add(x + 24).cast());
-        let g_v = _mm_loadu_si128(g.as_ptr().add(x + 24).cast());
-        let b_v = _mm_loadu_si128(b.as_ptr().add(x + 24).cast());
+        let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x + 24).cast()), mask128);
+        let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x + 24).cast()), mask128);
+        let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x + 24).cast()), mask128);
         write_rgb_u16_8(r_v, g_v, b_v, rgb_u16_out.as_mut_ptr().add((x + 24) * 3));
       }
       x += 32;
     }
     while x + 8 <= width {
-      let r_v = _mm_loadu_si128(r.as_ptr().add(x).cast());
-      let g_v = _mm_loadu_si128(g.as_ptr().add(x).cast());
-      let b_v = _mm_loadu_si128(b.as_ptr().add(x).cast());
+      let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask128);
+      let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask128);
+      let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask128);
       write_rgb_u16_8(r_v, g_v, b_v, rgb_u16_out.as_mut_ptr().add(x * 3));
       x += 8;
     }
@@ -504,20 +511,21 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
   );
 
   unsafe {
-    let opaque = _mm_set1_epi16(((1u32 << BITS) - 1) as u16 as i16);
+    let mask128 = _mm_set1_epi16(((1u32 << BITS) - 1) as u16 as i16);
+    let opaque = mask128;
 
     let mut x = 0usize;
     while x + 32 <= width {
       {
-        let r_v = _mm_loadu_si128(r.as_ptr().add(x).cast());
-        let g_v = _mm_loadu_si128(g.as_ptr().add(x).cast());
-        let b_v = _mm_loadu_si128(b.as_ptr().add(x).cast());
+        let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask128);
+        let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask128);
+        let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask128);
         write_rgba_u16_8(r_v, g_v, b_v, opaque, rgba_u16_out.as_mut_ptr().add(x * 4));
       }
       {
-        let r_v = _mm_loadu_si128(r.as_ptr().add(x + 8).cast());
-        let g_v = _mm_loadu_si128(g.as_ptr().add(x + 8).cast());
-        let b_v = _mm_loadu_si128(b.as_ptr().add(x + 8).cast());
+        let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x + 8).cast()), mask128);
+        let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x + 8).cast()), mask128);
+        let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x + 8).cast()), mask128);
         write_rgba_u16_8(
           r_v,
           g_v,
@@ -527,9 +535,9 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
         );
       }
       {
-        let r_v = _mm_loadu_si128(r.as_ptr().add(x + 16).cast());
-        let g_v = _mm_loadu_si128(g.as_ptr().add(x + 16).cast());
-        let b_v = _mm_loadu_si128(b.as_ptr().add(x + 16).cast());
+        let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x + 16).cast()), mask128);
+        let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x + 16).cast()), mask128);
+        let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x + 16).cast()), mask128);
         write_rgba_u16_8(
           r_v,
           g_v,
@@ -539,9 +547,9 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
         );
       }
       {
-        let r_v = _mm_loadu_si128(r.as_ptr().add(x + 24).cast());
-        let g_v = _mm_loadu_si128(g.as_ptr().add(x + 24).cast());
-        let b_v = _mm_loadu_si128(b.as_ptr().add(x + 24).cast());
+        let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x + 24).cast()), mask128);
+        let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x + 24).cast()), mask128);
+        let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x + 24).cast()), mask128);
         write_rgba_u16_8(
           r_v,
           g_v,
@@ -553,9 +561,9 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
       x += 32;
     }
     while x + 8 <= width {
-      let r_v = _mm_loadu_si128(r.as_ptr().add(x).cast());
-      let g_v = _mm_loadu_si128(g.as_ptr().add(x).cast());
-      let b_v = _mm_loadu_si128(b.as_ptr().add(x).cast());
+      let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask128);
+      let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask128);
+      let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask128);
       write_rgba_u16_8(r_v, g_v, b_v, opaque, rgba_u16_out.as_mut_ptr().add(x * 4));
       x += 8;
     }
@@ -602,20 +610,21 @@ pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
   );
 
   unsafe {
+    let mask128 = _mm_set1_epi16(((1u32 << BITS) - 1) as u16 as i16);
     let mut x = 0usize;
     while x + 32 <= width {
       {
-        let r_v = _mm_loadu_si128(r.as_ptr().add(x).cast());
-        let g_v = _mm_loadu_si128(g.as_ptr().add(x).cast());
-        let b_v = _mm_loadu_si128(b.as_ptr().add(x).cast());
-        let a_v = _mm_loadu_si128(a.as_ptr().add(x).cast());
+        let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask128);
+        let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask128);
+        let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask128);
+        let a_v = _mm_and_si128(_mm_loadu_si128(a.as_ptr().add(x).cast()), mask128);
         write_rgba_u16_8(r_v, g_v, b_v, a_v, rgba_u16_out.as_mut_ptr().add(x * 4));
       }
       {
-        let r_v = _mm_loadu_si128(r.as_ptr().add(x + 8).cast());
-        let g_v = _mm_loadu_si128(g.as_ptr().add(x + 8).cast());
-        let b_v = _mm_loadu_si128(b.as_ptr().add(x + 8).cast());
-        let a_v = _mm_loadu_si128(a.as_ptr().add(x + 8).cast());
+        let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x + 8).cast()), mask128);
+        let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x + 8).cast()), mask128);
+        let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x + 8).cast()), mask128);
+        let a_v = _mm_and_si128(_mm_loadu_si128(a.as_ptr().add(x + 8).cast()), mask128);
         write_rgba_u16_8(
           r_v,
           g_v,
@@ -625,10 +634,10 @@ pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
         );
       }
       {
-        let r_v = _mm_loadu_si128(r.as_ptr().add(x + 16).cast());
-        let g_v = _mm_loadu_si128(g.as_ptr().add(x + 16).cast());
-        let b_v = _mm_loadu_si128(b.as_ptr().add(x + 16).cast());
-        let a_v = _mm_loadu_si128(a.as_ptr().add(x + 16).cast());
+        let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x + 16).cast()), mask128);
+        let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x + 16).cast()), mask128);
+        let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x + 16).cast()), mask128);
+        let a_v = _mm_and_si128(_mm_loadu_si128(a.as_ptr().add(x + 16).cast()), mask128);
         write_rgba_u16_8(
           r_v,
           g_v,
@@ -638,10 +647,10 @@ pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
         );
       }
       {
-        let r_v = _mm_loadu_si128(r.as_ptr().add(x + 24).cast());
-        let g_v = _mm_loadu_si128(g.as_ptr().add(x + 24).cast());
-        let b_v = _mm_loadu_si128(b.as_ptr().add(x + 24).cast());
-        let a_v = _mm_loadu_si128(a.as_ptr().add(x + 24).cast());
+        let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x + 24).cast()), mask128);
+        let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x + 24).cast()), mask128);
+        let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x + 24).cast()), mask128);
+        let a_v = _mm_and_si128(_mm_loadu_si128(a.as_ptr().add(x + 24).cast()), mask128);
         write_rgba_u16_8(
           r_v,
           g_v,
@@ -653,10 +662,10 @@ pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
       x += 32;
     }
     while x + 8 <= width {
-      let r_v = _mm_loadu_si128(r.as_ptr().add(x).cast());
-      let g_v = _mm_loadu_si128(g.as_ptr().add(x).cast());
-      let b_v = _mm_loadu_si128(b.as_ptr().add(x).cast());
-      let a_v = _mm_loadu_si128(a.as_ptr().add(x).cast());
+      let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask128);
+      let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask128);
+      let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask128);
+      let a_v = _mm_and_si128(_mm_loadu_si128(a.as_ptr().add(x).cast()), mask128);
       write_rgba_u16_8(r_v, g_v, b_v, a_v, rgba_u16_out.as_mut_ptr().add(x * 4));
       x += 8;
     }

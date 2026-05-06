@@ -44,12 +44,13 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
   unsafe {
     // Shift amount as a negative (right) vector shift for vshlq_u16.
     let shr = vdupq_n_s16(-((BITS - 8) as i16));
+    let mask_v = vdupq_n_u16(((1u32 << BITS) - 1) as u16);
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let g_v = vld1q_u16(g.as_ptr().add(x));
-      let b_v = vld1q_u16(b.as_ptr().add(x));
-      let r_v = vld1q_u16(r.as_ptr().add(x));
+      let g_v = vandq_u16(vld1q_u16(g.as_ptr().add(x)), mask_v);
+      let b_v = vandq_u16(vld1q_u16(b.as_ptr().add(x)), mask_v);
+      let r_v = vandq_u16(vld1q_u16(r.as_ptr().add(x)), mask_v);
 
       // Right-shift each 8-pixel vector by BITS-8, then narrow to u8x8.
       let r_sh = vqmovn_u16(vshlq_u16(r_v, shr));
@@ -116,13 +117,14 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
 
   unsafe {
     let shr = vdupq_n_s16(-((BITS - 8) as i16));
+    let mask_v = vdupq_n_u16(((1u32 << BITS) - 1) as u16);
     let opaque = vdup_n_u8(0xFF);
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let g_v = vld1q_u16(g.as_ptr().add(x));
-      let b_v = vld1q_u16(b.as_ptr().add(x));
-      let r_v = vld1q_u16(r.as_ptr().add(x));
+      let g_v = vandq_u16(vld1q_u16(g.as_ptr().add(x)), mask_v);
+      let b_v = vandq_u16(vld1q_u16(b.as_ptr().add(x)), mask_v);
+      let r_v = vandq_u16(vld1q_u16(r.as_ptr().add(x)), mask_v);
 
       let r_sh = vqmovn_u16(vshlq_u16(r_v, shr));
       let g_sh = vqmovn_u16(vshlq_u16(g_v, shr));
@@ -182,13 +184,14 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
 
   unsafe {
     let shr = vdupq_n_s16(-((BITS - 8) as i16));
+    let mask_v = vdupq_n_u16(((1u32 << BITS) - 1) as u16);
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let g_v = vld1q_u16(g.as_ptr().add(x));
-      let b_v = vld1q_u16(b.as_ptr().add(x));
-      let r_v = vld1q_u16(r.as_ptr().add(x));
-      let a_v = vld1q_u16(a.as_ptr().add(x));
+      let g_v = vandq_u16(vld1q_u16(g.as_ptr().add(x)), mask_v);
+      let b_v = vandq_u16(vld1q_u16(b.as_ptr().add(x)), mask_v);
+      let r_v = vandq_u16(vld1q_u16(r.as_ptr().add(x)), mask_v);
+      let a_v = vandq_u16(vld1q_u16(a.as_ptr().add(x)), mask_v);
 
       let r_sh = vqmovn_u16(vshlq_u16(r_v, shr));
       let g_sh = vqmovn_u16(vshlq_u16(g_v, shr));
@@ -247,11 +250,12 @@ pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
   debug_assert!(rgb_u16_out.len() >= width * 3, "rgb_u16_out row too short");
 
   unsafe {
+    let mask_v = vdupq_n_u16(((1u32 << BITS) - 1) as u16);
     let mut x = 0usize;
     while x + 8 <= width {
-      let r_v = vld1q_u16(r.as_ptr().add(x));
-      let g_v = vld1q_u16(g.as_ptr().add(x));
-      let b_v = vld1q_u16(b.as_ptr().add(x));
+      let r_v = vandq_u16(vld1q_u16(r.as_ptr().add(x)), mask_v);
+      let g_v = vandq_u16(vld1q_u16(g.as_ptr().add(x)), mask_v);
+      let b_v = vandq_u16(vld1q_u16(b.as_ptr().add(x)), mask_v);
       // vst3q_u16 stores 8×3 = 24 u16 interleaved as R,G,B per pixel.
       let triple = uint16x8x3_t(r_v, g_v, b_v);
       vst3q_u16(rgb_u16_out.as_mut_ptr().add(x * 3), triple);
@@ -298,13 +302,14 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
   );
 
   unsafe {
-    let opaque = vdupq_n_u16(((1u32 << BITS) - 1) as u16);
+    let mask_v = vdupq_n_u16(((1u32 << BITS) - 1) as u16);
+    let opaque = mask_v;
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let r_v = vld1q_u16(r.as_ptr().add(x));
-      let g_v = vld1q_u16(g.as_ptr().add(x));
-      let b_v = vld1q_u16(b.as_ptr().add(x));
+      let r_v = vandq_u16(vld1q_u16(r.as_ptr().add(x)), mask_v);
+      let g_v = vandq_u16(vld1q_u16(g.as_ptr().add(x)), mask_v);
+      let b_v = vandq_u16(vld1q_u16(b.as_ptr().add(x)), mask_v);
       let quad = uint16x8x4_t(r_v, g_v, b_v, opaque);
       vst4q_u16(rgba_u16_out.as_mut_ptr().add(x * 4), quad);
       x += 8;
@@ -352,12 +357,13 @@ pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
   );
 
   unsafe {
+    let mask_v = vdupq_n_u16(((1u32 << BITS) - 1) as u16);
     let mut x = 0usize;
     while x + 8 <= width {
-      let r_v = vld1q_u16(r.as_ptr().add(x));
-      let g_v = vld1q_u16(g.as_ptr().add(x));
-      let b_v = vld1q_u16(b.as_ptr().add(x));
-      let a_v = vld1q_u16(a.as_ptr().add(x));
+      let r_v = vandq_u16(vld1q_u16(r.as_ptr().add(x)), mask_v);
+      let g_v = vandq_u16(vld1q_u16(g.as_ptr().add(x)), mask_v);
+      let b_v = vandq_u16(vld1q_u16(b.as_ptr().add(x)), mask_v);
+      let a_v = vandq_u16(vld1q_u16(a.as_ptr().add(x)), mask_v);
       let quad = uint16x8x4_t(r_v, g_v, b_v, a_v);
       vst4q_u16(rgba_u16_out.as_mut_ptr().add(x * 4), quad);
       x += 8;

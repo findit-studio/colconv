@@ -51,12 +51,13 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
   unsafe {
     let shift = (BITS - 8) as u32;
     let zero = i16x8_splat(0);
+    let mask_v = u16x8_splat(((1u32 << BITS) - 1) as u16);
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let r_v = v128_load(r.as_ptr().add(x).cast());
-      let g_v = v128_load(g.as_ptr().add(x).cast());
-      let b_v = v128_load(b.as_ptr().add(x).cast());
+      let r_v = v128_and(v128_load(r.as_ptr().add(x).cast()), mask_v);
+      let g_v = v128_and(v128_load(g.as_ptr().add(x).cast()), mask_v);
+      let b_v = v128_and(v128_load(b.as_ptr().add(x).cast()), mask_v);
 
       // Shift right by BITS-8, then narrow u16x8 → u8x8 (in low half).
       let r_sh = u16x8_shr(r_v, shift);
@@ -118,13 +119,14 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
   unsafe {
     let shift = (BITS - 8) as u32;
     let zero = i16x8_splat(0);
+    let mask_v = u16x8_splat(((1u32 << BITS) - 1) as u16);
     let opaque_u8 = u8x16_splat(0xFF);
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let r_v = v128_load(r.as_ptr().add(x).cast());
-      let g_v = v128_load(g.as_ptr().add(x).cast());
-      let b_v = v128_load(b.as_ptr().add(x).cast());
+      let r_v = v128_and(v128_load(r.as_ptr().add(x).cast()), mask_v);
+      let g_v = v128_and(v128_load(g.as_ptr().add(x).cast()), mask_v);
+      let b_v = v128_and(v128_load(b.as_ptr().add(x).cast()), mask_v);
 
       let r_sh = u16x8_shr(r_v, shift);
       let g_sh = u16x8_shr(g_v, shift);
@@ -183,13 +185,14 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
   unsafe {
     let shift = (BITS - 8) as u32;
     let zero = i16x8_splat(0);
+    let mask_v = u16x8_splat(((1u32 << BITS) - 1) as u16);
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let r_v = v128_load(r.as_ptr().add(x).cast());
-      let g_v = v128_load(g.as_ptr().add(x).cast());
-      let b_v = v128_load(b.as_ptr().add(x).cast());
-      let a_v = v128_load(a.as_ptr().add(x).cast());
+      let r_v = v128_and(v128_load(r.as_ptr().add(x).cast()), mask_v);
+      let g_v = v128_and(v128_load(g.as_ptr().add(x).cast()), mask_v);
+      let b_v = v128_and(v128_load(b.as_ptr().add(x).cast()), mask_v);
+      let a_v = v128_and(v128_load(a.as_ptr().add(x).cast()), mask_v);
 
       let r_sh = u16x8_shr(r_v, shift);
       let g_sh = u16x8_shr(g_v, shift);
@@ -246,11 +249,12 @@ pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
   debug_assert!(rgb_u16_out.len() >= width * 3, "rgb_u16_out row too short");
 
   unsafe {
+    let mask_v = u16x8_splat(((1u32 << BITS) - 1) as u16);
     let mut x = 0usize;
     while x + 8 <= width {
-      let r_v = v128_load(r.as_ptr().add(x).cast());
-      let g_v = v128_load(g.as_ptr().add(x).cast());
-      let b_v = v128_load(b.as_ptr().add(x).cast());
+      let r_v = v128_and(v128_load(r.as_ptr().add(x).cast()), mask_v);
+      let g_v = v128_and(v128_load(g.as_ptr().add(x).cast()), mask_v);
+      let b_v = v128_and(v128_load(b.as_ptr().add(x).cast()), mask_v);
       write_rgb_u16_8(r_v, g_v, b_v, rgb_u16_out.as_mut_ptr().add(x * 3));
       x += 8;
     }
@@ -295,13 +299,14 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
   );
 
   unsafe {
-    let opaque = u16x8_splat(((1u32 << BITS) - 1) as u16);
+    let mask_v = u16x8_splat(((1u32 << BITS) - 1) as u16);
+    let opaque = mask_v;
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let r_v = v128_load(r.as_ptr().add(x).cast());
-      let g_v = v128_load(g.as_ptr().add(x).cast());
-      let b_v = v128_load(b.as_ptr().add(x).cast());
+      let r_v = v128_and(v128_load(r.as_ptr().add(x).cast()), mask_v);
+      let g_v = v128_and(v128_load(g.as_ptr().add(x).cast()), mask_v);
+      let b_v = v128_and(v128_load(b.as_ptr().add(x).cast()), mask_v);
       write_rgba_u16_8(r_v, g_v, b_v, opaque, rgba_u16_out.as_mut_ptr().add(x * 4));
       x += 8;
     }
@@ -348,12 +353,13 @@ pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
   );
 
   unsafe {
+    let mask_v = u16x8_splat(((1u32 << BITS) - 1) as u16);
     let mut x = 0usize;
     while x + 8 <= width {
-      let r_v = v128_load(r.as_ptr().add(x).cast());
-      let g_v = v128_load(g.as_ptr().add(x).cast());
-      let b_v = v128_load(b.as_ptr().add(x).cast());
-      let a_v = v128_load(a.as_ptr().add(x).cast());
+      let r_v = v128_and(v128_load(r.as_ptr().add(x).cast()), mask_v);
+      let g_v = v128_and(v128_load(g.as_ptr().add(x).cast()), mask_v);
+      let b_v = v128_and(v128_load(b.as_ptr().add(x).cast()), mask_v);
+      let a_v = v128_and(v128_load(a.as_ptr().add(x).cast()), mask_v);
       write_rgba_u16_8(r_v, g_v, b_v, a_v, rgba_u16_out.as_mut_ptr().add(x * 4));
       x += 8;
     }
