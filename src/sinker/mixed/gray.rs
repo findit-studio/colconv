@@ -43,10 +43,20 @@ use crate::{
     gray_n_to_luma_u16_row, gray_n_to_rgb_row, gray_n_to_rgb_u16_row, gray_n_to_rgba_row,
     gray_n_to_rgba_u16_row, gray8_to_hsv_row, gray8_to_rgb_row, gray8_to_rgba_row,
     gray16_to_hsv_row, gray16_to_luma_row, gray16_to_luma_u16_row, gray16_to_rgb_row,
-    gray16_to_rgb_u16_row, gray16_to_rgba_row, gray16_to_rgba_u16_row, rgb_to_hsv_row,
-    y_plane_to_luma_u16_row,
+    gray16_to_rgb_u16_row, gray16_to_rgba_row, gray16_to_rgba_u16_row, grayf32_to_hsv_row,
+    grayf32_to_luma_f32_row, grayf32_to_luma_row, grayf32_to_luma_u16_row, grayf32_to_rgb_f32_row,
+    grayf32_to_rgb_row, grayf32_to_rgb_u16_row, grayf32_to_rgba_row, grayf32_to_rgba_u16_row,
+    rgb_to_hsv_row,
+    scalar::alpha_extract::{copy_alpha_ya_u8, copy_alpha_ya_u16, copy_alpha_ya_u16_to_u8},
+    y_plane_to_luma_u16_row, ya8_to_hsv_row, ya8_to_luma_row, ya8_to_luma_u16_row, ya8_to_rgb_row,
+    ya8_to_rgb_u16_row, ya8_to_rgba_row, ya8_to_rgba_u16_row, ya16_to_hsv_row, ya16_to_luma_row,
+    ya16_to_luma_u16_row, ya16_to_rgb_row, ya16_to_rgb_u16_row, ya16_to_rgba_row,
+    ya16_to_rgba_u16_row,
   },
-  yuv::{Gray8, Gray8Row, Gray8Sink, Gray16, Gray16Row, Gray16Sink},
+  yuv::{
+    Gray8, Gray8Row, Gray8Sink, Gray16, Gray16Row, Gray16Sink, Grayf32, Grayf32Row, Grayf32Sink,
+    Ya8, Ya8Row, Ya8Sink, Ya16, Ya16Row, Ya16Sink,
+  },
 };
 
 // ---- Gray8 impl -------------------------------------------------------------
@@ -798,15 +808,778 @@ impl PixelSink for MixedSinker<'_, Gray16> {
   }
 }
 
+// ---- Grayf32 impl -----------------------------------------------------------
+
+impl<'a> MixedSinker<'a, Grayf32> {
+  /// Attaches an 8-bit RGBA output buffer. α is forced to `0xFF`
+  /// (Grayf32 has no alpha channel).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
+    self.set_rgba(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgba`](Self::with_rgba).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(4)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::RgbaBufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.rgba = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a u16 RGB output buffer.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_rgb_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(3)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::RgbU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.rgb_u16 = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a u16 RGBA output buffer. α = `0xFFFF`.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_rgba_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(4)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::RgbaU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.rgba_u16 = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a u16 luma output buffer (`clamp(Y,0,1) × 65535`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(1)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::LumaU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a packed f32 RGB output buffer. Lossless replicate of Y → R=G=B.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgb_f32(mut self, buf: &'a mut [f32]) -> Result<Self, MixedSinkerError> {
+    self.set_rgb_f32(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgb_f32`](Self::with_rgb_f32).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgb_f32(&mut self, buf: &'a mut [f32]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(3)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::RgbF32BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.rgb_f32 = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches an f32 luma output buffer. Lossless pass-through of Y.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_f32(mut self, buf: &'a mut [f32]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_f32(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_luma_f32`](Self::with_luma_f32).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_f32(&mut self, buf: &'a mut [f32]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(1)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::LumaF32BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.luma_f32 = Some(buf);
+    Ok(self)
+  }
+}
+
+impl Grayf32Sink for MixedSinker<'_, Grayf32> {}
+
+impl PixelSink for MixedSinker<'_, Grayf32> {
+  type Input<'r> = Grayf32Row<'r>;
+  type Error = MixedSinkerError;
+
+  fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
+    check_dimensions_match(self.width, self.height, width, height)
+  }
+
+  fn process(&mut self, row: Grayf32Row<'_>) -> Result<(), Self::Error> {
+    let w = self.width;
+    let h = self.height;
+    let idx = row.row();
+    let use_simd = self.simd;
+
+    if row.y().len() != w {
+      return Err(MixedSinkerError::RowShapeMismatch {
+        which: RowSlice::Y,
+        row: idx,
+        expected: w,
+        actual: row.y().len(),
+      });
+    }
+    if idx >= h {
+      return Err(MixedSinkerError::RowIndexOutOfRange {
+        row: idx,
+        configured_height: h,
+      });
+    }
+
+    let y_plane = row.y();
+    let one_plane_start = idx * w;
+    let one_plane_end = one_plane_start + w;
+
+    // luma f32 pass-through — highest priority (no clamp, no round).
+    if let Some(buf) = self.luma_f32.as_deref_mut() {
+      grayf32_to_luma_f32_row(
+        y_plane,
+        &mut buf[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+    }
+
+    // rgb_f32 — lossless replicate Y → R=G=B.
+    if let Some(buf) = self.rgb_f32.as_deref_mut() {
+      let rgb_f32_start = one_plane_start * 3;
+      let rgb_f32_end = one_plane_end
+        .checked_mul(3)
+        .ok_or(MixedSinkerError::GeometryOverflow {
+          width: w,
+          height: h,
+          channels: 3,
+        })?;
+      grayf32_to_rgb_f32_row(y_plane, &mut buf[rgb_f32_start..rgb_f32_end], w, use_simd);
+    }
+
+    // luma u8.
+    if let Some(buf) = self.luma.as_deref_mut() {
+      grayf32_to_luma_row(
+        y_plane,
+        &mut buf[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+    }
+
+    // luma u16.
+    if let Some(buf) = self.luma_u16.as_deref_mut() {
+      grayf32_to_luma_u16_row(
+        y_plane,
+        &mut buf[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+    }
+
+    // u16 RGB / RGBA path (Strategy A).
+    let want_rgb_u16 = self.rgb_u16.is_some();
+    let want_rgba_u16 = self.rgba_u16.is_some();
+
+    if want_rgba_u16 && !want_rgb_u16 {
+      let rgba_u16_buf = self.rgba_u16.as_deref_mut().unwrap();
+      let rgba_u16_row =
+        rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
+      grayf32_to_rgba_u16_row(y_plane, rgba_u16_row, w, use_simd);
+    } else if want_rgb_u16 {
+      let rgb_u16_buf = self.rgb_u16.as_deref_mut().unwrap();
+      let rgb_plane_start = one_plane_start * 3;
+      let rgb_plane_end =
+        one_plane_end
+          .checked_mul(3)
+          .ok_or(MixedSinkerError::GeometryOverflow {
+            width: w,
+            height: h,
+            channels: 3,
+          })?;
+      let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
+      grayf32_to_rgb_u16_row(y_plane, rgb_u16_row, w, use_simd);
+      if want_rgba_u16 {
+        let rgba_u16_buf = self.rgba_u16.as_deref_mut().unwrap();
+        let rgba_u16_row =
+          rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
+        expand_rgb_u16_to_rgba_u16_row::<16>(rgb_u16_row, rgba_u16_row, w);
+      }
+    }
+
+    // u8 RGB / RGBA / HSV path.
+    let want_rgb = self.rgb.is_some();
+    let want_rgba = self.rgba.is_some();
+    let want_hsv = self.hsv.is_some();
+
+    // Standalone RGBA fast path.
+    if want_rgba && !want_rgb && !want_hsv {
+      let rgba_buf = self.rgba.as_deref_mut().unwrap();
+      let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
+      grayf32_to_rgba_row(y_plane, rgba_row, w, use_simd);
+      return Ok(());
+    }
+
+    // Standalone HSV fast path — Grayf32 always has H=0, S=0, V=clamp(Y)×255.
+    if want_hsv && !want_rgb {
+      let hsv = self.hsv.as_mut().unwrap();
+      grayf32_to_hsv_row(
+        y_plane,
+        &mut hsv.h[one_plane_start..one_plane_end],
+        &mut hsv.s[one_plane_start..one_plane_end],
+        &mut hsv.v[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+      if let Some(buf) = self.rgba.as_deref_mut() {
+        let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
+        grayf32_to_rgba_row(y_plane, rgba_row, w, use_simd);
+      }
+      return Ok(());
+    }
+
+    if !want_rgb && !want_rgba && !want_hsv {
+      return Ok(());
+    }
+
+    let rgb_row = rgb_row_buf_or_scratch(
+      self.rgb.as_deref_mut(),
+      &mut self.rgb_scratch,
+      one_plane_start,
+      one_plane_end,
+      w,
+      h,
+    )?;
+    grayf32_to_rgb_row(y_plane, rgb_row, w, use_simd);
+
+    if let Some(hsv) = self.hsv.as_mut() {
+      rgb_to_hsv_row(
+        rgb_row,
+        &mut hsv.h[one_plane_start..one_plane_end],
+        &mut hsv.s[one_plane_start..one_plane_end],
+        &mut hsv.v[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+    }
+
+    if let Some(buf) = self.rgba.as_deref_mut() {
+      let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
+      expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
+    }
+
+    Ok(())
+  }
+}
+
+// ---- Ya8 impl ---------------------------------------------------------------
+
+impl<'a> MixedSinker<'a, Ya8> {
+  /// Attaches an 8-bit RGBA output buffer. α is passed from the source.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
+    self.set_rgba(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgba`](Self::with_rgba).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(4)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::RgbaBufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.rgba = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a u16 RGB output buffer.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_rgb_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(3)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::RgbU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.rgb_u16 = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a u16 RGBA output buffer. α zero-extended from source.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_rgba_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(4)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::RgbaU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.rgba_u16 = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a u16 luma output buffer (zero-extend Y → u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(1)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::LumaU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
+}
+
+impl Ya8Sink for MixedSinker<'_, Ya8> {}
+
+impl PixelSink for MixedSinker<'_, Ya8> {
+  type Input<'r> = Ya8Row<'r>;
+  type Error = MixedSinkerError;
+
+  fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
+    check_dimensions_match(self.width, self.height, width, height)
+  }
+
+  fn process(&mut self, row: Ya8Row<'_>) -> Result<(), Self::Error> {
+    let w = self.width;
+    let h = self.height;
+    let idx = row.row();
+    let use_simd = self.simd;
+    let packed = row.packed(); // &[u8], length = width * 2
+
+    if packed.len() != w * 2 {
+      return Err(MixedSinkerError::RowShapeMismatch {
+        which: RowSlice::Y,
+        row: idx,
+        expected: w * 2,
+        actual: packed.len(),
+      });
+    }
+    if idx >= h {
+      return Err(MixedSinkerError::RowIndexOutOfRange {
+        row: idx,
+        configured_height: h,
+      });
+    }
+
+    let one_plane_start = idx * w;
+    let one_plane_end = one_plane_start + w;
+
+    // luma u8.
+    if let Some(buf) = self.luma.as_deref_mut() {
+      ya8_to_luma_row(
+        packed,
+        &mut buf[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+    }
+
+    // luma u16.
+    if let Some(buf) = self.luma_u16.as_deref_mut() {
+      ya8_to_luma_u16_row(
+        packed,
+        &mut buf[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+    }
+
+    // u16 RGB / RGBA path. Each path is independent (α is embedded in ya8_to_rgba_u16_row).
+    if let Some(buf) = self.rgb_u16.as_deref_mut() {
+      let rgb_plane_start = one_plane_start * 3;
+      let rgb_plane_end =
+        one_plane_end
+          .checked_mul(3)
+          .ok_or(MixedSinkerError::GeometryOverflow {
+            width: w,
+            height: h,
+            channels: 3,
+          })?;
+      ya8_to_rgb_u16_row(
+        packed,
+        &mut buf[rgb_plane_start..rgb_plane_end],
+        w,
+        use_simd,
+      );
+    }
+    if let Some(buf) = self.rgba_u16.as_deref_mut() {
+      let rgba_u16_row = rgba_u16_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
+      ya8_to_rgba_u16_row(packed, rgba_u16_row, w, use_simd);
+    }
+
+    // u8 RGB / RGBA / HSV path. Strategy A+: rgb first, then copy α into rgba.
+    let want_rgb = self.rgb.is_some();
+    let want_rgba = self.rgba.is_some();
+    let want_hsv = self.hsv.is_some();
+
+    // Standalone RGBA fast path (no RGB or HSV).
+    if want_rgba && !want_rgb && !want_hsv {
+      let rgba_buf = self.rgba.as_deref_mut().unwrap();
+      let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
+      ya8_to_rgba_row(packed, rgba_row, w, use_simd);
+      return Ok(());
+    }
+
+    // Standalone HSV fast path.
+    if want_hsv && !want_rgb && !want_rgba {
+      let hsv = self.hsv.as_mut().unwrap();
+      ya8_to_hsv_row(
+        packed,
+        &mut hsv.h[one_plane_start..one_plane_end],
+        &mut hsv.s[one_plane_start..one_plane_end],
+        &mut hsv.v[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+      return Ok(());
+    }
+
+    if !want_rgb && !want_rgba && !want_hsv {
+      return Ok(());
+    }
+
+    // RGB kernel (used for HSV + Strategy A+ fan-out).
+    let rgb_row = rgb_row_buf_or_scratch(
+      self.rgb.as_deref_mut(),
+      &mut self.rgb_scratch,
+      one_plane_start,
+      one_plane_end,
+      w,
+      h,
+    )?;
+    ya8_to_rgb_row(packed, rgb_row, w, use_simd);
+
+    if let Some(hsv) = self.hsv.as_mut() {
+      rgb_to_hsv_row(
+        rgb_row,
+        &mut hsv.h[one_plane_start..one_plane_end],
+        &mut hsv.s[one_plane_start..one_plane_end],
+        &mut hsv.v[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+    }
+
+    // Strategy A+: expand RGB→RGBA then patch α from source.
+    if let Some(buf) = self.rgba.as_deref_mut() {
+      let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
+      expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
+      // Overwrite the α channel with real source α.
+      copy_alpha_ya_u8(packed, rgba_row, w);
+    }
+
+    Ok(())
+  }
+}
+
+// ---- Ya16 impl --------------------------------------------------------------
+
+impl<'a> MixedSinker<'a, Ya16> {
+  /// Attaches an 8-bit RGBA output buffer. α is `source_A >> 8`.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
+    self.set_rgba(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgba`](Self::with_rgba).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(4)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::RgbaBufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.rgba = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a u16 RGB output buffer.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_rgb_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(3)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::RgbU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.rgb_u16 = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a u16 RGBA output buffer. α from source (native u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_rgba_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(4)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::RgbaU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.rgba_u16 = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a u16 luma output buffer (native pass-through).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(1)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::LumaU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
+}
+
+impl Ya16Sink for MixedSinker<'_, Ya16> {}
+
+impl PixelSink for MixedSinker<'_, Ya16> {
+  type Input<'r> = Ya16Row<'r>;
+  type Error = MixedSinkerError;
+
+  fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
+    check_dimensions_match(self.width, self.height, width, height)
+  }
+
+  fn process(&mut self, row: Ya16Row<'_>) -> Result<(), Self::Error> {
+    let w = self.width;
+    let h = self.height;
+    let idx = row.row();
+    let use_simd = self.simd;
+    let packed = row.packed(); // &[u16], length = width * 2
+
+    if packed.len() != w * 2 {
+      return Err(MixedSinkerError::RowShapeMismatch {
+        which: RowSlice::Y,
+        row: idx,
+        expected: w * 2,
+        actual: packed.len(),
+      });
+    }
+    if idx >= h {
+      return Err(MixedSinkerError::RowIndexOutOfRange {
+        row: idx,
+        configured_height: h,
+      });
+    }
+
+    let one_plane_start = idx * w;
+    let one_plane_end = one_plane_start + w;
+
+    // luma u8 — `Y >> 8`.
+    if let Some(buf) = self.luma.as_deref_mut() {
+      ya16_to_luma_row(
+        packed,
+        &mut buf[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+    }
+
+    // luma u16 — native pass-through.
+    if let Some(buf) = self.luma_u16.as_deref_mut() {
+      ya16_to_luma_u16_row(
+        packed,
+        &mut buf[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+    }
+
+    // u16 RGB / RGBA path. Strategy A + α-patch for RGBA.
+    let want_rgb_u16 = self.rgb_u16.is_some();
+    let want_rgba_u16 = self.rgba_u16.is_some();
+
+    if want_rgba_u16 && !want_rgb_u16 {
+      let rgba_u16_buf = self.rgba_u16.as_deref_mut().unwrap();
+      let rgba_u16_row =
+        rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
+      ya16_to_rgba_u16_row(packed, rgba_u16_row, w, use_simd);
+    } else if want_rgb_u16 {
+      let rgb_u16_buf = self.rgb_u16.as_deref_mut().unwrap();
+      let rgb_plane_start = one_plane_start * 3;
+      let rgb_plane_end =
+        one_plane_end
+          .checked_mul(3)
+          .ok_or(MixedSinkerError::GeometryOverflow {
+            width: w,
+            height: h,
+            channels: 3,
+          })?;
+      let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
+      ya16_to_rgb_u16_row(packed, rgb_u16_row, w, use_simd);
+      if want_rgba_u16 {
+        let rgba_u16_buf = self.rgba_u16.as_deref_mut().unwrap();
+        let rgba_u16_row =
+          rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
+        expand_rgb_u16_to_rgba_u16_row::<16>(rgb_u16_row, rgba_u16_row, w);
+        // Patch α from source (native u16 depth).
+        copy_alpha_ya_u16(packed, rgba_u16_row, w);
+      }
+    }
+
+    // u8 RGB / RGBA / HSV path. Strategy A+: rgb first, then copy α into rgba.
+    let want_rgb = self.rgb.is_some();
+    let want_rgba = self.rgba.is_some();
+    let want_hsv = self.hsv.is_some();
+
+    // Standalone RGBA fast path.
+    if want_rgba && !want_rgb && !want_hsv {
+      let rgba_buf = self.rgba.as_deref_mut().unwrap();
+      let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
+      ya16_to_rgba_row(packed, rgba_row, w, use_simd);
+      return Ok(());
+    }
+
+    // Standalone HSV fast path.
+    if want_hsv && !want_rgb && !want_rgba {
+      let hsv = self.hsv.as_mut().unwrap();
+      ya16_to_hsv_row(
+        packed,
+        &mut hsv.h[one_plane_start..one_plane_end],
+        &mut hsv.s[one_plane_start..one_plane_end],
+        &mut hsv.v[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+      return Ok(());
+    }
+
+    if !want_rgb && !want_rgba && !want_hsv {
+      return Ok(());
+    }
+
+    // RGB kernel.
+    let rgb_row = rgb_row_buf_or_scratch(
+      self.rgb.as_deref_mut(),
+      &mut self.rgb_scratch,
+      one_plane_start,
+      one_plane_end,
+      w,
+      h,
+    )?;
+    ya16_to_rgb_row(packed, rgb_row, w, use_simd);
+
+    if let Some(hsv) = self.hsv.as_mut() {
+      rgb_to_hsv_row(
+        rgb_row,
+        &mut hsv.h[one_plane_start..one_plane_end],
+        &mut hsv.s[one_plane_start..one_plane_end],
+        &mut hsv.v[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+    }
+
+    // Strategy A+: expand RGB→RGBA then patch α from source.
+    if let Some(buf) = self.rgba.as_deref_mut() {
+      let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
+      expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
+      // Overwrite the α channel with real source α (>> 8 for u8 output).
+      copy_alpha_ya_u16_to_u8(packed, rgba_row, w);
+    }
+
+    Ok(())
+  }
+}
+
 // ---- Integration tests -------------------------------------------------------
 
 #[cfg(all(test, feature = "std"))]
 mod tests {
   use crate::{
     ColorMatrix,
-    frame::{Gray8Frame, Gray16Frame, GrayNFrame},
+    frame::{Gray8Frame, Gray16Frame, GrayNFrame, Grayf32Frame, Ya8Frame, Ya16Frame},
     sinker::MixedSinker,
-    yuv::{gray8_to, gray9_to, gray10_to, gray12_to, gray14_to, gray16_to},
+    yuv::{
+      gray8_to, gray9_to, gray10_to, gray12_to, gray14_to, gray16_to, grayf32_to, ya8_to, ya16_to,
+    },
   };
 
   // Gray formats are luma-only; full_range and matrix are unused by the kernels
@@ -1264,5 +2037,301 @@ mod tests {
     assert_eq!(h, [0, 0, 0, 0], "H must be 0");
     assert_eq!(s, [0, 0, 0, 0], "S must be 0");
     assert_eq!(v, [255, 255, 255, 255], "V must be 255 for white");
+  }
+
+  // ---- Grayf32 integration tests ----------------------------------------------
+
+  #[test]
+  fn grayf32_with_luma_f32_passthrough() {
+    // NaN, out-of-range, and normal values all pass through unchanged.
+    let data: std::vec::Vec<f32> = std::vec![0.0, 0.25, 0.5, 0.75, 1.0, 1.5, -0.5, f32::NAN];
+    let frame = Grayf32Frame::new(&data, 8, 1, 8);
+    let mut out = std::vec![0.0f32; 8];
+    let mut sink = MixedSinker::<crate::yuv::Grayf32>::new(8, 1)
+      .with_luma_f32(&mut out)
+      .unwrap();
+    grayf32_to(&frame, FR, M, &mut sink).unwrap();
+    for (i, (&a, &b)) in data.iter().zip(out.iter()).enumerate() {
+      if a.is_nan() {
+        assert!(b.is_nan(), "pixel {i}: expected NaN");
+      } else {
+        assert_eq!(a, b, "pixel {i}");
+      }
+    }
+  }
+
+  #[test]
+  fn grayf32_with_rgb_f32_replicates_losslessly() {
+    let data: std::vec::Vec<f32> = std::vec![0.25, 0.75, 1.5, -0.5];
+    let frame = Grayf32Frame::new(&data, 4, 1, 4);
+    let mut out = std::vec![0.0f32; 4 * 3];
+    let mut sink = MixedSinker::<crate::yuv::Grayf32>::new(4, 1)
+      .with_rgb_f32(&mut out)
+      .unwrap();
+    grayf32_to(&frame, FR, M, &mut sink).unwrap();
+    for (x, &y) in data.iter().enumerate() {
+      assert_eq!(out[x * 3], y, "pixel {x} R");
+      assert_eq!(out[x * 3 + 1], y, "pixel {x} G");
+      assert_eq!(out[x * 3 + 2], y, "pixel {x} B");
+    }
+  }
+
+  #[test]
+  fn grayf32_with_rgb_saturates() {
+    // -0.5 → 0, 0.5 → 128, 1.0 → 255, 1.5 → 255
+    let data: std::vec::Vec<f32> = std::vec![-0.5, 0.0, 0.5, 1.0, 1.5];
+    let frame = Grayf32Frame::new(&data, 5, 1, 5);
+    let mut rgb = std::vec![0u8; 5 * 3];
+    let mut sink = MixedSinker::<crate::yuv::Grayf32>::new(5, 1)
+      .with_rgb(&mut rgb)
+      .unwrap();
+    grayf32_to(&frame, FR, M, &mut sink).unwrap();
+    assert_eq!(&rgb[0..3], &[0, 0, 0]); // -0.5 clamps to 0
+    assert_eq!(&rgb[3..6], &[0, 0, 0]); // 0.0
+    assert_eq!(&rgb[6..9], &[128, 128, 128]); // 0.5 × 255 + 0.5 = 128
+    assert_eq!(&rgb[9..12], &[255, 255, 255]); // 1.0
+    assert_eq!(&rgb[12..15], &[255, 255, 255]); // 1.5 clamps to 255
+  }
+
+  #[test]
+  fn grayf32_with_hsv_h0_s0_v_saturated() {
+    let data: std::vec::Vec<f32> = std::vec![0.0, 0.5, 1.0];
+    let frame = Grayf32Frame::new(&data, 3, 1, 3);
+    let mut h = std::vec![0xFFu8; 3];
+    let mut s = std::vec![0xFFu8; 3];
+    let mut v = std::vec![0u8; 3];
+    let mut sink = MixedSinker::<crate::yuv::Grayf32>::new(3, 1)
+      .with_hsv(&mut h, &mut s, &mut v)
+      .unwrap();
+    grayf32_to(&frame, FR, M, &mut sink).unwrap();
+    assert_eq!(h, [0, 0, 0]);
+    assert_eq!(s, [0, 0, 0]);
+    assert_eq!(v, [0, 128, 255]);
+  }
+
+  #[test]
+  fn grayf32_with_luma_u16_and_rgb_u16() {
+    // 1×1 frame: Y = 0.5 → luma_u16 ≈ 32768, rgb_u16 ≈ [32768, 32768, 32768]
+    let data = std::vec![0.5f32];
+    let frame = Grayf32Frame::new(&data, 1, 1, 1);
+    let mut lu16 = std::vec![0u16; 1];
+    let mut rgb_u16 = std::vec![0u16; 3];
+    let mut sink = MixedSinker::<crate::yuv::Grayf32>::new(1, 1)
+      .with_luma_u16(&mut lu16)
+      .unwrap()
+      .with_rgb_u16(&mut rgb_u16)
+      .unwrap();
+    grayf32_to(&frame, FR, M, &mut sink).unwrap();
+    // (0.5 * 65535 + 0.5) as u16 = 32768
+    assert_eq!(lu16[0], 32768);
+    assert_eq!(rgb_u16, [32768, 32768, 32768]);
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn grayf32_width_128_and_130_smoke() {
+    for &w in &[128usize, 130usize] {
+      let data: std::vec::Vec<f32> = (0..w).map(|i| i as f32 / w as f32).collect();
+      let frame = Grayf32Frame::new(&data, w as u32, 1, w as u32);
+      let mut rgb = std::vec![0u8; w * 3];
+      let mut luma_f32 = std::vec![0.0f32; w];
+      let mut sink = MixedSinker::<crate::yuv::Grayf32>::new(w, 1)
+        .with_rgb(&mut rgb)
+        .unwrap()
+        .with_luma_f32(&mut luma_f32)
+        .unwrap();
+      grayf32_to(&frame, FR, M, &mut sink).unwrap();
+      // Verify first and last pixel.
+      assert_eq!(rgb[0], 0, "w={w} first R");
+      assert_eq!(luma_f32[0], 0.0, "w={w} first luma_f32");
+      assert!(luma_f32[w - 1] > 0.9, "w={w} last luma_f32");
+    }
+  }
+
+  // ---- Ya8 integration tests --------------------------------------------------
+
+  #[test]
+  fn ya8_with_rgb_and_rgba_strategy_a_plus() {
+    // 2-pixel Ya8: [Y=100, A=200], [Y=50, A=150]
+    let packed: std::vec::Vec<u8> = std::vec![100, 200, 50, 150];
+    let frame = Ya8Frame::new(&packed, 2, 1, 4);
+    let mut rgb = std::vec![0u8; 6];
+    let mut rgba = std::vec![0u8; 8];
+    let mut sink = MixedSinker::<crate::yuv::Ya8>::new(2, 1)
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_rgba(&mut rgba)
+      .unwrap();
+    ya8_to(&frame, FR, M, &mut sink).unwrap();
+    // RGB: Y broadcast, α dropped.
+    assert_eq!(&rgb[0..3], &[100, 100, 100]);
+    assert_eq!(&rgb[3..6], &[50, 50, 50]);
+    // RGBA: Y broadcast, α from source.
+    assert_eq!(&rgba[0..4], &[100, 100, 100, 200]);
+    assert_eq!(&rgba[4..8], &[50, 50, 50, 150]);
+  }
+
+  #[test]
+  fn ya8_standalone_rgba_source_alpha() {
+    // Standalone RGBA path (no RGB requested).
+    let packed: std::vec::Vec<u8> = std::vec![77, 11, 88, 22];
+    let frame = Ya8Frame::new(&packed, 2, 1, 4);
+    let mut rgba = std::vec![0u8; 8];
+    let mut sink = MixedSinker::<crate::yuv::Ya8>::new(2, 1)
+      .with_rgba(&mut rgba)
+      .unwrap();
+    ya8_to(&frame, FR, M, &mut sink).unwrap();
+    assert_eq!(&rgba[0..4], &[77, 77, 77, 11]);
+    assert_eq!(&rgba[4..8], &[88, 88, 88, 22]);
+  }
+
+  #[test]
+  fn ya8_with_luma_u16_zero_extends() {
+    let packed: std::vec::Vec<u8> = std::vec![200, 50, 100, 25];
+    let frame = Ya8Frame::new(&packed, 2, 1, 4);
+    let mut lu16 = std::vec![0u16; 2];
+    let mut sink = MixedSinker::<crate::yuv::Ya8>::new(2, 1)
+      .with_luma_u16(&mut lu16)
+      .unwrap();
+    ya8_to(&frame, FR, M, &mut sink).unwrap();
+    assert_eq!(lu16, [200, 100]);
+  }
+
+  #[test]
+  fn ya8_with_hsv_h0_s0_v_y() {
+    let packed: std::vec::Vec<u8> = std::vec![200, 50, 100, 25];
+    let frame = Ya8Frame::new(&packed, 2, 1, 4);
+    let mut h = std::vec![0xFFu8; 2];
+    let mut s = std::vec![0xFFu8; 2];
+    let mut v = std::vec![0u8; 2];
+    let mut sink = MixedSinker::<crate::yuv::Ya8>::new(2, 1)
+      .with_hsv(&mut h, &mut s, &mut v)
+      .unwrap();
+    ya8_to(&frame, FR, M, &mut sink).unwrap();
+    assert_eq!(h, [0, 0]);
+    assert_eq!(s, [0, 0]);
+    assert_eq!(v, [200, 100]);
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn ya8_width_128_and_130_smoke() {
+    for &w in &[128usize, 130usize] {
+      let packed: std::vec::Vec<u8> = (0..w).flat_map(|i| [i as u8, (255 - i as u8)]).collect();
+      let frame = Ya8Frame::new(&packed, w as u32, 1, (w * 2) as u32);
+      let mut rgb = std::vec![0u8; w * 3];
+      let mut rgba = std::vec![0u8; w * 4];
+      let mut sink = MixedSinker::<crate::yuv::Ya8>::new(w, 1)
+        .with_rgb(&mut rgb)
+        .unwrap()
+        .with_rgba(&mut rgba)
+        .unwrap();
+      ya8_to(&frame, FR, M, &mut sink).unwrap();
+      // Spot-check pixel 0: Y=0, A=255
+      assert_eq!(&rgb[0..3], &[0, 0, 0], "w={w}");
+      assert_eq!(&rgba[0..4], &[0, 0, 0, 255], "w={w}");
+    }
+  }
+
+  // ---- Ya16 integration tests -------------------------------------------------
+
+  #[test]
+  fn ya16_with_rgba_u16_source_alpha() {
+    // 1-pixel: Y=0x8000, A=0x4000
+    let packed: std::vec::Vec<u16> = std::vec![0x8000, 0x4000];
+    let frame = Ya16Frame::new(&packed, 1, 1, 2);
+    let mut rgba_u16 = std::vec![0u16; 4];
+    let mut luma_u16 = std::vec![0u16; 1];
+    let mut sink = MixedSinker::<crate::yuv::Ya16>::new(1, 1)
+      .with_rgba_u16(&mut rgba_u16)
+      .unwrap()
+      .with_luma_u16(&mut luma_u16)
+      .unwrap();
+    ya16_to(&frame, FR, M, &mut sink).unwrap();
+    assert_eq!(&rgba_u16, &[0x8000, 0x8000, 0x8000, 0x4000]);
+    assert_eq!(luma_u16[0], 0x8000);
+  }
+
+  #[test]
+  fn ya16_with_rgba_u8_source_alpha_shifted() {
+    // 2-pixel: [Y=0x8000, A=0x4000], [Y=0xFFFF, A=0x8000]
+    let packed: std::vec::Vec<u16> = std::vec![0x8000, 0x4000, 0xFFFF, 0x8000];
+    let frame = Ya16Frame::new(&packed, 2, 1, 4);
+    let mut rgba = std::vec![0u8; 8];
+    let mut sink = MixedSinker::<crate::yuv::Ya16>::new(2, 1)
+      .with_rgba(&mut rgba)
+      .unwrap();
+    ya16_to(&frame, FR, M, &mut sink).unwrap();
+    // Y=0x8000>>8=0x80=128, A=0x4000>>8=0x40=64
+    assert_eq!(&rgba[0..4], &[0x80, 0x80, 0x80, 0x40]);
+    // Y=0xFFFF>>8=0xFF=255, A=0x8000>>8=0x80=128
+    assert_eq!(&rgba[4..8], &[0xFF, 0xFF, 0xFF, 0x80]);
+  }
+
+  #[test]
+  fn ya16_with_rgb_and_rgba_strategy_a_plus() {
+    let packed: std::vec::Vec<u16> = std::vec![0x8000, 0x4000, 0x2000, 0xC000];
+    let frame = Ya16Frame::new(&packed, 2, 1, 4);
+    let mut rgb = std::vec![0u8; 6];
+    let mut rgba = std::vec![0u8; 8];
+    let mut sink = MixedSinker::<crate::yuv::Ya16>::new(2, 1)
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_rgba(&mut rgba)
+      .unwrap();
+    ya16_to(&frame, FR, M, &mut sink).unwrap();
+    // Y=0x8000>>8=0x80, A dropped for rgb.
+    assert_eq!(&rgb[0..3], &[0x80, 0x80, 0x80]);
+    // RGBA: Y broadcast, A=0x4000>>8=0x40
+    assert_eq!(&rgba[0..4], &[0x80, 0x80, 0x80, 0x40]);
+    // Pixel 1: Y=0x2000>>8=0x20, A=0xC000>>8=0xC0
+    assert_eq!(&rgb[3..6], &[0x20, 0x20, 0x20]);
+    assert_eq!(&rgba[4..8], &[0x20, 0x20, 0x20, 0xC0]);
+  }
+
+  #[test]
+  fn ya16_with_hsv_h0_s0_v_shifted() {
+    let packed: std::vec::Vec<u16> = std::vec![0x8000, 0x4000, 0xFFFF, 0x0000];
+    let frame = Ya16Frame::new(&packed, 2, 1, 4);
+    let mut h = std::vec![0xFFu8; 2];
+    let mut s = std::vec![0xFFu8; 2];
+    let mut v = std::vec![0u8; 2];
+    let mut sink = MixedSinker::<crate::yuv::Ya16>::new(2, 1)
+      .with_hsv(&mut h, &mut s, &mut v)
+      .unwrap();
+    ya16_to(&frame, FR, M, &mut sink).unwrap();
+    assert_eq!(h, [0, 0]);
+    assert_eq!(s, [0, 0]);
+    assert_eq!(v, [0x80, 0xFF]);
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn ya16_width_128_and_130_smoke() {
+    for &w in &[128usize, 130usize] {
+      let packed: std::vec::Vec<u16> = (0..w)
+        .flat_map(|i| [(i as u16) << 8, (255u16 - i as u16) << 8])
+        .collect();
+      let frame = Ya16Frame::new(&packed, w as u32, 1, (w * 2) as u32);
+      let mut rgba = std::vec![0u8; w * 4];
+      let mut luma_u16 = std::vec![0u16; w];
+      let mut sink = MixedSinker::<crate::yuv::Ya16>::new(w, 1)
+        .with_rgba(&mut rgba)
+        .unwrap()
+        .with_luma_u16(&mut luma_u16)
+        .unwrap();
+      ya16_to(&frame, FR, M, &mut sink).unwrap();
+      // Pixel 0: Y=0, A=255<<8=0xFF00 → a8=0xFF
+      assert_eq!(&rgba[0..4], &[0, 0, 0, 0xFF], "w={w} px0");
+    }
   }
 }

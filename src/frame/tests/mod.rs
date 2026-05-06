@@ -1,6 +1,7 @@
 use super::*;
 
 mod bayer;
+mod grayf32;
 mod packed_rgb_10bit;
 mod packed_rgb_8bit;
 mod packed_rgb_f16;
@@ -16,6 +17,8 @@ mod subsampled_4_2_2_high_bit;
 mod subsampled_4_4_4_high_bit;
 mod v210;
 mod y2xx;
+mod ya16;
+mod ya8;
 
 // ---- 32-bit overflow regressions --------------------------------------
 //

@@ -134,9 +134,8 @@ impl<'a> MixedSinker<'a, Rgbf32> {
     Ok(self)
   }
 
-  /// Attaches an `f32` RGB output buffer (`width × height × 3`
-  /// elements). The source is copied **losslessly** — HDR values > 1.0
-  /// and negative values are preserved bit-exact.
+  /// Attaches a packed f32 RGB output buffer. Lossless pass-through —
+  /// HDR values > 1.0 and negative values are preserved bit-exact.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_f32(mut self, buf: &'a mut [f32]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_f32(buf)?;

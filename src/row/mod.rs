@@ -83,6 +83,13 @@ pub use dispatch::{
 // Gray dispatchers are pub(crate) — sinker code uses them via crate::row::gray*_row.
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub(crate) use dispatch::gray::*;
+// Grayf32 / Ya8 / Ya16 dispatchers — pub(crate) for sinker use.
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) use dispatch::grayf32::*;
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) use dispatch::ya8::*;
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) use dispatch::ya16::*;
 
 // `yuv_444p_n_to_rgb_u16_row` is consumed by the 32-bit overflow test
 // `yuv_444p_n_u16_dispatcher_rejects_width_times_3_overflow` below —
@@ -144,6 +151,19 @@ pub(crate) fn rgba_row_elems(width: usize) -> usize {
   match width.checked_mul(4) {
     Some(n) => n,
     None => panic!("width ({width}) × 4 overflows usize"),
+  }
+}
+
+/// Element count of one packed YA (luma + alpha) row (`width × 2`)
+/// with overflow checking. Same purpose as [`rgb_row_bytes`] for the
+/// 2-element `[Y, A, ...]` interleaved layout used by Ya8 (`&[u8]`)
+/// and Ya16 (`&[u16]`) packed inputs — both index `width × 2`
+/// elements regardless of element width, so this helper covers both.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn ya_row_elems(width: usize) -> usize {
+  match width.checked_mul(2) {
+    Some(n) => n,
+    None => panic!("width ({width}) × 2 overflows usize"),
   }
 }
 
