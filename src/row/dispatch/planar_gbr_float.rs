@@ -75,6 +75,13 @@ pub(crate) fn gbrpf32_to_rgb_row(
           return;
         }
       },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available.
+          unsafe { arch::x86_sse41::gbrpf32_to_rgb_row(g, b, r, out, width); }
+          return;
+        }
+      },
       _ => {}
     }
   }
@@ -104,6 +111,13 @@ pub(crate) fn gbrpf32_to_rgba_row(
         if neon_available() {
           // SAFETY: NEON verified available.
           unsafe { arch::neon::gbrpf32_to_rgba_row(g, b, r, out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available.
+          unsafe { arch::x86_sse41::gbrpf32_to_rgba_row(g, b, r, out, width); }
           return;
         }
       },
@@ -139,6 +153,13 @@ pub(crate) fn gbrpf32_to_rgb_u16_row(
           return;
         }
       },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available.
+          unsafe { arch::x86_sse41::gbrpf32_to_rgb_u16_row(g, b, r, out, width); }
+          return;
+        }
+      },
       _ => {}
     }
   }
@@ -168,6 +189,13 @@ pub(crate) fn gbrpf32_to_rgba_u16_row(
         if neon_available() {
           // SAFETY: NEON verified available.
           unsafe { arch::neon::gbrpf32_to_rgba_u16_row(g, b, r, out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available.
+          unsafe { arch::x86_sse41::gbrpf32_to_rgba_u16_row(g, b, r, out, width); }
           return;
         }
       },
@@ -203,6 +231,7 @@ pub(crate) fn gbrpf32_to_rgb_f32_row(
           return;
         }
       },
+      // SSE4.1 delegates to scalar for lossless f32 interleave (no vst3 equivalent).
       _ => {}
     }
   }
@@ -235,6 +264,7 @@ pub(crate) fn gbrpf32_to_rgba_f32_row(
           return;
         }
       },
+      // SSE4.1 delegates to scalar for lossless f32 interleave (no vst4 equivalent).
       _ => {}
     }
   }
@@ -266,6 +296,18 @@ pub(crate) fn gbrpf32_to_rgb_f16_row(
           if std::arch::is_aarch64_feature_detected!("fp16") {
             // SAFETY: NEON + fp16 verified available.
             unsafe { arch::neon::gbrpf32_to_rgb_f16_row_fp16(g, b, r, out, width); }
+          } else {
+            scalar::gbrpf32_to_rgb_f16_row(g, b, r, out, width);
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // F16C runtime detection for narrow.
+          if std::arch::is_x86_feature_detected!("f16c") {
+            // SAFETY: SSE4.1 + F16C verified available.
+            unsafe { arch::x86_sse41::gbrpf32_to_rgb_f16_row_f16c(g, b, r, out, width); }
           } else {
             scalar::gbrpf32_to_rgb_f16_row(g, b, r, out, width);
           }
@@ -309,6 +351,17 @@ pub(crate) fn gbrpf32_to_rgba_f16_row(
           return;
         }
       },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          if std::arch::is_x86_feature_detected!("f16c") {
+            // SAFETY: SSE4.1 + F16C verified available.
+            unsafe { arch::x86_sse41::gbrpf32_to_rgba_f16_row_f16c(g, b, r, out, width); }
+          } else {
+            scalar::gbrpf32_to_rgba_f16_row(g, b, r, out, width);
+          }
+          return;
+        }
+      },
       _ => {}
     }
   }
@@ -340,6 +393,13 @@ pub(crate) fn gbrpf32_to_luma_row(
         if neon_available() {
           // SAFETY: NEON verified available.
           unsafe { arch::neon::gbrpf32_to_luma_row(g, b, r, out, width, matrix, full_range); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available.
+          unsafe { arch::x86_sse41::gbrpf32_to_luma_row(g, b, r, out, width, matrix, full_range); }
           return;
         }
       },
@@ -375,6 +435,15 @@ pub(crate) fn gbrpf32_to_luma_u16_row(
           // SAFETY: NEON verified available.
           unsafe {
             arch::neon::gbrpf32_to_luma_u16_row(g, b, r, out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available.
+          unsafe {
+            arch::x86_sse41::gbrpf32_to_luma_u16_row(g, b, r, out, width, matrix, full_range);
           }
           return;
         }
@@ -417,6 +486,15 @@ pub(crate) fn gbrpf32_to_hsv_row(
           return;
         }
       },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available.
+          unsafe {
+            arch::x86_sse41::gbrpf32_to_hsv_row(g, b, r, h_out, s_out, v_out, width);
+          }
+          return;
+        }
+      },
       _ => {}
     }
   }
@@ -448,6 +526,13 @@ pub(crate) fn gbrapf32_to_rgba_row(
         if neon_available() {
           // SAFETY: NEON verified available.
           unsafe { arch::neon::gbrapf32_to_rgba_row(g, b, r, a, out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available.
+          unsafe { arch::x86_sse41::gbrapf32_to_rgba_row(g, b, r, a, out, width); }
           return;
         }
       },
@@ -485,6 +570,13 @@ pub(crate) fn gbrapf32_to_rgba_u16_row(
           return;
         }
       },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available.
+          unsafe { arch::x86_sse41::gbrapf32_to_rgba_u16_row(g, b, r, a, out, width); }
+          return;
+        }
+      },
       _ => {}
     }
   }
@@ -519,6 +611,7 @@ pub(crate) fn gbrapf32_to_rgba_f32_row(
           return;
         }
       },
+      // SSE4.1 delegates to scalar for lossless f32 4-channel interleave.
       _ => {}
     }
   }
@@ -558,6 +651,17 @@ pub(crate) fn gbrapf32_to_rgba_f16_row(
           return;
         }
       },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          if std::arch::is_x86_feature_detected!("f16c") {
+            // SAFETY: SSE4.1 + F16C verified available.
+            unsafe { arch::x86_sse41::gbrapf32_to_rgba_f16_row_f16c(g, b, r, a, out, width); }
+          } else {
+            scalar::gbrapf32_to_rgba_f16_row(g, b, r, a, out, width);
+          }
+          return;
+        }
+      },
       _ => {}
     }
   }
@@ -590,6 +694,13 @@ pub(crate) fn gbrpf16_to_rgb_f16_row(
           return;
         }
       },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available (no F16C needed — lossless u16 reinterpret).
+          unsafe { arch::x86_sse41::gbrpf16_to_rgb_f16_row(g, b, r, out, width); }
+          return;
+        }
+      },
       _ => {}
     }
   }
@@ -619,6 +730,13 @@ pub(crate) fn gbrpf16_to_rgba_f16_row(
         if neon_available() {
           // SAFETY: NEON verified available (no fp16 needed — lossless u16 reinterpret).
           unsafe { arch::neon::gbrpf16_to_rgba_f16_row(g, b, r, out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available (no F16C needed — lossless u16 reinterpret).
+          unsafe { arch::x86_sse41::gbrpf16_to_rgba_f16_row(g, b, r, out, width); }
           return;
         }
       },
@@ -656,16 +774,23 @@ pub(crate) fn gbrapf16_to_rgba_f16_row(
           return;
         }
       },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available (no F16C needed — lossless u16 reinterpret).
+          unsafe { arch::x86_sse41::gbrapf16_to_rgba_f16_row(g, b, r, a, out, width); }
+          return;
+        }
+      },
       _ => {}
     }
   }
   scalar_f16::gbrapf16_to_rgba_f16_row(g, b, r, a, out, width);
 }
 
-// ---- Gbrpf16 → u8 RGB (fp16 NEON widen or scalar widen) ---------------------
+// ---- Gbrpf16 → u8 RGB (fp16 NEON widen / F16C SSE4.1 widen / scalar) --------
 
-/// Dispatch `gbrpf16_to_rgb_row`: NEON fp16 widening when available, else
-/// scalar widen f16 → f32 then call the f32 scalar kernel.
+/// Dispatch `gbrpf16_to_rgb_row`: NEON fp16 or SSE4.1+F16C widening when
+/// available, else scalar widen f16 → f32 then call the f32 scalar kernel.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn gbrpf16_to_rgb_row(
   g: &[half::f16],
@@ -711,6 +836,41 @@ pub(crate) fn gbrpf16_to_rgb_row(
           return;
         }
       },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          if std::arch::is_x86_feature_detected!("f16c") {
+            // SAFETY: SSE4.1 + F16C verified available.
+            unsafe { arch::x86_sse41::gbrpf16_to_rgb_row_f16c(g, b, r, out, width); }
+          } else {
+            // SSE4.1 available but no F16C — widen scalar, then SSE4.1 f32→u8.
+            const CHUNK: usize = 64;
+            let mut gf = [0.0f32; CHUNK];
+            let mut bf = [0.0f32; CHUNK];
+            let mut rf = [0.0f32; CHUNK];
+            let mut offset = 0;
+            while offset < width {
+              let n = (width - offset).min(CHUNK);
+              for i in 0..n {
+                gf[i] = g[offset + i].to_f32();
+                bf[i] = b[offset + i].to_f32();
+                rf[i] = r[offset + i].to_f32();
+              }
+              // SAFETY: SSE4.1 verified available.
+              unsafe {
+                arch::x86_sse41::gbrpf32_to_rgb_row(
+                  &gf[..n],
+                  &bf[..n],
+                  &rf[..n],
+                  &mut out[offset * 3..],
+                  n,
+                );
+              }
+              offset += n;
+            }
+          }
+          return;
+        }
+      },
       _ => {}
     }
   }
@@ -732,10 +892,10 @@ pub(crate) fn gbrpf16_to_rgb_row(
   }
 }
 
-// ---- Gbrpf16 → u8 RGBA (fp16 NEON widen or scalar widen) --------------------
+// ---- Gbrpf16 → u8 RGBA (fp16 NEON widen / F16C SSE4.1 widen / scalar) -------
 
-/// Dispatch `gbrpf16_to_rgba_row`: NEON fp16 widening when available, else
-/// scalar widen f16 → f32 then call the f32 scalar kernel.
+/// Dispatch `gbrpf16_to_rgba_row`: NEON fp16 or SSE4.1+F16C widening when
+/// available, else scalar widen f16 → f32 then call the f32 scalar kernel.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn gbrpf16_to_rgba_row(
   g: &[half::f16],
@@ -774,6 +934,41 @@ pub(crate) fn gbrpf16_to_rgba_row(
               // SAFETY: NEON verified available.
               unsafe {
                 arch::neon::gbrpf32_to_rgba_row(
+                  &gf[..n],
+                  &bf[..n],
+                  &rf[..n],
+                  &mut out[offset * 4..],
+                  n,
+                );
+              }
+              offset += n;
+            }
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          if std::arch::is_x86_feature_detected!("f16c") {
+            // SAFETY: SSE4.1 + F16C verified available.
+            unsafe { arch::x86_sse41::gbrpf16_to_rgba_row_f16c(g, b, r, out, width); }
+          } else {
+            // SSE4.1 available but no F16C — widen scalar, then SSE4.1 f32→u8.
+            const CHUNK: usize = 64;
+            let mut gf = [0.0f32; CHUNK];
+            let mut bf = [0.0f32; CHUNK];
+            let mut rf = [0.0f32; CHUNK];
+            let mut offset = 0;
+            while offset < width {
+              let n = (width - offset).min(CHUNK);
+              for i in 0..n {
+                gf[i] = g[offset + i].to_f32();
+                bf[i] = b[offset + i].to_f32();
+                rf[i] = r[offset + i].to_f32();
+              }
+              // SAFETY: SSE4.1 verified available.
+              unsafe {
+                arch::x86_sse41::gbrpf32_to_rgba_row(
                   &gf[..n],
                   &bf[..n],
                   &rf[..n],
