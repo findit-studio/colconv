@@ -34,13 +34,19 @@ impl PixelSink for MixedSinker<'_, Rgb48> {
 
   fn process(&mut self, row: Rgb48Row<'_>) -> Result<(), Self::Error> {
     let w = self.width;
+    let h = self.height;
     let idx = row.row();
 
-    if row.rgb48().len() != w * 3 {
+    let packed_expected = w.checked_mul(3).ok_or(MixedSinkerError::GeometryOverflow {
+      width: w,
+      height: h,
+      channels: 3,
+    })?;
+    if row.rgb48().len() != packed_expected {
       return Err(MixedSinkerError::RowShapeMismatch {
         which: RowSlice::Rgb48Packed,
         row: idx,
-        expected: w * 3,
+        expected: packed_expected,
         actual: row.rgb48().len(),
       });
     }
@@ -69,13 +75,19 @@ impl PixelSink for MixedSinker<'_, Bgr48> {
 
   fn process(&mut self, row: Bgr48Row<'_>) -> Result<(), Self::Error> {
     let w = self.width;
+    let h = self.height;
     let idx = row.row();
 
-    if row.bgr48().len() != w * 3 {
+    let packed_expected = w.checked_mul(3).ok_or(MixedSinkerError::GeometryOverflow {
+      width: w,
+      height: h,
+      channels: 3,
+    })?;
+    if row.bgr48().len() != packed_expected {
       return Err(MixedSinkerError::RowShapeMismatch {
         which: RowSlice::Bgr48Packed,
         row: idx,
-        expected: w * 3,
+        expected: packed_expected,
         actual: row.bgr48().len(),
       });
     }
@@ -104,13 +116,19 @@ impl PixelSink for MixedSinker<'_, Rgba64> {
 
   fn process(&mut self, row: Rgba64Row<'_>) -> Result<(), Self::Error> {
     let w = self.width;
+    let h = self.height;
     let idx = row.row();
 
-    if row.rgba64().len() != w * 4 {
+    let packed_expected = w.checked_mul(4).ok_or(MixedSinkerError::GeometryOverflow {
+      width: w,
+      height: h,
+      channels: 4,
+    })?;
+    if row.rgba64().len() != packed_expected {
       return Err(MixedSinkerError::RowShapeMismatch {
         which: RowSlice::Rgba64Packed,
         row: idx,
-        expected: w * 4,
+        expected: packed_expected,
         actual: row.rgba64().len(),
       });
     }
@@ -139,13 +157,19 @@ impl PixelSink for MixedSinker<'_, Bgra64> {
 
   fn process(&mut self, row: Bgra64Row<'_>) -> Result<(), Self::Error> {
     let w = self.width;
+    let h = self.height;
     let idx = row.row();
 
-    if row.bgra64().len() != w * 4 {
+    let packed_expected = w.checked_mul(4).ok_or(MixedSinkerError::GeometryOverflow {
+      width: w,
+      height: h,
+      channels: 4,
+    })?;
+    if row.bgra64().len() != packed_expected {
       return Err(MixedSinkerError::RowShapeMismatch {
         which: RowSlice::Bgra64Packed,
         row: idx,
-        expected: w * 4,
+        expected: packed_expected,
         actual: row.bgra64().len(),
       });
     }

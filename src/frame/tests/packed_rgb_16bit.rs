@@ -99,6 +99,80 @@ fn rgba64_zero_dimension() {
   assert!(Rgba64Frame::try_new(&buf, 2, 0, 8).is_err());
 }
 
+// ---- Rgb48Frame overflow tests -----------------------------------------------
+
+#[test]
+fn rgb48_try_new_rejects_width_overflow() {
+  let buf = std::vec![0u16; 0];
+  let too_big = (u32::MAX / 3) + 1;
+  assert!(matches!(
+    Rgb48Frame::try_new(&buf, too_big, 1, u32::MAX),
+    Err(Rgb48FrameError::WidthOverflow { width }) if width == too_big
+  ));
+}
+
+#[cfg(target_pointer_width = "32")]
+#[test]
+fn rgb48_try_new_rejects_geometry_overflow() {
+  // Only meaningful on 32-bit targets (wasm32, i686) where
+  // `stride * height` as `usize` can overflow. Pick a width small
+  // enough that `3 * width <= stride` so we pass the StrideTooSmall
+  // check and reach the geometry-overflow check.
+  let buf: [u16; 0] = [];
+  let width: u32 = 0x5555; // 3 * width = 0xFFFF, ≤ stride
+  let stride: u32 = 0x1_0000;
+  let height: u32 = 0x1_0000; // stride * height = 2^32 → overflows usize on 32-bit
+  let res = Rgb48Frame::try_new(&buf, width, height, stride);
+  assert!(
+    matches!(
+      res,
+      Err(Rgb48FrameError::GeometryOverflow {
+        stride: 0x1_0000,
+        rows: 0x1_0000,
+      })
+    ),
+    "expected GeometryOverflow, got {:?}",
+    res
+  );
+}
+
+// ---- Rgba64Frame overflow tests ----------------------------------------------
+
+#[test]
+fn rgba64_try_new_rejects_width_overflow() {
+  let buf = std::vec![0u16; 0];
+  let too_big = (u32::MAX / 4) + 1;
+  assert!(matches!(
+    Rgba64Frame::try_new(&buf, too_big, 1, u32::MAX),
+    Err(Rgba64FrameError::WidthOverflow { width }) if width == too_big
+  ));
+}
+
+#[cfg(target_pointer_width = "32")]
+#[test]
+fn rgba64_try_new_rejects_geometry_overflow() {
+  // Only meaningful on 32-bit targets (wasm32, i686) where
+  // `stride * height` as `usize` can overflow. Pick a width small
+  // enough that `4 * width <= stride` so we pass the StrideTooSmall
+  // check and reach the geometry-overflow check.
+  let buf: [u16; 0] = [];
+  let width: u32 = 0x3FFF; // 4 * width = 0xFFFC, ≤ stride
+  let stride: u32 = 0x1_0000;
+  let height: u32 = 0x1_0000; // stride * height = 2^32 → overflows usize on 32-bit
+  let res = Rgba64Frame::try_new(&buf, width, height, stride);
+  assert!(
+    matches!(
+      res,
+      Err(Rgba64FrameError::GeometryOverflow {
+        stride: 0x1_0000,
+        rows: 0x1_0000,
+      })
+    ),
+    "expected GeometryOverflow, got {:?}",
+    res
+  );
+}
+
 // ---- Bgra64Frame tests -------------------------------------------------------
 
 #[test]
