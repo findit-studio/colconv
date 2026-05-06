@@ -124,6 +124,9 @@ fn pseudo_random_rgbf16(width: usize) -> std::vec::Vec<half::f16> {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn neon_rgbf16_to_rgb_matches_scalar() {
+  if !std::arch::is_aarch64_feature_detected!("fp16") {
+    return;
+  }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
     let input = pseudo_random_rgbf16(w);
     let mut out_scalar = std::vec![0u8; w * 3];
@@ -142,6 +145,9 @@ fn neon_rgbf16_to_rgb_matches_scalar() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn neon_rgbf16_to_rgba_matches_scalar() {
+  if !std::arch::is_aarch64_feature_detected!("fp16") {
+    return;
+  }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
     let input = pseudo_random_rgbf16(w);
     let mut out_scalar = std::vec![0u8; w * 4];
@@ -160,6 +166,9 @@ fn neon_rgbf16_to_rgba_matches_scalar() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn neon_rgbf16_to_rgb_u16_matches_scalar() {
+  if !std::arch::is_aarch64_feature_detected!("fp16") {
+    return;
+  }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
     let input = pseudo_random_rgbf16(w);
     let mut out_scalar = std::vec![0u16; w * 3];
@@ -178,6 +187,9 @@ fn neon_rgbf16_to_rgb_u16_matches_scalar() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn neon_rgbf16_to_rgba_u16_matches_scalar() {
+  if !std::arch::is_aarch64_feature_detected!("fp16") {
+    return;
+  }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
     let input = pseudo_random_rgbf16(w);
     let mut out_scalar = std::vec![0u16; w * 4];
@@ -196,6 +208,9 @@ fn neon_rgbf16_to_rgba_u16_matches_scalar() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn neon_rgbf16_to_rgb_f32_matches_scalar() {
+  if !std::arch::is_aarch64_feature_detected!("fp16") {
+    return;
+  }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
     let input = pseudo_random_rgbf16(w);
     let mut out_scalar = std::vec![0.0f32; w * 3];
