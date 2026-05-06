@@ -5,9 +5,11 @@
 //! handled as follows:
 //!
 //! - **Integer-output paths** (`*_u8`, `*_u16`): clamped via
-//!   `.clamp(0.0, 1.0)` before scaling. NaN clamps to 1.0 via IEEE
-//!   `f32::min` fold.
-//! - **Lossless float-output paths** (`*_f32`, f16 narrow paths): HDR, NaN,
+//!   `.clamp(0.0, 1.0)` before scaling. NaN is not clamped to a valid value —
+//!   `f32::clamp(NaN, 0.0, 1.0)` returns NaN (Rust 1.50+), and the subsequent
+//!   saturating `as u8` / `as u16` cast gives 0. Callers must not rely on a
+//!   specific NaN result.
+//! - **Lossless float-output paths** (`*_f32`): HDR, NaN,
 //!   and Inf are preserved bit-exact (`gbrpf32_to_rgb_f32_row`,
 //!   `gbrpf32_to_rgba_f32_row`).
 //! - **f16-output paths** (`*_f16`): HDR values exceeding the f16 maximum
@@ -533,10 +535,11 @@ mod tests {
 
   #[test]
   fn gbrpf32_to_rgb_clamps_and_scales() {
-    // Values: 0.0, 0.5, 1.0, 1.5, -0.1 → 0, 128, 255, 255, 0
+    // Values: 0.0, 0.5, 1.0, 1.5, -0.1, NaN → 0, 128, 255, 255, 0, 0
+    // NaN passes through f32::clamp unchanged (Rust 1.50+); `NaN as u8` saturates to 0.
     // All three channels use the same value for simplicity.
-    let vals = [0.0f32, 0.5, 1.0, 1.5, -0.1];
-    let expected = [0u8, 128, 255, 255, 0];
+    let vals = [0.0f32, 0.5, 1.0, 1.5, -0.1, f32::NAN];
+    let expected = [0u8, 128, 255, 255, 0, 0];
     for (v, e) in vals.iter().zip(expected.iter()) {
       let g = [*v; 1];
       let b = [*v; 1];
@@ -593,9 +596,10 @@ mod tests {
 
   #[test]
   fn gbrpf32_to_rgb_u16_clamps_and_scales() {
-    let vals = [0.0f32, 0.5, 1.0, 1.5, -0.1];
-    // 0.5 → (0.5 * 65535 + 0.5) as u16 = 32768
-    let expected = [0u16, 32768, 65535, 65535, 0];
+    // NaN passes through f32::clamp unchanged (Rust 1.50+); `NaN as u16` saturates to 0.
+    let vals = [0.0f32, 0.5, 1.0, 1.5, -0.1, f32::NAN];
+    // 0.5 → (0.5 * 65535 + 0.5) as u16 = 32768; NaN → 0
+    let expected = [0u16, 32768, 65535, 65535, 0, 0];
     for (v, e) in vals.iter().zip(expected.iter()) {
       let g = [*v; 1];
       let b = [*v; 1];

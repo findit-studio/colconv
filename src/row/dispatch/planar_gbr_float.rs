@@ -438,7 +438,7 @@ pub(crate) fn gbrpf16_to_rgb_row(
   r: &[half::f16],
   out: &mut [u8],
   width: usize,
-  use_simd: bool,
+  _use_simd: bool,
 ) {
   let out_min = rgb_row_bytes(width);
   assert!(g.len() >= width, "g row too short");
@@ -459,7 +459,6 @@ pub(crate) fn gbrpf16_to_rgb_row(
     }
     scalar::gbrpf32_to_rgb_row(&gf[..n], &bf[..n], &rf[..n], &mut out[offset * 3..], n);
     offset += n;
-    let _ = use_simd;
   }
 }
 
@@ -474,7 +473,7 @@ pub(crate) fn gbrpf16_to_rgba_row(
   r: &[half::f16],
   out: &mut [u8],
   width: usize,
-  use_simd: bool,
+  _use_simd: bool,
 ) {
   let out_min = rgba_row_bytes(width);
   assert!(g.len() >= width, "g row too short");
@@ -495,7 +494,6 @@ pub(crate) fn gbrpf16_to_rgba_row(
     }
     scalar::gbrpf32_to_rgba_row(&gf[..n], &bf[..n], &rf[..n], &mut out[offset * 4..], n);
     offset += n;
-    let _ = use_simd;
   }
 }
 
