@@ -604,13 +604,12 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
       let clamped = f32x4_min(f32x4_max(y, zero4), one4);
       let scaled = f32x4_mul(clamped, scale);
       let rounded = i32x4_trunc_sat_f32x4(f32x4_add(scaled, half));
-      // Narrow i32x4 → u16x8 via unsigned saturation, then store 4 u16.
+      // Narrow i32x4 → u16x8 via unsigned saturation, then extract lanes.
       let narrow16 = u16x8_narrow_i32x4(rounded, zero16);
-      let val = i64x2_extract_lane::<0>(narrow16) as u64;
-      out[x..x + 4].copy_from_slice(core::slice::from_raw_parts(
-        val.to_le_bytes().as_ptr().cast::<u16>(),
-        4,
-      ));
+      out[x] = u16x8_extract_lane::<0>(narrow16);
+      out[x + 1] = u16x8_extract_lane::<1>(narrow16);
+      out[x + 2] = u16x8_extract_lane::<2>(narrow16);
+      out[x + 3] = u16x8_extract_lane::<3>(narrow16);
       x += 4;
     }
   }

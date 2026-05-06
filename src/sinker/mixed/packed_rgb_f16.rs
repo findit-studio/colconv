@@ -159,6 +159,27 @@ impl<'a> MixedSinker<'a, Rgbf16> {
     self.rgb_f16 = Some(buf);
     Ok(self)
   }
+
+  /// Attaches a packed f32 RGB output buffer. Source f16 channels are
+  /// widened to f32 — lossless (f16 ⊂ f32).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgb_f32(mut self, buf: &'a mut [f32]) -> Result<Self, MixedSinkerError> {
+    self.set_rgb_f32(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgb_f32`](Self::with_rgb_f32).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgb_f32(&mut self, buf: &'a mut [f32]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(3)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::RgbF32BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.rgb_f32 = Some(buf);
+    Ok(self)
+  }
 }
 
 impl Rgbf16Sink for MixedSinker<'_, Rgbf16> {}

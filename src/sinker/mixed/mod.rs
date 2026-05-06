@@ -1290,49 +1290,15 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
     Ok(self)
   }
 
-  /// Attaches a packed f32 RGB output buffer (lossless replicate, Grayf32 only).
-  /// Returns `Err(RgbF32BufferTooShort)` if `buf.len() < width × height × 3`.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub fn with_rgb_f32(mut self, buf: &'a mut [f32]) -> Result<Self, MixedSinkerError> {
-    self.set_rgb_f32(buf)?;
-    Ok(self)
-  }
-
-  /// In-place variant of [`with_rgb_f32`](Self::with_rgb_f32).
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub fn set_rgb_f32(&mut self, buf: &'a mut [f32]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(3)?;
-    if buf.len() < expected {
-      return Err(MixedSinkerError::RgbF32BufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
-    }
-    self.rgb_f32 = Some(buf);
-    Ok(self)
-  }
-
-  /// Attaches an f32 luma output buffer (lossless pass-through, Grayf32 only).
-  /// Returns `Err(LumaF32BufferTooShort)` if `buf.len() < width × height`.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub fn with_luma_f32(mut self, buf: &'a mut [f32]) -> Result<Self, MixedSinkerError> {
-    self.set_luma_f32(buf)?;
-    Ok(self)
-  }
-
-  /// In-place variant of [`with_luma_f32`](Self::with_luma_f32).
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub fn set_luma_f32(&mut self, buf: &'a mut [f32]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(1)?;
-    if buf.len() < expected {
-      return Err(MixedSinkerError::LumaF32BufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
-    }
-    self.luma_f32 = Some(buf);
-    Ok(self)
-  }
+  // NOTE: `with_rgb_f32` / `set_rgb_f32` and `with_luma_f32` /
+  // `set_luma_f32` are **not** declared here. Same rationale as
+  // `with_rgb_u16` below: only the float-output formats actually
+  // write these buffers, so the setters live on format-specific
+  // impl blocks (`Grayf32` writes both; `Rgbf32` and `Rgbf16` only
+  // write `rgb_f32`). Attaching an f32 buffer to a sink whose
+  // `process` doesn't write it would leave the caller buffer
+  // silently stale — the format-specific scoping turns that into a
+  // compile error.
 
   // NOTE: `with_rgb_u16` / `set_rgb_u16` are **not** declared here.
   // They live on a format‑specific impl block further down (currently

@@ -495,7 +495,8 @@ pub(crate) unsafe fn gray16_to_hsv_row(
 
 /// AVX-512 `grayf32_to_rgb_row`: clamp [0,1] × 255 → u8, broadcast Y → R=G=B.
 ///
-/// Uses embedded `_mm512_cvt_roundps_epi32` (MXCSR-independent). Block: 16 px.
+/// Uses MXCSR-independent round-half-up: `+ 0.5` then `_mm512_cvttps_epi32`
+/// (matches the scalar `(y * scale + 0.5) as T` contract). Block: 16 px.
 ///
 /// # Safety
 /// AVX-512F must be available.
@@ -511,10 +512,11 @@ pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: 
     while x + 16 <= width {
       let y = _mm512_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm512_min_ps(_mm512_max_ps(y, _mm512_setzero_ps()), _mm512_set1_ps(1.0));
-      // Embedded round-to-nearest, no MXCSR dependence.
-      let int32 = _mm512_cvt_roundps_epi32::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(
+      // Round-half-up: + 0.5 then truncate (matches scalar).
+      let int32 = _mm512_cvttps_epi32(_mm512_add_ps(
         _mm512_mul_ps(clamped, scale),
-      );
+        _mm512_set1_ps(0.5),
+      ));
       // 16×i32 → 16×u8 via saturating narrow.
       let pack8: __m128i = _mm512_cvtusepi32_epi8(int32);
       // Store 16 bytes then scatter to RGB triples.
@@ -550,9 +552,10 @@ pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width:
     while x + 16 <= width {
       let y = _mm512_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm512_min_ps(_mm512_max_ps(y, _mm512_setzero_ps()), _mm512_set1_ps(1.0));
-      let int32 = _mm512_cvt_roundps_epi32::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(
+      let int32 = _mm512_cvttps_epi32(_mm512_add_ps(
         _mm512_mul_ps(clamped, scale),
-      );
+        _mm512_set1_ps(0.5),
+      ));
       let pack8: __m128i = _mm512_cvtusepi32_epi8(int32);
       let mut ybuf = [0u8; 16];
       _mm_storeu_si128(ybuf.as_mut_ptr().cast(), pack8);
@@ -588,9 +591,10 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
       let y = _mm512_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm512_min_ps(_mm512_max_ps(y, _mm512_setzero_ps()), _mm512_set1_ps(1.0));
       // Round-to-nearest with embedded rounding.
-      let int32 = _mm512_cvt_roundps_epi32::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(
+      let int32 = _mm512_cvttps_epi32(_mm512_add_ps(
         _mm512_mul_ps(clamped, scale),
-      );
+        _mm512_set1_ps(0.5),
+      ));
       // 16×i32 → 16×u16 via _mm512_cvtusepi32_epi16 (saturating, but values in [0,65535]).
       let pack16: __m256i = _mm512_cvtusepi32_epi16(int32);
       // Store 16 u16 values then scatter to 3-channel output.
@@ -626,9 +630,10 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
     while x + 16 <= width {
       let y = _mm512_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm512_min_ps(_mm512_max_ps(y, _mm512_setzero_ps()), _mm512_set1_ps(1.0));
-      let int32 = _mm512_cvt_roundps_epi32::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(
+      let int32 = _mm512_cvttps_epi32(_mm512_add_ps(
         _mm512_mul_ps(clamped, scale),
-      );
+        _mm512_set1_ps(0.5),
+      ));
       let pack16: __m256i = _mm512_cvtusepi32_epi16(int32);
       let mut vbuf = [0u16; 16];
       _mm256_storeu_si256(vbuf.as_mut_ptr().cast(), pack16);
@@ -677,9 +682,10 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
     while x + 16 <= width {
       let y = _mm512_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm512_min_ps(_mm512_max_ps(y, _mm512_setzero_ps()), _mm512_set1_ps(1.0));
-      let int32 = _mm512_cvt_roundps_epi32::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(
+      let int32 = _mm512_cvttps_epi32(_mm512_add_ps(
         _mm512_mul_ps(clamped, scale),
-      );
+        _mm512_set1_ps(0.5),
+      ));
       let pack8: __m128i = _mm512_cvtusepi32_epi8(int32);
       _mm_storeu_si128(out.as_mut_ptr().add(x).cast(), pack8);
       x += 16;
@@ -706,9 +712,10 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
     while x + 16 <= width {
       let y = _mm512_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm512_min_ps(_mm512_max_ps(y, _mm512_setzero_ps()), _mm512_set1_ps(1.0));
-      let int32 = _mm512_cvt_roundps_epi32::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(
+      let int32 = _mm512_cvttps_epi32(_mm512_add_ps(
         _mm512_mul_ps(clamped, scale),
-      );
+        _mm512_set1_ps(0.5),
+      ));
       let pack16: __m256i = _mm512_cvtusepi32_epi16(int32);
       _mm256_storeu_si256(out.as_mut_ptr().add(x).cast(), pack16);
       x += 16;
@@ -754,9 +761,10 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
     while x + 16 <= width {
       let y = _mm512_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm512_min_ps(_mm512_max_ps(y, _mm512_setzero_ps()), _mm512_set1_ps(1.0));
-      let int32 = _mm512_cvt_roundps_epi32::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(
+      let int32 = _mm512_cvttps_epi32(_mm512_add_ps(
         _mm512_mul_ps(clamped, scale),
-      );
+        _mm512_set1_ps(0.5),
+      ));
       let pack8: __m128i = _mm512_cvtusepi32_epi8(int32);
       let zero128 = _mm_setzero_si128();
       _mm_storeu_si128(h_out.as_mut_ptr().add(x).cast(), zero128);

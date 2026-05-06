@@ -514,7 +514,8 @@ pub(crate) unsafe fn gray16_to_hsv_row(
 
 /// SSE4.1 `grayf32_to_rgb_row`: clamp [0,1] × 255 → u8, broadcast Y → R=G=B.
 ///
-/// Uses MXCSR-independent rounding: `_mm_round_ps` + `_mm_cvttps_epi32`.
+/// Uses MXCSR-independent round-half-up: `+ 0.5` then `_mm_cvttps_epi32`
+/// (matches the scalar `(y * scale + 0.5) as T` contract).
 /// Block size: 4 px / iter.
 ///
 /// # Safety
@@ -534,8 +535,7 @@ pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: 
       let y = _mm_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm_min_ps(_mm_max_ps(y, zero), one);
       let scaled = _mm_mul_ps(clamped, scale);
-      let rounded = _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
-      let int32 = _mm_cvttps_epi32(rounded);
+      let int32 = _mm_cvttps_epi32(_mm_add_ps(scaled, _mm_set1_ps(0.5)));
       let pack16 = _mm_packs_epi32(int32, int32);
       let pack8 = _mm_packus_epi16(pack16, pack16);
       // Extract 4 bytes and scatter to RGB triples.
@@ -583,8 +583,7 @@ pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width:
       let y = _mm_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm_min_ps(_mm_max_ps(y, zero), one);
       let scaled = _mm_mul_ps(clamped, scale);
-      let rounded = _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
-      let int32 = _mm_cvttps_epi32(rounded);
+      let int32 = _mm_cvttps_epi32(_mm_add_ps(scaled, _mm_set1_ps(0.5)));
       let pack16 = _mm_packs_epi32(int32, int32);
       let pack8 = _mm_packus_epi16(pack16, pack16);
       let v0 = _mm_extract_epi8(pack8, 0) as u8;
@@ -635,8 +634,7 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
       let y = _mm_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm_min_ps(_mm_max_ps(y, zero), one);
       let scaled = _mm_mul_ps(clamped, scale);
-      let rounded = _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
-      let int32 = _mm_cvttps_epi32(rounded);
+      let int32 = _mm_cvttps_epi32(_mm_add_ps(scaled, _mm_set1_ps(0.5)));
       // Extract 4 u16 values (unrolled — _mm_extract_epi32 needs const lane).
       let base = x * 3;
       let v0 = _mm_extract_epi32::<0>(int32) as u16;
@@ -682,8 +680,7 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
       let y = _mm_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm_min_ps(_mm_max_ps(y, zero), one);
       let scaled = _mm_mul_ps(clamped, scale);
-      let rounded = _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
-      let int32 = _mm_cvttps_epi32(rounded);
+      let int32 = _mm_cvttps_epi32(_mm_add_ps(scaled, _mm_set1_ps(0.5)));
       let base = x * 4;
       let v0 = _mm_extract_epi32::<0>(int32) as u16;
       let v1 = _mm_extract_epi32::<1>(int32) as u16;
@@ -747,8 +744,7 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
       let y = _mm_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm_min_ps(_mm_max_ps(y, zero), one);
       let scaled = _mm_mul_ps(clamped, scale);
-      let rounded = _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
-      let int32 = _mm_cvttps_epi32(rounded);
+      let int32 = _mm_cvttps_epi32(_mm_add_ps(scaled, _mm_set1_ps(0.5)));
       let pack16 = _mm_packs_epi32(int32, int32);
       let pack8 = _mm_packus_epi16(pack16, pack16);
       // Store 4 bytes: low 4 of pack8.
@@ -781,8 +777,7 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
       let y = _mm_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm_min_ps(_mm_max_ps(y, zero), one);
       let scaled = _mm_mul_ps(clamped, scale);
-      let rounded = _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
-      let int32 = _mm_cvttps_epi32(rounded);
+      let int32 = _mm_cvttps_epi32(_mm_add_ps(scaled, _mm_set1_ps(0.5)));
       // Narrow i32x4 → u16x4 via packus (values in [0, 65535] so no saturation clipping).
       let pack16 = _mm_packus_epi32(int32, int32);
       // Store 8 bytes (4 u16 values) via unaligned store to the u16 output.
@@ -835,8 +830,7 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
       let y = _mm_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm_min_ps(_mm_max_ps(y, zero), one);
       let scaled = _mm_mul_ps(clamped, scale);
-      let rounded = _mm_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
-      let int32 = _mm_cvttps_epi32(rounded);
+      let int32 = _mm_cvttps_epi32(_mm_add_ps(scaled, _mm_set1_ps(0.5)));
       let pack16 = _mm_packs_epi32(int32, int32);
       let pack8 = _mm_packus_epi16(pack16, pack16);
       let val = _mm_cvtsi128_si32(pack8) as u32;

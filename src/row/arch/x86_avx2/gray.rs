@@ -521,7 +521,8 @@ pub(crate) unsafe fn gray16_to_hsv_row(
 
 /// AVX2 `grayf32_to_rgb_row`: clamp [0,1] × 255 → u8, broadcast Y → R=G=B.
 ///
-/// Uses MXCSR-independent rounding: `_mm256_round_ps` + `_mm256_cvttps_epi32`.
+/// Uses MXCSR-independent round-half-up: `+ 0.5` then `_mm256_cvttps_epi32`
+/// (matches the scalar `(y * scale + 0.5) as T` contract).
 /// Block size: 8 px / iter.
 ///
 /// # Safety
@@ -541,8 +542,7 @@ pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: 
       let y = _mm256_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm256_min_ps(_mm256_max_ps(y, zero), one);
       let scaled = _mm256_mul_ps(clamped, scale);
-      let rounded = _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
-      let int32 = _mm256_cvttps_epi32(rounded);
+      let int32 = _mm256_cvttps_epi32(_mm256_add_ps(scaled, _mm256_set1_ps(0.5)));
       // Narrow 8×i32 → 8×u8 via two pack steps.
       let lo = _mm256_castsi256_si128(int32);
       let hi = _mm256_extracti128_si256::<1>(int32);
@@ -584,8 +584,7 @@ pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width:
       let y = _mm256_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm256_min_ps(_mm256_max_ps(y, zero), one);
       let scaled = _mm256_mul_ps(clamped, scale);
-      let rounded = _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
-      let int32 = _mm256_cvttps_epi32(rounded);
+      let int32 = _mm256_cvttps_epi32(_mm256_add_ps(scaled, _mm256_set1_ps(0.5)));
       let lo = _mm256_castsi256_si128(int32);
       let hi = _mm256_extracti128_si256::<1>(int32);
       let pack16 = _mm_packs_epi32(lo, hi);
@@ -626,8 +625,7 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
       let y = _mm256_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm256_min_ps(_mm256_max_ps(y, zero), one);
       let scaled = _mm256_mul_ps(clamped, scale);
-      let rounded = _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
-      let int32 = _mm256_cvttps_epi32(rounded);
+      let int32 = _mm256_cvttps_epi32(_mm256_add_ps(scaled, _mm256_set1_ps(0.5)));
       // Narrow 8×i32 → 8×u16 using AVX2 packus path.
       let lo = _mm256_castsi256_si128(int32);
       let hi = _mm256_extracti128_si256::<1>(int32);
@@ -693,8 +691,7 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
       let y = _mm256_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm256_min_ps(_mm256_max_ps(y, zero), one);
       let scaled = _mm256_mul_ps(clamped, scale);
-      let rounded = _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
-      let int32 = _mm256_cvttps_epi32(rounded);
+      let int32 = _mm256_cvttps_epi32(_mm256_add_ps(scaled, _mm256_set1_ps(0.5)));
       let lo = _mm256_castsi256_si128(int32);
       let hi = _mm256_extracti128_si256::<1>(int32);
       let pack16 = _mm_packus_epi32(lo, hi);
@@ -780,8 +777,7 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
       let y = _mm256_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm256_min_ps(_mm256_max_ps(y, zero), one);
       let scaled = _mm256_mul_ps(clamped, scale);
-      let rounded = _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
-      let int32 = _mm256_cvttps_epi32(rounded);
+      let int32 = _mm256_cvttps_epi32(_mm256_add_ps(scaled, _mm256_set1_ps(0.5)));
       let lo = _mm256_castsi256_si128(int32);
       let hi = _mm256_extracti128_si256::<1>(int32);
       let pack16 = _mm_packs_epi32(lo, hi);
@@ -815,8 +811,7 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
       let y = _mm256_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm256_min_ps(_mm256_max_ps(y, zero), one);
       let scaled = _mm256_mul_ps(clamped, scale);
-      let rounded = _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
-      let int32 = _mm256_cvttps_epi32(rounded);
+      let int32 = _mm256_cvttps_epi32(_mm256_add_ps(scaled, _mm256_set1_ps(0.5)));
       let lo = _mm256_castsi256_si128(int32);
       let hi = _mm256_extracti128_si256::<1>(int32);
       let pack16 = _mm_packus_epi32(lo, hi); // 8×u16
@@ -867,8 +862,7 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
       let y = _mm256_loadu_ps(y_plane.as_ptr().add(x));
       let clamped = _mm256_min_ps(_mm256_max_ps(y, zero), one);
       let scaled = _mm256_mul_ps(clamped, scale);
-      let rounded = _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
-      let int32 = _mm256_cvttps_epi32(rounded);
+      let int32 = _mm256_cvttps_epi32(_mm256_add_ps(scaled, _mm256_set1_ps(0.5)));
       let lo = _mm256_castsi256_si128(int32);
       let hi = _mm256_extracti128_si256::<1>(int32);
       let pack16 = _mm_packs_epi32(lo, hi);
