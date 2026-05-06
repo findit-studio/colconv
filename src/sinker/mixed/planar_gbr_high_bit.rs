@@ -272,6 +272,7 @@ macro_rules! impl_gbrp_high_bit {
             w,
             row.matrix(),
             row.full_range(),
+            use_simd,
           );
         }
 
@@ -556,6 +557,7 @@ macro_rules! impl_gbrap_high_bit {
             w,
             row.matrix(),
             row.full_range(),
+            use_simd,
           );
         }
 

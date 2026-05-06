@@ -554,9 +554,11 @@ mod overflow_tests {
   //
   // The high-bit (`GbrpN` / `GbrapN`) dispatchers must guard their output
   // buffer sizes against `width * {3, 4}` wrapping on 32-bit targets.
-  // Each entry point — including the new native-depth luma kernel — gets
-  // an independent regression test so future guard removals surface
-  // individually.
+  // Each {3, 4}-channel-output entry point gets an independent regression
+  // test so future guard removals surface individually. The native-depth
+  // luma dispatcher (`gbr_to_luma_u16_high_bit_row`) is omitted because
+  // it doesn't perform a width × N multiply — output length is `width`
+  // exactly, so there is no wrapping path to guard.
 
   #[cfg(target_pointer_width = "32")]
   #[test]

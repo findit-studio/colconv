@@ -1,5 +1,5 @@
 //! High-bit-depth planar GBR (`AV_PIX_FMT_GBRP{9,10,12,14,16}LE`) and
-//! planar GBR+A (`AV_PIX_FMT_GBRAP{9,10,12,14,16}LE`) source frames.
+//! planar GBR+A (`AV_PIX_FMT_GBRAP{10,12,14,16}LE`) source frames.
 //!
 //! Both formats are *planar RGB* — three (or four) full-resolution `u16`
 //! planes, one per channel, in **G, B, R** order (FFmpeg convention).
@@ -7,7 +7,9 @@
 //!
 //! Samples are stored in the **low `BITS` bits** of each `u16` element
 //! (upper `16 − BITS` bits zero), matching FFmpeg's little-endian
-//! `gbrp{9,10,12,14,16}le` / `gbrap{9,10,12,14,16}le` conventions.
+//! `gbrp{9,10,12,14,16}le` / `gbrap{10,12,14,16}le` conventions.
+//! (FFmpeg has no `gbrap9le` — only the 3-plane `gbrp9le` exists at 9
+//! bits, so `GbrapHighBitFrame` accepts only `BITS ∈ {10, 12, 14, 16}`.)
 //! Callers with byte buffers from FFmpeg must cast via
 //! [`bytemuck::cast_slice`] and divide `linesize[i]` by 2 before
 //! construction.

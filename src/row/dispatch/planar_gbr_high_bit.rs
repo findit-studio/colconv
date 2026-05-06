@@ -525,6 +525,10 @@ pub fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
 /// `matrix` selects the BT.* coefficient set. `full_range = true`
 /// produces Y' ∈ `[0, (1 << BITS) - 1]`; `full_range = false` produces
 /// limited-range Y' ∈ `[16 << (BITS - 8), 235 << (BITS - 8)]`.
+///
+/// `use_simd` accepted for signature consistency with the rest of the
+/// row dispatcher family. Currently no SIMD path is wired (kernel is
+/// scalar-only); the flag is reserved for future backends.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
 pub fn gbr_to_luma_u16_high_bit_row<const BITS: u32>(
@@ -535,6 +539,7 @@ pub fn gbr_to_luma_u16_high_bit_row<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
   full_range: bool,
+  _use_simd: bool,
 ) {
   const {
     assert!(
