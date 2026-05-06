@@ -1,8 +1,12 @@
 //! wasm-simd128 parity tests for the high-bit-depth planar-GBR kernels (Tier 10b).
 //!
 //! Covers BITS=10 and BITS=16 at widths [1, 7, 8, 16, 17, 32, 33, 64, 128, 130].
-//! Tests compile on all targets but are gated by `target_feature = "simd128"` at
-//! runtime on wasm; on non-wasm hosts the SIMD functions compile to scalar.
+//!
+//! This module is gated `#[cfg(target_arch = "wasm32")]` (via `row::arch::mod`)
+//! and only compiles when targeting wasm32. wasm SIMD is enabled at compile
+//! time via `RUSTFLAGS=-C target-feature=+simd128`; there is no runtime
+//! `target_feature` detection — the kernels lower directly to wasm-simd128
+//! intrinsics or fail to compile if the feature isn't enabled.
 
 use super::*;
 

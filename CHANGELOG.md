@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## 0.22.0 — Tier 10b — Gbrp/Gbrap 9/10/12/14/16-bit high-bit-depth planar GBR
+## 0.22.0 — Tier 10b — Gbrp{9,10,12,14,16} + Gbrap{10,12,14,16} high-bit-depth planar GBR
 
 **Additive feature; no public API change for existing source formats.**
 

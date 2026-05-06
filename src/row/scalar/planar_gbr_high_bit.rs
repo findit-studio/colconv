@@ -1,8 +1,11 @@
 //! Scalar reference kernels for high-bit-depth planar GBR sources
 //! (Tier 10b — `AV_PIX_FMT_GBRP{9,10,12,14,16}LE` /
-//! `AV_PIX_FMT_GBRAP{9,10,12,14,16}LE`).
+//! `AV_PIX_FMT_GBRAP{10,12,14,16}LE`).
 //!
-//! All functions are const-generic over `BITS ∈ {9, 10, 12, 14, 16}`.
+//! `gbr_*` kernels (3-plane, no α) are const-generic over
+//! `BITS ∈ {9, 10, 12, 14, 16}`. `gbra_*` kernels (4-plane, with α)
+//! are const-generic over `BITS ∈ {10, 12, 14, 16}` — FFmpeg has no
+//! `GBRAP9` variant; only the 3-plane `GBRP9` exists at 9 bits.
 //! No runtime branching on `BITS` — every `BITS - 8` shift is a
 //! const-eval expression resolved at monomorphisation.
 //!
