@@ -44,6 +44,7 @@ mod packed_rgb;
 mod packed_rgb_float;
 mod packed_yuv_8bit;
 mod planar_gbr;
+pub(crate) mod planar_gbr_high_bit;
 mod rgb_expand;
 mod semi_planar_8bit;
 mod subsampled_high_bit_pn;
@@ -76,6 +77,7 @@ pub(crate) use packed_rgb::*;
 pub(crate) use packed_rgb_float::*;
 pub(crate) use packed_yuv_8bit::*;
 pub(crate) use planar_gbr::*;
+pub(crate) use planar_gbr_high_bit::*;
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub(crate) use rgb_expand::*;
 pub(crate) use semi_planar_8bit::*;

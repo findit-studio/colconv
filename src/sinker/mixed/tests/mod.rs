@@ -14,6 +14,7 @@ mod packed_rgb_f16;
 mod packed_rgb_float;
 mod packed_yuv_8bit;
 mod planar_gbr;
+mod planar_gbr_high_bit;
 mod planar_other_8bit_9bit;
 mod semi_planar_8bit;
 mod subsampled_4_2_0_high_bit;
