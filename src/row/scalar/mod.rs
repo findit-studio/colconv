@@ -44,6 +44,7 @@ mod hsv;
 pub(crate) mod legacy_rgb;
 pub(crate) mod mono1bit;
 mod packed_rgb;
+mod packed_rgb_16bit;
 mod packed_rgb_float;
 mod packed_yuv_8bit;
 pub(crate) mod pal8;
@@ -92,6 +93,8 @@ pub(crate) use hsv::*;
 #[allow(unused_imports)]
 pub(crate) use mono1bit::*;
 pub(crate) use packed_rgb::*;
+#[allow(unused_imports)] // dispatcher + sinker wired in Tasks 9–10
+pub(crate) use packed_rgb_16bit::*;
 pub(crate) use packed_rgb_float::*;
 pub(crate) use packed_yuv_8bit::*;
 pub(crate) use planar_gbr::*;

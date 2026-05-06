@@ -49,6 +49,43 @@ pub(crate) fn copy_alpha_packed_u16x4_at_0(packed: &[u16], rgba_out: &mut [u16],
   }
 }
 
+/// Rgba64 / Bgra64 → u8 RGBA: copy α from slot 3 of each 4-element u16
+/// pixel tuple into `rgba_out[3 + 4*n]` (u8) with `>> 8` depth conversion.
+///
+/// Rgba64 / Bgra64 layout per pixel: `[R(16), G(16), B(16), A(16)]` — α is
+/// at slot 3 (trailing position). Contrast with AYUV64's at-slot-0 variant.
+///
+/// Used in Strategy A+: after `expand_rgb_to_rgba_row` fills the RGBA buffer
+/// with a forced-opaque alpha, this helper overwrites only the α slot with the
+/// real source alpha, depth-converted to u8.
+#[allow(dead_code)] // wired in sinker Task 10
+pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_3(
+  packed: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 4, "packed too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+  for n in 0..width {
+    rgba_out[n * 4 + 3] = (packed[n * 4 + 3] >> 8) as u8;
+  }
+}
+
+/// Rgba64 / Bgra64 → u16 RGBA: copy α from slot 3 of each 4-element u16
+/// pixel tuple into `rgba_u16_out[3 + 4*n]` (u16). No depth conversion.
+///
+/// Used in Strategy A+: after `expand_rgb_u16_to_rgba_u16_row` fills the
+/// RGBA buffer, this helper overwrites only the α slot with the real source
+/// alpha at native 16-bit depth.
+#[allow(dead_code)] // wired in sinker Task 10
+pub(crate) fn copy_alpha_packed_u16x4_at_3(packed: &[u16], rgba_u16_out: &mut [u16], width: usize) {
+  debug_assert!(packed.len() >= width * 4, "packed too short");
+  debug_assert!(rgba_u16_out.len() >= width * 4, "rgba_u16_out too short");
+  for n in 0..width {
+    rgba_u16_out[n * 4 + 3] = packed[n * 4 + 3];
+  }
+}
+
 /// Yuva420p / 422p / 444p u8 → u8 RGBA: scatter α plane into
 /// `rgba_out[3 + 4*n]`.
 pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usize) {
@@ -361,5 +398,45 @@ mod tests {
     assert_eq!(rgba[0], 0.0);
     assert_eq!(rgba[1], 0.0);
     assert_eq!(rgba[2], 0.0);
+  }
+
+  // ---- copy_alpha_packed_u16x4_to_u8_at_3 / copy_alpha_packed_u16x4_at_3 --
+
+  /// Alpha at slot 3 is depth-converted >> 8 and written to rgba_out[3 + 4*n].
+  #[test]
+  fn copy_alpha_packed_u16x4_to_u8_at_3_narrows_correctly() {
+    let packed: std::vec::Vec<u16> = std::vec![100, 200, 300, 0xABFF, 101, 201, 301, 0x1234];
+    let mut rgba = std::vec![1u8; 8];
+    copy_alpha_packed_u16x4_to_u8_at_3(&packed, &mut rgba, 2);
+    assert_eq!(rgba, std::vec![1, 1, 1, 0xAB, 1, 1, 1, 0x12]);
+  }
+
+  /// Alpha at slot 3 is copied verbatim (no depth conversion).
+  #[test]
+  fn copy_alpha_packed_u16x4_at_3_copies_verbatim() {
+    let packed: std::vec::Vec<u16> = std::vec![100, 200, 300, 0xABFF, 101, 201, 301, 0x1234];
+    let mut rgba_u16 = std::vec![1u16; 8];
+    copy_alpha_packed_u16x4_at_3(&packed, &mut rgba_u16, 2);
+    assert_eq!(rgba_u16, std::vec![1, 1, 1, 0xABFF, 1, 1, 1, 0x1234]);
+  }
+
+  /// Only the alpha slot (index 3) is overwritten; RGB slots [0..3] are untouched.
+  #[test]
+  fn copy_alpha_packed_u16x4_to_u8_at_3_touches_only_alpha_slot() {
+    let packed: std::vec::Vec<u16> = std::vec![0, 0, 0, 0xFFFF];
+    let mut rgba = std::vec![42u8; 4];
+    copy_alpha_packed_u16x4_to_u8_at_3(&packed, &mut rgba, 1);
+    assert_eq!(rgba[..3], [42, 42, 42]);
+    assert_eq!(rgba[3], 0xFF);
+  }
+
+  /// Only the alpha slot (index 3) is overwritten; RGB slots [0..3] are untouched.
+  #[test]
+  fn copy_alpha_packed_u16x4_at_3_touches_only_alpha_slot() {
+    let packed: std::vec::Vec<u16> = std::vec![0, 0, 0, 0xBEEF];
+    let mut rgba_u16 = std::vec![99u16; 4];
+    copy_alpha_packed_u16x4_at_3(&packed, &mut rgba_u16, 1);
+    assert_eq!(rgba_u16[..3], [99, 99, 99]);
+    assert_eq!(rgba_u16[3], 0xBEEF);
   }
 }
