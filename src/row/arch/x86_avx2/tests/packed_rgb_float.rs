@@ -105,3 +105,151 @@ fn avx2_rgbf32_to_rgb_f32_matches_scalar() {
     assert_eq!(out_simd, input[..w * 3], "lossless width {w}");
   }
 }
+
+// ---- Tier 9 Rgbf16 AVX2 + F16C parity tests ----------------------------------
+
+fn pseudo_random_rgbf16(width: usize) -> std::vec::Vec<half::f16> {
+  pseudo_random_rgbf32(width)
+    .iter()
+    .map(|&v| half::f16::from_f32(v))
+    .collect()
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn avx2_rgbf16_to_rgb_matches_scalar() {
+  if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("f16c") {
+    return;
+  }
+  for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
+    let input = pseudo_random_rgbf16(w);
+    let mut out_scalar = std::vec![0u8; w * 3];
+    let mut out_simd = std::vec![0u8; w * 3];
+    scalar::rgbf16_to_rgb_row(&input, &mut out_scalar, w);
+    unsafe {
+      rgbf16_to_rgb_row(&input, &mut out_simd, w);
+    }
+    assert_eq!(out_scalar, out_simd, "AVX2+F16C rgbf16_to_rgb width {w}");
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn avx2_rgbf16_to_rgba_matches_scalar() {
+  if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("f16c") {
+    return;
+  }
+  for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
+    let input = pseudo_random_rgbf16(w);
+    let mut out_scalar = std::vec![0u8; w * 4];
+    let mut out_simd = std::vec![0u8; w * 4];
+    scalar::rgbf16_to_rgba_row(&input, &mut out_scalar, w);
+    unsafe {
+      rgbf16_to_rgba_row(&input, &mut out_simd, w);
+    }
+    assert_eq!(out_scalar, out_simd, "AVX2+F16C rgbf16_to_rgba width {w}");
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn avx2_rgbf16_to_rgb_u16_matches_scalar() {
+  if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("f16c") {
+    return;
+  }
+  for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
+    let input = pseudo_random_rgbf16(w);
+    let mut out_scalar = std::vec![0u16; w * 3];
+    let mut out_simd = std::vec![0u16; w * 3];
+    scalar::rgbf16_to_rgb_u16_row(&input, &mut out_scalar, w);
+    unsafe {
+      rgbf16_to_rgb_u16_row(&input, &mut out_simd, w);
+    }
+    assert_eq!(
+      out_scalar, out_simd,
+      "AVX2+F16C rgbf16_to_rgb_u16 width {w}"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn avx2_rgbf16_to_rgba_u16_matches_scalar() {
+  if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("f16c") {
+    return;
+  }
+  for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
+    let input = pseudo_random_rgbf16(w);
+    let mut out_scalar = std::vec![0u16; w * 4];
+    let mut out_simd = std::vec![0u16; w * 4];
+    scalar::rgbf16_to_rgba_u16_row(&input, &mut out_scalar, w);
+    unsafe {
+      rgbf16_to_rgba_u16_row(&input, &mut out_simd, w);
+    }
+    assert_eq!(
+      out_scalar, out_simd,
+      "AVX2+F16C rgbf16_to_rgba_u16 width {w}"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn avx2_rgbf16_to_rgb_f32_matches_scalar() {
+  if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("f16c") {
+    return;
+  }
+  for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
+    let input = pseudo_random_rgbf16(w);
+    let mut out_scalar = std::vec![0.0f32; w * 3];
+    let mut out_simd = std::vec![0.0f32; w * 3];
+    scalar::rgbf16_to_rgb_f32_row(&input, &mut out_scalar, w);
+    unsafe {
+      rgbf16_to_rgb_f32_row(&input, &mut out_simd, w);
+    }
+    assert_eq!(
+      out_scalar, out_simd,
+      "AVX2+F16C rgbf16_to_rgb_f32 width {w}"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn avx2_rgbf16_to_rgb_f16_matches_scalar() {
+  if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("f16c") {
+    return;
+  }
+  for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
+    let input = pseudo_random_rgbf16(w);
+    let mut out_scalar = std::vec![half::f16::ZERO; w * 3];
+    let mut out_simd = std::vec![half::f16::ZERO; w * 3];
+    scalar::rgbf16_to_rgb_f16_row(&input, &mut out_scalar, w);
+    unsafe {
+      rgbf16_to_rgb_f16_row(&input, &mut out_simd, w);
+    }
+    assert_eq!(
+      out_scalar, out_simd,
+      "AVX2+F16C rgbf16_to_rgb_f16 width {w}"
+    );
+    assert_eq!(out_simd, input[..w * 3], "lossless width {w}");
+  }
+}

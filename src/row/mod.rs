@@ -76,9 +76,9 @@ pub(crate) use dispatch::vuya::vuya_to_luma_u16_row;
 pub(crate) use dispatch::vuyx::vuyx_to_luma_u16_row;
 
 pub use dispatch::{
-  ayuv64::*, bayer::*, nv::*, packed_yuv422::*, planar_gbr::*, pn::*, rgb_float_ops::*, rgb_ops::*,
-  v30x::*, v210::*, v410::*, vuya::*, vuyx::*, xv36::*, y210::*, y212::*, y216::*, yuv420::*,
-  yuv444::*, yuva::*,
+  ayuv64::*, bayer::*, nv::*, packed_yuv422::*, planar_gbr::*, pn::*, rgb_f16_ops::*,
+  rgb_float_ops::*, rgb_ops::*, v30x::*, v210::*, v410::*, vuya::*, vuyx::*, xv36::*, y210::*,
+  y212::*, y216::*, yuv420::*, yuv444::*, yuva::*,
 };
 // Gray dispatchers are pub(crate) — sinker code uses them via crate::row::gray*_row.
 #[cfg(any(feature = "std", feature = "alloc"))]
@@ -301,6 +301,28 @@ pub(crate) const fn neon_available() -> bool {
   !cfg!(colconv_force_scalar) && cfg!(target_feature = "neon")
 }
 
+/// FP16 conversion-instruction availability on aarch64. Required for
+/// `vcvt_f32_f16` / FCVTL — a separate CPU feature from NEON. Older
+/// AArch64 cores (e.g. Cortex-A53/A57 base, some embedded SoCs) ship
+/// NEON without `fp16`; calling `vcvt_f32_f16` there raises SIGILL.
+/// The Rgbf16 NEON dispatchers gate on `neon_available() &&
+/// fp16_available()` and fall back to scalar when this returns false.
+#[cfg(all(target_arch = "aarch64", feature = "std"))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn fp16_available() -> bool {
+  if cfg!(colconv_force_scalar) {
+    return false;
+  }
+  std::arch::is_aarch64_feature_detected!("fp16")
+}
+
+/// FP16 availability on aarch64 — no‑std variant (compile‑time).
+#[cfg(all(target_arch = "aarch64", not(feature = "std")))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) const fn fp16_available() -> bool {
+  !cfg!(colconv_force_scalar) && cfg!(target_feature = "fp16")
+}
+
 /// AVX2 availability on x86_64.
 #[cfg(all(target_arch = "x86_64", feature = "std"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -351,6 +373,26 @@ pub(crate) fn avx512_available() -> bool {
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) const fn avx512_available() -> bool {
   !cfg!(colconv_force_scalar) && !cfg!(colconv_disable_avx512) && cfg!(target_feature = "avx512bw")
+}
+
+/// F16C availability on x86_64. Used by the `Rgbf16` dispatcher to gate the
+/// hardware-accelerated f16→f32 widening path. F16C is checked *in addition*
+/// to the SIMD tier (AVX-512 / AVX2 / SSE4.1) because it is an independent
+/// feature bit that can be absent even on AVX2 machines.
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn f16c_available() -> bool {
+  if cfg!(colconv_force_scalar) {
+    return false;
+  }
+  std::arch::is_x86_feature_detected!("f16c")
+}
+
+/// F16C availability on x86_64 — no‑std variant (compile‑time).
+#[cfg(all(target_arch = "x86_64", not(feature = "std")))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) const fn f16c_available() -> bool {
+  !cfg!(colconv_force_scalar) && cfg!(target_feature = "f16c")
 }
 
 /// simd128 availability on wasm32. WASM has no runtime CPU detection

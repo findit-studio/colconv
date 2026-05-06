@@ -251,3 +251,243 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row(rgb_in: &[f32], rgb_out: &mut [f32], 
     }
   }
 }
+
+// ---- Tier 9 — Rgbf16 AVX-512 + F16C entry points ---------------------------
+//
+// `_mm512_cvtph_ps` (F16C + AVX-512F) widens 16 × f16 (stored as 16 × i16 in
+// a __m256i) to 16 × f32 in a __m512.  We load 32 bytes (16 f16 values) via
+// `_mm256_loadu_si256`.
+//
+// Downstream: after widening a 48-lane chunk (= 16 pixels) to f32, we call the
+// existing AVX-512 Rgbf32 kernels.  The scalar tail uses
+// `crate::row::scalar::rgbf16_to_*_row`.
+//
+// `#[target_feature(enable = "avx512f,f16c")]` — `f16c` is the half↔single
+// narrowing/widening extension. AVX-512F + F16C is the minimum for
+// `_mm512_cvtph_ps`. AVX-512BW is a separate CPU-feature bit and is NOT
+// implied by AVX-512F; only enable `avx512bw` on functions that actually
+// use byte/word AVX-512 ops.
+
+/// Widen 16 × f16 (at `ptr`, 32 bytes) to 16 × f32 (returned as `__m512`).
+///
+/// # Safety
+///
+/// * AVX-512F + F16C must be available.
+/// * `ptr` must be valid for 32 bytes (16 × u16 / f16).
+#[inline]
+#[target_feature(enable = "avx512f,f16c")]
+unsafe fn widen_f16x16_avx512(ptr: *const half::f16) -> __m512 {
+  unsafe {
+    let raw = _mm256_loadu_si256(ptr as *const __m256i);
+    _mm512_cvtph_ps(raw)
+  }
+}
+
+/// f16 RGB → u8 RGB (AVX-512F + F16C).
+///
+/// # Safety
+///
+/// 1. AVX-512F, AVX-512BW, and F16C must be available.
+/// 2. `rgb_in.len() >= 3 * width`; `rgb_out.len() >= 3 * width`.
+/// 3. `rgb_in` / `rgb_out` must not alias.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw,f16c")]
+pub(crate) unsafe fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+
+  // Process 16 pixels (48 f16 lanes) per iteration.
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  while lane + 48 <= total_lanes {
+    let mut buf = [0.0f32; 48];
+    unsafe {
+      let f0 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane));
+      let f1 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane + 16));
+      let f2 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane + 32));
+      _mm512_storeu_ps(buf.as_mut_ptr(), f0);
+      _mm512_storeu_ps(buf.as_mut_ptr().add(16), f1);
+      _mm512_storeu_ps(buf.as_mut_ptr().add(32), f2);
+      rgbf32_to_rgb_row(&buf, rgb_out.get_unchecked_mut(lane..lane + 48), 16);
+    }
+    lane += 48;
+  }
+  let pix_done = lane / 3;
+  if pix_done < width {
+    scalar::rgbf16_to_rgb_row(
+      &rgb_in[pix_done * 3..width * 3],
+      &mut rgb_out[pix_done * 3..width * 3],
+      width - pix_done,
+    );
+  }
+}
+
+/// f16 RGB → u8 RGBA (alpha `0xFF`) (AVX-512F + F16C).
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw,f16c")]
+pub(crate) unsafe fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  let mut pix = 0usize;
+  while lane + 48 <= total_lanes {
+    let mut buf = [0.0f32; 48];
+    unsafe {
+      let f0 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane));
+      let f1 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane + 16));
+      let f2 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane + 32));
+      _mm512_storeu_ps(buf.as_mut_ptr(), f0);
+      _mm512_storeu_ps(buf.as_mut_ptr().add(16), f1);
+      _mm512_storeu_ps(buf.as_mut_ptr().add(32), f2);
+      rgbf32_to_rgba_row(&buf, rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 64), 16);
+    }
+    lane += 48;
+    pix += 16;
+  }
+  if pix < width {
+    scalar::rgbf16_to_rgba_row(
+      &rgb_in[pix * 3..width * 3],
+      &mut rgba_out[pix * 4..width * 4],
+      width - pix,
+    );
+  }
+}
+
+/// f16 RGB → u16 RGB (AVX-512F + F16C).
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [u16]` with
+/// `len() >= 3 * width` u16 elements.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw,f16c")]
+pub(crate) unsafe fn rgbf16_to_rgb_u16_row(
+  rgb_in: &[half::f16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_u16_out row too short");
+
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  while lane + 48 <= total_lanes {
+    let mut buf = [0.0f32; 48];
+    unsafe {
+      let f0 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane));
+      let f1 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane + 16));
+      let f2 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane + 32));
+      _mm512_storeu_ps(buf.as_mut_ptr(), f0);
+      _mm512_storeu_ps(buf.as_mut_ptr().add(16), f1);
+      _mm512_storeu_ps(buf.as_mut_ptr().add(32), f2);
+      rgbf32_to_rgb_u16_row(&buf, rgb_out.get_unchecked_mut(lane..lane + 48), 16);
+    }
+    lane += 48;
+  }
+  let pix_done = lane / 3;
+  if pix_done < width {
+    scalar::rgbf16_to_rgb_u16_row(
+      &rgb_in[pix_done * 3..width * 3],
+      &mut rgb_out[pix_done * 3..width * 3],
+      width - pix_done,
+    );
+  }
+}
+
+/// f16 RGB → u16 RGBA (alpha `0xFFFF`) (AVX-512F + F16C).
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_u16_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw,f16c")]
+pub(crate) unsafe fn rgbf16_to_rgba_u16_row(
+  rgb_in: &[half::f16],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_u16_out row too short");
+
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  let mut pix = 0usize;
+  while lane + 48 <= total_lanes {
+    let mut buf = [0.0f32; 48];
+    unsafe {
+      let f0 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane));
+      let f1 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane + 16));
+      let f2 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane + 32));
+      _mm512_storeu_ps(buf.as_mut_ptr(), f0);
+      _mm512_storeu_ps(buf.as_mut_ptr().add(16), f1);
+      _mm512_storeu_ps(buf.as_mut_ptr().add(32), f2);
+      rgbf32_to_rgba_u16_row(&buf, rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 64), 16);
+    }
+    lane += 48;
+    pix += 16;
+  }
+  if pix < width {
+    scalar::rgbf16_to_rgba_u16_row(
+      &rgb_in[pix * 3..width * 3],
+      &mut rgba_out[pix * 4..width * 4],
+      width - pix,
+    );
+  }
+}
+
+/// f16 RGB → f32 RGB (lossless widen) (AVX-512F + F16C).
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [f32]` with
+/// `len() >= 3 * width` f32 elements.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw,f16c")]
+pub(crate) unsafe fn rgbf16_to_rgb_f32_row(
+  rgb_in: &[half::f16],
+  rgb_out: &mut [f32],
+  width: usize,
+) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_f32_out row too short");
+
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  while lane + 16 <= total_lanes {
+    unsafe {
+      let f = widen_f16x16_avx512(rgb_in.as_ptr().add(lane));
+      _mm512_storeu_ps(rgb_out.as_mut_ptr().add(lane), f);
+    }
+    lane += 16;
+  }
+  // Scalar tail for the last 0-15 lanes.
+  for i in lane..total_lanes {
+    unsafe {
+      *rgb_out.get_unchecked_mut(i) = rgb_in.get_unchecked(i).to_f32();
+    }
+  }
+}
+
+/// f16 RGB → f16 RGB lossless pass-through (AVX-512F + F16C).
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [half::f16]` with
+/// `len() >= 3 * width` f16 elements.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw,f16c")]
+pub(crate) unsafe fn rgbf16_to_rgb_f16_row(
+  rgb_in: &[half::f16],
+  rgb_out: &mut [half::f16],
+  width: usize,
+) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_f16_out row too short");
+  scalar::rgbf16_to_rgb_f16_row(rgb_in, rgb_out, width);
+}
