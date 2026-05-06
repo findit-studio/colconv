@@ -48,6 +48,12 @@ pub fn gbr_to_rgb_high_bit_row<const BITS: u32>(
   width: usize,
   use_simd: bool,
 ) {
+  const {
+    assert!(
+      matches!(BITS, 9 | 10 | 12 | 14 | 16),
+      "BITS must be one of 9, 10, 12, 14, or 16"
+    )
+  };
   let out_min = rgb_row_bytes(width);
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
@@ -110,6 +116,12 @@ pub fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
   width: usize,
   use_simd: bool,
 ) {
+  const {
+    assert!(
+      matches!(BITS, 9 | 10 | 12 | 14 | 16),
+      "BITS must be one of 9, 10, 12, 14, or 16"
+    )
+  };
   let out_min = rgb_row_elems(width);
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
@@ -182,6 +194,12 @@ pub fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
   width: usize,
   use_simd: bool,
 ) {
+  const {
+    assert!(
+      matches!(BITS, 9 | 10 | 12 | 14 | 16),
+      "BITS must be one of 9, 10, 12, 14, or 16"
+    )
+  };
   let out_min = rgba_row_bytes(width);
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
@@ -255,6 +273,12 @@ pub fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
   width: usize,
   use_simd: bool,
 ) {
+  const {
+    assert!(
+      matches!(BITS, 9 | 10 | 12 | 14 | 16),
+      "BITS must be one of 9, 10, 12, 14, or 16"
+    )
+  };
   let out_min = rgba_row_elems(width);
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
@@ -339,6 +363,12 @@ pub fn gbra_to_rgba_high_bit_row<const BITS: u32>(
   width: usize,
   use_simd: bool,
 ) {
+  const {
+    assert!(
+      matches!(BITS, 10 | 12 | 14 | 16),
+      "BITS must be one of 10, 12, 14, or 16 (FFmpeg has no GBRAP9)"
+    )
+  };
   let out_min = rgba_row_bytes(width);
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
@@ -414,6 +444,12 @@ pub fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
   width: usize,
   use_simd: bool,
 ) {
+  const {
+    assert!(
+      matches!(BITS, 10 | 12 | 14 | 16),
+      "BITS must be one of 10, 12, 14, or 16 (FFmpeg has no GBRAP9)"
+    )
+  };
   let out_min = rgba_row_elems(width);
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
@@ -500,6 +536,12 @@ pub fn gbr_to_luma_u16_high_bit_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
+  const {
+    assert!(
+      matches!(BITS, 9 | 10 | 12 | 14 | 16),
+      "BITS must be one of 9, 10, 12, 14, or 16"
+    )
+  };
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");

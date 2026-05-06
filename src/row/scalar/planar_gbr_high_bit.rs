@@ -49,6 +49,12 @@ pub(crate) fn gbr_to_rgb_high_bit_row<const BITS: u32>(
   rgb_out: &mut [u8],
   width: usize,
 ) {
+  const {
+    assert!(
+      matches!(BITS, 9 | 10 | 12 | 14 | 16),
+      "BITS must be one of 9, 10, 12, 14, or 16"
+    )
+  };
   debug_assert!(g.len() >= width, "g row too short");
   debug_assert!(b.len() >= width, "b row too short");
   debug_assert!(r.len() >= width, "r row too short");
@@ -82,6 +88,12 @@ pub(crate) fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
   rgb_u16_out: &mut [u16],
   width: usize,
 ) {
+  const {
+    assert!(
+      matches!(BITS, 9 | 10 | 12 | 14 | 16),
+      "BITS must be one of 9, 10, 12, 14, or 16"
+    )
+  };
   debug_assert!(g.len() >= width, "g row too short");
   debug_assert!(b.len() >= width, "b row too short");
   debug_assert!(r.len() >= width, "r row too short");
@@ -111,6 +123,12 @@ pub(crate) fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
   rgba_out: &mut [u8],
   width: usize,
 ) {
+  const {
+    assert!(
+      matches!(BITS, 9 | 10 | 12 | 14 | 16),
+      "BITS must be one of 9, 10, 12, 14, or 16"
+    )
+  };
   debug_assert!(g.len() >= width, "g row too short");
   debug_assert!(b.len() >= width, "b row too short");
   debug_assert!(r.len() >= width, "r row too short");
@@ -141,6 +159,12 @@ pub(crate) fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
   rgba_u16_out: &mut [u16],
   width: usize,
 ) {
+  const {
+    assert!(
+      matches!(BITS, 9 | 10 | 12 | 14 | 16),
+      "BITS must be one of 9, 10, 12, 14, or 16"
+    )
+  };
   debug_assert!(g.len() >= width, "g row too short");
   debug_assert!(b.len() >= width, "b row too short");
   debug_assert!(r.len() >= width, "r row too short");
@@ -174,6 +198,12 @@ pub(crate) fn gbra_to_rgba_high_bit_row<const BITS: u32>(
   rgba_out: &mut [u8],
   width: usize,
 ) {
+  const {
+    assert!(
+      matches!(BITS, 10 | 12 | 14 | 16),
+      "BITS must be one of 10, 12, 14, or 16 (FFmpeg has no GBRAP9)"
+    )
+  };
   debug_assert!(g.len() >= width, "g row too short");
   debug_assert!(b.len() >= width, "b row too short");
   debug_assert!(r.len() >= width, "r row too short");
@@ -206,6 +236,12 @@ pub(crate) fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
   rgba_u16_out: &mut [u16],
   width: usize,
 ) {
+  const {
+    assert!(
+      matches!(BITS, 10 | 12 | 14 | 16),
+      "BITS must be one of 10, 12, 14, or 16 (FFmpeg has no GBRAP9)"
+    )
+  };
   debug_assert!(g.len() >= width, "g row too short");
   debug_assert!(b.len() >= width, "b row too short");
   debug_assert!(r.len() >= width, "r row too short");
@@ -251,6 +287,12 @@ pub(crate) fn gbr_to_luma_u16_high_bit_row<const BITS: u32>(
   matrix: crate::ColorMatrix,
   full_range: bool,
 ) {
+  const {
+    assert!(
+      matches!(BITS, 9 | 10 | 12 | 14 | 16),
+      "BITS must be one of 9, 10, 12, 14, or 16"
+    )
+  };
   debug_assert!(g.len() >= width, "g row too short");
   debug_assert!(b.len() >= width, "b row too short");
   debug_assert!(r.len() >= width, "r row too short");
