@@ -114,6 +114,18 @@ impl<'a, const INVERT: bool> MonoFrame<'a, INVERT> {
   pub const fn stride(&self) -> u32 {
     self.stride
   }
+
+  /// Data plane (monochrome bit buffer). Same as [`Self::data`].
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn y(&self) -> &'a [u8] {
+    self.data
+  }
+
+  /// Byte stride of the data plane. Same as [`Self::stride`].
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn y_stride(&self) -> u32 {
+    self.stride
+  }
 }
 
 /// Type alias for Monoblack frames (INVERT=false): bit=0 → black, bit=1 → white.
