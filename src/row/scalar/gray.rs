@@ -115,12 +115,18 @@ fn limited_n_to_full_u8<const BITS: u32>(y: u16) -> u8 {
 ///
 /// Limited-range: black = 16 << (BITS-8), range = 219 << (BITS-8).
 /// Output is clamped to [0, max_native] where max_native = (1 << BITS) - 1.
+///
+/// Math runs in `i64` to keep the `(y - black) * max_native` product safe at
+/// `BITS = 16`: limited-range white `60160` minus black `4096` times
+/// `max_native = 65535` is `~3.67 × 10^9`, which overflows `i32`. Lower bit
+/// depths fit in `i32` but using `i64` uniformly keeps one signature and
+/// avoids per-BITS branches.
 #[inline(always)]
 fn limited_n_to_full_u16<const BITS: u32>(y: u16) -> u16 {
-  let black = 16i32 << (BITS - 8);
-  let range = 219i32 << (BITS - 8);
-  let max_native = ((1u32 << BITS) - 1) as i32;
-  let y = y as i32;
+  let black = 16i64 << (BITS - 8);
+  let range = 219i64 << (BITS - 8);
+  let max_native = ((1u64 << BITS) - 1) as i64;
+  let y = y as i64;
   let rescaled = (y - black) * max_native + range / 2;
   let result = rescaled / range;
   result.clamp(0, max_native) as u16
@@ -718,6 +724,49 @@ mod tests {
     let mut out = std::vec![0u8; 3];
     gray16_to_rgb_row(&y, &mut out, 1, true);
     assert_eq!(&out[0..3], &[128, 128, 128]);
+  }
+
+  // ---- Gray16 u16-output limited-range tests (i32 overflow regression) ----
+  //
+  // The native-u16 limited-range rescale `(y - black) * max_native` overflows
+  // i32 at BITS=16: `(60160 - 4096) * 65535 ≈ 3.67e9` > `i32::MAX`. Math runs
+  // in i64 to keep the product safe. These tests exercise the boundary
+  // values (black, white, over-white) end-to-end.
+
+  #[test]
+  fn gray16_to_rgb_u16_limited_range_black() {
+    let y: std::vec::Vec<u16> = std::vec![4096u16]; // limited-range black
+    let mut out = std::vec![0u16; 3];
+    gray16_to_rgb_u16_row(&y, &mut out, 1, false);
+    assert_eq!(&out[0..3], &[0, 0, 0]);
+  }
+
+  #[test]
+  fn gray16_to_rgb_u16_limited_range_white() {
+    let y: std::vec::Vec<u16> = std::vec![60160u16]; // limited-range white
+    let mut out = std::vec![0u16; 3];
+    gray16_to_rgb_u16_row(&y, &mut out, 1, false);
+    assert_eq!(&out[0..3], &[65535, 65535, 65535]);
+  }
+
+  #[test]
+  fn gray16_to_rgb_u16_limited_range_over_white_clamps() {
+    // Over-white (Y > 60160) is clamped to max_native=65535.
+    let y: std::vec::Vec<u16> = std::vec![65535u16];
+    let mut out = std::vec![0u16; 3];
+    gray16_to_rgb_u16_row(&y, &mut out, 1, false);
+    assert_eq!(&out[0..3], &[65535, 65535, 65535]);
+  }
+
+  #[test]
+  fn gray16_to_rgba_u16_limited_range_black_and_white() {
+    let y: std::vec::Vec<u16> = std::vec![4096u16, 60160u16];
+    let mut out = std::vec![0u16; 8];
+    gray16_to_rgba_u16_row(&y, &mut out, 2, false);
+    assert_eq!(&out[0..3], &[0, 0, 0]);
+    assert_eq!(out[3], 0xFFFF);
+    assert_eq!(&out[4..7], &[65535, 65535, 65535]);
+    assert_eq!(out[7], 0xFFFF);
   }
 
   // ---- Original tests (now with full_range=true) ----

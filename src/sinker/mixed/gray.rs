@@ -1208,6 +1208,48 @@ mod tests {
   }
 
   #[test]
+  fn gray16_limited_range_rgba_u16_channels_rescale_at_boundaries() {
+    // Regression for the i32-overflow bug at BITS=16: limited-range white
+    // 60160 × max_native 65535 ≈ 3.67e9 overflows i32. Math runs in i64;
+    // assert that RGB channels reach black=0 and white=65535 at the
+    // limited-range boundaries (codex finding requested
+    // u16-channel-value asserts, not only alpha).
+    let plane = [4096u16, 60160u16, 65535u16, 0u16];
+    let frame = make_gray16_frame(&plane, 4, 1);
+    let mut rgba_u16 = std::vec![0u16; 16];
+    let mut sink = MixedSinker::<crate::yuv::Gray16>::new(4, 1)
+      .with_rgba_u16(&mut rgba_u16)
+      .unwrap();
+    gray16_to(&frame, false, M, &mut sink).unwrap();
+    // pixel 0: limited black 4096 → 0
+    assert_eq!(&rgba_u16[0..3], &[0, 0, 0]);
+    // pixel 1: limited white 60160 → 65535 (over-i32 path)
+    assert_eq!(&rgba_u16[4..7], &[65535, 65535, 65535]);
+    // pixel 2: over-white 65535 → clamped to 65535
+    assert_eq!(&rgba_u16[8..11], &[65535, 65535, 65535]);
+    // pixel 3: below-black 0 → clamped to 0
+    assert_eq!(&rgba_u16[12..15], &[0, 0, 0]);
+    // alpha unchanged
+    for i in 0..4 {
+      assert_eq!(rgba_u16[i * 4 + 3], 0xFFFF);
+    }
+  }
+
+  #[test]
+  fn gray16_limited_range_rgb_u16_channels_rescale_at_boundaries() {
+    // Same i32-overflow regression on the with_rgb_u16 path.
+    let plane = [4096u16, 60160u16];
+    let frame = make_gray16_frame(&plane, 2, 1);
+    let mut rgb_u16 = std::vec![0u16; 6];
+    let mut sink = MixedSinker::<crate::yuv::Gray16>::new(2, 1)
+      .with_rgb_u16(&mut rgb_u16)
+      .unwrap();
+    gray16_to(&frame, false, M, &mut sink).unwrap();
+    assert_eq!(&rgb_u16[0..3], &[0, 0, 0]);
+    assert_eq!(&rgb_u16[3..6], &[65535, 65535, 65535]);
+  }
+
+  #[test]
   fn gray16_limited_range_hsv_v_is_rescaled() {
     // HSV V must reflect limited-range rescaling.
     let plane = [60160u16; 4]; // white
