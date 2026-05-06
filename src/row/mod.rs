@@ -76,9 +76,9 @@ pub(crate) use dispatch::vuya::vuya_to_luma_u16_row;
 pub(crate) use dispatch::vuyx::vuyx_to_luma_u16_row;
 
 pub use dispatch::{
-  ayuv64::*, bayer::*, nv::*, packed_yuv422::*, planar_gbr::*, pn::*, rgb_f16_ops::*,
-  rgb_float_ops::*, rgb_ops::*, v30x::*, v210::*, v410::*, vuya::*, vuyx::*, xv36::*, y210::*,
-  y212::*, y216::*, yuv420::*, yuv444::*, yuva::*,
+  ayuv64::*, bayer::*, nv::*, packed_yuv422::*, planar_gbr::*, planar_gbr_high_bit::*, pn::*,
+  rgb_f16_ops::*, rgb_float_ops::*, rgb_ops::*, v30x::*, v210::*, v410::*, vuya::*, vuyx::*,
+  xv36::*, y210::*, y212::*, y216::*, yuv420::*, yuv444::*, yuva::*,
 };
 // Gray dispatchers are pub(crate) — sinker code uses them via crate::row::gray*_row.
 #[cfg(any(feature = "std", feature = "alloc"))]
@@ -548,6 +548,84 @@ mod overflow_tests {
     let a: [u8; 0] = [];
     let mut rgba: [u8; 0] = [];
     gbra_to_rgba_row(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
+  }
+
+  // ---- Tier 10b planar GBR high-bit dispatchers — `width × {3,4}` overflow
+  //
+  // The high-bit (`GbrpN` / `GbrapN`) dispatchers must guard their output
+  // buffer sizes against `width * {3, 4}` wrapping on 32-bit targets.
+  // Each {3, 4}-channel-output entry point gets an independent regression
+  // test so future guard removals surface individually. The native-depth
+  // luma dispatcher (`gbr_to_luma_u16_high_bit_row`) is omitted because
+  // it doesn't perform a width × N multiply — output length is `width`
+  // exactly, so there is no wrapping path to guard.
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gbr_to_rgb_high_bit_dispatcher_rejects_width_times_3_overflow() {
+    let g: [u16; 0] = [];
+    let b: [u16; 0] = [];
+    let r: [u16; 0] = [];
+    let mut rgb: [u8; 0] = [];
+    gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut rgb, OVERFLOW_WIDTH, false);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gbr_to_rgb_u16_high_bit_dispatcher_rejects_width_times_3_overflow() {
+    let g: [u16; 0] = [];
+    let b: [u16; 0] = [];
+    let r: [u16; 0] = [];
+    let mut rgb: [u16; 0] = [];
+    gbr_to_rgb_u16_high_bit_row::<10>(&g, &b, &r, &mut rgb, OVERFLOW_WIDTH, false);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gbr_to_rgba_opaque_high_bit_dispatcher_rejects_width_times_4_overflow() {
+    let g: [u16; 0] = [];
+    let b: [u16; 0] = [];
+    let r: [u16; 0] = [];
+    let mut rgba: [u8; 0] = [];
+    gbr_to_rgba_opaque_high_bit_row::<10>(&g, &b, &r, &mut rgba, OVERFLOW_WIDTH, false);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gbr_to_rgba_opaque_u16_high_bit_dispatcher_rejects_width_times_4_overflow() {
+    let g: [u16; 0] = [];
+    let b: [u16; 0] = [];
+    let r: [u16; 0] = [];
+    let mut rgba: [u16; 0] = [];
+    gbr_to_rgba_opaque_u16_high_bit_row::<10>(&g, &b, &r, &mut rgba, OVERFLOW_WIDTH, false);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gbra_to_rgba_high_bit_dispatcher_rejects_width_times_4_overflow() {
+    let g: [u16; 0] = [];
+    let b: [u16; 0] = [];
+    let r: [u16; 0] = [];
+    let a: [u16; 0] = [];
+    let mut rgba: [u8; 0] = [];
+    gbra_to_rgba_high_bit_row::<10>(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
+  }
+
+  #[cfg(target_pointer_width = "32")]
+  #[test]
+  #[should_panic(expected = "overflows usize")]
+  fn gbra_to_rgba_u16_high_bit_dispatcher_rejects_width_times_4_overflow() {
+    let g: [u16; 0] = [];
+    let b: [u16; 0] = [];
+    let r: [u16; 0] = [];
+    let a: [u16; 0] = [];
+    let mut rgba: [u16; 0] = [];
+    gbra_to_rgba_u16_high_bit_row::<10>(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
   }
 
   // ---- Tier 11 gray dispatchers — `width × {3, 4}` overflow ----
