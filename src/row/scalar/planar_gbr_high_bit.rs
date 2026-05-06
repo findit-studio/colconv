@@ -698,10 +698,10 @@ mod tests {
     let clean = dirty & 0x03FF;
     let expected_u8 = (clean >> 2) as u8;
     for w in [1usize, 7, 8, 16, 17, 32, 33, 64, 128, 130] {
-      let g = vec![dirty; w];
-      let b = vec![dirty; w];
-      let r = vec![dirty; w];
-      let mut out = vec![0u8; w * 3];
+      let g = std::vec![dirty; w];
+      let b = std::vec![dirty; w];
+      let r = std::vec![dirty; w];
+      let mut out = std::vec![0u8; w * 3];
       gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut out, w);
       for i in 0..w {
         assert_eq!(out[i * 3], expected_u8, "R pixel {i} wrong at width {w}");
