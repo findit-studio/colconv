@@ -70,9 +70,9 @@ pub fn gbrpf16_to<S: Gbrpf16Sink>(src: &Gbrpf16Frame<'_>, sink: &mut S) -> Resul
   let g_plane = src.g();
   let b_plane = src.b();
   let r_plane = src.r();
-  let g_stride = src.g_stride();
-  let b_stride = src.b_stride();
-  let r_stride = src.r_stride();
+  let g_stride = src.g_stride() as usize;
+  let b_stride = src.b_stride() as usize;
+  let r_stride = src.r_stride() as usize;
 
   for row in 0..h {
     let g = &g_plane[row * g_stride..row * g_stride + w];

@@ -18,7 +18,7 @@ use thiserror::Error;
 
 /// Errors returned by the `try_new` constructors on the four float-domain
 /// planar GBR frame types.
-#[derive(Debug, Clone, Copy, PartialEq, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum GbrFloatFrameError {
   /// `width` or `height` was zero.
@@ -56,9 +56,20 @@ pub enum GbrFloatFrameError {
     /// Which plane's stride was too small.
     plane: &'static str,
     /// The supplied stride (in elements).
-    stride: usize,
+    stride: u32,
     /// The declared frame width (in elements).
-    width: usize,
+    width: u32,
+  },
+
+  /// `stride * (height - 1) + width` overflows `usize` (32-bit targets only).
+  #[error("plane '{plane}' geometry overflows usize: stride={stride}, height={height}")]
+  GeometryOverflow {
+    /// Which plane's geometry overflowed.
+    plane: &'static str,
+    /// Stride of the plane that overflowed.
+    stride: u32,
+    /// Height of the frame.
+    height: u32,
   },
 }
 
@@ -69,7 +80,7 @@ pub enum GbrFloatFrameError {
 /// Returns `(width as usize, height as usize)` after confirming both are
 /// non-zero and their product fits in `i32::MAX`.
 #[inline(always)]
-fn check_dims(width: u32, height: u32) -> Result<(usize, usize), GbrFloatFrameError> {
+const fn check_dims(width: u32, height: u32) -> Result<(usize, usize), GbrFloatFrameError> {
   if width == 0 || height == 0 {
     return Err(GbrFloatFrameError::ZeroDimension { width, height });
   }
@@ -81,21 +92,41 @@ fn check_dims(width: u32, height: u32) -> Result<(usize, usize), GbrFloatFrameEr
 
 /// Validates a single plane's stride and length.
 #[inline(always)]
-fn check_plane(
+const fn check_plane(
   name: &'static str,
   plane_len: usize,
-  stride: usize,
+  stride: u32,
   w: usize,
   h: usize,
+  height: u32,
 ) -> Result<(), GbrFloatFrameError> {
-  if stride < w {
+  if (stride as usize) < w {
     return Err(GbrFloatFrameError::StrideBelowWidth {
       plane: name,
       stride,
-      width: w,
+      width: w as u32,
     });
   }
-  let needed = stride * (h - 1) + w;
+  let stride_times_hm1 = match (stride as usize).checked_mul(h - 1) {
+    Some(v) => v,
+    None => {
+      return Err(GbrFloatFrameError::GeometryOverflow {
+        plane: name,
+        stride,
+        height,
+      });
+    }
+  };
+  let needed = match stride_times_hm1.checked_add(w) {
+    Some(v) => v,
+    None => {
+      return Err(GbrFloatFrameError::GeometryOverflow {
+        plane: name,
+        stride,
+        height,
+      });
+    }
+  };
   if plane_len < needed {
     return Err(GbrFloatFrameError::PlaneTooShort {
       plane: name,
@@ -123,29 +154,39 @@ pub struct Gbrpf32Frame<'a> {
   r: &'a [f32],
   width: u32,
   height: u32,
-  g_stride: usize,
-  b_stride: usize,
-  r_stride: usize,
+  g_stride: u32,
+  b_stride: u32,
+  r_stride: u32,
 }
 
 impl<'a> Gbrpf32Frame<'a> {
   /// Constructs a new [`Gbrpf32Frame`], validating dimensions and plane
   /// lengths. Returns [`GbrFloatFrameError`] if any precondition fails.
+  #[cfg_attr(not(tarpaulin), inline(always))]
   #[allow(clippy::too_many_arguments)]
-  pub fn try_new(
+  pub const fn try_new(
     g: &'a [f32],
     b: &'a [f32],
     r: &'a [f32],
     width: u32,
     height: u32,
-    g_stride: usize,
-    b_stride: usize,
-    r_stride: usize,
+    g_stride: u32,
+    b_stride: u32,
+    r_stride: u32,
   ) -> Result<Self, GbrFloatFrameError> {
-    let (w, h) = check_dims(width, height)?;
-    check_plane("g", g.len(), g_stride, w, h)?;
-    check_plane("b", b.len(), b_stride, w, h)?;
-    check_plane("r", r.len(), r_stride, w, h)?;
+    let (w, h) = match check_dims(width, height) {
+      Ok(v) => v,
+      Err(e) => return Err(e),
+    };
+    if let Err(e) = check_plane("g", g.len(), g_stride, w, h, height) {
+      return Err(e);
+    }
+    if let Err(e) = check_plane("b", b.len(), b_stride, w, h, height) {
+      return Err(e);
+    }
+    if let Err(e) = check_plane("r", r.len(), r_stride, w, h, height) {
+      return Err(e);
+    }
     Ok(Self {
       g,
       b,
@@ -175,7 +216,7 @@ impl<'a> Gbrpf32Frame<'a> {
   }
   /// Green-plane element stride (`>= width`).
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn g_stride(&self) -> usize {
+  pub const fn g_stride(&self) -> u32 {
     self.g_stride
   }
   /// Blue plane samples.
@@ -185,7 +226,7 @@ impl<'a> Gbrpf32Frame<'a> {
   }
   /// Blue-plane element stride (`>= width`).
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn b_stride(&self) -> usize {
+  pub const fn b_stride(&self) -> u32 {
     self.b_stride
   }
   /// Red plane samples.
@@ -195,7 +236,7 @@ impl<'a> Gbrpf32Frame<'a> {
   }
   /// Red-plane element stride (`>= width`).
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn r_stride(&self) -> usize {
+  pub const fn r_stride(&self) -> u32 {
     self.r_stride
   }
 }
@@ -217,33 +258,45 @@ pub struct Gbrapf32Frame<'a> {
   a: &'a [f32],
   width: u32,
   height: u32,
-  g_stride: usize,
-  b_stride: usize,
-  r_stride: usize,
-  a_stride: usize,
+  g_stride: u32,
+  b_stride: u32,
+  r_stride: u32,
+  a_stride: u32,
 }
 
 impl<'a> Gbrapf32Frame<'a> {
   /// Constructs a new [`Gbrapf32Frame`], validating dimensions and plane
   /// lengths.
+  #[cfg_attr(not(tarpaulin), inline(always))]
   #[allow(clippy::too_many_arguments)]
-  pub fn try_new(
+  pub const fn try_new(
     g: &'a [f32],
     b: &'a [f32],
     r: &'a [f32],
     a: &'a [f32],
     width: u32,
     height: u32,
-    g_stride: usize,
-    b_stride: usize,
-    r_stride: usize,
-    a_stride: usize,
+    g_stride: u32,
+    b_stride: u32,
+    r_stride: u32,
+    a_stride: u32,
   ) -> Result<Self, GbrFloatFrameError> {
-    let (w, h) = check_dims(width, height)?;
-    check_plane("g", g.len(), g_stride, w, h)?;
-    check_plane("b", b.len(), b_stride, w, h)?;
-    check_plane("r", r.len(), r_stride, w, h)?;
-    check_plane("a", a.len(), a_stride, w, h)?;
+    let (w, h) = match check_dims(width, height) {
+      Ok(v) => v,
+      Err(e) => return Err(e),
+    };
+    if let Err(e) = check_plane("g", g.len(), g_stride, w, h, height) {
+      return Err(e);
+    }
+    if let Err(e) = check_plane("b", b.len(), b_stride, w, h, height) {
+      return Err(e);
+    }
+    if let Err(e) = check_plane("r", r.len(), r_stride, w, h, height) {
+      return Err(e);
+    }
+    if let Err(e) = check_plane("a", a.len(), a_stride, w, h, height) {
+      return Err(e);
+    }
     Ok(Self {
       g,
       b,
@@ -275,7 +328,7 @@ impl<'a> Gbrapf32Frame<'a> {
   }
   /// Green-plane element stride (`>= width`).
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn g_stride(&self) -> usize {
+  pub const fn g_stride(&self) -> u32 {
     self.g_stride
   }
   /// Blue plane samples.
@@ -285,7 +338,7 @@ impl<'a> Gbrapf32Frame<'a> {
   }
   /// Blue-plane element stride (`>= width`).
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn b_stride(&self) -> usize {
+  pub const fn b_stride(&self) -> u32 {
     self.b_stride
   }
   /// Red plane samples.
@@ -295,7 +348,7 @@ impl<'a> Gbrapf32Frame<'a> {
   }
   /// Red-plane element stride (`>= width`).
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn r_stride(&self) -> usize {
+  pub const fn r_stride(&self) -> u32 {
     self.r_stride
   }
   /// Alpha plane samples (real per-pixel; opaque = 1.0).
@@ -305,7 +358,7 @@ impl<'a> Gbrapf32Frame<'a> {
   }
   /// Alpha-plane element stride (`>= width`).
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn a_stride(&self) -> usize {
+  pub const fn a_stride(&self) -> u32 {
     self.a_stride
   }
 }
@@ -326,29 +379,39 @@ pub struct Gbrpf16Frame<'a> {
   r: &'a [half::f16],
   width: u32,
   height: u32,
-  g_stride: usize,
-  b_stride: usize,
-  r_stride: usize,
+  g_stride: u32,
+  b_stride: u32,
+  r_stride: u32,
 }
 
 impl<'a> Gbrpf16Frame<'a> {
   /// Constructs a new [`Gbrpf16Frame`], validating dimensions and plane
   /// lengths.
+  #[cfg_attr(not(tarpaulin), inline(always))]
   #[allow(clippy::too_many_arguments)]
-  pub fn try_new(
+  pub const fn try_new(
     g: &'a [half::f16],
     b: &'a [half::f16],
     r: &'a [half::f16],
     width: u32,
     height: u32,
-    g_stride: usize,
-    b_stride: usize,
-    r_stride: usize,
+    g_stride: u32,
+    b_stride: u32,
+    r_stride: u32,
   ) -> Result<Self, GbrFloatFrameError> {
-    let (w, h) = check_dims(width, height)?;
-    check_plane("g", g.len(), g_stride, w, h)?;
-    check_plane("b", b.len(), b_stride, w, h)?;
-    check_plane("r", r.len(), r_stride, w, h)?;
+    let (w, h) = match check_dims(width, height) {
+      Ok(v) => v,
+      Err(e) => return Err(e),
+    };
+    if let Err(e) = check_plane("g", g.len(), g_stride, w, h, height) {
+      return Err(e);
+    }
+    if let Err(e) = check_plane("b", b.len(), b_stride, w, h, height) {
+      return Err(e);
+    }
+    if let Err(e) = check_plane("r", r.len(), r_stride, w, h, height) {
+      return Err(e);
+    }
     Ok(Self {
       g,
       b,
@@ -378,7 +441,7 @@ impl<'a> Gbrpf16Frame<'a> {
   }
   /// Green-plane element stride (`>= width`).
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn g_stride(&self) -> usize {
+  pub const fn g_stride(&self) -> u32 {
     self.g_stride
   }
   /// Blue plane samples.
@@ -388,7 +451,7 @@ impl<'a> Gbrpf16Frame<'a> {
   }
   /// Blue-plane element stride (`>= width`).
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn b_stride(&self) -> usize {
+  pub const fn b_stride(&self) -> u32 {
     self.b_stride
   }
   /// Red plane samples.
@@ -398,7 +461,7 @@ impl<'a> Gbrpf16Frame<'a> {
   }
   /// Red-plane element stride (`>= width`).
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn r_stride(&self) -> usize {
+  pub const fn r_stride(&self) -> u32 {
     self.r_stride
   }
 }
@@ -420,33 +483,45 @@ pub struct Gbrapf16Frame<'a> {
   a: &'a [half::f16],
   width: u32,
   height: u32,
-  g_stride: usize,
-  b_stride: usize,
-  r_stride: usize,
-  a_stride: usize,
+  g_stride: u32,
+  b_stride: u32,
+  r_stride: u32,
+  a_stride: u32,
 }
 
 impl<'a> Gbrapf16Frame<'a> {
   /// Constructs a new [`Gbrapf16Frame`], validating dimensions and plane
   /// lengths.
+  #[cfg_attr(not(tarpaulin), inline(always))]
   #[allow(clippy::too_many_arguments)]
-  pub fn try_new(
+  pub const fn try_new(
     g: &'a [half::f16],
     b: &'a [half::f16],
     r: &'a [half::f16],
     a: &'a [half::f16],
     width: u32,
     height: u32,
-    g_stride: usize,
-    b_stride: usize,
-    r_stride: usize,
-    a_stride: usize,
+    g_stride: u32,
+    b_stride: u32,
+    r_stride: u32,
+    a_stride: u32,
   ) -> Result<Self, GbrFloatFrameError> {
-    let (w, h) = check_dims(width, height)?;
-    check_plane("g", g.len(), g_stride, w, h)?;
-    check_plane("b", b.len(), b_stride, w, h)?;
-    check_plane("r", r.len(), r_stride, w, h)?;
-    check_plane("a", a.len(), a_stride, w, h)?;
+    let (w, h) = match check_dims(width, height) {
+      Ok(v) => v,
+      Err(e) => return Err(e),
+    };
+    if let Err(e) = check_plane("g", g.len(), g_stride, w, h, height) {
+      return Err(e);
+    }
+    if let Err(e) = check_plane("b", b.len(), b_stride, w, h, height) {
+      return Err(e);
+    }
+    if let Err(e) = check_plane("r", r.len(), r_stride, w, h, height) {
+      return Err(e);
+    }
+    if let Err(e) = check_plane("a", a.len(), a_stride, w, h, height) {
+      return Err(e);
+    }
     Ok(Self {
       g,
       b,
@@ -478,7 +553,7 @@ impl<'a> Gbrapf16Frame<'a> {
   }
   /// Green-plane element stride (`>= width`).
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn g_stride(&self) -> usize {
+  pub const fn g_stride(&self) -> u32 {
     self.g_stride
   }
   /// Blue plane samples.
@@ -488,7 +563,7 @@ impl<'a> Gbrapf16Frame<'a> {
   }
   /// Blue-plane element stride (`>= width`).
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn b_stride(&self) -> usize {
+  pub const fn b_stride(&self) -> u32 {
     self.b_stride
   }
   /// Red plane samples.
@@ -498,7 +573,7 @@ impl<'a> Gbrapf16Frame<'a> {
   }
   /// Red-plane element stride (`>= width`).
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn r_stride(&self) -> usize {
+  pub const fn r_stride(&self) -> u32 {
     self.r_stride
   }
   /// Alpha plane samples (real per-pixel; opaque = 1.0).
@@ -508,7 +583,7 @@ impl<'a> Gbrapf16Frame<'a> {
   }
   /// Alpha-plane element stride (`>= width`).
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn a_stride(&self) -> usize {
+  pub const fn a_stride(&self) -> u32 {
     self.a_stride
   }
 }

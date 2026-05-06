@@ -41,9 +41,7 @@ pub use packed_yuv_8bit::*;
 pub use pal8::*;
 pub use planar_8bit::*;
 pub use planar_gbr_8bit::*;
-pub use planar_gbr_float::{
-  GbrFloatFrameError, Gbrapf16Frame, Gbrapf32Frame, Gbrpf16Frame, Gbrpf32Frame,
-};
+pub use planar_gbr_float::*;
 pub use planar_gbr_high_bit::*;
 pub use semi_planar_8bit::*;
 pub use subsampled_high_bit_planar::*;
