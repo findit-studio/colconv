@@ -83,6 +83,13 @@ pub use dispatch::{
 // Gray dispatchers are pub(crate) — sinker code uses them via crate::row::gray*_row.
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub(crate) use dispatch::gray::*;
+// Grayf32 / Ya8 / Ya16 dispatchers — pub(crate) for sinker use.
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) use dispatch::grayf32::*;
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) use dispatch::ya8::*;
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) use dispatch::ya16::*;
 
 // `yuv_444p_n_to_rgb_u16_row` is consumed by the 32-bit overflow test
 // `yuv_444p_n_u16_dispatcher_rejects_width_times_3_overflow` below —

@@ -1,5 +1,33 @@
 # CHANGELOG
 
+## 0.23.0 — Tier 11 finish: Grayf32 / Ya8 / Ya16 source formats
+
+**Additive feature; no public API change for existing callers.**
+
+Completes Tier 11 by adding full `MixedSinker` support for three new source
+formats: `Grayf32` (32-bit float luma), `Ya8` (8-bit luma + alpha), and
+`Ya16` (16-bit luma + alpha). Each format exposes RGB, RGBA, RGB-u16,
+RGBA-u16, luma, luma-u16, and HSV outputs via the same builder/accessor
+pattern used by all other formats.
+
+Key implementation details:
+
+- **Grayf32 output model**: clamp `[0, 1]`, scale × 255 (u8) or × 65535
+  (u16) with MXCSR-independent rounding; lossless f32 pass-throughs
+  (`rgb_f32`, `luma_f32`) added to `MixedSinker` struct.
+- **Ya8 / Ya16 RGBA**: Strategy A+ — RGB kernel first, then
+  `copy_alpha_ya_{u8,u16}` patches the α channel in-place, avoiding
+  double per-pixel math when both RGB and RGBA buffers are requested.
+- **Gray fast-path HSV**: H = 0, S = 0, V = Y (no RGB→HSV path) for all
+  three formats.
+- **SIMD coverage**: 5-backend SIMD (NEON, SSE4.1, AVX2, AVX-512,
+  wasm-simd128) dispatchers wired through `src/row/dispatch/`.
+- **New fields** on `MixedSinker`: `rgb_f32`, `luma_f32` with
+  `with_*/set_*` accessors and corresponding buffer-too-short error variants.
+
+Depends on PR #71 (Tier 11 MVP), PR #72 (Rgbf16), and PR #73 (Tier 10b)
+merging first.
+
 ## 0.22.0 — Tier 10b — Gbrp{9,10,12,14,16} + Gbrap{10,12,14,16} high-bit-depth planar GBR
 
 **Additive feature; no public API change for existing source formats.**
