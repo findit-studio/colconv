@@ -1,5 +1,52 @@
 # CHANGELOG
 
+## 0.20.0 — Tier 10 — Gbrp + Gbrap planar GBR sources (8-bit MVP)
+
+**Additive feature; no public API change for existing source formats.**
+
+Two new source formats:
+
+- `Gbrp` (`AV_PIX_FMT_GBRP`) — three full-resolution u8 planes in
+  **G, B, R** order (FFmpeg convention).
+- `Gbrap` (`AV_PIX_FMT_GBRAP`) — four planes (G, B, R, A) at 8 bits,
+  with a real per-pixel alpha plane (1:1 with the colour planes).
+
+`MixedSinker` impls expose the standard `with_rgb` / `with_rgba` /
+`with_luma` / `with_luma_u16` / `with_hsv` channels:
+
+- **`with_rgb`** — interleaves the three planes into packed `R, G, B`
+  via the new `gbr_to_rgb_row` kernel. Output is identical to running
+  the same pixel data through `Rgb24` (verified by parity tests).
+- **`with_rgba`** — for `Gbrp`: standalone path uses
+  `gbr_to_rgba_opaque_row` (α = `0xFF`). For `Gbrap`: standalone uses
+  `gbra_to_rgba_row` (real α from the source A plane). The combo
+  case `with_rgb + with_rgba` runs Strategy A (Gbrp) / A+ (Gbrap) —
+  expand the already-computed RGB row to RGBA and (Gbrap) overwrite
+  the α slot from the source plane, avoiding a second per-pixel
+  interleave.
+- **`with_luma` / `with_luma_u16`** — derive luma from staged packed
+  RGB via the existing `rgb_to_luma_row` (no new luma kernel).
+- **`with_hsv`** — derive HSV from staged packed RGB via the existing
+  `rgb_to_hsv_row`.
+
+Per-arch SIMD on every backend (NEON / SSE4.1 / AVX2 / AVX-512 /
+wasm-simd128) for the three new kernels (`gbr_to_rgb_row`,
+`gbra_to_rgba_row`, `gbr_to_rgba_opaque_row`). Each backend is
+byte-identical to the scalar reference (these kernels are pure
+shuffles — no rounding involved).
+
+The `walker!` macro is reused unchanged via thin Y/U/V → G/B/R alias
+methods on `GbrpFrame` / `GbrapFrame` (crate-private) plus accessor
+re-naming on the row types.
+
+**Out of scope (deferred to Tier 10b):**
+
+- High-bit GBR (`Gbrp9` / `Gbrp10` / `Gbrp12` / `Gbrp14` / `Gbrp16`,
+  `Gbrap10` / `Gbrap12` / `Gbrap14` / `Gbrap16`) — same shape, will
+  follow the BITS-generic `YuvNp` template.
+- Float planar (`gbrpf32`, `gbrapf16`) — folded into the Tier 9 float
+  follow-up.
+
 ## 0.19.0 — `with_luma_u16` for all 8-bit source formats
 
 **Additive feature; no public API change for existing accessors.**

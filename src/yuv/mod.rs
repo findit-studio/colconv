@@ -155,8 +155,26 @@
 //!   — distinct from the integer-source `with_rgb_u16` family which
 //!   preserves the source's native precision range (Tier 9 MVP).
 //!
+//! # Shipped (8-bit planar GBR sources — Tier 10)
+//!
+//! - [`Gbrp`](crate::yuv::Gbrp) — three full-resolution `u8` planes in
+//!   **G, B, R** order (`AV_PIX_FMT_GBRP`). Per-row kernels
+//!   `gbr_to_rgb_row` / `gbr_to_rgba_opaque_row` interleave the planes
+//!   into packed RGB / RGBA without a chroma matrix step (input is
+//!   already component RGB). Native SIMD on every backend (NEON /
+//!   SSE4.1 / AVX2 / AVX-512 / wasm-simd128).
+//! - [`Gbrap`](crate::yuv::Gbrap) — four planes (G, B, R, A) at 8 bits
+//!   per channel (`AV_PIX_FMT_GBRAP`). Adds a real per-pixel alpha
+//!   plane (1:1 with G); kernel `gbra_to_rgba_row` interleaves all
+//!   four planes into packed RGBA in one pass.
+//!
 //! # Not yet shipped
 //!
+//! - **High-bit-depth GBR** (`Gbrp9` / `Gbrp10` / `Gbrp12` / `Gbrp14` /
+//!   `Gbrp16`, `Gbrap10` / `Gbrap12` / `Gbrap14` / `Gbrap16`) — queued for
+//!   Tier 10b. The BITS-generic planar shape from `YuvNp` carries over
+//!   directly; these high-bit variants are not yet exposed in this release
+//!   and ship in a follow-up PR.
 //! - **Legacy planar** (`Yuv411p`, `Yuv410p`) — DV / Cinepak only;
 //!   uncommon enough that adding them would be speculative.
 //! - **Big-endian 10-bit packed RGB** (`X2RGB10BE` / `X2BGR10BE`).
@@ -182,6 +200,8 @@ mod ayuv64;
 mod bgr24;
 mod bgra;
 mod bgrx;
+mod gbrap;
+mod gbrp;
 mod nv12;
 mod nv16;
 mod nv21;
@@ -259,6 +279,8 @@ pub use ayuv64::{Ayuv64, Ayuv64Row, Ayuv64Sink, ayuv64_to};
 pub use bgr24::{Bgr24, Bgr24Row, Bgr24Sink, bgr24_to};
 pub use bgra::{Bgra, BgraRow, BgraSink, bgra_to};
 pub use bgrx::{Bgrx, BgrxRow, BgrxSink, bgrx_to};
+pub use gbrap::{Gbrap, GbrapRow, GbrapSink, gbrap_to};
+pub use gbrp::{Gbrp, GbrpRow, GbrpSink, gbrp_to};
 pub use nv12::{Nv12, Nv12Row, Nv12Sink, nv12_to};
 pub use nv16::{Nv16, Nv16Row, Nv16Sink, nv16_to};
 pub use nv21::{Nv21, Nv21Row, Nv21Sink, nv21_to};
