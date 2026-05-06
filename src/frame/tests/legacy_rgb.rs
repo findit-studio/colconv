@@ -279,6 +279,60 @@ fn rgb444_frame_try_new_rejects_plane_too_short() {
   ));
 }
 
+// ---- Rgb565Frame::new panic -------------------------------------------------
+
+#[test]
+#[should_panic(expected = "invalid Rgb565Frame dimensions or plane length")]
+fn rgb565_frame_new_panics_on_invalid() {
+  let buf = std::vec![0u8; 1];
+  Rgb565Frame::new(&buf, 16, 4, 32);
+}
+
+// ---- Bgr565Frame::new panic -------------------------------------------------
+
+#[test]
+#[should_panic(expected = "invalid Bgr565Frame dimensions or plane length")]
+fn bgr565_frame_new_panics_on_invalid() {
+  let buf = std::vec![0u8; 1];
+  Bgr565Frame::new(&buf, 16, 4, 32);
+}
+
+// ---- Rgb555Frame::new panic -------------------------------------------------
+
+#[test]
+#[should_panic(expected = "invalid Rgb555Frame dimensions or plane length")]
+fn rgb555_frame_new_panics_on_invalid() {
+  let buf = std::vec![0u8; 1];
+  Rgb555Frame::new(&buf, 16, 4, 32);
+}
+
+// ---- Bgr555Frame::new panic -------------------------------------------------
+
+#[test]
+#[should_panic(expected = "invalid Bgr555Frame dimensions or plane length")]
+fn bgr555_frame_new_panics_on_invalid() {
+  let buf = std::vec![0u8; 1];
+  Bgr555Frame::new(&buf, 16, 4, 32);
+}
+
+// ---- Rgb444Frame::new panic -------------------------------------------------
+
+#[test]
+#[should_panic(expected = "invalid Rgb444Frame dimensions or plane length")]
+fn rgb444_frame_new_panics_on_invalid() {
+  let buf = std::vec![0u8; 1];
+  Rgb444Frame::new(&buf, 16, 4, 32);
+}
+
+// ---- Bgr444Frame::new panic -------------------------------------------------
+
+#[test]
+#[should_panic(expected = "invalid Bgr444Frame dimensions or plane length")]
+fn bgr444_frame_new_panics_on_invalid() {
+  let buf = std::vec![0u8; 1];
+  Bgr444Frame::new(&buf, 16, 4, 32);
+}
+
 // ---- Bgr444Frame -----------------------------------------------------------
 
 #[test]

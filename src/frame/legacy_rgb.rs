@@ -110,6 +110,15 @@ impl<'a> Rgb565Frame<'a> {
     })
   }
 
+  /// Constructs a new [`Rgb565Frame`], panicking on invalid inputs.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn new(rgb565: &'a [u8], width: u32, height: u32, stride: u32) -> Self {
+    match Self::try_new(rgb565, width, height, stride) {
+      Ok(frame) => frame,
+      Err(_) => panic!("invalid Rgb565Frame dimensions or plane length"),
+    }
+  }
+
   /// Packed RGB565 plane bytes — each 2-byte group is one LE `u16` pixel.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn rgb565(&self) -> &'a [u8] {
@@ -189,6 +198,15 @@ impl<'a> Bgr565Frame<'a> {
       height,
       stride,
     })
+  }
+
+  /// Constructs a new [`Bgr565Frame`], panicking on invalid inputs.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn new(bgr565: &'a [u8], width: u32, height: u32, stride: u32) -> Self {
+    match Self::try_new(bgr565, width, height, stride) {
+      Ok(frame) => frame,
+      Err(_) => panic!("invalid Bgr565Frame dimensions or plane length"),
+    }
   }
 
   /// Packed BGR565 plane bytes — each 2-byte group is one LE `u16` pixel.
@@ -273,6 +291,15 @@ impl<'a> Rgb555Frame<'a> {
     })
   }
 
+  /// Constructs a new [`Rgb555Frame`], panicking on invalid inputs.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn new(rgb555: &'a [u8], width: u32, height: u32, stride: u32) -> Self {
+    match Self::try_new(rgb555, width, height, stride) {
+      Ok(frame) => frame,
+      Err(_) => panic!("invalid Rgb555Frame dimensions or plane length"),
+    }
+  }
+
   /// Packed RGB555 plane bytes — each 2-byte group is one LE `u16` pixel.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn rgb555(&self) -> &'a [u8] {
@@ -353,6 +380,15 @@ impl<'a> Bgr555Frame<'a> {
       height,
       stride,
     })
+  }
+
+  /// Constructs a new [`Bgr555Frame`], panicking on invalid inputs.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn new(bgr555: &'a [u8], width: u32, height: u32, stride: u32) -> Self {
+    match Self::try_new(bgr555, width, height, stride) {
+      Ok(frame) => frame,
+      Err(_) => panic!("invalid Bgr555Frame dimensions or plane length"),
+    }
   }
 
   /// Packed BGR555 plane bytes — each 2-byte group is one LE `u16` pixel.
@@ -437,6 +473,15 @@ impl<'a> Rgb444Frame<'a> {
     })
   }
 
+  /// Constructs a new [`Rgb444Frame`], panicking on invalid inputs.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn new(rgb444: &'a [u8], width: u32, height: u32, stride: u32) -> Self {
+    match Self::try_new(rgb444, width, height, stride) {
+      Ok(frame) => frame,
+      Err(_) => panic!("invalid Rgb444Frame dimensions or plane length"),
+    }
+  }
+
   /// Packed RGB444 plane bytes — each 2-byte group is one LE `u16` pixel.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn rgb444(&self) -> &'a [u8] {
@@ -517,6 +562,15 @@ impl<'a> Bgr444Frame<'a> {
       height,
       stride,
     })
+  }
+
+  /// Constructs a new [`Bgr444Frame`], panicking on invalid inputs.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn new(bgr444: &'a [u8], width: u32, height: u32, stride: u32) -> Self {
+    match Self::try_new(bgr444, width, height, stride) {
+      Ok(frame) => frame,
+      Err(_) => panic!("invalid Bgr444Frame dimensions or plane length"),
+    }
   }
 
   /// Packed BGR444 plane bytes — each 2-byte group is one LE `u16` pixel.
