@@ -44,6 +44,7 @@ mod hsv;
 pub(crate) mod legacy_rgb;
 pub(crate) mod mono1bit;
 mod packed_rgb;
+mod packed_rgb_16bit;
 mod packed_rgb_float;
 mod packed_yuv_8bit;
 pub(crate) mod pal8;
@@ -70,6 +71,8 @@ pub(crate) use ayuv64::*;
 pub(crate) use gray::*;
 pub(crate) use hsv::*;
 pub(crate) use packed_rgb::*;
+#[allow(unused_imports)]
+pub(crate) use packed_rgb_16bit::*;
 pub(crate) use packed_rgb_float::*;
 pub(crate) use packed_yuv_8bit::*;
 pub(crate) use planar_gbr::*;
