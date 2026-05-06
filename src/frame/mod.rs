@@ -9,6 +9,7 @@
 // family so no single source ends up over ~1.5k lines, mirroring the
 // split already done for `yuva/`, `packed_rgb_8bit`, etc.
 mod bayer;
+mod gray;
 mod packed_rgb_10bit;
 mod packed_rgb_8bit;
 mod packed_rgb_float;
@@ -24,6 +25,7 @@ mod y2xx;
 mod yuva;
 
 pub use bayer::*;
+pub use gray::*;
 pub use packed_rgb_8bit::*;
 pub use packed_rgb_10bit::*;
 pub use packed_rgb_float::*;

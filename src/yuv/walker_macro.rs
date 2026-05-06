@@ -1363,6 +1363,208 @@ macro_rules! walker {
     }
   };
 
+  // ---------- planar1 (single plane — gray / luma-only) --------------------
+  //
+  // Used by Gray8 (u8 plane) and Gray16 (u16 plane). No chroma planes.
+  // The walker reads one Y row per iteration. `elem_type` is `u8` or `u16`.
+  (
+    planar1 {
+      $(#[$marker_meta:meta])*
+      marker: $marker:ident,
+      frame: $frame:ty,
+      row: $row:ident,
+      sink: $sink:ident,
+      walker: $walker:ident,
+      elem_type: $elem:ty,
+      $(#[$row_meta:meta])*
+      row_doc: $row_doc:expr,
+      $(#[$walker_meta:meta])*
+      walker_doc: $walker_doc:expr,
+    }
+  ) => {
+    $(#[$marker_meta])*
+    pub struct $marker;
+
+    impl $crate::sealed::Sealed for $marker {}
+    impl $crate::SourceFormat for $marker {}
+
+    $(#[$row_meta])*
+    #[doc = $row_doc]
+    #[derive(Debug, Clone, Copy)]
+    pub struct $row<'a> {
+      y: &'a [$elem],
+      row: usize,
+      matrix: $crate::ColorMatrix,
+      full_range: bool,
+    }
+
+    impl<'a> $row<'a> {
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub(crate) fn new(
+        y: &'a [$elem],
+        row: usize,
+        matrix: $crate::ColorMatrix,
+        full_range: bool,
+      ) -> Self {
+        Self { y, row, matrix, full_range }
+      }
+      /// Full-width Y (luma) row.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn y(&self) -> &'a [$elem] {
+        self.y
+      }
+      /// Output row index within the frame.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn row(&self) -> usize {
+        self.row
+      }
+      /// Color matrix carried through from the kernel call.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn matrix(&self) -> $crate::ColorMatrix {
+        self.matrix
+      }
+      /// Full-range flag carried through from the kernel call.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn full_range(&self) -> bool {
+        self.full_range
+      }
+    }
+
+    /// Sinks that consume rows of this source format.
+    pub trait $sink: for<'a> $crate::PixelSink<Input<'a> = $row<'a>> {}
+
+    $(#[$walker_meta])*
+    #[doc = $walker_doc]
+    pub fn $walker<S: $sink>(
+      src: &$frame,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error> {
+      sink.begin_frame(src.width(), src.height())?;
+
+      let w = src.width() as usize;
+      let h = src.height() as usize;
+      let y_stride = src.y_stride() as usize;
+      let y_plane = src.y();
+
+      for row in 0..h {
+        let y_start = row * y_stride;
+        let y = &y_plane[y_start..y_start + w];
+        sink.process($row::new(y, row, matrix, full_range))?;
+      }
+      Ok(())
+    }
+  };
+
+  // ---------- planar1_bits (single u16 plane — GrayN<BITS>) ----------------
+  //
+  // Used by Gray9/10/12/14. The outer walker is monomorphic over the
+  // specific BITS value; the inner walker is const-generic. Same pattern
+  // as `planar3_bits`.
+  (
+    planar1_bits {
+      $(#[$marker_meta:meta])*
+      marker: $marker:ident,
+      frame: $frame:ty,
+      generic_frame: $gframe:ty,
+      bits: $bits:expr,
+      row: $row:ident,
+      sink: $sink:ident,
+      walker: $walker:ident,
+      walker_inner: $walker_inner:ident,
+      elem_type: $elem:ty,
+      $(#[$row_meta:meta])*
+      row_doc: $row_doc:expr,
+      $(#[$walker_meta:meta])*
+      walker_doc: $walker_doc:expr,
+    }
+  ) => {
+    $(#[$marker_meta])*
+    pub struct $marker;
+
+    impl $crate::sealed::Sealed for $marker {}
+    impl $crate::SourceFormat for $marker {}
+
+    $(#[$row_meta])*
+    #[doc = $row_doc]
+    #[derive(Debug, Clone, Copy)]
+    pub struct $row<'a> {
+      y: &'a [$elem],
+      row: usize,
+      matrix: $crate::ColorMatrix,
+      full_range: bool,
+    }
+
+    impl<'a> $row<'a> {
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub(crate) fn new(
+        y: &'a [$elem],
+        row: usize,
+        matrix: $crate::ColorMatrix,
+        full_range: bool,
+      ) -> Self {
+        Self { y, row, matrix, full_range }
+      }
+      /// Full-width Y (luma) row.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn y(&self) -> &'a [$elem] {
+        self.y
+      }
+      /// Output row index within the frame.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn row(&self) -> usize {
+        self.row
+      }
+      /// Color matrix carried through from the kernel call.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn matrix(&self) -> $crate::ColorMatrix {
+        self.matrix
+      }
+      /// Full-range flag carried through from the kernel call.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn full_range(&self) -> bool {
+        self.full_range
+      }
+    }
+
+    /// Sinks that consume rows of this source format.
+    pub trait $sink: for<'a> $crate::PixelSink<Input<'a> = $row<'a>> {}
+
+    $(#[$walker_meta])*
+    #[doc = $walker_doc]
+    pub fn $walker<S: $sink>(
+      src: &$frame,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error> {
+      $walker_inner::<{ $bits }, S>(src, full_range, matrix, sink)
+    }
+
+    #[cfg_attr(not(tarpaulin), inline(always))]
+    fn $walker_inner<const BITS: u32, S: $sink>(
+      src: &$gframe,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error> {
+      sink.begin_frame(src.width(), src.height())?;
+
+      let w = src.width() as usize;
+      let h = src.height() as usize;
+      let y_stride = src.y_stride() as usize;
+      let y_plane = src.y();
+
+      for row in 0..h {
+        let y_start = row * y_stride;
+        let y = &y_plane[y_start..y_start + w];
+        sink.process($row::new(y, row, matrix, full_range))?;
+      }
+      Ok(())
+    }
+  };
+
   // ---------- planar4 BITS-generic emitters: full --------------------------
   (@p4_emit_bits full
     $(#[$marker_meta:meta])*

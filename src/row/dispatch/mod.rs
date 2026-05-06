@@ -13,6 +13,7 @@
 pub(crate) mod alpha_extract;
 pub(super) mod ayuv64;
 pub(super) mod bayer;
+pub(super) mod gray;
 pub(super) mod nv;
 pub(super) mod packed_yuv422;
 pub(super) mod planar_gbr;
