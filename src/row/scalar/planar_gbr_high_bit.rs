@@ -315,25 +315,33 @@ pub(crate) fn gbr_to_luma_u16_high_bit_row<const BITS: u32>(
       luma_out[x] = y.clamp(0, native_max as i32) as u16;
     }
   } else {
-    // Limited-range luma:
-    //   Y_lim = (16 << (BITS - 8)) + (Y_full * 219) / 255
-    // Implemented as:
-    //   Y_lim = Y_off + (Y_full * LIMITED_SCALE_Q15 + RND) >> 15
-    // where LIMITED_SCALE_Q15 = round(219 * 32768 / 255) = 28142 (same
-    // constant as the 8-bit path — the Q15 ratio 219/255 is depth-
-    // independent). This correctly maps the native-depth full-range
-    // Y_full into the native-depth limited-range window.
-    const LIMITED_SCALE_Q15: i64 = 28142;
-    let y_off = (16i32 << (BITS - 8)) as i64;
-    let y_max = (235i32 << (BITS - 8)) as i64;
+    // Limited-range luma at native depth:
+    //   Y_lim = Y_off + Y_full_clamped * range / native_max
+    // where:
+    //   Y_off       = 16  << (BITS - 8)        (native limited black)
+    //   range       = 219 << (BITS - 8)        (native limited span)
+    //   native_max  = (1 << BITS) - 1          (full-range upper bound)
+    //
+    // The naive 8-bit `LIMITED_SCALE_Q15 = round(219/255 × 32768)` ratio
+    // is wrong here because it scales Y_full by `219/255 ≈ 0.85882`
+    // when the correct native ratio is `range / native_max ≈ 0.85546`
+    // at BITS=16. The ~0.4% overshoot makes the top ~250 input codes
+    // collapse onto the y_max clamp, destroying highlight gradation
+    // (codex review). The exact form below uses i64 throughout —
+    // `range × native_max < 2^32` for BITS ≤ 16 — and a +native_max/2
+    // bias for round-half-up semantics.
+    let y_off = (16i64) << (BITS - 8);
+    let range = (219i64) << (BITS - 8);
+    let native_max_i64 = native_max as i64;
+    let y_max = (235i64) << (BITS - 8);
     let y_min = y_off;
     for x in 0..width {
       let rv = (r[x] & mask) as i64;
       let gv = (g[x] & mask) as i64;
       let bv = (b[x] & mask) as i64;
       let y_full = (k_r * rv + k_g * gv + k_b * bv + RND) >> 15;
-      let y_full_clamped = y_full.clamp(0, native_max as i64);
-      let y_lim = y_off + ((y_full_clamped * LIMITED_SCALE_Q15 + RND) >> 15);
+      let y_full_clamped = y_full.clamp(0, native_max_i64);
+      let y_lim = y_off + (y_full_clamped * range + native_max_i64 / 2) / native_max_i64;
       luma_out[x] = y_lim.clamp(y_min, y_max) as u16;
     }
   }
@@ -971,5 +979,85 @@ mod tests {
       out[0], y_off,
       "all-black limited-range must give Y_off={y_off}"
     );
+  }
+
+  // ---- Limited-range native-depth scaling boundary regression ---------
+  //
+  // Codex review #4233323791 caught that an earlier 8-bit `219/255`
+  // Q15 scale collapsed the top ~250 input codes onto the y_max clamp
+  // at BITS=16 (e.g. y_full = 65300 → 60160 instead of ~59955),
+  // destroying highlight gradation. The current implementation uses
+  // native-depth scaling `(y_full × range) / native_max` where
+  // `range = 219 << (BITS - 8)` and `native_max = (1 << BITS) - 1`.
+
+  #[test]
+  fn luma_u16_high_bit_bits16_limited_range_max_white_maps_to_y_max() {
+    // BITS=16, all-white in: y_full clamps to native_max=65535;
+    // y_lim = 4096 + 65535 × 56064 / 65535 = 60160 = 235 << 8.
+    let g = [u16::MAX; 1];
+    let b = [u16::MAX; 1];
+    let r = [u16::MAX; 1];
+    let mut out = [0u16; 1];
+    gbr_to_luma_u16_high_bit_row::<16>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, false);
+    let y_max = 235u16 << 8; // 60160
+    assert_eq!(
+      out[0], y_max,
+      "all-white limited-range must give Y_max={y_max}"
+    );
+  }
+
+  #[test]
+  fn luma_u16_high_bit_bits16_limited_range_near_white_keeps_gradation() {
+    // BITS=16, BT.709 luma weights ≈ Kr=0.2126, Kg=0.7152, Kb=0.0722.
+    // Setting all 3 channels equal makes the matrix multiply produce
+    // y_full ≈ input, so we can probe the limited-range scaling at
+    // specific y_full values. y_full = 65000 / 65300 / 65500 must each
+    // produce a distinct y_lim — the buggy 8-bit ratio would clamp the
+    // top two onto y_max=60160, destroying the gradation codex flagged.
+    for &v in &[65000u16, 65300, 65500] {
+      let g = [v; 1];
+      let b = [v; 1];
+      let r = [v; 1];
+      let mut out = [0u16; 1];
+      gbr_to_luma_u16_high_bit_row::<16>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, false);
+      // Native-depth limited-range: y_lim = 4096 + v × 56064 / 65535
+      let expected = 4096 + ((v as u64 * 56064 + 65535 / 2) / 65535) as u16;
+      // Allow ±1 LSB for matrix-multiply rounding (BT.709 weights aren't
+      // exactly 1.0 even with all channels equal; tiny Q15 residue).
+      let diff = (out[0] as i32 - expected as i32).abs();
+      assert!(
+        diff <= 1,
+        "v={v} expected ≈{expected} got {} (diff {diff})",
+        out[0]
+      );
+      // The bug-collapse value would be 60160 (y_max). Reject any
+      // result above 60160 — that means we re-introduced the clamp.
+      assert!(
+        out[0] < 60160 || (v >= 65500),
+        "limited-range must not clamp at v={v} (got {})",
+        out[0]
+      );
+    }
+  }
+
+  #[test]
+  fn luma_u16_high_bit_bits10_limited_range_endpoints() {
+    // BITS=10: y_off=64 (=16<<2), y_max=940 (=235<<2), native_max=1023.
+    // BT.709 luma at all-equal channels passes y_full ≈ input through.
+    // Test endpoint values: 0 → 64, 1023 → 940.
+    let cases: &[(u16, u16)] = &[(0, 64), (1023, 940)];
+    for &(input, expected) in cases {
+      let g = [input; 1];
+      let b = [input; 1];
+      let r = [input; 1];
+      let mut out = [0u16; 1];
+      gbr_to_luma_u16_high_bit_row::<10>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, false);
+      let diff = (out[0] as i32 - expected as i32).abs();
+      assert!(
+        diff <= 1,
+        "BITS=10 input={input} expected ≈{expected} got {}",
+        out[0]
+      );
+    }
   }
 }
