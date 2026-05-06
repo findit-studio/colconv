@@ -1198,13 +1198,6 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
     self.luma_u16.is_some()
   }
 
-  /// Returns `true` iff the sinker will write `f32` RGB.
-  /// Only honored by `Grayf32` source impls.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn produces_rgb_f32(&self) -> bool {
-    self.rgb_f32.is_some()
-  }
-
   /// Returns `true` iff the sinker will write `f32` luma.
   /// Only honored by `Grayf32` source impls.
   #[cfg_attr(not(tarpaulin), inline(always))]
