@@ -2,7 +2,8 @@ use super::*;
 
 // ---- Tier 9 — Rgbf16 packed-half-float-RGB source family ----------------
 
-/// Builds a row-padded Rgbf16 frame with a constant `(R, G, B)` triple.
+/// Builds a tightly-packed Rgbf16 row buffer (`width * height * 3` `f16`
+/// elements, no row stride padding) filled with a constant `(R, G, B)` triple.
 fn solid_rgbf16_frame(
   width: u32,
   height: u32,

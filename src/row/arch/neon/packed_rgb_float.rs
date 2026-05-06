@@ -339,7 +339,9 @@ unsafe fn widen_f16x4(ptr: *const half::f16, out: *mut f32) {
 }
 
 /// Widen `n` half-precision floats (at most 4) from `src` to `f32` in `dst`.
-/// `n` must be in `[1, 4]`.
+/// `n` must be in `[0, 4]` — `n == 0` is a no-op (the caller passes
+/// `total_lanes - lane`, which is `0` when `total_lanes` is a multiple of 4
+/// and the SIMD loop consumed the whole row).
 #[inline(always)]
 unsafe fn widen_f16_tail(src: &[half::f16], dst: &mut [f32], n: usize) {
   for i in 0..n {

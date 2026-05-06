@@ -262,8 +262,11 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row(rgb_in: &[f32], rgb_out: &mut [f32], 
 // existing AVX-512 Rgbf32 kernels.  The scalar tail uses
 // `crate::row::scalar::rgbf16_to_*_row`.
 //
-// `#[target_feature(enable = "avx512f,f16c")]` — avx512bw is implicitly
-// available whenever avx512f is, and f16c is the narrowing/widening extension.
+// `#[target_feature(enable = "avx512f,f16c")]` — `f16c` is the half↔single
+// narrowing/widening extension. AVX-512F + F16C is the minimum for
+// `_mm512_cvtph_ps`. AVX-512BW is a separate CPU-feature bit and is NOT
+// implied by AVX-512F; only enable `avx512bw` on functions that actually
+// use byte/word AVX-512 ops.
 
 /// Widen 16 × f16 (at `ptr`, 32 bytes) to 16 × f32 (returned as `__m512`).
 ///

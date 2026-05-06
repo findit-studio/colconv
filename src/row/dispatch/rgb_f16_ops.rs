@@ -12,11 +12,15 @@
 //! paths skip the downstream `f32` kernels entirely.
 //!
 //! Backends:
-//! - AArch64: NEON FCVT widening + existing NEON f32 kernels.
-//! - x86_64: AVX-512F+F16C → AVX2+F16C → SSE4.1+F16C → scalar (F16C
-//!   detection is a runtime guard *in addition to* the SIMD tier check;
-//!   scalar fallback is used when F16C is absent so the downstream SIMD
-//!   can still accelerate the f32 conversion step on machines without F16C).
+//! - AArch64: NEON FCVT widening + existing NEON f32 kernels (gated on
+//!   `neon` AND `fp16` runtime detection — `fp16` is a separate CPU-feature
+//!   bit on AArch64; falls back to scalar without it).
+//! - x86_64: AVX-512F+F16C → AVX2+F16C → SSE4.1+F16C → fully scalar (F16C
+//!   detection is a runtime guard *in addition to* the SIMD tier check; on
+//!   machines without F16C the dispatcher routes to the scalar
+//!   `rgbf16_to_*_row` reference instead of mixing scalar widening with
+//!   SIMD downstream — the latter would copy widened f32 to a scratch
+//!   buffer twice and benchmarks haven't shown a win over plain scalar).
 //! - wasm32: scalar widen + wasm-simd128 downstream.
 //!
 //! `use_simd = false` forces the scalar reference path.
