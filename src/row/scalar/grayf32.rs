@@ -187,14 +187,15 @@ mod tests {
 
   #[test]
   fn grayf32_to_rgb_mid() {
-    // 0.5 * 255 + 0.5 = 128.25, truncated to 128 — spec says 127, but
-    // that's per spec §5.1 "Y=0.5 → u8 127 (saturating)". The rounding
-    // adds 0.5 so result is 128. Adjust expectation to match the chosen
-    // round-half-up scheme: 0.5*255 = 127.5 + 0.5 = 128.
+    // Mid-gray Y=0.5 with round-half-up:
+    //   0.5 * 255      = 127.5  (pure truncation would give 127)
+    //   127.5 + 0.5    = 128.0  (round-half-up adds 0.5 first)
+    //   trunc(128.0)   = 128
+    // See module-level "Rounding (float → integer)" doc — `+ 0.5 then
+    // truncate` is the contract this crate uses across scalar + SIMD.
     let plane = [0.5f32];
     let mut out = [0u8; 3];
     grayf32_to_rgb_row(&plane, &mut out, 1);
-    // f32_to_u8(0.5) = (0.5 * 255 + 0.5) as u8 = (127.5 + 0.5) as u8 = 128
     assert_eq!(out, [128, 128, 128]);
   }
 

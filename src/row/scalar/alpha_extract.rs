@@ -110,6 +110,39 @@ pub(crate) fn copy_alpha_plane_u16<const BITS: u32>(
   }
 }
 
+/// Ya8 → u8 RGBA: gather A from `packed[1 + 2*n]` into `rgba_out[3 + 4*n]`.
+///
+/// Ya8 layout per pixel: `[Y(8), A(8)]` — α is at odd byte offsets (slot 1).
+pub(crate) fn copy_alpha_ya_u8(packed: &[u8], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(packed.len() >= width * 2, "packed too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+  for n in 0..width {
+    rgba_out[n * 4 + 3] = packed[n * 2 + 1];
+  }
+}
+
+/// Ya16 → u8 RGBA: gather A from `packed[1 + 2*n]` (u16), depth-conv `>> 8`,
+/// into `rgba_out[3 + 4*n]` (u8).
+///
+/// Ya16 layout per pixel: `[Y(16), A(16)]` — α is at odd u16 offsets (slot 1).
+pub(crate) fn copy_alpha_ya_u16_to_u8(packed: &[u16], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(packed.len() >= width * 2, "packed too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+  for n in 0..width {
+    rgba_out[n * 4 + 3] = (packed[n * 2 + 1] >> 8) as u8;
+  }
+}
+
+/// Ya16 → u16 RGBA: gather A from `packed[1 + 2*n]` (u16) into
+/// `rgba_out[3 + 4*n]` (u16). No depth conversion.
+pub(crate) fn copy_alpha_ya_u16(packed: &[u16], rgba_out: &mut [u16], width: usize) {
+  debug_assert!(packed.len() >= width * 2, "packed too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+  for n in 0..width {
+    rgba_out[n * 4 + 3] = packed[n * 2 + 1];
+  }
+}
+
 #[cfg(all(test, feature = "std"))]
 mod tests {
   use super::*;
@@ -208,37 +241,30 @@ mod tests {
     copy_alpha_plane_u16_to_u8::<10>(&alpha, &mut rgba, 3);
     assert_eq!(rgba, std::vec![1, 1, 1, 64, 1, 1, 1, 0xFF, 1, 1, 1, 0xFF]);
   }
-}
 
-/// Ya8 → u8 RGBA: gather A from `packed[1 + 2*n]` into `rgba_out[3 + 4*n]`.
-///
-/// Ya8 layout per pixel: `[Y(8), A(8)]` — α is at odd byte offsets (slot 1).
-pub(crate) fn copy_alpha_ya_u8(packed: &[u8], rgba_out: &mut [u8], width: usize) {
-  debug_assert!(packed.len() >= width * 2, "packed too short");
-  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
-  for n in 0..width {
-    rgba_out[n * 4 + 3] = packed[n * 2 + 1];
+  #[test]
+  fn copy_alpha_ya_u8_extracts_alpha_from_odd_byte_slots() {
+    // Ya8 packed layout: [Y0, A0, Y1, A1, Y2, A2]
+    let packed = std::vec![10u8, 99, 20, 88, 30, 77];
+    let mut rgba = std::vec![1u8; 12];
+    copy_alpha_ya_u8(&packed, &mut rgba, 3);
+    assert_eq!(rgba, std::vec![1, 1, 1, 99, 1, 1, 1, 88, 1, 1, 1, 77]);
   }
-}
 
-/// Ya16 → u8 RGBA: gather A from `packed[1 + 2*n]` (u16), depth-conv `>> 8`,
-/// into `rgba_out[3 + 4*n]` (u8).
-///
-/// Ya16 layout per pixel: `[Y(16), A(16)]` — α is at odd u16 offsets (slot 1).
-pub(crate) fn copy_alpha_ya_u16_to_u8(packed: &[u16], rgba_out: &mut [u8], width: usize) {
-  debug_assert!(packed.len() >= width * 2, "packed too short");
-  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
-  for n in 0..width {
-    rgba_out[n * 4 + 3] = (packed[n * 2 + 1] >> 8) as u8;
+  #[test]
+  fn copy_alpha_ya_u16_to_u8_depth_converts_via_high_byte() {
+    // Ya16 packed → u8 RGBA: α >> 8 selects the high byte.
+    let packed: std::vec::Vec<u16> = std::vec![0x1234, 0xABCD, 0x5678, 0xFF00];
+    let mut rgba = std::vec![1u8; 8];
+    copy_alpha_ya_u16_to_u8(&packed, &mut rgba, 2);
+    assert_eq!(rgba, std::vec![1, 1, 1, 0xAB, 1, 1, 1, 0xFF]);
   }
-}
 
-/// Ya16 → u16 RGBA: gather A from `packed[1 + 2*n]` (u16) into
-/// `rgba_out[3 + 4*n]` (u16). No depth conversion.
-pub(crate) fn copy_alpha_ya_u16(packed: &[u16], rgba_out: &mut [u16], width: usize) {
-  debug_assert!(packed.len() >= width * 2, "packed too short");
-  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
-  for n in 0..width {
-    rgba_out[n * 4 + 3] = packed[n * 2 + 1];
+  #[test]
+  fn copy_alpha_ya_u16_preserves_native_u16() {
+    let packed: std::vec::Vec<u16> = std::vec![0x1234, 0xABCD, 0x5678, 0x9ABC];
+    let mut rgba = std::vec![1u16; 8];
+    copy_alpha_ya_u16(&packed, &mut rgba, 2);
+    assert_eq!(rgba, std::vec![1, 1, 1, 0xABCD, 1, 1, 1, 0x9ABC]);
   }
 }
