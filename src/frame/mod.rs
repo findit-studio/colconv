@@ -10,6 +10,7 @@
 // split already done for `yuva/`, `packed_rgb_8bit`, etc.
 mod bayer;
 mod gray;
+mod mono1bit;
 mod packed_rgb_10bit;
 mod packed_rgb_8bit;
 mod packed_rgb_f16;
@@ -29,6 +30,7 @@ mod yuva;
 
 pub use bayer::*;
 pub use gray::*;
+pub use mono1bit::*;
 pub use packed_rgb_8bit::*;
 pub use packed_rgb_10bit::*;
 pub use packed_rgb_f16::*;
