@@ -5,6 +5,13 @@
 //! The scalar kernels already auto-vectorize well with -O3; here we
 //! provide explicit SSE4.1 versions that use `_mm_loadu_si128` + store
 //! patterns and delegate to scalar for tail handling.
+//!
+//! # `full_range` parameter
+//!
+//! For RGB/RGBA/HSV kernels, `full_range = true` uses the existing fast SSE4.1
+//! path. `full_range = false` (limited-range) falls back to scalar since
+//! limited-range rescaling is the less-common path and the scalar formulation
+//! is simple and correct.
 
 #![cfg_attr(not(feature = "std"), allow(dead_code))]
 
@@ -16,37 +23,54 @@ use crate::row::scalar::{bits_mask, gray as scalar};
 
 /// SSE4.1 `gray8_to_rgb_row`.
 ///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
+///
 /// # Safety
 /// SSE4.1 must be available. `y_plane.len() >= width`. `out.len() >= width * 3`.
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn gray8_to_rgb_row(y_plane: &[u8], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn gray8_to_rgb_row(
+  y_plane: &[u8],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
   // SSE4.1 doesn't have a 3-channel interleave store like NEON's vst3q_u8.
   // Use scalar (which auto-vectorizes) for the whole row here, or implement
   // manually with repeated shuffle. We delegate to scalar to stay correct and
   // simple; the dispatch will auto-promote to AVX2 when available.
-  scalar::gray8_to_rgb_row(y_plane, out, width);
+  scalar::gray8_to_rgb_row(y_plane, out, width, full_range);
 }
 
 /// SSE4.1 `gray8_to_rgba_row`.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// SSE4.1 must be available.
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn gray8_to_rgba_row(y_plane: &[u8], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn gray8_to_rgba_row(
+  y_plane: &[u8],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
   // SSE4.1 4-channel interleave without SSSE3 shuffle tables is verbose;
   // delegate to scalar (which auto-vectorizes well at -O3).
-  scalar::gray8_to_rgba_row(y_plane, out, width);
+  scalar::gray8_to_rgba_row(y_plane, out, width, full_range);
 }
 
 /// SSE4.1 `gray8_to_hsv_row`.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling
+/// applied to V channel).
 ///
 /// # Safety
 /// SSE4.1 must be available.
@@ -59,8 +83,12 @@ pub(crate) unsafe fn gray8_to_hsv_row(
   s_out: &mut [u8],
   v_out: &mut [u8],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
+  if !full_range {
+    return scalar::gray8_to_hsv_row(y_plane, h_out, s_out, v_out, width, full_range);
+  }
   // H and S planes: memset 0. V plane: memcpy Y.
   // SSE4.1 can do 16-byte stores efficiently.
   let mut x = 0usize;
@@ -81,6 +109,7 @@ pub(crate) unsafe fn gray8_to_hsv_row(
       &mut s_out[x..width],
       &mut v_out[x..width],
       width - x,
+      true,
     );
   }
 }
@@ -88,6 +117,8 @@ pub(crate) unsafe fn gray8_to_hsv_row(
 // ---- GrayN (const BITS) ------------------------------------------------
 
 /// SSE4.1 `gray_n_to_rgb_row<BITS>`: mask, shift to u8, scalar store.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// SSE4.1 must be available.
@@ -98,13 +129,16 @@ pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  scalar::gray_n_to_rgb_row::<BITS>(y_plane, out, width);
+  scalar::gray_n_to_rgb_row::<BITS>(y_plane, out, width, full_range);
 }
 
 /// SSE4.1 `gray_n_to_rgba_row<BITS>`.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// SSE4.1 must be available.
@@ -115,15 +149,18 @@ pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
   // SSE4.1 4-channel interleave without SSSE3 shuffle tables is complex;
   // delegate to scalar (which auto-vectorizes well at -O3).
-  scalar::gray_n_to_rgba_row::<BITS>(y_plane, out, width);
+  scalar::gray_n_to_rgba_row::<BITS>(y_plane, out, width, full_range);
 }
 
 /// SSE4.1 `gray_n_to_rgb_u16_row<BITS>`.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// SSE4.1 must be available.
@@ -134,13 +171,16 @@ pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  scalar::gray_n_to_rgb_u16_row::<BITS>(y_plane, out, width);
+  scalar::gray_n_to_rgb_u16_row::<BITS>(y_plane, out, width, full_range);
 }
 
 /// SSE4.1 `gray_n_to_rgba_u16_row<BITS>`.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// SSE4.1 must be available.
@@ -151,13 +191,16 @@ pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  scalar::gray_n_to_rgba_u16_row::<BITS>(y_plane, out, width);
+  scalar::gray_n_to_rgba_u16_row::<BITS>(y_plane, out, width, full_range);
 }
 
 /// SSE4.1 `gray_n_to_luma_row<BITS>`: mask, shift, pack, store.
+///
+/// Luma outputs always pass Y through without `full_range` rescaling.
 ///
 /// # Safety
 /// SSE4.1 must be available.
@@ -199,6 +242,8 @@ pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32>(
 
 /// SSE4.1 `gray_n_to_luma_u16_row<BITS>`: mask, store.
 ///
+/// Luma outputs always pass Y through without `full_range` rescaling.
+///
 /// # Safety
 /// SSE4.1 must be available.
 #[allow(dead_code)]
@@ -229,6 +274,9 @@ pub(crate) unsafe fn gray_n_to_luma_u16_row<const BITS: u32>(
 
 /// SSE4.1 `gray_n_to_hsv_row<BITS>`: H=0, S=0, V = mask+shift.
 ///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling
+/// applied to V channel).
+///
 /// # Safety
 /// SSE4.1 must be available.
 #[allow(dead_code)]
@@ -240,8 +288,12 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
   s_out: &mut [u8],
   v_out: &mut [u8],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
+  if !full_range {
+    return scalar::gray_n_to_hsv_row::<BITS>(y_plane, h_out, s_out, v_out, width, full_range);
+  }
   let mask = bits_mask::<BITS>();
   let mut x = 0usize;
   unsafe {
@@ -269,6 +321,7 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
       &mut s_out[x..width],
       &mut v_out[x..width],
       width - x,
+      true,
     );
   }
 }
@@ -277,57 +330,87 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
 
 /// SSE4.1 `gray16_to_rgb_row`: `>> 8` → pack → scatter (scalar fallback).
 ///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
+///
 /// # Safety
 /// SSE4.1 must be available.
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn gray16_to_rgb_row(y_plane: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn gray16_to_rgb_row(
+  y_plane: &[u16],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  scalar::gray16_to_rgb_row(y_plane, out, width);
+  scalar::gray16_to_rgb_row(y_plane, out, width, full_range);
 }
 
 /// SSE4.1 `gray16_to_rgba_row`: `>> 8` → RGBA u8.
 ///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
+///
 /// # Safety
 /// SSE4.1 must be available.
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn gray16_to_rgba_row(y_plane: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn gray16_to_rgba_row(
+  y_plane: &[u16],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  scalar::gray16_to_rgba_row(y_plane, out, width);
+  scalar::gray16_to_rgba_row(y_plane, out, width, full_range);
 }
 
 /// SSE4.1 `gray16_to_rgb_u16_row`.
 ///
-/// # Safety
-/// SSE4.1 must be available.
-#[allow(dead_code)]
-#[inline]
-#[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn gray16_to_rgb_u16_row(y_plane: &[u16], out: &mut [u16], width: usize) {
-  debug_assert!(y_plane.len() >= width);
-  debug_assert!(out.len() >= width * 3);
-  scalar::gray16_to_rgb_u16_row(y_plane, out, width);
-}
-
-/// SSE4.1 `gray16_to_rgba_u16_row`.
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// SSE4.1 must be available.
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn gray16_to_rgba_u16_row(y_plane: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn gray16_to_rgb_u16_row(
+  y_plane: &[u16],
+  out: &mut [u16],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 3);
+  scalar::gray16_to_rgb_u16_row(y_plane, out, width, full_range);
+}
+
+/// SSE4.1 `gray16_to_rgba_u16_row`.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
+///
+/// # Safety
+/// SSE4.1 must be available.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn gray16_to_rgba_u16_row(
+  y_plane: &[u16],
+  out: &mut [u16],
+  width: usize,
+  full_range: bool,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  scalar::gray16_to_rgba_u16_row(y_plane, out, width);
+  scalar::gray16_to_rgba_u16_row(y_plane, out, width, full_range);
 }
 
 /// SSE4.1 `gray16_to_luma_row`: `>> 8`, pack, store.
+///
+/// Luma outputs always pass Y through without `full_range` rescaling.
 ///
 /// # Safety
 /// SSE4.1 must be available.
@@ -356,6 +439,8 @@ pub(crate) unsafe fn gray16_to_luma_row(y_plane: &[u16], out: &mut [u8], width: 
 
 /// SSE4.1 `gray16_to_luma_u16_row`: identity copy via SSE4.1 stores.
 ///
+/// Luma outputs always pass Y through without `full_range` rescaling.
+///
 /// # Safety
 /// SSE4.1 must be available.
 #[allow(dead_code)]
@@ -379,6 +464,9 @@ pub(crate) unsafe fn gray16_to_luma_u16_row(y_plane: &[u16], out: &mut [u16], wi
 
 /// SSE4.1 `gray16_to_hsv_row`: `>> 8`, H=0, S=0, V=Y8.
 ///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling
+/// applied to V channel).
+///
 /// # Safety
 /// SSE4.1 must be available.
 #[allow(dead_code)]
@@ -390,8 +478,12 @@ pub(crate) unsafe fn gray16_to_hsv_row(
   s_out: &mut [u8],
   v_out: &mut [u8],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
+  if !full_range {
+    return scalar::gray16_to_hsv_row(y_plane, h_out, s_out, v_out, width, full_range);
+  }
   let mut x = 0usize;
   unsafe {
     let zero16 = _mm_setzero_si128();
@@ -413,6 +505,7 @@ pub(crate) unsafe fn gray16_to_hsv_row(
       &mut s_out[x..width],
       &mut v_out[x..width],
       width - x,
+      true,
     );
   }
 }
@@ -448,8 +541,8 @@ mod tests {
       prng(&mut plane, 0xABCD);
       let mut simd = std::vec![0u8; w * 3];
       let mut scal = std::vec![0u8; w * 3];
-      unsafe { super::gray8_to_rgb_row(&plane, &mut simd, w) };
-      scalar::gray8_to_rgb_row(&plane, &mut scal, w);
+      unsafe { super::gray8_to_rgb_row(&plane, &mut simd, w, true) };
+      scalar::gray8_to_rgb_row(&plane, &mut scal, w, true);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -468,8 +561,8 @@ mod tests {
       let mut rh = std::vec![0u8; w];
       let mut rs = std::vec![0u8; w];
       let mut rv = std::vec![0u8; w];
-      unsafe { super::gray8_to_hsv_row(&plane, &mut sh, &mut ss, &mut sv, w) };
-      scalar::gray8_to_hsv_row(&plane, &mut rh, &mut rs, &mut rv, w);
+      unsafe { super::gray8_to_hsv_row(&plane, &mut sh, &mut ss, &mut sv, w, true) };
+      scalar::gray8_to_hsv_row(&plane, &mut rh, &mut rs, &mut rv, w, true);
       assert_eq!(sh, rh, "H width={w}");
       assert_eq!(ss, rs, "S width={w}");
       assert_eq!(sv, rv, "V width={w}");
@@ -521,6 +614,38 @@ mod tests {
       unsafe { super::gray16_to_luma_row(&plane, &mut simd, w) };
       scalar::gray16_to_luma_row(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
+    }
+  }
+
+  #[test]
+  fn sse41_gray8_limited_range_matches_scalar() {
+    if !is_x86_feature_detected!("sse4.1") {
+      return;
+    }
+    for &w in WIDTHS {
+      let mut plane = std::vec![0u8; w];
+      prng(&mut plane, 0xCAFE_BABEu32);
+      let mut simd = std::vec![0u8; w * 3];
+      let mut scal = std::vec![0u8; w * 3];
+      unsafe { super::gray8_to_rgb_row(&plane, &mut simd, w, false) };
+      scalar::gray8_to_rgb_row(&plane, &mut scal, w, false);
+      assert_eq!(simd, scal, "width={w} limited-range");
+    }
+  }
+
+  #[test]
+  fn sse41_gray16_limited_range_matches_scalar() {
+    if !is_x86_feature_detected!("sse4.1") {
+      return;
+    }
+    for &w in WIDTHS {
+      let mut plane = std::vec![0u16; w];
+      prng16(&mut plane, 0x1234_5678);
+      let mut simd = std::vec![0u8; w * 3];
+      let mut scal = std::vec![0u8; w * 3];
+      unsafe { super::gray16_to_rgb_row(&plane, &mut simd, w, false) };
+      scalar::gray16_to_rgb_row(&plane, &mut scal, w, false);
+      assert_eq!(simd, scal, "width={w} limited-range");
     }
   }
 }

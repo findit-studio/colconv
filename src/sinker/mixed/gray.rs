@@ -141,10 +141,12 @@ impl PixelSink for MixedSinker<'_, Gray8> {
       ..
     } = self;
     let y_plane = row.y();
+    let full_range = row.full_range();
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
     // Luma u8 — Gray8: Y IS luma; copy directly (no kernel overhead).
+    // Luma outputs always pass raw Y through — no full_range rescaling.
     if let Some(buf) = luma.as_deref_mut() {
       buf[one_plane_start..one_plane_end].copy_from_slice(y_plane);
     }
@@ -168,13 +170,13 @@ impl PixelSink for MixedSinker<'_, Gray8> {
     if want_rgba && !want_rgb && !want_hsv {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      gray8_to_rgba_row(y_plane, rgba_row, w, use_simd);
+      gray8_to_rgba_row(y_plane, rgba_row, w, use_simd, full_range);
       return Ok(());
     }
 
-    // Standalone HSV fast path — for gray sources, H=0/S=0/V=Y without
-    // any RGB computation. Use the dedicated kernel when neither RGB nor
-    // RGBA is also requested.
+    // Standalone HSV fast path — for gray sources, H=0/S=0/V=Y (rescaled if
+    // limited-range) without any RGB computation. Use the dedicated kernel
+    // when neither RGB nor RGBA is also requested.
     if want_hsv && !want_rgb && !want_rgba {
       let hsv = hsv.as_mut().unwrap();
       gray8_to_hsv_row(
@@ -184,6 +186,7 @@ impl PixelSink for MixedSinker<'_, Gray8> {
         &mut hsv.v[one_plane_start..one_plane_end],
         w,
         use_simd,
+        full_range,
       );
       return Ok(());
     }
@@ -201,7 +204,7 @@ impl PixelSink for MixedSinker<'_, Gray8> {
       w,
       h,
     )?;
-    gray8_to_rgb_row(y_plane, rgb_row, w, use_simd);
+    gray8_to_rgb_row(y_plane, rgb_row, w, use_simd, full_range);
 
     if let Some(hsv) = hsv.as_mut() {
       rgb_to_hsv_row(
@@ -239,6 +242,7 @@ fn process_gray_n<'a, const BITS: u32>(
   h: usize,
   idx: usize,
   use_simd: bool,
+  full_range: bool,
   y_plane: &[u16],
   rgb: &mut Option<&'a mut [u8]>,
   rgb_u16: &mut Option<&'a mut [u16]>,
@@ -252,7 +256,7 @@ fn process_gray_n<'a, const BITS: u32>(
   let one_plane_start = idx * w;
   let one_plane_end = one_plane_start + w;
 
-  // Luma u8.
+  // Luma u8 — always passes raw Y through, no full_range rescaling.
   if let Some(buf) = luma.as_deref_mut() {
     gray_n_to_luma_row::<BITS>(
       y_plane,
@@ -262,7 +266,7 @@ fn process_gray_n<'a, const BITS: u32>(
     );
   }
 
-  // Luma u16.
+  // Luma u16 — always passes raw Y through, no full_range rescaling.
   if let Some(buf) = luma_u16.as_deref_mut() {
     gray_n_to_luma_u16_row::<BITS>(
       y_plane,
@@ -280,7 +284,7 @@ fn process_gray_n<'a, const BITS: u32>(
     let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
     let rgba_u16_row =
       rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-    gray_n_to_rgba_u16_row::<BITS>(y_plane, rgba_u16_row, w, use_simd);
+    gray_n_to_rgba_u16_row::<BITS>(y_plane, rgba_u16_row, w, use_simd, full_range);
   } else if want_rgb_u16 {
     let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
     let rgb_plane_start = one_plane_start * 3;
@@ -292,7 +296,7 @@ fn process_gray_n<'a, const BITS: u32>(
         channels: 3,
       })?;
     let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-    gray_n_to_rgb_u16_row::<BITS>(y_plane, rgb_u16_row, w, use_simd);
+    gray_n_to_rgb_u16_row::<BITS>(y_plane, rgb_u16_row, w, use_simd, full_range);
     if want_rgba_u16 {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
@@ -310,11 +314,12 @@ fn process_gray_n<'a, const BITS: u32>(
   if want_rgba && !want_rgb && !want_hsv {
     let rgba_buf = rgba.as_deref_mut().unwrap();
     let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-    gray_n_to_rgba_row::<BITS>(y_plane, rgba_row, w, use_simd);
+    gray_n_to_rgba_row::<BITS>(y_plane, rgba_row, w, use_simd, full_range);
     return Ok(());
   }
 
-  // Standalone HSV fast path — gray sources always have H=0, S=0, V=Y8.
+  // Standalone HSV fast path — gray sources always have H=0, S=0, V=Y8
+  // (rescaled if limited-range).
   if want_hsv && !want_rgb && !want_rgba {
     let hsv = hsv.as_mut().unwrap();
     gray_n_to_hsv_row::<BITS>(
@@ -324,6 +329,7 @@ fn process_gray_n<'a, const BITS: u32>(
       &mut hsv.v[one_plane_start..one_plane_end],
       w,
       use_simd,
+      full_range,
     );
     return Ok(());
   }
@@ -340,7 +346,7 @@ fn process_gray_n<'a, const BITS: u32>(
     w,
     h,
   )?;
-  gray_n_to_rgb_row::<BITS>(y_plane, rgb_row, w, use_simd);
+  gray_n_to_rgb_row::<BITS>(y_plane, rgb_row, w, use_simd, full_range);
 
   if let Some(hsv) = hsv.as_mut() {
     rgb_to_hsv_row(
@@ -491,6 +497,7 @@ macro_rules! impl_gray_n_sinker {
         let h = self.height;
         let use_simd = self.simd;
         let idx = row.row();
+        let full_range = row.full_range();
         check_gray_n_row_shape(row.y().len(), w, idx, h)?;
         let y_plane = row.y();
         let Self {
@@ -509,6 +516,7 @@ macro_rules! impl_gray_n_sinker {
           h,
           idx,
           use_simd,
+          full_range,
           y_plane,
           rgb,
           rgb_u16,

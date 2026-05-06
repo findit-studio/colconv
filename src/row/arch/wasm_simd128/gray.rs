@@ -3,6 +3,13 @@
 //! Gray → luma / luma_u16 / HSV paths get simd128 (16-px / 8-px blocks).
 //! Packed-channel interleave paths (RGB, RGBA) delegate to scalar since
 //! the 3/4-channel store pattern is verbose and scalar auto-vectorizes well.
+//!
+//! # `full_range` parameter
+//!
+//! For RGB/RGBA/HSV kernels, `full_range = true` uses the existing fast
+//! simd128 path. `full_range = false` (limited-range) falls back to scalar
+//! since limited-range rescaling is the less-common path and the scalar
+//! formulation is simple and correct.
 
 #![cfg_attr(not(feature = "std"), allow(dead_code))]
 
@@ -14,31 +21,48 @@ use crate::row::scalar::{bits_mask, gray as scalar};
 
 /// wasm-simd128 `gray8_to_rgb_row`.
 ///
-/// # Safety
-/// simd128 must be enabled.
-#[allow(dead_code)]
-#[inline]
-#[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray8_to_rgb_row(y_plane: &[u8], out: &mut [u8], width: usize) {
-  debug_assert!(y_plane.len() >= width);
-  debug_assert!(out.len() >= width * 3);
-  scalar::gray8_to_rgb_row(y_plane, out, width);
-}
-
-/// wasm-simd128 `gray8_to_rgba_row`.
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// simd128 must be enabled.
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray8_to_rgba_row(y_plane: &[u8], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn gray8_to_rgb_row(
+  y_plane: &[u8],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 3);
+  scalar::gray8_to_rgb_row(y_plane, out, width, full_range);
+}
+
+/// wasm-simd128 `gray8_to_rgba_row`.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
+///
+/// # Safety
+/// simd128 must be enabled.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn gray8_to_rgba_row(
+  y_plane: &[u8],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  scalar::gray8_to_rgba_row(y_plane, out, width);
+  scalar::gray8_to_rgba_row(y_plane, out, width, full_range);
 }
 
 /// wasm-simd128 `gray8_to_hsv_row`: H=0, S=0, V=Y. 16 pixels/iter.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling
+/// applied to V channel).
 ///
 /// # Safety
 /// simd128 must be enabled. All planes have length >= width.
@@ -51,8 +75,12 @@ pub(crate) unsafe fn gray8_to_hsv_row(
   s_out: &mut [u8],
   v_out: &mut [u8],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
+  if !full_range {
+    return scalar::gray8_to_hsv_row(y_plane, h_out, s_out, v_out, width, full_range);
+  }
   let mut x = 0usize;
   unsafe {
     let zero = i64x2(0, 0);
@@ -71,6 +99,7 @@ pub(crate) unsafe fn gray8_to_hsv_row(
       &mut s_out[x..width],
       &mut v_out[x..width],
       width - x,
+      true,
     );
   }
 }
@@ -78,6 +107,8 @@ pub(crate) unsafe fn gray8_to_hsv_row(
 // ---- GrayN (const BITS) -----------------------------------------------------
 
 /// wasm-simd128 `gray_n_to_rgb_row<BITS>`.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// simd128 must be enabled.
@@ -88,13 +119,16 @@ pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  scalar::gray_n_to_rgb_row::<BITS>(y_plane, out, width);
+  scalar::gray_n_to_rgb_row::<BITS>(y_plane, out, width, full_range);
 }
 
 /// wasm-simd128 `gray_n_to_rgba_row<BITS>`.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// simd128 must be enabled.
@@ -105,13 +139,16 @@ pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  scalar::gray_n_to_rgba_row::<BITS>(y_plane, out, width);
+  scalar::gray_n_to_rgba_row::<BITS>(y_plane, out, width, full_range);
 }
 
 /// wasm-simd128 `gray_n_to_rgb_u16_row<BITS>`.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// simd128 must be enabled.
@@ -122,13 +159,16 @@ pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  scalar::gray_n_to_rgb_u16_row::<BITS>(y_plane, out, width);
+  scalar::gray_n_to_rgb_u16_row::<BITS>(y_plane, out, width, full_range);
 }
 
 /// wasm-simd128 `gray_n_to_rgba_u16_row<BITS>`.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// simd128 must be enabled.
@@ -139,13 +179,16 @@ pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  scalar::gray_n_to_rgba_u16_row::<BITS>(y_plane, out, width);
+  scalar::gray_n_to_rgba_u16_row::<BITS>(y_plane, out, width, full_range);
 }
 
 /// wasm-simd128 `gray_n_to_luma_row<BITS>`: mask + shift → u8. 8 pixels/iter.
+///
+/// Luma outputs always pass Y through without `full_range` rescaling.
 ///
 /// # Safety
 /// simd128 must be enabled. `y_plane.len() >= width`. `out.len() >= width`.
@@ -185,6 +228,8 @@ pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32>(
 
 /// wasm-simd128 `gray_n_to_luma_u16_row<BITS>`: mask, store. 8 pixels/iter.
 ///
+/// Luma outputs always pass Y through without `full_range` rescaling.
+///
 /// # Safety
 /// simd128 must be enabled. `y_plane.len() >= width`. `out.len() >= width`.
 #[allow(dead_code)]
@@ -216,6 +261,9 @@ pub(crate) unsafe fn gray_n_to_luma_u16_row<const BITS: u32>(
 /// wasm-simd128 `gray_n_to_hsv_row<BITS>`: H=0, S=0, V = mask+shift.
 /// 8 pixels/iter.
 ///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling
+/// applied to V channel).
+///
 /// # Safety
 /// simd128 must be enabled. All slices have length >= width.
 #[allow(dead_code)]
@@ -227,8 +275,12 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
   s_out: &mut [u8],
   v_out: &mut [u8],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
+  if !full_range {
+    return scalar::gray_n_to_hsv_row::<BITS>(y_plane, h_out, s_out, v_out, width, full_range);
+  }
   let mask = bits_mask::<BITS>();
   let shift = BITS - 8;
   let mut x = 0usize;
@@ -255,6 +307,7 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
       &mut s_out[x..width],
       &mut v_out[x..width],
       width - x,
+      true,
     );
   }
 }
@@ -263,57 +316,87 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
 
 /// wasm-simd128 `gray16_to_rgb_row`.
 ///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
+///
 /// # Safety
 /// simd128 must be enabled.
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray16_to_rgb_row(y_plane: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn gray16_to_rgb_row(
+  y_plane: &[u16],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  scalar::gray16_to_rgb_row(y_plane, out, width);
+  scalar::gray16_to_rgb_row(y_plane, out, width, full_range);
 }
 
 /// wasm-simd128 `gray16_to_rgba_row`.
 ///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
+///
 /// # Safety
 /// simd128 must be enabled.
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray16_to_rgba_row(y_plane: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn gray16_to_rgba_row(
+  y_plane: &[u16],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  scalar::gray16_to_rgba_row(y_plane, out, width);
+  scalar::gray16_to_rgba_row(y_plane, out, width, full_range);
 }
 
 /// wasm-simd128 `gray16_to_rgb_u16_row`.
 ///
-/// # Safety
-/// simd128 must be enabled.
-#[allow(dead_code)]
-#[inline]
-#[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray16_to_rgb_u16_row(y_plane: &[u16], out: &mut [u16], width: usize) {
-  debug_assert!(y_plane.len() >= width);
-  debug_assert!(out.len() >= width * 3);
-  scalar::gray16_to_rgb_u16_row(y_plane, out, width);
-}
-
-/// wasm-simd128 `gray16_to_rgba_u16_row`.
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// simd128 must be enabled.
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray16_to_rgba_u16_row(y_plane: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn gray16_to_rgb_u16_row(
+  y_plane: &[u16],
+  out: &mut [u16],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 3);
+  scalar::gray16_to_rgb_u16_row(y_plane, out, width, full_range);
+}
+
+/// wasm-simd128 `gray16_to_rgba_u16_row`.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
+///
+/// # Safety
+/// simd128 must be enabled.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn gray16_to_rgba_u16_row(
+  y_plane: &[u16],
+  out: &mut [u16],
+  width: usize,
+  full_range: bool,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  scalar::gray16_to_rgba_u16_row(y_plane, out, width);
+  scalar::gray16_to_rgba_u16_row(y_plane, out, width, full_range);
 }
 
 /// wasm-simd128 `gray16_to_luma_row`: `>> 8` → u8. 8 pixels/iter.
+///
+/// Luma outputs always pass Y through without `full_range` rescaling.
 ///
 /// # Safety
 /// simd128 must be enabled. `y_plane.len() >= width`. `out.len() >= width`.
@@ -342,6 +425,8 @@ pub(crate) unsafe fn gray16_to_luma_row(y_plane: &[u16], out: &mut [u8], width: 
 
 /// wasm-simd128 `gray16_to_luma_u16_row`: identity copy. 8 pixels/iter.
 ///
+/// Luma outputs always pass Y through without `full_range` rescaling.
+///
 /// # Safety
 /// simd128 must be enabled. `y_plane.len() >= width`. `out.len() >= width`.
 #[allow(dead_code)]
@@ -365,6 +450,9 @@ pub(crate) unsafe fn gray16_to_luma_u16_row(y_plane: &[u16], out: &mut [u16], wi
 
 /// wasm-simd128 `gray16_to_hsv_row`: `>> 8`, H=0, S=0, V=Y8. 8 pixels/iter.
 ///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling
+/// applied to V channel).
+///
 /// # Safety
 /// simd128 must be enabled. All slices have length >= width.
 #[allow(dead_code)]
@@ -376,8 +464,12 @@ pub(crate) unsafe fn gray16_to_hsv_row(
   s_out: &mut [u8],
   v_out: &mut [u8],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
+  if !full_range {
+    return scalar::gray16_to_hsv_row(y_plane, h_out, s_out, v_out, width, full_range);
+  }
   let mut x = 0usize;
   unsafe {
     let zero = i64x2(0, 0);
@@ -400,6 +492,7 @@ pub(crate) unsafe fn gray16_to_hsv_row(
       &mut s_out[x..width],
       &mut v_out[x..width],
       width - x,
+      true,
     );
   }
 }
@@ -437,8 +530,8 @@ mod tests {
       let mut rh = std::vec![0u8; w];
       let mut rs = std::vec![0u8; w];
       let mut rv = std::vec![0u8; w];
-      unsafe { super::gray8_to_hsv_row(&plane, &mut sh, &mut ss, &mut sv, w) };
-      scalar::gray8_to_hsv_row(&plane, &mut rh, &mut rs, &mut rv, w);
+      unsafe { super::gray8_to_hsv_row(&plane, &mut sh, &mut ss, &mut sv, w, true) };
+      scalar::gray8_to_hsv_row(&plane, &mut rh, &mut rs, &mut rv, w, true);
       assert_eq!(sh, rh, "H width={w}");
       assert_eq!(ss, rs, "S width={w}");
       assert_eq!(sv, rv, "V width={w}");

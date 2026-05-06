@@ -3,6 +3,13 @@
 //! Gray sources are achromatic: every output just broadcasts Y (or shifts
 //! it). NEON provides vectorised interleave stores (`vst3q_u8`, `vst4q_u8`)
 //! and vectorised shift-and-narrow for the depth-conversion paths.
+//!
+//! # `full_range` parameter
+//!
+//! For RGB/RGBA/HSV kernels, `full_range = true` uses the existing fast NEON
+//! path. `full_range = false` (limited-range) falls back to scalar since
+//! limited-range rescaling is the less-common path and the scalar formulation
+//! is simple and correct.
 
 #![cfg_attr(not(feature = "std"), allow(dead_code))]
 
@@ -43,15 +50,24 @@ unsafe fn store_rgba_16x(v: uint8x16_t, out: &mut [u8], x: usize) {
 /// NEON `gray8_to_rgb_row`: broadcast Y → packed RGB.
 ///
 /// Block size: 16 px / iter (48 bytes written per block via `vst3q_u8`).
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// NEON must be available. `y_plane.len() >= width`. `out.len() >= width * 3`.
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray8_to_rgb_row(y_plane: &[u8], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn gray8_to_rgb_row(
+  y_plane: &[u8],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
+  if !full_range {
+    return scalar::gray8_to_rgb_row(y_plane, out, width, full_range);
+  }
   let mut x = 0usize;
   unsafe {
     while x + 16 <= width {
@@ -61,20 +77,35 @@ pub(crate) unsafe fn gray8_to_rgb_row(y_plane: &[u8], out: &mut [u8], width: usi
     }
   }
   if x < width {
-    scalar::gray8_to_rgb_row(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
+    scalar::gray8_to_rgb_row(
+      &y_plane[x..width],
+      &mut out[x * 3..width * 3],
+      width - x,
+      true,
+    );
   }
 }
 
 /// NEON `gray8_to_rgba_row`: broadcast Y → packed RGBA, α=0xFF.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// NEON must be available. `y_plane.len() >= width`. `out.len() >= width * 4`.
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray8_to_rgba_row(y_plane: &[u8], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn gray8_to_rgba_row(
+  y_plane: &[u8],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
+  if !full_range {
+    return scalar::gray8_to_rgba_row(y_plane, out, width, full_range);
+  }
   let mut x = 0usize;
   unsafe {
     while x + 16 <= width {
@@ -84,11 +115,19 @@ pub(crate) unsafe fn gray8_to_rgba_row(y_plane: &[u8], out: &mut [u8], width: us
     }
   }
   if x < width {
-    scalar::gray8_to_rgba_row(&y_plane[x..width], &mut out[x * 4..width * 4], width - x);
+    scalar::gray8_to_rgba_row(
+      &y_plane[x..width],
+      &mut out[x * 4..width * 4],
+      width - x,
+      true,
+    );
   }
 }
 
 /// NEON `gray8_to_hsv_row`: H=0, S=0, V=Y — stores three memset-like planes.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling
+/// applied to V channel).
 ///
 /// # Safety
 /// NEON must be available. All slices `>= width`.
@@ -101,11 +140,15 @@ pub(crate) unsafe fn gray8_to_hsv_row(
   s_out: &mut [u8],
   v_out: &mut [u8],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(h_out.len() >= width);
   debug_assert!(s_out.len() >= width);
   debug_assert!(v_out.len() >= width);
+  if !full_range {
+    return scalar::gray8_to_hsv_row(y_plane, h_out, s_out, v_out, width, full_range);
+  }
   let mut x = 0usize;
   unsafe {
     let zero = vdupq_n_u8(0);
@@ -124,6 +167,7 @@ pub(crate) unsafe fn gray8_to_hsv_row(
       &mut s_out[x..width],
       &mut v_out[x..width],
       width - x,
+      true,
     );
   }
 }
@@ -131,6 +175,8 @@ pub(crate) unsafe fn gray8_to_hsv_row(
 // ---- GrayN (const BITS) ------------------------------------------------------
 
 /// NEON `gray_n_to_rgb_row<BITS>`: mask → shift → broadcast → packed RGB u8.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// NEON must be available. Slices sized correctly for `width`.
@@ -141,9 +187,13 @@ pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
+  if !full_range {
+    return scalar::gray_n_to_rgb_row::<BITS>(y_plane, out, width, full_range);
+  }
   let shift = (BITS - 8) as i32;
   let mask = bits_mask::<BITS>();
   let mut x = 0usize;
@@ -162,11 +212,18 @@ pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32>(
     }
   }
   if x < width {
-    scalar::gray_n_to_rgb_row::<BITS>(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
+    scalar::gray_n_to_rgb_row::<BITS>(
+      &y_plane[x..width],
+      &mut out[x * 3..width * 3],
+      width - x,
+      true,
+    );
   }
 }
 
 /// NEON `gray_n_to_rgba_row<BITS>`.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// NEON must be available. Slices sized correctly for `width`.
@@ -177,9 +234,13 @@ pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
+  if !full_range {
+    return scalar::gray_n_to_rgba_row::<BITS>(y_plane, out, width, full_range);
+  }
   let shift = (BITS - 8) as i32;
   let mask = bits_mask::<BITS>();
   let mut x = 0usize;
@@ -197,11 +258,18 @@ pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32>(
     }
   }
   if x < width {
-    scalar::gray_n_to_rgba_row::<BITS>(&y_plane[x..width], &mut out[x * 4..width * 4], width - x);
+    scalar::gray_n_to_rgba_row::<BITS>(
+      &y_plane[x..width],
+      &mut out[x * 4..width * 4],
+      width - x,
+      true,
+    );
   }
 }
 
 /// NEON `gray_n_to_rgb_u16_row<BITS>`: mask → broadcast 3x.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// NEON must be available.
@@ -212,9 +280,13 @@ pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
+  if !full_range {
+    return scalar::gray_n_to_rgb_u16_row::<BITS>(y_plane, out, width, full_range);
+  }
   let mask = bits_mask::<BITS>();
   let mut x = 0usize;
   unsafe {
@@ -232,11 +304,14 @@ pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32>(
       &y_plane[x..width],
       &mut out[x * 3..width * 3],
       width - x,
+      true,
     );
   }
 }
 
 /// NEON `gray_n_to_rgba_u16_row<BITS>`: mask → broadcast 3x + α = bits_mask.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// NEON must be available.
@@ -247,9 +322,13 @@ pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
+  if !full_range {
+    return scalar::gray_n_to_rgba_u16_row::<BITS>(y_plane, out, width, full_range);
+  }
   let mask = bits_mask::<BITS>();
   let mut x = 0usize;
   unsafe {
@@ -268,11 +347,14 @@ pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32>(
       &y_plane[x..width],
       &mut out[x * 4..width * 4],
       width - x,
+      true,
     );
   }
 }
 
 /// NEON `gray_n_to_luma_row<BITS>`: mask → shift → u8.
+///
+/// Luma outputs always pass Y through without `full_range` rescaling.
 ///
 /// # Safety
 /// NEON must be available.
@@ -307,6 +389,8 @@ pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32>(
 
 /// NEON `gray_n_to_luma_u16_row<BITS>`: mask only.
 ///
+/// Luma outputs always pass Y through without `full_range` rescaling.
+///
 /// # Safety
 /// NEON must be available.
 #[allow(dead_code)]
@@ -337,6 +421,9 @@ pub(crate) unsafe fn gray_n_to_luma_u16_row<const BITS: u32>(
 
 /// NEON `gray_n_to_hsv_row<BITS>`: H=0, S=0, V=Y8.
 ///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling
+/// applied to V channel).
+///
 /// # Safety
 /// NEON must be available.
 #[allow(dead_code)]
@@ -348,11 +435,15 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
   s_out: &mut [u8],
   v_out: &mut [u8],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(h_out.len() >= width);
   debug_assert!(s_out.len() >= width);
   debug_assert!(v_out.len() >= width);
+  if !full_range {
+    return scalar::gray_n_to_hsv_row::<BITS>(y_plane, h_out, s_out, v_out, width, full_range);
+  }
   let shift = (BITS - 8) as i32;
   let mask = bits_mask::<BITS>();
   let mut x = 0usize;
@@ -377,6 +468,7 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
       &mut s_out[x..width],
       &mut v_out[x..width],
       width - x,
+      true,
     );
   }
 }
@@ -385,14 +477,24 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
 
 /// NEON `gray16_to_rgb_row`: `>> 8` → broadcast → packed RGB u8.
 ///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
+///
 /// # Safety
 /// NEON must be available.
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray16_to_rgb_row(y_plane: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn gray16_to_rgb_row(
+  y_plane: &[u16],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
+  if !full_range {
+    return scalar::gray16_to_rgb_row(y_plane, out, width, full_range);
+  }
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
@@ -404,20 +506,35 @@ pub(crate) unsafe fn gray16_to_rgb_row(y_plane: &[u16], out: &mut [u8], width: u
     }
   }
   if x < width {
-    scalar::gray16_to_rgb_row(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
+    scalar::gray16_to_rgb_row(
+      &y_plane[x..width],
+      &mut out[x * 3..width * 3],
+      width - x,
+      true,
+    );
   }
 }
 
 /// NEON `gray16_to_rgba_row`: `>> 8` → broadcast → packed RGBA u8, α=0xFF.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// NEON must be available.
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray16_to_rgba_row(y_plane: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn gray16_to_rgba_row(
+  y_plane: &[u16],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
+  if !full_range {
+    return scalar::gray16_to_rgba_row(y_plane, out, width, full_range);
+  }
   let mut x = 0usize;
   unsafe {
     let alpha = vdup_n_u8(0xFF);
@@ -430,20 +547,35 @@ pub(crate) unsafe fn gray16_to_rgba_row(y_plane: &[u16], out: &mut [u8], width: 
     }
   }
   if x < width {
-    scalar::gray16_to_rgba_row(&y_plane[x..width], &mut out[x * 4..width * 4], width - x);
+    scalar::gray16_to_rgba_row(
+      &y_plane[x..width],
+      &mut out[x * 4..width * 4],
+      width - x,
+      true,
+    );
   }
 }
 
 /// NEON `gray16_to_rgb_u16_row`: identity broadcast × 3.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// NEON must be available.
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray16_to_rgb_u16_row(y_plane: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn gray16_to_rgb_u16_row(
+  y_plane: &[u16],
+  out: &mut [u16],
+  width: usize,
+  full_range: bool,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
+  if !full_range {
+    return scalar::gray16_to_rgb_u16_row(y_plane, out, width, full_range);
+  }
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
@@ -454,20 +586,35 @@ pub(crate) unsafe fn gray16_to_rgb_u16_row(y_plane: &[u16], out: &mut [u16], wid
     }
   }
   if x < width {
-    scalar::gray16_to_rgb_u16_row(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
+    scalar::gray16_to_rgb_u16_row(
+      &y_plane[x..width],
+      &mut out[x * 3..width * 3],
+      width - x,
+      true,
+    );
   }
 }
 
 /// NEON `gray16_to_rgba_u16_row`: identity broadcast × 3 + α=0xFFFF.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
 /// # Safety
 /// NEON must be available.
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray16_to_rgba_u16_row(y_plane: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn gray16_to_rgba_u16_row(
+  y_plane: &[u16],
+  out: &mut [u16],
+  width: usize,
+  full_range: bool,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
+  if !full_range {
+    return scalar::gray16_to_rgba_u16_row(y_plane, out, width, full_range);
+  }
   let mut x = 0usize;
   unsafe {
     let alpha = vdupq_n_u16(0xFFFF);
@@ -479,11 +626,18 @@ pub(crate) unsafe fn gray16_to_rgba_u16_row(y_plane: &[u16], out: &mut [u16], wi
     }
   }
   if x < width {
-    scalar::gray16_to_rgba_u16_row(&y_plane[x..width], &mut out[x * 4..width * 4], width - x);
+    scalar::gray16_to_rgba_u16_row(
+      &y_plane[x..width],
+      &mut out[x * 4..width * 4],
+      width - x,
+      true,
+    );
   }
 }
 
 /// NEON `gray16_to_luma_row`: `>> 8` → u8.
+///
+/// Luma outputs always pass Y through without `full_range` rescaling.
 ///
 /// # Safety
 /// NEON must be available.
@@ -509,6 +663,8 @@ pub(crate) unsafe fn gray16_to_luma_row(y_plane: &[u16], out: &mut [u8], width: 
 
 /// NEON `gray16_to_luma_u16_row`: identity copy via NEON loads/stores.
 ///
+/// Luma outputs always pass Y through without `full_range` rescaling.
+///
 /// # Safety
 /// NEON must be available.
 #[allow(dead_code)]
@@ -532,6 +688,9 @@ pub(crate) unsafe fn gray16_to_luma_u16_row(y_plane: &[u16], out: &mut [u16], wi
 
 /// NEON `gray16_to_hsv_row`: `>> 8` → H=0, S=0, V=Y8.
 ///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling
+/// applied to V channel).
+///
 /// # Safety
 /// NEON must be available.
 #[allow(dead_code)]
@@ -543,11 +702,15 @@ pub(crate) unsafe fn gray16_to_hsv_row(
   s_out: &mut [u8],
   v_out: &mut [u8],
   width: usize,
+  full_range: bool,
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(h_out.len() >= width);
   debug_assert!(s_out.len() >= width);
   debug_assert!(v_out.len() >= width);
+  if !full_range {
+    return scalar::gray16_to_hsv_row(y_plane, h_out, s_out, v_out, width, full_range);
+  }
   let mut x = 0usize;
   unsafe {
     let zero = vdup_n_u8(0);
@@ -567,6 +730,7 @@ pub(crate) unsafe fn gray16_to_hsv_row(
       &mut s_out[x..width],
       &mut v_out[x..width],
       width - x,
+      true,
     );
   }
 }
@@ -600,8 +764,8 @@ mod tests {
       prng(&mut plane, 0xABCD);
       let mut simd = std::vec![0u8; w * 3];
       let mut scal = std::vec![0u8; w * 3];
-      unsafe { super::gray8_to_rgb_row(&plane, &mut simd, w) };
-      scalar::gray8_to_rgb_row(&plane, &mut scal, w);
+      unsafe { super::gray8_to_rgb_row(&plane, &mut simd, w, true) };
+      scalar::gray8_to_rgb_row(&plane, &mut scal, w, true);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -614,8 +778,8 @@ mod tests {
       prng(&mut plane, 0x1234);
       let mut simd = std::vec![0u8; w * 4];
       let mut scal = std::vec![0u8; w * 4];
-      unsafe { super::gray8_to_rgba_row(&plane, &mut simd, w) };
-      scalar::gray8_to_rgba_row(&plane, &mut scal, w);
+      unsafe { super::gray8_to_rgba_row(&plane, &mut simd, w, true) };
+      scalar::gray8_to_rgba_row(&plane, &mut scal, w, true);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -632,8 +796,8 @@ mod tests {
       let mut rh = std::vec![0u8; w];
       let mut rs = std::vec![0u8; w];
       let mut rv = std::vec![0u8; w];
-      unsafe { super::gray8_to_hsv_row(&plane, &mut sh, &mut ss, &mut sv, w) };
-      scalar::gray8_to_hsv_row(&plane, &mut rh, &mut rs, &mut rv, w);
+      unsafe { super::gray8_to_hsv_row(&plane, &mut sh, &mut ss, &mut sv, w, true) };
+      scalar::gray8_to_hsv_row(&plane, &mut rh, &mut rs, &mut rv, w, true);
       assert_eq!(sh, rh, "H width={w}");
       assert_eq!(ss, rs, "S width={w}");
       assert_eq!(sv, rv, "V width={w}");
@@ -648,8 +812,8 @@ mod tests {
       prng16(&mut plane, 0xABCD_1234);
       let mut simd = std::vec![0u8; w * 3];
       let mut scal = std::vec![0u8; w * 3];
-      unsafe { super::gray_n_to_rgb_row::<10>(&plane, &mut simd, w) };
-      scalar::gray_n_to_rgb_row::<10>(&plane, &mut scal, w);
+      unsafe { super::gray_n_to_rgb_row::<10>(&plane, &mut simd, w, true) };
+      scalar::gray_n_to_rgb_row::<10>(&plane, &mut scal, w, true);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -662,9 +826,39 @@ mod tests {
       prng16(&mut plane, 0xDEAD_BEEF);
       let mut simd = std::vec![0u8; w * 3];
       let mut scal = std::vec![0u8; w * 3];
-      unsafe { super::gray16_to_rgb_row(&plane, &mut simd, w) };
-      scalar::gray16_to_rgb_row(&plane, &mut scal, w);
+      unsafe { super::gray16_to_rgb_row(&plane, &mut simd, w, true) };
+      scalar::gray16_to_rgb_row(&plane, &mut scal, w, true);
       assert_eq!(simd, scal, "width={w}");
+    }
+  }
+
+  // ---- limited-range SIMD/scalar parity tests ----
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn neon_gray8_limited_range_matches_scalar() {
+    for &w in WIDTHS {
+      let mut plane = std::vec![0u8; w];
+      prng(&mut plane, 0xCAFE_BABEu32);
+      let mut simd = std::vec![0u8; w * 3];
+      let mut scal = std::vec![0u8; w * 3];
+      unsafe { super::gray8_to_rgb_row(&plane, &mut simd, w, false) };
+      scalar::gray8_to_rgb_row(&plane, &mut scal, w, false);
+      assert_eq!(simd, scal, "width={w} limited-range");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn neon_gray16_limited_range_matches_scalar() {
+    for &w in WIDTHS {
+      let mut plane = std::vec![0u16; w];
+      prng16(&mut plane, 0x1234_5678);
+      let mut simd = std::vec![0u8; w * 3];
+      let mut scal = std::vec![0u8; w * 3];
+      unsafe { super::gray16_to_rgb_row(&plane, &mut simd, w, false) };
+      scalar::gray16_to_rgb_row(&plane, &mut scal, w, false);
+      assert_eq!(simd, scal, "width={w} limited-range");
     }
   }
 }
