@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## Unreleased — Tier 13 — Pal8 (palette) source format
+
+Closes Tier 13. New source-side pixel format `Pal8` (`AV_PIX_FMT_PAL8`):
+8-bit indexed-color with 256-entry BGRA palette, MAM completeness path.
+
+- Frame: `Pal8Frame` carries `&[u8]` index buffer + `&[[u8; 4]; 256]` palette
+  (FFmpeg's BGRA palette layout); width/height/stride validated; checked-mul
+  32-bit overflow guard
+- Walker: `pal8_to<S: Pal8Sink>` in `src/raw/` parallel to `bayer_to`
+- Scalar kernels: 4 per-pixel palette-lookup kernels (rgb, rgba, rgb_u16,
+  rgba_u16) with BGRA→RGB reorder + full-range u16 widening
+- SIMD: scalar-only (palette gather is hard to SIMD efficiently — 1 KB LUT
+  doesn't fit in NEON, x86 gather has poor latency, wasm has no gather)
+- Sinker: `MixedSinker<'_, Pal8>` with 7 accessors. Strategy A+ for
+  rgb+rgba combos (single palette lookup, RGB stripped from RGBA buffer).
+- 18 new tests: 5 frame validation + 5 scalar inline + 13 sinker integration
+
 ## 0.23.0 — Tier 11 finish: Grayf32 / Ya8 / Ya16 source formats
 
 **Additive feature; no public API change for existing callers.**

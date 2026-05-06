@@ -117,7 +117,7 @@ fn pal8_with_rgba_u16_passes_alpha() {
   palette[0] = [0, 0, 0, 128];
   let indices = [0u8; 1];
   let frame = make_frame(&indices, &palette, 1);
-  let mut rgba_u16 = std::vec![0u16; 1 * 4];
+  let mut rgba_u16 = std::vec![0u16; 4];
   let mut sink = MixedSinker::<Pal8>::new(1, 1)
     .with_rgba_u16(&mut rgba_u16)
     .unwrap();
