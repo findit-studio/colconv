@@ -646,6 +646,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
     let h = self.height;
     let idx = row.row();
     let use_simd = self.simd;
+    let full_range = row.full_range();
 
     if row.y().len() != w {
       return Err(MixedSinkerError::RowShapeMismatch {
@@ -705,7 +706,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-      gray16_to_rgba_u16_row(y_plane, rgba_u16_row, w, use_simd);
+      gray16_to_rgba_u16_row(y_plane, rgba_u16_row, w, use_simd, full_range);
     } else if want_rgb_u16 {
       let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
       let rgb_plane_start = one_plane_start * 3;
@@ -718,7 +719,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
             channels: 3,
           })?;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      gray16_to_rgb_u16_row(y_plane, rgb_u16_row, w, use_simd);
+      gray16_to_rgb_u16_row(y_plane, rgb_u16_row, w, use_simd, full_range);
       if want_rgba_u16 {
         let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
         let rgba_u16_row =
@@ -739,7 +740,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
     if want_rgba && !need_rgb_kernel && !want_hsv {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      gray16_to_rgba_row(y_plane, rgba_row, w, use_simd);
+      gray16_to_rgba_row(y_plane, rgba_row, w, use_simd, full_range);
       return Ok(());
     }
 
@@ -754,10 +755,11 @@ impl PixelSink for MixedSinker<'_, Gray16> {
         &mut hsv.v[one_plane_start..one_plane_end],
         w,
         use_simd,
+        full_range,
       );
       if let Some(buf) = rgba.as_deref_mut() {
         let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
-        gray16_to_rgba_row(y_plane, rgba_row, w, use_simd);
+        gray16_to_rgba_row(y_plane, rgba_row, w, use_simd, full_range);
       }
       return Ok(());
     }
@@ -774,7 +776,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
       w,
       h,
     )?;
-    gray16_to_rgb_row(y_plane, rgb_row, w, use_simd);
+    gray16_to_rgb_row(y_plane, rgb_row, w, use_simd, full_range);
 
     if let Some(hsv) = hsv.as_mut() {
       rgb_to_hsv_row(
@@ -1007,5 +1009,218 @@ mod tests {
     gray14_to(&frame, FR, M, &mut sink).unwrap();
     // 0x3FFF & 0x3FFF = 0x3FFF = 16383. >> 6 = 255.
     assert_eq!(luma, [255, 255, 255, 255]);
+  }
+
+  // ---- Limited-range integration tests ----------------------------------------
+  //
+  // For 8-bit limited-range: black=16, white=235, range=219.
+  //   rescale(y) = clamp_u8(((y - 16) * 255 + 109) / 219)
+  // For N-bit limited-range: black = 16 << (N-8), range = 219 << (N-8).
+  //   rescale(y) = clamp_u8(((y - black) * 255 + range/2) / range)
+  // Luma outputs always pass raw Y through (no rescaling regardless of
+  // full_range).
+
+  #[test]
+  fn gray8_limited_range_black_maps_to_zero() {
+    // Y=16 (limited-range black) → RGB(0, 0, 0).
+    let plane = [16u8; 4];
+    let frame = make_gray8_frame(&plane, 4, 1);
+    let mut rgb = std::vec![0xFFu8; 12];
+    let mut sink = MixedSinker::<crate::yuv::Gray8>::new(4, 1)
+      .with_rgb(&mut rgb)
+      .unwrap();
+    gray8_to(&frame, false, M, &mut sink).unwrap();
+    for i in 0..4 {
+      assert_eq!(rgb[i * 3..i * 3 + 3], [0, 0, 0], "pixel {i}");
+    }
+  }
+
+  #[test]
+  fn gray8_limited_range_white_maps_to_255() {
+    // Y=235 (limited-range white) → RGB(255, 255, 255).
+    let plane = [235u8; 4];
+    let frame = make_gray8_frame(&plane, 4, 1);
+    let mut rgb = std::vec![0u8; 12];
+    let mut sink = MixedSinker::<crate::yuv::Gray8>::new(4, 1)
+      .with_rgb(&mut rgb)
+      .unwrap();
+    gray8_to(&frame, false, M, &mut sink).unwrap();
+    for i in 0..4 {
+      assert_eq!(rgb[i * 3..i * 3 + 3], [255, 255, 255], "pixel {i}");
+    }
+  }
+
+  #[test]
+  fn gray8_limited_range_midpoint() {
+    // Y=125 → ((125-16)*255+109)/219 = 27904/219 = 127.
+    let plane = [125u8; 4];
+    let frame = make_gray8_frame(&plane, 4, 1);
+    let mut rgb = std::vec![0u8; 12];
+    let mut sink = MixedSinker::<crate::yuv::Gray8>::new(4, 1)
+      .with_rgb(&mut rgb)
+      .unwrap();
+    gray8_to(&frame, false, M, &mut sink).unwrap();
+    for i in 0..4 {
+      assert_eq!(rgb[i * 3], 127, "pixel {i} R");
+    }
+  }
+
+  #[test]
+  fn gray8_limited_range_luma_passthrough_unchanged() {
+    // Luma output must pass raw Y through even for limited-range; no rescaling.
+    let plane = [16u8, 235u8, 125u8, 0u8];
+    let frame = make_gray8_frame(&plane, 4, 1);
+    let mut luma = std::vec![0xAAu8; 4];
+    let mut sink = MixedSinker::<crate::yuv::Gray8>::new(4, 1)
+      .with_luma(&mut luma)
+      .unwrap();
+    gray8_to(&frame, false, M, &mut sink).unwrap();
+    assert_eq!(luma, [16, 235, 125, 0]);
+  }
+
+  #[test]
+  fn gray8_limited_range_rgba_alpha_is_0xff() {
+    // Verify limited-range RGBA: alpha=0xFF, channels rescaled.
+    let plane = [235u8; 4];
+    let frame = make_gray8_frame(&plane, 4, 1);
+    let mut rgba = std::vec![0u8; 16];
+    let mut sink = MixedSinker::<crate::yuv::Gray8>::new(4, 1)
+      .with_rgba(&mut rgba)
+      .unwrap();
+    gray8_to(&frame, false, M, &mut sink).unwrap();
+    for i in 0..4 {
+      assert_eq!(rgba[i * 4], 255, "pixel {i} R");
+      assert_eq!(rgba[i * 4 + 3], 0xFF, "pixel {i} alpha");
+    }
+  }
+
+  #[test]
+  fn gray8_limited_range_hsv_v_is_rescaled() {
+    // HSV V channel must use rescaled Y in limited-range mode.
+    let plane = [235u8; 4];
+    let frame = make_gray8_frame(&plane, 4, 1);
+    let mut h = std::vec![0xFFu8; 4];
+    let mut s = std::vec![0xFFu8; 4];
+    let mut v = std::vec![0u8; 4];
+    let mut sink = MixedSinker::<crate::yuv::Gray8>::new(4, 1)
+      .with_hsv(&mut h, &mut s, &mut v)
+      .unwrap();
+    gray8_to(&frame, false, M, &mut sink).unwrap();
+    assert_eq!(h, [0, 0, 0, 0], "H must be 0");
+    assert_eq!(s, [0, 0, 0, 0], "S must be 0");
+    assert_eq!(v, [255, 255, 255, 255], "V must be 255 for white");
+  }
+
+  #[test]
+  fn gray10_limited_range_black_and_white() {
+    use crate::frame::GrayNFrame;
+    // 10-bit: black=64, white=940, range=876.
+    let plane = [64u16, 940, 64, 940];
+    let frame: GrayNFrame<'_, 10> = GrayNFrame::new(&plane, 4, 1, 4);
+    let mut rgb = std::vec![0x80u8; 12];
+    let mut sink = MixedSinker::<crate::yuv::Gray10>::new(4, 1)
+      .with_rgb(&mut rgb)
+      .unwrap();
+    gray10_to(&frame, false, M, &mut sink).unwrap();
+    assert_eq!(rgb[0..3], [0, 0, 0], "Y=64 → black");
+    assert_eq!(rgb[3..6], [255, 255, 255], "Y=940 → white");
+    assert_eq!(rgb[6..9], [0, 0, 0], "Y=64 → black");
+    assert_eq!(rgb[9..12], [255, 255, 255], "Y=940 → white");
+  }
+
+  #[test]
+  fn gray12_limited_range_black_and_white() {
+    use crate::frame::GrayNFrame;
+    // 12-bit: black=256, white=3760, range=3504.
+    let plane = [256u16, 3760, 256, 3760];
+    let frame: GrayNFrame<'_, 12> = GrayNFrame::new(&plane, 4, 1, 4);
+    let mut rgb = std::vec![0x80u8; 12];
+    let mut sink = MixedSinker::<crate::yuv::Gray12>::new(4, 1)
+      .with_rgb(&mut rgb)
+      .unwrap();
+    gray12_to(&frame, false, M, &mut sink).unwrap();
+    assert_eq!(rgb[0..3], [0, 0, 0], "Y=256 → black");
+    assert_eq!(rgb[3..6], [255, 255, 255], "Y=3760 → white");
+    assert_eq!(rgb[6..9], [0, 0, 0], "Y=256 → black");
+    assert_eq!(rgb[9..12], [255, 255, 255], "Y=3760 → white");
+  }
+
+  #[test]
+  fn gray14_limited_range_black_and_white() {
+    use crate::frame::GrayNFrame;
+    // 14-bit: black=1024, white=15040, range=14016.
+    let plane = [1024u16, 15040, 1024, 15040];
+    let frame: GrayNFrame<'_, 14> = GrayNFrame::new(&plane, 4, 1, 4);
+    let mut rgb = std::vec![0x80u8; 12];
+    let mut sink = MixedSinker::<crate::yuv::Gray14>::new(4, 1)
+      .with_rgb(&mut rgb)
+      .unwrap();
+    gray14_to(&frame, false, M, &mut sink).unwrap();
+    assert_eq!(rgb[0..3], [0, 0, 0], "Y=1024 → black");
+    assert_eq!(rgb[3..6], [255, 255, 255], "Y=15040 → white");
+    assert_eq!(rgb[6..9], [0, 0, 0], "Y=1024 → black");
+    assert_eq!(rgb[9..12], [255, 255, 255], "Y=15040 → white");
+  }
+
+  #[test]
+  fn gray16_limited_range_black_and_white() {
+    // 16-bit: black=4096, white=60160, range=56064.
+    let plane = [4096u16, 60160, 4096, 60160];
+    let frame = make_gray16_frame(&plane, 4, 1);
+    let mut rgb = std::vec![0x80u8; 12];
+    let mut sink = MixedSinker::<crate::yuv::Gray16>::new(4, 1)
+      .with_rgb(&mut rgb)
+      .unwrap();
+    gray16_to(&frame, false, M, &mut sink).unwrap();
+    assert_eq!(rgb[0..3], [0, 0, 0], "Y=4096 → black");
+    assert_eq!(rgb[3..6], [255, 255, 255], "Y=60160 → white");
+    assert_eq!(rgb[6..9], [0, 0, 0], "Y=4096 → black");
+    assert_eq!(rgb[9..12], [255, 255, 255], "Y=60160 → white");
+  }
+
+  #[test]
+  fn gray16_limited_range_luma_passthrough_unchanged() {
+    // Luma u16 must copy raw Y regardless of full_range.
+    let plane = [4096u16, 60160, 32768, 0];
+    let frame = make_gray16_frame(&plane, 4, 1);
+    let mut lu16 = std::vec![0u16; 4];
+    let mut sink = MixedSinker::<crate::yuv::Gray16>::new(4, 1)
+      .with_luma_u16(&mut lu16)
+      .unwrap();
+    gray16_to(&frame, false, M, &mut sink).unwrap();
+    assert_eq!(lu16, [4096, 60160, 32768, 0]);
+  }
+
+  #[test]
+  fn gray16_limited_range_rgba_u16_alpha_is_0xffff() {
+    // RGBA u16 — alpha=0xFFFF; channels hold the native Y broadcast.
+    // In limited-range the u16 RGB path passes native Y through (no >>8).
+    let plane = [4096u16; 4];
+    let frame = make_gray16_frame(&plane, 4, 1);
+    let mut rgba_u16 = std::vec![0u16; 16];
+    let mut sink = MixedSinker::<crate::yuv::Gray16>::new(4, 1)
+      .with_rgba_u16(&mut rgba_u16)
+      .unwrap();
+    gray16_to(&frame, false, M, &mut sink).unwrap();
+    for i in 0..4 {
+      assert_eq!(rgba_u16[i * 4 + 3], 0xFFFF, "pixel {i} alpha");
+    }
+  }
+
+  #[test]
+  fn gray16_limited_range_hsv_v_is_rescaled() {
+    // HSV V must reflect limited-range rescaling.
+    let plane = [60160u16; 4]; // white
+    let frame = make_gray16_frame(&plane, 4, 1);
+    let mut h = std::vec![0xFFu8; 4];
+    let mut s = std::vec![0xFFu8; 4];
+    let mut v = std::vec![0u8; 4];
+    let mut sink = MixedSinker::<crate::yuv::Gray16>::new(4, 1)
+      .with_hsv(&mut h, &mut s, &mut v)
+      .unwrap();
+    gray16_to(&frame, false, M, &mut sink).unwrap();
+    assert_eq!(h, [0, 0, 0, 0], "H must be 0");
+    assert_eq!(s, [0, 0, 0, 0], "S must be 0");
+    assert_eq!(v, [255, 255, 255, 255], "V must be 255 for white");
   }
 }
