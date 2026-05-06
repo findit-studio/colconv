@@ -57,24 +57,15 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
       let g_sh = vqmovn_u16(vshlq_u16(g_v, shr));
       let b_sh = vqmovn_u16(vshlq_u16(b_v, shr));
 
-      // Combine two u8x8 halves into u8x16 for vst3q_u8 (needs 16-wide).
-      // We only have 8 pixels, so pair with zeros and store as 8 pixels.
-      // Use a direct store of the triple via vst3q_u8 with combined.
-      // Since vst3q_u8 writes 16 pixels, we combine with zeros and store
-      // only 8×3=24 bytes.
-      let r_16 = vcombine_u8(r_sh, vdup_n_u8(0));
-      let g_16 = vcombine_u8(g_sh, vdup_n_u8(0));
-      let b_16 = vcombine_u8(b_sh, vdup_n_u8(0));
-      // vst3q_u8 stores 3*16=48 bytes; we'll write exactly 24 of them.
-      // To avoid writing past the buffer, check if we have 16 pixels of
-      // space. If rgb_out is large enough, do it; otherwise fall back.
-      // Instead, use a temp buffer approach for safety.
-      let triple = uint8x16x3_t(r_16, g_16, b_16);
-      let mut tmp = [0u8; 48];
-      vst3q_u8(tmp.as_mut_ptr(), triple);
-      // Copy only the first 24 bytes (8 pixels * 3 channels).
-      let dst = rgb_out.as_mut_ptr().add(x * 3);
-      core::ptr::copy_nonoverlapping(tmp.as_ptr(), dst, 24);
+      // Direct 8-pixel interleaved store via vst3_u8: 24 bytes written
+      // straight to the output. This replaces the previous
+      // vcombine_u8 → vst3q_u8 → 48-byte stack temp → 24-byte memcpy
+      // dance, which was a workaround for the 16-pixel-wide vst3q_u8
+      // when only 8 pixels were available.
+      vst3_u8(
+        rgb_out.as_mut_ptr().add(x * 3),
+        uint8x8x3_t(r_sh, g_sh, b_sh),
+      );
 
       x += 8;
     }
@@ -130,16 +121,13 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
       let g_sh = vqmovn_u16(vshlq_u16(g_v, shr));
       let b_sh = vqmovn_u16(vshlq_u16(b_v, shr));
 
-      let r_16 = vcombine_u8(r_sh, vdup_n_u8(0));
-      let g_16 = vcombine_u8(g_sh, vdup_n_u8(0));
-      let b_16 = vcombine_u8(b_sh, vdup_n_u8(0));
-      let a_16 = vcombine_u8(opaque, vdup_n_u8(0));
-
-      let quad = uint8x16x4_t(r_16, g_16, b_16, a_16);
-      let mut tmp = [0u8; 64];
-      vst4q_u8(tmp.as_mut_ptr(), quad);
-      let dst = rgba_out.as_mut_ptr().add(x * 4);
-      core::ptr::copy_nonoverlapping(tmp.as_ptr(), dst, 32);
+      // Direct 8-pixel interleaved store via vst4_u8: 32 bytes written
+      // straight to the output (replaces the prior vst4q_u8 + 64-byte
+      // temp + 32-byte memcpy workaround).
+      vst4_u8(
+        rgba_out.as_mut_ptr().add(x * 4),
+        uint8x8x4_t(r_sh, g_sh, b_sh, opaque),
+      );
 
       x += 8;
     }
@@ -198,16 +186,13 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
       let b_sh = vqmovn_u16(vshlq_u16(b_v, shr));
       let a_sh = vqmovn_u16(vshlq_u16(a_v, shr));
 
-      let r_16 = vcombine_u8(r_sh, vdup_n_u8(0));
-      let g_16 = vcombine_u8(g_sh, vdup_n_u8(0));
-      let b_16 = vcombine_u8(b_sh, vdup_n_u8(0));
-      let a_16 = vcombine_u8(a_sh, vdup_n_u8(0));
-
-      let quad = uint8x16x4_t(r_16, g_16, b_16, a_16);
-      let mut tmp = [0u8; 64];
-      vst4q_u8(tmp.as_mut_ptr(), quad);
-      let dst = rgba_out.as_mut_ptr().add(x * 4);
-      core::ptr::copy_nonoverlapping(tmp.as_ptr(), dst, 32);
+      // Direct 8-pixel interleaved store via vst4_u8: 32 bytes written
+      // straight to the output (replaces the prior vst4q_u8 + 64-byte
+      // temp + 32-byte memcpy workaround).
+      vst4_u8(
+        rgba_out.as_mut_ptr().add(x * 4),
+        uint8x8x4_t(r_sh, g_sh, b_sh, a_sh),
+      );
 
       x += 8;
     }
