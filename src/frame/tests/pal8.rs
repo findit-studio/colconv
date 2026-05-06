@@ -70,3 +70,10 @@ fn pal8_try_new_stride_wider_than_width() {
   assert_eq!(f.width(), 4);
   assert_eq!(f.stride(), 8);
 }
+
+#[test]
+#[should_panic(expected = "invalid Pal8Frame")]
+fn pal8_new_panics_on_invalid() {
+  let data = std::vec![0u8; 10];
+  let _ = Pal8Frame::new(&data, &PALETTE, 16, 8, 16);
+}

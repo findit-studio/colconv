@@ -7,7 +7,8 @@ use derive_more::IsVariant;
 use thiserror::Error;
 
 /// Error returned by [`Pal8Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error, IsVariant)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[non_exhaustive]
 pub enum Pal8FrameError {
   /// `width` or `height` was zero.
   #[error("zero width or height: {width}×{height}")]
@@ -107,28 +108,49 @@ impl<'a> Pal8Frame<'a> {
     })
   }
 
+  /// Constructs a new [`Pal8Frame`], panicking on invalid inputs.
+  /// Prefer [`Self::try_new`] when inputs may be invalid at runtime.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn new(
+    data: &'a [u8],
+    palette: &'a [[u8; 4]; 256],
+    width: u32,
+    height: u32,
+    stride: u32,
+  ) -> Self {
+    match Self::try_new(data, palette, width, height, stride) {
+      Ok(frame) => frame,
+      Err(_) => panic!("invalid Pal8Frame dimensions or plane length"),
+    }
+  }
+
   /// The pixel index buffer. Row `r` starts at byte offset `r * stride()`.
-  pub fn data(&self) -> &'a [u8] {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn data(&self) -> &'a [u8] {
     self.data
   }
 
   /// The 256-entry BGRA palette. Each entry is `[B, G, R, A]` per
   /// FFmpeg's `AV_PIX_FMT_PAL8` convention.
-  pub fn palette(&self) -> &'a [[u8; 4]; 256] {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn palette(&self) -> &'a [[u8; 4]; 256] {
     self.palette
   }
 
   /// Frame width in pixels.
+  #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn width(&self) -> u32 {
     self.width
   }
 
   /// Frame height in pixels.
+  #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn height(&self) -> u32 {
     self.height
   }
 
   /// Byte stride of the pixel plane (`>= width`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn stride(&self) -> u32 {
     self.stride
   }

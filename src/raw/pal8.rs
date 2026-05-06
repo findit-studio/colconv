@@ -34,17 +34,20 @@ impl<'a> Pal8Row<'a> {
   }
 
   /// The pixel-index slice for this row. Length equals the frame width.
+  #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn row(&self) -> &'a [u8] {
     self.row
   }
 
   /// The 256-entry BGRA palette shared across all rows of the frame.
   /// Each entry is `[B, G, R, A]` per FFmpeg's `AV_PIX_FMT_PAL8` convention.
+  #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn palette(&self) -> &'a [[u8; 4]; 256] {
     self.palette
   }
 
   /// Row index within the frame (0-based).
+  #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn idx(&self) -> usize {
     self.idx
   }
