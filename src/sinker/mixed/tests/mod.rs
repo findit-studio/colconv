@@ -10,6 +10,7 @@ mod ayuv64;
 mod bayer;
 mod packed_rgb_10bit;
 mod packed_rgb_8bit;
+mod packed_rgb_f16;
 mod packed_rgb_float;
 mod packed_yuv_8bit;
 mod planar_gbr;

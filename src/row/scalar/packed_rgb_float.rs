@@ -160,3 +160,126 @@ pub(crate) fn rgbf32_to_rgb_f32_row(rgb_in: &[f32], rgb_out: &mut [f32], width: 
   debug_assert!(rgb_out.len() >= width * 3, "rgb_f32_out row too short");
   rgb_out[..width * 3].copy_from_slice(&rgb_in[..width * 3]);
 }
+
+// ---- Tier 9 — Rgbf16 scalar row kernels --------------------------------
+//
+// Each kernel widens the 16-bit half-precision input to `f32` on the fly
+// and then applies the same clamping / scaling logic as the corresponding
+// `rgbf32_to_*_row` function above.  No intermediate heap allocation is
+// needed because the widening and the per-element math are interleaved in
+// the same tight loop.
+
+/// Converts packed `R, G, B` 16-bit half-precision float input to packed
+/// `R, G, B` `u8` output.  Each `half::f16` is widened to `f32`, then
+/// clamped to `[0, 1]` and scaled by 255.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `rgb_in.len() < 3 * width` or
+/// `rgb_out.len() < 3 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+  for x in 0..width {
+    let i = x * 3;
+    rgb_out[i] = f32_to_u8_clamped(rgb_in[i].to_f32());
+    rgb_out[i + 1] = f32_to_u8_clamped(rgb_in[i + 1].to_f32());
+    rgb_out[i + 2] = f32_to_u8_clamped(rgb_in[i + 2].to_f32());
+  }
+}
+
+/// Converts packed `R, G, B` 16-bit half-precision float input to packed
+/// `R, G, B, A` `u8` output with `A = 0xFF` (the half-float source has no
+/// alpha channel).
+///
+/// # Panics
+///
+/// Panics (any build profile) if `rgb_in.len() < 3 * width` or
+/// `rgba_out.len() < 4 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+  for x in 0..width {
+    let s = x * 3;
+    let d = x * 4;
+    rgba_out[d] = f32_to_u8_clamped(rgb_in[s].to_f32());
+    rgba_out[d + 1] = f32_to_u8_clamped(rgb_in[s + 1].to_f32());
+    rgba_out[d + 2] = f32_to_u8_clamped(rgb_in[s + 2].to_f32());
+    rgba_out[d + 3] = 0xFF;
+  }
+}
+
+/// Converts packed `R, G, B` 16-bit half-precision float input to packed
+/// `R, G, B` `u16` output.  Each `half::f16` is widened to `f32`, then
+/// clamped to `[0, 1]` and scaled by 65535.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `rgb_in.len() < 3 * width` or
+/// `rgb_out.len() < 3 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbf16_to_rgb_u16_row(rgb_in: &[half::f16], rgb_out: &mut [u16], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+  for x in 0..width {
+    let i = x * 3;
+    rgb_out[i] = f32_to_u16_clamped(rgb_in[i].to_f32());
+    rgb_out[i + 1] = f32_to_u16_clamped(rgb_in[i + 1].to_f32());
+    rgb_out[i + 2] = f32_to_u16_clamped(rgb_in[i + 2].to_f32());
+  }
+}
+
+/// Converts packed `R, G, B` 16-bit half-precision float input to packed
+/// `R, G, B, A` `u16` output with `A = 0xFFFF`.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `rgb_in.len() < 3 * width` or
+/// `rgba_out.len() < 4 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbf16_to_rgba_u16_row(rgb_in: &[half::f16], rgba_out: &mut [u16], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+  for x in 0..width {
+    let s = x * 3;
+    let d = x * 4;
+    rgba_out[d] = f32_to_u16_clamped(rgb_in[s].to_f32());
+    rgba_out[d + 1] = f32_to_u16_clamped(rgb_in[s + 1].to_f32());
+    rgba_out[d + 2] = f32_to_u16_clamped(rgb_in[s + 2].to_f32());
+    rgba_out[d + 3] = 0xFFFF;
+  }
+}
+
+/// Widens each `half::f16` element to `f32`, preserving HDR values
+/// (> 1.0) and negatives bit-exactly through the widen step.  Output
+/// is `f32`; no clamping is applied.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `rgb_in.len() < 3 * width` or
+/// `rgb_out.len() < 3 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbf16_to_rgb_f32_row(rgb_in: &[half::f16], rgb_out: &mut [f32], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_f32_out row too short");
+  for i in 0..width * 3 {
+    rgb_out[i] = rgb_in[i].to_f32();
+  }
+}
+
+/// **Lossless** pass-through: copies the packed `R, G, B` `half::f16` row
+/// into the output buffer without any conversion.  Source HDR values and
+/// negatives are preserved bit-exact.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `rgb_in.len() < 3 * width` or
+/// `rgb_out.len() < 3 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbf16_to_rgb_f16_row(rgb_in: &[half::f16], rgb_out: &mut [half::f16], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_f16_out row too short");
+  rgb_out[..width * 3].copy_from_slice(&rgb_in[..width * 3]);
+}

@@ -248,3 +248,205 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row(rgb_in: &[f32], rgb_out: &mut [f32], 
     i += 1;
   }
 }
+
+// ---- Tier 9 — Rgbf16 wasm-simd128 entry points ----------------------------
+//
+// wasm-simd128 has no native f16 widening instruction. Strategy: widen each
+// f16 element to f32 via `half::f16::to_f32()` (scalar) into a stack-allocated
+// `[f32; CHUNK_PIXELS * 3]` buffer, then call the existing wasm-simd128
+// Rgbf32 downstream kernels for the f32→u8/u16/f32 work.
+//
+// The widening loop is cheap relative to the subsequent SIMD integer conversion,
+// so this hybrid strategy avoids a full scalar fallback while keeping the
+// heavier per-sample math in SIMD.
+//
+// CHUNK_PIXELS = 4 (= 12 f32 lanes), matching the simd128 Rgbf32 loop stride.
+
+/// f16 RGB → u8 RGB (wasm-simd128).
+///
+/// # Safety
+///
+/// 1. simd128 must be available (compile-time `target_feature`).
+/// 2. `rgb_in.len() >= 3 * width`; `rgb_out.len() >= 3 * width`.
+/// 3. `rgb_in` / `rgb_out` must not alias.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+
+  // Process 4 pixels (12 f16 lanes) per iteration.
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  while lane + 12 <= total_lanes {
+    let mut buf = [0.0f32; 12];
+    for k in 0..12 {
+      buf[k] = unsafe { rgb_in.get_unchecked(lane + k).to_f32() };
+    }
+    unsafe {
+      rgbf32_to_rgb_row(&buf, rgb_out.get_unchecked_mut(lane..lane + 12), 4);
+    }
+    lane += 12;
+  }
+  let pix_done = lane / 3;
+  if pix_done < width {
+    scalar::rgbf16_to_rgb_row(
+      &rgb_in[pix_done * 3..width * 3],
+      &mut rgb_out[pix_done * 3..width * 3],
+      width - pix_done,
+    );
+  }
+}
+
+/// f16 RGB → u8 RGBA (alpha `0xFF`) (wasm-simd128).
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  let mut pix = 0usize;
+  while lane + 12 <= total_lanes {
+    let mut buf = [0.0f32; 12];
+    for k in 0..12 {
+      buf[k] = unsafe { rgb_in.get_unchecked(lane + k).to_f32() };
+    }
+    unsafe {
+      rgbf32_to_rgba_row(&buf, rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 16), 4);
+    }
+    lane += 12;
+    pix += 4;
+  }
+  if pix < width {
+    scalar::rgbf16_to_rgba_row(
+      &rgb_in[pix * 3..width * 3],
+      &mut rgba_out[pix * 4..width * 4],
+      width - pix,
+    );
+  }
+}
+
+/// f16 RGB → u16 RGB (wasm-simd128).
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [u16]` with
+/// `len() >= 3 * width` u16 elements.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn rgbf16_to_rgb_u16_row(
+  rgb_in: &[half::f16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_u16_out row too short");
+
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  while lane + 12 <= total_lanes {
+    let mut buf = [0.0f32; 12];
+    for k in 0..12 {
+      buf[k] = unsafe { rgb_in.get_unchecked(lane + k).to_f32() };
+    }
+    unsafe {
+      rgbf32_to_rgb_u16_row(&buf, rgb_out.get_unchecked_mut(lane..lane + 12), 4);
+    }
+    lane += 12;
+  }
+  let pix_done = lane / 3;
+  if pix_done < width {
+    scalar::rgbf16_to_rgb_u16_row(
+      &rgb_in[pix_done * 3..width * 3],
+      &mut rgb_out[pix_done * 3..width * 3],
+      width - pix_done,
+    );
+  }
+}
+
+/// f16 RGB → u16 RGBA (alpha `0xFFFF`) (wasm-simd128).
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_u16_row`] but `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn rgbf16_to_rgba_u16_row(
+  rgb_in: &[half::f16],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_u16_out row too short");
+
+  let total_lanes = width * 3;
+  let mut lane = 0usize;
+  let mut pix = 0usize;
+  while lane + 12 <= total_lanes {
+    let mut buf = [0.0f32; 12];
+    for k in 0..12 {
+      buf[k] = unsafe { rgb_in.get_unchecked(lane + k).to_f32() };
+    }
+    unsafe {
+      rgbf32_to_rgba_u16_row(&buf, rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 16), 4);
+    }
+    lane += 12;
+    pix += 4;
+  }
+  if pix < width {
+    scalar::rgbf16_to_rgba_u16_row(
+      &rgb_in[pix * 3..width * 3],
+      &mut rgba_out[pix * 4..width * 4],
+      width - pix,
+    );
+  }
+}
+
+/// f16 RGB → f32 RGB (lossless widen) (wasm-simd128).
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [f32]` with
+/// `len() >= 3 * width` f32 elements.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn rgbf16_to_rgb_f32_row(
+  rgb_in: &[half::f16],
+  rgb_out: &mut [f32],
+  width: usize,
+) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_f32_out row too short");
+  // Pure scalar widen; the downstream f32 copy is trivial via copy_from_slice
+  // and we avoid an extra pass through the data.
+  let total_lanes = width * 3;
+  for i in 0..total_lanes {
+    unsafe {
+      *rgb_out.get_unchecked_mut(i) = rgb_in.get_unchecked(i).to_f32();
+    }
+  }
+}
+
+/// f16 RGB → f16 RGB lossless pass-through (wasm-simd128).
+///
+/// # Safety
+///
+/// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [half::f16]` with
+/// `len() >= 3 * width` f16 elements.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn rgbf16_to_rgb_f16_row(
+  rgb_in: &[half::f16],
+  rgb_out: &mut [half::f16],
+  width: usize,
+) {
+  debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_f16_out row too short");
+  scalar::rgbf16_to_rgb_f16_row(rgb_in, rgb_out, width);
+}
