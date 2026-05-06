@@ -16,6 +16,10 @@
 //! implementation. SIMD branches (NEON / SSE4.1 / AVX2 / AVX-512 / wasm-simd128)
 //! will be wired in Tasks 4-8.
 
+#[cfg(target_arch = "aarch64")]
+use crate::row::arch;
+#[cfg(target_arch = "aarch64")]
+use crate::row::neon_available;
 use crate::row::{
   packed_yuv422_row_bytes, rgb_row_bytes, rgb_row_elems, rgba_row_bytes, rgba_row_elems, scalar,
 };
@@ -37,7 +41,14 @@ pub fn rgb565_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: usize, use_simd:
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    // SAFETY: NEON verified available.
+    unsafe {
+      return arch::neon::legacy_rgb::rgb565_to_rgb_row(src, rgb_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::rgb565_to_rgb_row(src, rgb_out, width);
 }
 
@@ -49,7 +60,13 @@ pub fn rgb565_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: usize, use_sim
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::rgb565_to_rgba_row(src, rgba_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::rgb565_to_rgba_row(src, rgba_out, width);
 }
 
@@ -61,7 +78,13 @@ pub fn rgb565_to_rgb_u16_row(src: &[u8], rgb_out: &mut [u16], width: usize, use_
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::rgb565_to_rgb_u16_row(src, rgb_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::rgb565_to_rgb_u16_row(src, rgb_out, width);
 }
 
@@ -73,7 +96,13 @@ pub fn rgb565_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::rgb565_to_rgba_u16_row(src, rgba_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::rgb565_to_rgba_u16_row(src, rgba_out, width);
 }
 
@@ -89,7 +118,13 @@ pub fn bgr565_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: usize, use_simd:
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::bgr565_to_rgb_row(src, rgb_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::bgr565_to_rgb_row(src, rgb_out, width);
 }
 
@@ -101,7 +136,13 @@ pub fn bgr565_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: usize, use_sim
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::bgr565_to_rgba_row(src, rgba_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::bgr565_to_rgba_row(src, rgba_out, width);
 }
 
@@ -113,7 +154,13 @@ pub fn bgr565_to_rgb_u16_row(src: &[u8], rgb_out: &mut [u16], width: usize, use_
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::bgr565_to_rgb_u16_row(src, rgb_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::bgr565_to_rgb_u16_row(src, rgb_out, width);
 }
 
@@ -125,7 +172,13 @@ pub fn bgr565_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::bgr565_to_rgba_u16_row(src, rgba_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::bgr565_to_rgba_u16_row(src, rgba_out, width);
 }
 
@@ -141,7 +194,13 @@ pub fn rgb555_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: usize, use_simd:
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::rgb555_to_rgb_row(src, rgb_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::rgb555_to_rgb_row(src, rgb_out, width);
 }
 
@@ -153,7 +212,13 @@ pub fn rgb555_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: usize, use_sim
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::rgb555_to_rgba_row(src, rgba_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::rgb555_to_rgba_row(src, rgba_out, width);
 }
 
@@ -165,7 +230,13 @@ pub fn rgb555_to_rgb_u16_row(src: &[u8], rgb_out: &mut [u16], width: usize, use_
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::rgb555_to_rgb_u16_row(src, rgb_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::rgb555_to_rgb_u16_row(src, rgb_out, width);
 }
 
@@ -177,7 +248,13 @@ pub fn rgb555_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::rgb555_to_rgba_u16_row(src, rgba_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::rgb555_to_rgba_u16_row(src, rgba_out, width);
 }
 
@@ -193,7 +270,13 @@ pub fn bgr555_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: usize, use_simd:
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::bgr555_to_rgb_row(src, rgb_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::bgr555_to_rgb_row(src, rgb_out, width);
 }
 
@@ -205,7 +288,13 @@ pub fn bgr555_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: usize, use_sim
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::bgr555_to_rgba_row(src, rgba_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::bgr555_to_rgba_row(src, rgba_out, width);
 }
 
@@ -217,7 +306,13 @@ pub fn bgr555_to_rgb_u16_row(src: &[u8], rgb_out: &mut [u16], width: usize, use_
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::bgr555_to_rgb_u16_row(src, rgb_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::bgr555_to_rgb_u16_row(src, rgb_out, width);
 }
 
@@ -229,7 +324,13 @@ pub fn bgr555_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::bgr555_to_rgba_u16_row(src, rgba_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::bgr555_to_rgba_u16_row(src, rgba_out, width);
 }
 
@@ -245,7 +346,13 @@ pub fn rgb444_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: usize, use_simd:
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::rgb444_to_rgb_row(src, rgb_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::rgb444_to_rgb_row(src, rgb_out, width);
 }
 
@@ -257,7 +364,13 @@ pub fn rgb444_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: usize, use_sim
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::rgb444_to_rgba_row(src, rgba_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::rgb444_to_rgba_row(src, rgba_out, width);
 }
 
@@ -269,7 +382,13 @@ pub fn rgb444_to_rgb_u16_row(src: &[u8], rgb_out: &mut [u16], width: usize, use_
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::rgb444_to_rgb_u16_row(src, rgb_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::rgb444_to_rgb_u16_row(src, rgb_out, width);
 }
 
@@ -281,7 +400,13 @@ pub fn rgb444_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::rgb444_to_rgba_u16_row(src, rgba_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::rgb444_to_rgba_u16_row(src, rgba_out, width);
 }
 
@@ -297,7 +422,13 @@ pub fn bgr444_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: usize, use_simd:
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::bgr444_to_rgb_row(src, rgb_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::bgr444_to_rgb_row(src, rgb_out, width);
 }
 
@@ -309,7 +440,13 @@ pub fn bgr444_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: usize, use_sim
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::bgr444_to_rgba_row(src, rgba_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::bgr444_to_rgba_row(src, rgba_out, width);
 }
 
@@ -321,7 +458,13 @@ pub fn bgr444_to_rgb_u16_row(src: &[u8], rgb_out: &mut [u16], width: usize, use_
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::bgr444_to_rgb_u16_row(src, rgb_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::bgr444_to_rgb_u16_row(src, rgb_out, width);
 }
 
@@ -333,7 +476,13 @@ pub fn bgr444_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   let src_min = packed_yuv422_row_bytes(width);
   assert!(src.len() >= src_min, "src row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out too short");
-  let _ = use_simd; // SIMD branches wired in Tasks 4-8
+  #[cfg(target_arch = "aarch64")]
+  if use_simd && neon_available() {
+    unsafe {
+      return arch::neon::legacy_rgb::bgr444_to_rgba_u16_row(src, rgba_out, width);
+    }
+  }
+  let _ = use_simd;
   scalar::legacy_rgb::bgr444_to_rgba_u16_row(src, rgba_out, width);
 }
 
