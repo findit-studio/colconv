@@ -15,6 +15,7 @@ pub(super) mod ayuv64;
 pub(super) mod bayer;
 pub(super) mod gray;
 pub(super) mod grayf32;
+pub(crate) mod mono1bit;
 pub(super) mod nv;
 pub(super) mod packed_yuv422;
 pub(super) mod pal8;
