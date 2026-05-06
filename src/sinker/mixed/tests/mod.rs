@@ -8,6 +8,7 @@ use crate::{ColorMatrix, frame::*, raw::*, yuv::*};
 // submodules can pull them via `use super::*;`.
 mod ayuv64;
 mod bayer;
+mod mono1bit;
 mod packed_rgb_10bit;
 mod packed_rgb_8bit;
 mod packed_rgb_f16;
