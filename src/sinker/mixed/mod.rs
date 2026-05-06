@@ -224,6 +224,28 @@ pub enum MixedSinkerError {
     actual: usize,
   },
 
+  /// `f32` RGBA buffer attached via per-format `with_rgba_f32` /
+  /// `set_rgba_f32` is shorter than `width × height × 4` `f32` elements.
+  /// Only float-planar-GBR source impls write into this buffer.
+  #[error("MixedSinker rgba_f32 buffer too short: expected >= {expected} elements, got {actual}")]
+  RgbaF32BufferTooShort {
+    /// Minimum `f32` elements required (`width × height × 4`).
+    expected: usize,
+    /// `f32` elements supplied.
+    actual: usize,
+  },
+
+  /// `half::f16` RGBA buffer attached via per-format `with_rgba_f16` /
+  /// `set_rgba_f16` is shorter than `width × height × 4` `f16` elements.
+  /// Only float-planar-GBR source impls write into this buffer.
+  #[error("MixedSinker rgba_f16 buffer too short: expected >= {expected} elements, got {actual}")]
+  RgbaF16BufferTooShort {
+    /// Minimum `f16` elements required (`width × height × 4`).
+    expected: usize,
+    /// `f16` elements supplied.
+    actual: usize,
+  },
+
   /// `f32` luma buffer attached via `with_luma_f32` / `set_luma_f32` is
   /// shorter than `width × height` `f32` elements.
   #[error("MixedSinker luma_f32 buffer too short: expected >= {expected} elements, got {actual}")]
@@ -741,6 +763,14 @@ pub enum RowSlice {
   /// `width` elements.
   #[display("R plane")]
   RPlane,
+  /// Plane row of a float-32 planar GBR source (`Gbrpf32` /
+  /// `Gbrapf32`). `f32` samples, `width` elements per plane.
+  #[display("GBR f32 plane")]
+  GbrF32Plane,
+  /// Plane row of a float-16 planar GBR source (`Gbrpf16` /
+  /// `Gbrapf16`). `half::f16` samples, `width` elements per plane.
+  #[display("GBR f16 plane")]
+  GbrF16Plane,
 }
 
 /// A sink that writes any subset of `{RGB, Luma, HSV}` into
@@ -770,6 +800,8 @@ pub struct MixedSinker<'a, F: SourceFormat> {
   rgb_f16: Option<&'a mut [half::f16]>,
   rgba: Option<&'a mut [u8]>,
   rgba_u16: Option<&'a mut [u16]>,
+  rgba_f32: Option<&'a mut [f32]>,
+  rgba_f16: Option<&'a mut [half::f16]>,
   luma: Option<&'a mut [u8]>,
   luma_u16: Option<&'a mut [u16]>,
   luma_f32: Option<&'a mut [f32]>,
@@ -1121,6 +1153,8 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
       rgb_f16: None,
       rgba: None,
       rgba_u16: None,
+      rgba_f32: None,
+      rgba_f16: None,
       luma: None,
       luma_u16: None,
       luma_f32: None,
@@ -1169,6 +1203,22 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn produces_rgb_f16(&self) -> bool {
     self.rgb_f16.is_some()
+  }
+
+  /// Returns `true` iff the sinker will write `f32` RGBA. Only
+  /// float-planar-GBR source impls (`Gbrpf32` / `Gbrapf32` / `Gbrpf16` /
+  /// `Gbrapf16`) honor this buffer.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn produces_rgba_f32(&self) -> bool {
+    self.rgba_f32.is_some()
+  }
+
+  /// Returns `true` iff the sinker will write `half::f16` RGBA. Only
+  /// float-planar-GBR source impls (`Gbrpf32` / `Gbrapf32` / `Gbrpf16` /
+  /// `Gbrapf16`) honor this buffer.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn produces_rgba_f16(&self) -> bool {
+    self.rgba_f16.is_some()
   }
 
   /// Returns `true` iff the sinker will write 8‑bit RGBA. The
