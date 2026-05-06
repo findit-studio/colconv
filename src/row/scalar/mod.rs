@@ -44,6 +44,7 @@ mod hsv;
 mod packed_rgb;
 mod packed_rgb_float;
 mod packed_yuv_8bit;
+pub(crate) mod pal8;
 mod planar_gbr;
 pub(crate) mod planar_gbr_high_bit;
 mod rgb_expand;
