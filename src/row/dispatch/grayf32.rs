@@ -13,11 +13,13 @@
 use crate::row::arch;
 #[cfg(target_arch = "aarch64")]
 use crate::row::neon_available;
-use crate::row::scalar::grayf32 as scalar;
 #[cfg(target_arch = "wasm32")]
 use crate::row::simd128_available;
 #[cfg(target_arch = "x86_64")]
 use crate::row::{avx2_available, avx512_available, sse41_available};
+use crate::row::{
+  rgb_row_bytes, rgb_row_elems, rgba_row_bytes, rgba_row_elems, scalar::grayf32 as scalar,
+};
 
 // ---- grayf32_to_rgb_row -------------------------------------------------------
 
@@ -25,7 +27,7 @@ use crate::row::{avx2_available, avx512_available, sse41_available};
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn grayf32_to_rgb_row(plane: &[f32], out: &mut [u8], width: usize, use_simd: bool) {
   assert!(plane.len() >= width, "plane too short");
-  assert!(out.len() >= width * 3, "out too short");
+  assert!(out.len() >= rgb_row_bytes(width), "out too short");
   if !use_simd {
     return scalar::grayf32_to_rgb_row(plane, out, width);
   }
@@ -67,7 +69,7 @@ pub(crate) fn grayf32_to_rgb_row(plane: &[f32], out: &mut [u8], width: usize, us
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn grayf32_to_rgba_row(plane: &[f32], out: &mut [u8], width: usize, use_simd: bool) {
   assert!(plane.len() >= width, "plane too short");
-  assert!(out.len() >= width * 4, "out too short");
+  assert!(out.len() >= rgba_row_bytes(width), "out too short");
   if !use_simd {
     return scalar::grayf32_to_rgba_row(plane, out, width);
   }
@@ -109,7 +111,7 @@ pub(crate) fn grayf32_to_rgba_row(plane: &[f32], out: &mut [u8], width: usize, u
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn grayf32_to_rgb_u16_row(plane: &[f32], out: &mut [u16], width: usize, use_simd: bool) {
   assert!(plane.len() >= width, "plane too short");
-  assert!(out.len() >= width * 3, "out too short");
+  assert!(out.len() >= rgb_row_elems(width), "out too short");
   if !use_simd {
     return scalar::grayf32_to_rgb_u16_row(plane, out, width);
   }
@@ -156,7 +158,7 @@ pub(crate) fn grayf32_to_rgba_u16_row(
   use_simd: bool,
 ) {
   assert!(plane.len() >= width, "plane too short");
-  assert!(out.len() >= width * 4, "out too short");
+  assert!(out.len() >= rgba_row_elems(width), "out too short");
   if !use_simd {
     return scalar::grayf32_to_rgba_u16_row(plane, out, width);
   }
@@ -203,7 +205,7 @@ pub(crate) fn grayf32_to_rgb_f32_row(
   _use_simd: bool,
 ) {
   assert!(plane.len() >= width, "plane too short");
-  assert!(out.len() >= width * 3, "out too short");
+  assert!(out.len() >= rgb_row_elems(width), "out too short");
   scalar::grayf32_to_rgb_f32_row(plane, out, width);
 }
 

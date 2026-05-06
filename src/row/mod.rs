@@ -154,6 +154,19 @@ pub(crate) fn rgba_row_elems(width: usize) -> usize {
   }
 }
 
+/// Element count of one packed YA (luma + alpha) row (`width × 2`)
+/// with overflow checking. Same purpose as [`rgb_row_bytes`] for the
+/// 2-element `[Y, A, ...]` interleaved layout used by Ya8 (`&[u8]`)
+/// and Ya16 (`&[u16]`) packed inputs — both index `width × 2`
+/// elements regardless of element width, so this helper covers both.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn ya_row_elems(width: usize) -> usize {
+  match width.checked_mul(2) {
+    Some(n) => n,
+    None => panic!("width ({width}) × 2 overflows usize"),
+  }
+}
+
 /// Maximum permitted magnitude of any element of a fused color
 /// transform handed to a Bayer row dispatcher.
 ///
