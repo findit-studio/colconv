@@ -29,6 +29,18 @@
 // the MixedSinker impls). Allow dead_code until then.
 #![allow(dead_code)]
 
+#[cfg(any(
+  target_arch = "aarch64",
+  target_arch = "x86_64",
+  target_arch = "wasm32"
+))]
+use crate::row::arch;
+#[cfg(target_arch = "aarch64")]
+use crate::row::neon_available;
+#[cfg(target_arch = "wasm32")]
+use crate::row::simd128_available;
+#[cfg(target_arch = "x86_64")]
+use crate::row::{avx2_available, avx512_available, sse41_available};
 use crate::{
   ColorMatrix,
   row::{
@@ -54,7 +66,18 @@ pub(crate) fn gbrpf32_to_rgb_row(
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
   assert!(out.len() >= out_min, "out too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe { arch::neon::gbrpf32_to_rgb_row(g, b, r, out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::gbrpf32_to_rgb_row(g, b, r, out, width);
 }
 
@@ -75,7 +98,18 @@ pub(crate) fn gbrpf32_to_rgba_row(
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
   assert!(out.len() >= out_min, "out too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe { arch::neon::gbrpf32_to_rgba_row(g, b, r, out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::gbrpf32_to_rgba_row(g, b, r, out, width);
 }
 
@@ -96,7 +130,18 @@ pub(crate) fn gbrpf32_to_rgb_u16_row(
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
   assert!(out.len() >= out_min, "out too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe { arch::neon::gbrpf32_to_rgb_u16_row(g, b, r, out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::gbrpf32_to_rgb_u16_row(g, b, r, out, width);
 }
 
@@ -117,13 +162,24 @@ pub(crate) fn gbrpf32_to_rgba_u16_row(
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
   assert!(out.len() >= out_min, "out too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe { arch::neon::gbrpf32_to_rgba_u16_row(g, b, r, out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::gbrpf32_to_rgba_u16_row(g, b, r, out, width);
 }
 
 // ---- Gbrpf32 → f32 RGB (lossless) -------------------------------------------
 
-/// Dispatch `gbrpf32_to_rgb_f32_row` (lossless interleave; no SIMD needed).
+/// Dispatch `gbrpf32_to_rgb_f32_row` (lossless interleave).
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn gbrpf32_to_rgb_f32_row(
   g: &[f32],
@@ -131,19 +187,31 @@ pub(crate) fn gbrpf32_to_rgb_f32_row(
   r: &[f32],
   out: &mut [f32],
   width: usize,
-  _use_simd: bool,
+  use_simd: bool,
 ) {
   let out_min = rgb_row_elems(width);
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
   assert!(out.len() >= out_min, "out too short");
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe { arch::neon::gbrpf32_to_rgb_f32_row(g, b, r, out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::gbrpf32_to_rgb_f32_row(g, b, r, out, width);
 }
 
 // ---- Gbrpf32 → f32 RGBA (lossless) ------------------------------------------
 
-/// Dispatch `gbrpf32_to_rgba_f32_row` (lossless; no SIMD needed).
+/// Dispatch `gbrpf32_to_rgba_f32_row` (lossless).
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn gbrpf32_to_rgba_f32_row(
   g: &[f32],
@@ -151,13 +219,25 @@ pub(crate) fn gbrpf32_to_rgba_f32_row(
   r: &[f32],
   out: &mut [f32],
   width: usize,
-  _use_simd: bool,
+  use_simd: bool,
 ) {
   let out_min = rgba_row_elems(width);
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
   assert!(out.len() >= out_min, "out too short");
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe { arch::neon::gbrpf32_to_rgba_f32_row(g, b, r, out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::gbrpf32_to_rgba_f32_row(g, b, r, out, width);
 }
 
@@ -178,7 +258,23 @@ pub(crate) fn gbrpf32_to_rgb_f16_row(
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
   assert!(out.len() >= out_min, "out too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // fp16 feature needed for vcvt_f16_f32.
+          if std::arch::is_aarch64_feature_detected!("fp16") {
+            // SAFETY: NEON + fp16 verified available.
+            unsafe { arch::neon::gbrpf32_to_rgb_f16_row_fp16(g, b, r, out, width); }
+          } else {
+            scalar::gbrpf32_to_rgb_f16_row(g, b, r, out, width);
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::gbrpf32_to_rgb_f16_row(g, b, r, out, width);
 }
 
@@ -199,7 +295,23 @@ pub(crate) fn gbrpf32_to_rgba_f16_row(
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
   assert!(out.len() >= out_min, "out too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // fp16 feature needed for vcvt_f16_f32.
+          if std::arch::is_aarch64_feature_detected!("fp16") {
+            // SAFETY: NEON + fp16 verified available.
+            unsafe { arch::neon::gbrpf32_to_rgba_f16_row_fp16(g, b, r, out, width); }
+          } else {
+            scalar::gbrpf32_to_rgba_f16_row(g, b, r, out, width);
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::gbrpf32_to_rgba_f16_row(g, b, r, out, width);
 }
 
@@ -222,7 +334,18 @@ pub(crate) fn gbrpf32_to_luma_row(
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
   assert!(out.len() >= width, "out too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe { arch::neon::gbrpf32_to_luma_row(g, b, r, out, width, matrix, full_range); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::gbrpf32_to_luma_row(g, b, r, out, width, matrix, full_range);
 }
 
@@ -245,7 +368,20 @@ pub(crate) fn gbrpf32_to_luma_u16_row(
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
   assert!(out.len() >= width, "out too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe {
+            arch::neon::gbrpf32_to_luma_u16_row(g, b, r, out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::gbrpf32_to_luma_u16_row(g, b, r, out, width, matrix, full_range);
 }
 
@@ -270,7 +406,20 @@ pub(crate) fn gbrpf32_to_hsv_row(
   assert!(h_out.len() >= width, "h_out too short");
   assert!(s_out.len() >= width, "s_out too short");
   assert!(v_out.len() >= width, "v_out too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe {
+            arch::neon::gbrpf32_to_hsv_row(g, b, r, h_out, s_out, v_out, width);
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::gbrpf32_to_hsv_row(g, b, r, h_out, s_out, v_out, width);
 }
 
@@ -293,7 +442,18 @@ pub(crate) fn gbrapf32_to_rgba_row(
   assert!(r.len() >= width, "r row too short");
   assert!(a.len() >= width, "a row too short");
   assert!(out.len() >= out_min, "out too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe { arch::neon::gbrapf32_to_rgba_row(g, b, r, a, out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::gbrapf32_to_rgba_row(g, b, r, a, out, width);
 }
 
@@ -316,13 +476,24 @@ pub(crate) fn gbrapf32_to_rgba_u16_row(
   assert!(r.len() >= width, "r row too short");
   assert!(a.len() >= width, "a row too short");
   assert!(out.len() >= out_min, "out too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe { arch::neon::gbrapf32_to_rgba_u16_row(g, b, r, a, out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::gbrapf32_to_rgba_u16_row(g, b, r, a, out, width);
 }
 
 // ---- Gbrapf32 → f32 RGBA (lossless source α) --------------------------------
 
-/// Dispatch `gbrapf32_to_rgba_f32_row` (lossless; no SIMD needed).
+/// Dispatch `gbrapf32_to_rgba_f32_row` (lossless).
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn gbrapf32_to_rgba_f32_row(
   g: &[f32],
@@ -331,7 +502,7 @@ pub(crate) fn gbrapf32_to_rgba_f32_row(
   a: &[f32],
   out: &mut [f32],
   width: usize,
-  _use_simd: bool,
+  use_simd: bool,
 ) {
   let out_min = rgba_row_elems(width);
   assert!(g.len() >= width, "g row too short");
@@ -339,6 +510,18 @@ pub(crate) fn gbrapf32_to_rgba_f32_row(
   assert!(r.len() >= width, "r row too short");
   assert!(a.len() >= width, "a row too short");
   assert!(out.len() >= out_min, "out too short");
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe { arch::neon::gbrapf32_to_rgba_f32_row(g, b, r, a, out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::gbrapf32_to_rgba_f32_row(g, b, r, a, out, width);
 }
 
@@ -361,7 +544,23 @@ pub(crate) fn gbrapf32_to_rgba_f16_row(
   assert!(r.len() >= width, "r row too short");
   assert!(a.len() >= width, "a row too short");
   assert!(out.len() >= out_min, "out too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // fp16 feature needed for vcvt_f16_f32.
+          if std::arch::is_aarch64_feature_detected!("fp16") {
+            // SAFETY: NEON + fp16 verified available.
+            unsafe { arch::neon::gbrapf32_to_rgba_f16_row_fp16(g, b, r, a, out, width); }
+          } else {
+            scalar::gbrapf32_to_rgba_f16_row(g, b, r, a, out, width);
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::gbrapf32_to_rgba_f16_row(g, b, r, a, out, width);
 }
 
@@ -375,13 +574,25 @@ pub(crate) fn gbrpf16_to_rgb_f16_row(
   r: &[half::f16],
   out: &mut [half::f16],
   width: usize,
-  _use_simd: bool,
+  use_simd: bool,
 ) {
   let out_min = rgb_row_elems(width);
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
   assert!(out.len() >= out_min, "out too short");
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available (no fp16 needed — lossless u16 reinterpret).
+          unsafe { arch::neon::gbrpf16_to_rgb_f16_row(g, b, r, out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar_f16::gbrpf16_to_rgb_f16_row(g, b, r, out, width);
 }
 
@@ -395,13 +606,25 @@ pub(crate) fn gbrpf16_to_rgba_f16_row(
   r: &[half::f16],
   out: &mut [half::f16],
   width: usize,
-  _use_simd: bool,
+  use_simd: bool,
 ) {
   let out_min = rgba_row_elems(width);
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
   assert!(out.len() >= out_min, "out too short");
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available (no fp16 needed — lossless u16 reinterpret).
+          unsafe { arch::neon::gbrpf16_to_rgba_f16_row(g, b, r, out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar_f16::gbrpf16_to_rgba_f16_row(g, b, r, out, width);
 }
 
@@ -416,7 +639,7 @@ pub(crate) fn gbrapf16_to_rgba_f16_row(
   a: &[half::f16],
   out: &mut [half::f16],
   width: usize,
-  _use_simd: bool,
+  use_simd: bool,
 ) {
   let out_min = rgba_row_elems(width);
   assert!(g.len() >= width, "g row too short");
@@ -424,13 +647,25 @@ pub(crate) fn gbrapf16_to_rgba_f16_row(
   assert!(r.len() >= width, "r row too short");
   assert!(a.len() >= width, "a row too short");
   assert!(out.len() >= out_min, "out too short");
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available (no fp16 needed — lossless u16 reinterpret).
+          unsafe { arch::neon::gbrapf16_to_rgba_f16_row(g, b, r, a, out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar_f16::gbrapf16_to_rgba_f16_row(g, b, r, a, out, width);
 }
 
-// ---- Gbrpf16 → u8 RGB (widen f16 → f32, then scalar) -----------------------
+// ---- Gbrpf16 → u8 RGB (fp16 NEON widen or scalar widen) ---------------------
 
-/// Dispatch `gbrpf16_to_rgb_row`: widen f16 planes to f32, then call
-/// `gbrpf32_to_rgb_row`.
+/// Dispatch `gbrpf16_to_rgb_row`: NEON fp16 widening when available, else
+/// scalar widen f16 → f32 then call the f32 scalar kernel.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn gbrpf16_to_rgb_row(
   g: &[half::f16],
@@ -438,13 +673,48 @@ pub(crate) fn gbrpf16_to_rgb_row(
   r: &[half::f16],
   out: &mut [u8],
   width: usize,
-  _use_simd: bool,
+  use_simd: bool,
 ) {
   let out_min = rgb_row_bytes(width);
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
   assert!(out.len() >= out_min, "out too short");
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          if std::arch::is_aarch64_feature_detected!("fp16") {
+            // SAFETY: NEON + fp16 verified available.
+            unsafe { arch::neon::gbrpf16_to_rgb_row_fp16(g, b, r, out, width); }
+          } else {
+            // NEON available but no fp16 — widen scalar, then NEON f32→u8.
+            const CHUNK: usize = 64;
+            let mut gf = [0.0f32; CHUNK];
+            let mut bf = [0.0f32; CHUNK];
+            let mut rf = [0.0f32; CHUNK];
+            let mut offset = 0;
+            while offset < width {
+              let n = (width - offset).min(CHUNK);
+              for i in 0..n {
+                gf[i] = g[offset + i].to_f32();
+                bf[i] = b[offset + i].to_f32();
+                rf[i] = r[offset + i].to_f32();
+              }
+              // SAFETY: NEON verified available.
+              unsafe {
+                arch::neon::gbrpf32_to_rgb_row(&gf[..n], &bf[..n], &rf[..n], &mut out[offset * 3..], n);
+              }
+              offset += n;
+            }
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+  // Scalar fallback: widen f16 → f32 then scalar f32 kernel.
   const CHUNK: usize = 64;
   let mut gf = [0.0f32; CHUNK];
   let mut bf = [0.0f32; CHUNK];
@@ -462,10 +732,10 @@ pub(crate) fn gbrpf16_to_rgb_row(
   }
 }
 
-// ---- Gbrpf16 → u8 RGBA (widen f16 → f32) ------------------------------------
+// ---- Gbrpf16 → u8 RGBA (fp16 NEON widen or scalar widen) --------------------
 
-/// Dispatch `gbrpf16_to_rgba_row`: widen f16 planes to f32, then call
-/// `gbrpf32_to_rgba_row`.
+/// Dispatch `gbrpf16_to_rgba_row`: NEON fp16 widening when available, else
+/// scalar widen f16 → f32 then call the f32 scalar kernel.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn gbrpf16_to_rgba_row(
   g: &[half::f16],
@@ -473,13 +743,54 @@ pub(crate) fn gbrpf16_to_rgba_row(
   r: &[half::f16],
   out: &mut [u8],
   width: usize,
-  _use_simd: bool,
+  use_simd: bool,
 ) {
   let out_min = rgba_row_bytes(width);
   assert!(g.len() >= width, "g row too short");
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
   assert!(out.len() >= out_min, "out too short");
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          if std::arch::is_aarch64_feature_detected!("fp16") {
+            // SAFETY: NEON + fp16 verified available.
+            unsafe { arch::neon::gbrpf16_to_rgba_row_fp16(g, b, r, out, width); }
+          } else {
+            // NEON available but no fp16 — widen scalar, then NEON f32→u8.
+            const CHUNK: usize = 64;
+            let mut gf = [0.0f32; CHUNK];
+            let mut bf = [0.0f32; CHUNK];
+            let mut rf = [0.0f32; CHUNK];
+            let mut offset = 0;
+            while offset < width {
+              let n = (width - offset).min(CHUNK);
+              for i in 0..n {
+                gf[i] = g[offset + i].to_f32();
+                bf[i] = b[offset + i].to_f32();
+                rf[i] = r[offset + i].to_f32();
+              }
+              // SAFETY: NEON verified available.
+              unsafe {
+                arch::neon::gbrpf32_to_rgba_row(
+                  &gf[..n],
+                  &bf[..n],
+                  &rf[..n],
+                  &mut out[offset * 4..],
+                  n,
+                );
+              }
+              offset += n;
+            }
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+  // Scalar fallback: widen f16 → f32 then scalar f32 kernel.
   const CHUNK: usize = 64;
   let mut gf = [0.0f32; CHUNK];
   let mut bf = [0.0f32; CHUNK];
