@@ -33,8 +33,12 @@ pub(crate) fn gray8_to_rgb_row(
   use_simd: bool,
   full_range: bool,
 ) {
+  // Compute the overflow-checking helper BEFORE the y_plane bounds
+  // assert so 32-bit `width × N` overflow surfaces as the documented
+  // "overflows usize" panic instead of a misleading "too short" message.
+  let out_min = rgb_row_bytes(width);
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= rgb_row_bytes(width), "out too short");
+  assert!(out.len() >= out_min, "out too short");
   if !use_simd {
     return scalar::gray8_to_rgb_row(y_plane, out, width, full_range);
   }
@@ -79,8 +83,9 @@ pub(crate) fn gray8_to_rgba_row(
   use_simd: bool,
   full_range: bool,
 ) {
+  let out_min = rgba_row_bytes(width);
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= rgba_row_bytes(width), "out too short");
+  assert!(out.len() >= out_min, "out too short");
   if !use_simd {
     return scalar::gray8_to_rgba_row(y_plane, out, width, full_range);
   }
@@ -179,8 +184,9 @@ pub(crate) fn gray_n_to_rgb_row<const BITS: u32>(
   use_simd: bool,
   full_range: bool,
 ) {
+  let out_min = rgb_row_bytes(width);
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= rgb_row_bytes(width), "out too short");
+  assert!(out.len() >= out_min, "out too short");
   if !use_simd {
     return scalar::gray_n_to_rgb_row::<BITS>(y_plane, out, width, full_range);
   }
@@ -225,8 +231,9 @@ pub(crate) fn gray_n_to_rgba_row<const BITS: u32>(
   use_simd: bool,
   full_range: bool,
 ) {
+  let out_min = rgba_row_bytes(width);
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= rgba_row_bytes(width), "out too short");
+  assert!(out.len() >= out_min, "out too short");
   if !use_simd {
     return scalar::gray_n_to_rgba_row::<BITS>(y_plane, out, width, full_range);
   }
@@ -271,8 +278,9 @@ pub(crate) fn gray_n_to_rgb_u16_row<const BITS: u32>(
   use_simd: bool,
   full_range: bool,
 ) {
+  let out_min = rgb_row_elems(width);
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= rgb_row_elems(width), "out too short");
+  assert!(out.len() >= out_min, "out too short");
   if !use_simd {
     return scalar::gray_n_to_rgb_u16_row::<BITS>(y_plane, out, width, full_range);
   }
@@ -319,8 +327,9 @@ pub(crate) fn gray_n_to_rgba_u16_row<const BITS: u32>(
   use_simd: bool,
   full_range: bool,
 ) {
+  let out_min = rgba_row_elems(width);
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= rgba_row_elems(width), "out too short");
+  assert!(out.len() >= out_min, "out too short");
   if !use_simd {
     return scalar::gray_n_to_rgba_u16_row::<BITS>(y_plane, out, width, full_range);
   }
@@ -529,8 +538,9 @@ pub(crate) fn gray16_to_rgb_row(
   use_simd: bool,
   full_range: bool,
 ) {
+  let out_min = rgb_row_bytes(width);
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= rgb_row_bytes(width), "out too short");
+  assert!(out.len() >= out_min, "out too short");
   if !use_simd {
     return scalar::gray16_to_rgb_row(y_plane, out, width, full_range);
   }
@@ -575,8 +585,9 @@ pub(crate) fn gray16_to_rgba_row(
   use_simd: bool,
   full_range: bool,
 ) {
+  let out_min = rgba_row_bytes(width);
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= rgba_row_bytes(width), "out too short");
+  assert!(out.len() >= out_min, "out too short");
   if !use_simd {
     return scalar::gray16_to_rgba_row(y_plane, out, width, full_range);
   }
@@ -621,8 +632,9 @@ pub(crate) fn gray16_to_rgb_u16_row(
   use_simd: bool,
   full_range: bool,
 ) {
+  let out_min = rgb_row_elems(width);
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= rgb_row_elems(width), "out too short");
+  assert!(out.len() >= out_min, "out too short");
   if !use_simd {
     return scalar::gray16_to_rgb_u16_row(y_plane, out, width, full_range);
   }
@@ -667,8 +679,9 @@ pub(crate) fn gray16_to_rgba_u16_row(
   use_simd: bool,
   full_range: bool,
 ) {
+  let out_min = rgba_row_elems(width);
   assert!(y_plane.len() >= width, "y_plane too short");
-  assert!(out.len() >= rgba_row_elems(width), "out too short");
+  assert!(out.len() >= out_min, "out too short");
   if !use_simd {
     return scalar::gray16_to_rgba_u16_row(y_plane, out, width, full_range);
   }
