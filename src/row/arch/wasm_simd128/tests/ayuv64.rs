@@ -21,9 +21,11 @@ fn check_rgb<const ALPHA: bool, const ALPHA_SRC: bool>(
   let bpp = if ALPHA { 4 } else { 3 };
   let mut s = std::vec![0u8; width * bpp];
   let mut k = std::vec![0u8; width * bpp];
-  scalar::ayuv64_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC>(&p, &mut s, width, matrix, full_range);
+  scalar::ayuv64_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC, false>(
+    &p, &mut s, width, matrix, full_range,
+  );
   unsafe {
-    ayuv64_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC>(&p, &mut k, width, matrix, full_range);
+    ayuv64_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC, false>(&p, &mut k, width, matrix, full_range);
   }
   assert_eq!(
     s,
@@ -42,11 +44,13 @@ fn check_rgb_u16<const ALPHA: bool, const ALPHA_SRC: bool>(
   let bpp = if ALPHA { 4 } else { 3 };
   let mut s = std::vec![0u16; width * bpp];
   let mut k = std::vec![0u16; width * bpp];
-  scalar::ayuv64_to_rgb_u16_or_rgba_u16_row::<ALPHA, ALPHA_SRC>(
+  scalar::ayuv64_to_rgb_u16_or_rgba_u16_row::<ALPHA, ALPHA_SRC, false>(
     &p, &mut s, width, matrix, full_range,
   );
   unsafe {
-    ayuv64_to_rgb_u16_or_rgba_u16_row::<ALPHA, ALPHA_SRC>(&p, &mut k, width, matrix, full_range);
+    ayuv64_to_rgb_u16_or_rgba_u16_row::<ALPHA, ALPHA_SRC, false>(
+      &p, &mut k, width, matrix, full_range,
+    );
   }
   assert_eq!(
     s,
@@ -60,9 +64,9 @@ fn check_luma(width: usize) {
   let p = pseudo_random_ayuv64(width, 0xC001);
   let mut s = std::vec![0u8; width];
   let mut k = std::vec![0u8; width];
-  scalar::ayuv64_to_luma_row(&p, &mut s, width);
+  scalar::ayuv64_to_luma_row::<false>(&p, &mut s, width);
   unsafe {
-    ayuv64_to_luma_row(&p, &mut k, width);
+    ayuv64_to_luma_row::<false>(&p, &mut k, width);
   }
   assert_eq!(s, k, "wasm ayuv64→luma diverges (width={width})");
 }
@@ -71,9 +75,9 @@ fn check_luma_u16(width: usize) {
   let p = pseudo_random_ayuv64(width, 0xC001);
   let mut s = std::vec![0u16; width];
   let mut k = std::vec![0u16; width];
-  scalar::ayuv64_to_luma_u16_row(&p, &mut s, width);
+  scalar::ayuv64_to_luma_u16_row::<false>(&p, &mut s, width);
   unsafe {
-    ayuv64_to_luma_u16_row(&p, &mut k, width);
+    ayuv64_to_luma_u16_row::<false>(&p, &mut k, width);
   }
   assert_eq!(s, k, "wasm ayuv64→luma u16 diverges (width={width})");
 }
@@ -150,7 +154,7 @@ fn wasm_ayuv64_lane_order_high_bit_set_values() {
   // luma u8 high-byte extraction: 0x8001 >> 8 = 0x80 for every pixel
   let mut luma_u8 = std::vec![0u8; W];
   unsafe {
-    ayuv64_to_luma_row(&packed, &mut luma_u8, W);
+    ayuv64_to_luma_row::<false>(&packed, &mut luma_u8, W);
   }
   let expected_luma: std::vec::Vec<u8> = std::vec![0x80; W];
   assert_eq!(
@@ -161,7 +165,13 @@ fn wasm_ayuv64_lane_order_high_bit_set_values() {
   // u8 RGBA α depth-convert: 0x8000+n >> 8 = 0x80 for n in 0..16 (since n < 256)
   let mut rgba_u8 = std::vec![0u8; W * 4];
   unsafe {
-    ayuv64_to_rgb_or_rgba_row::<true, true>(&packed, &mut rgba_u8, W, ColorMatrix::Bt709, true);
+    ayuv64_to_rgb_or_rgba_row::<true, true, false>(
+      &packed,
+      &mut rgba_u8,
+      W,
+      ColorMatrix::Bt709,
+      true,
+    );
   }
   let alpha_out: std::vec::Vec<u8> = (0..W).map(|n| rgba_u8[n * 4 + 3]).collect();
   let expected_alpha: std::vec::Vec<u8> = std::vec![0x80; W];
@@ -206,7 +216,7 @@ fn wasm_ayuv64_lane_order_per_pixel_y_and_a() {
   // --- luma_u16 path: Y values should be direct (no shift, no conversion). ---
   let mut luma_out = std::vec![0u16; W];
   unsafe {
-    ayuv64_to_luma_u16_row(&packed, &mut luma_out, W);
+    ayuv64_to_luma_u16_row::<false>(&packed, &mut luma_out, W);
   }
   let expected_luma: std::vec::Vec<u16> = (1..=16u16).collect();
   assert_eq!(luma_out, expected_luma, "wasm ayuv64→luma_u16 reorder bug");
@@ -215,7 +225,7 @@ fn wasm_ayuv64_lane_order_per_pixel_y_and_a() {
   // Use full_range=true so neutral chroma gives a well-defined Y output.
   let mut rgba_out = std::vec![0u16; W * 4];
   unsafe {
-    ayuv64_to_rgb_u16_or_rgba_u16_row::<true, true>(
+    ayuv64_to_rgb_u16_or_rgba_u16_row::<true, true, false>(
       &packed,
       &mut rgba_out,
       W,

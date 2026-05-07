@@ -3,6 +3,10 @@
 //! 10-bit U / Y / V channels with 2-bit padding (see
 //! [`crate::frame::V410Frame`]). 4:4:4 means no chroma deinterleave
 //! step — each word yields a complete `(Y, U, V)` triple.
+//!
+//! `<const BE: bool>` — when `true`, each `u32` element of the input
+//! slice is byte-swapped before field extraction. This handles the
+//! `V410BE` big-endian wire format; `BE = false` is the standard LE path.
 
 use super::*;
 
@@ -18,7 +22,7 @@ const fn extract_v410(word: u32) -> (i32, i32, i32) {
 // ---- u8 RGB / RGBA output ----------------------------------------------
 
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn v410_to_rgb_or_rgba_row<const ALPHA: bool>(
+pub(crate) fn v410_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   packed: &[u32],
   out: &mut [u8],
   width: usize,
@@ -33,7 +37,8 @@ pub(crate) fn v410_to_rgb_or_rgba_row<const ALPHA: bool>(
   let (y_off, y_scale, c_scale) = range_params_n::<10, 8>(full_range);
   let bias = chroma_bias::<10>();
 
-  for (x, &word) in packed[..width].iter().enumerate() {
+  for (x, &raw) in packed[..width].iter().enumerate() {
+    let word = if BE { raw.swap_bytes() } else { raw };
     let (u, y, v) = extract_v410(word);
     let u_d = q15_scale(u - bias, c_scale);
     let v_d = q15_scale(v - bias, c_scale);
@@ -55,7 +60,7 @@ pub(crate) fn v410_to_rgb_or_rgba_row<const ALPHA: bool>(
 // ---- u16 RGB / RGBA native-depth output --------------------------------
 
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
+pub(crate) fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   packed: &[u32],
   out: &mut [u16],
   width: usize,
@@ -72,7 +77,8 @@ pub(crate) fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
   let alpha_max: u16 = 0x3FF;
   let out_max: i32 = 0x3FF;
 
-  for (x, &word) in packed[..width].iter().enumerate() {
+  for (x, &raw) in packed[..width].iter().enumerate() {
+    let word = if BE { raw.swap_bytes() } else { raw };
     let (u, y, v) = extract_v410(word);
     let u_d = q15_scale(u - bias, c_scale);
     let v_d = q15_scale(v - bias, c_scale);
@@ -94,11 +100,16 @@ pub(crate) fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 // ---- Luma (u8) — `>> 2` ------------------------------------------------
 
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn v410_to_luma_row(packed: &[u32], out: &mut [u8], width: usize) {
+pub(crate) fn v410_to_luma_row<const BE: bool>(packed: &[u32], out: &mut [u8], width: usize) {
   debug_assert!(packed.len() >= width);
   debug_assert!(out.len() >= width);
   for x in 0..width {
-    let y = (packed[x] >> 10) & 0x3FF;
+    let word = if BE {
+      packed[x].swap_bytes()
+    } else {
+      packed[x]
+    };
+    let y = (word >> 10) & 0x3FF;
     out[x] = (y >> 2) as u8;
   }
 }
@@ -106,11 +117,16 @@ pub(crate) fn v410_to_luma_row(packed: &[u32], out: &mut [u8], width: usize) {
 // ---- Luma (u16, low-bit-packed at 10-bit) ------------------------------
 
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn v410_to_luma_u16_row(packed: &[u32], out: &mut [u16], width: usize) {
+pub(crate) fn v410_to_luma_u16_row<const BE: bool>(packed: &[u32], out: &mut [u16], width: usize) {
   debug_assert!(packed.len() >= width);
   debug_assert!(out.len() >= width);
   for x in 0..width {
-    let y = (packed[x] >> 10) & 0x3FF;
+    let word = if BE {
+      packed[x].swap_bytes()
+    } else {
+      packed[x]
+    };
+    let y = (word >> 10) & 0x3FF;
     out[x] = y as u16;
   }
 }
@@ -138,7 +154,7 @@ mod tests {
       pack_v410(512, 940, 512),
     ];
     let mut out = vec![0u8; 4 * 3];
-    v410_to_rgb_or_rgba_row::<false>(&p, &mut out, 4, ColorMatrix::Bt709, false);
+    v410_to_rgb_or_rgba_row::<false, false>(&p, &mut out, 4, ColorMatrix::Bt709, false);
     // Two black pixels followed by two white pixels.
     assert_eq!(&out[0..3], &[0u8, 0, 0]);
     assert_eq!(&out[3..6], &[0u8, 0, 0]);
@@ -150,7 +166,7 @@ mod tests {
   fn v410_known_pattern_rgba_alpha_max() {
     let p = vec![pack_v410(512, 940, 512)];
     let mut out = vec![0u8; 4];
-    v410_to_rgb_or_rgba_row::<true>(&p, &mut out, 1, ColorMatrix::Bt709, false);
+    v410_to_rgb_or_rgba_row::<true, false>(&p, &mut out, 1, ColorMatrix::Bt709, false);
     assert_eq!(out[3], 0xFF);
   }
 
@@ -161,7 +177,7 @@ mod tests {
       pack_v410(0, 0x100, 0), // Y = 0x100
     ];
     let mut out = vec![0u8; 2];
-    v410_to_luma_row(&p, &mut out, 2);
+    v410_to_luma_row::<false>(&p, &mut out, 2);
     // 0x3FF >> 2 = 0xFF; 0x100 >> 2 = 0x40.
     assert_eq!(&out[..], &[0xFFu8, 0x40]);
   }
@@ -170,7 +186,7 @@ mod tests {
   fn v410_luma_extract_u16_low_bit_packed() {
     let p = vec![pack_v410(0, 0x3FF, 0), pack_v410(0, 0x123, 0)];
     let mut out = vec![0u16; 2];
-    v410_to_luma_u16_row(&p, &mut out, 2);
+    v410_to_luma_u16_row::<false>(&p, &mut out, 2);
     assert_eq!(&out[..], &[0x3FFu16, 0x123]);
   }
 
@@ -178,8 +194,23 @@ mod tests {
   fn v410_known_pattern_rgba_u16_alpha_max() {
     let p = vec![pack_v410(512, 940, 512)];
     let mut out = vec![0u16; 4];
-    v410_to_rgb_u16_or_rgba_u16_row::<true>(&p, &mut out, 1, ColorMatrix::Bt709, false);
+    v410_to_rgb_u16_or_rgba_u16_row::<true, false>(&p, &mut out, 1, ColorMatrix::Bt709, false);
     // 10-bit alpha max is 0x3FF (low-bit-packed).
     assert_eq!(out[3], 0x3FF);
+  }
+
+  #[test]
+  fn v410_be_roundtrip_matches_byte_swapped_le() {
+    // Build a LE pixel, byte-swap it to simulate BE wire format, then
+    // verify BE=true kernel produces the same RGB as BE=false on LE input.
+    let le_word = pack_v410(200, 500, 800);
+    let be_word = le_word.swap_bytes();
+    let le_buf = vec![le_word];
+    let be_buf = vec![be_word];
+    let mut out_le = vec![0u8; 3];
+    let mut out_be = vec![0u8; 3];
+    v410_to_rgb_or_rgba_row::<false, false>(&le_buf, &mut out_le, 1, ColorMatrix::Bt709, false);
+    v410_to_rgb_or_rgba_row::<false, true>(&be_buf, &mut out_be, 1, ColorMatrix::Bt709, false);
+    assert_eq!(out_le, out_be, "V410 BE scalar must match byte-swapped LE");
   }
 }

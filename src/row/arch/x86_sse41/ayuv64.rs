@@ -55,7 +55,7 @@
 
 use core::arch::x86_64::*;
 
-use super::*;
+use super::{endian, *};
 use crate::{ColorMatrix, row::scalar};
 
 // ---- Deinterleave helper ------------------------------------------------
@@ -74,13 +74,16 @@ use crate::{ColorMatrix, row::scalar};
 /// Caller's `target_feature` must include SSE4.1.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-unsafe fn deinterleave_ayuv64(ptr: *const u16) -> (__m128i, __m128i, __m128i, __m128i) {
+unsafe fn deinterleave_ayuv64<const BE: bool>(
+  ptr: *const u16,
+) -> (__m128i, __m128i, __m128i, __m128i) {
   unsafe {
     // Load 4 × __m128i (8 pixels × 4 channels × u16 = 64 bytes).
-    let raw0 = _mm_loadu_si128(ptr.cast()); // A0,Y0,U0,V0, A1,Y1,U1,V1
-    let raw1 = _mm_loadu_si128(ptr.add(8).cast()); // A2,Y2,U2,V2, A3,Y3,U3,V3
-    let raw2 = _mm_loadu_si128(ptr.add(16).cast()); // A4,Y4,U4,V4, A5,Y5,U5,V5
-    let raw3 = _mm_loadu_si128(ptr.add(24).cast()); // A6,Y6,U6,V6, A7,Y7,U7,V7
+    // BE=true: byte-swap within each u16 lane to correct wire endianness.
+    let raw0 = endian::load_endian_u16x8::<BE>(ptr as *const u8); // A0,Y0,U0,V0, A1,Y1,U1,V1
+    let raw1 = endian::load_endian_u16x8::<BE>(ptr.add(8) as *const u8); // A2,Y2,U2,V2, A3,Y3,U3,V3
+    let raw2 = endian::load_endian_u16x8::<BE>(ptr.add(16) as *const u8); // A4,Y4,U4,V4, A5,Y5,U5,V5
+    let raw3 = endian::load_endian_u16x8::<BE>(ptr.add(24) as *const u8); // A6,Y6,U6,V6, A7,Y7,U7,V7
 
     // Level 1 unpack (pairs 0-1, pairs 2-3).
     let s1_lo = _mm_unpacklo_epi16(raw0, raw1); // A0,A2,Y0,Y2,U0,U2,V0,V2
@@ -123,7 +126,11 @@ unsafe fn deinterleave_ayuv64(ptr: *const u16) -> (__m128i, __m128i, __m128i, __
 /// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn ayuv64_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
+pub(crate) unsafe fn ayuv64_to_rgb_or_rgba_row<
+  const ALPHA: bool,
+  const ALPHA_SRC: bool,
+  const BE: bool,
+>(
   packed: &[u16],
   out: &mut [u8],
   width: usize,
@@ -159,7 +166,7 @@ pub(crate) unsafe fn ayuv64_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SR
     while x + 16 <= width {
       // --- lo half: pixels x..x+7 ----------------------------------------
       let (a_lo_u16, y_lo_u16, u_lo_u16, v_lo_u16) =
-        deinterleave_ayuv64(packed.as_ptr().add(x * 4));
+        deinterleave_ayuv64::<BE>(packed.as_ptr().add(x * 4));
 
       // Center chroma: subtract 32768 via wrapping i16.
       let u_lo_i16 = _mm_sub_epi16(u_lo_u16, bias16_v);
@@ -200,7 +207,7 @@ pub(crate) unsafe fn ayuv64_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SR
 
       // --- hi half: pixels x+8..x+15 ------------------------------------
       let (a_hi_u16, y_hi_u16, u_hi_u16, v_hi_u16) =
-        deinterleave_ayuv64(packed.as_ptr().add(x * 4 + 32));
+        deinterleave_ayuv64::<BE>(packed.as_ptr().add(x * 4 + 32));
 
       let u_hi_i16 = _mm_sub_epi16(u_hi_u16, bias16_v);
       let v_hi_i16 = _mm_sub_epi16(v_hi_u16, bias16_v);
@@ -266,7 +273,7 @@ pub(crate) unsafe fn ayuv64_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SR
       let tail_packed = &packed[x * 4..width * 4];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::ayuv64_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC>(
+      scalar::ayuv64_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -297,7 +304,11 @@ pub(crate) unsafe fn ayuv64_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SR
 /// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })` (u16 elements).
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn ayuv64_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const ALPHA_SRC: bool>(
+pub(crate) unsafe fn ayuv64_to_rgb_u16_or_rgba_u16_row<
+  const ALPHA: bool,
+  const ALPHA_SRC: bool,
+  const BE: bool,
+>(
   packed: &[u16],
   out: &mut [u16],
   width: usize,
@@ -333,7 +344,7 @@ pub(crate) unsafe fn ayuv64_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const 
     let mut x = 0usize;
     while x + 8 <= width {
       // Deinterleave 8 AYUV64 quadruples → A, Y, U, V as u16x8.
-      let (a_u16, y_vec, u_u16, v_u16) = deinterleave_ayuv64(packed.as_ptr().add(x * 4));
+      let (a_u16, y_vec, u_u16, v_u16) = deinterleave_ayuv64::<BE>(packed.as_ptr().add(x * 4));
 
       // Center chroma via wrapping i16 subtraction.
       let u_i16 = _mm_sub_epi16(u_u16, bias16_v);
@@ -460,7 +471,7 @@ pub(crate) unsafe fn ayuv64_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const 
       let tail_packed = &packed[x * 4..width * 4];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::ayuv64_to_rgb_u16_or_rgba_u16_row::<ALPHA, ALPHA_SRC>(
+      scalar::ayuv64_to_rgb_u16_or_rgba_u16_row::<ALPHA, ALPHA_SRC, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -476,7 +487,7 @@ pub(crate) unsafe fn ayuv64_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const 
 /// SSE4.1 AYUV64 → packed **RGB** (3 bpp). Source α is discarded.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn ayuv64_to_rgb_row(
+pub(crate) unsafe fn ayuv64_to_rgb_row<const BE: bool>(
   packed: &[u16],
   rgb_out: &mut [u8],
   width: usize,
@@ -484,7 +495,7 @@ pub(crate) unsafe fn ayuv64_to_rgb_row(
   full_range: bool,
 ) {
   unsafe {
-    ayuv64_to_rgb_or_rgba_row::<false, false>(packed, rgb_out, width, matrix, full_range);
+    ayuv64_to_rgb_or_rgba_row::<false, false, BE>(packed, rgb_out, width, matrix, full_range);
   }
 }
 
@@ -492,7 +503,7 @@ pub(crate) unsafe fn ayuv64_to_rgb_row(
 /// to u8 via `>> 8`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn ayuv64_to_rgba_row(
+pub(crate) unsafe fn ayuv64_to_rgba_row<const BE: bool>(
   packed: &[u16],
   rgba_out: &mut [u8],
   width: usize,
@@ -500,14 +511,14 @@ pub(crate) unsafe fn ayuv64_to_rgba_row(
   full_range: bool,
 ) {
   unsafe {
-    ayuv64_to_rgb_or_rgba_row::<true, true>(packed, rgba_out, width, matrix, full_range);
+    ayuv64_to_rgb_or_rgba_row::<true, true, BE>(packed, rgba_out, width, matrix, full_range);
   }
 }
 
 /// SSE4.1 AYUV64 → packed **RGB u16** (3 × u16 per pixel). Source α discarded.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn ayuv64_to_rgb_u16_row(
+pub(crate) unsafe fn ayuv64_to_rgb_u16_row<const BE: bool>(
   packed: &[u16],
   rgb_out: &mut [u16],
   width: usize,
@@ -515,7 +526,9 @@ pub(crate) unsafe fn ayuv64_to_rgb_u16_row(
   full_range: bool,
 ) {
   unsafe {
-    ayuv64_to_rgb_u16_or_rgba_u16_row::<false, false>(packed, rgb_out, width, matrix, full_range);
+    ayuv64_to_rgb_u16_or_rgba_u16_row::<false, false, BE>(
+      packed, rgb_out, width, matrix, full_range,
+    );
   }
 }
 
@@ -523,7 +536,7 @@ pub(crate) unsafe fn ayuv64_to_rgb_u16_row(
 /// is written direct (no conversion).
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn ayuv64_to_rgba_u16_row(
+pub(crate) unsafe fn ayuv64_to_rgba_u16_row<const BE: bool>(
   packed: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -531,7 +544,9 @@ pub(crate) unsafe fn ayuv64_to_rgba_u16_row(
   full_range: bool,
 ) {
   unsafe {
-    ayuv64_to_rgb_u16_or_rgba_u16_row::<true, true>(packed, rgba_out, width, matrix, full_range);
+    ayuv64_to_rgb_u16_or_rgba_u16_row::<true, true, BE>(
+      packed, rgba_out, width, matrix, full_range,
+    );
   }
 }
 
@@ -551,7 +566,11 @@ pub(crate) unsafe fn ayuv64_to_rgba_u16_row(
 /// 3. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn ayuv64_to_luma_row(packed: &[u16], luma_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn ayuv64_to_luma_row<const BE: bool>(
+  packed: &[u16],
+  luma_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4, "packed row too short");
   debug_assert!(luma_out.len() >= width, "luma row too short");
 
@@ -559,8 +578,8 @@ pub(crate) unsafe fn ayuv64_to_luma_row(packed: &[u16], luma_out: &mut [u8], wid
     let mut x = 0usize;
     while x + 16 <= width {
       // Two deinterleaves for 8 pixels each.
-      let (_a_lo, y_lo, _u_lo, _v_lo) = deinterleave_ayuv64(packed.as_ptr().add(x * 4));
-      let (_a_hi, y_hi, _u_hi, _v_hi) = deinterleave_ayuv64(packed.as_ptr().add(x * 4 + 32));
+      let (_a_lo, y_lo, _u_lo, _v_lo) = deinterleave_ayuv64::<BE>(packed.as_ptr().add(x * 4));
+      let (_a_hi, y_hi, _u_hi, _v_hi) = deinterleave_ayuv64::<BE>(packed.as_ptr().add(x * 4 + 32));
 
       // >> 8 to get u8 luma (high byte of each Y u16 sample).
       let y_lo_shr = _mm_srli_epi16::<8>(y_lo);
@@ -574,7 +593,7 @@ pub(crate) unsafe fn ayuv64_to_luma_row(packed: &[u16], luma_out: &mut [u8], wid
 
     // Scalar tail.
     if x < width {
-      scalar::ayuv64_to_luma_row(
+      scalar::ayuv64_to_luma_row::<BE>(
         &packed[x * 4..width * 4],
         &mut luma_out[x..width],
         width - x,
@@ -597,7 +616,11 @@ pub(crate) unsafe fn ayuv64_to_luma_row(packed: &[u16], luma_out: &mut [u8], wid
 /// 3. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn ayuv64_to_luma_u16_row(packed: &[u16], luma_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn ayuv64_to_luma_u16_row<const BE: bool>(
+  packed: &[u16],
+  luma_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4, "packed row too short");
   debug_assert!(luma_out.len() >= width, "luma row too short");
 
@@ -605,8 +628,8 @@ pub(crate) unsafe fn ayuv64_to_luma_u16_row(packed: &[u16], luma_out: &mut [u16]
     let mut x = 0usize;
     while x + 16 <= width {
       // Two deinterleaves for 8 pixels each.
-      let (_a_lo, y_lo, _u_lo, _v_lo) = deinterleave_ayuv64(packed.as_ptr().add(x * 4));
-      let (_a_hi, y_hi, _u_hi, _v_hi) = deinterleave_ayuv64(packed.as_ptr().add(x * 4 + 32));
+      let (_a_lo, y_lo, _u_lo, _v_lo) = deinterleave_ayuv64::<BE>(packed.as_ptr().add(x * 4));
+      let (_a_hi, y_hi, _u_hi, _v_hi) = deinterleave_ayuv64::<BE>(packed.as_ptr().add(x * 4 + 32));
 
       // Direct copy — Y samples are 16-bit native (no shift needed).
       _mm_storeu_si128(luma_out.as_mut_ptr().add(x).cast(), y_lo);
@@ -617,7 +640,7 @@ pub(crate) unsafe fn ayuv64_to_luma_u16_row(packed: &[u16], luma_out: &mut [u16]
 
     // Scalar tail.
     if x < width {
-      scalar::ayuv64_to_luma_u16_row(
+      scalar::ayuv64_to_luma_u16_row::<BE>(
         &packed[x * 4..width * 4],
         &mut luma_out[x..width],
         width - x,

@@ -251,5 +251,40 @@ pub(super) fn scale_y_u16_i64(
   }
 }
 
+// ---- BE helpers ----------------------------------------------------------
+
+/// Conditionally byte-swap 8 u16 lanes in a NEON register.
+///
+/// When `BE = true` (big-endian wire format), inverts each u16 element's
+/// byte order via `vrev16q_u8`. When `BE = false` (native LE), returns
+/// the value unchanged. The unused branch is eliminated by the compiler.
+///
+/// Used by the packed YUV 4:4:4 kernels (XV36, AYUV64) after `vld4q_u16`
+/// to correct samples loaded from a BE-encoded buffer.
+#[inline(always)]
+pub(super) unsafe fn bswap_u16x8_if_be<const BE: bool>(v: uint16x8_t) -> uint16x8_t {
+  if BE {
+    unsafe { vreinterpretq_u16_u8(vrev16q_u8(vreinterpretq_u8_u16(v))) }
+  } else {
+    v
+  }
+}
+
+/// Conditionally byte-swap 4 u32 lanes in a NEON register.
+///
+/// When `BE = true`, inverts each u32 element's byte order via `vrev32q_u8`.
+/// When `BE = false`, returns the value unchanged.
+///
+/// Used by the V410 kernel after `vld1q_u32` to correct u32 words loaded
+/// from a BE-encoded buffer.
+#[inline(always)]
+pub(super) unsafe fn bswap_u32x4_if_be<const BE: bool>(v: uint32x4_t) -> uint32x4_t {
+  if BE {
+    unsafe { vreinterpretq_u32_u8(vrev32q_u8(vreinterpretq_u8_u32(v))) }
+  } else {
+    v
+  }
+}
+
 #[cfg(all(test, feature = "std"))]
 mod tests;

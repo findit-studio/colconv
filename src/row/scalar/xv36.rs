@@ -8,6 +8,10 @@
 //! are independent. Bit extraction is `>> 4` to drop the 4 padding
 //! LSBs, then the standard Q15 chroma + Y pipeline at BITS=12 (i32
 //! chroma — same depth as Y2xx at BITS=12).
+//!
+//! `<const BE: bool>` — when `true`, each `u16` element of the input
+//! slice is byte-swapped before use. This handles the `XV36BE`
+//! big-endian wire format; `BE = false` is the standard LE path.
 
 use super::*;
 
@@ -15,6 +19,8 @@ use super::*;
 /// is padding and is not returned. Each channel is `>> 4` to drop
 /// the 4 padding LSBs, bringing the 12-bit MSB-aligned sample to
 /// the BITS=12 range `[0, 4095]`.
+///
+/// Samples are passed already endian-corrected by the caller.
 #[cfg_attr(not(tarpaulin), inline(always))]
 const fn extract_xv36(quad: &[u16]) -> (i32, i32, i32) {
   let u = (quad[0] >> 4) as i32;
@@ -24,10 +30,17 @@ const fn extract_xv36(quad: &[u16]) -> (i32, i32, i32) {
   (u, y, v)
 }
 
+/// Load one XV36 u16 sample, applying a byte-swap for BE wire format
+/// when `BE = true`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn load_xv36_u16<const BE: bool>(v: u16) -> u16 {
+  if BE { v.swap_bytes() } else { v }
+}
+
 // ---- u8 RGB / RGBA output ----------------------------------------------
 
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn xv36_to_rgb_or_rgba_row<const ALPHA: bool>(
+pub(crate) fn xv36_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   packed: &[u16],
   out: &mut [u8],
   width: usize,
@@ -43,8 +56,14 @@ pub(crate) fn xv36_to_rgb_or_rgba_row<const ALPHA: bool>(
   let bias = chroma_bias::<12>();
 
   for x in 0..width {
-    let quad = &packed[x * 4..x * 4 + 4];
-    let (u, y, v) = extract_xv36(quad);
+    let base = x * 4;
+    let quad = [
+      load_xv36_u16::<BE>(packed[base]),
+      load_xv36_u16::<BE>(packed[base + 1]),
+      load_xv36_u16::<BE>(packed[base + 2]),
+      load_xv36_u16::<BE>(packed[base + 3]),
+    ];
+    let (u, y, v) = extract_xv36(&quad);
     let u_d = q15_scale(u - bias, c_scale);
     let v_d = q15_scale(v - bias, c_scale);
     let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
@@ -65,7 +84,7 @@ pub(crate) fn xv36_to_rgb_or_rgba_row<const ALPHA: bool>(
 // ---- u16 RGB / RGBA native-depth output --------------------------------
 
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
+pub(crate) fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   packed: &[u16],
   out: &mut [u16],
   width: usize,
@@ -83,8 +102,14 @@ pub(crate) fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
   let out_max: i32 = 0x0FFF;
 
   for x in 0..width {
-    let quad = &packed[x * 4..x * 4 + 4];
-    let (u, y, v) = extract_xv36(quad);
+    let base = x * 4;
+    let quad = [
+      load_xv36_u16::<BE>(packed[base]),
+      load_xv36_u16::<BE>(packed[base + 1]),
+      load_xv36_u16::<BE>(packed[base + 2]),
+      load_xv36_u16::<BE>(packed[base + 3]),
+    ];
+    let (u, y, v) = extract_xv36(&quad);
     let u_d = q15_scale(u - bias, c_scale);
     let v_d = q15_scale(v - bias, c_scale);
     let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
@@ -105,11 +130,11 @@ pub(crate) fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 // ---- Luma (u8) — `>> 8` (drops 4 padding bits + 4 LSBs) ----------------
 
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn xv36_to_luma_row(packed: &[u16], out: &mut [u8], width: usize) {
+pub(crate) fn xv36_to_luma_row<const BE: bool>(packed: &[u16], out: &mut [u8], width: usize) {
   debug_assert!(packed.len() >= width * 4);
   debug_assert!(out.len() >= width);
   for x in 0..width {
-    let y = packed[x * 4 + 1] >> 8;
+    let y = load_xv36_u16::<BE>(packed[x * 4 + 1]) >> 8;
     out[x] = y as u8;
   }
 }
@@ -117,11 +142,11 @@ pub(crate) fn xv36_to_luma_row(packed: &[u16], out: &mut [u8], width: usize) {
 // ---- Luma (u16, low-bit-packed at 12-bit) ------------------------------
 
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn xv36_to_luma_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
+pub(crate) fn xv36_to_luma_u16_row<const BE: bool>(packed: &[u16], out: &mut [u16], width: usize) {
   debug_assert!(packed.len() >= width * 4);
   debug_assert!(out.len() >= width);
   for x in 0..width {
-    let y = packed[x * 4 + 1] >> 4;
+    let y = load_xv36_u16::<BE>(packed[x * 4 + 1]) >> 4;
     out[x] = y;
   }
 }
@@ -149,7 +174,7 @@ mod tests {
     let p3 = pack_xv36(2048, 3760, 2048, 0);
     let packed: Vec<u16> = [p0, p1, p2, p3].iter().flatten().copied().collect();
     let mut out = vec![0u8; 4 * 3];
-    xv36_to_rgb_or_rgba_row::<false>(&packed, &mut out, 4, ColorMatrix::Bt709, false);
+    xv36_to_rgb_or_rgba_row::<false, false>(&packed, &mut out, 4, ColorMatrix::Bt709, false);
     assert_eq!(&out[0..3], &[0u8, 0, 0]);
     assert_eq!(&out[3..6], &[0u8, 0, 0]);
     assert_eq!(&out[6..9], &[255u8, 255, 255]);
@@ -161,7 +186,7 @@ mod tests {
     let p = pack_xv36(2048, 3760, 2048, 0);
     let packed: Vec<u16> = p.into_iter().collect();
     let mut out = vec![0u8; 4];
-    xv36_to_rgb_or_rgba_row::<true>(&packed, &mut out, 1, ColorMatrix::Bt709, false);
+    xv36_to_rgb_or_rgba_row::<true, false>(&packed, &mut out, 1, ColorMatrix::Bt709, false);
     // X = padding; RGBA forces α=0xFF regardless of source A byte.
     assert_eq!(out[3], 0xFF);
   }
@@ -172,7 +197,7 @@ mod tests {
     let p = pack_xv36(2048, 3760, 2048, 0xFFF);
     let packed: Vec<u16> = p.into_iter().collect();
     let mut out = vec![0u8; 4];
-    xv36_to_rgb_or_rgba_row::<true>(&packed, &mut out, 1, ColorMatrix::Bt709, false);
+    xv36_to_rgb_or_rgba_row::<true, false>(&packed, &mut out, 1, ColorMatrix::Bt709, false);
     assert_eq!(out[3], 0xFF);
   }
 
@@ -185,7 +210,7 @@ mod tests {
       .copied()
       .collect();
     let mut out = vec![0u8; 2];
-    xv36_to_luma_row(&packed, &mut out, 2);
+    xv36_to_luma_row::<false>(&packed, &mut out, 2);
     assert_eq!(&out[..], &[0xFFu8, 0x10]);
   }
 
@@ -197,7 +222,7 @@ mod tests {
       .copied()
       .collect();
     let mut out = vec![0u16; 2];
-    xv36_to_luma_u16_row(&packed, &mut out, 2);
+    xv36_to_luma_u16_row::<false>(&packed, &mut out, 2);
     assert_eq!(&out[..], &[0xFFFu16, 0x123]);
   }
 
@@ -206,8 +231,23 @@ mod tests {
     let p = pack_xv36(2048, 3760, 2048, 0xFFF);
     let packed: Vec<u16> = p.into_iter().collect();
     let mut out = vec![0u16; 4];
-    xv36_to_rgb_u16_or_rgba_u16_row::<true>(&packed, &mut out, 1, ColorMatrix::Bt709, false);
+    xv36_to_rgb_u16_or_rgba_u16_row::<true, false>(&packed, &mut out, 1, ColorMatrix::Bt709, false);
     // 12-bit alpha max = 0x0FFF; X = padding so source A byte is ignored.
     assert_eq!(out[3], 0x0FFF);
+  }
+
+  #[test]
+  fn xv36_be_roundtrip_matches_byte_swapped_le() {
+    // Build LE pixels, byte-swap each u16 to simulate BE wire format,
+    // then verify BE=true kernel produces the same RGB as BE=false on LE.
+    let p_le = pack_xv36(1024, 2048, 512, 0);
+    let p_be: [u16; 4] = p_le.map(|v| v.swap_bytes());
+    let le_buf: Vec<u16> = p_le.into_iter().collect();
+    let be_buf: Vec<u16> = p_be.into_iter().collect();
+    let mut out_le = vec![0u8; 3];
+    let mut out_be = vec![0u8; 3];
+    xv36_to_rgb_or_rgba_row::<false, false>(&le_buf, &mut out_le, 1, ColorMatrix::Bt709, false);
+    xv36_to_rgb_or_rgba_row::<false, true>(&be_buf, &mut out_be, 1, ColorMatrix::Bt709, false);
+    assert_eq!(out_le, out_be, "XV36 BE scalar must match byte-swapped LE");
   }
 }

@@ -28,7 +28,7 @@
 
 use core::arch::x86_64::*;
 
-use super::*;
+use super::{endian, *};
 use crate::{ColorMatrix, row::scalar};
 
 // ---- Bit-extraction helper -----------------------------------------------
@@ -47,11 +47,11 @@ use crate::{ColorMatrix, row::scalar};
 /// that `target_feature` includes AVX2.
 #[inline]
 #[target_feature(enable = "avx2")]
-unsafe fn unpack_v410_8px_avx2(ptr: *const u32) -> (__m256i, __m256i, __m256i) {
+unsafe fn unpack_v410_8px_avx2<const BE: bool>(ptr: *const u32) -> (__m256i, __m256i, __m256i) {
   // SAFETY: caller obligation — `ptr` has 32 bytes readable; AVX2 is
   // available.
   unsafe {
-    let words = _mm256_loadu_si256(ptr.cast());
+    let words = endian::load_endian_u32x8::<BE>(ptr as *const u8);
     let mask = _mm256_set1_epi32(0x3FF);
 
     // Extract 10-bit fields in i32x8 (values ≤ 1023 — no overflow risk).
@@ -88,7 +88,7 @@ unsafe fn unpack_v410_8px_avx2(ptr: *const u32) -> (__m256i, __m256i, __m256i) {
 /// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn v410_to_rgb_or_rgba_row<const ALPHA: bool>(
+pub(crate) unsafe fn v410_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   packed: &[u32],
   out: &mut [u8],
   width: usize,
@@ -121,7 +121,7 @@ pub(crate) unsafe fn v410_to_rgb_or_rgba_row<const ALPHA: bool>(
     let mut x = 0usize;
     while x + 8 <= width {
       // Unpack 8 V410 words → three i16x16 with valid data in lanes 0..7.
-      let (u_i16, y_i16, v_i16) = unpack_v410_8px_avx2(packed.as_ptr().add(x));
+      let (u_i16, y_i16, v_i16) = unpack_v410_8px_avx2::<BE>(packed.as_ptr().add(x));
 
       // Subtract chroma bias (512 for 10-bit).
       let u_sub = _mm256_sub_epi16(u_i16, bias_v);
@@ -201,7 +201,13 @@ pub(crate) unsafe fn v410_to_rgb_or_rgba_row<const ALPHA: bool>(
       let tail_packed = &packed[x..width];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::v410_to_rgb_or_rgba_row::<ALPHA>(tail_packed, tail_out, tail_w, matrix, full_range);
+      scalar::v410_to_rgb_or_rgba_row::<ALPHA, BE>(
+        tail_packed,
+        tail_out,
+        tail_w,
+        matrix,
+        full_range,
+      );
     }
   }
 }
@@ -222,7 +228,7 @@ pub(crate) unsafe fn v410_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })` (u16 elements).
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
+pub(crate) unsafe fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   packed: &[u32],
   out: &mut [u16],
   width: usize,
@@ -257,7 +263,7 @@ pub(crate) unsafe fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let (u_i16, y_i16, v_i16) = unpack_v410_8px_avx2(packed.as_ptr().add(x));
+      let (u_i16, y_i16, v_i16) = unpack_v410_8px_avx2::<BE>(packed.as_ptr().add(x));
 
       let u_sub = _mm256_sub_epi16(u_i16, bias_v);
       let v_sub = _mm256_sub_epi16(v_i16, bias_v);
@@ -331,7 +337,7 @@ pub(crate) unsafe fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
       let tail_packed = &packed[x..width];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::v410_to_rgb_u16_or_rgba_u16_row::<ALPHA>(
+      scalar::v410_to_rgb_u16_or_rgba_u16_row::<ALPHA, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -357,7 +363,11 @@ pub(crate) unsafe fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 /// 3. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn v410_to_luma_row(packed: &[u32], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn v410_to_luma_row<const BE: bool>(
+  packed: &[u32],
+  out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width);
   debug_assert!(out.len() >= width);
 
@@ -367,7 +377,7 @@ pub(crate) unsafe fn v410_to_luma_row(packed: &[u32], out: &mut [u8], width: usi
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let words = _mm256_loadu_si256(packed.as_ptr().add(x).cast());
+      let words = endian::load_endian_u32x8::<BE>(packed.as_ptr().add(x) as *const u8);
 
       // Y = (word >> 10) & 0x3FF for each i32 lane.
       let y_i32 = _mm256_and_si256(_mm256_srli_epi32::<10>(words), mask);
@@ -390,7 +400,7 @@ pub(crate) unsafe fn v410_to_luma_row(packed: &[u32], out: &mut [u8], width: usi
 
     // Scalar tail — remaining < 8 pixels.
     if x < width {
-      scalar::v410_to_luma_row(&packed[x..width], &mut out[x..width], width - x);
+      scalar::v410_to_luma_row::<BE>(&packed[x..width], &mut out[x..width], width - x);
     }
   }
 }
@@ -411,7 +421,11 @@ pub(crate) unsafe fn v410_to_luma_row(packed: &[u32], out: &mut [u8], width: usi
 /// 3. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn v410_to_luma_u16_row(packed: &[u32], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn v410_to_luma_u16_row<const BE: bool>(
+  packed: &[u32],
+  out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width);
   debug_assert!(out.len() >= width);
 
@@ -421,7 +435,7 @@ pub(crate) unsafe fn v410_to_luma_u16_row(packed: &[u32], out: &mut [u16], width
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let words = _mm256_loadu_si256(packed.as_ptr().add(x).cast());
+      let words = endian::load_endian_u32x8::<BE>(packed.as_ptr().add(x) as *const u8);
 
       // Y = (word >> 10) & 0x3FF for each i32 lane.
       let y_i32 = _mm256_and_si256(_mm256_srli_epi32::<10>(words), mask);
@@ -440,7 +454,7 @@ pub(crate) unsafe fn v410_to_luma_u16_row(packed: &[u32], out: &mut [u16], width
 
     // Scalar tail — remaining < 8 pixels.
     if x < width {
-      scalar::v410_to_luma_u16_row(&packed[x..width], &mut out[x..width], width - x);
+      scalar::v410_to_luma_u16_row::<BE>(&packed[x..width], &mut out[x..width], width - x);
     }
   }
 }

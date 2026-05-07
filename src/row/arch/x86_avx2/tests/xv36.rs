@@ -17,9 +17,9 @@ fn check_rgb<const ALPHA: bool>(width: usize, matrix: ColorMatrix, full_range: b
   let bpp = if ALPHA { 4 } else { 3 };
   let mut s = std::vec![0u8; width * bpp];
   let mut k = std::vec![0u8; width * bpp];
-  scalar::xv36_to_rgb_or_rgba_row::<ALPHA>(&p, &mut s, width, matrix, full_range);
+  scalar::xv36_to_rgb_or_rgba_row::<ALPHA, false>(&p, &mut s, width, matrix, full_range);
   unsafe {
-    xv36_to_rgb_or_rgba_row::<ALPHA>(&p, &mut k, width, matrix, full_range);
+    xv36_to_rgb_or_rgba_row::<ALPHA, false>(&p, &mut k, width, matrix, full_range);
   }
   assert_eq!(
     s,
@@ -34,9 +34,9 @@ fn check_rgb_u16<const ALPHA: bool>(width: usize, matrix: ColorMatrix, full_rang
   let bpp = if ALPHA { 4 } else { 3 };
   let mut s = std::vec![0u16; width * bpp];
   let mut k = std::vec![0u16; width * bpp];
-  scalar::xv36_to_rgb_u16_or_rgba_u16_row::<ALPHA>(&p, &mut s, width, matrix, full_range);
+  scalar::xv36_to_rgb_u16_or_rgba_u16_row::<ALPHA, false>(&p, &mut s, width, matrix, full_range);
   unsafe {
-    xv36_to_rgb_u16_or_rgba_u16_row::<ALPHA>(&p, &mut k, width, matrix, full_range);
+    xv36_to_rgb_u16_or_rgba_u16_row::<ALPHA, false>(&p, &mut k, width, matrix, full_range);
   }
   assert_eq!(
     s,
@@ -50,9 +50,9 @@ fn check_luma(width: usize) {
   let p = pseudo_random_xv36(width, 0xC001);
   let mut s = std::vec![0u8; width];
   let mut k = std::vec![0u8; width];
-  scalar::xv36_to_luma_row(&p, &mut s, width);
+  scalar::xv36_to_luma_row::<false>(&p, &mut s, width);
   unsafe {
-    xv36_to_luma_row(&p, &mut k, width);
+    xv36_to_luma_row::<false>(&p, &mut k, width);
   }
   assert_eq!(s, k, "AVX2 xv36→luma diverges (width={width})");
 }
@@ -61,9 +61,9 @@ fn check_luma_u16(width: usize) {
   let p = pseudo_random_xv36(width, 0xC001);
   let mut s = std::vec![0u16; width];
   let mut k = std::vec![0u16; width];
-  scalar::xv36_to_luma_u16_row(&p, &mut s, width);
+  scalar::xv36_to_luma_u16_row::<false>(&p, &mut s, width);
   unsafe {
-    xv36_to_luma_u16_row(&p, &mut k, width);
+    xv36_to_luma_u16_row::<false>(&p, &mut k, width);
   }
   assert_eq!(s, k, "AVX2 xv36→luma u16 diverges (width={width})");
 }
@@ -178,7 +178,7 @@ fn avx2_xv36_lane_order_per_pixel_y_and_u() {
   // Part 1: Luma natural-order at u16 (drops the 4-bit padding to recover n+1)
   let mut luma_u16 = std::vec![0u16; W];
   unsafe {
-    xv36_to_luma_u16_row(&packed, &mut luma_u16, W);
+    xv36_to_luma_u16_row::<false>(&packed, &mut luma_u16, W);
   }
   let expected_luma: std::vec::Vec<u16> = (1..=W as u16).collect();
   assert_eq!(luma_u16, expected_luma, "avx2 xv36 luma_u16 reorder bug");
@@ -187,9 +187,15 @@ fn avx2_xv36_lane_order_per_pixel_y_and_u() {
   let mut simd_rgb = std::vec![0u16; W * 3];
   let mut scalar_rgb = std::vec![0u16; W * 3];
   unsafe {
-    xv36_to_rgb_u16_or_rgba_u16_row::<false>(&packed, &mut simd_rgb, W, ColorMatrix::Bt709, false);
+    xv36_to_rgb_u16_or_rgba_u16_row::<false, false>(
+      &packed,
+      &mut simd_rgb,
+      W,
+      ColorMatrix::Bt709,
+      false,
+    );
   }
-  scalar::xv36_to_rgb_u16_or_rgba_u16_row::<false>(
+  scalar::xv36_to_rgb_u16_or_rgba_u16_row::<false, false>(
     &packed,
     &mut scalar_rgb,
     W,

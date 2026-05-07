@@ -14,6 +14,9 @@
 //!
 //! Source α is real (depth-converted u16 → u8 via `>> 8` for u8 RGBA;
 //! written direct as u16 for u16 RGBA).
+//!
+//! `be_input = true` selects the big-endian wire variant: each u16
+//! element is byte-swapped before unpacking, matching BE AYUV64 streams.
 
 #[cfg(any(
   target_arch = "aarch64",
@@ -46,7 +49,8 @@ fn ayuv64_packed_elems(width: usize) -> usize {
 
 /// Converts one row of AYUV64 to packed RGB (u8). Source α is discarded.
 /// See [`scalar::ayuv64_to_rgb_or_rgba_row`] for pixel layout / numerical
-/// contract. `use_simd = false` forces scalar.
+/// contract. `use_simd = false` forces scalar. `be_input = true` selects
+/// the big-endian wire variant.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub fn ayuv64_to_rgb_row(
   packed: &[u16],
@@ -55,6 +59,7 @@ pub fn ayuv64_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
   use_simd: bool,
+  be_input: bool,
 ) {
   assert!(
     packed.len() >= ayuv64_packed_elems(width),
@@ -70,31 +75,51 @@ pub fn ayuv64_to_rgb_row(
       target_arch = "aarch64" => {
         if neon_available() {
           // SAFETY: NEON verified at runtime.
-          unsafe { arch::neon::ayuv64_to_rgb_row(packed, rgb_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::neon::ayuv64_to_rgb_row::<true>(packed, rgb_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::neon::ayuv64_to_rgb_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          }
           return;
         }
       },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512BW verified.
-          unsafe { arch::x86_avx512::ayuv64_to_rgb_row(packed, rgb_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::x86_avx512::ayuv64_to_rgb_row::<true>(packed, rgb_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::x86_avx512::ayuv64_to_rgb_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          }
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified.
-          unsafe { arch::x86_avx2::ayuv64_to_rgb_row(packed, rgb_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::x86_avx2::ayuv64_to_rgb_row::<true>(packed, rgb_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::x86_avx2::ayuv64_to_rgb_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          }
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
-          unsafe { arch::x86_sse41::ayuv64_to_rgb_row(packed, rgb_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::x86_sse41::ayuv64_to_rgb_row::<true>(packed, rgb_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::x86_sse41::ayuv64_to_rgb_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          }
           return;
         }
       },
       target_arch = "wasm32" => {
         if simd128_available() {
           // SAFETY: simd128 compile-time verified.
-          unsafe { arch::wasm_simd128::ayuv64_to_rgb_row(packed, rgb_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::wasm_simd128::ayuv64_to_rgb_row::<true>(packed, rgb_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::wasm_simd128::ayuv64_to_rgb_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          }
           return;
         }
       },
@@ -102,12 +127,16 @@ pub fn ayuv64_to_rgb_row(
     }
   }
 
-  scalar::ayuv64_to_rgb_row(packed, rgb_out, width, matrix, full_range);
+  if be_input {
+    scalar::ayuv64_to_rgb_row::<true>(packed, rgb_out, width, matrix, full_range);
+  } else {
+    scalar::ayuv64_to_rgb_row::<false>(packed, rgb_out, width, matrix, full_range);
+  }
 }
 
 /// Converts one row of AYUV64 to packed RGBA (u8). The source A u16 at slot 0
 /// of each pixel quadruple is depth-converted to u8 via `>> 8`. `use_simd =
-/// false` forces scalar.
+/// false` forces scalar. `be_input = true` selects the big-endian wire variant.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub fn ayuv64_to_rgba_row(
   packed: &[u16],
@@ -116,6 +145,7 @@ pub fn ayuv64_to_rgba_row(
   matrix: ColorMatrix,
   full_range: bool,
   use_simd: bool,
+  be_input: bool,
 ) {
   assert!(
     packed.len() >= ayuv64_packed_elems(width),
@@ -131,31 +161,51 @@ pub fn ayuv64_to_rgba_row(
       target_arch = "aarch64" => {
         if neon_available() {
           // SAFETY: NEON verified.
-          unsafe { arch::neon::ayuv64_to_rgba_row(packed, rgba_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::neon::ayuv64_to_rgba_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::neon::ayuv64_to_rgba_row::<false>(packed, rgba_out, width, matrix, full_range); }
+          }
           return;
         }
       },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512BW verified.
-          unsafe { arch::x86_avx512::ayuv64_to_rgba_row(packed, rgba_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::x86_avx512::ayuv64_to_rgba_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::x86_avx512::ayuv64_to_rgba_row::<false>(packed, rgba_out, width, matrix, full_range); }
+          }
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified.
-          unsafe { arch::x86_avx2::ayuv64_to_rgba_row(packed, rgba_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::x86_avx2::ayuv64_to_rgba_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::x86_avx2::ayuv64_to_rgba_row::<false>(packed, rgba_out, width, matrix, full_range); }
+          }
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
-          unsafe { arch::x86_sse41::ayuv64_to_rgba_row(packed, rgba_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::x86_sse41::ayuv64_to_rgba_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::x86_sse41::ayuv64_to_rgba_row::<false>(packed, rgba_out, width, matrix, full_range); }
+          }
           return;
         }
       },
       target_arch = "wasm32" => {
         if simd128_available() {
           // SAFETY: simd128 compile-time verified.
-          unsafe { arch::wasm_simd128::ayuv64_to_rgba_row(packed, rgba_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::wasm_simd128::ayuv64_to_rgba_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::wasm_simd128::ayuv64_to_rgba_row::<false>(packed, rgba_out, width, matrix, full_range); }
+          }
           return;
         }
       },
@@ -163,11 +213,16 @@ pub fn ayuv64_to_rgba_row(
     }
   }
 
-  scalar::ayuv64_to_rgba_row(packed, rgba_out, width, matrix, full_range);
+  if be_input {
+    scalar::ayuv64_to_rgba_row::<true>(packed, rgba_out, width, matrix, full_range);
+  } else {
+    scalar::ayuv64_to_rgba_row::<false>(packed, rgba_out, width, matrix, full_range);
+  }
 }
 
 /// Converts one row of AYUV64 to packed `u16` RGB at native 16-bit
 /// depth. Source α is discarded. `use_simd = false` forces scalar.
+/// `be_input = true` selects the big-endian wire variant.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub fn ayuv64_to_rgb_u16_row(
   packed: &[u16],
@@ -176,6 +231,7 @@ pub fn ayuv64_to_rgb_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
   use_simd: bool,
+  be_input: bool,
 ) {
   assert!(
     packed.len() >= ayuv64_packed_elems(width),
@@ -191,31 +247,51 @@ pub fn ayuv64_to_rgb_u16_row(
       target_arch = "aarch64" => {
         if neon_available() {
           // SAFETY: NEON verified.
-          unsafe { arch::neon::ayuv64_to_rgb_u16_row(packed, rgb_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::neon::ayuv64_to_rgb_u16_row::<true>(packed, rgb_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::neon::ayuv64_to_rgb_u16_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          }
           return;
         }
       },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512BW verified.
-          unsafe { arch::x86_avx512::ayuv64_to_rgb_u16_row(packed, rgb_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::x86_avx512::ayuv64_to_rgb_u16_row::<true>(packed, rgb_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::x86_avx512::ayuv64_to_rgb_u16_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          }
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified.
-          unsafe { arch::x86_avx2::ayuv64_to_rgb_u16_row(packed, rgb_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::x86_avx2::ayuv64_to_rgb_u16_row::<true>(packed, rgb_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::x86_avx2::ayuv64_to_rgb_u16_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          }
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
-          unsafe { arch::x86_sse41::ayuv64_to_rgb_u16_row(packed, rgb_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::x86_sse41::ayuv64_to_rgb_u16_row::<true>(packed, rgb_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::x86_sse41::ayuv64_to_rgb_u16_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          }
           return;
         }
       },
       target_arch = "wasm32" => {
         if simd128_available() {
           // SAFETY: simd128 compile-time verified.
-          unsafe { arch::wasm_simd128::ayuv64_to_rgb_u16_row(packed, rgb_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::wasm_simd128::ayuv64_to_rgb_u16_row::<true>(packed, rgb_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::wasm_simd128::ayuv64_to_rgb_u16_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          }
           return;
         }
       },
@@ -223,12 +299,17 @@ pub fn ayuv64_to_rgb_u16_row(
     }
   }
 
-  scalar::ayuv64_to_rgb_u16_row(packed, rgb_out, width, matrix, full_range);
+  if be_input {
+    scalar::ayuv64_to_rgb_u16_row::<true>(packed, rgb_out, width, matrix, full_range);
+  } else {
+    scalar::ayuv64_to_rgb_u16_row::<false>(packed, rgb_out, width, matrix, full_range);
+  }
 }
 
 /// Converts one row of AYUV64 to packed `u16` RGBA at native 16-bit
 /// depth. The source A u16 at slot 0 of each pixel quadruple is written
 /// direct (no conversion). `use_simd = false` forces scalar.
+/// `be_input = true` selects the big-endian wire variant.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub fn ayuv64_to_rgba_u16_row(
   packed: &[u16],
@@ -237,6 +318,7 @@ pub fn ayuv64_to_rgba_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
   use_simd: bool,
+  be_input: bool,
 ) {
   assert!(
     packed.len() >= ayuv64_packed_elems(width),
@@ -252,31 +334,51 @@ pub fn ayuv64_to_rgba_u16_row(
       target_arch = "aarch64" => {
         if neon_available() {
           // SAFETY: NEON verified.
-          unsafe { arch::neon::ayuv64_to_rgba_u16_row(packed, rgba_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::neon::ayuv64_to_rgba_u16_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::neon::ayuv64_to_rgba_u16_row::<false>(packed, rgba_out, width, matrix, full_range); }
+          }
           return;
         }
       },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512BW verified.
-          unsafe { arch::x86_avx512::ayuv64_to_rgba_u16_row(packed, rgba_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::x86_avx512::ayuv64_to_rgba_u16_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::x86_avx512::ayuv64_to_rgba_u16_row::<false>(packed, rgba_out, width, matrix, full_range); }
+          }
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified.
-          unsafe { arch::x86_avx2::ayuv64_to_rgba_u16_row(packed, rgba_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::x86_avx2::ayuv64_to_rgba_u16_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::x86_avx2::ayuv64_to_rgba_u16_row::<false>(packed, rgba_out, width, matrix, full_range); }
+          }
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
-          unsafe { arch::x86_sse41::ayuv64_to_rgba_u16_row(packed, rgba_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::x86_sse41::ayuv64_to_rgba_u16_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::x86_sse41::ayuv64_to_rgba_u16_row::<false>(packed, rgba_out, width, matrix, full_range); }
+          }
           return;
         }
       },
       target_arch = "wasm32" => {
         if simd128_available() {
           // SAFETY: simd128 compile-time verified.
-          unsafe { arch::wasm_simd128::ayuv64_to_rgba_u16_row(packed, rgba_out, width, matrix, full_range); }
+          if be_input {
+            unsafe { arch::wasm_simd128::ayuv64_to_rgba_u16_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          } else {
+            unsafe { arch::wasm_simd128::ayuv64_to_rgba_u16_row::<false>(packed, rgba_out, width, matrix, full_range); }
+          }
           return;
         }
       },
@@ -284,14 +386,24 @@ pub fn ayuv64_to_rgba_u16_row(
     }
   }
 
-  scalar::ayuv64_to_rgba_u16_row(packed, rgba_out, width, matrix, full_range);
+  if be_input {
+    scalar::ayuv64_to_rgba_u16_row::<true>(packed, rgba_out, width, matrix, full_range);
+  } else {
+    scalar::ayuv64_to_rgba_u16_row::<false>(packed, rgba_out, width, matrix, full_range);
+  }
 }
 
 /// Extracts one row of 8-bit luma from a packed AYUV64 buffer. Y is at slot 1
 /// of each pixel quadruple; extracted via `>> 8` (high byte). `use_simd =
-/// false` forces scalar.
+/// false` forces scalar. `be_input = true` selects the big-endian wire variant.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn ayuv64_to_luma_row(packed: &[u16], luma_out: &mut [u8], width: usize, use_simd: bool) {
+pub fn ayuv64_to_luma_row(
+  packed: &[u16],
+  luma_out: &mut [u8],
+  width: usize,
+  use_simd: bool,
+  be_input: bool,
+) {
   assert!(
     packed.len() >= ayuv64_packed_elems(width),
     "packed row too short"
@@ -303,31 +415,51 @@ pub fn ayuv64_to_luma_row(packed: &[u16], luma_out: &mut [u8], width: usize, use
       target_arch = "aarch64" => {
         if neon_available() {
           // SAFETY: NEON verified.
-          unsafe { arch::neon::ayuv64_to_luma_row(packed, luma_out, width); }
+          if be_input {
+            unsafe { arch::neon::ayuv64_to_luma_row::<true>(packed, luma_out, width); }
+          } else {
+            unsafe { arch::neon::ayuv64_to_luma_row::<false>(packed, luma_out, width); }
+          }
           return;
         }
       },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512BW verified.
-          unsafe { arch::x86_avx512::ayuv64_to_luma_row(packed, luma_out, width); }
+          if be_input {
+            unsafe { arch::x86_avx512::ayuv64_to_luma_row::<true>(packed, luma_out, width); }
+          } else {
+            unsafe { arch::x86_avx512::ayuv64_to_luma_row::<false>(packed, luma_out, width); }
+          }
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified.
-          unsafe { arch::x86_avx2::ayuv64_to_luma_row(packed, luma_out, width); }
+          if be_input {
+            unsafe { arch::x86_avx2::ayuv64_to_luma_row::<true>(packed, luma_out, width); }
+          } else {
+            unsafe { arch::x86_avx2::ayuv64_to_luma_row::<false>(packed, luma_out, width); }
+          }
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
-          unsafe { arch::x86_sse41::ayuv64_to_luma_row(packed, luma_out, width); }
+          if be_input {
+            unsafe { arch::x86_sse41::ayuv64_to_luma_row::<true>(packed, luma_out, width); }
+          } else {
+            unsafe { arch::x86_sse41::ayuv64_to_luma_row::<false>(packed, luma_out, width); }
+          }
           return;
         }
       },
       target_arch = "wasm32" => {
         if simd128_available() {
           // SAFETY: simd128 compile-time verified.
-          unsafe { arch::wasm_simd128::ayuv64_to_luma_row(packed, luma_out, width); }
+          if be_input {
+            unsafe { arch::wasm_simd128::ayuv64_to_luma_row::<true>(packed, luma_out, width); }
+          } else {
+            unsafe { arch::wasm_simd128::ayuv64_to_luma_row::<false>(packed, luma_out, width); }
+          }
           return;
         }
       },
@@ -335,14 +467,25 @@ pub fn ayuv64_to_luma_row(packed: &[u16], luma_out: &mut [u8], width: usize, use
     }
   }
 
-  scalar::ayuv64_to_luma_row(packed, luma_out, width);
+  if be_input {
+    scalar::ayuv64_to_luma_row::<true>(packed, luma_out, width);
+  } else {
+    scalar::ayuv64_to_luma_row::<false>(packed, luma_out, width);
+  }
 }
 
 /// Extracts one row of native-depth `u16` luma from a packed AYUV64 buffer.
 /// Y is at slot 1 of each pixel quadruple; written direct (no shift — 16-bit
-/// native). `use_simd = false` forces scalar.
+/// native). `use_simd = false` forces scalar. `be_input = true` selects the
+/// big-endian wire variant.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn ayuv64_to_luma_u16_row(packed: &[u16], luma_out: &mut [u16], width: usize, use_simd: bool) {
+pub fn ayuv64_to_luma_u16_row(
+  packed: &[u16],
+  luma_out: &mut [u16],
+  width: usize,
+  use_simd: bool,
+  be_input: bool,
+) {
   assert!(
     packed.len() >= ayuv64_packed_elems(width),
     "packed row too short"
@@ -354,31 +497,51 @@ pub fn ayuv64_to_luma_u16_row(packed: &[u16], luma_out: &mut [u16], width: usize
       target_arch = "aarch64" => {
         if neon_available() {
           // SAFETY: NEON verified.
-          unsafe { arch::neon::ayuv64_to_luma_u16_row(packed, luma_out, width); }
+          if be_input {
+            unsafe { arch::neon::ayuv64_to_luma_u16_row::<true>(packed, luma_out, width); }
+          } else {
+            unsafe { arch::neon::ayuv64_to_luma_u16_row::<false>(packed, luma_out, width); }
+          }
           return;
         }
       },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512BW verified.
-          unsafe { arch::x86_avx512::ayuv64_to_luma_u16_row(packed, luma_out, width); }
+          if be_input {
+            unsafe { arch::x86_avx512::ayuv64_to_luma_u16_row::<true>(packed, luma_out, width); }
+          } else {
+            unsafe { arch::x86_avx512::ayuv64_to_luma_u16_row::<false>(packed, luma_out, width); }
+          }
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified.
-          unsafe { arch::x86_avx2::ayuv64_to_luma_u16_row(packed, luma_out, width); }
+          if be_input {
+            unsafe { arch::x86_avx2::ayuv64_to_luma_u16_row::<true>(packed, luma_out, width); }
+          } else {
+            unsafe { arch::x86_avx2::ayuv64_to_luma_u16_row::<false>(packed, luma_out, width); }
+          }
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
-          unsafe { arch::x86_sse41::ayuv64_to_luma_u16_row(packed, luma_out, width); }
+          if be_input {
+            unsafe { arch::x86_sse41::ayuv64_to_luma_u16_row::<true>(packed, luma_out, width); }
+          } else {
+            unsafe { arch::x86_sse41::ayuv64_to_luma_u16_row::<false>(packed, luma_out, width); }
+          }
           return;
         }
       },
       target_arch = "wasm32" => {
         if simd128_available() {
           // SAFETY: simd128 compile-time verified.
-          unsafe { arch::wasm_simd128::ayuv64_to_luma_u16_row(packed, luma_out, width); }
+          if be_input {
+            unsafe { arch::wasm_simd128::ayuv64_to_luma_u16_row::<true>(packed, luma_out, width); }
+          } else {
+            unsafe { arch::wasm_simd128::ayuv64_to_luma_u16_row::<false>(packed, luma_out, width); }
+          }
           return;
         }
       },
@@ -386,7 +549,11 @@ pub fn ayuv64_to_luma_u16_row(packed: &[u16], luma_out: &mut [u16], width: usize
     }
   }
 
-  scalar::ayuv64_to_luma_u16_row(packed, luma_out, width);
+  if be_input {
+    scalar::ayuv64_to_luma_u16_row::<true>(packed, luma_out, width);
+  } else {
+    scalar::ayuv64_to_luma_u16_row::<false>(packed, luma_out, width);
+  }
 }
 
 #[cfg(all(test, feature = "std"))]
@@ -404,11 +571,27 @@ mod tests {
     [a, y, u, v]
   }
 
+  /// Pack one AYUV64 pixel in big-endian wire format.
+  fn pack_ayuv64_be(a: u16, y: u16, u: u16, v: u16) -> [u16; 4] {
+    [
+      a.swap_bytes(),
+      y.swap_bytes(),
+      u.swap_bytes(),
+      v.swap_bytes(),
+    ]
+  }
+
   /// Build a `Vec<u16>` AYUV64 row of `width` pixels with neutral
   /// chroma (U=V=32768) and the given Y / alpha values. Any positive
   /// width is valid (4:4:4, no chroma subsampling).
   fn solid_ayuv64(width: usize, y: u16, a: u16) -> std::vec::Vec<u16> {
     let quad = pack_ayuv64(a, y, 32768, 32768);
+    (0..width).flat_map(|_| quad).collect()
+  }
+
+  /// Build a `Vec<u16>` AYUV64 row in big-endian wire format.
+  fn solid_ayuv64_be(width: usize, y: u16, a: u16) -> std::vec::Vec<u16> {
+    let quad = pack_ayuv64_be(a, y, 32768, 32768);
     (0..width).flat_map(|_| quad).collect()
   }
 
@@ -420,7 +603,7 @@ mod tests {
     // packed buffer has only 2×4=8 u16 elements for width=4 (needs 4×4=16).
     let packed = [0u16; 8];
     let mut rgb = [0u8; 4 * 3];
-    ayuv64_to_rgb_row(&packed, &mut rgb, 4, ColorMatrix::Bt709, true, false);
+    ayuv64_to_rgb_row(&packed, &mut rgb, 4, ColorMatrix::Bt709, true, false, false);
   }
 
   #[test]
@@ -428,7 +611,7 @@ mod tests {
   fn ayuv64_dispatcher_rejects_short_rgb_output() {
     let packed = [0u16; 4 * 4];
     let mut rgb = [0u8; 2];
-    ayuv64_to_rgb_row(&packed, &mut rgb, 4, ColorMatrix::Bt709, true, false);
+    ayuv64_to_rgb_row(&packed, &mut rgb, 4, ColorMatrix::Bt709, true, false, false);
   }
 
   #[test]
@@ -436,7 +619,15 @@ mod tests {
   fn ayuv64_dispatcher_rejects_short_rgba_output() {
     let packed = [0u16; 4 * 4];
     let mut rgba = [0u8; 2];
-    ayuv64_to_rgba_row(&packed, &mut rgba, 4, ColorMatrix::Bt709, true, false);
+    ayuv64_to_rgba_row(
+      &packed,
+      &mut rgba,
+      4,
+      ColorMatrix::Bt709,
+      true,
+      false,
+      false,
+    );
   }
 
   #[test]
@@ -444,7 +635,7 @@ mod tests {
   fn ayuv64_dispatcher_rejects_short_rgb_u16_output() {
     let packed = [0u16; 4 * 4];
     let mut rgb = [0u16; 2];
-    ayuv64_to_rgb_u16_row(&packed, &mut rgb, 4, ColorMatrix::Bt709, true, false);
+    ayuv64_to_rgb_u16_row(&packed, &mut rgb, 4, ColorMatrix::Bt709, true, false, false);
   }
 
   #[test]
@@ -452,7 +643,15 @@ mod tests {
   fn ayuv64_dispatcher_rejects_short_rgba_u16_output() {
     let packed = [0u16; 4 * 4];
     let mut rgba = [0u16; 2];
-    ayuv64_to_rgba_u16_row(&packed, &mut rgba, 4, ColorMatrix::Bt709, true, false);
+    ayuv64_to_rgba_u16_row(
+      &packed,
+      &mut rgba,
+      4,
+      ColorMatrix::Bt709,
+      true,
+      false,
+      false,
+    );
   }
 
   #[test]
@@ -460,7 +659,7 @@ mod tests {
   fn ayuv64_dispatcher_rejects_short_luma_output() {
     let packed = [0u16; 4 * 4];
     let mut luma = [0u8; 2];
-    ayuv64_to_luma_row(&packed, &mut luma, 4, false);
+    ayuv64_to_luma_row(&packed, &mut luma, 4, false, false);
   }
 
   #[test]
@@ -468,7 +667,7 @@ mod tests {
   fn ayuv64_dispatcher_rejects_short_luma_u16_output() {
     let packed = [0u16; 4 * 4];
     let mut luma = [0u16; 2];
-    ayuv64_to_luma_u16_row(&packed, &mut luma, 4, false);
+    ayuv64_to_luma_u16_row(&packed, &mut luma, 4, false, false);
   }
 
   // ---- functional smoke ---------------------------------------------------
@@ -482,7 +681,7 @@ mod tests {
 
     // u8 RGB — limited-range white → near 255 on every channel
     let mut rgb = [0u8; 8 * 3];
-    ayuv64_to_rgb_row(&buf, &mut rgb, 8, ColorMatrix::Bt709, false, false);
+    ayuv64_to_rgb_row(&buf, &mut rgb, 8, ColorMatrix::Bt709, false, false, false);
     for px in rgb.chunks(3) {
       assert!(
         px[0].abs_diff(255) <= 2,
@@ -495,7 +694,7 @@ mod tests {
 
     // u8 RGBA — source α 0xABCD >> 8 = 0xAB in output α channel
     let mut rgba = [0u8; 8 * 4];
-    ayuv64_to_rgba_row(&buf, &mut rgba, 8, ColorMatrix::Bt709, false, false);
+    ayuv64_to_rgba_row(&buf, &mut rgba, 8, ColorMatrix::Bt709, false, false, false);
     for px in rgba.chunks(4) {
       assert!(
         px[0].abs_diff(255) <= 2,
@@ -510,7 +709,15 @@ mod tests {
 
     // u16 RGB — near-white (65535 or close)
     let mut rgb_u16 = [0u16; 8 * 3];
-    ayuv64_to_rgb_u16_row(&buf, &mut rgb_u16, 8, ColorMatrix::Bt709, false, false);
+    ayuv64_to_rgb_u16_row(
+      &buf,
+      &mut rgb_u16,
+      8,
+      ColorMatrix::Bt709,
+      false,
+      false,
+      false,
+    );
     for px in rgb_u16.chunks(3) {
       assert!(
         px[0].abs_diff(0xFFFF) <= 256,
@@ -523,7 +730,15 @@ mod tests {
 
     // u16 RGBA — source α 0xABCD must appear direct in output α channel
     let mut rgba_u16 = [0u16; 8 * 4];
-    ayuv64_to_rgba_u16_row(&buf, &mut rgba_u16, 8, ColorMatrix::Bt709, false, false);
+    ayuv64_to_rgba_u16_row(
+      &buf,
+      &mut rgba_u16,
+      8,
+      ColorMatrix::Bt709,
+      false,
+      false,
+      false,
+    );
     for px in rgba_u16.chunks(4) {
       assert_eq!(
         px[3], 0xABCDu16,
@@ -533,17 +748,88 @@ mod tests {
 
     // u8 luma — Y=60160; >> 8 = 234 (0xEA)
     let mut luma = [0u8; 8];
-    ayuv64_to_luma_row(&buf, &mut luma, 8, false);
+    ayuv64_to_luma_row(&buf, &mut luma, 8, false, false);
     for &y in &luma {
       assert_eq!(y, (60160u16 >> 8) as u8, "luma u8 must be Y >> 8");
     }
 
     // u16 luma — Y=60160 written direct
     let mut luma_u16 = [0u16; 8];
-    ayuv64_to_luma_u16_row(&buf, &mut luma_u16, 8, false);
+    ayuv64_to_luma_u16_row(&buf, &mut luma_u16, 8, false, false);
     for &y in &luma_u16 {
       assert_eq!(y, 60160u16, "luma u16 must be Y direct");
     }
+  }
+
+  #[test]
+  fn ayuv64_be_and_le_dispatchers_agree() {
+    // BE-encoded data decoded with be_input=true must produce the same
+    // output as LE-encoded data decoded with be_input=false.
+    // Use a distinctive Y/alpha so both output channels are exercised.
+    let le_buf = solid_ayuv64(8, 60160, 0xABCD);
+    let be_buf = solid_ayuv64_be(8, 60160, 0xABCD);
+
+    // u8 RGB
+    let mut rgb_le = [0u8; 8 * 3];
+    let mut rgb_be = [0u8; 8 * 3];
+    ayuv64_to_rgb_row(
+      &le_buf,
+      &mut rgb_le,
+      8,
+      ColorMatrix::Bt709,
+      false,
+      false,
+      false,
+    );
+    ayuv64_to_rgb_row(
+      &be_buf,
+      &mut rgb_be,
+      8,
+      ColorMatrix::Bt709,
+      false,
+      false,
+      true,
+    );
+    assert_eq!(
+      rgb_le, rgb_be,
+      "LE and BE must produce identical RGB output"
+    );
+
+    // u8 luma
+    let mut luma_le = [0u8; 8];
+    let mut luma_be = [0u8; 8];
+    ayuv64_to_luma_row(&le_buf, &mut luma_le, 8, false, false);
+    ayuv64_to_luma_row(&be_buf, &mut luma_be, 8, false, true);
+    assert_eq!(
+      luma_le, luma_be,
+      "LE and BE must produce identical luma output"
+    );
+
+    // u16 RGBA — alpha pass-through must survive BE swap
+    let mut rgba_u16_le = [0u16; 8 * 4];
+    let mut rgba_u16_be = [0u16; 8 * 4];
+    ayuv64_to_rgba_u16_row(
+      &le_buf,
+      &mut rgba_u16_le,
+      8,
+      ColorMatrix::Bt709,
+      false,
+      false,
+      false,
+    );
+    ayuv64_to_rgba_u16_row(
+      &be_buf,
+      &mut rgba_u16_be,
+      8,
+      ColorMatrix::Bt709,
+      false,
+      false,
+      true,
+    );
+    assert_eq!(
+      rgba_u16_le, rgba_u16_be,
+      "LE and BE must produce identical u16 RGBA output"
+    );
   }
 
   // ---- 32-bit width × 4 overflow guard ------------------------------------
@@ -571,6 +857,7 @@ mod tests {
       OVERFLOW_WIDTH_TIMES_4,
       ColorMatrix::Bt709,
       true,
+      false,
       false,
     );
   }

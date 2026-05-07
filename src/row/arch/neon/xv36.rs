@@ -18,6 +18,10 @@
 //! fit in i16, so `scale_y` is used (not `scale_y_u16_to_i16`).
 //! The Q15 pipeline uses i32 chroma (`chroma_i16x8`) at BITS=12.
 //!
+//! For BE wire format (`BE = true`), each deinterleaved `uint16x8_t`
+//! channel is byte-swapped via `bswap_u16x8_if_be::<true>` after the
+//! `vld4q_u16` call.
+//!
 //! ## Tail
 //!
 //! `width % 8` remaining pixels fall through to `scalar::xv36_*`.
@@ -31,7 +35,7 @@ use crate::{ColorMatrix, row::scalar};
 
 /// NEON XV36 → packed u8 RGB or RGBA.
 ///
-/// Byte-identical to `scalar::xv36_to_rgb_or_rgba_row::<ALPHA>`.
+/// Byte-identical to `scalar::xv36_to_rgb_or_rgba_row::<ALPHA, BE>`.
 ///
 /// # Safety
 ///
@@ -40,7 +44,7 @@ use crate::{ColorMatrix, row::scalar};
 /// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn xv36_to_rgb_or_rgba_row<const ALPHA: bool>(
+pub(crate) unsafe fn xv36_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   packed: &[u16],
   out: &mut [u8],
   width: usize,
@@ -74,11 +78,16 @@ pub(crate) unsafe fn xv36_to_rgb_or_rgba_row<const ALPHA: bool>(
       // Load 8 XV36 quadruples (8 × 4 × u16 = 64 bytes).
       // vld4q_u16 deinterleaves: .0=U8, .1=Y8, .2=V8, .3=A8 (padding).
       let q = vld4q_u16(packed.as_ptr().add(x * 4));
+      // Apply BE byte-swap per-channel if needed.
+      let u_raw = bswap_u16x8_if_be::<BE>(q.0);
+      let y_raw = bswap_u16x8_if_be::<BE>(q.1);
+      let v_raw = bswap_u16x8_if_be::<BE>(q.2);
+      // q.3 (A) is padding — discarded (no swap needed).
+
       // Right-shift by 4 to drop the 4 padding LSBs → 12-bit range [0, 4095].
-      let u_u16 = vshrq_n_u16::<4>(q.0); // 8 lanes of U
-      let y_u16 = vshrq_n_u16::<4>(q.1); // 8 lanes of Y
-      let v_u16 = vshrq_n_u16::<4>(q.2); // 8 lanes of V
-      // q.3 (A) is padding — discarded.
+      let u_u16 = vshrq_n_u16::<4>(u_raw); // 8 lanes of U
+      let y_u16 = vshrq_n_u16::<4>(y_raw); // 8 lanes of Y
+      let v_u16 = vshrq_n_u16::<4>(v_raw); // 8 lanes of V
 
       // Reinterpret as signed i16 (values ≤ 4095 < 32767, safe).
       let u_i16 = vreinterpretq_s16_u16(u_u16);
@@ -133,7 +142,13 @@ pub(crate) unsafe fn xv36_to_rgb_or_rgba_row<const ALPHA: bool>(
       let tail_packed = &packed[x * 4..width * 4];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::xv36_to_rgb_or_rgba_row::<ALPHA>(tail_packed, tail_out, tail_w, matrix, full_range);
+      scalar::xv36_to_rgb_or_rgba_row::<ALPHA, BE>(
+        tail_packed,
+        tail_out,
+        tail_w,
+        matrix,
+        full_range,
+      );
     }
   }
 }
@@ -143,7 +158,7 @@ pub(crate) unsafe fn xv36_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// NEON XV36 → packed native-depth u16 RGB or RGBA (low-bit-packed at
 /// 12-bit).
 ///
-/// Byte-identical to `scalar::xv36_to_rgb_u16_or_rgba_u16_row::<ALPHA>`.
+/// Byte-identical to `scalar::xv36_to_rgb_u16_or_rgba_u16_row::<ALPHA, BE>`.
 ///
 /// # Safety
 ///
@@ -152,7 +167,7 @@ pub(crate) unsafe fn xv36_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })` (u16 elements).
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
+pub(crate) unsafe fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   packed: &[u16],
   out: &mut [u16],
   width: usize,
@@ -190,10 +205,14 @@ pub(crate) unsafe fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
     let mut x = 0usize;
     while x + 8 <= width {
       let q = vld4q_u16(packed.as_ptr().add(x * 4));
-      let u_u16 = vshrq_n_u16::<4>(q.0);
-      let y_u16 = vshrq_n_u16::<4>(q.1);
-      let v_u16 = vshrq_n_u16::<4>(q.2);
+      let u_raw = bswap_u16x8_if_be::<BE>(q.0);
+      let y_raw = bswap_u16x8_if_be::<BE>(q.1);
+      let v_raw = bswap_u16x8_if_be::<BE>(q.2);
       // q.3 (A) is padding — discarded.
+
+      let u_u16 = vshrq_n_u16::<4>(u_raw);
+      let y_u16 = vshrq_n_u16::<4>(y_raw);
+      let v_u16 = vshrq_n_u16::<4>(v_raw);
 
       let u_i16 = vreinterpretq_s16_u16(u_u16);
       let y_i16 = vreinterpretq_s16_u16(y_u16);
@@ -239,7 +258,7 @@ pub(crate) unsafe fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
       let tail_packed = &packed[x * 4..width * 4];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::xv36_to_rgb_u16_or_rgba_u16_row::<ALPHA>(
+      scalar::xv36_to_rgb_u16_or_rgba_u16_row::<ALPHA, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -255,7 +274,7 @@ pub(crate) unsafe fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 /// NEON XV36 → u8 luma. Y is quadruple element 1; `>> 8` brings the
 /// 12-bit MSB-aligned sample to 8-bit (drops 4 padding LSBs + 4 more).
 ///
-/// Byte-identical to `scalar::xv36_to_luma_row`.
+/// Byte-identical to `scalar::xv36_to_luma_row::<BE>`.
 ///
 /// # Safety
 ///
@@ -264,7 +283,11 @@ pub(crate) unsafe fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 /// 3. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn xv36_to_luma_row(packed: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn xv36_to_luma_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4);
   debug_assert!(out.len() >= width);
 
@@ -272,15 +295,17 @@ pub(crate) unsafe fn xv36_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
     let mut x = 0usize;
     while x + 8 <= width {
       let q = vld4q_u16(packed.as_ptr().add(x * 4));
-      // Y is q.1. Scalar does `packed[x*4+1] >> 8`; apply the same shift.
+      // Y is q.1. Apply BE byte-swap if needed before the shift.
+      let y_raw = bswap_u16x8_if_be::<BE>(q.1);
+      // Scalar does `packed[x*4+1] >> 8`; apply the same shift.
       // vshrn_n_u16::<8> narrows (u16 >> 8) → u8x8, handling 8 lanes.
-      let y_u8 = vshrn_n_u16::<8>(q.1);
+      let y_u8 = vshrn_n_u16::<8>(y_raw);
       vst1_u8(out.as_mut_ptr().add(x), y_u8);
       x += 8;
     }
     // Scalar tail.
     if x < width {
-      scalar::xv36_to_luma_row(&packed[x * 4..width * 4], &mut out[x..width], width - x);
+      scalar::xv36_to_luma_row::<BE>(&packed[x * 4..width * 4], &mut out[x..width], width - x);
     }
   }
 }
@@ -291,7 +316,7 @@ pub(crate) unsafe fn xv36_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
 /// element 1; `>> 4` drops the 4 padding LSBs to give a 12-bit value
 /// in `[0, 4095]`.
 ///
-/// Byte-identical to `scalar::xv36_to_luma_u16_row`.
+/// Byte-identical to `scalar::xv36_to_luma_u16_row::<BE>`.
 ///
 /// # Safety
 ///
@@ -300,7 +325,11 @@ pub(crate) unsafe fn xv36_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
 /// 3. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn xv36_to_luma_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn xv36_to_luma_u16_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4);
   debug_assert!(out.len() >= width);
 
@@ -308,14 +337,15 @@ pub(crate) unsafe fn xv36_to_luma_u16_row(packed: &[u16], out: &mut [u16], width
     let mut x = 0usize;
     while x + 8 <= width {
       let q = vld4q_u16(packed.as_ptr().add(x * 4));
-      // Y is q.1. Scalar does `packed[x*4+1] >> 4`.
-      let y_u16 = vshrq_n_u16::<4>(q.1);
+      // Y is q.1. Apply BE byte-swap if needed, then `>> 4`.
+      let y_raw = bswap_u16x8_if_be::<BE>(q.1);
+      let y_u16 = vshrq_n_u16::<4>(y_raw);
       vst1q_u16(out.as_mut_ptr().add(x), y_u16);
       x += 8;
     }
     // Scalar tail.
     if x < width {
-      scalar::xv36_to_luma_u16_row(&packed[x * 4..width * 4], &mut out[x..width], width - x);
+      scalar::xv36_to_luma_u16_row::<BE>(&packed[x * 4..width * 4], &mut out[x..width], width - x);
     }
   }
 }

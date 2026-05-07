@@ -22,9 +22,11 @@ fn check_rgb<const ALPHA: bool, const ALPHA_SRC: bool>(
   let bpp = if ALPHA { 4 } else { 3 };
   let mut s = std::vec![0u8; width * bpp];
   let mut k = std::vec![0u8; width * bpp];
-  scalar::ayuv64_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC>(&p, &mut s, width, matrix, full_range);
+  scalar::ayuv64_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC, false>(
+    &p, &mut s, width, matrix, full_range,
+  );
   unsafe {
-    ayuv64_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC>(&p, &mut k, width, matrix, full_range);
+    ayuv64_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC, false>(&p, &mut k, width, matrix, full_range);
   }
   assert_eq!(
     s,
@@ -43,11 +45,13 @@ fn check_rgb_u16<const ALPHA: bool, const ALPHA_SRC: bool>(
   let bpp = if ALPHA { 4 } else { 3 };
   let mut s = std::vec![0u16; width * bpp];
   let mut k = std::vec![0u16; width * bpp];
-  scalar::ayuv64_to_rgb_u16_or_rgba_u16_row::<ALPHA, ALPHA_SRC>(
+  scalar::ayuv64_to_rgb_u16_or_rgba_u16_row::<ALPHA, ALPHA_SRC, false>(
     &p, &mut s, width, matrix, full_range,
   );
   unsafe {
-    ayuv64_to_rgb_u16_or_rgba_u16_row::<ALPHA, ALPHA_SRC>(&p, &mut k, width, matrix, full_range);
+    ayuv64_to_rgb_u16_or_rgba_u16_row::<ALPHA, ALPHA_SRC, false>(
+      &p, &mut k, width, matrix, full_range,
+    );
   }
   assert_eq!(
     s,
@@ -61,9 +65,9 @@ fn check_luma(width: usize) {
   let p = pseudo_random_ayuv64(width, 0xC001);
   let mut s = std::vec![0u8; width];
   let mut k = std::vec![0u8; width];
-  scalar::ayuv64_to_luma_row(&p, &mut s, width);
+  scalar::ayuv64_to_luma_row::<false>(&p, &mut s, width);
   unsafe {
-    ayuv64_to_luma_row(&p, &mut k, width);
+    ayuv64_to_luma_row::<false>(&p, &mut k, width);
   }
   assert_eq!(s, k, "NEON ayuv64→luma diverges (width={width})");
 }
@@ -72,9 +76,9 @@ fn check_luma_u16(width: usize) {
   let p = pseudo_random_ayuv64(width, 0xC001);
   let mut s = std::vec![0u16; width];
   let mut k = std::vec![0u16; width];
-  scalar::ayuv64_to_luma_u16_row(&p, &mut s, width);
+  scalar::ayuv64_to_luma_u16_row::<false>(&p, &mut s, width);
   unsafe {
-    ayuv64_to_luma_u16_row(&p, &mut k, width);
+    ayuv64_to_luma_u16_row::<false>(&p, &mut k, width);
   }
   assert_eq!(s, k, "NEON ayuv64→luma u16 diverges (width={width})");
 }
@@ -154,7 +158,7 @@ fn neon_ayuv64_lane_order_per_pixel_y_and_a() {
   // --- luma_u16 path: Y values should be direct (no conversion). ---
   let mut luma_out = std::vec![0u16; W];
   unsafe {
-    ayuv64_to_luma_u16_row(&packed, &mut luma_out, W);
+    ayuv64_to_luma_u16_row::<false>(&packed, &mut luma_out, W);
   }
   let expected_luma: std::vec::Vec<u16> = (1..=16).map(|n| n as u16).collect();
   assert_eq!(
@@ -167,7 +171,7 @@ fn neon_ayuv64_lane_order_per_pixel_y_and_a() {
   // produces a well-defined Y output. Matrix doesn't matter for neutral chroma.
   let mut rgba_out = std::vec![0u16; W * 4];
   unsafe {
-    ayuv64_to_rgb_u16_or_rgba_u16_row::<true, true>(
+    ayuv64_to_rgb_u16_or_rgba_u16_row::<true, true, false>(
       &packed,
       &mut rgba_out,
       W,

@@ -116,6 +116,7 @@ fn bench_u8(c: &mut Criterion) {
                 MATRIX,
                 FULL_RANGE,
                 use_simd,
+                false,
               );
               ayuv64_to_rgba_row(
                 black_box(&packed[p_off..p_off + row_elems]),
@@ -124,6 +125,7 @@ fn bench_u8(c: &mut Criterion) {
                 MATRIX,
                 FULL_RANGE,
                 use_simd,
+                false,
               );
             }
             black_box((&rgb, &rgba));
@@ -201,6 +203,7 @@ fn bench_u16(c: &mut Criterion) {
                 MATRIX,
                 FULL_RANGE,
                 use_simd,
+                false,
               );
               ayuv64_to_rgba_u16_row(
                 black_box(&packed[p_off..p_off + row_elems]),
@@ -209,6 +212,7 @@ fn bench_u16(c: &mut Criterion) {
                 MATRIX,
                 FULL_RANGE,
                 use_simd,
+                false,
               );
             }
             black_box((&rgb, &rgba));
