@@ -71,6 +71,35 @@ Closes Tier 13. New source-side pixel format `Pal8` (`AV_PIX_FMT_PAL8`):
   + 12 NEON parity/semantic tests (boundary widths 1, 8, 15, 16, 17, 32, 33,
   128, 130)
 
+## Unreleased — Tier 10 float — Gbrpf32 / Gbrapf32 / Gbrpf16 / Gbrapf16 source formats
+
+Closes Tier 10's float family (P1 VFX priority — EXR / 30-60% format share).
+Four new source-side pixel formats end-to-end:
+
+- **Gbrpf32** (`AV_PIX_FMT_GBRPF32LE`) — planar G/B/R f32, no source α
+- **Gbrapf32** (`AV_PIX_FMT_GBRAPF32LE`) — planar G/B/R/A f32, source α
+- **Gbrpf16** (`AV_PIX_FMT_GBRPF16LE`) — planar G/B/R `half::f16`, no source α
+- **Gbrapf16** (`AV_PIX_FMT_GBRAPF16LE`) — planar G/B/R/A `half::f16`, source α
+
+Each format exposes 12 sinker accessors. Native SIMD across all 5 backends
+(NEON, SSE4.1, AVX2, AVX-512, wasm-simd128). f32 → f16 narrowing uses F16C
+on x86 (`is_x86_feature_detected!("f16c")`) and NEON `fp16` on aarch64
+(`is_aarch64_feature_detected!("fp16")`); scalar `half::f16` fallback on wasm
+and feature-absent paths.
+
+Rounding contracts: round-half-up for f32 → u8 / u16; IEEE-754
+round-to-nearest-even for f32 → f16 (F16C `_MM_FROUND_TO_NEAREST_INT`).
+
+α handling for gbrap*: Strategy A+ — chroma kernel runs once → expand to
+RGBA → α-extract scatters source α into slot 3. New helpers:
+`copy_alpha_plane_f32_to_u8`, `copy_alpha_plane_f32_to_u16`,
+`copy_alpha_plane_f32`, plus `copy_alpha_plane_f16` for f16-native paths.
+
+~85 new tests: per-format scalar correctness (~24), per-backend SIMD
+parity (5 × 8 kernels = 40), round-half-up regression (5), cross-format
+planar parity (6), Strategy A+ byte-equivalence (4), HDR pass-through (4),
+32-bit dispatcher overflow guards (4).
+
 ## 0.23.0 — Tier 11 finish: Grayf32 / Ya8 / Ya16 source formats
 
 **Additive feature; no public API change for existing callers.**
