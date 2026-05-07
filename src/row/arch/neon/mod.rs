@@ -41,6 +41,7 @@ pub(crate) mod alpha_extract;
 mod ayuv64;
 mod gray;
 mod hsv;
+pub(crate) mod mono1bit;
 mod packed_rgb;
 mod packed_rgb_float;
 mod packed_yuv_8bit;
