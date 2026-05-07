@@ -1598,44 +1598,60 @@ mod tests {
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gbrpf32_to_rgb_panics_on_width_overflow() {
+    // Use empty slices so no allocation happens before the dispatcher's
+    // checked-multiply helper fires. On i686 (usize=u32), width*3 overflows,
+    // and rgb_row_bytes(width) panics with "overflows usize" before any slice
+    // bounds check is reached.
+    let g: &[f32] = &[];
+    let b: &[f32] = &[];
+    let r: &[f32] = &[];
+    let mut out: [u8; 0] = [];
     let w = usize::MAX / 2 + 1;
-    let g = vec![0.0f32; w];
-    let b = vec![0.0f32; w];
-    let r = vec![0.0f32; w];
-    let mut out = vec![0u8; 3];
-    gbrpf32_to_rgb_row(&g, &b, &r, &mut out, w, false);
+    gbrpf32_to_rgb_row(g, b, r, &mut out, w, false);
   }
 
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gbrpf32_to_rgba_panics_on_width_overflow() {
+    // Use empty slices so no allocation happens before the dispatcher's
+    // checked-multiply helper fires. On i686 (usize=u32), width*4 overflows,
+    // and rgba_row_bytes(width) panics with "overflows usize" before any slice
+    // bounds check is reached.
+    let g: &[f32] = &[];
+    let b: &[f32] = &[];
+    let r: &[f32] = &[];
+    let mut out: [u8; 0] = [];
     let w = usize::MAX / 2 + 1;
-    let g = vec![0.0f32; w];
-    let b = vec![0.0f32; w];
-    let r = vec![0.0f32; w];
-    let mut out = vec![0u8; 4];
-    gbrpf32_to_rgba_row(&g, &b, &r, &mut out, w, false);
+    gbrpf32_to_rgba_row(g, b, r, &mut out, w, false);
   }
 
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gbrpf32_to_rgb_u16_panics_on_width_overflow() {
+    // Use empty slices so no allocation happens before the dispatcher's
+    // checked-multiply helper fires. On i686 (usize=u32), width*3 overflows,
+    // and rgb_row_elems(width) panics with "overflows usize" before any slice
+    // bounds check is reached.
+    let g: &[f32] = &[];
+    let b: &[f32] = &[];
+    let r: &[f32] = &[];
+    let mut out: [u16; 0] = [];
     let w = usize::MAX / 2 + 1;
-    let g = vec![0.0f32; w];
-    let b = vec![0.0f32; w];
-    let r = vec![0.0f32; w];
-    let mut out = vec![0u16; 3];
-    gbrpf32_to_rgb_u16_row(&g, &b, &r, &mut out, w, false);
+    gbrpf32_to_rgb_u16_row(g, b, r, &mut out, w, false);
   }
 
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gbrpf32_to_rgba_u16_panics_on_width_overflow() {
+    // Use empty slices so no allocation happens before the dispatcher's
+    // checked-multiply helper fires. On i686 (usize=u32), width*4 overflows,
+    // and rgba_row_elems(width) panics with "overflows usize" before any slice
+    // bounds check is reached.
+    let g: &[f32] = &[];
+    let b: &[f32] = &[];
+    let r: &[f32] = &[];
+    let mut out: [u16; 0] = [];
     let w = usize::MAX / 2 + 1;
-    let g = vec![0.0f32; w];
-    let b = vec![0.0f32; w];
-    let r = vec![0.0f32; w];
-    let mut out = vec![0u16; 4];
-    gbrpf32_to_rgba_u16_row(&g, &b, &r, &mut out, w, false);
+    gbrpf32_to_rgba_u16_row(g, b, r, &mut out, w, false);
   }
 }
