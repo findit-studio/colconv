@@ -1,10 +1,12 @@
 //! wasm-simd128 parity tests for legacy 16-bit packed-RGB kernels (Tier 7).
 //!
-//! These tests run on any host (x86_64, aarch64, etc.) since the kernels are
-//! compiled without `target_feature = "simd128"` on non-wasm targets — the
-//! `#[target_feature]` attribute is a compile-time gate on wasm32, but the
-//! function bodies are still callable via unsafe on other architectures for
-//! parity testing.
+//! These tests compile and run only when targeting `wasm32` with
+//! `target-feature=+simd128`. The entire `wasm_simd128` backend is
+//! `#[cfg(target_arch = "wasm32")]` — on native aarch64 / x86_64
+//! hosts, this module is `cfg`-out and these tests are not built.
+//! Run via `cargo test --target wasm32-unknown-unknown` with a
+//! wasm-bindgen-test runtime, or via the project's `test-wasm-simd128`
+//! CI job (which uses wasmtime).
 //!
 //! All tests carry `#[cfg_attr(miri, ignore = "...")]`.
 //! Tests use `Vec` / `assert_eq!` — not index-looping patterns.

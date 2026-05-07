@@ -37,7 +37,7 @@ Each format exposes 7 sinker accessors. Channel expansion via bit-replication
 preserves 0→0 and max→255 mapping. Native SIMD across all 5 backends
 (NEON 8 px/iter, SSE4.1 8 px/iter, AVX2 16 px/iter, AVX-512 32 px/iter,
 wasm-simd128 8 px/iter) — bit-shift + mask + replicate pattern translates
-directly across architectures. ~140 new tests: 36 frame validation, 24 scalar
+directly across architectures. ~223 new tests: 36 frame validation, 24 scalar
 correctness, 24 NEON / 24 SSE4.1 / 24 AVX2 / 24 AVX-512 / 24 wasm parity tests
 (SIMD tests gated by appropriate feature detection / arch cfg), plus 43
 sinker integration tests with SIMD-vs-scalar parity, alpha-forcing semantics,
