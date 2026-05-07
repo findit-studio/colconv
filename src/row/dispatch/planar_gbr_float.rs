@@ -402,6 +402,14 @@ pub(crate) fn gbrpf32_to_rgb_f16_row(
           return;
         }
       },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // wasm32 has no native f16 narrowing — delegates to scalar narrow.
+          // SAFETY: simd128 verified available at compile time.
+          unsafe { arch::wasm_simd128::gbrpf32_to_rgb_f16_row(g, b, r, out, width); }
+          return;
+        }
+      },
       _ => {}
     }
   }
@@ -465,6 +473,14 @@ pub(crate) fn gbrpf32_to_rgba_f16_row(
           } else {
             scalar::gbrpf32_to_rgba_f16_row(g, b, r, out, width);
           }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // wasm32 has no native f16 narrowing — delegates to scalar narrow.
+          // SAFETY: simd128 verified available at compile time.
+          unsafe { arch::wasm_simd128::gbrpf32_to_rgba_f16_row(g, b, r, out, width); }
           return;
         }
       },
@@ -883,6 +899,14 @@ pub(crate) fn gbrapf32_to_rgba_f16_row(
           return;
         }
       },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // wasm32 has no native f16 narrowing — delegates to scalar narrow.
+          // SAFETY: simd128 verified available at compile time.
+          unsafe { arch::wasm_simd128::gbrapf32_to_rgba_f16_row(g, b, r, a, out, width); }
+          return;
+        }
+      },
       _ => {}
     }
   }
@@ -1057,6 +1081,150 @@ pub(crate) fn gbrapf16_to_rgba_f16_row(
     }
   }
   scalar_f16::gbrapf16_to_rgba_f16_row(g, b, r, a, out, width);
+}
+
+// ---- Gbrpf16 → u16 RGB (fp16 NEON / F16C x86 widen / wasm simd128 / scalar) --
+
+/// Dispatch `gbrpf16_to_rgb_u16_row`: NEON fp16 or F16C x86 widen+SIMD when
+/// available, wasm-simd128 widen+SIMD on wasm32, else scalar widen fallback.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn gbrpf16_to_rgb_u16_row(
+  g: &[half::f16],
+  b: &[half::f16],
+  r: &[half::f16],
+  out: &mut [u16],
+  width: usize,
+  use_simd: bool,
+) {
+  let out_min = rgb_row_elems(width);
+  assert!(g.len() >= width, "g row too short");
+  assert!(b.len() >= width, "b row too short");
+  assert!(r.len() >= width, "r row too short");
+  assert!(out.len() >= out_min, "out too short");
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() && fp16_available() {
+          // SAFETY: NEON + fp16 verified available.
+          unsafe { arch::neon::gbrpf16_to_rgb_u16_row_fp16(g, b, r, out, width); }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe { arch::wasm_simd128::gbrpf16_to_rgb_u16_row(g, b, r, out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() && f16c_available() {
+          // SAFETY: AVX-512F + BW + F16C verified available.
+          unsafe { arch::x86_avx512::gbrpf16_to_rgb_u16_row_f16c(g, b, r, out, width); }
+          return;
+        }
+        if avx2_available() && f16c_available() {
+          // SAFETY: AVX2 + F16C verified available.
+          unsafe { arch::x86_avx2::gbrpf16_to_rgb_u16_row_f16c(g, b, r, out, width); }
+          return;
+        }
+        if sse41_available() && f16c_available() {
+          // SAFETY: SSE4.1 + F16C verified available.
+          unsafe { arch::x86_sse41::gbrpf16_to_rgb_u16_row_f16c(g, b, r, out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+  // Scalar fallback: widen f16 → f32 then scalar f32 kernel.
+  const CHUNK: usize = 64;
+  let mut gf = [0.0f32; CHUNK];
+  let mut bf = [0.0f32; CHUNK];
+  let mut rf = [0.0f32; CHUNK];
+  let mut offset = 0;
+  while offset < width {
+    let n = (width - offset).min(CHUNK);
+    for i in 0..n {
+      gf[i] = g[offset + i].to_f32();
+      bf[i] = b[offset + i].to_f32();
+      rf[i] = r[offset + i].to_f32();
+    }
+    scalar::gbrpf32_to_rgb_u16_row(&gf[..n], &bf[..n], &rf[..n], &mut out[offset * 3..], n);
+    offset += n;
+  }
+}
+
+// ---- Gbrpf16 → u16 RGBA (fp16 NEON / F16C x86 widen / wasm simd128 / scalar) -
+
+/// Dispatch `gbrpf16_to_rgba_u16_row`: NEON fp16 or F16C x86 widen+SIMD when
+/// available, wasm-simd128 widen+SIMD on wasm32, else scalar widen fallback.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn gbrpf16_to_rgba_u16_row(
+  g: &[half::f16],
+  b: &[half::f16],
+  r: &[half::f16],
+  out: &mut [u16],
+  width: usize,
+  use_simd: bool,
+) {
+  let out_min = rgba_row_elems(width);
+  assert!(g.len() >= width, "g row too short");
+  assert!(b.len() >= width, "b row too short");
+  assert!(r.len() >= width, "r row too short");
+  assert!(out.len() >= out_min, "out too short");
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() && fp16_available() {
+          // SAFETY: NEON + fp16 verified available.
+          unsafe { arch::neon::gbrpf16_to_rgba_u16_row_fp16(g, b, r, out, width); }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe { arch::wasm_simd128::gbrpf16_to_rgba_u16_row(g, b, r, out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() && f16c_available() {
+          // SAFETY: AVX-512F + BW + F16C verified available.
+          unsafe { arch::x86_avx512::gbrpf16_to_rgba_u16_row_f16c(g, b, r, out, width); }
+          return;
+        }
+        if avx2_available() && f16c_available() {
+          // SAFETY: AVX2 + F16C verified available.
+          unsafe { arch::x86_avx2::gbrpf16_to_rgba_u16_row_f16c(g, b, r, out, width); }
+          return;
+        }
+        if sse41_available() && f16c_available() {
+          // SAFETY: SSE4.1 + F16C verified available.
+          unsafe { arch::x86_sse41::gbrpf16_to_rgba_u16_row_f16c(g, b, r, out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+  // Scalar fallback: widen f16 → f32 then scalar f32 kernel.
+  const CHUNK: usize = 64;
+  let mut gf = [0.0f32; CHUNK];
+  let mut bf = [0.0f32; CHUNK];
+  let mut rf = [0.0f32; CHUNK];
+  let mut offset = 0;
+  while offset < width {
+    let n = (width - offset).min(CHUNK);
+    for i in 0..n {
+      gf[i] = g[offset + i].to_f32();
+      bf[i] = b[offset + i].to_f32();
+      rf[i] = r[offset + i].to_f32();
+    }
+    scalar::gbrpf32_to_rgba_u16_row(&gf[..n], &bf[..n], &rf[..n], &mut out[offset * 4..], n);
+    offset += n;
+  }
 }
 
 // ---- Gbrpf16 → u8 RGB (fp16 NEON widen / F16C SSE4.1 widen / wasm / scalar) -
