@@ -505,9 +505,30 @@ mod tests {
   use super::*;
   use crate::ColorMatrix;
 
+  // ---- LE-host fixture tests ----
+  //
+  // The tests below use host-native `u16` literals (e.g. `[100u16; 1]`,
+  // `vec![400u16, 200u16, 0u16]`) as if they were the on-disk LE
+  // encoding of those samples and then call the kernel with
+  // `<BITS, BE = false>` (LE path). On a BE host (e.g., s390x under
+  // miri-sb), host-native `u16` storage does NOT lay bytes out
+  // little-endian, so the kernel's `u16::from_le` byte-swap correctly
+  // reinterprets the host-native value and produces a different
+  // logical value than the literal — making the assertion fail. The
+  // kernel is correct: its BE-host scalar correctness is locked down
+  // by the dedicated `scalar_*_be_parity_*` tests further below, which
+  // build BE-encoded fixtures via `byte_swap_vec` from LE inputs and
+  // assert byte-for-byte parity. Gating these LE-fixture tests on
+  // `target_endian = "little"` avoids fixture-vs-kernel byte-order
+  // confusion without weakening coverage.
+  // Tests with all-zero / all-`u16::MAX` (byte-symmetric) literals are
+  // intentionally NOT gated — `from_le` is a no-op on those bit
+  // patterns regardless of host endianness.
+
   // ---- gbr_to_rgb_high_bit_row: u8 output, downshift ----------------------
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_high_bit_bits10_channel_reorder() {
     // G=0, B=100, R=1000 → packed R,G,B = 1000>>2, 0>>2, 100>>2 = 250, 0, 25
     let g = [0u16; 1];
@@ -521,6 +542,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_high_bit_bits10_max_value_becomes_0xff() {
     let max = (1u16 << 10) - 1; // 1023
     let g = [max; 4];
@@ -553,6 +575,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_high_bit_bits9_downshift_by_1() {
     // BITS=9: shift = 1. Value 510 >> 1 = 255.
     let g = [510u16; 1];
@@ -564,6 +587,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_high_bit_bits12_downshift_by_4() {
     // BITS=12: shift = 4. Value 4080 >> 4 = 255.
     let r = [4080u16; 1];
@@ -575,6 +599,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_high_bit_multiple_pixels_correct_layout() {
     // 3 pixels: (R,G,B) = (100,200,300>>2=75), (200>>2=50,0,0), (0,150>>2=37,50>>2=12)
     // BITS=10, shift=2
@@ -600,6 +625,7 @@ mod tests {
   // ---- gbr_to_rgb_u16_high_bit_row: u16 output, no shift ------------------
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_u16_high_bit_channel_reorder() {
     let g = [111u16; 1];
     let b = [222u16; 1];
@@ -612,6 +638,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_u16_high_bit_bits10_max_preserved() {
     let max = (1u16 << 10) - 1; // 1023
     let g = [max; 4];
@@ -634,6 +661,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_u16_high_bit_values_not_shifted() {
     // Verify that u16 output does NOT shift values (unlike u8 output).
     let g = [1000u16; 1];
@@ -649,6 +677,7 @@ mod tests {
   // ---- gbr_to_rgba_opaque_high_bit_row: u8 RGBA with constant alpha --------
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgba_opaque_high_bit_bits10_alpha_is_0xff() {
     let max = (1u16 << 10) - 1;
     let g = [max; 4];
@@ -663,6 +692,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgba_opaque_high_bit_bits9_downshift_correct() {
     // BITS=9, shift=1. Value 510 >> 1 = 255.
     let g = [510u16; 1];
@@ -677,6 +707,7 @@ mod tests {
   // ---- gbr_to_rgba_opaque_u16_high_bit_row: u16 RGBA with constant alpha ---
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgba_opaque_u16_high_bit_bits10_alpha_is_1023() {
     let g = [500u16; 2];
     let b = [200u16; 2];
@@ -714,6 +745,7 @@ mod tests {
   // ---- gbra_to_rgba_high_bit_row: u8 RGBA with source alpha ----------------
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbra_rgba_high_bit_bits10_source_alpha_downshifted() {
     // BITS=10, shift=2. Alpha value 512 >> 2 = 128.
     let g = [0u16; 1];
@@ -726,6 +758,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbra_rgba_high_bit_bits10_max_alpha_is_0xff() {
     let max = (1u16 << 10) - 1;
     let g = [max; 2];
@@ -740,6 +773,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbra_rgba_high_bit_bits14_channel_reorder_and_shift() {
     // BITS=14, shift=6. R=16320 >> 6 = 255, G=0, B=0, A=8192 >> 6 = 128.
     let g = [0u16; 1];
@@ -757,6 +791,7 @@ mod tests {
   // ---- gbra_to_rgba_u16_high_bit_row: u16 RGBA with source alpha -----------
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbra_rgba_u16_high_bit_source_alpha_preserved() {
     let g = [100u16; 1];
     let b = [200u16; 1];
@@ -771,6 +806,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbra_rgba_u16_high_bit_bits16_all_channels_preserved() {
     let g = [10000u16; 2];
     let b = [20000u16; 2];
@@ -789,6 +825,7 @@ mod tests {
   // ---- Round-trip parity: high-bit u8 output matches 8-bit source ----------
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_high_bit_bits10_parity_with_scaled_8bit() {
     // val=128 in 8-bit; in 10-bit: 128 << 2 = 512. 512 >> 2 = 128.
     let val: u16 = 128u16 << 2;
@@ -801,6 +838,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_high_bit_bits12_parity_with_scaled_8bit() {
     // val=200 in 8-bit; in 12-bit: 200 << 4 = 3200. 3200 >> 4 = 200.
     let val: u16 = 200u16 << 4;
@@ -817,6 +855,7 @@ mod tests {
   // correctly before processing, ensuring scalar/SIMD produce identical output.
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbr_to_rgb_high_bit_masks_upper_bits_bits10() {
     // BITS=10, mask=0x03FF. Input 0x0CFF has upper bits set.
     // masked = 0x0CFF & 0x03FF = 0x00FF = 255. 255 >> 2 = 63 as u8.
@@ -843,6 +882,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbr_to_rgb_high_bit_masks_upper_bits_multiple_widths_bits10() {
     // Width sweep: [1, 7, 8, 16, 17, 32, 33, 64, 128, 130].
     let dirty: u16 = 0x0500; // BITS=10: mask&0x0500 = 0x0100=256; 256>>2=64.
@@ -871,6 +911,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbra_to_rgba_high_bit_masks_upper_bits_alpha_bits10() {
     // Verify that the alpha channel is also masked before shifting.
     // BITS=10: dirty_alpha = 0x0800 | 512 = 0x0A00 = 2560.
@@ -890,6 +931,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbr_to_rgb_u16_high_bit_masks_upper_bits_bits10() {
     // u16-output: verify that masked sample is in the output (not raw dirty value).
     let dirty: u16 = 0x0CFF;
@@ -905,6 +947,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbra_to_rgba_u16_high_bit_masks_upper_bits_bits10() {
     // u16 RGBA output: all channels masked.
     let dirty: u16 = 0x0555; // BITS=10: masked = 0x0555 & 0x03FF = 0x0155 = 341.
@@ -922,6 +965,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbr_to_rgba_opaque_high_bit_masks_upper_bits_bits10() {
     // u8 RGBA opaque: RGB channels masked, alpha always 0xFF.
     let dirty: u16 = 0x0CFF; // masked & 0x03FF = 0x00FF = 255. 255>>2=63.
@@ -939,6 +983,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbr_to_rgba_opaque_u16_high_bit_masks_upper_bits_bits10() {
     // u16 RGBA opaque: RGB masked, alpha is opaque mask value.
     let dirty: u16 = 0x0CFF; // masked = 0x00FF = 255.
@@ -973,6 +1018,7 @@ mod tests {
   // ---- Cross-path consistency: direct GBRA vs masked RGB + separate alpha ---
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbra_to_rgba_high_bit_cross_path_consistency_bits10() {
     // With upper-bits-set alpha: direct gbra_to_rgba == manual masking.
     // BITS=10, dirty_alpha = 0x0800 | 0x0100 = 0x0900; masked=0x0100=256; 256>>2=64.
@@ -1004,6 +1050,7 @@ mod tests {
   // ---- gbr_to_luma_u16_high_bit_row: native-depth luma --------------------
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn luma_u16_high_bit_bits10_max_white_not_banded() {
     // BITS=10: max = 1023. Old path gave (255 as u16) << 2 = 1020, not 1023.
     // New kernel must produce a value near 1023 for all-white input.
@@ -1027,6 +1074,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn luma_u16_high_bit_bits12_max_white_not_banded() {
     // BITS=12: max = 4095. Old path: (255 as u16) << 4 = 4080.
     // New kernel should give a value in [4090, 4095].
@@ -1063,6 +1111,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn luma_u16_high_bit_bits10_neutral_gray_midrange() {
     // BITS=10: mid = 512. Luma of neutral gray ≈ 512.
     let mid = 512u16;
@@ -1089,6 +1138,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn luma_u16_high_bit_bits10_full_range_vs_limited_range() {
     // For mid-gray input, limited-range luma should be in [16<<2, 235<<2] = [64, 940].
     let mid = 512u16;
@@ -1174,6 +1224,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn luma_u16_high_bit_bits16_limited_range_near_white_keeps_gradation() {
     // BITS=16, BT.709 luma weights ≈ Kr=0.2126, Kg=0.7152, Kb=0.0722.
     // Setting all 3 channels equal makes the matrix multiply produce
@@ -1208,6 +1259,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn luma_u16_high_bit_bits10_limited_range_endpoints() {
     // BITS=10: y_off=64 (=16<<2), y_max=940 (=235<<2), native_max=1023.
     // BT.709 luma at all-equal channels passes y_full ≈ input through.

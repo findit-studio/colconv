@@ -294,7 +294,24 @@ mod tests {
     );
   }
 
+  // ---- LE-host fixture tests ----
+  //
+  // The tests below use host-native `u16` literals (e.g.
+  // `vec![0x3FFu16, 0x1FF]`) as if they were the on-disk LE encoding of
+  // those samples and then call the kernel with `<BITS, BE = false>`
+  // (LE path). On a BE host (e.g., s390x under miri-sb), host-native
+  // `u16` storage does NOT lay bytes out little-endian, so the kernel's
+  // `u16::from_le` byte-swap correctly reinterprets the host-native
+  // value and produces a different logical value than the literal —
+  // making the assertion fail. The kernel is correct: its BE-host
+  // scalar correctness is locked down by the dedicated
+  // `*_be_parity_with_swapped_buffer` tests below, which build
+  // BE-encoded fixtures via `swap_bytes` from LE inputs and assert
+  // byte-for-byte parity. Gating these LE-fixture tests on
+  // `target_endian = "little"` avoids fixture-vs-kernel byte-order
+  // confusion without weakening coverage.
   #[test]
+  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_u16_to_u8_depth_converts_at_each_bits_value() {
     // BITS=10
     let alpha: std::vec::Vec<u16> = std::vec![0x3FF, 0x1FF];
@@ -316,6 +333,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_u16_preserves_native_u16_within_bits_range() {
     // In-range values pass through unchanged.
     let alpha: std::vec::Vec<u16> = std::vec![0x3FF, 0x1FF, 0x000];
@@ -328,6 +346,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_u16_masks_overrange_to_bits_range() {
     // Over-range α (e.g., 0xFFFF at BITS=10) must be masked to low BITS.
     // Without the mask, raw u16 0xFFFF would leak straight to output and
@@ -343,6 +362,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_u16_to_u8_masks_overrange_then_shifts() {
     // Without the BITS mask, 0x0500 at BITS=10 would shift `>> 2` to
     // 320 and either narrow as u8 to 64 (scalar `as u8`) or saturate to
