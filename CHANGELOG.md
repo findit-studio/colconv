@@ -1,5 +1,25 @@
 # CHANGELOG
 
+## Unreleased — Tier 15 — Mono1bit (monoblack/monowhite) source formats
+
+Closes Tier 15. Two new source-side pixel formats:
+- `Monoblack` (`AV_PIX_FMT_MONOBLACK`) — 1-bit-per-pixel, MSB first, bit=0=black
+- `Monowhite` (`AV_PIX_FMT_MONOWHITE`) — same byte layout, INVERTED polarity
+
+Const-generic `MonoFrame<const INVERT: bool>` with type aliases for the two
+polarities. Native SIMD across all 5 backends (NEON, SSE4.1, AVX2, AVX-512,
+wasm-simd128). 16-64 px / iter via bit-mask broadcast + test-nonzero pattern.
+Each format exposes 7 sinker accessors: with_rgb, with_rgba, with_rgb_u16,
+with_rgba_u16, with_luma, with_luma_u16, with_hsv. ~1730+ tests.
+
+**Fix (codex high):** u16 outputs (`with_luma_u16`, `with_rgb_u16`, `with_rgba_u16`)
+now zero-extend the 8-bit luma value to u16 — white maps to 0x00FF, not 0xFFFF.
+This matches Gray8's `with_luma_u16` / `with_rgb_u16` / `with_rgba_u16` contract
+(zero-extend computed 8-bit luma rather than rescaling). Alpha in `with_rgba_u16`
+is also zero-extended (0x00FF), consistent with a `0xFF` u8 alpha zero-extended to
+u16. Callers mixing Monoblack/Monowhite with other 8-bit sources will see consistent
+white luma (255) across all formats in u16 outputs.
+
 ## Unreleased — Tier 13 — Pal8 (palette) source format
 
 Closes Tier 13. New source-side pixel format `Pal8` (`AV_PIX_FMT_PAL8`):

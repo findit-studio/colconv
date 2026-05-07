@@ -80,6 +80,11 @@ pub use dispatch::{
   pn::*, rgb_f16_ops::*, rgb_float_ops::*, rgb_ops::*, v30x::*, v210::*, v410::*, vuya::*, vuyx::*,
   xv36::*, y210::*, y212::*, y216::*, yuv420::*, yuv444::*, yuva::*,
 };
+// Mono1bit dispatchers — pub(crate) so sinker code can reach them via
+// `crate::row::monoblack_to_*` / `crate::row::monowhite_to_*` without
+// reaching into `dispatch::mono1bit` internals directly.
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) use dispatch::mono1bit::*;
 // Gray dispatchers are pub(crate) — sinker code uses them via crate::row::gray*_row.
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub(crate) use dispatch::gray::*;

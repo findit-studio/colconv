@@ -1620,6 +1620,7 @@ pub(super) fn rgb_row_to_luma_u16_row(
 mod ayuv64;
 mod bayer;
 mod gray;
+mod mono1bit;
 mod packed_rgb_10bit;
 mod packed_rgb_8bit;
 mod packed_rgb_f16;

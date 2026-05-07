@@ -41,6 +41,7 @@ mod bayer;
 pub(crate) mod gray;
 pub(crate) mod grayf32;
 mod hsv;
+pub(crate) mod mono1bit;
 mod packed_rgb;
 mod packed_rgb_float;
 mod packed_yuv_8bit;
@@ -79,6 +80,9 @@ pub(crate) use gray::*;
 #[allow(unused_imports)]
 pub(crate) use grayf32::*;
 pub(crate) use hsv::*;
+// mono1bit functions are consumed by dispatch via the module path.
+#[allow(unused_imports)]
+pub(crate) use mono1bit::*;
 pub(crate) use packed_rgb::*;
 pub(crate) use packed_rgb_float::*;
 pub(crate) use packed_yuv_8bit::*;
