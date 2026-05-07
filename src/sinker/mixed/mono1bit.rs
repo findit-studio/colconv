@@ -2,8 +2,7 @@
 
 use super::{MixedSinker, MixedSinkerError, RowSlice, check_dimensions_match};
 use crate::{
-  PixelSink,
-  row::dispatch::mono1bit as dispatch,
+  PixelSink, row,
   yuv::{Monoblack, MonoblackRow, MonoblackSink, Monowhite, MonowhiteRow, MonowhiteSink},
 };
 
@@ -154,7 +153,7 @@ impl PixelSink for MixedSinker<'_, Monoblack> {
     let one_plane_end = one_plane_start + w;
 
     if let Some(buf) = rgb.as_deref_mut() {
-      dispatch::monoblack_to_rgb_or_rgba_row::<false>(
+      row::monoblack_to_rgb_or_rgba_row::<false>(
         row.data(),
         &mut buf[one_plane_start * 3..one_plane_end * 3],
         w,
@@ -163,7 +162,7 @@ impl PixelSink for MixedSinker<'_, Monoblack> {
     }
 
     if let Some(buf) = rgba.as_deref_mut() {
-      dispatch::monoblack_to_rgb_or_rgba_row::<true>(
+      row::monoblack_to_rgb_or_rgba_row::<true>(
         row.data(),
         &mut buf[one_plane_start * 4..one_plane_end * 4],
         w,
@@ -172,7 +171,7 @@ impl PixelSink for MixedSinker<'_, Monoblack> {
     }
 
     if let Some(buf) = rgb_u16.as_deref_mut() {
-      dispatch::monoblack_to_rgb_u16_or_rgba_u16_row::<false>(
+      row::monoblack_to_rgb_u16_or_rgba_u16_row::<false>(
         row.data(),
         &mut buf[one_plane_start * 3..one_plane_end * 3],
         w,
@@ -181,7 +180,7 @@ impl PixelSink for MixedSinker<'_, Monoblack> {
     }
 
     if let Some(buf) = rgba_u16.as_deref_mut() {
-      dispatch::monoblack_to_rgb_u16_or_rgba_u16_row::<true>(
+      row::monoblack_to_rgb_u16_or_rgba_u16_row::<true>(
         row.data(),
         &mut buf[one_plane_start * 4..one_plane_end * 4],
         w,
@@ -190,7 +189,7 @@ impl PixelSink for MixedSinker<'_, Monoblack> {
     }
 
     if let Some(buf) = luma.as_deref_mut() {
-      dispatch::monoblack_to_luma_row(
+      row::monoblack_to_luma_row(
         row.data(),
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -199,7 +198,7 @@ impl PixelSink for MixedSinker<'_, Monoblack> {
     }
 
     if let Some(buf) = luma_u16.as_deref_mut() {
-      dispatch::monoblack_to_luma_u16_row(
+      row::monoblack_to_luma_u16_row(
         row.data(),
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -208,7 +207,7 @@ impl PixelSink for MixedSinker<'_, Monoblack> {
     }
 
     if let Some(hsv) = hsv.as_mut() {
-      dispatch::monoblack_to_hsv_row(
+      row::monoblack_to_hsv_row(
         row.data(),
         &mut hsv.h[one_plane_start..one_plane_end],
         &mut hsv.s[one_plane_start..one_plane_end],
@@ -369,7 +368,7 @@ impl PixelSink for MixedSinker<'_, Monowhite> {
     let one_plane_end = one_plane_start + w;
 
     if let Some(buf) = rgb.as_deref_mut() {
-      dispatch::monowhite_to_rgb_or_rgba_row::<false>(
+      row::monowhite_to_rgb_or_rgba_row::<false>(
         row.data(),
         &mut buf[one_plane_start * 3..one_plane_end * 3],
         w,
@@ -378,7 +377,7 @@ impl PixelSink for MixedSinker<'_, Monowhite> {
     }
 
     if let Some(buf) = rgba.as_deref_mut() {
-      dispatch::monowhite_to_rgb_or_rgba_row::<true>(
+      row::monowhite_to_rgb_or_rgba_row::<true>(
         row.data(),
         &mut buf[one_plane_start * 4..one_plane_end * 4],
         w,
@@ -387,7 +386,7 @@ impl PixelSink for MixedSinker<'_, Monowhite> {
     }
 
     if let Some(buf) = rgb_u16.as_deref_mut() {
-      dispatch::monowhite_to_rgb_u16_or_rgba_u16_row::<false>(
+      row::monowhite_to_rgb_u16_or_rgba_u16_row::<false>(
         row.data(),
         &mut buf[one_plane_start * 3..one_plane_end * 3],
         w,
@@ -396,7 +395,7 @@ impl PixelSink for MixedSinker<'_, Monowhite> {
     }
 
     if let Some(buf) = rgba_u16.as_deref_mut() {
-      dispatch::monowhite_to_rgb_u16_or_rgba_u16_row::<true>(
+      row::monowhite_to_rgb_u16_or_rgba_u16_row::<true>(
         row.data(),
         &mut buf[one_plane_start * 4..one_plane_end * 4],
         w,
@@ -405,7 +404,7 @@ impl PixelSink for MixedSinker<'_, Monowhite> {
     }
 
     if let Some(buf) = luma.as_deref_mut() {
-      dispatch::monowhite_to_luma_row(
+      row::monowhite_to_luma_row(
         row.data(),
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -414,7 +413,7 @@ impl PixelSink for MixedSinker<'_, Monowhite> {
     }
 
     if let Some(buf) = luma_u16.as_deref_mut() {
-      dispatch::monowhite_to_luma_u16_row(
+      row::monowhite_to_luma_u16_row(
         row.data(),
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -423,7 +422,7 @@ impl PixelSink for MixedSinker<'_, Monowhite> {
     }
 
     if let Some(hsv) = hsv.as_mut() {
-      dispatch::monowhite_to_hsv_row(
+      row::monowhite_to_hsv_row(
         row.data(),
         &mut hsv.h[one_plane_start..one_plane_end],
         &mut hsv.s[one_plane_start..one_plane_end],

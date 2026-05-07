@@ -14,7 +14,8 @@
 //! - RGBA: write via `write_rgba_16` (4-channel interleave, α=0xFF).
 //! - Luma u8: store with `_mm_storeu_si128`.
 //! - u16 outputs: process 8 px / iter, unpack the low 8 bytes to u16x8 with
-//!   `(y << 8) | y` via `_mm_unpacklo_epi8`.
+//!   `(y << 8) | y` via `_mm_unpacklo_epi8`, then store via `write_rgb_u16_8`
+//!   / `write_rgba_u16_8` (shared SSSE3/SSE2 interleave helpers).
 //!
 //! Tail (remaining pixels after last full 16-px block) falls back to scalar.
 
@@ -23,7 +24,7 @@
 use core::arch::x86_64::*;
 
 use crate::row::{
-  arch::x86_common::{write_rgb_16, write_rgba_16},
+  arch::x86_common::{write_rgb_16, write_rgb_u16_8, write_rgba_16, write_rgba_u16_8},
   scalar::mono1bit as scalar,
 };
 
@@ -216,43 +217,9 @@ pub(crate) unsafe fn mono1bit_to_rgb_u16_row<const INVERT: bool>(
       let y8_128 = unpack_2bytes_sse41::<INVERT>(data[byte_idx], 0);
       // Extract low 8 bytes (our 8 pixels) and expand to u16x8.
       let y16 = expand_y_to_u16x8_sse41(y8_128);
-      // Write 8 pixels × 3 channels = 24 u16 = 48 bytes.
-      // No intrinsic interleave-3 in SSE4.1 — use scalar for the store.
-      let ptr = out.as_mut_ptr().add(x * 3);
-      // Extract each lane and write manually (8 pixels × 3 u16).
-      // This is still faster than the full scalar bit-extraction path.
-      let v = _mm_extract_epi16::<0>(y16) as u16;
-      *ptr = v;
-      *ptr.add(1) = v;
-      *ptr.add(2) = v;
-      let v = _mm_extract_epi16::<1>(y16) as u16;
-      *ptr.add(3) = v;
-      *ptr.add(4) = v;
-      *ptr.add(5) = v;
-      let v = _mm_extract_epi16::<2>(y16) as u16;
-      *ptr.add(6) = v;
-      *ptr.add(7) = v;
-      *ptr.add(8) = v;
-      let v = _mm_extract_epi16::<3>(y16) as u16;
-      *ptr.add(9) = v;
-      *ptr.add(10) = v;
-      *ptr.add(11) = v;
-      let v = _mm_extract_epi16::<4>(y16) as u16;
-      *ptr.add(12) = v;
-      *ptr.add(13) = v;
-      *ptr.add(14) = v;
-      let v = _mm_extract_epi16::<5>(y16) as u16;
-      *ptr.add(15) = v;
-      *ptr.add(16) = v;
-      *ptr.add(17) = v;
-      let v = _mm_extract_epi16::<6>(y16) as u16;
-      *ptr.add(18) = v;
-      *ptr.add(19) = v;
-      *ptr.add(20) = v;
-      let v = _mm_extract_epi16::<7>(y16) as u16;
-      *ptr.add(21) = v;
-      *ptr.add(22) = v;
-      *ptr.add(23) = v;
+      // Write 8 pixels × 3 channels = 24 u16 = 48 bytes via the shared
+      // SSSE3 shuffle-based interleave helper (y broadcast to R, G, B).
+      write_rgb_u16_8(y16, y16, y16, out.as_mut_ptr().add(x * 3));
       x += 8;
       byte_idx += 1;
     }
@@ -288,47 +255,11 @@ pub(crate) unsafe fn mono1bit_to_rgba_u16_row<const INVERT: bool>(
     while x + 8 <= width {
       let y8_128 = unpack_2bytes_sse41::<INVERT>(data[byte_idx], 0);
       let y16 = expand_y_to_u16x8_sse41(y8_128);
-      let ptr = out.as_mut_ptr().add(x * 4);
-      let v = _mm_extract_epi16::<0>(y16) as u16;
-      *ptr = v;
-      *ptr.add(1) = v;
-      *ptr.add(2) = v;
-      *ptr.add(3) = 0xFFFF;
-      let v = _mm_extract_epi16::<1>(y16) as u16;
-      *ptr.add(4) = v;
-      *ptr.add(5) = v;
-      *ptr.add(6) = v;
-      *ptr.add(7) = 0xFFFF;
-      let v = _mm_extract_epi16::<2>(y16) as u16;
-      *ptr.add(8) = v;
-      *ptr.add(9) = v;
-      *ptr.add(10) = v;
-      *ptr.add(11) = 0xFFFF;
-      let v = _mm_extract_epi16::<3>(y16) as u16;
-      *ptr.add(12) = v;
-      *ptr.add(13) = v;
-      *ptr.add(14) = v;
-      *ptr.add(15) = 0xFFFF;
-      let v = _mm_extract_epi16::<4>(y16) as u16;
-      *ptr.add(16) = v;
-      *ptr.add(17) = v;
-      *ptr.add(18) = v;
-      *ptr.add(19) = 0xFFFF;
-      let v = _mm_extract_epi16::<5>(y16) as u16;
-      *ptr.add(20) = v;
-      *ptr.add(21) = v;
-      *ptr.add(22) = v;
-      *ptr.add(23) = 0xFFFF;
-      let v = _mm_extract_epi16::<6>(y16) as u16;
-      *ptr.add(24) = v;
-      *ptr.add(25) = v;
-      *ptr.add(26) = v;
-      *ptr.add(27) = 0xFFFF;
-      let v = _mm_extract_epi16::<7>(y16) as u16;
-      *ptr.add(28) = v;
-      *ptr.add(29) = v;
-      *ptr.add(30) = v;
-      *ptr.add(31) = 0xFFFF;
+      // α=0xFFFF for all 8 pixels. Cast to i16 since __m128i is signed.
+      let alpha = _mm_set1_epi16(0xFFFFu16 as i16);
+      // Write 8 pixels × 4 channels = 32 u16 = 64 bytes via the shared
+      // SSE2 unpack-based interleave helper (y broadcast to R, G, B).
+      write_rgba_u16_8(y16, y16, y16, alpha, out.as_mut_ptr().add(x * 4));
       x += 8;
       byte_idx += 1;
     }
