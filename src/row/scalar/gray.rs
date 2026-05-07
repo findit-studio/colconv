@@ -213,10 +213,11 @@ pub(crate) fn gray8_to_hsv_row(
 /// GrayN → packed RGB u8. Masks to BITS bits, downshifts `BITS - 8` to u8,
 /// broadcasts.
 ///
+/// When `BE = true`, each u16 sample is byte-swapped before processing.
 /// When `full_range = false`, limited-range Y is rescaled to [0, 255]
 /// before broadcast. Luma outputs always pass Y through without rescaling.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gray_n_to_rgb_row<const BITS: u32>(
+pub(crate) fn gray_n_to_rgb_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
@@ -227,6 +228,7 @@ pub(crate) fn gray_n_to_rgb_row<const BITS: u32>(
   let mask = bits_mask::<BITS>();
   let shift = BITS - 8;
   for (x, &raw) in y_plane[..width].iter().enumerate() {
+    let raw = if BE { raw.swap_bytes() } else { raw };
     let masked = raw & mask;
     let y8 = if full_range {
       (masked >> shift) as u8
@@ -240,9 +242,10 @@ pub(crate) fn gray_n_to_rgb_row<const BITS: u32>(
 /// GrayN → packed RGBA u8. Masks to BITS bits, downshifts to u8, broadcasts,
 /// α = 0xFF.
 ///
+/// When `BE = true`, each u16 sample is byte-swapped before processing.
 /// When `full_range = false`, limited-range Y is rescaled to [0, 255].
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gray_n_to_rgba_row<const BITS: u32>(
+pub(crate) fn gray_n_to_rgba_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
@@ -253,6 +256,7 @@ pub(crate) fn gray_n_to_rgba_row<const BITS: u32>(
   let mask = bits_mask::<BITS>();
   let shift = BITS - 8;
   for (x, &raw) in y_plane[..width].iter().enumerate() {
+    let raw = if BE { raw.swap_bytes() } else { raw };
     let masked = raw & mask;
     let y8 = if full_range {
       (masked >> shift) as u8
@@ -265,10 +269,11 @@ pub(crate) fn gray_n_to_rgba_row<const BITS: u32>(
 
 /// GrayN → packed u16 RGB. Masks to BITS bits, broadcasts at native depth.
 ///
+/// When `BE = true`, each u16 sample is byte-swapped before processing.
 /// When `full_range = false`, limited-range Y is rescaled to full native range
 /// [0, (1<<BITS)-1] before broadcast.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gray_n_to_rgb_u16_row<const BITS: u32>(
+pub(crate) fn gray_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -278,6 +283,7 @@ pub(crate) fn gray_n_to_rgb_u16_row<const BITS: u32>(
   debug_assert!(out.len() >= width * 3, "out too short");
   let mask = bits_mask::<BITS>();
   for (x, &raw) in y_plane[..width].iter().enumerate() {
+    let raw = if BE { raw.swap_bytes() } else { raw };
     let masked = raw & mask;
     let y_out = if full_range {
       masked
@@ -290,9 +296,10 @@ pub(crate) fn gray_n_to_rgb_u16_row<const BITS: u32>(
 
 /// GrayN → packed u16 RGBA. Masks to BITS bits, broadcasts, α = `(1 << BITS) - 1`.
 ///
+/// When `BE = true`, each u16 sample is byte-swapped before processing.
 /// When `full_range = false`, limited-range Y is rescaled to full native range.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gray_n_to_rgba_u16_row<const BITS: u32>(
+pub(crate) fn gray_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -303,6 +310,7 @@ pub(crate) fn gray_n_to_rgba_u16_row<const BITS: u32>(
   let mask = bits_mask::<BITS>();
   let alpha = mask; // full-range max for BITS
   for (x, &raw) in y_plane[..width].iter().enumerate() {
+    let raw = if BE { raw.swap_bytes() } else { raw };
     let masked = raw & mask;
     let y_out = if full_range {
       masked
@@ -315,25 +323,32 @@ pub(crate) fn gray_n_to_rgba_u16_row<const BITS: u32>(
 
 /// GrayN → luma u8. Masks to BITS bits, downshifts `BITS - 8`.
 ///
+/// When `BE = true`, each u16 sample is byte-swapped before processing.
 /// Always passes raw Y through without `full_range` rescaling —
 /// the caller is explicitly requesting the source luma plane as-is.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gray_n_to_luma_row<const BITS: u32>(y_plane: &[u16], out: &mut [u8], width: usize) {
+pub(crate) fn gray_n_to_luma_row<const BITS: u32, const BE: bool>(
+  y_plane: &[u16],
+  out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(y_plane.len() >= width, "y_plane too short");
   debug_assert!(out.len() >= width, "out too short");
   let mask = bits_mask::<BITS>();
   let shift = BITS - 8;
   for (out_byte, &raw) in out[..width].iter_mut().zip(y_plane[..width].iter()) {
+    let raw = if BE { raw.swap_bytes() } else { raw };
     *out_byte = ((raw & mask) >> shift) as u8;
   }
 }
 
 /// GrayN → luma u16. Masks to BITS bits, identity copy.
 ///
+/// When `BE = true`, each u16 sample is byte-swapped before processing.
 /// Always passes raw Y through without `full_range` rescaling —
 /// the caller is explicitly requesting the source luma plane as-is.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gray_n_to_luma_u16_row<const BITS: u32>(
+pub(crate) fn gray_n_to_luma_u16_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -342,16 +357,18 @@ pub(crate) fn gray_n_to_luma_u16_row<const BITS: u32>(
   debug_assert!(out.len() >= width, "out too short");
   let mask = bits_mask::<BITS>();
   for (out_el, &raw) in out[..width].iter_mut().zip(y_plane[..width].iter()) {
+    let raw = if BE { raw.swap_bytes() } else { raw };
     *out_el = raw & mask;
   }
 }
 
 /// GrayN → HSV u8. Masks to BITS bits, downshifts to u8, H=0 S=0 V=Y8.
 ///
+/// When `BE = true`, each u16 sample is byte-swapped before processing.
 /// When `full_range = false`, the V channel uses the rescaled luma value.
 /// See [`gray8_to_hsv_row`] for the S=0 convention.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gray_n_to_hsv_row<const BITS: u32>(
+pub(crate) fn gray_n_to_hsv_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -366,6 +383,7 @@ pub(crate) fn gray_n_to_hsv_row<const BITS: u32>(
   let mask = bits_mask::<BITS>();
   let shift = BITS - 8;
   for (x, &raw) in y_plane[..width].iter().enumerate() {
+    let raw = if BE { raw.swap_bytes() } else { raw };
     let masked = raw & mask;
     h_out[x] = 0;
     s_out[x] = 0;
@@ -381,13 +399,20 @@ pub(crate) fn gray_n_to_hsv_row<const BITS: u32>(
 
 /// Gray16 → packed RGB u8. Downshifts `>> 8` to u8, broadcasts.
 ///
+/// When `BE = true`, each u16 sample is byte-swapped before processing.
 /// When `full_range = false`, limited-range Y (black=4096, white=56064+4096)
 /// is rescaled to [0, 255] before broadcast.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gray16_to_rgb_row(y_plane: &[u16], out: &mut [u8], width: usize, full_range: bool) {
+pub(crate) fn gray16_to_rgb_row<const BE: bool>(
+  y_plane: &[u16],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
   debug_assert!(y_plane.len() >= width, "y_plane too short");
   debug_assert!(out.len() >= width * 3, "out too short");
   for (x, &raw) in y_plane[..width].iter().enumerate() {
+    let raw = if BE { raw.swap_bytes() } else { raw };
     let y8 = if full_range {
       (raw >> 8) as u8
     } else {
@@ -399,12 +424,19 @@ pub(crate) fn gray16_to_rgb_row(y_plane: &[u16], out: &mut [u8], width: usize, f
 
 /// Gray16 → packed RGBA u8. Downshifts `>> 8`, broadcasts, α = 0xFF.
 ///
+/// When `BE = true`, each u16 sample is byte-swapped before processing.
 /// When `full_range = false`, limited-range Y is rescaled to [0, 255].
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gray16_to_rgba_row(y_plane: &[u16], out: &mut [u8], width: usize, full_range: bool) {
+pub(crate) fn gray16_to_rgba_row<const BE: bool>(
+  y_plane: &[u16],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
   debug_assert!(y_plane.len() >= width, "y_plane too short");
   debug_assert!(out.len() >= width * 4, "out too short");
   for (x, &raw) in y_plane[..width].iter().enumerate() {
+    let raw = if BE { raw.swap_bytes() } else { raw };
     let y8 = if full_range {
       (raw >> 8) as u8
     } else {
@@ -416,9 +448,10 @@ pub(crate) fn gray16_to_rgba_row(y_plane: &[u16], out: &mut [u8], width: usize, 
 
 /// Gray16 → packed u16 RGB. Identity broadcast, native 16-bit depth.
 ///
+/// When `BE = true`, each u16 sample is byte-swapped before processing.
 /// When `full_range = false`, limited-range Y is rescaled to [0, 65535].
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gray16_to_rgb_u16_row(
+pub(crate) fn gray16_to_rgb_u16_row<const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -427,6 +460,7 @@ pub(crate) fn gray16_to_rgb_u16_row(
   debug_assert!(y_plane.len() >= width, "y_plane too short");
   debug_assert!(out.len() >= width * 3, "out too short");
   for (x, &raw) in y_plane[..width].iter().enumerate() {
+    let raw = if BE { raw.swap_bytes() } else { raw };
     let y_out = if full_range {
       raw
     } else {
@@ -438,9 +472,10 @@ pub(crate) fn gray16_to_rgb_u16_row(
 
 /// Gray16 → packed u16 RGBA. Identity broadcast, α = 0xFFFF.
 ///
+/// When `BE = true`, each u16 sample is byte-swapped before processing.
 /// When `full_range = false`, limited-range Y is rescaled to [0, 65535].
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gray16_to_rgba_u16_row(
+pub(crate) fn gray16_to_rgba_u16_row<const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -449,6 +484,7 @@ pub(crate) fn gray16_to_rgba_u16_row(
   debug_assert!(y_plane.len() >= width, "y_plane too short");
   debug_assert!(out.len() >= width * 4, "out too short");
   for (x, &raw) in y_plane[..width].iter().enumerate() {
+    let raw = if BE { raw.swap_bytes() } else { raw };
     let y_out = if full_range {
       raw
     } else {
@@ -460,34 +496,48 @@ pub(crate) fn gray16_to_rgba_u16_row(
 
 /// Gray16 → luma u8. Downshifts `>> 8`.
 ///
+/// When `BE = true`, each u16 sample is byte-swapped before processing.
 /// Always passes raw Y through without `full_range` rescaling —
 /// the caller is explicitly requesting the source luma plane as-is.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gray16_to_luma_row(y_plane: &[u16], out: &mut [u8], width: usize) {
+pub(crate) fn gray16_to_luma_row<const BE: bool>(y_plane: &[u16], out: &mut [u8], width: usize) {
   debug_assert!(y_plane.len() >= width, "y_plane too short");
   debug_assert!(out.len() >= width, "out too short");
   for (out_byte, &raw) in out[..width].iter_mut().zip(y_plane[..width].iter()) {
+    let raw = if BE { raw.swap_bytes() } else { raw };
     *out_byte = (raw >> 8) as u8;
   }
 }
 
-/// Gray16 → luma u16. Identity copy.
+/// Gray16 → luma u16. Identity copy (or byte-swap copy for BE).
 ///
+/// When `BE = true`, each u16 sample is byte-swapped before output.
 /// Always passes raw Y through without `full_range` rescaling —
 /// the caller is explicitly requesting the source luma plane as-is.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gray16_to_luma_u16_row(y_plane: &[u16], out: &mut [u16], width: usize) {
+pub(crate) fn gray16_to_luma_u16_row<const BE: bool>(
+  y_plane: &[u16],
+  out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(y_plane.len() >= width, "y_plane too short");
   debug_assert!(out.len() >= width, "out too short");
-  out[..width].copy_from_slice(&y_plane[..width]);
+  if BE {
+    for (o, &raw) in out[..width].iter_mut().zip(y_plane[..width].iter()) {
+      *o = raw.swap_bytes();
+    }
+  } else {
+    out[..width].copy_from_slice(&y_plane[..width]);
+  }
 }
 
 /// Gray16 → HSV u8. `>> 8` to u8, H=0 S=0 V=Y8.
 ///
+/// When `BE = true`, each u16 sample is byte-swapped before processing.
 /// When `full_range = false`, the V channel uses the rescaled luma value.
 /// See [`gray8_to_hsv_row`] for the S=0 convention.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gray16_to_hsv_row(
+pub(crate) fn gray16_to_hsv_row<const BE: bool>(
   y_plane: &[u16],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -500,6 +550,7 @@ pub(crate) fn gray16_to_hsv_row(
   debug_assert!(s_out.len() >= width, "S out too short");
   debug_assert!(v_out.len() >= width, "V out too short");
   for (x, &raw) in y_plane[..width].iter().enumerate() {
+    let raw = if BE { raw.swap_bytes() } else { raw };
     h_out[x] = 0;
     s_out[x] = 0;
     v_out[x] = if full_range {
@@ -609,7 +660,7 @@ mod tests {
     // 10-bit black = 16 << 2 = 64
     let y: std::vec::Vec<u16> = std::vec![64u16];
     let mut out = std::vec![0u8; 3];
-    gray_n_to_rgb_row::<10>(&y, &mut out, 1, false);
+    gray_n_to_rgb_row::<10, false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[0, 0, 0]);
   }
 
@@ -618,7 +669,7 @@ mod tests {
     // 10-bit white = 235 << 2 = 940
     let y: std::vec::Vec<u16> = std::vec![940u16];
     let mut out = std::vec![0u8; 3];
-    gray_n_to_rgb_row::<10>(&y, &mut out, 1, false);
+    gray_n_to_rgb_row::<10, false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[255, 255, 255]);
   }
 
@@ -627,7 +678,7 @@ mod tests {
     // 10-bit mid: 125 << 2 = 500 → approx 127
     let y: std::vec::Vec<u16> = std::vec![500u16];
     let mut out = std::vec![0u8; 3];
-    gray_n_to_rgb_row::<10>(&y, &mut out, 1, false);
+    gray_n_to_rgb_row::<10, false>(&y, &mut out, 1, false);
     assert!(
       out[0] >= 126 && out[0] <= 128,
       "expected ~127 got {}",
@@ -640,7 +691,7 @@ mod tests {
     // 10-bit full range: value 512 >> 2 = 128
     let y: std::vec::Vec<u16> = std::vec![512u16];
     let mut out = std::vec![0u8; 3];
-    gray_n_to_rgb_row::<10>(&y, &mut out, 1, true);
+    gray_n_to_rgb_row::<10, false>(&y, &mut out, 1, true);
     assert_eq!(&out[0..3], &[128, 128, 128]);
   }
 
@@ -651,7 +702,7 @@ mod tests {
     // 12-bit black = 16 << 4 = 256
     let y: std::vec::Vec<u16> = std::vec![256u16];
     let mut out = std::vec![0u8; 3];
-    gray_n_to_rgb_row::<12>(&y, &mut out, 1, false);
+    gray_n_to_rgb_row::<12, false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[0, 0, 0]);
   }
 
@@ -660,7 +711,7 @@ mod tests {
     // 12-bit white = 235 << 4 = 3760
     let y: std::vec::Vec<u16> = std::vec![3760u16];
     let mut out = std::vec![0u8; 3];
-    gray_n_to_rgb_row::<12>(&y, &mut out, 1, false);
+    gray_n_to_rgb_row::<12, false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[255, 255, 255]);
   }
 
@@ -671,7 +722,7 @@ mod tests {
     // 14-bit black = 16 << 6 = 1024
     let y: std::vec::Vec<u16> = std::vec![1024u16];
     let mut out = std::vec![0u8; 3];
-    gray_n_to_rgb_row::<14>(&y, &mut out, 1, false);
+    gray_n_to_rgb_row::<14, false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[0, 0, 0]);
   }
 
@@ -680,7 +731,7 @@ mod tests {
     // 14-bit white = 235 << 6 = 15040
     let y: std::vec::Vec<u16> = std::vec![15040u16];
     let mut out = std::vec![0u8; 3];
-    gray_n_to_rgb_row::<14>(&y, &mut out, 1, false);
+    gray_n_to_rgb_row::<14, false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[255, 255, 255]);
   }
 
@@ -691,7 +742,7 @@ mod tests {
     // 16-bit black = 16 << 8 = 4096
     let y: std::vec::Vec<u16> = std::vec![4096u16];
     let mut out = std::vec![0u8; 3];
-    gray16_to_rgb_row(&y, &mut out, 1, false);
+    gray16_to_rgb_row::<false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[0, 0, 0]);
   }
 
@@ -700,7 +751,7 @@ mod tests {
     // 16-bit white = 235 << 8 = 60160
     let y: std::vec::Vec<u16> = std::vec![60160u16];
     let mut out = std::vec![0u8; 3];
-    gray16_to_rgb_row(&y, &mut out, 1, false);
+    gray16_to_rgb_row::<false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[255, 255, 255]);
   }
 
@@ -709,7 +760,7 @@ mod tests {
     // 16-bit mid: 125 << 8 = 32000 → approx 127
     let y: std::vec::Vec<u16> = std::vec![32000u16];
     let mut out = std::vec![0u8; 3];
-    gray16_to_rgb_row(&y, &mut out, 1, false);
+    gray16_to_rgb_row::<false>(&y, &mut out, 1, false);
     assert!(
       out[0] >= 126 && out[0] <= 128,
       "expected ~127 got {}",
@@ -722,7 +773,7 @@ mod tests {
     // 16-bit full range: 0x8000 >> 8 = 128
     let y: std::vec::Vec<u16> = std::vec![0x8000u16];
     let mut out = std::vec![0u8; 3];
-    gray16_to_rgb_row(&y, &mut out, 1, true);
+    gray16_to_rgb_row::<false>(&y, &mut out, 1, true);
     assert_eq!(&out[0..3], &[128, 128, 128]);
   }
 
@@ -737,7 +788,7 @@ mod tests {
   fn gray16_to_rgb_u16_limited_range_black() {
     let y: std::vec::Vec<u16> = std::vec![4096u16]; // limited-range black
     let mut out = std::vec![0u16; 3];
-    gray16_to_rgb_u16_row(&y, &mut out, 1, false);
+    gray16_to_rgb_u16_row::<false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[0, 0, 0]);
   }
 
@@ -745,7 +796,7 @@ mod tests {
   fn gray16_to_rgb_u16_limited_range_white() {
     let y: std::vec::Vec<u16> = std::vec![60160u16]; // limited-range white
     let mut out = std::vec![0u16; 3];
-    gray16_to_rgb_u16_row(&y, &mut out, 1, false);
+    gray16_to_rgb_u16_row::<false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[65535, 65535, 65535]);
   }
 
@@ -754,7 +805,7 @@ mod tests {
     // Over-white (Y > 60160) is clamped to max_native=65535.
     let y: std::vec::Vec<u16> = std::vec![65535u16];
     let mut out = std::vec![0u16; 3];
-    gray16_to_rgb_u16_row(&y, &mut out, 1, false);
+    gray16_to_rgb_u16_row::<false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[65535, 65535, 65535]);
   }
 
@@ -762,7 +813,7 @@ mod tests {
   fn gray16_to_rgba_u16_limited_range_black_and_white() {
     let y: std::vec::Vec<u16> = std::vec![4096u16, 60160u16];
     let mut out = std::vec![0u16; 8];
-    gray16_to_rgba_u16_row(&y, &mut out, 2, false);
+    gray16_to_rgba_u16_row::<false>(&y, &mut out, 2, false);
     assert_eq!(&out[0..3], &[0, 0, 0]);
     assert_eq!(out[3], 0xFFFF);
     assert_eq!(&out[4..7], &[65535, 65535, 65535]);
@@ -776,7 +827,7 @@ mod tests {
     // 10-bit: 1023 >> 2 = 255; 0 >> 2 = 0; 512 >> 2 = 128
     let y: std::vec::Vec<u16> = std::vec![0, 512, 1023];
     let mut out = std::vec![0u8; 9];
-    gray_n_to_rgb_row::<10>(&y, &mut out, 3, true);
+    gray_n_to_rgb_row::<10, false>(&y, &mut out, 3, true);
     assert_eq!(&out[0..3], &[0, 0, 0]);
     assert_eq!(&out[3..6], &[128, 128, 128]);
     assert_eq!(&out[6..9], &[255, 255, 255]);
@@ -787,7 +838,7 @@ mod tests {
     // Upper bits should be masked out: 0xFFFF & 0x03FF = 0x03FF = 1023
     let y: std::vec::Vec<u16> = std::vec![0xFFFF, 512, 0];
     let mut out = std::vec![0u16; 9];
-    gray_n_to_rgb_u16_row::<10>(&y, &mut out, 3, true);
+    gray_n_to_rgb_u16_row::<10, false>(&y, &mut out, 3, true);
     assert_eq!(&out[0..3], &[1023, 1023, 1023]);
     assert_eq!(&out[3..6], &[512, 512, 512]);
     assert_eq!(&out[6..9], &[0, 0, 0]);
@@ -799,7 +850,7 @@ mod tests {
     let mut h = std::vec![0xFFu8; 1];
     let mut s = std::vec![0xFFu8; 1];
     let mut v = std::vec![0u8; 1];
-    gray_n_to_hsv_row::<10>(&y, &mut h, &mut s, &mut v, 1, true);
+    gray_n_to_hsv_row::<10, false>(&y, &mut h, &mut s, &mut v, 1, true);
     assert_eq!(h[0], 0);
     assert_eq!(s[0], 0);
     assert_eq!(v[0], 128);
@@ -809,7 +860,7 @@ mod tests {
   fn gray16_to_rgb_downshifts_8() {
     let y: std::vec::Vec<u16> = std::vec![0, 0x8000, 0xFFFF];
     let mut out = std::vec![0u8; 9];
-    gray16_to_rgb_row(&y, &mut out, 3, true);
+    gray16_to_rgb_row::<false>(&y, &mut out, 3, true);
     assert_eq!(&out[0..3], &[0, 0, 0]);
     assert_eq!(&out[3..6], &[0x80, 0x80, 0x80]);
     assert_eq!(&out[6..9], &[0xFF, 0xFF, 0xFF]);
@@ -819,7 +870,7 @@ mod tests {
   fn gray16_to_luma_u16_identity() {
     let y: std::vec::Vec<u16> = std::vec![0, 1000, 65535];
     let mut out = std::vec![0u16; 3];
-    gray16_to_luma_u16_row(&y, &mut out, 3);
+    gray16_to_luma_u16_row::<false>(&y, &mut out, 3);
     assert_eq!(out.as_slice(), &[0, 1000, 65535]);
   }
 
@@ -827,7 +878,7 @@ mod tests {
   fn gray16_to_rgba_u16_opaque() {
     let y: std::vec::Vec<u16> = std::vec![12345u16];
     let mut out = std::vec![0u16; 4];
-    gray16_to_rgba_u16_row(&y, &mut out, 1, true);
+    gray16_to_rgba_u16_row::<false>(&y, &mut out, 1, true);
     assert_eq!(&out[0..4], &[12345, 12345, 12345, 0xFFFF]);
   }
 
@@ -835,7 +886,7 @@ mod tests {
   fn gray_n_to_luma_u16_10bit_masks() {
     let y: std::vec::Vec<u16> = std::vec![0xFFFF]; // should mask to 1023
     let mut out = std::vec![0u16; 1];
-    gray_n_to_luma_u16_row::<10>(&y, &mut out, 1);
+    gray_n_to_luma_u16_row::<10, false>(&y, &mut out, 1);
     assert_eq!(out[0], 1023);
   }
 
@@ -846,7 +897,7 @@ mod tests {
     // 9-bit black = 16 << 1 = 32
     let y: std::vec::Vec<u16> = std::vec![32u16];
     let mut out = std::vec![0u8; 3];
-    gray_n_to_rgb_row::<9>(&y, &mut out, 1, false);
+    gray_n_to_rgb_row::<9, false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[0, 0, 0]);
   }
 
@@ -855,7 +906,7 @@ mod tests {
     // 9-bit white = 235 << 1 = 470
     let y: std::vec::Vec<u16> = std::vec![470u16];
     let mut out = std::vec![0u8; 3];
-    gray_n_to_rgb_row::<9>(&y, &mut out, 1, false);
+    gray_n_to_rgb_row::<9, false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[255, 255, 255]);
   }
 
@@ -864,7 +915,113 @@ mod tests {
     // 9-bit full range: value 256 >> 1 = 128
     let y: std::vec::Vec<u16> = std::vec![256u16];
     let mut out = std::vec![0u8; 3];
-    gray_n_to_rgb_row::<9>(&y, &mut out, 1, true);
+    gray_n_to_rgb_row::<9, false>(&y, &mut out, 1, true);
     assert_eq!(&out[0..3], &[128, 128, 128]);
+  }
+
+  // ---- BE parity tests: gray_n (Gray9-14) -----------------------------------
+  // Pattern: construct LE input, byte-swap to produce BE input, call with
+  // BE=true, assert output equals LE-input run output.
+
+  #[test]
+  fn gray10_be_parity_rgb() {
+    // LE value 512 >> 2 = 128. BE encoding: 512 = 0x0200, BE bytes = [0x02, 0x00].
+    let le: std::vec::Vec<u16> = std::vec![512u16];
+    let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+    let mut out_le = std::vec![0u8; 3];
+    let mut out_be = std::vec![0u8; 3];
+    gray_n_to_rgb_row::<10, false>(&le, &mut out_le, 1, true);
+    gray_n_to_rgb_row::<10, true>(&be, &mut out_be, 1, true);
+    assert_eq!(out_le, out_be, "BE and LE gray10 rgb outputs must match");
+  }
+
+  #[test]
+  fn gray10_be_parity_rgba() {
+    let le: std::vec::Vec<u16> = std::vec![768u16]; // 768 >> 2 = 192
+    let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+    let mut out_le = std::vec![0u8; 4];
+    let mut out_be = std::vec![0u8; 4];
+    gray_n_to_rgba_row::<10, false>(&le, &mut out_le, 1, true);
+    gray_n_to_rgba_row::<10, true>(&be, &mut out_be, 1, true);
+    assert_eq!(out_le, out_be, "BE and LE gray10 rgba outputs must match");
+  }
+
+  #[test]
+  fn gray10_be_parity_luma() {
+    let le: std::vec::Vec<u16> = std::vec![256u16]; // 256 >> 2 = 64
+    let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+    let mut out_le = std::vec![0u8; 1];
+    let mut out_be = std::vec![0u8; 1];
+    gray_n_to_luma_row::<10, false>(&le, &mut out_le, 1);
+    gray_n_to_luma_row::<10, true>(&be, &mut out_be, 1);
+    assert_eq!(out_le, out_be, "BE and LE gray10 luma outputs must match");
+  }
+
+  #[test]
+  fn gray10_be_parity_luma_u16() {
+    let le: std::vec::Vec<u16> = std::vec![512u16];
+    let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+    let mut out_le = std::vec![0u16; 1];
+    let mut out_be = std::vec![0u16; 1];
+    gray_n_to_luma_u16_row::<10, false>(&le, &mut out_le, 1);
+    gray_n_to_luma_u16_row::<10, true>(&be, &mut out_be, 1);
+    assert_eq!(
+      out_le, out_be,
+      "BE and LE gray10 luma_u16 outputs must match"
+    );
+  }
+
+  // ---- BE parity tests: gray16 -----------------------------------------------
+
+  #[test]
+  fn gray16_be_parity_rgb() {
+    // LE value 0x8000 >> 8 = 128.
+    let le: std::vec::Vec<u16> = std::vec![0x8000u16];
+    let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+    let mut out_le = std::vec![0u8; 3];
+    let mut out_be = std::vec![0u8; 3];
+    gray16_to_rgb_row::<false>(&le, &mut out_le, 1, true);
+    gray16_to_rgb_row::<true>(&be, &mut out_be, 1, true);
+    assert_eq!(out_le, out_be, "BE and LE gray16 rgb outputs must match");
+  }
+
+  #[test]
+  fn gray16_be_parity_rgba() {
+    let le: std::vec::Vec<u16> = std::vec![0xC000u16]; // 0xC0 = 192
+    let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+    let mut out_le = std::vec![0u8; 4];
+    let mut out_be = std::vec![0u8; 4];
+    gray16_to_rgba_row::<false>(&le, &mut out_le, 1, true);
+    gray16_to_rgba_row::<true>(&be, &mut out_be, 1, true);
+    assert_eq!(out_le, out_be, "BE and LE gray16 rgba outputs must match");
+  }
+
+  #[test]
+  fn gray16_be_parity_luma() {
+    let le: std::vec::Vec<u16> = std::vec![0x4000u16]; // 0x40 = 64
+    let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+    let mut out_le = std::vec![0u8; 1];
+    let mut out_be = std::vec![0u8; 1];
+    gray16_to_luma_row::<false>(&le, &mut out_le, 1);
+    gray16_to_luma_row::<true>(&be, &mut out_be, 1);
+    assert_eq!(out_le, out_be, "BE and LE gray16 luma outputs must match");
+  }
+
+  #[test]
+  fn gray16_be_parity_luma_u16() {
+    // For gray16_to_luma_u16_row with BE=true, swap_bytes is applied.
+    // LE: 0x1234. BE encoding of that value: swap bytes → 0x3412.
+    // After BE kernel processes 0x3412 with swap_bytes → 0x1234. Output = 0x1234.
+    let le_val: u16 = 0x1234;
+    let le: std::vec::Vec<u16> = std::vec![le_val];
+    let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+    let mut out_le = std::vec![0u16; 1];
+    let mut out_be = std::vec![0u16; 1];
+    gray16_to_luma_u16_row::<false>(&le, &mut out_le, 1);
+    gray16_to_luma_u16_row::<true>(&be, &mut out_be, 1);
+    assert_eq!(
+      out_le, out_be,
+      "BE and LE gray16 luma_u16 outputs must match"
+    );
   }
 }

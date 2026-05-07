@@ -27,259 +27,289 @@ use crate::row::{
 
 /// Dispatch `ya16_to_rgb_row`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usize, use_simd: bool) {
+pub(crate) fn ya16_to_rgb_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u8],
+  width: usize,
+  use_simd: bool,
+) {
   assert!(packed.len() >= ya_row_elems(width), "packed too short");
   assert!(out.len() >= rgb_row_bytes(width), "out too short");
   if !use_simd {
-    return scalar::ya16_to_rgb_row(packed, out, width);
+    return scalar::ya16_to_rgb_row::<BE>(packed, out, width);
   }
   cfg_select! {
     target_arch = "aarch64" => {
       if neon_available() {
-        unsafe { arch::neon::ya16_to_rgb_row(packed, out, width); }
+        unsafe { arch::neon::ya16_to_rgb_row::<BE>(packed, out, width); }
         return;
       }
     },
     target_arch = "x86_64" => {
       if avx512_available() {
-        unsafe { arch::x86_avx512::ya16_to_rgb_row(packed, out, width); }
+        unsafe { arch::x86_avx512::ya16_to_rgb_row::<BE>(packed, out, width); }
         return;
       }
       if avx2_available() {
-        unsafe { arch::x86_avx2::ya16_to_rgb_row(packed, out, width); }
+        unsafe { arch::x86_avx2::ya16_to_rgb_row::<BE>(packed, out, width); }
         return;
       }
       if sse41_available() {
-        unsafe { arch::x86_sse41::ya16_to_rgb_row(packed, out, width); }
+        unsafe { arch::x86_sse41::ya16_to_rgb_row::<BE>(packed, out, width); }
         return;
       }
     },
     target_arch = "wasm32" => {
       if simd128_available() {
-        unsafe { arch::wasm_simd128::ya16_to_rgb_row(packed, out, width); }
+        unsafe { arch::wasm_simd128::ya16_to_rgb_row::<BE>(packed, out, width); }
         return;
       }
     },
     _ => {}
   }
-  scalar::ya16_to_rgb_row(packed, out, width);
+  scalar::ya16_to_rgb_row::<BE>(packed, out, width);
 }
 
 // ---- ya16_to_rgba_row ---------------------------------------------------------
 
 /// Dispatch `ya16_to_rgba_row`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usize, use_simd: bool) {
+pub(crate) fn ya16_to_rgba_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u8],
+  width: usize,
+  use_simd: bool,
+) {
   assert!(packed.len() >= ya_row_elems(width), "packed too short");
   assert!(out.len() >= rgba_row_bytes(width), "out too short");
   if !use_simd {
-    return scalar::ya16_to_rgba_row(packed, out, width);
+    return scalar::ya16_to_rgba_row::<BE>(packed, out, width);
   }
   cfg_select! {
     target_arch = "aarch64" => {
       if neon_available() {
-        unsafe { arch::neon::ya16_to_rgba_row(packed, out, width); }
+        unsafe { arch::neon::ya16_to_rgba_row::<BE>(packed, out, width); }
         return;
       }
     },
     target_arch = "x86_64" => {
       if avx512_available() {
-        unsafe { arch::x86_avx512::ya16_to_rgba_row(packed, out, width); }
+        unsafe { arch::x86_avx512::ya16_to_rgba_row::<BE>(packed, out, width); }
         return;
       }
       if avx2_available() {
-        unsafe { arch::x86_avx2::ya16_to_rgba_row(packed, out, width); }
+        unsafe { arch::x86_avx2::ya16_to_rgba_row::<BE>(packed, out, width); }
         return;
       }
       if sse41_available() {
-        unsafe { arch::x86_sse41::ya16_to_rgba_row(packed, out, width); }
+        unsafe { arch::x86_sse41::ya16_to_rgba_row::<BE>(packed, out, width); }
         return;
       }
     },
     target_arch = "wasm32" => {
       if simd128_available() {
-        unsafe { arch::wasm_simd128::ya16_to_rgba_row(packed, out, width); }
+        unsafe { arch::wasm_simd128::ya16_to_rgba_row::<BE>(packed, out, width); }
         return;
       }
     },
     _ => {}
   }
-  scalar::ya16_to_rgba_row(packed, out, width);
+  scalar::ya16_to_rgba_row::<BE>(packed, out, width);
 }
 
 // ---- ya16_to_rgb_u16_row ------------------------------------------------------
 
 /// Dispatch `ya16_to_rgb_u16_row`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn ya16_to_rgb_u16_row(packed: &[u16], out: &mut [u16], width: usize, use_simd: bool) {
+pub(crate) fn ya16_to_rgb_u16_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u16],
+  width: usize,
+  use_simd: bool,
+) {
   assert!(packed.len() >= ya_row_elems(width), "packed too short");
   assert!(out.len() >= rgb_row_elems(width), "out too short");
   if !use_simd {
-    return scalar::ya16_to_rgb_u16_row(packed, out, width);
+    return scalar::ya16_to_rgb_u16_row::<BE>(packed, out, width);
   }
   cfg_select! {
     target_arch = "aarch64" => {
       if neon_available() {
-        unsafe { arch::neon::ya16_to_rgb_u16_row(packed, out, width); }
+        unsafe { arch::neon::ya16_to_rgb_u16_row::<BE>(packed, out, width); }
         return;
       }
     },
     target_arch = "x86_64" => {
       if avx512_available() {
-        unsafe { arch::x86_avx512::ya16_to_rgb_u16_row(packed, out, width); }
+        unsafe { arch::x86_avx512::ya16_to_rgb_u16_row::<BE>(packed, out, width); }
         return;
       }
       if avx2_available() {
-        unsafe { arch::x86_avx2::ya16_to_rgb_u16_row(packed, out, width); }
+        unsafe { arch::x86_avx2::ya16_to_rgb_u16_row::<BE>(packed, out, width); }
         return;
       }
       if sse41_available() {
-        unsafe { arch::x86_sse41::ya16_to_rgb_u16_row(packed, out, width); }
+        unsafe { arch::x86_sse41::ya16_to_rgb_u16_row::<BE>(packed, out, width); }
         return;
       }
     },
     target_arch = "wasm32" => {
       if simd128_available() {
-        unsafe { arch::wasm_simd128::ya16_to_rgb_u16_row(packed, out, width); }
+        unsafe { arch::wasm_simd128::ya16_to_rgb_u16_row::<BE>(packed, out, width); }
         return;
       }
     },
     _ => {}
   }
-  scalar::ya16_to_rgb_u16_row(packed, out, width);
+  scalar::ya16_to_rgb_u16_row::<BE>(packed, out, width);
 }
 
 // ---- ya16_to_rgba_u16_row -----------------------------------------------------
 
 /// Dispatch `ya16_to_rgba_u16_row`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn ya16_to_rgba_u16_row(packed: &[u16], out: &mut [u16], width: usize, use_simd: bool) {
+pub(crate) fn ya16_to_rgba_u16_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u16],
+  width: usize,
+  use_simd: bool,
+) {
   assert!(packed.len() >= ya_row_elems(width), "packed too short");
   assert!(out.len() >= rgba_row_elems(width), "out too short");
   if !use_simd {
-    return scalar::ya16_to_rgba_u16_row(packed, out, width);
+    return scalar::ya16_to_rgba_u16_row::<BE>(packed, out, width);
   }
   cfg_select! {
     target_arch = "aarch64" => {
       if neon_available() {
-        unsafe { arch::neon::ya16_to_rgba_u16_row(packed, out, width); }
+        unsafe { arch::neon::ya16_to_rgba_u16_row::<BE>(packed, out, width); }
         return;
       }
     },
     target_arch = "x86_64" => {
       if avx512_available() {
-        unsafe { arch::x86_avx512::ya16_to_rgba_u16_row(packed, out, width); }
+        unsafe { arch::x86_avx512::ya16_to_rgba_u16_row::<BE>(packed, out, width); }
         return;
       }
       if avx2_available() {
-        unsafe { arch::x86_avx2::ya16_to_rgba_u16_row(packed, out, width); }
+        unsafe { arch::x86_avx2::ya16_to_rgba_u16_row::<BE>(packed, out, width); }
         return;
       }
       if sse41_available() {
-        unsafe { arch::x86_sse41::ya16_to_rgba_u16_row(packed, out, width); }
+        unsafe { arch::x86_sse41::ya16_to_rgba_u16_row::<BE>(packed, out, width); }
         return;
       }
     },
     target_arch = "wasm32" => {
       if simd128_available() {
-        unsafe { arch::wasm_simd128::ya16_to_rgba_u16_row(packed, out, width); }
+        unsafe { arch::wasm_simd128::ya16_to_rgba_u16_row::<BE>(packed, out, width); }
         return;
       }
     },
     _ => {}
   }
-  scalar::ya16_to_rgba_u16_row(packed, out, width);
+  scalar::ya16_to_rgba_u16_row::<BE>(packed, out, width);
 }
 
 // ---- ya16_to_luma_row ---------------------------------------------------------
 
 /// Dispatch `ya16_to_luma_row`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usize, use_simd: bool) {
+pub(crate) fn ya16_to_luma_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u8],
+  width: usize,
+  use_simd: bool,
+) {
   assert!(packed.len() >= ya_row_elems(width), "packed too short");
   assert!(out.len() >= width, "out too short");
   if !use_simd {
-    return scalar::ya16_to_luma_row(packed, out, width);
+    return scalar::ya16_to_luma_row::<BE>(packed, out, width);
   }
   cfg_select! {
     target_arch = "aarch64" => {
       if neon_available() {
-        unsafe { arch::neon::ya16_to_luma_row(packed, out, width); }
+        unsafe { arch::neon::ya16_to_luma_row::<BE>(packed, out, width); }
         return;
       }
     },
     target_arch = "x86_64" => {
       if avx512_available() {
-        unsafe { arch::x86_avx512::ya16_to_luma_row(packed, out, width); }
+        unsafe { arch::x86_avx512::ya16_to_luma_row::<BE>(packed, out, width); }
         return;
       }
       if avx2_available() {
-        unsafe { arch::x86_avx2::ya16_to_luma_row(packed, out, width); }
+        unsafe { arch::x86_avx2::ya16_to_luma_row::<BE>(packed, out, width); }
         return;
       }
       if sse41_available() {
-        unsafe { arch::x86_sse41::ya16_to_luma_row(packed, out, width); }
+        unsafe { arch::x86_sse41::ya16_to_luma_row::<BE>(packed, out, width); }
         return;
       }
     },
     target_arch = "wasm32" => {
       if simd128_available() {
-        unsafe { arch::wasm_simd128::ya16_to_luma_row(packed, out, width); }
+        unsafe { arch::wasm_simd128::ya16_to_luma_row::<BE>(packed, out, width); }
         return;
       }
     },
     _ => {}
   }
-  scalar::ya16_to_luma_row(packed, out, width);
+  scalar::ya16_to_luma_row::<BE>(packed, out, width);
 }
 
 // ---- ya16_to_luma_u16_row -----------------------------------------------------
 
 /// Dispatch `ya16_to_luma_u16_row`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn ya16_to_luma_u16_row(packed: &[u16], out: &mut [u16], width: usize, use_simd: bool) {
+pub(crate) fn ya16_to_luma_u16_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u16],
+  width: usize,
+  use_simd: bool,
+) {
   assert!(packed.len() >= ya_row_elems(width), "packed too short");
   assert!(out.len() >= width, "out too short");
   if !use_simd {
-    return scalar::ya16_to_luma_u16_row(packed, out, width);
+    return scalar::ya16_to_luma_u16_row::<BE>(packed, out, width);
   }
   cfg_select! {
     target_arch = "aarch64" => {
       if neon_available() {
-        unsafe { arch::neon::ya16_to_luma_u16_row(packed, out, width); }
+        unsafe { arch::neon::ya16_to_luma_u16_row::<BE>(packed, out, width); }
         return;
       }
     },
     target_arch = "x86_64" => {
       if avx512_available() {
-        unsafe { arch::x86_avx512::ya16_to_luma_u16_row(packed, out, width); }
+        unsafe { arch::x86_avx512::ya16_to_luma_u16_row::<BE>(packed, out, width); }
         return;
       }
       if avx2_available() {
-        unsafe { arch::x86_avx2::ya16_to_luma_u16_row(packed, out, width); }
+        unsafe { arch::x86_avx2::ya16_to_luma_u16_row::<BE>(packed, out, width); }
         return;
       }
       if sse41_available() {
-        unsafe { arch::x86_sse41::ya16_to_luma_u16_row(packed, out, width); }
+        unsafe { arch::x86_sse41::ya16_to_luma_u16_row::<BE>(packed, out, width); }
         return;
       }
     },
     target_arch = "wasm32" => {
       if simd128_available() {
-        unsafe { arch::wasm_simd128::ya16_to_luma_u16_row(packed, out, width); }
+        unsafe { arch::wasm_simd128::ya16_to_luma_u16_row::<BE>(packed, out, width); }
         return;
       }
     },
     _ => {}
   }
-  scalar::ya16_to_luma_u16_row(packed, out, width);
+  scalar::ya16_to_luma_u16_row::<BE>(packed, out, width);
 }
 
 // ---- ya16_to_hsv_row ----------------------------------------------------------
 
 /// Dispatch `ya16_to_hsv_row`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn ya16_to_hsv_row(
+pub(crate) fn ya16_to_hsv_row<const BE: bool>(
   packed: &[u16],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -292,36 +322,36 @@ pub(crate) fn ya16_to_hsv_row(
   assert!(s_out.len() >= width, "S out too short");
   assert!(v_out.len() >= width, "V out too short");
   if !use_simd {
-    return scalar::ya16_to_hsv_row(packed, h_out, s_out, v_out, width);
+    return scalar::ya16_to_hsv_row::<BE>(packed, h_out, s_out, v_out, width);
   }
   cfg_select! {
     target_arch = "aarch64" => {
       if neon_available() {
-        unsafe { arch::neon::ya16_to_hsv_row(packed, h_out, s_out, v_out, width); }
+        unsafe { arch::neon::ya16_to_hsv_row::<BE>(packed, h_out, s_out, v_out, width); }
         return;
       }
     },
     target_arch = "x86_64" => {
       if avx512_available() {
-        unsafe { arch::x86_avx512::ya16_to_hsv_row(packed, h_out, s_out, v_out, width); }
+        unsafe { arch::x86_avx512::ya16_to_hsv_row::<BE>(packed, h_out, s_out, v_out, width); }
         return;
       }
       if avx2_available() {
-        unsafe { arch::x86_avx2::ya16_to_hsv_row(packed, h_out, s_out, v_out, width); }
+        unsafe { arch::x86_avx2::ya16_to_hsv_row::<BE>(packed, h_out, s_out, v_out, width); }
         return;
       }
       if sse41_available() {
-        unsafe { arch::x86_sse41::ya16_to_hsv_row(packed, h_out, s_out, v_out, width); }
+        unsafe { arch::x86_sse41::ya16_to_hsv_row::<BE>(packed, h_out, s_out, v_out, width); }
         return;
       }
     },
     target_arch = "wasm32" => {
       if simd128_available() {
-        unsafe { arch::wasm_simd128::ya16_to_hsv_row(packed, h_out, s_out, v_out, width); }
+        unsafe { arch::wasm_simd128::ya16_to_hsv_row::<BE>(packed, h_out, s_out, v_out, width); }
         return;
       }
     },
     _ => {}
   }
-  scalar::ya16_to_hsv_row(packed, h_out, s_out, v_out, width);
+  scalar::ya16_to_hsv_row::<BE>(packed, h_out, s_out, v_out, width);
 }

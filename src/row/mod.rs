@@ -710,7 +710,7 @@ mod overflow_tests {
   fn gray_n_to_rgb_dispatcher_rejects_width_times_3_overflow() {
     let y: [u16; 0] = [];
     let mut rgb: [u8; 0] = [];
-    gray_n_to_rgb_row::<10>(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
+    gray_n_to_rgb_row::<10, false>(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -719,7 +719,7 @@ mod overflow_tests {
   fn gray_n_to_rgba_dispatcher_rejects_width_times_4_overflow() {
     let y: [u16; 0] = [];
     let mut rgba: [u8; 0] = [];
-    gray_n_to_rgba_row::<10>(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
+    gray_n_to_rgba_row::<10, false>(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -728,7 +728,7 @@ mod overflow_tests {
   fn gray_n_to_rgb_u16_dispatcher_rejects_width_times_3_overflow() {
     let y: [u16; 0] = [];
     let mut rgb: [u16; 0] = [];
-    gray_n_to_rgb_u16_row::<10>(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
+    gray_n_to_rgb_u16_row::<10, false>(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -737,7 +737,7 @@ mod overflow_tests {
   fn gray_n_to_rgba_u16_dispatcher_rejects_width_times_4_overflow() {
     let y: [u16; 0] = [];
     let mut rgba: [u16; 0] = [];
-    gray_n_to_rgba_u16_row::<10>(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
+    gray_n_to_rgba_u16_row::<10, false>(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -746,7 +746,7 @@ mod overflow_tests {
   fn gray16_to_rgb_dispatcher_rejects_width_times_3_overflow() {
     let y: [u16; 0] = [];
     let mut rgb: [u8; 0] = [];
-    gray16_to_rgb_row(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
+    gray16_to_rgb_row::<false>(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -755,7 +755,7 @@ mod overflow_tests {
   fn gray16_to_rgba_dispatcher_rejects_width_times_4_overflow() {
     let y: [u16; 0] = [];
     let mut rgba: [u8; 0] = [];
-    gray16_to_rgba_row(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
+    gray16_to_rgba_row::<false>(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -764,7 +764,7 @@ mod overflow_tests {
   fn gray16_to_rgb_u16_dispatcher_rejects_width_times_3_overflow() {
     let y: [u16; 0] = [];
     let mut rgb: [u16; 0] = [];
-    gray16_to_rgb_u16_row(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
+    gray16_to_rgb_u16_row::<false>(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -773,7 +773,7 @@ mod overflow_tests {
   fn gray16_to_rgba_u16_dispatcher_rejects_width_times_4_overflow() {
     let y: [u16; 0] = [];
     let mut rgba: [u16; 0] = [];
-    gray16_to_rgba_u16_row(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
+    gray16_to_rgba_u16_row::<false>(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
   }
 
   #[cfg(target_pointer_width = "32")]
