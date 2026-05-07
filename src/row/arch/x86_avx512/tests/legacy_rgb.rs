@@ -125,10 +125,7 @@ fn avx512_rgb565_lane_order_r_only() {
   }
   let w = 33usize; // crosses the 32-pixel AVX-512 boundary
   let px: u16 = 0xF800; // R5=31, G6=0, B5=0
-  let src: std::vec::Vec<u8> = std::iter::repeat(px.to_le_bytes())
-    .take(w)
-    .flatten()
-    .collect();
+  let src: std::vec::Vec<u8> = std::iter::repeat_n(px.to_le_bytes(), w).flatten().collect();
   let mut out_scalar = std::vec![0u8; w * 3];
   let mut out_avx512 = std::vec![0u8; w * 3];
   scalar::legacy_rgb::rgb565_to_rgb_row(&src, &mut out_scalar, w);
@@ -139,8 +136,7 @@ fn avx512_rgb565_lane_order_r_only() {
     out_scalar, out_avx512,
     "AVX-512 rgb565 R-only lane order mismatch"
   );
-  let expected: std::vec::Vec<u8> = std::iter::repeat([255u8, 0u8, 0u8])
-    .take(w)
+  let expected: std::vec::Vec<u8> = std::iter::repeat_n([255u8, 0u8, 0u8], w)
     .flatten()
     .collect();
   assert_eq!(out_avx512, expected, "AVX-512 rgb565 R-only values wrong");
@@ -155,16 +151,12 @@ fn avx512_rgb565_lane_order_g_only() {
   }
   let w = 33usize;
   let px: u16 = 0x07E0; // R5=0, G6=63, B5=0
-  let src: std::vec::Vec<u8> = std::iter::repeat(px.to_le_bytes())
-    .take(w)
-    .flatten()
-    .collect();
+  let src: std::vec::Vec<u8> = std::iter::repeat_n(px.to_le_bytes(), w).flatten().collect();
   let mut out_avx512 = std::vec![0u8; w * 3];
   unsafe {
     legacy_rgb::rgb565_to_rgb_row(&src, &mut out_avx512, w);
   }
-  let expected: std::vec::Vec<u8> = std::iter::repeat([0u8, 255u8, 0u8])
-    .take(w)
+  let expected: std::vec::Vec<u8> = std::iter::repeat_n([0u8, 255u8, 0u8], w)
     .flatten()
     .collect();
   assert_eq!(out_avx512, expected, "AVX-512 rgb565 G-only values wrong");
@@ -179,16 +171,12 @@ fn avx512_rgb565_lane_order_b_only() {
   }
   let w = 33usize;
   let px: u16 = 0x001F; // R5=0, G6=0, B5=31
-  let src: std::vec::Vec<u8> = std::iter::repeat(px.to_le_bytes())
-    .take(w)
-    .flatten()
-    .collect();
+  let src: std::vec::Vec<u8> = std::iter::repeat_n(px.to_le_bytes(), w).flatten().collect();
   let mut out_avx512 = std::vec![0u8; w * 3];
   unsafe {
     legacy_rgb::rgb565_to_rgb_row(&src, &mut out_avx512, w);
   }
-  let expected: std::vec::Vec<u8> = std::iter::repeat([0u8, 0u8, 255u8])
-    .take(w)
+  let expected: std::vec::Vec<u8> = std::iter::repeat_n([0u8, 0u8, 255u8], w)
     .flatten()
     .collect();
   assert_eq!(out_avx512, expected, "AVX-512 rgb565 B-only values wrong");
@@ -292,16 +280,12 @@ fn avx512_bgr565_lane_order_r_in_low_bits() {
   let w = 33usize;
   // BGR565: R5 at [4:0]=31, G6=0, B5=0
   let px: u16 = 0x001F;
-  let src: std::vec::Vec<u8> = std::iter::repeat(px.to_le_bytes())
-    .take(w)
-    .flatten()
-    .collect();
+  let src: std::vec::Vec<u8> = std::iter::repeat_n(px.to_le_bytes(), w).flatten().collect();
   let mut out_avx512 = std::vec![0u8; w * 3];
   unsafe {
     legacy_rgb::bgr565_to_rgb_row(&src, &mut out_avx512, w);
   }
-  let expected: std::vec::Vec<u8> = std::iter::repeat([255u8, 0u8, 0u8])
-    .take(w)
+  let expected: std::vec::Vec<u8> = std::iter::repeat_n([255u8, 0u8, 0u8], w)
     .flatten()
     .collect();
   assert_eq!(
@@ -409,16 +393,12 @@ fn avx512_rgb555_lane_order_r_only() {
   }
   let w = 33usize;
   let px: u16 = 0x7C00; // R5=31, G5=0, B5=0
-  let src: std::vec::Vec<u8> = std::iter::repeat(px.to_le_bytes())
-    .take(w)
-    .flatten()
-    .collect();
+  let src: std::vec::Vec<u8> = std::iter::repeat_n(px.to_le_bytes(), w).flatten().collect();
   let mut out_avx512 = std::vec![0u8; w * 3];
   unsafe {
     legacy_rgb::rgb555_to_rgb_row(&src, &mut out_avx512, w);
   }
-  let expected: std::vec::Vec<u8> = std::iter::repeat([255u8, 0u8, 0u8])
-    .take(w)
+  let expected: std::vec::Vec<u8> = std::iter::repeat_n([255u8, 0u8, 0u8], w)
     .flatten()
     .collect();
   assert_eq!(out_avx512, expected, "AVX-512 rgb555 R-only values wrong");
@@ -433,16 +413,12 @@ fn avx512_rgb555_lane_order_b_only() {
   }
   let w = 33usize;
   let px: u16 = 0x001F; // R5=0, G5=0, B5=31
-  let src: std::vec::Vec<u8> = std::iter::repeat(px.to_le_bytes())
-    .take(w)
-    .flatten()
-    .collect();
+  let src: std::vec::Vec<u8> = std::iter::repeat_n(px.to_le_bytes(), w).flatten().collect();
   let mut out_avx512 = std::vec![0u8; w * 3];
   unsafe {
     legacy_rgb::rgb555_to_rgb_row(&src, &mut out_avx512, w);
   }
-  let expected: std::vec::Vec<u8> = std::iter::repeat([0u8, 0u8, 255u8])
-    .take(w)
+  let expected: std::vec::Vec<u8> = std::iter::repeat_n([0u8, 0u8, 255u8], w)
     .flatten()
     .collect();
   assert_eq!(out_avx512, expected, "AVX-512 rgb555 B-only values wrong");
@@ -635,16 +611,12 @@ fn avx512_rgb444_lane_order_r_only() {
   }
   let w = 33usize;
   let px: u16 = 0x0F00; // R4=15, G4=0, B4=0
-  let src: std::vec::Vec<u8> = std::iter::repeat(px.to_le_bytes())
-    .take(w)
-    .flatten()
-    .collect();
+  let src: std::vec::Vec<u8> = std::iter::repeat_n(px.to_le_bytes(), w).flatten().collect();
   let mut out_avx512 = std::vec![0u8; w * 3];
   unsafe {
     legacy_rgb::rgb444_to_rgb_row(&src, &mut out_avx512, w);
   }
-  let expected: std::vec::Vec<u8> = std::iter::repeat([255u8, 0u8, 0u8])
-    .take(w)
+  let expected: std::vec::Vec<u8> = std::iter::repeat_n([255u8, 0u8, 0u8], w)
     .flatten()
     .collect();
   assert_eq!(out_avx512, expected, "AVX-512 rgb444 R-only values wrong");
@@ -659,16 +631,12 @@ fn avx512_rgb444_lane_order_b_only() {
   }
   let w = 33usize;
   let px: u16 = 0x000F; // R4=0, G4=0, B4=15
-  let src: std::vec::Vec<u8> = std::iter::repeat(px.to_le_bytes())
-    .take(w)
-    .flatten()
-    .collect();
+  let src: std::vec::Vec<u8> = std::iter::repeat_n(px.to_le_bytes(), w).flatten().collect();
   let mut out_avx512 = std::vec![0u8; w * 3];
   unsafe {
     legacy_rgb::rgb444_to_rgb_row(&src, &mut out_avx512, w);
   }
-  let expected: std::vec::Vec<u8> = std::iter::repeat([0u8, 0u8, 255u8])
-    .take(w)
+  let expected: std::vec::Vec<u8> = std::iter::repeat_n([0u8, 0u8, 255u8], w)
     .flatten()
     .collect();
   assert_eq!(out_avx512, expected, "AVX-512 rgb444 B-only values wrong");
@@ -772,16 +740,12 @@ fn avx512_bgr444_lane_order_r_in_low_bits() {
   let w = 33usize;
   // BGR444: R4=15, G4=0, B4=0
   let px: u16 = 0x000F;
-  let src: std::vec::Vec<u8> = std::iter::repeat(px.to_le_bytes())
-    .take(w)
-    .flatten()
-    .collect();
+  let src: std::vec::Vec<u8> = std::iter::repeat_n(px.to_le_bytes(), w).flatten().collect();
   let mut out_avx512 = std::vec![0u8; w * 3];
   unsafe {
     legacy_rgb::bgr444_to_rgb_row(&src, &mut out_avx512, w);
   }
-  let expected: std::vec::Vec<u8> = std::iter::repeat([255u8, 0u8, 0u8])
-    .take(w)
+  let expected: std::vec::Vec<u8> = std::iter::repeat_n([255u8, 0u8, 0u8], w)
     .flatten()
     .collect();
   assert_eq!(

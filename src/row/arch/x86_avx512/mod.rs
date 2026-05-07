@@ -102,6 +102,8 @@ pub(crate) use alpha_extract::*;
 pub(crate) use ayuv64::*;
 pub(crate) use gray::*;
 pub(crate) use hsv::*;
+#[allow(unused_imports)] // dispatcher wired in Task 7
+pub(crate) use legacy_rgb::*;
 pub(crate) use mono1bit::*;
 pub(crate) use packed_rgb::*;
 pub(crate) use packed_rgb_float::*;
