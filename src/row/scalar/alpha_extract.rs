@@ -143,6 +143,50 @@ pub(crate) fn copy_alpha_ya_u16(packed: &[u16], rgba_out: &mut [u16], width: usi
   }
 }
 
+/// Gbrapf32 → u8 RGBA: scatter α plane (f32) into `rgba_out[3 + 4*n]` (u8).
+///
+/// Each α sample is clamped to `[0.0, 1.0]`, multiplied by 255, and rounded
+/// with round-half-up (`+ 0.5` then truncate). Only slot 3 of every 4-element
+/// tuple is written; R, G, B slots are untouched.
+// Not yet consumed by any sinker (Task 8 wires MixedSinker impls).
+#[allow(dead_code)]
+pub(crate) fn copy_alpha_plane_f32_to_u8(alpha: &[f32], rgba_out: &mut [u8], width: usize) {
+  debug_assert!(alpha.len() >= width, "alpha plane too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+  for n in 0..width {
+    rgba_out[n * 4 + 3] = (alpha[n].clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+  }
+}
+
+/// Gbrapf32 → u16 RGBA: scatter α plane (f32) into `rgba_out[3 + 4*n]` (u16).
+///
+/// Each α sample is clamped to `[0.0, 1.0]`, multiplied by 65535, and rounded
+/// with round-half-up. Only slot 3 of every 4-element tuple is written.
+// Not yet consumed by any sinker (Task 8 wires MixedSinker impls).
+#[allow(dead_code)]
+pub(crate) fn copy_alpha_plane_f32_to_u16(alpha: &[f32], rgba_out: &mut [u16], width: usize) {
+  debug_assert!(alpha.len() >= width, "alpha plane too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+  for n in 0..width {
+    rgba_out[n * 4 + 3] = (alpha[n].clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
+  }
+}
+
+/// Gbrapf32 → f32 RGBA: lossless scatter α plane (f32) into
+/// `rgba_out[3 + 4*n]` (f32).
+///
+/// No clamping, no rounding — HDR values, NaN, and Inf in the α plane are
+/// preserved bit-exact. Only slot 3 of every 4-element tuple is written.
+// Not yet consumed by any sinker (Task 8 wires MixedSinker impls).
+#[allow(dead_code)]
+pub(crate) fn copy_alpha_plane_f32(alpha: &[f32], rgba_out: &mut [f32], width: usize) {
+  debug_assert!(alpha.len() >= width, "alpha plane too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+  for n in 0..width {
+    rgba_out[n * 4 + 3] = alpha[n];
+  }
+}
+
 #[cfg(all(test, feature = "std"))]
 mod tests {
   use super::*;
@@ -266,5 +310,56 @@ mod tests {
     let mut rgba = std::vec![1u16; 8];
     copy_alpha_ya_u16(&packed, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xABCD, 1, 1, 1, 0x9ABC]);
+  }
+
+  #[test]
+  fn copy_alpha_plane_f32_to_u8_clamps_and_scales() {
+    // Values [0.0, 0.5, 1.0, 1.5, -0.1] → [0, 128, 255, 255, 0] in slot 3.
+    let alpha = vec![0.0f32, 0.5, 1.0, 1.5, -0.1];
+    let mut rgba = vec![1u8; 20];
+    copy_alpha_plane_f32_to_u8(&alpha, &mut rgba, 5);
+    // R, G, B slots (0, 1, 2) must be untouched; slot 3 has the alpha.
+    assert_eq!(rgba[3], 0, "alpha[0]=0.0 → 0");
+    assert_eq!(rgba[7], 128, "alpha[1]=0.5 → 128");
+    assert_eq!(rgba[11], 255, "alpha[2]=1.0 → 255");
+    assert_eq!(rgba[15], 255, "alpha[3]=1.5 → clamped to 255");
+    assert_eq!(rgba[19], 0, "alpha[4]=-0.1 → clamped to 0");
+    // Non-alpha slots unchanged.
+    assert_eq!(rgba[0], 1);
+    assert_eq!(rgba[1], 1);
+    assert_eq!(rgba[2], 1);
+  }
+
+  #[test]
+  fn copy_alpha_plane_f32_to_u16_clamps_and_scales() {
+    // Values [0.0, 0.5, 1.0, 1.5, -0.1] → [0, 32768, 65535, 65535, 0] in slot 3.
+    let alpha = vec![0.0f32, 0.5, 1.0, 1.5, -0.1];
+    let mut rgba = vec![1u16; 20];
+    copy_alpha_plane_f32_to_u16(&alpha, &mut rgba, 5);
+    assert_eq!(rgba[3], 0, "alpha[0]=0.0 → 0");
+    assert_eq!(rgba[7], 32768, "alpha[1]=0.5 → 32768");
+    assert_eq!(rgba[11], 65535, "alpha[2]=1.0 → 65535");
+    assert_eq!(rgba[15], 65535, "alpha[3]=1.5 → clamped to 65535");
+    assert_eq!(rgba[19], 0, "alpha[4]=-0.1 → clamped to 0");
+    // Non-alpha slots unchanged.
+    assert_eq!(rgba[0], 1);
+    assert_eq!(rgba[1], 1);
+    assert_eq!(rgba[2], 1);
+  }
+
+  #[test]
+  fn copy_alpha_plane_f32_lossless_passthrough() {
+    // HDR (2.5), NaN, Inf, negative all preserved bit-exact.
+    let alpha = vec![2.5f32, f32::NAN, f32::INFINITY, -1.0];
+    let mut rgba = vec![0.0f32; 16];
+    copy_alpha_plane_f32(&alpha, &mut rgba, 4);
+    assert_eq!(rgba[3], 2.5, "HDR 2.5 preserved");
+    assert!(rgba[7].is_nan(), "NaN preserved");
+    assert!(rgba[11].is_infinite() && rgba[11] > 0.0, "+Inf preserved");
+    assert_eq!(rgba[15], -1.0, "negative preserved");
+    // Non-alpha slots untouched (still 0.0).
+    assert_eq!(rgba[0], 0.0);
+    assert_eq!(rgba[1], 0.0);
+    assert_eq!(rgba[2], 0.0);
   }
 }

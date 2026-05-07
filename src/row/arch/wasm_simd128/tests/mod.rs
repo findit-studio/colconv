@@ -2,6 +2,8 @@
 
 use super::*;
 
+use crate::row::scalar::planar_gbr_f16 as scalar_f16;
+
 mod ayuv64;
 mod high_bit_4_2_0;
 mod high_bit_4_4_4_and_pn;
@@ -10,6 +12,7 @@ mod packed_rgb_float;
 mod packed_yuv_8bit;
 mod planar_8bit_and_nv;
 mod planar_gbr;
+mod planar_gbr_float;
 mod planar_gbr_high_bit;
 mod v210;
 mod v30x;
