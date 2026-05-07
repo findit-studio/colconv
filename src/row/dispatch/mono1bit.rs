@@ -3,6 +3,8 @@
 //! Selects the highest available SIMD backend (avx512 → avx2 → sse4.1 →
 //! neon → wasm-simd128) and falls back to scalar.
 
+#![cfg_attr(not(feature = "std"), allow(dead_code))]
+
 #[cfg(any(
   target_arch = "aarch64",
   target_arch = "x86_64",
