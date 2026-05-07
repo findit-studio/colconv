@@ -92,16 +92,14 @@ unsafe fn unpack_8bytes_avx512<const INVERT: bool>(b: [u8; 8]) -> __m512i {
     0x80u8 as i8,
   );
   let bcast = _mm512_set_epi8(
-    b[7] as i8, b[7] as i8, b[7] as i8, b[7] as i8, b[7] as i8, b[7] as i8, b[7] as i8,
-    b[7] as i8, b[6] as i8, b[6] as i8, b[6] as i8, b[6] as i8, b[6] as i8, b[6] as i8,
-    b[6] as i8, b[6] as i8, b[5] as i8, b[5] as i8, b[5] as i8, b[5] as i8, b[5] as i8,
-    b[5] as i8, b[5] as i8, b[5] as i8, b[4] as i8, b[4] as i8, b[4] as i8, b[4] as i8,
-    b[4] as i8, b[4] as i8, b[4] as i8, b[4] as i8, b[3] as i8, b[3] as i8, b[3] as i8,
-    b[3] as i8, b[3] as i8, b[3] as i8, b[3] as i8, b[3] as i8, b[2] as i8, b[2] as i8,
-    b[2] as i8, b[2] as i8, b[2] as i8, b[2] as i8, b[2] as i8, b[2] as i8, b[1] as i8,
-    b[1] as i8, b[1] as i8, b[1] as i8, b[1] as i8, b[1] as i8, b[1] as i8, b[1] as i8,
-    b[0] as i8, b[0] as i8, b[0] as i8, b[0] as i8, b[0] as i8, b[0] as i8, b[0] as i8,
-    b[0] as i8,
+    b[7] as i8, b[7] as i8, b[7] as i8, b[7] as i8, b[7] as i8, b[7] as i8, b[7] as i8, b[7] as i8,
+    b[6] as i8, b[6] as i8, b[6] as i8, b[6] as i8, b[6] as i8, b[6] as i8, b[6] as i8, b[6] as i8,
+    b[5] as i8, b[5] as i8, b[5] as i8, b[5] as i8, b[5] as i8, b[5] as i8, b[5] as i8, b[5] as i8,
+    b[4] as i8, b[4] as i8, b[4] as i8, b[4] as i8, b[4] as i8, b[4] as i8, b[4] as i8, b[4] as i8,
+    b[3] as i8, b[3] as i8, b[3] as i8, b[3] as i8, b[3] as i8, b[3] as i8, b[3] as i8, b[3] as i8,
+    b[2] as i8, b[2] as i8, b[2] as i8, b[2] as i8, b[2] as i8, b[2] as i8, b[2] as i8, b[2] as i8,
+    b[1] as i8, b[1] as i8, b[1] as i8, b[1] as i8, b[1] as i8, b[1] as i8, b[1] as i8, b[1] as i8,
+    b[0] as i8, b[0] as i8, b[0] as i8, b[0] as i8, b[0] as i8, b[0] as i8, b[0] as i8, b[0] as i8,
   );
   let anded = _mm512_and_si512(bcast, mask);
   let zero = _mm512_setzero_si512();

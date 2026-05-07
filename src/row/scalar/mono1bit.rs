@@ -9,6 +9,8 @@
 /// MSB first: bit 7 of byte[0] is pixel 0, bit 0 of byte[0] is pixel 7, etc.
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn mono1bit_to_luma_row_generic<const INVERT: bool>(data: &[u8], out: &mut [u8], width: usize) {
+  debug_assert!(data.len() >= width.div_ceil(8), "data too short");
+  debug_assert!(out.len() >= width, "out too short");
   let mut out_idx = 0;
   for byte_val in data.iter().take(width.div_ceil(8)) {
     for bit_pos in (0..8).rev() {

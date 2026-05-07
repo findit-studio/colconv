@@ -144,6 +144,22 @@ fn avx2_monowhite_to_rgb_matches_scalar() {
   }
 }
 
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+#[test]
+fn avx2_monowhite_to_rgba_matches_scalar() {
+  if !is_x86_feature_detected!("avx2") {
+    return;
+  }
+  for &w in WIDTHS {
+    let data = make_data(w.div_ceil(8), 0x3333_4444);
+    let mut simd = std::vec![0u8; w * 4];
+    let mut scal = std::vec![0u8; w * 4];
+    unsafe { super::super::mono1bit::monowhite_to_rgba_row(&data, &mut simd, w) };
+    scalar::monowhite_to_rgba_row(&data, &mut scal, w);
+    assert_eq!(simd, scal, "monowhite→rgba width={w}");
+  }
+}
+
 #[test]
 fn avx2_monowhite_to_luma_matches_scalar() {
   if !is_x86_feature_detected!("avx2") {
@@ -171,6 +187,38 @@ fn avx2_monowhite_to_luma_u16_matches_scalar() {
     unsafe { super::super::mono1bit::monowhite_to_luma_u16_row(&data, &mut simd, w) };
     scalar::monowhite_to_luma_u16_row(&data, &mut scal, w);
     assert_eq!(simd, scal, "monowhite→luma_u16 width={w}");
+  }
+}
+
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+#[test]
+fn avx2_monowhite_to_rgb_u16_matches_scalar() {
+  if !is_x86_feature_detected!("avx2") {
+    return;
+  }
+  for &w in WIDTHS {
+    let data = make_data(w.div_ceil(8), 0x9999_AAAA);
+    let mut simd = std::vec![0u16; w * 3];
+    let mut scal = std::vec![0u16; w * 3];
+    unsafe { super::super::mono1bit::monowhite_to_rgb_u16_row(&data, &mut simd, w) };
+    scalar::monowhite_to_rgb_u16_row(&data, &mut scal, w);
+    assert_eq!(simd, scal, "monowhite→rgb_u16 width={w}");
+  }
+}
+
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+#[test]
+fn avx2_monowhite_to_rgba_u16_matches_scalar() {
+  if !is_x86_feature_detected!("avx2") {
+    return;
+  }
+  for &w in WIDTHS {
+    let data = make_data(w.div_ceil(8), 0xBBBB_CCCC);
+    let mut simd = std::vec![0u16; w * 4];
+    let mut scal = std::vec![0u16; w * 4];
+    unsafe { super::super::mono1bit::monowhite_to_rgba_u16_row(&data, &mut simd, w) };
+    scalar::monowhite_to_rgba_u16_row(&data, &mut scal, w);
+    assert_eq!(simd, scal, "monowhite→rgba_u16 width={w}");
   }
 }
 
