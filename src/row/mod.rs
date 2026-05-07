@@ -87,8 +87,10 @@ pub use dispatch::{
 pub(crate) use dispatch::mono1bit::*;
 // Tier 8 finish — packed 16-bit RGB dispatcher re-exports.
 // The four basic converters (→rgb, →rgba, →rgb_u16, →rgba_u16) per format are
-// pub; luma and hsv variants (which require an rgb_scratch parameter) are
-// pub(crate) for sinker use.
+// re-exported as `pub`; luma and HSV variants (which require an rgb_scratch
+// parameter) are re-exported as `pub(crate)` for sinker use — the underlying
+// functions in `dispatch::packed_rgb_16bit` are `pub`, but only this
+// re-export visibility is visible outside the crate.
 pub use dispatch::packed_rgb_16bit::{
   bgr48_to_rgb_row, bgr48_to_rgb_u16_row, bgr48_to_rgba_row, bgr48_to_rgba_u16_row,
   bgra64_to_rgb_row, bgra64_to_rgb_u16_row, bgra64_to_rgba_row, bgra64_to_rgba_u16_row,

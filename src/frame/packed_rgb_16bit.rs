@@ -5,7 +5,12 @@
 //! - `AV_PIX_FMT_BGRA64LE` → [`Bgra64Frame`] (B, G, R, A; stride in u16 elements ≥ 4 × width)
 //!
 //! Stride is in **u16 elements** (not bytes). Plane slice is `&[u16]`.
-//! On little-endian hosts the slice can be cast directly from the FFmpeg byte buffer.
+//! Callers with a raw FFmpeg byte buffer should cast via `bytemuck::cast_slice`
+//! (which checks alignment at runtime) and divide `linesize[0]` by 2. Direct
+//! pointer casts to `&[u16]` are undefined behaviour if the byte buffer is not
+//! 2-byte aligned, and produce wrong values on big-endian hosts — all FFmpeg
+//! `*LE` formats store samples little-endian, so big-endian targets would also
+//! need per-sample `u16::from_le` conversion.
 
 use derive_more::IsVariant;
 use thiserror::Error;
