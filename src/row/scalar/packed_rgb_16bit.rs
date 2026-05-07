@@ -2,9 +2,12 @@
 //!
 //! Input planes are `&[u16]`. Each u16 sample is either LE- or BE-encoded on
 //! disk/wire; the `<const BE: bool>` const-generic parameter selects the
-//! interpretation.  When `BE = false` (the default) the kernels behave exactly
-//! as before — no extra work.  When `BE = true` each u16 element is
-//! byte-swapped on load via `u16::swap_bytes()` before any channel math.
+//! interpretation.  When `BE = false` the input is LE-encoded; when `BE = true`
+//! the input is BE-encoded.  In both cases each element is converted to
+//! host-native byte order on load via `u16::from_le` / `u16::from_be`, which
+//! are no-ops when the source byte order already matches the host.  This
+//! mirrors the SIMD `load_endian_u16x*` helpers and keeps the scalar reference
+//! correct on big-endian hosts (s390x).
 //!
 //! # Format layouts
 //!
@@ -22,13 +25,19 @@
 
 // ---- Endian load helper ------------------------------------------------------
 
-/// Load one u16 element, applying a byte-swap when `BE = true`.
+/// Load one u16 element from a source whose byte order is selected by `BE`,
+/// returning the value in host-native byte order.
+///
+/// `u16::from_be` / `u16::from_le` are target-endian aware: each is a no-op
+/// when the source byte order matches the host, and a `swap_bytes` otherwise.
+/// This matches the SIMD `load_endian_u16x*` helpers and keeps the scalar
+/// reference correct on big-endian hosts (s390x).
 ///
 /// The `if BE` branch is evaluated at compile time (monomorphization), so the
 /// unused branch is entirely eliminated from the generated binary.
 #[inline(always)]
 fn load_u16<const BE: bool>(v: u16) -> u16 {
-  if BE { v.swap_bytes() } else { v }
+  if BE { u16::from_be(v) } else { u16::from_le(v) }
 }
 
 // ---- Rgb48 family (3 u16 elements per pixel: R, G, B) ----------------------
@@ -68,10 +77,14 @@ pub(crate) fn rgb48_to_rgb_u16_row<const BE: bool>(
   debug_assert!(rgb_u16_out.len() >= width * 3, "rgb_u16_out row too short");
   if BE {
     for i in 0..width * 3 {
-      rgb_u16_out[i] = rgb48[i].swap_bytes();
+      rgb_u16_out[i] = u16::from_be(rgb48[i]);
     }
   } else {
-    rgb_u16_out[..width * 3].copy_from_slice(&rgb48[..width * 3]);
+    // LE source: use the target-endian-aware load on each element so big-endian
+    // hosts also receive host-native u16 output.
+    for i in 0..width * 3 {
+      rgb_u16_out[i] = u16::from_le(rgb48[i]);
+    }
   }
 }
 
@@ -285,10 +298,14 @@ pub(crate) fn rgba64_to_rgba_u16_row<const BE: bool>(
   );
   if BE {
     for i in 0..width * 4 {
-      rgba_u16_out[i] = rgba64[i].swap_bytes();
+      rgba_u16_out[i] = u16::from_be(rgba64[i]);
     }
   } else {
-    rgba_u16_out[..width * 4].copy_from_slice(&rgba64[..width * 4]);
+    // LE source: use the target-endian-aware load on each element so big-endian
+    // hosts also receive host-native u16 output.
+    for i in 0..width * 4 {
+      rgba_u16_out[i] = u16::from_le(rgba64[i]);
+    }
   }
 }
 
