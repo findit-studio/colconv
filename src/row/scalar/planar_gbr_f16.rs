@@ -138,6 +138,10 @@ mod tests {
   // ---- gbrpf16_to_rgb_f16_row ----------------------------------------------
 
   #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
+  )]
   fn gbrpf16_to_rgb_f16_channel_reorder() {
     // G=0.25, B=0.5, R=1.0 → packed R=1.0, G=0.25, B=0.5
     let g = [half::f16::from_f32(0.25)];
@@ -151,6 +155,10 @@ mod tests {
   }
 
   #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
+  )]
   fn gbrpf16_to_rgb_f16_hdr_preserved() {
     // HDR value 2.5 passes through losslessly.
     let hdr = half::f16::from_f32(2.5);
@@ -165,6 +173,10 @@ mod tests {
   // ---- gbrpf16_to_rgba_f16_row ---------------------------------------------
 
   #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
+  )]
   fn gbrpf16_to_rgba_f16_alpha_is_one() {
     let g = [half::f16::from_f32(0.5)];
     let b = [half::f16::from_f32(0.5)];
@@ -177,6 +189,10 @@ mod tests {
   // ---- gbrapf16_to_rgba_f16_row --------------------------------------------
 
   #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
+  )]
   fn gbrapf16_to_rgba_f16_source_alpha_passthrough() {
     let g = [half::f16::from_f32(0.25)];
     let b = [half::f16::from_f32(0.5)];
@@ -193,6 +209,10 @@ mod tests {
   // ---- copy_alpha_plane_f16 ------------------------------------------------
 
   #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
+  )]
   fn copy_alpha_plane_f16_only_writes_alpha_slot() {
     let alpha = vec![half::f16::from_f32(0.7), half::f16::from_f32(0.3)];
     let sentinel = half::f16::from_f32(0.1);
