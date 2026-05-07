@@ -11,11 +11,45 @@ Closes Tier 13. New source-side pixel format `Pal8` (`AV_PIX_FMT_PAL8`):
 - Walker: `pal8_to<S: Pal8Sink>` in `src/raw/` parallel to `bayer_to`
 - Scalar kernels: 4 per-pixel palette-lookup kernels (rgb, rgba, rgb_u16,
   rgba_u16) with BGRA→RGB reorder + full-range u16 widening
-- SIMD: scalar-only (palette gather is hard to SIMD efficiently — 1 KB LUT
-  doesn't fit in NEON, x86 gather has poor latency, wasm has no gather)
+- NEON SIMD backend (`src/row/arch/neon/pal8.rs`): hybrid scalar-gather +
+  NEON deinterleave/store strategy. For each 16-pixel block: scalar gather of
+  64 bytes into a stack buffer (reordering BGRA→RGBA), then `vld4q_u8` splits
+  4 channels for free, `vst3q_u8`/`vst4q_u8` stores them interleaved without
+  a temporary. For u16 output: `vmovl_u8` + `vshlq_n_u16`/`vorrq_u16` apply
+  the `(v << 8) | v` full-range widening in SIMD. Scalar tail for `width % 16`.
+- Dispatcher (`src/row/dispatch/pal8.rs`) updated: aarch64 paths select the
+  NEON backend via `neon_available()` when `use_simd=true`.
+- Criterion benchmark (`benches/pal8_simd.rs`) comparing scalar vs. NEON for
+  all 4 kernels at widths 256, 1280, 1920. Results on Apple M-series aarch64:
+
+  | kernel           | width | scalar      | NEON        | speedup |
+  |------------------|-------|-------------|-------------|---------|
+  | pal8_to_rgb      |   256 |   139.7 ns  |   123.5 ns  |  1.13×  |
+  | pal8_to_rgb      |  1280 |   667.6 ns  |   490.5 ns  |  1.36×  |
+  | pal8_to_rgb      |  1920 |   985.7 ns  |   744.6 ns  |  1.32×  |
+  | pal8_to_rgba     |   256 |   165.0 ns  |    83.7 ns  |  1.97×  |
+  | pal8_to_rgba     |  1280 |   794.2 ns  |   404.9 ns  |  1.96×  |
+  | pal8_to_rgba     |  1920 |  1197.8 ns  |   608.5 ns  |  1.97×  |
+  | pal8_to_rgb_u16  |   256 |   152.1 ns  |    83.3 ns  |  1.83×  |
+  | pal8_to_rgb_u16  |  1280 |   735.9 ns  |   404.0 ns  |  1.82×  |
+  | pal8_to_rgb_u16  |  1920 |  1085.2 ns  |   601.6 ns  |  1.80×  |
+  | pal8_to_rgba_u16 |   256 |   180.7 ns  |   133.0 ns  |  1.36×  |
+  | pal8_to_rgba_u16 |  1280 |   896.9 ns  |   680.5 ns  |  1.32×  |
+  | pal8_to_rgba_u16 |  1920 |  1342.5 ns  |   999.5 ns  |  1.34×  |
+
+  Analysis: SIMD wins 1.3–2.0× across all kernels. The RGBA kernels benefit
+  most (~2×) because `vst4q_u8` eliminates 4 independent byte-stride writes
+  that the scalar loop serializes. The gather itself is scalar and is the
+  primary bottleneck; the SIMD benefit comes entirely from cheaper
+  deinterleave + interleaved store, not from vectorized LUT access. The full
+  4-bank TBL approach would eliminate the stack buffer but add 16 `vqtbl4q_u8`
+  + select-merge operations per block — unlikely to win given the gather is
+  only ~50% of total cycle budget at 1920px width.
 - Sinker: `MixedSinker<'_, Pal8>` with 7 accessors. Strategy A+ for
   rgb+rgba combos (single palette lookup, RGB stripped from RGBA buffer).
-- 18 new tests: 5 frame validation + 5 scalar inline + 13 sinker integration
+- 30 new tests: 5 frame validation + 5 scalar inline + 13 sinker integration
+  + 12 NEON parity/semantic tests (boundary widths 1, 8, 15, 16, 17, 32, 33,
+  128, 130)
 
 ## 0.23.0 — Tier 11 finish: Grayf32 / Ya8 / Ya16 source formats
 

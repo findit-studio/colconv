@@ -6,6 +6,7 @@ mod high_bit_4_4_4_and_pn;
 mod packed_rgb;
 mod packed_rgb_float;
 mod packed_yuv_8bit;
+mod pal8;
 mod planar_8bit_and_nv;
 mod planar_gbr;
 mod planar_gbr_high_bit;

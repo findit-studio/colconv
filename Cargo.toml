@@ -156,6 +156,10 @@ harness = false
 name = "yuva_4_4_4_a_plus_combo"
 harness = false
 
+[[bench]]
+name = "pal8_simd"
+harness = false
+
 [features]
 default = ["std"]
 alloc = ["libm"]

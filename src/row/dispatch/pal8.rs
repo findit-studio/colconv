@@ -1,9 +1,13 @@
-//! Dispatcher for `AV_PIX_FMT_PAL8` scalar kernels.
+//! Dispatcher for `AV_PIX_FMT_PAL8` row kernels.
 //!
-//! Palette gather is not SIMD-efficient on any supported ISA
-//! (see spec § 4.4). The `use_simd` parameter is accepted for API
-//! consistency but is always a no-op — every path calls the scalar
-//! kernel.
+//! On aarch64 targets, selects the NEON backend when NEON is available
+//! at runtime (std) or compile-time (no-std). The NEON backend uses a
+//! hybrid strategy: scalar palette gather + NEON deinterleave/store, which
+//! delivers measurable throughput gains over pure scalar at production widths.
+//!
+//! On all other targets the scalar reference kernel is used. The `_use_simd`
+//! parameter is accepted for API consistency; on non-NEON targets it is a
+//! no-op.
 
 use crate::row::scalar::pal8::{
   pal8_to_rgb_row as scalar_rgb, pal8_to_rgb_u16_row as scalar_rgb_u16,
@@ -18,15 +22,25 @@ use crate::row::scalar::pal8::{
 /// `indices.len()` must equal the row's pixel width; `rgb_out.len()` must be
 /// >= `3 * indices.len()`.
 ///
-/// **`_use_simd` is a no-op.** Palette gather is not SIMD-efficient on any
-/// supported ISA (NEON lacks gather, x86 gather has poor latency for 1 KB LUTs,
-/// wasm has no gather). The scalar kernel is always called regardless of this flag.
+/// On aarch64 with NEON, delegates to the NEON hybrid backend (scalar gather +
+/// NEON deinterleave/store). On all other targets, always uses the scalar kernel
+/// regardless of `_use_simd`.
 pub fn pal8_to_rgb_row(
   indices: &[u8],
   palette: &[[u8; 4]; 256],
   rgb_out: &mut [u8],
   _use_simd: bool,
 ) {
+  #[cfg(target_arch = "aarch64")]
+  {
+    use crate::row::neon_available;
+    if _use_simd && neon_available() {
+      // SAFETY: neon_available() guarantees NEON is present; slice lengths
+      // are the caller's responsibility (same contract as scalar).
+      unsafe { crate::row::arch::neon::pal8::pal8_to_rgb_row(indices, palette, rgb_out) }
+      return;
+    }
+  }
   scalar_rgb(indices, palette, rgb_out);
 }
 
@@ -38,13 +52,22 @@ pub fn pal8_to_rgb_row(
 /// `indices.len()` must equal the row's pixel width; `rgba_out.len()` must be
 /// >= `4 * indices.len()`.
 ///
-/// **`_use_simd` is a no-op** — see [`pal8_to_rgb_row`] for the rationale.
+/// On aarch64 with NEON, delegates to the NEON hybrid backend. On all other
+/// targets, always uses the scalar kernel regardless of `_use_simd`.
 pub fn pal8_to_rgba_row(
   indices: &[u8],
   palette: &[[u8; 4]; 256],
   rgba_out: &mut [u8],
   _use_simd: bool,
 ) {
+  #[cfg(target_arch = "aarch64")]
+  {
+    use crate::row::neon_available;
+    if _use_simd && neon_available() {
+      unsafe { crate::row::arch::neon::pal8::pal8_to_rgba_row(indices, palette, rgba_out) }
+      return;
+    }
+  }
   scalar_rgba(indices, palette, rgba_out);
 }
 
@@ -56,13 +79,22 @@ pub fn pal8_to_rgba_row(
 /// `indices.len()` must equal the row's pixel width; `rgb_u16_out.len()` must
 /// be >= `3 * indices.len()`.
 ///
-/// **`_use_simd` is a no-op** — see [`pal8_to_rgb_row`] for the rationale.
+/// On aarch64 with NEON, delegates to the NEON hybrid backend. On all other
+/// targets, always uses the scalar kernel regardless of `_use_simd`.
 pub fn pal8_to_rgb_u16_row(
   indices: &[u8],
   palette: &[[u8; 4]; 256],
   rgb_u16_out: &mut [u16],
   _use_simd: bool,
 ) {
+  #[cfg(target_arch = "aarch64")]
+  {
+    use crate::row::neon_available;
+    if _use_simd && neon_available() {
+      unsafe { crate::row::arch::neon::pal8::pal8_to_rgb_u16_row(indices, palette, rgb_u16_out) }
+      return;
+    }
+  }
   scalar_rgb_u16(indices, palette, rgb_u16_out);
 }
 
@@ -74,12 +106,21 @@ pub fn pal8_to_rgb_u16_row(
 /// `indices.len()` must equal the row's pixel width; `rgba_u16_out.len()` must
 /// be >= `4 * indices.len()`.
 ///
-/// **`_use_simd` is a no-op** — see [`pal8_to_rgb_row`] for the rationale.
+/// On aarch64 with NEON, delegates to the NEON hybrid backend. On all other
+/// targets, always uses the scalar kernel regardless of `_use_simd`.
 pub fn pal8_to_rgba_u16_row(
   indices: &[u8],
   palette: &[[u8; 4]; 256],
   rgba_u16_out: &mut [u16],
   _use_simd: bool,
 ) {
+  #[cfg(target_arch = "aarch64")]
+  {
+    use crate::row::neon_available;
+    if _use_simd && neon_available() {
+      unsafe { crate::row::arch::neon::pal8::pal8_to_rgba_u16_row(indices, palette, rgba_u16_out) }
+      return;
+    }
+  }
   scalar_rgba_u16(indices, palette, rgba_u16_out);
 }
