@@ -35,7 +35,7 @@ use crate::row::arch;
 #[cfg(target_arch = "aarch64")]
 use crate::row::neon_available;
 #[cfg(target_arch = "x86_64")]
-use crate::row::sse41_available;
+use crate::row::{avx2_available, sse41_available};
 use crate::{
   ColorMatrix,
   row::{rgb_row_bytes, rgb_row_elems, rgba_row_bytes, rgba_row_elems, scalar},
@@ -86,6 +86,10 @@ pub fn rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], width: usize, use_sim
         }
       },
       target_arch = "x86_64" => {
+        if avx2_available() {
+          unsafe { arch::x86_avx2::avx2_rgb48_to_rgb_row(rgb48, rgb_out, width); }
+          return;
+        }
         if sse41_available() {
           unsafe { arch::x86_sse41::sse41_rgb48_to_rgb_row(rgb48, rgb_out, width); }
           return;
@@ -114,6 +118,10 @@ pub fn rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8], width: usize, use_s
         }
       },
       target_arch = "x86_64" => {
+        if avx2_available() {
+          unsafe { arch::x86_avx2::avx2_rgb48_to_rgba_row(rgb48, rgba_out, width); }
+          return;
+        }
         if sse41_available() {
           unsafe { arch::x86_sse41::sse41_rgb48_to_rgba_row(rgb48, rgba_out, width); }
           return;
@@ -142,6 +150,10 @@ pub fn rgb48_to_rgb_u16_row(rgb48: &[u16], rgb_out: &mut [u16], width: usize, us
         }
       },
       target_arch = "x86_64" => {
+        if avx2_available() {
+          unsafe { arch::x86_avx2::avx2_rgb48_to_rgb_u16_row(rgb48, rgb_out, width); }
+          return;
+        }
         if sse41_available() {
           unsafe { arch::x86_sse41::sse41_rgb48_to_rgb_u16_row(rgb48, rgb_out, width); }
           return;
@@ -170,6 +182,10 @@ pub fn rgb48_to_rgba_u16_row(rgb48: &[u16], rgba_out: &mut [u16], width: usize, 
         }
       },
       target_arch = "x86_64" => {
+        if avx2_available() {
+          unsafe { arch::x86_avx2::avx2_rgb48_to_rgba_u16_row(rgb48, rgba_out, width); }
+          return;
+        }
         if sse41_available() {
           unsafe { arch::x86_sse41::sse41_rgb48_to_rgba_u16_row(rgb48, rgba_out, width); }
           return;
@@ -274,6 +290,10 @@ pub fn bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], width: usize, use_sim
         }
       },
       target_arch = "x86_64" => {
+        if avx2_available() {
+          unsafe { arch::x86_avx2::avx2_bgr48_to_rgb_row(bgr48, rgb_out, width); }
+          return;
+        }
         if sse41_available() {
           unsafe { arch::x86_sse41::sse41_bgr48_to_rgb_row(bgr48, rgb_out, width); }
           return;
@@ -302,6 +322,10 @@ pub fn bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8], width: usize, use_s
         }
       },
       target_arch = "x86_64" => {
+        if avx2_available() {
+          unsafe { arch::x86_avx2::avx2_bgr48_to_rgba_row(bgr48, rgba_out, width); }
+          return;
+        }
         if sse41_available() {
           unsafe { arch::x86_sse41::sse41_bgr48_to_rgba_row(bgr48, rgba_out, width); }
           return;
@@ -330,6 +354,10 @@ pub fn bgr48_to_rgb_u16_row(bgr48: &[u16], rgb_out: &mut [u16], width: usize, us
         }
       },
       target_arch = "x86_64" => {
+        if avx2_available() {
+          unsafe { arch::x86_avx2::avx2_bgr48_to_rgb_u16_row(bgr48, rgb_out, width); }
+          return;
+        }
         if sse41_available() {
           unsafe { arch::x86_sse41::sse41_bgr48_to_rgb_u16_row(bgr48, rgb_out, width); }
           return;
@@ -358,6 +386,10 @@ pub fn bgr48_to_rgba_u16_row(bgr48: &[u16], rgba_out: &mut [u16], width: usize, 
         }
       },
       target_arch = "x86_64" => {
+        if avx2_available() {
+          unsafe { arch::x86_avx2::avx2_bgr48_to_rgba_u16_row(bgr48, rgba_out, width); }
+          return;
+        }
         if sse41_available() {
           unsafe { arch::x86_sse41::sse41_bgr48_to_rgba_u16_row(bgr48, rgba_out, width); }
           return;
@@ -458,6 +490,10 @@ pub fn rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8], width: usize, use_s
         }
       },
       target_arch = "x86_64" => {
+        if avx2_available() {
+          unsafe { arch::x86_avx2::avx2_rgba64_to_rgb_row(rgba64, rgb_out, width); }
+          return;
+        }
         if sse41_available() {
           unsafe { arch::x86_sse41::sse41_rgba64_to_rgb_row(rgba64, rgb_out, width); }
           return;
@@ -486,6 +522,10 @@ pub fn rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8], width: usize, use
         }
       },
       target_arch = "x86_64" => {
+        if avx2_available() {
+          unsafe { arch::x86_avx2::avx2_rgba64_to_rgba_row(rgba64, rgba_out, width); }
+          return;
+        }
         if sse41_available() {
           unsafe { arch::x86_sse41::sse41_rgba64_to_rgba_row(rgba64, rgba_out, width); }
           return;
@@ -514,6 +554,10 @@ pub fn rgba64_to_rgb_u16_row(rgba64: &[u16], rgb_out: &mut [u16], width: usize, 
         }
       },
       target_arch = "x86_64" => {
+        if avx2_available() {
+          unsafe { arch::x86_avx2::avx2_rgba64_to_rgb_u16_row(rgba64, rgb_out, width); }
+          return;
+        }
         if sse41_available() {
           unsafe { arch::x86_sse41::sse41_rgba64_to_rgb_u16_row(rgba64, rgb_out, width); }
           return;
@@ -542,6 +586,10 @@ pub fn rgba64_to_rgba_u16_row(rgba64: &[u16], rgba_out: &mut [u16], width: usize
         }
       },
       target_arch = "x86_64" => {
+        if avx2_available() {
+          unsafe { arch::x86_avx2::avx2_rgba64_to_rgba_u16_row(rgba64, rgba_out, width); }
+          return;
+        }
         if sse41_available() {
           unsafe { arch::x86_sse41::sse41_rgba64_to_rgba_u16_row(rgba64, rgba_out, width); }
           return;
@@ -645,6 +693,10 @@ pub fn bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8], width: usize, use_s
         }
       },
       target_arch = "x86_64" => {
+        if avx2_available() {
+          unsafe { arch::x86_avx2::avx2_bgra64_to_rgb_row(bgra64, rgb_out, width); }
+          return;
+        }
         if sse41_available() {
           unsafe { arch::x86_sse41::sse41_bgra64_to_rgb_row(bgra64, rgb_out, width); }
           return;
@@ -674,6 +726,10 @@ pub fn bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8], width: usize, use
         }
       },
       target_arch = "x86_64" => {
+        if avx2_available() {
+          unsafe { arch::x86_avx2::avx2_bgra64_to_rgba_row(bgra64, rgba_out, width); }
+          return;
+        }
         if sse41_available() {
           unsafe { arch::x86_sse41::sse41_bgra64_to_rgba_row(bgra64, rgba_out, width); }
           return;
@@ -702,6 +758,10 @@ pub fn bgra64_to_rgb_u16_row(bgra64: &[u16], rgb_out: &mut [u16], width: usize, 
         }
       },
       target_arch = "x86_64" => {
+        if avx2_available() {
+          unsafe { arch::x86_avx2::avx2_bgra64_to_rgb_u16_row(bgra64, rgb_out, width); }
+          return;
+        }
         if sse41_available() {
           unsafe { arch::x86_sse41::sse41_bgra64_to_rgb_u16_row(bgra64, rgb_out, width); }
           return;
@@ -730,6 +790,10 @@ pub fn bgra64_to_rgba_u16_row(bgra64: &[u16], rgba_out: &mut [u16], width: usize
         }
       },
       target_arch = "x86_64" => {
+        if avx2_available() {
+          unsafe { arch::x86_avx2::avx2_bgra64_to_rgba_u16_row(bgra64, rgba_out, width); }
+          return;
+        }
         if sse41_available() {
           unsafe { arch::x86_sse41::sse41_bgra64_to_rgba_u16_row(bgra64, rgba_out, width); }
           return;
