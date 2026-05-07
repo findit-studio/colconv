@@ -23,62 +23,178 @@ fn mono1bit_to_luma_row_generic<const INVERT: bool>(data: &[u8], out: &mut [u8],
   }
 }
 
+// ---- allocation-free pixel-expansion helpers --------------------------------
+
+/// Extract the Y value for one pixel bit, applying polarity.
+#[inline(always)]
+fn pixel_y<const INVERT: bool>(byte: u8, bit: usize) -> u8 {
+  let raw = (byte >> (7 - bit)) & 1;
+  if INVERT { (1 - raw) * 255 } else { raw * 255 }
+}
+
+// ---- allocation-free RGB/RGBA/u16 generics ----------------------------------
+
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn mono1bit_to_rgb_generic<const INVERT: bool>(data: &[u8], out: &mut [u8], width: usize) {
+  debug_assert!(data.len() >= width.div_ceil(8));
+  debug_assert!(out.len() >= width * 3);
+  let full_bytes = width / 8;
+  for (byte_idx, &byte) in data[..full_bytes].iter().enumerate() {
+    for bit in 0..8usize {
+      let y = pixel_y::<INVERT>(byte, bit);
+      let i = (byte_idx * 8 + bit) * 3;
+      out[i] = y;
+      out[i + 1] = y;
+      out[i + 2] = y;
+    }
+  }
+  let tail = width % 8;
+  if tail > 0 {
+    let byte = data[full_bytes];
+    for bit in 0..tail {
+      let y = pixel_y::<INVERT>(byte, bit);
+      let i = (full_bytes * 8 + bit) * 3;
+      out[i] = y;
+      out[i + 1] = y;
+      out[i + 2] = y;
+    }
+  }
+}
+
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn mono1bit_to_rgba_generic<const INVERT: bool>(data: &[u8], out: &mut [u8], width: usize) {
+  debug_assert!(data.len() >= width.div_ceil(8));
+  debug_assert!(out.len() >= width * 4);
+  let full_bytes = width / 8;
+  for (byte_idx, &byte) in data[..full_bytes].iter().enumerate() {
+    for bit in 0..8usize {
+      let y = pixel_y::<INVERT>(byte, bit);
+      let i = (byte_idx * 8 + bit) * 4;
+      out[i] = y;
+      out[i + 1] = y;
+      out[i + 2] = y;
+      out[i + 3] = 0xFF;
+    }
+  }
+  let tail = width % 8;
+  if tail > 0 {
+    let byte = data[full_bytes];
+    for bit in 0..tail {
+      let y = pixel_y::<INVERT>(byte, bit);
+      let i = (full_bytes * 8 + bit) * 4;
+      out[i] = y;
+      out[i + 1] = y;
+      out[i + 2] = y;
+      out[i + 3] = 0xFF;
+    }
+  }
+}
+
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn mono1bit_to_rgb_u16_generic<const INVERT: bool>(data: &[u8], out: &mut [u16], width: usize) {
+  debug_assert!(data.len() >= width.div_ceil(8));
+  debug_assert!(out.len() >= width * 3);
+  let full_bytes = width / 8;
+  for (byte_idx, &byte) in data[..full_bytes].iter().enumerate() {
+    for bit in 0..8usize {
+      let y8 = pixel_y::<INVERT>(byte, bit) as u16;
+      let y16 = (y8 << 8) | y8;
+      let i = (byte_idx * 8 + bit) * 3;
+      out[i] = y16;
+      out[i + 1] = y16;
+      out[i + 2] = y16;
+    }
+  }
+  let tail = width % 8;
+  if tail > 0 {
+    let byte = data[full_bytes];
+    for bit in 0..tail {
+      let y8 = pixel_y::<INVERT>(byte, bit) as u16;
+      let y16 = (y8 << 8) | y8;
+      let i = (full_bytes * 8 + bit) * 3;
+      out[i] = y16;
+      out[i + 1] = y16;
+      out[i + 2] = y16;
+    }
+  }
+}
+
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn mono1bit_to_rgba_u16_generic<const INVERT: bool>(data: &[u8], out: &mut [u16], width: usize) {
+  debug_assert!(data.len() >= width.div_ceil(8));
+  debug_assert!(out.len() >= width * 4);
+  let full_bytes = width / 8;
+  for (byte_idx, &byte) in data[..full_bytes].iter().enumerate() {
+    for bit in 0..8usize {
+      let y8 = pixel_y::<INVERT>(byte, bit) as u16;
+      let y16 = (y8 << 8) | y8;
+      let i = (byte_idx * 8 + bit) * 4;
+      out[i] = y16;
+      out[i + 1] = y16;
+      out[i + 2] = y16;
+      out[i + 3] = 0xFFFF;
+    }
+  }
+  let tail = width % 8;
+  if tail > 0 {
+    let byte = data[full_bytes];
+    for bit in 0..tail {
+      let y8 = pixel_y::<INVERT>(byte, bit) as u16;
+      let y16 = (y8 << 8) | y8;
+      let i = (full_bytes * 8 + bit) * 4;
+      out[i] = y16;
+      out[i + 1] = y16;
+      out[i + 2] = y16;
+      out[i + 3] = 0xFFFF;
+    }
+  }
+}
+
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn mono1bit_to_luma_u16_generic<const INVERT: bool>(data: &[u8], out: &mut [u16], width: usize) {
+  debug_assert!(data.len() >= width.div_ceil(8));
+  debug_assert!(out.len() >= width);
+  let full_bytes = width / 8;
+  for (byte_idx, &byte) in data[..full_bytes].iter().enumerate() {
+    for bit in 0..8usize {
+      let y8 = pixel_y::<INVERT>(byte, bit) as u16;
+      out[byte_idx * 8 + bit] = (y8 << 8) | y8;
+    }
+  }
+  let tail = width % 8;
+  if tail > 0 {
+    let byte = data[full_bytes];
+    for bit in 0..tail {
+      let y8 = pixel_y::<INVERT>(byte, bit) as u16;
+      out[full_bytes * 8 + bit] = (y8 << 8) | y8;
+    }
+  }
+}
+
 // ---- Monoblack (INVERT=false) -----------------------------------------------
 
 /// Monoblack → RGB u8 (broadcast Y).
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn monoblack_to_rgb_row(data: &[u8], out: &mut [u8], width: usize) {
-  let mut luma = vec![0u8; width];
-  mono1bit_to_luma_row_generic::<false>(data, &mut luma, width);
-  for i in 0..width {
-    let y = luma[i];
-    out[i * 3] = y;
-    out[i * 3 + 1] = y;
-    out[i * 3 + 2] = y;
-  }
+  mono1bit_to_rgb_generic::<false>(data, out, width);
 }
 
 /// Monoblack → RGBA u8 (broadcast Y, α=0xFF).
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn monoblack_to_rgba_row(data: &[u8], out: &mut [u8], width: usize) {
-  let mut luma = vec![0u8; width];
-  mono1bit_to_luma_row_generic::<false>(data, &mut luma, width);
-  for i in 0..width {
-    let y = luma[i];
-    out[i * 4] = y;
-    out[i * 4 + 1] = y;
-    out[i * 4 + 2] = y;
-    out[i * 4 + 3] = 0xFF;
-  }
+  mono1bit_to_rgba_generic::<false>(data, out, width);
 }
 
 /// Monoblack → RGB u16 (broadcast Y, upshift (Y << 8) | Y).
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn monoblack_to_rgb_u16_row(data: &[u8], out: &mut [u16], width: usize) {
-  let mut luma = vec![0u8; width];
-  mono1bit_to_luma_row_generic::<false>(data, &mut luma, width);
-  for i in 0..width {
-    let y = luma[i] as u16;
-    let y16 = (y << 8) | y;
-    out[i * 3] = y16;
-    out[i * 3 + 1] = y16;
-    out[i * 3 + 2] = y16;
-  }
+  mono1bit_to_rgb_u16_generic::<false>(data, out, width);
 }
 
 /// Monoblack → RGBA u16 (broadcast Y, α=0xFFFF).
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn monoblack_to_rgba_u16_row(data: &[u8], out: &mut [u16], width: usize) {
-  let mut luma = vec![0u8; width];
-  mono1bit_to_luma_row_generic::<false>(data, &mut luma, width);
-  for i in 0..width {
-    let y = luma[i] as u16;
-    let y16 = (y << 8) | y;
-    out[i * 4] = y16;
-    out[i * 4 + 1] = y16;
-    out[i * 4 + 2] = y16;
-    out[i * 4 + 3] = 0xFFFF;
-  }
+  mono1bit_to_rgba_u16_generic::<false>(data, out, width);
 }
 
 /// Monoblack → Luma u8 (pass-through).
@@ -90,12 +206,7 @@ pub(crate) fn monoblack_to_luma_row(data: &[u8], out: &mut [u8], width: usize) {
 /// Monoblack → Luma u16 (upshift (Y << 8) | Y).
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn monoblack_to_luma_u16_row(data: &[u8], out: &mut [u16], width: usize) {
-  let mut luma = vec![0u8; width];
-  mono1bit_to_luma_row_generic::<false>(data, &mut luma, width);
-  for i in 0..width {
-    let y = luma[i] as u16;
-    out[i] = (y << 8) | y;
-  }
+  mono1bit_to_luma_u16_generic::<false>(data, out, width);
 }
 
 /// Monoblack → HSV (H=0, S=0, V=Y, achromatic).
@@ -119,57 +230,25 @@ pub(crate) fn monoblack_to_hsv_row(
 /// Monowhite → RGB u8 (broadcast Y, inverted polarity).
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn monowhite_to_rgb_row(data: &[u8], out: &mut [u8], width: usize) {
-  let mut luma = vec![0u8; width];
-  mono1bit_to_luma_row_generic::<true>(data, &mut luma, width);
-  for i in 0..width {
-    let y = luma[i];
-    out[i * 3] = y;
-    out[i * 3 + 1] = y;
-    out[i * 3 + 2] = y;
-  }
+  mono1bit_to_rgb_generic::<true>(data, out, width);
 }
 
 /// Monowhite → RGBA u8.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn monowhite_to_rgba_row(data: &[u8], out: &mut [u8], width: usize) {
-  let mut luma = vec![0u8; width];
-  mono1bit_to_luma_row_generic::<true>(data, &mut luma, width);
-  for i in 0..width {
-    let y = luma[i];
-    out[i * 4] = y;
-    out[i * 4 + 1] = y;
-    out[i * 4 + 2] = y;
-    out[i * 4 + 3] = 0xFF;
-  }
+  mono1bit_to_rgba_generic::<true>(data, out, width);
 }
 
 /// Monowhite → RGB u16.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn monowhite_to_rgb_u16_row(data: &[u8], out: &mut [u16], width: usize) {
-  let mut luma = vec![0u8; width];
-  mono1bit_to_luma_row_generic::<true>(data, &mut luma, width);
-  for i in 0..width {
-    let y = luma[i] as u16;
-    let y16 = (y << 8) | y;
-    out[i * 3] = y16;
-    out[i * 3 + 1] = y16;
-    out[i * 3 + 2] = y16;
-  }
+  mono1bit_to_rgb_u16_generic::<true>(data, out, width);
 }
 
 /// Monowhite → RGBA u16.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn monowhite_to_rgba_u16_row(data: &[u8], out: &mut [u16], width: usize) {
-  let mut luma = vec![0u8; width];
-  mono1bit_to_luma_row_generic::<true>(data, &mut luma, width);
-  for i in 0..width {
-    let y = luma[i] as u16;
-    let y16 = (y << 8) | y;
-    out[i * 4] = y16;
-    out[i * 4 + 1] = y16;
-    out[i * 4 + 2] = y16;
-    out[i * 4 + 3] = 0xFFFF;
-  }
+  mono1bit_to_rgba_u16_generic::<true>(data, out, width);
 }
 
 /// Monowhite → Luma u8.
@@ -181,12 +260,7 @@ pub(crate) fn monowhite_to_luma_row(data: &[u8], out: &mut [u8], width: usize) {
 /// Monowhite → Luma u16.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn monowhite_to_luma_u16_row(data: &[u8], out: &mut [u16], width: usize) {
-  let mut luma = vec![0u8; width];
-  mono1bit_to_luma_row_generic::<true>(data, &mut luma, width);
-  for i in 0..width {
-    let y = luma[i] as u16;
-    out[i] = (y << 8) | y;
-  }
+  mono1bit_to_luma_u16_generic::<true>(data, out, width);
 }
 
 /// Monowhite → HSV.

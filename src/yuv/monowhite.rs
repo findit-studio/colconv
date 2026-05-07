@@ -17,6 +17,7 @@ impl crate::SourceFormat for Monowhite {}
 #[derive(Debug, Clone, Copy)]
 pub struct MonowhiteRow<'a> {
   data: &'a [u8],
+  width: u32,
   row: usize,
   matrix: ColorMatrix,
   full_range: bool,
@@ -25,9 +26,16 @@ pub struct MonowhiteRow<'a> {
 impl<'a> MonowhiteRow<'a> {
   /// Constructs a new row slice.
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn new(data: &'a [u8], row: usize, matrix: ColorMatrix, full_range: bool) -> Self {
+  pub(crate) const fn new(
+    data: &'a [u8],
+    width: u32,
+    row: usize,
+    matrix: ColorMatrix,
+    full_range: bool,
+  ) -> Self {
     Self {
       data,
+      width,
       row,
       matrix,
       full_range,
@@ -61,13 +69,13 @@ impl<'a> MonowhiteRow<'a> {
   /// Frame width in pixels.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn len(&self) -> usize {
-    self.data.len() * 8
+    self.width as usize
   }
 
   /// True if the row is empty.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn is_empty(&self) -> bool {
-    self.data.is_empty()
+    self.width == 0
   }
 }
 
@@ -84,15 +92,17 @@ pub fn monowhite_to<S: MonowhiteSink>(
 ) -> Result<(), S::Error> {
   sink.begin_frame(src.width(), src.height())?;
 
+  let w = src.width();
   let h = src.height() as usize;
   let stride = src.stride() as usize;
+  let packed_bytes = w.div_ceil(8) as usize;
   let data = src.data();
 
   for row in 0..h {
     let start = row * stride;
-    let end = start + stride.min(data.len() - start);
-    let row_data = &data[start..end];
-    sink.process(MonowhiteRow::new(row_data, row, matrix, full_range))?;
+    let avail = data.len().saturating_sub(start);
+    let row_data = &data[start..start + packed_bytes.min(avail)];
+    sink.process(MonowhiteRow::new(row_data, w, row, matrix, full_range))?;
   }
   Ok(())
 }
