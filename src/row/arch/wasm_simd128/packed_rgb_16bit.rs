@@ -60,77 +60,75 @@ use super::*;
 /// Caller must hold `simd128` target_feature.
 #[inline(always)]
 unsafe fn deinterleave_rgb48_8px(v0: v128, v1: v128, v2: v128) -> (v128, v128, v128) {
-  unsafe {
-    // ch0: C0 lanes at byte offsets (in the concatenated 3-register window):
-    //   pixel 0: bytes 0-1 from v0
-    //   pixel 1: bytes 6-7 from v0
-    //   pixel 2: bytes 18-19 from v1 (offset 2 in v1 = byte 18 relative)
-    //   pixel 3: bytes 8-9 from v1
-    //   pixel 4: bytes 24-25 from v1 (offset 8... no, v1 lanes 4-5 = bytes 8-11 = C0_4,C1_4)
-    //     Actually C0_4 is at v1 byte offsets 8-9.
-    //   pixel 5: bytes 14-15 from v1 (C0_5)
-    //   pixel 6: bytes 4-5 from v2
-    //   pixel 7: bytes 10-11 from v2
-    //
-    // Build ch0 from v0, v1, v2 contributions:
-    //   from v0: bytes [0,1] → out bytes [0,1]; bytes [6,7] → out bytes [2,3]
-    //   from v1: bytes [2,3] → out bytes [4,5]; bytes [8,9] → out bytes [6,7]
-    //            bytes [14,15] → out bytes [8,9]
-    //   from v2: bytes [4,5] → out bytes [10,11]; bytes [10,11] → out bytes [12,13]
-    //            bytes [--] → ...
-    //
-    // Actually let's derive systematically. 24 u16 laid flat as bytes:
-    //   v0 bytes 0..15:  [R0lo,R0hi, G0lo,G0hi, B0lo,B0hi, R1lo,R1hi, G1lo,G1hi, B1lo,B1hi, R2lo,R2hi, G2lo,G2hi]
-    //   v1 bytes 0..15:  [B2lo,B2hi, R3lo,R3hi, G3lo,G3hi, B3lo,B3hi, R4lo,R4hi, G4lo,G4hi, B4lo,B4hi, R5lo,R5hi]
-    //   v2 bytes 0..15:  [G5lo,G5hi, B5lo,B5hi, R6lo,R6hi, G6lo,G6hi, B6lo,B6hi, R7lo,R7hi, G7lo,G7hi, B7lo,B7hi]
-    //
-    // ch0 (R for Rgb48) = [R0,R1,R2,R3,R4,R5,R6,R7]:
-    //   R0: v0[0..2]   R1: v0[6..8]   R2: v0[12..14]
-    //   R3: v1[2..4]   R4: v1[8..10]  R5: v1[14..16] (= v1[14,15])
-    //   R6: v2[4..6]   R7: v2[10..12]
-    //
-    // ch1 (G) = [G0,G1,G2,G3,G4,G5,G6,G7]:
-    //   G0: v0[2..4]   G1: v0[8..10]  G2: v0[14..16]
-    //   G3: v1[4..6]   G4: v1[10..12] G5: v2[0..2]
-    //   G6: v2[6..8]   G7: v2[12..14]
-    //
-    // ch2 (B) = [B0,B1,B2,B3,B4,B5,B6,B7]:
-    //   B0: v0[4..6]   B1: v0[10..12] B2: v1[0..2]
-    //   B3: v1[6..8]   B4: v1[12..14] B5: v2[2..4]
-    //   B6: v2[8..10]  B7: v2[14..16]
+  // ch0: C0 lanes at byte offsets (in the concatenated 3-register window):
+  //   pixel 0: bytes 0-1 from v0
+  //   pixel 1: bytes 6-7 from v0
+  //   pixel 2: bytes 18-19 from v1 (offset 2 in v1 = byte 18 relative)
+  //   pixel 3: bytes 8-9 from v1
+  //   pixel 4: bytes 24-25 from v1 (offset 8... no, v1 lanes 4-5 = bytes 8-11 = C0_4,C1_4)
+  //     Actually C0_4 is at v1 byte offsets 8-9.
+  //   pixel 5: bytes 14-15 from v1 (C0_5)
+  //   pixel 6: bytes 4-5 from v2
+  //   pixel 7: bytes 10-11 from v2
+  //
+  // Build ch0 from v0, v1, v2 contributions:
+  //   from v0: bytes [0,1] → out bytes [0,1]; bytes [6,7] → out bytes [2,3]
+  //   from v1: bytes [2,3] → out bytes [4,5]; bytes [8,9] → out bytes [6,7]
+  //            bytes [14,15] → out bytes [8,9]
+  //   from v2: bytes [4,5] → out bytes [10,11]; bytes [10,11] → out bytes [12,13]
+  //            bytes [--] → ...
+  //
+  // Actually let's derive systematically. 24 u16 laid flat as bytes:
+  //   v0 bytes 0..15:  [R0lo,R0hi, G0lo,G0hi, B0lo,B0hi, R1lo,R1hi, G1lo,G1hi, B1lo,B1hi, R2lo,R2hi, G2lo,G2hi]
+  //   v1 bytes 0..15:  [B2lo,B2hi, R3lo,R3hi, G3lo,G3hi, B3lo,B3hi, R4lo,R4hi, G4lo,G4hi, B4lo,B4hi, R5lo,R5hi]
+  //   v2 bytes 0..15:  [G5lo,G5hi, B5lo,B5hi, R6lo,R6hi, G6lo,G6hi, B6lo,B6hi, R7lo,R7hi, G7lo,G7hi, B7lo,B7hi]
+  //
+  // ch0 (R for Rgb48) = [R0,R1,R2,R3,R4,R5,R6,R7]:
+  //   R0: v0[0..2]   R1: v0[6..8]   R2: v0[12..14]
+  //   R3: v1[2..4]   R4: v1[8..10]  R5: v1[14..16] (= v1[14,15])
+  //   R6: v2[4..6]   R7: v2[10..12]
+  //
+  // ch1 (G) = [G0,G1,G2,G3,G4,G5,G6,G7]:
+  //   G0: v0[2..4]   G1: v0[8..10]  G2: v0[14..16]
+  //   G3: v1[4..6]   G4: v1[10..12] G5: v2[0..2]
+  //   G6: v2[6..8]   G7: v2[12..14]
+  //
+  // ch2 (B) = [B0,B1,B2,B3,B4,B5,B6,B7]:
+  //   B0: v0[4..6]   B1: v0[10..12] B2: v1[0..2]
+  //   B3: v1[6..8]   B4: v1[12..14] B5: v2[2..4]
+  //   B6: v2[8..10]  B7: v2[14..16]
 
-    // ch0: R0=v0[0,1], R1=v0[6,7], R2=v0[12,13], R3=v1[2,3], R4=v1[8,9], R5=v1[14,15],
-    //      R6=v2[4,5], R7=v2[10,11]
-    let ch0_v0 = i8x16(0, 1, 6, 7, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
-    let ch0_v1 = i8x16(-1, -1, -1, -1, -1, -1, 2, 3, 8, 9, 14, 15, -1, -1, -1, -1);
-    let ch0_v2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 4, 5, 10, 11);
-    let ch0 = v128_or(
-      v128_or(u8x16_swizzle(v0, ch0_v0), u8x16_swizzle(v1, ch0_v1)),
-      u8x16_swizzle(v2, ch0_v2),
-    );
+  // ch0: R0=v0[0,1], R1=v0[6,7], R2=v0[12,13], R3=v1[2,3], R4=v1[8,9], R5=v1[14,15],
+  //      R6=v2[4,5], R7=v2[10,11]
+  let ch0_v0 = i8x16(0, 1, 6, 7, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+  let ch0_v1 = i8x16(-1, -1, -1, -1, -1, -1, 2, 3, 8, 9, 14, 15, -1, -1, -1, -1);
+  let ch0_v2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 4, 5, 10, 11);
+  let ch0 = v128_or(
+    v128_or(u8x16_swizzle(v0, ch0_v0), u8x16_swizzle(v1, ch0_v1)),
+    u8x16_swizzle(v2, ch0_v2),
+  );
 
-    // ch1: G0=v0[2,3], G1=v0[8,9], G2=v0[14,15], G3=v1[4,5], G4=v1[10,11],
-    //      G5=v2[0,1], G6=v2[6,7], G7=v2[12,13]
-    let ch1_v0 = i8x16(2, 3, 8, 9, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
-    let ch1_v1 = i8x16(-1, -1, -1, -1, -1, -1, 4, 5, 10, 11, -1, -1, -1, -1, -1, -1);
-    let ch1_v2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 6, 7, 12, 13);
-    let ch1 = v128_or(
-      v128_or(u8x16_swizzle(v0, ch1_v0), u8x16_swizzle(v1, ch1_v1)),
-      u8x16_swizzle(v2, ch1_v2),
-    );
+  // ch1: G0=v0[2,3], G1=v0[8,9], G2=v0[14,15], G3=v1[4,5], G4=v1[10,11],
+  //      G5=v2[0,1], G6=v2[6,7], G7=v2[12,13]
+  let ch1_v0 = i8x16(2, 3, 8, 9, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+  let ch1_v1 = i8x16(-1, -1, -1, -1, -1, -1, 4, 5, 10, 11, -1, -1, -1, -1, -1, -1);
+  let ch1_v2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 6, 7, 12, 13);
+  let ch1 = v128_or(
+    v128_or(u8x16_swizzle(v0, ch1_v0), u8x16_swizzle(v1, ch1_v1)),
+    u8x16_swizzle(v2, ch1_v2),
+  );
 
-    // ch2: B0=v0[4,5], B1=v0[10,11], B2=v1[0,1], B3=v1[6,7], B4=v1[12,13],
-    //      B5=v2[2,3], B6=v2[8,9], B7=v2[14,15]
-    let ch2_v0 = i8x16(4, 5, 10, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
-    let ch2_v1 = i8x16(-1, -1, -1, -1, 0, 1, 6, 7, 12, 13, -1, -1, -1, -1, -1, -1);
-    let ch2_v2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 2, 3, 8, 9, 14, 15);
-    let ch2 = v128_or(
-      v128_or(u8x16_swizzle(v0, ch2_v0), u8x16_swizzle(v1, ch2_v1)),
-      u8x16_swizzle(v2, ch2_v2),
-    );
+  // ch2: B0=v0[4,5], B1=v0[10,11], B2=v1[0,1], B3=v1[6,7], B4=v1[12,13],
+  //      B5=v2[2,3], B6=v2[8,9], B7=v2[14,15]
+  let ch2_v0 = i8x16(4, 5, 10, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+  let ch2_v1 = i8x16(-1, -1, -1, -1, 0, 1, 6, 7, 12, 13, -1, -1, -1, -1, -1, -1);
+  let ch2_v2 = i8x16(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 2, 3, 8, 9, 14, 15);
+  let ch2 = v128_or(
+    v128_or(u8x16_swizzle(v0, ch2_v0), u8x16_swizzle(v1, ch2_v1)),
+    u8x16_swizzle(v2, ch2_v2),
+  );
 
-    (ch0, ch1, ch2)
-  }
+  (ch0, ch1, ch2)
 }
 
 // =============================================================================
@@ -165,41 +163,39 @@ unsafe fn deinterleave_rgba64_8px(
   raw2: v128,
   raw3: v128,
 ) -> (v128, v128, v128, v128) {
-  unsafe {
-    // Level 1: combine each adjacent raw pair (raw0+raw1 = pixels 0-3,
-    // raw2+raw3 = pixels 4-7) and group the 4 channels into pairs.
-    //
-    // For (raw0, raw1) the 4 channels of pixels 0-3 sit at u16 lane
-    // positions:
-    //   C0_0=raw0[0], C0_1=raw0[4], C0_2=raw1[0]=8, C0_3=raw1[4]=12,
-    //   C1_0=raw0[1], C1_1=raw0[5], C1_2=raw1[1]=9, C1_3=raw1[5]=13,
-    //   C2_0=raw0[2], C2_1=raw0[6], C2_2=raw1[2]=10, C2_3=raw1[6]=14,
-    //   C3_0=raw0[3], C3_1=raw0[7], C3_2=raw1[3]=11, C3_3=raw1[7]=15.
-    //
-    // Each i16x8_shuffle output holds 8 u16 = exactly two channels worth
-    // of data for the 4-pixel group; pair channels (C0,C1) and (C2,C3).
-    //   pair_01_c01: [C0_0, C0_1, C0_2, C0_3, C1_0, C1_1, C1_2, C1_3]
-    //   pair_01_c23: [C2_0, C2_1, C2_2, C2_3, C3_0, C3_1, C3_2, C3_3]
-    //   pair_23_c01: [C0_4, C0_5, C0_6, C0_7, C1_4, C1_5, C1_6, C1_7]
-    //   pair_23_c23: [C2_4, C2_5, C2_6, C2_7, C3_4, C3_5, C3_6, C3_7]
-    let pair_01_c01 = i16x8_shuffle::<0, 4, 8, 12, 1, 5, 9, 13>(raw0, raw1);
-    let pair_01_c23 = i16x8_shuffle::<2, 6, 10, 14, 3, 7, 11, 15>(raw0, raw1);
-    let pair_23_c01 = i16x8_shuffle::<0, 4, 8, 12, 1, 5, 9, 13>(raw2, raw3);
-    let pair_23_c23 = i16x8_shuffle::<2, 6, 10, 14, 3, 7, 11, 15>(raw2, raw3);
+  // Level 1: combine each adjacent raw pair (raw0+raw1 = pixels 0-3,
+  // raw2+raw3 = pixels 4-7) and group the 4 channels into pairs.
+  //
+  // For (raw0, raw1) the 4 channels of pixels 0-3 sit at u16 lane
+  // positions:
+  //   C0_0=raw0[0], C0_1=raw0[4], C0_2=raw1[0]=8, C0_3=raw1[4]=12,
+  //   C1_0=raw0[1], C1_1=raw0[5], C1_2=raw1[1]=9, C1_3=raw1[5]=13,
+  //   C2_0=raw0[2], C2_1=raw0[6], C2_2=raw1[2]=10, C2_3=raw1[6]=14,
+  //   C3_0=raw0[3], C3_1=raw0[7], C3_2=raw1[3]=11, C3_3=raw1[7]=15.
+  //
+  // Each i16x8_shuffle output holds 8 u16 = exactly two channels worth
+  // of data for the 4-pixel group; pair channels (C0,C1) and (C2,C3).
+  //   pair_01_c01: [C0_0, C0_1, C0_2, C0_3, C1_0, C1_1, C1_2, C1_3]
+  //   pair_01_c23: [C2_0, C2_1, C2_2, C2_3, C3_0, C3_1, C3_2, C3_3]
+  //   pair_23_c01: [C0_4, C0_5, C0_6, C0_7, C1_4, C1_5, C1_6, C1_7]
+  //   pair_23_c23: [C2_4, C2_5, C2_6, C2_7, C3_4, C3_5, C3_6, C3_7]
+  let pair_01_c01 = i16x8_shuffle::<0, 4, 8, 12, 1, 5, 9, 13>(raw0, raw1);
+  let pair_01_c23 = i16x8_shuffle::<2, 6, 10, 14, 3, 7, 11, 15>(raw0, raw1);
+  let pair_23_c01 = i16x8_shuffle::<0, 4, 8, 12, 1, 5, 9, 13>(raw2, raw3);
+  let pair_23_c23 = i16x8_shuffle::<2, 6, 10, 14, 3, 7, 11, 15>(raw2, raw3);
 
-    // Level 2: concatenate the lo half of each pair_*_c01 (= channel 0 for
-    // 4 pixels) with the lo half of the matching counterpart (4 more
-    // pixels) to get a single 8-u16 channel vector in natural pixel order.
-    // Lanes 0..3 from first source = pixels 0..3; lanes 8..11 from second
-    // source = pixels 4..7 (treated as the second i16x8_shuffle source).
-    // Hi halves of each pair_* hold the next channel (C1 or C3).
-    let ch0 = i16x8_shuffle::<0, 1, 2, 3, 8, 9, 10, 11>(pair_01_c01, pair_23_c01);
-    let ch1 = i16x8_shuffle::<4, 5, 6, 7, 12, 13, 14, 15>(pair_01_c01, pair_23_c01);
-    let ch2 = i16x8_shuffle::<0, 1, 2, 3, 8, 9, 10, 11>(pair_01_c23, pair_23_c23);
-    let ch3 = i16x8_shuffle::<4, 5, 6, 7, 12, 13, 14, 15>(pair_01_c23, pair_23_c23);
+  // Level 2: concatenate the lo half of each pair_*_c01 (= channel 0 for
+  // 4 pixels) with the lo half of the matching counterpart (4 more
+  // pixels) to get a single 8-u16 channel vector in natural pixel order.
+  // Lanes 0..3 from first source = pixels 0..3; lanes 8..11 from second
+  // source = pixels 4..7 (treated as the second i16x8_shuffle source).
+  // Hi halves of each pair_* hold the next channel (C1 or C3).
+  let ch0 = i16x8_shuffle::<0, 1, 2, 3, 8, 9, 10, 11>(pair_01_c01, pair_23_c01);
+  let ch1 = i16x8_shuffle::<4, 5, 6, 7, 12, 13, 14, 15>(pair_01_c01, pair_23_c01);
+  let ch2 = i16x8_shuffle::<0, 1, 2, 3, 8, 9, 10, 11>(pair_01_c23, pair_23_c23);
+  let ch3 = i16x8_shuffle::<4, 5, 6, 7, 12, 13, 14, 15>(pair_01_c23, pair_23_c23);
 
-    (ch0, ch1, ch2, ch3)
-  }
+  (ch0, ch1, ch2, ch3)
 }
 
 // =============================================================================
@@ -216,11 +212,9 @@ unsafe fn deinterleave_rgba64_8px(
 /// Caller must hold `simd128` target_feature.
 #[inline(always)]
 unsafe fn narrow_u16x8_to_u8x8(v: v128) -> v128 {
-  unsafe {
-    let shr = u16x8_shr(v, 8);
-    let zero = u16x8_splat(0);
-    u8x16_narrow_i16x8(shr, zero)
-  }
+  let shr = u16x8_shr(v, 8);
+  let zero = u16x8_splat(0);
+  u8x16_narrow_i16x8(shr, zero)
 }
 
 // =============================================================================

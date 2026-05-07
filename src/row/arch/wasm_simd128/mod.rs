@@ -74,6 +74,7 @@ pub(crate) use gray::*;
 pub(crate) use hsv::*;
 pub(crate) use mono1bit::*;
 pub(crate) use packed_rgb::*;
+#[allow(unused_imports)]
 pub(crate) use packed_rgb_16bit::*;
 pub(crate) use packed_rgb_float::*;
 pub(crate) use packed_yuv_8bit::*;
