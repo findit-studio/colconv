@@ -24,56 +24,54 @@ use crate::row::{
 #[inline]
 #[target_feature(enable = "avx2")]
 unsafe fn unpack_4bytes_avx2<const INVERT: bool>(b0: u8, b1: u8, b2: u8, b3: u8) -> __m256i {
-  unsafe {
-    let mask = _mm256_set_epi8(
-      0x01u8 as i8,
-      0x02u8 as i8,
-      0x04u8 as i8,
-      0x08u8 as i8,
-      0x10u8 as i8,
-      0x20u8 as i8,
-      0x40u8 as i8,
-      0x80u8 as i8,
-      0x01u8 as i8,
-      0x02u8 as i8,
-      0x04u8 as i8,
-      0x08u8 as i8,
-      0x10u8 as i8,
-      0x20u8 as i8,
-      0x40u8 as i8,
-      0x80u8 as i8,
-      0x01u8 as i8,
-      0x02u8 as i8,
-      0x04u8 as i8,
-      0x08u8 as i8,
-      0x10u8 as i8,
-      0x20u8 as i8,
-      0x40u8 as i8,
-      0x80u8 as i8,
-      0x01u8 as i8,
-      0x02u8 as i8,
-      0x04u8 as i8,
-      0x08u8 as i8,
-      0x10u8 as i8,
-      0x20u8 as i8,
-      0x40u8 as i8,
-      0x80u8 as i8,
-    );
-    let bcast = _mm256_set_epi8(
-      b3 as i8, b3 as i8, b3 as i8, b3 as i8, b3 as i8, b3 as i8, b3 as i8, b3 as i8, b2 as i8,
-      b2 as i8, b2 as i8, b2 as i8, b2 as i8, b2 as i8, b2 as i8, b2 as i8, b1 as i8, b1 as i8,
-      b1 as i8, b1 as i8, b1 as i8, b1 as i8, b1 as i8, b1 as i8, b0 as i8, b0 as i8, b0 as i8,
-      b0 as i8, b0 as i8, b0 as i8, b0 as i8, b0 as i8,
-    );
-    let anded = _mm256_and_si256(bcast, mask);
-    let zero = _mm256_setzero_si256();
-    let cmp = _mm256_cmpeq_epi8(anded, zero);
-    if INVERT {
-      cmp
-    } else {
-      let all_ones = _mm256_set1_epi8(-1i8);
-      _mm256_xor_si256(cmp, all_ones)
-    }
+  let mask = _mm256_set_epi8(
+    0x01u8 as i8,
+    0x02u8 as i8,
+    0x04u8 as i8,
+    0x08u8 as i8,
+    0x10u8 as i8,
+    0x20u8 as i8,
+    0x40u8 as i8,
+    0x80u8 as i8,
+    0x01u8 as i8,
+    0x02u8 as i8,
+    0x04u8 as i8,
+    0x08u8 as i8,
+    0x10u8 as i8,
+    0x20u8 as i8,
+    0x40u8 as i8,
+    0x80u8 as i8,
+    0x01u8 as i8,
+    0x02u8 as i8,
+    0x04u8 as i8,
+    0x08u8 as i8,
+    0x10u8 as i8,
+    0x20u8 as i8,
+    0x40u8 as i8,
+    0x80u8 as i8,
+    0x01u8 as i8,
+    0x02u8 as i8,
+    0x04u8 as i8,
+    0x08u8 as i8,
+    0x10u8 as i8,
+    0x20u8 as i8,
+    0x40u8 as i8,
+    0x80u8 as i8,
+  );
+  let bcast = _mm256_set_epi8(
+    b3 as i8, b3 as i8, b3 as i8, b3 as i8, b3 as i8, b3 as i8, b3 as i8, b3 as i8, b2 as i8,
+    b2 as i8, b2 as i8, b2 as i8, b2 as i8, b2 as i8, b2 as i8, b2 as i8, b1 as i8, b1 as i8,
+    b1 as i8, b1 as i8, b1 as i8, b1 as i8, b1 as i8, b1 as i8, b0 as i8, b0 as i8, b0 as i8,
+    b0 as i8, b0 as i8, b0 as i8, b0 as i8, b0 as i8,
+  );
+  let anded = _mm256_and_si256(bcast, mask);
+  let zero = _mm256_setzero_si256();
+  let cmp = _mm256_cmpeq_epi8(anded, zero);
+  if INVERT {
+    cmp
+  } else {
+    let all_ones = _mm256_set1_epi8(-1i8);
+    _mm256_xor_si256(cmp, all_ones)
   }
 }
 

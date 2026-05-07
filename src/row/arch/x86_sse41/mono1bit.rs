@@ -33,43 +33,41 @@ use crate::row::{
 #[inline]
 #[target_feature(enable = "sse4.1")]
 unsafe fn unpack_2bytes_sse41<const INVERT: bool>(b0: u8, b1: u8) -> __m128i {
-  unsafe {
-    // Bit-position mask: lane i of each 8-lane half tests bit (7 - i).
-    let mask = _mm_set_epi8(
-      0x01u8 as i8,
-      0x02u8 as i8,
-      0x04u8 as i8,
-      0x08u8 as i8,
-      0x10u8 as i8,
-      0x20u8 as i8,
-      0x40u8 as i8,
-      0x80u8 as i8,
-      0x01u8 as i8,
-      0x02u8 as i8,
-      0x04u8 as i8,
-      0x08u8 as i8,
-      0x10u8 as i8,
-      0x20u8 as i8,
-      0x40u8 as i8,
-      0x80u8 as i8,
-    );
-    // Build the 16-byte broadcast vector: low 8 lanes = b0, high 8 lanes = b1.
-    let bcast = _mm_set_epi8(
-      b1 as i8, b1 as i8, b1 as i8, b1 as i8, b1 as i8, b1 as i8, b1 as i8, b1 as i8, b0 as i8,
-      b0 as i8, b0 as i8, b0 as i8, b0 as i8, b0 as i8, b0 as i8, b0 as i8,
-    );
-    let anded = _mm_and_si128(bcast, mask);
-    let zero = _mm_setzero_si128();
-    // cmpeq: 0xFF where (anded == 0), i.e., where bit was NOT set.
-    let cmp = _mm_cmpeq_epi8(anded, zero);
-    if INVERT {
-      // Monowhite: bit=0 (not set) → white (0xFF) — already what cmp gives.
-      cmp
-    } else {
-      // Monoblack: bit=1 (set) → white (0xFF) → negate the cmpeq.
-      let all_ones = _mm_set1_epi8(-1i8);
-      _mm_xor_si128(cmp, all_ones)
-    }
+  // Bit-position mask: lane i of each 8-lane half tests bit (7 - i).
+  let mask = _mm_set_epi8(
+    0x01u8 as i8,
+    0x02u8 as i8,
+    0x04u8 as i8,
+    0x08u8 as i8,
+    0x10u8 as i8,
+    0x20u8 as i8,
+    0x40u8 as i8,
+    0x80u8 as i8,
+    0x01u8 as i8,
+    0x02u8 as i8,
+    0x04u8 as i8,
+    0x08u8 as i8,
+    0x10u8 as i8,
+    0x20u8 as i8,
+    0x40u8 as i8,
+    0x80u8 as i8,
+  );
+  // Build the 16-byte broadcast vector: low 8 lanes = b0, high 8 lanes = b1.
+  let bcast = _mm_set_epi8(
+    b1 as i8, b1 as i8, b1 as i8, b1 as i8, b1 as i8, b1 as i8, b1 as i8, b1 as i8, b0 as i8,
+    b0 as i8, b0 as i8, b0 as i8, b0 as i8, b0 as i8, b0 as i8, b0 as i8,
+  );
+  let anded = _mm_and_si128(bcast, mask);
+  let zero = _mm_setzero_si128();
+  // cmpeq: 0xFF where (anded == 0), i.e., where bit was NOT set.
+  let cmp = _mm_cmpeq_epi8(anded, zero);
+  if INVERT {
+    // Monowhite: bit=0 (not set) → white (0xFF) — already what cmp gives.
+    cmp
+  } else {
+    // Monoblack: bit=1 (set) → white (0xFF) → negate the cmpeq.
+    let all_ones = _mm_set1_epi8(-1i8);
+    _mm_xor_si128(cmp, all_ones)
   }
 }
 
@@ -78,11 +76,9 @@ unsafe fn unpack_2bytes_sse41<const INVERT: bool>(b0: u8, b1: u8) -> __m128i {
 #[inline]
 #[target_feature(enable = "sse4.1")]
 unsafe fn expand_y_to_u16x8_sse41(y_low8: __m128i) -> __m128i {
-  unsafe {
-    // _mm_unpacklo_epi8(y, y): interleave low 8 bytes with themselves
-    // → [y0, y0, y1, y1, ..., y7, y7] as a u8x16, i.e. u16x8 of (y | y << 8).
-    _mm_unpacklo_epi8(y_low8, y_low8)
-  }
+  // _mm_unpacklo_epi8(y, y): interleave low 8 bytes with themselves
+  // → [y0, y0, y1, y1, ..., y7, y7] as a u8x16, i.e. u16x8 of (y | y << 8).
+  _mm_unpacklo_epi8(y_low8, y_low8)
 }
 
 // ---- mono1bit → RGB u8 -------------------------------------------------------

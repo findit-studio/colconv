@@ -25,97 +25,95 @@ use crate::row::{
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 unsafe fn unpack_8bytes_avx512<const INVERT: bool>(b: [u8; 8]) -> __m512i {
-  unsafe {
-    let mask = _mm512_set_epi8(
-      0x01u8 as i8,
-      0x02u8 as i8,
-      0x04u8 as i8,
-      0x08u8 as i8,
-      0x10u8 as i8,
-      0x20u8 as i8,
-      0x40u8 as i8,
-      0x80u8 as i8,
-      0x01u8 as i8,
-      0x02u8 as i8,
-      0x04u8 as i8,
-      0x08u8 as i8,
-      0x10u8 as i8,
-      0x20u8 as i8,
-      0x40u8 as i8,
-      0x80u8 as i8,
-      0x01u8 as i8,
-      0x02u8 as i8,
-      0x04u8 as i8,
-      0x08u8 as i8,
-      0x10u8 as i8,
-      0x20u8 as i8,
-      0x40u8 as i8,
-      0x80u8 as i8,
-      0x01u8 as i8,
-      0x02u8 as i8,
-      0x04u8 as i8,
-      0x08u8 as i8,
-      0x10u8 as i8,
-      0x20u8 as i8,
-      0x40u8 as i8,
-      0x80u8 as i8,
-      0x01u8 as i8,
-      0x02u8 as i8,
-      0x04u8 as i8,
-      0x08u8 as i8,
-      0x10u8 as i8,
-      0x20u8 as i8,
-      0x40u8 as i8,
-      0x80u8 as i8,
-      0x01u8 as i8,
-      0x02u8 as i8,
-      0x04u8 as i8,
-      0x08u8 as i8,
-      0x10u8 as i8,
-      0x20u8 as i8,
-      0x40u8 as i8,
-      0x80u8 as i8,
-      0x01u8 as i8,
-      0x02u8 as i8,
-      0x04u8 as i8,
-      0x08u8 as i8,
-      0x10u8 as i8,
-      0x20u8 as i8,
-      0x40u8 as i8,
-      0x80u8 as i8,
-      0x01u8 as i8,
-      0x02u8 as i8,
-      0x04u8 as i8,
-      0x08u8 as i8,
-      0x10u8 as i8,
-      0x20u8 as i8,
-      0x40u8 as i8,
-      0x80u8 as i8,
-    );
-    let bcast = _mm512_set_epi8(
-      b[7] as i8, b[7] as i8, b[7] as i8, b[7] as i8, b[7] as i8, b[7] as i8, b[7] as i8,
-      b[7] as i8, b[6] as i8, b[6] as i8, b[6] as i8, b[6] as i8, b[6] as i8, b[6] as i8,
-      b[6] as i8, b[6] as i8, b[5] as i8, b[5] as i8, b[5] as i8, b[5] as i8, b[5] as i8,
-      b[5] as i8, b[5] as i8, b[5] as i8, b[4] as i8, b[4] as i8, b[4] as i8, b[4] as i8,
-      b[4] as i8, b[4] as i8, b[4] as i8, b[4] as i8, b[3] as i8, b[3] as i8, b[3] as i8,
-      b[3] as i8, b[3] as i8, b[3] as i8, b[3] as i8, b[3] as i8, b[2] as i8, b[2] as i8,
-      b[2] as i8, b[2] as i8, b[2] as i8, b[2] as i8, b[2] as i8, b[2] as i8, b[1] as i8,
-      b[1] as i8, b[1] as i8, b[1] as i8, b[1] as i8, b[1] as i8, b[1] as i8, b[1] as i8,
-      b[0] as i8, b[0] as i8, b[0] as i8, b[0] as i8, b[0] as i8, b[0] as i8, b[0] as i8,
-      b[0] as i8,
-    );
-    let anded = _mm512_and_si512(bcast, mask);
-    let zero = _mm512_setzero_si512();
-    // cmpeq_epi8_mask: k=1 where anded==0 (bit not set).
-    // movm_epi8: expand mask bit to 0xFF per set mask bit, 0x00 per clear.
-    let eq_mask: __mmask64 = _mm512_cmpeq_epi8_mask(anded, zero);
-    if INVERT {
-      // Monowhite: 0xFF where bit=0 (not set) → directly use eq_mask.
-      _mm512_movm_epi8(eq_mask)
-    } else {
-      // Monoblack: 0xFF where bit=1 (set) → use NOT eq_mask.
-      _mm512_movm_epi8(!eq_mask)
-    }
+  let mask = _mm512_set_epi8(
+    0x01u8 as i8,
+    0x02u8 as i8,
+    0x04u8 as i8,
+    0x08u8 as i8,
+    0x10u8 as i8,
+    0x20u8 as i8,
+    0x40u8 as i8,
+    0x80u8 as i8,
+    0x01u8 as i8,
+    0x02u8 as i8,
+    0x04u8 as i8,
+    0x08u8 as i8,
+    0x10u8 as i8,
+    0x20u8 as i8,
+    0x40u8 as i8,
+    0x80u8 as i8,
+    0x01u8 as i8,
+    0x02u8 as i8,
+    0x04u8 as i8,
+    0x08u8 as i8,
+    0x10u8 as i8,
+    0x20u8 as i8,
+    0x40u8 as i8,
+    0x80u8 as i8,
+    0x01u8 as i8,
+    0x02u8 as i8,
+    0x04u8 as i8,
+    0x08u8 as i8,
+    0x10u8 as i8,
+    0x20u8 as i8,
+    0x40u8 as i8,
+    0x80u8 as i8,
+    0x01u8 as i8,
+    0x02u8 as i8,
+    0x04u8 as i8,
+    0x08u8 as i8,
+    0x10u8 as i8,
+    0x20u8 as i8,
+    0x40u8 as i8,
+    0x80u8 as i8,
+    0x01u8 as i8,
+    0x02u8 as i8,
+    0x04u8 as i8,
+    0x08u8 as i8,
+    0x10u8 as i8,
+    0x20u8 as i8,
+    0x40u8 as i8,
+    0x80u8 as i8,
+    0x01u8 as i8,
+    0x02u8 as i8,
+    0x04u8 as i8,
+    0x08u8 as i8,
+    0x10u8 as i8,
+    0x20u8 as i8,
+    0x40u8 as i8,
+    0x80u8 as i8,
+    0x01u8 as i8,
+    0x02u8 as i8,
+    0x04u8 as i8,
+    0x08u8 as i8,
+    0x10u8 as i8,
+    0x20u8 as i8,
+    0x40u8 as i8,
+    0x80u8 as i8,
+  );
+  let bcast = _mm512_set_epi8(
+    b[7] as i8, b[7] as i8, b[7] as i8, b[7] as i8, b[7] as i8, b[7] as i8, b[7] as i8,
+    b[7] as i8, b[6] as i8, b[6] as i8, b[6] as i8, b[6] as i8, b[6] as i8, b[6] as i8,
+    b[6] as i8, b[6] as i8, b[5] as i8, b[5] as i8, b[5] as i8, b[5] as i8, b[5] as i8,
+    b[5] as i8, b[5] as i8, b[5] as i8, b[4] as i8, b[4] as i8, b[4] as i8, b[4] as i8,
+    b[4] as i8, b[4] as i8, b[4] as i8, b[4] as i8, b[3] as i8, b[3] as i8, b[3] as i8,
+    b[3] as i8, b[3] as i8, b[3] as i8, b[3] as i8, b[3] as i8, b[2] as i8, b[2] as i8,
+    b[2] as i8, b[2] as i8, b[2] as i8, b[2] as i8, b[2] as i8, b[2] as i8, b[1] as i8,
+    b[1] as i8, b[1] as i8, b[1] as i8, b[1] as i8, b[1] as i8, b[1] as i8, b[1] as i8,
+    b[0] as i8, b[0] as i8, b[0] as i8, b[0] as i8, b[0] as i8, b[0] as i8, b[0] as i8,
+    b[0] as i8,
+  );
+  let anded = _mm512_and_si512(bcast, mask);
+  let zero = _mm512_setzero_si512();
+  // cmpeq_epi8_mask: k=1 where anded==0 (bit not set).
+  // movm_epi8: expand mask bit to 0xFF per set mask bit, 0x00 per clear.
+  let eq_mask: __mmask64 = _mm512_cmpeq_epi8_mask(anded, zero);
+  if INVERT {
+    // Monowhite: 0xFF where bit=0 (not set) → directly use eq_mask.
+    _mm512_movm_epi8(eq_mask)
+  } else {
+    // Monoblack: 0xFF where bit=1 (set) → use NOT eq_mask.
+    _mm512_movm_epi8(!eq_mask)
   }
 }
 
