@@ -17,6 +17,50 @@
 
 use core::arch::aarch64::*;
 
+// ---- u16x4 loaders ---------------------------------------------------------
+
+/// Loads 4 × u16 from `ptr` (LE-encoded on disk/wire) into host-native order.
+///
+/// # Safety
+///
+/// `ptr` must point to at least 8 readable bytes, aligned to at least 1 byte.
+/// Caller must have NEON enabled.
+#[inline(always)]
+pub(crate) unsafe fn load_le_u16x4(ptr: *const u8) -> uint16x4_t {
+  let v = unsafe { vld1_u16(ptr.cast()) };
+  #[cfg(target_endian = "big")]
+  let v = unsafe { vreinterpret_u16_u8(vrev16_u8(vreinterpret_u8_u16(v))) };
+  v
+}
+
+/// Loads 4 × u16 from `ptr` (BE-encoded on disk/wire) into host-native order.
+///
+/// # Safety
+///
+/// `ptr` must point to at least 8 readable bytes, aligned to at least 1 byte.
+/// Caller must have NEON enabled.
+#[inline(always)]
+pub(crate) unsafe fn load_be_u16x4(ptr: *const u8) -> uint16x4_t {
+  let v = unsafe { vld1_u16(ptr.cast()) };
+  #[cfg(target_endian = "little")]
+  let v = unsafe { vreinterpret_u16_u8(vrev16_u8(vreinterpret_u8_u16(v))) };
+  v
+}
+
+/// Generic dispatcher: routes to `load_le_u16x4` or `load_be_u16x4`.
+///
+/// # Safety
+///
+/// Same as `load_le_u16x4` / `load_be_u16x4`.
+#[inline(always)]
+pub(crate) unsafe fn load_endian_u16x4<const BE: bool>(ptr: *const u8) -> uint16x4_t {
+  if BE {
+    unsafe { load_be_u16x4(ptr) }
+  } else {
+    unsafe { load_le_u16x4(ptr) }
+  }
+}
+
 // ---- u16x8 loaders ---------------------------------------------------------
 
 /// Loads 8 × u16 from `ptr` (LE-encoded on disk/wire) into host-native order.

@@ -291,7 +291,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
     if let Some(buf) = self.rgb_f32.as_deref_mut() {
       let start = one_plane_start * 3;
       let end = one_plane_end * 3;
-      gbrpf32_to_rgb_f32_row(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
+      gbrpf32_to_rgb_f32_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     if let Some(buf) = self.rgba_f32.as_deref_mut() {
@@ -303,7 +303,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
           height: h,
           channels: 4,
         })?;
-      gbrpf32_to_rgba_f32_row(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
+      gbrpf32_to_rgba_f32_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     // ---- f16 narrowing (independent of integer paths) --------------------
@@ -311,7 +311,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
     if let Some(buf) = self.rgb_f16.as_deref_mut() {
       let start = one_plane_start * 3;
       let end = one_plane_end * 3;
-      gbrpf32_to_rgb_f16_row(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
+      gbrpf32_to_rgb_f16_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     if let Some(buf) = self.rgba_f16.as_deref_mut() {
@@ -323,7 +323,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
           height: h,
           channels: 4,
         })?;
-      gbrpf32_to_rgba_f16_row(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
+      gbrpf32_to_rgba_f16_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     // ---- u16 RGB / RGBA path (direct float → u16, no staging) -----------
@@ -331,12 +331,12 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
     if let Some(buf) = self.rgb_u16.as_deref_mut() {
       let start = one_plane_start * 3;
       let end = one_plane_end * 3;
-      gbrpf32_to_rgb_u16_row(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
+      gbrpf32_to_rgb_u16_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     if let Some(buf) = self.rgba_u16.as_deref_mut() {
       let rgba_row = rgba_u16_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
-      gbrpf32_to_rgba_u16_row(g_in, b_in, r_in, rgba_row, w, use_simd);
+      gbrpf32_to_rgba_u16_row::<false>(g_in, b_in, r_in, rgba_row, w, use_simd);
     }
 
     // ---- u8 RGBA standalone fast path (no RGB / luma / HSV needed) -------
@@ -351,7 +351,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
     if want_rgba && !need_u8_rgb {
       let rgba_buf = self.rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      gbrpf32_to_rgba_row(g_in, b_in, r_in, rgba_row, w, use_simd);
+      gbrpf32_to_rgba_row::<false>(g_in, b_in, r_in, rgba_row, w, use_simd);
       return Ok(());
     }
 
@@ -378,10 +378,10 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
       w,
       h,
     )?;
-    gbrpf32_to_rgb_row(g_in, b_in, r_in, rgb_row, w, use_simd);
+    gbrpf32_to_rgb_row::<false>(g_in, b_in, r_in, rgb_row, w, use_simd);
 
     if let Some(luma) = luma.as_deref_mut() {
-      gbrpf32_to_luma_row(
+      gbrpf32_to_luma_row::<false>(
         g_in,
         b_in,
         r_in,
@@ -394,7 +394,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
     }
 
     if let Some(luma_u16) = luma_u16.as_deref_mut() {
-      gbrpf32_to_luma_u16_row(
+      gbrpf32_to_luma_u16_row::<false>(
         g_in,
         b_in,
         r_in,
@@ -407,7 +407,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
     }
 
     if let Some(hsv) = hsv.as_mut() {
-      gbrpf32_to_hsv_row(
+      gbrpf32_to_hsv_row::<false>(
         g_in,
         b_in,
         r_in,
@@ -677,7 +677,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
     if let Some(buf) = self.rgb_f32.as_deref_mut() {
       let start = one_plane_start * 3;
       let end = one_plane_end * 3;
-      gbrpf32_to_rgb_f32_row(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
+      gbrpf32_to_rgb_f32_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     if let Some(buf) = self.rgba_f32.as_deref_mut() {
@@ -689,7 +689,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
           height: h,
           channels: 4,
         })?;
-      gbrapf32_to_rgba_f32_row(g_in, b_in, r_in, a_in, &mut buf[start..end], w, use_simd);
+      gbrapf32_to_rgba_f32_row::<false>(g_in, b_in, r_in, a_in, &mut buf[start..end], w, use_simd);
     }
 
     // ---- f16 narrowing (independent of integer paths) --------------------
@@ -697,7 +697,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
     if let Some(buf) = self.rgb_f16.as_deref_mut() {
       let start = one_plane_start * 3;
       let end = one_plane_end * 3;
-      gbrpf32_to_rgb_f16_row(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
+      gbrpf32_to_rgb_f16_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     if let Some(buf) = self.rgba_f16.as_deref_mut() {
@@ -709,7 +709,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
           height: h,
           channels: 4,
         })?;
-      gbrapf32_to_rgba_f16_row(g_in, b_in, r_in, a_in, &mut buf[start..end], w, use_simd);
+      gbrapf32_to_rgba_f16_row::<false>(g_in, b_in, r_in, a_in, &mut buf[start..end], w, use_simd);
     }
 
     // ---- u16 RGB path (direct, no staging) ------------------------------
@@ -717,14 +717,14 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
     if let Some(buf) = self.rgb_u16.as_deref_mut() {
       let start = one_plane_start * 3;
       let end = one_plane_end * 3;
-      gbrpf32_to_rgb_u16_row(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
+      gbrpf32_to_rgb_u16_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     // ---- u16 RGBA path (direct — source α clamped + scaled) -------------
 
     if let Some(buf) = self.rgba_u16.as_deref_mut() {
       let rgba_row = rgba_u16_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
-      gbrapf32_to_rgba_u16_row(g_in, b_in, r_in, a_in, rgba_row, w, use_simd);
+      gbrapf32_to_rgba_u16_row::<false>(g_in, b_in, r_in, a_in, rgba_row, w, use_simd);
     }
 
     // ---- u8 RGBA standalone fast path ------------------------------------
@@ -739,7 +739,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
     if want_rgba && !need_u8_rgb {
       let rgba_buf = self.rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      gbrapf32_to_rgba_row(g_in, b_in, r_in, a_in, rgba_row, w, use_simd);
+      gbrapf32_to_rgba_row::<false>(g_in, b_in, r_in, a_in, rgba_row, w, use_simd);
       return Ok(());
     }
 
@@ -766,10 +766,10 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
       w,
       h,
     )?;
-    gbrpf32_to_rgb_row(g_in, b_in, r_in, rgb_row, w, use_simd);
+    gbrpf32_to_rgb_row::<false>(g_in, b_in, r_in, rgb_row, w, use_simd);
 
     if let Some(luma) = luma.as_deref_mut() {
-      gbrpf32_to_luma_row(
+      gbrpf32_to_luma_row::<false>(
         g_in,
         b_in,
         r_in,
@@ -782,7 +782,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
     }
 
     if let Some(luma_u16) = luma_u16.as_deref_mut() {
-      gbrpf32_to_luma_u16_row(
+      gbrpf32_to_luma_u16_row::<false>(
         g_in,
         b_in,
         r_in,
@@ -795,7 +795,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
     }
 
     if let Some(hsv) = hsv.as_mut() {
-      gbrpf32_to_hsv_row(
+      gbrpf32_to_hsv_row::<false>(
         g_in,
         b_in,
         r_in,

@@ -75,6 +75,58 @@ pub(crate) unsafe fn load_endian_u16x8<const BE: bool>(ptr: *const u8) -> __m128
   }
 }
 
+// ---- u16x4 loaders (via _mm_loadl_epi64, low 64 bits only) ----------------
+
+/// SSSE3 `_mm_shuffle_epi8` mask that swaps bytes within every 2-byte (u16)
+/// lane in the LOW 8 bytes of a 128-bit register. Upper bytes are zeroed.
+const BYTESWAP_MASK_U16X4: __m128i = unsafe {
+  core::mem::transmute([1u8, 0, 3, 2, 5, 4, 7, 6, 0x80u8, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80])
+};
+
+/// Loads 4 × u16 (8 bytes) from `ptr` (LE-encoded) into the low 64 bits of
+/// `__m128i`, host-native order.
+///
+/// # Safety
+///
+/// `ptr` must point to at least 8 readable bytes. Caller must have SSE4.1
+/// (and SSSE3) enabled.
+#[inline(always)]
+pub(crate) unsafe fn load_le_u16x4(ptr: *const u8) -> __m128i {
+  let v = unsafe { _mm_loadl_epi64(ptr.cast()) };
+  #[cfg(target_endian = "big")]
+  let v = unsafe { _mm_shuffle_epi8(v, BYTESWAP_MASK_U16X4) };
+  v
+}
+
+/// Loads 4 × u16 (8 bytes) from `ptr` (BE-encoded) into the low 64 bits of
+/// `__m128i`, host-native order.
+///
+/// # Safety
+///
+/// `ptr` must point to at least 8 readable bytes. Caller must have SSE4.1
+/// (and SSSE3) enabled.
+#[inline(always)]
+pub(crate) unsafe fn load_be_u16x4(ptr: *const u8) -> __m128i {
+  let v = unsafe { _mm_loadl_epi64(ptr.cast()) };
+  #[cfg(target_endian = "little")]
+  let v = unsafe { _mm_shuffle_epi8(v, BYTESWAP_MASK_U16X4) };
+  v
+}
+
+/// Generic dispatcher: routes to `load_le_u16x4` or `load_be_u16x4`.
+///
+/// # Safety
+///
+/// Same as `load_le_u16x4` / `load_be_u16x4`.
+#[inline(always)]
+pub(crate) unsafe fn load_endian_u16x4<const BE: bool>(ptr: *const u8) -> __m128i {
+  if BE {
+    unsafe { load_be_u16x4(ptr) }
+  } else {
+    unsafe { load_le_u16x4(ptr) }
+  }
+}
+
 // ---- u32x4 loaders ---------------------------------------------------------
 
 /// Loads 4 × u32 from `ptr` (LE-encoded on disk/wire) into host-native order.
