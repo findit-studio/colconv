@@ -16,7 +16,12 @@
 //! implementation. SIMD branches (NEON / SSE4.1 / AVX2 / AVX-512 / wasm-simd128)
 //! will be wired in Tasks 4-8.
 
-#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(any(
+  target_arch = "aarch64",
+  target_arch = "x86",
+  target_arch = "x86_64",
+  target_arch = "wasm32"
+))]
 use crate::row::arch;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::row::avx2_available;
@@ -24,6 +29,8 @@ use crate::row::avx2_available;
 use crate::row::avx512_available;
 #[cfg(target_arch = "aarch64")]
 use crate::row::neon_available;
+#[cfg(target_arch = "wasm32")]
+use crate::row::simd128_available;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::row::sse41_available;
 use crate::row::{
@@ -75,6 +82,13 @@ pub fn rgb565_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: usize, use_simd:
       return arch::x86_sse41::legacy_rgb::rgb565_to_rgb_row(src, rgb_out, width);
     }
   }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    // SAFETY: simd128 compile-time enabled.
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::rgb565_to_rgb_row(src, rgb_out, width);
+    }
+  }
   let _ = use_simd;
   scalar::legacy_rgb::rgb565_to_rgb_row(src, rgb_out, width);
 }
@@ -109,6 +123,12 @@ pub fn rgb565_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: usize, use_sim
   if use_simd && sse41_available() {
     unsafe {
       return arch::x86_sse41::legacy_rgb::rgb565_to_rgba_row(src, rgba_out, width);
+    }
+  }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::rgb565_to_rgba_row(src, rgba_out, width);
     }
   }
   let _ = use_simd;
@@ -147,6 +167,12 @@ pub fn rgb565_to_rgb_u16_row(src: &[u8], rgb_out: &mut [u16], width: usize, use_
       return arch::x86_sse41::legacy_rgb::rgb565_to_rgb_u16_row(src, rgb_out, width);
     }
   }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::rgb565_to_rgb_u16_row(src, rgb_out, width);
+    }
+  }
   let _ = use_simd;
   scalar::legacy_rgb::rgb565_to_rgb_u16_row(src, rgb_out, width);
 }
@@ -181,6 +207,12 @@ pub fn rgb565_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   if use_simd && sse41_available() {
     unsafe {
       return arch::x86_sse41::legacy_rgb::rgb565_to_rgba_u16_row(src, rgba_out, width);
+    }
+  }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::rgb565_to_rgba_u16_row(src, rgba_out, width);
     }
   }
   let _ = use_simd;
@@ -223,6 +255,12 @@ pub fn bgr565_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: usize, use_simd:
       return arch::x86_sse41::legacy_rgb::bgr565_to_rgb_row(src, rgb_out, width);
     }
   }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::bgr565_to_rgb_row(src, rgb_out, width);
+    }
+  }
   let _ = use_simd;
   scalar::legacy_rgb::bgr565_to_rgb_row(src, rgb_out, width);
 }
@@ -257,6 +295,12 @@ pub fn bgr565_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: usize, use_sim
   if use_simd && sse41_available() {
     unsafe {
       return arch::x86_sse41::legacy_rgb::bgr565_to_rgba_row(src, rgba_out, width);
+    }
+  }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::bgr565_to_rgba_row(src, rgba_out, width);
     }
   }
   let _ = use_simd;
@@ -295,6 +339,12 @@ pub fn bgr565_to_rgb_u16_row(src: &[u8], rgb_out: &mut [u16], width: usize, use_
       return arch::x86_sse41::legacy_rgb::bgr565_to_rgb_u16_row(src, rgb_out, width);
     }
   }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::bgr565_to_rgb_u16_row(src, rgb_out, width);
+    }
+  }
   let _ = use_simd;
   scalar::legacy_rgb::bgr565_to_rgb_u16_row(src, rgb_out, width);
 }
@@ -329,6 +379,12 @@ pub fn bgr565_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   if use_simd && sse41_available() {
     unsafe {
       return arch::x86_sse41::legacy_rgb::bgr565_to_rgba_u16_row(src, rgba_out, width);
+    }
+  }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::bgr565_to_rgba_u16_row(src, rgba_out, width);
     }
   }
   let _ = use_simd;
@@ -371,6 +427,12 @@ pub fn rgb555_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: usize, use_simd:
       return arch::x86_sse41::legacy_rgb::rgb555_to_rgb_row(src, rgb_out, width);
     }
   }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::rgb555_to_rgb_row(src, rgb_out, width);
+    }
+  }
   let _ = use_simd;
   scalar::legacy_rgb::rgb555_to_rgb_row(src, rgb_out, width);
 }
@@ -405,6 +467,12 @@ pub fn rgb555_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: usize, use_sim
   if use_simd && sse41_available() {
     unsafe {
       return arch::x86_sse41::legacy_rgb::rgb555_to_rgba_row(src, rgba_out, width);
+    }
+  }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::rgb555_to_rgba_row(src, rgba_out, width);
     }
   }
   let _ = use_simd;
@@ -443,6 +511,12 @@ pub fn rgb555_to_rgb_u16_row(src: &[u8], rgb_out: &mut [u16], width: usize, use_
       return arch::x86_sse41::legacy_rgb::rgb555_to_rgb_u16_row(src, rgb_out, width);
     }
   }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::rgb555_to_rgb_u16_row(src, rgb_out, width);
+    }
+  }
   let _ = use_simd;
   scalar::legacy_rgb::rgb555_to_rgb_u16_row(src, rgb_out, width);
 }
@@ -477,6 +551,12 @@ pub fn rgb555_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   if use_simd && sse41_available() {
     unsafe {
       return arch::x86_sse41::legacy_rgb::rgb555_to_rgba_u16_row(src, rgba_out, width);
+    }
+  }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::rgb555_to_rgba_u16_row(src, rgba_out, width);
     }
   }
   let _ = use_simd;
@@ -519,6 +599,12 @@ pub fn bgr555_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: usize, use_simd:
       return arch::x86_sse41::legacy_rgb::bgr555_to_rgb_row(src, rgb_out, width);
     }
   }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::bgr555_to_rgb_row(src, rgb_out, width);
+    }
+  }
   let _ = use_simd;
   scalar::legacy_rgb::bgr555_to_rgb_row(src, rgb_out, width);
 }
@@ -553,6 +639,12 @@ pub fn bgr555_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: usize, use_sim
   if use_simd && sse41_available() {
     unsafe {
       return arch::x86_sse41::legacy_rgb::bgr555_to_rgba_row(src, rgba_out, width);
+    }
+  }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::bgr555_to_rgba_row(src, rgba_out, width);
     }
   }
   let _ = use_simd;
@@ -591,6 +683,12 @@ pub fn bgr555_to_rgb_u16_row(src: &[u8], rgb_out: &mut [u16], width: usize, use_
       return arch::x86_sse41::legacy_rgb::bgr555_to_rgb_u16_row(src, rgb_out, width);
     }
   }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::bgr555_to_rgb_u16_row(src, rgb_out, width);
+    }
+  }
   let _ = use_simd;
   scalar::legacy_rgb::bgr555_to_rgb_u16_row(src, rgb_out, width);
 }
@@ -625,6 +723,12 @@ pub fn bgr555_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   if use_simd && sse41_available() {
     unsafe {
       return arch::x86_sse41::legacy_rgb::bgr555_to_rgba_u16_row(src, rgba_out, width);
+    }
+  }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::bgr555_to_rgba_u16_row(src, rgba_out, width);
     }
   }
   let _ = use_simd;
@@ -667,6 +771,12 @@ pub fn rgb444_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: usize, use_simd:
       return arch::x86_sse41::legacy_rgb::rgb444_to_rgb_row(src, rgb_out, width);
     }
   }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::rgb444_to_rgb_row(src, rgb_out, width);
+    }
+  }
   let _ = use_simd;
   scalar::legacy_rgb::rgb444_to_rgb_row(src, rgb_out, width);
 }
@@ -701,6 +811,12 @@ pub fn rgb444_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: usize, use_sim
   if use_simd && sse41_available() {
     unsafe {
       return arch::x86_sse41::legacy_rgb::rgb444_to_rgba_row(src, rgba_out, width);
+    }
+  }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::rgb444_to_rgba_row(src, rgba_out, width);
     }
   }
   let _ = use_simd;
@@ -739,6 +855,12 @@ pub fn rgb444_to_rgb_u16_row(src: &[u8], rgb_out: &mut [u16], width: usize, use_
       return arch::x86_sse41::legacy_rgb::rgb444_to_rgb_u16_row(src, rgb_out, width);
     }
   }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::rgb444_to_rgb_u16_row(src, rgb_out, width);
+    }
+  }
   let _ = use_simd;
   scalar::legacy_rgb::rgb444_to_rgb_u16_row(src, rgb_out, width);
 }
@@ -773,6 +895,12 @@ pub fn rgb444_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   if use_simd && sse41_available() {
     unsafe {
       return arch::x86_sse41::legacy_rgb::rgb444_to_rgba_u16_row(src, rgba_out, width);
+    }
+  }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::rgb444_to_rgba_u16_row(src, rgba_out, width);
     }
   }
   let _ = use_simd;
@@ -815,6 +943,12 @@ pub fn bgr444_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: usize, use_simd:
       return arch::x86_sse41::legacy_rgb::bgr444_to_rgb_row(src, rgb_out, width);
     }
   }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::bgr444_to_rgb_row(src, rgb_out, width);
+    }
+  }
   let _ = use_simd;
   scalar::legacy_rgb::bgr444_to_rgb_row(src, rgb_out, width);
 }
@@ -849,6 +983,12 @@ pub fn bgr444_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: usize, use_sim
   if use_simd && sse41_available() {
     unsafe {
       return arch::x86_sse41::legacy_rgb::bgr444_to_rgba_row(src, rgba_out, width);
+    }
+  }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::bgr444_to_rgba_row(src, rgba_out, width);
     }
   }
   let _ = use_simd;
@@ -887,6 +1027,12 @@ pub fn bgr444_to_rgb_u16_row(src: &[u8], rgb_out: &mut [u16], width: usize, use_
       return arch::x86_sse41::legacy_rgb::bgr444_to_rgb_u16_row(src, rgb_out, width);
     }
   }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::bgr444_to_rgb_u16_row(src, rgb_out, width);
+    }
+  }
   let _ = use_simd;
   scalar::legacy_rgb::bgr444_to_rgb_u16_row(src, rgb_out, width);
 }
@@ -921,6 +1067,12 @@ pub fn bgr444_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   if use_simd && sse41_available() {
     unsafe {
       return arch::x86_sse41::legacy_rgb::bgr444_to_rgba_u16_row(src, rgba_out, width);
+    }
+  }
+  #[cfg(target_arch = "wasm32")]
+  if use_simd && simd128_available() {
+    unsafe {
+      return arch::wasm_simd128::legacy_rgb::bgr444_to_rgba_u16_row(src, rgba_out, width);
     }
   }
   let _ = use_simd;
