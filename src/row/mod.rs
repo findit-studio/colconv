@@ -85,6 +85,25 @@ pub use dispatch::{
 // reaching into `dispatch::mono1bit` internals directly.
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub(crate) use dispatch::mono1bit::*;
+// Tier 8 finish — packed 16-bit RGB dispatcher re-exports.
+// The four basic converters (→rgb, →rgba, →rgb_u16, →rgba_u16) per format are
+// re-exported as `pub`; luma and HSV variants (which require an rgb_scratch
+// parameter) are re-exported as `pub(crate)` for sinker use — the underlying
+// functions in `dispatch::packed_rgb_16bit` are `pub`, but only this
+// re-export visibility is visible outside the crate.
+pub use dispatch::packed_rgb_16bit::{
+  bgr48_to_rgb_row, bgr48_to_rgb_u16_row, bgr48_to_rgba_row, bgr48_to_rgba_u16_row,
+  bgra64_to_rgb_row, bgra64_to_rgb_u16_row, bgra64_to_rgba_row, bgra64_to_rgba_u16_row,
+  rgb48_to_rgb_row, rgb48_to_rgb_u16_row, rgb48_to_rgba_row, rgb48_to_rgba_u16_row,
+  rgba64_to_rgb_row, rgba64_to_rgb_u16_row, rgba64_to_rgba_row, rgba64_to_rgba_u16_row,
+};
+// luma + HSV variants take an extra rgb_scratch parameter — sinker wired in Task 9.
+#[allow(unused_imports)]
+pub(crate) use dispatch::packed_rgb_16bit::{
+  bgr48_to_hsv_row, bgr48_to_luma_row, bgr48_to_luma_u16_row, bgra64_to_hsv_row,
+  bgra64_to_luma_row, bgra64_to_luma_u16_row, rgb48_to_hsv_row, rgb48_to_luma_row,
+  rgb48_to_luma_u16_row, rgba64_to_hsv_row, rgba64_to_luma_row, rgba64_to_luma_u16_row,
+};
 // Gray dispatchers are pub(crate) — sinker code uses them via crate::row::gray*_row.
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub(crate) use dispatch::gray::*;

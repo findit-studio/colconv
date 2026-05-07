@@ -13,6 +13,7 @@ mod gray;
 mod legacy_rgb;
 mod mono1bit;
 mod packed_rgb_10bit;
+mod packed_rgb_16bit;
 mod packed_rgb_8bit;
 mod packed_rgb_f16;
 mod packed_rgb_float;
@@ -38,6 +39,7 @@ pub use legacy_rgb::{
 pub use mono1bit::*;
 pub use packed_rgb_8bit::*;
 pub use packed_rgb_10bit::*;
+pub use packed_rgb_16bit::*;
 pub use packed_rgb_f16::*;
 pub use packed_rgb_float::*;
 pub use packed_yuv_4_4_4::*;
