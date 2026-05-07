@@ -11,6 +11,7 @@ mod bayer;
 mod legacy_rgb;
 mod mono1bit;
 mod packed_rgb_10bit;
+mod packed_rgb_16bit;
 mod packed_rgb_8bit;
 mod packed_rgb_f16;
 mod packed_rgb_float;

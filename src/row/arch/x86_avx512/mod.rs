@@ -78,6 +78,7 @@ mod hsv;
 pub(crate) mod legacy_rgb;
 pub(crate) mod mono1bit;
 mod packed_rgb;
+mod packed_rgb_16bit;
 mod packed_rgb_float;
 mod packed_yuv_8bit;
 mod planar_gbr;
@@ -106,6 +107,8 @@ pub(crate) use hsv::*;
 pub(crate) use legacy_rgb::*;
 pub(crate) use mono1bit::*;
 pub(crate) use packed_rgb::*;
+#[allow(unused_imports)] // dispatcher wired in dispatch-wiring step
+pub(crate) use packed_rgb_16bit::*;
 pub(crate) use packed_rgb_float::*;
 pub(crate) use packed_yuv_8bit::*;
 pub(crate) use planar_gbr::*;

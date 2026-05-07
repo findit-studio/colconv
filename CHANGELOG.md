@@ -124,6 +124,32 @@ parity (5 × 8 kernels = 40), round-half-up regression (5), cross-format
 planar parity (6), Strategy A+ byte-equivalence (4), HDR pass-through (4),
 32-bit dispatcher overflow guards (4).
 
+## Unreleased — Tier 8 finish — Rgb48 / Bgr48 / Rgba64 / Bgra64 source formats
+
+Closes Tier 8's high-bit-depth packed RGB family (P1 mastering — DPX / film
+scan / 16-bit RGB pipelines). Four new source-side pixel formats:
+
+- **Rgb48** (`AV_PIX_FMT_RGB48LE`) — 16-bit packed R/G/B, no source α
+- **Bgr48** (`AV_PIX_FMT_BGR48LE`) — 16-bit packed B/G/R, no source α
+- **Rgba64** (`AV_PIX_FMT_RGBA64LE`) — 16-bit packed R/G/B/A, source α
+- **Bgra64** (`AV_PIX_FMT_BGRA64LE`) — 16-bit packed B/G/R/A, source α
+
+Each format exposes 7 sinker accessors (`with_rgb`, `with_rgba`,
+`with_rgb_u16`, `with_rgba_u16`, `with_luma`, `with_luma_u16`, `with_hsv`).
+Native SIMD across all 5 backends (NEON 8 px/iter via `vld3q_u16`/`vld4q_u16`,
+SSE4.1 8 px/iter, AVX2 16 px/iter via `_mm256_permute4x64_epi64` lane fix,
+AVX-512 32 px/iter, wasm-simd128 8 px/iter).
+
+α handling for Rgba64/Bgra64: Strategy A+ — single deinterleave pass +
+`expand_rgb_to_rgba_row` + α-extract via new helpers
+`copy_alpha_packed_u16x4_to_u8_at_3` and `copy_alpha_packed_u16x4_at_3`.
+Standalone fast path for alpha-only callers.
+
+~120 new tests: per-format scalar correctness, SIMD-vs-scalar parity across
+all 5 backends, lane-order regression (asymmetric R/G/B/A inputs), Strategy
+A+ byte-equivalence, frame validation (WidthOverflow + GeometryOverflow),
+sinker integration with row shape mismatch errors.
+
 ## 0.23.0 — Tier 11 finish: Grayf32 / Ya8 / Ya16 source formats
 
 **Additive feature; no public API change for existing callers.**

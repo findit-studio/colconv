@@ -797,6 +797,24 @@ pub enum RowSlice {
   /// `Gbrapf16`). `half::f16` samples, `width` elements per plane.
   #[display("GBR f16 plane")]
   GbrF16Plane,
+  /// Packed `R, G, B` row of an [`Rgb48`](crate::yuv::Rgb48) source —
+  /// `width * 3` u16 elements (each channel 16 bits, R, G, B order).
+  #[display("RGB48 packed")]
+  Rgb48Packed,
+  /// Packed `B, G, R` row of a [`Bgr48`](crate::yuv::Bgr48) source —
+  /// `width * 3` u16 elements (channel order reversed vs
+  /// [`Rgb48Packed`](Self::Rgb48Packed)).
+  #[display("BGR48 packed")]
+  Bgr48Packed,
+  /// Packed `R, G, B, A` row of an [`Rgba64`](crate::yuv::Rgba64) source —
+  /// `width * 4` u16 elements (each channel 16 bits; alpha is real).
+  #[display("RGBA64 packed")]
+  Rgba64Packed,
+  /// Packed `B, G, R, A` row of a [`Bgra64`](crate::yuv::Bgra64) source —
+  /// `width * 4` u16 elements (channel order reversed on RGB vs
+  /// [`Rgba64Packed`](Self::Rgba64Packed); alpha at slot 3 is real).
+  #[display("BGRA64 packed")]
+  Bgra64Packed,
 }
 
 /// A sink that writes any subset of `{RGB, Luma, HSV}` into
@@ -1699,6 +1717,7 @@ mod gray;
 mod legacy_rgb;
 mod mono1bit;
 mod packed_rgb_10bit;
+mod packed_rgb_16bit;
 mod packed_rgb_8bit;
 mod packed_rgb_f16;
 mod packed_rgb_float;
