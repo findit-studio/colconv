@@ -86,6 +86,10 @@ unsafe fn gather_16_rgba(indices: *const u8, palette: &[[u8; 4]; 256]) -> [u8; 6
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn pal8_to_rgb_row(indices: &[u8], palette: &[[u8; 4]; 256], rgb_out: &mut [u8]) {
   let w = indices.len();
+  // The `pal8_to_rgb_row` dispatcher in `src/row/dispatch/pal8.rs` asserts
+  // `rgb_out.len() >= rgb_row_bytes(width)` in release builds before reaching
+  // this call, so the precondition is guaranteed for all dispatcher-routed
+  // callers. Direct callers of this `unsafe fn` must enforce it themselves.
   debug_assert!(rgb_out.len() >= 3 * w, "rgb_out too short");
 
   unsafe {
@@ -123,6 +127,10 @@ pub(crate) unsafe fn pal8_to_rgba_row(
   rgba_out: &mut [u8],
 ) {
   let w = indices.len();
+  // The `pal8_to_rgba_row` dispatcher in `src/row/dispatch/pal8.rs` asserts
+  // `rgba_out.len() >= rgba_row_bytes(width)` in release builds before reaching
+  // this call, so the precondition is guaranteed for all dispatcher-routed
+  // callers. Direct callers of this `unsafe fn` must enforce it themselves.
   debug_assert!(rgba_out.len() >= 4 * w, "rgba_out too short");
 
   unsafe {
@@ -161,6 +169,11 @@ pub(crate) unsafe fn pal8_to_rgb_u16_row(
   rgb_u16_out: &mut [u16],
 ) {
   let w = indices.len();
+  // The `pal8_to_rgb_u16_row` dispatcher in `src/row/dispatch/pal8.rs` asserts
+  // `rgb_u16_out.len() >= rgb_row_elems(width)` in release builds before
+  // reaching this call, so the precondition is guaranteed for all
+  // dispatcher-routed callers. Direct callers of this `unsafe fn` must enforce
+  // it themselves.
   debug_assert!(rgb_u16_out.len() >= 3 * w, "rgb_u16_out too short");
 
   unsafe {
@@ -215,6 +228,11 @@ pub(crate) unsafe fn pal8_to_rgba_u16_row(
   rgba_u16_out: &mut [u16],
 ) {
   let w = indices.len();
+  // The `pal8_to_rgba_u16_row` dispatcher in `src/row/dispatch/pal8.rs` asserts
+  // `rgba_u16_out.len() >= rgba_row_elems(width)` in release builds before
+  // reaching this call, so the precondition is guaranteed for all
+  // dispatcher-routed callers. Direct callers of this `unsafe fn` must enforce
+  // it themselves.
   debug_assert!(rgba_u16_out.len() >= 4 * w, "rgba_u16_out too short");
 
   unsafe {
