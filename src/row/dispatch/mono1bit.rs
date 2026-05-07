@@ -11,11 +11,13 @@
 use crate::row::arch;
 #[cfg(target_arch = "aarch64")]
 use crate::row::neon_available;
-use crate::row::scalar::mono1bit as scalar;
 #[cfg(target_arch = "wasm32")]
 use crate::row::simd128_available;
 #[cfg(target_arch = "x86_64")]
 use crate::row::{avx2_available, avx512_available, sse41_available};
+use crate::row::{
+  rgb_row_bytes, rgb_row_elems, rgba_row_bytes, rgba_row_elems, scalar::mono1bit as scalar,
+};
 
 // ---- Monoblack dispatch ------------------------------------------------------
 
@@ -25,6 +27,22 @@ pub(crate) fn monoblack_to_rgb_or_rgba_row<const ALPHA: bool>(
   width: usize,
   use_simd: bool,
 ) {
+  let packed_min = width.div_ceil(8);
+  let out_min = if ALPHA {
+    rgba_row_bytes(width)
+  } else {
+    rgb_row_bytes(width)
+  };
+  assert!(
+    data.len() >= packed_min,
+    "packed too short: need >= {packed_min}, got {}",
+    data.len()
+  );
+  assert!(
+    out.len() >= out_min,
+    "out too short: need >= {out_min}, got {}",
+    out.len()
+  );
   if !use_simd {
     if ALPHA {
       return scalar::monoblack_to_rgba_row(data, out, width);
@@ -104,6 +122,22 @@ pub(crate) fn monoblack_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
   width: usize,
   use_simd: bool,
 ) {
+  let packed_min = width.div_ceil(8);
+  let out_min = if ALPHA {
+    rgba_row_elems(width)
+  } else {
+    rgb_row_elems(width)
+  };
+  assert!(
+    data.len() >= packed_min,
+    "packed too short: need >= {packed_min}, got {}",
+    data.len()
+  );
+  assert!(
+    out.len() >= out_min,
+    "out too short: need >= {out_min}, got {}",
+    out.len()
+  );
   if !use_simd {
     if ALPHA {
       return scalar::monoblack_to_rgba_u16_row(data, out, width);
@@ -178,6 +212,17 @@ pub(crate) fn monoblack_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 }
 
 pub(crate) fn monoblack_to_luma_row(data: &[u8], out: &mut [u8], width: usize, use_simd: bool) {
+  let packed_min = width.div_ceil(8);
+  assert!(
+    data.len() >= packed_min,
+    "packed too short: need >= {packed_min}, got {}",
+    data.len()
+  );
+  assert!(
+    out.len() >= width,
+    "out too short: need >= {width}, got {}",
+    out.len()
+  );
   if !use_simd {
     return scalar::monoblack_to_luma_row(data, out, width);
   }
@@ -219,6 +264,17 @@ pub(crate) fn monoblack_to_luma_u16_row(
   width: usize,
   use_simd: bool,
 ) {
+  let packed_min = width.div_ceil(8);
+  assert!(
+    data.len() >= packed_min,
+    "packed too short: need >= {packed_min}, got {}",
+    data.len()
+  );
+  assert!(
+    out.len() >= width,
+    "out too short: need >= {width}, got {}",
+    out.len()
+  );
   if !use_simd {
     return scalar::monoblack_to_luma_u16_row(data, out, width);
   }
@@ -262,6 +318,27 @@ pub(crate) fn monoblack_to_hsv_row(
   width: usize,
   use_simd: bool,
 ) {
+  let packed_min = width.div_ceil(8);
+  assert!(
+    data.len() >= packed_min,
+    "packed too short: need >= {packed_min}, got {}",
+    data.len()
+  );
+  assert!(
+    h.len() >= width,
+    "h too short: need >= {width}, got {}",
+    h.len()
+  );
+  assert!(
+    s.len() >= width,
+    "s too short: need >= {width}, got {}",
+    s.len()
+  );
+  assert!(
+    v.len() >= width,
+    "v too short: need >= {width}, got {}",
+    v.len()
+  );
   if !use_simd {
     return scalar::monoblack_to_hsv_row(data, h, s, v, width);
   }
@@ -305,6 +382,22 @@ pub(crate) fn monowhite_to_rgb_or_rgba_row<const ALPHA: bool>(
   width: usize,
   use_simd: bool,
 ) {
+  let packed_min = width.div_ceil(8);
+  let out_min = if ALPHA {
+    rgba_row_bytes(width)
+  } else {
+    rgb_row_bytes(width)
+  };
+  assert!(
+    data.len() >= packed_min,
+    "packed too short: need >= {packed_min}, got {}",
+    data.len()
+  );
+  assert!(
+    out.len() >= out_min,
+    "out too short: need >= {out_min}, got {}",
+    out.len()
+  );
   if !use_simd {
     if ALPHA {
       return scalar::monowhite_to_rgba_row(data, out, width);
@@ -384,6 +477,22 @@ pub(crate) fn monowhite_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
   width: usize,
   use_simd: bool,
 ) {
+  let packed_min = width.div_ceil(8);
+  let out_min = if ALPHA {
+    rgba_row_elems(width)
+  } else {
+    rgb_row_elems(width)
+  };
+  assert!(
+    data.len() >= packed_min,
+    "packed too short: need >= {packed_min}, got {}",
+    data.len()
+  );
+  assert!(
+    out.len() >= out_min,
+    "out too short: need >= {out_min}, got {}",
+    out.len()
+  );
   if !use_simd {
     if ALPHA {
       return scalar::monowhite_to_rgba_u16_row(data, out, width);
@@ -458,6 +567,17 @@ pub(crate) fn monowhite_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 }
 
 pub(crate) fn monowhite_to_luma_row(data: &[u8], out: &mut [u8], width: usize, use_simd: bool) {
+  let packed_min = width.div_ceil(8);
+  assert!(
+    data.len() >= packed_min,
+    "packed too short: need >= {packed_min}, got {}",
+    data.len()
+  );
+  assert!(
+    out.len() >= width,
+    "out too short: need >= {width}, got {}",
+    out.len()
+  );
   if !use_simd {
     return scalar::monowhite_to_luma_row(data, out, width);
   }
@@ -499,6 +619,17 @@ pub(crate) fn monowhite_to_luma_u16_row(
   width: usize,
   use_simd: bool,
 ) {
+  let packed_min = width.div_ceil(8);
+  assert!(
+    data.len() >= packed_min,
+    "packed too short: need >= {packed_min}, got {}",
+    data.len()
+  );
+  assert!(
+    out.len() >= width,
+    "out too short: need >= {width}, got {}",
+    out.len()
+  );
   if !use_simd {
     return scalar::monowhite_to_luma_u16_row(data, out, width);
   }
@@ -542,6 +673,27 @@ pub(crate) fn monowhite_to_hsv_row(
   width: usize,
   use_simd: bool,
 ) {
+  let packed_min = width.div_ceil(8);
+  assert!(
+    data.len() >= packed_min,
+    "packed too short: need >= {packed_min}, got {}",
+    data.len()
+  );
+  assert!(
+    h.len() >= width,
+    "h too short: need >= {width}, got {}",
+    h.len()
+  );
+  assert!(
+    s.len() >= width,
+    "s too short: need >= {width}, got {}",
+    s.len()
+  );
+  assert!(
+    v.len() >= width,
+    "v too short: need >= {width}, got {}",
+    v.len()
+  );
   if !use_simd {
     return scalar::monowhite_to_hsv_row(data, h, s, v, width);
   }

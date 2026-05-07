@@ -1,9 +1,9 @@
 //! wasm-simd128 mono1bit parity tests vs scalar reference.
 //!
-//! These tests compile and run on native hosts; the wasm-simd128 intrinsics
-//! are marked `#[target_feature(enable = "simd128")]` so the functions are
-//! always callable via `unsafe`.  No runtime feature gate is required — wasm
-//! either instantiates with SIMD or not, and these unit tests run natively.
+//! These tests are compiled and run only when targeting `wasm32` with
+//! `target-feature=+simd128` (e.g. via `cargo test --target wasm32-unknown-unknown`
+//! using a wasm-bindgen-test runtime). On native aarch64 / x86_64 hosts the
+//! entire wasm-simd128 backend is `cfg`-out and these tests don't compile.
 
 use crate::row::scalar::mono1bit as scalar;
 

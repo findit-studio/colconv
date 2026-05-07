@@ -53,21 +53,11 @@ unsafe fn unpack_2bytes_sse41<const INVERT: bool>(b0: u8, b1: u8) -> __m128i {
       0x40u8 as i8,
       0x80u8 as i8,
     );
-    // Broadcast each byte into 8 lanes. b0 → low 8 lanes, b1 → high 8 lanes.
-    let lo = _mm_set1_epi8(b0 as i8);
-    let hi = _mm_set1_epi8(b1 as i8);
-    // Combine: low half = b0 broadcast, high half = b1 broadcast.
-    let both = _mm_unpacklo_epi64(
-      _mm_unpacklo_epi8(lo, lo), // just need b0 in low 8 bytes
-      _mm_unpacklo_epi8(hi, hi), // just need b1 in low 8 bytes
-    );
-    // Actually, simpler: use insert + shuffle.
-    // Easiest: build the 16-byte vector directly.
+    // Build the 16-byte broadcast vector: low 8 lanes = b0, high 8 lanes = b1.
     let bcast = _mm_set_epi8(
       b1 as i8, b1 as i8, b1 as i8, b1 as i8, b1 as i8, b1 as i8, b1 as i8, b1 as i8, b0 as i8,
       b0 as i8, b0 as i8, b0 as i8, b0 as i8, b0 as i8, b0 as i8, b0 as i8,
     );
-    let _ = both; // discard the earlier attempt
     let anded = _mm_and_si128(bcast, mask);
     let zero = _mm_setzero_si128();
     // cmpeq: 0xFF where (anded == 0), i.e., where bit was NOT set.
