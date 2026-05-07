@@ -1,6 +1,7 @@
 //! NEON kernels for high-bit-depth planar GBR sources (Tier 10b).
 //!
-//! All functions are const-generic over `BITS ∈ {9, 10, 12, 14, 16}`.
+//! All functions are const-generic over `BITS ∈ {9, 10, 12, 14, 16}` and
+//! `BE: bool` (endianness of the source u16 planes).
 //! Lane width: 8 pixels per iteration (`vld1q_u16` = 8 × u16).
 //! `vst3q_u16` / `vst4q_u16` do the 3-way / 4-way u16 interleave in a
 //! single hardware instruction. Scalar tails handle the remainder.
@@ -11,15 +12,26 @@
 //! using a negative-count vector shift (`vshlq_u16` with a negative
 //! shift), then narrowed with `vqmovn_u16` to u8x8. Two such halves are
 //! recombined with `vcombine_u8` before `vst3q_u8` / `vst4q_u8`.
+//!
+//! # Big-endian (`BE = true`) mode
+//!
+//! When `BE = true` each 8-pixel NEON load goes through
+//! `load_endian_u16x8::<BE>` (defined in `endian.rs`) which applies a
+//! per-lane byte-swap via `vrev16q_u8`. The branch is resolved at
+//! monomorphisation — `BE = false` compiles to a plain `vld1q_u16`.
 
 use core::arch::aarch64::*;
 
 use crate::row::scalar;
 
+use super::endian::load_endian_u16x8;
+
 // ---- u8 output, 3-channel (RGB) -----------------------------------------
 
 /// NEON high-bit-depth G/B/R planar → packed `R, G, B` **bytes**.
 /// Downshifts each sample by `BITS - 8` and narrows to u8.
+///
+/// When `BE = true` each source u16 element is byte-swapped on load.
 ///
 /// # Safety
 ///
@@ -28,7 +40,7 @@ use crate::row::scalar;
 /// 3. `rgb_out.len()` ≥ `3 * width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
+pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -48,9 +60,13 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let g_v = vandq_u16(vld1q_u16(g.as_ptr().add(x)), mask_v);
-      let b_v = vandq_u16(vld1q_u16(b.as_ptr().add(x)), mask_v);
-      let r_v = vandq_u16(vld1q_u16(r.as_ptr().add(x)), mask_v);
+      let g_raw = load_endian_u16x8::<BE>(g.as_ptr().add(x).cast());
+      let b_raw = load_endian_u16x8::<BE>(b.as_ptr().add(x).cast());
+      let r_raw = load_endian_u16x8::<BE>(r.as_ptr().add(x).cast());
+
+      let g_v = vandq_u16(g_raw, mask_v);
+      let b_v = vandq_u16(b_raw, mask_v);
+      let r_v = vandq_u16(r_raw, mask_v);
 
       // Right-shift each 8-pixel vector by BITS-8, then narrow to u8x8.
       let r_sh = vqmovn_u16(vshlq_u16(r_v, shr));
@@ -70,7 +86,7 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
       x += 8;
     }
     if x < width {
-      scalar::gbr_to_rgb_high_bit_row::<BITS>(
+      scalar::gbr_to_rgb_high_bit_row::<BITS, BE>(
         &g[x..width],
         &b[x..width],
         &r[x..width],
@@ -86,6 +102,8 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
 /// NEON high-bit-depth G/B/R planar → packed `R, G, B, A` **bytes**
 /// with constant opaque alpha (`0xFF`). Used by `Gbrp*` (no alpha plane).
 ///
+/// When `BE = true` each source u16 element is byte-swapped on load.
+///
 /// # Safety
 ///
 /// 1. NEON must be available (caller obligation).
@@ -93,7 +111,7 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
 /// 3. `rgba_out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
+pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -113,9 +131,13 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let g_v = vandq_u16(vld1q_u16(g.as_ptr().add(x)), mask_v);
-      let b_v = vandq_u16(vld1q_u16(b.as_ptr().add(x)), mask_v);
-      let r_v = vandq_u16(vld1q_u16(r.as_ptr().add(x)), mask_v);
+      let g_raw = load_endian_u16x8::<BE>(g.as_ptr().add(x).cast());
+      let b_raw = load_endian_u16x8::<BE>(b.as_ptr().add(x).cast());
+      let r_raw = load_endian_u16x8::<BE>(r.as_ptr().add(x).cast());
+
+      let g_v = vandq_u16(g_raw, mask_v);
+      let b_v = vandq_u16(b_raw, mask_v);
+      let r_v = vandq_u16(r_raw, mask_v);
 
       let r_sh = vqmovn_u16(vshlq_u16(r_v, shr));
       let g_sh = vqmovn_u16(vshlq_u16(g_v, shr));
@@ -132,7 +154,7 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
       x += 8;
     }
     if x < width {
-      scalar::gbr_to_rgba_opaque_high_bit_row::<BITS>(
+      scalar::gbr_to_rgba_opaque_high_bit_row::<BITS, BE>(
         &g[x..width],
         &b[x..width],
         &r[x..width],
@@ -148,6 +170,8 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
 /// NEON high-bit-depth G/B/R/A planar → packed `R, G, B, A` **bytes**.
 /// Alpha sourced from the `a` plane, downshifted by `BITS - 8`.
 ///
+/// When `BE = true` each source u16 element is byte-swapped on load.
+///
 /// # Safety
 ///
 /// 1. NEON must be available (caller obligation).
@@ -155,7 +179,7 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
 /// 3. `rgba_out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
+pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -176,10 +200,15 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let g_v = vandq_u16(vld1q_u16(g.as_ptr().add(x)), mask_v);
-      let b_v = vandq_u16(vld1q_u16(b.as_ptr().add(x)), mask_v);
-      let r_v = vandq_u16(vld1q_u16(r.as_ptr().add(x)), mask_v);
-      let a_v = vandq_u16(vld1q_u16(a.as_ptr().add(x)), mask_v);
+      let g_raw = load_endian_u16x8::<BE>(g.as_ptr().add(x).cast());
+      let b_raw = load_endian_u16x8::<BE>(b.as_ptr().add(x).cast());
+      let r_raw = load_endian_u16x8::<BE>(r.as_ptr().add(x).cast());
+      let a_raw = load_endian_u16x8::<BE>(a.as_ptr().add(x).cast());
+
+      let g_v = vandq_u16(g_raw, mask_v);
+      let b_v = vandq_u16(b_raw, mask_v);
+      let r_v = vandq_u16(r_raw, mask_v);
+      let a_v = vandq_u16(a_raw, mask_v);
 
       let r_sh = vqmovn_u16(vshlq_u16(r_v, shr));
       let g_sh = vqmovn_u16(vshlq_u16(g_v, shr));
@@ -197,7 +226,7 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
       x += 8;
     }
     if x < width {
-      scalar::gbra_to_rgba_high_bit_row::<BITS>(
+      scalar::gbra_to_rgba_high_bit_row::<BITS, BE>(
         &g[x..width],
         &b[x..width],
         &r[x..width],
@@ -214,6 +243,8 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
 /// NEON high-bit-depth G/B/R planar → packed `R, G, B` **u16** samples.
 /// Copies samples without shifting — output values in `[0, (1<<BITS)-1]`.
 ///
+/// When `BE = true` each source u16 element is byte-swapped on load.
+///
 /// # Safety
 ///
 /// 1. NEON must be available (caller obligation).
@@ -221,7 +252,7 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
 /// 3. `rgb_u16_out.len()` ≥ `3 * width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
+pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -238,16 +269,16 @@ pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
     let mask_v = vdupq_n_u16(((1u32 << BITS) - 1) as u16);
     let mut x = 0usize;
     while x + 8 <= width {
-      let r_v = vandq_u16(vld1q_u16(r.as_ptr().add(x)), mask_v);
-      let g_v = vandq_u16(vld1q_u16(g.as_ptr().add(x)), mask_v);
-      let b_v = vandq_u16(vld1q_u16(b.as_ptr().add(x)), mask_v);
+      let r_v = vandq_u16(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask_v);
+      let g_v = vandq_u16(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask_v);
+      let b_v = vandq_u16(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask_v);
       // vst3q_u16 stores 8×3 = 24 u16 interleaved as R,G,B per pixel.
       let triple = uint16x8x3_t(r_v, g_v, b_v);
       vst3q_u16(rgb_u16_out.as_mut_ptr().add(x * 3), triple);
       x += 8;
     }
     if x < width {
-      scalar::gbr_to_rgb_u16_high_bit_row::<BITS>(
+      scalar::gbr_to_rgb_u16_high_bit_row::<BITS, BE>(
         &g[x..width],
         &b[x..width],
         &r[x..width],
@@ -263,6 +294,8 @@ pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
 /// NEON high-bit-depth G/B/R planar → packed `R, G, B, A` **u16** samples
 /// with constant opaque alpha `(1 << BITS) - 1`.
 ///
+/// When `BE = true` each source u16 element is byte-swapped on load.
+///
 /// # Safety
 ///
 /// 1. NEON must be available (caller obligation).
@@ -270,7 +303,7 @@ pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
 /// 3. `rgba_u16_out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
+pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -292,15 +325,15 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let r_v = vandq_u16(vld1q_u16(r.as_ptr().add(x)), mask_v);
-      let g_v = vandq_u16(vld1q_u16(g.as_ptr().add(x)), mask_v);
-      let b_v = vandq_u16(vld1q_u16(b.as_ptr().add(x)), mask_v);
+      let r_v = vandq_u16(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask_v);
+      let g_v = vandq_u16(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask_v);
+      let b_v = vandq_u16(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask_v);
       let quad = uint16x8x4_t(r_v, g_v, b_v, opaque);
       vst4q_u16(rgba_u16_out.as_mut_ptr().add(x * 4), quad);
       x += 8;
     }
     if x < width {
-      scalar::gbr_to_rgba_opaque_u16_high_bit_row::<BITS>(
+      scalar::gbr_to_rgba_opaque_u16_high_bit_row::<BITS, BE>(
         &g[x..width],
         &b[x..width],
         &r[x..width],
@@ -316,6 +349,8 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
 /// NEON high-bit-depth G/B/R/A planar → packed `R, G, B, A` **u16** samples.
 /// Alpha sourced from the `a` plane at native depth (no shift).
 ///
+/// When `BE = true` each source u16 element is byte-swapped on load.
+///
 /// # Safety
 ///
 /// 1. NEON must be available (caller obligation).
@@ -323,7 +358,7 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
 /// 3. `rgba_u16_out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
+pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -345,16 +380,16 @@ pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
     let mask_v = vdupq_n_u16(((1u32 << BITS) - 1) as u16);
     let mut x = 0usize;
     while x + 8 <= width {
-      let r_v = vandq_u16(vld1q_u16(r.as_ptr().add(x)), mask_v);
-      let g_v = vandq_u16(vld1q_u16(g.as_ptr().add(x)), mask_v);
-      let b_v = vandq_u16(vld1q_u16(b.as_ptr().add(x)), mask_v);
-      let a_v = vandq_u16(vld1q_u16(a.as_ptr().add(x)), mask_v);
+      let r_v = vandq_u16(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask_v);
+      let g_v = vandq_u16(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask_v);
+      let b_v = vandq_u16(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask_v);
+      let a_v = vandq_u16(load_endian_u16x8::<BE>(a.as_ptr().add(x).cast()), mask_v);
       let quad = uint16x8x4_t(r_v, g_v, b_v, a_v);
       vst4q_u16(rgba_u16_out.as_mut_ptr().add(x * 4), quad);
       x += 8;
     }
     if x < width {
-      scalar::gbra_to_rgba_u16_high_bit_row::<BITS>(
+      scalar::gbra_to_rgba_u16_high_bit_row::<BITS, BE>(
         &g[x..width],
         &b[x..width],
         &r[x..width],

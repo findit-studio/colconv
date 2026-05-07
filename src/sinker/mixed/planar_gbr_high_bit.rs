@@ -237,7 +237,14 @@ macro_rules! impl_gbrp_high_bit {
           let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
           let rgba_u16_row =
             rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-          gbr_to_rgba_opaque_u16_high_bit_row::<BITS>(g_in, b_in, r_in, rgba_u16_row, w, use_simd);
+          gbr_to_rgba_opaque_u16_high_bit_row::<BITS, false>(
+            g_in,
+            b_in,
+            r_in,
+            rgba_u16_row,
+            w,
+            use_simd,
+          );
         } else if want_rgb_u16 {
           let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
           let rgb_plane_end =
@@ -250,7 +257,7 @@ macro_rules! impl_gbrp_high_bit {
               })?;
           let rgb_plane_start = one_plane_start * 3;
           let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-          gbr_to_rgb_u16_high_bit_row::<BITS>(g_in, b_in, r_in, rgb_u16_row, w, use_simd);
+          gbr_to_rgb_u16_high_bit_row::<BITS, false>(g_in, b_in, r_in, rgb_u16_row, w, use_simd);
           if want_rgba_u16 {
             let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
             let rgba_u16_row =
@@ -264,7 +271,7 @@ macro_rules! impl_gbrp_high_bit {
         // going through the u8 staging path, so it is independent of whether
         // RGB staging happens below.
         if let Some(luma_u16_buf) = luma_u16.as_deref_mut() {
-          gbr_to_luma_u16_high_bit_row::<BITS>(
+          gbr_to_luma_u16_high_bit_row::<BITS, false>(
             g_in,
             b_in,
             r_in,
@@ -287,7 +294,7 @@ macro_rules! impl_gbrp_high_bit {
         if want_rgba && !need_rgb_staging {
           let rgba_buf = rgba.as_deref_mut().unwrap();
           let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-          gbr_to_rgba_opaque_high_bit_row::<BITS>(g_in, b_in, r_in, rgba_row, w, use_simd);
+          gbr_to_rgba_opaque_high_bit_row::<BITS, false>(g_in, b_in, r_in, rgba_row, w, use_simd);
           return Ok(());
         }
 
@@ -304,7 +311,7 @@ macro_rules! impl_gbrp_high_bit {
           w,
           h,
         )?;
-        gbr_to_rgb_high_bit_row::<BITS>(g_in, b_in, r_in, rgb_row, w, use_simd);
+        gbr_to_rgb_high_bit_row::<BITS, false>(g_in, b_in, r_in, rgb_row, w, use_simd);
 
         if let Some(luma) = luma.as_deref_mut() {
           rgb_to_luma_row(
@@ -519,7 +526,15 @@ macro_rules! impl_gbrap_high_bit {
           let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
           let rgba_u16_row =
             rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-          gbra_to_rgba_u16_high_bit_row::<BITS>(g_in, b_in, r_in, a_in, rgba_u16_row, w, use_simd);
+          gbra_to_rgba_u16_high_bit_row::<BITS, false>(
+            g_in,
+            b_in,
+            r_in,
+            a_in,
+            rgba_u16_row,
+            w,
+            use_simd,
+          );
         } else if want_rgb_u16 {
           let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
           let rgb_plane_end =
@@ -532,7 +547,7 @@ macro_rules! impl_gbrap_high_bit {
               })?;
           let rgb_plane_start = one_plane_start * 3;
           let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-          gbr_to_rgb_u16_high_bit_row::<BITS>(g_in, b_in, r_in, rgb_u16_row, w, use_simd);
+          gbr_to_rgb_u16_high_bit_row::<BITS, false>(g_in, b_in, r_in, rgb_u16_row, w, use_simd);
           if want_rgba_u16 {
             // Strategy A+: expand RGB → RGBA, then overwrite α from source plane.
             let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
@@ -549,7 +564,7 @@ macro_rules! impl_gbrap_high_bit {
         // going through the u8 staging path, so it is independent of whether
         // RGB staging happens below.
         if let Some(luma_u16_buf) = luma_u16.as_deref_mut() {
-          gbr_to_luma_u16_high_bit_row::<BITS>(
+          gbr_to_luma_u16_high_bit_row::<BITS, false>(
             g_in,
             b_in,
             r_in,
@@ -572,7 +587,7 @@ macro_rules! impl_gbrap_high_bit {
         if want_rgba && !need_rgb_staging {
           let rgba_buf = rgba.as_deref_mut().unwrap();
           let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-          gbra_to_rgba_high_bit_row::<BITS>(g_in, b_in, r_in, a_in, rgba_row, w, use_simd);
+          gbra_to_rgba_high_bit_row::<BITS, false>(g_in, b_in, r_in, a_in, rgba_row, w, use_simd);
           return Ok(());
         }
 
@@ -589,7 +604,7 @@ macro_rules! impl_gbrap_high_bit {
           w,
           h,
         )?;
-        gbr_to_rgb_high_bit_row::<BITS>(g_in, b_in, r_in, rgb_row, w, use_simd);
+        gbr_to_rgb_high_bit_row::<BITS, false>(g_in, b_in, r_in, rgb_row, w, use_simd);
 
         if let Some(luma) = luma.as_deref_mut() {
           rgb_to_luma_row(
