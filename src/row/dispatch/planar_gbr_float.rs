@@ -40,7 +40,6 @@ use crate::row::neon_available;
 #[cfg(target_arch = "wasm32")]
 use crate::row::simd128_available;
 #[cfg(target_arch = "x86_64")]
-#[allow(unused_imports)] // avx512_available wired in Task 6
 use crate::row::{avx2_available, avx512_available, sse41_available};
 use crate::{
   ColorMatrix,
@@ -77,6 +76,11 @@ pub(crate) fn gbrpf32_to_rgb_row(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available.
+          unsafe { arch::x86_avx512::gbrpf32_to_rgb_row(g, b, r, out, width); }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe { arch::x86_avx2::gbrpf32_to_rgb_row(g, b, r, out, width); }
@@ -121,6 +125,11 @@ pub(crate) fn gbrpf32_to_rgba_row(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available.
+          unsafe { arch::x86_avx512::gbrpf32_to_rgba_row(g, b, r, out, width); }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe { arch::x86_avx2::gbrpf32_to_rgba_row(g, b, r, out, width); }
@@ -165,6 +174,11 @@ pub(crate) fn gbrpf32_to_rgb_u16_row(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available.
+          unsafe { arch::x86_avx512::gbrpf32_to_rgb_u16_row(g, b, r, out, width); }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe { arch::x86_avx2::gbrpf32_to_rgb_u16_row(g, b, r, out, width); }
@@ -209,6 +223,11 @@ pub(crate) fn gbrpf32_to_rgba_u16_row(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available.
+          unsafe { arch::x86_avx512::gbrpf32_to_rgba_u16_row(g, b, r, out, width); }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe { arch::x86_avx2::gbrpf32_to_rgba_u16_row(g, b, r, out, width); }
@@ -324,6 +343,16 @@ pub(crate) fn gbrpf32_to_rgb_f16_row(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // F16C runtime detection for narrow.
+          if std::arch::is_x86_feature_detected!("f16c") {
+            // SAFETY: AVX-512F + BW + F16C verified available.
+            unsafe { arch::x86_avx512::gbrpf32_to_rgb_f16_row_f16c(g, b, r, out, width); }
+          } else {
+            scalar::gbrpf32_to_rgb_f16_row(g, b, r, out, width);
+          }
+          return;
+        }
         if avx2_available() {
           // F16C runtime detection for narrow.
           if std::arch::is_x86_feature_detected!("f16c") {
@@ -383,6 +412,15 @@ pub(crate) fn gbrpf32_to_rgba_f16_row(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          if std::arch::is_x86_feature_detected!("f16c") {
+            // SAFETY: AVX-512F + BW + F16C verified available.
+            unsafe { arch::x86_avx512::gbrpf32_to_rgba_f16_row_f16c(g, b, r, out, width); }
+          } else {
+            scalar::gbrpf32_to_rgba_f16_row(g, b, r, out, width);
+          }
+          return;
+        }
         if avx2_available() {
           if std::arch::is_x86_feature_detected!("f16c") {
             // SAFETY: AVX2 + F16C verified available.
@@ -437,6 +475,11 @@ pub(crate) fn gbrpf32_to_luma_row(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available.
+          unsafe { arch::x86_avx512::gbrpf32_to_luma_row(g, b, r, out, width, matrix, full_range); }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe { arch::x86_avx2::gbrpf32_to_luma_row(g, b, r, out, width, matrix, full_range); }
@@ -485,6 +528,13 @@ pub(crate) fn gbrpf32_to_luma_u16_row(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available.
+          unsafe {
+            arch::x86_avx512::gbrpf32_to_luma_u16_row(g, b, r, out, width, matrix, full_range);
+          }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe {
@@ -539,6 +589,13 @@ pub(crate) fn gbrpf32_to_hsv_row(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available.
+          unsafe {
+            arch::x86_avx512::gbrpf32_to_hsv_row(g, b, r, h_out, s_out, v_out, width);
+          }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe {
@@ -589,6 +646,11 @@ pub(crate) fn gbrapf32_to_rgba_row(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available.
+          unsafe { arch::x86_avx512::gbrapf32_to_rgba_row(g, b, r, a, out, width); }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe { arch::x86_avx2::gbrapf32_to_rgba_row(g, b, r, a, out, width); }
@@ -635,6 +697,11 @@ pub(crate) fn gbrapf32_to_rgba_u16_row(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available.
+          unsafe { arch::x86_avx512::gbrapf32_to_rgba_u16_row(g, b, r, a, out, width); }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe { arch::x86_avx2::gbrapf32_to_rgba_u16_row(g, b, r, a, out, width); }
@@ -721,6 +788,15 @@ pub(crate) fn gbrapf32_to_rgba_f16_row(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          if std::arch::is_x86_feature_detected!("f16c") {
+            // SAFETY: AVX-512F + BW + F16C verified available.
+            unsafe { arch::x86_avx512::gbrapf32_to_rgba_f16_row_f16c(g, b, r, a, out, width); }
+          } else {
+            scalar::gbrapf32_to_rgba_f16_row(g, b, r, a, out, width);
+          }
+          return;
+        }
         if avx2_available() {
           if std::arch::is_x86_feature_detected!("f16c") {
             // SAFETY: AVX2 + F16C verified available.
@@ -773,6 +849,11 @@ pub(crate) fn gbrpf16_to_rgb_f16_row(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available (no F16C needed — lossless u16 reinterpret).
+          unsafe { arch::x86_avx512::gbrpf16_to_rgb_f16_row(g, b, r, out, width); }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available (no F16C needed — lossless u16 reinterpret).
           unsafe { arch::x86_avx2::gbrpf16_to_rgb_f16_row(g, b, r, out, width); }
@@ -817,6 +898,11 @@ pub(crate) fn gbrpf16_to_rgba_f16_row(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available (no F16C needed — lossless u16 reinterpret).
+          unsafe { arch::x86_avx512::gbrpf16_to_rgba_f16_row(g, b, r, out, width); }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available (no F16C needed — lossless u16 reinterpret).
           unsafe { arch::x86_avx2::gbrpf16_to_rgba_f16_row(g, b, r, out, width); }
@@ -863,6 +949,11 @@ pub(crate) fn gbrapf16_to_rgba_f16_row(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available (no F16C needed — lossless u16 reinterpret).
+          unsafe { arch::x86_avx512::gbrapf16_to_rgba_f16_row(g, b, r, a, out, width); }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available (no F16C needed — lossless u16 reinterpret).
           unsafe { arch::x86_avx2::gbrapf16_to_rgba_f16_row(g, b, r, a, out, width); }
@@ -930,6 +1021,39 @@ pub(crate) fn gbrpf16_to_rgb_row(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          if std::arch::is_x86_feature_detected!("f16c") {
+            // SAFETY: AVX-512F + BW + F16C verified available.
+            unsafe { arch::x86_avx512::gbrpf16_to_rgb_row_f16c(g, b, r, out, width); }
+          } else {
+            // AVX-512 available but no F16C — widen scalar, then AVX-512 f32→u8.
+            const CHUNK: usize = 64;
+            let mut gf = [0.0f32; CHUNK];
+            let mut bf = [0.0f32; CHUNK];
+            let mut rf = [0.0f32; CHUNK];
+            let mut offset = 0;
+            while offset < width {
+              let n = (width - offset).min(CHUNK);
+              for i in 0..n {
+                gf[i] = g[offset + i].to_f32();
+                bf[i] = b[offset + i].to_f32();
+                rf[i] = r[offset + i].to_f32();
+              }
+              // SAFETY: AVX-512F + BW verified available.
+              unsafe {
+                arch::x86_avx512::gbrpf32_to_rgb_row(
+                  &gf[..n],
+                  &bf[..n],
+                  &rf[..n],
+                  &mut out[offset * 3..],
+                  n,
+                );
+              }
+              offset += n;
+            }
+          }
+          return;
+        }
         if avx2_available() {
           if std::arch::is_x86_feature_detected!("f16c") {
             // SAFETY: AVX2 + F16C verified available.
@@ -1074,6 +1198,39 @@ pub(crate) fn gbrpf16_to_rgba_row(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          if std::arch::is_x86_feature_detected!("f16c") {
+            // SAFETY: AVX-512F + BW + F16C verified available.
+            unsafe { arch::x86_avx512::gbrpf16_to_rgba_row_f16c(g, b, r, out, width); }
+          } else {
+            // AVX-512 available but no F16C — widen scalar, then AVX-512 f32→u8.
+            const CHUNK: usize = 64;
+            let mut gf = [0.0f32; CHUNK];
+            let mut bf = [0.0f32; CHUNK];
+            let mut rf = [0.0f32; CHUNK];
+            let mut offset = 0;
+            while offset < width {
+              let n = (width - offset).min(CHUNK);
+              for i in 0..n {
+                gf[i] = g[offset + i].to_f32();
+                bf[i] = b[offset + i].to_f32();
+                rf[i] = r[offset + i].to_f32();
+              }
+              // SAFETY: AVX-512F + BW verified available.
+              unsafe {
+                arch::x86_avx512::gbrpf32_to_rgba_row(
+                  &gf[..n],
+                  &bf[..n],
+                  &rf[..n],
+                  &mut out[offset * 4..],
+                  n,
+                );
+              }
+              offset += n;
+            }
+          }
+          return;
+        }
         if avx2_available() {
           if std::arch::is_x86_feature_detected!("f16c") {
             // SAFETY: AVX2 + F16C verified available.
