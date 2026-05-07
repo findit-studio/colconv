@@ -140,10 +140,13 @@ test_gbrp_channel_reorder!(gbrp16_channel_reorder, Gbrp16, gbrp16_to, 16);
 
 macro_rules! test_gbrap_strategy_a_plus {
   ($name:ident, $marker:ident, $walker:ident, $bits:literal) => {
+    test_gbrap_strategy_a_plus!($name, $marker, $walker, $bits, 32);
+  };
+  ($name:ident, $marker:ident, $walker:ident, $bits:literal, $w:literal) => {
     #[test]
     #[cfg_attr(miri, ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri")]
     fn $name() {
-      let w = 32usize;
+      let w = $w as usize;
       let h = 8usize;
       let n = w * h;
       let mut g = std::vec![0u16; n];
@@ -177,7 +180,7 @@ macro_rules! test_gbrap_strategy_a_plus {
       // RGBA bytes must be identical between standalone and combo paths.
       assert_eq!(
         rgba_ref, rgba_combo,
-        "Strategy A+ RGBA mismatch for BITS={}", $bits,
+        "Strategy A+ RGBA mismatch for BITS={} w={}", $bits, $w,
       );
     }
   };
@@ -223,10 +226,13 @@ test_gbrap_strategy_a_plus!(
 // them surfaces here.
 macro_rules! test_gbrap_strategy_a_plus_u16 {
   ($name:ident, $marker:ident, $walker:ident, $bits:literal) => {
+    test_gbrap_strategy_a_plus_u16!($name, $marker, $walker, $bits, 32);
+  };
+  ($name:ident, $marker:ident, $walker:ident, $bits:literal, $w:literal) => {
     #[test]
     #[cfg_attr(miri, ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri")]
     fn $name() {
-      let w = 32usize;
+      let w = $w as usize;
       let h = 8usize;
       let n = w * h;
       let mut g = std::vec![0u16; n];
@@ -262,7 +268,7 @@ macro_rules! test_gbrap_strategy_a_plus_u16 {
       // RGBA u16 elements must be byte-exact between standalone and combo paths.
       assert_eq!(
         rgba_u16_ref, rgba_u16_combo,
-        "Strategy A+ native-depth RGBA u16 mismatch for BITS={}", $bits,
+        "Strategy A+ native-depth RGBA u16 mismatch for BITS={} w={}", $bits, $w,
       );
     }
   };
@@ -291,6 +297,63 @@ test_gbrap_strategy_a_plus_u16!(
   Gbrap16,
   gbrap16_to,
   16
+);
+
+// ---- Strategy A+ at non-multiple width (31) — exercises SIMD scalar tail ---
+//
+// The SIMD α-extract backends (`copy_alpha_plane_u16{_to_u8}`) hardcode
+// `scalar::<BITS, false>` for the tail (e.g. NEON block size 8 + width 31
+// leaves 7 px in the tail; AVX2/AVX-512 likewise). Codex's 4th-pass review
+// of PR #82 found that the prior dispatcher routing
+// (`need_swap = BE != cfg!(target_endian = "big")`) admitted SIMD on
+// BE-host/BE-data: the vector body's host-native loads are correct there,
+// but the LE-only scalar tail then byte-swaps already-native u16 samples,
+// silently corrupting α at non-multiple widths. The fix is to route SIMD
+// only for the LE-host/LE-data quadrant; these tests at width 31 exercise
+// the SIMD tail path on supported (LE) hosts, locking in the parity
+// guarantee for the LE/LE quadrant. (The LE/BE, BE/LE, BE/BE quadrants
+// are exercised at the scalar level by the `target_endian`-aware scalar
+// helper itself; the new dispatcher routes them to scalar always.)
+
+test_gbrap_strategy_a_plus_u16!(
+  gbrap10_strategy_a_plus_u16_matches_standalone_w31,
+  Gbrap10,
+  gbrap10_to,
+  10,
+  31
+);
+test_gbrap_strategy_a_plus_u16!(
+  gbrap12_strategy_a_plus_u16_matches_standalone_w31,
+  Gbrap12,
+  gbrap12_to,
+  12,
+  31
+);
+test_gbrap_strategy_a_plus_u16!(
+  gbrap14_strategy_a_plus_u16_matches_standalone_w31,
+  Gbrap14,
+  gbrap14_to,
+  14,
+  31
+);
+test_gbrap_strategy_a_plus_u16!(
+  gbrap16_strategy_a_plus_u16_matches_standalone_w31,
+  Gbrap16,
+  gbrap16_to,
+  16,
+  31
+);
+
+// u8-path Strategy A+ at width 31 — exercises the SIMD tail of
+// `copy_alpha_plane_u16_to_u8` (depth-conv `>> (BITS - 8)`). One BITS value
+// is sufficient to cover the same dispatcher path as the u16 set above;
+// Gbrap10 chosen for parity with the existing u8 Strategy A+ coverage.
+test_gbrap_strategy_a_plus!(
+  gbrap10_strategy_a_plus_matches_standalone_w31,
+  Gbrap10,
+  gbrap10_to,
+  10,
+  31
 );
 
 // ---- Gbrap alpha downshift correctness -------------------------------------

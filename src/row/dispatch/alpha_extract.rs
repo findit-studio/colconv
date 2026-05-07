@@ -261,26 +261,31 @@ pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usiz
 /// depth-conv `>> (BITS - 8)`.
 ///
 /// `BE` selects the source α plane byte order (`false` = LE on disk/wire,
-/// `true` = BE on disk/wire). The SIMD α-extract backends use raw
-/// native-u16 loads (`vld1q_u16` / `_mm_loadu_si128` / `v128_load64_zero`)
-/// and have no byte-swap path, so SIMD is only correct when the source
-/// byte order matches the host CPU's native byte order. The dispatcher
-/// computes `need_swap = BE != cfg!(target_endian = "big")` and routes
-/// to scalar whenever a swap would be required (LE-on-BE-host or
-/// BE-on-LE-host). Per the codex review of #82 the scalar helper is
-/// target-endian-aware via `u16::from_be` / `u16::from_le`, so this
-/// scalar fallback emits the correct α plane on every host. Phase 4 will
-/// plumb BE through SIMD if a real BE-input sinker hot-path lands.
+/// `true` = BE on disk/wire). The SIMD α-extract helpers use host-native
+/// `u16` loads (`vld1q_u16` / `_mm_loadu_si128` / `v128_load64_zero`) AND
+/// hardcode their scalar tail to `scalar::<BITS, false>`. So SIMD is only
+/// correct when BOTH the host CPU is little-endian AND the source data is
+/// little-endian — any other quadrant either loads the wrong byte order in
+/// the vector body (LE-data on BE-host / BE-data on LE-host) or feeds
+/// already-native u16 samples through `u16::from_le` in the scalar tail
+/// (BE-data on BE-host), corrupting the tail at non-multiple widths.
 ///
-/// Truth table (`need_swap = BE != target_endian == "big"`):
-/// - LE data, LE host: `false != false = false` → SIMD (host-native LE u16 loads correct)
-/// - LE data, BE host: `false != true  = true`  → scalar (uses `u16::from_le`)
-/// - BE data, LE host: `true  != false = true`  → scalar (uses `u16::from_be`)
-/// - BE data, BE host: `true  != true  = false` → SIMD (host-native BE u16 loads correct)
+/// The dispatcher computes
+/// `safe_for_simd = !BE && cfg!(target_endian = "little")` and routes to
+/// scalar in every other quadrant. The scalar helper is target-endian-aware
+/// via `u16::from_be` / `u16::from_le`, so this scalar fallback emits the
+/// correct α plane on every host. Phase 4 will plumb BE through the SIMD
+/// helpers if a BE-input sinker hot-path lands.
 ///
-/// Selects the highest available SIMD backend when host endian == data
-/// endian; falls back to scalar otherwise. When `use_simd` is `false`,
-/// calls scalar directly.
+/// Truth table (`safe_for_simd = !BE && target_endian == "little"`):
+/// - LE data, LE host: `!false && true  = true`  → SIMD (host-native LE u16 loads correct, tail `from_le` is no-op)
+/// - LE data, BE host: `!false && false = false` → scalar (handles via `from_le`)
+/// - BE data, LE host: `!true  && true  = false` → scalar (handles via `from_be`)
+/// - BE data, BE host: `!true  && false = false` → scalar (handles via `from_be`; SIMD vector body would be correct but tail `from_le` would corrupt non-multiple widths — see codex 4th-pass review of PR #82)
+///
+/// Selects the highest available SIMD backend on LE-host with LE-data;
+/// falls back to scalar otherwise. When `use_simd` is `false`, calls
+/// scalar directly.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32, const BE: bool>(
   alpha: &[u16],
@@ -288,9 +293,11 @@ pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32, const BE: bool>(
   width: usize,
   use_simd: bool,
 ) {
-  // Need a byte-swap if data byte order differs from host CPU's native order.
-  let need_swap = BE != cfg!(target_endian = "big");
-  if need_swap || !use_simd {
+  // SIMD α-extract helpers use host-native u16 loads + a scalar tail
+  // hardcoded to BE=false. They are only correct on LE host with LE
+  // source data. Force scalar in every other quadrant.
+  let safe_for_simd = !BE && cfg!(target_endian = "little");
+  if !safe_for_simd || !use_simd {
     return scalar::copy_alpha_plane_u16_to_u8::<BITS, BE>(alpha, rgba_out, width);
   }
   cfg_select! {
@@ -340,14 +347,15 @@ pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32, const BE: bool>(
 ///
 /// `BE` selects the source α plane byte order (`false` = LE on disk/wire,
 /// `true` = BE on disk/wire). The dispatcher computes
-/// `need_swap = BE != cfg!(target_endian = "big")` and routes to scalar
-/// whenever a swap would be required: see `copy_alpha_plane_u16_to_u8`
-/// above for the truth table and rationale (SIMD α-extract uses
-/// host-native u16 loads; scalar is target-endian-aware).
+/// `safe_for_simd = !BE && cfg!(target_endian = "little")` and routes to
+/// scalar in every other quadrant: see `copy_alpha_plane_u16_to_u8` above
+/// for the truth table and rationale (SIMD α-extract uses host-native u16
+/// loads AND hardcodes its scalar tail to `BE=false`, so it only handles
+/// the LE-host/LE-data quadrant correctly; scalar is target-endian-aware).
 ///
-/// Selects the highest available SIMD backend when host endian == data
-/// endian; falls back to scalar otherwise. When `use_simd` is `false`,
-/// calls scalar directly.
+/// Selects the highest available SIMD backend on LE-host with LE-data;
+/// falls back to scalar otherwise. When `use_simd` is `false`, calls
+/// scalar directly.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn copy_alpha_plane_u16<const BITS: u32, const BE: bool>(
   alpha: &[u16],
@@ -355,9 +363,11 @@ pub(crate) fn copy_alpha_plane_u16<const BITS: u32, const BE: bool>(
   width: usize,
   use_simd: bool,
 ) {
-  // Need a byte-swap if data byte order differs from host CPU's native order.
-  let need_swap = BE != cfg!(target_endian = "big");
-  if need_swap || !use_simd {
+  // SIMD α-extract helpers use host-native u16 loads + a scalar tail
+  // hardcoded to BE=false. They are only correct on LE host with LE
+  // source data. Force scalar in every other quadrant.
+  let safe_for_simd = !BE && cfg!(target_endian = "little");
+  if !safe_for_simd || !use_simd {
     return scalar::copy_alpha_plane_u16::<BITS, BE>(alpha, rgba_out, width);
   }
   cfg_select! {
