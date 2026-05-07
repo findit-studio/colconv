@@ -85,12 +85,9 @@ pub(crate) use alpha_extract::*;
 pub(crate) use ayuv64::*;
 pub(crate) use gray::*;
 pub(crate) use hsv::*;
-<<<<<<< HEAD
-pub(crate) use mono1bit::*;
-=======
 #[allow(unused_imports)] // dispatcher wired in Task 5
 pub(crate) use legacy_rgb::*;
->>>>>>> ef2d803 (feat(tier7-legacy): Task 5 — SSE4.1 SIMD (8 px/iter, __m128i))
+pub(crate) use mono1bit::*;
 pub(crate) use packed_rgb::*;
 pub(crate) use packed_rgb_float::*;
 pub(crate) use packed_yuv_8bit::*;
