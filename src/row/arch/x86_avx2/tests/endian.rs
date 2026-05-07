@@ -1,4 +1,3 @@
-use super::*;
 use crate::row::arch::x86_avx2::endian::*;
 
 // Helper: extract __m256i to a stack array of 16 u16 lanes.

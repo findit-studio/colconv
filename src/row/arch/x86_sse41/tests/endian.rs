@@ -1,4 +1,3 @@
-use super::*;
 use crate::row::arch::x86_sse41::endian::*;
 
 // Helper: extract __m128i to a stack array of 8 u16 lanes.

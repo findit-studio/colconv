@@ -1,4 +1,3 @@
-use super::*;
 use crate::row::arch::x86_avx512::endian::*;
 
 // Helper: extract __m512i to a stack array of 32 u16 lanes.

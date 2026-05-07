@@ -1,4 +1,3 @@
-use super::*;
 use crate::row::arch::wasm_simd128::endian::*;
 
 // Helper: extract v128 to a stack array of 8 u16 lanes.
