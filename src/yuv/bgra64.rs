@@ -7,7 +7,10 @@
 //! - `with_rgb_u16`  — swap B↔R, drop alpha, native u16 passthrough (R, G, B output order).
 //! - `with_rgba_u16` — swap B↔R on RGB, all four channels as-is; source alpha preserved.
 //! - `with_luma`     — Y′ from R/G/B after channel swap and narrowing to u8 (alpha ignored).
-//! - `with_luma_u16` — Y′ from R/G/B at native 16-bit depth (alpha ignored).
+//! - `with_luma_u16` — Y′ computed at u8 precision (matching `with_luma`'s
+//!   output, with the same B↔R swap applied first) and zero-extended to
+//!   u16; alpha ignored. Same convention as the 8-bit-source family; not
+//!   native 16-bit luma precision.
 //! - `with_hsv`      — HSV via u8 RGB staging (alpha ignored).
 
 use crate::frame::Bgra64Frame;

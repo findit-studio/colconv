@@ -7,7 +7,9 @@
 //! - `with_rgb_u16`  — native u16 passthrough (R, G, B order preserved).
 //! - `with_rgba_u16` — native u16 passthrough + alpha = `0xFFFF`.
 //! - `with_luma`     — Y′ from R/G/B after narrowing to u8.
-//! - `with_luma_u16` — Y′ from R/G/B at native 16-bit depth.
+//! - `with_luma_u16` — Y′ computed at u8 precision (matching `with_luma`'s
+//!   output) and zero-extended to u16. Same convention as the 8-bit-source
+//!   family; not native 16-bit luma precision.
 //! - `with_hsv`      — HSV via u8 RGB staging.
 
 use crate::frame::Rgb48Frame;

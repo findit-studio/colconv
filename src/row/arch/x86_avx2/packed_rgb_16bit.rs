@@ -29,10 +29,14 @@
 //!
 //! 16 pixels = 64 u16 = 128 bytes = 4 × `_mm256_loadu_si256`.
 //!
-//! The deinterleave uses the same `_mm256_permute2x128_si256` reshape +
-//! 3-level `_mm256_unpacklo/hi_epi16` cascade + `_mm256_permute4x64_epi64`
-//! lane-fixup that is already proven in `xv36.rs`.  Produces four `__m256i`
-//! channel vectors each holding 16 u16 samples in natural order.
+//! The deinterleave uses the `_mm256_permute2x128_si256` reshape +
+//! 3-level `_mm256_unpacklo/hi_epi16` + `_mm256_unpackhi/lo_epi64` cascade
+//! already proven in `xv36.rs` (4-channel variant). The reshape pre-strides
+//! the four 256-bit loads so that the per-128-bit-lane unpack cascade
+//! lands in natural pixel order — no `_mm256_permute4x64_epi64` lane-fixup
+//! permute is needed (an earlier version applied one and produced
+//! `[evens; odds]` order). Produces four `__m256i` channel vectors each
+//! holding 16 u16 samples in natural pixel order.
 //!
 //! ## Depth conversion
 //!
@@ -174,17 +178,46 @@ unsafe fn reshape_rgba64_for_cascade(
   }
 }
 
-/// 3-level `_mm256_unpacklo/hi_epi16` cascade that separates 4 interleaved
-/// channels from the reshaped input registers into 4 channel vectors.
+/// 3-level `_mm256_unpacklo/hi_epi16` + `_mm256_unpackhi/lo_epi64` cascade
+/// that separates 4 interleaved channels from the reshaped input registers
+/// into 4 channel vectors **in natural pixel order** (no fixup permute needed).
 ///
-/// After reshape, the per-lane layout is:
-///   lo lane: P_n   = [C0_n, C1_n, C2_n, C3_n, C0_{n+1}, C1_{n+1}, C2_{n+1}, C3_{n+1}]
-///   hi lane: P_{n+8} similarly.
+/// After the cross-lane reshape upstream, the per-lane layout of `r0..r3` is:
+///   r0: lo=P0,P1   hi=P8,P9
+///   r1: lo=P2,P3   hi=P10,P11
+///   r2: lo=P4,P5   hi=P12,P13
+///   r3: lo=P6,P7   hi=P14,P15
+/// where each P_n is a 4-channel pixel: `[C0_n, C1_n, C2_n, C3_n]`.
 ///
-/// Level 1: unpack pairs → (C0,C1) and (C2,C3) interleaved quadruples.
-/// Level 2: unpack quadruples → (C0 x4) and (C1 x4) / (C2 x4) and (C3 x4).
-/// Level 3: unpack → final 16-element channel vectors (lane-split form).
-/// Lane fix: `_mm256_permute4x64_epi64::<0xD8>` → natural order.
+/// Cascade (mirrors `xv36.rs` AVX2 deinterleave precedent):
+///
+/// Level 1 — `unpacklo/hi_epi16` of `(r0,r1)` and `(r2,r3)` separately
+///   per 128-bit lane. Within each lane:
+///   `s1_lo = [C0_a,C0_{a+1}, C1_a,C1_{a+1}, C2_a,C2_{a+1}, C3_a,C3_{a+1}]`
+///   etc. for `(a,a+1) = (0,2)/(8,10)` (s1 pair from r0/r1) and
+///   `(4,6)/(12,14)` (s2 pair from r2/r3); `s1_hi` / `s2_hi` carry the
+///   adjacent odd pixels (1/3, 5/7, 9/11, 13/15).
+///
+/// Level 2 — `unpacklo/hi_epi16` of `(s1_lo, s1_hi)` and `(s2_lo, s2_hi)`
+///   per lane interleaves the even/odd halves so each 128-bit lane holds
+///   four consecutive pixels of two channels:
+///   `s3_lo lo lane = [C0_0..C0_3, C1_0..C1_3]`,
+///   `s3_lo hi lane = [C0_8..C0_11, C1_8..C1_11]`,
+///   `s4_lo lo lane = [C0_4..C0_7, C1_4..C1_7]`,
+///   `s4_lo hi lane = [C0_12..C0_15, C1_12..C1_15]`,
+///   and similarly `s3_hi`/`s4_hi` carry channels 2/3.
+///
+/// Level 3 — `unpacklo/hi_epi64` of `(s3_lo, s4_lo)` and `(s3_hi, s4_hi)`
+///   per lane concatenates the two 64-bit halves so each output channel
+///   vector holds 8 consecutive pixels per 128-bit lane in natural order:
+///   `ch0 lo = [C0_0..C0_7]`, `ch0 hi = [C0_8..C0_15]`, etc.
+///
+/// Because the upstream reshape pre-strided the inputs (lo=P_n,P_{n+1};
+/// hi=P_{n+8},P_{n+9}), no `_mm256_permute4x64_epi64::<0xD8>` lane fixup is
+/// needed — the cascade output already lands in natural order. (An earlier
+/// version of this kernel applied that permute and produced
+/// `[evens; odds]` order, which the current `*_matches_scalar_width17`
+/// regression tests catch.)
 ///
 /// # Safety
 ///
@@ -197,30 +230,27 @@ unsafe fn deinterleave_rgba64_cascade(
   r3: __m256i,
 ) -> (__m256i, __m256i, __m256i, __m256i) {
   unsafe {
-    // Level 1: separate even/odd u16 pairs from adjacent pixels
-    // lo_01 = [C0_0,C0_1, C1_0,C1_1, C2_0,C2_1, C3_0,C3_1, C0_8,C0_9, C1_8,C1_9, ...]
-    let lo_01 = _mm256_unpacklo_epi16(r0, r1);
-    let hi_01 = _mm256_unpackhi_epi16(r0, r1);
-    let lo_23 = _mm256_unpacklo_epi16(r2, r3);
-    let hi_23 = _mm256_unpackhi_epi16(r2, r3);
+    // Level 1: pair r0/r1 (yielding the (0,2,8,10) / (1,3,9,11) pixel
+    // halves in lo/hi lanes) and r2/r3 (yielding (4,6,12,14) / (5,7,13,15)).
+    let s1_lo = _mm256_unpacklo_epi16(r0, r1);
+    let s1_hi = _mm256_unpackhi_epi16(r0, r1);
+    let s2_lo = _mm256_unpacklo_epi16(r2, r3);
+    let s2_hi = _mm256_unpackhi_epi16(r2, r3);
 
-    // Level 2
-    let lo_lo = _mm256_unpacklo_epi32(lo_01, lo_23);
-    let lo_hi = _mm256_unpackhi_epi32(lo_01, lo_23);
-    let hi_lo = _mm256_unpacklo_epi32(hi_01, hi_23);
-    let hi_hi = _mm256_unpackhi_epi32(hi_01, hi_23);
+    // Level 2: interleave the even/odd halves within each pair to assemble
+    // four consecutive pixels per 128-bit lane (channels 0/1 in s3_lo/s4_lo,
+    // channels 2/3 in s3_hi/s4_hi).
+    let s3_lo = _mm256_unpacklo_epi16(s1_lo, s1_hi);
+    let s3_hi = _mm256_unpackhi_epi16(s1_lo, s1_hi);
+    let s4_lo = _mm256_unpacklo_epi16(s2_lo, s2_hi);
+    let s4_hi = _mm256_unpackhi_epi16(s2_lo, s2_hi);
 
-    // Level 3
-    let ch0_raw = _mm256_unpacklo_epi64(lo_lo, hi_lo);
-    let ch1_raw = _mm256_unpackhi_epi64(lo_lo, hi_lo);
-    let ch2_raw = _mm256_unpacklo_epi64(lo_hi, hi_hi);
-    let ch3_raw = _mm256_unpackhi_epi64(lo_hi, hi_hi);
-
-    // Lane-cross fixup: 0xD8 = [0,2,1,3] reorders 64-bit chunks to natural order.
-    let ch0 = _mm256_permute4x64_epi64::<0xD8>(ch0_raw);
-    let ch1 = _mm256_permute4x64_epi64::<0xD8>(ch1_raw);
-    let ch2 = _mm256_permute4x64_epi64::<0xD8>(ch2_raw);
-    let ch3 = _mm256_permute4x64_epi64::<0xD8>(ch3_raw);
+    // Level 3: concatenate the 64-bit halves so each lane holds 8
+    // consecutive pixels of one channel in natural order.
+    let ch0 = _mm256_unpacklo_epi64(s3_lo, s4_lo);
+    let ch1 = _mm256_unpackhi_epi64(s3_lo, s4_lo);
+    let ch2 = _mm256_unpacklo_epi64(s3_hi, s4_hi);
+    let ch3 = _mm256_unpackhi_epi64(s3_hi, s4_hi);
 
     (ch0, ch1, ch2, ch3)
   }
