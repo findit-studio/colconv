@@ -13,8 +13,8 @@
 //! - RGB: write via `write_rgb_16` (3-channel interleave).
 //! - RGBA: write via `write_rgba_16` (4-channel interleave, α=0xFF).
 //! - Luma u8: store with `_mm_storeu_si128`.
-//! - u16 outputs: process 8 px / iter, unpack the low 8 bytes to u16x8 with
-//!   `(y << 8) | y` via `_mm_unpacklo_epi8`, then store via `write_rgb_u16_8`
+//! - u16 outputs: process 8 px / iter, zero-extend the low 8 bytes to u16x8 with
+//!   `_mm_unpacklo_epi8(y, zero)`, then store via `write_rgb_u16_8`
 //!   / `write_rgba_u16_8` (shared SSSE3/SSE2 interleave helpers).
 //!
 //! Tail (remaining pixels after last full 16-px block) falls back to scalar.
@@ -72,14 +72,16 @@ unsafe fn unpack_2bytes_sse41<const INVERT: bool>(b0: u8, b1: u8) -> __m128i {
   }
 }
 
-/// Expand a u8x8 (low 8 bytes of a __m128i) to u16x8 with `(y << 8) | y`.
+/// Zero-extend a u8x8 (low 8 bytes of a __m128i) to u16x8.
+/// White (0xFF) maps to 0x00FF, matching Gray8's `with_luma_u16` contract.
 /// Returns a full __m128i with 8 u16 values.
 #[inline]
 #[target_feature(enable = "sse4.1")]
 unsafe fn expand_y_to_u16x8_sse41(y_low8: __m128i) -> __m128i {
-  // _mm_unpacklo_epi8(y, y): interleave low 8 bytes with themselves
-  // → [y0, y0, y1, y1, ..., y7, y7] as a u8x16, i.e. u16x8 of (y | y << 8).
-  _mm_unpacklo_epi8(y_low8, y_low8)
+  // _mm_unpacklo_epi8(y, zero): interleave low 8 bytes with 0x00
+  // → [y0, 0, y1, 0, ..., y7, 0] as a u8x16, i.e. u16x8 of y (zero-extended).
+  let zero = _mm_setzero_si128();
+  _mm_unpacklo_epi8(y_low8, zero)
 }
 
 // ---- mono1bit → RGB u8 -------------------------------------------------------
@@ -255,8 +257,8 @@ pub(crate) unsafe fn mono1bit_to_rgba_u16_row<const INVERT: bool>(
     while x + 8 <= width {
       let y8_128 = unpack_2bytes_sse41::<INVERT>(data[byte_idx], 0);
       let y16 = expand_y_to_u16x8_sse41(y8_128);
-      // α=0xFFFF for all 8 pixels. Cast to i16 since __m128i is signed.
-      let alpha = _mm_set1_epi16(0xFFFFu16 as i16);
+      // α=0x00FF for all 8 pixels (zero-extend of 0xFF u8). Cast to i16 since __m128i is signed.
+      let alpha = _mm_set1_epi16(0x00FFu16 as i16);
       // Write 8 pixels × 4 channels = 32 u16 = 64 bytes via the shared
       // SSE2 unpack-based interleave helper (y broadcast to R, G, B).
       write_rgba_u16_8(y16, y16, y16, alpha, out.as_mut_ptr().add(x * 4));

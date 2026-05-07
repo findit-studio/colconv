@@ -193,7 +193,7 @@ fn monoblack_to_luma_u16() {
   let mut out = vec![0u16; 8];
   scalar::monoblack_to_luma_u16_row(&data, &mut out, 8);
   for val in &out[0..4] {
-    assert_eq!(val, &0xFFFF); // white
+    assert_eq!(val, &0x00FF); // white zero-extended to u16
   }
   for val in &out[4..8] {
     assert_eq!(val, &0x0000); // black
@@ -206,10 +206,10 @@ fn monowhite_to_rgba_u16() {
   let mut out = vec![0u16; 8 * 4];
   scalar::monowhite_to_rgba_u16_row(&data, &mut out, 8);
   for chunk in out.chunks_exact(4) {
-    assert_eq!(chunk[0], 0xFFFF); // R (inverted: 0 → 255)
-    assert_eq!(chunk[1], 0xFFFF); // G
-    assert_eq!(chunk[2], 0xFFFF); // B
-    assert_eq!(chunk[3], 0xFFFF); // A
+    assert_eq!(chunk[0], 0x00FF); // R (inverted: 0 → 255, zero-extended to u16)
+    assert_eq!(chunk[1], 0x00FF); // G
+    assert_eq!(chunk[2], 0x00FF); // B
+    assert_eq!(chunk[3], 0x00FF); // A (0xFF alpha zero-extended)
   }
 }
 
@@ -242,10 +242,10 @@ fn monoblack_to_rgb_u16() {
   let data = [0x80u8]; // 1,0,0,0,0,0,0,0
   let mut out = vec![0u16; 8 * 3];
   scalar::monoblack_to_rgb_u16_row(&data, &mut out, 8);
-  // First pixel: 255 (0xFFFF)
-  assert_eq!(out[0], 0xFFFF);
-  assert_eq!(out[1], 0xFFFF);
-  assert_eq!(out[2], 0xFFFF);
+  // First pixel: 255 zero-extended to u16 (0x00FF)
+  assert_eq!(out[0], 0x00FF);
+  assert_eq!(out[1], 0x00FF);
+  assert_eq!(out[2], 0x00FF);
   // Remaining pixels: 0
   for i in 1..8 {
     assert_eq!(out[i * 3], 0);

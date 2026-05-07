@@ -7,7 +7,7 @@
 //! 2. `v128_and` with bit-position mask `[0x80,...,0x01]` repeated twice (16 bytes).
 //! 3. `i8x16_eq(and, zero)` → 0x00 where bit was set, 0xFF where clear.
 //! 4. For Monoblack (`INVERT=false`): negate with `v128_not`.
-//! 5. For u16 outputs: process 8 px / iter (1 byte), expand via unzip.
+//! 5. For u16 outputs: process 8 px / iter (1 byte), zero-extend via `u16x8_extend_low_u8x16`.
 //!
 //! Tail: scalar fallback.
 
@@ -65,15 +65,13 @@ unsafe fn unpack_2bytes_wasm<const INVERT: bool>(b0: u8, b1: u8) -> v128 {
   }
 }
 
-/// Expand 8 u8 pixel values (low 8 lanes of a v128) to u16x8 with `(y << 8) | y`.
+/// Zero-extend 8 u8 pixel values (low 8 lanes of a v128) to u16x8.
+/// White (0xFF) maps to 0x00FF, matching Gray8's `with_luma_u16` contract.
 #[inline]
 #[target_feature(enable = "simd128")]
 unsafe fn expand_y_to_u16x8_wasm(y_low8: v128) -> v128 {
-  // Use i16x8_extend_low_i8x16 would sign-extend; we need zero-extend.
   // u16x8_extend_low_u8x16 zero-extends the low 8 bytes to u16x8.
-  let y16 = u16x8_extend_low_u8x16(y_low8);
-  // (y << 8) | y  — since y is 0x00 or 0xFF, result is 0x0000 or 0xFFFF.
-  v128_or(i16x8_shl(y16, 8), y16)
+  u16x8_extend_low_u8x16(y_low8)
 }
 
 // ---- mono1bit → RGB u8 -------------------------------------------------------
@@ -242,7 +240,7 @@ pub(crate) unsafe fn mono1bit_to_rgba_u16_row<const INVERT: bool>(
   let mut x = 0usize;
   let mut byte_idx = 0usize;
   unsafe {
-    let alpha = u16x8_splat(0xFFFF);
+    let alpha = u16x8_splat(0x00FF);
     while x + 8 <= width {
       let y_raw = unpack_2bytes_wasm::<INVERT>(data[byte_idx], 0);
       let y16 = expand_y_to_u16x8_wasm(y_raw);

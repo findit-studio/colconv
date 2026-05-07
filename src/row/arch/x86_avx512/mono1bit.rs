@@ -8,7 +8,7 @@
 //! 3. `_mm512_cmpeq_epi8_mask` + `_mm512_movm_epi8`: compare-to-mask → 0xFF per set bit.
 //!    Alternative: `_mm512_cmpeq_epi8` then negate (using AVX-512BW).
 //! 4. For Monowhite (`INVERT=true`): use the inverted comparison.
-//! 5. For u16 outputs: process 32 px / iter (4 bytes), unpack to u16x32.
+//! 5. For u16 outputs: process 32 px / iter (4 bytes), zero-extend to u16x32.
 //!
 //! Requires AVX-512F + AVX-512BW (no VBMI required).
 
@@ -126,15 +126,14 @@ unsafe fn unpack_4bytes_as_m256i<const INVERT: bool>(b0: u8, b1: u8, b2: u8, b3:
   }
 }
 
-/// Expand 4 input bytes (32 pixels) to u16x32 with `(y << 8) | y`.
-/// Returns a __m512i with 32 u16 values.
+/// Zero-extend 32 u8 pixel values (from 4 input bytes) to u16x32.
+/// White (0xFF) maps to 0x00FF, matching Gray8's `with_luma_u16` contract.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 unsafe fn expand_4bytes_to_u16x32<const INVERT: bool>(b0: u8, b1: u8, b2: u8, b3: u8) -> __m512i {
   unsafe {
     let y256 = unpack_4bytes_as_m256i::<INVERT>(b0, b1, b2, b3);
-    let y512 = _mm512_cvtepu8_epi16(y256);
-    _mm512_or_si512(_mm512_slli_epi16::<8>(y512), y512)
+    _mm512_cvtepu8_epi16(y256)
   }
 }
 
@@ -365,7 +364,7 @@ pub(crate) unsafe fn mono1bit_to_rgba_u16_row<const INVERT: bool>(
   let mut x = 0usize;
   let mut byte_idx = 0usize;
   unsafe {
-    let alpha128 = _mm_set1_epi16(-1i16); // 0xFFFF
+    let alpha128 = _mm_set1_epi16(0x00FFi16); // zero-extend of 0xFF u8
     while x + 32 <= width {
       let y512 = expand_4bytes_to_u16x32::<INVERT>(
         data[byte_idx],

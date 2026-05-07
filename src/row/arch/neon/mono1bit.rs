@@ -8,7 +8,7 @@
 //! 3. `vtstq_u8(v, mask)` tests "is bit non-zero?" → 0xFF per set bit, 0x00 per clear bit.
 //! 4. `INVERT=true` (Monowhite): `vmvnq_u8` to flip all bits.
 //! 5. For RGB/RGBA: `vst3q_u8` / `vst4q_u8` broadcast the Y vector across channels.
-//! 6. For u16 outputs: Y = (y as u16 << 8) | y; unpacked via `vmovl_u8` + `vorrq_u16`.
+//! 6. For u16 outputs: Y = y as u16 (zero-extend via `vmovl_u8`); white maps to 0x00FF.
 //!
 //! Tail (< 16 pixels) falls back to scalar.
 
@@ -46,12 +46,12 @@ unsafe fn unpack_2bytes<const INVERT: bool>(b0: u8, b1: u8) -> uint8x16_t {
   vcombine_u8(lo, hi)
 }
 
-/// Expand a u8x8 luma vector to u16x8 with `(y << 8) | y`.
+/// Expand a u8x8 luma vector to u16x8 by zero-extending each u8 to u16.
+/// White (0xFF) maps to 0x00FF, matching Gray8's `with_luma_u16` contract.
 #[inline]
 #[target_feature(enable = "neon")]
 unsafe fn expand_y_to_u16x8(y8: uint8x8_t) -> uint16x8_t {
-  let y16 = vmovl_u8(y8);
-  vorrq_u16(vshlq_n_u16::<8>(y16), y16)
+  vmovl_u8(y8)
 }
 
 // ---- Monoblack / Monowhite → RGB u8 -----------------------------------------
@@ -223,7 +223,7 @@ pub(crate) unsafe fn mono1bit_to_rgba_u16_row<const INVERT: bool>(
   let mut x = 0usize;
   let mut byte_idx = 0usize;
   unsafe {
-    let alpha = vdupq_n_u16(0xFFFF);
+    let alpha = vdupq_n_u16(0x00FF);
     while x + 8 <= width {
       let y8 = unpack_byte::<INVERT>(data[byte_idx]);
       let y16 = expand_y_to_u16x8(y8);

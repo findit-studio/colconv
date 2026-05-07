@@ -77,7 +77,7 @@ fn monoblack_walker_to_luma_u16() {
     monoblack_to(&frame, true, ColorMatrix::Bt709, &mut sinker).expect("walk ok");
   }
 
-  assert_eq!(luma_u16[0], 0xFFFF);
+  assert_eq!(luma_u16[0], 0x00FF);
   for val in &luma_u16[1..8] {
     assert_eq!(val, &0);
   }
@@ -97,9 +97,9 @@ fn monoblack_walker_to_rgb_u16() {
   }
 
   for chunk in rgb_u16.chunks_exact(3) {
-    assert_eq!(chunk[0], 0xFFFF);
-    assert_eq!(chunk[1], 0xFFFF);
-    assert_eq!(chunk[2], 0xFFFF);
+    assert_eq!(chunk[0], 0x00FF);
+    assert_eq!(chunk[1], 0x00FF);
+    assert_eq!(chunk[2], 0x00FF);
   }
 }
 
@@ -120,7 +120,7 @@ fn monoblack_walker_to_rgba_u16() {
     assert_eq!(chunk[0], 0);
     assert_eq!(chunk[1], 0);
     assert_eq!(chunk[2], 0);
-    assert_eq!(chunk[3], 0xFFFF);
+    assert_eq!(chunk[3], 0x00FF);
   }
 }
 
@@ -241,9 +241,9 @@ fn monowhite_walker_to_rgb_u16() {
   assert_eq!(rgb_u16[1], 0);
   assert_eq!(rgb_u16[2], 0);
   for chunk in rgb_u16[3..].chunks_exact(3) {
-    assert_eq!(chunk[0], 0xFFFF);
-    assert_eq!(chunk[1], 0xFFFF);
-    assert_eq!(chunk[2], 0xFFFF);
+    assert_eq!(chunk[0], 0x00FF);
+    assert_eq!(chunk[1], 0x00FF);
+    assert_eq!(chunk[2], 0x00FF);
   }
 }
 
@@ -261,10 +261,10 @@ fn monowhite_walker_to_rgba_u16() {
   }
 
   for chunk in rgba_u16.chunks_exact(4) {
-    assert_eq!(chunk[0], 0xFFFF);
-    assert_eq!(chunk[1], 0xFFFF);
-    assert_eq!(chunk[2], 0xFFFF);
-    assert_eq!(chunk[3], 0xFFFF);
+    assert_eq!(chunk[0], 0x00FF);
+    assert_eq!(chunk[1], 0x00FF);
+    assert_eq!(chunk[2], 0x00FF);
+    assert_eq!(chunk[3], 0x00FF);
   }
 }
 

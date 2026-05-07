@@ -7,7 +7,7 @@
 //! 2. AND with the bit-position mask `[0x80,...,0x01]` repeated 4× (32 bytes).
 //! 3. `_mm256_cmpeq_epi8(and, zero)` → 0x00 where bit was set, 0xFF where clear.
 //! 4. Negate for Monoblack (`INVERT=false`).
-//! 5. For u16 outputs: process 16 px / iter (2 bytes), unpack to u16x16.
+//! 5. For u16 outputs: process 16 px / iter (2 bytes), zero-extend to u16x16.
 //!
 //! Tail: scalar fallback.
 
@@ -85,18 +85,16 @@ unsafe fn unpack_2bytes_as_m128i<const INVERT: bool>(b0: u8, b1: u8) -> __m128i 
   }
 }
 
-/// Expand the low 16 bytes of a __m256i to u16x16 with `(y << 8) | y`.
-/// Returns two __m128i vectors: lo (pixels 0..7) and hi (pixels 8..15).
+/// Zero-extend 16 u8 pixel values (from 2 input bytes) to u16x16.
+/// White (0xFF) maps to 0x00FF, matching Gray8's `with_luma_u16` contract.
 #[inline]
 #[target_feature(enable = "avx2")]
 unsafe fn expand_2bytes_to_u16x16<const INVERT: bool>(b0: u8, b1: u8) -> __m256i {
   unsafe {
     // Unpack just 2 bytes to get 16 pixels in the low 128 bits.
     let y128 = unpack_2bytes_as_m128i::<INVERT>(b0, b1);
-    // Expand 16 u8 lanes to 16 u16 lanes via `(y, y)` unpack.
-    let y256 = _mm256_cvtepu8_epi16(y128);
-    // (y << 8) | y
-    _mm256_or_si256(_mm256_slli_epi16::<8>(y256), y256)
+    // Zero-extend 16 u8 lanes to 16 u16 lanes.
+    _mm256_cvtepu8_epi16(y128)
   }
 }
 
@@ -293,7 +291,7 @@ pub(crate) unsafe fn mono1bit_to_rgba_u16_row<const INVERT: bool>(
   let mut x = 0usize;
   let mut byte_idx = 0usize;
   unsafe {
-    let alpha128 = _mm_set1_epi16(-1i16); // 0xFFFF
+    let alpha128 = _mm_set1_epi16(0x00FFi16); // zero-extend of 0xFF u8
     while x + 16 <= width {
       let y256 = expand_2bytes_to_u16x16::<INVERT>(data[byte_idx], data[byte_idx + 1]);
       let y_lo = _mm256_castsi256_si128(y256);
