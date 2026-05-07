@@ -1,18 +1,18 @@
 use super::*;
 use crate::row::arch::x86_avx512::endian::*;
 
-// Helper: extract __m512i to Vec<u16> (32 lanes).
+// Helper: extract __m512i to a stack array of 32 u16 lanes.
 #[cfg(target_arch = "x86_64")]
-unsafe fn m512i_to_u16x32(v: core::arch::x86_64::__m512i) -> std::vec::Vec<u16> {
-  let mut out = std::vec![0u16; 32];
+unsafe fn m512i_to_u16x32(v: core::arch::x86_64::__m512i) -> [u16; 32] {
+  let mut out = [0u16; 32];
   unsafe { core::arch::x86_64::_mm512_storeu_si512(out.as_mut_ptr().cast(), v) };
   out
 }
 
-// Helper: extract __m512i to Vec<u32> (16 lanes).
+// Helper: extract __m512i to a stack array of 16 u32 lanes.
 #[cfg(target_arch = "x86_64")]
-unsafe fn m512i_to_u32x16(v: core::arch::x86_64::__m512i) -> std::vec::Vec<u32> {
-  let mut out = std::vec![0u32; 16];
+unsafe fn m512i_to_u32x16(v: core::arch::x86_64::__m512i) -> [u32; 16] {
+  let mut out = [0u32; 16];
   unsafe { core::arch::x86_64::_mm512_storeu_si512(out.as_mut_ptr().cast(), v) };
   out
 }
@@ -34,9 +34,10 @@ fn avx512_load_le_u16x32_noop_on_le_host() {
   }
   let v = unsafe { load_le_u16x32(input.as_ptr()) };
   let got = unsafe { m512i_to_u16x32(v) };
-  let expected: std::vec::Vec<u16> = (0u16..32)
-    .map(|i| (((i + 1) as u16) << 8) | ((i + 2) as u16))
-    .collect();
+  let expected: [u16; 32] = core::array::from_fn(|i| {
+    let i = i as u16;
+    ((i + 1) << 8) | (i + 2)
+  });
   assert_eq!(
     got, expected,
     "AVX-512 load_le_u16x32 must not swap on LE host"
@@ -56,9 +57,10 @@ fn avx512_load_le_u16x32_swaps_on_be_host() {
   }
   let v = unsafe { load_le_u16x32(input.as_ptr()) };
   let got = unsafe { m512i_to_u16x32(v) };
-  let expected: std::vec::Vec<u16> = (0u16..32)
-    .map(|i| (((i + 1) as u16) << 8) | ((i + 2) as u16))
-    .collect();
+  let expected: [u16; 32] = core::array::from_fn(|i| {
+    let i = i as u16;
+    ((i + 1) << 8) | (i + 2)
+  });
   assert_eq!(got, expected, "AVX-512 load_le_u16x32 must swap on BE host");
 }
 
@@ -78,9 +80,10 @@ fn avx512_load_be_u16x32_swaps_on_le_host() {
   }
   let v = unsafe { load_be_u16x32(input.as_ptr()) };
   let got = unsafe { m512i_to_u16x32(v) };
-  let expected: std::vec::Vec<u16> = (0u16..32)
-    .map(|i| (((i + 1) as u16) << 8) | ((i + 2) as u16))
-    .collect();
+  let expected: [u16; 32] = core::array::from_fn(|i| {
+    let i = i as u16;
+    ((i + 1) << 8) | (i + 2)
+  });
   assert_eq!(got, expected, "AVX-512 load_be_u16x32 must swap on LE host");
 }
 
@@ -97,9 +100,10 @@ fn avx512_load_be_u16x32_noop_on_be_host() {
   }
   let v = unsafe { load_be_u16x32(input.as_ptr()) };
   let got = unsafe { m512i_to_u16x32(v) };
-  let expected: std::vec::Vec<u16> = (0u16..32)
-    .map(|i| (((i + 1) as u16) << 8) | ((i + 2) as u16))
-    .collect();
+  let expected: [u16; 32] = core::array::from_fn(|i| {
+    let i = i as u16;
+    ((i + 1) << 8) | (i + 2)
+  });
   assert_eq!(
     got, expected,
     "AVX-512 load_be_u16x32 must not swap on BE host"

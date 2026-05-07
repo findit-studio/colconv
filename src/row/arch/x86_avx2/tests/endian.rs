@@ -1,18 +1,18 @@
 use super::*;
 use crate::row::arch::x86_avx2::endian::*;
 
-// Helper: extract __m256i to Vec<u16> (16 lanes).
+// Helper: extract __m256i to a stack array of 16 u16 lanes.
 #[cfg(target_arch = "x86_64")]
-unsafe fn m256i_to_u16x16(v: core::arch::x86_64::__m256i) -> std::vec::Vec<u16> {
-  let mut out = std::vec![0u16; 16];
+unsafe fn m256i_to_u16x16(v: core::arch::x86_64::__m256i) -> [u16; 16] {
+  let mut out = [0u16; 16];
   unsafe { core::arch::x86_64::_mm256_storeu_si256(out.as_mut_ptr().cast(), v) };
   out
 }
 
-// Helper: extract __m256i to Vec<u32> (8 lanes).
+// Helper: extract __m256i to a stack array of 8 u32 lanes.
 #[cfg(target_arch = "x86_64")]
-unsafe fn m256i_to_u32x8(v: core::arch::x86_64::__m256i) -> std::vec::Vec<u32> {
-  let mut out = std::vec![0u32; 8];
+unsafe fn m256i_to_u32x8(v: core::arch::x86_64::__m256i) -> [u32; 8] {
+  let mut out = [0u32; 8];
   unsafe { core::arch::x86_64::_mm256_storeu_si256(out.as_mut_ptr().cast(), v) };
   out
 }

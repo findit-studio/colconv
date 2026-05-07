@@ -1,15 +1,15 @@
 use crate::row::arch::neon::endian::*;
 
-// Helper: extract uint16x8_t to Vec<u16>.
-unsafe fn u16x8_to_vec(v: core::arch::aarch64::uint16x8_t) -> std::vec::Vec<u16> {
-  let mut out = std::vec![0u16; 8];
+// Helper: extract uint16x8_t to a stack array.
+unsafe fn u16x8_to_arr(v: core::arch::aarch64::uint16x8_t) -> [u16; 8] {
+  let mut out = [0u16; 8];
   unsafe { core::arch::aarch64::vst1q_u16(out.as_mut_ptr(), v) };
   out
 }
 
-// Helper: extract uint32x4_t to Vec<u32>.
-unsafe fn u32x4_to_vec(v: core::arch::aarch64::uint32x4_t) -> std::vec::Vec<u32> {
-  let mut out = std::vec![0u32; 4];
+// Helper: extract uint32x4_t to a stack array.
+unsafe fn u32x4_to_arr(v: core::arch::aarch64::uint32x4_t) -> [u32; 4] {
+  let mut out = [0u32; 4];
   unsafe { core::arch::aarch64::vst1q_u32(out.as_mut_ptr(), v) };
   out
 }
@@ -33,7 +33,7 @@ fn neon_load_le_u16x8_noop_on_le_host() {
     0x10, 0x0f, // u16[7] = 0x0f10
   ];
   let v = unsafe { load_le_u16x8(input.as_ptr()) };
-  let got = unsafe { u16x8_to_vec(v) };
+  let got = unsafe { u16x8_to_arr(v) };
   assert_eq!(
     got,
     [
@@ -54,7 +54,7 @@ fn neon_load_le_u16x8_swaps_on_be_host() {
     0x02, 0x01, 0x04, 0x03, 0x06, 0x05, 0x08, 0x07, 0x0a, 0x09, 0x0c, 0x0b, 0x0e, 0x0d, 0x10, 0x0f,
   ];
   let v = unsafe { load_le_u16x8(input.as_ptr()) };
-  let got = unsafe { u16x8_to_vec(v) };
+  let got = unsafe { u16x8_to_arr(v) };
   assert_eq!(
     got,
     [
@@ -83,7 +83,7 @@ fn neon_load_be_u16x8_swaps_on_le_host() {
     0x0f, 0x10, // u16[7] = 0x0f10
   ];
   let v = unsafe { load_be_u16x8(input.as_ptr()) };
-  let got = unsafe { u16x8_to_vec(v) };
+  let got = unsafe { u16x8_to_arr(v) };
   assert_eq!(
     got,
     [
@@ -102,7 +102,7 @@ fn neon_load_be_u16x8_noop_on_be_host() {
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
   ];
   let v = unsafe { load_be_u16x8(input.as_ptr()) };
-  let got = unsafe { u16x8_to_vec(v) };
+  let got = unsafe { u16x8_to_arr(v) };
   assert_eq!(
     got,
     [
@@ -124,7 +124,7 @@ fn neon_load_le_u32x4_noop_on_le_host() {
     0x10, 0x0f, 0x0e, 0x0d, // u32[3] = 0x0d0e0f10
   ];
   let v = unsafe { load_le_u32x4(input.as_ptr()) };
-  let got = unsafe { u32x4_to_vec(v) };
+  let got = unsafe { u32x4_to_arr(v) };
   assert_eq!(
     got,
     [0x01020304, 0x05060708, 0x090a0b0c, 0x0d0e0f10],
@@ -144,7 +144,7 @@ fn neon_load_be_u32x4_swaps_on_le_host() {
     0x0d, 0x0e, 0x0f, 0x10, // u32[3] = 0x0d0e0f10
   ];
   let v = unsafe { load_be_u32x4(input.as_ptr()) };
-  let got = unsafe { u32x4_to_vec(v) };
+  let got = unsafe { u32x4_to_arr(v) };
   assert_eq!(
     got,
     [0x01020304, 0x05060708, 0x090a0b0c, 0x0d0e0f10],
@@ -163,8 +163,8 @@ fn neon_load_endian_u16x8_le_dispatcher() {
   ];
   let direct = unsafe { load_le_u16x8(input.as_ptr()) };
   let via_dispatch = unsafe { load_endian_u16x8::<false>(input.as_ptr()) };
-  let d = unsafe { u16x8_to_vec(direct) };
-  let g = unsafe { u16x8_to_vec(via_dispatch) };
+  let d = unsafe { u16x8_to_arr(direct) };
+  let g = unsafe { u16x8_to_arr(via_dispatch) };
   assert_eq!(d, g, "load_endian_u16x8::<false> must match load_le_u16x8");
 }
 
@@ -177,7 +177,7 @@ fn neon_load_endian_u16x8_be_dispatcher() {
   ];
   let direct = unsafe { load_be_u16x8(input.as_ptr()) };
   let via_dispatch = unsafe { load_endian_u16x8::<true>(input.as_ptr()) };
-  let d = unsafe { u16x8_to_vec(direct) };
-  let g = unsafe { u16x8_to_vec(via_dispatch) };
+  let d = unsafe { u16x8_to_arr(direct) };
+  let g = unsafe { u16x8_to_arr(via_dispatch) };
   assert_eq!(d, g, "load_endian_u16x8::<true> must match load_be_u16x8");
 }

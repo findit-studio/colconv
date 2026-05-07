@@ -1,16 +1,16 @@
 use super::*;
 use crate::row::arch::wasm_simd128::endian::*;
 
-// Helper: extract v128 to Vec<u16> (8 lanes).
-unsafe fn v128_to_u16x8(v: core::arch::wasm32::v128) -> std::vec::Vec<u16> {
-  let mut out = std::vec![0u16; 8];
+// Helper: extract v128 to a stack array of 8 u16 lanes.
+unsafe fn v128_to_u16x8(v: core::arch::wasm32::v128) -> [u16; 8] {
+  let mut out = [0u16; 8];
   unsafe { core::arch::wasm32::v128_store(out.as_mut_ptr().cast(), v) };
   out
 }
 
-// Helper: extract v128 to Vec<u32> (4 lanes).
-unsafe fn v128_to_u32x4(v: core::arch::wasm32::v128) -> std::vec::Vec<u32> {
-  let mut out = std::vec![0u32; 4];
+// Helper: extract v128 to a stack array of 4 u32 lanes.
+unsafe fn v128_to_u32x4(v: core::arch::wasm32::v128) -> [u32; 4] {
+  let mut out = [0u32; 4];
   unsafe { core::arch::wasm32::v128_store(out.as_mut_ptr().cast(), v) };
   out
 }

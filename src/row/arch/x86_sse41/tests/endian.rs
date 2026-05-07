@@ -1,18 +1,18 @@
 use super::*;
 use crate::row::arch::x86_sse41::endian::*;
 
-// Helper: extract __m128i to Vec<u16> (8 lanes).
+// Helper: extract __m128i to a stack array of 8 u16 lanes.
 #[cfg(target_arch = "x86_64")]
-unsafe fn m128i_to_u16x8(v: core::arch::x86_64::__m128i) -> std::vec::Vec<u16> {
-  let mut out = std::vec![0u16; 8];
+unsafe fn m128i_to_u16x8(v: core::arch::x86_64::__m128i) -> [u16; 8] {
+  let mut out = [0u16; 8];
   unsafe { core::arch::x86_64::_mm_storeu_si128(out.as_mut_ptr().cast(), v) };
   out
 }
 
-// Helper: extract __m128i to Vec<u32> (4 lanes).
+// Helper: extract __m128i to a stack array of 4 u32 lanes.
 #[cfg(target_arch = "x86_64")]
-unsafe fn m128i_to_u32x4(v: core::arch::x86_64::__m128i) -> std::vec::Vec<u32> {
-  let mut out = std::vec![0u32; 4];
+unsafe fn m128i_to_u32x4(v: core::arch::x86_64::__m128i) -> [u32; 4] {
+  let mut out = [0u32; 4];
   unsafe { core::arch::x86_64::_mm_storeu_si128(out.as_mut_ptr().cast(), v) };
   out
 }
