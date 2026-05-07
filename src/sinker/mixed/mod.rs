@@ -612,6 +612,32 @@ pub enum RowSlice {
   /// the 256-entry BGRA palette carried alongside in `Pal8Row`.
   #[display("Pal8 index row")]
   Pal8IndexRow,
+  /// Packed **RGB565** LE row of an [`Rgb565`](crate::yuv::Rgb565) source.
+  /// `2 * width` `u8` bytes — one `u16` LE word per pixel.
+  #[display("RGB565 packed")]
+  Rgb565Packed,
+  /// Packed **BGR565** LE row of a [`Bgr565`](crate::yuv::Bgr565) source.
+  /// Same `2 * width` byte shape as [`Rgb565Packed`](Self::Rgb565Packed)
+  /// with R↔B channel positions swapped.
+  #[display("BGR565 packed")]
+  Bgr565Packed,
+  /// Packed **RGB555** LE row of an [`Rgb555`](crate::yuv::Rgb555) source.
+  /// `2 * width` `u8` bytes — one `u16` LE word per pixel (bit 15 unused).
+  #[display("RGB555 packed")]
+  Rgb555Packed,
+  /// Packed **BGR555** LE row of a [`Bgr555`](crate::yuv::Bgr555) source.
+  /// Same shape as [`Rgb555Packed`](Self::Rgb555Packed) with R↔B swapped.
+  #[display("BGR555 packed")]
+  Bgr555Packed,
+  /// Packed **RGB444** LE row of an [`Rgb444`](crate::yuv::Rgb444) source.
+  /// `2 * width` `u8` bytes — one `u16` LE word per pixel (bits [15:12]
+  /// unused).
+  #[display("RGB444 packed")]
+  Rgb444Packed,
+  /// Packed **BGR444** LE row of a [`Bgr444`](crate::yuv::Bgr444) source.
+  /// Same shape as [`Rgb444Packed`](Self::Rgb444Packed) with R↔B swapped.
+  #[display("BGR444 packed")]
+  Bgr444Packed,
   /// Packed `R, G, B` row of an [`Rgb24`](crate::yuv::Rgb24) source.
   /// `3 * width` `u8` bytes.
   #[display("RGB packed")]
@@ -1670,6 +1696,7 @@ pub(super) fn rgb_row_to_luma_u16_row(
 mod ayuv64;
 mod bayer;
 mod gray;
+pub mod legacy_rgb;
 mod mono1bit;
 mod packed_rgb_10bit;
 mod packed_rgb_8bit;
