@@ -153,7 +153,7 @@ fn gbrpf32_try_new_rejects_geometry_overflow() {
   #[cfg(target_pointer_width = "32")]
   {
     let stride: u32 = u32::MAX / 2 + 1;
-    let height: u32 = u32::MAX / 2 + 1;
+    let _height: u32 = u32::MAX / 2 + 1;
     // width must be <= stride to avoid StrideBelowWidth, but also large enough
     // that width*height check might pass. Actually width*height will overflow i32::MAX
     // too, so DimensionOverflow will fire. Use width=1 so w*h passes i32::MAX check.

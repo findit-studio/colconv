@@ -116,6 +116,10 @@ pub(crate) fn gbrapf16_to_rgba_f16_row(
 /// Only slot 3 of every 4-element tuple is written; R, G, B slots are
 /// untouched. Lossless — HDR, NaN, and Inf in the α plane are preserved
 /// bit-exact.
+// Only called from the `mod tests` block which is gated on `feature = "std"`.
+// Under `cargo test --no-default-features` the test module is compiled out,
+// leaving the function without callers; suppress the resulting lint there.
+#[cfg_attr(not(feature = "std"), expect(dead_code))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn copy_alpha_plane_f16(alpha: &[half::f16], rgba_out: &mut [half::f16], width: usize) {
   debug_assert!(alpha.len() >= width, "alpha plane too short");
