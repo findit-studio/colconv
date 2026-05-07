@@ -70,19 +70,28 @@ fn f32_to_f16(y: f32) -> half::f16 {
   half::f16::from_f32(y)
 }
 
-/// Load a single f32 sample from a `&[f32]` plane with optional BE byte-swap.
+/// Load a single f32 sample from a `&[f32]` plane, target-endian aware.
 ///
-/// When `BE = true` the four bytes of the f32 representation are reversed
-/// (equivalent to loading a big-endian IEEE-754 single from disk). When
-/// `BE = false` the value is returned as-is (host-native / LE).
+/// The source plane is the raw on-disk / on-wire byte stream reinterpreted
+/// as `&[f32]`. Each f32 read therefore picks up four bytes in **host-native**
+/// order. We then convert that host-native u32 to the value the encoded
+/// stream represents:
+///
+/// - `BE = true`: bytes on disk are big-endian → `u32::from_be` is a no-op
+///   on BE hosts and a byte-swap on LE hosts.
+/// - `BE = false`: bytes on disk are little-endian → `u32::from_le` is a
+///   no-op on LE hosts and a byte-swap on BE hosts.
+///
+/// **Both** branches go through `from_be` / `from_le` so the
+/// LE-data-on-BE-host case is handled correctly too. An unconditional
+/// `swap_bytes` would corrupt rows on big-endian hosts (e.g. s390x).
 #[inline(always)]
 fn load_f32<const BE: bool>(plane: &[f32], i: usize) -> f32 {
+  let raw = plane[i];
   if BE {
-    // SAFETY: reinterpret f32 bits as u32, swap bytes, reinterpret back.
-    let bits = plane[i].to_bits().swap_bytes();
-    f32::from_bits(bits)
+    f32::from_bits(u32::from_be(raw.to_bits()))
   } else {
-    plane[i]
+    f32::from_bits(u32::from_le(raw.to_bits()))
   }
 }
 

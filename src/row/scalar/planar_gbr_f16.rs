@@ -33,18 +33,28 @@
 
 // ---- shared BE helper -------------------------------------------------------
 
-/// Load a single `half::f16` sample with optional BE byte-swap.
+/// Load a single `half::f16` sample, target-endian aware.
 ///
-/// When `BE = true` the two bytes of the f16 bit-pattern are reversed (i.e.
-/// we load a big-endian f16 from disk and convert to host-native). When
-/// `BE = false` the value is returned as-is. The dead branch is eliminated
-/// by the compiler when the caller is monomorphized.
+/// The source plane is the raw on-disk / on-wire byte stream reinterpreted
+/// as `&[half::f16]`. Each f16 read picks up two bytes in **host-native**
+/// order. We then convert that host-native u16 to the value the encoded
+/// stream represents:
+///
+/// - `BE = true`: bytes on disk are big-endian → `u16::from_be` is a no-op
+///   on BE hosts and a byte-swap on LE hosts.
+/// - `BE = false`: bytes on disk are little-endian → `u16::from_le` is a
+///   no-op on LE hosts and a byte-swap on BE hosts.
+///
+/// **Both** branches go through `from_be` / `from_le` so the
+/// LE-data-on-BE-host case is handled correctly too. An unconditional
+/// `swap_bytes` would corrupt rows on big-endian hosts (e.g. s390x).
 #[inline(always)]
 fn load_f16<const BE: bool>(plane: &[half::f16], i: usize) -> half::f16 {
+  let raw = plane[i];
   if BE {
-    half::f16::from_bits(plane[i].to_bits().swap_bytes())
+    half::f16::from_bits(u16::from_be(raw.to_bits()))
   } else {
-    plane[i]
+    half::f16::from_bits(u16::from_le(raw.to_bits()))
   }
 }
 
