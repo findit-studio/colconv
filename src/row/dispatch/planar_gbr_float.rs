@@ -35,12 +35,12 @@
   target_arch = "wasm32"
 ))]
 use crate::row::arch;
-#[cfg(target_arch = "aarch64")]
-use crate::row::neon_available;
 #[cfg(target_arch = "wasm32")]
 use crate::row::simd128_available;
 #[cfg(target_arch = "x86_64")]
-use crate::row::{avx2_available, avx512_available, sse41_available};
+use crate::row::{avx2_available, avx512_available, f16c_available, sse41_available};
+#[cfg(target_arch = "aarch64")]
+use crate::row::{fp16_available, neon_available};
 use crate::{
   ColorMatrix,
   row::{
@@ -361,7 +361,7 @@ pub(crate) fn gbrpf32_to_rgb_f16_row(
       target_arch = "aarch64" => {
         if neon_available() {
           // fp16 feature needed for vcvt_f16_f32.
-          if std::arch::is_aarch64_feature_detected!("fp16") {
+          if fp16_available() {
             // SAFETY: NEON + fp16 verified available.
             unsafe { arch::neon::gbrpf32_to_rgb_f16_row_fp16(g, b, r, out, width); }
           } else {
@@ -373,7 +373,7 @@ pub(crate) fn gbrpf32_to_rgb_f16_row(
       target_arch = "x86_64" => {
         if avx512_available() {
           // F16C runtime detection for narrow.
-          if std::arch::is_x86_feature_detected!("f16c") {
+          if f16c_available() {
             // SAFETY: AVX-512F + BW + F16C verified available.
             unsafe { arch::x86_avx512::gbrpf32_to_rgb_f16_row_f16c(g, b, r, out, width); }
           } else {
@@ -383,7 +383,7 @@ pub(crate) fn gbrpf32_to_rgb_f16_row(
         }
         if avx2_available() {
           // F16C runtime detection for narrow.
-          if std::arch::is_x86_feature_detected!("f16c") {
+          if f16c_available() {
             // SAFETY: AVX2 + F16C verified available.
             unsafe { arch::x86_avx2::gbrpf32_to_rgb_f16_row_f16c(g, b, r, out, width); }
           } else {
@@ -393,7 +393,7 @@ pub(crate) fn gbrpf32_to_rgb_f16_row(
         }
         if sse41_available() {
           // F16C runtime detection for narrow.
-          if std::arch::is_x86_feature_detected!("f16c") {
+          if f16c_available() {
             // SAFETY: SSE4.1 + F16C verified available.
             unsafe { arch::x86_sse41::gbrpf32_to_rgb_f16_row_f16c(g, b, r, out, width); }
           } else {
@@ -430,7 +430,7 @@ pub(crate) fn gbrpf32_to_rgba_f16_row(
       target_arch = "aarch64" => {
         if neon_available() {
           // fp16 feature needed for vcvt_f16_f32.
-          if std::arch::is_aarch64_feature_detected!("fp16") {
+          if fp16_available() {
             // SAFETY: NEON + fp16 verified available.
             unsafe { arch::neon::gbrpf32_to_rgba_f16_row_fp16(g, b, r, out, width); }
           } else {
@@ -441,7 +441,7 @@ pub(crate) fn gbrpf32_to_rgba_f16_row(
       },
       target_arch = "x86_64" => {
         if avx512_available() {
-          if std::arch::is_x86_feature_detected!("f16c") {
+          if f16c_available() {
             // SAFETY: AVX-512F + BW + F16C verified available.
             unsafe { arch::x86_avx512::gbrpf32_to_rgba_f16_row_f16c(g, b, r, out, width); }
           } else {
@@ -450,7 +450,7 @@ pub(crate) fn gbrpf32_to_rgba_f16_row(
           return;
         }
         if avx2_available() {
-          if std::arch::is_x86_feature_detected!("f16c") {
+          if f16c_available() {
             // SAFETY: AVX2 + F16C verified available.
             unsafe { arch::x86_avx2::gbrpf32_to_rgba_f16_row_f16c(g, b, r, out, width); }
           } else {
@@ -459,7 +459,7 @@ pub(crate) fn gbrpf32_to_rgba_f16_row(
           return;
         }
         if sse41_available() {
-          if std::arch::is_x86_feature_detected!("f16c") {
+          if f16c_available() {
             // SAFETY: SSE4.1 + F16C verified available.
             unsafe { arch::x86_sse41::gbrpf32_to_rgba_f16_row_f16c(g, b, r, out, width); }
           } else {
@@ -845,7 +845,7 @@ pub(crate) fn gbrapf32_to_rgba_f16_row(
       target_arch = "aarch64" => {
         if neon_available() {
           // fp16 feature needed for vcvt_f16_f32.
-          if std::arch::is_aarch64_feature_detected!("fp16") {
+          if fp16_available() {
             // SAFETY: NEON + fp16 verified available.
             unsafe { arch::neon::gbrapf32_to_rgba_f16_row_fp16(g, b, r, a, out, width); }
           } else {
@@ -856,7 +856,7 @@ pub(crate) fn gbrapf32_to_rgba_f16_row(
       },
       target_arch = "x86_64" => {
         if avx512_available() {
-          if std::arch::is_x86_feature_detected!("f16c") {
+          if f16c_available() {
             // SAFETY: AVX-512F + BW + F16C verified available.
             unsafe { arch::x86_avx512::gbrapf32_to_rgba_f16_row_f16c(g, b, r, a, out, width); }
           } else {
@@ -865,7 +865,7 @@ pub(crate) fn gbrapf32_to_rgba_f16_row(
           return;
         }
         if avx2_available() {
-          if std::arch::is_x86_feature_detected!("f16c") {
+          if f16c_available() {
             // SAFETY: AVX2 + F16C verified available.
             unsafe { arch::x86_avx2::gbrapf32_to_rgba_f16_row_f16c(g, b, r, a, out, width); }
           } else {
@@ -874,7 +874,7 @@ pub(crate) fn gbrapf32_to_rgba_f16_row(
           return;
         }
         if sse41_available() {
-          if std::arch::is_x86_feature_detected!("f16c") {
+          if f16c_available() {
             // SAFETY: SSE4.1 + F16C verified available.
             unsafe { arch::x86_sse41::gbrapf32_to_rgba_f16_row_f16c(g, b, r, a, out, width); }
           } else {
@@ -1081,7 +1081,7 @@ pub(crate) fn gbrpf16_to_rgb_row(
     cfg_select! {
       target_arch = "aarch64" => {
         if neon_available() {
-          if std::arch::is_aarch64_feature_detected!("fp16") {
+          if fp16_available() {
             // SAFETY: NEON + fp16 verified available.
             unsafe { arch::neon::gbrpf16_to_rgb_row_fp16(g, b, r, out, width); }
           } else {
@@ -1117,7 +1117,7 @@ pub(crate) fn gbrpf16_to_rgb_row(
       },
       target_arch = "x86_64" => {
         if avx512_available() {
-          if std::arch::is_x86_feature_detected!("f16c") {
+          if f16c_available() {
             // SAFETY: AVX-512F + BW + F16C verified available.
             unsafe { arch::x86_avx512::gbrpf16_to_rgb_row_f16c(g, b, r, out, width); }
           } else {
@@ -1150,7 +1150,7 @@ pub(crate) fn gbrpf16_to_rgb_row(
           return;
         }
         if avx2_available() {
-          if std::arch::is_x86_feature_detected!("f16c") {
+          if f16c_available() {
             // SAFETY: AVX2 + F16C verified available.
             unsafe { arch::x86_avx2::gbrpf16_to_rgb_row_f16c(g, b, r, out, width); }
           } else {
@@ -1183,7 +1183,7 @@ pub(crate) fn gbrpf16_to_rgb_row(
           return;
         }
         if sse41_available() {
-          if std::arch::is_x86_feature_detected!("f16c") {
+          if f16c_available() {
             // SAFETY: SSE4.1 + F16C verified available.
             unsafe { arch::x86_sse41::gbrpf16_to_rgb_row_f16c(g, b, r, out, width); }
           } else {
@@ -1259,7 +1259,7 @@ pub(crate) fn gbrpf16_to_rgba_row(
     cfg_select! {
       target_arch = "aarch64" => {
         if neon_available() {
-          if std::arch::is_aarch64_feature_detected!("fp16") {
+          if fp16_available() {
             // SAFETY: NEON + fp16 verified available.
             unsafe { arch::neon::gbrpf16_to_rgba_row_fp16(g, b, r, out, width); }
           } else {
@@ -1301,7 +1301,7 @@ pub(crate) fn gbrpf16_to_rgba_row(
       },
       target_arch = "x86_64" => {
         if avx512_available() {
-          if std::arch::is_x86_feature_detected!("f16c") {
+          if f16c_available() {
             // SAFETY: AVX-512F + BW + F16C verified available.
             unsafe { arch::x86_avx512::gbrpf16_to_rgba_row_f16c(g, b, r, out, width); }
           } else {
@@ -1334,7 +1334,7 @@ pub(crate) fn gbrpf16_to_rgba_row(
           return;
         }
         if avx2_available() {
-          if std::arch::is_x86_feature_detected!("f16c") {
+          if f16c_available() {
             // SAFETY: AVX2 + F16C verified available.
             unsafe { arch::x86_avx2::gbrpf16_to_rgba_row_f16c(g, b, r, out, width); }
           } else {
@@ -1367,7 +1367,7 @@ pub(crate) fn gbrpf16_to_rgba_row(
           return;
         }
         if sse41_available() {
-          if std::arch::is_x86_feature_detected!("f16c") {
+          if f16c_available() {
             // SAFETY: SSE4.1 + F16C verified available.
             unsafe { arch::x86_sse41::gbrpf16_to_rgba_row_f16c(g, b, r, out, width); }
           } else {
