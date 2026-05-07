@@ -26,7 +26,7 @@
 
 use super::{
   MixedSinker, MixedSinkerError, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch,
-  rgb_row_to_luma_row, rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  rgb_row_to_luma_row, rgb_row_to_luma_u16_row, rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
 use crate::{
   PixelSink,
@@ -317,21 +317,11 @@ impl PixelSink for MixedSinker<'_, Pal8> {
       }
 
       if let Some(luma_u16_buf) = luma_u16.as_deref_mut() {
-        // Widen via (y << 8) | y: 0 → 0x0000, 255 → 0xFFFF.
-        for (i, dst) in luma_u16_buf[one_plane_start..one_plane_end]
-          .iter_mut()
-          .enumerate()
-        {
-          // Compute luma inline from rgb_row (avoids requiring luma to be
-          // attached simultaneously). Each pixel is at offset i in the rgb_row.
-          let r = rgb_row[i * 3] as u32;
-          let g = rgb_row[i * 3 + 1] as u32;
-          let b = rgb_row[i * 3 + 2] as u32;
-          let (cr, cg, cb) = luma_coeffs_q8;
-          let y = ((cr * r + cg * g + cb * b + 128) >> 8).min(255) as u8;
-          let y16 = y as u16;
-          *dst = (y16 << 8) | y16;
-        }
+        rgb_row_to_luma_u16_row(
+          rgb_row,
+          &mut luma_u16_buf[one_plane_start..one_plane_end],
+          luma_coeffs_q8,
+        );
       }
 
       if let Some(hsv) = hsv.as_mut() {

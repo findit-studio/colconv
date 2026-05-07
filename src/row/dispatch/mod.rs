@@ -17,7 +17,7 @@ pub(super) mod gray;
 pub(super) mod grayf32;
 pub(super) mod nv;
 pub(super) mod packed_yuv422;
-pub mod pal8;
+pub(super) mod pal8;
 pub(super) mod planar_gbr;
 pub(super) mod planar_gbr_high_bit;
 pub(super) mod pn;

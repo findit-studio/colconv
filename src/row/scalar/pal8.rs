@@ -11,8 +11,8 @@
 //! `use_simd = true` as equivalent to `false`.
 //!
 //! # u16 scaling
-//! The formula `(x << 8) | x as u16` maps `u8` values to `u16`
-//! full-range: `0 → 0x0000`, `255 → 0xFFFF`.
+//! The formula `((x as u16) << 8) | (x as u16)` maps `u8` values to `u16`
+//! full-range: `0 → 0x0000`, `255 → 0xFFFF`. See [`expand_u8_to_u16`].
 
 /// Maps `u8` value to `u16` full-range: `(v as u16) << 8 | v as u16`.
 /// Guarantees `0 → 0x0000`, `255 → 0xFFFF`.
