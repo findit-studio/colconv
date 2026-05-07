@@ -66,21 +66,35 @@ pub(crate) fn f32_to_u16_clamped(v: f32) -> u16 {
   round_ties_even_nonneg(scaled) as u16
 }
 
-/// Read one f32 element from `rgb_in[i]`, byte-swapping the IEEE 754 bit
-/// pattern if `BE` is `true`. This is the scalar endian-aware load for
-/// big-endian Rgbf32 streams.
+/// Read one f32 element from `rgb_in[i]`, decoding the IEEE 754 bit
+/// pattern from `BE` byte order to host-native byte order. Scalar
+/// endian-aware load for Rgbf32 streams.
+///
+/// `from_be` / `from_le` are target-endian aware: a no-op when the
+/// stored byte order matches the host, a byte-swap when they differ.
+/// Mirrors the SIMD `load_endian_*::<BE>` helpers' semantics so LE and
+/// BE hosts produce identical decoded values.
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn load_f32<const BE: bool>(rgb_in: &[f32], i: usize) -> f32 {
   let bits = rgb_in[i].to_bits();
-  f32::from_bits(if BE { bits.swap_bytes() } else { bits })
+  f32::from_bits(if BE {
+    u32::from_be(bits)
+  } else {
+    u32::from_le(bits)
+  })
 }
 
-/// Read one `half::f16` element from `rgb_in[i]`, byte-swapping the
-/// bit pattern if `BE` is `true`. Scalar endian-aware load for Rgbf16.
+/// Read one `half::f16` element from `rgb_in[i]`, decoding the bit
+/// pattern from `BE` byte order to host-native. Scalar endian-aware
+/// load for Rgbf16 streams.
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn load_f16<const BE: bool>(rgb_in: &[half::f16], i: usize) -> half::f16 {
   let bits = rgb_in[i].to_bits();
-  half::f16::from_bits(if BE { bits.swap_bytes() } else { bits })
+  half::f16::from_bits(if BE {
+    u16::from_be(bits)
+  } else {
+    u16::from_le(bits)
+  })
 }
 
 /// Converts packed `R, G, B` `f32` input to packed `R, G, B` `u8`
@@ -203,16 +217,20 @@ pub(crate) fn rgbf32_to_rgb_f32_row<const BE: bool>(
 ) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf32 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_f32_out row too short");
-  if BE {
-    for (dst, src) in rgb_out[..width * 3]
-      .iter_mut()
-      .zip(rgb_in[..width * 3].iter())
-    {
-      let bits = src.to_bits().swap_bytes();
-      *dst = f32::from_bits(bits);
-    }
-  } else {
-    rgb_out[..width * 3].copy_from_slice(&rgb_in[..width * 3]);
+  // Decode each source f32 from `BE` byte order to host-native.
+  // `u32::from_be` / `u32::from_le` is target-endian aware: a no-op
+  // when encoded byte order matches the host, a byte-swap when they
+  // differ. Output is always host-native f32 on every target.
+  for (dst, src) in rgb_out[..width * 3]
+    .iter_mut()
+    .zip(rgb_in[..width * 3].iter())
+  {
+    let bits = src.to_bits();
+    *dst = f32::from_bits(if BE {
+      u32::from_be(bits)
+    } else {
+      u32::from_le(bits)
+    });
   }
 }
 
@@ -353,12 +371,13 @@ pub(crate) fn rgbf16_to_rgb_f32_row<const BE: bool>(
     .iter_mut()
     .zip(rgb_in[..width * 3].iter())
   {
-    let bits = if BE {
-      src.to_bits().swap_bytes()
+    let bits = src.to_bits();
+    let host_bits = if BE {
+      u16::from_be(bits)
     } else {
-      src.to_bits()
+      u16::from_le(bits)
     };
-    *dst = half::f16::from_bits(bits).to_f32();
+    *dst = half::f16::from_bits(host_bits).to_f32();
   }
 }
 
@@ -381,14 +400,19 @@ pub(crate) fn rgbf16_to_rgb_f16_row<const BE: bool>(
 ) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_f16_out row too short");
-  if BE {
-    for (dst, src) in rgb_out[..width * 3]
-      .iter_mut()
-      .zip(rgb_in[..width * 3].iter())
-    {
-      *dst = half::f16::from_bits(src.to_bits().swap_bytes());
-    }
-  } else {
-    rgb_out[..width * 3].copy_from_slice(&rgb_in[..width * 3]);
+  // Decode each source f16 from `BE` byte order to host-native, mirror
+  // of `rgbf32_to_rgb_f32_row`. `u16::from_be` / `u16::from_le` is
+  // target-endian aware: no-op when encoded byte order matches the
+  // host, swap when they differ. Output is always host-native f16.
+  for (dst, src) in rgb_out[..width * 3]
+    .iter_mut()
+    .zip(rgb_in[..width * 3].iter())
+  {
+    let bits = src.to_bits();
+    *dst = half::f16::from_bits(if BE {
+      u16::from_be(bits)
+    } else {
+      u16::from_le(bits)
+    });
   }
 }

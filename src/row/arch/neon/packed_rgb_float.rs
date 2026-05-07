@@ -419,8 +419,8 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
         i += 4;
       }
       while i < total {
-        let bits = (*rgb_in.get_unchecked(i)).to_bits().swap_bytes();
-        *rgb_out.get_unchecked_mut(i) = f32::from_bits(bits);
+        let bits = (*rgb_in.get_unchecked(i)).to_bits();
+        *rgb_out.get_unchecked_mut(i) = f32::from_bits(u32::from_be(bits));
         i += 1;
       }
     } else {
@@ -487,11 +487,23 @@ unsafe fn widen_f16x4<const BE: bool>(ptr: *const half::f16, out: *mut f32) {
 /// `n` must be in `[0, 4]` — `n == 0` is a no-op (the caller passes
 /// `total_lanes - lane`, which is `0` when `total_lanes` is a multiple of 4
 /// and the SIMD loop consumed the whole row).
+///
+/// For `BE = true` the source f16 bits are decoded from big-endian to
+/// host-native before widening; for `BE = false` they are read as host-
+/// native (identical to a plain LE load on every shipping target). This
+/// matches the SIMD body's `widen_f16x4::<BE>` semantics so partial-pixel
+/// tail bytes round-trip identically to the full-vector path.
 #[inline(always)]
-unsafe fn widen_f16_tail(src: &[half::f16], dst: &mut [f32], n: usize) {
+unsafe fn widen_f16_tail<const BE: bool>(src: &[half::f16], dst: &mut [f32], n: usize) {
   for i in 0..n {
     unsafe {
-      *dst.get_unchecked_mut(i) = src.get_unchecked(i).to_f32();
+      let raw = src.get_unchecked(i).to_bits();
+      let host_bits = if BE {
+        u16::from_be(raw)
+      } else {
+        u16::from_le(raw)
+      };
+      *dst.get_unchecked_mut(i) = half::f16::from_bits(host_bits).to_f32();
     }
   }
 }
@@ -687,7 +699,7 @@ pub(crate) unsafe fn rgbf16_to_rgb_f32_row<const BE: bool>(
   }
   // Scalar tail for the last 0-3 lanes (partial pixel at most).
   unsafe {
-    widen_f16_tail(
+    widen_f16_tail::<BE>(
       rgb_in.get_unchecked(lane..),
       rgb_out.get_unchecked_mut(lane..),
       total_lanes - lane,

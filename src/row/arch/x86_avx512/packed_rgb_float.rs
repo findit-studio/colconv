@@ -299,8 +299,8 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
         i += 16;
       }
       while i < total {
-        let bits = (*rgb_in.get_unchecked(i)).to_bits().swap_bytes();
-        *rgb_out.get_unchecked_mut(i) = f32::from_bits(bits);
+        let bits = (*rgb_in.get_unchecked(i)).to_bits();
+        *rgb_out.get_unchecked_mut(i) = f32::from_bits(u32::from_be(bits));
         i += 1;
       }
     } else {
@@ -556,7 +556,11 @@ pub(crate) unsafe fn rgbf16_to_rgb_f32_row<const BE: bool>(
   #[allow(clippy::needless_range_loop)]
   for i in lane..total_lanes {
     let bits = rgb_in[i].to_bits();
-    let h = half::f16::from_bits(if BE { bits.swap_bytes() } else { bits });
+    let h = half::f16::from_bits(if BE {
+      u16::from_be(bits)
+    } else {
+      u16::from_le(bits)
+    });
     unsafe {
       *rgb_out.get_unchecked_mut(i) = h.to_f32();
     }

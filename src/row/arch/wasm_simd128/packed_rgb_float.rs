@@ -304,8 +304,8 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
     }
     while i < total {
       unsafe {
-        let bits = rgb_in.get_unchecked(i).to_bits().swap_bytes();
-        *rgb_out.get_unchecked_mut(i) = f32::from_bits(bits);
+        let bits = rgb_in.get_unchecked(i).to_bits();
+        *rgb_out.get_unchecked_mut(i) = f32::from_bits(u32::from_be(bits));
       }
       i += 1;
     }
@@ -349,10 +349,11 @@ pub(crate) unsafe fn rgbf16_to_rgb_row<const BE: bool>(
     let mut buf = [0.0f32; 12];
     for k in 0..12 {
       let f = unsafe { rgb_in.get_unchecked(lane + k) };
+      let raw = f.to_bits();
       let bits = if BE {
-        f.to_bits().swap_bytes()
+        u16::from_be(raw)
       } else {
-        f.to_bits()
+        u16::from_le(raw)
       };
       buf[k] = half::f16::from_bits(bits).to_f32();
     }
@@ -394,10 +395,11 @@ pub(crate) unsafe fn rgbf16_to_rgba_row<const BE: bool>(
     let mut buf = [0.0f32; 12];
     for k in 0..12 {
       let f = unsafe { rgb_in.get_unchecked(lane + k) };
+      let raw = f.to_bits();
       let bits = if BE {
-        f.to_bits().swap_bytes()
+        u16::from_be(raw)
       } else {
-        f.to_bits()
+        u16::from_le(raw)
       };
       buf[k] = half::f16::from_bits(bits).to_f32();
     }
@@ -438,10 +440,11 @@ pub(crate) unsafe fn rgbf16_to_rgb_u16_row<const BE: bool>(
     let mut buf = [0.0f32; 12];
     for k in 0..12 {
       let f = unsafe { rgb_in.get_unchecked(lane + k) };
+      let raw = f.to_bits();
       let bits = if BE {
-        f.to_bits().swap_bytes()
+        u16::from_be(raw)
       } else {
-        f.to_bits()
+        u16::from_le(raw)
       };
       buf[k] = half::f16::from_bits(bits).to_f32();
     }
@@ -482,10 +485,11 @@ pub(crate) unsafe fn rgbf16_to_rgba_u16_row<const BE: bool>(
     let mut buf = [0.0f32; 12];
     for k in 0..12 {
       let f = unsafe { rgb_in.get_unchecked(lane + k) };
+      let raw = f.to_bits();
       let bits = if BE {
-        f.to_bits().swap_bytes()
+        u16::from_be(raw)
       } else {
-        f.to_bits()
+        u16::from_le(raw)
       };
       buf[k] = half::f16::from_bits(bits).to_f32();
     }
@@ -525,10 +529,11 @@ pub(crate) unsafe fn rgbf16_to_rgb_f32_row<const BE: bool>(
   for i in 0..total_lanes {
     unsafe {
       let f = rgb_in.get_unchecked(i);
+      let raw = f.to_bits();
       let bits = if BE {
-        f.to_bits().swap_bytes()
+        u16::from_be(raw)
       } else {
-        f.to_bits()
+        u16::from_le(raw)
       };
       *rgb_out.get_unchecked_mut(i) = half::f16::from_bits(bits).to_f32();
     }

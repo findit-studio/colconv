@@ -326,8 +326,8 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
         i += 4;
       }
       while i < total {
-        let bits = (*rgb_in.get_unchecked(i)).to_bits().swap_bytes();
-        *rgb_out.get_unchecked_mut(i) = f32::from_bits(bits);
+        let bits = (*rgb_in.get_unchecked(i)).to_bits();
+        *rgb_out.get_unchecked_mut(i) = f32::from_bits(u32::from_be(bits));
         i += 1;
       }
     } else {
@@ -617,5 +617,9 @@ pub(crate) unsafe fn rgbf16_to_rgb_f16_row<const BE: bool>(
 #[inline(always)]
 fn load_f16_scalar<const BE: bool>(rgb_in: &[half::f16], i: usize) -> half::f16 {
   let bits = rgb_in[i].to_bits();
-  half::f16::from_bits(if BE { bits.swap_bytes() } else { bits })
+  half::f16::from_bits(if BE {
+    u16::from_be(bits)
+  } else {
+    u16::from_le(bits)
+  })
 }
