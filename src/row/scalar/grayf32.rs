@@ -50,9 +50,9 @@ pub(crate) fn grayf32_to_rgb_row<const BE: bool>(plane: &[f32], rgb_out: &mut [u
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out too short");
   for (x, &raw) in plane[..width].iter().enumerate() {
     let y = if BE {
-      f32::from_bits(raw.to_bits().swap_bytes())
+      f32::from_bits(u32::from_be(raw.to_bits()))
     } else {
-      raw
+      f32::from_bits(u32::from_le(raw.to_bits()))
     };
     let v = f32_to_u8(y);
     let i = x * 3;
@@ -75,9 +75,9 @@ pub(crate) fn grayf32_to_rgba_row<const BE: bool>(
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   for (x, &raw) in plane[..width].iter().enumerate() {
     let y = if BE {
-      f32::from_bits(raw.to_bits().swap_bytes())
+      f32::from_bits(u32::from_be(raw.to_bits()))
     } else {
-      raw
+      f32::from_bits(u32::from_le(raw.to_bits()))
     };
     let v = f32_to_u8(y);
     let i = x * 4;
@@ -101,9 +101,9 @@ pub(crate) fn grayf32_to_rgb_u16_row<const BE: bool>(
   debug_assert!(rgb_u16_out.len() >= width * 3, "rgb_u16_out too short");
   for (x, &raw) in plane[..width].iter().enumerate() {
     let y = if BE {
-      f32::from_bits(raw.to_bits().swap_bytes())
+      f32::from_bits(u32::from_be(raw.to_bits()))
     } else {
-      raw
+      f32::from_bits(u32::from_le(raw.to_bits()))
     };
     let v = f32_to_u16(y);
     let i = x * 3;
@@ -126,9 +126,9 @@ pub(crate) fn grayf32_to_rgba_u16_row<const BE: bool>(
   debug_assert!(rgba_u16_out.len() >= width * 4, "rgba_u16_out too short");
   for (x, &raw) in plane[..width].iter().enumerate() {
     let y = if BE {
-      f32::from_bits(raw.to_bits().swap_bytes())
+      f32::from_bits(u32::from_be(raw.to_bits()))
     } else {
-      raw
+      f32::from_bits(u32::from_le(raw.to_bits()))
     };
     let v = f32_to_u16(y);
     let i = x * 4;
@@ -153,9 +153,9 @@ pub(crate) fn grayf32_to_rgb_f32_row<const BE: bool>(
   debug_assert!(rgb_f32_out.len() >= width * 3, "rgb_f32_out too short");
   for (x, &raw) in plane[..width].iter().enumerate() {
     let y = if BE {
-      f32::from_bits(raw.to_bits().swap_bytes())
+      f32::from_bits(u32::from_be(raw.to_bits()))
     } else {
-      raw
+      f32::from_bits(u32::from_le(raw.to_bits()))
     };
     let i = x * 3;
     rgb_f32_out[i] = y;
@@ -177,9 +177,9 @@ pub(crate) fn grayf32_to_luma_row<const BE: bool>(
   debug_assert!(luma_out.len() >= width, "luma_out too short");
   for (out, &raw) in luma_out[..width].iter_mut().zip(plane[..width].iter()) {
     let y = if BE {
-      f32::from_bits(raw.to_bits().swap_bytes())
+      f32::from_bits(u32::from_be(raw.to_bits()))
     } else {
-      raw
+      f32::from_bits(u32::from_le(raw.to_bits()))
     };
     *out = f32_to_u8(y);
   }
@@ -198,9 +198,9 @@ pub(crate) fn grayf32_to_luma_u16_row<const BE: bool>(
   debug_assert!(luma_u16_out.len() >= width, "luma_u16_out too short");
   for (out, &raw) in luma_u16_out[..width].iter_mut().zip(plane[..width].iter()) {
     let y = if BE {
-      f32::from_bits(raw.to_bits().swap_bytes())
+      f32::from_bits(u32::from_be(raw.to_bits()))
     } else {
-      raw
+      f32::from_bits(u32::from_le(raw.to_bits()))
     };
     *out = f32_to_u16(y);
   }
@@ -217,12 +217,12 @@ pub(crate) fn grayf32_to_luma_f32_row<const BE: bool>(
 ) {
   debug_assert!(plane.len() >= width, "plane too short");
   debug_assert!(luma_f32_out.len() >= width, "luma_f32_out too short");
-  if BE {
-    for (out, &raw) in luma_f32_out[..width].iter_mut().zip(plane[..width].iter()) {
-      *out = f32::from_bits(raw.to_bits().swap_bytes());
-    }
-  } else {
-    luma_f32_out[..width].copy_from_slice(&plane[..width]);
+  for (out, &raw) in luma_f32_out[..width].iter_mut().zip(plane[..width].iter()) {
+    *out = if BE {
+      f32::from_bits(u32::from_be(raw.to_bits()))
+    } else {
+      f32::from_bits(u32::from_le(raw.to_bits()))
+    };
   }
 }
 
@@ -245,9 +245,9 @@ pub(crate) fn grayf32_to_hsv_row<const BE: bool>(
   debug_assert!(v_out.len() >= width, "v_out too short");
   for (x, &raw) in plane[..width].iter().enumerate() {
     let y = if BE {
-      f32::from_bits(raw.to_bits().swap_bytes())
+      f32::from_bits(u32::from_be(raw.to_bits()))
     } else {
-      raw
+      f32::from_bits(u32::from_le(raw.to_bits()))
     };
     h_out[x] = 0;
     s_out[x] = 0;

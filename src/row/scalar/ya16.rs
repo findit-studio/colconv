@@ -27,9 +27,9 @@ pub(crate) fn ya16_to_rgb_row<const BE: bool>(packed: &[u16], rgb_out: &mut [u8]
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out too short");
   for x in 0..width {
     let y_raw = if BE {
-      packed[x * 2].swap_bytes()
+      u16::from_be(packed[x * 2])
     } else {
-      packed[x * 2]
+      u16::from_le(packed[x * 2])
     };
     let y8 = (y_raw >> 8) as u8;
     let i = x * 3;
@@ -48,14 +48,14 @@ pub(crate) fn ya16_to_rgba_row<const BE: bool>(packed: &[u16], rgba_out: &mut [u
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   for x in 0..width {
     let y_raw = if BE {
-      packed[x * 2].swap_bytes()
+      u16::from_be(packed[x * 2])
     } else {
-      packed[x * 2]
+      u16::from_le(packed[x * 2])
     };
     let a_raw = if BE {
-      packed[x * 2 + 1].swap_bytes()
+      u16::from_be(packed[x * 2 + 1])
     } else {
-      packed[x * 2 + 1]
+      u16::from_le(packed[x * 2 + 1])
     };
     let y8 = (y_raw >> 8) as u8;
     let a8 = (a_raw >> 8) as u8;
@@ -80,9 +80,9 @@ pub(crate) fn ya16_to_rgb_u16_row<const BE: bool>(
   debug_assert!(rgb_u16_out.len() >= width * 3, "rgb_u16_out too short");
   for x in 0..width {
     let y = if BE {
-      packed[x * 2].swap_bytes()
+      u16::from_be(packed[x * 2])
     } else {
-      packed[x * 2]
+      u16::from_le(packed[x * 2])
     };
     let i = x * 3;
     rgb_u16_out[i] = y;
@@ -104,14 +104,14 @@ pub(crate) fn ya16_to_rgba_u16_row<const BE: bool>(
   debug_assert!(rgba_u16_out.len() >= width * 4, "rgba_u16_out too short");
   for x in 0..width {
     let y = if BE {
-      packed[x * 2].swap_bytes()
+      u16::from_be(packed[x * 2])
     } else {
-      packed[x * 2]
+      u16::from_le(packed[x * 2])
     };
     let a = if BE {
-      packed[x * 2 + 1].swap_bytes()
+      u16::from_be(packed[x * 2 + 1])
     } else {
-      packed[x * 2 + 1]
+      u16::from_le(packed[x * 2 + 1])
     };
     let i = x * 4;
     rgba_u16_out[i] = y;
@@ -130,9 +130,9 @@ pub(crate) fn ya16_to_luma_row<const BE: bool>(packed: &[u16], luma_out: &mut [u
   debug_assert!(luma_out.len() >= width, "luma_out too short");
   for x in 0..width {
     let y = if BE {
-      packed[x * 2].swap_bytes()
+      u16::from_be(packed[x * 2])
     } else {
-      packed[x * 2]
+      u16::from_le(packed[x * 2])
     };
     luma_out[x] = (y >> 8) as u8;
   }
@@ -151,9 +151,9 @@ pub(crate) fn ya16_to_luma_u16_row<const BE: bool>(
   debug_assert!(luma_u16_out.len() >= width, "luma_u16_out too short");
   for x in 0..width {
     luma_u16_out[x] = if BE {
-      packed[x * 2].swap_bytes()
+      u16::from_be(packed[x * 2])
     } else {
-      packed[x * 2]
+      u16::from_le(packed[x * 2])
     };
   }
 }
@@ -176,9 +176,9 @@ pub(crate) fn ya16_to_hsv_row<const BE: bool>(
   debug_assert!(v_out.len() >= width, "v_out too short");
   for x in 0..width {
     let y = if BE {
-      packed[x * 2].swap_bytes()
+      u16::from_be(packed[x * 2])
     } else {
-      packed[x * 2]
+      u16::from_le(packed[x * 2])
     };
     h_out[x] = 0;
     s_out[x] = 0;

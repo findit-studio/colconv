@@ -151,4 +151,3 @@ pub(crate) unsafe fn load_endian_u32x4<const BE: bool>(ptr: *const u8) -> uint32
     unsafe { load_le_u32x4(ptr) }
   }
 }
-

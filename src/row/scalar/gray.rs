@@ -228,7 +228,11 @@ pub(crate) fn gray_n_to_rgb_row<const BITS: u32, const BE: bool>(
   let mask = bits_mask::<BITS>();
   let shift = BITS - 8;
   for (x, &raw) in y_plane[..width].iter().enumerate() {
-    let raw = if BE { raw.swap_bytes() } else { raw };
+    let raw = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
     let masked = raw & mask;
     let y8 = if full_range {
       (masked >> shift) as u8
@@ -256,7 +260,11 @@ pub(crate) fn gray_n_to_rgba_row<const BITS: u32, const BE: bool>(
   let mask = bits_mask::<BITS>();
   let shift = BITS - 8;
   for (x, &raw) in y_plane[..width].iter().enumerate() {
-    let raw = if BE { raw.swap_bytes() } else { raw };
+    let raw = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
     let masked = raw & mask;
     let y8 = if full_range {
       (masked >> shift) as u8
@@ -283,7 +291,11 @@ pub(crate) fn gray_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   debug_assert!(out.len() >= width * 3, "out too short");
   let mask = bits_mask::<BITS>();
   for (x, &raw) in y_plane[..width].iter().enumerate() {
-    let raw = if BE { raw.swap_bytes() } else { raw };
+    let raw = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
     let masked = raw & mask;
     let y_out = if full_range {
       masked
@@ -310,7 +322,11 @@ pub(crate) fn gray_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   let mask = bits_mask::<BITS>();
   let alpha = mask; // full-range max for BITS
   for (x, &raw) in y_plane[..width].iter().enumerate() {
-    let raw = if BE { raw.swap_bytes() } else { raw };
+    let raw = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
     let masked = raw & mask;
     let y_out = if full_range {
       masked
@@ -337,7 +353,11 @@ pub(crate) fn gray_n_to_luma_row<const BITS: u32, const BE: bool>(
   let mask = bits_mask::<BITS>();
   let shift = BITS - 8;
   for (out_byte, &raw) in out[..width].iter_mut().zip(y_plane[..width].iter()) {
-    let raw = if BE { raw.swap_bytes() } else { raw };
+    let raw = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
     *out_byte = ((raw & mask) >> shift) as u8;
   }
 }
@@ -357,7 +377,11 @@ pub(crate) fn gray_n_to_luma_u16_row<const BITS: u32, const BE: bool>(
   debug_assert!(out.len() >= width, "out too short");
   let mask = bits_mask::<BITS>();
   for (out_el, &raw) in out[..width].iter_mut().zip(y_plane[..width].iter()) {
-    let raw = if BE { raw.swap_bytes() } else { raw };
+    let raw = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
     *out_el = raw & mask;
   }
 }
@@ -383,7 +407,11 @@ pub(crate) fn gray_n_to_hsv_row<const BITS: u32, const BE: bool>(
   let mask = bits_mask::<BITS>();
   let shift = BITS - 8;
   for (x, &raw) in y_plane[..width].iter().enumerate() {
-    let raw = if BE { raw.swap_bytes() } else { raw };
+    let raw = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
     let masked = raw & mask;
     h_out[x] = 0;
     s_out[x] = 0;
@@ -412,7 +440,11 @@ pub(crate) fn gray16_to_rgb_row<const BE: bool>(
   debug_assert!(y_plane.len() >= width, "y_plane too short");
   debug_assert!(out.len() >= width * 3, "out too short");
   for (x, &raw) in y_plane[..width].iter().enumerate() {
-    let raw = if BE { raw.swap_bytes() } else { raw };
+    let raw = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
     let y8 = if full_range {
       (raw >> 8) as u8
     } else {
@@ -436,7 +468,11 @@ pub(crate) fn gray16_to_rgba_row<const BE: bool>(
   debug_assert!(y_plane.len() >= width, "y_plane too short");
   debug_assert!(out.len() >= width * 4, "out too short");
   for (x, &raw) in y_plane[..width].iter().enumerate() {
-    let raw = if BE { raw.swap_bytes() } else { raw };
+    let raw = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
     let y8 = if full_range {
       (raw >> 8) as u8
     } else {
@@ -460,7 +496,11 @@ pub(crate) fn gray16_to_rgb_u16_row<const BE: bool>(
   debug_assert!(y_plane.len() >= width, "y_plane too short");
   debug_assert!(out.len() >= width * 3, "out too short");
   for (x, &raw) in y_plane[..width].iter().enumerate() {
-    let raw = if BE { raw.swap_bytes() } else { raw };
+    let raw = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
     let y_out = if full_range {
       raw
     } else {
@@ -484,7 +524,11 @@ pub(crate) fn gray16_to_rgba_u16_row<const BE: bool>(
   debug_assert!(y_plane.len() >= width, "y_plane too short");
   debug_assert!(out.len() >= width * 4, "out too short");
   for (x, &raw) in y_plane[..width].iter().enumerate() {
-    let raw = if BE { raw.swap_bytes() } else { raw };
+    let raw = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
     let y_out = if full_range {
       raw
     } else {
@@ -504,7 +548,11 @@ pub(crate) fn gray16_to_luma_row<const BE: bool>(y_plane: &[u16], out: &mut [u8]
   debug_assert!(y_plane.len() >= width, "y_plane too short");
   debug_assert!(out.len() >= width, "out too short");
   for (out_byte, &raw) in out[..width].iter_mut().zip(y_plane[..width].iter()) {
-    let raw = if BE { raw.swap_bytes() } else { raw };
+    let raw = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
     *out_byte = (raw >> 8) as u8;
   }
 }
@@ -522,12 +570,12 @@ pub(crate) fn gray16_to_luma_u16_row<const BE: bool>(
 ) {
   debug_assert!(y_plane.len() >= width, "y_plane too short");
   debug_assert!(out.len() >= width, "out too short");
-  if BE {
-    for (o, &raw) in out[..width].iter_mut().zip(y_plane[..width].iter()) {
-      *o = raw.swap_bytes();
-    }
-  } else {
-    out[..width].copy_from_slice(&y_plane[..width]);
+  for (o, &raw) in out[..width].iter_mut().zip(y_plane[..width].iter()) {
+    *o = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
   }
 }
 
@@ -550,7 +598,11 @@ pub(crate) fn gray16_to_hsv_row<const BE: bool>(
   debug_assert!(s_out.len() >= width, "S out too short");
   debug_assert!(v_out.len() >= width, "V out too short");
   for (x, &raw) in y_plane[..width].iter().enumerate() {
-    let raw = if BE { raw.swap_bytes() } else { raw };
+    let raw = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
     h_out[x] = 0;
     s_out[x] = 0;
     v_out[x] = if full_range {
