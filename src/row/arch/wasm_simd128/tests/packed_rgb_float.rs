@@ -26,9 +26,9 @@ fn wasm_rgbf32_to_rgb_matches_scalar() {
     let input = pseudo_random_rgbf32(w);
     let mut out_scalar = std::vec![0u8; w * 3];
     let mut out_simd = std::vec![0u8; w * 3];
-    scalar::rgbf32_to_rgb_row(&input, &mut out_scalar, w);
+    scalar::rgbf32_to_rgb_row::<false>(&input, &mut out_scalar, w);
     unsafe {
-      rgbf32_to_rgb_row(&input, &mut out_simd, w);
+      rgbf32_to_rgb_row::<false>(&input, &mut out_simd, w);
     }
     assert_eq!(out_scalar, out_simd, "wasm rgbf32_to_rgb width {w}");
   }
@@ -40,9 +40,9 @@ fn wasm_rgbf32_to_rgba_matches_scalar() {
     let input = pseudo_random_rgbf32(w);
     let mut out_scalar = std::vec![0u8; w * 4];
     let mut out_simd = std::vec![0u8; w * 4];
-    scalar::rgbf32_to_rgba_row(&input, &mut out_scalar, w);
+    scalar::rgbf32_to_rgba_row::<false>(&input, &mut out_scalar, w);
     unsafe {
-      rgbf32_to_rgba_row(&input, &mut out_simd, w);
+      rgbf32_to_rgba_row::<false>(&input, &mut out_simd, w);
     }
     assert_eq!(out_scalar, out_simd, "wasm rgbf32_to_rgba width {w}");
   }
@@ -54,9 +54,9 @@ fn wasm_rgbf32_to_rgb_u16_matches_scalar() {
     let input = pseudo_random_rgbf32(w);
     let mut out_scalar = std::vec![0u16; w * 3];
     let mut out_simd = std::vec![0u16; w * 3];
-    scalar::rgbf32_to_rgb_u16_row(&input, &mut out_scalar, w);
+    scalar::rgbf32_to_rgb_u16_row::<false>(&input, &mut out_scalar, w);
     unsafe {
-      rgbf32_to_rgb_u16_row(&input, &mut out_simd, w);
+      rgbf32_to_rgb_u16_row::<false>(&input, &mut out_simd, w);
     }
     assert_eq!(out_scalar, out_simd, "wasm rgbf32_to_rgb_u16 width {w}");
   }
@@ -68,9 +68,9 @@ fn wasm_rgbf32_to_rgba_u16_matches_scalar() {
     let input = pseudo_random_rgbf32(w);
     let mut out_scalar = std::vec![0u16; w * 4];
     let mut out_simd = std::vec![0u16; w * 4];
-    scalar::rgbf32_to_rgba_u16_row(&input, &mut out_scalar, w);
+    scalar::rgbf32_to_rgba_u16_row::<false>(&input, &mut out_scalar, w);
     unsafe {
-      rgbf32_to_rgba_u16_row(&input, &mut out_simd, w);
+      rgbf32_to_rgba_u16_row::<false>(&input, &mut out_simd, w);
     }
     assert_eq!(out_scalar, out_simd, "wasm rgbf32_to_rgba_u16 width {w}");
   }
@@ -82,9 +82,9 @@ fn wasm_rgbf32_to_rgb_f32_matches_scalar() {
     let input = pseudo_random_rgbf32(w);
     let mut out_scalar = std::vec![0.0f32; w * 3];
     let mut out_simd = std::vec![0.0f32; w * 3];
-    scalar::rgbf32_to_rgb_f32_row(&input, &mut out_scalar, w);
+    scalar::rgbf32_to_rgb_f32_row::<false>(&input, &mut out_scalar, w);
     unsafe {
-      rgbf32_to_rgb_f32_row(&input, &mut out_simd, w);
+      rgbf32_to_rgb_f32_row::<false>(&input, &mut out_simd, w);
     }
     assert_eq!(out_scalar, out_simd, "wasm rgbf32_to_rgb_f32 width {w}");
     assert_eq!(out_simd, input[..w * 3], "lossless width {w}");
@@ -110,9 +110,9 @@ fn wasm_rgbf16_to_rgb_matches_scalar() {
     let input = pseudo_random_rgbf16(w);
     let mut out_scalar = std::vec![0u8; w * 3];
     let mut out_simd = std::vec![0u8; w * 3];
-    scalar::rgbf16_to_rgb_row(&input, &mut out_scalar, w);
+    scalar::rgbf16_to_rgb_row::<false>(&input, &mut out_scalar, w);
     unsafe {
-      rgbf16_to_rgb_row(&input, &mut out_simd, w);
+      rgbf16_to_rgb_row::<false>(&input, &mut out_simd, w);
     }
     assert_eq!(out_scalar, out_simd, "wasm rgbf16_to_rgb width {w}");
   }
@@ -128,9 +128,9 @@ fn wasm_rgbf16_to_rgba_matches_scalar() {
     let input = pseudo_random_rgbf16(w);
     let mut out_scalar = std::vec![0u8; w * 4];
     let mut out_simd = std::vec![0u8; w * 4];
-    scalar::rgbf16_to_rgba_row(&input, &mut out_scalar, w);
+    scalar::rgbf16_to_rgba_row::<false>(&input, &mut out_scalar, w);
     unsafe {
-      rgbf16_to_rgba_row(&input, &mut out_simd, w);
+      rgbf16_to_rgba_row::<false>(&input, &mut out_simd, w);
     }
     assert_eq!(out_scalar, out_simd, "wasm rgbf16_to_rgba width {w}");
   }
@@ -146,9 +146,9 @@ fn wasm_rgbf16_to_rgb_u16_matches_scalar() {
     let input = pseudo_random_rgbf16(w);
     let mut out_scalar = std::vec![0u16; w * 3];
     let mut out_simd = std::vec![0u16; w * 3];
-    scalar::rgbf16_to_rgb_u16_row(&input, &mut out_scalar, w);
+    scalar::rgbf16_to_rgb_u16_row::<false>(&input, &mut out_scalar, w);
     unsafe {
-      rgbf16_to_rgb_u16_row(&input, &mut out_simd, w);
+      rgbf16_to_rgb_u16_row::<false>(&input, &mut out_simd, w);
     }
     assert_eq!(out_scalar, out_simd, "wasm rgbf16_to_rgb_u16 width {w}");
   }
@@ -164,9 +164,9 @@ fn wasm_rgbf16_to_rgba_u16_matches_scalar() {
     let input = pseudo_random_rgbf16(w);
     let mut out_scalar = std::vec![0u16; w * 4];
     let mut out_simd = std::vec![0u16; w * 4];
-    scalar::rgbf16_to_rgba_u16_row(&input, &mut out_scalar, w);
+    scalar::rgbf16_to_rgba_u16_row::<false>(&input, &mut out_scalar, w);
     unsafe {
-      rgbf16_to_rgba_u16_row(&input, &mut out_simd, w);
+      rgbf16_to_rgba_u16_row::<false>(&input, &mut out_simd, w);
     }
     assert_eq!(out_scalar, out_simd, "wasm rgbf16_to_rgba_u16 width {w}");
   }
@@ -182,9 +182,9 @@ fn wasm_rgbf16_to_rgb_f32_matches_scalar() {
     let input = pseudo_random_rgbf16(w);
     let mut out_scalar = std::vec![0.0f32; w * 3];
     let mut out_simd = std::vec![0.0f32; w * 3];
-    scalar::rgbf16_to_rgb_f32_row(&input, &mut out_scalar, w);
+    scalar::rgbf16_to_rgb_f32_row::<false>(&input, &mut out_scalar, w);
     unsafe {
-      rgbf16_to_rgb_f32_row(&input, &mut out_simd, w);
+      rgbf16_to_rgb_f32_row::<false>(&input, &mut out_simd, w);
     }
     assert_eq!(out_scalar, out_simd, "wasm rgbf16_to_rgb_f32 width {w}");
   }
@@ -200,11 +200,222 @@ fn wasm_rgbf16_to_rgb_f16_matches_scalar() {
     let input = pseudo_random_rgbf16(w);
     let mut out_scalar = std::vec![half::f16::ZERO; w * 3];
     let mut out_simd = std::vec![half::f16::ZERO; w * 3];
-    scalar::rgbf16_to_rgb_f16_row(&input, &mut out_scalar, w);
+    scalar::rgbf16_to_rgb_f16_row::<false>(&input, &mut out_scalar, w);
     unsafe {
-      rgbf16_to_rgb_f16_row(&input, &mut out_simd, w);
+      rgbf16_to_rgb_f16_row::<false>(&input, &mut out_simd, w);
     }
     assert_eq!(out_scalar, out_simd, "wasm rgbf16_to_rgb_f16 width {w}");
     assert_eq!(out_simd, input[..w * 3], "lossless width {w}");
+  }
+}
+
+// ---- BE parity tests — wasm-simd128 Rgbf32 -----------------------------------
+
+fn be_rgbf32(le: &[f32]) -> std::vec::Vec<f32> {
+  le.iter()
+    .map(|v| f32::from_bits(v.to_bits().swap_bytes()))
+    .collect()
+}
+
+fn be_rgbf16(le: &[half::f16]) -> std::vec::Vec<half::f16> {
+  le.iter()
+    .map(|v| half::f16::from_bits(v.to_bits().swap_bytes()))
+    .collect()
+}
+
+#[test]
+fn wasm_rgbf32_to_rgb_be_matches_le() {
+  for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
+    let le_in = pseudo_random_rgbf32(w);
+    let be_in = be_rgbf32(&le_in);
+    let mut out_le = std::vec![0u8; w * 3];
+    let mut out_be = std::vec![0u8; w * 3];
+    unsafe {
+      rgbf32_to_rgb_row::<false>(&le_in, &mut out_le, w);
+      rgbf32_to_rgb_row::<true>(&be_in, &mut out_be, w);
+    }
+    assert_eq!(out_le, out_be, "wasm rgbf32_to_rgb BE parity width {w}");
+  }
+}
+
+#[test]
+fn wasm_rgbf32_to_rgba_be_matches_le() {
+  for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
+    let le_in = pseudo_random_rgbf32(w);
+    let be_in = be_rgbf32(&le_in);
+    let mut out_le = std::vec![0u8; w * 4];
+    let mut out_be = std::vec![0u8; w * 4];
+    unsafe {
+      rgbf32_to_rgba_row::<false>(&le_in, &mut out_le, w);
+      rgbf32_to_rgba_row::<true>(&be_in, &mut out_be, w);
+    }
+    assert_eq!(out_le, out_be, "wasm rgbf32_to_rgba BE parity width {w}");
+  }
+}
+
+#[test]
+fn wasm_rgbf32_to_rgb_u16_be_matches_le() {
+  for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
+    let le_in = pseudo_random_rgbf32(w);
+    let be_in = be_rgbf32(&le_in);
+    let mut out_le = std::vec![0u16; w * 3];
+    let mut out_be = std::vec![0u16; w * 3];
+    unsafe {
+      rgbf32_to_rgb_u16_row::<false>(&le_in, &mut out_le, w);
+      rgbf32_to_rgb_u16_row::<true>(&be_in, &mut out_be, w);
+    }
+    assert_eq!(out_le, out_be, "wasm rgbf32_to_rgb_u16 BE parity width {w}");
+  }
+}
+
+#[test]
+fn wasm_rgbf32_to_rgba_u16_be_matches_le() {
+  for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
+    let le_in = pseudo_random_rgbf32(w);
+    let be_in = be_rgbf32(&le_in);
+    let mut out_le = std::vec![0u16; w * 4];
+    let mut out_be = std::vec![0u16; w * 4];
+    unsafe {
+      rgbf32_to_rgba_u16_row::<false>(&le_in, &mut out_le, w);
+      rgbf32_to_rgba_u16_row::<true>(&be_in, &mut out_be, w);
+    }
+    assert_eq!(
+      out_le, out_be,
+      "wasm rgbf32_to_rgba_u16 BE parity width {w}"
+    );
+  }
+}
+
+#[test]
+fn wasm_rgbf32_to_rgb_f32_be_is_byteswap() {
+  for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
+    let le_in = pseudo_random_rgbf32(w);
+    let be_in = be_rgbf32(&le_in);
+    let mut out_le = std::vec![0.0f32; w * 3];
+    let mut out_be = std::vec![0.0f32; w * 3];
+    unsafe {
+      rgbf32_to_rgb_f32_row::<false>(&le_in, &mut out_le, w);
+      rgbf32_to_rgb_f32_row::<true>(&be_in, &mut out_be, w);
+    }
+    assert_eq!(out_le, out_be, "wasm rgbf32_to_rgb_f32 BE parity width {w}");
+  }
+}
+
+// ---- BE parity tests — wasm-simd128 Rgbf16 -----------------------------------
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn wasm_rgbf16_to_rgb_be_matches_le() {
+  for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
+    let le_in = pseudo_random_rgbf16(w);
+    let be_in = be_rgbf16(&le_in);
+    let mut out_le = std::vec![0u8; w * 3];
+    let mut out_be = std::vec![0u8; w * 3];
+    unsafe {
+      rgbf16_to_rgb_row::<false>(&le_in, &mut out_le, w);
+      rgbf16_to_rgb_row::<true>(&be_in, &mut out_be, w);
+    }
+    assert_eq!(out_le, out_be, "wasm rgbf16_to_rgb BE parity width {w}");
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn wasm_rgbf16_to_rgba_be_matches_le() {
+  for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
+    let le_in = pseudo_random_rgbf16(w);
+    let be_in = be_rgbf16(&le_in);
+    let mut out_le = std::vec![0u8; w * 4];
+    let mut out_be = std::vec![0u8; w * 4];
+    unsafe {
+      rgbf16_to_rgba_row::<false>(&le_in, &mut out_le, w);
+      rgbf16_to_rgba_row::<true>(&be_in, &mut out_be, w);
+    }
+    assert_eq!(out_le, out_be, "wasm rgbf16_to_rgba BE parity width {w}");
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn wasm_rgbf16_to_rgb_u16_be_matches_le() {
+  for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
+    let le_in = pseudo_random_rgbf16(w);
+    let be_in = be_rgbf16(&le_in);
+    let mut out_le = std::vec![0u16; w * 3];
+    let mut out_be = std::vec![0u16; w * 3];
+    unsafe {
+      rgbf16_to_rgb_u16_row::<false>(&le_in, &mut out_le, w);
+      rgbf16_to_rgb_u16_row::<true>(&be_in, &mut out_be, w);
+    }
+    assert_eq!(out_le, out_be, "wasm rgbf16_to_rgb_u16 BE parity width {w}");
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn wasm_rgbf16_to_rgba_u16_be_matches_le() {
+  for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
+    let le_in = pseudo_random_rgbf16(w);
+    let be_in = be_rgbf16(&le_in);
+    let mut out_le = std::vec![0u16; w * 4];
+    let mut out_be = std::vec![0u16; w * 4];
+    unsafe {
+      rgbf16_to_rgba_u16_row::<false>(&le_in, &mut out_le, w);
+      rgbf16_to_rgba_u16_row::<true>(&be_in, &mut out_be, w);
+    }
+    assert_eq!(
+      out_le, out_be,
+      "wasm rgbf16_to_rgba_u16 BE parity width {w}"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn wasm_rgbf16_to_rgb_f32_be_matches_le() {
+  for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
+    let le_in = pseudo_random_rgbf16(w);
+    let be_in = be_rgbf16(&le_in);
+    let mut out_le = std::vec![0.0f32; w * 3];
+    let mut out_be = std::vec![0.0f32; w * 3];
+    unsafe {
+      rgbf16_to_rgb_f32_row::<false>(&le_in, &mut out_le, w);
+      rgbf16_to_rgb_f32_row::<true>(&be_in, &mut out_be, w);
+    }
+    assert_eq!(out_le, out_be, "wasm rgbf16_to_rgb_f32 BE parity width {w}");
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn wasm_rgbf16_to_rgb_f16_be_is_byteswap() {
+  for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
+    let le_in = pseudo_random_rgbf16(w);
+    let be_in = be_rgbf16(&le_in);
+    let mut out_le = std::vec![half::f16::ZERO; w * 3];
+    let mut out_be = std::vec![half::f16::ZERO; w * 3];
+    unsafe {
+      rgbf16_to_rgb_f16_row::<false>(&le_in, &mut out_le, w);
+      rgbf16_to_rgb_f16_row::<true>(&be_in, &mut out_be, w);
+    }
+    assert_eq!(out_le, out_be, "wasm rgbf16_to_rgb_f16 BE parity width {w}");
   }
 }

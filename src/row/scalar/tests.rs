@@ -664,8 +664,8 @@ fn rgbf16_scalar_rgb_matches_widen_then_rgbf32() {
   let (rgb_in, widened, width) = rgbf16_test_inputs();
   let mut out_f16 = std::vec![0u8; width * 3];
   let mut out_via_f32 = std::vec![0u8; width * 3];
-  rgbf16_to_rgb_row(&rgb_in, &mut out_f16, width);
-  rgbf32_to_rgb_row(&widened, &mut out_via_f32, width);
+  rgbf16_to_rgb_row::<false>(&rgb_in, &mut out_f16, width);
+  rgbf32_to_rgb_row::<false>(&widened, &mut out_via_f32, width);
   assert_eq!(out_f16, out_via_f32, "rgbf16_to_rgb scalar parity");
 }
 
@@ -678,8 +678,8 @@ fn rgbf16_scalar_rgba_matches_widen_then_rgbf32() {
   let (rgb_in, widened, width) = rgbf16_test_inputs();
   let mut out_f16 = std::vec![0u8; width * 4];
   let mut out_via_f32 = std::vec![0u8; width * 4];
-  rgbf16_to_rgba_row(&rgb_in, &mut out_f16, width);
-  rgbf32_to_rgba_row(&widened, &mut out_via_f32, width);
+  rgbf16_to_rgba_row::<false>(&rgb_in, &mut out_f16, width);
+  rgbf32_to_rgba_row::<false>(&widened, &mut out_via_f32, width);
   assert_eq!(out_f16, out_via_f32, "rgbf16_to_rgba scalar parity");
 }
 
@@ -692,8 +692,8 @@ fn rgbf16_scalar_rgb_u16_matches_widen_then_rgbf32() {
   let (rgb_in, widened, width) = rgbf16_test_inputs();
   let mut out_f16 = std::vec![0u16; width * 3];
   let mut out_via_f32 = std::vec![0u16; width * 3];
-  rgbf16_to_rgb_u16_row(&rgb_in, &mut out_f16, width);
-  rgbf32_to_rgb_u16_row(&widened, &mut out_via_f32, width);
+  rgbf16_to_rgb_u16_row::<false>(&rgb_in, &mut out_f16, width);
+  rgbf32_to_rgb_u16_row::<false>(&widened, &mut out_via_f32, width);
   assert_eq!(out_f16, out_via_f32, "rgbf16_to_rgb_u16 scalar parity");
 }
 
@@ -706,8 +706,8 @@ fn rgbf16_scalar_rgba_u16_matches_widen_then_rgbf32() {
   let (rgb_in, widened, width) = rgbf16_test_inputs();
   let mut out_f16 = std::vec![0u16; width * 4];
   let mut out_via_f32 = std::vec![0u16; width * 4];
-  rgbf16_to_rgba_u16_row(&rgb_in, &mut out_f16, width);
-  rgbf32_to_rgba_u16_row(&widened, &mut out_via_f32, width);
+  rgbf16_to_rgba_u16_row::<false>(&rgb_in, &mut out_f16, width);
+  rgbf32_to_rgba_u16_row::<false>(&widened, &mut out_via_f32, width);
   assert_eq!(out_f16, out_via_f32, "rgbf16_to_rgba_u16 scalar parity");
 }
 
@@ -719,7 +719,7 @@ fn rgbf16_scalar_rgba_u16_matches_widen_then_rgbf32() {
 fn rgbf16_scalar_rgb_f32_matches_element_wise_widen() {
   let (rgb_in, widened, width) = rgbf16_test_inputs();
   let mut out = std::vec![0.0f32; width * 3];
-  rgbf16_to_rgb_f32_row(&rgb_in, &mut out, width);
+  rgbf16_to_rgb_f32_row::<false>(&rgb_in, &mut out, width);
   // Each output must equal the bit-exact widening of the input f16.
   assert_eq!(
     out, widened,
@@ -735,7 +735,7 @@ fn rgbf16_scalar_rgb_f32_matches_element_wise_widen() {
 fn rgbf16_scalar_rgb_f16_is_copy() {
   let (rgb_in, _widened, width) = rgbf16_test_inputs();
   let mut out = std::vec![half::f16::ZERO; width * 3];
-  rgbf16_to_rgb_f16_row(&rgb_in, &mut out, width);
+  rgbf16_to_rgb_f16_row::<false>(&rgb_in, &mut out, width);
   assert_eq!(
     out, rgb_in,
     "rgbf16_to_rgb_f16 must be a byte-identical copy"
