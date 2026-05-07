@@ -64,6 +64,38 @@ unsafe fn expand4(c: uint16x8_t) -> uint16x8_t {
   unsafe { vorrq_u16(vshlq_n_u16::<4>(c), c) }
 }
 
+/// LE-explicit `u16x8` load from a packed little-endian `u16` byte stream.
+///
+/// `vld1q_u16` interprets the 16 source bytes as `u16` lanes in host-endian
+/// order. Every `AV_PIX_FMT_*LE` source format (RGB565LE, BGR565LE, RGB555LE,
+/// BGR555LE, RGB444LE, BGR444LE) stores pixels as **little-endian** `u16`
+/// words, matching the scalar's `u16::from_le_bytes` contract. On big-endian
+/// `aarch64_be-*` targets the host-endian load reverses the two bytes within
+/// each lane, causing every subsequent shift-and-mask to operate on a swapped
+/// word and produce silent color corruption while the scalar path remains
+/// correct.
+///
+/// The `vrev16q_u8` on the big-endian branch byte-swaps each `u16` lane back
+/// to LE order. On all standard (LE) `aarch64` targets the `cfg!` evaluates to
+/// `false` at compile time and the load reduces to a plain `vld1q_u16`.
+///
+/// # Safety
+///
+/// `ptr` must be valid for a 16-byte aligned or unaligned `u16` read of 8
+/// lanes (i.e. at least 16 bytes of readable memory starting at `ptr`).
+/// Caller must ensure NEON is available.
+#[inline(always)]
+unsafe fn load_u16x8_le(ptr: *const u8) -> uint16x8_t {
+  unsafe {
+    let v = vld1q_u16(ptr.cast::<u16>());
+    if cfg!(target_endian = "big") {
+      vreinterpretq_u16_u8(vrev16q_u8(vreinterpretq_u8_u16(v)))
+    } else {
+      v
+    }
+  }
+}
+
 // ============================================================================
 // RGB565 — R5 G6 B5, bits [15:11]=R, [10:5]=G, [4:0]=B
 // ============================================================================
@@ -85,7 +117,7 @@ pub(crate) unsafe fn rgb565_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: us
     let mask6 = vdupq_n_u16(0x3F);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let r5 = vandq_u16(vshrq_n_u16::<11>(px), mask5);
       let g6 = vandq_u16(vshrq_n_u16::<5>(px), mask6);
       let b5 = vandq_u16(px, mask5);
@@ -122,7 +154,7 @@ pub(crate) unsafe fn rgb565_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: 
     let alpha = vdup_n_u8(0xFF);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let r5 = vandq_u16(vshrq_n_u16::<11>(px), mask5);
       let g6 = vandq_u16(vshrq_n_u16::<5>(px), mask6);
       let b5 = vandq_u16(px, mask5);
@@ -158,7 +190,7 @@ pub(crate) unsafe fn rgb565_to_rgb_u16_row(src: &[u8], rgb_u16_out: &mut [u16], 
     let mask6 = vdupq_n_u16(0x3F);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let r = vandq_u16(vshrq_n_u16::<11>(px), mask5);
       let g = vandq_u16(vshrq_n_u16::<5>(px), mask6);
       let b = vandq_u16(px, mask5);
@@ -193,7 +225,7 @@ pub(crate) unsafe fn rgb565_to_rgba_u16_row(src: &[u8], rgba_u16_out: &mut [u16]
     let alpha = vdupq_n_u16(0xFFFF);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let r = vandq_u16(vshrq_n_u16::<11>(px), mask5);
       let g = vandq_u16(vshrq_n_u16::<5>(px), mask6);
       let b = vandq_u16(px, mask5);
@@ -234,7 +266,7 @@ pub(crate) unsafe fn bgr565_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: us
     let mask6 = vdupq_n_u16(0x3F);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       // BGR565: B at [15:11], G at [10:5], R at [4:0]
       let b5 = vandq_u16(vshrq_n_u16::<11>(px), mask5);
       let g6 = vandq_u16(vshrq_n_u16::<5>(px), mask6);
@@ -272,7 +304,7 @@ pub(crate) unsafe fn bgr565_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: 
     let alpha = vdup_n_u8(0xFF);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let b5 = vandq_u16(vshrq_n_u16::<11>(px), mask5);
       let g6 = vandq_u16(vshrq_n_u16::<5>(px), mask6);
       let r5 = vandq_u16(px, mask5);
@@ -308,7 +340,7 @@ pub(crate) unsafe fn bgr565_to_rgb_u16_row(src: &[u8], rgb_u16_out: &mut [u16], 
     let mask6 = vdupq_n_u16(0x3F);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let b = vandq_u16(vshrq_n_u16::<11>(px), mask5);
       let g = vandq_u16(vshrq_n_u16::<5>(px), mask6);
       let r = vandq_u16(px, mask5);
@@ -344,7 +376,7 @@ pub(crate) unsafe fn bgr565_to_rgba_u16_row(src: &[u8], rgba_u16_out: &mut [u16]
     let alpha = vdupq_n_u16(0xFFFF);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let b = vandq_u16(vshrq_n_u16::<11>(px), mask5);
       let g = vandq_u16(vshrq_n_u16::<5>(px), mask6);
       let r = vandq_u16(px, mask5);
@@ -384,7 +416,7 @@ pub(crate) unsafe fn rgb555_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: us
     let mask5 = vdupq_n_u16(0x1F);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let r5 = vandq_u16(vshrq_n_u16::<10>(px), mask5);
       let g5 = vandq_u16(vshrq_n_u16::<5>(px), mask5);
       let b5 = vandq_u16(px, mask5);
@@ -420,7 +452,7 @@ pub(crate) unsafe fn rgb555_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: 
     let alpha = vdup_n_u8(0xFF);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let r5 = vandq_u16(vshrq_n_u16::<10>(px), mask5);
       let g5 = vandq_u16(vshrq_n_u16::<5>(px), mask5);
       let b5 = vandq_u16(px, mask5);
@@ -455,7 +487,7 @@ pub(crate) unsafe fn rgb555_to_rgb_u16_row(src: &[u8], rgb_u16_out: &mut [u16], 
     let mask5 = vdupq_n_u16(0x1F);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let r = vandq_u16(vshrq_n_u16::<10>(px), mask5);
       let g = vandq_u16(vshrq_n_u16::<5>(px), mask5);
       let b = vandq_u16(px, mask5);
@@ -489,7 +521,7 @@ pub(crate) unsafe fn rgb555_to_rgba_u16_row(src: &[u8], rgba_u16_out: &mut [u16]
     let alpha = vdupq_n_u16(0xFFFF);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let r = vandq_u16(vshrq_n_u16::<10>(px), mask5);
       let g = vandq_u16(vshrq_n_u16::<5>(px), mask5);
       let b = vandq_u16(px, mask5);
@@ -529,7 +561,7 @@ pub(crate) unsafe fn bgr555_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: us
     let mask5 = vdupq_n_u16(0x1F);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       // BGR555: B at [14:10], G at [9:5], R at [4:0]
       let b5 = vandq_u16(vshrq_n_u16::<10>(px), mask5);
       let g5 = vandq_u16(vshrq_n_u16::<5>(px), mask5);
@@ -566,7 +598,7 @@ pub(crate) unsafe fn bgr555_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: 
     let alpha = vdup_n_u8(0xFF);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let b5 = vandq_u16(vshrq_n_u16::<10>(px), mask5);
       let g5 = vandq_u16(vshrq_n_u16::<5>(px), mask5);
       let r5 = vandq_u16(px, mask5);
@@ -601,7 +633,7 @@ pub(crate) unsafe fn bgr555_to_rgb_u16_row(src: &[u8], rgb_u16_out: &mut [u16], 
     let mask5 = vdupq_n_u16(0x1F);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let b = vandq_u16(vshrq_n_u16::<10>(px), mask5);
       let g = vandq_u16(vshrq_n_u16::<5>(px), mask5);
       let r = vandq_u16(px, mask5);
@@ -636,7 +668,7 @@ pub(crate) unsafe fn bgr555_to_rgba_u16_row(src: &[u8], rgba_u16_out: &mut [u16]
     let alpha = vdupq_n_u16(0xFFFF);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let b = vandq_u16(vshrq_n_u16::<10>(px), mask5);
       let g = vandq_u16(vshrq_n_u16::<5>(px), mask5);
       let r = vandq_u16(px, mask5);
@@ -676,7 +708,7 @@ pub(crate) unsafe fn rgb444_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: us
     let mask4 = vdupq_n_u16(0x0F);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let r4 = vandq_u16(vshrq_n_u16::<8>(px), mask4);
       let g4 = vandq_u16(vshrq_n_u16::<4>(px), mask4);
       let b4 = vandq_u16(px, mask4);
@@ -712,7 +744,7 @@ pub(crate) unsafe fn rgb444_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: 
     let alpha = vdup_n_u8(0xFF);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let r4 = vandq_u16(vshrq_n_u16::<8>(px), mask4);
       let g4 = vandq_u16(vshrq_n_u16::<4>(px), mask4);
       let b4 = vandq_u16(px, mask4);
@@ -747,7 +779,7 @@ pub(crate) unsafe fn rgb444_to_rgb_u16_row(src: &[u8], rgb_u16_out: &mut [u16], 
     let mask4 = vdupq_n_u16(0x0F);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let r = vandq_u16(vshrq_n_u16::<8>(px), mask4);
       let g = vandq_u16(vshrq_n_u16::<4>(px), mask4);
       let b = vandq_u16(px, mask4);
@@ -781,7 +813,7 @@ pub(crate) unsafe fn rgb444_to_rgba_u16_row(src: &[u8], rgba_u16_out: &mut [u16]
     let alpha = vdupq_n_u16(0xFFFF);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let r = vandq_u16(vshrq_n_u16::<8>(px), mask4);
       let g = vandq_u16(vshrq_n_u16::<4>(px), mask4);
       let b = vandq_u16(px, mask4);
@@ -821,7 +853,7 @@ pub(crate) unsafe fn bgr444_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: us
     let mask4 = vdupq_n_u16(0x0F);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       // BGR444: B at [11:8], G at [7:4], R at [3:0]
       let b4 = vandq_u16(vshrq_n_u16::<8>(px), mask4);
       let g4 = vandq_u16(vshrq_n_u16::<4>(px), mask4);
@@ -858,7 +890,7 @@ pub(crate) unsafe fn bgr444_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: 
     let alpha = vdup_n_u8(0xFF);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let b4 = vandq_u16(vshrq_n_u16::<8>(px), mask4);
       let g4 = vandq_u16(vshrq_n_u16::<4>(px), mask4);
       let r4 = vandq_u16(px, mask4);
@@ -893,7 +925,7 @@ pub(crate) unsafe fn bgr444_to_rgb_u16_row(src: &[u8], rgb_u16_out: &mut [u16], 
     let mask4 = vdupq_n_u16(0x0F);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let b = vandq_u16(vshrq_n_u16::<8>(px), mask4);
       let g = vandq_u16(vshrq_n_u16::<4>(px), mask4);
       let r = vandq_u16(px, mask4);
@@ -928,7 +960,7 @@ pub(crate) unsafe fn bgr444_to_rgba_u16_row(src: &[u8], rgba_u16_out: &mut [u16]
     let alpha = vdupq_n_u16(0xFFFF);
     let mut x = 0usize;
     while x + 8 <= width {
-      let px = vld1q_u16(src.as_ptr().add(x * 2).cast());
+      let px = load_u16x8_le(src.as_ptr().add(x * 2));
       let b = vandq_u16(vshrq_n_u16::<8>(px), mask4);
       let g = vandq_u16(vshrq_n_u16::<4>(px), mask4);
       let r = vandq_u16(px, mask4);
