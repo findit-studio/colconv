@@ -75,6 +75,13 @@ pub(crate) fn gbrpf32_to_rgb_row(
           return;
         }
       },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe { arch::wasm_simd128::gbrpf32_to_rgb_row(g, b, r, out, width); }
+          return;
+        }
+      },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512F + BW verified available.
@@ -121,6 +128,13 @@ pub(crate) fn gbrpf32_to_rgba_row(
         if neon_available() {
           // SAFETY: NEON verified available.
           unsafe { arch::neon::gbrpf32_to_rgba_row(g, b, r, out, width); }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe { arch::wasm_simd128::gbrpf32_to_rgba_row(g, b, r, out, width); }
           return;
         }
       },
@@ -173,6 +187,13 @@ pub(crate) fn gbrpf32_to_rgb_u16_row(
           return;
         }
       },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe { arch::wasm_simd128::gbrpf32_to_rgb_u16_row(g, b, r, out, width); }
+          return;
+        }
+      },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512F + BW verified available.
@@ -219,6 +240,13 @@ pub(crate) fn gbrpf32_to_rgba_u16_row(
         if neon_available() {
           // SAFETY: NEON verified available.
           unsafe { arch::neon::gbrpf32_to_rgba_u16_row(g, b, r, out, width); }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe { arch::wasm_simd128::gbrpf32_to_rgba_u16_row(g, b, r, out, width); }
           return;
         }
       },
@@ -474,6 +502,13 @@ pub(crate) fn gbrpf32_to_luma_row(
           return;
         }
       },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe { arch::wasm_simd128::gbrpf32_to_luma_row(g, b, r, out, width, matrix, full_range); }
+          return;
+        }
+      },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512F + BW verified available.
@@ -523,6 +558,15 @@ pub(crate) fn gbrpf32_to_luma_u16_row(
           // SAFETY: NEON verified available.
           unsafe {
             arch::neon::gbrpf32_to_luma_u16_row(g, b, r, out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe {
+            arch::wasm_simd128::gbrpf32_to_luma_u16_row(g, b, r, out, width, matrix, full_range);
           }
           return;
         }
@@ -588,6 +632,15 @@ pub(crate) fn gbrpf32_to_hsv_row(
           return;
         }
       },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe {
+            arch::wasm_simd128::gbrpf32_to_hsv_row(g, b, r, h_out, s_out, v_out, width);
+          }
+          return;
+        }
+      },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512F + BW verified available.
@@ -645,6 +698,13 @@ pub(crate) fn gbrapf32_to_rgba_row(
           return;
         }
       },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe { arch::wasm_simd128::gbrapf32_to_rgba_row(g, b, r, a, out, width); }
+          return;
+        }
+      },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512F + BW verified available.
@@ -693,6 +753,13 @@ pub(crate) fn gbrapf32_to_rgba_u16_row(
         if neon_available() {
           // SAFETY: NEON verified available.
           unsafe { arch::neon::gbrapf32_to_rgba_u16_row(g, b, r, a, out, width); }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe { arch::wasm_simd128::gbrapf32_to_rgba_u16_row(g, b, r, a, out, width); }
           return;
         }
       },
@@ -848,6 +915,13 @@ pub(crate) fn gbrpf16_to_rgb_f16_row(
           return;
         }
       },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time (lossless, delegates scalar).
+          unsafe { arch::wasm_simd128::gbrpf16_to_rgb_f16_row(g, b, r, out, width); }
+          return;
+        }
+      },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512F + BW verified available (no F16C needed — lossless u16 reinterpret).
@@ -894,6 +968,13 @@ pub(crate) fn gbrpf16_to_rgba_f16_row(
         if neon_available() {
           // SAFETY: NEON verified available (no fp16 needed — lossless u16 reinterpret).
           unsafe { arch::neon::gbrpf16_to_rgba_f16_row(g, b, r, out, width); }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time (lossless, delegates scalar).
+          unsafe { arch::wasm_simd128::gbrpf16_to_rgba_f16_row(g, b, r, out, width); }
           return;
         }
       },
@@ -948,6 +1029,13 @@ pub(crate) fn gbrapf16_to_rgba_f16_row(
           return;
         }
       },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time (lossless, delegates scalar).
+          unsafe { arch::wasm_simd128::gbrapf16_to_rgba_f16_row(g, b, r, a, out, width); }
+          return;
+        }
+      },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512F + BW verified available (no F16C needed — lossless u16 reinterpret).
@@ -971,10 +1059,10 @@ pub(crate) fn gbrapf16_to_rgba_f16_row(
   scalar_f16::gbrapf16_to_rgba_f16_row(g, b, r, a, out, width);
 }
 
-// ---- Gbrpf16 → u8 RGB (fp16 NEON widen / F16C SSE4.1 widen / scalar) --------
+// ---- Gbrpf16 → u8 RGB (fp16 NEON widen / F16C SSE4.1 widen / wasm / scalar) -
 
 /// Dispatch `gbrpf16_to_rgb_row`: NEON fp16 or SSE4.1+F16C widening when
-/// available, else scalar widen f16 → f32 then call the f32 scalar kernel.
+/// available, wasm-simd128 widen+SIMD on wasm32, else scalar fallback.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn gbrpf16_to_rgb_row(
   g: &[half::f16],
@@ -1017,6 +1105,13 @@ pub(crate) fn gbrpf16_to_rgb_row(
               offset += n;
             }
           }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe { arch::wasm_simd128::gbrpf16_to_rgb_row(g, b, r, out, width); }
           return;
         }
       },
@@ -1142,10 +1237,10 @@ pub(crate) fn gbrpf16_to_rgb_row(
   }
 }
 
-// ---- Gbrpf16 → u8 RGBA (fp16 NEON widen / F16C SSE4.1 widen / scalar) -------
+// ---- Gbrpf16 → u8 RGBA (fp16 NEON widen / F16C SSE4.1 widen / wasm / scalar) -
 
 /// Dispatch `gbrpf16_to_rgba_row`: NEON fp16 or SSE4.1+F16C widening when
-/// available, else scalar widen f16 → f32 then call the f32 scalar kernel.
+/// available, wasm-simd128 widen+SIMD on wasm32, else scalar fallback.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn gbrpf16_to_rgba_row(
   g: &[half::f16],
@@ -1194,6 +1289,13 @@ pub(crate) fn gbrpf16_to_rgba_row(
               offset += n;
             }
           }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe { arch::wasm_simd128::gbrpf16_to_rgba_row(g, b, r, out, width); }
           return;
         }
       },
