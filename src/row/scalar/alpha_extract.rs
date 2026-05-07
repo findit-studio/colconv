@@ -96,12 +96,14 @@ pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usiz
   }
 }
 
-/// Yuva*p9/10/12/14 → u8 RGBA: scatter α plane (u16) into
-/// `rgba_out[3 + 4*n]` (u8) with depth-conv `>> (BITS - 8)`.
+/// Yuva*p9/10/12/14/16 + Gbrap10/12/14/16 → u8 RGBA: scatter α plane
+/// (u16) into `rgba_out[3 + 4*n]` (u8) with depth-conv `>> (BITS - 8)`.
 ///
-/// `BITS` is the source α bit depth (9, 10, 12, or 14). `BE` selects the
-/// **byte order** of the encoded source α plane: `false` = LE on disk/wire
-/// (e.g., AV `Yuva420p10le`), `true` = BE on disk/wire (e.g., `Yuva420p10be`).
+/// `BITS` is the source α bit depth (any value in `[8, 16]`; the runtime
+/// `assert!` enforces the range). In practice callers pass 9, 10, 12, 14,
+/// or 16. `BE` selects the **byte order** of the encoded source α plane:
+/// `false` = LE on disk/wire (e.g., AV `Yuva420p10le`, `Gbrap10le`),
+/// `true` = BE on disk/wire (e.g., `Yuva420p10be`, `Gbrap10be`).
 ///
 /// Each raw u16 sample is converted from its disk byte order into host-native
 /// order via `u16::from_le` / `u16::from_be` BEFORE the BITS-mask + shift.
