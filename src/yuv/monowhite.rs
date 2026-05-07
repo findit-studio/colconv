@@ -1,6 +1,11 @@
 //! [`MonowhiteFrame`] walker — 1-bit-per-pixel, MSB-first encoding,
 //! bit=0 → white (Y=255), bit=1 → black (Y=0). Inverted polarity from
 //! Monoblack.
+//!
+//! Note: `Monoblack` / `Monowhite` walkers are hand-written rather than
+//! generated via `walker! { packed { ... } }`. The packed macro arm assumes
+//! ≥ 1 byte per pixel; 1-bit-per-pixel formats need byte→pixel index expansion
+//! (one byte covers 8 pixels) which doesn't fit the macro's per-element shape.
 
 use crate::{ColorMatrix, PixelSink, frame::MonowhiteFrame};
 
@@ -67,15 +72,13 @@ impl<'a> MonowhiteRow<'a> {
   }
 
   /// Frame width in pixels.
+  // `is_empty` is not provided: `MonoFrame::try_new` rejects width=0, so
+  // a zero-width row can never be constructed and `is_empty` would always
+  // return false. The clippy lint is suppressed for the same reason.
+  #[allow(clippy::len_without_is_empty)]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn len(&self) -> usize {
     self.width as usize
-  }
-
-  /// True if the row is empty.
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  pub fn is_empty(&self) -> bool {
-    self.width == 0
   }
 }
 

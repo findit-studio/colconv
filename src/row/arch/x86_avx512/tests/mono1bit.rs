@@ -17,6 +17,7 @@ fn make_data(n_bytes: usize, seed: u32) -> std::vec::Vec<u8> {
 // ---- Monoblack --------------------------------------------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx512_monoblack_to_rgb_matches_scalar() {
   if !is_x86_feature_detected!("avx512bw") {
     return;
@@ -32,6 +33,7 @@ fn avx512_monoblack_to_rgb_matches_scalar() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx512_monoblack_to_rgba_matches_scalar() {
   if !is_x86_feature_detected!("avx512bw") {
     return;
@@ -47,6 +49,7 @@ fn avx512_monoblack_to_rgba_matches_scalar() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx512_monoblack_to_luma_matches_scalar() {
   if !is_x86_feature_detected!("avx512bw") {
     return;
@@ -62,6 +65,7 @@ fn avx512_monoblack_to_luma_matches_scalar() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx512_monoblack_to_luma_u16_matches_scalar() {
   if !is_x86_feature_detected!("avx512bw") {
     return;
@@ -77,6 +81,7 @@ fn avx512_monoblack_to_luma_u16_matches_scalar() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx512_monoblack_to_rgb_u16_matches_scalar() {
   if !is_x86_feature_detected!("avx512bw") {
     return;
@@ -92,6 +97,7 @@ fn avx512_monoblack_to_rgb_u16_matches_scalar() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx512_monoblack_to_rgba_u16_matches_scalar() {
   if !is_x86_feature_detected!("avx512bw") {
     return;
@@ -107,6 +113,7 @@ fn avx512_monoblack_to_rgba_u16_matches_scalar() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx512_monoblack_to_hsv_matches_scalar() {
   if !is_x86_feature_detected!("avx512bw") {
     return;
@@ -130,6 +137,7 @@ fn avx512_monoblack_to_hsv_matches_scalar() {
 // ---- Monowhite --------------------------------------------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx512_monowhite_to_rgb_matches_scalar() {
   if !is_x86_feature_detected!("avx512bw") {
     return;
@@ -144,8 +152,8 @@ fn avx512_monowhite_to_rgb_matches_scalar() {
   }
 }
 
-#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 #[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx512_monowhite_to_rgba_matches_scalar() {
   if !is_x86_feature_detected!("avx512bw") {
     return;
@@ -161,6 +169,7 @@ fn avx512_monowhite_to_rgba_matches_scalar() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx512_monowhite_to_luma_matches_scalar() {
   if !is_x86_feature_detected!("avx512bw") {
     return;
@@ -176,6 +185,7 @@ fn avx512_monowhite_to_luma_matches_scalar() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx512_monowhite_to_luma_u16_matches_scalar() {
   if !is_x86_feature_detected!("avx512bw") {
     return;
@@ -190,8 +200,8 @@ fn avx512_monowhite_to_luma_u16_matches_scalar() {
   }
 }
 
-#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 #[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx512_monowhite_to_rgb_u16_matches_scalar() {
   if !is_x86_feature_detected!("avx512bw") {
     return;
@@ -206,8 +216,8 @@ fn avx512_monowhite_to_rgb_u16_matches_scalar() {
   }
 }
 
-#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 #[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx512_monowhite_to_rgba_u16_matches_scalar() {
   if !is_x86_feature_detected!("avx512bw") {
     return;
@@ -223,6 +233,7 @@ fn avx512_monowhite_to_rgba_u16_matches_scalar() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx512_monowhite_to_hsv_matches_scalar() {
   if !is_x86_feature_detected!("avx512bw") {
     return;
