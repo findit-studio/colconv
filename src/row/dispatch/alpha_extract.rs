@@ -260,17 +260,26 @@ pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usiz
 /// scatter α plane (u16) into `rgba_out[3 + 4*n]` (u8) with
 /// depth-conv `>> (BITS - 8)`.
 ///
-/// Selects the highest available SIMD backend; falls back to scalar.
-/// When `use_simd` is `false`, calls scalar directly.
+/// `BE` selects the source α plane byte order (`false` = LE on disk/wire,
+/// `true` = BE on disk/wire). When `BE = true` the dispatcher routes to
+/// scalar directly: the SIMD α-extract backends use raw native-u16 loads
+/// (`vld1q_u16` / `_mm_loadu_si128` / `v128_load64_zero`) and have no
+/// byte-swap path. Per the codex review of #82 the scalar helper is now
+/// target-endian-aware via `u16::from_be` / `u16::from_le`, so this
+/// scalar fallback emits the correct α plane on every host. Phase 4 will
+/// plumb BE through SIMD if a real BE-input sinker hot-path lands.
+///
+/// Selects the highest available SIMD backend (`BE = false`); falls back
+/// to scalar. When `use_simd` is `false`, calls scalar directly.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
+pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32, const BE: bool>(
   alpha: &[u16],
   rgba_out: &mut [u8],
   width: usize,
   use_simd: bool,
 ) {
-  if !use_simd {
-    return scalar::copy_alpha_plane_u16_to_u8::<BITS>(alpha, rgba_out, width);
+  if !use_simd || BE {
+    return scalar::copy_alpha_plane_u16_to_u8::<BITS, BE>(alpha, rgba_out, width);
   }
   cfg_select! {
     target_arch = "aarch64" => {
@@ -306,7 +315,7 @@ pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
     },
     _ => {}
   }
-  scalar::copy_alpha_plane_u16_to_u8::<BITS>(alpha, rgba_out, width);
+  scalar::copy_alpha_plane_u16_to_u8::<BITS, BE>(alpha, rgba_out, width);
 }
 
 // ---------------------------------------------------------------------------
@@ -317,17 +326,22 @@ pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
 /// scatter α plane (u16) into `rgba_out[3 + 4*n]` (u16). No depth
 /// conversion.
 ///
-/// Selects the highest available SIMD backend; falls back to scalar.
-/// When `use_simd` is `false`, calls scalar directly.
+/// `BE` selects the source α plane byte order (`false` = LE on disk/wire,
+/// `true` = BE on disk/wire). When `BE = true` the dispatcher routes to
+/// scalar directly: see `copy_alpha_plane_u16_to_u8` above for the
+/// rationale (SIMD α-extract is BE-naïve; scalar is target-endian-aware).
+///
+/// Selects the highest available SIMD backend (`BE = false`); falls back
+/// to scalar. When `use_simd` is `false`, calls scalar directly.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn copy_alpha_plane_u16<const BITS: u32>(
+pub(crate) fn copy_alpha_plane_u16<const BITS: u32, const BE: bool>(
   alpha: &[u16],
   rgba_out: &mut [u16],
   width: usize,
   use_simd: bool,
 ) {
-  if !use_simd {
-    return scalar::copy_alpha_plane_u16::<BITS>(alpha, rgba_out, width);
+  if !use_simd || BE {
+    return scalar::copy_alpha_plane_u16::<BITS, BE>(alpha, rgba_out, width);
   }
   cfg_select! {
     target_arch = "aarch64" => {
@@ -363,5 +377,5 @@ pub(crate) fn copy_alpha_plane_u16<const BITS: u32>(
     },
     _ => {}
   }
-  scalar::copy_alpha_plane_u16::<BITS>(alpha, rgba_out, width);
+  scalar::copy_alpha_plane_u16::<BITS, BE>(alpha, rgba_out, width);
 }

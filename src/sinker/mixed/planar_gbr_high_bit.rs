@@ -555,7 +555,11 @@ macro_rules! impl_gbrap_high_bit {
               rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
             expand_rgb_u16_to_rgba_u16_row::<BITS>(rgb_u16_row, rgba_u16_row, w);
             // Overwrite α slot from source plane (native depth, no shift).
-            alpha_extract::copy_alpha_plane_u16::<BITS>(a_in, rgba_u16_row, w, use_simd);
+            // BE flag hard-wired to `false`: this sinker only handles LE-encoded
+            // GBR/GBRA inputs today (Tier 10b). Phase 4 will wire the kernel's
+            // `<const BE: bool>` through here (matches the LE-only `false` in
+            // the sibling `gbr_to_rgb_u16_high_bit_row::<BITS, false>` call).
+            alpha_extract::copy_alpha_plane_u16::<BITS, false>(a_in, rgba_u16_row, w, use_simd);
           }
         }
 
@@ -633,7 +637,8 @@ macro_rules! impl_gbrap_high_bit {
           // overwrite α bytes from the source A plane.
           let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
           expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
-          alpha_extract::copy_alpha_plane_u16_to_u8::<BITS>(a_in, rgba_row, w, use_simd);
+          // BE flag hard-wired to `false`: see the rgba_u16 branch above.
+          alpha_extract::copy_alpha_plane_u16_to_u8::<BITS, false>(a_in, rgba_row, w, use_simd);
         }
 
         Ok(())

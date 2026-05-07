@@ -99,17 +99,28 @@ pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usiz
 /// Yuva*p9/10/12/14 → u8 RGBA: scatter α plane (u16) into
 /// `rgba_out[3 + 4*n]` (u8) with depth-conv `>> (BITS - 8)`.
 ///
-/// `BITS` is the source α bit depth (9, 10, 12, or 14).
+/// `BITS` is the source α bit depth (9, 10, 12, or 14). `BE` selects the
+/// **byte order** of the encoded source α plane: `false` = LE on disk/wire
+/// (e.g., AV `Yuva420p10le`), `true` = BE on disk/wire (e.g., `Yuva420p10be`).
 ///
-/// α is masked with `(1 << BITS) - 1` BEFORE the shift to canonicalize
-/// over-range source samples. Frame constructors admit raw u16 input
-/// (e.g., p010-style buffers store the 10 active bits in the HIGH bits
+/// Each raw u16 sample is converted from its disk byte order into host-native
+/// order via `u16::from_le` / `u16::from_be` BEFORE the BITS-mask + shift.
+/// On a host whose endianness matches the data, the conversion compiles to a
+/// no-op; otherwise it is a `swap_bytes`. This mirrors the
+/// `load_endian_u16x*::<BE>` SIMD pattern from #81 so scalar tails and SIMD
+/// paths stay byte-for-byte equivalent on every host. Without this, a
+/// big-endian host (e.g., s390x) processing LE source data would emit a
+/// byte-reversed α plane.
+///
+/// α is masked with `(1 << BITS) - 1` AFTER the endian conversion to
+/// canonicalize over-range source samples. Frame constructors admit raw u16
+/// input (e.g., p010-style buffers store the 10 active bits in the HIGH bits
 /// of u16), so an unmasked over-range value would otherwise leak through
 /// the shift and produce divergent output between scalar and SIMD paths.
 /// See sibling inline-α kernels (`yuva_4_*` row impls) for the same
 /// pattern with comment "silently turning over-range alpha into
 /// transparent output".
-pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
+pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32, const BE: bool>(
   alpha: &[u16],
   rgba_out: &mut [u8],
   width: usize,
@@ -122,7 +133,12 @@ pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
   let mask: u16 = ((1u32 << BITS) - 1) as u16;
   let shift = BITS - 8;
   for n in 0..width {
-    rgba_out[n * 4 + 3] = ((alpha[n] & mask) >> shift) as u8;
+    let raw = if BE {
+      u16::from_be(alpha[n])
+    } else {
+      u16::from_le(alpha[n])
+    };
+    rgba_out[n * 4 + 3] = ((raw & mask) >> shift) as u8;
   }
 }
 
@@ -131,7 +147,17 @@ pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
 /// depth, masked to `(1 << BITS) - 1` so over-range source samples
 /// don't leak through (parity with the inline-α kernels — frame
 /// constructors admit raw u16 input above the BITS-bit native range).
-pub(crate) fn copy_alpha_plane_u16<const BITS: u32>(
+///
+/// `BE` selects the **byte order** of the encoded source α plane:
+/// `false` = LE on disk/wire, `true` = BE on disk/wire. Each raw u16
+/// sample is converted to host-native order via `u16::from_le` /
+/// `u16::from_be` BEFORE masking. On a host whose endianness matches
+/// the data, the conversion compiles to a no-op; otherwise it is a
+/// `swap_bytes`. Mirrors the `load_endian_u16x*::<BE>` SIMD pattern
+/// from #81 so scalar and SIMD stay byte-for-byte equivalent on every
+/// host. Without this, a BE host processing LE source data would emit
+/// a byte-reversed α plane.
+pub(crate) fn copy_alpha_plane_u16<const BITS: u32, const BE: bool>(
   alpha: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -143,7 +169,12 @@ pub(crate) fn copy_alpha_plane_u16<const BITS: u32>(
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   let mask: u16 = ((1u32 << BITS) - 1) as u16;
   for n in 0..width {
-    rgba_out[n * 4 + 3] = alpha[n] & mask;
+    let raw = if BE {
+      u16::from_be(alpha[n])
+    } else {
+      u16::from_le(alpha[n])
+    };
+    rgba_out[n * 4 + 3] = raw & mask;
   }
 }
 
@@ -268,19 +299,19 @@ mod tests {
     // BITS=10
     let alpha: std::vec::Vec<u16> = std::vec![0x3FF, 0x1FF];
     let mut rgba = std::vec![1u8; 8];
-    copy_alpha_plane_u16_to_u8::<10>(&alpha, &mut rgba, 2);
+    copy_alpha_plane_u16_to_u8::<10, false>(&alpha, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xFF, 1, 1, 1, 0x7F]);
 
     // BITS=12
     let alpha: std::vec::Vec<u16> = std::vec![0xFFF, 0x800];
     let mut rgba = std::vec![1u8; 8];
-    copy_alpha_plane_u16_to_u8::<12>(&alpha, &mut rgba, 2);
+    copy_alpha_plane_u16_to_u8::<12, false>(&alpha, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xFF, 1, 1, 1, 0x80]);
 
     // BITS=16
     let alpha: std::vec::Vec<u16> = std::vec![0xFFFF, 0x8000];
     let mut rgba = std::vec![1u8; 8];
-    copy_alpha_plane_u16_to_u8::<16>(&alpha, &mut rgba, 2);
+    copy_alpha_plane_u16_to_u8::<16, false>(&alpha, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xFF, 1, 1, 1, 0x80]);
   }
 
@@ -289,7 +320,7 @@ mod tests {
     // In-range values pass through unchanged.
     let alpha: std::vec::Vec<u16> = std::vec![0x3FF, 0x1FF, 0x000];
     let mut rgba = std::vec![1u16; 12];
-    copy_alpha_plane_u16::<10>(&alpha, &mut rgba, 3);
+    copy_alpha_plane_u16::<10, false>(&alpha, &mut rgba, 3);
     assert_eq!(
       rgba,
       std::vec![1, 1, 1, 0x3FF, 1, 1, 1, 0x1FF, 1, 1, 1, 0x000]
@@ -304,7 +335,7 @@ mod tests {
     // diverging from the inline-α scalar reference.
     let alpha: std::vec::Vec<u16> = std::vec![0xFFFF, 0x0500, 0x07FF];
     let mut rgba = std::vec![1u16; 12];
-    copy_alpha_plane_u16::<10>(&alpha, &mut rgba, 3);
+    copy_alpha_plane_u16::<10, false>(&alpha, &mut rgba, 3);
     assert_eq!(
       rgba,
       std::vec![1, 1, 1, 0x3FF, 1, 1, 1, 0x100, 1, 1, 1, 0x3FF]
@@ -319,8 +350,45 @@ mod tests {
     // & 0x3FF = 0x100 → 0x100 >> 2 = 64 consistently across all paths.
     let alpha: std::vec::Vec<u16> = std::vec![0x0500, 0xFFFF, 0x03FF];
     let mut rgba = std::vec![1u8; 12];
-    copy_alpha_plane_u16_to_u8::<10>(&alpha, &mut rgba, 3);
+    copy_alpha_plane_u16_to_u8::<10, false>(&alpha, &mut rgba, 3);
     assert_eq!(rgba, std::vec![1, 1, 1, 64, 1, 1, 1, 0xFF, 1, 1, 1, 0xFF]);
+  }
+
+  /// BE parity: byte-swapping the source α plane and toggling the `BE`
+  /// flag must yield byte-for-byte identical output. Locks down the
+  /// codex-flagged corruption where a BE host processing LE input
+  /// would otherwise emit a byte-reversed α slot. The synthesized
+  /// "BE-encoded" buffer is built by host-side `swap_bytes` on the LE
+  /// fixture; both `from_le` (LE flag) and `from_be` (BE flag with the
+  /// swapped buffer) recover the same logical u16 values, so the
+  /// outputs match on every host.
+  #[test]
+  fn copy_alpha_plane_u16_to_u8_be_parity_with_swapped_buffer() {
+    let alpha_le: std::vec::Vec<u16> = std::vec![0x3FF, 0x1FF, 0x0500, 0xFFFF, 0x07FF, 0x0123];
+    let alpha_be: std::vec::Vec<u16> = alpha_le.iter().map(|x| x.swap_bytes()).collect();
+    let mut rgba_le = std::vec![1u8; 24];
+    let mut rgba_be = std::vec![1u8; 24];
+    copy_alpha_plane_u16_to_u8::<10, false>(&alpha_le, &mut rgba_le, 6);
+    copy_alpha_plane_u16_to_u8::<10, true>(&alpha_be, &mut rgba_be, 6);
+    assert_eq!(
+      rgba_le, rgba_be,
+      "BE flag + byte-swapped buffer must match LE path"
+    );
+  }
+
+  /// BE parity for the u16-output variant.
+  #[test]
+  fn copy_alpha_plane_u16_be_parity_with_swapped_buffer() {
+    let alpha_le: std::vec::Vec<u16> = std::vec![0xFFFF, 0x0500, 0x07FF, 0x0123, 0x3FF, 0x000];
+    let alpha_be: std::vec::Vec<u16> = alpha_le.iter().map(|x| x.swap_bytes()).collect();
+    let mut rgba_le = std::vec![7u16; 24];
+    let mut rgba_be = std::vec![7u16; 24];
+    copy_alpha_plane_u16::<10, false>(&alpha_le, &mut rgba_le, 6);
+    copy_alpha_plane_u16::<10, true>(&alpha_be, &mut rgba_be, 6);
+    assert_eq!(
+      rgba_le, rgba_be,
+      "BE flag + byte-swapped buffer must match LE path"
+    );
   }
 
   #[test]
