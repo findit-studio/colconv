@@ -19,6 +19,7 @@ unsafe fn u32x4_to_arr(v: core::arch::aarch64::uint32x4_t) -> [u32; 4] {
 /// On a LE host, `load_le_u16x8` must NOT swap bytes — the in-memory LE
 /// layout already matches host-native order.
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn neon_load_le_u16x8_noop_on_le_host() {
   // 0x0102 stored LE = bytes [0x02, 0x01]; host reads as 0x0102.
@@ -46,6 +47,7 @@ fn neon_load_le_u16x8_noop_on_le_host() {
 /// On a BE host, `load_le_u16x8` MUST swap bytes so the host-native value
 /// matches the original LE value.
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "big")]
 fn neon_load_le_u16x8_swaps_on_be_host() {
   // Same byte layout as above; on a BE host the raw vld1q_u16 would give
@@ -69,6 +71,7 @@ fn neon_load_le_u16x8_swaps_on_be_host() {
 /// On a LE host, `load_be_u16x8` MUST swap bytes — BE-encoded data has the
 /// most-significant byte first, which needs swapping for LE-native math.
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn neon_load_be_u16x8_swaps_on_le_host() {
   // 0x0102 stored BE = bytes [0x01, 0x02].
@@ -96,6 +99,7 @@ fn neon_load_be_u16x8_swaps_on_le_host() {
 /// On a BE host, `load_be_u16x8` must NOT swap — BE-encoded data already
 /// matches host-native order.
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "big")]
 fn neon_load_be_u16x8_noop_on_be_host() {
   let input: [u8; 16] = [
@@ -115,6 +119,7 @@ fn neon_load_be_u16x8_noop_on_be_host() {
 // ---- u32x4 LE loader on LE host (no-op) ------------------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn neon_load_le_u32x4_noop_on_le_host() {
   let input: [u8; 16] = [
@@ -135,6 +140,7 @@ fn neon_load_le_u32x4_noop_on_le_host() {
 // ---- u32x4 BE loader on LE host (swap) -------------------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn neon_load_be_u32x4_swaps_on_le_host() {
   let input: [u8; 16] = [
@@ -156,6 +162,7 @@ fn neon_load_be_u32x4_swaps_on_le_host() {
 
 /// Verify `load_endian_u16x8::<false>` routes to the LE loader.
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn neon_load_endian_u16x8_le_dispatcher() {
   let input: [u8; 16] = [
@@ -170,6 +177,7 @@ fn neon_load_endian_u16x8_le_dispatcher() {
 
 /// Verify `load_endian_u16x8::<true>` routes to the BE loader.
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn neon_load_endian_u16x8_be_dispatcher() {
   let input: [u8; 16] = [

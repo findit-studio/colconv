@@ -19,12 +19,13 @@ unsafe fn m512i_to_u32x16(v: core::arch::x86_64::__m512i) -> [u32; 16] {
 // ---- LE loader on LE host (no-op) ------------------------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 AVX-512 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn avx512_load_le_u16x32_noop_on_le_host() {
   if !std::arch::is_x86_feature_detected!("avx512bw") {
     return;
   }
-  // Build 64 bytes: pairs [lo, hi] for values 0x0102..0x4142.
+  // Build 64 bytes: pairs [lo, hi] for values 0x0102..0x2021.
   let mut input = [0u8; 64];
   for i in 0usize..32 {
     // LE encoding: low byte first
@@ -44,6 +45,7 @@ fn avx512_load_le_u16x32_noop_on_le_host() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 AVX-512 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "big")]
 fn avx512_load_le_u16x32_swaps_on_be_host() {
   if !std::arch::is_x86_feature_detected!("avx512bw") {
@@ -66,6 +68,7 @@ fn avx512_load_le_u16x32_swaps_on_be_host() {
 // ---- BE loader on LE host (swap) -------------------------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 AVX-512 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn avx512_load_be_u16x32_swaps_on_le_host() {
   if !std::arch::is_x86_feature_detected!("avx512bw") {
@@ -87,6 +90,7 @@ fn avx512_load_be_u16x32_swaps_on_le_host() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 AVX-512 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "big")]
 fn avx512_load_be_u16x32_noop_on_be_host() {
   if !std::arch::is_x86_feature_detected!("avx512bw") {
@@ -112,6 +116,7 @@ fn avx512_load_be_u16x32_noop_on_be_host() {
 // ---- u32x16 LE loader on LE host (no-op) -----------------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 AVX-512 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn avx512_load_le_u32x16_noop_on_le_host() {
   if !std::arch::is_x86_feature_detected!("avx512bw") {
@@ -139,6 +144,7 @@ fn avx512_load_le_u32x16_noop_on_le_host() {
 // ---- u32x16 BE loader on LE host (swap) ------------------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 AVX-512 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn avx512_load_be_u32x16_swaps_on_le_host() {
   if !std::arch::is_x86_feature_detected!("avx512bw") {
@@ -166,6 +172,7 @@ fn avx512_load_be_u32x16_swaps_on_le_host() {
 // ---- Generic dispatcher consistency ----------------------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 AVX-512 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn avx512_load_endian_u16x32_le_dispatcher() {
   if !std::arch::is_x86_feature_detected!("avx512bw") {
@@ -187,6 +194,7 @@ fn avx512_load_endian_u16x32_le_dispatcher() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 AVX-512 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn avx512_load_endian_u16x32_be_dispatcher() {
   if !std::arch::is_x86_feature_detected!("avx512bw") {

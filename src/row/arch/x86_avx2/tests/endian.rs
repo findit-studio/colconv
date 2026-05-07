@@ -19,6 +19,7 @@ unsafe fn m256i_to_u32x8(v: core::arch::x86_64::__m256i) -> [u32; 8] {
 // ---- LE loader on LE host (no-op) ------------------------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn avx2_load_le_u16x16_noop_on_le_host() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -41,6 +42,7 @@ fn avx2_load_le_u16x16_noop_on_le_host() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "big")]
 fn avx2_load_le_u16x16_swaps_on_be_host() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -65,6 +67,7 @@ fn avx2_load_le_u16x16_swaps_on_be_host() {
 // ---- BE loader on LE host (swap) -------------------------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn avx2_load_be_u16x16_swaps_on_le_host() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -87,6 +90,7 @@ fn avx2_load_be_u16x16_swaps_on_le_host() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "big")]
 fn avx2_load_be_u16x16_noop_on_be_host() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -111,6 +115,7 @@ fn avx2_load_be_u16x16_noop_on_be_host() {
 // ---- u32x8 LE loader on LE host (no-op) ------------------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn avx2_load_le_u32x8_noop_on_le_host() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -135,6 +140,7 @@ fn avx2_load_le_u32x8_noop_on_le_host() {
 // ---- u32x8 BE loader on LE host (swap) -------------------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn avx2_load_be_u32x8_swaps_on_le_host() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -159,6 +165,7 @@ fn avx2_load_be_u32x8_swaps_on_le_host() {
 // ---- Generic dispatcher consistency ----------------------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn avx2_load_endian_u16x16_le_dispatcher() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -179,6 +186,7 @@ fn avx2_load_endian_u16x16_le_dispatcher() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn avx2_load_endian_u16x16_be_dispatcher() {
   if !std::arch::is_x86_feature_detected!("avx2") {

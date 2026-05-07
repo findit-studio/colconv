@@ -20,6 +20,7 @@ unsafe fn m128i_to_u32x4(v: core::arch::x86_64::__m128i) -> [u32; 4] {
 
 /// On a LE host, `load_le_u16x8` must NOT swap bytes.
 #[test]
+#[cfg_attr(miri, ignore = "x86 SSE4.1 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn sse41_load_le_u16x8_noop_on_le_host() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -48,6 +49,7 @@ fn sse41_load_le_u16x8_noop_on_le_host() {
 
 /// On a BE host, `load_le_u16x8` MUST swap bytes.
 #[test]
+#[cfg_attr(miri, ignore = "x86 SSE4.1 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "big")]
 fn sse41_load_le_u16x8_swaps_on_be_host() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -71,6 +73,7 @@ fn sse41_load_le_u16x8_swaps_on_be_host() {
 
 /// On a LE host, `load_be_u16x8` MUST swap bytes.
 #[test]
+#[cfg_attr(miri, ignore = "x86 SSE4.1 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn sse41_load_be_u16x8_swaps_on_le_host() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -99,6 +102,7 @@ fn sse41_load_be_u16x8_swaps_on_le_host() {
 
 /// On a BE host, `load_be_u16x8` must NOT swap.
 #[test]
+#[cfg_attr(miri, ignore = "x86 SSE4.1 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "big")]
 fn sse41_load_be_u16x8_noop_on_be_host() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -121,6 +125,7 @@ fn sse41_load_be_u16x8_noop_on_be_host() {
 // ---- u32x4 LE loader on LE host (no-op) ------------------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 SSE4.1 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn sse41_load_le_u32x4_noop_on_le_host() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -144,6 +149,7 @@ fn sse41_load_le_u32x4_noop_on_le_host() {
 // ---- u32x4 BE loader on LE host (swap) -------------------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 SSE4.1 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn sse41_load_be_u32x4_swaps_on_le_host() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -167,6 +173,7 @@ fn sse41_load_be_u32x4_swaps_on_le_host() {
 // ---- Generic dispatcher consistency ----------------------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 SSE4.1 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn sse41_load_endian_u16x8_le_dispatcher() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -183,6 +190,7 @@ fn sse41_load_endian_u16x8_le_dispatcher() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "x86 SSE4.1 SIMD intrinsics unsupported by Miri")]
 #[cfg(target_endian = "little")]
 fn sse41_load_endian_u16x8_be_dispatcher() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
