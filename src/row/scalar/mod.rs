@@ -76,8 +76,8 @@ mod yuv_planar_high_bit;
 pub(crate) use alpha_extract::*;
 pub(crate) use ayuv64::*;
 pub(crate) use bayer::*;
-// legacy_rgb functions are consumed by dispatch::legacy_rgb via
-// `crate::row::scalar::legacy_rgb as scalar` (the module path).
+// legacy_rgb functions are consumed by the dispatcher via `use crate::row::{..., scalar};`
+// and called as `scalar::legacy_rgb::...`.
 // This glob re-exports them into the scalar namespace for direct callers (SIMD tails, tests).
 #[allow(unused_imports)]
 pub(crate) use legacy_rgb::*;
