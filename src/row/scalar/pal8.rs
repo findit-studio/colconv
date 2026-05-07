@@ -5,10 +5,13 @@
 //! reorders to `[R, G, B, A]` on output.
 //!
 //! # SIMD note
-//! Palette gather is not efficient on any current SIMD ISA (see
-//! the design spec § 4.4 for the full rationale). These scalar
-//! kernels are the only implementation; the dispatcher treats
-//! `use_simd = true` as equivalent to `false`.
+//! These are the cross-platform fallback kernels. An aarch64 hybrid
+//! NEON+gather backend exists in `src/row/arch/neon/pal8.rs` and is
+//! selected by the dispatcher when `use_simd = true` on that target
+//! (scalar gather + NEON `vst3q_u8`/`vst4q_u8` for cheap interleaved
+//! stores). For all other targets (x86, wasm) the dispatcher routes
+//! `use_simd = true` here as well: palette gather does not vectorise
+//! efficiently on those ISAs, so no SIMD backend is provided.
 //!
 //! # u16 scaling
 //! The formula `((x as u16) << 8) | (x as u16)` maps `u8` values to `u16`

@@ -142,9 +142,11 @@ pub(crate) unsafe fn pal8_to_rgba_row(
 /// NEON kernel: palette lookup → packed `[R, G, B]` u16 for one row.
 ///
 /// After gathering, each u8 channel is widened to u16 via `(v << 8) | v`
-/// (maps 0→0x0000, 255→0xFFFF). Stored via three separate `vst1q_u16_x2`
-/// stores interleaved by hand because NEON lacks a `vst3q_u16` for three
-/// u16x8 channels.
+/// (maps 0→0x0000, 255→0xFFFF). The 16-pixel block is split into two 8-pixel
+/// halves (lo/hi via `vget_low_u8`/`vget_high_u8`) because NEON's widening
+/// intrinsics operate on 64-bit (8-element) halves; each half is then stored
+/// via `vst3q_u16` (three interleaved u16x8 channels), requiring two store
+/// calls per 16-pixel block.
 ///
 /// # Safety
 ///

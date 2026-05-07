@@ -47,7 +47,7 @@ Closes Tier 13. New source-side pixel format `Pal8` (`AV_PIX_FMT_PAL8`):
   only ~50% of total cycle budget at 1920px width.
 - Sinker: `MixedSinker<'_, Pal8>` with 7 accessors. Strategy A+ for
   rgb+rgba combos (single palette lookup, RGB stripped from RGBA buffer).
-- 30 new tests: 5 frame validation + 5 scalar inline + 13 sinker integration
+- 36 new tests: 6 frame validation + 5 scalar inline + 13 sinker integration
   + 12 NEON parity/semantic tests (boundary widths 1, 8, 15, 16, 17, 32, 33,
   128, 130)
 
