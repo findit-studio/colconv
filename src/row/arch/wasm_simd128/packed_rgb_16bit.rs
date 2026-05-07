@@ -217,6 +217,24 @@ unsafe fn narrow_u16x8_to_u8x8(v: v128) -> v128 {
   u8x16_narrow_i16x8(shr, zero)
 }
 
+// ---- endian byte-swap helper -------------------------------------------------
+
+/// Byte-swap every u16 lane in `v` when `BE = true`; no-op otherwise.
+///
+/// Uses `u8x16_swizzle` with a compile-time mask.
+#[inline(always)]
+unsafe fn byteswap_if_be<const BE: bool>(v: v128) -> v128 {
+  if BE {
+    // Swap bytes within each u16 lane: [1,0, 3,2, 5,4, 7,6, 9,8, 11,10, 13,12, 15,14]
+    u8x16_swizzle(
+      v,
+      i8x16(1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14),
+    )
+  } else {
+    v
+  }
+}
+
 // =============================================================================
 // Rgb48 (R, G, B — 3 u16 elements per pixel)
 // =============================================================================
@@ -234,7 +252,11 @@ unsafe fn narrow_u16x8_to_u8x8(v: v128) -> v128 {
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn wasm_rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn wasm_rgb48_to_rgb_row<const BE: bool>(
+  rgb48: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgb48.len() >= width * 3, "rgb48 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -242,9 +264,9 @@ pub(crate) unsafe fn wasm_rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], wi
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = rgb48.as_ptr().add(x * 3);
-      let v0 = v128_load(ptr.cast());
-      let v1 = v128_load(ptr.add(8).cast());
-      let v2 = v128_load(ptr.add(16).cast());
+      let v0 = byteswap_if_be::<BE>(v128_load(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(v128_load(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(v128_load(ptr.add(16).cast()));
       let (r, g, b) = deinterleave_rgb48_8px(v0, v1, v2);
       let r_u8 = narrow_u16x8_to_u8x8(r);
       let g_u8 = narrow_u16x8_to_u8x8(g);
@@ -257,7 +279,7 @@ pub(crate) unsafe fn wasm_rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], wi
       x += 8;
     }
     if x < width {
-      scalar::rgb48_to_rgb_row(&rgb48[x * 3..], &mut rgb_out[x * 3..], width - x);
+      scalar::rgb48_to_rgb_row::<BE>(&rgb48[x * 3..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
@@ -271,7 +293,11 @@ pub(crate) unsafe fn wasm_rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], wi
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn wasm_rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn wasm_rgb48_to_rgba_row<const BE: bool>(
+  rgb48: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgb48.len() >= width * 3, "rgb48 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -280,9 +306,9 @@ pub(crate) unsafe fn wasm_rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8], 
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = rgb48.as_ptr().add(x * 3);
-      let v0 = v128_load(ptr.cast());
-      let v1 = v128_load(ptr.add(8).cast());
-      let v2 = v128_load(ptr.add(16).cast());
+      let v0 = byteswap_if_be::<BE>(v128_load(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(v128_load(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(v128_load(ptr.add(16).cast()));
       let (r, g, b) = deinterleave_rgb48_8px(v0, v1, v2);
       let r_u8 = narrow_u16x8_to_u8x8(r);
       let g_u8 = narrow_u16x8_to_u8x8(g);
@@ -294,7 +320,7 @@ pub(crate) unsafe fn wasm_rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8], 
       x += 8;
     }
     if x < width {
-      scalar::rgb48_to_rgba_row(&rgb48[x * 3..], &mut rgba_out[x * 4..], width - x);
+      scalar::rgb48_to_rgba_row::<BE>(&rgb48[x * 3..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
@@ -308,7 +334,11 @@ pub(crate) unsafe fn wasm_rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8], 
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn wasm_rgb48_to_rgb_u16_row(rgb48: &[u16], rgb_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn wasm_rgb48_to_rgb_u16_row<const BE: bool>(
+  rgb48: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(rgb48.len() >= width * 3, "rgb48 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -316,15 +346,15 @@ pub(crate) unsafe fn wasm_rgb48_to_rgb_u16_row(rgb48: &[u16], rgb_out: &mut [u16
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = rgb48.as_ptr().add(x * 3);
-      let v0 = v128_load(ptr.cast());
-      let v1 = v128_load(ptr.add(8).cast());
-      let v2 = v128_load(ptr.add(16).cast());
+      let v0 = byteswap_if_be::<BE>(v128_load(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(v128_load(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(v128_load(ptr.add(16).cast()));
       let (r, g, b) = deinterleave_rgb48_8px(v0, v1, v2);
       write_rgb_u16_8(r, g, b, rgb_out.as_mut_ptr().add(x * 3));
       x += 8;
     }
     if x < width {
-      scalar::rgb48_to_rgb_u16_row(&rgb48[x * 3..], &mut rgb_out[x * 3..], width - x);
+      scalar::rgb48_to_rgb_u16_row::<BE>(&rgb48[x * 3..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
@@ -338,7 +368,11 @@ pub(crate) unsafe fn wasm_rgb48_to_rgb_u16_row(rgb48: &[u16], rgb_out: &mut [u16
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn wasm_rgb48_to_rgba_u16_row(rgb48: &[u16], rgba_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn wasm_rgb48_to_rgba_u16_row<const BE: bool>(
+  rgb48: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(rgb48.len() >= width * 3, "rgb48 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -347,15 +381,15 @@ pub(crate) unsafe fn wasm_rgb48_to_rgba_u16_row(rgb48: &[u16], rgba_out: &mut [u
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = rgb48.as_ptr().add(x * 3);
-      let v0 = v128_load(ptr.cast());
-      let v1 = v128_load(ptr.add(8).cast());
-      let v2 = v128_load(ptr.add(16).cast());
+      let v0 = byteswap_if_be::<BE>(v128_load(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(v128_load(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(v128_load(ptr.add(16).cast()));
       let (r, g, b) = deinterleave_rgb48_8px(v0, v1, v2);
       write_rgba_u16_8(r, g, b, opaque, rgba_out.as_mut_ptr().add(x * 4));
       x += 8;
     }
     if x < width {
-      scalar::rgb48_to_rgba_u16_row(&rgb48[x * 3..], &mut rgba_out[x * 4..], width - x);
+      scalar::rgb48_to_rgba_u16_row::<BE>(&rgb48[x * 3..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
@@ -374,7 +408,11 @@ pub(crate) unsafe fn wasm_rgb48_to_rgba_u16_row(rgb48: &[u16], rgba_out: &mut [u
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn wasm_bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn wasm_bgr48_to_rgb_row<const BE: bool>(
+  bgr48: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(bgr48.len() >= width * 3, "bgr48 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -382,9 +420,9 @@ pub(crate) unsafe fn wasm_bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], wi
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = bgr48.as_ptr().add(x * 3);
-      let v0 = v128_load(ptr.cast());
-      let v1 = v128_load(ptr.add(8).cast());
-      let v2 = v128_load(ptr.add(16).cast());
+      let v0 = byteswap_if_be::<BE>(v128_load(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(v128_load(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(v128_load(ptr.add(16).cast()));
       // ch0=B, ch1=G, ch2=R
       let (b, g, r) = deinterleave_rgb48_8px(v0, v1, v2);
       let r_u8 = narrow_u16x8_to_u8x8(r);
@@ -396,7 +434,7 @@ pub(crate) unsafe fn wasm_bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], wi
       x += 8;
     }
     if x < width {
-      scalar::bgr48_to_rgb_row(&bgr48[x * 3..], &mut rgb_out[x * 3..], width - x);
+      scalar::bgr48_to_rgb_row::<BE>(&bgr48[x * 3..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
@@ -411,7 +449,11 @@ pub(crate) unsafe fn wasm_bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], wi
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn wasm_bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn wasm_bgr48_to_rgba_row<const BE: bool>(
+  bgr48: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(bgr48.len() >= width * 3, "bgr48 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -420,9 +462,9 @@ pub(crate) unsafe fn wasm_bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8], 
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = bgr48.as_ptr().add(x * 3);
-      let v0 = v128_load(ptr.cast());
-      let v1 = v128_load(ptr.add(8).cast());
-      let v2 = v128_load(ptr.add(16).cast());
+      let v0 = byteswap_if_be::<BE>(v128_load(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(v128_load(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(v128_load(ptr.add(16).cast()));
       let (b, g, r) = deinterleave_rgb48_8px(v0, v1, v2);
       let r_u8 = narrow_u16x8_to_u8x8(r);
       let g_u8 = narrow_u16x8_to_u8x8(g);
@@ -433,7 +475,7 @@ pub(crate) unsafe fn wasm_bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8], 
       x += 8;
     }
     if x < width {
-      scalar::bgr48_to_rgba_row(&bgr48[x * 3..], &mut rgba_out[x * 4..], width - x);
+      scalar::bgr48_to_rgba_row::<BE>(&bgr48[x * 3..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
@@ -448,7 +490,11 @@ pub(crate) unsafe fn wasm_bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8], 
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn wasm_bgr48_to_rgb_u16_row(bgr48: &[u16], rgb_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn wasm_bgr48_to_rgb_u16_row<const BE: bool>(
+  bgr48: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(bgr48.len() >= width * 3, "bgr48 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -456,16 +502,16 @@ pub(crate) unsafe fn wasm_bgr48_to_rgb_u16_row(bgr48: &[u16], rgb_out: &mut [u16
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = bgr48.as_ptr().add(x * 3);
-      let v0 = v128_load(ptr.cast());
-      let v1 = v128_load(ptr.add(8).cast());
-      let v2 = v128_load(ptr.add(16).cast());
+      let v0 = byteswap_if_be::<BE>(v128_load(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(v128_load(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(v128_load(ptr.add(16).cast()));
       let (b, g, r) = deinterleave_rgb48_8px(v0, v1, v2);
       // Output R, G, B order
       write_rgb_u16_8(r, g, b, rgb_out.as_mut_ptr().add(x * 3));
       x += 8;
     }
     if x < width {
-      scalar::bgr48_to_rgb_u16_row(&bgr48[x * 3..], &mut rgb_out[x * 3..], width - x);
+      scalar::bgr48_to_rgb_u16_row::<BE>(&bgr48[x * 3..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
@@ -480,7 +526,11 @@ pub(crate) unsafe fn wasm_bgr48_to_rgb_u16_row(bgr48: &[u16], rgb_out: &mut [u16
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn wasm_bgr48_to_rgba_u16_row(bgr48: &[u16], rgba_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn wasm_bgr48_to_rgba_u16_row<const BE: bool>(
+  bgr48: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(bgr48.len() >= width * 3, "bgr48 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -489,16 +539,16 @@ pub(crate) unsafe fn wasm_bgr48_to_rgba_u16_row(bgr48: &[u16], rgba_out: &mut [u
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = bgr48.as_ptr().add(x * 3);
-      let v0 = v128_load(ptr.cast());
-      let v1 = v128_load(ptr.add(8).cast());
-      let v2 = v128_load(ptr.add(16).cast());
+      let v0 = byteswap_if_be::<BE>(v128_load(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(v128_load(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(v128_load(ptr.add(16).cast()));
       let (b, g, r) = deinterleave_rgb48_8px(v0, v1, v2);
       // Output R, G, B, A order
       write_rgba_u16_8(r, g, b, opaque, rgba_out.as_mut_ptr().add(x * 4));
       x += 8;
     }
     if x < width {
-      scalar::bgr48_to_rgba_u16_row(&bgr48[x * 3..], &mut rgba_out[x * 4..], width - x);
+      scalar::bgr48_to_rgba_u16_row::<BE>(&bgr48[x * 3..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
@@ -517,7 +567,11 @@ pub(crate) unsafe fn wasm_bgr48_to_rgba_u16_row(bgr48: &[u16], rgba_out: &mut [u
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn wasm_rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn wasm_rgba64_to_rgb_row<const BE: bool>(
+  rgba64: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgba64.len() >= width * 4, "rgba64 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -525,10 +579,10 @@ pub(crate) unsafe fn wasm_rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8], 
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = rgba64.as_ptr().add(x * 4);
-      let raw0 = v128_load(ptr.cast());
-      let raw1 = v128_load(ptr.add(8).cast());
-      let raw2 = v128_load(ptr.add(16).cast());
-      let raw3 = v128_load(ptr.add(24).cast());
+      let raw0 = byteswap_if_be::<BE>(v128_load(ptr.cast()));
+      let raw1 = byteswap_if_be::<BE>(v128_load(ptr.add(8).cast()));
+      let raw2 = byteswap_if_be::<BE>(v128_load(ptr.add(16).cast()));
+      let raw3 = byteswap_if_be::<BE>(v128_load(ptr.add(24).cast()));
       let (r, g, b, _a) = deinterleave_rgba64_8px(raw0, raw1, raw2, raw3);
       let r_u8 = narrow_u16x8_to_u8x8(r);
       let g_u8 = narrow_u16x8_to_u8x8(g);
@@ -539,7 +593,7 @@ pub(crate) unsafe fn wasm_rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8], 
       x += 8;
     }
     if x < width {
-      scalar::rgba64_to_rgb_row(&rgba64[x * 4..], &mut rgb_out[x * 3..], width - x);
+      scalar::rgba64_to_rgb_row::<BE>(&rgba64[x * 4..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
@@ -554,7 +608,11 @@ pub(crate) unsafe fn wasm_rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8], 
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn wasm_rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn wasm_rgba64_to_rgba_row<const BE: bool>(
+  rgba64: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgba64.len() >= width * 4, "rgba64 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -562,10 +620,10 @@ pub(crate) unsafe fn wasm_rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8]
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = rgba64.as_ptr().add(x * 4);
-      let raw0 = v128_load(ptr.cast());
-      let raw1 = v128_load(ptr.add(8).cast());
-      let raw2 = v128_load(ptr.add(16).cast());
-      let raw3 = v128_load(ptr.add(24).cast());
+      let raw0 = byteswap_if_be::<BE>(v128_load(ptr.cast()));
+      let raw1 = byteswap_if_be::<BE>(v128_load(ptr.add(8).cast()));
+      let raw2 = byteswap_if_be::<BE>(v128_load(ptr.add(16).cast()));
+      let raw3 = byteswap_if_be::<BE>(v128_load(ptr.add(24).cast()));
       let (r, g, b, a) = deinterleave_rgba64_8px(raw0, raw1, raw2, raw3);
       let r_u8 = narrow_u16x8_to_u8x8(r);
       let g_u8 = narrow_u16x8_to_u8x8(g);
@@ -577,7 +635,7 @@ pub(crate) unsafe fn wasm_rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8]
       x += 8;
     }
     if x < width {
-      scalar::rgba64_to_rgba_row(&rgba64[x * 4..], &mut rgba_out[x * 4..], width - x);
+      scalar::rgba64_to_rgba_row::<BE>(&rgba64[x * 4..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
@@ -592,7 +650,11 @@ pub(crate) unsafe fn wasm_rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8]
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn wasm_rgba64_to_rgb_u16_row(rgba64: &[u16], rgb_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn wasm_rgba64_to_rgb_u16_row<const BE: bool>(
+  rgba64: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(rgba64.len() >= width * 4, "rgba64 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -600,16 +662,16 @@ pub(crate) unsafe fn wasm_rgba64_to_rgb_u16_row(rgba64: &[u16], rgb_out: &mut [u
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = rgba64.as_ptr().add(x * 4);
-      let raw0 = v128_load(ptr.cast());
-      let raw1 = v128_load(ptr.add(8).cast());
-      let raw2 = v128_load(ptr.add(16).cast());
-      let raw3 = v128_load(ptr.add(24).cast());
+      let raw0 = byteswap_if_be::<BE>(v128_load(ptr.cast()));
+      let raw1 = byteswap_if_be::<BE>(v128_load(ptr.add(8).cast()));
+      let raw2 = byteswap_if_be::<BE>(v128_load(ptr.add(16).cast()));
+      let raw3 = byteswap_if_be::<BE>(v128_load(ptr.add(24).cast()));
       let (r, g, b, _a) = deinterleave_rgba64_8px(raw0, raw1, raw2, raw3);
       write_rgb_u16_8(r, g, b, rgb_out.as_mut_ptr().add(x * 3));
       x += 8;
     }
     if x < width {
-      scalar::rgba64_to_rgb_u16_row(&rgba64[x * 4..], &mut rgb_out[x * 3..], width - x);
+      scalar::rgba64_to_rgb_u16_row::<BE>(&rgba64[x * 4..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
@@ -624,7 +686,7 @@ pub(crate) unsafe fn wasm_rgba64_to_rgb_u16_row(rgba64: &[u16], rgb_out: &mut [u
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn wasm_rgba64_to_rgba_u16_row(
+pub(crate) unsafe fn wasm_rgba64_to_rgba_u16_row<const BE: bool>(
   rgba64: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -636,16 +698,16 @@ pub(crate) unsafe fn wasm_rgba64_to_rgba_u16_row(
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = rgba64.as_ptr().add(x * 4);
-      let raw0 = v128_load(ptr.cast());
-      let raw1 = v128_load(ptr.add(8).cast());
-      let raw2 = v128_load(ptr.add(16).cast());
-      let raw3 = v128_load(ptr.add(24).cast());
+      let raw0 = byteswap_if_be::<BE>(v128_load(ptr.cast()));
+      let raw1 = byteswap_if_be::<BE>(v128_load(ptr.add(8).cast()));
+      let raw2 = byteswap_if_be::<BE>(v128_load(ptr.add(16).cast()));
+      let raw3 = byteswap_if_be::<BE>(v128_load(ptr.add(24).cast()));
       let (r, g, b, a) = deinterleave_rgba64_8px(raw0, raw1, raw2, raw3);
       write_rgba_u16_8(r, g, b, a, rgba_out.as_mut_ptr().add(x * 4));
       x += 8;
     }
     if x < width {
-      scalar::rgba64_to_rgba_u16_row(&rgba64[x * 4..], &mut rgba_out[x * 4..], width - x);
+      scalar::rgba64_to_rgba_u16_row::<BE>(&rgba64[x * 4..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
@@ -666,7 +728,11 @@ pub(crate) unsafe fn wasm_rgba64_to_rgba_u16_row(
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn wasm_bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn wasm_bgra64_to_rgb_row<const BE: bool>(
+  bgra64: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(bgra64.len() >= width * 4, "bgra64 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -674,10 +740,10 @@ pub(crate) unsafe fn wasm_bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8], 
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = bgra64.as_ptr().add(x * 4);
-      let raw0 = v128_load(ptr.cast());
-      let raw1 = v128_load(ptr.add(8).cast());
-      let raw2 = v128_load(ptr.add(16).cast());
-      let raw3 = v128_load(ptr.add(24).cast());
+      let raw0 = byteswap_if_be::<BE>(v128_load(ptr.cast()));
+      let raw1 = byteswap_if_be::<BE>(v128_load(ptr.add(8).cast()));
+      let raw2 = byteswap_if_be::<BE>(v128_load(ptr.add(16).cast()));
+      let raw3 = byteswap_if_be::<BE>(v128_load(ptr.add(24).cast()));
       // ch0=B, ch1=G, ch2=R, ch3=A
       let (b, g, r, _a) = deinterleave_rgba64_8px(raw0, raw1, raw2, raw3);
       let r_u8 = narrow_u16x8_to_u8x8(r);
@@ -689,7 +755,7 @@ pub(crate) unsafe fn wasm_bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8], 
       x += 8;
     }
     if x < width {
-      scalar::bgra64_to_rgb_row(&bgra64[x * 4..], &mut rgb_out[x * 3..], width - x);
+      scalar::bgra64_to_rgb_row::<BE>(&bgra64[x * 4..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
@@ -704,7 +770,11 @@ pub(crate) unsafe fn wasm_bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8], 
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn wasm_bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn wasm_bgra64_to_rgba_row<const BE: bool>(
+  bgra64: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(bgra64.len() >= width * 4, "bgra64 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -712,10 +782,10 @@ pub(crate) unsafe fn wasm_bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8]
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = bgra64.as_ptr().add(x * 4);
-      let raw0 = v128_load(ptr.cast());
-      let raw1 = v128_load(ptr.add(8).cast());
-      let raw2 = v128_load(ptr.add(16).cast());
-      let raw3 = v128_load(ptr.add(24).cast());
+      let raw0 = byteswap_if_be::<BE>(v128_load(ptr.cast()));
+      let raw1 = byteswap_if_be::<BE>(v128_load(ptr.add(8).cast()));
+      let raw2 = byteswap_if_be::<BE>(v128_load(ptr.add(16).cast()));
+      let raw3 = byteswap_if_be::<BE>(v128_load(ptr.add(24).cast()));
       let (b, g, r, a) = deinterleave_rgba64_8px(raw0, raw1, raw2, raw3);
       let r_u8 = narrow_u16x8_to_u8x8(r);
       let g_u8 = narrow_u16x8_to_u8x8(g);
@@ -727,7 +797,7 @@ pub(crate) unsafe fn wasm_bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8]
       x += 8;
     }
     if x < width {
-      scalar::bgra64_to_rgba_row(&bgra64[x * 4..], &mut rgba_out[x * 4..], width - x);
+      scalar::bgra64_to_rgba_row::<BE>(&bgra64[x * 4..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
@@ -742,7 +812,11 @@ pub(crate) unsafe fn wasm_bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8]
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn wasm_bgra64_to_rgb_u16_row(bgra64: &[u16], rgb_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn wasm_bgra64_to_rgb_u16_row<const BE: bool>(
+  bgra64: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(bgra64.len() >= width * 4, "bgra64 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -750,17 +824,17 @@ pub(crate) unsafe fn wasm_bgra64_to_rgb_u16_row(bgra64: &[u16], rgb_out: &mut [u
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = bgra64.as_ptr().add(x * 4);
-      let raw0 = v128_load(ptr.cast());
-      let raw1 = v128_load(ptr.add(8).cast());
-      let raw2 = v128_load(ptr.add(16).cast());
-      let raw3 = v128_load(ptr.add(24).cast());
+      let raw0 = byteswap_if_be::<BE>(v128_load(ptr.cast()));
+      let raw1 = byteswap_if_be::<BE>(v128_load(ptr.add(8).cast()));
+      let raw2 = byteswap_if_be::<BE>(v128_load(ptr.add(16).cast()));
+      let raw3 = byteswap_if_be::<BE>(v128_load(ptr.add(24).cast()));
       // Swap B↔R: output (R=ch2, G=ch1, B=ch0)
       let (b, g, r, _a) = deinterleave_rgba64_8px(raw0, raw1, raw2, raw3);
       write_rgb_u16_8(r, g, b, rgb_out.as_mut_ptr().add(x * 3));
       x += 8;
     }
     if x < width {
-      scalar::bgra64_to_rgb_u16_row(&bgra64[x * 4..], &mut rgb_out[x * 3..], width - x);
+      scalar::bgra64_to_rgb_u16_row::<BE>(&bgra64[x * 4..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
@@ -775,7 +849,7 @@ pub(crate) unsafe fn wasm_bgra64_to_rgb_u16_row(bgra64: &[u16], rgb_out: &mut [u
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn wasm_bgra64_to_rgba_u16_row(
+pub(crate) unsafe fn wasm_bgra64_to_rgba_u16_row<const BE: bool>(
   bgra64: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -787,17 +861,17 @@ pub(crate) unsafe fn wasm_bgra64_to_rgba_u16_row(
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = bgra64.as_ptr().add(x * 4);
-      let raw0 = v128_load(ptr.cast());
-      let raw1 = v128_load(ptr.add(8).cast());
-      let raw2 = v128_load(ptr.add(16).cast());
-      let raw3 = v128_load(ptr.add(24).cast());
+      let raw0 = byteswap_if_be::<BE>(v128_load(ptr.cast()));
+      let raw1 = byteswap_if_be::<BE>(v128_load(ptr.add(8).cast()));
+      let raw2 = byteswap_if_be::<BE>(v128_load(ptr.add(16).cast()));
+      let raw3 = byteswap_if_be::<BE>(v128_load(ptr.add(24).cast()));
       // Swap B↔R: output (R=ch2, G=ch1, B=ch0, A=ch3)
       let (b, g, r, a) = deinterleave_rgba64_8px(raw0, raw1, raw2, raw3);
       write_rgba_u16_8(r, g, b, a, rgba_out.as_mut_ptr().add(x * 4));
       x += 8;
     }
     if x < width {
-      scalar::bgra64_to_rgba_u16_row(&bgra64[x * 4..], &mut rgba_out[x * 4..], width - x);
+      scalar::bgra64_to_rgba_u16_row::<BE>(&bgra64[x * 4..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }

@@ -65,8 +65,8 @@ fn avx512_rgb48_to_rgb_matches_scalar_width33() {
   let src = make_rgb48_src(33, 0x0101);
   let mut simd_out = std::vec![0u8; 33 * 3];
   let mut scalar_out = std::vec![0u8; 33 * 3];
-  unsafe { avx512_rgb48_to_rgb_row(&src, &mut simd_out, 33) };
-  scalar::rgb48_to_rgb_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_rgb48_to_rgb_row::<false>(&src, &mut simd_out, 33) };
+  scalar::rgb48_to_rgb_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "rgb48→rgb width=33: SIMD vs scalar mismatch"
@@ -82,8 +82,8 @@ fn avx512_rgb48_to_rgb_exact32_matches_scalar() {
   let src = make_rgb48_src(32, 0xF0F0);
   let mut simd_out = std::vec![0u8; 32 * 3];
   let mut scalar_out = std::vec![0u8; 32 * 3];
-  unsafe { avx512_rgb48_to_rgb_row(&src, &mut simd_out, 32) };
-  scalar::rgb48_to_rgb_row(&src, &mut scalar_out, 32);
+  unsafe { avx512_rgb48_to_rgb_row::<false>(&src, &mut simd_out, 32) };
+  scalar::rgb48_to_rgb_row::<false>(&src, &mut scalar_out, 32);
   assert_eq!(
     simd_out, scalar_out,
     "rgb48→rgb exact-32: SIMD vs scalar mismatch"
@@ -99,8 +99,8 @@ fn avx512_rgb48_to_rgb_width1_tail_only() {
   let src = [0x1234u16, 0x5678, 0x9ABC];
   let mut simd_out = [0u8; 3];
   let mut scalar_out = [0u8; 3];
-  unsafe { avx512_rgb48_to_rgb_row(&src, &mut simd_out, 1) };
-  scalar::rgb48_to_rgb_row(&src, &mut scalar_out, 1);
+  unsafe { avx512_rgb48_to_rgb_row::<false>(&src, &mut simd_out, 1) };
+  scalar::rgb48_to_rgb_row::<false>(&src, &mut scalar_out, 1);
   assert_eq!(
     simd_out, scalar_out,
     "rgb48→rgb width=1: tail-only mismatch"
@@ -117,8 +117,8 @@ fn avx512_rgb48_to_rgb_lane_order_regression() {
   let src = make_rgb48_asymmetric(33);
   let mut simd_out = std::vec![0u8; 33 * 3];
   let mut scalar_out = std::vec![0u8; 33 * 3];
-  unsafe { avx512_rgb48_to_rgb_row(&src, &mut simd_out, 33) };
-  scalar::rgb48_to_rgb_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_rgb48_to_rgb_row::<false>(&src, &mut simd_out, 33) };
+  scalar::rgb48_to_rgb_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "rgb48→rgb lane order: SIMD vs scalar mismatch (channel swap?)"
@@ -138,8 +138,8 @@ fn avx512_rgb48_to_rgba_matches_scalar_width33() {
   let src = make_rgb48_src(33, 0x0303);
   let mut simd_out = std::vec![0u8; 33 * 4];
   let mut scalar_out = std::vec![0u8; 33 * 4];
-  unsafe { avx512_rgb48_to_rgba_row(&src, &mut simd_out, 33) };
-  scalar::rgb48_to_rgba_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_rgb48_to_rgba_row::<false>(&src, &mut simd_out, 33) };
+  scalar::rgb48_to_rgba_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "rgb48→rgba width=33: SIMD vs scalar mismatch"
@@ -159,8 +159,8 @@ fn avx512_rgb48_to_rgb_u16_matches_scalar_width33() {
   let src = make_rgb48_src(33, 0x0505);
   let mut simd_out = std::vec![0u16; 33 * 3];
   let mut scalar_out = std::vec![0u16; 33 * 3];
-  unsafe { avx512_rgb48_to_rgb_u16_row(&src, &mut simd_out, 33) };
-  scalar::rgb48_to_rgb_u16_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_rgb48_to_rgb_u16_row::<false>(&src, &mut simd_out, 33) };
+  scalar::rgb48_to_rgb_u16_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "rgb48→rgb_u16 width=33: SIMD vs scalar mismatch"
@@ -177,8 +177,8 @@ fn avx512_rgb48_to_rgb_u16_lane_order_regression() {
   let src = make_rgb48_asymmetric(33);
   let mut simd_out = std::vec![0u16; 33 * 3];
   let mut scalar_out = std::vec![0u16; 33 * 3];
-  unsafe { avx512_rgb48_to_rgb_u16_row(&src, &mut simd_out, 33) };
-  scalar::rgb48_to_rgb_u16_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_rgb48_to_rgb_u16_row::<false>(&src, &mut simd_out, 33) };
+  scalar::rgb48_to_rgb_u16_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "rgb48→rgb_u16 lane order: SIMD vs scalar mismatch (channel swap?)"
@@ -198,8 +198,8 @@ fn avx512_rgb48_to_rgba_u16_matches_scalar_width33() {
   let src = make_rgb48_src(33, 0x0707);
   let mut simd_out = std::vec![0u16; 33 * 4];
   let mut scalar_out = std::vec![0u16; 33 * 4];
-  unsafe { avx512_rgb48_to_rgba_u16_row(&src, &mut simd_out, 33) };
-  scalar::rgb48_to_rgba_u16_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_rgb48_to_rgba_u16_row::<false>(&src, &mut simd_out, 33) };
+  scalar::rgb48_to_rgba_u16_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "rgb48→rgba_u16 width=33: SIMD vs scalar mismatch"
@@ -219,8 +219,8 @@ fn avx512_bgr48_to_rgb_matches_scalar_width33() {
   let src = make_rgb48_src(33, 0x1111);
   let mut simd_out = std::vec![0u8; 33 * 3];
   let mut scalar_out = std::vec![0u8; 33 * 3];
-  unsafe { avx512_bgr48_to_rgb_row(&src, &mut simd_out, 33) };
-  scalar::bgr48_to_rgb_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_bgr48_to_rgb_row::<false>(&src, &mut simd_out, 33) };
+  scalar::bgr48_to_rgb_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "bgr48→rgb width=33: SIMD vs scalar mismatch"
@@ -236,8 +236,8 @@ fn avx512_bgr48_to_rgb_exact32_matches_scalar() {
   let src = make_rgb48_src(32, 0xA1A1);
   let mut simd_out = std::vec![0u8; 32 * 3];
   let mut scalar_out = std::vec![0u8; 32 * 3];
-  unsafe { avx512_bgr48_to_rgb_row(&src, &mut simd_out, 32) };
-  scalar::bgr48_to_rgb_row(&src, &mut scalar_out, 32);
+  unsafe { avx512_bgr48_to_rgb_row::<false>(&src, &mut simd_out, 32) };
+  scalar::bgr48_to_rgb_row::<false>(&src, &mut scalar_out, 32);
   assert_eq!(
     simd_out, scalar_out,
     "bgr48→rgb exact-32: SIMD vs scalar mismatch"
@@ -254,8 +254,8 @@ fn avx512_bgr48_to_rgb_lane_order_regression() {
   let src = make_rgb48_asymmetric(33);
   let mut simd_out = std::vec![0u8; 33 * 3];
   let mut scalar_out = std::vec![0u8; 33 * 3];
-  unsafe { avx512_bgr48_to_rgb_row(&src, &mut simd_out, 33) };
-  scalar::bgr48_to_rgb_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_bgr48_to_rgb_row::<false>(&src, &mut simd_out, 33) };
+  scalar::bgr48_to_rgb_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "bgr48→rgb lane order (B↔R swap): SIMD vs scalar mismatch"
@@ -275,8 +275,8 @@ fn avx512_bgr48_to_rgba_matches_scalar_width33() {
   let src = make_rgb48_src(33, 0x2222);
   let mut simd_out = std::vec![0u8; 33 * 4];
   let mut scalar_out = std::vec![0u8; 33 * 4];
-  unsafe { avx512_bgr48_to_rgba_row(&src, &mut simd_out, 33) };
-  scalar::bgr48_to_rgba_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_bgr48_to_rgba_row::<false>(&src, &mut simd_out, 33) };
+  scalar::bgr48_to_rgba_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "bgr48→rgba width=33: SIMD vs scalar mismatch"
@@ -296,8 +296,8 @@ fn avx512_bgr48_to_rgb_u16_matches_scalar_width33() {
   let src = make_rgb48_src(33, 0x3333);
   let mut simd_out = std::vec![0u16; 33 * 3];
   let mut scalar_out = std::vec![0u16; 33 * 3];
-  unsafe { avx512_bgr48_to_rgb_u16_row(&src, &mut simd_out, 33) };
-  scalar::bgr48_to_rgb_u16_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_bgr48_to_rgb_u16_row::<false>(&src, &mut simd_out, 33) };
+  scalar::bgr48_to_rgb_u16_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "bgr48→rgb_u16 width=33: SIMD vs scalar mismatch"
@@ -317,8 +317,8 @@ fn avx512_bgr48_to_rgba_u16_matches_scalar_width33() {
   let src = make_rgb48_src(33, 0x4444);
   let mut simd_out = std::vec![0u16; 33 * 4];
   let mut scalar_out = std::vec![0u16; 33 * 4];
-  unsafe { avx512_bgr48_to_rgba_u16_row(&src, &mut simd_out, 33) };
-  scalar::bgr48_to_rgba_u16_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_bgr48_to_rgba_u16_row::<false>(&src, &mut simd_out, 33) };
+  scalar::bgr48_to_rgba_u16_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "bgr48→rgba_u16 width=33: SIMD vs scalar mismatch"
@@ -338,8 +338,8 @@ fn avx512_rgba64_to_rgb_matches_scalar_width33() {
   let src = make_rgba64_src(33, 0xAAAA);
   let mut simd_out = std::vec![0u8; 33 * 3];
   let mut scalar_out = std::vec![0u8; 33 * 3];
-  unsafe { avx512_rgba64_to_rgb_row(&src, &mut simd_out, 33) };
-  scalar::rgba64_to_rgb_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_rgba64_to_rgb_row::<false>(&src, &mut simd_out, 33) };
+  scalar::rgba64_to_rgb_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "rgba64→rgb width=33: SIMD vs scalar mismatch"
@@ -355,8 +355,8 @@ fn avx512_rgba64_to_rgb_exact32_matches_scalar() {
   let src = make_rgba64_src(32, 0x0F0F);
   let mut simd_out = std::vec![0u8; 32 * 3];
   let mut scalar_out = std::vec![0u8; 32 * 3];
-  unsafe { avx512_rgba64_to_rgb_row(&src, &mut simd_out, 32) };
-  scalar::rgba64_to_rgb_row(&src, &mut scalar_out, 32);
+  unsafe { avx512_rgba64_to_rgb_row::<false>(&src, &mut simd_out, 32) };
+  scalar::rgba64_to_rgb_row::<false>(&src, &mut scalar_out, 32);
   assert_eq!(
     simd_out, scalar_out,
     "rgba64→rgb exact-32: SIMD vs scalar mismatch"
@@ -373,8 +373,8 @@ fn avx512_rgba64_to_rgb_lane_order_regression() {
   let src = make_rgba64_asymmetric(33);
   let mut simd_out = std::vec![0u8; 33 * 3];
   let mut scalar_out = std::vec![0u8; 33 * 3];
-  unsafe { avx512_rgba64_to_rgb_row(&src, &mut simd_out, 33) };
-  scalar::rgba64_to_rgb_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_rgba64_to_rgb_row::<false>(&src, &mut simd_out, 33) };
+  scalar::rgba64_to_rgb_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "rgba64→rgb lane order: SIMD vs scalar mismatch"
@@ -394,8 +394,8 @@ fn avx512_rgba64_to_rgba_matches_scalar_width33() {
   let src = make_rgba64_src(33, 0xBBBB);
   let mut simd_out = std::vec![0u8; 33 * 4];
   let mut scalar_out = std::vec![0u8; 33 * 4];
-  unsafe { avx512_rgba64_to_rgba_row(&src, &mut simd_out, 33) };
-  scalar::rgba64_to_rgba_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_rgba64_to_rgba_row::<false>(&src, &mut simd_out, 33) };
+  scalar::rgba64_to_rgba_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "rgba64→rgba width=33: SIMD vs scalar mismatch"
@@ -412,8 +412,8 @@ fn avx512_rgba64_to_rgba_lane_order_regression() {
   let src = make_rgba64_asymmetric(33);
   let mut simd_out = std::vec![0u8; 33 * 4];
   let mut scalar_out = std::vec![0u8; 33 * 4];
-  unsafe { avx512_rgba64_to_rgba_row(&src, &mut simd_out, 33) };
-  scalar::rgba64_to_rgba_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_rgba64_to_rgba_row::<false>(&src, &mut simd_out, 33) };
+  scalar::rgba64_to_rgba_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "rgba64→rgba lane order (alpha passthrough): SIMD vs scalar mismatch"
@@ -433,8 +433,8 @@ fn avx512_rgba64_to_rgb_u16_matches_scalar_width33() {
   let src = make_rgba64_src(33, 0xCCCC);
   let mut simd_out = std::vec![0u16; 33 * 3];
   let mut scalar_out = std::vec![0u16; 33 * 3];
-  unsafe { avx512_rgba64_to_rgb_u16_row(&src, &mut simd_out, 33) };
-  scalar::rgba64_to_rgb_u16_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_rgba64_to_rgb_u16_row::<false>(&src, &mut simd_out, 33) };
+  scalar::rgba64_to_rgb_u16_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "rgba64→rgb_u16 width=33: SIMD vs scalar mismatch"
@@ -451,8 +451,8 @@ fn avx512_rgba64_to_rgb_u16_lane_order_regression() {
   let src = make_rgba64_asymmetric(33);
   let mut simd_out = std::vec![0u16; 33 * 3];
   let mut scalar_out = std::vec![0u16; 33 * 3];
-  unsafe { avx512_rgba64_to_rgb_u16_row(&src, &mut simd_out, 33) };
-  scalar::rgba64_to_rgb_u16_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_rgba64_to_rgb_u16_row::<false>(&src, &mut simd_out, 33) };
+  scalar::rgba64_to_rgb_u16_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "rgba64→rgb_u16 lane order: SIMD vs scalar mismatch"
@@ -472,8 +472,8 @@ fn avx512_rgba64_to_rgba_u16_matches_scalar_width33() {
   let src = make_rgba64_src(33, 0xDDDD);
   let mut simd_out = std::vec![0u16; 33 * 4];
   let mut scalar_out = std::vec![0u16; 33 * 4];
-  unsafe { avx512_rgba64_to_rgba_u16_row(&src, &mut simd_out, 33) };
-  scalar::rgba64_to_rgba_u16_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_rgba64_to_rgba_u16_row::<false>(&src, &mut simd_out, 33) };
+  scalar::rgba64_to_rgba_u16_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "rgba64→rgba_u16 width=33: SIMD vs scalar mismatch"
@@ -489,8 +489,8 @@ fn avx512_rgba64_to_rgba_u16_width1_tail_only() {
   let src = [0x1234u16, 0x5678, 0x9ABC, 0xDEF0]; // R, G, B, A
   let mut simd_out = [0u16; 4];
   let mut scalar_out = [0u16; 4];
-  unsafe { avx512_rgba64_to_rgba_u16_row(&src, &mut simd_out, 1) };
-  scalar::rgba64_to_rgba_u16_row(&src, &mut scalar_out, 1);
+  unsafe { avx512_rgba64_to_rgba_u16_row::<false>(&src, &mut simd_out, 1) };
+  scalar::rgba64_to_rgba_u16_row::<false>(&src, &mut scalar_out, 1);
   assert_eq!(
     simd_out, scalar_out,
     "rgba64→rgba_u16 width=1: tail-only mismatch"
@@ -507,8 +507,8 @@ fn avx512_rgba64_to_rgba_u16_lane_order_regression() {
   let src = make_rgba64_asymmetric(33);
   let mut simd_out = std::vec![0u16; 33 * 4];
   let mut scalar_out = std::vec![0u16; 33 * 4];
-  unsafe { avx512_rgba64_to_rgba_u16_row(&src, &mut simd_out, 33) };
-  scalar::rgba64_to_rgba_u16_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_rgba64_to_rgba_u16_row::<false>(&src, &mut simd_out, 33) };
+  scalar::rgba64_to_rgba_u16_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "rgba64→rgba_u16 lane order (identity copy): SIMD vs scalar mismatch"
@@ -528,8 +528,8 @@ fn avx512_bgra64_to_rgb_matches_scalar_width33() {
   let src = make_rgba64_src(33, 0x1234);
   let mut simd_out = std::vec![0u8; 33 * 3];
   let mut scalar_out = std::vec![0u8; 33 * 3];
-  unsafe { avx512_bgra64_to_rgb_row(&src, &mut simd_out, 33) };
-  scalar::bgra64_to_rgb_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_bgra64_to_rgb_row::<false>(&src, &mut simd_out, 33) };
+  scalar::bgra64_to_rgb_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "bgra64→rgb width=33: SIMD vs scalar mismatch"
@@ -546,8 +546,8 @@ fn avx512_bgra64_to_rgb_lane_order_regression() {
   let src = make_rgba64_asymmetric(33);
   let mut simd_out = std::vec![0u8; 33 * 3];
   let mut scalar_out = std::vec![0u8; 33 * 3];
-  unsafe { avx512_bgra64_to_rgb_row(&src, &mut simd_out, 33) };
-  scalar::bgra64_to_rgb_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_bgra64_to_rgb_row::<false>(&src, &mut simd_out, 33) };
+  scalar::bgra64_to_rgb_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "bgra64→rgb lane order (B↔R swap): SIMD vs scalar mismatch"
@@ -567,8 +567,8 @@ fn avx512_bgra64_to_rgba_matches_scalar_width33() {
   let src = make_rgba64_src(33, 0x5678);
   let mut simd_out = std::vec![0u8; 33 * 4];
   let mut scalar_out = std::vec![0u8; 33 * 4];
-  unsafe { avx512_bgra64_to_rgba_row(&src, &mut simd_out, 33) };
-  scalar::bgra64_to_rgba_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_bgra64_to_rgba_row::<false>(&src, &mut simd_out, 33) };
+  scalar::bgra64_to_rgba_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "bgra64→rgba width=33: SIMD vs scalar mismatch"
@@ -585,8 +585,8 @@ fn avx512_bgra64_to_rgba_lane_order_regression() {
   let src = make_rgba64_asymmetric(33);
   let mut simd_out = std::vec![0u8; 33 * 4];
   let mut scalar_out = std::vec![0u8; 33 * 4];
-  unsafe { avx512_bgra64_to_rgba_row(&src, &mut simd_out, 33) };
-  scalar::bgra64_to_rgba_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_bgra64_to_rgba_row::<false>(&src, &mut simd_out, 33) };
+  scalar::bgra64_to_rgba_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "bgra64→rgba lane order (B↔R swap + alpha): SIMD vs scalar mismatch"
@@ -606,8 +606,8 @@ fn avx512_bgra64_to_rgb_u16_matches_scalar_width33() {
   let src = make_rgba64_src(33, 0x9ABC);
   let mut simd_out = std::vec![0u16; 33 * 3];
   let mut scalar_out = std::vec![0u16; 33 * 3];
-  unsafe { avx512_bgra64_to_rgb_u16_row(&src, &mut simd_out, 33) };
-  scalar::bgra64_to_rgb_u16_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_bgra64_to_rgb_u16_row::<false>(&src, &mut simd_out, 33) };
+  scalar::bgra64_to_rgb_u16_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "bgra64→rgb_u16 width=33: SIMD vs scalar mismatch"
@@ -627,8 +627,8 @@ fn avx512_bgra64_to_rgba_u16_matches_scalar_width33() {
   let src = make_rgba64_src(33, 0xDEF0);
   let mut simd_out = std::vec![0u16; 33 * 4];
   let mut scalar_out = std::vec![0u16; 33 * 4];
-  unsafe { avx512_bgra64_to_rgba_u16_row(&src, &mut simd_out, 33) };
-  scalar::bgra64_to_rgba_u16_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_bgra64_to_rgba_u16_row::<false>(&src, &mut simd_out, 33) };
+  scalar::bgra64_to_rgba_u16_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "bgra64→rgba_u16 width=33: SIMD vs scalar mismatch"
@@ -644,8 +644,8 @@ fn avx512_bgra64_to_rgba_u16_width1_tail_only() {
   let src = [0x1111u16, 0x2222, 0x3333, 0x4444]; // B, G, R, A
   let mut simd_out = [0u16; 4];
   let mut scalar_out = [0u16; 4];
-  unsafe { avx512_bgra64_to_rgba_u16_row(&src, &mut simd_out, 1) };
-  scalar::bgra64_to_rgba_u16_row(&src, &mut scalar_out, 1);
+  unsafe { avx512_bgra64_to_rgba_u16_row::<false>(&src, &mut simd_out, 1) };
+  scalar::bgra64_to_rgba_u16_row::<false>(&src, &mut scalar_out, 1);
   assert_eq!(
     simd_out, scalar_out,
     "bgra64→rgba_u16 width=1: tail-only mismatch"
@@ -662,8 +662,8 @@ fn avx512_bgra64_to_rgba_u16_lane_order_regression() {
   let src = make_rgba64_asymmetric(33);
   let mut simd_out = std::vec![0u16; 33 * 4];
   let mut scalar_out = std::vec![0u16; 33 * 4];
-  unsafe { avx512_bgra64_to_rgba_u16_row(&src, &mut simd_out, 33) };
-  scalar::bgra64_to_rgba_u16_row(&src, &mut scalar_out, 33);
+  unsafe { avx512_bgra64_to_rgba_u16_row::<false>(&src, &mut simd_out, 33) };
+  scalar::bgra64_to_rgba_u16_row::<false>(&src, &mut scalar_out, 33);
   assert_eq!(
     simd_out, scalar_out,
     "bgra64→rgba_u16 lane order (B↔R swap + alpha preserve): SIMD vs scalar mismatch"
@@ -720,7 +720,7 @@ fn avx512_rgba64_to_rgba_u16_lane_order_handcheck() {
   }
   let src = make_rgba64_lane_order(33);
   let mut simd_out = std::vec![0u16; 33 * 4];
-  unsafe { avx512_rgba64_to_rgba_u16_row(&src, &mut simd_out, 33) };
+  unsafe { avx512_rgba64_to_rgba_u16_row::<false>(&src, &mut simd_out, 33) };
   for n in 0..33 {
     assert_eq!(simd_out[n * 4], (n as u16) + 1, "R at pixel {n}");
     assert_eq!(simd_out[n * 4 + 1], (n as u16) + 100, "G at pixel {n}");
@@ -737,7 +737,7 @@ fn avx512_rgba64_to_rgb_u16_lane_order_handcheck() {
   }
   let src = make_rgba64_lane_order(33);
   let mut simd_out = std::vec![0u16; 33 * 3];
-  unsafe { avx512_rgba64_to_rgb_u16_row(&src, &mut simd_out, 33) };
+  unsafe { avx512_rgba64_to_rgb_u16_row::<false>(&src, &mut simd_out, 33) };
   for n in 0..33 {
     assert_eq!(simd_out[n * 3], (n as u16) + 1, "R at pixel {n}");
     assert_eq!(simd_out[n * 3 + 1], (n as u16) + 100, "G at pixel {n}");
@@ -753,7 +753,7 @@ fn avx512_bgra64_to_rgba_u16_lane_order_handcheck() {
   }
   let src = make_bgra64_lane_order(33);
   let mut simd_out = std::vec![0u16; 33 * 4];
-  unsafe { avx512_bgra64_to_rgba_u16_row(&src, &mut simd_out, 33) };
+  unsafe { avx512_bgra64_to_rgba_u16_row::<false>(&src, &mut simd_out, 33) };
   // Output is RGBA: R=n+1, G=100+n, B=200+n, A=50+n per pixel n
   // (B↔R swap from source memory order).
   for n in 0..33 {
@@ -772,7 +772,7 @@ fn avx512_bgra64_to_rgb_u16_lane_order_handcheck() {
   }
   let src = make_bgra64_lane_order(33);
   let mut simd_out = std::vec![0u16; 33 * 3];
-  unsafe { avx512_bgra64_to_rgb_u16_row(&src, &mut simd_out, 33) };
+  unsafe { avx512_bgra64_to_rgb_u16_row::<false>(&src, &mut simd_out, 33) };
   for n in 0..33 {
     assert_eq!(simd_out[n * 3], (n as u16) + 1, "R at pixel {n}");
     assert_eq!(simd_out[n * 3 + 1], (n as u16) + 100, "G at pixel {n}");

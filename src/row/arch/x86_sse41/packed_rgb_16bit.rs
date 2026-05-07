@@ -306,6 +306,24 @@ unsafe fn narrow_u16x8_to_u8x8(v: __m128i, zero: __m128i) -> __m128i {
   unsafe { _mm_packus_epi16(_mm_srli_epi16::<8>(v), zero) }
 }
 
+// ---- endian byte-swap helper ------------------------------------------------
+
+/// Byte-swap every u16 lane in `v` when `BE = true`; no-op otherwise.
+///
+/// Uses `_mm_shuffle_epi8` (SSSE3, a subset of SSE4.1) with the same mask as
+/// `endian::BYTESWAP_MASK_U16`.
+#[inline(always)]
+unsafe fn byteswap_if_be<const BE: bool>(v: __m128i) -> __m128i {
+  if BE {
+    // Swap bytes within each u16 lane: [1,0, 3,2, 5,4, 7,6, 9,8, 11,10, 13,12, 15,14]
+    const MASK: __m128i =
+      unsafe { core::mem::transmute([1u8, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14]) };
+    unsafe { _mm_shuffle_epi8(v, MASK) }
+  } else {
+    v
+  }
+}
+
 // =============================================================================
 // Rgb48 (R, G, B — 3 u16 elements per pixel)
 // =============================================================================
@@ -314,6 +332,7 @@ unsafe fn narrow_u16x8_to_u8x8(v: __m128i, zero: __m128i) -> __m128i {
 ///
 /// Loads 3 × 128-bit chunks (24 u16), deinterleaves with shuffle masks,
 /// narrows via `>> 8`, writes 8 pixels (24 bytes) of interleaved RGB.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -322,7 +341,11 @@ unsafe fn narrow_u16x8_to_u8x8(v: __m128i, zero: __m128i) -> __m128i {
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn sse41_rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn sse41_rgb48_to_rgb_row<const BE: bool>(
+  rgb48: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgb48.len() >= width * 3, "rgb48 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -331,9 +354,9 @@ pub(crate) unsafe fn sse41_rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], w
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = rgb48.as_ptr().add(x * 3);
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
+      let v0 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
       let (r_u16, g_u16, b_u16) = deinterleave_rgb48_8px(v0, v1, v2);
       let r_u8 = narrow_u16x8_to_u8x8(r_u16, zero);
       let g_u8 = narrow_u16x8_to_u8x8(g_u16, zero);
@@ -345,12 +368,14 @@ pub(crate) unsafe fn sse41_rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], w
       x += 8;
     }
     if x < width {
-      scalar::rgb48_to_rgb_row(&rgb48[x * 3..], &mut rgb_out[x * 3..], width - x);
+      scalar::rgb48_to_rgb_row::<BE>(&rgb48[x * 3..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// SSE4.1 Rgb48 → packed u8 RGBA. 8 pixels per SIMD iteration. Alpha forced to 0xFF.
+///
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -359,7 +384,11 @@ pub(crate) unsafe fn sse41_rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], w
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn sse41_rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn sse41_rgb48_to_rgba_row<const BE: bool>(
+  rgb48: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgb48.len() >= width * 3, "rgb48 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -370,9 +399,9 @@ pub(crate) unsafe fn sse41_rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8],
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = rgb48.as_ptr().add(x * 3);
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
+      let v0 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
       let (r_u16, g_u16, b_u16) = deinterleave_rgb48_8px(v0, v1, v2);
       let r_u8 = narrow_u16x8_to_u8x8(r_u16, zero);
       let g_u8 = narrow_u16x8_to_u8x8(g_u16, zero);
@@ -383,14 +412,15 @@ pub(crate) unsafe fn sse41_rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8],
       x += 8;
     }
     if x < width {
-      scalar::rgb48_to_rgba_row(&rgb48[x * 3..], &mut rgba_out[x * 4..], width - x);
+      scalar::rgb48_to_rgba_row::<BE>(&rgb48[x * 3..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
 
-/// SSE4.1 Rgb48 → native-depth u16 RGB (identity repack). 8 pixels per iteration.
+/// SSE4.1 Rgb48 → native-depth u16 RGB. 8 pixels per iteration.
 ///
 /// Deinterleaves with shuffle masks, writes 8 pixels via `write_rgb_u16_8`.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -399,7 +429,11 @@ pub(crate) unsafe fn sse41_rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8],
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn sse41_rgb48_to_rgb_u16_row(rgb48: &[u16], rgb_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn sse41_rgb48_to_rgb_u16_row<const BE: bool>(
+  rgb48: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(rgb48.len() >= width * 3, "rgb48 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -407,20 +441,22 @@ pub(crate) unsafe fn sse41_rgb48_to_rgb_u16_row(rgb48: &[u16], rgb_out: &mut [u1
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = rgb48.as_ptr().add(x * 3);
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
+      let v0 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
       let (r_u16, g_u16, b_u16) = deinterleave_rgb48_8px(v0, v1, v2);
       write_rgb_u16_8(r_u16, g_u16, b_u16, rgb_out.as_mut_ptr().add(x * 3));
       x += 8;
     }
     if x < width {
-      scalar::rgb48_to_rgb_u16_row(&rgb48[x * 3..], &mut rgb_out[x * 3..], width - x);
+      scalar::rgb48_to_rgb_u16_row::<BE>(&rgb48[x * 3..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// SSE4.1 Rgb48 → native-depth u16 RGBA. 8 pixels per iteration. Alpha forced to 0xFFFF.
+///
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -429,7 +465,7 @@ pub(crate) unsafe fn sse41_rgb48_to_rgb_u16_row(rgb48: &[u16], rgb_out: &mut [u1
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn sse41_rgb48_to_rgba_u16_row(
+pub(crate) unsafe fn sse41_rgb48_to_rgba_u16_row<const BE: bool>(
   rgb48: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -442,9 +478,9 @@ pub(crate) unsafe fn sse41_rgb48_to_rgba_u16_row(
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = rgb48.as_ptr().add(x * 3);
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
+      let v0 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
       let (r_u16, g_u16, b_u16) = deinterleave_rgb48_8px(v0, v1, v2);
       write_rgba_u16_8(
         r_u16,
@@ -456,7 +492,7 @@ pub(crate) unsafe fn sse41_rgb48_to_rgba_u16_row(
       x += 8;
     }
     if x < width {
-      scalar::rgb48_to_rgba_u16_row(&rgb48[x * 3..], &mut rgba_out[x * 4..], width - x);
+      scalar::rgb48_to_rgba_u16_row::<BE>(&rgb48[x * 3..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
@@ -469,6 +505,7 @@ pub(crate) unsafe fn sse41_rgb48_to_rgba_u16_row(
 ///
 /// `deinterleave_rgb48_8px` yields `(B, G, R)` in source memory order;
 /// the B↔R swap is applied by passing them as `(R=ch2, G=ch1, B=ch0)`.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -477,7 +514,11 @@ pub(crate) unsafe fn sse41_rgb48_to_rgba_u16_row(
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn sse41_bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn sse41_bgr48_to_rgb_row<const BE: bool>(
+  bgr48: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(bgr48.len() >= width * 3, "bgr48 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -486,9 +527,9 @@ pub(crate) unsafe fn sse41_bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], w
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = bgr48.as_ptr().add(x * 3);
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
+      let v0 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
       // ch0=B, ch1=G, ch2=R (source BGR order)
       let (b_u16, g_u16, r_u16) = deinterleave_rgb48_8px(v0, v1, v2);
       let r_u8 = narrow_u16x8_to_u8x8(r_u16, zero);
@@ -500,13 +541,14 @@ pub(crate) unsafe fn sse41_bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], w
       x += 8;
     }
     if x < width {
-      scalar::bgr48_to_rgb_row(&bgr48[x * 3..], &mut rgb_out[x * 3..], width - x);
+      scalar::bgr48_to_rgb_row::<BE>(&bgr48[x * 3..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// SSE4.1 Bgr48 → packed u8 RGBA. 8 pixels per SIMD iteration.
 /// B↔R swap; alpha forced to 0xFF.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -515,7 +557,11 @@ pub(crate) unsafe fn sse41_bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], w
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn sse41_bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn sse41_bgr48_to_rgba_row<const BE: bool>(
+  bgr48: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(bgr48.len() >= width * 3, "bgr48 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -526,9 +572,9 @@ pub(crate) unsafe fn sse41_bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8],
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = bgr48.as_ptr().add(x * 3);
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
+      let v0 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
       let (b_u16, g_u16, r_u16) = deinterleave_rgb48_8px(v0, v1, v2);
       let r_u8 = narrow_u16x8_to_u8x8(r_u16, zero);
       let g_u8 = narrow_u16x8_to_u8x8(g_u16, zero);
@@ -539,13 +585,14 @@ pub(crate) unsafe fn sse41_bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8],
       x += 8;
     }
     if x < width {
-      scalar::bgr48_to_rgba_row(&bgr48[x * 3..], &mut rgba_out[x * 4..], width - x);
+      scalar::bgr48_to_rgba_row::<BE>(&bgr48[x * 3..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
 
 /// SSE4.1 Bgr48 → native-depth u16 RGB. 8 pixels per SIMD iteration.
 /// B↔R swap; values unchanged.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -554,7 +601,11 @@ pub(crate) unsafe fn sse41_bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8],
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn sse41_bgr48_to_rgb_u16_row(bgr48: &[u16], rgb_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn sse41_bgr48_to_rgb_u16_row<const BE: bool>(
+  bgr48: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(bgr48.len() >= width * 3, "bgr48 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -562,22 +613,23 @@ pub(crate) unsafe fn sse41_bgr48_to_rgb_u16_row(bgr48: &[u16], rgb_out: &mut [u1
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = bgr48.as_ptr().add(x * 3);
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
+      let v0 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
       let (b_u16, g_u16, r_u16) = deinterleave_rgb48_8px(v0, v1, v2);
       // Store as R, G, B (swap applied by argument order)
       write_rgb_u16_8(r_u16, g_u16, b_u16, rgb_out.as_mut_ptr().add(x * 3));
       x += 8;
     }
     if x < width {
-      scalar::bgr48_to_rgb_u16_row(&bgr48[x * 3..], &mut rgb_out[x * 3..], width - x);
+      scalar::bgr48_to_rgb_u16_row::<BE>(&bgr48[x * 3..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// SSE4.1 Bgr48 → native-depth u16 RGBA. 8 pixels per SIMD iteration.
 /// B↔R swap; alpha forced to 0xFFFF.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -586,7 +638,7 @@ pub(crate) unsafe fn sse41_bgr48_to_rgb_u16_row(bgr48: &[u16], rgb_out: &mut [u1
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn sse41_bgr48_to_rgba_u16_row(
+pub(crate) unsafe fn sse41_bgr48_to_rgba_u16_row<const BE: bool>(
   bgr48: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -599,9 +651,9 @@ pub(crate) unsafe fn sse41_bgr48_to_rgba_u16_row(
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = bgr48.as_ptr().add(x * 3);
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
+      let v0 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
       let (b_u16, g_u16, r_u16) = deinterleave_rgb48_8px(v0, v1, v2);
       write_rgba_u16_8(
         r_u16,
@@ -613,7 +665,7 @@ pub(crate) unsafe fn sse41_bgr48_to_rgba_u16_row(
       x += 8;
     }
     if x < width {
-      scalar::bgr48_to_rgba_u16_row(&bgr48[x * 3..], &mut rgba_out[x * 4..], width - x);
+      scalar::bgr48_to_rgba_u16_row::<BE>(&bgr48[x * 3..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
@@ -624,6 +676,8 @@ pub(crate) unsafe fn sse41_bgr48_to_rgba_u16_row(
 
 /// SSE4.1 Rgba64 → packed u8 RGB. 8 pixels per SIMD iteration. Alpha discarded.
 ///
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
+///
 /// # Safety
 ///
 /// 1. SSE4.1 must be available.
@@ -631,7 +685,11 @@ pub(crate) unsafe fn sse41_bgr48_to_rgba_u16_row(
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn sse41_rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn sse41_rgba64_to_rgb_row<const BE: bool>(
+  rgba64: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgba64.len() >= width * 4, "rgba64 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -640,10 +698,10 @@ pub(crate) unsafe fn sse41_rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8],
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = rgba64.as_ptr().add(x * 4);
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
-      let v3 = _mm_loadu_si128(ptr.add(24).cast());
+      let v0 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
+      let v3 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(24).cast()));
       let (r_u16, g_u16, b_u16, _a) = deinterleave_rgba64_8px(v0, v1, v2, v3);
       let r_u8 = narrow_u16x8_to_u8x8(r_u16, zero);
       let g_u8 = narrow_u16x8_to_u8x8(g_u16, zero);
@@ -654,7 +712,7 @@ pub(crate) unsafe fn sse41_rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8],
       x += 8;
     }
     if x < width {
-      scalar::rgba64_to_rgb_row(&rgba64[x * 4..], &mut rgb_out[x * 3..], width - x);
+      scalar::rgba64_to_rgb_row::<BE>(&rgba64[x * 4..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
@@ -662,6 +720,7 @@ pub(crate) unsafe fn sse41_rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8],
 /// SSE4.1 Rgba64 → packed u8 RGBA. 8 pixels per SIMD iteration. Source alpha passes through.
 ///
 /// All 4 channels narrowed via `>> 8`.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -670,7 +729,11 @@ pub(crate) unsafe fn sse41_rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8],
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn sse41_rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn sse41_rgba64_to_rgba_row<const BE: bool>(
+  rgba64: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgba64.len() >= width * 4, "rgba64 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -679,10 +742,10 @@ pub(crate) unsafe fn sse41_rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = rgba64.as_ptr().add(x * 4);
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
-      let v3 = _mm_loadu_si128(ptr.add(24).cast());
+      let v0 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
+      let v3 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(24).cast()));
       let (r_u16, g_u16, b_u16, a_u16) = deinterleave_rgba64_8px(v0, v1, v2, v3);
       let r_u8 = narrow_u16x8_to_u8x8(r_u16, zero);
       let g_u8 = narrow_u16x8_to_u8x8(g_u16, zero);
@@ -694,12 +757,14 @@ pub(crate) unsafe fn sse41_rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8
       x += 8;
     }
     if x < width {
-      scalar::rgba64_to_rgba_row(&rgba64[x * 4..], &mut rgba_out[x * 4..], width - x);
+      scalar::rgba64_to_rgba_row::<BE>(&rgba64[x * 4..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
 
 /// SSE4.1 Rgba64 → native-depth u16 RGB. 8 pixels per SIMD iteration. Alpha discarded.
+///
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -708,7 +773,7 @@ pub(crate) unsafe fn sse41_rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn sse41_rgba64_to_rgb_u16_row(
+pub(crate) unsafe fn sse41_rgba64_to_rgb_u16_row<const BE: bool>(
   rgba64: &[u16],
   rgb_out: &mut [u16],
   width: usize,
@@ -720,16 +785,16 @@ pub(crate) unsafe fn sse41_rgba64_to_rgb_u16_row(
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = rgba64.as_ptr().add(x * 4);
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
-      let v3 = _mm_loadu_si128(ptr.add(24).cast());
+      let v0 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
+      let v3 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(24).cast()));
       let (r_u16, g_u16, b_u16, _a) = deinterleave_rgba64_8px(v0, v1, v2, v3);
       write_rgb_u16_8(r_u16, g_u16, b_u16, rgb_out.as_mut_ptr().add(x * 3));
       x += 8;
     }
     if x < width {
-      scalar::rgba64_to_rgb_u16_row(&rgba64[x * 4..], &mut rgb_out[x * 3..], width - x);
+      scalar::rgba64_to_rgb_u16_row::<BE>(&rgba64[x * 4..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
@@ -737,6 +802,7 @@ pub(crate) unsafe fn sse41_rgba64_to_rgb_u16_row(
 /// SSE4.1 Rgba64 → native-depth u16 RGBA (identity copy). 8 pixels per iteration.
 ///
 /// All 4 channels passed through at native depth; source alpha preserved.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -745,7 +811,7 @@ pub(crate) unsafe fn sse41_rgba64_to_rgb_u16_row(
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn sse41_rgba64_to_rgba_u16_row(
+pub(crate) unsafe fn sse41_rgba64_to_rgba_u16_row<const BE: bool>(
   rgba64: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -757,16 +823,16 @@ pub(crate) unsafe fn sse41_rgba64_to_rgba_u16_row(
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = rgba64.as_ptr().add(x * 4);
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
-      let v3 = _mm_loadu_si128(ptr.add(24).cast());
+      let v0 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
+      let v3 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(24).cast()));
       let (r_u16, g_u16, b_u16, a_u16) = deinterleave_rgba64_8px(v0, v1, v2, v3);
       write_rgba_u16_8(r_u16, g_u16, b_u16, a_u16, rgba_out.as_mut_ptr().add(x * 4));
       x += 8;
     }
     if x < width {
-      scalar::rgba64_to_rgba_u16_row(&rgba64[x * 4..], &mut rgba_out[x * 4..], width - x);
+      scalar::rgba64_to_rgba_u16_row::<BE>(&rgba64[x * 4..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
@@ -779,6 +845,7 @@ pub(crate) unsafe fn sse41_rgba64_to_rgba_u16_row(
 /// B↔R swap; alpha discarded.
 ///
 /// `deinterleave_rgba64_8px` yields `(B, G, R, A)` in source memory order.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -787,7 +854,11 @@ pub(crate) unsafe fn sse41_rgba64_to_rgba_u16_row(
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn sse41_bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn sse41_bgra64_to_rgb_row<const BE: bool>(
+  bgra64: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(bgra64.len() >= width * 4, "bgra64 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -796,10 +867,10 @@ pub(crate) unsafe fn sse41_bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8],
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = bgra64.as_ptr().add(x * 4);
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
-      let v3 = _mm_loadu_si128(ptr.add(24).cast());
+      let v0 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
+      let v3 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(24).cast()));
       // ch0=B, ch1=G, ch2=R, ch3=A (source BGRA order)
       let (b_u16, g_u16, r_u16, _a) = deinterleave_rgba64_8px(v0, v1, v2, v3);
       let r_u8 = narrow_u16x8_to_u8x8(r_u16, zero);
@@ -811,13 +882,14 @@ pub(crate) unsafe fn sse41_bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8],
       x += 8;
     }
     if x < width {
-      scalar::bgra64_to_rgb_row(&bgra64[x * 4..], &mut rgb_out[x * 3..], width - x);
+      scalar::bgra64_to_rgb_row::<BE>(&bgra64[x * 4..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// SSE4.1 Bgra64 → packed u8 RGBA. 8 pixels per SIMD iteration.
 /// B↔R swap; source alpha passes through (narrowed via `>> 8`).
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -826,7 +898,11 @@ pub(crate) unsafe fn sse41_bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8],
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn sse41_bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn sse41_bgra64_to_rgba_row<const BE: bool>(
+  bgra64: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(bgra64.len() >= width * 4, "bgra64 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -835,10 +911,10 @@ pub(crate) unsafe fn sse41_bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = bgra64.as_ptr().add(x * 4);
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
-      let v3 = _mm_loadu_si128(ptr.add(24).cast());
+      let v0 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
+      let v3 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(24).cast()));
       let (b_u16, g_u16, r_u16, a_u16) = deinterleave_rgba64_8px(v0, v1, v2, v3);
       let r_u8 = narrow_u16x8_to_u8x8(r_u16, zero);
       let g_u8 = narrow_u16x8_to_u8x8(g_u16, zero);
@@ -850,13 +926,14 @@ pub(crate) unsafe fn sse41_bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8
       x += 8;
     }
     if x < width {
-      scalar::bgra64_to_rgba_row(&bgra64[x * 4..], &mut rgba_out[x * 4..], width - x);
+      scalar::bgra64_to_rgba_row::<BE>(&bgra64[x * 4..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
 
 /// SSE4.1 Bgra64 → native-depth u16 RGB. 8 pixels per SIMD iteration.
 /// B↔R swap; alpha discarded.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -865,7 +942,7 @@ pub(crate) unsafe fn sse41_bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn sse41_bgra64_to_rgb_u16_row(
+pub(crate) unsafe fn sse41_bgra64_to_rgb_u16_row<const BE: bool>(
   bgra64: &[u16],
   rgb_out: &mut [u16],
   width: usize,
@@ -877,23 +954,24 @@ pub(crate) unsafe fn sse41_bgra64_to_rgb_u16_row(
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = bgra64.as_ptr().add(x * 4);
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
-      let v3 = _mm_loadu_si128(ptr.add(24).cast());
+      let v0 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
+      let v3 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(24).cast()));
       let (b_u16, g_u16, r_u16, _a) = deinterleave_rgba64_8px(v0, v1, v2, v3);
       // Swap B↔R: store (R, G, B)
       write_rgb_u16_8(r_u16, g_u16, b_u16, rgb_out.as_mut_ptr().add(x * 3));
       x += 8;
     }
     if x < width {
-      scalar::bgra64_to_rgb_u16_row(&bgra64[x * 4..], &mut rgb_out[x * 3..], width - x);
+      scalar::bgra64_to_rgb_u16_row::<BE>(&bgra64[x * 4..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// SSE4.1 Bgra64 → native-depth u16 RGBA. 8 pixels per SIMD iteration.
 /// B↔R swap; source alpha preserved at position 3.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -902,7 +980,7 @@ pub(crate) unsafe fn sse41_bgra64_to_rgb_u16_row(
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn sse41_bgra64_to_rgba_u16_row(
+pub(crate) unsafe fn sse41_bgra64_to_rgba_u16_row<const BE: bool>(
   bgra64: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -914,17 +992,17 @@ pub(crate) unsafe fn sse41_bgra64_to_rgba_u16_row(
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = bgra64.as_ptr().add(x * 4);
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
-      let v3 = _mm_loadu_si128(ptr.add(24).cast());
+      let v0 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
+      let v3 = byteswap_if_be::<BE>(_mm_loadu_si128(ptr.add(24).cast()));
       // Swap B↔R: store (R=ch2, G=ch1, B=ch0, A=ch3)
       let (b_u16, g_u16, r_u16, a_u16) = deinterleave_rgba64_8px(v0, v1, v2, v3);
       write_rgba_u16_8(r_u16, g_u16, b_u16, a_u16, rgba_out.as_mut_ptr().add(x * 4));
       x += 8;
     }
     if x < width {
-      scalar::bgra64_to_rgba_u16_row(&bgra64[x * 4..], &mut rgba_out[x * 4..], width - x);
+      scalar::bgra64_to_rgba_u16_row::<BE>(&bgra64[x * 4..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
