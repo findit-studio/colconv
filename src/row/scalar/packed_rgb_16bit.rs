@@ -17,9 +17,6 @@
 //!
 //! - u16 → u8: `(v >> 8) as u8` (high-byte extraction, matching Y216 / Ship 11d).
 //! - u16 → u16: identity copy (no scaling).
-// Kernels are wired into the dispatcher (Task 9) and sinker (Task 10) in later
-// commits — suppress dead_code until then.
-#![allow(dead_code)]
 
 // ---- Rgb48 family (3 u16 elements per pixel: R, G, B) ----------------------
 
