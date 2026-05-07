@@ -41,6 +41,7 @@ pub(crate) mod alpha_extract;
 mod ayuv64;
 mod gray;
 mod hsv;
+pub(crate) mod legacy_rgb;
 pub(crate) mod mono1bit;
 mod packed_rgb;
 mod packed_rgb_float;

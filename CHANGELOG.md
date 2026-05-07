@@ -20,6 +20,30 @@ is also zero-extended (0x00FF), consistent with a `0xFF` u8 alpha zero-extended 
 u16. Callers mixing Monoblack/Monowhite with other 8-bit sources will see consistent
 white luma (255) across all formats in u16 outputs.
 
+## Unreleased — Tier 7 — Legacy low-bit packed RGB source formats
+
+Closes Tier 7. Six new source-side pixel formats covering FFmpeg's legacy
+16-bits-per-pixel packed RGB family:
+
+- **Rgb565** (`AV_PIX_FMT_RGB565LE`) — R5 G6 B5 packed in u16
+- **Bgr565** (`AV_PIX_FMT_BGR565LE`) — B5 G6 R5 packed in u16
+- **Rgb555** (`AV_PIX_FMT_RGB555LE`) — 1 padding bit + R5 G5 B5
+- **Bgr555** (`AV_PIX_FMT_BGR555LE`) — 1 padding bit + B5 G5 R5
+- **Rgb444** (`AV_PIX_FMT_RGB444LE`) — 4 padding bits + R4 G4 B4
+- **Bgr444** (`AV_PIX_FMT_BGR444LE`) — 4 padding bits + B4 G4 R4
+
+Each format exposes 7 sinker accessors. Channel expansion via bit-replication
+(5-bit: `(c << 3) | (c >> 2)`; 6-bit: `(c << 2) | (c >> 4)`; 4-bit: `(c << 4) | c`)
+preserves 0→0 and max→255 mapping. Native SIMD across all 5 backends
+(NEON 8 px/iter, SSE4.1 8 px/iter, AVX2 16 px/iter, AVX-512 32 px/iter,
+wasm-simd128 8 px/iter) — bit-shift + mask + replicate pattern translates
+directly across architectures. ~223 new tests: 36 frame validation, 24 scalar
+correctness, 24 NEON / 24 SSE4.1 / 24 AVX2 / 24 AVX-512 / 24 wasm parity tests
+(SIMD tests gated by appropriate feature detection / arch cfg), plus 43
+sinker integration tests with SIMD-vs-scalar parity, alpha-forcing semantics,
+buffer-too-short error paths, and channel-order verification.
+
+
 ## Unreleased — Tier 13 — Pal8 (palette) source format
 
 Closes Tier 13. New source-side pixel format `Pal8` (`AV_PIX_FMT_PAL8`):

@@ -2,6 +2,7 @@ use super::*;
 
 mod bayer;
 mod grayf32;
+mod legacy_rgb;
 mod mono1bit;
 mod packed_rgb_10bit;
 mod packed_rgb_8bit;

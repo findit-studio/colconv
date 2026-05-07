@@ -76,9 +76,9 @@ pub(crate) use dispatch::vuya::vuya_to_luma_u16_row;
 pub(crate) use dispatch::vuyx::vuyx_to_luma_u16_row;
 
 pub use dispatch::{
-  ayuv64::*, bayer::*, nv::*, packed_yuv422::*, pal8::*, planar_gbr::*, planar_gbr_high_bit::*,
-  pn::*, rgb_f16_ops::*, rgb_float_ops::*, rgb_ops::*, v30x::*, v210::*, v410::*, vuya::*, vuyx::*,
-  xv36::*, y210::*, y212::*, y216::*, yuv420::*, yuv444::*, yuva::*,
+  ayuv64::*, bayer::*, legacy_rgb::*, nv::*, packed_yuv422::*, pal8::*, planar_gbr::*,
+  planar_gbr_high_bit::*, pn::*, rgb_f16_ops::*, rgb_float_ops::*, rgb_ops::*, v30x::*, v210::*,
+  v410::*, vuya::*, vuyx::*, xv36::*, y210::*, y212::*, y216::*, yuv420::*, yuv444::*, yuva::*,
 };
 // Mono1bit dispatchers — pub(crate) so sinker code can reach them via
 // `crate::row::monoblack_to_*` / `crate::row::monowhite_to_*` without
