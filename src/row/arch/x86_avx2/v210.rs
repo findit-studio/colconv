@@ -34,7 +34,7 @@
 
 use core::arch::x86_64::*;
 
-use super::*;
+use super::{endian::load_endian_u32x8, *};
 use crate::{ColorMatrix, row::scalar};
 
 /// Unpacks two consecutive 16-byte v210 words (= 12 pixels) into
@@ -63,11 +63,11 @@ use crate::{ColorMatrix, row::scalar};
 /// `target_feature` includes AVX2 (which implies AVX, SSSE3, etc.).
 #[inline]
 #[target_feature(enable = "avx2")]
-unsafe fn unpack_v210_2words_avx2(ptr: *const u8) -> (__m256i, __m256i, __m256i) {
+unsafe fn unpack_v210_2words_avx2<const BE: bool>(ptr: *const u8) -> (__m256i, __m256i, __m256i) {
   // SAFETY: caller obligation — `ptr` has 32 bytes readable; AVX2
   // (and thus SSSE3) is available.
   unsafe {
-    let words = _mm256_loadu_si256(ptr.cast());
+    let words = load_endian_u32x8::<BE>(ptr);
     let mask10 = _mm256_set1_epi32(0x3FF);
     let low10 = _mm256_and_si256(words, mask10);
     let mid10 = _mm256_and_si256(_mm256_srli_epi32::<10>(words), mask10);
@@ -224,7 +224,7 @@ unsafe fn unpack_v210_2words_avx2(ptr: *const u8) -> (__m256i, __m256i, __m256i)
 /// 4. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn v210_to_rgb_or_rgba_row<const ALPHA: bool>(
+pub(crate) unsafe fn v210_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   packed: &[u8],
   out: &mut [u8],
   width: usize,
@@ -263,7 +263,7 @@ pub(crate) unsafe fn v210_to_rgb_or_rgba_row<const ALPHA: bool>(
     // Main loop: 12 pixels (2 v210 words = 32 bytes) per iteration.
     let pairs = words / 2;
     for p in 0..pairs {
-      let (y_vec, u_vec, v_vec) = unpack_v210_2words_avx2(packed.as_ptr().add(p * 32));
+      let (y_vec, u_vec, v_vec) = unpack_v210_2words_avx2::<BE>(packed.as_ptr().add(p * 32));
 
       let y_i16 = y_vec;
 
@@ -369,7 +369,13 @@ pub(crate) unsafe fn v210_to_rgb_or_rgba_row<const ALPHA: bool>(
       let tail_packed = &packed[pairs * 32..total_words * 16];
       let tail_out = &mut out[tail_start_px * bpp..width * bpp];
       let tail_w = width - tail_start_px;
-      scalar::v210_to_rgb_or_rgba_row::<ALPHA>(tail_packed, tail_out, tail_w, matrix, full_range);
+      scalar::v210_to_rgb_or_rgba_row::<ALPHA, BE>(
+        tail_packed,
+        tail_out,
+        tail_w,
+        matrix,
+        full_range,
+      );
     }
   }
 }
@@ -386,7 +392,7 @@ pub(crate) unsafe fn v210_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// 4. `out.len() >= width * (if ALPHA { 4 } else { 3 })` (`u16` elements).
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn v210_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
+pub(crate) unsafe fn v210_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   packed: &[u8],
   out: &mut [u16],
   width: usize,
@@ -424,7 +430,7 @@ pub(crate) unsafe fn v210_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 
     let pairs = words / 2;
     for p in 0..pairs {
-      let (y_vec, u_vec, v_vec) = unpack_v210_2words_avx2(packed.as_ptr().add(p * 32));
+      let (y_vec, u_vec, v_vec) = unpack_v210_2words_avx2::<BE>(packed.as_ptr().add(p * 32));
 
       let y_i16 = y_vec;
       let u_i16 = _mm256_sub_epi16(u_vec, bias_v);
@@ -503,7 +509,7 @@ pub(crate) unsafe fn v210_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
       let tail_packed = &packed[pairs * 32..total_words * 16];
       let tail_out = &mut out[tail_start_px * bpp..width * bpp];
       let tail_w = width - tail_start_px;
-      scalar::v210_to_rgb_u16_or_rgba_u16_row::<ALPHA>(
+      scalar::v210_to_rgb_u16_or_rgba_u16_row::<ALPHA, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -526,7 +532,11 @@ pub(crate) unsafe fn v210_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 /// 4. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn v210_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn v210_to_luma_row<const BE: bool>(
+  packed: &[u8],
+  luma_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(width.is_multiple_of(2), "v210 requires even width");
   let total_words = width.div_ceil(6);
   let words = width / 6;
@@ -537,7 +547,7 @@ pub(crate) unsafe fn v210_to_luma_row(packed: &[u8], luma_out: &mut [u8], width:
   unsafe {
     let pairs = words / 2;
     for p in 0..pairs {
-      let (y_vec, _, _) = unpack_v210_2words_avx2(packed.as_ptr().add(p * 32));
+      let (y_vec, _, _) = unpack_v210_2words_avx2::<BE>(packed.as_ptr().add(p * 32));
       // Downshift 10-bit Y by 2 → 8-bit, narrow to u8x32 via packus.
       let y_shr = _mm256_srli_epi16::<2>(y_vec);
       let y_u8 = narrow_u8x32(y_shr, _mm256_setzero_si256());
@@ -554,7 +564,7 @@ pub(crate) unsafe fn v210_to_luma_row(packed: &[u8], luma_out: &mut [u8], width:
       let tail_packed = &packed[pairs * 32..total_words * 16];
       let tail_out = &mut luma_out[tail_start_px..width];
       let tail_w = width - tail_start_px;
-      scalar::v210_to_luma_row(tail_packed, tail_out, tail_w);
+      scalar::v210_to_luma_row::<BE>(tail_packed, tail_out, tail_w);
     }
   }
 }
@@ -571,7 +581,11 @@ pub(crate) unsafe fn v210_to_luma_row(packed: &[u8], luma_out: &mut [u8], width:
 /// 4. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn v210_to_luma_u16_row(packed: &[u8], luma_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn v210_to_luma_u16_row<const BE: bool>(
+  packed: &[u8],
+  luma_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(width.is_multiple_of(2), "v210 requires even width");
   let total_words = width.div_ceil(6);
   let words = width / 6;
@@ -582,7 +596,7 @@ pub(crate) unsafe fn v210_to_luma_u16_row(packed: &[u8], luma_out: &mut [u16], w
   unsafe {
     let pairs = words / 2;
     for p in 0..pairs {
-      let (y_vec, _, _) = unpack_v210_2words_avx2(packed.as_ptr().add(p * 32));
+      let (y_vec, _, _) = unpack_v210_2words_avx2::<BE>(packed.as_ptr().add(p * 32));
       // Store first 12 of the 16 u16 lanes via stack buffer + copy_from_slice.
       let mut tmp = [0u16; 16];
       _mm256_storeu_si256(tmp.as_mut_ptr().cast(), y_vec);
@@ -596,7 +610,7 @@ pub(crate) unsafe fn v210_to_luma_u16_row(packed: &[u8], luma_out: &mut [u16], w
       let tail_packed = &packed[pairs * 32..total_words * 16];
       let tail_out = &mut luma_out[tail_start_px..width];
       let tail_w = width - tail_start_px;
-      scalar::v210_to_luma_u16_row(tail_packed, tail_out, tail_w);
+      scalar::v210_to_luma_u16_row::<BE>(tail_packed, tail_out, tail_w);
     }
   }
 }

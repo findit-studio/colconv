@@ -40,7 +40,7 @@
 
 use core::arch::x86_64::*;
 
-use super::*;
+use super::{endian::load_endian_u32x16, *};
 use crate::{ColorMatrix, row::scalar};
 
 // ---- Static permute index tables --------------------------------------
@@ -187,11 +187,11 @@ static V_FROM_MID: [i16; 32] = [
 /// `permutexvar` op `vpermw`).
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-unsafe fn unpack_v210_4words_avx512(ptr: *const u8) -> (__m512i, __m512i, __m512i) {
+unsafe fn unpack_v210_4words_avx512<const BE: bool>(ptr: *const u8) -> (__m512i, __m512i, __m512i) {
   // SAFETY: caller obligation — `ptr` has 64 bytes readable; AVX-512F
   // + AVX-512BW are available.
   unsafe {
-    let words = _mm512_loadu_si512(ptr.cast());
+    let words = load_endian_u32x16::<BE>(ptr);
     let mask10 = _mm512_set1_epi32(0x3FF);
     let low10 = _mm512_and_si512(words, mask10);
     let mid10 = _mm512_and_si512(_mm512_srli_epi32::<10>(words), mask10);
@@ -247,7 +247,7 @@ unsafe fn unpack_v210_4words_avx512(ptr: *const u8) -> (__m512i, __m512i, __m512
 /// 4. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn v210_to_rgb_or_rgba_row<const ALPHA: bool>(
+pub(crate) unsafe fn v210_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   packed: &[u8],
   out: &mut [u8],
   width: usize,
@@ -290,7 +290,7 @@ pub(crate) unsafe fn v210_to_rgb_or_rgba_row<const ALPHA: bool>(
     // Main loop: 24 pixels (4 v210 words = 64 bytes) per iteration.
     let quads = words / 4;
     for q in 0..quads {
-      let (y_vec, u_vec, v_vec) = unpack_v210_4words_avx512(packed.as_ptr().add(q * 64));
+      let (y_vec, u_vec, v_vec) = unpack_v210_4words_avx512::<BE>(packed.as_ptr().add(q * 64));
 
       let y_i16 = y_vec;
 
@@ -392,7 +392,13 @@ pub(crate) unsafe fn v210_to_rgb_or_rgba_row<const ALPHA: bool>(
       let tail_packed = &packed[quads * 64..total_words * 16];
       let tail_out = &mut out[tail_start_px * bpp..width * bpp];
       let tail_w = width - tail_start_px;
-      scalar::v210_to_rgb_or_rgba_row::<ALPHA>(tail_packed, tail_out, tail_w, matrix, full_range);
+      scalar::v210_to_rgb_or_rgba_row::<ALPHA, BE>(
+        tail_packed,
+        tail_out,
+        tail_w,
+        matrix,
+        full_range,
+      );
     }
   }
 }
@@ -409,7 +415,7 @@ pub(crate) unsafe fn v210_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// 4. `out.len() >= width * (if ALPHA { 4 } else { 3 })` (`u16` elements).
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn v210_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
+pub(crate) unsafe fn v210_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   packed: &[u8],
   out: &mut [u16],
   width: usize,
@@ -451,7 +457,7 @@ pub(crate) unsafe fn v210_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 
     let quads = words / 4;
     for q in 0..quads {
-      let (y_vec, u_vec, v_vec) = unpack_v210_4words_avx512(packed.as_ptr().add(q * 64));
+      let (y_vec, u_vec, v_vec) = unpack_v210_4words_avx512::<BE>(packed.as_ptr().add(q * 64));
 
       let y_i16 = y_vec;
       let u_i16 = _mm512_sub_epi16(u_vec, bias_v);
@@ -529,7 +535,7 @@ pub(crate) unsafe fn v210_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
       let tail_packed = &packed[quads * 64..total_words * 16];
       let tail_out = &mut out[tail_start_px * bpp..width * bpp];
       let tail_w = width - tail_start_px;
-      scalar::v210_to_rgb_u16_or_rgba_u16_row::<ALPHA>(
+      scalar::v210_to_rgb_u16_or_rgba_u16_row::<ALPHA, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -552,7 +558,11 @@ pub(crate) unsafe fn v210_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 /// 4. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn v210_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn v210_to_luma_row<const BE: bool>(
+  packed: &[u8],
+  luma_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(width.is_multiple_of(2), "v210 requires even width");
   let total_words = width.div_ceil(6);
   let words = width / 6;
@@ -566,7 +576,7 @@ pub(crate) unsafe fn v210_to_luma_row(packed: &[u8], luma_out: &mut [u8], width:
 
     let quads = words / 4;
     for q in 0..quads {
-      let (y_vec, _, _) = unpack_v210_4words_avx512(packed.as_ptr().add(q * 64));
+      let (y_vec, _, _) = unpack_v210_4words_avx512::<BE>(packed.as_ptr().add(q * 64));
       // Downshift 10-bit Y by 2 → 8-bit, narrow to u8x64 via packus
       // (only first 32 lanes carry data, paired with a zero hi half;
       // first 24 bytes of the result are valid Y0..Y23).
@@ -585,7 +595,7 @@ pub(crate) unsafe fn v210_to_luma_row(packed: &[u8], luma_out: &mut [u8], width:
       let tail_packed = &packed[quads * 64..total_words * 16];
       let tail_out = &mut luma_out[tail_start_px..width];
       let tail_w = width - tail_start_px;
-      scalar::v210_to_luma_row(tail_packed, tail_out, tail_w);
+      scalar::v210_to_luma_row::<BE>(tail_packed, tail_out, tail_w);
     }
   }
 }
@@ -602,7 +612,11 @@ pub(crate) unsafe fn v210_to_luma_row(packed: &[u8], luma_out: &mut [u8], width:
 /// 4. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn v210_to_luma_u16_row(packed: &[u8], luma_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn v210_to_luma_u16_row<const BE: bool>(
+  packed: &[u8],
+  luma_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(width.is_multiple_of(2), "v210 requires even width");
   let total_words = width.div_ceil(6);
   let words = width / 6;
@@ -613,7 +627,7 @@ pub(crate) unsafe fn v210_to_luma_u16_row(packed: &[u8], luma_out: &mut [u16], w
   unsafe {
     let quads = words / 4;
     for q in 0..quads {
-      let (y_vec, _, _) = unpack_v210_4words_avx512(packed.as_ptr().add(q * 64));
+      let (y_vec, _, _) = unpack_v210_4words_avx512::<BE>(packed.as_ptr().add(q * 64));
       // Store first 24 of the 32 u16 lanes via stack buffer + copy_from_slice.
       let mut tmp = [0u16; 32];
       _mm512_storeu_si512(tmp.as_mut_ptr().cast(), y_vec);
@@ -627,7 +641,7 @@ pub(crate) unsafe fn v210_to_luma_u16_row(packed: &[u8], luma_out: &mut [u16], w
       let tail_packed = &packed[quads * 64..total_words * 16];
       let tail_out = &mut luma_out[tail_start_px..width];
       let tail_w = width - tail_start_px;
-      scalar::v210_to_luma_u16_row(tail_packed, tail_out, tail_w);
+      scalar::v210_to_luma_u16_row::<BE>(tail_packed, tail_out, tail_w);
     }
   }
 }

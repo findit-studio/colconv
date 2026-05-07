@@ -7,8 +7,8 @@
 //! block; `use_simd = false` forces scalar.
 //!
 //! The per-format SIMD kernels are const-generic on `ALPHA`
-//! (`v210_to_rgb_or_rgba_row::<ALPHA>` /
-//! `v210_to_rgb_u16_or_rgba_u16_row::<ALPHA>`) — the public
+//! (`v210_to_rgb_or_rgba_row::<ALPHA, BE>` /
+//! `v210_to_rgb_u16_or_rgba_u16_row::<ALPHA, BE>`) — the public
 //! dispatchers split them into RGB vs. RGBA entries by hard-wiring
 //! `ALPHA = false` / `true`.
 
@@ -31,7 +31,8 @@ use crate::{
 
 /// Converts one row of v210 to packed RGB (u8). See
 /// [`scalar::v210_to_rgb_or_rgba_row`] for byte layout / numerical
-/// contract. `use_simd = false` forces scalar.
+/// contract. `use_simd = false` forces scalar. `big_endian = true` selects
+/// the big-endian wire encoding (32-bit words stored MSB-first).
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub fn v210_to_rgb_row(
   packed: &[u8],
@@ -40,6 +41,7 @@ pub fn v210_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
   use_simd: bool,
+  big_endian: bool,
 ) {
   assert!(
     width.is_multiple_of(2),
@@ -54,36 +56,57 @@ pub fn v210_to_rgb_row(
     "rgb_out row too short"
   );
 
+  macro_rules! dispatch_be {
+    ($call_le:expr, $call_be:expr) => {
+      if big_endian { $call_be } else { $call_le }
+    };
+  }
+
   if use_simd {
     cfg_select! {
       target_arch = "aarch64" => {
         if neon_available() {
           // SAFETY: NEON verified at runtime.
-          unsafe { arch::neon::v210_to_rgb_or_rgba_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::neon::v210_to_rgb_or_rgba_row::<false, false>(packed, rgb_out, width, matrix, full_range); },
+            unsafe { arch::neon::v210_to_rgb_or_rgba_row::<false, true>(packed, rgb_out, width, matrix, full_range); }
+          );
           return;
         }
       },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512BW verified.
-          unsafe { arch::x86_avx512::v210_to_rgb_or_rgba_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::x86_avx512::v210_to_rgb_or_rgba_row::<false, false>(packed, rgb_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx512::v210_to_rgb_or_rgba_row::<false, true>(packed, rgb_out, width, matrix, full_range); }
+          );
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified.
-          unsafe { arch::x86_avx2::v210_to_rgb_or_rgba_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::x86_avx2::v210_to_rgb_or_rgba_row::<false, false>(packed, rgb_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx2::v210_to_rgb_or_rgba_row::<false, true>(packed, rgb_out, width, matrix, full_range); }
+          );
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
-          unsafe { arch::x86_sse41::v210_to_rgb_or_rgba_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::x86_sse41::v210_to_rgb_or_rgba_row::<false, false>(packed, rgb_out, width, matrix, full_range); },
+            unsafe { arch::x86_sse41::v210_to_rgb_or_rgba_row::<false, true>(packed, rgb_out, width, matrix, full_range); }
+          );
           return;
         }
       },
       target_arch = "wasm32" => {
         if simd128_available() {
           // SAFETY: simd128 compile-time verified.
-          unsafe { arch::wasm_simd128::v210_to_rgb_or_rgba_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::wasm_simd128::v210_to_rgb_or_rgba_row::<false, false>(packed, rgb_out, width, matrix, full_range); },
+            unsafe { arch::wasm_simd128::v210_to_rgb_or_rgba_row::<false, true>(packed, rgb_out, width, matrix, full_range); }
+          );
           return;
         }
       },
@@ -91,7 +114,10 @@ pub fn v210_to_rgb_row(
     }
   }
 
-  scalar::v210_to_rgb_or_rgba_row::<false>(packed, rgb_out, width, matrix, full_range);
+  dispatch_be!(
+    scalar::v210_to_rgb_or_rgba_row::<false, false>(packed, rgb_out, width, matrix, full_range),
+    scalar::v210_to_rgb_or_rgba_row::<false, true>(packed, rgb_out, width, matrix, full_range)
+  );
 }
 
 /// Converts one row of v210 to packed RGBA (u8) with `α = 0xFF`.
@@ -103,6 +129,7 @@ pub fn v210_to_rgba_row(
   matrix: ColorMatrix,
   full_range: bool,
   use_simd: bool,
+  big_endian: bool,
 ) {
   assert!(
     width.is_multiple_of(2),
@@ -117,36 +144,57 @@ pub fn v210_to_rgba_row(
     "rgba_out row too short"
   );
 
+  macro_rules! dispatch_be {
+    ($call_le:expr, $call_be:expr) => {
+      if big_endian { $call_be } else { $call_le }
+    };
+  }
+
   if use_simd {
     cfg_select! {
       target_arch = "aarch64" => {
         if neon_available() {
           // SAFETY: NEON verified.
-          unsafe { arch::neon::v210_to_rgb_or_rgba_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::neon::v210_to_rgb_or_rgba_row::<true, false>(packed, rgba_out, width, matrix, full_range); },
+            unsafe { arch::neon::v210_to_rgb_or_rgba_row::<true, true>(packed, rgba_out, width, matrix, full_range); }
+          );
           return;
         }
       },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512BW verified.
-          unsafe { arch::x86_avx512::v210_to_rgb_or_rgba_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::x86_avx512::v210_to_rgb_or_rgba_row::<true, false>(packed, rgba_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx512::v210_to_rgb_or_rgba_row::<true, true>(packed, rgba_out, width, matrix, full_range); }
+          );
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified.
-          unsafe { arch::x86_avx2::v210_to_rgb_or_rgba_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::x86_avx2::v210_to_rgb_or_rgba_row::<true, false>(packed, rgba_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx2::v210_to_rgb_or_rgba_row::<true, true>(packed, rgba_out, width, matrix, full_range); }
+          );
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
-          unsafe { arch::x86_sse41::v210_to_rgb_or_rgba_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::x86_sse41::v210_to_rgb_or_rgba_row::<true, false>(packed, rgba_out, width, matrix, full_range); },
+            unsafe { arch::x86_sse41::v210_to_rgb_or_rgba_row::<true, true>(packed, rgba_out, width, matrix, full_range); }
+          );
           return;
         }
       },
       target_arch = "wasm32" => {
         if simd128_available() {
           // SAFETY: simd128 compile-time verified.
-          unsafe { arch::wasm_simd128::v210_to_rgb_or_rgba_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::wasm_simd128::v210_to_rgb_or_rgba_row::<true, false>(packed, rgba_out, width, matrix, full_range); },
+            unsafe { arch::wasm_simd128::v210_to_rgb_or_rgba_row::<true, true>(packed, rgba_out, width, matrix, full_range); }
+          );
           return;
         }
       },
@@ -154,7 +202,10 @@ pub fn v210_to_rgba_row(
     }
   }
 
-  scalar::v210_to_rgb_or_rgba_row::<true>(packed, rgba_out, width, matrix, full_range);
+  dispatch_be!(
+    scalar::v210_to_rgb_or_rgba_row::<true, false>(packed, rgba_out, width, matrix, full_range),
+    scalar::v210_to_rgb_or_rgba_row::<true, true>(packed, rgba_out, width, matrix, full_range)
+  );
 }
 
 /// Converts one row of v210 to packed `u16` RGB at native 10-bit
@@ -167,6 +218,7 @@ pub fn v210_to_rgb_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
   use_simd: bool,
+  big_endian: bool,
 ) {
   assert!(
     width.is_multiple_of(2),
@@ -181,36 +233,57 @@ pub fn v210_to_rgb_u16_row(
     "rgb_out row too short"
   );
 
+  macro_rules! dispatch_be {
+    ($call_le:expr, $call_be:expr) => {
+      if big_endian { $call_be } else { $call_le }
+    };
+  }
+
   if use_simd {
     cfg_select! {
       target_arch = "aarch64" => {
         if neon_available() {
           // SAFETY: NEON verified.
-          unsafe { arch::neon::v210_to_rgb_u16_or_rgba_u16_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::neon::v210_to_rgb_u16_or_rgba_u16_row::<false, false>(packed, rgb_out, width, matrix, full_range); },
+            unsafe { arch::neon::v210_to_rgb_u16_or_rgba_u16_row::<false, true>(packed, rgb_out, width, matrix, full_range); }
+          );
           return;
         }
       },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512BW verified.
-          unsafe { arch::x86_avx512::v210_to_rgb_u16_or_rgba_u16_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::x86_avx512::v210_to_rgb_u16_or_rgba_u16_row::<false, false>(packed, rgb_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx512::v210_to_rgb_u16_or_rgba_u16_row::<false, true>(packed, rgb_out, width, matrix, full_range); }
+          );
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified.
-          unsafe { arch::x86_avx2::v210_to_rgb_u16_or_rgba_u16_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::x86_avx2::v210_to_rgb_u16_or_rgba_u16_row::<false, false>(packed, rgb_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx2::v210_to_rgb_u16_or_rgba_u16_row::<false, true>(packed, rgb_out, width, matrix, full_range); }
+          );
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
-          unsafe { arch::x86_sse41::v210_to_rgb_u16_or_rgba_u16_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::x86_sse41::v210_to_rgb_u16_or_rgba_u16_row::<false, false>(packed, rgb_out, width, matrix, full_range); },
+            unsafe { arch::x86_sse41::v210_to_rgb_u16_or_rgba_u16_row::<false, true>(packed, rgb_out, width, matrix, full_range); }
+          );
           return;
         }
       },
       target_arch = "wasm32" => {
         if simd128_available() {
           // SAFETY: simd128 compile-time verified.
-          unsafe { arch::wasm_simd128::v210_to_rgb_u16_or_rgba_u16_row::<false>(packed, rgb_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::wasm_simd128::v210_to_rgb_u16_or_rgba_u16_row::<false, false>(packed, rgb_out, width, matrix, full_range); },
+            unsafe { arch::wasm_simd128::v210_to_rgb_u16_or_rgba_u16_row::<false, true>(packed, rgb_out, width, matrix, full_range); }
+          );
           return;
         }
       },
@@ -218,7 +291,14 @@ pub fn v210_to_rgb_u16_row(
     }
   }
 
-  scalar::v210_to_rgb_u16_or_rgba_u16_row::<false>(packed, rgb_out, width, matrix, full_range);
+  dispatch_be!(
+    scalar::v210_to_rgb_u16_or_rgba_u16_row::<false, false>(
+      packed, rgb_out, width, matrix, full_range
+    ),
+    scalar::v210_to_rgb_u16_or_rgba_u16_row::<false, true>(
+      packed, rgb_out, width, matrix, full_range
+    )
+  );
 }
 
 /// Converts one row of v210 to packed `u16` RGBA at native 10-bit
@@ -231,6 +311,7 @@ pub fn v210_to_rgba_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
   use_simd: bool,
+  big_endian: bool,
 ) {
   assert!(
     width.is_multiple_of(2),
@@ -245,36 +326,57 @@ pub fn v210_to_rgba_u16_row(
     "rgba_out row too short"
   );
 
+  macro_rules! dispatch_be {
+    ($call_le:expr, $call_be:expr) => {
+      if big_endian { $call_be } else { $call_le }
+    };
+  }
+
   if use_simd {
     cfg_select! {
       target_arch = "aarch64" => {
         if neon_available() {
           // SAFETY: NEON verified.
-          unsafe { arch::neon::v210_to_rgb_u16_or_rgba_u16_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::neon::v210_to_rgb_u16_or_rgba_u16_row::<true, false>(packed, rgba_out, width, matrix, full_range); },
+            unsafe { arch::neon::v210_to_rgb_u16_or_rgba_u16_row::<true, true>(packed, rgba_out, width, matrix, full_range); }
+          );
           return;
         }
       },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512BW verified.
-          unsafe { arch::x86_avx512::v210_to_rgb_u16_or_rgba_u16_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::x86_avx512::v210_to_rgb_u16_or_rgba_u16_row::<true, false>(packed, rgba_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx512::v210_to_rgb_u16_or_rgba_u16_row::<true, true>(packed, rgba_out, width, matrix, full_range); }
+          );
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified.
-          unsafe { arch::x86_avx2::v210_to_rgb_u16_or_rgba_u16_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::x86_avx2::v210_to_rgb_u16_or_rgba_u16_row::<true, false>(packed, rgba_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx2::v210_to_rgb_u16_or_rgba_u16_row::<true, true>(packed, rgba_out, width, matrix, full_range); }
+          );
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
-          unsafe { arch::x86_sse41::v210_to_rgb_u16_or_rgba_u16_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::x86_sse41::v210_to_rgb_u16_or_rgba_u16_row::<true, false>(packed, rgba_out, width, matrix, full_range); },
+            unsafe { arch::x86_sse41::v210_to_rgb_u16_or_rgba_u16_row::<true, true>(packed, rgba_out, width, matrix, full_range); }
+          );
           return;
         }
       },
       target_arch = "wasm32" => {
         if simd128_available() {
           // SAFETY: simd128 compile-time verified.
-          unsafe { arch::wasm_simd128::v210_to_rgb_u16_or_rgba_u16_row::<true>(packed, rgba_out, width, matrix, full_range); }
+          dispatch_be!(
+            unsafe { arch::wasm_simd128::v210_to_rgb_u16_or_rgba_u16_row::<true, false>(packed, rgba_out, width, matrix, full_range); },
+            unsafe { arch::wasm_simd128::v210_to_rgb_u16_or_rgba_u16_row::<true, true>(packed, rgba_out, width, matrix, full_range); }
+          );
           return;
         }
       },
@@ -282,13 +384,26 @@ pub fn v210_to_rgba_u16_row(
     }
   }
 
-  scalar::v210_to_rgb_u16_or_rgba_u16_row::<true>(packed, rgba_out, width, matrix, full_range);
+  dispatch_be!(
+    scalar::v210_to_rgb_u16_or_rgba_u16_row::<true, false>(
+      packed, rgba_out, width, matrix, full_range
+    ),
+    scalar::v210_to_rgb_u16_or_rgba_u16_row::<true, true>(
+      packed, rgba_out, width, matrix, full_range
+    )
+  );
 }
 
 /// Extracts one row of 8-bit luma from a packed v210 buffer.
 /// Y values are downshifted from 10-bit to 8-bit via `>> 2`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn v210_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize, use_simd: bool) {
+pub fn v210_to_luma_row(
+  packed: &[u8],
+  luma_out: &mut [u8],
+  width: usize,
+  use_simd: bool,
+  big_endian: bool,
+) {
   assert!(
     width.is_multiple_of(2),
     "v210 requires even width (4:2:2 chroma pair)"
@@ -299,36 +414,57 @@ pub fn v210_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize, use_si
   );
   assert!(luma_out.len() >= width, "luma_out row too short");
 
+  macro_rules! dispatch_be {
+    ($call_le:expr, $call_be:expr) => {
+      if big_endian { $call_be } else { $call_le }
+    };
+  }
+
   if use_simd {
     cfg_select! {
       target_arch = "aarch64" => {
         if neon_available() {
           // SAFETY: NEON verified.
-          unsafe { arch::neon::v210_to_luma_row(packed, luma_out, width); }
+          dispatch_be!(
+            unsafe { arch::neon::v210_to_luma_row::<false>(packed, luma_out, width); },
+            unsafe { arch::neon::v210_to_luma_row::<true>(packed, luma_out, width); }
+          );
           return;
         }
       },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512BW verified.
-          unsafe { arch::x86_avx512::v210_to_luma_row(packed, luma_out, width); }
+          dispatch_be!(
+            unsafe { arch::x86_avx512::v210_to_luma_row::<false>(packed, luma_out, width); },
+            unsafe { arch::x86_avx512::v210_to_luma_row::<true>(packed, luma_out, width); }
+          );
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified.
-          unsafe { arch::x86_avx2::v210_to_luma_row(packed, luma_out, width); }
+          dispatch_be!(
+            unsafe { arch::x86_avx2::v210_to_luma_row::<false>(packed, luma_out, width); },
+            unsafe { arch::x86_avx2::v210_to_luma_row::<true>(packed, luma_out, width); }
+          );
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
-          unsafe { arch::x86_sse41::v210_to_luma_row(packed, luma_out, width); }
+          dispatch_be!(
+            unsafe { arch::x86_sse41::v210_to_luma_row::<false>(packed, luma_out, width); },
+            unsafe { arch::x86_sse41::v210_to_luma_row::<true>(packed, luma_out, width); }
+          );
           return;
         }
       },
       target_arch = "wasm32" => {
         if simd128_available() {
           // SAFETY: simd128 compile-time verified.
-          unsafe { arch::wasm_simd128::v210_to_luma_row(packed, luma_out, width); }
+          dispatch_be!(
+            unsafe { arch::wasm_simd128::v210_to_luma_row::<false>(packed, luma_out, width); },
+            unsafe { arch::wasm_simd128::v210_to_luma_row::<true>(packed, luma_out, width); }
+          );
           return;
         }
       },
@@ -336,14 +472,23 @@ pub fn v210_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize, use_si
     }
   }
 
-  scalar::v210_to_luma_row(packed, luma_out, width);
+  dispatch_be!(
+    scalar::v210_to_luma_row::<false>(packed, luma_out, width),
+    scalar::v210_to_luma_row::<true>(packed, luma_out, width)
+  );
 }
 
 /// Extracts one row of native-depth `u16` luma from a packed v210
 /// buffer (low-bit-packed: each `u16` carries the 10-bit Y value in
 /// its low 10 bits).
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn v210_to_luma_u16_row(packed: &[u8], luma_out: &mut [u16], width: usize, use_simd: bool) {
+pub fn v210_to_luma_u16_row(
+  packed: &[u8],
+  luma_out: &mut [u16],
+  width: usize,
+  use_simd: bool,
+  big_endian: bool,
+) {
   assert!(
     width.is_multiple_of(2),
     "v210 requires even width (4:2:2 chroma pair)"
@@ -354,36 +499,57 @@ pub fn v210_to_luma_u16_row(packed: &[u8], luma_out: &mut [u16], width: usize, u
   );
   assert!(luma_out.len() >= width, "luma_out row too short");
 
+  macro_rules! dispatch_be {
+    ($call_le:expr, $call_be:expr) => {
+      if big_endian { $call_be } else { $call_le }
+    };
+  }
+
   if use_simd {
     cfg_select! {
       target_arch = "aarch64" => {
         if neon_available() {
           // SAFETY: NEON verified.
-          unsafe { arch::neon::v210_to_luma_u16_row(packed, luma_out, width); }
+          dispatch_be!(
+            unsafe { arch::neon::v210_to_luma_u16_row::<false>(packed, luma_out, width); },
+            unsafe { arch::neon::v210_to_luma_u16_row::<true>(packed, luma_out, width); }
+          );
           return;
         }
       },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512BW verified.
-          unsafe { arch::x86_avx512::v210_to_luma_u16_row(packed, luma_out, width); }
+          dispatch_be!(
+            unsafe { arch::x86_avx512::v210_to_luma_u16_row::<false>(packed, luma_out, width); },
+            unsafe { arch::x86_avx512::v210_to_luma_u16_row::<true>(packed, luma_out, width); }
+          );
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified.
-          unsafe { arch::x86_avx2::v210_to_luma_u16_row(packed, luma_out, width); }
+          dispatch_be!(
+            unsafe { arch::x86_avx2::v210_to_luma_u16_row::<false>(packed, luma_out, width); },
+            unsafe { arch::x86_avx2::v210_to_luma_u16_row::<true>(packed, luma_out, width); }
+          );
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
-          unsafe { arch::x86_sse41::v210_to_luma_u16_row(packed, luma_out, width); }
+          dispatch_be!(
+            unsafe { arch::x86_sse41::v210_to_luma_u16_row::<false>(packed, luma_out, width); },
+            unsafe { arch::x86_sse41::v210_to_luma_u16_row::<true>(packed, luma_out, width); }
+          );
           return;
         }
       },
       target_arch = "wasm32" => {
         if simd128_available() {
           // SAFETY: simd128 compile-time verified.
-          unsafe { arch::wasm_simd128::v210_to_luma_u16_row(packed, luma_out, width); }
+          dispatch_be!(
+            unsafe { arch::wasm_simd128::v210_to_luma_u16_row::<false>(packed, luma_out, width); },
+            unsafe { arch::wasm_simd128::v210_to_luma_u16_row::<true>(packed, luma_out, width); }
+          );
           return;
         }
       },
@@ -391,7 +557,10 @@ pub fn v210_to_luma_u16_row(packed: &[u8], luma_out: &mut [u16], width: usize, u
     }
   }
 
-  scalar::v210_to_luma_u16_row(packed, luma_out, width);
+  dispatch_be!(
+    scalar::v210_to_luma_u16_row::<false>(packed, luma_out, width),
+    scalar::v210_to_luma_u16_row::<true>(packed, luma_out, width)
+  );
 }
 
 #[cfg(all(test, feature = "std"))]
@@ -435,7 +604,7 @@ mod tests {
 
     // u8 RGB
     let mut rgb = [0u8; 6 * 3];
-    v210_to_rgb_row(&word, &mut rgb, 6, ColorMatrix::Bt709, true, false);
+    v210_to_rgb_row(&word, &mut rgb, 6, ColorMatrix::Bt709, true, false, false);
     for px in rgb.chunks(3) {
       assert!(px[0].abs_diff(128) <= 1);
       assert_eq!(px[0], px[1]);
@@ -444,7 +613,7 @@ mod tests {
 
     // u8 RGBA — alpha = 0xFF
     let mut rgba = [0u8; 6 * 4];
-    v210_to_rgba_row(&word, &mut rgba, 6, ColorMatrix::Bt709, true, false);
+    v210_to_rgba_row(&word, &mut rgba, 6, ColorMatrix::Bt709, true, false, false);
     for px in rgba.chunks(4) {
       assert!(px[0].abs_diff(128) <= 1);
       assert_eq!(px[3], 0xFF);
@@ -452,7 +621,15 @@ mod tests {
 
     // u16 RGB at native 10-bit depth.
     let mut rgb_u16 = [0u16; 6 * 3];
-    v210_to_rgb_u16_row(&word, &mut rgb_u16, 6, ColorMatrix::Bt709, true, false);
+    v210_to_rgb_u16_row(
+      &word,
+      &mut rgb_u16,
+      6,
+      ColorMatrix::Bt709,
+      true,
+      false,
+      false,
+    );
     for px in rgb_u16.chunks(3) {
       assert!(px[0].abs_diff(512) <= 2);
       assert_eq!(px[0], px[1]);
@@ -461,21 +638,29 @@ mod tests {
 
     // u16 RGBA — alpha = 1023.
     let mut rgba_u16 = [0u16; 6 * 4];
-    v210_to_rgba_u16_row(&word, &mut rgba_u16, 6, ColorMatrix::Bt709, true, false);
+    v210_to_rgba_u16_row(
+      &word,
+      &mut rgba_u16,
+      6,
+      ColorMatrix::Bt709,
+      true,
+      false,
+      false,
+    );
     for px in rgba_u16.chunks(4) {
       assert_eq!(px[3], 1023);
     }
 
     // u8 luma — Y=512 → 128 after `>> 2`.
     let mut luma = [0u8; 6];
-    v210_to_luma_row(&word, &mut luma, 6, false);
+    v210_to_luma_row(&word, &mut luma, 6, false, false);
     for &y in &luma {
       assert_eq!(y, (512u16 >> 2) as u8);
     }
 
     // u16 luma — low-packed 10-bit Y.
     let mut luma_u16 = [0u16; 6];
-    v210_to_luma_u16_row(&word, &mut luma_u16, 6, false);
+    v210_to_luma_u16_row(&word, &mut luma_u16, 6, false, false);
     for &y in &luma_u16 {
       assert_eq!(y, 512);
     }

@@ -177,7 +177,11 @@ unsafe fn unpack_y2xx_32px_avx512(
 /// 4. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
+pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<
+  const BITS: u32,
+  const ALPHA: bool,
+  const BE: bool,
+>(
   packed: &[u16],
   out: &mut [u8],
   width: usize,
@@ -205,132 +209,135 @@ pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: boo
   // adds are bounded by the `while x + 32 <= width` loop and the
   // caller-promised slice lengths checked above.
   unsafe {
-    let rnd_v = _mm512_set1_epi32(RND);
-    let y_off_v = _mm512_set1_epi16(y_off as i16);
-    let y_scale_v = _mm512_set1_epi32(y_scale);
-    let c_scale_v = _mm512_set1_epi32(c_scale);
-    let bias_v = _mm512_set1_epi16(bias as i16);
-    // Loop-invariant runtime shift count for `_mm512_srl_epi16` — see
-    // module-level note.
-    let shr_count = _mm_cvtsi32_si128((16 - BITS) as i32);
-    let cru = _mm512_set1_epi32(coeffs.r_u());
-    let crv = _mm512_set1_epi32(coeffs.r_v());
-    let cgu = _mm512_set1_epi32(coeffs.g_u());
-    let cgv = _mm512_set1_epi32(coeffs.g_v());
-    let cbu = _mm512_set1_epi32(coeffs.b_u());
-    let cbv = _mm512_set1_epi32(coeffs.b_v());
-
-    let pack_fixup = _mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7);
-    let dup_lo_idx = _mm512_setr_epi64(0, 1, 8, 9, 2, 3, 10, 11);
-    let dup_hi_idx = _mm512_setr_epi64(4, 5, 12, 13, 6, 7, 14, 15);
-
     let mut x = 0usize;
-    while x + 32 <= width {
-      let (y_vec, u_vec, v_vec) = unpack_y2xx_32px_avx512(packed.as_ptr().add(x * 2), shr_count);
+    if !BE {
+      let rnd_v = _mm512_set1_epi32(RND);
+      let y_off_v = _mm512_set1_epi16(y_off as i16);
+      let y_scale_v = _mm512_set1_epi32(y_scale);
+      let c_scale_v = _mm512_set1_epi32(c_scale);
+      let bias_v = _mm512_set1_epi16(bias as i16);
+      // Loop-invariant runtime shift count for `_mm512_srl_epi16` — see
+      // module-level note.
+      let shr_count = _mm_cvtsi32_si128((16 - BITS) as i32);
+      let cru = _mm512_set1_epi32(coeffs.r_u());
+      let crv = _mm512_set1_epi32(coeffs.r_v());
+      let cgu = _mm512_set1_epi32(coeffs.g_u());
+      let cgv = _mm512_set1_epi32(coeffs.g_v());
+      let cbu = _mm512_set1_epi32(coeffs.b_u());
+      let cbv = _mm512_set1_epi32(coeffs.b_v());
 
-      let y_i16 = y_vec;
+      let pack_fixup = _mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7);
+      let dup_lo_idx = _mm512_setr_epi64(0, 1, 8, 9, 2, 3, 10, 11);
+      let dup_hi_idx = _mm512_setr_epi64(4, 5, 12, 13, 6, 7, 14, 15);
 
-      // Subtract chroma bias (e.g. 512 for 10-bit) — fits i16 since
-      // each chroma sample is ≤ 2^BITS - 1 ≤ 4095. Only lanes 0..16
-      // carry valid samples; the bias subtraction on don't-care lanes
-      // is harmless since they're discarded by `chroma_dup`'s `hi32`.
-      let u_i16 = _mm512_sub_epi16(u_vec, bias_v);
-      let v_i16 = _mm512_sub_epi16(v_vec, bias_v);
+      while x + 32 <= width {
+        let (y_vec, u_vec, v_vec) = unpack_y2xx_32px_avx512(packed.as_ptr().add(x * 2), shr_count);
 
-      // Widen 16-valid-lane i16 chroma to two i32x16 halves so the
-      // Q15 multiplies don't overflow. Only lanes 0..16 of `_lo` are
-      // valid; `_hi` is entirely don't-care. We feed both halves
-      // through `chroma_i16x32` to recycle the helper exactly; the
-      // don't-care output lanes 16..32 are discarded by `chroma_dup`'s
-      // `hi32` return below (which only consumes lanes 0..16 in its
-      // `lo32` return).
-      let u_lo_i32 = _mm512_cvtepi16_epi32(_mm512_castsi512_si256(u_i16));
-      let u_hi_i32 = _mm512_cvtepi16_epi32(_mm512_extracti64x4_epi64::<1>(u_i16));
-      let v_lo_i32 = _mm512_cvtepi16_epi32(_mm512_castsi512_si256(v_i16));
-      let v_hi_i32 = _mm512_cvtepi16_epi32(_mm512_extracti64x4_epi64::<1>(v_i16));
+        let y_i16 = y_vec;
 
-      let u_d_lo = q15_shift(_mm512_add_epi32(
-        _mm512_mullo_epi32(u_lo_i32, c_scale_v),
-        rnd_v,
-      ));
-      let u_d_hi = q15_shift(_mm512_add_epi32(
-        _mm512_mullo_epi32(u_hi_i32, c_scale_v),
-        rnd_v,
-      ));
-      let v_d_lo = q15_shift(_mm512_add_epi32(
-        _mm512_mullo_epi32(v_lo_i32, c_scale_v),
-        rnd_v,
-      ));
-      let v_d_hi = q15_shift(_mm512_add_epi32(
-        _mm512_mullo_epi32(v_hi_i32, c_scale_v),
-        rnd_v,
-      ));
+        // Subtract chroma bias (e.g. 512 for 10-bit) — fits i16 since
+        // each chroma sample is ≤ 2^BITS - 1 ≤ 4095. Only lanes 0..16
+        // carry valid samples; the bias subtraction on don't-care lanes
+        // is harmless since they're discarded by `chroma_dup`'s `hi32`.
+        let u_i16 = _mm512_sub_epi16(u_vec, bias_v);
+        let v_i16 = _mm512_sub_epi16(v_vec, bias_v);
 
-      // i16x32 chroma vectors with valid data in lanes 0..16.
-      let r_chroma = chroma_i16x32(cru, crv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v, pack_fixup);
-      let g_chroma = chroma_i16x32(cgu, cgv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v, pack_fixup);
-      let b_chroma = chroma_i16x32(cbu, cbv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v, pack_fixup);
+        // Widen 16-valid-lane i16 chroma to two i32x16 halves so the
+        // Q15 multiplies don't overflow. Only lanes 0..16 of `_lo` are
+        // valid; `_hi` is entirely don't-care. We feed both halves
+        // through `chroma_i16x32` to recycle the helper exactly; the
+        // don't-care output lanes 16..32 are discarded by `chroma_dup`'s
+        // `hi32` return below (which only consumes lanes 0..16 in its
+        // `lo32` return).
+        let u_lo_i32 = _mm512_cvtepi16_epi32(_mm512_castsi512_si256(u_i16));
+        let u_hi_i32 = _mm512_cvtepi16_epi32(_mm512_extracti64x4_epi64::<1>(u_i16));
+        let v_lo_i32 = _mm512_cvtepi16_epi32(_mm512_castsi512_si256(v_i16));
+        let v_hi_i32 = _mm512_cvtepi16_epi32(_mm512_extracti64x4_epi64::<1>(v_i16));
 
-      // Each chroma sample covers 2 Y lanes (4:2:2). `chroma_dup`
-      // duplicates each of 32 chroma lanes into its pair slot,
-      // splitting across two i16x32 vectors. With 16 valid chroma in
-      // lanes 0..16, `lo32` lanes 0..32 are valid (= [c0,c0, c1,c1,
-      // ..., c15,c15]); `hi32` is don't-care.
-      let (r_dup_lo, _r_dup_hi) = chroma_dup(r_chroma, dup_lo_idx, dup_hi_idx);
-      let (g_dup_lo, _g_dup_hi) = chroma_dup(g_chroma, dup_lo_idx, dup_hi_idx);
-      let (b_dup_lo, _b_dup_hi) = chroma_dup(b_chroma, dup_lo_idx, dup_hi_idx);
+        let u_d_lo = q15_shift(_mm512_add_epi32(
+          _mm512_mullo_epi32(u_lo_i32, c_scale_v),
+          rnd_v,
+        ));
+        let u_d_hi = q15_shift(_mm512_add_epi32(
+          _mm512_mullo_epi32(u_hi_i32, c_scale_v),
+          rnd_v,
+        ));
+        let v_d_lo = q15_shift(_mm512_add_epi32(
+          _mm512_mullo_epi32(v_lo_i32, c_scale_v),
+          rnd_v,
+        ));
+        let v_d_hi = q15_shift(_mm512_add_epi32(
+          _mm512_mullo_epi32(v_hi_i32, c_scale_v),
+          rnd_v,
+        ));
 
-      // Y scale: `(Y - y_off) * y_scale + RND >> 15` → i16x32.
-      let y_scaled = scale_y(y_i16, y_off_v, y_scale_v, rnd_v, pack_fixup);
+        // i16x32 chroma vectors with valid data in lanes 0..16.
+        let r_chroma = chroma_i16x32(cru, crv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v, pack_fixup);
+        let g_chroma = chroma_i16x32(cgu, cgv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v, pack_fixup);
+        let b_chroma = chroma_i16x32(cbu, cbv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v, pack_fixup);
 
-      // Per-channel saturating add (i16x32). All 32 lanes valid.
-      let r_sum = _mm512_adds_epi16(y_scaled, r_dup_lo);
-      let g_sum = _mm512_adds_epi16(y_scaled, g_dup_lo);
-      let b_sum = _mm512_adds_epi16(y_scaled, b_dup_lo);
+        // Each chroma sample covers 2 Y lanes (4:2:2). `chroma_dup`
+        // duplicates each of 32 chroma lanes into its pair slot,
+        // splitting across two i16x32 vectors. With 16 valid chroma in
+        // lanes 0..16, `lo32` lanes 0..32 are valid (= [c0,c0, c1,c1,
+        // ..., c15,c15]); `hi32` is don't-care.
+        let (r_dup_lo, _r_dup_hi) = chroma_dup(r_chroma, dup_lo_idx, dup_hi_idx);
+        let (g_dup_lo, _g_dup_hi) = chroma_dup(g_chroma, dup_lo_idx, dup_hi_idx);
+        let (b_dup_lo, _b_dup_hi) = chroma_dup(b_chroma, dup_lo_idx, dup_hi_idx);
 
-      // u8 narrow with saturation. `narrow_u8x64(lo, zero, pack_fixup)`
-      // packs 32 i16 lanes of `lo` to u8 in the result's first 32
-      // bytes (next 32 zero, after the lane-fixup permute).
-      let zero = _mm512_setzero_si512();
-      let r_u8 = narrow_u8x64(r_sum, zero, pack_fixup);
-      let g_u8 = narrow_u8x64(g_sum, zero, pack_fixup);
-      let b_u8 = narrow_u8x64(b_sum, zero, pack_fixup);
+        // Y scale: `(Y - y_off) * y_scale + RND >> 15` → i16x32.
+        let y_scaled = scale_y(y_i16, y_off_v, y_scale_v, rnd_v, pack_fixup);
 
-      // 32-pixel store via two `write_rgb_16` / `write_rgba_16` calls
-      // (each writes 16 px = 48 / 64 bytes). `_mm512_extracti32x4_epi32`
-      // pulls the two valid 128-bit halves out of the u8x64 result.
-      if ALPHA {
-        let alpha = _mm_set1_epi8(-1);
-        let r0 = _mm512_castsi512_si128(r_u8);
-        let r1 = _mm512_extracti32x4_epi32::<1>(r_u8);
-        let g0 = _mm512_castsi512_si128(g_u8);
-        let g1 = _mm512_extracti32x4_epi32::<1>(g_u8);
-        let b0 = _mm512_castsi512_si128(b_u8);
-        let b1 = _mm512_extracti32x4_epi32::<1>(b_u8);
-        let dst = out.as_mut_ptr().add(x * 4);
-        write_rgba_16(r0, g0, b0, alpha, dst);
-        write_rgba_16(r1, g1, b1, alpha, dst.add(64));
-      } else {
-        let r0 = _mm512_castsi512_si128(r_u8);
-        let r1 = _mm512_extracti32x4_epi32::<1>(r_u8);
-        let g0 = _mm512_castsi512_si128(g_u8);
-        let g1 = _mm512_extracti32x4_epi32::<1>(g_u8);
-        let b0 = _mm512_castsi512_si128(b_u8);
-        let b1 = _mm512_extracti32x4_epi32::<1>(b_u8);
-        let dst = out.as_mut_ptr().add(x * 3);
-        write_rgb_16(r0, g0, b0, dst);
-        write_rgb_16(r1, g1, b1, dst.add(48));
+        // Per-channel saturating add (i16x32). All 32 lanes valid.
+        let r_sum = _mm512_adds_epi16(y_scaled, r_dup_lo);
+        let g_sum = _mm512_adds_epi16(y_scaled, g_dup_lo);
+        let b_sum = _mm512_adds_epi16(y_scaled, b_dup_lo);
+
+        // u8 narrow with saturation. `narrow_u8x64(lo, zero, pack_fixup)`
+        // packs 32 i16 lanes of `lo` to u8 in the result's first 32
+        // bytes (next 32 zero, after the lane-fixup permute).
+        let zero = _mm512_setzero_si512();
+        let r_u8 = narrow_u8x64(r_sum, zero, pack_fixup);
+        let g_u8 = narrow_u8x64(g_sum, zero, pack_fixup);
+        let b_u8 = narrow_u8x64(b_sum, zero, pack_fixup);
+
+        // 32-pixel store via two `write_rgb_16` / `write_rgba_16` calls
+        // (each writes 16 px = 48 / 64 bytes). `_mm512_extracti32x4_epi32`
+        // pulls the two valid 128-bit halves out of the u8x64 result.
+        if ALPHA {
+          let alpha = _mm_set1_epi8(-1);
+          let r0 = _mm512_castsi512_si128(r_u8);
+          let r1 = _mm512_extracti32x4_epi32::<1>(r_u8);
+          let g0 = _mm512_castsi512_si128(g_u8);
+          let g1 = _mm512_extracti32x4_epi32::<1>(g_u8);
+          let b0 = _mm512_castsi512_si128(b_u8);
+          let b1 = _mm512_extracti32x4_epi32::<1>(b_u8);
+          let dst = out.as_mut_ptr().add(x * 4);
+          write_rgba_16(r0, g0, b0, alpha, dst);
+          write_rgba_16(r1, g1, b1, alpha, dst.add(64));
+        } else {
+          let r0 = _mm512_castsi512_si128(r_u8);
+          let r1 = _mm512_extracti32x4_epi32::<1>(r_u8);
+          let g0 = _mm512_castsi512_si128(g_u8);
+          let g1 = _mm512_extracti32x4_epi32::<1>(g_u8);
+          let b0 = _mm512_castsi512_si128(b_u8);
+          let b1 = _mm512_extracti32x4_epi32::<1>(b_u8);
+          let dst = out.as_mut_ptr().add(x * 3);
+          write_rgb_16(r0, g0, b0, dst);
+          write_rgb_16(r1, g1, b1, dst.add(48));
+        }
+
+        x += 32;
       }
-
-      x += 32;
     }
 
     // Scalar tail — remaining < 32 pixels (always even per 4:2:2).
+    // When BE=true the full row is covered here.
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::y2xx_n_to_rgb_or_rgba_row::<BITS, ALPHA>(
+      scalar::y2xx_n_to_rgb_or_rgba_row::<BITS, ALPHA, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -357,7 +364,11 @@ pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: boo
 /// 4. `out.len() >= width * (if ALPHA { 4 } else { 3 })` (`u16` elements).
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn y2xx_n_to_rgb_u16_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
+pub(crate) unsafe fn y2xx_n_to_rgb_u16_or_rgba_u16_row<
+  const BITS: u32,
+  const ALPHA: bool,
+  const BE: bool,
+>(
   packed: &[u16],
   out: &mut [u16],
   width: usize,
@@ -383,86 +394,88 @@ pub(crate) unsafe fn y2xx_n_to_rgb_u16_or_rgba_u16_row<const BITS: u32, const AL
 
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
-    let rnd_v = _mm512_set1_epi32(RND);
-    let y_off_v = _mm512_set1_epi16(y_off as i16);
-    let y_scale_v = _mm512_set1_epi32(y_scale);
-    let c_scale_v = _mm512_set1_epi32(c_scale);
-    let bias_v = _mm512_set1_epi16(bias as i16);
-    let shr_count = _mm_cvtsi32_si128((16 - BITS) as i32);
-    let max_v = _mm512_set1_epi16(out_max);
-    let zero_v = _mm512_set1_epi16(0);
-    let cru = _mm512_set1_epi32(coeffs.r_u());
-    let crv = _mm512_set1_epi32(coeffs.r_v());
-    let cgu = _mm512_set1_epi32(coeffs.g_u());
-    let cgv = _mm512_set1_epi32(coeffs.g_v());
-    let cbu = _mm512_set1_epi32(coeffs.b_u());
-    let cbv = _mm512_set1_epi32(coeffs.b_v());
-
-    let pack_fixup = _mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7);
-    let dup_lo_idx = _mm512_setr_epi64(0, 1, 8, 9, 2, 3, 10, 11);
-    let dup_hi_idx = _mm512_setr_epi64(4, 5, 12, 13, 6, 7, 14, 15);
-
     let mut x = 0usize;
-    while x + 32 <= width {
-      let (y_vec, u_vec, v_vec) = unpack_y2xx_32px_avx512(packed.as_ptr().add(x * 2), shr_count);
+    if !BE {
+      let rnd_v = _mm512_set1_epi32(RND);
+      let y_off_v = _mm512_set1_epi16(y_off as i16);
+      let y_scale_v = _mm512_set1_epi32(y_scale);
+      let c_scale_v = _mm512_set1_epi32(c_scale);
+      let bias_v = _mm512_set1_epi16(bias as i16);
+      let shr_count = _mm_cvtsi32_si128((16 - BITS) as i32);
+      let max_v = _mm512_set1_epi16(out_max);
+      let zero_v = _mm512_set1_epi16(0);
+      let cru = _mm512_set1_epi32(coeffs.r_u());
+      let crv = _mm512_set1_epi32(coeffs.r_v());
+      let cgu = _mm512_set1_epi32(coeffs.g_u());
+      let cgv = _mm512_set1_epi32(coeffs.g_v());
+      let cbu = _mm512_set1_epi32(coeffs.b_u());
+      let cbv = _mm512_set1_epi32(coeffs.b_v());
 
-      let y_i16 = y_vec;
-      let u_i16 = _mm512_sub_epi16(u_vec, bias_v);
-      let v_i16 = _mm512_sub_epi16(v_vec, bias_v);
+      let pack_fixup = _mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7);
+      let dup_lo_idx = _mm512_setr_epi64(0, 1, 8, 9, 2, 3, 10, 11);
+      let dup_hi_idx = _mm512_setr_epi64(4, 5, 12, 13, 6, 7, 14, 15);
 
-      let u_lo_i32 = _mm512_cvtepi16_epi32(_mm512_castsi512_si256(u_i16));
-      let u_hi_i32 = _mm512_cvtepi16_epi32(_mm512_extracti64x4_epi64::<1>(u_i16));
-      let v_lo_i32 = _mm512_cvtepi16_epi32(_mm512_castsi512_si256(v_i16));
-      let v_hi_i32 = _mm512_cvtepi16_epi32(_mm512_extracti64x4_epi64::<1>(v_i16));
+      while x + 32 <= width {
+        let (y_vec, u_vec, v_vec) = unpack_y2xx_32px_avx512(packed.as_ptr().add(x * 2), shr_count);
 
-      let u_d_lo = q15_shift(_mm512_add_epi32(
-        _mm512_mullo_epi32(u_lo_i32, c_scale_v),
-        rnd_v,
-      ));
-      let u_d_hi = q15_shift(_mm512_add_epi32(
-        _mm512_mullo_epi32(u_hi_i32, c_scale_v),
-        rnd_v,
-      ));
-      let v_d_lo = q15_shift(_mm512_add_epi32(
-        _mm512_mullo_epi32(v_lo_i32, c_scale_v),
-        rnd_v,
-      ));
-      let v_d_hi = q15_shift(_mm512_add_epi32(
-        _mm512_mullo_epi32(v_hi_i32, c_scale_v),
-        rnd_v,
-      ));
+        let y_i16 = y_vec;
+        let u_i16 = _mm512_sub_epi16(u_vec, bias_v);
+        let v_i16 = _mm512_sub_epi16(v_vec, bias_v);
 
-      let r_chroma = chroma_i16x32(cru, crv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v, pack_fixup);
-      let g_chroma = chroma_i16x32(cgu, cgv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v, pack_fixup);
-      let b_chroma = chroma_i16x32(cbu, cbv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v, pack_fixup);
+        let u_lo_i32 = _mm512_cvtepi16_epi32(_mm512_castsi512_si256(u_i16));
+        let u_hi_i32 = _mm512_cvtepi16_epi32(_mm512_extracti64x4_epi64::<1>(u_i16));
+        let v_lo_i32 = _mm512_cvtepi16_epi32(_mm512_castsi512_si256(v_i16));
+        let v_hi_i32 = _mm512_cvtepi16_epi32(_mm512_extracti64x4_epi64::<1>(v_i16));
 
-      let (r_dup_lo, _r_dup_hi) = chroma_dup(r_chroma, dup_lo_idx, dup_hi_idx);
-      let (g_dup_lo, _g_dup_hi) = chroma_dup(g_chroma, dup_lo_idx, dup_hi_idx);
-      let (b_dup_lo, _b_dup_hi) = chroma_dup(b_chroma, dup_lo_idx, dup_hi_idx);
+        let u_d_lo = q15_shift(_mm512_add_epi32(
+          _mm512_mullo_epi32(u_lo_i32, c_scale_v),
+          rnd_v,
+        ));
+        let u_d_hi = q15_shift(_mm512_add_epi32(
+          _mm512_mullo_epi32(u_hi_i32, c_scale_v),
+          rnd_v,
+        ));
+        let v_d_lo = q15_shift(_mm512_add_epi32(
+          _mm512_mullo_epi32(v_lo_i32, c_scale_v),
+          rnd_v,
+        ));
+        let v_d_hi = q15_shift(_mm512_add_epi32(
+          _mm512_mullo_epi32(v_hi_i32, c_scale_v),
+          rnd_v,
+        ));
 
-      let y_scaled = scale_y(y_i16, y_off_v, y_scale_v, rnd_v, pack_fixup);
+        let r_chroma = chroma_i16x32(cru, crv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v, pack_fixup);
+        let g_chroma = chroma_i16x32(cgu, cgv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v, pack_fixup);
+        let b_chroma = chroma_i16x32(cbu, cbv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v, pack_fixup);
 
-      // Native-depth output: clamp to [0, (1 << BITS) - 1].
-      let r = clamp_u16_max_x32(_mm512_adds_epi16(y_scaled, r_dup_lo), zero_v, max_v);
-      let g = clamp_u16_max_x32(_mm512_adds_epi16(y_scaled, g_dup_lo), zero_v, max_v);
-      let b = clamp_u16_max_x32(_mm512_adds_epi16(y_scaled, b_dup_lo), zero_v, max_v);
+        let (r_dup_lo, _r_dup_hi) = chroma_dup(r_chroma, dup_lo_idx, dup_hi_idx);
+        let (g_dup_lo, _g_dup_hi) = chroma_dup(g_chroma, dup_lo_idx, dup_hi_idx);
+        let (b_dup_lo, _b_dup_hi) = chroma_dup(b_chroma, dup_lo_idx, dup_hi_idx);
 
-      // 32-pixel u16 store via the shared 32-pixel writers.
-      if ALPHA {
-        let alpha_u16 = _mm_set1_epi16(out_max);
-        write_rgba_u16_32(r, g, b, alpha_u16, out.as_mut_ptr().add(x * 4));
-      } else {
-        write_rgb_u16_32(r, g, b, out.as_mut_ptr().add(x * 3));
+        let y_scaled = scale_y(y_i16, y_off_v, y_scale_v, rnd_v, pack_fixup);
+
+        // Native-depth output: clamp to [0, (1 << BITS) - 1].
+        let r = clamp_u16_max_x32(_mm512_adds_epi16(y_scaled, r_dup_lo), zero_v, max_v);
+        let g = clamp_u16_max_x32(_mm512_adds_epi16(y_scaled, g_dup_lo), zero_v, max_v);
+        let b = clamp_u16_max_x32(_mm512_adds_epi16(y_scaled, b_dup_lo), zero_v, max_v);
+
+        // 32-pixel u16 store via the shared 32-pixel writers.
+        if ALPHA {
+          let alpha_u16 = _mm_set1_epi16(out_max);
+          write_rgba_u16_32(r, g, b, alpha_u16, out.as_mut_ptr().add(x * 4));
+        } else {
+          write_rgb_u16_32(r, g, b, out.as_mut_ptr().add(x * 3));
+        }
+
+        x += 32;
       }
-
-      x += 32;
     }
 
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::y2xx_n_to_rgb_u16_or_rgba_u16_row::<BITS, ALPHA>(
+      scalar::y2xx_n_to_rgb_u16_or_rgba_u16_row::<BITS, ALPHA, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -488,7 +501,7 @@ pub(crate) unsafe fn y2xx_n_to_rgb_u16_or_rgba_u16_row<const BITS: u32, const AL
 /// 4. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn y2xx_n_to_luma_row<const BITS: u32>(
+pub(crate) unsafe fn y2xx_n_to_luma_row<const BITS: u32, const BE: bool>(
   packed: &[u16],
   luma_out: &mut [u8],
   width: usize,
@@ -505,38 +518,40 @@ pub(crate) unsafe fn y2xx_n_to_luma_row<const BITS: u32>(
 
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
-    let pack_fixup = _mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7);
-    let zero = _mm512_setzero_si512();
-    let y_idx = _mm512_loadu_si512(Y_FROM_YUYV_IDX.as_ptr().cast());
-
     let mut x = 0usize;
-    while x + 32 <= width {
-      // Load 64 u16 = 32 pixels and pull just the Y lanes via the
-      // cross-vector u16 permute. We don't need chroma here.
-      let v0 = _mm512_loadu_si512(packed.as_ptr().add(x * 2).cast());
-      let v1 = _mm512_loadu_si512(packed.as_ptr().add(x * 2 + 32).cast());
-      let y_raw = _mm512_permutex2var_epi16(v0, y_idx, v1);
-      // `>> (16 - BITS)` then `>> (BITS - 8)` collapses to `>> 8` for
-      // any BITS ∈ {10, 12} — same single-shift simplification used
-      // by NEON / AVX2. `_mm512_srli_epi16::<8>` has a literal const
-      // count, so it works without runtime-count helper.
-      let y_shr = _mm512_srli_epi16::<8>(y_raw);
-      // Pack 32 i16 lanes to u8 — first 32 bytes valid (after pack
-      // fixup); next 32 zero from the zero-hi pack source.
-      let y_u8 = narrow_u8x64(y_shr, zero, pack_fixup);
-      // Store first 32 bytes via the low 256-bit half.
-      _mm256_storeu_si256(
-        luma_out.as_mut_ptr().add(x).cast(),
-        _mm512_castsi512_si256(y_u8),
-      );
-      x += 32;
+    if !BE {
+      let pack_fixup = _mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7);
+      let zero = _mm512_setzero_si512();
+      let y_idx = _mm512_loadu_si512(Y_FROM_YUYV_IDX.as_ptr().cast());
+
+      while x + 32 <= width {
+        // Load 64 u16 = 32 pixels and pull just the Y lanes via the
+        // cross-vector u16 permute. We don't need chroma here.
+        let v0 = _mm512_loadu_si512(packed.as_ptr().add(x * 2).cast());
+        let v1 = _mm512_loadu_si512(packed.as_ptr().add(x * 2 + 32).cast());
+        let y_raw = _mm512_permutex2var_epi16(v0, y_idx, v1);
+        // `>> (16 - BITS)` then `>> (BITS - 8)` collapses to `>> 8` for
+        // any BITS ∈ {10, 12} — same single-shift simplification used
+        // by NEON / AVX2. `_mm512_srli_epi16::<8>` has a literal const
+        // count, so it works without runtime-count helper.
+        let y_shr = _mm512_srli_epi16::<8>(y_raw);
+        // Pack 32 i16 lanes to u8 — first 32 bytes valid (after pack
+        // fixup); next 32 zero from the zero-hi pack source.
+        let y_u8 = narrow_u8x64(y_shr, zero, pack_fixup);
+        // Store first 32 bytes via the low 256-bit half.
+        _mm256_storeu_si256(
+          luma_out.as_mut_ptr().add(x).cast(),
+          _mm512_castsi512_si256(y_u8),
+        );
+        x += 32;
+      }
     }
 
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut luma_out[x..width];
       let tail_w = width - x;
-      scalar::y2xx_n_to_luma_row::<BITS>(tail_packed, tail_out, tail_w);
+      scalar::y2xx_n_to_luma_row::<BITS, BE>(tail_packed, tail_out, tail_w);
     }
   }
 }
@@ -554,7 +569,7 @@ pub(crate) unsafe fn y2xx_n_to_luma_row<const BITS: u32>(
 /// 4. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn y2xx_n_to_luma_u16_row<const BITS: u32>(
+pub(crate) unsafe fn y2xx_n_to_luma_u16_row<const BITS: u32, const BE: bool>(
   packed: &[u16],
   luma_out: &mut [u16],
   width: usize,
@@ -571,26 +586,28 @@ pub(crate) unsafe fn y2xx_n_to_luma_u16_row<const BITS: u32>(
 
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
-    let shr_count = _mm_cvtsi32_si128((16 - BITS) as i32);
-    let y_idx = _mm512_loadu_si512(Y_FROM_YUYV_IDX.as_ptr().cast());
-
     let mut x = 0usize;
-    while x + 32 <= width {
-      let v0 = _mm512_loadu_si512(packed.as_ptr().add(x * 2).cast());
-      let v1 = _mm512_loadu_si512(packed.as_ptr().add(x * 2 + 32).cast());
-      let y_raw = _mm512_permutex2var_epi16(v0, y_idx, v1);
-      // Right-shift by `(16 - BITS)` to bring MSB-aligned samples into
-      // low-bit-packed form for the native-depth u16 output.
-      let y_low = _mm512_srl_epi16(y_raw, shr_count);
-      _mm512_storeu_si512(luma_out.as_mut_ptr().add(x).cast(), y_low);
-      x += 32;
+    if !BE {
+      let shr_count = _mm_cvtsi32_si128((16 - BITS) as i32);
+      let y_idx = _mm512_loadu_si512(Y_FROM_YUYV_IDX.as_ptr().cast());
+
+      while x + 32 <= width {
+        let v0 = _mm512_loadu_si512(packed.as_ptr().add(x * 2).cast());
+        let v1 = _mm512_loadu_si512(packed.as_ptr().add(x * 2 + 32).cast());
+        let y_raw = _mm512_permutex2var_epi16(v0, y_idx, v1);
+        // Right-shift by `(16 - BITS)` to bring MSB-aligned samples into
+        // low-bit-packed form for the native-depth u16 output.
+        let y_low = _mm512_srl_epi16(y_raw, shr_count);
+        _mm512_storeu_si512(luma_out.as_mut_ptr().add(x).cast(), y_low);
+        x += 32;
+      }
     }
 
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut luma_out[x..width];
       let tail_w = width - x;
-      scalar::y2xx_n_to_luma_u16_row::<BITS>(tail_packed, tail_out, tail_w);
+      scalar::y2xx_n_to_luma_u16_row::<BITS, BE>(tail_packed, tail_out, tail_w);
     }
   }
 }

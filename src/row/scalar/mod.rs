@@ -123,6 +123,42 @@ pub(crate) use yuv_planar_high_bit::*;
 
 // ---- Shared scalar helpers (used across all conversion families) -------
 
+/// Reads one `u16` from the byte address `ptr` in the endianness
+/// indicated by `BE`. `BE = false` → little-endian (native v210/Y2xx
+/// on-wire format); `BE = true` → big-endian. The unused branch is
+/// eliminated by the compiler when the caller is monomorphized.
+///
+/// # Safety
+///
+/// `ptr` must point to at least 2 readable bytes.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(super) unsafe fn load_endian_u16<const BE: bool>(ptr: *const u8) -> u16 {
+  let bytes = unsafe { [*ptr, *ptr.add(1)] };
+  if BE {
+    u16::from_be_bytes(bytes)
+  } else {
+    u16::from_le_bytes(bytes)
+  }
+}
+
+/// Reads one `u32` from the byte address `ptr` in the endianness
+/// indicated by `BE`. `BE = false` → little-endian; `BE = true` →
+/// big-endian. The unused branch is eliminated by the compiler when
+/// the caller is monomorphized.
+///
+/// # Safety
+///
+/// `ptr` must point to at least 4 readable bytes.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(super) unsafe fn load_endian_u32<const BE: bool>(ptr: *const u8) -> u32 {
+  let bytes = unsafe { [*ptr, *ptr.add(1), *ptr.add(2), *ptr.add(3)] };
+  if BE {
+    u32::from_be_bytes(bytes)
+  } else {
+    u32::from_le_bytes(bytes)
+  }
+}
+
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn clamp_u8(v: i32) -> u8 {
   v.clamp(0, 255) as u8

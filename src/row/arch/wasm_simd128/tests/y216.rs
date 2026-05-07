@@ -15,9 +15,9 @@ fn check_rgb(width: usize, matrix: ColorMatrix, full_range: bool) {
   let p = pseudo_random_y216(width, 0xAA55);
   let mut s = std::vec![0u8; width * 3];
   let mut k = std::vec![0u8; width * 3];
-  scalar::y216_to_rgb_or_rgba_row::<false>(&p, &mut s, width, matrix, full_range);
+  scalar::y216_to_rgb_or_rgba_row::<false, false>(&p, &mut s, width, matrix, full_range);
   unsafe {
-    y216_to_rgb_or_rgba_row::<false>(&p, &mut k, width, matrix, full_range);
+    y216_to_rgb_or_rgba_row::<false, false>(&p, &mut k, width, matrix, full_range);
   }
   assert_eq!(
     s, k,
@@ -29,9 +29,9 @@ fn check_rgba(width: usize, matrix: ColorMatrix, full_range: bool) {
   let p = pseudo_random_y216(width, 0xAA55);
   let mut s = std::vec![0u8; width * 4];
   let mut k = std::vec![0u8; width * 4];
-  scalar::y216_to_rgb_or_rgba_row::<true>(&p, &mut s, width, matrix, full_range);
+  scalar::y216_to_rgb_or_rgba_row::<true, false>(&p, &mut s, width, matrix, full_range);
   unsafe {
-    y216_to_rgb_or_rgba_row::<true>(&p, &mut k, width, matrix, full_range);
+    y216_to_rgb_or_rgba_row::<true, false>(&p, &mut k, width, matrix, full_range);
   }
   assert_eq!(
     s, k,
@@ -43,9 +43,9 @@ fn check_rgb_u16(width: usize, matrix: ColorMatrix, full_range: bool) {
   let p = pseudo_random_y216(width, 0xAA55);
   let mut s = std::vec![0u16; width * 3];
   let mut k = std::vec![0u16; width * 3];
-  scalar::y216_to_rgb_u16_or_rgba_u16_row::<false>(&p, &mut s, width, matrix, full_range);
+  scalar::y216_to_rgb_u16_or_rgba_u16_row::<false, false>(&p, &mut s, width, matrix, full_range);
   unsafe {
-    y216_to_rgb_u16_or_rgba_u16_row::<false>(&p, &mut k, width, matrix, full_range);
+    y216_to_rgb_u16_or_rgba_u16_row::<false, false>(&p, &mut k, width, matrix, full_range);
   }
   assert_eq!(
     s, k,
@@ -57,9 +57,9 @@ fn check_rgba_u16(width: usize, matrix: ColorMatrix, full_range: bool) {
   let p = pseudo_random_y216(width, 0xAA55);
   let mut s = std::vec![0u16; width * 4];
   let mut k = std::vec![0u16; width * 4];
-  scalar::y216_to_rgb_u16_or_rgba_u16_row::<true>(&p, &mut s, width, matrix, full_range);
+  scalar::y216_to_rgb_u16_or_rgba_u16_row::<true, false>(&p, &mut s, width, matrix, full_range);
   unsafe {
-    y216_to_rgb_u16_or_rgba_u16_row::<true>(&p, &mut k, width, matrix, full_range);
+    y216_to_rgb_u16_or_rgba_u16_row::<true, false>(&p, &mut k, width, matrix, full_range);
   }
   assert_eq!(
     s, k,
@@ -71,9 +71,9 @@ fn check_luma(width: usize) {
   let p = pseudo_random_y216(width, 0xC001);
   let mut s = std::vec![0u8; width];
   let mut k = std::vec![0u8; width];
-  scalar::y216_to_luma_row(&p, &mut s, width);
+  scalar::y216_to_luma_row::<false>(&p, &mut s, width);
   unsafe {
-    y216_to_luma_row(&p, &mut k, width);
+    y216_to_luma_row::<false>(&p, &mut k, width);
   }
   assert_eq!(s, k, "simd128 y216→luma u8 diverges (width={width})");
 }
@@ -82,9 +82,9 @@ fn check_luma_u16(width: usize) {
   let p = pseudo_random_y216(width, 0xC001);
   let mut s = std::vec![0u16; width];
   let mut k = std::vec![0u16; width];
-  scalar::y216_to_luma_u16_row(&p, &mut s, width);
+  scalar::y216_to_luma_u16_row::<false>(&p, &mut s, width);
   unsafe {
-    y216_to_luma_u16_row(&p, &mut k, width);
+    y216_to_luma_u16_row::<false>(&p, &mut k, width);
   }
   assert_eq!(s, k, "simd128 y216→luma u16 diverges (width={width})");
 }
@@ -183,7 +183,7 @@ fn wasm_simd128_y216_lane_order_per_pixel_y_and_u() {
   // Part 1: Luma natural-order at u16
   let mut luma_u16 = std::vec![0u16; W];
   unsafe {
-    y216_to_luma_u16_row(&packed, &mut luma_u16, W);
+    y216_to_luma_u16_row::<false>(&packed, &mut luma_u16, W);
   }
   let expected_luma: std::vec::Vec<u16> = (1..=W as u16).collect();
   assert_eq!(
@@ -195,9 +195,15 @@ fn wasm_simd128_y216_lane_order_per_pixel_y_and_u() {
   let mut simd_rgb = std::vec![0u16; W * 3];
   let mut scalar_rgb = std::vec![0u16; W * 3];
   unsafe {
-    y216_to_rgb_u16_or_rgba_u16_row::<false>(&packed, &mut simd_rgb, W, ColorMatrix::Bt709, false);
+    y216_to_rgb_u16_or_rgba_u16_row::<false, false>(
+      &packed,
+      &mut simd_rgb,
+      W,
+      ColorMatrix::Bt709,
+      false,
+    );
   }
-  scalar::y216_to_rgb_u16_or_rgba_u16_row::<false>(
+  scalar::y216_to_rgb_u16_or_rgba_u16_row::<false, false>(
     &packed,
     &mut scalar_rgb,
     W,

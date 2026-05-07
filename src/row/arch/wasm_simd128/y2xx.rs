@@ -137,7 +137,11 @@ unsafe fn unpack_y2xx_8px_wasm(ptr: *const u16, shr_count: u32) -> (v128, v128, 
 /// 4. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
+pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<
+  const BITS: u32,
+  const ALPHA: bool,
+  const BE: bool,
+>(
   packed: &[u16],
   out: &mut [u8],
   width: usize,
@@ -165,112 +169,115 @@ pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: boo
   // adds are bounded by the `while x + 8 <= width` loop and the
   // caller-promised slice lengths checked above.
   unsafe {
-    let rnd_v = i32x4_splat(RND);
-    let y_off_v = i16x8_splat(y_off as i16);
-    let y_scale_v = i32x4_splat(y_scale);
-    let c_scale_v = i32x4_splat(c_scale);
-    let bias_v = i16x8_splat(bias as i16);
-    // Loop-invariant runtime shift count for `u16x8_shr`, see
-    // module-level note.
-    let shr_count: u32 = 16 - BITS;
-    let cru = i32x4_splat(coeffs.r_u());
-    let crv = i32x4_splat(coeffs.r_v());
-    let cgu = i32x4_splat(coeffs.g_u());
-    let cgv = i32x4_splat(coeffs.g_v());
-    let cbu = i32x4_splat(coeffs.b_u());
-    let cbv = i32x4_splat(coeffs.b_v());
-
     let mut x = 0usize;
-    while x + 8 <= width {
-      let (y_vec, u_vec, v_vec) = unpack_y2xx_8px_wasm(packed.as_ptr().add(x * 2), shr_count);
+    if !BE {
+      let rnd_v = i32x4_splat(RND);
+      let y_off_v = i16x8_splat(y_off as i16);
+      let y_scale_v = i32x4_splat(y_scale);
+      let c_scale_v = i32x4_splat(c_scale);
+      let bias_v = i16x8_splat(bias as i16);
+      // Loop-invariant runtime shift count for `u16x8_shr`, see
+      // module-level note.
+      let shr_count: u32 = 16 - BITS;
+      let cru = i32x4_splat(coeffs.r_u());
+      let crv = i32x4_splat(coeffs.r_v());
+      let cgu = i32x4_splat(coeffs.g_u());
+      let cgv = i32x4_splat(coeffs.g_v());
+      let cbu = i32x4_splat(coeffs.b_u());
+      let cbv = i32x4_splat(coeffs.b_v());
 
-      let y_i16 = y_vec;
+      while x + 8 <= width {
+        let (y_vec, u_vec, v_vec) = unpack_y2xx_8px_wasm(packed.as_ptr().add(x * 2), shr_count);
 
-      // Subtract chroma bias (e.g. 512 for 10-bit) — fits i16 since
-      // each chroma sample is ≤ 2^BITS - 1 ≤ 4095.
-      let u_i16 = i16x8_sub(u_vec, bias_v);
-      let v_i16 = i16x8_sub(v_vec, bias_v);
+        let y_i16 = y_vec;
 
-      // Widen 8-lane i16 chroma to two i32x4 halves so the Q15
-      // multiplies don't overflow. Only lanes 0..3 of `_lo` are
-      // valid; `_hi` is entirely don't-care. We feed both halves
-      // through `chroma_i16x8` to recycle the helper exactly; the
-      // don't-care output lanes are discarded by the [`dup_lo`]
-      // duplicate step below (which only consumes lanes 0..3).
-      let u_lo_i32 = i32x4_extend_low_i16x8(u_i16);
-      let u_hi_i32 = i32x4_extend_high_i16x8(u_i16);
-      let v_lo_i32 = i32x4_extend_low_i16x8(v_i16);
-      let v_hi_i32 = i32x4_extend_high_i16x8(v_i16);
+        // Subtract chroma bias (e.g. 512 for 10-bit) — fits i16 since
+        // each chroma sample is ≤ 2^BITS - 1 ≤ 4095.
+        let u_i16 = i16x8_sub(u_vec, bias_v);
+        let v_i16 = i16x8_sub(v_vec, bias_v);
 
-      let u_d_lo = q15_shift(i32x4_add(i32x4_mul(u_lo_i32, c_scale_v), rnd_v));
-      let u_d_hi = q15_shift(i32x4_add(i32x4_mul(u_hi_i32, c_scale_v), rnd_v));
-      let v_d_lo = q15_shift(i32x4_add(i32x4_mul(v_lo_i32, c_scale_v), rnd_v));
-      let v_d_hi = q15_shift(i32x4_add(i32x4_mul(v_hi_i32, c_scale_v), rnd_v));
+        // Widen 8-lane i16 chroma to two i32x4 halves so the Q15
+        // multiplies don't overflow. Only lanes 0..3 of `_lo` are
+        // valid; `_hi` is entirely don't-care. We feed both halves
+        // through `chroma_i16x8` to recycle the helper exactly; the
+        // don't-care output lanes are discarded by the [`dup_lo`]
+        // duplicate step below (which only consumes lanes 0..3).
+        let u_lo_i32 = i32x4_extend_low_i16x8(u_i16);
+        let u_hi_i32 = i32x4_extend_high_i16x8(u_i16);
+        let v_lo_i32 = i32x4_extend_low_i16x8(v_i16);
+        let v_hi_i32 = i32x4_extend_high_i16x8(v_i16);
 
-      // 8-lane chroma vectors with valid data in lanes 0..3.
-      let r_chroma = chroma_i16x8(cru, crv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
-      let g_chroma = chroma_i16x8(cgu, cgv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
-      let b_chroma = chroma_i16x8(cbu, cbv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
+        let u_d_lo = q15_shift(i32x4_add(i32x4_mul(u_lo_i32, c_scale_v), rnd_v));
+        let u_d_hi = q15_shift(i32x4_add(i32x4_mul(u_hi_i32, c_scale_v), rnd_v));
+        let v_d_lo = q15_shift(i32x4_add(i32x4_mul(v_lo_i32, c_scale_v), rnd_v));
+        let v_d_hi = q15_shift(i32x4_add(i32x4_mul(v_hi_i32, c_scale_v), rnd_v));
 
-      // Each chroma sample covers 2 Y lanes (4:2:2): duplicate via
-      // [`dup_lo`] so lanes 0..7 of `r_dup` align with Y0..Y7. Lane
-      // order: [c0, c0, c1, c1, c2, c2, c3, c3].
-      let r_dup = dup_lo(r_chroma);
-      let g_dup = dup_lo(g_chroma);
-      let b_dup = dup_lo(b_chroma);
+        // 8-lane chroma vectors with valid data in lanes 0..3.
+        let r_chroma = chroma_i16x8(cru, crv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
+        let g_chroma = chroma_i16x8(cgu, cgv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
+        let b_chroma = chroma_i16x8(cbu, cbv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
 
-      // Y scale: `(Y - y_off) * y_scale + RND >> 15` → i16x8.
-      let y_scaled = scale_y(y_i16, y_off_v, y_scale_v, rnd_v);
+        // Each chroma sample covers 2 Y lanes (4:2:2): duplicate via
+        // [`dup_lo`] so lanes 0..7 of `r_dup` align with Y0..Y7. Lane
+        // order: [c0, c0, c1, c1, c2, c2, c3, c3].
+        let r_dup = dup_lo(r_chroma);
+        let g_dup = dup_lo(g_chroma);
+        let b_dup = dup_lo(b_chroma);
 
-      // u8 narrow with saturation. `u8x16_narrow_i16x8(lo, hi)` emits
-      // 16 u8 lanes from 16 i16 lanes; we feed `lo == hi` so the low
-      // 8 bytes of the result hold the saturated u8 of the input
-      // i16x8. Only the first 8 bytes per channel matter.
-      let r_sum = i16x8_add_sat(y_scaled, r_dup);
-      let g_sum = i16x8_add_sat(y_scaled, g_dup);
-      let b_sum = i16x8_add_sat(y_scaled, b_dup);
-      let r_u8 = u8x16_narrow_i16x8(r_sum, r_sum);
-      let g_u8 = u8x16_narrow_i16x8(g_sum, g_sum);
-      let b_u8 = u8x16_narrow_i16x8(b_sum, b_sum);
+        // Y scale: `(Y - y_off) * y_scale + RND >> 15` → i16x8.
+        let y_scaled = scale_y(y_i16, y_off_v, y_scale_v, rnd_v);
 
-      // 8-pixel partial store: wasm-simd128's [`write_rgb_16`] /
-      // [`write_rgba_16`] emit 16-pixel output (48 / 64 bytes), so
-      // for the 8-px-iter body we use the v210-style stack-buffer +
-      // scalar interleave pattern. (8 px × 3 = 24 bytes RGB,
-      // 8 px × 4 = 32 bytes RGBA.)
-      let mut r_tmp = [0u8; 16];
-      let mut g_tmp = [0u8; 16];
-      let mut b_tmp = [0u8; 16];
-      v128_store(r_tmp.as_mut_ptr().cast(), r_u8);
-      v128_store(g_tmp.as_mut_ptr().cast(), g_u8);
-      v128_store(b_tmp.as_mut_ptr().cast(), b_u8);
+        // u8 narrow with saturation. `u8x16_narrow_i16x8(lo, hi)` emits
+        // 16 u8 lanes from 16 i16 lanes; we feed `lo == hi` so the low
+        // 8 bytes of the result hold the saturated u8 of the input
+        // i16x8. Only the first 8 bytes per channel matter.
+        let r_sum = i16x8_add_sat(y_scaled, r_dup);
+        let g_sum = i16x8_add_sat(y_scaled, g_dup);
+        let b_sum = i16x8_add_sat(y_scaled, b_dup);
+        let r_u8 = u8x16_narrow_i16x8(r_sum, r_sum);
+        let g_u8 = u8x16_narrow_i16x8(g_sum, g_sum);
+        let b_u8 = u8x16_narrow_i16x8(b_sum, b_sum);
 
-      if ALPHA {
-        let dst = &mut out[x * 4..x * 4 + 8 * 4];
-        for i in 0..8 {
-          dst[i * 4] = r_tmp[i];
-          dst[i * 4 + 1] = g_tmp[i];
-          dst[i * 4 + 2] = b_tmp[i];
-          dst[i * 4 + 3] = 0xFF;
+        // 8-pixel partial store: wasm-simd128's [`write_rgb_16`] /
+        // [`write_rgba_16`] emit 16-pixel output (48 / 64 bytes), so
+        // for the 8-px-iter body we use the v210-style stack-buffer +
+        // scalar interleave pattern. (8 px × 3 = 24 bytes RGB,
+        // 8 px × 4 = 32 bytes RGBA.)
+        let mut r_tmp = [0u8; 16];
+        let mut g_tmp = [0u8; 16];
+        let mut b_tmp = [0u8; 16];
+        v128_store(r_tmp.as_mut_ptr().cast(), r_u8);
+        v128_store(g_tmp.as_mut_ptr().cast(), g_u8);
+        v128_store(b_tmp.as_mut_ptr().cast(), b_u8);
+
+        if ALPHA {
+          let dst = &mut out[x * 4..x * 4 + 8 * 4];
+          for i in 0..8 {
+            dst[i * 4] = r_tmp[i];
+            dst[i * 4 + 1] = g_tmp[i];
+            dst[i * 4 + 2] = b_tmp[i];
+            dst[i * 4 + 3] = 0xFF;
+          }
+        } else {
+          let dst = &mut out[x * 3..x * 3 + 8 * 3];
+          for i in 0..8 {
+            dst[i * 3] = r_tmp[i];
+            dst[i * 3 + 1] = g_tmp[i];
+            dst[i * 3 + 2] = b_tmp[i];
+          }
         }
-      } else {
-        let dst = &mut out[x * 3..x * 3 + 8 * 3];
-        for i in 0..8 {
-          dst[i * 3] = r_tmp[i];
-          dst[i * 3 + 1] = g_tmp[i];
-          dst[i * 3 + 2] = b_tmp[i];
-        }
+
+        x += 8;
       }
-
-      x += 8;
     }
 
     // Scalar tail — remaining < 8 pixels (always even per 4:2:2).
+    // When BE=true the full row is covered here.
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::y2xx_n_to_rgb_or_rgba_row::<BITS, ALPHA>(
+      scalar::y2xx_n_to_rgb_or_rgba_row::<BITS, ALPHA, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -296,7 +303,11 @@ pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: boo
 /// 4. `out.len() >= width * (if ALPHA { 4 } else { 3 })` (`u16` elements).
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn y2xx_n_to_rgb_u16_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
+pub(crate) unsafe fn y2xx_n_to_rgb_u16_or_rgba_u16_row<
+  const BITS: u32,
+  const ALPHA: bool,
+  const BE: bool,
+>(
   packed: &[u16],
   out: &mut [u16],
   width: usize,
@@ -322,72 +333,76 @@ pub(crate) unsafe fn y2xx_n_to_rgb_u16_or_rgba_u16_row<const BITS: u32, const AL
 
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
-    let rnd_v = i32x4_splat(RND);
-    let y_off_v = i16x8_splat(y_off as i16);
-    let y_scale_v = i32x4_splat(y_scale);
-    let c_scale_v = i32x4_splat(c_scale);
-    let bias_v = i16x8_splat(bias as i16);
-    let shr_count: u32 = 16 - BITS;
-    let max_v = i16x8_splat(out_max);
-    let zero_v = i16x8_splat(0);
-    let cru = i32x4_splat(coeffs.r_u());
-    let crv = i32x4_splat(coeffs.r_v());
-    let cgu = i32x4_splat(coeffs.g_u());
-    let cgv = i32x4_splat(coeffs.g_v());
-    let cbu = i32x4_splat(coeffs.b_u());
-    let cbv = i32x4_splat(coeffs.b_v());
-
     let mut x = 0usize;
-    while x + 8 <= width {
-      let (y_vec, u_vec, v_vec) = unpack_y2xx_8px_wasm(packed.as_ptr().add(x * 2), shr_count);
+    if !BE {
+      let rnd_v = i32x4_splat(RND);
+      let y_off_v = i16x8_splat(y_off as i16);
+      let y_scale_v = i32x4_splat(y_scale);
+      let c_scale_v = i32x4_splat(c_scale);
+      let bias_v = i16x8_splat(bias as i16);
+      let shr_count: u32 = 16 - BITS;
+      let max_v = i16x8_splat(out_max);
+      let zero_v = i16x8_splat(0);
+      let cru = i32x4_splat(coeffs.r_u());
+      let crv = i32x4_splat(coeffs.r_v());
+      let cgu = i32x4_splat(coeffs.g_u());
+      let cgv = i32x4_splat(coeffs.g_v());
+      let cbu = i32x4_splat(coeffs.b_u());
+      let cbv = i32x4_splat(coeffs.b_v());
 
-      let y_i16 = y_vec;
-      let u_i16 = i16x8_sub(u_vec, bias_v);
-      let v_i16 = i16x8_sub(v_vec, bias_v);
+      while x + 8 <= width {
+        let (y_vec, u_vec, v_vec) = unpack_y2xx_8px_wasm(packed.as_ptr().add(x * 2), shr_count);
 
-      let u_lo_i32 = i32x4_extend_low_i16x8(u_i16);
-      let u_hi_i32 = i32x4_extend_high_i16x8(u_i16);
-      let v_lo_i32 = i32x4_extend_low_i16x8(v_i16);
-      let v_hi_i32 = i32x4_extend_high_i16x8(v_i16);
+        let y_i16 = y_vec;
+        let u_i16 = i16x8_sub(u_vec, bias_v);
+        let v_i16 = i16x8_sub(v_vec, bias_v);
 
-      let u_d_lo = q15_shift(i32x4_add(i32x4_mul(u_lo_i32, c_scale_v), rnd_v));
-      let u_d_hi = q15_shift(i32x4_add(i32x4_mul(u_hi_i32, c_scale_v), rnd_v));
-      let v_d_lo = q15_shift(i32x4_add(i32x4_mul(v_lo_i32, c_scale_v), rnd_v));
-      let v_d_hi = q15_shift(i32x4_add(i32x4_mul(v_hi_i32, c_scale_v), rnd_v));
+        let u_lo_i32 = i32x4_extend_low_i16x8(u_i16);
+        let u_hi_i32 = i32x4_extend_high_i16x8(u_i16);
+        let v_lo_i32 = i32x4_extend_low_i16x8(v_i16);
+        let v_hi_i32 = i32x4_extend_high_i16x8(v_i16);
 
-      let r_chroma = chroma_i16x8(cru, crv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
-      let g_chroma = chroma_i16x8(cgu, cgv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
-      let b_chroma = chroma_i16x8(cbu, cbv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
+        let u_d_lo = q15_shift(i32x4_add(i32x4_mul(u_lo_i32, c_scale_v), rnd_v));
+        let u_d_hi = q15_shift(i32x4_add(i32x4_mul(u_hi_i32, c_scale_v), rnd_v));
+        let v_d_lo = q15_shift(i32x4_add(i32x4_mul(v_lo_i32, c_scale_v), rnd_v));
+        let v_d_hi = q15_shift(i32x4_add(i32x4_mul(v_hi_i32, c_scale_v), rnd_v));
 
-      let r_dup = dup_lo(r_chroma);
-      let g_dup = dup_lo(g_chroma);
-      let b_dup = dup_lo(b_chroma);
+        let r_chroma = chroma_i16x8(cru, crv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
+        let g_chroma = chroma_i16x8(cgu, cgv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
+        let b_chroma = chroma_i16x8(cbu, cbv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
 
-      let y_scaled = scale_y(y_i16, y_off_v, y_scale_v, rnd_v);
+        let r_dup = dup_lo(r_chroma);
+        let g_dup = dup_lo(g_chroma);
+        let b_dup = dup_lo(b_chroma);
 
-      // Native-depth output: clamp to [0, (1 << BITS) - 1].
-      // `i16x8_add_sat` saturates at i16 bounds (no-op here since
-      // |sum| stays well inside i16 for BITS ≤ 12), then min/max
-      // clamps to the BITS range.
-      let r = clamp_u16_max_wasm(i16x8_add_sat(y_scaled, r_dup), zero_v, max_v);
-      let g = clamp_u16_max_wasm(i16x8_add_sat(y_scaled, g_dup), zero_v, max_v);
-      let b = clamp_u16_max_wasm(i16x8_add_sat(y_scaled, b_dup), zero_v, max_v);
+        let y_scaled = scale_y(y_i16, y_off_v, y_scale_v, rnd_v);
 
-      if ALPHA {
-        let alpha = i16x8_splat(out_max);
-        write_rgba_u16_8(r, g, b, alpha, out.as_mut_ptr().add(x * 4));
-      } else {
-        write_rgb_u16_8(r, g, b, out.as_mut_ptr().add(x * 3));
+        // Native-depth output: clamp to [0, (1 << BITS) - 1].
+        // `i16x8_add_sat` saturates at i16 bounds (no-op here since
+        // |sum| stays well inside i16 for BITS ≤ 12), then min/max
+        // clamps to the BITS range.
+        let r = clamp_u16_max_wasm(i16x8_add_sat(y_scaled, r_dup), zero_v, max_v);
+        let g = clamp_u16_max_wasm(i16x8_add_sat(y_scaled, g_dup), zero_v, max_v);
+        let b = clamp_u16_max_wasm(i16x8_add_sat(y_scaled, b_dup), zero_v, max_v);
+
+        if ALPHA {
+          let alpha = i16x8_splat(out_max);
+          write_rgba_u16_8(r, g, b, alpha, out.as_mut_ptr().add(x * 4));
+        } else {
+          write_rgb_u16_8(r, g, b, out.as_mut_ptr().add(x * 3));
+        }
+
+        x += 8;
       }
-
-      x += 8;
     }
 
+    // Scalar tail — remaining < 8 pixels (always even per 4:2:2).
+    // When BE=true the full row is covered here.
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::y2xx_n_to_rgb_u16_or_rgba_u16_row::<BITS, ALPHA>(
+      scalar::y2xx_n_to_rgb_u16_or_rgba_u16_row::<BITS, ALPHA, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -413,7 +428,7 @@ pub(crate) unsafe fn y2xx_n_to_rgb_u16_or_rgba_u16_row<const BITS: u32, const AL
 /// 4. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn y2xx_n_to_luma_row<const BITS: u32>(
+pub(crate) unsafe fn y2xx_n_to_luma_row<const BITS: u32, const BE: bool>(
   packed: &[u16],
   luma_out: &mut [u8],
   width: usize,
@@ -430,40 +445,44 @@ pub(crate) unsafe fn y2xx_n_to_luma_row<const BITS: u32>(
 
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
-    // Y permute mask: pick even u16 lanes (low byte at [0], high byte
-    // at [1]) into the low 8 bytes; high 8 bytes zeroed.
-    let y_idx = i8x16(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
-
     let mut x = 0usize;
-    while x + 8 <= width {
-      let lo = v128_load(packed.as_ptr().add(x * 2).cast());
-      let hi = v128_load(packed.as_ptr().add(x * 2 + 8).cast());
-      let y_lo = u8x16_swizzle(lo, y_idx); // [Y0..Y3, _, _, _, _]
-      let y_hi = u8x16_swizzle(hi, y_idx); // [Y4..Y7, _, _, _, _]
-      // Concatenate low halves: same `_mm_unpacklo_epi64` pattern as
-      // the 4:2:2 unpack helper.
-      let y_vec =
-        i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23>(y_lo, y_hi); // [Y0..Y7] MSB-aligned
+    if !BE {
+      // Y permute mask: pick even u16 lanes (low byte at [0], high byte
+      // at [1]) into the low 8 bytes; high 8 bytes zeroed.
+      let y_idx = i8x16(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
 
-      // `>> (16 - BITS)` then `>> (BITS - 8)` collapses to `>> 8` for
-      // any BITS ∈ {10, 12} — same single-shift simplification used
-      // by NEON's `vshrn_n_u16::<8>` and SSE4.1's `_mm_srli_epi16::<8>`.
-      let y_shr = u16x8_shr(y_vec, 8);
-      // Pack 8 i16 lanes to u8 — only low 8 bytes used.
-      let y_u8 = u8x16_narrow_i16x8(y_shr, y_shr);
-      // Store low 8 bytes via stack buffer + copy_from_slice.
-      let mut tmp = [0u8; 16];
-      v128_store(tmp.as_mut_ptr().cast(), y_u8);
-      luma_out[x..x + 8].copy_from_slice(&tmp[..8]);
+      while x + 8 <= width {
+        let lo = v128_load(packed.as_ptr().add(x * 2).cast());
+        let hi = v128_load(packed.as_ptr().add(x * 2 + 8).cast());
+        let y_lo = u8x16_swizzle(lo, y_idx); // [Y0..Y3, _, _, _, _]
+        let y_hi = u8x16_swizzle(hi, y_idx); // [Y4..Y7, _, _, _, _]
+        // Concatenate low halves: same `_mm_unpacklo_epi64` pattern as
+        // the 4:2:2 unpack helper.
+        let y_vec =
+          i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23>(y_lo, y_hi); // [Y0..Y7] MSB-aligned
 
-      x += 8;
+        // `>> (16 - BITS)` then `>> (BITS - 8)` collapses to `>> 8` for
+        // any BITS ∈ {10, 12} — same single-shift simplification used
+        // by NEON's `vshrn_n_u16::<8>` and SSE4.1's `_mm_srli_epi16::<8>`.
+        let y_shr = u16x8_shr(y_vec, 8);
+        // Pack 8 i16 lanes to u8 — only low 8 bytes used.
+        let y_u8 = u8x16_narrow_i16x8(y_shr, y_shr);
+        // Store low 8 bytes via stack buffer + copy_from_slice.
+        let mut tmp = [0u8; 16];
+        v128_store(tmp.as_mut_ptr().cast(), y_u8);
+        luma_out[x..x + 8].copy_from_slice(&tmp[..8]);
+
+        x += 8;
+      }
     }
 
+    // Scalar tail — remaining < 8 pixels (always even per 4:2:2).
+    // When BE=true the full row is covered here.
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut luma_out[x..width];
       let tail_w = width - x;
-      scalar::y2xx_n_to_luma_row::<BITS>(tail_packed, tail_out, tail_w);
+      scalar::y2xx_n_to_luma_row::<BITS, BE>(tail_packed, tail_out, tail_w);
     }
   }
 }
@@ -480,7 +499,7 @@ pub(crate) unsafe fn y2xx_n_to_luma_row<const BITS: u32>(
 /// 4. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn y2xx_n_to_luma_u16_row<const BITS: u32>(
+pub(crate) unsafe fn y2xx_n_to_luma_u16_row<const BITS: u32, const BE: bool>(
   packed: &[u16],
   luma_out: &mut [u16],
   width: usize,
@@ -497,29 +516,33 @@ pub(crate) unsafe fn y2xx_n_to_luma_u16_row<const BITS: u32>(
 
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
-    let shr_count: u32 = 16 - BITS;
-    let y_idx = i8x16(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
-
     let mut x = 0usize;
-    while x + 8 <= width {
-      let lo = v128_load(packed.as_ptr().add(x * 2).cast());
-      let hi = v128_load(packed.as_ptr().add(x * 2 + 8).cast());
-      let y_lo = u8x16_swizzle(lo, y_idx);
-      let y_hi = u8x16_swizzle(hi, y_idx);
-      let y_vec =
-        i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23>(y_lo, y_hi);
-      // Right-shift by `(16 - BITS)` to bring MSB-aligned samples
-      // into low-bit-packed form for the native-depth u16 output.
-      let y_low = u16x8_shr(y_vec, shr_count);
-      v128_store(luma_out.as_mut_ptr().add(x).cast(), y_low);
-      x += 8;
+    if !BE {
+      let shr_count: u32 = 16 - BITS;
+      let y_idx = i8x16(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
+
+      while x + 8 <= width {
+        let lo = v128_load(packed.as_ptr().add(x * 2).cast());
+        let hi = v128_load(packed.as_ptr().add(x * 2 + 8).cast());
+        let y_lo = u8x16_swizzle(lo, y_idx);
+        let y_hi = u8x16_swizzle(hi, y_idx);
+        let y_vec =
+          i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23>(y_lo, y_hi);
+        // Right-shift by `(16 - BITS)` to bring MSB-aligned samples
+        // into low-bit-packed form for the native-depth u16 output.
+        let y_low = u16x8_shr(y_vec, shr_count);
+        v128_store(luma_out.as_mut_ptr().add(x).cast(), y_low);
+        x += 8;
+      }
     }
 
+    // Scalar tail — remaining < 8 pixels (always even per 4:2:2).
+    // When BE=true the full row is covered here.
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut luma_out[x..width];
       let tail_w = width - x;
-      scalar::y2xx_n_to_luma_u16_row::<BITS>(tail_packed, tail_out, tail_w);
+      scalar::y2xx_n_to_luma_u16_row::<BITS, BE>(tail_packed, tail_out, tail_w);
     }
   }
 }

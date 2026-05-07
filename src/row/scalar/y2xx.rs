@@ -10,6 +10,15 @@
 //! `BITS` (mirrors `v210.rs`'s use of `range_params_n` /
 //! `chroma_bias` / `q15_scale` / `q15_chroma`, just sourced from
 //! Y2xx's u16 packed quadruples rather than v210's 16-byte words).
+//!
+//! ## Big-endian wire format (`BE = true`)
+//!
+//! When `BE = true`, each `u16` element in `packed` is stored in
+//! big-endian byte order (high byte first). The `<const BE: bool>`
+//! const-generic gates `load_endian_u16::<BE>` at each sample read
+//! site; on LE targets the `BE = false` path is identical to the
+//! previous plain slice index. On LE hosts with `BE = false` the
+//! compiler eliminates the branch entirely.
 
 use super::*;
 
@@ -31,12 +40,14 @@ const fn rshift_bits<const BITS: u32>(sample: u16) -> u16 {
 /// (downshifted from the native BITS Q15 pipeline via
 /// `range_params_n::<BITS, 8>`).
 ///
+/// `BE = true` selects big-endian wire decoding for each u16 sample.
+///
 /// # Panics (debug builds)
 /// - `width` must be even.
 /// - `packed.len() >= width * 2` (one u16 quadruple per chroma pair).
 /// - `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn y2xx_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
+pub(crate) fn y2xx_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool, const BE: bool>(
   packed: &[u16],
   out: &mut [u8],
   width: usize,
@@ -60,12 +71,15 @@ pub(crate) fn y2xx_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
 
   // One chroma pair (= 2 pixels) per iter.
   let pairs = width / 2;
+  // SAFETY: bounds checked by the debug_asserts above; p * 4 + 4 <= width * 2
+  // because pairs = width / 2, so p < pairs means p * 4 + 4 <= width * 2.
+  let base = packed.as_ptr().cast::<u8>();
   for p in 0..pairs {
-    let q = &packed[p * 4..p * 4 + 4];
-    let y0 = rshift_bits::<BITS>(q[0]) as i32;
-    let u = rshift_bits::<BITS>(q[1]) as i32;
-    let y1 = rshift_bits::<BITS>(q[2]) as i32;
-    let v = rshift_bits::<BITS>(q[3]) as i32;
+    let off4 = p * 4 * 2; // byte offset to quadruple p (4 u16 = 8 bytes)
+    let y0 = rshift_bits::<BITS>(unsafe { load_endian_u16::<BE>(base.add(off4)) }) as i32;
+    let u = rshift_bits::<BITS>(unsafe { load_endian_u16::<BE>(base.add(off4 + 2)) }) as i32;
+    let y1 = rshift_bits::<BITS>(unsafe { load_endian_u16::<BE>(base.add(off4 + 4)) }) as i32;
+    let v = rshift_bits::<BITS>(unsafe { load_endian_u16::<BE>(base.add(off4 + 6)) }) as i32;
 
     let u_d = q15_scale(u - bias, c_scale);
     let v_d = q15_scale(v - bias, c_scale);
@@ -96,13 +110,18 @@ pub(crate) fn y2xx_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
 ///
 /// `ALPHA = true` writes a 4-element-per-pixel output with α =
 /// `(1 << BITS) - 1` (opaque maximum at the native depth).
+/// `BE = true` selects big-endian wire decoding.
 ///
 /// # Panics (debug builds)
 /// - `width` must be even.
 /// - `packed.len() >= width * 2`.
 /// - `out.len() >= width * (if ALPHA { 4 } else { 3 })` (`u16` elements).
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn y2xx_n_to_rgb_u16_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
+pub(crate) fn y2xx_n_to_rgb_u16_or_rgba_u16_row<
+  const BITS: u32,
+  const ALPHA: bool,
+  const BE: bool,
+>(
   packed: &[u16],
   out: &mut [u16],
   width: usize,
@@ -127,12 +146,13 @@ pub(crate) fn y2xx_n_to_rgb_u16_or_rgba_u16_row<const BITS: u32, const ALPHA: bo
   let alpha_max: u16 = out_max as u16;
 
   let pairs = width / 2;
+  let base = packed.as_ptr().cast::<u8>();
   for p in 0..pairs {
-    let q = &packed[p * 4..p * 4 + 4];
-    let y0 = rshift_bits::<BITS>(q[0]) as i32;
-    let u = rshift_bits::<BITS>(q[1]) as i32;
-    let y1 = rshift_bits::<BITS>(q[2]) as i32;
-    let v = rshift_bits::<BITS>(q[3]) as i32;
+    let off4 = p * 4 * 2;
+    let y0 = rshift_bits::<BITS>(unsafe { load_endian_u16::<BE>(base.add(off4)) }) as i32;
+    let u = rshift_bits::<BITS>(unsafe { load_endian_u16::<BE>(base.add(off4 + 2)) }) as i32;
+    let y1 = rshift_bits::<BITS>(unsafe { load_endian_u16::<BE>(base.add(off4 + 4)) }) as i32;
+    let v = rshift_bits::<BITS>(unsafe { load_endian_u16::<BE>(base.add(off4 + 6)) }) as i32;
 
     let u_d = q15_scale(u - bias, c_scale);
     let v_d = q15_scale(v - bias, c_scale);
@@ -158,13 +178,14 @@ pub(crate) fn y2xx_n_to_rgb_u16_or_rgba_u16_row<const BITS: u32, const ALPHA: bo
 
 /// Y2xx → 8-bit luma. Y values are downshifted from BITS to 8 via
 /// `>> (BITS - 8)`. Bypasses the YUV → RGB pipeline entirely.
+/// `BE = true` selects big-endian wire decoding.
 ///
 /// # Panics (debug builds)
 /// - `width` must be even.
 /// - `packed.len() >= width * 2`.
 /// - `luma_out.len() >= width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn y2xx_n_to_luma_row<const BITS: u32>(
+pub(crate) fn y2xx_n_to_luma_row<const BITS: u32, const BE: bool>(
   packed: &[u16],
   luma_out: &mut [u8],
   width: usize,
@@ -180,10 +201,11 @@ pub(crate) fn y2xx_n_to_luma_row<const BITS: u32>(
   debug_assert!(luma_out.len() >= width, "luma row too short");
 
   let pairs = width / 2;
+  let base = packed.as_ptr().cast::<u8>();
   for p in 0..pairs {
-    let q = &packed[p * 4..p * 4 + 4];
-    let y0 = rshift_bits::<BITS>(q[0]);
-    let y1 = rshift_bits::<BITS>(q[2]);
+    let off4 = p * 4 * 2;
+    let y0 = rshift_bits::<BITS>(unsafe { load_endian_u16::<BE>(base.add(off4)) });
+    let y1 = rshift_bits::<BITS>(unsafe { load_endian_u16::<BE>(base.add(off4 + 4)) });
     luma_out[p * 2] = (y0 >> (BITS - 8)) as u8;
     luma_out[p * 2 + 1] = (y1 >> (BITS - 8)) as u8;
   }
@@ -191,14 +213,15 @@ pub(crate) fn y2xx_n_to_luma_row<const BITS: u32>(
 
 /// Y2xx → native-depth `u16` luma (low-bit-packed). Each output
 /// `u16` carries the source's BITS-bit Y value in its low BITS bits
-/// (upper `(16 - BITS)` bits zero).
+/// (upper `(16 - BITS)` bits zero). `BE = true` selects big-endian
+/// wire decoding.
 ///
 /// # Panics (debug builds)
 /// - `width` must be even.
 /// - `packed.len() >= width * 2`.
 /// - `luma_out.len() >= width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn y2xx_n_to_luma_u16_row<const BITS: u32>(
+pub(crate) fn y2xx_n_to_luma_u16_row<const BITS: u32, const BE: bool>(
   packed: &[u16],
   luma_out: &mut [u16],
   width: usize,
@@ -214,10 +237,11 @@ pub(crate) fn y2xx_n_to_luma_u16_row<const BITS: u32>(
   debug_assert!(luma_out.len() >= width, "luma row too short");
 
   let pairs = width / 2;
+  let base = packed.as_ptr().cast::<u8>();
   for p in 0..pairs {
-    let q = &packed[p * 4..p * 4 + 4];
-    luma_out[p * 2] = rshift_bits::<BITS>(q[0]);
-    luma_out[p * 2 + 1] = rshift_bits::<BITS>(q[2]);
+    let off4 = p * 4 * 2;
+    luma_out[p * 2] = rshift_bits::<BITS>(unsafe { load_endian_u16::<BE>(base.add(off4)) });
+    luma_out[p * 2 + 1] = rshift_bits::<BITS>(unsafe { load_endian_u16::<BE>(base.add(off4 + 4)) });
   }
 }
 
@@ -227,39 +251,47 @@ pub(crate) fn y2xx_n_to_luma_u16_row<const BITS: u32>(
 // BITS=12 wrappers (`y212_to_*_row`) without further kernel changes.
 
 /// Public Y210 (BITS=10) → packed RGB / RGBA u8 wrapper.
+/// `BE = true` selects big-endian wire decoding.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn y210_to_rgb_or_rgba_row<const ALPHA: bool>(
+pub(crate) fn y210_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   packed: &[u16],
   out: &mut [u8],
   width: usize,
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  y2xx_n_to_rgb_or_rgba_row::<10, ALPHA>(packed, out, width, matrix, full_range);
+  y2xx_n_to_rgb_or_rgba_row::<10, ALPHA, BE>(packed, out, width, matrix, full_range);
 }
 
 /// Public Y210 → packed `u16` RGB / RGBA wrapper.
+/// `BE = true` selects big-endian wire decoding.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn y210_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
+pub(crate) fn y210_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   packed: &[u16],
   out: &mut [u16],
   width: usize,
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  y2xx_n_to_rgb_u16_or_rgba_u16_row::<10, ALPHA>(packed, out, width, matrix, full_range);
+  y2xx_n_to_rgb_u16_or_rgba_u16_row::<10, ALPHA, BE>(packed, out, width, matrix, full_range);
 }
 
 /// Public Y210 → 8-bit luma wrapper.
+/// `BE = true` selects big-endian wire decoding.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn y210_to_luma_row(packed: &[u16], luma_out: &mut [u8], width: usize) {
-  y2xx_n_to_luma_row::<10>(packed, luma_out, width);
+pub(crate) fn y210_to_luma_row<const BE: bool>(packed: &[u16], luma_out: &mut [u8], width: usize) {
+  y2xx_n_to_luma_row::<10, BE>(packed, luma_out, width);
 }
 
 /// Public Y210 → native-depth `u16` luma wrapper.
+/// `BE = true` selects big-endian wire decoding.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn y210_to_luma_u16_row(packed: &[u16], luma_out: &mut [u16], width: usize) {
-  y2xx_n_to_luma_u16_row::<10>(packed, luma_out, width);
+pub(crate) fn y210_to_luma_u16_row<const BE: bool>(
+  packed: &[u16],
+  luma_out: &mut [u16],
+  width: usize,
+) {
+  y2xx_n_to_luma_u16_row::<10, BE>(packed, luma_out, width);
 }
 
 // ---- Public Y212 (BITS=12) wrappers ------------------------------------
@@ -268,39 +300,47 @@ pub(crate) fn y210_to_luma_u16_row(packed: &[u16], luma_out: &mut [u16], width: 
 // SIMD code — the per-arch backends already accept BITS ∈ {10, 12}.
 
 /// Public Y212 (BITS=12) → packed RGB / RGBA u8 wrapper.
+/// `BE = true` selects big-endian wire decoding.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn y212_to_rgb_or_rgba_row<const ALPHA: bool>(
+pub(crate) fn y212_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   packed: &[u16],
   out: &mut [u8],
   width: usize,
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  y2xx_n_to_rgb_or_rgba_row::<12, ALPHA>(packed, out, width, matrix, full_range);
+  y2xx_n_to_rgb_or_rgba_row::<12, ALPHA, BE>(packed, out, width, matrix, full_range);
 }
 
 /// Public Y212 → packed `u16` RGB / RGBA wrapper.
+/// `BE = true` selects big-endian wire decoding.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn y212_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
+pub(crate) fn y212_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   packed: &[u16],
   out: &mut [u16],
   width: usize,
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  y2xx_n_to_rgb_u16_or_rgba_u16_row::<12, ALPHA>(packed, out, width, matrix, full_range);
+  y2xx_n_to_rgb_u16_or_rgba_u16_row::<12, ALPHA, BE>(packed, out, width, matrix, full_range);
 }
 
 /// Public Y212 → 8-bit luma wrapper.
+/// `BE = true` selects big-endian wire decoding.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn y212_to_luma_row(packed: &[u16], luma_out: &mut [u8], width: usize) {
-  y2xx_n_to_luma_row::<12>(packed, luma_out, width);
+pub(crate) fn y212_to_luma_row<const BE: bool>(packed: &[u16], luma_out: &mut [u8], width: usize) {
+  y2xx_n_to_luma_row::<12, BE>(packed, luma_out, width);
 }
 
 /// Public Y212 → native-depth `u16` luma wrapper.
+/// `BE = true` selects big-endian wire decoding.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn y212_to_luma_u16_row(packed: &[u16], luma_out: &mut [u16], width: usize) {
-  y2xx_n_to_luma_u16_row::<12>(packed, luma_out, width);
+pub(crate) fn y212_to_luma_u16_row<const BE: bool>(
+  packed: &[u16],
+  luma_out: &mut [u16],
+  width: usize,
+) {
+  y2xx_n_to_luma_u16_row::<12, BE>(packed, luma_out, width);
 }
 
 #[cfg(all(test, feature = "std"))]
@@ -329,12 +369,17 @@ mod tests {
     buf
   }
 
+  /// Byte-swap every u16 in a slice to produce the BE-encoded form.
+  fn to_be_u16(le: &[u16]) -> std::vec::Vec<u16> {
+    le.iter().map(|&v| v.swap_bytes()).collect()
+  }
+
   #[test]
   fn scalar_y210_to_rgb_gray_is_gray() {
     // Full-range gray: Y=512, U=V=512 (10-bit center) → RGB ~128.
     let buf = solid_y210(8, 512, 512, 512);
     let mut rgb = [0u8; 8 * 3];
-    y210_to_rgb_or_rgba_row::<false>(&buf, &mut rgb, 8, ColorMatrix::Bt709, true);
+    y210_to_rgb_or_rgba_row::<false, false>(&buf, &mut rgb, 8, ColorMatrix::Bt709, true);
     for px in rgb.chunks(3) {
       assert!(px[0].abs_diff(128) <= 1);
       assert_eq!(px[0], px[1]);
@@ -346,7 +391,7 @@ mod tests {
   fn scalar_y210_to_rgba_alpha_is_opaque() {
     let buf = solid_y210(8, 512, 512, 512);
     let mut rgba = [0u8; 8 * 4];
-    y210_to_rgb_or_rgba_row::<true>(&buf, &mut rgba, 8, ColorMatrix::Bt709, true);
+    y210_to_rgb_or_rgba_row::<true, false>(&buf, &mut rgba, 8, ColorMatrix::Bt709, true);
     for px in rgba.chunks(4) {
       assert_eq!(px[3], 0xFF);
     }
@@ -357,7 +402,7 @@ mod tests {
     // Full-range gray Y=512 → ~512 in 10-bit RGB out (out_max = 1023).
     let buf = solid_y210(8, 512, 512, 512);
     let mut rgb = [0u16; 8 * 3];
-    y210_to_rgb_u16_or_rgba_u16_row::<false>(&buf, &mut rgb, 8, ColorMatrix::Bt709, true);
+    y210_to_rgb_u16_or_rgba_u16_row::<false, false>(&buf, &mut rgb, 8, ColorMatrix::Bt709, true);
     for px in rgb.chunks(3) {
       assert!(px[0].abs_diff(512) <= 2, "px expected ~512, got {}", px[0]);
       assert_eq!(px[0], px[1]);
@@ -369,7 +414,7 @@ mod tests {
   fn scalar_y210_to_rgba_u16_alpha_is_max() {
     let buf = solid_y210(8, 512, 512, 512);
     let mut rgba = [0u16; 8 * 4];
-    y210_to_rgb_u16_or_rgba_u16_row::<true>(&buf, &mut rgba, 8, ColorMatrix::Bt709, true);
+    y210_to_rgb_u16_or_rgba_u16_row::<true, false>(&buf, &mut rgba, 8, ColorMatrix::Bt709, true);
     for px in rgba.chunks(4) {
       assert_eq!(px[3], 1023, "alpha must be (1 << 10) - 1");
     }
@@ -388,7 +433,7 @@ mod tests {
       buf[i * 4 + 3] = 128u16 << 6; // V
     }
     let mut luma = [0u8; 6];
-    y210_to_luma_row(&buf, &mut luma, 6);
+    y210_to_luma_row::<false>(&buf, &mut luma, 6);
     assert_eq!(luma[0], (100u16 >> 2) as u8);
     assert_eq!(luma[1], (200u16 >> 2) as u8);
     assert_eq!(luma[2], (300u16 >> 2) as u8);
@@ -408,12 +453,72 @@ mod tests {
       buf[i * 4 + 3] = 128u16 << 6;
     }
     let mut luma = [0u16; 6];
-    y210_to_luma_u16_row(&buf, &mut luma, 6);
+    y210_to_luma_u16_row::<false>(&buf, &mut luma, 6);
     assert_eq!(luma[0], 100);
     assert_eq!(luma[1], 200);
     assert_eq!(luma[2], 300);
     assert_eq!(luma[3], 400);
     assert_eq!(luma[4], 500);
     assert_eq!(luma[5], 600);
+  }
+
+  // ---- BE=true parity tests -------------------------------------------
+
+  /// Verify that byte-swapped Y210 input + BE=true produces the same
+  /// RGB output as the native LE input + BE=false.
+  #[test]
+  fn scalar_y210_be_rgb_matches_le() {
+    let le = solid_y210(8, 512, 512, 512);
+    let be = to_be_u16(&le);
+    let mut rgb_le = [0u8; 8 * 3];
+    let mut rgb_be = [0u8; 8 * 3];
+    y210_to_rgb_or_rgba_row::<false, false>(&le, &mut rgb_le, 8, ColorMatrix::Bt709, true);
+    y210_to_rgb_or_rgba_row::<false, true>(&be, &mut rgb_be, 8, ColorMatrix::Bt709, true);
+    assert_eq!(
+      rgb_le, rgb_be,
+      "BE and LE paths must produce identical output"
+    );
+  }
+
+  #[test]
+  fn scalar_y210_be_rgb_u16_matches_le() {
+    let le = solid_y210(8, 512, 512, 512);
+    let be = to_be_u16(&le);
+    let mut out_le = [0u16; 8 * 3];
+    let mut out_be = [0u16; 8 * 3];
+    y210_to_rgb_u16_or_rgba_u16_row::<false, false>(&le, &mut out_le, 8, ColorMatrix::Bt709, true);
+    y210_to_rgb_u16_or_rgba_u16_row::<false, true>(&be, &mut out_be, 8, ColorMatrix::Bt709, true);
+    assert_eq!(
+      out_le, out_be,
+      "BE and LE u16 paths must produce identical output"
+    );
+  }
+
+  #[test]
+  fn scalar_y210_be_luma_matches_le() {
+    let le = solid_y210(8, 512, 512, 512);
+    let be = to_be_u16(&le);
+    let mut luma_le = [0u8; 8];
+    let mut luma_be = [0u8; 8];
+    y210_to_luma_row::<false>(&le, &mut luma_le, 8);
+    y210_to_luma_row::<true>(&be, &mut luma_be, 8);
+    assert_eq!(
+      luma_le, luma_be,
+      "BE and LE luma paths must produce identical output"
+    );
+  }
+
+  #[test]
+  fn scalar_y210_be_luma_u16_matches_le() {
+    let le = solid_y210(8, 512, 512, 512);
+    let be = to_be_u16(&le);
+    let mut luma_le = [0u16; 8];
+    let mut luma_be = [0u16; 8];
+    y210_to_luma_u16_row::<false>(&le, &mut luma_le, 8);
+    y210_to_luma_u16_row::<true>(&be, &mut luma_be, 8);
+    assert_eq!(
+      luma_le, luma_be,
+      "BE and LE luma_u16 paths must produce identical output"
+    );
   }
 }

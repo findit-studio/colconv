@@ -213,6 +213,7 @@ impl PixelSink for MixedSinker<'_, Y210> {
         &mut buf[one_plane_start..one_plane_end],
         w,
         use_simd,
+        false,
       );
     }
     // Luma u16 — extract 10-bit Y values at native depth.
@@ -222,6 +223,7 @@ impl PixelSink for MixedSinker<'_, Y210> {
         &mut buf[one_plane_start..one_plane_end],
         w,
         use_simd,
+        false,
       );
     }
 
@@ -242,6 +244,7 @@ impl PixelSink for MixedSinker<'_, Y210> {
         row.matrix(),
         row.full_range(),
         use_simd,
+        false,
       );
     } else if want_rgb_u16 {
       let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
@@ -262,6 +265,7 @@ impl PixelSink for MixedSinker<'_, Y210> {
         row.matrix(),
         row.full_range(),
         use_simd,
+        false,
       );
       if want_rgba_u16 {
         // Strategy A u16 fan-out — derive RGBA from the just-computed
@@ -292,6 +296,7 @@ impl PixelSink for MixedSinker<'_, Y210> {
         row.matrix(),
         row.full_range(),
         use_simd,
+        false,
       );
       return Ok(());
     }
@@ -308,7 +313,15 @@ impl PixelSink for MixedSinker<'_, Y210> {
       w,
       h,
     )?;
-    y210_to_rgb_row(packed, rgb_row, w, row.matrix(), row.full_range(), use_simd);
+    y210_to_rgb_row(
+      packed,
+      rgb_row,
+      w,
+      row.matrix(),
+      row.full_range(),
+      use_simd,
+      false,
+    );
 
     if let Some(hsv) = hsv.as_mut() {
       rgb_to_hsv_row(
