@@ -615,7 +615,7 @@ mod overflow_tests {
     let b: [u16; 0] = [];
     let r: [u16; 0] = [];
     let mut rgb: [u8; 0] = [];
-    gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut rgb, OVERFLOW_WIDTH, false);
+    gbr_to_rgb_high_bit_row::<10, false>(&g, &b, &r, &mut rgb, OVERFLOW_WIDTH, false);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -626,7 +626,7 @@ mod overflow_tests {
     let b: [u16; 0] = [];
     let r: [u16; 0] = [];
     let mut rgb: [u16; 0] = [];
-    gbr_to_rgb_u16_high_bit_row::<10>(&g, &b, &r, &mut rgb, OVERFLOW_WIDTH, false);
+    gbr_to_rgb_u16_high_bit_row::<10, false>(&g, &b, &r, &mut rgb, OVERFLOW_WIDTH, false);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -637,7 +637,7 @@ mod overflow_tests {
     let b: [u16; 0] = [];
     let r: [u16; 0] = [];
     let mut rgba: [u8; 0] = [];
-    gbr_to_rgba_opaque_high_bit_row::<10>(&g, &b, &r, &mut rgba, OVERFLOW_WIDTH, false);
+    gbr_to_rgba_opaque_high_bit_row::<10, false>(&g, &b, &r, &mut rgba, OVERFLOW_WIDTH, false);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -648,7 +648,7 @@ mod overflow_tests {
     let b: [u16; 0] = [];
     let r: [u16; 0] = [];
     let mut rgba: [u16; 0] = [];
-    gbr_to_rgba_opaque_u16_high_bit_row::<10>(&g, &b, &r, &mut rgba, OVERFLOW_WIDTH, false);
+    gbr_to_rgba_opaque_u16_high_bit_row::<10, false>(&g, &b, &r, &mut rgba, OVERFLOW_WIDTH, false);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -660,7 +660,7 @@ mod overflow_tests {
     let r: [u16; 0] = [];
     let a: [u16; 0] = [];
     let mut rgba: [u8; 0] = [];
-    gbra_to_rgba_high_bit_row::<10>(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
+    gbra_to_rgba_high_bit_row::<10, false>(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -672,7 +672,7 @@ mod overflow_tests {
     let r: [u16; 0] = [];
     let a: [u16; 0] = [];
     let mut rgba: [u16; 0] = [];
-    gbra_to_rgba_u16_high_bit_row::<10>(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
+    gbra_to_rgba_u16_high_bit_row::<10, false>(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
   }
 
   // ---- Tier 11 gray dispatchers — `width × {3, 4}` overflow ----

@@ -1,6 +1,7 @@
 //! SSE4.1 kernels for high-bit-depth planar GBR sources (Tier 10b).
 //!
-//! All functions are const-generic over `BITS ∈ {9, 10, 12, 14, 16}`.
+//! All functions are const-generic over `BITS ∈ {9, 10, 12, 14, 16}` and
+//! `BE: bool` (endianness of the source u16 planes).
 //! Lane width: 8 pixels per iteration (8 × u16 per `__m128i`).
 //! Scalar tail handles the remainder.
 //!
@@ -17,15 +18,25 @@
 //! Use the existing `write_rgb_u16_8` / `write_rgba_u16_8` helpers from
 //! `x86_common` which interleave 8 u16 lanes per channel into packed
 //! RGB / RGBA u16 output.
+//!
+//! # Big-endian (`BE = true`) mode
+//!
+//! When `BE = true` each 8-pixel load goes through
+//! `load_endian_u16x8::<BE>` (defined in `endian.rs`) which applies
+//! `_mm_shuffle_epi8` (SSSE3 pshufb) to byte-swap every u16 lane.
+//! The branch is resolved at monomorphisation — `BE = false` compiles
+//! to a plain `_mm_loadu_si128`.
 
 use core::arch::x86_64::*;
 
-use super::*;
+use super::{endian::load_endian_u16x8, *};
 
 // ---- u8 output, 3-channel (RGB) -----------------------------------------
 
 /// SSE4.1 high-bit-depth G/B/R planar → packed `R, G, B` **bytes**.
 /// Downshifts each sample by `BITS - 8` and packs to u8.
+///
+/// When `BE = true` each source u16 element is byte-swapped on load.
 ///
 /// # Safety
 ///
@@ -34,7 +45,7 @@ use super::*;
 /// 3. `rgb_out.len()` ≥ `3 * width`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
+pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -58,9 +69,9 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask_v);
-      let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask_v);
-      let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask_v);
+      let r_v = _mm_and_si128(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask_v);
+      let g_v = _mm_and_si128(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask_v);
+      let b_v = _mm_and_si128(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask_v);
 
       // Variable-count logical right-shift by BITS-8 per u16 lane.
       let r_sh = _mm_srl_epi16(r_v, shr_count);
@@ -81,7 +92,7 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
       x += 8;
     }
     if x < width {
-      scalar::gbr_to_rgb_high_bit_row::<BITS>(
+      scalar::gbr_to_rgb_high_bit_row::<BITS, BE>(
         &g[x..width],
         &b[x..width],
         &r[x..width],
@@ -97,6 +108,8 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
 /// SSE4.1 high-bit-depth G/B/R planar → packed `R, G, B, A` **bytes**
 /// with constant opaque alpha (`0xFF`).
 ///
+/// When `BE = true` each source u16 element is byte-swapped on load.
+///
 /// # Safety
 ///
 /// 1. SSE4.1 must be available (caller obligation).
@@ -104,7 +117,7 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
 /// 3. `rgba_out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
+pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -127,9 +140,9 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask_v);
-      let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask_v);
-      let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask_v);
+      let r_v = _mm_and_si128(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask_v);
+      let g_v = _mm_and_si128(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask_v);
+      let b_v = _mm_and_si128(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask_v);
 
       let r_sh = _mm_srl_epi16(r_v, shr_count);
       let g_sh = _mm_srl_epi16(g_v, shr_count);
@@ -146,7 +159,7 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
       x += 8;
     }
     if x < width {
-      scalar::gbr_to_rgba_opaque_high_bit_row::<BITS>(
+      scalar::gbr_to_rgba_opaque_high_bit_row::<BITS, BE>(
         &g[x..width],
         &b[x..width],
         &r[x..width],
@@ -162,6 +175,8 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
 /// SSE4.1 high-bit-depth G/B/R/A planar → packed `R, G, B, A` **bytes**.
 /// Alpha sourced from the `a` plane, downshifted by `BITS - 8`.
 ///
+/// When `BE = true` each source u16 element is byte-swapped on load.
+///
 /// # Safety
 ///
 /// 1. SSE4.1 must be available (caller obligation).
@@ -169,7 +184,7 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
 /// 3. `rgba_out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
+pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -191,10 +206,10 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask_v);
-      let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask_v);
-      let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask_v);
-      let a_v = _mm_and_si128(_mm_loadu_si128(a.as_ptr().add(x).cast()), mask_v);
+      let r_v = _mm_and_si128(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask_v);
+      let g_v = _mm_and_si128(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask_v);
+      let b_v = _mm_and_si128(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask_v);
+      let a_v = _mm_and_si128(load_endian_u16x8::<BE>(a.as_ptr().add(x).cast()), mask_v);
 
       let r_sh = _mm_srl_epi16(r_v, shr_count);
       let g_sh = _mm_srl_epi16(g_v, shr_count);
@@ -213,7 +228,7 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
       x += 8;
     }
     if x < width {
-      scalar::gbra_to_rgba_high_bit_row::<BITS>(
+      scalar::gbra_to_rgba_high_bit_row::<BITS, BE>(
         &g[x..width],
         &b[x..width],
         &r[x..width],
@@ -230,6 +245,8 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
 /// SSE4.1 high-bit-depth G/B/R planar → packed `R, G, B` **u16** samples.
 /// No shift — values copied directly, reordered G/B/R → R/G/B.
 ///
+/// When `BE = true` each source u16 element is byte-swapped on load.
+///
 /// # Safety
 ///
 /// 1. SSE4.1 must be available (caller obligation).
@@ -237,7 +254,7 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
 /// 3. `rgb_u16_out.len()` ≥ `3 * width`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
+pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -254,14 +271,14 @@ pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
     let mask_v = _mm_set1_epi16(((1u32 << BITS) - 1) as u16 as i16);
     let mut x = 0usize;
     while x + 8 <= width {
-      let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask_v);
-      let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask_v);
-      let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask_v);
+      let r_v = _mm_and_si128(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask_v);
+      let g_v = _mm_and_si128(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask_v);
+      let b_v = _mm_and_si128(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask_v);
       write_rgb_u16_8(r_v, g_v, b_v, rgb_u16_out.as_mut_ptr().add(x * 3));
       x += 8;
     }
     if x < width {
-      scalar::gbr_to_rgb_u16_high_bit_row::<BITS>(
+      scalar::gbr_to_rgb_u16_high_bit_row::<BITS, BE>(
         &g[x..width],
         &b[x..width],
         &r[x..width],
@@ -277,6 +294,8 @@ pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
 /// SSE4.1 high-bit-depth G/B/R planar → packed `R, G, B, A` **u16** samples
 /// with constant opaque alpha `(1 << BITS) - 1`.
 ///
+/// When `BE = true` each source u16 element is byte-swapped on load.
+///
 /// # Safety
 ///
 /// 1. SSE4.1 must be available (caller obligation).
@@ -284,7 +303,7 @@ pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
 /// 3. `rgba_u16_out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
+pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -307,14 +326,14 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask_v);
-      let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask_v);
-      let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask_v);
+      let r_v = _mm_and_si128(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask_v);
+      let g_v = _mm_and_si128(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask_v);
+      let b_v = _mm_and_si128(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask_v);
       write_rgba_u16_8(r_v, g_v, b_v, opaque, rgba_u16_out.as_mut_ptr().add(x * 4));
       x += 8;
     }
     if x < width {
-      scalar::gbr_to_rgba_opaque_u16_high_bit_row::<BITS>(
+      scalar::gbr_to_rgba_opaque_u16_high_bit_row::<BITS, BE>(
         &g[x..width],
         &b[x..width],
         &r[x..width],
@@ -330,6 +349,8 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
 /// SSE4.1 high-bit-depth G/B/R/A planar → packed `R, G, B, A` **u16** samples.
 /// Alpha sourced from the `a` plane at native depth (no shift).
 ///
+/// When `BE = true` each source u16 element is byte-swapped on load.
+///
 /// # Safety
 ///
 /// 1. SSE4.1 must be available (caller obligation).
@@ -337,7 +358,7 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
 /// 3. `rgba_u16_out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
+pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -359,15 +380,15 @@ pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
     let mask_v = _mm_set1_epi16(((1u32 << BITS) - 1) as u16 as i16);
     let mut x = 0usize;
     while x + 8 <= width {
-      let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask_v);
-      let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask_v);
-      let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask_v);
-      let a_v = _mm_and_si128(_mm_loadu_si128(a.as_ptr().add(x).cast()), mask_v);
+      let r_v = _mm_and_si128(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask_v);
+      let g_v = _mm_and_si128(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask_v);
+      let b_v = _mm_and_si128(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask_v);
+      let a_v = _mm_and_si128(load_endian_u16x8::<BE>(a.as_ptr().add(x).cast()), mask_v);
       write_rgba_u16_8(r_v, g_v, b_v, a_v, rgba_u16_out.as_mut_ptr().add(x * 4));
       x += 8;
     }
     if x < width {
-      scalar::gbra_to_rgba_u16_high_bit_row::<BITS>(
+      scalar::gbra_to_rgba_u16_high_bit_row::<BITS, BE>(
         &g[x..width],
         &b[x..width],
         &r[x..width],

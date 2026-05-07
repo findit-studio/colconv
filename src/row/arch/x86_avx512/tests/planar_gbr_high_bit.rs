@@ -37,9 +37,9 @@ fn avx512_gbr_to_rgb_high_bit_matches_scalar_bits10() {
     let r = gbr_plane_u16::<10>(w, 0xDEAD_BEEF);
     let mut out_scalar = std::vec![0u8; w * 3];
     let mut out_avx = std::vec![0u8; w * 3];
-    scalar::gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut out_scalar, w);
+    scalar::gbr_to_rgb_high_bit_row::<10, false>(&g, &b, &r, &mut out_scalar, w);
     unsafe {
-      gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut out_avx, w);
+      gbr_to_rgb_high_bit_row::<10, false>(&g, &b, &r, &mut out_avx, w);
     }
     assert_eq!(
       out_scalar, out_avx,
@@ -60,9 +60,9 @@ fn avx512_gbr_to_rgb_high_bit_matches_scalar_bits16() {
     let r = gbr_plane_u16::<16>(w, 0xDEAD_BEEF);
     let mut out_scalar = std::vec![0u8; w * 3];
     let mut out_avx = std::vec![0u8; w * 3];
-    scalar::gbr_to_rgb_high_bit_row::<16>(&g, &b, &r, &mut out_scalar, w);
+    scalar::gbr_to_rgb_high_bit_row::<16, false>(&g, &b, &r, &mut out_scalar, w);
     unsafe {
-      gbr_to_rgb_high_bit_row::<16>(&g, &b, &r, &mut out_avx, w);
+      gbr_to_rgb_high_bit_row::<16, false>(&g, &b, &r, &mut out_avx, w);
     }
     assert_eq!(
       out_scalar, out_avx,
@@ -83,9 +83,9 @@ fn avx512_gbr_to_rgba_opaque_high_bit_matches_scalar_bits10() {
     let r = gbr_plane_u16::<10>(w, 0xDEAD_BEEF);
     let mut out_scalar = std::vec![0u8; w * 4];
     let mut out_avx = std::vec![0u8; w * 4];
-    scalar::gbr_to_rgba_opaque_high_bit_row::<10>(&g, &b, &r, &mut out_scalar, w);
+    scalar::gbr_to_rgba_opaque_high_bit_row::<10, false>(&g, &b, &r, &mut out_scalar, w);
     unsafe {
-      gbr_to_rgba_opaque_high_bit_row::<10>(&g, &b, &r, &mut out_avx, w);
+      gbr_to_rgba_opaque_high_bit_row::<10, false>(&g, &b, &r, &mut out_avx, w);
     }
     assert_eq!(
       out_scalar, out_avx,
@@ -106,9 +106,9 @@ fn avx512_gbr_to_rgba_opaque_high_bit_matches_scalar_bits16() {
     let r = gbr_plane_u16::<16>(w, 0xDEAD_BEEF);
     let mut out_scalar = std::vec![0u8; w * 4];
     let mut out_avx = std::vec![0u8; w * 4];
-    scalar::gbr_to_rgba_opaque_high_bit_row::<16>(&g, &b, &r, &mut out_scalar, w);
+    scalar::gbr_to_rgba_opaque_high_bit_row::<16, false>(&g, &b, &r, &mut out_scalar, w);
     unsafe {
-      gbr_to_rgba_opaque_high_bit_row::<16>(&g, &b, &r, &mut out_avx, w);
+      gbr_to_rgba_opaque_high_bit_row::<16, false>(&g, &b, &r, &mut out_avx, w);
     }
     assert_eq!(
       out_scalar, out_avx,
@@ -130,9 +130,9 @@ fn avx512_gbra_to_rgba_high_bit_matches_scalar_bits10() {
     let a = gbr_plane_u16::<10>(w, 0xCAFE_F00D);
     let mut out_scalar = std::vec![0u8; w * 4];
     let mut out_avx = std::vec![0u8; w * 4];
-    scalar::gbra_to_rgba_high_bit_row::<10>(&g, &b, &r, &a, &mut out_scalar, w);
+    scalar::gbra_to_rgba_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out_scalar, w);
     unsafe {
-      gbra_to_rgba_high_bit_row::<10>(&g, &b, &r, &a, &mut out_avx, w);
+      gbra_to_rgba_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out_avx, w);
     }
     assert_eq!(
       out_scalar, out_avx,
@@ -154,9 +154,9 @@ fn avx512_gbra_to_rgba_high_bit_matches_scalar_bits16() {
     let a = gbr_plane_u16::<16>(w, 0xCAFE_F00D);
     let mut out_scalar = std::vec![0u8; w * 4];
     let mut out_avx = std::vec![0u8; w * 4];
-    scalar::gbra_to_rgba_high_bit_row::<16>(&g, &b, &r, &a, &mut out_scalar, w);
+    scalar::gbra_to_rgba_high_bit_row::<16, false>(&g, &b, &r, &a, &mut out_scalar, w);
     unsafe {
-      gbra_to_rgba_high_bit_row::<16>(&g, &b, &r, &a, &mut out_avx, w);
+      gbra_to_rgba_high_bit_row::<16, false>(&g, &b, &r, &a, &mut out_avx, w);
     }
     assert_eq!(
       out_scalar, out_avx,
@@ -179,9 +179,9 @@ fn avx512_gbr_to_rgb_u16_high_bit_matches_scalar_bits10() {
     let r = gbr_plane_u16::<10>(w, 0xDEAD_BEEF);
     let mut out_scalar = std::vec![0u16; w * 3];
     let mut out_avx = std::vec![0u16; w * 3];
-    scalar::gbr_to_rgb_u16_high_bit_row::<10>(&g, &b, &r, &mut out_scalar, w);
+    scalar::gbr_to_rgb_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out_scalar, w);
     unsafe {
-      gbr_to_rgb_u16_high_bit_row::<10>(&g, &b, &r, &mut out_avx, w);
+      gbr_to_rgb_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out_avx, w);
     }
     assert_eq!(
       out_scalar, out_avx,
@@ -202,9 +202,9 @@ fn avx512_gbr_to_rgb_u16_high_bit_matches_scalar_bits16() {
     let r = gbr_plane_u16::<16>(w, 0xDEAD_BEEF);
     let mut out_scalar = std::vec![0u16; w * 3];
     let mut out_avx = std::vec![0u16; w * 3];
-    scalar::gbr_to_rgb_u16_high_bit_row::<16>(&g, &b, &r, &mut out_scalar, w);
+    scalar::gbr_to_rgb_u16_high_bit_row::<16, false>(&g, &b, &r, &mut out_scalar, w);
     unsafe {
-      gbr_to_rgb_u16_high_bit_row::<16>(&g, &b, &r, &mut out_avx, w);
+      gbr_to_rgb_u16_high_bit_row::<16, false>(&g, &b, &r, &mut out_avx, w);
     }
     assert_eq!(
       out_scalar, out_avx,
@@ -225,9 +225,9 @@ fn avx512_gbr_to_rgba_opaque_u16_high_bit_matches_scalar_bits10() {
     let r = gbr_plane_u16::<10>(w, 0xDEAD_BEEF);
     let mut out_scalar = std::vec![0u16; w * 4];
     let mut out_avx = std::vec![0u16; w * 4];
-    scalar::gbr_to_rgba_opaque_u16_high_bit_row::<10>(&g, &b, &r, &mut out_scalar, w);
+    scalar::gbr_to_rgba_opaque_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out_scalar, w);
     unsafe {
-      gbr_to_rgba_opaque_u16_high_bit_row::<10>(&g, &b, &r, &mut out_avx, w);
+      gbr_to_rgba_opaque_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out_avx, w);
     }
     assert_eq!(
       out_scalar, out_avx,
@@ -248,9 +248,9 @@ fn avx512_gbr_to_rgba_opaque_u16_high_bit_matches_scalar_bits16() {
     let r = gbr_plane_u16::<16>(w, 0xDEAD_BEEF);
     let mut out_scalar = std::vec![0u16; w * 4];
     let mut out_avx = std::vec![0u16; w * 4];
-    scalar::gbr_to_rgba_opaque_u16_high_bit_row::<16>(&g, &b, &r, &mut out_scalar, w);
+    scalar::gbr_to_rgba_opaque_u16_high_bit_row::<16, false>(&g, &b, &r, &mut out_scalar, w);
     unsafe {
-      gbr_to_rgba_opaque_u16_high_bit_row::<16>(&g, &b, &r, &mut out_avx, w);
+      gbr_to_rgba_opaque_u16_high_bit_row::<16, false>(&g, &b, &r, &mut out_avx, w);
     }
     assert_eq!(
       out_scalar, out_avx,
@@ -272,9 +272,9 @@ fn avx512_gbra_to_rgba_u16_high_bit_matches_scalar_bits10() {
     let a = gbr_plane_u16::<10>(w, 0xCAFE_F00D);
     let mut out_scalar = std::vec![0u16; w * 4];
     let mut out_avx = std::vec![0u16; w * 4];
-    scalar::gbra_to_rgba_u16_high_bit_row::<10>(&g, &b, &r, &a, &mut out_scalar, w);
+    scalar::gbra_to_rgba_u16_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out_scalar, w);
     unsafe {
-      gbra_to_rgba_u16_high_bit_row::<10>(&g, &b, &r, &a, &mut out_avx, w);
+      gbra_to_rgba_u16_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out_avx, w);
     }
     assert_eq!(
       out_scalar, out_avx,
@@ -296,9 +296,9 @@ fn avx512_gbra_to_rgba_u16_high_bit_matches_scalar_bits16() {
     let a = gbr_plane_u16::<16>(w, 0xCAFE_F00D);
     let mut out_scalar = std::vec![0u16; w * 4];
     let mut out_avx = std::vec![0u16; w * 4];
-    scalar::gbra_to_rgba_u16_high_bit_row::<16>(&g, &b, &r, &a, &mut out_scalar, w);
+    scalar::gbra_to_rgba_u16_high_bit_row::<16, false>(&g, &b, &r, &a, &mut out_scalar, w);
     unsafe {
-      gbra_to_rgba_u16_high_bit_row::<16>(&g, &b, &r, &a, &mut out_avx, w);
+      gbra_to_rgba_u16_high_bit_row::<16, false>(&g, &b, &r, &a, &mut out_avx, w);
     }
     assert_eq!(
       out_scalar, out_avx,
@@ -321,9 +321,9 @@ fn avx512_gbr_to_rgb_high_bit_upper_bits_masked_bits10() {
     let r = gbr_plane_u16_dirty::<10>(w, 0x0400);
     let mut out_scalar = std::vec![0u8; w * 3];
     let mut out_avx = std::vec![0u8; w * 3];
-    scalar::gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut out_scalar, w);
+    scalar::gbr_to_rgb_high_bit_row::<10, false>(&g, &b, &r, &mut out_scalar, w);
     unsafe {
-      gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut out_avx, w);
+      gbr_to_rgb_high_bit_row::<10, false>(&g, &b, &r, &mut out_avx, w);
     }
     assert_eq!(
       out_scalar, out_avx,
@@ -345,9 +345,9 @@ fn avx512_gbra_to_rgba_high_bit_upper_bits_masked_bits10() {
     let a = gbr_plane_u16_dirty::<10>(w, 0x0C00);
     let mut out_scalar = std::vec![0u8; w * 4];
     let mut out_avx = std::vec![0u8; w * 4];
-    scalar::gbra_to_rgba_high_bit_row::<10>(&g, &b, &r, &a, &mut out_scalar, w);
+    scalar::gbra_to_rgba_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out_scalar, w);
     unsafe {
-      gbra_to_rgba_high_bit_row::<10>(&g, &b, &r, &a, &mut out_avx, w);
+      gbra_to_rgba_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out_avx, w);
     }
     assert_eq!(
       out_scalar, out_avx,
@@ -368,9 +368,9 @@ fn avx512_gbr_to_rgb_u16_high_bit_upper_bits_masked_bits10() {
     let r = gbr_plane_u16_dirty::<10>(w, 0x0400);
     let mut out_scalar = std::vec![0u16; w * 3];
     let mut out_avx = std::vec![0u16; w * 3];
-    scalar::gbr_to_rgb_u16_high_bit_row::<10>(&g, &b, &r, &mut out_scalar, w);
+    scalar::gbr_to_rgb_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out_scalar, w);
     unsafe {
-      gbr_to_rgb_u16_high_bit_row::<10>(&g, &b, &r, &mut out_avx, w);
+      gbr_to_rgb_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out_avx, w);
     }
     assert_eq!(
       out_scalar, out_avx,
@@ -392,13 +392,339 @@ fn avx512_gbra_to_rgba_u16_high_bit_upper_bits_masked_bits10() {
     let a = gbr_plane_u16_dirty::<10>(w, 0x0C00);
     let mut out_scalar = std::vec![0u16; w * 4];
     let mut out_avx = std::vec![0u16; w * 4];
-    scalar::gbra_to_rgba_u16_high_bit_row::<10>(&g, &b, &r, &a, &mut out_scalar, w);
+    scalar::gbra_to_rgba_u16_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out_scalar, w);
     unsafe {
-      gbra_to_rgba_u16_high_bit_row::<10>(&g, &b, &r, &a, &mut out_avx, w);
+      gbra_to_rgba_u16_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out_avx, w);
     }
     assert_eq!(
       out_scalar, out_avx,
       "AVX-512 gbra_to_rgba_u16_high_bit<10> dirty-input diverges (width={w})"
+    );
+  }
+}
+
+// ---- BE parity: AVX-512<BITS, true> output must match AVX-512<BITS, false> --
+
+fn byte_swap_plane(plane: &[u16]) -> std::vec::Vec<u16> {
+  plane.iter().map(|v| v.swap_bytes()).collect()
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_gbr_to_rgb_high_bit_be_matches_le_bits10() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  for w in [1usize, 7, 8, 16, 17, 32, 33, 64, 128, 130] {
+    let g = gbr_plane_u16::<10>(w, 0x6CCD_5C7B);
+    let b = gbr_plane_u16::<10>(w, 0x12AB_34CD);
+    let r = gbr_plane_u16::<10>(w, 0xDEAD_BEEF);
+    let g_be = byte_swap_plane(&g);
+    let b_be = byte_swap_plane(&b);
+    let r_be = byte_swap_plane(&r);
+    let mut out_le = std::vec![0u8; w * 3];
+    let mut out_be = std::vec![0u8; w * 3];
+    unsafe {
+      gbr_to_rgb_high_bit_row::<10, false>(&g, &b, &r, &mut out_le, w);
+      gbr_to_rgb_high_bit_row::<10, true>(&g_be, &b_be, &r_be, &mut out_be, w);
+    }
+    assert_eq!(
+      out_le, out_be,
+      "AVX-512 gbr_to_rgb_high_bit BE/LE mismatch (w={w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_gbr_to_rgb_high_bit_be_matches_le_bits16() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  for w in [1usize, 7, 8, 16, 17, 32, 33, 64, 128, 130] {
+    let g = gbr_plane_u16::<16>(w, 0x6CCD_5C7B);
+    let b = gbr_plane_u16::<16>(w, 0x12AB_34CD);
+    let r = gbr_plane_u16::<16>(w, 0xDEAD_BEEF);
+    let g_be = byte_swap_plane(&g);
+    let b_be = byte_swap_plane(&b);
+    let r_be = byte_swap_plane(&r);
+    let mut out_le = std::vec![0u8; w * 3];
+    let mut out_be = std::vec![0u8; w * 3];
+    unsafe {
+      gbr_to_rgb_high_bit_row::<16, false>(&g, &b, &r, &mut out_le, w);
+      gbr_to_rgb_high_bit_row::<16, true>(&g_be, &b_be, &r_be, &mut out_be, w);
+    }
+    assert_eq!(
+      out_le, out_be,
+      "AVX-512 gbr_to_rgb_high_bit BE/LE mismatch (w={w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_gbr_to_rgba_opaque_high_bit_be_matches_le_bits10() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  for w in [1usize, 7, 8, 16, 17, 32, 33, 64, 128, 130] {
+    let g = gbr_plane_u16::<10>(w, 0x6CCD_5C7B);
+    let b = gbr_plane_u16::<10>(w, 0x12AB_34CD);
+    let r = gbr_plane_u16::<10>(w, 0xDEAD_BEEF);
+    let g_be = byte_swap_plane(&g);
+    let b_be = byte_swap_plane(&b);
+    let r_be = byte_swap_plane(&r);
+    let mut out_le = std::vec![0u8; w * 4];
+    let mut out_be = std::vec![0u8; w * 4];
+    unsafe {
+      gbr_to_rgba_opaque_high_bit_row::<10, false>(&g, &b, &r, &mut out_le, w);
+      gbr_to_rgba_opaque_high_bit_row::<10, true>(&g_be, &b_be, &r_be, &mut out_be, w);
+    }
+    assert_eq!(
+      out_le, out_be,
+      "AVX-512 gbr_to_rgba_opaque_high_bit BE/LE mismatch (w={w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_gbr_to_rgba_opaque_high_bit_be_matches_le_bits16() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  for w in [1usize, 7, 8, 16, 17, 32, 33, 64, 128, 130] {
+    let g = gbr_plane_u16::<16>(w, 0x6CCD_5C7B);
+    let b = gbr_plane_u16::<16>(w, 0x12AB_34CD);
+    let r = gbr_plane_u16::<16>(w, 0xDEAD_BEEF);
+    let g_be = byte_swap_plane(&g);
+    let b_be = byte_swap_plane(&b);
+    let r_be = byte_swap_plane(&r);
+    let mut out_le = std::vec![0u8; w * 4];
+    let mut out_be = std::vec![0u8; w * 4];
+    unsafe {
+      gbr_to_rgba_opaque_high_bit_row::<16, false>(&g, &b, &r, &mut out_le, w);
+      gbr_to_rgba_opaque_high_bit_row::<16, true>(&g_be, &b_be, &r_be, &mut out_be, w);
+    }
+    assert_eq!(
+      out_le, out_be,
+      "AVX-512 gbr_to_rgba_opaque_high_bit BE/LE mismatch (w={w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_gbra_to_rgba_high_bit_be_matches_le_bits10() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  for w in [1usize, 7, 8, 16, 17, 32, 33, 64, 128, 130] {
+    let g = gbr_plane_u16::<10>(w, 0x6CCD_5C7B);
+    let b = gbr_plane_u16::<10>(w, 0x12AB_34CD);
+    let r = gbr_plane_u16::<10>(w, 0xDEAD_BEEF);
+    let a = gbr_plane_u16::<10>(w, 0xCAFE_F00D);
+    let g_be = byte_swap_plane(&g);
+    let b_be = byte_swap_plane(&b);
+    let r_be = byte_swap_plane(&r);
+    let a_be = byte_swap_plane(&a);
+    let mut out_le = std::vec![0u8; w * 4];
+    let mut out_be = std::vec![0u8; w * 4];
+    unsafe {
+      gbra_to_rgba_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out_le, w);
+      gbra_to_rgba_high_bit_row::<10, true>(&g_be, &b_be, &r_be, &a_be, &mut out_be, w);
+    }
+    assert_eq!(
+      out_le, out_be,
+      "AVX-512 gbra_to_rgba_high_bit BE/LE mismatch (w={w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_gbra_to_rgba_high_bit_be_matches_le_bits16() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  for w in [1usize, 7, 8, 16, 17, 32, 33, 64, 128, 130] {
+    let g = gbr_plane_u16::<16>(w, 0x6CCD_5C7B);
+    let b = gbr_plane_u16::<16>(w, 0x12AB_34CD);
+    let r = gbr_plane_u16::<16>(w, 0xDEAD_BEEF);
+    let a = gbr_plane_u16::<16>(w, 0xCAFE_F00D);
+    let g_be = byte_swap_plane(&g);
+    let b_be = byte_swap_plane(&b);
+    let r_be = byte_swap_plane(&r);
+    let a_be = byte_swap_plane(&a);
+    let mut out_le = std::vec![0u8; w * 4];
+    let mut out_be = std::vec![0u8; w * 4];
+    unsafe {
+      gbra_to_rgba_high_bit_row::<16, false>(&g, &b, &r, &a, &mut out_le, w);
+      gbra_to_rgba_high_bit_row::<16, true>(&g_be, &b_be, &r_be, &a_be, &mut out_be, w);
+    }
+    assert_eq!(
+      out_le, out_be,
+      "AVX-512 gbra_to_rgba_high_bit BE/LE mismatch (w={w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_gbr_to_rgb_u16_high_bit_be_matches_le_bits10() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  for w in [1usize, 7, 8, 16, 17, 32, 33, 64, 128, 130] {
+    let g = gbr_plane_u16::<10>(w, 0x6CCD_5C7B);
+    let b = gbr_plane_u16::<10>(w, 0x12AB_34CD);
+    let r = gbr_plane_u16::<10>(w, 0xDEAD_BEEF);
+    let g_be = byte_swap_plane(&g);
+    let b_be = byte_swap_plane(&b);
+    let r_be = byte_swap_plane(&r);
+    let mut out_le = std::vec![0u16; w * 3];
+    let mut out_be = std::vec![0u16; w * 3];
+    unsafe {
+      gbr_to_rgb_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out_le, w);
+      gbr_to_rgb_u16_high_bit_row::<10, true>(&g_be, &b_be, &r_be, &mut out_be, w);
+    }
+    assert_eq!(
+      out_le, out_be,
+      "AVX-512 gbr_to_rgb_u16_high_bit BE/LE mismatch (w={w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_gbr_to_rgb_u16_high_bit_be_matches_le_bits16() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  for w in [1usize, 7, 8, 16, 17, 32, 33, 64, 128, 130] {
+    let g = gbr_plane_u16::<16>(w, 0x6CCD_5C7B);
+    let b = gbr_plane_u16::<16>(w, 0x12AB_34CD);
+    let r = gbr_plane_u16::<16>(w, 0xDEAD_BEEF);
+    let g_be = byte_swap_plane(&g);
+    let b_be = byte_swap_plane(&b);
+    let r_be = byte_swap_plane(&r);
+    let mut out_le = std::vec![0u16; w * 3];
+    let mut out_be = std::vec![0u16; w * 3];
+    unsafe {
+      gbr_to_rgb_u16_high_bit_row::<16, false>(&g, &b, &r, &mut out_le, w);
+      gbr_to_rgb_u16_high_bit_row::<16, true>(&g_be, &b_be, &r_be, &mut out_be, w);
+    }
+    assert_eq!(
+      out_le, out_be,
+      "AVX-512 gbr_to_rgb_u16_high_bit BE/LE mismatch (w={w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_gbr_to_rgba_opaque_u16_high_bit_be_matches_le_bits10() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  for w in [1usize, 7, 8, 16, 17, 32, 33, 64, 128, 130] {
+    let g = gbr_plane_u16::<10>(w, 0x6CCD_5C7B);
+    let b = gbr_plane_u16::<10>(w, 0x12AB_34CD);
+    let r = gbr_plane_u16::<10>(w, 0xDEAD_BEEF);
+    let g_be = byte_swap_plane(&g);
+    let b_be = byte_swap_plane(&b);
+    let r_be = byte_swap_plane(&r);
+    let mut out_le = std::vec![0u16; w * 4];
+    let mut out_be = std::vec![0u16; w * 4];
+    unsafe {
+      gbr_to_rgba_opaque_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out_le, w);
+      gbr_to_rgba_opaque_u16_high_bit_row::<10, true>(&g_be, &b_be, &r_be, &mut out_be, w);
+    }
+    assert_eq!(
+      out_le, out_be,
+      "AVX-512 gbr_to_rgba_opaque_u16_high_bit BE/LE mismatch (w={w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_gbr_to_rgba_opaque_u16_high_bit_be_matches_le_bits16() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  for w in [1usize, 7, 8, 16, 17, 32, 33, 64, 128, 130] {
+    let g = gbr_plane_u16::<16>(w, 0x6CCD_5C7B);
+    let b = gbr_plane_u16::<16>(w, 0x12AB_34CD);
+    let r = gbr_plane_u16::<16>(w, 0xDEAD_BEEF);
+    let g_be = byte_swap_plane(&g);
+    let b_be = byte_swap_plane(&b);
+    let r_be = byte_swap_plane(&r);
+    let mut out_le = std::vec![0u16; w * 4];
+    let mut out_be = std::vec![0u16; w * 4];
+    unsafe {
+      gbr_to_rgba_opaque_u16_high_bit_row::<16, false>(&g, &b, &r, &mut out_le, w);
+      gbr_to_rgba_opaque_u16_high_bit_row::<16, true>(&g_be, &b_be, &r_be, &mut out_be, w);
+    }
+    assert_eq!(
+      out_le, out_be,
+      "AVX-512 gbr_to_rgba_opaque_u16_high_bit BE/LE mismatch (w={w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_gbra_to_rgba_u16_high_bit_be_matches_le_bits10() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  for w in [1usize, 7, 8, 16, 17, 32, 33, 64, 128, 130] {
+    let g = gbr_plane_u16::<10>(w, 0x6CCD_5C7B);
+    let b = gbr_plane_u16::<10>(w, 0x12AB_34CD);
+    let r = gbr_plane_u16::<10>(w, 0xDEAD_BEEF);
+    let a = gbr_plane_u16::<10>(w, 0xCAFE_F00D);
+    let g_be = byte_swap_plane(&g);
+    let b_be = byte_swap_plane(&b);
+    let r_be = byte_swap_plane(&r);
+    let a_be = byte_swap_plane(&a);
+    let mut out_le = std::vec![0u16; w * 4];
+    let mut out_be = std::vec![0u16; w * 4];
+    unsafe {
+      gbra_to_rgba_u16_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out_le, w);
+      gbra_to_rgba_u16_high_bit_row::<10, true>(&g_be, &b_be, &r_be, &a_be, &mut out_be, w);
+    }
+    assert_eq!(
+      out_le, out_be,
+      "AVX-512 gbra_to_rgba_u16_high_bit BE/LE mismatch (w={w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_gbra_to_rgba_u16_high_bit_be_matches_le_bits16() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  for w in [1usize, 7, 8, 16, 17, 32, 33, 64, 128, 130] {
+    let g = gbr_plane_u16::<16>(w, 0x6CCD_5C7B);
+    let b = gbr_plane_u16::<16>(w, 0x12AB_34CD);
+    let r = gbr_plane_u16::<16>(w, 0xDEAD_BEEF);
+    let a = gbr_plane_u16::<16>(w, 0xCAFE_F00D);
+    let g_be = byte_swap_plane(&g);
+    let b_be = byte_swap_plane(&b);
+    let r_be = byte_swap_plane(&r);
+    let a_be = byte_swap_plane(&a);
+    let mut out_le = std::vec![0u16; w * 4];
+    let mut out_be = std::vec![0u16; w * 4];
+    unsafe {
+      gbra_to_rgba_u16_high_bit_row::<16, false>(&g, &b, &r, &a, &mut out_le, w);
+      gbra_to_rgba_u16_high_bit_row::<16, true>(&g_be, &b_be, &r_be, &a_be, &mut out_be, w);
+    }
+    assert_eq!(
+      out_le, out_be,
+      "AVX-512 gbra_to_rgba_u16_high_bit BE/LE mismatch (w={w})"
     );
   }
 }

@@ -1,6 +1,7 @@
 //! AVX2 kernels for high-bit-depth planar GBR sources (Tier 10b).
 //!
-//! All functions are const-generic over `BITS ∈ {9, 10, 12, 14, 16}`.
+//! All functions are const-generic over `BITS ∈ {9, 10, 12, 14, 16}` and
+//! `BE: bool` (endianness of the source u16 planes).
 //! Lane width: 16 pixels per iteration (16 × u16 per `__m256i`).
 //! Scalar tail handles the remainder.
 //!
@@ -18,15 +19,25 @@
 //!
 //! Process 16 u16 pixels per outer iteration via two calls to the 128-bit
 //! `write_rgb_u16_8` / `write_rgba_u16_8` helpers (8 pixels each).
+//!
+//! # Big-endian (`BE = true`) mode
+//!
+//! Wide (16-pixel) iterations use `load_endian_u16x16::<BE>` from this
+//! backend's own `endian.rs` (256-bit shuffle). 8-pixel tail iterations use
+//! `load_endian_u16x8::<BE>` from the SSE4.1 `endian.rs` (128-bit shuffle).
+//! Both branches are resolved at monomorphisation time.
 
 use core::arch::x86_64::*;
 
-use super::*;
+use super::{endian::load_endian_u16x16, *};
+use crate::row::arch::x86_sse41::endian::load_endian_u16x8;
 
 // ---- u8 output, 3-channel (RGB) -----------------------------------------
 
 /// AVX2 high-bit-depth G/B/R planar → packed `R, G, B` **bytes**.
 /// Downshifts each sample by `BITS - 8` and packs to u8.
+///
+/// When `BE = true` each source u16 element is byte-swapped on load.
 ///
 /// # Safety
 ///
@@ -35,7 +46,7 @@ use super::*;
 /// 3. `rgb_out.len()` ≥ `3 * width`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
+pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -58,9 +69,9 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let r_v = _mm256_and_si256(_mm256_loadu_si256(r.as_ptr().add(x).cast()), mask256);
-      let g_v = _mm256_and_si256(_mm256_loadu_si256(g.as_ptr().add(x).cast()), mask256);
-      let b_v = _mm256_and_si256(_mm256_loadu_si256(b.as_ptr().add(x).cast()), mask256);
+      let r_v = _mm256_and_si256(load_endian_u16x16::<BE>(r.as_ptr().add(x).cast()), mask256);
+      let g_v = _mm256_and_si256(load_endian_u16x16::<BE>(g.as_ptr().add(x).cast()), mask256);
+      let b_v = _mm256_and_si256(load_endian_u16x16::<BE>(b.as_ptr().add(x).cast()), mask256);
 
       // Variable-count logical right-shift for all 16 u16 lanes.
       let r_sh = _mm256_srl_epi16(r_v, shr_count);
@@ -85,9 +96,9 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
     // Drain remaining 8-pixel blocks with the SSE-width path.
     if x + 8 <= width {
       let zero = _mm_setzero_si128();
-      let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask128);
-      let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask128);
-      let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask128);
+      let r_v = _mm_and_si128(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask128);
+      let g_v = _mm_and_si128(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask128);
+      let b_v = _mm_and_si128(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask128);
       let r_sh = _mm_srl_epi16(r_v, shr_count);
       let g_sh = _mm_srl_epi16(g_v, shr_count);
       let b_sh = _mm_srl_epi16(b_v, shr_count);
@@ -100,7 +111,7 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
       x += 8;
     }
     if x < width {
-      scalar::gbr_to_rgb_high_bit_row::<BITS>(
+      scalar::gbr_to_rgb_high_bit_row::<BITS, BE>(
         &g[x..width],
         &b[x..width],
         &r[x..width],
@@ -116,6 +127,8 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
 /// AVX2 high-bit-depth G/B/R planar → packed `R, G, B, A` **bytes**
 /// with constant opaque alpha (`0xFF`).
 ///
+/// When `BE = true` each source u16 element is byte-swapped on load.
+///
 /// # Safety
 ///
 /// 1. AVX2 must be available (caller obligation).
@@ -123,7 +136,7 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32>(
 /// 3. `rgba_out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
+pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -147,9 +160,9 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let r_v = _mm256_and_si256(_mm256_loadu_si256(r.as_ptr().add(x).cast()), mask256);
-      let g_v = _mm256_and_si256(_mm256_loadu_si256(g.as_ptr().add(x).cast()), mask256);
-      let b_v = _mm256_and_si256(_mm256_loadu_si256(b.as_ptr().add(x).cast()), mask256);
+      let r_v = _mm256_and_si256(load_endian_u16x16::<BE>(r.as_ptr().add(x).cast()), mask256);
+      let g_v = _mm256_and_si256(load_endian_u16x16::<BE>(g.as_ptr().add(x).cast()), mask256);
+      let b_v = _mm256_and_si256(load_endian_u16x16::<BE>(b.as_ptr().add(x).cast()), mask256);
 
       let r_sh = _mm256_srl_epi16(r_v, shr_count);
       let g_sh = _mm256_srl_epi16(g_v, shr_count);
@@ -174,9 +187,9 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
       x += 16;
     }
     if x + 8 <= width {
-      let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask128);
-      let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask128);
-      let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask128);
+      let r_v = _mm_and_si128(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask128);
+      let g_v = _mm_and_si128(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask128);
+      let b_v = _mm_and_si128(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask128);
       let r_sh = _mm_srl_epi16(r_v, shr_count);
       let g_sh = _mm_srl_epi16(g_v, shr_count);
       let b_sh = _mm_srl_epi16(b_v, shr_count);
@@ -189,7 +202,7 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
       x += 8;
     }
     if x < width {
-      scalar::gbr_to_rgba_opaque_high_bit_row::<BITS>(
+      scalar::gbr_to_rgba_opaque_high_bit_row::<BITS, BE>(
         &g[x..width],
         &b[x..width],
         &r[x..width],
@@ -205,6 +218,8 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
 /// AVX2 high-bit-depth G/B/R/A planar → packed `R, G, B, A` **bytes**.
 /// Alpha sourced from the `a` plane, downshifted by `BITS - 8`.
 ///
+/// When `BE = true` each source u16 element is byte-swapped on load.
+///
 /// # Safety
 ///
 /// 1. AVX2 must be available (caller obligation).
@@ -212,7 +227,7 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
 /// 3. `rgba_out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
+pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -236,10 +251,10 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let r_v = _mm256_and_si256(_mm256_loadu_si256(r.as_ptr().add(x).cast()), mask256);
-      let g_v = _mm256_and_si256(_mm256_loadu_si256(g.as_ptr().add(x).cast()), mask256);
-      let b_v = _mm256_and_si256(_mm256_loadu_si256(b.as_ptr().add(x).cast()), mask256);
-      let a_v = _mm256_and_si256(_mm256_loadu_si256(a.as_ptr().add(x).cast()), mask256);
+      let r_v = _mm256_and_si256(load_endian_u16x16::<BE>(r.as_ptr().add(x).cast()), mask256);
+      let g_v = _mm256_and_si256(load_endian_u16x16::<BE>(g.as_ptr().add(x).cast()), mask256);
+      let b_v = _mm256_and_si256(load_endian_u16x16::<BE>(b.as_ptr().add(x).cast()), mask256);
+      let a_v = _mm256_and_si256(load_endian_u16x16::<BE>(a.as_ptr().add(x).cast()), mask256);
 
       let r_sh = _mm256_srl_epi16(r_v, shr_count);
       let g_sh = _mm256_srl_epi16(g_v, shr_count);
@@ -261,10 +276,10 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
       x += 16;
     }
     if x + 8 <= width {
-      let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask128);
-      let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask128);
-      let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask128);
-      let a_v = _mm_and_si128(_mm_loadu_si128(a.as_ptr().add(x).cast()), mask128);
+      let r_v = _mm_and_si128(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask128);
+      let g_v = _mm_and_si128(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask128);
+      let b_v = _mm_and_si128(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask128);
+      let a_v = _mm_and_si128(load_endian_u16x8::<BE>(a.as_ptr().add(x).cast()), mask128);
       let r_sh = _mm_srl_epi16(r_v, shr_count);
       let g_sh = _mm_srl_epi16(g_v, shr_count);
       let b_sh = _mm_srl_epi16(b_v, shr_count);
@@ -279,7 +294,7 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
       x += 8;
     }
     if x < width {
-      scalar::gbra_to_rgba_high_bit_row::<BITS>(
+      scalar::gbra_to_rgba_high_bit_row::<BITS, BE>(
         &g[x..width],
         &b[x..width],
         &r[x..width],
@@ -297,6 +312,8 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
 /// No shift — values copied directly, reordered G/B/R → R/G/B.
 /// Processes 16 pixels per outer loop via two 8-pixel `write_rgb_u16_8` calls.
 ///
+/// When `BE = true` each source u16 element is byte-swapped on load.
+///
 /// # Safety
 ///
 /// 1. AVX2 must be available (caller obligation).
@@ -304,7 +321,7 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32>(
 /// 3. `rgb_u16_out.len()` ≥ `3 * width`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
+pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -322,27 +339,36 @@ pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
     let mut x = 0usize;
     while x + 16 <= width {
       // Two 8-pixel halves using the SSE helper.
-      let r_lo = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask128);
-      let g_lo = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask128);
-      let b_lo = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask128);
+      let r_lo = _mm_and_si128(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask128);
+      let g_lo = _mm_and_si128(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask128);
+      let b_lo = _mm_and_si128(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask128);
       write_rgb_u16_8(r_lo, g_lo, b_lo, rgb_u16_out.as_mut_ptr().add(x * 3));
 
-      let r_hi = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x + 8).cast()), mask128);
-      let g_hi = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x + 8).cast()), mask128);
-      let b_hi = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x + 8).cast()), mask128);
+      let r_hi = _mm_and_si128(
+        load_endian_u16x8::<BE>(r.as_ptr().add(x + 8).cast()),
+        mask128,
+      );
+      let g_hi = _mm_and_si128(
+        load_endian_u16x8::<BE>(g.as_ptr().add(x + 8).cast()),
+        mask128,
+      );
+      let b_hi = _mm_and_si128(
+        load_endian_u16x8::<BE>(b.as_ptr().add(x + 8).cast()),
+        mask128,
+      );
       write_rgb_u16_8(r_hi, g_hi, b_hi, rgb_u16_out.as_mut_ptr().add((x + 8) * 3));
 
       x += 16;
     }
     if x + 8 <= width {
-      let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask128);
-      let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask128);
-      let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask128);
+      let r_v = _mm_and_si128(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask128);
+      let g_v = _mm_and_si128(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask128);
+      let b_v = _mm_and_si128(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask128);
       write_rgb_u16_8(r_v, g_v, b_v, rgb_u16_out.as_mut_ptr().add(x * 3));
       x += 8;
     }
     if x < width {
-      scalar::gbr_to_rgb_u16_high_bit_row::<BITS>(
+      scalar::gbr_to_rgb_u16_high_bit_row::<BITS, BE>(
         &g[x..width],
         &b[x..width],
         &r[x..width],
@@ -358,6 +384,8 @@ pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
 /// AVX2 high-bit-depth G/B/R planar → packed `R, G, B, A` **u16** samples
 /// with constant opaque alpha `(1 << BITS) - 1`.
 ///
+/// When `BE = true` each source u16 element is byte-swapped on load.
+///
 /// # Safety
 ///
 /// 1. AVX2 must be available (caller obligation).
@@ -365,7 +393,7 @@ pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
 /// 3. `rgba_u16_out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
+pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -387,9 +415,9 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let r_lo = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask128);
-      let g_lo = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask128);
-      let b_lo = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask128);
+      let r_lo = _mm_and_si128(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask128);
+      let g_lo = _mm_and_si128(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask128);
+      let b_lo = _mm_and_si128(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask128);
       write_rgba_u16_8(
         r_lo,
         g_lo,
@@ -398,9 +426,18 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
         rgba_u16_out.as_mut_ptr().add(x * 4),
       );
 
-      let r_hi = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x + 8).cast()), mask128);
-      let g_hi = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x + 8).cast()), mask128);
-      let b_hi = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x + 8).cast()), mask128);
+      let r_hi = _mm_and_si128(
+        load_endian_u16x8::<BE>(r.as_ptr().add(x + 8).cast()),
+        mask128,
+      );
+      let g_hi = _mm_and_si128(
+        load_endian_u16x8::<BE>(g.as_ptr().add(x + 8).cast()),
+        mask128,
+      );
+      let b_hi = _mm_and_si128(
+        load_endian_u16x8::<BE>(b.as_ptr().add(x + 8).cast()),
+        mask128,
+      );
       write_rgba_u16_8(
         r_hi,
         g_hi,
@@ -412,14 +449,14 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
       x += 16;
     }
     if x + 8 <= width {
-      let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask128);
-      let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask128);
-      let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask128);
+      let r_v = _mm_and_si128(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask128);
+      let g_v = _mm_and_si128(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask128);
+      let b_v = _mm_and_si128(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask128);
       write_rgba_u16_8(r_v, g_v, b_v, opaque, rgba_u16_out.as_mut_ptr().add(x * 4));
       x += 8;
     }
     if x < width {
-      scalar::gbr_to_rgba_opaque_u16_high_bit_row::<BITS>(
+      scalar::gbr_to_rgba_opaque_u16_high_bit_row::<BITS, BE>(
         &g[x..width],
         &b[x..width],
         &r[x..width],
@@ -435,6 +472,8 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
 /// AVX2 high-bit-depth G/B/R/A planar → packed `R, G, B, A` **u16** samples.
 /// Alpha sourced from the `a` plane at native depth (no shift).
 ///
+/// When `BE = true` each source u16 element is byte-swapped on load.
+///
 /// # Safety
 ///
 /// 1. AVX2 must be available (caller obligation).
@@ -442,7 +481,7 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
 /// 3. `rgba_u16_out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
+pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -464,16 +503,28 @@ pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
     let mask128 = _mm_set1_epi16(((1u32 << BITS) - 1) as u16 as i16);
     let mut x = 0usize;
     while x + 16 <= width {
-      let r_lo = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask128);
-      let g_lo = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask128);
-      let b_lo = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask128);
-      let a_lo = _mm_and_si128(_mm_loadu_si128(a.as_ptr().add(x).cast()), mask128);
+      let r_lo = _mm_and_si128(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask128);
+      let g_lo = _mm_and_si128(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask128);
+      let b_lo = _mm_and_si128(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask128);
+      let a_lo = _mm_and_si128(load_endian_u16x8::<BE>(a.as_ptr().add(x).cast()), mask128);
       write_rgba_u16_8(r_lo, g_lo, b_lo, a_lo, rgba_u16_out.as_mut_ptr().add(x * 4));
 
-      let r_hi = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x + 8).cast()), mask128);
-      let g_hi = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x + 8).cast()), mask128);
-      let b_hi = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x + 8).cast()), mask128);
-      let a_hi = _mm_and_si128(_mm_loadu_si128(a.as_ptr().add(x + 8).cast()), mask128);
+      let r_hi = _mm_and_si128(
+        load_endian_u16x8::<BE>(r.as_ptr().add(x + 8).cast()),
+        mask128,
+      );
+      let g_hi = _mm_and_si128(
+        load_endian_u16x8::<BE>(g.as_ptr().add(x + 8).cast()),
+        mask128,
+      );
+      let b_hi = _mm_and_si128(
+        load_endian_u16x8::<BE>(b.as_ptr().add(x + 8).cast()),
+        mask128,
+      );
+      let a_hi = _mm_and_si128(
+        load_endian_u16x8::<BE>(a.as_ptr().add(x + 8).cast()),
+        mask128,
+      );
       write_rgba_u16_8(
         r_hi,
         g_hi,
@@ -485,15 +536,15 @@ pub(crate) unsafe fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
       x += 16;
     }
     if x + 8 <= width {
-      let r_v = _mm_and_si128(_mm_loadu_si128(r.as_ptr().add(x).cast()), mask128);
-      let g_v = _mm_and_si128(_mm_loadu_si128(g.as_ptr().add(x).cast()), mask128);
-      let b_v = _mm_and_si128(_mm_loadu_si128(b.as_ptr().add(x).cast()), mask128);
-      let a_v = _mm_and_si128(_mm_loadu_si128(a.as_ptr().add(x).cast()), mask128);
+      let r_v = _mm_and_si128(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask128);
+      let g_v = _mm_and_si128(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask128);
+      let b_v = _mm_and_si128(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask128);
+      let a_v = _mm_and_si128(load_endian_u16x8::<BE>(a.as_ptr().add(x).cast()), mask128);
       write_rgba_u16_8(r_v, g_v, b_v, a_v, rgba_u16_out.as_mut_ptr().add(x * 4));
       x += 8;
     }
     if x < width {
-      scalar::gbra_to_rgba_u16_high_bit_row::<BITS>(
+      scalar::gbra_to_rgba_u16_high_bit_row::<BITS, BE>(
         &g[x..width],
         &b[x..width],
         &r[x..width],

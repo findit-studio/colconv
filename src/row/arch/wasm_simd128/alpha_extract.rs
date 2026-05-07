@@ -357,7 +357,12 @@ pub(crate) unsafe fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
     }
 
     if x < width {
-      scalar::copy_alpha_plane_u16_to_u8::<BITS>(
+      // Scalar tail uses `BE = false`: this wasm-simd128 helper does
+      // host-native u16 loads (`v128_load64_zero`), which match LE-on-disk
+      // only on LE hosts. The dispatcher routes BE = true directly to scalar
+      // (see `dispatch::alpha_extract`), so the SIMD path here is BE = false
+      // by construction.
+      scalar::copy_alpha_plane_u16_to_u8::<BITS, false>(
         &alpha[x..width],
         &mut rgba_out[x * 4..width * 4],
         width - x,
@@ -438,7 +443,8 @@ pub(crate) unsafe fn copy_alpha_plane_u16<const BITS: u32>(
     }
 
     if x < width {
-      scalar::copy_alpha_plane_u16::<BITS>(
+      // Scalar tail uses `BE = false`: see `copy_alpha_plane_u16_to_u8` above.
+      scalar::copy_alpha_plane_u16::<BITS, false>(
         &alpha[x..width],
         &mut rgba_out[x * 4..width * 4],
         width - x,
@@ -575,7 +581,8 @@ mod tests {
       unsafe {
         super::copy_alpha_plane_u16_to_u8::<10>(&alpha, &mut rgba_simd, w);
       }
-      scalar::copy_alpha_plane_u16_to_u8::<10>(&alpha, &mut rgba_scalar, w);
+      // SIMD reads native u16; pair with scalar BE = false (LE-on-LE-host).
+      scalar::copy_alpha_plane_u16_to_u8::<10, false>(&alpha, &mut rgba_scalar, w);
       assert_eq!(rgba_simd, rgba_scalar, "width={w}");
     }
   }
@@ -598,7 +605,8 @@ mod tests {
       unsafe {
         super::copy_alpha_plane_u16_to_u8::<12>(&alpha, &mut rgba_simd, w);
       }
-      scalar::copy_alpha_plane_u16_to_u8::<12>(&alpha, &mut rgba_scalar, w);
+      // SIMD reads native u16; pair with scalar BE = false (LE-on-LE-host).
+      scalar::copy_alpha_plane_u16_to_u8::<12, false>(&alpha, &mut rgba_scalar, w);
       assert_eq!(rgba_simd, rgba_scalar, "width={w}");
     }
   }
@@ -618,7 +626,8 @@ mod tests {
       unsafe {
         super::copy_alpha_plane_u16::<10>(&alpha, &mut rgba_simd, w);
       }
-      scalar::copy_alpha_plane_u16::<10>(&alpha, &mut rgba_scalar, w);
+      // SIMD reads native u16; pair with scalar BE = false (LE-on-LE-host).
+      scalar::copy_alpha_plane_u16::<10, false>(&alpha, &mut rgba_scalar, w);
       assert_eq!(rgba_simd, rgba_scalar, "width={w}");
     }
   }
