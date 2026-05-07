@@ -12,6 +12,7 @@ mod packed_yuv_8bit;
 mod pal8;
 mod planar_8bit;
 mod planar_gbr_8bit;
+mod planar_gbr_float;
 mod planar_gbr_high_bit;
 mod semi_planar_8bit;
 mod subsampled_4_2_0_high_bit;

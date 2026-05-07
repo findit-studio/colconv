@@ -10,6 +10,7 @@ mod packed_yuv_8bit;
 mod pal8;
 mod planar_8bit_and_nv;
 mod planar_gbr;
+mod planar_gbr_float;
 mod planar_gbr_high_bit;
 mod v210;
 mod v30x;
