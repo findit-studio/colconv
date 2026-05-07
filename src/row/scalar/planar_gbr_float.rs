@@ -674,6 +674,10 @@ mod tests {
   // ---- gbrpf32_to_rgb_f16_row ----------------------------------------------
 
   #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
+  )]
   fn gbrpf32_to_rgb_f16_normal_values() {
     let g = [0.0f32, 0.5, 1.0];
     let b = [0.25f32, 0.75, 0.0];
@@ -686,6 +690,10 @@ mod tests {
   }
 
   #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
+  )]
   fn gbrpf32_to_rgb_f16_hdr_saturates_to_inf() {
     // Input 70000.0 > f16 max (~65504) → +Inf
     let g = [70_000.0f32];
@@ -702,6 +710,10 @@ mod tests {
   // ---- gbrpf32_to_rgba_f16_row ---------------------------------------------
 
   #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
+  )]
   fn gbrpf32_to_rgba_f16_alpha_is_one() {
     let g = [0.5f32];
     let b = [0.5f32];
@@ -870,6 +882,10 @@ mod tests {
   // ---- gbrapf32_to_rgba_f16_row --------------------------------------------
 
   #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
+  )]
   fn gbrapf32_to_rgba_f16_source_alpha_passthrough() {
     let g = [0.5f32];
     let b = [0.5f32];
@@ -881,6 +897,10 @@ mod tests {
   }
 
   #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
+  )]
   fn gbrapf32_to_rgba_f16_hdr_alpha_saturates() {
     let g = [0.5f32];
     let b = [0.5f32];
