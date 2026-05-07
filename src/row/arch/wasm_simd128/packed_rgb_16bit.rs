@@ -142,7 +142,12 @@ unsafe fn deinterleave_rgb48_8px(v0: v128, v1: v128, v2: v128) -> (v128, v128, v
 ///
 /// For Rgba64: `(R, G, B, A)`. For Bgra64: `(B, G, R, A)`.
 ///
-/// Uses a 3-level `i16x8_shuffle` cascade mirroring the AVX2/SSE4.1 sibling.
+/// Uses a 2-level `i16x8_shuffle` cascade. Each level-1 shuffle pairs two
+/// raw registers and groups two adjacent channels for 4 pixels; each
+/// level-2 shuffle splits the channel pair into the final per-channel
+/// 8-u16 vector. Mirrors the SSE4.1 sibling's per-channel gather
+/// (`src/row/arch/x86_sse41/packed_rgb_16bit.rs`) but adapted to the
+/// 8-lane `i16x8_shuffle` primitive.
 ///
 /// Input layout:
 ///   raw0 = [C0_0, C1_0, C2_0, C3_0, C0_1, C1_1, C2_1, C3_1]  (pixels 0-1)
@@ -161,35 +166,37 @@ unsafe fn deinterleave_rgba64_8px(
   raw3: v128,
 ) -> (v128, v128, v128, v128) {
   unsafe {
-    // Level 1: separate even/odd pixel pairs.
-    // lo_01: [C0_0, C0_1, C1_0, C1_1, C2_0, C2_1, C3_0, C3_1]
-    // hi_01: [C0_2, C0_3, C1_2, C1_3, C2_2, C2_3, C3_2, C3_3]
-    // lo_23: [C0_4, C0_5, C1_4, C1_5, C2_4, C2_5, C3_4, C3_5]
-    // hi_23: [C0_6, C0_7, C1_6, C1_7, C2_6, C2_7, C3_6, C3_7]
-    let lo_01 = i16x8_shuffle::<0, 4, 1, 5, 2, 6, 3, 7>(raw0, raw1);
-    let hi_01 = i16x8_shuffle::<8, 12, 9, 13, 10, 14, 11, 15>(raw0, raw1);
-    let lo_23 = i16x8_shuffle::<0, 4, 1, 5, 2, 6, 3, 7>(raw2, raw3);
-    let hi_23 = i16x8_shuffle::<8, 12, 9, 13, 10, 14, 11, 15>(raw2, raw3);
+    // Level 1: combine each adjacent raw pair (raw0+raw1 = pixels 0-3,
+    // raw2+raw3 = pixels 4-7) and group the 4 channels into pairs.
+    //
+    // For (raw0, raw1) the 4 channels of pixels 0-3 sit at u16 lane
+    // positions:
+    //   C0_0=raw0[0], C0_1=raw0[4], C0_2=raw1[0]=8, C0_3=raw1[4]=12,
+    //   C1_0=raw0[1], C1_1=raw0[5], C1_2=raw1[1]=9, C1_3=raw1[5]=13,
+    //   C2_0=raw0[2], C2_1=raw0[6], C2_2=raw1[2]=10, C2_3=raw1[6]=14,
+    //   C3_0=raw0[3], C3_1=raw0[7], C3_2=raw1[3]=11, C3_3=raw1[7]=15.
+    //
+    // Each i16x8_shuffle output holds 8 u16 = exactly two channels worth
+    // of data for the 4-pixel group; pair channels (C0,C1) and (C2,C3).
+    //   pair_01_c01: [C0_0, C0_1, C0_2, C0_3, C1_0, C1_1, C1_2, C1_3]
+    //   pair_01_c23: [C2_0, C2_1, C2_2, C2_3, C3_0, C3_1, C3_2, C3_3]
+    //   pair_23_c01: [C0_4, C0_5, C0_6, C0_7, C1_4, C1_5, C1_6, C1_7]
+    //   pair_23_c23: [C2_4, C2_5, C2_6, C2_7, C3_4, C3_5, C3_6, C3_7]
+    let pair_01_c01 = i16x8_shuffle::<0, 4, 8, 12, 1, 5, 9, 13>(raw0, raw1);
+    let pair_01_c23 = i16x8_shuffle::<2, 6, 10, 14, 3, 7, 11, 15>(raw0, raw1);
+    let pair_23_c01 = i16x8_shuffle::<0, 4, 8, 12, 1, 5, 9, 13>(raw2, raw3);
+    let pair_23_c23 = i16x8_shuffle::<2, 6, 10, 14, 3, 7, 11, 15>(raw2, raw3);
 
-    // Level 2: group same-channel values.
-    // lo_lo: [C0_0, C0_1, C0_4, C0_5, C1_0, C1_1, C1_4, C1_5]
-    // lo_hi: [C0_2, C0_3, C0_6, C0_7, C1_2, C1_3, C1_6, C1_7]
-    // hi_lo: [C2_0, C2_1, C2_4, C2_5, C3_0, C3_1, C3_4, C3_5]
-    // hi_hi: [C2_2, C2_3, C2_6, C2_7, C3_2, C3_3, C3_6, C3_7]
-    let lo_lo = i16x8_shuffle::<0, 1, 8, 9, 2, 3, 10, 11>(lo_01, lo_23);
-    let lo_hi = i16x8_shuffle::<4, 5, 12, 13, 6, 7, 14, 15>(lo_01, lo_23);
-    let hi_lo = i16x8_shuffle::<0, 1, 8, 9, 2, 3, 10, 11>(hi_01, hi_23);
-    let hi_hi = i16x8_shuffle::<4, 5, 12, 13, 6, 7, 14, 15>(hi_01, hi_23);
-
-    // Level 3: final separation of each channel in pixel order.
-    // ch0: [C0_0, C0_1, C0_2, C0_3, C0_4, C0_5, C0_6, C0_7]
-    // ch1: [C1_0, C1_1, C1_2, C1_3, C1_4, C1_5, C1_6, C1_7]
-    // ch2: [C2_0, C2_1, C2_2, C2_3, C2_4, C2_5, C2_6, C2_7]
-    // ch3: [C3_0, C3_1, C3_2, C3_3, C3_4, C3_5, C3_6, C3_7]
-    let ch0 = i16x8_shuffle::<0, 1, 2, 3, 8, 9, 10, 11>(lo_lo, lo_hi);
-    let ch1 = i16x8_shuffle::<4, 5, 6, 7, 12, 13, 14, 15>(lo_lo, lo_hi);
-    let ch2 = i16x8_shuffle::<0, 1, 2, 3, 8, 9, 10, 11>(hi_lo, hi_hi);
-    let ch3 = i16x8_shuffle::<4, 5, 6, 7, 12, 13, 14, 15>(hi_lo, hi_hi);
+    // Level 2: concatenate the lo half of each pair_*_c01 (= channel 0 for
+    // 4 pixels) with the lo half of the matching counterpart (4 more
+    // pixels) to get a single 8-u16 channel vector in natural pixel order.
+    // Lanes 0..3 from first source = pixels 0..3; lanes 8..11 from second
+    // source = pixels 4..7 (treated as the second i16x8_shuffle source).
+    // Hi halves of each pair_* hold the next channel (C1 or C3).
+    let ch0 = i16x8_shuffle::<0, 1, 2, 3, 8, 9, 10, 11>(pair_01_c01, pair_23_c01);
+    let ch1 = i16x8_shuffle::<4, 5, 6, 7, 12, 13, 14, 15>(pair_01_c01, pair_23_c01);
+    let ch2 = i16x8_shuffle::<0, 1, 2, 3, 8, 9, 10, 11>(pair_01_c23, pair_23_c23);
+    let ch3 = i16x8_shuffle::<4, 5, 6, 7, 12, 13, 14, 15>(pair_01_c23, pair_23_c23);
 
     (ch0, ch1, ch2, ch3)
   }

@@ -669,3 +669,113 @@ fn avx512_bgra64_to_rgba_u16_lane_order_regression() {
     "bgra64→rgba_u16 lane order (B↔R swap + alpha preserve): SIMD vs scalar mismatch"
   );
 }
+
+// =============================================================================
+// Lane-order regression tests with hand-derived expected values
+// (Codex Bug 2: stride-4 reshape paired the same vector twice)
+// =============================================================================
+//
+// The earlier `*_lane_order_regression` tests use a high-byte asymmetric
+// pattern (`0x1100+i`, `0x2200+i`, ...) and compare SIMD vs scalar.
+// While that pattern catches per-pixel mixing in u16 outputs, the
+// hand-derived per-pixel asserts below pin down the exact mapping that
+// the SIMD path must produce, making regression diagnosis trivial if
+// the deinterleave is ever broken again. Pattern matches the wasm
+// sibling for parity:
+//
+//   R[n] = n+1, G[n] = 100+n, B[n] = 200+n, A[n] = 50+n
+//
+// Width 33 exercises 1 SIMD iteration (32 px) + 1-pixel scalar tail —
+// catching reshape bugs that only manifest in the SIMD hot loop.
+
+/// Build an asymmetric Rgba64 row: pixel `n` = [R=n+1, G=100+n, B=200+n, A=50+n].
+fn make_rgba64_lane_order(width: usize) -> std::vec::Vec<u16> {
+  let mut src = std::vec::Vec::with_capacity(width * 4);
+  for n in 0..width {
+    src.push((n as u16).wrapping_add(1)); // R
+    src.push((n as u16).wrapping_add(100)); // G
+    src.push((n as u16).wrapping_add(200)); // B
+    src.push((n as u16).wrapping_add(50)); // A
+  }
+  src
+}
+
+/// Build an asymmetric Bgra64 row: pixel `n` memory = [B=200+n, G=100+n, R=n+1, A=50+n].
+fn make_bgra64_lane_order(width: usize) -> std::vec::Vec<u16> {
+  let mut src = std::vec::Vec::with_capacity(width * 4);
+  for n in 0..width {
+    src.push((n as u16).wrapping_add(200)); // B
+    src.push((n as u16).wrapping_add(100)); // G
+    src.push((n as u16).wrapping_add(1)); // R
+    src.push((n as u16).wrapping_add(50)); // A
+  }
+  src
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_rgba64_to_rgba_u16_lane_order_handcheck() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  let src = make_rgba64_lane_order(33);
+  let mut simd_out = std::vec![0u16; 33 * 4];
+  unsafe { avx512_rgba64_to_rgba_u16_row(&src, &mut simd_out, 33) };
+  for n in 0..33 {
+    assert_eq!(simd_out[n * 4], (n as u16) + 1, "R at pixel {n}");
+    assert_eq!(simd_out[n * 4 + 1], (n as u16) + 100, "G at pixel {n}");
+    assert_eq!(simd_out[n * 4 + 2], (n as u16) + 200, "B at pixel {n}");
+    assert_eq!(simd_out[n * 4 + 3], (n as u16) + 50, "A at pixel {n}");
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_rgba64_to_rgb_u16_lane_order_handcheck() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  let src = make_rgba64_lane_order(33);
+  let mut simd_out = std::vec![0u16; 33 * 3];
+  unsafe { avx512_rgba64_to_rgb_u16_row(&src, &mut simd_out, 33) };
+  for n in 0..33 {
+    assert_eq!(simd_out[n * 3], (n as u16) + 1, "R at pixel {n}");
+    assert_eq!(simd_out[n * 3 + 1], (n as u16) + 100, "G at pixel {n}");
+    assert_eq!(simd_out[n * 3 + 2], (n as u16) + 200, "B at pixel {n}");
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_bgra64_to_rgba_u16_lane_order_handcheck() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  let src = make_bgra64_lane_order(33);
+  let mut simd_out = std::vec![0u16; 33 * 4];
+  unsafe { avx512_bgra64_to_rgba_u16_row(&src, &mut simd_out, 33) };
+  // Output is RGBA: R=n+1, G=100+n, B=200+n, A=50+n per pixel n
+  // (B↔R swap from source memory order).
+  for n in 0..33 {
+    assert_eq!(simd_out[n * 4], (n as u16) + 1, "R at pixel {n}");
+    assert_eq!(simd_out[n * 4 + 1], (n as u16) + 100, "G at pixel {n}");
+    assert_eq!(simd_out[n * 4 + 2], (n as u16) + 200, "B at pixel {n}");
+    assert_eq!(simd_out[n * 4 + 3], (n as u16) + 50, "A at pixel {n}");
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_bgra64_to_rgb_u16_lane_order_handcheck() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  let src = make_bgra64_lane_order(33);
+  let mut simd_out = std::vec![0u16; 33 * 3];
+  unsafe { avx512_bgra64_to_rgb_u16_row(&src, &mut simd_out, 33) };
+  for n in 0..33 {
+    assert_eq!(simd_out[n * 3], (n as u16) + 1, "R at pixel {n}");
+    assert_eq!(simd_out[n * 3 + 1], (n as u16) + 100, "G at pixel {n}");
+    assert_eq!(simd_out[n * 3 + 2], (n as u16) + 200, "B at pixel {n}");
+  }
+}

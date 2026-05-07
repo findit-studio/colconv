@@ -117,145 +117,79 @@ unsafe fn deinterleave_rgb48_8px(
 //
 // Goal: ch0=[C0_0..C0_31], ch1=[C1_0..C1_31], ... in natural pixel order.
 //
-// Strategy (mirrors the AVX2 / xv36.rs cascade, scaled to 512-bit):
-// 1. Reshape 4 contiguous loads into the strided layout via
-//    `_mm512_permutex2var_epi64` cross-lane permutes.
-// 2. Apply 3-level unpack cascade to separate channels.
-// 3. Apply 0xD8-analog permute via `_mm512_permutexvar_epi64` with the
-//    pack_fixup index to restore natural element order.
+// Strategy (mirrors the `xv36.rs` AVX-512 deinterleave):
+// 1. Round 1 — two `_mm512_permutex2var_epi16` per channel: gather 16
+//    `Cc` values from each consecutive raw pair (raw0,raw1) and
+//    (raw2,raw3) into the low 16 lanes of a 512-bit register.
+// 2. Round 2 — one `_mm512_permutex2var_epi16` per channel: concatenate
+//    the two 16-value half-vectors into the natural 32-lane channel
+//    vector.
+//
+// `_mm512_permutex2var_epi16` (AVX-512BW `vpermt2w`) gives random 5-bit
+// gather across two source vectors with no cross-lane restrictions, so
+// the channels land directly in pixel-natural order with no fix-up
+// permute needed.
 
-/// Reshape 4 contiguous stride-4 512-bit loads into the strided layout
-/// expected by the 3-level `_mm512_unpack*_epi16` cascade.
-///
-/// Input:  raw0=pixels 0-7, raw1=pixels 8-15, raw2=pixels 16-23, raw3=pixels 24-31.
-/// Output: r0=pixels (0-1, 16-17), r1=pixels (2-3, 18-19), r2=pixels (4-5, 20-21),
-///         r3=pixels (6-7, 22-23), r4=pixels (8-9, 24-25), r5=pixels (10-11, 26-27),
-///         r6=pixels (12-13, 28-29), r7=pixels (14-15, 30-31).
-///
-/// Uses `_mm512_permutex2var_epi64` to cross-mix 64-bit chunks between pairs.
-///
-/// # Safety
-///
-/// Caller must hold AVX-512F + AVX-512BW `target_feature`.
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
-unsafe fn reshape_rgba64_32px_for_cascade(
-  raw0: __m512i,
-  raw1: __m512i,
-  raw2: __m512i,
-  raw3: __m512i,
-) -> (
-  __m512i,
-  __m512i,
-  __m512i,
-  __m512i,
-  __m512i,
-  __m512i,
-  __m512i,
-  __m512i,
-) {
-  unsafe {
-    // Each __m512i contains 8 pixels × 4 u16 = 32 u16 = 8 × 64-bit chunks.
-    // We want to interleave pairs from raw0 and raw2 (distance-16 partners):
-    //   r0: chunks [0,1] from raw0, chunks [0,1] from raw2  → pixels (0-1, 16-17)
-    //   r1: chunks [2,3] from raw0, chunks [2,3] from raw2  → pixels (2-3, 18-19)
-    //   r2: chunks [4,5] from raw0, chunks [4,5] from raw2  → pixels (4-5, 20-21)
-    //   r3: chunks [6,7] from raw0, chunks [6,7] from raw2  → pixels (6-7, 22-23)
-    // Similarly for raw1 and raw3:
-    //   r4..r7: pixels (8-9,24-25), (10-11,26-27), (12-13,28-29), (14-15,30-31)
+// Round-1 index: gather channel 0 from a `(raw_n, raw_{n+1})` pair.
+//   Lanes  0..7  pick `raw_n` lanes 0,4,8,12,16,20,24,28 (= channel 0 of
+//   the 8 pixels held by `raw_n`).
+//   Lanes  8..15 pick `raw_{n+1}` lanes 0,4,...,28 via `idx >= 32` (the
+//   permutex2var convention: index `>= 32` selects the second source).
+//   Lanes 16..31 are don't-care; `0` is a safe in-range index.
+#[rustfmt::skip]
+static C0_FROM_PAIR_IDX: [i16; 32] = [
+   0,  4,  8, 12, 16, 20, 24, 28,
+  32, 36, 40, 44, 48, 52, 56, 60,
+   0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+];
 
-    // permutex2var indices for "lo 256 from a, lo 256 from b":
-    let idx_lo = _mm512_setr_epi64(0, 1, 2, 3, 8, 9, 10, 11);
-    // "hi 256 from a, hi 256 from b":
-    let idx_hi = _mm512_setr_epi64(4, 5, 6, 7, 12, 13, 14, 15);
+// Round-1 index: gather channel 1 (offset +1 within each pixel quad).
+#[rustfmt::skip]
+static C1_FROM_PAIR_IDX: [i16; 32] = [
+   1,  5,  9, 13, 17, 21, 25, 29,
+  33, 37, 41, 45, 49, 53, 57, 61,
+   1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
+];
 
-    let r01 = _mm512_permutex2var_epi64(raw0, idx_lo, raw2);
-    let r23 = _mm512_permutex2var_epi64(raw0, idx_hi, raw2);
-    let r45 = _mm512_permutex2var_epi64(raw1, idx_lo, raw3);
-    let r67 = _mm512_permutex2var_epi64(raw1, idx_hi, raw3);
+// Round-1 index: gather channel 2 (offset +2 within each pixel quad).
+#[rustfmt::skip]
+static C2_FROM_PAIR_IDX: [i16; 32] = [
+   2,  6, 10, 14, 18, 22, 26, 30,
+  34, 38, 42, 46, 50, 54, 58, 62,
+   2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,
+];
 
-    // Now split each 512-bit register into two 256-bit-equivalent 512-bit halves
-    // by extracting / combining 64-bit chunks:
-    //   r0: lo256 of r01 → pixels (0-1, 16-17) in one 512-bit reg (chunks 0,1,4,5 → repack)
-    //   r1: hi256 of r01 → pixels (2-3, 18-19)
-    //   etc.
-    // Simpler: use permutex2var again to split lo/hi 256 of each r-pair into separate regs.
-    let idx_even = _mm512_setr_epi64(0, 1, 8, 9, 2, 3, 10, 11);
-    let idx_odd = _mm512_setr_epi64(4, 5, 12, 13, 6, 7, 14, 15);
+// Round-1 index: gather channel 3 (offset +3 within each pixel quad).
+#[rustfmt::skip]
+static C3_FROM_PAIR_IDX: [i16; 32] = [
+   3,  7, 11, 15, 19, 23, 27, 31,
+  35, 39, 43, 47, 51, 55, 59, 63,
+   3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,
+];
 
-    let r0 = _mm512_permutex2var_epi64(r01, idx_even, r01);
-    let r1 = _mm512_permutex2var_epi64(r01, idx_odd, r01);
-    let r2 = _mm512_permutex2var_epi64(r23, idx_even, r23);
-    let r3 = _mm512_permutex2var_epi64(r23, idx_odd, r23);
-    let r4 = _mm512_permutex2var_epi64(r45, idx_even, r45);
-    let r5 = _mm512_permutex2var_epi64(r45, idx_odd, r45);
-    let r6 = _mm512_permutex2var_epi64(r67, idx_even, r67);
-    let r7 = _mm512_permutex2var_epi64(r67, idx_odd, r67);
-
-    (r0, r1, r2, r3, r4, r5, r6, r7)
-  }
-}
-
-/// 3-level `_mm512_unpacklo/hi_epi16` cascade to deinterleave 4 channels
-/// from 2 reshaped `__m512i` inputs into 4 channel vectors (each holding
-/// 16 u16 values in natural order, occupying the low 256 bits).
-///
-/// This is the AVX-512 analog of the AVX2 `deinterleave_rgba64_cascade`.
-/// Used twice per 32-pixel block (once for pixels 0-15, once for 16-31).
-///
-/// # Safety
-///
-/// Caller must hold AVX-512F + AVX-512BW `target_feature`.
-#[inline(always)]
-unsafe fn cascade_4ch_epi16(
-  r0: __m512i,
-  r1: __m512i,
-  r2: __m512i,
-  r3: __m512i,
-) -> (__m512i, __m512i, __m512i, __m512i) {
-  unsafe {
-    // Level 1
-    let lo_01 = _mm512_unpacklo_epi16(r0, r1);
-    let hi_01 = _mm512_unpackhi_epi16(r0, r1);
-    let lo_23 = _mm512_unpacklo_epi16(r2, r3);
-    let hi_23 = _mm512_unpackhi_epi16(r2, r3);
-
-    // Level 2
-    let lo_lo = _mm512_unpacklo_epi32(lo_01, lo_23);
-    let lo_hi = _mm512_unpackhi_epi32(lo_01, lo_23);
-    let hi_lo = _mm512_unpacklo_epi32(hi_01, hi_23);
-    let hi_hi = _mm512_unpackhi_epi32(hi_01, hi_23);
-
-    // Level 3
-    let ch0_raw = _mm512_unpacklo_epi64(lo_lo, hi_lo);
-    let ch1_raw = _mm512_unpackhi_epi64(lo_lo, hi_lo);
-    let ch2_raw = _mm512_unpacklo_epi64(lo_hi, hi_hi);
-    let ch3_raw = _mm512_unpackhi_epi64(lo_hi, hi_hi);
-
-    // Lane-cross fixup: AVX-512 unpack operates per 128-bit lane.
-    // After 3 levels, 64-bit chunks are in the lane-split order
-    // [lo0..lo3 | hi0..hi3] per 256-bit half → need to reassemble into
-    // natural order. The pack_fixup [0,2,4,6,1,3,5,7] (64-bit chunks)
-    // restores [lo0,lo1,lo2,lo3, hi0,hi1,hi2,hi3] → flat u16x32 in order.
-    let pack_fixup = _mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7);
-    let ch0 = _mm512_permutexvar_epi64(pack_fixup, ch0_raw);
-    let ch1 = _mm512_permutexvar_epi64(pack_fixup, ch1_raw);
-    let ch2 = _mm512_permutexvar_epi64(pack_fixup, ch2_raw);
-    let ch3 = _mm512_permutexvar_epi64(pack_fixup, ch3_raw);
-
-    (ch0, ch1, ch2, ch3)
-  }
-}
+// Round-2 index: combine the two 16-pixel half-vectors (low 16 lanes
+// each) into a full 32-lane channel vector. Low 16 lanes come from the
+// first source (pixels 0-15); high 16 come from the second (pixels
+// 16-31, available at lanes 0..16 of that vector → idx 32..47).
+#[rustfmt::skip]
+static COMBINE_HALVES_IDX: [i16; 32] = [
+   0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,
+  32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+];
 
 /// Deinterleave 32 pixels of stride-4 u16 (Rgba64 or Bgra64) from four
-/// `__m512i` loads into four separate u16×32 channel vectors in natural order.
+/// `__m512i` loads into four separate u16×32 channel vectors in natural
+/// pixel order.
 ///
 /// Returns `(ch0, ch1, ch2, ch3)` in memory order.
 /// For Rgba64: `(R, G, B, A)`. For Bgra64: `(B, G, R, A)`.
 ///
+/// 12 ops total (8 round-1 `vpermt2w` + 4 round-2 `vpermt2w`).
+///
 /// # Safety
 ///
-/// Caller must hold AVX-512F + AVX-512BW `target_feature`.
+/// Caller must hold AVX-512F + AVX-512BW `target_feature` (BW provides
+/// `vpermt2w`, the u16 cross-vector permute).
 #[inline(always)]
 unsafe fn deinterleave_rgba64_32px(
   raw0: __m512i,
@@ -264,21 +198,31 @@ unsafe fn deinterleave_rgba64_32px(
   raw3: __m512i,
 ) -> (__m512i, __m512i, __m512i, __m512i) {
   unsafe {
-    let (r0, r1, r2, r3, r4, r5, r6, r7) = reshape_rgba64_32px_for_cascade(raw0, raw1, raw2, raw3);
-    // Process two groups of 4 registers (each group = 16 pixels).
-    // Group A (pixels 0-15): r0, r1, r2, r3
-    let (ch0a, ch1a, ch2a, ch3a) = cascade_4ch_epi16(r0, r1, r2, r3);
-    // Group B (pixels 16-31): r4, r5, r6, r7
-    let (ch0b, ch1b, ch2b, ch3b) = cascade_4ch_epi16(r4, r5, r6, r7);
+    let c0_idx = _mm512_loadu_si512(C0_FROM_PAIR_IDX.as_ptr().cast());
+    let c1_idx = _mm512_loadu_si512(C1_FROM_PAIR_IDX.as_ptr().cast());
+    let c2_idx = _mm512_loadu_si512(C2_FROM_PAIR_IDX.as_ptr().cast());
+    let c3_idx = _mm512_loadu_si512(C3_FROM_PAIR_IDX.as_ptr().cast());
+    let comb_idx = _mm512_loadu_si512(COMBINE_HALVES_IDX.as_ptr().cast());
 
-    // Combine the two halves: each ch_a holds pixels 0-15 in low 256b,
-    // ch_b holds pixels 16-31 in low 256b.
-    // Merge into a single __m512i via permutex2var.
-    let idx_merge = _mm512_setr_epi64(0, 1, 2, 3, 8, 9, 10, 11);
-    let ch0 = _mm512_permutex2var_epi64(ch0a, idx_merge, ch0b);
-    let ch1 = _mm512_permutex2var_epi64(ch1a, idx_merge, ch1b);
-    let ch2 = _mm512_permutex2var_epi64(ch2a, idx_merge, ch2b);
-    let ch3 = _mm512_permutex2var_epi64(ch3a, idx_merge, ch3b);
+    // Round 1: gather each channel from each consecutive raw pair. 16
+    // valid lanes in low half; high half is don't-care (overwritten by
+    // round 2).
+    let ch0_lo = _mm512_permutex2var_epi16(raw0, c0_idx, raw1);
+    let ch0_hi = _mm512_permutex2var_epi16(raw2, c0_idx, raw3);
+    let ch1_lo = _mm512_permutex2var_epi16(raw0, c1_idx, raw1);
+    let ch1_hi = _mm512_permutex2var_epi16(raw2, c1_idx, raw3);
+    let ch2_lo = _mm512_permutex2var_epi16(raw0, c2_idx, raw1);
+    let ch2_hi = _mm512_permutex2var_epi16(raw2, c2_idx, raw3);
+    let ch3_lo = _mm512_permutex2var_epi16(raw0, c3_idx, raw1);
+    let ch3_hi = _mm512_permutex2var_epi16(raw2, c3_idx, raw3);
+
+    // Round 2: concatenate the lo halves into a single 32-lane channel
+    // vector in natural pixel order.
+    let ch0 = _mm512_permutex2var_epi16(ch0_lo, comb_idx, ch0_hi);
+    let ch1 = _mm512_permutex2var_epi16(ch1_lo, comb_idx, ch1_hi);
+    let ch2 = _mm512_permutex2var_epi16(ch2_lo, comb_idx, ch2_hi);
+    let ch3 = _mm512_permutex2var_epi16(ch3_lo, comb_idx, ch3_hi);
+
     (ch0, ch1, ch2, ch3)
   }
 }
