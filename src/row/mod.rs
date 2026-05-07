@@ -76,8 +76,8 @@ pub(crate) use dispatch::vuya::vuya_to_luma_u16_row;
 pub(crate) use dispatch::vuyx::vuyx_to_luma_u16_row;
 
 pub use dispatch::{
-  ayuv64::*, bayer::*, nv::*, packed_yuv422::*, planar_gbr::*, planar_gbr_high_bit::*, pn::*,
-  rgb_f16_ops::*, rgb_float_ops::*, rgb_ops::*, v30x::*, v210::*, v410::*, vuya::*, vuyx::*,
+  ayuv64::*, bayer::*, nv::*, packed_yuv422::*, pal8::*, planar_gbr::*, planar_gbr_high_bit::*,
+  pn::*, rgb_f16_ops::*, rgb_float_ops::*, rgb_ops::*, v30x::*, v210::*, v410::*, vuya::*, vuyx::*,
   xv36::*, y210::*, y212::*, y216::*, yuv420::*, yuv444::*, yuva::*,
 };
 // Gray dispatchers are pub(crate) — sinker code uses them via crate::row::gray*_row.
