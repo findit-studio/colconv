@@ -184,8 +184,14 @@ pub(crate) fn yuv_420p_n_to_rgb_or_rgba_row<
   let mut x = 0;
   while x < width {
     let c_idx = x / 2;
-    let u_d = q15_scale((load_u16::<BE>(u_half[c_idx]) & mask) as i32 - bias, c_scale);
-    let v_d = q15_scale((load_u16::<BE>(v_half[c_idx]) & mask) as i32 - bias, c_scale);
+    let u_d = q15_scale(
+      (load_u16::<BE>(u_half[c_idx]) & mask) as i32 - bias,
+      c_scale,
+    );
+    let v_d = q15_scale(
+      (load_u16::<BE>(v_half[c_idx]) & mask) as i32 - bias,
+      c_scale,
+    );
 
     let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
@@ -401,8 +407,14 @@ pub(crate) fn yuv_420p_n_to_rgb_or_rgba_u16_row<
   let mut x = 0;
   while x < width {
     let c_idx = x / 2;
-    let u_d = q15_scale((load_u16::<BE>(u_half[c_idx]) & mask) as i32 - bias, c_scale);
-    let v_d = q15_scale((load_u16::<BE>(v_half[c_idx]) & mask) as i32 - bias, c_scale);
+    let u_d = q15_scale(
+      (load_u16::<BE>(u_half[c_idx]) & mask) as i32 - bias,
+      c_scale,
+    );
+    let v_d = q15_scale(
+      (load_u16::<BE>(v_half[c_idx]) & mask) as i32 - bias,
+      c_scale,
+    );
 
     let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);

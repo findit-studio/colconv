@@ -390,7 +390,15 @@ fn check_yuv444p_n_u16_neon_rgba_equivalence<const BITS: u32>(
     full_range,
   );
   unsafe {
-    yuv_444p_n_to_rgba_u16_row::<BITS, false>(&y, &u, &v, &mut rgba_neon, width, matrix, full_range);
+    yuv_444p_n_to_rgba_u16_row::<BITS, false>(
+      &y,
+      &u,
+      &v,
+      &mut rgba_neon,
+      width,
+      matrix,
+      full_range,
+    );
   }
   assert_eq!(
     rgba_scalar, rgba_neon,
@@ -409,7 +417,14 @@ fn check_pn_444_u16_neon_rgba_equivalence<const BITS: u32>(
   let uv = interleave_uv(&u, &v);
   let mut rgba_scalar = std::vec![0u16; width * 4];
   let mut rgba_neon = std::vec![0u16; width * 4];
-  scalar::p_n_444_to_rgba_u16_row::<BITS, false>(&y, &uv, &mut rgba_scalar, width, matrix, full_range);
+  scalar::p_n_444_to_rgba_u16_row::<BITS, false>(
+    &y,
+    &uv,
+    &mut rgba_scalar,
+    width,
+    matrix,
+    full_range,
+  );
   unsafe {
     p_n_444_to_rgba_u16_row::<BITS, false>(&y, &uv, &mut rgba_neon, width, matrix, full_range);
   }
@@ -425,7 +440,15 @@ fn check_yuv444p16_u16_neon_rgba_equivalence(width: usize, matrix: ColorMatrix, 
   let v = p16_plane_neon(width, 71);
   let mut rgba_scalar = std::vec![0u16; width * 4];
   let mut rgba_neon = std::vec![0u16; width * 4];
-  scalar::yuv_444p16_to_rgba_u16_row::<false>(&y, &u, &v, &mut rgba_scalar, width, matrix, full_range);
+  scalar::yuv_444p16_to_rgba_u16_row::<false>(
+    &y,
+    &u,
+    &v,
+    &mut rgba_scalar,
+    width,
+    matrix,
+    full_range,
+  );
   unsafe {
     yuv_444p16_to_rgba_u16_row::<false>(&y, &u, &v, &mut rgba_neon, width, matrix, full_range);
   }

@@ -185,7 +185,9 @@ pub fn yuv420p9_to_rgb_u16_row(
     }
   }
 
-  scalar::yuv_420p_n_to_rgb_u16_row::<9, false>(y, u_half, v_half, rgb_out, width, matrix, full_range);
+  scalar::yuv_420p_n_to_rgb_u16_row::<9, false>(
+    y, u_half, v_half, rgb_out, width, matrix, full_range,
+  );
 }
 
 // ---- High-bit 4:2:0 RGBA dispatchers (Ship 8 Tranche 5) ---------------
@@ -278,7 +280,9 @@ pub fn yuv420p9_to_rgba_row(
     }
   }
 
-  scalar::yuv_420p_n_to_rgba_row::<9, false>(y, u_half, v_half, rgba_out, width, matrix, full_range);
+  scalar::yuv_420p_n_to_rgba_row::<9, false>(
+    y, u_half, v_half, rgba_out, width, matrix, full_range,
+  );
 }
 
 /// Converts one row of **9-bit** YUV 4:2:0 to **native-depth `u16`**
@@ -362,5 +366,7 @@ pub fn yuv420p9_to_rgba_u16_row(
     }
   }
 
-  scalar::yuv_420p_n_to_rgba_u16_row::<9, false>(y, u_half, v_half, rgba_out, width, matrix, full_range);
+  scalar::yuv_420p_n_to_rgba_u16_row::<9, false>(
+    y, u_half, v_half, rgba_out, width, matrix, full_range,
+  );
 }

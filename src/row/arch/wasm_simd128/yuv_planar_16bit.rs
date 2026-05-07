@@ -14,7 +14,7 @@ use super::*;
 ///    `rgb_out.len() >= 3 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn yuv_444p16_to_rgb_row(
+pub(crate) unsafe fn yuv_444p16_to_rgb_row<const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -25,7 +25,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p16_to_rgb_or_rgba_row::<false, false>(
+    yuv_444p16_to_rgb_or_rgba_row::<false, false, BE>(
       y, u, v, None, rgb_out, width, matrix, full_range,
     );
   }
@@ -41,7 +41,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_row(
 /// Same as [`yuv_444p16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn yuv_444p16_to_rgba_row(
+pub(crate) unsafe fn yuv_444p16_to_rgba_row<const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -52,7 +52,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgba_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p16_to_rgb_or_rgba_row::<true, false>(
+    yuv_444p16_to_rgb_or_rgba_row::<true, false, BE>(
       y, u, v, None, rgba_out, width, matrix, full_range,
     );
   }
@@ -72,7 +72,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgba_row(
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn yuv_444p16_to_rgba_with_alpha_src_row(
+pub(crate) unsafe fn yuv_444p16_to_rgba_with_alpha_src_row<const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -84,7 +84,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgba_with_alpha_src_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p16_to_rgb_or_rgba_row::<true, true>(
+    yuv_444p16_to_rgb_or_rgba_row::<true, true, BE>(
       y,
       u,
       v,
@@ -114,7 +114,11 @@ pub(crate) unsafe fn yuv_444p16_to_rgba_with_alpha_src_row(
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
+pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_row<
+  const ALPHA: bool,
+  const ALPHA_SRC: bool,
+  const BE: bool,
+>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -155,12 +159,13 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPH
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let y_low = v128_load(y.as_ptr().add(x).cast());
-      let y_high = v128_load(y.as_ptr().add(x + 8).cast());
-      let u_lo_vec = v128_load(u.as_ptr().add(x).cast());
-      let u_hi_vec = v128_load(u.as_ptr().add(x + 8).cast());
-      let v_lo_vec = v128_load(v.as_ptr().add(x).cast());
-      let v_hi_vec = v128_load(v.as_ptr().add(x + 8).cast());
+      // BE input is byte-swapped via `load_endian_u16x8::<BE>` first.
+      let y_low = endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8);
+      let y_high = endian::load_endian_u16x8::<BE>(y.as_ptr().add(x + 8) as *const u8);
+      let u_lo_vec = endian::load_endian_u16x8::<BE>(u.as_ptr().add(x) as *const u8);
+      let u_hi_vec = endian::load_endian_u16x8::<BE>(u.as_ptr().add(x + 8) as *const u8);
+      let v_lo_vec = endian::load_endian_u16x8::<BE>(v.as_ptr().add(x) as *const u8);
+      let v_hi_vec = endian::load_endian_u16x8::<BE>(v.as_ptr().add(x + 8) as *const u8);
 
       let u_lo_i16 = i16x8_sub(u_lo_vec, bias16_v);
       let u_hi_i16 = i16x8_sub(u_hi_vec, bias16_v);
@@ -212,8 +217,14 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPH
           // wrapper passed Some(_), validated by debug_assert above.
           // 16-bit alpha is full-range u16 — `>> 8` to fit u8.
           let a_ptr = a_src.as_ref().unwrap_unchecked().as_ptr();
-          let a_lo = u16x8_shr(v128_load(a_ptr.add(x).cast()), 8);
-          let a_hi = u16x8_shr(v128_load(a_ptr.add(x + 8).cast()), 8);
+          let a_lo = u16x8_shr(
+            endian::load_endian_u16x8::<BE>(a_ptr.add(x) as *const u8),
+            8,
+          );
+          let a_hi = u16x8_shr(
+            endian::load_endian_u16x8::<BE>(a_ptr.add(x + 8) as *const u8),
+            8,
+          );
           u8x16_narrow_i16x8(a_lo, a_hi)
         } else {
           alpha_u8
@@ -234,15 +245,17 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPH
       if ALPHA_SRC {
         // SAFETY (const-checked): ALPHA_SRC = true implies Some(_).
         let tail_a = &a_src.as_ref().unwrap_unchecked()[x..width];
-        scalar::yuv_444p16_to_rgba_with_alpha_src_row(
+        scalar::yuv_444p16_to_rgba_with_alpha_src_row::<BE>(
           tail_y, tail_u, tail_v, tail_a, tail_out, tail_w, matrix, full_range,
         );
       } else if ALPHA {
-        scalar::yuv_444p16_to_rgba_row(
+        scalar::yuv_444p16_to_rgba_row::<BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       } else {
-        scalar::yuv_444p16_to_rgb_row(tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range);
+        scalar::yuv_444p16_to_rgb_row::<BE>(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
       }
     }
   }
@@ -258,7 +271,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPH
 /// Same as [`yuv_444p16_to_rgb_row`] but `rgb_out: &mut [u16]`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn yuv_444p16_to_rgb_u16_row(
+pub(crate) unsafe fn yuv_444p16_to_rgb_u16_row<const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -269,7 +282,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_u16_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p16_to_rgb_or_rgba_u16_row::<false, false>(
+    yuv_444p16_to_rgb_or_rgba_u16_row::<false, false, BE>(
       y, u, v, None, rgb_out, width, matrix, full_range,
     );
   }
@@ -283,7 +296,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_u16_row(
 /// Same as [`yuv_444p16_to_rgb_u16_row`] but `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn yuv_444p16_to_rgba_u16_row(
+pub(crate) unsafe fn yuv_444p16_to_rgba_u16_row<const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -294,7 +307,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgba_u16_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p16_to_rgb_or_rgba_u16_row::<true, false>(
+    yuv_444p16_to_rgb_or_rgba_u16_row::<true, false, BE>(
       y, u, v, None, rgba_out, width, matrix, full_range,
     );
   }
@@ -314,7 +327,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgba_u16_row(
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn yuv_444p16_to_rgba_u16_with_alpha_src_row(
+pub(crate) unsafe fn yuv_444p16_to_rgba_u16_with_alpha_src_row<const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -326,7 +339,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgba_u16_with_alpha_src_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p16_to_rgb_or_rgba_u16_row::<true, true>(
+    yuv_444p16_to_rgb_or_rgba_u16_row::<true, true, BE>(
       y,
       u,
       v,
@@ -358,7 +371,11 @@ pub(crate) unsafe fn yuv_444p16_to_rgba_u16_with_alpha_src_row(
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const ALPHA_SRC: bool>(
+pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_u16_row<
+  const ALPHA: bool,
+  const ALPHA_SRC: bool,
+  const BE: bool,
+>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -401,10 +418,11 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const 
 
     let mut x = 0usize;
     while x + 8 <= width {
-      // 8 Y + 8 U + 8 V per iter. 4:4:4 is 1:1 — no chroma dup.
-      let y_vec = v128_load(y.as_ptr().add(x).cast());
-      let u_vec = v128_load(u.as_ptr().add(x).cast());
-      let v_vec = v128_load(v.as_ptr().add(x).cast());
+      // 8 Y + 8 U + 8 V per iter. 4:4:4 is 1:1 — no chroma dup. BE
+      // input is byte-swapped via `load_endian_u16x8::<BE>` first.
+      let y_vec = endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8);
+      let u_vec = endian::load_endian_u16x8::<BE>(u.as_ptr().add(x) as *const u8);
+      let v_vec = endian::load_endian_u16x8::<BE>(v.as_ptr().add(x) as *const u8);
 
       let u_i16 = i16x8_sub(u_vec, bias16);
       let v_i16 = i16x8_sub(v_vec, bias16);
@@ -480,7 +498,9 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const 
           // wrapper passed Some(_), validated by debug_assert above.
           // 16-bit alpha is full-range u16 — load 8 lanes verbatim,
           // no shift needed.
-          v128_load(a_src.as_ref().unwrap_unchecked().as_ptr().add(x).cast())
+          endian::load_endian_u16x8::<BE>(
+            a_src.as_ref().unwrap_unchecked().as_ptr().add(x) as *const u8
+          )
         } else {
           alpha_u16
         };
@@ -500,15 +520,15 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const 
       if ALPHA_SRC {
         // SAFETY (const-checked): ALPHA_SRC = true implies Some(_).
         let tail_a = &a_src.as_ref().unwrap_unchecked()[x..width];
-        scalar::yuv_444p16_to_rgba_u16_with_alpha_src_row(
+        scalar::yuv_444p16_to_rgba_u16_with_alpha_src_row::<BE>(
           tail_y, tail_u, tail_v, tail_a, tail_out, tail_w, matrix, full_range,
         );
       } else if ALPHA {
-        scalar::yuv_444p16_to_rgba_u16_row(
+        scalar::yuv_444p16_to_rgba_u16_row::<BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       } else {
-        scalar::yuv_444p16_to_rgb_u16_row(
+        scalar::yuv_444p16_to_rgb_u16_row::<BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       }
@@ -518,7 +538,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const 
 /// Thin wrapper over [`yuv_420p16_to_rgb_or_rgba_row`] with `ALPHA = false`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn yuv_420p16_to_rgb_row(
+pub(crate) unsafe fn yuv_420p16_to_rgb_row<const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -529,7 +549,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_420p16_to_rgb_or_rgba_row::<false, false>(
+    yuv_420p16_to_rgb_or_rgba_row::<false, false, BE>(
       y, u_half, v_half, None, rgb_out, width, matrix, full_range,
     );
   }
@@ -540,7 +560,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_row(
 /// Thin wrapper over [`yuv_420p16_to_rgb_or_rgba_row`] with `ALPHA = true`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn yuv_420p16_to_rgba_row(
+pub(crate) unsafe fn yuv_420p16_to_rgba_row<const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -551,7 +571,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgba_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_420p16_to_rgb_or_rgba_row::<true, false>(
+    yuv_420p16_to_rgb_or_rgba_row::<true, false, BE>(
       y, u_half, v_half, None, rgba_out, width, matrix, full_range,
     );
   }
@@ -572,7 +592,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgba_row(
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn yuv_420p16_to_rgba_with_alpha_src_row(
+pub(crate) unsafe fn yuv_420p16_to_rgba_with_alpha_src_row<const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -584,7 +604,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgba_with_alpha_src_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_420p16_to_rgb_or_rgba_row::<true, true>(
+    yuv_420p16_to_rgb_or_rgba_row::<true, true, BE>(
       y,
       u_half,
       v_half,
@@ -607,7 +627,11 @@ pub(crate) unsafe fn yuv_420p16_to_rgba_with_alpha_src_row(
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
+pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_row<
+  const ALPHA: bool,
+  const ALPHA_SRC: bool,
+  const BE: bool,
+>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -649,10 +673,11 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPH
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let y_low = v128_load(y.as_ptr().add(x).cast());
-      let y_high = v128_load(y.as_ptr().add(x + 8).cast());
-      let u_vec = v128_load(u_half.as_ptr().add(x / 2).cast());
-      let v_vec = v128_load(v_half.as_ptr().add(x / 2).cast());
+      // BE input is byte-swapped via `load_endian_u16x8::<BE>` first.
+      let y_low = endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8);
+      let y_high = endian::load_endian_u16x8::<BE>(y.as_ptr().add(x + 8) as *const u8);
+      let u_vec = endian::load_endian_u16x8::<BE>(u_half.as_ptr().add(x / 2) as *const u8);
+      let v_vec = endian::load_endian_u16x8::<BE>(v_half.as_ptr().add(x / 2) as *const u8);
 
       let u_i16 = i16x8_sub(u_vec, bias16_v);
       let v_i16 = i16x8_sub(v_vec, bias16_v);
@@ -698,8 +723,14 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPH
           // wrapper passed Some(_), validated by debug_assert above.
           // 16-bit alpha is full-range u16 — `>> 8` to fit u8 directly.
           let a_ptr = a_src.as_ref().unwrap_unchecked().as_ptr();
-          let a_lo = u16x8_shr(v128_load(a_ptr.add(x).cast()), 8);
-          let a_hi = u16x8_shr(v128_load(a_ptr.add(x + 8).cast()), 8);
+          let a_lo = u16x8_shr(
+            endian::load_endian_u16x8::<BE>(a_ptr.add(x) as *const u8),
+            8,
+          );
+          let a_hi = u16x8_shr(
+            endian::load_endian_u16x8::<BE>(a_ptr.add(x + 8) as *const u8),
+            8,
+          );
           u8x16_narrow_i16x8(a_lo, a_hi)
         } else {
           alpha_u8
@@ -720,15 +751,17 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPH
       if ALPHA_SRC {
         // SAFETY (const-checked): ALPHA_SRC = true implies Some(_).
         let tail_a = &a_src.as_ref().unwrap_unchecked()[x..width];
-        scalar::yuv_420p16_to_rgba_with_alpha_src_row(
+        scalar::yuv_420p16_to_rgba_with_alpha_src_row::<BE>(
           tail_y, tail_u, tail_v, tail_a, tail_out, tail_w, matrix, full_range,
         );
       } else if ALPHA {
-        scalar::yuv_420p16_to_rgba_row(
+        scalar::yuv_420p16_to_rgba_row::<BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       } else {
-        scalar::yuv_420p16_to_rgb_row(tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range);
+        scalar::yuv_420p16_to_rgb_row::<BE>(
+          tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
+        );
       }
     }
   }
@@ -745,7 +778,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPH
 ///    `v_half.len() >= width / 2`, `rgb_out.len() >= 3 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn yuv_420p16_to_rgb_u16_row(
+pub(crate) unsafe fn yuv_420p16_to_rgb_u16_row<const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -755,7 +788,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_u16_row(
   full_range: bool,
 ) {
   unsafe {
-    yuv_420p16_to_rgb_or_rgba_u16_row::<false, false>(
+    yuv_420p16_to_rgb_or_rgba_u16_row::<false, false, BE>(
       y, u_half, v_half, None, rgb_out, width, matrix, full_range,
     );
   }
@@ -769,7 +802,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_u16_row(
 /// Same as [`yuv_420p16_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn yuv_420p16_to_rgba_u16_row(
+pub(crate) unsafe fn yuv_420p16_to_rgba_u16_row<const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -779,7 +812,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgba_u16_row(
   full_range: bool,
 ) {
   unsafe {
-    yuv_420p16_to_rgb_or_rgba_u16_row::<true, false>(
+    yuv_420p16_to_rgb_or_rgba_u16_row::<true, false, BE>(
       y, u_half, v_half, None, rgba_out, width, matrix, full_range,
     );
   }
@@ -799,7 +832,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgba_u16_row(
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn yuv_420p16_to_rgba_u16_with_alpha_src_row(
+pub(crate) unsafe fn yuv_420p16_to_rgba_u16_with_alpha_src_row<const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -811,7 +844,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgba_u16_with_alpha_src_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_420p16_to_rgb_or_rgba_u16_row::<true, true>(
+    yuv_420p16_to_rgb_or_rgba_u16_row::<true, true, BE>(
       y,
       u_half,
       v_half,
@@ -843,7 +876,11 @@ pub(crate) unsafe fn yuv_420p16_to_rgba_u16_with_alpha_src_row(
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const ALPHA_SRC: bool>(
+pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_u16_row<
+  const ALPHA: bool,
+  const ALPHA_SRC: bool,
+  const BE: bool,
+>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -887,10 +924,19 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const 
     let cbu = i64x2_extend_low_i32x4(i32x4_splat(coeffs.b_u()));
     let cbv = i64x2_extend_low_i32x4(i32x4_splat(coeffs.b_v()));
 
+    // Per-u16-lane byte-swap mask for `v128_load64_zero` half-width
+    // U/V loads. The high 8 bytes are zero post-load, so the same
+    // shuffle pattern applied to the low 8 bytes leaves them unchanged.
+    let bswap_u16_lo64 = i8x16(
+      1, 0, 3, 2, 5, 4, 7, 6, -128, -128, -128, -128, -128, -128, -128, -128,
+    );
+
     let mut x = 0usize;
     while x + 8 <= width {
-      // 8 Y pixels / 4 chroma pairs per iter (i64x2 constraint).
-      let y_vec = v128_load(y.as_ptr().add(x).cast());
+      // 8 Y pixels / 4 chroma pairs per iter (i64x2 constraint). BE
+      // input is byte-swapped via `load_endian_u16x8::<BE>` for Y,
+      // and via inline `u8x16_swizzle` for the half-width U/V loads.
+      let y_vec = endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8);
       // 4 U + 4 V samples = 8 bytes each. Use `v128_load64_zero` so we
       // don't over-read 8 bytes past the chroma plane — the public
       // contract only promises `u_half.len() >= width / 2`, and at
@@ -898,6 +944,16 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const 
       // `u_half[4..]` would read 8 bytes past the end.
       let u_vec = v128_load64_zero(u_half.as_ptr().add(x / 2).cast());
       let v_vec = v128_load64_zero(v_half.as_ptr().add(x / 2).cast());
+      let u_vec = if BE {
+        u8x16_swizzle(u_vec, bswap_u16_lo64)
+      } else {
+        u_vec
+      };
+      let v_vec = if BE {
+        u8x16_swizzle(v_vec, bswap_u16_lo64)
+      } else {
+        v_vec
+      };
 
       let u_i16 = i16x8_sub(u_vec, bias16);
       let v_i16 = i16x8_sub(v_vec, bias16);
@@ -959,7 +1015,9 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const 
           // SAFETY (const-checked): ALPHA_SRC = true implies the
           // wrapper passed Some(_), validated by debug_assert above.
           // 16-bit alpha is full-range u16 — load 8 lanes directly.
-          v128_load(a_src.as_ref().unwrap_unchecked().as_ptr().add(x).cast())
+          endian::load_endian_u16x8::<BE>(
+            a_src.as_ref().unwrap_unchecked().as_ptr().add(x) as *const u8
+          )
         } else {
           alpha_u16
         };
@@ -979,15 +1037,15 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const 
       if ALPHA_SRC {
         // SAFETY (const-checked): ALPHA_SRC = true implies Some(_).
         let tail_a = &a_src.as_ref().unwrap_unchecked()[x..width];
-        scalar::yuv_420p16_to_rgba_u16_with_alpha_src_row(
+        scalar::yuv_420p16_to_rgba_u16_with_alpha_src_row::<BE>(
           tail_y, tail_u, tail_v, tail_a, tail_out, tail_w, matrix, full_range,
         );
       } else if ALPHA {
-        scalar::yuv_420p16_to_rgba_u16_row(
+        scalar::yuv_420p16_to_rgba_u16_row::<BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       } else {
-        scalar::yuv_420p16_to_rgb_u16_row(
+        scalar::yuv_420p16_to_rgb_u16_row::<BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       }

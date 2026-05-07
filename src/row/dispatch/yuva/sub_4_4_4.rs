@@ -924,7 +924,9 @@ pub fn yuva444p16_to_rgba_row(
     }
   }
 
-  scalar::yuv_444p16_to_rgba_with_alpha_src_row::<false>(y, u, v, a, rgba_out, width, matrix, full_range);
+  scalar::yuv_444p16_to_rgba_with_alpha_src_row::<false>(
+    y, u, v, a, rgba_out, width, matrix, full_range,
+  );
 }
 
 /// Converts one row of **16-bit** YUVA 4:4:4 to **native-depth `u16`**

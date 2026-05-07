@@ -1100,7 +1100,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_u16_row<
           // 16-bit alpha is full-range u16 — byte-swap if BE, then
           // load 8 lanes verbatim, no shift needed.
           endian::load_endian_u16x8::<BE>(
-            a_src.as_ref().unwrap_unchecked().as_ptr().add(x) as *const u8,
+            a_src.as_ref().unwrap_unchecked().as_ptr().add(x) as *const u8
           )
         } else {
           alpha_u16

@@ -127,7 +127,11 @@ pub(crate) fn yuv_420p16_to_rgba_with_alpha_src_row<const BE: bool>(
 /// u16 is in range.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn yuv_420p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool, const BE: bool>(
+pub(crate) fn yuv_420p16_to_rgb_or_rgba_row<
+  const ALPHA: bool,
+  const ALPHA_SRC: bool,
+  const BE: bool,
+>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -383,7 +387,9 @@ pub(crate) fn yuv_444p16_to_rgb_row<const BE: bool>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p16_to_rgb_or_rgba_row::<false, false, BE>(y, u, v, None, rgb_out, width, matrix, full_range);
+  yuv_444p16_to_rgb_or_rgba_row::<false, false, BE>(
+    y, u, v, None, rgb_out, width, matrix, full_range,
+  );
 }
 
 /// YUV 4:4:4 planar **16‑bit** → packed **8‑bit** **RGBA**. Same
@@ -402,7 +408,9 @@ pub(crate) fn yuv_444p16_to_rgba_row<const BE: bool>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p16_to_rgb_or_rgba_row::<true, false, BE>(y, u, v, None, rgba_out, width, matrix, full_range);
+  yuv_444p16_to_rgb_or_rgba_row::<true, false, BE>(
+    y, u, v, None, rgba_out, width, matrix, full_range,
+  );
 }
 
 /// YUVA 4:4:4 16‑bit → packed **8‑bit** **RGBA**. Same numerical

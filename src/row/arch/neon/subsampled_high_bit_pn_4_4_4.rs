@@ -671,9 +671,7 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_u16_row<const BE: bool>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    p_n_444_16_to_rgb_or_rgba_u16_row::<false, BE>(
-      y, uv_full, rgb_out, width, matrix, full_range,
-    );
+    p_n_444_16_to_rgb_or_rgba_u16_row::<false, BE>(y, uv_full, rgb_out, width, matrix, full_range);
   }
 }
 
@@ -698,9 +696,7 @@ pub(crate) unsafe fn p_n_444_16_to_rgba_u16_row<const BE: bool>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    p_n_444_16_to_rgb_or_rgba_u16_row::<true, BE>(
-      y, uv_full, rgba_out, width, matrix, full_range,
-    );
+    p_n_444_16_to_rgb_or_rgba_u16_row::<true, BE>(y, uv_full, rgba_out, width, matrix, full_range);
   }
 }
 

@@ -292,5 +292,7 @@ pub fn yuv420p16_to_rgba_u16_row(
     }
   }
 
-  scalar::yuv_420p16_to_rgba_u16_row::<false>(y, u_half, v_half, rgba_out, width, matrix, full_range);
+  scalar::yuv_420p16_to_rgba_u16_row::<false>(
+    y, u_half, v_half, rgba_out, width, matrix, full_range,
+  );
 }

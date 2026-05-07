@@ -174,7 +174,9 @@ pub fn yuv420p12_to_rgb_u16_row(
     }
   }
 
-  scalar::yuv_420p_n_to_rgb_u16_row::<12, false>(y, u_half, v_half, rgb_out, width, matrix, full_range);
+  scalar::yuv_420p_n_to_rgb_u16_row::<12, false>(
+    y, u_half, v_half, rgb_out, width, matrix, full_range,
+  );
 }
 
 /// Converts one row of **12-bit** YUV 4:2:0 to packed **8-bit**
@@ -260,7 +262,9 @@ pub fn yuv420p12_to_rgba_row(
     }
   }
 
-  scalar::yuv_420p_n_to_rgba_row::<12, false>(y, u_half, v_half, rgba_out, width, matrix, full_range);
+  scalar::yuv_420p_n_to_rgba_row::<12, false>(
+    y, u_half, v_half, rgba_out, width, matrix, full_range,
+  );
 }
 
 /// Converts one row of **12-bit** YUV 4:2:0 to **native-depth `u16`**
@@ -344,5 +348,7 @@ pub fn yuv420p12_to_rgba_u16_row(
     }
   }
 
-  scalar::yuv_420p_n_to_rgba_u16_row::<12, false>(y, u_half, v_half, rgba_out, width, matrix, full_range);
+  scalar::yuv_420p_n_to_rgba_u16_row::<12, false>(
+    y, u_half, v_half, rgba_out, width, matrix, full_range,
+  );
 }
