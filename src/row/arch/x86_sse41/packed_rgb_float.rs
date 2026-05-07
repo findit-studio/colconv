@@ -356,12 +356,15 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
 // `#[target_feature(enable = "sse4.1,f16c")]` ensures both features are active
 // in the body even though F16C is an independent feature bit.
 
-use super::endian::load_endian_u16x8;
+use super::endian::load_endian_u16x4;
 
 /// Widen 4 × f16 (at `ptr`, 8 bytes) to 4 × f32 (returned as `__m128`).
 ///
 /// For `BE = true` the f16 values are stored big-endian; bytes are swapped
-/// before the F16C widening conversion.
+/// before the F16C widening conversion. The loader reads exactly 8 bytes
+/// regardless of `BE` so the caller's `ptr` only needs 8 readable bytes
+/// (a 16-byte load via `load_endian_u16x8` would tail-overread the 4 × f16
+/// region the kernel actually owns).
 ///
 /// # Safety
 ///
@@ -371,16 +374,12 @@ use super::endian::load_endian_u16x8;
 #[target_feature(enable = "sse4.1,f16c")]
 unsafe fn widen_f16x4_sse<const BE: bool>(ptr: *const half::f16) -> __m128 {
   unsafe {
-    if BE {
-      // Load 16 bytes (8 × u16) with byte-swap; the low 4 u16 are our
-      // 4 f16 values byte-swapped to host-native. Use the low 64 bits.
-      let raw = load_endian_u16x8::<BE>(ptr as *const u8);
-      _mm_cvtph_ps(raw)
-    } else {
-      // _mm_loadl_epi64: 64-bit load into the low half of __m128i.
-      let raw = _mm_loadl_epi64(ptr as *const __m128i);
-      _mm_cvtph_ps(raw)
-    }
+    // 8-byte load (low 64 bits of __m128i, upper half zero). For `BE = true`
+    // the loader byte-swaps each u16 in place; for `BE = false` it's a plain
+    // load. `_mm_cvtph_ps` reads only the low 4 × f16 (low 64 bits), so the
+    // upper half being zero is harmless.
+    let raw = load_endian_u16x4::<BE>(ptr as *const u8);
+    _mm_cvtph_ps(raw)
   }
 }
 
