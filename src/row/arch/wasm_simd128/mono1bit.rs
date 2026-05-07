@@ -48,7 +48,7 @@ unsafe fn bit_mask_8() -> v128 {
 #[inline]
 #[target_feature(enable = "simd128")]
 unsafe fn unpack_2bytes_wasm<const INVERT: bool>(b0: u8, b1: u8) -> v128 {
-  let mask = bit_mask_8();
+  let mask = unsafe { bit_mask_8() };
   // Build the broadcast: b0 in low 8 lanes, b1 in high 8 lanes.
   let bcast = i8x16(
     b0 as i8, b0 as i8, b0 as i8, b0 as i8, b0 as i8, b0 as i8, b0 as i8, b0 as i8, b1 as i8,
