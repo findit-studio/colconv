@@ -9,10 +9,9 @@
 //! `rgb_row_bytes` / `rgba_row_bytes` / `rgb_row_elems` / `rgba_row_elems`
 //! helpers, then route to the best available SIMD backend.
 //!
-//! **Current state (Tasks 4-8 pending):** All dispatchers fall through to
-//! scalar regardless of `use_simd`. The `cfg_select!` dispatch chain will be
-//! populated in the SIMD backend tasks; the `use_simd` parameter is accepted
-//! now so callers don't need to be updated later.
+//! **SIMD dispatch order (x86_64):** AVX-512 → AVX2 → SSE4.1 → scalar.
+//! **SIMD dispatch (aarch64):** NEON → scalar.
+//! **SIMD dispatch (wasm32):** wasm-simd128 → scalar (wired in later task).
 //!
 //! **Input element-strides**
 //! - Rgb48 / Bgr48: source row is `width × 3` u16 elements.
@@ -27,6 +26,16 @@
 // dead_code until then.
 #![allow(dead_code)]
 
+#[cfg(any(
+  target_arch = "aarch64",
+  target_arch = "x86_64",
+  target_arch = "wasm32"
+))]
+use crate::row::arch;
+#[cfg(target_arch = "aarch64")]
+use crate::row::neon_available;
+#[cfg(target_arch = "x86_64")]
+use crate::row::sse41_available;
 use crate::{
   ColorMatrix,
   row::{rgb_row_bytes, rgb_row_elems, rgba_row_bytes, rgba_row_elems, scalar},
@@ -61,15 +70,30 @@ fn rgba64_packed_elems(width: usize) -> usize {
 // =============================================================================
 
 /// Converts one row of `Rgb48` to packed u8 RGB. Each 16-bit channel is
-/// narrowed via `>> 8`. `use_simd = false` forces the scalar path (currently
-/// all paths fall through to scalar — SIMD backends added in Tasks 4-8).
+/// narrowed via `>> 8`. `use_simd = false` forces the scalar path.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub fn rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], width: usize, use_simd: bool) {
   let in_min = rgb48_packed_elems(width);
   let out_min = rgb_row_bytes(width);
   assert!(rgb48.len() >= in_min, "rgb48 row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out row too short");
-  let _ = use_simd; // SIMD dispatch wired in Tasks 4-8
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          unsafe { arch::neon::neon_rgb48_to_rgb_row(rgb48, rgb_out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          unsafe { arch::x86_sse41::sse41_rgb48_to_rgb_row(rgb48, rgb_out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::rgb48_to_rgb_row(rgb48, rgb_out, width);
 }
 
@@ -81,7 +105,23 @@ pub fn rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8], width: usize, use_s
   let out_min = rgba_row_bytes(width);
   assert!(rgb48.len() >= in_min, "rgb48 row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out row too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          unsafe { arch::neon::neon_rgb48_to_rgba_row(rgb48, rgba_out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          unsafe { arch::x86_sse41::sse41_rgb48_to_rgba_row(rgb48, rgba_out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::rgb48_to_rgba_row(rgb48, rgba_out, width);
 }
 
@@ -93,7 +133,23 @@ pub fn rgb48_to_rgb_u16_row(rgb48: &[u16], rgb_out: &mut [u16], width: usize, us
   let out_min = rgb_row_elems(width);
   assert!(rgb48.len() >= in_min, "rgb48 row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out row too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          unsafe { arch::neon::neon_rgb48_to_rgb_u16_row(rgb48, rgb_out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          unsafe { arch::x86_sse41::sse41_rgb48_to_rgb_u16_row(rgb48, rgb_out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::rgb48_to_rgb_u16_row(rgb48, rgb_out, width);
 }
 
@@ -105,7 +161,23 @@ pub fn rgb48_to_rgba_u16_row(rgb48: &[u16], rgba_out: &mut [u16], width: usize, 
   let out_min = rgba_row_elems(width);
   assert!(rgb48.len() >= in_min, "rgb48 row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out row too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          unsafe { arch::neon::neon_rgb48_to_rgba_u16_row(rgb48, rgba_out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          unsafe { arch::x86_sse41::sse41_rgb48_to_rgba_u16_row(rgb48, rgba_out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::rgb48_to_rgba_u16_row(rgb48, rgba_out, width);
 }
 
@@ -193,7 +265,23 @@ pub fn bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], width: usize, use_sim
   let out_min = rgb_row_bytes(width);
   assert!(bgr48.len() >= in_min, "bgr48 row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out row too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          unsafe { arch::neon::neon_bgr48_to_rgb_row(bgr48, rgb_out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          unsafe { arch::x86_sse41::sse41_bgr48_to_rgb_row(bgr48, rgb_out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::bgr48_to_rgb_row(bgr48, rgb_out, width);
 }
 
@@ -205,7 +293,23 @@ pub fn bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8], width: usize, use_s
   let out_min = rgba_row_bytes(width);
   assert!(bgr48.len() >= in_min, "bgr48 row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out row too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          unsafe { arch::neon::neon_bgr48_to_rgba_row(bgr48, rgba_out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          unsafe { arch::x86_sse41::sse41_bgr48_to_rgba_row(bgr48, rgba_out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::bgr48_to_rgba_row(bgr48, rgba_out, width);
 }
 
@@ -217,7 +321,23 @@ pub fn bgr48_to_rgb_u16_row(bgr48: &[u16], rgb_out: &mut [u16], width: usize, us
   let out_min = rgb_row_elems(width);
   assert!(bgr48.len() >= in_min, "bgr48 row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out row too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          unsafe { arch::neon::neon_bgr48_to_rgb_u16_row(bgr48, rgb_out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          unsafe { arch::x86_sse41::sse41_bgr48_to_rgb_u16_row(bgr48, rgb_out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::bgr48_to_rgb_u16_row(bgr48, rgb_out, width);
 }
 
@@ -229,7 +349,23 @@ pub fn bgr48_to_rgba_u16_row(bgr48: &[u16], rgba_out: &mut [u16], width: usize, 
   let out_min = rgba_row_elems(width);
   assert!(bgr48.len() >= in_min, "bgr48 row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out row too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          unsafe { arch::neon::neon_bgr48_to_rgba_u16_row(bgr48, rgba_out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          unsafe { arch::x86_sse41::sse41_bgr48_to_rgba_u16_row(bgr48, rgba_out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::bgr48_to_rgba_u16_row(bgr48, rgba_out, width);
 }
 
@@ -313,7 +449,23 @@ pub fn rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8], width: usize, use_s
   let out_min = rgb_row_bytes(width);
   assert!(rgba64.len() >= in_min, "rgba64 row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out row too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          unsafe { arch::neon::neon_rgba64_to_rgb_row(rgba64, rgb_out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          unsafe { arch::x86_sse41::sse41_rgba64_to_rgb_row(rgba64, rgb_out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::rgba64_to_rgb_row(rgba64, rgb_out, width);
 }
 
@@ -325,7 +477,23 @@ pub fn rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8], width: usize, use
   let out_min = rgba_row_bytes(width);
   assert!(rgba64.len() >= in_min, "rgba64 row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out row too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          unsafe { arch::neon::neon_rgba64_to_rgba_row(rgba64, rgba_out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          unsafe { arch::x86_sse41::sse41_rgba64_to_rgba_row(rgba64, rgba_out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::rgba64_to_rgba_row(rgba64, rgba_out, width);
 }
 
@@ -337,7 +505,23 @@ pub fn rgba64_to_rgb_u16_row(rgba64: &[u16], rgb_out: &mut [u16], width: usize, 
   let out_min = rgb_row_elems(width);
   assert!(rgba64.len() >= in_min, "rgba64 row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out row too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          unsafe { arch::neon::neon_rgba64_to_rgb_u16_row(rgba64, rgb_out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          unsafe { arch::x86_sse41::sse41_rgba64_to_rgb_u16_row(rgba64, rgb_out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::rgba64_to_rgb_u16_row(rgba64, rgb_out, width);
 }
 
@@ -349,7 +533,23 @@ pub fn rgba64_to_rgba_u16_row(rgba64: &[u16], rgba_out: &mut [u16], width: usize
   let out_min = rgba_row_elems(width);
   assert!(rgba64.len() >= in_min, "rgba64 row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out row too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          unsafe { arch::neon::neon_rgba64_to_rgba_u16_row(rgba64, rgba_out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          unsafe { arch::x86_sse41::sse41_rgba64_to_rgba_u16_row(rgba64, rgba_out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::rgba64_to_rgba_u16_row(rgba64, rgba_out, width);
 }
 
@@ -436,7 +636,23 @@ pub fn bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8], width: usize, use_s
   let out_min = rgb_row_bytes(width);
   assert!(bgra64.len() >= in_min, "bgra64 row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out row too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          unsafe { arch::neon::neon_bgra64_to_rgb_row(bgra64, rgb_out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          unsafe { arch::x86_sse41::sse41_bgra64_to_rgb_row(bgra64, rgb_out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::bgra64_to_rgb_row(bgra64, rgb_out, width);
 }
 
@@ -449,7 +665,23 @@ pub fn bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8], width: usize, use
   let out_min = rgba_row_bytes(width);
   assert!(bgra64.len() >= in_min, "bgra64 row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out row too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          unsafe { arch::neon::neon_bgra64_to_rgba_row(bgra64, rgba_out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          unsafe { arch::x86_sse41::sse41_bgra64_to_rgba_row(bgra64, rgba_out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::bgra64_to_rgba_row(bgra64, rgba_out, width);
 }
 
@@ -461,7 +693,23 @@ pub fn bgra64_to_rgb_u16_row(bgra64: &[u16], rgb_out: &mut [u16], width: usize, 
   let out_min = rgb_row_elems(width);
   assert!(bgra64.len() >= in_min, "bgra64 row too short");
   assert!(rgb_out.len() >= out_min, "rgb_out row too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          unsafe { arch::neon::neon_bgra64_to_rgb_u16_row(bgra64, rgb_out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          unsafe { arch::x86_sse41::sse41_bgra64_to_rgb_u16_row(bgra64, rgb_out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::bgra64_to_rgb_u16_row(bgra64, rgb_out, width);
 }
 
@@ -473,7 +721,23 @@ pub fn bgra64_to_rgba_u16_row(bgra64: &[u16], rgba_out: &mut [u16], width: usize
   let out_min = rgba_row_elems(width);
   assert!(bgra64.len() >= in_min, "bgra64 row too short");
   assert!(rgba_out.len() >= out_min, "rgba_out row too short");
-  let _ = use_simd;
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          unsafe { arch::neon::neon_bgra64_to_rgba_u16_row(bgra64, rgba_out, width); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          unsafe { arch::x86_sse41::sse41_bgra64_to_rgba_u16_row(bgra64, rgba_out, width); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
   scalar::bgra64_to_rgba_u16_row(bgra64, rgba_out, width);
 }
 
