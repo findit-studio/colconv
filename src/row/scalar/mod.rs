@@ -181,6 +181,17 @@ pub(super) fn clamp_u8(v: i32) -> u8 {
   v.clamp(0, 255) as u8
 }
 
+/// Byte-swap a `u16` sample when `BE = true`; identity when `BE = false`.
+///
+/// Used by BE-aware scalar kernels to normalize big-endian `u16` plane
+/// elements to host-native order at load time. The `if BE` branch is
+/// dead-code-eliminated by the compiler for each monomorphization, so
+/// the LE path (`BE = false`) is a zero-overhead no-op.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(super) const fn load_u16<const BE: bool>(v: u16) -> u16 {
+  if BE { v.swap_bytes() } else { v }
+}
+
 /// `(sample * scale_q15 + RND) >> 15`. With input masked to BITS,
 /// the `sample * scale` product cannot overflow i32 for any
 /// reasonable `OUT_BITS ≤ 16`, so plain arithmetic is sufficient.

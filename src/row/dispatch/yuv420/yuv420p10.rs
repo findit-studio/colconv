@@ -53,7 +53,7 @@ pub fn yuv420p10_to_rgb_row(
           // SAFETY: NEON verified on this CPU; bounds / parity are
           // the caller's obligation (asserted above).
           unsafe {
-            arch::neon::yuv_420p_n_to_rgb_row::<10>(y, u_half, v_half, rgb_out, width, matrix, full_range);
+            arch::neon::yuv_420p_n_to_rgb_row::<10, false>(y, u_half, v_half, rgb_out, width, matrix, full_range);
           }
           return;
         }
@@ -62,7 +62,7 @@ pub fn yuv420p10_to_rgb_row(
         if avx512_available() {
           // SAFETY: AVX‑512BW verified.
           unsafe {
-            arch::x86_avx512::yuv_420p_n_to_rgb_row::<10>(
+            arch::x86_avx512::yuv_420p_n_to_rgb_row::<10, false>(
               y, u_half, v_half, rgb_out, width, matrix, full_range,
             );
           }
@@ -71,7 +71,7 @@ pub fn yuv420p10_to_rgb_row(
         if avx2_available() {
           // SAFETY: AVX2 verified.
           unsafe {
-            arch::x86_avx2::yuv_420p_n_to_rgb_row::<10>(
+            arch::x86_avx2::yuv_420p_n_to_rgb_row::<10, false>(
               y, u_half, v_half, rgb_out, width, matrix, full_range,
             );
           }
@@ -80,7 +80,7 @@ pub fn yuv420p10_to_rgb_row(
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
           unsafe {
-            arch::x86_sse41::yuv_420p_n_to_rgb_row::<10>(
+            arch::x86_sse41::yuv_420p_n_to_rgb_row::<10, false>(
               y, u_half, v_half, rgb_out, width, matrix, full_range,
             );
           }
@@ -91,7 +91,7 @@ pub fn yuv420p10_to_rgb_row(
         if simd128_available() {
           // SAFETY: simd128 compile‑time verified.
           unsafe {
-            arch::wasm_simd128::yuv_420p_n_to_rgb_row::<10>(
+            arch::wasm_simd128::yuv_420p_n_to_rgb_row::<10, false>(
               y, u_half, v_half, rgb_out, width, matrix, full_range,
             );
           }
@@ -102,7 +102,7 @@ pub fn yuv420p10_to_rgb_row(
     }
   }
 
-  scalar::yuv_420p_n_to_rgb_row::<10>(y, u_half, v_half, rgb_out, width, matrix, full_range);
+  scalar::yuv_420p_n_to_rgb_row::<10, false>(y, u_half, v_half, rgb_out, width, matrix, full_range);
 }
 
 /// Converts one row of **10‑bit** YUV 4:2:0 to **native‑depth** packed
@@ -147,7 +147,7 @@ pub fn yuv420p10_to_rgb_u16_row(
         if neon_available() {
           // SAFETY: NEON verified.
           unsafe {
-            arch::neon::yuv_420p_n_to_rgb_u16_row::<10>(
+            arch::neon::yuv_420p_n_to_rgb_u16_row::<10, false>(
               y, u_half, v_half, rgb_out, width, matrix, full_range,
             );
           }
@@ -158,7 +158,7 @@ pub fn yuv420p10_to_rgb_u16_row(
         if avx512_available() {
           // SAFETY: AVX‑512BW verified.
           unsafe {
-            arch::x86_avx512::yuv_420p_n_to_rgb_u16_row::<10>(
+            arch::x86_avx512::yuv_420p_n_to_rgb_u16_row::<10, false>(
               y, u_half, v_half, rgb_out, width, matrix, full_range,
             );
           }
@@ -167,7 +167,7 @@ pub fn yuv420p10_to_rgb_u16_row(
         if avx2_available() {
           // SAFETY: AVX2 verified.
           unsafe {
-            arch::x86_avx2::yuv_420p_n_to_rgb_u16_row::<10>(
+            arch::x86_avx2::yuv_420p_n_to_rgb_u16_row::<10, false>(
               y, u_half, v_half, rgb_out, width, matrix, full_range,
             );
           }
@@ -176,7 +176,7 @@ pub fn yuv420p10_to_rgb_u16_row(
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
           unsafe {
-            arch::x86_sse41::yuv_420p_n_to_rgb_u16_row::<10>(
+            arch::x86_sse41::yuv_420p_n_to_rgb_u16_row::<10, false>(
               y, u_half, v_half, rgb_out, width, matrix, full_range,
             );
           }
@@ -187,7 +187,7 @@ pub fn yuv420p10_to_rgb_u16_row(
         if simd128_available() {
           // SAFETY: simd128 compile‑time verified.
           unsafe {
-            arch::wasm_simd128::yuv_420p_n_to_rgb_u16_row::<10>(
+            arch::wasm_simd128::yuv_420p_n_to_rgb_u16_row::<10, false>(
               y, u_half, v_half, rgb_out, width, matrix, full_range,
             );
           }
@@ -198,7 +198,7 @@ pub fn yuv420p10_to_rgb_u16_row(
     }
   }
 
-  scalar::yuv_420p_n_to_rgb_u16_row::<10>(y, u_half, v_half, rgb_out, width, matrix, full_range);
+  scalar::yuv_420p_n_to_rgb_u16_row::<10, false>(y, u_half, v_half, rgb_out, width, matrix, full_range);
 }
 
 /// Converts one row of **10-bit** YUV 4:2:0 to packed **8-bit**
@@ -235,7 +235,7 @@ pub fn yuv420p10_to_rgba_row(
         if neon_available() {
           // SAFETY: NEON verified.
           unsafe {
-            arch::neon::yuv_420p_n_to_rgba_row::<10>(y, u_half, v_half, rgba_out, width, matrix, full_range);
+            arch::neon::yuv_420p_n_to_rgba_row::<10, false>(y, u_half, v_half, rgba_out, width, matrix, full_range);
           }
           return;
         }
@@ -244,7 +244,7 @@ pub fn yuv420p10_to_rgba_row(
         if avx512_available() {
           // SAFETY: AVX‑512BW verified.
           unsafe {
-            arch::x86_avx512::yuv_420p_n_to_rgba_row::<10>(
+            arch::x86_avx512::yuv_420p_n_to_rgba_row::<10, false>(
               y, u_half, v_half, rgba_out, width, matrix, full_range,
             );
           }
@@ -253,7 +253,7 @@ pub fn yuv420p10_to_rgba_row(
         if avx2_available() {
           // SAFETY: AVX2 verified.
           unsafe {
-            arch::x86_avx2::yuv_420p_n_to_rgba_row::<10>(
+            arch::x86_avx2::yuv_420p_n_to_rgba_row::<10, false>(
               y, u_half, v_half, rgba_out, width, matrix, full_range,
             );
           }
@@ -262,7 +262,7 @@ pub fn yuv420p10_to_rgba_row(
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
           unsafe {
-            arch::x86_sse41::yuv_420p_n_to_rgba_row::<10>(
+            arch::x86_sse41::yuv_420p_n_to_rgba_row::<10, false>(
               y, u_half, v_half, rgba_out, width, matrix, full_range,
             );
           }
@@ -273,7 +273,7 @@ pub fn yuv420p10_to_rgba_row(
         if simd128_available() {
           // SAFETY: simd128 compile‑time verified.
           unsafe {
-            arch::wasm_simd128::yuv_420p_n_to_rgba_row::<10>(
+            arch::wasm_simd128::yuv_420p_n_to_rgba_row::<10, false>(
               y, u_half, v_half, rgba_out, width, matrix, full_range,
             );
           }
@@ -284,7 +284,7 @@ pub fn yuv420p10_to_rgba_row(
     }
   }
 
-  scalar::yuv_420p_n_to_rgba_row::<10>(y, u_half, v_half, rgba_out, width, matrix, full_range);
+  scalar::yuv_420p_n_to_rgba_row::<10, false>(y, u_half, v_half, rgba_out, width, matrix, full_range);
 }
 
 /// Converts one row of **10-bit** YUV 4:2:0 to **native-depth `u16`**
@@ -319,7 +319,7 @@ pub fn yuv420p10_to_rgba_u16_row(
         if neon_available() {
           // SAFETY: NEON verified.
           unsafe {
-            arch::neon::yuv_420p_n_to_rgba_u16_row::<10>(y, u_half, v_half, rgba_out, width, matrix, full_range);
+            arch::neon::yuv_420p_n_to_rgba_u16_row::<10, false>(y, u_half, v_half, rgba_out, width, matrix, full_range);
           }
           return;
         }
@@ -328,7 +328,7 @@ pub fn yuv420p10_to_rgba_u16_row(
         if avx512_available() {
           // SAFETY: AVX‑512BW verified.
           unsafe {
-            arch::x86_avx512::yuv_420p_n_to_rgba_u16_row::<10>(
+            arch::x86_avx512::yuv_420p_n_to_rgba_u16_row::<10, false>(
               y, u_half, v_half, rgba_out, width, matrix, full_range,
             );
           }
@@ -337,7 +337,7 @@ pub fn yuv420p10_to_rgba_u16_row(
         if avx2_available() {
           // SAFETY: AVX2 verified.
           unsafe {
-            arch::x86_avx2::yuv_420p_n_to_rgba_u16_row::<10>(
+            arch::x86_avx2::yuv_420p_n_to_rgba_u16_row::<10, false>(
               y, u_half, v_half, rgba_out, width, matrix, full_range,
             );
           }
@@ -346,7 +346,7 @@ pub fn yuv420p10_to_rgba_u16_row(
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
           unsafe {
-            arch::x86_sse41::yuv_420p_n_to_rgba_u16_row::<10>(
+            arch::x86_sse41::yuv_420p_n_to_rgba_u16_row::<10, false>(
               y, u_half, v_half, rgba_out, width, matrix, full_range,
             );
           }
@@ -357,7 +357,7 @@ pub fn yuv420p10_to_rgba_u16_row(
         if simd128_available() {
           // SAFETY: simd128 compile‑time verified.
           unsafe {
-            arch::wasm_simd128::yuv_420p_n_to_rgba_u16_row::<10>(
+            arch::wasm_simd128::yuv_420p_n_to_rgba_u16_row::<10, false>(
               y, u_half, v_half, rgba_out, width, matrix, full_range,
             );
           }
@@ -368,5 +368,5 @@ pub fn yuv420p10_to_rgba_u16_row(
     }
   }
 
-  scalar::yuv_420p_n_to_rgba_u16_row::<10>(y, u_half, v_half, rgba_out, width, matrix, full_range);
+  scalar::yuv_420p_n_to_rgba_u16_row::<10, false>(y, u_half, v_half, rgba_out, width, matrix, full_range);
 }

@@ -1152,7 +1152,7 @@ fn yuva444p9_strategy_a_plus_matches_independent_kernel() {
         let u_row = &up[r * width..(r + 1) * width];
         let v_row = &vp[r * width..(r + 1) * width];
         let a_row = &ap[r * width..(r + 1) * width];
-        crate::row::scalar::yuv_444p_n_to_rgb_row::<9>(
+        crate::row::scalar::yuv_444p_n_to_rgb_row::<9, false>(
           y_row,
           u_row,
           v_row,
@@ -1161,7 +1161,7 @@ fn yuva444p9_strategy_a_plus_matches_independent_kernel() {
           matrix,
           full_range,
         );
-        crate::row::scalar::yuv_444p_n_to_rgba_with_alpha_src_row::<9>(
+        crate::row::scalar::yuv_444p_n_to_rgba_with_alpha_src_row::<9, false>(
           y_row,
           u_row,
           v_row,
@@ -1239,7 +1239,7 @@ fn yuva444p9_strategy_a_plus_u16_matches_independent_kernel() {
         let u_row = &up[r * width..(r + 1) * width];
         let v_row = &vp[r * width..(r + 1) * width];
         let a_row = &ap[r * width..(r + 1) * width];
-        crate::row::scalar::yuv_444p_n_to_rgb_u16_row::<9>(
+        crate::row::scalar::yuv_444p_n_to_rgb_u16_row::<9, false>(
           y_row,
           u_row,
           v_row,
@@ -1248,7 +1248,7 @@ fn yuva444p9_strategy_a_plus_u16_matches_independent_kernel() {
           matrix,
           full_range,
         );
-        crate::row::scalar::yuv_444p_n_to_rgba_u16_with_alpha_src_row::<9>(
+        crate::row::scalar::yuv_444p_n_to_rgba_u16_with_alpha_src_row::<9, false>(
           y_row,
           u_row,
           v_row,
@@ -1326,7 +1326,7 @@ fn yuva444p10_strategy_a_plus_matches_independent_kernel() {
         let u_row = &up[r * width..(r + 1) * width];
         let v_row = &vp[r * width..(r + 1) * width];
         let a_row = &ap[r * width..(r + 1) * width];
-        crate::row::scalar::yuv_444p_n_to_rgb_row::<10>(
+        crate::row::scalar::yuv_444p_n_to_rgb_row::<10, false>(
           y_row,
           u_row,
           v_row,
@@ -1335,7 +1335,7 @@ fn yuva444p10_strategy_a_plus_matches_independent_kernel() {
           matrix,
           full_range,
         );
-        crate::row::scalar::yuv_444p_n_to_rgba_with_alpha_src_row::<10>(
+        crate::row::scalar::yuv_444p_n_to_rgba_with_alpha_src_row::<10, false>(
           y_row,
           u_row,
           v_row,
@@ -1413,7 +1413,7 @@ fn yuva444p10_strategy_a_plus_u16_matches_independent_kernel() {
         let u_row = &up[r * width..(r + 1) * width];
         let v_row = &vp[r * width..(r + 1) * width];
         let a_row = &ap[r * width..(r + 1) * width];
-        crate::row::scalar::yuv_444p_n_to_rgb_u16_row::<10>(
+        crate::row::scalar::yuv_444p_n_to_rgb_u16_row::<10, false>(
           y_row,
           u_row,
           v_row,
@@ -1422,7 +1422,7 @@ fn yuva444p10_strategy_a_plus_u16_matches_independent_kernel() {
           matrix,
           full_range,
         );
-        crate::row::scalar::yuv_444p_n_to_rgba_u16_with_alpha_src_row::<10>(
+        crate::row::scalar::yuv_444p_n_to_rgba_u16_with_alpha_src_row::<10, false>(
           y_row,
           u_row,
           v_row,
@@ -1500,7 +1500,7 @@ fn yuva444p12_strategy_a_plus_matches_independent_kernel() {
         let u_row = &up[r * width..(r + 1) * width];
         let v_row = &vp[r * width..(r + 1) * width];
         let a_row = &ap[r * width..(r + 1) * width];
-        crate::row::scalar::yuv_444p_n_to_rgb_row::<12>(
+        crate::row::scalar::yuv_444p_n_to_rgb_row::<12, false>(
           y_row,
           u_row,
           v_row,
@@ -1509,7 +1509,7 @@ fn yuva444p12_strategy_a_plus_matches_independent_kernel() {
           matrix,
           full_range,
         );
-        crate::row::scalar::yuv_444p_n_to_rgba_with_alpha_src_row::<12>(
+        crate::row::scalar::yuv_444p_n_to_rgba_with_alpha_src_row::<12, false>(
           y_row,
           u_row,
           v_row,
@@ -1587,7 +1587,7 @@ fn yuva444p12_strategy_a_plus_u16_matches_independent_kernel() {
         let u_row = &up[r * width..(r + 1) * width];
         let v_row = &vp[r * width..(r + 1) * width];
         let a_row = &ap[r * width..(r + 1) * width];
-        crate::row::scalar::yuv_444p_n_to_rgb_u16_row::<12>(
+        crate::row::scalar::yuv_444p_n_to_rgb_u16_row::<12, false>(
           y_row,
           u_row,
           v_row,
@@ -1596,7 +1596,7 @@ fn yuva444p12_strategy_a_plus_u16_matches_independent_kernel() {
           matrix,
           full_range,
         );
-        crate::row::scalar::yuv_444p_n_to_rgba_u16_with_alpha_src_row::<12>(
+        crate::row::scalar::yuv_444p_n_to_rgba_u16_with_alpha_src_row::<12, false>(
           y_row,
           u_row,
           v_row,
@@ -1674,7 +1674,7 @@ fn yuva444p14_strategy_a_plus_matches_independent_kernel() {
         let u_row = &up[r * width..(r + 1) * width];
         let v_row = &vp[r * width..(r + 1) * width];
         let a_row = &ap[r * width..(r + 1) * width];
-        crate::row::scalar::yuv_444p_n_to_rgb_row::<14>(
+        crate::row::scalar::yuv_444p_n_to_rgb_row::<14, false>(
           y_row,
           u_row,
           v_row,
@@ -1683,7 +1683,7 @@ fn yuva444p14_strategy_a_plus_matches_independent_kernel() {
           matrix,
           full_range,
         );
-        crate::row::scalar::yuv_444p_n_to_rgba_with_alpha_src_row::<14>(
+        crate::row::scalar::yuv_444p_n_to_rgba_with_alpha_src_row::<14, false>(
           y_row,
           u_row,
           v_row,
@@ -1761,7 +1761,7 @@ fn yuva444p14_strategy_a_plus_u16_matches_independent_kernel() {
         let u_row = &up[r * width..(r + 1) * width];
         let v_row = &vp[r * width..(r + 1) * width];
         let a_row = &ap[r * width..(r + 1) * width];
-        crate::row::scalar::yuv_444p_n_to_rgb_u16_row::<14>(
+        crate::row::scalar::yuv_444p_n_to_rgb_u16_row::<14, false>(
           y_row,
           u_row,
           v_row,
@@ -1770,7 +1770,7 @@ fn yuva444p14_strategy_a_plus_u16_matches_independent_kernel() {
           matrix,
           full_range,
         );
-        crate::row::scalar::yuv_444p_n_to_rgba_u16_with_alpha_src_row::<14>(
+        crate::row::scalar::yuv_444p_n_to_rgba_u16_with_alpha_src_row::<14, false>(
           y_row,
           u_row,
           v_row,
@@ -1849,7 +1849,7 @@ fn yuva444p16_strategy_a_plus_matches_independent_kernel() {
         let u_row = &up[r * width..(r + 1) * width];
         let v_row = &vp[r * width..(r + 1) * width];
         let a_row = &ap[r * width..(r + 1) * width];
-        crate::row::scalar::yuv_444p16_to_rgb_row(
+        crate::row::scalar::yuv_444p16_to_rgb_row::<false>(
           y_row,
           u_row,
           v_row,
@@ -1858,7 +1858,7 @@ fn yuva444p16_strategy_a_plus_matches_independent_kernel() {
           matrix,
           full_range,
         );
-        crate::row::scalar::yuv_444p16_to_rgba_with_alpha_src_row(
+        crate::row::scalar::yuv_444p16_to_rgba_with_alpha_src_row::<false>(
           y_row,
           u_row,
           v_row,
@@ -1936,7 +1936,7 @@ fn yuva444p16_strategy_a_plus_u16_matches_independent_kernel() {
         let u_row = &up[r * width..(r + 1) * width];
         let v_row = &vp[r * width..(r + 1) * width];
         let a_row = &ap[r * width..(r + 1) * width];
-        crate::row::scalar::yuv_444p16_to_rgb_u16_row(
+        crate::row::scalar::yuv_444p16_to_rgb_u16_row::<false>(
           y_row,
           u_row,
           v_row,
@@ -1945,7 +1945,7 @@ fn yuva444p16_strategy_a_plus_u16_matches_independent_kernel() {
           matrix,
           full_range,
         );
-        crate::row::scalar::yuv_444p16_to_rgba_u16_with_alpha_src_row(
+        crate::row::scalar::yuv_444p16_to_rgba_u16_with_alpha_src_row::<false>(
           y_row,
           u_row,
           v_row,
@@ -2040,7 +2040,7 @@ fn yuva444p10_strategy_a_plus_overrange_alpha_matches_inline_alpha() {
     let u_row = &up[r * width..(r + 1) * width];
     let v_row = &vp[r * width..(r + 1) * width];
     let a_row = &ap[r * width..(r + 1) * width];
-    crate::row::scalar::yuv_444p_n_to_rgba_with_alpha_src_row::<10>(
+    crate::row::scalar::yuv_444p_n_to_rgba_with_alpha_src_row::<10, false>(
       y_row,
       u_row,
       v_row,
@@ -2077,7 +2077,7 @@ fn yuva444p10_strategy_a_plus_overrange_alpha_matches_inline_alpha() {
     let u_row = &up[r * width..(r + 1) * width];
     let v_row = &vp[r * width..(r + 1) * width];
     let a_row = &ap[r * width..(r + 1) * width];
-    crate::row::scalar::yuv_444p_n_to_rgba_u16_with_alpha_src_row::<10>(
+    crate::row::scalar::yuv_444p_n_to_rgba_u16_with_alpha_src_row::<10, false>(
       y_row,
       u_row,
       v_row,

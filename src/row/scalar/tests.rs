@@ -246,7 +246,7 @@ fn yuv420p10_rgb_black_full_range() {
   let u = [512u16; 2];
   let v = [512u16; 2];
   let mut rgb = [0u8; 12];
-  yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 0), "got {rgb:?}");
 }
 
@@ -257,7 +257,7 @@ fn yuv420p10_rgb_white_full_range() {
   let u = [512u16; 2];
   let v = [512u16; 2];
   let mut rgb = [0u8; 12];
-  yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 255), "got {rgb:?}");
 }
 
@@ -268,7 +268,7 @@ fn yuv420p10_rgb_gray_is_gray() {
   let u = [512u16; 2];
   let v = [512u16; 2];
   let mut rgb = [0u8; 12];
-  yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
     let (r, g, b) = (rgb[x * 3], rgb[x * 3 + 1], rgb[x * 3 + 2]);
     assert_eq!(r, g);
@@ -284,7 +284,7 @@ fn yuv420p10_rgb_limited_range_black_and_white() {
   let u = [512u16; 2];
   let v = [512u16; 2];
   let mut rgb = [0u8; 12];
-  yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, false);
+  yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, false);
   assert_eq!((rgb[0], rgb[1], rgb[2]), (0, 0, 0));
   assert_eq!((rgb[3], rgb[4], rgb[5]), (0, 0, 0));
   assert_eq!((rgb[6], rgb[7], rgb[8]), (255, 255, 255));
@@ -298,7 +298,7 @@ fn yuv420p10_rgb_chroma_shared_across_pair() {
   let u = [512u16; 2];
   let v = [512u16; 2];
   let mut rgb = [0u8; 12];
-  yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
   // Full-range 10→8 scale = 255/1023, so Y=200 → 50, Y=800 → 199.4 → 199.
   // Allow ±1 for Q15 rounding.
   assert!(rgb[0].abs_diff(50) <= 1, "got {}", rgb[0]);
@@ -315,7 +315,7 @@ fn yuv420p10_rgb_u16_black_full_range() {
   let u = [512u16; 2];
   let v = [512u16; 2];
   let mut rgb = [0u16; 12];
-  yuv_420p_n_to_rgb_u16_row::<10>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  yuv_420p_n_to_rgb_u16_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 0), "got {rgb:?}");
 }
 
@@ -326,7 +326,7 @@ fn yuv420p10_rgb_u16_white_full_range() {
   let u = [512u16; 2];
   let v = [512u16; 2];
   let mut rgb = [0u16; 12];
-  yuv_420p_n_to_rgb_u16_row::<10>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  yuv_420p_n_to_rgb_u16_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 1023), "got {rgb:?}");
 }
 
@@ -337,7 +337,7 @@ fn yuv420p10_rgb_u16_limited_range_endpoints() {
   let u = [512u16; 1];
   let v = [512u16; 1];
   let mut rgb = [0u16; 6];
-  yuv_420p_n_to_rgb_u16_row::<10>(&y, &u, &v, &mut rgb, 2, ColorMatrix::Bt709, false);
+  yuv_420p_n_to_rgb_u16_row::<10, false>(&y, &u, &v, &mut rgb, 2, ColorMatrix::Bt709, false);
   assert_eq!((rgb[0], rgb[1], rgb[2]), (0, 0, 0));
   assert_eq!((rgb[3], rgb[4], rgb[5]), (1023, 1023, 1023));
 }
@@ -353,8 +353,8 @@ fn yuv420p10_rgb_u16_preserves_full_10bit_precision() {
   let v = [512u16; 1];
   let mut rgb8 = [0u8; 6];
   let mut rgb16 = [0u16; 6];
-  yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb8, 2, ColorMatrix::Bt601, true);
-  yuv_420p_n_to_rgb_u16_row::<10>(&y, &u, &v, &mut rgb16, 2, ColorMatrix::Bt601, true);
+  yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb8, 2, ColorMatrix::Bt601, true);
+  yuv_420p_n_to_rgb_u16_row::<10, false>(&y, &u, &v, &mut rgb16, 2, ColorMatrix::Bt601, true);
   assert_eq!(rgb8[0], rgb8[3]);
   assert_ne!(rgb16[0], rgb16[3]);
 }
@@ -367,8 +367,8 @@ fn yuv420p10_bt709_ycgco_differ_for_chroma() {
   let v = [800u16; 1];
   let mut bt709 = [0u8; 6];
   let mut ycgco = [0u8; 6];
-  yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut bt709, 2, ColorMatrix::Bt709, true);
-  yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut ycgco, 2, ColorMatrix::YCgCo, true);
+  yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut bt709, 2, ColorMatrix::Bt709, true);
+  yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut ycgco, 2, ColorMatrix::YCgCo, true);
   let sad: i32 = bt709
     .iter()
     .zip(ycgco.iter())
@@ -391,7 +391,7 @@ fn p010_rgb_black_full_range() {
   let y = [0u16; 4];
   let uv = [0x8000u16, 0x8000, 0x8000, 0x8000]; // U0 V0 U1 V1
   let mut rgb = [0u8; 12];
-  p_n_to_rgb_row::<10>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
+  p_n_to_rgb_row::<10, false>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 0), "got {rgb:?}");
 }
 
@@ -401,7 +401,7 @@ fn p010_rgb_white_full_range() {
   let y = [0xFFC0u16; 4];
   let uv = [0x8000u16, 0x8000, 0x8000, 0x8000];
   let mut rgb = [0u8; 12];
-  p_n_to_rgb_row::<10>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
+  p_n_to_rgb_row::<10, false>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 255), "got {rgb:?}");
 }
 
@@ -411,7 +411,7 @@ fn p010_rgb_gray_is_gray() {
   let y = [0x8000u16; 4];
   let uv = [0x8000u16; 4];
   let mut rgb = [0u8; 12];
-  p_n_to_rgb_row::<10>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
+  p_n_to_rgb_row::<10, false>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
     let (r, g, b) = (rgb[x * 3], rgb[x * 3 + 1], rgb[x * 3 + 2]);
     assert_eq!(r, g);
@@ -427,7 +427,7 @@ fn p010_rgb_limited_range_endpoints() {
   let y = [0x1000u16, 0x1000, 0xEB00, 0xEB00];
   let uv = [0x8000u16, 0x8000, 0x8000, 0x8000];
   let mut rgb = [0u8; 12];
-  p_n_to_rgb_row::<10>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, false);
+  p_n_to_rgb_row::<10, false>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, false);
   assert_eq!((rgb[0], rgb[1], rgb[2]), (0, 0, 0));
   assert_eq!((rgb[3], rgb[4], rgb[5]), (0, 0, 0));
   assert_eq!((rgb[6], rgb[7], rgb[8]), (255, 255, 255));
@@ -447,7 +447,7 @@ fn p010_matches_yuv420p10_when_shifted() {
 
   let mut rgb_p10 = [0u8; 12];
   let mut rgb_p010 = [0u8; 12];
-  yuv_420p_n_to_rgb_row::<10>(
+  yuv_420p_n_to_rgb_row::<10, false>(
     &y_p10,
     &u_p10,
     &v_p10,
@@ -456,7 +456,7 @@ fn p010_matches_yuv420p10_when_shifted() {
     ColorMatrix::Bt709,
     true,
   );
-  p_n_to_rgb_row::<10>(
+  p_n_to_rgb_row::<10, false>(
     &y_p010,
     &uv_p010,
     &mut rgb_p010,
@@ -474,7 +474,7 @@ fn p010_rgb_u16_white_full_range() {
   let y = [0xFFC0u16; 4];
   let uv = [0x8000u16; 4];
   let mut rgb = [0u16; 12];
-  p_n_to_rgb_u16_row::<10>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
+  p_n_to_rgb_u16_row::<10, false>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 1023), "got {rgb:?}");
 }
 
@@ -483,7 +483,7 @@ fn p010_rgb_u16_limited_range_endpoints() {
   let y = [0x1000u16, 0xEB00];
   let uv = [0x8000u16, 0x8000];
   let mut rgb = [0u16; 6];
-  p_n_to_rgb_u16_row::<10>(&y, &uv, &mut rgb, 2, ColorMatrix::Bt709, false);
+  p_n_to_rgb_u16_row::<10, false>(&y, &uv, &mut rgb, 2, ColorMatrix::Bt709, false);
   assert_eq!((rgb[0], rgb[1], rgb[2]), (0, 0, 0));
   assert_eq!((rgb[3], rgb[4], rgb[5]), (1023, 1023, 1023));
 }
@@ -498,7 +498,7 @@ fn yuv444p10_rgba_gray_alpha_is_ff() {
   let u = [512u16; 4];
   let v = [512u16; 4];
   let mut rgba = [0u8; 16];
-  yuv_444p_n_to_rgba_row::<10>(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
+  yuv_444p_n_to_rgba_row::<10, false>(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
     let (r, g, b, a) = (
       rgba[x * 4],
@@ -522,7 +522,7 @@ fn yuv444p10_rgba_u16_gray_alpha_is_1023() {
   let u = [512u16; 4];
   let v = [512u16; 4];
   let mut rgba = [0u16; 16];
-  yuv_444p_n_to_rgba_u16_row::<10>(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
+  yuv_444p_n_to_rgba_u16_row::<10, false>(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
     let (r, g, b, a) = (
       rgba[x * 4],
@@ -546,7 +546,7 @@ fn yuv444p16_rgba_gray_alpha_is_ff() {
   let u = [0x8000u16; 4];
   let v = [0x8000u16; 4];
   let mut rgba = [0u8; 16];
-  yuv_444p16_to_rgba_row(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
+  yuv_444p16_to_rgba_row::<false>(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
     let (r, g, b, a) = (
       rgba[x * 4],
@@ -570,7 +570,7 @@ fn yuv444p16_rgba_u16_gray_alpha_is_ffff() {
   let u = [0x8000u16; 4];
   let v = [0x8000u16; 4];
   let mut rgba = [0u16; 16];
-  yuv_444p16_to_rgba_u16_row(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
+  yuv_444p16_to_rgba_u16_row::<false>(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
     let (r, g, b, a) = (
       rgba[x * 4],
@@ -596,7 +596,7 @@ fn p410_rgba_gray_alpha_is_ff() {
   // 4 pixels × (U,V) per pixel = 8 elements.
   let uv = [0x8000u16; 8];
   let mut rgba = [0u8; 16];
-  p_n_444_to_rgba_row::<10>(&y, &uv, &mut rgba, 4, ColorMatrix::Bt601, true);
+  p_n_444_to_rgba_row::<10, false>(&y, &uv, &mut rgba, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
     let (r, g, b, a) = (
       rgba[x * 4],
@@ -620,7 +620,7 @@ fn p416_rgba_u16_gray_alpha_is_ffff() {
   let y = [0x8000u16; 4];
   let uv = [0x8000u16; 8];
   let mut rgba = [0u16; 16];
-  p_n_444_16_to_rgba_u16_row(&y, &uv, &mut rgba, 4, ColorMatrix::Bt601, true);
+  p_n_444_16_to_rgba_u16_row::<false>(&y, &uv, &mut rgba, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
     let (r, g, b, a) = (
       rgba[x * 4],

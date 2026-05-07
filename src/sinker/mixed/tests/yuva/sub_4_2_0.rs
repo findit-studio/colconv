@@ -867,7 +867,7 @@ fn yuva420p9_strategy_a_plus_matches_independent_kernel() {
         let u_row = &up[(r / 2) * cw..(r / 2 + 1) * cw];
         let v_row = &vp[(r / 2) * cw..(r / 2 + 1) * cw];
         let a_row = &ap[r * width..(r + 1) * width];
-        crate::row::scalar::yuv_420p_n_to_rgb_row::<9>(
+        crate::row::scalar::yuv_420p_n_to_rgb_row::<9, false>(
           y_row,
           u_row,
           v_row,
@@ -876,7 +876,7 @@ fn yuva420p9_strategy_a_plus_matches_independent_kernel() {
           matrix,
           full_range,
         );
-        crate::row::scalar::yuv_420p_n_to_rgba_with_alpha_src_row::<9>(
+        crate::row::scalar::yuv_420p_n_to_rgba_with_alpha_src_row::<9, false>(
           y_row,
           u_row,
           v_row,
@@ -956,7 +956,7 @@ fn yuva420p9_strategy_a_plus_u16_matches_independent_kernel() {
         let u_row = &up[(r / 2) * cw..(r / 2 + 1) * cw];
         let v_row = &vp[(r / 2) * cw..(r / 2 + 1) * cw];
         let a_row = &ap[r * width..(r + 1) * width];
-        crate::row::scalar::yuv_420p_n_to_rgb_u16_row::<9>(
+        crate::row::scalar::yuv_420p_n_to_rgb_u16_row::<9, false>(
           y_row,
           u_row,
           v_row,
@@ -965,7 +965,7 @@ fn yuva420p9_strategy_a_plus_u16_matches_independent_kernel() {
           matrix,
           full_range,
         );
-        crate::row::scalar::yuv_420p_n_to_rgba_u16_with_alpha_src_row::<9>(
+        crate::row::scalar::yuv_420p_n_to_rgba_u16_with_alpha_src_row::<9, false>(
           y_row,
           u_row,
           v_row,
@@ -1047,7 +1047,7 @@ fn yuva420p10_strategy_a_plus_matches_independent_kernel() {
         let u_row = &up[(r / 2) * cw..(r / 2 + 1) * cw];
         let v_row = &vp[(r / 2) * cw..(r / 2 + 1) * cw];
         let a_row = &ap[r * width..(r + 1) * width];
-        crate::row::scalar::yuv_420p_n_to_rgb_row::<10>(
+        crate::row::scalar::yuv_420p_n_to_rgb_row::<10, false>(
           y_row,
           u_row,
           v_row,
@@ -1056,7 +1056,7 @@ fn yuva420p10_strategy_a_plus_matches_independent_kernel() {
           matrix,
           full_range,
         );
-        crate::row::scalar::yuv_420p_n_to_rgba_with_alpha_src_row::<10>(
+        crate::row::scalar::yuv_420p_n_to_rgba_with_alpha_src_row::<10, false>(
           y_row,
           u_row,
           v_row,
@@ -1136,7 +1136,7 @@ fn yuva420p10_strategy_a_plus_u16_matches_independent_kernel() {
         let u_row = &up[(r / 2) * cw..(r / 2 + 1) * cw];
         let v_row = &vp[(r / 2) * cw..(r / 2 + 1) * cw];
         let a_row = &ap[r * width..(r + 1) * width];
-        crate::row::scalar::yuv_420p_n_to_rgb_u16_row::<10>(
+        crate::row::scalar::yuv_420p_n_to_rgb_u16_row::<10, false>(
           y_row,
           u_row,
           v_row,
@@ -1145,7 +1145,7 @@ fn yuva420p10_strategy_a_plus_u16_matches_independent_kernel() {
           matrix,
           full_range,
         );
-        crate::row::scalar::yuv_420p_n_to_rgba_u16_with_alpha_src_row::<10>(
+        crate::row::scalar::yuv_420p_n_to_rgba_u16_with_alpha_src_row::<10, false>(
           y_row,
           u_row,
           v_row,
@@ -1229,7 +1229,7 @@ fn yuva420p16_strategy_a_plus_matches_independent_kernel() {
         let u_row = &up[(r / 2) * cw..(r / 2 + 1) * cw];
         let v_row = &vp[(r / 2) * cw..(r / 2 + 1) * cw];
         let a_row = &ap[r * width..(r + 1) * width];
-        crate::row::scalar::yuv_420p16_to_rgb_row(
+        crate::row::scalar::yuv_420p16_to_rgb_row::<false>(
           y_row,
           u_row,
           v_row,
@@ -1238,7 +1238,7 @@ fn yuva420p16_strategy_a_plus_matches_independent_kernel() {
           matrix,
           full_range,
         );
-        crate::row::scalar::yuv_420p16_to_rgba_with_alpha_src_row(
+        crate::row::scalar::yuv_420p16_to_rgba_with_alpha_src_row::<false>(
           y_row,
           u_row,
           v_row,
@@ -1318,7 +1318,7 @@ fn yuva420p16_strategy_a_plus_u16_matches_independent_kernel() {
         let u_row = &up[(r / 2) * cw..(r / 2 + 1) * cw];
         let v_row = &vp[(r / 2) * cw..(r / 2 + 1) * cw];
         let a_row = &ap[r * width..(r + 1) * width];
-        crate::row::scalar::yuv_420p16_to_rgb_u16_row(
+        crate::row::scalar::yuv_420p16_to_rgb_u16_row::<false>(
           y_row,
           u_row,
           v_row,
@@ -1327,7 +1327,7 @@ fn yuva420p16_strategy_a_plus_u16_matches_independent_kernel() {
           matrix,
           full_range,
         );
-        crate::row::scalar::yuv_420p16_to_rgba_u16_with_alpha_src_row(
+        crate::row::scalar::yuv_420p16_to_rgba_u16_with_alpha_src_row::<false>(
           y_row,
           u_row,
           v_row,

@@ -20,7 +20,7 @@ use crate::{
 use super::{yuv_444p_n_to_rgb_row, yuv_444p_n_to_rgb_u16_row};
 
 /// YUV 4:4:4 planar 10-bit → u8 RGB. Thin wrapper over the
-/// crate-internal `yuv_444p_n_to_rgb_row::<10>`.
+/// crate-internal `yuv_444p_n_to_rgb_row::<10, false>`.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
 pub fn yuv444p10_to_rgb_row(
@@ -80,7 +80,7 @@ pub fn yuv444p10_to_rgba_row(
         if neon_available() {
           // SAFETY: NEON verified.
           unsafe {
-            arch::neon::yuv_444p_n_to_rgba_row::<10>(y, u, v, rgba_out, width, matrix, full_range);
+            arch::neon::yuv_444p_n_to_rgba_row::<10, false>(y, u, v, rgba_out, width, matrix, full_range);
           }
           return;
         }
@@ -89,21 +89,21 @@ pub fn yuv444p10_to_rgba_row(
         if avx512_available() {
           // SAFETY: AVX‑512BW verified.
           unsafe {
-            arch::x86_avx512::yuv_444p_n_to_rgba_row::<10>(y, u, v, rgba_out, width, matrix, full_range);
+            arch::x86_avx512::yuv_444p_n_to_rgba_row::<10, false>(y, u, v, rgba_out, width, matrix, full_range);
           }
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified.
           unsafe {
-            arch::x86_avx2::yuv_444p_n_to_rgba_row::<10>(y, u, v, rgba_out, width, matrix, full_range);
+            arch::x86_avx2::yuv_444p_n_to_rgba_row::<10, false>(y, u, v, rgba_out, width, matrix, full_range);
           }
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
           unsafe {
-            arch::x86_sse41::yuv_444p_n_to_rgba_row::<10>(y, u, v, rgba_out, width, matrix, full_range);
+            arch::x86_sse41::yuv_444p_n_to_rgba_row::<10, false>(y, u, v, rgba_out, width, matrix, full_range);
           }
           return;
         }
@@ -112,7 +112,7 @@ pub fn yuv444p10_to_rgba_row(
         if simd128_available() {
           // SAFETY: simd128 compile‑time verified.
           unsafe {
-            arch::wasm_simd128::yuv_444p_n_to_rgba_row::<10>(y, u, v, rgba_out, width, matrix, full_range);
+            arch::wasm_simd128::yuv_444p_n_to_rgba_row::<10, false>(y, u, v, rgba_out, width, matrix, full_range);
           }
           return;
         }
@@ -121,7 +121,7 @@ pub fn yuv444p10_to_rgba_row(
     }
   }
 
-  scalar::yuv_444p_n_to_rgba_row::<10>(y, u, v, rgba_out, width, matrix, full_range);
+  scalar::yuv_444p_n_to_rgba_row::<10, false>(y, u, v, rgba_out, width, matrix, full_range);
 }
 
 /// Converts one row of **10-bit** YUV 4:4:4 to **native-depth `u16`**
@@ -153,7 +153,7 @@ pub fn yuv444p10_to_rgba_u16_row(
         if neon_available() {
           // SAFETY: NEON verified.
           unsafe {
-            arch::neon::yuv_444p_n_to_rgba_u16_row::<10>(y, u, v, rgba_out, width, matrix, full_range);
+            arch::neon::yuv_444p_n_to_rgba_u16_row::<10, false>(y, u, v, rgba_out, width, matrix, full_range);
           }
           return;
         }
@@ -162,21 +162,21 @@ pub fn yuv444p10_to_rgba_u16_row(
         if avx512_available() {
           // SAFETY: AVX‑512BW verified.
           unsafe {
-            arch::x86_avx512::yuv_444p_n_to_rgba_u16_row::<10>(y, u, v, rgba_out, width, matrix, full_range);
+            arch::x86_avx512::yuv_444p_n_to_rgba_u16_row::<10, false>(y, u, v, rgba_out, width, matrix, full_range);
           }
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified.
           unsafe {
-            arch::x86_avx2::yuv_444p_n_to_rgba_u16_row::<10>(y, u, v, rgba_out, width, matrix, full_range);
+            arch::x86_avx2::yuv_444p_n_to_rgba_u16_row::<10, false>(y, u, v, rgba_out, width, matrix, full_range);
           }
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
           unsafe {
-            arch::x86_sse41::yuv_444p_n_to_rgba_u16_row::<10>(y, u, v, rgba_out, width, matrix, full_range);
+            arch::x86_sse41::yuv_444p_n_to_rgba_u16_row::<10, false>(y, u, v, rgba_out, width, matrix, full_range);
           }
           return;
         }
@@ -185,7 +185,7 @@ pub fn yuv444p10_to_rgba_u16_row(
         if simd128_available() {
           // SAFETY: simd128 compile‑time verified.
           unsafe {
-            arch::wasm_simd128::yuv_444p_n_to_rgba_u16_row::<10>(y, u, v, rgba_out, width, matrix, full_range);
+            arch::wasm_simd128::yuv_444p_n_to_rgba_u16_row::<10, false>(y, u, v, rgba_out, width, matrix, full_range);
           }
           return;
         }
@@ -194,5 +194,5 @@ pub fn yuv444p10_to_rgba_u16_row(
     }
   }
 
-  scalar::yuv_444p_n_to_rgba_u16_row::<10>(y, u, v, rgba_out, width, matrix, full_range);
+  scalar::yuv_444p_n_to_rgba_u16_row::<10, false>(y, u, v, rgba_out, width, matrix, full_range);
 }

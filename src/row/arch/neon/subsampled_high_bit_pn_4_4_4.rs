@@ -14,6 +14,27 @@ use super::*;
 // register, like `nv24_to_rgb_row`. Each iteration consumes 16 Y
 // pixels and 32 UV `u16` elements (= 16 interleaved U/V pairs).
 
+/// Byte-swap every u16 lane in `v` (BE ↔ LE conversion in-register).
+///
+/// Equivalent to `vrev16q_u8` on the reinterpreted byte view.  Used
+/// after `vld2q_u16` to apply per-lane byte-swapping that
+/// `load_endian_u16x8` cannot perform for interleaved loads.
+#[inline(always)]
+unsafe fn byteswap_u16x8(v: uint16x8_t) -> uint16x8_t {
+  unsafe { vreinterpretq_u16_u8(vrev16q_u8(vreinterpretq_u8_u16(v))) }
+}
+
+/// Apply BE byte-swap to a `uint16x8x2_t` pair (each lane individually).
+/// When `BE = false` this is a no-op and compiles away entirely.
+#[inline(always)]
+unsafe fn deinterleave_endian<const BE: bool>(pair: uint16x8x2_t) -> uint16x8x2_t {
+  if BE {
+    unsafe { uint16x8x2_t(byteswap_u16x8(pair.0), byteswap_u16x8(pair.1)) }
+  } else {
+    pair
+  }
+}
+
 /// NEON Pn 4:4:4 high-bit-packed (BITS ∈ {10, 12}) → packed **u8** RGB.
 ///
 /// Thin wrapper over [`p_n_444_to_rgb_or_rgba_row`] with `ALPHA = false`.
@@ -25,7 +46,7 @@ use super::*;
 ///    `rgb_out.len() >= 3 * width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn p_n_444_to_rgb_row<const BITS: u32>(
+pub(crate) unsafe fn p_n_444_to_rgb_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   rgb_out: &mut [u8],
@@ -35,7 +56,7 @@ pub(crate) unsafe fn p_n_444_to_rgb_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    p_n_444_to_rgb_or_rgba_row::<BITS, false>(y, uv_full, rgb_out, width, matrix, full_range);
+    p_n_444_to_rgb_or_rgba_row::<BITS, false, BE>(y, uv_full, rgb_out, width, matrix, full_range);
   }
 }
 
@@ -49,7 +70,7 @@ pub(crate) unsafe fn p_n_444_to_rgb_row<const BITS: u32>(
 /// Same as [`p_n_444_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn p_n_444_to_rgba_row<const BITS: u32>(
+pub(crate) unsafe fn p_n_444_to_rgba_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   rgba_out: &mut [u8],
@@ -59,7 +80,7 @@ pub(crate) unsafe fn p_n_444_to_rgba_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    p_n_444_to_rgb_or_rgba_row::<BITS, true>(y, uv_full, rgba_out, width, matrix, full_range);
+    p_n_444_to_rgb_or_rgba_row::<BITS, true, BE>(y, uv_full, rgba_out, width, matrix, full_range);
   }
 }
 
@@ -76,7 +97,11 @@ pub(crate) unsafe fn p_n_444_to_rgba_row<const BITS: u32>(
 /// 3. `BITS` must be one of `{10, 12}`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn p_n_444_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
+pub(crate) unsafe fn p_n_444_to_rgb_or_rgba_row<
+  const BITS: u32,
+  const ALPHA: bool,
+  const BE: bool,
+>(
   y: &[u16],
   uv_full: &[u16],
   out: &mut [u8],
@@ -116,19 +141,24 @@ pub(crate) unsafe fn p_n_444_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bo
 
     let mut x = 0usize;
     while x + 16 <= width {
-      // 16 Y pixels in two u16x8 loads; high-bit-extracted via the
-      // logical right shift.
-      let y_vec_lo = vshlq_u16(vld1q_u16(y.as_ptr().add(x)), shr_count);
-      let y_vec_hi = vshlq_u16(vld1q_u16(y.as_ptr().add(x + 8)), shr_count);
+      // 16 Y pixels in two u16x8 loads; BE-swapped before the high-bit
+      // extraction shift.
+      let y_raw_lo = endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8);
+      let y_raw_hi = endian::load_endian_u16x8::<BE>(y.as_ptr().add(x + 8) as *const u8);
+      let y_vec_lo = vshlq_u16(y_raw_lo, shr_count);
+      let y_vec_hi = vshlq_u16(y_raw_hi, shr_count);
 
       // 32 UV elements = 16 interleaved (U, V) pairs. Two `vld2q_u16`
       // calls deinterleave them into two pairs of (U, V) u16x8 vectors.
-      let uv_pair_lo = vld2q_u16(uv_full.as_ptr().add(x * 2));
-      let uv_pair_hi = vld2q_u16(uv_full.as_ptr().add(x * 2 + 16));
-      let u_lo_u16 = vshlq_u16(uv_pair_lo.0, shr_count);
-      let v_lo_u16 = vshlq_u16(uv_pair_lo.1, shr_count);
-      let u_hi_u16 = vshlq_u16(uv_pair_hi.0, shr_count);
-      let v_hi_u16 = vshlq_u16(uv_pair_hi.1, shr_count);
+      // Byte-swap after deinterleave for BE input.
+      let uv_raw_lo = vld2q_u16(uv_full.as_ptr().add(x * 2));
+      let uv_raw_hi = vld2q_u16(uv_full.as_ptr().add(x * 2 + 16));
+      let uv_sw_lo = deinterleave_endian::<BE>(uv_raw_lo);
+      let uv_sw_hi = deinterleave_endian::<BE>(uv_raw_hi);
+      let u_lo_u16 = vshlq_u16(uv_sw_lo.0, shr_count);
+      let v_lo_u16 = vshlq_u16(uv_sw_lo.1, shr_count);
+      let u_hi_u16 = vshlq_u16(uv_sw_hi.0, shr_count);
+      let v_hi_u16 = vshlq_u16(uv_sw_hi.1, shr_count);
 
       let y_lo = vreinterpretq_s16_u16(y_vec_lo);
       let y_hi = vreinterpretq_s16_u16(y_vec_hi);
@@ -199,9 +229,13 @@ pub(crate) unsafe fn p_n_444_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bo
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
       if ALPHA {
-        scalar::p_n_444_to_rgba_row::<BITS>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+        scalar::p_n_444_to_rgba_row::<BITS, BE>(
+          tail_y, tail_uv, tail_out, tail_w, matrix, full_range,
+        );
       } else {
-        scalar::p_n_444_to_rgb_row::<BITS>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+        scalar::p_n_444_to_rgb_row::<BITS, BE>(
+          tail_y, tail_uv, tail_out, tail_w, matrix, full_range,
+        );
       }
     }
   }
@@ -219,7 +253,7 @@ pub(crate) unsafe fn p_n_444_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bo
 ///    `rgb_out.len() >= 3 * width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn p_n_444_to_rgb_u16_row<const BITS: u32>(
+pub(crate) unsafe fn p_n_444_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   rgb_out: &mut [u16],
@@ -229,7 +263,9 @@ pub(crate) unsafe fn p_n_444_to_rgb_u16_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    p_n_444_to_rgb_or_rgba_u16_row::<BITS, false>(y, uv_full, rgb_out, width, matrix, full_range);
+    p_n_444_to_rgb_or_rgba_u16_row::<BITS, false, BE>(
+      y, uv_full, rgb_out, width, matrix, full_range,
+    );
   }
 }
 
@@ -244,7 +280,7 @@ pub(crate) unsafe fn p_n_444_to_rgb_u16_row<const BITS: u32>(
 /// Same as [`p_n_444_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn p_n_444_to_rgba_u16_row<const BITS: u32>(
+pub(crate) unsafe fn p_n_444_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   rgba_out: &mut [u16],
@@ -254,7 +290,9 @@ pub(crate) unsafe fn p_n_444_to_rgba_u16_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    p_n_444_to_rgb_or_rgba_u16_row::<BITS, true>(y, uv_full, rgba_out, width, matrix, full_range);
+    p_n_444_to_rgb_or_rgba_u16_row::<BITS, true, BE>(
+      y, uv_full, rgba_out, width, matrix, full_range,
+    );
   }
 }
 
@@ -271,7 +309,11 @@ pub(crate) unsafe fn p_n_444_to_rgba_u16_row<const BITS: u32>(
 /// 3. `BITS` ∈ `{10, 12}`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn p_n_444_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
+pub(crate) unsafe fn p_n_444_to_rgb_or_rgba_u16_row<
+  const BITS: u32,
+  const ALPHA: bool,
+  const BE: bool,
+>(
   y: &[u16],
   uv_full: &[u16],
   out: &mut [u16],
@@ -310,15 +352,19 @@ pub(crate) unsafe fn p_n_444_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let y_vec_lo = vshlq_u16(vld1q_u16(y.as_ptr().add(x)), shr_count);
-      let y_vec_hi = vshlq_u16(vld1q_u16(y.as_ptr().add(x + 8)), shr_count);
+      let y_raw_lo = endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8);
+      let y_raw_hi = endian::load_endian_u16x8::<BE>(y.as_ptr().add(x + 8) as *const u8);
+      let y_vec_lo = vshlq_u16(y_raw_lo, shr_count);
+      let y_vec_hi = vshlq_u16(y_raw_hi, shr_count);
 
-      let uv_pair_lo = vld2q_u16(uv_full.as_ptr().add(x * 2));
-      let uv_pair_hi = vld2q_u16(uv_full.as_ptr().add(x * 2 + 16));
-      let u_lo_u16 = vshlq_u16(uv_pair_lo.0, shr_count);
-      let v_lo_u16 = vshlq_u16(uv_pair_lo.1, shr_count);
-      let u_hi_u16 = vshlq_u16(uv_pair_hi.0, shr_count);
-      let v_hi_u16 = vshlq_u16(uv_pair_hi.1, shr_count);
+      let uv_raw_lo = vld2q_u16(uv_full.as_ptr().add(x * 2));
+      let uv_raw_hi = vld2q_u16(uv_full.as_ptr().add(x * 2 + 16));
+      let uv_sw_lo = deinterleave_endian::<BE>(uv_raw_lo);
+      let uv_sw_hi = deinterleave_endian::<BE>(uv_raw_hi);
+      let u_lo_u16 = vshlq_u16(uv_sw_lo.0, shr_count);
+      let v_lo_u16 = vshlq_u16(uv_sw_lo.1, shr_count);
+      let u_hi_u16 = vshlq_u16(uv_sw_hi.0, shr_count);
+      let v_hi_u16 = vshlq_u16(uv_sw_hi.1, shr_count);
 
       let y_lo = vreinterpretq_s16_u16(y_vec_lo);
       let y_hi = vreinterpretq_s16_u16(y_vec_hi);
@@ -386,11 +432,11 @@ pub(crate) unsafe fn p_n_444_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
       if ALPHA {
-        scalar::p_n_444_to_rgba_u16_row::<BITS>(
+        scalar::p_n_444_to_rgba_u16_row::<BITS, BE>(
           tail_y, tail_uv, tail_out, tail_w, matrix, full_range,
         );
       } else {
-        scalar::p_n_444_to_rgb_u16_row::<BITS>(
+        scalar::p_n_444_to_rgb_u16_row::<BITS, BE>(
           tail_y, tail_uv, tail_out, tail_w, matrix, full_range,
         );
       }
@@ -412,7 +458,7 @@ pub(crate) unsafe fn p_n_444_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA
 ///    `rgb_out.len() >= 3 * width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn p_n_444_16_to_rgb_row(
+pub(crate) unsafe fn p_n_444_16_to_rgb_row<const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   rgb_out: &mut [u8],
@@ -422,7 +468,7 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    p_n_444_16_to_rgb_or_rgba_row::<false>(y, uv_full, rgb_out, width, matrix, full_range);
+    p_n_444_16_to_rgb_or_rgba_row::<false, BE>(y, uv_full, rgb_out, width, matrix, full_range);
   }
 }
 
@@ -437,7 +483,7 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_row(
 /// Same as [`p_n_444_16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn p_n_444_16_to_rgba_row(
+pub(crate) unsafe fn p_n_444_16_to_rgba_row<const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   rgba_out: &mut [u8],
@@ -447,7 +493,7 @@ pub(crate) unsafe fn p_n_444_16_to_rgba_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    p_n_444_16_to_rgb_or_rgba_row::<true>(y, uv_full, rgba_out, width, matrix, full_range);
+    p_n_444_16_to_rgb_or_rgba_row::<true, BE>(y, uv_full, rgba_out, width, matrix, full_range);
   }
 }
 
@@ -463,7 +509,7 @@ pub(crate) unsafe fn p_n_444_16_to_rgba_row(
 ///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn p_n_444_16_to_rgb_or_rgba_row<const ALPHA: bool>(
+pub(crate) unsafe fn p_n_444_16_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   out: &mut [u8],
@@ -497,17 +543,20 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_or_rgba_row<const ALPHA: bool>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let y_vec_lo = vld1q_u16(y.as_ptr().add(x));
-      let y_vec_hi = vld1q_u16(y.as_ptr().add(x + 8));
+      // P416 has no shift — load + optional byte-swap, direct use.
+      let y_vec_lo = endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8);
+      let y_vec_hi = endian::load_endian_u16x8::<BE>(y.as_ptr().add(x + 8) as *const u8);
 
       // 16 chroma pairs per iter — two `vld2q_u16` calls deinterleave
       // 32 UV `u16` elements into two pairs of (U, V) u16x8 vectors.
-      let uv_pair_lo = vld2q_u16(uv_full.as_ptr().add(x * 2));
-      let uv_pair_hi = vld2q_u16(uv_full.as_ptr().add(x * 2 + 16));
-      let u_vec_lo = uv_pair_lo.0;
-      let v_vec_lo = uv_pair_lo.1;
-      let u_vec_hi = uv_pair_hi.0;
-      let v_vec_hi = uv_pair_hi.1;
+      let uv_raw_lo = vld2q_u16(uv_full.as_ptr().add(x * 2));
+      let uv_raw_hi = vld2q_u16(uv_full.as_ptr().add(x * 2 + 16));
+      let uv_sw_lo = deinterleave_endian::<BE>(uv_raw_lo);
+      let uv_sw_hi = deinterleave_endian::<BE>(uv_raw_hi);
+      let u_vec_lo = uv_sw_lo.0;
+      let v_vec_lo = uv_sw_lo.1;
+      let u_vec_hi = uv_sw_hi.0;
+      let v_vec_hi = uv_sw_hi.1;
 
       // Unsigned-widen + bias subtract in i32 (16-bit chroma can't fit
       // i16 after subtracting 32768).
@@ -593,9 +642,9 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_or_rgba_row<const ALPHA: bool>(
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
       if ALPHA {
-        scalar::p_n_444_16_to_rgba_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+        scalar::p_n_444_16_to_rgba_row::<BE>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
       } else {
-        scalar::p_n_444_16_to_rgb_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+        scalar::p_n_444_16_to_rgb_row::<BE>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
       }
     }
   }
@@ -612,7 +661,7 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// Same as [`p_n_444_16_to_rgb_row`] but `rgb_out: &mut [u16]`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn p_n_444_16_to_rgb_u16_row(
+pub(crate) unsafe fn p_n_444_16_to_rgb_u16_row<const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   rgb_out: &mut [u16],
@@ -622,13 +671,15 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_u16_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    p_n_444_16_to_rgb_or_rgba_u16_row::<false>(y, uv_full, rgb_out, width, matrix, full_range);
+    p_n_444_16_to_rgb_or_rgba_u16_row::<false, BE>(
+      y, uv_full, rgb_out, width, matrix, full_range,
+    );
   }
 }
 
 /// NEON sibling of [`p_n_444_16_to_rgba_row`] for native-depth `u16`
 /// output. Alpha samples are `0xFFFF` (opaque maximum at u16 range) —
-/// matches `scalar::p_n_444_16_to_rgba_u16_row`.
+/// matches `scalar::p_n_444_16_to_rgba_u16_row::<BE>`.
 ///
 /// Thin wrapper over [`p_n_444_16_to_rgb_or_rgba_u16_row`] with `ALPHA = true`.
 ///
@@ -637,7 +688,7 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_u16_row(
 /// Same as [`p_n_444_16_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn p_n_444_16_to_rgba_u16_row(
+pub(crate) unsafe fn p_n_444_16_to_rgba_u16_row<const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   rgba_out: &mut [u16],
@@ -647,7 +698,9 @@ pub(crate) unsafe fn p_n_444_16_to_rgba_u16_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    p_n_444_16_to_rgb_or_rgba_u16_row::<true>(y, uv_full, rgba_out, width, matrix, full_range);
+    p_n_444_16_to_rgb_or_rgba_u16_row::<true, BE>(
+      y, uv_full, rgba_out, width, matrix, full_range,
+    );
   }
 }
 
@@ -663,7 +716,7 @@ pub(crate) unsafe fn p_n_444_16_to_rgba_u16_row(
 ///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn p_n_444_16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
+pub(crate) unsafe fn p_n_444_16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   out: &mut [u16],
@@ -700,10 +753,11 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
     while x + 8 <= width {
       // 8 Y + 8 chroma pairs per iter — tighter block because i64
       // chroma narrows throughput; matches `yuv_444p16_to_rgb_u16_row`.
-      let y_vec = vld1q_u16(y.as_ptr().add(x));
-      let uv_pair = vld2q_u16(uv_full.as_ptr().add(x * 2));
-      let u_vec = uv_pair.0;
-      let v_vec = uv_pair.1;
+      let y_vec = endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8);
+      let uv_raw = vld2q_u16(uv_full.as_ptr().add(x * 2));
+      let uv_swapped = deinterleave_endian::<BE>(uv_raw);
+      let u_vec = uv_swapped.0;
+      let v_vec = uv_swapped.1;
 
       let u_lo_i32 = vsubq_s32(
         vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(u_vec))),
@@ -773,9 +827,13 @@ pub(crate) unsafe fn p_n_444_16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
       if ALPHA {
-        scalar::p_n_444_16_to_rgba_u16_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+        scalar::p_n_444_16_to_rgba_u16_row::<BE>(
+          tail_y, tail_uv, tail_out, tail_w, matrix, full_range,
+        );
       } else {
-        scalar::p_n_444_16_to_rgb_u16_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+        scalar::p_n_444_16_to_rgb_u16_row::<BE>(
+          tail_y, tail_uv, tail_out, tail_w, matrix, full_range,
+        );
       }
     }
   }
