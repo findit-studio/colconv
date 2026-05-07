@@ -9,6 +9,7 @@ mod high_bit_4_2_0;
 mod high_bit_4_4_4_and_pn;
 mod legacy_rgb;
 mod mono1bit;
+mod packed_rgb_16bit;
 mod packed_rgb_float;
 mod packed_yuv_8bit;
 mod planar_8bit_and_nv;

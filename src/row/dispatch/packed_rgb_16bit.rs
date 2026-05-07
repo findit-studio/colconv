@@ -99,6 +99,10 @@ pub fn rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], width: usize, use_sim
           return;
         }
       },
+      all(target_arch = "wasm32", target_feature = "simd128") => {
+        unsafe { arch::wasm_simd128::wasm_rgb48_to_rgb_row(rgb48, rgb_out, width); }
+        return;
+      },
       _ => {}
     }
   }
@@ -134,6 +138,10 @@ pub fn rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8], width: usize, use_s
           unsafe { arch::x86_sse41::sse41_rgb48_to_rgba_row(rgb48, rgba_out, width); }
           return;
         }
+      },
+      all(target_arch = "wasm32", target_feature = "simd128") => {
+        unsafe { arch::wasm_simd128::wasm_rgb48_to_rgba_row(rgb48, rgba_out, width); }
+        return;
       },
       _ => {}
     }
@@ -171,6 +179,10 @@ pub fn rgb48_to_rgb_u16_row(rgb48: &[u16], rgb_out: &mut [u16], width: usize, us
           return;
         }
       },
+      all(target_arch = "wasm32", target_feature = "simd128") => {
+        unsafe { arch::wasm_simd128::wasm_rgb48_to_rgb_u16_row(rgb48, rgb_out, width); }
+        return;
+      },
       _ => {}
     }
   }
@@ -206,6 +218,10 @@ pub fn rgb48_to_rgba_u16_row(rgb48: &[u16], rgba_out: &mut [u16], width: usize, 
           unsafe { arch::x86_sse41::sse41_rgb48_to_rgba_u16_row(rgb48, rgba_out, width); }
           return;
         }
+      },
+      all(target_arch = "wasm32", target_feature = "simd128") => {
+        unsafe { arch::wasm_simd128::wasm_rgb48_to_rgba_u16_row(rgb48, rgba_out, width); }
+        return;
       },
       _ => {}
     }
@@ -319,6 +335,10 @@ pub fn bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], width: usize, use_sim
           return;
         }
       },
+      all(target_arch = "wasm32", target_feature = "simd128") => {
+        unsafe { arch::wasm_simd128::wasm_bgr48_to_rgb_row(bgr48, rgb_out, width); }
+        return;
+      },
       _ => {}
     }
   }
@@ -354,6 +374,10 @@ pub fn bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8], width: usize, use_s
           unsafe { arch::x86_sse41::sse41_bgr48_to_rgba_row(bgr48, rgba_out, width); }
           return;
         }
+      },
+      all(target_arch = "wasm32", target_feature = "simd128") => {
+        unsafe { arch::wasm_simd128::wasm_bgr48_to_rgba_row(bgr48, rgba_out, width); }
+        return;
       },
       _ => {}
     }
@@ -391,6 +415,10 @@ pub fn bgr48_to_rgb_u16_row(bgr48: &[u16], rgb_out: &mut [u16], width: usize, us
           return;
         }
       },
+      all(target_arch = "wasm32", target_feature = "simd128") => {
+        unsafe { arch::wasm_simd128::wasm_bgr48_to_rgb_u16_row(bgr48, rgb_out, width); }
+        return;
+      },
       _ => {}
     }
   }
@@ -426,6 +454,10 @@ pub fn bgr48_to_rgba_u16_row(bgr48: &[u16], rgba_out: &mut [u16], width: usize, 
           unsafe { arch::x86_sse41::sse41_bgr48_to_rgba_u16_row(bgr48, rgba_out, width); }
           return;
         }
+      },
+      all(target_arch = "wasm32", target_feature = "simd128") => {
+        unsafe { arch::wasm_simd128::wasm_bgr48_to_rgba_u16_row(bgr48, rgba_out, width); }
+        return;
       },
       _ => {}
     }
@@ -535,6 +567,10 @@ pub fn rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8], width: usize, use_s
           return;
         }
       },
+      all(target_arch = "wasm32", target_feature = "simd128") => {
+        unsafe { arch::wasm_simd128::wasm_rgba64_to_rgb_row(rgba64, rgb_out, width); }
+        return;
+      },
       _ => {}
     }
   }
@@ -570,6 +606,10 @@ pub fn rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8], width: usize, use
           unsafe { arch::x86_sse41::sse41_rgba64_to_rgba_row(rgba64, rgba_out, width); }
           return;
         }
+      },
+      all(target_arch = "wasm32", target_feature = "simd128") => {
+        unsafe { arch::wasm_simd128::wasm_rgba64_to_rgba_row(rgba64, rgba_out, width); }
+        return;
       },
       _ => {}
     }
@@ -607,6 +647,10 @@ pub fn rgba64_to_rgb_u16_row(rgba64: &[u16], rgb_out: &mut [u16], width: usize, 
           return;
         }
       },
+      all(target_arch = "wasm32", target_feature = "simd128") => {
+        unsafe { arch::wasm_simd128::wasm_rgba64_to_rgb_u16_row(rgba64, rgb_out, width); }
+        return;
+      },
       _ => {}
     }
   }
@@ -642,6 +686,10 @@ pub fn rgba64_to_rgba_u16_row(rgba64: &[u16], rgba_out: &mut [u16], width: usize
           unsafe { arch::x86_sse41::sse41_rgba64_to_rgba_u16_row(rgba64, rgba_out, width); }
           return;
         }
+      },
+      all(target_arch = "wasm32", target_feature = "simd128") => {
+        unsafe { arch::wasm_simd128::wasm_rgba64_to_rgba_u16_row(rgba64, rgba_out, width); }
+        return;
       },
       _ => {}
     }
@@ -754,6 +802,10 @@ pub fn bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8], width: usize, use_s
           return;
         }
       },
+      all(target_arch = "wasm32", target_feature = "simd128") => {
+        unsafe { arch::wasm_simd128::wasm_bgra64_to_rgb_row(bgra64, rgb_out, width); }
+        return;
+      },
       _ => {}
     }
   }
@@ -791,6 +843,10 @@ pub fn bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8], width: usize, use
           return;
         }
       },
+      all(target_arch = "wasm32", target_feature = "simd128") => {
+        unsafe { arch::wasm_simd128::wasm_bgra64_to_rgba_row(bgra64, rgba_out, width); }
+        return;
+      },
       _ => {}
     }
   }
@@ -827,6 +883,10 @@ pub fn bgra64_to_rgb_u16_row(bgra64: &[u16], rgb_out: &mut [u16], width: usize, 
           return;
         }
       },
+      all(target_arch = "wasm32", target_feature = "simd128") => {
+        unsafe { arch::wasm_simd128::wasm_bgra64_to_rgb_u16_row(bgra64, rgb_out, width); }
+        return;
+      },
       _ => {}
     }
   }
@@ -862,6 +922,10 @@ pub fn bgra64_to_rgba_u16_row(bgra64: &[u16], rgba_out: &mut [u16], width: usize
           unsafe { arch::x86_sse41::sse41_bgra64_to_rgba_u16_row(bgra64, rgba_out, width); }
           return;
         }
+      },
+      all(target_arch = "wasm32", target_feature = "simd128") => {
+        unsafe { arch::wasm_simd128::wasm_bgra64_to_rgba_u16_row(bgra64, rgba_out, width); }
+        return;
       },
       _ => {}
     }
