@@ -14,6 +14,7 @@ pub(super) mod ayuv64;
 pub(super) mod bayer;
 pub(super) mod gray;
 pub(super) mod grayf32;
+pub(super) mod legacy_rgb;
 pub(super) mod mono1bit;
 pub(super) mod nv;
 pub(super) mod packed_yuv422;
