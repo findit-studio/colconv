@@ -1,0 +1,204 @@
+use crate::row::arch::x86_avx2::endian::*;
+
+// Helper: extract __m256i to a stack array of 16 u16 lanes.
+#[cfg(target_arch = "x86_64")]
+unsafe fn m256i_to_u16x16(v: core::arch::x86_64::__m256i) -> [u16; 16] {
+  let mut out = [0u16; 16];
+  unsafe { core::arch::x86_64::_mm256_storeu_si256(out.as_mut_ptr().cast(), v) };
+  out
+}
+
+// Helper: extract __m256i to a stack array of 8 u32 lanes.
+#[cfg(target_arch = "x86_64")]
+unsafe fn m256i_to_u32x8(v: core::arch::x86_64::__m256i) -> [u32; 8] {
+  let mut out = [0u32; 8];
+  unsafe { core::arch::x86_64::_mm256_storeu_si256(out.as_mut_ptr().cast(), v) };
+  out
+}
+
+// ---- LE loader on LE host (no-op) ------------------------------------------
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
+#[cfg(target_endian = "little")]
+fn avx2_load_le_u16x16_noop_on_le_host() {
+  if !std::arch::is_x86_feature_detected!("avx2") {
+    return;
+  }
+  let input: [u8; 32] = [
+    0x02, 0x01, 0x04, 0x03, 0x06, 0x05, 0x08, 0x07, 0x0a, 0x09, 0x0c, 0x0b, 0x0e, 0x0d, 0x10, 0x0f,
+    0x12, 0x11, 0x14, 0x13, 0x16, 0x15, 0x18, 0x17, 0x1a, 0x19, 0x1c, 0x1b, 0x1e, 0x1d, 0x20, 0x1f,
+  ];
+  let v = unsafe { load_le_u16x16(input.as_ptr()) };
+  let got = unsafe { m256i_to_u16x16(v) };
+  assert_eq!(
+    got,
+    [
+      0x0102, 0x0304, 0x0506, 0x0708, 0x090a, 0x0b0c, 0x0d0e, 0x0f10, 0x1112, 0x1314, 0x1516,
+      0x1718, 0x191a, 0x1b1c, 0x1d1e, 0x1f20,
+    ],
+    "AVX2 load_le_u16x16 must not swap on LE host"
+  );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
+#[cfg(target_endian = "big")]
+fn avx2_load_le_u16x16_swaps_on_be_host() {
+  if !std::arch::is_x86_feature_detected!("avx2") {
+    return;
+  }
+  let input: [u8; 32] = [
+    0x02, 0x01, 0x04, 0x03, 0x06, 0x05, 0x08, 0x07, 0x0a, 0x09, 0x0c, 0x0b, 0x0e, 0x0d, 0x10, 0x0f,
+    0x12, 0x11, 0x14, 0x13, 0x16, 0x15, 0x18, 0x17, 0x1a, 0x19, 0x1c, 0x1b, 0x1e, 0x1d, 0x20, 0x1f,
+  ];
+  let v = unsafe { load_le_u16x16(input.as_ptr()) };
+  let got = unsafe { m256i_to_u16x16(v) };
+  assert_eq!(
+    got,
+    [
+      0x0102, 0x0304, 0x0506, 0x0708, 0x090a, 0x0b0c, 0x0d0e, 0x0f10, 0x1112, 0x1314, 0x1516,
+      0x1718, 0x191a, 0x1b1c, 0x1d1e, 0x1f20,
+    ],
+    "AVX2 load_le_u16x16 must swap on BE host"
+  );
+}
+
+// ---- BE loader on LE host (swap) -------------------------------------------
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
+#[cfg(target_endian = "little")]
+fn avx2_load_be_u16x16_swaps_on_le_host() {
+  if !std::arch::is_x86_feature_detected!("avx2") {
+    return;
+  }
+  let input: [u8; 32] = [
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+  ];
+  let v = unsafe { load_be_u16x16(input.as_ptr()) };
+  let got = unsafe { m256i_to_u16x16(v) };
+  assert_eq!(
+    got,
+    [
+      0x0102, 0x0304, 0x0506, 0x0708, 0x090a, 0x0b0c, 0x0d0e, 0x0f10, 0x1112, 0x1314, 0x1516,
+      0x1718, 0x191a, 0x1b1c, 0x1d1e, 0x1f20,
+    ],
+    "AVX2 load_be_u16x16 must swap on LE host"
+  );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
+#[cfg(target_endian = "big")]
+fn avx2_load_be_u16x16_noop_on_be_host() {
+  if !std::arch::is_x86_feature_detected!("avx2") {
+    return;
+  }
+  let input: [u8; 32] = [
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+  ];
+  let v = unsafe { load_be_u16x16(input.as_ptr()) };
+  let got = unsafe { m256i_to_u16x16(v) };
+  assert_eq!(
+    got,
+    [
+      0x0102, 0x0304, 0x0506, 0x0708, 0x090a, 0x0b0c, 0x0d0e, 0x0f10, 0x1112, 0x1314, 0x1516,
+      0x1718, 0x191a, 0x1b1c, 0x1d1e, 0x1f20,
+    ],
+    "AVX2 load_be_u16x16 must not swap on BE host"
+  );
+}
+
+// ---- u32x8 LE loader on LE host (no-op) ------------------------------------
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
+#[cfg(target_endian = "little")]
+fn avx2_load_le_u32x8_noop_on_le_host() {
+  if !std::arch::is_x86_feature_detected!("avx2") {
+    return;
+  }
+  let input: [u8; 32] = [
+    0x04, 0x03, 0x02, 0x01, 0x08, 0x07, 0x06, 0x05, 0x0c, 0x0b, 0x0a, 0x09, 0x10, 0x0f, 0x0e, 0x0d,
+    0x14, 0x13, 0x12, 0x11, 0x18, 0x17, 0x16, 0x15, 0x1c, 0x1b, 0x1a, 0x19, 0x20, 0x1f, 0x1e, 0x1d,
+  ];
+  let v = unsafe { load_le_u32x8(input.as_ptr()) };
+  let got = unsafe { m256i_to_u32x8(v) };
+  assert_eq!(
+    got,
+    [
+      0x01020304, 0x05060708, 0x090a0b0c, 0x0d0e0f10, 0x11121314, 0x15161718, 0x191a1b1c,
+      0x1d1e1f20,
+    ],
+    "AVX2 load_le_u32x8 must not swap on LE host"
+  );
+}
+
+// ---- u32x8 BE loader on LE host (swap) -------------------------------------
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
+#[cfg(target_endian = "little")]
+fn avx2_load_be_u32x8_swaps_on_le_host() {
+  if !std::arch::is_x86_feature_detected!("avx2") {
+    return;
+  }
+  let input: [u8; 32] = [
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+  ];
+  let v = unsafe { load_be_u32x8(input.as_ptr()) };
+  let got = unsafe { m256i_to_u32x8(v) };
+  assert_eq!(
+    got,
+    [
+      0x01020304, 0x05060708, 0x090a0b0c, 0x0d0e0f10, 0x11121314, 0x15161718, 0x191a1b1c,
+      0x1d1e1f20,
+    ],
+    "AVX2 load_be_u32x8 must swap on LE host"
+  );
+}
+
+// ---- Generic dispatcher consistency ----------------------------------------
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
+#[cfg(target_endian = "little")]
+fn avx2_load_endian_u16x16_le_dispatcher() {
+  if !std::arch::is_x86_feature_detected!("avx2") {
+    return;
+  }
+  let input: [u8; 32] = [
+    0x02, 0x01, 0x04, 0x03, 0x06, 0x05, 0x08, 0x07, 0x0a, 0x09, 0x0c, 0x0b, 0x0e, 0x0d, 0x10, 0x0f,
+    0x12, 0x11, 0x14, 0x13, 0x16, 0x15, 0x18, 0x17, 0x1a, 0x19, 0x1c, 0x1b, 0x1e, 0x1d, 0x20, 0x1f,
+  ];
+  let direct = unsafe { load_le_u16x16(input.as_ptr()) };
+  let via_dispatch = unsafe { load_endian_u16x16::<false>(input.as_ptr()) };
+  let d = unsafe { m256i_to_u16x16(direct) };
+  let g = unsafe { m256i_to_u16x16(via_dispatch) };
+  assert_eq!(
+    d, g,
+    "load_endian_u16x16::<false> must match load_le_u16x16"
+  );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
+#[cfg(target_endian = "little")]
+fn avx2_load_endian_u16x16_be_dispatcher() {
+  if !std::arch::is_x86_feature_detected!("avx2") {
+    return;
+  }
+  let input: [u8; 32] = [
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+  ];
+  let direct = unsafe { load_be_u16x16(input.as_ptr()) };
+  let via_dispatch = unsafe { load_endian_u16x16::<true>(input.as_ptr()) };
+  let d = unsafe { m256i_to_u16x16(direct) };
+  let g = unsafe { m256i_to_u16x16(via_dispatch) };
+  assert_eq!(d, g, "load_endian_u16x16::<true> must match load_be_u16x16");
+}

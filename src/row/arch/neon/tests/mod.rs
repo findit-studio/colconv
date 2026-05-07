@@ -1,6 +1,7 @@
 use super::*;
 
 mod ayuv64;
+mod endian;
 mod high_bit_4_2_0;
 mod high_bit_4_4_4_and_pn;
 mod legacy_rgb;
