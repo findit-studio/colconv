@@ -210,7 +210,15 @@ fn wasm_gbrpf32_to_luma_u16_matches_scalar() {
     let r = gbr_plane_f32(w, 0x7968_5748);
     let mut out_scalar = std::vec![0u16; w];
     let mut out_simd = std::vec![0u16; w];
-    scalar::gbrpf32_to_luma_u16_row::<false>(&g, &b, &r, &mut out_scalar, w, ColorMatrix::Bt709, true);
+    scalar::gbrpf32_to_luma_u16_row::<false>(
+      &g,
+      &b,
+      &r,
+      &mut out_scalar,
+      w,
+      ColorMatrix::Bt709,
+      true,
+    );
     unsafe {
       gbrpf32_to_luma_u16_row::<false>(&g, &b, &r, &mut out_simd, w, ColorMatrix::Bt709, true);
     }
@@ -328,7 +336,7 @@ fn wasm_gbrpf16_to_rgb_f16_matches_scalar() {
     let r = gbr_plane_f16(w, 0xFEDC_BA98);
     let mut out_scalar = std::vec![half::f16::ZERO; w * 3];
     let mut out_simd = std::vec![half::f16::ZERO; w * 3];
-    scalar_f16::gbrpf16_to_rgb_f16_row(&g, &b, &r, &mut out_scalar, w);
+    scalar_f16::gbrpf16_to_rgb_f16_row::<false>(&g, &b, &r, &mut out_scalar, w);
     unsafe {
       gbrpf16_to_rgb_f16_row::<false>(&g, &b, &r, &mut out_simd, w);
     }
@@ -346,7 +354,7 @@ fn wasm_gbrpf16_to_rgba_f16_matches_scalar() {
     let r = gbr_plane_f16(w, 0x6767_8989);
     let mut out_scalar = std::vec![half::f16::ZERO; w * 4];
     let mut out_simd = std::vec![half::f16::ZERO; w * 4];
-    scalar_f16::gbrpf16_to_rgba_f16_row(&g, &b, &r, &mut out_scalar, w);
+    scalar_f16::gbrpf16_to_rgba_f16_row::<false>(&g, &b, &r, &mut out_scalar, w);
     unsafe {
       gbrpf16_to_rgba_f16_row::<false>(&g, &b, &r, &mut out_simd, w);
     }
@@ -365,7 +373,7 @@ fn wasm_gbrapf16_to_rgba_f16_matches_scalar() {
     let a = gbr_plane_f16(w, 0x7777_8888);
     let mut out_scalar = std::vec![half::f16::ZERO; w * 4];
     let mut out_simd = std::vec![half::f16::ZERO; w * 4];
-    scalar_f16::gbrapf16_to_rgba_f16_row(&g, &b, &r, &a, &mut out_scalar, w);
+    scalar_f16::gbrapf16_to_rgba_f16_row::<false>(&g, &b, &r, &a, &mut out_scalar, w);
     unsafe {
       gbrapf16_to_rgba_f16_row::<false>(&g, &b, &r, &a, &mut out_simd, w);
     }
@@ -391,7 +399,7 @@ fn wasm_gbrpf16_to_rgb_matches_scalar() {
       w,
     );
     unsafe {
-      gbrpf16_to_rgb_row(&g, &b, &r, &mut out_simd, w);
+      gbrpf16_to_rgb_row::<false>(&g, &b, &r, &mut out_simd, w);
     }
     assert_eq!(out_scalar, out_simd, "wasm gbrpf16_to_rgb width={w}");
   }
@@ -415,7 +423,7 @@ fn wasm_gbrpf16_to_rgba_matches_scalar() {
       w,
     );
     unsafe {
-      gbrpf16_to_rgba_row(&g, &b, &r, &mut out_simd, w);
+      gbrpf16_to_rgba_row::<false>(&g, &b, &r, &mut out_simd, w);
     }
     assert_eq!(out_scalar, out_simd, "wasm gbrpf16_to_rgba width={w}");
   }
@@ -439,7 +447,7 @@ fn wasm_gbrpf16_to_rgb_u16_matches_scalar() {
       w,
     );
     unsafe {
-      gbrpf16_to_rgb_u16_row(&g, &b, &r, &mut out_simd, w);
+      gbrpf16_to_rgb_u16_row::<false>(&g, &b, &r, &mut out_simd, w);
     }
     assert_eq!(out_scalar, out_simd, "wasm gbrpf16_to_rgb_u16 width={w}");
   }
@@ -463,7 +471,7 @@ fn wasm_gbrpf16_to_rgba_u16_matches_scalar() {
       w,
     );
     unsafe {
-      gbrpf16_to_rgba_u16_row(&g, &b, &r, &mut out_simd, w);
+      gbrpf16_to_rgba_u16_row::<false>(&g, &b, &r, &mut out_simd, w);
     }
     assert_eq!(out_scalar, out_simd, "wasm gbrpf16_to_rgba_u16 width={w}");
   }
@@ -499,11 +507,17 @@ fn wasm_gbrpf32_to_rgb_round_half_up() {
 // ---- BE parity helpers -------------------------------------------------------
 
 fn be_encode_f32(src: &[f32]) -> std::vec::Vec<f32> {
-  src.iter().map(|v| f32::from_bits(v.to_bits().swap_bytes())).collect()
+  src
+    .iter()
+    .map(|v| f32::from_bits(v.to_bits().swap_bytes()))
+    .collect()
 }
 
 fn be_encode_f16(src: &[half::f16]) -> std::vec::Vec<half::f16> {
-  src.iter().map(|v| half::f16::from_bits(v.to_bits().swap_bytes())).collect()
+  src
+    .iter()
+    .map(|v| half::f16::from_bits(v.to_bits().swap_bytes()))
+    .collect()
 }
 
 // ---- BE parity: Gbrpf32 → u8 RGB -------------------------------------------
@@ -516,11 +530,15 @@ fn wasm_gbrpf32_to_rgb_be_parity() {
     let r = gbr_plane_f32(w, 0xBE01_0003);
     let mut le_out = std::vec![0u8; w * 3];
     let mut be_out = std::vec![0u8; w * 3];
-    unsafe { gbrpf32_to_rgb_row::<false>(&g, &b, &r, &mut le_out, w); }
+    unsafe {
+      gbrpf32_to_rgb_row::<false>(&g, &b, &r, &mut le_out, w);
+    }
     let g_be = be_encode_f32(&g);
     let b_be = be_encode_f32(&b);
     let r_be = be_encode_f32(&r);
-    unsafe { gbrpf32_to_rgb_row::<true>(&g_be, &b_be, &r_be, &mut be_out, w); }
+    unsafe {
+      gbrpf32_to_rgb_row::<true>(&g_be, &b_be, &r_be, &mut be_out, w);
+    }
     assert_eq!(le_out, be_out, "wasm gbrpf32_to_rgb BE parity width={w}");
   }
 }
@@ -535,12 +553,19 @@ fn wasm_gbrpf16_to_rgb_f16_be_parity() {
     let r = gbr_plane_f16(w, 0xBE07_0003);
     let mut le_out = std::vec![half::f16::ZERO; w * 3];
     let mut be_out = std::vec![half::f16::ZERO; w * 3];
-    unsafe { gbrpf16_to_rgb_f16_row::<false>(&g, &b, &r, &mut le_out, w); }
+    unsafe {
+      gbrpf16_to_rgb_f16_row::<false>(&g, &b, &r, &mut le_out, w);
+    }
     let g_be = be_encode_f16(&g);
     let b_be = be_encode_f16(&b);
     let r_be = be_encode_f16(&r);
-    unsafe { gbrpf16_to_rgb_f16_row::<true>(&g_be, &b_be, &r_be, &mut be_out, w); }
-    assert_eq!(le_out, be_out, "wasm gbrpf16_to_rgb_f16 BE parity width={w}");
+    unsafe {
+      gbrpf16_to_rgb_f16_row::<true>(&g_be, &b_be, &r_be, &mut be_out, w);
+    }
+    assert_eq!(
+      le_out, be_out,
+      "wasm gbrpf16_to_rgb_f16 BE parity width={w}"
+    );
   }
 }
 
@@ -555,12 +580,19 @@ fn wasm_gbrapf16_to_rgba_f16_be_parity() {
     let a = gbr_plane_f16(w, 0xBE0F_0004);
     let mut le_out = std::vec![half::f16::ZERO; w * 4];
     let mut be_out = std::vec![half::f16::ZERO; w * 4];
-    unsafe { gbrapf16_to_rgba_f16_row::<false>(&g, &b, &r, &a, &mut le_out, w); }
+    unsafe {
+      gbrapf16_to_rgba_f16_row::<false>(&g, &b, &r, &a, &mut le_out, w);
+    }
     let g_be = be_encode_f16(&g);
     let b_be = be_encode_f16(&b);
     let r_be = be_encode_f16(&r);
     let a_be = be_encode_f16(&a);
-    unsafe { gbrapf16_to_rgba_f16_row::<true>(&g_be, &b_be, &r_be, &a_be, &mut be_out, w); }
-    assert_eq!(le_out, be_out, "wasm gbrapf16_to_rgba_f16 BE parity width={w}");
+    unsafe {
+      gbrapf16_to_rgba_f16_row::<true>(&g_be, &b_be, &r_be, &a_be, &mut be_out, w);
+    }
+    assert_eq!(
+      le_out, be_out,
+      "wasm gbrapf16_to_rgba_f16 BE parity width={w}"
+    );
   }
 }

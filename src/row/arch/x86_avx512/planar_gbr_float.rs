@@ -50,7 +50,10 @@ use core::arch::x86_64::*;
 
 use crate::{
   ColorMatrix,
-  row::{arch::x86_avx512::endian, scalar::{planar_gbr_f16 as scalar_f16, planar_gbr_float as scalar}},
+  row::{
+    arch::x86_avx512::endian,
+    scalar::{planar_gbr_f16 as scalar_f16, planar_gbr_float as scalar},
+  },
 };
 
 // ---- shared helpers ----------------------------------------------------------
@@ -99,9 +102,27 @@ pub(crate) unsafe fn gbrpf32_to_rgb_row<const BE: bool>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let gv = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(g.as_ptr().add(x).cast::<u8>())), zero, one);
-      let bv = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(b.as_ptr().add(x).cast::<u8>())), zero, one);
-      let rv = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(r.as_ptr().add(x).cast::<u8>())), zero, one);
+      let gv = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          g.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
+      let bv = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          b.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
+      let rv = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          r.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
       let g8 = _mm512_cvtusepi32_epi8(scale_round_i32(gv, scale));
       let b8 = _mm512_cvtusepi32_epi8(scale_round_i32(bv, scale));
       let r8 = _mm512_cvtusepi32_epi8(scale_round_i32(rv, scale));
@@ -155,9 +176,27 @@ pub(crate) unsafe fn gbrpf32_to_rgba_row<const BE: bool>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let gv = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(g.as_ptr().add(x).cast::<u8>())), zero, one);
-      let bv = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(b.as_ptr().add(x).cast::<u8>())), zero, one);
-      let rv = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(r.as_ptr().add(x).cast::<u8>())), zero, one);
+      let gv = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          g.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
+      let bv = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          b.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
+      let rv = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          r.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
       let g8 = _mm512_cvtusepi32_epi8(scale_round_i32(gv, scale));
       let b8 = _mm512_cvtusepi32_epi8(scale_round_i32(bv, scale));
       let r8 = _mm512_cvtusepi32_epi8(scale_round_i32(rv, scale));
@@ -212,9 +251,27 @@ pub(crate) unsafe fn gbrpf32_to_rgb_u16_row<const BE: bool>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let gv = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(g.as_ptr().add(x).cast::<u8>())), zero, one);
-      let bv = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(b.as_ptr().add(x).cast::<u8>())), zero, one);
-      let rv = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(r.as_ptr().add(x).cast::<u8>())), zero, one);
+      let gv = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          g.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
+      let bv = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          b.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
+      let rv = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          r.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
       let gw = _mm512_cvtusepi32_epi16(scale_round_i32(gv, scale));
       let bw = _mm512_cvtusepi32_epi16(scale_round_i32(bv, scale));
       let rw = _mm512_cvtusepi32_epi16(scale_round_i32(rv, scale));
@@ -268,9 +325,27 @@ pub(crate) unsafe fn gbrpf32_to_rgba_u16_row<const BE: bool>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let gv = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(g.as_ptr().add(x).cast::<u8>())), zero, one);
-      let bv = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(b.as_ptr().add(x).cast::<u8>())), zero, one);
-      let rv = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(r.as_ptr().add(x).cast::<u8>())), zero, one);
+      let gv = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          g.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
+      let bv = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          b.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
+      let rv = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          r.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
       let gw = _mm512_cvtusepi32_epi16(scale_round_i32(gv, scale));
       let bw = _mm512_cvtusepi32_epi16(scale_round_i32(bv, scale));
       let rw = _mm512_cvtusepi32_epi16(scale_round_i32(rv, scale));
@@ -290,7 +365,13 @@ pub(crate) unsafe fn gbrpf32_to_rgba_u16_row<const BE: bool>(
       x += 16;
     }
     if x < width {
-      scalar::gbrpf32_to_rgba_u16_row::<BE>(&g[x..], &b[x..], &r[x..], &mut out[x * 4..], width - x);
+      scalar::gbrpf32_to_rgba_u16_row::<BE>(
+        &g[x..],
+        &b[x..],
+        &r[x..],
+        &mut out[x * 4..],
+        width - x,
+      );
     }
   }
 }
@@ -384,9 +465,15 @@ pub(crate) unsafe fn gbrpf32_to_rgb_f16_row_f16c<const BE: bool>(
   unsafe {
     let mut x = 0usize;
     while x + 16 <= width {
-      let gv = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(g.as_ptr().add(x).cast::<u8>()));
-      let bv = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(b.as_ptr().add(x).cast::<u8>()));
-      let rv = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(r.as_ptr().add(x).cast::<u8>()));
+      let gv = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      ));
+      let bv = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      ));
+      let rv = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      ));
       // F16C narrow: IEEE-754 round-to-nearest-even (NOT round-half-up).
       let gh = _mm512_cvtps_ph::<{ _MM_FROUND_TO_NEAREST_INT }>(gv);
       let bh = _mm512_cvtps_ph::<{ _MM_FROUND_TO_NEAREST_INT }>(bv);
@@ -440,9 +527,15 @@ pub(crate) unsafe fn gbrpf32_to_rgba_f16_row_f16c<const BE: bool>(
   unsafe {
     let mut x = 0usize;
     while x + 16 <= width {
-      let gv = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(g.as_ptr().add(x).cast::<u8>()));
-      let bv = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(b.as_ptr().add(x).cast::<u8>()));
-      let rv = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(r.as_ptr().add(x).cast::<u8>()));
+      let gv = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      ));
+      let bv = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      ));
+      let rv = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      ));
       let gh = _mm512_cvtps_ph::<{ _MM_FROUND_TO_NEAREST_INT }>(gv);
       let bh = _mm512_cvtps_ph::<{ _MM_FROUND_TO_NEAREST_INT }>(bv);
       let rh = _mm512_cvtps_ph::<{ _MM_FROUND_TO_NEAREST_INT }>(rv);
@@ -463,7 +556,13 @@ pub(crate) unsafe fn gbrpf32_to_rgba_f16_row_f16c<const BE: bool>(
       x += 16;
     }
     if x < width {
-      scalar::gbrpf32_to_rgba_f16_row::<BE>(&g[x..], &b[x..], &r[x..], &mut out[x * 4..], width - x);
+      scalar::gbrpf32_to_rgba_f16_row::<BE>(
+        &g[x..],
+        &b[x..],
+        &r[x..],
+        &mut out[x * 4..],
+        width - x,
+      );
     }
   }
 }
@@ -655,10 +754,34 @@ pub(crate) unsafe fn gbrapf32_to_rgba_row<const BE: bool>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let gv = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(g.as_ptr().add(x).cast::<u8>())), zero, one);
-      let bv = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(b.as_ptr().add(x).cast::<u8>())), zero, one);
-      let rv = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(r.as_ptr().add(x).cast::<u8>())), zero, one);
-      let av = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(a.as_ptr().add(x).cast::<u8>())), zero, one);
+      let gv = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          g.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
+      let bv = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          b.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
+      let rv = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          r.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
+      let av = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          a.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
       let g8 = _mm512_cvtusepi32_epi8(scale_round_i32(gv, scale));
       let b8 = _mm512_cvtusepi32_epi8(scale_round_i32(bv, scale));
       let r8 = _mm512_cvtusepi32_epi8(scale_round_i32(rv, scale));
@@ -726,10 +849,34 @@ pub(crate) unsafe fn gbrapf32_to_rgba_u16_row<const BE: bool>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let gv = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(g.as_ptr().add(x).cast::<u8>())), zero, one);
-      let bv = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(b.as_ptr().add(x).cast::<u8>())), zero, one);
-      let rv = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(r.as_ptr().add(x).cast::<u8>())), zero, one);
-      let av = clamp01(_mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(a.as_ptr().add(x).cast::<u8>())), zero, one);
+      let gv = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          g.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
+      let bv = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          b.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
+      let rv = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          r.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
+      let av = clamp01(
+        _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+          a.as_ptr().add(x).cast::<u8>(),
+        )),
+        zero,
+        one,
+      );
       let gw = _mm512_cvtusepi32_epi16(scale_round_i32(gv, scale));
       let bw = _mm512_cvtusepi32_epi16(scale_round_i32(bv, scale));
       let rw = _mm512_cvtusepi32_epi16(scale_round_i32(rv, scale));
@@ -824,10 +971,18 @@ pub(crate) unsafe fn gbrapf32_to_rgba_f16_row_f16c<const BE: bool>(
   unsafe {
     let mut x = 0usize;
     while x + 16 <= width {
-      let gv = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(g.as_ptr().add(x).cast::<u8>()));
-      let bv = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(b.as_ptr().add(x).cast::<u8>()));
-      let rv = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(r.as_ptr().add(x).cast::<u8>()));
-      let av = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(a.as_ptr().add(x).cast::<u8>()));
+      let gv = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      ));
+      let bv = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      ));
+      let rv = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      ));
+      let av = _mm512_castsi512_ps(endian::load_endian_u32x16::<BE>(
+        a.as_ptr().add(x).cast::<u8>(),
+      ));
       let gh = _mm512_cvtps_ph::<{ _MM_FROUND_TO_NEAREST_INT }>(gv);
       let bh = _mm512_cvtps_ph::<{ _MM_FROUND_TO_NEAREST_INT }>(bv);
       let rh = _mm512_cvtps_ph::<{ _MM_FROUND_TO_NEAREST_INT }>(rv);
@@ -895,9 +1050,15 @@ pub(crate) unsafe fn gbrpf16_to_rgb_row_f16c<const BE: bool>(
     let mut x = 0usize;
     while x + 16 <= width {
       // Load 16 f16 lanes (32 bytes) per plane and widen to f32x16.
-      let gv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(g.as_ptr().add(x).cast::<u8>()));
-      let bv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(b.as_ptr().add(x).cast::<u8>()));
-      let rv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(r.as_ptr().add(x).cast::<u8>()));
+      let gv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      ));
+      let bv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      ));
+      let rv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      ));
       let gc = clamp01(gv, zero, one);
       let bc = clamp01(bv, zero, one);
       let rc = clamp01(rv, zero, one);
@@ -971,9 +1132,15 @@ pub(crate) unsafe fn gbrpf16_to_rgba_row_f16c<const BE: bool>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let gv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(g.as_ptr().add(x).cast::<u8>()));
-      let bv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(b.as_ptr().add(x).cast::<u8>()));
-      let rv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(r.as_ptr().add(x).cast::<u8>()));
+      let gv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      ));
+      let bv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      ));
+      let rv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      ));
       let gc = clamp01(gv, zero, one);
       let bc = clamp01(bv, zero, one);
       let rc = clamp01(rv, zero, one);
@@ -1048,9 +1215,15 @@ pub(crate) unsafe fn gbrpf16_to_rgb_u16_row_f16c<const BE: bool>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let gv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(g.as_ptr().add(x).cast::<u8>()));
-      let bv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(b.as_ptr().add(x).cast::<u8>()));
-      let rv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(r.as_ptr().add(x).cast::<u8>()));
+      let gv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      ));
+      let bv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      ));
+      let rv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      ));
       let gc = clamp01(gv, zero, one);
       let bc = clamp01(bv, zero, one);
       let rc = clamp01(rv, zero, one);
@@ -1124,9 +1297,15 @@ pub(crate) unsafe fn gbrpf16_to_rgba_u16_row_f16c<const BE: bool>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let gv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(g.as_ptr().add(x).cast::<u8>()));
-      let bv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(b.as_ptr().add(x).cast::<u8>()));
-      let rv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(r.as_ptr().add(x).cast::<u8>()));
+      let gv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      ));
+      let bv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      ));
+      let rv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      ));
       let gc = clamp01(gv, zero, one);
       let bc = clamp01(bv, zero, one);
       let rc = clamp01(rv, zero, one);
@@ -1197,9 +1376,15 @@ pub(crate) unsafe fn gbrpf16_to_rgb_f32_row_f16c<const BE: bool>(
   unsafe {
     let mut x = 0usize;
     while x + 16 <= width {
-      let gv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(g.as_ptr().add(x).cast::<u8>()));
-      let bv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(b.as_ptr().add(x).cast::<u8>()));
-      let rv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(r.as_ptr().add(x).cast::<u8>()));
+      let gv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      ));
+      let bv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      ));
+      let rv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      ));
       // No 3-channel interleave intrinsic in AVX-512 — scatter via scalar loop.
       let mut gf = [0.0f32; 16];
       let mut bf = [0.0f32; 16];
@@ -1264,9 +1449,15 @@ pub(crate) unsafe fn gbrpf16_to_rgba_f32_row_f16c<const BE: bool>(
   unsafe {
     let mut x = 0usize;
     while x + 16 <= width {
-      let gv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(g.as_ptr().add(x).cast::<u8>()));
-      let bv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(b.as_ptr().add(x).cast::<u8>()));
-      let rv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(r.as_ptr().add(x).cast::<u8>()));
+      let gv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      ));
+      let bv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      ));
+      let rv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      ));
       let mut gf = [0.0f32; 16];
       let mut bf = [0.0f32; 16];
       let mut rf = [0.0f32; 16];
@@ -1354,7 +1545,13 @@ pub(crate) unsafe fn gbrpf16_to_rgb_f16_row<const BE: bool>(
       x += 16;
     }
     if x < width {
-      scalar_f16::gbrpf16_to_rgb_f16_row::<BE>(&g[x..], &b[x..], &r[x..], &mut out[x * 3..], width - x);
+      scalar_f16::gbrpf16_to_rgb_f16_row::<BE>(
+        &g[x..],
+        &b[x..],
+        &r[x..],
+        &mut out[x * 3..],
+        width - x,
+      );
     }
   }
 }
@@ -1408,7 +1605,13 @@ pub(crate) unsafe fn gbrpf16_to_rgba_f16_row<const BE: bool>(
       x += 16;
     }
     if x < width {
-      scalar_f16::gbrpf16_to_rgba_f16_row::<BE>(&g[x..], &b[x..], &r[x..], &mut out[x * 4..], width - x);
+      scalar_f16::gbrpf16_to_rgba_f16_row::<BE>(
+        &g[x..],
+        &b[x..],
+        &r[x..],
+        &mut out[x * 4..],
+        width - x,
+      );
     }
   }
 }
@@ -1446,7 +1649,7 @@ pub(crate) unsafe fn gbrpf16_to_luma_row_f16c<const BE: bool>(
   while offset < width {
     let n = (width - offset).min(CHUNK);
     unsafe {
-      gbrpf16_to_rgb_row_f16c(
+      gbrpf16_to_rgb_row_f16c::<BE>(
         &g[offset..],
         &b[offset..],
         &r[offset..],
@@ -1498,7 +1701,7 @@ pub(crate) unsafe fn gbrpf16_to_luma_u16_row_f16c<const BE: bool>(
   while offset < width {
     let n = (width - offset).min(CHUNK);
     unsafe {
-      gbrpf16_to_rgb_row_f16c(
+      gbrpf16_to_rgb_row_f16c::<BE>(
         &g[offset..],
         &b[offset..],
         &r[offset..],
@@ -1551,7 +1754,7 @@ pub(crate) unsafe fn gbrpf16_to_hsv_row_f16c<const BE: bool>(
   while offset < width {
     let n = (width - offset).min(CHUNK);
     unsafe {
-      gbrpf16_to_rgb_row_f16c(
+      gbrpf16_to_rgb_row_f16c::<BE>(
         &g[offset..],
         &b[offset..],
         &r[offset..],
@@ -1604,10 +1807,18 @@ pub(crate) unsafe fn gbrapf16_to_rgba_row_f16c<const BE: bool>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let gv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(g.as_ptr().add(x).cast::<u8>()));
-      let bv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(b.as_ptr().add(x).cast::<u8>()));
-      let rv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(r.as_ptr().add(x).cast::<u8>()));
-      let av = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(a.as_ptr().add(x).cast::<u8>()));
+      let gv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      ));
+      let bv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      ));
+      let rv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      ));
+      let av = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        a.as_ptr().add(x).cast::<u8>(),
+      ));
       let gc = clamp01(gv, zero, one);
       let bc = clamp01(bv, zero, one);
       let rc = clamp01(rv, zero, one);
@@ -1691,10 +1902,18 @@ pub(crate) unsafe fn gbrapf16_to_rgba_u16_row_f16c<const BE: bool>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let gv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(g.as_ptr().add(x).cast::<u8>()));
-      let bv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(b.as_ptr().add(x).cast::<u8>()));
-      let rv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(r.as_ptr().add(x).cast::<u8>()));
-      let av = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(a.as_ptr().add(x).cast::<u8>()));
+      let gv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      ));
+      let bv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      ));
+      let rv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      ));
+      let av = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        a.as_ptr().add(x).cast::<u8>(),
+      ));
       let gc = clamp01(gv, zero, one);
       let bc = clamp01(bv, zero, one);
       let rc = clamp01(rv, zero, one);
@@ -1774,10 +1993,18 @@ pub(crate) unsafe fn gbrapf16_to_rgba_f32_row_f16c<const BE: bool>(
   unsafe {
     let mut x = 0usize;
     while x + 16 <= width {
-      let gv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(g.as_ptr().add(x).cast::<u8>()));
-      let bv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(b.as_ptr().add(x).cast::<u8>()));
-      let rv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(r.as_ptr().add(x).cast::<u8>()));
-      let av = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(a.as_ptr().add(x).cast::<u8>()));
+      let gv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      ));
+      let bv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      ));
+      let rv = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      ));
+      let av = _mm512_cvtph_ps(endian::load_endian_u16x16::<BE>(
+        a.as_ptr().add(x).cast::<u8>(),
+      ));
       let mut gf = [0.0f32; 16];
       let mut bf = [0.0f32; 16];
       let mut rf = [0.0f32; 16];

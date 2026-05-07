@@ -80,7 +80,9 @@ pub(crate) unsafe fn load_endian_u16x8<const BE: bool>(ptr: *const u8) -> __m128
 /// SSSE3 `_mm_shuffle_epi8` mask that swaps bytes within every 2-byte (u16)
 /// lane in the LOW 8 bytes of a 128-bit register. Upper bytes are zeroed.
 const BYTESWAP_MASK_U16X4: __m128i = unsafe {
-  core::mem::transmute([1u8, 0, 3, 2, 5, 4, 7, 6, 0x80u8, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80])
+  core::mem::transmute([
+    1u8, 0, 3, 2, 5, 4, 7, 6, 0x80u8, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+  ])
 };
 
 /// Loads 4 × u16 (8 bytes) from `ptr` (LE-encoded) into the low 64 bits of

@@ -589,7 +589,10 @@ mod tests {
   // ---- helper: byte-swap a slice of f32 to simulate BE source ----------------
 
   fn be_encode(src: &[f32]) -> std::vec::Vec<f32> {
-    src.iter().map(|v| f32::from_bits(v.to_bits().swap_bytes())).collect()
+    src
+      .iter()
+      .map(|v| f32::from_bits(v.to_bits().swap_bytes()))
+      .collect()
   }
 
   // ---- gbrpf32_to_rgb_row --------------------------------------------------
@@ -946,7 +949,15 @@ mod tests {
     let mut le_out = std::vec![0u8; 4];
     let mut be_out = std::vec![0u8; 4];
     gbrpf32_to_luma_row::<false>(&g, &b, &r, &mut le_out, 4, ColorMatrix::Bt709, true);
-    gbrpf32_to_luma_row::<true>(&g_be, &b_be, &r_be, &mut be_out, 4, ColorMatrix::Bt709, true);
+    gbrpf32_to_luma_row::<true>(
+      &g_be,
+      &b_be,
+      &r_be,
+      &mut be_out,
+      4,
+      ColorMatrix::Bt709,
+      true,
+    );
     assert_eq!(be_out, le_out, "BE gbrpf32_to_luma_row must match LE");
   }
 
@@ -983,7 +994,15 @@ mod tests {
     let mut le_out = std::vec![0u16; 4];
     let mut be_out = std::vec![0u16; 4];
     gbrpf32_to_luma_u16_row::<false>(&g, &b, &r, &mut le_out, 4, ColorMatrix::Bt709, true);
-    gbrpf32_to_luma_u16_row::<true>(&g_be, &b_be, &r_be, &mut be_out, 4, ColorMatrix::Bt709, true);
+    gbrpf32_to_luma_u16_row::<true>(
+      &g_be,
+      &b_be,
+      &r_be,
+      &mut be_out,
+      4,
+      ColorMatrix::Bt709,
+      true,
+    );
     assert_eq!(be_out, le_out, "BE gbrpf32_to_luma_u16_row must match LE");
   }
 

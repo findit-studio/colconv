@@ -880,7 +880,7 @@ fn gbr_float_dispatch_panics_on_width_overflow_gbrpf32_rgb() {
   let b = [0.0f32; 1];
   let r = [0.0f32; 1];
   let mut out = [0u8; 3];
-  crate::row::gbrpf32_to_rgb_row(&g, &b, &r, &mut out, bad_width, false);
+  crate::row::gbrpf32_to_rgb_row::<false>(&g, &b, &r, &mut out, bad_width, false);
 }
 
 #[cfg(target_pointer_width = "32")]
@@ -892,7 +892,7 @@ fn gbr_float_dispatch_panics_on_width_overflow_gbrpf32_rgba() {
   let b = [0.0f32; 1];
   let r = [0.0f32; 1];
   let mut out = [0u8; 4];
-  crate::row::gbrpf32_to_rgba_row(&g, &b, &r, &mut out, bad_width, false);
+  crate::row::gbrpf32_to_rgba_row::<false>(&g, &b, &r, &mut out, bad_width, false);
 }
 
 #[cfg(target_pointer_width = "32")]
@@ -904,7 +904,7 @@ fn gbr_float_dispatch_panics_on_width_overflow_gbrpf32_rgb_u16() {
   let b = [0.0f32; 1];
   let r = [0.0f32; 1];
   let mut out = [0u16; 3];
-  crate::row::gbrpf32_to_rgb_u16_row(&g, &b, &r, &mut out, bad_width, false);
+  crate::row::gbrpf32_to_rgb_u16_row::<false>(&g, &b, &r, &mut out, bad_width, false);
 }
 
 #[cfg(target_pointer_width = "32")]
@@ -916,5 +916,5 @@ fn gbr_float_dispatch_panics_on_width_overflow_gbrpf32_rgba_u16() {
   let b = [0.0f32; 1];
   let r = [0.0f32; 1];
   let mut out = [0u16; 4];
-  crate::row::gbrpf32_to_rgba_u16_row(&g, &b, &r, &mut out, bad_width, false);
+  crate::row::gbrpf32_to_rgba_u16_row::<false>(&g, &b, &r, &mut out, bad_width, false);
 }

@@ -978,7 +978,9 @@ fn avx2_gbrpf16_to_luma_f16c_matches_scalar() {
     prng_f16(&mut r, 0xB009_0003);
     let mut simd = std::vec![0u8; w];
     let mut scal = std::vec![0u8; w];
-    unsafe { gbrpf16_to_luma_row_f16c::<false>(&g, &b, &r, &mut simd, w, ColorMatrix::Bt709, true) };
+    unsafe {
+      gbrpf16_to_luma_row_f16c::<false>(&g, &b, &r, &mut simd, w, ColorMatrix::Bt709, true)
+    };
     let gf: std::vec::Vec<f32> = g.iter().map(|v| v.to_f32()).collect();
     let bf: std::vec::Vec<f32> = b.iter().map(|v| v.to_f32()).collect();
     let rf: std::vec::Vec<f32> = r.iter().map(|v| v.to_f32()).collect();
@@ -1013,7 +1015,9 @@ fn avx2_gbrpf16_to_luma_u16_f16c_matches_scalar() {
     prng_f16(&mut r, 0xB00A_0003);
     let mut simd = std::vec![0u16; w];
     let mut scal = std::vec![0u16; w];
-    unsafe { gbrpf16_to_luma_u16_row_f16c::<false>(&g, &b, &r, &mut simd, w, ColorMatrix::Bt709, true) };
+    unsafe {
+      gbrpf16_to_luma_u16_row_f16c::<false>(&g, &b, &r, &mut simd, w, ColorMatrix::Bt709, true)
+    };
     let gf: std::vec::Vec<f32> = g.iter().map(|v| v.to_f32()).collect();
     let bf: std::vec::Vec<f32> = b.iter().map(|v| v.to_f32()).collect();
     let rf: std::vec::Vec<f32> = r.iter().map(|v| v.to_f32()).collect();
@@ -1051,7 +1055,9 @@ fn avx2_gbrpf16_to_hsv_f16c_matches_scalar() {
     let mut scal_h = std::vec![0u8; w];
     let mut scal_s = std::vec![0u8; w];
     let mut scal_v = std::vec![0u8; w];
-    unsafe { gbrpf16_to_hsv_row_f16c::<false>(&g, &b, &r, &mut simd_h, &mut simd_s, &mut simd_v, w) };
+    unsafe {
+      gbrpf16_to_hsv_row_f16c::<false>(&g, &b, &r, &mut simd_h, &mut simd_s, &mut simd_v, w)
+    };
     let gf: std::vec::Vec<f32> = g.iter().map(|v| v.to_f32()).collect();
     let bf: std::vec::Vec<f32> = b.iter().map(|v| v.to_f32()).collect();
     let rf: std::vec::Vec<f32> = r.iter().map(|v| v.to_f32()).collect();
@@ -1235,11 +1241,17 @@ fn avx2_gbrapf16_to_rgba_f16_lane_order() {
 // ---- BE parity helpers -------------------------------------------------------
 
 fn be_encode_f32(src: &[f32]) -> std::vec::Vec<f32> {
-  src.iter().map(|v| f32::from_bits(v.to_bits().swap_bytes())).collect()
+  src
+    .iter()
+    .map(|v| f32::from_bits(v.to_bits().swap_bytes()))
+    .collect()
 }
 
 fn be_encode_f16(src: &[half::f16]) -> std::vec::Vec<half::f16> {
-  src.iter().map(|v| half::f16::from_bits(v.to_bits().swap_bytes())).collect()
+  src
+    .iter()
+    .map(|v| half::f16::from_bits(v.to_bits().swap_bytes()))
+    .collect()
 }
 
 // ---- BE parity: Gbrpf32 → u8 RGB -------------------------------------------
@@ -1259,11 +1271,15 @@ fn avx2_gbrpf32_to_rgb_be_parity() {
     prng_f32(&mut r, 0xBE01_0003);
     let mut le_out = std::vec![0u8; w * 3];
     let mut be_out = std::vec![0u8; w * 3];
-    unsafe { gbrpf32_to_rgb_row::<false>(&g, &b, &r, &mut le_out, w); }
+    unsafe {
+      gbrpf32_to_rgb_row::<false>(&g, &b, &r, &mut le_out, w);
+    }
     let g_be = be_encode_f32(&g);
     let b_be = be_encode_f32(&b);
     let r_be = be_encode_f32(&r);
-    unsafe { gbrpf32_to_rgb_row::<true>(&g_be, &b_be, &r_be, &mut be_out, w); }
+    unsafe {
+      gbrpf32_to_rgb_row::<true>(&g_be, &b_be, &r_be, &mut be_out, w);
+    }
     assert_eq!(le_out, be_out, "gbrpf32_to_rgb BE parity width={w}");
   }
 }
@@ -1285,11 +1301,15 @@ fn avx2_gbrpf32_to_rgba_be_parity() {
     prng_f32(&mut r, 0xBE02_0003);
     let mut le_out = std::vec![0u8; w * 4];
     let mut be_out = std::vec![0u8; w * 4];
-    unsafe { gbrpf32_to_rgba_row::<false>(&g, &b, &r, &mut le_out, w); }
+    unsafe {
+      gbrpf32_to_rgba_row::<false>(&g, &b, &r, &mut le_out, w);
+    }
     let g_be = be_encode_f32(&g);
     let b_be = be_encode_f32(&b);
     let r_be = be_encode_f32(&r);
-    unsafe { gbrpf32_to_rgba_row::<true>(&g_be, &b_be, &r_be, &mut be_out, w); }
+    unsafe {
+      gbrpf32_to_rgba_row::<true>(&g_be, &b_be, &r_be, &mut be_out, w);
+    }
     assert_eq!(le_out, be_out, "gbrpf32_to_rgba BE parity width={w}");
   }
 }
@@ -1311,11 +1331,15 @@ fn avx2_gbrpf16_to_rgb_f16_be_parity() {
     prng_f16(&mut r, 0xBE07_0003);
     let mut le_out = std::vec![half::f16::ZERO; w * 3];
     let mut be_out = std::vec![half::f16::ZERO; w * 3];
-    unsafe { gbrpf16_to_rgb_f16_row::<false>(&g, &b, &r, &mut le_out, w); }
+    unsafe {
+      gbrpf16_to_rgb_f16_row::<false>(&g, &b, &r, &mut le_out, w);
+    }
     let g_be = be_encode_f16(&g);
     let b_be = be_encode_f16(&b);
     let r_be = be_encode_f16(&r);
-    unsafe { gbrpf16_to_rgb_f16_row::<true>(&g_be, &b_be, &r_be, &mut be_out, w); }
+    unsafe {
+      gbrpf16_to_rgb_f16_row::<true>(&g_be, &b_be, &r_be, &mut be_out, w);
+    }
     assert_eq!(le_out, be_out, "gbrpf16_to_rgb_f16 BE parity width={w}");
   }
 }
@@ -1339,12 +1363,16 @@ fn avx2_gbrapf16_to_rgba_f16_be_parity() {
     prng_f16(&mut a, 0xBE0F_0004);
     let mut le_out = std::vec![half::f16::ZERO; w * 4];
     let mut be_out = std::vec![half::f16::ZERO; w * 4];
-    unsafe { gbrapf16_to_rgba_f16_row::<false>(&g, &b, &r, &a, &mut le_out, w); }
+    unsafe {
+      gbrapf16_to_rgba_f16_row::<false>(&g, &b, &r, &a, &mut le_out, w);
+    }
     let g_be = be_encode_f16(&g);
     let b_be = be_encode_f16(&b);
     let r_be = be_encode_f16(&r);
     let a_be = be_encode_f16(&a);
-    unsafe { gbrapf16_to_rgba_f16_row::<true>(&g_be, &b_be, &r_be, &a_be, &mut be_out, w); }
+    unsafe {
+      gbrapf16_to_rgba_f16_row::<true>(&g_be, &b_be, &r_be, &a_be, &mut be_out, w);
+    }
     assert_eq!(le_out, be_out, "gbrapf16_to_rgba_f16 BE parity width={w}");
   }
 }

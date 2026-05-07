@@ -100,8 +100,7 @@ pub(crate) unsafe fn load_endian_u16x32<const BE: bool>(ptr: *const u8) -> __m51
 const BYTESWAP_MASK_U16X16: __m256i = unsafe {
   core::mem::transmute([
     // low 128-bit lane
-    1u8, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14,
-    // high 128-bit lane
+    1u8, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14, // high 128-bit lane
     1u8, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14,
   ])
 };

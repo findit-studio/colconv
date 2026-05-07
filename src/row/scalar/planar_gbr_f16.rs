@@ -171,7 +171,10 @@ mod tests {
   // ---- helper: byte-swap a slice of f16 to simulate BE source ----------------
 
   fn be_encode_f16(src: &[half::f16]) -> std::vec::Vec<half::f16> {
-    src.iter().map(|v| half::f16::from_bits(v.to_bits().swap_bytes())).collect()
+    src
+      .iter()
+      .map(|v| half::f16::from_bits(v.to_bits().swap_bytes()))
+      .collect()
   }
 
   // ---- gbrpf16_to_rgb_f16_row ----------------------------------------------

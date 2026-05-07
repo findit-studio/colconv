@@ -1607,7 +1607,7 @@ mod tests {
     let r: &[f32] = &[];
     let mut out: [u8; 0] = [];
     let w = usize::MAX / 2 + 1;
-    gbrpf32_to_rgb_row(g, b, r, &mut out, w, false);
+    gbrpf32_to_rgb_row::<false>(g, b, r, &mut out, w, false);
   }
 
   #[test]
@@ -1622,7 +1622,7 @@ mod tests {
     let r: &[f32] = &[];
     let mut out: [u8; 0] = [];
     let w = usize::MAX / 2 + 1;
-    gbrpf32_to_rgba_row(g, b, r, &mut out, w, false);
+    gbrpf32_to_rgba_row::<false>(g, b, r, &mut out, w, false);
   }
 
   #[test]
@@ -1637,7 +1637,7 @@ mod tests {
     let r: &[f32] = &[];
     let mut out: [u16; 0] = [];
     let w = usize::MAX / 2 + 1;
-    gbrpf32_to_rgb_u16_row(g, b, r, &mut out, w, false);
+    gbrpf32_to_rgb_u16_row::<false>(g, b, r, &mut out, w, false);
   }
 
   #[test]
@@ -1652,6 +1652,6 @@ mod tests {
     let r: &[f32] = &[];
     let mut out: [u16; 0] = [];
     let w = usize::MAX / 2 + 1;
-    gbrpf32_to_rgba_u16_row(g, b, r, &mut out, w, false);
+    gbrpf32_to_rgba_u16_row::<false>(g, b, r, &mut out, w, false);
   }
 }

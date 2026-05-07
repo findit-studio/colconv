@@ -253,7 +253,13 @@ pub(crate) unsafe fn gbrpf32_to_rgba_u16_row<const BE: bool>(
       x += 4;
     }
     if x < width {
-      scalar::gbrpf32_to_rgba_u16_row::<BE>(&g[x..], &b[x..], &r[x..], &mut out[x * 4..], width - x);
+      scalar::gbrpf32_to_rgba_u16_row::<BE>(
+        &g[x..],
+        &b[x..],
+        &r[x..],
+        &mut out[x * 4..],
+        width - x,
+      );
     }
   }
 }
@@ -337,7 +343,13 @@ pub(crate) unsafe fn gbrpf32_to_rgba_f32_row<const BE: bool>(
       x += 4;
     }
     if x < width {
-      scalar::gbrpf32_to_rgba_f32_row::<BE>(&g[x..], &b[x..], &r[x..], &mut out[x * 4..], width - x);
+      scalar::gbrpf32_to_rgba_f32_row::<BE>(
+        &g[x..],
+        &b[x..],
+        &r[x..],
+        &mut out[x * 4..],
+        width - x,
+      );
     }
   }
 }
@@ -438,7 +450,13 @@ pub(crate) unsafe fn gbrpf32_to_rgba_f16_row_fp16<const BE: bool>(
       x += 4;
     }
     if x < width {
-      scalar::gbrpf32_to_rgba_f16_row::<BE>(&g[x..], &b[x..], &r[x..], &mut out[x * 4..], width - x);
+      scalar::gbrpf32_to_rgba_f16_row::<BE>(
+        &g[x..],
+        &b[x..],
+        &r[x..],
+        &mut out[x * 4..],
+        width - x,
+      );
     }
   }
 }
@@ -854,9 +872,15 @@ pub(crate) unsafe fn gbrpf16_to_rgb_row_fp16<const BE: bool>(
 
     let mut x = 0usize;
     while x + 4 <= width {
-      let gv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(g.as_ptr().add(x).cast::<u8>())));
-      let bv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(b.as_ptr().add(x).cast::<u8>())));
-      let rv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(r.as_ptr().add(x).cast::<u8>())));
+      let gv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      )));
+      let bv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      )));
+      let rv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      )));
       let gc = clamp01(gv, zero, one);
       let bc = clamp01(bv, zero, one);
       let rc = clamp01(rv, zero, one);
@@ -924,9 +948,15 @@ pub(crate) unsafe fn gbrpf16_to_rgba_row_fp16<const BE: bool>(
 
     let mut x = 0usize;
     while x + 4 <= width {
-      let gv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(g.as_ptr().add(x).cast::<u8>())));
-      let bv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(b.as_ptr().add(x).cast::<u8>())));
-      let rv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(r.as_ptr().add(x).cast::<u8>())));
+      let gv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      )));
+      let bv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      )));
+      let rv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      )));
       let gc = clamp01(gv, zero, one);
       let bc = clamp01(bv, zero, one);
       let rc = clamp01(rv, zero, one);
@@ -993,9 +1023,15 @@ pub(crate) unsafe fn gbrpf16_to_rgb_u16_row_fp16<const BE: bool>(
 
     let mut x = 0usize;
     while x + 4 <= width {
-      let gv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(g.as_ptr().add(x).cast::<u8>())));
-      let bv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(b.as_ptr().add(x).cast::<u8>())));
-      let rv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(r.as_ptr().add(x).cast::<u8>())));
+      let gv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      )));
+      let bv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      )));
+      let rv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      )));
       let gc = clamp01(gv, zero, one);
       let bc = clamp01(bv, zero, one);
       let rc = clamp01(rv, zero, one);
@@ -1059,9 +1095,15 @@ pub(crate) unsafe fn gbrpf16_to_rgba_u16_row_fp16<const BE: bool>(
 
     let mut x = 0usize;
     while x + 4 <= width {
-      let gv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(g.as_ptr().add(x).cast::<u8>())));
-      let bv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(b.as_ptr().add(x).cast::<u8>())));
-      let rv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(r.as_ptr().add(x).cast::<u8>())));
+      let gv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      )));
+      let bv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      )));
+      let rv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      )));
       let gc = clamp01(gv, zero, one);
       let bc = clamp01(bv, zero, one);
       let rc = clamp01(rv, zero, one);
@@ -1119,9 +1161,15 @@ pub(crate) unsafe fn gbrpf16_to_rgb_f32_row_fp16<const BE: bool>(
   unsafe {
     let mut x = 0usize;
     while x + 4 <= width {
-      let gv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(g.as_ptr().add(x).cast::<u8>())));
-      let bv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(b.as_ptr().add(x).cast::<u8>())));
-      let rv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(r.as_ptr().add(x).cast::<u8>())));
+      let gv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      )));
+      let bv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      )));
+      let rv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      )));
       vst3q_f32(out.as_mut_ptr().add(x * 3), float32x4x3_t(rv, gv, bv));
       x += 4;
     }
@@ -1174,9 +1222,15 @@ pub(crate) unsafe fn gbrpf16_to_rgba_f32_row_fp16<const BE: bool>(
     let one_v = vdupq_n_f32(1.0);
     let mut x = 0usize;
     while x + 4 <= width {
-      let gv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(g.as_ptr().add(x).cast::<u8>())));
-      let bv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(b.as_ptr().add(x).cast::<u8>())));
-      let rv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(r.as_ptr().add(x).cast::<u8>())));
+      let gv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      )));
+      let bv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      )));
+      let rv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      )));
       vst4q_f32(
         out.as_mut_ptr().add(x * 4),
         float32x4x4_t(rv, gv, bv, one_v),
@@ -1242,7 +1296,13 @@ pub(crate) unsafe fn gbrpf16_to_rgb_f16_row<const BE: bool>(
       x += 4;
     }
     if x < width {
-      scalar_f16::gbrpf16_to_rgb_f16_row::<BE>(&g[x..], &b[x..], &r[x..], &mut out[x * 3..], width - x);
+      scalar_f16::gbrpf16_to_rgb_f16_row::<BE>(
+        &g[x..],
+        &b[x..],
+        &r[x..],
+        &mut out[x * 3..],
+        width - x,
+      );
     }
   }
 }
@@ -1285,7 +1345,13 @@ pub(crate) unsafe fn gbrpf16_to_rgba_f16_row<const BE: bool>(
       x += 4;
     }
     if x < width {
-      scalar_f16::gbrpf16_to_rgba_f16_row::<BE>(&g[x..], &b[x..], &r[x..], &mut out[x * 4..], width - x);
+      scalar_f16::gbrpf16_to_rgba_f16_row::<BE>(
+        &g[x..],
+        &b[x..],
+        &r[x..],
+        &mut out[x * 4..],
+        width - x,
+      );
     }
   }
 }
@@ -1478,10 +1544,18 @@ pub(crate) unsafe fn gbrapf16_to_rgba_row_fp16<const BE: bool>(
 
     let mut x = 0usize;
     while x + 4 <= width {
-      let gv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(g.as_ptr().add(x).cast::<u8>())));
-      let bv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(b.as_ptr().add(x).cast::<u8>())));
-      let rv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(r.as_ptr().add(x).cast::<u8>())));
-      let av = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(a.as_ptr().add(x).cast::<u8>())));
+      let gv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      )));
+      let bv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      )));
+      let rv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      )));
+      let av = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        a.as_ptr().add(x).cast::<u8>(),
+      )));
       let gc = clamp01(gv, zero, one);
       let bc = clamp01(bv, zero, one);
       let rc = clamp01(rv, zero, one);
@@ -1555,10 +1629,18 @@ pub(crate) unsafe fn gbrapf16_to_rgba_u16_row_fp16<const BE: bool>(
 
     let mut x = 0usize;
     while x + 4 <= width {
-      let gv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(g.as_ptr().add(x).cast::<u8>())));
-      let bv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(b.as_ptr().add(x).cast::<u8>())));
-      let rv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(r.as_ptr().add(x).cast::<u8>())));
-      let av = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(a.as_ptr().add(x).cast::<u8>())));
+      let gv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      )));
+      let bv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      )));
+      let rv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      )));
+      let av = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        a.as_ptr().add(x).cast::<u8>(),
+      )));
       let gc = clamp01(gv, zero, one);
       let bc = clamp01(bv, zero, one);
       let rc = clamp01(rv, zero, one);
@@ -1623,10 +1705,18 @@ pub(crate) unsafe fn gbrapf16_to_rgba_f32_row_fp16<const BE: bool>(
   unsafe {
     let mut x = 0usize;
     while x + 4 <= width {
-      let gv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(g.as_ptr().add(x).cast::<u8>())));
-      let bv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(b.as_ptr().add(x).cast::<u8>())));
-      let rv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(r.as_ptr().add(x).cast::<u8>())));
-      let av = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(a.as_ptr().add(x).cast::<u8>())));
+      let gv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        g.as_ptr().add(x).cast::<u8>(),
+      )));
+      let bv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        b.as_ptr().add(x).cast::<u8>(),
+      )));
+      let rv = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        r.as_ptr().add(x).cast::<u8>(),
+      )));
+      let av = vcvt_f32_f16(vreinterpret_f16_u16(load_endian_u16x4::<BE>(
+        a.as_ptr().add(x).cast::<u8>(),
+      )));
       vst4q_f32(out.as_mut_ptr().add(x * 4), float32x4x4_t(rv, gv, bv, av));
       x += 4;
     }

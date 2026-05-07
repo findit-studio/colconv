@@ -27,7 +27,10 @@ use core::arch::wasm32::*;
 
 use crate::{
   ColorMatrix,
-  row::{arch::wasm_simd128::endian, scalar::{planar_gbr_f16 as scalar_f16, planar_gbr_float as scalar}},
+  row::{
+    arch::wasm_simd128::endian,
+    scalar::{planar_gbr_f16 as scalar_f16, planar_gbr_float as scalar},
+  },
 };
 
 // ---- shared helpers ----------------------------------------------------------
@@ -77,9 +80,21 @@ pub(crate) unsafe fn gbrpf32_to_rgb_row<const BE: bool>(
   let mut x = 0usize;
   while x + 4 <= width {
     unsafe {
-      let gv = clamp01(endian::load_endian_u32x4::<BE>(g.as_ptr().add(x).cast::<u8>()), zero, one);
-      let bv = clamp01(endian::load_endian_u32x4::<BE>(b.as_ptr().add(x).cast::<u8>()), zero, one);
-      let rv = clamp01(endian::load_endian_u32x4::<BE>(r.as_ptr().add(x).cast::<u8>()), zero, one);
+      let gv = clamp01(
+        endian::load_endian_u32x4::<BE>(g.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let bv = clamp01(
+        endian::load_endian_u32x4::<BE>(b.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let rv = clamp01(
+        endian::load_endian_u32x4::<BE>(r.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
       let gi = scale_round_i32(gv, scale, half);
       let bi = scale_round_i32(bv, scale, half);
       let ri = scale_round_i32(rv, scale, half);
@@ -142,9 +157,21 @@ pub(crate) unsafe fn gbrpf32_to_rgba_row<const BE: bool>(
   let mut x = 0usize;
   while x + 4 <= width {
     unsafe {
-      let gv = clamp01(endian::load_endian_u32x4::<BE>(g.as_ptr().add(x).cast::<u8>()), zero, one);
-      let bv = clamp01(endian::load_endian_u32x4::<BE>(b.as_ptr().add(x).cast::<u8>()), zero, one);
-      let rv = clamp01(endian::load_endian_u32x4::<BE>(r.as_ptr().add(x).cast::<u8>()), zero, one);
+      let gv = clamp01(
+        endian::load_endian_u32x4::<BE>(g.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let bv = clamp01(
+        endian::load_endian_u32x4::<BE>(b.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let rv = clamp01(
+        endian::load_endian_u32x4::<BE>(r.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
       let gi = scale_round_i32(gv, scale, half);
       let bi = scale_round_i32(bv, scale, half);
       let ri = scale_round_i32(rv, scale, half);
@@ -206,9 +233,21 @@ pub(crate) unsafe fn gbrpf32_to_rgb_u16_row<const BE: bool>(
   let mut x = 0usize;
   while x + 4 <= width {
     unsafe {
-      let gv = clamp01(endian::load_endian_u32x4::<BE>(g.as_ptr().add(x).cast::<u8>()), zero, one);
-      let bv = clamp01(endian::load_endian_u32x4::<BE>(b.as_ptr().add(x).cast::<u8>()), zero, one);
-      let rv = clamp01(endian::load_endian_u32x4::<BE>(r.as_ptr().add(x).cast::<u8>()), zero, one);
+      let gv = clamp01(
+        endian::load_endian_u32x4::<BE>(g.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let bv = clamp01(
+        endian::load_endian_u32x4::<BE>(b.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let rv = clamp01(
+        endian::load_endian_u32x4::<BE>(r.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
       let gi = scale_round_i32(gv, scale, half);
       let bi = scale_round_i32(bv, scale, half);
       let ri = scale_round_i32(rv, scale, half);
@@ -268,9 +307,21 @@ pub(crate) unsafe fn gbrpf32_to_rgba_u16_row<const BE: bool>(
   let mut x = 0usize;
   while x + 4 <= width {
     unsafe {
-      let gv = clamp01(endian::load_endian_u32x4::<BE>(g.as_ptr().add(x).cast::<u8>()), zero, one);
-      let bv = clamp01(endian::load_endian_u32x4::<BE>(b.as_ptr().add(x).cast::<u8>()), zero, one);
-      let rv = clamp01(endian::load_endian_u32x4::<BE>(r.as_ptr().add(x).cast::<u8>()), zero, one);
+      let gv = clamp01(
+        endian::load_endian_u32x4::<BE>(g.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let bv = clamp01(
+        endian::load_endian_u32x4::<BE>(b.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let rv = clamp01(
+        endian::load_endian_u32x4::<BE>(r.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
       let gi = scale_round_i32(gv, scale, half);
       let bi = scale_round_i32(bv, scale, half);
       let ri = scale_round_i32(rv, scale, half);
@@ -602,10 +653,26 @@ pub(crate) unsafe fn gbrapf32_to_rgba_row<const BE: bool>(
   let mut x = 0usize;
   while x + 4 <= width {
     unsafe {
-      let gv = clamp01(endian::load_endian_u32x4::<BE>(g.as_ptr().add(x).cast::<u8>()), zero, one);
-      let bv = clamp01(endian::load_endian_u32x4::<BE>(b.as_ptr().add(x).cast::<u8>()), zero, one);
-      let rv = clamp01(endian::load_endian_u32x4::<BE>(r.as_ptr().add(x).cast::<u8>()), zero, one);
-      let av = clamp01(endian::load_endian_u32x4::<BE>(a.as_ptr().add(x).cast::<u8>()), zero, one);
+      let gv = clamp01(
+        endian::load_endian_u32x4::<BE>(g.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let bv = clamp01(
+        endian::load_endian_u32x4::<BE>(b.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let rv = clamp01(
+        endian::load_endian_u32x4::<BE>(r.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let av = clamp01(
+        endian::load_endian_u32x4::<BE>(a.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
       let gi = scale_round_i32(gv, scale, half);
       let bi = scale_round_i32(bv, scale, half);
       let ri = scale_round_i32(rv, scale, half);
@@ -682,10 +749,26 @@ pub(crate) unsafe fn gbrapf32_to_rgba_u16_row<const BE: bool>(
   let mut x = 0usize;
   while x + 4 <= width {
     unsafe {
-      let gv = clamp01(endian::load_endian_u32x4::<BE>(g.as_ptr().add(x).cast::<u8>()), zero, one);
-      let bv = clamp01(endian::load_endian_u32x4::<BE>(b.as_ptr().add(x).cast::<u8>()), zero, one);
-      let rv = clamp01(endian::load_endian_u32x4::<BE>(r.as_ptr().add(x).cast::<u8>()), zero, one);
-      let av = clamp01(endian::load_endian_u32x4::<BE>(a.as_ptr().add(x).cast::<u8>()), zero, one);
+      let gv = clamp01(
+        endian::load_endian_u32x4::<BE>(g.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let bv = clamp01(
+        endian::load_endian_u32x4::<BE>(b.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let rv = clamp01(
+        endian::load_endian_u32x4::<BE>(r.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let av = clamp01(
+        endian::load_endian_u32x4::<BE>(a.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
       let gi = scale_round_i32(gv, scale, half);
       let bi = scale_round_i32(bv, scale, half);
       let ri = scale_round_i32(rv, scale, half);
@@ -963,7 +1046,7 @@ pub(crate) unsafe fn gbrpf16_to_rgba_row<const BE: bool>(
     widen_f16_plane(b, x, CHUNK, &mut bf);
     widen_f16_plane(r, x, CHUNK, &mut rf);
     unsafe {
-      gbrpf32_to_rgba_row(&gf, &bf, &rf, &mut out[x * 4..(x + CHUNK) * 4], CHUNK);
+      gbrpf32_to_rgba_row::<BE>(&gf, &bf, &rf, &mut out[x * 4..(x + CHUNK) * 4], CHUNK);
     }
     x += CHUNK;
   }
@@ -1009,7 +1092,7 @@ pub(crate) unsafe fn gbrpf16_to_rgb_u16_row<const BE: bool>(
     widen_f16_plane(b, x, CHUNK, &mut bf);
     widen_f16_plane(r, x, CHUNK, &mut rf);
     unsafe {
-      gbrpf32_to_rgb_u16_row(&gf, &bf, &rf, &mut out[x * 3..(x + CHUNK) * 3], CHUNK);
+      gbrpf32_to_rgb_u16_row::<BE>(&gf, &bf, &rf, &mut out[x * 3..(x + CHUNK) * 3], CHUNK);
     }
     x += CHUNK;
   }
@@ -1018,7 +1101,13 @@ pub(crate) unsafe fn gbrpf16_to_rgb_u16_row<const BE: bool>(
     widen_f16_plane(g, x, n, &mut gf);
     widen_f16_plane(b, x, n, &mut bf);
     widen_f16_plane(r, x, n, &mut rf);
-    scalar::gbrpf32_to_rgb_u16_row::<BE>(&gf[..n], &bf[..n], &rf[..n], &mut out[x * 3..width * 3], n);
+    scalar::gbrpf32_to_rgb_u16_row::<BE>(
+      &gf[..n],
+      &bf[..n],
+      &rf[..n],
+      &mut out[x * 3..width * 3],
+      n,
+    );
   }
 }
 
@@ -1055,7 +1144,7 @@ pub(crate) unsafe fn gbrpf16_to_rgba_u16_row<const BE: bool>(
     widen_f16_plane(b, x, CHUNK, &mut bf);
     widen_f16_plane(r, x, CHUNK, &mut rf);
     unsafe {
-      gbrpf32_to_rgba_u16_row(&gf, &bf, &rf, &mut out[x * 4..(x + CHUNK) * 4], CHUNK);
+      gbrpf32_to_rgba_u16_row::<BE>(&gf, &bf, &rf, &mut out[x * 4..(x + CHUNK) * 4], CHUNK);
     }
     x += CHUNK;
   }
@@ -1064,6 +1153,12 @@ pub(crate) unsafe fn gbrpf16_to_rgba_u16_row<const BE: bool>(
     widen_f16_plane(g, x, n, &mut gf);
     widen_f16_plane(b, x, n, &mut bf);
     widen_f16_plane(r, x, n, &mut rf);
-    scalar::gbrpf32_to_rgba_u16_row::<BE>(&gf[..n], &bf[..n], &rf[..n], &mut out[x * 4..width * 4], n);
+    scalar::gbrpf32_to_rgba_u16_row::<BE>(
+      &gf[..n],
+      &bf[..n],
+      &rf[..n],
+      &mut out[x * 4..width * 4],
+      n,
+    );
   }
 }
