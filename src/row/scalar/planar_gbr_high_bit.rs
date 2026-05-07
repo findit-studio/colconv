@@ -76,9 +76,21 @@ pub(crate) fn gbr_to_rgb_high_bit_row<const BITS: u32, const BE: bool>(
   let mask: u16 = ((1u32 << BITS) - 1) as u16;
   let shift = BITS - 8;
   for x in 0..width {
-    let r_raw = if BE { r[x].swap_bytes() } else { r[x] };
-    let g_raw = if BE { g[x].swap_bytes() } else { g[x] };
-    let b_raw = if BE { b[x].swap_bytes() } else { b[x] };
+    let r_raw = if BE {
+      u16::from_be(r[x])
+    } else {
+      u16::from_le(r[x])
+    };
+    let g_raw = if BE {
+      u16::from_be(g[x])
+    } else {
+      u16::from_le(g[x])
+    };
+    let b_raw = if BE {
+      u16::from_be(b[x])
+    } else {
+      u16::from_le(b[x])
+    };
     let r_val = r_raw & mask;
     let g_val = g_raw & mask;
     let b_val = b_raw & mask;
@@ -119,9 +131,21 @@ pub(crate) fn gbr_to_rgb_u16_high_bit_row<const BITS: u32, const BE: bool>(
   debug_assert!(rgb_u16_out.len() >= width * 3, "rgb_u16_out row too short");
   let mask: u16 = ((1u32 << BITS) - 1) as u16;
   for x in 0..width {
-    let r_raw = if BE { r[x].swap_bytes() } else { r[x] };
-    let g_raw = if BE { g[x].swap_bytes() } else { g[x] };
-    let b_raw = if BE { b[x].swap_bytes() } else { b[x] };
+    let r_raw = if BE {
+      u16::from_be(r[x])
+    } else {
+      u16::from_le(r[x])
+    };
+    let g_raw = if BE {
+      u16::from_be(g[x])
+    } else {
+      u16::from_le(g[x])
+    };
+    let b_raw = if BE {
+      u16::from_be(b[x])
+    } else {
+      u16::from_le(b[x])
+    };
     let r_val = r_raw & mask;
     let g_val = g_raw & mask;
     let b_val = b_raw & mask;
@@ -159,9 +183,21 @@ pub(crate) fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32, const BE: bool>(
   let mask: u16 = ((1u32 << BITS) - 1) as u16;
   let shift = BITS - 8;
   for x in 0..width {
-    let r_raw = if BE { r[x].swap_bytes() } else { r[x] };
-    let g_raw = if BE { g[x].swap_bytes() } else { g[x] };
-    let b_raw = if BE { b[x].swap_bytes() } else { b[x] };
+    let r_raw = if BE {
+      u16::from_be(r[x])
+    } else {
+      u16::from_le(r[x])
+    };
+    let g_raw = if BE {
+      u16::from_be(g[x])
+    } else {
+      u16::from_le(g[x])
+    };
+    let b_raw = if BE {
+      u16::from_be(b[x])
+    } else {
+      u16::from_le(b[x])
+    };
     let r_val = r_raw & mask;
     let g_val = g_raw & mask;
     let b_val = b_raw & mask;
@@ -202,9 +238,21 @@ pub(crate) fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32, const BE: boo
   let mask: u16 = ((1u32 << BITS) - 1) as u16;
   let opaque: u16 = mask;
   for x in 0..width {
-    let r_raw = if BE { r[x].swap_bytes() } else { r[x] };
-    let g_raw = if BE { g[x].swap_bytes() } else { g[x] };
-    let b_raw = if BE { b[x].swap_bytes() } else { b[x] };
+    let r_raw = if BE {
+      u16::from_be(r[x])
+    } else {
+      u16::from_le(r[x])
+    };
+    let g_raw = if BE {
+      u16::from_be(g[x])
+    } else {
+      u16::from_le(g[x])
+    };
+    let b_raw = if BE {
+      u16::from_be(b[x])
+    } else {
+      u16::from_le(b[x])
+    };
     let r_val = r_raw & mask;
     let g_val = g_raw & mask;
     let b_val = b_raw & mask;
@@ -243,10 +291,26 @@ pub(crate) fn gbra_to_rgba_high_bit_row<const BITS: u32, const BE: bool>(
   let mask: u16 = ((1u32 << BITS) - 1) as u16;
   let shift = BITS - 8;
   for x in 0..width {
-    let r_raw = if BE { r[x].swap_bytes() } else { r[x] };
-    let g_raw = if BE { g[x].swap_bytes() } else { g[x] };
-    let b_raw = if BE { b[x].swap_bytes() } else { b[x] };
-    let a_raw = if BE { a[x].swap_bytes() } else { a[x] };
+    let r_raw = if BE {
+      u16::from_be(r[x])
+    } else {
+      u16::from_le(r[x])
+    };
+    let g_raw = if BE {
+      u16::from_be(g[x])
+    } else {
+      u16::from_le(g[x])
+    };
+    let b_raw = if BE {
+      u16::from_be(b[x])
+    } else {
+      u16::from_le(b[x])
+    };
+    let a_raw = if BE {
+      u16::from_be(a[x])
+    } else {
+      u16::from_le(a[x])
+    };
     let r_val = r_raw & mask;
     let g_val = g_raw & mask;
     let b_val = b_raw & mask;
@@ -288,10 +352,26 @@ pub(crate) fn gbra_to_rgba_u16_high_bit_row<const BITS: u32, const BE: bool>(
   );
   let mask: u16 = ((1u32 << BITS) - 1) as u16;
   for x in 0..width {
-    let r_raw = if BE { r[x].swap_bytes() } else { r[x] };
-    let g_raw = if BE { g[x].swap_bytes() } else { g[x] };
-    let b_raw = if BE { b[x].swap_bytes() } else { b[x] };
-    let a_raw = if BE { a[x].swap_bytes() } else { a[x] };
+    let r_raw = if BE {
+      u16::from_be(r[x])
+    } else {
+      u16::from_le(r[x])
+    };
+    let g_raw = if BE {
+      u16::from_be(g[x])
+    } else {
+      u16::from_le(g[x])
+    };
+    let b_raw = if BE {
+      u16::from_be(b[x])
+    } else {
+      u16::from_le(b[x])
+    };
+    let a_raw = if BE {
+      u16::from_be(a[x])
+    } else {
+      u16::from_le(a[x])
+    };
     let r_val = r_raw & mask;
     let g_val = g_raw & mask;
     let b_val = b_raw & mask;
@@ -349,9 +429,21 @@ pub(crate) fn gbr_to_luma_u16_high_bit_row<const BITS: u32, const BE: bool>(
 
   if full_range {
     for x in 0..width {
-      let r_raw = if BE { r[x].swap_bytes() } else { r[x] };
-      let g_raw = if BE { g[x].swap_bytes() } else { g[x] };
-      let b_raw = if BE { b[x].swap_bytes() } else { b[x] };
+      let r_raw = if BE {
+        u16::from_be(r[x])
+      } else {
+        u16::from_le(r[x])
+      };
+      let g_raw = if BE {
+        u16::from_be(g[x])
+      } else {
+        u16::from_le(g[x])
+      };
+      let b_raw = if BE {
+        u16::from_be(b[x])
+      } else {
+        u16::from_le(b[x])
+      };
       let rv = (r_raw & mask) as i64;
       let gv = (g_raw & mask) as i64;
       let bv = (b_raw & mask) as i64;
@@ -380,9 +472,21 @@ pub(crate) fn gbr_to_luma_u16_high_bit_row<const BITS: u32, const BE: bool>(
     let y_max = (235i64) << (BITS - 8);
     let y_min = y_off;
     for x in 0..width {
-      let r_raw = if BE { r[x].swap_bytes() } else { r[x] };
-      let g_raw = if BE { g[x].swap_bytes() } else { g[x] };
-      let b_raw = if BE { b[x].swap_bytes() } else { b[x] };
+      let r_raw = if BE {
+        u16::from_be(r[x])
+      } else {
+        u16::from_le(r[x])
+      };
+      let g_raw = if BE {
+        u16::from_be(g[x])
+      } else {
+        u16::from_le(g[x])
+      };
+      let b_raw = if BE {
+        u16::from_be(b[x])
+      } else {
+        u16::from_le(b[x])
+      };
       let rv = (r_raw & mask) as i64;
       let gv = (g_raw & mask) as i64;
       let bv = (b_raw & mask) as i64;
