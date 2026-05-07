@@ -38,7 +38,11 @@ pub(crate) fn v410_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   let bias = chroma_bias::<10>();
 
   for (x, &raw) in packed[..width].iter().enumerate() {
-    let word = if BE { raw.swap_bytes() } else { raw };
+    let word = if BE {
+      u32::from_be(raw)
+    } else {
+      u32::from_le(raw)
+    };
     let (u, y, v) = extract_v410(word);
     let u_d = q15_scale(u - bias, c_scale);
     let v_d = q15_scale(v - bias, c_scale);
@@ -78,7 +82,11 @@ pub(crate) fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE: bool>
   let out_max: i32 = 0x3FF;
 
   for (x, &raw) in packed[..width].iter().enumerate() {
-    let word = if BE { raw.swap_bytes() } else { raw };
+    let word = if BE {
+      u32::from_be(raw)
+    } else {
+      u32::from_le(raw)
+    };
     let (u, y, v) = extract_v410(word);
     let u_d = q15_scale(u - bias, c_scale);
     let v_d = q15_scale(v - bias, c_scale);
@@ -105,9 +113,9 @@ pub(crate) fn v410_to_luma_row<const BE: bool>(packed: &[u32], out: &mut [u8], w
   debug_assert!(out.len() >= width);
   for x in 0..width {
     let word = if BE {
-      packed[x].swap_bytes()
+      u32::from_be(packed[x])
     } else {
-      packed[x]
+      u32::from_le(packed[x])
     };
     let y = (word >> 10) & 0x3FF;
     out[x] = (y >> 2) as u8;
@@ -122,9 +130,9 @@ pub(crate) fn v410_to_luma_u16_row<const BE: bool>(packed: &[u32], out: &mut [u1
   debug_assert!(out.len() >= width);
   for x in 0..width {
     let word = if BE {
-      packed[x].swap_bytes()
+      u32::from_be(packed[x])
     } else {
-      packed[x]
+      u32::from_le(packed[x])
     };
     let y = (word >> 10) & 0x3FF;
     out[x] = y as u16;

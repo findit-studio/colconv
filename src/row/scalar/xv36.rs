@@ -31,10 +31,12 @@ const fn extract_xv36(quad: &[u16]) -> (i32, i32, i32) {
 }
 
 /// Load one XV36 u16 sample, applying a byte-swap for BE wire format
-/// when `BE = true`.
+/// when `BE = true`. Uses target-endian aware `u16::from_be`/`u16::from_le`
+/// — these are no-ops when the source byte order matches the host, so the
+/// helper produces correct samples on both LE and BE hosts (e.g. s390x).
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn load_xv36_u16<const BE: bool>(v: u16) -> u16 {
-  if BE { v.swap_bytes() } else { v }
+  if BE { u16::from_be(v) } else { u16::from_le(v) }
 }
 
 // ---- u8 RGB / RGBA output ----------------------------------------------
