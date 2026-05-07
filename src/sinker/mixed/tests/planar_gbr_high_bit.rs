@@ -208,6 +208,91 @@ test_gbrap_strategy_a_plus!(
   16
 );
 
+// ---- Strategy A+: Gbrap combo RGB_u16+RGBA_u16 matches standalone RGBA_u16 -
+//
+// Mirrors the u8 Strategy A+ test above, but covers the native-depth combo
+// path (`with_rgb_u16` + `with_rgba_u16`) that routes through
+// `copy_alpha_plane_u16` rather than `copy_alpha_plane_u16_to_u8`. Without
+// this, a regression in the `BE != cfg!(target_endian)` dispatcher routing
+// or in the scalar α-extract helper would not be caught for the native-depth
+// path.
+//
+// Source planes are filled with full-range u16 values (`bits=16` argument
+// to `pseudo_random_u16_low_n_bits`) so the upper bits beyond BITS are
+// "dirty" — both paths must mask via `(1 << BITS) - 1`, so any drift between
+// them surfaces here.
+macro_rules! test_gbrap_strategy_a_plus_u16 {
+  ($name:ident, $marker:ident, $walker:ident, $bits:literal) => {
+    #[test]
+    #[cfg_attr(miri, ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri")]
+    fn $name() {
+      let w = 32usize;
+      let h = 8usize;
+      let n = w * h;
+      let mut g = std::vec![0u16; n];
+      let mut b = std::vec![0u16; n];
+      let mut r = std::vec![0u16; n];
+      let mut a = std::vec![0u16; n];
+      // Use full-range u16 (bits=16) so upper bits beyond BITS are dirty,
+      // exercising the mask in both the direct kernel and α-extract paths.
+      pseudo_random_u16_low_n_bits(&mut g, 0x55_u32.wrapping_add($bits), 16);
+      pseudo_random_u16_low_n_bits(&mut b, 0x66_u32.wrapping_add($bits), 16);
+      pseudo_random_u16_low_n_bits(&mut r, 0x77_u32.wrapping_add($bits), 16);
+      pseudo_random_u16_low_n_bits(&mut a, 0x88_u32.wrapping_add($bits), 16);
+
+      // Reference: standalone with_rgba_u16 (direct 4-channel kernel).
+      let src_ref = solid_gbrap_frame::<$bits>(&g, &b, &r, &a, w as u32, h as u32);
+      let mut rgba_u16_ref = std::vec![0u16; n * 4];
+      let mut sink_ref = MixedSinker::<crate::yuv::$marker>::new(w, h)
+        .with_rgba_u16(&mut rgba_u16_ref)
+        .unwrap();
+      crate::yuv::$walker(&src_ref, false, ColorMatrix::Bt709, &mut sink_ref).unwrap();
+
+      // Combo: with_rgb_u16 + with_rgba_u16 (Strategy A+ native-depth).
+      let src_combo = solid_gbrap_frame::<$bits>(&g, &b, &r, &a, w as u32, h as u32);
+      let mut rgb_u16_combo = std::vec![0u16; n * 3];
+      let mut rgba_u16_combo = std::vec![0u16; n * 4];
+      let mut sink_combo = MixedSinker::<crate::yuv::$marker>::new(w, h)
+        .with_rgb_u16(&mut rgb_u16_combo)
+        .unwrap()
+        .with_rgba_u16(&mut rgba_u16_combo)
+        .unwrap();
+      crate::yuv::$walker(&src_combo, false, ColorMatrix::Bt709, &mut sink_combo).unwrap();
+
+      // RGBA u16 elements must be byte-exact between standalone and combo paths.
+      assert_eq!(
+        rgba_u16_ref, rgba_u16_combo,
+        "Strategy A+ native-depth RGBA u16 mismatch for BITS={}", $bits,
+      );
+    }
+  };
+}
+
+test_gbrap_strategy_a_plus_u16!(
+  gbrap10_strategy_a_plus_u16_matches_standalone,
+  Gbrap10,
+  gbrap10_to,
+  10
+);
+test_gbrap_strategy_a_plus_u16!(
+  gbrap12_strategy_a_plus_u16_matches_standalone,
+  Gbrap12,
+  gbrap12_to,
+  12
+);
+test_gbrap_strategy_a_plus_u16!(
+  gbrap14_strategy_a_plus_u16_matches_standalone,
+  Gbrap14,
+  gbrap14_to,
+  14
+);
+test_gbrap_strategy_a_plus_u16!(
+  gbrap16_strategy_a_plus_u16_matches_standalone,
+  Gbrap16,
+  gbrap16_to,
+  16
+);
+
 // ---- Gbrap alpha downshift correctness -------------------------------------
 
 macro_rules! test_gbrap_alpha_downshift {

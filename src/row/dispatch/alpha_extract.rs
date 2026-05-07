@@ -261,16 +261,26 @@ pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usiz
 /// depth-conv `>> (BITS - 8)`.
 ///
 /// `BE` selects the source α plane byte order (`false` = LE on disk/wire,
-/// `true` = BE on disk/wire). When `BE = true` the dispatcher routes to
-/// scalar directly: the SIMD α-extract backends use raw native-u16 loads
-/// (`vld1q_u16` / `_mm_loadu_si128` / `v128_load64_zero`) and have no
-/// byte-swap path. Per the codex review of #82 the scalar helper is now
+/// `true` = BE on disk/wire). The SIMD α-extract backends use raw
+/// native-u16 loads (`vld1q_u16` / `_mm_loadu_si128` / `v128_load64_zero`)
+/// and have no byte-swap path, so SIMD is only correct when the source
+/// byte order matches the host CPU's native byte order. The dispatcher
+/// computes `need_swap = BE != cfg!(target_endian = "big")` and routes
+/// to scalar whenever a swap would be required (LE-on-BE-host or
+/// BE-on-LE-host). Per the codex review of #82 the scalar helper is
 /// target-endian-aware via `u16::from_be` / `u16::from_le`, so this
 /// scalar fallback emits the correct α plane on every host. Phase 4 will
 /// plumb BE through SIMD if a real BE-input sinker hot-path lands.
 ///
-/// Selects the highest available SIMD backend (`BE = false`); falls back
-/// to scalar. When `use_simd` is `false`, calls scalar directly.
+/// Truth table (`need_swap = BE != target_endian == "big"`):
+/// - LE data, LE host: `false != false = false` → SIMD (host-native LE u16 loads correct)
+/// - LE data, BE host: `false != true  = true`  → scalar (uses `u16::from_le`)
+/// - BE data, LE host: `true  != false = true`  → scalar (uses `u16::from_be`)
+/// - BE data, BE host: `true  != true  = false` → SIMD (host-native BE u16 loads correct)
+///
+/// Selects the highest available SIMD backend when host endian == data
+/// endian; falls back to scalar otherwise. When `use_simd` is `false`,
+/// calls scalar directly.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32, const BE: bool>(
   alpha: &[u16],
@@ -278,7 +288,9 @@ pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32, const BE: bool>(
   width: usize,
   use_simd: bool,
 ) {
-  if !use_simd || BE {
+  // Need a byte-swap if data byte order differs from host CPU's native order.
+  let need_swap = BE != cfg!(target_endian = "big");
+  if need_swap || !use_simd {
     return scalar::copy_alpha_plane_u16_to_u8::<BITS, BE>(alpha, rgba_out, width);
   }
   cfg_select! {
@@ -327,12 +339,15 @@ pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32, const BE: bool>(
 /// conversion.
 ///
 /// `BE` selects the source α plane byte order (`false` = LE on disk/wire,
-/// `true` = BE on disk/wire). When `BE = true` the dispatcher routes to
-/// scalar directly: see `copy_alpha_plane_u16_to_u8` above for the
-/// rationale (SIMD α-extract is BE-naïve; scalar is target-endian-aware).
+/// `true` = BE on disk/wire). The dispatcher computes
+/// `need_swap = BE != cfg!(target_endian = "big")` and routes to scalar
+/// whenever a swap would be required: see `copy_alpha_plane_u16_to_u8`
+/// above for the truth table and rationale (SIMD α-extract uses
+/// host-native u16 loads; scalar is target-endian-aware).
 ///
-/// Selects the highest available SIMD backend (`BE = false`); falls back
-/// to scalar. When `use_simd` is `false`, calls scalar directly.
+/// Selects the highest available SIMD backend when host endian == data
+/// endian; falls back to scalar otherwise. When `use_simd` is `false`,
+/// calls scalar directly.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn copy_alpha_plane_u16<const BITS: u32, const BE: bool>(
   alpha: &[u16],
@@ -340,7 +355,9 @@ pub(crate) fn copy_alpha_plane_u16<const BITS: u32, const BE: bool>(
   width: usize,
   use_simd: bool,
 ) {
-  if !use_simd || BE {
+  // Need a byte-swap if data byte order differs from host CPU's native order.
+  let need_swap = BE != cfg!(target_endian = "big");
+  if need_swap || !use_simd {
     return scalar::copy_alpha_plane_u16::<BITS, BE>(alpha, rgba_out, width);
   }
   cfg_select! {
