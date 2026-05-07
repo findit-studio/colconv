@@ -48,12 +48,14 @@
 
 mod bayer;
 mod bayer16;
+mod pal8;
 mod types;
 
 pub use bayer::{Bayer, BayerRow, BayerSink, bayer_to};
 pub use bayer16::{
   Bayer10, Bayer12, Bayer14, Bayer16, Bayer16Bit, BayerRow16, BayerSink16, bayer16_to,
 };
+pub use pal8::{Pal8, Pal8Row, Pal8Sink, pal8_to};
 pub use types::{
   BayerDemosaic, BayerPattern, ColorCorrectionMatrix, ColorCorrectionMatrixError, WbChannel,
   WhiteBalance, WhiteBalanceError,

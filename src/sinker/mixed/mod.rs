@@ -585,6 +585,11 @@ pub enum RowSlice {
   /// (`below == mid`) only when `height < 2`.
   #[display("Bayer16 Below")]
   Bayer16Below,
+  /// Pixel-index row of a [`Pal8`](crate::raw::Pal8) source.
+  /// `u8` samples, `width` elements — each value is an index into
+  /// the 256-entry BGRA palette carried alongside in `Pal8Row`.
+  #[display("Pal8 index row")]
+  Pal8IndexRow,
   /// Packed `R, G, B` row of an [`Rgb24`](crate::yuv::Rgb24) source.
   /// `3 * width` `u8` bytes.
   #[display("RGB packed")]
@@ -1573,6 +1578,37 @@ pub(super) fn rgb_row_to_luma_row(rgb: &[u8], luma: &mut [u8], coeffs_q8: (u32, 
   }
 }
 
+/// Same as [`rgb_row_to_luma_row`] but widens the luma byte to `u16` via
+/// `(y << 8) | y` (`0 → 0x0000`, `255 → 0xFFFF`).
+///
+/// Used by format sinker paths that expose a `with_luma_u16` output channel
+/// (e.g. `MixedSinker<Pal8>`).
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(super) fn rgb_row_to_luma_u16_row(
+  rgb: &[u8],
+  luma_u16: &mut [u16],
+  coeffs_q8: (u32, u32, u32),
+) {
+  debug_assert!(
+    luma_u16
+      .len()
+      .checked_mul(3)
+      .is_some_and(|need| rgb.len() >= need),
+    "rgb_row_to_luma_u16_row: rgb.len()={} but need {} (= 3 × luma_u16.len()={})",
+    rgb.len(),
+    luma_u16.len().saturating_mul(3),
+    luma_u16.len(),
+  );
+  let (cr, cg, cb) = coeffs_q8;
+  for (i, dst) in luma_u16.iter_mut().enumerate() {
+    let r = rgb[3 * i] as u32;
+    let g = rgb[3 * i + 1] as u32;
+    let b = rgb[3 * i + 2] as u32;
+    let y = ((cr * r + cg * g + cb * b + 128) >> 8).min(255) as u16;
+    *dst = (y << 8) | y;
+  }
+}
+
 // ---- Format-specific impl blocks (split out of mod.rs) ------------------
 //
 // Each child module hosts the `MixedSinker<'_, F>` impl blocks for a
@@ -1589,6 +1625,7 @@ mod packed_rgb_8bit;
 mod packed_rgb_f16;
 mod packed_rgb_float;
 mod packed_yuv_8bit;
+mod pal8;
 mod planar_8bit;
 mod planar_gbr_8bit;
 mod planar_gbr_high_bit;
