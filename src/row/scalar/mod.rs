@@ -128,6 +128,17 @@ pub(crate) use yuv_planar_high_bit::*;
 /// on-wire format); `BE = true` → big-endian. The unused branch is
 /// eliminated by the compiler when the caller is monomorphized.
 ///
+/// **Target-endian aware** — this matches the SIMD `load_endian_u16x*`
+/// helpers' semantics: `u16::from_be_bytes` / `u16::from_le_bytes`
+/// each emit a `bswap` only when the source byte order differs from
+/// the host CPU's native order. On a BE host the `BE = true` branch
+/// is a plain load (no swap) and the `BE = false` branch swaps; on
+/// an LE host the polarity reverses. This is the strict-superset-of-
+/// bugs alternative to a naive `if BE { x.swap_bytes() }` pattern,
+/// which would corrupt rows on s390x / other BE hosts. See
+/// `fix(be-tier10b): make scalar BE conversion target-endian aware`
+/// for the codex finding that motivated this contract crate-wide.
+///
 /// # Safety
 ///
 /// `ptr` must point to at least 2 readable bytes.
@@ -145,6 +156,12 @@ pub(super) unsafe fn load_endian_u16<const BE: bool>(ptr: *const u8) -> u16 {
 /// indicated by `BE`. `BE = false` → little-endian; `BE = true` →
 /// big-endian. The unused branch is eliminated by the compiler when
 /// the caller is monomorphized.
+///
+/// **Target-endian aware** — `u32::from_be_bytes` / `u32::from_le_bytes`
+/// each emit a `bswap` only when the source byte order differs from
+/// the host CPU's native order, matching the SIMD `load_endian_u32x*`
+/// helpers. See [`load_endian_u16`] for the full target-endian
+/// contract and the codex motivation.
 ///
 /// # Safety
 ///
