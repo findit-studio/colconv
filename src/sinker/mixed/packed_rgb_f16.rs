@@ -34,25 +34,6 @@ use crate::{
   yuv::{Rgbf16, Rgbf16Row, Rgbf16Sink},
 };
 
-/// `BE` value that makes the `rgbf16_to_*` row dispatchers treat their input as
-/// host-native (a no-op byte-swap). Used here because [`crate::frame::Rgbf16Frame`]
-/// exposes a `&[half::f16]` row in **host-native** layout — the API contract is that the
-/// caller hands us already-decoded half-floats. The kernel `BE` parameter,
-/// however, names the **encoded** byte order (so `BE = false` means "decode
-/// LE-encoded bytes" via `u16::from_le`). On a LE host the host-native layout
-/// is LE, so `BE = false` is correct; on a BE host the host-native layout is
-/// BE, so we must request `BE = true` to make `u16::from_be` no-op the swap.
-/// Without this routing the loaders would byte-swap an already-decoded host-
-/// native `f16` on BE hosts, corrupting every output path.
-///
-/// This is the **sinker-layer** complement to the SIMD-backend-internal
-/// `HOST_NATIVE_BE` introduced for the f16→f32 widen-then-convert paths in
-/// `c3a6478` — same truth table, different layer:
-///
-///   • LE host: `HOST_NATIVE_BE = false` → `from_le` (no-op on LE) → correct.
-///   • BE host: `HOST_NATIVE_BE = true`  → `from_be` (no-op on BE) → correct.
-const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
-
 // ---- Rgbf16 impl -------------------------------------------------------
 
 impl<'a> MixedSinker<'a, Rgbf16> {
@@ -253,27 +234,27 @@ impl PixelSink for MixedSinker<'_, Rgbf16> {
     if let Some(buf) = rgb_f16.as_deref_mut() {
       let f16_start = one_plane_start * 3;
       let f16_end = one_plane_end * 3;
-      rgbf16_to_rgb_f16_row::<HOST_NATIVE_BE>(rgb_in, &mut buf[f16_start..f16_end], w, use_simd);
+      rgbf16_to_rgb_f16_row::<false>(rgb_in, &mut buf[f16_start..f16_end], w, use_simd);
     }
 
     // Lossless f32 widen — also independent of integer conversion paths.
     if let Some(buf) = rgb_f32.as_deref_mut() {
       let f32_start = one_plane_start * 3;
       let f32_end = one_plane_end * 3;
-      rgbf16_to_rgb_f32_row::<HOST_NATIVE_BE>(rgb_in, &mut buf[f32_start..f32_end], w, use_simd);
+      rgbf16_to_rgb_f32_row::<false>(rgb_in, &mut buf[f32_start..f32_end], w, use_simd);
     }
 
     // u16 RGB output — direct half-float → u16 conversion (no staging).
     if let Some(buf) = rgb_u16.as_deref_mut() {
       let u16_start = one_plane_start * 3;
       let u16_end = one_plane_end * 3;
-      rgbf16_to_rgb_u16_row::<HOST_NATIVE_BE>(rgb_in, &mut buf[u16_start..u16_end], w, use_simd);
+      rgbf16_to_rgb_u16_row::<false>(rgb_in, &mut buf[u16_start..u16_end], w, use_simd);
     }
 
     // u16 RGBA output — direct half-float → u16 conversion (no staging).
     if let Some(buf) = rgba_u16.as_deref_mut() {
       let rgba_row = rgba_u16_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
-      rgbf16_to_rgba_u16_row::<HOST_NATIVE_BE>(rgb_in, rgba_row, w, use_simd);
+      rgbf16_to_rgba_u16_row::<false>(rgb_in, rgba_row, w, use_simd);
     }
 
     // u8 RGBA standalone fast path — direct float → u8 when no RGB / luma /
@@ -288,7 +269,7 @@ impl PixelSink for MixedSinker<'_, Rgbf16> {
     if want_rgba_u8 && !need_u8_rgb {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      rgbf16_to_rgba_row::<HOST_NATIVE_BE>(rgb_in, rgba_row, w, use_simd);
+      rgbf16_to_rgba_row::<false>(rgb_in, rgba_row, w, use_simd);
       return Ok(());
     }
 
@@ -307,7 +288,7 @@ impl PixelSink for MixedSinker<'_, Rgbf16> {
       w,
       h,
     )?;
-    rgbf16_to_rgb_row::<HOST_NATIVE_BE>(rgb_in, rgb_row, w, use_simd);
+    rgbf16_to_rgb_row::<false>(rgb_in, rgb_row, w, use_simd);
 
     if let Some(luma) = luma.as_deref_mut() {
       rgb_to_luma_row(
@@ -347,7 +328,7 @@ impl PixelSink for MixedSinker<'_, Rgbf16> {
     // over `rgb_row` via `expand_rgb_to_rgba_row`.
     if let Some(buf) = rgba.as_deref_mut() {
       let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
-      rgbf16_to_rgba_row::<HOST_NATIVE_BE>(rgb_in, rgba_row, w, use_simd);
+      rgbf16_to_rgba_row::<false>(rgb_in, rgba_row, w, use_simd);
     }
 
     Ok(())

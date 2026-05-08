@@ -95,17 +95,26 @@ pub(crate) fn copy_alpha_packed_u8x4_at_3(
 /// Runtime-dispatched α-extract for AYUV64 → u8 RGBA: gather α from
 /// `packed[0 + 4*n]` (u16) into `rgba_out[3 + 4*n]` (u8) via `>> 8`.
 ///
-/// Selects the highest available SIMD backend; falls back to scalar.
-/// When `use_simd` is `false`, calls scalar directly.
+/// `BE` selects the source `packed` plane byte order (`false` = LE on
+/// disk/wire — matching the LE-encoded `Ayuv64Frame` contract;
+/// `true` = BE). Like [`copy_alpha_plane_u16_to_u8`], the existing SIMD
+/// helpers use host-native u16 loads with no `from_le` / `from_be`
+/// normalisation, so SIMD is only correct on LE host processing LE
+/// source. The dispatcher computes
+/// `safe_for_simd = !BE && cfg!(target_endian = "little")` and falls
+/// back to the target-endian-aware scalar in every other quadrant.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0(
+pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0<const BE: bool>(
   packed: &[u16],
   rgba_out: &mut [u8],
   width: usize,
   use_simd: bool,
 ) {
-  if !use_simd {
-    return scalar::copy_alpha_packed_u16x4_to_u8_at_0(packed, rgba_out, width);
+  // SIMD α-extract helpers use host-native u16 loads. Force scalar in
+  // any quadrant where source byte order doesn't match host byte order.
+  let safe_for_simd = !BE && cfg!(target_endian = "little");
+  if !safe_for_simd || !use_simd {
+    return scalar::copy_alpha_packed_u16x4_to_u8_at_0::<BE>(packed, rgba_out, width);
   }
   cfg_select! {
     target_arch = "aarch64" => {
@@ -141,7 +150,7 @@ pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0(
     },
     _ => {}
   }
-  scalar::copy_alpha_packed_u16x4_to_u8_at_0(packed, rgba_out, width);
+  scalar::copy_alpha_packed_u16x4_to_u8_at_0::<BE>(packed, rgba_out, width);
 }
 
 // ---------------------------------------------------------------------------
@@ -152,17 +161,19 @@ pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0(
 /// `packed[0 + 4*n]` (u16) into `rgba_out[3 + 4*n]` (u16). No depth
 /// conversion.
 ///
-/// Selects the highest available SIMD backend; falls back to scalar.
-/// When `use_simd` is `false`, calls scalar directly.
+/// `BE` selects the source `packed` plane byte order. See
+/// [`copy_alpha_packed_u16x4_to_u8_at_0`] for the rationale: SIMD is
+/// only correct on LE host with LE source; scalar is target-endian-aware.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn copy_alpha_packed_u16x4_at_0(
+pub(crate) fn copy_alpha_packed_u16x4_at_0<const BE: bool>(
   packed: &[u16],
   rgba_out: &mut [u16],
   width: usize,
   use_simd: bool,
 ) {
-  if !use_simd {
-    return scalar::copy_alpha_packed_u16x4_at_0(packed, rgba_out, width);
+  let safe_for_simd = !BE && cfg!(target_endian = "little");
+  if !safe_for_simd || !use_simd {
+    return scalar::copy_alpha_packed_u16x4_at_0::<BE>(packed, rgba_out, width);
   }
   cfg_select! {
     target_arch = "aarch64" => {
@@ -198,7 +209,7 @@ pub(crate) fn copy_alpha_packed_u16x4_at_0(
     },
     _ => {}
   }
-  scalar::copy_alpha_packed_u16x4_at_0(packed, rgba_out, width);
+  scalar::copy_alpha_packed_u16x4_at_0::<BE>(packed, rgba_out, width);
 }
 
 // ---------------------------------------------------------------------------

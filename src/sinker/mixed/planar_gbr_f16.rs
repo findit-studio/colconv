@@ -51,7 +51,8 @@ use crate::{
     gbrapf32_to_rgba_u16_row, gbrpf16_to_rgb_f16_row, gbrpf16_to_rgb_row, gbrpf16_to_rgba_f16_row,
     gbrpf16_to_rgba_row, gbrpf32_to_hsv_row, gbrpf32_to_luma_row, gbrpf32_to_luma_u16_row,
     gbrpf32_to_rgb_f32_row, gbrpf32_to_rgb_u16_row, gbrpf32_to_rgba_f32_row,
-    gbrpf32_to_rgba_u16_row, scalar::alpha_extract::copy_alpha_plane_f32_to_u8,
+    gbrpf32_to_rgba_u16_row,
+    scalar::{alpha_extract::copy_alpha_plane_f32_to_u8, planar_gbr_f16::widen_f16_be_to_host_f32},
   },
   yuv::{Gbrapf16, Gbrapf16Row, Gbrapf16Sink, Gbrpf16, Gbrpf16Row, Gbrpf16Sink},
 };
@@ -64,55 +65,21 @@ const GBR_F16_FULL_RANGE: bool = true;
 // Chunk size for the inline f16→f32 widening scratch arrays (stack-allocated).
 const WIDEN_CHUNK: usize = 64;
 
-/// `BE` value that makes the `gbrpf16_to_*` / `gbrapf16_to_*` row dispatchers
-/// (and the widened `gbrpf32_to_*` chain after `widen_f16_to_f32`) treat
-/// their input as **host-native** (a no-op byte-swap).
-///
-/// [`crate::frame::Gbrpf16Frame`] / [`crate::frame::Gbrapf16Frame`] expose
-/// `&[half::f16]` plane rows in **host-native** layout — the API contract
-/// is that the caller hands us already-decoded half-floats. The kernel `BE`
-/// parameter, however, names the **encoded** byte order (so `BE = false`
-/// means "decode LE-encoded bytes" via `u16::from_le`). On a LE host the
-/// host-native layout is LE, so `BE = false` is correct; on a BE host the
-/// host-native layout is BE, so we must request `BE = true` to make
-/// `u16::from_be` no-op the swap. Without this routing the loaders would
-/// byte-swap an already-decoded host-native `f16` on BE hosts, corrupting
-/// every output path (codex PR #84 Finding 3).
-///
-/// Crucially, the **widened f32 chain** must also use `HOST_NATIVE_BE`:
-/// after [`widen_f16_to_f32`] (which calls `half::f16::to_f32` on host-native
-/// f16 bits) the scratch is host-native f32, so the downstream
-/// `gbrpf32_to_*` kernel's `from_le`/`from_be` loader must be a no-op —
-/// achieved by routing with `HOST_NATIVE_BE`.
-///
-/// This is the **sinker-layer** complement to the SIMD-backend-internal
-/// `HOST_NATIVE_BE` introduced in `c3a6478` and the `Rgbf16` sinker fix in
-/// `dcf40a3`. Same truth table:
-///
-///   • LE host: `HOST_NATIVE_BE = false` → `from_le` (no-op on LE) → correct.
-///   • BE host: `HOST_NATIVE_BE = true`  → `from_be` (no-op on BE) → correct.
-///
-/// The α-plane scatter for [`Gbrapf16`] (Strategy A+ / standalone-RGBA)
-/// widens the host-native f16 α plane to host-native f32 via
-/// [`widen_f16_to_f32`] then calls `copy_alpha_plane_f32_to_u8` — both
-/// operations are endian-agnostic. Mix-mode corruption (LE-decoded RGB +
-/// host-native α) is therefore eliminated by routing the RGB chain via
-/// `HOST_NATIVE_BE`.
+// Endianness routing for **post-widen** `gbrpf32_to_*` calls.
+//
+// `widen_f16_be_to_host_f32::<false>` produces **host-native f32 scratch** from
+// LE-encoded f16 plane bits (it normalises bits before widening), so the
+// downstream `gbrpf32_to_*::<HOST_NATIVE_BE>` kernel sees input that already
+// matches the host's byte order. The kernel's `from_le` / `from_be` then
+// becomes a no-op on every host — correct.
+//
+// Distinct from the **direct** Frame-to-row-kernel pattern elsewhere in this
+// file (the `gbrpf16_to_*::<false>` u8/f16 calls): those receive raw LE-encoded
+// `&[half::f16]` plane bytes per the unified Frame contract, so they pass
+// `BE = false` to tell the kernel to apply `from_le`. Post-widen scratch is
+// already host-native, so it must use `BE = HOST_NATIVE_BE` to keep the kernel
+// byte-swap a no-op on every host.
 const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
-
-/// Widen `width` `half::f16` values from `src` into `dst` (f32 elements).
-///
-/// The source slice is `&[half::f16]` in **host-native** layout (per the
-/// `Gbrpf16Frame` / `Gbrapf16Frame` API contract); `to_f32` interprets the
-/// bits as host-native and emits host-native `f32`. Downstream `gbrpf32_to_*`
-/// callers must therefore route with [`HOST_NATIVE_BE`] (not the encoded
-/// `BE`) to avoid double byte-swapping.
-#[cfg_attr(not(tarpaulin), inline(always))]
-fn widen_f16_to_f32(src: &[half::f16], dst: &mut [f32], count: usize) {
-  for i in 0..count {
-    dst[i] = src[i].to_f32();
-  }
-}
 
 // ---- Gbrpf16 accessor impl block ----------------------------------------
 
@@ -351,7 +318,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf16> {
     if let Some(buf) = self.rgb_f16.as_deref_mut() {
       let start = one_plane_start * 3;
       let end = one_plane_end * 3;
-      gbrpf16_to_rgb_f16_row::<HOST_NATIVE_BE>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
+      gbrpf16_to_rgb_f16_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     if let Some(buf) = self.rgba_f16.as_deref_mut() {
@@ -363,14 +330,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf16> {
           height: h,
           channels: 4,
         })?;
-      gbrpf16_to_rgba_f16_row::<HOST_NATIVE_BE>(
-        g_in,
-        b_in,
-        r_in,
-        &mut buf[start..end],
-        w,
-        use_simd,
-      );
+      gbrpf16_to_rgba_f16_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     // ---- Paths that require widening f16 → f32 ---------------------------
@@ -394,9 +354,14 @@ impl PixelSink for MixedSinker<'_, Gbrpf16> {
       let mut offset = 0;
       while offset < w {
         let n = (w - offset).min(WIDEN_CHUNK);
-        widen_f16_to_f32(&g_in[offset..], &mut gf_chunk, n);
-        widen_f16_to_f32(&b_in[offset..], &mut bf_chunk, n);
-        widen_f16_to_f32(&r_in[offset..], &mut rf_chunk, n);
+        // Bit-normalise LE-encoded f16 plane bits → host-native f32 so the
+        // downstream `gbrpf32_to_*` kernel (invoked with `BE = HOST_NATIVE_BE`
+        // — see module-scope constant) sees host-native f32 on every host.
+        // The post-widen scratch is host-native, distinct from the direct-
+        // Frame paths which use `<false>` per the LE-encoded byte contract.
+        widen_f16_be_to_host_f32::<false>(g_in, offset, &mut gf_chunk, n);
+        widen_f16_be_to_host_f32::<false>(b_in, offset, &mut bf_chunk, n);
+        widen_f16_be_to_host_f32::<false>(r_in, offset, &mut rf_chunk, n);
         let gf = &gf_chunk[..n];
         let bf = &bf_chunk[..n];
         let rf = &rf_chunk[..n];
@@ -480,7 +445,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf16> {
     if want_rgba && !need_u8_rgb {
       let rgba_buf = self.rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      gbrpf16_to_rgba_row::<HOST_NATIVE_BE>(g_in, b_in, r_in, rgba_row, w, use_simd);
+      gbrpf16_to_rgba_row::<false>(g_in, b_in, r_in, rgba_row, w, use_simd);
       return Ok(());
     }
 
@@ -504,7 +469,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf16> {
       w,
       h,
     )?;
-    gbrpf16_to_rgb_row::<HOST_NATIVE_BE>(g_in, b_in, r_in, rgb_row, w, use_simd);
+    gbrpf16_to_rgb_row::<false>(g_in, b_in, r_in, rgb_row, w, use_simd);
 
     // Strategy A: expand RGB → RGBA (constant α = 0xFF).
     if let Some(buf) = rgba.as_deref_mut() {
@@ -761,7 +726,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf16> {
       // rgb_f16: no source α — use the no-α kernel (lossless scatter).
       let start = one_plane_start * 3;
       let end = one_plane_end * 3;
-      gbrpf16_to_rgb_f16_row::<HOST_NATIVE_BE>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
+      gbrpf16_to_rgb_f16_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     if let Some(buf) = self.rgba_f16.as_deref_mut() {
@@ -774,15 +739,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf16> {
           height: h,
           channels: 4,
         })?;
-      gbrapf16_to_rgba_f16_row::<HOST_NATIVE_BE>(
-        g_in,
-        b_in,
-        r_in,
-        a_in,
-        &mut buf[start..end],
-        w,
-        use_simd,
-      );
+      gbrapf16_to_rgba_f16_row::<false>(g_in, b_in, r_in, a_in, &mut buf[start..end], w, use_simd);
     }
 
     // ---- Paths that require widening f16 → f32 ---------------------------
@@ -806,10 +763,12 @@ impl PixelSink for MixedSinker<'_, Gbrapf16> {
       let mut offset = 0;
       while offset < w {
         let n = (w - offset).min(WIDEN_CHUNK);
-        widen_f16_to_f32(&g_in[offset..], &mut gf_chunk, n);
-        widen_f16_to_f32(&b_in[offset..], &mut bf_chunk, n);
-        widen_f16_to_f32(&r_in[offset..], &mut rf_chunk, n);
-        widen_f16_to_f32(&a_in[offset..], &mut af_chunk, n);
+        // Bit-normalise LE-encoded f16 plane bits → host-native f32 (see the
+        // canonical helper's docs); downstream kernel uses `BE = false`.
+        widen_f16_be_to_host_f32::<false>(g_in, offset, &mut gf_chunk, n);
+        widen_f16_be_to_host_f32::<false>(b_in, offset, &mut bf_chunk, n);
+        widen_f16_be_to_host_f32::<false>(r_in, offset, &mut rf_chunk, n);
+        widen_f16_be_to_host_f32::<false>(a_in, offset, &mut af_chunk, n);
         let gf = &gf_chunk[..n];
         let bf = &bf_chunk[..n];
         let rf = &rf_chunk[..n];
@@ -918,7 +877,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf16> {
       let rgba_buf = self.rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
       // Write opaque RGB → RGBA (α = 0xFF), then overwrite α from source.
-      gbrpf16_to_rgba_row::<HOST_NATIVE_BE>(g_in, b_in, r_in, rgba_row, w, use_simd);
+      gbrpf16_to_rgba_row::<false>(g_in, b_in, r_in, rgba_row, w, use_simd);
       // Scatter f16 α → u8 slot 3: widen + clamp + scale.
       widen_and_scatter_f16_alpha_to_u8(a_in, rgba_row, w);
       return Ok(());
@@ -944,7 +903,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf16> {
       w,
       h,
     )?;
-    gbrpf16_to_rgb_row::<HOST_NATIVE_BE>(g_in, b_in, r_in, rgb_row, w, use_simd);
+    gbrpf16_to_rgb_row::<false>(g_in, b_in, r_in, rgb_row, w, use_simd);
 
     // Strategy A+: expand RGB → RGBA (0xFF stub), then overwrite α from source.
     if let Some(buf) = rgba.as_deref_mut() {
@@ -962,14 +921,26 @@ impl PixelSink for MixedSinker<'_, Gbrapf16> {
 ///
 /// Used by `Gbrapf16` Strategy A+ and standalone-RGBA paths to overwrite
 /// the per-pixel alpha byte from the f16 source α plane.
+///
+/// Endian routing: `widen_f16_be_to_host_f32::<false>` converts the
+/// LE-encoded `Gbrapf16Frame` α plane bits into **host-native f32**
+/// scratch. The downstream `copy_alpha_plane_f32_to_u8` therefore receives
+/// host-native f32 input, not LE-encoded f32, and must be invoked with
+/// `BE = HOST_NATIVE_BE` so the kernel's `from_le` / `from_be` is a no-op
+/// on every host (no second byte-swap). This is the **post-widen** routing
+/// pattern; contrast with `planar_gbr_float.rs` which calls the same
+/// helper with `BE = false` because it consumes the **direct** LE-encoded
+/// `Gbrapf32Frame` α plane.
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn widen_and_scatter_f16_alpha_to_u8(alpha_f16: &[half::f16], rgba_out: &mut [u8], width: usize) {
   let mut af_chunk = [0.0f32; WIDEN_CHUNK];
   let mut offset = 0;
   while offset < width {
     let n = (width - offset).min(WIDEN_CHUNK);
-    widen_f16_to_f32(&alpha_f16[offset..], &mut af_chunk, n);
-    copy_alpha_plane_f32_to_u8(&af_chunk[..n], &mut rgba_out[offset * 4..], n);
+    // Bit-normalise LE-encoded f16 α bits → host-native f32 before clamping
+    // and scaling to u8 — correct on both LE and BE hosts.
+    widen_f16_be_to_host_f32::<false>(alpha_f16, offset, &mut af_chunk, n);
+    copy_alpha_plane_f32_to_u8::<HOST_NATIVE_BE>(&af_chunk[..n], &mut rgba_out[offset * 4..], n);
     offset += n;
   }
 }

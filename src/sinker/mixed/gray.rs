@@ -1499,8 +1499,9 @@ impl PixelSink for MixedSinker<'_, Ya16> {
         let rgba_u16_row =
           rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
         expand_rgb_u16_to_rgba_u16_row::<16>(rgb_u16_row, rgba_u16_row, w);
-        // Patch α from source (native u16 depth).
-        copy_alpha_ya_u16(packed, rgba_u16_row, w);
+        // Patch α from source (native u16 depth). `Ya16Frame` is LE-encoded
+        // per the unified Frame contract → `BE = false`.
+        copy_alpha_ya_u16::<false>(packed, rgba_u16_row, w);
       }
     }
 
@@ -1562,7 +1563,8 @@ impl PixelSink for MixedSinker<'_, Ya16> {
       let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
       expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
       // Overwrite the α channel with real source α (>> 8 for u8 output).
-      copy_alpha_ya_u16_to_u8(packed, rgba_row, w);
+      // `Ya16Frame` is LE-encoded per the unified Frame contract → `BE = false`.
+      copy_alpha_ya_u16_to_u8::<false>(packed, rgba_row, w);
     }
 
     Ok(())
@@ -2406,6 +2408,139 @@ mod tests {
     assert_eq!(h, [0, 0]);
     assert_eq!(s, [0, 0]);
     assert_eq!(v, [0x80, 0xFF]);
+  }
+
+  /// Strategy A+ (combined `with_rgb` + `with_rgba`) must produce α bytes
+  /// byte-identical to the standalone `with_rgba` path. Locks down the
+  /// codex-flagged corruption where a BE host processing the LE-encoded
+  /// `Ya16Frame` would otherwise diverge between the two paths: standalone
+  /// uses the endian-aware `ya16_to_rgba_row::<false>` kernel; combined
+  /// expanded RGB → RGBA then patched α via `copy_alpha_ya_u16_to_u8` which
+  /// previously read raw `packed[n*2+1]` host-native and so emitted a
+  /// byte-reversed α byte on BE. After the fix, `copy_alpha_ya_u16_to_u8`
+  /// is target-endian-aware (`<false>` for the LE Frame contract) and the
+  /// two paths agree on every host.
+  ///
+  /// To exercise the LE-encoded byte contract on every host we build the
+  /// `&[u16]` plane by bit-casting LE bytes — `u16::from_le_bytes` per
+  /// sample. On LE hosts that's a no-op; on BE hosts it byte-swaps so the
+  /// in-memory bytes match the FFmpeg `AV_PIX_FMT_YA16LE` layout.
+  #[test]
+  fn ya16_combined_rgb_and_rgba_alpha_matches_standalone_le_encoded() {
+    let w: u32 = 8;
+    let h: u32 = 1;
+    // Logical samples (Y, A) per pixel.
+    let samples: [(u16, u16); 8] = [
+      (0x0000, 0xFFFF),
+      (0x8000, 0x4000),
+      (0xFFFF, 0x0000),
+      (0x1234, 0xABCD),
+      (0x00FF, 0xFF00),
+      (0x5A5A, 0xA5A5),
+      (0x7FFF, 0x8000),
+      (0xC000, 0x3FFF),
+    ];
+    // Build the `&[u16]` plane such that its in-memory bytes match the
+    // FFmpeg `AV_PIX_FMT_YA16LE` byte layout on every host. We want a
+    // host-native u16 whose underlying bytes spell `[low, high]` (LE):
+    // `u16::from_ne_bytes(x.to_le_bytes())` is `x` on LE and `x.swap_bytes()`
+    // on BE — the right value to store in either case.
+    let le_encoded = |x: u16| -> u16 { u16::from_ne_bytes(x.to_le_bytes()) };
+    let packed: std::vec::Vec<u16> = samples
+      .iter()
+      .flat_map(|&(y, a)| [le_encoded(y), le_encoded(a)])
+      .collect();
+    let frame = Ya16Frame::new(&packed, w, h, w * 2);
+
+    // Run combined (with_rgb + with_rgba) — exercises Strategy A+ with the
+    // newly endian-aware `copy_alpha_ya_u16_to_u8::<false>`. Forces
+    // `with_simd(false)` so the test runs purely scalar — no SIMD intrinsics
+    // — which lets it execute under `cargo miri test`. BE CI is driven by
+    // miri on s390x / powerpc64; gating it out of miri would skip exactly
+    // the host where BE corruption would surface.
+    let mut rgb_combined = std::vec![0u8; (w * h * 3) as usize];
+    let mut rgba_combined = std::vec![0u8; (w * h * 4) as usize];
+    {
+      let mut sink = MixedSinker::<crate::yuv::Ya16>::new(w as usize, h as usize)
+        .with_simd(false)
+        .with_rgb(&mut rgb_combined)
+        .unwrap()
+        .with_rgba(&mut rgba_combined)
+        .unwrap();
+      ya16_to(&frame, FR, M, &mut sink).unwrap();
+    }
+
+    // Run standalone (with_rgba only) — exercises the endian-aware
+    // `ya16_to_rgba_row::<false>` kernel. Same scalar-only rationale.
+    let mut rgba_standalone = std::vec![0u8; (w * h * 4) as usize];
+    {
+      let mut sink = MixedSinker::<crate::yuv::Ya16>::new(w as usize, h as usize)
+        .with_simd(false)
+        .with_rgba(&mut rgba_standalone)
+        .unwrap();
+      ya16_to(&frame, FR, M, &mut sink).unwrap();
+    }
+
+    assert_eq!(
+      rgba_combined, rgba_standalone,
+      "combined (with_rgb+with_rgba) RGBA must equal standalone with_rgba"
+    );
+  }
+
+  /// u16 RGBA variant of the combined-vs-standalone parity check. Locks
+  /// down `copy_alpha_ya_u16::<false>` (the u16 alpha-patch helper for
+  /// 16-bit RGBA outputs).
+  #[test]
+  fn ya16_combined_rgb_u16_and_rgba_u16_alpha_matches_standalone_le_encoded() {
+    let w: u32 = 8;
+    let h: u32 = 1;
+    let samples: [(u16, u16); 8] = [
+      (0x0000, 0xFFFF),
+      (0x8000, 0x4000),
+      (0xFFFF, 0x0000),
+      (0x1234, 0xABCD),
+      (0x00FF, 0xFF00),
+      (0x5A5A, 0xA5A5),
+      (0x7FFF, 0x8000),
+      (0xC000, 0x3FFF),
+    ];
+    // See sibling test for the `le_encoded` rationale.
+    let le_encoded = |x: u16| -> u16 { u16::from_ne_bytes(x.to_le_bytes()) };
+    let packed: std::vec::Vec<u16> = samples
+      .iter()
+      .flat_map(|&(y, a)| [le_encoded(y), le_encoded(a)])
+      .collect();
+    let frame = Ya16Frame::new(&packed, w, h, w * 2);
+
+    // Forces `with_simd(false)` so this test runs purely scalar — no SIMD
+    // intrinsics — which lets it execute under `cargo miri test`. BE CI is
+    // driven by miri on s390x / powerpc64; gating it out of miri would skip
+    // exactly the host where BE corruption would surface.
+    let mut rgb_combined = std::vec![0u16; (w * h * 3) as usize];
+    let mut rgba_combined = std::vec![0u16; (w * h * 4) as usize];
+    {
+      let mut sink = MixedSinker::<crate::yuv::Ya16>::new(w as usize, h as usize)
+        .with_simd(false)
+        .with_rgb_u16(&mut rgb_combined)
+        .unwrap()
+        .with_rgba_u16(&mut rgba_combined)
+        .unwrap();
+      ya16_to(&frame, FR, M, &mut sink).unwrap();
+    }
+
+    let mut rgba_standalone = std::vec![0u16; (w * h * 4) as usize];
+    {
+      let mut sink = MixedSinker::<crate::yuv::Ya16>::new(w as usize, h as usize)
+        .with_simd(false)
+        .with_rgba_u16(&mut rgba_standalone)
+        .unwrap();
+      ya16_to(&frame, FR, M, &mut sink).unwrap();
+    }
+
+    assert_eq!(
+      rgba_combined, rgba_standalone,
+      "combined (with_rgb_u16+with_rgba_u16) RGBA u16 must equal standalone"
+    );
   }
 
   #[test]

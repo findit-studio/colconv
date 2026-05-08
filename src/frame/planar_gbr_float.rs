@@ -147,6 +147,20 @@ const fn check_plane(
 /// `f32` elements. Nominal range `[0.0, 1.0]`; HDR values > 1.0 are
 /// preserved bit-exact on lossless pass-through outputs and clamped to
 /// `[0.0, 1.0]` on integer-output paths.
+///
+/// # Endian contract — **LE-encoded bytes**
+///
+/// The three `&[f32]` planes are the **LE-encoded byte layout** reinterpreted
+/// as `f32`, matching the FFmpeg `*LE` pixel-format suffix in the format
+/// name. On a little-endian host (every CI runner today) LE bytes _are_
+/// host-native, so the slices are also host-native float slices; on a
+/// big-endian host the bytes have to be byte-swapped back to host-native
+/// before arithmetic. Downstream row kernels handle this byte-swap (or
+/// no-op on LE) under the hood — callers do **not** pre-swap.
+///
+/// Stride is in **f32 elements** (not bytes). Callers holding byte buffers
+/// from FFmpeg should cast via `bytemuck::cast_slice` and divide each
+/// `linesize[i]` by 4 before constructing.
 #[derive(Debug, Clone, Copy)]
 pub struct Gbrpf32Frame<'a> {
   g: &'a [f32],
@@ -250,6 +264,20 @@ impl<'a> Gbrpf32Frame<'a> {
 /// Four full-resolution `f32` planes in **G, B, R, A** order. Alpha is
 /// real per-pixel; nominal range `[0.0, 1.0]` (opaque = 1.0). Stride is
 /// in `f32` elements.
+///
+/// # Endian contract — **LE-encoded bytes**
+///
+/// The four `&[f32]` planes are the **LE-encoded byte layout** reinterpreted
+/// as `f32`, matching the FFmpeg `*LE` pixel-format suffix in the format
+/// name. On a little-endian host (every CI runner today) LE bytes _are_
+/// host-native, so the slices are also host-native float slices; on a
+/// big-endian host the bytes have to be byte-swapped back to host-native
+/// before arithmetic. Downstream row kernels handle this byte-swap (or
+/// no-op on LE) under the hood — callers do **not** pre-swap.
+///
+/// Stride is in **f32 elements** (not bytes). Callers holding byte buffers
+/// from FFmpeg should cast via `bytemuck::cast_slice` and divide each
+/// `linesize[i]` by 4 before constructing.
 #[derive(Debug, Clone, Copy)]
 pub struct Gbrapf32Frame<'a> {
   g: &'a [f32],
@@ -372,6 +400,20 @@ impl<'a> Gbrapf32Frame<'a> {
 /// Three full-resolution [`half::f16`] planes in **G, B, R** order. Stride
 /// is in `f16` elements. Nominal range `[0.0, 1.0]`; HDR values > 1.0 are
 /// permitted (saturation to `+Inf` occurs on f16→f32 narrowing paths).
+///
+/// # Endian contract — **LE-encoded bytes**
+///
+/// The three `&[half::f16]` planes are the **LE-encoded byte layout**
+/// reinterpreted as `f16`, matching the FFmpeg `*LE` pixel-format suffix in
+/// the format name. On a little-endian host (every CI runner today) LE
+/// bytes _are_ host-native, so the slices are also host-native f16 slices;
+/// on a big-endian host the bytes have to be byte-swapped back to
+/// host-native before arithmetic. Downstream row kernels handle this
+/// byte-swap (or no-op on LE) under the hood — callers do **not** pre-swap.
+///
+/// Stride is in **f16 elements** (not bytes). Callers holding byte buffers
+/// from FFmpeg should cast via `bytemuck::cast_slice` and divide each
+/// `linesize[i]` by 2 before constructing.
 #[derive(Debug, Clone, Copy)]
 pub struct Gbrpf16Frame<'a> {
   g: &'a [half::f16],
@@ -475,6 +517,20 @@ impl<'a> Gbrpf16Frame<'a> {
 /// Four full-resolution [`half::f16`] planes in **G, B, R, A** order.
 /// Alpha is real per-pixel; nominal range `[0.0, 1.0]`. Stride is in
 /// `f16` elements.
+///
+/// # Endian contract — **LE-encoded bytes**
+///
+/// The four `&[half::f16]` planes are the **LE-encoded byte layout**
+/// reinterpreted as `f16`, matching the FFmpeg `*LE` pixel-format suffix in
+/// the format name. On a little-endian host (every CI runner today) LE
+/// bytes _are_ host-native, so the slices are also host-native f16 slices;
+/// on a big-endian host the bytes have to be byte-swapped back to
+/// host-native before arithmetic. Downstream row kernels handle this
+/// byte-swap (or no-op on LE) under the hood — callers do **not** pre-swap.
+///
+/// Stride is in **f16 elements** (not bytes). Callers holding byte buffers
+/// from FFmpeg should cast via `bytemuck::cast_slice` and divide each
+/// `linesize[i]` by 2 before constructing.
 #[derive(Debug, Clone, Copy)]
 pub struct Gbrapf16Frame<'a> {
   g: &'a [half::f16],
