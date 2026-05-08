@@ -1041,6 +1041,25 @@ pub(crate) unsafe fn ya8_to_hsv_row(
 
 // ---- Ya16 ------------------------------------------------------------------
 
+/// Host-endian gate for Ya16 SIMD bodies.
+///
+/// The AVX-512 Ya16 SIMD bodies use `_mm512_loadu_si512` + fixed shuffle masks
+/// that gather the **host-native** high byte of each Ya16 word. They are only
+/// correct when the encoded byte order matches the host. The full truth table
+/// (mirrors PR #82 `9c7d533` dispatcher routing fix):
+///
+/// | data BE | host BE | `BE != HOST_NATIVE_BE` | path   | correct via       |
+/// |---------|---------|------------------------|--------|-------------------|
+/// | false   | false   | false                  | SIMD   | host-native LE    |
+/// | false   | true    | true                   | scalar | `from_le`         |
+/// | true    | false   | true                   | scalar | `from_be`         |
+/// | true    | true    | false                  | SIMD   | host-native BE    |
+///
+/// The narrower `if BE { scalar }` gate from `7cb64c6` only covered rows 1+3
+/// (LE host); the LE-source-on-BE-host quadrant would still run the SIMD body
+/// and corrupt Y/A. This constant + comparison covers all 4 quadrants.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 /// AVX-512 `ya16_to_rgb_row`: deinterleave [Y,A] u16, Y `>> 8` → u8, broadcast.
 ///
 /// # Safety
@@ -1051,7 +1070,8 @@ pub(crate) unsafe fn ya16_to_rgb_row<const BE: bool>(packed: &[u16], out: &mut [
   use crate::row::scalar::ya16 as scalar;
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width * 3);
-  if BE {
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → SIMD host-native shuffle wrong; fall through.
     return scalar::ya16_to_rgb_row::<BE>(packed, out, width);
   }
   let mut x = 0usize;
@@ -1098,7 +1118,8 @@ pub(crate) unsafe fn ya16_to_rgba_row<const BE: bool>(
   use crate::row::scalar::ya16 as scalar;
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width * 4);
-  if BE {
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → SIMD host-native shuffle wrong; fall through.
     return scalar::ya16_to_rgba_row::<BE>(packed, out, width);
   }
   let mut x = 0usize;
@@ -1189,7 +1210,8 @@ pub(crate) unsafe fn ya16_to_luma_row<const BE: bool>(
   use crate::row::scalar::ya16 as scalar;
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width);
-  if BE {
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → SIMD host-native shuffle wrong; fall through.
     return scalar::ya16_to_luma_row::<BE>(packed, out, width);
   }
   let mut x = 0usize;
@@ -1244,7 +1266,8 @@ pub(crate) unsafe fn ya16_to_hsv_row<const BE: bool>(
 ) {
   use crate::row::scalar::ya16 as scalar;
   debug_assert!(packed.len() >= width * 2);
-  if BE {
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → SIMD host-native shuffle wrong; fall through.
     return scalar::ya16_to_hsv_row::<BE>(packed, h_out, s_out, v_out, width);
   }
   let mut x = 0usize;

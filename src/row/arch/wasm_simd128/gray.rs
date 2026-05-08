@@ -877,6 +877,28 @@ pub(crate) unsafe fn ya8_to_hsv_row(
 
 // ---- Ya16 -------------------------------------------------------------------
 
+/// Host-endian gate for Ya16 SIMD bodies (`luma_row`, `luma_u16_row`, `hsv_row`).
+///
+/// The wasm-simd128 Ya16 SIMD bodies use `v128_load` + fixed swizzle masks
+/// (`0,1,4,5,8,9,12,13,...`) plus `u16x8_shr` that gather the **host-native**
+/// high byte of each Ya16 word. They are only correct when the encoded byte
+/// order matches the host. The full truth table (mirrors PR #82 `9c7d533`
+/// dispatcher routing fix):
+///
+/// | data BE | host BE | `BE != HOST_NATIVE_BE` | path   | correct via       |
+/// |---------|---------|------------------------|--------|-------------------|
+/// | false   | false   | false                  | SIMD   | host-native LE    |
+/// | false   | true    | true                   | scalar | `from_le`         |
+/// | true    | false   | true                   | scalar | `from_be`         |
+/// | true    | true    | false                  | SIMD   | host-native BE    |
+///
+/// The narrower `if BE { scalar }` gate from `7cb64c6` only covered rows 1+3
+/// (LE host); the LE-source-on-BE-host quadrant would still run the SIMD body
+/// and corrupt Y/V. The pure-delegate entries (`rgb_row`, `rgba_row`,
+/// `rgb_u16_row`, `rgba_u16_row`) don't need the gate because they call into
+/// scalar directly.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 /// wasm-simd128 `ya16_to_rgb_row`: delegates to scalar.
 ///
 /// # Safety
@@ -954,7 +976,8 @@ pub(crate) unsafe fn ya16_to_luma_row<const BE: bool>(
 ) {
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width);
-  if BE {
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → SIMD host-native swizzle wrong; fall through.
     return ya16::ya16_to_luma_row::<BE>(packed, out, width);
   }
   // Shuffle mask: gather words at indices 0,2,4,6 (byte offsets 0-1,4-5,8-9,12-13)
@@ -1006,7 +1029,8 @@ pub(crate) unsafe fn ya16_to_luma_u16_row<const BE: bool>(
 ) {
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width);
-  if BE {
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → SIMD host-native swizzle wrong; fall through.
     return ya16::ya16_to_luma_u16_row::<BE>(packed, out, width);
   }
   let shuf_lo = i8x16(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
@@ -1047,7 +1071,8 @@ pub(crate) unsafe fn ya16_to_hsv_row<const BE: bool>(
   width: usize,
 ) {
   debug_assert!(packed.len() >= width * 2);
-  if BE {
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → SIMD host-native swizzle wrong; fall through.
     return ya16::ya16_to_hsv_row::<BE>(packed, h_out, s_out, v_out, width);
   }
   let shuf_lo = i8x16(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
