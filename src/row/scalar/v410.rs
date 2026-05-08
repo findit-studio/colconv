@@ -209,12 +209,24 @@ mod tests {
 
   #[test]
   fn v410_be_roundtrip_matches_byte_swapped_le() {
-    // Build a LE pixel, byte-swap it to simulate BE wire format, then
-    // verify BE=true kernel produces the same RGB as BE=false on LE input.
-    let le_word = pack_v410(200, 500, 800);
-    let be_word = le_word.swap_bytes();
-    let le_buf = vec![le_word];
-    let be_buf = vec![be_word];
+    // Construct LE/BE buffers from raw bytes via `to_le_bytes` / `to_be_bytes`
+    // so semantics are host-independent: on every host, `le` carries the
+    // intended value as LE-encoded bytes and `be` carries the same value as
+    // BE-encoded bytes. Both kernels should therefore decode to the same
+    // intended host-native value (and produce identical RGB output) on both
+    // LE and BE hosts. The earlier `swap_bytes` pattern only validated this
+    // on LE hosts and degenerated to equal-but-wrong on BE hosts.
+    let intended = pack_v410(200, 500, 800);
+    let le_bytes: std::vec::Vec<u8> = intended.to_le_bytes().to_vec();
+    let be_bytes: std::vec::Vec<u8> = intended.to_be_bytes().to_vec();
+    let le_buf: std::vec::Vec<u32> = le_bytes
+      .chunks_exact(4)
+      .map(|b| u32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
+      .collect();
+    let be_buf: std::vec::Vec<u32> = be_bytes
+      .chunks_exact(4)
+      .map(|b| u32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
+      .collect();
     let mut out_le = vec![0u8; 3];
     let mut out_be = vec![0u8; 3];
     v410_to_rgb_or_rgba_row::<false, false>(&le_buf, &mut out_le, 1, ColorMatrix::Bt709, false);

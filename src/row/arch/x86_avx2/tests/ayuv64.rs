@@ -225,9 +225,22 @@ fn avx2_ayuv64_be_le_simd_parity() {
   if !std::arch::is_x86_feature_detected!("avx2") {
     return;
   }
+  // Construct LE/BE buffers from raw bytes via `to_le_bytes` / `to_be_bytes`
+  // so semantics are host-independent. The earlier `swap_bytes` pattern only
+  // validated this on LE hosts (on BE hosts both buffers degenerate to
+  // equal-but-wrong values and the test passed vacuously).
   for w in [7usize, 8, 17, 33] {
-    let le = pseudo_random_ayuv64(w, 0xBEEF);
-    let be: std::vec::Vec<u16> = le.iter().map(|x| x.swap_bytes()).collect();
+    let intended = pseudo_random_ayuv64(w, 0xBEEF);
+    let le_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let be_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_be_bytes()).collect();
+    let le: std::vec::Vec<u16> = le_bytes
+      .chunks_exact(2)
+      .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+      .collect();
+    let be: std::vec::Vec<u16> = be_bytes
+      .chunks_exact(2)
+      .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+      .collect();
 
     {
       let mut out_le = std::vec![0u8; w * 3];

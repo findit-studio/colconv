@@ -240,12 +240,24 @@ mod tests {
 
   #[test]
   fn xv36_be_roundtrip_matches_byte_swapped_le() {
-    // Build LE pixels, byte-swap each u16 to simulate BE wire format,
-    // then verify BE=true kernel produces the same RGB as BE=false on LE.
-    let p_le = pack_xv36(1024, 2048, 512, 0);
-    let p_be: [u16; 4] = p_le.map(|v| v.swap_bytes());
-    let le_buf: Vec<u16> = p_le.into_iter().collect();
-    let be_buf: Vec<u16> = p_be.into_iter().collect();
+    // Construct LE/BE buffers from raw bytes via `to_le_bytes` / `to_be_bytes`
+    // so semantics are host-independent: on every host, `le` carries the
+    // intended values as LE-encoded bytes and `be` carries the same values as
+    // BE-encoded bytes. Both kernels should therefore decode to the same
+    // intended host-native values (and produce identical RGB output) on both
+    // LE and BE hosts. The earlier `swap_bytes` pattern only validated this
+    // on LE hosts and degenerated to equal-but-wrong on BE hosts.
+    let intended = pack_xv36(1024, 2048, 512, 0);
+    let le_bytes: Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let be_bytes: Vec<u8> = intended.iter().flat_map(|v| v.to_be_bytes()).collect();
+    let le_buf: Vec<u16> = le_bytes
+      .chunks_exact(2)
+      .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+      .collect();
+    let be_buf: Vec<u16> = be_bytes
+      .chunks_exact(2)
+      .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+      .collect();
     let mut out_le = vec![0u8; 3];
     let mut out_be = vec![0u8; 3];
     xv36_to_rgb_or_rgba_row::<false, false>(&le_buf, &mut out_le, 1, ColorMatrix::Bt709, false);

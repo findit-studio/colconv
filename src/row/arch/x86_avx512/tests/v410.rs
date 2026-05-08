@@ -261,9 +261,22 @@ fn avx512_v410_be_le_simd_parity() {
   {
     return;
   }
+  // Construct LE/BE buffers from raw bytes via `to_le_bytes` / `to_be_bytes`
+  // so semantics are host-independent. The earlier `swap_bytes` pattern only
+  // validated this on LE hosts (on BE hosts both buffers degenerate to
+  // equal-but-wrong values and the test passed vacuously).
   for w in [15usize, 16, 33, 65] {
-    let le = pseudo_random_v410_words(w, 0xBEEF);
-    let be: std::vec::Vec<u32> = le.iter().map(|x| x.swap_bytes()).collect();
+    let intended = pseudo_random_v410_words(w, 0xBEEF);
+    let le_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let be_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_be_bytes()).collect();
+    let le: std::vec::Vec<u32> = le_bytes
+      .chunks_exact(4)
+      .map(|b| u32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
+      .collect();
+    let be: std::vec::Vec<u32> = be_bytes
+      .chunks_exact(4)
+      .map(|b| u32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
+      .collect();
 
     for (alpha, bpp) in [(false, 3usize), (true, 4)] {
       let mut out_le = std::vec![0u8; w * bpp];

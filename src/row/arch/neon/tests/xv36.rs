@@ -196,9 +196,22 @@ fn neon_xv36_lane_order_per_pixel_y_and_u() {
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_xv36_be_le_simd_parity() {
+  // Construct LE/BE buffers from raw bytes via `to_le_bytes` / `to_be_bytes`
+  // so semantics are host-independent. The earlier `swap_bytes` pattern only
+  // validated this on LE hosts (on BE hosts both buffers degenerate to
+  // equal-but-wrong values and the test passed vacuously).
   for w in [7usize, 8, 17, 33] {
-    let le = pseudo_random_xv36(w, 0xBEEF);
-    let be: std::vec::Vec<u16> = le.iter().map(|x| x.swap_bytes()).collect();
+    let intended = pseudo_random_xv36(w, 0xBEEF);
+    let le_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let be_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_be_bytes()).collect();
+    let le: std::vec::Vec<u16> = le_bytes
+      .chunks_exact(2)
+      .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+      .collect();
+    let be: std::vec::Vec<u16> = be_bytes
+      .chunks_exact(2)
+      .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+      .collect();
 
     // u8 RGB / RGBA
     for (alpha, bpp) in [(false, 3usize), (true, 4)] {
