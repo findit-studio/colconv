@@ -1024,10 +1024,17 @@ fn gbrapf32_sinker_le_encoded_frame_decodes_correctly() {
 
 /// LE-encoded byte contract regression for [`Gbrpf16`].
 ///
-/// Forces `with_simd(false)` so the test is miri-safe and runs on BE-host
-/// miri CI. See the `gbrpf32_sinker_le_encoded_frame_decodes_correctly`
-/// docstring for the rationale.
+/// Forces `with_simd(false)` so the kernel runs purely scalar — no SIMD
+/// intrinsics — but the fixture builder calls `half::f16::from_f32`, which
+/// on aarch64 / x86 / x86_64 with `target_feature = "fp16"` (or F16C)
+/// expands to inline `asm!` unsupported by miri. Miri-gated on every
+/// target — BE-host miri (s390x / powerpc64) covers the byte-swap
+/// correctness via the f32 LE-encoded regressions in this module.
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
+)]
 fn gbrpf16_sinker_le_encoded_frame_decodes_correctly() {
   let w = 16usize;
   let h = 4usize;
@@ -1104,10 +1111,17 @@ fn gbrpf16_sinker_le_encoded_frame_decodes_correctly() {
 /// LE-encoded byte contract regression for [`Gbrapf16`] (lossless RGBA
 /// pass-through, including the α plane).
 ///
-/// Forces `with_simd(false)` so the test is miri-safe and runs on BE-host
-/// miri CI. See the `gbrpf32_sinker_le_encoded_frame_decodes_correctly`
-/// docstring for the rationale.
+/// Forces `with_simd(false)` so the kernel runs purely scalar — no SIMD
+/// intrinsics — but the fixture builder calls `half::f16::from_f32`, which
+/// on aarch64 / x86 / x86_64 with `target_feature = "fp16"` (or F16C)
+/// expands to inline `asm!` unsupported by miri. Miri-gated on every
+/// target — BE-host miri (s390x / powerpc64) covers the byte-swap
+/// correctness via the f32 LE-encoded regressions in this module.
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
+)]
 fn gbrapf16_sinker_le_encoded_frame_decodes_correctly() {
   let w = 16usize;
   let h = 4usize;
@@ -1178,10 +1192,17 @@ fn gbrapf16_sinker_le_encoded_frame_decodes_correctly() {
 /// `widen_f16_be_to_host_f32::<false>` would interpret byte-swapped bits as
 /// host-native f16 and decode to wildly wrong f32 values.
 ///
-/// Forces `with_simd(false)` so the test is miri-safe and runs on BE-host
-/// miri CI. See the `gbrpf32_sinker_le_encoded_frame_decodes_correctly`
-/// docstring for the rationale.
+/// Forces `with_simd(false)` so the kernel runs purely scalar — no SIMD
+/// intrinsics — but the fixture builder calls `half::f16::from_f32`, which
+/// on aarch64 / x86 / x86_64 with `target_feature = "fp16"` (or F16C)
+/// expands to inline `asm!` unsupported by miri. Miri-gated on every
+/// target — BE-host miri (s390x / powerpc64) covers the byte-swap
+/// correctness via the f32 LE-encoded regressions in this module.
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
+)]
 fn gbrpf16_sinker_widen_path_le_encoded_frame_decodes_correctly() {
   let w = 16usize;
   let h = 4usize;
@@ -1247,10 +1268,17 @@ fn gbrpf16_sinker_widen_path_le_encoded_frame_decodes_correctly() {
 /// (`with_rgba_f32`, including the α plane). Exercises the four-plane f16 →
 /// f32 widen step — same bit-normalise-first contract as the no-α variant.
 ///
-/// Forces `with_simd(false)` so the test is miri-safe and runs on BE-host
-/// miri CI. See the `gbrpf32_sinker_le_encoded_frame_decodes_correctly`
-/// docstring for the rationale.
+/// Forces `with_simd(false)` so the kernel runs purely scalar — no SIMD
+/// intrinsics — but the fixture builder calls `half::f16::from_f32`, which
+/// on aarch64 / x86 / x86_64 with `target_feature = "fp16"` (or F16C)
+/// expands to inline `asm!` unsupported by miri. Miri-gated on every
+/// target — BE-host miri (s390x / powerpc64) covers the byte-swap
+/// correctness via the f32 LE-encoded regressions in this module.
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
+)]
 fn gbrapf16_sinker_widen_path_le_encoded_frame_decodes_correctly() {
   let w = 16usize;
   let h = 4usize;
@@ -1310,10 +1338,17 @@ fn gbrapf16_sinker_widen_path_le_encoded_frame_decodes_correctly() {
 /// the kernel byte-swap a no-op on every host. Vacuous on LE; would catch
 /// the double-swap on BE.
 ///
-/// Forces `with_simd(false)` so the test is miri-safe and runs on BE-host
-/// miri CI. See the `gbrpf32_sinker_le_encoded_frame_decodes_correctly`
-/// docstring for the rationale.
+/// Forces `with_simd(false)` so the kernel runs purely scalar — no SIMD
+/// intrinsics — but the fixture builder calls `half::f16::from_f32`, which
+/// on aarch64 / x86 / x86_64 with `target_feature = "fp16"` (or F16C)
+/// expands to inline `asm!` unsupported by miri. Miri-gated on every
+/// target — BE-host miri (s390x / powerpc64) covers the byte-swap
+/// correctness via the f32 LE-encoded regressions in this module.
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
+)]
 fn gbrpf16_sinker_widen_path_u16_and_u8_le_encoded_frame_decodes_correctly() {
   let w = 16usize;
   let h = 4usize;
@@ -1595,10 +1630,17 @@ fn gbrapf32_strategy_a_plus_le_encoded_u16_alpha_decodes_correctly() {
 /// `widen_and_scatter` helper, so this test guards against the
 /// post-widen routing flag being wrong).
 ///
-/// Forces `with_simd(false)` so the test is miri-safe and runs on BE-host
-/// miri CI. See the `gbrpf32_sinker_le_encoded_frame_decodes_correctly`
-/// docstring for the rationale.
+/// Forces `with_simd(false)` so the kernel runs purely scalar — no SIMD
+/// intrinsics — but the fixture builder calls `half::f16::from_f32`, which
+/// on aarch64 / x86 / x86_64 with `target_feature = "fp16"` (or F16C)
+/// expands to inline `asm!` unsupported by miri. Miri-gated on every
+/// target — BE-host miri (s390x / powerpc64) covers the byte-swap
+/// correctness via the f32 LE-encoded regressions in this module.
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
+)]
 fn gbrapf16_strategy_a_plus_post_widen_alpha_decodes_correctly() {
   let w = 15usize;
   let h = 3usize;
