@@ -261,9 +261,9 @@ fn x2rgb10_to_rgb_neon_matches_scalar_widths() {
     let input = pseudo_random_rgba(w);
     let mut out_scalar = std::vec![0u8; w * 3];
     let mut out_neon = std::vec![0u8; w * 3];
-    scalar::x2rgb10_to_rgb_row(&input, &mut out_scalar, w);
+    scalar::x2rgb10_to_rgb_row::<false>(&input, &mut out_scalar, w);
     unsafe {
-      x2rgb10_to_rgb_row(&input, &mut out_neon, w);
+      x2rgb10_to_rgb_row::<false>(&input, &mut out_neon, w);
     }
     assert_eq!(out_scalar, out_neon, "width {w}");
   }
@@ -276,9 +276,9 @@ fn x2rgb10_to_rgba_neon_matches_scalar_widths() {
     let input = pseudo_random_rgba(w);
     let mut out_scalar = std::vec![0u8; w * 4];
     let mut out_neon = std::vec![0u8; w * 4];
-    scalar::x2rgb10_to_rgba_row(&input, &mut out_scalar, w);
+    scalar::x2rgb10_to_rgba_row::<false>(&input, &mut out_scalar, w);
     unsafe {
-      x2rgb10_to_rgba_row(&input, &mut out_neon, w);
+      x2rgb10_to_rgba_row::<false>(&input, &mut out_neon, w);
     }
     assert_eq!(out_scalar, out_neon, "width {w}");
   }
@@ -291,9 +291,9 @@ fn x2rgb10_to_rgb_u16_neon_matches_scalar_widths() {
     let input = pseudo_random_rgba(w);
     let mut out_scalar = std::vec![0u16; w * 3];
     let mut out_neon = std::vec![0u16; w * 3];
-    scalar::x2rgb10_to_rgb_u16_row(&input, &mut out_scalar, w);
+    scalar::x2rgb10_to_rgb_u16_row::<false>(&input, &mut out_scalar, w);
     unsafe {
-      x2rgb10_to_rgb_u16_row(&input, &mut out_neon, w);
+      x2rgb10_to_rgb_u16_row::<false>(&input, &mut out_neon, w);
     }
     assert_eq!(out_scalar, out_neon, "width {w}");
   }
@@ -306,9 +306,9 @@ fn x2bgr10_to_rgb_neon_matches_scalar_widths() {
     let input = pseudo_random_rgba(w);
     let mut out_scalar = std::vec![0u8; w * 3];
     let mut out_neon = std::vec![0u8; w * 3];
-    scalar::x2bgr10_to_rgb_row(&input, &mut out_scalar, w);
+    scalar::x2bgr10_to_rgb_row::<false>(&input, &mut out_scalar, w);
     unsafe {
-      x2bgr10_to_rgb_row(&input, &mut out_neon, w);
+      x2bgr10_to_rgb_row::<false>(&input, &mut out_neon, w);
     }
     assert_eq!(out_scalar, out_neon, "width {w}");
   }
@@ -321,9 +321,9 @@ fn x2bgr10_to_rgba_neon_matches_scalar_widths() {
     let input = pseudo_random_rgba(w);
     let mut out_scalar = std::vec![0u8; w * 4];
     let mut out_neon = std::vec![0u8; w * 4];
-    scalar::x2bgr10_to_rgba_row(&input, &mut out_scalar, w);
+    scalar::x2bgr10_to_rgba_row::<false>(&input, &mut out_scalar, w);
     unsafe {
-      x2bgr10_to_rgba_row(&input, &mut out_neon, w);
+      x2bgr10_to_rgba_row::<false>(&input, &mut out_neon, w);
     }
     assert_eq!(out_scalar, out_neon, "width {w}");
   }
@@ -336,10 +336,97 @@ fn x2bgr10_to_rgb_u16_neon_matches_scalar_widths() {
     let input = pseudo_random_rgba(w);
     let mut out_scalar = std::vec![0u16; w * 3];
     let mut out_neon = std::vec![0u16; w * 3];
-    scalar::x2bgr10_to_rgb_u16_row(&input, &mut out_scalar, w);
+    scalar::x2bgr10_to_rgb_u16_row::<false>(&input, &mut out_scalar, w);
     unsafe {
-      x2bgr10_to_rgb_u16_row(&input, &mut out_neon, w);
+      x2bgr10_to_rgb_u16_row::<false>(&input, &mut out_neon, w);
     }
     assert_eq!(out_scalar, out_neon, "width {w}");
   }
+}
+
+// ---- SIMD-level BE-vs-LE parity for X2RGB10 / X2BGR10 -------------------
+//
+// The X2 SIMD bodies are LE-only (`if !BE` gate falls through to scalar for
+// BE), but the parity test is still meaningful: `<false>` exercises the SIMD
+// body on LE bytes; `<true>` exercises the scalar reference on BE bytes
+// (which is where the host-independence of the byte-buffer construction
+// matters). Both must produce identical output. Width 33 ensures the SIMD
+// body executes (NEON does 16 px / iter).
+
+fn pseudo_random_x2_intended(width: usize, seed: u32) -> std::vec::Vec<u32> {
+  let mut state = seed;
+  (0..width)
+    .map(|_| {
+      state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+      state
+    })
+    .collect()
+}
+
+fn make_le_be_pair_x2(intended: &[u32]) -> (std::vec::Vec<u8>, std::vec::Vec<u8>) {
+  let le_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
+  let be_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_be_bytes()).collect();
+  (le_bytes, be_bytes)
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn neon_x2rgb10_be_le_simd_parity_width33() {
+  let intended = pseudo_random_x2_intended(33, 0xC0DE_BEEF);
+  let (le, be) = make_le_be_pair_x2(&intended);
+
+  let mut out_le = std::vec![0u8; 33 * 3];
+  let mut out_be = std::vec![0u8; 33 * 3];
+  unsafe {
+    x2rgb10_to_rgb_row::<false>(&le, &mut out_le, 33);
+    x2rgb10_to_rgb_row::<true>(&be, &mut out_be, 33);
+  }
+  assert_eq!(out_le, out_be, "x2rgb10→rgb SIMD BE/LE parity");
+
+  let mut out_le = std::vec![0u8; 33 * 4];
+  let mut out_be = std::vec![0u8; 33 * 4];
+  unsafe {
+    x2rgb10_to_rgba_row::<false>(&le, &mut out_le, 33);
+    x2rgb10_to_rgba_row::<true>(&be, &mut out_be, 33);
+  }
+  assert_eq!(out_le, out_be, "x2rgb10→rgba SIMD BE/LE parity");
+
+  let mut out_le = std::vec![0u16; 33 * 3];
+  let mut out_be = std::vec![0u16; 33 * 3];
+  unsafe {
+    x2rgb10_to_rgb_u16_row::<false>(&le, &mut out_le, 33);
+    x2rgb10_to_rgb_u16_row::<true>(&be, &mut out_be, 33);
+  }
+  assert_eq!(out_le, out_be, "x2rgb10→rgb_u16 SIMD BE/LE parity");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn neon_x2bgr10_be_le_simd_parity_width33() {
+  let intended = pseudo_random_x2_intended(33, 0xFEED_FACE);
+  let (le, be) = make_le_be_pair_x2(&intended);
+
+  let mut out_le = std::vec![0u8; 33 * 3];
+  let mut out_be = std::vec![0u8; 33 * 3];
+  unsafe {
+    x2bgr10_to_rgb_row::<false>(&le, &mut out_le, 33);
+    x2bgr10_to_rgb_row::<true>(&be, &mut out_be, 33);
+  }
+  assert_eq!(out_le, out_be, "x2bgr10→rgb SIMD BE/LE parity");
+
+  let mut out_le = std::vec![0u8; 33 * 4];
+  let mut out_be = std::vec![0u8; 33 * 4];
+  unsafe {
+    x2bgr10_to_rgba_row::<false>(&le, &mut out_le, 33);
+    x2bgr10_to_rgba_row::<true>(&be, &mut out_be, 33);
+  }
+  assert_eq!(out_le, out_be, "x2bgr10→rgba SIMD BE/LE parity");
+
+  let mut out_le = std::vec![0u16; 33 * 3];
+  let mut out_be = std::vec![0u16; 33 * 3];
+  unsafe {
+    x2bgr10_to_rgb_u16_row::<false>(&le, &mut out_le, 33);
+    x2bgr10_to_rgb_u16_row::<true>(&be, &mut out_be, 33);
+  }
+  assert_eq!(out_le, out_be, "x2bgr10→rgb_u16 SIMD BE/LE parity");
 }

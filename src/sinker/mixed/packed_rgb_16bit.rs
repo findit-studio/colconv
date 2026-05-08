@@ -35,12 +35,13 @@ use super::{
 use crate::{
   PixelSink,
   row::{
-    bgr48_to_rgb_row, bgr48_to_rgb_u16_row, bgr48_to_rgba_row, bgr48_to_rgba_u16_row,
-    bgra64_to_rgb_row, bgra64_to_rgb_u16_row, bgra64_to_rgba_row, bgra64_to_rgba_u16_row,
-    expand_rgb_to_rgba_row, expand_rgb_u16_to_rgba_u16_row, rgb_to_hsv_row, rgb_to_luma_row,
-    rgb_to_luma_u16_row, rgb48_to_rgb_row, rgb48_to_rgb_u16_row, rgb48_to_rgba_row,
-    rgb48_to_rgba_u16_row, rgba64_to_rgb_row, rgba64_to_rgb_u16_row, rgba64_to_rgba_row,
-    rgba64_to_rgba_u16_row,
+    bgr48_to_rgb_row_endian, bgr48_to_rgb_u16_row_endian, bgr48_to_rgba_row_endian,
+    bgr48_to_rgba_u16_row_endian, bgra64_to_rgb_row_endian, bgra64_to_rgb_u16_row_endian,
+    bgra64_to_rgba_row_endian, bgra64_to_rgba_u16_row_endian, expand_rgb_to_rgba_row,
+    expand_rgb_u16_to_rgba_u16_row, rgb_to_hsv_row, rgb_to_luma_row, rgb_to_luma_u16_row,
+    rgb48_to_rgb_row_endian, rgb48_to_rgb_u16_row_endian, rgb48_to_rgba_row_endian,
+    rgb48_to_rgba_u16_row_endian, rgba64_to_rgb_row_endian, rgba64_to_rgb_u16_row_endian,
+    rgba64_to_rgba_row_endian, rgba64_to_rgba_u16_row_endian,
   },
   yuv::{
     Bgr48, Bgr48Row, Bgr48Sink, Bgra64, Bgra64Row, Bgra64Sink, Rgb48, Rgb48Row, Rgb48Sink, Rgba64,
@@ -206,7 +207,7 @@ impl PixelSink for MixedSinker<'_, Rgb48> {
     // with_luma_u16, or with_hsv is attached.
     if need_u8_rgb {
       let rgb_row = rgb_row_buf_or_scratch(rgb.as_deref_mut(), rgb_scratch, ps, pe, w, h)?;
-      rgb48_to_rgb_row(in48, rgb_row, w, use_simd);
+      rgb48_to_rgb_row_endian::<false>(in48, rgb_row, w, use_simd);
 
       if let Some(luma_buf) = luma.as_deref_mut() {
         rgb_to_luma_row(
@@ -245,7 +246,7 @@ impl PixelSink for MixedSinker<'_, Rgb48> {
     // u8 RGBA — single-pass kernel, alpha forced to 0xFF.
     if let Some(buf) = rgba.as_deref_mut() {
       let rgba_row = rgba_plane_row_slice(buf, ps, pe, w, h)?;
-      rgb48_to_rgba_row(in48, rgba_row, w, use_simd);
+      rgb48_to_rgba_row_endian::<false>(in48, rgba_row, w, use_simd);
     }
 
     // u16 RGB — native passthrough.
@@ -257,13 +258,13 @@ impl PixelSink for MixedSinker<'_, Rgb48> {
           height: h,
           channels: 3,
         })?;
-      rgb48_to_rgb_u16_row(in48, &mut buf[ps * 3..end], w, use_simd);
+      rgb48_to_rgb_u16_row_endian::<false>(in48, &mut buf[ps * 3..end], w, use_simd);
     }
 
     // u16 RGBA — native passthrough, alpha forced to 0xFFFF.
     if let Some(buf) = rgba_u16.as_deref_mut() {
       let rgba_u16_row = rgba_u16_plane_row_slice(buf, ps, pe, w, h)?;
-      rgb48_to_rgba_u16_row(in48, rgba_u16_row, w, use_simd);
+      rgb48_to_rgba_u16_row_endian::<false>(in48, rgba_u16_row, w, use_simd);
     }
 
     Ok(())
@@ -426,7 +427,7 @@ impl PixelSink for MixedSinker<'_, Bgr48> {
 
     if need_u8_rgb {
       let rgb_row = rgb_row_buf_or_scratch(rgb.as_deref_mut(), rgb_scratch, ps, pe, w, h)?;
-      bgr48_to_rgb_row(in48, rgb_row, w, use_simd);
+      bgr48_to_rgb_row_endian::<false>(in48, rgb_row, w, use_simd);
 
       if let Some(luma_buf) = luma.as_deref_mut() {
         rgb_to_luma_row(
@@ -464,7 +465,7 @@ impl PixelSink for MixedSinker<'_, Bgr48> {
 
     if let Some(buf) = rgba.as_deref_mut() {
       let rgba_row = rgba_plane_row_slice(buf, ps, pe, w, h)?;
-      bgr48_to_rgba_row(in48, rgba_row, w, use_simd);
+      bgr48_to_rgba_row_endian::<false>(in48, rgba_row, w, use_simd);
     }
 
     if let Some(buf) = rgb_u16.as_deref_mut() {
@@ -475,12 +476,12 @@ impl PixelSink for MixedSinker<'_, Bgr48> {
           height: h,
           channels: 3,
         })?;
-      bgr48_to_rgb_u16_row(in48, &mut buf[ps * 3..end], w, use_simd);
+      bgr48_to_rgb_u16_row_endian::<false>(in48, &mut buf[ps * 3..end], w, use_simd);
     }
 
     if let Some(buf) = rgba_u16.as_deref_mut() {
       let rgba_u16_row = rgba_u16_plane_row_slice(buf, ps, pe, w, h)?;
-      bgr48_to_rgba_u16_row(in48, rgba_u16_row, w, use_simd);
+      bgr48_to_rgba_u16_row_endian::<false>(in48, rgba_u16_row, w, use_simd);
     }
 
     Ok(())
@@ -667,7 +668,7 @@ impl PixelSink for MixedSinker<'_, Rgba64> {
     if want_rgba && !need_u8_rgb && !want_rgb_u16 && !want_rgba_u16 {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, ps, pe, w, h)?;
-      rgba64_to_rgba_row(in64, rgba_row, w, use_simd);
+      rgba64_to_rgba_row_endian::<false>(in64, rgba_row, w, use_simd);
       return Ok(());
     }
 
@@ -675,7 +676,7 @@ impl PixelSink for MixedSinker<'_, Rgba64> {
     if want_rgba_u16 && !want_rgb_u16 && !need_u8_rgb && !want_rgba {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row = rgba_u16_plane_row_slice(rgba_u16_buf, ps, pe, w, h)?;
-      rgba64_to_rgba_u16_row(in64, rgba_u16_row, w, use_simd);
+      rgba64_to_rgba_u16_row_endian::<false>(in64, rgba_u16_row, w, use_simd);
       return Ok(());
     }
 
@@ -683,7 +684,7 @@ impl PixelSink for MixedSinker<'_, Rgba64> {
     // and Strategy A+ RGBA fan-out.
     if need_u8_rgb {
       let rgb_row = rgb_row_buf_or_scratch(rgb.as_deref_mut(), rgb_scratch, ps, pe, w, h)?;
-      rgba64_to_rgb_row(in64, rgb_row, w, use_simd);
+      rgba64_to_rgb_row_endian::<false>(in64, rgb_row, w, use_simd);
 
       if let Some(luma_buf) = luma.as_deref_mut() {
         rgb_to_luma_row(
@@ -739,7 +740,7 @@ impl PixelSink for MixedSinker<'_, Rgba64> {
     if want_rgba && !need_u8_rgb {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, ps, pe, w, h)?;
-      rgba64_to_rgba_row(in64, rgba_row, w, use_simd);
+      rgba64_to_rgba_row_endian::<false>(in64, rgba_row, w, use_simd);
     }
 
     // ===== u16 path =====
@@ -754,7 +755,7 @@ impl PixelSink for MixedSinker<'_, Rgba64> {
           channels: 3,
         })?;
       let rgb_u16_row = &mut rgb_u16_buf[ps * 3..end];
-      rgba64_to_rgb_u16_row(in64, rgb_u16_row, w, use_simd);
+      rgba64_to_rgb_u16_row_endian::<false>(in64, rgb_u16_row, w, use_simd);
 
       // Strategy A+ u16: RGBA u16 also attached — derive from the
       // just-computed u16 RGB row (writes α=0xFFFF), then overwrite α
@@ -778,7 +779,7 @@ impl PixelSink for MixedSinker<'_, Rgba64> {
     if want_rgba_u16 && !want_rgb_u16 {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row = rgba_u16_plane_row_slice(rgba_u16_buf, ps, pe, w, h)?;
-      rgba64_to_rgba_u16_row(in64, rgba_u16_row, w, use_simd);
+      rgba64_to_rgba_u16_row_endian::<false>(in64, rgba_u16_row, w, use_simd);
     }
 
     Ok(())
@@ -950,7 +951,7 @@ impl PixelSink for MixedSinker<'_, Bgra64> {
     if want_rgba && !need_u8_rgb && !want_rgb_u16 && !want_rgba_u16 {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, ps, pe, w, h)?;
-      bgra64_to_rgba_row(in64, rgba_row, w, use_simd);
+      bgra64_to_rgba_row_endian::<false>(in64, rgba_row, w, use_simd);
       return Ok(());
     }
 
@@ -958,14 +959,14 @@ impl PixelSink for MixedSinker<'_, Bgra64> {
     if want_rgba_u16 && !want_rgb_u16 && !need_u8_rgb && !want_rgba {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row = rgba_u16_plane_row_slice(rgba_u16_buf, ps, pe, w, h)?;
-      bgra64_to_rgba_u16_row(in64, rgba_u16_row, w, use_simd);
+      bgra64_to_rgba_u16_row_endian::<false>(in64, rgba_u16_row, w, use_simd);
       return Ok(());
     }
 
     // u8 RGB staging path.
     if need_u8_rgb {
       let rgb_row = rgb_row_buf_or_scratch(rgb.as_deref_mut(), rgb_scratch, ps, pe, w, h)?;
-      bgra64_to_rgb_row(in64, rgb_row, w, use_simd);
+      bgra64_to_rgb_row_endian::<false>(in64, rgb_row, w, use_simd);
 
       if let Some(luma_buf) = luma.as_deref_mut() {
         rgb_to_luma_row(
@@ -1017,7 +1018,7 @@ impl PixelSink for MixedSinker<'_, Bgra64> {
     if want_rgba && !need_u8_rgb {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, ps, pe, w, h)?;
-      bgra64_to_rgba_row(in64, rgba_row, w, use_simd);
+      bgra64_to_rgba_row_endian::<false>(in64, rgba_row, w, use_simd);
     }
 
     // u16 RGB path.
@@ -1031,7 +1032,7 @@ impl PixelSink for MixedSinker<'_, Bgra64> {
           channels: 3,
         })?;
       let rgb_u16_row = &mut rgb_u16_buf[ps * 3..end];
-      bgra64_to_rgb_u16_row(in64, rgb_u16_row, w, use_simd);
+      bgra64_to_rgb_u16_row_endian::<false>(in64, rgb_u16_row, w, use_simd);
 
       // Strategy A+ u16: RGBA u16 also attached.
       if want_rgba_u16 {
@@ -1052,7 +1053,7 @@ impl PixelSink for MixedSinker<'_, Bgra64> {
     if want_rgba_u16 && !want_rgb_u16 {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row = rgba_u16_plane_row_slice(rgba_u16_buf, ps, pe, w, h)?;
-      bgra64_to_rgba_u16_row(in64, rgba_u16_row, w, use_simd);
+      bgra64_to_rgba_u16_row_endian::<false>(in64, rgba_u16_row, w, use_simd);
     }
 
     Ok(())

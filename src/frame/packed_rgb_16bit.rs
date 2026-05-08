@@ -4,13 +4,21 @@
 //! - `AV_PIX_FMT_RGBA64LE` → [`Rgba64Frame`] (R, G, B, A; stride in u16 elements ≥ 4 × width)
 //! - `AV_PIX_FMT_BGRA64LE` → [`Bgra64Frame`] (B, G, R, A; stride in u16 elements ≥ 4 × width)
 //!
-//! Stride is in **u16 elements** (not bytes). Plane slice is `&[u16]`.
-//! Callers with a raw FFmpeg byte buffer should cast via `bytemuck::cast_slice`
-//! (which checks alignment at runtime) and divide `linesize[0]` by 2. Direct
-//! pointer casts to `&[u16]` are undefined behaviour if the byte buffer is not
-//! 2-byte aligned, and produce wrong values on big-endian hosts — all FFmpeg
-//! `*LE` formats store samples little-endian, so big-endian targets would also
-//! need per-sample `u16::from_le` conversion.
+//! # Endian contract — **LE-encoded bytes**
+//!
+//! The `&[u16]` plane is the **LE-encoded byte layout** reinterpreted as
+//! `u16`, matching the FFmpeg `*LE` pixel-format suffix in the format name.
+//! On a little-endian host (every CI runner today) LE bytes _are_ host-native,
+//! so `&[u16]` is also a host-native u16 slice; on a big-endian host the bytes
+//! have to be byte-swapped back to host-native before arithmetic. Downstream
+//! row kernels handle this byte-swap (or no-op on LE) under the hood —
+//! callers do **not** pre-swap.
+//!
+//! Stride is in **u16 elements** (not bytes). Callers holding a raw FFmpeg
+//! byte buffer should cast via `bytemuck::cast_slice` (which checks alignment
+//! at runtime) and divide `linesize[0]` by 2 before constructing. Direct
+//! pointer casts to `&[u16]` are undefined behaviour if the byte buffer is
+//! not 2-byte aligned.
 
 use derive_more::IsVariant;
 use thiserror::Error;
@@ -62,10 +70,19 @@ pub enum Rgb48FrameError {
 }
 
 /// A validated packed **RGB48** frame (`AV_PIX_FMT_RGB48LE`) — three `u16`
-/// samples per pixel in `R, G, B` order. Each `u16` is a native little-endian
-/// sample; the caller is responsible for casting the raw FFmpeg byte buffer.
+/// samples per pixel in `R, G, B` order.
 ///
-/// `stride` is in **u16 elements** (≥ `3 * width`).
+/// The `&[u16]` plane is the **LE-encoded byte layout** reinterpreted as
+/// `u16`, matching the FFmpeg `*LE` pixel-format suffix in the format name.
+/// On a little-endian host (every CI runner today) LE bytes _are_ host-native,
+/// so `&[u16]` is also a host-native u16 slice; on a big-endian host the
+/// bytes have to be byte-swapped back to host-native before arithmetic.
+/// Downstream row kernels handle this byte-swap (or no-op on LE) under the
+/// hood — callers do **not** pre-swap.
+///
+/// `stride` is in **u16 elements** (≥ `3 * width`). Callers holding byte
+/// buffers from FFmpeg should cast via `bytemuck::cast_slice` and divide
+/// `linesize[0]` by 2 before constructing.
 #[derive(Debug, Clone, Copy)]
 pub struct Rgb48Frame<'a> {
   rgb48: &'a [u16],
@@ -197,7 +214,17 @@ pub enum Bgr48FrameError {
 /// samples per pixel in `B, G, R` order. Channel order is reversed relative
 /// to [`Rgb48Frame`]; stride convention and element type are identical.
 ///
-/// `stride` is in **u16 elements** (≥ `3 * width`).
+/// The `&[u16]` plane is the **LE-encoded byte layout** reinterpreted as
+/// `u16`, matching the FFmpeg `*LE` pixel-format suffix in the format name.
+/// On a little-endian host (every CI runner today) LE bytes _are_ host-native,
+/// so `&[u16]` is also a host-native u16 slice; on a big-endian host the
+/// bytes have to be byte-swapped back to host-native before arithmetic.
+/// Downstream row kernels handle this byte-swap (or no-op on LE) under the
+/// hood — callers do **not** pre-swap.
+///
+/// `stride` is in **u16 elements** (≥ `3 * width`). Callers holding byte
+/// buffers from FFmpeg should cast via `bytemuck::cast_slice` and divide
+/// `linesize[0]` by 2 before constructing.
 #[derive(Debug, Clone, Copy)]
 pub struct Bgr48Frame<'a> {
   bgr48: &'a [u16],
@@ -329,7 +356,17 @@ pub enum Rgba64FrameError {
 /// samples per pixel in `R, G, B, A` order. The alpha channel is real
 /// (not padding) and is passed through by `with_rgba` / `with_rgba_u16`.
 ///
-/// `stride` is in **u16 elements** (≥ `4 * width`).
+/// The `&[u16]` plane is the **LE-encoded byte layout** reinterpreted as
+/// `u16`, matching the FFmpeg `*LE` pixel-format suffix in the format name.
+/// On a little-endian host (every CI runner today) LE bytes _are_ host-native,
+/// so `&[u16]` is also a host-native u16 slice; on a big-endian host the
+/// bytes have to be byte-swapped back to host-native before arithmetic.
+/// Downstream row kernels handle this byte-swap (or no-op on LE) under the
+/// hood — callers do **not** pre-swap.
+///
+/// `stride` is in **u16 elements** (≥ `4 * width`). Callers holding byte
+/// buffers from FFmpeg should cast via `bytemuck::cast_slice` and divide
+/// `linesize[0]` by 2 before constructing.
 #[derive(Debug, Clone, Copy)]
 pub struct Rgba64Frame<'a> {
   rgba64: &'a [u16],
@@ -462,7 +499,17 @@ pub enum Bgra64FrameError {
 /// first three elements relative to [`Rgba64Frame`]; alpha at position 3 is
 /// real and is passed through by `with_rgba` / `with_rgba_u16`.
 ///
-/// `stride` is in **u16 elements** (≥ `4 * width`).
+/// The `&[u16]` plane is the **LE-encoded byte layout** reinterpreted as
+/// `u16`, matching the FFmpeg `*LE` pixel-format suffix in the format name.
+/// On a little-endian host (every CI runner today) LE bytes _are_ host-native,
+/// so `&[u16]` is also a host-native u16 slice; on a big-endian host the
+/// bytes have to be byte-swapped back to host-native before arithmetic.
+/// Downstream row kernels handle this byte-swap (or no-op on LE) under the
+/// hood — callers do **not** pre-swap.
+///
+/// `stride` is in **u16 elements** (≥ `4 * width`). Callers holding byte
+/// buffers from FFmpeg should cast via `bytemuck::cast_slice` and divide
+/// `linesize[0]` by 2 before constructing.
 #[derive(Debug, Clone, Copy)]
 pub struct Bgra64Frame<'a> {
   bgra64: &'a [u16],

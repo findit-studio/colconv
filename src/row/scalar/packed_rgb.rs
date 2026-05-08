@@ -306,12 +306,17 @@ pub(crate) fn bgrx_to_rgba_row(bgrx: &[u8], rgba_out: &mut [u8], width: usize) {
 /// Panics (any build profile) if `x2rgb10.len() < 4 * width` or
 /// `rgb_out.len() < 3 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn x2rgb10_to_rgb_row(x2rgb10: &[u8], rgb_out: &mut [u8], width: usize) {
+pub(crate) fn x2rgb10_to_rgb_row<const BE: bool>(x2rgb10: &[u8], rgb_out: &mut [u8], width: usize) {
   debug_assert!(x2rgb10.len() >= width * 4, "x2rgb10 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
   for x in 0..width {
     let i = x * 4;
-    let pix = u32::from_le_bytes([x2rgb10[i], x2rgb10[i + 1], x2rgb10[i + 2], x2rgb10[i + 3]]);
+    let bytes = [x2rgb10[i], x2rgb10[i + 1], x2rgb10[i + 2], x2rgb10[i + 3]];
+    let pix = if BE {
+      u32::from_be_bytes(bytes)
+    } else {
+      u32::from_le_bytes(bytes)
+    };
     let r10 = (pix >> 20) & 0x3FF;
     let g10 = (pix >> 10) & 0x3FF;
     let b10 = pix & 0x3FF;
@@ -330,12 +335,21 @@ pub(crate) fn x2rgb10_to_rgb_row(x2rgb10: &[u8], rgb_out: &mut [u8], width: usiz
 /// Panics (any build profile) if `x2rgb10.len() < 4 * width` or
 /// `rgba_out.len() < 4 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn x2rgb10_to_rgba_row(x2rgb10: &[u8], rgba_out: &mut [u8], width: usize) {
+pub(crate) fn x2rgb10_to_rgba_row<const BE: bool>(
+  x2rgb10: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(x2rgb10.len() >= width * 4, "x2rgb10 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
   for x in 0..width {
     let i = x * 4;
-    let pix = u32::from_le_bytes([x2rgb10[i], x2rgb10[i + 1], x2rgb10[i + 2], x2rgb10[i + 3]]);
+    let bytes = [x2rgb10[i], x2rgb10[i + 1], x2rgb10[i + 2], x2rgb10[i + 3]];
+    let pix = if BE {
+      u32::from_be_bytes(bytes)
+    } else {
+      u32::from_le_bytes(bytes)
+    };
     let r10 = (pix >> 20) & 0x3FF;
     let g10 = (pix >> 10) & 0x3FF;
     let b10 = pix & 0x3FF;
@@ -355,12 +369,21 @@ pub(crate) fn x2rgb10_to_rgba_row(x2rgb10: &[u8], rgba_out: &mut [u8], width: us
 /// Panics (any build profile) if `x2rgb10.len() < 4 * width` or
 /// `rgb_out.len() < 3 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn x2rgb10_to_rgb_u16_row(x2rgb10: &[u8], rgb_out: &mut [u16], width: usize) {
+pub(crate) fn x2rgb10_to_rgb_u16_row<const BE: bool>(
+  x2rgb10: &[u8],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(x2rgb10.len() >= width * 4, "x2rgb10 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
   for x in 0..width {
     let i = x * 4;
-    let pix = u32::from_le_bytes([x2rgb10[i], x2rgb10[i + 1], x2rgb10[i + 2], x2rgb10[i + 3]]);
+    let bytes = [x2rgb10[i], x2rgb10[i + 1], x2rgb10[i + 2], x2rgb10[i + 3]];
+    let pix = if BE {
+      u32::from_be_bytes(bytes)
+    } else {
+      u32::from_le_bytes(bytes)
+    };
     let dst = x * 3;
     rgb_out[dst] = ((pix >> 20) & 0x3FF) as u16;
     rgb_out[dst + 1] = ((pix >> 10) & 0x3FF) as u16;
@@ -377,12 +400,17 @@ pub(crate) fn x2rgb10_to_rgb_u16_row(x2rgb10: &[u8], rgb_out: &mut [u16], width:
 /// Panics (any build profile) if `x2bgr10.len() < 4 * width` or
 /// `rgb_out.len() < 3 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn x2bgr10_to_rgb_row(x2bgr10: &[u8], rgb_out: &mut [u8], width: usize) {
+pub(crate) fn x2bgr10_to_rgb_row<const BE: bool>(x2bgr10: &[u8], rgb_out: &mut [u8], width: usize) {
   debug_assert!(x2bgr10.len() >= width * 4, "x2bgr10 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
   for x in 0..width {
     let i = x * 4;
-    let pix = u32::from_le_bytes([x2bgr10[i], x2bgr10[i + 1], x2bgr10[i + 2], x2bgr10[i + 3]]);
+    let bytes = [x2bgr10[i], x2bgr10[i + 1], x2bgr10[i + 2], x2bgr10[i + 3]];
+    let pix = if BE {
+      u32::from_be_bytes(bytes)
+    } else {
+      u32::from_le_bytes(bytes)
+    };
     let r10 = pix & 0x3FF;
     let g10 = (pix >> 10) & 0x3FF;
     let b10 = (pix >> 20) & 0x3FF;
@@ -400,12 +428,21 @@ pub(crate) fn x2bgr10_to_rgb_row(x2bgr10: &[u8], rgb_out: &mut [u8], width: usiz
 /// Panics (any build profile) if `x2bgr10.len() < 4 * width` or
 /// `rgba_out.len() < 4 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn x2bgr10_to_rgba_row(x2bgr10: &[u8], rgba_out: &mut [u8], width: usize) {
+pub(crate) fn x2bgr10_to_rgba_row<const BE: bool>(
+  x2bgr10: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(x2bgr10.len() >= width * 4, "x2bgr10 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
   for x in 0..width {
     let i = x * 4;
-    let pix = u32::from_le_bytes([x2bgr10[i], x2bgr10[i + 1], x2bgr10[i + 2], x2bgr10[i + 3]]);
+    let bytes = [x2bgr10[i], x2bgr10[i + 1], x2bgr10[i + 2], x2bgr10[i + 3]];
+    let pix = if BE {
+      u32::from_be_bytes(bytes)
+    } else {
+      u32::from_le_bytes(bytes)
+    };
     let r10 = pix & 0x3FF;
     let g10 = (pix >> 10) & 0x3FF;
     let b10 = (pix >> 20) & 0x3FF;
@@ -423,12 +460,21 @@ pub(crate) fn x2bgr10_to_rgba_row(x2bgr10: &[u8], rgba_out: &mut [u8], width: us
 /// Panics (any build profile) if `x2bgr10.len() < 4 * width` or
 /// `rgb_out.len() < 3 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn x2bgr10_to_rgb_u16_row(x2bgr10: &[u8], rgb_out: &mut [u16], width: usize) {
+pub(crate) fn x2bgr10_to_rgb_u16_row<const BE: bool>(
+  x2bgr10: &[u8],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(x2bgr10.len() >= width * 4, "x2bgr10 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
   for x in 0..width {
     let i = x * 4;
-    let pix = u32::from_le_bytes([x2bgr10[i], x2bgr10[i + 1], x2bgr10[i + 2], x2bgr10[i + 3]]);
+    let bytes = [x2bgr10[i], x2bgr10[i + 1], x2bgr10[i + 2], x2bgr10[i + 3]];
+    let pix = if BE {
+      u32::from_be_bytes(bytes)
+    } else {
+      u32::from_le_bytes(bytes)
+    };
     let dst = x * 3;
     rgb_out[dst] = (pix & 0x3FF) as u16;
     rgb_out[dst + 1] = ((pix >> 10) & 0x3FF) as u16;

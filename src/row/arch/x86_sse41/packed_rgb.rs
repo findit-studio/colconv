@@ -426,18 +426,24 @@ pub(crate) unsafe fn bgrx_to_rgba_row(bgrx: &[u8], rgba_out: &mut [u8], width: u
 /// 3. `x2rgb10` / `rgb_out` must not alias.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn x2rgb10_to_rgb_row(x2rgb10: &[u8], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn x2rgb10_to_rgb_row<const BE: bool>(
+  x2rgb10: &[u8],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(x2rgb10.len() >= width * 4, "x2rgb10 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
   unsafe {
     let mut x = 0usize;
-    while x + 16 <= width {
-      x2rgb10_to_rgb_16_pixels(x2rgb10.as_ptr().add(x * 4), rgb_out.as_mut_ptr().add(x * 3));
-      x += 16;
+    if !BE {
+      while x + 16 <= width {
+        x2rgb10_to_rgb_16_pixels(x2rgb10.as_ptr().add(x * 4), rgb_out.as_mut_ptr().add(x * 3));
+        x += 16;
+      }
     }
     if x < width {
-      scalar::x2rgb10_to_rgb_row(
+      scalar::x2rgb10_to_rgb_row::<BE>(
         &x2rgb10[x * 4..width * 4],
         &mut rgb_out[x * 3..width * 3],
         width - x,
@@ -449,21 +455,27 @@ pub(crate) unsafe fn x2rgb10_to_rgb_row(x2rgb10: &[u8], rgb_out: &mut [u8], widt
 /// SSE4.1 X2RGB10→RGBA. 16 pixels per iteration.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn x2rgb10_to_rgba_row(x2rgb10: &[u8], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn x2rgb10_to_rgba_row<const BE: bool>(
+  x2rgb10: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(x2rgb10.len() >= width * 4, "x2rgb10 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
   unsafe {
     let mut x = 0usize;
-    while x + 16 <= width {
-      x2rgb10_to_rgba_16_pixels(
-        x2rgb10.as_ptr().add(x * 4),
-        rgba_out.as_mut_ptr().add(x * 4),
-      );
-      x += 16;
+    if !BE {
+      while x + 16 <= width {
+        x2rgb10_to_rgba_16_pixels(
+          x2rgb10.as_ptr().add(x * 4),
+          rgba_out.as_mut_ptr().add(x * 4),
+        );
+        x += 16;
+      }
     }
     if x < width {
-      scalar::x2rgb10_to_rgba_row(
+      scalar::x2rgb10_to_rgba_row::<BE>(
         &x2rgb10[x * 4..width * 4],
         &mut rgba_out[x * 4..width * 4],
         width - x,
@@ -476,21 +488,27 @@ pub(crate) unsafe fn x2rgb10_to_rgba_row(x2rgb10: &[u8], rgba_out: &mut [u8], wi
 /// `u16`, max value `1023`). 8 pixels per iteration.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn x2rgb10_to_rgb_u16_row(x2rgb10: &[u8], rgb_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn x2rgb10_to_rgb_u16_row<const BE: bool>(
+  x2rgb10: &[u8],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(x2rgb10.len() >= width * 4, "x2rgb10 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
   unsafe {
     let mut x = 0usize;
-    while x + 8 <= width {
-      x2rgb10_to_rgb_u16_8_pixels(
-        x2rgb10.as_ptr().add(x * 4),
-        rgb_out.as_mut_ptr().add(x * 3).cast::<u8>(),
-      );
-      x += 8;
+    if !BE {
+      while x + 8 <= width {
+        x2rgb10_to_rgb_u16_8_pixels(
+          x2rgb10.as_ptr().add(x * 4),
+          rgb_out.as_mut_ptr().add(x * 3).cast::<u8>(),
+        );
+        x += 8;
+      }
     }
     if x < width {
-      scalar::x2rgb10_to_rgb_u16_row(
+      scalar::x2rgb10_to_rgb_u16_row::<BE>(
         &x2rgb10[x * 4..width * 4],
         &mut rgb_out[x * 3..width * 3],
         width - x,
@@ -502,18 +520,24 @@ pub(crate) unsafe fn x2rgb10_to_rgb_u16_row(x2rgb10: &[u8], rgb_out: &mut [u16],
 /// SSE4.1 X2BGR10→RGB. 16 pixels per iteration.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn x2bgr10_to_rgb_row(x2bgr10: &[u8], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn x2bgr10_to_rgb_row<const BE: bool>(
+  x2bgr10: &[u8],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(x2bgr10.len() >= width * 4, "x2bgr10 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
   unsafe {
     let mut x = 0usize;
-    while x + 16 <= width {
-      x2bgr10_to_rgb_16_pixels(x2bgr10.as_ptr().add(x * 4), rgb_out.as_mut_ptr().add(x * 3));
-      x += 16;
+    if !BE {
+      while x + 16 <= width {
+        x2bgr10_to_rgb_16_pixels(x2bgr10.as_ptr().add(x * 4), rgb_out.as_mut_ptr().add(x * 3));
+        x += 16;
+      }
     }
     if x < width {
-      scalar::x2bgr10_to_rgb_row(
+      scalar::x2bgr10_to_rgb_row::<BE>(
         &x2bgr10[x * 4..width * 4],
         &mut rgb_out[x * 3..width * 3],
         width - x,
@@ -525,21 +549,27 @@ pub(crate) unsafe fn x2bgr10_to_rgb_row(x2bgr10: &[u8], rgb_out: &mut [u8], widt
 /// SSE4.1 X2BGR10→RGBA. 16 pixels per iteration.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn x2bgr10_to_rgba_row(x2bgr10: &[u8], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn x2bgr10_to_rgba_row<const BE: bool>(
+  x2bgr10: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(x2bgr10.len() >= width * 4, "x2bgr10 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
   unsafe {
     let mut x = 0usize;
-    while x + 16 <= width {
-      x2bgr10_to_rgba_16_pixels(
-        x2bgr10.as_ptr().add(x * 4),
-        rgba_out.as_mut_ptr().add(x * 4),
-      );
-      x += 16;
+    if !BE {
+      while x + 16 <= width {
+        x2bgr10_to_rgba_16_pixels(
+          x2bgr10.as_ptr().add(x * 4),
+          rgba_out.as_mut_ptr().add(x * 4),
+        );
+        x += 16;
+      }
     }
     if x < width {
-      scalar::x2bgr10_to_rgba_row(
+      scalar::x2bgr10_to_rgba_row::<BE>(
         &x2bgr10[x * 4..width * 4],
         &mut rgba_out[x * 4..width * 4],
         width - x,
@@ -551,21 +581,27 @@ pub(crate) unsafe fn x2bgr10_to_rgba_row(x2bgr10: &[u8], rgba_out: &mut [u8], wi
 /// SSE4.1 X2BGR10→u16 RGB native. 8 pixels per iteration.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn x2bgr10_to_rgb_u16_row(x2bgr10: &[u8], rgb_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn x2bgr10_to_rgb_u16_row<const BE: bool>(
+  x2bgr10: &[u8],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(x2bgr10.len() >= width * 4, "x2bgr10 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
   unsafe {
     let mut x = 0usize;
-    while x + 8 <= width {
-      x2bgr10_to_rgb_u16_8_pixels(
-        x2bgr10.as_ptr().add(x * 4),
-        rgb_out.as_mut_ptr().add(x * 3).cast::<u8>(),
-      );
-      x += 8;
+    if !BE {
+      while x + 8 <= width {
+        x2bgr10_to_rgb_u16_8_pixels(
+          x2bgr10.as_ptr().add(x * 4),
+          rgb_out.as_mut_ptr().add(x * 3).cast::<u8>(),
+        );
+        x += 8;
+      }
     }
     if x < width {
-      scalar::x2bgr10_to_rgb_u16_row(
+      scalar::x2bgr10_to_rgb_u16_row::<BE>(
         &x2bgr10[x * 4..width * 4],
         &mut rgb_out[x * 3..width * 3],
         width - x,

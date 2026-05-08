@@ -567,11 +567,19 @@ mod tests {
 
   /// Pack one AYUV64 pixel from explicit A / Y / U / V samples (16-bit
   /// native, no shift required).
+  ///
+  /// Helpers below are consumed only by the LE-host-gated tests in this
+  /// module (see the gating policy at the top of `mod tests`); on BE
+  /// hosts (s390x / powerpc64) those tests are skipped, so the helpers
+  /// would appear unused under `-D warnings`. Gate the helpers with the
+  /// same `target_endian = "little"` cfg.
+  #[cfg(target_endian = "little")]
   fn pack_ayuv64(a: u16, y: u16, u: u16, v: u16) -> [u16; 4] {
     [a, y, u, v]
   }
 
   /// Pack one AYUV64 pixel in big-endian wire format.
+  #[cfg(target_endian = "little")]
   fn pack_ayuv64_be(a: u16, y: u16, u: u16, v: u16) -> [u16; 4] {
     [
       a.swap_bytes(),
@@ -584,12 +592,14 @@ mod tests {
   /// Build a `Vec<u16>` AYUV64 row of `width` pixels with neutral
   /// chroma (U=V=32768) and the given Y / alpha values. Any positive
   /// width is valid (4:4:4, no chroma subsampling).
+  #[cfg(target_endian = "little")]
   fn solid_ayuv64(width: usize, y: u16, a: u16) -> std::vec::Vec<u16> {
     let quad = pack_ayuv64(a, y, 32768, 32768);
     (0..width).flat_map(|_| quad).collect()
   }
 
   /// Build a `Vec<u16>` AYUV64 row in big-endian wire format.
+  #[cfg(target_endian = "little")]
   fn solid_ayuv64_be(width: usize, y: u16, a: u16) -> std::vec::Vec<u16> {
     let quad = pack_ayuv64_be(a, y, 32768, 32768);
     (0..width).flat_map(|_| quad).collect()
@@ -672,6 +682,13 @@ mod tests {
 
   // ---- functional smoke ---------------------------------------------------
 
+  // LE-host gate: this test builds host-native `Vec<u16>` fixtures and calls
+  // the dispatchers with `be_input = false`, which forwards to the scalar
+  // kernel's `from_le` load. On BE hosts (s390x / powerpc64) `from_le` swaps
+  // bytes, so the host-native fixture is corrupted before the math runs and
+  // the assertions break. BE-host correctness is covered by the per-arch BE
+  // parity tests that build fixtures via `to_le_bytes` / `to_be_bytes`.
+  #[cfg(target_endian = "little")]
   #[test]
   fn ayuv64_dispatchers_route_with_simd_false() {
     // Limited-range BT.709: Y=60160 = 235*256 is limited-range white;
@@ -761,6 +778,15 @@ mod tests {
     }
   }
 
+  // LE-host gate: the LE side uses `solid_ayuv64` (host-native) with
+  // `be_input = false` (→ `from_le`); the BE side uses `pack_ayuv64_be`
+  // (`swap_bytes` of host-native) with `be_input = true` (→ `from_be`).
+  // Both encodings are LE-host-correct only — on BE host the byte order in
+  // memory does not match what the wrappers decode, so the test must be
+  // pinned to little-endian. Cross-endian agreement on BE host is verified
+  // by the per-arch BE parity tests that construct fixtures via
+  // `to_le_bytes` / `to_be_bytes`.
+  #[cfg(target_endian = "little")]
   #[test]
   fn ayuv64_be_and_le_dispatchers_agree() {
     // BE-encoded data decoded with be_input=true must produce the same

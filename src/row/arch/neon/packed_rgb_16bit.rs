@@ -21,6 +21,18 @@
 //! - **Rgba64 / Bgra64:** `vld4q_u16(src_ptr)` → `uint16x8x4_t(ch0, ch1, ch2, ch3)`.
 //!   For Bgra64, `ch0` = B and `ch2` = R (swapped on store).
 //!
+//! ## Big-endian support
+//!
+//! Every public kernel accepts `<const BE: bool>`. Each per-channel
+//! `uint16x8_t` vector produced by `vld3q_u16`/`vld4q_u16` is conditionally
+//! byte-swapped via the canonical [`super::bswap_u16x8_if_be`] helper before
+//! any channel math. The gate is `BE != HOST_NATIVE_BE`, so the swap fires
+//! only when the wire endian differs from the host's native byte order — on
+//! LE hosts (all current AArch64 hardware) reading LE data the helper is a
+//! no-op and emits zero extra instructions; on BE hosts (e.g. `aarch64_be`)
+//! reading LE data the swap fires to recover host-native u16 lanes for the
+//! arithmetic that follows.
+//!
 //! ## Depth conversion
 //!
 //! - **u16 → u8:** `vshrn_n_u16::<8>(v)` — high-byte extraction, matching
@@ -33,6 +45,7 @@
 
 use core::arch::aarch64::*;
 
+use super::bswap_u16x8_if_be;
 use crate::row::scalar;
 
 // =============================================================================
@@ -44,6 +57,8 @@ use crate::row::scalar;
 /// `vld3q_u16` deinterleaves into `(R, G, B)` u16x8; `vshrn_n_u16::<8>`
 /// narrows each channel; `vst3_u8` interleaves back.
 ///
+/// When `BE = true` each channel vector is byte-swapped before narrowing.
+///
 /// # Safety
 ///
 /// 1. NEON must be available.
@@ -51,7 +66,11 @@ use crate::row::scalar;
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn neon_rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn neon_rgb48_to_rgb_row<const BE: bool>(
+  rgb48: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgb48.len() >= width * 3, "rgb48 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -59,19 +78,21 @@ pub(crate) unsafe fn neon_rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], wi
     let mut x = 0usize;
     while x + 8 <= width {
       let px: uint16x8x3_t = vld3q_u16(rgb48.as_ptr().add(x * 3));
-      let r8 = vshrn_n_u16::<8>(px.0);
-      let g8 = vshrn_n_u16::<8>(px.1);
-      let b8 = vshrn_n_u16::<8>(px.2);
+      let r8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.0));
+      let g8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.1));
+      let b8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.2));
       vst3_u8(rgb_out.as_mut_ptr().add(x * 3), uint8x8x3_t(r8, g8, b8));
       x += 8;
     }
     if x < width {
-      scalar::rgb48_to_rgb_row(&rgb48[x * 3..], &mut rgb_out[x * 3..], width - x);
+      scalar::rgb48_to_rgb_row::<BE>(&rgb48[x * 3..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// NEON Rgb48 → packed u8 RGBA. 8 pixels per SIMD iteration. Alpha forced to 0xFF.
+///
+/// When `BE = true` each channel vector is byte-swapped before narrowing.
 ///
 /// # Safety
 ///
@@ -80,7 +101,11 @@ pub(crate) unsafe fn neon_rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], wi
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn neon_rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn neon_rgb48_to_rgba_row<const BE: bool>(
+  rgb48: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgb48.len() >= width * 3, "rgb48 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -89,9 +114,9 @@ pub(crate) unsafe fn neon_rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8], 
     let mut x = 0usize;
     while x + 8 <= width {
       let px: uint16x8x3_t = vld3q_u16(rgb48.as_ptr().add(x * 3));
-      let r8 = vshrn_n_u16::<8>(px.0);
-      let g8 = vshrn_n_u16::<8>(px.1);
-      let b8 = vshrn_n_u16::<8>(px.2);
+      let r8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.0));
+      let g8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.1));
+      let b8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.2));
       vst4_u8(
         rgba_out.as_mut_ptr().add(x * 4),
         uint8x8x4_t(r8, g8, b8, alpha),
@@ -99,14 +124,15 @@ pub(crate) unsafe fn neon_rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8], 
       x += 8;
     }
     if x < width {
-      scalar::rgb48_to_rgba_row(&rgb48[x * 3..], &mut rgba_out[x * 4..], width - x);
+      scalar::rgb48_to_rgba_row::<BE>(&rgb48[x * 3..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
 
-/// NEON Rgb48 → native-depth u16 RGB (identity copy). 8 pixels per SIMD iteration.
+/// NEON Rgb48 → native-depth u16 RGB. 8 pixels per SIMD iteration.
 ///
-/// `vld3q_u16` deinterleaves, `vst3q_u16` reinterleaves — no narrowing.
+/// `vld3q_u16` deinterleaves, `vst3q_u16` reinterleaves.
+/// When `BE = true` each channel is byte-swapped to host-native order before storing.
 ///
 /// # Safety
 ///
@@ -115,7 +141,11 @@ pub(crate) unsafe fn neon_rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8], 
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn neon_rgb48_to_rgb_u16_row(rgb48: &[u16], rgb_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn neon_rgb48_to_rgb_u16_row<const BE: bool>(
+  rgb48: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(rgb48.len() >= width * 3, "rgb48 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -125,17 +155,23 @@ pub(crate) unsafe fn neon_rgb48_to_rgb_u16_row(rgb48: &[u16], rgb_out: &mut [u16
       let px: uint16x8x3_t = vld3q_u16(rgb48.as_ptr().add(x * 3));
       vst3q_u16(
         rgb_out.as_mut_ptr().add(x * 3),
-        uint16x8x3_t(px.0, px.1, px.2),
+        uint16x8x3_t(
+          bswap_u16x8_if_be::<BE>(px.0),
+          bswap_u16x8_if_be::<BE>(px.1),
+          bswap_u16x8_if_be::<BE>(px.2),
+        ),
       );
       x += 8;
     }
     if x < width {
-      scalar::rgb48_to_rgb_u16_row(&rgb48[x * 3..], &mut rgb_out[x * 3..], width - x);
+      scalar::rgb48_to_rgb_u16_row::<BE>(&rgb48[x * 3..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// NEON Rgb48 → native-depth u16 RGBA. 8 pixels per SIMD iteration. Alpha forced to 0xFFFF.
+///
+/// When `BE = true` each channel is byte-swapped to host-native order before storing.
 ///
 /// # Safety
 ///
@@ -144,7 +180,11 @@ pub(crate) unsafe fn neon_rgb48_to_rgb_u16_row(rgb48: &[u16], rgb_out: &mut [u16
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn neon_rgb48_to_rgba_u16_row(rgb48: &[u16], rgba_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn neon_rgb48_to_rgba_u16_row<const BE: bool>(
+  rgb48: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(rgb48.len() >= width * 3, "rgb48 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -155,12 +195,17 @@ pub(crate) unsafe fn neon_rgb48_to_rgba_u16_row(rgb48: &[u16], rgba_out: &mut [u
       let px: uint16x8x3_t = vld3q_u16(rgb48.as_ptr().add(x * 3));
       vst4q_u16(
         rgba_out.as_mut_ptr().add(x * 4),
-        uint16x8x4_t(px.0, px.1, px.2, alpha),
+        uint16x8x4_t(
+          bswap_u16x8_if_be::<BE>(px.0),
+          bswap_u16x8_if_be::<BE>(px.1),
+          bswap_u16x8_if_be::<BE>(px.2),
+          alpha,
+        ),
       );
       x += 8;
     }
     if x < width {
-      scalar::rgb48_to_rgba_u16_row(&rgb48[x * 3..], &mut rgba_out[x * 4..], width - x);
+      scalar::rgb48_to_rgba_u16_row::<BE>(&rgb48[x * 3..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
@@ -173,6 +218,7 @@ pub(crate) unsafe fn neon_rgb48_to_rgba_u16_row(rgb48: &[u16], rgba_out: &mut [u
 ///
 /// `vld3q_u16` deinterleaves into `(B, G, R)` u16x8; channels are swapped
 /// (`px.2` = R, `px.0` = B) in the `vst3_u8` call to produce R-first output.
+/// When `BE = true` each channel is byte-swapped before narrowing.
 ///
 /// # Safety
 ///
@@ -181,7 +227,11 @@ pub(crate) unsafe fn neon_rgb48_to_rgba_u16_row(rgb48: &[u16], rgba_out: &mut [u
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn neon_bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn neon_bgr48_to_rgb_row<const BE: bool>(
+  bgr48: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(bgr48.len() >= width * 3, "bgr48 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -190,20 +240,21 @@ pub(crate) unsafe fn neon_bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], wi
     while x + 8 <= width {
       // px.0 = B, px.1 = G, px.2 = R (source BGR order)
       let px: uint16x8x3_t = vld3q_u16(bgr48.as_ptr().add(x * 3));
-      let r8 = vshrn_n_u16::<8>(px.2); // R (was at position 2)
-      let g8 = vshrn_n_u16::<8>(px.1); // G (unchanged)
-      let b8 = vshrn_n_u16::<8>(px.0); // B (was at position 0)
+      let r8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.2)); // R (was at position 2)
+      let g8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.1)); // G (unchanged)
+      let b8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.0)); // B (was at position 0)
       vst3_u8(rgb_out.as_mut_ptr().add(x * 3), uint8x8x3_t(r8, g8, b8));
       x += 8;
     }
     if x < width {
-      scalar::bgr48_to_rgb_row(&bgr48[x * 3..], &mut rgb_out[x * 3..], width - x);
+      scalar::bgr48_to_rgb_row::<BE>(&bgr48[x * 3..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// NEON Bgr48 → packed u8 RGBA. 8 pixels per SIMD iteration.
 /// B↔R swap on output; alpha forced to 0xFF.
+/// When `BE = true` each channel is byte-swapped before narrowing.
 ///
 /// # Safety
 ///
@@ -212,7 +263,11 @@ pub(crate) unsafe fn neon_bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], wi
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn neon_bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn neon_bgr48_to_rgba_row<const BE: bool>(
+  bgr48: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(bgr48.len() >= width * 3, "bgr48 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -221,9 +276,9 @@ pub(crate) unsafe fn neon_bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8], 
     let mut x = 0usize;
     while x + 8 <= width {
       let px: uint16x8x3_t = vld3q_u16(bgr48.as_ptr().add(x * 3));
-      let r8 = vshrn_n_u16::<8>(px.2);
-      let g8 = vshrn_n_u16::<8>(px.1);
-      let b8 = vshrn_n_u16::<8>(px.0);
+      let r8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.2));
+      let g8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.1));
+      let b8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.0));
       vst4_u8(
         rgba_out.as_mut_ptr().add(x * 4),
         uint8x8x4_t(r8, g8, b8, alpha),
@@ -231,13 +286,14 @@ pub(crate) unsafe fn neon_bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8], 
       x += 8;
     }
     if x < width {
-      scalar::bgr48_to_rgba_row(&bgr48[x * 3..], &mut rgba_out[x * 4..], width - x);
+      scalar::bgr48_to_rgba_row::<BE>(&bgr48[x * 3..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
 
 /// NEON Bgr48 → native-depth u16 RGB. 8 pixels per SIMD iteration.
 /// B↔R swap: `px.2` → position 0 (R), `px.0` → position 2 (B).
+/// When `BE = true` each channel is byte-swapped to host-native order.
 ///
 /// # Safety
 ///
@@ -246,7 +302,11 @@ pub(crate) unsafe fn neon_bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8], 
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn neon_bgr48_to_rgb_u16_row(bgr48: &[u16], rgb_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn neon_bgr48_to_rgb_u16_row<const BE: bool>(
+  bgr48: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(bgr48.len() >= width * 3, "bgr48 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -257,18 +317,23 @@ pub(crate) unsafe fn neon_bgr48_to_rgb_u16_row(bgr48: &[u16], rgb_out: &mut [u16
       // Swap B↔R: store (R=px.2, G=px.1, B=px.0)
       vst3q_u16(
         rgb_out.as_mut_ptr().add(x * 3),
-        uint16x8x3_t(px.2, px.1, px.0),
+        uint16x8x3_t(
+          bswap_u16x8_if_be::<BE>(px.2),
+          bswap_u16x8_if_be::<BE>(px.1),
+          bswap_u16x8_if_be::<BE>(px.0),
+        ),
       );
       x += 8;
     }
     if x < width {
-      scalar::bgr48_to_rgb_u16_row(&bgr48[x * 3..], &mut rgb_out[x * 3..], width - x);
+      scalar::bgr48_to_rgb_u16_row::<BE>(&bgr48[x * 3..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// NEON Bgr48 → native-depth u16 RGBA. 8 pixels per SIMD iteration.
 /// B↔R swap; alpha forced to 0xFFFF.
+/// When `BE = true` each channel is byte-swapped to host-native order.
 ///
 /// # Safety
 ///
@@ -277,7 +342,11 @@ pub(crate) unsafe fn neon_bgr48_to_rgb_u16_row(bgr48: &[u16], rgb_out: &mut [u16
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn neon_bgr48_to_rgba_u16_row(bgr48: &[u16], rgba_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn neon_bgr48_to_rgba_u16_row<const BE: bool>(
+  bgr48: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(bgr48.len() >= width * 3, "bgr48 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -289,12 +358,17 @@ pub(crate) unsafe fn neon_bgr48_to_rgba_u16_row(bgr48: &[u16], rgba_out: &mut [u
       // Store (R=px.2, G=px.1, B=px.0, A=0xFFFF)
       vst4q_u16(
         rgba_out.as_mut_ptr().add(x * 4),
-        uint16x8x4_t(px.2, px.1, px.0, alpha),
+        uint16x8x4_t(
+          bswap_u16x8_if_be::<BE>(px.2),
+          bswap_u16x8_if_be::<BE>(px.1),
+          bswap_u16x8_if_be::<BE>(px.0),
+          alpha,
+        ),
       );
       x += 8;
     }
     if x < width {
-      scalar::bgr48_to_rgba_u16_row(&bgr48[x * 3..], &mut rgba_out[x * 4..], width - x);
+      scalar::bgr48_to_rgba_u16_row::<BE>(&bgr48[x * 3..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
@@ -307,6 +381,7 @@ pub(crate) unsafe fn neon_bgr48_to_rgba_u16_row(bgr48: &[u16], rgba_out: &mut [u
 ///
 /// `vld4q_u16` deinterleaves into `(R, G, B, A)` u16x8; R/G/B narrowed;
 /// `vst3_u8` writes only 3 channels.
+/// When `BE = true` each channel is byte-swapped before narrowing.
 ///
 /// # Safety
 ///
@@ -315,7 +390,11 @@ pub(crate) unsafe fn neon_bgr48_to_rgba_u16_row(bgr48: &[u16], rgba_out: &mut [u
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn neon_rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn neon_rgba64_to_rgb_row<const BE: bool>(
+  rgba64: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgba64.len() >= width * 4, "rgba64 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -323,15 +402,15 @@ pub(crate) unsafe fn neon_rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8], 
     let mut x = 0usize;
     while x + 8 <= width {
       let px: uint16x8x4_t = vld4q_u16(rgba64.as_ptr().add(x * 4));
-      let r8 = vshrn_n_u16::<8>(px.0);
-      let g8 = vshrn_n_u16::<8>(px.1);
-      let b8 = vshrn_n_u16::<8>(px.2);
+      let r8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.0));
+      let g8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.1));
+      let b8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.2));
       // Alpha (px.3) discarded.
       vst3_u8(rgb_out.as_mut_ptr().add(x * 3), uint8x8x3_t(r8, g8, b8));
       x += 8;
     }
     if x < width {
-      scalar::rgba64_to_rgb_row(&rgba64[x * 4..], &mut rgb_out[x * 3..], width - x);
+      scalar::rgba64_to_rgb_row::<BE>(&rgba64[x * 4..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
@@ -339,6 +418,7 @@ pub(crate) unsafe fn neon_rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8], 
 /// NEON Rgba64 → packed u8 RGBA. 8 pixels per SIMD iteration. Source alpha passes through.
 ///
 /// All 4 channels narrowed via `vshrn_n_u16::<8>`.
+/// When `BE = true` each channel is byte-swapped before narrowing.
 ///
 /// # Safety
 ///
@@ -347,7 +427,11 @@ pub(crate) unsafe fn neon_rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8], 
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn neon_rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn neon_rgba64_to_rgba_row<const BE: bool>(
+  rgba64: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgba64.len() >= width * 4, "rgba64 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -355,10 +439,10 @@ pub(crate) unsafe fn neon_rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8]
     let mut x = 0usize;
     while x + 8 <= width {
       let px: uint16x8x4_t = vld4q_u16(rgba64.as_ptr().add(x * 4));
-      let r8 = vshrn_n_u16::<8>(px.0);
-      let g8 = vshrn_n_u16::<8>(px.1);
-      let b8 = vshrn_n_u16::<8>(px.2);
-      let a8 = vshrn_n_u16::<8>(px.3); // source alpha depth-converted
+      let r8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.0));
+      let g8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.1));
+      let b8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.2));
+      let a8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.3)); // source alpha depth-converted
       vst4_u8(
         rgba_out.as_mut_ptr().add(x * 4),
         uint8x8x4_t(r8, g8, b8, a8),
@@ -366,7 +450,7 @@ pub(crate) unsafe fn neon_rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8]
       x += 8;
     }
     if x < width {
-      scalar::rgba64_to_rgba_row(&rgba64[x * 4..], &mut rgba_out[x * 4..], width - x);
+      scalar::rgba64_to_rgba_row::<BE>(&rgba64[x * 4..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
@@ -374,6 +458,7 @@ pub(crate) unsafe fn neon_rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8]
 /// NEON Rgba64 → native-depth u16 RGB. 8 pixels per SIMD iteration. Alpha discarded.
 ///
 /// `vld4q_u16` deinterleaves; `vst3q_u16` writes R, G, B channels only.
+/// When `BE = true` each channel is byte-swapped to host-native order.
 ///
 /// # Safety
 ///
@@ -382,7 +467,11 @@ pub(crate) unsafe fn neon_rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8]
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn neon_rgba64_to_rgb_u16_row(rgba64: &[u16], rgb_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn neon_rgba64_to_rgb_u16_row<const BE: bool>(
+  rgba64: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(rgba64.len() >= width * 4, "rgba64 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -393,19 +482,24 @@ pub(crate) unsafe fn neon_rgba64_to_rgb_u16_row(rgba64: &[u16], rgb_out: &mut [u
       // Alpha (px.3) discarded.
       vst3q_u16(
         rgb_out.as_mut_ptr().add(x * 3),
-        uint16x8x3_t(px.0, px.1, px.2),
+        uint16x8x3_t(
+          bswap_u16x8_if_be::<BE>(px.0),
+          bswap_u16x8_if_be::<BE>(px.1),
+          bswap_u16x8_if_be::<BE>(px.2),
+        ),
       );
       x += 8;
     }
     if x < width {
-      scalar::rgba64_to_rgb_u16_row(&rgba64[x * 4..], &mut rgb_out[x * 3..], width - x);
+      scalar::rgba64_to_rgb_u16_row::<BE>(&rgba64[x * 4..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
-/// NEON Rgba64 → native-depth u16 RGBA (identity copy). 8 pixels per SIMD iteration.
+/// NEON Rgba64 → native-depth u16 RGBA. 8 pixels per SIMD iteration.
 ///
 /// `vld4q_u16` deinterleaves; `vst4q_u16` reinterleaves — source alpha preserved.
+/// When `BE = true` each channel is byte-swapped to host-native order.
 ///
 /// # Safety
 ///
@@ -414,7 +508,7 @@ pub(crate) unsafe fn neon_rgba64_to_rgb_u16_row(rgba64: &[u16], rgb_out: &mut [u
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn neon_rgba64_to_rgba_u16_row(
+pub(crate) unsafe fn neon_rgba64_to_rgba_u16_row<const BE: bool>(
   rgba64: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -428,12 +522,17 @@ pub(crate) unsafe fn neon_rgba64_to_rgba_u16_row(
       let px: uint16x8x4_t = vld4q_u16(rgba64.as_ptr().add(x * 4));
       vst4q_u16(
         rgba_out.as_mut_ptr().add(x * 4),
-        uint16x8x4_t(px.0, px.1, px.2, px.3),
+        uint16x8x4_t(
+          bswap_u16x8_if_be::<BE>(px.0),
+          bswap_u16x8_if_be::<BE>(px.1),
+          bswap_u16x8_if_be::<BE>(px.2),
+          bswap_u16x8_if_be::<BE>(px.3),
+        ),
       );
       x += 8;
     }
     if x < width {
-      scalar::rgba64_to_rgba_u16_row(&rgba64[x * 4..], &mut rgba_out[x * 4..], width - x);
+      scalar::rgba64_to_rgba_u16_row::<BE>(&rgba64[x * 4..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
@@ -446,6 +545,7 @@ pub(crate) unsafe fn neon_rgba64_to_rgba_u16_row(
 /// B↔R swap; alpha discarded.
 ///
 /// `vld4q_u16` gives `(B, G, R, A)` → store `(R=px.2, G=px.1, B=px.0)`.
+/// When `BE = true` each channel is byte-swapped before narrowing.
 ///
 /// # Safety
 ///
@@ -454,7 +554,11 @@ pub(crate) unsafe fn neon_rgba64_to_rgba_u16_row(
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn neon_bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn neon_bgra64_to_rgb_row<const BE: bool>(
+  bgra64: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(bgra64.len() >= width * 4, "bgra64 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -463,21 +567,22 @@ pub(crate) unsafe fn neon_bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8], 
     while x + 8 <= width {
       // px.0 = B, px.1 = G, px.2 = R, px.3 = A
       let px: uint16x8x4_t = vld4q_u16(bgra64.as_ptr().add(x * 4));
-      let r8 = vshrn_n_u16::<8>(px.2); // R (from position 2)
-      let g8 = vshrn_n_u16::<8>(px.1); // G (unchanged)
-      let b8 = vshrn_n_u16::<8>(px.0); // B (from position 0)
+      let r8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.2)); // R (from position 2)
+      let g8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.1)); // G (unchanged)
+      let b8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.0)); // B (from position 0)
       // Alpha (px.3) discarded.
       vst3_u8(rgb_out.as_mut_ptr().add(x * 3), uint8x8x3_t(r8, g8, b8));
       x += 8;
     }
     if x < width {
-      scalar::bgra64_to_rgb_row(&bgra64[x * 4..], &mut rgb_out[x * 3..], width - x);
+      scalar::bgra64_to_rgb_row::<BE>(&bgra64[x * 4..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// NEON Bgra64 → packed u8 RGBA. 8 pixels per SIMD iteration.
 /// B↔R swap; source alpha passes through (narrowed via `>> 8`).
+/// When `BE = true` each channel is byte-swapped before narrowing.
 ///
 /// # Safety
 ///
@@ -486,7 +591,11 @@ pub(crate) unsafe fn neon_bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8], 
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn neon_bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn neon_bgra64_to_rgba_row<const BE: bool>(
+  bgra64: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(bgra64.len() >= width * 4, "bgra64 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -494,10 +603,10 @@ pub(crate) unsafe fn neon_bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8]
     let mut x = 0usize;
     while x + 8 <= width {
       let px: uint16x8x4_t = vld4q_u16(bgra64.as_ptr().add(x * 4));
-      let r8 = vshrn_n_u16::<8>(px.2);
-      let g8 = vshrn_n_u16::<8>(px.1);
-      let b8 = vshrn_n_u16::<8>(px.0);
-      let a8 = vshrn_n_u16::<8>(px.3); // source alpha depth-converted
+      let r8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.2));
+      let g8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.1));
+      let b8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.0));
+      let a8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.3)); // source alpha depth-converted
       vst4_u8(
         rgba_out.as_mut_ptr().add(x * 4),
         uint8x8x4_t(r8, g8, b8, a8),
@@ -505,13 +614,14 @@ pub(crate) unsafe fn neon_bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8]
       x += 8;
     }
     if x < width {
-      scalar::bgra64_to_rgba_row(&bgra64[x * 4..], &mut rgba_out[x * 4..], width - x);
+      scalar::bgra64_to_rgba_row::<BE>(&bgra64[x * 4..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
 
 /// NEON Bgra64 → native-depth u16 RGB. 8 pixels per SIMD iteration.
 /// B↔R swap; alpha discarded. `vld4q_u16` → `vst3q_u16(R, G, B)`.
+/// When `BE = true` each channel is byte-swapped to host-native order.
 ///
 /// # Safety
 ///
@@ -520,7 +630,11 @@ pub(crate) unsafe fn neon_bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8]
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn neon_bgra64_to_rgb_u16_row(bgra64: &[u16], rgb_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn neon_bgra64_to_rgb_u16_row<const BE: bool>(
+  bgra64: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(bgra64.len() >= width * 4, "bgra64 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -531,12 +645,16 @@ pub(crate) unsafe fn neon_bgra64_to_rgb_u16_row(bgra64: &[u16], rgb_out: &mut [u
       // Swap B↔R, drop alpha: store (R=px.2, G=px.1, B=px.0)
       vst3q_u16(
         rgb_out.as_mut_ptr().add(x * 3),
-        uint16x8x3_t(px.2, px.1, px.0),
+        uint16x8x3_t(
+          bswap_u16x8_if_be::<BE>(px.2),
+          bswap_u16x8_if_be::<BE>(px.1),
+          bswap_u16x8_if_be::<BE>(px.0),
+        ),
       );
       x += 8;
     }
     if x < width {
-      scalar::bgra64_to_rgb_u16_row(&bgra64[x * 4..], &mut rgb_out[x * 3..], width - x);
+      scalar::bgra64_to_rgb_u16_row::<BE>(&bgra64[x * 4..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
@@ -545,6 +663,7 @@ pub(crate) unsafe fn neon_bgra64_to_rgb_u16_row(bgra64: &[u16], rgb_out: &mut [u
 /// B↔R swap; source alpha preserved at position 3.
 ///
 /// `vld4q_u16` gives `(B, G, R, A)` → `vst4q_u16(R=px.2, G=px.1, B=px.0, A=px.3)`.
+/// When `BE = true` each channel is byte-swapped to host-native order.
 ///
 /// # Safety
 ///
@@ -553,7 +672,7 @@ pub(crate) unsafe fn neon_bgra64_to_rgb_u16_row(bgra64: &[u16], rgb_out: &mut [u
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn neon_bgra64_to_rgba_u16_row(
+pub(crate) unsafe fn neon_bgra64_to_rgba_u16_row<const BE: bool>(
   bgra64: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -568,12 +687,17 @@ pub(crate) unsafe fn neon_bgra64_to_rgba_u16_row(
       // Swap B↔R, preserve A: store (R=px.2, G=px.1, B=px.0, A=px.3)
       vst4q_u16(
         rgba_out.as_mut_ptr().add(x * 4),
-        uint16x8x4_t(px.2, px.1, px.0, px.3),
+        uint16x8x4_t(
+          bswap_u16x8_if_be::<BE>(px.2),
+          bswap_u16x8_if_be::<BE>(px.1),
+          bswap_u16x8_if_be::<BE>(px.0),
+          bswap_u16x8_if_be::<BE>(px.3),
+        ),
       );
       x += 8;
     }
     if x < width {
-      scalar::bgra64_to_rgba_u16_row(&bgra64[x * 4..], &mut rgba_out[x * 4..], width - x);
+      scalar::bgra64_to_rgba_u16_row::<BE>(&bgra64[x * 4..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }

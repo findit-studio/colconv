@@ -91,18 +91,34 @@ pub(crate) use dispatch::mono1bit::*;
 // parameter) are re-exported as `pub(crate)` for sinker use — the underlying
 // functions in `dispatch::packed_rgb_16bit` are `pub`, but only this
 // re-export visibility is visible outside the crate.
+//
+// Each function exists in two forms:
+// - `foo` — backwards-compatible LE-only wrapper (no const generic), preserves
+//   the pre-Tier 8 public signature so existing little-endian downstream
+//   callers compile unchanged.
+// - `foo_endian::<const BE: bool>` — endian-aware form (added in Tier 8 for
+//   the BE-on-BE-host plane contract). Used by sinker code internally.
 pub use dispatch::packed_rgb_16bit::{
-  bgr48_to_rgb_row, bgr48_to_rgb_u16_row, bgr48_to_rgba_row, bgr48_to_rgba_u16_row,
-  bgra64_to_rgb_row, bgra64_to_rgb_u16_row, bgra64_to_rgba_row, bgra64_to_rgba_u16_row,
-  rgb48_to_rgb_row, rgb48_to_rgb_u16_row, rgb48_to_rgba_row, rgb48_to_rgba_u16_row,
-  rgba64_to_rgb_row, rgba64_to_rgb_u16_row, rgba64_to_rgba_row, rgba64_to_rgba_u16_row,
+  bgr48_to_rgb_row, bgr48_to_rgb_row_endian, bgr48_to_rgb_u16_row, bgr48_to_rgb_u16_row_endian,
+  bgr48_to_rgba_row, bgr48_to_rgba_row_endian, bgr48_to_rgba_u16_row, bgr48_to_rgba_u16_row_endian,
+  bgra64_to_rgb_row, bgra64_to_rgb_row_endian, bgra64_to_rgb_u16_row, bgra64_to_rgb_u16_row_endian,
+  bgra64_to_rgba_row, bgra64_to_rgba_row_endian, bgra64_to_rgba_u16_row,
+  bgra64_to_rgba_u16_row_endian, rgb48_to_rgb_row, rgb48_to_rgb_row_endian, rgb48_to_rgb_u16_row,
+  rgb48_to_rgb_u16_row_endian, rgb48_to_rgba_row, rgb48_to_rgba_row_endian, rgb48_to_rgba_u16_row,
+  rgb48_to_rgba_u16_row_endian, rgba64_to_rgb_row, rgba64_to_rgb_row_endian, rgba64_to_rgb_u16_row,
+  rgba64_to_rgb_u16_row_endian, rgba64_to_rgba_row, rgba64_to_rgba_row_endian,
+  rgba64_to_rgba_u16_row, rgba64_to_rgba_u16_row_endian,
 };
 // luma + HSV variants take an extra rgb_scratch parameter — sinker wired in Task 9.
 #[allow(unused_imports)]
 pub(crate) use dispatch::packed_rgb_16bit::{
-  bgr48_to_hsv_row, bgr48_to_luma_row, bgr48_to_luma_u16_row, bgra64_to_hsv_row,
-  bgra64_to_luma_row, bgra64_to_luma_u16_row, rgb48_to_hsv_row, rgb48_to_luma_row,
-  rgb48_to_luma_u16_row, rgba64_to_hsv_row, rgba64_to_luma_row, rgba64_to_luma_u16_row,
+  bgr48_to_hsv_row, bgr48_to_hsv_row_endian, bgr48_to_luma_row, bgr48_to_luma_row_endian,
+  bgr48_to_luma_u16_row, bgr48_to_luma_u16_row_endian, bgra64_to_hsv_row, bgra64_to_hsv_row_endian,
+  bgra64_to_luma_row, bgra64_to_luma_row_endian, bgra64_to_luma_u16_row,
+  bgra64_to_luma_u16_row_endian, rgb48_to_hsv_row, rgb48_to_hsv_row_endian, rgb48_to_luma_row,
+  rgb48_to_luma_row_endian, rgb48_to_luma_u16_row, rgb48_to_luma_u16_row_endian, rgba64_to_hsv_row,
+  rgba64_to_hsv_row_endian, rgba64_to_luma_row, rgba64_to_luma_row_endian, rgba64_to_luma_u16_row,
+  rgba64_to_luma_u16_row_endian,
 };
 // Gray dispatchers are pub(crate) — sinker code uses them via crate::row::gray*_row.
 #[cfg(any(feature = "std", feature = "alloc"))]
