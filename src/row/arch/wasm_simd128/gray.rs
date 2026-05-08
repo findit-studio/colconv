@@ -954,6 +954,9 @@ pub(crate) unsafe fn ya16_to_luma_row<const BE: bool>(
 ) {
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width);
+  if BE {
+    return ya16::ya16_to_luma_row::<BE>(packed, out, width);
+  }
   // Shuffle mask: gather words at indices 0,2,4,6 (byte offsets 0-1,4-5,8-9,12-13)
   // into the low 8 bytes. Each word is little-endian so bytes are [lo,hi,...].
   // We want word[0]=bytes[0,1], word[2]=bytes[4,5], word[4]=bytes[8,9], word[6]=bytes[12,13].
@@ -1003,6 +1006,9 @@ pub(crate) unsafe fn ya16_to_luma_u16_row<const BE: bool>(
 ) {
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width);
+  if BE {
+    return ya16::ya16_to_luma_u16_row::<BE>(packed, out, width);
+  }
   let shuf_lo = i8x16(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
   let mut x = 0usize;
   unsafe {
@@ -1041,6 +1047,9 @@ pub(crate) unsafe fn ya16_to_hsv_row<const BE: bool>(
   width: usize,
 ) {
   debug_assert!(packed.len() >= width * 2);
+  if BE {
+    return ya16::ya16_to_hsv_row::<BE>(packed, h_out, s_out, v_out, width);
+  }
   let shuf_lo = i8x16(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
   let zero16 = i64x2(0, 0);
   let mut x = 0usize;
@@ -1569,6 +1578,124 @@ mod tests {
       unsafe { super::gray16_to_luma_row::<true>(&be, &mut simd_be, w) };
       scalar::gray16_to_luma_row::<false>(&le, &mut scal_le, w);
       assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn wasm_ya16_be_parity_rgb() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA8_0001);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u8; w * 3];
+      let mut scal_le = std::vec![0u8; w * 3];
+      unsafe { super::ya16_to_rgb_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_rgb_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn wasm_ya16_be_parity_rgba() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA8_0002);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u8; w * 4];
+      let mut scal_le = std::vec![0u8; w * 4];
+      unsafe { super::ya16_to_rgba_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_rgba_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn wasm_ya16_be_parity_rgb_u16() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA8_0003);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u16; w * 3];
+      let mut scal_le = std::vec![0u16; w * 3];
+      unsafe { super::ya16_to_rgb_u16_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_rgb_u16_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn wasm_ya16_be_parity_rgba_u16() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA8_0004);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u16; w * 4];
+      let mut scal_le = std::vec![0u16; w * 4];
+      unsafe { super::ya16_to_rgba_u16_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_rgba_u16_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn wasm_ya16_be_parity_luma() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA8_0005);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u8; w];
+      let mut scal_le = std::vec![0u8; w];
+      unsafe { super::ya16_to_luma_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_luma_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn wasm_ya16_be_parity_luma_u16() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA8_0006);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u16; w];
+      let mut scal_le = std::vec![0u16; w];
+      unsafe { super::ya16_to_luma_u16_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_luma_u16_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn wasm_ya16_be_parity_hsv() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA8_0007);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut sh_be = std::vec![0u8; w];
+      let mut ss_be = std::vec![0u8; w];
+      let mut sv_be = std::vec![0u8; w];
+      let mut sh_le = std::vec![0u8; w];
+      let mut ss_le = std::vec![0u8; w];
+      let mut sv_le = std::vec![0u8; w];
+      unsafe { super::ya16_to_hsv_row::<true>(&be, &mut sh_be, &mut ss_be, &mut sv_be, w) };
+      sy::ya16_to_hsv_row::<false>(&le, &mut sh_le, &mut ss_le, &mut sv_le, w);
+      assert_eq!(sh_be, sh_le, "H width={w}");
+      assert_eq!(ss_be, ss_le, "S width={w}");
+      assert_eq!(sv_be, sv_le, "V width={w}");
     }
   }
 }
