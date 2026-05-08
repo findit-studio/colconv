@@ -1,5 +1,43 @@
 # CHANGELOG
 
+## Unreleased — Tier 12 — Xyz12 (DCP / digital-cinema XYZ) source format
+
+Closes Tier 12. New source-side pixel format `Xyz12` (`AV_PIX_FMT_XYZ12LE`
+/ `AV_PIX_FMT_XYZ12BE`): 12-bit packed CIE XYZ in `X, Y, Z` order, three
+u16 elements per pixel with samples in the low 12 bits. Const-generic
+`Xyz12Frame<const BE: bool>` with type aliases `Xyz12LeFrame` /
+`Xyz12BeFrame`. The conversion chain is the heaviest in colconv: SMPTE
+ST 428-1 §8 inverse OETF → 3×3 matrix to one of three target gamuts
+(DCI-P3 / Rec.709 / Rec.2020) → sRGB-shape forward OETF → integer narrow.
+
+11 sinker outputs:
+
+- `with_rgb` / `with_rgba` — full pipeline → packed u8 RGB / RGBA
+  (alpha = `0xFF`)
+- `with_rgb_u16` / `with_rgba_u16` — full pipeline + full-range
+  `[0, 1] × 65535` scaling (alpha = `0xFFFF`)
+- `with_rgb_f32` — lossless linear-RGB f32 (matrix only, OETF skipped,
+  no clamp; out-of-gamut negative R/G/B and HDR > 1 preserved bit-exact)
+- `with_xyz_f32` — lossless linear XYZ f32 (only step-1 inverse OETF;
+  no matrix, no gamma, no clamp)
+- `with_rgb_f16` / `with_rgba_f16` — full pipeline + clamp `[0, 1]` +
+  IEEE-754 RNE narrow to f16 (alpha = `1.0`)
+- `with_luma` / `with_luma_u16` — staged through u8 RGB scratch, then
+  `rgb_to_luma_row` with the target-gamut-derived `ColorMatrix` (BT.709
+  for DciP3 / Rec709, BT.2020 for Rec2020)
+- `with_hsv` — same staging, then `rgb_to_hsv_row`
+
+Native SIMD across all 5 backends (NEON 4 px/iter, SSE4.1 8 px/iter,
+AVX2 8 px/iter, AVX-512 16 px/iter, wasm-simd128 8 px/iter). The
+matmul, integer narrow, and interleaved store are vectorized; the
+SMPTE 428-1 inverse OETF and sRGB-shape forward OETF run **scalar per
+lane** via the same scalar functions the reference kernel uses,
+preserving the 0-ULP scalar↔SIMD parity contract by construction. The
+sRGB OETF uses a 192-segment piecewise polynomial (≤ 2 ULP vs the
+f64-narrowed reference). FMA is intentionally NOT used in the matmul —
+single-rounding FMA breaks the 0-ULP parity contract on integer-narrow
+output paths.
+
 ## Unreleased — Tier 15 — Mono1bit (monoblack/monowhite) source formats
 
 Closes Tier 15. Two new source-side pixel formats:

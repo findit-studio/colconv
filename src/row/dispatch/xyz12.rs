@@ -13,10 +13,11 @@
 //! → sRGB-shape OETF (skipped for f32 outputs) → range scale + integer
 //! narrow (only for u8 / u16 outputs).
 //!
-//! SIMD backends are wired progressively: NEON (aarch64) lands in the
-//! Phase B `tier12-xyz12` rollout; x86 (SSE4.1 / AVX2 / AVX-512) and
-//! `wasm-simd128` follow in subsequent commits. Each backend follows
-//! the established `cfg_select!` pattern from `dispatch::planar_gbr_*`.
+//! SIMD backends: NEON (aarch64), SSE4.1 / AVX2 / AVX-512 (x86_64),
+//! and wasm-simd128 — runtime-selected on x86_64 with the standard
+//! AVX-512 → AVX2 → SSE4.1 priority order; compile-time-selected on
+//! wasm32. Each backend follows the established `cfg_select!` pattern
+//! from `dispatch::planar_gbr_*`.
 
 #[cfg(any(
   target_arch = "aarch64",
@@ -41,7 +42,7 @@ use crate::{
 ///
 /// `use_simd = false` forces scalar; SIMD backends pick up the call
 /// when their architecture is detected at runtime (NEON / SSE4.1 /
-/// AVX2 / AVX-512 / wasm-simd128 — wired in subsequent commits).
+/// AVX2 / AVX-512) or compile-time (wasm-simd128).
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub fn xyz12_to_rgb_row<const BE: bool>(
   xyz: &[u16],

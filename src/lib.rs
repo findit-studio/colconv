@@ -77,6 +77,15 @@
 //! | [`Ayuv64`]       | 16        | 4:4:4       | packed u16 quadruple, source α  | `ayuv64le`     |
 //! | [`Gbrp`]         |  8        | 4:4:4       | planar GBR (3 planes)            | `gbrp`        |
 //! | [`Gbrap`]        |  8        | 4:4:4       | planar GBR + A (4 planes, source α) | `gbrap`   |
+//! | [`Xyz12`](crate::yuv::Xyz12) | 12 | 4:4:4 | packed CIE XYZ (3 × u16, low 12 bits) | `xyz12le` / `xyz12be` |
+//!
+//! [`Xyz12`](crate::yuv::Xyz12) is the **DCP / digital-cinema** source format. Decoding
+//! it requires a SMPTE ST 428-1 §8 inverse OETF, a 3×3 matrix to one
+//! of three target gamuts ([`DcpTargetGamut::DciP3`] /
+//! [`DcpTargetGamut::Rec709`] / [`DcpTargetGamut::Rec2020`]), then a
+//! sRGB-shape forward OETF and integer narrow. Every backend is
+//! native SIMD; the OETFs run scalar per lane to preserve the 0-ULP
+//! scalar↔SIMD parity contract.
 //!
 //! ## RAW (Bayer) sources
 //!
