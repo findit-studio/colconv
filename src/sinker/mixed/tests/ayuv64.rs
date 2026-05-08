@@ -856,14 +856,14 @@ fn ayuv64_strategy_a_plus_matches_independent_kernel() {
         let row_off_packed = r * width * 4;
         let row_off_rgb = r * width * 3;
         let row_off_rgba = r * width * 4;
-        crate::row::scalar::ayuv64_to_rgb_row(
+        crate::row::scalar::ayuv64_to_rgb_row::<false>(
           &packed[row_off_packed..row_off_packed + width * 4],
           &mut inline_rgb[row_off_rgb..row_off_rgb + width * 3],
           width,
           matrix,
           full_range,
         );
-        crate::row::scalar::ayuv64_to_rgba_row(
+        crate::row::scalar::ayuv64_to_rgba_row::<false>(
           &packed[row_off_packed..row_off_packed + width * 4],
           &mut inline_rgba[row_off_rgba..row_off_rgba + width * 4],
           width,
@@ -931,14 +931,14 @@ fn ayuv64_strategy_a_plus_u16_matches_independent_kernel() {
         let row_off_packed = r * width * 4;
         let row_off_rgb = r * width * 3;
         let row_off_rgba = r * width * 4;
-        crate::row::scalar::ayuv64_to_rgb_u16_row(
+        crate::row::scalar::ayuv64_to_rgb_u16_row::<false>(
           &packed[row_off_packed..row_off_packed + width * 4],
           &mut inline_rgb[row_off_rgb..row_off_rgb + width * 3],
           width,
           matrix,
           full_range,
         );
-        crate::row::scalar::ayuv64_to_rgba_u16_row(
+        crate::row::scalar::ayuv64_to_rgba_u16_row::<false>(
           &packed[row_off_packed..row_off_packed + width * 4],
           &mut inline_rgba[row_off_rgba..row_off_rgba + width * 4],
           width,

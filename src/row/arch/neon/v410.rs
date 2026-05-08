@@ -16,6 +16,12 @@
 //! for `chroma_i16x8` / `scale_y`. Only the low 4 lanes carry valid
 //! data; the high 4 are don't-care.
 //!
+//! ## BE support (`<const BE: bool>`)
+//!
+//! When `BE = true`, each loaded `uint32x4_t` is byte-swapped via
+//! `bswap_u32x4_if_be::<BE>` before field extraction. The scalar tail
+//! also forwards `BE`.
+//!
 //! ## Tail
 //!
 //! `width % 4` remaining pixels fall through to `scalar::v410_*`.
@@ -29,7 +35,7 @@ use crate::{ColorMatrix, row::scalar};
 
 /// NEON V410 → packed u8 RGB or RGBA.
 ///
-/// Byte-identical to `scalar::v410_to_rgb_or_rgba_row::<ALPHA>`.
+/// Byte-identical to `scalar::v410_to_rgb_or_rgba_row::<ALPHA, BE>`.
 ///
 /// # Safety
 ///
@@ -38,7 +44,7 @@ use crate::{ColorMatrix, row::scalar};
 /// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn v410_to_rgb_or_rgba_row<const ALPHA: bool>(
+pub(crate) unsafe fn v410_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   packed: &[u32],
   out: &mut [u8],
   width: usize,
@@ -71,8 +77,8 @@ pub(crate) unsafe fn v410_to_rgb_or_rgba_row<const ALPHA: bool>(
 
     let mut x = 0usize;
     while x + 4 <= width {
-      // Load 4 V410 words.
-      let words = vld1q_u32(packed.as_ptr().add(x));
+      // Load 4 V410 words; byte-swap each u32 for BE wire format.
+      let words = bswap_u32x4_if_be::<BE>(vld1q_u32(packed.as_ptr().add(x)));
 
       // Extract U (bits 9:0), Y (bits 19:10), V (bits 29:20).
       let u_u32 = vandq_u32(words, mask);
@@ -140,7 +146,13 @@ pub(crate) unsafe fn v410_to_rgb_or_rgba_row<const ALPHA: bool>(
       let tail_packed = &packed[x..width];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::v410_to_rgb_or_rgba_row::<ALPHA>(tail_packed, tail_out, tail_w, matrix, full_range);
+      scalar::v410_to_rgb_or_rgba_row::<ALPHA, BE>(
+        tail_packed,
+        tail_out,
+        tail_w,
+        matrix,
+        full_range,
+      );
     }
   }
 }
@@ -150,7 +162,7 @@ pub(crate) unsafe fn v410_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// NEON V410 → packed native-depth u16 RGB or RGBA (low-bit-packed at
 /// 10-bit).
 ///
-/// Byte-identical to `scalar::v410_to_rgb_u16_or_rgba_u16_row::<ALPHA>`.
+/// Byte-identical to `scalar::v410_to_rgb_u16_or_rgba_u16_row::<ALPHA, BE>`.
 ///
 /// # Safety
 ///
@@ -159,7 +171,7 @@ pub(crate) unsafe fn v410_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })` (u16 elements).
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
+pub(crate) unsafe fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   packed: &[u32],
   out: &mut [u16],
   width: usize,
@@ -196,7 +208,7 @@ pub(crate) unsafe fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 
     let mut x = 0usize;
     while x + 4 <= width {
-      let words = vld1q_u32(packed.as_ptr().add(x));
+      let words = bswap_u32x4_if_be::<BE>(vld1q_u32(packed.as_ptr().add(x)));
 
       let u_u32 = vandq_u32(words, mask);
       let y_u32 = vandq_u32(vshrq_n_u32::<10>(words), mask);
@@ -253,7 +265,7 @@ pub(crate) unsafe fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
       let tail_packed = &packed[x..width];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::v410_to_rgb_u16_or_rgba_u16_row::<ALPHA>(
+      scalar::v410_to_rgb_u16_or_rgba_u16_row::<ALPHA, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -268,7 +280,7 @@ pub(crate) unsafe fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 
 /// NEON V410 → u8 luma. Y is `(word >> 10) & 0x3FF`, then `>> 2`.
 ///
-/// Byte-identical to `scalar::v410_to_luma_row`.
+/// Byte-identical to `scalar::v410_to_luma_row::<BE>`.
 ///
 /// # Safety
 ///
@@ -277,7 +289,11 @@ pub(crate) unsafe fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 /// 3. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn v410_to_luma_row(packed: &[u32], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn v410_to_luma_row<const BE: bool>(
+  packed: &[u32],
+  out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width);
   debug_assert!(out.len() >= width);
 
@@ -285,7 +301,7 @@ pub(crate) unsafe fn v410_to_luma_row(packed: &[u32], out: &mut [u8], width: usi
     let mask = vdupq_n_u32(0x3FF);
     let mut x = 0usize;
     while x + 4 <= width {
-      let words = vld1q_u32(packed.as_ptr().add(x));
+      let words = bswap_u32x4_if_be::<BE>(vld1q_u32(packed.as_ptr().add(x)));
       // Y field: bits 19:10 → shift right 10, mask to 10-bit.
       let y_u32 = vandq_u32(vshrq_n_u32::<10>(words), mask);
       // Narrow u32→u16, then >> 2, then narrow u16→u8.
@@ -301,7 +317,7 @@ pub(crate) unsafe fn v410_to_luma_row(packed: &[u32], out: &mut [u8], width: usi
       x += 4;
     }
     if x < width {
-      scalar::v410_to_luma_row(&packed[x..width], &mut out[x..width], width - x);
+      scalar::v410_to_luma_row::<BE>(&packed[x..width], &mut out[x..width], width - x);
     }
   }
 }
@@ -310,7 +326,7 @@ pub(crate) unsafe fn v410_to_luma_row(packed: &[u32], out: &mut [u8], width: usi
 
 /// NEON V410 → u16 luma (low-bit-packed at 10-bit).
 ///
-/// Byte-identical to `scalar::v410_to_luma_u16_row`.
+/// Byte-identical to `scalar::v410_to_luma_u16_row::<BE>`.
 ///
 /// # Safety
 ///
@@ -319,7 +335,11 @@ pub(crate) unsafe fn v410_to_luma_row(packed: &[u32], out: &mut [u8], width: usi
 /// 3. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn v410_to_luma_u16_row(packed: &[u32], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn v410_to_luma_u16_row<const BE: bool>(
+  packed: &[u32],
+  out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width);
   debug_assert!(out.len() >= width);
 
@@ -327,7 +347,7 @@ pub(crate) unsafe fn v410_to_luma_u16_row(packed: &[u32], out: &mut [u16], width
     let mask = vdupq_n_u32(0x3FF);
     let mut x = 0usize;
     while x + 4 <= width {
-      let words = vld1q_u32(packed.as_ptr().add(x));
+      let words = bswap_u32x4_if_be::<BE>(vld1q_u32(packed.as_ptr().add(x)));
       let y_u32 = vandq_u32(vshrq_n_u32::<10>(words), mask);
       // Narrow u32→u16 (values ≤ 1023, no saturation needed).
       let y_u16 = vmovn_u32(y_u32);
@@ -338,7 +358,7 @@ pub(crate) unsafe fn v410_to_luma_u16_row(packed: &[u32], out: &mut [u16], width
       x += 4;
     }
     if x < width {
-      scalar::v410_to_luma_u16_row(&packed[x..width], &mut out[x..width], width - x);
+      scalar::v410_to_luma_u16_row::<BE>(&packed[x..width], &mut out[x..width], width - x);
     }
   }
 }

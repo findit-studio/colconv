@@ -40,7 +40,7 @@
 
 use core::arch::x86_64::*;
 
-use super::*;
+use super::{endian, *};
 use crate::{ColorMatrix, row::scalar};
 
 // ---- Static permute index tables -----------------------------------------
@@ -145,15 +145,16 @@ static COMBINE_IDX: [i16; 32] = [
 /// `vpermt2w` — the u16 cross-vector permute).
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-unsafe fn unpack_xv36_32px_avx512(ptr: *const u16) -> (__m512i, __m512i, __m512i) {
+unsafe fn unpack_xv36_32px_avx512<const BE: bool>(ptr: *const u16) -> (__m512i, __m512i, __m512i) {
   // SAFETY: caller obligation — `ptr` has 256 bytes readable; AVX-512F +
   // AVX-512BW are available.
   unsafe {
     // Load 4 × __m512i (32 pixels × 4 u16 channels = 128 u16 = 256 bytes).
-    let v0 = _mm512_loadu_si512(ptr.cast()); // pixels  0.. 7
-    let v1 = _mm512_loadu_si512(ptr.add(32).cast()); // pixels  8..15
-    let v2 = _mm512_loadu_si512(ptr.add(64).cast()); // pixels 16..23
-    let v3 = _mm512_loadu_si512(ptr.add(96).cast()); // pixels 24..31
+    // For BE wire format, `load_endian_u16x32` byte-swaps each u16 lane.
+    let v0 = endian::load_endian_u16x32::<BE>(ptr as *const u8); // pixels  0.. 7
+    let v1 = endian::load_endian_u16x32::<BE>(ptr.add(32) as *const u8); // pixels  8..15
+    let v2 = endian::load_endian_u16x32::<BE>(ptr.add(64) as *const u8); // pixels 16..23
+    let v3 = endian::load_endian_u16x32::<BE>(ptr.add(96) as *const u8); // pixels 24..31
 
     // Load permute index tables.
     let uv_idx = _mm512_loadu_si512(UV_FROM_PAIR_IDX.as_ptr().cast());
@@ -201,7 +202,7 @@ unsafe fn unpack_xv36_32px_avx512(ptr: *const u16) -> (__m512i, __m512i, __m512i
 /// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn xv36_to_rgb_or_rgba_row<const ALPHA: bool>(
+pub(crate) unsafe fn xv36_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   packed: &[u16],
   out: &mut [u8],
   width: usize,
@@ -235,7 +236,7 @@ pub(crate) unsafe fn xv36_to_rgb_or_rgba_row<const ALPHA: bool>(
     let mut x = 0usize;
     while x + 32 <= width {
       // Deinterleave 32 XV36 quadruples → U, Y, V as i16x32 in [0, 4095].
-      let (u_u16, y_u16, v_u16) = unpack_xv36_32px_avx512(packed.as_ptr().add(x * 4));
+      let (u_u16, y_u16, v_u16) = unpack_xv36_32px_avx512::<BE>(packed.as_ptr().add(x * 4));
 
       // Values ≤ 4095 < 32767 — safe to treat as signed i16.
       let u_i16 = u_u16;
@@ -317,7 +318,13 @@ pub(crate) unsafe fn xv36_to_rgb_or_rgba_row<const ALPHA: bool>(
       let tail_packed = &packed[x * 4..width * 4];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::xv36_to_rgb_or_rgba_row::<ALPHA>(tail_packed, tail_out, tail_w, matrix, full_range);
+      scalar::xv36_to_rgb_or_rgba_row::<ALPHA, BE>(
+        tail_packed,
+        tail_out,
+        tail_w,
+        matrix,
+        full_range,
+      );
     }
   }
 }
@@ -338,7 +345,7 @@ pub(crate) unsafe fn xv36_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })` (u16 elements).
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
+pub(crate) unsafe fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   packed: &[u16],
   out: &mut [u16],
   width: usize,
@@ -376,7 +383,7 @@ pub(crate) unsafe fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 
     let mut x = 0usize;
     while x + 32 <= width {
-      let (u_u16, y_u16, v_u16) = unpack_xv36_32px_avx512(packed.as_ptr().add(x * 4));
+      let (u_u16, y_u16, v_u16) = unpack_xv36_32px_avx512::<BE>(packed.as_ptr().add(x * 4));
 
       let u_i16 = u_u16;
       let y_i16 = y_u16;
@@ -437,7 +444,7 @@ pub(crate) unsafe fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
       let tail_packed = &packed[x * 4..width * 4];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::xv36_to_rgb_u16_or_rgba_u16_row::<ALPHA>(
+      scalar::xv36_to_rgb_u16_or_rgba_u16_row::<ALPHA, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -466,7 +473,11 @@ pub(crate) unsafe fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 /// 3. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn xv36_to_luma_row(packed: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn xv36_to_luma_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4);
   debug_assert!(out.len() >= width);
 
@@ -477,7 +488,7 @@ pub(crate) unsafe fn xv36_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
 
     let mut x = 0usize;
     while x + 32 <= width {
-      let (_u_vec, y_vec, _v_vec) = unpack_xv36_32px_avx512(packed.as_ptr().add(x * 4));
+      let (_u_vec, y_vec, _v_vec) = unpack_xv36_32px_avx512::<BE>(packed.as_ptr().add(x * 4));
 
       // y_vec is already >> 4 (values in [0, 4095]).
       // Scalar does `packed[x*4+1] >> 8` — that is MSB-aligned >> 4 to get
@@ -495,7 +506,7 @@ pub(crate) unsafe fn xv36_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
 
     // Scalar tail — remaining < 32 pixels.
     if x < width {
-      scalar::xv36_to_luma_row(&packed[x * 4..width * 4], &mut out[x..width], width - x);
+      scalar::xv36_to_luma_row::<BE>(&packed[x * 4..width * 4], &mut out[x..width], width - x);
     }
   }
 }
@@ -517,7 +528,11 @@ pub(crate) unsafe fn xv36_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
 /// 3. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn xv36_to_luma_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn xv36_to_luma_u16_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4);
   debug_assert!(out.len() >= width);
 
@@ -525,7 +540,7 @@ pub(crate) unsafe fn xv36_to_luma_u16_row(packed: &[u16], out: &mut [u16], width
   unsafe {
     let mut x = 0usize;
     while x + 32 <= width {
-      let (_u_vec, y_vec, _v_vec) = unpack_xv36_32px_avx512(packed.as_ptr().add(x * 4));
+      let (_u_vec, y_vec, _v_vec) = unpack_xv36_32px_avx512::<BE>(packed.as_ptr().add(x * 4));
 
       // y_vec already has >> 4 applied (= 12-bit value in [0, 4095]).
       // Direct store of 32 × u16.
@@ -536,7 +551,7 @@ pub(crate) unsafe fn xv36_to_luma_u16_row(packed: &[u16], out: &mut [u16], width
 
     // Scalar tail — remaining < 32 pixels.
     if x < width {
-      scalar::xv36_to_luma_u16_row(&packed[x * 4..width * 4], &mut out[x..width], width - x);
+      scalar::xv36_to_luma_u16_row::<BE>(&packed[x * 4..width * 4], &mut out[x..width], width - x);
     }
   }
 }

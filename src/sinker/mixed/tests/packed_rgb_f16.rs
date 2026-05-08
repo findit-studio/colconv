@@ -330,7 +330,17 @@ fn rgbf16_simd_matches_scalar_with_random_input() {
 /// driven by miri on s390x / powerpc64; gating it out of miri (per the
 /// codex 4th-pass finding) would skip exactly the host where BE corruption
 /// would surface.
+///
+/// Re-gated on miri because the fixture builder calls `half::f16::from_f32`,
+/// which on aarch64 / x86 / x86_64 with `target_feature = "fp16"` (or F16C)
+/// expands to inline `asm!` that miri rejects. BE-host miri (s390x /
+/// powerpc64) covers the byte-swap correctness via the f32 LE-encoded
+/// regression tests in this module instead.
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
+)]
 fn rgbf16_sinker_le_encoded_frame_decodes_correctly() {
   let vals_f32 = [0.5f32, 1.5, -0.25, 100.0];
   let intended: Vec<half::f16> = (0..16 * 4 * 3)

@@ -252,6 +252,7 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         &mut buf[one_plane_start..one_plane_end],
         w,
         use_simd,
+        false,
       );
     }
 
@@ -263,6 +264,7 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         &mut buf[one_plane_start..one_plane_end],
         w,
         use_simd,
+        false,
       );
     }
 
@@ -290,6 +292,7 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         row.matrix(),
         row.full_range(),
         use_simd,
+        false,
       );
       return Ok(());
     }
@@ -308,6 +311,7 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         row.matrix(),
         row.full_range(),
         use_simd,
+        false,
       );
       return Ok(());
     }
@@ -328,7 +332,15 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         w,
         h,
       )?;
-      ayuv64_to_rgb_row(packed, rgb_row, w, row.matrix(), row.full_range(), use_simd);
+      ayuv64_to_rgb_row(
+        packed,
+        rgb_row,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        false,
+      );
 
       if let Some(hsv) = hsv.as_mut() {
         rgb_to_hsv_row(
@@ -370,6 +382,7 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         row.matrix(),
         row.full_range(),
         use_simd,
+        false,
       );
     }
 
@@ -393,6 +406,7 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         row.matrix(),
         row.full_range(),
         use_simd,
+        false,
       );
 
       // Strategy A+ combo (u16): RGBA u16 also attached — derive from the
@@ -429,6 +443,7 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         row.matrix(),
         row.full_range(),
         use_simd,
+        false,
       );
     }
 
