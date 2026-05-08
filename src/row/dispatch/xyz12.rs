@@ -13,10 +13,15 @@
 //! → sRGB-shape OETF (skipped for f32 outputs) → range scale + integer
 //! narrow (only for u8 / u16 outputs).
 //!
-//! SIMD backends ship in tranches 7–11; only the scalar fallback is
-//! wired right now. The signature is forward-compatible: backends will
-//! plug into the same `cfg_select!` block as the dispatcher grows.
+//! SIMD backends are wired progressively: NEON (aarch64) lands in the
+//! Phase B `tier12-xyz12` rollout; x86 (SSE4.1 / AVX2 / AVX-512) and
+//! `wasm-simd128` follow in subsequent commits. Each backend follows
+//! the established `cfg_select!` pattern from `dispatch::planar_gbr_*`.
 
+#[cfg(target_arch = "aarch64")]
+use crate::row::arch;
+#[cfg(target_arch = "aarch64")]
+use crate::row::neon_available;
 use crate::{
   DcpTargetGamut,
   row::{
@@ -26,20 +31,34 @@ use crate::{
 
 /// XYZ12 → packed `R, G, B` `u8` row dispatcher.
 ///
-/// `use_simd = false` forces scalar; SIMD backends are wired in
-/// tranches 7–11.
+/// `use_simd = false` forces scalar; SIMD backends pick up the call
+/// when their architecture is detected at runtime (NEON / SSE4.1 /
+/// AVX2 / AVX-512 / wasm-simd128 — wired in subsequent commits).
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub fn xyz12_to_rgb_row<const BE: bool>(
   xyz: &[u16],
   rgb_out: &mut [u8],
   width: usize,
   target_gamut: DcpTargetGamut,
-  _use_simd: bool,
+  use_simd: bool,
 ) {
   let xyz_in_min = rgb_row_elems(width);
   let rgb_out_min = rgb_row_bytes(width);
   assert!(xyz.len() >= xyz_in_min, "xyz row too short");
   assert!(rgb_out.len() >= rgb_out_min, "rgb_out row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe { arch::neon::xyz12::xyz12_to_rgb_row::<BE>(xyz, rgb_out, width, target_gamut); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
 
   scalar_xyz12::xyz12_to_rgb_row::<BE>(xyz, rgb_out, width, target_gamut);
 }
@@ -51,12 +70,25 @@ pub fn xyz12_to_rgba_row<const BE: bool>(
   rgba_out: &mut [u8],
   width: usize,
   target_gamut: DcpTargetGamut,
-  _use_simd: bool,
+  use_simd: bool,
 ) {
   let xyz_in_min = rgb_row_elems(width);
   let rgba_out_min = rgba_row_bytes(width);
   assert!(xyz.len() >= xyz_in_min, "xyz row too short");
   assert!(rgba_out.len() >= rgba_out_min, "rgba_out row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe { arch::neon::xyz12::xyz12_to_rgba_row::<BE>(xyz, rgba_out, width, target_gamut); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
 
   scalar_xyz12::xyz12_to_rgba_row::<BE>(xyz, rgba_out, width, target_gamut);
 }
@@ -68,12 +100,27 @@ pub fn xyz12_to_rgb_u16_row<const BE: bool>(
   rgb_out: &mut [u16],
   width: usize,
   target_gamut: DcpTargetGamut,
-  _use_simd: bool,
+  use_simd: bool,
 ) {
   let xyz_in_min = rgb_row_elems(width);
   let rgb_out_min = rgb_row_elems(width);
   assert!(xyz.len() >= xyz_in_min, "xyz row too short");
   assert!(rgb_out.len() >= rgb_out_min, "rgb_out row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe {
+            arch::neon::xyz12::xyz12_to_rgb_u16_row::<BE>(xyz, rgb_out, width, target_gamut);
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
 
   scalar_xyz12::xyz12_to_rgb_u16_row::<BE>(xyz, rgb_out, width, target_gamut);
 }
@@ -85,12 +132,27 @@ pub fn xyz12_to_rgba_u16_row<const BE: bool>(
   rgba_out: &mut [u16],
   width: usize,
   target_gamut: DcpTargetGamut,
-  _use_simd: bool,
+  use_simd: bool,
 ) {
   let xyz_in_min = rgb_row_elems(width);
   let rgba_out_min = rgba_row_elems(width);
   assert!(xyz.len() >= xyz_in_min, "xyz row too short");
   assert!(rgba_out.len() >= rgba_out_min, "rgba_out row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe {
+            arch::neon::xyz12::xyz12_to_rgba_u16_row::<BE>(xyz, rgba_out, width, target_gamut);
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
 
   scalar_xyz12::xyz12_to_rgba_u16_row::<BE>(xyz, rgba_out, width, target_gamut);
 }
@@ -105,12 +167,27 @@ pub fn xyz12_to_rgb_f32_row<const BE: bool>(
   rgb_out: &mut [f32],
   width: usize,
   target_gamut: DcpTargetGamut,
-  _use_simd: bool,
+  use_simd: bool,
 ) {
   let xyz_in_min = rgb_row_elems(width);
   let rgb_out_min = rgb_row_elems(width);
   assert!(xyz.len() >= xyz_in_min, "xyz row too short");
   assert!(rgb_out.len() >= rgb_out_min, "rgb_out row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe {
+            arch::neon::xyz12::xyz12_to_rgb_f32_row::<BE>(xyz, rgb_out, width, target_gamut);
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
 
   scalar_xyz12::xyz12_to_rgb_f32_row::<BE>(xyz, rgb_out, width, target_gamut);
 }
@@ -125,12 +202,27 @@ pub fn xyz12_to_xyz_f32_row<const BE: bool>(
   xyz: &[u16],
   xyz_out: &mut [f32],
   width: usize,
-  _use_simd: bool,
+  use_simd: bool,
 ) {
   let xyz_in_min = rgb_row_elems(width);
   let xyz_out_min = rgb_row_elems(width);
   assert!(xyz.len() >= xyz_in_min, "xyz row too short");
   assert!(xyz_out.len() >= xyz_out_min, "xyz_out row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe {
+            arch::neon::xyz12::xyz12_to_xyz_f32_row::<BE>(xyz, xyz_out, width);
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
 
   scalar_xyz12::xyz12_to_xyz_f32_row::<BE>(xyz, xyz_out, width);
 }
@@ -143,12 +235,27 @@ pub fn xyz12_to_rgb_f16_row<const BE: bool>(
   rgb_out: &mut [half::f16],
   width: usize,
   target_gamut: DcpTargetGamut,
-  _use_simd: bool,
+  use_simd: bool,
 ) {
   let xyz_in_min = rgb_row_elems(width);
   let rgb_out_min = rgb_row_elems(width);
   assert!(xyz.len() >= xyz_in_min, "xyz row too short");
   assert!(rgb_out.len() >= rgb_out_min, "rgb_out row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe {
+            arch::neon::xyz12::xyz12_to_rgb_f16_row::<BE>(xyz, rgb_out, width, target_gamut);
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
 
   scalar_xyz12::xyz12_to_rgb_f16_row::<BE>(xyz, rgb_out, width, target_gamut);
 }
@@ -160,12 +267,27 @@ pub fn xyz12_to_rgba_f16_row<const BE: bool>(
   rgba_out: &mut [half::f16],
   width: usize,
   target_gamut: DcpTargetGamut,
-  _use_simd: bool,
+  use_simd: bool,
 ) {
   let xyz_in_min = rgb_row_elems(width);
   let rgba_out_min = rgba_row_elems(width);
   assert!(xyz.len() >= xyz_in_min, "xyz row too short");
   assert!(rgba_out.len() >= rgba_out_min, "rgba_out row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified available.
+          unsafe {
+            arch::neon::xyz12::xyz12_to_rgba_f16_row::<BE>(xyz, rgba_out, width, target_gamut);
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
 
   scalar_xyz12::xyz12_to_rgba_f16_row::<BE>(xyz, rgba_out, width, target_gamut);
 }
