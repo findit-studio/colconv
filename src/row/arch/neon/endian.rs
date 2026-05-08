@@ -152,6 +152,3 @@ pub(crate) unsafe fn load_endian_u32x4<const BE: bool>(ptr: *const u8) -> uint32
   }
 }
 
-// (NEON u16x4 8-byte loaders `load_le_u16x4` / `load_be_u16x4` /
-// `load_endian_u16x4` are now provided by PR #83's be-tier9 branch
-// — see definitions earlier in this file.)
