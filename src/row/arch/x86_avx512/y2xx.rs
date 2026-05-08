@@ -65,6 +65,21 @@ use core::arch::x86_64::*;
 use super::*;
 use crate::{ColorMatrix, row::scalar};
 
+/// Host-endian gate for Y2xx/Y216 SIMD bodies.
+///
+/// SIMD deinterleave / fixed-shuffle paths use **host-native** u16 reads,
+/// so the SIMD body is only correct when the encoded byte order matches
+/// the host. The truth table (mirrors PR #82 `9c7d533` / PR #85 `9e678b0`
+/// / PR #86 `b7fb9d3` host-endian gate fixes):
+///
+/// | wire `BE` | host       | `BE == HOST_NATIVE_BE` | path   | correct via    |
+/// |-----------|------------|------------------------|--------|----------------|
+/// | false     | LE         | true                   | SIMD   | host-native LE |
+/// | false     | BE         | false                  | scalar | `from_le`      |
+/// | true      | LE         | false                  | scalar | `from_be`      |
+/// | true      | BE         | true                   | SIMD   | host-native BE |
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 // ---- Static permute index tables --------------------------------------
 //
 // Each table is a 32-lane u16 permute index. For
@@ -210,7 +225,7 @@ pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<
   // caller-promised slice lengths checked above.
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let rnd_v = _mm512_set1_epi32(RND);
       let y_off_v = _mm512_set1_epi16(y_off as i16);
       let y_scale_v = _mm512_set1_epi32(y_scale);
@@ -395,7 +410,7 @@ pub(crate) unsafe fn y2xx_n_to_rgb_u16_or_rgba_u16_row<
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let rnd_v = _mm512_set1_epi32(RND);
       let y_off_v = _mm512_set1_epi16(y_off as i16);
       let y_scale_v = _mm512_set1_epi32(y_scale);
@@ -519,7 +534,7 @@ pub(crate) unsafe fn y2xx_n_to_luma_row<const BITS: u32, const BE: bool>(
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let pack_fixup = _mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7);
       let zero = _mm512_setzero_si512();
       let y_idx = _mm512_loadu_si512(Y_FROM_YUYV_IDX.as_ptr().cast());
@@ -587,7 +602,7 @@ pub(crate) unsafe fn y2xx_n_to_luma_u16_row<const BITS: u32, const BE: bool>(
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let shr_count = _mm_cvtsi32_si128((16 - BITS) as i32);
       let y_idx = _mm512_loadu_si512(Y_FROM_YUYV_IDX.as_ptr().cast());
 

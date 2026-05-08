@@ -46,6 +46,21 @@ use core::arch::x86_64::*;
 use super::*;
 use crate::{ColorMatrix, row::scalar};
 
+/// Host-endian gate for Y2xx/Y216 SIMD bodies.
+///
+/// SIMD deinterleave / fixed-shuffle paths use **host-native** u16 reads,
+/// so the SIMD body is only correct when the encoded byte order matches
+/// the host. The truth table (mirrors PR #82 `9c7d533` / PR #85 `9e678b0`
+/// / PR #86 `b7fb9d3` host-endian gate fixes):
+///
+/// | wire `BE` | host       | `BE == HOST_NATIVE_BE` | path   | correct via    |
+/// |-----------|------------|------------------------|--------|----------------|
+/// | false     | LE         | true                   | SIMD   | host-native LE |
+/// | false     | BE         | false                  | scalar | `from_le`      |
+/// | true      | LE         | false                  | scalar | `from_be`      |
+/// | true      | BE         | true                   | SIMD   | host-native BE |
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 /// Loads 8 Y2xx pixels (16 u16 samples = 32 bytes) and unpacks them
 /// into three `__m128i` vectors holding `BITS`-bit samples in their
 /// low bits (each lane an i16):
@@ -163,7 +178,7 @@ pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<
   // lengths checked above.
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let rnd_v = _mm_set1_epi32(RND);
       let y_off_v = _mm_set1_epi16(y_off as i16);
       let y_scale_v = _mm_set1_epi32(y_scale);
@@ -261,7 +276,7 @@ pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<
 
         x += 8;
       }
-    } // end if !BE
+    } // end if BE == HOST_NATIVE_BE
 
     // Scalar tail — remaining < 8 pixels (always even per 4:2:2),
     // or full-row fallback when BE=true.
@@ -326,7 +341,7 @@ pub(crate) unsafe fn y2xx_n_to_rgb_u16_or_rgba_u16_row<
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let rnd_v = _mm_set1_epi32(RND);
       let y_off_v = _mm_set1_epi16(y_off as i16);
       let y_scale_v = _mm_set1_epi32(y_scale);
@@ -386,7 +401,7 @@ pub(crate) unsafe fn y2xx_n_to_rgb_u16_or_rgba_u16_row<
 
         x += 8;
       }
-    } // end if !BE
+    } // end if BE == HOST_NATIVE_BE
 
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
@@ -436,7 +451,7 @@ pub(crate) unsafe fn y2xx_n_to_luma_row<const BITS: u32, const BE: bool>(
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       // Y permute mask: pick even u16 lanes (low byte at [0], high byte
       // at [1]) into the low 8 bytes; high 8 bytes zeroed.
       let y_idx = _mm_setr_epi8(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
@@ -504,7 +519,7 @@ pub(crate) unsafe fn y2xx_n_to_luma_u16_row<const BITS: u32, const BE: bool>(
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let shr_count = _mm_cvtsi32_si128((16 - BITS) as i32);
       let y_idx = _mm_setr_epi8(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
 

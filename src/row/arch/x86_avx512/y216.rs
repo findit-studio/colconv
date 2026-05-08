@@ -41,6 +41,21 @@ use core::arch::x86_64::*;
 use super::*;
 use crate::{ColorMatrix, row::scalar};
 
+/// Host-endian gate for Y2xx/Y216 SIMD bodies.
+///
+/// SIMD deinterleave / fixed-shuffle paths use **host-native** u16 reads,
+/// so the SIMD body is only correct when the encoded byte order matches
+/// the host. The truth table (mirrors PR #82 `9c7d533` / PR #85 `9e678b0`
+/// / PR #86 `b7fb9d3` host-endian gate fixes):
+///
+/// | wire `BE` | host       | `BE == HOST_NATIVE_BE` | path   | correct via    |
+/// |-----------|------------|------------------------|--------|----------------|
+/// | false     | LE         | true                   | SIMD   | host-native LE |
+/// | false     | BE         | false                  | scalar | `from_le`      |
+/// | true      | LE         | false                  | scalar | `from_be`      |
+/// | true      | BE         | true                   | SIMD   | host-native BE |
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 // ---- Static permute index tables (same layout as y2xx.rs) ---------------
 
 #[rustfmt::skip]
@@ -138,7 +153,7 @@ pub(crate) unsafe fn y216_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   // SAFETY: AVX-512F + AVX-512BW is the caller's obligation.
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let rnd_v = _mm512_set1_epi32(RND);
       let y_off_v = _mm512_set1_epi32(y_off);
       let y_scale_v = _mm512_set1_epi32(y_scale);
@@ -331,7 +346,7 @@ pub(crate) unsafe fn y216_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE
   // SAFETY: AVX-512F + AVX-512BW is the caller's obligation.
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let alpha_u16 = _mm_set1_epi16(-1i16);
       let rnd_i64_v = _mm512_set1_epi64(RND_I64);
       let rnd_i32_v = _mm512_set1_epi32(RND_I32);
@@ -491,7 +506,7 @@ pub(crate) unsafe fn y216_to_luma_row<const BE: bool>(
   // SAFETY: AVX-512F + AVX-512BW is the caller's obligation.
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let pack_fixup = _mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7);
       let y_idx = _mm512_loadu_si512(Y_FROM_YUYV_IDX.as_ptr().cast());
 
@@ -553,7 +568,7 @@ pub(crate) unsafe fn y216_to_luma_u16_row<const BE: bool>(
   // SAFETY: AVX-512F + AVX-512BW is the caller's obligation.
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let y_idx = _mm512_loadu_si512(Y_FROM_YUYV_IDX.as_ptr().cast());
 
       while x + 64 <= width {

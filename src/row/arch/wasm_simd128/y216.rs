@@ -46,6 +46,21 @@ use core::arch::wasm32::*;
 use super::*;
 use crate::{ColorMatrix, row::scalar};
 
+/// Host-endian gate for Y2xx/Y216 SIMD bodies.
+///
+/// SIMD deinterleave / fixed-shuffle paths use **host-native** u16 reads,
+/// so the SIMD body is only correct when the encoded byte order matches
+/// the host. The truth table (mirrors PR #82 `9c7d533` / PR #85 `9e678b0`
+/// / PR #86 `b7fb9d3` host-endian gate fixes):
+///
+/// | wire `BE` | host       | `BE == HOST_NATIVE_BE` | path   | correct via    |
+/// |-----------|------------|------------------------|--------|----------------|
+/// | false     | LE         | true                   | SIMD   | host-native LE |
+/// | false     | BE         | false                  | scalar | `from_le`      |
+/// | true      | LE         | false                  | scalar | `from_be`      |
+/// | true      | BE         | true                   | SIMD   | host-native BE |
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 /// Loads 8 Y216 pixels (16 u16 samples = 32 bytes) and extracts
 /// the Y, U, V vectors **without any right-shift** (BITS=16, already
 /// full-range). Returns `(y_vec, u_vec, v_vec)` where:
@@ -125,7 +140,7 @@ pub(crate) unsafe fn y216_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
 
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let rnd_v = i32x4_splat(RND);
       let y_off32_v = i32x4_splat(y_off);
       let y_scale_v = i32x4_splat(y_scale);
@@ -265,7 +280,7 @@ pub(crate) unsafe fn y216_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE
 
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let alpha_u16 = u16x8_splat(0xFFFF);
       let rnd_i64 = i64x2_splat(RND_I64);
       let rnd_i32 = i32x4_splat(RND_I32);
@@ -396,7 +411,7 @@ pub(crate) unsafe fn y216_to_luma_row<const BE: bool>(
 
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       // Y permute: even u16 lanes → low 8 bytes; zeroed high.
       let y_idx = i8x16(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
 
@@ -463,7 +478,7 @@ pub(crate) unsafe fn y216_to_luma_u16_row<const BE: bool>(
 
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let y_idx = i8x16(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
 
       // 16 px/iter: two groups of 8 Y samples (u16 direct copy, no shift).

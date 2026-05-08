@@ -34,7 +34,7 @@ use crate::{
 /// contract. `use_simd = false` forces scalar. `big_endian = true` selects
 /// the big-endian wire encoding (u16 samples stored MSB-first).
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn y210_to_rgb_row(
+pub fn y210_to_rgb_row_endian(
   packed: &[u16],
   rgb_out: &mut [u8],
   width: usize,
@@ -120,9 +120,25 @@ pub fn y210_to_rgb_row(
   );
 }
 
+/// LE-only wrapper around [`y210_to_rgb_row_endian`]; preserves the
+/// pre-endian-aware public signature so existing little-endian
+/// callers compile unchanged. Equivalent to `y210_to_rgb_row_endian(
+/// ..., big_endian = false)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn y210_to_rgb_row(
+  packed: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  y210_to_rgb_row_endian(packed, rgb_out, width, matrix, full_range, use_simd, false)
+}
+
 /// Converts one row of Y210 to packed RGBA (u8) with `α = 0xFF`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn y210_to_rgba_row(
+pub fn y210_to_rgba_row_endian(
   packed: &[u16],
   rgba_out: &mut [u8],
   width: usize,
@@ -208,10 +224,26 @@ pub fn y210_to_rgba_row(
   );
 }
 
+/// LE-only wrapper around [`y210_to_rgba_row_endian`]; preserves the
+/// pre-endian-aware public signature so existing little-endian
+/// callers compile unchanged. Equivalent to `y210_to_rgba_row_endian(
+/// ..., big_endian = false)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn y210_to_rgba_row(
+  packed: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  y210_to_rgba_row_endian(packed, rgba_out, width, matrix, full_range, use_simd, false)
+}
+
 /// Converts one row of Y210 to packed `u16` RGB at native 10-bit
 /// depth (low-bit-packed, `[0, 1023]`).
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn y210_to_rgb_u16_row(
+pub fn y210_to_rgb_u16_row_endian(
   packed: &[u16],
   rgb_out: &mut [u16],
   width: usize,
@@ -301,10 +333,26 @@ pub fn y210_to_rgb_u16_row(
   );
 }
 
+/// LE-only wrapper around [`y210_to_rgb_u16_row_endian`]; preserves the
+/// pre-endian-aware public signature so existing little-endian
+/// callers compile unchanged. Equivalent to `y210_to_rgb_u16_row_endian(
+/// ..., big_endian = false)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn y210_to_rgb_u16_row(
+  packed: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  y210_to_rgb_u16_row_endian(packed, rgb_out, width, matrix, full_range, use_simd, false)
+}
+
 /// Converts one row of Y210 to packed `u16` RGBA at native 10-bit
 /// depth with `α = 1023` (10-bit opaque maximum).
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn y210_to_rgba_u16_row(
+pub fn y210_to_rgba_u16_row_endian(
   packed: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -394,10 +442,26 @@ pub fn y210_to_rgba_u16_row(
   );
 }
 
+/// LE-only wrapper around [`y210_to_rgba_u16_row_endian`]; preserves the
+/// pre-endian-aware public signature so existing little-endian
+/// callers compile unchanged. Equivalent to `y210_to_rgba_u16_row_endian(
+/// ..., big_endian = false)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn y210_to_rgba_u16_row(
+  packed: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  y210_to_rgba_u16_row_endian(packed, rgba_out, width, matrix, full_range, use_simd, false)
+}
+
 /// Extracts one row of 8-bit luma from a packed Y210 buffer.
 /// Y values are downshifted from 10-bit to 8-bit via `>> 2`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn y210_to_luma_row(
+pub fn y210_to_luma_row_endian(
   packed: &[u16],
   luma_out: &mut [u8],
   width: usize,
@@ -478,11 +542,20 @@ pub fn y210_to_luma_row(
   );
 }
 
+/// LE-only wrapper around [`y210_to_luma_row_endian`]; preserves the
+/// pre-endian-aware public signature so existing little-endian
+/// callers compile unchanged. Equivalent to `y210_to_luma_row_endian(
+/// ..., big_endian = false)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn y210_to_luma_row(packed: &[u16], luma_out: &mut [u8], width: usize, use_simd: bool) {
+  y210_to_luma_row_endian(packed, luma_out, width, use_simd, false)
+}
+
 /// Extracts one row of native-depth `u16` luma from a packed Y210
 /// buffer (low-bit-packed: each `u16` carries the 10-bit Y value in
 /// its low 10 bits).
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn y210_to_luma_u16_row(
+pub fn y210_to_luma_u16_row_endian(
   packed: &[u16],
   luma_out: &mut [u16],
   width: usize,
@@ -563,7 +636,24 @@ pub fn y210_to_luma_u16_row(
   );
 }
 
+/// LE-only wrapper around [`y210_to_luma_u16_row_endian`]; preserves the
+/// pre-endian-aware public signature so existing little-endian
+/// callers compile unchanged. Equivalent to `y210_to_luma_u16_row_endian(
+/// ..., big_endian = false)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn y210_to_luma_u16_row(packed: &[u16], luma_out: &mut [u16], width: usize, use_simd: bool) {
+  y210_to_luma_u16_row_endian(packed, luma_out, width, use_simd, false)
+}
+
 #[cfg(all(test, feature = "std"))]
+// LE-host-only: tests in this module use host-native u16/u8 literals as if
+// they were LE-encoded bytes; on a BE host the kernel's `from_le` byte-swap
+// reinterprets host-native storage and produces a different logical value
+// than the literal, breaking the assertions. The kernel's BE-host correctness
+// is locked down by the dedicated host-independent BE/LE parity tests in the
+// per-arch test files (which build fixtures via `to_le_bytes` / `to_be_bytes`,
+// not `swap_bytes`). Mirrors the gating from PR #82 `8f2e329`.
+#[cfg(target_endian = "little")]
 mod tests {
   //! Smoke tests for the public Y210 dispatchers. Walker / kernel
   //! correctness lives in the per-arch tests
@@ -602,7 +692,7 @@ mod tests {
 
     // u8 RGB
     let mut rgb = [0u8; 8 * 3];
-    y210_to_rgb_row(&buf, &mut rgb, 8, ColorMatrix::Bt709, true, false, false);
+    y210_to_rgb_row(&buf, &mut rgb, 8, ColorMatrix::Bt709, true, false);
     for px in rgb.chunks(3) {
       assert!(px[0].abs_diff(128) <= 1);
       assert_eq!(px[0], px[1]);
@@ -611,7 +701,7 @@ mod tests {
 
     // u8 RGBA — alpha = 0xFF
     let mut rgba = [0u8; 8 * 4];
-    y210_to_rgba_row(&buf, &mut rgba, 8, ColorMatrix::Bt709, true, false, false);
+    y210_to_rgba_row(&buf, &mut rgba, 8, ColorMatrix::Bt709, true, false);
     for px in rgba.chunks(4) {
       assert!(px[0].abs_diff(128) <= 1);
       assert_eq!(px[3], 0xFF);
@@ -619,15 +709,7 @@ mod tests {
 
     // u16 RGB at native 10-bit depth.
     let mut rgb_u16 = [0u16; 8 * 3];
-    y210_to_rgb_u16_row(
-      &buf,
-      &mut rgb_u16,
-      8,
-      ColorMatrix::Bt709,
-      true,
-      false,
-      false,
-    );
+    y210_to_rgb_u16_row(&buf, &mut rgb_u16, 8, ColorMatrix::Bt709, true, false);
     for px in rgb_u16.chunks(3) {
       assert!(px[0].abs_diff(512) <= 2);
       assert_eq!(px[0], px[1]);
@@ -636,29 +718,21 @@ mod tests {
 
     // u16 RGBA — alpha = 1023.
     let mut rgba_u16 = [0u16; 8 * 4];
-    y210_to_rgba_u16_row(
-      &buf,
-      &mut rgba_u16,
-      8,
-      ColorMatrix::Bt709,
-      true,
-      false,
-      false,
-    );
+    y210_to_rgba_u16_row(&buf, &mut rgba_u16, 8, ColorMatrix::Bt709, true, false);
     for px in rgba_u16.chunks(4) {
       assert_eq!(px[3], 1023);
     }
 
     // u8 luma — Y=512 → 128 after `>> 2`.
     let mut luma = [0u8; 8];
-    y210_to_luma_row(&buf, &mut luma, 8, false, false);
+    y210_to_luma_row(&buf, &mut luma, 8, false);
     for &y in &luma {
       assert_eq!(y, (512u16 >> 2) as u8);
     }
 
     // u16 luma — low-packed 10-bit Y.
     let mut luma_u16 = [0u16; 8];
-    y210_to_luma_u16_row(&buf, &mut luma_u16, 8, false, false);
+    y210_to_luma_u16_row(&buf, &mut luma_u16, 8, false);
     for &y in &luma_u16 {
       assert_eq!(y, 512);
     }

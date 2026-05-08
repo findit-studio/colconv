@@ -36,6 +36,26 @@ use core::arch::aarch64::*;
 use super::*;
 use crate::{ColorMatrix, row::scalar};
 
+/// Host-endian gate for Y2xx SIMD bodies.
+///
+/// `vld2q_u16` deinterleaves using **host-native** u16 reads, so the SIMD
+/// body is only correct when the encoded byte order matches the host. The
+/// truth table (mirrors PR #82 `9c7d533` / PR #85 `9e678b0` / PR #86
+/// `b7fb9d3` host-endian gate fixes):
+///
+/// | wire `BE` | host       | `BE == HOST_NATIVE_BE` | path   | correct via    |
+/// |-----------|------------|------------------------|--------|----------------|
+/// | false     | LE         | true                   | SIMD   | host-native LE |
+/// | false     | BE         | false                  | scalar | `from_le`      |
+/// | true      | LE         | false                  | scalar | `from_be`      |
+/// | true      | BE         | true                   | SIMD   | host-native BE |
+///
+/// The previous `if !BE` gate only covered rows 1+3 (LE-host) and would
+/// run the SIMD body for LE-encoded data on a BE host (e.g. `aarch64_be`),
+/// where `vld2q_u16` reads LE bytes as host-native (BE) and corrupts every
+/// sample.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 /// Loads 8 Y2xx pixels (16 u16 samples = 32 bytes) and unpacks them
 /// into three 8‑lane vectors:
 /// - `y_vec`: lanes 0..8 = Y0..Y7 in `[0, 2^BITS - 1]`.
@@ -131,9 +151,11 @@ pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<
   // by the `while x + 8 <= width` loop and the caller-promised slice
   // lengths checked above.
   unsafe {
-    // BE=true: NEON path skipped; scalar handles all pixels below.
+    // SIMD body runs only when the wire byte order matches the host
+    // (`BE == HOST_NATIVE_BE`); otherwise scalar handles the full row
+    // via `from_le` / `from_be`.
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let rnd_v = vdupq_n_s32(RND);
       let y_off_v = vdupq_n_s16(y_off as i16);
       let y_scale_v = vdupq_n_s32(y_scale);
@@ -271,9 +293,11 @@ pub(crate) unsafe fn y2xx_n_to_rgb_u16_or_rgba_u16_row<
 
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
-    // BE=true: bypass NEON; scalar handles full row below.
+    // SIMD body runs only when the wire byte order matches the host
+    // (`BE == HOST_NATIVE_BE`); otherwise scalar handles the full row
+    // via `from_le` / `from_be`.
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let rnd_v = vdupq_n_s32(RND);
       let y_off_v = vdupq_n_s16(y_off as i16);
       let y_scale_v = vdupq_n_s32(y_scale);
@@ -381,8 +405,10 @@ pub(crate) unsafe fn y2xx_n_to_luma_row<const BITS: u32, const BE: bool>(
 
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
+    // SIMD body runs only when the wire byte order matches the host
+    // (`BE == HOST_NATIVE_BE`); otherwise scalar handles the full row.
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       while x + 8 <= width {
         // `vld2q_u16` deinterleaves; `pair.0` is 8 raw Y u16 samples
         // (still MSB‑aligned at BITS ≤ 12, low bits zero).
@@ -434,8 +460,10 @@ pub(crate) unsafe fn y2xx_n_to_luma_u16_row<const BITS: u32, const BE: bool>(
 
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
+    // SIMD body runs only when the wire byte order matches the host
+    // (`BE == HOST_NATIVE_BE`); otherwise scalar handles the full row.
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let shr_count = vdupq_n_s16(-((16 - BITS) as i16));
       while x + 8 <= width {
         let pair = vld2q_u16(packed.as_ptr().add(x * 2));

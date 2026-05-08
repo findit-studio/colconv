@@ -41,9 +41,9 @@ use super::{
 use crate::{
   PixelSink,
   row::{
-    expand_rgb_to_rgba_row, expand_rgb_u16_to_rgba_u16_row, rgb_to_hsv_row, y216_to_luma_row,
-    y216_to_luma_u16_row, y216_to_rgb_row, y216_to_rgb_u16_row, y216_to_rgba_row,
-    y216_to_rgba_u16_row,
+    expand_rgb_to_rgba_row, expand_rgb_u16_to_rgba_u16_row, rgb_to_hsv_row,
+    y216_to_luma_row_endian, y216_to_luma_u16_row_endian, y216_to_rgb_row_endian,
+    y216_to_rgb_u16_row_endian, y216_to_rgba_row_endian, y216_to_rgba_u16_row_endian,
   },
   yuv::{Y216, Y216Row, Y216Sink},
 };
@@ -208,7 +208,7 @@ impl PixelSink for MixedSinker<'_, Y216> {
     // Luma u8 — extract 8-bit Y bytes from the Y216 plane via the
     // dedicated kernel (downshifts MSB-aligned 16→8 inline).
     if let Some(buf) = luma.as_deref_mut() {
-      y216_to_luma_row(
+      y216_to_luma_row_endian(
         packed,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -219,7 +219,7 @@ impl PixelSink for MixedSinker<'_, Y216> {
     // Luma u16 — extract 16-bit Y values at native depth (direct
     // memcpy — no shift needed for full 16-bit samples).
     if let Some(buf) = luma_u16.as_deref_mut() {
-      y216_to_luma_u16_row(
+      y216_to_luma_u16_row_endian(
         packed,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -238,7 +238,7 @@ impl PixelSink for MixedSinker<'_, Y216> {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-      y216_to_rgba_u16_row(
+      y216_to_rgba_u16_row_endian(
         packed,
         rgba_u16_row,
         w,
@@ -259,7 +259,7 @@ impl PixelSink for MixedSinker<'_, Y216> {
           })?;
       let rgb_plane_start = one_plane_start * 3;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      y216_to_rgb_u16_row(
+      y216_to_rgb_u16_row_endian(
         packed,
         rgb_u16_row,
         w,
@@ -290,7 +290,7 @@ impl PixelSink for MixedSinker<'_, Y216> {
     if want_rgba && !need_u8_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      y216_to_rgba_row(
+      y216_to_rgba_row_endian(
         packed,
         rgba_row,
         w,
@@ -314,7 +314,7 @@ impl PixelSink for MixedSinker<'_, Y216> {
       w,
       h,
     )?;
-    y216_to_rgb_row(
+    y216_to_rgb_row_endian(
       packed,
       rgb_row,
       w,

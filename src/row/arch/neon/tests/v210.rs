@@ -242,3 +242,92 @@ fn neon_v210_lane_order_per_pixel_y_and_u() {
     "neon v210 SIMD vs scalar diverges — chroma deinterleave bug"
   );
 }
+
+// ---- Host-independent BE/LE SIMD parity tests ----------------------------
+//
+// v210 packs three 10-bit samples per 32-bit word; the LE/BE wire forms
+// differ by the byte order of each 32-bit word. We materialize both
+// forms from raw bytes via `to_le_bytes` / `to_be_bytes` so the test
+// is host-independent (mirrors PR #86 `6924907` for V410). Locks down
+// the `BE == HOST_NATIVE_BE` host-endian gate fix on the NEON v210 SIMD
+// body.
+
+fn build_le_be_v210(words: usize, seed: usize) -> (std::vec::Vec<u8>, std::vec::Vec<u8>) {
+  // Build the intended u32 words first, then materialize LE-byte and
+  // BE-byte forms explicitly.
+  let mut intended_words: std::vec::Vec<u32> = std::vec::Vec::with_capacity(words * 4);
+  for w in 0..words {
+    for k in 0..4 {
+      let s0 = ((w * 4 + k) * 37 + seed) & 0x3FF;
+      let s1 = ((w * 4 + k) * 53 + seed * 3) & 0x3FF;
+      let s2 = ((w * 4 + k) * 71 + seed * 7) & 0x3FF;
+      intended_words.push((s0 as u32) | ((s1 as u32) << 10) | ((s2 as u32) << 20));
+    }
+  }
+  let le_bytes: std::vec::Vec<u8> = intended_words
+    .iter()
+    .flat_map(|w| w.to_le_bytes())
+    .collect();
+  let be_bytes: std::vec::Vec<u8> = intended_words
+    .iter()
+    .flat_map(|w| w.to_be_bytes())
+    .collect();
+  (le_bytes, be_bytes)
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn neon_v210_be_le_simd_parity() {
+  for w in [6usize, 12, 18, 24, 36, 1920] {
+    let words = w.div_ceil(6);
+    let (le, be) = build_le_be_v210(words, 0xCAFE);
+
+    // u8 RGB
+    let mut le_rgb = std::vec![0u8; w * 3];
+    let mut be_rgb = std::vec![0u8; w * 3];
+    unsafe {
+      v210_to_rgb_or_rgba_row::<false, false>(&le, &mut le_rgb, w, ColorMatrix::Bt709, false);
+      v210_to_rgb_or_rgba_row::<false, true>(&be, &mut be_rgb, w, ColorMatrix::Bt709, false);
+    }
+    assert_eq!(le_rgb, be_rgb, "v210 NEON LE vs BE RGB parity (w={w})");
+
+    // u16 RGB
+    let mut le_u16 = std::vec![0u16; w * 3];
+    let mut be_u16 = std::vec![0u16; w * 3];
+    unsafe {
+      v210_to_rgb_u16_or_rgba_u16_row::<false, false>(
+        &le,
+        &mut le_u16,
+        w,
+        ColorMatrix::Bt709,
+        false,
+      );
+      v210_to_rgb_u16_or_rgba_u16_row::<false, true>(
+        &be,
+        &mut be_u16,
+        w,
+        ColorMatrix::Bt709,
+        false,
+      );
+    }
+    assert_eq!(le_u16, be_u16, "v210 NEON LE vs BE RGB u16 parity (w={w})");
+
+    // luma u8
+    let mut le_l = std::vec![0u8; w];
+    let mut be_l = std::vec![0u8; w];
+    unsafe {
+      v210_to_luma_row::<false>(&le, &mut le_l, w);
+      v210_to_luma_row::<true>(&be, &mut be_l, w);
+    }
+    assert_eq!(le_l, be_l, "v210 NEON LE vs BE luma u8 parity (w={w})");
+
+    // luma u16
+    let mut le_lu = std::vec![0u16; w];
+    let mut be_lu = std::vec![0u16; w];
+    unsafe {
+      v210_to_luma_u16_row::<false>(&le, &mut le_lu, w);
+      v210_to_luma_u16_row::<true>(&be, &mut be_lu, w);
+    }
+    assert_eq!(le_lu, be_lu, "v210 NEON LE vs BE luma u16 parity (w={w})");
+  }
+}

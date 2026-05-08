@@ -5,13 +5,29 @@
 //! u16 quadruples (`Y₀, U, Y₁, V`). Active bits are MSB-aligned;
 //! low `(16 - BITS)` bits are zero.
 //!
-//! | Format | BITS | Active bit width | Low bits |
-//! |--------|------|------------------|----------|
-//! | Y210   | 10   | bits[15:6]       | bits[5:0] = 0 |
-//! | Y212   | 12   | bits[15:4]       | bits[3:0] = 0 |
-//! | Y216   | 16   | bits[15:0]       | n/a (full range) |
+//! | Format | BITS | FFmpeg pix_fmt           | Active bit width | Low bits |
+//! |--------|------|--------------------------|------------------|----------|
+//! | Y210   | 10   | `AV_PIX_FMT_Y210LE`      | bits[15:6]       | bits[5:0] = 0 |
+//! | Y212   | 12   | `AV_PIX_FMT_Y212LE`      | bits[15:4]       | bits[3:0] = 0 |
+//! | Y216   | 16   | `AV_PIX_FMT_Y216LE`      | bits[15:0]       | n/a (full range) |
 //!
 //! Width must be even (4:2:2 chroma subsampling).
+//!
+//! # Endian contract — **LE-encoded bytes**
+//!
+//! The `&[u16]` plane is the **LE-encoded byte layout** reinterpreted as
+//! `u16`, matching the FFmpeg `*LE` pixel-format suffix in each format's
+//! name. On a little-endian host (every CI runner today) LE bytes _are_
+//! host-native, so `&[u16]` is also a host-native u16 slice; on a
+//! big-endian host the bytes have to be byte-swapped back to host-native
+//! before arithmetic. Downstream row kernels handle this byte-swap (or
+//! no-op on LE) under the hood — callers do **not** pre-swap.
+//!
+//! Stride is in **u16 elements** (not bytes). Callers holding a raw
+//! FFmpeg byte buffer should cast via `bytemuck::cast_slice` (which
+//! checks alignment at runtime) and divide `linesize[0]` by 2 before
+//! constructing. Direct pointer casts to `&[u16]` are undefined behaviour
+//! if the byte buffer is not 2-byte aligned.
 //!
 //! Used by Ship 11b (Y210), Ship 11c (Y212 — wiring-only), and
 //! Ship 11d (Y216 — separate kernel family with i64 chroma path).
@@ -20,7 +36,8 @@ use derive_more::IsVariant;
 use thiserror::Error;
 
 /// Validated wrapper around a packed YUV 4:2:2 high-bit-depth plane
-/// for the `Y210` / `Y212` / `Y216` family.
+/// for the `Y210` / `Y212` / `Y216` family
+/// (`AV_PIX_FMT_Y210LE` / `Y212LE` / `Y216LE`).
 ///
 /// `BITS` selects the active sample width: 10, 12, or 16. Construct
 /// via [`Self::try_new`] (fallible) or [`Self::new`] (panics on
@@ -28,6 +45,17 @@ use thiserror::Error;
 /// [`Self::try_new_checked`] additionally verifies that every
 /// sample's low `(16 - BITS)` bits are zero (matches the
 /// `P010::try_new_checked` pattern).
+///
+/// The `&[u16]` plane is the **LE-encoded byte layout** reinterpreted
+/// as `u16`, matching the FFmpeg `*LE` pixel-format convention. On a
+/// little-endian host (every CI runner today) LE bytes _are_
+/// host-native, so `&[u16]` is also a host-native u16 slice; on a
+/// big-endian host the bytes have to be byte-swapped back to
+/// host-native before arithmetic. Downstream row kernels handle the
+/// byte-swap under the hood — callers do **not** pre-swap. Callers
+/// holding raw FFmpeg byte buffers should cast via
+/// `bytemuck::cast_slice` and divide `linesize[0]` by 2 before
+/// constructing.
 #[derive(Debug, Clone, Copy)]
 pub struct Y2xxFrame<'a, const BITS: u32> {
   packed: &'a [u16],
@@ -167,6 +195,16 @@ impl<'a, const BITS: u32> Y2xxFrame<'a, BITS> {
   /// low `(16 - BITS)` bits are non-zero. Only meaningful for
   /// `BITS ∈ {10, 12}`; for `BITS = 16` this delegates to
   /// [`Self::try_new`] (no low bits to check).
+  ///
+  /// Per the LE-encoded byte contract on the type-level docs, samples
+  /// are validated **after** `u16::from_le` normalization so the bit
+  /// check operates on the intended logical sample value on every host.
+  /// On little-endian hosts `from_le` is a no-op (the host-native `u16`
+  /// already matches the wire); on big-endian hosts it byte-swaps each
+  /// `u16` back into host-native form. Without this normalization a
+  /// valid `Y210LE` plane on a BE host would have its MSB-aligned
+  /// samples appear byte-swapped (low bits set in the host-native
+  /// reading) and the validator would falsely reject every row.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn try_new_checked(
     packed: &'a [u16],
@@ -183,7 +221,9 @@ impl<'a, const BITS: u32> Y2xxFrame<'a, BITS> {
       for row in 0..h {
         let start = row * stride_us;
         for &sample in &packed[start..start + row_elems] {
-          if sample & low_mask != 0 {
+          // Normalize from LE-encoded wire to host-native before the
+          // bit check (no-op on LE host, byte-swap on BE host).
+          if u16::from_le(sample) & low_mask != 0 {
             return Err(Y2xxFrameError::SampleLowBitsSet);
           }
         }
@@ -221,7 +261,10 @@ impl<'a, const BITS: u32> Y2xxFrame<'a, BITS> {
   /// Packed plane: `(Y₀, U, Y₁, V)` u16 quadruples — `width × 2`
   /// u16 elements per row (= `width × 4` bytes). 4:2:2 chroma is
   /// shared between each Y pair; samples are MSB-aligned with the
-  /// low `(16 - BITS)` bits zero.
+  /// low `(16 - BITS)` bits zero (`BITS ∈ {10, 12}`).
+  ///
+  /// The slice carries the **LE-encoded byte layout** reinterpreted
+  /// as `u16` (FFmpeg `*LE` convention) — see the type-level docs.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn packed(&self) -> &'a [u16] {
     self.packed

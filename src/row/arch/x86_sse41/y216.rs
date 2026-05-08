@@ -34,6 +34,21 @@ use core::arch::x86_64::*;
 use super::*;
 use crate::{ColorMatrix, row::scalar};
 
+/// Host-endian gate for Y2xx/Y216 SIMD bodies.
+///
+/// SIMD deinterleave / fixed-shuffle paths use **host-native** u16 reads,
+/// so the SIMD body is only correct when the encoded byte order matches
+/// the host. The truth table (mirrors PR #82 `9c7d533` / PR #85 `9e678b0`
+/// / PR #86 `b7fb9d3` host-endian gate fixes):
+///
+/// | wire `BE` | host       | `BE == HOST_NATIVE_BE` | path   | correct via    |
+/// |-----------|------------|------------------------|--------|----------------|
+/// | false     | LE         | true                   | SIMD   | host-native LE |
+/// | false     | BE         | false                  | scalar | `from_le`      |
+/// | true      | LE         | false                  | scalar | `from_be`      |
+/// | true      | BE         | true                   | SIMD   | host-native BE |
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 // ---- u8 output (i32 chroma, 16 px/iter) ---------------------------------
 
 /// SSE4.1 Y216 → packed u8 RGB or RGBA.
@@ -66,7 +81,7 @@ pub(crate) unsafe fn y216_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
 
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let rnd_v = _mm_set1_epi32(RND);
       // Y216 samples are full u16 [0..65535]; use i32 y_off and
       // scale_y_u16 (unsigned widening) to avoid sign-bit corruption for Y > 32767.
@@ -213,7 +228,7 @@ pub(crate) unsafe fn y216_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
 
         x += 16;
       }
-    } // end if !BE
+    } // end if BE == HOST_NATIVE_BE
 
     // Scalar tail — remaining < 16 pixels, or full-row fallback when BE=true.
     if x < width {
@@ -267,7 +282,7 @@ pub(crate) unsafe fn y216_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE
 
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let alpha_u16 = _mm_set1_epi16(-1i16);
       let rnd_v = _mm_set1_epi64x(RND);
       let rnd32_v = _mm_set1_epi32(1 << 14);
@@ -401,7 +416,7 @@ pub(crate) unsafe fn y216_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE
 
         x += 8;
       }
-    } // end if !BE
+    } // end if BE == HOST_NATIVE_BE
 
     // Scalar tail — remaining < 8 pixels, or full-row fallback when BE=true.
     if x < width {
@@ -444,7 +459,7 @@ pub(crate) unsafe fn y216_to_luma_row<const BE: bool>(
 
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       // Pick even u16 lanes (Y samples) into low 8 bytes, zero high bytes.
       let y_idx = _mm_setr_epi8(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
 
@@ -511,7 +526,7 @@ pub(crate) unsafe fn y216_to_luma_u16_row<const BE: bool>(
 
   unsafe {
     let mut x = 0usize;
-    if !BE {
+    if BE == HOST_NATIVE_BE {
       let y_idx = _mm_setr_epi8(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
 
       while x + 16 <= width {

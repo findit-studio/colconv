@@ -944,15 +944,7 @@ mod overflow_tests {
     let candidate = ((usize::MAX / 16) + 1) * 6;
     let p: [u8; 0] = [];
     let mut rgb: [u8; 0] = [];
-    v210_to_rgb_row(
-      &p,
-      &mut rgb,
-      candidate,
-      ColorMatrix::Bt601,
-      true,
-      false,
-      false,
-    );
+    v210_to_rgb_row(&p, &mut rgb, candidate, ColorMatrix::Bt601, true, false);
   }
 
   // ---- Y2xx dispatcher — `width × 2` overflow ----
@@ -981,7 +973,6 @@ mod overflow_tests {
       OVERFLOW_WIDTH_TIMES_2,
       ColorMatrix::Bt601,
       true,
-      false,
       false,
     );
   }
