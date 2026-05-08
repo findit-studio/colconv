@@ -174,58 +174,6 @@ pub(crate) unsafe fn load_endian_u32x4<const BE: bool>(ptr: *const u8) -> __m128
   }
 }
 
-// ---- u16x4 loaders (8-byte half-vector) ------------------------------------
-//
-// These load only 8 bytes (4 × u16) into the low half of an `__m128i` and
-// zero the upper half. Used by Rgbf16 widen kernels (`_mm_cvtph_ps` reads
-// the low 64 bits = 4 × f16) when the caller can only guarantee 8 readable
-// bytes — using the 16-byte `load_endian_u16x8` would tail-overread.
-
-/// Loads 4 × u16 from `ptr` (LE-encoded on disk/wire) into the low half of
-/// an `__m128i` in host-native order; the upper half is zero.
-///
-/// # Safety
-///
-/// `ptr` must point to at least 8 readable bytes. Caller must have SSE4.1
-/// (and SSSE3) enabled.
-#[inline(always)]
-pub(crate) unsafe fn load_le_u16x4(ptr: *const u8) -> __m128i {
-  let v = unsafe { _mm_loadl_epi64(ptr.cast()) };
-  // On LE hosts the on-disk LE bytes already match host-native; on BE hosts
-  // we'd need to byte-swap, but the shuffle mask references only source
-  // bytes [0..8) which are the loaded bytes (upper half is zero from
-  // `_mm_loadl_epi64`), so the byte-swap is correct.
-  #[cfg(target_endian = "big")]
-  let v = unsafe { _mm_shuffle_epi8(v, BYTESWAP_MASK_U16) };
-  v
-}
-
-/// Loads 4 × u16 from `ptr` (BE-encoded on disk/wire) into the low half of
-/// an `__m128i` in host-native order; the upper half is zero.
-///
-/// # Safety
-///
-/// `ptr` must point to at least 8 readable bytes. Caller must have SSE4.1
-/// (and SSSE3) enabled.
-#[inline(always)]
-pub(crate) unsafe fn load_be_u16x4(ptr: *const u8) -> __m128i {
-  let v = unsafe { _mm_loadl_epi64(ptr.cast()) };
-  #[cfg(target_endian = "little")]
-  let v = unsafe { _mm_shuffle_epi8(v, BYTESWAP_MASK_U16) };
-  v
-}
-
-/// Generic dispatcher: routes to `load_le_u16x4` or `load_be_u16x4` based on
-/// the compile-time `BE` const parameter. Reads exactly 8 bytes.
-///
-/// # Safety
-///
-/// Same as `load_le_u16x4` / `load_be_u16x4`.
-#[inline(always)]
-pub(crate) unsafe fn load_endian_u16x4<const BE: bool>(ptr: *const u8) -> __m128i {
-  if BE {
-    unsafe { load_be_u16x4(ptr) }
-  } else {
-    unsafe { load_le_u16x4(ptr) }
-  }
-}
+// (SSE4.1 u16x4 8-byte loaders `load_le_u16x4` / `load_be_u16x4` /
+// `load_endian_u16x4` are now provided by PR #83's be-tier9 branch
+// — see definitions earlier in this file.)
