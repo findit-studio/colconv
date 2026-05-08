@@ -15,7 +15,10 @@
 
 use core::arch::aarch64::*;
 
-use crate::row::scalar::{bits_mask, gray as scalar};
+use crate::row::{
+  arch::neon::endian::{load_endian_u16x8, load_endian_u32x4},
+  scalar::{bits_mask, gray as scalar},
+};
 
 // ---- helpers -----------------------------------------------------------------
 
@@ -179,7 +182,7 @@ pub(crate) unsafe fn gray8_to_hsv_row(
 /// NEON must be available. Slices sized correctly for `width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
@@ -188,7 +191,7 @@ pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32>(
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
   if !full_range {
-    return scalar::gray_n_to_rgb_row::<BITS>(y_plane, out, width, full_range);
+    return scalar::gray_n_to_rgb_row::<BITS, BE>(y_plane, out, width, full_range);
   }
   let shift = (BITS - 8) as i32;
   let mask = bits_mask::<BITS>();
@@ -196,7 +199,7 @@ pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32>(
   unsafe {
     let mask_v = vdupq_n_u16(mask);
     while x + 8 <= width {
-      let raw = vld1q_u16(y_plane.as_ptr().add(x));
+      let raw = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let masked = vandq_u16(raw, mask_v);
       let shifted = vshlq_u16(masked, vdupq_n_s16(-(shift as i16)));
       // narrow u16x8 → u8x8
@@ -208,7 +211,7 @@ pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32>(
     }
   }
   if x < width {
-    scalar::gray_n_to_rgb_row::<BITS>(
+    scalar::gray_n_to_rgb_row::<BITS, BE>(
       &y_plane[x..width],
       &mut out[x * 3..width * 3],
       width - x,
@@ -225,7 +228,7 @@ pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32>(
 /// NEON must be available. Slices sized correctly for `width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
@@ -234,7 +237,7 @@ pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32>(
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
   if !full_range {
-    return scalar::gray_n_to_rgba_row::<BITS>(y_plane, out, width, full_range);
+    return scalar::gray_n_to_rgba_row::<BITS, BE>(y_plane, out, width, full_range);
   }
   let shift = (BITS - 8) as i32;
   let mask = bits_mask::<BITS>();
@@ -243,7 +246,7 @@ pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32>(
     let mask_v = vdupq_n_u16(mask);
     let alpha = vdup_n_u8(0xFF);
     while x + 8 <= width {
-      let raw = vld1q_u16(y_plane.as_ptr().add(x));
+      let raw = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let masked = vandq_u16(raw, mask_v);
       let shifted = vshlq_u16(masked, vdupq_n_s16(-(shift as i16)));
       let narrow = vmovn_u16(shifted);
@@ -253,7 +256,7 @@ pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32>(
     }
   }
   if x < width {
-    scalar::gray_n_to_rgba_row::<BITS>(
+    scalar::gray_n_to_rgba_row::<BITS, BE>(
       &y_plane[x..width],
       &mut out[x * 4..width * 4],
       width - x,
@@ -270,7 +273,7 @@ pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32>(
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -279,14 +282,14 @@ pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32>(
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
   if !full_range {
-    return scalar::gray_n_to_rgb_u16_row::<BITS>(y_plane, out, width, full_range);
+    return scalar::gray_n_to_rgb_u16_row::<BITS, BE>(y_plane, out, width, full_range);
   }
   let mask = bits_mask::<BITS>();
   let mut x = 0usize;
   unsafe {
     let mask_v = vdupq_n_u16(mask);
     while x + 8 <= width {
-      let raw = vld1q_u16(y_plane.as_ptr().add(x));
+      let raw = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let y = vandq_u16(raw, mask_v);
       let rgb = uint16x8x3_t(y, y, y);
       vst3q_u16(out.as_mut_ptr().add(x * 3), rgb);
@@ -294,7 +297,7 @@ pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32>(
     }
   }
   if x < width {
-    scalar::gray_n_to_rgb_u16_row::<BITS>(
+    scalar::gray_n_to_rgb_u16_row::<BITS, BE>(
       &y_plane[x..width],
       &mut out[x * 3..width * 3],
       width - x,
@@ -311,7 +314,7 @@ pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32>(
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -320,7 +323,7 @@ pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32>(
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
   if !full_range {
-    return scalar::gray_n_to_rgba_u16_row::<BITS>(y_plane, out, width, full_range);
+    return scalar::gray_n_to_rgba_u16_row::<BITS, BE>(y_plane, out, width, full_range);
   }
   let mask = bits_mask::<BITS>();
   let mut x = 0usize;
@@ -328,7 +331,7 @@ pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32>(
     let mask_v = vdupq_n_u16(mask);
     let alpha_v = vdupq_n_u16(mask); // full-range max for BITS
     while x + 8 <= width {
-      let raw = vld1q_u16(y_plane.as_ptr().add(x));
+      let raw = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let y = vandq_u16(raw, mask_v);
       let rgba = uint16x8x4_t(y, y, y, alpha_v);
       vst4q_u16(out.as_mut_ptr().add(x * 4), rgba);
@@ -336,7 +339,7 @@ pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32>(
     }
   }
   if x < width {
-    scalar::gray_n_to_rgba_u16_row::<BITS>(
+    scalar::gray_n_to_rgba_u16_row::<BITS, BE>(
       &y_plane[x..width],
       &mut out[x * 4..width * 4],
       width - x,
@@ -353,7 +356,7 @@ pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32>(
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
@@ -366,7 +369,7 @@ pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32>(
   unsafe {
     let mask_v = vdupq_n_u16(mask);
     while x + 8 <= width {
-      let raw = vld1q_u16(y_plane.as_ptr().add(x));
+      let raw = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let masked = vandq_u16(raw, mask_v);
       let shifted = vshlq_u16(masked, vdupq_n_s16(-(shift as i16)));
       let narrow = vmovn_u16(shifted);
@@ -375,7 +378,7 @@ pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32>(
     }
   }
   if x < width {
-    scalar::gray_n_to_luma_row::<BITS>(&y_plane[x..width], &mut out[x..width], width - x);
+    scalar::gray_n_to_luma_row::<BITS, BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -387,7 +390,7 @@ pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32>(
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray_n_to_luma_u16_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_luma_u16_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -399,14 +402,14 @@ pub(crate) unsafe fn gray_n_to_luma_u16_row<const BITS: u32>(
   unsafe {
     let mask_v = vdupq_n_u16(mask);
     while x + 8 <= width {
-      let raw = vld1q_u16(y_plane.as_ptr().add(x));
+      let raw = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let masked = vandq_u16(raw, mask_v);
       vst1q_u16(out.as_mut_ptr().add(x), masked);
       x += 8;
     }
   }
   if x < width {
-    scalar::gray_n_to_luma_u16_row::<BITS>(&y_plane[x..width], &mut out[x..width], width - x);
+    scalar::gray_n_to_luma_u16_row::<BITS, BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -419,7 +422,7 @@ pub(crate) unsafe fn gray_n_to_luma_u16_row<const BITS: u32>(
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -432,7 +435,7 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
   debug_assert!(s_out.len() >= width);
   debug_assert!(v_out.len() >= width);
   if !full_range {
-    return scalar::gray_n_to_hsv_row::<BITS>(y_plane, h_out, s_out, v_out, width, full_range);
+    return scalar::gray_n_to_hsv_row::<BITS, BE>(y_plane, h_out, s_out, v_out, width, full_range);
   }
   let shift = (BITS - 8) as i32;
   let mask = bits_mask::<BITS>();
@@ -441,7 +444,7 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
     let mask_v = vdupq_n_u16(mask);
     let zero = vdup_n_u8(0);
     while x + 8 <= width {
-      let raw = vld1q_u16(y_plane.as_ptr().add(x));
+      let raw = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let masked = vandq_u16(raw, mask_v);
       let shifted = vshlq_u16(masked, vdupq_n_s16(-(shift as i16)));
       let narrow = vmovn_u16(shifted);
@@ -452,7 +455,7 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
     }
   }
   if x < width {
-    scalar::gray_n_to_hsv_row::<BITS>(
+    scalar::gray_n_to_hsv_row::<BITS, BE>(
       &y_plane[x..width],
       &mut h_out[x..width],
       &mut s_out[x..width],
@@ -473,7 +476,7 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray16_to_rgb_row(
+pub(crate) unsafe fn gray16_to_rgb_row<const BE: bool>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
@@ -482,12 +485,12 @@ pub(crate) unsafe fn gray16_to_rgb_row(
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
   if !full_range {
-    return scalar::gray16_to_rgb_row(y_plane, out, width, full_range);
+    return scalar::gray16_to_rgb_row::<BE>(y_plane, out, width, full_range);
   }
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
-      let raw = vld1q_u16(y_plane.as_ptr().add(x));
+      let raw = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let y8 = vshrn_n_u16::<8>(raw);
       let rgb = uint8x8x3_t(y8, y8, y8);
       vst3_u8(out.as_mut_ptr().add(x * 3), rgb);
@@ -495,7 +498,7 @@ pub(crate) unsafe fn gray16_to_rgb_row(
     }
   }
   if x < width {
-    scalar::gray16_to_rgb_row(
+    scalar::gray16_to_rgb_row::<BE>(
       &y_plane[x..width],
       &mut out[x * 3..width * 3],
       width - x,
@@ -512,7 +515,7 @@ pub(crate) unsafe fn gray16_to_rgb_row(
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray16_to_rgba_row(
+pub(crate) unsafe fn gray16_to_rgba_row<const BE: bool>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
@@ -521,13 +524,13 @@ pub(crate) unsafe fn gray16_to_rgba_row(
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
   if !full_range {
-    return scalar::gray16_to_rgba_row(y_plane, out, width, full_range);
+    return scalar::gray16_to_rgba_row::<BE>(y_plane, out, width, full_range);
   }
   let mut x = 0usize;
   unsafe {
     let alpha = vdup_n_u8(0xFF);
     while x + 8 <= width {
-      let raw = vld1q_u16(y_plane.as_ptr().add(x));
+      let raw = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let y8 = vshrn_n_u16::<8>(raw);
       let rgba = uint8x8x4_t(y8, y8, y8, alpha);
       vst4_u8(out.as_mut_ptr().add(x * 4), rgba);
@@ -535,7 +538,7 @@ pub(crate) unsafe fn gray16_to_rgba_row(
     }
   }
   if x < width {
-    scalar::gray16_to_rgba_row(
+    scalar::gray16_to_rgba_row::<BE>(
       &y_plane[x..width],
       &mut out[x * 4..width * 4],
       width - x,
@@ -552,7 +555,7 @@ pub(crate) unsafe fn gray16_to_rgba_row(
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray16_to_rgb_u16_row(
+pub(crate) unsafe fn gray16_to_rgb_u16_row<const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -561,19 +564,19 @@ pub(crate) unsafe fn gray16_to_rgb_u16_row(
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
   if !full_range {
-    return scalar::gray16_to_rgb_u16_row(y_plane, out, width, full_range);
+    return scalar::gray16_to_rgb_u16_row::<BE>(y_plane, out, width, full_range);
   }
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
-      let y = vld1q_u16(y_plane.as_ptr().add(x));
+      let y = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let rgb = uint16x8x3_t(y, y, y);
       vst3q_u16(out.as_mut_ptr().add(x * 3), rgb);
       x += 8;
     }
   }
   if x < width {
-    scalar::gray16_to_rgb_u16_row(
+    scalar::gray16_to_rgb_u16_row::<BE>(
       &y_plane[x..width],
       &mut out[x * 3..width * 3],
       width - x,
@@ -590,7 +593,7 @@ pub(crate) unsafe fn gray16_to_rgb_u16_row(
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray16_to_rgba_u16_row(
+pub(crate) unsafe fn gray16_to_rgba_u16_row<const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -599,20 +602,20 @@ pub(crate) unsafe fn gray16_to_rgba_u16_row(
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
   if !full_range {
-    return scalar::gray16_to_rgba_u16_row(y_plane, out, width, full_range);
+    return scalar::gray16_to_rgba_u16_row::<BE>(y_plane, out, width, full_range);
   }
   let mut x = 0usize;
   unsafe {
     let alpha = vdupq_n_u16(0xFFFF);
     while x + 8 <= width {
-      let y = vld1q_u16(y_plane.as_ptr().add(x));
+      let y = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let rgba = uint16x8x4_t(y, y, y, alpha);
       vst4q_u16(out.as_mut_ptr().add(x * 4), rgba);
       x += 8;
     }
   }
   if x < width {
-    scalar::gray16_to_rgba_u16_row(
+    scalar::gray16_to_rgba_u16_row::<BE>(
       &y_plane[x..width],
       &mut out[x * 4..width * 4],
       width - x,
@@ -629,20 +632,24 @@ pub(crate) unsafe fn gray16_to_rgba_u16_row(
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray16_to_luma_row(y_plane: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn gray16_to_luma_row<const BE: bool>(
+  y_plane: &[u16],
+  out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
-      let raw = vld1q_u16(y_plane.as_ptr().add(x));
+      let raw = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let y8 = vshrn_n_u16::<8>(raw);
       vst1_u8(out.as_mut_ptr().add(x), y8);
       x += 8;
     }
   }
   if x < width {
-    scalar::gray16_to_luma_row(&y_plane[x..width], &mut out[x..width], width - x);
+    scalar::gray16_to_luma_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -654,19 +661,23 @@ pub(crate) unsafe fn gray16_to_luma_row(y_plane: &[u16], out: &mut [u8], width: 
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray16_to_luma_u16_row(y_plane: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn gray16_to_luma_u16_row<const BE: bool>(
+  y_plane: &[u16],
+  out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
-      let y = vld1q_u16(y_plane.as_ptr().add(x));
+      let y = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       vst1q_u16(out.as_mut_ptr().add(x), y);
       x += 8;
     }
   }
   if x < width {
-    scalar::gray16_to_luma_u16_row(&y_plane[x..width], &mut out[x..width], width - x);
+    scalar::gray16_to_luma_u16_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -679,7 +690,7 @@ pub(crate) unsafe fn gray16_to_luma_u16_row(y_plane: &[u16], out: &mut [u16], wi
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn gray16_to_hsv_row(
+pub(crate) unsafe fn gray16_to_hsv_row<const BE: bool>(
   y_plane: &[u16],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -692,13 +703,13 @@ pub(crate) unsafe fn gray16_to_hsv_row(
   debug_assert!(s_out.len() >= width);
   debug_assert!(v_out.len() >= width);
   if !full_range {
-    return scalar::gray16_to_hsv_row(y_plane, h_out, s_out, v_out, width, full_range);
+    return scalar::gray16_to_hsv_row::<BE>(y_plane, h_out, s_out, v_out, width, full_range);
   }
   let mut x = 0usize;
   unsafe {
     let zero = vdup_n_u8(0);
     while x + 8 <= width {
-      let raw = vld1q_u16(y_plane.as_ptr().add(x));
+      let raw = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let y8 = vshrn_n_u16::<8>(raw);
       vst1_u8(h_out.as_mut_ptr().add(x), zero);
       vst1_u8(s_out.as_mut_ptr().add(x), zero);
@@ -707,7 +718,7 @@ pub(crate) unsafe fn gray16_to_hsv_row(
     }
   }
   if x < width {
-    scalar::gray16_to_hsv_row(
+    scalar::gray16_to_hsv_row::<BE>(
       &y_plane[x..width],
       &mut h_out[x..width],
       &mut s_out[x..width],
@@ -728,7 +739,11 @@ pub(crate) unsafe fn gray16_to_hsv_row(
 /// NEON must be available. `y_plane.len() >= width`. `out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn grayf32_to_rgb_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [u8],
+  width: usize,
+) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
@@ -738,8 +753,12 @@ pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: 
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
-      let y0 = vld1q_f32(y_plane.as_ptr().add(x));
-      let y1 = vld1q_f32(y_plane.as_ptr().add(x + 4));
+      let y0 = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
+        y_plane.as_ptr().cast::<u8>().add(x * 4),
+      ));
+      let y1 = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
+        y_plane.as_ptr().cast::<u8>().add((x + 4) * 4),
+      ));
       let c0 = vmulq_f32(vmaxq_f32(vminq_f32(y0, one), zero), scale);
       let c1 = vmulq_f32(vmaxq_f32(vminq_f32(y1, one), zero), scale);
       // vcvtaq_u32_f32: round-to-nearest-even, no FPCR manipulation needed.
@@ -754,7 +773,7 @@ pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: 
     }
   }
   if x < width {
-    scalar::grayf32_to_rgb_row(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
+    scalar::grayf32_to_rgb_row::<BE>(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
   }
 }
 
@@ -764,7 +783,11 @@ pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: 
 /// NEON must be available. `y_plane.len() >= width`. `out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn grayf32_to_rgba_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [u8],
+  width: usize,
+) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
@@ -775,8 +798,12 @@ pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width:
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
-      let y0 = vld1q_f32(y_plane.as_ptr().add(x));
-      let y1 = vld1q_f32(y_plane.as_ptr().add(x + 4));
+      let y0 = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
+        y_plane.as_ptr().cast::<u8>().add(x * 4),
+      ));
+      let y1 = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
+        y_plane.as_ptr().cast::<u8>().add((x + 4) * 4),
+      ));
       let c0 = vmulq_f32(vmaxq_f32(vminq_f32(y0, one), zero), scale);
       let c1 = vmulq_f32(vmaxq_f32(vminq_f32(y1, one), zero), scale);
       let u0 = vcvtaq_u32_f32(c0);
@@ -788,7 +815,7 @@ pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width:
     }
   }
   if x < width {
-    scalar::grayf32_to_rgba_row(&y_plane[x..width], &mut out[x * 4..width * 4], width - x);
+    scalar::grayf32_to_rgba_row::<BE>(&y_plane[x..width], &mut out[x * 4..width * 4], width - x);
   }
 }
 
@@ -798,7 +825,11 @@ pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width:
 /// NEON must be available. `y_plane.len() >= width`. `out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn grayf32_to_rgb_u16_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [u16],
+  width: usize,
+) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
@@ -808,7 +839,9 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
   let mut x = 0usize;
   unsafe {
     while x + 4 <= width {
-      let y = vld1q_f32(y_plane.as_ptr().add(x));
+      let y = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
+        y_plane.as_ptr().cast::<u8>().add(x * 4),
+      ));
       let c = vmulq_f32(vmaxq_f32(vminq_f32(y, one), zero), scale);
       let u32v = vcvtaq_u32_f32(c);
       let u16v = vqmovn_u32(u32v); // saturating narrow to u16
@@ -818,7 +851,7 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
     }
   }
   if x < width {
-    scalar::grayf32_to_rgb_u16_row(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
+    scalar::grayf32_to_rgb_u16_row::<BE>(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
   }
 }
 
@@ -828,7 +861,11 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
 /// NEON must be available. `y_plane.len() >= width`. `out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn grayf32_to_rgba_u16_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [u16],
+  width: usize,
+) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
@@ -839,7 +876,9 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
   let mut x = 0usize;
   unsafe {
     while x + 4 <= width {
-      let y = vld1q_f32(y_plane.as_ptr().add(x));
+      let y = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
+        y_plane.as_ptr().cast::<u8>().add(x * 4),
+      ));
       let c = vmulq_f32(vmaxq_f32(vminq_f32(y, one), zero), scale);
       let u16v = vqmovn_u32(vcvtaq_u32_f32(c));
       let rgba = uint16x4x4_t(u16v, u16v, u16v, alpha);
@@ -848,7 +887,11 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
     }
   }
   if x < width {
-    scalar::grayf32_to_rgba_u16_row(&y_plane[x..width], &mut out[x * 4..width * 4], width - x);
+    scalar::grayf32_to_rgba_u16_row::<BE>(
+      &y_plane[x..width],
+      &mut out[x * 4..width * 4],
+      width - x,
+    );
   }
 }
 
@@ -859,21 +902,27 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
 #[allow(dead_code)] // dispatcher uses scalar directly for lossless f32 paths
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn grayf32_to_rgb_f32_row(y_plane: &[f32], out: &mut [f32], width: usize) {
+pub(crate) unsafe fn grayf32_to_rgb_f32_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [f32],
+  width: usize,
+) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
   let mut x = 0usize;
   unsafe {
     while x + 4 <= width {
-      let y = vld1q_f32(y_plane.as_ptr().add(x));
+      let y = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
+        y_plane.as_ptr().cast::<u8>().add(x * 4),
+      ));
       let rgb = float32x4x3_t(y, y, y);
       vst3q_f32(out.as_mut_ptr().add(x * 3), rgb);
       x += 4;
     }
   }
   if x < width {
-    scalar::grayf32_to_rgb_f32_row(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
+    scalar::grayf32_to_rgb_f32_row::<BE>(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
   }
 }
 
@@ -883,7 +932,11 @@ pub(crate) unsafe fn grayf32_to_rgb_f32_row(y_plane: &[f32], out: &mut [f32], wi
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn grayf32_to_luma_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [u8],
+  width: usize,
+) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
@@ -893,8 +946,12 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
-      let y0 = vld1q_f32(y_plane.as_ptr().add(x));
-      let y1 = vld1q_f32(y_plane.as_ptr().add(x + 4));
+      let y0 = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
+        y_plane.as_ptr().cast::<u8>().add(x * 4),
+      ));
+      let y1 = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
+        y_plane.as_ptr().cast::<u8>().add((x + 4) * 4),
+      ));
       let c0 = vmulq_f32(vmaxq_f32(vminq_f32(y0, one), zero), scale);
       let c1 = vmulq_f32(vmaxq_f32(vminq_f32(y1, one), zero), scale);
       let n8 = vmovn_u16(vcombine_u16(
@@ -906,7 +963,7 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
     }
   }
   if x < width {
-    scalar::grayf32_to_luma_row(&y_plane[x..width], &mut out[x..width], width - x);
+    scalar::grayf32_to_luma_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -916,7 +973,11 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn grayf32_to_luma_u16_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [u16],
+  width: usize,
+) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
@@ -926,7 +987,9 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
   let mut x = 0usize;
   unsafe {
     while x + 4 <= width {
-      let y = vld1q_f32(y_plane.as_ptr().add(x));
+      let y = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
+        y_plane.as_ptr().cast::<u8>().add(x * 4),
+      ));
       let c = vmulq_f32(vmaxq_f32(vminq_f32(y, one), zero), scale);
       let u16v = vqmovn_u32(vcvtaq_u32_f32(c));
       vst1_u16(out.as_mut_ptr().add(x), u16v);
@@ -934,7 +997,7 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
     }
   }
   if x < width {
-    scalar::grayf32_to_luma_u16_row(&y_plane[x..width], &mut out[x..width], width - x);
+    scalar::grayf32_to_luma_u16_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -945,20 +1008,26 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
 #[allow(dead_code)] // dispatcher uses scalar directly for lossless f32 paths
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn grayf32_to_luma_f32_row(y_plane: &[f32], out: &mut [f32], width: usize) {
+pub(crate) unsafe fn grayf32_to_luma_f32_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [f32],
+  width: usize,
+) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
   let mut x = 0usize;
   unsafe {
     while x + 4 <= width {
-      let y = vld1q_f32(y_plane.as_ptr().add(x));
+      let y = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
+        y_plane.as_ptr().cast::<u8>().add(x * 4),
+      ));
       vst1q_f32(out.as_mut_ptr().add(x), y);
       x += 4;
     }
   }
   if x < width {
-    scalar::grayf32_to_luma_f32_row(&y_plane[x..width], &mut out[x..width], width - x);
+    scalar::grayf32_to_luma_f32_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -968,7 +1037,7 @@ pub(crate) unsafe fn grayf32_to_luma_f32_row(y_plane: &[f32], out: &mut [f32], w
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn grayf32_to_hsv_row(
+pub(crate) unsafe fn grayf32_to_hsv_row<const BE: bool>(
   y_plane: &[f32],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -984,8 +1053,12 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
-      let y0 = vld1q_f32(y_plane.as_ptr().add(x));
-      let y1 = vld1q_f32(y_plane.as_ptr().add(x + 4));
+      let y0 = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
+        y_plane.as_ptr().cast::<u8>().add(x * 4),
+      ));
+      let y1 = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
+        y_plane.as_ptr().cast::<u8>().add((x + 4) * 4),
+      ));
       let c0 = vmulq_f32(vmaxq_f32(vminq_f32(y0, one), zero_f), scale);
       let c1 = vmulq_f32(vmaxq_f32(vminq_f32(y1, one), zero_f), scale);
       let v8 = vmovn_u16(vcombine_u16(
@@ -999,7 +1072,7 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
     }
   }
   if x < width {
-    scalar::grayf32_to_hsv_row(
+    scalar::grayf32_to_hsv_row::<BE>(
       &y_plane[x..width],
       &mut h_out[x..width],
       &mut s_out[x..width],
@@ -1230,6 +1303,25 @@ pub(crate) unsafe fn ya8_to_hsv_row(
 
 // ---- Ya16 --------------------------------------------------------------------
 
+/// Host-endian gate for Ya16 SIMD bodies.
+///
+/// `vld2q_u16` deinterleaves using **host-native** u16 reads, so the SIMD body
+/// is only correct when the encoded byte order matches the host. The full
+/// truth table (mirrors PR #82 `9c7d533` dispatcher routing fix):
+///
+/// | data BE | host BE | `BE != HOST_NATIVE_BE` | path   | correct via       |
+/// |---------|---------|------------------------|--------|-------------------|
+/// | false   | false   | false                  | SIMD   | host-native LE    |
+/// | false   | true    | true                   | scalar | `from_le`         |
+/// | true    | false   | true                   | scalar | `from_be`         |
+/// | true    | true    | false                  | SIMD   | host-native BE    |
+///
+/// The narrower `if BE { scalar }` gate from `7cb64c6` only covered rows 1+3
+/// (LE host); the LE-source-on-BE-host quadrant (`aarch64_be`) would still
+/// run the SIMD body and corrupt Y/A. This constant + comparison covers all
+/// 4 quadrants on every host.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 /// NEON `ya16_to_rgb_row`: deinterleave `[Y,A]` u16 pairs, Y `>> 8` → u8, broadcast.
 ///
 /// Block size: 8 px / iter (vld2q_u16).
@@ -1238,10 +1330,14 @@ pub(crate) unsafe fn ya8_to_hsv_row(
 /// NEON must be available. `packed.len() >= width * 2`. `out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn ya16_to_rgb_row<const BE: bool>(packed: &[u16], out: &mut [u8], width: usize) {
   use crate::row::scalar::ya16 as scalar;
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width * 3);
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → vld2q_u16 host-native load wrong; fall through.
+    return scalar::ya16_to_rgb_row::<BE>(packed, out, width);
+  }
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
@@ -1253,7 +1349,7 @@ pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usiz
     }
   }
   if x < width {
-    scalar::ya16_to_rgb_row(
+    scalar::ya16_to_rgb_row::<BE>(
       &packed[x * 2..width * 2],
       &mut out[x * 3..width * 3],
       width - x,
@@ -1267,10 +1363,18 @@ pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usiz
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn ya16_to_rgba_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u8],
+  width: usize,
+) {
   use crate::row::scalar::ya16 as scalar;
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width * 4);
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → vld2q_u16 host-native load wrong; fall through.
+    return scalar::ya16_to_rgba_row::<BE>(packed, out, width);
+  }
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
@@ -1283,7 +1387,7 @@ pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usi
     }
   }
   if x < width {
-    scalar::ya16_to_rgba_row(
+    scalar::ya16_to_rgba_row::<BE>(
       &packed[x * 2..width * 2],
       &mut out[x * 4..width * 4],
       width - x,
@@ -1297,10 +1401,18 @@ pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usi
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn ya16_to_rgb_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn ya16_to_rgb_u16_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u16],
+  width: usize,
+) {
   use crate::row::scalar::ya16 as scalar;
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width * 3);
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → vld2q_u16 host-native load wrong; fall through.
+    return scalar::ya16_to_rgb_u16_row::<BE>(packed, out, width);
+  }
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
@@ -1315,7 +1427,7 @@ pub(crate) unsafe fn ya16_to_rgb_u16_row(packed: &[u16], out: &mut [u16], width:
     }
   }
   if x < width {
-    scalar::ya16_to_rgb_u16_row(
+    scalar::ya16_to_rgb_u16_row::<BE>(
       &packed[x * 2..width * 2],
       &mut out[x * 3..width * 3],
       width - x,
@@ -1329,10 +1441,18 @@ pub(crate) unsafe fn ya16_to_rgb_u16_row(packed: &[u16], out: &mut [u16], width:
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn ya16_to_rgba_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn ya16_to_rgba_u16_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u16],
+  width: usize,
+) {
   use crate::row::scalar::ya16 as scalar;
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width * 4);
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → vld2q_u16 host-native load wrong; fall through.
+    return scalar::ya16_to_rgba_u16_row::<BE>(packed, out, width);
+  }
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
@@ -1349,7 +1469,7 @@ pub(crate) unsafe fn ya16_to_rgba_u16_row(packed: &[u16], out: &mut [u16], width
     }
   }
   if x < width {
-    scalar::ya16_to_rgba_u16_row(
+    scalar::ya16_to_rgba_u16_row::<BE>(
       &packed[x * 2..width * 2],
       &mut out[x * 4..width * 4],
       width - x,
@@ -1363,10 +1483,18 @@ pub(crate) unsafe fn ya16_to_rgba_u16_row(packed: &[u16], out: &mut [u16], width
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn ya16_to_luma_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u8],
+  width: usize,
+) {
   use crate::row::scalar::ya16 as scalar;
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width);
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → vld2q_u16 host-native load wrong; fall through.
+    return scalar::ya16_to_luma_row::<BE>(packed, out, width);
+  }
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
@@ -1377,7 +1505,7 @@ pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
     }
   }
   if x < width {
-    scalar::ya16_to_luma_row(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+    scalar::ya16_to_luma_row::<BE>(&packed[x * 2..width * 2], &mut out[x..width], width - x);
   }
 }
 
@@ -1387,10 +1515,18 @@ pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn ya16_to_luma_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn ya16_to_luma_u16_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u16],
+  width: usize,
+) {
   use crate::row::scalar::ya16 as scalar;
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width);
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → vld2q_u16 host-native load wrong; fall through.
+    return scalar::ya16_to_luma_u16_row::<BE>(packed, out, width);
+  }
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
@@ -1400,7 +1536,7 @@ pub(crate) unsafe fn ya16_to_luma_u16_row(packed: &[u16], out: &mut [u16], width
     }
   }
   if x < width {
-    scalar::ya16_to_luma_u16_row(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+    scalar::ya16_to_luma_u16_row::<BE>(&packed[x * 2..width * 2], &mut out[x..width], width - x);
   }
 }
 
@@ -1410,7 +1546,7 @@ pub(crate) unsafe fn ya16_to_luma_u16_row(packed: &[u16], out: &mut [u16], width
 /// NEON must be available.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn ya16_to_hsv_row(
+pub(crate) unsafe fn ya16_to_hsv_row<const BE: bool>(
   packed: &[u16],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -1419,6 +1555,10 @@ pub(crate) unsafe fn ya16_to_hsv_row(
 ) {
   use crate::row::scalar::ya16 as scalar;
   debug_assert!(packed.len() >= width * 2);
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → vld2q_u16 host-native load wrong; fall through.
+    return scalar::ya16_to_hsv_row::<BE>(packed, h_out, s_out, v_out, width);
+  }
   let mut x = 0usize;
   unsafe {
     let zero = vdup_n_u8(0);
@@ -1432,7 +1572,7 @@ pub(crate) unsafe fn ya16_to_hsv_row(
     }
   }
   if x < width {
-    scalar::ya16_to_hsv_row(
+    scalar::ya16_to_hsv_row::<BE>(
       &packed[x * 2..width * 2],
       &mut h_out[x..width],
       &mut s_out[x..width],
@@ -1519,8 +1659,8 @@ mod tests {
       prng16(&mut plane, 0xABCD_1234);
       let mut simd = std::vec![0u8; w * 3];
       let mut scal = std::vec![0u8; w * 3];
-      unsafe { super::gray_n_to_rgb_row::<10>(&plane, &mut simd, w, true) };
-      scalar::gray_n_to_rgb_row::<10>(&plane, &mut scal, w, true);
+      unsafe { super::gray_n_to_rgb_row::<10, false>(&plane, &mut simd, w, true) };
+      scalar::gray_n_to_rgb_row::<10, false>(&plane, &mut scal, w, true);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1533,8 +1673,8 @@ mod tests {
       prng16(&mut plane, 0xDEAD_BEEF);
       let mut simd = std::vec![0u8; w * 3];
       let mut scal = std::vec![0u8; w * 3];
-      unsafe { super::gray16_to_rgb_row(&plane, &mut simd, w, true) };
-      scalar::gray16_to_rgb_row(&plane, &mut scal, w, true);
+      unsafe { super::gray16_to_rgb_row::<false>(&plane, &mut simd, w, true) };
+      scalar::gray16_to_rgb_row::<false>(&plane, &mut scal, w, true);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1563,8 +1703,8 @@ mod tests {
       prng16(&mut plane, 0x1234_5678);
       let mut simd = std::vec![0u8; w * 3];
       let mut scal = std::vec![0u8; w * 3];
-      unsafe { super::gray16_to_rgb_row(&plane, &mut simd, w, false) };
-      scalar::gray16_to_rgb_row(&plane, &mut scal, w, false);
+      unsafe { super::gray16_to_rgb_row::<false>(&plane, &mut simd, w, false) };
+      scalar::gray16_to_rgb_row::<false>(&plane, &mut scal, w, false);
       assert_eq!(simd, scal, "width={w} limited-range");
     }
   }
@@ -1589,8 +1729,8 @@ mod tests {
       prng_f32(&mut plane, 0xF32A_0001);
       let mut simd = std::vec![0u8; w * 3];
       let mut scal = std::vec![0u8; w * 3];
-      unsafe { super::grayf32_to_rgb_row(&plane, &mut simd, w) };
-      sf::grayf32_to_rgb_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_rgb_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_rgb_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1604,8 +1744,8 @@ mod tests {
       prng_f32(&mut plane, 0xF32A_0002);
       let mut simd = std::vec![0u8; w * 4];
       let mut scal = std::vec![0u8; w * 4];
-      unsafe { super::grayf32_to_rgba_row(&plane, &mut simd, w) };
-      sf::grayf32_to_rgba_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_rgba_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_rgba_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1619,8 +1759,8 @@ mod tests {
       prng_f32(&mut plane, 0xF32A_0003);
       let mut simd = std::vec![0u16; w * 3];
       let mut scal = std::vec![0u16; w * 3];
-      unsafe { super::grayf32_to_rgb_u16_row(&plane, &mut simd, w) };
-      sf::grayf32_to_rgb_u16_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_rgb_u16_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_rgb_u16_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1634,8 +1774,8 @@ mod tests {
       prng_f32(&mut plane, 0xF32A_0004);
       let mut simd = std::vec![0u16; w * 4];
       let mut scal = std::vec![0u16; w * 4];
-      unsafe { super::grayf32_to_rgba_u16_row(&plane, &mut simd, w) };
-      sf::grayf32_to_rgba_u16_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_rgba_u16_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_rgba_u16_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1649,8 +1789,8 @@ mod tests {
       prng_f32(&mut plane, 0xF32A_0005);
       let mut simd = std::vec![0.0f32; w * 3];
       let mut scal = std::vec![0.0f32; w * 3];
-      unsafe { super::grayf32_to_rgb_f32_row(&plane, &mut simd, w) };
-      sf::grayf32_to_rgb_f32_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_rgb_f32_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_rgb_f32_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1664,8 +1804,8 @@ mod tests {
       prng_f32(&mut plane, 0xF32A_0006);
       let mut simd = std::vec![0u8; w];
       let mut scal = std::vec![0u8; w];
-      unsafe { super::grayf32_to_luma_row(&plane, &mut simd, w) };
-      sf::grayf32_to_luma_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_luma_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_luma_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1679,8 +1819,8 @@ mod tests {
       prng_f32(&mut plane, 0xF32A_0007);
       let mut simd = std::vec![0u16; w];
       let mut scal = std::vec![0u16; w];
-      unsafe { super::grayf32_to_luma_u16_row(&plane, &mut simd, w) };
-      sf::grayf32_to_luma_u16_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_luma_u16_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_luma_u16_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1694,8 +1834,8 @@ mod tests {
       prng_f32(&mut plane, 0xF32A_0008);
       let mut simd = std::vec![0.0f32; w];
       let mut scal = std::vec![0.0f32; w];
-      unsafe { super::grayf32_to_luma_f32_row(&plane, &mut simd, w) };
-      sf::grayf32_to_luma_f32_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_luma_f32_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_luma_f32_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1713,8 +1853,8 @@ mod tests {
       let mut rh = std::vec![0u8; w];
       let mut rs = std::vec![0u8; w];
       let mut rv = std::vec![0u8; w];
-      unsafe { super::grayf32_to_hsv_row(&plane, &mut sh, &mut ss, &mut sv, w) };
-      sf::grayf32_to_hsv_row(&plane, &mut rh, &mut rs, &mut rv, w);
+      unsafe { super::grayf32_to_hsv_row::<false>(&plane, &mut sh, &mut ss, &mut sv, w) };
+      sf::grayf32_to_hsv_row::<false>(&plane, &mut rh, &mut rs, &mut rv, w);
       assert_eq!(sh, rh, "H width={w}");
       assert_eq!(ss, rs, "S width={w}");
       assert_eq!(sv, rv, "V width={w}");
@@ -1861,8 +2001,8 @@ mod tests {
       prng_ya16(&mut packed, 0xA160_0001);
       let mut simd = std::vec![0u8; w * 3];
       let mut scal = std::vec![0u8; w * 3];
-      unsafe { super::ya16_to_rgb_row(&packed, &mut simd, w) };
-      sy::ya16_to_rgb_row(&packed, &mut scal, w);
+      unsafe { super::ya16_to_rgb_row::<false>(&packed, &mut simd, w) };
+      sy::ya16_to_rgb_row::<false>(&packed, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1876,8 +2016,8 @@ mod tests {
       prng_ya16(&mut packed, 0xA160_0002);
       let mut simd = std::vec![0u8; w * 4];
       let mut scal = std::vec![0u8; w * 4];
-      unsafe { super::ya16_to_rgba_row(&packed, &mut simd, w) };
-      sy::ya16_to_rgba_row(&packed, &mut scal, w);
+      unsafe { super::ya16_to_rgba_row::<false>(&packed, &mut simd, w) };
+      sy::ya16_to_rgba_row::<false>(&packed, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1891,8 +2031,8 @@ mod tests {
       prng_ya16(&mut packed, 0xA160_0003);
       let mut simd = std::vec![0u16; w * 3];
       let mut scal = std::vec![0u16; w * 3];
-      unsafe { super::ya16_to_rgb_u16_row(&packed, &mut simd, w) };
-      sy::ya16_to_rgb_u16_row(&packed, &mut scal, w);
+      unsafe { super::ya16_to_rgb_u16_row::<false>(&packed, &mut simd, w) };
+      sy::ya16_to_rgb_u16_row::<false>(&packed, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1906,8 +2046,8 @@ mod tests {
       prng_ya16(&mut packed, 0xA160_0004);
       let mut simd = std::vec![0u16; w * 4];
       let mut scal = std::vec![0u16; w * 4];
-      unsafe { super::ya16_to_rgba_u16_row(&packed, &mut simd, w) };
-      sy::ya16_to_rgba_u16_row(&packed, &mut scal, w);
+      unsafe { super::ya16_to_rgba_u16_row::<false>(&packed, &mut simd, w) };
+      sy::ya16_to_rgba_u16_row::<false>(&packed, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1921,8 +2061,8 @@ mod tests {
       prng_ya16(&mut packed, 0xA160_0005);
       let mut simd = std::vec![0u8; w];
       let mut scal = std::vec![0u8; w];
-      unsafe { super::ya16_to_luma_row(&packed, &mut simd, w) };
-      sy::ya16_to_luma_row(&packed, &mut scal, w);
+      unsafe { super::ya16_to_luma_row::<false>(&packed, &mut simd, w) };
+      sy::ya16_to_luma_row::<false>(&packed, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1936,8 +2076,8 @@ mod tests {
       prng_ya16(&mut packed, 0xA160_0006);
       let mut simd = std::vec![0u16; w];
       let mut scal = std::vec![0u16; w];
-      unsafe { super::ya16_to_luma_u16_row(&packed, &mut simd, w) };
-      sy::ya16_to_luma_u16_row(&packed, &mut scal, w);
+      unsafe { super::ya16_to_luma_u16_row::<false>(&packed, &mut simd, w) };
+      sy::ya16_to_luma_u16_row::<false>(&packed, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1955,11 +2095,180 @@ mod tests {
       let mut rh = std::vec![0u8; w];
       let mut rs = std::vec![0u8; w];
       let mut rv = std::vec![0u8; w];
-      unsafe { super::ya16_to_hsv_row(&packed, &mut sh, &mut ss, &mut sv, w) };
-      sy::ya16_to_hsv_row(&packed, &mut rh, &mut rs, &mut rv, w);
+      unsafe { super::ya16_to_hsv_row::<false>(&packed, &mut sh, &mut ss, &mut sv, w) };
+      sy::ya16_to_hsv_row::<false>(&packed, &mut rh, &mut rs, &mut rv, w);
       assert_eq!(sh, rh, "H width={w}");
       assert_eq!(ss, rs, "S width={w}");
       assert_eq!(sv, rv, "V width={w}");
+    }
+  }
+
+  // ---- BE parity tests: NEON BE kernel == scalar LE kernel on byte-swapped input ----
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn neon_gray10_be_parity_rgb() {
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w];
+      prng16(&mut le, 0xBE10_0001);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u8; w * 3];
+      let mut scal_le = std::vec![0u8; w * 3];
+      unsafe { super::gray_n_to_rgb_row::<10, true>(&be, &mut simd_be, w, true) };
+      scalar::gray_n_to_rgb_row::<10, false>(&le, &mut scal_le, w, true);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn neon_gray16_be_parity_luma() {
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w];
+      prng16(&mut le, 0xBE16_0002);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u8; w];
+      let mut scal_le = std::vec![0u8; w];
+      unsafe { super::gray16_to_luma_row::<true>(&be, &mut simd_be, w) };
+      scalar::gray16_to_luma_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn neon_grayf32_be_parity_luma() {
+    use crate::row::scalar::grayf32 as sf;
+    for &w in WIDTHS {
+      let mut le = std::vec![0.0f32; w];
+      prng_f32(&mut le, 0xBEF3_0003);
+      let be: std::vec::Vec<f32> = le
+        .iter()
+        .map(|v| f32::from_bits(v.to_bits().swap_bytes()))
+        .collect();
+      let mut simd_be = std::vec![0u8; w];
+      let mut scal_le = std::vec![0u8; w];
+      unsafe { super::grayf32_to_luma_row::<true>(&be, &mut simd_be, w) };
+      sf::grayf32_to_luma_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn neon_ya16_be_parity_luma() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA1_0004);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u8; w];
+      let mut scal_le = std::vec![0u8; w];
+      unsafe { super::ya16_to_luma_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_luma_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn neon_ya16_be_parity_rgb() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA1_0005);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u8; w * 3];
+      let mut scal_le = std::vec![0u8; w * 3];
+      unsafe { super::ya16_to_rgb_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_rgb_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn neon_ya16_be_parity_rgba() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA1_0006);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u8; w * 4];
+      let mut scal_le = std::vec![0u8; w * 4];
+      unsafe { super::ya16_to_rgba_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_rgba_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn neon_ya16_be_parity_rgb_u16() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA1_0007);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u16; w * 3];
+      let mut scal_le = std::vec![0u16; w * 3];
+      unsafe { super::ya16_to_rgb_u16_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_rgb_u16_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn neon_ya16_be_parity_rgba_u16() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA1_0008);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u16; w * 4];
+      let mut scal_le = std::vec![0u16; w * 4];
+      unsafe { super::ya16_to_rgba_u16_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_rgba_u16_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn neon_ya16_be_parity_luma_u16() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA1_0009);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u16; w];
+      let mut scal_le = std::vec![0u16; w];
+      unsafe { super::ya16_to_luma_u16_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_luma_u16_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn neon_ya16_be_parity_hsv() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA1_000A);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut sh_be = std::vec![0u8; w];
+      let mut ss_be = std::vec![0u8; w];
+      let mut sv_be = std::vec![0u8; w];
+      let mut sh_le = std::vec![0u8; w];
+      let mut ss_le = std::vec![0u8; w];
+      let mut sv_le = std::vec![0u8; w];
+      unsafe { super::ya16_to_hsv_row::<true>(&be, &mut sh_be, &mut ss_be, &mut sv_be, w) };
+      sy::ya16_to_hsv_row::<false>(&le, &mut sh_le, &mut ss_le, &mut sv_le, w);
+      assert_eq!(sh_be, sh_le, "H width={w}");
+      assert_eq!(ss_be, ss_le, "S width={w}");
+      assert_eq!(sv_be, sv_le, "V width={w}");
     }
   }
 }

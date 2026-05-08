@@ -15,7 +15,10 @@
 
 use core::arch::wasm32::*;
 
-use crate::row::scalar::{bits_mask, gray as scalar, grayf32, ya8, ya16};
+use crate::row::{
+  arch::wasm_simd128::endian::{load_endian_u16x8, load_endian_u32x4},
+  scalar::{bits_mask, gray as scalar, grayf32, ya8, ya16},
+};
 
 // ---- Gray8 ------------------------------------------------------------------
 
@@ -112,7 +115,7 @@ pub(crate) unsafe fn gray8_to_hsv_row(
 /// simd128 must be enabled.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
@@ -120,7 +123,7 @@ pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32>(
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  scalar::gray_n_to_rgb_row::<BITS>(y_plane, out, width, full_range);
+  scalar::gray_n_to_rgb_row::<BITS, BE>(y_plane, out, width, full_range);
 }
 
 /// wasm-simd128 `gray_n_to_rgba_row<BITS>`.
@@ -131,7 +134,7 @@ pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32>(
 /// simd128 must be enabled.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
@@ -139,7 +142,7 @@ pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32>(
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  scalar::gray_n_to_rgba_row::<BITS>(y_plane, out, width, full_range);
+  scalar::gray_n_to_rgba_row::<BITS, BE>(y_plane, out, width, full_range);
 }
 
 /// wasm-simd128 `gray_n_to_rgb_u16_row<BITS>`.
@@ -150,7 +153,7 @@ pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32>(
 /// simd128 must be enabled.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -158,7 +161,7 @@ pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32>(
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  scalar::gray_n_to_rgb_u16_row::<BITS>(y_plane, out, width, full_range);
+  scalar::gray_n_to_rgb_u16_row::<BITS, BE>(y_plane, out, width, full_range);
 }
 
 /// wasm-simd128 `gray_n_to_rgba_u16_row<BITS>`.
@@ -169,7 +172,7 @@ pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32>(
 /// simd128 must be enabled.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -177,7 +180,7 @@ pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32>(
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  scalar::gray_n_to_rgba_u16_row::<BITS>(y_plane, out, width, full_range);
+  scalar::gray_n_to_rgba_u16_row::<BITS, BE>(y_plane, out, width, full_range);
 }
 
 /// wasm-simd128 `gray_n_to_luma_row<BITS>`: mask + shift → u8. 8 pixels/iter.
@@ -188,7 +191,7 @@ pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32>(
 /// simd128 must be enabled. `y_plane.len() >= width`. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
@@ -201,7 +204,7 @@ pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32>(
   unsafe {
     let mask_v = u16x8_splat(mask);
     while x + 8 <= width {
-      let raw = v128_load(y_plane.as_ptr().add(x).cast());
+      let raw = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let masked = v128_and(raw, mask_v);
       let shifted = u16x8_shr(masked, shift);
       // Narrow u16x8 → u8x8 via u8x16_narrow_i16x8 (saturation, but values
@@ -215,7 +218,7 @@ pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32>(
     }
   }
   if x < width {
-    scalar::gray_n_to_luma_row::<BITS>(&y_plane[x..width], &mut out[x..width], width - x);
+    scalar::gray_n_to_luma_row::<BITS, BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -227,7 +230,7 @@ pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32>(
 /// simd128 must be enabled. `y_plane.len() >= width`. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray_n_to_luma_u16_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_luma_u16_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -239,14 +242,14 @@ pub(crate) unsafe fn gray_n_to_luma_u16_row<const BITS: u32>(
   unsafe {
     let mask_v = u16x8_splat(mask);
     while x + 8 <= width {
-      let raw = v128_load(y_plane.as_ptr().add(x).cast());
+      let raw = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let masked = v128_and(raw, mask_v);
       v128_store(out.as_mut_ptr().add(x).cast(), masked);
       x += 8;
     }
   }
   if x < width {
-    scalar::gray_n_to_luma_u16_row::<BITS>(&y_plane[x..width], &mut out[x..width], width - x);
+    scalar::gray_n_to_luma_u16_row::<BITS, BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -260,7 +263,7 @@ pub(crate) unsafe fn gray_n_to_luma_u16_row<const BITS: u32>(
 /// simd128 must be enabled. All slices have length >= width.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -270,7 +273,7 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
 ) {
   debug_assert!(y_plane.len() >= width);
   if !full_range {
-    return scalar::gray_n_to_hsv_row::<BITS>(y_plane, h_out, s_out, v_out, width, full_range);
+    return scalar::gray_n_to_hsv_row::<BITS, BE>(y_plane, h_out, s_out, v_out, width, full_range);
   }
   let mask = bits_mask::<BITS>();
   let shift = BITS - 8;
@@ -279,7 +282,7 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
     let mask_v = u16x8_splat(mask);
     let zero = i64x2(0, 0);
     while x + 8 <= width {
-      let raw = v128_load(y_plane.as_ptr().add(x).cast());
+      let raw = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let masked = v128_and(raw, mask_v);
       let shifted = u16x8_shr(masked, shift);
       let narrowed = u8x16_narrow_i16x8(shifted, zero);
@@ -292,7 +295,7 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
     }
   }
   if x < width {
-    scalar::gray_n_to_hsv_row::<BITS>(
+    scalar::gray_n_to_hsv_row::<BITS, BE>(
       &y_plane[x..width],
       &mut h_out[x..width],
       &mut s_out[x..width],
@@ -313,7 +316,7 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
 /// simd128 must be enabled.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray16_to_rgb_row(
+pub(crate) unsafe fn gray16_to_rgb_row<const BE: bool>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
@@ -321,7 +324,7 @@ pub(crate) unsafe fn gray16_to_rgb_row(
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  scalar::gray16_to_rgb_row(y_plane, out, width, full_range);
+  scalar::gray16_to_rgb_row::<BE>(y_plane, out, width, full_range);
 }
 
 /// wasm-simd128 `gray16_to_rgba_row`.
@@ -332,7 +335,7 @@ pub(crate) unsafe fn gray16_to_rgb_row(
 /// simd128 must be enabled.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray16_to_rgba_row(
+pub(crate) unsafe fn gray16_to_rgba_row<const BE: bool>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
@@ -340,7 +343,7 @@ pub(crate) unsafe fn gray16_to_rgba_row(
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  scalar::gray16_to_rgba_row(y_plane, out, width, full_range);
+  scalar::gray16_to_rgba_row::<BE>(y_plane, out, width, full_range);
 }
 
 /// wasm-simd128 `gray16_to_rgb_u16_row`.
@@ -351,7 +354,7 @@ pub(crate) unsafe fn gray16_to_rgba_row(
 /// simd128 must be enabled.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray16_to_rgb_u16_row(
+pub(crate) unsafe fn gray16_to_rgb_u16_row<const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -359,7 +362,7 @@ pub(crate) unsafe fn gray16_to_rgb_u16_row(
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  scalar::gray16_to_rgb_u16_row(y_plane, out, width, full_range);
+  scalar::gray16_to_rgb_u16_row::<BE>(y_plane, out, width, full_range);
 }
 
 /// wasm-simd128 `gray16_to_rgba_u16_row`.
@@ -371,7 +374,7 @@ pub(crate) unsafe fn gray16_to_rgb_u16_row(
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray16_to_rgba_u16_row(
+pub(crate) unsafe fn gray16_to_rgba_u16_row<const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -379,7 +382,7 @@ pub(crate) unsafe fn gray16_to_rgba_u16_row(
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  scalar::gray16_to_rgba_u16_row(y_plane, out, width, full_range);
+  scalar::gray16_to_rgba_u16_row::<BE>(y_plane, out, width, full_range);
 }
 
 /// wasm-simd128 `gray16_to_luma_row`: `>> 8` → u8. 8 pixels/iter.
@@ -390,14 +393,18 @@ pub(crate) unsafe fn gray16_to_rgba_u16_row(
 /// simd128 must be enabled. `y_plane.len() >= width`. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray16_to_luma_row(y_plane: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn gray16_to_luma_row<const BE: bool>(
+  y_plane: &[u16],
+  out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
   let mut x = 0usize;
   unsafe {
     let zero = i64x2(0, 0);
     while x + 8 <= width {
-      let raw = v128_load(y_plane.as_ptr().add(x).cast());
+      let raw = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let shifted = u16x8_shr(raw, 8);
       let narrowed = u8x16_narrow_i16x8(shifted, zero);
       let val = i64x2_extract_lane::<0>(narrowed) as u64;
@@ -406,7 +413,7 @@ pub(crate) unsafe fn gray16_to_luma_row(y_plane: &[u16], out: &mut [u8], width: 
     }
   }
   if x < width {
-    scalar::gray16_to_luma_row(&y_plane[x..width], &mut out[x..width], width - x);
+    scalar::gray16_to_luma_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -418,19 +425,23 @@ pub(crate) unsafe fn gray16_to_luma_row(y_plane: &[u16], out: &mut [u8], width: 
 /// simd128 must be enabled. `y_plane.len() >= width`. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray16_to_luma_u16_row(y_plane: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn gray16_to_luma_u16_row<const BE: bool>(
+  y_plane: &[u16],
+  out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
   let mut x = 0usize;
   unsafe {
     while x + 8 <= width {
-      let y = v128_load(y_plane.as_ptr().add(x).cast());
+      let y = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       v128_store(out.as_mut_ptr().add(x).cast(), y);
       x += 8;
     }
   }
   if x < width {
-    scalar::gray16_to_luma_u16_row(&y_plane[x..width], &mut out[x..width], width - x);
+    scalar::gray16_to_luma_u16_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -443,7 +454,7 @@ pub(crate) unsafe fn gray16_to_luma_u16_row(y_plane: &[u16], out: &mut [u16], wi
 /// simd128 must be enabled. All slices have length >= width.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gray16_to_hsv_row(
+pub(crate) unsafe fn gray16_to_hsv_row<const BE: bool>(
   y_plane: &[u16],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -453,13 +464,13 @@ pub(crate) unsafe fn gray16_to_hsv_row(
 ) {
   debug_assert!(y_plane.len() >= width);
   if !full_range {
-    return scalar::gray16_to_hsv_row(y_plane, h_out, s_out, v_out, width, full_range);
+    return scalar::gray16_to_hsv_row::<BE>(y_plane, h_out, s_out, v_out, width, full_range);
   }
   let mut x = 0usize;
   unsafe {
     let zero = i64x2(0, 0);
     while x + 8 <= width {
-      let raw = v128_load(y_plane.as_ptr().add(x).cast());
+      let raw = load_endian_u16x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let shifted = u16x8_shr(raw, 8);
       let narrowed = u8x16_narrow_i16x8(shifted, zero);
       let val = i64x2_extract_lane::<0>(narrowed) as u64;
@@ -471,7 +482,7 @@ pub(crate) unsafe fn gray16_to_hsv_row(
     }
   }
   if x < width {
-    scalar::gray16_to_hsv_row(
+    scalar::gray16_to_hsv_row::<BE>(
       &y_plane[x..width],
       &mut h_out[x..width],
       &mut s_out[x..width],
@@ -490,10 +501,14 @@ pub(crate) unsafe fn gray16_to_hsv_row(
 /// simd128 must be enabled.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn grayf32_to_rgb_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  grayf32::grayf32_to_rgb_row(y_plane, out, width);
+  grayf32::grayf32_to_rgb_row::<BE>(y_plane, out, width);
 }
 
 /// wasm-simd128 `grayf32_to_rgba_row`: delegates to scalar.
@@ -502,10 +517,14 @@ pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: 
 /// simd128 must be enabled.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn grayf32_to_rgba_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  grayf32::grayf32_to_rgba_row(y_plane, out, width);
+  grayf32::grayf32_to_rgba_row::<BE>(y_plane, out, width);
 }
 
 /// wasm-simd128 `grayf32_to_rgb_u16_row`: delegates to scalar.
@@ -514,10 +533,14 @@ pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width:
 /// simd128 must be enabled.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn grayf32_to_rgb_u16_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  grayf32::grayf32_to_rgb_u16_row(y_plane, out, width);
+  grayf32::grayf32_to_rgb_u16_row::<BE>(y_plane, out, width);
 }
 
 /// wasm-simd128 `grayf32_to_rgba_u16_row`: delegates to scalar.
@@ -526,10 +549,14 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
 /// simd128 must be enabled.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn grayf32_to_rgba_u16_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  grayf32::grayf32_to_rgba_u16_row(y_plane, out, width);
+  grayf32::grayf32_to_rgba_u16_row::<BE>(y_plane, out, width);
 }
 
 /// wasm-simd128 `grayf32_to_rgb_f32_row`: delegates to scalar.
@@ -539,10 +566,14 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(dead_code)] // dispatcher always uses scalar; function is exercised by tests only
-pub(crate) unsafe fn grayf32_to_rgb_f32_row(y_plane: &[f32], out: &mut [f32], width: usize) {
+pub(crate) unsafe fn grayf32_to_rgb_f32_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [f32],
+  width: usize,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  grayf32::grayf32_to_rgb_f32_row(y_plane, out, width);
+  grayf32::grayf32_to_rgb_f32_row::<BE>(y_plane, out, width);
 }
 
 /// wasm-simd128 `grayf32_to_luma_row`: clamp→scale→round→u8. 4 pixels/iter.
@@ -554,7 +585,11 @@ pub(crate) unsafe fn grayf32_to_rgb_f32_row(y_plane: &[f32], out: &mut [f32], wi
 /// simd128 must be enabled. `y_plane.len() >= width`. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn grayf32_to_luma_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
   let scale = f32x4_splat(255.0);
@@ -565,7 +600,7 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
   let mut x = 0usize;
   unsafe {
     while x + 4 <= width {
-      let y = v128_load(y_plane.as_ptr().add(x).cast());
+      let y = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
       let clamped = f32x4_min(f32x4_max(y, zero4), one4);
       let scaled = f32x4_mul(clamped, scale);
       let rounded = i32x4_trunc_sat_f32x4(f32x4_add(scaled, half));
@@ -579,7 +614,7 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
     }
   }
   if x < width {
-    grayf32::grayf32_to_luma_row(&y_plane[x..width], &mut out[x..width], width - x);
+    grayf32::grayf32_to_luma_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -589,7 +624,11 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
 /// simd128 must be enabled. `y_plane.len() >= width`. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn grayf32_to_luma_u16_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
   let scale = f32x4_splat(65535.0);
@@ -600,7 +639,7 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
   let mut x = 0usize;
   unsafe {
     while x + 4 <= width {
-      let y = v128_load(y_plane.as_ptr().add(x).cast());
+      let y = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
       let clamped = f32x4_min(f32x4_max(y, zero4), one4);
       let scaled = f32x4_mul(clamped, scale);
       let rounded = i32x4_trunc_sat_f32x4(f32x4_add(scaled, half));
@@ -614,7 +653,7 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
     }
   }
   if x < width {
-    grayf32::grayf32_to_luma_u16_row(&y_plane[x..width], &mut out[x..width], width - x);
+    grayf32::grayf32_to_luma_u16_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -625,19 +664,23 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(dead_code)] // dispatcher always uses scalar; function is exercised by tests only
-pub(crate) unsafe fn grayf32_to_luma_f32_row(y_plane: &[f32], out: &mut [f32], width: usize) {
+pub(crate) unsafe fn grayf32_to_luma_f32_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [f32],
+  width: usize,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
   let mut x = 0usize;
   unsafe {
     while x + 4 <= width {
-      let y = v128_load(y_plane.as_ptr().add(x).cast());
+      let y = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
       v128_store(out.as_mut_ptr().add(x).cast(), y);
       x += 4;
     }
   }
   if x < width {
-    grayf32::grayf32_to_luma_f32_row(&y_plane[x..width], &mut out[x..width], width - x);
+    grayf32::grayf32_to_luma_f32_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -647,7 +690,7 @@ pub(crate) unsafe fn grayf32_to_luma_f32_row(y_plane: &[f32], out: &mut [f32], w
 /// simd128 must be enabled. All slices have length >= width.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn grayf32_to_hsv_row(
+pub(crate) unsafe fn grayf32_to_hsv_row<const BE: bool>(
   y_plane: &[f32],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -663,7 +706,7 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
   let mut x = 0usize;
   unsafe {
     while x + 4 <= width {
-      let y = v128_load(y_plane.as_ptr().add(x).cast());
+      let y = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
       let clamped = f32x4_min(f32x4_max(y, zero4), one4);
       let scaled = f32x4_mul(clamped, scale);
       let rounded = i32x4_trunc_sat_f32x4(f32x4_add(scaled, half));
@@ -678,7 +721,7 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
     }
   }
   if x < width {
-    grayf32::grayf32_to_hsv_row(
+    grayf32::grayf32_to_hsv_row::<BE>(
       &y_plane[x..width],
       &mut h_out[x..width],
       &mut s_out[x..width],
@@ -834,16 +877,38 @@ pub(crate) unsafe fn ya8_to_hsv_row(
 
 // ---- Ya16 -------------------------------------------------------------------
 
+/// Host-endian gate for Ya16 SIMD bodies (`luma_row`, `luma_u16_row`, `hsv_row`).
+///
+/// The wasm-simd128 Ya16 SIMD bodies use `v128_load` + fixed swizzle masks
+/// (`0,1,4,5,8,9,12,13,...`) plus `u16x8_shr` that gather the **host-native**
+/// high byte of each Ya16 word. They are only correct when the encoded byte
+/// order matches the host. The full truth table (mirrors PR #82 `9c7d533`
+/// dispatcher routing fix):
+///
+/// | data BE | host BE | `BE != HOST_NATIVE_BE` | path   | correct via       |
+/// |---------|---------|------------------------|--------|-------------------|
+/// | false   | false   | false                  | SIMD   | host-native LE    |
+/// | false   | true    | true                   | scalar | `from_le`         |
+/// | true    | false   | true                   | scalar | `from_be`         |
+/// | true    | true    | false                  | SIMD   | host-native BE    |
+///
+/// The narrower `if BE { scalar }` gate from `7cb64c6` only covered rows 1+3
+/// (LE host); the LE-source-on-BE-host quadrant would still run the SIMD body
+/// and corrupt Y/V. The pure-delegate entries (`rgb_row`, `rgba_row`,
+/// `rgb_u16_row`, `rgba_u16_row`) don't need the gate because they call into
+/// scalar directly.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 /// wasm-simd128 `ya16_to_rgb_row`: delegates to scalar.
 ///
 /// # Safety
 /// simd128 must be enabled.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn ya16_to_rgb_row<const BE: bool>(packed: &[u16], out: &mut [u8], width: usize) {
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width * 3);
-  ya16::ya16_to_rgb_row(packed, out, width);
+  ya16::ya16_to_rgb_row::<BE>(packed, out, width);
 }
 
 /// wasm-simd128 `ya16_to_rgba_row`: delegates to scalar.
@@ -852,10 +917,14 @@ pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usiz
 /// simd128 must be enabled.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn ya16_to_rgba_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width * 4);
-  ya16::ya16_to_rgba_row(packed, out, width);
+  ya16::ya16_to_rgba_row::<BE>(packed, out, width);
 }
 
 /// wasm-simd128 `ya16_to_rgb_u16_row`: delegates to scalar.
@@ -864,10 +933,14 @@ pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usi
 /// simd128 must be enabled.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn ya16_to_rgb_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn ya16_to_rgb_u16_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width * 3);
-  ya16::ya16_to_rgb_u16_row(packed, out, width);
+  ya16::ya16_to_rgb_u16_row::<BE>(packed, out, width);
 }
 
 /// wasm-simd128 `ya16_to_rgba_u16_row`: delegates to scalar.
@@ -876,10 +949,14 @@ pub(crate) unsafe fn ya16_to_rgb_u16_row(packed: &[u16], out: &mut [u16], width:
 /// simd128 must be enabled.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn ya16_to_rgba_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn ya16_to_rgba_u16_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width * 4);
-  ya16::ya16_to_rgba_u16_row(packed, out, width);
+  ya16::ya16_to_rgba_u16_row::<BE>(packed, out, width);
 }
 
 /// wasm-simd128 `ya16_to_luma_row`: deinterleave Y u16 → `>> 8` → u8.
@@ -892,9 +969,17 @@ pub(crate) unsafe fn ya16_to_rgba_u16_row(packed: &[u16], out: &mut [u16], width
 /// simd128 must be enabled. `packed.len() >= width * 2`. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn ya16_to_luma_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width);
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → SIMD host-native swizzle wrong; fall through.
+    return ya16::ya16_to_luma_row::<BE>(packed, out, width);
+  }
   // Shuffle mask: gather words at indices 0,2,4,6 (byte offsets 0-1,4-5,8-9,12-13)
   // into the low 8 bytes. Each word is little-endian so bytes are [lo,hi,...].
   // We want word[0]=bytes[0,1], word[2]=bytes[4,5], word[4]=bytes[8,9], word[6]=bytes[12,13].
@@ -926,7 +1011,7 @@ pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
     }
   }
   if x < width {
-    ya16::ya16_to_luma_row(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+    ya16::ya16_to_luma_row::<BE>(&packed[x * 2..width * 2], &mut out[x..width], width - x);
   }
 }
 
@@ -937,9 +1022,17 @@ pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
 /// simd128 must be enabled. `packed.len() >= width * 2`. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn ya16_to_luma_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn ya16_to_luma_u16_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width);
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → SIMD host-native swizzle wrong; fall through.
+    return ya16::ya16_to_luma_u16_row::<BE>(packed, out, width);
+  }
   let shuf_lo = i8x16(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
   let mut x = 0usize;
   unsafe {
@@ -960,7 +1053,7 @@ pub(crate) unsafe fn ya16_to_luma_u16_row(packed: &[u16], out: &mut [u16], width
     }
   }
   if x < width {
-    ya16::ya16_to_luma_u16_row(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+    ya16::ya16_to_luma_u16_row::<BE>(&packed[x * 2..width * 2], &mut out[x..width], width - x);
   }
 }
 
@@ -970,7 +1063,7 @@ pub(crate) unsafe fn ya16_to_luma_u16_row(packed: &[u16], out: &mut [u16], width
 /// simd128 must be enabled. All slices have length >= width.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn ya16_to_hsv_row(
+pub(crate) unsafe fn ya16_to_hsv_row<const BE: bool>(
   packed: &[u16],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -978,6 +1071,10 @@ pub(crate) unsafe fn ya16_to_hsv_row(
   width: usize,
 ) {
   debug_assert!(packed.len() >= width * 2);
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → SIMD host-native swizzle wrong; fall through.
+    return ya16::ya16_to_hsv_row::<BE>(packed, h_out, s_out, v_out, width);
+  }
   let shuf_lo = i8x16(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
   let zero16 = i64x2(0, 0);
   let mut x = 0usize;
@@ -1005,7 +1102,7 @@ pub(crate) unsafe fn ya16_to_hsv_row(
     }
   }
   if x < width {
-    ya16::ya16_to_hsv_row(
+    ya16::ya16_to_hsv_row::<BE>(
       &packed[x * 2..width * 2],
       &mut h_out[x..width],
       &mut s_out[x..width],
@@ -1055,8 +1152,8 @@ mod tests {
       prng_f32(&mut plane, 0xF800_0001);
       let mut simd = std::vec![0u8; w * 3];
       let mut scal = std::vec![0u8; w * 3];
-      unsafe { super::grayf32_to_rgb_row(&plane, &mut simd, w) };
-      sf::grayf32_to_rgb_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_rgb_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_rgb_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1070,8 +1167,8 @@ mod tests {
       prng_f32(&mut plane, 0xF800_0002);
       let mut simd = std::vec![0u8; w * 4];
       let mut scal = std::vec![0u8; w * 4];
-      unsafe { super::grayf32_to_rgba_row(&plane, &mut simd, w) };
-      sf::grayf32_to_rgba_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_rgba_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_rgba_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1085,8 +1182,8 @@ mod tests {
       prng_f32(&mut plane, 0xF800_0003);
       let mut simd = std::vec![0u16; w * 3];
       let mut scal = std::vec![0u16; w * 3];
-      unsafe { super::grayf32_to_rgb_u16_row(&plane, &mut simd, w) };
-      sf::grayf32_to_rgb_u16_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_rgb_u16_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_rgb_u16_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1100,8 +1197,8 @@ mod tests {
       prng_f32(&mut plane, 0xF800_0004);
       let mut simd = std::vec![0u16; w * 4];
       let mut scal = std::vec![0u16; w * 4];
-      unsafe { super::grayf32_to_rgba_u16_row(&plane, &mut simd, w) };
-      sf::grayf32_to_rgba_u16_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_rgba_u16_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_rgba_u16_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1115,8 +1212,8 @@ mod tests {
       prng_f32(&mut plane, 0xF800_0005);
       let mut simd = std::vec![0.0f32; w * 3];
       let mut scal = std::vec![0.0f32; w * 3];
-      unsafe { super::grayf32_to_rgb_f32_row(&plane, &mut simd, w) };
-      sf::grayf32_to_rgb_f32_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_rgb_f32_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_rgb_f32_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1130,8 +1227,8 @@ mod tests {
       prng_f32(&mut plane, 0xF800_0006);
       let mut simd = std::vec![0u8; w];
       let mut scal = std::vec![0u8; w];
-      unsafe { super::grayf32_to_luma_row(&plane, &mut simd, w) };
-      sf::grayf32_to_luma_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_luma_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_luma_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1145,8 +1242,8 @@ mod tests {
       prng_f32(&mut plane, 0xF800_0007);
       let mut simd = std::vec![0u16; w];
       let mut scal = std::vec![0u16; w];
-      unsafe { super::grayf32_to_luma_u16_row(&plane, &mut simd, w) };
-      sf::grayf32_to_luma_u16_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_luma_u16_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_luma_u16_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1160,8 +1257,8 @@ mod tests {
       prng_f32(&mut plane, 0xF800_0008);
       let mut simd = std::vec![0.0f32; w];
       let mut scal = std::vec![0.0f32; w];
-      unsafe { super::grayf32_to_luma_f32_row(&plane, &mut simd, w) };
-      sf::grayf32_to_luma_f32_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_luma_f32_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_luma_f32_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1179,8 +1276,8 @@ mod tests {
       let mut rh = std::vec![0u8; w];
       let mut rs = std::vec![0u8; w];
       let mut rv = std::vec![0u8; w];
-      unsafe { super::grayf32_to_hsv_row(&plane, &mut sh, &mut ss, &mut sv, w) };
-      sf::grayf32_to_hsv_row(&plane, &mut rh, &mut rs, &mut rv, w);
+      unsafe { super::grayf32_to_hsv_row::<false>(&plane, &mut sh, &mut ss, &mut sv, w) };
+      sf::grayf32_to_hsv_row::<false>(&plane, &mut rh, &mut rs, &mut rv, w);
       assert_eq!(sh, rh, "H width={w}");
       assert_eq!(ss, rs, "S width={w}");
       assert_eq!(sv, rv, "V width={w}");
@@ -1327,8 +1424,8 @@ mod tests {
       prng_ya16(&mut packed, 0xA862_0001);
       let mut simd = std::vec![0u8; w * 3];
       let mut scal = std::vec![0u8; w * 3];
-      unsafe { super::ya16_to_rgb_row(&packed, &mut simd, w) };
-      sy::ya16_to_rgb_row(&packed, &mut scal, w);
+      unsafe { super::ya16_to_rgb_row::<false>(&packed, &mut simd, w) };
+      sy::ya16_to_rgb_row::<false>(&packed, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1342,8 +1439,8 @@ mod tests {
       prng_ya16(&mut packed, 0xA862_0002);
       let mut simd = std::vec![0u8; w * 4];
       let mut scal = std::vec![0u8; w * 4];
-      unsafe { super::ya16_to_rgba_row(&packed, &mut simd, w) };
-      sy::ya16_to_rgba_row(&packed, &mut scal, w);
+      unsafe { super::ya16_to_rgba_row::<false>(&packed, &mut simd, w) };
+      sy::ya16_to_rgba_row::<false>(&packed, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1357,8 +1454,8 @@ mod tests {
       prng_ya16(&mut packed, 0xA862_0003);
       let mut simd = std::vec![0u16; w * 3];
       let mut scal = std::vec![0u16; w * 3];
-      unsafe { super::ya16_to_rgb_u16_row(&packed, &mut simd, w) };
-      sy::ya16_to_rgb_u16_row(&packed, &mut scal, w);
+      unsafe { super::ya16_to_rgb_u16_row::<false>(&packed, &mut simd, w) };
+      sy::ya16_to_rgb_u16_row::<false>(&packed, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1372,8 +1469,8 @@ mod tests {
       prng_ya16(&mut packed, 0xA862_0004);
       let mut simd = std::vec![0u16; w * 4];
       let mut scal = std::vec![0u16; w * 4];
-      unsafe { super::ya16_to_rgba_u16_row(&packed, &mut simd, w) };
-      sy::ya16_to_rgba_u16_row(&packed, &mut scal, w);
+      unsafe { super::ya16_to_rgba_u16_row::<false>(&packed, &mut simd, w) };
+      sy::ya16_to_rgba_u16_row::<false>(&packed, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1387,8 +1484,8 @@ mod tests {
       prng_ya16(&mut packed, 0xA862_0005);
       let mut simd = std::vec![0u8; w];
       let mut scal = std::vec![0u8; w];
-      unsafe { super::ya16_to_luma_row(&packed, &mut simd, w) };
-      sy::ya16_to_luma_row(&packed, &mut scal, w);
+      unsafe { super::ya16_to_luma_row::<false>(&packed, &mut simd, w) };
+      sy::ya16_to_luma_row::<false>(&packed, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1402,8 +1499,8 @@ mod tests {
       prng_ya16(&mut packed, 0xA862_0006);
       let mut simd = std::vec![0u16; w];
       let mut scal = std::vec![0u16; w];
-      unsafe { super::ya16_to_luma_u16_row(&packed, &mut simd, w) };
-      sy::ya16_to_luma_u16_row(&packed, &mut scal, w);
+      unsafe { super::ya16_to_luma_u16_row::<false>(&packed, &mut simd, w) };
+      sy::ya16_to_luma_u16_row::<false>(&packed, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1421,8 +1518,8 @@ mod tests {
       let mut rh = std::vec![0u8; w];
       let mut rs = std::vec![0u8; w];
       let mut rv = std::vec![0u8; w];
-      unsafe { super::ya16_to_hsv_row(&packed, &mut sh, &mut ss, &mut sv, w) };
-      sy::ya16_to_hsv_row(&packed, &mut rh, &mut rs, &mut rv, w);
+      unsafe { super::ya16_to_hsv_row::<false>(&packed, &mut sh, &mut ss, &mut sv, w) };
+      sy::ya16_to_hsv_row::<false>(&packed, &mut rh, &mut rs, &mut rv, w);
       assert_eq!(sh, rh, "H width={w}");
       assert_eq!(ss, rs, "S width={w}");
       assert_eq!(sv, rv, "V width={w}");
@@ -1457,8 +1554,8 @@ mod tests {
       prng16(&mut plane, 0xCAFE_BABE);
       let mut simd = std::vec![0u16; w];
       let mut scal = std::vec![0u16; w];
-      unsafe { super::gray_n_to_luma_u16_row::<10>(&plane, &mut simd, w) };
-      scalar::gray_n_to_luma_u16_row::<10>(&plane, &mut scal, w);
+      unsafe { super::gray_n_to_luma_u16_row::<10, false>(&plane, &mut simd, w) };
+      scalar::gray_n_to_luma_u16_row::<10, false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1471,9 +1568,159 @@ mod tests {
       prng16(&mut plane, 0xDEAD_BEEF);
       let mut simd = std::vec![0u16; w];
       let mut scal = std::vec![0u16; w];
-      unsafe { super::gray16_to_luma_u16_row(&plane, &mut simd, w) };
-      scalar::gray16_to_luma_u16_row(&plane, &mut scal, w);
+      unsafe { super::gray16_to_luma_u16_row::<false>(&plane, &mut simd, w) };
+      scalar::gray16_to_luma_u16_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
+    }
+  }
+
+  // ---- BE parity tests --------------------------------------------------------
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn wasm_gray10_be_parity_luma() {
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w];
+      prng16(&mut le, 0xBE10_0001);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u8; w];
+      let mut scal_le = std::vec![0u8; w];
+      unsafe { super::gray_n_to_luma_row::<10, true>(&be, &mut simd_be, w) };
+      scalar::gray_n_to_luma_row::<10, false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn wasm_gray16_be_parity_luma() {
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w];
+      prng16(&mut le, 0xBE16_0002);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u8; w];
+      let mut scal_le = std::vec![0u8; w];
+      unsafe { super::gray16_to_luma_row::<true>(&be, &mut simd_be, w) };
+      scalar::gray16_to_luma_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn wasm_ya16_be_parity_rgb() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA8_0001);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u8; w * 3];
+      let mut scal_le = std::vec![0u8; w * 3];
+      unsafe { super::ya16_to_rgb_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_rgb_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn wasm_ya16_be_parity_rgba() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA8_0002);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u8; w * 4];
+      let mut scal_le = std::vec![0u8; w * 4];
+      unsafe { super::ya16_to_rgba_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_rgba_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn wasm_ya16_be_parity_rgb_u16() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA8_0003);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u16; w * 3];
+      let mut scal_le = std::vec![0u16; w * 3];
+      unsafe { super::ya16_to_rgb_u16_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_rgb_u16_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn wasm_ya16_be_parity_rgba_u16() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA8_0004);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u16; w * 4];
+      let mut scal_le = std::vec![0u16; w * 4];
+      unsafe { super::ya16_to_rgba_u16_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_rgba_u16_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn wasm_ya16_be_parity_luma() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA8_0005);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u8; w];
+      let mut scal_le = std::vec![0u8; w];
+      unsafe { super::ya16_to_luma_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_luma_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn wasm_ya16_be_parity_luma_u16() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA8_0006);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u16; w];
+      let mut scal_le = std::vec![0u16; w];
+      unsafe { super::ya16_to_luma_u16_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_luma_u16_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+  fn wasm_ya16_be_parity_hsv() {
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA8_0007);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut sh_be = std::vec![0u8; w];
+      let mut ss_be = std::vec![0u8; w];
+      let mut sv_be = std::vec![0u8; w];
+      let mut sh_le = std::vec![0u8; w];
+      let mut ss_le = std::vec![0u8; w];
+      let mut sv_le = std::vec![0u8; w];
+      unsafe { super::ya16_to_hsv_row::<true>(&be, &mut sh_be, &mut ss_be, &mut sv_be, w) };
+      sy::ya16_to_hsv_row::<false>(&le, &mut sh_le, &mut ss_le, &mut sv_le, w);
+      assert_eq!(sh_be, sh_le, "H width={w}");
+      assert_eq!(ss_be, ss_le, "S width={w}");
+      assert_eq!(sv_be, sv_le, "V width={w}");
     }
   }
 }
