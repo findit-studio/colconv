@@ -641,10 +641,45 @@ fn p416_rgba_u16_gray_alpha_is_ffff() {
 // values, calls the `rgbf16_to_*_row` kernel, and then calls the matching
 // `rgbf32_to_*_row` kernel with the widened f32 slice.  The outputs must
 // be identical, proving that widening is the only difference.
+//
+// LE-host gating rationale (codex 5th-pass review of PR #83):
+//
+// The fixture builder `rgbf16_test_inputs` produces host-native `half::f16`
+// (and widened host-native `f32`) values via `half::f16::from_f32` /
+// `to_f32`. The tests then call the kernels with `::<false>`, which means
+// "input is LE-encoded — decode to host-native by applying `from_le`".
+//
+// On a little-endian host, host-native bits and LE-encoded bits are the
+// same byte sequence, so `u16::from_le` / `u32::from_le` is a no-op and
+// the assertion holds.
+//
+// On a big-endian host, host-native `f16`/`f32` bits do NOT lay out
+// little-endian, so the kernel's `from_le` byte-swap correctly
+// reinterprets the host-native fixture as if it were an LE-encoded
+// payload — producing a different (corrupted) value than the test
+// expects.  The kernel itself is correct; this is purely a
+// fixture-vs-kernel byte-order mismatch on BE hosts (same class as the
+// PR #82 alpha_extract / planar_gbr_high_bit gates in `8f2e329`).
+//
+// Kernel BE-host correctness is locked down separately by the dedicated
+// BE-parity tests in the per-backend `tests/packed_rgb_float.rs`
+// modules, which build LE-encoded fixtures via
+// `f32::from_bits(u32::from_le(_))` / `half::f16::from_bits(u16::from_le(_))`
+// and assert the kernel output matches the original host-native values
+// on every host. Those tests are intentionally NOT gated.
+//
+// The fixture set `[0.0, 1.0, 0.5, 65504.0, 1e-5, -0.5, 2.5, 0.999, 0.001]`
+// includes only one byte-symmetric value (`0.0` → `0x00..00`); every
+// other value has distinct LE/BE byte layouts, so the parity assertions
+// would fail on BE without gating.
 
 /// 9 representative half-float inputs: normal [0,1] range, HDR, subnormal-
 /// ish, negative, and over-range.  Replicated across 9 pixels × 3 channels
 /// so that every channel position sees every value at some pixel.
+///
+/// LE-only: the six parity / widen / copy tests below are all gated on
+/// `target_endian = "little"`, so this helper is unused on BE hosts.
+#[cfg(target_endian = "little")]
 fn rgbf16_test_inputs() -> (Vec<half::f16>, Vec<f32>, usize) {
   let inputs_f32: [f32; 9] = [0.0, 1.0, 0.5, 65504.0, 1e-5, -0.5, 2.5, 0.999, 0.001];
   let width = inputs_f32.len();
@@ -656,6 +691,7 @@ fn rgbf16_test_inputs() -> (Vec<half::f16>, Vec<f32>, usize) {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
@@ -670,6 +706,7 @@ fn rgbf16_scalar_rgb_matches_widen_then_rgbf32() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
@@ -684,6 +721,7 @@ fn rgbf16_scalar_rgba_matches_widen_then_rgbf32() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
@@ -698,6 +736,7 @@ fn rgbf16_scalar_rgb_u16_matches_widen_then_rgbf32() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
@@ -712,6 +751,7 @@ fn rgbf16_scalar_rgba_u16_matches_widen_then_rgbf32() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
@@ -728,6 +768,7 @@ fn rgbf16_scalar_rgb_f32_matches_element_wise_widen() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
