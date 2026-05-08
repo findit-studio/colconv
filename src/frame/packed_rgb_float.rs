@@ -50,7 +50,8 @@ pub enum Rgbf32FrameError {
   },
 }
 
-/// A validated packed **RGBF32** frame (FFmpeg `AV_PIX_FMT_RGBF32`).
+/// A validated packed **RGBF32** frame (FFmpeg `AV_PIX_FMT_RGBF32`,
+/// FFmpeg canonical `*LE` convention — see endian note below).
 /// One plane, 3 × `f32` per pixel, channel order `R, G, B`.
 ///
 /// Values are **linear** RGB by convention — no gamma / OETF handling
@@ -64,6 +65,20 @@ pub enum Rgbf32FrameError {
 /// `stride` is in **`f32` elements** (≥ `3 * width`), matching the
 /// per-format convention that stride aligns with the underlying slice
 /// element type. No width parity constraint.
+///
+/// # Endian contract — **LE-encoded bytes**
+///
+/// The `&[f32]` plane is the **LE-encoded byte layout** reinterpreted as
+/// `f32`, matching the FFmpeg `*LE` pixel-format convention. On a
+/// little-endian host (every CI runner today) LE bytes _are_ host-native,
+/// so `&[f32]` is also a host-native float slice; on a big-endian host the
+/// bytes have to be byte-swapped back to host-native before arithmetic.
+/// Downstream row kernels handle this byte-swap (or no-op on LE) under the
+/// hood — callers do **not** pre-swap.
+///
+/// Stride is in **f32 elements** (not bytes). Callers holding a byte buffer
+/// from FFmpeg should cast via `bytemuck::cast_slice` and divide
+/// `linesize[0]` by 4 before constructing.
 #[derive(Debug, Clone, Copy)]
 pub struct Rgbf32Frame<'a> {
   rgb: &'a [f32],
