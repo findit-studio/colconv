@@ -355,8 +355,10 @@ impl PixelSink for MixedSinker<'_, Gbrpf16> {
       while offset < w {
         let n = (w - offset).min(WIDEN_CHUNK);
         // Bit-normalise LE-encoded f16 plane bits → host-native f32 so the
-        // downstream `gbrpf32_to_*` kernel (invoked with `BE = false`) sees
-        // host-native f32 on every host. See the canonical helper's docs.
+        // downstream `gbrpf32_to_*` kernel (invoked with `BE = HOST_NATIVE_BE`
+        // — see module-scope constant) sees host-native f32 on every host.
+        // The post-widen scratch is host-native, distinct from the direct-
+        // Frame paths which use `<false>` per the LE-encoded byte contract.
         widen_f16_be_to_host_f32::<false>(g_in, offset, &mut gf_chunk, n);
         widen_f16_be_to_host_f32::<false>(b_in, offset, &mut bf_chunk, n);
         widen_f16_be_to_host_f32::<false>(r_in, offset, &mut rf_chunk, n);
