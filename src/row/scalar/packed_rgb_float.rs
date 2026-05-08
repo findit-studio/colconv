@@ -100,8 +100,12 @@ fn load_f16<const BE: bool>(rgb_in: &[half::f16], i: usize) -> half::f16 {
 /// Converts packed `R, G, B` `f32` input to packed `R, G, B` `u8`
 /// output. Each `f32` is clamped to `[0, 1]` and scaled by 255.
 ///
-/// When `BE = true` the input `f32` values are encoded big-endian
-/// (bytes swapped relative to the host's native little-endian layout).
+/// `BE` selects the **encoded byte order** of the input buffer:
+/// `false` = LE-encoded on disk/wire, `true` = BE-encoded. This is
+/// independent of the host CPU's native byte order — a swap happens
+/// only when the encoded order differs from the host CPU's native order
+/// (handled internally via `u32::from_le` / `u32::from_be`, both
+/// target-endian-aware).
 ///
 /// # Panics
 ///
@@ -217,10 +221,19 @@ pub(crate) fn rgbf32_to_rgb_f32_row<const BE: bool>(
 ) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf32 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_f32_out row too short");
-  // Decode each source f32 from `BE` byte order to host-native.
-  // `u32::from_be` / `u32::from_le` is target-endian aware: a no-op
-  // when encoded byte order matches the host, a byte-swap when they
-  // differ. Output is always host-native f32 on every target.
+  // Fast path: encoded byte order matches host-native — pure memcpy.
+  // (LE-encoded data on LE host, or BE-encoded data on BE host.)
+  // The const-generic `BE == HOST_NATIVE_BE` branch is dead-code-
+  // eliminated per monomorphization, so this becomes a single
+  // `copy_from_slice` call with no swap loop.
+  const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+  if BE == HOST_NATIVE_BE {
+    rgb_out[..width * 3].copy_from_slice(&rgb_in[..width * 3]);
+    return;
+  }
+  // Slow path: encoded byte order differs from host — byte-swap each
+  // f32 element via `u32::from_be` / `u32::from_le` (the dead branch
+  // is eliminated since `BE` is const). Output is always host-native.
   for (dst, src) in rgb_out[..width * 3]
     .iter_mut()
     .zip(rgb_in[..width * 3].iter())
@@ -400,10 +413,18 @@ pub(crate) fn rgbf16_to_rgb_f16_row<const BE: bool>(
 ) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_f16_out row too short");
-  // Decode each source f16 from `BE` byte order to host-native, mirror
-  // of `rgbf32_to_rgb_f32_row`. `u16::from_be` / `u16::from_le` is
-  // target-endian aware: no-op when encoded byte order matches the
-  // host, swap when they differ. Output is always host-native f16.
+  // Fast path: encoded byte order matches host-native — pure memcpy.
+  // Mirrors the `rgbf32_to_rgb_f32_row` fast path; the const-generic
+  // `BE == HOST_NATIVE_BE` branch is dead-code-eliminated per
+  // monomorphization, so this becomes a single `copy_from_slice`.
+  const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+  if BE == HOST_NATIVE_BE {
+    rgb_out[..width * 3].copy_from_slice(&rgb_in[..width * 3]);
+    return;
+  }
+  // Slow path: encoded byte order differs from host — byte-swap each
+  // f16 element via `u16::from_be` / `u16::from_le`. Output is always
+  // host-native f16.
   for (dst, src) in rgb_out[..width * 3]
     .iter_mut()
     .zip(rgb_in[..width * 3].iter())
