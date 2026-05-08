@@ -82,35 +82,11 @@ const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 
 /// Widen `n` `half::f16` values from `src[offset..offset + n]` into
 /// `dst[..n]` (f32 elements), normalizing source f16 bits **before** the
-/// f16 → f32 conversion so the resulting f32 is host-native regardless of
-/// the source `BE`.
-///
-/// `BE = true`: bytes on disk are big-endian → `u16::from_be` is a no-op on
-/// BE hosts and a byte-swap on LE hosts. `BE = false`: bytes on disk are
-/// little-endian → `u16::from_le` is a no-op on LE hosts and a byte-swap on
-/// BE hosts. Both branches go through `from_be` / `from_le` so the BE-source-
-/// on-LE-host and LE-source-on-BE-host cases are handled correctly.
-///
-/// After this widening the scratch is host-native f32; downstream callers
-/// must route the `gbrpf32_to_*` chain with `HOST_NATIVE_BE` (not `BE`) to
-/// avoid double-byte-swapping.
-#[inline(always)]
-fn widen_f16_be_to_host_f32<const BE: bool>(
-  src: &[half::f16],
-  offset: usize,
-  dst: &mut [f32],
-  n: usize,
-) {
-  for i in 0..n {
-    let raw = src[offset + i].to_bits();
-    let host_bits = if BE {
-      u16::from_be(raw)
-    } else {
-      u16::from_le(raw)
-    };
-    dst[i] = half::f16::from_bits(host_bits).to_f32();
-  }
-}
+// f16-widening helper is shared with per-backend SIMD scalar tails; the
+// canonical definition lives in `crate::row::scalar::planar_gbr_f16` so
+// every target that compiles either the dispatch fallback OR a SIMD
+// backend exercises it (avoids dead-code on miri targets with no SIMD).
+use crate::row::scalar::planar_gbr_f16::widen_f16_be_to_host_f32;
 
 // ---- Gbrpf32 → u8 RGB -------------------------------------------------------
 
