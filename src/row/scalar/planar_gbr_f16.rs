@@ -58,6 +58,45 @@ fn load_f16<const BE: bool>(plane: &[half::f16], i: usize) -> half::f16 {
   }
 }
 
+/// Widen `n` `half::f16` values from `src[offset..offset + n]` into
+/// `dst[..n]` (f32 elements), normalizing source f16 bits **before** the
+/// f16 → f32 conversion so the resulting f32 is host-native regardless of
+/// the source `BE`.
+///
+/// `BE = true`: bytes on disk are big-endian → `u16::from_be` is a no-op on
+/// BE hosts and a byte-swap on LE hosts. `BE = false`: bytes on disk are
+/// little-endian → `u16::from_le` is a no-op on LE hosts and a byte-swap on
+/// BE hosts. Both branches go through `from_be` / `from_le` so the BE-source-
+/// on-LE-host and LE-source-on-BE-host cases are handled correctly.
+///
+/// After this widening the scratch is host-native f32; downstream callers
+/// (e.g. `gbrpf32_to_*` row kernels) must route the chain with the
+/// `cfg!(target_endian = "big")` value (named `HOST_NATIVE_BE` at each call
+/// site) — **not** the source `BE` — to avoid double-byte-swapping.
+///
+/// This is the shared helper used by both the dispatch f16-widen fallback
+/// (see `dispatch::planar_gbr_float`) and the per-backend SIMD scalar tails
+/// (see `arch::*::planar_gbr_float`). Per-backend tails widening 4 elements
+/// into a stack scratch use the same bit-normalize-first contract.
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+#[inline(always)]
+pub(crate) fn widen_f16_be_to_host_f32<const BE: bool>(
+  src: &[half::f16],
+  offset: usize,
+  dst: &mut [f32],
+  n: usize,
+) {
+  for i in 0..n {
+    let raw = src[offset + i].to_bits();
+    let host_bits = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
+    dst[i] = half::f16::from_bits(host_bits).to_f32();
+  }
+}
+
 // ---- Gbrpf16 → f16 RGB (lossless interleave) --------------------------------
 
 /// Interleaves planar G/B/R `half::f16` rows into packed `R, G, B`

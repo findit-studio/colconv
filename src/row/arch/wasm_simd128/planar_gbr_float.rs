@@ -33,6 +33,22 @@ use crate::{
   },
 };
 
+/// `BE` value that makes the downstream `gbrpf32_to_*` kernels (both the
+/// SIMD-aligned head and the scalar tail in this file's f16 row kernels)
+/// treat their `f32` scratch input as **host-native** (no `from_be` /
+/// `from_le` byte-swap). After we widen f16 → f32 via
+/// [`scalar_f16::widen_f16_be_to_host_f32`] (which normalizes the source
+/// f16 bits per the source `BE` and produces host-native f32), the resulting
+/// scratch must be routed via `HOST_NATIVE_BE` so the downstream kernel's
+/// `from_le` / `from_be` loaders no-op the swap.
+///
+/// **Note:** wasm-simd128 has no native f16 widening intrinsic, so the
+/// "SIMD-aligned" body of the f16 row kernels in this file uses the same
+/// scalar widening pattern as the tail. Both code paths therefore need the
+/// same `HOST_NATIVE_BE` routing — codex PR #84 Finding 1 follow-up to
+/// commit `8627280`.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 // ---- shared helpers ----------------------------------------------------------
 
 /// Clamp a `f32x4` to `[0.0, 1.0]`.
@@ -953,23 +969,18 @@ pub(crate) unsafe fn gbrapf16_to_rgba_f16_row<const BE: bool>(
   scalar_f16::gbrapf16_to_rgba_f16_row::<BE>(g, b, r, a, out, width);
 }
 
-// ---- Gbrpf16 widen helpers --------------------------------------------------
-
-/// Widen `n` f16 elements from `src` starting at `offset` into `dst[..n]`.
-#[inline(always)]
-fn widen_f16_plane(src: &[half::f16], offset: usize, n: usize, dst: &mut [f32]) {
-  for k in 0..n {
-    dst[k] = src[offset + k].to_f32();
-  }
-}
-
 // ---- Gbrpf16 → u8 RGB (widen f16→f32 scalar, then SIMD f32→u8) --------------
 
 /// wasm-simd128: planar Gbrpf16 → packed `R, G, B` bytes.
 ///
 /// wasm-simd128 has no native f16 widening. Strategy: widen each plane
-/// to f32 in 4-element stack scratch via scalar `half::f16::to_f32`, then
-/// call the SIMD `gbrpf32_to_rgb_row` kernel for the SIMD conversion.
+/// to f32 in 4-element stack scratch via
+/// [`scalar_f16::widen_f16_be_to_host_f32::<BE>`] (which normalizes the
+/// source f16 bits per `BE` BEFORE the f16 → f32 conversion), then call the
+/// SIMD `gbrpf32_to_rgb_row` kernel routed via `HOST_NATIVE_BE` (since the
+/// f32 scratch is now host-native). Both the SIMD-aligned body chunks and
+/// the scalar tail share this contract — see file-level `HOST_NATIVE_BE`
+/// doc.
 ///
 /// # Safety
 ///
@@ -996,20 +1007,26 @@ pub(crate) unsafe fn gbrpf16_to_rgb_row<const BE: bool>(
   let mut rf = [0.0f32; CHUNK];
   let mut x = 0usize;
   while x + CHUNK <= width {
-    widen_f16_plane(g, x, CHUNK, &mut gf);
-    widen_f16_plane(b, x, CHUNK, &mut bf);
-    widen_f16_plane(r, x, CHUNK, &mut rf);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, CHUNK);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, CHUNK);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, CHUNK);
     unsafe {
-      gbrpf32_to_rgb_row::<BE>(&gf, &bf, &rf, &mut out[x * 3..(x + CHUNK) * 3], CHUNK);
+      gbrpf32_to_rgb_row::<HOST_NATIVE_BE>(&gf, &bf, &rf, &mut out[x * 3..(x + CHUNK) * 3], CHUNK);
     }
     x += CHUNK;
   }
   if x < width {
     let n = width - x;
-    widen_f16_plane(g, x, n, &mut gf);
-    widen_f16_plane(b, x, n, &mut bf);
-    widen_f16_plane(r, x, n, &mut rf);
-    scalar::gbrpf32_to_rgb_row::<BE>(&gf[..n], &bf[..n], &rf[..n], &mut out[x * 3..width * 3], n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, n);
+    scalar::gbrpf32_to_rgb_row::<HOST_NATIVE_BE>(
+      &gf[..n],
+      &bf[..n],
+      &rf[..n],
+      &mut out[x * 3..width * 3],
+      n,
+    );
   }
 }
 
@@ -1042,20 +1059,26 @@ pub(crate) unsafe fn gbrpf16_to_rgba_row<const BE: bool>(
   let mut rf = [0.0f32; CHUNK];
   let mut x = 0usize;
   while x + CHUNK <= width {
-    widen_f16_plane(g, x, CHUNK, &mut gf);
-    widen_f16_plane(b, x, CHUNK, &mut bf);
-    widen_f16_plane(r, x, CHUNK, &mut rf);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, CHUNK);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, CHUNK);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, CHUNK);
     unsafe {
-      gbrpf32_to_rgba_row::<BE>(&gf, &bf, &rf, &mut out[x * 4..(x + CHUNK) * 4], CHUNK);
+      gbrpf32_to_rgba_row::<HOST_NATIVE_BE>(&gf, &bf, &rf, &mut out[x * 4..(x + CHUNK) * 4], CHUNK);
     }
     x += CHUNK;
   }
   if x < width {
     let n = width - x;
-    widen_f16_plane(g, x, n, &mut gf);
-    widen_f16_plane(b, x, n, &mut bf);
-    widen_f16_plane(r, x, n, &mut rf);
-    scalar::gbrpf32_to_rgba_row::<BE>(&gf[..n], &bf[..n], &rf[..n], &mut out[x * 4..width * 4], n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, n);
+    scalar::gbrpf32_to_rgba_row::<HOST_NATIVE_BE>(
+      &gf[..n],
+      &bf[..n],
+      &rf[..n],
+      &mut out[x * 4..width * 4],
+      n,
+    );
   }
 }
 
@@ -1088,20 +1111,26 @@ pub(crate) unsafe fn gbrpf16_to_rgb_u16_row<const BE: bool>(
   let mut rf = [0.0f32; CHUNK];
   let mut x = 0usize;
   while x + CHUNK <= width {
-    widen_f16_plane(g, x, CHUNK, &mut gf);
-    widen_f16_plane(b, x, CHUNK, &mut bf);
-    widen_f16_plane(r, x, CHUNK, &mut rf);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, CHUNK);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, CHUNK);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, CHUNK);
     unsafe {
-      gbrpf32_to_rgb_u16_row::<BE>(&gf, &bf, &rf, &mut out[x * 3..(x + CHUNK) * 3], CHUNK);
+      gbrpf32_to_rgb_u16_row::<HOST_NATIVE_BE>(
+        &gf,
+        &bf,
+        &rf,
+        &mut out[x * 3..(x + CHUNK) * 3],
+        CHUNK,
+      );
     }
     x += CHUNK;
   }
   if x < width {
     let n = width - x;
-    widen_f16_plane(g, x, n, &mut gf);
-    widen_f16_plane(b, x, n, &mut bf);
-    widen_f16_plane(r, x, n, &mut rf);
-    scalar::gbrpf32_to_rgb_u16_row::<BE>(
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, n);
+    scalar::gbrpf32_to_rgb_u16_row::<HOST_NATIVE_BE>(
       &gf[..n],
       &bf[..n],
       &rf[..n],
@@ -1140,20 +1169,26 @@ pub(crate) unsafe fn gbrpf16_to_rgba_u16_row<const BE: bool>(
   let mut rf = [0.0f32; CHUNK];
   let mut x = 0usize;
   while x + CHUNK <= width {
-    widen_f16_plane(g, x, CHUNK, &mut gf);
-    widen_f16_plane(b, x, CHUNK, &mut bf);
-    widen_f16_plane(r, x, CHUNK, &mut rf);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, CHUNK);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, CHUNK);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, CHUNK);
     unsafe {
-      gbrpf32_to_rgba_u16_row::<BE>(&gf, &bf, &rf, &mut out[x * 4..(x + CHUNK) * 4], CHUNK);
+      gbrpf32_to_rgba_u16_row::<HOST_NATIVE_BE>(
+        &gf,
+        &bf,
+        &rf,
+        &mut out[x * 4..(x + CHUNK) * 4],
+        CHUNK,
+      );
     }
     x += CHUNK;
   }
   if x < width {
     let n = width - x;
-    widen_f16_plane(g, x, n, &mut gf);
-    widen_f16_plane(b, x, n, &mut bf);
-    widen_f16_plane(r, x, n, &mut rf);
-    scalar::gbrpf32_to_rgba_u16_row::<BE>(
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, n);
+    scalar::gbrpf32_to_rgba_u16_row::<HOST_NATIVE_BE>(
       &gf[..n],
       &bf[..n],
       &rf[..n],

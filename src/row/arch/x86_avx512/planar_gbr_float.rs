@@ -56,6 +56,18 @@ use crate::{
   },
 };
 
+/// `BE` value that makes the downstream `scalar::gbrpf32_to_*` kernels treat
+/// their `f32` scratch input as **host-native** (no `from_be` / `from_le`
+/// byte-swap). After we widen f16 → f32 via
+/// [`scalar_f16::widen_f16_be_to_host_f32`] (which normalizes the source
+/// f16 bits per the source `BE` and produces host-native f32), the resulting
+/// scratch must be routed via `HOST_NATIVE_BE` so the downstream kernel's
+/// `from_le` / `from_be` loaders no-op the swap. Without this routing the
+/// SIMD scalar tail double-byte-swaps on `BE`-source-on-LE-host (and
+/// symmetrically `LE`-source-on-BE-host) — codex PR #84 Finding 1
+/// follow-up to commit `8627280`.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 // ---- shared helpers ----------------------------------------------------------
 
 /// Clamp a `__m512` (f32x16) to `[0.0, 1.0]`.
@@ -1080,17 +1092,19 @@ pub(crate) unsafe fn gbrpf16_to_rgb_row_f16c<const BE: bool>(
       x += 16;
     }
     if x < width {
-      // Scalar tail: widen f16→f32, then scalar.
+      // Scalar tail: bit-normalize f16 → host-native f32 (via
+      // `scalar_f16::widen_f16_be_to_host_f32::<BE>` which `from_be` /
+      // `from_le`-loads the source bits BEFORE the f16 → f32 conversion),
+      // then route the scalar kernel via `HOST_NATIVE_BE` to avoid double
+      // byte-swap.
       let tail = width - x;
       let mut gf = [0.0f32; 16];
       let mut bf = [0.0f32; 16];
       let mut rf = [0.0f32; 16];
-      for i in 0..tail {
-        gf[i] = g[x + i].to_f32();
-        bf[i] = b[x + i].to_f32();
-        rf[i] = r[x + i].to_f32();
-      }
-      scalar::gbrpf32_to_rgb_row::<BE>(
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, tail);
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, tail);
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, tail);
+      scalar::gbrpf32_to_rgb_row::<HOST_NATIVE_BE>(
         &gf[..tail],
         &bf[..tail],
         &rf[..tail],
@@ -1163,16 +1177,16 @@ pub(crate) unsafe fn gbrpf16_to_rgba_row_f16c<const BE: bool>(
       x += 16;
     }
     if x < width {
+      // Scalar tail: bit-normalize f16 → host-native f32, then route the
+      // scalar kernel via `HOST_NATIVE_BE` to avoid double-byte-swap.
       let tail = width - x;
       let mut gf = [0.0f32; 16];
       let mut bf = [0.0f32; 16];
       let mut rf = [0.0f32; 16];
-      for i in 0..tail {
-        gf[i] = g[x + i].to_f32();
-        bf[i] = b[x + i].to_f32();
-        rf[i] = r[x + i].to_f32();
-      }
-      scalar::gbrpf32_to_rgba_row::<BE>(
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, tail);
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, tail);
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, tail);
+      scalar::gbrpf32_to_rgba_row::<HOST_NATIVE_BE>(
         &gf[..tail],
         &bf[..tail],
         &rf[..tail],
@@ -1245,16 +1259,16 @@ pub(crate) unsafe fn gbrpf16_to_rgb_u16_row_f16c<const BE: bool>(
       x += 16;
     }
     if x < width {
+      // Scalar tail: bit-normalize f16 → host-native f32, then route the
+      // scalar kernel via `HOST_NATIVE_BE` to avoid double-byte-swap.
       let tail = width - x;
       let mut gf = [0.0f32; 16];
       let mut bf = [0.0f32; 16];
       let mut rf = [0.0f32; 16];
-      for i in 0..tail {
-        gf[i] = g[x + i].to_f32();
-        bf[i] = b[x + i].to_f32();
-        rf[i] = r[x + i].to_f32();
-      }
-      scalar::gbrpf32_to_rgb_u16_row::<BE>(
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, tail);
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, tail);
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, tail);
+      scalar::gbrpf32_to_rgb_u16_row::<HOST_NATIVE_BE>(
         &gf[..tail],
         &bf[..tail],
         &rf[..tail],
@@ -1328,16 +1342,16 @@ pub(crate) unsafe fn gbrpf16_to_rgba_u16_row_f16c<const BE: bool>(
       x += 16;
     }
     if x < width {
+      // Scalar tail: bit-normalize f16 → host-native f32, then route the
+      // scalar kernel via `HOST_NATIVE_BE` to avoid double-byte-swap.
       let tail = width - x;
       let mut gf = [0.0f32; 16];
       let mut bf = [0.0f32; 16];
       let mut rf = [0.0f32; 16];
-      for i in 0..tail {
-        gf[i] = g[x + i].to_f32();
-        bf[i] = b[x + i].to_f32();
-        rf[i] = r[x + i].to_f32();
-      }
-      scalar::gbrpf32_to_rgba_u16_row::<BE>(
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, tail);
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, tail);
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, tail);
+      scalar::gbrpf32_to_rgba_u16_row::<HOST_NATIVE_BE>(
         &gf[..tail],
         &bf[..tail],
         &rf[..tail],
@@ -1845,18 +1859,18 @@ pub(crate) unsafe fn gbrapf16_to_rgba_row_f16c<const BE: bool>(
       x += 16;
     }
     if x < width {
+      // Scalar tail: bit-normalize f16 → host-native f32, then route the
+      // scalar kernel via `HOST_NATIVE_BE` to avoid double-byte-swap.
       let tail = width - x;
       let mut gf = [0.0f32; 16];
       let mut bf = [0.0f32; 16];
       let mut rf = [0.0f32; 16];
       let mut af = [0.0f32; 16];
-      for i in 0..tail {
-        gf[i] = g[x + i].to_f32();
-        bf[i] = b[x + i].to_f32();
-        rf[i] = r[x + i].to_f32();
-        af[i] = a[x + i].to_f32();
-      }
-      scalar::gbrapf32_to_rgba_row::<BE>(
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, tail);
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, tail);
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, tail);
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(a, x, &mut af, tail);
+      scalar::gbrapf32_to_rgba_row::<HOST_NATIVE_BE>(
         &gf[..tail],
         &bf[..tail],
         &rf[..tail],
@@ -1940,18 +1954,18 @@ pub(crate) unsafe fn gbrapf16_to_rgba_u16_row_f16c<const BE: bool>(
       x += 16;
     }
     if x < width {
+      // Scalar tail: bit-normalize f16 → host-native f32, then route the
+      // scalar kernel via `HOST_NATIVE_BE` to avoid double-byte-swap.
       let tail = width - x;
       let mut gf = [0.0f32; 16];
       let mut bf = [0.0f32; 16];
       let mut rf = [0.0f32; 16];
       let mut af = [0.0f32; 16];
-      for i in 0..tail {
-        gf[i] = g[x + i].to_f32();
-        bf[i] = b[x + i].to_f32();
-        rf[i] = r[x + i].to_f32();
-        af[i] = a[x + i].to_f32();
-      }
-      scalar::gbrapf32_to_rgba_u16_row::<BE>(
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, tail);
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, tail);
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, tail);
+      scalar_f16::widen_f16_be_to_host_f32::<BE>(a, x, &mut af, tail);
+      scalar::gbrapf32_to_rgba_u16_row::<HOST_NATIVE_BE>(
         &gf[..tail],
         &bf[..tail],
         &rf[..tail],

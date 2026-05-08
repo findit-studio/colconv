@@ -1376,3 +1376,205 @@ fn avx2_gbrapf16_to_rgba_f16_be_parity() {
     assert_eq!(le_out, be_out, "gbrapf16_to_rgba_f16 BE parity width={w}");
   }
 }
+
+// ---- BE parity: SIMD-tail Gbrpf16 → u8/u16 (8 px lane × non-multiple widths) ---
+//
+// Codex PR #84 Finding 1 follow-up: the SIMD scalar tail in
+// `gbrpf16_to_*_row_f16c` widens f16 → f32 then routes the scalar f32 kernel.
+// Without normalizing the f16 bits first via `from_be` / `from_le`, the
+// BE-source-on-LE-host path double-byte-swaps. AVX2 lane = 8, so widths
+// 5 / 7 / 33 = 8·0 + 5, 8·0 + 7, 8·4 + 1 — each exercises a different
+// non-multiple tail length.
+const SIMD_TAIL_WIDTHS: &[usize] = &[5, 7, 33];
+
+#[test]
+#[cfg_attr(miri, ignore = "AVX2 SIMD intrinsics unsupported by Miri")]
+fn avx2_gbrpf16_to_rgb_simd_tail_be_parity() {
+  if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("f16c") {
+    return;
+  }
+  for &w in SIMD_TAIL_WIDTHS {
+    let mut g = std::vec![half::f16::ZERO; w];
+    let mut b = std::vec![half::f16::ZERO; w];
+    let mut r = std::vec![half::f16::ZERO; w];
+    prng_f16(&mut g, 0xBE10_0001);
+    prng_f16(&mut b, 0xBE10_0002);
+    prng_f16(&mut r, 0xBE10_0003);
+    let mut le_out = std::vec![0u8; w * 3];
+    let mut be_out = std::vec![0u8; w * 3];
+    unsafe {
+      gbrpf16_to_rgb_row_f16c::<false>(&g, &b, &r, &mut le_out, w);
+    }
+    let g_be = be_encode_f16(&g);
+    let b_be = be_encode_f16(&b);
+    let r_be = be_encode_f16(&r);
+    unsafe {
+      gbrpf16_to_rgb_row_f16c::<true>(&g_be, &b_be, &r_be, &mut be_out, w);
+    }
+    assert_eq!(
+      le_out, be_out,
+      "gbrpf16_to_rgb SIMD-tail BE parity width={w}"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "AVX2 SIMD intrinsics unsupported by Miri")]
+fn avx2_gbrpf16_to_rgba_simd_tail_be_parity() {
+  if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("f16c") {
+    return;
+  }
+  for &w in SIMD_TAIL_WIDTHS {
+    let mut g = std::vec![half::f16::ZERO; w];
+    let mut b = std::vec![half::f16::ZERO; w];
+    let mut r = std::vec![half::f16::ZERO; w];
+    prng_f16(&mut g, 0xBE11_0001);
+    prng_f16(&mut b, 0xBE11_0002);
+    prng_f16(&mut r, 0xBE11_0003);
+    let mut le_out = std::vec![0u8; w * 4];
+    let mut be_out = std::vec![0u8; w * 4];
+    unsafe {
+      gbrpf16_to_rgba_row_f16c::<false>(&g, &b, &r, &mut le_out, w);
+    }
+    let g_be = be_encode_f16(&g);
+    let b_be = be_encode_f16(&b);
+    let r_be = be_encode_f16(&r);
+    unsafe {
+      gbrpf16_to_rgba_row_f16c::<true>(&g_be, &b_be, &r_be, &mut be_out, w);
+    }
+    assert_eq!(
+      le_out, be_out,
+      "gbrpf16_to_rgba SIMD-tail BE parity width={w}"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "AVX2 SIMD intrinsics unsupported by Miri")]
+fn avx2_gbrpf16_to_rgb_u16_simd_tail_be_parity() {
+  if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("f16c") {
+    return;
+  }
+  for &w in SIMD_TAIL_WIDTHS {
+    let mut g = std::vec![half::f16::ZERO; w];
+    let mut b = std::vec![half::f16::ZERO; w];
+    let mut r = std::vec![half::f16::ZERO; w];
+    prng_f16(&mut g, 0xBE12_0001);
+    prng_f16(&mut b, 0xBE12_0002);
+    prng_f16(&mut r, 0xBE12_0003);
+    let mut le_out = std::vec![0u16; w * 3];
+    let mut be_out = std::vec![0u16; w * 3];
+    unsafe {
+      gbrpf16_to_rgb_u16_row_f16c::<false>(&g, &b, &r, &mut le_out, w);
+    }
+    let g_be = be_encode_f16(&g);
+    let b_be = be_encode_f16(&b);
+    let r_be = be_encode_f16(&r);
+    unsafe {
+      gbrpf16_to_rgb_u16_row_f16c::<true>(&g_be, &b_be, &r_be, &mut be_out, w);
+    }
+    assert_eq!(
+      le_out, be_out,
+      "gbrpf16_to_rgb_u16 SIMD-tail BE parity width={w}"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "AVX2 SIMD intrinsics unsupported by Miri")]
+fn avx2_gbrpf16_to_rgba_u16_simd_tail_be_parity() {
+  if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("f16c") {
+    return;
+  }
+  for &w in SIMD_TAIL_WIDTHS {
+    let mut g = std::vec![half::f16::ZERO; w];
+    let mut b = std::vec![half::f16::ZERO; w];
+    let mut r = std::vec![half::f16::ZERO; w];
+    prng_f16(&mut g, 0xBE13_0001);
+    prng_f16(&mut b, 0xBE13_0002);
+    prng_f16(&mut r, 0xBE13_0003);
+    let mut le_out = std::vec![0u16; w * 4];
+    let mut be_out = std::vec![0u16; w * 4];
+    unsafe {
+      gbrpf16_to_rgba_u16_row_f16c::<false>(&g, &b, &r, &mut le_out, w);
+    }
+    let g_be = be_encode_f16(&g);
+    let b_be = be_encode_f16(&b);
+    let r_be = be_encode_f16(&r);
+    unsafe {
+      gbrpf16_to_rgba_u16_row_f16c::<true>(&g_be, &b_be, &r_be, &mut be_out, w);
+    }
+    assert_eq!(
+      le_out, be_out,
+      "gbrpf16_to_rgba_u16 SIMD-tail BE parity width={w}"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "AVX2 SIMD intrinsics unsupported by Miri")]
+fn avx2_gbrapf16_to_rgba_simd_tail_be_parity() {
+  if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("f16c") {
+    return;
+  }
+  for &w in SIMD_TAIL_WIDTHS {
+    let mut g = std::vec![half::f16::ZERO; w];
+    let mut b = std::vec![half::f16::ZERO; w];
+    let mut r = std::vec![half::f16::ZERO; w];
+    let mut a = std::vec![half::f16::ZERO; w];
+    prng_f16(&mut g, 0xBE14_0001);
+    prng_f16(&mut b, 0xBE14_0002);
+    prng_f16(&mut r, 0xBE14_0003);
+    prng_f16(&mut a, 0xBE14_0004);
+    let mut le_out = std::vec![0u8; w * 4];
+    let mut be_out = std::vec![0u8; w * 4];
+    unsafe {
+      gbrapf16_to_rgba_row_f16c::<false>(&g, &b, &r, &a, &mut le_out, w);
+    }
+    let g_be = be_encode_f16(&g);
+    let b_be = be_encode_f16(&b);
+    let r_be = be_encode_f16(&r);
+    let a_be = be_encode_f16(&a);
+    unsafe {
+      gbrapf16_to_rgba_row_f16c::<true>(&g_be, &b_be, &r_be, &a_be, &mut be_out, w);
+    }
+    assert_eq!(
+      le_out, be_out,
+      "gbrapf16_to_rgba SIMD-tail BE parity width={w}"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "AVX2 SIMD intrinsics unsupported by Miri")]
+fn avx2_gbrapf16_to_rgba_u16_simd_tail_be_parity() {
+  if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("f16c") {
+    return;
+  }
+  for &w in SIMD_TAIL_WIDTHS {
+    let mut g = std::vec![half::f16::ZERO; w];
+    let mut b = std::vec![half::f16::ZERO; w];
+    let mut r = std::vec![half::f16::ZERO; w];
+    let mut a = std::vec![half::f16::ZERO; w];
+    prng_f16(&mut g, 0xBE15_0001);
+    prng_f16(&mut b, 0xBE15_0002);
+    prng_f16(&mut r, 0xBE15_0003);
+    prng_f16(&mut a, 0xBE15_0004);
+    let mut le_out = std::vec![0u16; w * 4];
+    let mut be_out = std::vec![0u16; w * 4];
+    unsafe {
+      gbrapf16_to_rgba_u16_row_f16c::<false>(&g, &b, &r, &a, &mut le_out, w);
+    }
+    let g_be = be_encode_f16(&g);
+    let b_be = be_encode_f16(&b);
+    let r_be = be_encode_f16(&r);
+    let a_be = be_encode_f16(&a);
+    unsafe {
+      gbrapf16_to_rgba_u16_row_f16c::<true>(&g_be, &b_be, &r_be, &a_be, &mut be_out, w);
+    }
+    assert_eq!(
+      le_out, be_out,
+      "gbrapf16_to_rgba_u16 SIMD-tail BE parity width={w}"
+    );
+  }
+}
