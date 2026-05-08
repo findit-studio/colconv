@@ -23,7 +23,7 @@ use crate::row::arch;
 #[cfg(target_arch = "aarch64")]
 use crate::row::neon_available;
 #[cfg(target_arch = "x86_64")]
-use crate::row::{avx2_available, sse41_available};
+use crate::row::{avx2_available, avx512_available, sse41_available};
 use crate::{
   DcpTargetGamut,
   row::{
@@ -59,6 +59,13 @@ pub fn xyz12_to_rgb_row<const BE: bool>(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available.
+          unsafe {
+            arch::x86_avx512::xyz12::xyz12_to_rgb_row::<BE>(xyz, rgb_out, width, target_gamut);
+          }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe {
@@ -105,6 +112,13 @@ pub fn xyz12_to_rgba_row<const BE: bool>(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available.
+          unsafe {
+            arch::x86_avx512::xyz12::xyz12_to_rgba_row::<BE>(xyz, rgba_out, width, target_gamut);
+          }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe {
@@ -153,6 +167,15 @@ pub fn xyz12_to_rgb_u16_row<const BE: bool>(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available.
+          unsafe {
+            arch::x86_avx512::xyz12::xyz12_to_rgb_u16_row::<BE>(
+              xyz, rgb_out, width, target_gamut,
+            );
+          }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe {
@@ -201,6 +224,15 @@ pub fn xyz12_to_rgba_u16_row<const BE: bool>(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available.
+          unsafe {
+            arch::x86_avx512::xyz12::xyz12_to_rgba_u16_row::<BE>(
+              xyz, rgba_out, width, target_gamut,
+            );
+          }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe {
@@ -256,6 +288,15 @@ pub fn xyz12_to_rgb_f32_row<const BE: bool>(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available.
+          unsafe {
+            arch::x86_avx512::xyz12::xyz12_to_rgb_f32_row::<BE>(
+              xyz, rgb_out, width, target_gamut,
+            );
+          }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe {
@@ -307,6 +348,13 @@ pub fn xyz12_to_xyz_f32_row<const BE: bool>(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available.
+          unsafe {
+            arch::x86_avx512::xyz12::xyz12_to_xyz_f32_row::<BE>(xyz, xyz_out, width);
+          }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe {
@@ -356,6 +404,15 @@ pub fn xyz12_to_rgb_f16_row<const BE: bool>(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available.
+          unsafe {
+            arch::x86_avx512::xyz12::xyz12_to_rgb_f16_row::<BE>(
+              xyz, rgb_out, width, target_gamut,
+            );
+          }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe {
@@ -404,6 +461,15 @@ pub fn xyz12_to_rgba_f16_row<const BE: bool>(
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F + BW verified available.
+          unsafe {
+            arch::x86_avx512::xyz12::xyz12_to_rgba_f16_row::<BE>(
+              xyz, rgba_out, width, target_gamut,
+            );
+          }
+          return;
+        }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe {
