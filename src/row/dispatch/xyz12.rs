@@ -18,10 +18,16 @@
 //! `wasm-simd128` follow in subsequent commits. Each backend follows
 //! the established `cfg_select!` pattern from `dispatch::planar_gbr_*`.
 
-#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+#[cfg(any(
+  target_arch = "aarch64",
+  target_arch = "x86_64",
+  target_arch = "wasm32"
+))]
 use crate::row::arch;
 #[cfg(target_arch = "aarch64")]
 use crate::row::neon_available;
+#[cfg(target_arch = "wasm32")]
+use crate::row::simd128_available;
 #[cfg(target_arch = "x86_64")]
 use crate::row::{avx2_available, avx512_available, sse41_available};
 use crate::{
@@ -55,6 +61,15 @@ pub fn xyz12_to_rgb_row<const BE: bool>(
         if neon_available() {
           // SAFETY: NEON verified available.
           unsafe { arch::neon::xyz12::xyz12_to_rgb_row::<BE>(xyz, rgb_out, width, target_gamut); }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe {
+            arch::wasm_simd128::xyz12::xyz12_to_rgb_row::<BE>(xyz, rgb_out, width, target_gamut);
+          }
           return;
         }
       },
@@ -108,6 +123,17 @@ pub fn xyz12_to_rgba_row<const BE: bool>(
         if neon_available() {
           // SAFETY: NEON verified available.
           unsafe { arch::neon::xyz12::xyz12_to_rgba_row::<BE>(xyz, rgba_out, width, target_gamut); }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe {
+            arch::wasm_simd128::xyz12::xyz12_to_rgba_row::<BE>(
+              xyz, rgba_out, width, target_gamut,
+            );
+          }
           return;
         }
       },
@@ -166,6 +192,17 @@ pub fn xyz12_to_rgb_u16_row<const BE: bool>(
           return;
         }
       },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe {
+            arch::wasm_simd128::xyz12::xyz12_to_rgb_u16_row::<BE>(
+              xyz, rgb_out, width, target_gamut,
+            );
+          }
+          return;
+        }
+      },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512F + BW verified available.
@@ -219,6 +256,17 @@ pub fn xyz12_to_rgba_u16_row<const BE: bool>(
           // SAFETY: NEON verified available.
           unsafe {
             arch::neon::xyz12::xyz12_to_rgba_u16_row::<BE>(xyz, rgba_out, width, target_gamut);
+          }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe {
+            arch::wasm_simd128::xyz12::xyz12_to_rgba_u16_row::<BE>(
+              xyz, rgba_out, width, target_gamut,
+            );
           }
           return;
         }
@@ -287,6 +335,17 @@ pub fn xyz12_to_rgb_f32_row<const BE: bool>(
           return;
         }
       },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe {
+            arch::wasm_simd128::xyz12::xyz12_to_rgb_f32_row::<BE>(
+              xyz, rgb_out, width, target_gamut,
+            );
+          }
+          return;
+        }
+      },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512F + BW verified available.
@@ -347,6 +406,15 @@ pub fn xyz12_to_xyz_f32_row<const BE: bool>(
           return;
         }
       },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe {
+            arch::wasm_simd128::xyz12::xyz12_to_xyz_f32_row::<BE>(xyz, xyz_out, width);
+          }
+          return;
+        }
+      },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512F + BW verified available.
@@ -399,6 +467,17 @@ pub fn xyz12_to_rgb_f16_row<const BE: bool>(
           // SAFETY: NEON verified available.
           unsafe {
             arch::neon::xyz12::xyz12_to_rgb_f16_row::<BE>(xyz, rgb_out, width, target_gamut);
+          }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe {
+            arch::wasm_simd128::xyz12::xyz12_to_rgb_f16_row::<BE>(
+              xyz, rgb_out, width, target_gamut,
+            );
           }
           return;
         }
@@ -456,6 +535,17 @@ pub fn xyz12_to_rgba_f16_row<const BE: bool>(
           // SAFETY: NEON verified available.
           unsafe {
             arch::neon::xyz12::xyz12_to_rgba_f16_row::<BE>(xyz, rgba_out, width, target_gamut);
+          }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified available at compile time.
+          unsafe {
+            arch::wasm_simd128::xyz12::xyz12_to_rgba_f16_row::<BE>(
+              xyz, rgba_out, width, target_gamut,
+            );
           }
           return;
         }
