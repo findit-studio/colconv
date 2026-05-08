@@ -435,6 +435,49 @@ pub enum ColorMatrix {
   YCgCo,
 }
 
+/// Target RGB gamut for the XYZ → RGB matrix step in the
+/// [`Xyz12`](crate::yuv::Xyz12) source pipeline (`xyz12_to`).
+///
+/// The Digital Cinema Package (`AV_PIX_FMT_XYZ12LE`) source carries
+/// CIE XYZ samples that need a 3×3 matrix conversion to a target RGB
+/// space before any OETF / integer narrow. SMPTE ST 428-1 mastering is
+/// done in DCI-P3 (D65 white point); downstream re-targets to Rec.709
+/// (sRGB / web preview) or Rec.2020 (HDR / archival) are supported by
+/// runtime-selecting a different matrix at the walker call site.
+///
+/// All three matrices target the **D65 white point** at the output;
+/// see `xyz12_constants.rs` for the exact 27 f32 constants per gamut
+/// derived from SMPTE / ITU-R chromaticity coordinates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant)]
+#[non_exhaustive]
+pub enum DcpTargetGamut {
+  /// **DCI-P3** (D65 white point) — the SMPTE ST 428-1 / RP 431-2
+  /// mastering target. Most accurate decode of the DCP source. Default
+  /// for `xyz12_to` when callers do not opt into a re-target.
+  DciP3,
+  /// **Rec.709 / sRGB** — for sRGB-target deliverables and web preview.
+  Rec709,
+  /// **Rec.2020** — for HDR theatrical / archival.
+  Rec2020,
+}
+
+impl DcpTargetGamut {
+  /// Returns the default DCP mastering gamut (`DciP3`). Intended for
+  /// `Default`-style fallthrough when callers do not override the
+  /// gamut explicitly.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn default_dcp() -> Self {
+    Self::DciP3
+  }
+}
+
+impl Default for DcpTargetGamut {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn default() -> Self {
+    Self::default_dcp()
+  }
+}
+
 /// Sealed marker trait identifying a source pixel format.
 ///
 /// Used as a type parameter on sinks that specialize per source —
