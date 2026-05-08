@@ -1243,3 +1243,134 @@ fn neon_gbrapf16_to_rgba_u16_simd_tail_be_parity() {
     );
   }
 }
+
+// ---- BE parity: SIMD-tail Gbrpf16 → f32 RGB --------------------------------
+//
+// Codex PR #84 3rd-pass found that the f16 → f32 lossless tail paths had the
+// same double-byte-swap bug class as the integer-output tails fixed in the
+// previous commit (04cded3). At widths that are not a multiple of 4 (NEON
+// SIMD lane count), the scalar tail widened BE-encoded f16 bits as host-
+// native via `to_f32` then routed scratch through `scalar::gbrpf32_to_*::<BE>`
+// which byte-swapped the (already-wrong) f32 again. Widths 5 / 7 / 33 each
+// exercise a different tail length.
+
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn neon_gbrpf16_to_rgb_f32_simd_tail_be_parity() {
+  if !std::arch::is_aarch64_feature_detected!("fp16") {
+    return;
+  }
+  for &w in SIMD_TAIL_WIDTHS {
+    let mut g = std::vec![half::f16::ZERO; w];
+    let mut b = std::vec![half::f16::ZERO; w];
+    let mut r = std::vec![half::f16::ZERO; w];
+    prng_f16(&mut g, 0xBE16_0001);
+    prng_f16(&mut b, 0xBE16_0002);
+    prng_f16(&mut r, 0xBE16_0003);
+    let mut le_out = std::vec![0.0f32; w * 3];
+    let mut be_out = std::vec![0.0f32; w * 3];
+    unsafe {
+      gbrpf16_to_rgb_f32_row_fp16::<false>(&g, &b, &r, &mut le_out, w);
+    }
+    let g_be = be_encode_f16(&g);
+    let b_be = be_encode_f16(&b);
+    let r_be = be_encode_f16(&r);
+    unsafe {
+      gbrpf16_to_rgb_f32_row_fp16::<true>(&g_be, &b_be, &r_be, &mut be_out, w);
+    }
+    assert_eq!(
+      le_out
+        .iter()
+        .map(|v| v.to_bits())
+        .collect::<std::vec::Vec<_>>(),
+      be_out
+        .iter()
+        .map(|v| v.to_bits())
+        .collect::<std::vec::Vec<_>>(),
+      "gbrpf16_to_rgb_f32 SIMD-tail BE parity width={w}"
+    );
+  }
+}
+
+// ---- BE parity: SIMD-tail Gbrpf16 → f32 RGBA -------------------------------
+
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn neon_gbrpf16_to_rgba_f32_simd_tail_be_parity() {
+  if !std::arch::is_aarch64_feature_detected!("fp16") {
+    return;
+  }
+  for &w in SIMD_TAIL_WIDTHS {
+    let mut g = std::vec![half::f16::ZERO; w];
+    let mut b = std::vec![half::f16::ZERO; w];
+    let mut r = std::vec![half::f16::ZERO; w];
+    prng_f16(&mut g, 0xBE17_0001);
+    prng_f16(&mut b, 0xBE17_0002);
+    prng_f16(&mut r, 0xBE17_0003);
+    let mut le_out = std::vec![0.0f32; w * 4];
+    let mut be_out = std::vec![0.0f32; w * 4];
+    unsafe {
+      gbrpf16_to_rgba_f32_row_fp16::<false>(&g, &b, &r, &mut le_out, w);
+    }
+    let g_be = be_encode_f16(&g);
+    let b_be = be_encode_f16(&b);
+    let r_be = be_encode_f16(&r);
+    unsafe {
+      gbrpf16_to_rgba_f32_row_fp16::<true>(&g_be, &b_be, &r_be, &mut be_out, w);
+    }
+    assert_eq!(
+      le_out
+        .iter()
+        .map(|v| v.to_bits())
+        .collect::<std::vec::Vec<_>>(),
+      be_out
+        .iter()
+        .map(|v| v.to_bits())
+        .collect::<std::vec::Vec<_>>(),
+      "gbrpf16_to_rgba_f32 SIMD-tail BE parity width={w}"
+    );
+  }
+}
+
+// ---- BE parity: SIMD-tail Gbrapf16 → f32 RGBA ------------------------------
+
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn neon_gbrapf16_to_rgba_f32_simd_tail_be_parity() {
+  if !std::arch::is_aarch64_feature_detected!("fp16") {
+    return;
+  }
+  for &w in SIMD_TAIL_WIDTHS {
+    let mut g = std::vec![half::f16::ZERO; w];
+    let mut b = std::vec![half::f16::ZERO; w];
+    let mut r = std::vec![half::f16::ZERO; w];
+    let mut a = std::vec![half::f16::ZERO; w];
+    prng_f16(&mut g, 0xBE18_0001);
+    prng_f16(&mut b, 0xBE18_0002);
+    prng_f16(&mut r, 0xBE18_0003);
+    prng_f16(&mut a, 0xBE18_0004);
+    let mut le_out = std::vec![0.0f32; w * 4];
+    let mut be_out = std::vec![0.0f32; w * 4];
+    unsafe {
+      gbrapf16_to_rgba_f32_row_fp16::<false>(&g, &b, &r, &a, &mut le_out, w);
+    }
+    let g_be = be_encode_f16(&g);
+    let b_be = be_encode_f16(&b);
+    let r_be = be_encode_f16(&r);
+    let a_be = be_encode_f16(&a);
+    unsafe {
+      gbrapf16_to_rgba_f32_row_fp16::<true>(&g_be, &b_be, &r_be, &a_be, &mut be_out, w);
+    }
+    assert_eq!(
+      le_out
+        .iter()
+        .map(|v| v.to_bits())
+        .collect::<std::vec::Vec<_>>(),
+      be_out
+        .iter()
+        .map(|v| v.to_bits())
+        .collect::<std::vec::Vec<_>>(),
+      "gbrapf16_to_rgba_f32 SIMD-tail BE parity width={w}"
+    );
+  }
+}
