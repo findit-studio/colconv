@@ -187,3 +187,156 @@ fn neon_ayuv64_lane_order_per_pixel_y_and_a() {
     "rgba_u16: A lane order incorrect — expected A[n]=2n+1, got {alpha_out:?}"
   );
 }
+
+/// SIMD-level BE-vs-LE parity test: probes the `bswap_u16x8_if_be<BE>` gate
+/// added in `b7fb9d3` (PR #86) at the SIMD layer for AYUV64.
+///
+/// Covers all four valid `(ALPHA, ALPHA_SRC)` quadrant subsets used by the
+/// public API: (false,false) and (true,true). Source-α paths route the α
+/// channel directly through the SIMD endian gate, so this also covers the
+/// source-α-specific code path.
+///
+/// On an LE host:
+/// - SIMD `<…BE=false>` on LE input  → no-swap path (gate doesn't fire).
+/// - SIMD `<…BE=true>`  on BE input  → swap path (gate fires).
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn neon_ayuv64_be_le_simd_parity() {
+  for w in [7usize, 8, 17, 33] {
+    let le = pseudo_random_ayuv64(w, 0xBEEF);
+    let be: std::vec::Vec<u16> = le.iter().map(|x| x.swap_bytes()).collect();
+
+    // u8 RGB (ALPHA=false, ALPHA_SRC=false)
+    {
+      let mut out_le = std::vec![0u8; w * 3];
+      let mut out_be = std::vec![0u8; w * 3];
+      unsafe {
+        ayuv64_to_rgb_or_rgba_row::<false, false, false>(
+          &le,
+          &mut out_le,
+          w,
+          ColorMatrix::Bt709,
+          false,
+        );
+        ayuv64_to_rgb_or_rgba_row::<false, false, true>(
+          &be,
+          &mut out_be,
+          w,
+          ColorMatrix::Bt709,
+          false,
+        );
+      }
+      assert_eq!(
+        out_le, out_be,
+        "neon ayuv64 BE-vs-LE SIMD parity failed (rgb, w={w}) — endian gate broken"
+      );
+    }
+
+    // u8 RGBA + source α (ALPHA=true, ALPHA_SRC=true) — exercises the
+    // source-α path through the endian gate.
+    {
+      let mut out_le = std::vec![0u8; w * 4];
+      let mut out_be = std::vec![0u8; w * 4];
+      unsafe {
+        ayuv64_to_rgb_or_rgba_row::<true, true, false>(
+          &le,
+          &mut out_le,
+          w,
+          ColorMatrix::Bt709,
+          false,
+        );
+        ayuv64_to_rgb_or_rgba_row::<true, true, true>(
+          &be,
+          &mut out_be,
+          w,
+          ColorMatrix::Bt709,
+          false,
+        );
+      }
+      assert_eq!(
+        out_le, out_be,
+        "neon ayuv64 BE-vs-LE SIMD parity failed (rgba+srcα, w={w}) — endian gate broken"
+      );
+    }
+
+    // u16 RGB
+    {
+      let mut out_le = std::vec![0u16; w * 3];
+      let mut out_be = std::vec![0u16; w * 3];
+      unsafe {
+        ayuv64_to_rgb_u16_or_rgba_u16_row::<false, false, false>(
+          &le,
+          &mut out_le,
+          w,
+          ColorMatrix::Bt709,
+          true,
+        );
+        ayuv64_to_rgb_u16_or_rgba_u16_row::<false, false, true>(
+          &be,
+          &mut out_be,
+          w,
+          ColorMatrix::Bt709,
+          true,
+        );
+      }
+      assert_eq!(
+        out_le, out_be,
+        "neon ayuv64 BE-vs-LE SIMD parity failed (rgb u16, w={w}) — endian gate broken"
+      );
+    }
+
+    // u16 RGBA + source α
+    {
+      let mut out_le = std::vec![0u16; w * 4];
+      let mut out_be = std::vec![0u16; w * 4];
+      unsafe {
+        ayuv64_to_rgb_u16_or_rgba_u16_row::<true, true, false>(
+          &le,
+          &mut out_le,
+          w,
+          ColorMatrix::Bt709,
+          true,
+        );
+        ayuv64_to_rgb_u16_or_rgba_u16_row::<true, true, true>(
+          &be,
+          &mut out_be,
+          w,
+          ColorMatrix::Bt709,
+          true,
+        );
+      }
+      assert_eq!(
+        out_le, out_be,
+        "neon ayuv64 BE-vs-LE SIMD parity failed (rgba u16+srcα, w={w}) — endian gate broken"
+      );
+    }
+
+    // luma u8
+    {
+      let mut out_le = std::vec![0u8; w];
+      let mut out_be = std::vec![0u8; w];
+      unsafe {
+        ayuv64_to_luma_row::<false>(&le, &mut out_le, w);
+        ayuv64_to_luma_row::<true>(&be, &mut out_be, w);
+      }
+      assert_eq!(
+        out_le, out_be,
+        "neon ayuv64 BE-vs-LE SIMD parity failed (luma u8, w={w}) — endian gate broken"
+      );
+    }
+
+    // luma u16
+    {
+      let mut out_le = std::vec![0u16; w];
+      let mut out_be = std::vec![0u16; w];
+      unsafe {
+        ayuv64_to_luma_u16_row::<false>(&le, &mut out_le, w);
+        ayuv64_to_luma_u16_row::<true>(&be, &mut out_be, w);
+      }
+      assert_eq!(
+        out_le, out_be,
+        "neon ayuv64 BE-vs-LE SIMD parity failed (luma u16, w={w}) — endian gate broken"
+      );
+    }
+  }
+}

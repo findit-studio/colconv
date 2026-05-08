@@ -183,3 +183,111 @@ fn neon_xv36_lane_order_per_pixel_y_and_u() {
     "neon xv36 SIMD vs scalar diverges (u16 RGB) — lane-order bug"
   );
 }
+
+/// SIMD-level BE-vs-LE parity test: probes the `bswap_u16x8_if_be<BE>` gate
+/// added in `b7fb9d3` (PR #86) at the SIMD layer. Existing per-backend tests
+/// use `BE=false`; existing dispatcher BE-vs-LE tests use `use_simd=false`,
+/// so the SIMD endian gate is otherwise untested.
+///
+/// Builds an LE pseudo-random buffer, byte-swaps every u16 to obtain the
+/// equivalent BE-encoded buffer, then asserts that:
+///   SIMD<BE=false>(LE) == SIMD<BE=true>(BE)
+/// for every output variant (u8 RGB/RGBA, u16 RGB/RGBA, luma u8/u16).
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn neon_xv36_be_le_simd_parity() {
+  for w in [7usize, 8, 17, 33] {
+    let le = pseudo_random_xv36(w, 0xBEEF);
+    let be: std::vec::Vec<u16> = le.iter().map(|x| x.swap_bytes()).collect();
+
+    // u8 RGB / RGBA
+    for (alpha, bpp) in [(false, 3usize), (true, 4)] {
+      let mut out_le = std::vec![0u8; w * bpp];
+      let mut out_be = std::vec![0u8; w * bpp];
+      unsafe {
+        if alpha {
+          xv36_to_rgb_or_rgba_row::<true, false>(&le, &mut out_le, w, ColorMatrix::Bt709, false);
+          xv36_to_rgb_or_rgba_row::<true, true>(&be, &mut out_be, w, ColorMatrix::Bt709, false);
+        } else {
+          xv36_to_rgb_or_rgba_row::<false, false>(&le, &mut out_le, w, ColorMatrix::Bt709, false);
+          xv36_to_rgb_or_rgba_row::<false, true>(&be, &mut out_be, w, ColorMatrix::Bt709, false);
+        }
+      }
+      assert_eq!(
+        out_le, out_be,
+        "neon xv36 BE-vs-LE SIMD parity failed (alpha={alpha}, w={w}) — endian gate broken"
+      );
+    }
+
+    // u16 RGB / RGBA
+    for (alpha, bpp) in [(false, 3usize), (true, 4)] {
+      let mut out_le = std::vec![0u16; w * bpp];
+      let mut out_be = std::vec![0u16; w * bpp];
+      unsafe {
+        if alpha {
+          xv36_to_rgb_u16_or_rgba_u16_row::<true, false>(
+            &le,
+            &mut out_le,
+            w,
+            ColorMatrix::Bt709,
+            true,
+          );
+          xv36_to_rgb_u16_or_rgba_u16_row::<true, true>(
+            &be,
+            &mut out_be,
+            w,
+            ColorMatrix::Bt709,
+            true,
+          );
+        } else {
+          xv36_to_rgb_u16_or_rgba_u16_row::<false, false>(
+            &le,
+            &mut out_le,
+            w,
+            ColorMatrix::Bt709,
+            true,
+          );
+          xv36_to_rgb_u16_or_rgba_u16_row::<false, true>(
+            &be,
+            &mut out_be,
+            w,
+            ColorMatrix::Bt709,
+            true,
+          );
+        }
+      }
+      assert_eq!(
+        out_le, out_be,
+        "neon xv36 BE-vs-LE SIMD parity failed (u16, alpha={alpha}, w={w}) — endian gate broken"
+      );
+    }
+
+    // luma u8
+    {
+      let mut out_le = std::vec![0u8; w];
+      let mut out_be = std::vec![0u8; w];
+      unsafe {
+        xv36_to_luma_row::<false>(&le, &mut out_le, w);
+        xv36_to_luma_row::<true>(&be, &mut out_be, w);
+      }
+      assert_eq!(
+        out_le, out_be,
+        "neon xv36 BE-vs-LE SIMD parity failed (luma u8, w={w}) — endian gate broken"
+      );
+    }
+
+    // luma u16
+    {
+      let mut out_le = std::vec![0u16; w];
+      let mut out_be = std::vec![0u16; w];
+      unsafe {
+        xv36_to_luma_u16_row::<false>(&le, &mut out_le, w);
+        xv36_to_luma_u16_row::<true>(&be, &mut out_be, w);
+      }
+      assert_eq!(
+        out_le, out_be,
+        "neon xv36 BE-vs-LE SIMD parity failed (luma u16, w={w}) — endian gate broken"
+      );
+    }
+  }
+}

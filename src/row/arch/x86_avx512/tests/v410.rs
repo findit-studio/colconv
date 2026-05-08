@@ -244,3 +244,111 @@ fn avx512_v410_lane_order_per_pixel_y_and_u() {
     "avx512 v410 SIMD vs scalar diverges — lane-order bug"
   );
 }
+
+/// SIMD-level BE-vs-LE parity test — exercises the host-aware endian gate
+/// in `endian::load_endian_u32x*::<BE>` for AVX-512. Existing per-backend
+/// tests use `BE=false` only; existing dispatcher BE-vs-LE tests use
+/// `use_simd=false`, so the SIMD endian gate is otherwise untested. Widths
+/// 33 and 65 cover ≥1 main-loop iteration plus a scalar tail.
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn avx512_v410_be_le_simd_parity() {
+  if !std::arch::is_x86_feature_detected!("avx512f")
+    || !std::arch::is_x86_feature_detected!("avx512bw")
+  {
+    return;
+  }
+  for w in [15usize, 16, 33, 65] {
+    let le = pseudo_random_v410_words(w, 0xBEEF);
+    let be: std::vec::Vec<u32> = le.iter().map(|x| x.swap_bytes()).collect();
+
+    for (alpha, bpp) in [(false, 3usize), (true, 4)] {
+      let mut out_le = std::vec![0u8; w * bpp];
+      let mut out_be = std::vec![0u8; w * bpp];
+      unsafe {
+        if alpha {
+          v410_to_rgb_or_rgba_row::<true, false>(&le, &mut out_le, w, ColorMatrix::Bt709, false);
+          v410_to_rgb_or_rgba_row::<true, true>(&be, &mut out_be, w, ColorMatrix::Bt709, false);
+        } else {
+          v410_to_rgb_or_rgba_row::<false, false>(&le, &mut out_le, w, ColorMatrix::Bt709, false);
+          v410_to_rgb_or_rgba_row::<false, true>(&be, &mut out_be, w, ColorMatrix::Bt709, false);
+        }
+      }
+      assert_eq!(
+        out_le, out_be,
+        "avx512 v410 BE-vs-LE SIMD parity failed (alpha={alpha}, w={w})"
+      );
+    }
+
+    for (alpha, bpp) in [(false, 3usize), (true, 4)] {
+      let mut out_le = std::vec![0u16; w * bpp];
+      let mut out_be = std::vec![0u16; w * bpp];
+      unsafe {
+        if alpha {
+          v410_to_rgb_u16_or_rgba_u16_row::<true, false>(
+            &le,
+            &mut out_le,
+            w,
+            ColorMatrix::Bt709,
+            true,
+          );
+          v410_to_rgb_u16_or_rgba_u16_row::<true, true>(
+            &be,
+            &mut out_be,
+            w,
+            ColorMatrix::Bt709,
+            true,
+          );
+        } else {
+          v410_to_rgb_u16_or_rgba_u16_row::<false, false>(
+            &le,
+            &mut out_le,
+            w,
+            ColorMatrix::Bt709,
+            true,
+          );
+          v410_to_rgb_u16_or_rgba_u16_row::<false, true>(
+            &be,
+            &mut out_be,
+            w,
+            ColorMatrix::Bt709,
+            true,
+          );
+        }
+      }
+      assert_eq!(
+        out_le, out_be,
+        "avx512 v410 BE-vs-LE SIMD parity failed (u16, alpha={alpha}, w={w})"
+      );
+    }
+
+    {
+      let mut out_le = std::vec![0u8; w];
+      let mut out_be = std::vec![0u8; w];
+      unsafe {
+        v410_to_luma_row::<false>(&le, &mut out_le, w);
+        v410_to_luma_row::<true>(&be, &mut out_be, w);
+      }
+      assert_eq!(
+        out_le, out_be,
+        "avx512 v410 BE-vs-LE SIMD parity failed (luma u8, w={w})"
+      );
+    }
+
+    {
+      let mut out_le = std::vec![0u16; w];
+      let mut out_be = std::vec![0u16; w];
+      unsafe {
+        v410_to_luma_u16_row::<false>(&le, &mut out_le, w);
+        v410_to_luma_u16_row::<true>(&be, &mut out_be, w);
+      }
+      assert_eq!(
+        out_le, out_be,
+        "avx512 v410 BE-vs-LE SIMD parity failed (luma u16, w={w})"
+      );
+    }
+  }
+}

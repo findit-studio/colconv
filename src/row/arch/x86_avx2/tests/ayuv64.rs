@@ -212,3 +212,147 @@ fn avx2_ayuv64_lane_order_per_pixel_y_and_a() {
     "rgba_u16: A lane order incorrect — expected A[n]=2n+1, got {alpha_out:?}"
   );
 }
+
+/// SIMD-level BE-vs-LE parity test for AYUV64 — exercises the host-aware
+/// endian gate via `endian::load_endian_u16x*::<BE>` and covers the
+/// source-α path explicitly via `(ALPHA=true, ALPHA_SRC=true)`.
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn avx2_ayuv64_be_le_simd_parity() {
+  if !std::arch::is_x86_feature_detected!("avx2") {
+    return;
+  }
+  for w in [7usize, 8, 17, 33] {
+    let le = pseudo_random_ayuv64(w, 0xBEEF);
+    let be: std::vec::Vec<u16> = le.iter().map(|x| x.swap_bytes()).collect();
+
+    {
+      let mut out_le = std::vec![0u8; w * 3];
+      let mut out_be = std::vec![0u8; w * 3];
+      unsafe {
+        ayuv64_to_rgb_or_rgba_row::<false, false, false>(
+          &le,
+          &mut out_le,
+          w,
+          ColorMatrix::Bt709,
+          false,
+        );
+        ayuv64_to_rgb_or_rgba_row::<false, false, true>(
+          &be,
+          &mut out_be,
+          w,
+          ColorMatrix::Bt709,
+          false,
+        );
+      }
+      assert_eq!(
+        out_le, out_be,
+        "avx2 ayuv64 BE-vs-LE SIMD parity failed (rgb, w={w})"
+      );
+    }
+
+    {
+      let mut out_le = std::vec![0u8; w * 4];
+      let mut out_be = std::vec![0u8; w * 4];
+      unsafe {
+        ayuv64_to_rgb_or_rgba_row::<true, true, false>(
+          &le,
+          &mut out_le,
+          w,
+          ColorMatrix::Bt709,
+          false,
+        );
+        ayuv64_to_rgb_or_rgba_row::<true, true, true>(
+          &be,
+          &mut out_be,
+          w,
+          ColorMatrix::Bt709,
+          false,
+        );
+      }
+      assert_eq!(
+        out_le, out_be,
+        "avx2 ayuv64 BE-vs-LE SIMD parity failed (rgba+srcα, w={w})"
+      );
+    }
+
+    {
+      let mut out_le = std::vec![0u16; w * 3];
+      let mut out_be = std::vec![0u16; w * 3];
+      unsafe {
+        ayuv64_to_rgb_u16_or_rgba_u16_row::<false, false, false>(
+          &le,
+          &mut out_le,
+          w,
+          ColorMatrix::Bt709,
+          true,
+        );
+        ayuv64_to_rgb_u16_or_rgba_u16_row::<false, false, true>(
+          &be,
+          &mut out_be,
+          w,
+          ColorMatrix::Bt709,
+          true,
+        );
+      }
+      assert_eq!(
+        out_le, out_be,
+        "avx2 ayuv64 BE-vs-LE SIMD parity failed (rgb u16, w={w})"
+      );
+    }
+
+    {
+      let mut out_le = std::vec![0u16; w * 4];
+      let mut out_be = std::vec![0u16; w * 4];
+      unsafe {
+        ayuv64_to_rgb_u16_or_rgba_u16_row::<true, true, false>(
+          &le,
+          &mut out_le,
+          w,
+          ColorMatrix::Bt709,
+          true,
+        );
+        ayuv64_to_rgb_u16_or_rgba_u16_row::<true, true, true>(
+          &be,
+          &mut out_be,
+          w,
+          ColorMatrix::Bt709,
+          true,
+        );
+      }
+      assert_eq!(
+        out_le, out_be,
+        "avx2 ayuv64 BE-vs-LE SIMD parity failed (rgba u16+srcα, w={w})"
+      );
+    }
+
+    {
+      let mut out_le = std::vec![0u8; w];
+      let mut out_be = std::vec![0u8; w];
+      unsafe {
+        ayuv64_to_luma_row::<false>(&le, &mut out_le, w);
+        ayuv64_to_luma_row::<true>(&be, &mut out_be, w);
+      }
+      assert_eq!(
+        out_le, out_be,
+        "avx2 ayuv64 BE-vs-LE SIMD parity failed (luma u8, w={w})"
+      );
+    }
+
+    {
+      let mut out_le = std::vec![0u16; w];
+      let mut out_be = std::vec![0u16; w];
+      unsafe {
+        ayuv64_to_luma_u16_row::<false>(&le, &mut out_le, w);
+        ayuv64_to_luma_u16_row::<true>(&be, &mut out_be, w);
+      }
+      assert_eq!(
+        out_le, out_be,
+        "avx2 ayuv64 BE-vs-LE SIMD parity failed (luma u16, w={w})"
+      );
+    }
+  }
+}
