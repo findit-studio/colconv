@@ -18,10 +18,12 @@
 //! `wasm-simd128` follow in subsequent commits. Each backend follows
 //! the established `cfg_select!` pattern from `dispatch::planar_gbr_*`.
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use crate::row::arch;
 #[cfg(target_arch = "aarch64")]
 use crate::row::neon_available;
+#[cfg(target_arch = "x86_64")]
+use crate::row::sse41_available;
 use crate::{
   DcpTargetGamut,
   row::{
@@ -56,6 +58,15 @@ pub fn xyz12_to_rgb_row<const BE: bool>(
           return;
         }
       },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available.
+          unsafe {
+            arch::x86_sse41::xyz12::xyz12_to_rgb_row::<BE>(xyz, rgb_out, width, target_gamut);
+          }
+          return;
+        }
+      },
       _ => {}
     }
   }
@@ -83,6 +94,15 @@ pub fn xyz12_to_rgba_row<const BE: bool>(
         if neon_available() {
           // SAFETY: NEON verified available.
           unsafe { arch::neon::xyz12::xyz12_to_rgba_row::<BE>(xyz, rgba_out, width, target_gamut); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available.
+          unsafe {
+            arch::x86_sse41::xyz12::xyz12_to_rgba_row::<BE>(xyz, rgba_out, width, target_gamut);
+          }
           return;
         }
       },
@@ -118,6 +138,15 @@ pub fn xyz12_to_rgb_u16_row<const BE: bool>(
           return;
         }
       },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available.
+          unsafe {
+            arch::x86_sse41::xyz12::xyz12_to_rgb_u16_row::<BE>(xyz, rgb_out, width, target_gamut);
+          }
+          return;
+        }
+      },
       _ => {}
     }
   }
@@ -146,6 +175,17 @@ pub fn xyz12_to_rgba_u16_row<const BE: bool>(
           // SAFETY: NEON verified available.
           unsafe {
             arch::neon::xyz12::xyz12_to_rgba_u16_row::<BE>(xyz, rgba_out, width, target_gamut);
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available.
+          unsafe {
+            arch::x86_sse41::xyz12::xyz12_to_rgba_u16_row::<BE>(
+              xyz, rgba_out, width, target_gamut,
+            );
           }
           return;
         }
@@ -185,6 +225,15 @@ pub fn xyz12_to_rgb_f32_row<const BE: bool>(
           return;
         }
       },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available.
+          unsafe {
+            arch::x86_sse41::xyz12::xyz12_to_rgb_f32_row::<BE>(xyz, rgb_out, width, target_gamut);
+          }
+          return;
+        }
+      },
       _ => {}
     }
   }
@@ -216,6 +265,15 @@ pub fn xyz12_to_xyz_f32_row<const BE: bool>(
           // SAFETY: NEON verified available.
           unsafe {
             arch::neon::xyz12::xyz12_to_xyz_f32_row::<BE>(xyz, xyz_out, width);
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available.
+          unsafe {
+            arch::x86_sse41::xyz12::xyz12_to_xyz_f32_row::<BE>(xyz, xyz_out, width);
           }
           return;
         }
@@ -253,6 +311,15 @@ pub fn xyz12_to_rgb_f16_row<const BE: bool>(
           return;
         }
       },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available.
+          unsafe {
+            arch::x86_sse41::xyz12::xyz12_to_rgb_f16_row::<BE>(xyz, rgb_out, width, target_gamut);
+          }
+          return;
+        }
+      },
       _ => {}
     }
   }
@@ -281,6 +348,17 @@ pub fn xyz12_to_rgba_f16_row<const BE: bool>(
           // SAFETY: NEON verified available.
           unsafe {
             arch::neon::xyz12::xyz12_to_rgba_f16_row::<BE>(xyz, rgba_out, width, target_gamut);
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified available.
+          unsafe {
+            arch::x86_sse41::xyz12::xyz12_to_rgba_f16_row::<BE>(
+              xyz, rgba_out, width, target_gamut,
+            );
           }
           return;
         }
