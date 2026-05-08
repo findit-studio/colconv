@@ -299,12 +299,22 @@ unsafe fn narrow_u16x16_to_u8x16(v: __m256i, zero: __m256i) -> __m128i {
 
 // ---- endian byte-swap helpers -----------------------------------------------
 
-/// Byte-swap every u16 lane in a `__m128i` when `BE = true`; no-op otherwise.
+/// Compile-time host endianness. `true` on BE targets, `false` on LE.
 ///
-/// Uses `_mm_shuffle_epi8` (SSSE3 subset of AVX2).
+/// Used by the byte-swap helpers below to gate the swap on
+/// `BE != HOST_NATIVE_BE`, covering all four `wire × host` quadrants. Mirrors
+/// the gate established in `gray.rs` and the canonical NEON
+/// `bswap_u16x8_if_be` helper.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
+/// Conditionally byte-swap every u16 lane in a `__m128i` so the returned
+/// value is in **host-native** byte order regardless of the host endianness.
+///
+/// The gate is `BE != HOST_NATIVE_BE` — see [`byteswap256_if_be`] for the
+/// full truth table. Uses `_mm_shuffle_epi8` (SSSE3 subset of AVX2).
 #[inline(always)]
 unsafe fn byteswap128_if_be<const BE: bool>(v: __m128i) -> __m128i {
-  if BE {
+  if BE != HOST_NATIVE_BE {
     const MASK: __m128i =
       unsafe { core::mem::transmute([1u8, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14]) };
     unsafe { _mm_shuffle_epi8(v, MASK) }
@@ -313,12 +323,23 @@ unsafe fn byteswap128_if_be<const BE: bool>(v: __m128i) -> __m128i {
   }
 }
 
-/// Byte-swap every u16 lane in a `__m256i` when `BE = true`; no-op otherwise.
+/// Conditionally byte-swap every u16 lane in a `__m256i` so the returned
+/// value is in **host-native** byte order regardless of the host endianness.
 ///
-/// Uses `_mm256_shuffle_epi8` (AVX2).
+/// The gate is `BE != HOST_NATIVE_BE`:
+///
+/// | wire `BE` | host | gate    | action            |
+/// |-----------|------|---------|-------------------|
+/// | `false`   | LE   | `false` | no swap (LE→LE)   |
+/// | `false`   | BE   | `true`  | swap (LE→BE)      |
+/// | `true`    | LE   | `true`  | swap (BE→LE)      |
+/// | `true`    | BE   | `false` | no swap (BE→BE)   |
+///
+/// Uses `_mm256_shuffle_epi8` (AVX2). The unused branch folds at compile
+/// time since both `BE` and `HOST_NATIVE_BE` are constants.
 #[inline(always)]
 unsafe fn byteswap256_if_be<const BE: bool>(v: __m256i) -> __m256i {
-  if BE {
+  if BE != HOST_NATIVE_BE {
     // Same u16-lane byte-swap mask, broadcast to both 128-bit lanes.
     const MASK: __m256i = unsafe {
       core::mem::transmute([

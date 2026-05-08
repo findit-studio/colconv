@@ -219,12 +219,30 @@ unsafe fn narrow_u16x8_to_u8x8(v: v128) -> v128 {
 
 // ---- endian byte-swap helper -------------------------------------------------
 
-/// Byte-swap every u16 lane in `v` when `BE = true`; no-op otherwise.
+/// Compile-time host endianness. `true` on BE targets, `false` on LE.
 ///
-/// Uses `u8x16_swizzle` with a compile-time mask.
+/// Used by [`byteswap_if_be`] to gate the swap on `BE != HOST_NATIVE_BE`,
+/// covering all four `wire × host` quadrants. Mirrors the gate established
+/// in the canonical NEON `bswap_u16x8_if_be` helper.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
+/// Conditionally byte-swap every u16 lane in `v` so the returned value is in
+/// **host-native** byte order regardless of the host endianness.
+///
+/// The gate is `BE != HOST_NATIVE_BE`:
+///
+/// | wire `BE` | host | gate    | action            |
+/// |-----------|------|---------|-------------------|
+/// | `false`   | LE   | `false` | no swap (LE→LE)   |
+/// | `false`   | BE   | `true`  | swap (LE→BE)      |
+/// | `true`    | LE   | `true`  | swap (BE→LE)      |
+/// | `true`    | BE   | `false` | no swap (BE→BE)   |
+///
+/// Uses `u8x16_swizzle` with a compile-time mask. The unused branch folds
+/// at compile time since both `BE` and `HOST_NATIVE_BE` are constants.
 #[inline(always)]
 unsafe fn byteswap_if_be<const BE: bool>(v: v128) -> v128 {
-  if BE {
+  if BE != HOST_NATIVE_BE {
     // Swap bytes within each u16 lane: [1,0, 3,2, 5,4, 7,6, 9,8, 11,10, 13,12, 15,14]
     u8x16_swizzle(
       v,

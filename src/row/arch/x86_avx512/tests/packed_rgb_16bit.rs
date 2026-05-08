@@ -779,3 +779,313 @@ fn avx512_bgra64_to_rgb_u16_lane_order_handcheck() {
     assert_eq!(simd_out[n * 3 + 2], (n as u16) + 200, "B at pixel {n}");
   }
 }
+
+// =============================================================================
+// SIMD-level BE-vs-LE parity tests (probes `BE != HOST_NATIVE_BE` gate)
+// =============================================================================
+//
+// Buffers built host-independently via `to_le_bytes` / `to_be_bytes`. Width
+// 65 = 2 × 32-lane AVX-512 SIMD body + 1 scalar tail.
+
+fn make_le_be_pair_u16(intended: &[u16]) -> (std::vec::Vec<u16>, std::vec::Vec<u16>) {
+  let le_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
+  let be_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_be_bytes()).collect();
+  let le: std::vec::Vec<u16> = le_bytes
+    .chunks_exact(2)
+    .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+    .collect();
+  let be: std::vec::Vec<u16> = be_bytes
+    .chunks_exact(2)
+    .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+    .collect();
+  (le, be)
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_rgb48_be_le_simd_parity_width65() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  let intended = make_rgb48_src(65, 0xACE1);
+  let (le, be) = make_le_be_pair_u16(&intended);
+
+  let mut out_le = std::vec![0u8; 65 * 3];
+  let mut out_be = std::vec![0u8; 65 * 3];
+  unsafe {
+    avx512_rgb48_to_rgb_row::<false>(&le, &mut out_le, 65);
+    avx512_rgb48_to_rgb_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(out_le, out_be, "rgb48→rgb SIMD BE/LE parity (endian gate)");
+
+  let mut out_le = std::vec![0u8; 65 * 4];
+  let mut out_be = std::vec![0u8; 65 * 4];
+  unsafe {
+    avx512_rgb48_to_rgba_row::<false>(&le, &mut out_le, 65);
+    avx512_rgb48_to_rgba_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(out_le, out_be, "rgb48→rgba SIMD BE/LE parity (endian gate)");
+
+  let mut out_le = std::vec![0u16; 65 * 3];
+  let mut out_be = std::vec![0u16; 65 * 3];
+  unsafe {
+    avx512_rgb48_to_rgb_u16_row::<false>(&le, &mut out_le, 65);
+    avx512_rgb48_to_rgb_u16_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "rgb48→rgb_u16 SIMD BE/LE parity (endian gate)"
+  );
+
+  let mut out_le = std::vec![0u16; 65 * 4];
+  let mut out_be = std::vec![0u16; 65 * 4];
+  unsafe {
+    avx512_rgb48_to_rgba_u16_row::<false>(&le, &mut out_le, 65);
+    avx512_rgb48_to_rgba_u16_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "rgb48→rgba_u16 SIMD BE/LE parity (endian gate)"
+  );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_bgr48_be_le_simd_parity_width65() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  let intended = make_rgb48_src(65, 0xBEEF);
+  let (le, be) = make_le_be_pair_u16(&intended);
+
+  let mut out_le = std::vec![0u8; 65 * 3];
+  let mut out_be = std::vec![0u8; 65 * 3];
+  unsafe {
+    avx512_bgr48_to_rgb_row::<false>(&le, &mut out_le, 65);
+    avx512_bgr48_to_rgb_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(out_le, out_be, "bgr48→rgb SIMD BE/LE parity (endian gate)");
+
+  let mut out_le = std::vec![0u8; 65 * 4];
+  let mut out_be = std::vec![0u8; 65 * 4];
+  unsafe {
+    avx512_bgr48_to_rgba_row::<false>(&le, &mut out_le, 65);
+    avx512_bgr48_to_rgba_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(out_le, out_be, "bgr48→rgba SIMD BE/LE parity (endian gate)");
+
+  let mut out_le = std::vec![0u16; 65 * 3];
+  let mut out_be = std::vec![0u16; 65 * 3];
+  unsafe {
+    avx512_bgr48_to_rgb_u16_row::<false>(&le, &mut out_le, 65);
+    avx512_bgr48_to_rgb_u16_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "bgr48→rgb_u16 SIMD BE/LE parity (endian gate)"
+  );
+
+  let mut out_le = std::vec![0u16; 65 * 4];
+  let mut out_be = std::vec![0u16; 65 * 4];
+  unsafe {
+    avx512_bgr48_to_rgba_u16_row::<false>(&le, &mut out_le, 65);
+    avx512_bgr48_to_rgba_u16_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "bgr48→rgba_u16 SIMD BE/LE parity (endian gate)"
+  );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_rgba64_be_le_simd_parity_width65() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  let intended = make_rgba64_src(65, 0xCAFE);
+  let (le, be) = make_le_be_pair_u16(&intended);
+
+  let mut out_le = std::vec![0u8; 65 * 3];
+  let mut out_be = std::vec![0u8; 65 * 3];
+  unsafe {
+    avx512_rgba64_to_rgb_row::<false>(&le, &mut out_le, 65);
+    avx512_rgba64_to_rgb_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(out_le, out_be, "rgba64→rgb SIMD BE/LE parity (endian gate)");
+
+  let mut out_le = std::vec![0u8; 65 * 4];
+  let mut out_be = std::vec![0u8; 65 * 4];
+  unsafe {
+    avx512_rgba64_to_rgba_row::<false>(&le, &mut out_le, 65);
+    avx512_rgba64_to_rgba_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "rgba64→rgba SIMD BE/LE parity (endian gate)"
+  );
+
+  let mut out_le = std::vec![0u16; 65 * 3];
+  let mut out_be = std::vec![0u16; 65 * 3];
+  unsafe {
+    avx512_rgba64_to_rgb_u16_row::<false>(&le, &mut out_le, 65);
+    avx512_rgba64_to_rgb_u16_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "rgba64→rgb_u16 SIMD BE/LE parity (endian gate)"
+  );
+
+  let mut out_le = std::vec![0u16; 65 * 4];
+  let mut out_be = std::vec![0u16; 65 * 4];
+  unsafe {
+    avx512_rgba64_to_rgba_u16_row::<false>(&le, &mut out_le, 65);
+    avx512_rgba64_to_rgba_u16_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "rgba64→rgba_u16 SIMD BE/LE parity (endian gate)"
+  );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_bgra64_be_le_simd_parity_width65() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  let intended = make_rgba64_src(65, 0xF00D);
+  let (le, be) = make_le_be_pair_u16(&intended);
+
+  let mut out_le = std::vec![0u8; 65 * 3];
+  let mut out_be = std::vec![0u8; 65 * 3];
+  unsafe {
+    avx512_bgra64_to_rgb_row::<false>(&le, &mut out_le, 65);
+    avx512_bgra64_to_rgb_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(out_le, out_be, "bgra64→rgb SIMD BE/LE parity (endian gate)");
+
+  let mut out_le = std::vec![0u8; 65 * 4];
+  let mut out_be = std::vec![0u8; 65 * 4];
+  unsafe {
+    avx512_bgra64_to_rgba_row::<false>(&le, &mut out_le, 65);
+    avx512_bgra64_to_rgba_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "bgra64→rgba SIMD BE/LE parity (endian gate)"
+  );
+
+  let mut out_le = std::vec![0u16; 65 * 3];
+  let mut out_be = std::vec![0u16; 65 * 3];
+  unsafe {
+    avx512_bgra64_to_rgb_u16_row::<false>(&le, &mut out_le, 65);
+    avx512_bgra64_to_rgb_u16_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "bgra64→rgb_u16 SIMD BE/LE parity (endian gate)"
+  );
+
+  let mut out_le = std::vec![0u16; 65 * 4];
+  let mut out_be = std::vec![0u16; 65 * 4];
+  unsafe {
+    avx512_bgra64_to_rgba_u16_row::<false>(&le, &mut out_le, 65);
+    avx512_bgra64_to_rgba_u16_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "bgra64→rgba_u16 SIMD BE/LE parity (endian gate)"
+  );
+}
+
+// =============================================================================
+// X2RGB10 / X2BGR10 SIMD-level BE-vs-LE parity tests
+// =============================================================================
+//
+// Co-located here (rather than in the dead-code `tests/packed_rgb.rs` which
+// is not declared in `tests/mod.rs`) so they are actually compiled and run.
+
+fn pseudo_random_x2_intended(width: usize, seed: u32) -> std::vec::Vec<u32> {
+  let mut state = seed;
+  (0..width)
+    .map(|_| {
+      state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+      state
+    })
+    .collect()
+}
+
+fn make_le_be_pair_x2(intended: &[u32]) -> (std::vec::Vec<u8>, std::vec::Vec<u8>) {
+  let le_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
+  let be_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_be_bytes()).collect();
+  (le_bytes, be_bytes)
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_x2rgb10_be_le_simd_parity_width65() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  let intended = pseudo_random_x2_intended(65, 0xC0DE_BEEF);
+  let (le, be) = make_le_be_pair_x2(&intended);
+
+  let mut out_le = std::vec![0u8; 65 * 3];
+  let mut out_be = std::vec![0u8; 65 * 3];
+  unsafe {
+    x2rgb10_to_rgb_row::<false>(&le, &mut out_le, 65);
+    x2rgb10_to_rgb_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(out_le, out_be, "x2rgb10→rgb SIMD BE/LE parity");
+
+  let mut out_le = std::vec![0u8; 65 * 4];
+  let mut out_be = std::vec![0u8; 65 * 4];
+  unsafe {
+    x2rgb10_to_rgba_row::<false>(&le, &mut out_le, 65);
+    x2rgb10_to_rgba_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(out_le, out_be, "x2rgb10→rgba SIMD BE/LE parity");
+
+  let mut out_le = std::vec![0u16; 65 * 3];
+  let mut out_be = std::vec![0u16; 65 * 3];
+  unsafe {
+    x2rgb10_to_rgb_u16_row::<false>(&le, &mut out_le, 65);
+    x2rgb10_to_rgb_u16_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(out_le, out_be, "x2rgb10→rgb_u16 SIMD BE/LE parity");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_x2bgr10_be_le_simd_parity_width65() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  let intended = pseudo_random_x2_intended(65, 0xFEED_FACE);
+  let (le, be) = make_le_be_pair_x2(&intended);
+
+  let mut out_le = std::vec![0u8; 65 * 3];
+  let mut out_be = std::vec![0u8; 65 * 3];
+  unsafe {
+    x2bgr10_to_rgb_row::<false>(&le, &mut out_le, 65);
+    x2bgr10_to_rgb_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(out_le, out_be, "x2bgr10→rgb SIMD BE/LE parity");
+
+  let mut out_le = std::vec![0u8; 65 * 4];
+  let mut out_be = std::vec![0u8; 65 * 4];
+  unsafe {
+    x2bgr10_to_rgba_row::<false>(&le, &mut out_le, 65);
+    x2bgr10_to_rgba_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(out_le, out_be, "x2bgr10→rgba SIMD BE/LE parity");
+
+  let mut out_le = std::vec![0u16; 65 * 3];
+  let mut out_be = std::vec![0u16; 65 * 3];
+  unsafe {
+    x2bgr10_to_rgb_u16_row::<false>(&le, &mut out_le, 65);
+    x2bgr10_to_rgb_u16_row::<true>(&be, &mut out_be, 65);
+  }
+  assert_eq!(out_le, out_be, "x2bgr10→rgb_u16 SIMD BE/LE parity");
+}

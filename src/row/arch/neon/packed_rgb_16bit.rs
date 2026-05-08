@@ -23,11 +23,15 @@
 //!
 //! ## Big-endian support
 //!
-//! Every public kernel accepts `<const BE: bool>`. When `BE = true`, each
-//! per-channel `uint16x8_t` vector produced by `vld3q_u16`/`vld4q_u16` is
-//! byte-swapped via `byteswap_u16x8::<BE>` before any channel math. On LE
-//! targets (all current AArch64 hardware) the helper is a no-op and emits
-//! zero extra instructions.
+//! Every public kernel accepts `<const BE: bool>`. Each per-channel
+//! `uint16x8_t` vector produced by `vld3q_u16`/`vld4q_u16` is conditionally
+//! byte-swapped via the canonical [`super::bswap_u16x8_if_be`] helper before
+//! any channel math. The gate is `BE != HOST_NATIVE_BE`, so the swap fires
+//! only when the wire endian differs from the host's native byte order — on
+//! LE hosts (all current AArch64 hardware) reading LE data the helper is a
+//! no-op and emits zero extra instructions; on BE hosts (e.g. `aarch64_be`)
+//! reading LE data the swap fires to recover host-native u16 lanes for the
+//! arithmetic that follows.
 //!
 //! ## Depth conversion
 //!
@@ -41,26 +45,8 @@
 
 use core::arch::aarch64::*;
 
+use super::bswap_u16x8_if_be;
 use crate::row::scalar;
-
-// ---- endian byte-swap helper ------------------------------------------------
-
-/// Byte-swap every u16 lane in `v` when `BE = true`; no-op otherwise.
-///
-/// Implemented as `vreinterpretq_u16_u8(vrev16q_u8(vreinterpretq_u8_u16(v)))`,
-/// the same transform used inside `load_be_u16x8` in the NEON endian module.
-///
-/// # Safety
-///
-/// Caller must have NEON enabled.
-#[inline(always)]
-unsafe fn byteswap_u16x8<const BE: bool>(v: uint16x8_t) -> uint16x8_t {
-  if BE {
-    unsafe { vreinterpretq_u16_u8(vrev16q_u8(vreinterpretq_u8_u16(v))) }
-  } else {
-    v
-  }
-}
 
 // =============================================================================
 // Rgb48 (R, G, B — 3 u16 elements per pixel)
@@ -92,9 +78,9 @@ pub(crate) unsafe fn neon_rgb48_to_rgb_row<const BE: bool>(
     let mut x = 0usize;
     while x + 8 <= width {
       let px: uint16x8x3_t = vld3q_u16(rgb48.as_ptr().add(x * 3));
-      let r8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.0));
-      let g8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.1));
-      let b8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.2));
+      let r8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.0));
+      let g8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.1));
+      let b8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.2));
       vst3_u8(rgb_out.as_mut_ptr().add(x * 3), uint8x8x3_t(r8, g8, b8));
       x += 8;
     }
@@ -128,9 +114,9 @@ pub(crate) unsafe fn neon_rgb48_to_rgba_row<const BE: bool>(
     let mut x = 0usize;
     while x + 8 <= width {
       let px: uint16x8x3_t = vld3q_u16(rgb48.as_ptr().add(x * 3));
-      let r8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.0));
-      let g8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.1));
-      let b8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.2));
+      let r8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.0));
+      let g8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.1));
+      let b8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.2));
       vst4_u8(
         rgba_out.as_mut_ptr().add(x * 4),
         uint8x8x4_t(r8, g8, b8, alpha),
@@ -170,9 +156,9 @@ pub(crate) unsafe fn neon_rgb48_to_rgb_u16_row<const BE: bool>(
       vst3q_u16(
         rgb_out.as_mut_ptr().add(x * 3),
         uint16x8x3_t(
-          byteswap_u16x8::<BE>(px.0),
-          byteswap_u16x8::<BE>(px.1),
-          byteswap_u16x8::<BE>(px.2),
+          bswap_u16x8_if_be::<BE>(px.0),
+          bswap_u16x8_if_be::<BE>(px.1),
+          bswap_u16x8_if_be::<BE>(px.2),
         ),
       );
       x += 8;
@@ -210,9 +196,9 @@ pub(crate) unsafe fn neon_rgb48_to_rgba_u16_row<const BE: bool>(
       vst4q_u16(
         rgba_out.as_mut_ptr().add(x * 4),
         uint16x8x4_t(
-          byteswap_u16x8::<BE>(px.0),
-          byteswap_u16x8::<BE>(px.1),
-          byteswap_u16x8::<BE>(px.2),
+          bswap_u16x8_if_be::<BE>(px.0),
+          bswap_u16x8_if_be::<BE>(px.1),
+          bswap_u16x8_if_be::<BE>(px.2),
           alpha,
         ),
       );
@@ -254,9 +240,9 @@ pub(crate) unsafe fn neon_bgr48_to_rgb_row<const BE: bool>(
     while x + 8 <= width {
       // px.0 = B, px.1 = G, px.2 = R (source BGR order)
       let px: uint16x8x3_t = vld3q_u16(bgr48.as_ptr().add(x * 3));
-      let r8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.2)); // R (was at position 2)
-      let g8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.1)); // G (unchanged)
-      let b8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.0)); // B (was at position 0)
+      let r8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.2)); // R (was at position 2)
+      let g8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.1)); // G (unchanged)
+      let b8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.0)); // B (was at position 0)
       vst3_u8(rgb_out.as_mut_ptr().add(x * 3), uint8x8x3_t(r8, g8, b8));
       x += 8;
     }
@@ -290,9 +276,9 @@ pub(crate) unsafe fn neon_bgr48_to_rgba_row<const BE: bool>(
     let mut x = 0usize;
     while x + 8 <= width {
       let px: uint16x8x3_t = vld3q_u16(bgr48.as_ptr().add(x * 3));
-      let r8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.2));
-      let g8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.1));
-      let b8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.0));
+      let r8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.2));
+      let g8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.1));
+      let b8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.0));
       vst4_u8(
         rgba_out.as_mut_ptr().add(x * 4),
         uint8x8x4_t(r8, g8, b8, alpha),
@@ -332,9 +318,9 @@ pub(crate) unsafe fn neon_bgr48_to_rgb_u16_row<const BE: bool>(
       vst3q_u16(
         rgb_out.as_mut_ptr().add(x * 3),
         uint16x8x3_t(
-          byteswap_u16x8::<BE>(px.2),
-          byteswap_u16x8::<BE>(px.1),
-          byteswap_u16x8::<BE>(px.0),
+          bswap_u16x8_if_be::<BE>(px.2),
+          bswap_u16x8_if_be::<BE>(px.1),
+          bswap_u16x8_if_be::<BE>(px.0),
         ),
       );
       x += 8;
@@ -373,9 +359,9 @@ pub(crate) unsafe fn neon_bgr48_to_rgba_u16_row<const BE: bool>(
       vst4q_u16(
         rgba_out.as_mut_ptr().add(x * 4),
         uint16x8x4_t(
-          byteswap_u16x8::<BE>(px.2),
-          byteswap_u16x8::<BE>(px.1),
-          byteswap_u16x8::<BE>(px.0),
+          bswap_u16x8_if_be::<BE>(px.2),
+          bswap_u16x8_if_be::<BE>(px.1),
+          bswap_u16x8_if_be::<BE>(px.0),
           alpha,
         ),
       );
@@ -416,9 +402,9 @@ pub(crate) unsafe fn neon_rgba64_to_rgb_row<const BE: bool>(
     let mut x = 0usize;
     while x + 8 <= width {
       let px: uint16x8x4_t = vld4q_u16(rgba64.as_ptr().add(x * 4));
-      let r8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.0));
-      let g8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.1));
-      let b8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.2));
+      let r8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.0));
+      let g8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.1));
+      let b8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.2));
       // Alpha (px.3) discarded.
       vst3_u8(rgb_out.as_mut_ptr().add(x * 3), uint8x8x3_t(r8, g8, b8));
       x += 8;
@@ -453,10 +439,10 @@ pub(crate) unsafe fn neon_rgba64_to_rgba_row<const BE: bool>(
     let mut x = 0usize;
     while x + 8 <= width {
       let px: uint16x8x4_t = vld4q_u16(rgba64.as_ptr().add(x * 4));
-      let r8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.0));
-      let g8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.1));
-      let b8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.2));
-      let a8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.3)); // source alpha depth-converted
+      let r8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.0));
+      let g8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.1));
+      let b8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.2));
+      let a8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.3)); // source alpha depth-converted
       vst4_u8(
         rgba_out.as_mut_ptr().add(x * 4),
         uint8x8x4_t(r8, g8, b8, a8),
@@ -497,9 +483,9 @@ pub(crate) unsafe fn neon_rgba64_to_rgb_u16_row<const BE: bool>(
       vst3q_u16(
         rgb_out.as_mut_ptr().add(x * 3),
         uint16x8x3_t(
-          byteswap_u16x8::<BE>(px.0),
-          byteswap_u16x8::<BE>(px.1),
-          byteswap_u16x8::<BE>(px.2),
+          bswap_u16x8_if_be::<BE>(px.0),
+          bswap_u16x8_if_be::<BE>(px.1),
+          bswap_u16x8_if_be::<BE>(px.2),
         ),
       );
       x += 8;
@@ -537,10 +523,10 @@ pub(crate) unsafe fn neon_rgba64_to_rgba_u16_row<const BE: bool>(
       vst4q_u16(
         rgba_out.as_mut_ptr().add(x * 4),
         uint16x8x4_t(
-          byteswap_u16x8::<BE>(px.0),
-          byteswap_u16x8::<BE>(px.1),
-          byteswap_u16x8::<BE>(px.2),
-          byteswap_u16x8::<BE>(px.3),
+          bswap_u16x8_if_be::<BE>(px.0),
+          bswap_u16x8_if_be::<BE>(px.1),
+          bswap_u16x8_if_be::<BE>(px.2),
+          bswap_u16x8_if_be::<BE>(px.3),
         ),
       );
       x += 8;
@@ -581,9 +567,9 @@ pub(crate) unsafe fn neon_bgra64_to_rgb_row<const BE: bool>(
     while x + 8 <= width {
       // px.0 = B, px.1 = G, px.2 = R, px.3 = A
       let px: uint16x8x4_t = vld4q_u16(bgra64.as_ptr().add(x * 4));
-      let r8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.2)); // R (from position 2)
-      let g8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.1)); // G (unchanged)
-      let b8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.0)); // B (from position 0)
+      let r8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.2)); // R (from position 2)
+      let g8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.1)); // G (unchanged)
+      let b8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.0)); // B (from position 0)
       // Alpha (px.3) discarded.
       vst3_u8(rgb_out.as_mut_ptr().add(x * 3), uint8x8x3_t(r8, g8, b8));
       x += 8;
@@ -617,10 +603,10 @@ pub(crate) unsafe fn neon_bgra64_to_rgba_row<const BE: bool>(
     let mut x = 0usize;
     while x + 8 <= width {
       let px: uint16x8x4_t = vld4q_u16(bgra64.as_ptr().add(x * 4));
-      let r8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.2));
-      let g8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.1));
-      let b8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.0));
-      let a8 = vshrn_n_u16::<8>(byteswap_u16x8::<BE>(px.3)); // source alpha depth-converted
+      let r8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.2));
+      let g8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.1));
+      let b8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.0));
+      let a8 = vshrn_n_u16::<8>(bswap_u16x8_if_be::<BE>(px.3)); // source alpha depth-converted
       vst4_u8(
         rgba_out.as_mut_ptr().add(x * 4),
         uint8x8x4_t(r8, g8, b8, a8),
@@ -660,9 +646,9 @@ pub(crate) unsafe fn neon_bgra64_to_rgb_u16_row<const BE: bool>(
       vst3q_u16(
         rgb_out.as_mut_ptr().add(x * 3),
         uint16x8x3_t(
-          byteswap_u16x8::<BE>(px.2),
-          byteswap_u16x8::<BE>(px.1),
-          byteswap_u16x8::<BE>(px.0),
+          bswap_u16x8_if_be::<BE>(px.2),
+          bswap_u16x8_if_be::<BE>(px.1),
+          bswap_u16x8_if_be::<BE>(px.0),
         ),
       );
       x += 8;
@@ -702,10 +688,10 @@ pub(crate) unsafe fn neon_bgra64_to_rgba_u16_row<const BE: bool>(
       vst4q_u16(
         rgba_out.as_mut_ptr().add(x * 4),
         uint16x8x4_t(
-          byteswap_u16x8::<BE>(px.2),
-          byteswap_u16x8::<BE>(px.1),
-          byteswap_u16x8::<BE>(px.0),
-          byteswap_u16x8::<BE>(px.3),
+          bswap_u16x8_if_be::<BE>(px.2),
+          bswap_u16x8_if_be::<BE>(px.1),
+          bswap_u16x8_if_be::<BE>(px.0),
+          bswap_u16x8_if_be::<BE>(px.3),
         ),
       );
       x += 8;

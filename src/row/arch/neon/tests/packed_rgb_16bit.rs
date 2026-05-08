@@ -321,3 +321,227 @@ fn neon_bgra64_to_rgba_u16_width1_scalar_tail_only() {
     "bgra64→rgba_u16 width=1: tail-only mismatch"
   );
 }
+
+// =============================================================================
+// SIMD-level BE-vs-LE parity tests
+// =============================================================================
+//
+// These probe the `bswap_u16x8_if_be<BE>` gate (`BE != HOST_NATIVE_BE`) at
+// the SIMD layer. Existing tests above use `BE=false` only and never exercise
+// the swap path. The fix in this commit replaces the broken
+// `if BE { ... }` gate (which corrupted output on the BE host × LE wire and
+// BE host × BE wire quadrants) with the canonical helper from `super::`.
+//
+// Buffers are constructed via `to_le_bytes` / `to_be_bytes` so semantics are
+// host-independent: on every host, `le_buf` carries the intended values as
+// LE-encoded bytes and `be_buf` carries the same values as BE-encoded bytes.
+// Both `kernel<BE=false>(le_buf)` and `kernel<BE=true>(be_buf)` should
+// therefore decode to the same intended host-native u16 values and produce
+// identical RGB output. Mirrors PR #86's `87d682f` / `6924907` patterns.
+//
+// Width 17 = 2 × 8-lane SIMD body + 1 scalar tail, ensuring the SIMD body
+// is exercised (not just the scalar tail).
+
+fn make_le_be_pair_u16(intended: &[u16]) -> (std::vec::Vec<u16>, std::vec::Vec<u16>) {
+  let le_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
+  let be_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_be_bytes()).collect();
+  let le: std::vec::Vec<u16> = le_bytes
+    .chunks_exact(2)
+    .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+    .collect();
+  let be: std::vec::Vec<u16> = be_bytes
+    .chunks_exact(2)
+    .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+    .collect();
+  (le, be)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[cfg_attr(miri, ignore = "NEON intrinsics not supported under Miri")]
+#[test]
+fn neon_rgb48_be_le_simd_parity_width17() {
+  let intended = make_rgb48_src(17, 0xACE1);
+  let (le, be) = make_le_be_pair_u16(&intended);
+
+  let mut out_le = std::vec![0u8; 17 * 3];
+  let mut out_be = std::vec![0u8; 17 * 3];
+  unsafe {
+    neon_rgb48_to_rgb_row::<false>(&le, &mut out_le, 17);
+    neon_rgb48_to_rgb_row::<true>(&be, &mut out_be, 17);
+  }
+  assert_eq!(out_le, out_be, "rgb48→rgb SIMD BE/LE parity (endian gate)");
+
+  let mut out_le = std::vec![0u8; 17 * 4];
+  let mut out_be = std::vec![0u8; 17 * 4];
+  unsafe {
+    neon_rgb48_to_rgba_row::<false>(&le, &mut out_le, 17);
+    neon_rgb48_to_rgba_row::<true>(&be, &mut out_be, 17);
+  }
+  assert_eq!(out_le, out_be, "rgb48→rgba SIMD BE/LE parity (endian gate)");
+
+  let mut out_le = std::vec![0u16; 17 * 3];
+  let mut out_be = std::vec![0u16; 17 * 3];
+  unsafe {
+    neon_rgb48_to_rgb_u16_row::<false>(&le, &mut out_le, 17);
+    neon_rgb48_to_rgb_u16_row::<true>(&be, &mut out_be, 17);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "rgb48→rgb_u16 SIMD BE/LE parity (endian gate)"
+  );
+
+  let mut out_le = std::vec![0u16; 17 * 4];
+  let mut out_be = std::vec![0u16; 17 * 4];
+  unsafe {
+    neon_rgb48_to_rgba_u16_row::<false>(&le, &mut out_le, 17);
+    neon_rgb48_to_rgba_u16_row::<true>(&be, &mut out_be, 17);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "rgb48→rgba_u16 SIMD BE/LE parity (endian gate)"
+  );
+}
+
+#[cfg(target_arch = "aarch64")]
+#[cfg_attr(miri, ignore = "NEON intrinsics not supported under Miri")]
+#[test]
+fn neon_bgr48_be_le_simd_parity_width17() {
+  let intended = make_rgb48_src(17, 0xBEEF);
+  let (le, be) = make_le_be_pair_u16(&intended);
+
+  let mut out_le = std::vec![0u8; 17 * 3];
+  let mut out_be = std::vec![0u8; 17 * 3];
+  unsafe {
+    neon_bgr48_to_rgb_row::<false>(&le, &mut out_le, 17);
+    neon_bgr48_to_rgb_row::<true>(&be, &mut out_be, 17);
+  }
+  assert_eq!(out_le, out_be, "bgr48→rgb SIMD BE/LE parity (endian gate)");
+
+  let mut out_le = std::vec![0u8; 17 * 4];
+  let mut out_be = std::vec![0u8; 17 * 4];
+  unsafe {
+    neon_bgr48_to_rgba_row::<false>(&le, &mut out_le, 17);
+    neon_bgr48_to_rgba_row::<true>(&be, &mut out_be, 17);
+  }
+  assert_eq!(out_le, out_be, "bgr48→rgba SIMD BE/LE parity (endian gate)");
+
+  let mut out_le = std::vec![0u16; 17 * 3];
+  let mut out_be = std::vec![0u16; 17 * 3];
+  unsafe {
+    neon_bgr48_to_rgb_u16_row::<false>(&le, &mut out_le, 17);
+    neon_bgr48_to_rgb_u16_row::<true>(&be, &mut out_be, 17);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "bgr48→rgb_u16 SIMD BE/LE parity (endian gate)"
+  );
+
+  let mut out_le = std::vec![0u16; 17 * 4];
+  let mut out_be = std::vec![0u16; 17 * 4];
+  unsafe {
+    neon_bgr48_to_rgba_u16_row::<false>(&le, &mut out_le, 17);
+    neon_bgr48_to_rgba_u16_row::<true>(&be, &mut out_be, 17);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "bgr48→rgba_u16 SIMD BE/LE parity (endian gate)"
+  );
+}
+
+#[cfg(target_arch = "aarch64")]
+#[cfg_attr(miri, ignore = "NEON intrinsics not supported under Miri")]
+#[test]
+fn neon_rgba64_be_le_simd_parity_width17() {
+  let intended = make_rgba64_src(17, 0xCAFE);
+  let (le, be) = make_le_be_pair_u16(&intended);
+
+  let mut out_le = std::vec![0u8; 17 * 3];
+  let mut out_be = std::vec![0u8; 17 * 3];
+  unsafe {
+    neon_rgba64_to_rgb_row::<false>(&le, &mut out_le, 17);
+    neon_rgba64_to_rgb_row::<true>(&be, &mut out_be, 17);
+  }
+  assert_eq!(out_le, out_be, "rgba64→rgb SIMD BE/LE parity (endian gate)");
+
+  let mut out_le = std::vec![0u8; 17 * 4];
+  let mut out_be = std::vec![0u8; 17 * 4];
+  unsafe {
+    neon_rgba64_to_rgba_row::<false>(&le, &mut out_le, 17);
+    neon_rgba64_to_rgba_row::<true>(&be, &mut out_be, 17);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "rgba64→rgba SIMD BE/LE parity (endian gate)"
+  );
+
+  let mut out_le = std::vec![0u16; 17 * 3];
+  let mut out_be = std::vec![0u16; 17 * 3];
+  unsafe {
+    neon_rgba64_to_rgb_u16_row::<false>(&le, &mut out_le, 17);
+    neon_rgba64_to_rgb_u16_row::<true>(&be, &mut out_be, 17);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "rgba64→rgb_u16 SIMD BE/LE parity (endian gate)"
+  );
+
+  let mut out_le = std::vec![0u16; 17 * 4];
+  let mut out_be = std::vec![0u16; 17 * 4];
+  unsafe {
+    neon_rgba64_to_rgba_u16_row::<false>(&le, &mut out_le, 17);
+    neon_rgba64_to_rgba_u16_row::<true>(&be, &mut out_be, 17);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "rgba64→rgba_u16 SIMD BE/LE parity (endian gate)"
+  );
+}
+
+#[cfg(target_arch = "aarch64")]
+#[cfg_attr(miri, ignore = "NEON intrinsics not supported under Miri")]
+#[test]
+fn neon_bgra64_be_le_simd_parity_width17() {
+  let intended = make_rgba64_src(17, 0xF00D);
+  let (le, be) = make_le_be_pair_u16(&intended);
+
+  let mut out_le = std::vec![0u8; 17 * 3];
+  let mut out_be = std::vec![0u8; 17 * 3];
+  unsafe {
+    neon_bgra64_to_rgb_row::<false>(&le, &mut out_le, 17);
+    neon_bgra64_to_rgb_row::<true>(&be, &mut out_be, 17);
+  }
+  assert_eq!(out_le, out_be, "bgra64→rgb SIMD BE/LE parity (endian gate)");
+
+  let mut out_le = std::vec![0u8; 17 * 4];
+  let mut out_be = std::vec![0u8; 17 * 4];
+  unsafe {
+    neon_bgra64_to_rgba_row::<false>(&le, &mut out_le, 17);
+    neon_bgra64_to_rgba_row::<true>(&be, &mut out_be, 17);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "bgra64→rgba SIMD BE/LE parity (endian gate)"
+  );
+
+  let mut out_le = std::vec![0u16; 17 * 3];
+  let mut out_be = std::vec![0u16; 17 * 3];
+  unsafe {
+    neon_bgra64_to_rgb_u16_row::<false>(&le, &mut out_le, 17);
+    neon_bgra64_to_rgb_u16_row::<true>(&be, &mut out_be, 17);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "bgra64→rgb_u16 SIMD BE/LE parity (endian gate)"
+  );
+
+  let mut out_le = std::vec![0u16; 17 * 4];
+  let mut out_be = std::vec![0u16; 17 * 4];
+  unsafe {
+    neon_bgra64_to_rgba_u16_row::<false>(&le, &mut out_le, 17);
+    neon_bgra64_to_rgba_u16_row::<true>(&be, &mut out_be, 17);
+  }
+  assert_eq!(
+    out_le, out_be,
+    "bgra64→rgba_u16 SIMD BE/LE parity (endian gate)"
+  );
+}
