@@ -1,6 +1,23 @@
 use super::super::*;
 
 // ---- Tier 9 Rgbf32 SIMD-vs-scalar parity tests --------------------------
+//
+// LE-host gating rationale (codex 6th-pass review of PR #83):
+//
+// The five Rgbf32 / six Rgbf16 SIMD-vs-scalar parity tests below build
+// fixtures via host-native f32 / f16 (`pseudo_random_rgbf32` /
+// `pseudo_random_rgbf16`) and call the kernels with `::<false>`. Same
+// fixture-vs-kernel byte-order class as the scalar tests gated in
+// `56342c0` and the NEON tests gated alongside this commit.
+//
+// `target_arch = "x86_64"` always implies `target_endian = "little"`,
+// so the `#[cfg(target_endian = "little")]` gate is functionally a
+// no-op on every supported configuration. It's added here for
+// structural consistency with the NEON / scalar gating pattern. The
+// LE-decode regression tests further down build LE-encoded fixtures
+// via `half::f16::from_bits(u16::from_le(_))` and are correctly
+// vacuous on LE hosts (probe-the-bug on hypothetical BE), so they
+// are intentionally NOT gated.
 
 fn pseudo_random_rgbf32(width: usize) -> std::vec::Vec<f32> {
   let n = width * 3;
@@ -21,6 +38,7 @@ fn pseudo_random_rgbf32(width: usize) -> std::vec::Vec<f32> {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn avx512_rgbf32_to_rgb_matches_scalar() {
   if !std::arch::is_x86_feature_detected!("avx512bw") {
     return;
@@ -38,6 +56,7 @@ fn avx512_rgbf32_to_rgb_matches_scalar() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn avx512_rgbf32_to_rgba_matches_scalar() {
   if !std::arch::is_x86_feature_detected!("avx512bw") {
     return;
@@ -55,6 +74,7 @@ fn avx512_rgbf32_to_rgba_matches_scalar() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn avx512_rgbf32_to_rgb_u16_matches_scalar() {
   if !std::arch::is_x86_feature_detected!("avx512bw") {
     return;
@@ -72,6 +92,7 @@ fn avx512_rgbf32_to_rgb_u16_matches_scalar() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn avx512_rgbf32_to_rgba_u16_matches_scalar() {
   if !std::arch::is_x86_feature_detected!("avx512bw") {
     return;
@@ -89,6 +110,7 @@ fn avx512_rgbf32_to_rgba_u16_matches_scalar() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn avx512_rgbf32_to_rgb_f32_matches_scalar() {
   if !std::arch::is_x86_feature_detected!("avx512bw") {
     return;
@@ -116,6 +138,7 @@ fn pseudo_random_rgbf16(width: usize) -> std::vec::Vec<half::f16> {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -139,6 +162,7 @@ fn avx512_rgbf16_to_rgb_matches_scalar() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -165,6 +189,7 @@ fn avx512_rgbf16_to_rgba_matches_scalar() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -191,6 +216,7 @@ fn avx512_rgbf16_to_rgb_u16_matches_scalar() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -217,6 +243,7 @@ fn avx512_rgbf16_to_rgba_u16_matches_scalar() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -243,6 +270,7 @@ fn avx512_rgbf16_to_rgb_f32_matches_scalar() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"

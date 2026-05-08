@@ -1,6 +1,47 @@
 use super::*;
 
 // ---- Tier 9 Rgbf32 SIMD-vs-scalar parity tests --------------------------
+//
+// LE-host gating rationale (codex 6th-pass review of PR #83):
+//
+// The five Rgbf32 SIMD-vs-scalar parity tests below (and the six Rgbf16
+// parity tests further down) build their fixtures via
+// `pseudo_random_rgbf32` / `pseudo_random_rgbf16`, which produce
+// host-native `f32` / `half::f16` values. They then call the kernels
+// with `::<false>`, which means "input is LE-encoded — decode to
+// host-native by applying `u32::from_le` / `u16::from_le`".
+//
+// On a little-endian host (e.g. aarch64-apple-darwin), host-native bits
+// and LE-encoded bits are the same byte sequence, so `from_le` is a
+// no-op and the assertions hold.
+//
+// On a big-endian host (e.g. aarch64-be-linux-gnu), host-native f32 /
+// f16 bits do NOT lay out little-endian, so the kernel's `from_le`
+// byte-swap correctly reinterprets the host-native fixture as if it
+// were an LE-encoded payload — producing a different (corrupted) value
+// than the test expects. Because both the scalar and NEON kernels
+// apply the same `from_le` byte-swap, the SIMD-vs-scalar parity
+// assertions still hold on BE — but they're vacuously testing
+// "scalar and SIMD are identically wrong", not kernel correctness.
+// The two `lossless` host-native equality assertions
+// (`assert_eq!(out_neon, input[..w * 3])` for `rgbf32_to_rgb_f32_row`
+// and `rgbf16_to_rgb_f16_row`) would fail outright on BE since the
+// kernel decodes through `load_f32x4::<false>` / scalar `from_le` to
+// produce a byte-swapped (relative to host-native) result.
+//
+// The kernel itself is correct on BE; this is purely a fixture-vs-
+// kernel byte-order mismatch (same class as the scalar tests gated in
+// `56342c0`, and the PR #82 alpha_extract / planar_gbr_high_bit gates
+// in `8f2e329`). NEON BE-host correctness is locked down separately
+// by the dedicated BE-parity tests in this same module (which build
+// LE-encoded fixtures via `byte_swap` helpers and assert
+// `<true>`/`<false>` parity on every host) and by the LE-decode
+// regression tests added in commits c3a6478, dcf40a3, f1161d7,
+// 63fdf8f (which build LE-encoded fixtures via
+// `f32::from_bits(u32::from_le(_))` /
+// `half::f16::from_bits(u16::from_le(_))` and assert kernel output
+// matches scalar on every host). Those tests are intentionally NOT
+// gated.
 
 /// Generates a row of pseudo-random `f32` RGB samples. Mix of in-range
 /// `[0, 1]` values, exact `0.5` (round-half-even tie), and HDR > 1.0
@@ -28,6 +69,7 @@ fn pseudo_random_rgbf32(width: usize) -> std::vec::Vec<f32> {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn rgbf32_to_rgb_neon_matches_scalar_widths() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
@@ -43,6 +85,7 @@ fn rgbf32_to_rgb_neon_matches_scalar_widths() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn rgbf32_to_rgba_neon_matches_scalar_widths() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
@@ -58,6 +101,7 @@ fn rgbf32_to_rgba_neon_matches_scalar_widths() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn rgbf32_to_rgb_u16_neon_matches_scalar_widths() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
@@ -73,6 +117,7 @@ fn rgbf32_to_rgb_u16_neon_matches_scalar_widths() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn rgbf32_to_rgba_u16_neon_matches_scalar_widths() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
@@ -88,6 +133,7 @@ fn rgbf32_to_rgba_u16_neon_matches_scalar_widths() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn rgbf32_to_rgb_f32_neon_matches_scalar_widths() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
@@ -119,6 +165,7 @@ fn pseudo_random_rgbf16(width: usize) -> std::vec::Vec<half::f16> {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -140,6 +187,7 @@ fn neon_rgbf16_to_rgb_matches_scalar() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -161,6 +209,7 @@ fn neon_rgbf16_to_rgba_matches_scalar() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -182,6 +231,7 @@ fn neon_rgbf16_to_rgb_u16_matches_scalar() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -203,6 +253,7 @@ fn neon_rgbf16_to_rgba_u16_matches_scalar() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -224,6 +275,7 @@ fn neon_rgbf16_to_rgb_f32_matches_scalar() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
