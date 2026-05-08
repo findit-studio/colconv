@@ -65,16 +65,18 @@ pub enum Rgbf32FrameError {
 /// per-format convention that stride aligns with the underlying slice
 /// element type. No width parity constraint.
 ///
-/// # Endian contract — **LE-encoded bytes**
+/// # Endian contract — **LE-encoded bytes** (`AV_PIX_FMT_RGBF32LE`)
 ///
 /// The `&[f32]` plane is the **LE-encoded byte layout** reinterpreted as
-/// `f32`. Note that, unlike RGBA float and the f16 variants, FFmpeg does
-/// **not** define an `AV_PIX_FMT_RGBF32` constant for non-α 3-channel f32
-/// (only the 4-channel `AV_PIX_FMT_RGBAF32LE` / `AV_PIX_FMT_RGBAF32BE`
-/// pair exists). `colconv` pins this frame to the canonical FFmpeg `*LE`
-/// byte-order convention — i.e. callers should pass LE-encoded bytes
-/// regardless of host endianness, exactly as they would for the existing
-/// `AV_PIX_FMT_RGBAF32LE` flavour.
+/// `f32`. This frame maps to FFmpeg `AV_PIX_FMT_RGBF32LE`. FFmpeg also
+/// defines `AV_PIX_FMT_RGBF32BE` and an unsuffixed `AV_PIX_FMT_RGBF32`
+/// alias that is **target-endian** (resolves to `RGBF32LE` on LE hosts and
+/// `RGBF32BE` on BE hosts). **Callers on a BE host who hold target-endian
+/// `AV_PIX_FMT_RGBF32` bytes must convert them to LE before constructing
+/// this frame** — otherwise the LE-decode contract here would re-interpret
+/// the BE bytes as LE and produce byte-swapped float data. The 4-channel
+/// `AV_PIX_FMT_RGBAF32LE` / `AV_PIX_FMT_RGBAF32BE` pair follows the same
+/// `*LE` convention; this frame uses the analogous LE binding.
 ///
 /// On a little-endian host (every CI runner today) LE bytes _are_
 /// host-native, so `&[f32]` is also a host-native float slice; on a
