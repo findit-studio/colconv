@@ -152,7 +152,7 @@ pub(crate) unsafe fn copy_alpha_packed_u16x4_to_u8_at_0(
     }
 
     if x < width {
-      scalar::copy_alpha_packed_u16x4_to_u8_at_0(
+      scalar::copy_alpha_packed_u16x4_to_u8_at_0::<false>(
         &packed[x * 4..width * 4],
         &mut rgba_out[x * 4..width * 4],
         width - x,
@@ -227,7 +227,7 @@ pub(crate) unsafe fn copy_alpha_packed_u16x4_at_0(
     }
 
     if x < width {
-      scalar::copy_alpha_packed_u16x4_at_0(
+      scalar::copy_alpha_packed_u16x4_at_0::<false>(
         &packed[x * 4..width * 4],
         &mut rgba_out[x * 4..width * 4],
         width - x,
@@ -521,7 +521,7 @@ mod tests {
       pseudo_random_u8(&mut rgba_simd, 0xFEED);
       let mut rgba_scalar = rgba_simd.clone();
       unsafe { super::copy_alpha_packed_u16x4_to_u8_at_0(&packed, &mut rgba_simd, w) };
-      scalar::copy_alpha_packed_u16x4_to_u8_at_0(&packed, &mut rgba_scalar, w);
+      scalar::copy_alpha_packed_u16x4_to_u8_at_0::<false>(&packed, &mut rgba_scalar, w);
       assert_eq!(rgba_simd, rgba_scalar, "width={w}");
     }
   }
@@ -542,7 +542,7 @@ mod tests {
       pseudo_random_u16(&mut rgba_simd, 0x1337);
       let mut rgba_scalar = rgba_simd.clone();
       unsafe { super::copy_alpha_packed_u16x4_at_0(&packed, &mut rgba_simd, w) };
-      scalar::copy_alpha_packed_u16x4_at_0(&packed, &mut rgba_scalar, w);
+      scalar::copy_alpha_packed_u16x4_at_0::<false>(&packed, &mut rgba_scalar, w);
       assert_eq!(rgba_simd, rgba_scalar, "width={w}");
     }
   }

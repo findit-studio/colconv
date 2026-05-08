@@ -350,7 +350,8 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         let rgba_buf = rgba.as_deref_mut().unwrap();
         let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
         expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
-        crate::row::alpha_extract::copy_alpha_packed_u16x4_to_u8_at_0(
+        // `Ayuv64Frame` is LE-encoded per the unified Frame contract → `BE = false`.
+        crate::row::alpha_extract::copy_alpha_packed_u16x4_to_u8_at_0::<false>(
           packed, rgba_row, w, use_simd,
         );
       }
@@ -404,7 +405,13 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         let rgba_u16_row =
           rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
         expand_rgb_u16_to_rgba_u16_row::<16>(rgb_u16_row, rgba_u16_row, w);
-        crate::row::alpha_extract::copy_alpha_packed_u16x4_at_0(packed, rgba_u16_row, w, use_simd);
+        // `Ayuv64Frame` is LE-encoded per the unified Frame contract → `BE = false`.
+        crate::row::alpha_extract::copy_alpha_packed_u16x4_at_0::<false>(
+          packed,
+          rgba_u16_row,
+          w,
+          use_simd,
+        );
       }
     }
 

@@ -726,7 +726,11 @@ impl PixelSink for MixedSinker<'_, Rgba64> {
         let rgba_buf = rgba.as_deref_mut().unwrap();
         let rgba_row = rgba_plane_row_slice(rgba_buf, ps, pe, w, h)?;
         expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
-        crate::row::scalar::alpha_extract::copy_alpha_packed_u16x4_to_u8_at_3(in64, rgba_row, w);
+        // `Rgba64Frame` / `Bgra64Frame` are LE-encoded per the unified Frame
+        // contract → `BE = false`.
+        crate::row::scalar::alpha_extract::copy_alpha_packed_u16x4_to_u8_at_3::<false>(
+          in64, rgba_row, w,
+        );
       }
     }
 
@@ -759,7 +763,13 @@ impl PixelSink for MixedSinker<'_, Rgba64> {
         let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
         let rgba_u16_row = rgba_u16_plane_row_slice(rgba_u16_buf, ps, pe, w, h)?;
         expand_rgb_u16_to_rgba_u16_row::<16>(rgb_u16_row, rgba_u16_row, w);
-        crate::row::scalar::alpha_extract::copy_alpha_packed_u16x4_at_3(in64, rgba_u16_row, w);
+        // `Rgba64Frame` / `Bgra64Frame` are LE-encoded per the unified Frame
+        // contract → `BE = false`.
+        crate::row::scalar::alpha_extract::copy_alpha_packed_u16x4_at_3::<false>(
+          in64,
+          rgba_u16_row,
+          w,
+        );
       }
     }
 
@@ -995,7 +1005,11 @@ impl PixelSink for MixedSinker<'_, Bgra64> {
         let rgba_buf = rgba.as_deref_mut().unwrap();
         let rgba_row = rgba_plane_row_slice(rgba_buf, ps, pe, w, h)?;
         expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
-        crate::row::scalar::alpha_extract::copy_alpha_packed_u16x4_to_u8_at_3(in64, rgba_row, w);
+        // `Rgba64Frame` / `Bgra64Frame` are LE-encoded per the unified Frame
+        // contract → `BE = false`.
+        crate::row::scalar::alpha_extract::copy_alpha_packed_u16x4_to_u8_at_3::<false>(
+          in64, rgba_row, w,
+        );
       }
     }
 
@@ -1024,7 +1038,13 @@ impl PixelSink for MixedSinker<'_, Bgra64> {
         let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
         let rgba_u16_row = rgba_u16_plane_row_slice(rgba_u16_buf, ps, pe, w, h)?;
         expand_rgb_u16_to_rgba_u16_row::<16>(rgb_u16_row, rgba_u16_row, w);
-        crate::row::scalar::alpha_extract::copy_alpha_packed_u16x4_at_3(in64, rgba_u16_row, w);
+        // `Rgba64Frame` / `Bgra64Frame` are LE-encoded per the unified Frame
+        // contract → `BE = false`.
+        crate::row::scalar::alpha_extract::copy_alpha_packed_u16x4_at_3::<false>(
+          in64,
+          rgba_u16_row,
+          w,
+        );
       }
     }
 

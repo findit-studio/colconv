@@ -50,8 +50,7 @@ pub enum Rgbf32FrameError {
   },
 }
 
-/// A validated packed **RGBF32** frame (FFmpeg `AV_PIX_FMT_RGBF32`,
-/// FFmpeg canonical `*LE` convention — see endian note below).
+/// A validated packed **RGBF32** frame.
 /// One plane, 3 × `f32` per pixel, channel order `R, G, B`.
 ///
 /// Values are **linear** RGB by convention — no gamma / OETF handling
@@ -69,12 +68,19 @@ pub enum Rgbf32FrameError {
 /// # Endian contract — **LE-encoded bytes**
 ///
 /// The `&[f32]` plane is the **LE-encoded byte layout** reinterpreted as
-/// `f32`, matching the FFmpeg `*LE` pixel-format convention. On a
-/// little-endian host (every CI runner today) LE bytes _are_ host-native,
-/// so `&[f32]` is also a host-native float slice; on a big-endian host the
-/// bytes have to be byte-swapped back to host-native before arithmetic.
-/// Downstream row kernels handle this byte-swap (or no-op on LE) under the
-/// hood — callers do **not** pre-swap.
+/// `f32`. Note that, unlike RGBA float and the f16 variants, FFmpeg does
+/// **not** define an `AV_PIX_FMT_RGBF32` constant for non-α 3-channel f32
+/// (only the 4-channel `AV_PIX_FMT_RGBAF32LE` / `AV_PIX_FMT_RGBAF32BE`
+/// pair exists). `colconv` pins this frame to the canonical FFmpeg `*LE`
+/// byte-order convention — i.e. callers should pass LE-encoded bytes
+/// regardless of host endianness, exactly as they would for the existing
+/// `AV_PIX_FMT_RGBAF32LE` flavour.
+///
+/// On a little-endian host (every CI runner today) LE bytes _are_
+/// host-native, so `&[f32]` is also a host-native float slice; on a
+/// big-endian host the bytes have to be byte-swapped back to host-native
+/// before arithmetic. Downstream row kernels handle this byte-swap (or
+/// no-op on LE) under the hood — callers do **not** pre-swap.
 ///
 /// Stride is in **f32 elements** (not bytes). Callers holding a byte buffer
 /// from FFmpeg should cast via `bytemuck::cast_slice` and divide

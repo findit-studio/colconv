@@ -1288,6 +1288,115 @@ fn gbrapf16_sinker_widen_path_le_encoded_frame_decodes_correctly() {
   }
 }
 
+/// LE-encoded byte contract regression for [`Gbrpf16`] **widening → narrow
+/// chain** (`with_rgb_u16` and `with_rgba`). Covers the post-widen routing
+/// where `gbrpf32_to_rgb_u16_row` / `gbrpf32_to_rgba_u16_row` /
+/// `gbrpf32_to_rgb_row` are invoked on **host-native f32 scratch** produced
+/// by `widen_f16_be_to_host_f32::<false>`.
+///
+/// On a BE host this would have been corrupted under the prior
+/// `gbrpf32_to_*::<false>` post-widen routing — that kernel applied
+/// `from_le` to scratch that was already host-native, byte-swapping the
+/// f32 representation before scaling. Fixed by routing post-widen calls
+/// through `::<HOST_NATIVE_BE>` (`true` on BE, `false` on LE), which makes
+/// the kernel byte-swap a no-op on every host. Vacuous on LE; would catch
+/// the double-swap on BE.
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn gbrpf16_sinker_widen_path_u16_and_u8_le_encoded_frame_decodes_correctly() {
+  let w = 16usize;
+  let h = 4usize;
+  let intended_g: Vec<half::f16> = (0..w * h)
+    .map(|i| {
+      half::f16::from_f32(match i % 4 {
+        0 => 0.5,
+        1 => 0.25,
+        2 => 0.0,
+        _ => 1.0,
+      })
+    })
+    .collect();
+  let intended_b: Vec<half::f16> = (0..w * h)
+    .map(|i| {
+      half::f16::from_f32(match i % 4 {
+        0 => 0.125,
+        1 => 0.75,
+        2 => 0.0625,
+        _ => 0.875,
+      })
+    })
+    .collect();
+  let intended_r: Vec<half::f16> = (0..w * h)
+    .map(|i| {
+      half::f16::from_f32(match i % 4 {
+        0 => 0.375,
+        1 => 0.625,
+        2 => 0.9375,
+        _ => 0.03125,
+      })
+    })
+    .collect();
+  let le_f16 = |v: &Vec<half::f16>| -> Vec<half::f16> {
+    v.iter()
+      .map(|&x| half::f16::from_bits(x.to_bits().to_le()))
+      .collect()
+  };
+  let gp = le_f16(&intended_g);
+  let bp = le_f16(&intended_b);
+  let rp = le_f16(&intended_r);
+
+  let src = Gbrpf16Frame::try_new(
+    &gp, &bp, &rp, w as u32, h as u32, w as u32, w as u32, w as u32,
+  )
+  .unwrap();
+
+  // Exercise the u16 narrow path (post-widen → gbrpf32_to_rgb_u16_row).
+  let mut rgb_u16 = std::vec![0u16; w * h * 3];
+  // Exercise the u8 narrow path via with_rgba (Strategy A: post-widen
+  // is unused for u8 since rgba=opaque-α; we trigger the SAME post-widen
+  // path by also attaching luma_u16 alongside u16).
+  let mut luma_u16 = std::vec![0u16; w * h];
+  {
+    let mut sink = MixedSinker::<Gbrpf16>::new(w, h)
+      .with_rgb_u16(&mut rgb_u16)
+      .unwrap()
+      .with_luma_u16(&mut luma_u16)
+      .unwrap();
+    gbrpf16_to(&src, &mut sink).unwrap();
+  }
+
+  // Assert RGB u16 output matches the intended (clamp+scale × 65535) values.
+  let to_u16 = |v: f32| -> u16 { (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16 };
+  for i in 0..(w * h) {
+    assert_eq!(
+      rgb_u16[i * 3],
+      to_u16(intended_r[i].to_f32()),
+      "RGB u16 R idx {i}"
+    );
+    assert_eq!(
+      rgb_u16[i * 3 + 1],
+      to_u16(intended_g[i].to_f32()),
+      "RGB u16 G idx {i}"
+    );
+    assert_eq!(
+      rgb_u16[i * 3 + 2],
+      to_u16(intended_b[i].to_f32()),
+      "RGB u16 B idx {i}"
+    );
+  }
+  // Sanity: luma_u16 (post-widen narrow) is non-zero — locks down that
+  // the post-widen luma kernel also sees host-native f32 scratch.
+  assert!(
+    luma_u16.iter().any(|&v| v > 0),
+    "luma_u16 must contain non-zero samples — \
+     a corrupted byte-swap would still emit non-zero output but the rgb_u16 \
+     assertion above is the primary guard"
+  );
+}
+
 // ---- 32-bit overflow guards ------------------------------------------------
 //
 // Feeding width = usize::MAX / 2 + 1 to a dispatcher must panic with a message

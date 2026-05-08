@@ -65,6 +65,22 @@ const GBR_F16_FULL_RANGE: bool = true;
 // Chunk size for the inline f16→f32 widening scratch arrays (stack-allocated).
 const WIDEN_CHUNK: usize = 64;
 
+// Endianness routing for **post-widen** `gbrpf32_to_*` calls.
+//
+// `widen_f16_be_to_host_f32::<false>` produces **host-native f32 scratch** from
+// LE-encoded f16 plane bits (it normalises bits before widening), so the
+// downstream `gbrpf32_to_*::<HOST_NATIVE_BE>` kernel sees input that already
+// matches the host's byte order. The kernel's `from_le` / `from_be` then
+// becomes a no-op on every host — correct.
+//
+// Distinct from the **direct** Frame-to-row-kernel pattern elsewhere in this
+// file (the `gbrpf16_to_*::<false>` u8/f16 calls): those receive raw LE-encoded
+// `&[half::f16]` plane bytes per the unified Frame contract, so they pass
+// `BE = false` to tell the kernel to apply `from_le`. Post-widen scratch is
+// already host-native, so it must use `BE = HOST_NATIVE_BE` to keep the kernel
+// byte-swap a no-op on every host.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 // ---- Gbrpf16 accessor impl block ----------------------------------------
 
 impl<'a> MixedSinker<'a, Gbrpf16> {
@@ -354,29 +370,29 @@ impl PixelSink for MixedSinker<'_, Gbrpf16> {
         if let Some(buf) = self.rgb_f32.as_deref_mut() {
           let start = chunk_plane_start * 3;
           let end = chunk_plane_end * 3;
-          gbrpf32_to_rgb_f32_row::<false>(gf, bf, rf, &mut buf[start..end], n, use_simd);
+          gbrpf32_to_rgb_f32_row::<HOST_NATIVE_BE>(gf, bf, rf, &mut buf[start..end], n, use_simd);
         }
 
         if let Some(buf) = self.rgba_f32.as_deref_mut() {
           let start = chunk_plane_start * 4;
           let end = chunk_plane_end * 4;
-          gbrpf32_to_rgba_f32_row::<false>(gf, bf, rf, &mut buf[start..end], n, use_simd);
+          gbrpf32_to_rgba_f32_row::<HOST_NATIVE_BE>(gf, bf, rf, &mut buf[start..end], n, use_simd);
         }
 
         if let Some(buf) = self.rgb_u16.as_deref_mut() {
           let start = chunk_plane_start * 3;
           let end = chunk_plane_end * 3;
-          gbrpf32_to_rgb_u16_row::<false>(gf, bf, rf, &mut buf[start..end], n, use_simd);
+          gbrpf32_to_rgb_u16_row::<HOST_NATIVE_BE>(gf, bf, rf, &mut buf[start..end], n, use_simd);
         }
 
         if let Some(buf) = self.rgba_u16.as_deref_mut() {
           let start = chunk_plane_start * 4;
           let end = chunk_plane_end * 4;
-          gbrpf32_to_rgba_u16_row::<false>(gf, bf, rf, &mut buf[start..end], n, use_simd);
+          gbrpf32_to_rgba_u16_row::<HOST_NATIVE_BE>(gf, bf, rf, &mut buf[start..end], n, use_simd);
         }
 
         if let Some(buf) = self.luma.as_deref_mut() {
-          gbrpf32_to_luma_row::<false>(
+          gbrpf32_to_luma_row::<HOST_NATIVE_BE>(
             gf,
             bf,
             rf,
@@ -389,7 +405,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf16> {
         }
 
         if let Some(buf) = self.luma_u16.as_deref_mut() {
-          gbrpf32_to_luma_u16_row::<false>(
+          gbrpf32_to_luma_u16_row::<HOST_NATIVE_BE>(
             gf,
             bf,
             rf,
@@ -402,7 +418,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf16> {
         }
 
         if let Some(hsv) = self.hsv.as_mut() {
-          gbrpf32_to_hsv_row::<false>(
+          gbrpf32_to_hsv_row::<HOST_NATIVE_BE>(
             gf,
             bf,
             rf,
@@ -762,31 +778,47 @@ impl PixelSink for MixedSinker<'_, Gbrapf16> {
         if let Some(buf) = self.rgb_f32.as_deref_mut() {
           let start = chunk_plane_start * 3;
           let end = chunk_plane_end * 3;
-          gbrpf32_to_rgb_f32_row::<false>(gf, bf, rf, &mut buf[start..end], n, use_simd);
+          gbrpf32_to_rgb_f32_row::<HOST_NATIVE_BE>(gf, bf, rf, &mut buf[start..end], n, use_simd);
         }
 
         if let Some(buf) = self.rgba_f32.as_deref_mut() {
           // gbrapf32_to_rgba_f32_row with widened source α (lossless).
           let start = chunk_plane_start * 4;
           let end = chunk_plane_end * 4;
-          gbrapf32_to_rgba_f32_row::<false>(gf, bf, rf, af, &mut buf[start..end], n, use_simd);
+          gbrapf32_to_rgba_f32_row::<HOST_NATIVE_BE>(
+            gf,
+            bf,
+            rf,
+            af,
+            &mut buf[start..end],
+            n,
+            use_simd,
+          );
         }
 
         if let Some(buf) = self.rgb_u16.as_deref_mut() {
           let start = chunk_plane_start * 3;
           let end = chunk_plane_end * 3;
-          gbrpf32_to_rgb_u16_row::<false>(gf, bf, rf, &mut buf[start..end], n, use_simd);
+          gbrpf32_to_rgb_u16_row::<HOST_NATIVE_BE>(gf, bf, rf, &mut buf[start..end], n, use_simd);
         }
 
         if let Some(buf) = self.rgba_u16.as_deref_mut() {
           // gbrapf32_to_rgba_u16_row with widened source α.
           let start = chunk_plane_start * 4;
           let end = chunk_plane_end * 4;
-          gbrapf32_to_rgba_u16_row::<false>(gf, bf, rf, af, &mut buf[start..end], n, use_simd);
+          gbrapf32_to_rgba_u16_row::<HOST_NATIVE_BE>(
+            gf,
+            bf,
+            rf,
+            af,
+            &mut buf[start..end],
+            n,
+            use_simd,
+          );
         }
 
         if let Some(buf) = self.luma.as_deref_mut() {
-          gbrpf32_to_luma_row::<false>(
+          gbrpf32_to_luma_row::<HOST_NATIVE_BE>(
             gf,
             bf,
             rf,
@@ -799,7 +831,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf16> {
         }
 
         if let Some(buf) = self.luma_u16.as_deref_mut() {
-          gbrpf32_to_luma_u16_row::<false>(
+          gbrpf32_to_luma_u16_row::<HOST_NATIVE_BE>(
             gf,
             bf,
             rf,
@@ -812,7 +844,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf16> {
         }
 
         if let Some(hsv) = self.hsv.as_mut() {
-          gbrpf32_to_hsv_row::<false>(
+          gbrpf32_to_hsv_row::<HOST_NATIVE_BE>(
             gf,
             bf,
             rf,

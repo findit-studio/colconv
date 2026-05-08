@@ -27,7 +27,16 @@ pub(crate) fn copy_alpha_packed_u8x4_at_3(packed: &[u8], rgba_out: &mut [u8], wi
 /// into `rgba_out[3 + 4*n]` (u8 element) with depth-conv `>> 8`.
 ///
 /// AYUV64 layout per pixel: `[A(16), Y(16), U(16), V(16)]` — α is at slot 0.
-pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0(
+///
+/// `BE` selects the **byte order** of the encoded source `packed` plane
+/// (`false` = LE on disk/wire, e.g. `AV_PIX_FMT_AYUV64LE` per the Frame
+/// contract; `true` = BE on disk/wire). Each raw u16 is normalised to
+/// host-native order via `u16::from_le` / `u16::from_be` before the
+/// `>> 8` depth conversion. On a host whose endianness matches the
+/// source the conversion compiles to a no-op; otherwise it is a
+/// `swap_bytes`. Without this a BE host (e.g., s390x) processing the
+/// LE-encoded Frame would emit a byte-reversed α byte.
+pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0<const BE: bool>(
   packed: &[u16],
   rgba_out: &mut [u8],
   width: usize,
@@ -35,17 +44,34 @@ pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0(
   debug_assert!(packed.len() >= width * 4, "packed too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   for n in 0..width {
-    rgba_out[n * 4 + 3] = (packed[n * 4] >> 8) as u8;
+    let raw = if BE {
+      u16::from_be(packed[n * 4])
+    } else {
+      u16::from_le(packed[n * 4])
+    };
+    rgba_out[n * 4 + 3] = (raw >> 8) as u8;
   }
 }
 
 /// AYUV64 → u16 RGBA: gather α from `packed[0 + 4*n]` (u16) into
 /// `rgba_out[3 + 4*n]` (u16). No depth conversion.
-pub(crate) fn copy_alpha_packed_u16x4_at_0(packed: &[u16], rgba_out: &mut [u16], width: usize) {
+///
+/// `BE` selects the **byte order** of the encoded source `packed` plane.
+/// See [`copy_alpha_packed_u16x4_to_u8_at_0`] for the full rationale.
+pub(crate) fn copy_alpha_packed_u16x4_at_0<const BE: bool>(
+  packed: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4, "packed too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   for n in 0..width {
-    rgba_out[n * 4 + 3] = packed[n * 4];
+    let raw = if BE {
+      u16::from_be(packed[n * 4])
+    } else {
+      u16::from_le(packed[n * 4])
+    };
+    rgba_out[n * 4 + 3] = raw;
   }
 }
 
@@ -58,8 +84,15 @@ pub(crate) fn copy_alpha_packed_u16x4_at_0(packed: &[u16], rgba_out: &mut [u16],
 /// Used in Strategy A+: after `expand_rgb_to_rgba_row` fills the RGBA buffer
 /// with a forced-opaque alpha, this helper overwrites only the α slot with the
 /// real source alpha, depth-converted to u8.
+///
+/// `BE` selects the **byte order** of the encoded source `packed` plane
+/// (`false` = LE on disk/wire, e.g. `AV_PIX_FMT_RGBA64LE` /
+/// `AV_PIX_FMT_BGRA64LE` per the Frame contract; `true` = BE). Each raw
+/// u16 is normalised to host-native order via `u16::from_le` /
+/// `u16::from_be` before the `>> 8` depth conversion. Without this a BE
+/// host processing the LE-encoded Frame would emit a byte-reversed α byte.
 #[allow(dead_code)] // wired in sinker Task 10
-pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_3(
+pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_3<const BE: bool>(
   packed: &[u16],
   rgba_out: &mut [u8],
   width: usize,
@@ -67,7 +100,12 @@ pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_3(
   debug_assert!(packed.len() >= width * 4, "packed too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   for n in 0..width {
-    rgba_out[n * 4 + 3] = (packed[n * 4 + 3] >> 8) as u8;
+    let raw = if BE {
+      u16::from_be(packed[n * 4 + 3])
+    } else {
+      u16::from_le(packed[n * 4 + 3])
+    };
+    rgba_out[n * 4 + 3] = (raw >> 8) as u8;
   }
 }
 
@@ -77,12 +115,24 @@ pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_3(
 /// Used in Strategy A+: after `expand_rgb_u16_to_rgba_u16_row` fills the
 /// RGBA buffer, this helper overwrites only the α slot with the real source
 /// alpha at native 16-bit depth.
+///
+/// `BE` selects the **byte order** of the encoded source `packed` plane.
+/// See [`copy_alpha_packed_u16x4_to_u8_at_3`] for the full rationale.
 #[allow(dead_code)] // wired in sinker Task 10
-pub(crate) fn copy_alpha_packed_u16x4_at_3(packed: &[u16], rgba_u16_out: &mut [u16], width: usize) {
+pub(crate) fn copy_alpha_packed_u16x4_at_3<const BE: bool>(
+  packed: &[u16],
+  rgba_u16_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4, "packed too short");
   debug_assert!(rgba_u16_out.len() >= width * 4, "rgba_u16_out too short");
   for n in 0..width {
-    rgba_u16_out[n * 4 + 3] = packed[n * 4 + 3];
+    let raw = if BE {
+      u16::from_be(packed[n * 4 + 3])
+    } else {
+      u16::from_le(packed[n * 4 + 3])
+    };
+    rgba_u16_out[n * 4 + 3] = raw;
   }
 }
 
@@ -195,21 +245,49 @@ pub(crate) fn copy_alpha_ya_u8(packed: &[u8], rgba_out: &mut [u8], width: usize)
 /// into `rgba_out[3 + 4*n]` (u8).
 ///
 /// Ya16 layout per pixel: `[Y(16), A(16)]` — α is at odd u16 offsets (slot 1).
-pub(crate) fn copy_alpha_ya_u16_to_u8(packed: &[u16], rgba_out: &mut [u8], width: usize) {
+///
+/// `BE` selects the **byte order** of the encoded source `packed` plane
+/// (`false` = LE on disk/wire, e.g. `AV_PIX_FMT_YA16LE` per the
+/// `Ya16Frame` contract; `true` = BE). Each raw u16 is normalised to
+/// host-native order via `u16::from_le` / `u16::from_be` before the
+/// `>> 8` depth conversion. Without this a BE host processing the
+/// LE-encoded Frame would emit a byte-reversed α byte.
+pub(crate) fn copy_alpha_ya_u16_to_u8<const BE: bool>(
+  packed: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 2, "packed too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   for n in 0..width {
-    rgba_out[n * 4 + 3] = (packed[n * 2 + 1] >> 8) as u8;
+    let raw = if BE {
+      u16::from_be(packed[n * 2 + 1])
+    } else {
+      u16::from_le(packed[n * 2 + 1])
+    };
+    rgba_out[n * 4 + 3] = (raw >> 8) as u8;
   }
 }
 
 /// Ya16 → u16 RGBA: gather A from `packed[1 + 2*n]` (u16) into
 /// `rgba_out[3 + 4*n]` (u16). No depth conversion.
-pub(crate) fn copy_alpha_ya_u16(packed: &[u16], rgba_out: &mut [u16], width: usize) {
+///
+/// `BE` selects the **byte order** of the encoded source `packed` plane.
+/// See [`copy_alpha_ya_u16_to_u8`] for the full rationale.
+pub(crate) fn copy_alpha_ya_u16<const BE: bool>(
+  packed: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 2, "packed too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   for n in 0..width {
-    rgba_out[n * 4 + 3] = packed[n * 2 + 1];
+    let raw = if BE {
+      u16::from_be(packed[n * 2 + 1])
+    } else {
+      u16::from_le(packed[n * 2 + 1])
+    };
+    rgba_out[n * 4 + 3] = raw;
   }
 }
 
@@ -270,19 +348,54 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn copy_alpha_packed_u16x4_to_u8_at_0_depth_converts_correctly() {
     let packed: std::vec::Vec<u16> = std::vec![0x1234, 100, 200, 300, 0xABCD, 101, 201, 301,];
     let mut rgba = std::vec![1u8; 8];
-    copy_alpha_packed_u16x4_to_u8_at_0(&packed, &mut rgba, 2);
+    copy_alpha_packed_u16x4_to_u8_at_0::<false>(&packed, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0x12, 1, 1, 1, 0xAB]);
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn copy_alpha_packed_u16x4_at_0_preserves_native_u16() {
     let packed: std::vec::Vec<u16> = std::vec![0x1234, 100, 200, 300, 0xABCD, 101, 201, 301,];
     let mut rgba = std::vec![1u16; 8];
-    copy_alpha_packed_u16x4_at_0(&packed, &mut rgba, 2);
+    copy_alpha_packed_u16x4_at_0::<false>(&packed, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0x1234, 1, 1, 1, 0xABCD]);
+  }
+
+  /// BE parity for AYUV64 alpha-at-slot-0 → u8 RGBA: byte-swapping the
+  /// packed source and toggling the `BE` flag must yield byte-for-byte
+  /// identical output. Locks down the corruption where a BE host
+  /// processing the LE-encoded Frame contract would emit a byte-reversed α.
+  #[test]
+  fn copy_alpha_packed_u16x4_to_u8_at_0_be_parity_with_swapped_buffer() {
+    let packed_le: std::vec::Vec<u16> = std::vec![0x1234, 100, 200, 300, 0xABCD, 101, 201, 301];
+    let packed_be: std::vec::Vec<u16> = packed_le.iter().map(|x| x.swap_bytes()).collect();
+    let mut rgba_le = std::vec![1u8; 8];
+    let mut rgba_be = std::vec![1u8; 8];
+    copy_alpha_packed_u16x4_to_u8_at_0::<false>(&packed_le, &mut rgba_le, 2);
+    copy_alpha_packed_u16x4_to_u8_at_0::<true>(&packed_be, &mut rgba_be, 2);
+    assert_eq!(
+      rgba_le, rgba_be,
+      "BE flag + byte-swapped buffer must match LE path"
+    );
+  }
+
+  /// BE parity for AYUV64 alpha-at-slot-0 → u16 RGBA.
+  #[test]
+  fn copy_alpha_packed_u16x4_at_0_be_parity_with_swapped_buffer() {
+    let packed_le: std::vec::Vec<u16> = std::vec![0x1234, 100, 200, 300, 0xABCD, 101, 201, 301];
+    let packed_be: std::vec::Vec<u16> = packed_le.iter().map(|x| x.swap_bytes()).collect();
+    let mut rgba_le = std::vec![7u16; 8];
+    let mut rgba_be = std::vec![7u16; 8];
+    copy_alpha_packed_u16x4_at_0::<false>(&packed_le, &mut rgba_le, 2);
+    copy_alpha_packed_u16x4_at_0::<true>(&packed_be, &mut rgba_be, 2);
+    assert_eq!(
+      rgba_le, rgba_be,
+      "BE flag + byte-swapped buffer must match LE path"
+    );
   }
 
   #[test]
@@ -423,20 +536,57 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn copy_alpha_ya_u16_to_u8_depth_converts_via_high_byte() {
     // Ya16 packed → u8 RGBA: α >> 8 selects the high byte.
     let packed: std::vec::Vec<u16> = std::vec![0x1234, 0xABCD, 0x5678, 0xFF00];
     let mut rgba = std::vec![1u8; 8];
-    copy_alpha_ya_u16_to_u8(&packed, &mut rgba, 2);
+    copy_alpha_ya_u16_to_u8::<false>(&packed, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xAB, 1, 1, 1, 0xFF]);
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn copy_alpha_ya_u16_preserves_native_u16() {
     let packed: std::vec::Vec<u16> = std::vec![0x1234, 0xABCD, 0x5678, 0x9ABC];
     let mut rgba = std::vec![1u16; 8];
-    copy_alpha_ya_u16(&packed, &mut rgba, 2);
+    copy_alpha_ya_u16::<false>(&packed, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xABCD, 1, 1, 1, 0x9ABC]);
+  }
+
+  /// BE parity for Ya16 → u8 RGBA: byte-swapping the packed source and
+  /// toggling the `BE` flag must yield byte-for-byte identical output.
+  /// Locks down the codex-flagged corruption where a BE host (e.g.
+  /// s390x) processing the LE-encoded `Ya16Frame` would otherwise emit
+  /// a byte-reversed α byte under the combined `with_rgb + with_rgba`
+  /// Strategy A+ path.
+  #[test]
+  fn copy_alpha_ya_u16_to_u8_be_parity_with_swapped_buffer() {
+    let packed_le: std::vec::Vec<u16> = std::vec![0x1234, 0xABCD, 0x5678, 0xFF00, 0x0001, 0x00FF];
+    let packed_be: std::vec::Vec<u16> = packed_le.iter().map(|x| x.swap_bytes()).collect();
+    let mut rgba_le = std::vec![1u8; 12];
+    let mut rgba_be = std::vec![1u8; 12];
+    copy_alpha_ya_u16_to_u8::<false>(&packed_le, &mut rgba_le, 3);
+    copy_alpha_ya_u16_to_u8::<true>(&packed_be, &mut rgba_be, 3);
+    assert_eq!(
+      rgba_le, rgba_be,
+      "BE flag + byte-swapped buffer must match LE path"
+    );
+  }
+
+  /// BE parity for Ya16 → u16 RGBA (16-bit α path).
+  #[test]
+  fn copy_alpha_ya_u16_be_parity_with_swapped_buffer() {
+    let packed_le: std::vec::Vec<u16> = std::vec![0x1234, 0xABCD, 0x5678, 0x9ABC, 0x0001, 0x00FF];
+    let packed_be: std::vec::Vec<u16> = packed_le.iter().map(|x| x.swap_bytes()).collect();
+    let mut rgba_le = std::vec![7u16; 12];
+    let mut rgba_be = std::vec![7u16; 12];
+    copy_alpha_ya_u16::<false>(&packed_le, &mut rgba_le, 3);
+    copy_alpha_ya_u16::<true>(&packed_be, &mut rgba_be, 3);
+    assert_eq!(
+      rgba_le, rgba_be,
+      "BE flag + byte-swapped buffer must match LE path"
+    );
   }
 
   #[test]
@@ -494,39 +644,73 @@ mod tests {
 
   /// Alpha at slot 3 is depth-converted >> 8 and written to rgba_out[3 + 4*n].
   #[test]
+  #[cfg(target_endian = "little")]
   fn copy_alpha_packed_u16x4_to_u8_at_3_narrows_correctly() {
     let packed: std::vec::Vec<u16> = std::vec![100, 200, 300, 0xABFF, 101, 201, 301, 0x1234];
     let mut rgba = std::vec![1u8; 8];
-    copy_alpha_packed_u16x4_to_u8_at_3(&packed, &mut rgba, 2);
+    copy_alpha_packed_u16x4_to_u8_at_3::<false>(&packed, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xAB, 1, 1, 1, 0x12]);
   }
 
   /// Alpha at slot 3 is copied verbatim (no depth conversion).
   #[test]
+  #[cfg(target_endian = "little")]
   fn copy_alpha_packed_u16x4_at_3_copies_verbatim() {
     let packed: std::vec::Vec<u16> = std::vec![100, 200, 300, 0xABFF, 101, 201, 301, 0x1234];
     let mut rgba_u16 = std::vec![1u16; 8];
-    copy_alpha_packed_u16x4_at_3(&packed, &mut rgba_u16, 2);
+    copy_alpha_packed_u16x4_at_3::<false>(&packed, &mut rgba_u16, 2);
     assert_eq!(rgba_u16, std::vec![1, 1, 1, 0xABFF, 1, 1, 1, 0x1234]);
   }
 
   /// Only the alpha slot (index 3) is overwritten; RGB slots [0..3] are untouched.
   #[test]
+  #[cfg(target_endian = "little")]
   fn copy_alpha_packed_u16x4_to_u8_at_3_touches_only_alpha_slot() {
     let packed: std::vec::Vec<u16> = std::vec![0, 0, 0, 0xFFFF];
     let mut rgba = std::vec![42u8; 4];
-    copy_alpha_packed_u16x4_to_u8_at_3(&packed, &mut rgba, 1);
+    copy_alpha_packed_u16x4_to_u8_at_3::<false>(&packed, &mut rgba, 1);
     assert_eq!(rgba[..3], [42, 42, 42]);
     assert_eq!(rgba[3], 0xFF);
   }
 
   /// Only the alpha slot (index 3) is overwritten; RGB slots [0..3] are untouched.
   #[test]
+  #[cfg(target_endian = "little")]
   fn copy_alpha_packed_u16x4_at_3_touches_only_alpha_slot() {
     let packed: std::vec::Vec<u16> = std::vec![0, 0, 0, 0xBEEF];
     let mut rgba_u16 = std::vec![99u16; 4];
-    copy_alpha_packed_u16x4_at_3(&packed, &mut rgba_u16, 1);
+    copy_alpha_packed_u16x4_at_3::<false>(&packed, &mut rgba_u16, 1);
     assert_eq!(rgba_u16[..3], [99, 99, 99]);
     assert_eq!(rgba_u16[3], 0xBEEF);
+  }
+
+  /// BE parity for Rgba64 / Bgra64 alpha-at-slot-3 → u8 RGBA.
+  #[test]
+  fn copy_alpha_packed_u16x4_to_u8_at_3_be_parity_with_swapped_buffer() {
+    let packed_le: std::vec::Vec<u16> = std::vec![100, 200, 300, 0xABFF, 101, 201, 301, 0x1234];
+    let packed_be: std::vec::Vec<u16> = packed_le.iter().map(|x| x.swap_bytes()).collect();
+    let mut rgba_le = std::vec![1u8; 8];
+    let mut rgba_be = std::vec![1u8; 8];
+    copy_alpha_packed_u16x4_to_u8_at_3::<false>(&packed_le, &mut rgba_le, 2);
+    copy_alpha_packed_u16x4_to_u8_at_3::<true>(&packed_be, &mut rgba_be, 2);
+    assert_eq!(
+      rgba_le, rgba_be,
+      "BE flag + byte-swapped buffer must match LE path"
+    );
+  }
+
+  /// BE parity for Rgba64 / Bgra64 alpha-at-slot-3 → u16 RGBA.
+  #[test]
+  fn copy_alpha_packed_u16x4_at_3_be_parity_with_swapped_buffer() {
+    let packed_le: std::vec::Vec<u16> = std::vec![100, 200, 300, 0xABFF, 101, 201, 301, 0x1234];
+    let packed_be: std::vec::Vec<u16> = packed_le.iter().map(|x| x.swap_bytes()).collect();
+    let mut rgba_le = std::vec![7u16; 8];
+    let mut rgba_be = std::vec![7u16; 8];
+    copy_alpha_packed_u16x4_at_3::<false>(&packed_le, &mut rgba_le, 2);
+    copy_alpha_packed_u16x4_at_3::<true>(&packed_be, &mut rgba_be, 2);
+    assert_eq!(
+      rgba_le, rgba_be,
+      "BE flag + byte-swapped buffer must match LE path"
+    );
   }
 }

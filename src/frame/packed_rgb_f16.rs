@@ -50,8 +50,7 @@ pub enum Rgbf16FrameError {
   },
 }
 
-/// A validated packed **RGBF16** frame (FFmpeg `AV_PIX_FMT_RGBF16`,
-/// FFmpeg canonical `*LE` convention — see endian note below).
+/// A validated packed **RGBF16** frame (FFmpeg `AV_PIX_FMT_RGBF16LE`).
 /// One plane, 3 × `f16` per pixel, channel order `R, G, B`.
 ///
 /// Values are **linear** RGB by convention — no gamma / OETF handling
@@ -70,12 +69,17 @@ pub enum Rgbf16FrameError {
 /// # Endian contract — **LE-encoded bytes**
 ///
 /// The `&[half::f16]` plane is the **LE-encoded byte layout** reinterpreted
-/// as `f16`, matching the FFmpeg `*LE` pixel-format convention. On a
-/// little-endian host (every CI runner today) LE bytes _are_ host-native,
-/// so `&[half::f16]` is also a host-native f16 slice; on a big-endian host
-/// the bytes have to be byte-swapped back to host-native before arithmetic.
-/// Downstream row kernels handle this byte-swap (or no-op on LE) under the
-/// hood — callers do **not** pre-swap.
+/// as `f16`, matching the FFmpeg **`AV_PIX_FMT_RGBF16LE`** pixel-format
+/// convention. (FFmpeg's unsuffixed `AV_PIX_FMT_RGBF16` is a *target-endian*
+/// alias — `RGBF16LE` on a little-endian host, `RGBF16BE` on a big-endian
+/// host — so this contract pins the canonical `*LE` byte order regardless
+/// of host endianness.)
+///
+/// On a little-endian host (every CI runner today) LE bytes _are_
+/// host-native, so `&[half::f16]` is also a host-native f16 slice; on a
+/// big-endian host the bytes have to be byte-swapped back to host-native
+/// before arithmetic. Downstream row kernels handle this byte-swap (or
+/// no-op on LE) under the hood — callers do **not** pre-swap.
 ///
 /// Stride is in **f16 elements** (not bytes). Callers holding a byte buffer
 /// from FFmpeg should cast via `bytemuck::cast_slice` and divide
