@@ -373,14 +373,20 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
 //
 // `_mm256_cvtph_ps` (F16C) widens 8 × f16 (stored as 8 × i16 in a __m128i)
 // to 8 × f32 in a __m256.  We load 16 bytes (8 f16 values) via
-// `_mm_loadu_si128` (LE) or `load_endian_u16x8::<BE>` (with byte-swap for BE).
+// `load_endian_u16x8::<BE>` which routes to a host-native pass-through when
+// the on-disk encoding matches host-native and to a byte-swap shuffle
+// otherwise — correct on both LE and BE hosts.
 //
 // `#[target_feature(enable = "avx2,f16c")]` ensures both features are active.
 
 /// Widen 8 × f16 (at `ptr`, 16 bytes) to 8 × f32 (returned as `__m256`).
 ///
 /// For `BE = true` the f16 values are stored big-endian; bytes are swapped
-/// before the F16C widening conversion.
+/// before the F16C widening conversion. The historical `BE = false` branch
+/// used a raw `_mm_loadu_si128` which assumed LE-encoded input on a LE host;
+/// `load_endian_u16x8::<BE>` is correct on both LE and BE hosts because it
+/// monomorphizes to a no-op load when on-disk encoding matches host-native
+/// and to a byte-swap shuffle otherwise.
 ///
 /// # Safety
 ///
@@ -390,14 +396,8 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
 #[target_feature(enable = "avx2,f16c")]
 unsafe fn widen_f16x8_avx<const BE: bool>(ptr: *const half::f16) -> __m256 {
   unsafe {
-    if BE {
-      // Load 16 bytes as u16x8 with byte-swap, then widen to f32x8.
-      let raw = load_endian_u16x8::<BE>(ptr as *const u8);
-      _mm256_cvtph_ps(raw)
-    } else {
-      let raw = _mm_loadu_si128(ptr as *const __m128i);
-      _mm256_cvtph_ps(raw)
-    }
+    let raw = load_endian_u16x8::<BE>(ptr as *const u8);
+    _mm256_cvtph_ps(raw)
   }
 }
 

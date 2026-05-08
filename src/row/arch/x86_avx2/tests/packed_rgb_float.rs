@@ -553,3 +553,148 @@ fn avx2_rgbf16_to_rgb_f16_be_is_byteswap() {
     );
   }
 }
+
+// ---- LE-decode regression tests — AVX2 + F16C `widen_f16x8_avx` -------------
+//
+// These guard against the historical bug where `widen_f16x8_avx::<false>` used
+// a raw `_mm_loadu_si128` to read 8 × f16 — that's a host-native u16 load, so
+// on a BE host with LE-encoded input the lanes were mis-decoded as host-BE
+// before the F16C widening conversion. The fixed helper always routes through
+// `load_endian_u16x8::<BE>` which monomorphizes to a pass-through on the
+// matching host-encoding axis and to a byte-swap shuffle otherwise, so each
+// kernel decodes correctly on both LE and BE hosts.
+
+/// Build an LE-encoded f16 fixture from a host-native one. On LE hosts this is
+/// identity; on BE hosts each lane is byte-swapped (so an LE-encoded buffer
+/// looks byte-swapped relative to host-native bits).
+fn le_rgbf16_from_host(host: &[half::f16]) -> std::vec::Vec<half::f16> {
+  host
+    .iter()
+    .map(|v| half::f16::from_bits(u16::from_le(v.to_bits())))
+    .collect()
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn avx2_rgbf16_to_rgb_row_le_input_decodes_correctly_on_any_host() {
+  if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("f16c") {
+    return;
+  }
+  for w in [1usize, 4, 8, 15, 17, 33, 1920, 1921] {
+    let host = pseudo_random_rgbf16(w);
+    let le_in = le_rgbf16_from_host(&host);
+    let mut out_simd = std::vec![0u8; w * 3];
+    let mut out_scalar = std::vec![0u8; w * 3];
+    unsafe {
+      rgbf16_to_rgb_row::<false>(&le_in, &mut out_simd, w);
+    }
+    scalar::rgbf16_to_rgb_row::<false>(&le_in, &mut out_scalar, w);
+    assert_eq!(
+      out_simd, out_scalar,
+      "AVX2+F16C rgbf16_to_rgb_row::<false> must decode LE input to match scalar (width {w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn avx2_rgbf16_to_rgba_row_le_input_decodes_correctly_on_any_host() {
+  if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("f16c") {
+    return;
+  }
+  for w in [1usize, 4, 8, 15, 17, 33, 1920, 1921] {
+    let host = pseudo_random_rgbf16(w);
+    let le_in = le_rgbf16_from_host(&host);
+    let mut out_simd = std::vec![0u8; w * 4];
+    let mut out_scalar = std::vec![0u8; w * 4];
+    unsafe {
+      rgbf16_to_rgba_row::<false>(&le_in, &mut out_simd, w);
+    }
+    scalar::rgbf16_to_rgba_row::<false>(&le_in, &mut out_scalar, w);
+    assert_eq!(
+      out_simd, out_scalar,
+      "AVX2+F16C rgbf16_to_rgba_row::<false> must decode LE input to match scalar (width {w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn avx2_rgbf16_to_rgb_u16_row_le_input_decodes_correctly_on_any_host() {
+  if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("f16c") {
+    return;
+  }
+  for w in [1usize, 4, 8, 15, 17, 33, 1920, 1921] {
+    let host = pseudo_random_rgbf16(w);
+    let le_in = le_rgbf16_from_host(&host);
+    let mut out_simd = std::vec![0u16; w * 3];
+    let mut out_scalar = std::vec![0u16; w * 3];
+    unsafe {
+      rgbf16_to_rgb_u16_row::<false>(&le_in, &mut out_simd, w);
+    }
+    scalar::rgbf16_to_rgb_u16_row::<false>(&le_in, &mut out_scalar, w);
+    assert_eq!(
+      out_simd, out_scalar,
+      "AVX2+F16C rgbf16_to_rgb_u16_row::<false> must decode LE input to match scalar (width {w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn avx2_rgbf16_to_rgba_u16_row_le_input_decodes_correctly_on_any_host() {
+  if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("f16c") {
+    return;
+  }
+  for w in [1usize, 4, 8, 15, 17, 33, 1920, 1921] {
+    let host = pseudo_random_rgbf16(w);
+    let le_in = le_rgbf16_from_host(&host);
+    let mut out_simd = std::vec![0u16; w * 4];
+    let mut out_scalar = std::vec![0u16; w * 4];
+    unsafe {
+      rgbf16_to_rgba_u16_row::<false>(&le_in, &mut out_simd, w);
+    }
+    scalar::rgbf16_to_rgba_u16_row::<false>(&le_in, &mut out_scalar, w);
+    assert_eq!(
+      out_simd, out_scalar,
+      "AVX2+F16C rgbf16_to_rgba_u16_row::<false> must decode LE input to match scalar (width {w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn avx2_rgbf16_to_rgb_f32_row_le_input_decodes_correctly_on_any_host() {
+  if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("f16c") {
+    return;
+  }
+  for w in [1usize, 4, 8, 15, 17, 33, 1920, 1921] {
+    let host = pseudo_random_rgbf16(w);
+    let le_in = le_rgbf16_from_host(&host);
+    let mut out_simd = std::vec![0.0f32; w * 3];
+    let mut out_scalar = std::vec![0.0f32; w * 3];
+    unsafe {
+      rgbf16_to_rgb_f32_row::<false>(&le_in, &mut out_simd, w);
+    }
+    scalar::rgbf16_to_rgb_f32_row::<false>(&le_in, &mut out_scalar, w);
+    assert_eq!(
+      out_simd, out_scalar,
+      "AVX2+F16C rgbf16_to_rgb_f32_row::<false> must decode LE input to match scalar (width {w})"
+    );
+  }
+}

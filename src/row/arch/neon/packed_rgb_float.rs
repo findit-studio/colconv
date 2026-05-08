@@ -159,35 +159,26 @@ pub(crate) unsafe fn rgbf32_to_rgba_row<const BE: bool>(
       // — the f32→u8 cast itself is the cost, not the gather.
       for sub in 0..4 {
         let base = (x + sub * 4) * 3;
-        let v_rgb = if BE {
-          // For BE we cannot use vld3q_f32 directly (it always loads
-          // native-endian bytes). Load each f32 vector individually
-          // via the endian-aware helper, then manually deinterleave.
-          // Load 12 f32 values as 3 × float32x4_t, then deinterleave
-          // the R/G/B channels using vtrnq / vuzpq.
+        // Fast path: on-disk encoding (`BE`) matches host-native, so the raw
+        // `vld3q_f32` reads host-native bytes that already carry the right f32
+        // values. Slow path (`BE != HOST_NATIVE_BE`): each f32 must be byte-
+        // swapped before deinterleave; load via the endian-aware helper into
+        // a contiguous buffer, then unstride into per-channel vectors.
+        let (r_v, g_v, b_v) = if BE == HOST_NATIVE_BE {
+          let v_rgb = vld3q_f32(rgb_in.as_ptr().add(base));
+          (v_rgb.0, v_rgb.1, v_rgb.2)
+        } else {
           let raw0 = load_f32x4::<BE>(rgb_in.as_ptr().add(base));
           let raw1 = load_f32x4::<BE>(rgb_in.as_ptr().add(base + 4));
           let raw2 = load_f32x4::<BE>(rgb_in.as_ptr().add(base + 8));
-          // raw0 = [R0,G0,B0,R1], raw1 = [G1,B1,R2,G2], raw2 = [B2,R3,G3,B3]
-          // Deinterleave into per-channel vectors via vuzpq:
-          //   r = [R0,B0,G1,R2, R1,B1,…] — need proper deinterleave.
-          // Use the same scalar path for the BE deinterleave case to
-          // keep correctness simple.
-          float32x4x3_t(raw0, raw1, raw2)
-        } else {
-          vld3q_f32(rgb_in.as_ptr().add(base))
-        };
-
-        let (r_v, g_v, b_v) = if BE {
-          // Manual deinterleave: raw interleaved [R0,G0,B0,R1,G1,B1,R2,G2,B2,R3,G3,B3]
-          // split into three 4-element f32 arrays via temporary scalar approach.
+          // Manual deinterleave: contiguous host-native f32 layout is
+          // [R0,G0,B0,R1, G1,B1,R2,G2, B2,R3,G3,B3] across raw{0,1,2}.
           let mut r_arr = [0.0f32; 4];
           let mut g_arr = [0.0f32; 4];
           let mut b_arr = [0.0f32; 4];
-          vst1q_f32(r_arr.as_mut_ptr(), v_rgb.0);
-          vst1q_f32(g_arr.as_mut_ptr(), v_rgb.1);
-          vst1q_f32(b_arr.as_mut_ptr(), v_rgb.2);
-          // r_arr = [R0,G0,B0,R1], g_arr = [G1,B1,R2,G2], b_arr = [B2,R3,G3,B3]
+          vst1q_f32(r_arr.as_mut_ptr(), raw0);
+          vst1q_f32(g_arr.as_mut_ptr(), raw1);
+          vst1q_f32(b_arr.as_mut_ptr(), raw2);
           let r_deint = [r_arr[0], r_arr[3], g_arr[2], b_arr[1]];
           let g_deint = [r_arr[1], g_arr[0], g_arr[3], b_arr[2]];
           let b_deint = [r_arr[2], g_arr[1], b_arr[0], b_arr[3]];
@@ -196,8 +187,6 @@ pub(crate) unsafe fn rgbf32_to_rgba_row<const BE: bool>(
             vld1q_f32(g_deint.as_ptr()),
             vld1q_f32(b_deint.as_ptr()),
           )
-        } else {
-          (v_rgb.0, v_rgb.1, v_rgb.2)
         };
 
         let r_clamped = vmulq_f32(vminq_f32(vmaxq_f32(r_v, zero), one), scale);
@@ -338,7 +327,16 @@ pub(crate) unsafe fn rgbf32_to_rgba_u16_row<const BE: bool>(
       let mut b_h = [0u16; 8];
       for sub in 0..2 {
         let base = (x + sub * 4) * 3;
-        let (r_v, g_v, b_v) = if BE {
+        // Fast path: `BE == HOST_NATIVE_BE` means on-disk encoding matches the
+        // host's native byte order, so `vld3q_f32` (which always reads host-
+        // native bytes) decodes the encoded f32s correctly. Slow path: the
+        // encoded bytes are foreign — load each f32 through the endian-aware
+        // helper (which byte-swaps when `BE != HOST_NATIVE_BE`) into a
+        // contiguous buffer, then deinterleave into per-channel vectors.
+        let (r_v, g_v, b_v) = if BE == HOST_NATIVE_BE {
+          let v_rgb = vld3q_f32(rgb_in.as_ptr().add(base));
+          (v_rgb.0, v_rgb.1, v_rgb.2)
+        } else {
           let raw0 = load_f32x4::<BE>(rgb_in.as_ptr().add(base));
           let raw1 = load_f32x4::<BE>(rgb_in.as_ptr().add(base + 4));
           let raw2 = load_f32x4::<BE>(rgb_in.as_ptr().add(base + 8));
@@ -356,9 +354,6 @@ pub(crate) unsafe fn rgbf32_to_rgba_u16_row<const BE: bool>(
             vld1q_f32(g_deint.as_ptr()),
             vld1q_f32(b_deint.as_ptr()),
           )
-        } else {
-          let v_rgb = vld3q_f32(rgb_in.as_ptr().add(base));
-          (v_rgb.0, v_rgb.1, v_rgb.2)
         };
 
         let r_s = vmulq_f32(vminq_f32(vmaxq_f32(r_v, zero), one), scale);
@@ -474,6 +469,12 @@ use super::endian::load_endian_u16x4;
 /// `vld1q_f32`/`vst1q_f32` copy is byte-correct only when the source encoding
 /// (`BE`) matches the host's native endian, so the kernel falls through to
 /// the endian-aware `load_f32x4::<BE>` slow path otherwise.
+///
+/// Same gate applies to the `rgbf32_to_rgba_row` / `rgbf32_to_rgba_u16_row`
+/// `vld3q_f32` deinterleave fast path: `vld3q_f32` reads host-native bytes,
+/// so it's only correct when the on-disk encoding matches host-native.
+/// Otherwise the kernel falls through to the endian-aware `load_f32x4::<BE>`
+/// path with a manual deinterleave.
 const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 
 /// Widen 4 half-precision floats (`f16x4`, i.e. 8 bytes starting at `ptr`)
