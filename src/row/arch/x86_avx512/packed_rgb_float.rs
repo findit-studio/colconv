@@ -17,6 +17,14 @@ use super::endian::load_endian_u32x16;
 use super::scalar;
 use crate::row::arch::x86_avx2::endian::load_endian_u16x16;
 
+/// `BE` value that makes the f32 row loaders treat their input as host-native
+/// (a no-op byte-swap). Used by f16→f32 widen-then-convert paths whose stack
+/// buffer is already host-native after `_mm512_cvtph_ps`. On a LE target,
+/// host-native == LE so `BE = false`; on a BE target, host-native == BE so
+/// `BE = true`. Without this routing the downstream `rgbf32_to_*::<false>`
+/// would byte-swap an already-decoded host-native f32 buffer on BE hosts.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 /// Load 16 f32 lanes from `ptr` in endian-aware fashion.
 ///
 /// # Safety
@@ -382,7 +390,10 @@ pub(crate) unsafe fn rgbf16_to_rgb_row<const BE: bool>(
       _mm512_storeu_ps(buf.as_mut_ptr(), f0);
       _mm512_storeu_ps(buf.as_mut_ptr().add(16), f1);
       _mm512_storeu_ps(buf.as_mut_ptr().add(32), f2);
-      rgbf32_to_rgb_row::<false>(&buf, rgb_out.get_unchecked_mut(lane..lane + 48), 16);
+      // Buffer is host-native f32 after _mm512_cvtph_ps; route via
+      // HOST_NATIVE_BE so the f32 loaders perform a no-op byte-swap on
+      // both LE and BE hosts.
+      rgbf32_to_rgb_row::<HOST_NATIVE_BE>(&buf, rgb_out.get_unchecked_mut(lane..lane + 48), 16);
     }
     lane += 48;
   }
@@ -425,7 +436,12 @@ pub(crate) unsafe fn rgbf16_to_rgba_row<const BE: bool>(
       _mm512_storeu_ps(buf.as_mut_ptr(), f0);
       _mm512_storeu_ps(buf.as_mut_ptr().add(16), f1);
       _mm512_storeu_ps(buf.as_mut_ptr().add(32), f2);
-      rgbf32_to_rgba_row::<false>(&buf, rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 64), 16);
+      // Buffer is host-native f32; route via HOST_NATIVE_BE.
+      rgbf32_to_rgba_row::<HOST_NATIVE_BE>(
+        &buf,
+        rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 64),
+        16,
+      );
     }
     lane += 48;
     pix += 16;
@@ -468,7 +484,8 @@ pub(crate) unsafe fn rgbf16_to_rgb_u16_row<const BE: bool>(
       _mm512_storeu_ps(buf.as_mut_ptr(), f0);
       _mm512_storeu_ps(buf.as_mut_ptr().add(16), f1);
       _mm512_storeu_ps(buf.as_mut_ptr().add(32), f2);
-      rgbf32_to_rgb_u16_row::<false>(&buf, rgb_out.get_unchecked_mut(lane..lane + 48), 16);
+      // Buffer is host-native f32; route via HOST_NATIVE_BE.
+      rgbf32_to_rgb_u16_row::<HOST_NATIVE_BE>(&buf, rgb_out.get_unchecked_mut(lane..lane + 48), 16);
     }
     lane += 48;
   }
@@ -511,7 +528,12 @@ pub(crate) unsafe fn rgbf16_to_rgba_u16_row<const BE: bool>(
       _mm512_storeu_ps(buf.as_mut_ptr(), f0);
       _mm512_storeu_ps(buf.as_mut_ptr().add(16), f1);
       _mm512_storeu_ps(buf.as_mut_ptr().add(32), f2);
-      rgbf32_to_rgba_u16_row::<false>(&buf, rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 64), 16);
+      // Buffer is host-native f32; route via HOST_NATIVE_BE.
+      rgbf32_to_rgba_u16_row::<HOST_NATIVE_BE>(
+        &buf,
+        rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 64),
+        16,
+      );
     }
     lane += 48;
     pix += 16;

@@ -357,7 +357,13 @@ fn neon_rgbf16_to_rgb_be_matches_le() {
   if !std::arch::is_aarch64_feature_detected!("fp16") {
     return;
   }
-  for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
+  // Widths 4, 5, 16, 33 specifically exercise the f16 widen-tail boundary:
+  // the BE branch used to over-read past the row via load_endian_u16x8 (16
+  // bytes) when only 8 bytes of f16 data are guaranteed at the third
+  // widen_f16x4 call per 12-lane chunk. With load_endian_u16x4 (8 bytes)
+  // the read stays within bounds; ASan / Miri pages would have caught the
+  // over-read as a guarded-page UB.
+  for w in [1usize, 4, 5, 7, 16, 33, 1920, 1921] {
     let le_in = pseudo_random_rgbf16(w);
     let be_in = be_rgbf16(&le_in);
     let mut out_le = std::vec![0u8; w * 3];
@@ -379,7 +385,7 @@ fn neon_rgbf16_to_rgba_be_matches_le() {
   if !std::arch::is_aarch64_feature_detected!("fp16") {
     return;
   }
-  for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
+  for w in [1usize, 4, 5, 7, 16, 33, 1920, 1921] {
     let le_in = pseudo_random_rgbf16(w);
     let be_in = be_rgbf16(&le_in);
     let mut out_le = std::vec![0u8; w * 4];
@@ -401,7 +407,7 @@ fn neon_rgbf16_to_rgb_u16_be_matches_le() {
   if !std::arch::is_aarch64_feature_detected!("fp16") {
     return;
   }
-  for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
+  for w in [1usize, 4, 5, 7, 16, 33, 1920, 1921] {
     let le_in = pseudo_random_rgbf16(w);
     let be_in = be_rgbf16(&le_in);
     let mut out_le = std::vec![0u16; w * 3];
@@ -423,7 +429,7 @@ fn neon_rgbf16_to_rgba_u16_be_matches_le() {
   if !std::arch::is_aarch64_feature_detected!("fp16") {
     return;
   }
-  for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
+  for w in [1usize, 4, 5, 7, 16, 33, 1920, 1921] {
     let le_in = pseudo_random_rgbf16(w);
     let be_in = be_rgbf16(&le_in);
     let mut out_le = std::vec![0u16; w * 4];
@@ -448,7 +454,7 @@ fn neon_rgbf16_to_rgb_f32_be_matches_le() {
   if !std::arch::is_aarch64_feature_detected!("fp16") {
     return;
   }
-  for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
+  for w in [1usize, 4, 5, 7, 16, 33, 1920, 1921] {
     let le_in = pseudo_random_rgbf16(w);
     let be_in = be_rgbf16(&le_in);
     let mut out_le = std::vec![0.0f32; w * 3];
@@ -467,7 +473,7 @@ fn neon_rgbf16_to_rgb_f32_be_matches_le() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn neon_rgbf16_to_rgb_f16_be_is_byteswap() {
-  for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
+  for w in [1usize, 4, 5, 7, 16, 33, 1920, 1921] {
     let le_in = pseudo_random_rgbf16(w);
     let be_in = be_rgbf16(&le_in);
     let mut out_le = std::vec![half::f16::ZERO; w * 3];
@@ -478,5 +484,51 @@ fn neon_rgbf16_to_rgb_f16_be_is_byteswap() {
     }
     // BE byte-swap should reconstruct original LE output bit-exact.
     assert_eq!(out_le, out_be, "NEON rgbf16_to_rgb_f16 BE parity width {w}");
+  }
+}
+
+// ---- Tail-overread regression tests (NEON BE Rgbf16) ------------------------
+//
+// These specifically place the BE f16 input at the end of an exact-sized
+// allocation so any read past `3 * width * 2` bytes lands on the next
+// allocation (or, with ASan / Miri / guarded pages, an unmapped page). The
+// previous bug — `widen_f16x4::<BE=true>` calling `load_endian_u16x8` (16-byte
+// load) when only 8 bytes were guaranteed — would over-read 8 bytes past the
+// row at widths where lane+12 reaches total_lanes (multiples of 4 pixels).
+//
+// Widths 4, 16, 32 are exact multiples of 4 pixels (the SIMD chunk size) so
+// the tail-overread happens on the LAST chunk; widths 5 and 33 leave 1 pixel
+// of scalar tail, so the over-read happens on the SECOND-TO-LAST chunk.
+
+fn assert_rgbf16_tail_overread_safe<const BE: bool, F>(width: usize, kernel: F)
+where
+  F: Fn(&[half::f16], &mut [u8], usize),
+{
+  // Allocate exact-sized input/output so any over-read lands outside the
+  // Vec's allocation. The exact-fit Vec mostly catches over-reads that go
+  // outside the page boundary — pair with ASan in CI for the strict case.
+  let width_lanes = width * 3;
+  let mut le_in = std::vec::Vec::<half::f16>::with_capacity(width_lanes);
+  for v in pseudo_random_rgbf16(width) {
+    le_in.push(v);
+  }
+  let raw: std::vec::Vec<half::f16> = if BE { be_rgbf16(&le_in) } else { le_in.clone() };
+  let mut out = std::vec![0u8; width * 3];
+  kernel(&raw, &mut out, width);
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn neon_rgbf16_be_tail_overread_widths_4_5_16_33() {
+  if !std::arch::is_aarch64_feature_detected!("fp16") {
+    return;
+  }
+  for &w in &[4usize, 5, 16, 33] {
+    assert_rgbf16_tail_overread_safe::<true, _>(w, |inp, out, w| unsafe {
+      rgbf16_to_rgb_row::<true>(inp, out, w);
+    });
   }
 }

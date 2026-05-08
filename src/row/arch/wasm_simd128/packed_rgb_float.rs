@@ -12,6 +12,16 @@ use core::arch::wasm32::*;
 
 use super::{endian::load_endian_u32x4, scalar};
 
+/// `BE` value that makes the f32 row loaders treat their input as host-native
+/// (a no-op byte-swap). Used by f16→f32 widen-then-convert paths whose stack
+/// buffer is already host-native after `half::f16::to_f32()`. On a LE target,
+/// host-native == LE so `BE = false`; on a BE target, host-native == BE so
+/// `BE = true`. Without this routing the downstream `rgbf32_to_*::<false>`
+/// would byte-swap an already-decoded host-native f32 buffer on BE hosts.
+/// (`wasm32-*` is LE today, but keeping the routing endian-agnostic future-
+/// proofs against any BE wasm target.)
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 // ---- helpers ------------------------------------------------------------------
 
 #[inline(always)]
@@ -321,7 +331,8 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
 //
 // For BE inputs the byte-swap is applied before widening so the widened f32
 // buffer is already host-native; downstream f32 kernels are called with
-// `BE=false` to avoid a second swap.
+// `HOST_NATIVE_BE` so their loaders perform a no-op byte-swap (correct on
+// both LE and BE hosts).
 //
 // CHUNK_PIXELS = 4 (= 12 f32 lanes), matching the simd128 Rgbf32 loop stride.
 
@@ -358,8 +369,9 @@ pub(crate) unsafe fn rgbf16_to_rgb_row<const BE: bool>(
       buf[k] = half::f16::from_bits(bits).to_f32();
     }
     unsafe {
-      // Buffer is now host-native f32; call LE downstream.
-      rgbf32_to_rgb_row::<false>(&buf, rgb_out.get_unchecked_mut(lane..lane + 12), 4);
+      // Buffer is now host-native f32; route via HOST_NATIVE_BE so the f32
+      // loaders perform a no-op byte-swap on both LE and BE hosts.
+      rgbf32_to_rgb_row::<HOST_NATIVE_BE>(&buf, rgb_out.get_unchecked_mut(lane..lane + 12), 4);
     }
     lane += 12;
   }
@@ -404,7 +416,12 @@ pub(crate) unsafe fn rgbf16_to_rgba_row<const BE: bool>(
       buf[k] = half::f16::from_bits(bits).to_f32();
     }
     unsafe {
-      rgbf32_to_rgba_row::<false>(&buf, rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 16), 4);
+      // Buffer is host-native f32; route via HOST_NATIVE_BE.
+      rgbf32_to_rgba_row::<HOST_NATIVE_BE>(
+        &buf,
+        rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 16),
+        4,
+      );
     }
     lane += 12;
     pix += 4;
@@ -449,7 +466,8 @@ pub(crate) unsafe fn rgbf16_to_rgb_u16_row<const BE: bool>(
       buf[k] = half::f16::from_bits(bits).to_f32();
     }
     unsafe {
-      rgbf32_to_rgb_u16_row::<false>(&buf, rgb_out.get_unchecked_mut(lane..lane + 12), 4);
+      // Buffer is host-native f32; route via HOST_NATIVE_BE.
+      rgbf32_to_rgb_u16_row::<HOST_NATIVE_BE>(&buf, rgb_out.get_unchecked_mut(lane..lane + 12), 4);
     }
     lane += 12;
   }
@@ -494,7 +512,12 @@ pub(crate) unsafe fn rgbf16_to_rgba_u16_row<const BE: bool>(
       buf[k] = half::f16::from_bits(bits).to_f32();
     }
     unsafe {
-      rgbf32_to_rgba_u16_row::<false>(&buf, rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 16), 4);
+      // Buffer is host-native f32; route via HOST_NATIVE_BE.
+      rgbf32_to_rgba_u16_row::<HOST_NATIVE_BE>(
+        &buf,
+        rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 16),
+        4,
+      );
     }
     lane += 12;
     pix += 4;

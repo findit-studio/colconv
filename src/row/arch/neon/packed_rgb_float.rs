@@ -445,17 +445,30 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
 //
 // `vcvt_f32_f16` widens 4 × f16 to 4 × f32 in a single FCVT instruction.
 //
-// For BE: we load the u16 bits via `load_endian_u16x8::<BE>` (loads 8 u16
-// with byte-swap for BE), extract the low 4 lanes into a `uint16x4_t`, then
-// reinterpret as `float16x4_t` before widening with `vcvt_f32_f16`.
+// For BE: we load the u16 bits via `load_endian_u16x4::<BE>` (loads 4 u16 with
+// byte-swap for BE) into a `uint16x4_t`, then reinterpret as `float16x4_t`
+// before widening with `vcvt_f32_f16`.  `load_endian_u16x4` reads exactly
+// 8 bytes regardless of `BE`, matching the 4 × f16 region the kernel owns
+// (a 16-byte load via `load_endian_u16x8` would tail-overread).
 
-use super::endian::load_endian_u16x8;
+use super::endian::load_endian_u16x4;
+
+/// `BE` value that makes the f32 row loaders treat their input as host-native
+/// (a no-op byte-swap). Used by f16→f32 widen-then-convert paths whose stack
+/// buffer is already host-native after `vcvt_f32_f16`. On a LE target, host-
+/// native == LE so `BE = false`; on a BE target, host-native == BE so
+/// `BE = true`. Without this routing the downstream `rgbf32_to_*::<false>`
+/// would byte-swap an already-decoded host-native f32 buffer on BE hosts.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 
 /// Widen 4 half-precision floats (`f16x4`, i.e. 8 bytes starting at `ptr`)
 /// to 4 single-precision floats into `out[0..4]`.
 ///
 /// For `BE = true` the f16 values are stored big-endian (bytes swapped);
-/// the byte-swap is applied before the widening conversion.
+/// the byte-swap is applied before the widening conversion. The loader reads
+/// exactly 8 bytes regardless of `BE` so the caller's `ptr` only needs 8
+/// readable bytes (a 16-byte load via `load_endian_u16x8` would tail-overread
+/// the 4 × f16 region the kernel actually owns).
 ///
 /// # Safety
 ///
@@ -465,21 +478,13 @@ use super::endian::load_endian_u16x8;
 #[inline(always)]
 unsafe fn widen_f16x4<const BE: bool>(ptr: *const half::f16, out: *mut f32) {
   unsafe {
-    if BE {
-      // Load 8 bytes as u16x8, byte-swap each u16, take low 4.
-      let u8_ptr = ptr as *const u8;
-      let u16x8 = load_endian_u16x8::<BE>(u8_ptr);
-      // Extract low 4 lanes (the ones we need for 4 f16 values).
-      let u16x4 = vget_low_u16(u16x8);
-      let f16x4 = vreinterpret_f16_u16(u16x4);
-      let f32x4 = vcvt_f32_f16(f16x4);
-      vst1q_f32(out, f32x4);
-    } else {
-      let u16s = vld1_u16(ptr as *const u16);
-      let f16s = vreinterpret_f16_u16(u16s);
-      let f32s = vcvt_f32_f16(f16s);
-      vst1q_f32(out, f32s);
-    }
+    // 8-byte load (4 × u16), byte-swapped per-lane when BE = true so the
+    // resulting `uint16x4_t` carries host-native f16 bit patterns ready for
+    // `vcvt_f32_f16`.
+    let u16x4 = load_endian_u16x4::<BE>(ptr as *const u8);
+    let f16x4 = vreinterpret_f16_u16(u16x4);
+    let f32x4 = vcvt_f32_f16(f16x4);
+    vst1q_f32(out, f32x4);
   }
 }
 
@@ -536,7 +541,9 @@ pub(crate) unsafe fn rgbf16_to_rgb_row<const BE: bool>(
       widen_f16x4::<BE>(rgb_in.as_ptr().add(lane), buf.as_mut_ptr());
       widen_f16x4::<BE>(rgb_in.as_ptr().add(lane + 4), buf.as_mut_ptr().add(4));
       widen_f16x4::<BE>(rgb_in.as_ptr().add(lane + 8), buf.as_mut_ptr().add(8));
-      rgbf32_to_rgb_row::<false>(&buf, rgb_out.get_unchecked_mut(lane..lane + 12), 4);
+      // Buffer is host-native f32 after vcvt_f32_f16; route through the f32
+      // kernel with HOST_NATIVE_BE so its loaders perform a no-op swap.
+      rgbf32_to_rgb_row::<HOST_NATIVE_BE>(&buf, rgb_out.get_unchecked_mut(lane..lane + 12), 4);
     }
     lane += 12;
   }
@@ -576,7 +583,12 @@ pub(crate) unsafe fn rgbf16_to_rgba_row<const BE: bool>(
       widen_f16x4::<BE>(rgb_in.as_ptr().add(lane), buf.as_mut_ptr());
       widen_f16x4::<BE>(rgb_in.as_ptr().add(lane + 4), buf.as_mut_ptr().add(4));
       widen_f16x4::<BE>(rgb_in.as_ptr().add(lane + 8), buf.as_mut_ptr().add(8));
-      rgbf32_to_rgba_row::<false>(&buf, rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 16), 4);
+      // Buffer is host-native f32; route via HOST_NATIVE_BE (see widen_f16x4).
+      rgbf32_to_rgba_row::<HOST_NATIVE_BE>(
+        &buf,
+        rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 16),
+        4,
+      );
     }
     lane += 12;
     pix += 4;
@@ -616,7 +628,8 @@ pub(crate) unsafe fn rgbf16_to_rgb_u16_row<const BE: bool>(
       widen_f16x4::<BE>(rgb_in.as_ptr().add(lane), buf.as_mut_ptr());
       widen_f16x4::<BE>(rgb_in.as_ptr().add(lane + 4), buf.as_mut_ptr().add(4));
       widen_f16x4::<BE>(rgb_in.as_ptr().add(lane + 8), buf.as_mut_ptr().add(8));
-      rgbf32_to_rgb_u16_row::<false>(&buf, rgb_out.get_unchecked_mut(lane..lane + 12), 4);
+      // Buffer is host-native f32; route via HOST_NATIVE_BE (see widen_f16x4).
+      rgbf32_to_rgb_u16_row::<HOST_NATIVE_BE>(&buf, rgb_out.get_unchecked_mut(lane..lane + 12), 4);
     }
     lane += 12;
   }
@@ -657,7 +670,12 @@ pub(crate) unsafe fn rgbf16_to_rgba_u16_row<const BE: bool>(
       widen_f16x4::<BE>(rgb_in.as_ptr().add(lane), buf.as_mut_ptr());
       widen_f16x4::<BE>(rgb_in.as_ptr().add(lane + 4), buf.as_mut_ptr().add(4));
       widen_f16x4::<BE>(rgb_in.as_ptr().add(lane + 8), buf.as_mut_ptr().add(8));
-      rgbf32_to_rgba_u16_row::<false>(&buf, rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 16), 4);
+      // Buffer is host-native f32; route via HOST_NATIVE_BE (see widen_f16x4).
+      rgbf32_to_rgba_u16_row::<HOST_NATIVE_BE>(
+        &buf,
+        rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 16),
+        4,
+      );
     }
     lane += 12;
     pix += 4;
