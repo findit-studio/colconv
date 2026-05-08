@@ -1163,6 +1163,131 @@ fn gbrapf16_sinker_le_encoded_frame_decodes_correctly() {
   }
 }
 
+/// LE-encoded byte contract regression for [`Gbrpf16`] **widening path**
+/// (`with_rgb_f32`). Exercises the f16 → f32 widen step in the sinker — which
+/// must bit-normalise LE-encoded f16 plane bits before converting to f32.
+///
+/// Vacuous on LE hosts (where `to_le` is identity); on a BE host any
+/// regression that drops the bit-normalize-first step in
+/// `widen_f16_be_to_host_f32::<false>` would interpret byte-swapped bits as
+/// host-native f16 and decode to wildly wrong f32 values.
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn gbrpf16_sinker_widen_path_le_encoded_frame_decodes_correctly() {
+  let w = 16usize;
+  let h = 4usize;
+  let intended_g: Vec<half::f16> = (0..w * h)
+    .map(|i| {
+      half::f16::from_f32(match i % 4 {
+        0 => 0.5,
+        1 => 0.25,
+        2 => 0.0,
+        _ => 1.0,
+      })
+    })
+    .collect();
+  let intended_b: Vec<half::f16> = (0..w * h)
+    .map(|i| {
+      half::f16::from_f32(match i % 4 {
+        0 => 0.125,
+        1 => 0.75,
+        2 => 0.0625,
+        _ => 0.875,
+      })
+    })
+    .collect();
+  let intended_r: Vec<half::f16> = (0..w * h)
+    .map(|i| {
+      half::f16::from_f32(match i % 4 {
+        0 => 0.375,
+        1 => 0.625,
+        2 => 0.9375,
+        _ => 0.03125,
+      })
+    })
+    .collect();
+  let le_f16 = |v: &Vec<half::f16>| -> Vec<half::f16> {
+    v.iter()
+      .map(|&x| half::f16::from_bits(x.to_bits().to_le()))
+      .collect()
+  };
+  let gp = le_f16(&intended_g);
+  let bp = le_f16(&intended_b);
+  let rp = le_f16(&intended_r);
+
+  let src = Gbrpf16Frame::try_new(
+    &gp, &bp, &rp, w as u32, h as u32, w as u32, w as u32, w as u32,
+  )
+  .unwrap();
+
+  let mut rgb_f32 = std::vec![0.0f32; w * h * 3];
+  let mut sink = MixedSinker::<Gbrpf16>::new(w, h)
+    .with_rgb_f32(&mut rgb_f32)
+    .unwrap();
+  gbrpf16_to(&src, &mut sink).unwrap();
+
+  for i in 0..(w * h) {
+    assert_eq!(rgb_f32[i * 3], intended_r[i].to_f32(), "R idx {i}");
+    assert_eq!(rgb_f32[i * 3 + 1], intended_g[i].to_f32(), "G idx {i}");
+    assert_eq!(rgb_f32[i * 3 + 2], intended_b[i].to_f32(), "B idx {i}");
+  }
+}
+
+/// LE-encoded byte contract regression for [`Gbrapf16`] **widening path**
+/// (`with_rgba_f32`, including the α plane). Exercises the four-plane f16 →
+/// f32 widen step — same bit-normalise-first contract as the no-α variant.
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn gbrapf16_sinker_widen_path_le_encoded_frame_decodes_correctly() {
+  let w = 16usize;
+  let h = 4usize;
+  let intended_g: Vec<half::f16> = (0..w * h)
+    .map(|i| half::f16::from_f32(0.1 + (i as f32) * 0.001))
+    .collect();
+  let intended_b: Vec<half::f16> = (0..w * h)
+    .map(|i| half::f16::from_f32(0.2 + (i as f32) * 0.002))
+    .collect();
+  let intended_r: Vec<half::f16> = (0..w * h)
+    .map(|i| half::f16::from_f32(0.3 + (i as f32) * 0.003))
+    .collect();
+  let intended_a: Vec<half::f16> = (0..w * h)
+    .map(|i| half::f16::from_f32(0.5 + (i as f32) * 0.001))
+    .collect();
+  let le_f16 = |v: &Vec<half::f16>| -> Vec<half::f16> {
+    v.iter()
+      .map(|&x| half::f16::from_bits(x.to_bits().to_le()))
+      .collect()
+  };
+  let gp = le_f16(&intended_g);
+  let bp = le_f16(&intended_b);
+  let rp = le_f16(&intended_r);
+  let ap = le_f16(&intended_a);
+
+  let src = Gbrapf16Frame::try_new(
+    &gp, &bp, &rp, &ap, w as u32, h as u32, w as u32, w as u32, w as u32, w as u32,
+  )
+  .unwrap();
+
+  let mut rgba_f32 = std::vec![0.0f32; w * h * 4];
+  let mut sink = MixedSinker::<Gbrapf16>::new(w, h)
+    .with_rgba_f32(&mut rgba_f32)
+    .unwrap();
+  gbrapf16_to(&src, &mut sink).unwrap();
+
+  for i in 0..(w * h) {
+    assert_eq!(rgba_f32[i * 4], intended_r[i].to_f32(), "R idx {i}");
+    assert_eq!(rgba_f32[i * 4 + 1], intended_g[i].to_f32(), "G idx {i}");
+    assert_eq!(rgba_f32[i * 4 + 2], intended_b[i].to_f32(), "B idx {i}");
+    assert_eq!(rgba_f32[i * 4 + 3], intended_a[i].to_f32(), "A idx {i}");
+  }
+}
+
 // ---- 32-bit overflow guards ------------------------------------------------
 //
 // Feeding width = usize::MAX / 2 + 1 to a dispatcher must panic with a message

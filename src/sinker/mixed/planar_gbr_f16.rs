@@ -51,7 +51,8 @@ use crate::{
     gbrapf32_to_rgba_u16_row, gbrpf16_to_rgb_f16_row, gbrpf16_to_rgb_row, gbrpf16_to_rgba_f16_row,
     gbrpf16_to_rgba_row, gbrpf32_to_hsv_row, gbrpf32_to_luma_row, gbrpf32_to_luma_u16_row,
     gbrpf32_to_rgb_f32_row, gbrpf32_to_rgb_u16_row, gbrpf32_to_rgba_f32_row,
-    gbrpf32_to_rgba_u16_row, scalar::alpha_extract::copy_alpha_plane_f32_to_u8,
+    gbrpf32_to_rgba_u16_row,
+    scalar::{alpha_extract::copy_alpha_plane_f32_to_u8, planar_gbr_f16::widen_f16_be_to_host_f32},
   },
   yuv::{Gbrapf16, Gbrapf16Row, Gbrapf16Sink, Gbrpf16, Gbrpf16Row, Gbrpf16Sink},
 };
@@ -63,34 +64,6 @@ const GBR_F16_FULL_RANGE: bool = true;
 
 // Chunk size for the inline f16→f32 widening scratch arrays (stack-allocated).
 const WIDEN_CHUNK: usize = 64;
-
-/// Widen `width` `half::f16` values from `src` into `dst` (f32 elements).
-///
-/// The source slice is `&[half::f16]` from a [`Gbrpf16Frame`] /
-/// [`Gbrapf16Frame`] plane — i.e. **LE-encoded bytes** reinterpreted as
-/// `half::f16` (per the FFmpeg `*LE` contract). On a little-endian host
-/// LE bytes _are_ host-native, so `half::f16::to_f32` interprets the bits
-/// correctly and the downstream `gbrpf32_to_*` kernel — invoked with
-/// `BE = false` — sees host-native f32 (its `u32::from_le` is a no-op on
-/// LE host) → correct.
-///
-/// On a big-endian host this helper would mis-interpret the LE-encoded
-/// bits as host-native (a separate bug from the sinker-layer routing
-/// reverted in this PR); the bit-normalising scalar helper
-/// [`crate::row::scalar::widen_f16_be_to_host_f32`] is the correct pattern
-/// for cross-endian widen-then-convert chains and is what the per-arch
-/// SIMD backends use. Wiring this sinker-local helper to that bit-
-/// normalising version is left as a future improvement — every CI runner
-/// today is LE and exercises the correct path here.
-///
-/// [`Gbrpf16Frame`]: crate::frame::Gbrpf16Frame
-/// [`Gbrapf16Frame`]: crate::frame::Gbrapf16Frame
-#[cfg_attr(not(tarpaulin), inline(always))]
-fn widen_f16_to_f32(src: &[half::f16], dst: &mut [f32], count: usize) {
-  for i in 0..count {
-    dst[i] = src[i].to_f32();
-  }
-}
 
 // ---- Gbrpf16 accessor impl block ----------------------------------------
 
@@ -365,9 +338,12 @@ impl PixelSink for MixedSinker<'_, Gbrpf16> {
       let mut offset = 0;
       while offset < w {
         let n = (w - offset).min(WIDEN_CHUNK);
-        widen_f16_to_f32(&g_in[offset..], &mut gf_chunk, n);
-        widen_f16_to_f32(&b_in[offset..], &mut bf_chunk, n);
-        widen_f16_to_f32(&r_in[offset..], &mut rf_chunk, n);
+        // Bit-normalise LE-encoded f16 plane bits → host-native f32 so the
+        // downstream `gbrpf32_to_*` kernel (invoked with `BE = false`) sees
+        // host-native f32 on every host. See the canonical helper's docs.
+        widen_f16_be_to_host_f32::<false>(g_in, offset, &mut gf_chunk, n);
+        widen_f16_be_to_host_f32::<false>(b_in, offset, &mut bf_chunk, n);
+        widen_f16_be_to_host_f32::<false>(r_in, offset, &mut rf_chunk, n);
         let gf = &gf_chunk[..n];
         let bf = &bf_chunk[..n];
         let rf = &rf_chunk[..n];
@@ -769,10 +745,12 @@ impl PixelSink for MixedSinker<'_, Gbrapf16> {
       let mut offset = 0;
       while offset < w {
         let n = (w - offset).min(WIDEN_CHUNK);
-        widen_f16_to_f32(&g_in[offset..], &mut gf_chunk, n);
-        widen_f16_to_f32(&b_in[offset..], &mut bf_chunk, n);
-        widen_f16_to_f32(&r_in[offset..], &mut rf_chunk, n);
-        widen_f16_to_f32(&a_in[offset..], &mut af_chunk, n);
+        // Bit-normalise LE-encoded f16 plane bits → host-native f32 (see the
+        // canonical helper's docs); downstream kernel uses `BE = false`.
+        widen_f16_be_to_host_f32::<false>(g_in, offset, &mut gf_chunk, n);
+        widen_f16_be_to_host_f32::<false>(b_in, offset, &mut bf_chunk, n);
+        widen_f16_be_to_host_f32::<false>(r_in, offset, &mut rf_chunk, n);
+        widen_f16_be_to_host_f32::<false>(a_in, offset, &mut af_chunk, n);
         let gf = &gf_chunk[..n];
         let bf = &bf_chunk[..n];
         let rf = &rf_chunk[..n];
@@ -915,7 +893,9 @@ fn widen_and_scatter_f16_alpha_to_u8(alpha_f16: &[half::f16], rgba_out: &mut [u8
   let mut offset = 0;
   while offset < width {
     let n = (width - offset).min(WIDEN_CHUNK);
-    widen_f16_to_f32(&alpha_f16[offset..], &mut af_chunk, n);
+    // Bit-normalise LE-encoded f16 α bits → host-native f32 before clamping
+    // and scaling to u8 — correct on both LE and BE hosts.
+    widen_f16_be_to_host_f32::<false>(alpha_f16, offset, &mut af_chunk, n);
     copy_alpha_plane_f32_to_u8(&af_chunk[..n], &mut rgba_out[offset * 4..], n);
     offset += n;
   }
