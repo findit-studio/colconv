@@ -79,6 +79,8 @@ mod v30x;
 mod v410;
 mod vuya;
 mod xv36;
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) mod xyz12;
 mod y216;
 mod y2xx;
 mod y_plane_to_luma_u16;
