@@ -1397,6 +1397,274 @@ fn gbrpf16_sinker_widen_path_u16_and_u8_le_encoded_frame_decodes_correctly() {
   );
 }
 
+// ---- LE-encoded Strategy A+ alpha-patch regressions (codex 3rd-pass) ------
+//
+// The `copy_alpha_plane_f32_to_u8` (and `copy_alpha_plane_f32_to_u16`,
+// `copy_alpha_plane_f32`) helper used to read each f32 α sample as
+// host-native, which silently corrupted the α slot on BE hosts processing
+// the LE-encoded `Gbrapf32Frame` α plane (the byte-swapped bits clamp to
+// near-zero or near-one, producing α = 0 or 255 regardless of intent).
+// Same bug class as the u16 alpha-patch helpers fixed in cf26058.
+//
+// These regressions trigger the **Strategy A+ combo path** (`with_rgb` +
+// `with_rgba`, `with_rgb_u16` + `with_rgba_u16`) on a Frame whose α plane
+// is built from explicit LE-encoded f32 bit-patterns. On a LE host the
+// `to_le` on f32 bits is identity so the test reduces to the original
+// semantics; on a BE host the kernel without `from_le` would clamp
+// byte-swapped garbage and the assertion would fail. The non-multiple-of-
+// SIMD widths (15, 17) exercise scalar-tail correctness in addition to
+// any vectorized body.
+
+/// Codex 3rd-pass regression: Gbrapf32 Strategy A+ (`with_rgb` + `with_rgba`)
+/// on a LE-encoded f32 α plane must reproduce standalone `with_rgba` output
+/// byte-for-byte. The standalone path uses `gbrapf32_to_rgba_row::<false>`
+/// (already endian-aware), so any deviation indicates the Strategy A+
+/// alpha-patch path corrupted the α plane.
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn gbrapf32_strategy_a_plus_le_encoded_frame_alpha_decodes_correctly() {
+  // 15 is non-multiple-of-{4,8,16} — exercises scalar tail in every backend.
+  let w = 15usize;
+  let h = 3usize;
+  let intended_g: Vec<f32> = (0..w * h).map(|i| 0.10 + (i as f32) * 0.001).collect();
+  let intended_b: Vec<f32> = (0..w * h).map(|i| 0.20 + (i as f32) * 0.002).collect();
+  let intended_r: Vec<f32> = (0..w * h).map(|i| 0.30 + (i as f32) * 0.003).collect();
+  // Deliberately mix in-range, boundary, > 1, and negative α to stress
+  // clamp/scale correctness *after* the bit-normalize step.
+  let intended_a: Vec<f32> = (0..w * h)
+    .map(|i| match i % 7 {
+      0 => 0.0,
+      1 => 0.5,
+      2 => 1.0,
+      3 => 1.5,
+      4 => -0.1,
+      5 => 0.123,
+      _ => 0.876,
+    })
+    .collect();
+
+  // LE-encode every plane (per the documented `*LE` Frame contract).
+  let le = |v: &Vec<f32>| -> Vec<f32> {
+    v.iter()
+      .map(|&x| f32::from_bits(x.to_bits().to_le()))
+      .collect()
+  };
+  let gp = le(&intended_g);
+  let bp = le(&intended_b);
+  let rp = le(&intended_r);
+  let ap = le(&intended_a);
+
+  let src = Gbrapf32Frame::try_new(
+    &gp, &bp, &rp, &ap, w as u32, h as u32, w as u32, w as u32, w as u32, w as u32,
+  )
+  .unwrap();
+
+  // Reference: standalone `with_rgba`.
+  let mut rgba_ref = std::vec![0u8; w * h * 4];
+  {
+    let mut sink = MixedSinker::<Gbrapf32>::new(w, h)
+      .with_rgba(&mut rgba_ref)
+      .unwrap();
+    gbrapf32_to(&src, &mut sink).unwrap();
+  }
+
+  // Strategy A+: `with_rgb` + `with_rgba` combo (alpha-patch path).
+  let mut rgb_combo = std::vec![0u8; w * h * 3];
+  let mut rgba_combo = std::vec![0u8; w * h * 4];
+  {
+    let mut sink = MixedSinker::<Gbrapf32>::new(w, h)
+      .with_rgb(&mut rgb_combo)
+      .unwrap()
+      .with_rgba(&mut rgba_combo)
+      .unwrap();
+    gbrapf32_to(&src, &mut sink).unwrap();
+  }
+
+  assert_eq!(
+    rgba_combo, rgba_ref,
+    "Gbrapf32 Strategy A+ alpha-patch must equal standalone `with_rgba`"
+  );
+}
+
+/// Codex 3rd-pass regression: Gbrapf32 Strategy A+ (`with_rgb_u16` +
+/// `with_rgba_u16`) on a LE-encoded f32 α plane. Defense-in-depth: the
+/// current sinker calls `gbrapf32_to_rgba_u16_row::<false>` directly here
+/// (no alpha-patch helper invocation), but any future routing change that
+/// switches to the alpha-patch helper must keep BE-host correctness.
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn gbrapf32_strategy_a_plus_le_encoded_u16_alpha_decodes_correctly() {
+  // 17 is non-multiple-of-{4,8,16}.
+  let w = 17usize;
+  let h = 3usize;
+  let intended_g: Vec<f32> = (0..w * h).map(|i| 0.11 + (i as f32) * 0.0011).collect();
+  let intended_b: Vec<f32> = (0..w * h).map(|i| 0.22 + (i as f32) * 0.0022).collect();
+  let intended_r: Vec<f32> = (0..w * h).map(|i| 0.33 + (i as f32) * 0.0033).collect();
+  let intended_a: Vec<f32> = (0..w * h)
+    .map(|i| match i % 5 {
+      0 => 0.0,
+      1 => 0.25,
+      2 => 1.0,
+      3 => 0.5,
+      _ => 0.75,
+    })
+    .collect();
+
+  let le = |v: &Vec<f32>| -> Vec<f32> {
+    v.iter()
+      .map(|&x| f32::from_bits(x.to_bits().to_le()))
+      .collect()
+  };
+  let gp = le(&intended_g);
+  let bp = le(&intended_b);
+  let rp = le(&intended_r);
+  let ap = le(&intended_a);
+
+  let src = Gbrapf32Frame::try_new(
+    &gp, &bp, &rp, &ap, w as u32, h as u32, w as u32, w as u32, w as u32, w as u32,
+  )
+  .unwrap();
+
+  // Reference: standalone `with_rgba_u16`.
+  let mut rgba_ref = std::vec![0u16; w * h * 4];
+  {
+    let mut sink = MixedSinker::<Gbrapf32>::new(w, h)
+      .with_rgba_u16(&mut rgba_ref)
+      .unwrap();
+    gbrapf32_to(&src, &mut sink).unwrap();
+  }
+
+  // Combo: `with_rgb_u16` + `with_rgba_u16`.
+  let mut rgb_combo = std::vec![0u16; w * h * 3];
+  let mut rgba_combo = std::vec![0u16; w * h * 4];
+  {
+    let mut sink = MixedSinker::<Gbrapf32>::new(w, h)
+      .with_rgb_u16(&mut rgb_combo)
+      .unwrap()
+      .with_rgba_u16(&mut rgba_combo)
+      .unwrap();
+    gbrapf32_to(&src, &mut sink).unwrap();
+  }
+
+  assert_eq!(
+    rgba_combo, rgba_ref,
+    "Gbrapf32 Strategy A+ rgba_u16 must equal standalone `with_rgba_u16`"
+  );
+
+  // Independently assert the α slot reflects the intended values
+  // (clamp × 65535 + 0.5). This catches a hypothetical regression where
+  // both code paths share the same bug.
+  let to_u16 = |v: f32| -> u16 { (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16 };
+  for i in 0..(w * h) {
+    assert_eq!(
+      rgba_combo[i * 4 + 3],
+      to_u16(intended_a[i]),
+      "α slot idx {i}"
+    );
+  }
+}
+
+/// Codex 3rd-pass regression: Gbrapf16 Strategy A+ (`with_rgb` + `with_rgba`)
+/// on a LE-encoded f16 α plane. This exercises the **post-widen** routing
+/// pattern in `widen_and_scatter_f16_alpha_to_u8`: the f16 α plane is
+/// widened to host-native f32 scratch via `widen_f16_be_to_host_f32::<false>`,
+/// then the alpha-patch helper must consume that scratch with
+/// `BE = HOST_NATIVE_BE` (no double byte-swap). The test compares the
+/// Strategy A+ combo output against the standalone `with_rgba` path, which
+/// uses the `gbrpf16_to_rgba_row::<false>` direct kernel + the same
+/// `widen_and_scatter_f16_alpha_to_u8` helper (both paths share the
+/// `widen_and_scatter` helper, so this test guards against the
+/// post-widen routing flag being wrong).
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn gbrapf16_strategy_a_plus_post_widen_alpha_decodes_correctly() {
+  let w = 15usize;
+  let h = 3usize;
+  let intended_g: Vec<half::f16> = (0..w * h)
+    .map(|i| half::f16::from_f32(0.10 + (i as f32) * 0.001))
+    .collect();
+  let intended_b: Vec<half::f16> = (0..w * h)
+    .map(|i| half::f16::from_f32(0.20 + (i as f32) * 0.002))
+    .collect();
+  let intended_r: Vec<half::f16> = (0..w * h)
+    .map(|i| half::f16::from_f32(0.30 + (i as f32) * 0.003))
+    .collect();
+  let intended_a: Vec<half::f16> = (0..w * h)
+    .map(|i| {
+      half::f16::from_f32(match i % 5 {
+        0 => 0.0,
+        1 => 0.5,
+        2 => 1.0,
+        3 => 0.25,
+        _ => 0.75,
+      })
+    })
+    .collect();
+
+  let le_f16 = |v: &Vec<half::f16>| -> Vec<half::f16> {
+    v.iter()
+      .map(|&x| half::f16::from_bits(x.to_bits().to_le()))
+      .collect()
+  };
+  let gp = le_f16(&intended_g);
+  let bp = le_f16(&intended_b);
+  let rp = le_f16(&intended_r);
+  let ap = le_f16(&intended_a);
+
+  let src = Gbrapf16Frame::try_new(
+    &gp, &bp, &rp, &ap, w as u32, h as u32, w as u32, w as u32, w as u32, w as u32,
+  )
+  .unwrap();
+
+  // Reference: standalone `with_rgba` (uses `gbrpf16_to_rgba_row` then
+  // `widen_and_scatter_f16_alpha_to_u8` → exercises the post-widen helper
+  // as well, with the same routing as the combo path).
+  let mut rgba_ref = std::vec![0u8; w * h * 4];
+  {
+    let mut sink = MixedSinker::<Gbrapf16>::new(w, h)
+      .with_rgba(&mut rgba_ref)
+      .unwrap();
+    gbrapf16_to(&src, &mut sink).unwrap();
+  }
+
+  // Strategy A+: `with_rgb` + `with_rgba`.
+  let mut rgb_combo = std::vec![0u8; w * h * 3];
+  let mut rgba_combo = std::vec![0u8; w * h * 4];
+  {
+    let mut sink = MixedSinker::<Gbrapf16>::new(w, h)
+      .with_rgb(&mut rgb_combo)
+      .unwrap()
+      .with_rgba(&mut rgba_combo)
+      .unwrap();
+    gbrapf16_to(&src, &mut sink).unwrap();
+  }
+
+  assert_eq!(
+    rgba_combo, rgba_ref,
+    "Gbrapf16 Strategy A+ post-widen alpha-patch must equal standalone `with_rgba`"
+  );
+
+  // Independently assert α slot reflects the intended values
+  // (widen → clamp × 255 + 0.5).
+  let to_u8 = |v: f32| -> u8 { (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8 };
+  for i in 0..(w * h) {
+    assert_eq!(
+      rgba_combo[i * 4 + 3],
+      to_u8(intended_a[i].to_f32()),
+      "α slot idx {i}"
+    );
+  }
+}
+
 // ---- 32-bit overflow guards ------------------------------------------------
 //
 // Feeding width = usize::MAX / 2 + 1 to a dispatcher must panic with a message

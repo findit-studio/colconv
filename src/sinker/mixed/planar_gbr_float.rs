@@ -809,10 +809,20 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
 
     // Strategy A+: expand RGB → RGBA (0xFF stub), then overwrite α from
     // the source f32 α plane (clamped × 255 → u8).
+    //
+    // `BE = false`: `a_in` is the **direct** Gbrapf32Frame α plane, which
+    // is LE-encoded f32 per the Phase-1 unified Frame contract. The helper
+    // bit-normalises each f32 to host-native order before clamp/scale, so
+    // the conversion compiles to a no-op on LE hosts and a `swap_bytes` on
+    // BE hosts (e.g., s390x). Without this BE hosts would clamp byte-
+    // swapped garbage and emit α = 0 / 255 regardless of intent. Distinct
+    // from the **post-widen** routing in `planar_gbr_f16.rs`
+    // (`widen_and_scatter_f16_alpha_to_u8`), which feeds host-native f32
+    // scratch into the same helper with `BE = HOST_NATIVE_BE`.
     if let Some(buf) = rgba.as_deref_mut() {
       let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
       expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
-      copy_alpha_plane_f32_to_u8(a_in, rgba_row, w);
+      copy_alpha_plane_f32_to_u8::<false>(a_in, rgba_row, w);
     }
 
     Ok(())

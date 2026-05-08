@@ -198,16 +198,34 @@ pub(crate) fn gbrapf16_to_rgba_f16_row<const BE: bool>(
 /// Only slot 3 of every 4-element tuple is written; R, G, B slots are
 /// untouched. Lossless — HDR, NaN, and Inf in the α plane are preserved
 /// bit-exact.
+///
+/// `BE` selects the **byte order** of the encoded source α plane
+/// (`false` = LE on disk/wire, e.g. `AV_PIX_FMT_GBRAPF16LE` per the
+/// `Gbrapf16Frame` contract; `true` = BE on disk/wire). Each raw f16 is
+/// bit-normalised to host-native order via `u16::from_le` / `u16::from_be`
+/// BEFORE the slot-3 write so the output buffer always carries host-native
+/// `half::f16` (matching the rest of the f16 row kernels). Without this a
+/// BE host processing the LE-encoded Frame would emit byte-reversed α bits.
 // Only called from the `mod tests` block which is gated on `feature = "std"`.
 // Under `cargo test --no-default-features` the test module is compiled out,
 // leaving the function without callers; suppress the resulting lint there.
 #[cfg_attr(not(feature = "std"), expect(dead_code))]
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn copy_alpha_plane_f16(alpha: &[half::f16], rgba_out: &mut [half::f16], width: usize) {
+pub(crate) fn copy_alpha_plane_f16<const BE: bool>(
+  alpha: &[half::f16],
+  rgba_out: &mut [half::f16],
+  width: usize,
+) {
   debug_assert!(alpha.len() >= width, "alpha plane too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   for n in 0..width {
-    rgba_out[n * 4 + 3] = alpha[n];
+    let raw = alpha[n].to_bits();
+    let host_bits = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
+    rgba_out[n * 4 + 3] = half::f16::from_bits(host_bits);
   }
 }
 
@@ -414,11 +432,12 @@ mod tests {
     miri,
     ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
   )]
+  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_f16_only_writes_alpha_slot() {
     let alpha = vec![half::f16::from_f32(0.7), half::f16::from_f32(0.3)];
     let sentinel = half::f16::from_f32(0.1);
     let mut rgba = vec![sentinel; 8];
-    copy_alpha_plane_f16(&alpha, &mut rgba, 2);
+    copy_alpha_plane_f16::<false>(&alpha, &mut rgba, 2);
     // Only slot 3 written; R, G, B slots (0, 1, 2) must be untouched.
     assert_eq!(rgba[0], sentinel, "R slot 0 untouched");
     assert_eq!(rgba[1], sentinel, "G slot 0 untouched");
@@ -428,5 +447,35 @@ mod tests {
     assert_eq!(rgba[5], sentinel, "G slot 1 untouched");
     assert_eq!(rgba[6], sentinel, "B slot 1 untouched");
     assert_eq!(rgba[7], half::f16::from_f32(0.3), "A slot 1");
+  }
+
+  /// BE parity for `copy_alpha_plane_f16`: byte-swapping the bits of every
+  /// f16 in the source α plane and toggling `BE` must produce identical
+  /// output. Mirrors the f32 alpha-patch endian-aware fix.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
+  )]
+  fn copy_alpha_plane_f16_be_parity_with_swapped_buffer() {
+    let alpha_le = vec![
+      half::f16::from_f32(0.0),
+      half::f16::from_f32(0.25),
+      half::f16::from_f32(0.5),
+      half::f16::from_f32(1.0),
+      half::f16::from_f32(2.5),
+      half::f16::from_f32(-1.0),
+    ];
+    let alpha_be = be_encode_f16(&alpha_le);
+    let mut rgba_le = vec![half::f16::ZERO; 24];
+    let mut rgba_be = vec![half::f16::ZERO; 24];
+    copy_alpha_plane_f16::<false>(&alpha_le, &mut rgba_le, 6);
+    copy_alpha_plane_f16::<true>(&alpha_be, &mut rgba_be, 6);
+    let bits_le: std::vec::Vec<u16> = rgba_le.iter().map(|v| v.to_bits()).collect();
+    let bits_be: std::vec::Vec<u16> = rgba_be.iter().map(|v| v.to_bits()).collect();
+    assert_eq!(
+      bits_le, bits_be,
+      "BE flag + bit-swapped buffer must match LE path bit-for-bit"
+    );
   }
 }

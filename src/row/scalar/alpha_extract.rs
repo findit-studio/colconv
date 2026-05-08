@@ -296,13 +296,42 @@ pub(crate) fn copy_alpha_ya_u16<const BE: bool>(
 /// Each α sample is clamped to `[0.0, 1.0]`, multiplied by 255, and rounded
 /// with round-half-up (`+ 0.5` then truncate). Only slot 3 of every 4-element
 /// tuple is written; R, G, B slots are untouched.
+///
+/// `BE` selects the **byte order** of the encoded source α plane:
+/// `false` = LE on disk/wire (e.g., `AV_PIX_FMT_GBRAPF32LE` per the
+/// `Gbrapf32Frame` contract; this also matches the case where the f32
+/// scratch is already host-native and the host is little-endian);
+/// `true` = BE on disk/wire (or host-native scratch on a BE host). Each
+/// raw f32 is bit-normalised to host-native order via
+/// `f32::from_bits(u32::from_le(bits))` (or `from_be`) BEFORE the clamp /
+/// scale / round-half-up. Without this a BE host (e.g., s390x) processing
+/// the LE-encoded Frame would clamp byte-swapped garbage values, typically
+/// producing α = 0 or α = 255 regardless of intent. Mirrors the
+/// `copy_alpha_plane_u16_to_u8::<BITS, BE>` endian pattern.
+///
+/// Routing pattern at the sinker layer:
+/// - **Direct-Frame paths** (e.g., `Gbrapf32Frame` → α plane consumed directly)
+///   pass `BE = false` (data is LE-encoded per the unified Frame contract).
+/// - **Post-widen paths** (e.g., `Gbrapf16Frame` widened-to-f32 scratch) pass
+///   `BE = HOST_NATIVE_BE` (scratch is host-native f32 after widen).
 // Not yet consumed by any sinker (Task 8 wires MixedSinker impls).
 #[allow(dead_code)]
-pub(crate) fn copy_alpha_plane_f32_to_u8(alpha: &[f32], rgba_out: &mut [u8], width: usize) {
+pub(crate) fn copy_alpha_plane_f32_to_u8<const BE: bool>(
+  alpha: &[f32],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(alpha.len() >= width, "alpha plane too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   for n in 0..width {
-    rgba_out[n * 4 + 3] = (alpha[n].clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    let bits = alpha[n].to_bits();
+    let host_bits = if BE {
+      u32::from_be(bits)
+    } else {
+      u32::from_le(bits)
+    };
+    let v = f32::from_bits(host_bits);
+    rgba_out[n * 4 + 3] = (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
   }
 }
 
@@ -310,13 +339,28 @@ pub(crate) fn copy_alpha_plane_f32_to_u8(alpha: &[f32], rgba_out: &mut [u8], wid
 ///
 /// Each α sample is clamped to `[0.0, 1.0]`, multiplied by 65535, and rounded
 /// with round-half-up. Only slot 3 of every 4-element tuple is written.
+///
+/// `BE` selects the **byte order** of the encoded source α plane.
+/// See [`copy_alpha_plane_f32_to_u8`] for the full rationale and the
+/// direct-Frame vs post-widen routing pattern.
 // Not yet consumed by any sinker (Task 8 wires MixedSinker impls).
 #[allow(dead_code)]
-pub(crate) fn copy_alpha_plane_f32_to_u16(alpha: &[f32], rgba_out: &mut [u16], width: usize) {
+pub(crate) fn copy_alpha_plane_f32_to_u16<const BE: bool>(
+  alpha: &[f32],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(alpha.len() >= width, "alpha plane too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   for n in 0..width {
-    rgba_out[n * 4 + 3] = (alpha[n].clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
+    let bits = alpha[n].to_bits();
+    let host_bits = if BE {
+      u32::from_be(bits)
+    } else {
+      u32::from_le(bits)
+    };
+    let v = f32::from_bits(host_bits);
+    rgba_out[n * 4 + 3] = (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
   }
 }
 
@@ -325,13 +369,30 @@ pub(crate) fn copy_alpha_plane_f32_to_u16(alpha: &[f32], rgba_out: &mut [u16], w
 ///
 /// No clamping, no rounding — HDR values, NaN, and Inf in the α plane are
 /// preserved bit-exact. Only slot 3 of every 4-element tuple is written.
+/// The output α is always written in **host-native** byte order (the
+/// downstream consumer of `&[f32]` expects host-native floats); this helper's
+/// `BE` only describes the **input** plane.
+///
+/// `BE` selects the **byte order** of the encoded source α plane.
+/// See [`copy_alpha_plane_f32_to_u8`] for the full rationale and the
+/// direct-Frame vs post-widen routing pattern.
 // Not yet consumed by any sinker (Task 8 wires MixedSinker impls).
 #[allow(dead_code)]
-pub(crate) fn copy_alpha_plane_f32(alpha: &[f32], rgba_out: &mut [f32], width: usize) {
+pub(crate) fn copy_alpha_plane_f32<const BE: bool>(
+  alpha: &[f32],
+  rgba_out: &mut [f32],
+  width: usize,
+) {
   debug_assert!(alpha.len() >= width, "alpha plane too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   for n in 0..width {
-    rgba_out[n * 4 + 3] = alpha[n];
+    let bits = alpha[n].to_bits();
+    let host_bits = if BE {
+      u32::from_be(bits)
+    } else {
+      u32::from_le(bits)
+    };
+    rgba_out[n * 4 + 3] = f32::from_bits(host_bits);
   }
 }
 
@@ -589,12 +650,18 @@ mod tests {
     );
   }
 
+  /// On a LE host, `BE = false` makes the bit-normalize a no-op, so passing
+  /// host-native `f32` literals as if they were already LE-encoded reproduces
+  /// the original (pre-endian-aware) clamp+scale semantics. BE-host scalar
+  /// correctness is locked down by the `*_be_parity_with_swapped_buffer`
+  /// tests below.
   #[test]
+  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_f32_to_u8_clamps_and_scales() {
     // Values [0.0, 0.5, 1.0, 1.5, -0.1] → [0, 128, 255, 255, 0] in slot 3.
     let alpha = vec![0.0f32, 0.5, 1.0, 1.5, -0.1];
     let mut rgba = vec![1u8; 20];
-    copy_alpha_plane_f32_to_u8(&alpha, &mut rgba, 5);
+    copy_alpha_plane_f32_to_u8::<false>(&alpha, &mut rgba, 5);
     // R, G, B slots (0, 1, 2) must be untouched; slot 3 has the alpha.
     assert_eq!(rgba[3], 0, "alpha[0]=0.0 → 0");
     assert_eq!(rgba[7], 128, "alpha[1]=0.5 → 128");
@@ -608,11 +675,12 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_f32_to_u16_clamps_and_scales() {
     // Values [0.0, 0.5, 1.0, 1.5, -0.1] → [0, 32768, 65535, 65535, 0] in slot 3.
     let alpha = vec![0.0f32, 0.5, 1.0, 1.5, -0.1];
     let mut rgba = vec![1u16; 20];
-    copy_alpha_plane_f32_to_u16(&alpha, &mut rgba, 5);
+    copy_alpha_plane_f32_to_u16::<false>(&alpha, &mut rgba, 5);
     assert_eq!(rgba[3], 0, "alpha[0]=0.0 → 0");
     assert_eq!(rgba[7], 32768, "alpha[1]=0.5 → 32768");
     assert_eq!(rgba[11], 65535, "alpha[2]=1.0 → 65535");
@@ -625,11 +693,12 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_f32_lossless_passthrough() {
     // HDR (2.5), NaN, Inf, negative all preserved bit-exact.
     let alpha = vec![2.5f32, f32::NAN, f32::INFINITY, -1.0];
     let mut rgba = vec![0.0f32; 16];
-    copy_alpha_plane_f32(&alpha, &mut rgba, 4);
+    copy_alpha_plane_f32::<false>(&alpha, &mut rgba, 4);
     assert_eq!(rgba[3], 2.5, "HDR 2.5 preserved");
     assert!(rgba[7].is_nan(), "NaN preserved");
     assert!(rgba[11].is_infinite() && rgba[11] > 0.0, "+Inf preserved");
@@ -638,6 +707,71 @@ mod tests {
     assert_eq!(rgba[0], 0.0);
     assert_eq!(rgba[1], 0.0);
     assert_eq!(rgba[2], 0.0);
+  }
+
+  /// BE parity for Gbrapf32 → u8 RGBA: byte-swapping the bits of every
+  /// f32 in the source α plane and toggling `BE` must produce identical
+  /// output. Locks down the codex 3rd-pass finding where a BE host
+  /// processing the LE-encoded `Gbrapf32Frame` would clamp byte-swapped
+  /// garbage values (typical result: α = 0 or α = 255 regardless of intent).
+  #[test]
+  fn copy_alpha_plane_f32_to_u8_be_parity_with_swapped_buffer() {
+    let alpha_le: std::vec::Vec<f32> = std::vec![0.0f32, 0.25, 0.5, 0.75, 1.0, 1.5, -0.1, 0.123];
+    let alpha_be: std::vec::Vec<f32> = alpha_le
+      .iter()
+      .map(|v| f32::from_bits(v.to_bits().swap_bytes()))
+      .collect();
+    let mut rgba_le = std::vec![1u8; 32];
+    let mut rgba_be = std::vec![1u8; 32];
+    copy_alpha_plane_f32_to_u8::<false>(&alpha_le, &mut rgba_le, 8);
+    copy_alpha_plane_f32_to_u8::<true>(&alpha_be, &mut rgba_be, 8);
+    assert_eq!(
+      rgba_le, rgba_be,
+      "BE flag + bit-swapped buffer must match LE path"
+    );
+  }
+
+  /// BE parity for Gbrapf32 → u16 RGBA.
+  #[test]
+  fn copy_alpha_plane_f32_to_u16_be_parity_with_swapped_buffer() {
+    let alpha_le: std::vec::Vec<f32> = std::vec![0.0f32, 0.25, 0.5, 0.75, 1.0, 1.5, -0.1, 0.123];
+    let alpha_be: std::vec::Vec<f32> = alpha_le
+      .iter()
+      .map(|v| f32::from_bits(v.to_bits().swap_bytes()))
+      .collect();
+    let mut rgba_le = std::vec![7u16; 32];
+    let mut rgba_be = std::vec![7u16; 32];
+    copy_alpha_plane_f32_to_u16::<false>(&alpha_le, &mut rgba_le, 8);
+    copy_alpha_plane_f32_to_u16::<true>(&alpha_be, &mut rgba_be, 8);
+    assert_eq!(
+      rgba_le, rgba_be,
+      "BE flag + bit-swapped buffer must match LE path"
+    );
+  }
+
+  /// BE parity for Gbrapf32 → f32 RGBA (lossless α pass-through). The
+  /// output α must equal the host-native f32 bit-pattern of the LE source
+  /// regardless of the host's byte order. NaN bit-patterns may differ
+  /// across hardware after a `from_bits → to_bits` round-trip, so we
+  /// compare on the bit representation of finite, non-NaN samples only.
+  #[test]
+  fn copy_alpha_plane_f32_be_parity_with_swapped_buffer() {
+    let alpha_le: std::vec::Vec<f32> =
+      std::vec![0.0f32, 0.25, 0.5, 0.75, 1.0, 2.5, -1.0, f32::INFINITY];
+    let alpha_be: std::vec::Vec<f32> = alpha_le
+      .iter()
+      .map(|v| f32::from_bits(v.to_bits().swap_bytes()))
+      .collect();
+    let mut rgba_le = std::vec![0.0f32; 32];
+    let mut rgba_be = std::vec![0.0f32; 32];
+    copy_alpha_plane_f32::<false>(&alpha_le, &mut rgba_le, 8);
+    copy_alpha_plane_f32::<true>(&alpha_be, &mut rgba_be, 8);
+    let bits_le: std::vec::Vec<u32> = rgba_le.iter().map(|v| v.to_bits()).collect();
+    let bits_be: std::vec::Vec<u32> = rgba_be.iter().map(|v| v.to_bits()).collect();
+    assert_eq!(
+      bits_le, bits_be,
+      "BE flag + bit-swapped buffer must match LE path bit-for-bit"
+    );
   }
 
   // ---- copy_alpha_packed_u16x4_to_u8_at_3 / copy_alpha_packed_u16x4_at_3 --
