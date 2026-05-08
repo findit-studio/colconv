@@ -53,6 +53,36 @@ use crate::{
 const GBR_FLOAT_LUMA_MATRIX: ColorMatrix = ColorMatrix::Bt709;
 const GBR_FLOAT_FULL_RANGE: bool = true;
 
+/// `BE` value that makes the `gbrpf32_to_*` / `gbrapf32_to_*` row dispatchers
+/// treat their input as **host-native** (a no-op byte-swap).
+///
+/// [`crate::frame::Gbrpf32Frame`] / [`crate::frame::Gbrapf32Frame`] expose
+/// `&[f32]` plane rows in **host-native** layout — the API contract is that
+/// the caller hands us already-decoded floats. The kernel `BE` parameter,
+/// however, names the **encoded** byte order (so `BE = false` means "decode
+/// LE-encoded bytes" via `u32::from_le`). On a LE host the host-native layout
+/// is LE, so `BE = false` is correct; on a BE host the host-native layout is
+/// BE, so we must request `BE = true` to make `u32::from_be` no-op the swap.
+/// Without this routing the loaders would byte-swap an already-decoded host-
+/// native `f32` on BE hosts, corrupting every output path (codex PR #84
+/// Finding 2).
+///
+/// This is the **sinker-layer** complement to the SIMD-backend-internal
+/// `HOST_NATIVE_BE` introduced for the f16→f32 widen-then-convert paths in
+/// `c3a6478` and the `Rgbf32` sinker fix in `dcf40a3`. Same truth table,
+/// different layer:
+///
+///   • LE host: `HOST_NATIVE_BE = false` → `from_le` (no-op on LE) → correct.
+///   • BE host: `HOST_NATIVE_BE = true`  → `from_be` (no-op on BE) → correct.
+///
+/// The α-plane scatter (Strategy A+ / standalone-RGBA) consumes the host-
+/// native `&[f32]` α plane via `copy_alpha_plane_f32_to_u8`, which is endian-
+/// agnostic — there's no BE branching needed for the α path because it does
+/// not byte-load through `from_le`/`from_be`. Mix-mode corruption (LE-decoded
+/// RGB + host-native α) is therefore eliminated by routing the RGB chain via
+/// `HOST_NATIVE_BE`.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 // ---- Gbrpf32 accessor impl block ----------------------------------------
 
 impl<'a> MixedSinker<'a, Gbrpf32> {
@@ -291,7 +321,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
     if let Some(buf) = self.rgb_f32.as_deref_mut() {
       let start = one_plane_start * 3;
       let end = one_plane_end * 3;
-      gbrpf32_to_rgb_f32_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
+      gbrpf32_to_rgb_f32_row::<HOST_NATIVE_BE>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     if let Some(buf) = self.rgba_f32.as_deref_mut() {
@@ -303,7 +333,14 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
           height: h,
           channels: 4,
         })?;
-      gbrpf32_to_rgba_f32_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
+      gbrpf32_to_rgba_f32_row::<HOST_NATIVE_BE>(
+        g_in,
+        b_in,
+        r_in,
+        &mut buf[start..end],
+        w,
+        use_simd,
+      );
     }
 
     // ---- f16 narrowing (independent of integer paths) --------------------
@@ -311,7 +348,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
     if let Some(buf) = self.rgb_f16.as_deref_mut() {
       let start = one_plane_start * 3;
       let end = one_plane_end * 3;
-      gbrpf32_to_rgb_f16_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
+      gbrpf32_to_rgb_f16_row::<HOST_NATIVE_BE>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     if let Some(buf) = self.rgba_f16.as_deref_mut() {
@@ -323,7 +360,14 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
           height: h,
           channels: 4,
         })?;
-      gbrpf32_to_rgba_f16_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
+      gbrpf32_to_rgba_f16_row::<HOST_NATIVE_BE>(
+        g_in,
+        b_in,
+        r_in,
+        &mut buf[start..end],
+        w,
+        use_simd,
+      );
     }
 
     // ---- u16 RGB / RGBA path (direct float → u16, no staging) -----------
@@ -331,12 +375,12 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
     if let Some(buf) = self.rgb_u16.as_deref_mut() {
       let start = one_plane_start * 3;
       let end = one_plane_end * 3;
-      gbrpf32_to_rgb_u16_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
+      gbrpf32_to_rgb_u16_row::<HOST_NATIVE_BE>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     if let Some(buf) = self.rgba_u16.as_deref_mut() {
       let rgba_row = rgba_u16_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
-      gbrpf32_to_rgba_u16_row::<false>(g_in, b_in, r_in, rgba_row, w, use_simd);
+      gbrpf32_to_rgba_u16_row::<HOST_NATIVE_BE>(g_in, b_in, r_in, rgba_row, w, use_simd);
     }
 
     // ---- u8 RGBA standalone fast path (no RGB / luma / HSV needed) -------
@@ -351,7 +395,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
     if want_rgba && !need_u8_rgb {
       let rgba_buf = self.rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      gbrpf32_to_rgba_row::<false>(g_in, b_in, r_in, rgba_row, w, use_simd);
+      gbrpf32_to_rgba_row::<HOST_NATIVE_BE>(g_in, b_in, r_in, rgba_row, w, use_simd);
       return Ok(());
     }
 
@@ -378,10 +422,10 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
       w,
       h,
     )?;
-    gbrpf32_to_rgb_row::<false>(g_in, b_in, r_in, rgb_row, w, use_simd);
+    gbrpf32_to_rgb_row::<HOST_NATIVE_BE>(g_in, b_in, r_in, rgb_row, w, use_simd);
 
     if let Some(luma) = luma.as_deref_mut() {
-      gbrpf32_to_luma_row::<false>(
+      gbrpf32_to_luma_row::<HOST_NATIVE_BE>(
         g_in,
         b_in,
         r_in,
@@ -394,7 +438,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
     }
 
     if let Some(luma_u16) = luma_u16.as_deref_mut() {
-      gbrpf32_to_luma_u16_row::<false>(
+      gbrpf32_to_luma_u16_row::<HOST_NATIVE_BE>(
         g_in,
         b_in,
         r_in,
@@ -407,7 +451,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
     }
 
     if let Some(hsv) = hsv.as_mut() {
-      gbrpf32_to_hsv_row::<false>(
+      gbrpf32_to_hsv_row::<HOST_NATIVE_BE>(
         g_in,
         b_in,
         r_in,
@@ -677,7 +721,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
     if let Some(buf) = self.rgb_f32.as_deref_mut() {
       let start = one_plane_start * 3;
       let end = one_plane_end * 3;
-      gbrpf32_to_rgb_f32_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
+      gbrpf32_to_rgb_f32_row::<HOST_NATIVE_BE>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     if let Some(buf) = self.rgba_f32.as_deref_mut() {
@@ -689,7 +733,15 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
           height: h,
           channels: 4,
         })?;
-      gbrapf32_to_rgba_f32_row::<false>(g_in, b_in, r_in, a_in, &mut buf[start..end], w, use_simd);
+      gbrapf32_to_rgba_f32_row::<HOST_NATIVE_BE>(
+        g_in,
+        b_in,
+        r_in,
+        a_in,
+        &mut buf[start..end],
+        w,
+        use_simd,
+      );
     }
 
     // ---- f16 narrowing (independent of integer paths) --------------------
@@ -697,7 +749,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
     if let Some(buf) = self.rgb_f16.as_deref_mut() {
       let start = one_plane_start * 3;
       let end = one_plane_end * 3;
-      gbrpf32_to_rgb_f16_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
+      gbrpf32_to_rgb_f16_row::<HOST_NATIVE_BE>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     if let Some(buf) = self.rgba_f16.as_deref_mut() {
@@ -709,7 +761,15 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
           height: h,
           channels: 4,
         })?;
-      gbrapf32_to_rgba_f16_row::<false>(g_in, b_in, r_in, a_in, &mut buf[start..end], w, use_simd);
+      gbrapf32_to_rgba_f16_row::<HOST_NATIVE_BE>(
+        g_in,
+        b_in,
+        r_in,
+        a_in,
+        &mut buf[start..end],
+        w,
+        use_simd,
+      );
     }
 
     // ---- u16 RGB path (direct, no staging) ------------------------------
@@ -717,14 +777,14 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
     if let Some(buf) = self.rgb_u16.as_deref_mut() {
       let start = one_plane_start * 3;
       let end = one_plane_end * 3;
-      gbrpf32_to_rgb_u16_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
+      gbrpf32_to_rgb_u16_row::<HOST_NATIVE_BE>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     // ---- u16 RGBA path (direct — source α clamped + scaled) -------------
 
     if let Some(buf) = self.rgba_u16.as_deref_mut() {
       let rgba_row = rgba_u16_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
-      gbrapf32_to_rgba_u16_row::<false>(g_in, b_in, r_in, a_in, rgba_row, w, use_simd);
+      gbrapf32_to_rgba_u16_row::<HOST_NATIVE_BE>(g_in, b_in, r_in, a_in, rgba_row, w, use_simd);
     }
 
     // ---- u8 RGBA standalone fast path ------------------------------------
@@ -739,7 +799,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
     if want_rgba && !need_u8_rgb {
       let rgba_buf = self.rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      gbrapf32_to_rgba_row::<false>(g_in, b_in, r_in, a_in, rgba_row, w, use_simd);
+      gbrapf32_to_rgba_row::<HOST_NATIVE_BE>(g_in, b_in, r_in, a_in, rgba_row, w, use_simd);
       return Ok(());
     }
 
@@ -766,10 +826,10 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
       w,
       h,
     )?;
-    gbrpf32_to_rgb_row::<false>(g_in, b_in, r_in, rgb_row, w, use_simd);
+    gbrpf32_to_rgb_row::<HOST_NATIVE_BE>(g_in, b_in, r_in, rgb_row, w, use_simd);
 
     if let Some(luma) = luma.as_deref_mut() {
-      gbrpf32_to_luma_row::<false>(
+      gbrpf32_to_luma_row::<HOST_NATIVE_BE>(
         g_in,
         b_in,
         r_in,
@@ -782,7 +842,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
     }
 
     if let Some(luma_u16) = luma_u16.as_deref_mut() {
-      gbrpf32_to_luma_u16_row::<false>(
+      gbrpf32_to_luma_u16_row::<HOST_NATIVE_BE>(
         g_in,
         b_in,
         r_in,
@@ -795,7 +855,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
     }
 
     if let Some(hsv) = hsv.as_mut() {
-      gbrpf32_to_hsv_row::<false>(
+      gbrpf32_to_hsv_row::<HOST_NATIVE_BE>(
         g_in,
         b_in,
         r_in,

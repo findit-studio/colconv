@@ -49,6 +49,69 @@ use crate::{
   },
 };
 
+/// `BE` value that makes the downstream `gbrpf32_to_*` kernels treat their
+/// `f32` scratch input as **host-native** (a no-op byte-swap). After we widen
+/// f16 → f32 via [`widen_f16_be_to_host_f32`] (which normalizes the source
+/// f16 bits per the source `BE` and produces host-native f32), the resulting
+/// scratch must be routed via `HOST_NATIVE_BE` so the downstream kernel's
+/// `from_le` / `from_be` loaders no-op the swap.
+///
+/// Truth table — [`widen_f16_be_to_host_f32::<BE>`] + downstream
+/// `gbrpf32_to_*::<HOST_NATIVE_BE>` route:
+///
+///   • LE host, `BE = false`: f16 bits `from_le`-loaded (no-op on LE) →
+///     host-native f32; downstream `HOST_NATIVE_BE = false` → kernel's
+///     `from_le` no-op on LE → correct.
+///   • LE host, `BE = true`:  f16 bits `from_be`-loaded (swap on LE) →
+///     host-native f32; downstream `HOST_NATIVE_BE = false` → kernel's
+///     `from_le` no-op on LE → correct.
+///   • BE host, `BE = false`: f16 bits `from_le`-loaded (swap on BE) →
+///     host-native f32; downstream `HOST_NATIVE_BE = true` → kernel's
+///     `from_be` no-op on BE → correct.
+///   • BE host, `BE = true`:  f16 bits `from_be`-loaded (no-op on BE) →
+///     host-native f32; downstream `HOST_NATIVE_BE = true` → kernel's
+///     `from_be` no-op on BE → correct.
+///
+/// Without this routing the f16 → f32 widen path double-byte-swaps on
+/// `BE`-source-on-LE-host (and symmetrically `LE`-source-on-BE-host),
+/// corrupting every integer / luma / HSV output (codex PR #84 Finding 1).
+/// This is the **dispatch-layer** complement of the SIMD-backend-internal
+/// `HOST_NATIVE_BE` introduced in `c3a6478` for the rgbf16 widen-then-convert
+/// paths.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
+/// Widen `n` `half::f16` values from `src[offset..offset + n]` into
+/// `dst[..n]` (f32 elements), normalizing source f16 bits **before** the
+/// f16 → f32 conversion so the resulting f32 is host-native regardless of
+/// the source `BE`.
+///
+/// `BE = true`: bytes on disk are big-endian → `u16::from_be` is a no-op on
+/// BE hosts and a byte-swap on LE hosts. `BE = false`: bytes on disk are
+/// little-endian → `u16::from_le` is a no-op on LE hosts and a byte-swap on
+/// BE hosts. Both branches go through `from_be` / `from_le` so the BE-source-
+/// on-LE-host and LE-source-on-BE-host cases are handled correctly.
+///
+/// After this widening the scratch is host-native f32; downstream callers
+/// must route the `gbrpf32_to_*` chain with `HOST_NATIVE_BE` (not `BE`) to
+/// avoid double-byte-swapping.
+#[inline(always)]
+fn widen_f16_be_to_host_f32<const BE: bool>(
+  src: &[half::f16],
+  offset: usize,
+  dst: &mut [f32],
+  n: usize,
+) {
+  for i in 0..n {
+    let raw = src[offset + i].to_bits();
+    let host_bits = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
+    dst[i] = half::f16::from_bits(host_bits).to_f32();
+  }
+}
+
 // ---- Gbrpf32 → u8 RGB -------------------------------------------------------
 
 /// Dispatch `gbrpf32_to_rgb_row`.
@@ -1137,7 +1200,8 @@ pub(crate) fn gbrpf16_to_rgb_u16_row<const BE: bool>(
       _ => {}
     }
   }
-  // Scalar fallback: widen f16 → f32 then scalar f32 kernel.
+  // Scalar fallback: widen f16 → f32 (host-native after `from_be`/`from_le`),
+  // then scalar f32 kernel routed via `HOST_NATIVE_BE` to avoid double swap.
   const CHUNK: usize = 64;
   let mut gf = [0.0f32; CHUNK];
   let mut bf = [0.0f32; CHUNK];
@@ -1145,12 +1209,16 @@ pub(crate) fn gbrpf16_to_rgb_u16_row<const BE: bool>(
   let mut offset = 0;
   while offset < width {
     let n = (width - offset).min(CHUNK);
-    for i in 0..n {
-      gf[i] = g[offset + i].to_f32();
-      bf[i] = b[offset + i].to_f32();
-      rf[i] = r[offset + i].to_f32();
-    }
-    scalar::gbrpf32_to_rgb_u16_row::<BE>(&gf[..n], &bf[..n], &rf[..n], &mut out[offset * 3..], n);
+    widen_f16_be_to_host_f32::<BE>(g, offset, &mut gf, n);
+    widen_f16_be_to_host_f32::<BE>(b, offset, &mut bf, n);
+    widen_f16_be_to_host_f32::<BE>(r, offset, &mut rf, n);
+    scalar::gbrpf32_to_rgb_u16_row::<HOST_NATIVE_BE>(
+      &gf[..n],
+      &bf[..n],
+      &rf[..n],
+      &mut out[offset * 3..],
+      n,
+    );
     offset += n;
   }
 }
@@ -1209,7 +1277,8 @@ pub(crate) fn gbrpf16_to_rgba_u16_row<const BE: bool>(
       _ => {}
     }
   }
-  // Scalar fallback: widen f16 → f32 then scalar f32 kernel.
+  // Scalar fallback: widen f16 → f32 (host-native after `from_be`/`from_le`),
+  // then scalar f32 kernel routed via `HOST_NATIVE_BE` to avoid double swap.
   const CHUNK: usize = 64;
   let mut gf = [0.0f32; CHUNK];
   let mut bf = [0.0f32; CHUNK];
@@ -1217,12 +1286,16 @@ pub(crate) fn gbrpf16_to_rgba_u16_row<const BE: bool>(
   let mut offset = 0;
   while offset < width {
     let n = (width - offset).min(CHUNK);
-    for i in 0..n {
-      gf[i] = g[offset + i].to_f32();
-      bf[i] = b[offset + i].to_f32();
-      rf[i] = r[offset + i].to_f32();
-    }
-    scalar::gbrpf32_to_rgba_u16_row::<BE>(&gf[..n], &bf[..n], &rf[..n], &mut out[offset * 4..], n);
+    widen_f16_be_to_host_f32::<BE>(g, offset, &mut gf, n);
+    widen_f16_be_to_host_f32::<BE>(b, offset, &mut bf, n);
+    widen_f16_be_to_host_f32::<BE>(r, offset, &mut rf, n);
+    scalar::gbrpf32_to_rgba_u16_row::<HOST_NATIVE_BE>(
+      &gf[..n],
+      &bf[..n],
+      &rf[..n],
+      &mut out[offset * 4..],
+      n,
+    );
     offset += n;
   }
 }
@@ -1253,7 +1326,8 @@ pub(crate) fn gbrpf16_to_rgb_row<const BE: bool>(
             // SAFETY: NEON + fp16 verified available.
             unsafe { arch::neon::gbrpf16_to_rgb_row_fp16::<BE>(g, b, r, out, width); }
           } else {
-            // NEON available but no fp16 — widen scalar, then NEON f32→u8.
+            // NEON available but no fp16 — widen scalar (host-native after
+            // `from_be`/`from_le`), then NEON f32→u8 routed via `HOST_NATIVE_BE`.
             const CHUNK: usize = 64;
             let mut gf = [0.0f32; CHUNK];
             let mut bf = [0.0f32; CHUNK];
@@ -1261,14 +1335,12 @@ pub(crate) fn gbrpf16_to_rgb_row<const BE: bool>(
             let mut offset = 0;
             while offset < width {
               let n = (width - offset).min(CHUNK);
-              for i in 0..n {
-                gf[i] = g[offset + i].to_f32();
-                bf[i] = b[offset + i].to_f32();
-                rf[i] = r[offset + i].to_f32();
-              }
+              widen_f16_be_to_host_f32::<BE>(g, offset, &mut gf, n);
+              widen_f16_be_to_host_f32::<BE>(b, offset, &mut bf, n);
+              widen_f16_be_to_host_f32::<BE>(r, offset, &mut rf, n);
               // SAFETY: NEON verified available.
               unsafe {
-                arch::neon::gbrpf32_to_rgb_row::<BE>(&gf[..n], &bf[..n], &rf[..n], &mut out[offset * 3..], n);
+                arch::neon::gbrpf32_to_rgb_row::<HOST_NATIVE_BE>(&gf[..n], &bf[..n], &rf[..n], &mut out[offset * 3..], n);
               }
               offset += n;
             }
@@ -1289,7 +1361,8 @@ pub(crate) fn gbrpf16_to_rgb_row<const BE: bool>(
             // SAFETY: AVX-512F + BW + F16C verified available.
             unsafe { arch::x86_avx512::gbrpf16_to_rgb_row_f16c::<BE>(g, b, r, out, width); }
           } else {
-            // AVX-512 available but no F16C — widen scalar, then AVX-512 f32→u8.
+            // AVX-512 available but no F16C — widen scalar (host-native after
+            // `from_be`/`from_le`), then AVX-512 f32→u8 via `HOST_NATIVE_BE`.
             const CHUNK: usize = 64;
             let mut gf = [0.0f32; CHUNK];
             let mut bf = [0.0f32; CHUNK];
@@ -1297,14 +1370,12 @@ pub(crate) fn gbrpf16_to_rgb_row<const BE: bool>(
             let mut offset = 0;
             while offset < width {
               let n = (width - offset).min(CHUNK);
-              for i in 0..n {
-                gf[i] = g[offset + i].to_f32();
-                bf[i] = b[offset + i].to_f32();
-                rf[i] = r[offset + i].to_f32();
-              }
+              widen_f16_be_to_host_f32::<BE>(g, offset, &mut gf, n);
+              widen_f16_be_to_host_f32::<BE>(b, offset, &mut bf, n);
+              widen_f16_be_to_host_f32::<BE>(r, offset, &mut rf, n);
               // SAFETY: AVX-512F + BW verified available.
               unsafe {
-                arch::x86_avx512::gbrpf32_to_rgb_row::<BE>(
+                arch::x86_avx512::gbrpf32_to_rgb_row::<HOST_NATIVE_BE>(
                   &gf[..n],
                   &bf[..n],
                   &rf[..n],
@@ -1322,7 +1393,8 @@ pub(crate) fn gbrpf16_to_rgb_row<const BE: bool>(
             // SAFETY: AVX2 + F16C verified available.
             unsafe { arch::x86_avx2::gbrpf16_to_rgb_row_f16c::<BE>(g, b, r, out, width); }
           } else {
-            // AVX2 available but no F16C — widen scalar, then AVX2 f32→u8.
+            // AVX2 available but no F16C — widen scalar (host-native after
+            // `from_be`/`from_le`), then AVX2 f32→u8 via `HOST_NATIVE_BE`.
             const CHUNK: usize = 64;
             let mut gf = [0.0f32; CHUNK];
             let mut bf = [0.0f32; CHUNK];
@@ -1330,14 +1402,12 @@ pub(crate) fn gbrpf16_to_rgb_row<const BE: bool>(
             let mut offset = 0;
             while offset < width {
               let n = (width - offset).min(CHUNK);
-              for i in 0..n {
-                gf[i] = g[offset + i].to_f32();
-                bf[i] = b[offset + i].to_f32();
-                rf[i] = r[offset + i].to_f32();
-              }
+              widen_f16_be_to_host_f32::<BE>(g, offset, &mut gf, n);
+              widen_f16_be_to_host_f32::<BE>(b, offset, &mut bf, n);
+              widen_f16_be_to_host_f32::<BE>(r, offset, &mut rf, n);
               // SAFETY: AVX2 verified available.
               unsafe {
-                arch::x86_avx2::gbrpf32_to_rgb_row::<BE>(
+                arch::x86_avx2::gbrpf32_to_rgb_row::<HOST_NATIVE_BE>(
                   &gf[..n],
                   &bf[..n],
                   &rf[..n],
@@ -1355,7 +1425,8 @@ pub(crate) fn gbrpf16_to_rgb_row<const BE: bool>(
             // SAFETY: SSE4.1 + F16C verified available.
             unsafe { arch::x86_sse41::gbrpf16_to_rgb_row_f16c::<BE>(g, b, r, out, width); }
           } else {
-            // SSE4.1 available but no F16C — widen scalar, then SSE4.1 f32→u8.
+            // SSE4.1 available but no F16C — widen scalar (host-native after
+            // `from_be`/`from_le`), then SSE4.1 f32→u8 via `HOST_NATIVE_BE`.
             const CHUNK: usize = 64;
             let mut gf = [0.0f32; CHUNK];
             let mut bf = [0.0f32; CHUNK];
@@ -1363,14 +1434,12 @@ pub(crate) fn gbrpf16_to_rgb_row<const BE: bool>(
             let mut offset = 0;
             while offset < width {
               let n = (width - offset).min(CHUNK);
-              for i in 0..n {
-                gf[i] = g[offset + i].to_f32();
-                bf[i] = b[offset + i].to_f32();
-                rf[i] = r[offset + i].to_f32();
-              }
+              widen_f16_be_to_host_f32::<BE>(g, offset, &mut gf, n);
+              widen_f16_be_to_host_f32::<BE>(b, offset, &mut bf, n);
+              widen_f16_be_to_host_f32::<BE>(r, offset, &mut rf, n);
               // SAFETY: SSE4.1 verified available.
               unsafe {
-                arch::x86_sse41::gbrpf32_to_rgb_row::<BE>(
+                arch::x86_sse41::gbrpf32_to_rgb_row::<HOST_NATIVE_BE>(
                   &gf[..n],
                   &bf[..n],
                   &rf[..n],
@@ -1387,7 +1456,8 @@ pub(crate) fn gbrpf16_to_rgb_row<const BE: bool>(
       _ => {}
     }
   }
-  // Scalar fallback: widen f16 → f32 then scalar f32 kernel.
+  // Scalar fallback: widen f16 → f32 (host-native after `from_be`/`from_le`),
+  // then scalar f32 kernel routed via `HOST_NATIVE_BE` to avoid double swap.
   const CHUNK: usize = 64;
   let mut gf = [0.0f32; CHUNK];
   let mut bf = [0.0f32; CHUNK];
@@ -1395,12 +1465,16 @@ pub(crate) fn gbrpf16_to_rgb_row<const BE: bool>(
   let mut offset = 0;
   while offset < width {
     let n = (width - offset).min(CHUNK);
-    for i in 0..n {
-      gf[i] = g[offset + i].to_f32();
-      bf[i] = b[offset + i].to_f32();
-      rf[i] = r[offset + i].to_f32();
-    }
-    scalar::gbrpf32_to_rgb_row::<BE>(&gf[..n], &bf[..n], &rf[..n], &mut out[offset * 3..], n);
+    widen_f16_be_to_host_f32::<BE>(g, offset, &mut gf, n);
+    widen_f16_be_to_host_f32::<BE>(b, offset, &mut bf, n);
+    widen_f16_be_to_host_f32::<BE>(r, offset, &mut rf, n);
+    scalar::gbrpf32_to_rgb_row::<HOST_NATIVE_BE>(
+      &gf[..n],
+      &bf[..n],
+      &rf[..n],
+      &mut out[offset * 3..],
+      n,
+    );
     offset += n;
   }
 }
@@ -1431,7 +1505,8 @@ pub(crate) fn gbrpf16_to_rgba_row<const BE: bool>(
             // SAFETY: NEON + fp16 verified available.
             unsafe { arch::neon::gbrpf16_to_rgba_row_fp16::<BE>(g, b, r, out, width); }
           } else {
-            // NEON available but no fp16 — widen scalar, then NEON f32→u8.
+            // NEON available but no fp16 — widen scalar (host-native after
+            // `from_be`/`from_le`), then NEON f32→u8 via `HOST_NATIVE_BE`.
             const CHUNK: usize = 64;
             let mut gf = [0.0f32; CHUNK];
             let mut bf = [0.0f32; CHUNK];
@@ -1439,14 +1514,12 @@ pub(crate) fn gbrpf16_to_rgba_row<const BE: bool>(
             let mut offset = 0;
             while offset < width {
               let n = (width - offset).min(CHUNK);
-              for i in 0..n {
-                gf[i] = g[offset + i].to_f32();
-                bf[i] = b[offset + i].to_f32();
-                rf[i] = r[offset + i].to_f32();
-              }
+              widen_f16_be_to_host_f32::<BE>(g, offset, &mut gf, n);
+              widen_f16_be_to_host_f32::<BE>(b, offset, &mut bf, n);
+              widen_f16_be_to_host_f32::<BE>(r, offset, &mut rf, n);
               // SAFETY: NEON verified available.
               unsafe {
-                arch::neon::gbrpf32_to_rgba_row::<BE>(
+                arch::neon::gbrpf32_to_rgba_row::<HOST_NATIVE_BE>(
                   &gf[..n],
                   &bf[..n],
                   &rf[..n],
@@ -1473,7 +1546,8 @@ pub(crate) fn gbrpf16_to_rgba_row<const BE: bool>(
             // SAFETY: AVX-512F + BW + F16C verified available.
             unsafe { arch::x86_avx512::gbrpf16_to_rgba_row_f16c::<BE>(g, b, r, out, width); }
           } else {
-            // AVX-512 available but no F16C — widen scalar, then AVX-512 f32→u8.
+            // AVX-512 available but no F16C — widen scalar (host-native after
+            // `from_be`/`from_le`), then AVX-512 f32→u8 via `HOST_NATIVE_BE`.
             const CHUNK: usize = 64;
             let mut gf = [0.0f32; CHUNK];
             let mut bf = [0.0f32; CHUNK];
@@ -1481,14 +1555,12 @@ pub(crate) fn gbrpf16_to_rgba_row<const BE: bool>(
             let mut offset = 0;
             while offset < width {
               let n = (width - offset).min(CHUNK);
-              for i in 0..n {
-                gf[i] = g[offset + i].to_f32();
-                bf[i] = b[offset + i].to_f32();
-                rf[i] = r[offset + i].to_f32();
-              }
+              widen_f16_be_to_host_f32::<BE>(g, offset, &mut gf, n);
+              widen_f16_be_to_host_f32::<BE>(b, offset, &mut bf, n);
+              widen_f16_be_to_host_f32::<BE>(r, offset, &mut rf, n);
               // SAFETY: AVX-512F + BW verified available.
               unsafe {
-                arch::x86_avx512::gbrpf32_to_rgba_row::<BE>(
+                arch::x86_avx512::gbrpf32_to_rgba_row::<HOST_NATIVE_BE>(
                   &gf[..n],
                   &bf[..n],
                   &rf[..n],
@@ -1506,7 +1578,8 @@ pub(crate) fn gbrpf16_to_rgba_row<const BE: bool>(
             // SAFETY: AVX2 + F16C verified available.
             unsafe { arch::x86_avx2::gbrpf16_to_rgba_row_f16c::<BE>(g, b, r, out, width); }
           } else {
-            // AVX2 available but no F16C — widen scalar, then AVX2 f32→u8.
+            // AVX2 available but no F16C — widen scalar (host-native after
+            // `from_be`/`from_le`), then AVX2 f32→u8 via `HOST_NATIVE_BE`.
             const CHUNK: usize = 64;
             let mut gf = [0.0f32; CHUNK];
             let mut bf = [0.0f32; CHUNK];
@@ -1514,14 +1587,12 @@ pub(crate) fn gbrpf16_to_rgba_row<const BE: bool>(
             let mut offset = 0;
             while offset < width {
               let n = (width - offset).min(CHUNK);
-              for i in 0..n {
-                gf[i] = g[offset + i].to_f32();
-                bf[i] = b[offset + i].to_f32();
-                rf[i] = r[offset + i].to_f32();
-              }
+              widen_f16_be_to_host_f32::<BE>(g, offset, &mut gf, n);
+              widen_f16_be_to_host_f32::<BE>(b, offset, &mut bf, n);
+              widen_f16_be_to_host_f32::<BE>(r, offset, &mut rf, n);
               // SAFETY: AVX2 verified available.
               unsafe {
-                arch::x86_avx2::gbrpf32_to_rgba_row::<BE>(
+                arch::x86_avx2::gbrpf32_to_rgba_row::<HOST_NATIVE_BE>(
                   &gf[..n],
                   &bf[..n],
                   &rf[..n],
@@ -1539,7 +1610,8 @@ pub(crate) fn gbrpf16_to_rgba_row<const BE: bool>(
             // SAFETY: SSE4.1 + F16C verified available.
             unsafe { arch::x86_sse41::gbrpf16_to_rgba_row_f16c::<BE>(g, b, r, out, width); }
           } else {
-            // SSE4.1 available but no F16C — widen scalar, then SSE4.1 f32→u8.
+            // SSE4.1 available but no F16C — widen scalar (host-native after
+            // `from_be`/`from_le`), then SSE4.1 f32→u8 via `HOST_NATIVE_BE`.
             const CHUNK: usize = 64;
             let mut gf = [0.0f32; CHUNK];
             let mut bf = [0.0f32; CHUNK];
@@ -1547,14 +1619,12 @@ pub(crate) fn gbrpf16_to_rgba_row<const BE: bool>(
             let mut offset = 0;
             while offset < width {
               let n = (width - offset).min(CHUNK);
-              for i in 0..n {
-                gf[i] = g[offset + i].to_f32();
-                bf[i] = b[offset + i].to_f32();
-                rf[i] = r[offset + i].to_f32();
-              }
+              widen_f16_be_to_host_f32::<BE>(g, offset, &mut gf, n);
+              widen_f16_be_to_host_f32::<BE>(b, offset, &mut bf, n);
+              widen_f16_be_to_host_f32::<BE>(r, offset, &mut rf, n);
               // SAFETY: SSE4.1 verified available.
               unsafe {
-                arch::x86_sse41::gbrpf32_to_rgba_row::<BE>(
+                arch::x86_sse41::gbrpf32_to_rgba_row::<HOST_NATIVE_BE>(
                   &gf[..n],
                   &bf[..n],
                   &rf[..n],
@@ -1571,7 +1641,8 @@ pub(crate) fn gbrpf16_to_rgba_row<const BE: bool>(
       _ => {}
     }
   }
-  // Scalar fallback: widen f16 → f32 then scalar f32 kernel.
+  // Scalar fallback: widen f16 → f32 (host-native after `from_be`/`from_le`),
+  // then scalar f32 kernel routed via `HOST_NATIVE_BE` to avoid double swap.
   const CHUNK: usize = 64;
   let mut gf = [0.0f32; CHUNK];
   let mut bf = [0.0f32; CHUNK];
@@ -1579,12 +1650,16 @@ pub(crate) fn gbrpf16_to_rgba_row<const BE: bool>(
   let mut offset = 0;
   while offset < width {
     let n = (width - offset).min(CHUNK);
-    for i in 0..n {
-      gf[i] = g[offset + i].to_f32();
-      bf[i] = b[offset + i].to_f32();
-      rf[i] = r[offset + i].to_f32();
-    }
-    scalar::gbrpf32_to_rgba_row::<BE>(&gf[..n], &bf[..n], &rf[..n], &mut out[offset * 4..], n);
+    widen_f16_be_to_host_f32::<BE>(g, offset, &mut gf, n);
+    widen_f16_be_to_host_f32::<BE>(b, offset, &mut bf, n);
+    widen_f16_be_to_host_f32::<BE>(r, offset, &mut rf, n);
+    scalar::gbrpf32_to_rgba_row::<HOST_NATIVE_BE>(
+      &gf[..n],
+      &bf[..n],
+      &rf[..n],
+      &mut out[offset * 4..],
+      n,
+    );
     offset += n;
   }
 }
