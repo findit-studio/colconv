@@ -2453,11 +2453,16 @@ mod tests {
     let frame = Ya16Frame::new(&packed, w, h, w * 2);
 
     // Run combined (with_rgb + with_rgba) — exercises Strategy A+ with the
-    // newly endian-aware `copy_alpha_ya_u16_to_u8::<false>`.
+    // newly endian-aware `copy_alpha_ya_u16_to_u8::<false>`. Forces
+    // `with_simd(false)` so the test runs purely scalar — no SIMD intrinsics
+    // — which lets it execute under `cargo miri test`. BE CI is driven by
+    // miri on s390x / powerpc64; gating it out of miri would skip exactly
+    // the host where BE corruption would surface.
     let mut rgb_combined = std::vec![0u8; (w * h * 3) as usize];
     let mut rgba_combined = std::vec![0u8; (w * h * 4) as usize];
     {
       let mut sink = MixedSinker::<crate::yuv::Ya16>::new(w as usize, h as usize)
+        .with_simd(false)
         .with_rgb(&mut rgb_combined)
         .unwrap()
         .with_rgba(&mut rgba_combined)
@@ -2466,10 +2471,11 @@ mod tests {
     }
 
     // Run standalone (with_rgba only) — exercises the endian-aware
-    // `ya16_to_rgba_row::<false>` kernel.
+    // `ya16_to_rgba_row::<false>` kernel. Same scalar-only rationale.
     let mut rgba_standalone = std::vec![0u8; (w * h * 4) as usize];
     {
       let mut sink = MixedSinker::<crate::yuv::Ya16>::new(w as usize, h as usize)
+        .with_simd(false)
         .with_rgba(&mut rgba_standalone)
         .unwrap();
       ya16_to(&frame, FR, M, &mut sink).unwrap();
@@ -2506,10 +2512,15 @@ mod tests {
       .collect();
     let frame = Ya16Frame::new(&packed, w, h, w * 2);
 
+    // Forces `with_simd(false)` so this test runs purely scalar — no SIMD
+    // intrinsics — which lets it execute under `cargo miri test`. BE CI is
+    // driven by miri on s390x / powerpc64; gating it out of miri would skip
+    // exactly the host where BE corruption would surface.
     let mut rgb_combined = std::vec![0u16; (w * h * 3) as usize];
     let mut rgba_combined = std::vec![0u16; (w * h * 4) as usize];
     {
       let mut sink = MixedSinker::<crate::yuv::Ya16>::new(w as usize, h as usize)
+        .with_simd(false)
         .with_rgb_u16(&mut rgb_combined)
         .unwrap()
         .with_rgba_u16(&mut rgba_combined)
@@ -2520,6 +2531,7 @@ mod tests {
     let mut rgba_standalone = std::vec![0u16; (w * h * 4) as usize];
     {
       let mut sink = MixedSinker::<crate::yuv::Ya16>::new(w as usize, h as usize)
+        .with_simd(false)
         .with_rgba_u16(&mut rgba_standalone)
         .unwrap();
       ya16_to(&frame, FR, M, &mut sink).unwrap();
