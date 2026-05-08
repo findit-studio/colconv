@@ -648,6 +648,35 @@ mod tests {
     assert_eq!(v, [0, 128, 255]);
   }
 
+  // ---- LE-host gating rationale (BE-tier11 follow-up) -----------------------
+  //
+  // The Gray9/10/12/14/16 limited-range / full-range / mask / luma / HSV /
+  // identity / opaque tests below construct fixtures as host-native
+  // `Vec<u16>` literals (e.g. `std::vec![512u16]`) and call the kernels with
+  // `::<false>`, which means "input is LE-encoded — decode to host-native by
+  // applying `u16::from_le`".
+  //
+  // On a little-endian host, host-native u16 bits and LE-encoded bits are the
+  // same byte sequence, so `u16::from_le` is a no-op and the assertions hold.
+  //
+  // On a big-endian host (powerpc64 / s390x / aarch64-be / mips), host-native
+  // u16 bits do NOT lay out little-endian, so the kernel's `from_le`
+  // byte-swap correctly reinterprets the host-native fixture as if it were
+  // an LE-encoded payload — producing a different (corrupted) value than the
+  // test expects.  The kernel itself is correct; this is purely a
+  // fixture-vs-kernel byte-order mismatch on BE hosts (same class as the
+  // PR #82 alpha_extract / planar_gbr_high_bit gates in `8f2e329` and the
+  // PR #83 Rgbf16 gates in `56342c0`).
+  //
+  // Kernel BE-host correctness is locked down separately by the dedicated
+  // `gray*_be_parity_*` tests further down in this module, which build the
+  // BE-encoded input via `swap_bytes()` and assert that BE+`<true>` matches
+  // LE+`<false>`. Those tests are intentionally NOT gated.
+  //
+  // Byte-symmetric value tests (`0x0000`, `0xFFFF`, `u16::MAX`) are also NOT
+  // gated — their bytes lay out the same in either order, so the kernel's
+  // `from_le` swap is a true no-op on every host.
+
   // ---- limited-range tests: Gray8 ----
 
   #[test]
@@ -708,6 +737,7 @@ mod tests {
   // ---- Gray10 limited-range tests ----
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray10_limited_range_black() {
     // 10-bit black = 16 << 2 = 64
     let y: std::vec::Vec<u16> = std::vec![64u16];
@@ -717,6 +747,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray10_limited_range_white() {
     // 10-bit white = 235 << 2 = 940
     let y: std::vec::Vec<u16> = std::vec![940u16];
@@ -726,6 +757,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray10_limited_range_midpoint() {
     // 10-bit mid: 125 << 2 = 500 → approx 127
     let y: std::vec::Vec<u16> = std::vec![500u16];
@@ -739,6 +771,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray10_full_range_pass_through() {
     // 10-bit full range: value 512 >> 2 = 128
     let y: std::vec::Vec<u16> = std::vec![512u16];
@@ -750,6 +783,7 @@ mod tests {
   // ---- Gray12 limited-range tests ----
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray12_limited_range_black() {
     // 12-bit black = 16 << 4 = 256
     let y: std::vec::Vec<u16> = std::vec![256u16];
@@ -759,6 +793,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray12_limited_range_white() {
     // 12-bit white = 235 << 4 = 3760
     let y: std::vec::Vec<u16> = std::vec![3760u16];
@@ -770,6 +805,7 @@ mod tests {
   // ---- Gray14 limited-range tests ----
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray14_limited_range_black() {
     // 14-bit black = 16 << 6 = 1024
     let y: std::vec::Vec<u16> = std::vec![1024u16];
@@ -779,6 +815,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray14_limited_range_white() {
     // 14-bit white = 235 << 6 = 15040
     let y: std::vec::Vec<u16> = std::vec![15040u16];
@@ -790,6 +827,7 @@ mod tests {
   // ---- Gray16 limited-range tests ----
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray16_limited_range_black() {
     // 16-bit black = 16 << 8 = 4096
     let y: std::vec::Vec<u16> = std::vec![4096u16];
@@ -799,6 +837,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray16_limited_range_white() {
     // 16-bit white = 235 << 8 = 60160
     let y: std::vec::Vec<u16> = std::vec![60160u16];
@@ -808,6 +847,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray16_limited_range_midpoint() {
     // 16-bit mid: 125 << 8 = 32000 → approx 127
     let y: std::vec::Vec<u16> = std::vec![32000u16];
@@ -821,6 +861,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray16_full_range_pass_through() {
     // 16-bit full range: 0x8000 >> 8 = 128
     let y: std::vec::Vec<u16> = std::vec![0x8000u16];
@@ -837,6 +878,7 @@ mod tests {
   // values (black, white, over-white) end-to-end.
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray16_to_rgb_u16_limited_range_black() {
     let y: std::vec::Vec<u16> = std::vec![4096u16]; // limited-range black
     let mut out = std::vec![0u16; 3];
@@ -845,6 +887,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray16_to_rgb_u16_limited_range_white() {
     let y: std::vec::Vec<u16> = std::vec![60160u16]; // limited-range white
     let mut out = std::vec![0u16; 3];
@@ -862,6 +905,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray16_to_rgba_u16_limited_range_black_and_white() {
     let y: std::vec::Vec<u16> = std::vec![4096u16, 60160u16];
     let mut out = std::vec![0u16; 8];
@@ -875,6 +919,7 @@ mod tests {
   // ---- Original tests (now with full_range=true) ----
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray_n_to_rgb_10bit_downshifts() {
     // 10-bit: 1023 >> 2 = 255; 0 >> 2 = 0; 512 >> 2 = 128
     let y: std::vec::Vec<u16> = std::vec![0, 512, 1023];
@@ -886,6 +931,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray_n_to_rgb_u16_10bit_masks() {
     // Upper bits should be masked out: 0xFFFF & 0x03FF = 0x03FF = 1023
     let y: std::vec::Vec<u16> = std::vec![0xFFFF, 512, 0];
@@ -897,6 +943,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray_n_to_hsv_h0_s0() {
     let y: std::vec::Vec<u16> = std::vec![512u16]; // 512 >> 2 = 128
     let mut h = std::vec![0xFFu8; 1];
@@ -909,6 +956,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray16_to_rgb_downshifts_8() {
     let y: std::vec::Vec<u16> = std::vec![0, 0x8000, 0xFFFF];
     let mut out = std::vec![0u8; 9];
@@ -919,6 +967,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray16_to_luma_u16_identity() {
     let y: std::vec::Vec<u16> = std::vec![0, 1000, 65535];
     let mut out = std::vec![0u16; 3];
@@ -927,6 +976,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray16_to_rgba_u16_opaque() {
     let y: std::vec::Vec<u16> = std::vec![12345u16];
     let mut out = std::vec![0u16; 4];
@@ -945,6 +995,7 @@ mod tests {
   // ---- Gray9 limited-range tests ----
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray9_limited_range_black() {
     // 9-bit black = 16 << 1 = 32
     let y: std::vec::Vec<u16> = std::vec![32u16];
@@ -954,6 +1005,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray9_limited_range_white() {
     // 9-bit white = 235 << 1 = 470
     let y: std::vec::Vec<u16> = std::vec![470u16];
@@ -963,6 +1015,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gray9_full_range_pass_through() {
     // 9-bit full range: value 256 >> 1 = 128
     let y: std::vec::Vec<u16> = std::vec![256u16];

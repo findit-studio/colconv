@@ -529,4 +529,44 @@ mod tests {
     grayf32_to_luma_row::<true>(&be, &mut out_be, 1);
     assert_eq!(out_le, out_be, "BE and LE grayf32 luma outputs must match");
   }
+
+  /// Closes Copilot review PR #85 finding 3: the existing `grayf32_be_parity_*`
+  /// suite covers the integer-output paths but never exercises the lossless
+  /// `grayf32_to_luma_f32_row::<true>` (BE-encoded f32 → host-native f32)
+  /// fast/slow paths. This test constructs an LE input + a BE-encoded mirror
+  /// (built by swapping the u32 bits of each intended value, matching the
+  /// existing `f32_to_be_bytes` helper convention used by the suite above),
+  /// runs both kernels, and asserts bitwise equality of their outputs
+  /// (NaN-safe via `f32::to_bits`).
+  ///
+  /// Path coverage by host:
+  ///   LE host: LE kernel = memcpy fast path; BE kernel = slow swap path.
+  ///   BE host: LE kernel = slow swap path; BE kernel = memcpy fast path.
+  /// Either way both outputs must agree bit-for-bit, exercising the
+  /// `BE == HOST_NATIVE_BE` gate from both directions.
+  #[test]
+  fn grayf32_to_luma_f32_row_be_le_parity_lossless() {
+    // Mix of normal, HDR, negative, subnormal, and exact-zero values to
+    // ensure non-symmetric byte layouts in every position.
+    let le: std::vec::Vec<f32> = std::vec![0.25f32, 1.5, -0.5, 1e-5, 0.0, 65504.0];
+    let width = le.len();
+    // BE-encoded mirror: bit-swap each f32's u32 representation (the same
+    // construction used by the existing `f32_to_be_bytes` helper).
+    let be: std::vec::Vec<f32> = le
+      .iter()
+      .map(|&v| f32::from_bits(v.to_bits().swap_bytes()))
+      .collect();
+    let mut out_le = std::vec![0.0f32; width];
+    let mut out_be = std::vec![0.0f32; width];
+    grayf32_to_luma_f32_row::<false>(&le, &mut out_le, width);
+    grayf32_to_luma_f32_row::<true>(&be, &mut out_be, width);
+    // Bitwise equality is NaN-safe and confirms no rounding/clamping was
+    // applied along either path.
+    let bits_le: std::vec::Vec<u32> = out_le.iter().map(|v| v.to_bits()).collect();
+    let bits_be: std::vec::Vec<u32> = out_be.iter().map(|v| v.to_bits()).collect();
+    assert_eq!(
+      bits_le, bits_be,
+      "BE and LE grayf32 luma_f32 outputs must match bit-for-bit"
+    );
+  }
 }
