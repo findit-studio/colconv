@@ -862,291 +862,172 @@ fn gbrapf32_rgba_f16_strategy_a_plus_matches_independent_kernel() {
   );
 }
 
-// ---- HOST_NATIVE_BE routing parity (codex PR #84 Findings 1-3) -------------
+// ---- LE-encoded byte contract regressions (post-#83/#84/#85 audit) --------
 //
-// LE-host routing-equivalence and host-native sinker-contract tests for the
-// `Gbrpf32` / `Gbrapf32` / `Gbrpf16` / `Gbrapf16` sinkers. Mirrors the
-// `Rgbf32` / `Rgbf16` sinker tests added for PR #83's `dcf40a3` (sinker
-// HOST_NATIVE_BE routing) and `c3a6478` (dispatch f16-widen HOST_NATIVE_BE
-// routing).
+// Each of the four float planar GBR Frame types is documented as
+// LE-encoded bytes reinterpreted as `f32` / `half::f16` (FFmpeg `*LE`
+// pixel-format convention). The sinker row-kernel dispatch must apply
+// `u32::from_le` / `u16::from_le` (kernel `BE = false`) to recover host-
+// native arithmetic from those bytes. These tests build a plane explicitly
+// from LE-encoded bit patterns (`f32::from_bits(intended.to_bits().to_le())`
+// and the f16 analogue) and assert the lossless pass-through output equals
+// the host-native intended values.
 //
-// On a LE host `HOST_NATIVE_BE = false`, so the kernel-level test below is
-// a routing sanity check (proving the dispatcher / sinker substitute the
-// correct `BE` template parameter); BE-host correctness of the routing is
-// verified by the existing row-kernel BE parity tests in
-// `src/row/arch/*/tests/` and by the contract tests below (which assert
-// host-native pass-through end-to-end on every host).
+// Vacuous on LE host (where `to_le` is identity so the LE-encoded plane is
+// host-native already), but on a BE host any regression that drops the
+// `::<false>` routing would be caught here — kernel without `from_le` would
+// emit byte-swapped bit-patterns, failing the bit-exact assertion below.
+//
+// Mirrors the `Grayf32` regression added in PR #85's `52f8191`.
 
-/// Kernel-level test: on a LE host, `gbrpf32_to_*::<false>` and
-/// `gbrpf32_to_*::<HOST_NATIVE_BE>` must produce byte-identical output for
-/// every Tier 10 float planar GBR dispatcher across every output type
-/// (u8 RGB / u8 RGBA / u16 RGB / u16 RGBA / f32 lossless). Width 33 covers
-/// SIMD main loop + scalar tail across every backend; width 5 covers tail-
-/// only paths.
-///
-/// **LE-host-only**: gated on `target_endian = "little"`. On a BE host
-/// `::<false>` decodes the host-native fixture as LE-encoded (byte-swap)
-/// while `::<HOST_NATIVE_BE> == ::<true>` decodes as BE (no swap), so the
-/// outputs diverge by design. This sinker-routing-equivalence claim is
-/// specifically about the LE host pattern; BE-host correctness of the
-/// routing change is verified by the contract tests below and the row-
-/// kernel BE parity tests in `src/row/arch/*/tests/`.
-#[test]
-#[cfg(target_endian = "little")]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
-fn gbrpf32_kernel_host_native_be_matches_false_on_le_host() {
-  use crate::row::{
-    gbrpf32_to_rgb_f32_row, gbrpf32_to_rgb_row, gbrpf32_to_rgb_u16_row, gbrpf32_to_rgba_row,
-    gbrpf32_to_rgba_u16_row,
-  };
-
-  // Sinker-layer `HOST_NATIVE_BE` mirrors `cfg!(target_endian = "big")`; on
-  // the LE-host gate this evaluates to `false`.
-  const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
-
-  // Width 33: SIMD main loop + scalar tail. Width 5: tail-only path. Run both
-  // to cover SIMD-tail-aware backends.
-  for w in [5usize, 7usize, 33usize] {
-    let mut gp = std::vec![0.0f32; w];
-    let mut bp = std::vec![0.0f32; w];
-    let mut rp = std::vec![0.0f32; w];
-    for (i, (g, (b, r))) in gp
-      .iter_mut()
-      .zip(bp.iter_mut().zip(rp.iter_mut()))
-      .enumerate()
-    {
-      *g = match i % 5 {
-        0 => 0.0,
-        1 => 0.5,
-        2 => 1.0,
-        3 => 1.75,
-        _ => -0.25,
-      };
-      *b = match i % 5 {
-        0 => 0.25,
-        1 => 0.75,
-        2 => 1.5,
-        3 => 0.0,
-        _ => -0.5,
-      };
-      *r = match i % 5 {
-        0 => 1.0,
-        1 => 0.5,
-        2 => 0.0,
-        3 => -0.25,
-        _ => 1.25,
-      };
-    }
-
-    let mut rgb_false = std::vec![0u8; w * 3];
-    let mut rgb_host = std::vec![0u8; w * 3];
-    gbrpf32_to_rgb_row::<false>(&gp, &bp, &rp, &mut rgb_false, w, true);
-    gbrpf32_to_rgb_row::<HOST_NATIVE_BE>(&gp, &bp, &rp, &mut rgb_host, w, true);
-    assert_eq!(rgb_false, rgb_host, "u8 RGB diverges (w = {w})");
-
-    let mut rgba_false = std::vec![0u8; w * 4];
-    let mut rgba_host = std::vec![0u8; w * 4];
-    gbrpf32_to_rgba_row::<false>(&gp, &bp, &rp, &mut rgba_false, w, true);
-    gbrpf32_to_rgba_row::<HOST_NATIVE_BE>(&gp, &bp, &rp, &mut rgba_host, w, true);
-    assert_eq!(rgba_false, rgba_host, "u8 RGBA diverges (w = {w})");
-
-    let mut u16_false = std::vec![0u16; w * 3];
-    let mut u16_host = std::vec![0u16; w * 3];
-    gbrpf32_to_rgb_u16_row::<false>(&gp, &bp, &rp, &mut u16_false, w, true);
-    gbrpf32_to_rgb_u16_row::<HOST_NATIVE_BE>(&gp, &bp, &rp, &mut u16_host, w, true);
-    assert_eq!(u16_false, u16_host, "u16 RGB diverges (w = {w})");
-
-    let mut u16a_false = std::vec![0u16; w * 4];
-    let mut u16a_host = std::vec![0u16; w * 4];
-    gbrpf32_to_rgba_u16_row::<false>(&gp, &bp, &rp, &mut u16a_false, w, true);
-    gbrpf32_to_rgba_u16_row::<HOST_NATIVE_BE>(&gp, &bp, &rp, &mut u16a_host, w, true);
-    assert_eq!(u16a_false, u16a_host, "u16 RGBA diverges (w = {w})");
-
-    let mut f32_false = std::vec![0.0f32; w * 3];
-    let mut f32_host = std::vec![0.0f32; w * 3];
-    gbrpf32_to_rgb_f32_row::<false>(&gp, &bp, &rp, &mut f32_false, w, true);
-    gbrpf32_to_rgb_f32_row::<HOST_NATIVE_BE>(&gp, &bp, &rp, &mut f32_host, w, true);
-    assert_eq!(f32_false, f32_host, "f32 RGB diverges (w = {w})");
-  }
-}
-
-/// Sinker contract test: feeding host-native `f32` planes through
-/// [`MixedSinker<Gbrpf32>`] must produce the same output every other sinker
-/// would expect from a host-native source — specifically, `with_rgb_f32`
-/// must be bit-exact identical to the source on every host. Documents the
-/// public-API contract that the [`HOST_NATIVE_BE`] routing fix preserves.
-/// Pairs with the kernel-level test above; together they cover both the
-/// dispatch boundary and the public sinker boundary.
+/// LE-encoded byte contract regression for [`Gbrpf32`].
 #[test]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
-fn gbrpf32_sinker_host_native_contract_lossless_passthrough() {
+fn gbrpf32_sinker_le_encoded_frame_decodes_correctly() {
   let w = 16usize;
   let h = 4usize;
   // Mix HDR, in-range, and negative values — the f32 lossless path must
   // round-trip them bit-exact on every host.
-  let mut gp = std::vec![0.0f32; w * h];
-  let mut bp = std::vec![0.0f32; w * h];
-  let mut rp = std::vec![0.0f32; w * h];
-  for (i, (g, (b, r))) in gp
-    .iter_mut()
-    .zip(bp.iter_mut().zip(rp.iter_mut()))
-    .enumerate()
-  {
-    *g = match i % 4 {
+  let intended_g: Vec<f32> = (0..w * h)
+    .map(|i| match i % 4 {
       0 => 0.5,
       1 => 1.5,
       2 => -0.25,
       _ => 100.0,
-    };
-    *b = match i % 4 {
+    })
+    .collect();
+  let intended_b: Vec<f32> = (0..w * h)
+    .map(|i| match i % 4 {
       0 => 0.0,
       1 => 0.25,
       2 => 1.0,
       _ => f32::INFINITY,
-    };
-    *r = match i % 4 {
+    })
+    .collect();
+  let intended_r: Vec<f32> = (0..w * h)
+    .map(|i| match i % 4 {
       0 => 1.0,
       1 => -1.0,
       2 => 65505.0,
       _ => 0.5,
-    };
-  }
+    })
+    .collect();
+  // LE-encode each plane (per the documented `*LE` Frame contract).
+  let gp: Vec<f32> = intended_g
+    .iter()
+    .map(|&v| f32::from_bits(v.to_bits().to_le()))
+    .collect();
+  let bp: Vec<f32> = intended_b
+    .iter()
+    .map(|&v| f32::from_bits(v.to_bits().to_le()))
+    .collect();
+  let rp: Vec<f32> = intended_r
+    .iter()
+    .map(|&v| f32::from_bits(v.to_bits().to_le()))
+    .collect();
   let src = Gbrpf32Frame::try_new(
     &gp, &bp, &rp, w as u32, h as u32, w as u32, w as u32, w as u32,
   )
   .unwrap();
 
-  // rgb_f32 lossless: each pixel `(R, G, B)` packed in source plane order.
   let mut rgb_f32 = std::vec![0.0f32; w * h * 3];
   let mut sink = MixedSinker::<Gbrpf32>::new(w, h)
     .with_rgb_f32(&mut rgb_f32)
     .unwrap();
   gbrpf32_to(&src, &mut sink).unwrap();
 
-  // The lossless scatter writes `(R, G, B)` per pixel in plane-index order.
-  // Bit-exact equality on every host. Buggy `::<false>` routing on a BE host
-  // would byte-swap the output here; the fix keeps it bit-exact.
   for i in 0..(w * h) {
-    assert_eq!(rgb_f32[i * 3], rp[i], "R mismatch at idx {i}");
-    assert_eq!(rgb_f32[i * 3 + 1], gp[i], "G mismatch at idx {i}");
-    assert_eq!(rgb_f32[i * 3 + 2], bp[i], "B mismatch at idx {i}");
+    assert_eq!(
+      rgb_f32[i * 3].to_bits(),
+      intended_r[i].to_bits(),
+      "R idx {i}"
+    );
+    assert_eq!(
+      rgb_f32[i * 3 + 1].to_bits(),
+      intended_g[i].to_bits(),
+      "G idx {i}"
+    );
+    assert_eq!(
+      rgb_f32[i * 3 + 2].to_bits(),
+      intended_b[i].to_bits(),
+      "B idx {i}"
+    );
   }
 }
 
-/// Same as [`gbrpf32_kernel_host_native_be_matches_false_on_le_host`] but
-/// for the `Gbrpf16` family — covers both `use_simd = false` (dispatch's
-/// scalar widen-fallback) and `use_simd = true` (SIMD widen path) at tail
-/// widths 5, 7, 33 to exercise every backend's main loop + scalar tail.
-#[test]
-#[cfg(target_endian = "little")]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
-fn gbrpf16_kernel_host_native_be_matches_false_on_le_host() {
-  use crate::row::{
-    gbrpf16_to_rgb_row, gbrpf16_to_rgb_u16_row, gbrpf16_to_rgba_row, gbrpf16_to_rgba_u16_row,
-  };
-
-  const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
-
-  for w in [5usize, 7usize, 33usize] {
-    let gp: Vec<half::f16> = (0..w)
-      .map(|i| {
-        half::f16::from_f32(match i % 5 {
-          0 => 0.0,
-          1 => 0.5,
-          2 => 1.0,
-          3 => 1.75,
-          _ => -0.25,
-        })
-      })
-      .collect();
-    let bp: Vec<half::f16> = (0..w)
-      .map(|i| {
-        half::f16::from_f32(match i % 5 {
-          0 => 0.25,
-          1 => 0.75,
-          2 => 1.5,
-          3 => 0.0,
-          _ => -0.5,
-        })
-      })
-      .collect();
-    let rp: Vec<half::f16> = (0..w)
-      .map(|i| {
-        half::f16::from_f32(match i % 5 {
-          0 => 1.0,
-          1 => 0.5,
-          2 => 0.0,
-          3 => -0.25,
-          _ => 1.25,
-        })
-      })
-      .collect();
-
-    // Both `use_simd = false` and `use_simd = true` to cover dispatch's
-    // scalar widen-fallback and the SIMD widen path on every backend.
-    for use_simd in [false, true] {
-      let mut rgb_false = std::vec![0u8; w * 3];
-      let mut rgb_host = std::vec![0u8; w * 3];
-      gbrpf16_to_rgb_row::<false>(&gp, &bp, &rp, &mut rgb_false, w, use_simd);
-      gbrpf16_to_rgb_row::<HOST_NATIVE_BE>(&gp, &bp, &rp, &mut rgb_host, w, use_simd);
-      assert_eq!(
-        rgb_false, rgb_host,
-        "u8 RGB diverges (w = {w}, use_simd = {use_simd})"
-      );
-
-      let mut rgba_false = std::vec![0u8; w * 4];
-      let mut rgba_host = std::vec![0u8; w * 4];
-      gbrpf16_to_rgba_row::<false>(&gp, &bp, &rp, &mut rgba_false, w, use_simd);
-      gbrpf16_to_rgba_row::<HOST_NATIVE_BE>(&gp, &bp, &rp, &mut rgba_host, w, use_simd);
-      assert_eq!(
-        rgba_false, rgba_host,
-        "u8 RGBA diverges (w = {w}, use_simd = {use_simd})"
-      );
-
-      let mut u16_false = std::vec![0u16; w * 3];
-      let mut u16_host = std::vec![0u16; w * 3];
-      gbrpf16_to_rgb_u16_row::<false>(&gp, &bp, &rp, &mut u16_false, w, use_simd);
-      gbrpf16_to_rgb_u16_row::<HOST_NATIVE_BE>(&gp, &bp, &rp, &mut u16_host, w, use_simd);
-      assert_eq!(
-        u16_false, u16_host,
-        "u16 RGB diverges (w = {w}, use_simd = {use_simd})"
-      );
-
-      let mut u16a_false = std::vec![0u16; w * 4];
-      let mut u16a_host = std::vec![0u16; w * 4];
-      gbrpf16_to_rgba_u16_row::<false>(&gp, &bp, &rp, &mut u16a_false, w, use_simd);
-      gbrpf16_to_rgba_u16_row::<HOST_NATIVE_BE>(&gp, &bp, &rp, &mut u16a_host, w, use_simd);
-      assert_eq!(
-        u16a_false, u16a_host,
-        "u16 RGBA diverges (w = {w}, use_simd = {use_simd})"
-      );
-    }
-  }
-}
-
-/// Sinker contract: host-native `half::f16` source through [`MixedSinker<Gbrpf16>`]
-/// `with_rgb_f16` must round-trip the planes bit-exact on every host. The
-/// `::<HOST_NATIVE_BE>` routing keeps the lossless interleave a no-op in the
-/// BE-load layer; the buggy `::<false>` routing on a BE host would byte-swap
-/// every f16 element.
+/// LE-encoded byte contract regression for [`Gbrapf32`] (lossless RGBA
+/// pass-through, including the α plane).
 #[test]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
-fn gbrpf16_sinker_host_native_contract_lossless_passthrough() {
+fn gbrapf32_sinker_le_encoded_frame_decodes_correctly() {
   let w = 16usize;
   let h = 4usize;
-  let gp: Vec<half::f16> = (0..w * h)
+  let intended_g: Vec<f32> = (0..w * h).map(|i| 0.1 + (i as f32) * 0.001).collect();
+  let intended_b: Vec<f32> = (0..w * h).map(|i| 0.2 + (i as f32) * 0.002).collect();
+  let intended_r: Vec<f32> = (0..w * h).map(|i| 0.3 + (i as f32) * 0.003).collect();
+  let intended_a: Vec<f32> = (0..w * h).map(|i| 0.5 + (i as f32) * 0.0005).collect();
+
+  let le = |v: &Vec<f32>| -> Vec<f32> {
+    v.iter()
+      .map(|&x| f32::from_bits(x.to_bits().to_le()))
+      .collect()
+  };
+  let gp = le(&intended_g);
+  let bp = le(&intended_b);
+  let rp = le(&intended_r);
+  let ap = le(&intended_a);
+
+  let src = Gbrapf32Frame::try_new(
+    &gp, &bp, &rp, &ap, w as u32, h as u32, w as u32, w as u32, w as u32, w as u32,
+  )
+  .unwrap();
+
+  let mut rgba_f32 = std::vec![0.0f32; w * h * 4];
+  let mut sink = MixedSinker::<Gbrapf32>::new(w, h)
+    .with_rgba_f32(&mut rgba_f32)
+    .unwrap();
+  gbrapf32_to(&src, &mut sink).unwrap();
+
+  for i in 0..(w * h) {
+    assert_eq!(
+      rgba_f32[i * 4].to_bits(),
+      intended_r[i].to_bits(),
+      "R idx {i}"
+    );
+    assert_eq!(
+      rgba_f32[i * 4 + 1].to_bits(),
+      intended_g[i].to_bits(),
+      "G idx {i}"
+    );
+    assert_eq!(
+      rgba_f32[i * 4 + 2].to_bits(),
+      intended_b[i].to_bits(),
+      "B idx {i}"
+    );
+    assert_eq!(
+      rgba_f32[i * 4 + 3].to_bits(),
+      intended_a[i].to_bits(),
+      "A idx {i}"
+    );
+  }
+}
+
+/// LE-encoded byte contract regression for [`Gbrpf16`].
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn gbrpf16_sinker_le_encoded_frame_decodes_correctly() {
+  let w = 16usize;
+  let h = 4usize;
+  let intended_g: Vec<half::f16> = (0..w * h)
     .map(|i| {
       half::f16::from_f32(match i % 4 {
         0 => 0.5,
@@ -1156,7 +1037,7 @@ fn gbrpf16_sinker_host_native_contract_lossless_passthrough() {
       })
     })
     .collect();
-  let bp: Vec<half::f16> = (0..w * h)
+  let intended_b: Vec<half::f16> = (0..w * h)
     .map(|i| {
       half::f16::from_f32(match i % 4 {
         0 => 0.0,
@@ -1166,7 +1047,7 @@ fn gbrpf16_sinker_host_native_contract_lossless_passthrough() {
       })
     })
     .collect();
-  let rp: Vec<half::f16> = (0..w * h)
+  let intended_r: Vec<half::f16> = (0..w * h)
     .map(|i| {
       half::f16::from_f32(match i % 4 {
         0 => 1.0,
@@ -1176,6 +1057,14 @@ fn gbrpf16_sinker_host_native_contract_lossless_passthrough() {
       })
     })
     .collect();
+  let le_f16 = |v: &Vec<half::f16>| -> Vec<half::f16> {
+    v.iter()
+      .map(|&x| half::f16::from_bits(x.to_bits().to_le()))
+      .collect()
+  };
+  let gp = le_f16(&intended_g);
+  let bp = le_f16(&intended_b);
+  let rp = le_f16(&intended_r);
 
   let src = Gbrpf16Frame::try_new(
     &gp, &bp, &rp, w as u32, h as u32, w as u32, w as u32, w as u32,
@@ -1191,46 +1080,53 @@ fn gbrpf16_sinker_host_native_contract_lossless_passthrough() {
   for i in 0..(w * h) {
     assert_eq!(
       rgb_f16[i * 3].to_bits(),
-      rp[i].to_bits(),
-      "R mismatch at idx {i}"
+      intended_r[i].to_bits(),
+      "R idx {i}"
     );
     assert_eq!(
       rgb_f16[i * 3 + 1].to_bits(),
-      gp[i].to_bits(),
-      "G mismatch at idx {i}"
+      intended_g[i].to_bits(),
+      "G idx {i}"
     );
     assert_eq!(
       rgb_f16[i * 3 + 2].to_bits(),
-      bp[i].to_bits(),
-      "B mismatch at idx {i}"
+      intended_b[i].to_bits(),
+      "B idx {i}"
     );
   }
 }
 
-/// Sinker contract: [`MixedSinker<Gbrapf16>`] `with_rgba_f16` must round-trip
-/// the source α plane bit-exact alongside the G/B/R planes, on every host.
-/// Validates Strategy A+ alpha consistency under the `HOST_NATIVE_BE`
-/// routing — the previous mix-mode (LE-decoded RGB + host-native α) is gone.
+/// LE-encoded byte contract regression for [`Gbrapf16`] (lossless RGBA
+/// pass-through, including the α plane).
 #[test]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
-fn gbrapf16_sinker_host_native_contract_lossless_passthrough_with_alpha() {
+fn gbrapf16_sinker_le_encoded_frame_decodes_correctly() {
   let w = 16usize;
   let h = 4usize;
-  let gp: Vec<half::f16> = (0..w * h)
+  let intended_g: Vec<half::f16> = (0..w * h)
     .map(|i| half::f16::from_f32(0.1 + (i as f32) * 0.001))
     .collect();
-  let bp: Vec<half::f16> = (0..w * h)
+  let intended_b: Vec<half::f16> = (0..w * h)
     .map(|i| half::f16::from_f32(0.2 + (i as f32) * 0.002))
     .collect();
-  let rp: Vec<half::f16> = (0..w * h)
+  let intended_r: Vec<half::f16> = (0..w * h)
     .map(|i| half::f16::from_f32(0.3 + (i as f32) * 0.003))
     .collect();
-  let ap: Vec<half::f16> = (0..w * h)
+  let intended_a: Vec<half::f16> = (0..w * h)
     .map(|i| half::f16::from_f32(0.5 + (i as f32) * 0.001))
     .collect();
+  let le_f16 = |v: &Vec<half::f16>| -> Vec<half::f16> {
+    v.iter()
+      .map(|&x| half::f16::from_bits(x.to_bits().to_le()))
+      .collect()
+  };
+  let gp = le_f16(&intended_g);
+  let bp = le_f16(&intended_b);
+  let rp = le_f16(&intended_r);
+  let ap = le_f16(&intended_a);
 
   let src = Gbrapf16Frame::try_new(
     &gp, &bp, &rp, &ap, w as u32, h as u32, w as u32, w as u32, w as u32, w as u32,
@@ -1244,52 +1140,26 @@ fn gbrapf16_sinker_host_native_contract_lossless_passthrough_with_alpha() {
   gbrapf16_to(&src, &mut sink).unwrap();
 
   for i in 0..(w * h) {
-    assert_eq!(rgba_f16[i * 4].to_bits(), rp[i].to_bits(), "R idx {i}");
-    assert_eq!(rgba_f16[i * 4 + 1].to_bits(), gp[i].to_bits(), "G idx {i}");
-    assert_eq!(rgba_f16[i * 4 + 2].to_bits(), bp[i].to_bits(), "B idx {i}");
-    assert_eq!(rgba_f16[i * 4 + 3].to_bits(), ap[i].to_bits(), "A idx {i}");
-  }
-}
-
-/// Sinker contract: [`MixedSinker<Gbrapf32>`] `with_rgba_f32` lossless
-/// pass-through plus α — confirms Strategy A+ alpha consistency when the
-/// f32 RGB chain routes via `HOST_NATIVE_BE`. The α plane is host-native
-/// f32, also routed via `HOST_NATIVE_BE`, eliminating any mix-mode.
-#[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
-fn gbrapf32_sinker_host_native_contract_lossless_passthrough_with_alpha() {
-  let w = 16usize;
-  let h = 4usize;
-  let mut gp = std::vec![0.0f32; w * h];
-  let mut bp = std::vec![0.0f32; w * h];
-  let mut rp = std::vec![0.0f32; w * h];
-  let mut ap = std::vec![0.0f32; w * h];
-  for i in 0..(w * h) {
-    gp[i] = 0.1 + (i as f32) * 0.001;
-    bp[i] = 0.2 + (i as f32) * 0.002;
-    rp[i] = 0.3 + (i as f32) * 0.003;
-    ap[i] = 0.5 + (i as f32) * 0.0005;
-  }
-
-  let src = Gbrapf32Frame::try_new(
-    &gp, &bp, &rp, &ap, w as u32, h as u32, w as u32, w as u32, w as u32, w as u32,
-  )
-  .unwrap();
-
-  let mut rgba_f32 = std::vec![0.0f32; w * h * 4];
-  let mut sink = MixedSinker::<Gbrapf32>::new(w, h)
-    .with_rgba_f32(&mut rgba_f32)
-    .unwrap();
-  gbrapf32_to(&src, &mut sink).unwrap();
-
-  for i in 0..(w * h) {
-    assert_eq!(rgba_f32[i * 4], rp[i], "R idx {i}");
-    assert_eq!(rgba_f32[i * 4 + 1], gp[i], "G idx {i}");
-    assert_eq!(rgba_f32[i * 4 + 2], bp[i], "B idx {i}");
-    assert_eq!(rgba_f32[i * 4 + 3], ap[i], "A idx {i}");
+    assert_eq!(
+      rgba_f16[i * 4].to_bits(),
+      intended_r[i].to_bits(),
+      "R idx {i}"
+    );
+    assert_eq!(
+      rgba_f16[i * 4 + 1].to_bits(),
+      intended_g[i].to_bits(),
+      "G idx {i}"
+    );
+    assert_eq!(
+      rgba_f16[i * 4 + 2].to_bits(),
+      intended_b[i].to_bits(),
+      "B idx {i}"
+    );
+    assert_eq!(
+      rgba_f16[i * 4 + 3].to_bits(),
+      intended_a[i].to_bits(),
+      "A idx {i}"
+    );
   }
 }
 

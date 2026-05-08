@@ -303,14 +303,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
           height: h,
           channels: 4,
         })?;
-      gbrpf32_to_rgba_f32_row::<false>(
-        g_in,
-        b_in,
-        r_in,
-        &mut buf[start..end],
-        w,
-        use_simd,
-      );
+      gbrpf32_to_rgba_f32_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     // ---- f16 narrowing (independent of integer paths) --------------------
@@ -330,14 +323,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf32> {
           height: h,
           channels: 4,
         })?;
-      gbrpf32_to_rgba_f16_row::<false>(
-        g_in,
-        b_in,
-        r_in,
-        &mut buf[start..end],
-        w,
-        use_simd,
-      );
+      gbrpf32_to_rgba_f16_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     // ---- u16 RGB / RGBA path (direct float → u16, no staging) -----------
@@ -703,15 +689,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
           height: h,
           channels: 4,
         })?;
-      gbrapf32_to_rgba_f32_row::<false>(
-        g_in,
-        b_in,
-        r_in,
-        a_in,
-        &mut buf[start..end],
-        w,
-        use_simd,
-      );
+      gbrapf32_to_rgba_f32_row::<false>(g_in, b_in, r_in, a_in, &mut buf[start..end], w, use_simd);
     }
 
     // ---- f16 narrowing (independent of integer paths) --------------------
@@ -731,15 +709,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf32> {
           height: h,
           channels: 4,
         })?;
-      gbrapf32_to_rgba_f16_row::<false>(
-        g_in,
-        b_in,
-        r_in,
-        a_in,
-        &mut buf[start..end],
-        w,
-        use_simd,
-      );
+      gbrapf32_to_rgba_f16_row::<false>(g_in, b_in, r_in, a_in, &mut buf[start..end], w, use_simd);
     }
 
     // ---- u16 RGB path (direct, no staging) ------------------------------

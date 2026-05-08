@@ -341,14 +341,7 @@ impl PixelSink for MixedSinker<'_, Gbrpf16> {
           height: h,
           channels: 4,
         })?;
-      gbrpf16_to_rgba_f16_row::<false>(
-        g_in,
-        b_in,
-        r_in,
-        &mut buf[start..end],
-        w,
-        use_simd,
-      );
+      gbrpf16_to_rgba_f16_row::<false>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
     // ---- Paths that require widening f16 → f32 ---------------------------
@@ -752,15 +745,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf16> {
           height: h,
           channels: 4,
         })?;
-      gbrapf16_to_rgba_f16_row::<false>(
-        g_in,
-        b_in,
-        r_in,
-        a_in,
-        &mut buf[start..end],
-        w,
-        use_simd,
-      );
+      gbrapf16_to_rgba_f16_row::<false>(g_in, b_in, r_in, a_in, &mut buf[start..end], w, use_simd);
     }
 
     // ---- Paths that require widening f16 → f32 ---------------------------
@@ -806,15 +791,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf16> {
           // gbrapf32_to_rgba_f32_row with widened source α (lossless).
           let start = chunk_plane_start * 4;
           let end = chunk_plane_end * 4;
-          gbrapf32_to_rgba_f32_row::<false>(
-            gf,
-            bf,
-            rf,
-            af,
-            &mut buf[start..end],
-            n,
-            use_simd,
-          );
+          gbrapf32_to_rgba_f32_row::<false>(gf, bf, rf, af, &mut buf[start..end], n, use_simd);
         }
 
         if let Some(buf) = self.rgb_u16.as_deref_mut() {
@@ -827,15 +804,7 @@ impl PixelSink for MixedSinker<'_, Gbrapf16> {
           // gbrapf32_to_rgba_u16_row with widened source α.
           let start = chunk_plane_start * 4;
           let end = chunk_plane_end * 4;
-          gbrapf32_to_rgba_u16_row::<false>(
-            gf,
-            bf,
-            rf,
-            af,
-            &mut buf[start..end],
-            n,
-            use_simd,
-          );
+          gbrapf32_to_rgba_u16_row::<false>(gf, bf, rf, af, &mut buf[start..end], n, use_simd);
         }
 
         if let Some(buf) = self.luma.as_deref_mut() {
