@@ -59,6 +59,32 @@ use crate::{
   },
 };
 
+/// `BE` value that makes the `grayf32_to_*` row dispatchers treat their input
+/// as host-native (a no-op byte-swap). Used here because
+/// [`crate::frame::Grayf32Frame`] exposes a `&[f32]` row in **host-native**
+/// layout — the API contract is that the caller hands us already-decoded
+/// floats. The kernel `BE` parameter, however, names the **encoded** byte
+/// order (so `BE = false` means "decode LE-encoded bytes" via `u32::from_le`).
+/// On a LE host the host-native layout is LE, so `BE = false` is correct; on
+/// a BE host the host-native layout is BE, so we must request `BE = true` to
+/// make `u32::from_be` no-op the swap. Without this routing the loaders would
+/// byte-swap an already-decoded host-native `f32` on BE hosts, corrupting
+/// every Grayf32 output path (including the lossless `with_luma_f32` and
+/// `with_rgb_f32` pass-throughs).
+///
+/// Mirrors the sinker-layer fix from PR #83 (`dcf40a3`,
+/// `src/sinker/mixed/packed_rgb_float.rs`) and PR #84 (`8627280`,
+/// `src/sinker/mixed/packed_rgb_f16.rs`). Same truth table, different layer:
+///
+///   • LE host: `HOST_NATIVE_BE = false` → `from_le` (no-op on LE) → correct.
+///   • BE host: `HOST_NATIVE_BE = true`  → `from_be` (no-op on BE) → correct.
+///
+/// Scoped to the Grayf32 sinker only — the GrayN / Gray16 / Ya8 / Ya16
+/// sinkers in this module take their `BE` from the source `Frame`'s flag
+/// (different layer: encoded plane bytes, not host-native floats) and must
+/// keep their existing `<BE>` routing.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 // ---- Gray8 impl -------------------------------------------------------------
 
 impl<'a> MixedSinker<'a, Gray8> {
@@ -970,7 +996,7 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
 
     // luma f32 pass-through — highest priority (no clamp, no round).
     if let Some(buf) = self.luma_f32.as_deref_mut() {
-      grayf32_to_luma_f32_row::<false>(
+      grayf32_to_luma_f32_row::<HOST_NATIVE_BE>(
         y_plane,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -988,12 +1014,17 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
           height: h,
           channels: 3,
         })?;
-      grayf32_to_rgb_f32_row::<false>(y_plane, &mut buf[rgb_f32_start..rgb_f32_end], w, use_simd);
+      grayf32_to_rgb_f32_row::<HOST_NATIVE_BE>(
+        y_plane,
+        &mut buf[rgb_f32_start..rgb_f32_end],
+        w,
+        use_simd,
+      );
     }
 
     // luma u8.
     if let Some(buf) = self.luma.as_deref_mut() {
-      grayf32_to_luma_row::<false>(
+      grayf32_to_luma_row::<HOST_NATIVE_BE>(
         y_plane,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -1003,7 +1034,7 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
 
     // luma u16.
     if let Some(buf) = self.luma_u16.as_deref_mut() {
-      grayf32_to_luma_u16_row::<false>(
+      grayf32_to_luma_u16_row::<HOST_NATIVE_BE>(
         y_plane,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -1019,7 +1050,7 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
       let rgba_u16_buf = self.rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-      grayf32_to_rgba_u16_row::<false>(y_plane, rgba_u16_row, w, use_simd);
+      grayf32_to_rgba_u16_row::<HOST_NATIVE_BE>(y_plane, rgba_u16_row, w, use_simd);
     } else if want_rgb_u16 {
       let rgb_u16_buf = self.rgb_u16.as_deref_mut().unwrap();
       let rgb_plane_start = one_plane_start * 3;
@@ -1032,7 +1063,7 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
             channels: 3,
           })?;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      grayf32_to_rgb_u16_row::<false>(y_plane, rgb_u16_row, w, use_simd);
+      grayf32_to_rgb_u16_row::<HOST_NATIVE_BE>(y_plane, rgb_u16_row, w, use_simd);
       if want_rgba_u16 {
         let rgba_u16_buf = self.rgba_u16.as_deref_mut().unwrap();
         let rgba_u16_row =
@@ -1050,14 +1081,14 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
     if want_rgba && !want_rgb && !want_hsv {
       let rgba_buf = self.rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      grayf32_to_rgba_row::<false>(y_plane, rgba_row, w, use_simd);
+      grayf32_to_rgba_row::<HOST_NATIVE_BE>(y_plane, rgba_row, w, use_simd);
       return Ok(());
     }
 
     // Standalone HSV fast path — Grayf32 always has H=0, S=0, V=clamp(Y)×255.
     if want_hsv && !want_rgb {
       let hsv = self.hsv.as_mut().unwrap();
-      grayf32_to_hsv_row::<false>(
+      grayf32_to_hsv_row::<HOST_NATIVE_BE>(
         y_plane,
         &mut hsv.h[one_plane_start..one_plane_end],
         &mut hsv.s[one_plane_start..one_plane_end],
@@ -1067,7 +1098,7 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
       );
       if let Some(buf) = self.rgba.as_deref_mut() {
         let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
-        grayf32_to_rgba_row::<false>(y_plane, rgba_row, w, use_simd);
+        grayf32_to_rgba_row::<HOST_NATIVE_BE>(y_plane, rgba_row, w, use_simd);
       }
       return Ok(());
     }
@@ -1084,7 +1115,7 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
       w,
       h,
     )?;
-    grayf32_to_rgb_row::<false>(y_plane, rgb_row, w, use_simd);
+    grayf32_to_rgb_row::<HOST_NATIVE_BE>(y_plane, rgb_row, w, use_simd);
 
     if let Some(hsv) = self.hsv.as_mut() {
       rgb_to_hsv_row(
@@ -2148,6 +2179,204 @@ mod tests {
       assert_eq!(rgb[0], 0, "w={w} first R");
       assert_eq!(luma_f32[0], 0.0, "w={w} first luma_f32");
       assert!(luma_f32[w - 1] > 0.9, "w={w} last luma_f32");
+    }
+  }
+
+  /// Sinker-layer host-native-`f32` regression for the bug fixed in this
+  /// commit (codex 2nd-pass review of PR #85): the [`Grayf32`] sinker used
+  /// to hardcode `::<false>` when calling the row dispatchers, telling them
+  /// to "decode LE-encoded input". Because [`Grayf32Frame`] hands us a
+  /// host-native `&[f32]` plane, that routing was a no-op on LE hosts but
+  /// corrupted every Grayf32 output path on BE hosts (the loaders would
+  /// byte-swap an already-decoded f32). The fix replaces those `::<false>`
+  /// with `::<HOST_NATIVE_BE>`, which is `false` on LE and `true` on BE — a
+  /// no-op byte-swap on either host.
+  ///
+  /// On a LE host (the only target Apple-Silicon and x86_64 macOS can run),
+  /// `HOST_NATIVE_BE = false` and `::<HOST_NATIVE_BE>` is byte-for-byte
+  /// identical to `::<false>`, so this test cannot distinguish the broken
+  /// vs fixed code on LE. It instead documents the equivalence at the
+  /// **kernel dispatch** layer — calling each `grayf32_to_*` dispatcher
+  /// with both `BE = false` and `BE = HOST_NATIVE_BE` (=
+  /// `cfg!(target_endian = "big")`) must produce identical output on the
+  /// active host. Mirrors `rgbf32_kernel_host_native_be_matches_false_on_le_host`
+  /// in `tests/packed_rgb_float.rs` (PR #83 `dcf40a3`).
+  ///
+  /// **LE-host-only**: gated on `target_endian = "little"`. On a BE host
+  /// the equality `::<false>` ≡ `::<HOST_NATIVE_BE>` is _false_ —
+  /// `::<false>` decodes the host-native fixture as if it were LE-encoded
+  /// (byte-swap), while `::<HOST_NATIVE_BE> == ::<true>` decodes as BE
+  /// (no swap), so the outputs diverge by design. The BE-host correctness
+  /// of the routing change is verified instead by
+  /// [`grayf32_sinker_host_native_contract_lossless_passthrough`] and the
+  /// row-kernel BE parity tests in `src/row/arch/*/tests/`.
+  #[test]
+  #[cfg(target_endian = "little")]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn grayf32_kernel_host_native_be_matches_false_on_le_host() {
+    use crate::row::{
+      grayf32_to_hsv_row, grayf32_to_luma_f32_row, grayf32_to_luma_row, grayf32_to_luma_u16_row,
+      grayf32_to_rgb_f32_row, grayf32_to_rgb_row, grayf32_to_rgb_u16_row, grayf32_to_rgba_row,
+      grayf32_to_rgba_u16_row,
+    };
+
+    // The sinker layer's `HOST_NATIVE_BE` mirrors `cfg!(target_endian = "big")`.
+    // Compute it locally so the test asserts the same condition without
+    // taking a dependency on a private const.
+    const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
+    // Width 33 covers SIMD main loop + scalar tail across every backend.
+    let w = 33usize;
+    let mut plane = std::vec![0.0f32; w];
+    for (i, v) in plane.iter_mut().enumerate() {
+      // Mix in-range, HDR, and negative values to exercise every clamp branch.
+      *v = match i % 5 {
+        0 => 0.0,
+        1 => 0.5,
+        2 => 1.0,
+        3 => 1.75,
+        _ => -0.25,
+      };
+    }
+
+    // luma f32 lossless pass-through.
+    let mut lf32_false = std::vec![0.0f32; w];
+    let mut lf32_host = std::vec![0.0f32; w];
+    grayf32_to_luma_f32_row::<false>(&plane, &mut lf32_false, w, true);
+    grayf32_to_luma_f32_row::<HOST_NATIVE_BE>(&plane, &mut lf32_host, w, true);
+    assert_eq!(lf32_false, lf32_host, "luma f32 diverges");
+    if !HOST_NATIVE_BE {
+      assert_eq!(
+        lf32_host, plane,
+        "luma_f32 lossless pass-through corrupted on LE host"
+      );
+    }
+
+    // rgb f32 lossless replicate.
+    let mut rgb_f32_false = std::vec![0.0f32; w * 3];
+    let mut rgb_f32_host = std::vec![0.0f32; w * 3];
+    grayf32_to_rgb_f32_row::<false>(&plane, &mut rgb_f32_false, w, true);
+    grayf32_to_rgb_f32_row::<HOST_NATIVE_BE>(&plane, &mut rgb_f32_host, w, true);
+    assert_eq!(rgb_f32_false, rgb_f32_host, "rgb f32 diverges");
+
+    // luma u8.
+    let mut l_false = std::vec![0u8; w];
+    let mut l_host = std::vec![0u8; w];
+    grayf32_to_luma_row::<false>(&plane, &mut l_false, w, true);
+    grayf32_to_luma_row::<HOST_NATIVE_BE>(&plane, &mut l_host, w, true);
+    assert_eq!(l_false, l_host, "luma u8 diverges");
+
+    // luma u16.
+    let mut lu16_false = std::vec![0u16; w];
+    let mut lu16_host = std::vec![0u16; w];
+    grayf32_to_luma_u16_row::<false>(&plane, &mut lu16_false, w, true);
+    grayf32_to_luma_u16_row::<HOST_NATIVE_BE>(&plane, &mut lu16_host, w, true);
+    assert_eq!(lu16_false, lu16_host, "luma u16 diverges");
+
+    // u8 RGB.
+    let mut rgb_false = std::vec![0u8; w * 3];
+    let mut rgb_host = std::vec![0u8; w * 3];
+    grayf32_to_rgb_row::<false>(&plane, &mut rgb_false, w, true);
+    grayf32_to_rgb_row::<HOST_NATIVE_BE>(&plane, &mut rgb_host, w, true);
+    assert_eq!(rgb_false, rgb_host, "u8 RGB diverges");
+
+    // u8 RGBA.
+    let mut rgba_false = std::vec![0u8; w * 4];
+    let mut rgba_host = std::vec![0u8; w * 4];
+    grayf32_to_rgba_row::<false>(&plane, &mut rgba_false, w, true);
+    grayf32_to_rgba_row::<HOST_NATIVE_BE>(&plane, &mut rgba_host, w, true);
+    assert_eq!(rgba_false, rgba_host, "u8 RGBA diverges");
+
+    // u16 RGB.
+    let mut rgb_u16_false = std::vec![0u16; w * 3];
+    let mut rgb_u16_host = std::vec![0u16; w * 3];
+    grayf32_to_rgb_u16_row::<false>(&plane, &mut rgb_u16_false, w, true);
+    grayf32_to_rgb_u16_row::<HOST_NATIVE_BE>(&plane, &mut rgb_u16_host, w, true);
+    assert_eq!(rgb_u16_false, rgb_u16_host, "u16 RGB diverges");
+
+    // u16 RGBA.
+    let mut rgba_u16_false = std::vec![0u16; w * 4];
+    let mut rgba_u16_host = std::vec![0u16; w * 4];
+    grayf32_to_rgba_u16_row::<false>(&plane, &mut rgba_u16_false, w, true);
+    grayf32_to_rgba_u16_row::<HOST_NATIVE_BE>(&plane, &mut rgba_u16_host, w, true);
+    assert_eq!(rgba_u16_false, rgba_u16_host, "u16 RGBA diverges");
+
+    // HSV.
+    let mut h_false = std::vec![0u8; w];
+    let mut s_false = std::vec![0u8; w];
+    let mut v_false = std::vec![0u8; w];
+    let mut h_host = std::vec![0u8; w];
+    let mut s_host = std::vec![0u8; w];
+    let mut v_host = std::vec![0u8; w];
+    grayf32_to_hsv_row::<false>(&plane, &mut h_false, &mut s_false, &mut v_false, w, true);
+    grayf32_to_hsv_row::<HOST_NATIVE_BE>(&plane, &mut h_host, &mut s_host, &mut v_host, w, true);
+    assert_eq!(h_false, h_host, "HSV H diverges");
+    assert_eq!(s_false, s_host, "HSV S diverges");
+    assert_eq!(v_false, v_host, "HSV V diverges");
+  }
+
+  /// End-to-end sinker contract test: feeding host-native `f32` through
+  /// [`MixedSinker<Grayf32>`] must round-trip the lossless `with_luma_f32`
+  /// and `with_rgb_f32` pass-throughs bit-exact on every host. Documents
+  /// the public-API contract that the `HOST_NATIVE_BE` routing fix
+  /// preserves. Pairs with the kernel-level test above; together they
+  /// cover both the dispatch boundary and the public sinker boundary.
+  /// Mirrors `rgbf32_sinker_host_native_contract_lossless_passthrough`
+  /// (PR #83 `dcf40a3`).
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn grayf32_sinker_host_native_contract_lossless_passthrough() {
+    use crate::yuv::Grayf32;
+
+    // Mix HDR, in-range, and negative values — the f32 lossless paths must
+    // round-trip them bit-exact on every host.
+    let w = 16usize;
+    let h = 4usize;
+    let mut plane = std::vec![0.0f32; w * h];
+    for (i, v) in plane.iter_mut().enumerate() {
+      *v = match i % 4 {
+        0 => 0.5,
+        1 => 1.5,
+        2 => -0.25,
+        _ => 100.0,
+      };
+    }
+    let frame = Grayf32Frame::new(&plane, w as u32, h as u32, w as u32);
+
+    // luma_f32 pass-through.
+    let mut luma_f32_out = std::vec![0.0f32; w * h];
+    {
+      let mut sink = MixedSinker::<Grayf32>::new(w, h)
+        .with_luma_f32(&mut luma_f32_out)
+        .unwrap();
+      grayf32_to(&frame, FR, M, &mut sink).unwrap();
+    }
+    // Bit-exact pass-through on every host. On the buggy `::<false>`
+    // routing a BE host would see byte-swapped output; on the fixed
+    // routing the assertion holds on both LE and BE.
+    assert_eq!(
+      luma_f32_out, plane,
+      "Grayf32 sinker luma_f32 pass-through corrupted"
+    );
+
+    // rgb_f32 lossless replicate (R = G = B = Y, bit-exact).
+    let mut rgb_f32_out = std::vec![0.0f32; w * h * 3];
+    {
+      let mut sink = MixedSinker::<Grayf32>::new(w, h)
+        .with_rgb_f32(&mut rgb_f32_out)
+        .unwrap();
+      grayf32_to(&frame, FR, M, &mut sink).unwrap();
+    }
+    for (x, &y) in plane.iter().enumerate() {
+      assert_eq!(rgb_f32_out[x * 3], y, "pixel {x} R diverges");
+      assert_eq!(rgb_f32_out[x * 3 + 1], y, "pixel {x} G diverges");
+      assert_eq!(rgb_f32_out[x * 3 + 2], y, "pixel {x} B diverges");
     }
   }
 

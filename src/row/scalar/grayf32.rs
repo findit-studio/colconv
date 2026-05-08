@@ -206,9 +206,12 @@ pub(crate) fn grayf32_to_luma_u16_row<const BE: bool>(
   }
 }
 
-/// Grayf32 → luma f32. Lossless pass-through (or byte-swap copy for BE).
+/// Grayf32 → luma f32. Lossless pass-through (or byte-swap copy when the
+/// encoded byte order differs from the host).
 ///
-/// When `BE = true`, each f32 element is byte-swapped before output.
+/// `BE` selects the **encoded byte order** of the input buffer: `false` =
+/// LE-encoded, `true` = BE-encoded. A swap happens only when the encoded
+/// order differs from the host CPU's native order.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn grayf32_to_luma_f32_row<const BE: bool>(
   plane: &[f32],
@@ -217,6 +220,20 @@ pub(crate) fn grayf32_to_luma_f32_row<const BE: bool>(
 ) {
   debug_assert!(plane.len() >= width, "plane too short");
   debug_assert!(luma_f32_out.len() >= width, "luma_f32_out too short");
+  // Fast path: encoded byte order matches host-native — pure memcpy.
+  // (LE-encoded data on LE host, or BE-encoded data on BE host.) The
+  // const-generic `BE == HOST_NATIVE_BE` branch is dead-code-eliminated
+  // per monomorphization, so this becomes a single `copy_from_slice` call
+  // with no swap loop. Mirrors the `rgbf32_to_rgb_f32_row` fast path
+  // landed in PR #83 (`b915754`).
+  const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+  if BE == HOST_NATIVE_BE {
+    luma_f32_out[..width].copy_from_slice(&plane[..width]);
+    return;
+  }
+  // Slow path: encoded byte order differs from host — byte-swap each f32
+  // element via `u32::from_be` / `u32::from_le` (the dead branch is
+  // eliminated since `BE` is const). Output is always host-native.
   for (out, &raw) in luma_f32_out[..width].iter_mut().zip(plane[..width].iter()) {
     *out = if BE {
       f32::from_bits(u32::from_be(raw.to_bits()))
