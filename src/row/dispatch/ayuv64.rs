@@ -567,11 +567,19 @@ mod tests {
 
   /// Pack one AYUV64 pixel from explicit A / Y / U / V samples (16-bit
   /// native, no shift required).
+  ///
+  /// Helpers below are consumed only by the LE-host-gated tests in this
+  /// module (see the gating policy at the top of `mod tests`); on BE
+  /// hosts (s390x / powerpc64) those tests are skipped, so the helpers
+  /// would appear unused under `-D warnings`. Gate the helpers with the
+  /// same `target_endian = "little"` cfg.
+  #[cfg(target_endian = "little")]
   fn pack_ayuv64(a: u16, y: u16, u: u16, v: u16) -> [u16; 4] {
     [a, y, u, v]
   }
 
   /// Pack one AYUV64 pixel in big-endian wire format.
+  #[cfg(target_endian = "little")]
   fn pack_ayuv64_be(a: u16, y: u16, u: u16, v: u16) -> [u16; 4] {
     [
       a.swap_bytes(),
@@ -584,12 +592,14 @@ mod tests {
   /// Build a `Vec<u16>` AYUV64 row of `width` pixels with neutral
   /// chroma (U=V=32768) and the given Y / alpha values. Any positive
   /// width is valid (4:4:4, no chroma subsampling).
+  #[cfg(target_endian = "little")]
   fn solid_ayuv64(width: usize, y: u16, a: u16) -> std::vec::Vec<u16> {
     let quad = pack_ayuv64(a, y, 32768, 32768);
     (0..width).flat_map(|_| quad).collect()
   }
 
   /// Build a `Vec<u16>` AYUV64 row in big-endian wire format.
+  #[cfg(target_endian = "little")]
   fn solid_ayuv64_be(width: usize, y: u16, a: u16) -> std::vec::Vec<u16> {
     let quad = pack_ayuv64_be(a, y, 32768, 32768);
     (0..width).flat_map(|_| quad).collect()
