@@ -60,6 +60,10 @@ mod v30x;
 mod v410;
 mod vuya;
 mod xv36;
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) mod xyz12;
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) mod xyz12_constants;
 mod y216;
 mod y2xx;
 pub(crate) mod y_plane_to_luma_u16;
@@ -111,6 +115,10 @@ pub(crate) use v210::*;
 pub(crate) use v410::*;
 pub(crate) use vuya::*;
 pub(crate) use xv36::*;
+// `xyz12` and `xyz12_constants` are crate-internal modules; consumers (dispatcher
+// + SIMD tails) reach in via `crate::row::scalar::xyz12::xyz12_to_rgb_row::<BE>`
+// rather than a glob re-export, so the constants table and helpers stay
+// addressable without polluting the scalar namespace.
 pub(crate) use y2xx::*;
 pub(crate) use y216::*;
 #[allow(unused_imports)]

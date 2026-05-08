@@ -36,7 +36,9 @@
 //! const-branch on byte-swap. Type aliases [`Xyz12LeFrame`] and
 //! [`Xyz12BeFrame`] cover the FFmpeg `XYZ12LE` / `XYZ12BE` variants.
 
-use crate::{DcpTargetGamut, PixelSink, SourceFormat, frame::Xyz12Frame, sealed::Sealed};
+use crate::{
+  ColorMatrix, DcpTargetGamut, PixelSink, SourceFormat, frame::Xyz12Frame, sealed::Sealed,
+};
 
 /// Zero-sized marker type for the packed **XYZ12** source format
 /// (`AV_PIX_FMT_XYZ12LE` / `AV_PIX_FMT_XYZ12BE`).
@@ -60,21 +62,30 @@ pub type Xyz12Be = Xyz12<true>;
 ///
 /// Carries the per-frame [`DcpTargetGamut`] choice so downstream row
 /// kernels can apply the correct XYZ → RGB matrix without a separate
-/// dispatch parameter.
+/// dispatch parameter. The luma-derivation [`ColorMatrix`] is derived
+/// from the target gamut at the walker call site (BT.709 for
+/// DciP3 / Rec709, BT.2020Ncl for Rec2020).
 #[derive(Debug, Clone, Copy)]
 pub struct Xyz12Row<'a, const BE: bool = false> {
   xyz: &'a [u16],
   row: usize,
   target_gamut: DcpTargetGamut,
+  matrix: ColorMatrix,
 }
 
 impl<'a, const BE: bool> Xyz12Row<'a, BE> {
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub(crate) fn new(xyz: &'a [u16], row: usize, target_gamut: DcpTargetGamut) -> Self {
+  pub(crate) fn new(
+    xyz: &'a [u16],
+    row: usize,
+    target_gamut: DcpTargetGamut,
+    matrix: ColorMatrix,
+  ) -> Self {
     Self {
       xyz,
       row,
       target_gamut,
+      matrix,
     }
   }
 
@@ -96,11 +107,42 @@ impl<'a, const BE: bool> Xyz12Row<'a, BE> {
     self.target_gamut
   }
 
+  /// Luma-derivation matrix paired with the target gamut. Used by the
+  /// `with_luma` / `with_luma_u16` sinker accessors. Always full-range
+  /// (the OETF-encoded RGB output is full-range by construction).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn matrix(&self) -> ColorMatrix {
+    self.matrix
+  }
+
+  /// XYZ12 always emits full-range RGB after the OETF; the constant
+  /// `true` is provided as a convenience for sinker plumbing that takes
+  /// a `full_range` flag uniformly across source formats.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn full_range(&self) -> bool {
+    true
+  }
+
   /// Whether the source samples are big-endian on the wire (mirrors
   /// the const-generic parameter).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn big_endian(&self) -> bool {
     BE
+  }
+}
+
+/// Maps a [`DcpTargetGamut`] to the [`ColorMatrix`] used for luma
+/// derivation when the sinker downstreams `with_luma` / `with_luma_u16`.
+///
+/// - `DciP3` and `Rec709` both use `Bt709` (D65 white point shared,
+///   luma weights agree to within a single LSB on u8 grayscale).
+/// - `Rec2020` uses `Bt2020Ncl` (different luma weights to match the
+///   wider gamut's perceptual brightness).
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) const fn luma_matrix_for_gamut(g: DcpTargetGamut) -> ColorMatrix {
+  match g {
+    DcpTargetGamut::DciP3 | DcpTargetGamut::Rec709 => ColorMatrix::Bt709,
+    DcpTargetGamut::Rec2020 => ColorMatrix::Bt2020Ncl,
   }
 }
 
@@ -134,11 +176,12 @@ pub fn xyz12_to<const BE: bool, S: Xyz12Sink<BE>>(
   let stride = src.stride() as usize;
   let row_elems: usize = w * 3;
   let plane = src.xyz();
+  let matrix = luma_matrix_for_gamut(target_gamut);
 
   for row in 0..h {
     let start = row * stride;
     let xyz = &plane[start..start + row_elems];
-    sink.process(Xyz12Row::<BE>::new(xyz, row, target_gamut))?;
+    sink.process(Xyz12Row::<BE>::new(xyz, row, target_gamut, matrix))?;
   }
   Ok(())
 }

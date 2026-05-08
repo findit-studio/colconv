@@ -246,6 +246,17 @@ pub enum MixedSinkerError {
     actual: usize,
   },
 
+  /// `f32` XYZ buffer attached via `with_xyz_f32` / `set_xyz_f32` is
+  /// shorter than `width × height × 3` `f32` elements. Only the
+  /// [`Xyz12`](crate::yuv::Xyz12) source impl writes into this buffer.
+  #[error("MixedSinker xyz_f32 buffer too short: expected >= {expected} elements, got {actual}")]
+  XyzF32BufferTooShort {
+    /// Minimum `f32` elements required (`width × height × 3`).
+    expected: usize,
+    /// `f32` elements supplied.
+    actual: usize,
+  },
+
   /// `f32` luma buffer attached via `with_luma_f32` / `set_luma_f32` is
   /// shorter than `width × height` `f32` elements.
   #[error("MixedSinker luma_f32 buffer too short: expected >= {expected} elements, got {actual}")]
@@ -776,6 +787,12 @@ pub enum RowSlice {
   /// `3 * width` `half::f16` elements (= `6 * width` bytes).
   #[display("RGBF16 packed")]
   RgbF16Packed,
+  /// Packed `X, Y, Z` row of an [`Xyz12`](crate::yuv::Xyz12) source —
+  /// Tier 12 12-bit CIE XYZ packed in u16 triples (low 12 bits
+  /// active). Row length: `3 * width` `u16` elements (= `6 * width`
+  /// bytes).
+  #[display("XYZ12 packed")]
+  Xyz12Packed,
   /// Green plane row of an 8-bit planar GBR source
   /// ([`Gbrp`](crate::yuv::Gbrp) /
   /// [`Gbrap`](crate::yuv::Gbrap)). `u8` samples, `width` elements.
@@ -850,6 +867,10 @@ pub struct MixedSinker<'a, F: SourceFormat> {
   luma_u16: Option<&'a mut [u16]>,
   luma_f32: Option<&'a mut [f32]>,
   hsv: Option<HsvBuffers<'a>>,
+  /// Lossless linear-XYZ pass-through buffer used by the
+  /// [`Xyz12`](crate::yuv::Xyz12) source's `with_xyz_f32` accessor.
+  /// `None` for every other source format.
+  xyz_f32: Option<&'a mut [f32]>,
   width: usize,
   height: usize,
   /// Lazily grown to `3 * width` bytes when HSV is requested without a
@@ -1203,6 +1224,7 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
       luma_u16: None,
       luma_f32: None,
       hsv: None,
+      xyz_f32: None,
       width,
       height,
       rgb_scratch: Vec::new(),
@@ -1738,6 +1760,7 @@ mod v410;
 mod vuya;
 mod vuyx;
 mod xv36;
+mod xyz12;
 mod y210;
 mod y212;
 mod y216;
