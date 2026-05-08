@@ -20,6 +20,11 @@ use super::{endian::load_endian_u32x4, scalar};
 /// would byte-swap an already-decoded host-native f32 buffer on BE hosts.
 /// (`wasm32-*` is LE today, but keeping the routing endian-agnostic future-
 /// proofs against any BE wasm target.)
+///
+/// Also used by the `rgbf32_to_rgb_f32_row` pass-through fast path: the raw
+/// `v128_load`/`v128_store` copy is byte-correct only when the source encoding
+/// (`BE`) matches the host's native endian, so the kernel falls through to
+/// the endian-aware `load_f32x4::<BE>` slow path otherwise.
 const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 
 // ---- helpers ------------------------------------------------------------------
@@ -272,8 +277,9 @@ pub(crate) unsafe fn rgbf32_to_rgba_u16_row<const BE: bool>(
 
 /// f32 RGB → f32 RGB lossless pass-through / byte-swap.
 ///
-/// - `BE = false`: fast `v128_load` → `v128_store` copy (no math).
-/// - `BE = true`:  load each element as u32, byte-swap, store as f32.
+/// - `BE == HOST_NATIVE_BE`: fast `v128_load` → `v128_store` copy (no math).
+/// - otherwise: load each element through endian-aware `load_f32x4::<BE>`
+///   (byte-swap to host-native), store as f32.
 #[inline]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
@@ -284,7 +290,12 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
   debug_assert!(rgb_in.len() >= width * 3, "rgbf32 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_f32_out row too short");
 
-  if !BE {
+  // Fast path: when the requested encoding (BE) matches the host's native
+  // endian, the bytes can be copied verbatim — `v128_load` reads host-native
+  // bytes which is exactly what we need to emit. Otherwise we must decode
+  // through `load_f32x4::<BE>` (which byte-swaps when BE differs from
+  // host-native) so the stored host-native f32 round-trips to the same value.
+  if BE == HOST_NATIVE_BE {
     let total = width * 3;
     let mut i = 0usize;
     while i + 4 <= total {
@@ -301,12 +312,12 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
       i += 1;
     }
   } else {
-    // BE: byte-swap each f32 element via u32 lane reinterpretation.
+    // Encoding doesn't match host: decode each lane to host-native via the
+    // endian-aware loader (`load_endian_u32x4::<BE>` byte-swaps each lane).
     let total = width * 3;
     let mut i = 0usize;
     while i + 4 <= total {
       unsafe {
-        // load_endian_u32x4::<true> byte-swaps each 32-bit lane.
         let swapped = load_f32x4::<BE>(rgb_in.as_ptr().add(i));
         v128_store(rgb_out.as_mut_ptr().add(i) as *mut v128, swapped);
       }
@@ -315,7 +326,12 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
     while i < total {
       unsafe {
         let bits = rgb_in.get_unchecked(i).to_bits();
-        *rgb_out.get_unchecked_mut(i) = f32::from_bits(u32::from_be(bits));
+        let host_bits = if BE {
+          u32::from_be(bits)
+        } else {
+          u32::from_le(bits)
+        };
+        *rgb_out.get_unchecked_mut(i) = f32::from_bits(host_bits);
       }
       i += 1;
     }

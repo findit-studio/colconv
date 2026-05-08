@@ -327,10 +327,19 @@ fn rgbf16_simd_matches_scalar_with_random_input() {
 /// fixed code on LE. It instead documents the equivalence at the **kernel
 /// dispatch** layer — calling each `rgbf16_to_*` dispatcher with both
 /// `BE = false` and `BE = HOST_NATIVE_BE` (= `cfg!(target_endian = "big")`)
-/// must produce identical output on the active host. On a hypothetical BE
-/// host (full QEMU s390x coverage is Phase 3), the same equivalence holds
-/// for the **fixed** sinker but would fail for the broken one.
+/// must produce identical output on the active host.
+///
+/// **LE-host-only**: gated on `target_endian = "little"`. On a BE host the
+/// equality `::<false>` ≡ `::<HOST_NATIVE_BE>` is _false_ — `::<false>`
+/// decodes the host-native fixture as if it were LE-encoded (byte-swap),
+/// while `::<HOST_NATIVE_BE> == ::<true>` decodes as BE (no swap), so the
+/// outputs diverge by design. The dispatch-equivalence claim is specifically
+/// about the LE host-routing pattern; the BE-host correctness of the routing
+/// change is verified instead by
+/// [`rgbf16_sinker_host_native_contract_lossless_passthrough`] and the
+/// row-kernel BE parity tests in `src/row/arch/*/tests/`.
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"

@@ -411,19 +411,12 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
   unsafe {
     let total = width * 3;
     let mut i = 0usize;
-    if BE {
-      // For BE pass-through: load as u32 with byte-swap, store as f32.
-      while i + 4 <= total {
-        let v = load_f32x4::<BE>(rgb_in.as_ptr().add(i));
-        vst1q_f32(rgb_out.as_mut_ptr().add(i), v);
-        i += 4;
-      }
-      while i < total {
-        let bits = (*rgb_in.get_unchecked(i)).to_bits();
-        *rgb_out.get_unchecked_mut(i) = f32::from_bits(u32::from_be(bits));
-        i += 1;
-      }
-    } else {
+    // Fast path: when the requested encoding (BE) matches the host's native
+    // endian, the bytes can be copied verbatim — `vld1q_f32` reads host-native
+    // bytes which is exactly what we need to emit. Otherwise we must decode
+    // through `load_f32x4::<BE>` (which byte-swaps when BE != host-native) so
+    // the stored host-native f32 round-trips back to the same value.
+    if BE == HOST_NATIVE_BE {
       while i + 4 <= total {
         let v = vld1q_f32(rgb_in.as_ptr().add(i));
         vst1q_f32(rgb_out.as_mut_ptr().add(i), v);
@@ -431,6 +424,23 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
       }
       while i < total {
         *rgb_out.get_unchecked_mut(i) = *rgb_in.get_unchecked(i);
+        i += 1;
+      }
+    } else {
+      // Encoding doesn't match host: decode each lane to host-native.
+      while i + 4 <= total {
+        let v = load_f32x4::<BE>(rgb_in.as_ptr().add(i));
+        vst1q_f32(rgb_out.as_mut_ptr().add(i), v);
+        i += 4;
+      }
+      while i < total {
+        let bits = (*rgb_in.get_unchecked(i)).to_bits();
+        let host_bits = if BE {
+          u32::from_be(bits)
+        } else {
+          u32::from_le(bits)
+        };
+        *rgb_out.get_unchecked_mut(i) = f32::from_bits(host_bits);
         i += 1;
       }
     }
@@ -459,6 +469,11 @@ use super::endian::load_endian_u16x4;
 /// native == LE so `BE = false`; on a BE target, host-native == BE so
 /// `BE = true`. Without this routing the downstream `rgbf32_to_*::<false>`
 /// would byte-swap an already-decoded host-native f32 buffer on BE hosts.
+///
+/// Also used by the `rgbf32_to_rgb_f32_row` pass-through fast path: the raw
+/// `vld1q_f32`/`vst1q_f32` copy is byte-correct only when the source encoding
+/// (`BE`) matches the host's native endian, so the kernel falls through to
+/// the endian-aware `load_f32x4::<BE>` slow path otherwise.
 const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 
 /// Widen 4 half-precision floats (`f16x4`, i.e. 8 bytes starting at `ptr`)

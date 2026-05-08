@@ -301,6 +301,39 @@ fn wasm_rgbf32_to_rgb_f32_be_is_byteswap() {
   }
 }
 
+/// Feeds an explicitly LE-encoded fixture through `rgbf32_to_rgb_f32_row::<false>`
+/// and asserts it decodes to the host-native expected values.
+///
+/// On LE hosts this is a vacuous sanity check (LE-encoded == host-native), but
+/// on BE hosts it guards against the historical bug where the kernel used a raw
+/// `v128_load`/`v128_store` copy in the `BE = false` branch, which preserved
+/// the LE byte order on store and produced corrupted (byte-swapped) host f32s.
+/// The current kernel falls through to the endian-aware `load_f32x4::<false>`
+/// slow path on BE hosts (`HOST_NATIVE_BE != BE`) so this test passes on both.
+/// (`wasm32-*` is LE today, but the routing is endian-agnostic for any future
+/// BE wasm target.)
+#[test]
+fn wasm_rgbf32_to_rgb_f32_row_le_input_decodes_correctly_on_any_host() {
+  for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
+    let expected = pseudo_random_rgbf32(w); // host-native f32 values
+    // Build LE-encoded input: each lane's bits, written as if LE on disk, then
+    // reinterpreted as host-native f32. On LE hosts this is identical to
+    // `expected`; on BE hosts each lane is byte-swapped.
+    let le_in: std::vec::Vec<f32> = expected
+      .iter()
+      .map(|v| f32::from_bits(u32::from_le(v.to_bits())))
+      .collect();
+    let mut out = std::vec![0.0f32; w * 3];
+    unsafe {
+      rgbf32_to_rgb_f32_row::<false>(&le_in, &mut out, w);
+    }
+    assert_eq!(
+      out, expected,
+      "wasm rgbf32_to_rgb_f32_row::<false> must decode LE input to host-native (width {w})"
+    );
+  }
+}
+
 // ---- BE parity tests — wasm-simd128 Rgbf16 -----------------------------------
 
 #[test]
