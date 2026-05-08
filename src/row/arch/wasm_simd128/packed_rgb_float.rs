@@ -10,7 +10,24 @@
 
 use core::arch::wasm32::*;
 
-use super::scalar;
+use super::{endian::load_endian_u32x4, scalar};
+
+/// `BE` value that makes the f32 row loaders treat their input as host-native
+/// (a no-op byte-swap). Used by f16→f32 widen-then-convert paths whose stack
+/// buffer is already host-native after `half::f16::to_f32()`. On a LE target,
+/// host-native == LE so `BE = false`; on a BE target, host-native == BE so
+/// `BE = true`. Without this routing the downstream `rgbf32_to_*::<false>`
+/// would byte-swap an already-decoded host-native f32 buffer on BE hosts.
+/// (`wasm32-*` is LE today, but keeping the routing endian-agnostic future-
+/// proofs against any BE wasm target.)
+///
+/// Also used by the `rgbf32_to_rgb_f32_row` pass-through fast path: the raw
+/// `v128_load`/`v128_store` copy is byte-correct only when the source encoding
+/// (`BE`) matches the host's native endian, so the kernel falls through to
+/// the endian-aware `load_f32x4::<BE>` slow path otherwise.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
+// ---- helpers ------------------------------------------------------------------
 
 #[inline(always)]
 fn clamp_scale_to_i32(v: v128, zero: v128, one: v128, scale: v128) -> v128 {
@@ -21,6 +38,23 @@ fn clamp_scale_to_i32(v: v128, zero: v128, one: v128, scale: v128) -> v128 {
   i32x4_trunc_sat_f32x4(rounded)
 }
 
+/// Load 4 f32 values from `ptr`, byte-swapping each 32-bit element when
+/// `BE = true`.  The returned `v128` holds f32 bit patterns in host-native
+/// order so downstream float arithmetic is correct.
+///
+/// # Safety
+///
+/// `ptr` must point to at least 16 readable bytes.  simd128 must be
+/// available (compile-time `target_feature`).
+#[inline(always)]
+unsafe fn load_f32x4<const BE: bool>(ptr: *const f32) -> v128 {
+  // load_endian_u32x4 byte-swaps each 32-bit lane when BE=true, giving us
+  // host-native f32 bit patterns.
+  unsafe { load_endian_u32x4::<BE>(ptr as *const u8) }
+}
+
+// ---- Tier 9 — Rgbf32 wasm-simd128 kernels ------------------------------------
+
 /// f32 RGB → u8 RGB.
 ///
 /// # Safety
@@ -30,7 +64,11 @@ fn clamp_scale_to_i32(v: v128, zero: v128, one: v128, scale: v128) -> v128 {
 /// 3. `rgb_in` / `rgb_out` must not alias.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn rgbf32_to_rgb_row(rgb_in: &[f32], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn rgbf32_to_rgb_row<const BE: bool>(
+  rgb_in: &[f32],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf32 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -43,9 +81,9 @@ pub(crate) unsafe fn rgbf32_to_rgb_row(rgb_in: &[f32], rgb_out: &mut [u8], width
   // 4 pixels = 12 lanes per iter.
   while lane + 12 <= total_lanes {
     unsafe {
-      let v0 = v128_load(rgb_in.as_ptr().add(lane) as *const v128);
-      let v1 = v128_load(rgb_in.as_ptr().add(lane + 4) as *const v128);
-      let v2 = v128_load(rgb_in.as_ptr().add(lane + 8) as *const v128);
+      let v0 = load_f32x4::<BE>(rgb_in.as_ptr().add(lane));
+      let v1 = load_f32x4::<BE>(rgb_in.as_ptr().add(lane + 4));
+      let v2 = load_f32x4::<BE>(rgb_in.as_ptr().add(lane + 8));
 
       let i0 = clamp_scale_to_i32(v0, zero, one, scale);
       let i1 = clamp_scale_to_i32(v1, zero, one, scale);
@@ -68,7 +106,7 @@ pub(crate) unsafe fn rgbf32_to_rgb_row(rgb_in: &[f32], rgb_out: &mut [u8], width
   }
   let pix_done = lane / 3;
   if pix_done < width {
-    scalar::rgbf32_to_rgb_row(
+    scalar::rgbf32_to_rgb_row::<BE>(
       &rgb_in[pix_done * 3..width * 3],
       &mut rgb_out[pix_done * 3..width * 3],
       width - pix_done,
@@ -79,7 +117,11 @@ pub(crate) unsafe fn rgbf32_to_rgb_row(rgb_in: &[f32], rgb_out: &mut [u8], width
 /// f32 RGB → u8 RGBA (alpha forced to `0xFF`).
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn rgbf32_to_rgba_row(rgb_in: &[f32], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn rgbf32_to_rgba_row<const BE: bool>(
+  rgb_in: &[f32],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf32 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -92,9 +134,9 @@ pub(crate) unsafe fn rgbf32_to_rgba_row(rgb_in: &[f32], rgba_out: &mut [u8], wid
   let mut pix = 0usize;
   while lane + 12 <= total_lanes {
     unsafe {
-      let v0 = v128_load(rgb_in.as_ptr().add(lane) as *const v128);
-      let v1 = v128_load(rgb_in.as_ptr().add(lane + 4) as *const v128);
-      let v2 = v128_load(rgb_in.as_ptr().add(lane + 8) as *const v128);
+      let v0 = load_f32x4::<BE>(rgb_in.as_ptr().add(lane));
+      let v1 = load_f32x4::<BE>(rgb_in.as_ptr().add(lane + 4));
+      let v2 = load_f32x4::<BE>(rgb_in.as_ptr().add(lane + 8));
 
       let i0 = clamp_scale_to_i32(v0, zero, one, scale);
       let i1 = clamp_scale_to_i32(v1, zero, one, scale);
@@ -118,7 +160,7 @@ pub(crate) unsafe fn rgbf32_to_rgba_row(rgb_in: &[f32], rgba_out: &mut [u8], wid
     pix += 4;
   }
   if pix < width {
-    scalar::rgbf32_to_rgba_row(
+    scalar::rgbf32_to_rgba_row::<BE>(
       &rgb_in[pix * 3..width * 3],
       &mut rgba_out[pix * 4..width * 4],
       width - pix,
@@ -129,7 +171,11 @@ pub(crate) unsafe fn rgbf32_to_rgba_row(rgb_in: &[f32], rgba_out: &mut [u8], wid
 /// f32 RGB → u16 RGB.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn rgbf32_to_rgb_u16_row(rgb_in: &[f32], rgb_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn rgbf32_to_rgb_u16_row<const BE: bool>(
+  rgb_in: &[f32],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf32 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_u16_out row too short");
 
@@ -141,9 +187,9 @@ pub(crate) unsafe fn rgbf32_to_rgb_u16_row(rgb_in: &[f32], rgb_out: &mut [u16], 
   let mut lane = 0usize;
   while lane + 12 <= total_lanes {
     unsafe {
-      let v0 = v128_load(rgb_in.as_ptr().add(lane) as *const v128);
-      let v1 = v128_load(rgb_in.as_ptr().add(lane + 4) as *const v128);
-      let v2 = v128_load(rgb_in.as_ptr().add(lane + 8) as *const v128);
+      let v0 = load_f32x4::<BE>(rgb_in.as_ptr().add(lane));
+      let v1 = load_f32x4::<BE>(rgb_in.as_ptr().add(lane + 4));
+      let v2 = load_f32x4::<BE>(rgb_in.as_ptr().add(lane + 8));
 
       let i0 = clamp_scale_to_i32(v0, zero, one, scale);
       let i1 = clamp_scale_to_i32(v1, zero, one, scale);
@@ -167,7 +213,7 @@ pub(crate) unsafe fn rgbf32_to_rgb_u16_row(rgb_in: &[f32], rgb_out: &mut [u16], 
   }
   let pix_done = lane / 3;
   if pix_done < width {
-    scalar::rgbf32_to_rgb_u16_row(
+    scalar::rgbf32_to_rgb_u16_row::<BE>(
       &rgb_in[pix_done * 3..width * 3],
       &mut rgb_out[pix_done * 3..width * 3],
       width - pix_done,
@@ -178,7 +224,11 @@ pub(crate) unsafe fn rgbf32_to_rgb_u16_row(rgb_in: &[f32], rgb_out: &mut [u16], 
 /// f32 RGB → u16 RGBA (alpha forced to `0xFFFF`).
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn rgbf32_to_rgba_u16_row(rgb_in: &[f32], rgba_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn rgbf32_to_rgba_u16_row<const BE: bool>(
+  rgb_in: &[f32],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf32 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_u16_out row too short");
 
@@ -191,9 +241,9 @@ pub(crate) unsafe fn rgbf32_to_rgba_u16_row(rgb_in: &[f32], rgba_out: &mut [u16]
   let mut pix = 0usize;
   while lane + 12 <= total_lanes {
     unsafe {
-      let v0 = v128_load(rgb_in.as_ptr().add(lane) as *const v128);
-      let v1 = v128_load(rgb_in.as_ptr().add(lane + 4) as *const v128);
-      let v2 = v128_load(rgb_in.as_ptr().add(lane + 8) as *const v128);
+      let v0 = load_f32x4::<BE>(rgb_in.as_ptr().add(lane));
+      let v1 = load_f32x4::<BE>(rgb_in.as_ptr().add(lane + 4));
+      let v2 = load_f32x4::<BE>(rgb_in.as_ptr().add(lane + 8));
 
       let i0 = clamp_scale_to_i32(v0, zero, one, scale);
       let i1 = clamp_scale_to_i32(v1, zero, one, scale);
@@ -217,7 +267,7 @@ pub(crate) unsafe fn rgbf32_to_rgba_u16_row(rgb_in: &[f32], rgba_out: &mut [u16]
     pix += 4;
   }
   if pix < width {
-    scalar::rgbf32_to_rgba_u16_row(
+    scalar::rgbf32_to_rgba_u16_row::<BE>(
       &rgb_in[pix * 3..width * 3],
       &mut rgba_out[pix * 4..width * 4],
       width - pix,
@@ -225,27 +275,66 @@ pub(crate) unsafe fn rgbf32_to_rgba_u16_row(rgb_in: &[f32], rgba_out: &mut [u16]
   }
 }
 
-/// f32 RGB → f32 RGB lossless pass-through.
+/// f32 RGB → f32 RGB lossless pass-through / byte-swap.
+///
+/// - `BE == HOST_NATIVE_BE`: fast `v128_load` → `v128_store` copy (no math).
+/// - otherwise: load each element through endian-aware `load_f32x4::<BE>`
+///   (byte-swap to host-native), store as f32.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn rgbf32_to_rgb_f32_row(rgb_in: &[f32], rgb_out: &mut [f32], width: usize) {
+pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
+  rgb_in: &[f32],
+  rgb_out: &mut [f32],
+  width: usize,
+) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf32 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_f32_out row too short");
 
-  let total = width * 3;
-  let mut i = 0usize;
-  while i + 4 <= total {
-    unsafe {
-      let v = v128_load(rgb_in.as_ptr().add(i) as *const v128);
-      v128_store(rgb_out.as_mut_ptr().add(i) as *mut v128, v);
+  // Fast path: when the requested encoding (BE) matches the host's native
+  // endian, the bytes can be copied verbatim — `v128_load` reads host-native
+  // bytes which is exactly what we need to emit. Otherwise we must decode
+  // through `load_f32x4::<BE>` (which byte-swaps when BE differs from
+  // host-native) so the stored host-native f32 round-trips to the same value.
+  if BE == HOST_NATIVE_BE {
+    let total = width * 3;
+    let mut i = 0usize;
+    while i + 4 <= total {
+      unsafe {
+        let v = v128_load(rgb_in.as_ptr().add(i) as *const v128);
+        v128_store(rgb_out.as_mut_ptr().add(i) as *mut v128, v);
+      }
+      i += 4;
     }
-    i += 4;
-  }
-  while i < total {
-    unsafe {
-      *rgb_out.get_unchecked_mut(i) = *rgb_in.get_unchecked(i);
+    while i < total {
+      unsafe {
+        *rgb_out.get_unchecked_mut(i) = *rgb_in.get_unchecked(i);
+      }
+      i += 1;
     }
-    i += 1;
+  } else {
+    // Encoding doesn't match host: decode each lane to host-native via the
+    // endian-aware loader (`load_endian_u32x4::<BE>` byte-swaps each lane).
+    let total = width * 3;
+    let mut i = 0usize;
+    while i + 4 <= total {
+      unsafe {
+        let swapped = load_f32x4::<BE>(rgb_in.as_ptr().add(i));
+        v128_store(rgb_out.as_mut_ptr().add(i) as *mut v128, swapped);
+      }
+      i += 4;
+    }
+    while i < total {
+      unsafe {
+        let bits = rgb_in.get_unchecked(i).to_bits();
+        let host_bits = if BE {
+          u32::from_be(bits)
+        } else {
+          u32::from_le(bits)
+        };
+        *rgb_out.get_unchecked_mut(i) = f32::from_bits(host_bits);
+      }
+      i += 1;
+    }
   }
 }
 
@@ -256,9 +345,10 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row(rgb_in: &[f32], rgb_out: &mut [f32], 
 // `[f32; CHUNK_PIXELS * 3]` buffer, then call the existing wasm-simd128
 // Rgbf32 downstream kernels for the f32→u8/u16/f32 work.
 //
-// The widening loop is cheap relative to the subsequent SIMD integer conversion,
-// so this hybrid strategy avoids a full scalar fallback while keeping the
-// heavier per-sample math in SIMD.
+// For BE inputs the byte-swap is applied before widening so the widened f32
+// buffer is already host-native; downstream f32 kernels are called with
+// `HOST_NATIVE_BE` so their loaders perform a no-op byte-swap (correct on
+// both LE and BE hosts).
 //
 // CHUNK_PIXELS = 4 (= 12 f32 lanes), matching the simd128 Rgbf32 loop stride.
 
@@ -271,7 +361,11 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row(rgb_in: &[f32], rgb_out: &mut [f32], 
 /// 3. `rgb_in` / `rgb_out` must not alias.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn rgbf16_to_rgb_row<const BE: bool>(
+  rgb_in: &[half::f16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -281,16 +375,25 @@ pub(crate) unsafe fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8],
   while lane + 12 <= total_lanes {
     let mut buf = [0.0f32; 12];
     for k in 0..12 {
-      buf[k] = unsafe { rgb_in.get_unchecked(lane + k).to_f32() };
+      let f = unsafe { rgb_in.get_unchecked(lane + k) };
+      let raw = f.to_bits();
+      let bits = if BE {
+        u16::from_be(raw)
+      } else {
+        u16::from_le(raw)
+      };
+      buf[k] = half::f16::from_bits(bits).to_f32();
     }
     unsafe {
-      rgbf32_to_rgb_row(&buf, rgb_out.get_unchecked_mut(lane..lane + 12), 4);
+      // Buffer is now host-native f32; route via HOST_NATIVE_BE so the f32
+      // loaders perform a no-op byte-swap on both LE and BE hosts.
+      rgbf32_to_rgb_row::<HOST_NATIVE_BE>(&buf, rgb_out.get_unchecked_mut(lane..lane + 12), 4);
     }
     lane += 12;
   }
   let pix_done = lane / 3;
   if pix_done < width {
-    scalar::rgbf16_to_rgb_row(
+    scalar::rgbf16_to_rgb_row::<BE>(
       &rgb_in[pix_done * 3..width * 3],
       &mut rgb_out[pix_done * 3..width * 3],
       width - pix_done,
@@ -305,7 +408,11 @@ pub(crate) unsafe fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8],
 /// Same as [`rgbf16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn rgbf16_to_rgba_row<const BE: bool>(
+  rgb_in: &[half::f16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -315,16 +422,28 @@ pub(crate) unsafe fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8
   while lane + 12 <= total_lanes {
     let mut buf = [0.0f32; 12];
     for k in 0..12 {
-      buf[k] = unsafe { rgb_in.get_unchecked(lane + k).to_f32() };
+      let f = unsafe { rgb_in.get_unchecked(lane + k) };
+      let raw = f.to_bits();
+      let bits = if BE {
+        u16::from_be(raw)
+      } else {
+        u16::from_le(raw)
+      };
+      buf[k] = half::f16::from_bits(bits).to_f32();
     }
     unsafe {
-      rgbf32_to_rgba_row(&buf, rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 16), 4);
+      // Buffer is host-native f32; route via HOST_NATIVE_BE.
+      rgbf32_to_rgba_row::<HOST_NATIVE_BE>(
+        &buf,
+        rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 16),
+        4,
+      );
     }
     lane += 12;
     pix += 4;
   }
   if pix < width {
-    scalar::rgbf16_to_rgba_row(
+    scalar::rgbf16_to_rgba_row::<BE>(
       &rgb_in[pix * 3..width * 3],
       &mut rgba_out[pix * 4..width * 4],
       width - pix,
@@ -340,7 +459,7 @@ pub(crate) unsafe fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8
 /// `len() >= 3 * width` u16 elements.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn rgbf16_to_rgb_u16_row(
+pub(crate) unsafe fn rgbf16_to_rgb_u16_row<const BE: bool>(
   rgb_in: &[half::f16],
   rgb_out: &mut [u16],
   width: usize,
@@ -353,16 +472,24 @@ pub(crate) unsafe fn rgbf16_to_rgb_u16_row(
   while lane + 12 <= total_lanes {
     let mut buf = [0.0f32; 12];
     for k in 0..12 {
-      buf[k] = unsafe { rgb_in.get_unchecked(lane + k).to_f32() };
+      let f = unsafe { rgb_in.get_unchecked(lane + k) };
+      let raw = f.to_bits();
+      let bits = if BE {
+        u16::from_be(raw)
+      } else {
+        u16::from_le(raw)
+      };
+      buf[k] = half::f16::from_bits(bits).to_f32();
     }
     unsafe {
-      rgbf32_to_rgb_u16_row(&buf, rgb_out.get_unchecked_mut(lane..lane + 12), 4);
+      // Buffer is host-native f32; route via HOST_NATIVE_BE.
+      rgbf32_to_rgb_u16_row::<HOST_NATIVE_BE>(&buf, rgb_out.get_unchecked_mut(lane..lane + 12), 4);
     }
     lane += 12;
   }
   let pix_done = lane / 3;
   if pix_done < width {
-    scalar::rgbf16_to_rgb_u16_row(
+    scalar::rgbf16_to_rgb_u16_row::<BE>(
       &rgb_in[pix_done * 3..width * 3],
       &mut rgb_out[pix_done * 3..width * 3],
       width - pix_done,
@@ -377,7 +504,7 @@ pub(crate) unsafe fn rgbf16_to_rgb_u16_row(
 /// Same as [`rgbf16_to_rgb_u16_row`] but `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn rgbf16_to_rgba_u16_row(
+pub(crate) unsafe fn rgbf16_to_rgba_u16_row<const BE: bool>(
   rgb_in: &[half::f16],
   rgba_out: &mut [u16],
   width: usize,
@@ -391,16 +518,28 @@ pub(crate) unsafe fn rgbf16_to_rgba_u16_row(
   while lane + 12 <= total_lanes {
     let mut buf = [0.0f32; 12];
     for k in 0..12 {
-      buf[k] = unsafe { rgb_in.get_unchecked(lane + k).to_f32() };
+      let f = unsafe { rgb_in.get_unchecked(lane + k) };
+      let raw = f.to_bits();
+      let bits = if BE {
+        u16::from_be(raw)
+      } else {
+        u16::from_le(raw)
+      };
+      buf[k] = half::f16::from_bits(bits).to_f32();
     }
     unsafe {
-      rgbf32_to_rgba_u16_row(&buf, rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 16), 4);
+      // Buffer is host-native f32; route via HOST_NATIVE_BE.
+      rgbf32_to_rgba_u16_row::<HOST_NATIVE_BE>(
+        &buf,
+        rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 16),
+        4,
+      );
     }
     lane += 12;
     pix += 4;
   }
   if pix < width {
-    scalar::rgbf16_to_rgba_u16_row(
+    scalar::rgbf16_to_rgba_u16_row::<BE>(
       &rgb_in[pix * 3..width * 3],
       &mut rgba_out[pix * 4..width * 4],
       width - pix,
@@ -416,7 +555,7 @@ pub(crate) unsafe fn rgbf16_to_rgba_u16_row(
 /// `len() >= 3 * width` f32 elements.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn rgbf16_to_rgb_f32_row(
+pub(crate) unsafe fn rgbf16_to_rgb_f32_row<const BE: bool>(
   rgb_in: &[half::f16],
   rgb_out: &mut [f32],
   width: usize,
@@ -428,12 +567,19 @@ pub(crate) unsafe fn rgbf16_to_rgb_f32_row(
   let total_lanes = width * 3;
   for i in 0..total_lanes {
     unsafe {
-      *rgb_out.get_unchecked_mut(i) = rgb_in.get_unchecked(i).to_f32();
+      let f = rgb_in.get_unchecked(i);
+      let raw = f.to_bits();
+      let bits = if BE {
+        u16::from_be(raw)
+      } else {
+        u16::from_le(raw)
+      };
+      *rgb_out.get_unchecked_mut(i) = half::f16::from_bits(bits).to_f32();
     }
   }
 }
 
-/// f16 RGB → f16 RGB lossless pass-through (wasm-simd128).
+/// f16 RGB → f16 RGB lossless pass-through / byte-swap (wasm-simd128).
 ///
 /// # Safety
 ///
@@ -441,12 +587,12 @@ pub(crate) unsafe fn rgbf16_to_rgb_f32_row(
 /// `len() >= 3 * width` f16 elements.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn rgbf16_to_rgb_f16_row(
+pub(crate) unsafe fn rgbf16_to_rgb_f16_row<const BE: bool>(
   rgb_in: &[half::f16],
   rgb_out: &mut [half::f16],
   width: usize,
 ) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_f16_out row too short");
-  scalar::rgbf16_to_rgb_f16_row(rgb_in, rgb_out, width);
+  scalar::rgbf16_to_rgb_f16_row::<BE>(rgb_in, rgb_out, width);
 }

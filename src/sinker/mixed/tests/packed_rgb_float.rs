@@ -245,3 +245,141 @@ fn rgbf32_simd_matches_scalar_with_random_input() {
   assert_eq!(luma_u16_simd, luma_u16_scalar, "Luma u16 output diverges");
   assert_eq!(rgb_f32_simd, pix, "RGB f32 output is not lossless");
 }
+
+/// Sinker-layer host-native-`f32` regression for the bug fixed alongside
+/// `c3a6478` (PR #83 codex 2nd-pass review): the [`Rgbf32`] sinker used to
+/// hardcode `::<false>` when calling the row dispatchers, telling them to
+/// "decode LE-encoded input". Because [`Rgbf32Frame`] hands us a host-native
+/// `&[f32]` row, that routing was a no-op on LE hosts but corrupted every
+/// output path on BE hosts (the loaders would byte-swap an already-decoded
+/// f32). The fix replaces those `::<false>` with `::<HOST_NATIVE_BE>`, which
+/// is `false` on LE and `true` on BE — a no-op byte-swap on either host.
+///
+/// On a LE host (the only target Apple-Silicon and x86_64 macOS can run),
+/// `HOST_NATIVE_BE = false` and `::<HOST_NATIVE_BE>` is byte-for-byte
+/// identical to `::<false>`, so this test cannot distinguish the broken vs
+/// fixed code on LE. It instead documents the equivalence at the **kernel
+/// dispatch** layer — calling each `rgbf32_to_*` dispatcher with both
+/// `BE = false` and `BE = HOST_NATIVE_BE` (= `cfg!(target_endian = "big")`)
+/// must produce identical output on the active host.
+///
+/// **LE-host-only**: gated on `target_endian = "little"`. On a BE host the
+/// equality `::<false>` ≡ `::<HOST_NATIVE_BE>` is _false_ — `::<false>`
+/// decodes the host-native fixture as if it were LE-encoded (byte-swap),
+/// while `::<HOST_NATIVE_BE> == ::<true>` decodes as BE (no swap), so the
+/// outputs diverge by design. The dispatch-equivalence claim is specifically
+/// about the LE host-routing pattern; the BE-host correctness of the routing
+/// change is verified instead by
+/// [`rgbf32_sinker_host_native_contract_lossless_passthrough`] and the
+/// row-kernel BE parity tests in `src/row/arch/*/tests/`.
+#[test]
+#[cfg(target_endian = "little")]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn rgbf32_kernel_host_native_be_matches_false_on_le_host() {
+  use crate::row::{
+    rgbf32_to_rgb_f32_row, rgbf32_to_rgb_row, rgbf32_to_rgb_u16_row, rgbf32_to_rgba_row,
+    rgbf32_to_rgba_u16_row,
+  };
+
+  // The sinker layer's `HOST_NATIVE_BE` mirrors `cfg!(target_endian = "big")`.
+  // Compute it locally so the test asserts the same condition without taking
+  // a dependency on a private const.
+  const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
+  // Width 33 covers SIMD main loop + scalar tail across every backend.
+  let w = 33usize;
+  let mut pix = std::vec![0.0f32; w * 3];
+  for (i, v) in pix.iter_mut().enumerate() {
+    // Mix in-range, HDR, and negative values to exercise every clamp branch.
+    *v = match i % 5 {
+      0 => 0.0,
+      1 => 0.5,
+      2 => 1.0,
+      3 => 1.75,
+      _ => -0.25,
+    };
+  }
+
+  // u8 RGB.
+  let mut rgb_false = std::vec![0u8; w * 3];
+  let mut rgb_host = std::vec![0u8; w * 3];
+  rgbf32_to_rgb_row::<false>(&pix, &mut rgb_false, w, true);
+  rgbf32_to_rgb_row::<HOST_NATIVE_BE>(&pix, &mut rgb_host, w, true);
+  assert_eq!(rgb_false, rgb_host, "u8 RGB diverges");
+
+  // u8 RGBA.
+  let mut rgba_false = std::vec![0u8; w * 4];
+  let mut rgba_host = std::vec![0u8; w * 4];
+  rgbf32_to_rgba_row::<false>(&pix, &mut rgba_false, w, true);
+  rgbf32_to_rgba_row::<HOST_NATIVE_BE>(&pix, &mut rgba_host, w, true);
+  assert_eq!(rgba_false, rgba_host, "u8 RGBA diverges");
+
+  // u16 RGB.
+  let mut rgb_u16_false = std::vec![0u16; w * 3];
+  let mut rgb_u16_host = std::vec![0u16; w * 3];
+  rgbf32_to_rgb_u16_row::<false>(&pix, &mut rgb_u16_false, w, true);
+  rgbf32_to_rgb_u16_row::<HOST_NATIVE_BE>(&pix, &mut rgb_u16_host, w, true);
+  assert_eq!(rgb_u16_false, rgb_u16_host, "u16 RGB diverges");
+
+  // u16 RGBA.
+  let mut rgba_u16_false = std::vec![0u16; w * 4];
+  let mut rgba_u16_host = std::vec![0u16; w * 4];
+  rgbf32_to_rgba_u16_row::<false>(&pix, &mut rgba_u16_false, w, true);
+  rgbf32_to_rgba_u16_row::<HOST_NATIVE_BE>(&pix, &mut rgba_u16_host, w, true);
+  assert_eq!(rgba_u16_false, rgba_u16_host, "u16 RGBA diverges");
+
+  // f32 lossless pass-through.
+  let mut f32_false = std::vec![0.0f32; w * 3];
+  let mut f32_host = std::vec![0.0f32; w * 3];
+  rgbf32_to_rgb_f32_row::<false>(&pix, &mut f32_false, w, true);
+  rgbf32_to_rgb_f32_row::<HOST_NATIVE_BE>(&pix, &mut f32_host, w, true);
+  assert_eq!(f32_false, f32_host, "f32 RGB diverges");
+  // And on the host (LE on every CI runner) both must equal `pix` bit-exact.
+  if !HOST_NATIVE_BE {
+    assert_eq!(
+      f32_host, pix,
+      "f32 lossless pass-through corrupted on LE host"
+    );
+  }
+}
+
+/// End-to-end sinker contract test: feeding host-native `f32` through
+/// [`MixedSinker<Rgbf32>`] must produce the same output every other sinker
+/// would expect from a host-native source — specifically, `with_rgb_f32`
+/// must be bit-exact identical to the input on every host. Documents the
+/// public-API contract that the [`HOST_NATIVE_BE`] routing fix preserves.
+/// Pairs with the kernel-level test above; together they cover both the
+/// dispatch boundary and the public sinker boundary.
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn rgbf32_sinker_host_native_contract_lossless_passthrough() {
+  // Mix HDR, in-range, and negative values — the f32 lossless path must
+  // round-trip them bit-exact on every host.
+  let mut pix = std::vec![0.0f32; 16 * 4 * 3];
+  for (i, v) in pix.iter_mut().enumerate() {
+    *v = match i % 4 {
+      0 => 0.5,
+      1 => 1.5,
+      2 => -0.25,
+      _ => 100.0,
+    };
+  }
+  let src = Rgbf32Frame::try_new(&pix, 16, 4, 16 * 3).unwrap();
+
+  let mut rgb_f32_out = std::vec![0.0f32; 16 * 4 * 3];
+  let mut sink = MixedSinker::<Rgbf32>::new(16, 4)
+    .with_rgb_f32(&mut rgb_f32_out)
+    .unwrap();
+  rgbf32_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  // Bit-exact pass-through on every host. On the buggy `::<false>` routing
+  // a BE host would see byte-swapped output here; on the fixed routing the
+  // assertion holds on both LE and BE.
+  assert_eq!(rgb_f32_out, pix, "Rgbf32 sinker f32 pass-through corrupted");
+}
