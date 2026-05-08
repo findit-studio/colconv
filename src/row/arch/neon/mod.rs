@@ -253,33 +253,58 @@ pub(super) fn scale_y_u16_i64(
 
 // ---- BE helpers ----------------------------------------------------------
 
-/// Conditionally byte-swap 8 u16 lanes in a NEON register.
+/// Compile-time host endianness. `true` on BE targets (e.g. `s390x`,
+/// `powerpc`-BE), `false` on LE targets (e.g. `aarch64-apple-darwin`,
+/// `x86_64`).
 ///
-/// When `BE = true` (big-endian wire format), inverts each u16 element's
-/// byte order via `vrev16q_u8`. When `BE = false` (native LE), returns
-/// the value unchanged. The unused branch is eliminated by the compiler.
+/// Used by the conditional byte-swap helpers below to decide whether a raw
+/// NEON load already matches the wire endian. Without this, the helpers
+/// would only correctly handle two of the four `host × wire` quadrants.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
+/// Conditionally byte-swap 8 u16 lanes in a NEON register so that the
+/// returned value is in **host-native** byte order, regardless of the
+/// host endianness.
+///
+/// The gate is `BE != HOST_NATIVE_BE`:
+///
+/// | wire `BE` | host       | gate    | action            |
+/// |-----------|------------|---------|-------------------|
+/// | `false`   | LE         | `false` | no swap (LE→LE)   |
+/// | `false`   | BE         | `true`  | swap (LE→BE)      |
+/// | `true`    | LE         | `true`  | swap (BE→LE)      |
+/// | `true`    | BE         | `false` | no swap (BE→BE)   |
+///
+/// The unused branch is eliminated by the compiler — `BE` and
+/// `HOST_NATIVE_BE` are both compile-time constants, so the gate folds.
 ///
 /// Used by the packed YUV 4:4:4 kernels (XV36, AYUV64) after `vld4q_u16`
-/// to correct samples loaded from a BE-encoded buffer.
+/// to correct samples loaded from a wire-encoded buffer.
+///
+/// Mirrors PR #82's `9c7d533` dispatcher routing fix and PR #85's
+/// `9e678b0` Ya16 SIMD gate — both addressed the same bug class
+/// (only swapping on `BE = true` rather than `BE != HOST_NATIVE_BE`).
 #[inline(always)]
 pub(super) unsafe fn bswap_u16x8_if_be<const BE: bool>(v: uint16x8_t) -> uint16x8_t {
-  if BE {
+  if BE != HOST_NATIVE_BE {
     unsafe { vreinterpretq_u16_u8(vrev16q_u8(vreinterpretq_u8_u16(v))) }
   } else {
     v
   }
 }
 
-/// Conditionally byte-swap 4 u32 lanes in a NEON register.
+/// Conditionally byte-swap 4 u32 lanes in a NEON register so that the
+/// returned value is in **host-native** byte order, regardless of the
+/// host endianness.
 ///
-/// When `BE = true`, inverts each u32 element's byte order via `vrev32q_u8`.
-/// When `BE = false`, returns the value unchanged.
+/// Same `BE != HOST_NATIVE_BE` gate as [`bswap_u16x8_if_be`] — see that
+/// helper for the truth table.
 ///
 /// Used by the V410 kernel after `vld1q_u32` to correct u32 words loaded
-/// from a BE-encoded buffer.
+/// from a wire-encoded buffer.
 #[inline(always)]
 pub(super) unsafe fn bswap_u32x4_if_be<const BE: bool>(v: uint32x4_t) -> uint32x4_t {
-  if BE {
+  if BE != HOST_NATIVE_BE {
     unsafe { vreinterpretq_u32_u8(vrev32q_u8(vreinterpretq_u8_u32(v))) }
   } else {
     v
