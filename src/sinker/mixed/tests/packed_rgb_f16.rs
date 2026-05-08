@@ -324,11 +324,13 @@ fn rgbf16_simd_matches_scalar_with_random_input() {
 /// from the LE-encoded bytes.
 ///
 /// Mirrors the `Grayf32` regression added in PR #85's `52f8191`.
+///
+/// Forces `with_simd(false)` so this test runs purely scalar — no SIMD
+/// intrinsics — which lets it execute under `cargo miri test`. BE CI is
+/// driven by miri on s390x / powerpc64; gating it out of miri (per the
+/// codex 4th-pass finding) would skip exactly the host where BE corruption
+/// would surface.
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn rgbf16_sinker_le_encoded_frame_decodes_correctly() {
   let vals_f32 = [0.5f32, 1.5, -0.25, 100.0];
   let intended: Vec<half::f16> = (0..16 * 4 * 3)
@@ -345,6 +347,7 @@ fn rgbf16_sinker_le_encoded_frame_decodes_correctly() {
 
   let mut rgb_f16_out = std::vec![half::f16::ZERO; 16 * 4 * 3];
   let mut sink = MixedSinker::<Rgbf16>::new(16, 4)
+    .with_simd(false)
     .with_rgb_f16(&mut rgb_f16_out)
     .unwrap();
   rgbf16_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();

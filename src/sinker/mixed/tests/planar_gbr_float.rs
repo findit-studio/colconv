@@ -881,11 +881,13 @@ fn gbrapf32_rgba_f16_strategy_a_plus_matches_independent_kernel() {
 // Mirrors the `Grayf32` regression added in PR #85's `52f8191`.
 
 /// LE-encoded byte contract regression for [`Gbrpf32`].
+///
+/// Forces `with_simd(false)` so the test runs purely scalar — no SIMD
+/// intrinsics — which lets it execute under `cargo miri test`. BE CI is
+/// driven by miri on s390x / powerpc64; gating it out of miri (per the
+/// codex 4th-pass finding) would skip exactly the host where BE corruption
+/// would surface.
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn gbrpf32_sinker_le_encoded_frame_decodes_correctly() {
   let w = 16usize;
   let h = 4usize;
@@ -935,6 +937,7 @@ fn gbrpf32_sinker_le_encoded_frame_decodes_correctly() {
 
   let mut rgb_f32 = std::vec![0.0f32; w * h * 3];
   let mut sink = MixedSinker::<Gbrpf32>::new(w, h)
+    .with_simd(false)
     .with_rgb_f32(&mut rgb_f32)
     .unwrap();
   gbrpf32_to(&src, &mut sink).unwrap();
@@ -960,11 +963,11 @@ fn gbrpf32_sinker_le_encoded_frame_decodes_correctly() {
 
 /// LE-encoded byte contract regression for [`Gbrapf32`] (lossless RGBA
 /// pass-through, including the α plane).
+///
+/// Forces `with_simd(false)` so the test is miri-safe and runs on BE-host
+/// miri CI. See the `gbrpf32_sinker_le_encoded_frame_decodes_correctly`
+/// docstring for the rationale.
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn gbrapf32_sinker_le_encoded_frame_decodes_correctly() {
   let w = 16usize;
   let h = 4usize;
@@ -990,6 +993,7 @@ fn gbrapf32_sinker_le_encoded_frame_decodes_correctly() {
 
   let mut rgba_f32 = std::vec![0.0f32; w * h * 4];
   let mut sink = MixedSinker::<Gbrapf32>::new(w, h)
+    .with_simd(false)
     .with_rgba_f32(&mut rgba_f32)
     .unwrap();
   gbrapf32_to(&src, &mut sink).unwrap();
@@ -1019,11 +1023,11 @@ fn gbrapf32_sinker_le_encoded_frame_decodes_correctly() {
 }
 
 /// LE-encoded byte contract regression for [`Gbrpf16`].
+///
+/// Forces `with_simd(false)` so the test is miri-safe and runs on BE-host
+/// miri CI. See the `gbrpf32_sinker_le_encoded_frame_decodes_correctly`
+/// docstring for the rationale.
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn gbrpf16_sinker_le_encoded_frame_decodes_correctly() {
   let w = 16usize;
   let h = 4usize;
@@ -1073,6 +1077,7 @@ fn gbrpf16_sinker_le_encoded_frame_decodes_correctly() {
 
   let mut rgb_f16 = std::vec![half::f16::ZERO; w * h * 3];
   let mut sink = MixedSinker::<Gbrpf16>::new(w, h)
+    .with_simd(false)
     .with_rgb_f16(&mut rgb_f16)
     .unwrap();
   gbrpf16_to(&src, &mut sink).unwrap();
@@ -1098,11 +1103,11 @@ fn gbrpf16_sinker_le_encoded_frame_decodes_correctly() {
 
 /// LE-encoded byte contract regression for [`Gbrapf16`] (lossless RGBA
 /// pass-through, including the α plane).
+///
+/// Forces `with_simd(false)` so the test is miri-safe and runs on BE-host
+/// miri CI. See the `gbrpf32_sinker_le_encoded_frame_decodes_correctly`
+/// docstring for the rationale.
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn gbrapf16_sinker_le_encoded_frame_decodes_correctly() {
   let w = 16usize;
   let h = 4usize;
@@ -1135,6 +1140,7 @@ fn gbrapf16_sinker_le_encoded_frame_decodes_correctly() {
 
   let mut rgba_f16 = std::vec![half::f16::ZERO; w * h * 4];
   let mut sink = MixedSinker::<Gbrapf16>::new(w, h)
+    .with_simd(false)
     .with_rgba_f16(&mut rgba_f16)
     .unwrap();
   gbrapf16_to(&src, &mut sink).unwrap();
@@ -1171,11 +1177,11 @@ fn gbrapf16_sinker_le_encoded_frame_decodes_correctly() {
 /// regression that drops the bit-normalize-first step in
 /// `widen_f16_be_to_host_f32::<false>` would interpret byte-swapped bits as
 /// host-native f16 and decode to wildly wrong f32 values.
+///
+/// Forces `with_simd(false)` so the test is miri-safe and runs on BE-host
+/// miri CI. See the `gbrpf32_sinker_le_encoded_frame_decodes_correctly`
+/// docstring for the rationale.
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn gbrpf16_sinker_widen_path_le_encoded_frame_decodes_correctly() {
   let w = 16usize;
   let h = 4usize;
@@ -1225,6 +1231,7 @@ fn gbrpf16_sinker_widen_path_le_encoded_frame_decodes_correctly() {
 
   let mut rgb_f32 = std::vec![0.0f32; w * h * 3];
   let mut sink = MixedSinker::<Gbrpf16>::new(w, h)
+    .with_simd(false)
     .with_rgb_f32(&mut rgb_f32)
     .unwrap();
   gbrpf16_to(&src, &mut sink).unwrap();
@@ -1239,11 +1246,11 @@ fn gbrpf16_sinker_widen_path_le_encoded_frame_decodes_correctly() {
 /// LE-encoded byte contract regression for [`Gbrapf16`] **widening path**
 /// (`with_rgba_f32`, including the α plane). Exercises the four-plane f16 →
 /// f32 widen step — same bit-normalise-first contract as the no-α variant.
+///
+/// Forces `with_simd(false)` so the test is miri-safe and runs on BE-host
+/// miri CI. See the `gbrpf32_sinker_le_encoded_frame_decodes_correctly`
+/// docstring for the rationale.
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn gbrapf16_sinker_widen_path_le_encoded_frame_decodes_correctly() {
   let w = 16usize;
   let h = 4usize;
@@ -1276,6 +1283,7 @@ fn gbrapf16_sinker_widen_path_le_encoded_frame_decodes_correctly() {
 
   let mut rgba_f32 = std::vec![0.0f32; w * h * 4];
   let mut sink = MixedSinker::<Gbrapf16>::new(w, h)
+    .with_simd(false)
     .with_rgba_f32(&mut rgba_f32)
     .unwrap();
   gbrapf16_to(&src, &mut sink).unwrap();
@@ -1301,11 +1309,11 @@ fn gbrapf16_sinker_widen_path_le_encoded_frame_decodes_correctly() {
 /// through `::<HOST_NATIVE_BE>` (`true` on BE, `false` on LE), which makes
 /// the kernel byte-swap a no-op on every host. Vacuous on LE; would catch
 /// the double-swap on BE.
+///
+/// Forces `with_simd(false)` so the test is miri-safe and runs on BE-host
+/// miri CI. See the `gbrpf32_sinker_le_encoded_frame_decodes_correctly`
+/// docstring for the rationale.
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn gbrpf16_sinker_widen_path_u16_and_u8_le_encoded_frame_decodes_correctly() {
   let w = 16usize;
   let h = 4usize;
@@ -1361,6 +1369,7 @@ fn gbrpf16_sinker_widen_path_u16_and_u8_le_encoded_frame_decodes_correctly() {
   let mut luma_u16 = std::vec![0u16; w * h];
   {
     let mut sink = MixedSinker::<Gbrpf16>::new(w, h)
+      .with_simd(false)
       .with_rgb_u16(&mut rgb_u16)
       .unwrap()
       .with_luma_u16(&mut luma_u16)
@@ -1420,11 +1429,11 @@ fn gbrpf16_sinker_widen_path_u16_and_u8_le_encoded_frame_decodes_correctly() {
 /// byte-for-byte. The standalone path uses `gbrapf32_to_rgba_row::<false>`
 /// (already endian-aware), so any deviation indicates the Strategy A+
 /// alpha-patch path corrupted the α plane.
+///
+/// Forces `with_simd(false)` so the test is miri-safe and runs on BE-host
+/// miri CI. See the `gbrpf32_sinker_le_encoded_frame_decodes_correctly`
+/// docstring for the rationale.
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn gbrapf32_strategy_a_plus_le_encoded_frame_alpha_decodes_correctly() {
   // 15 is non-multiple-of-{4,8,16} — exercises scalar tail in every backend.
   let w = 15usize;
@@ -1466,6 +1475,7 @@ fn gbrapf32_strategy_a_plus_le_encoded_frame_alpha_decodes_correctly() {
   let mut rgba_ref = std::vec![0u8; w * h * 4];
   {
     let mut sink = MixedSinker::<Gbrapf32>::new(w, h)
+      .with_simd(false)
       .with_rgba(&mut rgba_ref)
       .unwrap();
     gbrapf32_to(&src, &mut sink).unwrap();
@@ -1476,6 +1486,7 @@ fn gbrapf32_strategy_a_plus_le_encoded_frame_alpha_decodes_correctly() {
   let mut rgba_combo = std::vec![0u8; w * h * 4];
   {
     let mut sink = MixedSinker::<Gbrapf32>::new(w, h)
+      .with_simd(false)
       .with_rgb(&mut rgb_combo)
       .unwrap()
       .with_rgba(&mut rgba_combo)
@@ -1494,11 +1505,11 @@ fn gbrapf32_strategy_a_plus_le_encoded_frame_alpha_decodes_correctly() {
 /// current sinker calls `gbrapf32_to_rgba_u16_row::<false>` directly here
 /// (no alpha-patch helper invocation), but any future routing change that
 /// switches to the alpha-patch helper must keep BE-host correctness.
+///
+/// Forces `with_simd(false)` so the test is miri-safe and runs on BE-host
+/// miri CI. See the `gbrpf32_sinker_le_encoded_frame_decodes_correctly`
+/// docstring for the rationale.
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn gbrapf32_strategy_a_plus_le_encoded_u16_alpha_decodes_correctly() {
   // 17 is non-multiple-of-{4,8,16}.
   let w = 17usize;
@@ -1535,6 +1546,7 @@ fn gbrapf32_strategy_a_plus_le_encoded_u16_alpha_decodes_correctly() {
   let mut rgba_ref = std::vec![0u16; w * h * 4];
   {
     let mut sink = MixedSinker::<Gbrapf32>::new(w, h)
+      .with_simd(false)
       .with_rgba_u16(&mut rgba_ref)
       .unwrap();
     gbrapf32_to(&src, &mut sink).unwrap();
@@ -1545,6 +1557,7 @@ fn gbrapf32_strategy_a_plus_le_encoded_u16_alpha_decodes_correctly() {
   let mut rgba_combo = std::vec![0u16; w * h * 4];
   {
     let mut sink = MixedSinker::<Gbrapf32>::new(w, h)
+      .with_simd(false)
       .with_rgb_u16(&mut rgb_combo)
       .unwrap()
       .with_rgba_u16(&mut rgba_combo)
@@ -1581,11 +1594,11 @@ fn gbrapf32_strategy_a_plus_le_encoded_u16_alpha_decodes_correctly() {
 /// `widen_and_scatter_f16_alpha_to_u8` helper (both paths share the
 /// `widen_and_scatter` helper, so this test guards against the
 /// post-widen routing flag being wrong).
+///
+/// Forces `with_simd(false)` so the test is miri-safe and runs on BE-host
+/// miri CI. See the `gbrpf32_sinker_le_encoded_frame_decodes_correctly`
+/// docstring for the rationale.
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn gbrapf16_strategy_a_plus_post_widen_alpha_decodes_correctly() {
   let w = 15usize;
   let h = 3usize;
@@ -1631,6 +1644,7 @@ fn gbrapf16_strategy_a_plus_post_widen_alpha_decodes_correctly() {
   let mut rgba_ref = std::vec![0u8; w * h * 4];
   {
     let mut sink = MixedSinker::<Gbrapf16>::new(w, h)
+      .with_simd(false)
       .with_rgba(&mut rgba_ref)
       .unwrap();
     gbrapf16_to(&src, &mut sink).unwrap();
@@ -1641,6 +1655,7 @@ fn gbrapf16_strategy_a_plus_post_widen_alpha_decodes_correctly() {
   let mut rgba_combo = std::vec![0u8; w * h * 4];
   {
     let mut sink = MixedSinker::<Gbrapf16>::new(w, h)
+      .with_simd(false)
       .with_rgb(&mut rgb_combo)
       .unwrap()
       .with_rgba(&mut rgba_combo)
