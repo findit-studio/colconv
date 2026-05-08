@@ -32,8 +32,9 @@ use super::{
 use crate::{
   PixelSink,
   row::{
-    rgb_to_hsv_row, rgb_to_luma_row, x2bgr10_to_rgb_row, x2bgr10_to_rgb_u16_row,
-    x2bgr10_to_rgba_row, x2rgb10_to_rgb_row, x2rgb10_to_rgb_u16_row, x2rgb10_to_rgba_row,
+    rgb_to_hsv_row, rgb_to_luma_row, x2bgr10_to_rgb_row_endian, x2bgr10_to_rgb_u16_row_endian,
+    x2bgr10_to_rgba_row_endian, x2rgb10_to_rgb_row_endian, x2rgb10_to_rgb_u16_row_endian,
+    x2rgb10_to_rgba_row_endian,
   },
   yuv::{X2Bgr10, X2Bgr10Row, X2Bgr10Sink, X2Rgb10, X2Rgb10Row, X2Rgb10Sink},
 };
@@ -149,7 +150,7 @@ impl PixelSink for MixedSinker<'_, X2Rgb10> {
         w,
         h,
       )?;
-      x2rgb10_to_rgb_row::<false>(x2rgb10_in, rgb_row, w, use_simd);
+      x2rgb10_to_rgb_row_endian::<false>(x2rgb10_in, rgb_row, w, use_simd);
 
       if let Some(luma) = luma.as_deref_mut() {
         rgb_to_luma_row(
@@ -177,7 +178,7 @@ impl PixelSink for MixedSinker<'_, X2Rgb10> {
     // u8 RGBA output (single-pass, dedicated kernel forces alpha).
     if let Some(buf) = rgba.as_deref_mut() {
       let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
-      x2rgb10_to_rgba_row::<false>(x2rgb10_in, rgba_row, w, use_simd);
+      x2rgb10_to_rgba_row_endian::<false>(x2rgb10_in, rgba_row, w, use_simd);
     }
 
     // u16 native RGB output (10-bit precision preserved).
@@ -193,7 +194,7 @@ impl PixelSink for MixedSinker<'_, X2Rgb10> {
           })?;
       let rgb_plane_start = one_plane_start * 3;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      x2rgb10_to_rgb_u16_row::<false>(x2rgb10_in, rgb_u16_row, w, use_simd);
+      x2rgb10_to_rgb_u16_row_endian::<false>(x2rgb10_in, rgb_u16_row, w, use_simd);
     }
 
     Ok(())
@@ -307,7 +308,7 @@ impl PixelSink for MixedSinker<'_, X2Bgr10> {
         w,
         h,
       )?;
-      x2bgr10_to_rgb_row::<false>(x2bgr10_in, rgb_row, w, use_simd);
+      x2bgr10_to_rgb_row_endian::<false>(x2bgr10_in, rgb_row, w, use_simd);
 
       if let Some(luma) = luma.as_deref_mut() {
         rgb_to_luma_row(
@@ -334,7 +335,7 @@ impl PixelSink for MixedSinker<'_, X2Bgr10> {
 
     if let Some(buf) = rgba.as_deref_mut() {
       let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
-      x2bgr10_to_rgba_row::<false>(x2bgr10_in, rgba_row, w, use_simd);
+      x2bgr10_to_rgba_row_endian::<false>(x2bgr10_in, rgba_row, w, use_simd);
     }
 
     if want_rgb_u16 {
@@ -349,7 +350,7 @@ impl PixelSink for MixedSinker<'_, X2Bgr10> {
           })?;
       let rgb_plane_start = one_plane_start * 3;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      x2bgr10_to_rgb_u16_row::<false>(x2bgr10_in, rgb_u16_row, w, use_simd);
+      x2bgr10_to_rgb_u16_row_endian::<false>(x2bgr10_in, rgb_u16_row, w, use_simd);
     }
 
     Ok(())

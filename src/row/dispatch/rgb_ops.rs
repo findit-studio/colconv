@@ -948,7 +948,7 @@ pub fn bgrx_to_rgba_row(bgrx: &[u8], rgba_out: &mut [u8], width: usize, use_simd
 ///
 /// `use_simd = false` forces the scalar reference path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn x2rgb10_to_rgb_row<const BE: bool>(
+pub fn x2rgb10_to_rgb_row_endian<const BE: bool>(
   x2rgb10: &[u8],
   rgb_out: &mut [u8],
   width: usize,
@@ -993,12 +993,20 @@ pub fn x2rgb10_to_rgb_row<const BE: bool>(
   scalar::x2rgb10_to_rgb_row::<BE>(x2rgb10, rgb_out, width);
 }
 
+/// LE-only wrapper around [`x2rgb10_to_rgb_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `x2rgb10_to_rgb_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn x2rgb10_to_rgb_row(x2rgb10: &[u8], rgb_out: &mut [u8], width: usize, use_simd: bool) {
+  x2rgb10_to_rgb_row_endian::<false>(x2rgb10, rgb_out, width, use_simd)
+}
+
 /// Drops the 2-bit padding, down-shifts to 8 bits, and forces alpha
 /// to `0xFF` from `X2RGB10` LE input. Output: packed `R, G, B, A`.
 ///
 /// `use_simd = false` forces the scalar reference path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn x2rgb10_to_rgba_row<const BE: bool>(
+pub fn x2rgb10_to_rgba_row_endian<const BE: bool>(
   x2rgb10: &[u8],
   rgba_out: &mut [u8],
   width: usize,
@@ -1042,13 +1050,21 @@ pub fn x2rgb10_to_rgba_row<const BE: bool>(
   scalar::x2rgb10_to_rgba_row::<BE>(x2rgb10, rgba_out, width);
 }
 
+/// LE-only wrapper around [`x2rgb10_to_rgba_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `x2rgb10_to_rgba_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn x2rgb10_to_rgba_row(x2rgb10: &[u8], rgba_out: &mut [u8], width: usize, use_simd: bool) {
+  x2rgb10_to_rgba_row_endian::<false>(x2rgb10, rgba_out, width, use_simd)
+}
+
 /// Extracts each 10-bit channel into native-depth `u16` (low-bit
 /// aligned, max value `1023`) from `X2RGB10` LE input. Output:
 /// packed `R, G, B` `u16` elements.
 ///
 /// `use_simd = false` forces the scalar reference path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn x2rgb10_to_rgb_u16_row<const BE: bool>(
+pub fn x2rgb10_to_rgb_u16_row_endian<const BE: bool>(
   x2rgb10: &[u8],
   rgb_out: &mut [u16],
   width: usize,
@@ -1095,11 +1111,19 @@ pub fn x2rgb10_to_rgb_u16_row<const BE: bool>(
   scalar::x2rgb10_to_rgb_u16_row::<BE>(x2rgb10, rgb_out, width);
 }
 
+/// LE-only wrapper around [`x2rgb10_to_rgb_u16_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `x2rgb10_to_rgb_u16_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn x2rgb10_to_rgb_u16_row(x2rgb10: &[u8], rgb_out: &mut [u16], width: usize, use_simd: bool) {
+  x2rgb10_to_rgb_u16_row_endian::<false>(x2rgb10, rgb_out, width, use_simd)
+}
+
 /// `X2BGR10` LE counterpart of [`x2rgb10_to_rgb_row`]. Channel
 /// positions in the source `u32` are reversed; output is still
 /// `R, G, B`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn x2bgr10_to_rgb_row<const BE: bool>(
+pub fn x2bgr10_to_rgb_row_endian<const BE: bool>(
   x2bgr10: &[u8],
   rgb_out: &mut [u8],
   width: usize,
@@ -1144,9 +1168,17 @@ pub fn x2bgr10_to_rgb_row<const BE: bool>(
   scalar::x2bgr10_to_rgb_row::<BE>(x2bgr10, rgb_out, width);
 }
 
+/// LE-only wrapper around [`x2bgr10_to_rgb_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `x2bgr10_to_rgb_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn x2bgr10_to_rgb_row(x2bgr10: &[u8], rgb_out: &mut [u8], width: usize, use_simd: bool) {
+  x2bgr10_to_rgb_row_endian::<false>(x2bgr10, rgb_out, width, use_simd)
+}
+
 /// `X2BGR10` LE counterpart of [`x2rgb10_to_rgba_row`].
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn x2bgr10_to_rgba_row<const BE: bool>(
+pub fn x2bgr10_to_rgba_row_endian<const BE: bool>(
   x2bgr10: &[u8],
   rgba_out: &mut [u8],
   width: usize,
@@ -1190,9 +1222,17 @@ pub fn x2bgr10_to_rgba_row<const BE: bool>(
   scalar::x2bgr10_to_rgba_row::<BE>(x2bgr10, rgba_out, width);
 }
 
+/// LE-only wrapper around [`x2bgr10_to_rgba_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `x2bgr10_to_rgba_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn x2bgr10_to_rgba_row(x2bgr10: &[u8], rgba_out: &mut [u8], width: usize, use_simd: bool) {
+  x2bgr10_to_rgba_row_endian::<false>(x2bgr10, rgba_out, width, use_simd)
+}
+
 /// `X2BGR10` LE counterpart of [`x2rgb10_to_rgb_u16_row`].
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn x2bgr10_to_rgb_u16_row<const BE: bool>(
+pub fn x2bgr10_to_rgb_u16_row_endian<const BE: bool>(
   x2bgr10: &[u8],
   rgb_out: &mut [u16],
   width: usize,
@@ -1236,4 +1276,12 @@ pub fn x2bgr10_to_rgb_u16_row<const BE: bool>(
     }
   }
   scalar::x2bgr10_to_rgb_u16_row::<BE>(x2bgr10, rgb_out, width);
+}
+
+/// LE-only wrapper around [`x2bgr10_to_rgb_u16_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `x2bgr10_to_rgb_u16_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn x2bgr10_to_rgb_u16_row(x2bgr10: &[u8], rgb_out: &mut [u16], width: usize, use_simd: bool) {
+  x2bgr10_to_rgb_u16_row_endian::<false>(x2bgr10, rgb_out, width, use_simd)
 }

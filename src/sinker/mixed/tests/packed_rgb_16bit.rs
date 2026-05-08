@@ -417,3 +417,64 @@ fn rgb48_multi_row_frame() {
   assert_eq!(out[10], 0xFF);
   assert_eq!(out[11], 0xFF);
 }
+
+// ---- BE-contract regression -----------------------------------------------
+
+/// Rgb48 sinker LE-encoded plane decodes correctly on every host.
+///
+/// The frame doc-comment contract (see `src/frame/packed_rgb_16bit.rs`) says
+/// the `&[u16]` plane is the **LE-encoded byte layout** reinterpreted as
+/// `u16` (matching FFmpeg's `*LE` suffix). On a little-endian host LE bytes
+/// are host-native — identity. On a big-endian host the bytes are swapped
+/// relative to host-native, so the kernel must apply `u16::from_le` (kernel
+/// generic `BE = false`) to recover the host-native sample before arithmetic.
+///
+/// This test builds the plane from LE-encoded u16 patterns
+/// (`intended.to_le()` on each sample) and asserts the sinker output matches
+/// the host-native `intended` values bit-exact via the `with_rgb_u16`
+/// (identity) path. On a BE host with a regressed pre-swap (caller swaps,
+/// kernel swaps again → double swap) this would corrupt every sample.
+///
+/// Forces `with_simd(false)` so this test runs purely scalar — no SIMD
+/// intrinsics — which lets it execute under `cargo miri test`. BE CI is
+/// driven by miri on s390x / powerpc64; gating it out of miri would skip
+/// exactly the host where BE corruption would surface.
+///
+/// Mirrors the `rgbf32_sinker_le_encoded_frame_decodes_correctly` pattern
+/// added in PR #92's `5b42065` / `3b1d716`.
+#[test]
+fn rgb48_sinker_le_encoded_frame_decodes_correctly() {
+  // Mix high / mid / low / asymmetric byte patterns so any byte-swap regression
+  // shows up as a non-trivial mismatch (not just a no-op pattern).
+  let intended: Vec<u16> = (0..16 * 4 * 3)
+    .map(|i| match i % 4 {
+      0 => 0x1234,
+      1 => 0xABCD,
+      2 => 0x00FF,
+      _ => 0xFF00,
+    })
+    .collect();
+  // Construct the plane as LE-encoded u16 (the documented `*LE` Frame
+  // contract). On LE host this is identity; on BE host the bit-pattern is
+  // byte-swapped so the kernel must `from_le` it back to host-native.
+  let pix: Vec<u16> = intended.iter().map(|&v| v.to_le()).collect();
+  let src = Rgb48Frame::try_new(&pix, 16, 4, 16 * 3).unwrap();
+
+  // `with_rgb_u16` is the identity passthrough — the cleanest probe of the
+  // endian contract because no narrowing or arithmetic obscures the bit
+  // pattern. A single mismatched sample byte-swap would be unmissable.
+  let mut rgb_u16_out = vec![0u16; 16 * 4 * 3];
+  let mut sink = MixedSinker::<Rgb48>::new(16, 4)
+    .with_simd(false)
+    .with_rgb_u16(&mut rgb_u16_out)
+    .unwrap();
+  rgb48_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  // Output must be host-native intended values. On a BE host with a
+  // regressed pre-swap (caller swaps, kernel swaps again) this would be
+  // byte-swapped relative to `intended`.
+  assert_eq!(
+    rgb_u16_out, intended,
+    "Rgb48 sinker LE-encoded plane decoded incorrectly (BE-contract regression)"
+  );
+}

@@ -72,7 +72,7 @@ fn rgba64_packed_elems(width: usize) -> usize {
 /// Converts one row of `Rgb48` to packed u8 RGB. Each 16-bit channel is
 /// narrowed via `>> 8`. `use_simd = false` forces the scalar path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn rgb48_to_rgb_row<const BE: bool>(
+pub fn rgb48_to_rgb_row_endian<const BE: bool>(
   rgb48: &[u16],
   rgb_out: &mut [u8],
   width: usize,
@@ -114,10 +114,18 @@ pub fn rgb48_to_rgb_row<const BE: bool>(
   scalar::rgb48_to_rgb_row::<BE>(rgb48, rgb_out, width);
 }
 
+/// LE-only wrapper around [`rgb48_to_rgb_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `rgb48_to_rgb_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], width: usize, use_simd: bool) {
+  rgb48_to_rgb_row_endian::<false>(rgb48, rgb_out, width, use_simd)
+}
+
 /// Converts one row of `Rgb48` to packed u8 RGBA. Alpha forced to `0xFF`.
 /// `use_simd = false` forces the scalar path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn rgb48_to_rgba_row<const BE: bool>(
+pub fn rgb48_to_rgba_row_endian<const BE: bool>(
   rgb48: &[u16],
   rgba_out: &mut [u8],
   width: usize,
@@ -159,10 +167,18 @@ pub fn rgb48_to_rgba_row<const BE: bool>(
   scalar::rgb48_to_rgba_row::<BE>(rgb48, rgba_out, width);
 }
 
+/// LE-only wrapper around [`rgb48_to_rgba_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `rgb48_to_rgba_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8], width: usize, use_simd: bool) {
+  rgb48_to_rgba_row_endian::<false>(rgb48, rgba_out, width, use_simd)
+}
+
 /// Converts one row of `Rgb48` to native-depth u16 RGB (identity copy).
 /// `use_simd = false` forces the scalar path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn rgb48_to_rgb_u16_row<const BE: bool>(
+pub fn rgb48_to_rgb_u16_row_endian<const BE: bool>(
   rgb48: &[u16],
   rgb_out: &mut [u16],
   width: usize,
@@ -204,10 +220,18 @@ pub fn rgb48_to_rgb_u16_row<const BE: bool>(
   scalar::rgb48_to_rgb_u16_row::<BE>(rgb48, rgb_out, width);
 }
 
+/// LE-only wrapper around [`rgb48_to_rgb_u16_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `rgb48_to_rgb_u16_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn rgb48_to_rgb_u16_row(rgb48: &[u16], rgb_out: &mut [u16], width: usize, use_simd: bool) {
+  rgb48_to_rgb_u16_row_endian::<false>(rgb48, rgb_out, width, use_simd)
+}
+
 /// Converts one row of `Rgb48` to native-depth u16 RGBA. Alpha forced to
 /// `0xFFFF`. `use_simd = false` forces the scalar path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn rgb48_to_rgba_u16_row<const BE: bool>(
+pub fn rgb48_to_rgba_u16_row_endian<const BE: bool>(
   rgb48: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -249,12 +273,20 @@ pub fn rgb48_to_rgba_u16_row<const BE: bool>(
   scalar::rgb48_to_rgba_u16_row::<BE>(rgb48, rgba_out, width);
 }
 
+/// LE-only wrapper around [`rgb48_to_rgba_u16_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `rgb48_to_rgba_u16_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn rgb48_to_rgba_u16_row(rgb48: &[u16], rgba_out: &mut [u16], width: usize, use_simd: bool) {
+  rgb48_to_rgba_u16_row_endian::<false>(rgb48, rgba_out, width, use_simd)
+}
+
 /// Derives 8-bit luma from one row of `Rgb48` source. Narrows to u8 RGB via
 /// `rgb48_to_rgb_row` into `rgb_scratch` (length ≥ `width × 3`), then applies
 /// `rgb_to_luma_row`. `use_simd = false` forces the scalar path for both steps.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub fn rgb48_to_luma_row<const BE: bool>(
+pub fn rgb48_to_luma_row_endian<const BE: bool>(
   rgb48: &[u16],
   luma_out: &mut [u8],
   rgb_scratch: &mut [u8],
@@ -268,8 +300,33 @@ pub fn rgb48_to_luma_row<const BE: bool>(
   assert!(rgb48.len() >= in_min, "rgb48 row too short");
   assert!(rgb_scratch.len() >= scratch_min, "rgb_scratch too short");
   assert!(luma_out.len() >= width, "luma_out row too short");
-  rgb48_to_rgb_row::<BE>(rgb48, rgb_scratch, width, use_simd);
+  rgb48_to_rgb_row_endian::<BE>(rgb48, rgb_scratch, width, use_simd);
   scalar::rgb_to_luma_row(rgb_scratch, luma_out, width, matrix, full_range);
+}
+
+/// LE-only wrapper around [`rgb48_to_luma_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `rgb48_to_luma_row_endian::<false>(...)`.
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn rgb48_to_luma_row(
+  rgb48: &[u16],
+  luma_out: &mut [u8],
+  rgb_scratch: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  rgb48_to_luma_row_endian::<false>(
+    rgb48,
+    luma_out,
+    rgb_scratch,
+    width,
+    matrix,
+    full_range,
+    use_simd,
+  )
 }
 
 /// Derives u16 luma from one row of `Rgb48` source (Y' is computed at 8-bit
@@ -278,7 +335,7 @@ pub fn rgb48_to_luma_row<const BE: bool>(
 /// the scalar path for both steps.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub fn rgb48_to_luma_u16_row<const BE: bool>(
+pub fn rgb48_to_luma_u16_row_endian<const BE: bool>(
   rgb48: &[u16],
   luma_out: &mut [u16],
   rgb_scratch: &mut [u8],
@@ -292,8 +349,33 @@ pub fn rgb48_to_luma_u16_row<const BE: bool>(
   assert!(rgb48.len() >= in_min, "rgb48 row too short");
   assert!(rgb_scratch.len() >= scratch_min, "rgb_scratch too short");
   assert!(luma_out.len() >= width, "luma_out row too short");
-  rgb48_to_rgb_row::<BE>(rgb48, rgb_scratch, width, use_simd);
+  rgb48_to_rgb_row_endian::<BE>(rgb48, rgb_scratch, width, use_simd);
   scalar::rgb_to_luma_u16_row(rgb_scratch, luma_out, width, matrix, full_range);
+}
+
+/// LE-only wrapper around [`rgb48_to_luma_u16_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `rgb48_to_luma_u16_row_endian::<false>(...)`.
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn rgb48_to_luma_u16_row(
+  rgb48: &[u16],
+  luma_out: &mut [u16],
+  rgb_scratch: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  rgb48_to_luma_u16_row_endian::<false>(
+    rgb48,
+    luma_out,
+    rgb_scratch,
+    width,
+    matrix,
+    full_range,
+    use_simd,
+  )
 }
 
 /// Derives planar HSV from one row of `Rgb48` source (OpenCV 8-bit encoding).
@@ -301,7 +383,7 @@ pub fn rgb48_to_luma_u16_row<const BE: bool>(
 /// `rgb_to_hsv_row`. `use_simd = false` forces the scalar path for both steps.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub fn rgb48_to_hsv_row<const BE: bool>(
+pub fn rgb48_to_hsv_row_endian<const BE: bool>(
   rgb48: &[u16],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -317,8 +399,25 @@ pub fn rgb48_to_hsv_row<const BE: bool>(
   assert!(h_out.len() >= width, "h_out row too short");
   assert!(s_out.len() >= width, "s_out row too short");
   assert!(v_out.len() >= width, "v_out row too short");
-  rgb48_to_rgb_row::<BE>(rgb48, rgb_scratch, width, use_simd);
+  rgb48_to_rgb_row_endian::<BE>(rgb48, rgb_scratch, width, use_simd);
   scalar::rgb_to_hsv_row(rgb_scratch, h_out, s_out, v_out, width);
+}
+
+/// LE-only wrapper around [`rgb48_to_hsv_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `rgb48_to_hsv_row_endian::<false>(...)`.
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn rgb48_to_hsv_row(
+  rgb48: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  rgb_scratch: &mut [u8],
+  width: usize,
+  use_simd: bool,
+) {
+  rgb48_to_hsv_row_endian::<false>(rgb48, h_out, s_out, v_out, rgb_scratch, width, use_simd)
 }
 
 // =============================================================================
@@ -328,7 +427,7 @@ pub fn rgb48_to_hsv_row<const BE: bool>(
 /// Converts one row of `Bgr48` to packed u8 RGB (B↔R swap, narrow via `>> 8`).
 /// `use_simd = false` forces the scalar path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn bgr48_to_rgb_row<const BE: bool>(
+pub fn bgr48_to_rgb_row_endian<const BE: bool>(
   bgr48: &[u16],
   rgb_out: &mut [u8],
   width: usize,
@@ -370,10 +469,18 @@ pub fn bgr48_to_rgb_row<const BE: bool>(
   scalar::bgr48_to_rgb_row::<BE>(bgr48, rgb_out, width);
 }
 
+/// LE-only wrapper around [`bgr48_to_rgb_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `bgr48_to_rgb_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], width: usize, use_simd: bool) {
+  bgr48_to_rgb_row_endian::<false>(bgr48, rgb_out, width, use_simd)
+}
+
 /// Converts one row of `Bgr48` to packed u8 RGBA (B↔R swap, alpha forced to
 /// `0xFF`). `use_simd = false` forces the scalar path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn bgr48_to_rgba_row<const BE: bool>(
+pub fn bgr48_to_rgba_row_endian<const BE: bool>(
   bgr48: &[u16],
   rgba_out: &mut [u8],
   width: usize,
@@ -415,10 +522,18 @@ pub fn bgr48_to_rgba_row<const BE: bool>(
   scalar::bgr48_to_rgba_row::<BE>(bgr48, rgba_out, width);
 }
 
+/// LE-only wrapper around [`bgr48_to_rgba_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `bgr48_to_rgba_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8], width: usize, use_simd: bool) {
+  bgr48_to_rgba_row_endian::<false>(bgr48, rgba_out, width, use_simd)
+}
+
 /// Converts one row of `Bgr48` to native-depth u16 RGB (B↔R swap, values
 /// unchanged). `use_simd = false` forces the scalar path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn bgr48_to_rgb_u16_row<const BE: bool>(
+pub fn bgr48_to_rgb_u16_row_endian<const BE: bool>(
   bgr48: &[u16],
   rgb_out: &mut [u16],
   width: usize,
@@ -460,10 +575,18 @@ pub fn bgr48_to_rgb_u16_row<const BE: bool>(
   scalar::bgr48_to_rgb_u16_row::<BE>(bgr48, rgb_out, width);
 }
 
+/// LE-only wrapper around [`bgr48_to_rgb_u16_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `bgr48_to_rgb_u16_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn bgr48_to_rgb_u16_row(bgr48: &[u16], rgb_out: &mut [u16], width: usize, use_simd: bool) {
+  bgr48_to_rgb_u16_row_endian::<false>(bgr48, rgb_out, width, use_simd)
+}
+
 /// Converts one row of `Bgr48` to native-depth u16 RGBA (B↔R swap, alpha
 /// forced to `0xFFFF`). `use_simd = false` forces the scalar path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn bgr48_to_rgba_u16_row<const BE: bool>(
+pub fn bgr48_to_rgba_u16_row_endian<const BE: bool>(
   bgr48: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -505,11 +628,19 @@ pub fn bgr48_to_rgba_u16_row<const BE: bool>(
   scalar::bgr48_to_rgba_u16_row::<BE>(bgr48, rgba_out, width);
 }
 
+/// LE-only wrapper around [`bgr48_to_rgba_u16_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `bgr48_to_rgba_u16_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn bgr48_to_rgba_u16_row(bgr48: &[u16], rgba_out: &mut [u16], width: usize, use_simd: bool) {
+  bgr48_to_rgba_u16_row_endian::<false>(bgr48, rgba_out, width, use_simd)
+}
+
 /// Derives 8-bit luma from one row of `Bgr48` source. Narrows to u8 RGB via
 /// `bgr48_to_rgb_row` into `rgb_scratch`, then applies `rgb_to_luma_row`.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub fn bgr48_to_luma_row<const BE: bool>(
+pub fn bgr48_to_luma_row_endian<const BE: bool>(
   bgr48: &[u16],
   luma_out: &mut [u8],
   rgb_scratch: &mut [u8],
@@ -523,15 +654,40 @@ pub fn bgr48_to_luma_row<const BE: bool>(
   assert!(bgr48.len() >= in_min, "bgr48 row too short");
   assert!(rgb_scratch.len() >= scratch_min, "rgb_scratch too short");
   assert!(luma_out.len() >= width, "luma_out row too short");
-  bgr48_to_rgb_row::<BE>(bgr48, rgb_scratch, width, use_simd);
+  bgr48_to_rgb_row_endian::<BE>(bgr48, rgb_scratch, width, use_simd);
   scalar::rgb_to_luma_row(rgb_scratch, luma_out, width, matrix, full_range);
+}
+
+/// LE-only wrapper around [`bgr48_to_luma_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `bgr48_to_luma_row_endian::<false>(...)`.
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn bgr48_to_luma_row(
+  bgr48: &[u16],
+  luma_out: &mut [u8],
+  rgb_scratch: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  bgr48_to_luma_row_endian::<false>(
+    bgr48,
+    luma_out,
+    rgb_scratch,
+    width,
+    matrix,
+    full_range,
+    use_simd,
+  )
 }
 
 /// Derives u16 luma from one row of `Bgr48` source. Narrows to u8 RGB via
 /// `bgr48_to_rgb_row` into `rgb_scratch`, then applies `rgb_to_luma_u16_row`.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub fn bgr48_to_luma_u16_row<const BE: bool>(
+pub fn bgr48_to_luma_u16_row_endian<const BE: bool>(
   bgr48: &[u16],
   luma_out: &mut [u16],
   rgb_scratch: &mut [u8],
@@ -545,15 +701,40 @@ pub fn bgr48_to_luma_u16_row<const BE: bool>(
   assert!(bgr48.len() >= in_min, "bgr48 row too short");
   assert!(rgb_scratch.len() >= scratch_min, "rgb_scratch too short");
   assert!(luma_out.len() >= width, "luma_out row too short");
-  bgr48_to_rgb_row::<BE>(bgr48, rgb_scratch, width, use_simd);
+  bgr48_to_rgb_row_endian::<BE>(bgr48, rgb_scratch, width, use_simd);
   scalar::rgb_to_luma_u16_row(rgb_scratch, luma_out, width, matrix, full_range);
+}
+
+/// LE-only wrapper around [`bgr48_to_luma_u16_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `bgr48_to_luma_u16_row_endian::<false>(...)`.
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn bgr48_to_luma_u16_row(
+  bgr48: &[u16],
+  luma_out: &mut [u16],
+  rgb_scratch: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  bgr48_to_luma_u16_row_endian::<false>(
+    bgr48,
+    luma_out,
+    rgb_scratch,
+    width,
+    matrix,
+    full_range,
+    use_simd,
+  )
 }
 
 /// Derives planar HSV from one row of `Bgr48` source. Narrows to u8 RGB via
 /// `bgr48_to_rgb_row` into `rgb_scratch`, then applies `rgb_to_hsv_row`.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub fn bgr48_to_hsv_row<const BE: bool>(
+pub fn bgr48_to_hsv_row_endian<const BE: bool>(
   bgr48: &[u16],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -569,8 +750,25 @@ pub fn bgr48_to_hsv_row<const BE: bool>(
   assert!(h_out.len() >= width, "h_out row too short");
   assert!(s_out.len() >= width, "s_out row too short");
   assert!(v_out.len() >= width, "v_out row too short");
-  bgr48_to_rgb_row::<BE>(bgr48, rgb_scratch, width, use_simd);
+  bgr48_to_rgb_row_endian::<BE>(bgr48, rgb_scratch, width, use_simd);
   scalar::rgb_to_hsv_row(rgb_scratch, h_out, s_out, v_out, width);
+}
+
+/// LE-only wrapper around [`bgr48_to_hsv_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `bgr48_to_hsv_row_endian::<false>(...)`.
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn bgr48_to_hsv_row(
+  bgr48: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  rgb_scratch: &mut [u8],
+  width: usize,
+  use_simd: bool,
+) {
+  bgr48_to_hsv_row_endian::<false>(bgr48, h_out, s_out, v_out, rgb_scratch, width, use_simd)
 }
 
 // =============================================================================
@@ -580,7 +778,7 @@ pub fn bgr48_to_hsv_row<const BE: bool>(
 /// Converts one row of `Rgba64` to packed u8 RGB. Source alpha is discarded;
 /// R/G/B narrowed via `>> 8`. `use_simd = false` forces the scalar path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn rgba64_to_rgb_row<const BE: bool>(
+pub fn rgba64_to_rgb_row_endian<const BE: bool>(
   rgba64: &[u16],
   rgb_out: &mut [u8],
   width: usize,
@@ -622,10 +820,18 @@ pub fn rgba64_to_rgb_row<const BE: bool>(
   scalar::rgba64_to_rgb_row::<BE>(rgba64, rgb_out, width);
 }
 
+/// LE-only wrapper around [`rgba64_to_rgb_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `rgba64_to_rgb_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8], width: usize, use_simd: bool) {
+  rgba64_to_rgb_row_endian::<false>(rgba64, rgb_out, width, use_simd)
+}
+
 /// Converts one row of `Rgba64` to packed u8 RGBA. All 4 channels narrowed via
 /// `>> 8`; source alpha passes through. `use_simd = false` forces the scalar path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn rgba64_to_rgba_row<const BE: bool>(
+pub fn rgba64_to_rgba_row_endian<const BE: bool>(
   rgba64: &[u16],
   rgba_out: &mut [u8],
   width: usize,
@@ -667,10 +873,18 @@ pub fn rgba64_to_rgba_row<const BE: bool>(
   scalar::rgba64_to_rgba_row::<BE>(rgba64, rgba_out, width);
 }
 
+/// LE-only wrapper around [`rgba64_to_rgba_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `rgba64_to_rgba_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8], width: usize, use_simd: bool) {
+  rgba64_to_rgba_row_endian::<false>(rgba64, rgba_out, width, use_simd)
+}
+
 /// Converts one row of `Rgba64` to native-depth u16 RGB. Source alpha
 /// discarded; R/G/B copied as-is. `use_simd = false` forces the scalar path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn rgba64_to_rgb_u16_row<const BE: bool>(
+pub fn rgba64_to_rgb_u16_row_endian<const BE: bool>(
   rgba64: &[u16],
   rgb_out: &mut [u16],
   width: usize,
@@ -712,10 +926,18 @@ pub fn rgba64_to_rgb_u16_row<const BE: bool>(
   scalar::rgba64_to_rgb_u16_row::<BE>(rgba64, rgb_out, width);
 }
 
+/// LE-only wrapper around [`rgba64_to_rgb_u16_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `rgba64_to_rgb_u16_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn rgba64_to_rgb_u16_row(rgba64: &[u16], rgb_out: &mut [u16], width: usize, use_simd: bool) {
+  rgba64_to_rgb_u16_row_endian::<false>(rgba64, rgb_out, width, use_simd)
+}
+
 /// Converts one row of `Rgba64` to native-depth u16 RGBA (identity copy of all
 /// 4 channels; source alpha preserved). `use_simd = false` forces the scalar path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn rgba64_to_rgba_u16_row<const BE: bool>(
+pub fn rgba64_to_rgba_u16_row_endian<const BE: bool>(
   rgba64: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -757,12 +979,20 @@ pub fn rgba64_to_rgba_u16_row<const BE: bool>(
   scalar::rgba64_to_rgba_u16_row::<BE>(rgba64, rgba_out, width);
 }
 
+/// LE-only wrapper around [`rgba64_to_rgba_u16_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `rgba64_to_rgba_u16_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn rgba64_to_rgba_u16_row(rgba64: &[u16], rgba_out: &mut [u16], width: usize, use_simd: bool) {
+  rgba64_to_rgba_u16_row_endian::<false>(rgba64, rgba_out, width, use_simd)
+}
+
 /// Derives 8-bit luma from one row of `Rgba64` source. Narrows to u8 RGB via
 /// `rgba64_to_rgb_row` into `rgb_scratch`, then applies `rgb_to_luma_row`.
 /// Source alpha is discarded.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub fn rgba64_to_luma_row<const BE: bool>(
+pub fn rgba64_to_luma_row_endian<const BE: bool>(
   rgba64: &[u16],
   luma_out: &mut [u8],
   rgb_scratch: &mut [u8],
@@ -776,8 +1006,33 @@ pub fn rgba64_to_luma_row<const BE: bool>(
   assert!(rgba64.len() >= in_min, "rgba64 row too short");
   assert!(rgb_scratch.len() >= scratch_min, "rgb_scratch too short");
   assert!(luma_out.len() >= width, "luma_out row too short");
-  rgba64_to_rgb_row::<BE>(rgba64, rgb_scratch, width, use_simd);
+  rgba64_to_rgb_row_endian::<BE>(rgba64, rgb_scratch, width, use_simd);
   scalar::rgb_to_luma_row(rgb_scratch, luma_out, width, matrix, full_range);
+}
+
+/// LE-only wrapper around [`rgba64_to_luma_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `rgba64_to_luma_row_endian::<false>(...)`.
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn rgba64_to_luma_row(
+  rgba64: &[u16],
+  luma_out: &mut [u8],
+  rgb_scratch: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  rgba64_to_luma_row_endian::<false>(
+    rgba64,
+    luma_out,
+    rgb_scratch,
+    width,
+    matrix,
+    full_range,
+    use_simd,
+  )
 }
 
 /// Derives u16 luma from one row of `Rgba64` source. Narrows to u8 RGB via
@@ -785,7 +1040,7 @@ pub fn rgba64_to_luma_row<const BE: bool>(
 /// Source alpha is discarded.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub fn rgba64_to_luma_u16_row<const BE: bool>(
+pub fn rgba64_to_luma_u16_row_endian<const BE: bool>(
   rgba64: &[u16],
   luma_out: &mut [u16],
   rgb_scratch: &mut [u8],
@@ -799,8 +1054,33 @@ pub fn rgba64_to_luma_u16_row<const BE: bool>(
   assert!(rgba64.len() >= in_min, "rgba64 row too short");
   assert!(rgb_scratch.len() >= scratch_min, "rgb_scratch too short");
   assert!(luma_out.len() >= width, "luma_out row too short");
-  rgba64_to_rgb_row::<BE>(rgba64, rgb_scratch, width, use_simd);
+  rgba64_to_rgb_row_endian::<BE>(rgba64, rgb_scratch, width, use_simd);
   scalar::rgb_to_luma_u16_row(rgb_scratch, luma_out, width, matrix, full_range);
+}
+
+/// LE-only wrapper around [`rgba64_to_luma_u16_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `rgba64_to_luma_u16_row_endian::<false>(...)`.
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn rgba64_to_luma_u16_row(
+  rgba64: &[u16],
+  luma_out: &mut [u16],
+  rgb_scratch: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  rgba64_to_luma_u16_row_endian::<false>(
+    rgba64,
+    luma_out,
+    rgb_scratch,
+    width,
+    matrix,
+    full_range,
+    use_simd,
+  )
 }
 
 /// Derives planar HSV from one row of `Rgba64` source. Narrows to u8 RGB via
@@ -808,7 +1088,7 @@ pub fn rgba64_to_luma_u16_row<const BE: bool>(
 /// Source alpha is discarded.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub fn rgba64_to_hsv_row<const BE: bool>(
+pub fn rgba64_to_hsv_row_endian<const BE: bool>(
   rgba64: &[u16],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -824,8 +1104,25 @@ pub fn rgba64_to_hsv_row<const BE: bool>(
   assert!(h_out.len() >= width, "h_out row too short");
   assert!(s_out.len() >= width, "s_out row too short");
   assert!(v_out.len() >= width, "v_out row too short");
-  rgba64_to_rgb_row::<BE>(rgba64, rgb_scratch, width, use_simd);
+  rgba64_to_rgb_row_endian::<BE>(rgba64, rgb_scratch, width, use_simd);
   scalar::rgb_to_hsv_row(rgb_scratch, h_out, s_out, v_out, width);
+}
+
+/// LE-only wrapper around [`rgba64_to_hsv_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `rgba64_to_hsv_row_endian::<false>(...)`.
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn rgba64_to_hsv_row(
+  rgba64: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  rgb_scratch: &mut [u8],
+  width: usize,
+  use_simd: bool,
+) {
+  rgba64_to_hsv_row_endian::<false>(rgba64, h_out, s_out, v_out, rgb_scratch, width, use_simd)
 }
 
 // =============================================================================
@@ -835,7 +1132,7 @@ pub fn rgba64_to_hsv_row<const BE: bool>(
 /// Converts one row of `Bgra64` to packed u8 RGB (B↔R swap, drop alpha,
 /// narrow via `>> 8`). `use_simd = false` forces the scalar path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn bgra64_to_rgb_row<const BE: bool>(
+pub fn bgra64_to_rgb_row_endian<const BE: bool>(
   bgra64: &[u16],
   rgb_out: &mut [u8],
   width: usize,
@@ -877,11 +1174,19 @@ pub fn bgra64_to_rgb_row<const BE: bool>(
   scalar::bgra64_to_rgb_row::<BE>(bgra64, rgb_out, width);
 }
 
+/// LE-only wrapper around [`bgra64_to_rgb_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `bgra64_to_rgb_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8], width: usize, use_simd: bool) {
+  bgra64_to_rgb_row_endian::<false>(bgra64, rgb_out, width, use_simd)
+}
+
 /// Converts one row of `Bgra64` to packed u8 RGBA (B↔R swap, all 4 channels
 /// narrowed via `>> 8`; source alpha passes through). `use_simd = false` forces
 /// the scalar path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn bgra64_to_rgba_row<const BE: bool>(
+pub fn bgra64_to_rgba_row_endian<const BE: bool>(
   bgra64: &[u16],
   rgba_out: &mut [u8],
   width: usize,
@@ -923,10 +1228,18 @@ pub fn bgra64_to_rgba_row<const BE: bool>(
   scalar::bgra64_to_rgba_row::<BE>(bgra64, rgba_out, width);
 }
 
+/// LE-only wrapper around [`bgra64_to_rgba_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `bgra64_to_rgba_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8], width: usize, use_simd: bool) {
+  bgra64_to_rgba_row_endian::<false>(bgra64, rgba_out, width, use_simd)
+}
+
 /// Converts one row of `Bgra64` to native-depth u16 RGB (B↔R swap, drop alpha,
 /// values copied as-is). `use_simd = false` forces the scalar path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn bgra64_to_rgb_u16_row<const BE: bool>(
+pub fn bgra64_to_rgb_u16_row_endian<const BE: bool>(
   bgra64: &[u16],
   rgb_out: &mut [u16],
   width: usize,
@@ -968,10 +1281,18 @@ pub fn bgra64_to_rgb_u16_row<const BE: bool>(
   scalar::bgra64_to_rgb_u16_row::<BE>(bgra64, rgb_out, width);
 }
 
+/// LE-only wrapper around [`bgra64_to_rgb_u16_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `bgra64_to_rgb_u16_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn bgra64_to_rgb_u16_row(bgra64: &[u16], rgb_out: &mut [u16], width: usize, use_simd: bool) {
+  bgra64_to_rgb_u16_row_endian::<false>(bgra64, rgb_out, width, use_simd)
+}
+
 /// Converts one row of `Bgra64` to native-depth u16 RGBA (B↔R swap; source
 /// alpha preserved at position 3). `use_simd = false` forces the scalar path.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn bgra64_to_rgba_u16_row<const BE: bool>(
+pub fn bgra64_to_rgba_u16_row_endian<const BE: bool>(
   bgra64: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -1013,12 +1334,20 @@ pub fn bgra64_to_rgba_u16_row<const BE: bool>(
   scalar::bgra64_to_rgba_u16_row::<BE>(bgra64, rgba_out, width);
 }
 
+/// LE-only wrapper around [`bgra64_to_rgba_u16_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `bgra64_to_rgba_u16_row_endian::<false>(...)`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn bgra64_to_rgba_u16_row(bgra64: &[u16], rgba_out: &mut [u16], width: usize, use_simd: bool) {
+  bgra64_to_rgba_u16_row_endian::<false>(bgra64, rgba_out, width, use_simd)
+}
+
 /// Derives 8-bit luma from one row of `Bgra64` source. Narrows to u8 RGB via
 /// `bgra64_to_rgb_row` into `rgb_scratch`, then applies `rgb_to_luma_row`.
 /// Source alpha is discarded.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub fn bgra64_to_luma_row<const BE: bool>(
+pub fn bgra64_to_luma_row_endian<const BE: bool>(
   bgra64: &[u16],
   luma_out: &mut [u8],
   rgb_scratch: &mut [u8],
@@ -1032,8 +1361,33 @@ pub fn bgra64_to_luma_row<const BE: bool>(
   assert!(bgra64.len() >= in_min, "bgra64 row too short");
   assert!(rgb_scratch.len() >= scratch_min, "rgb_scratch too short");
   assert!(luma_out.len() >= width, "luma_out row too short");
-  bgra64_to_rgb_row::<BE>(bgra64, rgb_scratch, width, use_simd);
+  bgra64_to_rgb_row_endian::<BE>(bgra64, rgb_scratch, width, use_simd);
   scalar::rgb_to_luma_row(rgb_scratch, luma_out, width, matrix, full_range);
+}
+
+/// LE-only wrapper around [`bgra64_to_luma_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `bgra64_to_luma_row_endian::<false>(...)`.
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn bgra64_to_luma_row(
+  bgra64: &[u16],
+  luma_out: &mut [u8],
+  rgb_scratch: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  bgra64_to_luma_row_endian::<false>(
+    bgra64,
+    luma_out,
+    rgb_scratch,
+    width,
+    matrix,
+    full_range,
+    use_simd,
+  )
 }
 
 /// Derives u16 luma from one row of `Bgra64` source. Narrows to u8 RGB via
@@ -1041,7 +1395,7 @@ pub fn bgra64_to_luma_row<const BE: bool>(
 /// Source alpha is discarded.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub fn bgra64_to_luma_u16_row<const BE: bool>(
+pub fn bgra64_to_luma_u16_row_endian<const BE: bool>(
   bgra64: &[u16],
   luma_out: &mut [u16],
   rgb_scratch: &mut [u8],
@@ -1055,8 +1409,33 @@ pub fn bgra64_to_luma_u16_row<const BE: bool>(
   assert!(bgra64.len() >= in_min, "bgra64 row too short");
   assert!(rgb_scratch.len() >= scratch_min, "rgb_scratch too short");
   assert!(luma_out.len() >= width, "luma_out row too short");
-  bgra64_to_rgb_row::<BE>(bgra64, rgb_scratch, width, use_simd);
+  bgra64_to_rgb_row_endian::<BE>(bgra64, rgb_scratch, width, use_simd);
   scalar::rgb_to_luma_u16_row(rgb_scratch, luma_out, width, matrix, full_range);
+}
+
+/// LE-only wrapper around [`bgra64_to_luma_u16_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `bgra64_to_luma_u16_row_endian::<false>(...)`.
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn bgra64_to_luma_u16_row(
+  bgra64: &[u16],
+  luma_out: &mut [u16],
+  rgb_scratch: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  bgra64_to_luma_u16_row_endian::<false>(
+    bgra64,
+    luma_out,
+    rgb_scratch,
+    width,
+    matrix,
+    full_range,
+    use_simd,
+  )
 }
 
 /// Derives planar HSV from one row of `Bgra64` source. Narrows to u8 RGB via
@@ -1064,7 +1443,7 @@ pub fn bgra64_to_luma_u16_row<const BE: bool>(
 /// Source alpha is discarded.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub fn bgra64_to_hsv_row<const BE: bool>(
+pub fn bgra64_to_hsv_row_endian<const BE: bool>(
   bgra64: &[u16],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -1080,8 +1459,25 @@ pub fn bgra64_to_hsv_row<const BE: bool>(
   assert!(h_out.len() >= width, "h_out row too short");
   assert!(s_out.len() >= width, "s_out row too short");
   assert!(v_out.len() >= width, "v_out row too short");
-  bgra64_to_rgb_row::<BE>(bgra64, rgb_scratch, width, use_simd);
+  bgra64_to_rgb_row_endian::<BE>(bgra64, rgb_scratch, width, use_simd);
   scalar::rgb_to_hsv_row(rgb_scratch, h_out, s_out, v_out, width);
+}
+
+/// LE-only wrapper around [`bgra64_to_hsv_row_endian`]; preserves the pre-endian-
+/// generic public signature so existing little-endian callers compile
+/// unchanged. Equivalent to `bgra64_to_hsv_row_endian::<false>(...)`.
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn bgra64_to_hsv_row(
+  bgra64: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  rgb_scratch: &mut [u8],
+  width: usize,
+  use_simd: bool,
+) {
+  bgra64_to_hsv_row_endian::<false>(bgra64, h_out, s_out, v_out, rgb_scratch, width, use_simd)
 }
 
 // =============================================================================
@@ -1115,7 +1511,7 @@ mod tests {
     // All-white Rgb48: each u16 channel = 0xFFFF; narrowed >> 8 = 0xFF.
     let src = solid_rgb48(4, 0xFFFF);
     let mut rgb = std::vec![0u8; 4 * 3];
-    rgb48_to_rgb_row::<false>(&src, &mut rgb, 4, false);
+    rgb48_to_rgb_row_endian::<false>(&src, &mut rgb, 4, false);
     assert!(
       rgb.iter().all(|&v| v == 0xFF),
       "expected all 0xFF, got {rgb:?}"
@@ -1126,7 +1522,7 @@ mod tests {
   fn rgb48_dispatcher_to_rgba_scalar_path() {
     let src = solid_rgb48(4, 0x1200);
     let mut rgba = std::vec![0u8; 4 * 4];
-    rgb48_to_rgba_row::<false>(&src, &mut rgba, 4, false);
+    rgb48_to_rgba_row_endian::<false>(&src, &mut rgba, 4, false);
     for px in rgba.chunks(4) {
       assert_eq!(px[0], 0x12, "R channel");
       assert_eq!(px[3], 0xFF, "alpha forced to 0xFF");
@@ -1137,7 +1533,7 @@ mod tests {
   fn rgb48_dispatcher_to_rgb_u16_scalar_path() {
     let src = solid_rgb48(4, 0xABCD);
     let mut rgb_u16 = std::vec![0u16; 4 * 3];
-    rgb48_to_rgb_u16_row::<false>(&src, &mut rgb_u16, 4, false);
+    rgb48_to_rgb_u16_row_endian::<false>(&src, &mut rgb_u16, 4, false);
     assert!(
       rgb_u16.iter().all(|&v| v == 0xABCD),
       "expected identity copy"
@@ -1148,7 +1544,7 @@ mod tests {
   fn rgb48_dispatcher_to_rgba_u16_scalar_path() {
     let src = solid_rgb48(4, 0x1234);
     let mut rgba_u16 = std::vec![0u16; 4 * 4];
-    rgb48_to_rgba_u16_row::<false>(&src, &mut rgba_u16, 4, false);
+    rgb48_to_rgba_u16_row_endian::<false>(&src, &mut rgba_u16, 4, false);
     for px in rgba_u16.chunks(4) {
       assert_eq!(px[0], 0x1234, "R channel");
       assert_eq!(px[3], 0xFFFF, "alpha forced to 0xFFFF");
@@ -1161,7 +1557,7 @@ mod tests {
     let src = solid_rgb48(4, 0xFF00);
     let mut scratch = std::vec![0u8; 4 * 3];
     let mut luma = std::vec![0u8; 4];
-    rgb48_to_luma_row::<false>(
+    rgb48_to_luma_row_endian::<false>(
       &src,
       &mut luma,
       &mut scratch,
@@ -1180,7 +1576,7 @@ mod tests {
     let src = solid_rgb48(4, 0xFF00);
     let mut scratch = std::vec![0u8; 4 * 3];
     let mut luma = std::vec![0u16; 4];
-    rgb48_to_luma_u16_row::<false>(
+    rgb48_to_luma_u16_row_endian::<false>(
       &src,
       &mut luma,
       &mut scratch,
@@ -1205,7 +1601,7 @@ mod tests {
     let mut h = std::vec![0u8; 1];
     let mut s = std::vec![0u8; 1];
     let mut v = std::vec![0u8; 1];
-    rgb48_to_hsv_row::<false>(&src, &mut h, &mut s, &mut v, &mut scratch, 1, false);
+    rgb48_to_hsv_row_endian::<false>(&src, &mut h, &mut s, &mut v, &mut scratch, 1, false);
     assert_eq!(h[0], 0, "H for pure red must be 0");
     assert_eq!(s[0], 255, "S for pure red must be 255");
     assert!(v[0] >= 254, "V for pure red must be near 255, got {}", v[0]);
@@ -1218,7 +1614,7 @@ mod tests {
     // Bgr48 pixel [B=0x1100, G=0x2200, R=0x3300] → rgb [R=0x33, G=0x22, B=0x11].
     let src = [0x1100u16, 0x2200, 0x3300];
     let mut rgb = [0u8; 3];
-    bgr48_to_rgb_row::<false>(&src, &mut rgb, 1, false);
+    bgr48_to_rgb_row_endian::<false>(&src, &mut rgb, 1, false);
     assert_eq!(rgb[0], 0x33, "R");
     assert_eq!(rgb[1], 0x22, "G");
     assert_eq!(rgb[2], 0x11, "B");
@@ -1228,7 +1624,7 @@ mod tests {
   fn bgr48_dispatcher_to_rgba_scalar_path() {
     let src = [0x1100u16, 0x2200, 0x3300];
     let mut rgba = [0u8; 4];
-    bgr48_to_rgba_row::<false>(&src, &mut rgba, 1, false);
+    bgr48_to_rgba_row_endian::<false>(&src, &mut rgba, 1, false);
     assert_eq!(rgba[0], 0x33, "R");
     assert_eq!(rgba[3], 0xFF, "alpha forced to 0xFF");
   }
@@ -1237,7 +1633,7 @@ mod tests {
   fn bgr48_dispatcher_to_rgb_u16_scalar_path() {
     let src = [0x1111u16, 0x2222, 0x3333]; // B, G, R
     let mut rgb_u16 = [0u16; 3];
-    bgr48_to_rgb_u16_row::<false>(&src, &mut rgb_u16, 1, false);
+    bgr48_to_rgb_u16_row_endian::<false>(&src, &mut rgb_u16, 1, false);
     assert_eq!(rgb_u16[0], 0x3333, "R (from position 2)");
     assert_eq!(rgb_u16[1], 0x2222, "G");
     assert_eq!(rgb_u16[2], 0x1111, "B (from position 0)");
@@ -1247,7 +1643,7 @@ mod tests {
   fn bgr48_dispatcher_to_rgba_u16_scalar_path() {
     let src = [0x1111u16, 0x2222, 0x3333]; // B, G, R
     let mut rgba_u16 = [0u16; 4];
-    bgr48_to_rgba_u16_row::<false>(&src, &mut rgba_u16, 1, false);
+    bgr48_to_rgba_u16_row_endian::<false>(&src, &mut rgba_u16, 1, false);
     assert_eq!(rgba_u16[0], 0x3333, "R");
     assert_eq!(rgba_u16[3], 0xFFFF, "alpha forced to 0xFFFF");
   }
@@ -1257,7 +1653,7 @@ mod tests {
     let src = solid_rgb48(4, 0xFF00); // all channels = 0xFF00
     let mut scratch = std::vec![0u8; 4 * 3];
     let mut luma = std::vec![0u8; 4];
-    bgr48_to_luma_row::<false>(
+    bgr48_to_luma_row_endian::<false>(
       &src,
       &mut luma,
       &mut scratch,
@@ -1276,7 +1672,7 @@ mod tests {
     let src = solid_rgb48(4, 0xFF00);
     let mut scratch = std::vec![0u8; 4 * 3];
     let mut luma = std::vec![0u16; 4];
-    bgr48_to_luma_u16_row::<false>(
+    bgr48_to_luma_u16_row_endian::<false>(
       &src,
       &mut luma,
       &mut scratch,
@@ -1299,7 +1695,7 @@ mod tests {
     let mut h = std::vec![0u8; 1];
     let mut s = std::vec![0u8; 1];
     let mut v = std::vec![0u8; 1];
-    bgr48_to_hsv_row::<false>(&src, &mut h, &mut s, &mut v, &mut scratch, 1, false);
+    bgr48_to_hsv_row_endian::<false>(&src, &mut h, &mut s, &mut v, &mut scratch, 1, false);
     assert_eq!(h[0], 120, "H for pure blue must be 120 in OpenCV encoding");
     assert_eq!(s[0], 255, "S for pure blue must be 255");
     assert!(
@@ -1316,7 +1712,7 @@ mod tests {
     // Source alpha should be dropped; R/G/B narrowed.
     let src = [0x1100u16, 0x2200, 0x3300, 0xDEAD]; // R, G, B, A
     let mut rgb = [0u8; 3];
-    rgba64_to_rgb_row::<false>(&src, &mut rgb, 1, false);
+    rgba64_to_rgb_row_endian::<false>(&src, &mut rgb, 1, false);
     assert_eq!(rgb[0], 0x11, "R");
     assert_eq!(rgb[1], 0x22, "G");
     assert_eq!(rgb[2], 0x33, "B");
@@ -1327,7 +1723,7 @@ mod tests {
     // Source alpha 0xABCD → 0xAB after >> 8.
     let src = [0x1100u16, 0x2200, 0x3300, 0xABCD];
     let mut rgba = [0u8; 4];
-    rgba64_to_rgba_row::<false>(&src, &mut rgba, 1, false);
+    rgba64_to_rgba_row_endian::<false>(&src, &mut rgba, 1, false);
     assert_eq!(rgba[3], 0xAB, "source alpha depth-converted >> 8");
   }
 
@@ -1335,7 +1731,7 @@ mod tests {
   fn rgba64_dispatcher_to_rgb_u16_scalar_path() {
     let src = [0x1111u16, 0x2222, 0x3333, 0xDEAD];
     let mut rgb_u16 = [0u16; 3];
-    rgba64_to_rgb_u16_row::<false>(&src, &mut rgb_u16, 1, false);
+    rgba64_to_rgb_u16_row_endian::<false>(&src, &mut rgb_u16, 1, false);
     assert_eq!(rgb_u16[0], 0x1111, "R");
     assert_eq!(rgb_u16[1], 0x2222, "G");
     assert_eq!(rgb_u16[2], 0x3333, "B");
@@ -1346,7 +1742,7 @@ mod tests {
     // Identity copy; source alpha preserved.
     let src = [0x1111u16, 0x2222, 0x3333, 0xABCD];
     let mut rgba_u16 = [0u16; 4];
-    rgba64_to_rgba_u16_row::<false>(&src, &mut rgba_u16, 1, false);
+    rgba64_to_rgba_u16_row_endian::<false>(&src, &mut rgba_u16, 1, false);
     assert_eq!(rgba_u16[0], 0x1111, "R");
     assert_eq!(rgba_u16[3], 0xABCD, "source alpha preserved");
   }
@@ -1357,7 +1753,7 @@ mod tests {
     let src = solid_rgba64(4, 0xFF00);
     let mut scratch = std::vec![0u8; 4 * 3];
     let mut luma = std::vec![0u8; 4];
-    rgba64_to_luma_row::<false>(
+    rgba64_to_luma_row_endian::<false>(
       &src,
       &mut luma,
       &mut scratch,
@@ -1376,7 +1772,7 @@ mod tests {
     let src = solid_rgba64(4, 0xFF00);
     let mut scratch = std::vec![0u8; 4 * 3];
     let mut luma = std::vec![0u16; 4];
-    rgba64_to_luma_u16_row::<false>(
+    rgba64_to_luma_u16_row_endian::<false>(
       &src,
       &mut luma,
       &mut scratch,
@@ -1401,7 +1797,7 @@ mod tests {
     let mut h = std::vec![0u8; 1];
     let mut s = std::vec![0u8; 1];
     let mut v = std::vec![0u8; 1];
-    rgba64_to_hsv_row::<false>(&src, &mut h, &mut s, &mut v, &mut scratch, 1, false);
+    rgba64_to_hsv_row_endian::<false>(&src, &mut h, &mut s, &mut v, &mut scratch, 1, false);
     assert_eq!(h[0], 60, "H for pure green must be 60 in OpenCV encoding");
     assert_eq!(s[0], 255, "S for pure green must be 255");
     assert!(
@@ -1418,7 +1814,7 @@ mod tests {
     // Bgra64: B=0x1100, G=0x2200, R=0x3300, A=0xDEAD → RGB [R=0x33, G=0x22, B=0x11].
     let src = [0x1100u16, 0x2200, 0x3300, 0xDEAD];
     let mut rgb = [0u8; 3];
-    bgra64_to_rgb_row::<false>(&src, &mut rgb, 1, false);
+    bgra64_to_rgb_row_endian::<false>(&src, &mut rgb, 1, false);
     assert_eq!(rgb[0], 0x33, "R");
     assert_eq!(rgb[1], 0x22, "G");
     assert_eq!(rgb[2], 0x11, "B");
@@ -1429,7 +1825,7 @@ mod tests {
     // Source alpha 0xABCD → 0xAB after >> 8; channels swapped.
     let src = [0x1100u16, 0x2200, 0x3300, 0xABCD];
     let mut rgba = [0u8; 4];
-    bgra64_to_rgba_row::<false>(&src, &mut rgba, 1, false);
+    bgra64_to_rgba_row_endian::<false>(&src, &mut rgba, 1, false);
     assert_eq!(rgba[0], 0x33, "R (from position 2)");
     assert_eq!(rgba[3], 0xAB, "source alpha depth-converted >> 8");
   }
@@ -1438,7 +1834,7 @@ mod tests {
   fn bgra64_dispatcher_to_rgb_u16_scalar_path() {
     let src = [0x1111u16, 0x2222, 0x3333, 0xDEAD]; // B, G, R, A
     let mut rgb_u16 = [0u16; 3];
-    bgra64_to_rgb_u16_row::<false>(&src, &mut rgb_u16, 1, false);
+    bgra64_to_rgb_u16_row_endian::<false>(&src, &mut rgb_u16, 1, false);
     assert_eq!(rgb_u16[0], 0x3333, "R (from position 2)");
     assert_eq!(rgb_u16[1], 0x2222, "G");
     assert_eq!(rgb_u16[2], 0x1111, "B (from position 0)");
@@ -1448,7 +1844,7 @@ mod tests {
   fn bgra64_dispatcher_to_rgba_u16_scalar_path() {
     let src = [0x1111u16, 0x2222, 0x3333, 0xABCD]; // B, G, R, A
     let mut rgba_u16 = [0u16; 4];
-    bgra64_to_rgba_u16_row::<false>(&src, &mut rgba_u16, 1, false);
+    bgra64_to_rgba_u16_row_endian::<false>(&src, &mut rgba_u16, 1, false);
     assert_eq!(rgba_u16[0], 0x3333, "R (from position 2)");
     assert_eq!(rgba_u16[3], 0xABCD, "source alpha preserved");
   }
@@ -1458,7 +1854,7 @@ mod tests {
     let src = solid_rgba64(4, 0xFF00);
     let mut scratch = std::vec![0u8; 4 * 3];
     let mut luma = std::vec![0u8; 4];
-    bgra64_to_luma_row::<false>(
+    bgra64_to_luma_row_endian::<false>(
       &src,
       &mut luma,
       &mut scratch,
@@ -1477,7 +1873,7 @@ mod tests {
     let src = solid_rgba64(4, 0xFF00);
     let mut scratch = std::vec![0u8; 4 * 3];
     let mut luma = std::vec![0u16; 4];
-    bgra64_to_luma_u16_row::<false>(
+    bgra64_to_luma_u16_row_endian::<false>(
       &src,
       &mut luma,
       &mut scratch,
@@ -1503,7 +1899,7 @@ mod tests {
     let mut h = std::vec![0u8; 1];
     let mut s = std::vec![0u8; 1];
     let mut v = std::vec![0u8; 1];
-    bgra64_to_hsv_row::<false>(&src, &mut h, &mut s, &mut v, &mut scratch, 1, false);
+    bgra64_to_hsv_row_endian::<false>(&src, &mut h, &mut s, &mut v, &mut scratch, 1, false);
     assert_eq!(h[0], 120, "H for pure blue must be 120 in OpenCV encoding");
     assert_eq!(s[0], 255, "S for pure blue must be 255");
     assert!(
@@ -1520,7 +1916,7 @@ mod tests {
   fn rgb48_to_rgb_row_rejects_short_input() {
     let src = [0u16; 2]; // needs 3 for width=1
     let mut out = [0u8; 3];
-    rgb48_to_rgb_row::<false>(&src, &mut out, 1, false);
+    rgb48_to_rgb_row_endian::<false>(&src, &mut out, 1, false);
   }
 
   #[test]
@@ -1528,7 +1924,7 @@ mod tests {
   fn rgb48_to_rgb_row_rejects_short_output() {
     let src = [0u16; 3];
     let mut out = [0u8; 2]; // needs 3
-    rgb48_to_rgb_row::<false>(&src, &mut out, 1, false);
+    rgb48_to_rgb_row_endian::<false>(&src, &mut out, 1, false);
   }
 
   #[test]
@@ -1536,7 +1932,7 @@ mod tests {
   fn rgba64_to_rgb_row_rejects_short_input() {
     let src = [0u16; 3]; // needs 4 for width=1
     let mut out = [0u8; 3];
-    rgba64_to_rgb_row::<false>(&src, &mut out, 1, false);
+    rgba64_to_rgb_row_endian::<false>(&src, &mut out, 1, false);
   }
 
   #[test]
@@ -1544,7 +1940,7 @@ mod tests {
   fn rgba64_to_rgba_row_rejects_short_output() {
     let src = [0u16; 4];
     let mut out = [0u8; 3]; // needs 4
-    rgba64_to_rgba_row::<false>(&src, &mut out, 1, false);
+    rgba64_to_rgba_row_endian::<false>(&src, &mut out, 1, false);
   }
 
   #[test]
@@ -1553,7 +1949,7 @@ mod tests {
     let src = [0u16; 3];
     let mut scratch = [0u8; 3];
     let mut luma: [u8; 0] = [];
-    rgb48_to_luma_row::<false>(
+    rgb48_to_luma_row_endian::<false>(
       &src,
       &mut luma,
       &mut scratch,
@@ -1570,7 +1966,7 @@ mod tests {
     let src = [0u16; 3];
     let mut scratch = [0u8; 2]; // needs 3
     let mut luma = [0u8; 1];
-    rgb48_to_luma_row::<false>(
+    rgb48_to_luma_row_endian::<false>(
       &src,
       &mut luma,
       &mut scratch,
@@ -1601,7 +1997,7 @@ mod tests {
   fn rgb48_dispatcher_rejects_width_times_3_overflow() {
     let p: [u16; 0] = [];
     let mut out: [u8; 0] = [];
-    rgb48_to_rgb_row::<false>(&p, &mut out, OVERFLOW_WIDTH_TIMES_3, false);
+    rgb48_to_rgb_row_endian::<false>(&p, &mut out, OVERFLOW_WIDTH_TIMES_3, false);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -1610,7 +2006,7 @@ mod tests {
   fn bgr48_dispatcher_rejects_width_times_3_overflow() {
     let p: [u16; 0] = [];
     let mut out: [u8; 0] = [];
-    bgr48_to_rgb_row::<false>(&p, &mut out, OVERFLOW_WIDTH_TIMES_3, false);
+    bgr48_to_rgb_row_endian::<false>(&p, &mut out, OVERFLOW_WIDTH_TIMES_3, false);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -1619,7 +2015,7 @@ mod tests {
   fn rgba64_dispatcher_rejects_width_times_4_overflow() {
     let p: [u16; 0] = [];
     let mut out: [u8; 0] = [];
-    rgba64_to_rgb_row::<false>(&p, &mut out, OVERFLOW_WIDTH_TIMES_4, false);
+    rgba64_to_rgb_row_endian::<false>(&p, &mut out, OVERFLOW_WIDTH_TIMES_4, false);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -1628,6 +2024,6 @@ mod tests {
   fn bgra64_dispatcher_rejects_width_times_4_overflow() {
     let p: [u16; 0] = [];
     let mut out: [u8; 0] = [];
-    bgra64_to_rgb_row::<false>(&p, &mut out, OVERFLOW_WIDTH_TIMES_4, false);
+    bgra64_to_rgb_row_endian::<false>(&p, &mut out, OVERFLOW_WIDTH_TIMES_4, false);
   }
 }
