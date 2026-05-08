@@ -27,8 +27,27 @@ use core::arch::wasm32::*;
 
 use crate::{
   ColorMatrix,
-  row::scalar::{planar_gbr_f16 as scalar_f16, planar_gbr_float as scalar},
+  row::{
+    arch::wasm_simd128::endian,
+    scalar::{planar_gbr_f16 as scalar_f16, planar_gbr_float as scalar},
+  },
 };
+
+/// `BE` value that makes the downstream `gbrpf32_to_*` kernels (both the
+/// SIMD-aligned head and the scalar tail in this file's f16 row kernels)
+/// treat their `f32` scratch input as **host-native** (no `from_be` /
+/// `from_le` byte-swap). After we widen f16 → f32 via
+/// [`scalar_f16::widen_f16_be_to_host_f32`] (which normalizes the source
+/// f16 bits per the source `BE` and produces host-native f32), the resulting
+/// scratch must be routed via `HOST_NATIVE_BE` so the downstream kernel's
+/// `from_le` / `from_be` loaders no-op the swap.
+///
+/// **Note:** wasm-simd128 has no native f16 widening intrinsic, so the
+/// "SIMD-aligned" body of the f16 row kernels in this file uses the same
+/// scalar widening pattern as the tail. Both code paths therefore need the
+/// same `HOST_NATIVE_BE` routing — codex PR #84 Finding 1 follow-up to
+/// commit `8627280`.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 
 // ---- shared helpers ----------------------------------------------------------
 
@@ -57,7 +76,7 @@ fn scale_round_i32(v: v128, scale: v128, half: v128) -> v128 {
 /// 3. `out.len()` ≥ `3 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gbrpf32_to_rgb_row(
+pub(crate) unsafe fn gbrpf32_to_rgb_row<const BE: bool>(
   g: &[f32],
   b: &[f32],
   r: &[f32],
@@ -77,9 +96,21 @@ pub(crate) unsafe fn gbrpf32_to_rgb_row(
   let mut x = 0usize;
   while x + 4 <= width {
     unsafe {
-      let gv = clamp01(v128_load(g.as_ptr().add(x).cast()), zero, one);
-      let bv = clamp01(v128_load(b.as_ptr().add(x).cast()), zero, one);
-      let rv = clamp01(v128_load(r.as_ptr().add(x).cast()), zero, one);
+      let gv = clamp01(
+        endian::load_endian_u32x4::<BE>(g.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let bv = clamp01(
+        endian::load_endian_u32x4::<BE>(b.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let rv = clamp01(
+        endian::load_endian_u32x4::<BE>(r.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
       let gi = scale_round_i32(gv, scale, half);
       let bi = scale_round_i32(bv, scale, half);
       let ri = scale_round_i32(rv, scale, half);
@@ -106,7 +137,7 @@ pub(crate) unsafe fn gbrpf32_to_rgb_row(
     x += 4;
   }
   if x < width {
-    scalar::gbrpf32_to_rgb_row(&g[x..], &b[x..], &r[x..], &mut out[x * 3..], width - x);
+    scalar::gbrpf32_to_rgb_row::<BE>(&g[x..], &b[x..], &r[x..], &mut out[x * 3..], width - x);
   }
 }
 
@@ -122,7 +153,7 @@ pub(crate) unsafe fn gbrpf32_to_rgb_row(
 /// 3. `out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gbrpf32_to_rgba_row(
+pub(crate) unsafe fn gbrpf32_to_rgba_row<const BE: bool>(
   g: &[f32],
   b: &[f32],
   r: &[f32],
@@ -142,9 +173,21 @@ pub(crate) unsafe fn gbrpf32_to_rgba_row(
   let mut x = 0usize;
   while x + 4 <= width {
     unsafe {
-      let gv = clamp01(v128_load(g.as_ptr().add(x).cast()), zero, one);
-      let bv = clamp01(v128_load(b.as_ptr().add(x).cast()), zero, one);
-      let rv = clamp01(v128_load(r.as_ptr().add(x).cast()), zero, one);
+      let gv = clamp01(
+        endian::load_endian_u32x4::<BE>(g.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let bv = clamp01(
+        endian::load_endian_u32x4::<BE>(b.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let rv = clamp01(
+        endian::load_endian_u32x4::<BE>(r.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
       let gi = scale_round_i32(gv, scale, half);
       let bi = scale_round_i32(bv, scale, half);
       let ri = scale_round_i32(rv, scale, half);
@@ -171,7 +214,7 @@ pub(crate) unsafe fn gbrpf32_to_rgba_row(
     x += 4;
   }
   if x < width {
-    scalar::gbrpf32_to_rgba_row(&g[x..], &b[x..], &r[x..], &mut out[x * 4..], width - x);
+    scalar::gbrpf32_to_rgba_row::<BE>(&g[x..], &b[x..], &r[x..], &mut out[x * 4..], width - x);
   }
 }
 
@@ -186,7 +229,7 @@ pub(crate) unsafe fn gbrpf32_to_rgba_row(
 /// 3. `out.len()` ≥ `3 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gbrpf32_to_rgb_u16_row(
+pub(crate) unsafe fn gbrpf32_to_rgb_u16_row<const BE: bool>(
   g: &[f32],
   b: &[f32],
   r: &[f32],
@@ -206,9 +249,21 @@ pub(crate) unsafe fn gbrpf32_to_rgb_u16_row(
   let mut x = 0usize;
   while x + 4 <= width {
     unsafe {
-      let gv = clamp01(v128_load(g.as_ptr().add(x).cast()), zero, one);
-      let bv = clamp01(v128_load(b.as_ptr().add(x).cast()), zero, one);
-      let rv = clamp01(v128_load(r.as_ptr().add(x).cast()), zero, one);
+      let gv = clamp01(
+        endian::load_endian_u32x4::<BE>(g.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let bv = clamp01(
+        endian::load_endian_u32x4::<BE>(b.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let rv = clamp01(
+        endian::load_endian_u32x4::<BE>(r.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
       let gi = scale_round_i32(gv, scale, half);
       let bi = scale_round_i32(bv, scale, half);
       let ri = scale_round_i32(rv, scale, half);
@@ -232,7 +287,7 @@ pub(crate) unsafe fn gbrpf32_to_rgb_u16_row(
     x += 4;
   }
   if x < width {
-    scalar::gbrpf32_to_rgb_u16_row(&g[x..], &b[x..], &r[x..], &mut out[x * 3..], width - x);
+    scalar::gbrpf32_to_rgb_u16_row::<BE>(&g[x..], &b[x..], &r[x..], &mut out[x * 3..], width - x);
   }
 }
 
@@ -248,7 +303,7 @@ pub(crate) unsafe fn gbrpf32_to_rgb_u16_row(
 /// 3. `out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gbrpf32_to_rgba_u16_row(
+pub(crate) unsafe fn gbrpf32_to_rgba_u16_row<const BE: bool>(
   g: &[f32],
   b: &[f32],
   r: &[f32],
@@ -268,9 +323,21 @@ pub(crate) unsafe fn gbrpf32_to_rgba_u16_row(
   let mut x = 0usize;
   while x + 4 <= width {
     unsafe {
-      let gv = clamp01(v128_load(g.as_ptr().add(x).cast()), zero, one);
-      let bv = clamp01(v128_load(b.as_ptr().add(x).cast()), zero, one);
-      let rv = clamp01(v128_load(r.as_ptr().add(x).cast()), zero, one);
+      let gv = clamp01(
+        endian::load_endian_u32x4::<BE>(g.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let bv = clamp01(
+        endian::load_endian_u32x4::<BE>(b.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let rv = clamp01(
+        endian::load_endian_u32x4::<BE>(r.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
       let gi = scale_round_i32(gv, scale, half);
       let bi = scale_round_i32(bv, scale, half);
       let ri = scale_round_i32(rv, scale, half);
@@ -294,7 +361,7 @@ pub(crate) unsafe fn gbrpf32_to_rgba_u16_row(
     x += 4;
   }
   if x < width {
-    scalar::gbrpf32_to_rgba_u16_row(&g[x..], &b[x..], &r[x..], &mut out[x * 4..], width - x);
+    scalar::gbrpf32_to_rgba_u16_row::<BE>(&g[x..], &b[x..], &r[x..], &mut out[x * 4..], width - x);
   }
 }
 
@@ -313,7 +380,7 @@ pub(crate) unsafe fn gbrpf32_to_rgba_u16_row(
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(dead_code)] // dispatcher delegates to scalar for lossless f32 interleave
-pub(crate) unsafe fn gbrpf32_to_rgb_f32_row(
+pub(crate) unsafe fn gbrpf32_to_rgb_f32_row<const BE: bool>(
   g: &[f32],
   b: &[f32],
   r: &[f32],
@@ -325,7 +392,7 @@ pub(crate) unsafe fn gbrpf32_to_rgb_f32_row(
   debug_assert!(r.len() >= width, "r row too short");
   debug_assert!(out.len() >= width * 3, "out row too short");
 
-  scalar::gbrpf32_to_rgb_f32_row(g, b, r, out, width);
+  scalar::gbrpf32_to_rgb_f32_row::<BE>(g, b, r, out, width);
 }
 
 // ---- Gbrpf32 → f32 RGBA (lossless, α = 1.0) --------------------------------
@@ -342,7 +409,7 @@ pub(crate) unsafe fn gbrpf32_to_rgb_f32_row(
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(dead_code)] // dispatcher delegates to scalar for lossless f32 interleave
-pub(crate) unsafe fn gbrpf32_to_rgba_f32_row(
+pub(crate) unsafe fn gbrpf32_to_rgba_f32_row<const BE: bool>(
   g: &[f32],
   b: &[f32],
   r: &[f32],
@@ -354,7 +421,7 @@ pub(crate) unsafe fn gbrpf32_to_rgba_f32_row(
   debug_assert!(r.len() >= width, "r row too short");
   debug_assert!(out.len() >= width * 4, "out row too short");
 
-  scalar::gbrpf32_to_rgba_f32_row(g, b, r, out, width);
+  scalar::gbrpf32_to_rgba_f32_row::<BE>(g, b, r, out, width);
 }
 
 // ---- Gbrpf32 → f16 RGB (scalar narrow) ---------------------------------------
@@ -372,7 +439,7 @@ pub(crate) unsafe fn gbrpf32_to_rgba_f32_row(
 /// 3. `out.len()` ≥ `3 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gbrpf32_to_rgb_f16_row(
+pub(crate) unsafe fn gbrpf32_to_rgb_f16_row<const BE: bool>(
   g: &[f32],
   b: &[f32],
   r: &[f32],
@@ -385,7 +452,7 @@ pub(crate) unsafe fn gbrpf32_to_rgb_f16_row(
   debug_assert!(out.len() >= width * 3, "out row too short");
 
   // Scalar narrow: IEEE-754 round-to-nearest-even via half::f16::from_f32.
-  scalar::gbrpf32_to_rgb_f16_row(g, b, r, out, width);
+  scalar::gbrpf32_to_rgb_f16_row::<BE>(g, b, r, out, width);
 }
 
 // ---- Gbrpf32 → f16 RGBA (scalar narrow, α = f16(1.0)) ----------------------
@@ -399,7 +466,7 @@ pub(crate) unsafe fn gbrpf32_to_rgb_f16_row(
 /// 3. `out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gbrpf32_to_rgba_f16_row(
+pub(crate) unsafe fn gbrpf32_to_rgba_f16_row<const BE: bool>(
   g: &[f32],
   b: &[f32],
   r: &[f32],
@@ -411,7 +478,7 @@ pub(crate) unsafe fn gbrpf32_to_rgba_f16_row(
   debug_assert!(r.len() >= width, "r row too short");
   debug_assert!(out.len() >= width * 4, "out row too short");
 
-  scalar::gbrpf32_to_rgba_f16_row(g, b, r, out, width);
+  scalar::gbrpf32_to_rgba_f16_row::<BE>(g, b, r, out, width);
 }
 
 // ---- Gbrpf32 → u8 luma (staged via RGB scratch) -----------------------------
@@ -426,7 +493,7 @@ pub(crate) unsafe fn gbrpf32_to_rgba_f16_row(
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn gbrpf32_to_luma_row(
+pub(crate) unsafe fn gbrpf32_to_luma_row<const BE: bool>(
   g: &[f32],
   b: &[f32],
   r: &[f32],
@@ -446,7 +513,7 @@ pub(crate) unsafe fn gbrpf32_to_luma_row(
   while offset < width {
     let n = (width - offset).min(CHUNK);
     unsafe {
-      gbrpf32_to_rgb_row(
+      gbrpf32_to_rgb_row::<BE>(
         &g[offset..],
         &b[offset..],
         &r[offset..],
@@ -477,7 +544,7 @@ pub(crate) unsafe fn gbrpf32_to_luma_row(
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn gbrpf32_to_luma_u16_row(
+pub(crate) unsafe fn gbrpf32_to_luma_u16_row<const BE: bool>(
   g: &[f32],
   b: &[f32],
   r: &[f32],
@@ -497,7 +564,7 @@ pub(crate) unsafe fn gbrpf32_to_luma_u16_row(
   while offset < width {
     let n = (width - offset).min(CHUNK);
     unsafe {
-      gbrpf32_to_rgb_row(
+      gbrpf32_to_rgb_row::<BE>(
         &g[offset..],
         &b[offset..],
         &r[offset..],
@@ -527,7 +594,7 @@ pub(crate) unsafe fn gbrpf32_to_luma_u16_row(
 /// 3. `h_out.len()`, `s_out.len()`, `v_out.len()` ≥ `width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gbrpf32_to_hsv_row(
+pub(crate) unsafe fn gbrpf32_to_hsv_row<const BE: bool>(
   g: &[f32],
   b: &[f32],
   r: &[f32],
@@ -549,7 +616,7 @@ pub(crate) unsafe fn gbrpf32_to_hsv_row(
   while offset < width {
     let n = (width - offset).min(CHUNK);
     unsafe {
-      gbrpf32_to_rgb_row(
+      gbrpf32_to_rgb_row::<BE>(
         &g[offset..],
         &b[offset..],
         &r[offset..],
@@ -580,7 +647,7 @@ pub(crate) unsafe fn gbrpf32_to_hsv_row(
 /// 3. `out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gbrapf32_to_rgba_row(
+pub(crate) unsafe fn gbrapf32_to_rgba_row<const BE: bool>(
   g: &[f32],
   b: &[f32],
   r: &[f32],
@@ -602,10 +669,26 @@ pub(crate) unsafe fn gbrapf32_to_rgba_row(
   let mut x = 0usize;
   while x + 4 <= width {
     unsafe {
-      let gv = clamp01(v128_load(g.as_ptr().add(x).cast()), zero, one);
-      let bv = clamp01(v128_load(b.as_ptr().add(x).cast()), zero, one);
-      let rv = clamp01(v128_load(r.as_ptr().add(x).cast()), zero, one);
-      let av = clamp01(v128_load(a.as_ptr().add(x).cast()), zero, one);
+      let gv = clamp01(
+        endian::load_endian_u32x4::<BE>(g.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let bv = clamp01(
+        endian::load_endian_u32x4::<BE>(b.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let rv = clamp01(
+        endian::load_endian_u32x4::<BE>(r.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let av = clamp01(
+        endian::load_endian_u32x4::<BE>(a.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
       let gi = scale_round_i32(gv, scale, half);
       let bi = scale_round_i32(bv, scale, half);
       let ri = scale_round_i32(rv, scale, half);
@@ -637,7 +720,7 @@ pub(crate) unsafe fn gbrapf32_to_rgba_row(
     x += 4;
   }
   if x < width {
-    scalar::gbrapf32_to_rgba_row(
+    scalar::gbrapf32_to_rgba_row::<BE>(
       &g[x..],
       &b[x..],
       &r[x..],
@@ -660,7 +743,7 @@ pub(crate) unsafe fn gbrapf32_to_rgba_row(
 /// 3. `out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gbrapf32_to_rgba_u16_row(
+pub(crate) unsafe fn gbrapf32_to_rgba_u16_row<const BE: bool>(
   g: &[f32],
   b: &[f32],
   r: &[f32],
@@ -682,10 +765,26 @@ pub(crate) unsafe fn gbrapf32_to_rgba_u16_row(
   let mut x = 0usize;
   while x + 4 <= width {
     unsafe {
-      let gv = clamp01(v128_load(g.as_ptr().add(x).cast()), zero, one);
-      let bv = clamp01(v128_load(b.as_ptr().add(x).cast()), zero, one);
-      let rv = clamp01(v128_load(r.as_ptr().add(x).cast()), zero, one);
-      let av = clamp01(v128_load(a.as_ptr().add(x).cast()), zero, one);
+      let gv = clamp01(
+        endian::load_endian_u32x4::<BE>(g.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let bv = clamp01(
+        endian::load_endian_u32x4::<BE>(b.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let rv = clamp01(
+        endian::load_endian_u32x4::<BE>(r.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
+      let av = clamp01(
+        endian::load_endian_u32x4::<BE>(a.as_ptr().add(x).cast::<u8>()),
+        zero,
+        one,
+      );
       let gi = scale_round_i32(gv, scale, half);
       let bi = scale_round_i32(bv, scale, half);
       let ri = scale_round_i32(rv, scale, half);
@@ -713,7 +812,7 @@ pub(crate) unsafe fn gbrapf32_to_rgba_u16_row(
     x += 4;
   }
   if x < width {
-    scalar::gbrapf32_to_rgba_u16_row(
+    scalar::gbrapf32_to_rgba_u16_row::<BE>(
       &g[x..],
       &b[x..],
       &r[x..],
@@ -738,7 +837,7 @@ pub(crate) unsafe fn gbrapf32_to_rgba_u16_row(
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(dead_code)] // dispatcher delegates to scalar for lossless f32 interleave
-pub(crate) unsafe fn gbrapf32_to_rgba_f32_row(
+pub(crate) unsafe fn gbrapf32_to_rgba_f32_row<const BE: bool>(
   g: &[f32],
   b: &[f32],
   r: &[f32],
@@ -752,7 +851,7 @@ pub(crate) unsafe fn gbrapf32_to_rgba_f32_row(
   debug_assert!(a.len() >= width, "a row too short");
   debug_assert!(out.len() >= width * 4, "out row too short");
 
-  scalar::gbrapf32_to_rgba_f32_row(g, b, r, a, out, width);
+  scalar::gbrapf32_to_rgba_f32_row::<BE>(g, b, r, a, out, width);
 }
 
 // ---- Gbrapf32 → f16 RGBA (scalar narrow, source α) --------------------------
@@ -768,7 +867,7 @@ pub(crate) unsafe fn gbrapf32_to_rgba_f32_row(
 /// 3. `out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gbrapf32_to_rgba_f16_row(
+pub(crate) unsafe fn gbrapf32_to_rgba_f16_row<const BE: bool>(
   g: &[f32],
   b: &[f32],
   r: &[f32],
@@ -782,7 +881,7 @@ pub(crate) unsafe fn gbrapf32_to_rgba_f16_row(
   debug_assert!(a.len() >= width, "a row too short");
   debug_assert!(out.len() >= width * 4, "out row too short");
 
-  scalar::gbrapf32_to_rgba_f16_row(g, b, r, a, out, width);
+  scalar::gbrapf32_to_rgba_f16_row::<BE>(g, b, r, a, out, width);
 }
 
 // ---- Gbrpf16 → f16 RGB (lossless, f16-native) --------------------------------
@@ -799,7 +898,7 @@ pub(crate) unsafe fn gbrapf32_to_rgba_f16_row(
 /// 3. `out.len()` ≥ `3 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gbrpf16_to_rgb_f16_row(
+pub(crate) unsafe fn gbrpf16_to_rgb_f16_row<const BE: bool>(
   g: &[half::f16],
   b: &[half::f16],
   r: &[half::f16],
@@ -811,7 +910,7 @@ pub(crate) unsafe fn gbrpf16_to_rgb_f16_row(
   debug_assert!(r.len() >= width, "r row too short");
   debug_assert!(out.len() >= width * 3, "out row too short");
 
-  scalar_f16::gbrpf16_to_rgb_f16_row(g, b, r, out, width);
+  scalar_f16::gbrpf16_to_rgb_f16_row::<BE>(g, b, r, out, width);
 }
 
 // ---- Gbrpf16 → f16 RGBA (lossless, opaque α = f16(1.0)) ---------------------
@@ -826,7 +925,7 @@ pub(crate) unsafe fn gbrpf16_to_rgb_f16_row(
 /// 3. `out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gbrpf16_to_rgba_f16_row(
+pub(crate) unsafe fn gbrpf16_to_rgba_f16_row<const BE: bool>(
   g: &[half::f16],
   b: &[half::f16],
   r: &[half::f16],
@@ -838,7 +937,7 @@ pub(crate) unsafe fn gbrpf16_to_rgba_f16_row(
   debug_assert!(r.len() >= width, "r row too short");
   debug_assert!(out.len() >= width * 4, "out row too short");
 
-  scalar_f16::gbrpf16_to_rgba_f16_row(g, b, r, out, width);
+  scalar_f16::gbrpf16_to_rgba_f16_row::<BE>(g, b, r, out, width);
 }
 
 // ---- Gbrapf16 → f16 RGBA (lossless, source α) --------------------------------
@@ -853,7 +952,7 @@ pub(crate) unsafe fn gbrpf16_to_rgba_f16_row(
 /// 3. `out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gbrapf16_to_rgba_f16_row(
+pub(crate) unsafe fn gbrapf16_to_rgba_f16_row<const BE: bool>(
   g: &[half::f16],
   b: &[half::f16],
   r: &[half::f16],
@@ -867,17 +966,7 @@ pub(crate) unsafe fn gbrapf16_to_rgba_f16_row(
   debug_assert!(a.len() >= width, "a row too short");
   debug_assert!(out.len() >= width * 4, "out row too short");
 
-  scalar_f16::gbrapf16_to_rgba_f16_row(g, b, r, a, out, width);
-}
-
-// ---- Gbrpf16 widen helpers --------------------------------------------------
-
-/// Widen `n` f16 elements from `src` starting at `offset` into `dst[..n]`.
-#[inline(always)]
-fn widen_f16_plane(src: &[half::f16], offset: usize, n: usize, dst: &mut [f32]) {
-  for k in 0..n {
-    dst[k] = src[offset + k].to_f32();
-  }
+  scalar_f16::gbrapf16_to_rgba_f16_row::<BE>(g, b, r, a, out, width);
 }
 
 // ---- Gbrpf16 → u8 RGB (widen f16→f32 scalar, then SIMD f32→u8) --------------
@@ -885,8 +974,13 @@ fn widen_f16_plane(src: &[half::f16], offset: usize, n: usize, dst: &mut [f32]) 
 /// wasm-simd128: planar Gbrpf16 → packed `R, G, B` bytes.
 ///
 /// wasm-simd128 has no native f16 widening. Strategy: widen each plane
-/// to f32 in 4-element stack scratch via scalar `half::f16::to_f32`, then
-/// call the SIMD `gbrpf32_to_rgb_row` kernel for the SIMD conversion.
+/// to f32 in 4-element stack scratch via
+/// [`scalar_f16::widen_f16_be_to_host_f32::<BE>`] (which normalizes the
+/// source f16 bits per `BE` BEFORE the f16 → f32 conversion), then call the
+/// SIMD `gbrpf32_to_rgb_row` kernel routed via `HOST_NATIVE_BE` (since the
+/// f32 scratch is now host-native). Both the SIMD-aligned body chunks and
+/// the scalar tail share this contract — see file-level `HOST_NATIVE_BE`
+/// doc.
 ///
 /// # Safety
 ///
@@ -895,7 +989,7 @@ fn widen_f16_plane(src: &[half::f16], offset: usize, n: usize, dst: &mut [f32]) 
 /// 3. `out.len()` ≥ `3 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gbrpf16_to_rgb_row(
+pub(crate) unsafe fn gbrpf16_to_rgb_row<const BE: bool>(
   g: &[half::f16],
   b: &[half::f16],
   r: &[half::f16],
@@ -913,20 +1007,26 @@ pub(crate) unsafe fn gbrpf16_to_rgb_row(
   let mut rf = [0.0f32; CHUNK];
   let mut x = 0usize;
   while x + CHUNK <= width {
-    widen_f16_plane(g, x, CHUNK, &mut gf);
-    widen_f16_plane(b, x, CHUNK, &mut bf);
-    widen_f16_plane(r, x, CHUNK, &mut rf);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, CHUNK);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, CHUNK);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, CHUNK);
     unsafe {
-      gbrpf32_to_rgb_row(&gf, &bf, &rf, &mut out[x * 3..(x + CHUNK) * 3], CHUNK);
+      gbrpf32_to_rgb_row::<HOST_NATIVE_BE>(&gf, &bf, &rf, &mut out[x * 3..(x + CHUNK) * 3], CHUNK);
     }
     x += CHUNK;
   }
   if x < width {
     let n = width - x;
-    widen_f16_plane(g, x, n, &mut gf);
-    widen_f16_plane(b, x, n, &mut bf);
-    widen_f16_plane(r, x, n, &mut rf);
-    scalar::gbrpf32_to_rgb_row(&gf[..n], &bf[..n], &rf[..n], &mut out[x * 3..width * 3], n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, n);
+    scalar::gbrpf32_to_rgb_row::<HOST_NATIVE_BE>(
+      &gf[..n],
+      &bf[..n],
+      &rf[..n],
+      &mut out[x * 3..width * 3],
+      n,
+    );
   }
 }
 
@@ -941,7 +1041,7 @@ pub(crate) unsafe fn gbrpf16_to_rgb_row(
 /// 3. `out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gbrpf16_to_rgba_row(
+pub(crate) unsafe fn gbrpf16_to_rgba_row<const BE: bool>(
   g: &[half::f16],
   b: &[half::f16],
   r: &[half::f16],
@@ -959,20 +1059,26 @@ pub(crate) unsafe fn gbrpf16_to_rgba_row(
   let mut rf = [0.0f32; CHUNK];
   let mut x = 0usize;
   while x + CHUNK <= width {
-    widen_f16_plane(g, x, CHUNK, &mut gf);
-    widen_f16_plane(b, x, CHUNK, &mut bf);
-    widen_f16_plane(r, x, CHUNK, &mut rf);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, CHUNK);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, CHUNK);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, CHUNK);
     unsafe {
-      gbrpf32_to_rgba_row(&gf, &bf, &rf, &mut out[x * 4..(x + CHUNK) * 4], CHUNK);
+      gbrpf32_to_rgba_row::<HOST_NATIVE_BE>(&gf, &bf, &rf, &mut out[x * 4..(x + CHUNK) * 4], CHUNK);
     }
     x += CHUNK;
   }
   if x < width {
     let n = width - x;
-    widen_f16_plane(g, x, n, &mut gf);
-    widen_f16_plane(b, x, n, &mut bf);
-    widen_f16_plane(r, x, n, &mut rf);
-    scalar::gbrpf32_to_rgba_row(&gf[..n], &bf[..n], &rf[..n], &mut out[x * 4..width * 4], n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, n);
+    scalar::gbrpf32_to_rgba_row::<HOST_NATIVE_BE>(
+      &gf[..n],
+      &bf[..n],
+      &rf[..n],
+      &mut out[x * 4..width * 4],
+      n,
+    );
   }
 }
 
@@ -987,7 +1093,7 @@ pub(crate) unsafe fn gbrpf16_to_rgba_row(
 /// 3. `out.len()` ≥ `3 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gbrpf16_to_rgb_u16_row(
+pub(crate) unsafe fn gbrpf16_to_rgb_u16_row<const BE: bool>(
   g: &[half::f16],
   b: &[half::f16],
   r: &[half::f16],
@@ -1005,20 +1111,32 @@ pub(crate) unsafe fn gbrpf16_to_rgb_u16_row(
   let mut rf = [0.0f32; CHUNK];
   let mut x = 0usize;
   while x + CHUNK <= width {
-    widen_f16_plane(g, x, CHUNK, &mut gf);
-    widen_f16_plane(b, x, CHUNK, &mut bf);
-    widen_f16_plane(r, x, CHUNK, &mut rf);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, CHUNK);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, CHUNK);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, CHUNK);
     unsafe {
-      gbrpf32_to_rgb_u16_row(&gf, &bf, &rf, &mut out[x * 3..(x + CHUNK) * 3], CHUNK);
+      gbrpf32_to_rgb_u16_row::<HOST_NATIVE_BE>(
+        &gf,
+        &bf,
+        &rf,
+        &mut out[x * 3..(x + CHUNK) * 3],
+        CHUNK,
+      );
     }
     x += CHUNK;
   }
   if x < width {
     let n = width - x;
-    widen_f16_plane(g, x, n, &mut gf);
-    widen_f16_plane(b, x, n, &mut bf);
-    widen_f16_plane(r, x, n, &mut rf);
-    scalar::gbrpf32_to_rgb_u16_row(&gf[..n], &bf[..n], &rf[..n], &mut out[x * 3..width * 3], n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, n);
+    scalar::gbrpf32_to_rgb_u16_row::<HOST_NATIVE_BE>(
+      &gf[..n],
+      &bf[..n],
+      &rf[..n],
+      &mut out[x * 3..width * 3],
+      n,
+    );
   }
 }
 
@@ -1033,7 +1151,7 @@ pub(crate) unsafe fn gbrpf16_to_rgb_u16_row(
 /// 3. `out.len()` ≥ `4 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn gbrpf16_to_rgba_u16_row(
+pub(crate) unsafe fn gbrpf16_to_rgba_u16_row<const BE: bool>(
   g: &[half::f16],
   b: &[half::f16],
   r: &[half::f16],
@@ -1051,19 +1169,31 @@ pub(crate) unsafe fn gbrpf16_to_rgba_u16_row(
   let mut rf = [0.0f32; CHUNK];
   let mut x = 0usize;
   while x + CHUNK <= width {
-    widen_f16_plane(g, x, CHUNK, &mut gf);
-    widen_f16_plane(b, x, CHUNK, &mut bf);
-    widen_f16_plane(r, x, CHUNK, &mut rf);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, CHUNK);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, CHUNK);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, CHUNK);
     unsafe {
-      gbrpf32_to_rgba_u16_row(&gf, &bf, &rf, &mut out[x * 4..(x + CHUNK) * 4], CHUNK);
+      gbrpf32_to_rgba_u16_row::<HOST_NATIVE_BE>(
+        &gf,
+        &bf,
+        &rf,
+        &mut out[x * 4..(x + CHUNK) * 4],
+        CHUNK,
+      );
     }
     x += CHUNK;
   }
   if x < width {
     let n = width - x;
-    widen_f16_plane(g, x, n, &mut gf);
-    widen_f16_plane(b, x, n, &mut bf);
-    widen_f16_plane(r, x, n, &mut rf);
-    scalar::gbrpf32_to_rgba_u16_row(&gf[..n], &bf[..n], &rf[..n], &mut out[x * 4..width * 4], n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(g, x, &mut gf, n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(b, x, &mut bf, n);
+    scalar_f16::widen_f16_be_to_host_f32::<BE>(r, x, &mut rf, n);
+    scalar::gbrpf32_to_rgba_u16_row::<HOST_NATIVE_BE>(
+      &gf[..n],
+      &bf[..n],
+      &rf[..n],
+      &mut out[x * 4..width * 4],
+      n,
+    );
   }
 }

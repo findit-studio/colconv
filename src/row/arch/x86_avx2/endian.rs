@@ -87,6 +87,61 @@ pub(crate) unsafe fn load_endian_u16x16<const BE: bool>(ptr: *const u8) -> __m25
   }
 }
 
+// ---- u16x8 loaders (via _mm_loadu_si128, for f16 widening) ----------------
+//
+// AVX2 kernels widen 8 × f16 using `_mm256_cvtph_ps(__m128i)`, which requires
+// a 128-bit lane load.  The helpers below provide endian-aware loading of
+// that 16-byte (8 × u16) block.
+
+/// SSSE3 `_mm_shuffle_epi8` mask that swaps bytes within every 2-byte (u16)
+/// lane.
+const BYTESWAP_MASK_U16X8: __m128i =
+  unsafe { core::mem::transmute([1u8, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14]) };
+
+/// Loads 8 × u16 (16 bytes) from `ptr` (LE-encoded) into a `__m128i`,
+/// host-native order.
+///
+/// # Safety
+///
+/// `ptr` must point to at least 16 readable bytes. Caller must have AVX2
+/// (which implies SSSE3) enabled.
+#[inline(always)]
+pub(crate) unsafe fn load_le_u16x8(ptr: *const u8) -> __m128i {
+  let v = unsafe { _mm_loadu_si128(ptr.cast()) };
+  #[cfg(target_endian = "big")]
+  let v = unsafe { _mm_shuffle_epi8(v, BYTESWAP_MASK_U16X8) };
+  v
+}
+
+/// Loads 8 × u16 (16 bytes) from `ptr` (BE-encoded) into a `__m128i`,
+/// host-native order.
+///
+/// # Safety
+///
+/// `ptr` must point to at least 16 readable bytes. Caller must have AVX2
+/// (which implies SSSE3) enabled.
+#[inline(always)]
+pub(crate) unsafe fn load_be_u16x8(ptr: *const u8) -> __m128i {
+  let v = unsafe { _mm_loadu_si128(ptr.cast()) };
+  #[cfg(target_endian = "little")]
+  let v = unsafe { _mm_shuffle_epi8(v, BYTESWAP_MASK_U16X8) };
+  v
+}
+
+/// Generic dispatcher: routes to `load_le_u16x8` or `load_be_u16x8`.
+///
+/// # Safety
+///
+/// Same as `load_le_u16x8` / `load_be_u16x8`.
+#[inline(always)]
+pub(crate) unsafe fn load_endian_u16x8<const BE: bool>(ptr: *const u8) -> __m128i {
+  if BE {
+    unsafe { load_be_u16x8(ptr) }
+  } else {
+    unsafe { load_le_u16x8(ptr) }
+  }
+}
+
 // ---- u32x8 loaders ---------------------------------------------------------
 
 /// Loads 8 × u32 from `ptr` (LE-encoded on disk/wire) into host-native order.

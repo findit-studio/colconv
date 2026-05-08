@@ -89,6 +89,66 @@ pub(crate) unsafe fn load_endian_u16x32<const BE: bool>(ptr: *const u8) -> __m51
   }
 }
 
+// ---- u16x16 loaders (via _mm256_loadu_si256, for f16 widening) -------------
+//
+// AVX-512 kernels widen 16 × f16 using `_mm512_cvtph_ps(__m256i)`, which
+// requires a 256-bit lane load.  The helpers below provide endian-aware
+// loading of that 32-byte (16 × u16) block.
+
+/// AVX2 `_mm256_shuffle_epi8` mask that swaps bytes within every 2-byte (u16)
+/// lane across both 128-bit halves.
+const BYTESWAP_MASK_U16X16: __m256i = unsafe {
+  core::mem::transmute([
+    // low 128-bit lane
+    1u8, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14, // high 128-bit lane
+    1u8, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14,
+  ])
+};
+
+/// Loads 16 × u16 (32 bytes) from `ptr` (LE-encoded) into a `__m256i`,
+/// host-native order.
+///
+/// # Safety
+///
+/// `ptr` must point to at least 32 readable bytes. Caller must have AVX2
+/// (implied by AVX-512) enabled.
+#[inline(always)]
+pub(crate) unsafe fn load_le_u16x16(ptr: *const u8) -> __m256i {
+  let v = unsafe { _mm256_loadu_si256(ptr.cast()) };
+  #[cfg(target_endian = "big")]
+  let v = unsafe { _mm256_shuffle_epi8(v, BYTESWAP_MASK_U16X16) };
+  v
+}
+
+/// Loads 16 × u16 (32 bytes) from `ptr` (BE-encoded) into a `__m256i`,
+/// host-native order.
+///
+/// # Safety
+///
+/// `ptr` must point to at least 32 readable bytes. Caller must have AVX2
+/// (implied by AVX-512) enabled.
+#[inline(always)]
+pub(crate) unsafe fn load_be_u16x16(ptr: *const u8) -> __m256i {
+  let v = unsafe { _mm256_loadu_si256(ptr.cast()) };
+  #[cfg(target_endian = "little")]
+  let v = unsafe { _mm256_shuffle_epi8(v, BYTESWAP_MASK_U16X16) };
+  v
+}
+
+/// Generic dispatcher: routes to `load_le_u16x16` or `load_be_u16x16`.
+///
+/// # Safety
+///
+/// Same as `load_le_u16x16` / `load_be_u16x16`.
+#[inline(always)]
+pub(crate) unsafe fn load_endian_u16x16<const BE: bool>(ptr: *const u8) -> __m256i {
+  if BE {
+    unsafe { load_be_u16x16(ptr) }
+  } else {
+    unsafe { load_le_u16x16(ptr) }
+  }
+}
+
 // ---- u32x16 loaders --------------------------------------------------------
 
 /// Loads 16 × u32 from `ptr` (LE-encoded on disk/wire) into host-native order.
