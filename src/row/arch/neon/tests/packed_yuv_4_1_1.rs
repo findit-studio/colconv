@@ -1,12 +1,6 @@
 use super::super::*;
 
 // ---- Tier 5.25 packed YUV 4:1:1 NEON scalar-equivalence ------------
-//
-// The NEON UYYVYY411 path forwards to the scalar reference under a
-// `#[target_feature(enable = "neon")]` gate (P3 legacy format — the
-// 4:1:1 decode shape doesn't justify a hand-tuned NEON pipeline at
-// this tier). The parity check below pins that contract: any future
-// hand-rolled NEON kernel must remain byte-identical to scalar.
 
 /// Deterministic packed UYYVYY411 buffer: `width * 3 / 2` bytes per
 /// row, hash-like seed per byte position.
@@ -56,8 +50,8 @@ fn neon_uyyvyy411_rgb_matches_scalar_all_matrices() {
     ColorMatrix::YCgCo,
   ] {
     for full in [true, false] {
-      check_uyyvyy411_rgb(16, m, full);
-      check_uyyvyy411_rgba(16, m, full);
+      check_uyyvyy411_rgb(32, m, full);
+      check_uyyvyy411_rgba(32, m, full);
     }
   }
 }
@@ -65,17 +59,22 @@ fn neon_uyyvyy411_rgb_matches_scalar_all_matrices() {
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_uyyvyy411_matches_scalar_widths() {
-  // Width must be a multiple of 4 — sweep small / boundary / wide.
-  for w in [4usize, 8, 16, 32, 64, 128, 1920] {
+  // Width must be a multiple of 4. Sweep small / boundary / wide.
+  // 4..28 → all-tail (below 32-px NEON block); 32 → exact;
+  // 36..60 → tail remainder; 64, 96, 128 → multi-iter; 1920 → typical
+  // HD row.
+  for w in [4usize, 8, 12, 16, 20, 28, 32, 36, 60, 64, 96, 128, 1920] {
     check_uyyvyy411_rgb(w, ColorMatrix::Bt709, false);
     check_uyyvyy411_rgba(w, ColorMatrix::Bt709, true);
+    check_uyyvyy411_rgb(w, ColorMatrix::Bt2020Ncl, true);
+    check_uyyvyy411_rgba(w, ColorMatrix::Bt2020Ncl, false);
   }
 }
 
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_uyyvyy411_luma_matches_scalar() {
-  for w in [4usize, 8, 16, 32, 64, 128, 1920] {
+  for w in [4usize, 8, 12, 16, 28, 32, 36, 60, 64, 128, 1920] {
     let p = packed_yuv411_buffer(w, 53);
     let mut s = std::vec![0u8; w];
     let mut n = std::vec![0u8; w];
@@ -84,5 +83,20 @@ fn neon_uyyvyy411_luma_matches_scalar() {
       uyyvyy411_to_luma_row(&p, &mut n, w);
     }
     assert_eq!(s, n, "NEON uyyvyy411→luma diverges (width={w})");
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn neon_uyyvyy411_luma_u16_matches_scalar() {
+  for w in [4usize, 8, 12, 16, 28, 32, 36, 60, 64, 128, 1920] {
+    let p = packed_yuv411_buffer(w, 71);
+    let mut s = std::vec![0u16; w];
+    let mut n = std::vec![0u16; w];
+    scalar::uyyvyy411_to_luma_u16_row(&p, &mut s, w);
+    unsafe {
+      uyyvyy411_to_luma_u16_row(&p, &mut n, w);
+    }
+    assert_eq!(s, n, "NEON uyyvyy411→luma_u16 diverges (width={w})");
   }
 }
