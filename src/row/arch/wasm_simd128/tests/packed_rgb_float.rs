@@ -14,11 +14,29 @@ fn as_le_rgbf32(host: &[f32]) -> std::vec::Vec<f32> {
     .collect()
 }
 
+/// Re-encode a host-native f32 slice as BE-encoded f32 byte storage; the
+/// host-independent companion to `as_le_rgbf32` for BE-parity fixtures.
+fn as_be_rgbf32(host: &[f32]) -> std::vec::Vec<f32> {
+  host
+    .iter()
+    .map(|v| f32::from_bits(u32::from_ne_bytes(v.to_bits().to_be_bytes())))
+    .collect()
+}
+
 /// Re-encode a host-native f16 slice as LE-encoded f16 storage.
 fn as_le_rgbf16(host: &[half::f16]) -> std::vec::Vec<half::f16> {
   host
     .iter()
     .map(|v| half::f16::from_bits(u16::from_ne_bytes(v.to_bits().to_le_bytes())))
+    .collect()
+}
+
+/// BE-encoded f16 byte storage of host-native f16 values; companion to
+/// `as_le_rgbf16` for host-independent BE-parity fixtures.
+fn as_be_rgbf16(host: &[half::f16]) -> std::vec::Vec<half::f16> {
+  host
+    .iter()
+    .map(|v| half::f16::from_bits(u16::from_ne_bytes(v.to_bits().to_be_bytes())))
     .collect()
 }
 
@@ -243,24 +261,21 @@ fn wasm_rgbf16_to_rgb_f16_matches_scalar() {
 }
 
 // ---- BE parity tests — wasm-simd128 Rgbf32 -----------------------------------
-
-fn be_rgbf32(le: &[f32]) -> std::vec::Vec<f32> {
-  le.iter()
-    .map(|v| f32::from_bits(v.to_bits().swap_bytes()))
-    .collect()
-}
-
-fn be_rgbf16(le: &[half::f16]) -> std::vec::Vec<half::f16> {
-  le.iter()
-    .map(|v| half::f16::from_bits(v.to_bits().swap_bytes()))
-    .collect()
-}
+//
+// Build a host-native `expected` source, then derive both LE-encoded
+// (`as_le_rgbf32`) and BE-encoded (`as_be_rgbf32`) byte storage from it.
+// Both kernels decode to the same logical values on every host (no longer
+// vacuous: the previous `swap_bytes` of `pseudo_random_rgbf32` produced
+// matching corrupted decodes on BE hosts and could mask BE float bugs).
+// (`wasm32-*` is LE today, but the routing is endian-agnostic for any
+// future BE wasm target.)
 
 #[test]
 fn wasm_rgbf32_to_rgb_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf32(w);
-    let be_in = be_rgbf32(&le_in);
+    let host = pseudo_random_rgbf32(w);
+    let le_in = as_le_rgbf32(&host);
+    let be_in = as_be_rgbf32(&host);
     let mut out_le = std::vec![0u8; w * 3];
     let mut out_be = std::vec![0u8; w * 3];
     unsafe {
@@ -274,8 +289,9 @@ fn wasm_rgbf32_to_rgb_be_matches_le() {
 #[test]
 fn wasm_rgbf32_to_rgba_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf32(w);
-    let be_in = be_rgbf32(&le_in);
+    let host = pseudo_random_rgbf32(w);
+    let le_in = as_le_rgbf32(&host);
+    let be_in = as_be_rgbf32(&host);
     let mut out_le = std::vec![0u8; w * 4];
     let mut out_be = std::vec![0u8; w * 4];
     unsafe {
@@ -289,8 +305,9 @@ fn wasm_rgbf32_to_rgba_be_matches_le() {
 #[test]
 fn wasm_rgbf32_to_rgb_u16_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf32(w);
-    let be_in = be_rgbf32(&le_in);
+    let host = pseudo_random_rgbf32(w);
+    let le_in = as_le_rgbf32(&host);
+    let be_in = as_be_rgbf32(&host);
     let mut out_le = std::vec![0u16; w * 3];
     let mut out_be = std::vec![0u16; w * 3];
     unsafe {
@@ -304,8 +321,9 @@ fn wasm_rgbf32_to_rgb_u16_be_matches_le() {
 #[test]
 fn wasm_rgbf32_to_rgba_u16_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf32(w);
-    let be_in = be_rgbf32(&le_in);
+    let host = pseudo_random_rgbf32(w);
+    let le_in = as_le_rgbf32(&host);
+    let be_in = as_be_rgbf32(&host);
     let mut out_le = std::vec![0u16; w * 4];
     let mut out_be = std::vec![0u16; w * 4];
     unsafe {
@@ -322,8 +340,9 @@ fn wasm_rgbf32_to_rgba_u16_be_matches_le() {
 #[test]
 fn wasm_rgbf32_to_rgb_f32_be_is_byteswap() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf32(w);
-    let be_in = be_rgbf32(&le_in);
+    let host = pseudo_random_rgbf32(w);
+    let le_in = as_le_rgbf32(&host);
+    let be_in = as_be_rgbf32(&host);
     let mut out_le = std::vec![0.0f32; w * 3];
     let mut out_be = std::vec![0.0f32; w * 3];
     unsafe {
@@ -376,8 +395,9 @@ fn wasm_rgbf32_to_rgb_f32_row_le_input_decodes_correctly_on_any_host() {
 )]
 fn wasm_rgbf16_to_rgb_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf16(w);
-    let be_in = be_rgbf16(&le_in);
+    let host = pseudo_random_rgbf16(w);
+    let le_in = as_le_rgbf16(&host);
+    let be_in = as_be_rgbf16(&host);
     let mut out_le = std::vec![0u8; w * 3];
     let mut out_be = std::vec![0u8; w * 3];
     unsafe {
@@ -395,8 +415,9 @@ fn wasm_rgbf16_to_rgb_be_matches_le() {
 )]
 fn wasm_rgbf16_to_rgba_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf16(w);
-    let be_in = be_rgbf16(&le_in);
+    let host = pseudo_random_rgbf16(w);
+    let le_in = as_le_rgbf16(&host);
+    let be_in = as_be_rgbf16(&host);
     let mut out_le = std::vec![0u8; w * 4];
     let mut out_be = std::vec![0u8; w * 4];
     unsafe {
@@ -414,8 +435,9 @@ fn wasm_rgbf16_to_rgba_be_matches_le() {
 )]
 fn wasm_rgbf16_to_rgb_u16_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf16(w);
-    let be_in = be_rgbf16(&le_in);
+    let host = pseudo_random_rgbf16(w);
+    let le_in = as_le_rgbf16(&host);
+    let be_in = as_be_rgbf16(&host);
     let mut out_le = std::vec![0u16; w * 3];
     let mut out_be = std::vec![0u16; w * 3];
     unsafe {
@@ -433,8 +455,9 @@ fn wasm_rgbf16_to_rgb_u16_be_matches_le() {
 )]
 fn wasm_rgbf16_to_rgba_u16_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf16(w);
-    let be_in = be_rgbf16(&le_in);
+    let host = pseudo_random_rgbf16(w);
+    let le_in = as_le_rgbf16(&host);
+    let be_in = as_be_rgbf16(&host);
     let mut out_le = std::vec![0u16; w * 4];
     let mut out_be = std::vec![0u16; w * 4];
     unsafe {
@@ -455,8 +478,9 @@ fn wasm_rgbf16_to_rgba_u16_be_matches_le() {
 )]
 fn wasm_rgbf16_to_rgb_f32_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf16(w);
-    let be_in = be_rgbf16(&le_in);
+    let host = pseudo_random_rgbf16(w);
+    let le_in = as_le_rgbf16(&host);
+    let be_in = as_be_rgbf16(&host);
     let mut out_le = std::vec![0.0f32; w * 3];
     let mut out_be = std::vec![0.0f32; w * 3];
     unsafe {
@@ -474,8 +498,9 @@ fn wasm_rgbf16_to_rgb_f32_be_matches_le() {
 )]
 fn wasm_rgbf16_to_rgb_f16_be_is_byteswap() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf16(w);
-    let be_in = be_rgbf16(&le_in);
+    let host = pseudo_random_rgbf16(w);
+    let le_in = as_le_rgbf16(&host);
+    let be_in = as_be_rgbf16(&host);
     let mut out_le = std::vec![half::f16::ZERO; w * 3];
     let mut out_be = std::vec![half::f16::ZERO; w * 3];
     unsafe {

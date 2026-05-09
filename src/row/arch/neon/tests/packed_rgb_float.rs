@@ -22,11 +22,32 @@ fn as_le_rgbf32(host: &[f32]) -> std::vec::Vec<f32> {
     .collect()
 }
 
+/// Re-encode a host-native f32 slice as BE-encoded f32 byte storage. On BE
+/// host this is a no-op; on LE host every f32 is byte-swapped. Pair with
+/// `as_le_rgbf32` so a single `host_native` source feeds both LE and BE
+/// kernels with byte storage that decodes to the same logical values on
+/// every host (host-independent BE-parity fixture).
+fn as_be_rgbf32(host: &[f32]) -> std::vec::Vec<f32> {
+  host
+    .iter()
+    .map(|v| f32::from_bits(u32::from_ne_bytes(v.to_bits().to_be_bytes())))
+    .collect()
+}
+
 /// Same idea for half::f16 slices.
 fn as_le_rgbf16(host: &[half::f16]) -> std::vec::Vec<half::f16> {
   host
     .iter()
     .map(|v| half::f16::from_bits(u16::from_ne_bytes(v.to_bits().to_le_bytes())))
+    .collect()
+}
+
+/// BE-encoded f16 byte storage of host-native f16 values; companion to
+/// `as_le_rgbf16` for host-independent BE-parity fixtures.
+fn as_be_rgbf16(host: &[half::f16]) -> std::vec::Vec<half::f16> {
+  host
+    .iter()
+    .map(|v| half::f16::from_bits(u16::from_ne_bytes(v.to_bits().to_be_bytes())))
     .collect()
 }
 
@@ -279,29 +300,23 @@ fn neon_rgbf16_to_rgb_f16_matches_scalar() {
 
 // ---- BE parity tests — Rgbf32 -----------------------------------------------
 //
-// For each kernel: byte-swap the LE f32 inputs into a BE buffer, call the
-// kernel with `BE=true`, and assert the output matches the LE run (`BE=false`).
-
-/// Build a BE-encoded f32 slice by byte-swapping every 32-bit element.
-fn be_rgbf32(le: &[f32]) -> std::vec::Vec<f32> {
-  le.iter()
-    .map(|v| f32::from_bits(v.to_bits().swap_bytes()))
-    .collect()
-}
-
-/// Build a BE-encoded f16 slice by byte-swapping every 16-bit element.
-fn be_rgbf16(le: &[half::f16]) -> std::vec::Vec<half::f16> {
-  le.iter()
-    .map(|v| half::f16::from_bits(v.to_bits().swap_bytes()))
-    .collect()
-}
+// For each kernel: build a host-native `expected` source, then derive both
+// LE-encoded byte storage (`as_le_rgbf32`) and BE-encoded byte storage
+// (`as_be_rgbf32`) from it. Run the LE-encoded buffer through `BE=false`
+// and the BE-encoded buffer through `BE=true`; both kernels decode to the
+// same logical `expected` values on every host, so the outputs must match.
+//
+// The previous helper (`swap_bytes` of `pseudo_random_rgbf32`) was vacuous
+// on BE hosts: both buffers would decode to corrupted-but-equal values, so
+// `out_le == out_be` could pass while BE float decoding was actually broken.
 
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_rgbf32_to_rgb_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf32(w);
-    let be_in = be_rgbf32(&le_in);
+    let host = pseudo_random_rgbf32(w);
+    let le_in = as_le_rgbf32(&host);
+    let be_in = as_be_rgbf32(&host);
     let mut out_le = std::vec![0u8; w * 3];
     let mut out_be = std::vec![0u8; w * 3];
     unsafe {
@@ -316,8 +331,9 @@ fn neon_rgbf32_to_rgb_be_matches_le() {
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_rgbf32_to_rgba_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf32(w);
-    let be_in = be_rgbf32(&le_in);
+    let host = pseudo_random_rgbf32(w);
+    let le_in = as_le_rgbf32(&host);
+    let be_in = as_be_rgbf32(&host);
     let mut out_le = std::vec![0u8; w * 4];
     let mut out_be = std::vec![0u8; w * 4];
     unsafe {
@@ -332,8 +348,9 @@ fn neon_rgbf32_to_rgba_be_matches_le() {
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_rgbf32_to_rgb_u16_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf32(w);
-    let be_in = be_rgbf32(&le_in);
+    let host = pseudo_random_rgbf32(w);
+    let le_in = as_le_rgbf32(&host);
+    let be_in = as_be_rgbf32(&host);
     let mut out_le = std::vec![0u16; w * 3];
     let mut out_be = std::vec![0u16; w * 3];
     unsafe {
@@ -348,8 +365,9 @@ fn neon_rgbf32_to_rgb_u16_be_matches_le() {
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_rgbf32_to_rgba_u16_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf32(w);
-    let be_in = be_rgbf32(&le_in);
+    let host = pseudo_random_rgbf32(w);
+    let le_in = as_le_rgbf32(&host);
+    let be_in = as_be_rgbf32(&host);
     let mut out_le = std::vec![0u16; w * 4];
     let mut out_be = std::vec![0u16; w * 4];
     unsafe {
@@ -367,8 +385,9 @@ fn neon_rgbf32_to_rgba_u16_be_matches_le() {
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_rgbf32_to_rgb_f32_be_is_byteswap() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf32(w);
-    let be_in = be_rgbf32(&le_in);
+    let host = pseudo_random_rgbf32(w);
+    let le_in = as_le_rgbf32(&host);
+    let be_in = as_be_rgbf32(&host);
     let mut out_le = std::vec![0.0f32; w * 3];
     let mut out_be = std::vec![0.0f32; w * 3];
     unsafe {
@@ -491,8 +510,9 @@ fn neon_rgbf16_to_rgb_be_matches_le() {
   // the read stays within bounds; ASan / Miri pages would have caught the
   // over-read as a guarded-page UB.
   for w in [1usize, 4, 5, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf16(w);
-    let be_in = be_rgbf16(&le_in);
+    let host = pseudo_random_rgbf16(w);
+    let le_in = as_le_rgbf16(&host);
+    let be_in = as_be_rgbf16(&host);
     let mut out_le = std::vec![0u8; w * 3];
     let mut out_be = std::vec![0u8; w * 3];
     unsafe {
@@ -513,8 +533,9 @@ fn neon_rgbf16_to_rgba_be_matches_le() {
     return;
   }
   for w in [1usize, 4, 5, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf16(w);
-    let be_in = be_rgbf16(&le_in);
+    let host = pseudo_random_rgbf16(w);
+    let le_in = as_le_rgbf16(&host);
+    let be_in = as_be_rgbf16(&host);
     let mut out_le = std::vec![0u8; w * 4];
     let mut out_be = std::vec![0u8; w * 4];
     unsafe {
@@ -535,8 +556,9 @@ fn neon_rgbf16_to_rgb_u16_be_matches_le() {
     return;
   }
   for w in [1usize, 4, 5, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf16(w);
-    let be_in = be_rgbf16(&le_in);
+    let host = pseudo_random_rgbf16(w);
+    let le_in = as_le_rgbf16(&host);
+    let be_in = as_be_rgbf16(&host);
     let mut out_le = std::vec![0u16; w * 3];
     let mut out_be = std::vec![0u16; w * 3];
     unsafe {
@@ -557,8 +579,9 @@ fn neon_rgbf16_to_rgba_u16_be_matches_le() {
     return;
   }
   for w in [1usize, 4, 5, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf16(w);
-    let be_in = be_rgbf16(&le_in);
+    let host = pseudo_random_rgbf16(w);
+    let le_in = as_le_rgbf16(&host);
+    let be_in = as_be_rgbf16(&host);
     let mut out_le = std::vec![0u16; w * 4];
     let mut out_be = std::vec![0u16; w * 4];
     unsafe {
@@ -582,8 +605,9 @@ fn neon_rgbf16_to_rgb_f32_be_matches_le() {
     return;
   }
   for w in [1usize, 4, 5, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf16(w);
-    let be_in = be_rgbf16(&le_in);
+    let host = pseudo_random_rgbf16(w);
+    let le_in = as_le_rgbf16(&host);
+    let be_in = as_be_rgbf16(&host);
     let mut out_le = std::vec![0.0f32; w * 3];
     let mut out_be = std::vec![0.0f32; w * 3];
     unsafe {
@@ -601,8 +625,9 @@ fn neon_rgbf16_to_rgb_f32_be_matches_le() {
 )]
 fn neon_rgbf16_to_rgb_f16_be_is_byteswap() {
   for w in [1usize, 4, 5, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf16(w);
-    let be_in = be_rgbf16(&le_in);
+    let host = pseudo_random_rgbf16(w);
+    let le_in = as_le_rgbf16(&host);
+    let be_in = as_be_rgbf16(&host);
     let mut out_le = std::vec![half::f16::ZERO; w * 3];
     let mut out_be = std::vec![half::f16::ZERO; w * 3];
     unsafe {
@@ -634,12 +659,17 @@ where
   // Allocate exact-sized input/output so any over-read lands outside the
   // Vec's allocation. The exact-fit Vec mostly catches over-reads that go
   // outside the page boundary — pair with ASan in CI for the strict case.
+  // Encode the host-native source as either BE or LE bytes so the kernel's
+  // decode is a real round-trip on every host (not a vacuous `swap_bytes`).
   let width_lanes = width * 3;
-  let mut le_in = std::vec::Vec::<half::f16>::with_capacity(width_lanes);
-  for v in pseudo_random_rgbf16(width) {
-    le_in.push(v);
-  }
-  let raw: std::vec::Vec<half::f16> = if BE { be_rgbf16(&le_in) } else { le_in.clone() };
+  let host = pseudo_random_rgbf16(width);
+  let encoded = if BE {
+    as_be_rgbf16(&host)
+  } else {
+    as_le_rgbf16(&host)
+  };
+  let mut raw = std::vec::Vec::<half::f16>::with_capacity(width_lanes);
+  raw.extend_from_slice(&encoded);
   let mut out = std::vec![0u8; width * 3];
   kernel(&raw, &mut out, width);
 }
