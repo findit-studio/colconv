@@ -235,13 +235,95 @@ pub(crate) fn copy_alpha_plane_f16<const BE: bool>(
 mod tests {
   use super::*;
 
-  // ---- helper: byte-swap a slice of f16 to simulate BE source ----------------
+  // ---- helpers: host-independent f16 LE / BE byte-storage encoders ----------
 
-  fn be_encode_f16(src: &[half::f16]) -> std::vec::Vec<half::f16> {
-    src
+  /// Re-encode a host-native f16 slice as LE-encoded byte storage. Kernels
+  /// called with `BE = false` recover the host-native logical bit pattern via
+  /// `u16::from_le` on both LE (no-op) and BE (byte-swap) hosts.
+  fn as_le_f16(host: &[half::f16]) -> std::vec::Vec<half::f16> {
+    host
       .iter()
-      .map(|v| half::f16::from_bits(v.to_bits().swap_bytes()))
+      .map(|v| half::f16::from_bits(u16::from_ne_bytes(v.to_bits().to_le_bytes())))
       .collect()
+  }
+
+  /// Mirror of `as_le_f16` for kernels invoked with `BE = true`.
+  fn as_be_f16(host: &[half::f16]) -> std::vec::Vec<half::f16> {
+    host
+      .iter()
+      .map(|v| half::f16::from_bits(u16::from_ne_bytes(v.to_bits().to_be_bytes())))
+      .collect()
+  }
+
+  // -- Scalar references for the BE-parity tests --
+  //
+  // Walk host-native `intended` planes and reproduce each kernel's pure
+  // gather-scatter behaviour without any byte-order conversion. Pinning the
+  // LE / BE outputs against these absolute references prevents the parity
+  // assertion from passing in lock-step on two equally corrupt decodes.
+
+  fn ref_gbrpf16_to_rgb_f16(
+    g: &[half::f16],
+    b: &[half::f16],
+    r: &[half::f16],
+    width: usize,
+  ) -> std::vec::Vec<half::f16> {
+    let mut out = std::vec![half::f16::ZERO; width * 3];
+    for x in 0..width {
+      let dst = x * 3;
+      out[dst] = r[x];
+      out[dst + 1] = g[x];
+      out[dst + 2] = b[x];
+    }
+    out
+  }
+
+  fn ref_gbrpf16_to_rgba_f16(
+    g: &[half::f16],
+    b: &[half::f16],
+    r: &[half::f16],
+    width: usize,
+  ) -> std::vec::Vec<half::f16> {
+    let mut out = std::vec![half::f16::ZERO; width * 4];
+    let one = half::f16::from_f32(1.0);
+    for x in 0..width {
+      let dst = x * 4;
+      out[dst] = r[x];
+      out[dst + 1] = g[x];
+      out[dst + 2] = b[x];
+      out[dst + 3] = one;
+    }
+    out
+  }
+
+  fn ref_gbrapf16_to_rgba_f16(
+    g: &[half::f16],
+    b: &[half::f16],
+    r: &[half::f16],
+    a: &[half::f16],
+    width: usize,
+  ) -> std::vec::Vec<half::f16> {
+    let mut out = std::vec![half::f16::ZERO; width * 4];
+    for x in 0..width {
+      let dst = x * 4;
+      out[dst] = r[x];
+      out[dst + 1] = g[x];
+      out[dst + 2] = b[x];
+      out[dst + 3] = a[x];
+    }
+    out
+  }
+
+  fn ref_copy_alpha_plane_f16(
+    intended_alpha: &[half::f16],
+    fill: half::f16,
+    width: usize,
+  ) -> std::vec::Vec<half::f16> {
+    let mut out = std::vec![fill; width * 4];
+    for n in 0..width {
+      out[n * 4 + 3] = intended_alpha[n];
+    }
+    out
   }
 
   // ---- gbrpf16_to_rgb_f16_row ----------------------------------------------
@@ -285,32 +367,40 @@ mod tests {
     ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
   )]
   fn gbrpf16_to_rgb_f16_be_parity() {
-    // BE-encoded source must decode to same output as LE source.
-    let g = [
+    // Build host-native intended planes; materialise as LE / BE byte storage
+    // so each kernel's `from_le` / `from_be` recovers the same logical bits
+    // on every host. Pin both outputs against an absolute scalar reference.
+    let g_intended = [
       half::f16::from_f32(0.0),
       half::f16::from_f32(0.25),
       half::f16::from_f32(0.5),
       half::f16::from_f32(1.0),
     ];
-    let b = [
+    let b_intended = [
       half::f16::from_f32(0.1),
       half::f16::from_f32(0.3),
       half::f16::from_f32(0.7),
       half::f16::from_f32(0.9),
     ];
-    let r = [
+    let r_intended = [
       half::f16::from_f32(0.5),
       half::f16::from_f32(0.8),
       half::f16::from_f32(0.2),
       half::f16::from_f32(0.6),
     ];
-    let g_be = be_encode_f16(&g);
-    let b_be = be_encode_f16(&b);
-    let r_be = be_encode_f16(&r);
+    let g_le = as_le_f16(&g_intended);
+    let b_le = as_le_f16(&b_intended);
+    let r_le = as_le_f16(&r_intended);
+    let g_be = as_be_f16(&g_intended);
+    let b_be = as_be_f16(&b_intended);
+    let r_be = as_be_f16(&r_intended);
     let mut le_out = vec![half::f16::ZERO; 4 * 3];
     let mut be_out = vec![half::f16::ZERO; 4 * 3];
-    gbrpf16_to_rgb_f16_row::<false>(&g, &b, &r, &mut le_out, 4);
+    gbrpf16_to_rgb_f16_row::<false>(&g_le, &b_le, &r_le, &mut le_out, 4);
     gbrpf16_to_rgb_f16_row::<true>(&g_be, &b_be, &r_be, &mut be_out, 4);
+    let expected = ref_gbrpf16_to_rgb_f16(&g_intended, &b_intended, &r_intended, 4);
+    assert_eq!(le_out, expected, "LE path must match scalar reference");
+    assert_eq!(be_out, expected, "BE path must match scalar reference");
     assert_eq!(be_out, le_out, "BE gbrpf16_to_rgb_f16_row must match LE");
   }
 
@@ -336,31 +426,37 @@ mod tests {
     ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
   )]
   fn gbrpf16_to_rgba_f16_be_parity() {
-    let g = [
+    let g_intended = [
       half::f16::from_f32(0.0),
       half::f16::from_f32(0.25),
       half::f16::from_f32(0.5),
       half::f16::from_f32(1.0),
     ];
-    let b = [
+    let b_intended = [
       half::f16::from_f32(0.1),
       half::f16::from_f32(0.3),
       half::f16::from_f32(0.7),
       half::f16::from_f32(0.9),
     ];
-    let r = [
+    let r_intended = [
       half::f16::from_f32(0.5),
       half::f16::from_f32(0.8),
       half::f16::from_f32(0.2),
       half::f16::from_f32(0.6),
     ];
-    let g_be = be_encode_f16(&g);
-    let b_be = be_encode_f16(&b);
-    let r_be = be_encode_f16(&r);
+    let g_le = as_le_f16(&g_intended);
+    let b_le = as_le_f16(&b_intended);
+    let r_le = as_le_f16(&r_intended);
+    let g_be = as_be_f16(&g_intended);
+    let b_be = as_be_f16(&b_intended);
+    let r_be = as_be_f16(&r_intended);
     let mut le_out = vec![half::f16::ZERO; 4 * 4];
     let mut be_out = vec![half::f16::ZERO; 4 * 4];
-    gbrpf16_to_rgba_f16_row::<false>(&g, &b, &r, &mut le_out, 4);
+    gbrpf16_to_rgba_f16_row::<false>(&g_le, &b_le, &r_le, &mut le_out, 4);
     gbrpf16_to_rgba_f16_row::<true>(&g_be, &b_be, &r_be, &mut be_out, 4);
+    let expected = ref_gbrpf16_to_rgba_f16(&g_intended, &b_intended, &r_intended, 4);
+    assert_eq!(le_out, expected, "LE path must match scalar reference");
+    assert_eq!(be_out, expected, "BE path must match scalar reference");
     assert_eq!(be_out, le_out, "BE gbrpf16_to_rgba_f16_row must match LE");
   }
 
@@ -390,38 +486,45 @@ mod tests {
     ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
   )]
   fn gbrapf16_to_rgba_f16_be_parity() {
-    let g = [
+    let g_intended = [
       half::f16::from_f32(0.0),
       half::f16::from_f32(0.25),
       half::f16::from_f32(0.5),
       half::f16::from_f32(1.0),
     ];
-    let b = [
+    let b_intended = [
       half::f16::from_f32(0.1),
       half::f16::from_f32(0.3),
       half::f16::from_f32(0.7),
       half::f16::from_f32(0.9),
     ];
-    let r = [
+    let r_intended = [
       half::f16::from_f32(0.5),
       half::f16::from_f32(0.8),
       half::f16::from_f32(0.2),
       half::f16::from_f32(0.6),
     ];
-    let a = [
+    let a_intended = [
       half::f16::from_f32(0.2),
       half::f16::from_f32(0.4),
       half::f16::from_f32(0.6),
       half::f16::from_f32(0.8),
     ];
-    let g_be = be_encode_f16(&g);
-    let b_be = be_encode_f16(&b);
-    let r_be = be_encode_f16(&r);
-    let a_be = be_encode_f16(&a);
+    let g_le = as_le_f16(&g_intended);
+    let b_le = as_le_f16(&b_intended);
+    let r_le = as_le_f16(&r_intended);
+    let a_le = as_le_f16(&a_intended);
+    let g_be = as_be_f16(&g_intended);
+    let b_be = as_be_f16(&b_intended);
+    let r_be = as_be_f16(&r_intended);
+    let a_be = as_be_f16(&a_intended);
     let mut le_out = vec![half::f16::ZERO; 4 * 4];
     let mut be_out = vec![half::f16::ZERO; 4 * 4];
-    gbrapf16_to_rgba_f16_row::<false>(&g, &b, &r, &a, &mut le_out, 4);
+    gbrapf16_to_rgba_f16_row::<false>(&g_le, &b_le, &r_le, &a_le, &mut le_out, 4);
     gbrapf16_to_rgba_f16_row::<true>(&g_be, &b_be, &r_be, &a_be, &mut be_out, 4);
+    let expected = ref_gbrapf16_to_rgba_f16(&g_intended, &b_intended, &r_intended, &a_intended, 4);
+    assert_eq!(le_out, expected, "LE path must match scalar reference");
+    assert_eq!(be_out, expected, "BE path must match scalar reference");
     assert_eq!(be_out, le_out, "BE gbrapf16_to_rgba_f16_row must match LE");
   }
 
@@ -432,9 +535,14 @@ mod tests {
     miri,
     ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
   )]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_f16_only_writes_alpha_slot() {
-    let alpha = vec![half::f16::from_f32(0.7), half::f16::from_f32(0.3)];
+    // LE-encoded fixture so the kernel's `from_le` recovers host-native values
+    // on both LE (no-op) and BE (byte-swap) hosts.
+    let host_alpha = [half::f16::from_f32(0.7), half::f16::from_f32(0.3)];
+    let alpha: std::vec::Vec<half::f16> = host_alpha
+      .iter()
+      .map(|v| half::f16::from_bits(u16::from_ne_bytes(v.to_bits().to_le_bytes())))
+      .collect();
     let sentinel = half::f16::from_f32(0.1);
     let mut rgba = vec![sentinel; 8];
     copy_alpha_plane_f16::<false>(&alpha, &mut rgba, 2);
@@ -458,7 +566,11 @@ mod tests {
     ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
   )]
   fn copy_alpha_plane_f16_be_parity_with_swapped_buffer() {
-    let alpha_le = vec![
+    // Build a single host-native `intended` α plane; materialise as LE / BE
+    // byte storage so each kernel's `from_le` / `from_be` recovers the same
+    // host-native bits on every host. Pin both outputs against an absolute
+    // scalar reference (compared bitwise to be NaN-safe).
+    let intended = vec![
       half::f16::from_f32(0.0),
       half::f16::from_f32(0.25),
       half::f16::from_f32(0.5),
@@ -466,13 +578,24 @@ mod tests {
       half::f16::from_f32(2.5),
       half::f16::from_f32(-1.0),
     ];
-    let alpha_be = be_encode_f16(&alpha_le);
+    let alpha_le = as_le_f16(&intended);
+    let alpha_be = as_be_f16(&intended);
     let mut rgba_le = vec![half::f16::ZERO; 24];
     let mut rgba_be = vec![half::f16::ZERO; 24];
     copy_alpha_plane_f16::<false>(&alpha_le, &mut rgba_le, 6);
     copy_alpha_plane_f16::<true>(&alpha_be, &mut rgba_be, 6);
+    let expected = ref_copy_alpha_plane_f16(&intended, half::f16::ZERO, 6);
     let bits_le: std::vec::Vec<u16> = rgba_le.iter().map(|v| v.to_bits()).collect();
     let bits_be: std::vec::Vec<u16> = rgba_be.iter().map(|v| v.to_bits()).collect();
+    let bits_expected: std::vec::Vec<u16> = expected.iter().map(|v| v.to_bits()).collect();
+    assert_eq!(
+      bits_le, bits_expected,
+      "LE path must match scalar reference"
+    );
+    assert_eq!(
+      bits_be, bits_expected,
+      "BE path must match scalar reference"
+    );
     assert_eq!(
       bits_le, bits_be,
       "BE flag + bit-swapped buffer must match LE path bit-for-bit"

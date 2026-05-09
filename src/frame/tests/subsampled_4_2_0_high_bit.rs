@@ -171,23 +171,34 @@ fn yuv420p10_try_new_checked_accepts_in_range_samples() {
   // Same valid frame as `yuv420p10_try_new_accepts_valid_tight`,
   // but run through the checked constructor. All samples live in
   // the 10‑bit range.
-  let (y, u, v) = p10_planes();
+  //
+  // Wrap host-native `p10_planes()` via `le_encoded_u16_buf` so the buffer
+  // honors the LE-encoded byte contract on every host: `try_new_checked`
+  // applies `u16::from_le` to each sample before the range check, and a
+  // raw host-native u16 of `512` decodes to `0x0002` on a BE host —
+  // making the original literal-fed test vacuously pass for the wrong
+  // reason there.
+  let (intended_y, intended_u, intended_v) = p10_planes();
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&intended_u);
+  let v = le_encoded_u16_buf(&intended_v);
   let f = Yuv420p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8).expect("valid");
   assert_eq!(f.width(), 16);
   assert_eq!(f.bits(), 10);
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv420p10_try_new_checked_rejects_y_high_bit_set() {
   // A Y sample with bit 15 set — typical of `p010` packing where
   // the 10 active bits sit in the high bits. `try_new` would
   // accept this and let the SIMD kernels produce arch‑dependent
   // garbage; `try_new_checked` catches it up front.
-  let mut y = std::vec![0u16; 16 * 8];
-  y[3 * 16 + 5] = 0x8000; // bit 15 set → way above 1023
-  let u = std::vec![512u16; 8 * 4];
-  let v = std::vec![512u16; 8 * 4];
+  let mut intended_y = std::vec![0u16; 16 * 8];
+  intended_y[3 * 16 + 5] = 0x8000; // bit 15 set → way above 1023
+  let intended_uv = std::vec![512u16; 8 * 4];
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&intended_uv);
+  let v = le_encoded_u16_buf(&intended_uv);
   let e = Yuv420p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8).unwrap_err();
   match e {
     Yuv420pFrame16Error::SampleOutOfRange {
@@ -205,13 +216,15 @@ fn yuv420p10_try_new_checked_rejects_y_high_bit_set() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv420p10_try_new_checked_rejects_u_plane_sample() {
   // Offending sample in the U plane — error must name U, not Y or V.
-  let y = std::vec![0u16; 16 * 8];
-  let mut u = std::vec![512u16; 8 * 4];
-  u[2 * 8 + 3] = 1024; // just above max
-  let v = std::vec![512u16; 8 * 4];
+  let intended_y = std::vec![0u16; 16 * 8];
+  let mut intended_u = std::vec![512u16; 8 * 4];
+  intended_u[2 * 8 + 3] = 1024; // just above max
+  let intended_v = std::vec![512u16; 8 * 4];
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&intended_u);
+  let v = le_encoded_u16_buf(&intended_v);
   let e = Yuv420p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8).unwrap_err();
   assert!(matches!(
     e,
@@ -226,10 +239,19 @@ fn yuv420p10_try_new_checked_rejects_u_plane_sample() {
 
 #[test]
 fn yuv420p10_try_new_checked_rejects_v_plane_sample() {
-  let y = std::vec![0u16; 16 * 8];
-  let u = std::vec![512u16; 8 * 4];
-  let mut v = std::vec![512u16; 8 * 4];
-  v[8 + 7] = 0xFFFF; // all bits set
+  // `try_new_checked` applies `u16::from_le` before the range check, so
+  // pass LE-encoded byte storage so the test asserts the same logical
+  // values on every host. (Without the wrap, a host-native `0xFFFF`
+  // happens to be byte-palindromic and still triggers rejection on BE,
+  // but the surrounding `512`s decode to `0x0002` — the test rejects on
+  // accident, not on the value it claims.)
+  let intended_y = std::vec![0u16; 16 * 8];
+  let intended_u = std::vec![512u16; 8 * 4];
+  let mut intended_v = std::vec![512u16; 8 * 4];
+  intended_v[8 + 7] = 0xFFFF; // all bits set
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&intended_u);
+  let v = le_encoded_u16_buf(&intended_v);
   let e = Yuv420p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8).unwrap_err();
   assert!(matches!(
     e,
@@ -242,13 +264,14 @@ fn yuv420p10_try_new_checked_rejects_v_plane_sample() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv420p10_try_new_checked_accepts_exact_max_sample() {
   // Boundary: sample value == (1 << BITS) - 1 is valid.
-  let mut y = std::vec![0u16; 16 * 8];
-  y[0] = 1023;
-  let u = std::vec![512u16; 8 * 4];
-  let v = std::vec![512u16; 8 * 4];
+  let mut intended_y = std::vec![0u16; 16 * 8];
+  intended_y[0] = 1023;
+  let intended_uv = std::vec![512u16; 8 * 4];
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&intended_uv);
+  let v = le_encoded_u16_buf(&intended_uv);
   Yuv420p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8).expect("1023 is in range");
 }
 
@@ -390,23 +413,26 @@ fn p010_try_new_rejects_geometry_overflow() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn p010_try_new_checked_accepts_shifted_samples() {
   // Valid P010 samples: low 6 bits zero.
-  let (y, uv) = p010_planes();
+  let intended_y = std::vec![0xFFC0u16; 16 * 8];
+  let intended_uv = std::vec![0x8000u16; 16 * 4];
+  let y = le_encoded_u16_buf(&intended_y);
+  let uv = le_encoded_u16_buf(&intended_uv);
   P010Frame::try_new_checked(&y, &uv, 16, 8, 16, 16).expect("shifted samples valid");
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn p010_try_new_checked_rejects_y_low_bits_set() {
   // A Y sample with low 6 bits set — characteristic of yuv420p10le
   // packing (value in low 10 bits) accidentally handed to the P010
   // constructor. `try_new_checked` catches this; plain `try_new`
   // would let the kernel mask it down and produce wrong colors.
-  let mut y = std::vec![0xFFC0u16; 16 * 8];
-  y[3 * 16 + 5] = 0x03FF; // 10-bit value in low bits — wrong packing
-  let uv = std::vec![0x8000u16; 16 * 4];
+  let mut intended_y = std::vec![0xFFC0u16; 16 * 8];
+  intended_y[3 * 16 + 5] = 0x03FF; // 10-bit value in low bits — wrong packing
+  let intended_uv = std::vec![0x8000u16; 16 * 4];
+  let y = le_encoded_u16_buf(&intended_y);
+  let uv = le_encoded_u16_buf(&intended_uv);
   let e = P010Frame::try_new_checked(&y, &uv, 16, 8, 16, 16).unwrap_err();
   match e {
     PnFrameError::SampleLowBitsSet { plane, value, .. } => {
@@ -418,11 +444,12 @@ fn p010_try_new_checked_rejects_y_low_bits_set() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn p010_try_new_checked_rejects_uv_plane_sample() {
-  let y = std::vec![0xFFC0u16; 16 * 8];
-  let mut uv = std::vec![0x8000u16; 16 * 4];
-  uv[2 * 16 + 3] = 0x0001; // low bit set
+  let intended_y = std::vec![0xFFC0u16; 16 * 8];
+  let mut intended_uv = std::vec![0x8000u16; 16 * 4];
+  intended_uv[2 * 16 + 3] = 0x0001; // low bit set
+  let y = le_encoded_u16_buf(&intended_y);
+  let uv = le_encoded_u16_buf(&intended_uv);
   let e = P010Frame::try_new_checked(&y, &uv, 16, 8, 16, 16).unwrap_err();
   assert!(matches!(
     e,
@@ -456,13 +483,14 @@ fn p010_try_new_checked_reports_geometry_errors_first() {
 /// constructor into a real provenance validator will need to
 /// update or replace this test.
 #[test]
-#[cfg(target_endian = "little")]
 fn p010_try_new_checked_accepts_ambiguous_yuv420p10le_samples() {
   // `yuv420p10le`-style samples, all multiples of 64: low 6 bits
   // are zero, so they pass the P010 sanity check even though this
   // is wrong data for a P010 frame.
-  let y = std::vec![0x0040u16; 16 * 8]; // limited-range black in 10-bit low-packed
-  let uv = std::vec![0x0200u16; 16 * 4]; // neutral chroma in 10-bit low-packed
+  let intended_y = std::vec![0x0040u16; 16 * 8]; // limited-range black in 10-bit low-packed
+  let intended_uv = std::vec![0x0200u16; 16 * 4]; // neutral chroma in 10-bit low-packed
+  let y = le_encoded_u16_buf(&intended_y);
+  let uv = le_encoded_u16_buf(&intended_uv);
   let f = P010Frame::try_new_checked(&y, &uv, 16, 8, 16, 16)
     .expect("known limitation: low-6-bits-zero check cannot tell yuv420p10le from P010");
   assert_eq!(f.width(), 16);
@@ -482,14 +510,15 @@ fn p012_try_new_checked_accepts_shifted_samples() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn p012_try_new_checked_rejects_low_bits_set() {
   // A Y sample with any of the low 4 bits set — e.g. yuv420p12le
   // value 0x0ABC landing where P012 expects `value << 4`. The check
   // catches samples like this that are obviously mispacked.
-  let mut y = std::vec![(2048u16) << 4; 16 * 8];
-  y[3 * 16 + 5] = 0x0ABC; // low 4 bits = 0xC ≠ 0
-  let uv = std::vec![(2048u16) << 4; 16 * 4];
+  let mut intended_y = std::vec![(2048u16) << 4; 16 * 8];
+  intended_y[3 * 16 + 5] = 0x0ABC; // low 4 bits = 0xC ≠ 0
+  let intended_uv = std::vec![(2048u16) << 4; 16 * 4];
+  let y = le_encoded_u16_buf(&intended_y);
+  let uv = le_encoded_u16_buf(&intended_uv);
   let e = P012Frame::try_new_checked(&y, &uv, 16, 8, 16, 16).unwrap_err();
   match e {
     PnFrameError::SampleLowBitsSet {
@@ -529,13 +558,14 @@ fn p012_try_new_checked_rejects_low_bits_set() {
 /// [`Yuv420p12Frame`] at construction based on decoder metadata)
 /// is the only reliable provenance guarantee.
 #[test]
-#[cfg(target_endian = "little")]
 fn p012_try_new_checked_accepts_low_packed_flat_content_by_design() {
   // All values are multiples of 16 — exactly the set that slips
   // through a 4-low-bits-zero check. `yuv420p12le` limited-range
   // black and neutral chroma both satisfy this.
-  let y = std::vec![0x0100u16; 16 * 8]; // Y = 256 (limited-range black), multiple of 16
-  let uv = std::vec![0x0800u16; 16 * 4]; // UV = 2048 (neutral chroma), multiple of 16
+  let intended_y = std::vec![0x0100u16; 16 * 8]; // Y = 256 (limited-range black), multiple of 16
+  let intended_uv = std::vec![0x0800u16; 16 * 4]; // UV = 2048 (neutral chroma), multiple of 16
+  let y = le_encoded_u16_buf(&intended_y);
+  let uv = le_encoded_u16_buf(&intended_uv);
   let f = P012Frame::try_new_checked(&y, &uv, 16, 8, 16, 16)
     .expect("known limitation: 4-low-bits-zero check cannot tell yuv420p12le from P012");
   assert_eq!(f.width(), 16);

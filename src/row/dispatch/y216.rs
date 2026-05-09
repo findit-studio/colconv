@@ -644,14 +644,6 @@ pub fn y216_to_luma_u16_row(packed: &[u16], luma_out: &mut [u16], width: usize, 
 }
 
 #[cfg(all(test, feature = "std"))]
-// LE-host-only: tests in this module use host-native u16/u8 literals as if
-// they were LE-encoded bytes; on a BE host the kernel's `from_le` byte-swap
-// reinterprets host-native storage and produces a different logical value
-// than the literal, breaking the assertions. The kernel's BE-host correctness
-// is locked down by the dedicated host-independent BE/LE parity tests in the
-// per-arch test files (which build fixtures via `to_le_bytes` / `to_be_bytes`,
-// not `swap_bytes`). Mirrors the gating from PR #82 `8f2e329`.
-#[cfg(target_endian = "little")]
 mod tests {
   //! Smoke tests for the public Y216 dispatchers. Walker / kernel
   //! correctness lives in the per-arch tests and the scalar reference's
@@ -672,13 +664,18 @@ mod tests {
   }
 
   /// Build a `Vec<u16>` Y216 row of `width` pixels with `(Y, U, V)`
-  /// repeated. Width must be even.
+  /// repeated, in LE-encoded byte form so kernels with `BE = false`
+  /// recover the intended logical values on both LE and BE hosts.
+  /// Width must be even.
   fn solid_y216(width: usize, y: u16, u: u16, v: u16) -> std::vec::Vec<u16> {
     let mut buf = std::vec::Vec::with_capacity(width * 2);
     for _ in 0..(width / 2) {
       buf.extend_from_slice(&y216_quad(y, u, y, v));
     }
     buf
+      .iter()
+      .map(|v| u16::from_ne_bytes(v.to_le_bytes()))
+      .collect()
   }
 
   #[test]

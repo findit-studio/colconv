@@ -2,21 +2,43 @@ use super::*;
 
 // ---- Tier 9 Rgbf32 SIMD-vs-scalar parity tests --------------------------
 //
-// LE-host gating rationale (codex 6th-pass review of PR #83):
-//
-// The five Rgbf32 / six Rgbf16 SIMD-vs-scalar parity tests below build
-// fixtures via host-native f32 / f16 (`pseudo_random_rgbf32` /
-// `pseudo_random_rgbf16`) and call the kernels with `::<false>`. Same
-// fixture-vs-kernel byte-order class as the scalar tests gated in
-// `56342c0` and the NEON tests gated alongside this commit.
-//
-// `target_arch = "wasm32"` is little-endian by spec, so the
-// `#[cfg(target_endian = "little")]` gate is functionally a no-op on
-// every supported configuration. It's added here for structural
-// consistency with the NEON / scalar gating pattern. The
-// `wasm_rgbf32_to_rgb_f32_row_le_input_decodes_correctly_on_any_host`
-// regression test is correctly vacuous on LE hosts (probe-the-bug on
-// hypothetical BE wasm) and is intentionally NOT gated.
+// Fixtures are re-encoded through `as_le_rgbf32` / `as_le_rgbf16` so kernels
+// called with `::<false>` recover the intended host-native value via
+// `from_le` on every host (no-op on LE; byte-swap on BE).
+
+/// Re-encode a host-native f32 slice as LE-encoded f32 storage.
+fn as_le_rgbf32(host: &[f32]) -> std::vec::Vec<f32> {
+  host
+    .iter()
+    .map(|v| f32::from_bits(u32::from_ne_bytes(v.to_bits().to_le_bytes())))
+    .collect()
+}
+
+/// Re-encode a host-native f32 slice as BE-encoded f32 byte storage; the
+/// host-independent companion to `as_le_rgbf32` for BE-parity fixtures.
+fn as_be_rgbf32(host: &[f32]) -> std::vec::Vec<f32> {
+  host
+    .iter()
+    .map(|v| f32::from_bits(u32::from_ne_bytes(v.to_bits().to_be_bytes())))
+    .collect()
+}
+
+/// Re-encode a host-native f16 slice as LE-encoded f16 storage.
+fn as_le_rgbf16(host: &[half::f16]) -> std::vec::Vec<half::f16> {
+  host
+    .iter()
+    .map(|v| half::f16::from_bits(u16::from_ne_bytes(v.to_bits().to_le_bytes())))
+    .collect()
+}
+
+/// BE-encoded f16 byte storage of host-native f16 values; companion to
+/// `as_le_rgbf16` for host-independent BE-parity fixtures.
+fn as_be_rgbf16(host: &[half::f16]) -> std::vec::Vec<half::f16> {
+  host
+    .iter()
+    .map(|v| half::f16::from_bits(u16::from_ne_bytes(v.to_bits().to_be_bytes())))
+    .collect()
+}
 
 fn pseudo_random_rgbf32(width: usize) -> std::vec::Vec<f32> {
   let n = width * 3;
@@ -37,10 +59,10 @@ fn pseudo_random_rgbf32(width: usize) -> std::vec::Vec<f32> {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn wasm_rgbf32_to_rgb_matches_scalar() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf32(w);
+    let host_input = pseudo_random_rgbf32(w);
+    let input = as_le_rgbf32(&host_input);
     let mut out_scalar = std::vec![0u8; w * 3];
     let mut out_simd = std::vec![0u8; w * 3];
     scalar::rgbf32_to_rgb_row::<false>(&input, &mut out_scalar, w);
@@ -52,10 +74,10 @@ fn wasm_rgbf32_to_rgb_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn wasm_rgbf32_to_rgba_matches_scalar() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf32(w);
+    let host_input = pseudo_random_rgbf32(w);
+    let input = as_le_rgbf32(&host_input);
     let mut out_scalar = std::vec![0u8; w * 4];
     let mut out_simd = std::vec![0u8; w * 4];
     scalar::rgbf32_to_rgba_row::<false>(&input, &mut out_scalar, w);
@@ -67,10 +89,10 @@ fn wasm_rgbf32_to_rgba_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn wasm_rgbf32_to_rgb_u16_matches_scalar() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf32(w);
+    let host_input = pseudo_random_rgbf32(w);
+    let input = as_le_rgbf32(&host_input);
     let mut out_scalar = std::vec![0u16; w * 3];
     let mut out_simd = std::vec![0u16; w * 3];
     scalar::rgbf32_to_rgb_u16_row::<false>(&input, &mut out_scalar, w);
@@ -82,10 +104,10 @@ fn wasm_rgbf32_to_rgb_u16_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn wasm_rgbf32_to_rgba_u16_matches_scalar() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf32(w);
+    let host_input = pseudo_random_rgbf32(w);
+    let input = as_le_rgbf32(&host_input);
     let mut out_scalar = std::vec![0u16; w * 4];
     let mut out_simd = std::vec![0u16; w * 4];
     scalar::rgbf32_to_rgba_u16_row::<false>(&input, &mut out_scalar, w);
@@ -97,10 +119,10 @@ fn wasm_rgbf32_to_rgba_u16_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn wasm_rgbf32_to_rgb_f32_matches_scalar() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf32(w);
+    let host_input = pseudo_random_rgbf32(w);
+    let input = as_le_rgbf32(&host_input);
     let mut out_scalar = std::vec![0.0f32; w * 3];
     let mut out_simd = std::vec![0.0f32; w * 3];
     scalar::rgbf32_to_rgb_f32_row::<false>(&input, &mut out_scalar, w);
@@ -108,7 +130,8 @@ fn wasm_rgbf32_to_rgb_f32_matches_scalar() {
       rgbf32_to_rgb_f32_row::<false>(&input, &mut out_simd, w);
     }
     assert_eq!(out_scalar, out_simd, "wasm rgbf32_to_rgb_f32 width {w}");
-    assert_eq!(out_simd, input[..w * 3], "lossless width {w}");
+    // Output is host-native; compare against original host-native input.
+    assert_eq!(out_simd, host_input[..w * 3], "lossless width {w}");
   }
 }
 
@@ -122,14 +145,14 @@ fn pseudo_random_rgbf16(width: usize) -> std::vec::Vec<half::f16> {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn wasm_rgbf16_to_rgb_matches_scalar() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf16(w);
+    let host_input = pseudo_random_rgbf16(w);
+    let input = as_le_rgbf16(&host_input);
     let mut out_scalar = std::vec![0u8; w * 3];
     let mut out_simd = std::vec![0u8; w * 3];
     scalar::rgbf16_to_rgb_row::<false>(&input, &mut out_scalar, w);
@@ -141,14 +164,14 @@ fn wasm_rgbf16_to_rgb_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn wasm_rgbf16_to_rgba_matches_scalar() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf16(w);
+    let host_input = pseudo_random_rgbf16(w);
+    let input = as_le_rgbf16(&host_input);
     let mut out_scalar = std::vec![0u8; w * 4];
     let mut out_simd = std::vec![0u8; w * 4];
     scalar::rgbf16_to_rgba_row::<false>(&input, &mut out_scalar, w);
@@ -160,14 +183,14 @@ fn wasm_rgbf16_to_rgba_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn wasm_rgbf16_to_rgb_u16_matches_scalar() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf16(w);
+    let host_input = pseudo_random_rgbf16(w);
+    let input = as_le_rgbf16(&host_input);
     let mut out_scalar = std::vec![0u16; w * 3];
     let mut out_simd = std::vec![0u16; w * 3];
     scalar::rgbf16_to_rgb_u16_row::<false>(&input, &mut out_scalar, w);
@@ -179,14 +202,14 @@ fn wasm_rgbf16_to_rgb_u16_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn wasm_rgbf16_to_rgba_u16_matches_scalar() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf16(w);
+    let host_input = pseudo_random_rgbf16(w);
+    let input = as_le_rgbf16(&host_input);
     let mut out_scalar = std::vec![0u16; w * 4];
     let mut out_simd = std::vec![0u16; w * 4];
     scalar::rgbf16_to_rgba_u16_row::<false>(&input, &mut out_scalar, w);
@@ -198,14 +221,14 @@ fn wasm_rgbf16_to_rgba_u16_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn wasm_rgbf16_to_rgb_f32_matches_scalar() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf16(w);
+    let host_input = pseudo_random_rgbf16(w);
+    let input = as_le_rgbf16(&host_input);
     let mut out_scalar = std::vec![0.0f32; w * 3];
     let mut out_simd = std::vec![0.0f32; w * 3];
     scalar::rgbf16_to_rgb_f32_row::<false>(&input, &mut out_scalar, w);
@@ -217,14 +240,14 @@ fn wasm_rgbf16_to_rgb_f32_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn wasm_rgbf16_to_rgb_f16_matches_scalar() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf16(w);
+    let host_input = pseudo_random_rgbf16(w);
+    let input = as_le_rgbf16(&host_input);
     let mut out_scalar = std::vec![half::f16::ZERO; w * 3];
     let mut out_simd = std::vec![half::f16::ZERO; w * 3];
     scalar::rgbf16_to_rgb_f16_row::<false>(&input, &mut out_scalar, w);
@@ -232,29 +255,27 @@ fn wasm_rgbf16_to_rgb_f16_matches_scalar() {
       rgbf16_to_rgb_f16_row::<false>(&input, &mut out_simd, w);
     }
     assert_eq!(out_scalar, out_simd, "wasm rgbf16_to_rgb_f16 width {w}");
-    assert_eq!(out_simd, input[..w * 3], "lossless width {w}");
+    // Output is host-native; compare against original host-native input.
+    assert_eq!(out_simd, host_input[..w * 3], "lossless width {w}");
   }
 }
 
 // ---- BE parity tests — wasm-simd128 Rgbf32 -----------------------------------
-
-fn be_rgbf32(le: &[f32]) -> std::vec::Vec<f32> {
-  le.iter()
-    .map(|v| f32::from_bits(v.to_bits().swap_bytes()))
-    .collect()
-}
-
-fn be_rgbf16(le: &[half::f16]) -> std::vec::Vec<half::f16> {
-  le.iter()
-    .map(|v| half::f16::from_bits(v.to_bits().swap_bytes()))
-    .collect()
-}
+//
+// Build a host-native `expected` source, then derive both LE-encoded
+// (`as_le_rgbf32`) and BE-encoded (`as_be_rgbf32`) byte storage from it.
+// Both kernels decode to the same logical values on every host (no longer
+// vacuous: the previous `swap_bytes` of `pseudo_random_rgbf32` produced
+// matching corrupted decodes on BE hosts and could mask BE float bugs).
+// (`wasm32-*` is LE today, but the routing is endian-agnostic for any
+// future BE wasm target.)
 
 #[test]
 fn wasm_rgbf32_to_rgb_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf32(w);
-    let be_in = be_rgbf32(&le_in);
+    let host = pseudo_random_rgbf32(w);
+    let le_in = as_le_rgbf32(&host);
+    let be_in = as_be_rgbf32(&host);
     let mut out_le = std::vec![0u8; w * 3];
     let mut out_be = std::vec![0u8; w * 3];
     unsafe {
@@ -268,8 +289,9 @@ fn wasm_rgbf32_to_rgb_be_matches_le() {
 #[test]
 fn wasm_rgbf32_to_rgba_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf32(w);
-    let be_in = be_rgbf32(&le_in);
+    let host = pseudo_random_rgbf32(w);
+    let le_in = as_le_rgbf32(&host);
+    let be_in = as_be_rgbf32(&host);
     let mut out_le = std::vec![0u8; w * 4];
     let mut out_be = std::vec![0u8; w * 4];
     unsafe {
@@ -283,8 +305,9 @@ fn wasm_rgbf32_to_rgba_be_matches_le() {
 #[test]
 fn wasm_rgbf32_to_rgb_u16_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf32(w);
-    let be_in = be_rgbf32(&le_in);
+    let host = pseudo_random_rgbf32(w);
+    let le_in = as_le_rgbf32(&host);
+    let be_in = as_be_rgbf32(&host);
     let mut out_le = std::vec![0u16; w * 3];
     let mut out_be = std::vec![0u16; w * 3];
     unsafe {
@@ -298,8 +321,9 @@ fn wasm_rgbf32_to_rgb_u16_be_matches_le() {
 #[test]
 fn wasm_rgbf32_to_rgba_u16_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf32(w);
-    let be_in = be_rgbf32(&le_in);
+    let host = pseudo_random_rgbf32(w);
+    let le_in = as_le_rgbf32(&host);
+    let be_in = as_be_rgbf32(&host);
     let mut out_le = std::vec![0u16; w * 4];
     let mut out_be = std::vec![0u16; w * 4];
     unsafe {
@@ -316,8 +340,9 @@ fn wasm_rgbf32_to_rgba_u16_be_matches_le() {
 #[test]
 fn wasm_rgbf32_to_rgb_f32_be_is_byteswap() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf32(w);
-    let be_in = be_rgbf32(&le_in);
+    let host = pseudo_random_rgbf32(w);
+    let le_in = as_le_rgbf32(&host);
+    let be_in = as_be_rgbf32(&host);
     let mut out_le = std::vec![0.0f32; w * 3];
     let mut out_be = std::vec![0.0f32; w * 3];
     unsafe {
@@ -370,8 +395,9 @@ fn wasm_rgbf32_to_rgb_f32_row_le_input_decodes_correctly_on_any_host() {
 )]
 fn wasm_rgbf16_to_rgb_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf16(w);
-    let be_in = be_rgbf16(&le_in);
+    let host = pseudo_random_rgbf16(w);
+    let le_in = as_le_rgbf16(&host);
+    let be_in = as_be_rgbf16(&host);
     let mut out_le = std::vec![0u8; w * 3];
     let mut out_be = std::vec![0u8; w * 3];
     unsafe {
@@ -389,8 +415,9 @@ fn wasm_rgbf16_to_rgb_be_matches_le() {
 )]
 fn wasm_rgbf16_to_rgba_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf16(w);
-    let be_in = be_rgbf16(&le_in);
+    let host = pseudo_random_rgbf16(w);
+    let le_in = as_le_rgbf16(&host);
+    let be_in = as_be_rgbf16(&host);
     let mut out_le = std::vec![0u8; w * 4];
     let mut out_be = std::vec![0u8; w * 4];
     unsafe {
@@ -408,8 +435,9 @@ fn wasm_rgbf16_to_rgba_be_matches_le() {
 )]
 fn wasm_rgbf16_to_rgb_u16_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf16(w);
-    let be_in = be_rgbf16(&le_in);
+    let host = pseudo_random_rgbf16(w);
+    let le_in = as_le_rgbf16(&host);
+    let be_in = as_be_rgbf16(&host);
     let mut out_le = std::vec![0u16; w * 3];
     let mut out_be = std::vec![0u16; w * 3];
     unsafe {
@@ -427,8 +455,9 @@ fn wasm_rgbf16_to_rgb_u16_be_matches_le() {
 )]
 fn wasm_rgbf16_to_rgba_u16_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf16(w);
-    let be_in = be_rgbf16(&le_in);
+    let host = pseudo_random_rgbf16(w);
+    let le_in = as_le_rgbf16(&host);
+    let be_in = as_be_rgbf16(&host);
     let mut out_le = std::vec![0u16; w * 4];
     let mut out_be = std::vec![0u16; w * 4];
     unsafe {
@@ -449,8 +478,9 @@ fn wasm_rgbf16_to_rgba_u16_be_matches_le() {
 )]
 fn wasm_rgbf16_to_rgb_f32_be_matches_le() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf16(w);
-    let be_in = be_rgbf16(&le_in);
+    let host = pseudo_random_rgbf16(w);
+    let le_in = as_le_rgbf16(&host);
+    let be_in = as_be_rgbf16(&host);
     let mut out_le = std::vec![0.0f32; w * 3];
     let mut out_be = std::vec![0.0f32; w * 3];
     unsafe {
@@ -468,8 +498,9 @@ fn wasm_rgbf16_to_rgb_f32_be_matches_le() {
 )]
 fn wasm_rgbf16_to_rgb_f16_be_is_byteswap() {
   for w in [1usize, 4, 7, 16, 33, 1920, 1921] {
-    let le_in = pseudo_random_rgbf16(w);
-    let be_in = be_rgbf16(&le_in);
+    let host = pseudo_random_rgbf16(w);
+    let le_in = as_le_rgbf16(&host);
+    let be_in = as_be_rgbf16(&host);
     let mut out_le = std::vec![half::f16::ZERO; w * 3];
     let mut out_be = std::vec![half::f16::ZERO; w * 3];
     unsafe {

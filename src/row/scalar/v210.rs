@@ -45,7 +45,9 @@ use super::*;
 /// byte order.
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn unpack_v210_word<const BE: bool>(word: &[u8]) -> ([u16; 6], [u16; 3], [u16; 3]) {
-  debug_assert_eq!(word.len(), 16);
+  // assert! (not debug_assert!) — bounds gate `unsafe load_endian_u32`
+  // reads below; release-mode check prevents UB on bad inputs.
+  assert_eq!(word.len(), 16);
   // SAFETY: word has exactly 16 bytes (checked above); each offset is ≤ 12.
   let w0 = unsafe { load_endian_u32::<BE>(word.as_ptr()) };
   let w1 = unsafe { load_endian_u32::<BE>(word.as_ptr().add(4)) };
@@ -344,14 +346,6 @@ pub(crate) fn v210_to_luma_u16_row<const BE: bool>(
 }
 
 #[cfg(all(test, feature = "std"))]
-// LE-host-only: tests in this module use host-native u16/u8 literals as if
-// they were LE-encoded bytes; on a BE host the kernel's `from_le` byte-swap
-// reinterprets host-native storage and produces a different logical value
-// than the literal, breaking the assertions. The kernel's BE-host correctness
-// is locked down by the dedicated host-independent BE/LE parity tests in the
-// per-arch test files (which build fixtures via `to_le_bytes` / `to_be_bytes`,
-// not `swap_bytes`). Mirrors the gating from PR #82 `8f2e329`.
-#[cfg(target_endian = "little")]
 mod tests {
   use super::*;
   use crate::ColorMatrix;

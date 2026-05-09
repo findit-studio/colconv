@@ -400,6 +400,187 @@ pub(crate) fn copy_alpha_plane_f32<const BE: bool>(
 mod tests {
   use super::*;
 
+  /// Re-encode a host-native u16 slice as LE-encoded byte storage, packed back
+  /// into `Vec<u16>`. On LE host this is a no-op; on BE host every u16 is byte-
+  /// swapped relative to its host-native representation. Kernels called with
+  /// `BE = false` recover the intended logical values via `u16::from_le` on
+  /// both LE and BE hosts.
+  fn as_le_u16(host: &[u16]) -> std::vec::Vec<u16> {
+    host
+      .iter()
+      .map(|v| u16::from_ne_bytes(v.to_le_bytes()))
+      .collect()
+  }
+
+  /// Re-encode a host-native u16 slice as BE-encoded byte storage. Mirror of
+  /// `as_le_u16` for kernels invoked with `BE = true`. On a BE host this is a
+  /// no-op; on a LE host every u16 is byte-swapped relative to its host-native
+  /// representation. Combined with `as_le_u16`, this lets a single host-native
+  /// `intended` fixture drive both `<false>` and `<true>` kernel paths so they
+  /// must decode the same logical values on every host.
+  fn as_be_u16(host: &[u16]) -> std::vec::Vec<u16> {
+    host
+      .iter()
+      .map(|v| u16::from_ne_bytes(v.to_be_bytes()))
+      .collect()
+  }
+
+  /// Re-encode a host-native f32 slice as LE-encoded bit storage, packed back
+  /// into `Vec<f32>`. The f32 bits are byte-swapped on a BE host so that the
+  /// kernel's `u32::from_le(bits)` recovers the original logical bit pattern.
+  fn as_le_f32(host: &[f32]) -> std::vec::Vec<f32> {
+    host
+      .iter()
+      .map(|v| f32::from_bits(u32::from_ne_bytes(v.to_bits().to_le_bytes())))
+      .collect()
+  }
+
+  /// Mirror of `as_le_f32` for kernels invoked with `BE = true`.
+  fn as_be_f32(host: &[f32]) -> std::vec::Vec<f32> {
+    host
+      .iter()
+      .map(|v| f32::from_bits(u32::from_ne_bytes(v.to_bits().to_be_bytes())))
+      .collect()
+  }
+
+  // -- Scalar references for the BE-parity tests --
+  //
+  // These walk host-native `intended` buffers and reproduce the kernel's
+  // documented behaviour without going through any byte-order conversion.
+  // Pinning the LE / BE outputs against these absolute references prevents
+  // the parity assertion from passing in lock-step on two equally corrupt
+  // decode paths (the bug codex round-2 flagged: a vacuous `swap_bytes`
+  // construction lets both `<false>` and `<true>` agree on byte-reversed
+  // garbage on a big-endian host).
+
+  /// Reference for `copy_alpha_packed_u16x4_to_u8_at_0`: gather α from
+  /// slot 0 of every 4-element u16 tuple, depth-convert `>> 8`, scatter to
+  /// slot 3 of the u8 RGBA quad. Untouched slots stay at the input fill.
+  fn ref_copy_alpha_packed_u16x4_to_u8_at_0(
+    intended: &[u16],
+    fill: u8,
+    width: usize,
+  ) -> std::vec::Vec<u8> {
+    let mut out = std::vec![fill; width * 4];
+    for n in 0..width {
+      out[n * 4 + 3] = (intended[n * 4] >> 8) as u8;
+    }
+    out
+  }
+
+  /// Reference for `copy_alpha_packed_u16x4_at_0` (u16 output, no depth conv).
+  fn ref_copy_alpha_packed_u16x4_at_0(
+    intended: &[u16],
+    fill: u16,
+    width: usize,
+  ) -> std::vec::Vec<u16> {
+    let mut out = std::vec![fill; width * 4];
+    for n in 0..width {
+      out[n * 4 + 3] = intended[n * 4];
+    }
+    out
+  }
+
+  /// Reference for `copy_alpha_plane_u16_to_u8::<BITS, _>`: mask with
+  /// `(1 << BITS) - 1`, shift `>> (BITS - 8)`, narrow to u8, scatter to
+  /// slot 3 of the u8 RGBA quad.
+  fn ref_copy_alpha_plane_u16_to_u8<const BITS: u32>(
+    intended: &[u16],
+    fill: u8,
+    width: usize,
+  ) -> std::vec::Vec<u8> {
+    let mask: u16 = ((1u32 << BITS) - 1) as u16;
+    let shift = BITS - 8;
+    let mut out = std::vec![fill; width * 4];
+    for n in 0..width {
+      out[n * 4 + 3] = ((intended[n] & mask) >> shift) as u8;
+    }
+    out
+  }
+
+  /// Reference for `copy_alpha_plane_u16::<BITS, _>` (u16 output, masked).
+  fn ref_copy_alpha_plane_u16<const BITS: u32>(
+    intended: &[u16],
+    fill: u16,
+    width: usize,
+  ) -> std::vec::Vec<u16> {
+    let mask: u16 = ((1u32 << BITS) - 1) as u16;
+    let mut out = std::vec![fill; width * 4];
+    for n in 0..width {
+      out[n * 4 + 3] = intended[n] & mask;
+    }
+    out
+  }
+
+  /// Reference for `copy_alpha_ya_u16_to_u8`: gather α from slot 1 of every
+  /// 2-element u16 tuple, depth-convert `>> 8`.
+  fn ref_copy_alpha_ya_u16_to_u8(intended: &[u16], fill: u8, width: usize) -> std::vec::Vec<u8> {
+    let mut out = std::vec![fill; width * 4];
+    for n in 0..width {
+      out[n * 4 + 3] = (intended[n * 2 + 1] >> 8) as u8;
+    }
+    out
+  }
+
+  /// Reference for `copy_alpha_ya_u16` (u16 output, no depth conv).
+  fn ref_copy_alpha_ya_u16(intended: &[u16], fill: u16, width: usize) -> std::vec::Vec<u16> {
+    let mut out = std::vec![fill; width * 4];
+    for n in 0..width {
+      out[n * 4 + 3] = intended[n * 2 + 1];
+    }
+    out
+  }
+
+  /// Reference for `copy_alpha_packed_u16x4_to_u8_at_3`: gather α from slot 3
+  /// of every 4-element u16 tuple, depth-convert `>> 8`.
+  fn ref_copy_alpha_packed_u16x4_to_u8_at_3(
+    intended: &[u16],
+    fill: u8,
+    width: usize,
+  ) -> std::vec::Vec<u8> {
+    let mut out = std::vec![fill; width * 4];
+    for n in 0..width {
+      out[n * 4 + 3] = (intended[n * 4 + 3] >> 8) as u8;
+    }
+    out
+  }
+
+  /// Reference for `copy_alpha_packed_u16x4_at_3` (u16 output, no depth conv).
+  fn ref_copy_alpha_packed_u16x4_at_3(
+    intended: &[u16],
+    fill: u16,
+    width: usize,
+  ) -> std::vec::Vec<u16> {
+    let mut out = std::vec![fill; width * 4];
+    for n in 0..width {
+      out[n * 4 + 3] = intended[n * 4 + 3];
+    }
+    out
+  }
+
+  /// Reference for `copy_alpha_plane_f32_to_u8`: clamp to `[0, 1]`, scale by
+  /// 255, round-half-up.
+  fn ref_copy_alpha_plane_f32_to_u8(intended: &[f32], fill: u8, width: usize) -> std::vec::Vec<u8> {
+    let mut out = std::vec![fill; width * 4];
+    for n in 0..width {
+      out[n * 4 + 3] = (intended[n].clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    }
+    out
+  }
+
+  /// Reference for `copy_alpha_plane_f32_to_u16`.
+  fn ref_copy_alpha_plane_f32_to_u16(
+    intended: &[f32],
+    fill: u16,
+    width: usize,
+  ) -> std::vec::Vec<u16> {
+    let mut out = std::vec![fill; width * 4];
+    for n in 0..width {
+      out[n * 4 + 3] = (intended[n].clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
+    }
+    out
+  }
+
   #[test]
   fn copy_alpha_packed_u8x4_at_3_overwrites_only_alpha_slots() {
     let packed = [10, 20, 30, 99, 11, 21, 31, 88, 12, 22, 32, 77];
@@ -409,54 +590,57 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_packed_u16x4_to_u8_at_0_depth_converts_correctly() {
-    let packed: std::vec::Vec<u16> = std::vec![0x1234, 100, 200, 300, 0xABCD, 101, 201, 301,];
+    let packed = as_le_u16(&[0x1234, 100, 200, 300, 0xABCD, 101, 201, 301]);
     let mut rgba = std::vec![1u8; 8];
     copy_alpha_packed_u16x4_to_u8_at_0::<false>(&packed, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0x12, 1, 1, 1, 0xAB]);
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_packed_u16x4_at_0_preserves_native_u16() {
-    let packed: std::vec::Vec<u16> = std::vec![0x1234, 100, 200, 300, 0xABCD, 101, 201, 301,];
+    let packed = as_le_u16(&[0x1234, 100, 200, 300, 0xABCD, 101, 201, 301]);
     let mut rgba = std::vec![1u16; 8];
     copy_alpha_packed_u16x4_at_0::<false>(&packed, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0x1234, 1, 1, 1, 0xABCD]);
   }
 
-  /// BE parity for AYUV64 alpha-at-slot-0 → u8 RGBA: byte-swapping the
-  /// packed source and toggling the `BE` flag must yield byte-for-byte
-  /// identical output. Locks down the corruption where a BE host
-  /// processing the LE-encoded Frame contract would emit a byte-reversed α.
+  /// BE parity for AYUV64 alpha-at-slot-0 → u8 RGBA. Build LE / BE source
+  /// buffers from a single host-native `intended` fixture via
+  /// `as_le_u16` / `as_be_u16`, so the kernel's `from_le` / `from_be`
+  /// recovers the same logical u16 values on every host. Pin both outputs
+  /// against an absolute scalar reference so the parity assertion cannot
+  /// pass on two equally corrupt decodes (codex round-2).
   #[test]
   fn copy_alpha_packed_u16x4_to_u8_at_0_be_parity_with_swapped_buffer() {
-    let packed_le: std::vec::Vec<u16> = std::vec![0x1234, 100, 200, 300, 0xABCD, 101, 201, 301];
-    let packed_be: std::vec::Vec<u16> = packed_le.iter().map(|x| x.swap_bytes()).collect();
+    let intended: std::vec::Vec<u16> = std::vec![0x1234, 100, 200, 300, 0xABCD, 101, 201, 301];
+    let packed_le = as_le_u16(&intended);
+    let packed_be = as_be_u16(&intended);
     let mut rgba_le = std::vec![1u8; 8];
     let mut rgba_be = std::vec![1u8; 8];
     copy_alpha_packed_u16x4_to_u8_at_0::<false>(&packed_le, &mut rgba_le, 2);
     copy_alpha_packed_u16x4_to_u8_at_0::<true>(&packed_be, &mut rgba_be, 2);
-    assert_eq!(
-      rgba_le, rgba_be,
-      "BE flag + byte-swapped buffer must match LE path"
-    );
+    let expected = ref_copy_alpha_packed_u16x4_to_u8_at_0(&intended, 1, 2);
+    assert_eq!(rgba_le, expected, "LE path must match scalar reference");
+    assert_eq!(rgba_be, expected, "BE path must match scalar reference");
+    assert_eq!(rgba_le, rgba_be, "BE and LE outputs must agree");
   }
 
-  /// BE parity for AYUV64 alpha-at-slot-0 → u16 RGBA.
+  /// BE parity for AYUV64 alpha-at-slot-0 → u16 RGBA. Same host-independent
+  /// fixture pattern + absolute reference assertion as the u8-output variant.
   #[test]
   fn copy_alpha_packed_u16x4_at_0_be_parity_with_swapped_buffer() {
-    let packed_le: std::vec::Vec<u16> = std::vec![0x1234, 100, 200, 300, 0xABCD, 101, 201, 301];
-    let packed_be: std::vec::Vec<u16> = packed_le.iter().map(|x| x.swap_bytes()).collect();
+    let intended: std::vec::Vec<u16> = std::vec![0x1234, 100, 200, 300, 0xABCD, 101, 201, 301];
+    let packed_le = as_le_u16(&intended);
+    let packed_be = as_be_u16(&intended);
     let mut rgba_le = std::vec![7u16; 8];
     let mut rgba_be = std::vec![7u16; 8];
     copy_alpha_packed_u16x4_at_0::<false>(&packed_le, &mut rgba_le, 2);
     copy_alpha_packed_u16x4_at_0::<true>(&packed_be, &mut rgba_be, 2);
-    assert_eq!(
-      rgba_le, rgba_be,
-      "BE flag + byte-swapped buffer must match LE path"
-    );
+    let expected = ref_copy_alpha_packed_u16x4_at_0(&intended, 7, 2);
+    assert_eq!(rgba_le, expected, "LE path must match scalar reference");
+    assert_eq!(rgba_be, expected, "BE path must match scalar reference");
+    assert_eq!(rgba_le, rgba_be, "BE and LE outputs must agree");
   }
 
   #[test]
@@ -470,49 +654,31 @@ mod tests {
     );
   }
 
-  // ---- LE-host fixture tests ----
-  //
-  // The tests below use host-native `u16` literals (e.g.
-  // `vec![0x3FFu16, 0x1FF]`) as if they were the on-disk LE encoding of
-  // those samples and then call the kernel with `<BITS, BE = false>`
-  // (LE path). On a BE host (e.g., s390x under miri-sb), host-native
-  // `u16` storage does NOT lay bytes out little-endian, so the kernel's
-  // `u16::from_le` byte-swap correctly reinterprets the host-native
-  // value and produces a different logical value than the literal —
-  // making the assertion fail. The kernel is correct: its BE-host
-  // scalar correctness is locked down by the dedicated
-  // `*_be_parity_with_swapped_buffer` tests below, which build
-  // BE-encoded fixtures via `swap_bytes` from LE inputs and assert
-  // byte-for-byte parity. Gating these LE-fixture tests on
-  // `target_endian = "little"` avoids fixture-vs-kernel byte-order
-  // confusion without weakening coverage.
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_u16_to_u8_depth_converts_at_each_bits_value() {
     // BITS=10
-    let alpha: std::vec::Vec<u16> = std::vec![0x3FF, 0x1FF];
+    let alpha = as_le_u16(&[0x3FF, 0x1FF]);
     let mut rgba = std::vec![1u8; 8];
     copy_alpha_plane_u16_to_u8::<10, false>(&alpha, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xFF, 1, 1, 1, 0x7F]);
 
     // BITS=12
-    let alpha: std::vec::Vec<u16> = std::vec![0xFFF, 0x800];
+    let alpha = as_le_u16(&[0xFFF, 0x800]);
     let mut rgba = std::vec![1u8; 8];
     copy_alpha_plane_u16_to_u8::<12, false>(&alpha, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xFF, 1, 1, 1, 0x80]);
 
     // BITS=16
-    let alpha: std::vec::Vec<u16> = std::vec![0xFFFF, 0x8000];
+    let alpha = as_le_u16(&[0xFFFF, 0x8000]);
     let mut rgba = std::vec![1u8; 8];
     copy_alpha_plane_u16_to_u8::<16, false>(&alpha, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xFF, 1, 1, 1, 0x80]);
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_u16_preserves_native_u16_within_bits_range() {
     // In-range values pass through unchanged.
-    let alpha: std::vec::Vec<u16> = std::vec![0x3FF, 0x1FF, 0x000];
+    let alpha = as_le_u16(&[0x3FF, 0x1FF, 0x000]);
     let mut rgba = std::vec![1u16; 12];
     copy_alpha_plane_u16::<10, false>(&alpha, &mut rgba, 3);
     assert_eq!(
@@ -522,13 +688,12 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_u16_masks_overrange_to_bits_range() {
     // Over-range α (e.g., 0xFFFF at BITS=10) must be masked to low BITS.
     // Without the mask, raw u16 0xFFFF would leak straight to output and
     // exceed the documented [0, (1 << BITS) - 1] native-depth range,
     // diverging from the inline-α scalar reference.
-    let alpha: std::vec::Vec<u16> = std::vec![0xFFFF, 0x0500, 0x07FF];
+    let alpha = as_le_u16(&[0xFFFF, 0x0500, 0x07FF]);
     let mut rgba = std::vec![1u16; 12];
     copy_alpha_plane_u16::<10, false>(&alpha, &mut rgba, 3);
     assert_eq!(
@@ -538,53 +703,54 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_u16_to_u8_masks_overrange_then_shifts() {
     // Without the BITS mask, 0x0500 at BITS=10 would shift `>> 2` to
     // 320 and either narrow as u8 to 64 (scalar `as u8`) or saturate to
     // 255 (some SIMD narrow-with-saturation paths). With masking, 0x0500
     // & 0x3FF = 0x100 → 0x100 >> 2 = 64 consistently across all paths.
-    let alpha: std::vec::Vec<u16> = std::vec![0x0500, 0xFFFF, 0x03FF];
+    let alpha = as_le_u16(&[0x0500, 0xFFFF, 0x03FF]);
     let mut rgba = std::vec![1u8; 12];
     copy_alpha_plane_u16_to_u8::<10, false>(&alpha, &mut rgba, 3);
     assert_eq!(rgba, std::vec![1, 1, 1, 64, 1, 1, 1, 0xFF, 1, 1, 1, 0xFF]);
   }
 
-  /// BE parity: byte-swapping the source α plane and toggling the `BE`
-  /// flag must yield byte-for-byte identical output. Locks down the
-  /// codex-flagged corruption where a BE host processing LE input
-  /// would otherwise emit a byte-reversed α slot. The synthesized
-  /// "BE-encoded" buffer is built by host-side `swap_bytes` on the LE
-  /// fixture; both `from_le` (LE flag) and `from_be` (BE flag with the
-  /// swapped buffer) recover the same logical u16 values, so the
-  /// outputs match on every host.
+  /// BE parity: build LE / BE source buffers from a single host-native
+  /// `intended` fixture via `as_le_u16` / `as_be_u16` so each kernel decodes
+  /// the same logical u16 values on every host. Pin both outputs against an
+  /// absolute scalar reference so the parity assertion cannot pass on two
+  /// equally corrupt decodes (codex round-2: the prior `swap_bytes` host-side
+  /// construction was vacuous on a BE host because both flags decoded
+  /// byte-reversed values that happened to match).
   #[test]
   fn copy_alpha_plane_u16_to_u8_be_parity_with_swapped_buffer() {
-    let alpha_le: std::vec::Vec<u16> = std::vec![0x3FF, 0x1FF, 0x0500, 0xFFFF, 0x07FF, 0x0123];
-    let alpha_be: std::vec::Vec<u16> = alpha_le.iter().map(|x| x.swap_bytes()).collect();
+    let intended: std::vec::Vec<u16> = std::vec![0x3FF, 0x1FF, 0x0500, 0xFFFF, 0x07FF, 0x0123];
+    let alpha_le = as_le_u16(&intended);
+    let alpha_be = as_be_u16(&intended);
     let mut rgba_le = std::vec![1u8; 24];
     let mut rgba_be = std::vec![1u8; 24];
     copy_alpha_plane_u16_to_u8::<10, false>(&alpha_le, &mut rgba_le, 6);
     copy_alpha_plane_u16_to_u8::<10, true>(&alpha_be, &mut rgba_be, 6);
-    assert_eq!(
-      rgba_le, rgba_be,
-      "BE flag + byte-swapped buffer must match LE path"
-    );
+    let expected = ref_copy_alpha_plane_u16_to_u8::<10>(&intended, 1, 6);
+    assert_eq!(rgba_le, expected, "LE path must match scalar reference");
+    assert_eq!(rgba_be, expected, "BE path must match scalar reference");
+    assert_eq!(rgba_le, rgba_be, "BE and LE outputs must agree");
   }
 
-  /// BE parity for the u16-output variant.
+  /// BE parity for the u16-output variant. Host-independent fixture +
+  /// absolute reference assertion (codex round-2).
   #[test]
   fn copy_alpha_plane_u16_be_parity_with_swapped_buffer() {
-    let alpha_le: std::vec::Vec<u16> = std::vec![0xFFFF, 0x0500, 0x07FF, 0x0123, 0x3FF, 0x000];
-    let alpha_be: std::vec::Vec<u16> = alpha_le.iter().map(|x| x.swap_bytes()).collect();
+    let intended: std::vec::Vec<u16> = std::vec![0xFFFF, 0x0500, 0x07FF, 0x0123, 0x3FF, 0x000];
+    let alpha_le = as_le_u16(&intended);
+    let alpha_be = as_be_u16(&intended);
     let mut rgba_le = std::vec![7u16; 24];
     let mut rgba_be = std::vec![7u16; 24];
     copy_alpha_plane_u16::<10, false>(&alpha_le, &mut rgba_le, 6);
     copy_alpha_plane_u16::<10, true>(&alpha_be, &mut rgba_be, 6);
-    assert_eq!(
-      rgba_le, rgba_be,
-      "BE flag + byte-swapped buffer must match LE path"
-    );
+    let expected = ref_copy_alpha_plane_u16::<10>(&intended, 7, 6);
+    assert_eq!(rgba_le, expected, "LE path must match scalar reference");
+    assert_eq!(rgba_be, expected, "BE path must match scalar reference");
+    assert_eq!(rgba_le, rgba_be, "BE and LE outputs must agree");
   }
 
   #[test]
@@ -597,69 +763,63 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_ya_u16_to_u8_depth_converts_via_high_byte() {
     // Ya16 packed → u8 RGBA: α >> 8 selects the high byte.
-    let packed: std::vec::Vec<u16> = std::vec![0x1234, 0xABCD, 0x5678, 0xFF00];
+    let packed = as_le_u16(&[0x1234, 0xABCD, 0x5678, 0xFF00]);
     let mut rgba = std::vec![1u8; 8];
     copy_alpha_ya_u16_to_u8::<false>(&packed, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xAB, 1, 1, 1, 0xFF]);
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_ya_u16_preserves_native_u16() {
-    let packed: std::vec::Vec<u16> = std::vec![0x1234, 0xABCD, 0x5678, 0x9ABC];
+    let packed = as_le_u16(&[0x1234, 0xABCD, 0x5678, 0x9ABC]);
     let mut rgba = std::vec![1u16; 8];
     copy_alpha_ya_u16::<false>(&packed, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xABCD, 1, 1, 1, 0x9ABC]);
   }
 
-  /// BE parity for Ya16 → u8 RGBA: byte-swapping the packed source and
-  /// toggling the `BE` flag must yield byte-for-byte identical output.
-  /// Locks down the codex-flagged corruption where a BE host (e.g.
-  /// s390x) processing the LE-encoded `Ya16Frame` would otherwise emit
-  /// a byte-reversed α byte under the combined `with_rgb + with_rgba`
-  /// Strategy A+ path.
+  /// BE parity for Ya16 → u8 RGBA. Build LE / BE source buffers from a
+  /// single host-native `intended` fixture via `as_le_u16` / `as_be_u16`
+  /// and pin both outputs against an absolute scalar reference (codex
+  /// round-2: the prior `swap_bytes` construction was vacuous on a BE host
+  /// because both flags then decoded byte-reversed values that matched).
   #[test]
   fn copy_alpha_ya_u16_to_u8_be_parity_with_swapped_buffer() {
-    let packed_le: std::vec::Vec<u16> = std::vec![0x1234, 0xABCD, 0x5678, 0xFF00, 0x0001, 0x00FF];
-    let packed_be: std::vec::Vec<u16> = packed_le.iter().map(|x| x.swap_bytes()).collect();
+    let intended: std::vec::Vec<u16> = std::vec![0x1234, 0xABCD, 0x5678, 0xFF00, 0x0001, 0x00FF];
+    let packed_le = as_le_u16(&intended);
+    let packed_be = as_be_u16(&intended);
     let mut rgba_le = std::vec![1u8; 12];
     let mut rgba_be = std::vec![1u8; 12];
     copy_alpha_ya_u16_to_u8::<false>(&packed_le, &mut rgba_le, 3);
     copy_alpha_ya_u16_to_u8::<true>(&packed_be, &mut rgba_be, 3);
-    assert_eq!(
-      rgba_le, rgba_be,
-      "BE flag + byte-swapped buffer must match LE path"
-    );
+    let expected = ref_copy_alpha_ya_u16_to_u8(&intended, 1, 3);
+    assert_eq!(rgba_le, expected, "LE path must match scalar reference");
+    assert_eq!(rgba_be, expected, "BE path must match scalar reference");
+    assert_eq!(rgba_le, rgba_be, "BE and LE outputs must agree");
   }
 
-  /// BE parity for Ya16 → u16 RGBA (16-bit α path).
+  /// BE parity for Ya16 → u16 RGBA (16-bit α path). Host-independent fixture
+  /// + absolute reference assertion (codex round-2).
   #[test]
   fn copy_alpha_ya_u16_be_parity_with_swapped_buffer() {
-    let packed_le: std::vec::Vec<u16> = std::vec![0x1234, 0xABCD, 0x5678, 0x9ABC, 0x0001, 0x00FF];
-    let packed_be: std::vec::Vec<u16> = packed_le.iter().map(|x| x.swap_bytes()).collect();
+    let intended: std::vec::Vec<u16> = std::vec![0x1234, 0xABCD, 0x5678, 0x9ABC, 0x0001, 0x00FF];
+    let packed_le = as_le_u16(&intended);
+    let packed_be = as_be_u16(&intended);
     let mut rgba_le = std::vec![7u16; 12];
     let mut rgba_be = std::vec![7u16; 12];
     copy_alpha_ya_u16::<false>(&packed_le, &mut rgba_le, 3);
     copy_alpha_ya_u16::<true>(&packed_be, &mut rgba_be, 3);
-    assert_eq!(
-      rgba_le, rgba_be,
-      "BE flag + byte-swapped buffer must match LE path"
-    );
+    let expected = ref_copy_alpha_ya_u16(&intended, 7, 3);
+    assert_eq!(rgba_le, expected, "LE path must match scalar reference");
+    assert_eq!(rgba_be, expected, "BE path must match scalar reference");
+    assert_eq!(rgba_le, rgba_be, "BE and LE outputs must agree");
   }
 
-  /// On a LE host, `BE = false` makes the bit-normalize a no-op, so passing
-  /// host-native `f32` literals as if they were already LE-encoded reproduces
-  /// the original (pre-endian-aware) clamp+scale semantics. BE-host scalar
-  /// correctness is locked down by the `*_be_parity_with_swapped_buffer`
-  /// tests below.
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_f32_to_u8_clamps_and_scales() {
     // Values [0.0, 0.5, 1.0, 1.5, -0.1] → [0, 128, 255, 255, 0] in slot 3.
-    let alpha = vec![0.0f32, 0.5, 1.0, 1.5, -0.1];
+    let alpha = as_le_f32(&[0.0f32, 0.5, 1.0, 1.5, -0.1]);
     let mut rgba = vec![1u8; 20];
     copy_alpha_plane_f32_to_u8::<false>(&alpha, &mut rgba, 5);
     // R, G, B slots (0, 1, 2) must be untouched; slot 3 has the alpha.
@@ -675,10 +835,9 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_f32_to_u16_clamps_and_scales() {
     // Values [0.0, 0.5, 1.0, 1.5, -0.1] → [0, 32768, 65535, 65535, 0] in slot 3.
-    let alpha = vec![0.0f32, 0.5, 1.0, 1.5, -0.1];
+    let alpha = as_le_f32(&[0.0f32, 0.5, 1.0, 1.5, -0.1]);
     let mut rgba = vec![1u16; 20];
     copy_alpha_plane_f32_to_u16::<false>(&alpha, &mut rgba, 5);
     assert_eq!(rgba[3], 0, "alpha[0]=0.0 → 0");
@@ -693,10 +852,9 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_f32_lossless_passthrough() {
     // HDR (2.5), NaN, Inf, negative all preserved bit-exact.
-    let alpha = vec![2.5f32, f32::NAN, f32::INFINITY, -1.0];
+    let alpha = as_le_f32(&[2.5f32, f32::NAN, f32::INFINITY, -1.0]);
     let mut rgba = vec![0.0f32; 16];
     copy_alpha_plane_f32::<false>(&alpha, &mut rgba, 4);
     assert_eq!(rgba[3], 2.5, "HDR 2.5 preserved");
@@ -709,78 +867,90 @@ mod tests {
     assert_eq!(rgba[2], 0.0);
   }
 
-  /// BE parity for Gbrapf32 → u8 RGBA: byte-swapping the bits of every
-  /// f32 in the source α plane and toggling `BE` must produce identical
-  /// output. Locks down the codex 3rd-pass finding where a BE host
-  /// processing the LE-encoded `Gbrapf32Frame` would clamp byte-swapped
-  /// garbage values (typical result: α = 0 or α = 255 regardless of intent).
+  /// BE parity for Gbrapf32 → u8 RGBA. Build LE / BE source buffers from a
+  /// single host-native `intended` fixture via `as_le_f32` / `as_be_f32` so
+  /// each kernel's `u32::from_le` / `u32::from_be` recovers the same logical
+  /// bit pattern on every host. Pin both outputs against an absolute scalar
+  /// reference (codex round-2: the prior `to_bits().swap_bytes()` host-side
+  /// construction was vacuous on a BE host because both flags decoded
+  /// byte-reversed bits that matched after clamp+scale).
   #[test]
   fn copy_alpha_plane_f32_to_u8_be_parity_with_swapped_buffer() {
-    let alpha_le: std::vec::Vec<f32> = std::vec![0.0f32, 0.25, 0.5, 0.75, 1.0, 1.5, -0.1, 0.123];
-    let alpha_be: std::vec::Vec<f32> = alpha_le
-      .iter()
-      .map(|v| f32::from_bits(v.to_bits().swap_bytes()))
-      .collect();
+    let intended: std::vec::Vec<f32> = std::vec![0.0f32, 0.25, 0.5, 0.75, 1.0, 1.5, -0.1, 0.123];
+    let alpha_le = as_le_f32(&intended);
+    let alpha_be = as_be_f32(&intended);
     let mut rgba_le = std::vec![1u8; 32];
     let mut rgba_be = std::vec![1u8; 32];
     copy_alpha_plane_f32_to_u8::<false>(&alpha_le, &mut rgba_le, 8);
     copy_alpha_plane_f32_to_u8::<true>(&alpha_be, &mut rgba_be, 8);
-    assert_eq!(
-      rgba_le, rgba_be,
-      "BE flag + bit-swapped buffer must match LE path"
-    );
+    let expected = ref_copy_alpha_plane_f32_to_u8(&intended, 1, 8);
+    assert_eq!(rgba_le, expected, "LE path must match scalar reference");
+    assert_eq!(rgba_be, expected, "BE path must match scalar reference");
+    assert_eq!(rgba_le, rgba_be, "BE and LE outputs must agree");
   }
 
-  /// BE parity for Gbrapf32 → u16 RGBA.
+  /// BE parity for Gbrapf32 → u16 RGBA. Host-independent fixture + absolute
+  /// reference assertion (codex round-2).
   #[test]
   fn copy_alpha_plane_f32_to_u16_be_parity_with_swapped_buffer() {
-    let alpha_le: std::vec::Vec<f32> = std::vec![0.0f32, 0.25, 0.5, 0.75, 1.0, 1.5, -0.1, 0.123];
-    let alpha_be: std::vec::Vec<f32> = alpha_le
-      .iter()
-      .map(|v| f32::from_bits(v.to_bits().swap_bytes()))
-      .collect();
+    let intended: std::vec::Vec<f32> = std::vec![0.0f32, 0.25, 0.5, 0.75, 1.0, 1.5, -0.1, 0.123];
+    let alpha_le = as_le_f32(&intended);
+    let alpha_be = as_be_f32(&intended);
     let mut rgba_le = std::vec![7u16; 32];
     let mut rgba_be = std::vec![7u16; 32];
     copy_alpha_plane_f32_to_u16::<false>(&alpha_le, &mut rgba_le, 8);
     copy_alpha_plane_f32_to_u16::<true>(&alpha_be, &mut rgba_be, 8);
-    assert_eq!(
-      rgba_le, rgba_be,
-      "BE flag + bit-swapped buffer must match LE path"
-    );
+    let expected = ref_copy_alpha_plane_f32_to_u16(&intended, 7, 8);
+    assert_eq!(rgba_le, expected, "LE path must match scalar reference");
+    assert_eq!(rgba_be, expected, "BE path must match scalar reference");
+    assert_eq!(rgba_le, rgba_be, "BE and LE outputs must agree");
   }
 
-  /// BE parity for Gbrapf32 → f32 RGBA (lossless α pass-through). The
-  /// output α must equal the host-native f32 bit-pattern of the LE source
-  /// regardless of the host's byte order. NaN bit-patterns may differ
-  /// across hardware after a `from_bits → to_bits` round-trip, so we
-  /// compare on the bit representation of finite, non-NaN samples only.
+  /// BE parity for Gbrapf32 → f32 RGBA (lossless α pass-through).
+  /// Host-independent fixture: LE / BE source buffers built from a single
+  /// `intended` host-native f32 sequence via `as_le_f32` / `as_be_f32`. The
+  /// kernel writes the recovered f32 in host-native order, so output α must
+  /// equal the host-native bit-pattern of `intended` on every host.
+  /// NaN bit-patterns may differ across hardware after a `from_bits → to_bits`
+  /// round-trip, so we compare on the bit representation of finite, non-NaN
+  /// samples only (codex round-2: pin against an absolute reference, not just
+  /// LE-vs-BE parity).
   #[test]
   fn copy_alpha_plane_f32_be_parity_with_swapped_buffer() {
-    let alpha_le: std::vec::Vec<f32> =
+    let intended: std::vec::Vec<f32> =
       std::vec![0.0f32, 0.25, 0.5, 0.75, 1.0, 2.5, -1.0, f32::INFINITY];
-    let alpha_be: std::vec::Vec<f32> = alpha_le
-      .iter()
-      .map(|v| f32::from_bits(v.to_bits().swap_bytes()))
-      .collect();
+    let alpha_le = as_le_f32(&intended);
+    let alpha_be = as_be_f32(&intended);
     let mut rgba_le = std::vec![0.0f32; 32];
     let mut rgba_be = std::vec![0.0f32; 32];
     copy_alpha_plane_f32::<false>(&alpha_le, &mut rgba_le, 8);
     copy_alpha_plane_f32::<true>(&alpha_be, &mut rgba_be, 8);
     let bits_le: std::vec::Vec<u32> = rgba_le.iter().map(|v| v.to_bits()).collect();
     let bits_be: std::vec::Vec<u32> = rgba_be.iter().map(|v| v.to_bits()).collect();
+    // Absolute reference: only slot 3 of every 4-tuple is written; the rest
+    // remain at the 0.0 fill. Slot 3 must equal the host-native `intended`
+    // bit pattern (the kernel writes f32 in host-native byte order).
+    let mut expected_bits = std::vec![0u32; 32];
+    for (n, v) in intended.iter().enumerate() {
+      expected_bits[n * 4 + 3] = v.to_bits();
+    }
     assert_eq!(
-      bits_le, bits_be,
-      "BE flag + bit-swapped buffer must match LE path bit-for-bit"
+      bits_le, expected_bits,
+      "LE path must match scalar reference"
     );
+    assert_eq!(
+      bits_be, expected_bits,
+      "BE path must match scalar reference"
+    );
+    assert_eq!(bits_le, bits_be, "BE and LE outputs must agree bit-for-bit");
   }
 
   // ---- copy_alpha_packed_u16x4_to_u8_at_3 / copy_alpha_packed_u16x4_at_3 --
 
   /// Alpha at slot 3 is depth-converted >> 8 and written to rgba_out[3 + 4*n].
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_packed_u16x4_to_u8_at_3_narrows_correctly() {
-    let packed: std::vec::Vec<u16> = std::vec![100, 200, 300, 0xABFF, 101, 201, 301, 0x1234];
+    let packed = as_le_u16(&[100, 200, 300, 0xABFF, 101, 201, 301, 0x1234]);
     let mut rgba = std::vec![1u8; 8];
     copy_alpha_packed_u16x4_to_u8_at_3::<false>(&packed, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xAB, 1, 1, 1, 0x12]);
@@ -788,9 +958,8 @@ mod tests {
 
   /// Alpha at slot 3 is copied verbatim (no depth conversion).
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_packed_u16x4_at_3_copies_verbatim() {
-    let packed: std::vec::Vec<u16> = std::vec![100, 200, 300, 0xABFF, 101, 201, 301, 0x1234];
+    let packed = as_le_u16(&[100, 200, 300, 0xABFF, 101, 201, 301, 0x1234]);
     let mut rgba_u16 = std::vec![1u16; 8];
     copy_alpha_packed_u16x4_at_3::<false>(&packed, &mut rgba_u16, 2);
     assert_eq!(rgba_u16, std::vec![1, 1, 1, 0xABFF, 1, 1, 1, 0x1234]);
@@ -798,9 +967,8 @@ mod tests {
 
   /// Only the alpha slot (index 3) is overwritten; RGB slots [0..3] are untouched.
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_packed_u16x4_to_u8_at_3_touches_only_alpha_slot() {
-    let packed: std::vec::Vec<u16> = std::vec![0, 0, 0, 0xFFFF];
+    let packed = as_le_u16(&[0, 0, 0, 0xFFFF]);
     let mut rgba = std::vec![42u8; 4];
     copy_alpha_packed_u16x4_to_u8_at_3::<false>(&packed, &mut rgba, 1);
     assert_eq!(rgba[..3], [42, 42, 42]);
@@ -809,9 +977,8 @@ mod tests {
 
   /// Only the alpha slot (index 3) is overwritten; RGB slots [0..3] are untouched.
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_packed_u16x4_at_3_touches_only_alpha_slot() {
-    let packed: std::vec::Vec<u16> = std::vec![0, 0, 0, 0xBEEF];
+    let packed = as_le_u16(&[0, 0, 0, 0xBEEF]);
     let mut rgba_u16 = std::vec![99u16; 4];
     copy_alpha_packed_u16x4_at_3::<false>(&packed, &mut rgba_u16, 1);
     assert_eq!(rgba_u16[..3], [99, 99, 99]);
@@ -819,32 +986,36 @@ mod tests {
   }
 
   /// BE parity for Rgba64 / Bgra64 alpha-at-slot-3 → u8 RGBA.
+  /// Host-independent fixture + absolute reference assertion (codex round-2).
   #[test]
   fn copy_alpha_packed_u16x4_to_u8_at_3_be_parity_with_swapped_buffer() {
-    let packed_le: std::vec::Vec<u16> = std::vec![100, 200, 300, 0xABFF, 101, 201, 301, 0x1234];
-    let packed_be: std::vec::Vec<u16> = packed_le.iter().map(|x| x.swap_bytes()).collect();
+    let intended: std::vec::Vec<u16> = std::vec![100, 200, 300, 0xABFF, 101, 201, 301, 0x1234];
+    let packed_le = as_le_u16(&intended);
+    let packed_be = as_be_u16(&intended);
     let mut rgba_le = std::vec![1u8; 8];
     let mut rgba_be = std::vec![1u8; 8];
     copy_alpha_packed_u16x4_to_u8_at_3::<false>(&packed_le, &mut rgba_le, 2);
     copy_alpha_packed_u16x4_to_u8_at_3::<true>(&packed_be, &mut rgba_be, 2);
-    assert_eq!(
-      rgba_le, rgba_be,
-      "BE flag + byte-swapped buffer must match LE path"
-    );
+    let expected = ref_copy_alpha_packed_u16x4_to_u8_at_3(&intended, 1, 2);
+    assert_eq!(rgba_le, expected, "LE path must match scalar reference");
+    assert_eq!(rgba_be, expected, "BE path must match scalar reference");
+    assert_eq!(rgba_le, rgba_be, "BE and LE outputs must agree");
   }
 
   /// BE parity for Rgba64 / Bgra64 alpha-at-slot-3 → u16 RGBA.
+  /// Host-independent fixture + absolute reference assertion (codex round-2).
   #[test]
   fn copy_alpha_packed_u16x4_at_3_be_parity_with_swapped_buffer() {
-    let packed_le: std::vec::Vec<u16> = std::vec![100, 200, 300, 0xABFF, 101, 201, 301, 0x1234];
-    let packed_be: std::vec::Vec<u16> = packed_le.iter().map(|x| x.swap_bytes()).collect();
+    let intended: std::vec::Vec<u16> = std::vec![100, 200, 300, 0xABFF, 101, 201, 301, 0x1234];
+    let packed_le = as_le_u16(&intended);
+    let packed_be = as_be_u16(&intended);
     let mut rgba_le = std::vec![7u16; 8];
     let mut rgba_be = std::vec![7u16; 8];
     copy_alpha_packed_u16x4_at_3::<false>(&packed_le, &mut rgba_le, 2);
     copy_alpha_packed_u16x4_at_3::<true>(&packed_be, &mut rgba_be, 2);
-    assert_eq!(
-      rgba_le, rgba_be,
-      "BE flag + byte-swapped buffer must match LE path"
-    );
+    let expected = ref_copy_alpha_packed_u16x4_at_3(&intended, 7, 2);
+    assert_eq!(rgba_le, expected, "LE path must match scalar reference");
+    assert_eq!(rgba_be, expected, "BE path must match scalar reference");
+    assert_eq!(rgba_le, rgba_be, "BE and LE outputs must agree");
   }
 }

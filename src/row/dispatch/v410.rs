@@ -539,36 +539,30 @@ mod tests {
   //! invalid inputs.
   use super::*;
 
-  /// Pack one V410 word from explicit U / Y / V samples (10-bit each).
-  ///
-  /// Helpers below are consumed only by the LE-host-gated tests in this
-  /// module (see the gating comments on each test); on BE hosts (s390x /
-  /// powerpc64) those tests are skipped, so the helpers would appear
-  /// unused under `-D warnings`. Gate the helpers with the same
-  /// `target_endian = "little"` cfg (mirrors PR #87 cb53e86 for AYUV64).
-  #[cfg(target_endian = "little")]
+  /// Pack one V410 word (host-native u32) from explicit U / Y / V samples
+  /// (10-bit each).
   fn pack_v410(u: u32, y: u32, v: u32) -> u32 {
     debug_assert!(u < 1024 && y < 1024 && v < 1024);
     (v << 20) | (y << 10) | u
   }
 
-  /// Pack one V410 word in big-endian wire format.
-  #[cfg(target_endian = "little")]
-  fn pack_v410_be(u: u32, y: u32, v: u32) -> u32 {
-    pack_v410(u, y, v).swap_bytes()
-  }
-
-  /// Build a `Vec<u32>` V410 row of `width` pixels with `(U, Y, V)`
-  /// repeated. Any positive width is valid (4:4:4, no chroma subsampling).
-  #[cfg(target_endian = "little")]
+  /// Build a `Vec<u32>` V410 row of `width` pixels with `(U, Y, V)` repeated,
+  /// in LE-encoded byte form so dispatchers with `be_input = false` recover
+  /// the intended logical values on both LE and BE hosts. Any positive width
+  /// is valid (4:4:4, no chroma subsampling).
   fn solid_v410(width: usize, u: u32, y: u32, v: u32) -> std::vec::Vec<u32> {
-    (0..width).map(|_| pack_v410(u, y, v)).collect()
+    (0..width)
+      .map(|_| u32::from_ne_bytes(pack_v410(u, y, v).to_le_bytes()))
+      .collect()
   }
 
-  /// Build a `Vec<u32>` V410 row in big-endian wire format.
-  #[cfg(target_endian = "little")]
+  /// Build a `Vec<u32>` V410 row in BE-encoded byte form so dispatchers with
+  /// `be_input = true` recover the intended logical values on both LE and
+  /// BE hosts.
   fn solid_v410_be(width: usize, u: u32, y: u32, v: u32) -> std::vec::Vec<u32> {
-    (0..width).map(|_| pack_v410_be(u, y, v)).collect()
+    (0..width)
+      .map(|_| u32::from_ne_bytes(pack_v410(u, y, v).to_be_bytes()))
+      .collect()
   }
 
   #[test]
@@ -589,14 +583,6 @@ mod tests {
     v410_to_rgb_row(&packed, &mut rgb, 4, ColorMatrix::Bt709, true, false, false);
   }
 
-  // LE-host gate: this test builds host-native `Vec<u32>` fixtures via
-  // `solid_v410` (host-native u32 storage) and calls the dispatchers with
-  // `be_input = false`, which forwards to the scalar kernel's `from_le`
-  // load. On BE hosts (s390x / powerpc64) `from_le` swaps bytes, so the
-  // host-native fixture is corrupted before the math runs and the
-  // assertions break. BE-host correctness is covered by the per-arch BE
-  // parity tests that build fixtures via `to_le_bytes` / `to_be_bytes`.
-  #[cfg(target_endian = "little")]
   #[test]
   fn v410_dispatchers_route_with_simd_false() {
     // Full-range gray (Y=512, U=V=512 at 10-bit). Every dispatcher
@@ -668,15 +654,6 @@ mod tests {
     }
   }
 
-  // LE-host gate: the LE side uses `solid_v410` (host-native) with
-  // `be_input = false` (→ `from_le`); the BE side uses `pack_v410_be`
-  // (`swap_bytes` of host-native) with `be_input = true` (→ `from_be`).
-  // Both encodings are LE-host-correct only — on BE host the byte order
-  // in memory does not match what the wrappers decode, so the test must
-  // be pinned to little-endian. Cross-endian agreement on BE host is
-  // verified by the per-arch BE parity tests that construct fixtures via
-  // `to_le_bytes` / `to_be_bytes`.
-  #[cfg(target_endian = "little")]
   #[test]
   fn v410_be_and_le_dispatchers_agree() {
     // BE-encoded data decoded with be_input=true must produce the same
