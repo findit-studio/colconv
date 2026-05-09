@@ -388,6 +388,17 @@ pub enum RowSlice {
   /// Half‑width V (Cr) plane in a planar 4:2:0 source ([`Yuv420p`]).
   #[display("V Half")]
   VHalf,
+  /// Quarter‑width U (Cb) plane in a planar 4:1:0 source
+  /// ([`Yuv410p`](crate::yuv::Yuv410p)). `width / 4` bytes per row.
+  /// Each chroma sample is duplicated across four adjacent Y columns
+  /// by the kernel; vertically the same chroma row covers four
+  /// consecutive Y rows.
+  #[display("U Quarter")]
+  UQuarter,
+  /// Quarter‑width V (Cr) plane in a planar 4:1:0 source
+  /// ([`Yuv410p`](crate::yuv::Yuv410p)). `width / 4` bytes per row.
+  #[display("V Quarter")]
+  VQuarter,
   /// Half‑width interleaved UV plane in a semi‑planar 4:2:0 source
   /// ([`Nv12`]). Each row is `U0, V0, U1, V1, …` for `width / 2` pairs.
   #[display("UV Half")]

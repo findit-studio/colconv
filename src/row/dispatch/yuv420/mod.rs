@@ -1,5 +1,8 @@
 //! YUV 4:2:0 dispatchers, split per source format for readability.
 //!
+//! - `yuv_410` — 8-bit YUV 4:1:0 → RGB / RGBA (Cinepak / Sorenson
+//!   legacy). Co-located here because 4:1:0 shares the vertical-
+//!   subsampling walker shape with 4:2:0.
 //! - `yuv_420` — 8-bit YUV 4:2:0 → RGB / RGBA.
 //! - `yuv420p9` / `yuv420p10` / `yuv420p12` / `yuv420p14` /
 //!   `yuv420p16` — high-bit planar 4:2:0 (4 variants per format:
@@ -18,11 +21,13 @@ pub(super) mod yuv420p12;
 pub(super) mod yuv420p14;
 pub(super) mod yuv420p16;
 pub(super) mod yuv420p9;
+pub(super) mod yuv_410;
 pub(super) mod yuv_420;
 
 pub use p010::*;
 pub use p012::*;
 pub use p016::*;
+pub use yuv_410::*;
 pub use yuv_420::*;
 pub use yuv420p9::*;
 pub use yuv420p10::*;

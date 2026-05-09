@@ -837,3 +837,93 @@ fn nv21_wasm_rgba_matches_scalar_widths() {
     check_nv21_rgba_equivalence(w, ColorMatrix::Bt601, false);
   }
 }
+
+// ---- yuv_410_to_rgb_row / yuv_410_to_rgba_row equivalence ------------
+//
+// wasm simd128 4:1:0 parity with scalar — 16 Y / 4 chroma per iter;
+// 4× chroma fan-out via two `i8x16_shuffle` calls per channel with
+// compile-time byte-index masks. Width must be a multiple of 4.
+
+fn check_yuv_410_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
+  let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
+  let cw = width / 4;
+  let u: std::vec::Vec<u8> = (0..cw).map(|i| ((i * 53 + 23) & 0xFF) as u8).collect();
+  let v: std::vec::Vec<u8> = (0..cw).map(|i| ((i * 71 + 91) & 0xFF) as u8).collect();
+  let mut rgb_scalar = std::vec![0u8; width * 3];
+  let mut rgb_wasm = std::vec![0u8; width * 3];
+
+  scalar::yuv_410_to_rgb_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
+  unsafe {
+    yuv_410_to_rgb_row(&y, &u, &v, &mut rgb_wasm, width, matrix, full_range);
+  }
+
+  assert_eq!(
+    rgb_scalar, rgb_wasm,
+    "simd128 yuv_410 diverges from scalar (width={width}, matrix={matrix:?}, full_range={full_range})"
+  );
+}
+
+#[test]
+fn yuv_410_simd128_matches_scalar_all_matrices_16() {
+  for m in [
+    ColorMatrix::Bt601,
+    ColorMatrix::Bt709,
+    ColorMatrix::Bt2020Ncl,
+    ColorMatrix::Smpte240m,
+    ColorMatrix::Fcc,
+    ColorMatrix::YCgCo,
+  ] {
+    for full in [true, false] {
+      check_yuv_410_equivalence(16, m, full);
+    }
+  }
+}
+
+#[test]
+fn yuv_410_simd128_matches_scalar_widths() {
+  // Cover: pure-scalar (< 16), one SIMD iter (16), SIMD + tail (20, 28),
+  // multi-iter (32, 64), large (1920).
+  for &w in &[4usize, 8, 12, 16, 20, 28, 32, 64, 128, 1920] {
+    check_yuv_410_equivalence(w, ColorMatrix::Bt601, true);
+    check_yuv_410_equivalence(w, ColorMatrix::Bt709, false);
+  }
+}
+
+#[test]
+fn yuv_410_simd128_matches_scalar_bt2020() {
+  for &w in &[16usize, 20, 64, 1920] {
+    check_yuv_410_equivalence(w, ColorMatrix::Bt2020Ncl, false);
+    check_yuv_410_equivalence(w, ColorMatrix::Bt2020Ncl, true);
+  }
+}
+
+fn check_yuv_410_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
+  let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
+  let cw = width / 4;
+  let u: std::vec::Vec<u8> = (0..cw).map(|i| ((i * 53 + 23) & 0xFF) as u8).collect();
+  let v: std::vec::Vec<u8> = (0..cw).map(|i| ((i * 71 + 91) & 0xFF) as u8).collect();
+  let mut rgba_scalar = std::vec![0u8; width * 4];
+  let mut rgba_wasm = std::vec![0u8; width * 4];
+
+  scalar::yuv_410_to_rgba_row(&y, &u, &v, &mut rgba_scalar, width, matrix, full_range);
+  unsafe {
+    yuv_410_to_rgba_row(&y, &u, &v, &mut rgba_wasm, width, matrix, full_range);
+  }
+
+  assert_eq!(
+    rgba_scalar, rgba_wasm,
+    "simd128 yuv_410 RGBA diverges from scalar (width={width}, matrix={matrix:?}, full_range={full_range})"
+  );
+
+  for (i, px) in rgba_wasm.chunks(4).enumerate() {
+    assert_eq!(px[3], 0xFF, "alpha at pixel {i} must be 0xFF");
+  }
+}
+
+#[test]
+fn yuv_410_simd128_rgba_matches_scalar_widths() {
+  for &w in &[4usize, 8, 16, 20, 32, 64, 128] {
+    check_yuv_410_rgba_equivalence(w, ColorMatrix::Bt601, true);
+    check_yuv_410_rgba_equivalence(w, ColorMatrix::YCgCo, false);
+  }
+}
