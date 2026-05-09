@@ -1033,19 +1033,32 @@ unsafe fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
       let g_c8 = _mm256_castsi256_si128(g_i16);
       let b_c8 = _mm256_castsi256_si128(b_i16);
 
-      // 1→4 nearest-neighbor upsample. Two-stage cascade:
+      // 1→4 nearest-neighbor upsample. Two-stage cascade.
       //
-      // Stage 1 (i16x8 → i16x16, each lane duplicated once): broadcast
-      // c8 into both 128-bit lanes of a __m256i, then per-lane
-      // unpacklo gives `[c0,c0,c1,c1,c2,c2,c3,c3]` in the low lane and
-      // `[c4,c4,c5,c5,c6,c6,c7,c7]` in the high lane.
-      let r_bcast = _mm256_inserti128_si256::<1>(_mm256_castsi128_si256(r_c8), r_c8);
-      let g_bcast = _mm256_inserti128_si256::<1>(_mm256_castsi128_si256(g_c8), g_c8);
-      let b_bcast = _mm256_inserti128_si256::<1>(_mm256_castsi128_si256(b_c8), b_c8);
+      // CRITICAL: `_mm256_unpacklo_epi16` operates per-128-bit lane and
+      // only consumes lanes 0..3 of each input lane. A naive broadcast
+      // (`inserti128` of `r_c8` into both halves) would therefore expand
+      // c0..c3 in BOTH lanes and silently drop c4..c7 — pixels 16..31
+      // would reuse the first half's chroma. To use c4..c7 in the high
+      // lane, we splice it into the low 64 bits of the high lane via
+      // `_mm_unpackhi_epi64(r_c8, r_c8)` (or equivalently a 64-bit
+      // shuffle), then `inserti128` that into the high lane.
+      //
+      // Stage 1 (i16x8 → i16x16, each lane duplicated once): per-lane
+      // unpacklo on a vector whose low lane low-64 holds c0..c3 and
+      // high lane low-64 holds c4..c7 yields `[c0,c0,c1,c1,c2,c2,c3,c3]`
+      // in the low lane and `[c4,c4,c5,c5,c6,c6,c7,c7]` in the high
+      // lane.
+      let r_c8_hi = _mm_unpackhi_epi64(r_c8, r_c8); // [c4,c5,c6,c7, c4,c5,c6,c7]
+      let g_c8_hi = _mm_unpackhi_epi64(g_c8, g_c8);
+      let b_c8_hi = _mm_unpackhi_epi64(b_c8, b_c8);
+      let r_bcast = _mm256_inserti128_si256::<1>(_mm256_castsi128_si256(r_c8), r_c8_hi);
+      let g_bcast = _mm256_inserti128_si256::<1>(_mm256_castsi128_si256(g_c8), g_c8_hi);
+      let b_bcast = _mm256_inserti128_si256::<1>(_mm256_castsi128_si256(b_c8), b_c8_hi);
       let r_dup8 = _mm256_unpacklo_epi16(r_bcast, r_bcast);
       let g_dup8 = _mm256_unpacklo_epi16(g_bcast, g_bcast);
       let b_dup8 = _mm256_unpacklo_epi16(b_bcast, b_bcast);
-      // r_dup8 = lo lane [c0,c0,c1,c1,c2,c2,c3,c3], hi lane [c4..×2,c5..×2,c6..×2,c7..×2].
+      // r_dup8 = lo lane [c0,c0,c1,c1,c2,c2,c3,c3], hi lane [c4,c4,c5,c5,c6,c6,c7,c7].
 
       // Stage 2: re-apply per-lane unpack on stage-1 output.
       let u_lo = _mm256_unpacklo_epi16(r_dup8, r_dup8);

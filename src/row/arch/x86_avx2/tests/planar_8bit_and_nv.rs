@@ -1266,6 +1266,63 @@ fn avx2_yuv411_matches_scalar_width_1920() {
   check_yuv411_equivalence(1920, ColorMatrix::Bt709, false);
 }
 
+// Direct regression for the AVX2 chroma fan-out lane bug: at width=32
+// the kernel reads 8 chroma samples (c0..c7) and must fan c0..c3 across
+// pixels 0..15 and c4..c7 across pixels 16..31. A previous version
+// broadcast c0..c7 into both 128-bit lanes and relied on per-lane
+// `_mm256_unpacklo_epi16`, which only consumes lanes 0..3 of each lane
+// and therefore expanded c0..c3 in BOTH halves (pixels 16..31 silently
+// reused the first half's chroma).
+//
+// Pick a fixture where c0..c3 are far from c4..c7 so any reuse is a
+// large RGB delta. The Y plane is constant so any divergence comes
+// from the chroma fan-out alone.
+#[test]
+#[cfg_attr(miri, ignore = "AVX2 SIMD intrinsics unsupported by Miri")]
+fn avx2_yuv411_chroma_fanout_low_high_split() {
+  if !std::arch::is_x86_feature_detected!("avx2") {
+    return;
+  }
+  // Width 32 = exactly one AVX2 iteration, no scalar tail.
+  let width = 32usize;
+  let y: std::vec::Vec<u8> = std::vec![128u8; width];
+  // c0..c3 (low half, pixels 0..15) vs c4..c7 (high half, pixels 16..31)
+  // chosen far apart in the chroma plane.
+  let u: std::vec::Vec<u8> = std::vec![10, 20, 30, 40, 200, 210, 220, 230];
+  let v: std::vec::Vec<u8> = std::vec![230, 220, 210, 200, 40, 30, 20, 10];
+
+  for &m in &[
+    ColorMatrix::Bt601,
+    ColorMatrix::Bt709,
+    ColorMatrix::Bt2020Ncl,
+    ColorMatrix::YCgCo,
+  ] {
+    for full in [true, false] {
+      let mut rgb_scalar = std::vec![0u8; width * 3];
+      let mut rgb_simd = std::vec![0u8; width * 3];
+      scalar::yuv_411_to_rgb_row(&y, &u, &v, &mut rgb_scalar, width, m, full);
+      unsafe {
+        yuv_411_to_rgb_row(&y, &u, &v, &mut rgb_simd, width, m, full);
+      }
+      assert_eq!(
+        rgb_scalar, rgb_simd,
+        "AVX2 yuv_411 RGB chroma fan-out diverges (matrix={m:?}, full_range={full})"
+      );
+
+      let mut rgba_scalar = std::vec![0u8; width * 4];
+      let mut rgba_simd = std::vec![0u8; width * 4];
+      scalar::yuv_411_to_rgba_row(&y, &u, &v, &mut rgba_scalar, width, m, full);
+      unsafe {
+        yuv_411_to_rgba_row(&y, &u, &v, &mut rgba_simd, width, m, full);
+      }
+      assert_eq!(
+        rgba_scalar, rgba_simd,
+        "AVX2 yuv_411 RGBA chroma fan-out diverges (matrix={m:?}, full_range={full})"
+      );
+    }
+  }
+}
+
 fn check_yuv411_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   assert_eq!(width & 3, 0, "test fixture must use width % 4 == 0");
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
