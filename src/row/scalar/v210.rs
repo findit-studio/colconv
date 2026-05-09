@@ -45,7 +45,9 @@ use super::*;
 /// byte order.
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn unpack_v210_word<const BE: bool>(word: &[u8]) -> ([u16; 6], [u16; 3], [u16; 3]) {
-  debug_assert_eq!(word.len(), 16);
+  // assert! (not debug_assert!) — bounds gate `unsafe load_endian_u32`
+  // reads below; release-mode check prevents UB on bad inputs.
+  assert_eq!(word.len(), 16);
   // SAFETY: word has exactly 16 bytes (checked above); each offset is ≤ 12.
   let w0 = unsafe { load_endian_u32::<BE>(word.as_ptr()) };
   let w1 = unsafe { load_endian_u32::<BE>(word.as_ptr().add(4)) };
