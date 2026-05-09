@@ -1,7 +1,4 @@
-use super::{
-  super::*, high_bit_plane_wasm, interleave_uv_wasm, p_n_packed_plane, p010_uv_interleave,
-  p16_plane_wasm, planar_n_plane,
-};
+use super::super::*;
 
 fn check_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
@@ -519,11 +516,27 @@ fn check_yuv_444p_n_equivalence<const BITS: u32>(
   let mut u16_scalar = std::vec![0u16; width * 3];
   let mut u16_wasm = std::vec![0u16; width * 3];
 
-  scalar::yuv_444p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-  scalar::yuv_444p_n_to_rgb_u16_row::<BITS>(&y, &u, &v, &mut u16_scalar, width, matrix, full_range);
+  scalar::yuv_444p_n_to_rgb_row::<BITS, false>(
+    &y,
+    &u,
+    &v,
+    &mut rgb_scalar,
+    width,
+    matrix,
+    full_range,
+  );
+  scalar::yuv_444p_n_to_rgb_u16_row::<BITS, false>(
+    &y,
+    &u,
+    &v,
+    &mut u16_scalar,
+    width,
+    matrix,
+    full_range,
+  );
   unsafe {
-    yuv_444p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_wasm, width, matrix, full_range);
-    yuv_444p_n_to_rgb_u16_row::<BITS>(&y, &u, &v, &mut u16_wasm, width, matrix, full_range);
+    yuv_444p_n_to_rgb_row::<BITS, false>(&y, &u, &v, &mut rgb_wasm, width, matrix, full_range);
+    yuv_444p_n_to_rgb_u16_row::<BITS, false>(&y, &u, &v, &mut u16_wasm, width, matrix, full_range);
   }
   assert_eq!(
     rgb_scalar, rgb_wasm,
@@ -592,9 +605,9 @@ fn check_yuv_444p16_equivalence(width: usize, matrix: ColorMatrix, full_range: b
   let mut rgb_scalar = std::vec![0u8; width * 3];
   let mut rgb_wasm = std::vec![0u8; width * 3];
 
-  scalar::yuv_444p16_to_rgb_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
+  scalar::yuv_444p16_to_rgb_row::<false>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
   unsafe {
-    yuv_444p16_to_rgb_row(&y, &u, &v, &mut rgb_wasm, width, matrix, full_range);
+    yuv_444p16_to_rgb_row::<false>(&y, &u, &v, &mut rgb_wasm, width, matrix, full_range);
   }
   assert_eq!(rgb_scalar, rgb_wasm, "simd128 yuv_444p16 u8 ≠ scalar");
   // u16-output path delegates to scalar on wasm — no SIMD to compare

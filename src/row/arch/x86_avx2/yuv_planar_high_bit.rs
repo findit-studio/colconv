@@ -31,7 +31,7 @@ use super::*;
 /// Thin wrapper over [`yuv_420p_n_to_rgb_or_rgba_row`] with `ALPHA = false`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn yuv_420p_n_to_rgb_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_420p_n_to_rgb_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -42,7 +42,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_420p_n_to_rgb_or_rgba_row::<BITS, false, false>(
+    yuv_420p_n_to_rgb_or_rgba_row::<BITS, false, false, BE>(
       y, u_half, v_half, None, rgb_out, width, matrix, full_range,
     );
   }
@@ -53,7 +53,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_row<const BITS: u32>(
 /// Thin wrapper over [`yuv_420p_n_to_rgb_or_rgba_row`] with `ALPHA = true`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn yuv_420p_n_to_rgba_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_420p_n_to_rgba_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -64,7 +64,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgba_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_420p_n_to_rgb_or_rgba_row::<BITS, true, false>(
+    yuv_420p_n_to_rgb_or_rgba_row::<BITS, true, false, BE>(
       y, u_half, v_half, None, rgba_out, width, matrix, full_range,
     );
   }
@@ -84,7 +84,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgba_row<const BITS: u32>(
 #[inline]
 #[target_feature(enable = "avx2")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn yuv_420p_n_to_rgba_with_alpha_src_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_420p_n_to_rgba_with_alpha_src_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -96,7 +96,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgba_with_alpha_src_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_420p_n_to_rgb_or_rgba_row::<BITS, true, true>(
+    yuv_420p_n_to_rgb_or_rgba_row::<BITS, true, true, BE>(
       y,
       u_half,
       v_half,
@@ -131,6 +131,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_row<
   const BITS: u32,
   const ALPHA: bool,
   const ALPHA_SRC: bool,
+  const BE: bool,
 >(
   y: &[u16],
   u_half: &[u16],
@@ -180,14 +181,21 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_row<
       // 32 Y = two `_mm256_loadu_si256` (16 u16 each). U/V each = one
       // load of 16 u16. AND‑mask each load to the low 10 bits — see
       // matching comment in [`crate::row::scalar::yuv_420p_n_to_rgb_row`].
-      let y_low_i16 = _mm256_and_si256(_mm256_loadu_si256(y.as_ptr().add(x).cast()), mask_v);
-      let y_high_i16 = _mm256_and_si256(_mm256_loadu_si256(y.as_ptr().add(x + 16).cast()), mask_v);
+      // BE input is byte-swapped via `load_endian_u16x16::<BE>` first.
+      let y_low_i16 = _mm256_and_si256(
+        endian::load_endian_u16x16::<BE>(y.as_ptr().add(x) as *const u8),
+        mask_v,
+      );
+      let y_high_i16 = _mm256_and_si256(
+        endian::load_endian_u16x16::<BE>(y.as_ptr().add(x + 16) as *const u8),
+        mask_v,
+      );
       let u_vec = _mm256_and_si256(
-        _mm256_loadu_si256(u_half.as_ptr().add(x / 2).cast()),
+        endian::load_endian_u16x16::<BE>(u_half.as_ptr().add(x / 2) as *const u8),
         mask_v,
       );
       let v_vec = _mm256_and_si256(
-        _mm256_loadu_si256(v_half.as_ptr().add(x / 2).cast()),
+        endian::load_endian_u16x16::<BE>(v_half.as_ptr().add(x / 2) as *const u8),
         mask_v,
       );
 
@@ -248,8 +256,14 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_row<
           // generic shift (not stable for `BITS - 8`); use
           // `_mm256_srl_epi16` with a count vector built from `BITS-8`.
           let a_ptr = a_src.as_ref().unwrap_unchecked().as_ptr();
-          let a_lo = _mm256_and_si256(_mm256_loadu_si256(a_ptr.add(x).cast()), mask_v);
-          let a_hi = _mm256_and_si256(_mm256_loadu_si256(a_ptr.add(x + 16).cast()), mask_v);
+          let a_lo = _mm256_and_si256(
+            endian::load_endian_u16x16::<BE>(a_ptr.add(x) as *const u8),
+            mask_v,
+          );
+          let a_hi = _mm256_and_si256(
+            endian::load_endian_u16x16::<BE>(a_ptr.add(x + 16) as *const u8),
+            mask_v,
+          );
           let a_shr = _mm_cvtsi32_si128((BITS - 8) as i32);
           let a_lo_shifted = _mm256_srl_epi16(a_lo, a_shr);
           let a_hi_shifted = _mm256_srl_epi16(a_hi, a_shr);
@@ -277,15 +291,15 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_row<
       if ALPHA_SRC {
         // SAFETY (const-checked): ALPHA_SRC = true implies Some(_).
         let tail_a = &a_src.as_ref().unwrap_unchecked()[x..width];
-        scalar::yuv_420p_n_to_rgba_with_alpha_src_row::<BITS>(
+        scalar::yuv_420p_n_to_rgba_with_alpha_src_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_a, tail_out, tail_w, matrix, full_range,
         );
       } else if ALPHA {
-        scalar::yuv_420p_n_to_rgba_row::<BITS>(
+        scalar::yuv_420p_n_to_rgba_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       } else {
-        scalar::yuv_420p_n_to_rgb_row::<BITS>(
+        scalar::yuv_420p_n_to_rgb_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       }
@@ -317,7 +331,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_row<
 ///    `v_half.len() >= width / 2`, `rgb_out.len() >= 3 * width`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn yuv_420p_n_to_rgb_u16_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_420p_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -327,7 +341,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_u16_row<const BITS: u32>(
   full_range: bool,
 ) {
   unsafe {
-    yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, false, false>(
+    yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, false, false, BE>(
       y, u_half, v_half, None, rgb_out, width, matrix, full_range,
     );
   }
@@ -342,7 +356,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_u16_row<const BITS: u32>(
 /// Same as [`yuv_420p_n_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn yuv_420p_n_to_rgba_u16_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_420p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -352,7 +366,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgba_u16_row<const BITS: u32>(
   full_range: bool,
 ) {
   unsafe {
-    yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, true, false>(
+    yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, true, false, BE>(
       y, u_half, v_half, None, rgba_out, width, matrix, full_range,
     );
   }
@@ -372,7 +386,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgba_u16_row<const BITS: u32>(
 #[inline]
 #[target_feature(enable = "avx2")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn yuv_420p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_420p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -384,7 +398,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, true, true>(
+    yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, true, true, BE>(
       y,
       u_half,
       v_half,
@@ -421,6 +435,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_u16_row<
   const BITS: u32,
   const ALPHA: bool,
   const ALPHA_SRC: bool,
+  const BE: bool,
 >(
   y: &[u16],
   u_half: &[u16],
@@ -471,15 +486,22 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_u16_row<
     let mut x = 0usize;
     while x + 32 <= width {
       // AND‑mask loads to the low 10 bits so `chroma_i16x16`'s
-      // `_mm256_packs_epi32` narrow stays lossless.
-      let y_low_i16 = _mm256_and_si256(_mm256_loadu_si256(y.as_ptr().add(x).cast()), mask_v);
-      let y_high_i16 = _mm256_and_si256(_mm256_loadu_si256(y.as_ptr().add(x + 16).cast()), mask_v);
+      // `_mm256_packs_epi32` narrow stays lossless. BE input is
+      // byte-swapped via `load_endian_u16x16::<BE>` first.
+      let y_low_i16 = _mm256_and_si256(
+        endian::load_endian_u16x16::<BE>(y.as_ptr().add(x) as *const u8),
+        mask_v,
+      );
+      let y_high_i16 = _mm256_and_si256(
+        endian::load_endian_u16x16::<BE>(y.as_ptr().add(x + 16) as *const u8),
+        mask_v,
+      );
       let u_vec = _mm256_and_si256(
-        _mm256_loadu_si256(u_half.as_ptr().add(x / 2).cast()),
+        endian::load_endian_u16x16::<BE>(u_half.as_ptr().add(x / 2) as *const u8),
         mask_v,
       );
       let v_vec = _mm256_and_si256(
-        _mm256_loadu_si256(v_half.as_ptr().add(x / 2).cast()),
+        endian::load_endian_u16x16::<BE>(v_half.as_ptr().add(x / 2) as *const u8),
         mask_v,
       );
 
@@ -538,8 +560,14 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_u16_row<
           // bit depth output, so no shift; just split each 256-bit
           // load into two 128-bit halves to feed `write_rgba_u16_8`.
           let a_ptr = a_src.as_ref().unwrap_unchecked().as_ptr();
-          let a_lo = _mm256_and_si256(_mm256_loadu_si256(a_ptr.add(x).cast()), mask_v);
-          let a_hi = _mm256_and_si256(_mm256_loadu_si256(a_ptr.add(x + 16).cast()), mask_v);
+          let a_lo = _mm256_and_si256(
+            endian::load_endian_u16x16::<BE>(a_ptr.add(x) as *const u8),
+            mask_v,
+          );
+          let a_hi = _mm256_and_si256(
+            endian::load_endian_u16x16::<BE>(a_ptr.add(x + 16) as *const u8),
+            mask_v,
+          );
           (
             _mm256_castsi256_si128(a_lo),
             _mm256_extracti128_si256::<1>(a_lo),
@@ -618,15 +646,15 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_u16_row<
       if ALPHA_SRC {
         // SAFETY (const-checked): ALPHA_SRC = true implies Some(_).
         let tail_a = &a_src.as_ref().unwrap_unchecked()[x..width];
-        scalar::yuv_420p_n_to_rgba_u16_with_alpha_src_row::<BITS>(
+        scalar::yuv_420p_n_to_rgba_u16_with_alpha_src_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_a, tail_out, tail_w, matrix, full_range,
         );
       } else if ALPHA {
-        scalar::yuv_420p_n_to_rgba_u16_row::<BITS>(
+        scalar::yuv_420p_n_to_rgba_u16_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       } else {
-        scalar::yuv_420p_n_to_rgb_u16_row::<BITS>(
+        scalar::yuv_420p_n_to_rgb_u16_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       }
@@ -645,7 +673,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_u16_row<
 ///    `rgb_out.len() >= 3 * width`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn yuv_444p_n_to_rgb_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_444p_n_to_rgb_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -656,7 +684,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_row::<BITS, false, false>(
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, false, false, BE>(
       y, u, v, rgb_out, width, matrix, full_range, None,
     );
   }
@@ -674,7 +702,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_row<const BITS: u32>(
 /// Same as [`yuv_444p_n_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn yuv_444p_n_to_rgba_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_444p_n_to_rgba_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -685,7 +713,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, false>(
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, false, BE>(
       y, u, v, rgba_out, width, matrix, full_range, None,
     );
   }
@@ -705,7 +733,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_row<const BITS: u32>(
 #[inline]
 #[target_feature(enable = "avx2")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn yuv_444p_n_to_rgba_with_alpha_src_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_444p_n_to_rgba_with_alpha_src_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -717,7 +745,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_with_alpha_src_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, true>(
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, true, BE>(
       y,
       u,
       v,
@@ -753,6 +781,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<
   const BITS: u32,
   const ALPHA: bool,
   const ALPHA_SRC: bool,
+  const BE: bool,
 >(
   y: &[u16],
   u: &[u16],
@@ -799,13 +828,32 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<
     let mut x = 0usize;
     while x + 32 <= width {
       // 32 Y + 32 U + 32 V per iter. Full-width chroma (two 16-u16
-      // loads each) — no horizontal duplication, 4:4:4 is 1:1.
-      let y_low_i16 = _mm256_and_si256(_mm256_loadu_si256(y.as_ptr().add(x).cast()), mask_v);
-      let y_high_i16 = _mm256_and_si256(_mm256_loadu_si256(y.as_ptr().add(x + 16).cast()), mask_v);
-      let u_lo_vec = _mm256_and_si256(_mm256_loadu_si256(u.as_ptr().add(x).cast()), mask_v);
-      let u_hi_vec = _mm256_and_si256(_mm256_loadu_si256(u.as_ptr().add(x + 16).cast()), mask_v);
-      let v_lo_vec = _mm256_and_si256(_mm256_loadu_si256(v.as_ptr().add(x).cast()), mask_v);
-      let v_hi_vec = _mm256_and_si256(_mm256_loadu_si256(v.as_ptr().add(x + 16).cast()), mask_v);
+      // loads each) — no horizontal duplication, 4:4:4 is 1:1. BE
+      // input is byte-swapped via `load_endian_u16x16::<BE>` first.
+      let y_low_i16 = _mm256_and_si256(
+        endian::load_endian_u16x16::<BE>(y.as_ptr().add(x) as *const u8),
+        mask_v,
+      );
+      let y_high_i16 = _mm256_and_si256(
+        endian::load_endian_u16x16::<BE>(y.as_ptr().add(x + 16) as *const u8),
+        mask_v,
+      );
+      let u_lo_vec = _mm256_and_si256(
+        endian::load_endian_u16x16::<BE>(u.as_ptr().add(x) as *const u8),
+        mask_v,
+      );
+      let u_hi_vec = _mm256_and_si256(
+        endian::load_endian_u16x16::<BE>(u.as_ptr().add(x + 16) as *const u8),
+        mask_v,
+      );
+      let v_lo_vec = _mm256_and_si256(
+        endian::load_endian_u16x16::<BE>(v.as_ptr().add(x) as *const u8),
+        mask_v,
+      );
+      let v_hi_vec = _mm256_and_si256(
+        endian::load_endian_u16x16::<BE>(v.as_ptr().add(x + 16) as *const u8),
+        mask_v,
+      );
 
       let u_lo_i16 = _mm256_sub_epi16(u_lo_vec, bias_v);
       let u_hi_i16 = _mm256_sub_epi16(u_hi_vec, bias_v);
@@ -881,8 +929,14 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<
           // SAFETY (const-checked): ALPHA_SRC = true implies the
           // wrapper passed Some(_), validated by debug_assert.
           let a_ptr = a_src.as_ref().unwrap_unchecked().as_ptr();
-          let a_lo = _mm256_and_si256(_mm256_loadu_si256(a_ptr.add(x).cast()), mask_v);
-          let a_hi = _mm256_and_si256(_mm256_loadu_si256(a_ptr.add(x + 16).cast()), mask_v);
+          let a_lo = _mm256_and_si256(
+            endian::load_endian_u16x16::<BE>(a_ptr.add(x) as *const u8),
+            mask_v,
+          );
+          let a_hi = _mm256_and_si256(
+            endian::load_endian_u16x16::<BE>(a_ptr.add(x + 16) as *const u8),
+            mask_v,
+          );
           // Mask before shifting to harden against over-range source
           // alpha (e.g. 1024 at BITS=10), matching scalar. AVX2's
           // `_mm256_srli_epi16::<IMM8>` requires a literal shift, so
@@ -914,15 +968,15 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<
       if ALPHA_SRC {
         // SAFETY (const-checked): ALPHA_SRC = true implies Some(_).
         let tail_a = &a_src.as_ref().unwrap_unchecked()[x..width];
-        scalar::yuv_444p_n_to_rgba_with_alpha_src_row::<BITS>(
+        scalar::yuv_444p_n_to_rgba_with_alpha_src_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_a, tail_out, tail_w, matrix, full_range,
         );
       } else if ALPHA {
-        scalar::yuv_444p_n_to_rgba_row::<BITS>(
+        scalar::yuv_444p_n_to_rgba_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       } else {
-        scalar::yuv_444p_n_to_rgb_row::<BITS>(
+        scalar::yuv_444p_n_to_rgb_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       }
@@ -941,7 +995,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<
 /// Same as [`yuv_444p_n_to_rgb_row`] but `rgb_out: &mut [u16]`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn yuv_444p_n_to_rgb_u16_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_444p_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -952,7 +1006,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_u16_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, false, false>(
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, false, false, BE>(
       y, u, v, rgb_out, width, matrix, full_range, None,
     );
   }
@@ -970,7 +1024,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_u16_row<const BITS: u32>(
 /// Same as [`yuv_444p_n_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -981,7 +1035,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, false>(
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, false, BE>(
       y, u, v, rgba_out, width, matrix, full_range, None,
     );
   }
@@ -1002,7 +1056,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_row<const BITS: u32>(
 #[inline]
 #[target_feature(enable = "avx2")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -1014,7 +1068,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, true>(
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, true, BE>(
       y,
       u,
       v,
@@ -1053,6 +1107,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<
   const BITS: u32,
   const ALPHA: bool,
   const ALPHA_SRC: bool,
+  const BE: bool,
 >(
   y: &[u16],
   u: &[u16],
@@ -1101,12 +1156,31 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<
 
     let mut x = 0usize;
     while x + 32 <= width {
-      let y_low_i16 = _mm256_and_si256(_mm256_loadu_si256(y.as_ptr().add(x).cast()), mask_v);
-      let y_high_i16 = _mm256_and_si256(_mm256_loadu_si256(y.as_ptr().add(x + 16).cast()), mask_v);
-      let u_lo_vec = _mm256_and_si256(_mm256_loadu_si256(u.as_ptr().add(x).cast()), mask_v);
-      let u_hi_vec = _mm256_and_si256(_mm256_loadu_si256(u.as_ptr().add(x + 16).cast()), mask_v);
-      let v_lo_vec = _mm256_and_si256(_mm256_loadu_si256(v.as_ptr().add(x).cast()), mask_v);
-      let v_hi_vec = _mm256_and_si256(_mm256_loadu_si256(v.as_ptr().add(x + 16).cast()), mask_v);
+      // BE input is byte-swapped via `load_endian_u16x16::<BE>` first.
+      let y_low_i16 = _mm256_and_si256(
+        endian::load_endian_u16x16::<BE>(y.as_ptr().add(x) as *const u8),
+        mask_v,
+      );
+      let y_high_i16 = _mm256_and_si256(
+        endian::load_endian_u16x16::<BE>(y.as_ptr().add(x + 16) as *const u8),
+        mask_v,
+      );
+      let u_lo_vec = _mm256_and_si256(
+        endian::load_endian_u16x16::<BE>(u.as_ptr().add(x) as *const u8),
+        mask_v,
+      );
+      let u_hi_vec = _mm256_and_si256(
+        endian::load_endian_u16x16::<BE>(u.as_ptr().add(x + 16) as *const u8),
+        mask_v,
+      );
+      let v_lo_vec = _mm256_and_si256(
+        endian::load_endian_u16x16::<BE>(v.as_ptr().add(x) as *const u8),
+        mask_v,
+      );
+      let v_hi_vec = _mm256_and_si256(
+        endian::load_endian_u16x16::<BE>(v.as_ptr().add(x + 16) as *const u8),
+        mask_v,
+      );
 
       let u_lo_i16 = _mm256_sub_epi16(u_lo_vec, bias_v);
       let u_hi_i16 = _mm256_sub_epi16(u_hi_vec, bias_v);
@@ -1182,8 +1256,14 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<
           // 128-bit quarters consumed by the four `write_rgba_u16_8`
           // calls per iter (mirroring the R/G/B cast/extract pattern).
           let a_ptr = a_src.as_ref().unwrap_unchecked().as_ptr();
-          let a_lo_v = _mm256_and_si256(_mm256_loadu_si256(a_ptr.add(x).cast()), mask_v);
-          let a_hi_v = _mm256_and_si256(_mm256_loadu_si256(a_ptr.add(x + 16).cast()), mask_v);
+          let a_lo_v = _mm256_and_si256(
+            endian::load_endian_u16x16::<BE>(a_ptr.add(x) as *const u8),
+            mask_v,
+          );
+          let a_hi_v = _mm256_and_si256(
+            endian::load_endian_u16x16::<BE>(a_ptr.add(x + 16) as *const u8),
+            mask_v,
+          );
           (
             _mm256_castsi256_si128(a_lo_v),
             _mm256_extracti128_si256::<1>(a_lo_v),
@@ -1262,15 +1342,15 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<
       if ALPHA_SRC {
         // SAFETY (const-checked): ALPHA_SRC = true implies Some(_).
         let tail_a = &a_src.as_ref().unwrap_unchecked()[x..width];
-        scalar::yuv_444p_n_to_rgba_u16_with_alpha_src_row::<BITS>(
+        scalar::yuv_444p_n_to_rgba_u16_with_alpha_src_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_a, tail_out, tail_w, matrix, full_range,
         );
       } else if ALPHA {
-        scalar::yuv_444p_n_to_rgba_u16_row::<BITS>(
+        scalar::yuv_444p_n_to_rgba_u16_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       } else {
-        scalar::yuv_444p_n_to_rgb_u16_row::<BITS>(
+        scalar::yuv_444p_n_to_rgb_u16_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       }

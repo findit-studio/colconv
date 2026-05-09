@@ -117,11 +117,63 @@ fn y210_frame_try_new_checked_rejects_low_bit_violations() {
   assert_eq!(err, Y2xxFrameError::SampleLowBitsSet);
 }
 
+// LE-host-only fixture: builds host-native `u16` literals as if they were
+// the LE-encoded byte layout. On a BE host the validator's `u16::from_le`
+// byte-swap reinterprets host-native storage and the literal-vs-decoded
+// byte order doesn't match the test's intent. The host-independent BE-host
+// regression for this validator path lives in
+// `y210_frame_try_new_checked_accepts_le_encoded_buffer` below.
+#[cfg(target_endian = "little")]
 #[test]
 fn y210_frame_try_new_checked_accepts_valid_msb_aligned_data() {
   // All samples have low 6 bits == 0.
   let buf: std::vec::Vec<u16> = (0..8).map(|i| ((i as u16) << 6) & 0xFFC0).collect();
   Y210Frame::try_new_checked(&buf, 4, 1, 8).unwrap();
+}
+
+/// Host-independent regression for [`Y2xxFrame::try_new_checked`]'s LE-encoded
+/// byte contract. Builds the plane explicitly from LE-encoded bytes via
+/// `to_le_bytes` then reinterprets as `&[u16]` via `from_ne_bytes`. The
+/// validator must accept this on both LE and BE hosts: on LE host
+/// `from_le` is a no-op (host-native already matches); on BE host
+/// `from_le` byte-swaps each sample back into host-native form before
+/// the bit-check, recovering the intended MSB-aligned value.
+///
+/// Without the LE-aware bit-check, this test would reject every sample
+/// on a BE host (the byte-swapped storage has the active bits in the
+/// low byte, which fails the low-`(16 - BITS)`-bits-zero check).
+#[test]
+fn y210_frame_try_new_checked_accepts_le_encoded_buffer() {
+  // Intended values: 10-bit MSB-aligned `(i << 6) & 0xFFC0` for i in 0..8.
+  let intended: std::vec::Vec<u16> = (0..8u16).map(|i| (i << 6) & 0xFFC0).collect();
+  let le_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
+  let buf: std::vec::Vec<u16> = le_bytes
+    .chunks_exact(2)
+    .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+    .collect();
+  Y210Frame::try_new_checked(&buf, 4, 1, 8).unwrap();
+}
+
+/// Host-independent BE-host regression: a *BE-encoded* buffer of valid
+/// MSB-aligned values must be rejected when fed to a Y2xx frame
+/// (which assumes the LE-encoded byte contract). Pick a logical value
+/// whose BE-byte form, when re-interpreted as LE, has non-zero low bits.
+///
+/// Logical value `0xFFC0` BE-encoded = `[0xFF, 0xC0]`. Re-interpreted
+/// via `from_le_bytes([0xFF, 0xC0])` = `0xC0FF`, whose low 6 bits =
+/// `0x3F` (non-zero) → `SampleLowBitsSet`.
+#[test]
+fn y210_frame_try_new_checked_rejects_be_encoded_buffer_with_low_bits() {
+  // Use the same `0xFFC0` value across the row so we get a
+  // deterministic rejection regardless of host.
+  let intended: std::vec::Vec<u16> = std::vec![0xFFC0u16; 8];
+  let be_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_be_bytes()).collect();
+  let buf: std::vec::Vec<u16> = be_bytes
+    .chunks_exact(2)
+    .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+    .collect();
+  let err = Y210Frame::try_new_checked(&buf, 4, 1, 8).unwrap_err();
+  assert_eq!(err, Y2xxFrameError::SampleLowBitsSet);
 }
 
 #[test]
@@ -131,6 +183,9 @@ fn y210_frame_new_panics_on_invalid() {
   let _ = Y210Frame::new(&buf, 0, 0, 0);
 }
 
+// LE-host-only fixture: builds host-native `u16` literals as if they were
+// the LE-encoded byte layout. See note above on the LE-encoded contract.
+#[cfg(target_endian = "little")]
 #[test]
 fn y210_frame_try_new_checked_ignores_stride_padding_bytes() {
   // Width=4 → row_elems = 8 u16; stride = 12 u16 (4 u16 padding per row).

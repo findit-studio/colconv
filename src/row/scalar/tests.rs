@@ -246,7 +246,7 @@ fn yuv420p10_rgb_black_full_range() {
   let u = [512u16; 2];
   let v = [512u16; 2];
   let mut rgb = [0u8; 12];
-  yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 0), "got {rgb:?}");
 }
 
@@ -257,7 +257,7 @@ fn yuv420p10_rgb_white_full_range() {
   let u = [512u16; 2];
   let v = [512u16; 2];
   let mut rgb = [0u8; 12];
-  yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 255), "got {rgb:?}");
 }
 
@@ -268,7 +268,7 @@ fn yuv420p10_rgb_gray_is_gray() {
   let u = [512u16; 2];
   let v = [512u16; 2];
   let mut rgb = [0u8; 12];
-  yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
     let (r, g, b) = (rgb[x * 3], rgb[x * 3 + 1], rgb[x * 3 + 2]);
     assert_eq!(r, g);
@@ -284,7 +284,7 @@ fn yuv420p10_rgb_limited_range_black_and_white() {
   let u = [512u16; 2];
   let v = [512u16; 2];
   let mut rgb = [0u8; 12];
-  yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, false);
+  yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, false);
   assert_eq!((rgb[0], rgb[1], rgb[2]), (0, 0, 0));
   assert_eq!((rgb[3], rgb[4], rgb[5]), (0, 0, 0));
   assert_eq!((rgb[6], rgb[7], rgb[8]), (255, 255, 255));
@@ -298,7 +298,7 @@ fn yuv420p10_rgb_chroma_shared_across_pair() {
   let u = [512u16; 2];
   let v = [512u16; 2];
   let mut rgb = [0u8; 12];
-  yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
   // Full-range 10→8 scale = 255/1023, so Y=200 → 50, Y=800 → 199.4 → 199.
   // Allow ±1 for Q15 rounding.
   assert!(rgb[0].abs_diff(50) <= 1, "got {}", rgb[0]);
@@ -315,7 +315,7 @@ fn yuv420p10_rgb_u16_black_full_range() {
   let u = [512u16; 2];
   let v = [512u16; 2];
   let mut rgb = [0u16; 12];
-  yuv_420p_n_to_rgb_u16_row::<10>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  yuv_420p_n_to_rgb_u16_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 0), "got {rgb:?}");
 }
 
@@ -326,7 +326,7 @@ fn yuv420p10_rgb_u16_white_full_range() {
   let u = [512u16; 2];
   let v = [512u16; 2];
   let mut rgb = [0u16; 12];
-  yuv_420p_n_to_rgb_u16_row::<10>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  yuv_420p_n_to_rgb_u16_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 1023), "got {rgb:?}");
 }
 
@@ -337,7 +337,7 @@ fn yuv420p10_rgb_u16_limited_range_endpoints() {
   let u = [512u16; 1];
   let v = [512u16; 1];
   let mut rgb = [0u16; 6];
-  yuv_420p_n_to_rgb_u16_row::<10>(&y, &u, &v, &mut rgb, 2, ColorMatrix::Bt709, false);
+  yuv_420p_n_to_rgb_u16_row::<10, false>(&y, &u, &v, &mut rgb, 2, ColorMatrix::Bt709, false);
   assert_eq!((rgb[0], rgb[1], rgb[2]), (0, 0, 0));
   assert_eq!((rgb[3], rgb[4], rgb[5]), (1023, 1023, 1023));
 }
@@ -353,8 +353,8 @@ fn yuv420p10_rgb_u16_preserves_full_10bit_precision() {
   let v = [512u16; 1];
   let mut rgb8 = [0u8; 6];
   let mut rgb16 = [0u16; 6];
-  yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb8, 2, ColorMatrix::Bt601, true);
-  yuv_420p_n_to_rgb_u16_row::<10>(&y, &u, &v, &mut rgb16, 2, ColorMatrix::Bt601, true);
+  yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb8, 2, ColorMatrix::Bt601, true);
+  yuv_420p_n_to_rgb_u16_row::<10, false>(&y, &u, &v, &mut rgb16, 2, ColorMatrix::Bt601, true);
   assert_eq!(rgb8[0], rgb8[3]);
   assert_ne!(rgb16[0], rgb16[3]);
 }
@@ -367,8 +367,8 @@ fn yuv420p10_bt709_ycgco_differ_for_chroma() {
   let v = [800u16; 1];
   let mut bt709 = [0u8; 6];
   let mut ycgco = [0u8; 6];
-  yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut bt709, 2, ColorMatrix::Bt709, true);
-  yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut ycgco, 2, ColorMatrix::YCgCo, true);
+  yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut bt709, 2, ColorMatrix::Bt709, true);
+  yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut ycgco, 2, ColorMatrix::YCgCo, true);
   let sad: i32 = bt709
     .iter()
     .zip(ycgco.iter())
@@ -391,7 +391,7 @@ fn p010_rgb_black_full_range() {
   let y = [0u16; 4];
   let uv = [0x8000u16, 0x8000, 0x8000, 0x8000]; // U0 V0 U1 V1
   let mut rgb = [0u8; 12];
-  p_n_to_rgb_row::<10>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
+  p_n_to_rgb_row::<10, false>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 0), "got {rgb:?}");
 }
 
@@ -401,7 +401,7 @@ fn p010_rgb_white_full_range() {
   let y = [0xFFC0u16; 4];
   let uv = [0x8000u16, 0x8000, 0x8000, 0x8000];
   let mut rgb = [0u8; 12];
-  p_n_to_rgb_row::<10>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
+  p_n_to_rgb_row::<10, false>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 255), "got {rgb:?}");
 }
 
@@ -411,7 +411,7 @@ fn p010_rgb_gray_is_gray() {
   let y = [0x8000u16; 4];
   let uv = [0x8000u16; 4];
   let mut rgb = [0u8; 12];
-  p_n_to_rgb_row::<10>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
+  p_n_to_rgb_row::<10, false>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
     let (r, g, b) = (rgb[x * 3], rgb[x * 3 + 1], rgb[x * 3 + 2]);
     assert_eq!(r, g);
@@ -427,7 +427,7 @@ fn p010_rgb_limited_range_endpoints() {
   let y = [0x1000u16, 0x1000, 0xEB00, 0xEB00];
   let uv = [0x8000u16, 0x8000, 0x8000, 0x8000];
   let mut rgb = [0u8; 12];
-  p_n_to_rgb_row::<10>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, false);
+  p_n_to_rgb_row::<10, false>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, false);
   assert_eq!((rgb[0], rgb[1], rgb[2]), (0, 0, 0));
   assert_eq!((rgb[3], rgb[4], rgb[5]), (0, 0, 0));
   assert_eq!((rgb[6], rgb[7], rgb[8]), (255, 255, 255));
@@ -447,7 +447,7 @@ fn p010_matches_yuv420p10_when_shifted() {
 
   let mut rgb_p10 = [0u8; 12];
   let mut rgb_p010 = [0u8; 12];
-  yuv_420p_n_to_rgb_row::<10>(
+  yuv_420p_n_to_rgb_row::<10, false>(
     &y_p10,
     &u_p10,
     &v_p10,
@@ -456,7 +456,7 @@ fn p010_matches_yuv420p10_when_shifted() {
     ColorMatrix::Bt709,
     true,
   );
-  p_n_to_rgb_row::<10>(
+  p_n_to_rgb_row::<10, false>(
     &y_p010,
     &uv_p010,
     &mut rgb_p010,
@@ -474,7 +474,7 @@ fn p010_rgb_u16_white_full_range() {
   let y = [0xFFC0u16; 4];
   let uv = [0x8000u16; 4];
   let mut rgb = [0u16; 12];
-  p_n_to_rgb_u16_row::<10>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
+  p_n_to_rgb_u16_row::<10, false>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 1023), "got {rgb:?}");
 }
 
@@ -483,7 +483,7 @@ fn p010_rgb_u16_limited_range_endpoints() {
   let y = [0x1000u16, 0xEB00];
   let uv = [0x8000u16, 0x8000];
   let mut rgb = [0u16; 6];
-  p_n_to_rgb_u16_row::<10>(&y, &uv, &mut rgb, 2, ColorMatrix::Bt709, false);
+  p_n_to_rgb_u16_row::<10, false>(&y, &uv, &mut rgb, 2, ColorMatrix::Bt709, false);
   assert_eq!((rgb[0], rgb[1], rgb[2]), (0, 0, 0));
   assert_eq!((rgb[3], rgb[4], rgb[5]), (1023, 1023, 1023));
 }
@@ -498,7 +498,7 @@ fn yuv444p10_rgba_gray_alpha_is_ff() {
   let u = [512u16; 4];
   let v = [512u16; 4];
   let mut rgba = [0u8; 16];
-  yuv_444p_n_to_rgba_row::<10>(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
+  yuv_444p_n_to_rgba_row::<10, false>(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
     let (r, g, b, a) = (
       rgba[x * 4],
@@ -522,7 +522,7 @@ fn yuv444p10_rgba_u16_gray_alpha_is_1023() {
   let u = [512u16; 4];
   let v = [512u16; 4];
   let mut rgba = [0u16; 16];
-  yuv_444p_n_to_rgba_u16_row::<10>(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
+  yuv_444p_n_to_rgba_u16_row::<10, false>(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
     let (r, g, b, a) = (
       rgba[x * 4],
@@ -546,7 +546,7 @@ fn yuv444p16_rgba_gray_alpha_is_ff() {
   let u = [0x8000u16; 4];
   let v = [0x8000u16; 4];
   let mut rgba = [0u8; 16];
-  yuv_444p16_to_rgba_row(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
+  yuv_444p16_to_rgba_row::<false>(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
     let (r, g, b, a) = (
       rgba[x * 4],
@@ -570,7 +570,7 @@ fn yuv444p16_rgba_u16_gray_alpha_is_ffff() {
   let u = [0x8000u16; 4];
   let v = [0x8000u16; 4];
   let mut rgba = [0u16; 16];
-  yuv_444p16_to_rgba_u16_row(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
+  yuv_444p16_to_rgba_u16_row::<false>(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
     let (r, g, b, a) = (
       rgba[x * 4],
@@ -596,7 +596,7 @@ fn p410_rgba_gray_alpha_is_ff() {
   // 4 pixels × (U,V) per pixel = 8 elements.
   let uv = [0x8000u16; 8];
   let mut rgba = [0u8; 16];
-  p_n_444_to_rgba_row::<10>(&y, &uv, &mut rgba, 4, ColorMatrix::Bt601, true);
+  p_n_444_to_rgba_row::<10, false>(&y, &uv, &mut rgba, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
     let (r, g, b, a) = (
       rgba[x * 4],
@@ -620,7 +620,7 @@ fn p416_rgba_u16_gray_alpha_is_ffff() {
   let y = [0x8000u16; 4];
   let uv = [0x8000u16; 8];
   let mut rgba = [0u16; 16];
-  p_n_444_16_to_rgba_u16_row(&y, &uv, &mut rgba, 4, ColorMatrix::Bt601, true);
+  p_n_444_16_to_rgba_u16_row::<false>(&y, &uv, &mut rgba, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
     let (r, g, b, a) = (
       rgba[x * 4],
@@ -641,10 +641,45 @@ fn p416_rgba_u16_gray_alpha_is_ffff() {
 // values, calls the `rgbf16_to_*_row` kernel, and then calls the matching
 // `rgbf32_to_*_row` kernel with the widened f32 slice.  The outputs must
 // be identical, proving that widening is the only difference.
+//
+// LE-host gating rationale (codex 5th-pass review of PR #83):
+//
+// The fixture builder `rgbf16_test_inputs` produces host-native `half::f16`
+// (and widened host-native `f32`) values via `half::f16::from_f32` /
+// `to_f32`. The tests then call the kernels with `::<false>`, which means
+// "input is LE-encoded — decode to host-native by applying `from_le`".
+//
+// On a little-endian host, host-native bits and LE-encoded bits are the
+// same byte sequence, so `u16::from_le` / `u32::from_le` is a no-op and
+// the assertion holds.
+//
+// On a big-endian host, host-native `f16`/`f32` bits do NOT lay out
+// little-endian, so the kernel's `from_le` byte-swap correctly
+// reinterprets the host-native fixture as if it were an LE-encoded
+// payload — producing a different (corrupted) value than the test
+// expects.  The kernel itself is correct; this is purely a
+// fixture-vs-kernel byte-order mismatch on BE hosts (same class as the
+// PR #82 alpha_extract / planar_gbr_high_bit gates in `8f2e329`).
+//
+// Kernel BE-host correctness is locked down separately by the dedicated
+// BE-parity tests in the per-backend `tests/packed_rgb_float.rs`
+// modules, which build LE-encoded fixtures via
+// `f32::from_bits(u32::from_le(_))` / `half::f16::from_bits(u16::from_le(_))`
+// and assert the kernel output matches the original host-native values
+// on every host. Those tests are intentionally NOT gated.
+//
+// The fixture set `[0.0, 1.0, 0.5, 65504.0, 1e-5, -0.5, 2.5, 0.999, 0.001]`
+// includes only one byte-symmetric value (`0.0` → `0x00..00`); every
+// other value has distinct LE/BE byte layouts, so the parity assertions
+// would fail on BE without gating.
 
 /// 9 representative half-float inputs: normal [0,1] range, HDR, subnormal-
 /// ish, negative, and over-range.  Replicated across 9 pixels × 3 channels
 /// so that every channel position sees every value at some pixel.
+///
+/// LE-only: the six parity / widen / copy tests below are all gated on
+/// `target_endian = "little"`, so this helper is unused on BE hosts.
+#[cfg(target_endian = "little")]
 fn rgbf16_test_inputs() -> (Vec<half::f16>, Vec<f32>, usize) {
   let inputs_f32: [f32; 9] = [0.0, 1.0, 0.5, 65504.0, 1e-5, -0.5, 2.5, 0.999, 0.001];
   let width = inputs_f32.len();
@@ -656,6 +691,7 @@ fn rgbf16_test_inputs() -> (Vec<half::f16>, Vec<f32>, usize) {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
@@ -664,12 +700,13 @@ fn rgbf16_scalar_rgb_matches_widen_then_rgbf32() {
   let (rgb_in, widened, width) = rgbf16_test_inputs();
   let mut out_f16 = std::vec![0u8; width * 3];
   let mut out_via_f32 = std::vec![0u8; width * 3];
-  rgbf16_to_rgb_row(&rgb_in, &mut out_f16, width);
-  rgbf32_to_rgb_row(&widened, &mut out_via_f32, width);
+  rgbf16_to_rgb_row::<false>(&rgb_in, &mut out_f16, width);
+  rgbf32_to_rgb_row::<false>(&widened, &mut out_via_f32, width);
   assert_eq!(out_f16, out_via_f32, "rgbf16_to_rgb scalar parity");
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
@@ -678,12 +715,13 @@ fn rgbf16_scalar_rgba_matches_widen_then_rgbf32() {
   let (rgb_in, widened, width) = rgbf16_test_inputs();
   let mut out_f16 = std::vec![0u8; width * 4];
   let mut out_via_f32 = std::vec![0u8; width * 4];
-  rgbf16_to_rgba_row(&rgb_in, &mut out_f16, width);
-  rgbf32_to_rgba_row(&widened, &mut out_via_f32, width);
+  rgbf16_to_rgba_row::<false>(&rgb_in, &mut out_f16, width);
+  rgbf32_to_rgba_row::<false>(&widened, &mut out_via_f32, width);
   assert_eq!(out_f16, out_via_f32, "rgbf16_to_rgba scalar parity");
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
@@ -692,12 +730,13 @@ fn rgbf16_scalar_rgb_u16_matches_widen_then_rgbf32() {
   let (rgb_in, widened, width) = rgbf16_test_inputs();
   let mut out_f16 = std::vec![0u16; width * 3];
   let mut out_via_f32 = std::vec![0u16; width * 3];
-  rgbf16_to_rgb_u16_row(&rgb_in, &mut out_f16, width);
-  rgbf32_to_rgb_u16_row(&widened, &mut out_via_f32, width);
+  rgbf16_to_rgb_u16_row::<false>(&rgb_in, &mut out_f16, width);
+  rgbf32_to_rgb_u16_row::<false>(&widened, &mut out_via_f32, width);
   assert_eq!(out_f16, out_via_f32, "rgbf16_to_rgb_u16 scalar parity");
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
@@ -706,12 +745,13 @@ fn rgbf16_scalar_rgba_u16_matches_widen_then_rgbf32() {
   let (rgb_in, widened, width) = rgbf16_test_inputs();
   let mut out_f16 = std::vec![0u16; width * 4];
   let mut out_via_f32 = std::vec![0u16; width * 4];
-  rgbf16_to_rgba_u16_row(&rgb_in, &mut out_f16, width);
-  rgbf32_to_rgba_u16_row(&widened, &mut out_via_f32, width);
+  rgbf16_to_rgba_u16_row::<false>(&rgb_in, &mut out_f16, width);
+  rgbf32_to_rgba_u16_row::<false>(&widened, &mut out_via_f32, width);
   assert_eq!(out_f16, out_via_f32, "rgbf16_to_rgba_u16 scalar parity");
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
@@ -719,7 +759,7 @@ fn rgbf16_scalar_rgba_u16_matches_widen_then_rgbf32() {
 fn rgbf16_scalar_rgb_f32_matches_element_wise_widen() {
   let (rgb_in, widened, width) = rgbf16_test_inputs();
   let mut out = std::vec![0.0f32; width * 3];
-  rgbf16_to_rgb_f32_row(&rgb_in, &mut out, width);
+  rgbf16_to_rgb_f32_row::<false>(&rgb_in, &mut out, width);
   // Each output must equal the bit-exact widening of the input f16.
   assert_eq!(
     out, widened,
@@ -728,6 +768,7 @@ fn rgbf16_scalar_rgb_f32_matches_element_wise_widen() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
@@ -735,7 +776,7 @@ fn rgbf16_scalar_rgb_f32_matches_element_wise_widen() {
 fn rgbf16_scalar_rgb_f16_is_copy() {
   let (rgb_in, _widened, width) = rgbf16_test_inputs();
   let mut out = std::vec![half::f16::ZERO; width * 3];
-  rgbf16_to_rgb_f16_row(&rgb_in, &mut out, width);
+  rgbf16_to_rgb_f16_row::<false>(&rgb_in, &mut out, width);
   assert_eq!(
     out, rgb_in,
     "rgbf16_to_rgb_f16 must be a byte-identical copy"

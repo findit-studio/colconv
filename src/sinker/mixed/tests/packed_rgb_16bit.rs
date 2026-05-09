@@ -7,6 +7,7 @@ use crate::{
 
 // ---- Rgb48 -----------------------------------------------------------------
 
+#[cfg(target_endian = "little")]
 #[test]
 fn rgb48_with_rgb_u16_identity() {
   // Native passthrough: each channel copied verbatim (no shift).
@@ -20,6 +21,7 @@ fn rgb48_with_rgb_u16_identity() {
   assert_eq!(out, vec![0x1234u16, 0x5678, 0x9ABC]);
 }
 
+#[cfg(target_endian = "little")]
 #[test]
 fn rgb48_with_rgb_narrows_correctly() {
   // Each 16-bit channel narrowed >> 8: 0xFF00 → 0xFF, 0x8000 → 0x80, 0x0100 → 0x01.
@@ -53,6 +55,7 @@ fn rgb48_with_rgba_u16_forces_0xffff() {
   assert_eq!(out[3], 0xFFFF);
 }
 
+#[cfg(target_endian = "little")]
 #[test]
 fn rgb48_with_rgb_u16_and_rgba_u16_both_correct() {
   // Two pixels: verify identity copy for RGB and forced alpha for RGBA.
@@ -73,6 +76,7 @@ fn rgb48_with_rgb_u16_and_rgba_u16_both_correct() {
   assert_eq!(rgba_u16[7], 0xFFFF);
 }
 
+#[cfg(target_endian = "little")]
 #[test]
 fn rgb48_with_luma_non_zero_for_nonzero_input() {
   // Any non-zero equal R/G/B → non-zero luma.
@@ -86,6 +90,7 @@ fn rgb48_with_luma_non_zero_for_nonzero_input() {
   assert_ne!(luma[0], 0);
 }
 
+#[cfg(target_endian = "little")]
 #[test]
 fn rgb48_with_luma_u16_non_zero_for_nonzero_input() {
   let src: Vec<u16> = vec![0x8000, 0x8000, 0x8000];
@@ -120,6 +125,7 @@ fn rgb48_simd_matches_scalar() {
 
 // ---- Bgr48 -----------------------------------------------------------------
 
+#[cfg(target_endian = "little")]
 #[test]
 fn bgr48_channel_order_swapped_vs_rgb48() {
   // B=0x1000, G=0x2000, R=0x3000 stored in BGR input order.
@@ -169,6 +175,7 @@ fn bgr48_with_rgba_u16_forces_0xffff() {
 
 // ---- Rgba64 ----------------------------------------------------------------
 
+#[cfg(target_endian = "little")]
 #[test]
 fn rgba64_with_rgba_passes_source_alpha_u8() {
   // R=0xFFFF, G=0x8000, B=0x0000, A=0xABFF → alpha byte = 0xABFF >> 8 = 0xAB.
@@ -182,6 +189,7 @@ fn rgba64_with_rgba_passes_source_alpha_u8() {
   assert_eq!(out[3], 0xAB); // 0xABFF >> 8 = 0xAB
 }
 
+#[cfg(target_endian = "little")]
 #[test]
 fn rgba64_with_rgba_u16_passes_source_alpha_native() {
   // Source α = 0xABCD must be preserved verbatim (no shift).
@@ -284,6 +292,7 @@ fn rgba64_with_rgb_u16_drops_alpha() {
 
 // ---- Bgra64 ----------------------------------------------------------------
 
+#[cfg(target_endian = "little")]
 #[test]
 fn bgra64_channel_order_and_alpha_preserved() {
   // B=0x1000, G=0x2000, R=0x3000, A=0xAAAA in BGRA source order.
@@ -353,6 +362,7 @@ fn bgra64_strategy_a_plus_u16_path_byte_identical() {
   assert_eq!(rgba_u16_combo, rgba_u16_only);
 }
 
+#[cfg(target_endian = "little")]
 #[test]
 fn bgra64_with_rgba_u16_passes_source_alpha_native() {
   let src: Vec<u16> = vec![0x1000, 0x2000, 0x3000, 0xBEEF];
@@ -395,6 +405,7 @@ fn rgba64_row_shape_mismatch_returns_error() {
   assert!(matches!(err, MixedSinkerError::RowShapeMismatch { .. }));
 }
 
+#[cfg(target_endian = "little")]
 #[test]
 fn rgb48_multi_row_frame() {
   // 2×2 frame: verify correct row-by-row accumulation.
@@ -416,4 +427,65 @@ fn rgb48_multi_row_frame() {
   assert_eq!(out[9], 0xFF);
   assert_eq!(out[10], 0xFF);
   assert_eq!(out[11], 0xFF);
+}
+
+// ---- BE-contract regression -----------------------------------------------
+
+/// Rgb48 sinker LE-encoded plane decodes correctly on every host.
+///
+/// The frame doc-comment contract (see `src/frame/packed_rgb_16bit.rs`) says
+/// the `&[u16]` plane is the **LE-encoded byte layout** reinterpreted as
+/// `u16` (matching FFmpeg's `*LE` suffix). On a little-endian host LE bytes
+/// are host-native — identity. On a big-endian host the bytes are swapped
+/// relative to host-native, so the kernel must apply `u16::from_le` (kernel
+/// generic `BE = false`) to recover the host-native sample before arithmetic.
+///
+/// This test builds the plane from LE-encoded u16 patterns
+/// (`intended.to_le()` on each sample) and asserts the sinker output matches
+/// the host-native `intended` values bit-exact via the `with_rgb_u16`
+/// (identity) path. On a BE host with a regressed pre-swap (caller swaps,
+/// kernel swaps again → double swap) this would corrupt every sample.
+///
+/// Forces `with_simd(false)` so this test runs purely scalar — no SIMD
+/// intrinsics — which lets it execute under `cargo miri test`. BE CI is
+/// driven by miri on s390x / powerpc64; gating it out of miri would skip
+/// exactly the host where BE corruption would surface.
+///
+/// Mirrors the `rgbf32_sinker_le_encoded_frame_decodes_correctly` pattern
+/// added in PR #92's `5b42065` / `3b1d716`.
+#[test]
+fn rgb48_sinker_le_encoded_frame_decodes_correctly() {
+  // Mix high / mid / low / asymmetric byte patterns so any byte-swap regression
+  // shows up as a non-trivial mismatch (not just a no-op pattern).
+  let intended: Vec<u16> = (0..16 * 4 * 3)
+    .map(|i| match i % 4 {
+      0 => 0x1234,
+      1 => 0xABCD,
+      2 => 0x00FF,
+      _ => 0xFF00,
+    })
+    .collect();
+  // Construct the plane as LE-encoded u16 (the documented `*LE` Frame
+  // contract). On LE host this is identity; on BE host the bit-pattern is
+  // byte-swapped so the kernel must `from_le` it back to host-native.
+  let pix: Vec<u16> = intended.iter().map(|&v| v.to_le()).collect();
+  let src = Rgb48Frame::try_new(&pix, 16, 4, 16 * 3).unwrap();
+
+  // `with_rgb_u16` is the identity passthrough — the cleanest probe of the
+  // endian contract because no narrowing or arithmetic obscures the bit
+  // pattern. A single mismatched sample byte-swap would be unmissable.
+  let mut rgb_u16_out = vec![0u16; 16 * 4 * 3];
+  let mut sink = MixedSinker::<Rgb48>::new(16, 4)
+    .with_simd(false)
+    .with_rgb_u16(&mut rgb_u16_out)
+    .unwrap();
+  rgb48_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  // Output must be host-native intended values. On a BE host with a
+  // regressed pre-swap (caller swaps, kernel swaps again) this would be
+  // byte-swapped relative to `intended`.
+  assert_eq!(
+    rgb_u16_out, intended,
+    "Rgb48 sinker LE-encoded plane decoded incorrectly (BE-contract regression)"
+  );
 }

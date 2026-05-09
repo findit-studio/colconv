@@ -310,3 +310,60 @@ fn rgbf16_simd_matches_scalar_with_random_input() {
   assert_eq!(luma_u16_simd, luma_u16_scalar, "Luma u16 output diverges");
   assert_eq!(rgb_f16_simd, pix, "RGB f16 output is not lossless");
 }
+
+/// LE-encoded byte contract regression: builds an [`Rgbf16Frame`] from a
+/// `&[half::f16]` plane explicitly encoded as LE bytes (per the FFmpeg
+/// `AV_PIX_FMT_*LE` convention documented on `Rgbf16Frame`), runs it
+/// through the sinker's `with_rgb_f16` lossless pass-through, and asserts
+/// the output equals the host-native intended values.
+///
+/// Vacuous on LE hosts (where `to_le` on a `u16` is a no-op so the LE-
+/// encoded plane *is* host-native), but on a BE host this would fail fast
+/// for any regression that drops the `::<false>` kernel routing — the
+/// kernel must apply `u16::from_le` to recover host-native f16 bit-patterns
+/// from the LE-encoded bytes.
+///
+/// Mirrors the `Grayf32` regression added in PR #85's `52f8191`.
+///
+/// Forces `with_simd(false)` so this test runs purely scalar — no SIMD
+/// intrinsics — which lets it execute under `cargo miri test`. BE CI is
+/// driven by miri on s390x / powerpc64; gating it out of miri (per the
+/// codex 4th-pass finding) would skip exactly the host where BE corruption
+/// would surface.
+///
+/// Re-gated on miri because the fixture builder calls `half::f16::from_f32`,
+/// which on aarch64 / x86 / x86_64 with `target_feature = "fp16"` (or F16C)
+/// expands to inline `asm!` that miri rejects. BE-host miri (s390x /
+/// powerpc64) covers the byte-swap correctness via the f32 LE-encoded
+/// regression tests in this module instead.
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
+)]
+fn rgbf16_sinker_le_encoded_frame_decodes_correctly() {
+  let vals_f32 = [0.5f32, 1.5, -0.25, 100.0];
+  let intended: Vec<half::f16> = (0..16 * 4 * 3)
+    .map(|i| half::f16::from_f32(vals_f32[i % vals_f32.len()]))
+    .collect();
+  // Encode the plane as LE bytes reinterpreted as f16 (the documented
+  // `*LE` Frame contract). On LE host: identity. On BE host: byte-swapped
+  // bit-patterns the kernel must `from_le` back to host-native.
+  let pix: Vec<half::f16> = intended
+    .iter()
+    .map(|&v| half::f16::from_bits(v.to_bits().to_le()))
+    .collect();
+  let src = Rgbf16Frame::try_new(&pix, 16, 4, 16 * 3).unwrap();
+
+  let mut rgb_f16_out = std::vec![half::f16::ZERO; 16 * 4 * 3];
+  let mut sink = MixedSinker::<Rgbf16>::new(16, 4)
+    .with_simd(false)
+    .with_rgb_f16(&mut rgb_f16_out)
+    .unwrap();
+  rgbf16_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  assert_eq!(
+    rgb_f16_out, intended,
+    "Rgbf16 sinker LE-encoded plane decoded incorrectly"
+  );
+}

@@ -245,3 +245,60 @@ fn rgbf32_simd_matches_scalar_with_random_input() {
   assert_eq!(luma_u16_simd, luma_u16_scalar, "Luma u16 output diverges");
   assert_eq!(rgb_f32_simd, pix, "RGB f32 output is not lossless");
 }
+
+/// LE-encoded byte contract regression: builds an [`Rgbf32Frame`] from a
+/// `&[f32]` plane explicitly encoded as LE bytes (per the FFmpeg
+/// `AV_PIX_FMT_*LE` convention documented on `Rgbf32Frame`), runs it
+/// through the sinker's `with_rgb_f32` lossless pass-through, and asserts
+/// the output equals the host-native intended values.
+///
+/// Vacuous on LE hosts (where `f32::to_le_bytes` is a no-op so the LE-
+/// encoded plane *is* host-native), but on a BE host this would fail fast
+/// for any regression that drops the `::<false>` kernel routing — the
+/// kernel must apply `u32::from_le` to recover host-native f32 from the
+/// LE-encoded bytes; if it skipped the swap (e.g. `::<HOST_NATIVE_BE>` on
+/// BE), the output would be byte-swapped relative to `intended`.
+///
+/// Mirrors the `Grayf32` regression added in PR #85's `52f8191`.
+///
+/// Forces `with_simd(false)` so this test runs purely scalar — no SIMD
+/// intrinsics — which lets it execute under `cargo miri test`. BE CI is
+/// driven by miri on s390x / powerpc64; gating it out of miri (per the
+/// codex 4th-pass finding) would skip exactly the host where BE corruption
+/// would surface.
+#[test]
+fn rgbf32_sinker_le_encoded_frame_decodes_correctly() {
+  // Mix HDR, in-range, and negative values — the f32 lossless path must
+  // round-trip them bit-exact on every host.
+  let intended: Vec<f32> = (0..16 * 4 * 3)
+    .map(|i| match i % 4 {
+      0 => 0.5,
+      1 => 1.5,
+      2 => -0.25,
+      _ => 100.0,
+    })
+    .collect();
+  // Construct the plane as LE-encoded bytes reinterpreted as f32 (the
+  // documented `*LE` Frame contract). On LE host this is identity; on BE
+  // host the bit-pattern is byte-swapped so the kernel must `from_le` it
+  // back to host-native.
+  let pix: Vec<f32> = intended
+    .iter()
+    .map(|&v| f32::from_bits(v.to_bits().to_le()))
+    .collect();
+  let src = Rgbf32Frame::try_new(&pix, 16, 4, 16 * 3).unwrap();
+
+  let mut rgb_f32_out = std::vec![0.0f32; 16 * 4 * 3];
+  let mut sink = MixedSinker::<Rgbf32>::new(16, 4)
+    .with_simd(false)
+    .with_rgb_f32(&mut rgb_f32_out)
+    .unwrap();
+  rgbf32_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  // Output must be host-native intended values. On a BE host with a
+  // regressed `::<HOST_NATIVE_BE>` routing this would be byte-swapped.
+  assert_eq!(
+    rgb_f32_out, intended,
+    "Rgbf32 sinker LE-encoded plane decoded incorrectly"
+  );
+}

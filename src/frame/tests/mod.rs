@@ -24,6 +24,7 @@ mod v210;
 mod y2xx;
 mod ya16;
 mod ya8;
+mod yuva_high_bit;
 
 // ---- 32-bit overflow regressions --------------------------------------
 //

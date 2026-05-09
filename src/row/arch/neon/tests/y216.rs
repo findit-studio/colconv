@@ -15,9 +15,9 @@ fn check_rgb<const ALPHA: bool>(width: usize, matrix: ColorMatrix, full_range: b
   let bpp = if ALPHA { 4 } else { 3 };
   let mut s = std::vec![0u8; width * bpp];
   let mut k = std::vec![0u8; width * bpp];
-  scalar::y216_to_rgb_or_rgba_row::<ALPHA>(&p, &mut s, width, matrix, full_range);
+  scalar::y216_to_rgb_or_rgba_row::<ALPHA, false>(&p, &mut s, width, matrix, full_range);
   unsafe {
-    y216_to_rgb_or_rgba_row::<ALPHA>(&p, &mut k, width, matrix, full_range);
+    y216_to_rgb_or_rgba_row::<ALPHA, false>(&p, &mut k, width, matrix, full_range);
   }
   assert_eq!(
     s,
@@ -32,9 +32,9 @@ fn check_rgb_u16<const ALPHA: bool>(width: usize, matrix: ColorMatrix, full_rang
   let bpp = if ALPHA { 4 } else { 3 };
   let mut s = std::vec![0u16; width * bpp];
   let mut k = std::vec![0u16; width * bpp];
-  scalar::y216_to_rgb_u16_or_rgba_u16_row::<ALPHA>(&p, &mut s, width, matrix, full_range);
+  scalar::y216_to_rgb_u16_or_rgba_u16_row::<ALPHA, false>(&p, &mut s, width, matrix, full_range);
   unsafe {
-    y216_to_rgb_u16_or_rgba_u16_row::<ALPHA>(&p, &mut k, width, matrix, full_range);
+    y216_to_rgb_u16_or_rgba_u16_row::<ALPHA, false>(&p, &mut k, width, matrix, full_range);
   }
   assert_eq!(
     s,
@@ -48,9 +48,9 @@ fn check_luma(width: usize) {
   let p = pseudo_random_y216(width, 0xC001);
   let mut s = std::vec![0u8; width];
   let mut k = std::vec![0u8; width];
-  scalar::y216_to_luma_row(&p, &mut s, width);
+  scalar::y216_to_luma_row::<false>(&p, &mut s, width);
   unsafe {
-    y216_to_luma_row(&p, &mut k, width);
+    y216_to_luma_row::<false>(&p, &mut k, width);
   }
   assert_eq!(s, k, "NEON y216→luma diverges (width={width})");
 }
@@ -59,9 +59,9 @@ fn check_luma_u16(width: usize) {
   let p = pseudo_random_y216(width, 0xC001);
   let mut s = std::vec![0u16; width];
   let mut k = std::vec![0u16; width];
-  scalar::y216_to_luma_u16_row(&p, &mut s, width);
+  scalar::y216_to_luma_u16_row::<false>(&p, &mut s, width);
   unsafe {
-    y216_to_luma_u16_row(&p, &mut k, width);
+    y216_to_luma_u16_row::<false>(&p, &mut k, width);
   }
   assert_eq!(s, k, "NEON y216→luma u16 diverges (width={width})");
 }
@@ -142,7 +142,7 @@ fn neon_y216_lane_order_per_pixel_y_and_u() {
   // Part 1: Luma natural-order at u16
   let mut luma_u16 = std::vec![0u16; W];
   unsafe {
-    y216_to_luma_u16_row(&packed, &mut luma_u16, W);
+    y216_to_luma_u16_row::<false>(&packed, &mut luma_u16, W);
   }
   let expected_luma: std::vec::Vec<u16> = (1..=W as u16).collect();
   assert_eq!(luma_u16, expected_luma, "NEON y216 luma_u16 reorder bug");
@@ -151,9 +151,15 @@ fn neon_y216_lane_order_per_pixel_y_and_u() {
   let mut simd_rgb = std::vec![0u16; W * 3];
   let mut scalar_rgb = std::vec![0u16; W * 3];
   unsafe {
-    y216_to_rgb_u16_or_rgba_u16_row::<false>(&packed, &mut simd_rgb, W, ColorMatrix::Bt709, false);
+    y216_to_rgb_u16_or_rgba_u16_row::<false, false>(
+      &packed,
+      &mut simd_rgb,
+      W,
+      ColorMatrix::Bt709,
+      false,
+    );
   }
-  scalar::y216_to_rgb_u16_or_rgba_u16_row::<false>(
+  scalar::y216_to_rgb_u16_or_rgba_u16_row::<false, false>(
     &packed,
     &mut scalar_rgb,
     W,
@@ -164,4 +170,99 @@ fn neon_y216_lane_order_per_pixel_y_and_u() {
     simd_rgb, scalar_rgb,
     "NEON y216 SIMD vs scalar diverges (u16 RGB, i64 chroma)"
   );
+}
+
+// ---- Host-independent BE/LE SIMD parity tests ----------------------------
+//
+// Built per PR #86 `6924907` pattern: construct LE/BE buffers from raw
+// bytes via `to_le_bytes` / `to_be_bytes` and reinterpret as host-native
+// `u16` via `from_ne_bytes`. The byte-level encoding is host-independent —
+// on every host the LE buffer carries the intended values as LE-encoded
+// bytes and the BE buffer carries the same values as BE-encoded bytes —
+// so both kernel monomorphizations decode to the same logical values and
+// produce byte-identical output on both LE and BE hosts. Locks down the
+// `BE == HOST_NATIVE_BE` host-endian gate fix applied to the NEON Y216
+// SIMD bodies (mirrors PR #82 `9c7d533` / PR #85 `9e678b0` /
+// PR #86 `b7fb9d3`).
+
+fn build_le_be_y216(width: usize, seed: usize) -> (std::vec::Vec<u16>, std::vec::Vec<u16>) {
+  let intended = pseudo_random_y216(width, seed);
+  let le_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
+  let be_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_be_bytes()).collect();
+  let le: std::vec::Vec<u16> = le_bytes
+    .chunks_exact(2)
+    .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+    .collect();
+  let be: std::vec::Vec<u16> = be_bytes
+    .chunks_exact(2)
+    .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+    .collect();
+  (le, be)
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn neon_y216_be_le_simd_parity() {
+  // Widths covering tail-only (< 16), full SIMD body (16 px), and
+  // body+tail to exercise both code paths on every host.
+  for w in [8usize, 14, 16, 22, 32, 1920] {
+    let (le, be) = build_le_be_y216(w, 0xBEEF);
+
+    // u8 RGB
+    let mut le_rgb = std::vec![0u8; w * 3];
+    let mut be_rgb = std::vec![0u8; w * 3];
+    unsafe {
+      y216_to_rgb_or_rgba_row::<false, false>(&le, &mut le_rgb, w, ColorMatrix::Bt709, false);
+      y216_to_rgb_or_rgba_row::<false, true>(&be, &mut be_rgb, w, ColorMatrix::Bt709, false);
+    }
+    assert_eq!(le_rgb, be_rgb, "y216 NEON LE vs BE RGB parity (w={w})");
+
+    // u8 RGBA
+    let mut le_rgba = std::vec![0u8; w * 4];
+    let mut be_rgba = std::vec![0u8; w * 4];
+    unsafe {
+      y216_to_rgb_or_rgba_row::<true, false>(&le, &mut le_rgba, w, ColorMatrix::Bt709, false);
+      y216_to_rgb_or_rgba_row::<true, true>(&be, &mut be_rgba, w, ColorMatrix::Bt709, false);
+    }
+    assert_eq!(le_rgba, be_rgba, "y216 NEON LE vs BE RGBA parity (w={w})");
+
+    // u16 RGB (i64-chroma path)
+    let mut le_u16 = std::vec![0u16; w * 3];
+    let mut be_u16 = std::vec![0u16; w * 3];
+    unsafe {
+      y216_to_rgb_u16_or_rgba_u16_row::<false, false>(
+        &le,
+        &mut le_u16,
+        w,
+        ColorMatrix::Bt2020Ncl,
+        true,
+      );
+      y216_to_rgb_u16_or_rgba_u16_row::<false, true>(
+        &be,
+        &mut be_u16,
+        w,
+        ColorMatrix::Bt2020Ncl,
+        true,
+      );
+    }
+    assert_eq!(le_u16, be_u16, "y216 NEON LE vs BE RGB u16 parity (w={w})");
+
+    // luma u8
+    let mut le_l = std::vec![0u8; w];
+    let mut be_l = std::vec![0u8; w];
+    unsafe {
+      y216_to_luma_row::<false>(&le, &mut le_l, w);
+      y216_to_luma_row::<true>(&be, &mut be_l, w);
+    }
+    assert_eq!(le_l, be_l, "y216 NEON LE vs BE luma u8 parity (w={w})");
+
+    // luma u16
+    let mut le_lu = std::vec![0u16; w];
+    let mut be_lu = std::vec![0u16; w];
+    unsafe {
+      y216_to_luma_u16_row::<false>(&le, &mut le_lu, w);
+      y216_to_luma_u16_row::<true>(&be, &mut be_lu, w);
+    }
+    assert_eq!(le_lu, be_lu, "y216 NEON LE vs BE luma u16 parity (w={w})");
+  }
 }

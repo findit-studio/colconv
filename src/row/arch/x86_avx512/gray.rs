@@ -16,7 +16,10 @@
 
 use core::arch::x86_64::*;
 
-use crate::row::scalar::{bits_mask, gray as scalar};
+use crate::row::{
+  arch::x86_avx512::endian::{load_endian_u16x32, load_endian_u32x16},
+  scalar::{bits_mask, gray as scalar},
+};
 
 // ---- Gray8 ------------------------------------------------------------------
 
@@ -116,7 +119,7 @@ pub(crate) unsafe fn gray8_to_hsv_row(
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
@@ -124,7 +127,7 @@ pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32>(
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  scalar::gray_n_to_rgb_row::<BITS>(y_plane, out, width, full_range);
+  scalar::gray_n_to_rgb_row::<BITS, BE>(y_plane, out, width, full_range);
 }
 
 /// AVX-512 `gray_n_to_rgba_row<BITS>`.
@@ -136,7 +139,7 @@ pub(crate) unsafe fn gray_n_to_rgb_row<const BITS: u32>(
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
@@ -144,7 +147,7 @@ pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32>(
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  scalar::gray_n_to_rgba_row::<BITS>(y_plane, out, width, full_range);
+  scalar::gray_n_to_rgba_row::<BITS, BE>(y_plane, out, width, full_range);
 }
 
 /// AVX-512 `gray_n_to_rgb_u16_row<BITS>`.
@@ -156,7 +159,7 @@ pub(crate) unsafe fn gray_n_to_rgba_row<const BITS: u32>(
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -164,7 +167,7 @@ pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32>(
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  scalar::gray_n_to_rgb_u16_row::<BITS>(y_plane, out, width, full_range);
+  scalar::gray_n_to_rgb_u16_row::<BITS, BE>(y_plane, out, width, full_range);
 }
 
 /// AVX-512 `gray_n_to_rgba_u16_row<BITS>`.
@@ -176,7 +179,7 @@ pub(crate) unsafe fn gray_n_to_rgb_u16_row<const BITS: u32>(
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -184,7 +187,7 @@ pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32>(
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  scalar::gray_n_to_rgba_u16_row::<BITS>(y_plane, out, width, full_range);
+  scalar::gray_n_to_rgba_u16_row::<BITS, BE>(y_plane, out, width, full_range);
 }
 
 /// AVX-512 `gray_n_to_luma_row<BITS>`: mask + shift → u8. 32 pixels/iter.
@@ -196,7 +199,7 @@ pub(crate) unsafe fn gray_n_to_rgba_u16_row<const BITS: u32>(
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
@@ -211,7 +214,7 @@ pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32>(
     // requires a literal const generic shift not expressible as `BITS - 8`.
     let shr = _mm_cvtsi32_si128((BITS - 8) as i32);
     while x + 32 <= width {
-      let raw = _mm512_loadu_si512(y_plane.as_ptr().add(x).cast());
+      let raw = load_endian_u16x32::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let masked = _mm512_and_si512(raw, mask_v);
       // Shift right by (BITS - 8) to get u8-range value in u16
       let shifted = _mm512_srl_epi16(masked, shr);
@@ -222,7 +225,7 @@ pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32>(
     }
   }
   if x < width {
-    scalar::gray_n_to_luma_row::<BITS>(&y_plane[x..width], &mut out[x..width], width - x);
+    scalar::gray_n_to_luma_row::<BITS, BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -235,7 +238,7 @@ pub(crate) unsafe fn gray_n_to_luma_row<const BITS: u32>(
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn gray_n_to_luma_u16_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_luma_u16_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -247,14 +250,14 @@ pub(crate) unsafe fn gray_n_to_luma_u16_row<const BITS: u32>(
   unsafe {
     let mask_v = _mm512_set1_epi16(mask as i16);
     while x + 32 <= width {
-      let raw = _mm512_loadu_si512(y_plane.as_ptr().add(x).cast());
+      let raw = load_endian_u16x32::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let masked = _mm512_and_si512(raw, mask_v);
       _mm512_storeu_si512(out.as_mut_ptr().add(x).cast(), masked);
       x += 32;
     }
   }
   if x < width {
-    scalar::gray_n_to_luma_u16_row::<BITS>(&y_plane[x..width], &mut out[x..width], width - x);
+    scalar::gray_n_to_luma_u16_row::<BITS, BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -268,7 +271,7 @@ pub(crate) unsafe fn gray_n_to_luma_u16_row<const BITS: u32>(
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
+pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32, const BE: bool>(
   y_plane: &[u16],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -278,7 +281,7 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
 ) {
   debug_assert!(y_plane.len() >= width);
   if !full_range {
-    return scalar::gray_n_to_hsv_row::<BITS>(y_plane, h_out, s_out, v_out, width, full_range);
+    return scalar::gray_n_to_hsv_row::<BITS, BE>(y_plane, h_out, s_out, v_out, width, full_range);
   }
   let mask = bits_mask::<BITS>();
   let mut x = 0usize;
@@ -287,7 +290,7 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
     let shr = _mm_cvtsi32_si128((BITS - 8) as i32);
     let zero256 = _mm256_setzero_si256();
     while x + 32 <= width {
-      let raw = _mm512_loadu_si512(y_plane.as_ptr().add(x).cast());
+      let raw = load_endian_u16x32::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let masked = _mm512_and_si512(raw, mask_v);
       let shifted = _mm512_srl_epi16(masked, shr);
       let packed = _mm512_cvtepi16_epi8(shifted);
@@ -299,7 +302,7 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
     }
   }
   if x < width {
-    scalar::gray_n_to_hsv_row::<BITS>(
+    scalar::gray_n_to_hsv_row::<BITS, BE>(
       &y_plane[x..width],
       &mut h_out[x..width],
       &mut s_out[x..width],
@@ -321,7 +324,7 @@ pub(crate) unsafe fn gray_n_to_hsv_row<const BITS: u32>(
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn gray16_to_rgb_row(
+pub(crate) unsafe fn gray16_to_rgb_row<const BE: bool>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
@@ -329,7 +332,7 @@ pub(crate) unsafe fn gray16_to_rgb_row(
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  scalar::gray16_to_rgb_row(y_plane, out, width, full_range);
+  scalar::gray16_to_rgb_row::<BE>(y_plane, out, width, full_range);
 }
 
 /// AVX-512 `gray16_to_rgba_row`.
@@ -341,7 +344,7 @@ pub(crate) unsafe fn gray16_to_rgb_row(
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn gray16_to_rgba_row(
+pub(crate) unsafe fn gray16_to_rgba_row<const BE: bool>(
   y_plane: &[u16],
   out: &mut [u8],
   width: usize,
@@ -349,7 +352,7 @@ pub(crate) unsafe fn gray16_to_rgba_row(
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  scalar::gray16_to_rgba_row(y_plane, out, width, full_range);
+  scalar::gray16_to_rgba_row::<BE>(y_plane, out, width, full_range);
 }
 
 /// AVX-512 `gray16_to_rgb_u16_row`.
@@ -361,7 +364,7 @@ pub(crate) unsafe fn gray16_to_rgba_row(
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn gray16_to_rgb_u16_row(
+pub(crate) unsafe fn gray16_to_rgb_u16_row<const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -369,7 +372,7 @@ pub(crate) unsafe fn gray16_to_rgb_u16_row(
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  scalar::gray16_to_rgb_u16_row(y_plane, out, width, full_range);
+  scalar::gray16_to_rgb_u16_row::<BE>(y_plane, out, width, full_range);
 }
 
 /// AVX-512 `gray16_to_rgba_u16_row`.
@@ -381,7 +384,7 @@ pub(crate) unsafe fn gray16_to_rgb_u16_row(
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn gray16_to_rgba_u16_row(
+pub(crate) unsafe fn gray16_to_rgba_u16_row<const BE: bool>(
   y_plane: &[u16],
   out: &mut [u16],
   width: usize,
@@ -389,7 +392,7 @@ pub(crate) unsafe fn gray16_to_rgba_u16_row(
 ) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
-  scalar::gray16_to_rgba_u16_row(y_plane, out, width, full_range);
+  scalar::gray16_to_rgba_u16_row::<BE>(y_plane, out, width, full_range);
 }
 
 /// AVX-512 `gray16_to_luma_row`: `>> 8`, pack to u8. 32 pixels/iter.
@@ -401,13 +404,17 @@ pub(crate) unsafe fn gray16_to_rgba_u16_row(
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn gray16_to_luma_row(y_plane: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn gray16_to_luma_row<const BE: bool>(
+  y_plane: &[u16],
+  out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
   let mut x = 0usize;
   unsafe {
     while x + 32 <= width {
-      let raw = _mm512_loadu_si512(y_plane.as_ptr().add(x).cast());
+      let raw = load_endian_u16x32::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let shifted = _mm512_srli_epi16(raw, 8);
       let packed = _mm512_cvtepi16_epi8(shifted);
       _mm256_storeu_si256(out.as_mut_ptr().add(x).cast(), packed);
@@ -415,7 +422,7 @@ pub(crate) unsafe fn gray16_to_luma_row(y_plane: &[u16], out: &mut [u8], width: 
     }
   }
   if x < width {
-    scalar::gray16_to_luma_row(&y_plane[x..width], &mut out[x..width], width - x);
+    scalar::gray16_to_luma_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -428,19 +435,23 @@ pub(crate) unsafe fn gray16_to_luma_row(y_plane: &[u16], out: &mut [u8], width: 
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn gray16_to_luma_u16_row(y_plane: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn gray16_to_luma_u16_row<const BE: bool>(
+  y_plane: &[u16],
+  out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
   let mut x = 0usize;
   unsafe {
     while x + 32 <= width {
-      let y = _mm512_loadu_si512(y_plane.as_ptr().add(x).cast());
+      let y = load_endian_u16x32::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       _mm512_storeu_si512(out.as_mut_ptr().add(x).cast(), y);
       x += 32;
     }
   }
   if x < width {
-    scalar::gray16_to_luma_u16_row(&y_plane[x..width], &mut out[x..width], width - x);
+    scalar::gray16_to_luma_u16_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -454,7 +465,7 @@ pub(crate) unsafe fn gray16_to_luma_u16_row(y_plane: &[u16], out: &mut [u16], wi
 #[allow(dead_code)]
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn gray16_to_hsv_row(
+pub(crate) unsafe fn gray16_to_hsv_row<const BE: bool>(
   y_plane: &[u16],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -464,13 +475,13 @@ pub(crate) unsafe fn gray16_to_hsv_row(
 ) {
   debug_assert!(y_plane.len() >= width);
   if !full_range {
-    return scalar::gray16_to_hsv_row(y_plane, h_out, s_out, v_out, width, full_range);
+    return scalar::gray16_to_hsv_row::<BE>(y_plane, h_out, s_out, v_out, width, full_range);
   }
   let mut x = 0usize;
   unsafe {
     let zero256 = _mm256_setzero_si256();
     while x + 32 <= width {
-      let raw = _mm512_loadu_si512(y_plane.as_ptr().add(x).cast());
+      let raw = load_endian_u16x32::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 2));
       let shifted = _mm512_srli_epi16(raw, 8);
       let packed = _mm512_cvtepi16_epi8(shifted);
       _mm256_storeu_si256(h_out.as_mut_ptr().add(x).cast(), zero256);
@@ -480,7 +491,7 @@ pub(crate) unsafe fn gray16_to_hsv_row(
     }
   }
   if x < width {
-    scalar::gray16_to_hsv_row(
+    scalar::gray16_to_hsv_row::<BE>(
       &y_plane[x..width],
       &mut h_out[x..width],
       &mut s_out[x..width],
@@ -502,7 +513,11 @@ pub(crate) unsafe fn gray16_to_hsv_row(
 /// AVX-512F must be available.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn grayf32_to_rgb_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [u8],
+  width: usize,
+) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
@@ -510,7 +525,9 @@ pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: 
   let mut x = 0usize;
   unsafe {
     while x + 16 <= width {
-      let y = _mm512_loadu_ps(y_plane.as_ptr().add(x));
+      let y = _mm512_castsi512_ps(load_endian_u32x16::<BE>(
+        y_plane.as_ptr().cast::<u8>().add(x * 4),
+      ));
       let clamped = _mm512_min_ps(_mm512_max_ps(y, _mm512_setzero_ps()), _mm512_set1_ps(1.0));
       // Round-half-up: + 0.5 then truncate (matches scalar).
       let int32 = _mm512_cvttps_epi32(_mm512_add_ps(
@@ -532,7 +549,7 @@ pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: 
     }
   }
   if x < width {
-    scalar::grayf32_to_rgb_row(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
+    scalar::grayf32_to_rgb_row::<BE>(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
   }
 }
 
@@ -542,7 +559,11 @@ pub(crate) unsafe fn grayf32_to_rgb_row(y_plane: &[f32], out: &mut [u8], width: 
 /// AVX-512F must be available.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn grayf32_to_rgba_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [u8],
+  width: usize,
+) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
@@ -550,7 +571,9 @@ pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width:
   let mut x = 0usize;
   unsafe {
     while x + 16 <= width {
-      let y = _mm512_loadu_ps(y_plane.as_ptr().add(x));
+      let y = _mm512_castsi512_ps(load_endian_u32x16::<BE>(
+        y_plane.as_ptr().cast::<u8>().add(x * 4),
+      ));
       let clamped = _mm512_min_ps(_mm512_max_ps(y, _mm512_setzero_ps()), _mm512_set1_ps(1.0));
       let int32 = _mm512_cvttps_epi32(_mm512_add_ps(
         _mm512_mul_ps(clamped, scale),
@@ -570,7 +593,7 @@ pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width:
     }
   }
   if x < width {
-    scalar::grayf32_to_rgba_row(&y_plane[x..width], &mut out[x * 4..width * 4], width - x);
+    scalar::grayf32_to_rgba_row::<BE>(&y_plane[x..width], &mut out[x * 4..width * 4], width - x);
   }
 }
 
@@ -580,7 +603,11 @@ pub(crate) unsafe fn grayf32_to_rgba_row(y_plane: &[f32], out: &mut [u8], width:
 /// AVX-512F must be available.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn grayf32_to_rgb_u16_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [u16],
+  width: usize,
+) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
@@ -588,7 +615,9 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
   let mut x = 0usize;
   unsafe {
     while x + 16 <= width {
-      let y = _mm512_loadu_ps(y_plane.as_ptr().add(x));
+      let y = _mm512_castsi512_ps(load_endian_u32x16::<BE>(
+        y_plane.as_ptr().cast::<u8>().add(x * 4),
+      ));
       let clamped = _mm512_min_ps(_mm512_max_ps(y, _mm512_setzero_ps()), _mm512_set1_ps(1.0));
       // Round-to-nearest with embedded rounding.
       let int32 = _mm512_cvttps_epi32(_mm512_add_ps(
@@ -610,7 +639,7 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
     }
   }
   if x < width {
-    scalar::grayf32_to_rgb_u16_row(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
+    scalar::grayf32_to_rgb_u16_row::<BE>(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
   }
 }
 
@@ -620,7 +649,11 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row(y_plane: &[f32], out: &mut [u16], wi
 /// AVX-512F must be available.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn grayf32_to_rgba_u16_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [u16],
+  width: usize,
+) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 4);
@@ -628,7 +661,9 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
   let mut x = 0usize;
   unsafe {
     while x + 16 <= width {
-      let y = _mm512_loadu_ps(y_plane.as_ptr().add(x));
+      let y = _mm512_castsi512_ps(load_endian_u32x16::<BE>(
+        y_plane.as_ptr().cast::<u8>().add(x * 4),
+      ));
       let clamped = _mm512_min_ps(_mm512_max_ps(y, _mm512_setzero_ps()), _mm512_set1_ps(1.0));
       let int32 = _mm512_cvttps_epi32(_mm512_add_ps(
         _mm512_mul_ps(clamped, scale),
@@ -648,7 +683,11 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
     }
   }
   if x < width {
-    scalar::grayf32_to_rgba_u16_row(&y_plane[x..width], &mut out[x * 4..width * 4], width - x);
+    scalar::grayf32_to_rgba_u16_row::<BE>(
+      &y_plane[x..width],
+      &mut out[x * 4..width * 4],
+      width - x,
+    );
   }
 }
 
@@ -659,11 +698,15 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row(y_plane: &[f32], out: &mut [u16], w
 #[allow(dead_code)] // dispatcher uses scalar directly for lossless f32 paths
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn grayf32_to_rgb_f32_row(y_plane: &[f32], out: &mut [f32], width: usize) {
+pub(crate) unsafe fn grayf32_to_rgb_f32_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [f32],
+  width: usize,
+) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width * 3);
-  scalar::grayf32_to_rgb_f32_row(y_plane, out, width);
+  scalar::grayf32_to_rgb_f32_row::<BE>(y_plane, out, width);
 }
 
 /// AVX-512 `grayf32_to_luma_row`: clamp [0,1] × 255 → u8. 16 px/iter.
@@ -672,7 +715,11 @@ pub(crate) unsafe fn grayf32_to_rgb_f32_row(y_plane: &[f32], out: &mut [f32], wi
 /// AVX-512F must be available.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn grayf32_to_luma_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [u8],
+  width: usize,
+) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
@@ -680,7 +727,9 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
   let mut x = 0usize;
   unsafe {
     while x + 16 <= width {
-      let y = _mm512_loadu_ps(y_plane.as_ptr().add(x));
+      let y = _mm512_castsi512_ps(load_endian_u32x16::<BE>(
+        y_plane.as_ptr().cast::<u8>().add(x * 4),
+      ));
       let clamped = _mm512_min_ps(_mm512_max_ps(y, _mm512_setzero_ps()), _mm512_set1_ps(1.0));
       let int32 = _mm512_cvttps_epi32(_mm512_add_ps(
         _mm512_mul_ps(clamped, scale),
@@ -692,7 +741,7 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
     }
   }
   if x < width {
-    scalar::grayf32_to_luma_row(&y_plane[x..width], &mut out[x..width], width - x);
+    scalar::grayf32_to_luma_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -702,7 +751,11 @@ pub(crate) unsafe fn grayf32_to_luma_row(y_plane: &[f32], out: &mut [u8], width:
 /// AVX-512F must be available.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn grayf32_to_luma_u16_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [u16],
+  width: usize,
+) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
@@ -710,7 +763,9 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
   let mut x = 0usize;
   unsafe {
     while x + 16 <= width {
-      let y = _mm512_loadu_ps(y_plane.as_ptr().add(x));
+      let y = _mm512_castsi512_ps(load_endian_u32x16::<BE>(
+        y_plane.as_ptr().cast::<u8>().add(x * 4),
+      ));
       let clamped = _mm512_min_ps(_mm512_max_ps(y, _mm512_setzero_ps()), _mm512_set1_ps(1.0));
       let int32 = _mm512_cvttps_epi32(_mm512_add_ps(
         _mm512_mul_ps(clamped, scale),
@@ -722,7 +777,7 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
     }
   }
   if x < width {
-    scalar::grayf32_to_luma_u16_row(&y_plane[x..width], &mut out[x..width], width - x);
+    scalar::grayf32_to_luma_u16_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
   }
 }
 
@@ -733,11 +788,15 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row(y_plane: &[f32], out: &mut [u16], w
 #[allow(dead_code)] // dispatcher uses scalar directly for lossless f32 paths
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn grayf32_to_luma_f32_row(y_plane: &[f32], out: &mut [f32], width: usize) {
+pub(crate) unsafe fn grayf32_to_luma_f32_row<const BE: bool>(
+  y_plane: &[f32],
+  out: &mut [f32],
+  width: usize,
+) {
   use crate::row::scalar::grayf32 as scalar;
   debug_assert!(y_plane.len() >= width);
   debug_assert!(out.len() >= width);
-  scalar::grayf32_to_luma_f32_row(y_plane, out, width);
+  scalar::grayf32_to_luma_f32_row::<BE>(y_plane, out, width);
 }
 
 /// AVX-512 `grayf32_to_hsv_row`: H=0, S=0, V = clamp(Y,0,1)×255. 16 px/iter.
@@ -746,7 +805,7 @@ pub(crate) unsafe fn grayf32_to_luma_f32_row(y_plane: &[f32], out: &mut [f32], w
 /// AVX-512F must be available.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn grayf32_to_hsv_row(
+pub(crate) unsafe fn grayf32_to_hsv_row<const BE: bool>(
   y_plane: &[f32],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -759,7 +818,9 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
   let mut x = 0usize;
   unsafe {
     while x + 16 <= width {
-      let y = _mm512_loadu_ps(y_plane.as_ptr().add(x));
+      let y = _mm512_castsi512_ps(load_endian_u32x16::<BE>(
+        y_plane.as_ptr().cast::<u8>().add(x * 4),
+      ));
       let clamped = _mm512_min_ps(_mm512_max_ps(y, _mm512_setzero_ps()), _mm512_set1_ps(1.0));
       let int32 = _mm512_cvttps_epi32(_mm512_add_ps(
         _mm512_mul_ps(clamped, scale),
@@ -774,7 +835,7 @@ pub(crate) unsafe fn grayf32_to_hsv_row(
     }
   }
   if x < width {
-    scalar::grayf32_to_hsv_row(
+    scalar::grayf32_to_hsv_row::<BE>(
       &y_plane[x..width],
       &mut h_out[x..width],
       &mut s_out[x..width],
@@ -980,16 +1041,39 @@ pub(crate) unsafe fn ya8_to_hsv_row(
 
 // ---- Ya16 ------------------------------------------------------------------
 
+/// Host-endian gate for Ya16 SIMD bodies.
+///
+/// The AVX-512 Ya16 SIMD bodies use `_mm512_loadu_si512` + fixed shuffle masks
+/// that gather the **host-native** high byte of each Ya16 word. They are only
+/// correct when the encoded byte order matches the host. The full truth table
+/// (mirrors PR #82 `9c7d533` dispatcher routing fix):
+///
+/// | data BE | host BE | `BE != HOST_NATIVE_BE` | path   | correct via       |
+/// |---------|---------|------------------------|--------|-------------------|
+/// | false   | false   | false                  | SIMD   | host-native LE    |
+/// | false   | true    | true                   | scalar | `from_le`         |
+/// | true    | false   | true                   | scalar | `from_be`         |
+/// | true    | true    | false                  | SIMD   | host-native BE    |
+///
+/// The narrower `if BE { scalar }` gate from `7cb64c6` only covered rows 1+3
+/// (LE host); the LE-source-on-BE-host quadrant would still run the SIMD body
+/// and corrupt Y/A. This constant + comparison covers all 4 quadrants.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 /// AVX-512 `ya16_to_rgb_row`: deinterleave [Y,A] u16, Y `>> 8` → u8, broadcast.
 ///
 /// # Safety
 /// AVX-512F+BW must be available.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn ya16_to_rgb_row<const BE: bool>(packed: &[u16], out: &mut [u8], width: usize) {
   use crate::row::scalar::ya16 as scalar;
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width * 3);
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → SIMD host-native shuffle wrong; fall through.
+    return scalar::ya16_to_rgb_row::<BE>(packed, out, width);
+  }
   let mut x = 0usize;
   unsafe {
     let y_mask = _mm_set_epi8(
@@ -1012,7 +1096,7 @@ pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usiz
     }
   }
   if x < width {
-    scalar::ya16_to_rgb_row(
+    scalar::ya16_to_rgb_row::<BE>(
       &packed[x * 2..width * 2],
       &mut out[x * 3..width * 3],
       width - x,
@@ -1026,10 +1110,18 @@ pub(crate) unsafe fn ya16_to_rgb_row(packed: &[u16], out: &mut [u8], width: usiz
 /// AVX-512F+BW must be available.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn ya16_to_rgba_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u8],
+  width: usize,
+) {
   use crate::row::scalar::ya16 as scalar;
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width * 4);
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → SIMD host-native shuffle wrong; fall through.
+    return scalar::ya16_to_rgba_row::<BE>(packed, out, width);
+  }
   let mut x = 0usize;
   unsafe {
     let y_mask = _mm_set_epi8(
@@ -1062,7 +1154,7 @@ pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usi
     }
   }
   if x < width {
-    scalar::ya16_to_rgba_row(
+    scalar::ya16_to_rgba_row::<BE>(
       &packed[x * 2..width * 2],
       &mut out[x * 4..width * 4],
       width - x,
@@ -1076,11 +1168,15 @@ pub(crate) unsafe fn ya16_to_rgba_row(packed: &[u16], out: &mut [u8], width: usi
 /// AVX-512F+BW must be available.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn ya16_to_rgb_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn ya16_to_rgb_u16_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u16],
+  width: usize,
+) {
   use crate::row::scalar::ya16 as scalar;
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width * 3);
-  scalar::ya16_to_rgb_u16_row(packed, out, width);
+  scalar::ya16_to_rgb_u16_row::<BE>(packed, out, width);
 }
 
 /// AVX-512 `ya16_to_rgba_u16_row`: native Y and A u16.
@@ -1089,11 +1185,15 @@ pub(crate) unsafe fn ya16_to_rgb_u16_row(packed: &[u16], out: &mut [u16], width:
 /// AVX-512F+BW must be available.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn ya16_to_rgba_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn ya16_to_rgba_u16_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u16],
+  width: usize,
+) {
   use crate::row::scalar::ya16 as scalar;
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width * 4);
-  scalar::ya16_to_rgba_u16_row(packed, out, width);
+  scalar::ya16_to_rgba_u16_row::<BE>(packed, out, width);
 }
 
 /// AVX-512 `ya16_to_luma_row`: Y `>> 8` → u8. 4 px/iter.
@@ -1102,10 +1202,18 @@ pub(crate) unsafe fn ya16_to_rgba_u16_row(packed: &[u16], out: &mut [u16], width
 /// AVX-512F+BW must be available.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn ya16_to_luma_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u8],
+  width: usize,
+) {
   use crate::row::scalar::ya16 as scalar;
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width);
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → SIMD host-native shuffle wrong; fall through.
+    return scalar::ya16_to_luma_row::<BE>(packed, out, width);
+  }
   let mut x = 0usize;
   unsafe {
     let y_mask = _mm_set_epi8(
@@ -1122,7 +1230,7 @@ pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
     }
   }
   if x < width {
-    scalar::ya16_to_luma_row(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+    scalar::ya16_to_luma_row::<BE>(&packed[x * 2..width * 2], &mut out[x..width], width - x);
   }
 }
 
@@ -1132,11 +1240,15 @@ pub(crate) unsafe fn ya16_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
 /// AVX-512F+BW must be available.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn ya16_to_luma_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn ya16_to_luma_u16_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u16],
+  width: usize,
+) {
   use crate::row::scalar::ya16 as scalar;
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width);
-  scalar::ya16_to_luma_u16_row(packed, out, width);
+  scalar::ya16_to_luma_u16_row::<BE>(packed, out, width);
 }
 
 /// AVX-512 `ya16_to_hsv_row`: H=0, S=0, V = Y `>> 8`. α dropped.
@@ -1145,7 +1257,7 @@ pub(crate) unsafe fn ya16_to_luma_u16_row(packed: &[u16], out: &mut [u16], width
 /// AVX-512F+BW must be available.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn ya16_to_hsv_row(
+pub(crate) unsafe fn ya16_to_hsv_row<const BE: bool>(
   packed: &[u16],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -1154,6 +1266,10 @@ pub(crate) unsafe fn ya16_to_hsv_row(
 ) {
   use crate::row::scalar::ya16 as scalar;
   debug_assert!(packed.len() >= width * 2);
+  if BE != HOST_NATIVE_BE {
+    // Source byte order differs from host → SIMD host-native shuffle wrong; fall through.
+    return scalar::ya16_to_hsv_row::<BE>(packed, h_out, s_out, v_out, width);
+  }
   let mut x = 0usize;
   unsafe {
     let y_mask = _mm_set_epi8(
@@ -1173,7 +1289,7 @@ pub(crate) unsafe fn ya16_to_hsv_row(
     }
   }
   if x < width {
-    scalar::ya16_to_hsv_row(
+    scalar::ya16_to_hsv_row::<BE>(
       &packed[x * 2..width * 2],
       &mut h_out[x..width],
       &mut s_out[x..width],
@@ -1226,8 +1342,8 @@ mod tests {
       prng_f32(&mut plane, 0xF512_0001);
       let mut simd = std::vec![0u8; w * 3];
       let mut scal = std::vec![0u8; w * 3];
-      unsafe { super::grayf32_to_rgb_row(&plane, &mut simd, w) };
-      sf::grayf32_to_rgb_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_rgb_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_rgb_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1244,8 +1360,8 @@ mod tests {
       prng_f32(&mut plane, 0xF512_0002);
       let mut simd = std::vec![0u8; w * 4];
       let mut scal = std::vec![0u8; w * 4];
-      unsafe { super::grayf32_to_rgba_row(&plane, &mut simd, w) };
-      sf::grayf32_to_rgba_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_rgba_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_rgba_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1262,8 +1378,8 @@ mod tests {
       prng_f32(&mut plane, 0xF512_0003);
       let mut simd = std::vec![0u16; w * 3];
       let mut scal = std::vec![0u16; w * 3];
-      unsafe { super::grayf32_to_rgb_u16_row(&plane, &mut simd, w) };
-      sf::grayf32_to_rgb_u16_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_rgb_u16_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_rgb_u16_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1280,8 +1396,8 @@ mod tests {
       prng_f32(&mut plane, 0xF512_0004);
       let mut simd = std::vec![0u16; w * 4];
       let mut scal = std::vec![0u16; w * 4];
-      unsafe { super::grayf32_to_rgba_u16_row(&plane, &mut simd, w) };
-      sf::grayf32_to_rgba_u16_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_rgba_u16_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_rgba_u16_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1298,8 +1414,8 @@ mod tests {
       prng_f32(&mut plane, 0xF512_0005);
       let mut simd = std::vec![0.0f32; w * 3];
       let mut scal = std::vec![0.0f32; w * 3];
-      unsafe { super::grayf32_to_rgb_f32_row(&plane, &mut simd, w) };
-      sf::grayf32_to_rgb_f32_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_rgb_f32_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_rgb_f32_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1316,8 +1432,8 @@ mod tests {
       prng_f32(&mut plane, 0xF512_0006);
       let mut simd = std::vec![0u8; w];
       let mut scal = std::vec![0u8; w];
-      unsafe { super::grayf32_to_luma_row(&plane, &mut simd, w) };
-      sf::grayf32_to_luma_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_luma_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_luma_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1334,8 +1450,8 @@ mod tests {
       prng_f32(&mut plane, 0xF512_0007);
       let mut simd = std::vec![0u16; w];
       let mut scal = std::vec![0u16; w];
-      unsafe { super::grayf32_to_luma_u16_row(&plane, &mut simd, w) };
-      sf::grayf32_to_luma_u16_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_luma_u16_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_luma_u16_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1352,8 +1468,8 @@ mod tests {
       prng_f32(&mut plane, 0xF512_0008);
       let mut simd = std::vec![0.0f32; w];
       let mut scal = std::vec![0.0f32; w];
-      unsafe { super::grayf32_to_luma_f32_row(&plane, &mut simd, w) };
-      sf::grayf32_to_luma_f32_row(&plane, &mut scal, w);
+      unsafe { super::grayf32_to_luma_f32_row::<false>(&plane, &mut simd, w) };
+      sf::grayf32_to_luma_f32_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1374,8 +1490,8 @@ mod tests {
       let mut rh = std::vec![0u8; w];
       let mut rs = std::vec![0u8; w];
       let mut rv = std::vec![0u8; w];
-      unsafe { super::grayf32_to_hsv_row(&plane, &mut sh, &mut ss, &mut sv, w) };
-      sf::grayf32_to_hsv_row(&plane, &mut rh, &mut rs, &mut rv, w);
+      unsafe { super::grayf32_to_hsv_row::<false>(&plane, &mut sh, &mut ss, &mut sv, w) };
+      sf::grayf32_to_hsv_row::<false>(&plane, &mut rh, &mut rs, &mut rv, w);
       assert_eq!(sh, rh, "H width={w}");
       assert_eq!(ss, rs, "S width={w}");
       assert_eq!(sv, rv, "V width={w}");
@@ -1546,8 +1662,8 @@ mod tests {
       prng_ya16(&mut packed, 0xA562_0001);
       let mut simd = std::vec![0u8; w * 3];
       let mut scal = std::vec![0u8; w * 3];
-      unsafe { super::ya16_to_rgb_row(&packed, &mut simd, w) };
-      sy::ya16_to_rgb_row(&packed, &mut scal, w);
+      unsafe { super::ya16_to_rgb_row::<false>(&packed, &mut simd, w) };
+      sy::ya16_to_rgb_row::<false>(&packed, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1564,8 +1680,8 @@ mod tests {
       prng_ya16(&mut packed, 0xA562_0002);
       let mut simd = std::vec![0u8; w * 4];
       let mut scal = std::vec![0u8; w * 4];
-      unsafe { super::ya16_to_rgba_row(&packed, &mut simd, w) };
-      sy::ya16_to_rgba_row(&packed, &mut scal, w);
+      unsafe { super::ya16_to_rgba_row::<false>(&packed, &mut simd, w) };
+      sy::ya16_to_rgba_row::<false>(&packed, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1582,8 +1698,8 @@ mod tests {
       prng_ya16(&mut packed, 0xA562_0003);
       let mut simd = std::vec![0u16; w * 3];
       let mut scal = std::vec![0u16; w * 3];
-      unsafe { super::ya16_to_rgb_u16_row(&packed, &mut simd, w) };
-      sy::ya16_to_rgb_u16_row(&packed, &mut scal, w);
+      unsafe { super::ya16_to_rgb_u16_row::<false>(&packed, &mut simd, w) };
+      sy::ya16_to_rgb_u16_row::<false>(&packed, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1600,8 +1716,8 @@ mod tests {
       prng_ya16(&mut packed, 0xA562_0004);
       let mut simd = std::vec![0u16; w * 4];
       let mut scal = std::vec![0u16; w * 4];
-      unsafe { super::ya16_to_rgba_u16_row(&packed, &mut simd, w) };
-      sy::ya16_to_rgba_u16_row(&packed, &mut scal, w);
+      unsafe { super::ya16_to_rgba_u16_row::<false>(&packed, &mut simd, w) };
+      sy::ya16_to_rgba_u16_row::<false>(&packed, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1618,8 +1734,8 @@ mod tests {
       prng_ya16(&mut packed, 0xA562_0005);
       let mut simd = std::vec![0u8; w];
       let mut scal = std::vec![0u8; w];
-      unsafe { super::ya16_to_luma_row(&packed, &mut simd, w) };
-      sy::ya16_to_luma_row(&packed, &mut scal, w);
+      unsafe { super::ya16_to_luma_row::<false>(&packed, &mut simd, w) };
+      sy::ya16_to_luma_row::<false>(&packed, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1636,8 +1752,8 @@ mod tests {
       prng_ya16(&mut packed, 0xA562_0006);
       let mut simd = std::vec![0u16; w];
       let mut scal = std::vec![0u16; w];
-      unsafe { super::ya16_to_luma_u16_row(&packed, &mut simd, w) };
-      sy::ya16_to_luma_u16_row(&packed, &mut scal, w);
+      unsafe { super::ya16_to_luma_u16_row::<false>(&packed, &mut simd, w) };
+      sy::ya16_to_luma_u16_row::<false>(&packed, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1658,8 +1774,8 @@ mod tests {
       let mut rh = std::vec![0u8; w];
       let mut rs = std::vec![0u8; w];
       let mut rv = std::vec![0u8; w];
-      unsafe { super::ya16_to_hsv_row(&packed, &mut sh, &mut ss, &mut sv, w) };
-      sy::ya16_to_hsv_row(&packed, &mut rh, &mut rs, &mut rv, w);
+      unsafe { super::ya16_to_hsv_row::<false>(&packed, &mut sh, &mut ss, &mut sv, w) };
+      sy::ya16_to_hsv_row::<false>(&packed, &mut rh, &mut rs, &mut rv, w);
       assert_eq!(sh, rh, "H width={w}");
       assert_eq!(ss, rs, "S width={w}");
       assert_eq!(sv, rv, "V width={w}");
@@ -1698,8 +1814,8 @@ mod tests {
       prng16(&mut plane, 0x1234_ABCD);
       let mut simd = std::vec![0u16; w];
       let mut scal = std::vec![0u16; w];
-      unsafe { super::gray_n_to_luma_u16_row::<10>(&plane, &mut simd, w) };
-      scalar::gray_n_to_luma_u16_row::<10>(&plane, &mut scal, w);
+      unsafe { super::gray_n_to_luma_u16_row::<10, false>(&plane, &mut simd, w) };
+      scalar::gray_n_to_luma_u16_row::<10, false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1714,8 +1830,8 @@ mod tests {
       prng16(&mut plane, 0xCAFE_BABE);
       let mut simd = std::vec![0u8; w];
       let mut scal = std::vec![0u8; w];
-      unsafe { super::gray16_to_luma_row(&plane, &mut simd, w) };
-      scalar::gray16_to_luma_row(&plane, &mut scal, w);
+      unsafe { super::gray16_to_luma_row::<false>(&plane, &mut simd, w) };
+      scalar::gray16_to_luma_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1730,8 +1846,8 @@ mod tests {
       prng16(&mut plane, 0xDEAD_BEEF);
       let mut simd = std::vec![0u16; w];
       let mut scal = std::vec![0u16; w];
-      unsafe { super::gray16_to_luma_u16_row(&plane, &mut simd, w) };
-      scalar::gray16_to_luma_u16_row(&plane, &mut scal, w);
+      unsafe { super::gray16_to_luma_u16_row::<false>(&plane, &mut simd, w) };
+      scalar::gray16_to_luma_u16_row::<false>(&plane, &mut scal, w);
       assert_eq!(simd, scal, "width={w}");
     }
   }
@@ -1762,9 +1878,177 @@ mod tests {
       prng16(&mut plane, 0x1234_5678);
       let mut simd = std::vec![0u8; w * 3];
       let mut scal = std::vec![0u8; w * 3];
-      unsafe { super::gray16_to_rgb_row(&plane, &mut simd, w, false) };
-      scalar::gray16_to_rgb_row(&plane, &mut scal, w, false);
+      unsafe { super::gray16_to_rgb_row::<false>(&plane, &mut simd, w, false) };
+      scalar::gray16_to_rgb_row::<false>(&plane, &mut scal, w, false);
       assert_eq!(simd, scal, "width={w} limited-range");
+    }
+  }
+
+  // ---- BE parity tests --------------------------------------------------------
+
+  #[test]
+  fn avx512_gray10_be_parity_luma() {
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w];
+      prng16(&mut le, 0xBE10_0001);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u8; w];
+      let mut scal_le = std::vec![0u8; w];
+      unsafe { super::gray_n_to_luma_row::<10, true>(&be, &mut simd_be, w) };
+      scalar::gray_n_to_luma_row::<10, false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  fn avx512_gray16_be_parity_luma() {
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w];
+      prng16(&mut le, 0xBE16_0002);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u8; w];
+      let mut scal_le = std::vec![0u8; w];
+      unsafe { super::gray16_to_luma_row::<true>(&be, &mut simd_be, w) };
+      scalar::gray16_to_luma_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  fn avx512_ya16_be_parity_rgb() {
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA5_0001);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u8; w * 3];
+      let mut scal_le = std::vec![0u8; w * 3];
+      unsafe { super::ya16_to_rgb_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_rgb_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  fn avx512_ya16_be_parity_rgba() {
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA5_0002);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u8; w * 4];
+      let mut scal_le = std::vec![0u8; w * 4];
+      unsafe { super::ya16_to_rgba_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_rgba_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  fn avx512_ya16_be_parity_rgb_u16() {
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA5_0003);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u16; w * 3];
+      let mut scal_le = std::vec![0u16; w * 3];
+      unsafe { super::ya16_to_rgb_u16_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_rgb_u16_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  fn avx512_ya16_be_parity_rgba_u16() {
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA5_0004);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u16; w * 4];
+      let mut scal_le = std::vec![0u16; w * 4];
+      unsafe { super::ya16_to_rgba_u16_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_rgba_u16_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  fn avx512_ya16_be_parity_luma() {
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA5_0005);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u8; w];
+      let mut scal_le = std::vec![0u8; w];
+      unsafe { super::ya16_to_luma_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_luma_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  fn avx512_ya16_be_parity_luma_u16() {
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA5_0006);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut simd_be = std::vec![0u16; w];
+      let mut scal_le = std::vec![0u16; w];
+      unsafe { super::ya16_to_luma_u16_row::<true>(&be, &mut simd_be, w) };
+      sy::ya16_to_luma_u16_row::<false>(&le, &mut scal_le, w);
+      assert_eq!(simd_be, scal_le, "width={w}");
+    }
+  }
+
+  #[test]
+  fn avx512_ya16_be_parity_hsv() {
+    if !is_x86_feature_detected!("avx512bw") {
+      return;
+    }
+    use crate::row::scalar::ya16 as sy;
+    for &w in WIDTHS {
+      let mut le = std::vec![0u16; w * 2];
+      prng_ya16(&mut le, 0xBEA5_0007);
+      let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+      let mut sh_be = std::vec![0u8; w];
+      let mut ss_be = std::vec![0u8; w];
+      let mut sv_be = std::vec![0u8; w];
+      let mut sh_le = std::vec![0u8; w];
+      let mut ss_le = std::vec![0u8; w];
+      let mut sv_le = std::vec![0u8; w];
+      unsafe { super::ya16_to_hsv_row::<true>(&be, &mut sh_be, &mut ss_be, &mut sv_be, w) };
+      sy::ya16_to_hsv_row::<false>(&le, &mut sh_le, &mut ss_le, &mut sv_le, w);
+      assert_eq!(sh_be, sh_le, "H width={w}");
+      assert_eq!(ss_be, ss_le, "S width={w}");
+      assert_eq!(sv_be, sv_le, "V width={w}");
     }
   }
 }

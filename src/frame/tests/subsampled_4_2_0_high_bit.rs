@@ -535,3 +535,117 @@ fn p012_try_new_checked_accepts_low_packed_flat_content_by_design() {
   // corruption. The type system, not `try_new_checked`, must
   // guarantee provenance for 12-bit.
 }
+
+// ---- Host-independent BE-host regressions (codex round-2) -----------
+//
+// These tests build the planes explicitly from LE-encoded bytes via
+// `to_le_bytes` and read back as `&[u16]` via `from_ne_bytes`. On an
+// LE host the resulting `u16` values are identical to the intended
+// literals; on a BE host every `u16` is byte-swapped relative to the
+// intent, exercising the `u16::from_le` normalization inside the
+// validators. Without that normalization the validators would falsely
+// reject every valid LE-encoded plane on a BE host.
+//
+// Each family covers (1) a positive case — a logical LE buffer of
+// valid samples that must be accepted on both LE and BE hosts — and
+// (2) a negative case where a sample is invalid even after `from_le`
+// normalization, ensuring the validator still surfaces real errors.
+
+/// Build a `Vec<u16>` representing the LE-encoded byte layout of
+/// `intended` (i.e., what FFmpeg would emit on the wire). On an LE
+/// host the result equals `intended` element-wise; on a BE host every
+/// element is byte-swapped relative to `intended`.
+fn le_encoded_u16_buf(intended: &[u16]) -> std::vec::Vec<u16> {
+  let bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
+  bytes
+    .chunks_exact(2)
+    .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+    .collect()
+}
+
+#[test]
+fn yuv420p10_try_new_checked_accepts_le_encoded_buffer_on_any_host() {
+  // 10-bit-low-packed white = 1023 (LE bytes [0xFF, 0x03]).
+  let intended_y = std::vec![1023u16; 16 * 8];
+  let intended_uv = std::vec![512u16; 8 * 4];
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&intended_uv);
+  let v = le_encoded_u16_buf(&intended_uv);
+  Yuv420p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8)
+    .expect("LE-encoded valid yuv420p10le must be accepted on both LE and BE hosts");
+}
+
+#[test]
+fn yuv420p10_try_new_checked_rejects_le_encoded_out_of_range_on_any_host() {
+  // After `u16::from_le` normalization the offending sample is 1024
+  // (just above the 10-bit max of 1023). On both LE and BE hosts the
+  // validator must catch this — the LE-encoded byte buffer carries the
+  // logical value 1024 in `u[2 * 8 + 3]`.
+  let intended_y = std::vec![0u16; 16 * 8];
+  let mut intended_u = std::vec![512u16; 8 * 4];
+  intended_u[2 * 8 + 3] = 1024;
+  let intended_v = std::vec![512u16; 8 * 4];
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&intended_u);
+  let v = le_encoded_u16_buf(&intended_v);
+  let e = Yuv420p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8).unwrap_err();
+  assert!(matches!(
+    e,
+    Yuv420pFrame16Error::SampleOutOfRange {
+      plane: Yuv420pFrame16Plane::U,
+      value: 1024,
+      max_valid: 1023,
+      ..
+    }
+  ));
+}
+
+#[test]
+fn p010_try_new_checked_accepts_le_encoded_buffer_on_any_host() {
+  // P010 white = 1023 << 6 = 0xFFC0; LE bytes [0xC0, 0xFF]. On a BE
+  // host these bytes read back as host-native 0xC0FF (low 6 bits =
+  // 0x3F) — the validator's `from_le` normalization must recover the
+  // intended 0xFFC0 before the low-bits check.
+  let intended_y = std::vec![0xFFC0u16; 16 * 8];
+  let intended_uv = std::vec![0x8000u16; 16 * 4];
+  let y = le_encoded_u16_buf(&intended_y);
+  let uv = le_encoded_u16_buf(&intended_uv);
+  P010Frame::try_new_checked(&y, &uv, 16, 8, 16, 16)
+    .expect("LE-encoded valid P010 must be accepted on both LE and BE hosts");
+}
+
+#[test]
+fn p010_try_new_checked_rejects_le_encoded_low_bits_on_any_host() {
+  // After `u16::from_le` normalization, a logical 0x03FF has all six
+  // low bits set — characteristic of `yuv420p10le` data accidentally
+  // handed to the P010 constructor. The validator must reject this on
+  // both LE and BE hosts.
+  let mut intended_y = std::vec![0xFFC0u16; 16 * 8];
+  intended_y[3 * 16 + 5] = 0x03FF;
+  let intended_uv = std::vec![0x8000u16; 16 * 4];
+  let y = le_encoded_u16_buf(&intended_y);
+  let uv = le_encoded_u16_buf(&intended_uv);
+  let e = P010Frame::try_new_checked(&y, &uv, 16, 8, 16, 16).unwrap_err();
+  assert!(matches!(
+    e,
+    PnFrameError::SampleLowBitsSet {
+      plane: PnFramePlane::Y,
+      value: 0x03FF,
+      low_bits: 6,
+      ..
+    }
+  ));
+}
+
+#[test]
+fn p012_try_new_checked_accepts_le_encoded_buffer_on_any_host() {
+  // P012 mid-gray = 2048 << 4 = 0x8000; LE bytes [0x00, 0x80]. On a BE
+  // host these read back as host-native 0x0080 — the validator must
+  // `from_le` to recover 0x8000 before the low-4-bits check.
+  let intended_y = std::vec![(2048u16) << 4; 16 * 8];
+  let intended_uv = std::vec![(2048u16) << 4; 16 * 4];
+  let y = le_encoded_u16_buf(&intended_y);
+  let uv = le_encoded_u16_buf(&intended_uv);
+  P012Frame::try_new_checked(&y, &uv, 16, 8, 16, 16)
+    .expect("LE-encoded valid P012 must be accepted on both LE and BE hosts");
+}

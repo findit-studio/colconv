@@ -2,6 +2,33 @@ use core::arch::x86_64::*;
 
 use super::*;
 
+/// Compile-time host endianness. `true` on BE targets, `false` on LE
+/// targets (always `false` on `x86_64` / `i686` in practice).
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
+/// Byte-swap every u16 lane of `v` in-register when the source (wire)
+/// endian differs from the host's native u16 byte order.
+///
+/// Used after `deinterleave_uv_u16` (or other UV-interleaved loads) to
+/// apply byte-swapping that `load_endian_u16x8` cannot perform for
+/// shuffled-then-loaded values. The gate is `BE != HOST_NATIVE_BE`
+/// (mirrors PR #82 / #85 / #87 / #88), so a hypothetical BE-x86 host
+/// would not double-swap. When the gate folds to `false` at compile
+/// time, the call compiles away entirely.
+#[inline(always)]
+unsafe fn byteswap_u16x8<const BE: bool>(v: __m128i) -> __m128i {
+  if BE != HOST_NATIVE_BE {
+    let mask = unsafe {
+      core::mem::transmute::<[u8; 16], __m128i>([
+        1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14,
+      ])
+    };
+    unsafe { _mm_shuffle_epi8(v, mask) }
+  } else {
+    v
+  }
+}
+
 /// SSE4.1 high‑bit‑packed semi‑planar (`BITS` ∈ {10, 12}) → packed
 /// **8‑bit** RGB.
 ///
@@ -30,7 +57,7 @@ use super::*;
 /// Thin wrapper over [`p_n_to_rgb_or_rgba_row`] with `ALPHA = false`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn p_n_to_rgb_row<const BITS: u32>(
+pub(crate) unsafe fn p_n_to_rgb_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   rgb_out: &mut [u8],
@@ -40,7 +67,7 @@ pub(crate) unsafe fn p_n_to_rgb_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    p_n_to_rgb_or_rgba_row::<BITS, false>(y, uv_half, rgb_out, width, matrix, full_range);
+    p_n_to_rgb_or_rgba_row::<BITS, false, BE>(y, uv_half, rgb_out, width, matrix, full_range);
   }
 }
 
@@ -54,7 +81,7 @@ pub(crate) unsafe fn p_n_to_rgb_row<const BITS: u32>(
 /// Same as [`p_n_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn p_n_to_rgba_row<const BITS: u32>(
+pub(crate) unsafe fn p_n_to_rgba_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   rgba_out: &mut [u8],
@@ -64,7 +91,7 @@ pub(crate) unsafe fn p_n_to_rgba_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    p_n_to_rgb_or_rgba_row::<BITS, true>(y, uv_half, rgba_out, width, matrix, full_range);
+    p_n_to_rgb_or_rgba_row::<BITS, true, BE>(y, uv_half, rgba_out, width, matrix, full_range);
   }
 }
 
@@ -81,7 +108,7 @@ pub(crate) unsafe fn p_n_to_rgba_row<const BITS: u32>(
 /// 4. `BITS` ∈ `{10, 12}` — P016 has its own kernel family.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
+pub(crate) unsafe fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool, const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   out: &mut [u8],
@@ -122,13 +149,26 @@ pub(crate) unsafe fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      // Y: two u16×8 loads, each shifted right by `16 - BITS`.
-      let y_low_i16 = _mm_srl_epi16(_mm_loadu_si128(y.as_ptr().add(x).cast()), shr_count);
-      let y_high_i16 = _mm_srl_epi16(_mm_loadu_si128(y.as_ptr().add(x + 8).cast()), shr_count);
+      // Y: two u16×8 loads, each shifted right by `16 - BITS`. BE
+      // input is byte-swapped before the shift via `load_endian_u16x8`.
+      let y_low_i16 = _mm_srl_epi16(
+        endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8),
+        shr_count,
+      );
+      let y_high_i16 = _mm_srl_epi16(
+        endian::load_endian_u16x8::<BE>(y.as_ptr().add(x + 8) as *const u8),
+        shr_count,
+      );
 
       // UV: two u16×8 loads of interleaved [U0,V0,U1,V1,...], then
-      // deinterleave into separate u_vec + v_vec.
+      // deinterleave into separate u_vec + v_vec. For BE input,
+      // byte-swap each lane after deinterleave (the shuffle that
+      // splits U/V can't be combined with the byte-swap shuffle in a
+      // single pshufb). The shift to extract the BITS-bit value runs
+      // on host-native u16, so it must follow the byte-swap.
       let (u_vec, v_vec) = deinterleave_uv_u16(uv_half.as_ptr().add(x));
+      let u_vec = byteswap_u16x8::<BE>(u_vec);
+      let v_vec = byteswap_u16x8::<BE>(v_vec);
       let u_vec = _mm_srl_epi16(u_vec, shr_count);
       let v_vec = _mm_srl_epi16(v_vec, shr_count);
 
@@ -185,9 +225,9 @@ pub(crate) unsafe fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
       if ALPHA {
-        scalar::p_n_to_rgba_row::<BITS>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+        scalar::p_n_to_rgba_row::<BITS, BE>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
       } else {
-        scalar::p_n_to_rgb_row::<BITS>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+        scalar::p_n_to_rgb_row::<BITS, BE>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
       }
     }
   }
@@ -210,7 +250,7 @@ pub(crate) unsafe fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
 ///    `rgb_out.len() >= 3 * width`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn p_n_to_rgb_u16_row<const BITS: u32>(
+pub(crate) unsafe fn p_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   rgb_out: &mut [u16],
@@ -219,7 +259,7 @@ pub(crate) unsafe fn p_n_to_rgb_u16_row<const BITS: u32>(
   full_range: bool,
 ) {
   unsafe {
-    p_n_to_rgb_or_rgba_u16_row::<BITS, false>(y, uv_half, rgb_out, width, matrix, full_range);
+    p_n_to_rgb_or_rgba_u16_row::<BITS, false, BE>(y, uv_half, rgb_out, width, matrix, full_range);
   }
 }
 
@@ -232,7 +272,7 @@ pub(crate) unsafe fn p_n_to_rgb_u16_row<const BITS: u32>(
 /// Same as [`p_n_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn p_n_to_rgba_u16_row<const BITS: u32>(
+pub(crate) unsafe fn p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   rgba_out: &mut [u16],
@@ -241,7 +281,7 @@ pub(crate) unsafe fn p_n_to_rgba_u16_row<const BITS: u32>(
   full_range: bool,
 ) {
   unsafe {
-    p_n_to_rgb_or_rgba_u16_row::<BITS, true>(y, uv_half, rgba_out, width, matrix, full_range);
+    p_n_to_rgb_or_rgba_u16_row::<BITS, true, BE>(y, uv_half, rgba_out, width, matrix, full_range);
   }
 }
 
@@ -260,7 +300,11 @@ pub(crate) unsafe fn p_n_to_rgba_u16_row<const BITS: u32>(
 /// 4. `BITS` ∈ `{10, 12}`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
+pub(crate) unsafe fn p_n_to_rgb_or_rgba_u16_row<
+  const BITS: u32,
+  const ALPHA: bool,
+  const BE: bool,
+>(
   y: &[u16],
   uv_half: &[u16],
   out: &mut [u16],
@@ -303,9 +347,19 @@ pub(crate) unsafe fn p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bo
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let y_low_i16 = _mm_srl_epi16(_mm_loadu_si128(y.as_ptr().add(x).cast()), shr_count);
-      let y_high_i16 = _mm_srl_epi16(_mm_loadu_si128(y.as_ptr().add(x + 8).cast()), shr_count);
+      // BE input is byte-swapped before the shift via `load_endian_u16x8`
+      // for Y, and via `byteswap_u16x8::<BE>` after deinterleave for UV.
+      let y_low_i16 = _mm_srl_epi16(
+        endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8),
+        shr_count,
+      );
+      let y_high_i16 = _mm_srl_epi16(
+        endian::load_endian_u16x8::<BE>(y.as_ptr().add(x + 8) as *const u8),
+        shr_count,
+      );
       let (u_vec, v_vec) = deinterleave_uv_u16(uv_half.as_ptr().add(x));
+      let u_vec = byteswap_u16x8::<BE>(u_vec);
+      let v_vec = byteswap_u16x8::<BE>(v_vec);
       let u_vec = _mm_srl_epi16(u_vec, shr_count);
       let v_vec = _mm_srl_epi16(v_vec, shr_count);
 
@@ -366,9 +420,13 @@ pub(crate) unsafe fn p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bo
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
       if ALPHA {
-        scalar::p_n_to_rgba_u16_row::<BITS>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+        scalar::p_n_to_rgba_u16_row::<BITS, BE>(
+          tail_y, tail_uv, tail_out, tail_w, matrix, full_range,
+        );
       } else {
-        scalar::p_n_to_rgb_u16_row::<BITS>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+        scalar::p_n_to_rgb_u16_row::<BITS, BE>(
+          tail_y, tail_uv, tail_out, tail_w, matrix, full_range,
+        );
       }
     }
   }
@@ -387,7 +445,7 @@ pub(crate) unsafe fn p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bo
 /// Thin wrapper over [`p16_to_rgb_or_rgba_row`] with `ALPHA = false`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn p16_to_rgb_row(
+pub(crate) unsafe fn p16_to_rgb_row<const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   rgb_out: &mut [u8],
@@ -397,7 +455,7 @@ pub(crate) unsafe fn p16_to_rgb_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    p16_to_rgb_or_rgba_row::<false>(y, uv_half, rgb_out, width, matrix, full_range);
+    p16_to_rgb_or_rgba_row::<false, BE>(y, uv_half, rgb_out, width, matrix, full_range);
   }
 }
 
@@ -410,7 +468,7 @@ pub(crate) unsafe fn p16_to_rgb_row(
 /// Same as [`p16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn p16_to_rgba_row(
+pub(crate) unsafe fn p16_to_rgba_row<const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   rgba_out: &mut [u8],
@@ -420,7 +478,7 @@ pub(crate) unsafe fn p16_to_rgba_row(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    p16_to_rgb_or_rgba_row::<true>(y, uv_half, rgba_out, width, matrix, full_range);
+    p16_to_rgb_or_rgba_row::<true, BE>(y, uv_half, rgba_out, width, matrix, full_range);
   }
 }
 
@@ -436,7 +494,7 @@ pub(crate) unsafe fn p16_to_rgba_row(
 ///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn p16_to_rgb_or_rgba_row<const ALPHA: bool>(
+pub(crate) unsafe fn p16_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   out: &mut [u8],
@@ -470,9 +528,13 @@ pub(crate) unsafe fn p16_to_rgb_or_rgba_row<const ALPHA: bool>(
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let y_low = _mm_loadu_si128(y.as_ptr().add(x).cast());
-      let y_high = _mm_loadu_si128(y.as_ptr().add(x + 8).cast());
+      // BE input is byte-swapped via `load_endian_u16x8` for Y and
+      // via `byteswap_u16x8::<BE>` after deinterleave for UV.
+      let y_low = endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8);
+      let y_high = endian::load_endian_u16x8::<BE>(y.as_ptr().add(x + 8) as *const u8);
       let (u_vec, v_vec) = deinterleave_uv_u16(uv_half.as_ptr().add(x));
+      let u_vec = byteswap_u16x8::<BE>(u_vec);
+      let v_vec = byteswap_u16x8::<BE>(v_vec);
 
       let u_i16 = _mm_sub_epi16(u_vec, bias16_v);
       let v_i16 = _mm_sub_epi16(v_vec, bias16_v);
@@ -526,9 +588,9 @@ pub(crate) unsafe fn p16_to_rgb_or_rgba_row<const ALPHA: bool>(
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
       if ALPHA {
-        scalar::p16_to_rgba_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+        scalar::p16_to_rgba_row::<BE>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
       } else {
-        scalar::p16_to_rgb_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+        scalar::p16_to_rgb_row::<BE>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
       }
     }
   }
@@ -541,7 +603,7 @@ pub(crate) unsafe fn p16_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// Same as [`p16_to_rgb_row`] but `rgb_out` is `&mut [u16]`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn p16_to_rgb_u16_row(
+pub(crate) unsafe fn p16_to_rgb_u16_row<const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   rgb_out: &mut [u16],
@@ -550,7 +612,7 @@ pub(crate) unsafe fn p16_to_rgb_u16_row(
   full_range: bool,
 ) {
   unsafe {
-    p16_to_rgb_or_rgba_u16_row::<false>(y, uv_half, rgb_out, width, matrix, full_range);
+    p16_to_rgb_or_rgba_u16_row::<false, BE>(y, uv_half, rgb_out, width, matrix, full_range);
   }
 }
 
@@ -562,7 +624,7 @@ pub(crate) unsafe fn p16_to_rgb_u16_row(
 /// Same as [`p16_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn p16_to_rgba_u16_row(
+pub(crate) unsafe fn p16_to_rgba_u16_row<const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   rgba_out: &mut [u16],
@@ -571,7 +633,7 @@ pub(crate) unsafe fn p16_to_rgba_u16_row(
   full_range: bool,
 ) {
   unsafe {
-    p16_to_rgb_or_rgba_u16_row::<true>(y, uv_half, rgba_out, width, matrix, full_range);
+    p16_to_rgb_or_rgba_u16_row::<true, BE>(y, uv_half, rgba_out, width, matrix, full_range);
   }
 }
 
@@ -587,7 +649,7 @@ pub(crate) unsafe fn p16_to_rgba_u16_row(
 ///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
+pub(crate) unsafe fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   out: &mut [u16],
@@ -621,12 +683,24 @@ pub(crate) unsafe fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let y_vec = _mm_loadu_si128(y.as_ptr().add(x).cast());
+      // BE input is byte-swapped via `load_endian_u16x8` for Y. UV
+      // is loaded then split via shuffle; per-u16-lane byte-swap is
+      // folded into the split shuffle when `BE = true`.
+      let y_vec = endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8);
       // Load 4 UV pairs = 8 u16 = 16 bytes; deinterleave inline.
       // uv_half.len() >= width >= x + 8 guarantees 8 u16 readable.
       let uv_raw = _mm_loadu_si128(uv_half.as_ptr().add(x).cast());
-      // [U0,V0,U1,V1,U2,V2,U3,V3] → [U0,U1,U2,U3, V0,V1,V2,V3]
-      let split_mask = _mm_setr_epi8(0, 1, 4, 5, 8, 9, 12, 13, 2, 3, 6, 7, 10, 11, 14, 15);
+      // [U0,V0,U1,V1,U2,V2,U3,V3] → [U0,U1,U2,U3, V0,V1,V2,V3].
+      // When wire endian differs from host (`BE != HOST_NATIVE_BE`):
+      // also swap the two bytes within each u16 lane (lo/hi byte
+      // indices within each 16-bit element flipped). On a hypothetical
+      // BE-x86 host this avoids the double-swap that a plain `BE`
+      // gate would introduce.
+      let split_mask = if BE != HOST_NATIVE_BE {
+        _mm_setr_epi8(1, 0, 5, 4, 9, 8, 13, 12, 3, 2, 7, 6, 11, 10, 15, 14)
+      } else {
+        _mm_setr_epi8(0, 1, 4, 5, 8, 9, 12, 13, 2, 3, 6, 7, 10, 11, 14, 15)
+      };
       let uv_split = _mm_shuffle_epi8(uv_raw, split_mask);
       let u_vec4 = uv_split;
       let v_vec4 = _mm_srli_si128::<8>(uv_split);
@@ -718,9 +792,9 @@ pub(crate) unsafe fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
       if ALPHA {
-        scalar::p16_to_rgba_u16_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+        scalar::p16_to_rgba_u16_row::<BE>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
       } else {
-        scalar::p16_to_rgb_u16_row(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
+        scalar::p16_to_rgb_u16_row::<BE>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
       }
     }
   }

@@ -1,13 +1,15 @@
 //! Scalar reference kernels for high-bit-depth planar GBR sources
-//! (Tier 10b — `AV_PIX_FMT_GBRP{9,10,12,14,16}LE` /
-//! `AV_PIX_FMT_GBRAP{10,12,14,16}LE`).
+//! (Tier 10b — `AV_PIX_FMT_GBRP{9,10,12,14,16}LE/BE` /
+//! `AV_PIX_FMT_GBRAP{10,12,14,16}LE/BE`).
 //!
 //! `gbr_*` kernels (3-plane, no α) are const-generic over
-//! `BITS ∈ {9, 10, 12, 14, 16}`. `gbra_*` kernels (4-plane, with α)
-//! are const-generic over `BITS ∈ {10, 12, 14, 16}` — FFmpeg has no
-//! `GBRAP9` variant; only the 3-plane `GBRP9` exists at 9 bits.
+//! `BITS ∈ {9, 10, 12, 14, 16}` **and** `BE: bool` (endianness of the
+//! source planes). `gbra_*` kernels (4-plane, with α) are const-generic
+//! over `BITS ∈ {10, 12, 14, 16}` — FFmpeg has no `GBRAP9` variant;
+//! only the 3-plane `GBRP9` exists at 9 bits.
 //! No runtime branching on `BITS` — every `BITS - 8` shift is a
-//! const-eval expression resolved at monomorphisation.
+//! const-eval expression resolved at monomorphisation.  The `BE` branch is
+//! also const-folded away at monomorphisation time.
 //!
 //! # Output variants
 //!
@@ -34,18 +36,27 @@
 //!
 //! - u8: `0xFF`
 //! - u16: `(1u16 << BITS) - 1` (i.e., `511`, `1023`, `4095`, …)
+//!
+//! # Big-endian (`BE = true`) mode
+//!
+//! When `BE = true` each u16 sample is byte-swapped before masking and
+//! arithmetic.  The swap is a compile-time branch: the `BE = false` path
+//! compiles to a no-op and the call overhead is zero.
 
 /// Interleaves three planar G/B/R `u16` rows into packed `R, G, B`
 /// **bytes**, downshifting each sample by `BITS - 8`.
 ///
 /// Output order is **R, G, B** per pixel (FFmpeg `RGB24` convention).
 ///
+/// When `BE = true` each source element is byte-swapped before processing
+/// (big-endian wire format → host-native arithmetic value).
+///
 /// # Panics (debug builds)
 ///
 /// Asserts that `g`, `b`, `r` each have at least `width` samples and
 /// `rgb_out` has at least `width * 3` bytes.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gbr_to_rgb_high_bit_row<const BITS: u32>(
+pub(crate) fn gbr_to_rgb_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -65,9 +76,24 @@ pub(crate) fn gbr_to_rgb_high_bit_row<const BITS: u32>(
   let mask: u16 = ((1u32 << BITS) - 1) as u16;
   let shift = BITS - 8;
   for x in 0..width {
-    let r_val = r[x] & mask;
-    let g_val = g[x] & mask;
-    let b_val = b[x] & mask;
+    let r_raw = if BE {
+      u16::from_be(r[x])
+    } else {
+      u16::from_le(r[x])
+    };
+    let g_raw = if BE {
+      u16::from_be(g[x])
+    } else {
+      u16::from_le(g[x])
+    };
+    let b_raw = if BE {
+      u16::from_be(b[x])
+    } else {
+      u16::from_le(b[x])
+    };
+    let r_val = r_raw & mask;
+    let g_val = g_raw & mask;
+    let b_val = b_raw & mask;
     let dst = x * 3;
     rgb_out[dst] = (r_val >> shift) as u8;
     rgb_out[dst + 1] = (g_val >> shift) as u8;
@@ -79,12 +105,14 @@ pub(crate) fn gbr_to_rgb_high_bit_row<const BITS: u32>(
 /// **`u16`** samples. Copies samples directly without shifting —
 /// output values are in `[0, (1 << BITS) - 1]`.
 ///
+/// When `BE = true` each source element is byte-swapped before processing.
+///
 /// # Panics (debug builds)
 ///
 /// Asserts that `g`, `b`, `r` each have at least `width` samples and
 /// `rgb_u16_out` has at least `width * 3` samples.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
+pub(crate) fn gbr_to_rgb_u16_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -103,9 +131,24 @@ pub(crate) fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
   debug_assert!(rgb_u16_out.len() >= width * 3, "rgb_u16_out row too short");
   let mask: u16 = ((1u32 << BITS) - 1) as u16;
   for x in 0..width {
-    let r_val = r[x] & mask;
-    let g_val = g[x] & mask;
-    let b_val = b[x] & mask;
+    let r_raw = if BE {
+      u16::from_be(r[x])
+    } else {
+      u16::from_le(r[x])
+    };
+    let g_raw = if BE {
+      u16::from_be(g[x])
+    } else {
+      u16::from_le(g[x])
+    };
+    let b_raw = if BE {
+      u16::from_be(b[x])
+    } else {
+      u16::from_le(b[x])
+    };
+    let r_val = r_raw & mask;
+    let g_val = g_raw & mask;
+    let b_val = b_raw & mask;
     let dst = x * 3;
     rgb_u16_out[dst] = r_val;
     rgb_u16_out[dst + 1] = g_val;
@@ -118,8 +161,9 @@ pub(crate) fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
 /// `Gbrp*` sources (no alpha plane) when `with_rgba` is requested.
 ///
 /// Each sample is downshifted by `BITS - 8`.
+/// When `BE = true` each source element is byte-swapped before processing.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
+pub(crate) fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -139,9 +183,24 @@ pub(crate) fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
   let mask: u16 = ((1u32 << BITS) - 1) as u16;
   let shift = BITS - 8;
   for x in 0..width {
-    let r_val = r[x] & mask;
-    let g_val = g[x] & mask;
-    let b_val = b[x] & mask;
+    let r_raw = if BE {
+      u16::from_be(r[x])
+    } else {
+      u16::from_le(r[x])
+    };
+    let g_raw = if BE {
+      u16::from_be(g[x])
+    } else {
+      u16::from_le(g[x])
+    };
+    let b_raw = if BE {
+      u16::from_be(b[x])
+    } else {
+      u16::from_le(b[x])
+    };
+    let r_val = r_raw & mask;
+    let g_val = g_raw & mask;
+    let b_val = b_raw & mask;
     let dst = x * 4;
     rgba_out[dst] = (r_val >> shift) as u8;
     rgba_out[dst + 1] = (g_val >> shift) as u8;
@@ -154,8 +213,9 @@ pub(crate) fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
 /// **`u16`** samples with a constant **opaque** alpha
 /// (`(1u16 << BITS) - 1`). Used for `Gbrp*` sources (no alpha plane)
 /// when `with_rgba_u16` is requested. Copies samples directly.
+/// When `BE = true` each source element is byte-swapped before processing.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
+pub(crate) fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -178,9 +238,24 @@ pub(crate) fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
   let mask: u16 = ((1u32 << BITS) - 1) as u16;
   let opaque: u16 = mask;
   for x in 0..width {
-    let r_val = r[x] & mask;
-    let g_val = g[x] & mask;
-    let b_val = b[x] & mask;
+    let r_raw = if BE {
+      u16::from_be(r[x])
+    } else {
+      u16::from_le(r[x])
+    };
+    let g_raw = if BE {
+      u16::from_be(g[x])
+    } else {
+      u16::from_le(g[x])
+    };
+    let b_raw = if BE {
+      u16::from_be(b[x])
+    } else {
+      u16::from_le(b[x])
+    };
+    let r_val = r_raw & mask;
+    let g_val = g_raw & mask;
+    let b_val = b_raw & mask;
     let dst = x * 4;
     rgba_u16_out[dst] = r_val;
     rgba_u16_out[dst + 1] = g_val;
@@ -192,8 +267,9 @@ pub(crate) fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
 /// Interleaves four planar G/B/R/A `u16` rows into packed `R, G, B, A`
 /// **bytes**. Alpha is sourced from the `a` plane (real per-pixel α).
 /// Each sample (including α) is downshifted by `BITS - 8`.
+/// When `BE = true` each source element is byte-swapped before processing.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gbra_to_rgba_high_bit_row<const BITS: u32>(
+pub(crate) fn gbra_to_rgba_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -215,10 +291,30 @@ pub(crate) fn gbra_to_rgba_high_bit_row<const BITS: u32>(
   let mask: u16 = ((1u32 << BITS) - 1) as u16;
   let shift = BITS - 8;
   for x in 0..width {
-    let r_val = r[x] & mask;
-    let g_val = g[x] & mask;
-    let b_val = b[x] & mask;
-    let a_val = a[x] & mask;
+    let r_raw = if BE {
+      u16::from_be(r[x])
+    } else {
+      u16::from_le(r[x])
+    };
+    let g_raw = if BE {
+      u16::from_be(g[x])
+    } else {
+      u16::from_le(g[x])
+    };
+    let b_raw = if BE {
+      u16::from_be(b[x])
+    } else {
+      u16::from_le(b[x])
+    };
+    let a_raw = if BE {
+      u16::from_be(a[x])
+    } else {
+      u16::from_le(a[x])
+    };
+    let r_val = r_raw & mask;
+    let g_val = g_raw & mask;
+    let b_val = b_raw & mask;
+    let a_val = a_raw & mask;
     let dst = x * 4;
     rgba_out[dst] = (r_val >> shift) as u8;
     rgba_out[dst + 1] = (g_val >> shift) as u8;
@@ -230,8 +326,9 @@ pub(crate) fn gbra_to_rgba_high_bit_row<const BITS: u32>(
 /// Interleaves four planar G/B/R/A `u16` rows into packed `R, G, B, A`
 /// **`u16`** samples. Alpha is sourced from the `a` plane at native
 /// depth (no shift). Copies all four channels directly.
+/// When `BE = true` each source element is byte-swapped before processing.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
+pub(crate) fn gbra_to_rgba_u16_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -255,10 +352,30 @@ pub(crate) fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
   );
   let mask: u16 = ((1u32 << BITS) - 1) as u16;
   for x in 0..width {
-    let r_val = r[x] & mask;
-    let g_val = g[x] & mask;
-    let b_val = b[x] & mask;
-    let a_val = a[x] & mask;
+    let r_raw = if BE {
+      u16::from_be(r[x])
+    } else {
+      u16::from_le(r[x])
+    };
+    let g_raw = if BE {
+      u16::from_be(g[x])
+    } else {
+      u16::from_le(g[x])
+    };
+    let b_raw = if BE {
+      u16::from_be(b[x])
+    } else {
+      u16::from_le(b[x])
+    };
+    let a_raw = if BE {
+      u16::from_be(a[x])
+    } else {
+      u16::from_le(a[x])
+    };
+    let r_val = r_raw & mask;
+    let g_val = g_raw & mask;
+    let b_val = b_raw & mask;
+    let a_val = a_raw & mask;
     let dst = x * 4;
     rgba_u16_out[dst] = r_val;
     rgba_u16_out[dst + 1] = g_val;
@@ -280,8 +397,9 @@ pub(crate) fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
 /// `full_range = false` → Y' ∈ `[16 << (BITS - 8), 235 << (BITS - 8)]`
 /// (limited / studio swing). The limited-range formula mirrors
 /// `rgb_to_luma_row` but scaled to native depth.
+/// When `BE = true` each source element is byte-swapped before processing.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gbr_to_luma_u16_high_bit_row<const BITS: u32>(
+pub(crate) fn gbr_to_luma_u16_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -311,9 +429,24 @@ pub(crate) fn gbr_to_luma_u16_high_bit_row<const BITS: u32>(
 
   if full_range {
     for x in 0..width {
-      let rv = (r[x] & mask) as i64;
-      let gv = (g[x] & mask) as i64;
-      let bv = (b[x] & mask) as i64;
+      let r_raw = if BE {
+        u16::from_be(r[x])
+      } else {
+        u16::from_le(r[x])
+      };
+      let g_raw = if BE {
+        u16::from_be(g[x])
+      } else {
+        u16::from_le(g[x])
+      };
+      let b_raw = if BE {
+        u16::from_be(b[x])
+      } else {
+        u16::from_le(b[x])
+      };
+      let rv = (r_raw & mask) as i64;
+      let gv = (g_raw & mask) as i64;
+      let bv = (b_raw & mask) as i64;
       let y = ((k_r * rv + k_g * gv + k_b * bv + RND) >> 15) as i32;
       luma_out[x] = y.clamp(0, native_max as i32) as u16;
     }
@@ -339,9 +472,24 @@ pub(crate) fn gbr_to_luma_u16_high_bit_row<const BITS: u32>(
     let y_max = (235i64) << (BITS - 8);
     let y_min = y_off;
     for x in 0..width {
-      let rv = (r[x] & mask) as i64;
-      let gv = (g[x] & mask) as i64;
-      let bv = (b[x] & mask) as i64;
+      let r_raw = if BE {
+        u16::from_be(r[x])
+      } else {
+        u16::from_le(r[x])
+      };
+      let g_raw = if BE {
+        u16::from_be(g[x])
+      } else {
+        u16::from_le(g[x])
+      };
+      let b_raw = if BE {
+        u16::from_be(b[x])
+      } else {
+        u16::from_le(b[x])
+      };
+      let rv = (r_raw & mask) as i64;
+      let gv = (g_raw & mask) as i64;
+      let bv = (b_raw & mask) as i64;
       let y_full = (k_r * rv + k_g * gv + k_b * bv + RND) >> 15;
       let y_full_clamped = y_full.clamp(0, native_max_i64);
       let y_lim = y_off + (y_full_clamped * range + native_max_i64 / 2) / native_max_i64;
@@ -357,29 +505,51 @@ mod tests {
   use super::*;
   use crate::ColorMatrix;
 
+  // ---- LE-host fixture tests ----
+  //
+  // The tests below use host-native `u16` literals (e.g. `[100u16; 1]`,
+  // `vec![400u16, 200u16, 0u16]`) as if they were the on-disk LE
+  // encoding of those samples and then call the kernel with
+  // `<BITS, BE = false>` (LE path). On a BE host (e.g., s390x under
+  // miri-sb), host-native `u16` storage does NOT lay bytes out
+  // little-endian, so the kernel's `u16::from_le` byte-swap correctly
+  // reinterprets the host-native value and produces a different
+  // logical value than the literal — making the assertion fail. The
+  // kernel is correct: its BE-host scalar correctness is locked down
+  // by the dedicated `scalar_*_be_parity_*` tests further below, which
+  // build BE-encoded fixtures via `byte_swap_vec` from LE inputs and
+  // assert byte-for-byte parity. Gating these LE-fixture tests on
+  // `target_endian = "little"` avoids fixture-vs-kernel byte-order
+  // confusion without weakening coverage.
+  // Tests with all-zero / all-`u16::MAX` (byte-symmetric) literals are
+  // intentionally NOT gated — `from_le` is a no-op on those bit
+  // patterns regardless of host endianness.
+
   // ---- gbr_to_rgb_high_bit_row: u8 output, downshift ----------------------
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_high_bit_bits10_channel_reorder() {
     // G=0, B=100, R=1000 → packed R,G,B = 1000>>2, 0>>2, 100>>2 = 250, 0, 25
     let g = [0u16; 1];
     let b = [100u16; 1];
     let r = [1000u16; 1];
     let mut out = [0u8; 3];
-    gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut out, 1);
+    gbr_to_rgb_high_bit_row::<10, false>(&g, &b, &r, &mut out, 1);
     assert_eq!(out[0], 250); // R
     assert_eq!(out[1], 0); // G
     assert_eq!(out[2], 25); // B
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_high_bit_bits10_max_value_becomes_0xff() {
     let max = (1u16 << 10) - 1; // 1023
     let g = [max; 4];
     let b = [max; 4];
     let r = [max; 4];
     let mut out = [0u8; 12];
-    gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut out, 4);
+    gbr_to_rgb_high_bit_row::<10, false>(&g, &b, &r, &mut out, 4);
     assert!(out.iter().all(|&v| v == 0xFF), "all pixels must be 0xFF");
   }
 
@@ -390,7 +560,7 @@ mod tests {
     let b = [max; 2];
     let r = [max; 2];
     let mut out = [0u8; 6];
-    gbr_to_rgb_high_bit_row::<16>(&g, &b, &r, &mut out, 2);
+    gbr_to_rgb_high_bit_row::<16, false>(&g, &b, &r, &mut out, 2);
     assert!(out.iter().all(|&v| v == 0xFF));
   }
 
@@ -400,33 +570,36 @@ mod tests {
     let b = [0u16; 2];
     let r = [0u16; 2];
     let mut out = [0xFFu8; 6];
-    gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut out, 2);
+    gbr_to_rgb_high_bit_row::<10, false>(&g, &b, &r, &mut out, 2);
     assert!(out.iter().all(|&v| v == 0));
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_high_bit_bits9_downshift_by_1() {
     // BITS=9: shift = 1. Value 510 >> 1 = 255.
     let g = [510u16; 1];
     let b = [0u16; 1];
     let r = [0u16; 1];
     let mut out = [0u8; 3];
-    gbr_to_rgb_high_bit_row::<9>(&g, &b, &r, &mut out, 1);
+    gbr_to_rgb_high_bit_row::<9, false>(&g, &b, &r, &mut out, 1);
     assert_eq!(out[1], 255); // G channel
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_high_bit_bits12_downshift_by_4() {
     // BITS=12: shift = 4. Value 4080 >> 4 = 255.
     let r = [4080u16; 1];
     let g = [0u16; 1];
     let b = [0u16; 1];
     let mut out = [0u8; 3];
-    gbr_to_rgb_high_bit_row::<12>(&g, &b, &r, &mut out, 1);
+    gbr_to_rgb_high_bit_row::<12, false>(&g, &b, &r, &mut out, 1);
     assert_eq!(out[0], 255); // R channel
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_high_bit_multiple_pixels_correct_layout() {
     // 3 pixels: (R,G,B) = (100,200,300>>2=75), (200>>2=50,0,0), (0,150>>2=37,50>>2=12)
     // BITS=10, shift=2
@@ -434,7 +607,7 @@ mod tests {
     let g = [800u16, 0u16, 600u16];
     let b = [300u16, 0u16, 200u16];
     let mut out = [0u8; 9];
-    gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut out, 3);
+    gbr_to_rgb_high_bit_row::<10, false>(&g, &b, &r, &mut out, 3);
     // pixel 0: R=400>>2=100, G=800>>2=200, B=300>>2=75
     assert_eq!(out[0], 100);
     assert_eq!(out[1], 200);
@@ -452,25 +625,27 @@ mod tests {
   // ---- gbr_to_rgb_u16_high_bit_row: u16 output, no shift ------------------
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_u16_high_bit_channel_reorder() {
     let g = [111u16; 1];
     let b = [222u16; 1];
     let r = [333u16; 1];
     let mut out = [0u16; 3];
-    gbr_to_rgb_u16_high_bit_row::<10>(&g, &b, &r, &mut out, 1);
+    gbr_to_rgb_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out, 1);
     assert_eq!(out[0], 333); // R
     assert_eq!(out[1], 111); // G
     assert_eq!(out[2], 222); // B
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_u16_high_bit_bits10_max_preserved() {
     let max = (1u16 << 10) - 1; // 1023
     let g = [max; 4];
     let b = [max; 4];
     let r = [max; 4];
     let mut out = [0u16; 12];
-    gbr_to_rgb_u16_high_bit_row::<10>(&g, &b, &r, &mut out, 4);
+    gbr_to_rgb_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out, 4);
     assert!(out.iter().all(|&v| v == max));
   }
 
@@ -481,18 +656,19 @@ mod tests {
     let b = [max; 2];
     let r = [max; 2];
     let mut out = [0u16; 6];
-    gbr_to_rgb_u16_high_bit_row::<16>(&g, &b, &r, &mut out, 2);
+    gbr_to_rgb_u16_high_bit_row::<16, false>(&g, &b, &r, &mut out, 2);
     assert!(out.iter().all(|&v| v == max));
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_u16_high_bit_values_not_shifted() {
     // Verify that u16 output does NOT shift values (unlike u8 output).
     let g = [1000u16; 1];
     let b = [2000u16; 1];
     let r = [3000u16; 1];
     let mut out = [0u16; 3];
-    gbr_to_rgb_u16_high_bit_row::<12>(&g, &b, &r, &mut out, 1);
+    gbr_to_rgb_u16_high_bit_row::<12, false>(&g, &b, &r, &mut out, 1);
     assert_eq!(out[0], 3000); // R — unchanged
     assert_eq!(out[1], 1000); // G — unchanged
     assert_eq!(out[2], 2000); // B — unchanged
@@ -501,13 +677,14 @@ mod tests {
   // ---- gbr_to_rgba_opaque_high_bit_row: u8 RGBA with constant alpha --------
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgba_opaque_high_bit_bits10_alpha_is_0xff() {
     let max = (1u16 << 10) - 1;
     let g = [max; 4];
     let b = [max; 4];
     let r = [max; 4];
     let mut out = [0u8; 16];
-    gbr_to_rgba_opaque_high_bit_row::<10>(&g, &b, &r, &mut out, 4);
+    gbr_to_rgba_opaque_high_bit_row::<10, false>(&g, &b, &r, &mut out, 4);
     for i in 0..4 {
       assert_eq!(out[i * 4 + 3], 0xFF, "alpha must be 0xFF at pixel {i}");
       assert_eq!(out[i * 4], 0xFF, "R must be 0xFF at pixel {i}");
@@ -515,13 +692,14 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgba_opaque_high_bit_bits9_downshift_correct() {
     // BITS=9, shift=1. Value 510 >> 1 = 255.
     let g = [510u16; 1];
     let b = [0u16; 1];
     let r = [0u16; 1];
     let mut out = [0u8; 4];
-    gbr_to_rgba_opaque_high_bit_row::<9>(&g, &b, &r, &mut out, 1);
+    gbr_to_rgba_opaque_high_bit_row::<9, false>(&g, &b, &r, &mut out, 1);
     assert_eq!(out[1], 255); // G
     assert_eq!(out[3], 0xFF); // alpha
   }
@@ -529,12 +707,13 @@ mod tests {
   // ---- gbr_to_rgba_opaque_u16_high_bit_row: u16 RGBA with constant alpha ---
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgba_opaque_u16_high_bit_bits10_alpha_is_1023() {
     let g = [500u16; 2];
     let b = [200u16; 2];
     let r = [800u16; 2];
     let mut out = [0u16; 8];
-    gbr_to_rgba_opaque_u16_high_bit_row::<10>(&g, &b, &r, &mut out, 2);
+    gbr_to_rgba_opaque_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out, 2);
     let opaque = (1u16 << 10) - 1; // 1023
     assert_eq!(out[3], opaque); // pixel 0 alpha
     assert_eq!(out[7], opaque); // pixel 1 alpha
@@ -549,7 +728,7 @@ mod tests {
     let b = [0u16; 1];
     let r = [0u16; 1];
     let mut out = [0u16; 4];
-    gbr_to_rgba_opaque_u16_high_bit_row::<16>(&g, &b, &r, &mut out, 1);
+    gbr_to_rgba_opaque_u16_high_bit_row::<16, false>(&g, &b, &r, &mut out, 1);
     assert_eq!(out[3], u16::MAX);
   }
 
@@ -559,13 +738,14 @@ mod tests {
     let b = [0u16; 1];
     let r = [0u16; 1];
     let mut out = [0u16; 4];
-    gbr_to_rgba_opaque_u16_high_bit_row::<9>(&g, &b, &r, &mut out, 1);
+    gbr_to_rgba_opaque_u16_high_bit_row::<9, false>(&g, &b, &r, &mut out, 1);
     assert_eq!(out[3], (1u16 << 9) - 1); // 511
   }
 
   // ---- gbra_to_rgba_high_bit_row: u8 RGBA with source alpha ----------------
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbra_rgba_high_bit_bits10_source_alpha_downshifted() {
     // BITS=10, shift=2. Alpha value 512 >> 2 = 128.
     let g = [0u16; 1];
@@ -573,11 +753,12 @@ mod tests {
     let r = [0u16; 1];
     let a = [512u16; 1];
     let mut out = [0u8; 4];
-    gbra_to_rgba_high_bit_row::<10>(&g, &b, &r, &a, &mut out, 1);
+    gbra_to_rgba_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out, 1);
     assert_eq!(out[3], 128); // alpha = 512 >> 2
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbra_rgba_high_bit_bits10_max_alpha_is_0xff() {
     let max = (1u16 << 10) - 1;
     let g = [max; 2];
@@ -585,13 +766,14 @@ mod tests {
     let r = [max; 2];
     let a = [max; 2];
     let mut out = [0u8; 8];
-    gbra_to_rgba_high_bit_row::<10>(&g, &b, &r, &a, &mut out, 2);
+    gbra_to_rgba_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out, 2);
     for i in 0..2 {
       assert_eq!(out[i * 4 + 3], 0xFF, "alpha must be 0xFF at pixel {i}");
     }
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbra_rgba_high_bit_bits14_channel_reorder_and_shift() {
     // BITS=14, shift=6. R=16320 >> 6 = 255, G=0, B=0, A=8192 >> 6 = 128.
     let g = [0u16; 1];
@@ -599,7 +781,7 @@ mod tests {
     let r = [16320u16; 1];
     let a = [8192u16; 1];
     let mut out = [0u8; 4];
-    gbra_to_rgba_high_bit_row::<14>(&g, &b, &r, &a, &mut out, 1);
+    gbra_to_rgba_high_bit_row::<14, false>(&g, &b, &r, &a, &mut out, 1);
     assert_eq!(out[0], 255); // R
     assert_eq!(out[1], 0); // G
     assert_eq!(out[2], 0); // B
@@ -609,13 +791,14 @@ mod tests {
   // ---- gbra_to_rgba_u16_high_bit_row: u16 RGBA with source alpha -----------
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbra_rgba_u16_high_bit_source_alpha_preserved() {
     let g = [100u16; 1];
     let b = [200u16; 1];
     let r = [300u16; 1];
     let a = [777u16; 1];
     let mut out = [0u16; 4];
-    gbra_to_rgba_u16_high_bit_row::<10>(&g, &b, &r, &a, &mut out, 1);
+    gbra_to_rgba_u16_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out, 1);
     assert_eq!(out[0], 300); // R
     assert_eq!(out[1], 100); // G
     assert_eq!(out[2], 200); // B
@@ -623,13 +806,14 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbra_rgba_u16_high_bit_bits16_all_channels_preserved() {
     let g = [10000u16; 2];
     let b = [20000u16; 2];
     let r = [30000u16; 2];
     let a = [40000u16; 2];
     let mut out = [0u16; 8];
-    gbra_to_rgba_u16_high_bit_row::<16>(&g, &b, &r, &a, &mut out, 2);
+    gbra_to_rgba_u16_high_bit_row::<16, false>(&g, &b, &r, &a, &mut out, 2);
     for i in 0..2 {
       assert_eq!(out[i * 4], 30000);
       assert_eq!(out[i * 4 + 1], 10000);
@@ -641,6 +825,7 @@ mod tests {
   // ---- Round-trip parity: high-bit u8 output matches 8-bit source ----------
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_high_bit_bits10_parity_with_scaled_8bit() {
     // val=128 in 8-bit; in 10-bit: 128 << 2 = 512. 512 >> 2 = 128.
     let val: u16 = 128u16 << 2;
@@ -648,11 +833,12 @@ mod tests {
     let b = [val; 8];
     let r = [val; 8];
     let mut out = [0u8; 24];
-    gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut out, 8);
+    gbr_to_rgb_high_bit_row::<10, false>(&g, &b, &r, &mut out, 8);
     assert!(out.iter().all(|&v| v == 128));
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn rgb_high_bit_bits12_parity_with_scaled_8bit() {
     // val=200 in 8-bit; in 12-bit: 200 << 4 = 3200. 3200 >> 4 = 200.
     let val: u16 = 200u16 << 4;
@@ -660,7 +846,7 @@ mod tests {
     let b = [val; 4];
     let r = [val; 4];
     let mut out = [0u8; 12];
-    gbr_to_rgb_high_bit_row::<12>(&g, &b, &r, &mut out, 4);
+    gbr_to_rgb_high_bit_row::<12, false>(&g, &b, &r, &mut out, 4);
     assert!(out.iter().all(|&v| v == 200));
   }
 
@@ -669,6 +855,7 @@ mod tests {
   // correctly before processing, ensuring scalar/SIMD produce identical output.
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbr_to_rgb_high_bit_masks_upper_bits_bits10() {
     // BITS=10, mask=0x03FF. Input 0x0CFF has upper bits set.
     // masked = 0x0CFF & 0x03FF = 0x00FF = 255. 255 >> 2 = 63 as u8.
@@ -679,7 +866,7 @@ mod tests {
     let b = [dirty; 1];
     let r = [dirty; 1];
     let mut out = [0u8; 3];
-    gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut out, 1);
+    gbr_to_rgb_high_bit_row::<10, false>(&g, &b, &r, &mut out, 1);
     assert_eq!(
       out[0], expected_u8,
       "R must equal masked-then-shifted value"
@@ -695,6 +882,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbr_to_rgb_high_bit_masks_upper_bits_multiple_widths_bits10() {
     // Width sweep: [1, 7, 8, 16, 17, 32, 33, 64, 128, 130].
     let dirty: u16 = 0x0500; // BITS=10: mask&0x0500 = 0x0100=256; 256>>2=64.
@@ -705,7 +893,7 @@ mod tests {
       let b = std::vec![dirty; w];
       let r = std::vec![dirty; w];
       let mut out = std::vec![0u8; w * 3];
-      gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut out, w);
+      gbr_to_rgb_high_bit_row::<10, false>(&g, &b, &r, &mut out, w);
       for i in 0..w {
         assert_eq!(out[i * 3], expected_u8, "R pixel {i} wrong at width {w}");
         assert_eq!(
@@ -723,6 +911,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbra_to_rgba_high_bit_masks_upper_bits_alpha_bits10() {
     // Verify that the alpha channel is also masked before shifting.
     // BITS=10: dirty_alpha = 0x0800 | 512 = 0x0A00 = 2560.
@@ -734,7 +923,7 @@ mod tests {
     let r = [dirty_rgb; 1];
     let a = [dirty_alpha; 1];
     let mut out = [0u8; 4];
-    gbra_to_rgba_high_bit_row::<10>(&g, &b, &r, &a, &mut out, 1);
+    gbra_to_rgba_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out, 1);
     assert_eq!(out[0], 0, "R (dirty, masked to 0)");
     assert_eq!(out[1], 0, "G (dirty, masked to 0)");
     assert_eq!(out[2], 0, "B (dirty, masked to 0)");
@@ -742,6 +931,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbr_to_rgb_u16_high_bit_masks_upper_bits_bits10() {
     // u16-output: verify that masked sample is in the output (not raw dirty value).
     let dirty: u16 = 0x0CFF;
@@ -750,13 +940,14 @@ mod tests {
     let b = [dirty; 1];
     let r = [dirty; 1];
     let mut out = [0u16; 3];
-    gbr_to_rgb_u16_high_bit_row::<10>(&g, &b, &r, &mut out, 1);
+    gbr_to_rgb_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out, 1);
     assert_eq!(out[0], clean, "R u16 must be masked value");
     assert_eq!(out[1], clean, "G u16 must be masked value");
     assert_eq!(out[2], clean, "B u16 must be masked value");
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbra_to_rgba_u16_high_bit_masks_upper_bits_bits10() {
     // u16 RGBA output: all channels masked.
     let dirty: u16 = 0x0555; // BITS=10: masked = 0x0555 & 0x03FF = 0x0155 = 341.
@@ -766,7 +957,7 @@ mod tests {
     let r = [dirty; 1];
     let a = [dirty; 1];
     let mut out = [0u16; 4];
-    gbra_to_rgba_u16_high_bit_row::<10>(&g, &b, &r, &a, &mut out, 1);
+    gbra_to_rgba_u16_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out, 1);
     assert_eq!(out[0], clean, "R u16 must be masked");
     assert_eq!(out[1], clean, "G u16 must be masked");
     assert_eq!(out[2], clean, "B u16 must be masked");
@@ -774,6 +965,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbr_to_rgba_opaque_high_bit_masks_upper_bits_bits10() {
     // u8 RGBA opaque: RGB channels masked, alpha always 0xFF.
     let dirty: u16 = 0x0CFF; // masked & 0x03FF = 0x00FF = 255. 255>>2=63.
@@ -783,7 +975,7 @@ mod tests {
     let b = [dirty; 1];
     let r = [dirty; 1];
     let mut out = [0u8; 4];
-    gbr_to_rgba_opaque_high_bit_row::<10>(&g, &b, &r, &mut out, 1);
+    gbr_to_rgba_opaque_high_bit_row::<10, false>(&g, &b, &r, &mut out, 1);
     assert_eq!(out[0], expected_u8, "R must be masked");
     assert_eq!(out[1], expected_u8, "G must be masked");
     assert_eq!(out[2], expected_u8, "B must be masked");
@@ -791,6 +983,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbr_to_rgba_opaque_u16_high_bit_masks_upper_bits_bits10() {
     // u16 RGBA opaque: RGB masked, alpha is opaque mask value.
     let dirty: u16 = 0x0CFF; // masked = 0x00FF = 255.
@@ -799,7 +992,7 @@ mod tests {
     let b = [dirty; 1];
     let r = [dirty; 1];
     let mut out = [0u16; 4];
-    gbr_to_rgba_opaque_u16_high_bit_row::<10>(&g, &b, &r, &mut out, 1);
+    gbr_to_rgba_opaque_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out, 1);
     assert_eq!(out[0], clean, "R u16 must be masked");
     assert_eq!(out[1], clean, "G u16 must be masked");
     assert_eq!(out[2], clean, "B u16 must be masked");
@@ -815,7 +1008,7 @@ mod tests {
     let b = [val; 2];
     let r = [val; 2];
     let mut out = [0u8; 6];
-    gbr_to_rgb_high_bit_row::<16>(&g, &b, &r, &mut out, 2);
+    gbr_to_rgb_high_bit_row::<16, false>(&g, &b, &r, &mut out, 2);
     assert!(
       out.iter().all(|&v| v == 0xFF),
       "BITS=16: max sample => 0xFF"
@@ -825,6 +1018,7 @@ mod tests {
   // ---- Cross-path consistency: direct GBRA vs masked RGB + separate alpha ---
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn gbra_to_rgba_high_bit_cross_path_consistency_bits10() {
     // With upper-bits-set alpha: direct gbra_to_rgba == manual masking.
     // BITS=10, dirty_alpha = 0x0800 | 0x0100 = 0x0900; masked=0x0100=256; 256>>2=64.
@@ -839,12 +1033,12 @@ mod tests {
 
     // Direct path
     let mut out_direct = [0u8; 4];
-    gbra_to_rgba_high_bit_row::<10>(&g, &b, &r, &a, &mut out_direct, 1);
+    gbra_to_rgba_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out_direct, 1);
 
     // Manual path: apply mask to alpha, call with clean value
     let a_clean = [clean_alpha; 1];
     let mut out_manual = [0u8; 4];
-    gbra_to_rgba_high_bit_row::<10>(&g, &b, &r, &a_clean, &mut out_manual, 1);
+    gbra_to_rgba_high_bit_row::<10, false>(&g, &b, &r, &a_clean, &mut out_manual, 1);
 
     assert_eq!(
       out_direct, out_manual,
@@ -856,6 +1050,7 @@ mod tests {
   // ---- gbr_to_luma_u16_high_bit_row: native-depth luma --------------------
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn luma_u16_high_bit_bits10_max_white_not_banded() {
     // BITS=10: max = 1023. Old path gave (255 as u16) << 2 = 1020, not 1023.
     // New kernel must produce a value near 1023 for all-white input.
@@ -864,7 +1059,7 @@ mod tests {
     let b = [max; 1];
     let r = [max; 1];
     let mut out = [0u16; 1];
-    gbr_to_luma_u16_high_bit_row::<10>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, true);
+    gbr_to_luma_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, true);
     // For BT.709 full-range all-white: Y = round(Kr*max + Kg*max + Kb*max).
     // = round((6966 + 23436 + 2366) / 32768 * 1023) ≈ round(32768/32768 * 1023) = 1023.
     assert!(
@@ -879,6 +1074,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn luma_u16_high_bit_bits12_max_white_not_banded() {
     // BITS=12: max = 4095. Old path: (255 as u16) << 4 = 4080.
     // New kernel should give a value in [4090, 4095].
@@ -887,7 +1083,7 @@ mod tests {
     let b = [max; 1];
     let r = [max; 1];
     let mut out = [0u16; 1];
-    gbr_to_luma_u16_high_bit_row::<12>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt601, true);
+    gbr_to_luma_u16_high_bit_row::<12, false>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt601, true);
     assert!(
       out[0] >= 4090,
       "max-white luma_u16 bits12 must be near 4095 (was {})",
@@ -905,7 +1101,7 @@ mod tests {
     let b = [max; 1];
     let r = [max; 1];
     let mut out = [0u16; 1];
-    gbr_to_luma_u16_high_bit_row::<16>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, true);
+    gbr_to_luma_u16_high_bit_row::<16, false>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, true);
     assert!(
       out[0] >= 65520,
       "max-white luma_u16 bits16 must be near 65535 (was {}), old banded gives 65280",
@@ -915,6 +1111,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn luma_u16_high_bit_bits10_neutral_gray_midrange() {
     // BITS=10: mid = 512. Luma of neutral gray ≈ 512.
     let mid = 512u16;
@@ -922,7 +1119,7 @@ mod tests {
     let b = [mid; 1];
     let r = [mid; 1];
     let mut out = [0u16; 1];
-    gbr_to_luma_u16_high_bit_row::<10>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, true);
+    gbr_to_luma_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, true);
     assert!(
       out[0] >= 510 && out[0] <= 514,
       "neutral gray luma_u16 must be ~512 (was {})",
@@ -936,11 +1133,12 @@ mod tests {
     let b = [0u16; 2];
     let r = [0u16; 2];
     let mut out = [0xFFFFu16; 2];
-    gbr_to_luma_u16_high_bit_row::<10>(&g, &b, &r, &mut out, 2, ColorMatrix::Bt709, true);
+    gbr_to_luma_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out, 2, ColorMatrix::Bt709, true);
     assert!(out.iter().all(|&v| v == 0), "all-black must give zero luma");
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn luma_u16_high_bit_bits10_full_range_vs_limited_range() {
     // For mid-gray input, limited-range luma should be in [16<<2, 235<<2] = [64, 940].
     let mid = 512u16;
@@ -949,8 +1147,24 @@ mod tests {
     let r = [mid; 1];
     let mut out_full = [0u16; 1];
     let mut out_lim = [0u16; 1];
-    gbr_to_luma_u16_high_bit_row::<10>(&g, &b, &r, &mut out_full, 1, ColorMatrix::Bt601, true);
-    gbr_to_luma_u16_high_bit_row::<10>(&g, &b, &r, &mut out_lim, 1, ColorMatrix::Bt601, false);
+    gbr_to_luma_u16_high_bit_row::<10, false>(
+      &g,
+      &b,
+      &r,
+      &mut out_full,
+      1,
+      ColorMatrix::Bt601,
+      true,
+    );
+    gbr_to_luma_u16_high_bit_row::<10, false>(
+      &g,
+      &b,
+      &r,
+      &mut out_lim,
+      1,
+      ColorMatrix::Bt601,
+      false,
+    );
     let y_off = 16u16 << 2; // 64
     let y_max = 235u16 << 2; // 940
     assert!(
@@ -976,7 +1190,7 @@ mod tests {
     let b = [0u16; 1];
     let r = [0u16; 1];
     let mut out = [0u16; 1];
-    gbr_to_luma_u16_high_bit_row::<16>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, false);
+    gbr_to_luma_u16_high_bit_row::<16, false>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, false);
     let y_off = 16u16 << 8; // 4096
     assert_eq!(
       out[0], y_off,
@@ -1001,7 +1215,7 @@ mod tests {
     let b = [u16::MAX; 1];
     let r = [u16::MAX; 1];
     let mut out = [0u16; 1];
-    gbr_to_luma_u16_high_bit_row::<16>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, false);
+    gbr_to_luma_u16_high_bit_row::<16, false>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, false);
     let y_max = 235u16 << 8; // 60160
     assert_eq!(
       out[0], y_max,
@@ -1010,6 +1224,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn luma_u16_high_bit_bits16_limited_range_near_white_keeps_gradation() {
     // BITS=16, BT.709 luma weights ≈ Kr=0.2126, Kg=0.7152, Kb=0.0722.
     // Setting all 3 channels equal makes the matrix multiply produce
@@ -1022,7 +1237,7 @@ mod tests {
       let b = [v; 1];
       let r = [v; 1];
       let mut out = [0u16; 1];
-      gbr_to_luma_u16_high_bit_row::<16>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, false);
+      gbr_to_luma_u16_high_bit_row::<16, false>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, false);
       // Native-depth limited-range: y_lim = 4096 + v × 56064 / 65535
       let expected = 4096 + ((v as u64 * 56064 + 65535 / 2) / 65535) as u16;
       // Allow ±1 LSB for matrix-multiply rounding (BT.709 weights aren't
@@ -1044,6 +1259,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn luma_u16_high_bit_bits10_limited_range_endpoints() {
     // BITS=10: y_off=64 (=16<<2), y_max=940 (=235<<2), native_max=1023.
     // BT.709 luma at all-equal channels passes y_full ≈ input through.
@@ -1054,12 +1270,172 @@ mod tests {
       let b = [input; 1];
       let r = [input; 1];
       let mut out = [0u16; 1];
-      gbr_to_luma_u16_high_bit_row::<10>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, false);
+      gbr_to_luma_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, false);
       let diff = (out[0] as i32 - expected as i32).abs();
       assert!(
         diff <= 1,
         "BITS=10 input={input} expected ≈{expected} got {}",
         out[0]
+      );
+    }
+  }
+
+  // ---- BE vs LE parity: scalar<BITS, true> must produce same output as -------
+  // scalar<BITS, false> on byte-swapped input. Covers 6 kernels at BITS 10/16. -
+
+  fn byte_swap_vec(v: &[u16]) -> std::vec::Vec<u16> {
+    v.iter().map(|x| x.swap_bytes()).collect()
+  }
+
+  fn rand_plane<const BITS: u32>(seed: u32, n: usize) -> std::vec::Vec<u16> {
+    let mask = (1u32 << BITS) - 1;
+    let mut s = seed;
+    (0..n)
+      .map(|_| {
+        s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (s & mask) as u16
+      })
+      .collect()
+  }
+
+  #[test]
+  fn scalar_gbr_to_rgb_high_bit_be_parity_bits10() {
+    for w in [1usize, 7, 8, 9, 17, 33, 65] {
+      let g = rand_plane::<10>(0xAAAA, w);
+      let b = rand_plane::<10>(0xBBBB, w);
+      let r = rand_plane::<10>(0xCCCC, w);
+      let mut out_le = std::vec![0u8; w * 3];
+      let mut out_be = std::vec![0u8; w * 3];
+      gbr_to_rgb_high_bit_row::<10, false>(&g, &b, &r, &mut out_le, w);
+      gbr_to_rgb_high_bit_row::<10, true>(
+        &byte_swap_vec(&g),
+        &byte_swap_vec(&b),
+        &byte_swap_vec(&r),
+        &mut out_be,
+        w,
+      );
+      assert_eq!(
+        out_le, out_be,
+        "scalar BE/LE mismatch gbr_to_rgb bits10 w={w}"
+      );
+    }
+  }
+
+  #[test]
+  fn scalar_gbr_to_rgb_high_bit_be_parity_bits16() {
+    for w in [1usize, 7, 8, 9, 17, 33, 65] {
+      let g = rand_plane::<16>(0xAAAA, w);
+      let b = rand_plane::<16>(0xBBBB, w);
+      let r = rand_plane::<16>(0xCCCC, w);
+      let mut out_le = std::vec![0u8; w * 3];
+      let mut out_be = std::vec![0u8; w * 3];
+      gbr_to_rgb_high_bit_row::<16, false>(&g, &b, &r, &mut out_le, w);
+      gbr_to_rgb_high_bit_row::<16, true>(
+        &byte_swap_vec(&g),
+        &byte_swap_vec(&b),
+        &byte_swap_vec(&r),
+        &mut out_be,
+        w,
+      );
+      assert_eq!(
+        out_le, out_be,
+        "scalar BE/LE mismatch gbr_to_rgb bits16 w={w}"
+      );
+    }
+  }
+
+  #[test]
+  fn scalar_gbr_to_rgba_opaque_high_bit_be_parity_bits10() {
+    for w in [1usize, 7, 8, 9, 17] {
+      let g = rand_plane::<10>(0xAAAA, w);
+      let b = rand_plane::<10>(0xBBBB, w);
+      let r = rand_plane::<10>(0xCCCC, w);
+      let mut out_le = std::vec![0u8; w * 4];
+      let mut out_be = std::vec![0u8; w * 4];
+      gbr_to_rgba_opaque_high_bit_row::<10, false>(&g, &b, &r, &mut out_le, w);
+      gbr_to_rgba_opaque_high_bit_row::<10, true>(
+        &byte_swap_vec(&g),
+        &byte_swap_vec(&b),
+        &byte_swap_vec(&r),
+        &mut out_be,
+        w,
+      );
+      assert_eq!(
+        out_le, out_be,
+        "scalar BE/LE mismatch gbr_to_rgba_opaque bits10 w={w}"
+      );
+    }
+  }
+
+  #[test]
+  fn scalar_gbra_to_rgba_high_bit_be_parity_bits10() {
+    for w in [1usize, 7, 8, 9, 17] {
+      let g = rand_plane::<10>(0xAAAA, w);
+      let b = rand_plane::<10>(0xBBBB, w);
+      let r = rand_plane::<10>(0xCCCC, w);
+      let a = rand_plane::<10>(0xDDDD, w);
+      let mut out_le = std::vec![0u8; w * 4];
+      let mut out_be = std::vec![0u8; w * 4];
+      gbra_to_rgba_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out_le, w);
+      gbra_to_rgba_high_bit_row::<10, true>(
+        &byte_swap_vec(&g),
+        &byte_swap_vec(&b),
+        &byte_swap_vec(&r),
+        &byte_swap_vec(&a),
+        &mut out_be,
+        w,
+      );
+      assert_eq!(
+        out_le, out_be,
+        "scalar BE/LE mismatch gbra_to_rgba bits10 w={w}"
+      );
+    }
+  }
+
+  #[test]
+  fn scalar_gbr_to_rgb_u16_high_bit_be_parity_bits10() {
+    for w in [1usize, 7, 8, 9, 17] {
+      let g = rand_plane::<10>(0xAAAA, w);
+      let b = rand_plane::<10>(0xBBBB, w);
+      let r = rand_plane::<10>(0xCCCC, w);
+      let mut out_le = std::vec![0u16; w * 3];
+      let mut out_be = std::vec![0u16; w * 3];
+      gbr_to_rgb_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out_le, w);
+      gbr_to_rgb_u16_high_bit_row::<10, true>(
+        &byte_swap_vec(&g),
+        &byte_swap_vec(&b),
+        &byte_swap_vec(&r),
+        &mut out_be,
+        w,
+      );
+      assert_eq!(
+        out_le, out_be,
+        "scalar BE/LE mismatch gbr_to_rgb_u16 bits10 w={w}"
+      );
+    }
+  }
+
+  #[test]
+  fn scalar_gbra_to_rgba_u16_high_bit_be_parity_bits10() {
+    for w in [1usize, 7, 8, 9, 17] {
+      let g = rand_plane::<10>(0xAAAA, w);
+      let b = rand_plane::<10>(0xBBBB, w);
+      let r = rand_plane::<10>(0xCCCC, w);
+      let a = rand_plane::<10>(0xDDDD, w);
+      let mut out_le = std::vec![0u16; w * 4];
+      let mut out_be = std::vec![0u16; w * 4];
+      gbra_to_rgba_u16_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out_le, w);
+      gbra_to_rgba_u16_high_bit_row::<10, true>(
+        &byte_swap_vec(&g),
+        &byte_swap_vec(&b),
+        &byte_swap_vec(&r),
+        &byte_swap_vec(&a),
+        &mut out_be,
+        w,
+      );
+      assert_eq!(
+        out_le, out_be,
+        "scalar BE/LE mismatch gbra_to_rgba_u16 bits10 w={w}"
       );
     }
   }

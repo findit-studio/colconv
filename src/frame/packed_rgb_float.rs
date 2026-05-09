@@ -50,7 +50,7 @@ pub enum Rgbf32FrameError {
   },
 }
 
-/// A validated packed **RGBF32** frame (FFmpeg `AV_PIX_FMT_RGBF32`).
+/// A validated packed **RGBF32** frame.
 /// One plane, 3 × `f32` per pixel, channel order `R, G, B`.
 ///
 /// Values are **linear** RGB by convention — no gamma / OETF handling
@@ -64,6 +64,29 @@ pub enum Rgbf32FrameError {
 /// `stride` is in **`f32` elements** (≥ `3 * width`), matching the
 /// per-format convention that stride aligns with the underlying slice
 /// element type. No width parity constraint.
+///
+/// # Endian contract — **LE-encoded bytes** (`AV_PIX_FMT_RGBF32LE`)
+///
+/// The `&[f32]` plane is the **LE-encoded byte layout** reinterpreted as
+/// `f32`. This frame maps to FFmpeg `AV_PIX_FMT_RGBF32LE`. FFmpeg also
+/// defines `AV_PIX_FMT_RGBF32BE` and an unsuffixed `AV_PIX_FMT_RGBF32`
+/// alias that is **target-endian** (resolves to `RGBF32LE` on LE hosts and
+/// `RGBF32BE` on BE hosts). **Callers on a BE host who hold target-endian
+/// `AV_PIX_FMT_RGBF32` bytes must convert them to LE before constructing
+/// this frame** — otherwise the LE-decode contract here would re-interpret
+/// the BE bytes as LE and produce byte-swapped float data. The 4-channel
+/// `AV_PIX_FMT_RGBAF32LE` / `AV_PIX_FMT_RGBAF32BE` pair follows the same
+/// `*LE` convention; this frame uses the analogous LE binding.
+///
+/// On a little-endian host (every CI runner today) LE bytes _are_
+/// host-native, so `&[f32]` is also a host-native float slice; on a
+/// big-endian host the bytes have to be byte-swapped back to host-native
+/// before arithmetic. Downstream row kernels handle this byte-swap (or
+/// no-op on LE) under the hood — callers do **not** pre-swap.
+///
+/// Stride is in **f32 elements** (not bytes). Callers holding a byte buffer
+/// from FFmpeg should cast via `bytemuck::cast_slice` and divide
+/// `linesize[0]` by 4 before constructing.
 #[derive(Debug, Clone, Copy)]
 pub struct Rgbf32Frame<'a> {
   rgb: &'a [f32],

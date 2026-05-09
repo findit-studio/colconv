@@ -7,6 +7,14 @@
 //! from [`super::planar_gbr_float`]. No separate f16-source kernels are needed
 //! for those paths.
 //!
+//! ## Endian support
+//!
+//! All `<const BE: bool>` kernels treat the source planes as opaque `u16`
+//! bit-patterns (which they already are for the lossless f16 paths).
+//! When `BE = true` each u16 element is byte-swapped before being written to
+//! the interleaved output buffer — i.e. we load a big-endian f16 bit-pattern
+//! and emit it as host-native f16.
+//!
 //! ## Kernels in this file
 //!
 //! | Kernel | In | Out | Notes |
@@ -23,6 +31,72 @@
 // Kernels are not yet consumed by any sinker (Task 8 wires MixedSinker impls).
 #![cfg_attr(not(test), allow(dead_code))]
 
+// ---- shared BE helper -------------------------------------------------------
+
+/// Load a single `half::f16` sample, target-endian aware.
+///
+/// The source plane is the raw on-disk / on-wire byte stream reinterpreted
+/// as `&[half::f16]`. Each f16 read picks up two bytes in **host-native**
+/// order. We then convert that host-native u16 to the value the encoded
+/// stream represents:
+///
+/// - `BE = true`: bytes on disk are big-endian → `u16::from_be` is a no-op
+///   on BE hosts and a byte-swap on LE hosts.
+/// - `BE = false`: bytes on disk are little-endian → `u16::from_le` is a
+///   no-op on LE hosts and a byte-swap on BE hosts.
+///
+/// **Both** branches go through `from_be` / `from_le` so the
+/// LE-data-on-BE-host case is handled correctly too. An unconditional
+/// `swap_bytes` would corrupt rows on big-endian hosts (e.g. s390x).
+#[inline(always)]
+fn load_f16<const BE: bool>(plane: &[half::f16], i: usize) -> half::f16 {
+  let raw = plane[i];
+  if BE {
+    half::f16::from_bits(u16::from_be(raw.to_bits()))
+  } else {
+    half::f16::from_bits(u16::from_le(raw.to_bits()))
+  }
+}
+
+/// Widen `n` `half::f16` values from `src[offset..offset + n]` into
+/// `dst[..n]` (f32 elements), normalizing source f16 bits **before** the
+/// f16 → f32 conversion so the resulting f32 is host-native regardless of
+/// the source `BE`.
+///
+/// `BE = true`: bytes on disk are big-endian → `u16::from_be` is a no-op on
+/// BE hosts and a byte-swap on LE hosts. `BE = false`: bytes on disk are
+/// little-endian → `u16::from_le` is a no-op on LE hosts and a byte-swap on
+/// BE hosts. Both branches go through `from_be` / `from_le` so the BE-source-
+/// on-LE-host and LE-source-on-BE-host cases are handled correctly.
+///
+/// After this widening the scratch is host-native f32; downstream callers
+/// (e.g. `gbrpf32_to_*` row kernels) must route the chain with the
+/// `cfg!(target_endian = "big")` value (named `HOST_NATIVE_BE` at each call
+/// site) — **not** the source `BE` — to avoid double-byte-swapping.
+///
+/// This is the shared helper used by both the dispatch f16-widen fallback
+/// (see `dispatch::planar_gbr_float`) and the per-backend SIMD scalar tails
+/// (see `arch::*::planar_gbr_float`). Per-backend tails widening 4 elements
+/// into a stack scratch use the same bit-normalize-first contract.
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
+#[inline(always)]
+pub(crate) fn widen_f16_be_to_host_f32<const BE: bool>(
+  src: &[half::f16],
+  offset: usize,
+  dst: &mut [f32],
+  n: usize,
+) {
+  for i in 0..n {
+    let raw = src[offset + i].to_bits();
+    let host_bits = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
+    dst[i] = half::f16::from_bits(host_bits).to_f32();
+  }
+}
+
 // ---- Gbrpf16 → f16 RGB (lossless interleave) --------------------------------
 
 /// Interleaves planar G/B/R `half::f16` rows into packed `R, G, B`
@@ -30,8 +104,11 @@
 ///
 /// Pure gather-scatter — no conversion. HDR values, NaN, and Inf are
 /// preserved bit-exact. Output order is **R, G, B** per pixel.
+///
+/// `BE = true`: each f16 element is byte-swapped (BE → host-native) before
+/// being written to the interleaved output.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gbrpf16_to_rgb_f16_row(
+pub(crate) fn gbrpf16_to_rgb_f16_row<const BE: bool>(
   g: &[half::f16],
   b: &[half::f16],
   r: &[half::f16],
@@ -44,9 +121,9 @@ pub(crate) fn gbrpf16_to_rgb_f16_row(
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
   for x in 0..width {
     let dst = x * 3;
-    rgb_out[dst] = r[x];
-    rgb_out[dst + 1] = g[x];
-    rgb_out[dst + 2] = b[x];
+    rgb_out[dst] = load_f16::<BE>(r, x);
+    rgb_out[dst + 1] = load_f16::<BE>(g, x);
+    rgb_out[dst + 2] = load_f16::<BE>(b, x);
   }
 }
 
@@ -56,8 +133,11 @@ pub(crate) fn gbrpf16_to_rgb_f16_row(
 /// **`half::f16`** with constant opaque α = `half::f16::from_f32(1.0)`.
 ///
 /// Used for `Gbrpf16` sources (no α plane) when `with_rgba_f16` is requested.
+///
+/// `BE = true`: each f16 element is byte-swapped (BE → host-native) before
+/// being written. α is always host-native f16(1.0) regardless of `BE`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gbrpf16_to_rgba_f16_row(
+pub(crate) fn gbrpf16_to_rgba_f16_row<const BE: bool>(
   g: &[half::f16],
   b: &[half::f16],
   r: &[half::f16],
@@ -71,9 +151,9 @@ pub(crate) fn gbrpf16_to_rgba_f16_row(
   let one_f16 = half::f16::from_f32(1.0);
   for x in 0..width {
     let dst = x * 4;
-    rgba_out[dst] = r[x];
-    rgba_out[dst + 1] = g[x];
-    rgba_out[dst + 2] = b[x];
+    rgba_out[dst] = load_f16::<BE>(r, x);
+    rgba_out[dst + 1] = load_f16::<BE>(g, x);
+    rgba_out[dst + 2] = load_f16::<BE>(b, x);
     rgba_out[dst + 3] = one_f16;
   }
 }
@@ -85,8 +165,10 @@ pub(crate) fn gbrpf16_to_rgba_f16_row(
 ///
 /// Pure gather-scatter. All four channels including α are copied losslessly —
 /// HDR, NaN, and Inf preserved bit-exact.
+///
+/// `BE = true`: each f16 element (including α) is byte-swapped before write.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn gbrapf16_to_rgba_f16_row(
+pub(crate) fn gbrapf16_to_rgba_f16_row<const BE: bool>(
   g: &[half::f16],
   b: &[half::f16],
   r: &[half::f16],
@@ -101,10 +183,10 @@ pub(crate) fn gbrapf16_to_rgba_f16_row(
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
   for x in 0..width {
     let dst = x * 4;
-    rgba_out[dst] = r[x];
-    rgba_out[dst + 1] = g[x];
-    rgba_out[dst + 2] = b[x];
-    rgba_out[dst + 3] = a[x];
+    rgba_out[dst] = load_f16::<BE>(r, x);
+    rgba_out[dst + 1] = load_f16::<BE>(g, x);
+    rgba_out[dst + 2] = load_f16::<BE>(b, x);
+    rgba_out[dst + 3] = load_f16::<BE>(a, x);
   }
 }
 
@@ -116,16 +198,34 @@ pub(crate) fn gbrapf16_to_rgba_f16_row(
 /// Only slot 3 of every 4-element tuple is written; R, G, B slots are
 /// untouched. Lossless — HDR, NaN, and Inf in the α plane are preserved
 /// bit-exact.
+///
+/// `BE` selects the **byte order** of the encoded source α plane
+/// (`false` = LE on disk/wire, e.g. `AV_PIX_FMT_GBRAPF16LE` per the
+/// `Gbrapf16Frame` contract; `true` = BE on disk/wire). Each raw f16 is
+/// bit-normalised to host-native order via `u16::from_le` / `u16::from_be`
+/// BEFORE the slot-3 write so the output buffer always carries host-native
+/// `half::f16` (matching the rest of the f16 row kernels). Without this a
+/// BE host processing the LE-encoded Frame would emit byte-reversed α bits.
 // Only called from the `mod tests` block which is gated on `feature = "std"`.
 // Under `cargo test --no-default-features` the test module is compiled out,
 // leaving the function without callers; suppress the resulting lint there.
 #[cfg_attr(not(feature = "std"), expect(dead_code))]
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn copy_alpha_plane_f16(alpha: &[half::f16], rgba_out: &mut [half::f16], width: usize) {
+pub(crate) fn copy_alpha_plane_f16<const BE: bool>(
+  alpha: &[half::f16],
+  rgba_out: &mut [half::f16],
+  width: usize,
+) {
   debug_assert!(alpha.len() >= width, "alpha plane too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
   for n in 0..width {
-    rgba_out[n * 4 + 3] = alpha[n];
+    let raw = alpha[n].to_bits();
+    let host_bits = if BE {
+      u16::from_be(raw)
+    } else {
+      u16::from_le(raw)
+    };
+    rgba_out[n * 4 + 3] = half::f16::from_bits(host_bits);
   }
 }
 
@@ -134,6 +234,15 @@ pub(crate) fn copy_alpha_plane_f16(alpha: &[half::f16], rgba_out: &mut [half::f1
 #[cfg(all(test, feature = "std"))]
 mod tests {
   use super::*;
+
+  // ---- helper: byte-swap a slice of f16 to simulate BE source ----------------
+
+  fn be_encode_f16(src: &[half::f16]) -> std::vec::Vec<half::f16> {
+    src
+      .iter()
+      .map(|v| half::f16::from_bits(v.to_bits().swap_bytes()))
+      .collect()
+  }
 
   // ---- gbrpf16_to_rgb_f16_row ----------------------------------------------
 
@@ -148,7 +257,7 @@ mod tests {
     let b = [half::f16::from_f32(0.5)];
     let r = [half::f16::from_f32(1.0)];
     let mut out = vec![half::f16::ZERO; 3];
-    gbrpf16_to_rgb_f16_row(&g, &b, &r, &mut out, 1);
+    gbrpf16_to_rgb_f16_row::<false>(&g, &b, &r, &mut out, 1);
     assert_eq!(out[0], half::f16::from_f32(1.0), "R");
     assert_eq!(out[1], half::f16::from_f32(0.25), "G");
     assert_eq!(out[2], half::f16::from_f32(0.5), "B");
@@ -166,8 +275,43 @@ mod tests {
     let b = [half::f16::from_f32(0.0)];
     let r = [half::f16::from_f32(0.0)];
     let mut out = vec![half::f16::ZERO; 3];
-    gbrpf16_to_rgb_f16_row(&g, &b, &r, &mut out, 1);
+    gbrpf16_to_rgb_f16_row::<false>(&g, &b, &r, &mut out, 1);
     assert_eq!(out[1], hdr, "HDR G preserved bit-exact");
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
+  )]
+  fn gbrpf16_to_rgb_f16_be_parity() {
+    // BE-encoded source must decode to same output as LE source.
+    let g = [
+      half::f16::from_f32(0.0),
+      half::f16::from_f32(0.25),
+      half::f16::from_f32(0.5),
+      half::f16::from_f32(1.0),
+    ];
+    let b = [
+      half::f16::from_f32(0.1),
+      half::f16::from_f32(0.3),
+      half::f16::from_f32(0.7),
+      half::f16::from_f32(0.9),
+    ];
+    let r = [
+      half::f16::from_f32(0.5),
+      half::f16::from_f32(0.8),
+      half::f16::from_f32(0.2),
+      half::f16::from_f32(0.6),
+    ];
+    let g_be = be_encode_f16(&g);
+    let b_be = be_encode_f16(&b);
+    let r_be = be_encode_f16(&r);
+    let mut le_out = vec![half::f16::ZERO; 4 * 3];
+    let mut be_out = vec![half::f16::ZERO; 4 * 3];
+    gbrpf16_to_rgb_f16_row::<false>(&g, &b, &r, &mut le_out, 4);
+    gbrpf16_to_rgb_f16_row::<true>(&g_be, &b_be, &r_be, &mut be_out, 4);
+    assert_eq!(be_out, le_out, "BE gbrpf16_to_rgb_f16_row must match LE");
   }
 
   // ---- gbrpf16_to_rgba_f16_row ---------------------------------------------
@@ -182,8 +326,42 @@ mod tests {
     let b = [half::f16::from_f32(0.5)];
     let r = [half::f16::from_f32(0.5)];
     let mut out = vec![half::f16::ZERO; 4];
-    gbrpf16_to_rgba_f16_row(&g, &b, &r, &mut out, 1);
+    gbrpf16_to_rgba_f16_row::<false>(&g, &b, &r, &mut out, 1);
     assert_eq!(out[3], half::f16::from_f32(1.0), "alpha must be f16(1.0)");
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
+  )]
+  fn gbrpf16_to_rgba_f16_be_parity() {
+    let g = [
+      half::f16::from_f32(0.0),
+      half::f16::from_f32(0.25),
+      half::f16::from_f32(0.5),
+      half::f16::from_f32(1.0),
+    ];
+    let b = [
+      half::f16::from_f32(0.1),
+      half::f16::from_f32(0.3),
+      half::f16::from_f32(0.7),
+      half::f16::from_f32(0.9),
+    ];
+    let r = [
+      half::f16::from_f32(0.5),
+      half::f16::from_f32(0.8),
+      half::f16::from_f32(0.2),
+      half::f16::from_f32(0.6),
+    ];
+    let g_be = be_encode_f16(&g);
+    let b_be = be_encode_f16(&b);
+    let r_be = be_encode_f16(&r);
+    let mut le_out = vec![half::f16::ZERO; 4 * 4];
+    let mut be_out = vec![half::f16::ZERO; 4 * 4];
+    gbrpf16_to_rgba_f16_row::<false>(&g, &b, &r, &mut le_out, 4);
+    gbrpf16_to_rgba_f16_row::<true>(&g_be, &b_be, &r_be, &mut be_out, 4);
+    assert_eq!(be_out, le_out, "BE gbrpf16_to_rgba_f16_row must match LE");
   }
 
   // ---- gbrapf16_to_rgba_f16_row --------------------------------------------
@@ -199,11 +377,52 @@ mod tests {
     let r = [half::f16::from_f32(0.75)];
     let a = [half::f16::from_f32(0.9)];
     let mut out = vec![half::f16::ZERO; 4];
-    gbrapf16_to_rgba_f16_row(&g, &b, &r, &a, &mut out, 1);
+    gbrapf16_to_rgba_f16_row::<false>(&g, &b, &r, &a, &mut out, 1);
     assert_eq!(out[0], half::f16::from_f32(0.75), "R");
     assert_eq!(out[1], half::f16::from_f32(0.25), "G");
     assert_eq!(out[2], half::f16::from_f32(0.5), "B");
     assert_eq!(out[3], half::f16::from_f32(0.9), "A from source");
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
+  )]
+  fn gbrapf16_to_rgba_f16_be_parity() {
+    let g = [
+      half::f16::from_f32(0.0),
+      half::f16::from_f32(0.25),
+      half::f16::from_f32(0.5),
+      half::f16::from_f32(1.0),
+    ];
+    let b = [
+      half::f16::from_f32(0.1),
+      half::f16::from_f32(0.3),
+      half::f16::from_f32(0.7),
+      half::f16::from_f32(0.9),
+    ];
+    let r = [
+      half::f16::from_f32(0.5),
+      half::f16::from_f32(0.8),
+      half::f16::from_f32(0.2),
+      half::f16::from_f32(0.6),
+    ];
+    let a = [
+      half::f16::from_f32(0.2),
+      half::f16::from_f32(0.4),
+      half::f16::from_f32(0.6),
+      half::f16::from_f32(0.8),
+    ];
+    let g_be = be_encode_f16(&g);
+    let b_be = be_encode_f16(&b);
+    let r_be = be_encode_f16(&r);
+    let a_be = be_encode_f16(&a);
+    let mut le_out = vec![half::f16::ZERO; 4 * 4];
+    let mut be_out = vec![half::f16::ZERO; 4 * 4];
+    gbrapf16_to_rgba_f16_row::<false>(&g, &b, &r, &a, &mut le_out, 4);
+    gbrapf16_to_rgba_f16_row::<true>(&g_be, &b_be, &r_be, &a_be, &mut be_out, 4);
+    assert_eq!(be_out, le_out, "BE gbrapf16_to_rgba_f16_row must match LE");
   }
 
   // ---- copy_alpha_plane_f16 ------------------------------------------------
@@ -213,11 +432,12 @@ mod tests {
     miri,
     ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
   )]
+  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_f16_only_writes_alpha_slot() {
     let alpha = vec![half::f16::from_f32(0.7), half::f16::from_f32(0.3)];
     let sentinel = half::f16::from_f32(0.1);
     let mut rgba = vec![sentinel; 8];
-    copy_alpha_plane_f16(&alpha, &mut rgba, 2);
+    copy_alpha_plane_f16::<false>(&alpha, &mut rgba, 2);
     // Only slot 3 written; R, G, B slots (0, 1, 2) must be untouched.
     assert_eq!(rgba[0], sentinel, "R slot 0 untouched");
     assert_eq!(rgba[1], sentinel, "G slot 0 untouched");
@@ -227,5 +447,35 @@ mod tests {
     assert_eq!(rgba[5], sentinel, "G slot 1 untouched");
     assert_eq!(rgba[6], sentinel, "B slot 1 untouched");
     assert_eq!(rgba[7], half::f16::from_f32(0.3), "A slot 1");
+  }
+
+  /// BE parity for `copy_alpha_plane_f16`: byte-swapping the bits of every
+  /// f16 in the source α plane and toggling `BE` must produce identical
+  /// output. Mirrors the f32 alpha-patch endian-aware fix.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
+  )]
+  fn copy_alpha_plane_f16_be_parity_with_swapped_buffer() {
+    let alpha_le = vec![
+      half::f16::from_f32(0.0),
+      half::f16::from_f32(0.25),
+      half::f16::from_f32(0.5),
+      half::f16::from_f32(1.0),
+      half::f16::from_f32(2.5),
+      half::f16::from_f32(-1.0),
+    ];
+    let alpha_be = be_encode_f16(&alpha_le);
+    let mut rgba_le = vec![half::f16::ZERO; 24];
+    let mut rgba_be = vec![half::f16::ZERO; 24];
+    copy_alpha_plane_f16::<false>(&alpha_le, &mut rgba_le, 6);
+    copy_alpha_plane_f16::<true>(&alpha_be, &mut rgba_be, 6);
+    let bits_le: std::vec::Vec<u16> = rgba_le.iter().map(|v| v.to_bits()).collect();
+    let bits_be: std::vec::Vec<u16> = rgba_be.iter().map(|v| v.to_bits()).collect();
+    assert_eq!(
+      bits_le, bits_be,
+      "BE flag + bit-swapped buffer must match LE path bit-for-bit"
+    );
   }
 }

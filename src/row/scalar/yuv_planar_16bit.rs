@@ -1,4 +1,4 @@
-use super::*;
+use super::{load_u16, *};
 
 // ---- 16-bit YUV 4:2:0 → RGB (parallel kernel family) -------------------
 //
@@ -36,7 +36,7 @@ use super::*;
 /// - `y.len() >= width`, `u_half.len() >= width / 2`,
 ///   `v_half.len() >= width / 2`, `rgb_out.len() >= 3 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn yuv_420p16_to_rgb_row(
+pub(crate) fn yuv_420p16_to_rgb_row<const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -45,7 +45,7 @@ pub(crate) fn yuv_420p16_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_420p16_to_rgb_or_rgba_row::<false, false>(
+  yuv_420p16_to_rgb_or_rgba_row::<false, false, BE>(
     y, u_half, v_half, None, rgb_out, width, matrix, full_range,
   );
 }
@@ -61,7 +61,7 @@ pub(crate) fn yuv_420p16_to_rgb_row(
 // `row::yuv420p16_to_rgba_row` lands in the follow-up SIMD/dispatcher
 // PR. Until then this thin wrapper has no caller.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn yuv_420p16_to_rgba_row(
+pub(crate) fn yuv_420p16_to_rgba_row<const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -70,7 +70,7 @@ pub(crate) fn yuv_420p16_to_rgba_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_420p16_to_rgb_or_rgba_row::<true, false>(
+  yuv_420p16_to_rgb_or_rgba_row::<true, false, BE>(
     y, u_half, v_half, None, rgba_out, width, matrix, full_range,
   );
 }
@@ -92,7 +92,7 @@ pub(crate) fn yuv_420p16_to_rgba_row(
 ///   `rgba_out.len() >= 4 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn yuv_420p16_to_rgba_with_alpha_src_row(
+pub(crate) fn yuv_420p16_to_rgba_with_alpha_src_row<const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -102,7 +102,7 @@ pub(crate) fn yuv_420p16_to_rgba_with_alpha_src_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_420p16_to_rgb_or_rgba_row::<true, true>(
+  yuv_420p16_to_rgb_or_rgba_row::<true, true, BE>(
     y,
     u_half,
     v_half,
@@ -127,7 +127,11 @@ pub(crate) fn yuv_420p16_to_rgba_with_alpha_src_row(
 /// u16 is in range.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn yuv_420p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
+pub(crate) fn yuv_420p16_to_rgb_or_rgba_row<
+  const ALPHA: bool,
+  const ALPHA_SRC: bool,
+  const BE: bool,
+>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -162,14 +166,14 @@ pub(crate) fn yuv_420p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: 
   let mut x = 0;
   while x < width {
     let c_idx = x / 2;
-    let u_d = q15_scale(u_half[c_idx] as i32 - bias, c_scale);
-    let v_d = q15_scale(v_half[c_idx] as i32 - bias, c_scale);
+    let u_d = q15_scale(load_u16::<BE>(u_half[c_idx]) as i32 - bias, c_scale);
+    let v_d = q15_scale(load_u16::<BE>(v_half[c_idx]) as i32 - bias, c_scale);
 
     let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale(y[x] as i32 - y_off, y_scale);
+    let y0 = q15_scale(load_u16::<BE>(y[x]) as i32 - y_off, y_scale);
     out[x * bpp] = clamp_u8(y0 + r_chroma);
     out[x * bpp + 1] = clamp_u8(y0 + g_chroma);
     out[x * bpp + 2] = clamp_u8(y0 + b_chroma);
@@ -177,17 +181,17 @@ pub(crate) fn yuv_420p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: 
       // SAFETY (const-checked): ALPHA_SRC = true implies Some(_).
       // 16-bit input is full-range u16 — no `bits_mask` step. Depth
       // convert via `>> 8` to fit the u8 output.
-      out[x * bpp + 3] = (a_src.as_ref().unwrap()[x] >> 8) as u8;
+      out[x * bpp + 3] = (load_u16::<BE>(a_src.as_ref().unwrap()[x]) >> 8) as u8;
     } else if ALPHA {
       out[x * bpp + 3] = 0xFF;
     }
 
-    let y1 = q15_scale(y[x + 1] as i32 - y_off, y_scale);
+    let y1 = q15_scale(load_u16::<BE>(y[x + 1]) as i32 - y_off, y_scale);
     out[(x + 1) * bpp] = clamp_u8(y1 + r_chroma);
     out[(x + 1) * bpp + 1] = clamp_u8(y1 + g_chroma);
     out[(x + 1) * bpp + 2] = clamp_u8(y1 + b_chroma);
     if ALPHA_SRC {
-      out[(x + 1) * bpp + 3] = (a_src.as_ref().unwrap()[x + 1] >> 8) as u8;
+      out[(x + 1) * bpp + 3] = (load_u16::<BE>(a_src.as_ref().unwrap()[x + 1]) >> 8) as u8;
     } else if ALPHA {
       out[(x + 1) * bpp + 3] = 0xFF;
     }
@@ -208,7 +212,7 @@ pub(crate) fn yuv_420p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: 
 /// Same contract as [`yuv_420p16_to_rgb_row`] plus `rgb_out` is
 /// measured in `u16` elements.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn yuv_420p16_to_rgb_u16_row(
+pub(crate) fn yuv_420p16_to_rgb_u16_row<const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -217,7 +221,7 @@ pub(crate) fn yuv_420p16_to_rgb_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_420p16_to_rgb_or_rgba_u16_row::<false, false>(
+  yuv_420p16_to_rgb_or_rgba_u16_row::<false, false, BE>(
     y, u_half, v_half, None, rgb_out, width, matrix, full_range,
   );
 }
@@ -232,7 +236,7 @@ pub(crate) fn yuv_420p16_to_rgb_u16_row(
 // `row::yuv420p16_to_rgba_u16_row` lands in the follow-up SIMD/dispatcher
 // PR. Until then this thin wrapper has no caller.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn yuv_420p16_to_rgba_u16_row(
+pub(crate) fn yuv_420p16_to_rgba_u16_row<const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -241,7 +245,7 @@ pub(crate) fn yuv_420p16_to_rgba_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_420p16_to_rgb_or_rgba_u16_row::<true, false>(
+  yuv_420p16_to_rgb_or_rgba_u16_row::<true, false, BE>(
     y, u_half, v_half, None, rgba_out, width, matrix, full_range,
   );
 }
@@ -264,7 +268,7 @@ pub(crate) fn yuv_420p16_to_rgba_u16_row(
 ///   `rgba_out.len() >= 4 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn yuv_420p16_to_rgba_u16_with_alpha_src_row(
+pub(crate) fn yuv_420p16_to_rgba_u16_with_alpha_src_row<const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -274,7 +278,7 @@ pub(crate) fn yuv_420p16_to_rgba_u16_with_alpha_src_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_420p16_to_rgb_or_rgba_u16_row::<true, true>(
+  yuv_420p16_to_rgb_or_rgba_u16_row::<true, true, BE>(
     y,
     u_half,
     v_half,
@@ -297,7 +301,11 @@ pub(crate) fn yuv_420p16_to_rgba_u16_with_alpha_src_row(
 /// at native depth (full u16 range, no `bits_mask` needed).
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn yuv_420p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const ALPHA_SRC: bool>(
+pub(crate) fn yuv_420p16_to_rgb_or_rgba_u16_row<
+  const ALPHA: bool,
+  const ALPHA_SRC: bool,
+  const BE: bool,
+>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -330,14 +338,14 @@ pub(crate) fn yuv_420p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const ALPHA_S
   let mut x = 0;
   while x < width {
     let c_idx = x / 2;
-    let u_d = q15_scale(u_half[c_idx] as i32 - bias, c_scale);
-    let v_d = q15_scale(v_half[c_idx] as i32 - bias, c_scale);
+    let u_d = q15_scale(load_u16::<BE>(u_half[c_idx]) as i32 - bias, c_scale);
+    let v_d = q15_scale(load_u16::<BE>(v_half[c_idx]) as i32 - bias, c_scale);
 
     let r_chroma = q15_chroma64(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
     let g_chroma = q15_chroma64(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma64(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale64(y[x] as i32 - y_off, y_scale);
+    let y0 = q15_scale64(load_u16::<BE>(y[x]) as i32 - y_off, y_scale);
     out[x * bpp] = (y0 + r_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 1] = (y0 + g_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 2] = (y0 + b_chroma).clamp(0, out_max) as u16;
@@ -345,17 +353,17 @@ pub(crate) fn yuv_420p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const ALPHA_S
       // SAFETY (const-checked): ALPHA_SRC = true implies Some(_).
       // 16-bit alpha is already at native depth (full u16 range);
       // no mask needed since every u16 is in range.
-      out[x * bpp + 3] = a_src.as_ref().unwrap()[x];
+      out[x * bpp + 3] = load_u16::<BE>(a_src.as_ref().unwrap()[x]);
     } else if ALPHA {
       out[x * bpp + 3] = 0xFFFF;
     }
 
-    let y1 = q15_scale64(y[x + 1] as i32 - y_off, y_scale);
+    let y1 = q15_scale64(load_u16::<BE>(y[x + 1]) as i32 - y_off, y_scale);
     out[(x + 1) * bpp] = (y1 + r_chroma).clamp(0, out_max) as u16;
     out[(x + 1) * bpp + 1] = (y1 + g_chroma).clamp(0, out_max) as u16;
     out[(x + 1) * bpp + 2] = (y1 + b_chroma).clamp(0, out_max) as u16;
     if ALPHA_SRC {
-      out[(x + 1) * bpp + 3] = a_src.as_ref().unwrap()[x + 1];
+      out[(x + 1) * bpp + 3] = load_u16::<BE>(a_src.as_ref().unwrap()[x + 1]);
     } else if ALPHA {
       out[(x + 1) * bpp + 3] = 0xFFFF;
     }
@@ -370,7 +378,7 @@ pub(crate) fn yuv_420p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const ALPHA_S
 ///
 /// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_row`] with `ALPHA = false`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn yuv_444p16_to_rgb_row(
+pub(crate) fn yuv_444p16_to_rgb_row<const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -379,7 +387,9 @@ pub(crate) fn yuv_444p16_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p16_to_rgb_or_rgba_row::<false, false>(y, u, v, None, rgb_out, width, matrix, full_range);
+  yuv_444p16_to_rgb_or_rgba_row::<false, false, BE>(
+    y, u, v, None, rgb_out, width, matrix, full_range,
+  );
 }
 
 /// YUV 4:4:4 planar **16‑bit** → packed **8‑bit** **RGBA**. Same
@@ -389,7 +399,7 @@ pub(crate) fn yuv_444p16_to_rgb_row(
 ///
 /// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_row`] with `ALPHA = true`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn yuv_444p16_to_rgba_row(
+pub(crate) fn yuv_444p16_to_rgba_row<const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -398,7 +408,9 @@ pub(crate) fn yuv_444p16_to_rgba_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p16_to_rgb_or_rgba_row::<true, false>(y, u, v, None, rgba_out, width, matrix, full_range);
+  yuv_444p16_to_rgb_or_rgba_row::<true, false, BE>(
+    y, u, v, None, rgba_out, width, matrix, full_range,
+  );
 }
 
 /// YUVA 4:4:4 16‑bit → packed **8‑bit** **RGBA**. Same numerical
@@ -417,7 +429,7 @@ pub(crate) fn yuv_444p16_to_rgba_row(
 ///   `a_src.len() >= width`, `rgba_out.len() >= 4 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn yuv_444p16_to_rgba_with_alpha_src_row(
+pub(crate) fn yuv_444p16_to_rgba_with_alpha_src_row<const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -427,7 +439,7 @@ pub(crate) fn yuv_444p16_to_rgba_with_alpha_src_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p16_to_rgb_or_rgba_row::<true, true>(
+  yuv_444p16_to_rgb_or_rgba_row::<true, true, BE>(
     y,
     u,
     v,
@@ -452,7 +464,11 @@ pub(crate) fn yuv_444p16_to_rgba_with_alpha_src_row(
 /// u16 is in range.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn yuv_444p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
+pub(crate) fn yuv_444p16_to_rgb_or_rgba_row<
+  const ALPHA: bool,
+  const ALPHA_SRC: bool,
+  const BE: bool,
+>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -481,14 +497,14 @@ pub(crate) fn yuv_444p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: 
   let bias = chroma_bias::<16>();
 
   for x in 0..width {
-    let u_d = q15_scale(u[x] as i32 - bias, c_scale);
-    let v_d = q15_scale(v[x] as i32 - bias, c_scale);
+    let u_d = q15_scale(load_u16::<BE>(u[x]) as i32 - bias, c_scale);
+    let v_d = q15_scale(load_u16::<BE>(v[x]) as i32 - bias, c_scale);
 
     let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale(y[x] as i32 - y_off, y_scale);
+    let y0 = q15_scale(load_u16::<BE>(y[x]) as i32 - y_off, y_scale);
     out[x * bpp] = clamp_u8(y0 + r_chroma);
     out[x * bpp + 1] = clamp_u8(y0 + g_chroma);
     out[x * bpp + 2] = clamp_u8(y0 + b_chroma);
@@ -496,7 +512,7 @@ pub(crate) fn yuv_444p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: 
       // SAFETY (const-checked): ALPHA_SRC = true implies Some(_).
       // 16-bit input is full-range u16 — no `bits_mask` step. Depth
       // convert via `>> 8` to fit the u8 output.
-      out[x * bpp + 3] = (a_src.as_ref().unwrap()[x] >> 8) as u8;
+      out[x * bpp + 3] = (load_u16::<BE>(a_src.as_ref().unwrap()[x]) >> 8) as u8;
     } else if ALPHA {
       out[x * bpp + 3] = 0xFF;
     }
@@ -511,7 +527,7 @@ pub(crate) fn yuv_444p16_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: 
 ///
 /// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn yuv_444p16_to_rgb_u16_row(
+pub(crate) fn yuv_444p16_to_rgb_u16_row<const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -520,7 +536,7 @@ pub(crate) fn yuv_444p16_to_rgb_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p16_to_rgb_or_rgba_u16_row::<false, false>(
+  yuv_444p16_to_rgb_or_rgba_u16_row::<false, false, BE>(
     y, u, v, None, rgb_out, width, matrix, full_range,
   );
 }
@@ -530,7 +546,7 @@ pub(crate) fn yuv_444p16_to_rgb_u16_row(
 ///
 /// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_u16_row`] with `ALPHA = true`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn yuv_444p16_to_rgba_u16_row(
+pub(crate) fn yuv_444p16_to_rgba_u16_row<const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -539,7 +555,7 @@ pub(crate) fn yuv_444p16_to_rgba_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p16_to_rgb_or_rgba_u16_row::<true, false>(
+  yuv_444p16_to_rgb_or_rgba_u16_row::<true, false, BE>(
     y, u, v, None, rgba_out, width, matrix, full_range,
   );
 }
@@ -560,7 +576,7 @@ pub(crate) fn yuv_444p16_to_rgba_u16_row(
 ///   `a_src.len() >= width`, `rgba_out.len() >= 4 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn yuv_444p16_to_rgba_u16_with_alpha_src_row(
+pub(crate) fn yuv_444p16_to_rgba_u16_with_alpha_src_row<const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -570,7 +586,7 @@ pub(crate) fn yuv_444p16_to_rgba_u16_with_alpha_src_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p16_to_rgb_or_rgba_u16_row::<true, true>(
+  yuv_444p16_to_rgb_or_rgba_u16_row::<true, true, BE>(
     y,
     u,
     v,
@@ -593,7 +609,11 @@ pub(crate) fn yuv_444p16_to_rgba_u16_with_alpha_src_row(
 /// [`yuv_444p16_to_rgb_u16_row`]).
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn yuv_444p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const ALPHA_SRC: bool>(
+pub(crate) fn yuv_444p16_to_rgb_or_rgba_u16_row<
+  const ALPHA: bool,
+  const ALPHA_SRC: bool,
+  const BE: bool,
+>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -623,21 +643,21 @@ pub(crate) fn yuv_444p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const ALPHA_S
   let out_max: i32 = 0xFFFF;
 
   for x in 0..width {
-    let u_d = q15_scale(u[x] as i32 - bias, c_scale);
-    let v_d = q15_scale(v[x] as i32 - bias, c_scale);
+    let u_d = q15_scale(load_u16::<BE>(u[x]) as i32 - bias, c_scale);
+    let v_d = q15_scale(load_u16::<BE>(v[x]) as i32 - bias, c_scale);
 
     let r_chroma = q15_chroma64(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
     let g_chroma = q15_chroma64(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma64(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale64(y[x] as i32 - y_off, y_scale);
+    let y0 = q15_scale64(load_u16::<BE>(y[x]) as i32 - y_off, y_scale);
     out[x * bpp] = (y0 + r_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 1] = (y0 + g_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 2] = (y0 + b_chroma).clamp(0, out_max) as u16;
     if ALPHA_SRC {
       // SAFETY (const-checked): ALPHA_SRC = true implies Some(_).
       // 16-bit native-depth output keeps alpha verbatim — no shift.
-      out[x * bpp + 3] = a_src.as_ref().unwrap()[x];
+      out[x * bpp + 3] = load_u16::<BE>(a_src.as_ref().unwrap()[x]);
     } else if ALPHA {
       out[x * bpp + 3] = 0xFFFF;
     }
@@ -660,7 +680,7 @@ pub(crate) fn yuv_444p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const ALPHA_S
 ///
 /// Thin wrapper over [`p16_to_rgb_or_rgba_row`] with `ALPHA = false`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p16_to_rgb_row(
+pub(crate) fn p16_to_rgb_row<const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   rgb_out: &mut [u8],
@@ -668,7 +688,7 @@ pub(crate) fn p16_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p16_to_rgb_or_rgba_row::<false>(y, uv_half, rgb_out, width, matrix, full_range);
+  p16_to_rgb_or_rgba_row::<false, BE>(y, uv_half, rgb_out, width, matrix, full_range);
 }
 
 /// Converts one row of **P016** to **8-bit** packed **RGBA**. Same
@@ -681,7 +701,7 @@ pub(crate) fn p16_to_rgb_row(
 // `row::p016_to_rgba_row` lands in the follow-up SIMD/dispatcher PR.
 // Until then this thin wrapper has no caller.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p16_to_rgba_row(
+pub(crate) fn p16_to_rgba_row<const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   rgba_out: &mut [u8],
@@ -689,13 +709,13 @@ pub(crate) fn p16_to_rgba_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p16_to_rgb_or_rgba_row::<true>(y, uv_half, rgba_out, width, matrix, full_range);
+  p16_to_rgb_or_rgba_row::<true, BE>(y, uv_half, rgba_out, width, matrix, full_range);
 }
 
 /// Shared P016 → 8-bit RGB / RGBA kernel. `ALPHA = false` emits 3 bpp;
 /// `ALPHA = true` emits 4 bpp with constant `0xFF` alpha.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p16_to_rgb_or_rgba_row<const ALPHA: bool>(
+pub(crate) fn p16_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   out: &mut [u8],
@@ -716,8 +736,8 @@ pub(crate) fn p16_to_rgb_or_rgba_row<const ALPHA: bool>(
   let mut x = 0;
   while x < width {
     let c_idx = x / 2;
-    let u_sample = uv_half[c_idx * 2];
-    let v_sample = uv_half[c_idx * 2 + 1];
+    let u_sample = load_u16::<BE>(uv_half[c_idx * 2]);
+    let v_sample = load_u16::<BE>(uv_half[c_idx * 2 + 1]);
     let u_d = q15_scale(u_sample as i32 - bias, c_scale);
     let v_d = q15_scale(v_sample as i32 - bias, c_scale);
 
@@ -725,7 +745,7 @@ pub(crate) fn p16_to_rgb_or_rgba_row<const ALPHA: bool>(
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale(y[x] as i32 - y_off, y_scale);
+    let y0 = q15_scale(load_u16::<BE>(y[x]) as i32 - y_off, y_scale);
     out[x * bpp] = clamp_u8(y0 + r_chroma);
     out[x * bpp + 1] = clamp_u8(y0 + g_chroma);
     out[x * bpp + 2] = clamp_u8(y0 + b_chroma);
@@ -733,7 +753,7 @@ pub(crate) fn p16_to_rgb_or_rgba_row<const ALPHA: bool>(
       out[x * bpp + 3] = 0xFF;
     }
 
-    let y1 = q15_scale(y[x + 1] as i32 - y_off, y_scale);
+    let y1 = q15_scale(load_u16::<BE>(y[x + 1]) as i32 - y_off, y_scale);
     out[(x + 1) * bpp] = clamp_u8(y1 + r_chroma);
     out[(x + 1) * bpp + 1] = clamp_u8(y1 + g_chroma);
     out[(x + 1) * bpp + 2] = clamp_u8(y1 + b_chroma);
@@ -751,7 +771,7 @@ pub(crate) fn p16_to_rgb_or_rgba_row<const ALPHA: bool>(
 ///
 /// Thin wrapper over [`p16_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p16_to_rgb_u16_row(
+pub(crate) fn p16_to_rgb_u16_row<const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   rgb_out: &mut [u16],
@@ -759,7 +779,7 @@ pub(crate) fn p16_to_rgb_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p16_to_rgb_or_rgba_u16_row::<false>(y, uv_half, rgb_out, width, matrix, full_range);
+  p16_to_rgb_or_rgba_u16_row::<false, BE>(y, uv_half, rgb_out, width, matrix, full_range);
 }
 
 /// Converts one row of **P016** to **native-depth `u16`** packed
@@ -771,7 +791,7 @@ pub(crate) fn p16_to_rgb_u16_row(
 // `row::p016_to_rgba_u16_row` lands in the follow-up SIMD/dispatcher
 // PR. Until then this thin wrapper has no caller.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p16_to_rgba_u16_row(
+pub(crate) fn p16_to_rgba_u16_row<const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   rgba_out: &mut [u16],
@@ -779,7 +799,7 @@ pub(crate) fn p16_to_rgba_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p16_to_rgb_or_rgba_u16_row::<true>(y, uv_half, rgba_out, width, matrix, full_range);
+  p16_to_rgb_or_rgba_u16_row::<true, BE>(y, uv_half, rgba_out, width, matrix, full_range);
 }
 
 /// Shared P016 → native-depth `u16` RGB / RGBA kernel. `ALPHA = false`
@@ -788,7 +808,7 @@ pub(crate) fn p16_to_rgba_u16_row(
 ///
 /// Uses i64 chroma multiply (same rationale as [`yuv_420p16_to_rgb_or_rgba_u16_row`]).
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
+pub(crate) fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   out: &mut [u16],
@@ -810,8 +830,8 @@ pub(crate) fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
   let mut x = 0;
   while x < width {
     let c_idx = x / 2;
-    let u_sample = uv_half[c_idx * 2];
-    let v_sample = uv_half[c_idx * 2 + 1];
+    let u_sample = load_u16::<BE>(uv_half[c_idx * 2]);
+    let v_sample = load_u16::<BE>(uv_half[c_idx * 2 + 1]);
     let u_d = q15_scale(u_sample as i32 - bias, c_scale);
     let v_d = q15_scale(v_sample as i32 - bias, c_scale);
 
@@ -819,7 +839,7 @@ pub(crate) fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
     let g_chroma = q15_chroma64(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma64(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale64(y[x] as i32 - y_off, y_scale);
+    let y0 = q15_scale64(load_u16::<BE>(y[x]) as i32 - y_off, y_scale);
     out[x * bpp] = (y0 + r_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 1] = (y0 + g_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 2] = (y0 + b_chroma).clamp(0, out_max) as u16;
@@ -827,7 +847,7 @@ pub(crate) fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
       out[x * bpp + 3] = 0xFFFF;
     }
 
-    let y1 = q15_scale64(y[x + 1] as i32 - y_off, y_scale);
+    let y1 = q15_scale64(load_u16::<BE>(y[x + 1]) as i32 - y_off, y_scale);
     out[(x + 1) * bpp] = (y1 + r_chroma).clamp(0, out_max) as u16;
     out[(x + 1) * bpp + 1] = (y1 + g_chroma).clamp(0, out_max) as u16;
     out[(x + 1) * bpp + 2] = (y1 + b_chroma).clamp(0, out_max) as u16;

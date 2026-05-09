@@ -268,7 +268,7 @@ fn process_gray_n<'a, const BITS: u32>(
 
   // Luma u8 — always passes raw Y through, no full_range rescaling.
   if let Some(buf) = luma.as_deref_mut() {
-    gray_n_to_luma_row::<BITS>(
+    gray_n_to_luma_row::<BITS, false>(
       y_plane,
       &mut buf[one_plane_start..one_plane_end],
       w,
@@ -278,7 +278,7 @@ fn process_gray_n<'a, const BITS: u32>(
 
   // Luma u16 — always passes raw Y through, no full_range rescaling.
   if let Some(buf) = luma_u16.as_deref_mut() {
-    gray_n_to_luma_u16_row::<BITS>(
+    gray_n_to_luma_u16_row::<BITS, false>(
       y_plane,
       &mut buf[one_plane_start..one_plane_end],
       w,
@@ -294,7 +294,7 @@ fn process_gray_n<'a, const BITS: u32>(
     let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
     let rgba_u16_row =
       rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-    gray_n_to_rgba_u16_row::<BITS>(y_plane, rgba_u16_row, w, use_simd, full_range);
+    gray_n_to_rgba_u16_row::<BITS, false>(y_plane, rgba_u16_row, w, use_simd, full_range);
   } else if want_rgb_u16 {
     let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
     let rgb_plane_start = one_plane_start * 3;
@@ -306,7 +306,7 @@ fn process_gray_n<'a, const BITS: u32>(
         channels: 3,
       })?;
     let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-    gray_n_to_rgb_u16_row::<BITS>(y_plane, rgb_u16_row, w, use_simd, full_range);
+    gray_n_to_rgb_u16_row::<BITS, false>(y_plane, rgb_u16_row, w, use_simd, full_range);
     if want_rgba_u16 {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
@@ -324,7 +324,7 @@ fn process_gray_n<'a, const BITS: u32>(
   if want_rgba && !want_rgb && !want_hsv {
     let rgba_buf = rgba.as_deref_mut().unwrap();
     let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-    gray_n_to_rgba_row::<BITS>(y_plane, rgba_row, w, use_simd, full_range);
+    gray_n_to_rgba_row::<BITS, false>(y_plane, rgba_row, w, use_simd, full_range);
     return Ok(());
   }
 
@@ -332,7 +332,7 @@ fn process_gray_n<'a, const BITS: u32>(
   // (rescaled if limited-range).
   if want_hsv && !want_rgb && !want_rgba {
     let hsv = hsv.as_mut().unwrap();
-    gray_n_to_hsv_row::<BITS>(
+    gray_n_to_hsv_row::<BITS, false>(
       y_plane,
       &mut hsv.h[one_plane_start..one_plane_end],
       &mut hsv.s[one_plane_start..one_plane_end],
@@ -356,7 +356,7 @@ fn process_gray_n<'a, const BITS: u32>(
     w,
     h,
   )?;
-  gray_n_to_rgb_row::<BITS>(y_plane, rgb_row, w, use_simd, full_range);
+  gray_n_to_rgb_row::<BITS, false>(y_plane, rgb_row, w, use_simd, full_range);
 
   if let Some(hsv) = hsv.as_mut() {
     rgb_to_hsv_row(
@@ -690,7 +690,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
 
     // Luma u8 — shift >> 8.
     if let Some(buf) = luma.as_deref_mut() {
-      gray16_to_luma_row(
+      gray16_to_luma_row::<false>(
         y_plane,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -700,7 +700,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
 
     // Luma u16 — identity copy.
     if let Some(buf) = luma_u16.as_deref_mut() {
-      gray16_to_luma_u16_row(
+      gray16_to_luma_u16_row::<false>(
         y_plane,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -716,7 +716,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-      gray16_to_rgba_u16_row(y_plane, rgba_u16_row, w, use_simd, full_range);
+      gray16_to_rgba_u16_row::<false>(y_plane, rgba_u16_row, w, use_simd, full_range);
     } else if want_rgb_u16 {
       let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
       let rgb_plane_start = one_plane_start * 3;
@@ -729,7 +729,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
             channels: 3,
           })?;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      gray16_to_rgb_u16_row(y_plane, rgb_u16_row, w, use_simd, full_range);
+      gray16_to_rgb_u16_row::<false>(y_plane, rgb_u16_row, w, use_simd, full_range);
       if want_rgba_u16 {
         let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
         let rgba_u16_row =
@@ -750,7 +750,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
     if want_rgba && !need_rgb_kernel && !want_hsv {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      gray16_to_rgba_row(y_plane, rgba_row, w, use_simd, full_range);
+      gray16_to_rgba_row::<false>(y_plane, rgba_row, w, use_simd, full_range);
       return Ok(());
     }
 
@@ -758,7 +758,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
     // Skip RGB scratch entirely when only HSV (and optionally RGBA) is needed.
     if want_hsv && !want_rgb {
       let hsv = hsv.as_mut().unwrap();
-      gray16_to_hsv_row(
+      gray16_to_hsv_row::<false>(
         y_plane,
         &mut hsv.h[one_plane_start..one_plane_end],
         &mut hsv.s[one_plane_start..one_plane_end],
@@ -769,7 +769,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
       );
       if let Some(buf) = rgba.as_deref_mut() {
         let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
-        gray16_to_rgba_row(y_plane, rgba_row, w, use_simd, full_range);
+        gray16_to_rgba_row::<false>(y_plane, rgba_row, w, use_simd, full_range);
       }
       return Ok(());
     }
@@ -786,7 +786,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
       w,
       h,
     )?;
-    gray16_to_rgb_row(y_plane, rgb_row, w, use_simd, full_range);
+    gray16_to_rgb_row::<false>(y_plane, rgb_row, w, use_simd, full_range);
 
     if let Some(hsv) = hsv.as_mut() {
       rgb_to_hsv_row(
@@ -970,7 +970,7 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
 
     // luma f32 pass-through — highest priority (no clamp, no round).
     if let Some(buf) = self.luma_f32.as_deref_mut() {
-      grayf32_to_luma_f32_row(
+      grayf32_to_luma_f32_row::<false>(
         y_plane,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -988,12 +988,12 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
           height: h,
           channels: 3,
         })?;
-      grayf32_to_rgb_f32_row(y_plane, &mut buf[rgb_f32_start..rgb_f32_end], w, use_simd);
+      grayf32_to_rgb_f32_row::<false>(y_plane, &mut buf[rgb_f32_start..rgb_f32_end], w, use_simd);
     }
 
     // luma u8.
     if let Some(buf) = self.luma.as_deref_mut() {
-      grayf32_to_luma_row(
+      grayf32_to_luma_row::<false>(
         y_plane,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -1003,7 +1003,7 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
 
     // luma u16.
     if let Some(buf) = self.luma_u16.as_deref_mut() {
-      grayf32_to_luma_u16_row(
+      grayf32_to_luma_u16_row::<false>(
         y_plane,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -1019,7 +1019,7 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
       let rgba_u16_buf = self.rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-      grayf32_to_rgba_u16_row(y_plane, rgba_u16_row, w, use_simd);
+      grayf32_to_rgba_u16_row::<false>(y_plane, rgba_u16_row, w, use_simd);
     } else if want_rgb_u16 {
       let rgb_u16_buf = self.rgb_u16.as_deref_mut().unwrap();
       let rgb_plane_start = one_plane_start * 3;
@@ -1032,7 +1032,7 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
             channels: 3,
           })?;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      grayf32_to_rgb_u16_row(y_plane, rgb_u16_row, w, use_simd);
+      grayf32_to_rgb_u16_row::<false>(y_plane, rgb_u16_row, w, use_simd);
       if want_rgba_u16 {
         let rgba_u16_buf = self.rgba_u16.as_deref_mut().unwrap();
         let rgba_u16_row =
@@ -1050,14 +1050,14 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
     if want_rgba && !want_rgb && !want_hsv {
       let rgba_buf = self.rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      grayf32_to_rgba_row(y_plane, rgba_row, w, use_simd);
+      grayf32_to_rgba_row::<false>(y_plane, rgba_row, w, use_simd);
       return Ok(());
     }
 
     // Standalone HSV fast path — Grayf32 always has H=0, S=0, V=clamp(Y)×255.
     if want_hsv && !want_rgb {
       let hsv = self.hsv.as_mut().unwrap();
-      grayf32_to_hsv_row(
+      grayf32_to_hsv_row::<false>(
         y_plane,
         &mut hsv.h[one_plane_start..one_plane_end],
         &mut hsv.s[one_plane_start..one_plane_end],
@@ -1067,7 +1067,7 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
       );
       if let Some(buf) = self.rgba.as_deref_mut() {
         let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
-        grayf32_to_rgba_row(y_plane, rgba_row, w, use_simd);
+        grayf32_to_rgba_row::<false>(y_plane, rgba_row, w, use_simd);
       }
       return Ok(());
     }
@@ -1084,7 +1084,7 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
       w,
       h,
     )?;
-    grayf32_to_rgb_row(y_plane, rgb_row, w, use_simd);
+    grayf32_to_rgb_row::<false>(y_plane, rgb_row, w, use_simd);
 
     if let Some(hsv) = self.hsv.as_mut() {
       rgb_to_hsv_row(
@@ -1454,7 +1454,7 @@ impl PixelSink for MixedSinker<'_, Ya16> {
 
     // luma u8 — `Y >> 8`.
     if let Some(buf) = self.luma.as_deref_mut() {
-      ya16_to_luma_row(
+      ya16_to_luma_row::<false>(
         packed,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -1464,7 +1464,7 @@ impl PixelSink for MixedSinker<'_, Ya16> {
 
     // luma u16 — native pass-through.
     if let Some(buf) = self.luma_u16.as_deref_mut() {
-      ya16_to_luma_u16_row(
+      ya16_to_luma_u16_row::<false>(
         packed,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -1480,7 +1480,7 @@ impl PixelSink for MixedSinker<'_, Ya16> {
       let rgba_u16_buf = self.rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-      ya16_to_rgba_u16_row(packed, rgba_u16_row, w, use_simd);
+      ya16_to_rgba_u16_row::<false>(packed, rgba_u16_row, w, use_simd);
     } else if want_rgb_u16 {
       let rgb_u16_buf = self.rgb_u16.as_deref_mut().unwrap();
       let rgb_plane_start = one_plane_start * 3;
@@ -1493,14 +1493,15 @@ impl PixelSink for MixedSinker<'_, Ya16> {
             channels: 3,
           })?;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      ya16_to_rgb_u16_row(packed, rgb_u16_row, w, use_simd);
+      ya16_to_rgb_u16_row::<false>(packed, rgb_u16_row, w, use_simd);
       if want_rgba_u16 {
         let rgba_u16_buf = self.rgba_u16.as_deref_mut().unwrap();
         let rgba_u16_row =
           rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
         expand_rgb_u16_to_rgba_u16_row::<16>(rgb_u16_row, rgba_u16_row, w);
-        // Patch α from source (native u16 depth).
-        copy_alpha_ya_u16(packed, rgba_u16_row, w);
+        // Patch α from source (native u16 depth). `Ya16Frame` is LE-encoded
+        // per the unified Frame contract → `BE = false`.
+        copy_alpha_ya_u16::<false>(packed, rgba_u16_row, w);
       }
     }
 
@@ -1513,14 +1514,14 @@ impl PixelSink for MixedSinker<'_, Ya16> {
     if want_rgba && !want_rgb && !want_hsv {
       let rgba_buf = self.rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      ya16_to_rgba_row(packed, rgba_row, w, use_simd);
+      ya16_to_rgba_row::<false>(packed, rgba_row, w, use_simd);
       return Ok(());
     }
 
     // Standalone HSV fast path.
     if want_hsv && !want_rgb && !want_rgba {
       let hsv = self.hsv.as_mut().unwrap();
-      ya16_to_hsv_row(
+      ya16_to_hsv_row::<false>(
         packed,
         &mut hsv.h[one_plane_start..one_plane_end],
         &mut hsv.s[one_plane_start..one_plane_end],
@@ -1544,7 +1545,7 @@ impl PixelSink for MixedSinker<'_, Ya16> {
       w,
       h,
     )?;
-    ya16_to_rgb_row(packed, rgb_row, w, use_simd);
+    ya16_to_rgb_row::<false>(packed, rgb_row, w, use_simd);
 
     if let Some(hsv) = self.hsv.as_mut() {
       rgb_to_hsv_row(
@@ -1562,7 +1563,8 @@ impl PixelSink for MixedSinker<'_, Ya16> {
       let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
       expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
       // Overwrite the α channel with real source α (>> 8 for u8 output).
-      copy_alpha_ya_u16_to_u8(packed, rgba_row, w);
+      // `Ya16Frame` is LE-encoded per the unified Frame contract → `BE = false`.
+      copy_alpha_ya_u16_to_u8::<false>(packed, rgba_row, w);
     }
 
     Ok(())
@@ -1575,11 +1577,17 @@ impl PixelSink for MixedSinker<'_, Ya16> {
 mod tests {
   use crate::{
     ColorMatrix,
-    frame::{Gray8Frame, Gray16Frame, GrayNFrame, Grayf32Frame, Ya8Frame, Ya16Frame},
+    frame::{Gray8Frame, Gray16Frame, Grayf32Frame, Ya8Frame, Ya16Frame},
     sinker::MixedSinker,
-    yuv::{
-      gray8_to, gray9_to, gray10_to, gray12_to, gray14_to, gray16_to, grayf32_to, ya8_to, ya16_to,
-    },
+    yuv::{gray8_to, gray16_to, grayf32_to, ya8_to, ya16_to},
+  };
+  // GrayN<BITS> frame + non-byte-aligned dispatchers are consumed only by
+  // tests gated on LE hosts (their `Vec<u16>` fixtures travel through
+  // `from_le` on the sink path and would be byte-swapped on a BE host).
+  #[cfg(target_endian = "little")]
+  use crate::{
+    frame::GrayNFrame,
+    yuv::{gray9_to, gray10_to, gray12_to, gray14_to},
   };
 
   // Gray formats are luma-only; full_range and matrix are unused by the kernels
@@ -1590,6 +1598,10 @@ mod tests {
   fn make_gray8_frame(data: &[u8], w: u32, h: u32) -> Gray8Frame<'_> {
     Gray8Frame::new(data, w, h, w)
   }
+  // Only used by `gray10_with_*` tests, all of which are gated to LE hosts
+  // because their `Vec<u16>` plane fixtures travel through `from_le` on the
+  // sink path and would be byte-swapped on a BE host.
+  #[cfg(target_endian = "little")]
   fn make_gray10_frame(data: &[u16], w: u32, h: u32) -> GrayNFrame<'_, 10> {
     GrayNFrame::new(data, w, h, w)
   }
@@ -1670,6 +1682,7 @@ mod tests {
     assert_eq!(v, plane.as_slice(), "V must equal Y");
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray10_with_rgb_masks_and_shifts() {
     // 10-bit sample: value 512 = 0b10_0000_0000, masked = 512, >> 2 = 128
@@ -1685,6 +1698,7 @@ mod tests {
     assert_eq!(rgb[3..6], [128, 128, 128]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray10_with_luma_u16_masks_only() {
     // 10-bit, over-range sample: 0x0800 (bit 11 set) masked → 0.
@@ -1698,6 +1712,7 @@ mod tests {
     assert_eq!(lu16, [0x0000, 0x03FF, 0x0200, 0x0001]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray16_with_rgb_shifts_to_u8() {
     // Gray16 sample 0x8000 → >> 8 = 0x80 = 128.
@@ -1715,6 +1730,7 @@ mod tests {
     assert_eq!(rgb[9..12], [0x01, 0x01, 0x01]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray16_with_luma_u16_copies_plane() {
     let plane: Vec<u16> = (0u16..16).map(|x| x * 4096).collect();
@@ -1727,6 +1743,7 @@ mod tests {
     assert_eq!(lu16, plane);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray16_with_rgba_u16_alpha_is_0xffff() {
     let plane = [0x1234u16; 4];
@@ -1742,6 +1759,7 @@ mod tests {
     }
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray9_walker_smoke_test() {
     use crate::frame::GrayNFrame;
@@ -1756,6 +1774,7 @@ mod tests {
     assert_eq!(luma, [50, 50, 50, 50]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray12_walker_smoke_test() {
     use crate::frame::GrayNFrame;
@@ -1770,6 +1789,7 @@ mod tests {
     assert_eq!(luma, [255, 255, 255, 255]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray14_walker_smoke_test() {
     use crate::frame::GrayNFrame;
@@ -1884,6 +1904,7 @@ mod tests {
     assert_eq!(v, [255, 255, 255, 255], "V must be 255 for white");
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray10_limited_range_black_and_white() {
     use crate::frame::GrayNFrame;
@@ -1901,6 +1922,7 @@ mod tests {
     assert_eq!(rgb[9..12], [255, 255, 255], "Y=940 → white");
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray12_limited_range_black_and_white() {
     use crate::frame::GrayNFrame;
@@ -1918,6 +1940,7 @@ mod tests {
     assert_eq!(rgb[9..12], [255, 255, 255], "Y=3760 → white");
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray14_limited_range_black_and_white() {
     use crate::frame::GrayNFrame;
@@ -1935,6 +1958,7 @@ mod tests {
     assert_eq!(rgb[9..12], [255, 255, 255], "Y=15040 → white");
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray16_limited_range_black_and_white() {
     // 16-bit: black=4096, white=60160, range=56064.
@@ -1951,6 +1975,7 @@ mod tests {
     assert_eq!(rgb[9..12], [255, 255, 255], "Y=60160 → white");
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray16_limited_range_luma_passthrough_unchanged() {
     // Luma u16 must copy raw Y regardless of full_range.
@@ -1980,6 +2005,7 @@ mod tests {
     }
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray16_limited_range_rgba_u16_channels_rescale_at_boundaries() {
     // Regression for the i32-overflow bug at BITS=16: limited-range white
@@ -2008,6 +2034,7 @@ mod tests {
     }
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray16_limited_range_rgb_u16_channels_rescale_at_boundaries() {
     // Same i32-overflow regression on the with_rgb_u16 path.
@@ -2022,6 +2049,7 @@ mod tests {
     assert_eq!(&rgb_u16[3..6], &[65535, 65535, 65535]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray16_limited_range_hsv_v_is_rescaled() {
     // HSV V must reflect limited-range rescaling.
@@ -2041,6 +2069,7 @@ mod tests {
 
   // ---- Grayf32 integration tests ----------------------------------------------
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_with_luma_f32_passthrough() {
     // NaN, out-of-range, and normal values all pass through unchanged.
@@ -2060,6 +2089,7 @@ mod tests {
     }
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_with_rgb_f32_replicates_losslessly() {
     let data: std::vec::Vec<f32> = std::vec![0.25, 0.75, 1.5, -0.5];
@@ -2076,6 +2106,7 @@ mod tests {
     }
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_with_rgb_saturates() {
     // -0.5 → 0, 0.5 → 128, 1.0 → 255, 1.5 → 255
@@ -2093,6 +2124,7 @@ mod tests {
     assert_eq!(&rgb[12..15], &[255, 255, 255]); // 1.5 clamps to 255
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_with_hsv_h0_s0_v_saturated() {
     let data: std::vec::Vec<f32> = std::vec![0.0, 0.5, 1.0];
@@ -2109,6 +2141,7 @@ mod tests {
     assert_eq!(v, [0, 128, 255]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_with_luma_u16_and_rgb_u16() {
     // 1×1 frame: Y = 0.5 → luma_u16 ≈ 32768, rgb_u16 ≈ [32768, 32768, 32768]
@@ -2148,6 +2181,103 @@ mod tests {
       assert_eq!(rgb[0], 0, "w={w} first R");
       assert_eq!(luma_f32[0], 0.0, "w={w} first luma_f32");
       assert!(luma_f32[w - 1] > 0.9, "w={w} last luma_f32");
+    }
+  }
+
+  /// Sinker-layer Frame-contract regression for codex 3rd-pass review of
+  /// PR #85.
+  ///
+  /// [`Grayf32Frame`] documents its `&[f32]` plane as **FFmpeg `grayf32le`**
+  /// (see `src/frame/gray.rs`): the byte layout is little-endian-encoded f32,
+  /// produced by FFmpeg and reinterpreted as `&[f32]` via
+  /// `bytemuck::cast_slice`. This is **not** host-native f32 on a BE host —
+  /// the bytes are byte-swapped from the intended values until the loader
+  /// applies `u32::from_le`.
+  ///
+  /// The `Grayf32` sinker therefore correctly hardcodes `::<false>` (i.e.
+  /// "input is LE-encoded") on every host:
+  ///
+  ///   • LE host: `from_le` is a no-op → LE bytes read as LE-interpreted f32
+  ///     → correct host-native value.
+  ///   • BE host: `from_le` is a byte-swap → restores LE-encoded bytes to
+  ///     host-native f32 → correct host-native value.
+  ///
+  /// This test constructs an explicitly LE-encoded f32 fixture (mirroring
+  /// `bytemuck::cast_slice` over `f32::to_le_bytes` output) and feeds it
+  /// through the sinker. On a LE host the assertion is vacuous (LE bytes
+  /// already are host-native), but it pins the contract; on a BE host it
+  /// catches any regression that drops the `::<false>` routing.
+  ///
+  /// Replaces the two earlier (incorrectly-typed) regressions that assumed
+  /// `Grayf32Frame` was host-native f32; the codex 3rd-pass review of
+  /// commit `1bd851a` caught the contract conflict.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn grayf32_sinker_le_encoded_frame_decodes_correctly() {
+    use crate::yuv::Grayf32;
+
+    // Host-native intended values (mix in-range, HDR, negative).
+    let w = 16usize;
+    let h = 4usize;
+    let mut intended = std::vec![0.0f32; w * h];
+    for (i, v) in intended.iter_mut().enumerate() {
+      *v = match i % 4 {
+        0 => 0.5,
+        1 => 1.5,
+        2 => -0.25,
+        _ => 100.0,
+      };
+    }
+
+    // Build an `&[f32]` whose bit pattern, when read as raw bytes, is
+    // little-endian-encoded — i.e. the layout an FFmpeg `grayf32le` plane
+    // hands to `bytemuck::cast_slice`. We do this without a `&[u8]` →
+    // `&[f32]` cast (which would need 4-byte alignment) by storing the
+    // LE-encoded `u32` bit pattern directly into an aligned `Vec<f32>`:
+    //
+    //   `f32::from_bits(intended.to_bits().to_le())`
+    //
+    //   • LE host: `to_le` is a no-op → element bits = intended bits → the
+    //     in-memory bytes are LE-encoded (which on a LE host is also the
+    //     host-native f32 = intended).
+    //   • BE host: `to_le` byte-swaps → element bits = byte-swapped intended
+    //     → the in-memory bytes are LE-encoded; reinterpreted as host-native
+    //     (BE) f32 they are *not* the intended value. The sinker's
+    //     `from_le` swap then restores the intended bits.
+    let le_plane: std::vec::Vec<f32> = intended
+      .iter()
+      .map(|&v| f32::from_bits(v.to_bits().to_le()))
+      .collect();
+    let frame = Grayf32Frame::new(&le_plane, w as u32, h as u32, w as u32);
+
+    // luma_f32 pass-through must restore host-native intended values.
+    let mut luma_f32_out = std::vec![0.0f32; w * h];
+    {
+      let mut sink = MixedSinker::<Grayf32>::new(w, h)
+        .with_luma_f32(&mut luma_f32_out)
+        .unwrap();
+      grayf32_to(&frame, FR, M, &mut sink).unwrap();
+    }
+    assert_eq!(
+      luma_f32_out, intended,
+      "Grayf32 sinker failed to decode LE-encoded plane to host-native"
+    );
+
+    // rgb_f32 lossless replicate (R = G = B = host-native Y, bit-exact).
+    let mut rgb_f32_out = std::vec![0.0f32; w * h * 3];
+    {
+      let mut sink = MixedSinker::<Grayf32>::new(w, h)
+        .with_rgb_f32(&mut rgb_f32_out)
+        .unwrap();
+      grayf32_to(&frame, FR, M, &mut sink).unwrap();
+    }
+    for (x, &y) in intended.iter().enumerate() {
+      assert_eq!(rgb_f32_out[x * 3], y, "pixel {x} R diverges");
+      assert_eq!(rgb_f32_out[x * 3 + 1], y, "pixel {x} G diverges");
+      assert_eq!(rgb_f32_out[x * 3 + 2], y, "pixel {x} B diverges");
     }
   }
 
@@ -2241,6 +2371,7 @@ mod tests {
 
   // ---- Ya16 integration tests -------------------------------------------------
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn ya16_with_rgba_u16_source_alpha() {
     // 1-pixel: Y=0x8000, A=0x4000
@@ -2258,6 +2389,7 @@ mod tests {
     assert_eq!(luma_u16[0], 0x8000);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn ya16_with_rgba_u8_source_alpha_shifted() {
     // 2-pixel: [Y=0x8000, A=0x4000], [Y=0xFFFF, A=0x8000]
@@ -2274,6 +2406,7 @@ mod tests {
     assert_eq!(&rgba[4..8], &[0xFF, 0xFF, 0xFF, 0x80]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn ya16_with_rgb_and_rgba_strategy_a_plus() {
     let packed: std::vec::Vec<u16> = std::vec![0x8000, 0x4000, 0x2000, 0xC000];
@@ -2295,6 +2428,7 @@ mod tests {
     assert_eq!(&rgba[4..8], &[0x20, 0x20, 0x20, 0xC0]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn ya16_with_hsv_h0_s0_v_shifted() {
     let packed: std::vec::Vec<u16> = std::vec![0x8000, 0x4000, 0xFFFF, 0x0000];
@@ -2309,6 +2443,139 @@ mod tests {
     assert_eq!(h, [0, 0]);
     assert_eq!(s, [0, 0]);
     assert_eq!(v, [0x80, 0xFF]);
+  }
+
+  /// Strategy A+ (combined `with_rgb` + `with_rgba`) must produce α bytes
+  /// byte-identical to the standalone `with_rgba` path. Locks down the
+  /// codex-flagged corruption where a BE host processing the LE-encoded
+  /// `Ya16Frame` would otherwise diverge between the two paths: standalone
+  /// uses the endian-aware `ya16_to_rgba_row::<false>` kernel; combined
+  /// expanded RGB → RGBA then patched α via `copy_alpha_ya_u16_to_u8` which
+  /// previously read raw `packed[n*2+1]` host-native and so emitted a
+  /// byte-reversed α byte on BE. After the fix, `copy_alpha_ya_u16_to_u8`
+  /// is target-endian-aware (`<false>` for the LE Frame contract) and the
+  /// two paths agree on every host.
+  ///
+  /// To exercise the LE-encoded byte contract on every host we build the
+  /// `&[u16]` plane by bit-casting LE bytes — `u16::from_le_bytes` per
+  /// sample. On LE hosts that's a no-op; on BE hosts it byte-swaps so the
+  /// in-memory bytes match the FFmpeg `AV_PIX_FMT_YA16LE` layout.
+  #[test]
+  fn ya16_combined_rgb_and_rgba_alpha_matches_standalone_le_encoded() {
+    let w: u32 = 8;
+    let h: u32 = 1;
+    // Logical samples (Y, A) per pixel.
+    let samples: [(u16, u16); 8] = [
+      (0x0000, 0xFFFF),
+      (0x8000, 0x4000),
+      (0xFFFF, 0x0000),
+      (0x1234, 0xABCD),
+      (0x00FF, 0xFF00),
+      (0x5A5A, 0xA5A5),
+      (0x7FFF, 0x8000),
+      (0xC000, 0x3FFF),
+    ];
+    // Build the `&[u16]` plane such that its in-memory bytes match the
+    // FFmpeg `AV_PIX_FMT_YA16LE` byte layout on every host. We want a
+    // host-native u16 whose underlying bytes spell `[low, high]` (LE):
+    // `u16::from_ne_bytes(x.to_le_bytes())` is `x` on LE and `x.swap_bytes()`
+    // on BE — the right value to store in either case.
+    let le_encoded = |x: u16| -> u16 { u16::from_ne_bytes(x.to_le_bytes()) };
+    let packed: std::vec::Vec<u16> = samples
+      .iter()
+      .flat_map(|&(y, a)| [le_encoded(y), le_encoded(a)])
+      .collect();
+    let frame = Ya16Frame::new(&packed, w, h, w * 2);
+
+    // Run combined (with_rgb + with_rgba) — exercises Strategy A+ with the
+    // newly endian-aware `copy_alpha_ya_u16_to_u8::<false>`. Forces
+    // `with_simd(false)` so the test runs purely scalar — no SIMD intrinsics
+    // — which lets it execute under `cargo miri test`. BE CI is driven by
+    // miri on s390x / powerpc64; gating it out of miri would skip exactly
+    // the host where BE corruption would surface.
+    let mut rgb_combined = std::vec![0u8; (w * h * 3) as usize];
+    let mut rgba_combined = std::vec![0u8; (w * h * 4) as usize];
+    {
+      let mut sink = MixedSinker::<crate::yuv::Ya16>::new(w as usize, h as usize)
+        .with_simd(false)
+        .with_rgb(&mut rgb_combined)
+        .unwrap()
+        .with_rgba(&mut rgba_combined)
+        .unwrap();
+      ya16_to(&frame, FR, M, &mut sink).unwrap();
+    }
+
+    // Run standalone (with_rgba only) — exercises the endian-aware
+    // `ya16_to_rgba_row::<false>` kernel. Same scalar-only rationale.
+    let mut rgba_standalone = std::vec![0u8; (w * h * 4) as usize];
+    {
+      let mut sink = MixedSinker::<crate::yuv::Ya16>::new(w as usize, h as usize)
+        .with_simd(false)
+        .with_rgba(&mut rgba_standalone)
+        .unwrap();
+      ya16_to(&frame, FR, M, &mut sink).unwrap();
+    }
+
+    assert_eq!(
+      rgba_combined, rgba_standalone,
+      "combined (with_rgb+with_rgba) RGBA must equal standalone with_rgba"
+    );
+  }
+
+  /// u16 RGBA variant of the combined-vs-standalone parity check. Locks
+  /// down `copy_alpha_ya_u16::<false>` (the u16 alpha-patch helper for
+  /// 16-bit RGBA outputs).
+  #[test]
+  fn ya16_combined_rgb_u16_and_rgba_u16_alpha_matches_standalone_le_encoded() {
+    let w: u32 = 8;
+    let h: u32 = 1;
+    let samples: [(u16, u16); 8] = [
+      (0x0000, 0xFFFF),
+      (0x8000, 0x4000),
+      (0xFFFF, 0x0000),
+      (0x1234, 0xABCD),
+      (0x00FF, 0xFF00),
+      (0x5A5A, 0xA5A5),
+      (0x7FFF, 0x8000),
+      (0xC000, 0x3FFF),
+    ];
+    // See sibling test for the `le_encoded` rationale.
+    let le_encoded = |x: u16| -> u16 { u16::from_ne_bytes(x.to_le_bytes()) };
+    let packed: std::vec::Vec<u16> = samples
+      .iter()
+      .flat_map(|&(y, a)| [le_encoded(y), le_encoded(a)])
+      .collect();
+    let frame = Ya16Frame::new(&packed, w, h, w * 2);
+
+    // Forces `with_simd(false)` so this test runs purely scalar — no SIMD
+    // intrinsics — which lets it execute under `cargo miri test`. BE CI is
+    // driven by miri on s390x / powerpc64; gating it out of miri would skip
+    // exactly the host where BE corruption would surface.
+    let mut rgb_combined = std::vec![0u16; (w * h * 3) as usize];
+    let mut rgba_combined = std::vec![0u16; (w * h * 4) as usize];
+    {
+      let mut sink = MixedSinker::<crate::yuv::Ya16>::new(w as usize, h as usize)
+        .with_simd(false)
+        .with_rgb_u16(&mut rgb_combined)
+        .unwrap()
+        .with_rgba_u16(&mut rgba_combined)
+        .unwrap();
+      ya16_to(&frame, FR, M, &mut sink).unwrap();
+    }
+
+    let mut rgba_standalone = std::vec![0u16; (w * h * 4) as usize];
+    {
+      let mut sink = MixedSinker::<crate::yuv::Ya16>::new(w as usize, h as usize)
+        .with_simd(false)
+        .with_rgba_u16(&mut rgba_standalone)
+        .unwrap();
+      ya16_to(&frame, FR, M, &mut sink).unwrap();
+    }
+
+    assert_eq!(
+      rgba_combined, rgba_standalone,
+      "combined (with_rgb_u16+with_rgba_u16) RGBA u16 must equal standalone"
+    );
   }
 
   #[test]

@@ -24,9 +24,9 @@ fn check_rgb(width: usize, matrix: ColorMatrix, full_range: bool) {
   let p = pseudo_random_v410_words(width, 0xAA55);
   let mut s = std::vec![0u8; width * 3];
   let mut k = std::vec![0u8; width * 3];
-  scalar::v410_to_rgb_or_rgba_row::<false>(&p, &mut s, width, matrix, full_range);
+  scalar::v410_to_rgb_or_rgba_row::<false, false>(&p, &mut s, width, matrix, full_range);
   unsafe {
-    v410_to_rgb_or_rgba_row::<false>(&p, &mut k, width, matrix, full_range);
+    v410_to_rgb_or_rgba_row::<false, false>(&p, &mut k, width, matrix, full_range);
   }
   assert_eq!(
     s, k,
@@ -38,9 +38,9 @@ fn check_rgba(width: usize, matrix: ColorMatrix, full_range: bool) {
   let p = pseudo_random_v410_words(width, 0xAA55);
   let mut s = std::vec![0u8; width * 4];
   let mut k = std::vec![0u8; width * 4];
-  scalar::v410_to_rgb_or_rgba_row::<true>(&p, &mut s, width, matrix, full_range);
+  scalar::v410_to_rgb_or_rgba_row::<true, false>(&p, &mut s, width, matrix, full_range);
   unsafe {
-    v410_to_rgb_or_rgba_row::<true>(&p, &mut k, width, matrix, full_range);
+    v410_to_rgb_or_rgba_row::<true, false>(&p, &mut k, width, matrix, full_range);
   }
   assert_eq!(
     s, k,
@@ -52,9 +52,9 @@ fn check_rgb_u16(width: usize, matrix: ColorMatrix, full_range: bool) {
   let p = pseudo_random_v410_words(width, 0xAA55);
   let mut s = std::vec![0u16; width * 3];
   let mut k = std::vec![0u16; width * 3];
-  scalar::v410_to_rgb_u16_or_rgba_u16_row::<false>(&p, &mut s, width, matrix, full_range);
+  scalar::v410_to_rgb_u16_or_rgba_u16_row::<false, false>(&p, &mut s, width, matrix, full_range);
   unsafe {
-    v410_to_rgb_u16_or_rgba_u16_row::<false>(&p, &mut k, width, matrix, full_range);
+    v410_to_rgb_u16_or_rgba_u16_row::<false, false>(&p, &mut k, width, matrix, full_range);
   }
   assert_eq!(
     s, k,
@@ -66,9 +66,9 @@ fn check_rgba_u16(width: usize, matrix: ColorMatrix, full_range: bool) {
   let p = pseudo_random_v410_words(width, 0xAA55);
   let mut s = std::vec![0u16; width * 4];
   let mut k = std::vec![0u16; width * 4];
-  scalar::v410_to_rgb_u16_or_rgba_u16_row::<true>(&p, &mut s, width, matrix, full_range);
+  scalar::v410_to_rgb_u16_or_rgba_u16_row::<true, false>(&p, &mut s, width, matrix, full_range);
   unsafe {
-    v410_to_rgb_u16_or_rgba_u16_row::<true>(&p, &mut k, width, matrix, full_range);
+    v410_to_rgb_u16_or_rgba_u16_row::<true, false>(&p, &mut k, width, matrix, full_range);
   }
   assert_eq!(
     s, k,
@@ -80,9 +80,9 @@ fn check_luma(width: usize) {
   let p = pseudo_random_v410_words(width, 0xC001);
   let mut s = std::vec![0u8; width];
   let mut k = std::vec![0u8; width];
-  scalar::v410_to_luma_row(&p, &mut s, width);
+  scalar::v410_to_luma_row::<false>(&p, &mut s, width);
   unsafe {
-    v410_to_luma_row(&p, &mut k, width);
+    v410_to_luma_row::<false>(&p, &mut k, width);
   }
   assert_eq!(s, k, "simd128 v410→luma diverges (width={width})");
 }
@@ -91,9 +91,9 @@ fn check_luma_u16(width: usize) {
   let p = pseudo_random_v410_words(width, 0xC001);
   let mut s = std::vec![0u16; width];
   let mut k = std::vec![0u16; width];
-  scalar::v410_to_luma_u16_row(&p, &mut s, width);
+  scalar::v410_to_luma_u16_row::<false>(&p, &mut s, width);
   unsafe {
-    v410_to_luma_u16_row(&p, &mut k, width);
+    v410_to_luma_u16_row::<false>(&p, &mut k, width);
   }
   assert_eq!(s, k, "simd128 v410→luma u16 diverges (width={width})");
 }
@@ -197,7 +197,7 @@ fn wasm_simd128_v410_lane_order_per_pixel_y_and_u() {
   // Part 1: Luma natural-order (u16, no shift loss)
   let mut luma_out = std::vec![0u16; W];
   unsafe {
-    v410_to_luma_u16_row(&packed, &mut luma_out, W);
+    v410_to_luma_u16_row::<false>(&packed, &mut luma_out, W);
   }
   let expected_luma: std::vec::Vec<u16> = (1..=W as u16).collect();
   assert_eq!(
@@ -209,9 +209,15 @@ fn wasm_simd128_v410_lane_order_per_pixel_y_and_u() {
   let mut simd_rgb = std::vec![0u8; W * 3];
   let mut scalar_rgb = std::vec![0u8; W * 3];
   unsafe {
-    v410_to_rgb_or_rgba_row::<false>(&packed, &mut simd_rgb, W, crate::ColorMatrix::Bt709, false);
+    v410_to_rgb_or_rgba_row::<false, false>(
+      &packed,
+      &mut simd_rgb,
+      W,
+      crate::ColorMatrix::Bt709,
+      false,
+    );
   }
-  scalar::v410_to_rgb_or_rgba_row::<false>(
+  scalar::v410_to_rgb_or_rgba_row::<false, false>(
     &packed,
     &mut scalar_rgb,
     W,

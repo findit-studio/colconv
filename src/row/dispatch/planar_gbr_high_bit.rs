@@ -1,6 +1,7 @@
 //! Runtime SIMD dispatchers for high-bit-depth planar GBR sources (Tier 10b).
 //!
-//! Seven kernel variants, all const-generic over `BITS ∈ {9, 10, 12, 14, 16}`:
+//! Seven kernel variants, all const-generic over `BITS ∈ {9, 10, 12, 14, 16}`
+//! and `BE` (big-endian input when `true`):
 //! - [`gbr_to_rgb_high_bit_row`] — interleave G/B/R → packed `R, G, B` bytes.
 //! - [`gbr_to_rgb_u16_high_bit_row`] — interleave G/B/R → packed `R, G, B` u16.
 //! - [`gbr_to_rgba_opaque_high_bit_row`] — interleave G/B/R → packed
@@ -39,8 +40,9 @@ use crate::{
 
 /// Interleaves three planar G/B/R `u16` rows into packed `R, G, B` **bytes**.
 /// Downshifts each sample by `BITS - 8`. `use_simd = false` forces scalar.
+/// When `BE = true`, input u16 samples are big-endian and byte-swapped first.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn gbr_to_rgb_high_bit_row<const BITS: u32>(
+pub fn gbr_to_rgb_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -65,31 +67,33 @@ pub fn gbr_to_rgb_high_bit_row<const BITS: u32>(
       target_arch = "aarch64" => {
         if neon_available() {
           // SAFETY: NEON verified available.
-          unsafe { arch::neon::gbr_to_rgb_high_bit_row::<BITS>(g, b, r, rgb_out, width); }
+          unsafe { arch::neon::gbr_to_rgb_high_bit_row::<BITS, BE>(g, b, r, rgb_out, width); }
           return;
         }
       },
       target_arch = "x86_64" => {
         if avx512_available() {
           // SAFETY: AVX-512BW verified available.
-          unsafe { arch::x86_avx512::gbr_to_rgb_high_bit_row::<BITS>(g, b, r, rgb_out, width); }
+          unsafe { arch::x86_avx512::gbr_to_rgb_high_bit_row::<BITS, BE>(g, b, r, rgb_out, width); }
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
-          unsafe { arch::x86_avx2::gbr_to_rgb_high_bit_row::<BITS>(g, b, r, rgb_out, width); }
+          unsafe { arch::x86_avx2::gbr_to_rgb_high_bit_row::<BITS, BE>(g, b, r, rgb_out, width); }
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified available.
-          unsafe { arch::x86_sse41::gbr_to_rgb_high_bit_row::<BITS>(g, b, r, rgb_out, width); }
+          unsafe { arch::x86_sse41::gbr_to_rgb_high_bit_row::<BITS, BE>(g, b, r, rgb_out, width); }
           return;
         }
       },
       target_arch = "wasm32" => {
         if simd128_available() {
           // SAFETY: simd128 compile-time enabled.
-          unsafe { arch::wasm_simd128::gbr_to_rgb_high_bit_row::<BITS>(g, b, r, rgb_out, width); }
+          unsafe {
+            arch::wasm_simd128::gbr_to_rgb_high_bit_row::<BITS, BE>(g, b, r, rgb_out, width);
+          }
           return;
         }
       },
@@ -97,7 +101,7 @@ pub fn gbr_to_rgb_high_bit_row<const BITS: u32>(
     }
   }
 
-  scalar::gbr_to_rgb_high_bit_row::<BITS>(g, b, r, rgb_out, width);
+  scalar::gbr_to_rgb_high_bit_row::<BITS, BE>(g, b, r, rgb_out, width);
 }
 
 // ---------------------------------------------------------------------------
@@ -107,8 +111,9 @@ pub fn gbr_to_rgb_high_bit_row<const BITS: u32>(
 /// Interleaves three planar G/B/R `u16` rows into packed `R, G, B` **u16**
 /// elements. Samples are copied as-is (no depth conversion); values stay in
 /// `[0, (1 << BITS) - 1]`. `use_simd = false` forces scalar.
+/// When `BE = true`, input u16 samples are big-endian and byte-swapped first.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
+pub fn gbr_to_rgb_u16_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -134,7 +139,7 @@ pub fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
         if neon_available() {
           // SAFETY: NEON verified available.
           unsafe {
-            arch::neon::gbr_to_rgb_u16_high_bit_row::<BITS>(g, b, r, rgb_u16_out, width);
+            arch::neon::gbr_to_rgb_u16_high_bit_row::<BITS, BE>(g, b, r, rgb_u16_out, width);
           }
           return;
         }
@@ -143,21 +148,27 @@ pub fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
         if avx512_available() {
           // SAFETY: AVX-512BW verified available.
           unsafe {
-            arch::x86_avx512::gbr_to_rgb_u16_high_bit_row::<BITS>(g, b, r, rgb_u16_out, width);
+            arch::x86_avx512::gbr_to_rgb_u16_high_bit_row::<BITS, BE>(
+              g, b, r, rgb_u16_out, width,
+            );
           }
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe {
-            arch::x86_avx2::gbr_to_rgb_u16_high_bit_row::<BITS>(g, b, r, rgb_u16_out, width);
+            arch::x86_avx2::gbr_to_rgb_u16_high_bit_row::<BITS, BE>(
+              g, b, r, rgb_u16_out, width,
+            );
           }
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified available.
           unsafe {
-            arch::x86_sse41::gbr_to_rgb_u16_high_bit_row::<BITS>(g, b, r, rgb_u16_out, width);
+            arch::x86_sse41::gbr_to_rgb_u16_high_bit_row::<BITS, BE>(
+              g, b, r, rgb_u16_out, width,
+            );
           }
           return;
         }
@@ -166,7 +177,9 @@ pub fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
         if simd128_available() {
           // SAFETY: simd128 compile-time enabled.
           unsafe {
-            arch::wasm_simd128::gbr_to_rgb_u16_high_bit_row::<BITS>(g, b, r, rgb_u16_out, width);
+            arch::wasm_simd128::gbr_to_rgb_u16_high_bit_row::<BITS, BE>(
+              g, b, r, rgb_u16_out, width,
+            );
           }
           return;
         }
@@ -175,7 +188,7 @@ pub fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
     }
   }
 
-  scalar::gbr_to_rgb_u16_high_bit_row::<BITS>(g, b, r, rgb_u16_out, width);
+  scalar::gbr_to_rgb_u16_high_bit_row::<BITS, BE>(g, b, r, rgb_u16_out, width);
 }
 
 // ---------------------------------------------------------------------------
@@ -185,8 +198,9 @@ pub fn gbr_to_rgb_u16_high_bit_row<const BITS: u32>(
 /// Interleaves three planar G/B/R `u16` rows into packed `R, G, B, A` **bytes**
 /// with constant α = `0xFF`. Used by `GbrpN` for standalone `with_rgba` path.
 /// `use_simd = false` forces scalar.
+/// When `BE = true`, input u16 samples are big-endian and byte-swapped first.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
+pub fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -212,7 +226,7 @@ pub fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
         if neon_available() {
           // SAFETY: NEON verified available.
           unsafe {
-            arch::neon::gbr_to_rgba_opaque_high_bit_row::<BITS>(g, b, r, rgba_out, width);
+            arch::neon::gbr_to_rgba_opaque_high_bit_row::<BITS, BE>(g, b, r, rgba_out, width);
           }
           return;
         }
@@ -221,21 +235,27 @@ pub fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
         if avx512_available() {
           // SAFETY: AVX-512BW verified available.
           unsafe {
-            arch::x86_avx512::gbr_to_rgba_opaque_high_bit_row::<BITS>(g, b, r, rgba_out, width);
+            arch::x86_avx512::gbr_to_rgba_opaque_high_bit_row::<BITS, BE>(
+              g, b, r, rgba_out, width,
+            );
           }
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe {
-            arch::x86_avx2::gbr_to_rgba_opaque_high_bit_row::<BITS>(g, b, r, rgba_out, width);
+            arch::x86_avx2::gbr_to_rgba_opaque_high_bit_row::<BITS, BE>(
+              g, b, r, rgba_out, width,
+            );
           }
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified available.
           unsafe {
-            arch::x86_sse41::gbr_to_rgba_opaque_high_bit_row::<BITS>(g, b, r, rgba_out, width);
+            arch::x86_sse41::gbr_to_rgba_opaque_high_bit_row::<BITS, BE>(
+              g, b, r, rgba_out, width,
+            );
           }
           return;
         }
@@ -244,7 +264,9 @@ pub fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
         if simd128_available() {
           // SAFETY: simd128 compile-time enabled.
           unsafe {
-            arch::wasm_simd128::gbr_to_rgba_opaque_high_bit_row::<BITS>(g, b, r, rgba_out, width);
+            arch::wasm_simd128::gbr_to_rgba_opaque_high_bit_row::<BITS, BE>(
+              g, b, r, rgba_out, width,
+            );
           }
           return;
         }
@@ -253,7 +275,7 @@ pub fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
     }
   }
 
-  scalar::gbr_to_rgba_opaque_high_bit_row::<BITS>(g, b, r, rgba_out, width);
+  scalar::gbr_to_rgba_opaque_high_bit_row::<BITS, BE>(g, b, r, rgba_out, width);
 }
 
 // ---------------------------------------------------------------------------
@@ -264,8 +286,9 @@ pub fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32>(
 /// **u16** elements with constant α = `(1 << BITS) - 1` (native-depth
 /// opaque). Used by `GbrpN` for standalone `with_rgba_u16` path.
 /// `use_simd = false` forces scalar.
+/// When `BE = true`, input u16 samples are big-endian and byte-swapped first.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
+pub fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -291,7 +314,7 @@ pub fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
         if neon_available() {
           // SAFETY: NEON verified available.
           unsafe {
-            arch::neon::gbr_to_rgba_opaque_u16_high_bit_row::<BITS>(
+            arch::neon::gbr_to_rgba_opaque_u16_high_bit_row::<BITS, BE>(
               g, b, r, rgba_u16_out, width,
             );
           }
@@ -302,7 +325,7 @@ pub fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
         if avx512_available() {
           // SAFETY: AVX-512BW verified available.
           unsafe {
-            arch::x86_avx512::gbr_to_rgba_opaque_u16_high_bit_row::<BITS>(
+            arch::x86_avx512::gbr_to_rgba_opaque_u16_high_bit_row::<BITS, BE>(
               g, b, r, rgba_u16_out, width,
             );
           }
@@ -311,7 +334,7 @@ pub fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe {
-            arch::x86_avx2::gbr_to_rgba_opaque_u16_high_bit_row::<BITS>(
+            arch::x86_avx2::gbr_to_rgba_opaque_u16_high_bit_row::<BITS, BE>(
               g, b, r, rgba_u16_out, width,
             );
           }
@@ -320,7 +343,7 @@ pub fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
         if sse41_available() {
           // SAFETY: SSE4.1 verified available.
           unsafe {
-            arch::x86_sse41::gbr_to_rgba_opaque_u16_high_bit_row::<BITS>(
+            arch::x86_sse41::gbr_to_rgba_opaque_u16_high_bit_row::<BITS, BE>(
               g, b, r, rgba_u16_out, width,
             );
           }
@@ -331,7 +354,7 @@ pub fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
         if simd128_available() {
           // SAFETY: simd128 compile-time enabled.
           unsafe {
-            arch::wasm_simd128::gbr_to_rgba_opaque_u16_high_bit_row::<BITS>(
+            arch::wasm_simd128::gbr_to_rgba_opaque_u16_high_bit_row::<BITS, BE>(
               g, b, r, rgba_u16_out, width,
             );
           }
@@ -342,7 +365,7 @@ pub fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
     }
   }
 
-  scalar::gbr_to_rgba_opaque_u16_high_bit_row::<BITS>(g, b, r, rgba_u16_out, width);
+  scalar::gbr_to_rgba_opaque_u16_high_bit_row::<BITS, BE>(g, b, r, rgba_u16_out, width);
 }
 
 // ---------------------------------------------------------------------------
@@ -352,9 +375,10 @@ pub fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32>(
 /// Interleaves four planar G/B/R/A `u16` rows into packed `R, G, B, A`
 /// **bytes**. Alpha is downshifted by `BITS - 8` (real source α, not
 /// constant). `use_simd = false` forces scalar.
+/// When `BE = true`, input u16 samples are big-endian and byte-swapped first.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub fn gbra_to_rgba_high_bit_row<const BITS: u32>(
+pub fn gbra_to_rgba_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -382,7 +406,7 @@ pub fn gbra_to_rgba_high_bit_row<const BITS: u32>(
         if neon_available() {
           // SAFETY: NEON verified available.
           unsafe {
-            arch::neon::gbra_to_rgba_high_bit_row::<BITS>(g, b, r, a, rgba_out, width);
+            arch::neon::gbra_to_rgba_high_bit_row::<BITS, BE>(g, b, r, a, rgba_out, width);
           }
           return;
         }
@@ -391,21 +415,21 @@ pub fn gbra_to_rgba_high_bit_row<const BITS: u32>(
         if avx512_available() {
           // SAFETY: AVX-512BW verified available.
           unsafe {
-            arch::x86_avx512::gbra_to_rgba_high_bit_row::<BITS>(g, b, r, a, rgba_out, width);
+            arch::x86_avx512::gbra_to_rgba_high_bit_row::<BITS, BE>(g, b, r, a, rgba_out, width);
           }
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe {
-            arch::x86_avx2::gbra_to_rgba_high_bit_row::<BITS>(g, b, r, a, rgba_out, width);
+            arch::x86_avx2::gbra_to_rgba_high_bit_row::<BITS, BE>(g, b, r, a, rgba_out, width);
           }
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified available.
           unsafe {
-            arch::x86_sse41::gbra_to_rgba_high_bit_row::<BITS>(g, b, r, a, rgba_out, width);
+            arch::x86_sse41::gbra_to_rgba_high_bit_row::<BITS, BE>(g, b, r, a, rgba_out, width);
           }
           return;
         }
@@ -414,7 +438,9 @@ pub fn gbra_to_rgba_high_bit_row<const BITS: u32>(
         if simd128_available() {
           // SAFETY: simd128 compile-time enabled.
           unsafe {
-            arch::wasm_simd128::gbra_to_rgba_high_bit_row::<BITS>(g, b, r, a, rgba_out, width);
+            arch::wasm_simd128::gbra_to_rgba_high_bit_row::<BITS, BE>(
+              g, b, r, a, rgba_out, width,
+            );
           }
           return;
         }
@@ -423,7 +449,7 @@ pub fn gbra_to_rgba_high_bit_row<const BITS: u32>(
     }
   }
 
-  scalar::gbra_to_rgba_high_bit_row::<BITS>(g, b, r, a, rgba_out, width);
+  scalar::gbra_to_rgba_high_bit_row::<BITS, BE>(g, b, r, a, rgba_out, width);
 }
 
 // ---------------------------------------------------------------------------
@@ -433,9 +459,10 @@ pub fn gbra_to_rgba_high_bit_row<const BITS: u32>(
 /// Interleaves four planar G/B/R/A `u16` rows into packed `R, G, B, A`
 /// **u16** elements. Alpha is copied directly without depth conversion (values
 /// stay in `[0, (1 << BITS) - 1]`). `use_simd = false` forces scalar.
+/// When `BE = true`, input u16 samples are big-endian and byte-swapped first.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
+pub fn gbra_to_rgba_u16_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -463,7 +490,9 @@ pub fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
         if neon_available() {
           // SAFETY: NEON verified available.
           unsafe {
-            arch::neon::gbra_to_rgba_u16_high_bit_row::<BITS>(g, b, r, a, rgba_u16_out, width);
+            arch::neon::gbra_to_rgba_u16_high_bit_row::<BITS, BE>(
+              g, b, r, a, rgba_u16_out, width,
+            );
           }
           return;
         }
@@ -472,7 +501,7 @@ pub fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
         if avx512_available() {
           // SAFETY: AVX-512BW verified available.
           unsafe {
-            arch::x86_avx512::gbra_to_rgba_u16_high_bit_row::<BITS>(
+            arch::x86_avx512::gbra_to_rgba_u16_high_bit_row::<BITS, BE>(
               g, b, r, a, rgba_u16_out, width,
             );
           }
@@ -481,7 +510,7 @@ pub fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
         if avx2_available() {
           // SAFETY: AVX2 verified available.
           unsafe {
-            arch::x86_avx2::gbra_to_rgba_u16_high_bit_row::<BITS>(
+            arch::x86_avx2::gbra_to_rgba_u16_high_bit_row::<BITS, BE>(
               g, b, r, a, rgba_u16_out, width,
             );
           }
@@ -490,7 +519,7 @@ pub fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
         if sse41_available() {
           // SAFETY: SSE4.1 verified available.
           unsafe {
-            arch::x86_sse41::gbra_to_rgba_u16_high_bit_row::<BITS>(
+            arch::x86_sse41::gbra_to_rgba_u16_high_bit_row::<BITS, BE>(
               g, b, r, a, rgba_u16_out, width,
             );
           }
@@ -501,7 +530,7 @@ pub fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
         if simd128_available() {
           // SAFETY: simd128 compile-time enabled.
           unsafe {
-            arch::wasm_simd128::gbra_to_rgba_u16_high_bit_row::<BITS>(
+            arch::wasm_simd128::gbra_to_rgba_u16_high_bit_row::<BITS, BE>(
               g, b, r, a, rgba_u16_out, width,
             );
           }
@@ -512,7 +541,7 @@ pub fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
     }
   }
 
-  scalar::gbra_to_rgba_u16_high_bit_row::<BITS>(g, b, r, a, rgba_u16_out, width);
+  scalar::gbra_to_rgba_u16_high_bit_row::<BITS, BE>(g, b, r, a, rgba_u16_out, width);
 }
 
 // ---------------------------------------------------------------------------
@@ -529,9 +558,10 @@ pub fn gbra_to_rgba_u16_high_bit_row<const BITS: u32>(
 /// `use_simd` accepted for signature consistency with the rest of the
 /// row dispatcher family. Currently no SIMD path is wired (kernel is
 /// scalar-only); the flag is reserved for future backends.
+/// When `BE = true`, input u16 samples are big-endian and byte-swapped first.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub fn gbr_to_luma_u16_high_bit_row<const BITS: u32>(
+pub fn gbr_to_luma_u16_high_bit_row<const BITS: u32, const BE: bool>(
   g: &[u16],
   b: &[u16],
   r: &[u16],
@@ -551,5 +581,5 @@ pub fn gbr_to_luma_u16_high_bit_row<const BITS: u32>(
   assert!(b.len() >= width, "b row too short");
   assert!(r.len() >= width, "r row too short");
   assert!(luma_out.len() >= width, "luma_out row too short");
-  scalar::gbr_to_luma_u16_high_bit_row::<BITS>(g, b, r, luma_out, width, matrix, full_range);
+  scalar::gbr_to_luma_u16_high_bit_row::<BITS, BE>(g, b, r, luma_out, width, matrix, full_range);
 }

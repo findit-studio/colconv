@@ -2,13 +2,47 @@
 //! (`Rgbf32`) source. 16-lane `__m512` registers; same lane-aligned
 //! pixel chunking as the AVX2 backend at twice the throughput.
 //!
+//! For `<const BE: bool>` kernels, each 16-lane f32 load is replaced by
+//! `load_endian_u32x16::<BE>` (a `__m512i` with byte-swapped u32 lanes
+//! for BE inputs) followed by `_mm512_castsi512_ps` to reinterpret as f32.
+//!
 //! Process 16 pixels = 48 lanes per iteration so the loop boundary
 //! lands on a pixel boundary; the scalar tail handles the leftover
 //! 0–15 pixels.
 
 use core::arch::x86_64::*;
 
+use super::endian::load_endian_u32x16;
+// For f16 widen we need a 256-bit u16 load (16 × u16 = 32 bytes).
 use super::scalar;
+use crate::row::arch::x86_avx2::endian::load_endian_u16x16;
+
+/// `BE` value that makes the f32 row loaders treat their input as host-native
+/// (a no-op byte-swap). Used by f16→f32 widen-then-convert paths whose stack
+/// buffer is already host-native after `_mm512_cvtph_ps`. On a LE target,
+/// host-native == LE so `BE = false`; on a BE target, host-native == BE so
+/// `BE = true`. Without this routing the downstream `rgbf32_to_*::<false>`
+/// would byte-swap an already-decoded host-native f32 buffer on BE hosts.
+///
+/// Also used by the `rgbf32_to_rgb_f32_row` pass-through fast path: the raw
+/// `_mm512_loadu_ps`/`_mm512_storeu_ps` copy is byte-correct only when the
+/// source encoding (`BE`) matches the host's native endian, so the kernel
+/// falls through to the endian-aware `load_f32x16::<BE>` slow path otherwise.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
+/// Load 16 f32 lanes from `ptr` in endian-aware fashion.
+///
+/// # Safety
+///
+/// AVX-512F must be available; `ptr` must be valid for 64 bytes.
+#[inline]
+#[target_feature(enable = "avx512f")]
+unsafe fn load_f32x16<const BE: bool>(ptr: *const f32) -> __m512 {
+  unsafe {
+    let u = load_endian_u32x16::<BE>(ptr as *const u8);
+    _mm512_castsi512_ps(u)
+  }
+}
 
 #[inline(always)]
 unsafe fn clamp_scale_to_u32_512(v: __m512, zero: __m512, one: __m512, scale: __m512) -> __m512i {
@@ -24,6 +58,8 @@ unsafe fn clamp_scale_to_u32_512(v: __m512, zero: __m512, one: __m512, scale: __
 
 /// f32 RGB → u8 RGB.
 ///
+/// When `BE = true` the input `f32` values are big-endian encoded.
+///
 /// # Safety
 ///
 /// 1. AVX-512F + AVX-512BW must be available.
@@ -31,7 +67,11 @@ unsafe fn clamp_scale_to_u32_512(v: __m512, zero: __m512, one: __m512, scale: __
 /// 3. `rgb_in` / `rgb_out` must not alias.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn rgbf32_to_rgb_row(rgb_in: &[f32], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn rgbf32_to_rgb_row<const BE: bool>(
+  rgb_in: &[f32],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf32 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -44,9 +84,9 @@ pub(crate) unsafe fn rgbf32_to_rgb_row(rgb_in: &[f32], rgb_out: &mut [u8], width
     let mut lane = 0usize;
     // 16 pixels = 48 lanes per iter (3 × 16-lane f32 loads).
     while lane + 48 <= total_lanes {
-      let v0 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane));
-      let v1 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane + 16));
-      let v2 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane + 32));
+      let v0 = load_f32x16::<BE>(rgb_in.as_ptr().add(lane));
+      let v1 = load_f32x16::<BE>(rgb_in.as_ptr().add(lane + 16));
+      let v2 = load_f32x16::<BE>(rgb_in.as_ptr().add(lane + 32));
 
       let i0 = clamp_scale_to_u32_512(v0, zero, one, scale);
       let i1 = clamp_scale_to_u32_512(v1, zero, one, scale);
@@ -67,7 +107,7 @@ pub(crate) unsafe fn rgbf32_to_rgb_row(rgb_in: &[f32], rgb_out: &mut [u8], width
     }
     let pix_done = lane / 3;
     if pix_done < width {
-      scalar::rgbf32_to_rgb_row(
+      scalar::rgbf32_to_rgb_row::<BE>(
         &rgb_in[pix_done * 3..width * 3],
         &mut rgb_out[pix_done * 3..width * 3],
         width - pix_done,
@@ -77,9 +117,15 @@ pub(crate) unsafe fn rgbf32_to_rgb_row(rgb_in: &[f32], rgb_out: &mut [u8], width
 }
 
 /// f32 RGB → u8 RGBA (alpha forced to `0xFF`).
+///
+/// When `BE = true` the input `f32` values are big-endian encoded.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn rgbf32_to_rgba_row(rgb_in: &[f32], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn rgbf32_to_rgba_row<const BE: bool>(
+  rgb_in: &[f32],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf32 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -92,9 +138,9 @@ pub(crate) unsafe fn rgbf32_to_rgba_row(rgb_in: &[f32], rgba_out: &mut [u8], wid
     let mut lane = 0usize;
     let mut pix = 0usize;
     while lane + 48 <= total_lanes {
-      let v0 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane));
-      let v1 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane + 16));
-      let v2 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane + 32));
+      let v0 = load_f32x16::<BE>(rgb_in.as_ptr().add(lane));
+      let v1 = load_f32x16::<BE>(rgb_in.as_ptr().add(lane + 16));
+      let v2 = load_f32x16::<BE>(rgb_in.as_ptr().add(lane + 32));
 
       let i0 = clamp_scale_to_u32_512(v0, zero, one, scale);
       let i1 = clamp_scale_to_u32_512(v1, zero, one, scale);
@@ -122,7 +168,7 @@ pub(crate) unsafe fn rgbf32_to_rgba_row(rgb_in: &[f32], rgba_out: &mut [u8], wid
       pix += 16;
     }
     if pix < width {
-      scalar::rgbf32_to_rgba_row(
+      scalar::rgbf32_to_rgba_row::<BE>(
         &rgb_in[pix * 3..width * 3],
         &mut rgba_out[pix * 4..width * 4],
         width - pix,
@@ -132,9 +178,15 @@ pub(crate) unsafe fn rgbf32_to_rgba_row(rgb_in: &[f32], rgba_out: &mut [u8], wid
 }
 
 /// f32 RGB → u16 RGB.
+///
+/// When `BE = true` the input `f32` values are big-endian encoded.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn rgbf32_to_rgb_u16_row(rgb_in: &[f32], rgb_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn rgbf32_to_rgb_u16_row<const BE: bool>(
+  rgb_in: &[f32],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf32 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_u16_out row too short");
 
@@ -146,9 +198,9 @@ pub(crate) unsafe fn rgbf32_to_rgb_u16_row(rgb_in: &[f32], rgb_out: &mut [u16], 
     let total_lanes = width * 3;
     let mut lane = 0usize;
     while lane + 48 <= total_lanes {
-      let v0 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane));
-      let v1 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane + 16));
-      let v2 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane + 32));
+      let v0 = load_f32x16::<BE>(rgb_in.as_ptr().add(lane));
+      let v1 = load_f32x16::<BE>(rgb_in.as_ptr().add(lane + 16));
+      let v2 = load_f32x16::<BE>(rgb_in.as_ptr().add(lane + 32));
 
       let i0 = clamp_scale_to_u32_512(v0, zero, one, scale);
       let i1 = clamp_scale_to_u32_512(v1, zero, one, scale);
@@ -168,7 +220,7 @@ pub(crate) unsafe fn rgbf32_to_rgb_u16_row(rgb_in: &[f32], rgb_out: &mut [u16], 
     }
     let pix_done = lane / 3;
     if pix_done < width {
-      scalar::rgbf32_to_rgb_u16_row(
+      scalar::rgbf32_to_rgb_u16_row::<BE>(
         &rgb_in[pix_done * 3..width * 3],
         &mut rgb_out[pix_done * 3..width * 3],
         width - pix_done,
@@ -178,9 +230,15 @@ pub(crate) unsafe fn rgbf32_to_rgb_u16_row(rgb_in: &[f32], rgb_out: &mut [u16], 
 }
 
 /// f32 RGB → u16 RGBA (alpha forced to `0xFFFF`).
+///
+/// When `BE = true` the input `f32` values are big-endian encoded.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn rgbf32_to_rgba_u16_row(rgb_in: &[f32], rgba_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn rgbf32_to_rgba_u16_row<const BE: bool>(
+  rgb_in: &[f32],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf32 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_u16_out row too short");
 
@@ -193,9 +251,9 @@ pub(crate) unsafe fn rgbf32_to_rgba_u16_row(rgb_in: &[f32], rgba_out: &mut [u16]
     let mut lane = 0usize;
     let mut pix = 0usize;
     while lane + 48 <= total_lanes {
-      let v0 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane));
-      let v1 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane + 16));
-      let v2 = _mm512_loadu_ps(rgb_in.as_ptr().add(lane + 32));
+      let v0 = load_f32x16::<BE>(rgb_in.as_ptr().add(lane));
+      let v1 = load_f32x16::<BE>(rgb_in.as_ptr().add(lane + 16));
+      let v2 = load_f32x16::<BE>(rgb_in.as_ptr().add(lane + 32));
 
       let i0 = clamp_scale_to_u32_512(v0, zero, one, scale);
       let i1 = clamp_scale_to_u32_512(v1, zero, one, scale);
@@ -221,7 +279,7 @@ pub(crate) unsafe fn rgbf32_to_rgba_u16_row(rgb_in: &[f32], rgba_out: &mut [u16]
       pix += 16;
     }
     if pix < width {
-      scalar::rgbf32_to_rgba_u16_row(
+      scalar::rgbf32_to_rgba_u16_row::<BE>(
         &rgb_in[pix * 3..width * 3],
         &mut rgba_out[pix * 4..width * 4],
         width - pix,
@@ -231,23 +289,53 @@ pub(crate) unsafe fn rgbf32_to_rgba_u16_row(rgb_in: &[f32], rgba_out: &mut [u16]
 }
 
 /// f32 RGB → f32 RGB lossless pass-through.
+///
+/// When `BE = true` the input values are byte-swapped to host-native before
+/// being written.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-pub(crate) unsafe fn rgbf32_to_rgb_f32_row(rgb_in: &[f32], rgb_out: &mut [f32], width: usize) {
+pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
+  rgb_in: &[f32],
+  rgb_out: &mut [f32],
+  width: usize,
+) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf32 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_f32_out row too short");
 
   unsafe {
     let total = width * 3;
     let mut i = 0usize;
-    while i + 16 <= total {
-      let v = _mm512_loadu_ps(rgb_in.as_ptr().add(i));
-      _mm512_storeu_ps(rgb_out.as_mut_ptr().add(i), v);
-      i += 16;
-    }
-    while i < total {
-      *rgb_out.get_unchecked_mut(i) = *rgb_in.get_unchecked(i);
-      i += 1;
+    // Fast path: when the requested encoding (BE) matches the host's native
+    // endian, the bytes can be copied verbatim — `_mm512_loadu_ps` reads host-
+    // native bytes which is exactly what we need to emit. Otherwise we must
+    // decode through `load_f32x16::<BE>` (which byte-swaps when BE differs from
+    // host-native) so the stored host-native f32 round-trips to the same value.
+    if BE == HOST_NATIVE_BE {
+      while i + 16 <= total {
+        let v = _mm512_loadu_ps(rgb_in.as_ptr().add(i));
+        _mm512_storeu_ps(rgb_out.as_mut_ptr().add(i), v);
+        i += 16;
+      }
+      while i < total {
+        *rgb_out.get_unchecked_mut(i) = *rgb_in.get_unchecked(i);
+        i += 1;
+      }
+    } else {
+      while i + 16 <= total {
+        let v = load_f32x16::<BE>(rgb_in.as_ptr().add(i));
+        _mm512_storeu_ps(rgb_out.as_mut_ptr().add(i), v);
+        i += 16;
+      }
+      while i < total {
+        let bits = (*rgb_in.get_unchecked(i)).to_bits();
+        let host_bits = if BE {
+          u32::from_be(bits)
+        } else {
+          u32::from_le(bits)
+        };
+        *rgb_out.get_unchecked_mut(i) = f32::from_bits(host_bits);
+        i += 1;
+      }
     }
   }
 }
@@ -255,20 +343,23 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row(rgb_in: &[f32], rgb_out: &mut [f32], 
 // ---- Tier 9 — Rgbf16 AVX-512 + F16C entry points ---------------------------
 //
 // `_mm512_cvtph_ps` (F16C + AVX-512F) widens 16 × f16 (stored as 16 × i16 in
-// a __m256i) to 16 × f32 in a __m512.  We load 32 bytes (16 f16 values) via
-// `_mm256_loadu_si256`.
+// a __m256i) to 16 × f32 in a __m512.
 //
-// Downstream: after widening a 48-lane chunk (= 16 pixels) to f32, we call the
-// existing AVX-512 Rgbf32 kernels.  The scalar tail uses
-// `crate::row::scalar::rgbf16_to_*_row`.
+// Load 32 bytes as __m256i via `load_endian_u16x16::<BE>` which byte-swaps
+// each u16 when the on-disk encoding doesn't match host-native, then call
+// `_mm512_cvtph_ps`.
 //
 // `#[target_feature(enable = "avx512f,f16c")]` — `f16c` is the half↔single
-// narrowing/widening extension. AVX-512F + F16C is the minimum for
-// `_mm512_cvtph_ps`. AVX-512BW is a separate CPU-feature bit and is NOT
-// implied by AVX-512F; only enable `avx512bw` on functions that actually
-// use byte/word AVX-512 ops.
+// narrowing/widening extension.
 
 /// Widen 16 × f16 (at `ptr`, 32 bytes) to 16 × f32 (returned as `__m512`).
+///
+/// For `BE = true` the f16 values are stored big-endian; bytes are swapped
+/// before the F16C widening conversion. The historical `BE = false` branch
+/// used a raw `_mm256_loadu_si256` which assumed LE-encoded input on a LE
+/// host; `load_endian_u16x16::<BE>` is correct on both LE and BE hosts because
+/// it monomorphizes to a no-op load when on-disk encoding matches host-native
+/// and to a byte-swap shuffle otherwise.
 ///
 /// # Safety
 ///
@@ -276,14 +367,16 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row(rgb_in: &[f32], rgb_out: &mut [f32], 
 /// * `ptr` must be valid for 32 bytes (16 × u16 / f16).
 #[inline]
 #[target_feature(enable = "avx512f,f16c")]
-unsafe fn widen_f16x16_avx512(ptr: *const half::f16) -> __m512 {
+unsafe fn widen_f16x16_avx512<const BE: bool>(ptr: *const half::f16) -> __m512 {
   unsafe {
-    let raw = _mm256_loadu_si256(ptr as *const __m256i);
+    let raw = load_endian_u16x16::<BE>(ptr as *const u8);
     _mm512_cvtph_ps(raw)
   }
 }
 
 /// f16 RGB → u8 RGB (AVX-512F + F16C).
+///
+/// When `BE = true` the input `half::f16` values are big-endian encoded.
 ///
 /// # Safety
 ///
@@ -292,7 +385,11 @@ unsafe fn widen_f16x16_avx512(ptr: *const half::f16) -> __m512 {
 /// 3. `rgb_in` / `rgb_out` must not alias.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw,f16c")]
-pub(crate) unsafe fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn rgbf16_to_rgb_row<const BE: bool>(
+  rgb_in: &[half::f16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -302,19 +399,22 @@ pub(crate) unsafe fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8],
   while lane + 48 <= total_lanes {
     let mut buf = [0.0f32; 48];
     unsafe {
-      let f0 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane));
-      let f1 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane + 16));
-      let f2 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane + 32));
+      let f0 = widen_f16x16_avx512::<BE>(rgb_in.as_ptr().add(lane));
+      let f1 = widen_f16x16_avx512::<BE>(rgb_in.as_ptr().add(lane + 16));
+      let f2 = widen_f16x16_avx512::<BE>(rgb_in.as_ptr().add(lane + 32));
       _mm512_storeu_ps(buf.as_mut_ptr(), f0);
       _mm512_storeu_ps(buf.as_mut_ptr().add(16), f1);
       _mm512_storeu_ps(buf.as_mut_ptr().add(32), f2);
-      rgbf32_to_rgb_row(&buf, rgb_out.get_unchecked_mut(lane..lane + 48), 16);
+      // Buffer is host-native f32 after _mm512_cvtph_ps; route via
+      // HOST_NATIVE_BE so the f32 loaders perform a no-op byte-swap on
+      // both LE and BE hosts.
+      rgbf32_to_rgb_row::<HOST_NATIVE_BE>(&buf, rgb_out.get_unchecked_mut(lane..lane + 48), 16);
     }
     lane += 48;
   }
   let pix_done = lane / 3;
   if pix_done < width {
-    scalar::rgbf16_to_rgb_row(
+    scalar::rgbf16_to_rgb_row::<BE>(
       &rgb_in[pix_done * 3..width * 3],
       &mut rgb_out[pix_done * 3..width * 3],
       width - pix_done,
@@ -324,12 +424,18 @@ pub(crate) unsafe fn rgbf16_to_rgb_row(rgb_in: &[half::f16], rgb_out: &mut [u8],
 
 /// f16 RGB → u8 RGBA (alpha `0xFF`) (AVX-512F + F16C).
 ///
+/// When `BE = true` the input `half::f16` values are big-endian encoded.
+///
 /// # Safety
 ///
 /// Same as [`rgbf16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw,f16c")]
-pub(crate) unsafe fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn rgbf16_to_rgba_row<const BE: bool>(
+  rgb_in: &[half::f16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -339,19 +445,24 @@ pub(crate) unsafe fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8
   while lane + 48 <= total_lanes {
     let mut buf = [0.0f32; 48];
     unsafe {
-      let f0 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane));
-      let f1 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane + 16));
-      let f2 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane + 32));
+      let f0 = widen_f16x16_avx512::<BE>(rgb_in.as_ptr().add(lane));
+      let f1 = widen_f16x16_avx512::<BE>(rgb_in.as_ptr().add(lane + 16));
+      let f2 = widen_f16x16_avx512::<BE>(rgb_in.as_ptr().add(lane + 32));
       _mm512_storeu_ps(buf.as_mut_ptr(), f0);
       _mm512_storeu_ps(buf.as_mut_ptr().add(16), f1);
       _mm512_storeu_ps(buf.as_mut_ptr().add(32), f2);
-      rgbf32_to_rgba_row(&buf, rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 64), 16);
+      // Buffer is host-native f32; route via HOST_NATIVE_BE.
+      rgbf32_to_rgba_row::<HOST_NATIVE_BE>(
+        &buf,
+        rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 64),
+        16,
+      );
     }
     lane += 48;
     pix += 16;
   }
   if pix < width {
-    scalar::rgbf16_to_rgba_row(
+    scalar::rgbf16_to_rgba_row::<BE>(
       &rgb_in[pix * 3..width * 3],
       &mut rgba_out[pix * 4..width * 4],
       width - pix,
@@ -361,13 +472,15 @@ pub(crate) unsafe fn rgbf16_to_rgba_row(rgb_in: &[half::f16], rgba_out: &mut [u8
 
 /// f16 RGB → u16 RGB (AVX-512F + F16C).
 ///
+/// When `BE = true` the input `half::f16` values are big-endian encoded.
+///
 /// # Safety
 ///
 /// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [u16]` with
 /// `len() >= 3 * width` u16 elements.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw,f16c")]
-pub(crate) unsafe fn rgbf16_to_rgb_u16_row(
+pub(crate) unsafe fn rgbf16_to_rgb_u16_row<const BE: bool>(
   rgb_in: &[half::f16],
   rgb_out: &mut [u16],
   width: usize,
@@ -380,19 +493,20 @@ pub(crate) unsafe fn rgbf16_to_rgb_u16_row(
   while lane + 48 <= total_lanes {
     let mut buf = [0.0f32; 48];
     unsafe {
-      let f0 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane));
-      let f1 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane + 16));
-      let f2 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane + 32));
+      let f0 = widen_f16x16_avx512::<BE>(rgb_in.as_ptr().add(lane));
+      let f1 = widen_f16x16_avx512::<BE>(rgb_in.as_ptr().add(lane + 16));
+      let f2 = widen_f16x16_avx512::<BE>(rgb_in.as_ptr().add(lane + 32));
       _mm512_storeu_ps(buf.as_mut_ptr(), f0);
       _mm512_storeu_ps(buf.as_mut_ptr().add(16), f1);
       _mm512_storeu_ps(buf.as_mut_ptr().add(32), f2);
-      rgbf32_to_rgb_u16_row(&buf, rgb_out.get_unchecked_mut(lane..lane + 48), 16);
+      // Buffer is host-native f32; route via HOST_NATIVE_BE.
+      rgbf32_to_rgb_u16_row::<HOST_NATIVE_BE>(&buf, rgb_out.get_unchecked_mut(lane..lane + 48), 16);
     }
     lane += 48;
   }
   let pix_done = lane / 3;
   if pix_done < width {
-    scalar::rgbf16_to_rgb_u16_row(
+    scalar::rgbf16_to_rgb_u16_row::<BE>(
       &rgb_in[pix_done * 3..width * 3],
       &mut rgb_out[pix_done * 3..width * 3],
       width - pix_done,
@@ -402,12 +516,14 @@ pub(crate) unsafe fn rgbf16_to_rgb_u16_row(
 
 /// f16 RGB → u16 RGBA (alpha `0xFFFF`) (AVX-512F + F16C).
 ///
+/// When `BE = true` the input `half::f16` values are big-endian encoded.
+///
 /// # Safety
 ///
 /// Same as [`rgbf16_to_rgb_u16_row`] but `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw,f16c")]
-pub(crate) unsafe fn rgbf16_to_rgba_u16_row(
+pub(crate) unsafe fn rgbf16_to_rgba_u16_row<const BE: bool>(
   rgb_in: &[half::f16],
   rgba_out: &mut [u16],
   width: usize,
@@ -421,19 +537,24 @@ pub(crate) unsafe fn rgbf16_to_rgba_u16_row(
   while lane + 48 <= total_lanes {
     let mut buf = [0.0f32; 48];
     unsafe {
-      let f0 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane));
-      let f1 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane + 16));
-      let f2 = widen_f16x16_avx512(rgb_in.as_ptr().add(lane + 32));
+      let f0 = widen_f16x16_avx512::<BE>(rgb_in.as_ptr().add(lane));
+      let f1 = widen_f16x16_avx512::<BE>(rgb_in.as_ptr().add(lane + 16));
+      let f2 = widen_f16x16_avx512::<BE>(rgb_in.as_ptr().add(lane + 32));
       _mm512_storeu_ps(buf.as_mut_ptr(), f0);
       _mm512_storeu_ps(buf.as_mut_ptr().add(16), f1);
       _mm512_storeu_ps(buf.as_mut_ptr().add(32), f2);
-      rgbf32_to_rgba_u16_row(&buf, rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 64), 16);
+      // Buffer is host-native f32; route via HOST_NATIVE_BE.
+      rgbf32_to_rgba_u16_row::<HOST_NATIVE_BE>(
+        &buf,
+        rgba_out.get_unchecked_mut(pix * 4..pix * 4 + 64),
+        16,
+      );
     }
     lane += 48;
     pix += 16;
   }
   if pix < width {
-    scalar::rgbf16_to_rgba_u16_row(
+    scalar::rgbf16_to_rgba_u16_row::<BE>(
       &rgb_in[pix * 3..width * 3],
       &mut rgba_out[pix * 4..width * 4],
       width - pix,
@@ -443,13 +564,15 @@ pub(crate) unsafe fn rgbf16_to_rgba_u16_row(
 
 /// f16 RGB → f32 RGB (lossless widen) (AVX-512F + F16C).
 ///
+/// When `BE = true` the input `half::f16` values are big-endian encoded.
+///
 /// # Safety
 ///
 /// Same as [`rgbf16_to_rgb_row`] but `rgb_out` is `&mut [f32]` with
 /// `len() >= 3 * width` f32 elements.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw,f16c")]
-pub(crate) unsafe fn rgbf16_to_rgb_f32_row(
+pub(crate) unsafe fn rgbf16_to_rgb_f32_row<const BE: bool>(
   rgb_in: &[half::f16],
   rgb_out: &mut [f32],
   width: usize,
@@ -461,20 +584,29 @@ pub(crate) unsafe fn rgbf16_to_rgb_f32_row(
   let mut lane = 0usize;
   while lane + 16 <= total_lanes {
     unsafe {
-      let f = widen_f16x16_avx512(rgb_in.as_ptr().add(lane));
+      let f = widen_f16x16_avx512::<BE>(rgb_in.as_ptr().add(lane));
       _mm512_storeu_ps(rgb_out.as_mut_ptr().add(lane), f);
     }
     lane += 16;
   }
   // Scalar tail for the last 0-15 lanes.
+  #[allow(clippy::needless_range_loop)]
   for i in lane..total_lanes {
+    let bits = rgb_in[i].to_bits();
+    let h = half::f16::from_bits(if BE {
+      u16::from_be(bits)
+    } else {
+      u16::from_le(bits)
+    });
     unsafe {
-      *rgb_out.get_unchecked_mut(i) = rgb_in.get_unchecked(i).to_f32();
+      *rgb_out.get_unchecked_mut(i) = h.to_f32();
     }
   }
 }
 
 /// f16 RGB → f16 RGB lossless pass-through (AVX-512F + F16C).
+///
+/// When `BE = true` the input values are byte-swapped to host-native order.
 ///
 /// # Safety
 ///
@@ -482,12 +614,12 @@ pub(crate) unsafe fn rgbf16_to_rgb_f32_row(
 /// `len() >= 3 * width` f16 elements.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw,f16c")]
-pub(crate) unsafe fn rgbf16_to_rgb_f16_row(
+pub(crate) unsafe fn rgbf16_to_rgb_f16_row<const BE: bool>(
   rgb_in: &[half::f16],
   rgb_out: &mut [half::f16],
   width: usize,
 ) {
   debug_assert!(rgb_in.len() >= width * 3, "rgbf16 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_f16_out row too short");
-  scalar::rgbf16_to_rgb_f16_row(rgb_in, rgb_out, width);
+  scalar::rgbf16_to_rgb_f16_row::<BE>(rgb_in, rgb_out, width);
 }

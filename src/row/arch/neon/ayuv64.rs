@@ -14,6 +14,10 @@
 //! producing `uint16x8_t` halves for each of the four channels:
 //! `a_lo/a_hi`, `y_lo/y_hi`, `u_lo/u_hi`, `v_lo/v_hi`.
 //!
+//! For BE wire format (`BE = true`), each deinterleaved `uint16x8_t`
+//! channel is byte-swapped via `bswap_u16x8_if_be::<true>` after the
+//! `vld4q_u16` call.
+//!
 //! - u8 output: Y values are full 16-bit (0..65535), so
 //!   `scale_y_u16_to_i16` is used (not `scale_y`, which would corrupt
 //!   values > 32767). i32 chroma via `chroma_i16x8`.
@@ -26,7 +30,7 @@
 //! ## Tail
 //!
 //! `width % 16` remaining pixels fall through to the scalar
-//! `ayuv64_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC>` (or u16 version).
+//! `ayuv64_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC, BE>` (or u16 version).
 
 use core::arch::aarch64::*;
 
@@ -37,13 +41,13 @@ use crate::{ColorMatrix, row::scalar};
 
 /// NEON AYUV64 → packed u8 RGB or RGBA.
 ///
-/// Byte-identical to `scalar::ayuv64_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC>`.
+/// Byte-identical to `scalar::ayuv64_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC, BE>`.
 ///
 /// Valid monomorphizations:
-/// - `<false, false>` — RGB (α dropped)
-/// - `<true, true>`  — RGBA, source α depth-converted u16 → u8 (`>> 8`)
+/// - `<false, false, _>` — RGB (α dropped)
+/// - `<true, true, _>`  — RGBA, source α depth-converted u16 → u8 (`>> 8`)
 ///
-/// `<false, true>` is rejected at monomorphization via `const { assert! }`.
+/// `<false, true, _>` is rejected at monomorphization via `const { assert! }`.
 ///
 /// # Safety
 ///
@@ -52,7 +56,11 @@ use crate::{ColorMatrix, row::scalar};
 /// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn ayuv64_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
+pub(crate) unsafe fn ayuv64_to_rgb_or_rgba_row<
+  const ALPHA: bool,
+  const ALPHA_SRC: bool,
+  const BE: bool,
+>(
   packed: &[u16],
   out: &mut [u8],
   width: usize,
@@ -91,16 +99,16 @@ pub(crate) unsafe fn ayuv64_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SR
       let q_lo = vld4q_u16(packed.as_ptr().add(x * 4));
       let q_hi = vld4q_u16(packed.as_ptr().add(x * 4 + 32));
 
-      // Extract channels (no shift needed — 16-bit native samples).
-      let a_lo_u16 = q_lo.0; // uint16x8_t — A for pixels 0..7
-      let y_lo_u16 = q_lo.1; // uint16x8_t — Y for pixels 0..7
-      let u_lo_u16 = q_lo.2; // uint16x8_t — U for pixels 0..7
-      let v_lo_u16 = q_lo.3; // uint16x8_t — V for pixels 0..7
+      // Apply BE byte-swap per-channel if needed.
+      let a_lo_u16 = bswap_u16x8_if_be::<BE>(q_lo.0);
+      let y_lo_u16 = bswap_u16x8_if_be::<BE>(q_lo.1);
+      let u_lo_u16 = bswap_u16x8_if_be::<BE>(q_lo.2);
+      let v_lo_u16 = bswap_u16x8_if_be::<BE>(q_lo.3);
 
-      let a_hi_u16 = q_hi.0; // uint16x8_t — A for pixels 8..15
-      let y_hi_u16 = q_hi.1; // uint16x8_t — Y for pixels 8..15
-      let u_hi_u16 = q_hi.2; // uint16x8_t — U for pixels 8..15
-      let v_hi_u16 = q_hi.3; // uint16x8_t — V for pixels 8..15
+      let a_hi_u16 = bswap_u16x8_if_be::<BE>(q_hi.0);
+      let y_hi_u16 = bswap_u16x8_if_be::<BE>(q_hi.1);
+      let u_hi_u16 = bswap_u16x8_if_be::<BE>(q_hi.2);
+      let v_hi_u16 = bswap_u16x8_if_be::<BE>(q_hi.3);
 
       // Reinterpret chroma as signed i16 (bias subtraction fits i16:
       // chroma ∈ [0,65535], bias=32768, so (chroma-bias) ∈ [-32768,32767]).
@@ -194,7 +202,7 @@ pub(crate) unsafe fn ayuv64_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SR
       let tail_packed = &packed[x * 4..width * 4];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::ayuv64_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC>(
+      scalar::ayuv64_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -210,13 +218,13 @@ pub(crate) unsafe fn ayuv64_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SR
 /// NEON AYUV64 → packed native-depth u16 RGB or RGBA.
 ///
 /// Uses i64 chroma (`chroma_i64x4`) to avoid overflow at BITS=16/16.
-/// Byte-identical to `scalar::ayuv64_to_rgb_u16_or_rgba_u16_row::<ALPHA, ALPHA_SRC>`.
+/// Byte-identical to `scalar::ayuv64_to_rgb_u16_or_rgba_u16_row::<ALPHA, ALPHA_SRC, BE>`.
 ///
 /// Valid monomorphizations:
-/// - `<false, false>` — RGB u16 (α dropped)
-/// - `<true, true>`  — RGBA u16, source α written direct (no conversion)
+/// - `<false, false, _>` — RGB u16 (α dropped)
+/// - `<true, true, _>`  — RGBA u16, source α written direct (no conversion)
 ///
-/// `<false, true>` is rejected at monomorphization via `const { assert! }`.
+/// `<false, true, _>` is rejected at monomorphization via `const { assert! }`.
 ///
 /// # Safety
 ///
@@ -225,7 +233,11 @@ pub(crate) unsafe fn ayuv64_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SR
 /// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })` (u16 elements).
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn ayuv64_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const ALPHA_SRC: bool>(
+pub(crate) unsafe fn ayuv64_to_rgb_u16_or_rgba_u16_row<
+  const ALPHA: bool,
+  const ALPHA_SRC: bool,
+  const BE: bool,
+>(
   packed: &[u16],
   out: &mut [u16],
   width: usize,
@@ -265,15 +277,16 @@ pub(crate) unsafe fn ayuv64_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const 
       let q_lo = vld4q_u16(packed.as_ptr().add(x * 4));
       let q_hi = vld4q_u16(packed.as_ptr().add(x * 4 + 32));
 
-      let a_lo_u16 = q_lo.0;
-      let y_lo_u16 = q_lo.1;
-      let u_lo_u16 = q_lo.2;
-      let v_lo_u16 = q_lo.3;
+      // Apply BE byte-swap per-channel if needed.
+      let a_lo_u16 = bswap_u16x8_if_be::<BE>(q_lo.0);
+      let y_lo_u16 = bswap_u16x8_if_be::<BE>(q_lo.1);
+      let u_lo_u16 = bswap_u16x8_if_be::<BE>(q_lo.2);
+      let v_lo_u16 = bswap_u16x8_if_be::<BE>(q_lo.3);
 
-      let a_hi_u16 = q_hi.0;
-      let y_hi_u16 = q_hi.1;
-      let u_hi_u16 = q_hi.2;
-      let v_hi_u16 = q_hi.3;
+      let a_hi_u16 = bswap_u16x8_if_be::<BE>(q_hi.0);
+      let y_hi_u16 = bswap_u16x8_if_be::<BE>(q_hi.1);
+      let u_hi_u16 = bswap_u16x8_if_be::<BE>(q_hi.2);
+      let v_hi_u16 = bswap_u16x8_if_be::<BE>(q_hi.3);
 
       // Chroma: widen u16 → i32, subtract bias, apply c_scale (Q15).
       // 4:4:4 — 8 per-pixel chroma values per half, split into 2 × i32x4.
@@ -411,7 +424,7 @@ pub(crate) unsafe fn ayuv64_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const 
       let tail_packed = &packed[x * 4..width * 4];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::ayuv64_to_rgb_u16_or_rgba_u16_row::<ALPHA, ALPHA_SRC>(
+      scalar::ayuv64_to_rgb_u16_or_rgba_u16_row::<ALPHA, ALPHA_SRC, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -427,7 +440,7 @@ pub(crate) unsafe fn ayuv64_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const 
 /// NEON AYUV64 → packed **RGB** (3 bpp). Source α is discarded.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn ayuv64_to_rgb_row(
+pub(crate) unsafe fn ayuv64_to_rgb_row<const BE: bool>(
   packed: &[u16],
   rgb_out: &mut [u8],
   width: usize,
@@ -435,7 +448,7 @@ pub(crate) unsafe fn ayuv64_to_rgb_row(
   full_range: bool,
 ) {
   unsafe {
-    ayuv64_to_rgb_or_rgba_row::<false, false>(packed, rgb_out, width, matrix, full_range);
+    ayuv64_to_rgb_or_rgba_row::<false, false, BE>(packed, rgb_out, width, matrix, full_range);
   }
 }
 
@@ -443,7 +456,7 @@ pub(crate) unsafe fn ayuv64_to_rgb_row(
 /// to u8 via `>> 8`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn ayuv64_to_rgba_row(
+pub(crate) unsafe fn ayuv64_to_rgba_row<const BE: bool>(
   packed: &[u16],
   rgba_out: &mut [u8],
   width: usize,
@@ -451,14 +464,14 @@ pub(crate) unsafe fn ayuv64_to_rgba_row(
   full_range: bool,
 ) {
   unsafe {
-    ayuv64_to_rgb_or_rgba_row::<true, true>(packed, rgba_out, width, matrix, full_range);
+    ayuv64_to_rgb_or_rgba_row::<true, true, BE>(packed, rgba_out, width, matrix, full_range);
   }
 }
 
 /// NEON AYUV64 → packed **RGB u16** (3 × u16 per pixel). Source α discarded.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn ayuv64_to_rgb_u16_row(
+pub(crate) unsafe fn ayuv64_to_rgb_u16_row<const BE: bool>(
   packed: &[u16],
   rgb_out: &mut [u16],
   width: usize,
@@ -466,7 +479,9 @@ pub(crate) unsafe fn ayuv64_to_rgb_u16_row(
   full_range: bool,
 ) {
   unsafe {
-    ayuv64_to_rgb_u16_or_rgba_u16_row::<false, false>(packed, rgb_out, width, matrix, full_range);
+    ayuv64_to_rgb_u16_or_rgba_u16_row::<false, false, BE>(
+      packed, rgb_out, width, matrix, full_range,
+    );
   }
 }
 
@@ -474,7 +489,7 @@ pub(crate) unsafe fn ayuv64_to_rgb_u16_row(
 /// is written direct (no conversion).
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn ayuv64_to_rgba_u16_row(
+pub(crate) unsafe fn ayuv64_to_rgba_u16_row<const BE: bool>(
   packed: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -482,7 +497,9 @@ pub(crate) unsafe fn ayuv64_to_rgba_u16_row(
   full_range: bool,
 ) {
   unsafe {
-    ayuv64_to_rgb_u16_or_rgba_u16_row::<true, true>(packed, rgba_out, width, matrix, full_range);
+    ayuv64_to_rgb_u16_or_rgba_u16_row::<true, true, BE>(
+      packed, rgba_out, width, matrix, full_range,
+    );
   }
 }
 
@@ -491,7 +508,7 @@ pub(crate) unsafe fn ayuv64_to_rgba_u16_row(
 /// NEON AYUV64 → u8 luma. Y is the second u16 (slot 1) of each pixel
 /// quadruple; `vshrn_n_u16::<8>` narrows u16 → u8 (high byte = `>> 8`).
 ///
-/// Byte-identical to `scalar::ayuv64_to_luma_row`.
+/// Byte-identical to `scalar::ayuv64_to_luma_row::<BE>`.
 ///
 /// # Safety
 ///
@@ -500,7 +517,11 @@ pub(crate) unsafe fn ayuv64_to_rgba_u16_row(
 /// 3. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn ayuv64_to_luma_row(packed: &[u16], luma_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn ayuv64_to_luma_row<const BE: bool>(
+  packed: &[u16],
+  luma_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4, "packed row too short");
   debug_assert!(luma_out.len() >= width, "luma row too short");
 
@@ -510,16 +531,19 @@ pub(crate) unsafe fn ayuv64_to_luma_row(packed: &[u16], luma_out: &mut [u8], wid
       // Two vld4q_u16 loads: channel 1 (.1) = Y for each group of 8 pixels.
       let q_lo = vld4q_u16(packed.as_ptr().add(x * 4));
       let q_hi = vld4q_u16(packed.as_ptr().add(x * 4 + 32));
+      // Apply BE byte-swap to Y channel if needed.
+      let y_lo = bswap_u16x8_if_be::<BE>(q_lo.1);
+      let y_hi = bswap_u16x8_if_be::<BE>(q_hi.1);
       // vshrn_n_u16::<8>: narrows 8 u16 → 8 u8 by taking high byte (>> 8).
-      let y_lo_u8 = vshrn_n_u16::<8>(q_lo.1);
-      let y_hi_u8 = vshrn_n_u16::<8>(q_hi.1);
+      let y_lo_u8 = vshrn_n_u16::<8>(y_lo);
+      let y_hi_u8 = vshrn_n_u16::<8>(y_hi);
       vst1_u8(luma_out.as_mut_ptr().add(x), y_lo_u8);
       vst1_u8(luma_out.as_mut_ptr().add(x + 8), y_hi_u8);
       x += 16;
     }
     // Scalar tail.
     if x < width {
-      scalar::ayuv64_to_luma_row(
+      scalar::ayuv64_to_luma_row::<BE>(
         &packed[x * 4..width * 4],
         &mut luma_out[x..width],
         width - x,
@@ -533,7 +557,7 @@ pub(crate) unsafe fn ayuv64_to_luma_row(packed: &[u16], luma_out: &mut [u8], wid
 /// NEON AYUV64 → u16 luma. Direct copy of Y samples (slot 1, no shift —
 /// 16-bit native).
 ///
-/// Byte-identical to `scalar::ayuv64_to_luma_u16_row`.
+/// Byte-identical to `scalar::ayuv64_to_luma_u16_row::<BE>`.
 ///
 /// # Safety
 ///
@@ -542,7 +566,11 @@ pub(crate) unsafe fn ayuv64_to_luma_row(packed: &[u16], luma_out: &mut [u8], wid
 /// 3. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn ayuv64_to_luma_u16_row(packed: &[u16], luma_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn ayuv64_to_luma_u16_row<const BE: bool>(
+  packed: &[u16],
+  luma_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4, "packed row too short");
   debug_assert!(luma_out.len() >= width, "luma row too short");
 
@@ -552,14 +580,16 @@ pub(crate) unsafe fn ayuv64_to_luma_u16_row(packed: &[u16], luma_out: &mut [u16]
       // Two vld4q_u16 loads: channel 1 (.1) = Y.
       let q_lo = vld4q_u16(packed.as_ptr().add(x * 4));
       let q_hi = vld4q_u16(packed.as_ptr().add(x * 4 + 32));
-      // Direct copy — Y samples are 16-bit native (no shift needed).
-      vst1q_u16(luma_out.as_mut_ptr().add(x), q_lo.1);
-      vst1q_u16(luma_out.as_mut_ptr().add(x + 8), q_hi.1);
+      // Apply BE byte-swap to Y channel if needed, then direct copy.
+      let y_lo = bswap_u16x8_if_be::<BE>(q_lo.1);
+      let y_hi = bswap_u16x8_if_be::<BE>(q_hi.1);
+      vst1q_u16(luma_out.as_mut_ptr().add(x), y_lo);
+      vst1q_u16(luma_out.as_mut_ptr().add(x + 8), y_hi);
       x += 16;
     }
     // Scalar tail.
     if x < width {
-      scalar::ayuv64_to_luma_u16_row(
+      scalar::ayuv64_to_luma_u16_row::<BE>(
         &packed[x * 4..width * 4],
         &mut luma_out[x..width],
         width - x,

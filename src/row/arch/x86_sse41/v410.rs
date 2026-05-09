@@ -24,7 +24,7 @@
 
 use core::arch::x86_64::*;
 
-use super::*;
+use super::{endian, *};
 use crate::{ColorMatrix, row::scalar};
 
 // ---- u8 RGB / RGBA output (8 px/iter) -----------------------------------
@@ -40,7 +40,7 @@ use crate::{ColorMatrix, row::scalar};
 /// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn v410_to_rgb_or_rgba_row<const ALPHA: bool>(
+pub(crate) unsafe fn v410_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   packed: &[u32],
   out: &mut [u8],
   width: usize,
@@ -73,8 +73,8 @@ pub(crate) unsafe fn v410_to_rgb_or_rgba_row<const ALPHA: bool>(
     let mut x = 0usize;
     while x + 8 <= width {
       // Load 8 V410 words = 8 pixels (32 bytes = 2 × __m128i).
-      let words_lo = _mm_loadu_si128(packed.as_ptr().add(x).cast());
-      let words_hi = _mm_loadu_si128(packed.as_ptr().add(x + 4).cast());
+      let words_lo = endian::load_endian_u32x4::<BE>(packed.as_ptr().add(x) as *const u8);
+      let words_hi = endian::load_endian_u32x4::<BE>(packed.as_ptr().add(x + 4) as *const u8);
 
       // Extract U (bits 9:0), Y (bits 19:10), V (bits 29:20) for each
       // 4-pixel batch as i32x4. Values ≤ 1023 — safe for i16.
@@ -154,7 +154,13 @@ pub(crate) unsafe fn v410_to_rgb_or_rgba_row<const ALPHA: bool>(
       let tail_packed = &packed[x..width];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::v410_to_rgb_or_rgba_row::<ALPHA>(tail_packed, tail_out, tail_w, matrix, full_range);
+      scalar::v410_to_rgb_or_rgba_row::<ALPHA, BE>(
+        tail_packed,
+        tail_out,
+        tail_w,
+        matrix,
+        full_range,
+      );
     }
   }
 }
@@ -173,7 +179,7 @@ pub(crate) unsafe fn v410_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })` (u16 elements).
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
+pub(crate) unsafe fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   packed: &[u32],
   out: &mut [u16],
   width: usize,
@@ -208,8 +214,8 @@ pub(crate) unsafe fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let words_lo = _mm_loadu_si128(packed.as_ptr().add(x).cast());
-      let words_hi = _mm_loadu_si128(packed.as_ptr().add(x + 4).cast());
+      let words_lo = endian::load_endian_u32x4::<BE>(packed.as_ptr().add(x) as *const u8);
+      let words_hi = endian::load_endian_u32x4::<BE>(packed.as_ptr().add(x + 4) as *const u8);
 
       let u_lo_i32 = _mm_and_si128(words_lo, mask);
       let y_lo_i32 = _mm_and_si128(_mm_srli_epi32::<10>(words_lo), mask);
@@ -283,7 +289,7 @@ pub(crate) unsafe fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
       let tail_packed = &packed[x..width];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::v410_to_rgb_u16_or_rgba_u16_row::<ALPHA>(
+      scalar::v410_to_rgb_u16_or_rgba_u16_row::<ALPHA, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -307,7 +313,11 @@ pub(crate) unsafe fn v410_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 /// 3. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn v410_to_luma_row(packed: &[u32], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn v410_to_luma_row<const BE: bool>(
+  packed: &[u32],
+  out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width);
   debug_assert!(out.len() >= width);
 
@@ -316,8 +326,8 @@ pub(crate) unsafe fn v410_to_luma_row(packed: &[u32], out: &mut [u8], width: usi
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let words_lo = _mm_loadu_si128(packed.as_ptr().add(x).cast());
-      let words_hi = _mm_loadu_si128(packed.as_ptr().add(x + 4).cast());
+      let words_lo = endian::load_endian_u32x4::<BE>(packed.as_ptr().add(x) as *const u8);
+      let words_hi = endian::load_endian_u32x4::<BE>(packed.as_ptr().add(x + 4) as *const u8);
 
       // Y = (word >> 10) & 0x3FF for each lane.
       let y_lo_i32 = _mm_and_si128(_mm_srli_epi32::<10>(words_lo), mask);
@@ -340,7 +350,7 @@ pub(crate) unsafe fn v410_to_luma_row(packed: &[u32], out: &mut [u8], width: usi
 
     // Scalar tail.
     if x < width {
-      scalar::v410_to_luma_row(&packed[x..width], &mut out[x..width], width - x);
+      scalar::v410_to_luma_row::<BE>(&packed[x..width], &mut out[x..width], width - x);
     }
   }
 }
@@ -359,7 +369,11 @@ pub(crate) unsafe fn v410_to_luma_row(packed: &[u32], out: &mut [u8], width: usi
 /// 3. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-pub(crate) unsafe fn v410_to_luma_u16_row(packed: &[u32], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn v410_to_luma_u16_row<const BE: bool>(
+  packed: &[u32],
+  out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width);
   debug_assert!(out.len() >= width);
 
@@ -368,8 +382,8 @@ pub(crate) unsafe fn v410_to_luma_u16_row(packed: &[u32], out: &mut [u16], width
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let words_lo = _mm_loadu_si128(packed.as_ptr().add(x).cast());
-      let words_hi = _mm_loadu_si128(packed.as_ptr().add(x + 4).cast());
+      let words_lo = endian::load_endian_u32x4::<BE>(packed.as_ptr().add(x) as *const u8);
+      let words_hi = endian::load_endian_u32x4::<BE>(packed.as_ptr().add(x + 4) as *const u8);
 
       // Y = (word >> 10) & 0x3FF for each lane.
       let y_lo_i32 = _mm_and_si128(_mm_srli_epi32::<10>(words_lo), mask);
@@ -386,7 +400,7 @@ pub(crate) unsafe fn v410_to_luma_u16_row(packed: &[u32], out: &mut [u16], width
 
     // Scalar tail.
     if x < width {
-      scalar::v410_to_luma_u16_row(&packed[x..width], &mut out[x..width], width - x);
+      scalar::v410_to_luma_u16_row::<BE>(&packed[x..width], &mut out[x..width], width - x);
     }
   }
 }

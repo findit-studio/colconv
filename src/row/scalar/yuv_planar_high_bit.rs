@@ -1,4 +1,4 @@
-use super::*;
+use super::{load_u16, *};
 
 // ---- High-bit-depth YUV 4:2:0 → RGB (BITS ∈ {10, 12, 14}) -------------
 
@@ -25,7 +25,7 @@ use super::*;
 /// - `y.len() >= width`, `u_half.len() >= width / 2`,
 ///   `v_half.len() >= width / 2`, `rgb_out.len() >= 3 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn yuv_420p_n_to_rgb_row<const BITS: u32>(
+pub(crate) fn yuv_420p_n_to_rgb_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -34,7 +34,7 @@ pub(crate) fn yuv_420p_n_to_rgb_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_420p_n_to_rgb_or_rgba_row::<BITS, false, false>(
+  yuv_420p_n_to_rgb_or_rgba_row::<BITS, false, false, BE>(
     y, u_half, v_half, None, rgb_out, width, matrix, full_range,
   );
 }
@@ -56,7 +56,7 @@ pub(crate) fn yuv_420p_n_to_rgb_row<const BITS: u32>(
 // follow-up SIMD/dispatcher PR. Until then this thin wrapper has no
 // caller.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn yuv_420p_n_to_rgba_row<const BITS: u32>(
+pub(crate) fn yuv_420p_n_to_rgba_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -65,7 +65,7 @@ pub(crate) fn yuv_420p_n_to_rgba_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_420p_n_to_rgb_or_rgba_row::<BITS, true, false>(
+  yuv_420p_n_to_rgb_or_rgba_row::<BITS, true, false, BE>(
     y, u_half, v_half, None, rgba_out, width, matrix, full_range,
   );
 }
@@ -88,7 +88,7 @@ pub(crate) fn yuv_420p_n_to_rgba_row<const BITS: u32>(
 ///   `rgba_out.len() >= 4 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn yuv_420p_n_to_rgba_with_alpha_src_row<const BITS: u32>(
+pub(crate) fn yuv_420p_n_to_rgba_with_alpha_src_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -98,7 +98,7 @@ pub(crate) fn yuv_420p_n_to_rgba_with_alpha_src_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_420p_n_to_rgb_or_rgba_row::<BITS, true, true>(
+  yuv_420p_n_to_rgb_or_rgba_row::<BITS, true, true, BE>(
     y,
     u_half,
     v_half,
@@ -137,6 +137,7 @@ pub(crate) fn yuv_420p_n_to_rgb_or_rgba_row<
   const BITS: u32,
   const ALPHA: bool,
   const ALPHA_SRC: bool,
+  const BE: bool,
 >(
   y: &[u16],
   u_half: &[u16],
@@ -175,26 +176,28 @@ pub(crate) fn yuv_420p_n_to_rgb_or_rgba_row<
   let bias = chroma_bias::<BITS>();
   let mask = bits_mask::<BITS>();
 
-  // Every sample is AND‑masked to the low `BITS` bits on load. This
-  // eliminates architecture‑dependent divergence on mispacked input
-  // (e.g. `p010`‑style buffers where the 10 active bits sit in the
-  // high bits of each `u16`): after masking, every backend sees the
-  // same in‑range sample, so the whole Q15 pipeline stays bounded
-  // (intermediate chroma sums fit i16 as designed, no saturating
-  // narrow loses information). For valid input every mask is a
+  // Every sample is AND‑masked to the low `BITS` bits on load (after
+  // optional BE byte-swap). This eliminates architecture‑dependent
+  // divergence on mispacked input. For valid input every mask is a
   // no‑op. For malformed input the "wrong" output is identical
   // across scalar + all 5 SIMD backends.
   let mut x = 0;
   while x < width {
     let c_idx = x / 2;
-    let u_d = q15_scale((u_half[c_idx] & mask) as i32 - bias, c_scale);
-    let v_d = q15_scale((v_half[c_idx] & mask) as i32 - bias, c_scale);
+    let u_d = q15_scale(
+      (load_u16::<BE>(u_half[c_idx]) & mask) as i32 - bias,
+      c_scale,
+    );
+    let v_d = q15_scale(
+      (load_u16::<BE>(v_half[c_idx]) & mask) as i32 - bias,
+      c_scale,
+    );
 
     let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale((y[x] & mask) as i32 - y_off, y_scale);
+    let y0 = q15_scale((load_u16::<BE>(y[x]) & mask) as i32 - y_off, y_scale);
     out[x * bpp] = clamp_u8(y0 + r_chroma);
     out[x * bpp + 1] = clamp_u8(y0 + g_chroma);
     out[x * bpp + 2] = clamp_u8(y0 + b_chroma);
@@ -205,18 +208,18 @@ pub(crate) fn yuv_420p_n_to_rgb_or_rgba_row<
       // out-of-range u16 samples, and an unmasked overrange value
       // (e.g. 1024 at BITS=10) would shift down to 256 → cast-to-u8 0,
       // silently turning over-range alpha into transparent output.
-      let a_u16 = a_src.as_ref().unwrap()[x] & mask;
+      let a_u16 = load_u16::<BE>(a_src.as_ref().unwrap()[x]) & mask;
       out[x * bpp + 3] = (a_u16 >> (BITS - 8)) as u8;
     } else if ALPHA {
       out[x * bpp + 3] = 0xFF;
     }
 
-    let y1 = q15_scale((y[x + 1] & mask) as i32 - y_off, y_scale);
+    let y1 = q15_scale((load_u16::<BE>(y[x + 1]) & mask) as i32 - y_off, y_scale);
     out[(x + 1) * bpp] = clamp_u8(y1 + r_chroma);
     out[(x + 1) * bpp + 1] = clamp_u8(y1 + g_chroma);
     out[(x + 1) * bpp + 2] = clamp_u8(y1 + b_chroma);
     if ALPHA_SRC {
-      let a_u16 = a_src.as_ref().unwrap()[x + 1] & mask;
+      let a_u16 = load_u16::<BE>(a_src.as_ref().unwrap()[x + 1]) & mask;
       out[(x + 1) * bpp + 3] = (a_u16 >> (BITS - 8)) as u8;
     } else if ALPHA {
       out[(x + 1) * bpp + 3] = 0xFF;
@@ -253,7 +256,7 @@ pub(crate) fn yuv_420p_n_to_rgb_or_rgba_row<
 /// - `y.len() >= width`, `u_half.len() >= width / 2`,
 ///   `v_half.len() >= width / 2`, `rgb_out.len() >= 3 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn yuv_420p_n_to_rgb_u16_row<const BITS: u32>(
+pub(crate) fn yuv_420p_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -262,7 +265,7 @@ pub(crate) fn yuv_420p_n_to_rgb_u16_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, false, false>(
+  yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, false, false, BE>(
     y, u_half, v_half, None, rgb_out, width, matrix, full_range,
   );
 }
@@ -284,7 +287,7 @@ pub(crate) fn yuv_420p_n_to_rgb_u16_row<const BITS: u32>(
 // `row::yuv420p10_to_rgba_u16_row` lands in the follow-up SIMD/dispatcher
 // PR. Until then this thin wrapper has no caller.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn yuv_420p_n_to_rgba_u16_row<const BITS: u32>(
+pub(crate) fn yuv_420p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -293,7 +296,7 @@ pub(crate) fn yuv_420p_n_to_rgba_u16_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, true, false>(
+  yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, true, false, BE>(
     y, u_half, v_half, None, rgba_out, width, matrix, full_range,
   );
 }
@@ -318,7 +321,7 @@ pub(crate) fn yuv_420p_n_to_rgba_u16_row<const BITS: u32>(
 ///   `rgba_out.len() >= 4 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn yuv_420p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32>(
+pub(crate) fn yuv_420p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -328,7 +331,7 @@ pub(crate) fn yuv_420p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, true, true>(
+  yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, true, true, BE>(
     y,
     u_half,
     v_half,
@@ -361,6 +364,7 @@ pub(crate) fn yuv_420p_n_to_rgb_or_rgba_u16_row<
   const BITS: u32,
   const ALPHA: bool,
   const ALPHA_SRC: bool,
+  const BE: bool,
 >(
   y: &[u16],
   u_half: &[u16],
@@ -397,25 +401,26 @@ pub(crate) fn yuv_420p_n_to_rgb_or_rgba_u16_row<
   let mask = bits_mask::<BITS>();
   let alpha_max: u16 = out_max as u16;
 
-  // Every sample AND‑masked to the low `BITS` bits — see matching
-  // comment in [`yuv_420p_n_to_rgb_or_rgba_row`]. Critical for the
-  // native‑depth u16 output path: `range_params_n::<10, 10>` uses
-  // `y_scale = c_scale = 32768` (unit Q15 for BITS==OUT_BITS full
-  // range), so an unmasked out‑of‑range sample would push `u_d` /
-  // `v_d` to ±32256 and the subsequent `coeff * v_d` exceeds i16
-  // range — breaking the SIMD kernels' `vqmovn_s32` narrow step.
+  // Every sample AND‑masked to the low `BITS` bits (after optional BE
+  // byte-swap). See matching comment in `yuv_420p_n_to_rgb_or_rgba_row`.
   // Masking keeps every intermediate bounded by design.
   let mut x = 0;
   while x < width {
     let c_idx = x / 2;
-    let u_d = q15_scale((u_half[c_idx] & mask) as i32 - bias, c_scale);
-    let v_d = q15_scale((v_half[c_idx] & mask) as i32 - bias, c_scale);
+    let u_d = q15_scale(
+      (load_u16::<BE>(u_half[c_idx]) & mask) as i32 - bias,
+      c_scale,
+    );
+    let v_d = q15_scale(
+      (load_u16::<BE>(v_half[c_idx]) & mask) as i32 - bias,
+      c_scale,
+    );
 
     let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale((y[x] & mask) as i32 - y_off, y_scale);
+    let y0 = q15_scale((load_u16::<BE>(y[x]) & mask) as i32 - y_off, y_scale);
     out[x * bpp] = (y0 + r_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 1] = (y0 + g_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 2] = (y0 + b_chroma).clamp(0, out_max) as u16;
@@ -425,17 +430,17 @@ pub(crate) fn yuv_420p_n_to_rgb_or_rgba_u16_row<
       // out-of-range u16 samples, and the documented native-depth
       // output range is `[0, (1 << BITS) - 1]`. Without masking, an
       // overrange `1024` at BITS=10 would leak straight to output.
-      out[x * bpp + 3] = a_src.as_ref().unwrap()[x] & mask;
+      out[x * bpp + 3] = load_u16::<BE>(a_src.as_ref().unwrap()[x]) & mask;
     } else if ALPHA {
       out[x * bpp + 3] = alpha_max;
     }
 
-    let y1 = q15_scale((y[x + 1] & mask) as i32 - y_off, y_scale);
+    let y1 = q15_scale((load_u16::<BE>(y[x + 1]) & mask) as i32 - y_off, y_scale);
     out[(x + 1) * bpp] = (y1 + r_chroma).clamp(0, out_max) as u16;
     out[(x + 1) * bpp + 1] = (y1 + g_chroma).clamp(0, out_max) as u16;
     out[(x + 1) * bpp + 2] = (y1 + b_chroma).clamp(0, out_max) as u16;
     if ALPHA_SRC {
-      out[(x + 1) * bpp + 3] = a_src.as_ref().unwrap()[x + 1] & mask;
+      out[(x + 1) * bpp + 3] = load_u16::<BE>(a_src.as_ref().unwrap()[x + 1]) & mask;
     } else if ALPHA {
       out[(x + 1) * bpp + 3] = alpha_max;
     }
@@ -457,7 +462,7 @@ pub(crate) fn yuv_420p_n_to_rgb_or_rgba_u16_row<
 /// - `y.len() >= width`, `u.len() >= width`, `v.len() >= width`,
 ///   `rgb_out.len() >= 3 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn yuv_444p_n_to_rgb_row<const BITS: u32>(
+pub(crate) fn yuv_444p_n_to_rgb_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -466,7 +471,7 @@ pub(crate) fn yuv_444p_n_to_rgb_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p_n_to_rgb_or_rgba_row::<BITS, false, false>(
+  yuv_444p_n_to_rgb_or_rgba_row::<BITS, false, false, BE>(
     y, u, v, None, rgb_out, width, matrix, full_range,
   );
 }
@@ -484,7 +489,7 @@ pub(crate) fn yuv_444p_n_to_rgb_row<const BITS: u32>(
 /// - `y.len() >= width`, `u.len() >= width`, `v.len() >= width`,
 ///   `rgba_out.len() >= 4 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn yuv_444p_n_to_rgba_row<const BITS: u32>(
+pub(crate) fn yuv_444p_n_to_rgba_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -493,7 +498,7 @@ pub(crate) fn yuv_444p_n_to_rgba_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, false>(
+  yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, false, BE>(
     y, u, v, None, rgba_out, width, matrix, full_range,
   );
 }
@@ -513,7 +518,7 @@ pub(crate) fn yuv_444p_n_to_rgba_row<const BITS: u32>(
 ///   `a_src.len() >= width`, `rgba_out.len() >= 4 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn yuv_444p_n_to_rgba_with_alpha_src_row<const BITS: u32>(
+pub(crate) fn yuv_444p_n_to_rgba_with_alpha_src_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -523,7 +528,7 @@ pub(crate) fn yuv_444p_n_to_rgba_with_alpha_src_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, true>(
+  yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, true, BE>(
     y,
     u,
     v,
@@ -560,6 +565,7 @@ pub(crate) fn yuv_444p_n_to_rgb_or_rgba_row<
   const BITS: u32,
   const ALPHA: bool,
   const ALPHA_SRC: bool,
+  const BE: bool,
 >(
   y: &[u16],
   u: &[u16],
@@ -598,14 +604,14 @@ pub(crate) fn yuv_444p_n_to_rgb_or_rgba_row<
 
   for x in 0..width {
     // 4:4:4: one UV pair per pixel, no subsampling.
-    let u_d = q15_scale((u[x] & mask) as i32 - bias, c_scale);
-    let v_d = q15_scale((v[x] & mask) as i32 - bias, c_scale);
+    let u_d = q15_scale((load_u16::<BE>(u[x]) & mask) as i32 - bias, c_scale);
+    let v_d = q15_scale((load_u16::<BE>(v[x]) & mask) as i32 - bias, c_scale);
 
     let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale((y[x] & mask) as i32 - y_off, y_scale);
+    let y0 = q15_scale((load_u16::<BE>(y[x]) & mask) as i32 - y_off, y_scale);
     out[x * bpp] = clamp_u8(y0 + r_chroma);
     out[x * bpp + 1] = clamp_u8(y0 + g_chroma);
     out[x * bpp + 2] = clamp_u8(y0 + b_chroma);
@@ -616,7 +622,7 @@ pub(crate) fn yuv_444p_n_to_rgb_or_rgba_row<
       // out-of-range u16 samples, and an unmasked overrange value
       // (e.g. 1024 at BITS=10) would shift down to 256 → cast-to-u8 0,
       // silently turning over-range alpha into transparent output.
-      let a_u16 = a_src.as_ref().unwrap()[x] & mask;
+      let a_u16 = load_u16::<BE>(a_src.as_ref().unwrap()[x]) & mask;
       out[x * bpp + 3] = (a_u16 >> (BITS - 8)) as u8;
     } else if ALPHA {
       out[x * bpp + 3] = 0xFF;
@@ -635,7 +641,7 @@ pub(crate) fn yuv_444p_n_to_rgb_or_rgba_row<
 /// - `y.len() >= width`, `u.len() >= width`, `v.len() >= width`,
 ///   `rgb_out.len() >= 3 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn yuv_444p_n_to_rgb_u16_row<const BITS: u32>(
+pub(crate) fn yuv_444p_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -644,7 +650,7 @@ pub(crate) fn yuv_444p_n_to_rgb_u16_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, false, false>(
+  yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, false, false, BE>(
     y, u, v, None, rgb_out, width, matrix, full_range,
   );
 }
@@ -663,7 +669,7 @@ pub(crate) fn yuv_444p_n_to_rgb_u16_row<const BITS: u32>(
 /// - `y.len() >= width`, `u.len() >= width`, `v.len() >= width`,
 ///   `rgba_out.len() >= 4 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn yuv_444p_n_to_rgba_u16_row<const BITS: u32>(
+pub(crate) fn yuv_444p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -672,7 +678,7 @@ pub(crate) fn yuv_444p_n_to_rgba_u16_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, false>(
+  yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, false, BE>(
     y, u, v, None, rgba_out, width, matrix, full_range,
   );
 }
@@ -693,7 +699,7 @@ pub(crate) fn yuv_444p_n_to_rgba_u16_row<const BITS: u32>(
 ///   `a_src.len() >= width`, `rgba_out.len() >= 4 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn yuv_444p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32>(
+pub(crate) fn yuv_444p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -703,7 +709,7 @@ pub(crate) fn yuv_444p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, true>(
+  yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, true, BE>(
     y,
     u,
     v,
@@ -734,6 +740,7 @@ pub(crate) fn yuv_444p_n_to_rgb_or_rgba_u16_row<
   const BITS: u32,
   const ALPHA: bool,
   const ALPHA_SRC: bool,
+  const BE: bool,
 >(
   y: &[u16],
   u: &[u16],
@@ -770,14 +777,14 @@ pub(crate) fn yuv_444p_n_to_rgb_or_rgba_u16_row<
   let alpha_max: u16 = out_max as u16;
 
   for x in 0..width {
-    let u_d = q15_scale((u[x] & mask) as i32 - bias, c_scale);
-    let v_d = q15_scale((v[x] & mask) as i32 - bias, c_scale);
+    let u_d = q15_scale((load_u16::<BE>(u[x]) & mask) as i32 - bias, c_scale);
+    let v_d = q15_scale((load_u16::<BE>(v[x]) & mask) as i32 - bias, c_scale);
 
     let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale((y[x] & mask) as i32 - y_off, y_scale);
+    let y0 = q15_scale((load_u16::<BE>(y[x]) & mask) as i32 - y_off, y_scale);
     out[x * bpp] = (y0 + r_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 1] = (y0 + g_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 2] = (y0 + b_chroma).clamp(0, out_max) as u16;
@@ -787,7 +794,7 @@ pub(crate) fn yuv_444p_n_to_rgb_or_rgba_u16_row<
       // out-of-range u16 samples, and the documented native-depth
       // output range is `[0, (1 << BITS) - 1]`. Without masking, an
       // overrange `1024` at BITS=10 would leak straight to output.
-      out[x * bpp + 3] = a_src.as_ref().unwrap()[x] & mask;
+      out[x * bpp + 3] = load_u16::<BE>(a_src.as_ref().unwrap()[x]) & mask;
     } else if ALPHA {
       out[x * bpp + 3] = alpha_max;
     }

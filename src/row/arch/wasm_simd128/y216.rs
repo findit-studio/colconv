@@ -46,6 +46,21 @@ use core::arch::wasm32::*;
 use super::*;
 use crate::{ColorMatrix, row::scalar};
 
+/// Host-endian gate for Y2xx/Y216 SIMD bodies.
+///
+/// SIMD deinterleave / fixed-shuffle paths use **host-native** u16 reads,
+/// so the SIMD body is only correct when the encoded byte order matches
+/// the host. The truth table (mirrors PR #82 `9c7d533` / PR #85 `9e678b0`
+/// / PR #86 `b7fb9d3` host-endian gate fixes):
+///
+/// | wire `BE` | host       | `BE == HOST_NATIVE_BE` | path   | correct via    |
+/// |-----------|------------|------------------------|--------|----------------|
+/// | false     | LE         | true                   | SIMD   | host-native LE |
+/// | false     | BE         | false                  | scalar | `from_le`      |
+/// | true      | LE         | false                  | scalar | `from_be`      |
+/// | true      | BE         | true                   | SIMD   | host-native BE |
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 /// Loads 8 Y216 pixels (16 u16 samples = 32 bytes) and extracts
 /// the Y, U, V vectors **without any right-shift** (BITS=16, already
 /// full-range). Returns `(y_vec, u_vec, v_vec)` where:
@@ -107,7 +122,7 @@ unsafe fn unpack_y216_8px_wasm(ptr: *const u16) -> (v128, v128, v128) {
 /// 4. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn y216_to_rgb_or_rgba_row<const ALPHA: bool>(
+pub(crate) unsafe fn y216_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   packed: &[u16],
   out: &mut [u8],
   width: usize,
@@ -124,102 +139,111 @@ pub(crate) unsafe fn y216_to_rgb_or_rgba_row<const ALPHA: bool>(
   const RND: i32 = 1 << 14;
 
   unsafe {
-    let rnd_v = i32x4_splat(RND);
-    let y_off32_v = i32x4_splat(y_off);
-    let y_scale_v = i32x4_splat(y_scale);
-    let c_scale_v = i32x4_splat(c_scale);
-    // Bias = 32768 = 0x8000; as i16 this wraps to -32768.
-    // Using the wrapping trick (i16x8_sub with bias16 = -32768) correctly
-    // maps full-u16 chroma [0, 65535] to [-32768, 32767].
-    let bias16_v = i16x8_splat(-32768i16);
-    let alpha_u8 = u8x16_splat(0xFF);
-    let cru = i32x4_splat(coeffs.r_u());
-    let crv = i32x4_splat(coeffs.r_v());
-    let cgu = i32x4_splat(coeffs.g_u());
-    let cgv = i32x4_splat(coeffs.g_v());
-    let cbu = i32x4_splat(coeffs.b_u());
-    let cbv = i32x4_splat(coeffs.b_v());
-
     let mut x = 0usize;
-    // 16 px/iter: two groups of 8 (lo = Y0..Y7, hi = Y8..Y15).
-    while x + 16 <= width {
-      let (y_lo_vec, u_lo_vec, v_lo_vec) = unpack_y216_8px_wasm(packed.as_ptr().add(x * 2));
-      let (y_hi_vec, u_hi_vec, v_hi_vec) = unpack_y216_8px_wasm(packed.as_ptr().add(x * 2 + 16));
+    if BE == HOST_NATIVE_BE {
+      let rnd_v = i32x4_splat(RND);
+      let y_off32_v = i32x4_splat(y_off);
+      let y_scale_v = i32x4_splat(y_scale);
+      let c_scale_v = i32x4_splat(c_scale);
+      // Bias = 32768 = 0x8000; as i16 this wraps to -32768.
+      // Using the wrapping trick (i16x8_sub with bias16 = -32768) correctly
+      // maps full-u16 chroma [0, 65535] to [-32768, 32767].
+      let bias16_v = i16x8_splat(-32768i16);
+      let alpha_u8 = u8x16_splat(0xFF);
+      let cru = i32x4_splat(coeffs.r_u());
+      let crv = i32x4_splat(coeffs.r_v());
+      let cgu = i32x4_splat(coeffs.g_u());
+      let cgv = i32x4_splat(coeffs.g_v());
+      let cbu = i32x4_splat(coeffs.b_u());
+      let cbv = i32x4_splat(coeffs.b_v());
 
-      // Chroma bias subtraction (wrapping trick for full-u16 range).
-      let u_lo_i16 = i16x8_sub(u_lo_vec, bias16_v);
-      let v_lo_i16 = i16x8_sub(v_lo_vec, bias16_v);
-      let u_hi_i16 = i16x8_sub(u_hi_vec, bias16_v);
-      let v_hi_i16 = i16x8_sub(v_hi_vec, bias16_v);
+      // 16 px/iter: two groups of 8 (lo = Y0..Y7, hi = Y8..Y15).
+      while x + 16 <= width {
+        let (y_lo_vec, u_lo_vec, v_lo_vec) = unpack_y216_8px_wasm(packed.as_ptr().add(x * 2));
+        let (y_hi_vec, u_hi_vec, v_hi_vec) = unpack_y216_8px_wasm(packed.as_ptr().add(x * 2 + 16));
 
-      // Widen to i32x4 halves; only lo halves (lanes 0..3) are valid.
-      // Hi halves hold zeros (from the swizzle mask) — don't-care since
-      // `chroma_i16x8` discards lanes 4..7 after `dup_lo`.
-      let u_lo_lo = i32x4_extend_low_i16x8(u_lo_i16);
-      let u_lo_hi = i32x4_extend_high_i16x8(u_lo_i16);
-      let v_lo_lo = i32x4_extend_low_i16x8(v_lo_i16);
-      let v_lo_hi = i32x4_extend_high_i16x8(v_lo_i16);
-      let u_hi_lo = i32x4_extend_low_i16x8(u_hi_i16);
-      let u_hi_hi = i32x4_extend_high_i16x8(u_hi_i16);
-      let v_hi_lo = i32x4_extend_low_i16x8(v_hi_i16);
-      let v_hi_hi = i32x4_extend_high_i16x8(v_hi_i16);
+        // Chroma bias subtraction (wrapping trick for full-u16 range).
+        let u_lo_i16 = i16x8_sub(u_lo_vec, bias16_v);
+        let v_lo_i16 = i16x8_sub(v_lo_vec, bias16_v);
+        let u_hi_i16 = i16x8_sub(u_hi_vec, bias16_v);
+        let v_hi_i16 = i16x8_sub(v_hi_vec, bias16_v);
 
-      // Q15 chroma scale → i32x4 (scaled chroma deltas).
-      let u_d_lo_lo = q15_shift(i32x4_add(i32x4_mul(u_lo_lo, c_scale_v), rnd_v));
-      let u_d_lo_hi = q15_shift(i32x4_add(i32x4_mul(u_lo_hi, c_scale_v), rnd_v));
-      let v_d_lo_lo = q15_shift(i32x4_add(i32x4_mul(v_lo_lo, c_scale_v), rnd_v));
-      let v_d_lo_hi = q15_shift(i32x4_add(i32x4_mul(v_lo_hi, c_scale_v), rnd_v));
-      let u_d_hi_lo = q15_shift(i32x4_add(i32x4_mul(u_hi_lo, c_scale_v), rnd_v));
-      let u_d_hi_hi = q15_shift(i32x4_add(i32x4_mul(u_hi_hi, c_scale_v), rnd_v));
-      let v_d_hi_lo = q15_shift(i32x4_add(i32x4_mul(v_hi_lo, c_scale_v), rnd_v));
-      let v_d_hi_hi = q15_shift(i32x4_add(i32x4_mul(v_hi_hi, c_scale_v), rnd_v));
+        // Widen to i32x4 halves; only lo halves (lanes 0..3) are valid.
+        // Hi halves hold zeros (from the swizzle mask) — don't-care since
+        // `chroma_i16x8` discards lanes 4..7 after `dup_lo`.
+        let u_lo_lo = i32x4_extend_low_i16x8(u_lo_i16);
+        let u_lo_hi = i32x4_extend_high_i16x8(u_lo_i16);
+        let v_lo_lo = i32x4_extend_low_i16x8(v_lo_i16);
+        let v_lo_hi = i32x4_extend_high_i16x8(v_lo_i16);
+        let u_hi_lo = i32x4_extend_low_i16x8(u_hi_i16);
+        let u_hi_hi = i32x4_extend_high_i16x8(u_hi_i16);
+        let v_hi_lo = i32x4_extend_low_i16x8(v_hi_i16);
+        let v_hi_hi = i32x4_extend_high_i16x8(v_hi_i16);
 
-      // 8-lane i16 chroma vectors (valid in lanes 0..3; lanes 4..7 don't-care).
-      let r_chroma_lo = chroma_i16x8(cru, crv, u_d_lo_lo, v_d_lo_lo, u_d_lo_hi, v_d_lo_hi, rnd_v);
-      let g_chroma_lo = chroma_i16x8(cgu, cgv, u_d_lo_lo, v_d_lo_lo, u_d_lo_hi, v_d_lo_hi, rnd_v);
-      let b_chroma_lo = chroma_i16x8(cbu, cbv, u_d_lo_lo, v_d_lo_lo, u_d_lo_hi, v_d_lo_hi, rnd_v);
-      let r_chroma_hi = chroma_i16x8(cru, crv, u_d_hi_lo, v_d_hi_lo, u_d_hi_hi, v_d_hi_hi, rnd_v);
-      let g_chroma_hi = chroma_i16x8(cgu, cgv, u_d_hi_lo, v_d_hi_lo, u_d_hi_hi, v_d_hi_hi, rnd_v);
-      let b_chroma_hi = chroma_i16x8(cbu, cbv, u_d_hi_lo, v_d_hi_lo, u_d_hi_hi, v_d_hi_hi, rnd_v);
+        // Q15 chroma scale → i32x4 (scaled chroma deltas).
+        let u_d_lo_lo = q15_shift(i32x4_add(i32x4_mul(u_lo_lo, c_scale_v), rnd_v));
+        let u_d_lo_hi = q15_shift(i32x4_add(i32x4_mul(u_lo_hi, c_scale_v), rnd_v));
+        let v_d_lo_lo = q15_shift(i32x4_add(i32x4_mul(v_lo_lo, c_scale_v), rnd_v));
+        let v_d_lo_hi = q15_shift(i32x4_add(i32x4_mul(v_lo_hi, c_scale_v), rnd_v));
+        let u_d_hi_lo = q15_shift(i32x4_add(i32x4_mul(u_hi_lo, c_scale_v), rnd_v));
+        let u_d_hi_hi = q15_shift(i32x4_add(i32x4_mul(u_hi_hi, c_scale_v), rnd_v));
+        let v_d_hi_lo = q15_shift(i32x4_add(i32x4_mul(v_hi_lo, c_scale_v), rnd_v));
+        let v_d_hi_hi = q15_shift(i32x4_add(i32x4_mul(v_hi_hi, c_scale_v), rnd_v));
 
-      // Duplicate chroma into Y-pair slots (4:2:2 nearest-neighbor upsample).
-      let r_dup_lo = dup_lo(r_chroma_lo);
-      let g_dup_lo = dup_lo(g_chroma_lo);
-      let b_dup_lo = dup_lo(b_chroma_lo);
-      let r_dup_hi = dup_lo(r_chroma_hi);
-      let g_dup_hi = dup_lo(g_chroma_hi);
-      let b_dup_hi = dup_lo(b_chroma_hi);
+        // 8-lane i16 chroma vectors (valid in lanes 0..3; lanes 4..7 don't-care).
+        let r_chroma_lo = chroma_i16x8(cru, crv, u_d_lo_lo, v_d_lo_lo, u_d_lo_hi, v_d_lo_hi, rnd_v);
+        let g_chroma_lo = chroma_i16x8(cgu, cgv, u_d_lo_lo, v_d_lo_lo, u_d_lo_hi, v_d_lo_hi, rnd_v);
+        let b_chroma_lo = chroma_i16x8(cbu, cbv, u_d_lo_lo, v_d_lo_lo, u_d_lo_hi, v_d_lo_hi, rnd_v);
+        let r_chroma_hi = chroma_i16x8(cru, crv, u_d_hi_lo, v_d_hi_lo, u_d_hi_hi, v_d_hi_hi, rnd_v);
+        let g_chroma_hi = chroma_i16x8(cgu, cgv, u_d_hi_lo, v_d_hi_lo, u_d_hi_hi, v_d_hi_hi, rnd_v);
+        let b_chroma_hi = chroma_i16x8(cbu, cbv, u_d_hi_lo, v_d_hi_lo, u_d_hi_hi, v_d_hi_hi, rnd_v);
 
-      // Y scale via unsigned widening (Y216 has full u16 range; i16 would
-      // overflow for Y > 32767).
-      let y_lo_scaled = scale_y_u16_wasm(y_lo_vec, y_off32_v, y_scale_v, rnd_v);
-      let y_hi_scaled = scale_y_u16_wasm(y_hi_vec, y_off32_v, y_scale_v, rnd_v);
+        // Duplicate chroma into Y-pair slots (4:2:2 nearest-neighbor upsample).
+        let r_dup_lo = dup_lo(r_chroma_lo);
+        let g_dup_lo = dup_lo(g_chroma_lo);
+        let b_dup_lo = dup_lo(b_chroma_lo);
+        let r_dup_hi = dup_lo(r_chroma_hi);
+        let g_dup_hi = dup_lo(g_chroma_hi);
+        let b_dup_hi = dup_lo(b_chroma_hi);
 
-      // Saturating add → saturating narrow to u8x16.
-      let r_lo = i16x8_add_sat(y_lo_scaled, r_dup_lo);
-      let r_hi = i16x8_add_sat(y_hi_scaled, r_dup_hi);
-      let g_lo = i16x8_add_sat(y_lo_scaled, g_dup_lo);
-      let g_hi = i16x8_add_sat(y_hi_scaled, g_dup_hi);
-      let b_lo = i16x8_add_sat(y_lo_scaled, b_dup_lo);
-      let b_hi = i16x8_add_sat(y_hi_scaled, b_dup_hi);
-      let r_u8 = u8x16_narrow_i16x8(r_lo, r_hi);
-      let g_u8 = u8x16_narrow_i16x8(g_lo, g_hi);
-      let b_u8 = u8x16_narrow_i16x8(b_lo, b_hi);
+        // Y scale via unsigned widening (Y216 has full u16 range; i16 would
+        // overflow for Y > 32767).
+        let y_lo_scaled = scale_y_u16_wasm(y_lo_vec, y_off32_v, y_scale_v, rnd_v);
+        let y_hi_scaled = scale_y_u16_wasm(y_hi_vec, y_off32_v, y_scale_v, rnd_v);
 
-      if ALPHA {
-        write_rgba_16(r_u8, g_u8, b_u8, alpha_u8, out.as_mut_ptr().add(x * 4));
-      } else {
-        write_rgb_16(r_u8, g_u8, b_u8, out.as_mut_ptr().add(x * 3));
+        // Saturating add → saturating narrow to u8x16.
+        let r_lo = i16x8_add_sat(y_lo_scaled, r_dup_lo);
+        let r_hi = i16x8_add_sat(y_hi_scaled, r_dup_hi);
+        let g_lo = i16x8_add_sat(y_lo_scaled, g_dup_lo);
+        let g_hi = i16x8_add_sat(y_hi_scaled, g_dup_hi);
+        let b_lo = i16x8_add_sat(y_lo_scaled, b_dup_lo);
+        let b_hi = i16x8_add_sat(y_hi_scaled, b_dup_hi);
+        let r_u8 = u8x16_narrow_i16x8(r_lo, r_hi);
+        let g_u8 = u8x16_narrow_i16x8(g_lo, g_hi);
+        let b_u8 = u8x16_narrow_i16x8(b_lo, b_hi);
+
+        if ALPHA {
+          write_rgba_16(r_u8, g_u8, b_u8, alpha_u8, out.as_mut_ptr().add(x * 4));
+        } else {
+          write_rgb_16(r_u8, g_u8, b_u8, out.as_mut_ptr().add(x * 3));
+        }
+        x += 16;
       }
-      x += 16;
     }
 
     // Scalar tail — remaining < 16 pixels.
+    // When BE=true the full row is covered here.
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::y216_to_rgb_or_rgba_row::<ALPHA>(tail_packed, tail_out, tail_w, matrix, full_range);
+      scalar::y216_to_rgb_or_rgba_row::<ALPHA, BE>(
+        tail_packed,
+        tail_out,
+        tail_w,
+        matrix,
+        full_range,
+      );
     }
   }
 }
@@ -237,7 +261,7 @@ pub(crate) unsafe fn y216_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// 4. `out.len() >= width * (if ALPHA { 4 } else { 3 })` (u16 elements).
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn y216_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
+pub(crate) unsafe fn y216_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   packed: &[u16],
   out: &mut [u16],
   width: usize,
@@ -255,101 +279,104 @@ pub(crate) unsafe fn y216_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
   const RND_I32: i32 = 1 << 14;
 
   unsafe {
-    let alpha_u16 = u16x8_splat(0xFFFF);
-    let rnd_i64 = i64x2_splat(RND_I64);
-    let rnd_i32 = i32x4_splat(RND_I32);
-    let y_off32 = i32x4_splat(y_off);
-    let y_scale_i64 = i64x2_splat(y_scale as i64);
-    let c_scale_i32 = i32x4_splat(c_scale);
-    // Wrapping 0x8000 bias trick for full-u16 chroma.
-    let bias16 = i16x8_splat(-32768i16);
-    // Coefficients widened once to i64x2.
-    let cru = i64x2_extend_low_i32x4(i32x4_splat(coeffs.r_u()));
-    let crv = i64x2_extend_low_i32x4(i32x4_splat(coeffs.r_v()));
-    let cgu = i64x2_extend_low_i32x4(i32x4_splat(coeffs.g_u()));
-    let cgv = i64x2_extend_low_i32x4(i32x4_splat(coeffs.g_v()));
-    let cbu = i64x2_extend_low_i32x4(i32x4_splat(coeffs.b_u()));
-    let cbv = i64x2_extend_low_i32x4(i32x4_splat(coeffs.b_v()));
-
     let mut x = 0usize;
-    // 8 px/iter: one call to unpack_y216_8px_wasm gives Y0..Y7 and 4 UV pairs.
-    while x + 8 <= width {
-      let (y_vec, u_vec, v_vec) = unpack_y216_8px_wasm(packed.as_ptr().add(x * 2));
+    if BE == HOST_NATIVE_BE {
+      let alpha_u16 = u16x8_splat(0xFFFF);
+      let rnd_i64 = i64x2_splat(RND_I64);
+      let rnd_i32 = i32x4_splat(RND_I32);
+      let y_off32 = i32x4_splat(y_off);
+      let y_scale_i64 = i64x2_splat(y_scale as i64);
+      let c_scale_i32 = i32x4_splat(c_scale);
+      // Wrapping 0x8000 bias trick for full-u16 chroma.
+      let bias16 = i16x8_splat(-32768i16);
+      // Coefficients widened once to i64x2.
+      let cru = i64x2_extend_low_i32x4(i32x4_splat(coeffs.r_u()));
+      let crv = i64x2_extend_low_i32x4(i32x4_splat(coeffs.r_v()));
+      let cgu = i64x2_extend_low_i32x4(i32x4_splat(coeffs.g_u()));
+      let cgv = i64x2_extend_low_i32x4(i32x4_splat(coeffs.g_v()));
+      let cbu = i64x2_extend_low_i32x4(i32x4_splat(coeffs.b_u()));
+      let cbv = i64x2_extend_low_i32x4(i32x4_splat(coeffs.b_v()));
 
-      // Chroma bias (wrapping trick).
-      let u_i16 = i16x8_sub(u_vec, bias16);
-      let v_i16 = i16x8_sub(v_vec, bias16);
+      // 8 px/iter: one call to unpack_y216_8px_wasm gives Y0..Y7 and 4 UV pairs.
+      while x + 8 <= width {
+        let (y_vec, u_vec, v_vec) = unpack_y216_8px_wasm(packed.as_ptr().add(x * 2));
 
-      // Widen low 4 lanes to i32x4 (high 4 are zeroed don't-cares).
-      let u_i32 = i32x4_extend_low_i16x8(u_i16);
-      let v_i32 = i32x4_extend_low_i16x8(v_i16);
+        // Chroma bias (wrapping trick).
+        let u_i16 = i16x8_sub(u_vec, bias16);
+        let v_i16 = i16x8_sub(v_vec, bias16);
 
-      // Q15 scale → 4 × i32 chroma deltas.
-      let u_d = i32x4_shr(i32x4_add(i32x4_mul(u_i32, c_scale_i32), rnd_i32), 15);
-      let v_d = i32x4_shr(i32x4_add(i32x4_mul(v_i32, c_scale_i32), rnd_i32), 15);
+        // Widen low 4 lanes to i32x4 (high 4 are zeroed don't-cares).
+        let u_i32 = i32x4_extend_low_i16x8(u_i16);
+        let v_i32 = i32x4_extend_low_i16x8(v_i16);
 
-      // Widen to 2 × i64x2 for i64 chroma pipeline.
-      let u_d_lo = i64x2_extend_low_i32x4(u_d);
-      let u_d_hi = i64x2_extend_high_i32x4(u_d);
-      let v_d_lo = i64x2_extend_low_i32x4(v_d);
-      let v_d_hi = i64x2_extend_high_i32x4(v_d);
+        // Q15 scale → 4 × i32 chroma deltas.
+        let u_d = i32x4_shr(i32x4_add(i32x4_mul(u_i32, c_scale_i32), rnd_i32), 15);
+        let v_d = i32x4_shr(i32x4_add(i32x4_mul(v_i32, c_scale_i32), rnd_i32), 15);
 
-      let r_ch_lo = chroma_i64x2_wasm(cru, crv, u_d_lo, v_d_lo, rnd_i64);
-      let r_ch_hi = chroma_i64x2_wasm(cru, crv, u_d_hi, v_d_hi, rnd_i64);
-      let g_ch_lo = chroma_i64x2_wasm(cgu, cgv, u_d_lo, v_d_lo, rnd_i64);
-      let g_ch_hi = chroma_i64x2_wasm(cgu, cgv, u_d_hi, v_d_hi, rnd_i64);
-      let b_ch_lo = chroma_i64x2_wasm(cbu, cbv, u_d_lo, v_d_lo, rnd_i64);
-      let b_ch_hi = chroma_i64x2_wasm(cbu, cbv, u_d_hi, v_d_hi, rnd_i64);
+        // Widen to 2 × i64x2 for i64 chroma pipeline.
+        let u_d_lo = i64x2_extend_low_i32x4(u_d);
+        let u_d_hi = i64x2_extend_high_i32x4(u_d);
+        let v_d_lo = i64x2_extend_low_i32x4(v_d);
+        let v_d_hi = i64x2_extend_high_i32x4(v_d);
 
-      // Combine each i64x2 pair → i32x4 [c0, c1, c2, c3].
-      let r_ch_i32 = combine_i64x2_pair_to_i32x4(r_ch_lo, r_ch_hi);
-      let g_ch_i32 = combine_i64x2_pair_to_i32x4(g_ch_lo, g_ch_hi);
-      let b_ch_i32 = combine_i64x2_pair_to_i32x4(b_ch_lo, b_ch_hi);
+        let r_ch_lo = chroma_i64x2_wasm(cru, crv, u_d_lo, v_d_lo, rnd_i64);
+        let r_ch_hi = chroma_i64x2_wasm(cru, crv, u_d_hi, v_d_hi, rnd_i64);
+        let g_ch_lo = chroma_i64x2_wasm(cgu, cgv, u_d_lo, v_d_lo, rnd_i64);
+        let g_ch_hi = chroma_i64x2_wasm(cgu, cgv, u_d_hi, v_d_hi, rnd_i64);
+        let b_ch_lo = chroma_i64x2_wasm(cbu, cbv, u_d_lo, v_d_lo, rnd_i64);
+        let b_ch_hi = chroma_i64x2_wasm(cbu, cbv, u_d_hi, v_d_hi, rnd_i64);
 
-      // Duplicate 4 chroma values into 8 per-pixel slots (4:2:2).
-      // chroma_dup_i32x4_u16([c0,c1,c2,c3]) →
-      //   lo = [c0,c0,c1,c1], hi = [c2,c2,c3,c3]
-      let (r_dup_lo, r_dup_hi) = chroma_dup_i32x4_u16(r_ch_i32);
-      let (g_dup_lo, g_dup_hi) = chroma_dup_i32x4_u16(g_ch_i32);
-      let (b_dup_lo, b_dup_hi) = chroma_dup_i32x4_u16(b_ch_i32);
+        // Combine each i64x2 pair → i32x4 [c0, c1, c2, c3].
+        let r_ch_i32 = combine_i64x2_pair_to_i32x4(r_ch_lo, r_ch_hi);
+        let g_ch_i32 = combine_i64x2_pair_to_i32x4(g_ch_lo, g_ch_hi);
+        let b_ch_i32 = combine_i64x2_pair_to_i32x4(b_ch_lo, b_ch_hi);
 
-      // Y: unsigned widen 8 u16 → 2 × i32x4, subtract y_off, scale in i64.
-      let y_lo_u32 = u32x4_extend_low_u16x8(y_vec);
-      let y_hi_u32 = u32x4_extend_high_u16x8(y_vec);
-      let y_lo_i32 = i32x4_sub(y_lo_u32, y_off32);
-      let y_hi_i32 = i32x4_sub(y_hi_u32, y_off32);
+        // Duplicate 4 chroma values into 8 per-pixel slots (4:2:2).
+        // chroma_dup_i32x4_u16([c0,c1,c2,c3]) →
+        //   lo = [c0,c0,c1,c1], hi = [c2,c2,c3,c3]
+        let (r_dup_lo, r_dup_hi) = chroma_dup_i32x4_u16(r_ch_i32);
+        let (g_dup_lo, g_dup_hi) = chroma_dup_i32x4_u16(g_ch_i32);
+        let (b_dup_lo, b_dup_hi) = chroma_dup_i32x4_u16(b_ch_i32);
 
-      let y_lo_scaled = scale_y_i32x4_i64_wasm(y_lo_i32, y_scale_i64, rnd_i64);
-      let y_hi_scaled = scale_y_i32x4_i64_wasm(y_hi_i32, y_scale_i64, rnd_i64);
+        // Y: unsigned widen 8 u16 → 2 × i32x4, subtract y_off, scale in i64.
+        let y_lo_u32 = u32x4_extend_low_u16x8(y_vec);
+        let y_hi_u32 = u32x4_extend_high_u16x8(y_vec);
+        let y_lo_i32 = i32x4_sub(y_lo_u32, y_off32);
+        let y_hi_i32 = i32x4_sub(y_hi_u32, y_off32);
 
-      // Add Y + chroma, saturating narrow i32 → u16 (clamps [0, 65535]).
-      let r_u16 = u16x8_narrow_i32x4(
-        i32x4_add(y_lo_scaled, r_dup_lo),
-        i32x4_add(y_hi_scaled, r_dup_hi),
-      );
-      let g_u16 = u16x8_narrow_i32x4(
-        i32x4_add(y_lo_scaled, g_dup_lo),
-        i32x4_add(y_hi_scaled, g_dup_hi),
-      );
-      let b_u16 = u16x8_narrow_i32x4(
-        i32x4_add(y_lo_scaled, b_dup_lo),
-        i32x4_add(y_hi_scaled, b_dup_hi),
-      );
+        let y_lo_scaled = scale_y_i32x4_i64_wasm(y_lo_i32, y_scale_i64, rnd_i64);
+        let y_hi_scaled = scale_y_i32x4_i64_wasm(y_hi_i32, y_scale_i64, rnd_i64);
 
-      if ALPHA {
-        write_rgba_u16_8(r_u16, g_u16, b_u16, alpha_u16, out.as_mut_ptr().add(x * 4));
-      } else {
-        write_rgb_u16_8(r_u16, g_u16, b_u16, out.as_mut_ptr().add(x * 3));
+        // Add Y + chroma, saturating narrow i32 → u16 (clamps [0, 65535]).
+        let r_u16 = u16x8_narrow_i32x4(
+          i32x4_add(y_lo_scaled, r_dup_lo),
+          i32x4_add(y_hi_scaled, r_dup_hi),
+        );
+        let g_u16 = u16x8_narrow_i32x4(
+          i32x4_add(y_lo_scaled, g_dup_lo),
+          i32x4_add(y_hi_scaled, g_dup_hi),
+        );
+        let b_u16 = u16x8_narrow_i32x4(
+          i32x4_add(y_lo_scaled, b_dup_lo),
+          i32x4_add(y_hi_scaled, b_dup_hi),
+        );
+
+        if ALPHA {
+          write_rgba_u16_8(r_u16, g_u16, b_u16, alpha_u16, out.as_mut_ptr().add(x * 4));
+        } else {
+          write_rgb_u16_8(r_u16, g_u16, b_u16, out.as_mut_ptr().add(x * 3));
+        }
+        x += 8;
       }
-      x += 8;
     }
 
     // Scalar tail.
+    // When BE=true the full row is covered here.
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::y216_to_rgb_u16_or_rgba_u16_row::<ALPHA>(
+      scalar::y216_to_rgb_u16_or_rgba_u16_row::<ALPHA, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -373,48 +400,56 @@ pub(crate) unsafe fn y216_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 /// 4. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn y216_to_luma_row(packed: &[u16], luma_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn y216_to_luma_row<const BE: bool>(
+  packed: &[u16],
+  luma_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(width.is_multiple_of(2));
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(luma_out.len() >= width);
 
   unsafe {
-    // Y permute: even u16 lanes → low 8 bytes; zeroed high.
-    let y_idx = i8x16(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
-
     let mut x = 0usize;
-    // 16 px/iter: two groups of 8 Y samples.
-    while x + 16 <= width {
-      // lo group: Y0..Y7 from bytes x*2 .. x*2+32.
-      let lo0 = v128_load(packed.as_ptr().add(x * 2).cast());
-      let lo1 = v128_load(packed.as_ptr().add(x * 2 + 8).cast());
-      let y_lo0 = u8x16_swizzle(lo0, y_idx);
-      let y_lo1 = u8x16_swizzle(lo1, y_idx);
-      let y_lo =
-        i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23>(y_lo0, y_lo1);
+    if BE == HOST_NATIVE_BE {
+      // Y permute: even u16 lanes → low 8 bytes; zeroed high.
+      let y_idx = i8x16(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
 
-      // hi group: Y8..Y15 from bytes x*2+32 .. x*2+64.
-      let hi0 = v128_load(packed.as_ptr().add(x * 2 + 16).cast());
-      let hi1 = v128_load(packed.as_ptr().add(x * 2 + 24).cast());
-      let y_hi0 = u8x16_swizzle(hi0, y_idx);
-      let y_hi1 = u8x16_swizzle(hi1, y_idx);
-      let y_hi =
-        i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23>(y_hi0, y_hi1);
+      // 16 px/iter: two groups of 8 Y samples.
+      while x + 16 <= width {
+        // lo group: Y0..Y7 from bytes x*2 .. x*2+32.
+        let lo0 = v128_load(packed.as_ptr().add(x * 2).cast());
+        let lo1 = v128_load(packed.as_ptr().add(x * 2 + 8).cast());
+        let y_lo0 = u8x16_swizzle(lo0, y_idx);
+        let y_lo1 = u8x16_swizzle(lo1, y_idx);
+        let y_lo =
+          i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23>(y_lo0, y_lo1);
 
-      // >> 8: extract high byte of each u16 Y sample.
-      let y_shr_lo = u16x8_shr(y_lo, 8);
-      let y_shr_hi = u16x8_shr(y_hi, 8);
-      // Narrow 16 i16 → 16 u8 (no saturation needed; values ≤ 255).
-      let y_u8 = u8x16_narrow_i16x8(y_shr_lo, y_shr_hi);
-      v128_store(luma_out.as_mut_ptr().add(x).cast(), y_u8);
-      x += 16;
+        // hi group: Y8..Y15 from bytes x*2+32 .. x*2+64.
+        let hi0 = v128_load(packed.as_ptr().add(x * 2 + 16).cast());
+        let hi1 = v128_load(packed.as_ptr().add(x * 2 + 24).cast());
+        let y_hi0 = u8x16_swizzle(hi0, y_idx);
+        let y_hi1 = u8x16_swizzle(hi1, y_idx);
+        let y_hi =
+          i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23>(y_hi0, y_hi1);
+
+        // >> 8: extract high byte of each u16 Y sample.
+        let y_shr_lo = u16x8_shr(y_lo, 8);
+        let y_shr_hi = u16x8_shr(y_hi, 8);
+        // Narrow 16 i16 → 16 u8 (no saturation needed; values ≤ 255).
+        let y_u8 = u8x16_narrow_i16x8(y_shr_lo, y_shr_hi);
+        v128_store(luma_out.as_mut_ptr().add(x).cast(), y_u8);
+        x += 16;
+      }
     }
 
+    // Scalar tail — remaining < 16 pixels.
+    // When BE=true the full row is covered here.
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut luma_out[x..width];
       let tail_w = width - x;
-      scalar::y216_to_luma_row(tail_packed, tail_out, tail_w);
+      scalar::y216_to_luma_row::<BE>(tail_packed, tail_out, tail_w);
     }
   }
 }
@@ -432,44 +467,52 @@ pub(crate) unsafe fn y216_to_luma_row(packed: &[u16], luma_out: &mut [u8], width
 /// 4. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn y216_to_luma_u16_row(packed: &[u16], luma_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn y216_to_luma_u16_row<const BE: bool>(
+  packed: &[u16],
+  luma_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(width.is_multiple_of(2));
   debug_assert!(packed.len() >= width * 2);
   debug_assert!(luma_out.len() >= width);
 
   unsafe {
-    let y_idx = i8x16(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
-
     let mut x = 0usize;
-    // 16 px/iter: two groups of 8 Y samples (u16 direct copy, no shift).
-    while x + 16 <= width {
-      // lo group: Y0..Y7
-      let lo0 = v128_load(packed.as_ptr().add(x * 2).cast());
-      let lo1 = v128_load(packed.as_ptr().add(x * 2 + 8).cast());
-      let y_lo0 = u8x16_swizzle(lo0, y_idx);
-      let y_lo1 = u8x16_swizzle(lo1, y_idx);
-      let y_lo =
-        i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23>(y_lo0, y_lo1);
+    if BE == HOST_NATIVE_BE {
+      let y_idx = i8x16(0, 1, 4, 5, 8, 9, 12, 13, -1, -1, -1, -1, -1, -1, -1, -1);
 
-      // hi group: Y8..Y15
-      let hi0 = v128_load(packed.as_ptr().add(x * 2 + 16).cast());
-      let hi1 = v128_load(packed.as_ptr().add(x * 2 + 24).cast());
-      let y_hi0 = u8x16_swizzle(hi0, y_idx);
-      let y_hi1 = u8x16_swizzle(hi1, y_idx);
-      let y_hi =
-        i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23>(y_hi0, y_hi1);
+      // 16 px/iter: two groups of 8 Y samples (u16 direct copy, no shift).
+      while x + 16 <= width {
+        // lo group: Y0..Y7
+        let lo0 = v128_load(packed.as_ptr().add(x * 2).cast());
+        let lo1 = v128_load(packed.as_ptr().add(x * 2 + 8).cast());
+        let y_lo0 = u8x16_swizzle(lo0, y_idx);
+        let y_lo1 = u8x16_swizzle(lo1, y_idx);
+        let y_lo =
+          i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23>(y_lo0, y_lo1);
 
-      // Direct store — full 16-bit Y, no shift.
-      v128_store(luma_out.as_mut_ptr().add(x).cast(), y_lo);
-      v128_store(luma_out.as_mut_ptr().add(x + 8).cast(), y_hi);
-      x += 16;
+        // hi group: Y8..Y15
+        let hi0 = v128_load(packed.as_ptr().add(x * 2 + 16).cast());
+        let hi1 = v128_load(packed.as_ptr().add(x * 2 + 24).cast());
+        let y_hi0 = u8x16_swizzle(hi0, y_idx);
+        let y_hi1 = u8x16_swizzle(hi1, y_idx);
+        let y_hi =
+          i8x16_shuffle::<0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23>(y_hi0, y_hi1);
+
+        // Direct store — full 16-bit Y, no shift.
+        v128_store(luma_out.as_mut_ptr().add(x).cast(), y_lo);
+        v128_store(luma_out.as_mut_ptr().add(x + 8).cast(), y_hi);
+        x += 16;
+      }
     }
 
+    // Scalar tail — remaining < 16 pixels.
+    // When BE=true the full row is covered here.
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut luma_out[x..width];
       let tail_w = width - x;
-      scalar::y216_to_luma_u16_row(tail_packed, tail_out, tail_w);
+      scalar::y216_to_luma_u16_row::<BE>(tail_packed, tail_out, tail_w);
     }
   }
 }

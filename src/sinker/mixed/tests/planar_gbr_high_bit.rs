@@ -140,10 +140,13 @@ test_gbrp_channel_reorder!(gbrp16_channel_reorder, Gbrp16, gbrp16_to, 16);
 
 macro_rules! test_gbrap_strategy_a_plus {
   ($name:ident, $marker:ident, $walker:ident, $bits:literal) => {
+    test_gbrap_strategy_a_plus!($name, $marker, $walker, $bits, 32);
+  };
+  ($name:ident, $marker:ident, $walker:ident, $bits:literal, $w:literal) => {
     #[test]
     #[cfg_attr(miri, ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri")]
     fn $name() {
-      let w = 32usize;
+      let w = $w as usize;
       let h = 8usize;
       let n = w * h;
       let mut g = std::vec![0u16; n];
@@ -177,7 +180,7 @@ macro_rules! test_gbrap_strategy_a_plus {
       // RGBA bytes must be identical between standalone and combo paths.
       assert_eq!(
         rgba_ref, rgba_combo,
-        "Strategy A+ RGBA mismatch for BITS={}", $bits,
+        "Strategy A+ RGBA mismatch for BITS={} w={}", $bits, $w,
       );
     }
   };
@@ -206,6 +209,151 @@ test_gbrap_strategy_a_plus!(
   Gbrap16,
   gbrap16_to,
   16
+);
+
+// ---- Strategy A+: Gbrap combo RGB_u16+RGBA_u16 matches standalone RGBA_u16 -
+//
+// Mirrors the u8 Strategy A+ test above, but covers the native-depth combo
+// path (`with_rgb_u16` + `with_rgba_u16`) that routes through
+// `copy_alpha_plane_u16` rather than `copy_alpha_plane_u16_to_u8`. Without
+// this, a regression in the `BE != cfg!(target_endian)` dispatcher routing
+// or in the scalar α-extract helper would not be caught for the native-depth
+// path.
+//
+// Source planes are filled with full-range u16 values (`bits=16` argument
+// to `pseudo_random_u16_low_n_bits`) so the upper bits beyond BITS are
+// "dirty" — both paths must mask via `(1 << BITS) - 1`, so any drift between
+// them surfaces here.
+macro_rules! test_gbrap_strategy_a_plus_u16 {
+  ($name:ident, $marker:ident, $walker:ident, $bits:literal) => {
+    test_gbrap_strategy_a_plus_u16!($name, $marker, $walker, $bits, 32);
+  };
+  ($name:ident, $marker:ident, $walker:ident, $bits:literal, $w:literal) => {
+    #[test]
+    #[cfg_attr(miri, ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri")]
+    fn $name() {
+      let w = $w as usize;
+      let h = 8usize;
+      let n = w * h;
+      let mut g = std::vec![0u16; n];
+      let mut b = std::vec![0u16; n];
+      let mut r = std::vec![0u16; n];
+      let mut a = std::vec![0u16; n];
+      // Use full-range u16 (bits=16) so upper bits beyond BITS are dirty,
+      // exercising the mask in both the direct kernel and α-extract paths.
+      pseudo_random_u16_low_n_bits(&mut g, 0x55_u32.wrapping_add($bits), 16);
+      pseudo_random_u16_low_n_bits(&mut b, 0x66_u32.wrapping_add($bits), 16);
+      pseudo_random_u16_low_n_bits(&mut r, 0x77_u32.wrapping_add($bits), 16);
+      pseudo_random_u16_low_n_bits(&mut a, 0x88_u32.wrapping_add($bits), 16);
+
+      // Reference: standalone with_rgba_u16 (direct 4-channel kernel).
+      let src_ref = solid_gbrap_frame::<$bits>(&g, &b, &r, &a, w as u32, h as u32);
+      let mut rgba_u16_ref = std::vec![0u16; n * 4];
+      let mut sink_ref = MixedSinker::<crate::yuv::$marker>::new(w, h)
+        .with_rgba_u16(&mut rgba_u16_ref)
+        .unwrap();
+      crate::yuv::$walker(&src_ref, false, ColorMatrix::Bt709, &mut sink_ref).unwrap();
+
+      // Combo: with_rgb_u16 + with_rgba_u16 (Strategy A+ native-depth).
+      let src_combo = solid_gbrap_frame::<$bits>(&g, &b, &r, &a, w as u32, h as u32);
+      let mut rgb_u16_combo = std::vec![0u16; n * 3];
+      let mut rgba_u16_combo = std::vec![0u16; n * 4];
+      let mut sink_combo = MixedSinker::<crate::yuv::$marker>::new(w, h)
+        .with_rgb_u16(&mut rgb_u16_combo)
+        .unwrap()
+        .with_rgba_u16(&mut rgba_u16_combo)
+        .unwrap();
+      crate::yuv::$walker(&src_combo, false, ColorMatrix::Bt709, &mut sink_combo).unwrap();
+
+      // RGBA u16 elements must be byte-exact between standalone and combo paths.
+      assert_eq!(
+        rgba_u16_ref, rgba_u16_combo,
+        "Strategy A+ native-depth RGBA u16 mismatch for BITS={} w={}", $bits, $w,
+      );
+    }
+  };
+}
+
+test_gbrap_strategy_a_plus_u16!(
+  gbrap10_strategy_a_plus_u16_matches_standalone,
+  Gbrap10,
+  gbrap10_to,
+  10
+);
+test_gbrap_strategy_a_plus_u16!(
+  gbrap12_strategy_a_plus_u16_matches_standalone,
+  Gbrap12,
+  gbrap12_to,
+  12
+);
+test_gbrap_strategy_a_plus_u16!(
+  gbrap14_strategy_a_plus_u16_matches_standalone,
+  Gbrap14,
+  gbrap14_to,
+  14
+);
+test_gbrap_strategy_a_plus_u16!(
+  gbrap16_strategy_a_plus_u16_matches_standalone,
+  Gbrap16,
+  gbrap16_to,
+  16
+);
+
+// ---- Strategy A+ at non-multiple width (31) — exercises SIMD scalar tail ---
+//
+// The SIMD α-extract backends (`copy_alpha_plane_u16{_to_u8}`) hardcode
+// `scalar::<BITS, false>` for the tail (e.g. NEON block size 8 + width 31
+// leaves 7 px in the tail; AVX2/AVX-512 likewise). Codex's 4th-pass review
+// of PR #82 found that the prior dispatcher routing
+// (`need_swap = BE != cfg!(target_endian = "big")`) admitted SIMD on
+// BE-host/BE-data: the vector body's host-native loads are correct there,
+// but the LE-only scalar tail then byte-swaps already-native u16 samples,
+// silently corrupting α at non-multiple widths. The fix is to route SIMD
+// only for the LE-host/LE-data quadrant; these tests at width 31 exercise
+// the SIMD tail path on supported (LE) hosts, locking in the parity
+// guarantee for the LE/LE quadrant. (The LE/BE, BE/LE, BE/BE quadrants
+// are exercised at the scalar level by the `target_endian`-aware scalar
+// helper itself; the new dispatcher routes them to scalar always.)
+
+test_gbrap_strategy_a_plus_u16!(
+  gbrap10_strategy_a_plus_u16_matches_standalone_w31,
+  Gbrap10,
+  gbrap10_to,
+  10,
+  31
+);
+test_gbrap_strategy_a_plus_u16!(
+  gbrap12_strategy_a_plus_u16_matches_standalone_w31,
+  Gbrap12,
+  gbrap12_to,
+  12,
+  31
+);
+test_gbrap_strategy_a_plus_u16!(
+  gbrap14_strategy_a_plus_u16_matches_standalone_w31,
+  Gbrap14,
+  gbrap14_to,
+  14,
+  31
+);
+test_gbrap_strategy_a_plus_u16!(
+  gbrap16_strategy_a_plus_u16_matches_standalone_w31,
+  Gbrap16,
+  gbrap16_to,
+  16,
+  31
+);
+
+// u8-path Strategy A+ at width 31 — exercises the SIMD tail of
+// `copy_alpha_plane_u16_to_u8` (depth-conv `>> (BITS - 8)`). One BITS value
+// is sufficient to cover the same dispatcher path as the u16 set above;
+// Gbrap10 chosen for parity with the existing u8 Strategy A+ coverage.
+test_gbrap_strategy_a_plus!(
+  gbrap10_strategy_a_plus_matches_standalone_w31,
+  Gbrap10,
+  gbrap10_to,
+  10,
+  31
 );
 
 // ---- Gbrap alpha downshift correctness -------------------------------------

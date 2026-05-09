@@ -297,6 +297,62 @@ unsafe fn narrow_u16x16_to_u8x16(v: __m256i, zero: __m256i) -> __m128i {
   }
 }
 
+// ---- endian byte-swap helpers -----------------------------------------------
+
+/// Compile-time host endianness. `true` on BE targets, `false` on LE.
+///
+/// Used by the byte-swap helpers below to gate the swap on
+/// `BE != HOST_NATIVE_BE`, covering all four `wire × host` quadrants. Mirrors
+/// the gate established in `gray.rs` and the canonical NEON
+/// `bswap_u16x8_if_be` helper.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
+/// Conditionally byte-swap every u16 lane in a `__m128i` so the returned
+/// value is in **host-native** byte order regardless of the host endianness.
+///
+/// The gate is `BE != HOST_NATIVE_BE` — see [`byteswap256_if_be`] for the
+/// full truth table. Uses `_mm_shuffle_epi8` (SSSE3 subset of AVX2).
+#[inline(always)]
+unsafe fn byteswap128_if_be<const BE: bool>(v: __m128i) -> __m128i {
+  if BE != HOST_NATIVE_BE {
+    const MASK: __m128i =
+      unsafe { core::mem::transmute([1u8, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14]) };
+    unsafe { _mm_shuffle_epi8(v, MASK) }
+  } else {
+    v
+  }
+}
+
+/// Conditionally byte-swap every u16 lane in a `__m256i` so the returned
+/// value is in **host-native** byte order regardless of the host endianness.
+///
+/// The gate is `BE != HOST_NATIVE_BE`:
+///
+/// | wire `BE` | host | gate    | action            |
+/// |-----------|------|---------|-------------------|
+/// | `false`   | LE   | `false` | no swap (LE→LE)   |
+/// | `false`   | BE   | `true`  | swap (LE→BE)      |
+/// | `true`    | LE   | `true`  | swap (BE→LE)      |
+/// | `true`    | BE   | `false` | no swap (BE→BE)   |
+///
+/// Uses `_mm256_shuffle_epi8` (AVX2). The unused branch folds at compile
+/// time since both `BE` and `HOST_NATIVE_BE` are constants.
+#[inline(always)]
+unsafe fn byteswap256_if_be<const BE: bool>(v: __m256i) -> __m256i {
+  if BE != HOST_NATIVE_BE {
+    // Same u16-lane byte-swap mask, broadcast to both 128-bit lanes.
+    const MASK: __m256i = unsafe {
+      core::mem::transmute([
+        1u8, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14, 1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11,
+        10, 13, 12, 15, 14,
+      ])
+    };
+    unsafe { _mm256_shuffle_epi8(v, MASK) }
+  } else {
+    v
+  }
+}
+
 // =============================================================================
 // Rgb48 (R, G, B — 3 u16 elements per pixel)
 // =============================================================================
@@ -307,6 +363,7 @@ unsafe fn narrow_u16x16_to_u8x16(v: __m256i, zero: __m256i) -> __m128i {
 /// target_feature, exploiting that SSE4.1/SSSE3 are AVX2 subsets. Each half
 /// deinterleaves with shuffle masks, narrows via `>> 8`, writes 8 pixels
 /// (24 bytes). 16 pixels are produced per outer loop iteration.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -315,7 +372,11 @@ unsafe fn narrow_u16x16_to_u8x16(v: __m256i, zero: __m256i) -> __m128i {
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn avx2_rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn avx2_rgb48_to_rgb_row<const BE: bool>(
+  rgb48: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgb48.len() >= width * 3, "rgb48 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -327,9 +388,9 @@ pub(crate) unsafe fn avx2_rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], wi
       let ptr = rgb48.as_ptr().add(x * 3);
 
       // First half: pixels x..x+7
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
+      let v0 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
       let (r0, g0, b0) = deinterleave_rgb48_8px(v0, v1, v2);
       let r0u8 = narrow_u16x8_to_u8x8(r0, zero);
       let g0u8 = narrow_u16x8_to_u8x8(g0, zero);
@@ -340,9 +401,9 @@ pub(crate) unsafe fn avx2_rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], wi
 
       // Second half: pixels x+8..x+15
       let ptr8 = ptr.add(24); // 24 u16 ahead = 8 pixels × 3 channels
-      let v3 = _mm_loadu_si128(ptr8.cast());
-      let v4 = _mm_loadu_si128(ptr8.add(8).cast());
-      let v5 = _mm_loadu_si128(ptr8.add(16).cast());
+      let v3 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.cast()));
+      let v4 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.add(8).cast()));
+      let v5 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.add(16).cast()));
       let (r1, g1, b1) = deinterleave_rgb48_8px(v3, v4, v5);
       let r1u8 = narrow_u16x8_to_u8x8(r1, zero);
       let g1u8 = narrow_u16x8_to_u8x8(g1, zero);
@@ -355,12 +416,14 @@ pub(crate) unsafe fn avx2_rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], wi
     }
     // Handle remaining pixels (< 16) via scalar fallback.
     if x < width {
-      scalar::rgb48_to_rgb_row(&rgb48[x * 3..], &mut rgb_out[x * 3..], width - x);
+      scalar::rgb48_to_rgb_row::<BE>(&rgb48[x * 3..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// AVX2 Rgb48 → packed u8 RGBA. 16 pixels per outer iteration. Alpha forced to 0xFF.
+///
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -369,7 +432,11 @@ pub(crate) unsafe fn avx2_rgb48_to_rgb_row(rgb48: &[u16], rgb_out: &mut [u8], wi
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn avx2_rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn avx2_rgb48_to_rgba_row<const BE: bool>(
+  rgb48: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgb48.len() >= width * 3, "rgb48 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -381,9 +448,9 @@ pub(crate) unsafe fn avx2_rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8], 
     while x + 16 <= width {
       let ptr = rgb48.as_ptr().add(x * 3);
 
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
+      let v0 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
       let (r0, g0, b0) = deinterleave_rgb48_8px(v0, v1, v2);
       let r0u8 = narrow_u16x8_to_u8x8(r0, zero);
       let g0u8 = narrow_u16x8_to_u8x8(g0, zero);
@@ -393,9 +460,9 @@ pub(crate) unsafe fn avx2_rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8], 
       core::ptr::copy_nonoverlapping(tmp0.as_ptr(), rgba_out.as_mut_ptr().add(x * 4), 32);
 
       let ptr8 = ptr.add(24);
-      let v3 = _mm_loadu_si128(ptr8.cast());
-      let v4 = _mm_loadu_si128(ptr8.add(8).cast());
-      let v5 = _mm_loadu_si128(ptr8.add(16).cast());
+      let v3 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.cast()));
+      let v4 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.add(8).cast()));
+      let v5 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.add(16).cast()));
       let (r1, g1, b1) = deinterleave_rgb48_8px(v3, v4, v5);
       let r1u8 = narrow_u16x8_to_u8x8(r1, zero);
       let g1u8 = narrow_u16x8_to_u8x8(g1, zero);
@@ -407,12 +474,14 @@ pub(crate) unsafe fn avx2_rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8], 
       x += 16;
     }
     if x < width {
-      scalar::rgb48_to_rgba_row(&rgb48[x * 3..], &mut rgba_out[x * 4..], width - x);
+      scalar::rgb48_to_rgba_row::<BE>(&rgb48[x * 3..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
 
 /// AVX2 Rgb48 → native-depth u16 RGB (identity repack). 16 pixels per iteration.
+///
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -421,7 +490,11 @@ pub(crate) unsafe fn avx2_rgb48_to_rgba_row(rgb48: &[u16], rgba_out: &mut [u8], 
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn avx2_rgb48_to_rgb_u16_row(rgb48: &[u16], rgb_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn avx2_rgb48_to_rgb_u16_row<const BE: bool>(
+  rgb48: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(rgb48.len() >= width * 3, "rgb48 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -430,28 +503,30 @@ pub(crate) unsafe fn avx2_rgb48_to_rgb_u16_row(rgb48: &[u16], rgb_out: &mut [u16
     while x + 16 <= width {
       let ptr = rgb48.as_ptr().add(x * 3);
 
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
+      let v0 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
       let (r0, g0, b0) = deinterleave_rgb48_8px(v0, v1, v2);
       write_rgb_u16_8(r0, g0, b0, rgb_out.as_mut_ptr().add(x * 3));
 
       let ptr8 = ptr.add(24);
-      let v3 = _mm_loadu_si128(ptr8.cast());
-      let v4 = _mm_loadu_si128(ptr8.add(8).cast());
-      let v5 = _mm_loadu_si128(ptr8.add(16).cast());
+      let v3 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.cast()));
+      let v4 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.add(8).cast()));
+      let v5 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.add(16).cast()));
       let (r1, g1, b1) = deinterleave_rgb48_8px(v3, v4, v5);
       write_rgb_u16_8(r1, g1, b1, rgb_out.as_mut_ptr().add((x + 8) * 3));
 
       x += 16;
     }
     if x < width {
-      scalar::rgb48_to_rgb_u16_row(&rgb48[x * 3..], &mut rgb_out[x * 3..], width - x);
+      scalar::rgb48_to_rgb_u16_row::<BE>(&rgb48[x * 3..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// AVX2 Rgb48 → native-depth u16 RGBA. 16 pixels per iteration. Alpha forced to 0xFFFF.
+///
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -460,7 +535,11 @@ pub(crate) unsafe fn avx2_rgb48_to_rgb_u16_row(rgb48: &[u16], rgb_out: &mut [u16
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn avx2_rgb48_to_rgba_u16_row(rgb48: &[u16], rgba_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn avx2_rgb48_to_rgba_u16_row<const BE: bool>(
+  rgb48: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(rgb48.len() >= width * 3, "rgb48 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -470,23 +549,23 @@ pub(crate) unsafe fn avx2_rgb48_to_rgba_u16_row(rgb48: &[u16], rgba_out: &mut [u
     while x + 16 <= width {
       let ptr = rgb48.as_ptr().add(x * 3);
 
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
+      let v0 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
       let (r0, g0, b0) = deinterleave_rgb48_8px(v0, v1, v2);
       write_rgba_u16_8(r0, g0, b0, opaque, rgba_out.as_mut_ptr().add(x * 4));
 
       let ptr8 = ptr.add(24);
-      let v3 = _mm_loadu_si128(ptr8.cast());
-      let v4 = _mm_loadu_si128(ptr8.add(8).cast());
-      let v5 = _mm_loadu_si128(ptr8.add(16).cast());
+      let v3 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.cast()));
+      let v4 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.add(8).cast()));
+      let v5 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.add(16).cast()));
       let (r1, g1, b1) = deinterleave_rgb48_8px(v3, v4, v5);
       write_rgba_u16_8(r1, g1, b1, opaque, rgba_out.as_mut_ptr().add((x + 8) * 4));
 
       x += 16;
     }
     if x < width {
-      scalar::rgb48_to_rgba_u16_row(&rgb48[x * 3..], &mut rgba_out[x * 4..], width - x);
+      scalar::rgb48_to_rgba_u16_row::<BE>(&rgb48[x * 3..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
@@ -499,6 +578,7 @@ pub(crate) unsafe fn avx2_rgb48_to_rgba_u16_row(rgb48: &[u16], rgba_out: &mut [u
 ///
 /// `deinterleave_rgb48_8px` yields `(B, G, R)` in source memory order;
 /// the B↔R swap is applied by passing them as `(R=ch2, G=ch1, B=ch0)`.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -507,7 +587,11 @@ pub(crate) unsafe fn avx2_rgb48_to_rgba_u16_row(rgb48: &[u16], rgba_out: &mut [u
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn avx2_bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn avx2_bgr48_to_rgb_row<const BE: bool>(
+  bgr48: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(bgr48.len() >= width * 3, "bgr48 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -517,9 +601,9 @@ pub(crate) unsafe fn avx2_bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], wi
     while x + 16 <= width {
       let ptr = bgr48.as_ptr().add(x * 3);
 
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
+      let v0 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
       let (b0, g0, r0) = deinterleave_rgb48_8px(v0, v1, v2);
       let r0u8 = narrow_u16x8_to_u8x8(r0, zero);
       let g0u8 = narrow_u16x8_to_u8x8(g0, zero);
@@ -529,9 +613,9 @@ pub(crate) unsafe fn avx2_bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], wi
       core::ptr::copy_nonoverlapping(tmp0.as_ptr(), rgb_out.as_mut_ptr().add(x * 3), 24);
 
       let ptr8 = ptr.add(24);
-      let v3 = _mm_loadu_si128(ptr8.cast());
-      let v4 = _mm_loadu_si128(ptr8.add(8).cast());
-      let v5 = _mm_loadu_si128(ptr8.add(16).cast());
+      let v3 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.cast()));
+      let v4 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.add(8).cast()));
+      let v5 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.add(16).cast()));
       let (b1, g1, r1) = deinterleave_rgb48_8px(v3, v4, v5);
       let r1u8 = narrow_u16x8_to_u8x8(r1, zero);
       let g1u8 = narrow_u16x8_to_u8x8(g1, zero);
@@ -543,13 +627,14 @@ pub(crate) unsafe fn avx2_bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], wi
       x += 16;
     }
     if x < width {
-      scalar::bgr48_to_rgb_row(&bgr48[x * 3..], &mut rgb_out[x * 3..], width - x);
+      scalar::bgr48_to_rgb_row::<BE>(&bgr48[x * 3..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// AVX2 Bgr48 → packed u8 RGBA. 16 pixels per outer iteration.
 /// B↔R swap; alpha forced to 0xFF.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -558,7 +643,11 @@ pub(crate) unsafe fn avx2_bgr48_to_rgb_row(bgr48: &[u16], rgb_out: &mut [u8], wi
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn avx2_bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn avx2_bgr48_to_rgba_row<const BE: bool>(
+  bgr48: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(bgr48.len() >= width * 3, "bgr48 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -570,9 +659,9 @@ pub(crate) unsafe fn avx2_bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8], 
     while x + 16 <= width {
       let ptr = bgr48.as_ptr().add(x * 3);
 
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
+      let v0 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
       let (b0, g0, r0) = deinterleave_rgb48_8px(v0, v1, v2);
       let r0u8 = narrow_u16x8_to_u8x8(r0, zero);
       let g0u8 = narrow_u16x8_to_u8x8(g0, zero);
@@ -582,9 +671,9 @@ pub(crate) unsafe fn avx2_bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8], 
       core::ptr::copy_nonoverlapping(tmp0.as_ptr(), rgba_out.as_mut_ptr().add(x * 4), 32);
 
       let ptr8 = ptr.add(24);
-      let v3 = _mm_loadu_si128(ptr8.cast());
-      let v4 = _mm_loadu_si128(ptr8.add(8).cast());
-      let v5 = _mm_loadu_si128(ptr8.add(16).cast());
+      let v3 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.cast()));
+      let v4 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.add(8).cast()));
+      let v5 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.add(16).cast()));
       let (b1, g1, r1) = deinterleave_rgb48_8px(v3, v4, v5);
       let r1u8 = narrow_u16x8_to_u8x8(r1, zero);
       let g1u8 = narrow_u16x8_to_u8x8(g1, zero);
@@ -596,13 +685,14 @@ pub(crate) unsafe fn avx2_bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8], 
       x += 16;
     }
     if x < width {
-      scalar::bgr48_to_rgba_row(&bgr48[x * 3..], &mut rgba_out[x * 4..], width - x);
+      scalar::bgr48_to_rgba_row::<BE>(&bgr48[x * 3..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
 
 /// AVX2 Bgr48 → native-depth u16 RGB. 16 pixels per outer iteration.
 /// B↔R swap; values unchanged.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -611,7 +701,11 @@ pub(crate) unsafe fn avx2_bgr48_to_rgba_row(bgr48: &[u16], rgba_out: &mut [u8], 
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn avx2_bgr48_to_rgb_u16_row(bgr48: &[u16], rgb_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn avx2_bgr48_to_rgb_u16_row<const BE: bool>(
+  bgr48: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(bgr48.len() >= width * 3, "bgr48 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -620,29 +714,30 @@ pub(crate) unsafe fn avx2_bgr48_to_rgb_u16_row(bgr48: &[u16], rgb_out: &mut [u16
     while x + 16 <= width {
       let ptr = bgr48.as_ptr().add(x * 3);
 
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
+      let v0 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
       let (b0, g0, r0) = deinterleave_rgb48_8px(v0, v1, v2);
       write_rgb_u16_8(r0, g0, b0, rgb_out.as_mut_ptr().add(x * 3));
 
       let ptr8 = ptr.add(24);
-      let v3 = _mm_loadu_si128(ptr8.cast());
-      let v4 = _mm_loadu_si128(ptr8.add(8).cast());
-      let v5 = _mm_loadu_si128(ptr8.add(16).cast());
+      let v3 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.cast()));
+      let v4 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.add(8).cast()));
+      let v5 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.add(16).cast()));
       let (b1, g1, r1) = deinterleave_rgb48_8px(v3, v4, v5);
       write_rgb_u16_8(r1, g1, b1, rgb_out.as_mut_ptr().add((x + 8) * 3));
 
       x += 16;
     }
     if x < width {
-      scalar::bgr48_to_rgb_u16_row(&bgr48[x * 3..], &mut rgb_out[x * 3..], width - x);
+      scalar::bgr48_to_rgb_u16_row::<BE>(&bgr48[x * 3..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// AVX2 Bgr48 → native-depth u16 RGBA. 16 pixels per outer iteration.
 /// B↔R swap; alpha forced to 0xFFFF.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -651,7 +746,11 @@ pub(crate) unsafe fn avx2_bgr48_to_rgb_u16_row(bgr48: &[u16], rgb_out: &mut [u16
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn avx2_bgr48_to_rgba_u16_row(bgr48: &[u16], rgba_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn avx2_bgr48_to_rgba_u16_row<const BE: bool>(
+  bgr48: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(bgr48.len() >= width * 3, "bgr48 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -661,23 +760,23 @@ pub(crate) unsafe fn avx2_bgr48_to_rgba_u16_row(bgr48: &[u16], rgba_out: &mut [u
     while x + 16 <= width {
       let ptr = bgr48.as_ptr().add(x * 3);
 
-      let v0 = _mm_loadu_si128(ptr.cast());
-      let v1 = _mm_loadu_si128(ptr.add(8).cast());
-      let v2 = _mm_loadu_si128(ptr.add(16).cast());
+      let v0 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+      let v1 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+      let v2 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr.add(16).cast()));
       let (b0, g0, r0) = deinterleave_rgb48_8px(v0, v1, v2);
       write_rgba_u16_8(r0, g0, b0, opaque, rgba_out.as_mut_ptr().add(x * 4));
 
       let ptr8 = ptr.add(24);
-      let v3 = _mm_loadu_si128(ptr8.cast());
-      let v4 = _mm_loadu_si128(ptr8.add(8).cast());
-      let v5 = _mm_loadu_si128(ptr8.add(16).cast());
+      let v3 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.cast()));
+      let v4 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.add(8).cast()));
+      let v5 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.add(16).cast()));
       let (b1, g1, r1) = deinterleave_rgb48_8px(v3, v4, v5);
       write_rgba_u16_8(r1, g1, b1, opaque, rgba_out.as_mut_ptr().add((x + 8) * 4));
 
       x += 16;
     }
     if x < width {
-      scalar::bgr48_to_rgba_u16_row(&bgr48[x * 3..], &mut rgba_out[x * 4..], width - x);
+      scalar::bgr48_to_rgba_u16_row::<BE>(&bgr48[x * 3..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
@@ -691,6 +790,7 @@ pub(crate) unsafe fn avx2_bgr48_to_rgba_u16_row(bgr48: &[u16], rgba_out: &mut [u
 /// Loads 4 × `__m256i` (64 u16 = 16 pixels), deinterleaves via the
 /// cascade helper, narrows via `>> 8` + `packus_epi16` + lane fix, writes
 /// 16 pixels (48 bytes) via `write_rgb_16` on the low 128 bits.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -699,7 +799,11 @@ pub(crate) unsafe fn avx2_bgr48_to_rgba_u16_row(bgr48: &[u16], rgba_out: &mut [u
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn avx2_rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn avx2_rgba64_to_rgb_row<const BE: bool>(
+  rgba64: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgba64.len() >= width * 4, "rgba64 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -708,10 +812,10 @@ pub(crate) unsafe fn avx2_rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8], 
     let mut x = 0usize;
     while x + 16 <= width {
       let ptr = rgba64.as_ptr().add(x * 4);
-      let raw0 = _mm256_loadu_si256(ptr.cast());
-      let raw1 = _mm256_loadu_si256(ptr.add(16).cast());
-      let raw2 = _mm256_loadu_si256(ptr.add(32).cast());
-      let raw3 = _mm256_loadu_si256(ptr.add(48).cast());
+      let raw0 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.cast()));
+      let raw1 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(16).cast()));
+      let raw2 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(32).cast()));
+      let raw3 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(48).cast()));
       let (r_u16, g_u16, b_u16, _a) = deinterleave_rgba64_16px(raw0, raw1, raw2, raw3);
       let r_u8 = narrow_u16x16_to_u8x16(r_u16, zero256);
       let g_u8 = narrow_u16x16_to_u8x16(g_u16, zero256);
@@ -720,13 +824,14 @@ pub(crate) unsafe fn avx2_rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8], 
       x += 16;
     }
     if x < width {
-      scalar::rgba64_to_rgb_row(&rgba64[x * 4..], &mut rgb_out[x * 3..], width - x);
+      scalar::rgba64_to_rgb_row::<BE>(&rgba64[x * 4..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// AVX2 Rgba64 → packed u8 RGBA. 16 pixels per SIMD iteration.
 /// Source alpha passes through (narrowed via `>> 8`).
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -735,7 +840,11 @@ pub(crate) unsafe fn avx2_rgba64_to_rgb_row(rgba64: &[u16], rgb_out: &mut [u8], 
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn avx2_rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn avx2_rgba64_to_rgba_row<const BE: bool>(
+  rgba64: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(rgba64.len() >= width * 4, "rgba64 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -744,10 +853,10 @@ pub(crate) unsafe fn avx2_rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8]
     let mut x = 0usize;
     while x + 16 <= width {
       let ptr = rgba64.as_ptr().add(x * 4);
-      let raw0 = _mm256_loadu_si256(ptr.cast());
-      let raw1 = _mm256_loadu_si256(ptr.add(16).cast());
-      let raw2 = _mm256_loadu_si256(ptr.add(32).cast());
-      let raw3 = _mm256_loadu_si256(ptr.add(48).cast());
+      let raw0 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.cast()));
+      let raw1 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(16).cast()));
+      let raw2 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(32).cast()));
+      let raw3 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(48).cast()));
       let (r_u16, g_u16, b_u16, a_u16) = deinterleave_rgba64_16px(raw0, raw1, raw2, raw3);
       let r_u8 = narrow_u16x16_to_u8x16(r_u16, zero256);
       let g_u8 = narrow_u16x16_to_u8x16(g_u16, zero256);
@@ -757,12 +866,14 @@ pub(crate) unsafe fn avx2_rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8]
       x += 16;
     }
     if x < width {
-      scalar::rgba64_to_rgba_row(&rgba64[x * 4..], &mut rgba_out[x * 4..], width - x);
+      scalar::rgba64_to_rgba_row::<BE>(&rgba64[x * 4..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
 
 /// AVX2 Rgba64 → native-depth u16 RGB. 16 pixels per SIMD iteration. Alpha discarded.
+///
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -771,7 +882,11 @@ pub(crate) unsafe fn avx2_rgba64_to_rgba_row(rgba64: &[u16], rgba_out: &mut [u8]
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn avx2_rgba64_to_rgb_u16_row(rgba64: &[u16], rgb_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn avx2_rgba64_to_rgb_u16_row<const BE: bool>(
+  rgba64: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(rgba64.len() >= width * 4, "rgba64 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -779,10 +894,10 @@ pub(crate) unsafe fn avx2_rgba64_to_rgb_u16_row(rgba64: &[u16], rgb_out: &mut [u
     let mut x = 0usize;
     while x + 16 <= width {
       let ptr = rgba64.as_ptr().add(x * 4);
-      let raw0 = _mm256_loadu_si256(ptr.cast());
-      let raw1 = _mm256_loadu_si256(ptr.add(16).cast());
-      let raw2 = _mm256_loadu_si256(ptr.add(32).cast());
-      let raw3 = _mm256_loadu_si256(ptr.add(48).cast());
+      let raw0 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.cast()));
+      let raw1 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(16).cast()));
+      let raw2 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(32).cast()));
+      let raw3 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(48).cast()));
       let (r_u16, g_u16, b_u16, _a) = deinterleave_rgba64_16px(raw0, raw1, raw2, raw3);
       // Write in two 8-pixel halves using the existing 128-bit helper.
       write_rgb_u16_8(
@@ -800,13 +915,14 @@ pub(crate) unsafe fn avx2_rgba64_to_rgb_u16_row(rgba64: &[u16], rgb_out: &mut [u
       x += 16;
     }
     if x < width {
-      scalar::rgba64_to_rgb_u16_row(&rgba64[x * 4..], &mut rgb_out[x * 3..], width - x);
+      scalar::rgba64_to_rgb_u16_row::<BE>(&rgba64[x * 4..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// AVX2 Rgba64 → native-depth u16 RGBA (identity copy). 16 pixels per iteration.
 /// Source alpha preserved.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -815,7 +931,7 @@ pub(crate) unsafe fn avx2_rgba64_to_rgb_u16_row(rgba64: &[u16], rgb_out: &mut [u
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn avx2_rgba64_to_rgba_u16_row(
+pub(crate) unsafe fn avx2_rgba64_to_rgba_u16_row<const BE: bool>(
   rgba64: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -827,10 +943,10 @@ pub(crate) unsafe fn avx2_rgba64_to_rgba_u16_row(
     let mut x = 0usize;
     while x + 16 <= width {
       let ptr = rgba64.as_ptr().add(x * 4);
-      let raw0 = _mm256_loadu_si256(ptr.cast());
-      let raw1 = _mm256_loadu_si256(ptr.add(16).cast());
-      let raw2 = _mm256_loadu_si256(ptr.add(32).cast());
-      let raw3 = _mm256_loadu_si256(ptr.add(48).cast());
+      let raw0 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.cast()));
+      let raw1 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(16).cast()));
+      let raw2 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(32).cast()));
+      let raw3 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(48).cast()));
       let (r_u16, g_u16, b_u16, a_u16) = deinterleave_rgba64_16px(raw0, raw1, raw2, raw3);
       write_rgba_u16_8(
         _mm256_castsi256_si128(r_u16),
@@ -849,7 +965,7 @@ pub(crate) unsafe fn avx2_rgba64_to_rgba_u16_row(
       x += 16;
     }
     if x < width {
-      scalar::rgba64_to_rgba_u16_row(&rgba64[x * 4..], &mut rgba_out[x * 4..], width - x);
+      scalar::rgba64_to_rgba_u16_row::<BE>(&rgba64[x * 4..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
@@ -862,6 +978,7 @@ pub(crate) unsafe fn avx2_rgba64_to_rgba_u16_row(
 /// B↔R swap; alpha discarded.
 ///
 /// `deinterleave_rgba64_16px` yields `(B, G, R, A)` in source memory order.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -870,7 +987,11 @@ pub(crate) unsafe fn avx2_rgba64_to_rgba_u16_row(
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn avx2_bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn avx2_bgra64_to_rgb_row<const BE: bool>(
+  bgra64: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(bgra64.len() >= width * 4, "bgra64 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -879,10 +1000,10 @@ pub(crate) unsafe fn avx2_bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8], 
     let mut x = 0usize;
     while x + 16 <= width {
       let ptr = bgra64.as_ptr().add(x * 4);
-      let raw0 = _mm256_loadu_si256(ptr.cast());
-      let raw1 = _mm256_loadu_si256(ptr.add(16).cast());
-      let raw2 = _mm256_loadu_si256(ptr.add(32).cast());
-      let raw3 = _mm256_loadu_si256(ptr.add(48).cast());
+      let raw0 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.cast()));
+      let raw1 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(16).cast()));
+      let raw2 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(32).cast()));
+      let raw3 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(48).cast()));
       // ch0=B, ch1=G, ch2=R, ch3=A (source BGRA order)
       let (b_u16, g_u16, r_u16, _a) = deinterleave_rgba64_16px(raw0, raw1, raw2, raw3);
       let r_u8 = narrow_u16x16_to_u8x16(r_u16, zero256);
@@ -892,13 +1013,14 @@ pub(crate) unsafe fn avx2_bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8], 
       x += 16;
     }
     if x < width {
-      scalar::bgra64_to_rgb_row(&bgra64[x * 4..], &mut rgb_out[x * 3..], width - x);
+      scalar::bgra64_to_rgb_row::<BE>(&bgra64[x * 4..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// AVX2 Bgra64 → packed u8 RGBA. 16 pixels per SIMD iteration.
 /// B↔R swap; source alpha passes through (narrowed via `>> 8`).
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -907,7 +1029,11 @@ pub(crate) unsafe fn avx2_bgra64_to_rgb_row(bgra64: &[u16], rgb_out: &mut [u8], 
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn avx2_bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn avx2_bgra64_to_rgba_row<const BE: bool>(
+  bgra64: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(bgra64.len() >= width * 4, "bgra64 row too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
 
@@ -916,10 +1042,10 @@ pub(crate) unsafe fn avx2_bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8]
     let mut x = 0usize;
     while x + 16 <= width {
       let ptr = bgra64.as_ptr().add(x * 4);
-      let raw0 = _mm256_loadu_si256(ptr.cast());
-      let raw1 = _mm256_loadu_si256(ptr.add(16).cast());
-      let raw2 = _mm256_loadu_si256(ptr.add(32).cast());
-      let raw3 = _mm256_loadu_si256(ptr.add(48).cast());
+      let raw0 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.cast()));
+      let raw1 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(16).cast()));
+      let raw2 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(32).cast()));
+      let raw3 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(48).cast()));
       let (b_u16, g_u16, r_u16, a_u16) = deinterleave_rgba64_16px(raw0, raw1, raw2, raw3);
       let r_u8 = narrow_u16x16_to_u8x16(r_u16, zero256);
       let g_u8 = narrow_u16x16_to_u8x16(g_u16, zero256);
@@ -929,13 +1055,14 @@ pub(crate) unsafe fn avx2_bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8]
       x += 16;
     }
     if x < width {
-      scalar::bgra64_to_rgba_row(&bgra64[x * 4..], &mut rgba_out[x * 4..], width - x);
+      scalar::bgra64_to_rgba_row::<BE>(&bgra64[x * 4..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }
 
 /// AVX2 Bgra64 → native-depth u16 RGB. 16 pixels per SIMD iteration.
 /// B↔R swap; alpha discarded.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -944,7 +1071,11 @@ pub(crate) unsafe fn avx2_bgra64_to_rgba_row(bgra64: &[u16], rgba_out: &mut [u8]
 /// 3. `rgb_out.len() >= width * 3`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn avx2_bgra64_to_rgb_u16_row(bgra64: &[u16], rgb_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn avx2_bgra64_to_rgb_u16_row<const BE: bool>(
+  bgra64: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(bgra64.len() >= width * 4, "bgra64 row too short");
   debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
 
@@ -952,10 +1083,10 @@ pub(crate) unsafe fn avx2_bgra64_to_rgb_u16_row(bgra64: &[u16], rgb_out: &mut [u
     let mut x = 0usize;
     while x + 16 <= width {
       let ptr = bgra64.as_ptr().add(x * 4);
-      let raw0 = _mm256_loadu_si256(ptr.cast());
-      let raw1 = _mm256_loadu_si256(ptr.add(16).cast());
-      let raw2 = _mm256_loadu_si256(ptr.add(32).cast());
-      let raw3 = _mm256_loadu_si256(ptr.add(48).cast());
+      let raw0 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.cast()));
+      let raw1 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(16).cast()));
+      let raw2 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(32).cast()));
+      let raw3 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(48).cast()));
       let (b_u16, g_u16, r_u16, _a) = deinterleave_rgba64_16px(raw0, raw1, raw2, raw3);
       // Swap B↔R: store (R, G, B)
       write_rgb_u16_8(
@@ -973,13 +1104,14 @@ pub(crate) unsafe fn avx2_bgra64_to_rgb_u16_row(bgra64: &[u16], rgb_out: &mut [u
       x += 16;
     }
     if x < width {
-      scalar::bgra64_to_rgb_u16_row(&bgra64[x * 4..], &mut rgb_out[x * 3..], width - x);
+      scalar::bgra64_to_rgb_u16_row::<BE>(&bgra64[x * 4..], &mut rgb_out[x * 3..], width - x);
     }
   }
 }
 
 /// AVX2 Bgra64 → native-depth u16 RGBA. 16 pixels per SIMD iteration.
 /// B↔R swap; source alpha preserved at position 3.
+/// When `BE = true` each loaded register is byte-swapped before deinterleaving.
 ///
 /// # Safety
 ///
@@ -988,7 +1120,7 @@ pub(crate) unsafe fn avx2_bgra64_to_rgb_u16_row(bgra64: &[u16], rgb_out: &mut [u
 /// 3. `rgba_out.len() >= width * 4`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn avx2_bgra64_to_rgba_u16_row(
+pub(crate) unsafe fn avx2_bgra64_to_rgba_u16_row<const BE: bool>(
   bgra64: &[u16],
   rgba_out: &mut [u16],
   width: usize,
@@ -1000,10 +1132,10 @@ pub(crate) unsafe fn avx2_bgra64_to_rgba_u16_row(
     let mut x = 0usize;
     while x + 16 <= width {
       let ptr = bgra64.as_ptr().add(x * 4);
-      let raw0 = _mm256_loadu_si256(ptr.cast());
-      let raw1 = _mm256_loadu_si256(ptr.add(16).cast());
-      let raw2 = _mm256_loadu_si256(ptr.add(32).cast());
-      let raw3 = _mm256_loadu_si256(ptr.add(48).cast());
+      let raw0 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.cast()));
+      let raw1 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(16).cast()));
+      let raw2 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(32).cast()));
+      let raw3 = byteswap256_if_be::<BE>(_mm256_loadu_si256(ptr.add(48).cast()));
       // Swap B↔R: (R=ch2, G=ch1, B=ch0, A=ch3)
       let (b_u16, g_u16, r_u16, a_u16) = deinterleave_rgba64_16px(raw0, raw1, raw2, raw3);
       write_rgba_u16_8(
@@ -1023,7 +1155,7 @@ pub(crate) unsafe fn avx2_bgra64_to_rgba_u16_row(
       x += 16;
     }
     if x < width {
-      scalar::bgra64_to_rgba_u16_row(&bgra64[x * 4..], &mut rgba_out[x * 4..], width - x);
+      scalar::bgra64_to_rgba_u16_row::<BE>(&bgra64[x * 4..], &mut rgba_out[x * 4..], width - x);
     }
   }
 }

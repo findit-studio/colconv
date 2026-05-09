@@ -56,6 +56,7 @@ pub(super) use crate::{
 
 mod alpha_extract;
 mod ayuv64;
+pub(crate) mod endian;
 mod gray;
 mod hsv;
 pub(crate) mod legacy_rgb;

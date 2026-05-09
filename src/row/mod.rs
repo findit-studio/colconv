@@ -91,18 +91,34 @@ pub(crate) use dispatch::mono1bit::*;
 // parameter) are re-exported as `pub(crate)` for sinker use — the underlying
 // functions in `dispatch::packed_rgb_16bit` are `pub`, but only this
 // re-export visibility is visible outside the crate.
+//
+// Each function exists in two forms:
+// - `foo` — backwards-compatible LE-only wrapper (no const generic), preserves
+//   the pre-Tier 8 public signature so existing little-endian downstream
+//   callers compile unchanged.
+// - `foo_endian::<const BE: bool>` — endian-aware form (added in Tier 8 for
+//   the BE-on-BE-host plane contract). Used by sinker code internally.
 pub use dispatch::packed_rgb_16bit::{
-  bgr48_to_rgb_row, bgr48_to_rgb_u16_row, bgr48_to_rgba_row, bgr48_to_rgba_u16_row,
-  bgra64_to_rgb_row, bgra64_to_rgb_u16_row, bgra64_to_rgba_row, bgra64_to_rgba_u16_row,
-  rgb48_to_rgb_row, rgb48_to_rgb_u16_row, rgb48_to_rgba_row, rgb48_to_rgba_u16_row,
-  rgba64_to_rgb_row, rgba64_to_rgb_u16_row, rgba64_to_rgba_row, rgba64_to_rgba_u16_row,
+  bgr48_to_rgb_row, bgr48_to_rgb_row_endian, bgr48_to_rgb_u16_row, bgr48_to_rgb_u16_row_endian,
+  bgr48_to_rgba_row, bgr48_to_rgba_row_endian, bgr48_to_rgba_u16_row, bgr48_to_rgba_u16_row_endian,
+  bgra64_to_rgb_row, bgra64_to_rgb_row_endian, bgra64_to_rgb_u16_row, bgra64_to_rgb_u16_row_endian,
+  bgra64_to_rgba_row, bgra64_to_rgba_row_endian, bgra64_to_rgba_u16_row,
+  bgra64_to_rgba_u16_row_endian, rgb48_to_rgb_row, rgb48_to_rgb_row_endian, rgb48_to_rgb_u16_row,
+  rgb48_to_rgb_u16_row_endian, rgb48_to_rgba_row, rgb48_to_rgba_row_endian, rgb48_to_rgba_u16_row,
+  rgb48_to_rgba_u16_row_endian, rgba64_to_rgb_row, rgba64_to_rgb_row_endian, rgba64_to_rgb_u16_row,
+  rgba64_to_rgb_u16_row_endian, rgba64_to_rgba_row, rgba64_to_rgba_row_endian,
+  rgba64_to_rgba_u16_row, rgba64_to_rgba_u16_row_endian,
 };
 // luma + HSV variants take an extra rgb_scratch parameter — sinker wired in Task 9.
 #[allow(unused_imports)]
 pub(crate) use dispatch::packed_rgb_16bit::{
-  bgr48_to_hsv_row, bgr48_to_luma_row, bgr48_to_luma_u16_row, bgra64_to_hsv_row,
-  bgra64_to_luma_row, bgra64_to_luma_u16_row, rgb48_to_hsv_row, rgb48_to_luma_row,
-  rgb48_to_luma_u16_row, rgba64_to_hsv_row, rgba64_to_luma_row, rgba64_to_luma_u16_row,
+  bgr48_to_hsv_row, bgr48_to_hsv_row_endian, bgr48_to_luma_row, bgr48_to_luma_row_endian,
+  bgr48_to_luma_u16_row, bgr48_to_luma_u16_row_endian, bgra64_to_hsv_row, bgra64_to_hsv_row_endian,
+  bgra64_to_luma_row, bgra64_to_luma_row_endian, bgra64_to_luma_u16_row,
+  bgra64_to_luma_u16_row_endian, rgb48_to_hsv_row, rgb48_to_hsv_row_endian, rgb48_to_luma_row,
+  rgb48_to_luma_row_endian, rgb48_to_luma_u16_row, rgb48_to_luma_u16_row_endian, rgba64_to_hsv_row,
+  rgba64_to_hsv_row_endian, rgba64_to_luma_row, rgba64_to_luma_row_endian, rgba64_to_luma_u16_row,
+  rgba64_to_luma_u16_row_endian,
 };
 // Gray dispatchers are pub(crate) — sinker code uses them via crate::row::gray*_row.
 #[cfg(any(feature = "std", feature = "alloc"))]
@@ -615,7 +631,7 @@ mod overflow_tests {
     let b: [u16; 0] = [];
     let r: [u16; 0] = [];
     let mut rgb: [u8; 0] = [];
-    gbr_to_rgb_high_bit_row::<10>(&g, &b, &r, &mut rgb, OVERFLOW_WIDTH, false);
+    gbr_to_rgb_high_bit_row::<10, false>(&g, &b, &r, &mut rgb, OVERFLOW_WIDTH, false);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -626,7 +642,7 @@ mod overflow_tests {
     let b: [u16; 0] = [];
     let r: [u16; 0] = [];
     let mut rgb: [u16; 0] = [];
-    gbr_to_rgb_u16_high_bit_row::<10>(&g, &b, &r, &mut rgb, OVERFLOW_WIDTH, false);
+    gbr_to_rgb_u16_high_bit_row::<10, false>(&g, &b, &r, &mut rgb, OVERFLOW_WIDTH, false);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -637,7 +653,7 @@ mod overflow_tests {
     let b: [u16; 0] = [];
     let r: [u16; 0] = [];
     let mut rgba: [u8; 0] = [];
-    gbr_to_rgba_opaque_high_bit_row::<10>(&g, &b, &r, &mut rgba, OVERFLOW_WIDTH, false);
+    gbr_to_rgba_opaque_high_bit_row::<10, false>(&g, &b, &r, &mut rgba, OVERFLOW_WIDTH, false);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -648,7 +664,7 @@ mod overflow_tests {
     let b: [u16; 0] = [];
     let r: [u16; 0] = [];
     let mut rgba: [u16; 0] = [];
-    gbr_to_rgba_opaque_u16_high_bit_row::<10>(&g, &b, &r, &mut rgba, OVERFLOW_WIDTH, false);
+    gbr_to_rgba_opaque_u16_high_bit_row::<10, false>(&g, &b, &r, &mut rgba, OVERFLOW_WIDTH, false);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -660,7 +676,7 @@ mod overflow_tests {
     let r: [u16; 0] = [];
     let a: [u16; 0] = [];
     let mut rgba: [u8; 0] = [];
-    gbra_to_rgba_high_bit_row::<10>(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
+    gbra_to_rgba_high_bit_row::<10, false>(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -672,7 +688,7 @@ mod overflow_tests {
     let r: [u16; 0] = [];
     let a: [u16; 0] = [];
     let mut rgba: [u16; 0] = [];
-    gbra_to_rgba_u16_high_bit_row::<10>(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
+    gbra_to_rgba_u16_high_bit_row::<10, false>(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
   }
 
   // ---- Tier 11 gray dispatchers — `width × {3, 4}` overflow ----
@@ -710,7 +726,7 @@ mod overflow_tests {
   fn gray_n_to_rgb_dispatcher_rejects_width_times_3_overflow() {
     let y: [u16; 0] = [];
     let mut rgb: [u8; 0] = [];
-    gray_n_to_rgb_row::<10>(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
+    gray_n_to_rgb_row::<10, false>(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -719,7 +735,7 @@ mod overflow_tests {
   fn gray_n_to_rgba_dispatcher_rejects_width_times_4_overflow() {
     let y: [u16; 0] = [];
     let mut rgba: [u8; 0] = [];
-    gray_n_to_rgba_row::<10>(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
+    gray_n_to_rgba_row::<10, false>(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -728,7 +744,7 @@ mod overflow_tests {
   fn gray_n_to_rgb_u16_dispatcher_rejects_width_times_3_overflow() {
     let y: [u16; 0] = [];
     let mut rgb: [u16; 0] = [];
-    gray_n_to_rgb_u16_row::<10>(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
+    gray_n_to_rgb_u16_row::<10, false>(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -737,7 +753,7 @@ mod overflow_tests {
   fn gray_n_to_rgba_u16_dispatcher_rejects_width_times_4_overflow() {
     let y: [u16; 0] = [];
     let mut rgba: [u16; 0] = [];
-    gray_n_to_rgba_u16_row::<10>(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
+    gray_n_to_rgba_u16_row::<10, false>(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -746,7 +762,7 @@ mod overflow_tests {
   fn gray16_to_rgb_dispatcher_rejects_width_times_3_overflow() {
     let y: [u16; 0] = [];
     let mut rgb: [u8; 0] = [];
-    gray16_to_rgb_row(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
+    gray16_to_rgb_row::<false>(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -755,7 +771,7 @@ mod overflow_tests {
   fn gray16_to_rgba_dispatcher_rejects_width_times_4_overflow() {
     let y: [u16; 0] = [];
     let mut rgba: [u8; 0] = [];
-    gray16_to_rgba_row(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
+    gray16_to_rgba_row::<false>(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -764,7 +780,7 @@ mod overflow_tests {
   fn gray16_to_rgb_u16_dispatcher_rejects_width_times_3_overflow() {
     let y: [u16; 0] = [];
     let mut rgb: [u16; 0] = [];
-    gray16_to_rgb_u16_row(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
+    gray16_to_rgb_u16_row::<false>(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -773,7 +789,7 @@ mod overflow_tests {
   fn gray16_to_rgba_u16_dispatcher_rejects_width_times_4_overflow() {
     let y: [u16; 0] = [];
     let mut rgba: [u16; 0] = [];
-    gray16_to_rgba_u16_row(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
+    gray16_to_rgba_u16_row::<false>(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
   }
 
   #[cfg(target_pointer_width = "32")]
@@ -784,7 +800,7 @@ mod overflow_tests {
     let u: [u16; 0] = [];
     let v: [u16; 0] = [];
     let mut rgb: [u16; 0] = [];
-    yuv_444p_n_to_rgb_u16_row::<10>(
+    yuv_444p_n_to_rgb_u16_row::<10, false>(
       &y,
       &u,
       &v,

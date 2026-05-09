@@ -218,6 +218,19 @@ impl<'a, const BITS: u32> PnFrame<'a, BITS> {
   /// Returns [`PnFrameError::SampleLowBitsSet`] on the first
   /// offending sample — carries the plane, element index, offending
   /// value, and the number of low bits expected to be zero.
+  ///
+  /// Per the LE-encoded byte contract on the type-level docs, samples
+  /// are validated **after** `u16::from_le` normalization so the bit
+  /// check operates on the intended logical sample value on every host.
+  /// On little-endian hosts `from_le` is a no-op (the host-native `u16`
+  /// already matches the wire); on big-endian hosts it byte-swaps each
+  /// `u16` back into host-native form. Without this normalization a
+  /// valid `P010LE` plane on a BE host would have its MSB-aligned
+  /// samples appear byte-swapped (e.g. white = `0xFFC0` LE-encoded
+  /// reads as host-native `0xC0FF` on BE, with the active bits in the
+  /// low byte) and the validator would falsely reject every row. The
+  /// reported `value` in the error is the normalized logical sample.
+  /// Mirrors the `Y2xxFrame::try_new_checked` pattern.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn try_new_checked(
     y: &'a [u16],
@@ -237,11 +250,14 @@ impl<'a, const BITS: u32> PnFrame<'a, BITS> {
     for row in 0..h {
       let start = row * y_stride as usize;
       for (col, &s) in y[start..start + w].iter().enumerate() {
-        if s & low_mask != 0 {
+        // Normalize from LE-encoded wire to host-native before the
+        // bit check (no-op on LE host, byte-swap on BE host).
+        let logical = u16::from_le(s);
+        if logical & low_mask != 0 {
           return Err(PnFrameError::SampleLowBitsSet {
             plane: PnFramePlane::Y,
             index: start + col,
-            value: s,
+            value: logical,
             low_bits,
           });
         }
@@ -250,11 +266,12 @@ impl<'a, const BITS: u32> PnFrame<'a, BITS> {
     for row in 0..chroma_h {
       let start = row * uv_stride as usize;
       for (col, &s) in uv[start..start + uv_w].iter().enumerate() {
-        if s & low_mask != 0 {
+        let logical = u16::from_le(s);
+        if logical & low_mask != 0 {
           return Err(PnFrameError::SampleLowBitsSet {
             plane: PnFramePlane::Uv,
             index: start + col,
-            value: s,
+            value: logical,
             low_bits,
           });
         }
@@ -482,6 +499,11 @@ impl<'a, const BITS: u32> PnFrame422<'a, BITS> {
   /// rejects any whose low `16 - BITS` bits are non-zero. See
   /// [`PnFrame::try_new_checked`] for the full discussion of catch
   /// rates and limitations at each `BITS`.
+  ///
+  /// Per the LE-encoded byte contract on the type, samples are
+  /// validated **after** `u16::from_le` normalization so the bit check
+  /// operates on the intended logical sample on both LE and BE hosts.
+  /// See [`PnFrame::try_new_checked`] for the full rationale.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn try_new_checked(
     y: &'a [u16],
@@ -503,11 +525,12 @@ impl<'a, const BITS: u32> PnFrame422<'a, BITS> {
     for row in 0..h {
       let start = row * y_stride as usize;
       for (col, &s) in y[start..start + w].iter().enumerate() {
-        if s & low_mask != 0 {
+        let logical = u16::from_le(s);
+        if logical & low_mask != 0 {
           return Err(PnFrameError::SampleLowBitsSet {
             plane: PnFramePlane::Y,
             index: start + col,
-            value: s,
+            value: logical,
             low_bits,
           });
         }
@@ -517,11 +540,12 @@ impl<'a, const BITS: u32> PnFrame422<'a, BITS> {
     for row in 0..h {
       let start = row * uv_stride as usize;
       for (col, &s) in uv[start..start + uv_w].iter().enumerate() {
-        if s & low_mask != 0 {
+        let logical = u16::from_le(s);
+        if logical & low_mask != 0 {
           return Err(PnFrameError::SampleLowBitsSet {
             plane: PnFramePlane::Uv,
             index: start + col,
-            value: s,
+            value: logical,
             low_bits,
           });
         }
@@ -717,6 +741,11 @@ impl<'a, const BITS: u32> PnFrame444<'a, BITS> {
   /// rejects any whose low `16 - BITS` bits are non-zero. See
   /// [`PnFrame::try_new_checked`] for the full discussion of catch
   /// rates and limitations.
+  ///
+  /// Per the LE-encoded byte contract on the type, samples are
+  /// validated **after** `u16::from_le` normalization so the bit check
+  /// operates on the intended logical sample on both LE and BE hosts.
+  /// See [`PnFrame::try_new_checked`] for the full rationale.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn try_new_checked(
     y: &'a [u16],
@@ -738,11 +767,12 @@ impl<'a, const BITS: u32> PnFrame444<'a, BITS> {
     for row in 0..h {
       let start = row * y_stride as usize;
       for (col, &s) in y[start..start + w].iter().enumerate() {
-        if s & low_mask != 0 {
+        let logical = u16::from_le(s);
+        if logical & low_mask != 0 {
           return Err(PnFrameError::SampleLowBitsSet {
             plane: PnFramePlane::Y,
             index: start + col,
-            value: s,
+            value: logical,
             low_bits,
           });
         }
@@ -751,11 +781,12 @@ impl<'a, const BITS: u32> PnFrame444<'a, BITS> {
     for row in 0..h {
       let start = row * uv_stride as usize;
       for (col, &s) in uv[start..start + uv_w].iter().enumerate() {
-        if s & low_mask != 0 {
+        let logical = u16::from_le(s);
+        if logical & low_mask != 0 {
           return Err(PnFrameError::SampleLowBitsSet {
             plane: PnFramePlane::Uv,
             index: start + col,
-            value: s,
+            value: logical,
             low_bits,
           });
         }

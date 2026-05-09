@@ -113,3 +113,87 @@ fn yuv422p16_try_new_checked_accepts_full_u16_range() {
   Yuv422p16Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8)
     .expect("every u16 value is in range at 16 bits");
 }
+
+// ---- Host-independent BE-host regressions (codex round-2) -----------
+//
+// Build planes from LE-encoded bytes via `to_le_bytes` and read back
+// via `from_ne_bytes`. On LE host the buffer matches the literal; on
+// BE host every `u16` is byte-swapped. The validator must `from_le`-
+// normalize before the range check on both hosts. See the comment at
+// the bottom of `subsampled_4_2_0_high_bit.rs` for the full rationale.
+
+fn le_encoded_u16_buf(intended: &[u16]) -> std::vec::Vec<u16> {
+  let bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
+  bytes
+    .chunks_exact(2)
+    .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+    .collect()
+}
+
+#[test]
+fn yuv422p10_try_new_checked_accepts_le_encoded_buffer_on_any_host() {
+  // 4:2:2: chroma is half-width × full-height.
+  let intended_y = std::vec![1023u16; 16 * 8];
+  let intended_uv = std::vec![512u16; 8 * 8];
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&intended_uv);
+  let v = le_encoded_u16_buf(&intended_uv);
+  Yuv422p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8)
+    .expect("LE-encoded valid yuv422p10le must be accepted on both LE and BE hosts");
+}
+
+#[test]
+fn yuv422p12_try_new_checked_rejects_le_encoded_out_of_range_on_any_host() {
+  // After `from_le` normalization, the offending sample is 4096
+  // (just above 12-bit max 4095).
+  let mut intended_y = std::vec![2048u16; 16 * 8];
+  intended_y[5] = 4096;
+  let intended_uv = std::vec![2048u16; 8 * 8];
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&intended_uv);
+  let v = le_encoded_u16_buf(&intended_uv);
+  let e = Yuv422p12Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8).unwrap_err();
+  assert!(matches!(
+    e,
+    Yuv420pFrame16Error::SampleOutOfRange {
+      plane: Yuv420pFrame16Plane::Y,
+      value: 4096,
+      max_valid: 4095,
+      ..
+    }
+  ));
+}
+
+#[test]
+fn p210_try_new_checked_accepts_le_encoded_buffer_on_any_host() {
+  // P210 white = 1023 << 6 = 0xFFC0; LE bytes [0xC0, 0xFF].
+  // 4:2:2 PnFrame422: chroma is half-width pairs × full-height ⇒
+  // each UV row holds `width` u16 elements (= width/2 pairs × 2).
+  let intended_y = std::vec![0xFFC0u16; 16 * 8];
+  let intended_uv = std::vec![0x8000u16; 16 * 8];
+  let y = le_encoded_u16_buf(&intended_y);
+  let uv = le_encoded_u16_buf(&intended_uv);
+  P210Frame::try_new_checked(&y, &uv, 16, 8, 16, 16)
+    .expect("LE-encoded valid P210 must be accepted on both LE and BE hosts");
+}
+
+#[test]
+fn p210_try_new_checked_rejects_le_encoded_low_bits_on_any_host() {
+  // After `from_le` normalization, the logical 0x03FF has all six
+  // low bits set — `yuv422p10le`-style data wrongly handed to P210.
+  let mut intended_y = std::vec![0xFFC0u16; 16 * 8];
+  intended_y[2 * 16 + 7] = 0x03FF;
+  let intended_uv = std::vec![0x8000u16; 16 * 8];
+  let y = le_encoded_u16_buf(&intended_y);
+  let uv = le_encoded_u16_buf(&intended_uv);
+  let e = P210Frame::try_new_checked(&y, &uv, 16, 8, 16, 16).unwrap_err();
+  assert!(matches!(
+    e,
+    PnFrameError::SampleLowBitsSet {
+      plane: PnFramePlane::Y,
+      value: 0x03FF,
+      low_bits: 6,
+      ..
+    }
+  ));
+}

@@ -39,7 +39,7 @@
 
 use core::arch::wasm32::*;
 
-use super::*;
+use super::{endian, *};
 use crate::{ColorMatrix, row::scalar};
 
 /// Deinterleave 8 XV36 pixels (4 × v128 = 64 bytes) into separate
@@ -55,13 +55,14 @@ use crate::{ColorMatrix, row::scalar};
 /// caller must `u16x8_shr(v, 4)` to drop the 4 padding LSBs.
 #[inline]
 #[target_feature(enable = "simd128")]
-unsafe fn deinterleave_xv36_8px(ptr: *const u16) -> (v128, v128, v128) {
+unsafe fn deinterleave_xv36_8px<const BE: bool>(ptr: *const u16) -> (v128, v128, v128) {
   unsafe {
     // Load 4 × v128, each covering 2 pixels.
-    let raw0 = v128_load(ptr.cast()); // [U0,Y0,V0,A0,  U1,Y1,V1,A1]
-    let raw1 = v128_load(ptr.add(8).cast()); // [U2,Y2,V2,A2,  U3,Y3,V3,A3]
-    let raw2 = v128_load(ptr.add(16).cast()); // [U4,Y4,V4,A4,  U5,Y5,V5,A5]
-    let raw3 = v128_load(ptr.add(24).cast()); // [U6,Y6,V6,A6,  U7,Y7,V7,A7]
+    // For BE wire format, `load_endian_u16x8` byte-swaps each u16 lane.
+    let raw0 = endian::load_endian_u16x8::<BE>(ptr as *const u8); // [U0,Y0,V0,A0,  U1,Y1,V1,A1]
+    let raw1 = endian::load_endian_u16x8::<BE>(ptr.add(8) as *const u8); // [U2,Y2,V2,A2,  U3,Y3,V3,A3]
+    let raw2 = endian::load_endian_u16x8::<BE>(ptr.add(16) as *const u8); // [U4,Y4,V4,A4,  U5,Y5,V5,A5]
+    let raw3 = endian::load_endian_u16x8::<BE>(ptr.add(24) as *const u8); // [U6,Y6,V6,A6,  U7,Y7,V7,A7]
 
     // Per-channel byte positions inside a 2-pixel v128:
     //   U → bytes 0,1 (pixel n) and 8,9 (pixel n+1)
@@ -137,7 +138,7 @@ unsafe fn deinterleave_xv36_8px(ptr: *const u16) -> (v128, v128, v128) {
 /// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn xv36_to_rgb_or_rgba_row<const ALPHA: bool>(
+pub(crate) unsafe fn xv36_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   packed: &[u16],
   out: &mut [u8],
   width: usize,
@@ -169,7 +170,7 @@ pub(crate) unsafe fn xv36_to_rgb_or_rgba_row<const ALPHA: bool>(
     let mut x = 0usize;
     while x + 8 <= width {
       // Deinterleave 8 XV36 pixels (64 bytes) into U/Y/V channels.
-      let (u_raw, y_raw, v_raw) = deinterleave_xv36_8px(packed.as_ptr().add(x * 4));
+      let (u_raw, y_raw, v_raw) = deinterleave_xv36_8px::<BE>(packed.as_ptr().add(x * 4));
 
       // Right-shift by 4 to drop the 4 padding LSBs → 12-bit [0, 4095].
       // Values ≤ 4095 fit safely in i16.
@@ -241,7 +242,13 @@ pub(crate) unsafe fn xv36_to_rgb_or_rgba_row<const ALPHA: bool>(
       let tail_packed = &packed[x * 4..width * 4];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::xv36_to_rgb_or_rgba_row::<ALPHA>(tail_packed, tail_out, tail_w, matrix, full_range);
+      scalar::xv36_to_rgb_or_rgba_row::<ALPHA, BE>(
+        tail_packed,
+        tail_out,
+        tail_w,
+        matrix,
+        full_range,
+      );
     }
   }
 }
@@ -261,7 +268,7 @@ pub(crate) unsafe fn xv36_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })` (u16 elements).
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
+pub(crate) unsafe fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   packed: &[u16],
   out: &mut [u16],
   width: usize,
@@ -296,7 +303,7 @@ pub(crate) unsafe fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 
     let mut x = 0usize;
     while x + 8 <= width {
-      let (u_raw, y_raw, v_raw) = deinterleave_xv36_8px(packed.as_ptr().add(x * 4));
+      let (u_raw, y_raw, v_raw) = deinterleave_xv36_8px::<BE>(packed.as_ptr().add(x * 4));
 
       let u_i16 = u16x8_shr(u_raw, 4);
       let y_i16 = u16x8_shr(y_raw, 4);
@@ -359,7 +366,7 @@ pub(crate) unsafe fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
       let tail_packed = &packed[x * 4..width * 4];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::xv36_to_rgb_u16_or_rgba_u16_row::<ALPHA>(
+      scalar::xv36_to_rgb_u16_or_rgba_u16_row::<ALPHA, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -384,7 +391,11 @@ pub(crate) unsafe fn xv36_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 /// 3. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn xv36_to_luma_row(packed: &[u16], out: &mut [u8], width: usize) {
+pub(crate) unsafe fn xv36_to_luma_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4);
   debug_assert!(out.len() >= width);
 
@@ -396,10 +407,11 @@ pub(crate) unsafe fn xv36_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = packed.as_ptr().add(x * 4);
-      let raw0 = v128_load(ptr.cast()); // pixels 0,1
-      let raw1 = v128_load(ptr.add(8).cast()); // pixels 2,3
-      let raw2 = v128_load(ptr.add(16).cast()); // pixels 4,5
-      let raw3 = v128_load(ptr.add(24).cast()); // pixels 6,7
+      // For BE wire format, byte-swap each u16 before extracting Y via swizzle.
+      let raw0 = endian::load_endian_u16x8::<BE>(ptr as *const u8); // pixels 0,1
+      let raw1 = endian::load_endian_u16x8::<BE>(ptr.add(8) as *const u8); // pixels 2,3
+      let raw2 = endian::load_endian_u16x8::<BE>(ptr.add(16) as *const u8); // pixels 4,5
+      let raw3 = endian::load_endian_u16x8::<BE>(ptr.add(24) as *const u8); // pixels 6,7
 
       // Extract Y from each pair → 2 u16 in low 4 bytes.
       let y0 = u8x16_swizzle(raw0, y_idx); // [Y0,Y1, 0..12]
@@ -425,7 +437,7 @@ pub(crate) unsafe fn xv36_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
 
     // Scalar tail.
     if x < width {
-      scalar::xv36_to_luma_row(&packed[x * 4..width * 4], &mut out[x..width], width - x);
+      scalar::xv36_to_luma_row::<BE>(&packed[x * 4..width * 4], &mut out[x..width], width - x);
     }
   }
 }
@@ -445,7 +457,11 @@ pub(crate) unsafe fn xv36_to_luma_row(packed: &[u16], out: &mut [u8], width: usi
 /// 3. `out.len() >= width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn xv36_to_luma_u16_row(packed: &[u16], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn xv36_to_luma_u16_row<const BE: bool>(
+  packed: &[u16],
+  out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4);
   debug_assert!(out.len() >= width);
 
@@ -455,10 +471,10 @@ pub(crate) unsafe fn xv36_to_luma_u16_row(packed: &[u16], out: &mut [u16], width
     let mut x = 0usize;
     while x + 8 <= width {
       let ptr = packed.as_ptr().add(x * 4);
-      let raw0 = v128_load(ptr.cast());
-      let raw1 = v128_load(ptr.add(8).cast());
-      let raw2 = v128_load(ptr.add(16).cast());
-      let raw3 = v128_load(ptr.add(24).cast());
+      let raw0 = endian::load_endian_u16x8::<BE>(ptr as *const u8);
+      let raw1 = endian::load_endian_u16x8::<BE>(ptr.add(8) as *const u8);
+      let raw2 = endian::load_endian_u16x8::<BE>(ptr.add(16) as *const u8);
+      let raw3 = endian::load_endian_u16x8::<BE>(ptr.add(24) as *const u8);
 
       let y0 = u8x16_swizzle(raw0, y_idx);
       let y1 = u8x16_swizzle(raw1, y_idx);
@@ -477,7 +493,7 @@ pub(crate) unsafe fn xv36_to_luma_u16_row(packed: &[u16], out: &mut [u16], width
 
     // Scalar tail.
     if x < width {
-      scalar::xv36_to_luma_u16_row(&packed[x * 4..width * 4], &mut out[x..width], width - x);
+      scalar::xv36_to_luma_u16_row::<BE>(&packed[x * 4..width * 4], &mut out[x..width], width - x);
     }
   }
 }

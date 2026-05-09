@@ -198,3 +198,117 @@ fn yuv440p12_try_new_checked_rejects_above_4095() {
     }
   ));
 }
+
+// ---- Host-independent BE-host regressions (codex round-2) -----------
+//
+// See `subsampled_4_2_0_high_bit.rs` for the full rationale: build
+// planes from LE-encoded bytes so on BE hosts the validator's
+// `u16::from_le` normalization is exercised end-to-end.
+
+fn le_encoded_u16_buf(intended: &[u16]) -> std::vec::Vec<u16> {
+  let bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
+  bytes
+    .chunks_exact(2)
+    .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+    .collect()
+}
+
+#[test]
+fn yuv444p10_try_new_checked_accepts_le_encoded_buffer_on_any_host() {
+  // 4:4:4: chroma is full-width × full-height.
+  let intended_y = std::vec![1023u16; 16 * 8];
+  let intended_uv = std::vec![512u16; 16 * 8];
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&intended_uv);
+  let v = le_encoded_u16_buf(&intended_uv);
+  Yuv444p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 16, 16)
+    .expect("LE-encoded valid yuv444p10le must be accepted on both LE and BE hosts");
+}
+
+#[test]
+fn yuv444p14_try_new_checked_rejects_le_encoded_out_of_range_on_any_host() {
+  // After `from_le` normalization, the offending sample is 16384
+  // (just above 14-bit max 16383).
+  let intended_y = std::vec![8192u16; 16 * 8];
+  let intended_u = std::vec![8192u16; 16 * 8];
+  let mut intended_v = std::vec![8192u16; 16 * 8];
+  intended_v[3 * 16 + 11] = 16384;
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&intended_u);
+  let v = le_encoded_u16_buf(&intended_v);
+  let e = Yuv444p14Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 16, 16).unwrap_err();
+  assert!(matches!(
+    e,
+    Yuv420pFrame16Error::SampleOutOfRange {
+      plane: Yuv420pFrame16Plane::V,
+      value: 16384,
+      max_valid: 16383,
+      ..
+    }
+  ));
+}
+
+#[test]
+fn yuv440p10_try_new_checked_accepts_le_encoded_buffer_on_any_host() {
+  // 4:4:0: chroma is full-width × half-height.
+  let intended_y = std::vec![1023u16; 16 * 8];
+  let intended_uv = std::vec![512u16; 16 * 4];
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&intended_uv);
+  let v = le_encoded_u16_buf(&intended_uv);
+  Yuv440p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 16, 16)
+    .expect("LE-encoded valid yuv440p10le must be accepted on both LE and BE hosts");
+}
+
+#[test]
+fn yuv440p12_try_new_checked_rejects_le_encoded_out_of_range_on_any_host() {
+  let intended_y = std::vec![2048u16; 16 * 8];
+  let mut intended_u = std::vec![2048u16; 16 * 4];
+  intended_u[2 * 16 + 5] = 4096;
+  let intended_v = std::vec![2048u16; 16 * 4];
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&intended_u);
+  let v = le_encoded_u16_buf(&intended_v);
+  let e = Yuv440p12Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 16, 16).unwrap_err();
+  assert!(matches!(
+    e,
+    Yuv420pFrame16Error::SampleOutOfRange {
+      plane: Yuv420pFrame16Plane::U,
+      value: 4096,
+      max_valid: 4095,
+      ..
+    }
+  ));
+}
+
+#[test]
+fn p410_try_new_checked_accepts_le_encoded_buffer_on_any_host() {
+  // 4:4:4 PnFrame444: chroma is full-width × full-height with 2 u16
+  // per pair ⇒ each UV row holds 2 * width u16 elements.
+  let intended_y = std::vec![0xFFC0u16; 16 * 8];
+  let intended_uv = std::vec![0x8000u16; 32 * 8];
+  let y = le_encoded_u16_buf(&intended_y);
+  let uv = le_encoded_u16_buf(&intended_uv);
+  P410Frame::try_new_checked(&y, &uv, 16, 8, 16, 32)
+    .expect("LE-encoded valid P410 must be accepted on both LE and BE hosts");
+}
+
+#[test]
+fn p410_try_new_checked_rejects_le_encoded_low_bits_on_any_host() {
+  // Logical 0x03FF (low 6 bits all set) on the UV plane.
+  let intended_y = std::vec![0xFFC0u16; 16 * 8];
+  let mut intended_uv = std::vec![0x8000u16; 32 * 8];
+  intended_uv[4 * 32 + 17] = 0x03FF;
+  let y = le_encoded_u16_buf(&intended_y);
+  let uv = le_encoded_u16_buf(&intended_uv);
+  let e = P410Frame::try_new_checked(&y, &uv, 16, 8, 16, 32).unwrap_err();
+  assert!(matches!(
+    e,
+    PnFrameError::SampleLowBitsSet {
+      plane: PnFramePlane::Uv,
+      value: 0x03FF,
+      low_bits: 6,
+      ..
+    }
+  ));
+}

@@ -15,6 +15,10 @@
 //! u8 output uses i32 chroma (output-range scaling keeps within i32);
 //! u16 output uses **i64 chroma** via `q15_chroma64` (Q15 sums
 //! overflow i32 at BITS=16/16, peak ~3.7e9 for BT.2020).
+//!
+//! `<const BE: bool>` — when `true`, each `u16` element of the input
+//! slice is byte-swapped before use. This handles the `AYUV64BE`
+//! big-endian wire format; `BE = false` is the standard LE path.
 
 use super::*;
 
@@ -23,6 +27,8 @@ use super::*;
 /// Channel slot order: A at slot 0, Y at slot 1, U at slot 2, V at slot 3
 /// (differs from VUYA which has A at slot 3). No right-shift needed — 16-bit
 /// native samples with no padding bits.
+///
+/// Samples are passed already endian-corrected by the caller.
 #[cfg_attr(not(tarpaulin), inline(always))]
 const fn extract_ayuv64(quad: &[u16]) -> (i32, i32, i32, u16) {
   let a = quad[0]; // slot 0 = A (source α)
@@ -30,6 +36,15 @@ const fn extract_ayuv64(quad: &[u16]) -> (i32, i32, i32, u16) {
   let u = quad[2] as i32; // slot 2 = U
   let v = quad[3] as i32; // slot 3 = V
   (u, y, v, a) // returned as (u, y, v, a) for consistency with chroma pipeline
+}
+
+/// Load one AYUV64 u16 sample, applying a byte-swap for BE wire format
+/// when `BE = true`. Uses target-endian aware `u16::from_be`/`u16::from_le`
+/// — these are no-ops when the source byte order matches the host, so the
+/// helper produces correct samples on both LE and BE hosts (e.g. s390x).
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn load_ayuv64_u16<const BE: bool>(v: u16) -> u16 {
+  if BE { u16::from_be(v) } else { u16::from_le(v) }
 }
 
 // ---- u8 output (i32 chroma) --------------------------------------------
@@ -49,7 +64,11 @@ const fn extract_ayuv64(quad: &[u16]) -> (i32, i32, i32, u16) {
 /// - `packed.len() >= width * 4`.
 /// - `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn ayuv64_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
+pub(crate) fn ayuv64_to_rgb_or_rgba_row<
+  const ALPHA: bool,
+  const ALPHA_SRC: bool,
+  const BE: bool,
+>(
   packed: &[u16],
   out: &mut [u8],
   width: usize,
@@ -70,7 +89,13 @@ pub(crate) fn ayuv64_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool
 
   for x in 0..width {
     let pix_off = x * 4;
-    let (u, y, v, a) = extract_ayuv64(&packed[pix_off..pix_off + 4]);
+    let quad = [
+      load_ayuv64_u16::<BE>(packed[pix_off]),
+      load_ayuv64_u16::<BE>(packed[pix_off + 1]),
+      load_ayuv64_u16::<BE>(packed[pix_off + 2]),
+      load_ayuv64_u16::<BE>(packed[pix_off + 3]),
+    ];
+    let (u, y, v, a) = extract_ayuv64(&quad);
     let u_d = q15_scale(u - bias, c_scale);
     let v_d = q15_scale(v - bias, c_scale);
     let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
@@ -94,27 +119,27 @@ pub(crate) fn ayuv64_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool
 
 /// Scalar AYUV64 → packed **RGB** (3 bpp). Source α is discarded.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn ayuv64_to_rgb_row(
+pub(crate) fn ayuv64_to_rgb_row<const BE: bool>(
   packed: &[u16],
   rgb_out: &mut [u8],
   width: usize,
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  ayuv64_to_rgb_or_rgba_row::<false, false>(packed, rgb_out, width, matrix, full_range);
+  ayuv64_to_rgb_or_rgba_row::<false, false, BE>(packed, rgb_out, width, matrix, full_range);
 }
 
 /// Scalar AYUV64 → packed **RGBA** (4 bpp). The source A u16 at slot 0
 /// of each pixel quadruple is depth-converted to u8 via `>> 8`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn ayuv64_to_rgba_row(
+pub(crate) fn ayuv64_to_rgba_row<const BE: bool>(
   packed: &[u16],
   rgba_out: &mut [u8],
   width: usize,
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  ayuv64_to_rgb_or_rgba_row::<true, true>(packed, rgba_out, width, matrix, full_range);
+  ayuv64_to_rgb_or_rgba_row::<true, true, BE>(packed, rgba_out, width, matrix, full_range);
 }
 
 // ---- u16 output (i64 chroma) -------------------------------------------
@@ -132,7 +157,11 @@ pub(crate) fn ayuv64_to_rgba_row(
 /// - `packed.len() >= width * 4`.
 /// - `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn ayuv64_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const ALPHA_SRC: bool>(
+pub(crate) fn ayuv64_to_rgb_u16_or_rgba_u16_row<
+  const ALPHA: bool,
+  const ALPHA_SRC: bool,
+  const BE: bool,
+>(
   packed: &[u16],
   out: &mut [u16],
   width: usize,
@@ -152,7 +181,13 @@ pub(crate) fn ayuv64_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const ALPHA_S
 
   for x in 0..width {
     let pix_off = x * 4;
-    let (u, y, v, a) = extract_ayuv64(&packed[pix_off..pix_off + 4]);
+    let quad = [
+      load_ayuv64_u16::<BE>(packed[pix_off]),
+      load_ayuv64_u16::<BE>(packed[pix_off + 1]),
+      load_ayuv64_u16::<BE>(packed[pix_off + 2]),
+      load_ayuv64_u16::<BE>(packed[pix_off + 3]),
+    ];
+    let (u, y, v, a) = extract_ayuv64(&quad);
     // q15_scale returns i32; q15_chroma64 handles the i32→i64 promotion
     // internally — pass i32 values directly (same API as q15_chroma).
     let u_d = q15_scale(u - bias, c_scale);
@@ -180,27 +215,27 @@ pub(crate) fn ayuv64_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const ALPHA_S
 
 /// Scalar AYUV64 → packed **RGB u16** (3 × u16 per pixel). Source α discarded.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn ayuv64_to_rgb_u16_row(
+pub(crate) fn ayuv64_to_rgb_u16_row<const BE: bool>(
   packed: &[u16],
   rgb_out: &mut [u16],
   width: usize,
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  ayuv64_to_rgb_u16_or_rgba_u16_row::<false, false>(packed, rgb_out, width, matrix, full_range);
+  ayuv64_to_rgb_u16_or_rgba_u16_row::<false, false, BE>(packed, rgb_out, width, matrix, full_range);
 }
 
 /// Scalar AYUV64 → packed **RGBA u16** (4 × u16 per pixel). The source A u16
 /// at slot 0 of each pixel quadruple is written direct (no conversion).
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn ayuv64_to_rgba_u16_row(
+pub(crate) fn ayuv64_to_rgba_u16_row<const BE: bool>(
   packed: &[u16],
   rgba_out: &mut [u16],
   width: usize,
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  ayuv64_to_rgb_u16_or_rgba_u16_row::<true, true>(packed, rgba_out, width, matrix, full_range);
+  ayuv64_to_rgb_u16_or_rgba_u16_row::<true, true, BE>(packed, rgba_out, width, matrix, full_range);
 }
 
 // ---- Luma extraction ---------------------------------------------------
@@ -208,22 +243,30 @@ pub(crate) fn ayuv64_to_rgba_u16_row(
 /// Copies only the Y u16 from each AYUV64 pixel into a u8 luma plane,
 /// extracting the high byte via `>> 8`. Y is at slot 1 of each quadruple.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn ayuv64_to_luma_row(packed: &[u16], luma_out: &mut [u8], width: usize) {
+pub(crate) fn ayuv64_to_luma_row<const BE: bool>(
+  packed: &[u16],
+  luma_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4, "packed row too short");
   debug_assert!(luma_out.len() >= width, "luma row too short");
   for x in 0..width {
-    luma_out[x] = (packed[x * 4 + 1] >> 8) as u8;
+    luma_out[x] = (load_ayuv64_u16::<BE>(packed[x * 4 + 1]) >> 8) as u8;
   }
 }
 
 /// Copies only the Y u16 from each AYUV64 pixel into a u16 luma plane,
 /// direct (no shift — 16-bit native). Y is at slot 1 of each quadruple.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn ayuv64_to_luma_u16_row(packed: &[u16], luma_out: &mut [u16], width: usize) {
+pub(crate) fn ayuv64_to_luma_u16_row<const BE: bool>(
+  packed: &[u16],
+  luma_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4, "packed row too short");
   debug_assert!(luma_out.len() >= width, "luma row too short");
   for x in 0..width {
-    luma_out[x] = packed[x * 4 + 1];
+    luma_out[x] = load_ayuv64_u16::<BE>(packed[x * 4 + 1]);
   }
 }
 
@@ -242,6 +285,16 @@ mod tests {
   /// Limited-range BT.709, neutral chroma U=V=32768.
   /// Black:  Y=4096  (limited-range black at 16-bit: 16 * 256 = 4096).
   /// White:  Y=60160 (limited-range white at 16-bit: 235 * 256 = 60160).
+  ///
+  /// LE-host gate: builds host-native `Vec<u16>` fixtures via `pack_ayuv64`
+  /// and calls the scalar kernel with `<BE = false>`, which applies
+  /// `u16::from_le`. On BE hosts (s390x / powerpc64) the host-native
+  /// storage doesn't match LE byte order, so `from_le` swaps bytes and
+  /// corrupts the fixture before the math runs (same pattern as PR #82
+  /// 8f2e329, PR #83 56342c0, PR #85 57d9064, PR #87 9b6521b). BE-host
+  /// correctness is covered by `ayuv64_be_roundtrip_matches_byte_swapped_le`,
+  /// which builds fixtures via `to_le_bytes` / `to_be_bytes`.
+  #[cfg(target_endian = "little")]
   #[test]
   fn ayuv64_known_pattern_rgb_limited_range() {
     let p_black = pack_ayuv64(0xFFFF, 4096, 32768, 32768);
@@ -252,7 +305,7 @@ mod tests {
       .copied()
       .collect();
     let mut out = vec![0u8; 4 * 3];
-    ayuv64_to_rgb_row(&packed, &mut out, 4, ColorMatrix::Bt709, false);
+    ayuv64_to_rgb_row::<false>(&packed, &mut out, 4, ColorMatrix::Bt709, false);
     // Black pixels → [0, 0, 0]
     assert_eq!(&out[0..3], &[0u8, 0, 0], "black pixel 0");
     assert_eq!(&out[3..6], &[0u8, 0, 0], "black pixel 1");
@@ -269,7 +322,7 @@ mod tests {
     let p1 = pack_ayuv64(0x9999, 60160, 32768, 32768);
     let packed: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
     let mut out = vec![0u8; 2 * 4];
-    ayuv64_to_rgba_row(&packed, &mut out, 2, ColorMatrix::Bt709, false);
+    ayuv64_to_rgba_row::<false>(&packed, &mut out, 2, ColorMatrix::Bt709, false);
     assert_eq!(out[3], 0x42, "pixel 0 alpha (0x4242 >> 8 = 0x42)");
     assert_eq!(out[7], 0x99, "pixel 1 alpha (0x9999 >> 8 = 0x99)");
   }
@@ -282,32 +335,74 @@ mod tests {
     let p1 = pack_ayuv64(0x9999, 60160, 32768, 32768);
     let packed: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
     let mut out = vec![0u16; 2 * 4];
-    ayuv64_to_rgba_u16_row(&packed, &mut out, 2, ColorMatrix::Bt709, false);
+    ayuv64_to_rgba_u16_row::<false>(&packed, &mut out, 2, ColorMatrix::Bt709, false);
     assert_eq!(out[3], 0x4242, "pixel 0 alpha u16 direct");
     assert_eq!(out[7], 0x9999, "pixel 1 alpha u16 direct");
   }
 
   /// Luma u8: Y at slot 1, extracted via >> 8 (high byte only).
   /// Y=0xFFFF → 0xFF; Y=0x4000 → 0x40.
+  ///
+  /// LE-host gate: host-native `pack_ayuv64` fixture (Y=0x4000 is non-
+  /// palindromic in bytes) + `<BE = false>` kernel path → `from_le`
+  /// byte-swaps the fixture on BE hosts and corrupts the Y field before
+  /// extraction.
+  #[cfg(target_endian = "little")]
   #[test]
   fn ayuv64_luma_extract_u8_high_byte() {
     let p0 = pack_ayuv64(0, 0xFFFF, 0, 0);
     let p1 = pack_ayuv64(0, 0x4000, 0, 0);
     let packed: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
     let mut out = vec![0u8; 2];
-    ayuv64_to_luma_row(&packed, &mut out, 2);
+    ayuv64_to_luma_row::<false>(&packed, &mut out, 2);
     assert_eq!(&out[..], &[0xFFu8, 0x40], "luma u8 high-byte extract");
   }
 
   /// Luma u16: Y at slot 1, written direct (no shift).
   /// Y=0xABCD → 0xABCD; Y=0x1234 → 0x1234.
+  ///
+  /// LE-host gate: host-native `pack_ayuv64` fixture (Y=0xABCD / 0x1234
+  /// are non-palindromic in bytes) + `<BE = false>` kernel path →
+  /// `from_le` byte-swaps the fixture on BE hosts and corrupts the Y
+  /// field before extraction.
+  #[cfg(target_endian = "little")]
   #[test]
   fn ayuv64_luma_extract_u16_direct() {
     let p0 = pack_ayuv64(0, 0xABCD, 0, 0);
     let p1 = pack_ayuv64(0, 0x1234, 0, 0);
     let packed: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
     let mut out = vec![0u16; 2];
-    ayuv64_to_luma_u16_row(&packed, &mut out, 2);
+    ayuv64_to_luma_u16_row::<false>(&packed, &mut out, 2);
     assert_eq!(&out[..], &[0xABCDu16, 0x1234], "luma u16 direct extract");
+  }
+
+  #[test]
+  fn ayuv64_be_roundtrip_matches_byte_swapped_le() {
+    // Construct LE/BE buffers from raw bytes via `to_le_bytes` / `to_be_bytes`
+    // so semantics are host-independent: on every host, `le` carries the
+    // intended values as LE-encoded bytes and `be` carries the same values as
+    // BE-encoded bytes. Both kernels should therefore decode to the same
+    // intended host-native values (and produce identical RGB output) on both
+    // LE and BE hosts. The earlier `swap_bytes` pattern only validated this
+    // on LE hosts and degenerated to equal-but-wrong on BE hosts.
+    let intended = pack_ayuv64(0xFFFF, 60160, 32768, 32768);
+    let le_bytes: Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let be_bytes: Vec<u8> = intended.iter().flat_map(|v| v.to_be_bytes()).collect();
+    let le_buf: Vec<u16> = le_bytes
+      .chunks_exact(2)
+      .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+      .collect();
+    let be_buf: Vec<u16> = be_bytes
+      .chunks_exact(2)
+      .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+      .collect();
+    let mut out_le = vec![0u8; 3];
+    let mut out_be = vec![0u8; 3];
+    ayuv64_to_rgb_row::<false>(&le_buf, &mut out_le, 1, ColorMatrix::Bt709, false);
+    ayuv64_to_rgb_row::<true>(&be_buf, &mut out_be, 1, ColorMatrix::Bt709, false);
+    assert_eq!(
+      out_le, out_be,
+      "AYUV64 BE scalar must match byte-swapped LE"
+    );
   }
 }
