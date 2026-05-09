@@ -1000,7 +1000,7 @@ mod tests {
     gbra_to_rgba_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out_direct, 1);
 
     // Manual path: apply mask to alpha, call with clean value
-    let a_clean = [clean_alpha; 1];
+    let a_clean = as_le_u16(&[clean_alpha; 1]);
     let mut out_manual = [0u8; 4];
     gbra_to_rgba_high_bit_row::<10, false>(&g, &b, &r, &a_clean, &mut out_manual, 1);
 
