@@ -927,3 +927,114 @@ fn yuv_410_simd128_rgba_matches_scalar_widths() {
     check_yuv_410_rgba_equivalence(w, ColorMatrix::YCgCo, false);
   }
 }
+
+// ---- yuv_411_to_rgb_row equivalence (wasm simd128 ↔ scalar) ----------
+//
+// Direct backend test for the 4:1:1 path: bypasses the public
+// dispatcher so the simd128 1→4 chroma upsample is exercised
+// regardless of what tier the dispatcher would pick on the current
+// runner.
+
+fn check_yuv411_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
+  assert_eq!(width & 3, 0, "test fixture must use width % 4 == 0");
+  let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
+  let u: std::vec::Vec<u8> = (0..width / 4)
+    .map(|i| ((i * 53 + 23) & 0xFF) as u8)
+    .collect();
+  let v: std::vec::Vec<u8> = (0..width / 4)
+    .map(|i| ((i * 71 + 91) & 0xFF) as u8)
+    .collect();
+  let mut rgb_scalar = std::vec![0u8; width * 3];
+  let mut rgb_simd = std::vec![0u8; width * 3];
+
+  scalar::yuv_411_to_rgb_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
+  unsafe {
+    yuv_411_to_rgb_row(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
+  }
+
+  if rgb_scalar != rgb_simd {
+    let first_diff = rgb_scalar
+      .iter()
+      .zip(rgb_simd.iter())
+      .position(|(a, b)| a != b)
+      .unwrap();
+    panic!(
+      "wasm yuv_411 diverges from scalar at byte {first_diff} (width={width}, matrix={matrix:?}, full_range={full_range}): scalar={} wasm={}",
+      rgb_scalar[first_diff], rgb_simd[first_diff]
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "wasm SIMD intrinsics unsupported by Miri")]
+fn wasm_yuv411_matches_scalar_all_matrices_16() {
+  // Width 16 = exactly one SIMD iteration with no scalar tail.
+  for m in [
+    ColorMatrix::Bt601,
+    ColorMatrix::Bt709,
+    ColorMatrix::Bt2020Ncl,
+    ColorMatrix::Smpte240m,
+    ColorMatrix::Fcc,
+    ColorMatrix::YCgCo,
+  ] {
+    for full in [true, false] {
+      check_yuv411_equivalence(16, m, full);
+    }
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "wasm SIMD intrinsics unsupported by Miri")]
+fn wasm_yuv411_matches_scalar_tail_widths() {
+  // Widths that leave a non-trivial scalar tail (not multiple of 16
+  // but multiple of 4).
+  for w in [4usize, 8, 12, 20, 24, 28, 36, 60, 100, 132] {
+    check_yuv411_equivalence(w, ColorMatrix::Bt601, false);
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "wasm SIMD intrinsics unsupported by Miri")]
+fn wasm_yuv411_matches_scalar_width_1920() {
+  check_yuv411_equivalence(1920, ColorMatrix::Bt709, false);
+}
+
+fn check_yuv411_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
+  assert_eq!(width & 3, 0, "test fixture must use width % 4 == 0");
+  let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
+  let u: std::vec::Vec<u8> = (0..width / 4)
+    .map(|i| ((i * 53 + 23) & 0xFF) as u8)
+    .collect();
+  let v: std::vec::Vec<u8> = (0..width / 4)
+    .map(|i| ((i * 71 + 91) & 0xFF) as u8)
+    .collect();
+  let mut rgba_scalar = std::vec![0u8; width * 4];
+  let mut rgba_simd = std::vec![0u8; width * 4];
+
+  scalar::yuv_411_to_rgba_row(&y, &u, &v, &mut rgba_scalar, width, matrix, full_range);
+  unsafe {
+    yuv_411_to_rgba_row(&y, &u, &v, &mut rgba_simd, width, matrix, full_range);
+  }
+
+  assert_eq!(
+    rgba_scalar, rgba_simd,
+    "wasm yuv_411 RGBA diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
+  );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "wasm SIMD intrinsics unsupported by Miri")]
+fn wasm_yuv411_rgba_matches_scalar_widths() {
+  for &m in &[
+    ColorMatrix::Bt601,
+    ColorMatrix::Bt709,
+    ColorMatrix::Bt2020Ncl,
+    ColorMatrix::YCgCo,
+  ] {
+    for full in [true, false] {
+      for &w in &[16usize, 32, 64, 128, 1920] {
+        check_yuv411_rgba_equivalence(w, m, full);
+      }
+    }
+  }
+}

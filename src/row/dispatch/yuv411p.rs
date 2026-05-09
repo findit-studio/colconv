@@ -2,15 +2,25 @@
 //! `yuv_411_to_rgba_row`).
 //!
 //! 4:1:1 is **legacy DV-NTSC** subsampling: chroma is quarter-width
-//! and full-height. SIMD coverage today: NEON only. x86 (SSE4.1 /
-//! AVX2 / AVX-512) and wasm32 simd128 backends fall through to the
-//! scalar reference — 4:1:1 is rare enough to defer SIMD work on
-//! those targets until a real workload demands it.
+//! and full-height. SIMD coverage: NEON (16 Y / 4 chroma per iter),
+//! SSE4.1 (16 Y / 4 chroma per iter), AVX2 (32 Y / 8 chroma per iter),
+//! AVX-512BW (64 Y / 16 chroma per iter), wasm32 simd128 (16 Y / 4
+//! chroma per iter). Each backend implements the 1→4 nearest-neighbor
+//! chroma fan-out in registers and falls back to the scalar reference
+//! for the multiple-of-4 tail.
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(
+  target_arch = "aarch64",
+  target_arch = "x86_64",
+  target_arch = "wasm32"
+))]
 use crate::row::arch;
 #[cfg(target_arch = "aarch64")]
 use crate::row::neon_available;
+#[cfg(target_arch = "wasm32")]
+use crate::row::simd128_available;
+#[cfg(target_arch = "x86_64")]
+use crate::row::{avx2_available, avx512_available, sse41_available};
 use crate::{
   ColorMatrix,
   row::{rgb_row_bytes, rgba_row_bytes, scalar},
@@ -23,8 +33,7 @@ use crate::{
 /// specification (range handling, matrix definitions, output layout).
 ///
 /// `use_simd = false` forces the scalar reference path, bypassing any
-/// SIMD backend. 4:1:1 currently has SIMD only on aarch64 / NEON;
-/// every other target lands on the scalar fallback.
+/// SIMD backend.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
 pub fn yuv_411_to_rgb_row(
@@ -37,10 +46,10 @@ pub fn yuv_411_to_rgb_row(
   full_range: bool,
   use_simd: bool,
 ) {
-  // Runtime asserts at the dispatcher boundary. The unsafe NEON
-  // kernel below relies on these invariants for pointer arithmetic,
+  // Runtime asserts at the dispatcher boundary. The unsafe SIMD
+  // kernels below rely on these invariants for pointer arithmetic,
   // so we validate in *release* builds too — not just under
-  // `debug_assert!`. The kernel keeps its own `debug_assert!`s as
+  // `debug_assert!`. Kernels keep their own `debug_assert!`s as
   // internal sanity checks. `rgb_min` uses `checked_mul` because
   // `3 * width` can wrap `usize` on 32-bit targets (wasm32, i686)
   // for extreme widths.
@@ -67,10 +76,53 @@ pub fn yuv_411_to_rgb_row(
           return;
         }
       },
-      // 4:1:1 SIMD coverage on x86_64 / wasm32 deferred — DV-NTSC
-      // legacy is rare enough that the scalar fallback's perf is
-      // adequate for the foreseeable future.
-      _ => {}
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: `avx512_available()` verified AVX-512BW is present.
+          unsafe {
+            arch::x86_avx512::yuv_411_to_rgb_row(
+              y, u_quarter, v_quarter, rgb_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: `avx2_available()` verified AVX2 is present.
+          unsafe {
+            arch::x86_avx2::yuv_411_to_rgb_row(
+              y, u_quarter, v_quarter, rgb_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: `sse41_available()` verified SSE4.1 is present.
+          unsafe {
+            arch::x86_sse41::yuv_411_to_rgb_row(
+              y, u_quarter, v_quarter, rgb_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: `simd128_available()` (compile-time
+          // `cfg!(target_feature = "simd128")`) verified that simd128
+          // is on. WASM has no runtime detection — the module's SIMD
+          // support is fixed at produce-time.
+          unsafe {
+            arch::wasm_simd128::yuv_411_to_rgb_row(
+              y, u_quarter, v_quarter, rgb_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      _ => {
+        // Targets without a SIMD backend (riscv64, powerpc, …) fall
+        // through to the scalar path below.
+      }
     }
   }
 
@@ -115,6 +167,46 @@ pub fn yuv_411_to_rgba_row(
           // SAFETY: NEON verified present; bounds / parity asserted above.
           unsafe {
             arch::neon::yuv_411_to_rgba_row(
+              y, u_quarter, v_quarter, rgba_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512BW verified present.
+          unsafe {
+            arch::x86_avx512::yuv_411_to_rgba_row(
+              y, u_quarter, v_quarter, rgba_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified present.
+          unsafe {
+            arch::x86_avx2::yuv_411_to_rgba_row(
+              y, u_quarter, v_quarter, rgba_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified present.
+          unsafe {
+            arch::x86_sse41::yuv_411_to_rgba_row(
+              y, u_quarter, v_quarter, rgba_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile-time enabled.
+          unsafe {
+            arch::wasm_simd128::yuv_411_to_rgba_row(
               y, u_quarter, v_quarter, rgba_out, width, matrix, full_range,
             );
           }
