@@ -388,12 +388,126 @@ mod tests {
     as_le_u16(&buf)
   }
 
-  /// Convert an LE-encoded `Vec<u16>` (as built by `solid_y210`) into the
-  /// BE-encoded form of the same logical values by swapping bytes element-
-  /// wise. On both LE and BE hosts the result is bytes-stored-as-BE for the
-  /// same intended logical values as the input.
-  fn to_be_u16(le: &[u16]) -> std::vec::Vec<u16> {
-    le.iter().map(|&v| v.swap_bytes()).collect()
+  /// Re-encode a host-native u16 slice as BE-encoded byte storage. Mirror of
+  /// `as_le_u16` for kernels invoked with `BE = true`. Combined with
+  /// `as_le_u16`, lets a single host-native `intended` fixture drive both
+  /// `<_, false>` and `<_, true>` kernel paths so they decode the same
+  /// logical values on every host.
+  fn as_be_u16(host: &[u16]) -> std::vec::Vec<u16> {
+    host
+      .iter()
+      .map(|v| u16::from_ne_bytes(v.to_be_bytes()))
+      .collect()
+  }
+
+  /// Build the host-native intended Y210 row corresponding to `solid_y210`.
+  /// Width must be even.
+  fn solid_y210_intended(width: usize, y: u16, u: u16, v: u16) -> std::vec::Vec<u16> {
+    let mut buf = std::vec::Vec::with_capacity(width * 2);
+    for _ in 0..(width / 2) {
+      buf.extend_from_slice(&y210_quad(y, u, y, v));
+    }
+    buf
+  }
+
+  // -- Scalar references for the BE-parity tests --
+  //
+  // Walk host-native `intended` Y2xx buffers (laid out as YUYV `u16`
+  // quadruples, BITS-aligned with `(16 - BITS)` low bits zero) and reproduce
+  // each kernel's documented behaviour without going through any byte-order
+  // conversion. Pinning the LE / BE outputs against these absolute references
+  // prevents the parity assertion from passing in lock-step on two equally
+  // corrupt decode paths.
+
+  fn ref_y2xx_to_rgb_u8<const BITS: u32>(
+    intended: &[u16],
+    width: usize,
+    matrix: ColorMatrix,
+    full_range: bool,
+  ) -> std::vec::Vec<u8> {
+    let coeffs = Coefficients::for_matrix(matrix);
+    let (y_off, y_scale, c_scale) = range_params_n::<BITS, 8>(full_range);
+    let bias = chroma_bias::<BITS>();
+    let pairs = width / 2;
+    let mut out = std::vec![0u8; width * 3];
+    for p in 0..pairs {
+      let off4 = p * 4;
+      let y0 = (intended[off4] >> (16 - BITS)) as i32;
+      let u = (intended[off4 + 1] >> (16 - BITS)) as i32;
+      let y1 = (intended[off4 + 2] >> (16 - BITS)) as i32;
+      let v = (intended[off4 + 3] >> (16 - BITS)) as i32;
+      let u_d = q15_scale(u - bias, c_scale);
+      let v_d = q15_scale(v - bias, c_scale);
+      let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
+      let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
+      let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
+      for (k, &y) in [y0, y1].iter().enumerate() {
+        let y_s = q15_scale(y - y_off, y_scale);
+        let off = (p * 2 + k) * 3;
+        out[off] = clamp_u8(y_s + r_chroma);
+        out[off + 1] = clamp_u8(y_s + g_chroma);
+        out[off + 2] = clamp_u8(y_s + b_chroma);
+      }
+    }
+    out
+  }
+
+  fn ref_y2xx_to_rgb_u16<const BITS: u32>(
+    intended: &[u16],
+    width: usize,
+    matrix: ColorMatrix,
+    full_range: bool,
+  ) -> std::vec::Vec<u16> {
+    let coeffs = Coefficients::for_matrix(matrix);
+    let (y_off, y_scale, c_scale) = range_params_n::<BITS, BITS>(full_range);
+    let bias = chroma_bias::<BITS>();
+    let out_max: i32 = (1i32 << BITS) - 1;
+    let pairs = width / 2;
+    let mut out = std::vec![0u16; width * 3];
+    for p in 0..pairs {
+      let off4 = p * 4;
+      let y0 = (intended[off4] >> (16 - BITS)) as i32;
+      let u = (intended[off4 + 1] >> (16 - BITS)) as i32;
+      let y1 = (intended[off4 + 2] >> (16 - BITS)) as i32;
+      let v = (intended[off4 + 3] >> (16 - BITS)) as i32;
+      let u_d = q15_scale(u - bias, c_scale);
+      let v_d = q15_scale(v - bias, c_scale);
+      let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
+      let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
+      let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
+      for (k, &y) in [y0, y1].iter().enumerate() {
+        let y_s = q15_scale(y - y_off, y_scale);
+        let off = (p * 2 + k) * 3;
+        out[off] = (y_s + r_chroma).clamp(0, out_max) as u16;
+        out[off + 1] = (y_s + g_chroma).clamp(0, out_max) as u16;
+        out[off + 2] = (y_s + b_chroma).clamp(0, out_max) as u16;
+      }
+    }
+    out
+  }
+
+  fn ref_y2xx_to_luma<const BITS: u32>(intended: &[u16], width: usize) -> std::vec::Vec<u8> {
+    let pairs = width / 2;
+    let mut out = std::vec![0u8; width];
+    for p in 0..pairs {
+      let off4 = p * 4;
+      let y0 = intended[off4] >> (16 - BITS);
+      let y1 = intended[off4 + 2] >> (16 - BITS);
+      out[p * 2] = (y0 >> (BITS - 8)) as u8;
+      out[p * 2 + 1] = (y1 >> (BITS - 8)) as u8;
+    }
+    out
+  }
+
+  fn ref_y2xx_to_luma_u16<const BITS: u32>(intended: &[u16], width: usize) -> std::vec::Vec<u16> {
+    let pairs = width / 2;
+    let mut out = std::vec![0u16; width];
+    for p in 0..pairs {
+      let off4 = p * 4;
+      out[p * 2] = intended[off4] >> (16 - BITS);
+      out[p * 2 + 1] = intended[off4 + 2] >> (16 - BITS);
+    }
+    out
   }
 
   #[test]
@@ -487,62 +601,102 @@ mod tests {
   }
 
   // ---- BE=true parity tests -------------------------------------------
+  //
+  // Pattern: build a single host-native `intended` Y210 row, materialise it as
+  // LE-encoded bytes via `as_le_u16` and BE-encoded bytes via `as_be_u16`,
+  // run both `<_, false>` and `<_, true>` kernels, and pin each output against
+  // an absolute scalar reference so the parity assertion cannot pass on two
+  // equally corrupt decodes.
 
-  /// Verify that byte-swapped Y210 input + BE=true produces the same
-  /// RGB output as the native LE input + BE=false.
   #[test]
   fn scalar_y210_be_rgb_matches_le() {
-    let le = solid_y210(8, 512, 512, 512);
-    let be = to_be_u16(&le);
+    let intended = solid_y210_intended(8, 512, 512, 512);
+    let le = as_le_u16(&intended);
+    let be = as_be_u16(&intended);
     let mut rgb_le = [0u8; 8 * 3];
     let mut rgb_be = [0u8; 8 * 3];
     y210_to_rgb_or_rgba_row::<false, false>(&le, &mut rgb_le, 8, ColorMatrix::Bt709, true);
     y210_to_rgb_or_rgba_row::<false, true>(&be, &mut rgb_be, 8, ColorMatrix::Bt709, true);
+    let expected = ref_y2xx_to_rgb_u8::<10>(&intended, 8, ColorMatrix::Bt709, true);
     assert_eq!(
-      rgb_le, rgb_be,
-      "BE and LE paths must produce identical output"
+      rgb_le.as_slice(),
+      expected,
+      "LE path must match scalar reference"
     );
+    assert_eq!(
+      rgb_be.as_slice(),
+      expected,
+      "BE path must match scalar reference"
+    );
+    assert_eq!(rgb_le, rgb_be, "BE and LE outputs must agree");
   }
 
   #[test]
   fn scalar_y210_be_rgb_u16_matches_le() {
-    let le = solid_y210(8, 512, 512, 512);
-    let be = to_be_u16(&le);
+    let intended = solid_y210_intended(8, 512, 512, 512);
+    let le = as_le_u16(&intended);
+    let be = as_be_u16(&intended);
     let mut out_le = [0u16; 8 * 3];
     let mut out_be = [0u16; 8 * 3];
     y210_to_rgb_u16_or_rgba_u16_row::<false, false>(&le, &mut out_le, 8, ColorMatrix::Bt709, true);
     y210_to_rgb_u16_or_rgba_u16_row::<false, true>(&be, &mut out_be, 8, ColorMatrix::Bt709, true);
+    let expected = ref_y2xx_to_rgb_u16::<10>(&intended, 8, ColorMatrix::Bt709, true);
     assert_eq!(
-      out_le, out_be,
-      "BE and LE u16 paths must produce identical output"
+      out_le.as_slice(),
+      expected,
+      "LE path must match scalar reference"
     );
+    assert_eq!(
+      out_be.as_slice(),
+      expected,
+      "BE path must match scalar reference"
+    );
+    assert_eq!(out_le, out_be, "BE and LE u16 outputs must agree");
   }
 
   #[test]
   fn scalar_y210_be_luma_matches_le() {
-    let le = solid_y210(8, 512, 512, 512);
-    let be = to_be_u16(&le);
+    let intended = solid_y210_intended(8, 512, 512, 512);
+    let le = as_le_u16(&intended);
+    let be = as_be_u16(&intended);
     let mut luma_le = [0u8; 8];
     let mut luma_be = [0u8; 8];
     y210_to_luma_row::<false>(&le, &mut luma_le, 8);
     y210_to_luma_row::<true>(&be, &mut luma_be, 8);
+    let expected = ref_y2xx_to_luma::<10>(&intended, 8);
     assert_eq!(
-      luma_le, luma_be,
-      "BE and LE luma paths must produce identical output"
+      luma_le.as_slice(),
+      expected,
+      "LE path must match scalar reference"
     );
+    assert_eq!(
+      luma_be.as_slice(),
+      expected,
+      "BE path must match scalar reference"
+    );
+    assert_eq!(luma_le, luma_be, "BE and LE luma outputs must agree");
   }
 
   #[test]
   fn scalar_y210_be_luma_u16_matches_le() {
-    let le = solid_y210(8, 512, 512, 512);
-    let be = to_be_u16(&le);
+    let intended = solid_y210_intended(8, 512, 512, 512);
+    let le = as_le_u16(&intended);
+    let be = as_be_u16(&intended);
     let mut luma_le = [0u16; 8];
     let mut luma_be = [0u16; 8];
     y210_to_luma_u16_row::<false>(&le, &mut luma_le, 8);
     y210_to_luma_u16_row::<true>(&be, &mut luma_be, 8);
+    let expected = ref_y2xx_to_luma_u16::<10>(&intended, 8);
     assert_eq!(
-      luma_le, luma_be,
-      "BE and LE luma_u16 paths must produce identical output"
+      luma_le.as_slice(),
+      expected,
+      "LE path must match scalar reference"
     );
+    assert_eq!(
+      luma_be.as_slice(),
+      expected,
+      "BE path must match scalar reference"
+    );
+    assert_eq!(luma_le, luma_be, "BE and LE luma_u16 outputs must agree");
   }
 }
