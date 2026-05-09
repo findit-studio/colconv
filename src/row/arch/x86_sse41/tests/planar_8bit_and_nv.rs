@@ -1093,3 +1093,120 @@ fn nv21_sse41_rgba_matches_scalar_widths() {
     check_nv21_rgba_equivalence(w, ColorMatrix::Bt601, false);
   }
 }
+
+// ---- yuv_410_to_rgb_row / yuv_410_to_rgba_row equivalence ------------
+//
+// SSE4.1 4:1:0 parity with scalar — same Q15 sequence as the 4:2:0
+// kernel, just 4× chroma duplication via two-pass `_mm_unpack*_epi16`
+// cascade instead of a single unpack. Width must be a multiple of 4.
+
+fn check_yuv_410_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
+  let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
+  let cw = width / 4;
+  let u: std::vec::Vec<u8> = (0..cw).map(|i| ((i * 53 + 23) & 0xFF) as u8).collect();
+  let v: std::vec::Vec<u8> = (0..cw).map(|i| ((i * 71 + 91) & 0xFF) as u8).collect();
+  let mut rgb_scalar = std::vec![0u8; width * 3];
+  let mut rgb_sse41 = std::vec![0u8; width * 3];
+
+  scalar::yuv_410_to_rgb_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
+  unsafe {
+    yuv_410_to_rgb_row(&y, &u, &v, &mut rgb_sse41, width, matrix, full_range);
+  }
+
+  if rgb_scalar != rgb_sse41 {
+    let first_diff = rgb_scalar
+      .iter()
+      .zip(rgb_sse41.iter())
+      .position(|(a, b)| a != b)
+      .unwrap();
+    panic!(
+      "SSE4.1 yuv_410 diverges from scalar at byte {first_diff} (width={width}, matrix={matrix:?}, full_range={full_range}): scalar={} sse41={}",
+      rgb_scalar[first_diff], rgb_sse41[first_diff]
+    );
+  }
+}
+
+#[test]
+fn yuv_410_sse41_matches_scalar_all_matrices_16() {
+  if !std::arch::is_x86_feature_detected!("sse4.1") {
+    return;
+  }
+  for m in [
+    ColorMatrix::Bt601,
+    ColorMatrix::Bt709,
+    ColorMatrix::Bt2020Ncl,
+    ColorMatrix::Smpte240m,
+    ColorMatrix::Fcc,
+    ColorMatrix::YCgCo,
+  ] {
+    for full in [true, false] {
+      check_yuv_410_equivalence(16, m, full);
+    }
+  }
+}
+
+#[test]
+fn yuv_410_sse41_matches_scalar_widths() {
+  if !std::arch::is_x86_feature_detected!("sse4.1") {
+    return;
+  }
+  // Multiples of 4: pure scalar (4, 8, 12), exactly one SIMD iter (16),
+  // SIMD + tail (20, 28), multi-iter (32, 64), large (1920).
+  for &w in &[4usize, 8, 12, 16, 20, 28, 32, 64, 128, 1920] {
+    check_yuv_410_equivalence(w, ColorMatrix::Bt601, true);
+    check_yuv_410_equivalence(w, ColorMatrix::Bt709, false);
+  }
+}
+
+#[test]
+fn yuv_410_sse41_matches_scalar_bt2020() {
+  if !std::arch::is_x86_feature_detected!("sse4.1") {
+    return;
+  }
+  for &w in &[16usize, 20, 64, 1920] {
+    check_yuv_410_equivalence(w, ColorMatrix::Bt2020Ncl, false);
+    check_yuv_410_equivalence(w, ColorMatrix::Bt2020Ncl, true);
+  }
+}
+
+fn check_yuv_410_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
+  let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
+  let cw = width / 4;
+  let u: std::vec::Vec<u8> = (0..cw).map(|i| ((i * 53 + 23) & 0xFF) as u8).collect();
+  let v: std::vec::Vec<u8> = (0..cw).map(|i| ((i * 71 + 91) & 0xFF) as u8).collect();
+  let mut rgba_scalar = std::vec![0u8; width * 4];
+  let mut rgba_sse41 = std::vec![0u8; width * 4];
+
+  scalar::yuv_410_to_rgba_row(&y, &u, &v, &mut rgba_scalar, width, matrix, full_range);
+  unsafe {
+    yuv_410_to_rgba_row(&y, &u, &v, &mut rgba_sse41, width, matrix, full_range);
+  }
+
+  if rgba_scalar != rgba_sse41 {
+    let first_diff = rgba_scalar
+      .iter()
+      .zip(rgba_sse41.iter())
+      .position(|(a, b)| a != b)
+      .unwrap();
+    panic!(
+      "SSE4.1 yuv_410 RGBA diverges from scalar at byte {first_diff} (width={width}, matrix={matrix:?}, full_range={full_range}): scalar={} sse41={}",
+      rgba_scalar[first_diff], rgba_sse41[first_diff]
+    );
+  }
+
+  // Alpha must always be 0xFF (Yuv410p has no alpha plane).
+  for (i, px) in rgba_sse41.chunks(4).enumerate() {
+    assert_eq!(px[3], 0xFF, "alpha at pixel {i} must be 0xFF");
+  }
+}
+
+#[test]
+fn yuv_410_sse41_rgba_matches_scalar_widths() {
+  if !std::arch::is_x86_feature_detected!("sse4.1") {
+    return;
+  }
+  for &w in &[4usize, 8, 16, 20, 32, 64, 128] {
+    check_yuv_410_rgba_equivalence(w, ColorMatrix::Bt601, true);
+    check_yuv_410_rgba_equivalence(w, ColorMatrix::YCgCo, false);
+  }
+}

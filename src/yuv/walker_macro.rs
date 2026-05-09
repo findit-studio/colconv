@@ -455,9 +455,11 @@ macro_rules! walker {
 
   // ===== Internal sub-rules ================================================
 
-  // chroma_v selector: `half` → `row / 2` (4:2:0/4:4:0); `full` → `row`.
+  // chroma_v selector: `half` → `row / 2` (4:2:0/4:4:0); `full` → `row`;
+  // `quarter` → `row / 4` (4:1:0 — chroma row covers 4 consecutive Y rows).
   (@chroma_row half $row:expr) => { $row / 2 };
   (@chroma_row full $row:expr) => { $row };
+  (@chroma_row quarter $row:expr) => { $row / 4 };
 
   // ---------- planar3 emitters: half (u_half/v_half) -----------------------
   (@p3_emit half
@@ -572,6 +574,131 @@ macro_rules! walker {
         let v_half = &v_plane[v_start..v_start + chroma_width];
 
         sink.process($row::new(y, u_half, v_half, row, matrix, full_range))?;
+      }
+      Ok(())
+    }
+  };
+
+  // ---------- planar3 emitters: quarter (u_quarter/v_quarter) ------------
+  //
+  // Used by YUV 4:1:0 (Yuv410p) — chroma is subsampled 4:1 in width.
+  // Each chroma sample covers four adjacent Y columns; one chroma row
+  // covers four Y rows when `chroma_v: quarter` is also set, but
+  // the row carrier itself is independent of the vertical sampling
+  // (the walker handles that via `@chroma_row`).
+  (@p3_emit quarter
+    $(#[$marker_meta:meta])*
+    marker: $marker:ident,
+    frame: $frame:ty,
+    row: $row:ident,
+    sink: $sink:ident,
+    walker: $walker:ident,
+    elem_type: $elem:ty,
+    chroma_v: $chroma_v:tt,
+    $(#[$row_meta:meta])*
+    row_doc: $row_doc:expr,
+    $(#[$walker_meta:meta])*
+    walker_doc: $walker_doc:expr,
+  ) => {
+    $(#[$marker_meta])*
+    pub struct $marker;
+
+    impl $crate::sealed::Sealed for $marker {}
+    impl $crate::SourceFormat for $marker {}
+
+    $(#[$row_meta])*
+    #[doc = $row_doc]
+    #[derive(Debug, Clone, Copy)]
+    pub struct $row<'a> {
+      y: &'a [$elem],
+      u_quarter: &'a [$elem],
+      v_quarter: &'a [$elem],
+      row: usize,
+      matrix: $crate::ColorMatrix,
+      full_range: bool,
+    }
+
+    impl<'a> $row<'a> {
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      #[allow(clippy::too_many_arguments)]
+      pub(crate) fn new(
+        y: &'a [$elem],
+        u_quarter: &'a [$elem],
+        v_quarter: &'a [$elem],
+        row: usize,
+        matrix: $crate::ColorMatrix,
+        full_range: bool,
+      ) -> Self {
+        Self { y, u_quarter, v_quarter, row, matrix, full_range }
+      }
+      /// Full-width Y (luma) row.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn y(&self) -> &'a [$elem] {
+        self.y
+      }
+      /// Quarter-width U (Cb) row — `width / 4` samples. Each sample
+      /// is duplicated across 4 adjacent Y columns by the kernel.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn u_quarter(&self) -> &'a [$elem] {
+        self.u_quarter
+      }
+      /// Quarter-width V (Cr) row — `width / 4` samples.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn v_quarter(&self) -> &'a [$elem] {
+        self.v_quarter
+      }
+      /// Output row index within the frame.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn row(&self) -> usize {
+        self.row
+      }
+      /// YUV → RGB matrix carried through from the kernel call.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn matrix(&self) -> $crate::ColorMatrix {
+        self.matrix
+      }
+      /// Full-range flag carried through from the kernel call.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn full_range(&self) -> bool {
+        self.full_range
+      }
+    }
+
+    /// Sinks that consume rows of this source format.
+    pub trait $sink: for<'a> $crate::PixelSink<Input<'a> = $row<'a>> {}
+
+    $(#[$walker_meta])*
+    #[doc = $walker_doc]
+    pub fn $walker<S: $sink>(
+      src: &$frame,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error> {
+      sink.begin_frame(src.width(), src.height())?;
+
+      let w = src.width() as usize;
+      let h = src.height() as usize;
+      let y_stride = src.y_stride() as usize;
+      let u_stride = src.u_stride() as usize;
+      let v_stride = src.v_stride() as usize;
+      let chroma_width = w / 4;
+
+      let y_plane = src.y();
+      let u_plane = src.u();
+      let v_plane = src.v();
+
+      for row in 0..h {
+        let y_start = row * y_stride;
+        let y = &y_plane[y_start..y_start + w];
+
+        let chroma_row = walker!(@chroma_row $chroma_v row);
+        let u_start = chroma_row * u_stride;
+        let v_start = chroma_row * v_stride;
+        let u_quarter = &u_plane[u_start..u_start + chroma_width];
+        let v_quarter = &v_plane[v_start..v_start + chroma_width];
+
+        sink.process($row::new(y, u_quarter, v_quarter, row, matrix, full_range))?;
       }
       Ok(())
     }
