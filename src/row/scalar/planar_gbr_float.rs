@@ -595,14 +595,7 @@ mod tests {
   use super::*;
   use crate::ColorMatrix;
 
-  // ---- helper: byte-swap a slice of f32 to simulate BE source ----------------
-
-  fn be_encode(src: &[f32]) -> std::vec::Vec<f32> {
-    src
-      .iter()
-      .map(|v| f32::from_bits(v.to_bits().swap_bytes()))
-      .collect()
-  }
+  // ---- helpers: host-independent f32 LE / BE byte-storage encoders -----------
 
   /// Re-encode a host-native f32 slice as LE-encoded f32 storage. Kernels
   /// called with `BE = false` recover the intended host-native value via
@@ -612,6 +605,289 @@ mod tests {
       .iter()
       .map(|v| f32::from_bits(u32::from_ne_bytes(v.to_bits().to_le_bytes())))
       .collect()
+  }
+
+  /// Mirror of `as_le_f32` for kernels invoked with `BE = true`. Combined
+  /// with `as_le_f32`, lets a single host-native `intended` fixture drive
+  /// both `<false>` and `<true>` kernel paths so they decode the same logical
+  /// bit pattern on every host.
+  fn as_be_f32(host: &[f32]) -> std::vec::Vec<f32> {
+    host
+      .iter()
+      .map(|v| f32::from_bits(u32::from_ne_bytes(v.to_bits().to_be_bytes())))
+      .collect()
+  }
+
+  // -- Scalar references for the BE-parity tests --
+  //
+  // Walk host-native `intended` G/B/R(/A) planes and reproduce each kernel's
+  // documented behaviour without going through any byte-order conversion.
+  // Pinning the LE / BE outputs against these absolute references prevents
+  // the parity assertion from passing in lock-step on two equally corrupt
+  // decode paths. The references mirror the in-source kernel logic bit-for-
+  // bit (clamp, round-half-up, channel reorder, fused narrow) so they can
+  // pin the kernel outputs absolutely.
+
+  fn ref_gbrpf32_to_rgb_u8(g: &[f32], b: &[f32], r: &[f32], width: usize) -> std::vec::Vec<u8> {
+    let mut out = std::vec![0u8; width * 3];
+    for x in 0..width {
+      let dst = x * 3;
+      out[dst] = f32_to_u8(r[x]);
+      out[dst + 1] = f32_to_u8(g[x]);
+      out[dst + 2] = f32_to_u8(b[x]);
+    }
+    out
+  }
+
+  fn ref_gbrpf32_to_rgba_u8(g: &[f32], b: &[f32], r: &[f32], width: usize) -> std::vec::Vec<u8> {
+    let mut out = std::vec![0u8; width * 4];
+    for x in 0..width {
+      let dst = x * 4;
+      out[dst] = f32_to_u8(r[x]);
+      out[dst + 1] = f32_to_u8(g[x]);
+      out[dst + 2] = f32_to_u8(b[x]);
+      out[dst + 3] = 0xFF;
+    }
+    out
+  }
+
+  fn ref_gbrpf32_to_rgb_u16(g: &[f32], b: &[f32], r: &[f32], width: usize) -> std::vec::Vec<u16> {
+    let mut out = std::vec![0u16; width * 3];
+    for x in 0..width {
+      let dst = x * 3;
+      out[dst] = f32_to_u16(r[x]);
+      out[dst + 1] = f32_to_u16(g[x]);
+      out[dst + 2] = f32_to_u16(b[x]);
+    }
+    out
+  }
+
+  fn ref_gbrpf32_to_rgba_u16(g: &[f32], b: &[f32], r: &[f32], width: usize) -> std::vec::Vec<u16> {
+    let mut out = std::vec![0u16; width * 4];
+    for x in 0..width {
+      let dst = x * 4;
+      out[dst] = f32_to_u16(r[x]);
+      out[dst + 1] = f32_to_u16(g[x]);
+      out[dst + 2] = f32_to_u16(b[x]);
+      out[dst + 3] = 0xFFFF;
+    }
+    out
+  }
+
+  fn ref_gbrpf32_to_rgb_f32(g: &[f32], b: &[f32], r: &[f32], width: usize) -> std::vec::Vec<f32> {
+    let mut out = std::vec![0.0f32; width * 3];
+    for x in 0..width {
+      let dst = x * 3;
+      out[dst] = r[x];
+      out[dst + 1] = g[x];
+      out[dst + 2] = b[x];
+    }
+    out
+  }
+
+  fn ref_gbrpf32_to_rgba_f32(g: &[f32], b: &[f32], r: &[f32], width: usize) -> std::vec::Vec<f32> {
+    let mut out = std::vec![0.0f32; width * 4];
+    for x in 0..width {
+      let dst = x * 4;
+      out[dst] = r[x];
+      out[dst + 1] = g[x];
+      out[dst + 2] = b[x];
+      out[dst + 3] = 1.0;
+    }
+    out
+  }
+
+  fn ref_gbrpf32_to_rgb_f16(
+    g: &[f32],
+    b: &[f32],
+    r: &[f32],
+    width: usize,
+  ) -> std::vec::Vec<half::f16> {
+    let mut out = std::vec![half::f16::ZERO; width * 3];
+    for x in 0..width {
+      let dst = x * 3;
+      out[dst] = f32_to_f16(r[x]);
+      out[dst + 1] = f32_to_f16(g[x]);
+      out[dst + 2] = f32_to_f16(b[x]);
+    }
+    out
+  }
+
+  fn ref_gbrpf32_to_rgba_f16(
+    g: &[f32],
+    b: &[f32],
+    r: &[f32],
+    width: usize,
+  ) -> std::vec::Vec<half::f16> {
+    let mut out = std::vec![half::f16::ZERO; width * 4];
+    let one = half::f16::from_f32(1.0);
+    for x in 0..width {
+      let dst = x * 4;
+      out[dst] = f32_to_f16(r[x]);
+      out[dst + 1] = f32_to_f16(g[x]);
+      out[dst + 2] = f32_to_f16(b[x]);
+      out[dst + 3] = one;
+    }
+    out
+  }
+
+  /// Reference for `gbrpf32_to_luma_row`: stage through u8 RGB scratch in
+  /// chunks of 64, then `super::rgb_to_luma_row`. Mirrors the kernel exactly
+  /// so the staged-rounding behaviour is reproduced.
+  fn ref_gbrpf32_to_luma(
+    g: &[f32],
+    b: &[f32],
+    r: &[f32],
+    width: usize,
+    matrix: ColorMatrix,
+    full_range: bool,
+  ) -> std::vec::Vec<u8> {
+    let mut luma = std::vec![0u8; width];
+    const CHUNK: usize = 64;
+    let mut scratch = [0u8; CHUNK * 3];
+    let mut offset = 0;
+    while offset < width {
+      let n = (width - offset).min(CHUNK);
+      let rgb = ref_gbrpf32_to_rgb_u8(&g[offset..], &b[offset..], &r[offset..], n);
+      scratch[..n * 3].copy_from_slice(&rgb);
+      super::super::rgb_to_luma_row(
+        &scratch[..n * 3],
+        &mut luma[offset..offset + n],
+        n,
+        matrix,
+        full_range,
+      );
+      offset += n;
+    }
+    luma
+  }
+
+  fn ref_gbrpf32_to_luma_u16(
+    g: &[f32],
+    b: &[f32],
+    r: &[f32],
+    width: usize,
+    matrix: ColorMatrix,
+    full_range: bool,
+  ) -> std::vec::Vec<u16> {
+    let mut luma = std::vec![0u16; width];
+    const CHUNK: usize = 64;
+    let mut scratch = [0u8; CHUNK * 3];
+    let mut offset = 0;
+    while offset < width {
+      let n = (width - offset).min(CHUNK);
+      let rgb = ref_gbrpf32_to_rgb_u8(&g[offset..], &b[offset..], &r[offset..], n);
+      scratch[..n * 3].copy_from_slice(&rgb);
+      super::super::rgb_to_luma_u16_row(
+        &scratch[..n * 3],
+        &mut luma[offset..offset + n],
+        n,
+        matrix,
+        full_range,
+      );
+      offset += n;
+    }
+    luma
+  }
+
+  fn ref_gbrpf32_to_hsv(
+    g: &[f32],
+    b: &[f32],
+    r: &[f32],
+    width: usize,
+  ) -> (std::vec::Vec<u8>, std::vec::Vec<u8>, std::vec::Vec<u8>) {
+    let mut h = std::vec![0u8; width];
+    let mut s = std::vec![0u8; width];
+    let mut v = std::vec![0u8; width];
+    const CHUNK: usize = 64;
+    let mut scratch = [0u8; CHUNK * 3];
+    let mut offset = 0;
+    while offset < width {
+      let n = (width - offset).min(CHUNK);
+      let rgb = ref_gbrpf32_to_rgb_u8(&g[offset..], &b[offset..], &r[offset..], n);
+      scratch[..n * 3].copy_from_slice(&rgb);
+      super::super::rgb_to_hsv_row(
+        &scratch[..n * 3],
+        &mut h[offset..offset + n],
+        &mut s[offset..offset + n],
+        &mut v[offset..offset + n],
+        n,
+      );
+      offset += n;
+    }
+    (h, s, v)
+  }
+
+  fn ref_gbrapf32_to_rgba_u8(
+    g: &[f32],
+    b: &[f32],
+    r: &[f32],
+    a: &[f32],
+    width: usize,
+  ) -> std::vec::Vec<u8> {
+    let mut out = std::vec![0u8; width * 4];
+    for x in 0..width {
+      let dst = x * 4;
+      out[dst] = f32_to_u8(r[x]);
+      out[dst + 1] = f32_to_u8(g[x]);
+      out[dst + 2] = f32_to_u8(b[x]);
+      out[dst + 3] = f32_to_u8(a[x]);
+    }
+    out
+  }
+
+  fn ref_gbrapf32_to_rgba_u16(
+    g: &[f32],
+    b: &[f32],
+    r: &[f32],
+    a: &[f32],
+    width: usize,
+  ) -> std::vec::Vec<u16> {
+    let mut out = std::vec![0u16; width * 4];
+    for x in 0..width {
+      let dst = x * 4;
+      out[dst] = f32_to_u16(r[x]);
+      out[dst + 1] = f32_to_u16(g[x]);
+      out[dst + 2] = f32_to_u16(b[x]);
+      out[dst + 3] = f32_to_u16(a[x]);
+    }
+    out
+  }
+
+  fn ref_gbrapf32_to_rgba_f32(
+    g: &[f32],
+    b: &[f32],
+    r: &[f32],
+    a: &[f32],
+    width: usize,
+  ) -> std::vec::Vec<f32> {
+    let mut out = std::vec![0.0f32; width * 4];
+    for x in 0..width {
+      let dst = x * 4;
+      out[dst] = r[x];
+      out[dst + 1] = g[x];
+      out[dst + 2] = b[x];
+      out[dst + 3] = a[x];
+    }
+    out
+  }
+
+  fn ref_gbrapf32_to_rgba_f16(
+    g: &[f32],
+    b: &[f32],
+    r: &[f32],
+    a: &[f32],
+    width: usize,
+  ) -> std::vec::Vec<half::f16> {
+    let mut out = std::vec![half::f16::ZERO; width * 4];
+    for x in 0..width {
+      let dst = x * 4;
+      out[dst] = f32_to_f16(r[x]);
+      out[dst + 1] = f32_to_f16(g[x]);
+      out[dst + 2] = f32_to_f16(b[x]);
+      out[dst + 3] = f32_to_f16(a[x]);
+    }
+    out
   }
 
   // ---- gbrpf32_to_rgb_row --------------------------------------------------
@@ -650,17 +926,25 @@ mod tests {
 
   #[test]
   fn gbrpf32_to_rgb_be_parity() {
-    // BE-encoded source must decode to same output as LE source.
-    let g = [0.0f32, 0.25, 0.5, 1.0];
-    let b = [0.1f32, 0.3, 0.7, 0.9];
-    let r = [0.5f32, 0.8, 0.2, 0.6];
-    let g_be = be_encode(&g);
-    let b_be = be_encode(&b);
-    let r_be = be_encode(&r);
+    // Build host-native intended planes; materialise as LE / BE byte storage
+    // so each kernel's `from_le` / `from_be` recovers the same logical bits
+    // on every host. Pin both outputs against an absolute scalar reference.
+    let g_intended = [0.0f32, 0.25, 0.5, 1.0];
+    let b_intended = [0.1f32, 0.3, 0.7, 0.9];
+    let r_intended = [0.5f32, 0.8, 0.2, 0.6];
+    let g_le = as_le_f32(&g_intended);
+    let b_le = as_le_f32(&b_intended);
+    let r_le = as_le_f32(&r_intended);
+    let g_be = as_be_f32(&g_intended);
+    let b_be = as_be_f32(&b_intended);
+    let r_be = as_be_f32(&r_intended);
     let mut le_out = std::vec![0u8; 4 * 3];
     let mut be_out = std::vec![0u8; 4 * 3];
-    gbrpf32_to_rgb_row::<false>(&g, &b, &r, &mut le_out, 4);
+    gbrpf32_to_rgb_row::<false>(&g_le, &b_le, &r_le, &mut le_out, 4);
     gbrpf32_to_rgb_row::<true>(&g_be, &b_be, &r_be, &mut be_out, 4);
+    let expected = ref_gbrpf32_to_rgb_u8(&g_intended, &b_intended, &r_intended, 4);
+    assert_eq!(le_out, expected, "LE path must match scalar reference");
+    assert_eq!(be_out, expected, "BE path must match scalar reference");
     assert_eq!(be_out, le_out, "BE gbrpf32_to_rgb_row must match LE");
   }
 
@@ -693,16 +977,22 @@ mod tests {
 
   #[test]
   fn gbrpf32_to_rgba_be_parity() {
-    let g = [0.0f32, 0.25, 0.5, 1.0];
-    let b = [0.1f32, 0.3, 0.7, 0.9];
-    let r = [0.5f32, 0.8, 0.2, 0.6];
-    let g_be = be_encode(&g);
-    let b_be = be_encode(&b);
-    let r_be = be_encode(&r);
+    let g_intended = [0.0f32, 0.25, 0.5, 1.0];
+    let b_intended = [0.1f32, 0.3, 0.7, 0.9];
+    let r_intended = [0.5f32, 0.8, 0.2, 0.6];
+    let g_le = as_le_f32(&g_intended);
+    let b_le = as_le_f32(&b_intended);
+    let r_le = as_le_f32(&r_intended);
+    let g_be = as_be_f32(&g_intended);
+    let b_be = as_be_f32(&b_intended);
+    let r_be = as_be_f32(&r_intended);
     let mut le_out = std::vec![0u8; 4 * 4];
     let mut be_out = std::vec![0u8; 4 * 4];
-    gbrpf32_to_rgba_row::<false>(&g, &b, &r, &mut le_out, 4);
+    gbrpf32_to_rgba_row::<false>(&g_le, &b_le, &r_le, &mut le_out, 4);
     gbrpf32_to_rgba_row::<true>(&g_be, &b_be, &r_be, &mut be_out, 4);
+    let expected = ref_gbrpf32_to_rgba_u8(&g_intended, &b_intended, &r_intended, 4);
+    assert_eq!(le_out, expected, "LE path must match scalar reference");
+    assert_eq!(be_out, expected, "BE path must match scalar reference");
     assert_eq!(be_out, le_out, "BE gbrpf32_to_rgba_row must match LE");
   }
 
@@ -728,16 +1018,22 @@ mod tests {
 
   #[test]
   fn gbrpf32_to_rgb_u16_be_parity() {
-    let g = [0.0f32, 0.25, 0.5, 1.0];
-    let b = [0.1f32, 0.3, 0.7, 0.9];
-    let r = [0.5f32, 0.8, 0.2, 0.6];
-    let g_be = be_encode(&g);
-    let b_be = be_encode(&b);
-    let r_be = be_encode(&r);
+    let g_intended = [0.0f32, 0.25, 0.5, 1.0];
+    let b_intended = [0.1f32, 0.3, 0.7, 0.9];
+    let r_intended = [0.5f32, 0.8, 0.2, 0.6];
+    let g_le = as_le_f32(&g_intended);
+    let b_le = as_le_f32(&b_intended);
+    let r_le = as_le_f32(&r_intended);
+    let g_be = as_be_f32(&g_intended);
+    let b_be = as_be_f32(&b_intended);
+    let r_be = as_be_f32(&r_intended);
     let mut le_out = std::vec![0u16; 4 * 3];
     let mut be_out = std::vec![0u16; 4 * 3];
-    gbrpf32_to_rgb_u16_row::<false>(&g, &b, &r, &mut le_out, 4);
+    gbrpf32_to_rgb_u16_row::<false>(&g_le, &b_le, &r_le, &mut le_out, 4);
     gbrpf32_to_rgb_u16_row::<true>(&g_be, &b_be, &r_be, &mut be_out, 4);
+    let expected = ref_gbrpf32_to_rgb_u16(&g_intended, &b_intended, &r_intended, 4);
+    assert_eq!(le_out, expected, "LE path must match scalar reference");
+    assert_eq!(be_out, expected, "BE path must match scalar reference");
     assert_eq!(be_out, le_out, "BE gbrpf32_to_rgb_u16_row must match LE");
   }
 
@@ -755,16 +1051,22 @@ mod tests {
 
   #[test]
   fn gbrpf32_to_rgba_u16_be_parity() {
-    let g = [0.0f32, 0.25, 0.5, 1.0];
-    let b = [0.1f32, 0.3, 0.7, 0.9];
-    let r = [0.5f32, 0.8, 0.2, 0.6];
-    let g_be = be_encode(&g);
-    let b_be = be_encode(&b);
-    let r_be = be_encode(&r);
+    let g_intended = [0.0f32, 0.25, 0.5, 1.0];
+    let b_intended = [0.1f32, 0.3, 0.7, 0.9];
+    let r_intended = [0.5f32, 0.8, 0.2, 0.6];
+    let g_le = as_le_f32(&g_intended);
+    let b_le = as_le_f32(&b_intended);
+    let r_le = as_le_f32(&r_intended);
+    let g_be = as_be_f32(&g_intended);
+    let b_be = as_be_f32(&b_intended);
+    let r_be = as_be_f32(&r_intended);
     let mut le_out = std::vec![0u16; 4 * 4];
     let mut be_out = std::vec![0u16; 4 * 4];
-    gbrpf32_to_rgba_u16_row::<false>(&g, &b, &r, &mut le_out, 4);
+    gbrpf32_to_rgba_u16_row::<false>(&g_le, &b_le, &r_le, &mut le_out, 4);
     gbrpf32_to_rgba_u16_row::<true>(&g_be, &b_be, &r_be, &mut be_out, 4);
+    let expected = ref_gbrpf32_to_rgba_u16(&g_intended, &b_intended, &r_intended, 4);
+    assert_eq!(le_out, expected, "LE path must match scalar reference");
+    assert_eq!(be_out, expected, "BE path must match scalar reference");
     assert_eq!(be_out, le_out, "BE gbrpf32_to_rgba_u16_row must match LE");
   }
 
@@ -797,16 +1099,22 @@ mod tests {
 
   #[test]
   fn gbrpf32_to_rgb_f32_be_parity() {
-    let g = [0.0f32, 0.25, 0.5, 1.0];
-    let b = [0.1f32, 0.3, 0.7, 0.9];
-    let r = [0.5f32, 0.8, 0.2, 0.6];
-    let g_be = be_encode(&g);
-    let b_be = be_encode(&b);
-    let r_be = be_encode(&r);
+    let g_intended = [0.0f32, 0.25, 0.5, 1.0];
+    let b_intended = [0.1f32, 0.3, 0.7, 0.9];
+    let r_intended = [0.5f32, 0.8, 0.2, 0.6];
+    let g_le = as_le_f32(&g_intended);
+    let b_le = as_le_f32(&b_intended);
+    let r_le = as_le_f32(&r_intended);
+    let g_be = as_be_f32(&g_intended);
+    let b_be = as_be_f32(&b_intended);
+    let r_be = as_be_f32(&r_intended);
     let mut le_out = std::vec![0.0f32; 4 * 3];
     let mut be_out = std::vec![0.0f32; 4 * 3];
-    gbrpf32_to_rgb_f32_row::<false>(&g, &b, &r, &mut le_out, 4);
+    gbrpf32_to_rgb_f32_row::<false>(&g_le, &b_le, &r_le, &mut le_out, 4);
     gbrpf32_to_rgb_f32_row::<true>(&g_be, &b_be, &r_be, &mut be_out, 4);
+    let expected = ref_gbrpf32_to_rgb_f32(&g_intended, &b_intended, &r_intended, 4);
+    assert_eq!(le_out, expected, "LE path must match scalar reference");
+    assert_eq!(be_out, expected, "BE path must match scalar reference");
     assert_eq!(be_out, le_out, "BE gbrpf32_to_rgb_f32_row must match LE");
   }
 
@@ -837,16 +1145,22 @@ mod tests {
 
   #[test]
   fn gbrpf32_to_rgba_f32_be_parity() {
-    let g = [0.0f32, 0.25, 0.5, 1.0];
-    let b = [0.1f32, 0.3, 0.7, 0.9];
-    let r = [0.5f32, 0.8, 0.2, 0.6];
-    let g_be = be_encode(&g);
-    let b_be = be_encode(&b);
-    let r_be = be_encode(&r);
+    let g_intended = [0.0f32, 0.25, 0.5, 1.0];
+    let b_intended = [0.1f32, 0.3, 0.7, 0.9];
+    let r_intended = [0.5f32, 0.8, 0.2, 0.6];
+    let g_le = as_le_f32(&g_intended);
+    let b_le = as_le_f32(&b_intended);
+    let r_le = as_le_f32(&r_intended);
+    let g_be = as_be_f32(&g_intended);
+    let b_be = as_be_f32(&b_intended);
+    let r_be = as_be_f32(&r_intended);
     let mut le_out = std::vec![0.0f32; 4 * 4];
     let mut be_out = std::vec![0.0f32; 4 * 4];
-    gbrpf32_to_rgba_f32_row::<false>(&g, &b, &r, &mut le_out, 4);
+    gbrpf32_to_rgba_f32_row::<false>(&g_le, &b_le, &r_le, &mut le_out, 4);
     gbrpf32_to_rgba_f32_row::<true>(&g_be, &b_be, &r_be, &mut be_out, 4);
+    let expected = ref_gbrpf32_to_rgba_f32(&g_intended, &b_intended, &r_intended, 4);
+    assert_eq!(le_out, expected, "LE path must match scalar reference");
+    assert_eq!(be_out, expected, "BE path must match scalar reference");
     assert_eq!(be_out, le_out, "BE gbrpf32_to_rgba_f32_row must match LE");
   }
 
@@ -892,16 +1206,22 @@ mod tests {
     ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
   )]
   fn gbrpf32_to_rgb_f16_be_parity() {
-    let g = [0.0f32, 0.25, 0.5, 1.0];
-    let b = [0.1f32, 0.3, 0.7, 0.9];
-    let r = [0.5f32, 0.8, 0.2, 0.6];
-    let g_be = be_encode(&g);
-    let b_be = be_encode(&b);
-    let r_be = be_encode(&r);
+    let g_intended = [0.0f32, 0.25, 0.5, 1.0];
+    let b_intended = [0.1f32, 0.3, 0.7, 0.9];
+    let r_intended = [0.5f32, 0.8, 0.2, 0.6];
+    let g_le = as_le_f32(&g_intended);
+    let b_le = as_le_f32(&b_intended);
+    let r_le = as_le_f32(&r_intended);
+    let g_be = as_be_f32(&g_intended);
+    let b_be = as_be_f32(&b_intended);
+    let r_be = as_be_f32(&r_intended);
     let mut le_out = vec![half::f16::ZERO; 4 * 3];
     let mut be_out = vec![half::f16::ZERO; 4 * 3];
-    gbrpf32_to_rgb_f16_row::<false>(&g, &b, &r, &mut le_out, 4);
+    gbrpf32_to_rgb_f16_row::<false>(&g_le, &b_le, &r_le, &mut le_out, 4);
     gbrpf32_to_rgb_f16_row::<true>(&g_be, &b_be, &r_be, &mut be_out, 4);
+    let expected = ref_gbrpf32_to_rgb_f16(&g_intended, &b_intended, &r_intended, 4);
+    assert_eq!(le_out, expected, "LE path must match scalar reference");
+    assert_eq!(be_out, expected, "BE path must match scalar reference");
     assert_eq!(be_out, le_out, "BE gbrpf32_to_rgb_f16_row must match LE");
   }
 
@@ -927,16 +1247,22 @@ mod tests {
     ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
   )]
   fn gbrpf32_to_rgba_f16_be_parity() {
-    let g = [0.0f32, 0.25, 0.5, 1.0];
-    let b = [0.1f32, 0.3, 0.7, 0.9];
-    let r = [0.5f32, 0.8, 0.2, 0.6];
-    let g_be = be_encode(&g);
-    let b_be = be_encode(&b);
-    let r_be = be_encode(&r);
+    let g_intended = [0.0f32, 0.25, 0.5, 1.0];
+    let b_intended = [0.1f32, 0.3, 0.7, 0.9];
+    let r_intended = [0.5f32, 0.8, 0.2, 0.6];
+    let g_le = as_le_f32(&g_intended);
+    let b_le = as_le_f32(&b_intended);
+    let r_le = as_le_f32(&r_intended);
+    let g_be = as_be_f32(&g_intended);
+    let b_be = as_be_f32(&b_intended);
+    let r_be = as_be_f32(&r_intended);
     let mut le_out = vec![half::f16::ZERO; 4 * 4];
     let mut be_out = vec![half::f16::ZERO; 4 * 4];
-    gbrpf32_to_rgba_f16_row::<false>(&g, &b, &r, &mut le_out, 4);
+    gbrpf32_to_rgba_f16_row::<false>(&g_le, &b_le, &r_le, &mut le_out, 4);
     gbrpf32_to_rgba_f16_row::<true>(&g_be, &b_be, &r_be, &mut be_out, 4);
+    let expected = ref_gbrpf32_to_rgba_f16(&g_intended, &b_intended, &r_intended, 4);
+    assert_eq!(le_out, expected, "LE path must match scalar reference");
+    assert_eq!(be_out, expected, "BE path must match scalar reference");
     assert_eq!(be_out, le_out, "BE gbrpf32_to_rgba_f16_row must match LE");
   }
 
@@ -964,15 +1290,26 @@ mod tests {
 
   #[test]
   fn gbrpf32_to_luma_be_parity() {
-    let g = [0.0f32, 0.25, 0.5, 1.0];
-    let b = [0.1f32, 0.3, 0.7, 0.9];
-    let r = [0.5f32, 0.8, 0.2, 0.6];
-    let g_be = be_encode(&g);
-    let b_be = be_encode(&b);
-    let r_be = be_encode(&r);
+    let g_intended = [0.0f32, 0.25, 0.5, 1.0];
+    let b_intended = [0.1f32, 0.3, 0.7, 0.9];
+    let r_intended = [0.5f32, 0.8, 0.2, 0.6];
+    let g_le = as_le_f32(&g_intended);
+    let b_le = as_le_f32(&b_intended);
+    let r_le = as_le_f32(&r_intended);
+    let g_be = as_be_f32(&g_intended);
+    let b_be = as_be_f32(&b_intended);
+    let r_be = as_be_f32(&r_intended);
     let mut le_out = std::vec![0u8; 4];
     let mut be_out = std::vec![0u8; 4];
-    gbrpf32_to_luma_row::<false>(&g, &b, &r, &mut le_out, 4, ColorMatrix::Bt709, true);
+    gbrpf32_to_luma_row::<false>(
+      &g_le,
+      &b_le,
+      &r_le,
+      &mut le_out,
+      4,
+      ColorMatrix::Bt709,
+      true,
+    );
     gbrpf32_to_luma_row::<true>(
       &g_be,
       &b_be,
@@ -982,6 +1319,16 @@ mod tests {
       ColorMatrix::Bt709,
       true,
     );
+    let expected = ref_gbrpf32_to_luma(
+      &g_intended,
+      &b_intended,
+      &r_intended,
+      4,
+      ColorMatrix::Bt709,
+      true,
+    );
+    assert_eq!(le_out, expected, "LE path must match scalar reference");
+    assert_eq!(be_out, expected, "BE path must match scalar reference");
     assert_eq!(be_out, le_out, "BE gbrpf32_to_luma_row must match LE");
   }
 
@@ -1009,15 +1356,26 @@ mod tests {
 
   #[test]
   fn gbrpf32_to_luma_u16_be_parity() {
-    let g = [0.0f32, 0.25, 0.5, 1.0];
-    let b = [0.1f32, 0.3, 0.7, 0.9];
-    let r = [0.5f32, 0.8, 0.2, 0.6];
-    let g_be = be_encode(&g);
-    let b_be = be_encode(&b);
-    let r_be = be_encode(&r);
+    let g_intended = [0.0f32, 0.25, 0.5, 1.0];
+    let b_intended = [0.1f32, 0.3, 0.7, 0.9];
+    let r_intended = [0.5f32, 0.8, 0.2, 0.6];
+    let g_le = as_le_f32(&g_intended);
+    let b_le = as_le_f32(&b_intended);
+    let r_le = as_le_f32(&r_intended);
+    let g_be = as_be_f32(&g_intended);
+    let b_be = as_be_f32(&b_intended);
+    let r_be = as_be_f32(&r_intended);
     let mut le_out = std::vec![0u16; 4];
     let mut be_out = std::vec![0u16; 4];
-    gbrpf32_to_luma_u16_row::<false>(&g, &b, &r, &mut le_out, 4, ColorMatrix::Bt709, true);
+    gbrpf32_to_luma_u16_row::<false>(
+      &g_le,
+      &b_le,
+      &r_le,
+      &mut le_out,
+      4,
+      ColorMatrix::Bt709,
+      true,
+    );
     gbrpf32_to_luma_u16_row::<true>(
       &g_be,
       &b_be,
@@ -1027,6 +1385,16 @@ mod tests {
       ColorMatrix::Bt709,
       true,
     );
+    let expected = ref_gbrpf32_to_luma_u16(
+      &g_intended,
+      &b_intended,
+      &r_intended,
+      4,
+      ColorMatrix::Bt709,
+      true,
+    );
+    assert_eq!(le_out, expected, "LE path must match scalar reference");
+    assert_eq!(be_out, expected, "BE path must match scalar reference");
     assert_eq!(be_out, le_out, "BE gbrpf32_to_luma_u16_row must match LE");
   }
 
@@ -1060,20 +1428,31 @@ mod tests {
 
   #[test]
   fn gbrpf32_to_hsv_be_parity() {
-    let g = [0.0f32, 0.25, 0.5, 1.0];
-    let b = [0.1f32, 0.3, 0.7, 0.9];
-    let r = [0.5f32, 0.8, 0.2, 0.6];
-    let g_be = be_encode(&g);
-    let b_be = be_encode(&b);
-    let r_be = be_encode(&r);
+    let g_intended = [0.0f32, 0.25, 0.5, 1.0];
+    let b_intended = [0.1f32, 0.3, 0.7, 0.9];
+    let r_intended = [0.5f32, 0.8, 0.2, 0.6];
+    let g_le = as_le_f32(&g_intended);
+    let b_le = as_le_f32(&b_intended);
+    let r_le = as_le_f32(&r_intended);
+    let g_be = as_be_f32(&g_intended);
+    let b_be = as_be_f32(&b_intended);
+    let r_be = as_be_f32(&r_intended);
     let mut le_h = std::vec![0u8; 4];
     let mut le_s = std::vec![0u8; 4];
     let mut le_v = std::vec![0u8; 4];
     let mut be_h = std::vec![0u8; 4];
     let mut be_s = std::vec![0u8; 4];
     let mut be_v = std::vec![0u8; 4];
-    gbrpf32_to_hsv_row::<false>(&g, &b, &r, &mut le_h, &mut le_s, &mut le_v, 4);
+    gbrpf32_to_hsv_row::<false>(&g_le, &b_le, &r_le, &mut le_h, &mut le_s, &mut le_v, 4);
     gbrpf32_to_hsv_row::<true>(&g_be, &b_be, &r_be, &mut be_h, &mut be_s, &mut be_v, 4);
+    let (h_expected, s_expected, v_expected) =
+      ref_gbrpf32_to_hsv(&g_intended, &b_intended, &r_intended, 4);
+    assert_eq!(le_h, h_expected, "LE H must match scalar reference");
+    assert_eq!(le_s, s_expected, "LE S must match scalar reference");
+    assert_eq!(le_v, v_expected, "LE V must match scalar reference");
+    assert_eq!(be_h, h_expected, "BE H must match scalar reference");
+    assert_eq!(be_s, s_expected, "BE S must match scalar reference");
+    assert_eq!(be_v, v_expected, "BE V must match scalar reference");
     assert_eq!(be_h, le_h, "BE hsv H must match LE");
     assert_eq!(be_s, le_s, "BE hsv S must match LE");
     assert_eq!(be_v, le_v, "BE hsv V must match LE");
@@ -1111,18 +1490,25 @@ mod tests {
 
   #[test]
   fn gbrapf32_to_rgba_be_parity() {
-    let g = [0.0f32, 0.25, 0.5, 1.0];
-    let b = [0.1f32, 0.3, 0.7, 0.9];
-    let r = [0.5f32, 0.8, 0.2, 0.6];
-    let a = [0.2f32, 0.4, 0.6, 0.8];
-    let g_be = be_encode(&g);
-    let b_be = be_encode(&b);
-    let r_be = be_encode(&r);
-    let a_be = be_encode(&a);
+    let g_intended = [0.0f32, 0.25, 0.5, 1.0];
+    let b_intended = [0.1f32, 0.3, 0.7, 0.9];
+    let r_intended = [0.5f32, 0.8, 0.2, 0.6];
+    let a_intended = [0.2f32, 0.4, 0.6, 0.8];
+    let g_le = as_le_f32(&g_intended);
+    let b_le = as_le_f32(&b_intended);
+    let r_le = as_le_f32(&r_intended);
+    let a_le = as_le_f32(&a_intended);
+    let g_be = as_be_f32(&g_intended);
+    let b_be = as_be_f32(&b_intended);
+    let r_be = as_be_f32(&r_intended);
+    let a_be = as_be_f32(&a_intended);
     let mut le_out = std::vec![0u8; 4 * 4];
     let mut be_out = std::vec![0u8; 4 * 4];
-    gbrapf32_to_rgba_row::<false>(&g, &b, &r, &a, &mut le_out, 4);
+    gbrapf32_to_rgba_row::<false>(&g_le, &b_le, &r_le, &a_le, &mut le_out, 4);
     gbrapf32_to_rgba_row::<true>(&g_be, &b_be, &r_be, &a_be, &mut be_out, 4);
+    let expected = ref_gbrapf32_to_rgba_u8(&g_intended, &b_intended, &r_intended, &a_intended, 4);
+    assert_eq!(le_out, expected, "LE path must match scalar reference");
+    assert_eq!(be_out, expected, "BE path must match scalar reference");
     assert_eq!(be_out, le_out, "BE gbrapf32_to_rgba_row must match LE");
   }
 
@@ -1157,18 +1543,25 @@ mod tests {
 
   #[test]
   fn gbrapf32_to_rgba_u16_be_parity() {
-    let g = [0.0f32, 0.25, 0.5, 1.0];
-    let b = [0.1f32, 0.3, 0.7, 0.9];
-    let r = [0.5f32, 0.8, 0.2, 0.6];
-    let a = [0.2f32, 0.4, 0.6, 0.8];
-    let g_be = be_encode(&g);
-    let b_be = be_encode(&b);
-    let r_be = be_encode(&r);
-    let a_be = be_encode(&a);
+    let g_intended = [0.0f32, 0.25, 0.5, 1.0];
+    let b_intended = [0.1f32, 0.3, 0.7, 0.9];
+    let r_intended = [0.5f32, 0.8, 0.2, 0.6];
+    let a_intended = [0.2f32, 0.4, 0.6, 0.8];
+    let g_le = as_le_f32(&g_intended);
+    let b_le = as_le_f32(&b_intended);
+    let r_le = as_le_f32(&r_intended);
+    let a_le = as_le_f32(&a_intended);
+    let g_be = as_be_f32(&g_intended);
+    let b_be = as_be_f32(&b_intended);
+    let r_be = as_be_f32(&r_intended);
+    let a_be = as_be_f32(&a_intended);
     let mut le_out = std::vec![0u16; 4 * 4];
     let mut be_out = std::vec![0u16; 4 * 4];
-    gbrapf32_to_rgba_u16_row::<false>(&g, &b, &r, &a, &mut le_out, 4);
+    gbrapf32_to_rgba_u16_row::<false>(&g_le, &b_le, &r_le, &a_le, &mut le_out, 4);
     gbrapf32_to_rgba_u16_row::<true>(&g_be, &b_be, &r_be, &a_be, &mut be_out, 4);
+    let expected = ref_gbrapf32_to_rgba_u16(&g_intended, &b_intended, &r_intended, &a_intended, 4);
+    assert_eq!(le_out, expected, "LE path must match scalar reference");
+    assert_eq!(be_out, expected, "BE path must match scalar reference");
     assert_eq!(be_out, le_out, "BE gbrapf32_to_rgba_u16_row must match LE");
   }
 
@@ -1199,18 +1592,25 @@ mod tests {
 
   #[test]
   fn gbrapf32_to_rgba_f32_be_parity() {
-    let g = [0.0f32, 0.25, 0.5, 1.0];
-    let b = [0.1f32, 0.3, 0.7, 0.9];
-    let r = [0.5f32, 0.8, 0.2, 0.6];
-    let a = [0.2f32, 0.4, 0.6, 0.8];
-    let g_be = be_encode(&g);
-    let b_be = be_encode(&b);
-    let r_be = be_encode(&r);
-    let a_be = be_encode(&a);
+    let g_intended = [0.0f32, 0.25, 0.5, 1.0];
+    let b_intended = [0.1f32, 0.3, 0.7, 0.9];
+    let r_intended = [0.5f32, 0.8, 0.2, 0.6];
+    let a_intended = [0.2f32, 0.4, 0.6, 0.8];
+    let g_le = as_le_f32(&g_intended);
+    let b_le = as_le_f32(&b_intended);
+    let r_le = as_le_f32(&r_intended);
+    let a_le = as_le_f32(&a_intended);
+    let g_be = as_be_f32(&g_intended);
+    let b_be = as_be_f32(&b_intended);
+    let r_be = as_be_f32(&r_intended);
+    let a_be = as_be_f32(&a_intended);
     let mut le_out = std::vec![0.0f32; 4 * 4];
     let mut be_out = std::vec![0.0f32; 4 * 4];
-    gbrapf32_to_rgba_f32_row::<false>(&g, &b, &r, &a, &mut le_out, 4);
+    gbrapf32_to_rgba_f32_row::<false>(&g_le, &b_le, &r_le, &a_le, &mut le_out, 4);
     gbrapf32_to_rgba_f32_row::<true>(&g_be, &b_be, &r_be, &a_be, &mut be_out, 4);
+    let expected = ref_gbrapf32_to_rgba_f32(&g_intended, &b_intended, &r_intended, &a_intended, 4);
+    assert_eq!(le_out, expected, "LE path must match scalar reference");
+    assert_eq!(be_out, expected, "BE path must match scalar reference");
     assert_eq!(be_out, le_out, "BE gbrapf32_to_rgba_f32_row must match LE");
   }
 
@@ -1255,18 +1655,25 @@ mod tests {
     ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
   )]
   fn gbrapf32_to_rgba_f16_be_parity() {
-    let g = [0.0f32, 0.25, 0.5, 1.0];
-    let b = [0.1f32, 0.3, 0.7, 0.9];
-    let r = [0.5f32, 0.8, 0.2, 0.6];
-    let a = [0.2f32, 0.4, 0.6, 0.8];
-    let g_be = be_encode(&g);
-    let b_be = be_encode(&b);
-    let r_be = be_encode(&r);
-    let a_be = be_encode(&a);
+    let g_intended = [0.0f32, 0.25, 0.5, 1.0];
+    let b_intended = [0.1f32, 0.3, 0.7, 0.9];
+    let r_intended = [0.5f32, 0.8, 0.2, 0.6];
+    let a_intended = [0.2f32, 0.4, 0.6, 0.8];
+    let g_le = as_le_f32(&g_intended);
+    let b_le = as_le_f32(&b_intended);
+    let r_le = as_le_f32(&r_intended);
+    let a_le = as_le_f32(&a_intended);
+    let g_be = as_be_f32(&g_intended);
+    let b_be = as_be_f32(&b_intended);
+    let r_be = as_be_f32(&r_intended);
+    let a_be = as_be_f32(&a_intended);
     let mut le_out = vec![half::f16::ZERO; 4 * 4];
     let mut be_out = vec![half::f16::ZERO; 4 * 4];
-    gbrapf32_to_rgba_f16_row::<false>(&g, &b, &r, &a, &mut le_out, 4);
+    gbrapf32_to_rgba_f16_row::<false>(&g_le, &b_le, &r_le, &a_le, &mut le_out, 4);
     gbrapf32_to_rgba_f16_row::<true>(&g_be, &b_be, &r_be, &a_be, &mut be_out, 4);
+    let expected = ref_gbrapf32_to_rgba_f16(&g_intended, &b_intended, &r_intended, &a_intended, 4);
+    assert_eq!(le_out, expected, "LE path must match scalar reference");
+    assert_eq!(be_out, expected, "BE path must match scalar reference");
     assert_eq!(be_out, le_out, "BE gbrapf32_to_rgba_f16_row must match LE");
   }
 }

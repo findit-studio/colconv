@@ -171,7 +171,17 @@ fn yuv420p10_try_new_checked_accepts_in_range_samples() {
   // Same valid frame as `yuv420p10_try_new_accepts_valid_tight`,
   // but run through the checked constructor. All samples live in
   // the 10‑bit range.
-  let (y, u, v) = p10_planes();
+  //
+  // Wrap host-native `p10_planes()` via `le_encoded_u16_buf` so the buffer
+  // honors the LE-encoded byte contract on every host: `try_new_checked`
+  // applies `u16::from_le` to each sample before the range check, and a
+  // raw host-native u16 of `512` decodes to `0x0002` on a BE host —
+  // making the original literal-fed test vacuously pass for the wrong
+  // reason there.
+  let (intended_y, intended_u, intended_v) = p10_planes();
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&intended_u);
+  let v = le_encoded_u16_buf(&intended_v);
   let f = Yuv420p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8).expect("valid");
   assert_eq!(f.width(), 16);
   assert_eq!(f.bits(), 10);
@@ -229,10 +239,19 @@ fn yuv420p10_try_new_checked_rejects_u_plane_sample() {
 
 #[test]
 fn yuv420p10_try_new_checked_rejects_v_plane_sample() {
-  let y = std::vec![0u16; 16 * 8];
-  let u = std::vec![512u16; 8 * 4];
-  let mut v = std::vec![512u16; 8 * 4];
-  v[8 + 7] = 0xFFFF; // all bits set
+  // `try_new_checked` applies `u16::from_le` before the range check, so
+  // pass LE-encoded byte storage so the test asserts the same logical
+  // values on every host. (Without the wrap, a host-native `0xFFFF`
+  // happens to be byte-palindromic and still triggers rejection on BE,
+  // but the surrounding `512`s decode to `0x0002` — the test rejects on
+  // accident, not on the value it claims.)
+  let intended_y = std::vec![0u16; 16 * 8];
+  let intended_u = std::vec![512u16; 8 * 4];
+  let mut intended_v = std::vec![512u16; 8 * 4];
+  intended_v[8 + 7] = 0xFFFF; // all bits set
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&intended_u);
+  let v = le_encoded_u16_buf(&intended_v);
   let e = Yuv420p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8).unwrap_err();
   assert!(matches!(
     e,

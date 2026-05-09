@@ -617,14 +617,32 @@ pub(crate) fn gray16_to_hsv_row<const BE: bool>(
 mod tests {
   use super::*;
 
-  /// Re-encode a host-native u16 slice as LE-encoded byte storage, packed back
-  /// into `Vec<u16>`. Kernels called with `BE = false` recover the intended
-  /// logical values via `u16::from_le` on both LE (no-op) and BE (byte-swap)
-  /// hosts.
-  fn as_le_u16(host: &[u16]) -> std::vec::Vec<u16> {
-    host
-      .iter()
-      .map(|v| u16::from_ne_bytes(v.to_le_bytes()))
+  // ---- Host-independent BE-fixture helpers ----------------------------------
+  //
+  // Build a `Vec<u16>` whose in-memory byte layout is the LE (resp. BE) byte
+  // encoding of `intended`. On a host with matching endianness the result
+  // equals `intended` element-wise; on the opposite-endian host every element
+  // is byte-swapped relative to `intended`. Together these let the
+  // `gray*_be_parity_*` tests below feed the LE kernel (`<false>`) and the BE
+  // kernel (`<true>`) byte-encoded inputs that decode to the same logical
+  // value on every host — replacing the earlier `swap_bytes()`-on-host-native
+  // pattern, which silently passed on BE hosts because both kernels decoded
+  // wrong but matched. See the `le_encoded_u16_buf` helpers in
+  // `src/frame/tests/*_high_bit.rs` for the same idea.
+
+  fn as_le_u16(intended: &[u16]) -> std::vec::Vec<u16> {
+    let bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
+    bytes
+      .chunks_exact(2)
+      .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+      .collect()
+  }
+
+  fn as_be_u16(intended: &[u16]) -> std::vec::Vec<u16> {
+    let bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_be_bytes()).collect();
+    bytes
+      .chunks_exact(2)
+      .map(|b| u16::from_ne_bytes([b[0], b[1]]))
       .collect()
   }
 
@@ -1012,108 +1030,129 @@ mod tests {
   }
 
   // ---- BE parity tests: gray_n (Gray9-14) -----------------------------------
-  // Pattern: construct LE input, byte-swap to produce BE input, call with
-  // BE=true, assert output equals LE-input run output.
+  // Pattern: build LE-encoded and BE-encoded byte storage from the same
+  // logical `intended` value via `as_le_u16` / `as_be_u16` (host-independent),
+  // then assert the LE kernel on LE-encoded input and the BE kernel on
+  // BE-encoded input produce the same output. The earlier
+  // `swap_bytes()`-on-host-native pattern was vacuous on BE hosts: both
+  // kernels decoded incorrectly but to matching values.
 
   #[test]
   fn gray10_be_parity_rgb() {
-    // LE value 512 >> 2 = 128. BE encoding: 512 = 0x0200, BE bytes = [0x02, 0x00].
-    let le: std::vec::Vec<u16> = std::vec![512u16];
-    let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+    // Logical 10-bit value 512 → 512 >> 2 = 128 in the high 8 bits.
+    let intended: std::vec::Vec<u16> = std::vec![512u16];
+    let le_in = as_le_u16(&intended);
+    let be_in = as_be_u16(&intended);
     let mut out_le = std::vec![0u8; 3];
     let mut out_be = std::vec![0u8; 3];
-    gray_n_to_rgb_row::<10, false>(&le, &mut out_le, 1, true);
-    gray_n_to_rgb_row::<10, true>(&be, &mut out_be, 1, true);
+    gray_n_to_rgb_row::<10, false>(&le_in, &mut out_le, 1, true);
+    gray_n_to_rgb_row::<10, true>(&be_in, &mut out_be, 1, true);
     assert_eq!(out_le, out_be, "BE and LE gray10 rgb outputs must match");
+    assert_eq!(&out_le[..], &[128, 128, 128]);
   }
 
   #[test]
   fn gray10_be_parity_rgba() {
-    let le: std::vec::Vec<u16> = std::vec![768u16]; // 768 >> 2 = 192
-    let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+    // Logical 10-bit value 768 → 768 >> 2 = 192.
+    let intended: std::vec::Vec<u16> = std::vec![768u16];
+    let le_in = as_le_u16(&intended);
+    let be_in = as_be_u16(&intended);
     let mut out_le = std::vec![0u8; 4];
     let mut out_be = std::vec![0u8; 4];
-    gray_n_to_rgba_row::<10, false>(&le, &mut out_le, 1, true);
-    gray_n_to_rgba_row::<10, true>(&be, &mut out_be, 1, true);
+    gray_n_to_rgba_row::<10, false>(&le_in, &mut out_le, 1, true);
+    gray_n_to_rgba_row::<10, true>(&be_in, &mut out_be, 1, true);
     assert_eq!(out_le, out_be, "BE and LE gray10 rgba outputs must match");
+    assert_eq!(&out_le[..], &[192, 192, 192, 0xFF]);
   }
 
   #[test]
   fn gray10_be_parity_luma() {
-    let le: std::vec::Vec<u16> = std::vec![256u16]; // 256 >> 2 = 64
-    let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+    // Logical 10-bit value 256 → 256 >> 2 = 64.
+    let intended: std::vec::Vec<u16> = std::vec![256u16];
+    let le_in = as_le_u16(&intended);
+    let be_in = as_be_u16(&intended);
     let mut out_le = std::vec![0u8; 1];
     let mut out_be = std::vec![0u8; 1];
-    gray_n_to_luma_row::<10, false>(&le, &mut out_le, 1);
-    gray_n_to_luma_row::<10, true>(&be, &mut out_be, 1);
+    gray_n_to_luma_row::<10, false>(&le_in, &mut out_le, 1);
+    gray_n_to_luma_row::<10, true>(&be_in, &mut out_be, 1);
     assert_eq!(out_le, out_be, "BE and LE gray10 luma outputs must match");
+    assert_eq!(out_le[0], 64);
   }
 
   #[test]
   fn gray10_be_parity_luma_u16() {
-    let le: std::vec::Vec<u16> = std::vec![512u16];
-    let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+    let intended: std::vec::Vec<u16> = std::vec![512u16];
+    let le_in = as_le_u16(&intended);
+    let be_in = as_be_u16(&intended);
     let mut out_le = std::vec![0u16; 1];
     let mut out_be = std::vec![0u16; 1];
-    gray_n_to_luma_u16_row::<10, false>(&le, &mut out_le, 1);
-    gray_n_to_luma_u16_row::<10, true>(&be, &mut out_be, 1);
+    gray_n_to_luma_u16_row::<10, false>(&le_in, &mut out_le, 1);
+    gray_n_to_luma_u16_row::<10, true>(&be_in, &mut out_be, 1);
     assert_eq!(
       out_le, out_be,
       "BE and LE gray10 luma_u16 outputs must match"
     );
+    assert_eq!(out_le[0], 512);
   }
 
   // ---- BE parity tests: gray16 -----------------------------------------------
 
   #[test]
   fn gray16_be_parity_rgb() {
-    // LE value 0x8000 >> 8 = 128.
-    let le: std::vec::Vec<u16> = std::vec![0x8000u16];
-    let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+    // Logical 16-bit value 0x8000 → high byte 0x80 = 128.
+    let intended: std::vec::Vec<u16> = std::vec![0x8000u16];
+    let le_in = as_le_u16(&intended);
+    let be_in = as_be_u16(&intended);
     let mut out_le = std::vec![0u8; 3];
     let mut out_be = std::vec![0u8; 3];
-    gray16_to_rgb_row::<false>(&le, &mut out_le, 1, true);
-    gray16_to_rgb_row::<true>(&be, &mut out_be, 1, true);
+    gray16_to_rgb_row::<false>(&le_in, &mut out_le, 1, true);
+    gray16_to_rgb_row::<true>(&be_in, &mut out_be, 1, true);
     assert_eq!(out_le, out_be, "BE and LE gray16 rgb outputs must match");
+    assert_eq!(&out_le[..], &[128, 128, 128]);
   }
 
   #[test]
   fn gray16_be_parity_rgba() {
-    let le: std::vec::Vec<u16> = std::vec![0xC000u16]; // 0xC0 = 192
-    let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+    // Logical 16-bit value 0xC000 → high byte 0xC0 = 192.
+    let intended: std::vec::Vec<u16> = std::vec![0xC000u16];
+    let le_in = as_le_u16(&intended);
+    let be_in = as_be_u16(&intended);
     let mut out_le = std::vec![0u8; 4];
     let mut out_be = std::vec![0u8; 4];
-    gray16_to_rgba_row::<false>(&le, &mut out_le, 1, true);
-    gray16_to_rgba_row::<true>(&be, &mut out_be, 1, true);
+    gray16_to_rgba_row::<false>(&le_in, &mut out_le, 1, true);
+    gray16_to_rgba_row::<true>(&be_in, &mut out_be, 1, true);
     assert_eq!(out_le, out_be, "BE and LE gray16 rgba outputs must match");
+    assert_eq!(&out_le[..], &[192, 192, 192, 0xFF]);
   }
 
   #[test]
   fn gray16_be_parity_luma() {
-    let le: std::vec::Vec<u16> = std::vec![0x4000u16]; // 0x40 = 64
-    let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+    // Logical 16-bit value 0x4000 → high byte 0x40 = 64.
+    let intended: std::vec::Vec<u16> = std::vec![0x4000u16];
+    let le_in = as_le_u16(&intended);
+    let be_in = as_be_u16(&intended);
     let mut out_le = std::vec![0u8; 1];
     let mut out_be = std::vec![0u8; 1];
-    gray16_to_luma_row::<false>(&le, &mut out_le, 1);
-    gray16_to_luma_row::<true>(&be, &mut out_be, 1);
+    gray16_to_luma_row::<false>(&le_in, &mut out_le, 1);
+    gray16_to_luma_row::<true>(&be_in, &mut out_be, 1);
     assert_eq!(out_le, out_be, "BE and LE gray16 luma outputs must match");
+    assert_eq!(out_le[0], 64);
   }
 
   #[test]
   fn gray16_be_parity_luma_u16() {
-    // For gray16_to_luma_u16_row with BE=true, swap_bytes is applied.
-    // LE: 0x1234. BE encoding of that value: swap bytes → 0x3412.
-    // After BE kernel processes 0x3412 with swap_bytes → 0x1234. Output = 0x1234.
-    let le_val: u16 = 0x1234;
-    let le: std::vec::Vec<u16> = std::vec![le_val];
-    let be: std::vec::Vec<u16> = le.iter().map(|v| v.swap_bytes()).collect();
+    // Logical 16-bit value 0x1234 — both kernels must recover it.
+    let intended: std::vec::Vec<u16> = std::vec![0x1234u16];
+    let le_in = as_le_u16(&intended);
+    let be_in = as_be_u16(&intended);
     let mut out_le = std::vec![0u16; 1];
     let mut out_be = std::vec![0u16; 1];
-    gray16_to_luma_u16_row::<false>(&le, &mut out_le, 1);
-    gray16_to_luma_u16_row::<true>(&be, &mut out_be, 1);
+    gray16_to_luma_u16_row::<false>(&le_in, &mut out_le, 1);
+    gray16_to_luma_u16_row::<true>(&be_in, &mut out_be, 1);
     assert_eq!(
       out_le, out_be,
       "BE and LE gray16 luma_u16 outputs must match"
     );
+    assert_eq!(out_le[0], 0x1234);
   }
 }
