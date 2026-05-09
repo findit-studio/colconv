@@ -27,8 +27,10 @@ pub(crate) fn y216_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  debug_assert!(width.is_multiple_of(2), "Y216 requires even width");
-  debug_assert!(packed.len() >= width * 2, "packed row too short");
+  // assert! (not debug_assert!) — bounds gate `unsafe load_endian_u16`
+  // reads below; release-mode check prevents UB on bad inputs.
+  assert!(width.is_multiple_of(2), "Y216 requires even width");
+  assert!(packed.len() >= width * 2, "packed row too short");
   let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(out.len() >= width * bpp, "out row too short");
 
@@ -78,8 +80,10 @@ pub(crate) fn y216_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE: bool>
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  debug_assert!(width.is_multiple_of(2), "Y216 requires even width");
-  debug_assert!(packed.len() >= width * 2, "packed row too short");
+  // assert! (not debug_assert!) — bounds gate `unsafe load_endian_u16`
+  // reads below; release-mode check prevents UB on bad inputs.
+  assert!(width.is_multiple_of(2), "Y216 requires even width");
+  assert!(packed.len() >= width * 2, "packed row too short");
   let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(out.len() >= width * bpp, "out row too short");
 
@@ -122,8 +126,10 @@ pub(crate) fn y216_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE: bool>
 /// `BE = true` selects big-endian wire decoding.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn y216_to_luma_row<const BE: bool>(packed: &[u16], out: &mut [u8], width: usize) {
-  debug_assert!(width.is_multiple_of(2));
-  debug_assert!(packed.len() >= width * 2);
+  // assert! (not debug_assert!) — bounds gate `unsafe load_endian_u16`
+  // reads below; release-mode check prevents UB on bad inputs.
+  assert!(width.is_multiple_of(2));
+  assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width);
   let pairs = width / 2;
   let base = packed.as_ptr().cast::<u8>();
@@ -141,8 +147,10 @@ pub(crate) fn y216_to_luma_row<const BE: bool>(packed: &[u16], out: &mut [u8], w
 /// `BE = true` selects big-endian wire decoding.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn y216_to_luma_u16_row<const BE: bool>(packed: &[u16], out: &mut [u16], width: usize) {
-  debug_assert!(width.is_multiple_of(2));
-  debug_assert!(packed.len() >= width * 2);
+  // assert! (not debug_assert!) — bounds gate `unsafe load_endian_u16`
+  // reads below; release-mode check prevents UB on bad inputs.
+  assert!(width.is_multiple_of(2));
+  assert!(packed.len() >= width * 2);
   debug_assert!(out.len() >= width);
   let pairs = width / 2;
   let base = packed.as_ptr().cast::<u8>();

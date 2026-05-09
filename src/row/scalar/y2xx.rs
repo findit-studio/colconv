@@ -60,8 +60,10 @@ pub(crate) fn y2xx_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool, cons
       "y2xx_n_to_rgb requires BITS in {{10, 12}}"
     );
   }
-  debug_assert!(width.is_multiple_of(2), "Y2xx requires even width");
-  debug_assert!(packed.len() >= width * 2, "packed row too short");
+  // assert! (not debug_assert!) — bounds gate `unsafe load_endian_u16`
+  // reads below; release-mode check prevents UB on bad inputs.
+  assert!(width.is_multiple_of(2), "Y2xx requires even width");
+  assert!(packed.len() >= width * 2, "packed row too short");
   let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(out.len() >= width * bpp, "out row too short");
 
@@ -134,8 +136,10 @@ pub(crate) fn y2xx_n_to_rgb_u16_or_rgba_u16_row<
       "y2xx_n_to_rgb_u16 requires BITS in {{10, 12}}"
     );
   }
-  debug_assert!(width.is_multiple_of(2), "Y2xx requires even width");
-  debug_assert!(packed.len() >= width * 2, "packed row too short");
+  // assert! (not debug_assert!) — bounds gate `unsafe load_endian_u16`
+  // reads below; release-mode check prevents UB on bad inputs.
+  assert!(width.is_multiple_of(2), "Y2xx requires even width");
+  assert!(packed.len() >= width * 2, "packed row too short");
   let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(out.len() >= width * bpp, "out row too short");
 
@@ -196,8 +200,10 @@ pub(crate) fn y2xx_n_to_luma_row<const BITS: u32, const BE: bool>(
       "y2xx_n_to_luma requires BITS in {{10, 12}}"
     );
   }
-  debug_assert!(width.is_multiple_of(2), "Y2xx requires even width");
-  debug_assert!(packed.len() >= width * 2, "packed row too short");
+  // assert! (not debug_assert!) — bounds gate `unsafe load_endian_u16`
+  // reads below; release-mode check prevents UB on bad inputs.
+  assert!(width.is_multiple_of(2), "Y2xx requires even width");
+  assert!(packed.len() >= width * 2, "packed row too short");
   debug_assert!(luma_out.len() >= width, "luma row too short");
 
   let pairs = width / 2;
@@ -232,8 +238,10 @@ pub(crate) fn y2xx_n_to_luma_u16_row<const BITS: u32, const BE: bool>(
       "y2xx_n_to_luma_u16 requires BITS in {{10, 12}}"
     );
   }
-  debug_assert!(width.is_multiple_of(2), "Y2xx requires even width");
-  debug_assert!(packed.len() >= width * 2, "packed row too short");
+  // assert! (not debug_assert!) — bounds gate `unsafe load_endian_u16`
+  // reads below; release-mode check prevents UB on bad inputs.
+  assert!(width.is_multiple_of(2), "Y2xx requires even width");
+  assert!(packed.len() >= width * 2, "packed row too short");
   debug_assert!(luma_out.len() >= width, "luma row too short");
 
   let pairs = width / 2;

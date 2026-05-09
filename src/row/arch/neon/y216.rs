@@ -47,7 +47,8 @@ const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 // ---- u8 output (i32 chroma, 16 px/iter) ---------------------------------
 
 /// NEON Y216 → packed u8 RGB or RGBA.
-/// `BE = true` bypasses NEON and uses scalar for the full row.
+/// The NEON loop runs only when `BE == HOST_NATIVE_BE`; otherwise the
+/// scalar kernel handles the full row (cross-endian decode).
 ///
 /// Byte-identical to `scalar::y216_to_rgb_or_rgba_row::<ALPHA, BE>`.
 ///
@@ -198,7 +199,8 @@ pub(crate) unsafe fn y216_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
       }
     } // end if BE == HOST_NATIVE_BE
 
-    // Scalar tail — remaining < 16 pixels, or full-row fallback when BE=true.
+    // Scalar tail — remaining < 16 pixels, or full-row fallback when
+    // `BE != HOST_NATIVE_BE` (cross-endian decode on either host).
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut out[x * bpp..width * bpp];
@@ -219,7 +221,8 @@ pub(crate) unsafe fn y216_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
 /// NEON Y216 → packed native-depth u16 RGB or RGBA.
 ///
 /// Uses i64 chroma (`chroma_i64x4`) to avoid overflow at 16-bit scales.
-/// `BE = true` bypasses NEON and uses scalar for the full row.
+/// The NEON loop runs only when `BE == HOST_NATIVE_BE`; otherwise the
+/// scalar kernel handles the full row (cross-endian decode).
 /// Byte-identical to `scalar::y216_to_rgb_u16_or_rgba_u16_row::<ALPHA, BE>`.
 ///
 /// ## Pipeline
@@ -430,7 +433,8 @@ pub(crate) unsafe fn y216_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE
       }
     } // end if BE == HOST_NATIVE_BE
 
-    // Scalar tail — remaining < 16 pixels, or full-row fallback when BE=true.
+    // Scalar tail — remaining < 16 pixels, or full-row fallback when
+    // `BE != HOST_NATIVE_BE` (cross-endian decode on either host).
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut out[x * bpp..width * bpp];
@@ -449,7 +453,8 @@ pub(crate) unsafe fn y216_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE
 // ---- Luma u8 (16 px/iter) -----------------------------------------------
 
 /// NEON Y216 → u8 luma. Extracts Y via `>> 8`.
-/// `BE = true` bypasses NEON and uses scalar.
+/// NEON runs only when `BE == HOST_NATIVE_BE`; otherwise the scalar
+/// kernel handles the full row.
 ///
 /// Byte-identical to `scalar::y216_to_luma_row::<BE>`.
 ///
@@ -499,7 +504,8 @@ pub(crate) unsafe fn y216_to_luma_row<const BE: bool>(
 // ---- Luma u16 (16 px/iter) ----------------------------------------------
 
 /// NEON Y216 → u16 luma. Direct copy of Y samples (no shift).
-/// `BE = true` bypasses NEON and uses scalar.
+/// NEON runs only when `BE == HOST_NATIVE_BE`; otherwise the scalar
+/// kernel handles the full row.
 ///
 /// Byte-identical to `scalar::y216_to_luma_u16_row::<BE>`.
 ///

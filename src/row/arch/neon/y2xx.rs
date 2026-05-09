@@ -105,8 +105,9 @@ unsafe fn unpack_y2xx_8px_neon(
 /// NEON Y2xx → packed RGB / RGBA u8. Const‑generic over
 /// `BITS ∈ {10, 12}`, `ALPHA ∈ {false, true}`, and `BE ∈ {false, true}`.
 /// `BE = true` selects big-endian u16 decoding for the input samples.
-/// When `BE = true` the SIMD path is bypassed and the scalar kernel
-/// handles the full row (the NEON loop only handles native-endian data).
+/// The NEON loop runs only when `BE == HOST_NATIVE_BE` (i.e. the wire
+/// endianness already matches the host); otherwise the scalar kernel
+/// handles the full row (covers cross-endian decode on either host).
 ///
 /// Byte‑identical to `scalar::y2xx_n_to_rgb_or_rgba_row::<BITS, ALPHA, BE>`
 /// for every input.
@@ -231,7 +232,8 @@ pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<
     }
 
     // Scalar tail — remaining < 8 pixels (always even per 4:2:2), or
-    // full-row fallback when BE=true.
+    // full-row fallback when `BE != HOST_NATIVE_BE` (cross-endian decode
+    // on either host).
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut out[x * bpp..width * bpp];
@@ -250,7 +252,8 @@ pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<
 /// NEON Y2xx → packed `u16` RGB / RGBA at native BITS depth
 /// (low‑bit‑packed: BITS active bits in the low N of each `u16`).
 /// Const‑generic over `BITS ∈ {10, 12}`, `ALPHA`, and `BE`.
-/// `BE = true` bypasses NEON and uses the scalar kernel for the full row.
+/// The NEON loop runs only when `BE == HOST_NATIVE_BE`; otherwise the
+/// scalar kernel handles the full row (cross-endian decode).
 ///
 /// Byte‑identical to
 /// `scalar::y2xx_n_to_rgb_u16_or_rgba_u16_row::<BITS, ALPHA, BE>`.
@@ -376,7 +379,8 @@ pub(crate) unsafe fn y2xx_n_to_rgb_u16_or_rgba_u16_row<
 /// NEON Y2xx → 8‑bit luma. Y values are downshifted from BITS to 8
 /// via `>> (BITS - 8)` after the `>> (16 - BITS)` MSB‑alignment, i.e.
 /// a single `>> 8` from the raw u16 sample. Bypasses the YUV → RGB
-/// pipeline entirely. `BE = true` bypasses NEON and uses scalar.
+/// pipeline entirely. NEON runs only when `BE == HOST_NATIVE_BE`;
+/// otherwise the scalar kernel handles the full row.
 ///
 /// Byte‑identical to `scalar::y2xx_n_to_luma_row::<BITS, BE>`.
 ///
@@ -432,7 +436,8 @@ pub(crate) unsafe fn y2xx_n_to_luma_row<const BITS: u32, const BE: bool>(
 
 /// NEON Y2xx → native‑depth `u16` luma (low‑bit‑packed). Each output
 /// `u16` carries the source's BITS-bit Y value in its low BITS bits.
-/// `BE = true` bypasses NEON and uses scalar.
+/// NEON runs only when `BE == HOST_NATIVE_BE`; otherwise the scalar
+/// kernel handles the full row.
 /// Byte‑identical to `scalar::y2xx_n_to_luma_u16_row::<BITS, BE>`.
 ///
 /// # Safety
