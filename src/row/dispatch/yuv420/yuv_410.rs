@@ -1,19 +1,24 @@
 //! 8-bit YUV 4:1:0 → RGB / RGBA dispatchers (`yuv_410_to_rgb_row`,
 //! `yuv_410_to_rgba_row`). Tier 1 P3 legacy (Cinepak / Sorenson).
 //!
-//! Backends: scalar (always) + NEON (aarch64). The other SIMD tiers
-//! (SSE4.1 / AVX2 / AVX-512 / wasm32 simd128) intentionally fall
-//! through to scalar for this format — 4:1:0 has 1/4 the chroma math
-//! density of 4:2:0, modern decoders almost never produce it, and
-//! the maintenance cost of four extra hand-rolled kernels for a
-//! format with this usage profile isn't justified. Scalar is fast
-//! enough for the legacy decode-side use case and the dispatcher
-//! preserves the option to add more backends later.
+//! Backends: scalar (always) + NEON (aarch64) + SSE4.1 / AVX2 /
+//! AVX-512 (x86_64) + simd128 (wasm32). Each SIMD backend follows
+//! the same `block_size_y` / 4× horizontal chroma fan-out shape:
+//! NEON / SSE4.1 / wasm 16 Y per iter, AVX2 32 Y, AVX-512 64 Y.
+//! Math is byte-identical to scalar by construction.
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(
+  target_arch = "aarch64",
+  target_arch = "x86_64",
+  target_arch = "wasm32"
+))]
 use crate::row::arch;
 #[cfg(target_arch = "aarch64")]
 use crate::row::neon_available;
+#[cfg(target_arch = "wasm32")]
+use crate::row::simd128_available;
+#[cfg(target_arch = "x86_64")]
+use crate::row::{avx2_available, avx512_available, sse41_available};
 use crate::{
   ColorMatrix,
   row::{rgb_row_bytes, rgba_row_bytes, scalar},
@@ -48,17 +53,62 @@ pub fn yuv_410_to_rgb_row(
   assert!(rgb_out.len() >= rgb_min, "rgb_out row too short");
 
   if use_simd {
-    #[cfg(target_arch = "aarch64")]
-    if neon_available() {
-      // SAFETY: `neon_available()` verified NEON is present.
-      // Bounds / parity invariants are the caller's obligation.
-      unsafe {
-        arch::neon::yuv_410_to_rgb_row(y, u_quarter, v_quarter, rgb_out, width, matrix, full_range);
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: `neon_available()` verified NEON is present.
+          // Bounds / parity invariants are the caller's obligation.
+          unsafe {
+            arch::neon::yuv_410_to_rgb_row(y, u_quarter, v_quarter, rgb_out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: `avx512_available()` verified AVX-512BW is present.
+          unsafe {
+            arch::x86_avx512::yuv_410_to_rgb_row(
+              y, u_quarter, v_quarter, rgb_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: `avx2_available()` verified AVX2 is present.
+          unsafe {
+            arch::x86_avx2::yuv_410_to_rgb_row(
+              y, u_quarter, v_quarter, rgb_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: `sse41_available()` verified SSE4.1 is present.
+          unsafe {
+            arch::x86_sse41::yuv_410_to_rgb_row(
+              y, u_quarter, v_quarter, rgb_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile-time availability verified.
+          unsafe {
+            arch::wasm_simd128::yuv_410_to_rgb_row(
+              y, u_quarter, v_quarter, rgb_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      _ => {
+        // Targets without a SIMD backend (riscv64, powerpc, …) fall
+        // through to scalar.
       }
-      return;
     }
-    // Other architectures (x86_64 / wasm32 / s390x / riscv) fall
-    // through to scalar — see module docs for the rationale.
   }
 
   scalar::yuv_410_to_rgb_row(y, u_quarter, v_quarter, rgb_out, width, matrix, full_range);
@@ -94,15 +144,61 @@ pub fn yuv_410_to_rgba_row(
   assert!(rgba_out.len() >= rgba_min, "rgba_out row too short");
 
   if use_simd {
-    #[cfg(target_arch = "aarch64")]
-    if neon_available() {
-      // SAFETY: `neon_available()` verified NEON is present.
-      unsafe {
-        arch::neon::yuv_410_to_rgba_row(
-          y, u_quarter, v_quarter, rgba_out, width, matrix, full_range,
-        );
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: `neon_available()` verified NEON is present.
+          unsafe {
+            arch::neon::yuv_410_to_rgba_row(
+              y, u_quarter, v_quarter, rgba_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: `avx512_available()` verified AVX-512BW is present.
+          unsafe {
+            arch::x86_avx512::yuv_410_to_rgba_row(
+              y, u_quarter, v_quarter, rgba_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: `avx2_available()` verified AVX2 is present.
+          unsafe {
+            arch::x86_avx2::yuv_410_to_rgba_row(
+              y, u_quarter, v_quarter, rgba_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: `sse41_available()` verified SSE4.1 is present.
+          unsafe {
+            arch::x86_sse41::yuv_410_to_rgba_row(
+              y, u_quarter, v_quarter, rgba_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile-time availability verified.
+          unsafe {
+            arch::wasm_simd128::yuv_410_to_rgba_row(
+              y, u_quarter, v_quarter, rgba_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      _ => {
+        // Targets without a SIMD backend fall through to scalar.
       }
-      return;
     }
   }
 

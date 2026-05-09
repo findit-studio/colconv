@@ -24,16 +24,27 @@ Strategy A applies for the RGB+RGBA combo: run the 3-channel kernel
 once, fan out to RGBA via `expand_rgb_to_rgba_row` (no double YUV→RGB
 math).
 
-Backends: scalar (always) + NEON (aarch64). The four other SIMD tiers
-(SSE4.1 / AVX2 / AVX-512 / wasm32 simd128) intentionally fall through
-to scalar — 4:1:0 has 1/4 the chroma math density of 4:2:0, modern
-decoders almost never produce it, and the maintenance cost of four
-extra hand-rolled kernels for a format with this usage profile isn't
-justified. NEON processes 16 Y pixels per iteration (loading 4 chroma
-samples and broadcasting each across 4 Y lanes via two-pass
-`vzip1q_s16` / `vzip2q_s16` lane fan-out); math is byte-identical to
-scalar (same Q15 sequence, same saturating-narrow primitives), verified
-by parity tests.
+Backends: scalar + full SIMD coverage on every supported tier (NEON
+aarch64, SSE4.1 / AVX2 / AVX-512 x86_64, wasm32 simd128). Every SIMD
+backend runs the same Q15 sequence as the scalar reference — math is
+byte-identical, verified by per-backend parity tests.
+
+Per-backend block size (Y per iter / chroma per iter) and 4×
+horizontal upsample method:
+
+- **NEON** (16 / 4): two-pass `vzip*q_s16` cascade fans each chroma
+  lane to 4 adjacent Y slots.
+- **SSE4.1** (16 / 4): two-pass `_mm_unpack*_epi16` cascade. 4 chroma
+  loaded via a u32 read splatted with `_mm_cvtsi32_si128`.
+- **AVX2** (32 / 8): split 8 chroma into low4 / high4 inside the XMM
+  half, then per-128-bit two-pass `_mm_unpack*_epi16` cascade per
+  half (no AVX2 lane-crossing fixup needed — the chroma split is
+  already lane-aligned). 8 chroma loaded via a u64 read.
+- **AVX-512** (64 / 16): one `_mm512_permutexvar_epi16` per channel
+  per Y half with explicit 4× duplicate indices — cleanest 4×
+  fan-out of any backend (no unpack chain).
+- **wasm-simd128** (16 / 4): two `i8x16_shuffle` calls per channel
+  with compile-time byte indices duplicating each i16 chroma lane 4×.
 
 Structural analog: [`Yuv420pFrame`] for the vertical-subsampling
 walker shape (chroma_row = `row / 4` for 4:1:0 vs `row / 2` for 4:2:0)

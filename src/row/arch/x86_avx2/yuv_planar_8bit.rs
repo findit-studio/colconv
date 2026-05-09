@@ -287,6 +287,293 @@ unsafe fn yuv_420_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
     }
   }
 }
+// ---- YUV 4:1:0 AVX2 entries -----------------------------------------
+//
+// 4:1:0: planar YUV with chroma subsampled 4:1 in **both** axes (each
+// (U, V) sample covers a 4×4 luma block; vertical 4× re-use is the
+// walker's job — chroma row = `y_row / 4`). This kernel handles the
+// per-row 4× horizontal upsample. Math is byte-identical to scalar.
+//
+// Block size: 32 Y / 8 chroma per iteration (matches the 4:2:0 AVX2
+// kernel's 32-Y throughput). The chroma upsample is implemented via
+// per-128-bit-lane unpack chains (no lane-crossing fixups needed)
+// because the 8 chroma samples split cleanly into two groups of 4
+// — low 4 cover Y[0..16], high 4 cover Y[16..32], and each group is
+// fanned via the same two-pass `_mm_unpack*_epi16` cascade as the
+// SSE4.1 4:1:0 kernel.
+
+/// AVX2 YUV 4:1:0 → packed RGB. Semantics match
+/// [`scalar::yuv_410_to_rgb_row`] byte-identically.
+///
+/// # Safety
+///
+/// 1. **AVX2 must be available on the current CPU.**
+/// 2. `width % 4 == 0` (4:1:0 requires width multiple of 4).
+/// 3. `y.len() >= width`, `u_quarter.len() >= width / 4`,
+///    `v_quarter.len() >= width / 4`, `rgb_out.len() >= 3 * width`.
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn yuv_410_to_rgb_row(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller-checked AVX2 availability + slice bounds — see
+  // [`yuv_410_to_rgb_or_rgba_row`] safety contract.
+  unsafe {
+    yuv_410_to_rgb_or_rgba_row::<false>(
+      y, u_quarter, v_quarter, rgb_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// AVX2 YUV 4:1:0 → packed **RGBA** (8-bit). Same contract as
+/// [`yuv_410_to_rgb_row`] but writes 4 bytes per pixel (R, G, B,
+/// `0xFF`).
+///
+/// # Safety
+///
+/// Same as [`yuv_410_to_rgb_row`] except `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn yuv_410_to_rgba_row(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller-checked AVX2 availability + slice bounds — see
+  // [`yuv_410_to_rgb_or_rgba_row`] safety contract.
+  unsafe {
+    yuv_410_to_rgb_or_rgba_row::<true>(
+      y, u_quarter, v_quarter, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// Shared AVX2 kernel for [`yuv_410_to_rgb_row`] (`ALPHA = false`,
+/// [`write_rgb_32`]) and [`yuv_410_to_rgba_row`] (`ALPHA = true`,
+/// [`write_rgba_32`] with constant `0xFF` alpha). Math is
+/// byte-identical to `scalar::yuv_410_to_rgb_or_rgba_row::<ALPHA>`.
+///
+/// Pipeline per 32 Y pixels / 8 chroma samples:
+/// 1. Load 32 Y + 8 U + 8 V (each chroma plane via a single `u64`
+///    read since 8 bytes < 16).
+/// 2. Widen 8 chroma to i16x8 (in 128-bit register), subtract 128,
+///    widen to i32x8 (256-bit) for Q15 multiplies.
+/// 3. `u_d = (u * c_scale + RND) >> 15`, same for `v_d` (i32x8).
+/// 4. Per channel: `(C_u*u_d + C_v*v_d + RND) >> 15` (i32x8).
+/// 5. Saturate-narrow each channel's i32x8 to i16x8 (256→128) via
+///    `_mm256_packs_epi32` then permute to fix lane order.
+/// 6. Split i16x8 into two i16x4 halves (low 4 chroma cover
+///    Y[0..16], high 4 cover Y[16..32]). For each half apply the
+///    same two-pass `_mm_unpack*_epi16` cascade as the SSE4.1
+///    kernel: produces an i16x8 pair (low/high) covering 16 Y
+///    lanes per chroma group; combine the four i16x8 vectors into
+///    two i16x16 (one per Y[0..16] / Y[16..32] half).
+/// 7. Y path: widen 32 Y → two i16x16, scale.
+/// 8. Saturating add Y + chroma per channel (i16x16), saturate-
+///    narrow to u8x32, interleave via [`write_rgb_32`] /
+///    [`write_rgba_32`].
+///
+/// # Safety
+///
+/// Same as [`yuv_410_to_rgb_row`] / [`yuv_410_to_rgba_row`].
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn yuv_410_to_rgb_or_rgba_row<const ALPHA: bool>(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(width & 3, 0, "YUV 4:1:0 requires width % 4 == 0");
+  debug_assert!(y.len() >= width);
+  debug_assert!(u_quarter.len() >= width / 4);
+  debug_assert!(v_quarter.len() >= width / 4);
+  let bpp: usize = if ALPHA { 4 } else { 3 };
+  debug_assert!(out.len() >= width * bpp);
+
+  let coeffs = scalar::Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = scalar::range_params_n::<8, 8>(full_range);
+  const RND: i32 = 1 << 14;
+
+  // SAFETY: AVX2 availability is the caller's obligation per the
+  // `# Safety` section. All pointer adds below are bounded by the
+  // `while x + 32 <= width` loop condition and caller-promised slice
+  // lengths.
+  unsafe {
+    let rnd_v = _mm256_set1_epi32(RND);
+    let y_off_v = _mm256_set1_epi16(y_off as i16);
+    let y_scale_v = _mm256_set1_epi32(y_scale);
+    let c_scale_v = _mm256_set1_epi32(c_scale);
+    let mid128 = _mm_set1_epi16(128);
+    let cru = _mm256_set1_epi32(coeffs.r_u());
+    let crv = _mm256_set1_epi32(coeffs.r_v());
+    let cgu = _mm256_set1_epi32(coeffs.g_u());
+    let cgv = _mm256_set1_epi32(coeffs.g_v());
+    let cbu = _mm256_set1_epi32(coeffs.b_u());
+    let cbv = _mm256_set1_epi32(coeffs.b_v());
+    let alpha_u8 = _mm256_set1_epi8(-1);
+
+    let mut x = 0usize;
+    while x + 32 <= width {
+      let y_vec = _mm256_loadu_si256(y.as_ptr().add(x).cast());
+
+      // Load 8 chroma bytes per plane via an unaligned u64 read
+      // splatted into the low 8 bytes of an XMM vector.
+      let u_bytes = (u_quarter.as_ptr().add(x / 4) as *const u64).read_unaligned();
+      let v_bytes = (v_quarter.as_ptr().add(x / 4) as *const u64).read_unaligned();
+      let u_u64 = _mm_set_epi64x(0, u_bytes as i64);
+      let v_u64 = _mm_set_epi64x(0, v_bytes as i64);
+
+      // Widen 8 chroma bytes → i16x8, subtract 128 (in XMM).
+      let u_i16x8 = _mm_sub_epi16(_mm_cvtepu8_epi16(u_u64), mid128);
+      let v_i16x8 = _mm_sub_epi16(_mm_cvtepu8_epi16(v_u64), mid128);
+
+      // Widen to i32x8 (256-bit) for Q15 multiplies.
+      let u_i32x8 = _mm256_cvtepi16_epi32(u_i16x8);
+      let v_i32x8 = _mm256_cvtepi16_epi32(v_i16x8);
+
+      // u_d, v_d = (u * c_scale + RND) >> 15.
+      let u_d = q15_shift(_mm256_add_epi32(
+        _mm256_mullo_epi32(u_i32x8, c_scale_v),
+        rnd_v,
+      ));
+      let v_d = q15_shift(_mm256_add_epi32(
+        _mm256_mullo_epi32(v_i32x8, c_scale_v),
+        rnd_v,
+      ));
+
+      // Per-channel chroma contribution as i32x8.
+      let r_i32 = q15_shift(_mm256_add_epi32(
+        _mm256_add_epi32(_mm256_mullo_epi32(cru, u_d), _mm256_mullo_epi32(crv, v_d)),
+        rnd_v,
+      ));
+      let g_i32 = q15_shift(_mm256_add_epi32(
+        _mm256_add_epi32(_mm256_mullo_epi32(cgu, u_d), _mm256_mullo_epi32(cgv, v_d)),
+        rnd_v,
+      ));
+      let b_i32 = q15_shift(_mm256_add_epi32(
+        _mm256_add_epi32(_mm256_mullo_epi32(cbu, u_d), _mm256_mullo_epi32(cbv, v_d)),
+        rnd_v,
+      ));
+
+      // Saturate-narrow i32x8 → i16x8 (XMM). `_mm256_packs_epi32`
+      // is per-128-bit-lane and produces lane-split output:
+      // `[c0,c1,c2,c3, _,_,_,_, c4,c5,c6,c7, _,_,_,_]`. Permute via
+      // `permute4x64<0xD8>` then take the low XMM gives natural
+      // `[c0..c7]` in the low 8 i16 lanes.
+      //
+      // Equivalent and simpler at this size: pack the i32x8 down via
+      // `permute4x64` then extract low 128 = i16x8 of [c0..c7].
+      let r_pack = _mm256_permute4x64_epi64::<0xD8>(_mm256_packs_epi32(r_i32, r_i32));
+      let g_pack = _mm256_permute4x64_epi64::<0xD8>(_mm256_packs_epi32(g_i32, g_i32));
+      let b_pack = _mm256_permute4x64_epi64::<0xD8>(_mm256_packs_epi32(b_i32, b_i32));
+      let r_chroma = _mm256_castsi256_si128(r_pack); // i16x8: [c0..c7]
+      let g_chroma = _mm256_castsi256_si128(g_pack);
+      let b_chroma = _mm256_castsi256_si128(b_pack);
+
+      // Split [c0..c7] i16x8 into [c0,c1,c2,c3] and [c4,c5,c6,c7]
+      // halves, then run the SSE4.1-style two-pass unpack cascade on
+      // each half to produce four i16x8 vectors covering 32 Y lanes.
+      // `_mm_srli_si128::<8>` shifts c4..c7 into the low half.
+      let r_lo4 = r_chroma; // [c0,c1,c2,c3, _,_,_,_]
+      let r_hi4 = _mm_srli_si128::<8>(r_chroma); // [c4,c5,c6,c7, _,_,_,_]
+      let g_lo4 = g_chroma;
+      let g_hi4 = _mm_srli_si128::<8>(g_chroma);
+      let b_lo4 = b_chroma;
+      let b_hi4 = _mm_srli_si128::<8>(b_chroma);
+
+      // First pass: each [c_a,c_b,c_c,c_d] → [c_a,c_a,c_b,c_b,c_c,c_c,c_d,c_d].
+      let r_pair_lo = _mm_unpacklo_epi16(r_lo4, r_lo4);
+      let r_pair_hi = _mm_unpacklo_epi16(r_hi4, r_hi4);
+      let g_pair_lo = _mm_unpacklo_epi16(g_lo4, g_lo4);
+      let g_pair_hi = _mm_unpacklo_epi16(g_hi4, g_hi4);
+      let b_pair_lo = _mm_unpacklo_epi16(b_lo4, b_lo4);
+      let b_pair_hi = _mm_unpacklo_epi16(b_hi4, b_hi4);
+
+      // Second pass on each pair: produces i16x8 [c_a×4, c_b×4]
+      // (lo) and [c_c×4, c_d×4] (hi). For each chroma half (lo4 /
+      // hi4) this gives two i16x8 vectors covering 16 Y lanes
+      // (8 + 8). Combining with `_mm256_set_m128i` builds the
+      // i16x16 covering Y[0..16] and Y[16..32] per channel.
+      let r_q0 = _mm_unpacklo_epi16(r_pair_lo, r_pair_lo); // c0×4, c1×4 → Y[0..8]
+      let r_q1 = _mm_unpackhi_epi16(r_pair_lo, r_pair_lo); // c2×4, c3×4 → Y[8..16]
+      let r_q2 = _mm_unpacklo_epi16(r_pair_hi, r_pair_hi); // c4×4, c5×4 → Y[16..24]
+      let r_q3 = _mm_unpackhi_epi16(r_pair_hi, r_pair_hi); // c6×4, c7×4 → Y[24..32]
+      let g_q0 = _mm_unpacklo_epi16(g_pair_lo, g_pair_lo);
+      let g_q1 = _mm_unpackhi_epi16(g_pair_lo, g_pair_lo);
+      let g_q2 = _mm_unpacklo_epi16(g_pair_hi, g_pair_hi);
+      let g_q3 = _mm_unpackhi_epi16(g_pair_hi, g_pair_hi);
+      let b_q0 = _mm_unpacklo_epi16(b_pair_lo, b_pair_lo);
+      let b_q1 = _mm_unpackhi_epi16(b_pair_lo, b_pair_lo);
+      let b_q2 = _mm_unpacklo_epi16(b_pair_hi, b_pair_hi);
+      let b_q3 = _mm_unpackhi_epi16(b_pair_hi, b_pair_hi);
+
+      // Combine into i16x16 vectors. Each `set_m128i(hi, lo)` puts
+      // `lo` in lane 0 and `hi` in lane 1 (low/high 128-bit halves).
+      let r_dup_lo = _mm256_set_m128i(r_q1, r_q0); // Y[0..16]
+      let r_dup_hi = _mm256_set_m128i(r_q3, r_q2); // Y[16..32]
+      let g_dup_lo = _mm256_set_m128i(g_q1, g_q0);
+      let g_dup_hi = _mm256_set_m128i(g_q3, g_q2);
+      let b_dup_lo = _mm256_set_m128i(b_q1, b_q0);
+      let b_dup_hi = _mm256_set_m128i(b_q3, b_q2);
+
+      // Y path: widen 32 Y → two i16x16, scale.
+      let y_low_i16 = _mm256_cvtepu8_epi16(_mm256_castsi256_si128(y_vec));
+      let y_high_i16 = _mm256_cvtepu8_epi16(_mm256_extracti128_si256::<1>(y_vec));
+      let y_scaled_lo = scale_y(y_low_i16, y_off_v, y_scale_v, rnd_v);
+      let y_scaled_hi = scale_y(y_high_i16, y_off_v, y_scale_v, rnd_v);
+
+      // Saturating i16 add Y + chroma per channel.
+      let b_lo = _mm256_adds_epi16(y_scaled_lo, b_dup_lo);
+      let b_hi = _mm256_adds_epi16(y_scaled_hi, b_dup_hi);
+      let g_lo = _mm256_adds_epi16(y_scaled_lo, g_dup_lo);
+      let g_hi = _mm256_adds_epi16(y_scaled_hi, g_dup_hi);
+      let r_lo = _mm256_adds_epi16(y_scaled_lo, r_dup_lo);
+      let r_hi = _mm256_adds_epi16(y_scaled_hi, r_dup_hi);
+
+      // Saturate-narrow per channel → u8x32 (with lane fixup).
+      let b_u8 = narrow_u8x32(b_lo, b_hi);
+      let g_u8 = narrow_u8x32(g_lo, g_hi);
+      let r_u8 = narrow_u8x32(r_lo, r_hi);
+
+      if ALPHA {
+        write_rgba_32(r_u8, g_u8, b_u8, alpha_u8, out.as_mut_ptr().add(x * 4));
+      } else {
+        write_rgb_32(r_u8, g_u8, b_u8, out.as_mut_ptr().add(x * 3));
+      }
+
+      x += 32;
+    }
+
+    // Scalar tail. `width % 4 == 0` so `width - x` is also a multiple
+    // of 4.
+    if x < width {
+      scalar::yuv_410_to_rgb_or_rgba_row::<ALPHA>(
+        &y[x..width],
+        &u_quarter[x / 4..width / 4],
+        &v_quarter[x / 4..width / 4],
+        &mut out[x * bpp..width * bpp],
+        width - x,
+        matrix,
+        full_range,
+      );
+    }
+  }
+}
+
 /// AVX2 YUV 4:4:4 planar → packed RGB. Thin wrapper over
 /// [`yuv_444_to_rgb_or_rgba_row`] with `ALPHA = false`.
 ///
