@@ -42,3 +42,12 @@ pub(super) mod ya8;
 pub(super) mod yuv420;
 pub(super) mod yuv444;
 pub(super) mod yuva;
+
+// Dispatch-level BE/LE parity tests for the high-bit YUV planar and
+// P-format families (codex round-3 follow-up on `feat/be-yuv-hb`). The
+// per-format dispatchers in `yuv420::*`, `yuv444::*`, and `pn::*` each
+// gained `_endian` entry points; this module asserts that the BE path
+// is reachable and produces byte-identical output to the LE path on
+// matching fixtures.
+#[cfg(all(test, feature = "std"))]
+mod be_yuv_hb_parity_tests;

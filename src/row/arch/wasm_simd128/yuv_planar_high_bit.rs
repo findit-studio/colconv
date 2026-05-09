@@ -29,7 +29,7 @@ use super::*;
 /// Thin wrapper over [`yuv_420p_n_to_rgb_or_rgba_row`] with `ALPHA = false`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn yuv_420p_n_to_rgb_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_420p_n_to_rgb_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -40,7 +40,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_420p_n_to_rgb_or_rgba_row::<BITS, false, false>(
+    yuv_420p_n_to_rgb_or_rgba_row::<BITS, false, false, BE>(
       y, u_half, v_half, None, rgb_out, width, matrix, full_range,
     );
   }
@@ -51,7 +51,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_row<const BITS: u32>(
 /// Thin wrapper over [`yuv_420p_n_to_rgb_or_rgba_row`] with `ALPHA = true`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn yuv_420p_n_to_rgba_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_420p_n_to_rgba_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -62,7 +62,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgba_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_420p_n_to_rgb_or_rgba_row::<BITS, true, false>(
+    yuv_420p_n_to_rgb_or_rgba_row::<BITS, true, false, BE>(
       y, u_half, v_half, None, rgba_out, width, matrix, full_range,
     );
   }
@@ -82,7 +82,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgba_row<const BITS: u32>(
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn yuv_420p_n_to_rgba_with_alpha_src_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_420p_n_to_rgba_with_alpha_src_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -94,7 +94,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgba_with_alpha_src_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_420p_n_to_rgb_or_rgba_row::<BITS, true, true>(
+    yuv_420p_n_to_rgb_or_rgba_row::<BITS, true, true, BE>(
       y,
       u_half,
       v_half,
@@ -130,6 +130,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_row<
   const BITS: u32,
   const ALPHA: bool,
   const ALPHA_SRC: bool,
+  const BE: bool,
 >(
   y: &[u16],
   u_half: &[u16],
@@ -178,11 +179,24 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_row<
     let mut x = 0usize;
     while x + 16 <= width {
       // AND‑mask each load to the low 10 bits — see matching comment
-      // in [`crate::row::scalar::yuv_420p_n_to_rgb_row`].
-      let y_low_i16 = v128_and(v128_load(y.as_ptr().add(x).cast()), mask_v);
-      let y_high_i16 = v128_and(v128_load(y.as_ptr().add(x + 8).cast()), mask_v);
-      let u_vec = v128_and(v128_load(u_half.as_ptr().add(x / 2).cast()), mask_v);
-      let v_vec = v128_and(v128_load(v_half.as_ptr().add(x / 2).cast()), mask_v);
+      // in [`crate::row::scalar::yuv_420p_n_to_rgb_row`]. BE input is
+      // byte-swapped via `load_endian_u16x8::<BE>` first.
+      let y_low_i16 = v128_and(
+        endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8),
+        mask_v,
+      );
+      let y_high_i16 = v128_and(
+        endian::load_endian_u16x8::<BE>(y.as_ptr().add(x + 8) as *const u8),
+        mask_v,
+      );
+      let u_vec = v128_and(
+        endian::load_endian_u16x8::<BE>(u_half.as_ptr().add(x / 2) as *const u8),
+        mask_v,
+      );
+      let v_vec = v128_and(
+        endian::load_endian_u16x8::<BE>(v_half.as_ptr().add(x / 2) as *const u8),
+        mask_v,
+      );
 
       let u_i16 = i16x8_sub(u_vec, bias_v);
       let v_i16 = i16x8_sub(v_vec, bias_v);
@@ -230,8 +244,14 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_row<
           // alpha (e.g. 1024 at BITS=10), matching scalar. `u16x8_shr`
           // accepts a runtime u32 count, so `BITS - 8` works directly.
           let a_ptr = a_src.as_ref().unwrap_unchecked().as_ptr();
-          let a_lo = v128_and(v128_load(a_ptr.add(x).cast()), mask_v);
-          let a_hi = v128_and(v128_load(a_ptr.add(x + 8).cast()), mask_v);
+          let a_lo = v128_and(
+            endian::load_endian_u16x8::<BE>(a_ptr.add(x) as *const u8),
+            mask_v,
+          );
+          let a_hi = v128_and(
+            endian::load_endian_u16x8::<BE>(a_ptr.add(x + 8) as *const u8),
+            mask_v,
+          );
           let a_lo_shifted = u16x8_shr(a_lo, BITS - 8);
           let a_hi_shifted = u16x8_shr(a_hi, BITS - 8);
           u8x16_narrow_i16x8(a_lo_shifted, a_hi_shifted)
@@ -255,15 +275,15 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_row<
       if ALPHA_SRC {
         // SAFETY (const-checked): ALPHA_SRC = true implies Some(_).
         let tail_a = &a_src.as_ref().unwrap_unchecked()[x..width];
-        scalar::yuv_420p_n_to_rgba_with_alpha_src_row::<BITS>(
+        scalar::yuv_420p_n_to_rgba_with_alpha_src_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_a, tail_out, tail_w, matrix, full_range,
         );
       } else if ALPHA {
-        scalar::yuv_420p_n_to_rgba_row::<BITS>(
+        scalar::yuv_420p_n_to_rgba_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       } else {
-        scalar::yuv_420p_n_to_rgb_row::<BITS>(
+        scalar::yuv_420p_n_to_rgb_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       }
@@ -289,7 +309,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_row<
 ///    `v_half.len() >= width / 2`, `rgb_out.len() >= 3 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn yuv_420p_n_to_rgb_u16_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_420p_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -299,7 +319,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_u16_row<const BITS: u32>(
   full_range: bool,
 ) {
   unsafe {
-    yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, false, false>(
+    yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, false, false, BE>(
       y, u_half, v_half, None, rgb_out, width, matrix, full_range,
     );
   }
@@ -314,7 +334,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_u16_row<const BITS: u32>(
 /// Same as [`yuv_420p_n_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn yuv_420p_n_to_rgba_u16_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_420p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -324,7 +344,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgba_u16_row<const BITS: u32>(
   full_range: bool,
 ) {
   unsafe {
-    yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, true, false>(
+    yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, true, false, BE>(
       y, u_half, v_half, None, rgba_out, width, matrix, full_range,
     );
   }
@@ -344,7 +364,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgba_u16_row<const BITS: u32>(
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn yuv_420p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_420p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u_half: &[u16],
   v_half: &[u16],
@@ -356,7 +376,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, true, true>(
+    yuv_420p_n_to_rgb_or_rgba_u16_row::<BITS, true, true, BE>(
       y,
       u_half,
       v_half,
@@ -393,6 +413,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_u16_row<
   const BITS: u32,
   const ALPHA: bool,
   const ALPHA_SRC: bool,
+  const BE: bool,
 >(
   y: &[u16],
   u_half: &[u16],
@@ -444,11 +465,24 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_u16_row<
     let mut x = 0usize;
     while x + 16 <= width {
       // AND‑mask loads to the low 10 bits so `chroma_i16x8`'s
-      // `i16x8_narrow_i32x4` stays lossless.
-      let y_low_i16 = v128_and(v128_load(y.as_ptr().add(x).cast()), mask_v);
-      let y_high_i16 = v128_and(v128_load(y.as_ptr().add(x + 8).cast()), mask_v);
-      let u_vec = v128_and(v128_load(u_half.as_ptr().add(x / 2).cast()), mask_v);
-      let v_vec = v128_and(v128_load(v_half.as_ptr().add(x / 2).cast()), mask_v);
+      // `i16x8_narrow_i32x4` stays lossless. BE input is byte-swapped
+      // via `load_endian_u16x8::<BE>` first.
+      let y_low_i16 = v128_and(
+        endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8),
+        mask_v,
+      );
+      let y_high_i16 = v128_and(
+        endian::load_endian_u16x8::<BE>(y.as_ptr().add(x + 8) as *const u8),
+        mask_v,
+      );
+      let u_vec = v128_and(
+        endian::load_endian_u16x8::<BE>(u_half.as_ptr().add(x / 2) as *const u8),
+        mask_v,
+      );
+      let v_vec = v128_and(
+        endian::load_endian_u16x8::<BE>(v_half.as_ptr().add(x / 2) as *const u8),
+        mask_v,
+      );
 
       let u_i16 = i16x8_sub(u_vec, bias_v);
       let v_i16 = i16x8_sub(v_vec, bias_v);
@@ -491,8 +525,14 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_u16_row<
           // Mask alpha loads to BITS — same hardening as Y/U/V. Native
           // bit depth output, so no shift.
           let a_ptr = a_src.as_ref().unwrap_unchecked().as_ptr();
-          let lo = v128_and(v128_load(a_ptr.add(x).cast()), mask_v);
-          let hi = v128_and(v128_load(a_ptr.add(x + 8).cast()), mask_v);
+          let lo = v128_and(
+            endian::load_endian_u16x8::<BE>(a_ptr.add(x) as *const u8),
+            mask_v,
+          );
+          let hi = v128_and(
+            endian::load_endian_u16x8::<BE>(a_ptr.add(x + 8) as *const u8),
+            mask_v,
+          );
           (lo, hi)
         } else {
           (alpha_u16, alpha_u16)
@@ -518,15 +558,15 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_u16_row<
       if ALPHA_SRC {
         // SAFETY (const-checked): ALPHA_SRC = true implies Some(_).
         let tail_a = &a_src.as_ref().unwrap_unchecked()[x..width];
-        scalar::yuv_420p_n_to_rgba_u16_with_alpha_src_row::<BITS>(
+        scalar::yuv_420p_n_to_rgba_u16_with_alpha_src_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_a, tail_out, tail_w, matrix, full_range,
         );
       } else if ALPHA {
-        scalar::yuv_420p_n_to_rgba_u16_row::<BITS>(
+        scalar::yuv_420p_n_to_rgba_u16_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       } else {
-        scalar::yuv_420p_n_to_rgb_u16_row::<BITS>(
+        scalar::yuv_420p_n_to_rgb_u16_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       }
@@ -546,7 +586,7 @@ pub(crate) unsafe fn yuv_420p_n_to_rgb_or_rgba_u16_row<
 ///    `rgb_out.len() >= 3 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn yuv_444p_n_to_rgb_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_444p_n_to_rgb_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -557,7 +597,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_row::<BITS, false, false>(
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, false, false, BE>(
       y, u, v, rgb_out, width, matrix, full_range, None,
     );
   }
@@ -575,7 +615,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_row<const BITS: u32>(
 /// Same as [`yuv_444p_n_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn yuv_444p_n_to_rgba_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_444p_n_to_rgba_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -586,7 +626,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, false>(
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, false, BE>(
       y, u, v, rgba_out, width, matrix, full_range, None,
     );
   }
@@ -607,7 +647,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_row<const BITS: u32>(
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn yuv_444p_n_to_rgba_with_alpha_src_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_444p_n_to_rgba_with_alpha_src_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -619,7 +659,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_with_alpha_src_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, true>(
+    yuv_444p_n_to_rgb_or_rgba_row::<BITS, true, true, BE>(
       y,
       u,
       v,
@@ -655,6 +695,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<
   const BITS: u32,
   const ALPHA: bool,
   const ALPHA_SRC: bool,
+  const BE: bool,
 >(
   y: &[u16],
   u: &[u16],
@@ -701,13 +742,32 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<
     let mut x = 0usize;
     while x + 16 <= width {
       // 16 Y + 16 U + 16 V per iter. Full-width chroma (two u16x8
-      // loads each) — no horizontal duplication, 4:4:4 is 1:1.
-      let y_low_i16 = v128_and(v128_load(y.as_ptr().add(x).cast()), mask_v);
-      let y_high_i16 = v128_and(v128_load(y.as_ptr().add(x + 8).cast()), mask_v);
-      let u_lo_vec = v128_and(v128_load(u.as_ptr().add(x).cast()), mask_v);
-      let u_hi_vec = v128_and(v128_load(u.as_ptr().add(x + 8).cast()), mask_v);
-      let v_lo_vec = v128_and(v128_load(v.as_ptr().add(x).cast()), mask_v);
-      let v_hi_vec = v128_and(v128_load(v.as_ptr().add(x + 8).cast()), mask_v);
+      // loads each) — no horizontal duplication, 4:4:4 is 1:1. BE
+      // input is byte-swapped via `load_endian_u16x8::<BE>` first.
+      let y_low_i16 = v128_and(
+        endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8),
+        mask_v,
+      );
+      let y_high_i16 = v128_and(
+        endian::load_endian_u16x8::<BE>(y.as_ptr().add(x + 8) as *const u8),
+        mask_v,
+      );
+      let u_lo_vec = v128_and(
+        endian::load_endian_u16x8::<BE>(u.as_ptr().add(x) as *const u8),
+        mask_v,
+      );
+      let u_hi_vec = v128_and(
+        endian::load_endian_u16x8::<BE>(u.as_ptr().add(x + 8) as *const u8),
+        mask_v,
+      );
+      let v_lo_vec = v128_and(
+        endian::load_endian_u16x8::<BE>(v.as_ptr().add(x) as *const u8),
+        mask_v,
+      );
+      let v_hi_vec = v128_and(
+        endian::load_endian_u16x8::<BE>(v.as_ptr().add(x + 8) as *const u8),
+        mask_v,
+      );
 
       let u_lo_i16 = i16x8_sub(u_lo_vec, bias_v);
       let u_hi_i16 = i16x8_sub(u_hi_vec, bias_v);
@@ -758,8 +818,14 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<
           // SAFETY (const-checked): ALPHA_SRC = true implies the
           // wrapper passed Some(_), validated by debug_assert.
           let a_ptr = a_src.as_ref().unwrap_unchecked().as_ptr();
-          let a_lo = v128_and(v128_load(a_ptr.add(x).cast()), mask_v);
-          let a_hi = v128_and(v128_load(a_ptr.add(x + 8).cast()), mask_v);
+          let a_lo = v128_and(
+            endian::load_endian_u16x8::<BE>(a_ptr.add(x) as *const u8),
+            mask_v,
+          );
+          let a_hi = v128_and(
+            endian::load_endian_u16x8::<BE>(a_ptr.add(x + 8) as *const u8),
+            mask_v,
+          );
           // Mask before shifting to harden against over-range source
           // alpha (e.g. 1024 at BITS=10), matching scalar.
           // `u16x8_shr` accepts a runtime u32 count; `BITS - 8` is a
@@ -790,15 +856,15 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<
       if ALPHA_SRC {
         // SAFETY (const-checked): ALPHA_SRC = true implies Some(_).
         let tail_a = &a_src.as_ref().unwrap_unchecked()[x..width];
-        scalar::yuv_444p_n_to_rgba_with_alpha_src_row::<BITS>(
+        scalar::yuv_444p_n_to_rgba_with_alpha_src_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_a, tail_out, tail_w, matrix, full_range,
         );
       } else if ALPHA {
-        scalar::yuv_444p_n_to_rgba_row::<BITS>(
+        scalar::yuv_444p_n_to_rgba_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       } else {
-        scalar::yuv_444p_n_to_rgb_row::<BITS>(
+        scalar::yuv_444p_n_to_rgb_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       }
@@ -817,7 +883,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_row<
 /// Same as [`yuv_444p_n_to_rgb_row`] but `rgb_out: &mut [u16]`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn yuv_444p_n_to_rgb_u16_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_444p_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -828,7 +894,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_u16_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, false, false>(
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, false, false, BE>(
       y, u, v, rgb_out, width, matrix, full_range, None,
     );
   }
@@ -846,7 +912,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_u16_row<const BITS: u32>(
 /// Same as [`yuv_444p_n_to_rgb_u16_row`] but `rgba_out.len() >= 4 * width`.
 #[inline]
 #[target_feature(enable = "simd128")]
-pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -857,7 +923,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, false>(
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, false, BE>(
       y, u, v, rgba_out, width, matrix, full_range, None,
     );
   }
@@ -879,7 +945,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_row<const BITS: u32>(
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32>(
+pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   u: &[u16],
   v: &[u16],
@@ -891,7 +957,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, true>(
+    yuv_444p_n_to_rgb_or_rgba_u16_row::<BITS, true, true, BE>(
       y,
       u,
       v,
@@ -930,6 +996,7 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<
   const BITS: u32,
   const ALPHA: bool,
   const ALPHA_SRC: bool,
+  const BE: bool,
 >(
   y: &[u16],
   u: &[u16],
@@ -978,12 +1045,31 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<
 
     let mut x = 0usize;
     while x + 16 <= width {
-      let y_low_i16 = v128_and(v128_load(y.as_ptr().add(x).cast()), mask_v);
-      let y_high_i16 = v128_and(v128_load(y.as_ptr().add(x + 8).cast()), mask_v);
-      let u_lo_vec = v128_and(v128_load(u.as_ptr().add(x).cast()), mask_v);
-      let u_hi_vec = v128_and(v128_load(u.as_ptr().add(x + 8).cast()), mask_v);
-      let v_lo_vec = v128_and(v128_load(v.as_ptr().add(x).cast()), mask_v);
-      let v_hi_vec = v128_and(v128_load(v.as_ptr().add(x + 8).cast()), mask_v);
+      // BE input is byte-swapped via `load_endian_u16x8::<BE>` first.
+      let y_low_i16 = v128_and(
+        endian::load_endian_u16x8::<BE>(y.as_ptr().add(x) as *const u8),
+        mask_v,
+      );
+      let y_high_i16 = v128_and(
+        endian::load_endian_u16x8::<BE>(y.as_ptr().add(x + 8) as *const u8),
+        mask_v,
+      );
+      let u_lo_vec = v128_and(
+        endian::load_endian_u16x8::<BE>(u.as_ptr().add(x) as *const u8),
+        mask_v,
+      );
+      let u_hi_vec = v128_and(
+        endian::load_endian_u16x8::<BE>(u.as_ptr().add(x + 8) as *const u8),
+        mask_v,
+      );
+      let v_lo_vec = v128_and(
+        endian::load_endian_u16x8::<BE>(v.as_ptr().add(x) as *const u8),
+        mask_v,
+      );
+      let v_hi_vec = v128_and(
+        endian::load_endian_u16x8::<BE>(v.as_ptr().add(x + 8) as *const u8),
+        mask_v,
+      );
 
       let u_lo_i16 = i16x8_sub(u_lo_vec, bias_v);
       let u_hi_i16 = i16x8_sub(u_hi_vec, bias_v);
@@ -1033,8 +1119,14 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<
           // at the same native bit depth (BITS), so just AND-mask any
           // over-range bits to match the scalar reference.
           let a_ptr = a_src.as_ref().unwrap_unchecked().as_ptr();
-          let lo = v128_and(v128_load(a_ptr.add(x).cast()), mask_v);
-          let hi = v128_and(v128_load(a_ptr.add(x + 8).cast()), mask_v);
+          let lo = v128_and(
+            endian::load_endian_u16x8::<BE>(a_ptr.add(x) as *const u8),
+            mask_v,
+          );
+          let hi = v128_and(
+            endian::load_endian_u16x8::<BE>(a_ptr.add(x + 8) as *const u8),
+            mask_v,
+          );
           (lo, hi)
         } else {
           (alpha_u16, alpha_u16)
@@ -1060,15 +1152,15 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<
       if ALPHA_SRC {
         // SAFETY (const-checked): ALPHA_SRC = true implies Some(_).
         let tail_a = &a_src.as_ref().unwrap_unchecked()[x..width];
-        scalar::yuv_444p_n_to_rgba_u16_with_alpha_src_row::<BITS>(
+        scalar::yuv_444p_n_to_rgba_u16_with_alpha_src_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_a, tail_out, tail_w, matrix, full_range,
         );
       } else if ALPHA {
-        scalar::yuv_444p_n_to_rgba_u16_row::<BITS>(
+        scalar::yuv_444p_n_to_rgba_u16_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       } else {
-        scalar::yuv_444p_n_to_rgb_u16_row::<BITS>(
+        scalar::yuv_444p_n_to_rgb_u16_row::<BITS, BE>(
           tail_y, tail_u, tail_v, tail_out, tail_w, matrix, full_range,
         );
       }

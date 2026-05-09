@@ -20,7 +20,7 @@ fn check_yuv444p_n_u8_sse41_rgba_with_alpha_src_equivalence<const BITS: u32>(
   let a_src = planar_n_plane::<BITS>(width, alpha_seed);
   let mut rgba_scalar = std::vec![0u8; width * 4];
   let mut rgba_simd = std::vec![0u8; width * 4];
-  scalar::yuv_444p_n_to_rgba_with_alpha_src_row::<BITS>(
+  scalar::yuv_444p_n_to_rgba_with_alpha_src_row::<BITS, false>(
     &y,
     &u,
     &v,
@@ -31,7 +31,7 @@ fn check_yuv444p_n_u8_sse41_rgba_with_alpha_src_equivalence<const BITS: u32>(
     full_range,
   );
   unsafe {
-    yuv_444p_n_to_rgba_with_alpha_src_row::<BITS>(
+    yuv_444p_n_to_rgba_with_alpha_src_row::<BITS, false>(
       &y,
       &u,
       &v,
@@ -214,7 +214,7 @@ fn check_yuv420p_n_u8_sse41_rgba_with_alpha_src_equivalence<const BITS: u32>(
   let a_src = planar_n_plane::<BITS>(width, alpha_seed);
   let mut rgba_scalar = std::vec![0u8; width * 4];
   let mut rgba_simd = std::vec![0u8; width * 4];
-  scalar::yuv_420p_n_to_rgba_with_alpha_src_row::<BITS>(
+  scalar::yuv_420p_n_to_rgba_with_alpha_src_row::<BITS, false>(
     &y,
     &u,
     &v,
@@ -225,7 +225,7 @@ fn check_yuv420p_n_u8_sse41_rgba_with_alpha_src_equivalence<const BITS: u32>(
     full_range,
   );
   unsafe {
-    yuv_420p_n_to_rgba_with_alpha_src_row::<BITS>(
+    yuv_420p_n_to_rgba_with_alpha_src_row::<BITS, false>(
       &y,
       &u,
       &v,
@@ -254,7 +254,7 @@ fn check_yuv420p16_u8_sse41_rgba_with_alpha_src_equivalence(
   let a_src = p16_plane(width, alpha_seed);
   let mut rgba_scalar = std::vec![0u8; width * 4];
   let mut rgba_simd = std::vec![0u8; width * 4];
-  scalar::yuv_420p16_to_rgba_with_alpha_src_row(
+  scalar::yuv_420p16_to_rgba_with_alpha_src_row::<false>(
     &y,
     &u,
     &v,
@@ -265,7 +265,7 @@ fn check_yuv420p16_u8_sse41_rgba_with_alpha_src_equivalence(
     full_range,
   );
   unsafe {
-    yuv_420p16_to_rgba_with_alpha_src_row(
+    yuv_420p16_to_rgba_with_alpha_src_row::<false>(
       &y,
       &u,
       &v,
@@ -391,7 +391,7 @@ fn check_yuv444p_n_u16_sse41_rgba_equivalence<const BITS: u32>(
   let v = planar_n_plane::<BITS>(width, 71);
   let mut rgba_scalar = std::vec![0u16; width * 4];
   let mut rgba_simd = std::vec![0u16; width * 4];
-  scalar::yuv_444p_n_to_rgba_u16_row::<BITS>(
+  scalar::yuv_444p_n_to_rgba_u16_row::<BITS, false>(
     &y,
     &u,
     &v,
@@ -401,7 +401,15 @@ fn check_yuv444p_n_u16_sse41_rgba_equivalence<const BITS: u32>(
     full_range,
   );
   unsafe {
-    yuv_444p_n_to_rgba_u16_row::<BITS>(&y, &u, &v, &mut rgba_simd, width, matrix, full_range);
+    yuv_444p_n_to_rgba_u16_row::<BITS, false>(
+      &y,
+      &u,
+      &v,
+      &mut rgba_simd,
+      width,
+      matrix,
+      full_range,
+    );
   }
   assert_eq!(
     rgba_scalar, rgba_simd,
@@ -420,9 +428,16 @@ fn check_pn_444_u16_sse41_rgba_equivalence<const BITS: u32>(
   let uv = interleave_uv_sse41(&u, &v);
   let mut rgba_scalar = std::vec![0u16; width * 4];
   let mut rgba_simd = std::vec![0u16; width * 4];
-  scalar::p_n_444_to_rgba_u16_row::<BITS>(&y, &uv, &mut rgba_scalar, width, matrix, full_range);
+  scalar::p_n_444_to_rgba_u16_row::<BITS, false>(
+    &y,
+    &uv,
+    &mut rgba_scalar,
+    width,
+    matrix,
+    full_range,
+  );
   unsafe {
-    p_n_444_to_rgba_u16_row::<BITS>(&y, &uv, &mut rgba_simd, width, matrix, full_range);
+    p_n_444_to_rgba_u16_row::<BITS, false>(&y, &uv, &mut rgba_simd, width, matrix, full_range);
   }
   assert_eq!(
     rgba_scalar, rgba_simd,
@@ -436,9 +451,17 @@ fn check_yuv444p16_u16_sse41_rgba_equivalence(width: usize, matrix: ColorMatrix,
   let v = p16_plane(width, 71);
   let mut rgba_scalar = std::vec![0u16; width * 4];
   let mut rgba_simd = std::vec![0u16; width * 4];
-  scalar::yuv_444p16_to_rgba_u16_row(&y, &u, &v, &mut rgba_scalar, width, matrix, full_range);
+  scalar::yuv_444p16_to_rgba_u16_row::<false>(
+    &y,
+    &u,
+    &v,
+    &mut rgba_scalar,
+    width,
+    matrix,
+    full_range,
+  );
   unsafe {
-    yuv_444p16_to_rgba_u16_row(&y, &u, &v, &mut rgba_simd, width, matrix, full_range);
+    yuv_444p16_to_rgba_u16_row::<false>(&y, &u, &v, &mut rgba_simd, width, matrix, full_range);
   }
   assert_eq!(
     rgba_scalar, rgba_simd,
@@ -457,9 +480,9 @@ fn check_p_n_444_16_u16_sse41_rgba_equivalence(
   let uv = interleave_uv_sse41(&u, &v);
   let mut rgba_scalar = std::vec![0u16; width * 4];
   let mut rgba_simd = std::vec![0u16; width * 4];
-  scalar::p_n_444_16_to_rgba_u16_row(&y, &uv, &mut rgba_scalar, width, matrix, full_range);
+  scalar::p_n_444_16_to_rgba_u16_row::<false>(&y, &uv, &mut rgba_scalar, width, matrix, full_range);
   unsafe {
-    p_n_444_16_to_rgba_u16_row(&y, &uv, &mut rgba_simd, width, matrix, full_range);
+    p_n_444_16_to_rgba_u16_row::<false>(&y, &uv, &mut rgba_simd, width, matrix, full_range);
   }
   assert_eq!(
     rgba_scalar, rgba_simd,
@@ -567,7 +590,7 @@ fn check_yuv444p16_u16_sse41_rgba_with_alpha_src_equivalence(
   let a_src = p16_plane(width, alpha_seed);
   let mut rgba_scalar = std::vec![0u16; width * 4];
   let mut rgba_simd = std::vec![0u16; width * 4];
-  scalar::yuv_444p16_to_rgba_u16_with_alpha_src_row(
+  scalar::yuv_444p16_to_rgba_u16_with_alpha_src_row::<false>(
     &y,
     &u,
     &v,
@@ -578,7 +601,7 @@ fn check_yuv444p16_u16_sse41_rgba_with_alpha_src_equivalence(
     full_range,
   );
   unsafe {
-    yuv_444p16_to_rgba_u16_with_alpha_src_row(
+    yuv_444p16_to_rgba_u16_with_alpha_src_row::<false>(
       &y,
       &u,
       &v,
@@ -670,7 +693,7 @@ fn check_yuv444p_n_u16_sse41_rgba_with_alpha_src_equivalence<const BITS: u32>(
   let a_src = planar_n_plane::<BITS>(width, alpha_seed);
   let mut rgba_scalar = std::vec![0u16; width * 4];
   let mut rgba_simd = std::vec![0u16; width * 4];
-  scalar::yuv_444p_n_to_rgba_u16_with_alpha_src_row::<BITS>(
+  scalar::yuv_444p_n_to_rgba_u16_with_alpha_src_row::<BITS, false>(
     &y,
     &u,
     &v,
@@ -681,7 +704,7 @@ fn check_yuv444p_n_u16_sse41_rgba_with_alpha_src_equivalence<const BITS: u32>(
     full_range,
   );
   unsafe {
-    yuv_444p_n_to_rgba_u16_with_alpha_src_row::<BITS>(
+    yuv_444p_n_to_rgba_u16_with_alpha_src_row::<BITS, false>(
       &y,
       &u,
       &v,
@@ -822,7 +845,7 @@ fn check_yuv420p_n_u16_sse41_rgba_with_alpha_src_equivalence<const BITS: u32>(
   let a_src = planar_n_plane::<BITS>(width, alpha_seed);
   let mut rgba_scalar = std::vec![0u16; width * 4];
   let mut rgba_simd = std::vec![0u16; width * 4];
-  scalar::yuv_420p_n_to_rgba_u16_with_alpha_src_row::<BITS>(
+  scalar::yuv_420p_n_to_rgba_u16_with_alpha_src_row::<BITS, false>(
     &y,
     &u,
     &v,
@@ -833,7 +856,7 @@ fn check_yuv420p_n_u16_sse41_rgba_with_alpha_src_equivalence<const BITS: u32>(
     full_range,
   );
   unsafe {
-    yuv_420p_n_to_rgba_u16_with_alpha_src_row::<BITS>(
+    yuv_420p_n_to_rgba_u16_with_alpha_src_row::<BITS, false>(
       &y,
       &u,
       &v,
@@ -862,7 +885,7 @@ fn check_yuv420p16_u16_sse41_rgba_with_alpha_src_equivalence(
   let a_src = p16_plane(width, alpha_seed);
   let mut rgba_scalar = std::vec![0u16; width * 4];
   let mut rgba_simd = std::vec![0u16; width * 4];
-  scalar::yuv_420p16_to_rgba_u16_with_alpha_src_row(
+  scalar::yuv_420p16_to_rgba_u16_with_alpha_src_row::<false>(
     &y,
     &u,
     &v,
@@ -873,7 +896,7 @@ fn check_yuv420p16_u16_sse41_rgba_with_alpha_src_equivalence(
     full_range,
   );
   unsafe {
-    yuv_420p16_to_rgba_u16_with_alpha_src_row(
+    yuv_420p16_to_rgba_u16_with_alpha_src_row::<false>(
       &y,
       &u,
       &v,

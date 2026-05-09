@@ -241,6 +241,20 @@ impl<'a, const BITS: u32> Yuv420pFrame16<'a, BITS> {
   /// within that plane's slice, offending value, and the valid
   /// maximum so the caller can pinpoint the bad sample. All of
   /// [`Self::try_new`]'s geometry errors are still possible.
+  ///
+  /// Per the LE-encoded byte contract documented on the type, samples
+  /// are validated **after** `u16::from_le` normalization so the range
+  /// check operates on the intended logical sample value on every host.
+  /// On little-endian hosts `from_le` is a no-op (the host-native `u16`
+  /// already matches the wire); on big-endian hosts it byte-swaps each
+  /// `u16` back into host-native form before the comparison. Without
+  /// this normalization a valid `yuv420p10le` plane on a BE host would
+  /// have its samples appear byte-swapped (e.g. `1023` encoded LE as
+  /// bytes `[0xFF, 0x03]` reads as host-native `0xFF03` on BE) and the
+  /// validator would falsely reject every row. The reported `value` in
+  /// the error is the normalized logical sample so callers can match it
+  /// against the declared `max_valid`. Mirrors the `Y2xxFrame::try_new_checked`
+  /// pattern.
   #[cfg_attr(not(tarpaulin), inline(always))]
   #[allow(clippy::too_many_arguments)]
   pub fn try_new_checked(
@@ -266,11 +280,14 @@ impl<'a, const BITS: u32> Yuv420pFrame16<'a, BITS> {
     for row in 0..h {
       let start = row * y_stride as usize;
       for (col, &s) in y[start..start + w].iter().enumerate() {
-        if s > max_valid {
+        // Normalize from LE-encoded wire to host-native before the
+        // range check (no-op on LE host, byte-swap on BE host).
+        let logical = u16::from_le(s);
+        if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::Y,
             index: start + col,
-            value: s,
+            value: logical,
             max_valid,
           });
         }
@@ -279,11 +296,12 @@ impl<'a, const BITS: u32> Yuv420pFrame16<'a, BITS> {
     for row in 0..chroma_h {
       let start = row * u_stride as usize;
       for (col, &s) in u[start..start + chroma_w].iter().enumerate() {
-        if s > max_valid {
+        let logical = u16::from_le(s);
+        if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::U,
             index: start + col,
-            value: s,
+            value: logical,
             max_valid,
           });
         }
@@ -292,11 +310,12 @@ impl<'a, const BITS: u32> Yuv420pFrame16<'a, BITS> {
     for row in 0..chroma_h {
       let start = row * v_stride as usize;
       for (col, &s) in v[start..start + chroma_w].iter().enumerate() {
-        if s > max_valid {
+        let logical = u16::from_le(s);
+        if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::V,
             index: start + col,
-            value: s,
+            value: logical,
             max_valid,
           });
         }
@@ -680,6 +699,11 @@ impl<'a, const BITS: u32> Yuv422pFrame16<'a, BITS> {
   /// `u16` value is valid) — same convention as
   /// [`Yuv420pFrame16::try_new_checked`].
   ///
+  /// Per the LE-encoded byte contract on the type, samples are validated
+  /// **after** `u16::from_le` normalization so the range check operates
+  /// on the intended logical sample on both LE and BE hosts. See
+  /// [`Yuv420pFrame16::try_new_checked`] for the full rationale.
+  ///
   /// Cost: one O(plane_size) linear scan per plane. The default
   /// [`Self::try_new`] skips this so the hot path (decoder output,
   /// already-conforming buffers) stays O(1).
@@ -708,11 +732,12 @@ impl<'a, const BITS: u32> Yuv422pFrame16<'a, BITS> {
     for row in 0..h {
       let start = row * y_stride as usize;
       for (col, &s) in y[start..start + w].iter().enumerate() {
-        if s > max_valid {
+        let logical = u16::from_le(s);
+        if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::Y,
             index: start + col,
-            value: s,
+            value: logical,
             max_valid,
           });
         }
@@ -721,11 +746,12 @@ impl<'a, const BITS: u32> Yuv422pFrame16<'a, BITS> {
     for row in 0..chroma_h {
       let start = row * u_stride as usize;
       for (col, &s) in u[start..start + chroma_w].iter().enumerate() {
-        if s > max_valid {
+        let logical = u16::from_le(s);
+        if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::U,
             index: start + col,
-            value: s,
+            value: logical,
             max_valid,
           });
         }
@@ -734,11 +760,12 @@ impl<'a, const BITS: u32> Yuv422pFrame16<'a, BITS> {
     for row in 0..chroma_h {
       let start = row * v_stride as usize;
       for (col, &s) in v[start..start + chroma_w].iter().enumerate() {
-        if s > max_valid {
+        let logical = u16::from_le(s);
+        if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::V,
             index: start + col,
-            value: s,
+            value: logical,
             max_valid,
           });
         }
@@ -948,6 +975,11 @@ impl<'a, const BITS: u32> Yuv444pFrame16<'a, BITS> {
   /// `u16` value is valid) — same convention as
   /// [`Yuv420pFrame16::try_new_checked`].
   ///
+  /// Per the LE-encoded byte contract on the type, samples are validated
+  /// **after** `u16::from_le` normalization so the range check operates
+  /// on the intended logical sample on both LE and BE hosts. See
+  /// [`Yuv420pFrame16::try_new_checked`] for the full rationale.
+  ///
   /// Cost: one O(plane_size) linear scan per plane.
   #[cfg_attr(not(tarpaulin), inline(always))]
   #[allow(clippy::too_many_arguments)]
@@ -972,11 +1004,12 @@ impl<'a, const BITS: u32> Yuv444pFrame16<'a, BITS> {
     for row in 0..h {
       let start = row * y_stride as usize;
       for (col, &s) in y[start..start + w].iter().enumerate() {
-        if s > max_valid {
+        let logical = u16::from_le(s);
+        if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::Y,
             index: start + col,
-            value: s,
+            value: logical,
             max_valid,
           });
         }
@@ -985,11 +1018,12 @@ impl<'a, const BITS: u32> Yuv444pFrame16<'a, BITS> {
     for row in 0..h {
       let start = row * u_stride as usize;
       for (col, &s) in u[start..start + w].iter().enumerate() {
-        if s > max_valid {
+        let logical = u16::from_le(s);
+        if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::U,
             index: start + col,
-            value: s,
+            value: logical,
             max_valid,
           });
         }
@@ -998,11 +1032,12 @@ impl<'a, const BITS: u32> Yuv444pFrame16<'a, BITS> {
     for row in 0..h {
       let start = row * v_stride as usize;
       for (col, &s) in v[start..start + w].iter().enumerate() {
-        if s > max_valid {
+        let logical = u16::from_le(s);
+        if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::V,
             index: start + col,
-            value: s,
+            value: logical,
             max_valid,
           });
         }
@@ -1228,6 +1263,11 @@ impl<'a, const BITS: u32> Yuv440pFrame16<'a, BITS> {
   /// produce silently wrong output. Use this constructor on untrusted
   /// inputs (custom decoders, unchecked FFI buffers, etc.).
   ///
+  /// Per the LE-encoded byte contract on the type, samples are validated
+  /// **after** `u16::from_le` normalization so the range check operates
+  /// on the intended logical sample on both LE and BE hosts. See
+  /// [`Yuv420pFrame16::try_new_checked`] for the full rationale.
+  ///
   /// Cost: one O(plane_size) linear scan per plane. The chroma planes
   /// here are full-width × half-height (4:4:0 layout).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -1253,11 +1293,12 @@ impl<'a, const BITS: u32> Yuv440pFrame16<'a, BITS> {
     for row in 0..h {
       let start = row * y_stride as usize;
       for (col, &s) in y[start..start + w].iter().enumerate() {
-        if s > max_valid {
+        let logical = u16::from_le(s);
+        if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::Y,
             index: start + col,
-            value: s,
+            value: logical,
             max_valid,
           });
         }
@@ -1266,11 +1307,12 @@ impl<'a, const BITS: u32> Yuv440pFrame16<'a, BITS> {
     for row in 0..chroma_h {
       let start = row * u_stride as usize;
       for (col, &s) in u[start..start + w].iter().enumerate() {
-        if s > max_valid {
+        let logical = u16::from_le(s);
+        if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::U,
             index: start + col,
-            value: s,
+            value: logical,
             max_valid,
           });
         }
@@ -1279,11 +1321,12 @@ impl<'a, const BITS: u32> Yuv440pFrame16<'a, BITS> {
     for row in 0..chroma_h {
       let start = row * v_stride as usize;
       for (col, &s) in v[start..start + w].iter().enumerate() {
-        if s > max_valid {
+        let logical = u16::from_le(s);
+        if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::V,
             index: start + col,
-            value: s,
+            value: logical,
             max_valid,
           });
         }

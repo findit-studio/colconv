@@ -104,9 +104,17 @@ fn check_p10_u8_avx2_equivalence(width: usize, matrix: ColorMatrix, full_range: 
   let mut rgb_scalar = std::vec![0u8; width * 3];
   let mut rgb_simd = std::vec![0u8; width * 3];
 
-  scalar::yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
+  scalar::yuv_420p_n_to_rgb_row::<10, false>(
+    &y,
+    &u,
+    &v,
+    &mut rgb_scalar,
+    width,
+    matrix,
+    full_range,
+  );
   unsafe {
-    yuv_420p_n_to_rgb_row::<10>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
+    yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
   }
 
   if rgb_scalar != rgb_simd {
@@ -132,9 +140,17 @@ fn check_p10_u16_avx2_equivalence(width: usize, matrix: ColorMatrix, full_range:
   let mut rgb_scalar = std::vec![0u16; width * 3];
   let mut rgb_simd = std::vec![0u16; width * 3];
 
-  scalar::yuv_420p_n_to_rgb_u16_row::<10>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
+  scalar::yuv_420p_n_to_rgb_u16_row::<10, false>(
+    &y,
+    &u,
+    &v,
+    &mut rgb_scalar,
+    width,
+    matrix,
+    full_range,
+  );
   unsafe {
-    yuv_420p_n_to_rgb_u16_row::<10>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
+    yuv_420p_n_to_rgb_u16_row::<10, false>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
   }
 
   if rgb_scalar != rgb_simd {
@@ -218,9 +234,17 @@ fn check_p_n_u8_avx2_equivalence<const BITS: u32>(
   let v = p_n_plane_avx2::<BITS>(width / 2, 71);
   let mut rgb_scalar = std::vec![0u8; width * 3];
   let mut rgb_simd = std::vec![0u8; width * 3];
-  scalar::yuv_420p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
+  scalar::yuv_420p_n_to_rgb_row::<BITS, false>(
+    &y,
+    &u,
+    &v,
+    &mut rgb_scalar,
+    width,
+    matrix,
+    full_range,
+  );
   unsafe {
-    yuv_420p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
+    yuv_420p_n_to_rgb_row::<BITS, false>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
   }
   assert_eq!(
     rgb_scalar, rgb_simd,
@@ -241,9 +265,17 @@ fn check_p_n_u16_avx2_equivalence<const BITS: u32>(
   let v = p_n_plane_avx2::<BITS>(width / 2, 71);
   let mut rgb_scalar = std::vec![0u16; width * 3];
   let mut rgb_simd = std::vec![0u16; width * 3];
-  scalar::yuv_420p_n_to_rgb_u16_row::<BITS>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
+  scalar::yuv_420p_n_to_rgb_u16_row::<BITS, false>(
+    &y,
+    &u,
+    &v,
+    &mut rgb_scalar,
+    width,
+    matrix,
+    full_range,
+  );
   unsafe {
-    yuv_420p_n_to_rgb_u16_row::<BITS>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
+    yuv_420p_n_to_rgb_u16_row::<BITS, false>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
   }
   assert_eq!(
     rgb_scalar, rgb_simd,
@@ -298,9 +330,9 @@ fn check_p010_u8_avx2_equivalence(width: usize, matrix: ColorMatrix, full_range:
   let uv = p010_uv_interleave(&u, &v);
   let mut rgb_scalar = std::vec![0u8; width * 3];
   let mut rgb_simd = std::vec![0u8; width * 3];
-  scalar::p_n_to_rgb_row::<10>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
+  scalar::p_n_to_rgb_row::<10, false>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
   unsafe {
-    p_n_to_rgb_row::<10>(&y, &uv, &mut rgb_simd, width, matrix, full_range);
+    p_n_to_rgb_row::<10, false>(&y, &uv, &mut rgb_simd, width, matrix, full_range);
   }
   assert_eq!(rgb_scalar, rgb_simd, "AVX2 P010→u8 diverges");
 }
@@ -315,9 +347,9 @@ fn check_p010_u16_avx2_equivalence(width: usize, matrix: ColorMatrix, full_range
   let uv = p010_uv_interleave(&u, &v);
   let mut rgb_scalar = std::vec![0u16; width * 3];
   let mut rgb_simd = std::vec![0u16; width * 3];
-  scalar::p_n_to_rgb_u16_row::<10>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
+  scalar::p_n_to_rgb_u16_row::<10, false>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
   unsafe {
-    p_n_to_rgb_u16_row::<10>(&y, &uv, &mut rgb_simd, width, matrix, full_range);
+    p_n_to_rgb_u16_row::<10, false>(&y, &uv, &mut rgb_simd, width, matrix, full_range);
   }
   assert_eq!(rgb_scalar, rgb_simd, "AVX2 P010→u16 diverges");
 }
@@ -383,9 +415,17 @@ fn check_planar_u8_avx2_equivalence_n<const BITS: u32>(
   let v = planar_n_plane::<BITS>(width / 2, 71);
   let mut rgb_scalar = std::vec![0u8; width * 3];
   let mut rgb_simd = std::vec![0u8; width * 3];
-  scalar::yuv_420p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
+  scalar::yuv_420p_n_to_rgb_row::<BITS, false>(
+    &y,
+    &u,
+    &v,
+    &mut rgb_scalar,
+    width,
+    matrix,
+    full_range,
+  );
   unsafe {
-    yuv_420p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
+    yuv_420p_n_to_rgb_row::<BITS, false>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
   }
   assert_eq!(rgb_scalar, rgb_simd, "AVX2 planar {BITS}-bit → u8 diverges");
 }
@@ -403,9 +443,17 @@ fn check_planar_u16_avx2_equivalence_n<const BITS: u32>(
   let v = planar_n_plane::<BITS>(width / 2, 71);
   let mut rgb_scalar = std::vec![0u16; width * 3];
   let mut rgb_simd = std::vec![0u16; width * 3];
-  scalar::yuv_420p_n_to_rgb_u16_row::<BITS>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
+  scalar::yuv_420p_n_to_rgb_u16_row::<BITS, false>(
+    &y,
+    &u,
+    &v,
+    &mut rgb_scalar,
+    width,
+    matrix,
+    full_range,
+  );
   unsafe {
-    yuv_420p_n_to_rgb_u16_row::<BITS>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
+    yuv_420p_n_to_rgb_u16_row::<BITS, false>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
   }
   assert_eq!(
     rgb_scalar, rgb_simd,
@@ -427,9 +475,9 @@ fn check_pn_u8_avx2_equivalence_n<const BITS: u32>(
   let uv = p010_uv_interleave(&u, &v);
   let mut rgb_scalar = std::vec![0u8; width * 3];
   let mut rgb_simd = std::vec![0u8; width * 3];
-  scalar::p_n_to_rgb_row::<BITS>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
+  scalar::p_n_to_rgb_row::<BITS, false>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
   unsafe {
-    p_n_to_rgb_row::<BITS>(&y, &uv, &mut rgb_simd, width, matrix, full_range);
+    p_n_to_rgb_row::<BITS, false>(&y, &uv, &mut rgb_simd, width, matrix, full_range);
   }
   assert_eq!(rgb_scalar, rgb_simd, "AVX2 Pn {BITS}-bit → u8 diverges");
 }
@@ -448,9 +496,9 @@ fn check_pn_u16_avx2_equivalence_n<const BITS: u32>(
   let uv = p010_uv_interleave(&u, &v);
   let mut rgb_scalar = std::vec![0u16; width * 3];
   let mut rgb_simd = std::vec![0u16; width * 3];
-  scalar::p_n_to_rgb_u16_row::<BITS>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
+  scalar::p_n_to_rgb_u16_row::<BITS, false>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
   unsafe {
-    p_n_to_rgb_u16_row::<BITS>(&y, &uv, &mut rgb_simd, width, matrix, full_range);
+    p_n_to_rgb_u16_row::<BITS, false>(&y, &uv, &mut rgb_simd, width, matrix, full_range);
   }
   assert_eq!(rgb_scalar, rgb_simd, "AVX2 Pn {BITS}-bit → u16 diverges");
 }
@@ -520,9 +568,9 @@ fn check_yuv420p16_u8_avx2_equivalence(width: usize, matrix: ColorMatrix, full_r
   let v = p16_plane_avx2(width / 2, 71);
   let mut rgb_scalar = std::vec![0u8; width * 3];
   let mut rgb_simd = std::vec![0u8; width * 3];
-  scalar::yuv_420p16_to_rgb_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
+  scalar::yuv_420p16_to_rgb_row::<false>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
   unsafe {
-    yuv_420p16_to_rgb_row(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
+    yuv_420p16_to_rgb_row::<false>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
   }
   assert_eq!(
     rgb_scalar, rgb_simd,
@@ -539,9 +587,17 @@ fn check_yuv420p16_u16_avx2_equivalence(width: usize, matrix: ColorMatrix, full_
   let v = p16_plane_avx2(width / 2, 71);
   let mut rgb_scalar = std::vec![0u16; width * 3];
   let mut rgb_simd = std::vec![0u16; width * 3];
-  scalar::yuv_420p16_to_rgb_u16_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
+  scalar::yuv_420p16_to_rgb_u16_row::<false>(
+    &y,
+    &u,
+    &v,
+    &mut rgb_scalar,
+    width,
+    matrix,
+    full_range,
+  );
   unsafe {
-    yuv_420p16_to_rgb_u16_row(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
+    yuv_420p16_to_rgb_u16_row::<false>(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
   }
   assert_eq!(
     rgb_scalar, rgb_simd,
@@ -559,9 +615,9 @@ fn check_p16_u8_avx2_equivalence(width: usize, matrix: ColorMatrix, full_range: 
   let uv = p010_uv_interleave(&u, &v);
   let mut rgb_scalar = std::vec![0u8; width * 3];
   let mut rgb_simd = std::vec![0u8; width * 3];
-  scalar::p16_to_rgb_row(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
+  scalar::p16_to_rgb_row::<false>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
   unsafe {
-    p16_to_rgb_row(&y, &uv, &mut rgb_simd, width, matrix, full_range);
+    p16_to_rgb_row::<false>(&y, &uv, &mut rgb_simd, width, matrix, full_range);
   }
   assert_eq!(
     rgb_scalar, rgb_simd,
@@ -579,9 +635,9 @@ fn check_p16_u16_avx2_equivalence(width: usize, matrix: ColorMatrix, full_range:
   let uv = p010_uv_interleave(&u, &v);
   let mut rgb_scalar = std::vec![0u16; width * 3];
   let mut rgb_simd = std::vec![0u16; width * 3];
-  scalar::p16_to_rgb_u16_row(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
+  scalar::p16_to_rgb_u16_row::<false>(&y, &uv, &mut rgb_scalar, width, matrix, full_range);
   unsafe {
-    p16_to_rgb_u16_row(&y, &uv, &mut rgb_simd, width, matrix, full_range);
+    p16_to_rgb_u16_row::<false>(&y, &uv, &mut rgb_simd, width, matrix, full_range);
   }
   assert_eq!(
     rgb_scalar, rgb_simd,

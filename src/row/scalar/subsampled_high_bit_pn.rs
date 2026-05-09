@@ -1,4 +1,4 @@
-use super::*;
+use super::{load_u16, *};
 
 // ---- P010 (semi-planar 10-bit, high-bit-packed) → RGB ------------------
 
@@ -23,7 +23,7 @@ use super::*;
 /// - `y.len() >= width`, `uv_half.len() >= width`,
 ///   `rgb_out.len() >= 3 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_to_rgb_row<const BITS: u32>(
+pub(crate) fn p_n_to_rgb_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   rgb_out: &mut [u8],
@@ -31,7 +31,7 @@ pub(crate) fn p_n_to_rgb_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p_n_to_rgb_or_rgba_row::<BITS, false>(y, uv_half, rgb_out, width, matrix, full_range);
+  p_n_to_rgb_or_rgba_row::<BITS, false, BE>(y, uv_half, rgb_out, width, matrix, full_range);
 }
 
 /// Converts one row of high‑bit‑packed semi‑planar 4:2:0 (P010/P012)
@@ -47,7 +47,7 @@ pub(crate) fn p_n_to_rgb_row<const BITS: u32>(
 // caller. P016 has its own kernel family
 // ([`p16_to_rgb_or_rgba_row`]) — never routed here.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_to_rgba_row<const BITS: u32>(
+pub(crate) fn p_n_to_rgba_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   rgba_out: &mut [u8],
@@ -55,7 +55,7 @@ pub(crate) fn p_n_to_rgba_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p_n_to_rgb_or_rgba_row::<BITS, true>(y, uv_half, rgba_out, width, matrix, full_range);
+  p_n_to_rgb_or_rgba_row::<BITS, true, BE>(y, uv_half, rgba_out, width, matrix, full_range);
 }
 
 /// Shared kernel for [`p_n_to_rgb_row`] (`ALPHA = false`, 3 bpp store)
@@ -68,7 +68,7 @@ pub(crate) fn p_n_to_rgba_row<const BITS: u32>(
 /// - `y.len() >= width`, `uv_half.len() >= width`,
 ///   `out.len() >= width * if ALPHA { 4 } else { 3 }`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
+pub(crate) fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool, const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   out: &mut [u8],
@@ -97,17 +97,18 @@ pub(crate) fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
   let shift = 16 - BITS;
 
   // Each `u16` load is converted to its `BITS`-bit sample with
-  // `>> (16 - BITS)` — 6 for P010, 4 for P012. Extracts the upper
-  // bits and leaves the result in `[0, (1 << BITS) - 1]`. If
-  // low-packed input (`yuv420p10le`, `yuv420p12le`) is handed to
-  // this kernel by mistake, the shift discards the active low bits
-  // rather than recovering the intended value. No hot-path cost:
-  // one shift per load.
+  // `>> (16 - BITS)` — 6 for P010, 4 for P012. The BE byte-swap is
+  // applied first (on the raw wire format), then the shift extracts the
+  // active upper bits: `load_u16::<BE>(sample) >> (16 - BITS)`. If
+  // low-packed input (`yuv420p10le`, `yuv420p12le`) is handed to this
+  // kernel by mistake, the shift discards the active low bits rather than
+  // recovering the intended value. No hot-path cost: one swap + one shift
+  // per load.
   let mut x = 0;
   while x < width {
     let c_idx = x / 2;
-    let u_sample = uv_half[c_idx * 2] >> shift;
-    let v_sample = uv_half[c_idx * 2 + 1] >> shift;
+    let u_sample = load_u16::<BE>(uv_half[c_idx * 2]) >> shift;
+    let v_sample = load_u16::<BE>(uv_half[c_idx * 2 + 1]) >> shift;
     let u_d = q15_scale(u_sample as i32 - bias, c_scale);
     let v_d = q15_scale(v_sample as i32 - bias, c_scale);
 
@@ -115,7 +116,7 @@ pub(crate) fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale((y[x] >> shift) as i32 - y_off, y_scale);
+    let y0 = q15_scale((load_u16::<BE>(y[x]) >> shift) as i32 - y_off, y_scale);
     out[x * bpp] = clamp_u8(y0 + r_chroma);
     out[x * bpp + 1] = clamp_u8(y0 + g_chroma);
     out[x * bpp + 2] = clamp_u8(y0 + b_chroma);
@@ -123,7 +124,7 @@ pub(crate) fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
       out[x * bpp + 3] = 0xFF;
     }
 
-    let y1 = q15_scale((y[x + 1] >> shift) as i32 - y_off, y_scale);
+    let y1 = q15_scale((load_u16::<BE>(y[x + 1]) >> shift) as i32 - y_off, y_scale);
     out[(x + 1) * bpp] = clamp_u8(y1 + r_chroma);
     out[(x + 1) * bpp + 1] = clamp_u8(y1 + g_chroma);
     out[(x + 1) * bpp + 2] = clamp_u8(y1 + b_chroma);
@@ -156,7 +157,7 @@ pub(crate) fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
 /// - `y.len() >= width`, `uv_half.len() >= width`,
 ///   `rgb_out.len() >= 3 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_to_rgb_u16_row<const BITS: u32>(
+pub(crate) fn p_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   rgb_out: &mut [u16],
@@ -164,7 +165,7 @@ pub(crate) fn p_n_to_rgb_u16_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p_n_to_rgb_or_rgba_u16_row::<BITS, false>(y, uv_half, rgb_out, width, matrix, full_range);
+  p_n_to_rgb_or_rgba_u16_row::<BITS, false, BE>(y, uv_half, rgb_out, width, matrix, full_range);
 }
 
 /// Converts one row of high‑bit‑packed semi‑planar 4:2:0 (P010/P012)
@@ -180,7 +181,7 @@ pub(crate) fn p_n_to_rgb_u16_row<const BITS: u32>(
 // no caller. P016 has its own u16 kernel family
 // ([`p16_to_rgb_or_rgba_u16_row`]) — never routed here.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_to_rgba_u16_row<const BITS: u32>(
+pub(crate) fn p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   rgba_out: &mut [u16],
@@ -188,7 +189,7 @@ pub(crate) fn p_n_to_rgba_u16_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p_n_to_rgb_or_rgba_u16_row::<BITS, true>(y, uv_half, rgba_out, width, matrix, full_range);
+  p_n_to_rgb_or_rgba_u16_row::<BITS, true, BE>(y, uv_half, rgba_out, width, matrix, full_range);
 }
 
 /// Shared kernel for [`p_n_to_rgb_u16_row`] (`ALPHA = false`, 3 bpp
@@ -201,7 +202,7 @@ pub(crate) fn p_n_to_rgba_u16_row<const BITS: u32>(
 /// - `y.len() >= width`, `uv_half.len() >= width`,
 ///   `out.len() >= width * if ALPHA { 4 } else { 3 }` (`u16` elements).
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
+pub(crate) fn p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool, const BE: bool>(
   y: &[u16],
   uv_half: &[u16],
   out: &mut [u16],
@@ -231,8 +232,8 @@ pub(crate) fn p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
   let mut x = 0;
   while x < width {
     let c_idx = x / 2;
-    let u_sample = uv_half[c_idx * 2] >> shift;
-    let v_sample = uv_half[c_idx * 2 + 1] >> shift;
+    let u_sample = load_u16::<BE>(uv_half[c_idx * 2]) >> shift;
+    let v_sample = load_u16::<BE>(uv_half[c_idx * 2 + 1]) >> shift;
     let u_d = q15_scale(u_sample as i32 - bias, c_scale);
     let v_d = q15_scale(v_sample as i32 - bias, c_scale);
 
@@ -240,7 +241,7 @@ pub(crate) fn p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale((y[x] >> shift) as i32 - y_off, y_scale);
+    let y0 = q15_scale((load_u16::<BE>(y[x]) >> shift) as i32 - y_off, y_scale);
     out[x * bpp] = (y0 + r_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 1] = (y0 + g_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 2] = (y0 + b_chroma).clamp(0, out_max) as u16;
@@ -248,7 +249,7 @@ pub(crate) fn p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
       out[x * bpp + 3] = alpha_max;
     }
 
-    let y1 = q15_scale((y[x + 1] >> shift) as i32 - y_off, y_scale);
+    let y1 = q15_scale((load_u16::<BE>(y[x + 1]) >> shift) as i32 - y_off, y_scale);
     out[(x + 1) * bpp] = (y1 + r_chroma).clamp(0, out_max) as u16;
     out[(x + 1) * bpp + 1] = (y1 + g_chroma).clamp(0, out_max) as u16;
     out[(x + 1) * bpp + 2] = (y1 + b_chroma).clamp(0, out_max) as u16;
@@ -281,7 +282,7 @@ pub(crate) fn p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
 /// - `y.len() >= width`, `uv_full.len() >= 2 * width`,
 ///   `rgb_out.len() >= 3 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_444_to_rgb_row<const BITS: u32>(
+pub(crate) fn p_n_444_to_rgb_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   rgb_out: &mut [u8],
@@ -289,7 +290,7 @@ pub(crate) fn p_n_444_to_rgb_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p_n_444_to_rgb_or_rgba_row::<BITS, false>(y, uv_full, rgb_out, width, matrix, full_range);
+  p_n_444_to_rgb_or_rgba_row::<BITS, false, BE>(y, uv_full, rgb_out, width, matrix, full_range);
 }
 
 /// Converts one row of high-bit-packed semi-planar 4:4:4 (P410, P412)
@@ -304,7 +305,7 @@ pub(crate) fn p_n_444_to_rgb_row<const BITS: u32>(
 /// - `y.len() >= width`, `uv_full.len() >= 2 * width`,
 ///   `rgba_out.len() >= 4 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_444_to_rgba_row<const BITS: u32>(
+pub(crate) fn p_n_444_to_rgba_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   rgba_out: &mut [u8],
@@ -312,7 +313,7 @@ pub(crate) fn p_n_444_to_rgba_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p_n_444_to_rgb_or_rgba_row::<BITS, true>(y, uv_full, rgba_out, width, matrix, full_range);
+  p_n_444_to_rgb_or_rgba_row::<BITS, true, BE>(y, uv_full, rgba_out, width, matrix, full_range);
 }
 
 /// Shared kernel for [`p_n_444_to_rgb_row`] (`ALPHA = false`, 3 bpp
@@ -324,7 +325,7 @@ pub(crate) fn p_n_444_to_rgba_row<const BITS: u32>(
 /// - `y.len() >= width`, `uv_full.len() >= 2 * width`,
 ///   `out.len() >= width * if ALPHA { 4 } else { 3 }`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_444_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
+pub(crate) fn p_n_444_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool, const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   out: &mut [u8],
@@ -345,8 +346,8 @@ pub(crate) fn p_n_444_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
 
   for x in 0..width {
     // 4:4:4: one UV pair per pixel — uv_full[x*2] = U, uv_full[x*2+1] = V.
-    let u_sample = uv_full[x * 2] >> shift;
-    let v_sample = uv_full[x * 2 + 1] >> shift;
+    let u_sample = load_u16::<BE>(uv_full[x * 2]) >> shift;
+    let v_sample = load_u16::<BE>(uv_full[x * 2 + 1]) >> shift;
     let u_d = q15_scale(u_sample as i32 - bias, c_scale);
     let v_d = q15_scale(v_sample as i32 - bias, c_scale);
 
@@ -354,7 +355,7 @@ pub(crate) fn p_n_444_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale((y[x] >> shift) as i32 - y_off, y_scale);
+    let y0 = q15_scale((load_u16::<BE>(y[x]) >> shift) as i32 - y_off, y_scale);
     out[x * bpp] = clamp_u8(y0 + r_chroma);
     out[x * bpp + 1] = clamp_u8(y0 + g_chroma);
     out[x * bpp + 2] = clamp_u8(y0 + b_chroma);
@@ -377,7 +378,7 @@ pub(crate) fn p_n_444_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
 /// - `y.len() >= width`, `uv_full.len() >= 2 * width`,
 ///   `rgb_out.len() >= 3 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_444_to_rgb_u16_row<const BITS: u32>(
+pub(crate) fn p_n_444_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   rgb_out: &mut [u16],
@@ -385,7 +386,7 @@ pub(crate) fn p_n_444_to_rgb_u16_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p_n_444_to_rgb_or_rgba_u16_row::<BITS, false>(y, uv_full, rgb_out, width, matrix, full_range);
+  p_n_444_to_rgb_or_rgba_u16_row::<BITS, false, BE>(y, uv_full, rgb_out, width, matrix, full_range);
 }
 
 /// Converts one row of high-bit-packed semi-planar 4:4:4 (P410, P412)
@@ -400,7 +401,7 @@ pub(crate) fn p_n_444_to_rgb_u16_row<const BITS: u32>(
 /// - `y.len() >= width`, `uv_full.len() >= 2 * width`,
 ///   `rgba_out.len() >= 4 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_444_to_rgba_u16_row<const BITS: u32>(
+pub(crate) fn p_n_444_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   rgba_out: &mut [u16],
@@ -408,7 +409,7 @@ pub(crate) fn p_n_444_to_rgba_u16_row<const BITS: u32>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p_n_444_to_rgb_or_rgba_u16_row::<BITS, true>(y, uv_full, rgba_out, width, matrix, full_range);
+  p_n_444_to_rgb_or_rgba_u16_row::<BITS, true, BE>(y, uv_full, rgba_out, width, matrix, full_range);
 }
 
 /// Shared kernel for [`p_n_444_to_rgb_u16_row`] (`ALPHA = false`,
@@ -420,7 +421,7 @@ pub(crate) fn p_n_444_to_rgba_u16_row<const BITS: u32>(
 /// - `y.len() >= width`, `uv_full.len() >= 2 * width`,
 ///   `out.len() >= width * if ALPHA { 4 } else { 3 }` (`u16` elements).
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_444_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
+pub(crate) fn p_n_444_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool, const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   out: &mut [u16],
@@ -442,8 +443,8 @@ pub(crate) fn p_n_444_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>
   let alpha_max: u16 = out_max as u16;
 
   for x in 0..width {
-    let u_sample = uv_full[x * 2] >> shift;
-    let v_sample = uv_full[x * 2 + 1] >> shift;
+    let u_sample = load_u16::<BE>(uv_full[x * 2]) >> shift;
+    let v_sample = load_u16::<BE>(uv_full[x * 2 + 1]) >> shift;
     let u_d = q15_scale(u_sample as i32 - bias, c_scale);
     let v_d = q15_scale(v_sample as i32 - bias, c_scale);
 
@@ -451,7 +452,7 @@ pub(crate) fn p_n_444_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale((y[x] >> shift) as i32 - y_off, y_scale);
+    let y0 = q15_scale((load_u16::<BE>(y[x]) >> shift) as i32 - y_off, y_scale);
     out[x * bpp] = (y0 + r_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 1] = (y0 + g_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 2] = (y0 + b_chroma).clamp(0, out_max) as u16;
@@ -472,7 +473,7 @@ pub(crate) fn p_n_444_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>
 /// - `y.len() >= width`, `uv_full.len() >= 2 * width`,
 ///   `rgb_out.len() >= 3 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_444_16_to_rgb_row(
+pub(crate) fn p_n_444_16_to_rgb_row<const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   rgb_out: &mut [u8],
@@ -480,7 +481,7 @@ pub(crate) fn p_n_444_16_to_rgb_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p_n_444_16_to_rgb_or_rgba_row::<false>(y, uv_full, rgb_out, width, matrix, full_range);
+  p_n_444_16_to_rgb_or_rgba_row::<false, BE>(y, uv_full, rgb_out, width, matrix, full_range);
 }
 
 /// Converts one row of P416 to **8-bit** packed **RGBA**. Same
@@ -490,7 +491,7 @@ pub(crate) fn p_n_444_16_to_rgb_row(
 ///
 /// Thin wrapper over [`p_n_444_16_to_rgb_or_rgba_row`] with `ALPHA = true`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_444_16_to_rgba_row(
+pub(crate) fn p_n_444_16_to_rgba_row<const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   rgba_out: &mut [u8],
@@ -498,13 +499,13 @@ pub(crate) fn p_n_444_16_to_rgba_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p_n_444_16_to_rgb_or_rgba_row::<true>(y, uv_full, rgba_out, width, matrix, full_range);
+  p_n_444_16_to_rgb_or_rgba_row::<true, BE>(y, uv_full, rgba_out, width, matrix, full_range);
 }
 
 /// Shared P416 → 8-bit RGB / RGBA kernel. `ALPHA = false` emits 3 bpp;
 /// `ALPHA = true` emits 4 bpp with constant `0xFF` alpha.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_444_16_to_rgb_or_rgba_row<const ALPHA: bool>(
+pub(crate) fn p_n_444_16_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   out: &mut [u8],
@@ -522,8 +523,8 @@ pub(crate) fn p_n_444_16_to_rgb_or_rgba_row<const ALPHA: bool>(
   let bias = chroma_bias::<16>();
 
   for x in 0..width {
-    let u_sample = uv_full[x * 2];
-    let v_sample = uv_full[x * 2 + 1];
+    let u_sample = load_u16::<BE>(uv_full[x * 2]);
+    let v_sample = load_u16::<BE>(uv_full[x * 2 + 1]);
     let u_d = q15_scale(u_sample as i32 - bias, c_scale);
     let v_d = q15_scale(v_sample as i32 - bias, c_scale);
 
@@ -531,7 +532,7 @@ pub(crate) fn p_n_444_16_to_rgb_or_rgba_row<const ALPHA: bool>(
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale(y[x] as i32 - y_off, y_scale);
+    let y0 = q15_scale(load_u16::<BE>(y[x]) as i32 - y_off, y_scale);
     out[x * bpp] = clamp_u8(y0 + r_chroma);
     out[x * bpp + 1] = clamp_u8(y0 + g_chroma);
     out[x * bpp + 2] = clamp_u8(y0 + b_chroma);
@@ -554,7 +555,7 @@ pub(crate) fn p_n_444_16_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// - `y.len() >= width`, `uv_full.len() >= 2 * width`,
 ///   `rgb_out.len() >= 3 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_444_16_to_rgb_u16_row(
+pub(crate) fn p_n_444_16_to_rgb_u16_row<const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   rgb_out: &mut [u16],
@@ -562,7 +563,7 @@ pub(crate) fn p_n_444_16_to_rgb_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p_n_444_16_to_rgb_or_rgba_u16_row::<false>(y, uv_full, rgb_out, width, matrix, full_range);
+  p_n_444_16_to_rgb_or_rgba_u16_row::<false, BE>(y, uv_full, rgb_out, width, matrix, full_range);
 }
 
 /// Converts one row of P416 to **native-depth `u16`** packed
@@ -571,7 +572,7 @@ pub(crate) fn p_n_444_16_to_rgb_u16_row(
 ///
 /// Thin wrapper over [`p_n_444_16_to_rgb_or_rgba_u16_row`] with `ALPHA = true`.
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_444_16_to_rgba_u16_row(
+pub(crate) fn p_n_444_16_to_rgba_u16_row<const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   rgba_out: &mut [u16],
@@ -579,7 +580,7 @@ pub(crate) fn p_n_444_16_to_rgba_u16_row(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p_n_444_16_to_rgb_or_rgba_u16_row::<true>(y, uv_full, rgba_out, width, matrix, full_range);
+  p_n_444_16_to_rgb_or_rgba_u16_row::<true, BE>(y, uv_full, rgba_out, width, matrix, full_range);
 }
 
 /// Shared P416 → native-depth `u16` RGB / RGBA kernel. `ALPHA = false`
@@ -587,7 +588,7 @@ pub(crate) fn p_n_444_16_to_rgba_u16_row(
 /// alpha. Uses i64 chroma multiply (same rationale as
 /// [`p_n_444_16_to_rgb_u16_row`]).
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_444_16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
+pub(crate) fn p_n_444_16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   y: &[u16],
   uv_full: &[u16],
   out: &mut [u16],
@@ -606,8 +607,8 @@ pub(crate) fn p_n_444_16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
   let out_max: i32 = 0xFFFF;
 
   for x in 0..width {
-    let u_sample = uv_full[x * 2];
-    let v_sample = uv_full[x * 2 + 1];
+    let u_sample = load_u16::<BE>(uv_full[x * 2]);
+    let v_sample = load_u16::<BE>(uv_full[x * 2 + 1]);
     let u_d = q15_scale(u_sample as i32 - bias, c_scale);
     let v_d = q15_scale(v_sample as i32 - bias, c_scale);
 
@@ -615,7 +616,7 @@ pub(crate) fn p_n_444_16_to_rgb_or_rgba_u16_row<const ALPHA: bool>(
     let g_chroma = q15_chroma64(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma64(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale64(y[x] as i32 - y_off, y_scale);
+    let y0 = q15_scale64(load_u16::<BE>(y[x]) as i32 - y_off, y_scale);
     out[x * bpp] = (y0 + r_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 1] = (y0 + g_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 2] = (y0 + b_chroma).clamp(0, out_max) as u16;

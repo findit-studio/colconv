@@ -800,7 +800,7 @@ mod overflow_tests {
     let u: [u16; 0] = [];
     let v: [u16; 0] = [];
     let mut rgb: [u16; 0] = [];
-    yuv_444p_n_to_rgb_u16_row::<10>(
+    yuv_444p_n_to_rgb_u16_row::<10, false>(
       &y,
       &u,
       &v,

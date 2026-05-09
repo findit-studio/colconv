@@ -665,11 +665,27 @@ fn check_yuv_444p_n_equivalence<const BITS: u32>(
   let mut u16_scalar = std::vec![0u16; width * 3];
   let mut u16_avx2 = std::vec![0u16; width * 3];
 
-  scalar::yuv_444p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-  scalar::yuv_444p_n_to_rgb_u16_row::<BITS>(&y, &u, &v, &mut u16_scalar, width, matrix, full_range);
+  scalar::yuv_444p_n_to_rgb_row::<BITS, false>(
+    &y,
+    &u,
+    &v,
+    &mut rgb_scalar,
+    width,
+    matrix,
+    full_range,
+  );
+  scalar::yuv_444p_n_to_rgb_u16_row::<BITS, false>(
+    &y,
+    &u,
+    &v,
+    &mut u16_scalar,
+    width,
+    matrix,
+    full_range,
+  );
   unsafe {
-    yuv_444p_n_to_rgb_row::<BITS>(&y, &u, &v, &mut rgb_avx2, width, matrix, full_range);
-    yuv_444p_n_to_rgb_u16_row::<BITS>(&y, &u, &v, &mut u16_avx2, width, matrix, full_range);
+    yuv_444p_n_to_rgb_row::<BITS, false>(&y, &u, &v, &mut rgb_avx2, width, matrix, full_range);
+    yuv_444p_n_to_rgb_u16_row::<BITS, false>(&y, &u, &v, &mut u16_avx2, width, matrix, full_range);
   }
   assert_eq!(rgb_scalar, rgb_avx2, "AVX2 yuv_444p_n<{BITS}> u8 ≠ scalar");
   assert_eq!(u16_scalar, u16_avx2, "AVX2 yuv_444p_n<{BITS}> u16 ≠ scalar");
@@ -749,11 +765,19 @@ fn check_yuv_444p16_equivalence(width: usize, matrix: ColorMatrix, full_range: b
   let mut u16_scalar = std::vec![0u16; width * 3];
   let mut u16_avx2 = std::vec![0u16; width * 3];
 
-  scalar::yuv_444p16_to_rgb_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
-  scalar::yuv_444p16_to_rgb_u16_row(&y, &u, &v, &mut u16_scalar, width, matrix, full_range);
+  scalar::yuv_444p16_to_rgb_row::<false>(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
+  scalar::yuv_444p16_to_rgb_u16_row::<false>(
+    &y,
+    &u,
+    &v,
+    &mut u16_scalar,
+    width,
+    matrix,
+    full_range,
+  );
   unsafe {
-    yuv_444p16_to_rgb_row(&y, &u, &v, &mut rgb_avx2, width, matrix, full_range);
-    yuv_444p16_to_rgb_u16_row(&y, &u, &v, &mut u16_avx2, width, matrix, full_range);
+    yuv_444p16_to_rgb_row::<false>(&y, &u, &v, &mut rgb_avx2, width, matrix, full_range);
+    yuv_444p16_to_rgb_u16_row::<false>(&y, &u, &v, &mut u16_avx2, width, matrix, full_range);
   }
   assert_eq!(rgb_scalar, rgb_avx2, "AVX2 yuv_444p16 u8 ≠ scalar");
   assert_eq!(u16_scalar, u16_avx2, "AVX2 yuv_444p16 u16 ≠ scalar");

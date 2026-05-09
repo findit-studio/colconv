@@ -649,6 +649,20 @@ impl<'a, const BITS: u32> Yuva422pFrame16<'a, BITS> {
   /// four planes total). The default [`Self::try_new`] skips this so
   /// the hot path (decoder output, already-conforming buffers) stays
   /// O(1).
+  ///
+  /// Per the LE-encoded byte contract documented on the type, samples
+  /// are validated **after** `u16::from_le` normalization so the range
+  /// check operates on the intended logical sample value on every host.
+  /// On little-endian hosts `from_le` is a no-op (the host-native `u16`
+  /// already matches the wire); on big-endian hosts it byte-swaps each
+  /// `u16` back into host-native form before the comparison. Without
+  /// this normalization a valid `yuva422p10le` plane on a BE host would
+  /// have its samples appear byte-swapped (e.g. `1023` encoded LE as
+  /// bytes `[0xFF, 0x03]` reads as host-native `0xFF03` on BE) and the
+  /// validator would falsely reject every row. The reported `value` in
+  /// the error is the normalized logical sample so callers can match it
+  /// against the declared `max_valid`. Mirrors the
+  /// `Yuv422pFrame16::try_new_checked` pattern.
   #[cfg_attr(not(tarpaulin), inline(always))]
   #[allow(clippy::too_many_arguments)]
   pub fn try_new_checked(
@@ -673,11 +687,14 @@ impl<'a, const BITS: u32> Yuva422pFrame16<'a, BITS> {
     for row in 0..h {
       let start = row * y_stride as usize;
       for (col, &s) in y[start..start + w].iter().enumerate() {
-        if s > max_valid {
+        // Normalize from LE-encoded wire to host-native before the
+        // range check (no-op on LE host, byte-swap on BE host).
+        let logical = u16::from_le(s);
+        if logical > max_valid {
           return Err(Yuva422pFrame16Error::SampleOutOfRange {
             plane: Yuva422pFrame16Plane::Y,
             index: start + col,
-            value: s,
+            value: logical,
             max_valid,
           });
         }
@@ -686,11 +703,12 @@ impl<'a, const BITS: u32> Yuva422pFrame16<'a, BITS> {
     for row in 0..h {
       let start = row * u_stride as usize;
       for (col, &s) in u[start..start + chroma_w].iter().enumerate() {
-        if s > max_valid {
+        let logical = u16::from_le(s);
+        if logical > max_valid {
           return Err(Yuva422pFrame16Error::SampleOutOfRange {
             plane: Yuva422pFrame16Plane::U,
             index: start + col,
-            value: s,
+            value: logical,
             max_valid,
           });
         }
@@ -699,11 +717,12 @@ impl<'a, const BITS: u32> Yuva422pFrame16<'a, BITS> {
     for row in 0..h {
       let start = row * v_stride as usize;
       for (col, &s) in v[start..start + chroma_w].iter().enumerate() {
-        if s > max_valid {
+        let logical = u16::from_le(s);
+        if logical > max_valid {
           return Err(Yuva422pFrame16Error::SampleOutOfRange {
             plane: Yuva422pFrame16Plane::V,
             index: start + col,
-            value: s,
+            value: logical,
             max_valid,
           });
         }
@@ -712,11 +731,12 @@ impl<'a, const BITS: u32> Yuva422pFrame16<'a, BITS> {
     for row in 0..h {
       let start = row * a_stride as usize;
       for (col, &s) in a[start..start + w].iter().enumerate() {
-        if s > max_valid {
+        let logical = u16::from_le(s);
+        if logical > max_valid {
           return Err(Yuva422pFrame16Error::SampleOutOfRange {
             plane: Yuva422pFrame16Plane::A,
             index: start + col,
-            value: s,
+            value: logical,
             max_valid,
           });
         }
