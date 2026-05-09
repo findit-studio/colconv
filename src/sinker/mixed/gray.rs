@@ -1577,11 +1577,17 @@ impl PixelSink for MixedSinker<'_, Ya16> {
 mod tests {
   use crate::{
     ColorMatrix,
-    frame::{Gray8Frame, Gray16Frame, GrayNFrame, Grayf32Frame, Ya8Frame, Ya16Frame},
+    frame::{Gray8Frame, Gray16Frame, Grayf32Frame, Ya8Frame, Ya16Frame},
     sinker::MixedSinker,
-    yuv::{
-      gray8_to, gray9_to, gray10_to, gray12_to, gray14_to, gray16_to, grayf32_to, ya8_to, ya16_to,
-    },
+    yuv::{gray8_to, gray16_to, grayf32_to, ya8_to, ya16_to},
+  };
+  // GrayN<BITS> frame + non-byte-aligned dispatchers are consumed only by
+  // tests gated on LE hosts (their `Vec<u16>` fixtures travel through
+  // `from_le` on the sink path and would be byte-swapped on a BE host).
+  #[cfg(target_endian = "little")]
+  use crate::{
+    frame::GrayNFrame,
+    yuv::{gray9_to, gray10_to, gray12_to, gray14_to},
   };
 
   // Gray formats are luma-only; full_range and matrix are unused by the kernels
