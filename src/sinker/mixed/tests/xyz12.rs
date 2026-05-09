@@ -57,6 +57,10 @@ fn solid_xyz12_frame_be(width: u32, height: u32, x: u16, y: u16, z: u16) -> Vec<
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_with_rgb_zero_input_zero_output() {
   let pix = solid_xyz12_frame_le(8, 4, 0, 0, 0);
   let src = Xyz12LeFrame::try_new(&pix, 8, 4, 8 * 3).unwrap();
@@ -73,6 +77,10 @@ fn xyz12_with_rgb_zero_input_zero_output() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_with_rgb_max_input_clamps_to_255() {
   // (4095, 4095, 4095) under DCI-P3 (DCI white, post round-2 fix) →
   // linear ~(1.383, 1.001, 1.151) → after clamp [0,1] + OETF + ×255
@@ -92,6 +100,10 @@ fn xyz12_with_rgb_max_input_clamps_to_255() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_with_rgba_fills_alpha_max_u8() {
   let pix = solid_xyz12_frame_le(8, 4, 0x800, 0x800, 0x800);
   let src = Xyz12LeFrame::try_new(&pix, 8, 4, 8 * 3).unwrap();
@@ -108,6 +120,10 @@ fn xyz12_with_rgba_fills_alpha_max_u8() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_with_rgb_u16_full_range_at_max() {
   let pix = solid_xyz12_frame_le(8, 4, 0xFFF, 0xFFF, 0xFFF);
   let src = Xyz12LeFrame::try_new(&pix, 8, 4, 8 * 3).unwrap();
@@ -124,6 +140,10 @@ fn xyz12_with_rgb_u16_full_range_at_max() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_with_rgba_u16_fills_alpha_max() {
   let pix = solid_xyz12_frame_le(8, 4, 0x800, 0x800, 0x800);
   let src = Xyz12LeFrame::try_new(&pix, 8, 4, 8 * 3).unwrap();
@@ -140,6 +160,10 @@ fn xyz12_with_rgba_u16_fills_alpha_max() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_with_rgb_f32_preserves_negatives() {
   // y_only_max under Rec.709 → R = -1.677, G = +2.05, B = -0.222.
   // f32 path skips clamp, so negatives + > 1 values are preserved.
@@ -160,6 +184,10 @@ fn xyz12_with_rgb_f32_preserves_negatives() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_with_xyz_f32_lossless_passthrough() {
   let pix = solid_xyz12_frame_le(4, 2, 0x800, 0x800, 0x800);
   let src = Xyz12LeFrame::try_new(&pix, 4, 2, 4 * 3).unwrap();
@@ -183,6 +211,10 @@ fn xyz12_with_xyz_f32_lossless_passthrough() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_with_rgb_f16_rec709_mid_gray() {
   let pix = solid_xyz12_frame_le(4, 2, 0x800, 0x800, 0x800);
   let src = Xyz12LeFrame::try_new(&pix, 4, 2, 4 * 3).unwrap();
@@ -204,6 +236,10 @@ fn xyz12_with_rgb_f16_rec709_mid_gray() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_with_rgba_f16_alpha_one() {
   let pix = solid_xyz12_frame_le(4, 2, 0x800, 0x800, 0x800);
   let src = Xyz12LeFrame::try_new(&pix, 4, 2, 4 * 3).unwrap();
@@ -220,6 +256,10 @@ fn xyz12_with_rgba_f16_alpha_one() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_with_luma_via_staging() {
   let pix = solid_xyz12_frame_le(4, 4, 0x800, 0x800, 0x800);
   let src = Xyz12LeFrame::try_new(&pix, 4, 4, 4 * 3).unwrap();
@@ -238,6 +278,10 @@ fn xyz12_with_luma_via_staging() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_with_luma_u16_zero_extends() {
   let pix = solid_xyz12_frame_le(4, 4, 0x800, 0x800, 0x800);
   let src = Xyz12LeFrame::try_new(&pix, 4, 4, 4 * 3).unwrap();
@@ -255,6 +299,10 @@ fn xyz12_with_luma_u16_zero_extends() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_with_hsv_via_staging() {
   let pix = solid_xyz12_frame_le(4, 4, 0x800, 0x800, 0x800);
   let src = Xyz12LeFrame::try_new(&pix, 4, 4, 4 * 3).unwrap();
@@ -275,6 +323,10 @@ fn xyz12_with_hsv_via_staging() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_target_gamut_changes_output() {
   let pix = solid_xyz12_frame_le(4, 2, 0x800, 0x800, 0x800);
   let src = Xyz12LeFrame::try_new(&pix, 4, 2, 4 * 3).unwrap();
@@ -308,6 +360,10 @@ fn xyz12_target_gamut_changes_output() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_be_byte_swap_matches_le() {
   // BE input that is the byte-swapped LE encoding of the same
   // logical sample value should produce identical output.
@@ -334,6 +390,10 @@ fn xyz12_be_byte_swap_matches_le() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_combined_rgb_rgba_consistent() {
   // Combined `with_rgb + with_rgba` must produce the same RGB on both
   // outputs (alpha = 0xFF on the rgba path).
@@ -360,6 +420,10 @@ fn xyz12_combined_rgb_rgba_consistent() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_dirty_low_bits_discarded_by_kernel() {
   // FFmpeg `AV_PIX_FMT_XYZ12LE` reserves bits `[3:0]` as zero. A
   // non-spec-compliant producer that sets them anyway must produce
@@ -402,6 +466,10 @@ fn xyz12_dirty_low_bits_discarded_by_kernel() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_mid_gray_sample_is_nonzero() {
   // Pre-fix regression: mid-gray sample (`0x8000` on the wire = code
   // `0x800`) was decoded as `0x000`, producing all-zero output.
@@ -423,6 +491,10 @@ fn xyz12_mid_gray_sample_is_nonzero() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_short_buffer_rejected_at_attach() {
   let pix = solid_xyz12_frame_le(8, 4, 0, 0, 0);
   let _src = Xyz12LeFrame::try_new(&pix, 8, 4, 8 * 3).unwrap();
@@ -436,6 +508,10 @@ fn xyz12_short_buffer_rejected_at_attach() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_short_xyz_f32_buffer_rejected_at_attach() {
   let mut xyz_out = std::vec![0.0f32; 8 * 4 * 3 - 1];
   let res = MixedSinker::<Xyz12Le>::new(8, 4).with_xyz_f32(&mut xyz_out);
@@ -446,6 +522,10 @@ fn xyz12_short_xyz_f32_buffer_rejected_at_attach() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn xyz12_dimension_mismatch_rejected_at_begin_frame() {
   let pix = solid_xyz12_frame_le(4, 2, 0, 0, 0);
   let src = Xyz12LeFrame::try_new(&pix, 4, 2, 4 * 3).unwrap();
