@@ -406,6 +406,16 @@ pub(crate) fn bgra64_to_rgba_u16_row<const BE: bool>(
 mod tests {
   use super::*;
 
+  /// Re-encode a host-native u16 slice as LE-encoded byte storage. Kernels
+  /// called with `BE = false` recover the intended logical values via
+  /// `u16::from_le` on both LE (no-op) and BE (byte-swap) hosts.
+  fn as_le_u16(host: &[u16]) -> std::vec::Vec<u16> {
+    host
+      .iter()
+      .map(|v| u16::from_ne_bytes(v.to_le_bytes()))
+      .collect()
+  }
+
   // ---- Rgb48 ---------------------------------------------------------------
 
   /// All-white input: u16 passthrough should produce all-0xFFFF.
@@ -432,11 +442,10 @@ mod tests {
     );
   }
 
-  #[cfg(target_endian = "little")]
   /// Known value: 0x1234 >> 8 = 0x12.
   #[test]
   fn rgb48_to_rgb_narrow_known_value() {
-    let src = [0x1234u16, 0x5678, 0x9ABC];
+    let src = as_le_u16(&[0x1234u16, 0x5678, 0x9ABC]);
     let mut out = [0u8; 3];
     rgb48_to_rgb_row::<false>(&src, &mut out, 1);
     assert_eq!(out[0], 0x12, "R channel");
@@ -447,7 +456,7 @@ mod tests {
   /// rgba output forces alpha = 0xFF.
   #[test]
   fn rgb48_to_rgba_forces_alpha_0xff() {
-    let src = [0xAAAAu16, 0xBBBB, 0xCCCC];
+    let src = as_le_u16(&[0xAAAAu16, 0xBBBB, 0xCCCC]);
     let mut out = [0u8; 4];
     rgb48_to_rgba_row::<false>(&src, &mut out, 1);
     assert_eq!(out[3], 0xFF, "alpha must be 0xFF");
@@ -459,7 +468,7 @@ mod tests {
   /// rgba_u16 output forces alpha = 0xFFFF.
   #[test]
   fn rgb48_to_rgba_u16_forces_alpha_0xffff() {
-    let src = [0xAAAAu16, 0xBBBB, 0xCCCC];
+    let src = as_le_u16(&[0xAAAAu16, 0xBBBB, 0xCCCC]);
     let mut out = [0u16; 4];
     rgb48_to_rgba_u16_row::<false>(&src, &mut out, 1);
     assert_eq!(out[0], 0xAAAA, "R");
@@ -488,13 +497,12 @@ mod tests {
     assert!(out.iter().all(|&v| v == 0xFF), "expected all 0xFF");
   }
 
-  #[cfg(target_endian = "little")]
   /// Channel-order swap: Bgr48 `[B=0x1234, G=0x5678, R=0x9ABC]`
   /// → `with_rgb_u16` → `[R=0x9ABC, G=0x5678, B=0x1234]`.
   #[test]
   fn bgr48_to_rgb_u16_channel_order_swapped() {
     // Source pixel in BGR order: B=0x1234, G=0x5678, R=0x9ABC
-    let src = [0x1234u16, 0x5678, 0x9ABC];
+    let src = as_le_u16(&[0x1234u16, 0x5678, 0x9ABC]);
     let mut out = [0u16; 3];
     bgr48_to_rgb_u16_row::<false>(&src, &mut out, 1);
     assert_eq!(out[0], 0x9ABC, "R (was at src[2])");
@@ -502,11 +510,10 @@ mod tests {
     assert_eq!(out[2], 0x1234, "B (was at src[0])");
   }
 
-  #[cfg(target_endian = "little")]
   /// u8 RGB output: same swap + narrow.
   #[test]
   fn bgr48_to_rgb_channel_order_and_narrow() {
-    let src = [0x1200u16, 0x5600, 0x9A00];
+    let src = as_le_u16(&[0x1200u16, 0x5600, 0x9A00]);
     let mut out = [0u8; 3];
     bgr48_to_rgb_row::<false>(&src, &mut out, 1);
     assert_eq!(out[0], 0x9A, "R");
@@ -514,11 +521,10 @@ mod tests {
     assert_eq!(out[2], 0x12, "B");
   }
 
-  #[cfg(target_endian = "little")]
   /// rgba output: swapped channels + forced alpha = 0xFF.
   #[test]
   fn bgr48_to_rgba_channel_order_and_alpha() {
-    let src = [0x1100u16, 0x2200, 0x3300];
+    let src = as_le_u16(&[0x1100u16, 0x2200, 0x3300]);
     let mut out = [0u8; 4];
     bgr48_to_rgba_row::<false>(&src, &mut out, 1);
     assert_eq!(out[0], 0x33, "R");
@@ -530,7 +536,7 @@ mod tests {
   /// rgba_u16 output: swapped channels + forced alpha = 0xFFFF.
   #[test]
   fn bgr48_to_rgba_u16_channel_order_and_alpha() {
-    let src = [0x1111u16, 0x2222, 0x3333];
+    let src = as_le_u16(&[0x1111u16, 0x2222, 0x3333]);
     let mut out = [0u16; 4];
     bgr48_to_rgba_u16_row::<false>(&src, &mut out, 1);
     assert_eq!(out[0], 0x3333, "R");
@@ -559,12 +565,11 @@ mod tests {
     assert!(out.iter().all(|&v| v == 0xFF), "expected all 0xFF");
   }
 
-  #[cfg(target_endian = "little")]
   /// Source alpha is preserved in u16 passthrough at position 3.
   #[test]
   fn rgba64_to_rgba_u16_source_alpha_preserved() {
     // R=0x1111, G=0x2222, B=0x3333, A=0xABCD
-    let src = [0x1111u16, 0x2222, 0x3333, 0xABCD];
+    let src = as_le_u16(&[0x1111u16, 0x2222, 0x3333, 0xABCD]);
     let mut out = [0u16; 4];
     rgba64_to_rgba_u16_row::<false>(&src, &mut out, 1);
     assert_eq!(out[0], 0x1111, "R");
@@ -573,11 +578,10 @@ mod tests {
     assert_eq!(out[3], 0xABCD, "alpha must be preserved as-is");
   }
 
-  #[cfg(target_endian = "little")]
   /// Source alpha is depth-converted (>> 8) in u8 rgba output.
   #[test]
   fn rgba64_to_rgba_source_alpha_depth_converted() {
-    let src = [0x1100u16, 0x2200, 0x3300, 0xABCD];
+    let src = as_le_u16(&[0x1100u16, 0x2200, 0x3300, 0xABCD]);
     let mut out = [0u8; 4];
     rgba64_to_rgba_row::<false>(&src, &mut out, 1);
     assert_eq!(out[0], 0x11, "R");
@@ -586,11 +590,10 @@ mod tests {
     assert_eq!(out[3], 0xAB, "alpha narrowed >> 8");
   }
 
-  #[cfg(target_endian = "little")]
   /// rgb path drops alpha, narrows.
   #[test]
   fn rgba64_to_rgb_drops_alpha() {
-    let src = [0x1100u16, 0x2200, 0x3300, 0xDEAD];
+    let src = as_le_u16(&[0x1100u16, 0x2200, 0x3300, 0xDEAD]);
     let mut out = [0u8; 3];
     rgba64_to_rgb_row::<false>(&src, &mut out, 1);
     assert_eq!(out[0], 0x11, "R");
@@ -601,7 +604,7 @@ mod tests {
   /// rgb_u16 path drops alpha, copies native u16.
   #[test]
   fn rgba64_to_rgb_u16_drops_alpha() {
-    let src = [0x1111u16, 0x2222, 0x3333, 0xDEAD];
+    let src = as_le_u16(&[0x1111u16, 0x2222, 0x3333, 0xDEAD]);
     let mut out = [0u16; 3];
     rgba64_to_rgb_u16_row::<false>(&src, &mut out, 1);
     assert_eq!(out[0], 0x1111, "R");
@@ -633,7 +636,7 @@ mod tests {
   #[test]
   fn bgra64_to_rgba_u16_channel_order_and_alpha_preserved() {
     // Source in BGRA order: B=0x1111, G=0x2222, R=0x3333, A=0x4444
-    let src = [0x1111u16, 0x2222, 0x3333, 0x4444];
+    let src = as_le_u16(&[0x1111u16, 0x2222, 0x3333, 0x4444]);
     let mut out = [0u16; 4];
     bgra64_to_rgba_u16_row::<false>(&src, &mut out, 1);
     assert_eq!(out[0], 0x3333, "R (from src[2])");
@@ -642,11 +645,10 @@ mod tests {
     assert_eq!(out[3], 0x4444, "A preserved as-is");
   }
 
-  #[cfg(target_endian = "little")]
   /// u8 rgba output: swap + narrow + source alpha depth-converted.
   #[test]
   fn bgra64_to_rgba_channel_order_and_alpha_narrowed() {
-    let src = [0x1100u16, 0x2200, 0x3300, 0xAB00];
+    let src = as_le_u16(&[0x1100u16, 0x2200, 0x3300, 0xAB00]);
     let mut out = [0u8; 4];
     bgra64_to_rgba_row::<false>(&src, &mut out, 1);
     assert_eq!(out[0], 0x33, "R");
@@ -655,11 +657,10 @@ mod tests {
     assert_eq!(out[3], 0xAB, "alpha narrowed >> 8");
   }
 
-  #[cfg(target_endian = "little")]
   /// rgb path drops alpha and swaps channels.
   #[test]
   fn bgra64_to_rgb_drops_alpha_and_swaps() {
-    let src = [0x1100u16, 0x2200, 0x3300, 0xDEAD];
+    let src = as_le_u16(&[0x1100u16, 0x2200, 0x3300, 0xDEAD]);
     let mut out = [0u8; 3];
     bgra64_to_rgb_row::<false>(&src, &mut out, 1);
     assert_eq!(out[0], 0x33, "R");
@@ -670,7 +671,7 @@ mod tests {
   /// rgb_u16 path drops alpha, swaps, native copy.
   #[test]
   fn bgra64_to_rgb_u16_drops_alpha_and_swaps() {
-    let src = [0x1111u16, 0x2222, 0x3333, 0xDEAD];
+    let src = as_le_u16(&[0x1111u16, 0x2222, 0x3333, 0xDEAD]);
     let mut out = [0u16; 3];
     bgra64_to_rgb_u16_row::<false>(&src, &mut out, 1);
     assert_eq!(out[0], 0x3333, "R");
@@ -680,15 +681,14 @@ mod tests {
 
   // ---- Multi-pixel width tests ---------------------------------------------
 
-  #[cfg(target_endian = "little")]
   /// Width=3 Rgb48→rgb: verify correct stride indexing.
   #[test]
   fn rgb48_to_rgb_multi_pixel_width() {
     // 3 pixels: [R0=0x1100, G0=0x2200, B0=0x3300], [R1=0x4400, G1=0x5500, B1=0x6600],
     //           [R2=0x7700, G2=0x8800, B2=0x9900]
-    let src = [
+    let src = as_le_u16(&[
       0x1100u16, 0x2200, 0x3300, 0x4400, 0x5500, 0x6600, 0x7700, 0x8800, 0x9900,
-    ];
+    ]);
     let mut out = [0u8; 9];
     rgb48_to_rgb_row::<false>(&src, &mut out, 3);
     assert_eq!(out[0], 0x11);
@@ -702,25 +702,38 @@ mod tests {
     assert_eq!(out[8], 0x99);
   }
 
-  /// Width=2 Rgba64→rgba_u16: identity copy preserves layout.
+  /// Width=2 Rgba64→rgba_u16: identity copy preserves layout. Output is
+  /// host-native u16 after the kernel's `from_le` decode; compare against
+  /// the original host-native intended values.
   #[test]
   fn rgba64_to_rgba_u16_multi_pixel_identity() {
-    let src = [
+    let intended: [u16; 8] = [
       0x1111u16, 0x2222, 0x3333, 0x4444, // pixel 0
       0x5555, 0x6666, 0x7777, 0x8888, // pixel 1
     ];
+    let src = as_le_u16(&intended);
     let mut out = [0u16; 8];
     rgba64_to_rgba_u16_row::<false>(&src, &mut out, 2);
-    assert_eq!(&out, &src, "identity copy must be byte-exact");
+    assert_eq!(out, intended, "identity copy must be byte-exact");
   }
 
   /// Bgr48 and Rgb48 on mirrored input produce same rgb output.
+  ///
+  /// Uses non-byte-palindromic values (low byte ≠ high byte) AND
+  /// LE-encodes both fixtures through `as_le_u16`. With palindromic
+  /// values like 0xAAAA / 0xCCCC the host-native and LE byte storage
+  /// happen to coincide, which would let a missing `as_le_u16` wrap
+  /// silently produce a passing parity check on BE — masking the very
+  /// byte-order bug the test should catch. Asserting the absolute
+  /// post-shift output bytes pins down the channel order against the
+  /// intended host-native samples instead of just self-comparing two
+  /// `<false>` outputs.
   #[test]
   fn bgr48_rgb_output_matches_rgb48_with_swapped_input() {
-    // RGB input: R=0xAAAA, G=0xBBBB, B=0xCCCC
-    let rgb48_src = [0xAAAAu16, 0xBBBB, 0xCCCC];
-    // BGR input: B=0xCCCC, G=0xBBBB, R=0xAAAA
-    let bgr48_src = [0xCCCCu16, 0xBBBB, 0xAAAA];
+    // RGB input: R=0xAB12, G=0xCD34, B=0xEF56
+    let rgb48_src = as_le_u16(&[0xAB12u16, 0xCD34, 0xEF56]);
+    // BGR input: B=0xEF56, G=0xCD34, R=0xAB12
+    let bgr48_src = as_le_u16(&[0xEF56u16, 0xCD34, 0xAB12]);
 
     let mut rgb48_out = [0u8; 3];
     let mut bgr48_out = [0u8; 3];
@@ -731,5 +744,10 @@ mod tests {
       rgb48_out, bgr48_out,
       "RGB48 and BGR48 mirrored inputs must produce same RGB output"
     );
+    // Independent expected-output assertion: rgb48_to_rgb_row extracts
+    // the high byte of each u16 channel. R=0xAB12→0xAB, G=0xCD34→0xCD,
+    // B=0xEF56→0xEF. A BE host that fails to LE-encode the fixtures
+    // would decode swapped bytes (R=0x12AB) and emit 0x12 instead.
+    assert_eq!(rgb48_out, [0xAB, 0xCD, 0xEF], "RGB48 high-byte extract");
   }
 }

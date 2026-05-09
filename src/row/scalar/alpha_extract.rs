@@ -400,6 +400,26 @@ pub(crate) fn copy_alpha_plane_f32<const BE: bool>(
 mod tests {
   use super::*;
 
+  /// Re-encode a host-native u16 slice as LE-encoded byte storage, packed back
+  /// into `Vec<u16>`. On LE host this is a no-op; on BE host every u16 is byte-
+  /// swapped relative to its host-native representation. Kernels called with
+  /// `BE = false` recover the intended logical values via `u16::from_le` on
+  /// both LE and BE hosts.
+  fn as_le_u16(host: &[u16]) -> std::vec::Vec<u16> {
+    host
+      .iter()
+      .map(|v| u16::from_ne_bytes(v.to_le_bytes()))
+      .collect()
+  }
+
+  /// Same idea for f32 slices.
+  fn as_le_f32(host: &[f32]) -> std::vec::Vec<f32> {
+    host
+      .iter()
+      .map(|v| f32::from_bits(u32::from_ne_bytes(v.to_bits().to_le_bytes())))
+      .collect()
+  }
+
   #[test]
   fn copy_alpha_packed_u8x4_at_3_overwrites_only_alpha_slots() {
     let packed = [10, 20, 30, 99, 11, 21, 31, 88, 12, 22, 32, 77];
@@ -409,18 +429,16 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_packed_u16x4_to_u8_at_0_depth_converts_correctly() {
-    let packed: std::vec::Vec<u16> = std::vec![0x1234, 100, 200, 300, 0xABCD, 101, 201, 301,];
+    let packed = as_le_u16(&[0x1234, 100, 200, 300, 0xABCD, 101, 201, 301]);
     let mut rgba = std::vec![1u8; 8];
     copy_alpha_packed_u16x4_to_u8_at_0::<false>(&packed, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0x12, 1, 1, 1, 0xAB]);
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_packed_u16x4_at_0_preserves_native_u16() {
-    let packed: std::vec::Vec<u16> = std::vec![0x1234, 100, 200, 300, 0xABCD, 101, 201, 301,];
+    let packed = as_le_u16(&[0x1234, 100, 200, 300, 0xABCD, 101, 201, 301]);
     let mut rgba = std::vec![1u16; 8];
     copy_alpha_packed_u16x4_at_0::<false>(&packed, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0x1234, 1, 1, 1, 0xABCD]);
@@ -470,49 +488,31 @@ mod tests {
     );
   }
 
-  // ---- LE-host fixture tests ----
-  //
-  // The tests below use host-native `u16` literals (e.g.
-  // `vec![0x3FFu16, 0x1FF]`) as if they were the on-disk LE encoding of
-  // those samples and then call the kernel with `<BITS, BE = false>`
-  // (LE path). On a BE host (e.g., s390x under miri-sb), host-native
-  // `u16` storage does NOT lay bytes out little-endian, so the kernel's
-  // `u16::from_le` byte-swap correctly reinterprets the host-native
-  // value and produces a different logical value than the literal —
-  // making the assertion fail. The kernel is correct: its BE-host
-  // scalar correctness is locked down by the dedicated
-  // `*_be_parity_with_swapped_buffer` tests below, which build
-  // BE-encoded fixtures via `swap_bytes` from LE inputs and assert
-  // byte-for-byte parity. Gating these LE-fixture tests on
-  // `target_endian = "little"` avoids fixture-vs-kernel byte-order
-  // confusion without weakening coverage.
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_u16_to_u8_depth_converts_at_each_bits_value() {
     // BITS=10
-    let alpha: std::vec::Vec<u16> = std::vec![0x3FF, 0x1FF];
+    let alpha = as_le_u16(&[0x3FF, 0x1FF]);
     let mut rgba = std::vec![1u8; 8];
     copy_alpha_plane_u16_to_u8::<10, false>(&alpha, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xFF, 1, 1, 1, 0x7F]);
 
     // BITS=12
-    let alpha: std::vec::Vec<u16> = std::vec![0xFFF, 0x800];
+    let alpha = as_le_u16(&[0xFFF, 0x800]);
     let mut rgba = std::vec![1u8; 8];
     copy_alpha_plane_u16_to_u8::<12, false>(&alpha, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xFF, 1, 1, 1, 0x80]);
 
     // BITS=16
-    let alpha: std::vec::Vec<u16> = std::vec![0xFFFF, 0x8000];
+    let alpha = as_le_u16(&[0xFFFF, 0x8000]);
     let mut rgba = std::vec![1u8; 8];
     copy_alpha_plane_u16_to_u8::<16, false>(&alpha, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xFF, 1, 1, 1, 0x80]);
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_u16_preserves_native_u16_within_bits_range() {
     // In-range values pass through unchanged.
-    let alpha: std::vec::Vec<u16> = std::vec![0x3FF, 0x1FF, 0x000];
+    let alpha = as_le_u16(&[0x3FF, 0x1FF, 0x000]);
     let mut rgba = std::vec![1u16; 12];
     copy_alpha_plane_u16::<10, false>(&alpha, &mut rgba, 3);
     assert_eq!(
@@ -522,13 +522,12 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_u16_masks_overrange_to_bits_range() {
     // Over-range α (e.g., 0xFFFF at BITS=10) must be masked to low BITS.
     // Without the mask, raw u16 0xFFFF would leak straight to output and
     // exceed the documented [0, (1 << BITS) - 1] native-depth range,
     // diverging from the inline-α scalar reference.
-    let alpha: std::vec::Vec<u16> = std::vec![0xFFFF, 0x0500, 0x07FF];
+    let alpha = as_le_u16(&[0xFFFF, 0x0500, 0x07FF]);
     let mut rgba = std::vec![1u16; 12];
     copy_alpha_plane_u16::<10, false>(&alpha, &mut rgba, 3);
     assert_eq!(
@@ -538,13 +537,12 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_u16_to_u8_masks_overrange_then_shifts() {
     // Without the BITS mask, 0x0500 at BITS=10 would shift `>> 2` to
     // 320 and either narrow as u8 to 64 (scalar `as u8`) or saturate to
     // 255 (some SIMD narrow-with-saturation paths). With masking, 0x0500
     // & 0x3FF = 0x100 → 0x100 >> 2 = 64 consistently across all paths.
-    let alpha: std::vec::Vec<u16> = std::vec![0x0500, 0xFFFF, 0x03FF];
+    let alpha = as_le_u16(&[0x0500, 0xFFFF, 0x03FF]);
     let mut rgba = std::vec![1u8; 12];
     copy_alpha_plane_u16_to_u8::<10, false>(&alpha, &mut rgba, 3);
     assert_eq!(rgba, std::vec![1, 1, 1, 64, 1, 1, 1, 0xFF, 1, 1, 1, 0xFF]);
@@ -597,19 +595,17 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_ya_u16_to_u8_depth_converts_via_high_byte() {
     // Ya16 packed → u8 RGBA: α >> 8 selects the high byte.
-    let packed: std::vec::Vec<u16> = std::vec![0x1234, 0xABCD, 0x5678, 0xFF00];
+    let packed = as_le_u16(&[0x1234, 0xABCD, 0x5678, 0xFF00]);
     let mut rgba = std::vec![1u8; 8];
     copy_alpha_ya_u16_to_u8::<false>(&packed, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xAB, 1, 1, 1, 0xFF]);
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_ya_u16_preserves_native_u16() {
-    let packed: std::vec::Vec<u16> = std::vec![0x1234, 0xABCD, 0x5678, 0x9ABC];
+    let packed = as_le_u16(&[0x1234, 0xABCD, 0x5678, 0x9ABC]);
     let mut rgba = std::vec![1u16; 8];
     copy_alpha_ya_u16::<false>(&packed, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xABCD, 1, 1, 1, 0x9ABC]);
@@ -650,16 +646,10 @@ mod tests {
     );
   }
 
-  /// On a LE host, `BE = false` makes the bit-normalize a no-op, so passing
-  /// host-native `f32` literals as if they were already LE-encoded reproduces
-  /// the original (pre-endian-aware) clamp+scale semantics. BE-host scalar
-  /// correctness is locked down by the `*_be_parity_with_swapped_buffer`
-  /// tests below.
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_f32_to_u8_clamps_and_scales() {
     // Values [0.0, 0.5, 1.0, 1.5, -0.1] → [0, 128, 255, 255, 0] in slot 3.
-    let alpha = vec![0.0f32, 0.5, 1.0, 1.5, -0.1];
+    let alpha = as_le_f32(&[0.0f32, 0.5, 1.0, 1.5, -0.1]);
     let mut rgba = vec![1u8; 20];
     copy_alpha_plane_f32_to_u8::<false>(&alpha, &mut rgba, 5);
     // R, G, B slots (0, 1, 2) must be untouched; slot 3 has the alpha.
@@ -675,10 +665,9 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_f32_to_u16_clamps_and_scales() {
     // Values [0.0, 0.5, 1.0, 1.5, -0.1] → [0, 32768, 65535, 65535, 0] in slot 3.
-    let alpha = vec![0.0f32, 0.5, 1.0, 1.5, -0.1];
+    let alpha = as_le_f32(&[0.0f32, 0.5, 1.0, 1.5, -0.1]);
     let mut rgba = vec![1u16; 20];
     copy_alpha_plane_f32_to_u16::<false>(&alpha, &mut rgba, 5);
     assert_eq!(rgba[3], 0, "alpha[0]=0.0 → 0");
@@ -693,10 +682,9 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_f32_lossless_passthrough() {
     // HDR (2.5), NaN, Inf, negative all preserved bit-exact.
-    let alpha = vec![2.5f32, f32::NAN, f32::INFINITY, -1.0];
+    let alpha = as_le_f32(&[2.5f32, f32::NAN, f32::INFINITY, -1.0]);
     let mut rgba = vec![0.0f32; 16];
     copy_alpha_plane_f32::<false>(&alpha, &mut rgba, 4);
     assert_eq!(rgba[3], 2.5, "HDR 2.5 preserved");
@@ -778,9 +766,8 @@ mod tests {
 
   /// Alpha at slot 3 is depth-converted >> 8 and written to rgba_out[3 + 4*n].
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_packed_u16x4_to_u8_at_3_narrows_correctly() {
-    let packed: std::vec::Vec<u16> = std::vec![100, 200, 300, 0xABFF, 101, 201, 301, 0x1234];
+    let packed = as_le_u16(&[100, 200, 300, 0xABFF, 101, 201, 301, 0x1234]);
     let mut rgba = std::vec![1u8; 8];
     copy_alpha_packed_u16x4_to_u8_at_3::<false>(&packed, &mut rgba, 2);
     assert_eq!(rgba, std::vec![1, 1, 1, 0xAB, 1, 1, 1, 0x12]);
@@ -788,9 +775,8 @@ mod tests {
 
   /// Alpha at slot 3 is copied verbatim (no depth conversion).
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_packed_u16x4_at_3_copies_verbatim() {
-    let packed: std::vec::Vec<u16> = std::vec![100, 200, 300, 0xABFF, 101, 201, 301, 0x1234];
+    let packed = as_le_u16(&[100, 200, 300, 0xABFF, 101, 201, 301, 0x1234]);
     let mut rgba_u16 = std::vec![1u16; 8];
     copy_alpha_packed_u16x4_at_3::<false>(&packed, &mut rgba_u16, 2);
     assert_eq!(rgba_u16, std::vec![1, 1, 1, 0xABFF, 1, 1, 1, 0x1234]);
@@ -798,9 +784,8 @@ mod tests {
 
   /// Only the alpha slot (index 3) is overwritten; RGB slots [0..3] are untouched.
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_packed_u16x4_to_u8_at_3_touches_only_alpha_slot() {
-    let packed: std::vec::Vec<u16> = std::vec![0, 0, 0, 0xFFFF];
+    let packed = as_le_u16(&[0, 0, 0, 0xFFFF]);
     let mut rgba = std::vec![42u8; 4];
     copy_alpha_packed_u16x4_to_u8_at_3::<false>(&packed, &mut rgba, 1);
     assert_eq!(rgba[..3], [42, 42, 42]);
@@ -809,9 +794,8 @@ mod tests {
 
   /// Only the alpha slot (index 3) is overwritten; RGB slots [0..3] are untouched.
   #[test]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_packed_u16x4_at_3_touches_only_alpha_slot() {
-    let packed: std::vec::Vec<u16> = std::vec![0, 0, 0, 0xBEEF];
+    let packed = as_le_u16(&[0, 0, 0, 0xBEEF]);
     let mut rgba_u16 = std::vec![99u16; 4];
     copy_alpha_packed_u16x4_at_3::<false>(&packed, &mut rgba_u16, 1);
     assert_eq!(rgba_u16[..3], [99, 99, 99]);

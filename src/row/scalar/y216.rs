@@ -163,26 +163,34 @@ pub(crate) fn y216_to_luma_u16_row<const BE: bool>(packed: &[u16], out: &mut [u1
 }
 
 #[cfg(all(test, feature = "std"))]
-// LE-host-only: tests in this module use host-native u16/u8 literals as if
-// they were LE-encoded bytes; on a BE host the kernel's `from_le` byte-swap
-// reinterprets host-native storage and produces a different logical value
-// than the literal, breaking the assertions. The kernel's BE-host correctness
-// is locked down by the dedicated host-independent BE/LE parity tests in the
-// per-arch test files (which build fixtures via `to_le_bytes` / `to_be_bytes`,
-// not `swap_bytes`). Mirrors the gating from PR #82 `8f2e329`.
-#[cfg(target_endian = "little")]
 mod tests {
   use super::*;
   use crate::ColorMatrix;
 
-  // Test input layout: two YUYV quadruples (= 4 pixels, width=4).
-  // Pair 0: Y0=4096, U=32768, Y1=32000, V=32768  (neutral chroma, Bt709 limited floor / mid-gray)
-  // Pair 1: Y2=0,    U=16384, Y3=65535, V=49152  (non-neutral chroma, below-floor / above-ceil Y)
-  fn test_input() -> [u16; 8] {
-    [4096, 32768, 32000, 32768, 0, 16384, 65535, 49152]
+  /// Re-encode a host-native u16 slice as LE-encoded bytes packed back as
+  /// `Vec<u16>`. On LE host this is a no-op; on BE host every u16 is byte-
+  /// swapped relative to the intended logical value. Kernels called with
+  /// `BE = false` recover the intended values via `from_le` on both hosts.
+  fn as_le_u16(host: &[u16]) -> std::vec::Vec<u16> {
+    host
+      .iter()
+      .map(|v| u16::from_ne_bytes(v.to_le_bytes()))
+      .collect()
   }
 
-  /// Byte-swap every u16 to produce the BE-encoded form.
+  // Test input layout: two YUYV quadruples (= 4 pixels, width=4), in
+  // LE-encoded byte form so kernels with `BE = false` recover the
+  // intended logical values on both LE and BE hosts.
+  // Pair 0: Y0=4096, U=32768, Y1=32000, V=32768  (neutral chroma, Bt709 limited floor / mid-gray)
+  // Pair 1: Y2=0,    U=16384, Y3=65535, V=49152  (non-neutral chroma, below-floor / above-ceil Y)
+  fn test_input() -> std::vec::Vec<u16> {
+    as_le_u16(&[4096, 32768, 32000, 32768, 0, 16384, 65535, 49152])
+  }
+
+  /// Byte-swap every u16 to produce the BE-encoded form. See y2xx tests
+  /// for the rationale: this works on both LE and BE hosts because the
+  /// LE-encoded `le` already differs from host-native by a byte-swap on
+  /// BE, and `swap_bytes()` toggles that to produce the BE-encoded form.
   fn to_be_u16(le: &[u16]) -> std::vec::Vec<u16> {
     le.iter().map(|&v| v.swap_bytes()).collect()
   }
@@ -286,7 +294,7 @@ mod tests {
   /// [0xAB12, 0x4444, 0xCD34, 0x5555] → luma [0xAB, 0xCD].
   #[test]
   fn y216_luma_extract() {
-    let packed = [0xAB12u16, 0x4444, 0xCD34, 0x5555];
+    let packed = as_le_u16(&[0xAB12u16, 0x4444, 0xCD34, 0x5555]);
     let mut out = [0u8; 2];
     y216_to_luma_row::<false>(&packed, &mut out, 2);
     assert_eq!(out[0], 0xAB, "Y0 luma u8");
@@ -297,7 +305,7 @@ mod tests {
   /// [0xAB12, 0x4444, 0xCD34, 0x5555] → luma [0xAB12, 0xCD34].
   #[test]
   fn y216_luma_u16_extract() {
-    let packed = [0xAB12u16, 0x4444, 0xCD34, 0x5555];
+    let packed = as_le_u16(&[0xAB12u16, 0x4444, 0xCD34, 0x5555]);
     let mut out = [0u16; 2];
     y216_to_luma_u16_row::<false>(&packed, &mut out, 2);
     assert_eq!(out[0], 0xAB12, "Y0 luma u16");

@@ -117,17 +117,18 @@ fn y210_frame_try_new_checked_rejects_low_bit_violations() {
   assert_eq!(err, Y2xxFrameError::SampleLowBitsSet);
 }
 
-// LE-host-only fixture: builds host-native `u16` literals as if they were
-// the LE-encoded byte layout. On a BE host the validator's `u16::from_le`
-// byte-swap reinterprets host-native storage and the literal-vs-decoded
-// byte order doesn't match the test's intent. The host-independent BE-host
-// regression for this validator path lives in
-// `y210_frame_try_new_checked_accepts_le_encoded_buffer` below.
-#[cfg(target_endian = "little")]
+/// Host-independent: builds the plane explicitly from LE-encoded bytes via
+/// `to_le_bytes` then reinterprets as `&[u16]` via `from_ne_bytes`. The
+/// validator's `from_le` normalization recovers the intended MSB-aligned
+/// values on both LE and BE hosts.
 #[test]
 fn y210_frame_try_new_checked_accepts_valid_msb_aligned_data() {
   // All samples have low 6 bits == 0.
-  let buf: std::vec::Vec<u16> = (0..8).map(|i| ((i as u16) << 6) & 0xFFC0).collect();
+  let intended: std::vec::Vec<u16> = (0..8).map(|i| ((i as u16) << 6) & 0xFFC0).collect();
+  let buf: std::vec::Vec<u16> = intended
+    .iter()
+    .map(|v| u16::from_ne_bytes(v.to_le_bytes()))
+    .collect();
   Y210Frame::try_new_checked(&buf, 4, 1, 8).unwrap();
 }
 
@@ -183,26 +184,30 @@ fn y210_frame_new_panics_on_invalid() {
   let _ = Y210Frame::new(&buf, 0, 0, 0);
 }
 
-// LE-host-only fixture: builds host-native `u16` literals as if they were
-// the LE-encoded byte layout. See note above on the LE-encoded contract.
-#[cfg(target_endian = "little")]
+/// Host-independent: declared-payload samples (low 6 bits == 0) are LE-encoded
+/// so the validator's `from_le` recovers them on both hosts; padding bytes
+/// stay outside the declared payload window so they're never scanned.
 #[test]
 fn y210_frame_try_new_checked_ignores_stride_padding_bytes() {
   // Width=4 → row_elems = 8 u16; stride = 12 u16 (4 u16 padding per row).
   // All declared-payload samples have low 6 bits == 0 (valid 10-bit MSB-aligned).
   // Padding samples have arbitrary low bits set — must not trigger
   // SampleLowBitsSet (matches PnFrame::try_new_checked behavior).
-  let mut buf = std::vec![0u16; 12 * 2]; // height=2
+  let mut intended = std::vec![0u16; 12 * 2]; // height=2
   for row in 0..2 {
     // Declared payload (first 8 u16 of each row) — clean MSB-aligned.
     for i in 0..8 {
-      buf[row * 12 + i] = ((i as u16) << 6) & 0xFFC0;
+      intended[row * 12 + i] = ((i as u16) << 6) & 0xFFC0;
     }
     // Stride padding (last 4 u16 of each row) — arbitrary low bits.
     for i in 8..12 {
-      buf[row * 12 + i] = 0xFFFF; // every bit set, including low 6
+      intended[row * 12 + i] = 0xFFFF; // every bit set, including low 6
     }
   }
+  let buf: std::vec::Vec<u16> = intended
+    .iter()
+    .map(|v| u16::from_ne_bytes(v.to_le_bytes()))
+    .collect();
   // try_new_checked must accept this — it scans only the declared payload.
   Y210Frame::try_new_checked(&buf, 4, 2, 12).unwrap();
 }

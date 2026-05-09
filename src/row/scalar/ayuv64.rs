@@ -277,33 +277,37 @@ mod tests {
   use super::*;
   use crate::ColorMatrix;
 
-  /// Build a 4-u16 AYUV64 pixel from explicit components.
+  /// Build a 4-u16 AYUV64 pixel (host-native u16 quadruple) from explicit
+  /// components.
   fn pack_ayuv64(a: u16, y: u16, u: u16, v: u16) -> [u16; 4] {
     [a, y, u, v]
+  }
+
+  /// Re-encode a slice of host-native u16 values as LE-encoded byte storage,
+  /// packed back into `Vec<u16>`. On LE host this is a no-op; on BE host
+  /// every u16 is byte-swapped relative to its host-native representation.
+  /// Kernels called with `BE = false` recover the intended logical values
+  /// via `u16::from_le` on both hosts.
+  fn as_le_u16(host: &[u16]) -> Vec<u16> {
+    host
+      .iter()
+      .map(|v| u16::from_ne_bytes(v.to_le_bytes()))
+      .collect()
   }
 
   /// Limited-range BT.709, neutral chroma U=V=32768.
   /// Black:  Y=4096  (limited-range black at 16-bit: 16 * 256 = 4096).
   /// White:  Y=60160 (limited-range white at 16-bit: 235 * 256 = 60160).
-  ///
-  /// LE-host gate: builds host-native `Vec<u16>` fixtures via `pack_ayuv64`
-  /// and calls the scalar kernel with `<BE = false>`, which applies
-  /// `u16::from_le`. On BE hosts (s390x / powerpc64) the host-native
-  /// storage doesn't match LE byte order, so `from_le` swaps bytes and
-  /// corrupts the fixture before the math runs (same pattern as PR #82
-  /// 8f2e329, PR #83 56342c0, PR #85 57d9064, PR #87 9b6521b). BE-host
-  /// correctness is covered by `ayuv64_be_roundtrip_matches_byte_swapped_le`,
-  /// which builds fixtures via `to_le_bytes` / `to_be_bytes`.
-  #[cfg(target_endian = "little")]
   #[test]
   fn ayuv64_known_pattern_rgb_limited_range() {
     let p_black = pack_ayuv64(0xFFFF, 4096, 32768, 32768);
     let p_white = pack_ayuv64(0xFFFF, 60160, 32768, 32768);
-    let packed: Vec<u16> = [p_black, p_black, p_white, p_white]
+    let intended: Vec<u16> = [p_black, p_black, p_white, p_white]
       .iter()
       .flatten()
       .copied()
       .collect();
+    let packed = as_le_u16(&intended);
     let mut out = vec![0u8; 4 * 3];
     ayuv64_to_rgb_row::<false>(&packed, &mut out, 4, ColorMatrix::Bt709, false);
     // Black pixels → [0, 0, 0]
@@ -314,45 +318,54 @@ mod tests {
     assert_eq!(&out[9..12], &[255u8, 255, 255], "white pixel 3");
   }
 
-  /// AYUV64 RGBA u8: source α = 0x4242 / 0x9999 must appear depth-converted
+  /// AYUV64 RGBA u8: source α = 0x42AB / 0x99CD must appear depth-converted
   /// (>> 8) as 0x42 / 0x99 in the output α channel.
+  ///
+  /// Alpha values are deliberately non-byte-palindromic (low byte ≠ high
+  /// byte) so a BE host that fails to LE-encode the fixture would see the
+  /// alpha decoded as 0xAB42 / 0xCD99 and the assertion would fail. This
+  /// is the test's only sentinel for the alpha pass-through path under
+  /// real LE byte storage — palindromic alpha (e.g. 0x4242) would mask a
+  /// missing `as_le_u16` wrap because byte-swap is a no-op on palindromes.
   #[test]
   fn ayuv64_rgba_passes_source_alpha_depth_converted() {
-    let p0 = pack_ayuv64(0x4242, 60160, 32768, 32768);
-    let p1 = pack_ayuv64(0x9999, 60160, 32768, 32768);
-    let packed: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
+    let p0 = pack_ayuv64(0x42AB, 60160, 32768, 32768);
+    let p1 = pack_ayuv64(0x99CD, 60160, 32768, 32768);
+    let intended: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
+    let packed = as_le_u16(&intended);
     let mut out = vec![0u8; 2 * 4];
     ayuv64_to_rgba_row::<false>(&packed, &mut out, 2, ColorMatrix::Bt709, false);
-    assert_eq!(out[3], 0x42, "pixel 0 alpha (0x4242 >> 8 = 0x42)");
-    assert_eq!(out[7], 0x99, "pixel 1 alpha (0x9999 >> 8 = 0x99)");
+    assert_eq!(out[3], 0x42, "pixel 0 alpha (0x42AB >> 8 = 0x42)");
+    assert_eq!(out[7], 0x99, "pixel 1 alpha (0x99CD >> 8 = 0x99)");
   }
 
-  /// AYUV64 RGBA u16: source α = 0x4242 / 0x9999 must appear direct
+  /// AYUV64 RGBA u16: source α = 0x42AB / 0x99CD must appear direct
   /// (no conversion) in the output α channel.
+  ///
+  /// Same non-palindromic-alpha rationale as the u8 variant above:
+  /// asserting the full u16 alpha (not just one byte) plus LE-encoding
+  /// the fixture turns this from a byte-vacuous check on BE into an
+  /// end-to-end alpha pass-through verification under real LE storage.
   #[test]
   fn ayuv64_rgba_u16_passes_source_alpha_direct() {
-    let p0 = pack_ayuv64(0x4242, 60160, 32768, 32768);
-    let p1 = pack_ayuv64(0x9999, 60160, 32768, 32768);
-    let packed: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
+    let p0 = pack_ayuv64(0x42AB, 60160, 32768, 32768);
+    let p1 = pack_ayuv64(0x99CD, 60160, 32768, 32768);
+    let intended: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
+    let packed = as_le_u16(&intended);
     let mut out = vec![0u16; 2 * 4];
     ayuv64_to_rgba_u16_row::<false>(&packed, &mut out, 2, ColorMatrix::Bt709, false);
-    assert_eq!(out[3], 0x4242, "pixel 0 alpha u16 direct");
-    assert_eq!(out[7], 0x9999, "pixel 1 alpha u16 direct");
+    assert_eq!(out[3], 0x42AB, "pixel 0 alpha u16 direct");
+    assert_eq!(out[7], 0x99CD, "pixel 1 alpha u16 direct");
   }
 
   /// Luma u8: Y at slot 1, extracted via >> 8 (high byte only).
   /// Y=0xFFFF → 0xFF; Y=0x4000 → 0x40.
-  ///
-  /// LE-host gate: host-native `pack_ayuv64` fixture (Y=0x4000 is non-
-  /// palindromic in bytes) + `<BE = false>` kernel path → `from_le`
-  /// byte-swaps the fixture on BE hosts and corrupts the Y field before
-  /// extraction.
-  #[cfg(target_endian = "little")]
   #[test]
   fn ayuv64_luma_extract_u8_high_byte() {
     let p0 = pack_ayuv64(0, 0xFFFF, 0, 0);
     let p1 = pack_ayuv64(0, 0x4000, 0, 0);
-    let packed: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
+    let intended: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
+    let packed = as_le_u16(&intended);
     let mut out = vec![0u8; 2];
     ayuv64_to_luma_row::<false>(&packed, &mut out, 2);
     assert_eq!(&out[..], &[0xFFu8, 0x40], "luma u8 high-byte extract");
@@ -360,17 +373,12 @@ mod tests {
 
   /// Luma u16: Y at slot 1, written direct (no shift).
   /// Y=0xABCD → 0xABCD; Y=0x1234 → 0x1234.
-  ///
-  /// LE-host gate: host-native `pack_ayuv64` fixture (Y=0xABCD / 0x1234
-  /// are non-palindromic in bytes) + `<BE = false>` kernel path →
-  /// `from_le` byte-swaps the fixture on BE hosts and corrupts the Y
-  /// field before extraction.
-  #[cfg(target_endian = "little")]
   #[test]
   fn ayuv64_luma_extract_u16_direct() {
     let p0 = pack_ayuv64(0, 0xABCD, 0, 0);
     let p1 = pack_ayuv64(0, 0x1234, 0, 0);
-    let packed: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
+    let intended: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
+    let packed = as_le_u16(&intended);
     let mut out = vec![0u16; 2];
     ayuv64_to_luma_u16_row::<false>(&packed, &mut out, 2);
     assert_eq!(&out[..], &[0xABCDu16, 0x1234], "luma u16 direct extract");

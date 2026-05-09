@@ -1491,30 +1491,32 @@ mod tests {
   //! Each dispatcher's scalar fallback is exercised via `use_simd = false`.
   //! Overflow-guard tests are gated on 32-bit targets where `usize` is 32 bits.
   //!
-  //! Many tests in this module build host-native `Vec<u16>` fixtures and
-  //! call the LE-only `*_endian::<false>` wrappers, which apply
-  //! `u16::from_le` to each element. On big-endian hosts (s390x /
-  //! powerpc64) `from_le` swaps bytes, corrupting the fixture before the
-  //! conversion math runs. Such tests are gated with
-  //! `#[cfg(target_endian = "little")]`. Tests that use only
-  //! byte-symmetric values (`0x0000`, `0xFFFF`, `0x1111`, `0x2222`,
-  //! `0x3333`, ...) or that discard the only non-symmetric u16 (e.g. an
-  //! alpha that is dropped on RGB output) are host-endian-invariant and
-  //! left ungated. BE-host correctness of the underlying kernels is
-  //! covered by the per-arch BE parity tests that construct fixtures via
-  //! `to_le_bytes` / `to_be_bytes`.
+  //! Fixtures use the `as_le_u16` helper so the kernel's `from_le` recovers
+  //! the intended logical values on both LE (no-op) and BE (byte-swap) hosts.
   use super::*;
 
   // ---- helpers -------------------------------------------------------------
 
-  /// Build a `width`-pixel Rgb48 / Bgr48 row with every channel = `val`.
-  fn solid_rgb48(width: usize, val: u16) -> std::vec::Vec<u16> {
-    std::vec![val; width * 3]
+  /// Re-encode a host-native u16 slice as LE-encoded byte storage, packed back
+  /// into `Vec<u16>`. Kernels called via `*_endian::<false>` recover the
+  /// intended logical values via `u16::from_le` on both hosts.
+  fn as_le_u16(host: &[u16]) -> std::vec::Vec<u16> {
+    host
+      .iter()
+      .map(|v| u16::from_ne_bytes(v.to_le_bytes()))
+      .collect()
   }
 
-  /// Build a `width`-pixel Rgba64 / Bgra64 row with every channel = `val`.
+  /// Build a `width`-pixel Rgb48 / Bgr48 row with every channel = `val`,
+  /// LE-encoded.
+  fn solid_rgb48(width: usize, val: u16) -> std::vec::Vec<u16> {
+    as_le_u16(&std::vec![val; width * 3])
+  }
+
+  /// Build a `width`-pixel Rgba64 / Bgra64 row with every channel = `val`,
+  /// LE-encoded.
   fn solid_rgba64(width: usize, val: u16) -> std::vec::Vec<u16> {
-    std::vec![val; width * 4]
+    as_le_u16(&std::vec![val; width * 4])
   }
 
   // ---- Rgb48 ---------------------------------------------------------------
@@ -1531,7 +1533,6 @@ mod tests {
     );
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn rgb48_dispatcher_to_rgba_scalar_path() {
     let src = solid_rgb48(4, 0x1200);
@@ -1543,7 +1544,6 @@ mod tests {
     }
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn rgb48_dispatcher_to_rgb_u16_scalar_path() {
     let src = solid_rgb48(4, 0xABCD);
@@ -1555,7 +1555,6 @@ mod tests {
     );
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn rgb48_dispatcher_to_rgba_u16_scalar_path() {
     let src = solid_rgb48(4, 0x1234);
@@ -1567,7 +1566,6 @@ mod tests {
     }
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn rgb48_dispatcher_to_luma_scalar_path() {
     // All-white Rgb48 (all channels = 0xFF00) → near-white luma in full-range BT.709.
@@ -1588,7 +1586,6 @@ mod tests {
     }
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn rgb48_dispatcher_to_luma_u16_scalar_path() {
     let src = solid_rgb48(4, 0xFF00);
@@ -1611,11 +1608,10 @@ mod tests {
     }
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn rgb48_dispatcher_to_hsv_scalar_path() {
     // Pure red: R=0xFF00, G=0, B=0 → H=0, S=255, V≈255 in OpenCV encoding.
-    let src = [0xFF00u16, 0x0000, 0x0000]; // 1 pixel
+    let src = as_le_u16(&[0xFF00u16, 0x0000, 0x0000]); // 1 pixel
     let mut scratch = std::vec![0u8; 3];
     let mut h = std::vec![0u8; 1];
     let mut s = std::vec![0u8; 1];
@@ -1628,11 +1624,10 @@ mod tests {
 
   // ---- Bgr48 ---------------------------------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn bgr48_dispatcher_to_rgb_scalar_path() {
     // Bgr48 pixel [B=0x1100, G=0x2200, R=0x3300] → rgb [R=0x33, G=0x22, B=0x11].
-    let src = [0x1100u16, 0x2200, 0x3300];
+    let src = as_le_u16(&[0x1100u16, 0x2200, 0x3300]);
     let mut rgb = [0u8; 3];
     bgr48_to_rgb_row_endian::<false>(&src, &mut rgb, 1, false);
     assert_eq!(rgb[0], 0x33, "R");
@@ -1640,10 +1635,9 @@ mod tests {
     assert_eq!(rgb[2], 0x11, "B");
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn bgr48_dispatcher_to_rgba_scalar_path() {
-    let src = [0x1100u16, 0x2200, 0x3300];
+    let src = as_le_u16(&[0x1100u16, 0x2200, 0x3300]);
     let mut rgba = [0u8; 4];
     bgr48_to_rgba_row_endian::<false>(&src, &mut rgba, 1, false);
     assert_eq!(rgba[0], 0x33, "R");
@@ -1652,7 +1646,7 @@ mod tests {
 
   #[test]
   fn bgr48_dispatcher_to_rgb_u16_scalar_path() {
-    let src = [0x1111u16, 0x2222, 0x3333]; // B, G, R
+    let src = as_le_u16(&[0x1111u16, 0x2222, 0x3333]); // B, G, R
     let mut rgb_u16 = [0u16; 3];
     bgr48_to_rgb_u16_row_endian::<false>(&src, &mut rgb_u16, 1, false);
     assert_eq!(rgb_u16[0], 0x3333, "R (from position 2)");
@@ -1662,14 +1656,13 @@ mod tests {
 
   #[test]
   fn bgr48_dispatcher_to_rgba_u16_scalar_path() {
-    let src = [0x1111u16, 0x2222, 0x3333]; // B, G, R
+    let src = as_le_u16(&[0x1111u16, 0x2222, 0x3333]); // B, G, R
     let mut rgba_u16 = [0u16; 4];
     bgr48_to_rgba_u16_row_endian::<false>(&src, &mut rgba_u16, 1, false);
     assert_eq!(rgba_u16[0], 0x3333, "R");
     assert_eq!(rgba_u16[3], 0xFFFF, "alpha forced to 0xFFFF");
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn bgr48_dispatcher_to_luma_scalar_path() {
     let src = solid_rgb48(4, 0xFF00); // all channels = 0xFF00
@@ -1689,7 +1682,6 @@ mod tests {
     }
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn bgr48_dispatcher_to_luma_u16_scalar_path() {
     let src = solid_rgb48(4, 0xFF00);
@@ -1709,12 +1701,11 @@ mod tests {
     }
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn bgr48_dispatcher_to_hsv_scalar_path() {
     // Pure blue in Bgr48 layout: B=0xFF00, G=0, R=0.
     // After B↔R swap → rgb=[R=0, G=0, B=0xFF] → H=120, S=255, V≈255.
-    let src = [0xFF00u16, 0x0000, 0x0000]; // B, G, R
+    let src = as_le_u16(&[0xFF00u16, 0x0000, 0x0000]); // B, G, R
     let mut scratch = std::vec![0u8; 3];
     let mut h = std::vec![0u8; 1];
     let mut s = std::vec![0u8; 1];
@@ -1731,11 +1722,10 @@ mod tests {
 
   // ---- Rgba64 --------------------------------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn rgba64_dispatcher_to_rgb_scalar_path() {
     // Source alpha should be dropped; R/G/B narrowed.
-    let src = [0x1100u16, 0x2200, 0x3300, 0xDEAD]; // R, G, B, A
+    let src = as_le_u16(&[0x1100u16, 0x2200, 0x3300, 0xDEAD]); // R, G, B, A
     let mut rgb = [0u8; 3];
     rgba64_to_rgb_row_endian::<false>(&src, &mut rgb, 1, false);
     assert_eq!(rgb[0], 0x11, "R");
@@ -1743,11 +1733,10 @@ mod tests {
     assert_eq!(rgb[2], 0x33, "B");
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn rgba64_dispatcher_to_rgba_scalar_path() {
     // Source alpha 0xABCD → 0xAB after >> 8.
-    let src = [0x1100u16, 0x2200, 0x3300, 0xABCD];
+    let src = as_le_u16(&[0x1100u16, 0x2200, 0x3300, 0xABCD]);
     let mut rgba = [0u8; 4];
     rgba64_to_rgba_row_endian::<false>(&src, &mut rgba, 1, false);
     assert_eq!(rgba[3], 0xAB, "source alpha depth-converted >> 8");
@@ -1755,7 +1744,7 @@ mod tests {
 
   #[test]
   fn rgba64_dispatcher_to_rgb_u16_scalar_path() {
-    let src = [0x1111u16, 0x2222, 0x3333, 0xDEAD];
+    let src = as_le_u16(&[0x1111u16, 0x2222, 0x3333, 0xDEAD]);
     let mut rgb_u16 = [0u16; 3];
     rgba64_to_rgb_u16_row_endian::<false>(&src, &mut rgb_u16, 1, false);
     assert_eq!(rgb_u16[0], 0x1111, "R");
@@ -1763,18 +1752,16 @@ mod tests {
     assert_eq!(rgb_u16[2], 0x3333, "B");
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn rgba64_dispatcher_to_rgba_u16_scalar_path() {
     // Identity copy; source alpha preserved.
-    let src = [0x1111u16, 0x2222, 0x3333, 0xABCD];
+    let src = as_le_u16(&[0x1111u16, 0x2222, 0x3333, 0xABCD]);
     let mut rgba_u16 = [0u16; 4];
     rgba64_to_rgba_u16_row_endian::<false>(&src, &mut rgba_u16, 1, false);
     assert_eq!(rgba_u16[0], 0x1111, "R");
     assert_eq!(rgba_u16[3], 0xABCD, "source alpha preserved");
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn rgba64_dispatcher_to_luma_scalar_path() {
     // All-white Rgba64 (alpha irrelevant for luma path).
@@ -1795,7 +1782,6 @@ mod tests {
     }
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn rgba64_dispatcher_to_luma_u16_scalar_path() {
     let src = solid_rgba64(4, 0xFF00);
@@ -1818,11 +1804,10 @@ mod tests {
     }
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn rgba64_dispatcher_to_hsv_scalar_path() {
     // Pure green Rgba64: R=0, G=0xFF00, B=0, A=anything → H=60, S=255, V≈255.
-    let src = [0x0000u16, 0xFF00, 0x0000, 0x1234];
+    let src = as_le_u16(&[0x0000u16, 0xFF00, 0x0000, 0x1234]);
     let mut scratch = std::vec![0u8; 3];
     let mut h = std::vec![0u8; 1];
     let mut s = std::vec![0u8; 1];
@@ -1839,11 +1824,10 @@ mod tests {
 
   // ---- Bgra64 --------------------------------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn bgra64_dispatcher_to_rgb_scalar_path() {
     // Bgra64: B=0x1100, G=0x2200, R=0x3300, A=0xDEAD → RGB [R=0x33, G=0x22, B=0x11].
-    let src = [0x1100u16, 0x2200, 0x3300, 0xDEAD];
+    let src = as_le_u16(&[0x1100u16, 0x2200, 0x3300, 0xDEAD]);
     let mut rgb = [0u8; 3];
     bgra64_to_rgb_row_endian::<false>(&src, &mut rgb, 1, false);
     assert_eq!(rgb[0], 0x33, "R");
@@ -1851,11 +1835,10 @@ mod tests {
     assert_eq!(rgb[2], 0x11, "B");
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn bgra64_dispatcher_to_rgba_scalar_path() {
     // Source alpha 0xABCD → 0xAB after >> 8; channels swapped.
-    let src = [0x1100u16, 0x2200, 0x3300, 0xABCD];
+    let src = as_le_u16(&[0x1100u16, 0x2200, 0x3300, 0xABCD]);
     let mut rgba = [0u8; 4];
     bgra64_to_rgba_row_endian::<false>(&src, &mut rgba, 1, false);
     assert_eq!(rgba[0], 0x33, "R (from position 2)");
@@ -1864,7 +1847,7 @@ mod tests {
 
   #[test]
   fn bgra64_dispatcher_to_rgb_u16_scalar_path() {
-    let src = [0x1111u16, 0x2222, 0x3333, 0xDEAD]; // B, G, R, A
+    let src = as_le_u16(&[0x1111u16, 0x2222, 0x3333, 0xDEAD]); // B, G, R, A
     let mut rgb_u16 = [0u16; 3];
     bgra64_to_rgb_u16_row_endian::<false>(&src, &mut rgb_u16, 1, false);
     assert_eq!(rgb_u16[0], 0x3333, "R (from position 2)");
@@ -1872,17 +1855,15 @@ mod tests {
     assert_eq!(rgb_u16[2], 0x1111, "B (from position 0)");
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn bgra64_dispatcher_to_rgba_u16_scalar_path() {
-    let src = [0x1111u16, 0x2222, 0x3333, 0xABCD]; // B, G, R, A
+    let src = as_le_u16(&[0x1111u16, 0x2222, 0x3333, 0xABCD]); // B, G, R, A
     let mut rgba_u16 = [0u16; 4];
     bgra64_to_rgba_u16_row_endian::<false>(&src, &mut rgba_u16, 1, false);
     assert_eq!(rgba_u16[0], 0x3333, "R (from position 2)");
     assert_eq!(rgba_u16[3], 0xABCD, "source alpha preserved");
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn bgra64_dispatcher_to_luma_scalar_path() {
     let src = solid_rgba64(4, 0xFF00);
@@ -1902,7 +1883,6 @@ mod tests {
     }
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn bgra64_dispatcher_to_luma_u16_scalar_path() {
     let src = solid_rgba64(4, 0xFF00);
@@ -1925,12 +1905,11 @@ mod tests {
     }
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn bgra64_dispatcher_to_hsv_scalar_path() {
     // Pure blue in Bgra64 layout: B=0xFF00, G=0, R=0, A=any.
     // After B↔R swap → rgb=[R=0, G=0, B=0xFF] → H=120, S=255, V≈255.
-    let src = [0xFF00u16, 0x0000, 0x0000, 0x1234];
+    let src = as_le_u16(&[0xFF00u16, 0x0000, 0x0000, 0x1234]);
     let mut scratch = std::vec![0u8; 3];
     let mut h = std::vec![0u8; 1];
     let mut s = std::vec![0u8; 1];

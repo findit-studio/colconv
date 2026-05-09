@@ -352,14 +352,6 @@ pub(crate) fn y212_to_luma_u16_row<const BE: bool>(
 }
 
 #[cfg(all(test, feature = "std"))]
-// LE-host-only: tests in this module use host-native u16/u8 literals as if
-// they were LE-encoded bytes; on a BE host the kernel's `from_le` byte-swap
-// reinterprets host-native storage and produces a different logical value
-// than the literal, breaking the assertions. The kernel's BE-host correctness
-// is locked down by the dedicated host-independent BE/LE parity tests in the
-// per-arch test files (which build fixtures via `to_le_bytes` / `to_be_bytes`,
-// not `swap_bytes`). Mirrors the gating from PR #82 `8f2e329`.
-#[cfg(target_endian = "little")]
 mod tests {
   use super::*;
   use crate::ColorMatrix;
@@ -375,17 +367,31 @@ mod tests {
     ]
   }
 
+  /// Re-encode a host-native u16 slice as LE-encoded bytes packed back as
+  /// `Vec<u16>`. On LE host this is a no-op; on BE host every u16 is byte-
+  /// swapped relative to the intended logical value. Kernels called with
+  /// `BE = false` recover the intended values via `from_le` on both hosts.
+  fn as_le_u16(host: &[u16]) -> std::vec::Vec<u16> {
+    host
+      .iter()
+      .map(|v| u16::from_ne_bytes(v.to_le_bytes()))
+      .collect()
+  }
+
   /// Build a `Vec<u16>` Y210 row of `width` pixels with `(Y, U, V)`
-  /// repeated. Width must be even.
+  /// repeated, in LE-encoded byte form. Width must be even.
   fn solid_y210(width: usize, y: u16, u: u16, v: u16) -> std::vec::Vec<u16> {
     let mut buf = std::vec::Vec::with_capacity(width * 2);
     for _ in 0..(width / 2) {
       buf.extend_from_slice(&y210_quad(y, u, y, v));
     }
-    buf
+    as_le_u16(&buf)
   }
 
-  /// Byte-swap every u16 in a slice to produce the BE-encoded form.
+  /// Convert an LE-encoded `Vec<u16>` (as built by `solid_y210`) into the
+  /// BE-encoded form of the same logical values by swapping bytes element-
+  /// wise. On both LE and BE hosts the result is bytes-stored-as-BE for the
+  /// same intended logical values as the input.
   fn to_be_u16(le: &[u16]) -> std::vec::Vec<u16> {
     le.iter().map(|&v| v.swap_bytes()).collect()
   }
@@ -440,14 +446,15 @@ mod tests {
   fn scalar_y210_to_luma_extracts_y_bytes_downshifted() {
     // Build a width=6 row with Y values 100, 200, 300, 400, 500, 600
     // (10-bit). u16 length = width * 2 = 12.
-    let mut buf = std::vec![0u16; 12];
+    let mut intended = std::vec![0u16; 12];
     let ys = [100u16, 200, 300, 400, 500, 600];
     for i in 0..3 {
-      buf[i * 4] = ys[i * 2] << 6;
-      buf[i * 4 + 1] = 128u16 << 6; // U
-      buf[i * 4 + 2] = ys[i * 2 + 1] << 6;
-      buf[i * 4 + 3] = 128u16 << 6; // V
+      intended[i * 4] = ys[i * 2] << 6;
+      intended[i * 4 + 1] = 128u16 << 6; // U
+      intended[i * 4 + 2] = ys[i * 2 + 1] << 6;
+      intended[i * 4 + 3] = 128u16 << 6; // V
     }
+    let buf = as_le_u16(&intended);
     let mut luma = [0u8; 6];
     y210_to_luma_row::<false>(&buf, &mut luma, 6);
     assert_eq!(luma[0], (100u16 >> 2) as u8);
@@ -460,14 +467,15 @@ mod tests {
 
   #[test]
   fn scalar_y210_to_luma_u16_extracts_y_low_bit_packed() {
-    let mut buf = std::vec![0u16; 12];
+    let mut intended = std::vec![0u16; 12];
     let ys = [100u16, 200, 300, 400, 500, 600];
     for i in 0..3 {
-      buf[i * 4] = ys[i * 2] << 6;
-      buf[i * 4 + 1] = 128u16 << 6;
-      buf[i * 4 + 2] = ys[i * 2 + 1] << 6;
-      buf[i * 4 + 3] = 128u16 << 6;
+      intended[i * 4] = ys[i * 2] << 6;
+      intended[i * 4 + 1] = 128u16 << 6;
+      intended[i * 4 + 2] = ys[i * 2 + 1] << 6;
+      intended[i * 4 + 3] = 128u16 << 6;
     }
+    let buf = as_le_u16(&intended);
     let mut luma = [0u16; 6];
     y210_to_luma_u16_row::<false>(&buf, &mut luma, 6);
     assert_eq!(luma[0], 100);

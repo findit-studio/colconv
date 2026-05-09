@@ -2,17 +2,15 @@ use super::*;
 
 // ---- Yuv422pFrame16::try_new_checked ---------------------------------
 
-#[cfg(target_endian = "little")]
 fn p422_planes_10bit() -> (std::vec::Vec<u16>, std::vec::Vec<u16>, std::vec::Vec<u16>) {
   // Width 16, height 8 — 4:2:2 chroma is half-width, FULL-height.
-  let y = std::vec![64u16; 16 * 8];
-  let u = std::vec![512u16; 8 * 8];
-  let v = std::vec![512u16; 8 * 8];
+  let y = le_encoded_u16_buf(&std::vec![64u16; 16 * 8]);
+  let u = le_encoded_u16_buf(&std::vec![512u16; 8 * 8]);
+  let v = le_encoded_u16_buf(&std::vec![512u16; 8 * 8]);
   (y, u, v)
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv422p10_try_new_checked_accepts_in_range_samples() {
   let (y, u, v) = p422_planes_10bit();
   let f = Yuv422p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8).expect("valid 10-bit");
@@ -21,22 +19,21 @@ fn yuv422p10_try_new_checked_accepts_in_range_samples() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv422p10_try_new_checked_accepts_max_valid_value() {
   // Exactly `(1 << 10) - 1 = 1023` must pass.
-  let y = std::vec![1023u16; 16 * 8];
-  let u = std::vec![1023u16; 8 * 8];
-  let v = std::vec![1023u16; 8 * 8];
+  let y = le_encoded_u16_buf(&std::vec![1023u16; 16 * 8]);
+  let u = le_encoded_u16_buf(&std::vec![1023u16; 8 * 8]);
+  let v = le_encoded_u16_buf(&std::vec![1023u16; 8 * 8]);
   Yuv422p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8).expect("max valid passes");
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv422p10_try_new_checked_rejects_y_high_bit_set() {
-  let mut y = std::vec![0u16; 16 * 8];
-  y[3 * 16 + 5] = 0x8000;
-  let u = std::vec![512u16; 8 * 8];
-  let v = std::vec![512u16; 8 * 8];
+  let mut intended_y = std::vec![0u16; 16 * 8];
+  intended_y[3 * 16 + 5] = 0x8000;
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&std::vec![512u16; 8 * 8]);
+  let v = le_encoded_u16_buf(&std::vec![512u16; 8 * 8]);
   let e = Yuv422p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8).unwrap_err();
   match e {
     Yuv420pFrame16Error::SampleOutOfRange {
@@ -54,16 +51,16 @@ fn yuv422p10_try_new_checked_rejects_y_high_bit_set() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv422p10_try_new_checked_rejects_u_plane_sample_in_full_height_chroma() {
   // Crucial 4:2:2-specific test: the offending sample is on the
   // last chroma row (row 7), which only exists because 4:2:2
   // chroma is full-height (8 rows). The 4:2:0 scan would stop at
   // row 3.
-  let y = std::vec![0u16; 16 * 8];
-  let mut u = std::vec![512u16; 8 * 8];
-  u[7 * 8 + 3] = 1024; // last chroma row, just above max
-  let v = std::vec![512u16; 8 * 8];
+  let mut intended_u = std::vec![512u16; 8 * 8];
+  intended_u[7 * 8 + 3] = 1024; // last chroma row, just above max
+  let y = le_encoded_u16_buf(&std::vec![0u16; 16 * 8]);
+  let u = le_encoded_u16_buf(&intended_u);
+  let v = le_encoded_u16_buf(&std::vec![512u16; 8 * 8]);
   let e = Yuv422p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8).unwrap_err();
   assert!(matches!(
     e,
@@ -93,12 +90,12 @@ fn yuv422p10_try_new_checked_rejects_v_plane_sample() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv422p12_try_new_checked_rejects_above_4095() {
-  let mut y = std::vec![2048u16; 16 * 8];
-  y[0] = 4096; // just above 12-bit max
-  let u = std::vec![2048u16; 8 * 8];
-  let v = std::vec![2048u16; 8 * 8];
+  let mut intended_y = std::vec![2048u16; 16 * 8];
+  intended_y[0] = 4096; // just above 12-bit max
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&std::vec![2048u16; 8 * 8]);
+  let v = le_encoded_u16_buf(&std::vec![2048u16; 8 * 8]);
   let e = Yuv422p12Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8).unwrap_err();
   assert!(matches!(
     e,
