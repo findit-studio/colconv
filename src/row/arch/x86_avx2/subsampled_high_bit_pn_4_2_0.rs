@@ -2,13 +2,20 @@ use core::arch::x86_64::*;
 
 use super::*;
 
-/// Byte-swap every u16 lane of `v` in-register (BE ↔ LE conversion).
+/// Compile-time host endianness. `true` on BE targets, `false` on LE
+/// targets (always `false` on `x86_64` / `i686` in practice).
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
+/// Byte-swap every u16 lane of `v` in-register when the source (wire)
+/// endian differs from the host's native u16 byte order.
 ///
-/// Used after `deinterleave_uv_u16_avx2` to apply per-lane byte-swapping
-/// for BE input. When `BE = false` this compiles away entirely.
+/// Used after `deinterleave_uv_u16_avx2` to apply per-lane byte-swapping.
+/// Gated on `BE != HOST_NATIVE_BE` (mirrors PR #82 / #85 / #87 / #88)
+/// so a hypothetical BE-x86 host would not double-swap. When the gate
+/// folds to `false` at compile time, the call compiles away entirely.
 #[inline(always)]
 unsafe fn byteswap_u16x16<const BE: bool>(v: __m256i) -> __m256i {
-  if BE {
+  if BE != HOST_NATIVE_BE {
     let mask = unsafe {
       core::mem::transmute::<[u8; 32], __m256i>([
         1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14, 1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10,
@@ -724,8 +731,11 @@ pub(crate) unsafe fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const BE: boo
     // Load as two __m128i halves so we can reuse the SSE4.1 128-bit
     // byte-shuffle mask. Each half carries 4 UV pairs; we deinterleave
     // each to [U's | V's] and then join the two U halves / two V halves.
-    // For BE: fold per-u16-lane byte-swap into the deinterleave mask.
-    let split_mask_128 = if BE {
+    // When wire endian differs from host (`BE != HOST_NATIVE_BE`):
+    // fold per-u16-lane byte-swap into the deinterleave mask. On a
+    // hypothetical BE-x86 host this avoids the double-swap that a plain
+    // `BE` gate would introduce.
+    let split_mask_128 = if BE != HOST_NATIVE_BE {
       _mm_setr_epi8(1, 0, 5, 4, 9, 8, 13, 12, 3, 2, 7, 6, 11, 10, 15, 14)
     } else {
       _mm_setr_epi8(0, 1, 4, 5, 8, 9, 12, 13, 2, 3, 6, 7, 10, 11, 14, 15)

@@ -2,13 +2,20 @@ use core::arch::x86_64::*;
 
 use super::*;
 
-/// Byte-swap every u16 lane of `v` in-register (BE ↔ LE conversion).
+/// Compile-time host endianness. `true` on BE targets, `false` on LE
+/// targets (always `false` on `x86_64` / `i686` in practice).
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
+/// Byte-swap every u16 lane of `v` in-register when the source (wire)
+/// endian differs from the host's native u16 byte order.
 ///
-/// Used after `deinterleave_uv_u16_avx512` to apply per-lane byte-swapping
-/// for BE input. When `BE = false` this compiles away entirely.
+/// Used after `deinterleave_uv_u16_avx512` to apply per-lane byte-swapping.
+/// Gated on `BE != HOST_NATIVE_BE` (mirrors PR #82 / #85 / #87 / #88)
+/// so a hypothetical BE-x86 host would not double-swap. When the gate
+/// folds to `false` at compile time, the call compiles away entirely.
 #[inline(always)]
 unsafe fn byteswap_u16x32<const BE: bool>(v: __m512i) -> __m512i {
-  if BE {
+  if BE != HOST_NATIVE_BE {
     let mask = unsafe {
       core::mem::transmute::<[u8; 64], __m512i>([
         1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14, 1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10,
@@ -706,9 +713,11 @@ pub(crate) unsafe fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const BE: boo
     // Per-128-bit-lane shuffle to deinterleave u16 UV pairs within
     // each lane: `[u0,v0,u1,v1,u2,v2,u3,v3] → [u0,u1,u2,u3,v0,v1,v2,v3]`
     // as u16 = byte indices `[0,1, 4,5, 8,9, 12,13 | 2,3, 6,7, 10,11, 14,15]`.
-    // For BE: also swap the two bytes within each u16 lane during the
-    // deinterleave shuffle.
-    let uv_lane_mask = if BE {
+    // When wire endian differs from host (`BE != HOST_NATIVE_BE`):
+    // also swap the two bytes within each u16 lane during the
+    // deinterleave shuffle. On a hypothetical BE-x86 host this avoids
+    // the double-swap that a plain `BE` gate would introduce.
+    let uv_lane_mask = if BE != HOST_NATIVE_BE {
       _mm_setr_epi8(1, 0, 5, 4, 9, 8, 13, 12, 3, 2, 7, 6, 11, 10, 15, 14)
     } else {
       _mm_setr_epi8(0, 1, 4, 5, 8, 9, 12, 13, 2, 3, 6, 7, 10, 11, 14, 15)

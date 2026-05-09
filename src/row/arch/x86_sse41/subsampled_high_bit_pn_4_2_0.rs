@@ -2,15 +2,22 @@ use core::arch::x86_64::*;
 
 use super::*;
 
-/// Byte-swap every u16 lane of `v` in-register (BE ↔ LE conversion).
+/// Compile-time host endianness. `true` on BE targets, `false` on LE
+/// targets (always `false` on `x86_64` / `i686` in practice).
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
+/// Byte-swap every u16 lane of `v` in-register when the source (wire)
+/// endian differs from the host's native u16 byte order.
 ///
 /// Used after `deinterleave_uv_u16` (or other UV-interleaved loads) to
-/// apply the BE byte-swap that `load_endian_u16x8` cannot perform for
-/// shuffled-then-loaded values. When `BE = false` this compiles away
-/// entirely.
+/// apply byte-swapping that `load_endian_u16x8` cannot perform for
+/// shuffled-then-loaded values. The gate is `BE != HOST_NATIVE_BE`
+/// (mirrors PR #82 / #85 / #87 / #88), so a hypothetical BE-x86 host
+/// would not double-swap. When the gate folds to `false` at compile
+/// time, the call compiles away entirely.
 #[inline(always)]
 unsafe fn byteswap_u16x8<const BE: bool>(v: __m128i) -> __m128i {
-  if BE {
+  if BE != HOST_NATIVE_BE {
     let mask = unsafe {
       core::mem::transmute::<[u8; 16], __m128i>([
         1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14,
@@ -684,9 +691,12 @@ pub(crate) unsafe fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const BE: boo
       // uv_half.len() >= width >= x + 8 guarantees 8 u16 readable.
       let uv_raw = _mm_loadu_si128(uv_half.as_ptr().add(x).cast());
       // [U0,V0,U1,V1,U2,V2,U3,V3] → [U0,U1,U2,U3, V0,V1,V2,V3].
-      // For BE: also swap the two bytes within each u16 lane (lo/hi
-      // byte indices within each 16-bit element flipped).
-      let split_mask = if BE {
+      // When wire endian differs from host (`BE != HOST_NATIVE_BE`):
+      // also swap the two bytes within each u16 lane (lo/hi byte
+      // indices within each 16-bit element flipped). On a hypothetical
+      // BE-x86 host this avoids the double-swap that a plain `BE`
+      // gate would introduce.
+      let split_mask = if BE != HOST_NATIVE_BE {
         _mm_setr_epi8(1, 0, 5, 4, 9, 8, 13, 12, 3, 2, 7, 6, 11, 10, 15, 14)
       } else {
         _mm_setr_epi8(0, 1, 4, 5, 8, 9, 12, 13, 2, 3, 6, 7, 10, 11, 14, 15)

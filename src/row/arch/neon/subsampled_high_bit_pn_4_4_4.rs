@@ -14,24 +14,21 @@ use super::*;
 // register, like `nv24_to_rgb_row`. Each iteration consumes 16 Y
 // pixels and 32 UV `u16` elements (= 16 interleaved U/V pairs).
 
-/// Byte-swap every u16 lane in `v` (BE ↔ LE conversion in-register).
+/// Apply per-lane byte-swap to a `uint16x8x2_t` pair when the source
+/// (wire) endian differs from the host's native u16 byte order.
 ///
-/// Equivalent to `vrev16q_u8` on the reinterpreted byte view.  Used
-/// after `vld2q_u16` to apply per-lane byte-swapping that
-/// `load_endian_u16x8` cannot perform for interleaved loads.
-#[inline(always)]
-unsafe fn byteswap_u16x8(v: uint16x8_t) -> uint16x8_t {
-  unsafe { vreinterpretq_u16_u8(vrev16q_u8(vreinterpretq_u8_u16(v))) }
-}
-
-/// Apply BE byte-swap to a `uint16x8x2_t` pair (each lane individually).
-/// When `BE = false` this is a no-op and compiles away entirely.
+/// `vld2q_u16` materializes lanes in the **host-native** u16 byte order
+/// regardless of the wire encoding, so the swap must trigger on
+/// `BE != HOST_NATIVE_BE` (mirrors PR #82 / #85 / #87 / #88 fixes).
+/// See [`bswap_u16x8_if_be`](super::bswap_u16x8_if_be) for the truth
+/// table; this wrapper just applies it to both UV halves.
 #[inline(always)]
 unsafe fn deinterleave_endian<const BE: bool>(pair: uint16x8x2_t) -> uint16x8x2_t {
-  if BE {
-    unsafe { uint16x8x2_t(byteswap_u16x8(pair.0), byteswap_u16x8(pair.1)) }
-  } else {
-    pair
+  unsafe {
+    uint16x8x2_t(
+      bswap_u16x8_if_be::<BE>(pair.0),
+      bswap_u16x8_if_be::<BE>(pair.1),
+    )
   }
 }
 

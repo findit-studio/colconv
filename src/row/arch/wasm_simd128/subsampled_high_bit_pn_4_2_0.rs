@@ -2,13 +2,20 @@ use core::arch::wasm32::*;
 
 use super::*;
 
-/// Byte-swap every u16 lane of `v` in-register (BE ↔ LE conversion).
+/// Compile-time host endianness. `true` on BE targets, `false` on LE
+/// targets (always `false` on `wasm32` in practice).
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
+/// Byte-swap every u16 lane of `v` in-register when the source (wire)
+/// endian differs from the host's native u16 byte order.
 ///
-/// Used after `deinterleave_uv_u16_wasm` to apply per-lane byte-swapping
-/// for BE input. When `BE = false` this compiles away entirely.
+/// Used after `deinterleave_uv_u16_wasm` to apply per-lane byte-swapping.
+/// Gated on `BE != HOST_NATIVE_BE` (mirrors PR #82 / #85 / #87 / #88)
+/// so a hypothetical BE-wasm host would not double-swap. When the gate
+/// folds to `false` at compile time, the call compiles away entirely.
 #[inline(always)]
 unsafe fn byteswap_u16x8<const BE: bool>(v: v128) -> v128 {
-  if BE {
+  if BE != HOST_NATIVE_BE {
     let mask = i8x16(1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14);
     u8x16_swizzle(v, mask)
   } else {
