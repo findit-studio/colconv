@@ -587,3 +587,53 @@ pub fn xyz12_to_rgba_f16_row<const BE: bool>(
 
   scalar_xyz12::xyz12_to_rgba_f16_row::<BE>(xyz, rgba_out, width, target_gamut);
 }
+
+/// XYZ12 staged-RGB → `u8` luma row dispatcher.
+///
+/// Inputs the staged `u8` packed RGB row produced by
+/// [`xyz12_to_rgb_row`] and emits a single-channel `u8` luma plane
+/// using the gamut-derived Q15 weights from
+/// [`crate::yuv::luma_weights_q15_for_gamut`] (carried on
+/// [`crate::yuv::Xyz12Row::luma_q15`]).
+///
+/// **No SIMD** path: per-pixel cost (one Q15 dot product) is dwarfed
+/// by the upstream 6× scalar `powf` work in the matmul + OETF stages.
+/// `use_simd` is accepted for sinker-API uniformity and ignored.
+///
+/// Codex round-2 medium fix: prior code used `rgb_to_luma_row` with
+/// `ColorMatrix::Bt709` for both DciP3 and Rec709 targets; that biases
+/// luma for saturated content under DCI-P3, which has its own weights
+/// from the DCI-white-pointed RGB→XYZ matrix Y row.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn xyz12_rgb_to_luma_row(
+  rgb: &[u8],
+  luma_out: &mut [u8],
+  width: usize,
+  luma_q15: (i32, i32, i32),
+  _use_simd: bool,
+) {
+  let rgb_min = rgb_row_bytes(width);
+  assert!(rgb.len() >= rgb_min, "rgb row too short");
+  assert!(luma_out.len() >= width, "luma row too short");
+  scalar_xyz12::xyz12_rgb_to_luma_row(rgb, luma_out, width, luma_q15);
+}
+
+/// XYZ12 staged-RGB → `u16` luma row dispatcher.
+///
+/// `u16` carrier preserves the `[0, 255]` dynamic range from the u8
+/// luma path (zero-extended), matching every other `*_to_luma_u16_row`
+/// kernel in colconv. `use_simd` is currently a no-op (see
+/// [`xyz12_rgb_to_luma_row`] for rationale).
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn xyz12_rgb_to_luma_u16_row(
+  rgb: &[u8],
+  luma_out: &mut [u16],
+  width: usize,
+  luma_q15: (i32, i32, i32),
+  _use_simd: bool,
+) {
+  let rgb_min = rgb_row_bytes(width);
+  assert!(rgb.len() >= rgb_min, "rgb row too short");
+  assert!(luma_out.len() >= width, "luma row too short");
+  scalar_xyz12::xyz12_rgb_to_luma_u16_row(rgb, luma_out, width, luma_q15);
+}

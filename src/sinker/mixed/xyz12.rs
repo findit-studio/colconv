@@ -20,9 +20,13 @@
 //! - `with_rgb_f16` / `with_rgba_f16` — full pipeline + clamp `[0, 1]`
 //!   + IEEE-754 RNE narrow to f16; alpha = `1.0` for the rgba variant.
 //! - `with_luma` / `with_luma_u16` — staged through u8 RGB scratch,
-//!   then `rgb_to_luma_row` / `rgb_to_luma_u16_row` with the
-//!   target-gamut-derived `ColorMatrix` (BT.709 for DciP3 / Rec709,
-//!   BT.2020 for Rec2020).
+//!   then `xyz12_rgb_to_luma_row` / `xyz12_rgb_to_luma_u16_row` with
+//!   the gamut-derived Q15 weights (BT.709 for Rec709,
+//!   `(6865, 23645, 2258)` for DciP3 theatrical, BT.2020Ncl for
+//!   Rec2020 — see [`crate::yuv::luma_weights_q15_for_gamut`]). Codex
+//!   round-2 medium fix: the prior implementation re-used the BT.709
+//!   triple for DciP3, which biased luma for saturated content under
+//!   the theatrical DCI-white target.
 //! - `with_hsv` — same staging, then `rgb_to_hsv_row`.
 
 use super::{
@@ -32,7 +36,7 @@ use super::{
 use crate::{
   PixelSink,
   row::{
-    rgb_to_hsv_row, rgb_to_luma_row, rgb_to_luma_u16_row, xyz12_to_rgb_f16_row,
+    rgb_to_hsv_row, xyz12_rgb_to_luma_row, xyz12_rgb_to_luma_u16_row, xyz12_to_rgb_f16_row,
     xyz12_to_rgb_f32_row, xyz12_to_rgb_row, xyz12_to_rgb_u16_row, xyz12_to_rgba_f16_row,
     xyz12_to_rgba_row, xyz12_to_rgba_u16_row, xyz12_to_xyz_f32_row,
   },
@@ -376,23 +380,21 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Xyz12<BE>> {
     xyz12_to_rgb_row::<BE>(xyz_in, rgb_row, w, target_gamut, use_simd);
 
     if let Some(luma) = luma.as_deref_mut() {
-      rgb_to_luma_row(
+      xyz12_rgb_to_luma_row(
         rgb_row,
         &mut luma[one_plane_start..one_plane_end],
         w,
-        row.matrix(),
-        row.full_range(),
+        row.luma_q15(),
         use_simd,
       );
     }
 
     if let Some(luma_buf) = luma_u16.as_deref_mut() {
-      rgb_to_luma_u16_row(
+      xyz12_rgb_to_luma_u16_row(
         rgb_row,
         &mut luma_buf[one_plane_start..one_plane_end],
         w,
-        row.matrix(),
-        row.full_range(),
+        row.luma_q15(),
         use_simd,
       );
     }

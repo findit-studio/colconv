@@ -36,9 +36,7 @@
 //! const-branch on byte-swap. Type aliases [`Xyz12LeFrame`] and
 //! [`Xyz12BeFrame`] cover the FFmpeg `XYZ12LE` / `XYZ12BE` variants.
 
-use crate::{
-  ColorMatrix, DcpTargetGamut, PixelSink, SourceFormat, frame::Xyz12Frame, sealed::Sealed,
-};
+use crate::{DcpTargetGamut, PixelSink, SourceFormat, frame::Xyz12Frame, sealed::Sealed};
 
 /// Zero-sized marker type for the packed **XYZ12** source format
 /// (`AV_PIX_FMT_XYZ12LE` / `AV_PIX_FMT_XYZ12BE`).
@@ -64,15 +62,18 @@ pub type Xyz12Be = Xyz12<true>;
 ///
 /// Carries the per-frame [`DcpTargetGamut`] choice so downstream row
 /// kernels can apply the correct XYZ → RGB matrix without a separate
-/// dispatch parameter. The luma-derivation [`ColorMatrix`] is derived
-/// from the target gamut at the walker call site (BT.709 for
-/// DciP3 / Rec709, BT.2020Ncl for Rec2020).
+/// dispatch parameter. Per-target Q15 luma weights `(k_r, k_g, k_b)`
+/// are also derived once at the walker call site (see
+/// [`luma_weights_q15_for_gamut`]) so the `with_luma` /
+/// `with_luma_u16` sinker accessors can apply the gamut-matched
+/// coefficients without going through the YUV-leaning [`ColorMatrix`]
+/// enum (which has no DCI-P3 entry — codex round-2 finding).
 #[derive(Debug, Clone, Copy)]
 pub struct Xyz12Row<'a, const BE: bool = false> {
   xyz: &'a [u16],
   row: usize,
   target_gamut: DcpTargetGamut,
-  matrix: ColorMatrix,
+  luma_q15: (i32, i32, i32),
 }
 
 impl<'a, const BE: bool> Xyz12Row<'a, BE> {
@@ -81,13 +82,13 @@ impl<'a, const BE: bool> Xyz12Row<'a, BE> {
     xyz: &'a [u16],
     row: usize,
     target_gamut: DcpTargetGamut,
-    matrix: ColorMatrix,
+    luma_q15: (i32, i32, i32),
   ) -> Self {
     Self {
       xyz,
       row,
       target_gamut,
-      matrix,
+      luma_q15,
     }
   }
 
@@ -109,12 +110,14 @@ impl<'a, const BE: bool> Xyz12Row<'a, BE> {
     self.target_gamut
   }
 
-  /// Luma-derivation matrix paired with the target gamut. Used by the
-  /// `with_luma` / `with_luma_u16` sinker accessors. Always full-range
-  /// (the OETF-encoded RGB output is full-range by construction).
+  /// Q15 luma weights `(k_r, k_g, k_b)` matched to the target gamut.
+  /// Each `k` is the corresponding RGB coefficient × 32768, rounded
+  /// to nearest, with the constraint `k_r + k_g + k_b ≈ 32768`. Used
+  /// by `with_luma` / `with_luma_u16` to derive Y' from gamma-encoded
+  /// RGB without going through the YUV-leaning [`ColorMatrix`] enum.
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn matrix(&self) -> ColorMatrix {
-    self.matrix
+  pub const fn luma_q15(&self) -> (i32, i32, i32) {
+    self.luma_q15
   }
 
   /// XYZ12 always emits full-range RGB after the OETF; the constant
@@ -133,18 +136,40 @@ impl<'a, const BE: bool> Xyz12Row<'a, BE> {
   }
 }
 
-/// Maps a [`DcpTargetGamut`] to the [`ColorMatrix`] used for luma
-/// derivation when the sinker downstreams `with_luma` / `with_luma_u16`.
+/// Maps a [`DcpTargetGamut`] to the Q15 luma coefficients
+/// `(k_r, k_g, k_b)` used by the `with_luma` / `with_luma_u16` sinker
+/// accessors.
 ///
-/// - `DciP3` and `Rec709` both use `Bt709` (D65 white point shared,
-///   luma weights agree to within a single LSB on u8 grayscale).
-/// - `Rec2020` uses `Bt2020Ncl` (different luma weights to match the
-///   wider gamut's perceptual brightness).
+/// Coefficients are the Y row of each gamut's `M_rgb_to_xyz` (so the
+/// luma weights are exactly `(Y_red, Y_green, Y_blue)` with the
+/// gamut's white point at `Y = 1`), scaled to Q15 (×32768) and rounded
+/// to nearest. The triple sums to `32768 ± 1` LSB by construction.
+///
+/// Numbers (derived in `examples/derive_xyz_matrices.rs`):
+///
+/// - **Rec.709 / sRGB** (D65) — `Y = 0.2126 R + 0.7152 G + 0.0722 B`
+///   → `(6966, 23436, 2366)`.
+/// - **DCI-P3 (theatrical, DCI white)** —
+///   `Y ≈ 0.2095 R + 0.7216 G + 0.0689 B` →
+///   `(6865, 23645, 2258)`, sum = 32768. *Distinct from BT.709* —
+///   codex round-2 medium finding: prior code reused the Bt709
+///   triple, biasing luma values for saturated content under the
+///   DCI-P3 path.
+/// - **Rec.2020** (D65) — `Y = 0.2627 R + 0.6780 G + 0.0593 B`
+///   → `(8607, 22217, 1944)`. (Matches `ColorMatrix::Bt2020Ncl`.)
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) const fn luma_matrix_for_gamut(g: DcpTargetGamut) -> ColorMatrix {
+pub(crate) const fn luma_weights_q15_for_gamut(g: DcpTargetGamut) -> (i32, i32, i32) {
   match g {
-    DcpTargetGamut::DciP3 | DcpTargetGamut::Rec709 => ColorMatrix::Bt709,
-    DcpTargetGamut::Rec2020 => ColorMatrix::Bt2020Ncl,
+    // Rec.709 / sRGB: Y = 0.2126 R + 0.7152 G + 0.0722 B (D65).
+    DcpTargetGamut::Rec709 => (6966, 23436, 2366),
+    // DCI-P3 theatrical (DCI white): Y row of the P3-DCI rgb_to_xyz
+    // matrix derived in `examples/derive_xyz_matrices.rs`
+    // (`Y_red = 0.2094916779`, `Y_green = 0.7215952542`,
+    // `Y_blue = 0.0689130679`); each coefficient × 32768 rounded to
+    // nearest gives `(6865, 23645, 2258)` with `sum = 32768` exactly.
+    DcpTargetGamut::DciP3 => (6865, 23645, 2258),
+    // Rec.2020: Y = 0.2627 R + 0.6780 G + 0.0593 B (D65).
+    DcpTargetGamut::Rec2020 => (8607, 22217, 1944),
   }
 }
 
@@ -178,12 +203,12 @@ pub fn xyz12_to<const BE: bool, S: Xyz12Sink<BE>>(
   let stride = src.stride() as usize;
   let row_elems: usize = w * 3;
   let plane = src.xyz();
-  let matrix = luma_matrix_for_gamut(target_gamut);
+  let luma_q15 = luma_weights_q15_for_gamut(target_gamut);
 
   for row in 0..h {
     let start = row * stride;
     let xyz = &plane[start..start + row_elems];
-    sink.process(Xyz12Row::<BE>::new(xyz, row, target_gamut, matrix))?;
+    sink.process(Xyz12Row::<BE>::new(xyz, row, target_gamut, luma_q15))?;
   }
   Ok(())
 }

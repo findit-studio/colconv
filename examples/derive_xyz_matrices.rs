@@ -62,12 +62,16 @@ const GAMUTS: &[GamutCoords] = &[
     w: (0.3127, 0.3290),
   },
   GamutCoords {
-    name: "DCI-P3 D65",
-    source: "SMPTE RP 431-2 / SMPTE ST 432-1, D65 variant",
+    name: "DCI-P3 (DCI white)",
+    source: "SMPTE RP 431-2 §5.1 / ST 428-1 — theatrical DCI white \
+             (~6300K, x=0.314, y=0.351), NOT D65",
     r: (0.680, 0.320),
     g: (0.265, 0.690),
     b: (0.150, 0.060),
-    w: (0.3127, 0.3290),
+    // DCI white per SMPTE RP 431-2 §5.1 — chromaticity (0.314, 0.351),
+    // approximately 6300 K. Distinct from D65 (0.31270, 0.32900) used
+    // by Display-P3 (Apple/web) and the other gamuts in this table.
+    w: (0.314, 0.351),
   },
   GamutCoords {
     name: "Rec.2020",
@@ -137,6 +141,51 @@ fn matvec3(m: &Mat3, v: &[f64; 3]) -> [f64; 3] {
     m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
     m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
   ]
+}
+
+/// Derives `M_rgb_to_xyz` (3×3 f64) for a single gamut. Used both as
+/// the inverse-target for `derive_xyz_to_rgb` and to read off luma
+/// coefficients (the Y row, normalised so the three weights sum to 1
+/// at the gamut's white point).
+fn derive_rgb_to_xyz(g: &GamutCoords) -> Mat3 {
+  let r_xyz = xyz_from_xy(g.r);
+  let g_xyz = xyz_from_xy(g.g);
+  let b_xyz = xyz_from_xy(g.b);
+  let w_xyz = xyz_from_xy(g.w);
+  let m_unscaled: Mat3 = [
+    [r_xyz[0], g_xyz[0], b_xyz[0]],
+    [r_xyz[1], g_xyz[1], b_xyz[1]],
+    [r_xyz[2], g_xyz[2], b_xyz[2]],
+  ];
+  let m_unscaled_inv = invert3(&m_unscaled).expect("primary matrix is invertible");
+  let s = matvec3(&m_unscaled_inv, &w_xyz);
+  let mut m_rgb_to_xyz: Mat3 = [[0.0; 3]; 3];
+  for i in 0..3 {
+    for j in 0..3 {
+      m_rgb_to_xyz[i][j] = m_unscaled[i][j] * s[j];
+    }
+  }
+  m_rgb_to_xyz
+}
+
+/// Prints the per-gamut luma coefficients — the Y row of
+/// `M_rgb_to_xyz`. Since `M_rgb_to_xyz · (1, 1, 1)^T = W_xyz` and the
+/// derivation normalises Y_white to 1.0, the Y row already sums to 1
+/// for every gamut — no extra normalisation step needed.
+fn print_luma_coeffs(name: &str, m_rgb_to_xyz: &Mat3) {
+  let yr = m_rgb_to_xyz[1][0];
+  let yg = m_rgb_to_xyz[1][1];
+  let yb = m_rgb_to_xyz[1][2];
+  let sum = yr + yg + yb;
+  println!(
+    "// Luma weights for {}: Y = {:.10} R + {:.10} G + {:.10} B (sum = {:.10})",
+    name, yr, yg, yb, sum,
+  );
+  println!(
+    "//   f32: [{:>14.9}_f32, {:>14.9}_f32, {:>14.9}_f32]",
+    yr as f32, yg as f32, yb as f32,
+  );
+  println!();
 }
 
 /// Derives M_xyz_to_rgb (3×3 f64) for a single gamut.
@@ -547,6 +596,11 @@ fn main() {
   for g in GAMUTS {
     let m = derive_xyz_to_rgb(g);
     print_mat_const(g.name, g.source, &m);
+  }
+
+  for g in GAMUTS {
+    let m_rgb_to_xyz = derive_rgb_to_xyz(g);
+    print_luma_coeffs(g.name, &m_rgb_to_xyz);
   }
 
   for g in GAMUTS {

@@ -449,24 +449,38 @@ pub enum ColorMatrix {
 ///
 /// The Digital Cinema Package (`AV_PIX_FMT_XYZ12LE`) source carries
 /// CIE XYZ samples that need a 3×3 matrix conversion to a target RGB
-/// space before any OETF / integer narrow. SMPTE ST 428-1 mastering is
-/// done in DCI-P3 (D65 white point); downstream re-targets to Rec.709
-/// (sRGB / web preview) or Rec.2020 (HDR / archival) are supported by
-/// runtime-selecting a different matrix at the walker call site.
+/// space before any OETF / integer narrow. The default [`Self::DciP3`]
+/// target is the **theatrical SMPTE ST 428-1 / RP 431-2** decode using
+/// the **DCI white** point `(0.314, 0.351)` — *not* D65; downstream
+/// re-targets to Rec.709 (sRGB / web preview) or Rec.2020 (HDR /
+/// archival) are supported by runtime-selecting a different matrix at
+/// the walker call site.
 ///
-/// All three matrices target the **D65 white point** at the output;
-/// see `xyz12_constants.rs` for the exact 27 f32 constants per gamut
-/// derived from SMPTE / ITU-R chromaticity coordinates.
+/// White points by variant: `DciP3` = DCI white (~6300 K),
+/// `Rec709` = D65, `Rec2020` = D65. See `xyz12_constants.rs` for the
+/// exact 27 f32 matrix constants per gamut, derived from each
+/// standard's chromaticity coordinates.
+///
+/// **Codex round-2 fix (2026-05-09):** prior to this fix, the `DciP3`
+/// variant erroneously used D65 (i.e. Display-P3 / `display-p3`),
+/// producing biased white balance for ST 428-1 DCP playback. The
+/// matrix is now the theatrical DCI-white version. f32 RGB output
+/// values for `DciP3` callers have changed; see CHANGELOG.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant)]
 #[non_exhaustive]
 pub enum DcpTargetGamut {
-  /// **DCI-P3** (D65 white point) — the SMPTE ST 428-1 / RP 431-2
-  /// mastering target. Most accurate decode of the DCP source. Default
-  /// for `xyz12_to` when callers do not opt into a re-target.
+  /// **DCI-P3 (theatrical, DCI white)** — the SMPTE ST 428-1 / RP
+  /// 431-2 §5.1 D-Cinema decode target. White point is **DCI white**
+  /// `(0.314, 0.351)` (~6300 K), *not* D65. Default for `xyz12_to`
+  /// when callers do not opt into a re-target. **Distinct from
+  /// Display-P3** (which re-uses the P3 primaries with a D65 white
+  /// point and is the Apple / web `display-p3` colour space) — for
+  /// sRGB / web preview select [`Self::Rec709`] instead.
   DciP3,
-  /// **Rec.709 / sRGB** — for sRGB-target deliverables and web preview.
+  /// **Rec.709 / sRGB** (D65) — for sRGB-target deliverables and web
+  /// preview.
   Rec709,
-  /// **Rec.2020** — for HDR theatrical / archival.
+  /// **Rec.2020** (D65) — for HDR theatrical / archival.
   Rec2020,
 }
 

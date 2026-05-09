@@ -41,9 +41,22 @@
 //! 4-decimal chromaticity row (`0.3127, 0.3290`). My derivation is
 //! canonical for the chromaticities printed in the standard.
 //!
-//! Same observation for DCI-P3 (SMPTE RP 431-2 / ST 432-1 D65 variant)
-//! and Rec.2020 (ITU-R BT.2020-2): derived matrix values agree to 4–5
-//! decimals with each standard's published inverse.
+//! Same observation for **DCI-P3 theatrical** (SMPTE RP 431-2 §5.1
+//! with **DCI white** at `(0.314, 0.351)` — *not* D65) and Rec.2020
+//! (ITU-R BT.2020-2): derived matrix values agree to 4–5 decimals
+//! with each standard's published inverse.
+//!
+//! # Codex round-2 fix (2026-05-09)
+//!
+//! Pre-fix code used D65 white for the `DciP3` variant, which
+//! corresponds to "Display-P3" (Apple / web / ICC `display-p3`) — not
+//! the SMPTE ST 428 / DCP theatrical decode target. The `M_XYZ_TO_RGB_DCI_P3`
+//! constant has been re-derived with DCI white `(0.314, 0.351)` per
+//! SMPTE RP 431-2 §5.1; this changes the f32 matrix coefficients and
+//! therefore the f32 RGB output values for every `DciP3`-targeted
+//! `xyz12_to` caller. Callers who specifically wanted Display-P3 D65
+//! desktop preview should select `Rec709` (or open a follow-up issue
+//! for an explicit `DisplayP3D65` variant).
 
 use crate::DcpTargetGamut;
 
@@ -66,24 +79,46 @@ pub(crate) const M_XYZ_TO_RGB_REC709: [[f32; 3]; 3] = [
   [0.055_630_08_f32, -0.203_976_96_f32, 1.056_971_5_f32],
 ];
 
-/// XYZ → RGB matrix for **DCI-P3 D65** (D65 output white) — DCP
-/// mastering default per SMPTE ST 428-1 / RP 431-2.
+/// XYZ → RGB matrix for **DCI-P3 (theatrical, DCI white)** — the
+/// SMPTE ST 428-1 / RP 431-2 §5.1 / SMPTE ST 432-1 D-Cinema
+/// distribution-master target.
 ///
-/// Derived from chromaticity coordinates in SMPTE RP 431-2 / SMPTE ST
-/// 432-1 (D65 variant): R=(0.680, 0.320), G=(0.265, 0.690),
-/// B=(0.150, 0.060), W=D65=(0.3127, 0.3290).
+/// Derived from chromaticity coordinates in SMPTE RP 431-2 §5.1:
+/// R=(0.680, 0.320), G=(0.265, 0.690), B=(0.150, 0.060),
+/// **W=DCI white=(0.314, 0.351)** (~6300 K — explicitly NOT D65).
 ///
-/// f64 source values:
+/// Why DCI white and not D65: SMPTE ST 428-1 D-Cinema masters and the
+/// DCI-P3 RGB target both reference DCI white; Display-P3 (Apple/web,
+/// `display-p3` in ICC / CSS) is a different target that re-uses the
+/// P3 primaries with D65 white. The `DcpTargetGamut::DciP3` variant
+/// here decodes XYZ12 to the **theatrical** DCP target — callers who
+/// want desktop preview should select `Rec709` (sRGB / Display-P3
+/// approximation) or pre-adapt the XYZ themselves before decoding.
+///
+/// Codex round-2 finding (high): the original v0.24.0-pre constant
+/// used D65 (Display-P3 / "P3-D65"), producing systematically biased
+/// white balance for the documented DCP / SMPTE ST 428 use case. This
+/// constant is the corrected DCI-white target.
+///
+/// f64 source values (from `examples/derive_xyz_matrices.rs`,
+/// re-derived with the closed-form primary-scaling algorithm):
 ///
 /// ```text
-/// [  2.4934969119,  -0.9313836179,  -0.4027107845]
-/// [ -0.8294889696,   1.7626640603,   0.0236246858]
-/// [  0.0358458302,  -0.0761723893,   0.9568845240]
+/// [  2.7253940305,  -1.0180030062,  -0.4401631952]
+/// [ -0.7951680258,   1.6897320548,   0.0226471906]
+/// [  0.0412418914,  -0.0876390192,   1.1009293786]
 /// ```
+///
+/// Cross-check: matches the published SMPTE EG 432-1 §5.1.6 inverse
+/// matrix for the DCI-P3 theatrical projector to 4-5 decimals. Sanity
+/// check `M · DCI_white_XYZ = (1, 1, 1)`:
+/// - DCI white XYZ = `(0.8949, 1.0000, 0.9543)` (from `(0.314, 0.351)`,
+///   Y normalised to 1).
+/// - `M[0] · W ≈ 1.0`, `M[1] · W ≈ 1.0`, `M[2] · W ≈ 1.0` to f32 ULP.
 pub(crate) const M_XYZ_TO_RGB_DCI_P3: [[f32; 3]; 3] = [
-  [2.493_497_f32, -0.931_383_6_f32, -0.402_710_78_f32],
-  [-0.829_489_f32, 1.762_664_f32, 0.023_624_687_f32],
-  [0.035_845_83_f32, -0.076_172_39_f32, 0.956_884_5_f32],
+  [2.725_394_f32, -1.018_003_f32, -0.440_163_2_f32],
+  [-0.795_168_04_f32, 1.689_732_1_f32, 0.022_647_19_f32],
+  [0.041_241_89_f32, -0.087_639_02_f32, 1.100_929_4_f32],
 ];
 
 /// XYZ → RGB matrix for **Rec.2020** (D65 output white).
