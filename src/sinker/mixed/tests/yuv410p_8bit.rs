@@ -331,3 +331,62 @@ fn rgb_simd_matches_scalar_pseudo_random() {
     "SIMD and scalar must produce byte-identical RGB"
   );
 }
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn non_4_aligned_height_reuses_trailing_chroma_row() {
+  // Height = 6 → chroma height = ceil(6/4) = 2. Y rows 0..4 read
+  // chroma row 0; Y rows 4..6 read chroma row 1. Distinct chroma
+  // values per chroma row let us assert the walker mapped the
+  // trailing partial group correctly.
+  let w: u32 = 16;
+  let h: u32 = 6;
+  let cw = (w / 4) as usize; // 4
+  let ch = h.div_ceil(4) as usize; // 2
+
+  // Distinct chroma per row: row 0 = (40, 200), row 1 = (200, 40).
+  let mut up = std::vec![0u8; cw * ch];
+  let mut vp = std::vec![0u8; cw * ch];
+  for x in 0..cw {
+    up[x] = 40;
+    vp[x] = 200;
+    up[cw + x] = 200;
+    vp[cw + x] = 40;
+  }
+  // Mid-gray Y so the chroma swing is what dominates color output.
+  let yp = std::vec![128u8; (w * h) as usize];
+
+  let src = Yuv410pFrame::try_new(&yp, &up, &vp, w, h, w, cw as u32, cw as u32).expect("valid");
+
+  let mut rgb_simd = std::vec![0u8; (w * h) as usize * 3];
+  let mut rgb_scalar = std::vec![0u8; (w * h) as usize * 3];
+
+  let mut sink_simd = MixedSinker::<Yuv410p>::new(w as usize, h as usize)
+    .with_rgb(&mut rgb_simd)
+    .unwrap();
+  yuv410p_to(&src, true, ColorMatrix::Bt709, &mut sink_simd).unwrap();
+
+  let mut sink_scalar = MixedSinker::<Yuv410p>::new(w as usize, h as usize)
+    .with_rgb(&mut rgb_scalar)
+    .unwrap();
+  sink_scalar.set_simd(false);
+  yuv410p_to(&src, true, ColorMatrix::Bt709, &mut sink_scalar).unwrap();
+
+  assert_eq!(
+    rgb_simd, rgb_scalar,
+    "SIMD and scalar must agree at non-4-aligned heights"
+  );
+
+  // Sanity: the top half (chroma row 0, U=40 V=200) and bottom strip
+  // (chroma row 1, U=200 V=40) must produce visibly different colors.
+  let row_stride = (w * 3) as usize;
+  let top_red = rgb_scalar[0];
+  let bot_red = rgb_scalar[5 * row_stride];
+  assert_ne!(
+    top_red, bot_red,
+    "row 0 and row 5 should derive from different chroma rows"
+  );
+}

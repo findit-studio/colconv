@@ -1218,6 +1218,84 @@ fn yuv_410_rgba_neon_matches_scalar_widths() {
   }
 }
 
+// ---- yuv_410 chroma byte-lane-order parity --------------------------
+//
+// Targets the BE-safety of the chroma load: the kernel reads four
+// chroma bytes per plane and fans each across four Y columns. If the
+// load were native-endian dependent (the pre-fix `(*const u32).read +
+// vdup_n_u32` pattern), a big-endian aarch64 host would reorder the
+// four samples before the fan-out, producing different chroma at
+// horizontal positions 0..4, 4..8, 8..12, 12..16.
+//
+// We pick four very different chroma values so any reordering would
+// surface as a byte-level RGB mismatch vs the scalar reference. The
+// test runs on every host (no `cfg(target_endian)` guard) so it
+// exercises the BE-host decode path under Miri-style emulation; on
+// LE x86/aarch64 hosts it provides additional functional coverage of
+// the byte-lane load.
+
+fn check_yuv_410_chroma_lane_order_parity(matrix: ColorMatrix, full_range: bool) {
+  // 16 pixels = exactly one NEON main-loop iteration (no scalar tail).
+  let width = 16usize;
+  let y: std::vec::Vec<u8> = (0..width).map(|_| 128u8).collect();
+  // Distinct values across all 4 chroma lanes, well-spaced over 0..255
+  // so a swap of any two would change the reconstructed RGB.
+  let u: std::vec::Vec<u8> = std::vec![10, 60, 110, 200];
+  let v: std::vec::Vec<u8> = std::vec![240, 30, 170, 90];
+
+  let mut rgb_scalar = std::vec![0u8; width * 3];
+  let mut rgb_neon = std::vec![0u8; width * 3];
+
+  scalar::yuv_410_to_rgb_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
+  unsafe {
+    yuv_410_to_rgb_row(&y, &u, &v, &mut rgb_neon, width, matrix, full_range);
+  }
+
+  assert_eq!(
+    rgb_scalar, rgb_neon,
+    "NEON yuv_410 chroma lane order diverged from scalar (matrix={matrix:?}, full_range={full_range}); \
+     this typically indicates the chroma load reordered the 4 samples"
+  );
+
+  // Also check the columns 0..4 / 4..8 / 8..12 / 12..16 use distinct
+  // chroma — defends against a regression where the fan-out collapses
+  // multiple lanes onto the same group.
+  let px = |i: usize| {
+    (
+      rgb_scalar[i * 3],
+      rgb_scalar[i * 3 + 1],
+      rgb_scalar[i * 3 + 2],
+    )
+  };
+  assert_ne!(
+    px(0),
+    px(4),
+    "chroma lane 0 and 1 must produce different RGB"
+  );
+  assert_ne!(
+    px(4),
+    px(8),
+    "chroma lane 1 and 2 must produce different RGB"
+  );
+  assert_ne!(
+    px(8),
+    px(12),
+    "chroma lane 2 and 3 must produce different RGB"
+  );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn yuv_410_neon_chroma_lane_order_parity() {
+  for &(m, full) in &[
+    (ColorMatrix::Bt601, true),
+    (ColorMatrix::Bt709, false),
+    (ColorMatrix::Bt2020Ncl, true),
+  ] {
+    check_yuv_410_chroma_lane_order_parity(m, full);
+  }
+}
+
 // ---- rgb_to_luma_row equivalence ------------------------------------
 //
 // The NEON luma kernel uses pure integer Q15 arithmetic (no f32 ops),

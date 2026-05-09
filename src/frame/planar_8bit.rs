@@ -1026,14 +1026,17 @@ pub enum Yuv420pFrameError {
 /// - `y` — full-size luma, `y_stride >= width`, length
 ///   `>= y_stride * height`.
 /// - `u` / `v` — **quarter-width**, **quarter-height** chroma.
-///   `u_stride >= width / 4`, length `>= u_stride * (height / 4)`.
+///   `u_stride >= width / 4`, length
+///   `>= u_stride * height.div_ceil(4)`.
 ///
-/// Both `width` and `height` must be multiples of 4 (the per-row
-/// kernels assume `width % 4 == 0`, and the chroma plane height is
-/// `height / 4`). Unlike 4:2:0 (which permits odd height via
-/// `div_ceil(2)`), 4:1:0 rejects non-multiple-of-4 dimensions
-/// outright — the legacy formats this targets always use aligned
-/// dimensions.
+/// `width` must be a multiple of 4 (the per-row kernels assume
+/// `width % 4 == 0`). `height` may be any non-zero value: the chroma
+/// plane height is computed as `height.div_ceil(4)`, so a partial
+/// 4-row chroma group at the bottom is handled by the walker
+/// (`chroma_row = y_row / 4`) reading the trailing chroma row for the
+/// final 1..=3 Y rows. This mirrors how `Yuv420pFrame` admits odd
+/// heights and lets cropped / non-aligned 4:1:0 frames be wrapped
+/// without copying.
 ///
 /// Per-row kernel: `yuv_410_to_rgb_row` — the same Q15 chroma+Y math
 /// as 4:2:0, but each (U, V) sample is duplicated across four
@@ -1061,12 +1064,17 @@ impl<'a> Yuv410pFrame<'a> {
   ///
   /// Returns [`Yuv410pFrameError`] if any of:
   /// - `width` or `height` is zero,
-  /// - `width % 4 != 0` or `height % 4 != 0` (4:1:0 has 4× chroma
-  ///   subsampling in both axes — partial chroma blocks have no
-  ///   defined coverage),
+  /// - `width % 4 != 0` (the per-row kernels operate on 4-pixel chroma
+  ///   groups; partial horizontal chroma blocks have no defined
+  ///   coverage),
   /// - `y_stride < width`, `u_stride < width / 4`, or
   ///   `v_stride < width / 4`,
-  /// - any plane is too short to cover its declared rows.
+  /// - any plane is too short to cover its declared rows (chroma plane
+  ///   length is checked against `chroma_stride * height.div_ceil(4)`).
+  ///
+  /// `height` need not be a multiple of 4 — heights such as 6 or 10
+  /// are accepted and the walker reuses the final chroma row group for
+  /// the trailing 1..=3 Y rows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   // The 3-plane × (slice, stride, dim) shape is intrinsic to YUV 4:1:0.
   #[allow(clippy::too_many_arguments)]
@@ -1083,15 +1091,15 @@ impl<'a> Yuv410pFrame<'a> {
     if width == 0 || height == 0 {
       return Err(Yuv410pFrameError::ZeroDimension { width, height });
     }
-    // 4:1:0 needs both width and height to be multiples of 4 — chroma
-    // is subsampled 4:1 in both axes, and unlike 4:2:0 (which permits
-    // odd height) the legacy formats this serves always pad to a
-    // 4-pixel block grid.
+    // 4:1:0 chroma is subsampled 4:1 in both axes. Width must be a
+    // multiple of 4 because the row kernels operate on 4-pixel chroma
+    // groups (no partial horizontal block coverage). Height may be
+    // any non-zero value: chroma_height is `height.div_ceil(4)` and
+    // the walker (`chroma_row = y_row / 4`) reuses the final chroma
+    // row group for the trailing 1..=3 Y rows. This matches how
+    // `Yuv420pFrame` admits odd heights.
     if width & 3 != 0 {
       return Err(Yuv410pFrameError::WidthNotMultipleOf4 { width });
-    }
-    if height & 3 != 0 {
-      return Err(Yuv410pFrameError::HeightNotMultipleOf4 { height });
     }
     if y_stride < width {
       return Err(Yuv410pFrameError::YStrideTooSmall { width, y_stride });
@@ -1128,7 +1136,10 @@ impl<'a> Yuv410pFrame<'a> {
         actual: y.len(),
       });
     }
-    let chroma_height = height / 4;
+    // `div_ceil(4)` matches the walker, which maps Y row → chroma row
+    // via `y_row / 4` (so a height of 6 yields chroma rows 0 and 1, with
+    // chroma row 1 covering Y rows 4..6).
+    let chroma_height = height.div_ceil(4);
     let u_min = match (u_stride as usize).checked_mul(chroma_height as usize) {
       Some(v) => v,
       None => {
@@ -1199,7 +1210,9 @@ impl<'a> Yuv410pFrame<'a> {
   }
   /// U (Cb) plane bytes. **Quarter-width, quarter-height** — one
   /// chroma row per four Y rows, one chroma sample per four Y
-  /// columns. `u_stride()` bytes per row, `height / 4` rows total.
+  /// columns. `u_stride()` bytes per row, `height.div_ceil(4)` rows
+  /// total (a partial 4-row chroma group at the bottom is reused for
+  /// the trailing 1..=3 Y rows).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn u(&self) -> &'a [u8] {
     self.u
@@ -1214,7 +1227,8 @@ impl<'a> Yuv410pFrame<'a> {
   pub const fn width(&self) -> u32 {
     self.width
   }
-  /// Frame height in pixels. Always a multiple of 4.
+  /// Frame height in pixels. Any non-zero value; chroma plane carries
+  /// `height.div_ceil(4)` rows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn height(&self) -> u32 {
     self.height
@@ -1255,13 +1269,6 @@ pub enum Yuv410pFrameError {
     /// The supplied width.
     width: u32,
   },
-  /// `height` is not a multiple of 4. 4:1:0 subsamples chroma 4:1 in
-  /// height — partial 4-row chroma blocks have no defined coverage.
-  #[error("height ({height}) is not a multiple of 4; YUV410p / 4:1:0 requires height % 4 == 0")]
-  HeightNotMultipleOf4 {
-    /// The supplied height.
-    height: u32,
-  },
   /// `y_stride < width`.
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -1294,7 +1301,7 @@ pub enum Yuv410pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  /// U plane is shorter than `u_stride * (height / 4)` bytes.
+  /// U plane is shorter than `u_stride * height.div_ceil(4)` bytes.
   #[error("U plane has {actual} bytes but at least {expected} are required")]
   UPlaneTooShort {
     /// Minimum bytes required.
@@ -1302,7 +1309,7 @@ pub enum Yuv410pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  /// V plane is shorter than `v_stride * (height / 4)` bytes.
+  /// V plane is shorter than `v_stride * height.div_ceil(4)` bytes.
   #[error("V plane has {actual} bytes but at least {expected} are required")]
   VPlaneTooShort {
     /// Minimum bytes required.

@@ -144,17 +144,37 @@ fn yuv410p_try_new_rejects_width_not_multiple_of_4() {
 }
 
 #[test]
-fn yuv410p_try_new_rejects_height_not_multiple_of_4() {
-  // Height = 6 → not a multiple of 4. 4:1:0 requires both axes
-  // 4-aligned (4:2:0 permits odd height).
+fn yuv410p_try_new_accepts_height_not_multiple_of_4() {
+  // Height = 6 → not a multiple of 4. The walker (`chroma_row =
+  // y_row / 4`) reuses chroma row 1 for Y rows 4 and 5, so chroma
+  // height must be `height.div_ceil(4) = 2`. Accepts the frame.
   let y = std::vec![0u8; 16 * 6];
   let u = std::vec![128u8; 4 * 2];
   let v = std::vec![128u8; 4 * 2];
+  let f = Yuv410pFrame::try_new(&y, &u, &v, 16, 6, 16, 4, 4).expect("valid");
+  assert_eq!(f.height(), 6);
+}
+
+#[test]
+fn yuv410p_try_new_accepts_height_10_with_three_chroma_rows() {
+  // Height = 10 → chroma rows = ceil(10 / 4) = 3 (covering Y rows
+  // 0..4, 4..8, and 8..10).
+  let y = std::vec![0u8; 16 * 10];
+  let u = std::vec![128u8; 4 * 3];
+  let v = std::vec![128u8; 4 * 3];
+  let f = Yuv410pFrame::try_new(&y, &u, &v, 16, 10, 16, 4, 4).expect("valid");
+  assert_eq!(f.height(), 10);
+}
+
+#[test]
+fn yuv410p_try_new_rejects_short_chroma_for_partial_group() {
+  // Height = 6 → chroma rows must be `div_ceil(6, 4) = 2`. A plane
+  // sized for floor(6 / 4) = 1 chroma row is rejected.
+  let y = std::vec![0u8; 16 * 6];
+  let u = std::vec![128u8; 4]; // only 1 chroma row, need 2
+  let v = std::vec![128u8; 4 * 2];
   let e = Yuv410pFrame::try_new(&y, &u, &v, 16, 6, 16, 4, 4).unwrap_err();
-  assert!(matches!(
-    e,
-    Yuv410pFrameError::HeightNotMultipleOf4 { height: 6 }
-  ));
+  assert!(matches!(e, Yuv410pFrameError::UPlaneTooShort { .. }));
 }
 
 #[test]

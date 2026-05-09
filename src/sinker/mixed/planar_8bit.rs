@@ -350,11 +350,13 @@ impl PixelSink for MixedSinker<'_, Yuv410p> {
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    // Yuv410p requires both width and height to be multiples of 4. The
-    // frame `try_new` already enforces this, but a hand-crafted row
-    // walker (driving `process` directly) might bypass it — guard at
-    // the sinker boundary so unsafe SIMD dispatchers never see a
-    // non-multiple-of-4 width.
+    // Yuv410p requires width to be a multiple of 4 (the row kernels
+    // operate on 4-pixel chroma groups). Height is unconstrained — the
+    // walker reuses the trailing chroma row for the final 1..=3 Y rows.
+    // The frame `try_new` already enforces width alignment, but a
+    // hand-crafted row walker (driving `process` directly) might bypass
+    // it — guard at the sinker boundary so unsafe SIMD dispatchers
+    // never see a non-multiple-of-4 width.
     if self.width & 3 != 0 {
       return Err(MixedSinkerError::OddWidth { width: self.width });
     }

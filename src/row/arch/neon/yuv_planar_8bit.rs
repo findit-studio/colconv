@@ -427,19 +427,50 @@ unsafe fn yuv_410_to_rgb_or_rgba_row<const ALPHA: bool>(
     while x + 16 <= width {
       let y_vec = vld1q_u8(y.as_ptr().add(x));
 
-      // Load 4 chroma bytes per plane. `vld1_lane_u8` builds a u8x8
-      // (only the low 4 lanes matter); zero-init the rest. We load
-      // four bytes manually via 32-bit native load + transmute since
-      // there's no `vld1_u32_to_u8x8` intrinsic — read as u32, splat
-      // into a u8x8 vector with the bytes in lanes 0..3.
-      let u_bytes_u32 = (u_quarter.as_ptr().add(x / 4) as *const u32).read_unaligned();
-      let v_bytes_u32 = (v_quarter.as_ptr().add(x / 4) as *const u32).read_unaligned();
-      let u_u8x8 = vreinterpret_u8_u32(vdup_n_u32(u_bytes_u32));
-      let v_u8x8 = vreinterpret_u8_u32(vdup_n_u32(v_bytes_u32));
+      // Load 4 chroma bytes per plane via four `vld1_lane_u8` byte
+      // loads. Each `vld1_lane_u8` writes the byte at `ptr + i` into
+      // u8x8 lane i, so the resulting lane order is
+      // `[c0, c1, c2, c3, _, _, _, _]` regardless of host endianness.
+      // The earlier `(*const u32).read_unaligned() + vdup_n_u32`
+      // sequence was native-endian dependent — on big-endian aarch64
+      // it would reorder the chroma bytes, putting U/V samples on the
+      // wrong horizontal pixel groups.
+      //
+      // We initialise the u8x8 to zero and write only the four low
+      // lanes; the upper 4 are duplicated by `vmovl_u8` then sliced
+      // off via `vget_low_s16`, so their values do not matter.
+      //
+      // SAFETY: the outer `while x + 16 <= width` bound and the
+      // caller-guaranteed `u_quarter.len() >= width / 4` precondition
+      // give `x / 4 + 4 <= u_quarter.len()` (and likewise for V), so
+      // each of the four byte reads is in-bounds.
+      let u_chroma_ptr = u_quarter.as_ptr().add(x / 4);
+      let v_chroma_ptr = v_quarter.as_ptr().add(x / 4);
+      let zero_u8x8 = vdup_n_u8(0);
+      let u_u8x8 = vld1_lane_u8::<3>(
+        u_chroma_ptr.add(3),
+        vld1_lane_u8::<2>(
+          u_chroma_ptr.add(2),
+          vld1_lane_u8::<1>(
+            u_chroma_ptr.add(1),
+            vld1_lane_u8::<0>(u_chroma_ptr, zero_u8x8),
+          ),
+        ),
+      );
+      let v_u8x8 = vld1_lane_u8::<3>(
+        v_chroma_ptr.add(3),
+        vld1_lane_u8::<2>(
+          v_chroma_ptr.add(2),
+          vld1_lane_u8::<1>(
+            v_chroma_ptr.add(1),
+            vld1_lane_u8::<0>(v_chroma_ptr, zero_u8x8),
+          ),
+        ),
+      );
 
-      // Widen 4 chroma samples to i16x4 (the upper 4 lanes are
-      // identical duplicates from `vdup_n_u32` but we discard them
-      // via `vget_low_s16` after widening).
+      // Widen 4 chroma samples to i16x8 (the upper 4 lanes are zeros
+      // from the `vdup_n_u8(0)` initializer but we discard them via
+      // `vget_low_s16` after widening).
       let u_i16x8 = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(u_u8x8)), vdupq_n_s16(128));
       let v_i16x8 = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(v_u8x8)), vdupq_n_s16(128));
       // Take the low 4 lanes (the meaningful chroma samples).
