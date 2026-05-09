@@ -318,30 +318,44 @@ mod tests {
     assert_eq!(&out[9..12], &[255u8, 255, 255], "white pixel 3");
   }
 
-  /// AYUV64 RGBA u8: source α = 0x4242 / 0x9999 must appear depth-converted
+  /// AYUV64 RGBA u8: source α = 0x42AB / 0x99CD must appear depth-converted
   /// (>> 8) as 0x42 / 0x99 in the output α channel.
+  ///
+  /// Alpha values are deliberately non-byte-palindromic (low byte ≠ high
+  /// byte) so a BE host that fails to LE-encode the fixture would see the
+  /// alpha decoded as 0xAB42 / 0xCD99 and the assertion would fail. This
+  /// is the test's only sentinel for the alpha pass-through path under
+  /// real LE byte storage — palindromic alpha (e.g. 0x4242) would mask a
+  /// missing `as_le_u16` wrap because byte-swap is a no-op on palindromes.
   #[test]
   fn ayuv64_rgba_passes_source_alpha_depth_converted() {
-    let p0 = pack_ayuv64(0x4242, 60160, 32768, 32768);
-    let p1 = pack_ayuv64(0x9999, 60160, 32768, 32768);
-    let packed: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
+    let p0 = pack_ayuv64(0x42AB, 60160, 32768, 32768);
+    let p1 = pack_ayuv64(0x99CD, 60160, 32768, 32768);
+    let intended: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
+    let packed = as_le_u16(&intended);
     let mut out = vec![0u8; 2 * 4];
     ayuv64_to_rgba_row::<false>(&packed, &mut out, 2, ColorMatrix::Bt709, false);
-    assert_eq!(out[3], 0x42, "pixel 0 alpha (0x4242 >> 8 = 0x42)");
-    assert_eq!(out[7], 0x99, "pixel 1 alpha (0x9999 >> 8 = 0x99)");
+    assert_eq!(out[3], 0x42, "pixel 0 alpha (0x42AB >> 8 = 0x42)");
+    assert_eq!(out[7], 0x99, "pixel 1 alpha (0x99CD >> 8 = 0x99)");
   }
 
-  /// AYUV64 RGBA u16: source α = 0x4242 / 0x9999 must appear direct
+  /// AYUV64 RGBA u16: source α = 0x42AB / 0x99CD must appear direct
   /// (no conversion) in the output α channel.
+  ///
+  /// Same non-palindromic-alpha rationale as the u8 variant above:
+  /// asserting the full u16 alpha (not just one byte) plus LE-encoding
+  /// the fixture turns this from a byte-vacuous check on BE into an
+  /// end-to-end alpha pass-through verification under real LE storage.
   #[test]
   fn ayuv64_rgba_u16_passes_source_alpha_direct() {
-    let p0 = pack_ayuv64(0x4242, 60160, 32768, 32768);
-    let p1 = pack_ayuv64(0x9999, 60160, 32768, 32768);
-    let packed: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
+    let p0 = pack_ayuv64(0x42AB, 60160, 32768, 32768);
+    let p1 = pack_ayuv64(0x99CD, 60160, 32768, 32768);
+    let intended: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
+    let packed = as_le_u16(&intended);
     let mut out = vec![0u16; 2 * 4];
     ayuv64_to_rgba_u16_row::<false>(&packed, &mut out, 2, ColorMatrix::Bt709, false);
-    assert_eq!(out[3], 0x4242, "pixel 0 alpha u16 direct");
-    assert_eq!(out[7], 0x9999, "pixel 1 alpha u16 direct");
+    assert_eq!(out[3], 0x42AB, "pixel 0 alpha u16 direct");
+    assert_eq!(out[7], 0x99CD, "pixel 1 alpha u16 direct");
   }
 
   /// Luma u8: Y at slot 1, extracted via >> 8 (high byte only).

@@ -464,12 +464,41 @@ fn p010_rgb_limited_range_endpoints() {
 fn p010_matches_yuv420p10_when_shifted() {
   // Handing the same logical samples to P010 (high-packed) and
   // yuv420p10 (low-packed) must produce the same RGB output.
-  let y_p10 = [200u16, 800, 500, 700]; // 10-bit values
-  let u_p10 = [600u16, 400]; // 10-bit values
-  let v_p10 = [300u16, 900]; // 10-bit values
+  //
+  // Intended host-native samples:
+  //   Y per-pixel: [0, 1023, 512, 700]
+  //     pixel 0 = full-range black (Y=0 with neutral chroma → RGB 0,0,0)
+  //     pixel 1 = full-range white (Y=1023 with neutral chroma → RGB 255,…)
+  //     pixel 2 = full-range mid-gray (Y=512, neutral chroma → R=G=B≈128)
+  //     pixel 3 = arbitrary mid-luma (Y=700, neutral chroma → R=G=B≈175)
+  //   Chroma: U=V=512 on every chroma sample (neutral 10-bit center).
+  //
+  // The neutral chroma fixes R=G=B for every pixel, so the expected
+  // RGB triples are computable from the host-native intended Y values
+  // alone — independent of the kernel's matrix coefficients. That
+  // turns this from a vacuous self-comparison ("both kernels agree")
+  // into an absolute-value check: a BE host that fails to LE-encode
+  // these fixtures would decode different (post-byte-swap) Y values
+  // and produce different RGB, mismatching the host-native expectation.
+  let y_p10_intended = [0u16, 1023, 512, 700];
+  let u_p10_intended = [512u16, 512];
+  let v_p10_intended = [512u16, 512];
 
-  let y_p010: [u16; 4] = core::array::from_fn(|i| y_p10[i] << 6);
-  let uv_p010: [u16; 4] = [u_p10[0] << 6, v_p10[0] << 6, u_p10[1] << 6, v_p10[1] << 6];
+  let y_p010_intended: [u16; 4] = core::array::from_fn(|i| y_p10_intended[i] << 6);
+  let uv_p010_intended: [u16; 4] = [
+    u_p10_intended[0] << 6,
+    v_p10_intended[0] << 6,
+    u_p10_intended[1] << 6,
+    v_p10_intended[1] << 6,
+  ];
+
+  // LE-encode every fixture so `<false>` kernels recover the intended
+  // host-native samples on both LE and BE hosts via `from_le`.
+  let y_p10 = as_le_u16(&y_p10_intended);
+  let u_p10 = as_le_u16(&u_p10_intended);
+  let v_p10 = as_le_u16(&v_p10_intended);
+  let y_p010 = as_le_u16(&y_p010_intended);
+  let uv_p010 = as_le_u16(&uv_p010_intended);
 
   let mut rgb_p10 = [0u8; 12];
   let mut rgb_p010 = [0u8; 12];
@@ -490,7 +519,24 @@ fn p010_matches_yuv420p10_when_shifted() {
     ColorMatrix::Bt709,
     true,
   );
+  // Parity: same logical samples, same RGB output regardless of layout.
   assert_eq!(rgb_p10, rgb_p010);
+
+  // Independent expected-output assertion against the intended
+  // host-native samples. Neutral chroma forces R=G=B per pixel; with
+  // full-range BT.709 Y' = Y/1023, the expected 8-bit channel value
+  // for pixel `i` is `round(255 * y_p10_intended[i] / 1023)`.
+  for i in 0..4 {
+    let expected = ((y_p10_intended[i] as u32 * 255 + 511) / 1023) as u8;
+    let (r, g, b) = (rgb_p10[i * 3], rgb_p10[i * 3 + 1], rgb_p10[i * 3 + 2]);
+    assert_eq!(r, g, "pixel {i}: R==G under neutral chroma");
+    assert_eq!(g, b, "pixel {i}: G==B under neutral chroma");
+    assert!(
+      r.abs_diff(expected) <= 1,
+      "pixel {i} (Y={}): got R={r}, expected≈{expected}",
+      y_p10_intended[i],
+    );
+  }
 }
 
 // ---- p010_to_rgb_u16_row (P010 → native-depth u16) --------------------

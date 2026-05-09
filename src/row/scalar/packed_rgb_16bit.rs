@@ -718,12 +718,22 @@ mod tests {
   }
 
   /// Bgr48 and Rgb48 on mirrored input produce same rgb output.
+  ///
+  /// Uses non-byte-palindromic values (low byte ≠ high byte) AND
+  /// LE-encodes both fixtures through `as_le_u16`. With palindromic
+  /// values like 0xAAAA / 0xCCCC the host-native and LE byte storage
+  /// happen to coincide, which would let a missing `as_le_u16` wrap
+  /// silently produce a passing parity check on BE — masking the very
+  /// byte-order bug the test should catch. Asserting the absolute
+  /// post-shift output bytes pins down the channel order against the
+  /// intended host-native samples instead of just self-comparing two
+  /// `<false>` outputs.
   #[test]
   fn bgr48_rgb_output_matches_rgb48_with_swapped_input() {
-    // RGB input: R=0xAAAA, G=0xBBBB, B=0xCCCC
-    let rgb48_src = [0xAAAAu16, 0xBBBB, 0xCCCC];
-    // BGR input: B=0xCCCC, G=0xBBBB, R=0xAAAA
-    let bgr48_src = [0xCCCCu16, 0xBBBB, 0xAAAA];
+    // RGB input: R=0xAB12, G=0xCD34, B=0xEF56
+    let rgb48_src = as_le_u16(&[0xAB12u16, 0xCD34, 0xEF56]);
+    // BGR input: B=0xEF56, G=0xCD34, R=0xAB12
+    let bgr48_src = as_le_u16(&[0xEF56u16, 0xCD34, 0xAB12]);
 
     let mut rgb48_out = [0u8; 3];
     let mut bgr48_out = [0u8; 3];
@@ -734,5 +744,10 @@ mod tests {
       rgb48_out, bgr48_out,
       "RGB48 and BGR48 mirrored inputs must produce same RGB output"
     );
+    // Independent expected-output assertion: rgb48_to_rgb_row extracts
+    // the high byte of each u16 channel. R=0xAB12→0xAB, G=0xCD34→0xCD,
+    // B=0xEF56→0xEF. A BE host that fails to LE-encode the fixtures
+    // would decode swapped bytes (R=0x12AB) and emit 0x12 instead.
+    assert_eq!(rgb48_out, [0xAB, 0xCD, 0xEF], "RGB48 high-byte extract");
   }
 }
