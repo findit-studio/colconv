@@ -494,6 +494,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg_attr(miri, ignore = "f32::powf is non-deterministic under Miri")]
   fn smpte428_inverse_oetf_masks_upper_bits() {
     // Defensive: `smpte428_inverse_oetf` masks its argument with
     // `SAMPLE_MASK`, so passing a non-shifted dirty value still
@@ -801,6 +802,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg_attr(miri, ignore = "f32::powf is non-deterministic under Miri")]
   fn xyz12_be_byte_swap_matches_le() {
     // Same logical 12-bit code (`0x800`) encoded with both LE and BE
     // wire conventions; both kernel paths must produce identical
