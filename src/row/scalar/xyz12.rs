@@ -507,6 +507,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn read_xyz12_sample_extracts_high_bit_packed_code_le() {
     // FFmpeg `AV_PIX_FMT_XYZ12LE`: 12-bit code in `[15:4]`, low 4 bits
     // zero. Mid-gray sample on the 16-bit scale is `0x8000`, which
@@ -518,6 +519,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn read_xyz12_sample_extracts_high_bit_packed_code_be() {
     // BE wire: bytes are stored big-endian on disk, so the host-native
     // `u16` for code `0x800 << 4 = 0x8000` would be `0x8000.swap_bytes()
@@ -527,6 +529,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn smpte428_mid_gray_high_bit_packed_is_nonzero() {
     // Pre-fix regression: `0x8000` (real mid-gray sample) was decoded
     // as `0x000` because `read_xyz12_sample` masked the *low* 12 bits
@@ -711,6 +714,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn xyz12_to_rgb_f32_dci_p3_mid_gray() {
     let xyz: [u16; 3] = [pack12_le(0x800), pack12_le(0x800), pack12_le(0x800)];
     let mut out = [0.0_f32; 3];
@@ -728,6 +732,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn xyz12_to_rgb_f32_rec709_mid_gray() {
     let xyz: [u16; 3] = [pack12_le(0x800), pack12_le(0x800), pack12_le(0x800)];
     let mut out = [0.0_f32; 3];
@@ -738,6 +743,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn xyz12_to_rgb_f32_rec2020_three_quarter() {
     let xyz: [u16; 3] = [pack12_le(0xC00), pack12_le(0xC00), pack12_le(0xC00)];
     let mut out = [0.0_f32; 3];
@@ -748,6 +754,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn xyz12_to_rgb_f32_preserves_negative_after_matrix() {
     // y_only_max under Rec.709 → R = -1.677, G = +2.05, B = -0.222.
     let xyz: [u16; 3] = [pack12_le(0), pack12_le(0xFFF), pack12_le(0)];
@@ -788,6 +795,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn xyz12_to_xyz_f32_lossless_round_trip() {
     // Pass-through: input -> step-1 inverse-OETF -> output. For u12 =
     // (0x800, 0x800, 0x800) the linear value is the same in all three
@@ -819,6 +827,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn xyz12_to_rgb_u16_full_range_scaling() {
     let xyz: [u16; 3] = [pack12_le(0xFFF), pack12_le(0xFFF), pack12_le(0xFFF)];
     let mut out = [0_u16; 3];
@@ -856,6 +865,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn xyz12_to_rgb_target_gamut_changes_output() {
     let xyz: [u16; 3] = [pack12_le(0xC00), pack12_le(0xC00), pack12_le(0xC00)];
     let mut out_p3 = [0.0_f32; 3];
@@ -880,6 +890,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_endian = "little")]
   fn xyz12_to_rgb_low_4_bits_ignored() {
     // FFmpeg spec: low 4 bits of each `u16` are zero. A producer that
     // sets them anyway must not change the output (the `>> 4` shift
@@ -966,6 +977,7 @@ mod tests {
   /// per channel, well above any rounding tolerance, so this test
   /// independently catches a regression to the wrong white point.
   #[test]
+  #[cfg(target_endian = "little")]
   fn xyz12_dci_p3_mid_gray_reference_dci_white() {
     let xyz: [u16; 3] = [pack12_le(0x800), pack12_le(0x800), pack12_le(0x800)];
     let mut out = [0.0_f32; 3];
@@ -1000,6 +1012,7 @@ mod tests {
   /// is per-channel, not per-luminance) — the f32 path preserves this
   /// excursion losslessly; the u8 / u16 paths clamp.
   #[test]
+  #[cfg(target_endian = "little")]
   fn xyz12_dci_p3_peak_white_reference() {
     let xyz: [u16; 3] = [pack12_le(0xFFF), pack12_le(0xFFF), pack12_le(0xFFF)];
     let mut out = [0.0_f32; 3];
@@ -1020,6 +1033,7 @@ mod tests {
   /// preserves it. This test independently catches column ordering
   /// regressions.
   #[test]
+  #[cfg(target_endian = "little")]
   fn xyz12_dci_p3_x_only_axis_reference() {
     let xyz: [u16; 3] = [pack12_le(0xFFF), pack12_le(0), pack12_le(0)];
     let mut out = [0.0_f32; 3];
@@ -1035,6 +1049,7 @@ mod tests {
   /// `(0.158064, 0.158064, 0.158064)` · M_REC709 =
   /// `(0.216984, 0.170760, 0.163620)` (Rec.709 / sRGB white = D65).
   #[test]
+  #[cfg(target_endian = "little")]
   fn xyz12_rec709_mid_gray_reference() {
     let xyz: [u16; 3] = [pack12_le(0x800), pack12_le(0x800), pack12_le(0x800)];
     let mut out = [0.0_f32; 3];
@@ -1047,6 +1062,7 @@ mod tests {
   /// Rec.2020 mid-gray reference: same canonical mid-gray input,
   /// expected RGB derived from Rec.2020's primary-scaling matrix.
   #[test]
+  #[cfg(target_endian = "little")]
   fn xyz12_rec2020_mid_gray_reference() {
     let xyz: [u16; 3] = [pack12_le(0x800), pack12_le(0x800), pack12_le(0x800)];
     let mut out = [0.0_f32; 3];
