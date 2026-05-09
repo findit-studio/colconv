@@ -11,6 +11,7 @@ mod mono1bit;
 mod packed_rgb;
 mod packed_rgb_16bit;
 mod packed_rgb_float;
+mod packed_yuv_4_1_1;
 mod packed_yuv_8bit;
 mod pal8;
 mod planar_8bit_and_nv;

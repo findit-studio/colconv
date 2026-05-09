@@ -355,6 +355,22 @@ pub enum MixedSinkerError {
     /// Sink's configured width.
     width: usize,
   },
+
+  /// The sinker's configured `width` is not a multiple of 4. Packed
+  /// 4:1:1 ([`Uyyvyy411`](crate::yuv::Uyyvyy411)) shares one chroma
+  /// pair across 4 luma samples, so each 6-byte block covers exactly
+  /// 4 pixels — widths not divisible by 4 can't form a complete
+  /// final block. `MixedSinker::new` is infallible and accepts any
+  /// width, so this error surfaces the misconfiguration at
+  /// [`PixelSink::begin_frame`] / [`PixelSink::process`] before any
+  /// row primitive is invoked.
+  #[error(
+    "MixedSinker configured width {width} is not a multiple of 4; packed YUV 4:1:1 requires width divisible by 4"
+  )]
+  WidthNotMultipleOf4 {
+    /// Sink's configured width.
+    width: usize,
+  },
 }
 
 /// Identifies which of the three HSV planes a
@@ -739,6 +755,13 @@ pub enum RowSlice {
   /// [`Yuyv422Packed`](Self::Yuyv422Packed)).
   #[display("YVYU422 packed")]
   Yvyu422Packed,
+  /// Packed `U0, Y0, Y1, V0, Y2, Y3, …` row of a
+  /// [`Uyyvyy411`](crate::yuv::Uyyvyy411) source (FFmpeg
+  /// `uyyvyy411`). `width * 3 / 2` `u8` bytes — one (U, V) chroma
+  /// pair shared across 4 luma samples (4:1:1 horizontal
+  /// subsampling, 12 bpp, DV legacy).
+  #[display("UYYVYY411 packed")]
+  Uyyvyy411Packed,
   /// Packed `v210` row of a [`V210`](crate::yuv::V210) source —
   /// Tier 4 10-bit pro-broadcast SDI capture format. Each 16-byte
   /// word holds 12 × 10-bit samples = 6 pixels (4:2:2: 6 Y +
@@ -1755,6 +1778,7 @@ mod packed_rgb_16bit;
 mod packed_rgb_8bit;
 mod packed_rgb_f16;
 mod packed_rgb_float;
+mod packed_yuv_4_1_1;
 mod packed_yuv_8bit;
 mod pal8;
 mod planar_8bit;

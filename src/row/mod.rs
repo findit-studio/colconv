@@ -69,6 +69,10 @@ pub(crate) use dispatch::packed_yuv422::{
   uyvy422_to_luma_u16_row, yuyv422_to_luma_u16_row, yvyu422_to_luma_u16_row,
 };
 
+// Tier 5.25 — packed YUV 4:1:1 luma_u16 dispatcher (pub(crate); MixedSinker only).
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub(crate) use dispatch::packed_yuv411::uyyvyy411_to_luma_u16_row;
+
 // Task 4 — packed YUV 4:4:4 (VUYA / VUYX) luma_u16 dispatchers.
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub(crate) use dispatch::vuya::vuya_to_luma_u16_row;
@@ -76,9 +80,10 @@ pub(crate) use dispatch::vuya::vuya_to_luma_u16_row;
 pub(crate) use dispatch::vuyx::vuyx_to_luma_u16_row;
 
 pub use dispatch::{
-  ayuv64::*, bayer::*, legacy_rgb::*, nv::*, packed_yuv422::*, pal8::*, planar_gbr::*,
-  planar_gbr_high_bit::*, pn::*, rgb_f16_ops::*, rgb_float_ops::*, rgb_ops::*, v30x::*, v210::*,
-  v410::*, vuya::*, vuyx::*, xv36::*, y210::*, y212::*, y216::*, yuv420::*, yuv444::*, yuva::*,
+  ayuv64::*, bayer::*, legacy_rgb::*, nv::*, packed_yuv411::*, packed_yuv422::*, pal8::*,
+  planar_gbr::*, planar_gbr_high_bit::*, pn::*, rgb_f16_ops::*, rgb_float_ops::*, rgb_ops::*,
+  v30x::*, v210::*, v410::*, vuya::*, vuyx::*, xv36::*, y210::*, y212::*, y216::*, yuv420::*,
+  yuv444::*, yuva::*,
 };
 // Tier 12 — Xyz12 dispatchers depend on `f32::powf`, which is only
 // available with `feature = "std"` or `feature = "alloc"` (the latter
@@ -301,6 +306,22 @@ pub(crate) fn packed_yuv422_row_bytes(width: usize) -> usize {
   match width.checked_mul(2) {
     Some(n) => n,
     None => panic!("width ({width}) × 2 overflows usize (packed YUV 4:2:2 row)"),
+  }
+}
+
+/// Byte length of one packed YUV 4:1:1 row (`width × 3 / 2`) for
+/// the `Uyyvyy411` source. 6 bytes per 4-pixel block (12 bpp). Width
+/// must be a multiple of 4 — callers assert this separately. Same
+/// `checked_mul` rationale as [`rgb_row_bytes`]: the returned byte
+/// count feeds into the dispatcher's input-side `assert!`, which
+/// gates entry into unsafe SIMD loads. Computed as
+/// `(width × 3) / 2` so the intermediate `width × 3` is the only
+/// product that can overflow on 32-bit targets at extreme widths.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn packed_yuv411_row_bytes(width: usize) -> usize {
+  match width.checked_mul(3) {
+    Some(n) => n / 2,
+    None => panic!("width ({width}) × 3 / 2 overflows usize (packed YUV 4:1:1 row)"),
   }
 }
 

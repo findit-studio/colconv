@@ -18,6 +18,7 @@ pub(super) mod legacy_rgb;
 pub(super) mod mono1bit;
 pub(super) mod nv;
 pub(super) mod packed_rgb_16bit;
+pub(super) mod packed_yuv411;
 pub(super) mod packed_yuv422;
 pub(super) mod pal8;
 pub(super) mod planar_gbr;
