@@ -722,3 +722,331 @@ fn p416_dispatch_be_le_parity() {
     assert_eq!(out_le4u, out_be4u, "p416 rgba_u16 BE/LE parity");
   }
 }
+
+// ---- YUVA dispatch parity (codex round-5 follow-up) ---------------------
+//
+// Mirrors the non-alpha YUV high-bit dispatcher tests above. Adds
+// dispatch-level BE/LE parity coverage for the YUVA 4:2:0 and 4:4:4
+// families — which were missed by round-3 and forced through
+// `BE = false` regardless of the source contract. Uses the same
+// `to_le_bytes` / `to_be_bytes` host-independent fixture pattern;
+// asserts byte-identical output between
+// `_endian(LE_buf, false)` and `_endian(BE_buf, true)` for both
+// `use_simd = true` and `use_simd = false`.
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva420p10_dispatch_be_le_parity_simd_and_scalar() {
+  for w in [8usize, 16, 24] {
+    let y_int = pseudo_plane(w, 0x1010, 0x3FF);
+    let u_int = pseudo_plane(w / 2, 0x2020, 0x3FF);
+    let v_int = pseudo_plane(w / 2, 0x3030, 0x3FF);
+    let a_int = pseudo_plane(w, 0x4040, 0x3FF);
+    let (y_le, y_be) = split_le_be(&y_int);
+    let (u_le, u_be) = split_le_be(&u_int);
+    let (v_le, v_be) = split_le_be(&v_int);
+    let (a_le, a_be) = split_le_be(&a_int);
+
+    for &use_simd in &[false, true] {
+      // u8 RGBA — exercises BITS-generic
+      // `yuv_420p_n_to_rgba_with_alpha_src_row<10, BE>` across all backends.
+      let mut out_le = std::vec![0u8; w * 4];
+      let mut out_be = std::vec![0u8; w * 4];
+      yuva420p10_to_rgba_row_endian(
+        &y_le,
+        &u_le,
+        &v_le,
+        &a_le,
+        &mut out_le,
+        w,
+        ColorMatrix::Bt709,
+        false,
+        use_simd,
+        false,
+      );
+      yuva420p10_to_rgba_row_endian(
+        &y_be,
+        &u_be,
+        &v_be,
+        &a_be,
+        &mut out_be,
+        w,
+        ColorMatrix::Bt709,
+        false,
+        use_simd,
+        true,
+      );
+      assert_eq!(
+        out_le, out_be,
+        "yuva420p10 rgba BE/LE parity (w={w}, simd={use_simd})"
+      );
+
+      // u16 RGBA — native-depth path, alpha sourced at full BITS.
+      let mut out_le16 = std::vec![0u16; w * 4];
+      let mut out_be16 = std::vec![0u16; w * 4];
+      yuva420p10_to_rgba_u16_row_endian(
+        &y_le,
+        &u_le,
+        &v_le,
+        &a_le,
+        &mut out_le16,
+        w,
+        ColorMatrix::Bt709,
+        false,
+        use_simd,
+        false,
+      );
+      yuva420p10_to_rgba_u16_row_endian(
+        &y_be,
+        &u_be,
+        &v_be,
+        &a_be,
+        &mut out_be16,
+        w,
+        ColorMatrix::Bt709,
+        false,
+        use_simd,
+        true,
+      );
+      assert_eq!(
+        out_le16, out_be16,
+        "yuva420p10 rgba_u16 BE/LE parity (w={w}, simd={use_simd})"
+      );
+    }
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva444p10_dispatch_be_le_parity_simd_and_scalar() {
+  for w in [8usize, 16, 24] {
+    let y_int = pseudo_plane(w, 0x1111, 0x3FF);
+    let u_int = pseudo_plane(w, 0x2222, 0x3FF);
+    let v_int = pseudo_plane(w, 0x3333, 0x3FF);
+    let a_int = pseudo_plane(w, 0x4444, 0x3FF);
+    let (y_le, y_be) = split_le_be(&y_int);
+    let (u_le, u_be) = split_le_be(&u_int);
+    let (v_le, v_be) = split_le_be(&v_int);
+    let (a_le, a_be) = split_le_be(&a_int);
+
+    for &use_simd in &[false, true] {
+      let mut out_le = std::vec![0u8; w * 4];
+      let mut out_be = std::vec![0u8; w * 4];
+      yuva444p10_to_rgba_row_endian(
+        &y_le,
+        &u_le,
+        &v_le,
+        &a_le,
+        &mut out_le,
+        w,
+        ColorMatrix::Bt709,
+        false,
+        use_simd,
+        false,
+      );
+      yuva444p10_to_rgba_row_endian(
+        &y_be,
+        &u_be,
+        &v_be,
+        &a_be,
+        &mut out_be,
+        w,
+        ColorMatrix::Bt709,
+        false,
+        use_simd,
+        true,
+      );
+      assert_eq!(
+        out_le, out_be,
+        "yuva444p10 rgba BE/LE parity (w={w}, simd={use_simd})"
+      );
+
+      let mut out_le16 = std::vec![0u16; w * 4];
+      let mut out_be16 = std::vec![0u16; w * 4];
+      yuva444p10_to_rgba_u16_row_endian(
+        &y_le,
+        &u_le,
+        &v_le,
+        &a_le,
+        &mut out_le16,
+        w,
+        ColorMatrix::Bt709,
+        false,
+        use_simd,
+        false,
+      );
+      yuva444p10_to_rgba_u16_row_endian(
+        &y_be,
+        &u_be,
+        &v_be,
+        &a_be,
+        &mut out_be16,
+        w,
+        ColorMatrix::Bt709,
+        false,
+        use_simd,
+        true,
+      );
+      assert_eq!(
+        out_le16, out_be16,
+        "yuva444p10 rgba_u16 BE/LE parity (w={w}, simd={use_simd})"
+      );
+    }
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva420p16_dispatch_be_le_parity() {
+  let w = 16usize;
+  let y_int = pseudo_plane(w, 0xA1A1, 0xFFFF);
+  let u_int = pseudo_plane(w / 2, 0xB2B2, 0xFFFF);
+  let v_int = pseudo_plane(w / 2, 0xC3C3, 0xFFFF);
+  let a_int = pseudo_plane(w, 0xD4D4, 0xFFFF);
+  let (y_le, y_be) = split_le_be(&y_int);
+  let (u_le, u_be) = split_le_be(&u_int);
+  let (v_le, v_be) = split_le_be(&v_int);
+  let (a_le, a_be) = split_le_be(&a_int);
+
+  for &use_simd in &[false, true] {
+    let mut out_le = std::vec![0u8; w * 4];
+    let mut out_be = std::vec![0u8; w * 4];
+    yuva420p16_to_rgba_row_endian(
+      &y_le,
+      &u_le,
+      &v_le,
+      &a_le,
+      &mut out_le,
+      w,
+      ColorMatrix::Bt709,
+      false,
+      use_simd,
+      false,
+    );
+    yuva420p16_to_rgba_row_endian(
+      &y_be,
+      &u_be,
+      &v_be,
+      &a_be,
+      &mut out_be,
+      w,
+      ColorMatrix::Bt709,
+      false,
+      use_simd,
+      true,
+    );
+    assert_eq!(out_le, out_be, "yuva420p16 rgba BE/LE parity");
+
+    let mut out_le16 = std::vec![0u16; w * 4];
+    let mut out_be16 = std::vec![0u16; w * 4];
+    yuva420p16_to_rgba_u16_row_endian(
+      &y_le,
+      &u_le,
+      &v_le,
+      &a_le,
+      &mut out_le16,
+      w,
+      ColorMatrix::Bt709,
+      false,
+      use_simd,
+      false,
+    );
+    yuva420p16_to_rgba_u16_row_endian(
+      &y_be,
+      &u_be,
+      &v_be,
+      &a_be,
+      &mut out_be16,
+      w,
+      ColorMatrix::Bt709,
+      false,
+      use_simd,
+      true,
+    );
+    assert_eq!(out_le16, out_be16, "yuva420p16 rgba_u16 BE/LE parity");
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva444p16_dispatch_be_le_parity() {
+  let w = 16usize;
+  let y_int = pseudo_plane(w, 0xA5A5, 0xFFFF);
+  let u_int = pseudo_plane(w, 0xB6B6, 0xFFFF);
+  let v_int = pseudo_plane(w, 0xC7C7, 0xFFFF);
+  let a_int = pseudo_plane(w, 0xD8D8, 0xFFFF);
+  let (y_le, y_be) = split_le_be(&y_int);
+  let (u_le, u_be) = split_le_be(&u_int);
+  let (v_le, v_be) = split_le_be(&v_int);
+  let (a_le, a_be) = split_le_be(&a_int);
+
+  for &use_simd in &[false, true] {
+    let mut out_le = std::vec![0u8; w * 4];
+    let mut out_be = std::vec![0u8; w * 4];
+    yuva444p16_to_rgba_row_endian(
+      &y_le,
+      &u_le,
+      &v_le,
+      &a_le,
+      &mut out_le,
+      w,
+      ColorMatrix::Bt709,
+      false,
+      use_simd,
+      false,
+    );
+    yuva444p16_to_rgba_row_endian(
+      &y_be,
+      &u_be,
+      &v_be,
+      &a_be,
+      &mut out_be,
+      w,
+      ColorMatrix::Bt709,
+      false,
+      use_simd,
+      true,
+    );
+    assert_eq!(out_le, out_be, "yuva444p16 rgba BE/LE parity");
+
+    let mut out_le16 = std::vec![0u16; w * 4];
+    let mut out_be16 = std::vec![0u16; w * 4];
+    yuva444p16_to_rgba_u16_row_endian(
+      &y_le,
+      &u_le,
+      &v_le,
+      &a_le,
+      &mut out_le16,
+      w,
+      ColorMatrix::Bt709,
+      false,
+      use_simd,
+      false,
+    );
+    yuva444p16_to_rgba_u16_row_endian(
+      &y_be,
+      &u_be,
+      &v_be,
+      &a_be,
+      &mut out_be16,
+      w,
+      ColorMatrix::Bt709,
+      false,
+      use_simd,
+      true,
+    );
+    assert_eq!(out_le16, out_be16, "yuva444p16 rgba_u16 BE/LE parity");
+  }
+}
