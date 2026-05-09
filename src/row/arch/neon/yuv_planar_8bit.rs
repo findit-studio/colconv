@@ -979,10 +979,11 @@ unsafe fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
       let v_i16 = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(v_u8x8)), mid128);
 
       // Only the low 4 lanes (lanes 0..3) of u_i16 / v_i16 hold real
-      // chroma data — lanes 4..7 came from the upper half of `vcreate`
-      // which we filled with the same 32-bit word, but those lanes
-      // would map to chroma indices 4..7 in a 4:1:1 layout, so they
-      // are not used. Promote the low 4 lanes to i32x4.
+      // chroma data. `vcreate_u8(u_word as u64)` zero-extends the
+      // 32-bit `u_word` into the low 64 bits of a u8x8, so lanes 4..7
+      // are zero (not a duplicate of the word) — but we never read
+      // them: only the low 4 lanes feed the 1→4 fanout cascade below.
+      // Promote the low 4 lanes to i32x4.
       let u_i32 = vmovl_s16(vget_low_s16(u_i16));
       let v_i32 = vmovl_s16(vget_low_s16(v_i16));
 
