@@ -70,10 +70,15 @@ fn yuv444p10_try_new_checked_rejects_u_plane_sample_in_full_width_chroma() {
 
 #[test]
 fn yuv444p10_try_new_checked_rejects_v_plane_sample() {
-  let y = std::vec![0u16; 16 * 8];
-  let u = std::vec![512u16; 16 * 8];
-  let mut v = std::vec![512u16; 16 * 8];
-  v[7 * 16 + 15] = 0xFFFF; // last chroma sample
+  // LE-encoded byte storage so the test asserts the same logical values
+  // on every host (see 4:2:0 sibling for the BE-host failure mode).
+  let intended_y = std::vec![0u16; 16 * 8];
+  let intended_u = std::vec![512u16; 16 * 8];
+  let mut intended_v = std::vec![512u16; 16 * 8];
+  intended_v[7 * 16 + 15] = 0xFFFF; // last chroma sample
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&intended_u);
+  let v = le_encoded_u16_buf(&intended_v);
   let e = Yuv444p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 16, 16).unwrap_err();
   assert!(matches!(
     e,
@@ -173,10 +178,15 @@ fn yuv440p10_try_new_checked_rejects_u_plane_sample_in_full_width_chroma() {
 
 #[test]
 fn yuv440p10_try_new_checked_rejects_v_plane_sample() {
-  let y = std::vec![0u16; 16 * 8];
-  let u = std::vec![512u16; 16 * 4];
-  let mut v = std::vec![512u16; 16 * 4];
-  v[3 * 16 + 15] = 0xFFFF; // last chroma sample of the last chroma row
+  // LE-encoded byte storage so the test asserts the same logical values
+  // on every host (see 4:2:0 sibling for the BE-host failure mode).
+  let intended_y = std::vec![0u16; 16 * 8];
+  let intended_u = std::vec![512u16; 16 * 4];
+  let mut intended_v = std::vec![512u16; 16 * 4];
+  intended_v[3 * 16 + 15] = 0xFFFF; // last chroma sample of the last chroma row
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&intended_u);
+  let v = le_encoded_u16_buf(&intended_v);
   let e = Yuv440p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 16, 16).unwrap_err();
   assert!(matches!(
     e,

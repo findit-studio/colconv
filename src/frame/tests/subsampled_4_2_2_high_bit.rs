@@ -75,10 +75,17 @@ fn yuv422p10_try_new_checked_rejects_u_plane_sample_in_full_height_chroma() {
 
 #[test]
 fn yuv422p10_try_new_checked_rejects_v_plane_sample() {
-  let y = std::vec![0u16; 16 * 8];
-  let u = std::vec![512u16; 8 * 8];
-  let mut v = std::vec![512u16; 8 * 8];
-  v[5 * 8 + 6] = 0xFFFF;
+  // `try_new_checked` applies `u16::from_le` before the range check, so
+  // pass LE-encoded byte storage to keep the asserted logical values
+  // host-independent (see comment on the 4:2:0 sibling test for the
+  // failure mode on BE hosts).
+  let intended_y = std::vec![0u16; 16 * 8];
+  let intended_u = std::vec![512u16; 8 * 8];
+  let mut intended_v = std::vec![512u16; 8 * 8];
+  intended_v[5 * 8 + 6] = 0xFFFF;
+  let y = le_encoded_u16_buf(&intended_y);
+  let u = le_encoded_u16_buf(&intended_u);
+  let v = le_encoded_u16_buf(&intended_v);
   let e = Yuv422p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8).unwrap_err();
   assert!(matches!(
     e,
