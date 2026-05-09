@@ -2,27 +2,26 @@ use super::super::*;
 
 // ---- Tier 9 Rgbf32 SIMD-vs-scalar parity tests --------------------------
 //
-// LE-host gating rationale (codex 6th-pass review of PR #83):
-//
-// The MXCSR regression test plus the five Rgbf32 / six Rgbf16 SIMD-vs-
-// scalar parity tests below build their fixtures via host-native f32
-// (`vec![0.5_f32; ...]`, `pseudo_random_rgbf32`) or host-native f16
-// (`pseudo_random_rgbf16`) and call the kernels with `::<false>`. Same
-// fixture-vs-kernel byte-order class as the scalar tests gated in
-// `56342c0` and the NEON tests gated alongside this commit.
-//
-// `target_arch = "x86_64"` always implies `target_endian = "little"`,
-// so the `#[cfg(target_endian = "little")]` gate is functionally a
-// no-op on every supported configuration. It's added here for
-// structural consistency with the NEON / scalar gating pattern, so an
-// audit of "tests that take host-native fixtures and call kernels with
-// `<false>`" returns a uniform answer across every backend. (If x86
-// ever adds BE support, the gates are already in place.)
-//
-// SSE4.1 BE-host correctness — when SSE4.1 is run on a hypothetical BE
-// target — is locked down separately by the dedicated BE-parity tests
-// in this same module (which build LE-encoded fixtures via byte-swap
-// helpers and assert `<true>`/`<false>` parity on every host).
+// Fixtures are re-encoded through `as_le_rgbf32` / `as_le_rgbf16` so kernels
+// called with `::<false>` recover the intended host-native value via
+// `from_le` on every host (no-op on LE; byte-swap on BE). Matches the same
+// pattern used in the scalar and per-arch test modules.
+
+/// Re-encode a host-native f32 slice as LE-encoded f32 storage.
+fn as_le_rgbf32(host: &[f32]) -> std::vec::Vec<f32> {
+  host
+    .iter()
+    .map(|v| f32::from_bits(u32::from_ne_bytes(v.to_bits().to_le_bytes())))
+    .collect()
+}
+
+/// Re-encode a host-native f16 slice as LE-encoded f16 storage.
+fn as_le_rgbf16(host: &[half::f16]) -> std::vec::Vec<half::f16> {
+  host
+    .iter()
+    .map(|v| half::f16::from_bits(u16::from_ne_bytes(v.to_bits().to_le_bytes())))
+    .collect()
+}
 
 // MXCSR access via inline asm. `_mm_getcsr` / `_mm_setcsr` are deprecated
 // (the deprecation message itself points at inline assembly), so we use the
@@ -56,7 +55,6 @@ unsafe fn write_mxcsr(v: u32) {
 
 #[test]
 #[cfg(target_arch = "x86_64")]
-#[cfg(target_endian = "little")]
 #[cfg_attr(miri, ignore = "MXCSR + SIMD intrinsics unsupported by Miri")]
 fn rgbf32_to_rgb_row_simd_matches_scalar_under_truncate_mxcsr() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -71,7 +69,7 @@ fn rgbf32_to_rgb_row_simd_matches_scalar_under_truncate_mxcsr() {
   // value. Scalar (round-ties-even) → 128. SIMD without the fix → 127 under
   // truncate MXCSR. Use 16 pixels so the SIMD loop body executes at least once.
   let width = 16usize;
-  let rgb = std::vec![0.5_f32; width * 3];
+  let rgb = as_le_rgbf32(&std::vec![0.5_f32; width * 3]);
   let mut simd_out = std::vec![0u8; width * 3];
   let mut scalar_out = std::vec![0u8; width * 3];
 
@@ -106,13 +104,12 @@ fn pseudo_random_rgbf32(width: usize) -> std::vec::Vec<f32> {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn sse41_rgbf32_to_rgb_matches_scalar() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
     return;
   }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf32(w);
+    let input = as_le_rgbf32(&pseudo_random_rgbf32(w));
     let mut out_scalar = std::vec![0u8; w * 3];
     let mut out_simd = std::vec![0u8; w * 3];
     scalar::rgbf32_to_rgb_row::<false>(&input, &mut out_scalar, w);
@@ -124,13 +121,12 @@ fn sse41_rgbf32_to_rgb_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn sse41_rgbf32_to_rgba_matches_scalar() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
     return;
   }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf32(w);
+    let input = as_le_rgbf32(&pseudo_random_rgbf32(w));
     let mut out_scalar = std::vec![0u8; w * 4];
     let mut out_simd = std::vec![0u8; w * 4];
     scalar::rgbf32_to_rgba_row::<false>(&input, &mut out_scalar, w);
@@ -142,13 +138,12 @@ fn sse41_rgbf32_to_rgba_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn sse41_rgbf32_to_rgb_u16_matches_scalar() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
     return;
   }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf32(w);
+    let input = as_le_rgbf32(&pseudo_random_rgbf32(w));
     let mut out_scalar = std::vec![0u16; w * 3];
     let mut out_simd = std::vec![0u16; w * 3];
     scalar::rgbf32_to_rgb_u16_row::<false>(&input, &mut out_scalar, w);
@@ -160,13 +155,12 @@ fn sse41_rgbf32_to_rgb_u16_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn sse41_rgbf32_to_rgba_u16_matches_scalar() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
     return;
   }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf32(w);
+    let input = as_le_rgbf32(&pseudo_random_rgbf32(w));
     let mut out_scalar = std::vec![0u16; w * 4];
     let mut out_simd = std::vec![0u16; w * 4];
     scalar::rgbf32_to_rgba_u16_row::<false>(&input, &mut out_scalar, w);
@@ -178,13 +172,13 @@ fn sse41_rgbf32_to_rgba_u16_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn sse41_rgbf32_to_rgb_f32_matches_scalar() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
     return;
   }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf32(w);
+    let host_input = pseudo_random_rgbf32(w);
+    let input = as_le_rgbf32(&host_input);
     let mut out_scalar = std::vec![0.0f32; w * 3];
     let mut out_simd = std::vec![0.0f32; w * 3];
     scalar::rgbf32_to_rgb_f32_row::<false>(&input, &mut out_scalar, w);
@@ -192,7 +186,8 @@ fn sse41_rgbf32_to_rgb_f32_matches_scalar() {
       rgbf32_to_rgb_f32_row::<false>(&input, &mut out_simd, w);
     }
     assert_eq!(out_scalar, out_simd, "SSE4.1 rgbf32_to_rgb_f32 width {w}");
-    assert_eq!(out_simd, input[..w * 3], "lossless width {w}");
+    // Output is host-native; compare against the original host-native input.
+    assert_eq!(out_simd, host_input[..w * 3], "lossless width {w}");
   }
 }
 
@@ -206,7 +201,6 @@ fn pseudo_random_rgbf16(width: usize) -> std::vec::Vec<half::f16> {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -217,7 +211,7 @@ fn sse41_rgbf16_to_rgb_matches_scalar() {
     return;
   }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf16(w);
+    let input = as_le_rgbf16(&pseudo_random_rgbf16(w));
     let mut out_scalar = std::vec![0u8; w * 3];
     let mut out_simd = std::vec![0u8; w * 3];
     scalar::rgbf16_to_rgb_row::<false>(&input, &mut out_scalar, w);
@@ -229,7 +223,6 @@ fn sse41_rgbf16_to_rgb_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -240,7 +233,7 @@ fn sse41_rgbf16_to_rgba_matches_scalar() {
     return;
   }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf16(w);
+    let input = as_le_rgbf16(&pseudo_random_rgbf16(w));
     let mut out_scalar = std::vec![0u8; w * 4];
     let mut out_simd = std::vec![0u8; w * 4];
     scalar::rgbf16_to_rgba_row::<false>(&input, &mut out_scalar, w);
@@ -252,7 +245,6 @@ fn sse41_rgbf16_to_rgba_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -263,7 +255,7 @@ fn sse41_rgbf16_to_rgb_u16_matches_scalar() {
     return;
   }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf16(w);
+    let input = as_le_rgbf16(&pseudo_random_rgbf16(w));
     let mut out_scalar = std::vec![0u16; w * 3];
     let mut out_simd = std::vec![0u16; w * 3];
     scalar::rgbf16_to_rgb_u16_row::<false>(&input, &mut out_scalar, w);
@@ -278,7 +270,6 @@ fn sse41_rgbf16_to_rgb_u16_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -289,7 +280,7 @@ fn sse41_rgbf16_to_rgba_u16_matches_scalar() {
     return;
   }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf16(w);
+    let input = as_le_rgbf16(&pseudo_random_rgbf16(w));
     let mut out_scalar = std::vec![0u16; w * 4];
     let mut out_simd = std::vec![0u16; w * 4];
     scalar::rgbf16_to_rgba_u16_row::<false>(&input, &mut out_scalar, w);
@@ -304,7 +295,6 @@ fn sse41_rgbf16_to_rgba_u16_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -315,7 +305,7 @@ fn sse41_rgbf16_to_rgb_f32_matches_scalar() {
     return;
   }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf16(w);
+    let input = as_le_rgbf16(&pseudo_random_rgbf16(w));
     let mut out_scalar = std::vec![0.0f32; w * 3];
     let mut out_simd = std::vec![0.0f32; w * 3];
     scalar::rgbf16_to_rgb_f32_row::<false>(&input, &mut out_scalar, w);
@@ -330,7 +320,6 @@ fn sse41_rgbf16_to_rgb_f32_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -341,7 +330,8 @@ fn sse41_rgbf16_to_rgb_f16_matches_scalar() {
     return;
   }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf16(w);
+    let host_input = pseudo_random_rgbf16(w);
+    let input = as_le_rgbf16(&host_input);
     let mut out_scalar = std::vec![half::f16::ZERO; w * 3];
     let mut out_simd = std::vec![half::f16::ZERO; w * 3];
     scalar::rgbf16_to_rgb_f16_row::<false>(&input, &mut out_scalar, w);
@@ -352,7 +342,8 @@ fn sse41_rgbf16_to_rgb_f16_matches_scalar() {
       out_scalar, out_simd,
       "SSE4.1+F16C rgbf16_to_rgb_f16 width {w}"
     );
-    assert_eq!(out_simd, input[..w * 3], "lossless width {w}");
+    // Output is host-native; compare against the original host-native input.
+    assert_eq!(out_simd, host_input[..w * 3], "lossless width {w}");
   }
 }
 

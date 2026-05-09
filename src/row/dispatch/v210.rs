@@ -646,14 +646,6 @@ pub fn v210_to_luma_u16_row(packed: &[u8], luma_out: &mut [u16], width: usize, u
 }
 
 #[cfg(all(test, feature = "std"))]
-// LE-host-only: tests in this module use host-native u16/u8 literals as if
-// they were LE-encoded bytes; on a BE host the kernel's `from_le` byte-swap
-// reinterprets host-native storage and produces a different logical value
-// than the literal, breaking the assertions. The kernel's BE-host correctness
-// is locked down by the dedicated host-independent BE/LE parity tests in the
-// per-arch test files (which build fixtures via `to_le_bytes` / `to_be_bytes`,
-// not `swap_bytes`). Mirrors the gating from PR #82 `8f2e329`.
-#[cfg(target_endian = "little")]
 mod tests {
   //! Smoke tests for the public v210 dispatchers. Walker / kernel
   //! correctness lives in the per-arch tests

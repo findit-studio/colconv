@@ -277,33 +277,37 @@ mod tests {
   use super::*;
   use crate::ColorMatrix;
 
-  /// Build a 4-u16 AYUV64 pixel from explicit components.
+  /// Build a 4-u16 AYUV64 pixel (host-native u16 quadruple) from explicit
+  /// components.
   fn pack_ayuv64(a: u16, y: u16, u: u16, v: u16) -> [u16; 4] {
     [a, y, u, v]
+  }
+
+  /// Re-encode a slice of host-native u16 values as LE-encoded byte storage,
+  /// packed back into `Vec<u16>`. On LE host this is a no-op; on BE host
+  /// every u16 is byte-swapped relative to its host-native representation.
+  /// Kernels called with `BE = false` recover the intended logical values
+  /// via `u16::from_le` on both hosts.
+  fn as_le_u16(host: &[u16]) -> Vec<u16> {
+    host
+      .iter()
+      .map(|v| u16::from_ne_bytes(v.to_le_bytes()))
+      .collect()
   }
 
   /// Limited-range BT.709, neutral chroma U=V=32768.
   /// Black:  Y=4096  (limited-range black at 16-bit: 16 * 256 = 4096).
   /// White:  Y=60160 (limited-range white at 16-bit: 235 * 256 = 60160).
-  ///
-  /// LE-host gate: builds host-native `Vec<u16>` fixtures via `pack_ayuv64`
-  /// and calls the scalar kernel with `<BE = false>`, which applies
-  /// `u16::from_le`. On BE hosts (s390x / powerpc64) the host-native
-  /// storage doesn't match LE byte order, so `from_le` swaps bytes and
-  /// corrupts the fixture before the math runs (same pattern as PR #82
-  /// 8f2e329, PR #83 56342c0, PR #85 57d9064, PR #87 9b6521b). BE-host
-  /// correctness is covered by `ayuv64_be_roundtrip_matches_byte_swapped_le`,
-  /// which builds fixtures via `to_le_bytes` / `to_be_bytes`.
-  #[cfg(target_endian = "little")]
   #[test]
   fn ayuv64_known_pattern_rgb_limited_range() {
     let p_black = pack_ayuv64(0xFFFF, 4096, 32768, 32768);
     let p_white = pack_ayuv64(0xFFFF, 60160, 32768, 32768);
-    let packed: Vec<u16> = [p_black, p_black, p_white, p_white]
+    let intended: Vec<u16> = [p_black, p_black, p_white, p_white]
       .iter()
       .flatten()
       .copied()
       .collect();
+    let packed = as_le_u16(&intended);
     let mut out = vec![0u8; 4 * 3];
     ayuv64_to_rgb_row::<false>(&packed, &mut out, 4, ColorMatrix::Bt709, false);
     // Black pixels → [0, 0, 0]
@@ -342,17 +346,12 @@ mod tests {
 
   /// Luma u8: Y at slot 1, extracted via >> 8 (high byte only).
   /// Y=0xFFFF → 0xFF; Y=0x4000 → 0x40.
-  ///
-  /// LE-host gate: host-native `pack_ayuv64` fixture (Y=0x4000 is non-
-  /// palindromic in bytes) + `<BE = false>` kernel path → `from_le`
-  /// byte-swaps the fixture on BE hosts and corrupts the Y field before
-  /// extraction.
-  #[cfg(target_endian = "little")]
   #[test]
   fn ayuv64_luma_extract_u8_high_byte() {
     let p0 = pack_ayuv64(0, 0xFFFF, 0, 0);
     let p1 = pack_ayuv64(0, 0x4000, 0, 0);
-    let packed: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
+    let intended: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
+    let packed = as_le_u16(&intended);
     let mut out = vec![0u8; 2];
     ayuv64_to_luma_row::<false>(&packed, &mut out, 2);
     assert_eq!(&out[..], &[0xFFu8, 0x40], "luma u8 high-byte extract");
@@ -360,17 +359,12 @@ mod tests {
 
   /// Luma u16: Y at slot 1, written direct (no shift).
   /// Y=0xABCD → 0xABCD; Y=0x1234 → 0x1234.
-  ///
-  /// LE-host gate: host-native `pack_ayuv64` fixture (Y=0xABCD / 0x1234
-  /// are non-palindromic in bytes) + `<BE = false>` kernel path →
-  /// `from_le` byte-swaps the fixture on BE hosts and corrupts the Y
-  /// field before extraction.
-  #[cfg(target_endian = "little")]
   #[test]
   fn ayuv64_luma_extract_u16_direct() {
     let p0 = pack_ayuv64(0, 0xABCD, 0, 0);
     let p1 = pack_ayuv64(0, 0x1234, 0, 0);
-    let packed: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
+    let intended: Vec<u16> = [p0, p1].iter().flatten().copied().collect();
+    let packed = as_le_u16(&intended);
     let mut out = vec![0u16; 2];
     ayuv64_to_luma_u16_row::<false>(&packed, &mut out, 2);
     assert_eq!(&out[..], &[0xABCDu16, 0x1234], "luma u16 direct extract");

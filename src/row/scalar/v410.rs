@@ -144,32 +144,35 @@ mod tests {
   use super::*;
   use crate::ColorMatrix;
 
-  /// Pack one V410 word from explicit U / Y / V samples.
+  /// Pack one V410 word (host-native u32) from explicit U / Y / V samples.
   fn pack_v410(u: u32, y: u32, v: u32) -> u32 {
     debug_assert!(u < 1024 && y < 1024 && v < 1024);
     (v << 20) | (y << 10) | u
   }
 
-  // LE-host gate: this test builds host-native `Vec<u32>` fixtures via
-  // `pack_v410` and calls the scalar kernel with `<BE = false>`, which
-  // applies `u32::from_le`. On BE hosts the host-native storage doesn't
-  // match LE byte order, so `from_le` swaps bytes and corrupts the
-  // fixture before the math runs (same pattern as PR #82 8f2e329, PR #83
-  // 56342c0, PR #85 57d9064, PR #87 9b6521b). BE-host correctness is
-  // covered by `v410_be_roundtrip_matches_byte_swapped_le`, which builds
-  // fixtures via `to_le_bytes` / `to_be_bytes`.
-  #[cfg(target_endian = "little")]
+  /// Re-encode a slice of host-native u32 values as LE-encoded byte storage,
+  /// packed back into `Vec<u32>`. On LE host this is a no-op; on BE host
+  /// every u32 is byte-swapped relative to its host-native representation.
+  /// Kernels called with `BE = false` recover the intended logical values
+  /// via `u32::from_le` on both hosts.
+  fn as_le_u32(host: &[u32]) -> std::vec::Vec<u32> {
+    host
+      .iter()
+      .map(|v| u32::from_ne_bytes(v.to_le_bytes()))
+      .collect()
+  }
+
   #[test]
   fn v410_known_pattern_rgb() {
     // Limited-range BT.709, gray Y=64 (≈ 0 in [0, 255]) with neutral
     // chroma U=V=512. Both pixels should produce ~black [0, 0, 0]
     // before saturation.
-    let p = vec![
+    let p = as_le_u32(&[
       pack_v410(512, 64, 512),
       pack_v410(512, 64, 512),
       pack_v410(512, 940, 512), // Y=940 ≈ 255 (limited-range white)
       pack_v410(512, 940, 512),
-    ];
+    ]);
     let mut out = vec![0u8; 4 * 3];
     v410_to_rgb_or_rgba_row::<false, false>(&p, &mut out, 4, ColorMatrix::Bt709, false);
     // Two black pixels followed by two white pixels.
@@ -181,35 +184,27 @@ mod tests {
 
   #[test]
   fn v410_known_pattern_rgba_alpha_max() {
-    let p = vec![pack_v410(512, 940, 512)];
+    let p = as_le_u32(&[pack_v410(512, 940, 512)]);
     let mut out = vec![0u8; 4];
     v410_to_rgb_or_rgba_row::<true, false>(&p, &mut out, 1, ColorMatrix::Bt709, false);
     assert_eq!(out[3], 0xFF);
   }
 
-  // LE-host gate: host-native `pack_v410` fixture + `<BE = false>` kernel
-  // path → `from_le` byte-swaps the fixture on BE hosts and corrupts the
-  // Y field before extraction.
-  #[cfg(target_endian = "little")]
   #[test]
   fn v410_luma_extract_u8() {
-    let p = vec![
+    let p = as_le_u32(&[
       pack_v410(0, 0x3FF, 0), // Y = 0x3FF (10-bit max)
       pack_v410(0, 0x100, 0), // Y = 0x100
-    ];
+    ]);
     let mut out = vec![0u8; 2];
     v410_to_luma_row::<false>(&p, &mut out, 2);
     // 0x3FF >> 2 = 0xFF; 0x100 >> 2 = 0x40.
     assert_eq!(&out[..], &[0xFFu8, 0x40]);
   }
 
-  // LE-host gate: host-native `pack_v410` fixture + `<BE = false>` kernel
-  // path → `from_le` byte-swaps the fixture on BE hosts and corrupts the
-  // Y field before extraction.
-  #[cfg(target_endian = "little")]
   #[test]
   fn v410_luma_extract_u16_low_bit_packed() {
-    let p = vec![pack_v410(0, 0x3FF, 0), pack_v410(0, 0x123, 0)];
+    let p = as_le_u32(&[pack_v410(0, 0x3FF, 0), pack_v410(0, 0x123, 0)]);
     let mut out = vec![0u16; 2];
     v410_to_luma_u16_row::<false>(&p, &mut out, 2);
     assert_eq!(&out[..], &[0x3FFu16, 0x123]);
@@ -217,7 +212,7 @@ mod tests {
 
   #[test]
   fn v410_known_pattern_rgba_u16_alpha_max() {
-    let p = vec![pack_v410(512, 940, 512)];
+    let p = as_le_u32(&[pack_v410(512, 940, 512)]);
     let mut out = vec![0u16; 4];
     v410_to_rgb_u16_or_rgba_u16_row::<true, false>(&p, &mut out, 1, ColorMatrix::Bt709, false);
     // 10-bit alpha max is 0x3FF (low-bit-packed).

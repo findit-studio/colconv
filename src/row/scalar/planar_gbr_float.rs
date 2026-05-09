@@ -604,9 +604,18 @@ mod tests {
       .collect()
   }
 
+  /// Re-encode a host-native f32 slice as LE-encoded f32 storage. Kernels
+  /// called with `BE = false` recover the intended host-native value via
+  /// `u32::from_le` on both LE (no-op) and BE (byte-swap) hosts.
+  fn as_le_f32(host: &[f32]) -> std::vec::Vec<f32> {
+    host
+      .iter()
+      .map(|v| f32::from_bits(u32::from_ne_bytes(v.to_bits().to_le_bytes())))
+      .collect()
+  }
+
   // ---- gbrpf32_to_rgb_row --------------------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn gbrpf32_to_rgb_clamps_and_scales() {
     // Values: 0.0, 0.5, 1.0, 1.5, -0.1, NaN → 0, 128, 255, 255, 0, 0
@@ -615,9 +624,9 @@ mod tests {
     let vals = [0.0f32, 0.5, 1.0, 1.5, -0.1, f32::NAN];
     let expected = [0u8, 128, 255, 255, 0, 0];
     for (v, e) in vals.iter().zip(expected.iter()) {
-      let g = [*v; 1];
-      let b = [*v; 1];
-      let r = [*v; 1];
+      let g = as_le_f32(&[*v]);
+      let b = as_le_f32(&[*v]);
+      let r = as_le_f32(&[*v]);
       let mut out = [0u8; 3];
       gbrpf32_to_rgb_row::<false>(&g, &b, &r, &mut out, 1);
       assert_eq!(out[0], *e, "R: v={v}, expected={e}");
@@ -626,13 +635,12 @@ mod tests {
     }
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn gbrpf32_to_rgb_channel_reorder() {
     // G=0.0, B=0.5, R=1.0 → packed R=255, G=0, B=128
-    let g = [0.0f32];
-    let b = [0.5f32];
-    let r = [1.0f32];
+    let g = as_le_f32(&[0.0f32]);
+    let b = as_le_f32(&[0.5f32]);
+    let r = as_le_f32(&[1.0f32]);
     let mut out = [0u8; 3];
     gbrpf32_to_rgb_row::<false>(&g, &b, &r, &mut out, 1);
     assert_eq!(out[0], 255, "R");
@@ -668,15 +676,14 @@ mod tests {
     assert_eq!(out[3], 0xFF, "alpha must be 0xFF");
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn gbrpf32_to_rgba_clamps_and_scales() {
     let vals = [0.0f32, 0.5, 1.0, 1.5, -0.1];
     let expected = [0u8, 128, 255, 255, 0];
     for (v, e) in vals.iter().zip(expected.iter()) {
-      let g = [*v; 1];
-      let b = [*v; 1];
-      let r = [*v; 1];
+      let g = as_le_f32(&[*v]);
+      let b = as_le_f32(&[*v]);
+      let r = as_le_f32(&[*v]);
       let mut out = [0u8; 4];
       gbrpf32_to_rgba_row::<false>(&g, &b, &r, &mut out, 1);
       assert_eq!(out[0], *e, "R: v={v}");
@@ -701,7 +708,6 @@ mod tests {
 
   // ---- gbrpf32_to_rgb_u16_row ----------------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn gbrpf32_to_rgb_u16_clamps_and_scales() {
     // NaN passes through f32::clamp unchanged (Rust 1.50+); `NaN as u16` saturates to 0.
@@ -709,9 +715,9 @@ mod tests {
     // 0.5 → (0.5 * 65535 + 0.5) as u16 = 32768; NaN → 0
     let expected = [0u16, 32768, 65535, 65535, 0, 0];
     for (v, e) in vals.iter().zip(expected.iter()) {
-      let g = [*v; 1];
-      let b = [*v; 1];
-      let r = [*v; 1];
+      let g = as_le_f32(&[*v]);
+      let b = as_le_f32(&[*v]);
+      let r = as_le_f32(&[*v]);
       let mut out = [0u16; 3];
       gbrpf32_to_rgb_u16_row::<false>(&g, &b, &r, &mut out, 1);
       assert_eq!(out[0], *e, "R u16: v={v}");
@@ -764,25 +770,29 @@ mod tests {
 
   // ---- gbrpf32_to_rgb_f32_row (lossless) ------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn gbrpf32_to_rgb_f32_lossless_passthrough() {
-    // HDR 2.5, NaN, Inf, negative all preserved bit-exact.
-    let g = [2.5f32, f32::NAN, f32::INFINITY, -1.0];
-    let b = [0.1f32, 0.2, 0.3, 0.4];
-    let r = [0.5f32, 0.6, 0.7, 0.8];
+    // HDR 2.5, NaN, Inf, negative all preserved bit-exact. Output is host-
+    // native f32 after the kernel's `from_le` decode; compare against the
+    // original host-native values rather than the LE-encoded inputs.
+    let host_g = [2.5f32, f32::NAN, f32::INFINITY, -1.0];
+    let host_b = [0.1f32, 0.2, 0.3, 0.4];
+    let host_r = [0.5f32, 0.6, 0.7, 0.8];
+    let g = as_le_f32(&host_g);
+    let b = as_le_f32(&host_b);
+    let r = as_le_f32(&host_r);
     let mut out = [0.0f32; 12];
     gbrpf32_to_rgb_f32_row::<false>(&g, &b, &r, &mut out, 4);
     // Check R channel (index 0, 3, 6, 9 in RGBA interleave = index 0, 3, 6, 9)
-    assert_eq!(out[0], r[0]);
-    assert_eq!(out[3], r[1]);
-    assert_eq!(out[6], r[2]);
-    assert_eq!(out[9], r[3]);
+    assert_eq!(out[0], host_r[0]);
+    assert_eq!(out[3], host_r[1]);
+    assert_eq!(out[6], host_r[2]);
+    assert_eq!(out[9], host_r[3]);
     // Check G channel (index 1, 4, 7, 10)
-    assert_eq!(out[1], g[0], "G HDR preserved");
+    assert_eq!(out[1], host_g[0], "G HDR preserved");
     assert!(out[4].is_nan(), "G NaN preserved");
     assert!(out[7].is_infinite() && out[7] > 0.0, "G +Inf preserved");
-    assert_eq!(out[10], g[3], "G negative preserved");
+    assert_eq!(out[10], host_g[3], "G negative preserved");
   }
 
   #[test]
@@ -812,12 +822,11 @@ mod tests {
     assert_eq!(out[3], 1.0, "alpha must be 1.0");
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn gbrpf32_to_rgba_f32_lossless_passthrough() {
-    let r = [2.5f32];
-    let g = [f32::NAN];
-    let b = [f32::NEG_INFINITY];
+    let r = as_le_f32(&[2.5f32]);
+    let g = as_le_f32(&[f32::NAN]);
+    let b = as_le_f32(&[f32::NEG_INFINITY]);
     let mut out = [0.0f32; 4];
     gbrpf32_to_rgba_f32_row::<false>(&g, &b, &r, &mut out, 1);
     assert_eq!(out[0], 2.5, "R HDR preserved");
@@ -943,12 +952,11 @@ mod tests {
     assert_eq!(out[0], 0);
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn gbrpf32_to_luma_max_gives_255() {
-    let g = [1.0f32];
-    let b = [1.0f32];
-    let r = [1.0f32];
+    let g = as_le_f32(&[1.0f32]);
+    let b = as_le_f32(&[1.0f32]);
+    let r = as_le_f32(&[1.0f32]);
     let mut out = [0u8; 1];
     gbrpf32_to_luma_row::<false>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, true);
     assert_eq!(out[0], 255);
@@ -989,12 +997,11 @@ mod tests {
     assert_eq!(out[0], 0);
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn gbrpf32_to_luma_u16_max_gives_255_zero_extended() {
-    let g = [1.0f32];
-    let b = [1.0f32];
-    let r = [1.0f32];
+    let g = as_le_f32(&[1.0f32]);
+    let b = as_le_f32(&[1.0f32]);
+    let r = as_le_f32(&[1.0f32]);
     let mut out = [0u16; 1];
     gbrpf32_to_luma_u16_row::<false>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, true);
     assert_eq!(out[0], 255, "luma_u16 is zero-extended u8 luma");
@@ -1038,12 +1045,11 @@ mod tests {
     assert_eq!(s[0], 0, "S must be 0 for achromatic");
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn gbrpf32_to_hsv_achromatic_white() {
-    let g = [1.0f32];
-    let b = [1.0f32];
-    let r = [1.0f32];
+    let g = as_le_f32(&[1.0f32]);
+    let b = as_le_f32(&[1.0f32]);
+    let r = as_le_f32(&[1.0f32]);
     let mut h = [0u8; 1];
     let mut s = [0u8; 1];
     let mut v = [0u8; 1];
@@ -1075,28 +1081,26 @@ mod tests {
 
   // ---- gbrapf32_to_rgba_row ------------------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn gbrapf32_to_rgba_source_alpha_passthrough() {
-    let g = [0.5f32];
-    let b = [0.5f32];
-    let r = [0.5f32];
-    let a = [0.5f32];
+    let g = as_le_f32(&[0.5f32]);
+    let b = as_le_f32(&[0.5f32]);
+    let r = as_le_f32(&[0.5f32]);
+    let a = as_le_f32(&[0.5f32]);
     let mut out = [0u8; 4];
     gbrapf32_to_rgba_row::<false>(&g, &b, &r, &a, &mut out, 1);
     // 0.5 → (0.5 * 255 + 0.5) as u8 = 128
     assert_eq!(out[3], 128, "alpha from source plane");
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn gbrapf32_to_rgba_source_alpha_clamps() {
-    let g = [0.5f32];
-    let b = [0.5f32];
-    let r = [0.5f32];
+    let g = as_le_f32(&[0.5f32]);
+    let b = as_le_f32(&[0.5f32]);
+    let r = as_le_f32(&[0.5f32]);
     // Test α > 1.0 → 255 and α < 0.0 → 0
-    let a_high = [1.5f32];
-    let a_low = [-0.1f32];
+    let a_high = as_le_f32(&[1.5f32]);
+    let a_low = as_le_f32(&[-0.1f32]);
     let mut out_high = [0u8; 4];
     let mut out_low = [0u8; 4];
     gbrapf32_to_rgba_row::<false>(&g, &b, &r, &a_high, &mut out_high, 1);
@@ -1124,27 +1128,25 @@ mod tests {
 
   // ---- gbrapf32_to_rgba_u16_row --------------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn gbrapf32_to_rgba_u16_source_alpha_passthrough() {
-    let g = [0.5f32];
-    let b = [0.5f32];
-    let r = [0.5f32];
-    let a = [0.5f32];
+    let g = as_le_f32(&[0.5f32]);
+    let b = as_le_f32(&[0.5f32]);
+    let r = as_le_f32(&[0.5f32]);
+    let a = as_le_f32(&[0.5f32]);
     let mut out = [0u16; 4];
     gbrapf32_to_rgba_u16_row::<false>(&g, &b, &r, &a, &mut out, 1);
     // 0.5 → (0.5 * 65535 + 0.5) as u16 = 32768
     assert_eq!(out[3], 32768, "u16 alpha from source plane");
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn gbrapf32_to_rgba_u16_source_alpha_clamps() {
-    let g = [0.5f32];
-    let b = [0.5f32];
-    let r = [0.5f32];
-    let a_high = [1.5f32];
-    let a_low = [-0.1f32];
+    let g = as_le_f32(&[0.5f32]);
+    let b = as_le_f32(&[0.5f32]);
+    let r = as_le_f32(&[0.5f32]);
+    let a_high = as_le_f32(&[1.5f32]);
+    let a_low = as_le_f32(&[-0.1f32]);
     let mut out_high = [0u16; 4];
     let mut out_low = [0u16; 4];
     gbrapf32_to_rgba_u16_row::<false>(&g, &b, &r, &a_high, &mut out_high, 1);
@@ -1172,26 +1174,24 @@ mod tests {
 
   // ---- gbrapf32_to_rgba_f32_row (lossless source α) -------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn gbrapf32_to_rgba_f32_lossless_passthrough() {
     // HDR 2.5, NaN, Inf, negative all preserved — including in α
-    let g = [0.5f32];
-    let b = [0.5f32];
-    let r = [0.5f32];
-    let a = [2.5f32];
+    let g = as_le_f32(&[0.5f32]);
+    let b = as_le_f32(&[0.5f32]);
+    let r = as_le_f32(&[0.5f32]);
+    let a = as_le_f32(&[2.5f32]);
     let mut out = [0.0f32; 4];
     gbrapf32_to_rgba_f32_row::<false>(&g, &b, &r, &a, &mut out, 1);
     assert_eq!(out[3], 2.5, "HDR alpha preserved bit-exact");
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn gbrapf32_to_rgba_f32_nan_alpha_preserved() {
-    let g = [0.5f32];
-    let b = [0.5f32];
-    let r = [0.5f32];
-    let a = [f32::NAN];
+    let g = as_le_f32(&[0.5f32]);
+    let b = as_le_f32(&[0.5f32]);
+    let r = as_le_f32(&[0.5f32]);
+    let a = as_le_f32(&[f32::NAN]);
     let mut out = [0.0f32; 4];
     gbrapf32_to_rgba_f32_row::<false>(&g, &b, &r, &a, &mut out, 1);
     assert!(out[3].is_nan(), "NaN alpha preserved");

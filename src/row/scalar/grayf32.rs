@@ -276,6 +276,17 @@ pub(crate) fn grayf32_to_hsv_row<const BE: bool>(
 mod tests {
   use super::*;
 
+  /// Re-encode a host-native f32 slice as LE-encoded byte storage (each element
+  /// stored with LE u32-bit byte layout). Kernels called with `BE = false`
+  /// recover the intended host-native value via `u32::from_le` on both LE
+  /// (no-op) and BE (byte-swap) hosts.
+  fn as_le_f32(host: &[f32]) -> std::vec::Vec<f32> {
+    host
+      .iter()
+      .map(|v| f32::from_bits(u32::from_ne_bytes(v.to_bits().to_le_bytes())))
+      .collect()
+  }
+
   // ---- grayf32_to_rgb_row --------------------------------------------------
 
   #[test]
@@ -286,16 +297,14 @@ mod tests {
     assert_eq!(out, [0, 0, 0]);
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgb_max() {
-    let plane = [1.0f32];
+    let plane = as_le_f32(&[1.0f32]);
     let mut out = [0u8; 3];
     grayf32_to_rgb_row::<false>(&plane, &mut out, 1);
     assert_eq!(out, [255, 255, 255]);
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgb_mid() {
     // Mid-gray Y=0.5 with round-half-up:
@@ -304,16 +313,15 @@ mod tests {
     //   trunc(128.0)   = 128
     // See module-level "Rounding (float → integer)" doc — `+ 0.5 then
     // truncate` is the contract this crate uses across scalar + SIMD.
-    let plane = [0.5f32];
+    let plane = as_le_f32(&[0.5f32]);
     let mut out = [0u8; 3];
     grayf32_to_rgb_row::<false>(&plane, &mut out, 1);
     assert_eq!(out, [128, 128, 128]);
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgb_saturates_high() {
-    let plane = [1.5f32];
+    let plane = as_le_f32(&[1.5f32]);
     let mut out = [0u8; 3];
     grayf32_to_rgb_row::<false>(&plane, &mut out, 1);
     assert_eq!(out, [255, 255, 255]);
@@ -337,10 +345,9 @@ mod tests {
     assert_eq!(out, [0, 0, 0, 0xFF]);
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgba_max_alpha_opaque() {
-    let plane = [1.0f32];
+    let plane = as_le_f32(&[1.0f32]);
     let mut out = [0u8; 4];
     grayf32_to_rgba_row::<false>(&plane, &mut out, 1);
     assert_eq!(out, [255, 255, 255, 0xFF]);
@@ -356,19 +363,17 @@ mod tests {
     assert_eq!(out, [0, 0, 0]);
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgb_u16_max() {
-    let plane = [1.0f32];
+    let plane = as_le_f32(&[1.0f32]);
     let mut out = [0u16; 3];
     grayf32_to_rgb_u16_row::<false>(&plane, &mut out, 1);
     assert_eq!(out, [65535, 65535, 65535]);
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgb_u16_saturates_high() {
-    let plane = [2.0f32];
+    let plane = as_le_f32(&[2.0f32]);
     let mut out = [0u16; 3];
     grayf32_to_rgb_u16_row::<false>(&plane, &mut out, 1);
     assert_eq!(out, [65535, 65535, 65535]);
@@ -376,10 +381,9 @@ mod tests {
 
   // ---- grayf32_to_rgba_u16_row ---------------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgba_u16_opaque() {
-    let plane = [1.0f32];
+    let plane = as_le_f32(&[1.0f32]);
     let mut out = [0u16; 4];
     grayf32_to_rgba_u16_row::<false>(&plane, &mut out, 1);
     assert_eq!(out, [65535, 65535, 65535, 0xFFFF]);
@@ -387,20 +391,18 @@ mod tests {
 
   // ---- grayf32_to_rgb_f32_row ----------------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgb_f32_lossless_replicate() {
-    // Non-clamped value preserved exactly.
-    let plane = [1.5f32];
+    // Non-clamped value preserved exactly. Output is host-native f32.
+    let plane = as_le_f32(&[1.5f32]);
     let mut out = [0.0f32; 3];
     grayf32_to_rgb_f32_row::<false>(&plane, &mut out, 1);
     assert_eq!(out, [1.5, 1.5, 1.5]);
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgb_f32_negative_preserved() {
-    let plane = [-0.5f32];
+    let plane = as_le_f32(&[-0.5f32]);
     let mut out = [0.0f32; 3];
     grayf32_to_rgb_f32_row::<false>(&plane, &mut out, 1);
     assert_eq!(out, [-0.5, -0.5, -0.5]);
@@ -416,10 +418,9 @@ mod tests {
     assert_eq!(out, [0]);
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_luma_max() {
-    let plane = [1.0f32];
+    let plane = as_le_f32(&[1.0f32]);
     let mut out = [0u8; 1];
     grayf32_to_luma_row::<false>(&plane, &mut out, 1);
     assert_eq!(out, [255]);
@@ -427,10 +428,9 @@ mod tests {
 
   // ---- grayf32_to_luma_u16_row ---------------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_luma_u16_max() {
-    let plane = [1.0f32];
+    let plane = as_le_f32(&[1.0f32]);
     let mut out = [0u16; 1];
     grayf32_to_luma_u16_row::<false>(&plane, &mut out, 1);
     assert_eq!(out, [65535]);
@@ -438,13 +438,12 @@ mod tests {
 
   // ---- grayf32_to_luma_f32_row ---------------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_luma_f32_identity() {
-    let plane = [0.0f32, 0.5, 1.0, 1.5, -0.1];
+    let plane = as_le_f32(&[0.0f32, 0.5, 1.0, 1.5, -0.1]);
     let mut out = [99.0f32; 5];
     grayf32_to_luma_f32_row::<false>(&plane, &mut out, 5);
-    // Lossless pass-through — exact bit equality.
+    // Lossless pass-through — exact bit equality. Output is host-native f32.
     assert_eq!(out, [0.0, 0.5, 1.0, 1.5, -0.1]);
   }
 
@@ -462,10 +461,9 @@ mod tests {
     assert_eq!(v[0], 0);
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_hsv_max() {
-    let plane = [1.0f32];
+    let plane = as_le_f32(&[1.0f32]);
     let mut h = [0u8; 1];
     let mut s = [0u8; 1];
     let mut v = [0u8; 1];
@@ -475,11 +473,10 @@ mod tests {
     assert_eq!(v[0], 255);
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_hsv_mid() {
     // 0.5 → (0.5 * 255 + 0.5) as u8 = 128
-    let plane = [0.5f32];
+    let plane = as_le_f32(&[0.5f32]);
     let mut h = [0u8; 1];
     let mut s = [0u8; 1];
     let mut v = [0u8; 1];
@@ -489,11 +486,10 @@ mod tests {
     assert_eq!(v[0], 128);
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_hsv_clamps_hdr() {
     // HDR value > 1.0 saturates to V=255.
-    let plane = [2.0f32];
+    let plane = as_le_f32(&[2.0f32]);
     let mut h = [0u8; 1];
     let mut s = [0u8; 1];
     let mut v = [0u8; 1];
@@ -501,10 +497,9 @@ mod tests {
     assert_eq!(v[0], 255);
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgb_multi_pixel() {
-    let plane = [0.0f32, 1.0, 0.5];
+    let plane = as_le_f32(&[0.0f32, 1.0, 0.5]);
     let mut out = [0u8; 9];
     grayf32_to_rgb_row::<false>(&plane, &mut out, 3);
     assert_eq!(&out[0..3], &[0, 0, 0]);

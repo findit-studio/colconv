@@ -190,14 +190,19 @@ pub(crate) fn ya16_to_hsv_row<const BE: bool>(
 mod tests {
   use super::*;
 
-  // Helper: make packed [Y, A, Y, A, ...] from pairs.
+  // Helper: make packed [Y, A, Y, A, ...] from pairs, in LE-encoded byte form
+  // so kernels with `BE = false` recover the intended logical values via
+  // `u16::from_le` on both LE (no-op) and BE (byte-swap) hosts.
   fn packed_ya(pairs: &[(u16, u16)]) -> std::vec::Vec<u16> {
-    pairs.iter().flat_map(|&(y, a)| [y, a]).collect()
+    pairs
+      .iter()
+      .flat_map(|&(y, a)| [y, a])
+      .map(|v| u16::from_ne_bytes(v.to_le_bytes()))
+      .collect()
   }
 
   // ---- ya16_to_rgb_row -------------------------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn ya16_to_rgb_downshifts_y_drops_alpha() {
     // Y=0x8000, A=0x4000 → rgb [0x80, 0x80, 0x80]
@@ -225,7 +230,6 @@ mod tests {
 
   // ---- ya16_to_rgba_row -----------------------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn ya16_to_rgba_downshifts_y_and_alpha() {
     // Y=0x8000, A=0x4000 → rgba [0x80, 0x80, 0x80, 0x40]
@@ -235,7 +239,6 @@ mod tests {
     assert_eq!(out, [0x80, 0x80, 0x80, 0x40]);
   }
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn ya16_to_rgba_two_pixels() {
     let p = packed_ya(&[(0x8000, 0x4000), (0x1000, 0x0800)]);
@@ -247,7 +250,6 @@ mod tests {
 
   // ---- ya16_to_rgb_u16_row --------------------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn ya16_to_rgb_u16_native_y_broadcast() {
     // Y=0x8000 native, broadcast
@@ -267,7 +269,6 @@ mod tests {
 
   // ---- ya16_to_rgba_u16_row -------------------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn ya16_to_rgba_u16_native_y_and_alpha() {
     // Y=0x8000, A=0x4000 → rgba_u16 [0x8000, 0x8000, 0x8000, 0x4000]
@@ -279,7 +280,6 @@ mod tests {
 
   // ---- ya16_to_luma_row -----------------------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn ya16_to_luma_downshifts() {
     let p = packed_ya(&[(0x8000, 0x4000), (0x0000, 0xFFFF)]);
@@ -290,7 +290,6 @@ mod tests {
 
   // ---- ya16_to_luma_u16_row -------------------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn ya16_to_luma_u16_native_passthrough() {
     let p = packed_ya(&[(0x8000, 0x0000)]);
@@ -301,7 +300,6 @@ mod tests {
 
   // ---- ya16_to_hsv_row -------------------------------------------------------
 
-  #[cfg(target_endian = "little")]
   #[test]
   fn ya16_to_hsv_h0_s0_v_y8_drops_alpha() {
     // Y=0x8000 → V = 0x80; α dropped

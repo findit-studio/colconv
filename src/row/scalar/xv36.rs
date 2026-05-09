@@ -158,23 +158,26 @@ mod tests {
   use super::*;
   use crate::ColorMatrix;
 
-  /// Pack one XV36 pixel from explicit U / Y / V / A samples.
-  /// Each channel value must be in `[0, 0xFFF]`; the helper shifts
-  /// each by 4 to MSB-align into the high 12 bits.
+  /// Pack one XV36 pixel (host-native u16 quadruple) from explicit
+  /// U / Y / V / A samples. Each channel value must be in `[0, 0xFFF]`;
+  /// the helper shifts each by 4 to MSB-align into the high 12 bits.
   fn pack_xv36(u: u16, y: u16, v: u16, a: u16) -> [u16; 4] {
     debug_assert!(u <= 0xFFF && y <= 0xFFF && v <= 0xFFF && a <= 0xFFF);
     [u << 4, y << 4, v << 4, a << 4]
   }
 
-  // LE-host gate: this test builds host-native `Vec<u16>` fixtures via
-  // `pack_xv36` and calls the scalar kernel with `<BE = false>`, which
-  // applies `u16::from_le`. On BE hosts the host-native storage doesn't
-  // match LE byte order, so `from_le` swaps bytes and corrupts the
-  // fixture before the math runs (same pattern as PR #82 8f2e329, PR #83
-  // 56342c0, PR #85 57d9064, PR #87 9b6521b). BE-host correctness is
-  // covered by `xv36_be_roundtrip_matches_byte_swapped_le`, which builds
-  // fixtures via `to_le_bytes` / `to_be_bytes`.
-  #[cfg(target_endian = "little")]
+  /// Re-encode a slice of host-native u16 values as LE-encoded byte storage,
+  /// packed back into `Vec<u16>`. On LE host this is a no-op; on BE host
+  /// every u16 is byte-swapped relative to its host-native representation.
+  /// Kernels called with `BE = false` recover the intended logical values
+  /// via `u16::from_le` on both hosts.
+  fn as_le_u16(host: &[u16]) -> Vec<u16> {
+    host
+      .iter()
+      .map(|v| u16::from_ne_bytes(v.to_le_bytes()))
+      .collect()
+  }
+
   #[test]
   fn xv36_known_pattern_rgb() {
     // Limited-range BT.709, gray Y=256 (≈ 0 in u8) with neutral
@@ -183,7 +186,8 @@ mod tests {
     let p1 = pack_xv36(2048, 256, 2048, 0);
     let p2 = pack_xv36(2048, 3760, 2048, 0);
     let p3 = pack_xv36(2048, 3760, 2048, 0);
-    let packed: Vec<u16> = [p0, p1, p2, p3].iter().flatten().copied().collect();
+    let intended: Vec<u16> = [p0, p1, p2, p3].iter().flatten().copied().collect();
+    let packed = as_le_u16(&intended);
     let mut out = vec![0u8; 4 * 3];
     xv36_to_rgb_or_rgba_row::<false, false>(&packed, &mut out, 4, ColorMatrix::Bt709, false);
     assert_eq!(&out[0..3], &[0u8, 0, 0]);
@@ -195,7 +199,7 @@ mod tests {
   #[test]
   fn xv36_known_pattern_rgba_alpha_max() {
     let p = pack_xv36(2048, 3760, 2048, 0);
-    let packed: Vec<u16> = p.into_iter().collect();
+    let packed = as_le_u16(&p);
     let mut out = vec![0u8; 4];
     xv36_to_rgb_or_rgba_row::<true, false>(&packed, &mut out, 1, ColorMatrix::Bt709, false);
     // X = padding; RGBA forces α=0xFF regardless of source A byte.
@@ -206,40 +210,34 @@ mod tests {
   fn xv36_known_pattern_rgba_ignores_source_alpha_bits() {
     // Source A=0x123 (low 12 bits set) — should not leak into RGB or affect α.
     let p = pack_xv36(2048, 3760, 2048, 0xFFF);
-    let packed: Vec<u16> = p.into_iter().collect();
+    let packed = as_le_u16(&p);
     let mut out = vec![0u8; 4];
     xv36_to_rgb_or_rgba_row::<true, false>(&packed, &mut out, 1, ColorMatrix::Bt709, false);
     assert_eq!(out[3], 0xFF);
   }
 
-  // LE-host gate: host-native `pack_xv36` fixture + `<BE = false>` kernel
-  // path → `from_le` byte-swaps the fixture on BE hosts and corrupts the
-  // Y field before extraction.
-  #[cfg(target_endian = "little")]
   #[test]
   fn xv36_luma_extract_u8() {
     // Y = 0xFFF → 0xFFF >> 4 = 0xFF (12-bit max); Y = 0x100 → 0x10
-    let packed: Vec<u16> = [pack_xv36(0, 0xFFF, 0, 0), pack_xv36(0, 0x100, 0, 0)]
+    let intended: Vec<u16> = [pack_xv36(0, 0xFFF, 0, 0), pack_xv36(0, 0x100, 0, 0)]
       .iter()
       .flatten()
       .copied()
       .collect();
+    let packed = as_le_u16(&intended);
     let mut out = vec![0u8; 2];
     xv36_to_luma_row::<false>(&packed, &mut out, 2);
     assert_eq!(&out[..], &[0xFFu8, 0x10]);
   }
 
-  // LE-host gate: host-native `pack_xv36` fixture + `<BE = false>` kernel
-  // path → `from_le` byte-swaps the fixture on BE hosts and corrupts the
-  // Y field before extraction.
-  #[cfg(target_endian = "little")]
   #[test]
   fn xv36_luma_extract_u16_low_bit_packed() {
-    let packed: Vec<u16> = [pack_xv36(0, 0xFFF, 0, 0), pack_xv36(0, 0x123, 0, 0)]
+    let intended: Vec<u16> = [pack_xv36(0, 0xFFF, 0, 0), pack_xv36(0, 0x123, 0, 0)]
       .iter()
       .flatten()
       .copied()
       .collect();
+    let packed = as_le_u16(&intended);
     let mut out = vec![0u16; 2];
     xv36_to_luma_u16_row::<false>(&packed, &mut out, 2);
     assert_eq!(&out[..], &[0xFFFu16, 0x123]);
@@ -248,7 +246,7 @@ mod tests {
   #[test]
   fn xv36_known_pattern_rgba_u16_alpha_max() {
     let p = pack_xv36(2048, 3760, 2048, 0xFFF);
-    let packed: Vec<u16> = p.into_iter().collect();
+    let packed = as_le_u16(&p);
     let mut out = vec![0u16; 4];
     xv36_to_rgb_u16_or_rgba_u16_row::<true, false>(&packed, &mut out, 1, ColorMatrix::Bt709, false);
     // 12-bit alpha max = 0x0FFF; X = padding so source A byte is ignored.

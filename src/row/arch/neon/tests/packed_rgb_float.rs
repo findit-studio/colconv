@@ -2,46 +2,33 @@ use super::*;
 
 // ---- Tier 9 Rgbf32 SIMD-vs-scalar parity tests --------------------------
 //
-// LE-host gating rationale (codex 6th-pass review of PR #83):
-//
-// The five Rgbf32 SIMD-vs-scalar parity tests below (and the six Rgbf16
-// parity tests further down) build their fixtures via
-// `pseudo_random_rgbf32` / `pseudo_random_rgbf16`, which produce
-// host-native `f32` / `half::f16` values. They then call the kernels
-// with `::<false>`, which means "input is LE-encoded — decode to
-// host-native by applying `u32::from_le` / `u16::from_le`".
-//
-// On a little-endian host (e.g. aarch64-apple-darwin), host-native bits
-// and LE-encoded bits are the same byte sequence, so `from_le` is a
-// no-op and the assertions hold.
-//
-// On a big-endian host (e.g. aarch64-be-linux-gnu), host-native f32 /
-// f16 bits do NOT lay out little-endian, so the kernel's `from_le`
-// byte-swap correctly reinterprets the host-native fixture as if it
-// were an LE-encoded payload — producing a different (corrupted) value
-// than the test expects. Because both the scalar and NEON kernels
-// apply the same `from_le` byte-swap, the SIMD-vs-scalar parity
-// assertions still hold on BE — but they're vacuously testing
-// "scalar and SIMD are identically wrong", not kernel correctness.
-// The two `lossless` host-native equality assertions
-// (`assert_eq!(out_neon, input[..w * 3])` for `rgbf32_to_rgb_f32_row`
-// and `rgbf16_to_rgb_f16_row`) would fail outright on BE since the
-// kernel decodes through `load_f32x4::<false>` / scalar `from_le` to
-// produce a byte-swapped (relative to host-native) result.
-//
-// The kernel itself is correct on BE; this is purely a fixture-vs-
-// kernel byte-order mismatch (same class as the scalar tests gated in
-// `56342c0`, and the PR #82 alpha_extract / planar_gbr_high_bit gates
-// in `8f2e329`). NEON BE-host correctness is locked down separately
-// by the dedicated BE-parity tests in this same module (which build
-// LE-encoded fixtures via `byte_swap` helpers and assert
-// `<true>`/`<false>` parity on every host) and by the LE-decode
-// regression tests added in commits c3a6478, dcf40a3, f1161d7,
-// 63fdf8f (which build LE-encoded fixtures via
-// `f32::from_bits(u32::from_le(_))` /
-// `half::f16::from_bits(u16::from_le(_))` and assert kernel output
-// matches scalar on every host). Those tests are intentionally NOT
-// gated.
+// Fixtures are built via `pseudo_random_rgbf32` / `pseudo_random_rgbf16`,
+// which produce host-native `f32` / `half::f16` values. They are then
+// re-encoded through `as_le_rgbf32` / `as_le_rgbf16` so the byte layout
+// matches what the kernels (called with `::<false>`, i.e. LE-encoded
+// input) expect on every host: the kernel's internal `from_le` recovers
+// the intended host-native value on both LE (no-op) and BE (byte-swap)
+// hosts, so SIMD-vs-scalar parity AND lossless equality assertions
+// hold on both.
+
+/// Re-encode a host-native f32 slice as LE-encoded f32: pack each value
+/// into LE bytes (so storage = LE bytes on every host), then load via
+/// `from_ne_bytes`. On LE host this is a no-op; on BE host every f32
+/// is byte-swapped relative to its host-native representation.
+fn as_le_rgbf32(host: &[f32]) -> std::vec::Vec<f32> {
+  host
+    .iter()
+    .map(|v| f32::from_bits(u32::from_ne_bytes(v.to_bits().to_le_bytes())))
+    .collect()
+}
+
+/// Same idea for half::f16 slices.
+fn as_le_rgbf16(host: &[half::f16]) -> std::vec::Vec<half::f16> {
+  host
+    .iter()
+    .map(|v| half::f16::from_bits(u16::from_ne_bytes(v.to_bits().to_le_bytes())))
+    .collect()
+}
 
 /// Generates a row of pseudo-random `f32` RGB samples. Mix of in-range
 /// `[0, 1]` values, exact `0.5` (round-half-even tie), and HDR > 1.0
@@ -69,11 +56,10 @@ fn pseudo_random_rgbf32(width: usize) -> std::vec::Vec<f32> {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn rgbf32_to_rgb_neon_matches_scalar_widths() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf32(w);
+    let input = as_le_rgbf32(&pseudo_random_rgbf32(w));
     let mut out_scalar = std::vec![0u8; w * 3];
     let mut out_neon = std::vec![0u8; w * 3];
     scalar::rgbf32_to_rgb_row::<false>(&input, &mut out_scalar, w);
@@ -85,11 +71,10 @@ fn rgbf32_to_rgb_neon_matches_scalar_widths() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn rgbf32_to_rgba_neon_matches_scalar_widths() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf32(w);
+    let input = as_le_rgbf32(&pseudo_random_rgbf32(w));
     let mut out_scalar = std::vec![0u8; w * 4];
     let mut out_neon = std::vec![0u8; w * 4];
     scalar::rgbf32_to_rgba_row::<false>(&input, &mut out_scalar, w);
@@ -101,11 +86,10 @@ fn rgbf32_to_rgba_neon_matches_scalar_widths() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn rgbf32_to_rgb_u16_neon_matches_scalar_widths() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf32(w);
+    let input = as_le_rgbf32(&pseudo_random_rgbf32(w));
     let mut out_scalar = std::vec![0u16; w * 3];
     let mut out_neon = std::vec![0u16; w * 3];
     scalar::rgbf32_to_rgb_u16_row::<false>(&input, &mut out_scalar, w);
@@ -117,11 +101,10 @@ fn rgbf32_to_rgb_u16_neon_matches_scalar_widths() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn rgbf32_to_rgba_u16_neon_matches_scalar_widths() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf32(w);
+    let input = as_le_rgbf32(&pseudo_random_rgbf32(w));
     let mut out_scalar = std::vec![0u16; w * 4];
     let mut out_neon = std::vec![0u16; w * 4];
     scalar::rgbf32_to_rgba_u16_row::<false>(&input, &mut out_scalar, w);
@@ -133,11 +116,11 @@ fn rgbf32_to_rgba_u16_neon_matches_scalar_widths() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn rgbf32_to_rgb_f32_neon_matches_scalar_widths() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf32(w);
+    let host_input = pseudo_random_rgbf32(w);
+    let input = as_le_rgbf32(&host_input);
     let mut out_scalar = std::vec![0.0f32; w * 3];
     let mut out_neon = std::vec![0.0f32; w * 3];
     scalar::rgbf32_to_rgb_f32_row::<false>(&input, &mut out_scalar, w);
@@ -145,8 +128,10 @@ fn rgbf32_to_rgb_f32_neon_matches_scalar_widths() {
       rgbf32_to_rgb_f32_row::<false>(&input, &mut out_neon, w);
     }
     assert_eq!(out_scalar, out_neon, "width {w}");
-    // Lossless: output should equal input bit-exact.
-    assert_eq!(out_neon, input[..w * 3], "lossless width {w}");
+    // Lossless: output (host-native) should equal the original host-native
+    // input bit-exact. The kernel decodes the LE-encoded `input` via
+    // `from_le` back to host-native, so the output matches `host_input`.
+    assert_eq!(out_neon, host_input[..w * 3], "lossless width {w}");
   }
 }
 
@@ -165,7 +150,6 @@ fn pseudo_random_rgbf16(width: usize) -> std::vec::Vec<half::f16> {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -175,7 +159,7 @@ fn neon_rgbf16_to_rgb_matches_scalar() {
     return;
   }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf16(w);
+    let input = as_le_rgbf16(&pseudo_random_rgbf16(w));
     let mut out_scalar = std::vec![0u8; w * 3];
     let mut out_neon = std::vec![0u8; w * 3];
     scalar::rgbf16_to_rgb_row::<false>(&input, &mut out_scalar, w);
@@ -187,7 +171,6 @@ fn neon_rgbf16_to_rgb_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -197,7 +180,7 @@ fn neon_rgbf16_to_rgba_matches_scalar() {
     return;
   }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf16(w);
+    let input = as_le_rgbf16(&pseudo_random_rgbf16(w));
     let mut out_scalar = std::vec![0u8; w * 4];
     let mut out_neon = std::vec![0u8; w * 4];
     scalar::rgbf16_to_rgba_row::<false>(&input, &mut out_scalar, w);
@@ -209,7 +192,6 @@ fn neon_rgbf16_to_rgba_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -219,7 +201,7 @@ fn neon_rgbf16_to_rgb_u16_matches_scalar() {
     return;
   }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf16(w);
+    let input = as_le_rgbf16(&pseudo_random_rgbf16(w));
     let mut out_scalar = std::vec![0u16; w * 3];
     let mut out_neon = std::vec![0u16; w * 3];
     scalar::rgbf16_to_rgb_u16_row::<false>(&input, &mut out_scalar, w);
@@ -231,7 +213,6 @@ fn neon_rgbf16_to_rgb_u16_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -241,7 +222,7 @@ fn neon_rgbf16_to_rgba_u16_matches_scalar() {
     return;
   }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf16(w);
+    let input = as_le_rgbf16(&pseudo_random_rgbf16(w));
     let mut out_scalar = std::vec![0u16; w * 4];
     let mut out_neon = std::vec![0u16; w * 4];
     scalar::rgbf16_to_rgba_u16_row::<false>(&input, &mut out_scalar, w);
@@ -253,7 +234,6 @@ fn neon_rgbf16_to_rgba_u16_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -263,7 +243,7 @@ fn neon_rgbf16_to_rgb_f32_matches_scalar() {
     return;
   }
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf16(w);
+    let input = as_le_rgbf16(&pseudo_random_rgbf16(w));
     let mut out_scalar = std::vec![0.0f32; w * 3];
     let mut out_neon = std::vec![0.0f32; w * 3];
     scalar::rgbf16_to_rgb_f32_row::<false>(&input, &mut out_scalar, w);
@@ -275,14 +255,14 @@ fn neon_rgbf16_to_rgb_f32_matches_scalar() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn neon_rgbf16_to_rgb_f16_matches_scalar() {
   for w in [1usize, 3, 4, 5, 7, 8, 15, 16, 17, 31, 33, 1920, 1921] {
-    let input = pseudo_random_rgbf16(w);
+    let host_input = pseudo_random_rgbf16(w);
+    let input = as_le_rgbf16(&host_input);
     let mut out_scalar = std::vec![half::f16::ZERO; w * 3];
     let mut out_neon = std::vec![half::f16::ZERO; w * 3];
     scalar::rgbf16_to_rgb_f16_row::<false>(&input, &mut out_scalar, w);
@@ -290,8 +270,10 @@ fn neon_rgbf16_to_rgb_f16_matches_scalar() {
       rgbf16_to_rgb_f16_row::<false>(&input, &mut out_neon, w);
     }
     assert_eq!(out_scalar, out_neon, "width {w}");
-    // Lossless: output should equal input bit-exact.
-    assert_eq!(out_neon, input[..w * 3], "lossless width {w}");
+    // Lossless: output (host-native) should equal the original host-native
+    // input bit-exact. The kernel decodes the LE-encoded `input` via
+    // `from_le` back to host-native, so the output matches `host_input`.
+    assert_eq!(out_neon, host_input[..w * 3], "lossless width {w}");
   }
 }
 

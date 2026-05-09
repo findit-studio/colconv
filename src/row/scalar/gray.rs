@@ -617,6 +617,17 @@ pub(crate) fn gray16_to_hsv_row<const BE: bool>(
 mod tests {
   use super::*;
 
+  /// Re-encode a host-native u16 slice as LE-encoded byte storage, packed back
+  /// into `Vec<u16>`. Kernels called with `BE = false` recover the intended
+  /// logical values via `u16::from_le` on both LE (no-op) and BE (byte-swap)
+  /// hosts.
+  fn as_le_u16(host: &[u16]) -> std::vec::Vec<u16> {
+    host
+      .iter()
+      .map(|v| u16::from_ne_bytes(v.to_le_bytes()))
+      .collect()
+  }
+
   #[test]
   fn gray8_to_rgb_broadcasts() {
     let y = [0u8, 128, 255];
@@ -737,30 +748,27 @@ mod tests {
   // ---- Gray10 limited-range tests ----
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray10_limited_range_black() {
     // 10-bit black = 16 << 2 = 64
-    let y: std::vec::Vec<u16> = std::vec![64u16];
+    let y = as_le_u16(&[64u16]);
     let mut out = std::vec![0u8; 3];
     gray_n_to_rgb_row::<10, false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[0, 0, 0]);
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray10_limited_range_white() {
     // 10-bit white = 235 << 2 = 940
-    let y: std::vec::Vec<u16> = std::vec![940u16];
+    let y = as_le_u16(&[940u16]);
     let mut out = std::vec![0u8; 3];
     gray_n_to_rgb_row::<10, false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[255, 255, 255]);
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray10_limited_range_midpoint() {
     // 10-bit mid: 125 << 2 = 500 → approx 127
-    let y: std::vec::Vec<u16> = std::vec![500u16];
+    let y = as_le_u16(&[500u16]);
     let mut out = std::vec![0u8; 3];
     gray_n_to_rgb_row::<10, false>(&y, &mut out, 1, false);
     assert!(
@@ -771,10 +779,9 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray10_full_range_pass_through() {
     // 10-bit full range: value 512 >> 2 = 128
-    let y: std::vec::Vec<u16> = std::vec![512u16];
+    let y = as_le_u16(&[512u16]);
     let mut out = std::vec![0u8; 3];
     gray_n_to_rgb_row::<10, false>(&y, &mut out, 1, true);
     assert_eq!(&out[0..3], &[128, 128, 128]);
@@ -783,20 +790,18 @@ mod tests {
   // ---- Gray12 limited-range tests ----
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray12_limited_range_black() {
     // 12-bit black = 16 << 4 = 256
-    let y: std::vec::Vec<u16> = std::vec![256u16];
+    let y = as_le_u16(&[256u16]);
     let mut out = std::vec![0u8; 3];
     gray_n_to_rgb_row::<12, false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[0, 0, 0]);
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray12_limited_range_white() {
     // 12-bit white = 235 << 4 = 3760
-    let y: std::vec::Vec<u16> = std::vec![3760u16];
+    let y = as_le_u16(&[3760u16]);
     let mut out = std::vec![0u8; 3];
     gray_n_to_rgb_row::<12, false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[255, 255, 255]);
@@ -805,20 +810,18 @@ mod tests {
   // ---- Gray14 limited-range tests ----
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray14_limited_range_black() {
     // 14-bit black = 16 << 6 = 1024
-    let y: std::vec::Vec<u16> = std::vec![1024u16];
+    let y = as_le_u16(&[1024u16]);
     let mut out = std::vec![0u8; 3];
     gray_n_to_rgb_row::<14, false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[0, 0, 0]);
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray14_limited_range_white() {
     // 14-bit white = 235 << 6 = 15040
-    let y: std::vec::Vec<u16> = std::vec![15040u16];
+    let y = as_le_u16(&[15040u16]);
     let mut out = std::vec![0u8; 3];
     gray_n_to_rgb_row::<14, false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[255, 255, 255]);
@@ -827,30 +830,27 @@ mod tests {
   // ---- Gray16 limited-range tests ----
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray16_limited_range_black() {
     // 16-bit black = 16 << 8 = 4096
-    let y: std::vec::Vec<u16> = std::vec![4096u16];
+    let y = as_le_u16(&[4096u16]);
     let mut out = std::vec![0u8; 3];
     gray16_to_rgb_row::<false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[0, 0, 0]);
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray16_limited_range_white() {
     // 16-bit white = 235 << 8 = 60160
-    let y: std::vec::Vec<u16> = std::vec![60160u16];
+    let y = as_le_u16(&[60160u16]);
     let mut out = std::vec![0u8; 3];
     gray16_to_rgb_row::<false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[255, 255, 255]);
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray16_limited_range_midpoint() {
     // 16-bit mid: 125 << 8 = 32000 → approx 127
-    let y: std::vec::Vec<u16> = std::vec![32000u16];
+    let y = as_le_u16(&[32000u16]);
     let mut out = std::vec![0u8; 3];
     gray16_to_rgb_row::<false>(&y, &mut out, 1, false);
     assert!(
@@ -861,10 +861,9 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray16_full_range_pass_through() {
     // 16-bit full range: 0x8000 >> 8 = 128
-    let y: std::vec::Vec<u16> = std::vec![0x8000u16];
+    let y = as_le_u16(&[0x8000u16]);
     let mut out = std::vec![0u8; 3];
     gray16_to_rgb_row::<false>(&y, &mut out, 1, true);
     assert_eq!(&out[0..3], &[128, 128, 128]);
@@ -878,18 +877,16 @@ mod tests {
   // values (black, white, over-white) end-to-end.
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray16_to_rgb_u16_limited_range_black() {
-    let y: std::vec::Vec<u16> = std::vec![4096u16]; // limited-range black
+    let y = as_le_u16(&[4096u16]); // limited-range black
     let mut out = std::vec![0u16; 3];
     gray16_to_rgb_u16_row::<false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[0, 0, 0]);
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray16_to_rgb_u16_limited_range_white() {
-    let y: std::vec::Vec<u16> = std::vec![60160u16]; // limited-range white
+    let y = as_le_u16(&[60160u16]); // limited-range white
     let mut out = std::vec![0u16; 3];
     gray16_to_rgb_u16_row::<false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[65535, 65535, 65535]);
@@ -898,16 +895,15 @@ mod tests {
   #[test]
   fn gray16_to_rgb_u16_limited_range_over_white_clamps() {
     // Over-white (Y > 60160) is clamped to max_native=65535.
-    let y: std::vec::Vec<u16> = std::vec![65535u16];
+    let y = as_le_u16(&[65535u16]);
     let mut out = std::vec![0u16; 3];
     gray16_to_rgb_u16_row::<false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[65535, 65535, 65535]);
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray16_to_rgba_u16_limited_range_black_and_white() {
-    let y: std::vec::Vec<u16> = std::vec![4096u16, 60160u16];
+    let y = as_le_u16(&[4096u16, 60160u16]);
     let mut out = std::vec![0u16; 8];
     gray16_to_rgba_u16_row::<false>(&y, &mut out, 2, false);
     assert_eq!(&out[0..3], &[0, 0, 0]);
@@ -919,10 +915,9 @@ mod tests {
   // ---- Original tests (now with full_range=true) ----
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray_n_to_rgb_10bit_downshifts() {
     // 10-bit: 1023 >> 2 = 255; 0 >> 2 = 0; 512 >> 2 = 128
-    let y: std::vec::Vec<u16> = std::vec![0, 512, 1023];
+    let y = as_le_u16(&[0, 512, 1023]);
     let mut out = std::vec![0u8; 9];
     gray_n_to_rgb_row::<10, false>(&y, &mut out, 3, true);
     assert_eq!(&out[0..3], &[0, 0, 0]);
@@ -931,10 +926,9 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray_n_to_rgb_u16_10bit_masks() {
     // Upper bits should be masked out: 0xFFFF & 0x03FF = 0x03FF = 1023
-    let y: std::vec::Vec<u16> = std::vec![0xFFFF, 512, 0];
+    let y = as_le_u16(&[0xFFFF, 512, 0]);
     let mut out = std::vec![0u16; 9];
     gray_n_to_rgb_u16_row::<10, false>(&y, &mut out, 3, true);
     assert_eq!(&out[0..3], &[1023, 1023, 1023]);
@@ -943,9 +937,8 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray_n_to_hsv_h0_s0() {
-    let y: std::vec::Vec<u16> = std::vec![512u16]; // 512 >> 2 = 128
+    let y = as_le_u16(&[512u16]); // 512 >> 2 = 128
     let mut h = std::vec![0xFFu8; 1];
     let mut s = std::vec![0xFFu8; 1];
     let mut v = std::vec![0u8; 1];
@@ -956,9 +949,8 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray16_to_rgb_downshifts_8() {
-    let y: std::vec::Vec<u16> = std::vec![0, 0x8000, 0xFFFF];
+    let y = as_le_u16(&[0, 0x8000, 0xFFFF]);
     let mut out = std::vec![0u8; 9];
     gray16_to_rgb_row::<false>(&y, &mut out, 3, true);
     assert_eq!(&out[0..3], &[0, 0, 0]);
@@ -967,18 +959,16 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray16_to_luma_u16_identity() {
-    let y: std::vec::Vec<u16> = std::vec![0, 1000, 65535];
+    let y = as_le_u16(&[0, 1000, 65535]);
     let mut out = std::vec![0u16; 3];
     gray16_to_luma_u16_row::<false>(&y, &mut out, 3);
     assert_eq!(out.as_slice(), &[0, 1000, 65535]);
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray16_to_rgba_u16_opaque() {
-    let y: std::vec::Vec<u16> = std::vec![12345u16];
+    let y = as_le_u16(&[12345u16]);
     let mut out = std::vec![0u16; 4];
     gray16_to_rgba_u16_row::<false>(&y, &mut out, 1, true);
     assert_eq!(&out[0..4], &[12345, 12345, 12345, 0xFFFF]);
@@ -995,30 +985,27 @@ mod tests {
   // ---- Gray9 limited-range tests ----
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray9_limited_range_black() {
     // 9-bit black = 16 << 1 = 32
-    let y: std::vec::Vec<u16> = std::vec![32u16];
+    let y = as_le_u16(&[32u16]);
     let mut out = std::vec![0u8; 3];
     gray_n_to_rgb_row::<9, false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[0, 0, 0]);
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray9_limited_range_white() {
     // 9-bit white = 235 << 1 = 470
-    let y: std::vec::Vec<u16> = std::vec![470u16];
+    let y = as_le_u16(&[470u16]);
     let mut out = std::vec![0u8; 3];
     gray_n_to_rgb_row::<9, false>(&y, &mut out, 1, false);
     assert_eq!(&out[0..3], &[255, 255, 255]);
   }
 
   #[test]
-  #[cfg(target_endian = "little")]
   fn gray9_full_range_pass_through() {
     // 9-bit full range: value 256 >> 1 = 128
-    let y: std::vec::Vec<u16> = std::vec![256u16];
+    let y = as_le_u16(&[256u16]);
     let mut out = std::vec![0u8; 3];
     gray_n_to_rgb_row::<9, false>(&y, &mut out, 1, true);
     assert_eq!(&out[0..3], &[128, 128, 128]);

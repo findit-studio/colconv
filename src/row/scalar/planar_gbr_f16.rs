@@ -432,9 +432,14 @@ mod tests {
     miri,
     ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
   )]
-  #[cfg(target_endian = "little")]
   fn copy_alpha_plane_f16_only_writes_alpha_slot() {
-    let alpha = vec![half::f16::from_f32(0.7), half::f16::from_f32(0.3)];
+    // LE-encoded fixture so the kernel's `from_le` recovers host-native values
+    // on both LE (no-op) and BE (byte-swap) hosts.
+    let host_alpha = [half::f16::from_f32(0.7), half::f16::from_f32(0.3)];
+    let alpha: std::vec::Vec<half::f16> = host_alpha
+      .iter()
+      .map(|v| half::f16::from_bits(u16::from_ne_bytes(v.to_bits().to_le_bytes())))
+      .collect();
     let sentinel = half::f16::from_f32(0.1);
     let mut rgba = vec![sentinel; 8];
     copy_alpha_plane_f16::<false>(&alpha, &mut rgba, 2);

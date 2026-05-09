@@ -1,5 +1,31 @@
 use super::*;
 
+// Helper: re-encode a host-native u16 slice as the LE-encoded byte layout so
+// kernels called with `BE = false` recover the intended values via `from_le`
+// on both LE (no-op) and BE (byte-swap) hosts.
+fn as_le_u16(host: &[u16]) -> std::vec::Vec<u16> {
+  host
+    .iter()
+    .map(|v| u16::from_ne_bytes(v.to_le_bytes()))
+    .collect()
+}
+
+// Same idea for `half::f16` slices.
+fn as_le_f16(host: &[half::f16]) -> std::vec::Vec<half::f16> {
+  host
+    .iter()
+    .map(|v| half::f16::from_bits(u16::from_ne_bytes(v.to_bits().to_le_bytes())))
+    .collect()
+}
+
+// Same idea for `f32` slices.
+fn as_le_f32(host: &[f32]) -> std::vec::Vec<f32> {
+  host
+    .iter()
+    .map(|v| f32::from_bits(u32::from_ne_bytes(v.to_bits().to_le_bytes())))
+    .collect()
+}
+
 // ---- expand_rgb_to_rgba_row -----------------------------------------
 
 #[test]
@@ -240,36 +266,33 @@ fn hsv_pure_blue_matches_opencv() {
 // ---- yuv_420p_n_to_rgb_row (10-bit → u8) -----------------------------
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv420p10_rgb_black_full_range() {
   // Y=0, neutral chroma (512 in 10-bit) → black.
-  let y = [0u16; 4];
-  let u = [512u16; 2];
-  let v = [512u16; 2];
+  let y = as_le_u16(&[0u16; 4]);
+  let u = as_le_u16(&[512u16; 2]);
+  let v = as_le_u16(&[512u16; 2]);
   let mut rgb = [0u8; 12];
   yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 0), "got {rgb:?}");
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv420p10_rgb_white_full_range() {
   // 10-bit full-range white is Y=1023.
-  let y = [1023u16; 4];
-  let u = [512u16; 2];
-  let v = [512u16; 2];
+  let y = as_le_u16(&[1023u16; 4]);
+  let u = as_le_u16(&[512u16; 2]);
+  let v = as_le_u16(&[512u16; 2]);
   let mut rgb = [0u8; 12];
   yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 255), "got {rgb:?}");
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv420p10_rgb_gray_is_gray() {
   // Mid-gray 10-bit Y=512 ↔ 8-bit 128. Within ±1 for Q15 rounding.
-  let y = [512u16; 4];
-  let u = [512u16; 2];
-  let v = [512u16; 2];
+  let y = as_le_u16(&[512u16; 4]);
+  let u = as_le_u16(&[512u16; 2]);
+  let v = as_le_u16(&[512u16; 2]);
   let mut rgb = [0u8; 12];
   yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
@@ -281,12 +304,11 @@ fn yuv420p10_rgb_gray_is_gray() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv420p10_rgb_limited_range_black_and_white() {
   // 10-bit limited: Y=64 → black, Y=940 → white.
-  let y = [64u16, 64, 940, 940];
-  let u = [512u16; 2];
-  let v = [512u16; 2];
+  let y = as_le_u16(&[64u16, 64, 940, 940]);
+  let u = as_le_u16(&[512u16; 2]);
+  let v = as_le_u16(&[512u16; 2]);
   let mut rgb = [0u8; 12];
   yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, false);
   assert_eq!((rgb[0], rgb[1], rgb[2]), (0, 0, 0));
@@ -296,12 +318,11 @@ fn yuv420p10_rgb_limited_range_black_and_white() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv420p10_rgb_chroma_shared_across_pair() {
   // Two 10-bit Y values sharing chroma: output is gray = Y>>2.
-  let y = [200u16, 800, 200, 800];
-  let u = [512u16; 2];
-  let v = [512u16; 2];
+  let y = as_le_u16(&[200u16, 800, 200, 800]);
+  let u = as_le_u16(&[512u16; 2]);
+  let v = as_le_u16(&[512u16; 2]);
   let mut rgb = [0u8; 12];
   yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
   // Full-range 10→8 scale = 255/1023, so Y=200 → 50, Y=800 → 199.4 → 199.
@@ -315,35 +336,32 @@ fn yuv420p10_rgb_chroma_shared_across_pair() {
 // ---- yuv_420p_n_to_rgb_u16_row (10-bit → 10-bit u16) ----------------
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv420p10_rgb_u16_black_full_range() {
-  let y = [0u16; 4];
-  let u = [512u16; 2];
-  let v = [512u16; 2];
+  let y = as_le_u16(&[0u16; 4]);
+  let u = as_le_u16(&[512u16; 2]);
+  let v = as_le_u16(&[512u16; 2]);
   let mut rgb = [0u16; 12];
   yuv_420p_n_to_rgb_u16_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 0), "got {rgb:?}");
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv420p10_rgb_u16_white_full_range() {
   // 10-bit input Y=1023, full-range scale=1 → output Y=1023 on each channel.
-  let y = [1023u16; 4];
-  let u = [512u16; 2];
-  let v = [512u16; 2];
+  let y = as_le_u16(&[1023u16; 4]);
+  let u = as_le_u16(&[512u16; 2]);
+  let v = as_le_u16(&[512u16; 2]);
   let mut rgb = [0u16; 12];
   yuv_420p_n_to_rgb_u16_row::<10, false>(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 1023), "got {rgb:?}");
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv420p10_rgb_u16_limited_range_endpoints() {
   // Limited-range: Y=64 → 0, Y=940 → 1023 in 10-bit output.
-  let y = [64u16, 940];
-  let u = [512u16; 1];
-  let v = [512u16; 1];
+  let y = as_le_u16(&[64u16, 940]);
+  let u = as_le_u16(&[512u16; 1]);
+  let v = as_le_u16(&[512u16; 1]);
   let mut rgb = [0u16; 6];
   yuv_420p_n_to_rgb_u16_row::<10, false>(&y, &u, &v, &mut rgb, 2, ColorMatrix::Bt709, false);
   assert_eq!((rgb[0], rgb[1], rgb[2]), (0, 0, 0));
@@ -351,15 +369,14 @@ fn yuv420p10_rgb_u16_limited_range_endpoints() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv420p10_rgb_u16_preserves_full_10bit_precision() {
   // Sanity: the u16 path retains native-depth precision, so two
   // inputs that round to the same u8 are distinguishable in u16.
   // Full-range Y=200 vs Y=201: same u8 output (50 vs 50) but
   // distinct u16 outputs (200 vs 201).
-  let y = [200u16, 201];
-  let u = [512u16; 1];
-  let v = [512u16; 1];
+  let y = as_le_u16(&[200u16, 201]);
+  let u = as_le_u16(&[512u16; 1]);
+  let v = as_le_u16(&[512u16; 1]);
   let mut rgb8 = [0u8; 6];
   let mut rgb16 = [0u16; 6];
   yuv_420p_n_to_rgb_row::<10, false>(&y, &u, &v, &mut rgb8, 2, ColorMatrix::Bt601, true);
@@ -395,33 +412,30 @@ fn yuv420p10_bt709_ycgco_differ_for_chroma() {
 // White Y = 1023 << 6 = 0xFFC0, neutral UV = 512 << 6 = 0x8000.
 
 #[test]
-#[cfg(target_endian = "little")]
 fn p010_rgb_black_full_range() {
   // Y = 0, neutral UV → black.
-  let y = [0u16; 4];
-  let uv = [0x8000u16, 0x8000, 0x8000, 0x8000]; // U0 V0 U1 V1
+  let y = as_le_u16(&[0u16; 4]);
+  let uv = as_le_u16(&[0x8000u16, 0x8000, 0x8000, 0x8000]); // U0 V0 U1 V1
   let mut rgb = [0u8; 12];
   p_n_to_rgb_row::<10, false>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 0), "got {rgb:?}");
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn p010_rgb_white_full_range() {
   // Y = 0xFFC0 = 1023 << 6, neutral UV → white.
-  let y = [0xFFC0u16; 4];
-  let uv = [0x8000u16, 0x8000, 0x8000, 0x8000];
+  let y = as_le_u16(&[0xFFC0u16; 4]);
+  let uv = as_le_u16(&[0x8000u16, 0x8000, 0x8000, 0x8000]);
   let mut rgb = [0u8; 12];
   p_n_to_rgb_row::<10, false>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 255), "got {rgb:?}");
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn p010_rgb_gray_is_gray() {
   // 10-bit mid-gray Y=512 → P010 Y = 512 << 6 = 0x8000.
-  let y = [0x8000u16; 4];
-  let uv = [0x8000u16; 4];
+  let y = as_le_u16(&[0x8000u16; 4]);
+  let uv = as_le_u16(&[0x8000u16; 4]);
   let mut rgb = [0u8; 12];
   p_n_to_rgb_row::<10, false>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
@@ -433,12 +447,11 @@ fn p010_rgb_gray_is_gray() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn p010_rgb_limited_range_endpoints() {
   // 10-bit limited black Y=64 → P010 = 64 << 6 = 0x1000.
   // 10-bit limited white Y=940 → P010 = 940 << 6 = 0xEB00.
-  let y = [0x1000u16, 0x1000, 0xEB00, 0xEB00];
-  let uv = [0x8000u16, 0x8000, 0x8000, 0x8000];
+  let y = as_le_u16(&[0x1000u16, 0x1000, 0xEB00, 0xEB00]);
+  let uv = as_le_u16(&[0x8000u16, 0x8000, 0x8000, 0x8000]);
   let mut rgb = [0u8; 12];
   p_n_to_rgb_row::<10, false>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, false);
   assert_eq!((rgb[0], rgb[1], rgb[2]), (0, 0, 0));
@@ -483,20 +496,18 @@ fn p010_matches_yuv420p10_when_shifted() {
 // ---- p010_to_rgb_u16_row (P010 → native-depth u16) --------------------
 
 #[test]
-#[cfg(target_endian = "little")]
 fn p010_rgb_u16_white_full_range() {
-  let y = [0xFFC0u16; 4];
-  let uv = [0x8000u16; 4];
+  let y = as_le_u16(&[0xFFC0u16; 4]);
+  let uv = as_le_u16(&[0x8000u16; 4]);
   let mut rgb = [0u16; 12];
   p_n_to_rgb_u16_row::<10, false>(&y, &uv, &mut rgb, 4, ColorMatrix::Bt601, true);
   assert!(rgb.iter().all(|&c| c == 1023), "got {rgb:?}");
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 fn p010_rgb_u16_limited_range_endpoints() {
-  let y = [0x1000u16, 0xEB00];
-  let uv = [0x8000u16, 0x8000];
+  let y = as_le_u16(&[0x1000u16, 0xEB00]);
+  let uv = as_le_u16(&[0x8000u16, 0x8000]);
   let mut rgb = [0u16; 6];
   p_n_to_rgb_u16_row::<10, false>(&y, &uv, &mut rgb, 2, ColorMatrix::Bt709, false);
   assert_eq!((rgb[0], rgb[1], rgb[2]), (0, 0, 0));
@@ -506,13 +517,12 @@ fn p010_rgb_u16_limited_range_endpoints() {
 // ---- yuv_444p_n_to_rgba_row (10-bit → u8 RGBA) ----------------------
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv444p10_rgba_gray_alpha_is_ff() {
   // Mid-gray 10-bit Y=512 ↔ 8-bit ≈128. RGBA stride is 4 bytes/px;
   // alpha must be 0xFF on every pixel.
-  let y = [512u16; 4];
-  let u = [512u16; 4];
-  let v = [512u16; 4];
+  let y = as_le_u16(&[512u16; 4]);
+  let u = as_le_u16(&[512u16; 4]);
+  let v = as_le_u16(&[512u16; 4]);
   let mut rgba = [0u8; 16];
   yuv_444p_n_to_rgba_row::<10, false>(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
@@ -532,12 +542,11 @@ fn yuv444p10_rgba_gray_alpha_is_ff() {
 // ---- yuv_444p_n_to_rgba_u16_row (10-bit → 10-bit u16 RGBA) ---------
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv444p10_rgba_u16_gray_alpha_is_1023() {
   // 10-bit u16 RGBA: alpha element is `(1 << BITS) - 1 = 1023`.
-  let y = [512u16; 4];
-  let u = [512u16; 4];
-  let v = [512u16; 4];
+  let y = as_le_u16(&[512u16; 4]);
+  let u = as_le_u16(&[512u16; 4]);
+  let v = as_le_u16(&[512u16; 4]);
   let mut rgba = [0u16; 16];
   yuv_444p_n_to_rgba_u16_row::<10, false>(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
@@ -557,12 +566,11 @@ fn yuv444p10_rgba_u16_gray_alpha_is_1023() {
 // ---- yuv_444p16_to_rgba_row (16-bit → u8 RGBA) ----------------------
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv444p16_rgba_gray_alpha_is_ff() {
   // 16-bit mid-gray Y = 0x8000 → 8-bit ≈128. Alpha = 0xFF.
-  let y = [0x8000u16; 4];
-  let u = [0x8000u16; 4];
-  let v = [0x8000u16; 4];
+  let y = as_le_u16(&[0x8000u16; 4]);
+  let u = as_le_u16(&[0x8000u16; 4]);
+  let v = as_le_u16(&[0x8000u16; 4]);
   let mut rgba = [0u8; 16];
   yuv_444p16_to_rgba_row::<false>(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
@@ -582,12 +590,11 @@ fn yuv444p16_rgba_gray_alpha_is_ff() {
 // ---- yuv_444p16_to_rgba_u16_row (16-bit → 16-bit u16 RGBA) ---------
 
 #[test]
-#[cfg(target_endian = "little")]
 fn yuv444p16_rgba_u16_gray_alpha_is_ffff() {
   // 16-bit u16 RGBA: alpha element is `0xFFFF`.
-  let y = [0x8000u16; 4];
-  let u = [0x8000u16; 4];
-  let v = [0x8000u16; 4];
+  let y = as_le_u16(&[0x8000u16; 4]);
+  let u = as_le_u16(&[0x8000u16; 4]);
+  let v = as_le_u16(&[0x8000u16; 4]);
   let mut rgba = [0u16; 16];
   yuv_444p16_to_rgba_u16_row::<false>(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
@@ -608,13 +615,12 @@ fn yuv444p16_rgba_u16_gray_alpha_is_ffff() {
 // ---- p_n_444_to_rgba_row (P410 → u8 RGBA) ---------------------------
 
 #[test]
-#[cfg(target_endian = "little")]
 fn p410_rgba_gray_alpha_is_ff() {
   // P410: 10 active bits in HIGH 10 of each u16. Mid-gray 10-bit
   // Y=512 → P410 Y = 0x8000. UV interleaved: U V U V ... full width.
-  let y = [0x8000u16; 4];
+  let y = as_le_u16(&[0x8000u16; 4]);
   // 4 pixels × (U,V) per pixel = 8 elements.
-  let uv = [0x8000u16; 8];
+  let uv = as_le_u16(&[0x8000u16; 8]);
   let mut rgba = [0u8; 16];
   p_n_444_to_rgba_row::<10, false>(&y, &uv, &mut rgba, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
@@ -634,12 +640,11 @@ fn p410_rgba_gray_alpha_is_ff() {
 // ---- p_n_444_16_to_rgba_u16_row (P416 → 16-bit u16 RGBA) -----------
 
 #[test]
-#[cfg(target_endian = "little")]
 fn p416_rgba_u16_gray_alpha_is_ffff() {
   // P416: full 16-bit samples. Mid-gray Y=0x8000, neutral UV=0x8000.
   // 16-bit u16 RGBA: alpha element is `0xFFFF`.
-  let y = [0x8000u16; 4];
-  let uv = [0x8000u16; 8];
+  let y = as_le_u16(&[0x8000u16; 4]);
+  let uv = as_le_u16(&[0x8000u16; 8]);
   let mut rgba = [0u16; 16];
   p_n_444_16_to_rgba_u16_row::<false>(&y, &uv, &mut rgba, 4, ColorMatrix::Bt601, true);
   for x in 0..4 {
@@ -663,56 +668,26 @@ fn p416_rgba_u16_gray_alpha_is_ffff() {
 // `rgbf32_to_*_row` kernel with the widened f32 slice.  The outputs must
 // be identical, proving that widening is the only difference.
 //
-// LE-host gating rationale (codex 5th-pass review of PR #83):
-//
-// The fixture builder `rgbf16_test_inputs` produces host-native `half::f16`
-// (and widened host-native `f32`) values via `half::f16::from_f32` /
-// `to_f32`. The tests then call the kernels with `::<false>`, which means
-// "input is LE-encoded — decode to host-native by applying `from_le`".
-//
-// On a little-endian host, host-native bits and LE-encoded bits are the
-// same byte sequence, so `u16::from_le` / `u32::from_le` is a no-op and
-// the assertion holds.
-//
-// On a big-endian host, host-native `f16`/`f32` bits do NOT lay out
-// little-endian, so the kernel's `from_le` byte-swap correctly
-// reinterprets the host-native fixture as if it were an LE-encoded
-// payload — producing a different (corrupted) value than the test
-// expects.  The kernel itself is correct; this is purely a
-// fixture-vs-kernel byte-order mismatch on BE hosts (same class as the
-// PR #82 alpha_extract / planar_gbr_high_bit gates in `8f2e329`).
-//
-// Kernel BE-host correctness is locked down separately by the dedicated
-// BE-parity tests in the per-backend `tests/packed_rgb_float.rs`
-// modules, which build LE-encoded fixtures via
-// `f32::from_bits(u32::from_le(_))` / `half::f16::from_bits(u16::from_le(_))`
-// and assert the kernel output matches the original host-native values
-// on every host. Those tests are intentionally NOT gated.
-//
-// The fixture set `[0.0, 1.0, 0.5, 65504.0, 1e-5, -0.5, 2.5, 0.999, 0.001]`
-// includes only one byte-symmetric value (`0.0` → `0x00..00`); every
-// other value has distinct LE/BE byte layouts, so the parity assertions
-// would fail on BE without gating.
+// `rgbf16_test_inputs` re-encodes the host-native f16/f32 fixtures as
+// LE-encoded byte layouts via `as_le_f16` / `as_le_f32`, so the kernels
+// (called with `::<false>` ⇒ LE-encoded input) recover the intended
+// values via `u16::from_le` / `u32::from_le` on both LE (no-op) and BE
+// (byte-swap) hosts.
 
-/// 9 representative half-float inputs: normal [0,1] range, HDR, subnormal-
-/// ish, negative, and over-range.  Replicated across 9 pixels × 3 channels
-/// so that every channel position sees every value at some pixel.
-///
-/// LE-only: the six parity / widen / copy tests below are all gated on
-/// `target_endian = "little"`, so this helper is unused on BE hosts.
-#[cfg(target_endian = "little")]
+/// 9 representative half-float inputs (LE-encoded) plus the matching
+/// widened f32 slice (also LE-encoded). Each output channel position
+/// sees every input value at some pixel.
 fn rgbf16_test_inputs() -> (Vec<half::f16>, Vec<f32>, usize) {
   let inputs_f32: [f32; 9] = [0.0, 1.0, 0.5, 65504.0, 1e-5, -0.5, 2.5, 0.999, 0.001];
   let width = inputs_f32.len();
-  let rgb_in: Vec<half::f16> = (0..width * 3)
+  let rgb_in_host: Vec<half::f16> = (0..width * 3)
     .map(|i| half::f16::from_f32(inputs_f32[i % width]))
     .collect();
-  let widened: Vec<f32> = rgb_in.iter().map(|&h| h.to_f32()).collect();
-  (rgb_in, widened, width)
+  let widened_host: Vec<f32> = rgb_in_host.iter().map(|&h| h.to_f32()).collect();
+  (as_le_f16(&rgb_in_host), as_le_f32(&widened_host), width)
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
@@ -727,7 +702,6 @@ fn rgbf16_scalar_rgb_matches_widen_then_rgbf32() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
@@ -742,7 +716,6 @@ fn rgbf16_scalar_rgba_matches_widen_then_rgbf32() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
@@ -757,7 +730,6 @@ fn rgbf16_scalar_rgb_u16_matches_widen_then_rgbf32() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
@@ -772,7 +744,6 @@ fn rgbf16_scalar_rgba_u16_matches_widen_then_rgbf32() {
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
@@ -782,14 +753,20 @@ fn rgbf16_scalar_rgb_f32_matches_element_wise_widen() {
   let mut out = std::vec![0.0f32; width * 3];
   rgbf16_to_rgb_f32_row::<false>(&rgb_in, &mut out, width);
   // Each output must equal the bit-exact widening of the input f16.
+  // Output is host-native f32; `widened` is LE-encoded f32 — compare
+  // host-native values by re-interpreting `widened` through the same
+  // LE→host-native decode the kernel applied.
+  let widened_host: Vec<f32> = widened
+    .iter()
+    .map(|v| f32::from_bits(u32::from_le(v.to_bits())))
+    .collect();
   assert_eq!(
-    out, widened,
+    out, widened_host,
     "rgbf16_to_rgb_f32 must widen without clamping"
   );
 }
 
 #[test]
-#[cfg(target_endian = "little")]
 #[cfg_attr(
   miri,
   ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
@@ -798,8 +775,14 @@ fn rgbf16_scalar_rgb_f16_is_copy() {
   let (rgb_in, _widened, width) = rgbf16_test_inputs();
   let mut out = std::vec![half::f16::ZERO; width * 3];
   rgbf16_to_rgb_f16_row::<false>(&rgb_in, &mut out, width);
+  // Output is host-native f16; `rgb_in` is LE-encoded f16 — recover the
+  // host-native values for the lossless equality check.
+  let rgb_in_host: Vec<half::f16> = rgb_in
+    .iter()
+    .map(|v| half::f16::from_bits(u16::from_le(v.to_bits())))
+    .collect();
   assert_eq!(
-    out, rgb_in,
+    out, rgb_in_host,
     "rgbf16_to_rgb_f16 must be a byte-identical copy"
   );
 }

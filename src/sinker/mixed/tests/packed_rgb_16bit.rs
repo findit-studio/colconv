@@ -5,13 +5,22 @@ use crate::{
   yuv::{Bgr48, Bgra64, Rgb48, Rgba64, bgr48_to, bgra64_to, rgb48_to, rgba64_to},
 };
 
+/// Re-encode a host-native u16 slice as LE-encoded byte storage. Sink kernels
+/// recover the intended logical values via `u16::from_le` on both LE (no-op)
+/// and BE (byte-swap) hosts.
+fn as_le_u16(host: &[u16]) -> std::vec::Vec<u16> {
+  host
+    .iter()
+    .map(|v| u16::from_ne_bytes(v.to_le_bytes()))
+    .collect()
+}
+
 // ---- Rgb48 -----------------------------------------------------------------
 
-#[cfg(target_endian = "little")]
 #[test]
 fn rgb48_with_rgb_u16_identity() {
   // Native passthrough: each channel copied verbatim (no shift).
-  let src: Vec<u16> = vec![0x1234, 0x5678, 0x9ABC];
+  let src: Vec<u16> = as_le_u16(&[0x1234, 0x5678, 0x9ABC]);
   let frame = Rgb48Frame::new(&src, 1, 1, 3);
   let mut out = vec![0u16; 3];
   let mut sinker = MixedSinker::<Rgb48>::new(1, 1)
@@ -21,11 +30,10 @@ fn rgb48_with_rgb_u16_identity() {
   assert_eq!(out, vec![0x1234u16, 0x5678, 0x9ABC]);
 }
 
-#[cfg(target_endian = "little")]
 #[test]
 fn rgb48_with_rgb_narrows_correctly() {
   // Each 16-bit channel narrowed >> 8: 0xFF00 → 0xFF, 0x8000 → 0x80, 0x0100 → 0x01.
-  let src: Vec<u16> = vec![0xFF00, 0x8000, 0x0100];
+  let src: Vec<u16> = as_le_u16(&[0xFF00, 0x8000, 0x0100]);
   let frame = Rgb48Frame::new(&src, 1, 1, 3);
   let mut out = vec![0u8; 3];
   let mut sinker = MixedSinker::<Rgb48>::new(1, 1).with_rgb(&mut out).unwrap();
@@ -35,7 +43,7 @@ fn rgb48_with_rgb_narrows_correctly() {
 
 #[test]
 fn rgb48_with_rgba_forces_0xff() {
-  let src: Vec<u16> = vec![0xFFFF, 0x8000, 0x0000];
+  let src: Vec<u16> = as_le_u16(&[0xFFFF, 0x8000, 0x0000]);
   let frame = Rgb48Frame::new(&src, 1, 1, 3);
   let mut out = vec![0u8; 4];
   let mut sinker = MixedSinker::<Rgb48>::new(1, 1).with_rgba(&mut out).unwrap();
@@ -45,7 +53,7 @@ fn rgb48_with_rgba_forces_0xff() {
 
 #[test]
 fn rgb48_with_rgba_u16_forces_0xffff() {
-  let src: Vec<u16> = vec![0x1000, 0x2000, 0x3000];
+  let src: Vec<u16> = as_le_u16(&[0x1000, 0x2000, 0x3000]);
   let frame = Rgb48Frame::new(&src, 1, 1, 3);
   let mut out = vec![0u16; 4];
   let mut sinker = MixedSinker::<Rgb48>::new(1, 1)
@@ -55,11 +63,10 @@ fn rgb48_with_rgba_u16_forces_0xffff() {
   assert_eq!(out[3], 0xFFFF);
 }
 
-#[cfg(target_endian = "little")]
 #[test]
 fn rgb48_with_rgb_u16_and_rgba_u16_both_correct() {
   // Two pixels: verify identity copy for RGB and forced alpha for RGBA.
-  let src: Vec<u16> = vec![0x1234, 0x5678, 0x9ABC, 0xDEF0, 0x1357, 0x2468];
+  let src: Vec<u16> = as_le_u16(&[0x1234, 0x5678, 0x9ABC, 0xDEF0, 0x1357, 0x2468]);
   let frame = Rgb48Frame::new(&src, 2, 1, 6);
   let mut rgb_u16 = vec![0u16; 6];
   let mut rgba_u16 = vec![0u16; 8];
@@ -76,11 +83,10 @@ fn rgb48_with_rgb_u16_and_rgba_u16_both_correct() {
   assert_eq!(rgba_u16[7], 0xFFFF);
 }
 
-#[cfg(target_endian = "little")]
 #[test]
 fn rgb48_with_luma_non_zero_for_nonzero_input() {
   // Any non-zero equal R/G/B → non-zero luma.
-  let src: Vec<u16> = vec![0x8000, 0x8000, 0x8000];
+  let src: Vec<u16> = as_le_u16(&[0x8000, 0x8000, 0x8000]);
   let frame = Rgb48Frame::new(&src, 1, 1, 3);
   let mut luma = vec![0u8; 1];
   let mut sinker = MixedSinker::<Rgb48>::new(1, 1)
@@ -90,10 +96,9 @@ fn rgb48_with_luma_non_zero_for_nonzero_input() {
   assert_ne!(luma[0], 0);
 }
 
-#[cfg(target_endian = "little")]
 #[test]
 fn rgb48_with_luma_u16_non_zero_for_nonzero_input() {
-  let src: Vec<u16> = vec![0x8000, 0x8000, 0x8000];
+  let src: Vec<u16> = as_le_u16(&[0x8000, 0x8000, 0x8000]);
   let frame = Rgb48Frame::new(&src, 1, 1, 3);
   let mut luma_u16 = vec![0u16; 1];
   let mut sinker = MixedSinker::<Rgb48>::new(1, 1)
@@ -125,12 +130,11 @@ fn rgb48_simd_matches_scalar() {
 
 // ---- Bgr48 -----------------------------------------------------------------
 
-#[cfg(target_endian = "little")]
 #[test]
 fn bgr48_channel_order_swapped_vs_rgb48() {
   // B=0x1000, G=0x2000, R=0x3000 stored in BGR input order.
   // After sinker's B↔R swap on output: R=0x30, G=0x20, B=0x10 in u8 RGB.
-  let src: Vec<u16> = vec![0x1000, 0x2000, 0x3000];
+  let src: Vec<u16> = as_le_u16(&[0x1000, 0x2000, 0x3000]);
   let rgb_frame = Rgb48Frame::new(&src, 1, 1, 3);
   let bgr_frame = Bgr48Frame::new(&src, 1, 1, 3);
   let mut rgb_from_rgb48 = vec![0u8; 3];
@@ -153,7 +157,7 @@ fn bgr48_channel_order_swapped_vs_rgb48() {
 
 #[test]
 fn bgr48_with_rgba_forces_0xff() {
-  let src: Vec<u16> = vec![0xAAAA, 0xBBBB, 0xCCCC];
+  let src: Vec<u16> = as_le_u16(&[0xAAAA, 0xBBBB, 0xCCCC]);
   let frame = Bgr48Frame::new(&src, 1, 1, 3);
   let mut out = vec![0u8; 4];
   let mut sinker = MixedSinker::<Bgr48>::new(1, 1).with_rgba(&mut out).unwrap();
@@ -163,7 +167,7 @@ fn bgr48_with_rgba_forces_0xff() {
 
 #[test]
 fn bgr48_with_rgba_u16_forces_0xffff() {
-  let src: Vec<u16> = vec![0x1234, 0x5678, 0x9ABC];
+  let src: Vec<u16> = as_le_u16(&[0x1234, 0x5678, 0x9ABC]);
   let frame = Bgr48Frame::new(&src, 1, 1, 3);
   let mut out = vec![0u16; 4];
   let mut sinker = MixedSinker::<Bgr48>::new(1, 1)
@@ -175,11 +179,10 @@ fn bgr48_with_rgba_u16_forces_0xffff() {
 
 // ---- Rgba64 ----------------------------------------------------------------
 
-#[cfg(target_endian = "little")]
 #[test]
 fn rgba64_with_rgba_passes_source_alpha_u8() {
   // R=0xFFFF, G=0x8000, B=0x0000, A=0xABFF → alpha byte = 0xABFF >> 8 = 0xAB.
-  let src: Vec<u16> = vec![0xFFFF, 0x8000, 0x0000, 0xABFF];
+  let src: Vec<u16> = as_le_u16(&[0xFFFF, 0x8000, 0x0000, 0xABFF]);
   let frame = Rgba64Frame::new(&src, 1, 1, 4);
   let mut out = vec![0u8; 4];
   let mut sinker = MixedSinker::<Rgba64>::new(1, 1)
@@ -189,11 +192,10 @@ fn rgba64_with_rgba_passes_source_alpha_u8() {
   assert_eq!(out[3], 0xAB); // 0xABFF >> 8 = 0xAB
 }
 
-#[cfg(target_endian = "little")]
 #[test]
 fn rgba64_with_rgba_u16_passes_source_alpha_native() {
   // Source α = 0xABCD must be preserved verbatim (no shift).
-  let src: Vec<u16> = vec![0xFFFF, 0x8000, 0x0000, 0xABCD];
+  let src: Vec<u16> = as_le_u16(&[0xFFFF, 0x8000, 0x0000, 0xABCD]);
   let frame = Rgba64Frame::new(&src, 1, 1, 4);
   let mut out = vec![0u16; 4];
   let mut sinker = MixedSinker::<Rgba64>::new(1, 1)
@@ -278,7 +280,7 @@ fn rgba64_simd_matches_scalar() {
 #[test]
 fn rgba64_with_rgb_u16_drops_alpha() {
   // with_rgb_u16 must output exactly 3 elements per pixel (alpha slot dropped).
-  let src: Vec<u16> = vec![0x1111, 0x2222, 0x3333, 0xAAAA];
+  let src: Vec<u16> = as_le_u16(&[0x1111, 0x2222, 0x3333, 0xAAAA]);
   let frame = Rgba64Frame::new(&src, 1, 1, 4);
   let mut out = vec![0u16; 3];
   let mut sinker = MixedSinker::<Rgba64>::new(1, 1)
@@ -292,12 +294,11 @@ fn rgba64_with_rgb_u16_drops_alpha() {
 
 // ---- Bgra64 ----------------------------------------------------------------
 
-#[cfg(target_endian = "little")]
 #[test]
 fn bgra64_channel_order_and_alpha_preserved() {
   // B=0x1000, G=0x2000, R=0x3000, A=0xAAAA in BGRA source order.
   // After B↔R swap on output: R=0x30, G=0x20, B=0x10. Alpha 0xAAAA>>8=0xAA.
-  let src: Vec<u16> = vec![0x1000, 0x2000, 0x3000, 0xAAAA];
+  let src: Vec<u16> = as_le_u16(&[0x1000, 0x2000, 0x3000, 0xAAAA]);
   let frame = Bgra64Frame::new(&src, 1, 1, 4);
   let mut rgb_out = vec![0u8; 3];
   let mut rgba_out = vec![0u8; 4];
@@ -362,10 +363,9 @@ fn bgra64_strategy_a_plus_u16_path_byte_identical() {
   assert_eq!(rgba_u16_combo, rgba_u16_only);
 }
 
-#[cfg(target_endian = "little")]
 #[test]
 fn bgra64_with_rgba_u16_passes_source_alpha_native() {
-  let src: Vec<u16> = vec![0x1000, 0x2000, 0x3000, 0xBEEF];
+  let src: Vec<u16> = as_le_u16(&[0x1000, 0x2000, 0x3000, 0xBEEF]);
   let frame = Bgra64Frame::new(&src, 1, 1, 4);
   let mut out = vec![0u16; 4];
   let mut sinker = MixedSinker::<Bgra64>::new(1, 1)
@@ -405,16 +405,15 @@ fn rgba64_row_shape_mismatch_returns_error() {
   assert!(matches!(err, MixedSinkerError::RowShapeMismatch { .. }));
 }
 
-#[cfg(target_endian = "little")]
 #[test]
 fn rgb48_multi_row_frame() {
   // 2×2 frame: verify correct row-by-row accumulation.
-  let src: Vec<u16> = vec![
+  let src: Vec<u16> = as_le_u16(&[
     0xFF00, 0x0000, 0x0000, // row 0, px 0: R=0xFF, G=0x00, B=0x00
     0x0000, 0xFF00, 0x0000, // row 0, px 1: R=0x00, G=0xFF, B=0x00
     0x0000, 0x0000, 0xFF00, // row 1, px 0: R=0x00, G=0x00, B=0xFF
     0xFF00, 0xFF00, 0xFF00, // row 1, px 1: R=0xFF, G=0xFF, B=0xFF
-  ];
+  ]);
   let frame = Rgb48Frame::new(&src, 2, 2, 6);
   let mut out = vec![0u8; 12];
   let mut sinker = MixedSinker::<Rgb48>::new(2, 2).with_rgb(&mut out).unwrap();
