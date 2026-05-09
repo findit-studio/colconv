@@ -338,8 +338,8 @@ fn rgb_simd_matches_scalar_pseudo_random() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn non_4_aligned_height_reuses_trailing_chroma_row() {
-  // Height = 6 → chroma height = ceil(6/4) = 2. Y rows 0..4 read
-  // chroma row 0; Y rows 4..6 read chroma row 1. Distinct chroma
+  // Height = 6 → chroma height = ceil(6/4) = 2. Y rows 0..=3 read
+  // chroma row 0; Y rows 4..=5 read chroma row 1. Distinct chroma
   // values per chroma row let us assert the walker mapped the
   // trailing partial group correctly.
   let w: u32 = 16;

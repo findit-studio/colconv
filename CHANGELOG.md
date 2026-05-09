@@ -9,9 +9,9 @@ pixels. Mostly historical interest (Cinepak / Sorenson Spark / FFmpeg's
 `yuv410p` test fixtures); modern pipelines almost never see it.
 
 `Yuv410pFrame<'a>` — three u8 planes (Y full-size, U/V quarter-width
-quarter-height). Both `width` and `height` must be multiples of 4
-(unlike 4:2:0 which permits odd height). Construction validates plane
-lengths, strides, and 32-bit `stride × rows` overflow.
+quarter-height). `width` must be a multiple of 4, while `height` may
+be any non-zero value. Construction validates plane lengths, strides,
+and 32-bit `stride × rows` overflow.
 
 `MixedSinker<Yuv410p>` outputs:
 

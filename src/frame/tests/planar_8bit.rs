@@ -91,8 +91,9 @@ fn new_panics_on_invalid() {
 
 // ---- Yuv410pFrame -------------------------------------------------------
 //
-// 4:1:0 (Cinepak / Sorenson legacy): both width & height multiples of 4,
-// chroma planes are quarter-width AND quarter-height.
+// 4:1:0 (Cinepak / Sorenson legacy): width must be a multiple of 4;
+// height may be any non-zero value; chroma planes are quarter-width and
+// chroma height is computed with div_ceil(4).
 
 fn yuv410p_planes() -> (std::vec::Vec<u8>, std::vec::Vec<u8>, std::vec::Vec<u8>) {
   // 16×8 frame → U/V are 4×2.
