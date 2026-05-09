@@ -1,6 +1,5 @@
 //! Tests for `crate::row::scalar::gray`.
 
-
 use super::*;
 
 // ---- Host-independent BE-fixture helpers ----------------------------------
