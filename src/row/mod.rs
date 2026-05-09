@@ -82,8 +82,8 @@ pub(crate) use dispatch::vuyx::vuyx_to_luma_u16_row;
 pub use dispatch::{
   ayuv64::*, bayer::*, legacy_rgb::*, nv::*, packed_yuv411::*, packed_yuv422::*, pal8::*,
   planar_gbr::*, planar_gbr_high_bit::*, pn::*, rgb_f16_ops::*, rgb_float_ops::*, rgb_ops::*,
-  v30x::*, v210::*, v410::*, vuya::*, vuyx::*, xv36::*, y210::*, y212::*, y216::*, yuv420::*,
-  yuv444::*, yuva::*,
+  v30x::*, v210::*, v410::*, vuya::*, vuyx::*, xv36::*, y210::*, y212::*, y216::*, yuv411p::*,
+  yuv420::*, yuv444::*, yuva::*,
 };
 // Tier 12 — Xyz12 dispatchers depend on `f32::powf`, which is only
 // available with `feature = "std"` or `feature = "alloc"` (the latter

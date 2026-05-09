@@ -1,5 +1,43 @@
 # CHANGELOG
 
+## Unreleased — Tier 1.6 — Yuv411p (DV-NTSC legacy 4:1:1 planar)
+
+Closes Tier 1.6. New source-side pixel format `Yuv411p`
+(`AV_PIX_FMT_YUV411P`): 8-bit planar 4:1:1 YUV — full-resolution Y plus
+**quarter-width**, full-height U / V. One chroma sample covers four Y
+columns horizontally; chroma is fully sampled vertically (one chroma
+row per Y row, like 4:2:2). Width must be a multiple of 4
+(`Yuv411pFrame::try_new` validates `width & 3 == 0` and rejects
+otherwise). Common in DV-NTSC video (legacy); included for FFmpeg
+ingest completeness.
+
+Output coverage on `MixedSinker<Yuv411p>` matches the rest of the
+8-bit planar family: `with_rgb`, `with_rgba` (alpha = `0xFF` —
+Yuv411p has no alpha plane), `with_luma` (Y-plane copy), `with_luma_u16`
+(zero-extend), `with_hsv` (staged through RGB scratch), and Strategy A
+fan-out when both `with_rgb` and `with_rgba` are attached
+(RGB kernel runs once; `expand_rgb_to_rgba_row` pads alpha).
+
+SIMD coverage:
+
+- **NEON** (`aarch64`) — full per-row kernel processing 16 Y / 4 chroma
+  per iteration. The 1→4 chroma upsample is materialized in registers
+  via a paired `vzip_s16` cascade (i16x4 → i16x8 → i16x16) matching the
+  16 Y lanes; a scalar tail covers widths in `{4, 8, 12, 20, 24, 28, …}`
+  that leave a multiple-of-4 remainder. Output is byte-identical to
+  the scalar reference.
+- **x86 SSE4.1 / AVX2 / AVX-512BW** and **wasm32 simd128** — scalar
+  fallback. 4:1:1 is rare enough on modern targets that adding native
+  vector kernels for those backends would be speculative; the
+  dispatcher routes through the existing scalar reference until a real
+  workload demands it. The `yuv_411_to_rgb_row` / `yuv_411_to_rgba_row`
+  dispatcher gates SIMD only on aarch64.
+
+Structural analog: yuv422p (full-height chroma; only the horizontal
+subsampling factor changes from 2× to 4×). Yuv411p shares the same
+`@p3_emit quarter` walker-macro arm as Yuv410p; the two differ only
+in the `chroma_v` selector (`full` for 4:1:1, `quarter` for 4:1:0).
+
 ## Unreleased — Tier 1 — Yuv410p (Cinepak / Sorenson legacy 4:1:0 planar)
 
 Closes Tier 1 row 7 (P3 legacy). New source-side pixel format `Yuv410p`

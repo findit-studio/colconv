@@ -42,6 +42,7 @@ pub(super) mod y216;
 pub(crate) mod y_plane_to_luma_u16;
 pub(super) mod ya16;
 pub(super) mod ya8;
+pub(super) mod yuv411p;
 pub(super) mod yuv420;
 pub(super) mod yuv444;
 pub(super) mod yuva;

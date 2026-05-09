@@ -838,3 +838,266 @@ unsafe fn yuv_444_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
     }
   }
 }
+
+// ---- YUV 4:1:1 → RGB / RGBA (NEON) -------------------------------------
+
+/// NEON YUV 4:1:1 planar → packed RGB. One chroma sample drives four
+/// Y pixels (1→4 nearest-neighbor upsample in registers).
+///
+/// Same Q15 arithmetic as the scalar reference; output is byte-
+/// identical. Processes 16 Y / 4 chroma samples per iteration.
+///
+/// # Safety
+///
+/// 1. **NEON must be available on the current CPU.**
+/// 2. `width % 4 == 0`.
+/// 3. `y.len() >= width`, `u_quarter.len() >= width / 4`,
+///    `v_quarter.len() >= width / 4`.
+/// 4. `rgb_out.len() >= 3 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_411_to_rgb_row(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller-checked NEON availability + slice bounds — see
+  // [`yuv_411_to_rgb_or_rgba_row`] safety contract.
+  unsafe {
+    yuv_411_to_rgb_or_rgba_row::<false>(
+      y, u_quarter, v_quarter, rgb_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// NEON YUV 4:1:1 planar → packed **RGBA** (8-bit). Same contract as
+/// [`yuv_411_to_rgb_row`] but writes 4 bytes per pixel via `vst4q_u8`
+/// (R, G, B, `0xFF`).
+///
+/// # Safety
+///
+/// Same as [`yuv_411_to_rgb_row`] except `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yuv_411_to_rgba_row(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller-checked NEON availability + slice bounds — see
+  // [`yuv_411_to_rgb_or_rgba_row`] safety contract.
+  unsafe {
+    yuv_411_to_rgb_or_rgba_row::<true>(
+      y, u_quarter, v_quarter, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// Shared NEON YUV 4:1:1 kernel. Processes 16 Y pixels (= 4 chroma
+/// samples) per iteration; the 1→4 chroma upsample is materialized
+/// in registers via paired `vzip1q_s16` / `vzip2q_s16` cascades:
+/// 4 chroma lanes → 8 (each duplicated once) → 16 (each duplicated
+/// three more times) matches the 16 Y lanes.
+///
+/// 4:1:1 has no source-alpha variant (no `Yuva411p` exists), so the
+/// const-generic surface stays 1-D (`ALPHA` only).
+///
+/// # Safety
+///
+/// 1. **NEON must be available on the current CPU.**
+/// 2. `width % 4 == 0`.
+/// 3. `y.len() >= width`, `u_quarter.len() >= width / 4`,
+///    `v_quarter.len() >= width / 4`.
+/// 4. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(width & 3, 0, "YUV 4:1:1 requires width % 4 == 0");
+  debug_assert!(y.len() >= width);
+  debug_assert!(u_quarter.len() >= width / 4);
+  debug_assert!(v_quarter.len() >= width / 4);
+  let bpp: usize = if ALPHA { 4 } else { 3 };
+  debug_assert!(out.len() >= width * bpp);
+
+  let coeffs = scalar::Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = scalar::range_params_n::<8, 8>(full_range);
+  const RND: i32 = 1 << 14;
+
+  // SAFETY: NEON availability is the caller's obligation per the
+  // `# Safety` section above; the dispatcher in `crate::row` checks
+  // it. All pointer adds below are bounded by the
+  // `while x + 16 <= width` loop condition and the caller-promised
+  // slice lengths checked above.
+  unsafe {
+    let rnd_v = vdupq_n_s32(RND);
+    let y_off_v = vdupq_n_s16(y_off as i16);
+    let y_scale_v = vdupq_n_s32(y_scale);
+    let c_scale_v = vdupq_n_s32(c_scale);
+    let mid128 = vdupq_n_s16(128);
+    let cru = vdupq_n_s32(coeffs.r_u());
+    let crv = vdupq_n_s32(coeffs.r_v());
+    let cgu = vdupq_n_s32(coeffs.g_u());
+    let cgv = vdupq_n_s32(coeffs.g_v());
+    let cbu = vdupq_n_s32(coeffs.b_u());
+    let cbv = vdupq_n_s32(coeffs.b_v());
+    let alpha_u8 = vdupq_n_u8(0xFF);
+
+    let mut x = 0usize;
+    while x + 16 <= width {
+      let y_vec = vld1q_u8(y.as_ptr().add(x));
+      // 4 chroma samples per 16 Y pixels. Load as 4 u8 lanes via a
+      // u32 broadcast: read 4 bytes into a `u32`, splat into a vector,
+      // reinterpret to u8x16. The first 4 lanes hold the four chroma
+      // samples we care about; we then zero-extend to the i16x4 form
+      // we need for the math.
+      let u_4 = u_quarter.as_ptr().add(x / 4) as *const u32;
+      let v_4 = v_quarter.as_ptr().add(x / 4) as *const u32;
+      let u_word = core::ptr::read_unaligned(u_4);
+      let v_word = core::ptr::read_unaligned(v_4);
+
+      // Pack the 4 u8 chroma samples into the low 4 lanes of a u8x8;
+      // widen to i16x4 in the low half of an i16x8.
+      let u_u8x8 = vcreate_u8(u_word as u64);
+      let v_u8x8 = vcreate_u8(v_word as u64);
+      let u_i16 = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(u_u8x8)), mid128);
+      let v_i16 = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(v_u8x8)), mid128);
+
+      // Only the low 4 lanes (lanes 0..3) of u_i16 / v_i16 hold real
+      // chroma data — lanes 4..7 came from the upper half of `vcreate`
+      // which we filled with the same 32-bit word, but those lanes
+      // would map to chroma indices 4..7 in a 4:1:1 layout, so they
+      // are not used. Promote the low 4 lanes to i32x4.
+      let u_i32 = vmovl_s16(vget_low_s16(u_i16));
+      let v_i32 = vmovl_s16(vget_low_s16(v_i16));
+
+      // u_d / v_d in i32x4 (4 chroma values).
+      let u_d = q15_shift(vaddq_s32(vmulq_s32(u_i32, c_scale_v), rnd_v));
+      let v_d = q15_shift(vaddq_s32(vmulq_s32(v_i32, c_scale_v), rnd_v));
+
+      // Per-channel chroma contribution as i32x4 (4 lanes, one per
+      // chroma sample). Narrow to i16x4 stuffed into the low half of
+      // an i16x8.
+      let r_i32 = q15_shift(vaddq_s32(
+        vaddq_s32(vmulq_s32(cru, u_d), vmulq_s32(crv, v_d)),
+        rnd_v,
+      ));
+      let g_i32 = q15_shift(vaddq_s32(
+        vaddq_s32(vmulq_s32(cgu, u_d), vmulq_s32(cgv, v_d)),
+        rnd_v,
+      ));
+      let b_i32 = q15_shift(vaddq_s32(
+        vaddq_s32(vmulq_s32(cbu, u_d), vmulq_s32(cbv, v_d)),
+        rnd_v,
+      ));
+
+      // Narrow to i16x4 in the low half of an i16x8 (the high half is
+      // unused). `vqmovn_s32` saturates i32 → i16, then `vcombine_s16`
+      // pairs it with arbitrary garbage in the high half — we never
+      // touch those lanes.
+      let r_low4 = vqmovn_s32(r_i32);
+      let g_low4 = vqmovn_s32(g_i32);
+      let b_low4 = vqmovn_s32(b_i32);
+
+      // 1→4 nearest-neighbor upsample. Stage 1: duplicate each of the
+      // 4 lanes once via `vzip1_s16(x, x)` over an i16x4 — produces
+      // the i16x4 [c0,c0,c1,c1] (low half of the doubled vector). Use
+      // `vzip2_s16(x, x)` for the high half [c2,c2,c3,c3].
+      //
+      // Stage 2: combine those two i16x4 halves back into one i16x8,
+      // giving [c0,c0,c1,c1,c2,c2,c3,c3]. Then run `vzip1q_s16(s,s)`
+      // and `vzip2q_s16(s,s)` over that 8-lane vector to land at
+      // [c0×4,c1×4] (low) and [c2×4,c3×4] (high), matching the 16 Y
+      // lanes.
+      let r_dup8 = vcombine_s16(vzip1_s16(r_low4, r_low4), vzip2_s16(r_low4, r_low4));
+      let g_dup8 = vcombine_s16(vzip1_s16(g_low4, g_low4), vzip2_s16(g_low4, g_low4));
+      let b_dup8 = vcombine_s16(vzip1_s16(b_low4, b_low4), vzip2_s16(b_low4, b_low4));
+      // r_dup8 = [c0,c0,c1,c1,c2,c2,c3,c3].
+
+      let r_x2 = vzip1q_s16(r_dup8, r_dup8);
+      let g_x2 = vzip1q_s16(g_dup8, g_dup8);
+      let b_x2 = vzip1q_s16(b_dup8, b_dup8);
+      // r_x2 holds [c0,c0,c0,c0,c1,c1,c1,c1] (`vzip1q(s,s)` takes
+      // lanes 0..3 of both operands interleaved → c0,c0,c0,c0,c1,c1,c1,c1).
+      let r_x2_hi = vzip2q_s16(r_dup8, r_dup8);
+      let g_x2_hi = vzip2q_s16(g_dup8, g_dup8);
+      let b_x2_hi = vzip2q_s16(b_dup8, b_dup8);
+      // r_x2_hi holds [c2,c2,c2,c2,c3,c3,c3,c3].
+
+      // Y path → i16x8 (two vectors covering 16 pixels).
+      let y_lo = vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(y_vec)));
+      let y_hi = vreinterpretq_s16_u16(vmovl_u8(vget_high_u8(y_vec)));
+      let y_scaled_lo = scale_y(y_lo, y_off_v, y_scale_v, rnd_v);
+      let y_scaled_hi = scale_y(y_hi, y_off_v, y_scale_v, rnd_v);
+
+      let b_u8 = vcombine_u8(
+        vqmovun_s16(vqaddq_s16(y_scaled_lo, b_x2)),
+        vqmovun_s16(vqaddq_s16(y_scaled_hi, b_x2_hi)),
+      );
+      let g_u8 = vcombine_u8(
+        vqmovun_s16(vqaddq_s16(y_scaled_lo, g_x2)),
+        vqmovun_s16(vqaddq_s16(y_scaled_hi, g_x2_hi)),
+      );
+      let r_u8 = vcombine_u8(
+        vqmovun_s16(vqaddq_s16(y_scaled_lo, r_x2)),
+        vqmovun_s16(vqaddq_s16(y_scaled_hi, r_x2_hi)),
+      );
+
+      if ALPHA {
+        let rgba = uint8x16x4_t(r_u8, g_u8, b_u8, alpha_u8);
+        vst4q_u8(out.as_mut_ptr().add(x * 4), rgba);
+      } else {
+        let rgb = uint8x16x3_t(r_u8, g_u8, b_u8);
+        vst3q_u8(out.as_mut_ptr().add(x * 3), rgb);
+      }
+
+      x += 16;
+    }
+
+    // Scalar tail. 4:1:1 requires width % 4 == 0, but the SIMD loop
+    // strides 16, so widths in {4, 8, 12, 20, 24, 28, …} leave a
+    // multiple-of-4 tail to be handled by the scalar reference.
+    if x < width {
+      let tail_w = width - x;
+      let tail_u = &u_quarter[x / 4..width / 4];
+      let tail_v = &v_quarter[x / 4..width / 4];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      if ALPHA {
+        scalar::yuv_411_to_rgba_row(
+          &y[x..width],
+          tail_u,
+          tail_v,
+          tail_out,
+          tail_w,
+          matrix,
+          full_range,
+        );
+      } else {
+        scalar::yuv_411_to_rgb_row(
+          &y[x..width],
+          tail_u,
+          tail_v,
+          tail_out,
+          tail_w,
+          matrix,
+          full_range,
+        );
+      }
+    }
+  }
+}

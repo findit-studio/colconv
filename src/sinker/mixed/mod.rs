@@ -5,7 +5,8 @@
 //! parameter. One `PixelSink` impl per supported format. Currently
 //! ships impls for:
 //!
-//! - **8‑bit planar**: [`Yuv420p`](crate::yuv::Yuv420p),
+//! - **8‑bit planar**: [`Yuv411p`](crate::yuv::Yuv411p),
+//!   [`Yuv420p`](crate::yuv::Yuv420p),
 //!   [`Yuv422p`](crate::yuv::Yuv422p),
 //!   [`Yuv440p`](crate::yuv::Yuv440p),
 //!   [`Yuv444p`](crate::yuv::Yuv444p).
@@ -404,15 +405,17 @@ pub enum RowSlice {
   /// Half‑width V (Cr) plane in a planar 4:2:0 source ([`Yuv420p`]).
   #[display("V Half")]
   VHalf,
-  /// Quarter‑width U (Cb) plane in a planar 4:1:0 source
-  /// ([`Yuv410p`](crate::yuv::Yuv410p)). `width / 4` bytes per row.
-  /// Each chroma sample is duplicated across four adjacent Y columns
-  /// by the kernel; vertically the same chroma row covers four
-  /// consecutive Y rows.
+  /// Quarter‑width U (Cb) plane in a planar 4:1:1 / 4:1:0 source
+  /// ([`Yuv411p`](crate::yuv::Yuv411p) — DV-NTSC legacy;
+  /// [`Yuv410p`](crate::yuv::Yuv410p) — Cinepak / extreme-old codecs).
+  /// `width / 4` bytes per row — each chroma sample covers four Y
+  /// columns horizontally. In 4:1:0 the same chroma row also covers
+  /// four consecutive Y rows vertically; in 4:1:1 chroma is full-height.
   #[display("U Quarter")]
   UQuarter,
-  /// Quarter‑width V (Cr) plane in a planar 4:1:0 source
-  /// ([`Yuv410p`](crate::yuv::Yuv410p)). `width / 4` bytes per row.
+  /// Quarter‑width V (Cr) plane in a planar 4:1:1 / 4:1:0 source
+  /// ([`Yuv411p`](crate::yuv::Yuv411p) /
+  /// [`Yuv410p`](crate::yuv::Yuv410p)). `width / 4` bytes per row.
   #[display("V Quarter")]
   VQuarter,
   /// Half‑width interleaved UV plane in a semi‑planar 4:2:0 source

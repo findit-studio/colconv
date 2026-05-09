@@ -226,6 +226,129 @@ fn yuv420_rgb_bt601_vs_bt709_differ_for_chroma() {
   );
 }
 
+// ---- yuv_411_to_rgb_row (4:1:1 — quarter-width chroma) ---------------
+
+#[test]
+fn yuv411_rgb_black() {
+  // Full-range Y=0, neutral chroma → black. width=4 means one chroma
+  // sample drives all four Y pixels (the full sub-block).
+  let y = [0u8; 4];
+  let u = [128u8; 1];
+  let v = [128u8; 1];
+  let mut rgb = [0u8; 12];
+  yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  assert!(rgb.iter().all(|&c| c == 0), "got {rgb:?}");
+}
+
+#[test]
+fn yuv411_rgb_white_full_range() {
+  let y = [255u8; 4];
+  let u = [128u8; 1];
+  let v = [128u8; 1];
+  let mut rgb = [0u8; 12];
+  yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  assert!(rgb.iter().all(|&c| c == 255), "got {rgb:?}");
+}
+
+#[test]
+fn yuv411_rgb_gray_is_gray() {
+  let y = [128u8; 4];
+  let u = [128u8; 1];
+  let v = [128u8; 1];
+  let mut rgb = [0u8; 12];
+  yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  for x in 0..4 {
+    let (r, g, b) = (rgb[x * 3], rgb[x * 3 + 1], rgb[x * 3 + 2]);
+    assert_eq!(r, g);
+    assert_eq!(g, b);
+    assert!(r.abs_diff(128) <= 1, "got {r}");
+  }
+}
+
+#[test]
+fn yuv411_rgb_chroma_shared_across_quartet() {
+  // Four Y values with same chroma: differing Y produces differing
+  // luminance but same chroma-driven offsets. Validates that pixels
+  // x..x+3 share the upsampled chroma sample.
+  let y = [50u8, 100, 150, 200];
+  let u = [128u8; 1];
+  let v = [128u8; 1];
+  let mut rgb = [0u8; 12];
+  yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  // With neutral chroma, output is gray = Y for each pixel.
+  assert_eq!(rgb[0], 50);
+  assert_eq!(rgb[3], 100);
+  assert_eq!(rgb[6], 150);
+  assert_eq!(rgb[9], 200);
+}
+
+#[test]
+fn yuv411_rgb_two_chroma_blocks() {
+  // 8-pixel row with two different chroma blocks. Sub-block 0 (Y[0..4])
+  // gets chroma[0]; sub-block 1 (Y[4..8]) gets chroma[1]. Validates
+  // the `c_idx = x / 4` indexing.
+  let y = [128u8; 8];
+  // First quartet: red-ward (V=200); second: green-ward (V=64).
+  let u = [128u8, 128];
+  let v = [200u8, 64];
+  let mut rgb = [0u8; 24];
+  yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, 8, ColorMatrix::Bt601, true);
+  // First four pixels: red boost.
+  for x in 0..4 {
+    let r = rgb[x * 3];
+    let b = rgb[x * 3 + 2];
+    assert!(r > b, "px {x}: r={r} should be > b={b} for V=200");
+  }
+  // Last four pixels: blue boost (V=64 → cyan-ish).
+  for x in 4..8 {
+    let r = rgb[x * 3];
+    let b = rgb[x * 3 + 2];
+    assert!(r < b, "px {x}: r={r} should be < b={b} for V=64");
+  }
+}
+
+#[test]
+fn yuv411_rgba_alpha_is_opaque() {
+  // RGBA wrapper writes four bytes per pixel with constant 0xFF
+  // alpha; the first three bytes match yuv_411_to_rgb_row.
+  let y = [200u8, 100, 50, 150];
+  let u = [128u8; 1];
+  let v = [128u8; 1];
+  let mut rgba = [0u8; 16];
+  yuv_411_to_rgba_row(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
+  for x in 0..4 {
+    assert_eq!(rgba[x * 4 + 3], 0xFF, "alpha at px {x}");
+  }
+  // R/G/B match `yuv_411_to_rgb_row` byte-for-byte.
+  let mut rgb = [0u8; 12];
+  yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  for x in 0..4 {
+    assert_eq!(rgba[x * 4], rgb[x * 3]);
+    assert_eq!(rgba[x * 4 + 1], rgb[x * 3 + 1]);
+    assert_eq!(rgba[x * 4 + 2], rgb[x * 3 + 2]);
+  }
+}
+
+#[test]
+fn yuv411_rgb_limited_range_black_and_white() {
+  // Y=16 → black, Y=235 → white in limited range. Two quartets.
+  let y = [16u8, 16, 16, 16, 235, 235, 235, 235];
+  let u = [128u8; 2];
+  let v = [128u8; 2];
+  let mut rgb = [0u8; 24];
+  yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, 8, ColorMatrix::Bt601, false);
+  for x in 0..4 {
+    assert_eq!((rgb[x * 3], rgb[x * 3 + 1], rgb[x * 3 + 2]), (0, 0, 0));
+  }
+  for x in 4..8 {
+    assert_eq!(
+      (rgb[x * 3], rgb[x * 3 + 1], rgb[x * 3 + 2]),
+      (255, 255, 255),
+      "limited-range Y=235 should be white"
+    );
+  }
+}
+
 // ---- rgb_to_hsv_row --------------------------------------------------
 
 #[test]

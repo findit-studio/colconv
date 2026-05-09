@@ -462,3 +462,120 @@ pub(crate) fn yuv_444_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: boo
     }
   }
 }
+
+// ---- YUV 4:1:1 → RGB / RGBA (fused: 1→4 chroma upsample) -------------
+
+/// Converts one row of 4:1:1 YUV — Y at full width, U/V at
+/// **quarter-width** — directly to packed RGB. Each chroma sample
+/// covers four Y columns; nearest-neighbor 1→4 upsample happens in
+/// registers inside the kernel.
+///
+/// Same range / matrix semantics as [`yuv_420_to_rgb_row`]; only the
+/// chroma indexing differs (`x / 4` instead of `x / 2`).
+///
+/// # Panics (debug builds)
+///
+/// - `width % 4 == 0` (4:1:1 quarters chroma columns).
+/// - `y.len() >= width`, `u_quarter.len() >= width / 4`,
+///   `v_quarter.len() >= width / 4`, `rgb_out.len() >= 3 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn yuv_411_to_rgb_row(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  yuv_411_to_rgb_or_rgba_row::<false>(y, u_quarter, v_quarter, rgb_out, width, matrix, full_range);
+}
+
+/// Same as [`yuv_411_to_rgb_row`] but writes packed `R, G, B, A`
+/// quadruplets, with `A = 0xFF` (opaque) for every pixel. The first
+/// three bytes per pixel are byte-identical to what
+/// [`yuv_411_to_rgb_row`] would write.
+///
+/// `rgba_out.len() >= 4 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn yuv_411_to_rgba_row(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  yuv_411_to_rgb_or_rgba_row::<true>(y, u_quarter, v_quarter, rgba_out, width, matrix, full_range);
+}
+
+/// Shared scalar kernel for [`yuv_411_to_rgb_row`] (`ALPHA = false`,
+/// 3 bpp) and [`yuv_411_to_rgba_row`] (`ALPHA = true`, 4 bpp + opaque
+/// alpha). The math is identical; only the per-pixel store differs.
+/// `ALPHA` drives compile-time monomorphization — each public wrapper
+/// is inlined with the alpha branch eliminated.
+///
+/// 4:1:1 has no alpha-source variant: there is no `Yuva411p` source
+/// format in FFmpeg, so `ALPHA_SRC` is unconditional `false`.
+///
+/// # Panics (debug builds)
+///
+/// - `width % 4 == 0`.
+/// - `y.len() >= width`, `u_quarter.len() >= width / 4`,
+///   `v_quarter.len() >= width / 4`,
+///   `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(width & 3, 0, "YUV 4:1:1 requires width % 4 == 0");
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u_quarter.len() >= width / 4, "u_quarter row too short");
+  debug_assert!(v_quarter.len() >= width / 4, "v_quarter row too short");
+  let bpp: usize = if ALPHA { 4 } else { 3 };
+  debug_assert!(out.len() >= width * bpp, "out row too short for {bpp}bpp");
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<8, 8>(full_range);
+  const RND: i32 = 1 << 14;
+
+  // Process four pixels per iteration — they share one chroma sample.
+  let mut x = 0;
+  while x < width {
+    let c_idx = x / 4;
+    let u_d = ((u_quarter[c_idx] as i32 - 128) * c_scale + RND) >> 15;
+    let v_d = ((v_quarter[c_idx] as i32 - 128) * c_scale + RND) >> 15;
+
+    // Single-round per channel keeps the math faithful to a 1×4 3x3
+    // matrix multiply. All four pixels in this group share the chroma
+    // contributions — only Y differs.
+    let r_chroma = (coeffs.r_u() * u_d + coeffs.r_v() * v_d + RND) >> 15;
+    let g_chroma = (coeffs.g_u() * u_d + coeffs.g_v() * v_d + RND) >> 15;
+    let b_chroma = (coeffs.b_u() * u_d + coeffs.b_v() * v_d + RND) >> 15;
+
+    // Unrolled fan-out across the four Y pixels that share this chroma
+    // sample. The const-generic `ALPHA` decides 3 vs 4 bpp store; the
+    // monomorphizer eliminates the branch.
+    let mut k = 0;
+    while k < 4 {
+      let y_k = ((y[x + k] as i32 - y_off) * y_scale + RND) >> 15;
+      let pos = (x + k) * bpp;
+      out[pos] = clamp_u8(y_k + r_chroma);
+      out[pos + 1] = clamp_u8(y_k + g_chroma);
+      out[pos + 2] = clamp_u8(y_k + b_chroma);
+      if ALPHA {
+        out[pos + 3] = 0xFF;
+      }
+      k += 1;
+    }
+
+    x += 4;
+  }
+}
