@@ -150,6 +150,15 @@ mod tests {
     (v << 20) | (y << 10) | u
   }
 
+  // LE-host gate: this test builds host-native `Vec<u32>` fixtures via
+  // `pack_v410` and calls the scalar kernel with `<BE = false>`, which
+  // applies `u32::from_le`. On BE hosts the host-native storage doesn't
+  // match LE byte order, so `from_le` swaps bytes and corrupts the
+  // fixture before the math runs (same pattern as PR #82 8f2e329, PR #83
+  // 56342c0, PR #85 57d9064, PR #87 9b6521b). BE-host correctness is
+  // covered by `v410_be_roundtrip_matches_byte_swapped_le`, which builds
+  // fixtures via `to_le_bytes` / `to_be_bytes`.
+  #[cfg(target_endian = "little")]
   #[test]
   fn v410_known_pattern_rgb() {
     // Limited-range BT.709, gray Y=64 (≈ 0 in [0, 255]) with neutral
@@ -178,6 +187,10 @@ mod tests {
     assert_eq!(out[3], 0xFF);
   }
 
+  // LE-host gate: host-native `pack_v410` fixture + `<BE = false>` kernel
+  // path → `from_le` byte-swaps the fixture on BE hosts and corrupts the
+  // Y field before extraction.
+  #[cfg(target_endian = "little")]
   #[test]
   fn v410_luma_extract_u8() {
     let p = vec![
@@ -190,6 +203,10 @@ mod tests {
     assert_eq!(&out[..], &[0xFFu8, 0x40]);
   }
 
+  // LE-host gate: host-native `pack_v410` fixture + `<BE = false>` kernel
+  // path → `from_le` byte-swaps the fixture on BE hosts and corrupts the
+  // Y field before extraction.
+  #[cfg(target_endian = "little")]
   #[test]
   fn v410_luma_extract_u16_low_bit_packed() {
     let p = vec![pack_v410(0, 0x3FF, 0), pack_v410(0, 0x123, 0)];

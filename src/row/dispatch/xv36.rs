@@ -570,12 +570,20 @@ mod tests {
 
   /// Pack one XV36 pixel from explicit U / Y / V / A samples (12-bit
   /// each, MSB-aligned into u16: value is `sample << 4`).
+  ///
+  /// Helpers below are consumed only by the LE-host-gated tests in this
+  /// module (see the gating comments on each test); on BE hosts (s390x /
+  /// powerpc64) those tests are skipped, so the helpers would appear
+  /// unused under `-D warnings`. Gate the helpers with the same
+  /// `target_endian = "little"` cfg (mirrors PR #87 cb53e86 for AYUV64).
+  #[cfg(target_endian = "little")]
   fn pack_xv36(u: u16, y: u16, v: u16, a: u16) -> [u16; 4] {
     debug_assert!(u <= 0xFFF && y <= 0xFFF && v <= 0xFFF && a <= 0xFFF);
     [u << 4, y << 4, v << 4, a << 4]
   }
 
   /// Pack one XV36 pixel in big-endian wire format.
+  #[cfg(target_endian = "little")]
   fn pack_xv36_be(u: u16, y: u16, v: u16, a: u16) -> [u16; 4] {
     let le = pack_xv36(u, y, v, a);
     [
@@ -588,12 +596,14 @@ mod tests {
 
   /// Build a `Vec<u16>` XV36 row of `width` pixels with `(U, Y, V, A)`
   /// repeated. Any positive width is valid (4:4:4, no chroma subsampling).
+  #[cfg(target_endian = "little")]
   fn solid_xv36(width: usize, u: u16, y: u16, v: u16) -> std::vec::Vec<u16> {
     let quad = pack_xv36(u, y, v, 0);
     (0..width).flat_map(|_| quad).collect()
   }
 
   /// Build a `Vec<u16>` XV36 row in big-endian wire format.
+  #[cfg(target_endian = "little")]
   fn solid_xv36_be(width: usize, u: u16, y: u16, v: u16) -> std::vec::Vec<u16> {
     let quad = pack_xv36_be(u, y, v, 0);
     (0..width).flat_map(|_| quad).collect()
@@ -617,6 +627,14 @@ mod tests {
     xv36_to_rgb_row(&packed, &mut rgb, 4, ColorMatrix::Bt709, true, false, false);
   }
 
+  // LE-host gate: this test builds host-native `Vec<u16>` fixtures via
+  // `solid_xv36` (host-native u16 storage) and calls the dispatchers with
+  // `be_input = false`, which forwards to the scalar kernel's `from_le`
+  // load. On BE hosts (s390x / powerpc64) `from_le` swaps bytes, so the
+  // host-native fixture is corrupted before the math runs and the
+  // assertions break. BE-host correctness is covered by the per-arch BE
+  // parity tests that build fixtures via `to_le_bytes` / `to_be_bytes`.
+  #[cfg(target_endian = "little")]
   #[test]
   fn xv36_dispatchers_route_with_simd_false() {
     // Full-range gray (Y=0x800, U=V=0x800 at 12-bit). Every dispatcher
@@ -689,6 +707,15 @@ mod tests {
     }
   }
 
+  // LE-host gate: the LE side uses `solid_xv36` (host-native) with
+  // `be_input = false` (→ `from_le`); the BE side uses `pack_xv36_be`
+  // (`swap_bytes` of host-native) with `be_input = true` (→ `from_be`).
+  // Both encodings are LE-host-correct only — on BE host the byte order
+  // in memory does not match what the wrappers decode, so the test must
+  // be pinned to little-endian. Cross-endian agreement on BE host is
+  // verified by the per-arch BE parity tests that construct fixtures via
+  // `to_le_bytes` / `to_be_bytes`.
+  #[cfg(target_endian = "little")]
   #[test]
   fn xv36_be_and_le_dispatchers_agree() {
     // BE-encoded data decoded with be_input=true must produce the same
