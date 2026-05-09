@@ -504,37 +504,28 @@ unsafe fn yuv_410_to_rgb_or_rgba_row<const ALPHA: bool>(
       let b_i16x4 = vqmovn_s32(b_i32);
 
       // Duplicate each chroma lane 4× to cover 16 Y lanes:
-      //   chroma = [c0, c1, c2, c3]
-      //   dup_lo = [c0, c0, c0, c0, c1, c1, c1, c1]  (covers Y lanes 0..7)
-      //   dup_hi = [c2, c2, c2, c2, c3, c3, c3, c3]  (covers Y lanes 8..15)
-      // Built via two `vzip1`s: zip([c0,c1,c2,c3], [c0,c1,c2,c3]) →
-      // [c0,c0,c1,c1,c2,c2,c3,c3], then zip(.,.) of the low half with
-      // itself gives [c0,c0,c0,c0,c1,c1,c1,c1]. Similarly for the high.
-      let r_zipped = vzip1_s16(r_i16x4, r_i16x4); // [c0,c0,c1,c1] in each half
-      // Wait — zip on i16x4 produces i16x4. Let me restructure: build
-      // the full i16x8 by `vcombine`, then use vzip1q_s16/vzip2q_s16
-      // twice for 4× duplication.
-      let _ = r_zipped; // silence — we use a different sequence below
-
-      // Approach: combine two copies of the i16x4 into i16x8 with each
-      // half being `[c0, c1, c2, c3]`, then `vzip1q` and `vzip2q` fan
-      // each lane to its pair, and a second `vzip` step fans pairs to
-      // quartets. This matches the 4:2:0 kernel's lane-duplication
-      // pattern, just one extra zip layer for 4× instead of 2×.
+      //   chroma  = [c0, c1, c2, c3]                       (i16x4)
+      //   dup_lo  = [c0, c0, c0, c0, c1, c1, c1, c1]       (covers Y lanes 0..7)
+      //   dup_hi  = [c2, c2, c2, c2, c3, c3, c3, c3]       (covers Y lanes 8..15)
+      //
+      // Lane-fanout sequence (two zip layers for 4× duplication, mirroring
+      // the 4:2:0 kernel which only needs one zip for 2× duplication):
+      //   1. `vcombine_s16` two copies of the i16x4 → i16x8 = [c0..c3, c0..c3].
+      //   2. `vzip1q_s16(x, x)` interleaves lanes [0,0,1,1,2,2,3,3] →
+      //      `pair = [c0,c0,c1,c1, c2,c2,c3,c3]`.
+      //   3. A second zip pass on `pair` fans each adjacent pair into a quartet:
+      //      `vzip1q(pair,pair) = [c0,c0,c0,c0, c1,c1,c1,c1]` → dup_lo (Y0..7),
+      //      `vzip2q(pair,pair) = [c2,c2,c2,c2, c3,c3,c3,c3]` → dup_hi (Y8..15).
       let r_i16x8 = vcombine_s16(r_i16x4, r_i16x4); // [c0..c3, c0..c3]
       let g_i16x8 = vcombine_s16(g_i16x4, g_i16x4);
       let b_i16x8 = vcombine_s16(b_i16x4, b_i16x4);
 
-      // First zip pass: [c0,c0,c1,c1, c2,c2,c3,c3] in lanes 0..7.
-      // vzip1q_s16(a, a) = lanes [0,0,1,1,2,2,3,3] of the input.
+      // First zip pass (step 2 above): pair = [c0,c0,c1,c1, c2,c2,c3,c3].
       let r_pair = vzip1q_s16(r_i16x8, r_i16x8);
       let g_pair = vzip1q_s16(g_i16x8, g_i16x8);
       let b_pair = vzip1q_s16(b_i16x8, b_i16x8);
 
-      // Second zip pass: turn each adjacent pair into a quartet.
-      //   r_pair = [c0,c0,c1,c1, c2,c2,c3,c3]
-      //   vzip1q(r_pair,r_pair) = [c0,c0,c0,c0, c1,c1,c1,c1] → covers Y0..7
-      //   vzip2q(r_pair,r_pair) = [c2,c2,c2,c2, c3,c3,c3,c3] → covers Y8..15
+      // Second zip pass (step 3 above): pairs → quartets, split lo/hi.
       let r_dup_lo = vzip1q_s16(r_pair, r_pair);
       let r_dup_hi = vzip2q_s16(r_pair, r_pair);
       let g_dup_lo = vzip1q_s16(g_pair, g_pair);

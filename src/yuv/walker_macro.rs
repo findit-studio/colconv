@@ -583,7 +583,7 @@ macro_rules! walker {
   //
   // Used by YUV 4:1:0 (Yuv410p) — chroma is subsampled 4:1 in width.
   // Each chroma sample covers four adjacent Y columns; one chroma row
-  // covers four Y rows when `chroma_v: half_quarter` is also set, but
+  // covers four Y rows when `chroma_v: quarter` is also set, but
   // the row carrier itself is independent of the vertical sampling
   // (the walker handles that via `@chroma_row`).
   (@p3_emit quarter
