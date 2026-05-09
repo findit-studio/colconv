@@ -67,16 +67,30 @@ fn powf64(x: f64, y: f64) -> f64 {
 // formula in their scalar tail / scalar-`powf` lanes.
 // ---------------------------------------------------------------------------
 
-/// Reads a packed XYZ12 sample with byte-swap if `BE` is set; masks
-/// the upper 4 bits per the SMPTE ST 428-1 12-bit-active convention.
+/// Reads a packed XYZ12 sample with byte-swap if `BE` is set, then
+/// extracts the active 12-bit code from the high-bit-packed `u16`.
+///
+/// FFmpeg's `AV_PIX_FMT_XYZ12LE` / `AV_PIX_FMT_XYZ12BE` formats are
+/// described as "the same as RGB48LE/BE, but the lower 4 bits of each
+/// component are zero" — i.e. the active 12-bit code lives in bits
+/// `[15:4]` of each `u16`, not bits `[11:0]`. After the endian-aware
+/// load, we right-shift by 4 to recover the active code, then mask to
+/// 12 bits as a defensive guard against dirty-low-bit producers.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn read_xyz12_sample<const BE: bool>(s: u16) -> u16 {
   let raw = if BE { u16::from_be(s) } else { u16::from_le(s) };
-  raw & SAMPLE_MASK
+  (raw >> 4) & SAMPLE_MASK
 }
 
 /// SMPTE ST 428-1 §8 inverse OETF: u12 → linear XYZ value in `f32`.
 /// `xyz_lin = (x_u12 / 4095)^2.6 / 0.91653`.
+///
+/// Input is the **active 12-bit code** (`0..=4095`), already extracted
+/// from the high-bit-packed wire `u16` by the caller (scalar callers
+/// route through `read_xyz12_sample`; SIMD backends apply a `>> 4`
+/// shift in the load path before this function). The internal
+/// `& SAMPLE_MASK` is a defensive belt-and-braces clamp against
+/// callers passing a non-shifted value.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn smpte428_inverse_oetf(x_u12: u16) -> f32 {
   let normalised = (x_u12 & SAMPLE_MASK) as f32 * INV_4095;
@@ -415,10 +429,46 @@ mod tests {
 
   #[test]
   fn smpte428_inverse_oetf_masks_upper_bits() {
-    // Setting bit 13 should not change the result (upper 4 bits masked).
+    // Defensive: `smpte428_inverse_oetf` masks its argument with
+    // `SAMPLE_MASK`, so passing a non-shifted dirty value still
+    // produces the same result as the clean 12-bit code. Callers
+    // (`read_xyz12_sample` / SIMD shift path) provide the shifted
+    // value directly.
     let clean = smpte428_inverse_oetf(0x0800);
     let dirty = smpte428_inverse_oetf(0xF800);
     assert_eq!(clean, dirty);
+  }
+
+  #[test]
+  fn read_xyz12_sample_extracts_high_bit_packed_code_le() {
+    // FFmpeg `AV_PIX_FMT_XYZ12LE`: 12-bit code in `[15:4]`, low 4 bits
+    // zero. Mid-gray sample on the 16-bit scale is `0x8000`, which
+    // decodes as `0x800` (mid-gray on the 12-bit scale = 2048).
+    let raw_u16: u16 = 0x8000;
+    assert_eq!(read_xyz12_sample::<false>(raw_u16), 0x800);
+    assert_eq!(read_xyz12_sample::<false>(0xFFF0), 0x0FFF);
+    assert_eq!(read_xyz12_sample::<false>(0x0000), 0x0000);
+  }
+
+  #[test]
+  fn read_xyz12_sample_extracts_high_bit_packed_code_be() {
+    // BE wire: bytes are stored big-endian on disk, so the host-native
+    // `u16` for code `0x800 << 4 = 0x8000` would be `0x8000.swap_bytes()
+    // = 0x0080` after the LE-encoded-bytes-as-`&[u16]` reinterpretation.
+    let raw_be: u16 = 0x8000_u16.swap_bytes();
+    assert_eq!(read_xyz12_sample::<true>(raw_be), 0x800);
+  }
+
+  #[test]
+  fn smpte428_mid_gray_high_bit_packed_is_nonzero() {
+    // Pre-fix regression: `0x8000` (real mid-gray sample) was decoded
+    // as `0x000` because `read_xyz12_sample` masked the *low* 12 bits
+    // instead of the high-bit-packed payload. Post-fix it is `0x800`
+    // and produces the mid-gray linear-XYZ value.
+    let mid_gray = read_xyz12_sample::<false>(0x8000);
+    assert_eq!(mid_gray, 0x800);
+    let xyz_lin = smpte428_inverse_oetf(mid_gray);
+    assert!(xyz_lin > 0.1, "expected mid-gray > 0.1, got {xyz_lin}");
   }
 
   #[test]
@@ -574,9 +624,28 @@ mod tests {
     assert_eq!(out, [0.0; 3]);
   }
 
+  /// Encodes a 12-bit code in the high-bit-packed wire layout
+  /// (`code << 4`) for FFmpeg `AV_PIX_FMT_XYZ12LE` fixtures. The
+  /// resulting `u16` is host-native and ready to feed `<BE = false>`
+  /// kernels (which expect LE-encoded bytes interpreted as host-native
+  /// `u16` via the `bytemuck::cast_slice` contract on LE hosts).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn pack12_le(code: u16) -> u16 {
+    u16::from_le_bytes((code << 4).to_le_bytes())
+  }
+
+  /// Encodes a 12-bit code in the high-bit-packed BE wire layout —
+  /// `(code << 4).to_be_bytes()` reinterpreted as a host-native `u16`.
+  /// Host-independent: produces the same logical wire value on LE and
+  /// BE hosts (the `<BE = true>` kernel applies `from_be` internally).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn pack12_be(code: u16) -> u16 {
+    u16::from_ne_bytes((code << 4).to_be_bytes())
+  }
+
   #[test]
   fn xyz12_to_rgb_f32_dci_p3_mid_gray() {
-    let xyz: [u16; 3] = [0x800, 0x800, 0x800];
+    let xyz: [u16; 3] = [pack12_le(0x800), pack12_le(0x800), pack12_le(0x800)];
     let mut out = [0.0_f32; 3];
     xyz12_to_rgb_f32_row::<false>(&xyz, &mut out, 1, DcpTargetGamut::DciP3);
     // DCI-P3 expected: [0.2087783, 0.1722948, 0.1650483].
@@ -587,7 +656,7 @@ mod tests {
 
   #[test]
   fn xyz12_to_rgb_f32_rec709_mid_gray() {
-    let xyz: [u16; 3] = [0x800, 0x800, 0x800];
+    let xyz: [u16; 3] = [pack12_le(0x800), pack12_le(0x800), pack12_le(0x800)];
     let mut out = [0.0_f32; 3];
     xyz12_to_rgb_f32_row::<false>(&xyz, &mut out, 1, DcpTargetGamut::Rec709);
     assert_close(out[0], 0.216_984_87, "R");
@@ -597,7 +666,7 @@ mod tests {
 
   #[test]
   fn xyz12_to_rgb_f32_rec2020_three_quarter() {
-    let xyz: [u16; 3] = [0xC00, 0xC00, 0xC00];
+    let xyz: [u16; 3] = [pack12_le(0xC00), pack12_le(0xC00), pack12_le(0xC00)];
     let mut out = [0.0_f32; 3];
     xyz12_to_rgb_f32_row::<false>(&xyz, &mut out, 1, DcpTargetGamut::Rec2020);
     assert_close(out[0], 0.572_369_93, "R");
@@ -608,7 +677,7 @@ mod tests {
   #[test]
   fn xyz12_to_rgb_f32_preserves_negative_after_matrix() {
     // y_only_max under Rec.709 → R = -1.677, G = +2.05, B = -0.222.
-    let xyz: [u16; 3] = [0, 0xFFF, 0];
+    let xyz: [u16; 3] = [pack12_le(0), pack12_le(0xFFF), pack12_le(0)];
     let mut out = [0.0_f32; 3];
     xyz12_to_rgb_f32_row::<false>(&xyz, &mut out, 1, DcpTargetGamut::Rec709);
     assert!(out[0] < 0.0, "expected negative R, got {}", out[0]);
@@ -622,7 +691,7 @@ mod tests {
   fn xyz12_to_rgb_clamps_at_u8() {
     // x_only_max under Rec.709 → R = +3.5, G = -1.0 → after OETF +
     // clamp + ×255 → R = 255, G = 0.
-    let xyz: [u16; 3] = [0xFFF, 0, 0];
+    let xyz: [u16; 3] = [pack12_le(0xFFF), pack12_le(0), pack12_le(0)];
     let mut out = [0_u8; 3];
     xyz12_to_rgb_row::<false>(&xyz, &mut out, 1, DcpTargetGamut::Rec709);
     assert_eq!(out[0], 255);
@@ -631,7 +700,7 @@ mod tests {
 
   #[test]
   fn xyz12_to_rgba_fills_alpha_max() {
-    let xyz: [u16; 3] = [0x800, 0x800, 0x800];
+    let xyz: [u16; 3] = [pack12_le(0x800), pack12_le(0x800), pack12_le(0x800)];
     let mut out = [0_u8; 4];
     xyz12_to_rgba_row::<false>(&xyz, &mut out, 1, DcpTargetGamut::DciP3);
     assert_eq!(out[3], 0xFF);
@@ -639,7 +708,7 @@ mod tests {
 
   #[test]
   fn xyz12_to_rgba_u16_fills_alpha_max() {
-    let xyz: [u16; 3] = [0x800, 0x800, 0x800];
+    let xyz: [u16; 3] = [pack12_le(0x800), pack12_le(0x800), pack12_le(0x800)];
     let mut out = [0_u16; 4];
     xyz12_to_rgba_u16_row::<false>(&xyz, &mut out, 1, DcpTargetGamut::DciP3);
     assert_eq!(out[3], 0xFFFF);
@@ -650,7 +719,7 @@ mod tests {
     // Pass-through: input -> step-1 inverse-OETF -> output. For u12 =
     // (0x800, 0x800, 0x800) the linear value is the same in all three
     // channels.
-    let xyz: [u16; 3] = [0x800, 0x800, 0x800];
+    let xyz: [u16; 3] = [pack12_le(0x800), pack12_le(0x800), pack12_le(0x800)];
     let mut out = [0.0_f32; 3];
     xyz12_to_xyz_f32_row::<false>(&xyz, &mut out, 1);
     let expected = powf32(0x800_u16 as f32 * INV_4095, 2.6_f32) * SMPTE428_INV_NORM;
@@ -661,25 +730,23 @@ mod tests {
 
   #[test]
   fn xyz12_be_byte_swap_matches_le() {
-    // BE = byte-swap of LE input: the kernel should produce identical
-    // output for byte-swapped vs native input.
-    let raw: [u16; 3] = [0x0800, 0x0800, 0x0800];
+    // Same logical 12-bit code (`0x800`) encoded with both LE and BE
+    // wire conventions; both kernel paths must produce identical
+    // output. Host-independent: `pack12_be` builds the BE bytes and
+    // reinterprets via `from_ne_bytes`, so the test runs on BE hosts
+    // (s390x miri) without further `cfg` gates.
+    let xyz_le: [u16; 3] = [pack12_le(0x800), pack12_le(0x800), pack12_le(0x800)];
+    let xyz_be: [u16; 3] = [pack12_be(0x800), pack12_be(0x800), pack12_be(0x800)];
     let mut out_le = [0.0_f32; 3];
-    xyz12_to_rgb_f32_row::<false>(&raw, &mut out_le, 1, DcpTargetGamut::DciP3);
-
-    let swapped: [u16; 3] = [
-      raw[0].swap_bytes(),
-      raw[1].swap_bytes(),
-      raw[2].swap_bytes(),
-    ];
     let mut out_be = [0.0_f32; 3];
-    xyz12_to_rgb_f32_row::<true>(&swapped, &mut out_be, 1, DcpTargetGamut::DciP3);
+    xyz12_to_rgb_f32_row::<false>(&xyz_le, &mut out_le, 1, DcpTargetGamut::DciP3);
+    xyz12_to_rgb_f32_row::<true>(&xyz_be, &mut out_be, 1, DcpTargetGamut::DciP3);
     assert_eq!(out_le, out_be);
   }
 
   #[test]
   fn xyz12_to_rgb_u16_full_range_scaling() {
-    let xyz: [u16; 3] = [0xFFF, 0xFFF, 0xFFF];
+    let xyz: [u16; 3] = [pack12_le(0xFFF), pack12_le(0xFFF), pack12_le(0xFFF)];
     let mut out = [0_u16; 3];
     xyz12_to_rgb_u16_row::<false>(&xyz, &mut out, 1, DcpTargetGamut::DciP3);
     // Per derivation: rgb_linear = (1.265, 1.044, 1.0) → after OETF +
@@ -691,7 +758,7 @@ mod tests {
 
   #[test]
   fn xyz12_to_rgb_f16_clamps_to_unit_range() {
-    let xyz: [u16; 3] = [0xFFF, 0, 0];
+    let xyz: [u16; 3] = [pack12_le(0xFFF), pack12_le(0), pack12_le(0)];
     let mut out = [half::f16::from_f32(0.0); 3];
     xyz12_to_rgb_f16_row::<false>(&xyz, &mut out, 1, DcpTargetGamut::Rec709);
     assert_eq!(out[0].to_f32(), 1.0);
@@ -700,7 +767,7 @@ mod tests {
 
   #[test]
   fn xyz12_to_rgba_f16_alpha_one() {
-    let xyz: [u16; 3] = [0x800, 0x800, 0x800];
+    let xyz: [u16; 3] = [pack12_le(0x800), pack12_le(0x800), pack12_le(0x800)];
     let mut out = [half::f16::from_f32(0.0); 4];
     xyz12_to_rgba_f16_row::<false>(&xyz, &mut out, 1, DcpTargetGamut::DciP3);
     assert_eq!(out[3].to_f32(), 1.0);
@@ -708,7 +775,7 @@ mod tests {
 
   #[test]
   fn xyz12_to_rgb_target_gamut_changes_output() {
-    let xyz: [u16; 3] = [0xC00, 0xC00, 0xC00];
+    let xyz: [u16; 3] = [pack12_le(0xC00), pack12_le(0xC00), pack12_le(0xC00)];
     let mut out_p3 = [0.0_f32; 3];
     let mut out_709 = [0.0_f32; 3];
     let mut out_2020 = [0.0_f32; 3];
@@ -731,10 +798,16 @@ mod tests {
   }
 
   #[test]
-  fn xyz12_to_rgb_high_12bit_value_clipped_to_0fff_mask() {
-    // Setting bit 13 should be equivalent to the clean 12-bit input.
-    let xyz_clean: [u16; 3] = [0x0800, 0x0800, 0x0800];
-    let xyz_dirty: [u16; 3] = [0x2800, 0xA800, 0xF800];
+  fn xyz12_to_rgb_low_4_bits_ignored() {
+    // FFmpeg spec: low 4 bits of each `u16` are zero. A producer that
+    // sets them anyway must not change the output (the `>> 4` shift
+    // discards them before the OETF).
+    let xyz_clean: [u16; 3] = [pack12_le(0x800), pack12_le(0x800), pack12_le(0x800)];
+    let xyz_dirty: [u16; 3] = [
+      pack12_le(0x800) | 0x000F,
+      pack12_le(0x800) | 0x000A,
+      pack12_le(0x800) | 0x0007,
+    ];
     let mut out_clean = [0_u8; 3];
     let mut out_dirty = [0_u8; 3];
     xyz12_to_rgb_row::<false>(&xyz_clean, &mut out_clean, 1, DcpTargetGamut::DciP3);
@@ -745,8 +818,12 @@ mod tests {
   #[test]
   fn xyz12_to_rgb_multi_pixel_independence() {
     let xyz: [u16; 6] = [
-      0x800, 0x800, 0x800, // pixel 0
-      0xFFF, 0, 0, // pixel 1
+      pack12_le(0x800),
+      pack12_le(0x800),
+      pack12_le(0x800), // pixel 0
+      pack12_le(0xFFF),
+      pack12_le(0),
+      pack12_le(0), // pixel 1
     ];
     let mut out = [0_u8; 6];
     xyz12_to_rgb_row::<false>(&xyz, &mut out, 2, DcpTargetGamut::Rec709);

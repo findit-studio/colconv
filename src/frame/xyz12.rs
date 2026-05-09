@@ -3,9 +3,13 @@
 //!
 //! Despite the inventory doc note "3 planes (X / Y / Z)", FFmpeg's actual
 //! `AV_PIX_FMT_XYZ12LE` descriptor is **packed**: one stream of `u16`
-//! triples in `X, Y, Z` order, low-packed (samples in low 12 bits, upper
-//! 4 bits zero). This matches the DCDM JPEG2000 cinema container format
-//! that decoders like OpenJPEG expand into.
+//! triples in `X, Y, Z` order, **high-bit-packed** per the FFmpeg spec
+//! ("the same as RGB48LE/BE, but the lower 4 bits of each component are
+//! zero"). The active 12-bit code lives in bits `[15:4]` of each `u16`;
+//! bits `[3:0]` are reserved zero. Equivalently, the wire `u16` value
+//! is `code << 4` for a 12-bit code in `[0, 4095]`. This matches the
+//! DCDM JPEG2000 cinema container format that decoders like OpenJPEG
+//! expand into.
 //!
 //! # Stride semantics
 //!
@@ -16,10 +20,13 @@
 //!
 //! # Sample-value validation
 //!
-//! `try_new` validates geometry only. Out-of-range samples (upper 4
-//! bits set) are masked by `& 0x0FFF` inside every kernel — matches
-//! `Yuv420pFrame16` / `GbrpHighBitFrame` precedent (scanning every
-//! sample at video rates is prohibitive).
+//! `try_new` validates geometry only. Every kernel applies an
+//! endian-aware load (`from_le` / `from_be`) followed by `>> 4` to
+//! recover the active 12-bit code from the high-bit-packed `u16`,
+//! then defensively masks with `& 0x0FFF`. Producers that violate the
+//! spec by setting bits `[3:0]` see those bits silently discarded —
+//! matches `Yuv420pFrame16` / `GbrpHighBitFrame` precedent (scanning
+//! every sample at video rates is prohibitive).
 //!
 //! # Endianness
 //!
@@ -83,10 +90,13 @@ pub enum Xyz12FrameError {
 /// `AV_PIX_FMT_XYZ12BE`).
 ///
 /// Each pixel occupies 3 × `u16` (six bytes), in **`X, Y, Z`** order.
-/// Samples are 12-bit values stored in the low 12 bits of each `u16`
-/// (upper 4 bits zero per the SMPTE ST 428-1 spec). Out-of-range
-/// samples are tolerated at construction time and masked inside every
-/// row kernel.
+/// Samples are 12-bit codes stored **high-bit-packed**: active 12 bits
+/// in `[15:4]` of each `u16`, low 4 bits reserved zero (per the
+/// FFmpeg `AV_PIX_FMT_XYZ12LE` / `AV_PIX_FMT_XYZ12BE` spec — "the same
+/// as RGB48LE/BE, but the lower 4 bits of each component are zero").
+/// Producers that violate the convention by setting bits `[3:0]` are
+/// tolerated: every row kernel applies `>> 4` after the endian-aware
+/// load, silently discarding the dirty low bits.
 ///
 /// `stride` is in **u16 elements** (≥ `3 * width`), matching the
 /// per-format convention that stride aligns with the underlying slice
@@ -157,8 +167,10 @@ impl<'a, const BE: bool> Xyz12Frame<'a, BE> {
   }
 
   /// Packed `X, Y, Z` plane — `width * 3` u16 elements per row.
-  /// Samples are in the low 12 bits of each `u16`; upper bits are
-  /// masked by every row kernel.
+  /// Samples are 12-bit codes in bits `[15:4]` of each `u16`
+  /// (high-bit-packed per FFmpeg `AV_PIX_FMT_XYZ12LE/BE`); bits `[3:0]`
+  /// are reserved zero. Every row kernel right-shifts by 4 after the
+  /// endian-aware load to recover the active code.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn xyz(&self) -> &'a [u16] {
     self.xyz

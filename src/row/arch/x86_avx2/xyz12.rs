@@ -13,7 +13,10 @@
 //!    pattern the SSE4.1 backend uses, since AVX2 reuses
 //!    `_mm_shuffle_epi8` per 128-bit lane). The result is three
 //!    `__m128i` channel vectors (8 u16 each).
-//! 2. Each `(X8, Y8, Z8)` is masked (`_mm_and_si128`), widened to
+//! 2. Each `(X8, Y8, Z8)` is right-shifted by 4 (`_mm_srli_epi16::<4>`)
+//!    to extract the active 12-bit code from the high-bit-packed `u16`
+//!    (FFmpeg `AV_PIX_FMT_XYZ12LE/BE`: code in `[15:4]`, low 4 bits
+//!    zero), defensively masked (`_mm_and_si128`), widened to
 //!    `__m256i` u32x8 via `_mm256_cvtepu16_epi32`, then cast to
 //!    `__m256` via `_mm256_cvtepi32_ps`.
 //! 3. Per-lane scalar `smpte428_inverse_oetf` produces linear XYZ as
@@ -174,10 +177,15 @@ unsafe fn load_and_matmul_8px<const BE: bool>(
     let v1 = load_endian_u16x8::<BE>(p.add(16));
     let v2 = load_endian_u16x8::<BE>(p.add(32));
     let (x_u, y_u, z_u) = deinterleave_xyz12_8px(v0, v1, v2);
+    // Shift right 4 to extract active 12-bit code (high-bit-packed
+    // FFmpeg `AV_PIX_FMT_XYZ12LE/BE`); mask defensively.
     let mask = _mm_set1_epi16(SAMPLE_MASK_U16 as i16);
-    let x_lin = smpte428_inv_oetf_scalar8(u16x8_to_f32x8(_mm_and_si128(x_u, mask)));
-    let y_lin = smpte428_inv_oetf_scalar8(u16x8_to_f32x8(_mm_and_si128(y_u, mask)));
-    let z_lin = smpte428_inv_oetf_scalar8(u16x8_to_f32x8(_mm_and_si128(z_u, mask)));
+    let x_shr = _mm_and_si128(_mm_srli_epi16::<4>(x_u), mask);
+    let y_shr = _mm_and_si128(_mm_srli_epi16::<4>(y_u), mask);
+    let z_shr = _mm_and_si128(_mm_srli_epi16::<4>(z_u), mask);
+    let x_lin = smpte428_inv_oetf_scalar8(u16x8_to_f32x8(x_shr));
+    let y_lin = smpte428_inv_oetf_scalar8(u16x8_to_f32x8(y_shr));
+    let z_lin = smpte428_inv_oetf_scalar8(u16x8_to_f32x8(z_shr));
     matmul_xyz_to_rgb_8lane(m, x_lin, y_lin, z_lin)
   }
 }
@@ -192,9 +200,12 @@ unsafe fn load_xyz_linear_8px<const BE: bool>(p: *const u8) -> (__m256, __m256, 
     let v2 = load_endian_u16x8::<BE>(p.add(32));
     let (x_u, y_u, z_u) = deinterleave_xyz12_8px(v0, v1, v2);
     let mask = _mm_set1_epi16(SAMPLE_MASK_U16 as i16);
-    let x_lin = smpte428_inv_oetf_scalar8(u16x8_to_f32x8(_mm_and_si128(x_u, mask)));
-    let y_lin = smpte428_inv_oetf_scalar8(u16x8_to_f32x8(_mm_and_si128(y_u, mask)));
-    let z_lin = smpte428_inv_oetf_scalar8(u16x8_to_f32x8(_mm_and_si128(z_u, mask)));
+    let x_shr = _mm_and_si128(_mm_srli_epi16::<4>(x_u), mask);
+    let y_shr = _mm_and_si128(_mm_srli_epi16::<4>(y_u), mask);
+    let z_shr = _mm_and_si128(_mm_srli_epi16::<4>(z_u), mask);
+    let x_lin = smpte428_inv_oetf_scalar8(u16x8_to_f32x8(x_shr));
+    let y_lin = smpte428_inv_oetf_scalar8(u16x8_to_f32x8(y_shr));
+    let z_lin = smpte428_inv_oetf_scalar8(u16x8_to_f32x8(z_shr));
     (x_lin, y_lin, z_lin)
   }
 }

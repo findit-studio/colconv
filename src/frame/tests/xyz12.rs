@@ -4,8 +4,11 @@ use super::*;
 //
 // Single-plane packed-XYZ at 12 bits per sample. `stride` is in **u16
 // elements** (≥ 3 * width); `plane.len() >= stride * height` u16s.
-// No width parity constraint. Out-of-range samples (upper 4 bits set)
-// are tolerated at construction — masking happens inside every kernel.
+// No width parity constraint. Samples are high-bit-packed per FFmpeg
+// `AV_PIX_FMT_XYZ12LE/BE` (active 12 bits in `[15:4]`, low 4 bits zero);
+// non-spec-compliant samples (low 4 bits set) are tolerated at
+// construction time — every row kernel applies `>> 4` then masks
+// defensively.
 
 #[test]
 fn xyz12_frame_try_new_accepts_valid_tight() {
@@ -28,10 +31,11 @@ fn xyz12_frame_try_new_accepts_be_alias() {
 
 #[test]
 fn xyz12_frame_try_new_accepts_out_of_range_samples() {
-  // Samples with upper 4 bits set are permitted at construction; the
-  // masking happens inside every row kernel.
+  // Samples with low 4 bits set (non-spec-compliant per FFmpeg
+  // `AV_PIX_FMT_XYZ12LE`) are permitted at construction; every row
+  // kernel applies `>> 4` and masks defensively.
   let buf = std::vec![0xFFFF_u16; 16 * 4 * 3];
-  Xyz12LeFrame::try_new(&buf, 16, 4, 48).expect("upper-4-bits dirty values allowed");
+  Xyz12LeFrame::try_new(&buf, 16, 4, 48).expect("low-4-bits dirty values allowed");
 }
 
 #[test]

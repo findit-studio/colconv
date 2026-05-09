@@ -11,8 +11,12 @@
 //!    XYZ in 24 u16) feed the 3-channel deinterleave shuffle. The
 //!    shuffle pattern matches the established
 //!    `deinterleave_rgb48_8px` layout from the Tier 8 kernels.
-//! 2. Each `(X8, Y8, Z8)` vector is masked to the active 12 bits via
-//!    `_mm_and_si128`, then split into low/high u32x4 halves
+//! 2. Each `(X8, Y8, Z8)` vector is right-shifted by 4
+//!    (`_mm_srli_epi16::<4>`) to extract the active 12-bit code from
+//!    the high-bit-packed `u16` (FFmpeg `AV_PIX_FMT_XYZ12LE/BE`:
+//!    active 12 bits in `[15:4]`, low 4 bits reserved zero), then
+//!    defensively masked via `_mm_and_si128` with `SAMPLE_MASK`. The
+//!    result is split into low/high u32x4 halves
 //!    (`_mm_unpacklo/hi_epi16`) and converted to `f32x4` via
 //!    `_mm_cvtepi32_ps` (the masked u16 fits in the i32 positive
 //!    range, so signed and unsigned conversions agree).
@@ -192,13 +196,19 @@ unsafe fn load_and_matmul_8px<const BE: bool>(
     let v1 = load_endian_u16x8::<BE>(p.add(16));
     let v2 = load_endian_u16x8::<BE>(p.add(32));
     let (x_u, y_u, z_u) = deinterleave_xyz12_8px(v0, v1, v2);
+    // Shift right 4 to extract the active 12-bit code from the
+    // high-bit-packed u16 (FFmpeg `AV_PIX_FMT_XYZ12LE/BE`: code in
+    // `[15:4]`, low 4 bits zero). Defensive `& SAMPLE_MASK` is a
+    // no-op for spec-compliant input but tolerates a producer that
+    // sets bits above 15 (impossible in u16 — included for symmetry
+    // with the scalar's `(raw >> 4) & SAMPLE_MASK` decode).
     let mask = _mm_set1_epi16(SAMPLE_MASK_U16 as i16);
-    let x_masked = _mm_and_si128(x_u, mask);
-    let y_masked = _mm_and_si128(y_u, mask);
-    let z_masked = _mm_and_si128(z_u, mask);
-    let (x_lo, x_hi) = u16x8_to_f32x4_pair(x_masked);
-    let (y_lo, y_hi) = u16x8_to_f32x4_pair(y_masked);
-    let (z_lo, z_hi) = u16x8_to_f32x4_pair(z_masked);
+    let x_shr = _mm_and_si128(_mm_srli_epi16::<4>(x_u), mask);
+    let y_shr = _mm_and_si128(_mm_srli_epi16::<4>(y_u), mask);
+    let z_shr = _mm_and_si128(_mm_srli_epi16::<4>(z_u), mask);
+    let (x_lo, x_hi) = u16x8_to_f32x4_pair(x_shr);
+    let (y_lo, y_hi) = u16x8_to_f32x4_pair(y_shr);
+    let (z_lo, z_hi) = u16x8_to_f32x4_pair(z_shr);
     let x_lo = smpte428_inv_oetf_scalar4(x_lo);
     let x_hi = smpte428_inv_oetf_scalar4(x_hi);
     let y_lo = smpte428_inv_oetf_scalar4(y_lo);
@@ -223,12 +233,12 @@ unsafe fn load_xyz_linear_8px<const BE: bool>(
     let v2 = load_endian_u16x8::<BE>(p.add(32));
     let (x_u, y_u, z_u) = deinterleave_xyz12_8px(v0, v1, v2);
     let mask = _mm_set1_epi16(SAMPLE_MASK_U16 as i16);
-    let x_masked = _mm_and_si128(x_u, mask);
-    let y_masked = _mm_and_si128(y_u, mask);
-    let z_masked = _mm_and_si128(z_u, mask);
-    let (x_lo, x_hi) = u16x8_to_f32x4_pair(x_masked);
-    let (y_lo, y_hi) = u16x8_to_f32x4_pair(y_masked);
-    let (z_lo, z_hi) = u16x8_to_f32x4_pair(z_masked);
+    let x_shr = _mm_and_si128(_mm_srli_epi16::<4>(x_u), mask);
+    let y_shr = _mm_and_si128(_mm_srli_epi16::<4>(y_u), mask);
+    let z_shr = _mm_and_si128(_mm_srli_epi16::<4>(z_u), mask);
+    let (x_lo, x_hi) = u16x8_to_f32x4_pair(x_shr);
+    let (y_lo, y_hi) = u16x8_to_f32x4_pair(y_shr);
+    let (z_lo, z_hi) = u16x8_to_f32x4_pair(z_shr);
     (
       (
         smpte428_inv_oetf_scalar4(x_lo),

@@ -25,34 +25,54 @@ use crate::{
 
 const WIDTHS: &[usize] = &[1, 4, 7, 16, 33, 1920];
 
+/// Pseudo-random 12-bit-active XYZ12 plane in the **high-bit-packed**
+/// LE wire convention (FFmpeg `AV_PIX_FMT_XYZ12LE`: code in `[15:4]`,
+/// low 4 bits zero).
 fn xyz12_plane(width: usize, seed: u32) -> std::vec::Vec<u16> {
   let mut state = seed;
   (0..width * 3)
     .map(|_| {
       state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-      (state & 0x0FFF) as u16
+      let code = (state & 0x0FFF) as u16;
+      // Encode as `code << 4` per the FFmpeg high-bit-packed convention.
+      // Host-independent: `from_le_bytes` of `to_le_bytes` is identity
+      // on LE hosts and a no-op on the wire-byte representation.
+      u16::from_le_bytes((code << 4).to_le_bytes())
     })
     .collect()
 }
 
-/// Mirrors the dirty-input pattern from the planar-gbr tests: the
-/// upper bits should be ignored by the kernel's `SAMPLE_MASK`, so a
-/// value with bit 13 / 15 set must produce the same output as its
-/// `& 0x0FFF` clean counterpart.
+/// Mirrors the dirty-input pattern from the planar-gbr tests: a
+/// non-spec-compliant producer that sets bits `[3:0]` (reserved zero
+/// per the FFmpeg `AV_PIX_FMT_XYZ12LE` spec) must still produce the
+/// same output as its clean counterpart — every kernel applies `>> 4`
+/// after the endian-aware load.
 fn xyz12_plane_dirty(width: usize, seed: u32) -> std::vec::Vec<u16> {
   let mut state = seed;
   (0..width * 3)
     .map(|i| {
       state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-      let clean = (state & 0x0FFF) as u16;
-      let dirty = if i % 2 == 0 { 0xF000 } else { 0xA000 };
-      clean | dirty
+      let code = (state & 0x0FFF) as u16;
+      let clean = u16::from_le_bytes((code << 4).to_le_bytes());
+      // Set the reserved low 4 bits with arbitrary garbage on the wire.
+      let dirt: u16 = if i % 2 == 0 { 0x000F } else { 0x000A };
+      clean | u16::from_le_bytes(dirt.to_le_bytes())
     })
     .collect()
 }
 
+/// Returns the BE-wire counterpart of an LE-wire fixture: byte-swap
+/// every `u16`. Host-independent: the kernel's `from_be` undoes the
+/// swap to recover the original host-native LE encoding.
 fn byte_swap_vec(v: &[u16]) -> std::vec::Vec<u16> {
   v.iter().map(|x| x.swap_bytes()).collect()
+}
+
+/// Encodes a 12-bit code in the BE-wire layout for direct host-
+/// independent BE input fixtures (used by the BE-host parity test).
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn pack12_be(code: u16) -> u16 {
+  u16::from_ne_bytes((code << 4).to_be_bytes())
 }
 
 // ---- u8 RGB --------------------------------------------------------------
@@ -112,6 +132,37 @@ fn neon_xyz12_to_rgb_be_matches_le() {
       xyz12_to_rgb_row::<true>(&xyz_be, &mut out_be, w, DcpTargetGamut::Rec709);
     }
     assert_eq!(out_le, out_be, "NEON xyz12_to_rgb BE/LE mismatch (w={w})");
+  }
+}
+
+/// Host-independent NEON-vs-scalar parity over BE-wire input. On an
+/// LE host this exercises the new `BE != HOST_NATIVE_BE` scalar
+/// fallback path; on a BE host (e.g. `s390x_unknown_linux_gnu` miri,
+/// `aarch64_be`) it exercises the NEON SIMD body. Catches the prior
+/// `if BE { swap }` bug (which corrupted both BE-host paths) by
+/// asserting bit-exact scalar/SIMD parity regardless of host.
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn neon_xyz12_to_rgb_be_wire_matches_scalar() {
+  for &w in WIDTHS {
+    // Build a fixture of host-independent BE-wire u16 codes.
+    let mut state: u32 = 0x9E37_79B9;
+    let xyz_be: std::vec::Vec<u16> = (0..w * 3)
+      .map(|_| {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        pack12_be((state & 0x0FFF) as u16)
+      })
+      .collect();
+    let mut out_scalar = std::vec![0u8; w * 3];
+    let mut out_neon = std::vec![0u8; w * 3];
+    scalar::xyz12::xyz12_to_rgb_row::<true>(&xyz_be, &mut out_scalar, w, DcpTargetGamut::DciP3);
+    unsafe {
+      xyz12_to_rgb_row::<true>(&xyz_be, &mut out_neon, w, DcpTargetGamut::DciP3);
+    }
+    assert_eq!(
+      out_scalar, out_neon,
+      "NEON BE-wire xyz12_to_rgb diverges from scalar (w={w})"
+    );
   }
 }
 

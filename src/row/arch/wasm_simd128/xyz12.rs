@@ -13,12 +13,15 @@
 //!    XYZ in 24 u16) feed a 3-source byte-swizzle deinterleave (three
 //!    `u8x16_swizzle` + `v128_or` per channel — same OR-mask pattern
 //!    as the SSE4.1 `_mm_shuffle_epi8` cascade).
-//! 2. Each `(X8, Y8, Z8)` u16x8 vector is masked to the active 12 bits
-//!    (`v128_and`), then split into low/high i32x4 halves
-//!    (`i32x4_extend_low_i16x8` / `i32x4_extend_high_i16x8`) and cast
-//!    to f32x4 via `f32x4_convert_i32x4`. The 12-bit mask keeps values
-//!    in the positive i32 range, so signed widening matches the scalar
-//!    `as f32` of a u16.
+//! 2. Each `(X8, Y8, Z8)` u16x8 vector is right-shifted by 4
+//!    (`u16x8_shr(.., 4)`) to extract the active 12-bit code from the
+//!    high-bit-packed `u16` (FFmpeg `AV_PIX_FMT_XYZ12LE/BE`: code in
+//!    `[15:4]`, low 4 bits zero), defensively masked with `v128_and`,
+//!    then split into low/high i32x4 halves (`i32x4_extend_low_i16x8`
+//!    / `i32x4_extend_high_i16x8`) and cast to f32x4 via
+//!    `f32x4_convert_i32x4`. The 12-bit mask keeps values in the
+//!    positive i32 range, so signed widening matches the scalar `as
+//!    f32` of a u16.
 //! 3. Per-lane scalar `smpte428_inverse_oetf` produces linear XYZ
 //!    f32x4 halves (stored to a stack array, scalar-called four times,
 //!    reloaded).
@@ -182,13 +185,15 @@ unsafe fn load_and_matmul_8px<const BE: bool>(
     let v1 = load_endian_u16x8::<BE>(p.add(16));
     let v2 = load_endian_u16x8::<BE>(p.add(32));
     let (x_u, y_u, z_u) = deinterleave_xyz12_8px(v0, v1, v2);
+    // Shift right 4 to extract active 12-bit code (high-bit-packed
+    // FFmpeg `AV_PIX_FMT_XYZ12LE/BE`); mask defensively.
     let mask = u16x8_splat(SAMPLE_MASK_U16);
-    let x_masked = v128_and(x_u, mask);
-    let y_masked = v128_and(y_u, mask);
-    let z_masked = v128_and(z_u, mask);
-    let (x_lo, x_hi) = u16x8_to_f32x4_pair(x_masked);
-    let (y_lo, y_hi) = u16x8_to_f32x4_pair(y_masked);
-    let (z_lo, z_hi) = u16x8_to_f32x4_pair(z_masked);
+    let x_shr = v128_and(u16x8_shr(x_u, 4), mask);
+    let y_shr = v128_and(u16x8_shr(y_u, 4), mask);
+    let z_shr = v128_and(u16x8_shr(z_u, 4), mask);
+    let (x_lo, x_hi) = u16x8_to_f32x4_pair(x_shr);
+    let (y_lo, y_hi) = u16x8_to_f32x4_pair(y_shr);
+    let (z_lo, z_hi) = u16x8_to_f32x4_pair(z_shr);
     let x_lo = smpte428_inv_oetf_scalar4(x_lo);
     let x_hi = smpte428_inv_oetf_scalar4(x_hi);
     let y_lo = smpte428_inv_oetf_scalar4(y_lo);
@@ -213,12 +218,12 @@ unsafe fn load_xyz_linear_8px<const BE: bool>(
     let v2 = load_endian_u16x8::<BE>(p.add(32));
     let (x_u, y_u, z_u) = deinterleave_xyz12_8px(v0, v1, v2);
     let mask = u16x8_splat(SAMPLE_MASK_U16);
-    let x_masked = v128_and(x_u, mask);
-    let y_masked = v128_and(y_u, mask);
-    let z_masked = v128_and(z_u, mask);
-    let (x_lo, x_hi) = u16x8_to_f32x4_pair(x_masked);
-    let (y_lo, y_hi) = u16x8_to_f32x4_pair(y_masked);
-    let (z_lo, z_hi) = u16x8_to_f32x4_pair(z_masked);
+    let x_shr = v128_and(u16x8_shr(x_u, 4), mask);
+    let y_shr = v128_and(u16x8_shr(y_u, 4), mask);
+    let z_shr = v128_and(u16x8_shr(z_u, 4), mask);
+    let (x_lo, x_hi) = u16x8_to_f32x4_pair(x_shr);
+    let (y_lo, y_hi) = u16x8_to_f32x4_pair(y_shr);
+    let (z_lo, z_hi) = u16x8_to_f32x4_pair(z_shr);
     (
       (
         smpte428_inv_oetf_scalar4(x_lo),

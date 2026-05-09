@@ -58,7 +58,9 @@ pub type Xyz12Le = Xyz12<false>;
 pub type Xyz12Be = Xyz12<true>;
 
 /// One row of an [`Xyz12Frame`] — `width * 3` packed `u16` X/Y/Z
-/// samples, each in the low 12 bits.
+/// samples, each in the **high-bit-packed** layout per FFmpeg
+/// `AV_PIX_FMT_XYZ12LE/BE` (active 12 bits in `[15:4]`, low 4 bits
+/// reserved zero).
 ///
 /// Carries the per-frame [`DcpTargetGamut`] choice so downstream row
 /// kernels can apply the correct XYZ → RGB matrix without a separate

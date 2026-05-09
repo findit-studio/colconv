@@ -16,12 +16,16 @@ use crate::{
 
 const WIDTHS: &[usize] = &[1, 4, 7, 16, 33, 1920];
 
+/// Pseudo-random 12-bit-active XYZ12 plane in the **high-bit-packed**
+/// LE wire convention (FFmpeg `AV_PIX_FMT_XYZ12LE`: code in `[15:4]`,
+/// low 4 bits zero).
 fn xyz12_plane(width: usize, seed: u32) -> std::vec::Vec<u16> {
   let mut state = seed;
   (0..width * 3)
     .map(|_| {
       state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-      (state & 0x0FFF) as u16
+      let code = (state & 0x0FFF) as u16;
+      u16::from_le_bytes((code << 4).to_le_bytes())
     })
     .collect()
 }
@@ -31,9 +35,10 @@ fn xyz12_plane_dirty(width: usize, seed: u32) -> std::vec::Vec<u16> {
   (0..width * 3)
     .map(|i| {
       state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-      let clean = (state & 0x0FFF) as u16;
-      let dirty = if i % 2 == 0 { 0xF000 } else { 0xA000 };
-      clean | dirty
+      let code = (state & 0x0FFF) as u16;
+      let clean = u16::from_le_bytes((code << 4).to_le_bytes());
+      let dirt: u16 = if i % 2 == 0 { 0x000F } else { 0x000A };
+      clean | u16::from_le_bytes(dirt.to_le_bytes())
     })
     .collect()
 }

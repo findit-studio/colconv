@@ -2,7 +2,8 @@
 //! dispatchers.
 //!
 //! Each entry point converts one row of packed `X, Y, Z` `u16` input
-//! (low-12-bit-active samples) to the requested output format. Every
+//! (high-bit-packed per FFmpeg `AV_PIX_FMT_XYZ12LE/BE`: active 12 bits
+//! in `[15:4]`, low 4 bits zero) to the requested output format. Every
 //! kernel takes:
 //!
 //! - `BE: const bool` — wire-format endianness of the source `u16`s.

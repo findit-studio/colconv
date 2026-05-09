@@ -13,8 +13,12 @@
 //!    feed two SSE-style 8-pixel deinterleaves, each producing
 //!    `(X8, Y8, Z8)` u16x8. The two halves are merged with
 //!    `_mm256_inserti128_si256` into `__m256i` channel vectors.
-//! 2. Mask + `_mm512_cvtepu16_epi32` widens to i32x16 in `__m512i`;
-//!    `_mm512_cvtepi32_ps` casts to f32x16 in `__m512`.
+//! 2. Right-shift by 4 (`_mm256_srli_epi16::<4>`) extracts the active
+//!    12-bit code from the high-bit-packed `u16` (FFmpeg
+//!    `AV_PIX_FMT_XYZ12LE/BE`: code in `[15:4]`, low 4 bits zero);
+//!    defensive `_mm256_and_si256` mask + `_mm512_cvtepu16_epi32`
+//!    widens to i32x16 in `__m512i`; `_mm512_cvtepi32_ps` casts to
+//!    f32x16 in `__m512`.
 //! 3. Per-lane scalar `smpte428_inverse_oetf` produces linear XYZ.
 //! 4. Vectorized 3×3 matmul uses plain `_mm512_mul_ps + _mm512_add_ps`
 //!    (NOT FMA via `_mm512_fmadd_ps`) — single-rounding FMA breaks
@@ -185,10 +189,15 @@ unsafe fn load_and_matmul_16px<const BE: bool>(
 ) -> (__m512, __m512, __m512) {
   unsafe {
     let (x_u, y_u, z_u) = load_and_deinterleave_16px::<BE>(p);
+    // Shift right 4 to extract active 12-bit code (high-bit-packed
+    // FFmpeg `AV_PIX_FMT_XYZ12LE/BE`); mask defensively.
     let mask = _mm256_set1_epi16(SAMPLE_MASK_U16 as i16);
-    let x_lin = smpte428_inv_oetf_scalar16(u16x16_to_f32x16(_mm256_and_si256(x_u, mask)));
-    let y_lin = smpte428_inv_oetf_scalar16(u16x16_to_f32x16(_mm256_and_si256(y_u, mask)));
-    let z_lin = smpte428_inv_oetf_scalar16(u16x16_to_f32x16(_mm256_and_si256(z_u, mask)));
+    let x_shr = _mm256_and_si256(_mm256_srli_epi16::<4>(x_u), mask);
+    let y_shr = _mm256_and_si256(_mm256_srli_epi16::<4>(y_u), mask);
+    let z_shr = _mm256_and_si256(_mm256_srli_epi16::<4>(z_u), mask);
+    let x_lin = smpte428_inv_oetf_scalar16(u16x16_to_f32x16(x_shr));
+    let y_lin = smpte428_inv_oetf_scalar16(u16x16_to_f32x16(y_shr));
+    let z_lin = smpte428_inv_oetf_scalar16(u16x16_to_f32x16(z_shr));
     matmul_xyz_to_rgb_16lane(m, x_lin, y_lin, z_lin)
   }
 }
@@ -199,9 +208,12 @@ unsafe fn load_xyz_linear_16px<const BE: bool>(p: *const u8) -> (__m512, __m512,
   unsafe {
     let (x_u, y_u, z_u) = load_and_deinterleave_16px::<BE>(p);
     let mask = _mm256_set1_epi16(SAMPLE_MASK_U16 as i16);
-    let x_lin = smpte428_inv_oetf_scalar16(u16x16_to_f32x16(_mm256_and_si256(x_u, mask)));
-    let y_lin = smpte428_inv_oetf_scalar16(u16x16_to_f32x16(_mm256_and_si256(y_u, mask)));
-    let z_lin = smpte428_inv_oetf_scalar16(u16x16_to_f32x16(_mm256_and_si256(z_u, mask)));
+    let x_shr = _mm256_and_si256(_mm256_srli_epi16::<4>(x_u), mask);
+    let y_shr = _mm256_and_si256(_mm256_srli_epi16::<4>(y_u), mask);
+    let z_shr = _mm256_and_si256(_mm256_srli_epi16::<4>(z_u), mask);
+    let x_lin = smpte428_inv_oetf_scalar16(u16x16_to_f32x16(x_shr));
+    let y_lin = smpte428_inv_oetf_scalar16(u16x16_to_f32x16(y_shr));
+    let z_lin = smpte428_inv_oetf_scalar16(u16x16_to_f32x16(z_shr));
     (x_lin, y_lin, z_lin)
   }
 }

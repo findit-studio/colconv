@@ -8,28 +8,50 @@ use crate::DcpTargetGamut;
 /// drift. Matches the spec's `EPSILON_F32 = 4e-6` constant.
 const EPSILON_F32: f32 = 4e-6;
 
-/// Builds a row-padded Xyz12LE frame with a constant `(X, Y, Z)` triple.
+/// Encodes a 12-bit code into the high-bit-packed LE wire `u16`
+/// (`code << 4`, then LE-bytes reinterpreted as host-native `u16`).
+/// Per FFmpeg `AV_PIX_FMT_XYZ12LE`: active 12 bits in `[15:4]`, low 4
+/// bits zero. Host-independent: same logical wire value on LE and BE
+/// hosts.
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn pack12_le(code: u16) -> u16 {
+  u16::from_le_bytes((code << 4).to_le_bytes())
+}
+
+/// Encodes a 12-bit code into the high-bit-packed BE wire `u16` —
+/// `(code << 4).to_be_bytes()` reinterpreted as host-native. Same
+/// logical wire value on LE and BE hosts; the kernel's `from_be`
+/// recovers the LE-encoded form internally.
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn pack12_be(code: u16) -> u16 {
+  u16::from_ne_bytes((code << 4).to_be_bytes())
+}
+
+/// Builds a row-padded Xyz12LE frame with a constant 12-bit `(X, Y, Z)`
+/// triple. Inputs are 12-bit codes; the helper applies the high-bit
+/// packing.
 fn solid_xyz12_frame_le(width: u32, height: u32, x: u16, y: u16, z: u16) -> Vec<u16> {
   let w = width as usize;
   let h = height as usize;
   let mut buf = std::vec![0u16; w * h * 3];
   for px in buf.chunks_mut(3) {
-    px[0] = x;
-    px[1] = y;
-    px[2] = z;
+    px[0] = pack12_le(x);
+    px[1] = pack12_le(y);
+    px[2] = pack12_le(z);
   }
   buf
 }
 
-/// Builds the BE-byte-swapped variant of `solid_xyz12_frame_le`.
+/// Builds the BE-wire variant of `solid_xyz12_frame_le` for the same
+/// 12-bit codes (host-independent via `pack12_be`).
 fn solid_xyz12_frame_be(width: u32, height: u32, x: u16, y: u16, z: u16) -> Vec<u16> {
   let w = width as usize;
   let h = height as usize;
   let mut buf = std::vec![0u16; w * h * 3];
   for px in buf.chunks_mut(3) {
-    px[0] = x.swap_bytes();
-    px[1] = y.swap_bytes();
-    px[2] = z.swap_bytes();
+    px[0] = pack12_be(x);
+    px[1] = pack12_be(y);
+    px[2] = pack12_be(z);
   }
   buf
 }
@@ -337,11 +359,24 @@ fn xyz12_combined_rgb_rgba_consistent() {
 }
 
 #[test]
-fn xyz12_dirty_high_bits_masked_in_kernel() {
-  // Input with bit 13 set — kernel masks to 12 bits, output should
-  // match clean 12-bit input.
-  let clean = solid_xyz12_frame_le(4, 2, 0x0800, 0x0800, 0x0800);
-  let dirty = solid_xyz12_frame_le(4, 2, 0xF800, 0xA800, 0x2800);
+fn xyz12_dirty_low_bits_discarded_by_kernel() {
+  // FFmpeg `AV_PIX_FMT_XYZ12LE` reserves bits `[3:0]` as zero. A
+  // non-spec-compliant producer that sets them anyway must produce
+  // identical output to the clean input — every kernel applies `>> 4`
+  // after the endian-aware load.
+  let mut clean = solid_xyz12_frame_le(4, 2, 0x800, 0x800, 0x800);
+  let mut dirty = solid_xyz12_frame_le(4, 2, 0x800, 0x800, 0x800);
+  for px in dirty.chunks_mut(3) {
+    // Set the reserved low 4 bits with arbitrary garbage on the LE
+    // wire — `from_le_bytes` interprets them as the low byte.
+    let lo_dirt = [0x000F_u16, 0x000A_u16, 0x0007_u16];
+    for (i, c) in px.iter_mut().enumerate() {
+      let bytes = c.to_le_bytes();
+      let mut dirty_u16 = u16::from_le_bytes(bytes);
+      dirty_u16 |= u16::from_le_bytes(lo_dirt[i].to_le_bytes());
+      *c = dirty_u16;
+    }
+  }
   let src_clean = Xyz12LeFrame::try_new(&clean, 4, 2, 4 * 3).unwrap();
   let src_dirty = Xyz12LeFrame::try_new(&dirty, 4, 2, 4 * 3).unwrap();
 
@@ -360,6 +395,30 @@ fn xyz12_dirty_high_bits_masked_in_kernel() {
     xyz12_to(&src_dirty, DcpTargetGamut::DciP3, &mut sink).unwrap();
   }
   assert_eq!(out_clean, out_dirty);
+  // Mark `clean` as touched to silence the lint for symmetry; all real
+  // mutation happens on `dirty`.
+  let _ = &mut clean;
+}
+
+#[test]
+fn xyz12_mid_gray_sample_is_nonzero() {
+  // Pre-fix regression: mid-gray sample (`0x8000` on the wire = code
+  // `0x800`) was decoded as `0x000`, producing all-zero output.
+  // Post-fix the `>> 4` shift extracts the active code and the kernel
+  // produces a positive linear value.
+  let pix = solid_xyz12_frame_le(4, 2, 0x800, 0x800, 0x800);
+  let src = Xyz12LeFrame::try_new(&pix, 4, 2, 4 * 3).unwrap();
+
+  let mut xyz_out = std::vec![0.0f32; 4 * 2 * 3];
+  let mut sink = MixedSinker::<Xyz12Le>::new(4, 2)
+    .with_xyz_f32(&mut xyz_out)
+    .unwrap();
+  xyz12_to(&src, DcpTargetGamut::DciP3, &mut sink).unwrap();
+  for px in xyz_out.chunks(3) {
+    assert!(px[0] > 0.1, "expected mid-gray X > 0.1, got {}", px[0]);
+    assert!(px[1] > 0.1, "expected mid-gray Y > 0.1, got {}", px[1]);
+    assert!(px[2] > 0.1, "expected mid-gray Z > 0.1, got {}", px[2]);
+  }
 }
 
 #[test]
