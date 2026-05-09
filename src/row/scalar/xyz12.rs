@@ -474,6 +474,11 @@ mod tests {
   /// any platform variation.
   const EPSILON_F32: f32 = 4e-6;
 
+  // All consumers of `assert_close` are tests gated on
+  // `cfg(target_endian = "little")` (their LE-byte fixtures travel
+  // through `from_le` on the kernel path). Gate the helper too so BE
+  // hosts don't trip `dead_code`. Mirrors PR #87 `cb53e86` pattern.
+  #[cfg(target_endian = "little")]
   fn assert_close(a: f32, b: f32, tag: &str) {
     let diff = (a - b).abs();
     assert!(diff <= EPSILON_F32, "{tag}: {a} vs {b} (diff {diff})");
