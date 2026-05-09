@@ -2,6 +2,7 @@ use super::*;
 
 // ---- Yuv444pFrame16::try_new_checked ---------------------------------
 
+#[cfg(target_endian = "little")]
 fn p444_planes_10bit() -> (std::vec::Vec<u16>, std::vec::Vec<u16>, std::vec::Vec<u16>) {
   // 4:4:4: chroma is FULL-width, full-height (1:1 with Y).
   let y = std::vec![64u16; 16 * 8];
@@ -11,6 +12,7 @@ fn p444_planes_10bit() -> (std::vec::Vec<u16>, std::vec::Vec<u16>, std::vec::Vec
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv444p10_try_new_checked_accepts_in_range_samples() {
   let (y, u, v) = p444_planes_10bit();
   let f = Yuv444p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 16, 16).expect("valid 10-bit");
@@ -19,6 +21,7 @@ fn yuv444p10_try_new_checked_accepts_in_range_samples() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv444p10_try_new_checked_accepts_max_valid_value() {
   let y = std::vec![1023u16; 16 * 8];
   let u = std::vec![1023u16; 16 * 8];
@@ -27,6 +30,7 @@ fn yuv444p10_try_new_checked_accepts_max_valid_value() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv444p10_try_new_checked_rejects_y_high_bit_set() {
   let mut y = std::vec![0u16; 16 * 8];
   y[2 * 16 + 9] = 0x8000;
@@ -45,6 +49,7 @@ fn yuv444p10_try_new_checked_rejects_y_high_bit_set() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv444p10_try_new_checked_rejects_u_plane_sample_in_full_width_chroma() {
   // 4:4:4-specific: the offending sample is in the FULL-WIDTH
   // chroma plane, at column 13 (which doesn't exist in 4:2:0/4:2:2
@@ -83,6 +88,7 @@ fn yuv444p10_try_new_checked_rejects_v_plane_sample() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv444p14_try_new_checked_rejects_above_16383() {
   let mut y = std::vec![8192u16; 16 * 8];
   y[42] = 16384; // just above 14-bit max
@@ -110,6 +116,7 @@ fn yuv444p16_try_new_checked_accepts_full_u16_range() {
 
 // ---- Yuv440p10/12 checked-constructor tests ---------------------------
 
+#[cfg(target_endian = "little")]
 fn p440_planes_10bit() -> (std::vec::Vec<u16>, std::vec::Vec<u16>, std::vec::Vec<u16>) {
   // 4:4:0: chroma is FULL-width × HALF-height (8 / 2 = 4 chroma rows).
   let y = std::vec![64u16; 16 * 8];
@@ -119,6 +126,7 @@ fn p440_planes_10bit() -> (std::vec::Vec<u16>, std::vec::Vec<u16>, std::vec::Vec
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv440p10_try_new_checked_accepts_in_range_samples() {
   let (y, u, v) = p440_planes_10bit();
   let f = Yuv440p10Frame::try_new_checked(&y, &u, &v, 16, 8, 16, 16, 16).expect("valid 10-bit");
@@ -127,6 +135,7 @@ fn yuv440p10_try_new_checked_accepts_in_range_samples() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv440p10_try_new_checked_rejects_y_high_bit_set() {
   let mut y = std::vec![0u16; 16 * 8];
   y[2 * 16 + 9] = 0x8000;
@@ -145,6 +154,7 @@ fn yuv440p10_try_new_checked_rejects_y_high_bit_set() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv440p10_try_new_checked_rejects_u_plane_sample_in_full_width_chroma() {
   // 4:4:0-specific: chroma is full-width × half-height. Plant the
   // bad sample at column 13 (would be out of range for half-width
@@ -183,6 +193,7 @@ fn yuv440p10_try_new_checked_rejects_v_plane_sample() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv440p12_try_new_checked_rejects_above_4095() {
   let mut y = std::vec![2048u16; 16 * 8];
   y[42] = 4096; // just above 12-bit max

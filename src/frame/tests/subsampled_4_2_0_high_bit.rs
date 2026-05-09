@@ -178,6 +178,7 @@ fn yuv420p10_try_new_checked_accepts_in_range_samples() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv420p10_try_new_checked_rejects_y_high_bit_set() {
   // A Y sample with bit 15 set — typical of `p010` packing where
   // the 10 active bits sit in the high bits. `try_new` would
@@ -204,6 +205,7 @@ fn yuv420p10_try_new_checked_rejects_y_high_bit_set() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv420p10_try_new_checked_rejects_u_plane_sample() {
   // Offending sample in the U plane — error must name U, not Y or V.
   let y = std::vec![0u16; 16 * 8];
@@ -240,6 +242,7 @@ fn yuv420p10_try_new_checked_rejects_v_plane_sample() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv420p10_try_new_checked_accepts_exact_max_sample() {
   // Boundary: sample value == (1 << BITS) - 1 is valid.
   let mut y = std::vec![0u16; 16 * 8];
@@ -387,6 +390,7 @@ fn p010_try_new_rejects_geometry_overflow() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn p010_try_new_checked_accepts_shifted_samples() {
   // Valid P010 samples: low 6 bits zero.
   let (y, uv) = p010_planes();
@@ -394,6 +398,7 @@ fn p010_try_new_checked_accepts_shifted_samples() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn p010_try_new_checked_rejects_y_low_bits_set() {
   // A Y sample with low 6 bits set — characteristic of yuv420p10le
   // packing (value in low 10 bits) accidentally handed to the P010
@@ -413,6 +418,7 @@ fn p010_try_new_checked_rejects_y_low_bits_set() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn p010_try_new_checked_rejects_uv_plane_sample() {
   let y = std::vec![0xFFC0u16; 16 * 8];
   let mut uv = std::vec![0x8000u16; 16 * 4];
@@ -450,6 +456,7 @@ fn p010_try_new_checked_reports_geometry_errors_first() {
 /// constructor into a real provenance validator will need to
 /// update or replace this test.
 #[test]
+#[cfg(target_endian = "little")]
 fn p010_try_new_checked_accepts_ambiguous_yuv420p10le_samples() {
   // `yuv420p10le`-style samples, all multiples of 64: low 6 bits
   // are zero, so they pass the P010 sanity check even though this
@@ -475,6 +482,7 @@ fn p012_try_new_checked_accepts_shifted_samples() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn p012_try_new_checked_rejects_low_bits_set() {
   // A Y sample with any of the low 4 bits set — e.g. yuv420p12le
   // value 0x0ABC landing where P012 expects `value << 4`. The check
@@ -521,6 +529,7 @@ fn p012_try_new_checked_rejects_low_bits_set() {
 /// [`Yuv420p12Frame`] at construction based on decoder metadata)
 /// is the only reliable provenance guarantee.
 #[test]
+#[cfg(target_endian = "little")]
 fn p012_try_new_checked_accepts_low_packed_flat_content_by_design() {
   // All values are multiples of 16 — exactly the set that slips
   // through a 4-low-bits-zero check. `yuv420p12le` limited-range

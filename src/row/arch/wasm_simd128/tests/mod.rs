@@ -23,6 +23,8 @@ mod v30x;
 mod v410;
 mod vuya;
 mod xv36;
+#[cfg(any(feature = "std", feature = "alloc"))]
+mod xyz12;
 mod y216;
 mod y2xx;
 mod yuva;

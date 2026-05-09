@@ -165,6 +165,110 @@ pub(super) unsafe fn write_rgba_16(r: __m128i, g: __m128i, b: __m128i, a: __m128
   }
 }
 
+/// Writes 8 pixels of packed `u8` RGB (24 bytes) from three `__m128i`
+/// channel vectors whose **low 8 bytes** carry the 8 valid samples
+/// (high 8 bytes are don't-care, e.g. zero from a `_mm_packus_epi16`
+/// against a zero register).
+///
+/// Two output blocks: block 0 stores 16 bytes
+/// `[R0,G0,B0, R1,G1,B1, R2,G2,B2, R3,G3,B3, R4,G4,B4, R5]` via
+/// `storeu_si128`, block 1 stores the remaining 8 bytes
+/// `[G5,B5, R6,G6,B6, R7,G7,B7]` via `storel_epi64`. Each block is the
+/// OR of three `_mm_shuffle_epi8` gathers (one per channel), reusing
+/// the same byte-mask shape as the 16-pixel
+/// [`write_rgb_16`](super::x86_common::write_rgb_16) helper but only
+/// emitting blocks 0 and 1's first half (which together touch source
+/// bytes 0..7 of each channel — exactly the valid range for 8-pixel
+/// inputs).
+///
+/// This replaces the prior pattern of round-tripping each channel
+/// through a 16-byte stack array and a per-pixel scalar scatter loop,
+/// which limited SIMD's benefit on the output stage (Copilot review,
+/// PR #91 Comment 2).
+///
+/// # Safety
+///
+/// - `ptr` must point to at least 24 writable bytes.
+/// - The calling function must have SSSE3 available (via
+///   `#[target_feature(enable = "sse4.1")]` or any AVX2 / AVX-512
+///   superset).
+//
+// Gated on `std` / `alloc` because the only callers
+// (`x86_sse41::xyz12`, `x86_avx2::xyz12`) are gated the same way.
+// Without this gate `cargo build --no-default-features` fires a
+// dead-code warning that becomes a hard error under `RUSTFLAGS=
+// -Dwarnings` (Windows CI failure on PR #91, run 25591669613).
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[inline(always)]
+pub(super) unsafe fn write_rgb_u8_8(r: __m128i, g: __m128i, b: __m128i, ptr: *mut u8) {
+  unsafe {
+    // Block 0 = bytes 0..15 = [R0,G0,B0, R1,G1,B1, R2,G2,B2, R3,G3,B3,
+    // R4,G4,B4, R5]. Same masks as `write_rgb_16` block 0.
+    let r0 = _mm_setr_epi8(0, -1, -1, 1, -1, -1, 2, -1, -1, 3, -1, -1, 4, -1, -1, 5);
+    let g0 = _mm_setr_epi8(-1, 0, -1, -1, 1, -1, -1, 2, -1, -1, 3, -1, -1, 4, -1, -1);
+    let b0 = _mm_setr_epi8(-1, -1, 0, -1, -1, 1, -1, -1, 2, -1, -1, 3, -1, -1, 4, -1);
+    let out0 = _mm_or_si128(
+      _mm_or_si128(_mm_shuffle_epi8(r, r0), _mm_shuffle_epi8(g, g0)),
+      _mm_shuffle_epi8(b, b0),
+    );
+
+    // Block 1 first half = bytes 16..23 = [G5,B5, R6,G6,B6, R7,G7,B7].
+    // Same masks as `write_rgb_16` block 1 — source bytes 5..7 of each
+    // channel are inside the 0..7 valid range for 8-pixel inputs.
+    let r1 = _mm_setr_epi8(-1, -1, 6, -1, -1, 7, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+    let g1 = _mm_setr_epi8(5, -1, -1, 6, -1, -1, 7, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+    let b1 = _mm_setr_epi8(-1, 5, -1, -1, 6, -1, -1, 7, -1, -1, -1, -1, -1, -1, -1, -1);
+    let out1 = _mm_or_si128(
+      _mm_or_si128(_mm_shuffle_epi8(r, r1), _mm_shuffle_epi8(g, g1)),
+      _mm_shuffle_epi8(b, b1),
+    );
+
+    _mm_storeu_si128(ptr.cast(), out0);
+    // `storel_epi64` writes the low 8 bytes of `out1` (= block 1's
+    // first half) to `ptr + 16`, leaving any subsequent bytes
+    // untouched — important for callers writing into a tightly-bound
+    // 24-byte slot.
+    _mm_storel_epi64(ptr.add(16).cast(), out1);
+  }
+}
+
+/// Writes 8 pixels of packed `u8` RGBA (32 bytes) from four `__m128i`
+/// channel vectors whose **low 8 bytes** carry the 8 valid samples.
+///
+/// Pure unpack ladder — no shuffle masks needed because the 4-byte
+/// RGBA stride aligns with `__m128i` lanes:
+/// 1. `rg = unpacklo_epi8(R, G)` interleaves bytes:
+///    `[R0,G0, R1,G1, ..., R7,G7]` (16 bytes, 8 R/G pairs).
+/// 2. `ba = unpacklo_epi8(B, A)` likewise: `[B0,A0, ..., B7,A7]`.
+/// 3. `rgba_lo = unpacklo_epi16(rg, ba)` zips into RGBA quads:
+///    `[R0,G0,B0,A0, R1,G1,B1,A1, R2,G2,B2,A2, R3,G3,B3,A3]`.
+/// 4. `rgba_hi = unpackhi_epi16(rg, ba)` produces pixels 4..7.
+///
+/// Two `_mm_storeu_si128` writes emit the 32-byte output. This
+/// replaces the prior 4-channel scalar scatter (Copilot review, PR
+/// #91 Comment 2).
+///
+/// # Safety
+///
+/// - `ptr` must point to at least 32 writable bytes.
+/// - The calling function must have SSE2 available (any SSE4.1+
+///   superset satisfies this).
+//
+// Same `std` / `alloc` gate as [`write_rgb_u8_8`] — only the xyz12
+// SIMD kernels (gated on those features) consume this helper.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[inline(always)]
+pub(super) unsafe fn write_rgba_u8_8(r: __m128i, g: __m128i, b: __m128i, a: __m128i, ptr: *mut u8) {
+  unsafe {
+    let rg = _mm_unpacklo_epi8(r, g);
+    let ba = _mm_unpacklo_epi8(b, a);
+    let rgba_lo = _mm_unpacklo_epi16(rg, ba);
+    let rgba_hi = _mm_unpackhi_epi16(rg, ba);
+    _mm_storeu_si128(ptr.cast(), rgba_lo);
+    _mm_storeu_si128(ptr.add(16).cast(), rgba_hi);
+  }
+}
+
 /// Writes 8 pixels of packed **`u16`** RGB (48 bytes = 24 `u16`)
 /// from three `u16x8` channel vectors. Drives the SSE4.1 / AVX2 /
 /// AVX‑512 high‑bit‑depth kernels' u16 output path.
