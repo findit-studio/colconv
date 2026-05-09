@@ -1117,6 +1117,107 @@ fn swap_is_self_inverse() {
   assert_eq!(input, back, "swap is not self-inverse");
 }
 
+// ---- yuv_410_to_rgb_row equivalence ---------------------------------
+//
+// 4:1:0 NEON parity with scalar — same Q15 sequence, just 4× chroma
+// duplication instead of 2×. Width must be a multiple of 4 (so the
+// scalar tail receives an aligned input).
+
+fn check_yuv_410_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
+  let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
+  let cw = width / 4;
+  let u: std::vec::Vec<u8> = (0..cw).map(|i| ((i * 53 + 23) & 0xFF) as u8).collect();
+  let v: std::vec::Vec<u8> = (0..cw).map(|i| ((i * 71 + 91) & 0xFF) as u8).collect();
+  let mut rgb_scalar = std::vec![0u8; width * 3];
+  let mut rgb_neon = std::vec![0u8; width * 3];
+
+  scalar::yuv_410_to_rgb_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
+  unsafe {
+    yuv_410_to_rgb_row(&y, &u, &v, &mut rgb_neon, width, matrix, full_range);
+  }
+
+  if rgb_scalar != rgb_neon {
+    let first_diff = rgb_scalar
+      .iter()
+      .zip(rgb_neon.iter())
+      .position(|(a, b)| a != b)
+      .unwrap();
+    panic!(
+      "NEON yuv_410 diverges from scalar at byte {first_diff} (width={width}, matrix={matrix:?}, full_range={full_range}): scalar={} neon={}",
+      rgb_scalar[first_diff], rgb_neon[first_diff]
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn yuv_410_neon_matches_scalar_all_matrices_16() {
+  for m in [
+    ColorMatrix::Bt601,
+    ColorMatrix::Bt709,
+    ColorMatrix::Bt2020Ncl,
+    ColorMatrix::Smpte240m,
+    ColorMatrix::Fcc,
+    ColorMatrix::YCgCo,
+  ] {
+    for full in [true, false] {
+      check_yuv_410_equivalence(16, m, full);
+    }
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn yuv_410_neon_matches_scalar_widths() {
+  // Multiples of 4 — including pure scalar (4, 8, 12), exactly one
+  // SIMD iter (16), SIMD + tail (20, 28), SIMD + multi-iter (32),
+  // larger frames (64, 1920).
+  for &w in &[4usize, 8, 12, 16, 20, 28, 32, 64, 128, 1920] {
+    check_yuv_410_equivalence(w, ColorMatrix::Bt601, true);
+    check_yuv_410_equivalence(w, ColorMatrix::Bt709, false);
+  }
+}
+
+fn check_yuv_410_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
+  let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
+  let cw = width / 4;
+  let u: std::vec::Vec<u8> = (0..cw).map(|i| ((i * 53 + 23) & 0xFF) as u8).collect();
+  let v: std::vec::Vec<u8> = (0..cw).map(|i| ((i * 71 + 91) & 0xFF) as u8).collect();
+  let mut rgba_scalar = std::vec![0u8; width * 4];
+  let mut rgba_neon = std::vec![0u8; width * 4];
+
+  scalar::yuv_410_to_rgba_row(&y, &u, &v, &mut rgba_scalar, width, matrix, full_range);
+  unsafe {
+    yuv_410_to_rgba_row(&y, &u, &v, &mut rgba_neon, width, matrix, full_range);
+  }
+
+  if rgba_scalar != rgba_neon {
+    let first_diff = rgba_scalar
+      .iter()
+      .zip(rgba_neon.iter())
+      .position(|(a, b)| a != b)
+      .unwrap();
+    panic!(
+      "NEON yuv_410 RGBA diverges from scalar at byte {first_diff} (width={width}, matrix={matrix:?}, full_range={full_range}): scalar={} neon={}",
+      rgba_scalar[first_diff], rgba_neon[first_diff]
+    );
+  }
+
+  // Alpha must always be 0xFF (Yuv410p has no alpha plane).
+  for (i, px) in rgba_neon.chunks(4).enumerate() {
+    assert_eq!(px[3], 0xFF, "alpha at pixel {i} must be 0xFF");
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn yuv_410_rgba_neon_matches_scalar_widths() {
+  for &w in &[4usize, 8, 16, 20, 32, 64, 128] {
+    check_yuv_410_rgba_equivalence(w, ColorMatrix::Bt601, true);
+    check_yuv_410_rgba_equivalence(w, ColorMatrix::YCgCo, false);
+  }
+}
+
 // ---- rgb_to_luma_row equivalence ------------------------------------
 //
 // The NEON luma kernel uses pure integer Q15 arithmetic (no f32 ops),

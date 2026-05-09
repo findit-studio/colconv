@@ -1,4 +1,4 @@
-//! 8-bit planar YUV `MixedSinker` impls: Yuv420p / Yuv422p / Yuv444p / Yuv440p.
+//! 8-bit planar YUV `MixedSinker` impls: Yuv410p / Yuv420p / Yuv422p / Yuv444p / Yuv440p.
 
 use super::{
   MixedSinker, MixedSinkerError, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch,
@@ -274,6 +274,231 @@ impl PixelSink for MixedSinker<'_, Yuv420p> {
 }
 
 impl Yuv420pSink for MixedSinker<'_, Yuv420p> {}
+
+// ---- Yuv410p impl -------------------------------------------------------
+//
+// 4:1:0 planar 8-bit (Cinepak / Sorenson legacy, Tier 1 P3). Chroma
+// is subsampled 4:1 in **both** axes — `width / 4` chroma bytes per
+// row, `height / 4` chroma rows. Per-row math reuses the dedicated
+// `yuv_410_to_rgb_row` / `yuv_410_to_rgba_row` kernels (4:2:0's
+// half-width chroma layout doesn't apply — each chroma sample
+// covers four Y columns instead of two).
+//
+// Output set matches the Tier 1 contract:
+// `with_rgb` / `with_rgba` / `with_luma` / `with_luma_u16` / `with_hsv`.
+// No source alpha (no YUVA 4:1:0 format). Strategy A applies for the
+// RGB+RGBA combo: run the 3-channel kernel once, fan out via
+// `expand_rgb_to_rgba_row`.
+
+impl<'a> MixedSinker<'a, Yuv410p> {
+  /// Attaches a packed 32-bit RGBA output buffer.
+  ///
+  /// See [`MixedSinker::<Yuv420p>::with_rgba`] for the rationale and
+  /// constraints. Yuv410p has no alpha plane, so every alpha byte is
+  /// filled with `0xFF` (opaque).
+  ///
+  /// Returns `Err(RgbaBufferTooShort)` if
+  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// 32-bit targets when the product overflows.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
+    self.set_rgba(buf)?;
+    Ok(self)
+  }
+
+  /// In-place variant of [`with_rgba`](Self::with_rgba).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(4)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::RgbaBufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.rgba = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a `u16` luma output buffer. The 8-bit Y plane samples
+  /// are zero-extended into `u16`.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_bytes(1)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::LumaU16BufferTooShort {
+        expected,
+        actual: buf.len(),
+      });
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
+}
+
+impl Yuv410pSink for MixedSinker<'_, Yuv410p> {}
+
+impl PixelSink for MixedSinker<'_, Yuv410p> {
+  type Input<'r> = Yuv410pRow<'r>;
+  type Error = MixedSinkerError;
+
+  fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
+    // Yuv410p requires both width and height to be multiples of 4. The
+    // frame `try_new` already enforces this, but a hand-crafted row
+    // walker (driving `process` directly) might bypass it — guard at
+    // the sinker boundary so unsafe SIMD dispatchers never see a
+    // non-multiple-of-4 width.
+    if self.width & 3 != 0 {
+      return Err(MixedSinkerError::OddWidth { width: self.width });
+    }
+    check_dimensions_match(self.width, self.height, width, height)
+  }
+
+  fn process(&mut self, row: Yuv410pRow<'_>) -> Result<(), Self::Error> {
+    let w = self.width;
+    let h = self.height;
+    let idx = row.row();
+    let use_simd = self.simd;
+
+    // Defense in depth — see Yuv420p impl. `OddWidth` is reused for
+    // the "non-multiple-of-4" case here since the variant's payload
+    // (the offending width) is what callers need; the kind is
+    // already format-specific via the Sinker type parameter.
+    if w & 3 != 0 {
+      return Err(MixedSinkerError::OddWidth { width: w });
+    }
+    if row.y().len() != w {
+      return Err(MixedSinkerError::RowShapeMismatch {
+        which: RowSlice::Y,
+        row: idx,
+        expected: w,
+        actual: row.y().len(),
+      });
+    }
+    if row.u_quarter().len() != w / 4 {
+      return Err(MixedSinkerError::RowShapeMismatch {
+        which: RowSlice::UQuarter,
+        row: idx,
+        expected: w / 4,
+        actual: row.u_quarter().len(),
+      });
+    }
+    if row.v_quarter().len() != w / 4 {
+      return Err(MixedSinkerError::RowShapeMismatch {
+        which: RowSlice::VQuarter,
+        row: idx,
+        expected: w / 4,
+        actual: row.v_quarter().len(),
+      });
+    }
+    if idx >= self.height {
+      return Err(MixedSinkerError::RowIndexOutOfRange {
+        row: idx,
+        configured_height: self.height,
+      });
+    }
+
+    let Self {
+      rgb,
+      rgba,
+      luma,
+      luma_u16,
+      hsv,
+      rgb_scratch,
+      ..
+    } = self;
+
+    let one_plane_start = idx * w;
+    let one_plane_end = one_plane_start + w;
+
+    // Luma — Yuv410p luma *is* the Y plane. Just copy.
+    if let Some(luma) = luma.as_deref_mut() {
+      luma[one_plane_start..one_plane_end].copy_from_slice(&row.y()[..w]);
+    }
+
+    // Luma u16 — zero-extend the 8-bit Y plane into u16.
+    if let Some(buf) = luma_u16.as_deref_mut() {
+      crate::row::y_plane_to_luma_u16_row(
+        row.y(),
+        &mut buf[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+    }
+
+    // Strategy A output mode resolution — see Yuv420p impl above.
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+    let need_rgb_kernel = want_rgb || want_hsv;
+
+    if want_rgba && !need_rgb_kernel {
+      let rgba_buf = rgba.as_deref_mut().unwrap();
+      let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
+      yuv_410_to_rgba_row(
+        row.y(),
+        row.u_quarter(),
+        row.v_quarter(),
+        rgba_row,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+      return Ok(());
+    }
+
+    if !need_rgb_kernel {
+      return Ok(());
+    }
+
+    let rgb_row = rgb_row_buf_or_scratch(
+      rgb.as_deref_mut(),
+      rgb_scratch,
+      one_plane_start,
+      one_plane_end,
+      w,
+      h,
+    )?;
+
+    yuv_410_to_rgb_row(
+      row.y(),
+      row.u_quarter(),
+      row.v_quarter(),
+      rgb_row,
+      w,
+      row.matrix(),
+      row.full_range(),
+      use_simd,
+    );
+
+    if let Some(hsv) = hsv.as_mut() {
+      rgb_to_hsv_row(
+        rgb_row,
+        &mut hsv.h[one_plane_start..one_plane_end],
+        &mut hsv.s[one_plane_start..one_plane_end],
+        &mut hsv.v[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+    }
+
+    if let Some(buf) = rgba.as_deref_mut() {
+      let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
+      expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
+    }
+
+    Ok(())
+  }
+}
+
 // ---- Yuv422p impl -------------------------------------------------------
 //
 // 4:2:2 is 4:2:0's vertical-axis twin: same per-row chroma shape

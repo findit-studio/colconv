@@ -1,5 +1,45 @@
 # CHANGELOG
 
+## Unreleased — Tier 1 — Yuv410p (Cinepak / Sorenson legacy 4:1:0 planar)
+
+Closes Tier 1 row 7 (P3 legacy). New source-side pixel format `Yuv410p`
+(`AV_PIX_FMT_YUV410P`): 8-bit planar YUV with chroma subsampled 4:1 in
+**both** axes — one (U, V) sample covers a 4×4 block of 16 luma
+pixels. Mostly historical interest (Cinepak / Sorenson Spark / FFmpeg's
+`yuv410p` test fixtures); modern pipelines almost never see it.
+
+`Yuv410pFrame<'a>` — three u8 planes (Y full-size, U/V quarter-width
+quarter-height). Both `width` and `height` must be multiples of 4
+(unlike 4:2:0 which permits odd height). Construction validates plane
+lengths, strides, and 32-bit `stride × rows` overflow.
+
+`MixedSinker<Yuv410p>` outputs:
+
+- `with_rgb` / `with_rgba` — packed u8 RGB / RGBA (alpha = `0xFF`)
+- `with_luma` — Y plane copy (8-bit)
+- `with_luma_u16` — Y plane zero-extended to u16
+- `with_hsv` — staged through u8 RGB scratch, then `rgb_to_hsv_row`
+
+Strategy A applies for the RGB+RGBA combo: run the 3-channel kernel
+once, fan out to RGBA via `expand_rgb_to_rgba_row` (no double YUV→RGB
+math).
+
+Backends: scalar (always) + NEON (aarch64). The four other SIMD tiers
+(SSE4.1 / AVX2 / AVX-512 / wasm32 simd128) intentionally fall through
+to scalar — 4:1:0 has 1/4 the chroma math density of 4:2:0, modern
+decoders almost never produce it, and the maintenance cost of four
+extra hand-rolled kernels for a format with this usage profile isn't
+justified. NEON processes 16 Y pixels per iteration (loading 4 chroma
+samples and broadcasting each across 4 Y lanes via two-pass
+`vzip1q_s16` / `vzip2q_s16` lane fan-out); math is byte-identical to
+scalar (same Q15 sequence, same saturating-narrow primitives), verified
+by parity tests.
+
+Structural analog: [`Yuv420pFrame`] for the vertical-subsampling
+walker shape (chroma_row = `row / 4` for 4:1:0 vs `row / 2` for 4:2:0)
+combined with 4× horizontal subsampling. The walker macro grew a new
+`chroma_h: quarter` emitter and a `@chroma_row quarter` selector.
+
 ## Unreleased — Tier 12 — Xyz12 (DCP / digital-cinema XYZ) source format
 
 Closes Tier 12. New source-side pixel format `Xyz12` (`AV_PIX_FMT_XYZ12LE`

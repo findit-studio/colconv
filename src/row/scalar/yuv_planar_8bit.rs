@@ -203,6 +203,121 @@ pub(crate) fn yuv_420_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: boo
     x += 2;
   }
 }
+// ---- YUV 4:1:0 → RGB (fused: 4× horizontal upsample + convert) -------
+
+/// Converts one row of 4:1:0 YUV — Y at full width, U/V at
+/// **quarter-width** — directly to packed RGB. Each chroma sample
+/// is duplicated across four adjacent Y columns; vertical 4:1
+/// subsampling is the walker's job (the same chroma row is fed to
+/// four consecutive Y rows).
+///
+/// `full_range = true` interprets Y in `[0, 255]` and chroma in
+/// `[0, 255]` (JPEG / `yuvjNNNp` convention). `full_range = false`
+/// interprets Y in `[16, 235]` and chroma in `[16, 240]`.
+///
+/// Output is packed `R, G, B` triples.
+///
+/// # Panics (debug builds)
+///
+/// - `width` must be a multiple of 4 (4:1:0 pairs four columns).
+/// - `y.len() >= width`, `u_quarter.len() >= width / 4`,
+///   `v_quarter.len() >= width / 4`, `rgb_out.len() >= 3 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn yuv_410_to_rgb_row(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  yuv_410_to_rgb_or_rgba_row::<false>(y, u_quarter, v_quarter, rgb_out, width, matrix, full_range);
+}
+
+/// Same as [`yuv_410_to_rgb_row`] but writes packed `R, G, B, A`
+/// quadruplets, with `A = 0xFF` (opaque) for every pixel. The first
+/// three bytes per pixel are byte-identical to what
+/// [`yuv_410_to_rgb_row`] would write — only the per-pixel stride
+/// (4 vs 3) and the alpha byte differ.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn yuv_410_to_rgba_row(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  yuv_410_to_rgb_or_rgba_row::<true>(y, u_quarter, v_quarter, rgba_out, width, matrix, full_range);
+}
+
+/// Shared scalar kernel for [`yuv_410_to_rgb_row`] (`ALPHA = false`,
+/// 3 bpp) and [`yuv_410_to_rgba_row`] (`ALPHA = true`, 4 bpp + opaque
+/// `0xFF` alpha). The math is identical to the 4:2:0 sibling; only
+/// the chroma-fanout shape differs (one chroma sample per four Y
+/// columns instead of two), and there's no source-alpha variant
+/// because no YUVA 4:1:0 format ships in the crate's tier list.
+///
+/// # Panics (debug builds)
+///
+/// - `width` must be a multiple of 4.
+/// - `y.len() >= width`, `u_quarter.len() >= width / 4`,
+///   `v_quarter.len() >= width / 4`,
+///   `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn yuv_410_to_rgb_or_rgba_row<const ALPHA: bool>(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(width & 3, 0, "YUV 4:1:0 requires width % 4 == 0");
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u_quarter.len() >= width / 4, "u_quarter row too short");
+  debug_assert!(v_quarter.len() >= width / 4, "v_quarter row too short");
+  let bpp: usize = if ALPHA { 4 } else { 3 };
+  debug_assert!(out.len() >= width * bpp, "out row too short for {bpp}bpp");
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<8, 8>(full_range);
+  const RND: i32 = 1 << 14;
+
+  // Process four pixels per iteration — they share one chroma sample.
+  let mut x = 0;
+  while x < width {
+    let c_idx = x / 4;
+    let u_d = ((u_quarter[c_idx] as i32 - 128) * c_scale + RND) >> 15;
+    let v_d = ((v_quarter[c_idx] as i32 - 128) * c_scale + RND) >> 15;
+
+    // Same matrix-multiply as 4:2:0: standard matrices have
+    // r_u = b_v = 0; YCgCo uses all six.
+    let r_chroma = (coeffs.r_u() * u_d + coeffs.r_v() * v_d + RND) >> 15;
+    let g_chroma = (coeffs.g_u() * u_d + coeffs.g_v() * v_d + RND) >> 15;
+    let b_chroma = (coeffs.b_u() * u_d + coeffs.b_v() * v_d + RND) >> 15;
+
+    // Each of the 4 pixels in this group: scale Y, add the shared
+    // chroma contribution, clamp, store. Unrolling by 4 here matches
+    // the 4:2:0 unroll-by-2 pattern and lets the compiler keep the
+    // chroma values in registers across the group.
+    for k in 0..4 {
+      let yk = ((y[x + k] as i32 - y_off) * y_scale + RND) >> 15;
+      out[(x + k) * bpp] = clamp_u8(yk + r_chroma);
+      out[(x + k) * bpp + 1] = clamp_u8(yk + g_chroma);
+      out[(x + k) * bpp + 2] = clamp_u8(yk + b_chroma);
+      if ALPHA {
+        out[(x + k) * bpp + 3] = 0xFF;
+      }
+    }
+
+    x += 4;
+  }
+}
+
 /// YUV 4:4:4 planar → packed RGB. Thin wrapper over
 /// [`yuv_444_to_rgb_or_rgba_row`] with `ALPHA = false`.
 ///
