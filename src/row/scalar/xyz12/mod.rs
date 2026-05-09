@@ -45,10 +45,18 @@ fn powf32(x: f32, y: f32) -> f32 {
   }
 }
 
-/// `f64` `powf` portable across `std` and `no_std + alloc` builds.
-/// Used by the `oetf_srgb_reference_f64` test oracle — production
-/// `oetf_srgb` uses the polynomial table in `xyz12_constants`, not
-/// `powf`, so this helper is only needed in the test harness.
+/// Test-only helper used by the `oetf_srgb_reference_f64` test oracle.
+///
+/// Compiled **only** under `cfg(all(test, feature = "std"))`. The xyz12
+/// `mod tests;` declaration at the bottom of this file is gated on
+/// `feature = "std"`, so no-default-features (`alloc`-only) builds never
+/// reach this fn — and the inner `cfg(all(not(feature = "std"), ...))`
+/// libm branch is therefore dead code in practice (kept as a
+/// compile-time fallback in case the outer test gate is ever relaxed
+/// to `any(feature = "std", feature = "alloc")` to match `powf32`).
+/// Production `oetf_srgb` uses the polynomial table in
+/// `xyz12_constants`, not `powf`, so this helper is only needed in the
+/// test harness.
 #[cfg(all(test, feature = "std"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn powf64(x: f64, y: f64) -> f64 {

@@ -498,5 +498,5 @@ pub(crate) fn gbr_to_luma_u16_high_bit_row<const BITS: u32, const BE: bool>(
   }
 }
 
-#[cfg(all(test, any(feature = "std", feature = "alloc")))]
+#[cfg(all(test, feature = "std"))]
 mod tests;

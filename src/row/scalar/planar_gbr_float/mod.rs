@@ -19,10 +19,16 @@
 //!
 //! # Endian support
 //!
-//! All `<const BE: bool>` kernels take the source planes as raw byte slices
-//! (`&[u8]` reinterpreted as `&[u32]` / `&[u16]` with byte-swap when
-//! `BE = true`). The `BE = false` path is identical to the original LE kernels
-//! — the compiler eliminates the dead branch.
+//! All `<const BE: bool>` kernels take the source planes as `&[f32]`
+//! (Gbrpf32) — the same host-native typed slice on every target. Each
+//! sample is loaded via `f32::to_bits()` → `u32::from_be` / `u32::from_le`
+//! → `f32::from_bits` (see `load_f32`), so the on-disk byte order encoded
+//! in `BE` is reinterpreted into the host-native f32 value before any
+//! arithmetic. `BE = false` (LE wire format) is a no-op on LE hosts and
+//! a 4-byte swap on BE hosts; `BE = true` is the inverse. The dead
+//! branch is eliminated at monomorphisation. (The f16-input dispatch
+//! widens `&[half::f16]` to f32 upstream of these kernels — endian
+//! handling for the f16 source happens in the dispatcher, not here.)
 //!
 //! # Rounding (float → integer)
 //!
