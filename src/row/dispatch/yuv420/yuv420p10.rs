@@ -29,6 +29,113 @@ use crate::{
 /// path.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
+pub fn yuv420p10_to_rgb_row_endian(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+  big_endian: bool,
+) {
+  assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
+  let rgb_min = rgb_row_bytes(width);
+  assert!(y.len() >= width, "y row too short");
+  assert!(u_half.len() >= width / 2, "u_half row too short");
+  assert!(v_half.len() >= width / 2, "v_half row too short");
+  assert!(rgb_out.len() >= rgb_min, "rgb_out row too short");
+
+  macro_rules! dispatch_be {
+    ($call_le:expr, $call_be:expr) => {
+      if big_endian { $call_be } else { $call_le }
+    };
+  }
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified on this CPU; bounds / parity are
+          // the caller's obligation (asserted above).
+          dispatch_be!(
+            unsafe { arch::neon::yuv_420p_n_to_rgb_row::<10, false>(y, u_half, v_half, rgb_out, width, matrix, full_range); },
+            unsafe { arch::neon::yuv_420p_n_to_rgb_row::<10, true>(y, u_half, v_half, rgb_out, width, matrix, full_range); }
+          );
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX‑512BW verified.
+          dispatch_be!(
+            unsafe { arch::x86_avx512::yuv_420p_n_to_rgb_row::<10, false>(
+              y, u_half, v_half, rgb_out, width, matrix, full_range,
+            ); },
+            unsafe { arch::x86_avx512::yuv_420p_n_to_rgb_row::<10, true>(
+              y, u_half, v_half, rgb_out, width, matrix, full_range,
+            ); }
+          );
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          dispatch_be!(
+            unsafe { arch::x86_avx2::yuv_420p_n_to_rgb_row::<10, false>(
+              y, u_half, v_half, rgb_out, width, matrix, full_range,
+            ); },
+            unsafe { arch::x86_avx2::yuv_420p_n_to_rgb_row::<10, true>(
+              y, u_half, v_half, rgb_out, width, matrix, full_range,
+            ); }
+          );
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          dispatch_be!(
+            unsafe { arch::x86_sse41::yuv_420p_n_to_rgb_row::<10, false>(
+              y, u_half, v_half, rgb_out, width, matrix, full_range,
+            ); },
+            unsafe { arch::x86_sse41::yuv_420p_n_to_rgb_row::<10, true>(
+              y, u_half, v_half, rgb_out, width, matrix, full_range,
+            ); }
+          );
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile‑time verified.
+          dispatch_be!(
+            unsafe { arch::wasm_simd128::yuv_420p_n_to_rgb_row::<10, false>(
+              y, u_half, v_half, rgb_out, width, matrix, full_range,
+            ); },
+            unsafe { arch::wasm_simd128::yuv_420p_n_to_rgb_row::<10, true>(
+              y, u_half, v_half, rgb_out, width, matrix, full_range,
+            ); }
+          );
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  dispatch_be!(
+    scalar::yuv_420p_n_to_rgb_row::<10, false>(
+      y, u_half, v_half, rgb_out, width, matrix, full_range
+    ),
+    scalar::yuv_420p_n_to_rgb_row::<10, true>(
+      y, u_half, v_half, rgb_out, width, matrix, full_range
+    )
+  );
+}
+
+/// LE-only wrapper around [`yuv420p10_to_rgb_row_endian`]; preserves the pre-endian-aware
+/// public signature so existing little-endian callers compile unchanged.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
 pub fn yuv420p10_to_rgb_row(
   y: &[u16],
   u_half: &[u16],
@@ -39,70 +146,9 @@ pub fn yuv420p10_to_rgb_row(
   full_range: bool,
   use_simd: bool,
 ) {
-  assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
-  let rgb_min = rgb_row_bytes(width);
-  assert!(y.len() >= width, "y row too short");
-  assert!(u_half.len() >= width / 2, "u_half row too short");
-  assert!(v_half.len() >= width / 2, "v_half row too short");
-  assert!(rgb_out.len() >= rgb_min, "rgb_out row too short");
-
-  if use_simd {
-    cfg_select! {
-      target_arch = "aarch64" => {
-        if neon_available() {
-          // SAFETY: NEON verified on this CPU; bounds / parity are
-          // the caller's obligation (asserted above).
-          unsafe {
-            arch::neon::yuv_420p_n_to_rgb_row::<10, false>(y, u_half, v_half, rgb_out, width, matrix, full_range);
-          }
-          return;
-        }
-      },
-      target_arch = "x86_64" => {
-        if avx512_available() {
-          // SAFETY: AVX‑512BW verified.
-          unsafe {
-            arch::x86_avx512::yuv_420p_n_to_rgb_row::<10, false>(
-              y, u_half, v_half, rgb_out, width, matrix, full_range,
-            );
-          }
-          return;
-        }
-        if avx2_available() {
-          // SAFETY: AVX2 verified.
-          unsafe {
-            arch::x86_avx2::yuv_420p_n_to_rgb_row::<10, false>(
-              y, u_half, v_half, rgb_out, width, matrix, full_range,
-            );
-          }
-          return;
-        }
-        if sse41_available() {
-          // SAFETY: SSE4.1 verified.
-          unsafe {
-            arch::x86_sse41::yuv_420p_n_to_rgb_row::<10, false>(
-              y, u_half, v_half, rgb_out, width, matrix, full_range,
-            );
-          }
-          return;
-        }
-      },
-      target_arch = "wasm32" => {
-        if simd128_available() {
-          // SAFETY: simd128 compile‑time verified.
-          unsafe {
-            arch::wasm_simd128::yuv_420p_n_to_rgb_row::<10, false>(
-              y, u_half, v_half, rgb_out, width, matrix, full_range,
-            );
-          }
-          return;
-        }
-      },
-      _ => {}
-    }
-  }
-
-  scalar::yuv_420p_n_to_rgb_row::<10, false>(y, u_half, v_half, rgb_out, width, matrix, full_range);
+  yuv420p10_to_rgb_row_endian(
+    y, u_half, v_half, rgb_out, width, matrix, full_range, use_simd, false,
+  );
 }
 
 /// Converts one row of **10‑bit** YUV 4:2:0 to **native‑depth** packed
@@ -124,6 +170,116 @@ pub fn yuv420p10_to_rgb_row(
 /// path.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
+pub fn yuv420p10_to_rgb_u16_row_endian(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+  big_endian: bool,
+) {
+  assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
+  let rgb_min = rgb_row_elems(width);
+  assert!(y.len() >= width, "y row too short");
+  assert!(u_half.len() >= width / 2, "u_half row too short");
+  assert!(v_half.len() >= width / 2, "v_half row too short");
+  assert!(rgb_out.len() >= rgb_min, "rgb_out row too short");
+
+  macro_rules! dispatch_be {
+    ($call_le:expr, $call_be:expr) => {
+      if big_endian { $call_be } else { $call_le }
+    };
+  }
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified.
+          dispatch_be!(
+            unsafe { arch::neon::yuv_420p_n_to_rgb_u16_row::<10, false>(
+              y, u_half, v_half, rgb_out, width, matrix, full_range,
+            ); },
+            unsafe { arch::neon::yuv_420p_n_to_rgb_u16_row::<10, true>(
+              y, u_half, v_half, rgb_out, width, matrix, full_range,
+            ); }
+          );
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX‑512BW verified.
+          dispatch_be!(
+            unsafe { arch::x86_avx512::yuv_420p_n_to_rgb_u16_row::<10, false>(
+              y, u_half, v_half, rgb_out, width, matrix, full_range,
+            ); },
+            unsafe { arch::x86_avx512::yuv_420p_n_to_rgb_u16_row::<10, true>(
+              y, u_half, v_half, rgb_out, width, matrix, full_range,
+            ); }
+          );
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          dispatch_be!(
+            unsafe { arch::x86_avx2::yuv_420p_n_to_rgb_u16_row::<10, false>(
+              y, u_half, v_half, rgb_out, width, matrix, full_range,
+            ); },
+            unsafe { arch::x86_avx2::yuv_420p_n_to_rgb_u16_row::<10, true>(
+              y, u_half, v_half, rgb_out, width, matrix, full_range,
+            ); }
+          );
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          dispatch_be!(
+            unsafe { arch::x86_sse41::yuv_420p_n_to_rgb_u16_row::<10, false>(
+              y, u_half, v_half, rgb_out, width, matrix, full_range,
+            ); },
+            unsafe { arch::x86_sse41::yuv_420p_n_to_rgb_u16_row::<10, true>(
+              y, u_half, v_half, rgb_out, width, matrix, full_range,
+            ); }
+          );
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile‑time verified.
+          dispatch_be!(
+            unsafe { arch::wasm_simd128::yuv_420p_n_to_rgb_u16_row::<10, false>(
+              y, u_half, v_half, rgb_out, width, matrix, full_range,
+            ); },
+            unsafe { arch::wasm_simd128::yuv_420p_n_to_rgb_u16_row::<10, true>(
+              y, u_half, v_half, rgb_out, width, matrix, full_range,
+            ); }
+          );
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  dispatch_be!(
+    scalar::yuv_420p_n_to_rgb_u16_row::<10, false>(
+      y, u_half, v_half, rgb_out, width, matrix, full_range,
+    ),
+    scalar::yuv_420p_n_to_rgb_u16_row::<10, true>(
+      y, u_half, v_half, rgb_out, width, matrix, full_range,
+    )
+  );
+}
+
+/// LE-only wrapper around [`yuv420p10_to_rgb_u16_row_endian`]; preserves the pre-endian-aware
+/// public signature so existing little-endian callers compile unchanged.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
 pub fn yuv420p10_to_rgb_u16_row(
   y: &[u16],
   u_half: &[u16],
@@ -134,72 +290,8 @@ pub fn yuv420p10_to_rgb_u16_row(
   full_range: bool,
   use_simd: bool,
 ) {
-  assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
-  let rgb_min = rgb_row_elems(width);
-  assert!(y.len() >= width, "y row too short");
-  assert!(u_half.len() >= width / 2, "u_half row too short");
-  assert!(v_half.len() >= width / 2, "v_half row too short");
-  assert!(rgb_out.len() >= rgb_min, "rgb_out row too short");
-
-  if use_simd {
-    cfg_select! {
-      target_arch = "aarch64" => {
-        if neon_available() {
-          // SAFETY: NEON verified.
-          unsafe {
-            arch::neon::yuv_420p_n_to_rgb_u16_row::<10, false>(
-              y, u_half, v_half, rgb_out, width, matrix, full_range,
-            );
-          }
-          return;
-        }
-      },
-      target_arch = "x86_64" => {
-        if avx512_available() {
-          // SAFETY: AVX‑512BW verified.
-          unsafe {
-            arch::x86_avx512::yuv_420p_n_to_rgb_u16_row::<10, false>(
-              y, u_half, v_half, rgb_out, width, matrix, full_range,
-            );
-          }
-          return;
-        }
-        if avx2_available() {
-          // SAFETY: AVX2 verified.
-          unsafe {
-            arch::x86_avx2::yuv_420p_n_to_rgb_u16_row::<10, false>(
-              y, u_half, v_half, rgb_out, width, matrix, full_range,
-            );
-          }
-          return;
-        }
-        if sse41_available() {
-          // SAFETY: SSE4.1 verified.
-          unsafe {
-            arch::x86_sse41::yuv_420p_n_to_rgb_u16_row::<10, false>(
-              y, u_half, v_half, rgb_out, width, matrix, full_range,
-            );
-          }
-          return;
-        }
-      },
-      target_arch = "wasm32" => {
-        if simd128_available() {
-          // SAFETY: simd128 compile‑time verified.
-          unsafe {
-            arch::wasm_simd128::yuv_420p_n_to_rgb_u16_row::<10, false>(
-              y, u_half, v_half, rgb_out, width, matrix, full_range,
-            );
-          }
-          return;
-        }
-      },
-      _ => {}
-    }
-  }
-
-  scalar::yuv_420p_n_to_rgb_u16_row::<10, false>(
-    y, u_half, v_half, rgb_out, width, matrix, full_range,
+  yuv420p10_to_rgb_u16_row_endian(
+    y, u_half, v_half, rgb_out, width, matrix, full_range, use_simd, false,
   );
 }
 
@@ -214,6 +306,112 @@ pub fn yuv420p10_to_rgb_u16_row(
 /// `use_simd = false` forces the scalar reference path.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
+pub fn yuv420p10_to_rgba_row_endian(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+  big_endian: bool,
+) {
+  assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
+  let rgba_min = rgba_row_bytes(width);
+  assert!(y.len() >= width, "y row too short");
+  assert!(u_half.len() >= width / 2, "u_half row too short");
+  assert!(v_half.len() >= width / 2, "v_half row too short");
+  assert!(rgba_out.len() >= rgba_min, "rgba_out row too short");
+
+  macro_rules! dispatch_be {
+    ($call_le:expr, $call_be:expr) => {
+      if big_endian { $call_be } else { $call_le }
+    };
+  }
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified.
+          dispatch_be!(
+            unsafe { arch::neon::yuv_420p_n_to_rgba_row::<10, false>(y, u_half, v_half, rgba_out, width, matrix, full_range); },
+            unsafe { arch::neon::yuv_420p_n_to_rgba_row::<10, true>(y, u_half, v_half, rgba_out, width, matrix, full_range); }
+          );
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX‑512BW verified.
+          dispatch_be!(
+            unsafe { arch::x86_avx512::yuv_420p_n_to_rgba_row::<10, false>(
+              y, u_half, v_half, rgba_out, width, matrix, full_range,
+            ); },
+            unsafe { arch::x86_avx512::yuv_420p_n_to_rgba_row::<10, true>(
+              y, u_half, v_half, rgba_out, width, matrix, full_range,
+            ); }
+          );
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          dispatch_be!(
+            unsafe { arch::x86_avx2::yuv_420p_n_to_rgba_row::<10, false>(
+              y, u_half, v_half, rgba_out, width, matrix, full_range,
+            ); },
+            unsafe { arch::x86_avx2::yuv_420p_n_to_rgba_row::<10, true>(
+              y, u_half, v_half, rgba_out, width, matrix, full_range,
+            ); }
+          );
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          dispatch_be!(
+            unsafe { arch::x86_sse41::yuv_420p_n_to_rgba_row::<10, false>(
+              y, u_half, v_half, rgba_out, width, matrix, full_range,
+            ); },
+            unsafe { arch::x86_sse41::yuv_420p_n_to_rgba_row::<10, true>(
+              y, u_half, v_half, rgba_out, width, matrix, full_range,
+            ); }
+          );
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile‑time verified.
+          dispatch_be!(
+            unsafe { arch::wasm_simd128::yuv_420p_n_to_rgba_row::<10, false>(
+              y, u_half, v_half, rgba_out, width, matrix, full_range,
+            ); },
+            unsafe { arch::wasm_simd128::yuv_420p_n_to_rgba_row::<10, true>(
+              y, u_half, v_half, rgba_out, width, matrix, full_range,
+            ); }
+          );
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  dispatch_be!(
+    scalar::yuv_420p_n_to_rgba_row::<10, false>(
+      y, u_half, v_half, rgba_out, width, matrix, full_range,
+    ),
+    scalar::yuv_420p_n_to_rgba_row::<10, true>(
+      y, u_half, v_half, rgba_out, width, matrix, full_range,
+    )
+  );
+}
+
+/// LE-only wrapper around [`yuv420p10_to_rgba_row_endian`]; preserves the pre-endian-aware
+/// public signature so existing little-endian callers compile unchanged.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
 pub fn yuv420p10_to_rgba_row(
   y: &[u16],
   u_half: &[u16],
@@ -224,70 +422,8 @@ pub fn yuv420p10_to_rgba_row(
   full_range: bool,
   use_simd: bool,
 ) {
-  assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
-  let rgba_min = rgba_row_bytes(width);
-  assert!(y.len() >= width, "y row too short");
-  assert!(u_half.len() >= width / 2, "u_half row too short");
-  assert!(v_half.len() >= width / 2, "v_half row too short");
-  assert!(rgba_out.len() >= rgba_min, "rgba_out row too short");
-
-  if use_simd {
-    cfg_select! {
-      target_arch = "aarch64" => {
-        if neon_available() {
-          // SAFETY: NEON verified.
-          unsafe {
-            arch::neon::yuv_420p_n_to_rgba_row::<10, false>(y, u_half, v_half, rgba_out, width, matrix, full_range);
-          }
-          return;
-        }
-      },
-      target_arch = "x86_64" => {
-        if avx512_available() {
-          // SAFETY: AVX‑512BW verified.
-          unsafe {
-            arch::x86_avx512::yuv_420p_n_to_rgba_row::<10, false>(
-              y, u_half, v_half, rgba_out, width, matrix, full_range,
-            );
-          }
-          return;
-        }
-        if avx2_available() {
-          // SAFETY: AVX2 verified.
-          unsafe {
-            arch::x86_avx2::yuv_420p_n_to_rgba_row::<10, false>(
-              y, u_half, v_half, rgba_out, width, matrix, full_range,
-            );
-          }
-          return;
-        }
-        if sse41_available() {
-          // SAFETY: SSE4.1 verified.
-          unsafe {
-            arch::x86_sse41::yuv_420p_n_to_rgba_row::<10, false>(
-              y, u_half, v_half, rgba_out, width, matrix, full_range,
-            );
-          }
-          return;
-        }
-      },
-      target_arch = "wasm32" => {
-        if simd128_available() {
-          // SAFETY: simd128 compile‑time verified.
-          unsafe {
-            arch::wasm_simd128::yuv_420p_n_to_rgba_row::<10, false>(
-              y, u_half, v_half, rgba_out, width, matrix, full_range,
-            );
-          }
-          return;
-        }
-      },
-      _ => {}
-    }
-  }
-
-  scalar::yuv_420p_n_to_rgba_row::<10, false>(
-    y, u_half, v_half, rgba_out, width, matrix, full_range,
+  yuv420p10_to_rgba_row_endian(
+    y, u_half, v_half, rgba_out, width, matrix, full_range, use_simd, false,
   );
 }
 
@@ -300,6 +436,112 @@ pub fn yuv420p10_to_rgba_row(
 /// `use_simd = false` forces the scalar reference path.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
+pub fn yuv420p10_to_rgba_u16_row_endian(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+  big_endian: bool,
+) {
+  assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
+  let rgba_min = rgba_row_elems(width);
+  assert!(y.len() >= width, "y row too short");
+  assert!(u_half.len() >= width / 2, "u_half row too short");
+  assert!(v_half.len() >= width / 2, "v_half row too short");
+  assert!(rgba_out.len() >= rgba_min, "rgba_out row too short");
+
+  macro_rules! dispatch_be {
+    ($call_le:expr, $call_be:expr) => {
+      if big_endian { $call_be } else { $call_le }
+    };
+  }
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified.
+          dispatch_be!(
+            unsafe { arch::neon::yuv_420p_n_to_rgba_u16_row::<10, false>(y, u_half, v_half, rgba_out, width, matrix, full_range); },
+            unsafe { arch::neon::yuv_420p_n_to_rgba_u16_row::<10, true>(y, u_half, v_half, rgba_out, width, matrix, full_range); }
+          );
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX‑512BW verified.
+          dispatch_be!(
+            unsafe { arch::x86_avx512::yuv_420p_n_to_rgba_u16_row::<10, false>(
+              y, u_half, v_half, rgba_out, width, matrix, full_range,
+            ); },
+            unsafe { arch::x86_avx512::yuv_420p_n_to_rgba_u16_row::<10, true>(
+              y, u_half, v_half, rgba_out, width, matrix, full_range,
+            ); }
+          );
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          dispatch_be!(
+            unsafe { arch::x86_avx2::yuv_420p_n_to_rgba_u16_row::<10, false>(
+              y, u_half, v_half, rgba_out, width, matrix, full_range,
+            ); },
+            unsafe { arch::x86_avx2::yuv_420p_n_to_rgba_u16_row::<10, true>(
+              y, u_half, v_half, rgba_out, width, matrix, full_range,
+            ); }
+          );
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          dispatch_be!(
+            unsafe { arch::x86_sse41::yuv_420p_n_to_rgba_u16_row::<10, false>(
+              y, u_half, v_half, rgba_out, width, matrix, full_range,
+            ); },
+            unsafe { arch::x86_sse41::yuv_420p_n_to_rgba_u16_row::<10, true>(
+              y, u_half, v_half, rgba_out, width, matrix, full_range,
+            ); }
+          );
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile‑time verified.
+          dispatch_be!(
+            unsafe { arch::wasm_simd128::yuv_420p_n_to_rgba_u16_row::<10, false>(
+              y, u_half, v_half, rgba_out, width, matrix, full_range,
+            ); },
+            unsafe { arch::wasm_simd128::yuv_420p_n_to_rgba_u16_row::<10, true>(
+              y, u_half, v_half, rgba_out, width, matrix, full_range,
+            ); }
+          );
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  dispatch_be!(
+    scalar::yuv_420p_n_to_rgba_u16_row::<10, false>(
+      y, u_half, v_half, rgba_out, width, matrix, full_range,
+    ),
+    scalar::yuv_420p_n_to_rgba_u16_row::<10, true>(
+      y, u_half, v_half, rgba_out, width, matrix, full_range,
+    )
+  );
+}
+
+/// LE-only wrapper around [`yuv420p10_to_rgba_u16_row_endian`]; preserves the pre-endian-aware
+/// public signature so existing little-endian callers compile unchanged.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
 pub fn yuv420p10_to_rgba_u16_row(
   y: &[u16],
   u_half: &[u16],
@@ -310,69 +552,177 @@ pub fn yuv420p10_to_rgba_u16_row(
   full_range: bool,
   use_simd: bool,
 ) {
-  assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
-  let rgba_min = rgba_row_elems(width);
-  assert!(y.len() >= width, "y row too short");
-  assert!(u_half.len() >= width / 2, "u_half row too short");
-  assert!(v_half.len() >= width / 2, "v_half row too short");
-  assert!(rgba_out.len() >= rgba_min, "rgba_out row too short");
+  yuv420p10_to_rgba_u16_row_endian(
+    y, u_half, v_half, rgba_out, width, matrix, full_range, use_simd, false,
+  );
+}
 
-  if use_simd {
-    cfg_select! {
-      target_arch = "aarch64" => {
-        if neon_available() {
-          // SAFETY: NEON verified.
-          unsafe {
-            arch::neon::yuv_420p_n_to_rgba_u16_row::<10, false>(y, u_half, v_half, rgba_out, width, matrix, full_range);
-          }
-          return;
-        }
-      },
-      target_arch = "x86_64" => {
-        if avx512_available() {
-          // SAFETY: AVX‑512BW verified.
-          unsafe {
-            arch::x86_avx512::yuv_420p_n_to_rgba_u16_row::<10, false>(
-              y, u_half, v_half, rgba_out, width, matrix, full_range,
-            );
-          }
-          return;
-        }
-        if avx2_available() {
-          // SAFETY: AVX2 verified.
-          unsafe {
-            arch::x86_avx2::yuv_420p_n_to_rgba_u16_row::<10, false>(
-              y, u_half, v_half, rgba_out, width, matrix, full_range,
-            );
-          }
-          return;
-        }
-        if sse41_available() {
-          // SAFETY: SSE4.1 verified.
-          unsafe {
-            arch::x86_sse41::yuv_420p_n_to_rgba_u16_row::<10, false>(
-              y, u_half, v_half, rgba_out, width, matrix, full_range,
-            );
-          }
-          return;
-        }
-      },
-      target_arch = "wasm32" => {
-        if simd128_available() {
-          // SAFETY: simd128 compile‑time verified.
-          unsafe {
-            arch::wasm_simd128::yuv_420p_n_to_rgba_u16_row::<10, false>(
-              y, u_half, v_half, rgba_out, width, matrix, full_range,
-            );
-          }
-          return;
-        }
-      },
-      _ => {}
-    }
+#[cfg(all(test, feature = "std"))]
+// Host-independent BE parity tests — fixtures built byte-wise via
+// `to_le_bytes` / `to_be_bytes` and reinterpreted with `from_ne_bytes`,
+// so the LE and BE variants exercise the dispatcher's `BE=false` and
+// `BE=true` paths regardless of host endianness. Mirrors PR #82
+// `8f2e329` and the per-arch test convention.
+mod be_parity_tests {
+  use super::*;
+
+  /// Build LE/BE host-native u16 buffers from a slice of intended 10-bit
+  /// samples (values must already be in the correct low-bit-packed form
+  /// — `[0, 1023]`). Returns `(le, be)` where each contains `u16`
+  /// elements that, when serialized via `to_ne_bytes`, reproduce the
+  /// LE/BE wire bytes.
+  fn split_le_be(intended: &[u16]) -> (std::vec::Vec<u16>, std::vec::Vec<u16>) {
+    let le_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let be_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_be_bytes()).collect();
+    let le: std::vec::Vec<u16> = le_bytes
+      .chunks_exact(2)
+      .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+      .collect();
+    let be: std::vec::Vec<u16> = be_bytes
+      .chunks_exact(2)
+      .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+      .collect();
+    (le, be)
   }
 
-  scalar::yuv_420p_n_to_rgba_u16_row::<10, false>(
-    y, u_half, v_half, rgba_out, width, matrix, full_range,
-  );
+  fn pseudo_y(width: usize, seed: u32) -> std::vec::Vec<u16> {
+    (0..width)
+      .map(|i| ((seed.wrapping_mul(i as u32 + 1).wrapping_add(0x55)) & 0x3FF) as u16)
+      .collect()
+  }
+  fn pseudo_uv(half: usize, seed: u32) -> std::vec::Vec<u16> {
+    (0..half)
+      .map(|i| ((seed.wrapping_mul(i as u32 + 7).wrapping_add(0x123)) & 0x3FF) as u16)
+      .collect()
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn yuv420p10_dispatch_be_le_parity_simd_and_scalar() {
+    for w in [8usize, 16, 24] {
+      let half = w / 2;
+      let y_int = pseudo_y(w, 0xA17F);
+      let u_int = pseudo_uv(half, 0xC0DE);
+      let v_int = pseudo_uv(half, 0xBEEF);
+      let (y_le, y_be) = split_le_be(&y_int);
+      let (u_le, u_be) = split_le_be(&u_int);
+      let (v_le, v_be) = split_le_be(&v_int);
+
+      for &use_simd in &[false, true] {
+        // u8 RGB
+        let mut out_le = std::vec![0u8; w * 3];
+        let mut out_be = std::vec![0u8; w * 3];
+        yuv420p10_to_rgb_row_endian(
+          &y_le,
+          &u_le,
+          &v_le,
+          &mut out_le,
+          w,
+          ColorMatrix::Bt709,
+          false,
+          use_simd,
+          false,
+        );
+        yuv420p10_to_rgb_row_endian(
+          &y_be,
+          &u_be,
+          &v_be,
+          &mut out_be,
+          w,
+          ColorMatrix::Bt709,
+          false,
+          use_simd,
+          true,
+        );
+        assert_eq!(
+          out_le, out_be,
+          "yuv420p10 rgb BE/LE parity (w={w}, simd={use_simd})"
+        );
+
+        // u16 RGB
+        let mut out_le16 = std::vec![0u16; w * 3];
+        let mut out_be16 = std::vec![0u16; w * 3];
+        yuv420p10_to_rgb_u16_row_endian(
+          &y_le,
+          &u_le,
+          &v_le,
+          &mut out_le16,
+          w,
+          ColorMatrix::Bt709,
+          false,
+          use_simd,
+          false,
+        );
+        yuv420p10_to_rgb_u16_row_endian(
+          &y_be,
+          &u_be,
+          &v_be,
+          &mut out_be16,
+          w,
+          ColorMatrix::Bt709,
+          false,
+          use_simd,
+          true,
+        );
+        assert_eq!(out_le16, out_be16, "yuv420p10 rgb_u16 BE/LE parity");
+
+        // u8 RGBA
+        let mut out_le4 = std::vec![0u8; w * 4];
+        let mut out_be4 = std::vec![0u8; w * 4];
+        yuv420p10_to_rgba_row_endian(
+          &y_le,
+          &u_le,
+          &v_le,
+          &mut out_le4,
+          w,
+          ColorMatrix::Bt709,
+          false,
+          use_simd,
+          false,
+        );
+        yuv420p10_to_rgba_row_endian(
+          &y_be,
+          &u_be,
+          &v_be,
+          &mut out_be4,
+          w,
+          ColorMatrix::Bt709,
+          false,
+          use_simd,
+          true,
+        );
+        assert_eq!(out_le4, out_be4, "yuv420p10 rgba BE/LE parity");
+
+        // u16 RGBA
+        let mut out_le4u = std::vec![0u16; w * 4];
+        let mut out_be4u = std::vec![0u16; w * 4];
+        yuv420p10_to_rgba_u16_row_endian(
+          &y_le,
+          &u_le,
+          &v_le,
+          &mut out_le4u,
+          w,
+          ColorMatrix::Bt709,
+          false,
+          use_simd,
+          false,
+        );
+        yuv420p10_to_rgba_u16_row_endian(
+          &y_be,
+          &u_be,
+          &v_be,
+          &mut out_be4u,
+          w,
+          ColorMatrix::Bt709,
+          false,
+          use_simd,
+          true,
+        );
+        assert_eq!(out_le4u, out_be4u, "yuv420p10 rgba_u16 BE/LE parity");
+      }
+    }
+  }
 }
