@@ -689,13 +689,15 @@ mod tests {
   }
 
   /// Encodes a 12-bit code in the high-bit-packed wire layout
-  /// (`code << 4`) for FFmpeg `AV_PIX_FMT_XYZ12LE` fixtures. The
-  /// resulting `u16` is host-native and ready to feed `<BE = false>`
-  /// kernels (which expect LE-encoded bytes interpreted as host-native
-  /// `u16` via the `bytemuck::cast_slice` contract on LE hosts).
+  /// (`code << 4`) for FFmpeg `AV_PIX_FMT_XYZ12LE` fixtures.
+  /// `(code << 4).to_le_bytes()` reinterpreted as a host-native `u16`
+  /// produces a value whose **byte storage** is LE-encoded on every
+  /// host. The `<BE = false>` kernel applies `u16::from_le` internally
+  /// to recover the intended logical sample (no-op on LE; byte-swap on
+  /// BE). Mirrors `pack12_be` below — host-independent by construction.
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn pack12_le(code: u16) -> u16 {
-    u16::from_le_bytes((code << 4).to_le_bytes())
+    u16::from_ne_bytes((code << 4).to_le_bytes())
   }
 
   /// Encodes a 12-bit code in the high-bit-packed BE wire layout —
