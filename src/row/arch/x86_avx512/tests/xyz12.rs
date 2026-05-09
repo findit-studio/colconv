@@ -150,6 +150,73 @@ fn avx512_xyz12_to_rgba_matches_scalar() {
   }
 }
 
+// ---- In-register store regression coverage (PR #91 Comment 2) -----------
+//
+// The u8 RGB / RGBA store paths were rewritten to use the shared
+// `write_rgb_16` / `write_rgba_16` `_mm_shuffle_epi8` interleave
+// helpers instead of a 3× `[u16; 16]` stack-temp + per-pixel scalar
+// scatter. These tests pin block-multiple widths (16, 32) that hit
+// the SIMD fast path exclusively (no scalar tail), confirming
+// byte-identical output against the scalar reference.
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_xyz12_to_rgb_in_register_store_parity() {
+  if !std::arch::is_x86_feature_detected!("avx512f")
+    || !std::arch::is_x86_feature_detected!("avx512bw")
+  {
+    return;
+  }
+  for &w in &[16usize, 32] {
+    for gamut in [
+      DcpTargetGamut::DciP3,
+      DcpTargetGamut::Rec709,
+      DcpTargetGamut::Rec2020,
+    ] {
+      let xyz = xyz12_plane(w, 0x5101_5101);
+      let mut out_scalar = std::vec![0u8; w * 3];
+      let mut out_avx = std::vec![0u8; w * 3];
+      scalar::xyz12::xyz12_to_rgb_row::<false>(&xyz, &mut out_scalar, w, gamut);
+      unsafe {
+        xyz12_to_rgb_row::<false>(&xyz, &mut out_avx, w, gamut);
+      }
+      assert_eq!(
+        out_scalar, out_avx,
+        "AVX-512 xyz12_to_rgb in-register store parity (w={w}, gamut={gamut:?})"
+      );
+    }
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
+fn avx512_xyz12_to_rgba_in_register_store_parity() {
+  if !std::arch::is_x86_feature_detected!("avx512f")
+    || !std::arch::is_x86_feature_detected!("avx512bw")
+  {
+    return;
+  }
+  for &w in &[16usize, 32] {
+    for gamut in [
+      DcpTargetGamut::DciP3,
+      DcpTargetGamut::Rec709,
+      DcpTargetGamut::Rec2020,
+    ] {
+      let xyz = xyz12_plane(w, 0x5202_5202);
+      let mut out_scalar = std::vec![0u8; w * 4];
+      let mut out_avx = std::vec![0u8; w * 4];
+      scalar::xyz12::xyz12_to_rgba_row::<false>(&xyz, &mut out_scalar, w, gamut);
+      unsafe {
+        xyz12_to_rgba_row::<false>(&xyz, &mut out_avx, w, gamut);
+      }
+      assert_eq!(
+        out_scalar, out_avx,
+        "AVX-512 xyz12_to_rgba in-register store parity (w={w}, gamut={gamut:?})"
+      );
+    }
+  }
+}
+
 // ---- u16 RGB / RGBA -----------------------------------------------------
 
 #[test]
