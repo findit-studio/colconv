@@ -1238,11 +1238,26 @@ mod tests {
     }
   }
 
-  // ---- BE vs LE parity: scalar<BITS, true> must produce same output as -------
-  // scalar<BITS, false> on byte-swapped input. Covers 6 kernels at BITS 10/16. -
+  // ---- BE vs LE parity: scalar<BITS, true> on BE-encoded storage must match -
+  // scalar<BITS, false> on LE-encoded storage. Each plane is built from the ---
+  // same host-native `intended` buffer, then re-encoded with `to_le_bytes` /  -
+  // `to_be_bytes` so the kernels' `from_le` / `from_be` decode it back to the -
+  // same logical values on every host. The previous helper (`swap_bytes` of  -
+  // host-native data) was vacuous: on BE the `<false>` path would byte-swap   -
+  // host-native into wrong logical values while the `<true>` path on the      -
+  // swapped buffer produced the same wrong values, so equality could pass on  -
+  // a corrupted decode. Each test now also pins the LE output to an absolute  -
+  // expected value computed independently from `intended`. -------------------
 
-  fn byte_swap_vec(v: &[u16]) -> std::vec::Vec<u16> {
-    v.iter().map(|x| x.swap_bytes()).collect()
+  /// Re-encode host-native `u16` samples as BE byte storage. On a BE host this
+  /// is identity; on a LE host each element is byte-swapped so the kernel's
+  /// `from_be` recovers the original logical value. Mirror of the existing
+  /// `as_le_u16` helper above.
+  fn as_be_u16(host: &[u16]) -> std::vec::Vec<u16> {
+    host
+      .iter()
+      .map(|v| u16::from_ne_bytes(v.to_be_bytes()))
+      .collect()
   }
 
   fn rand_plane<const BITS: u32>(seed: u32, n: usize) -> std::vec::Vec<u16> {
@@ -1256,21 +1271,119 @@ mod tests {
       .collect()
   }
 
+  /// Independent scalar reference for the `gbr_to_rgb_high_bit_row` kernel:
+  /// reorders the planes to packed R, G, B and applies the `>> (BITS - 8)`
+  /// downshift on host-native logical samples. Used to pin the LE path's
+  /// output absolutely (so equality cannot pass on equally corrupted decodes).
+  fn ref_gbr_to_rgb_high_bit<const BITS: u32>(
+    g: &[u16],
+    b: &[u16],
+    r: &[u16],
+    width: usize,
+  ) -> std::vec::Vec<u8> {
+    let shift = BITS - 8;
+    let mut out = std::vec![0u8; width * 3];
+    for x in 0..width {
+      out[x * 3] = (r[x] >> shift) as u8;
+      out[x * 3 + 1] = (g[x] >> shift) as u8;
+      out[x * 3 + 2] = (b[x] >> shift) as u8;
+    }
+    out
+  }
+
+  /// Independent scalar reference for `gbr_to_rgba_opaque_high_bit_row`.
+  fn ref_gbr_to_rgba_opaque_high_bit<const BITS: u32>(
+    g: &[u16],
+    b: &[u16],
+    r: &[u16],
+    width: usize,
+  ) -> std::vec::Vec<u8> {
+    let shift = BITS - 8;
+    let mut out = std::vec![0u8; width * 4];
+    for x in 0..width {
+      out[x * 4] = (r[x] >> shift) as u8;
+      out[x * 4 + 1] = (g[x] >> shift) as u8;
+      out[x * 4 + 2] = (b[x] >> shift) as u8;
+      out[x * 4 + 3] = 0xFF;
+    }
+    out
+  }
+
+  /// Independent scalar reference for `gbra_to_rgba_high_bit_row`.
+  fn ref_gbra_to_rgba_high_bit<const BITS: u32>(
+    g: &[u16],
+    b: &[u16],
+    r: &[u16],
+    a: &[u16],
+    width: usize,
+  ) -> std::vec::Vec<u8> {
+    let shift = BITS - 8;
+    let mut out = std::vec![0u8; width * 4];
+    for x in 0..width {
+      out[x * 4] = (r[x] >> shift) as u8;
+      out[x * 4 + 1] = (g[x] >> shift) as u8;
+      out[x * 4 + 2] = (b[x] >> shift) as u8;
+      out[x * 4 + 3] = (a[x] >> shift) as u8;
+    }
+    out
+  }
+
+  /// Independent scalar reference for `gbr_to_rgb_u16_high_bit_row`.
+  fn ref_gbr_to_rgb_u16_high_bit<const BITS: u32>(
+    g: &[u16],
+    b: &[u16],
+    r: &[u16],
+    width: usize,
+  ) -> std::vec::Vec<u16> {
+    let mask: u16 = ((1u32 << BITS) - 1) as u16;
+    let mut out = std::vec![0u16; width * 3];
+    for x in 0..width {
+      out[x * 3] = r[x] & mask;
+      out[x * 3 + 1] = g[x] & mask;
+      out[x * 3 + 2] = b[x] & mask;
+    }
+    out
+  }
+
+  /// Independent scalar reference for `gbra_to_rgba_u16_high_bit_row`.
+  fn ref_gbra_to_rgba_u16_high_bit<const BITS: u32>(
+    g: &[u16],
+    b: &[u16],
+    r: &[u16],
+    a: &[u16],
+    width: usize,
+  ) -> std::vec::Vec<u16> {
+    let mask: u16 = ((1u32 << BITS) - 1) as u16;
+    let mut out = std::vec![0u16; width * 4];
+    for x in 0..width {
+      out[x * 4] = r[x] & mask;
+      out[x * 4 + 1] = g[x] & mask;
+      out[x * 4 + 2] = b[x] & mask;
+      out[x * 4 + 3] = a[x] & mask;
+    }
+    out
+  }
+
   #[test]
   fn scalar_gbr_to_rgb_high_bit_be_parity_bits10() {
     for w in [1usize, 7, 8, 9, 17, 33, 65] {
       let g = rand_plane::<10>(0xAAAA, w);
       let b = rand_plane::<10>(0xBBBB, w);
       let r = rand_plane::<10>(0xCCCC, w);
+      let g_le = as_le_u16(&g);
+      let b_le = as_le_u16(&b);
+      let r_le = as_le_u16(&r);
+      let g_be = as_be_u16(&g);
+      let b_be = as_be_u16(&b);
+      let r_be = as_be_u16(&r);
       let mut out_le = std::vec![0u8; w * 3];
       let mut out_be = std::vec![0u8; w * 3];
-      gbr_to_rgb_high_bit_row::<10, false>(&g, &b, &r, &mut out_le, w);
-      gbr_to_rgb_high_bit_row::<10, true>(
-        &byte_swap_vec(&g),
-        &byte_swap_vec(&b),
-        &byte_swap_vec(&r),
-        &mut out_be,
-        w,
+      gbr_to_rgb_high_bit_row::<10, false>(&g_le, &b_le, &r_le, &mut out_le, w);
+      gbr_to_rgb_high_bit_row::<10, true>(&g_be, &b_be, &r_be, &mut out_be, w);
+      let expected = ref_gbr_to_rgb_high_bit::<10>(&g, &b, &r, w);
+      assert_eq!(
+        out_le, expected,
+        "scalar LE path does not match independent reference (gbr_to_rgb bits10 w={w})"
       );
       assert_eq!(
         out_le, out_be,
@@ -1285,15 +1398,20 @@ mod tests {
       let g = rand_plane::<16>(0xAAAA, w);
       let b = rand_plane::<16>(0xBBBB, w);
       let r = rand_plane::<16>(0xCCCC, w);
+      let g_le = as_le_u16(&g);
+      let b_le = as_le_u16(&b);
+      let r_le = as_le_u16(&r);
+      let g_be = as_be_u16(&g);
+      let b_be = as_be_u16(&b);
+      let r_be = as_be_u16(&r);
       let mut out_le = std::vec![0u8; w * 3];
       let mut out_be = std::vec![0u8; w * 3];
-      gbr_to_rgb_high_bit_row::<16, false>(&g, &b, &r, &mut out_le, w);
-      gbr_to_rgb_high_bit_row::<16, true>(
-        &byte_swap_vec(&g),
-        &byte_swap_vec(&b),
-        &byte_swap_vec(&r),
-        &mut out_be,
-        w,
+      gbr_to_rgb_high_bit_row::<16, false>(&g_le, &b_le, &r_le, &mut out_le, w);
+      gbr_to_rgb_high_bit_row::<16, true>(&g_be, &b_be, &r_be, &mut out_be, w);
+      let expected = ref_gbr_to_rgb_high_bit::<16>(&g, &b, &r, w);
+      assert_eq!(
+        out_le, expected,
+        "scalar LE path does not match independent reference (gbr_to_rgb bits16 w={w})"
       );
       assert_eq!(
         out_le, out_be,
@@ -1308,15 +1426,20 @@ mod tests {
       let g = rand_plane::<10>(0xAAAA, w);
       let b = rand_plane::<10>(0xBBBB, w);
       let r = rand_plane::<10>(0xCCCC, w);
+      let g_le = as_le_u16(&g);
+      let b_le = as_le_u16(&b);
+      let r_le = as_le_u16(&r);
+      let g_be = as_be_u16(&g);
+      let b_be = as_be_u16(&b);
+      let r_be = as_be_u16(&r);
       let mut out_le = std::vec![0u8; w * 4];
       let mut out_be = std::vec![0u8; w * 4];
-      gbr_to_rgba_opaque_high_bit_row::<10, false>(&g, &b, &r, &mut out_le, w);
-      gbr_to_rgba_opaque_high_bit_row::<10, true>(
-        &byte_swap_vec(&g),
-        &byte_swap_vec(&b),
-        &byte_swap_vec(&r),
-        &mut out_be,
-        w,
+      gbr_to_rgba_opaque_high_bit_row::<10, false>(&g_le, &b_le, &r_le, &mut out_le, w);
+      gbr_to_rgba_opaque_high_bit_row::<10, true>(&g_be, &b_be, &r_be, &mut out_be, w);
+      let expected = ref_gbr_to_rgba_opaque_high_bit::<10>(&g, &b, &r, w);
+      assert_eq!(
+        out_le, expected,
+        "scalar LE path does not match independent reference (gbr_to_rgba_opaque bits10 w={w})"
       );
       assert_eq!(
         out_le, out_be,
@@ -1332,16 +1455,22 @@ mod tests {
       let b = rand_plane::<10>(0xBBBB, w);
       let r = rand_plane::<10>(0xCCCC, w);
       let a = rand_plane::<10>(0xDDDD, w);
+      let g_le = as_le_u16(&g);
+      let b_le = as_le_u16(&b);
+      let r_le = as_le_u16(&r);
+      let a_le = as_le_u16(&a);
+      let g_be = as_be_u16(&g);
+      let b_be = as_be_u16(&b);
+      let r_be = as_be_u16(&r);
+      let a_be = as_be_u16(&a);
       let mut out_le = std::vec![0u8; w * 4];
       let mut out_be = std::vec![0u8; w * 4];
-      gbra_to_rgba_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out_le, w);
-      gbra_to_rgba_high_bit_row::<10, true>(
-        &byte_swap_vec(&g),
-        &byte_swap_vec(&b),
-        &byte_swap_vec(&r),
-        &byte_swap_vec(&a),
-        &mut out_be,
-        w,
+      gbra_to_rgba_high_bit_row::<10, false>(&g_le, &b_le, &r_le, &a_le, &mut out_le, w);
+      gbra_to_rgba_high_bit_row::<10, true>(&g_be, &b_be, &r_be, &a_be, &mut out_be, w);
+      let expected = ref_gbra_to_rgba_high_bit::<10>(&g, &b, &r, &a, w);
+      assert_eq!(
+        out_le, expected,
+        "scalar LE path does not match independent reference (gbra_to_rgba bits10 w={w})"
       );
       assert_eq!(
         out_le, out_be,
@@ -1356,15 +1485,20 @@ mod tests {
       let g = rand_plane::<10>(0xAAAA, w);
       let b = rand_plane::<10>(0xBBBB, w);
       let r = rand_plane::<10>(0xCCCC, w);
+      let g_le = as_le_u16(&g);
+      let b_le = as_le_u16(&b);
+      let r_le = as_le_u16(&r);
+      let g_be = as_be_u16(&g);
+      let b_be = as_be_u16(&b);
+      let r_be = as_be_u16(&r);
       let mut out_le = std::vec![0u16; w * 3];
       let mut out_be = std::vec![0u16; w * 3];
-      gbr_to_rgb_u16_high_bit_row::<10, false>(&g, &b, &r, &mut out_le, w);
-      gbr_to_rgb_u16_high_bit_row::<10, true>(
-        &byte_swap_vec(&g),
-        &byte_swap_vec(&b),
-        &byte_swap_vec(&r),
-        &mut out_be,
-        w,
+      gbr_to_rgb_u16_high_bit_row::<10, false>(&g_le, &b_le, &r_le, &mut out_le, w);
+      gbr_to_rgb_u16_high_bit_row::<10, true>(&g_be, &b_be, &r_be, &mut out_be, w);
+      let expected = ref_gbr_to_rgb_u16_high_bit::<10>(&g, &b, &r, w);
+      assert_eq!(
+        out_le, expected,
+        "scalar LE path does not match independent reference (gbr_to_rgb_u16 bits10 w={w})"
       );
       assert_eq!(
         out_le, out_be,
@@ -1380,16 +1514,22 @@ mod tests {
       let b = rand_plane::<10>(0xBBBB, w);
       let r = rand_plane::<10>(0xCCCC, w);
       let a = rand_plane::<10>(0xDDDD, w);
+      let g_le = as_le_u16(&g);
+      let b_le = as_le_u16(&b);
+      let r_le = as_le_u16(&r);
+      let a_le = as_le_u16(&a);
+      let g_be = as_be_u16(&g);
+      let b_be = as_be_u16(&b);
+      let r_be = as_be_u16(&r);
+      let a_be = as_be_u16(&a);
       let mut out_le = std::vec![0u16; w * 4];
       let mut out_be = std::vec![0u16; w * 4];
-      gbra_to_rgba_u16_high_bit_row::<10, false>(&g, &b, &r, &a, &mut out_le, w);
-      gbra_to_rgba_u16_high_bit_row::<10, true>(
-        &byte_swap_vec(&g),
-        &byte_swap_vec(&b),
-        &byte_swap_vec(&r),
-        &byte_swap_vec(&a),
-        &mut out_be,
-        w,
+      gbra_to_rgba_u16_high_bit_row::<10, false>(&g_le, &b_le, &r_le, &a_le, &mut out_le, w);
+      gbra_to_rgba_u16_high_bit_row::<10, true>(&g_be, &b_be, &r_be, &a_be, &mut out_be, w);
+      let expected = ref_gbra_to_rgba_u16_high_bit::<10>(&g, &b, &r, &a, w);
+      assert_eq!(
+        out_le, expected,
+        "scalar LE path does not match independent reference (gbra_to_rgba_u16 bits10 w={w})"
       );
       assert_eq!(
         out_le, out_be,

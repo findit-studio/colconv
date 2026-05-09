@@ -66,7 +66,12 @@ fn rgb48_with_rgba_u16_forces_0xffff() {
 #[test]
 fn rgb48_with_rgb_u16_and_rgba_u16_both_correct() {
   // Two pixels: verify identity copy for RGB and forced alpha for RGBA.
-  let src: Vec<u16> = as_le_u16(&[0x1234, 0x5678, 0x9ABC, 0xDEF0, 0x1357, 0x2468]);
+  // `intended` holds host-native logical samples; `src` is the LE-encoded
+  // byte storage the kernel decodes via `from_le`. The decoded `rgb_u16`
+  // output is host-native, so it must be compared against `intended`, not
+  // against the byte-swapped `src` (which would only match on LE hosts).
+  let intended: [u16; 6] = [0x1234, 0x5678, 0x9ABC, 0xDEF0, 0x1357, 0x2468];
+  let src: Vec<u16> = as_le_u16(&intended);
   let frame = Rgb48Frame::new(&src, 2, 1, 6);
   let mut rgb_u16 = vec![0u16; 6];
   let mut rgba_u16 = vec![0u16; 8];
@@ -76,8 +81,8 @@ fn rgb48_with_rgb_u16_and_rgba_u16_both_correct() {
     .with_rgba_u16(&mut rgba_u16)
     .unwrap();
   rgb48_to(&frame, true, ColorMatrix::Bt709, &mut sinker).unwrap();
-  // RGB u16: identity copy of source
-  assert_eq!(rgb_u16[..6], src[..6]);
+  // RGB u16: identity copy of source decoded to host-native intended values.
+  assert_eq!(rgb_u16[..6], intended[..6]);
   // RGBA u16: alpha slots forced to 0xFFFF
   assert_eq!(rgba_u16[3], 0xFFFF);
   assert_eq!(rgba_u16[7], 0xFFFF);
