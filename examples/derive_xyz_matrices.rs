@@ -62,7 +62,7 @@ const GAMUTS: &[GamutCoords] = &[
     w: (0.3127, 0.3290),
   },
   GamutCoords {
-    name: "DCI-P3 (DCI white)",
+    name: "DCI-P3",
     source: "SMPTE RP 431-2 §5.1 / ST 428-1 — theatrical DCI white \
              (~6300K, x=0.314, y=0.351), NOT D65",
     r: (0.680, 0.320),
@@ -254,8 +254,24 @@ fn derive_xyz_to_rgb(g: &GamutCoords) -> Mat3 {
 }
 
 /// Pretty-print a 3×3 matrix as Rust f32 literals.
-fn print_mat_const(name: &str, source: &str, m: &Mat3) {
-  println!("/// XYZ → RGB matrix for {} (D65 output).", name);
+///
+/// `white` is the gamut's chromaticity white point — used to label the
+/// generated comment as either D65 (Bt709 / DisplayP3D65 / Bt2020Ncl)
+/// or DCI white (theatrical DciP3, x=0.314 y=0.351). Hard-coding "(D65
+/// output)" for every gamut was Copilot review #4256795439 Comment 3:
+/// the DCI-P3 theatrical matrix uses DCI white, not D65.
+fn print_mat_const(name: &str, source: &str, m: &Mat3, white: (f64, f64)) {
+  // Recognise canonical white points to within 1e-4. Anything else
+  // prints the (x, y) coordinates verbatim, which keeps the helper
+  // honest if a future gamut entry adds a new white point.
+  let white_label = if (white.0 - 0.3127).abs() < 1e-4 && (white.1 - 0.3290).abs() < 1e-4 {
+    "D65 output".to_string()
+  } else if (white.0 - 0.314).abs() < 1e-4 && (white.1 - 0.351).abs() < 1e-4 {
+    "DCI white output, x=0.314, y=0.351".to_string()
+  } else {
+    format!("white point output, x={}, y={}", white.0, white.1)
+  };
+  println!("/// XYZ → RGB matrix for {} ({}).", name, white_label);
   println!("/// Derived from chromaticity coordinates in {}.", source);
   println!("///");
   println!("/// Verify (compare published values in the source standard):");
@@ -595,7 +611,7 @@ fn main() {
 
   for g in GAMUTS {
     let m = derive_xyz_to_rgb(g);
-    print_mat_const(g.name, g.source, &m);
+    print_mat_const(g.name, g.source, &m, g.w);
   }
 
   for g in GAMUTS {

@@ -829,6 +829,10 @@ mod tests {
   }
 
   #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
+  )]
   fn xyz12_to_rgb_f16_clamps_to_unit_range() {
     let xyz: [u16; 3] = [pack12_le(0xFFF), pack12_le(0), pack12_le(0)];
     let mut out = [half::f16::from_f32(0.0); 3];
@@ -838,6 +842,10 @@ mod tests {
   }
 
   #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
+  )]
   fn xyz12_to_rgba_f16_alpha_one() {
     let xyz: [u16; 3] = [pack12_le(0x800), pack12_le(0x800), pack12_le(0x800)];
     let mut out = [half::f16::from_f32(0.0); 4];

@@ -4,7 +4,8 @@
 
 Closes Tier 12. New source-side pixel format `Xyz12` (`AV_PIX_FMT_XYZ12LE`
 / `AV_PIX_FMT_XYZ12BE`): 12-bit packed CIE XYZ in `X, Y, Z` order, three
-u16 elements per pixel with samples in the low 12 bits. Const-generic
+u16 elements per pixel — active 12 bits in `[15:4]`, low 4 bits zero
+(per FFmpeg `AV_PIX_FMT_XYZ12LE/BE`). Const-generic
 `Xyz12Frame<const BE: bool>` with type aliases `Xyz12LeFrame` /
 `Xyz12BeFrame`. The conversion chain is the heaviest in colconv: SMPTE
 ST 428-1 §8 inverse OETF → 3×3 matrix to one of three target gamuts

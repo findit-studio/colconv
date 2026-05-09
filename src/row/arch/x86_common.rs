@@ -192,6 +192,13 @@ pub(super) unsafe fn write_rgba_16(r: __m128i, g: __m128i, b: __m128i, a: __m128
 /// - The calling function must have SSSE3 available (via
 ///   `#[target_feature(enable = "sse4.1")]` or any AVX2 / AVX-512
 ///   superset).
+//
+// Gated on `std` / `alloc` because the only callers
+// (`x86_sse41::xyz12`, `x86_avx2::xyz12`) are gated the same way.
+// Without this gate `cargo build --no-default-features` fires a
+// dead-code warning that becomes a hard error under `RUSTFLAGS=
+// -Dwarnings` (Windows CI failure on PR #91, run 25591669613).
+#[cfg(any(feature = "std", feature = "alloc"))]
 #[inline(always)]
 pub(super) unsafe fn write_rgb_u8_8(r: __m128i, g: __m128i, b: __m128i, ptr: *mut u8) {
   unsafe {
@@ -246,6 +253,10 @@ pub(super) unsafe fn write_rgb_u8_8(r: __m128i, g: __m128i, b: __m128i, ptr: *mu
 /// - `ptr` must point to at least 32 writable bytes.
 /// - The calling function must have SSE2 available (any SSE4.1+
 ///   superset satisfies this).
+//
+// Same `std` / `alloc` gate as [`write_rgb_u8_8`] — only the xyz12
+// SIMD kernels (gated on those features) consume this helper.
+#[cfg(any(feature = "std", feature = "alloc"))]
 #[inline(always)]
 pub(super) unsafe fn write_rgba_u8_8(r: __m128i, g: __m128i, b: __m128i, a: __m128i, ptr: *mut u8) {
   unsafe {

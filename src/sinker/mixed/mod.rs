@@ -788,9 +788,10 @@ pub enum RowSlice {
   #[display("RGBF16 packed")]
   RgbF16Packed,
   /// Packed `X, Y, Z` row of an [`Xyz12`](crate::yuv::Xyz12) source —
-  /// Tier 12 12-bit CIE XYZ packed in u16 triples (low 12 bits
-  /// active). Row length: `3 * width` `u16` elements (= `6 * width`
-  /// bytes).
+  /// Tier 12 12-bit CIE XYZ packed in u16 triples — active 12 bits
+  /// in `[15:4]`, low 4 bits zero (per FFmpeg
+  /// `AV_PIX_FMT_XYZ12LE/BE`). Row length: `3 * width` `u16` elements
+  /// (= `6 * width` bytes).
   #[display("XYZ12 packed")]
   Xyz12Packed,
   /// Green plane row of an 8-bit planar GBR source
