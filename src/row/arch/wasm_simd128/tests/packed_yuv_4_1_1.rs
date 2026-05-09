@@ -1,12 +1,6 @@
-use super::super::*;
+use super::{super::*, packed_yuv411_buffer};
 
 // ---- Tier 5.25 packed YUV 4:1:1 simd128 scalar-equivalence ---------
-
-fn packed_yuv411_buffer(width: usize, seed: usize) -> std::vec::Vec<u8> {
-  (0..width * 3 / 2)
-    .map(|i| ((i.wrapping_mul(seed).wrapping_add(seed * 3)) & 0xFF) as u8)
-    .collect()
-}
 
 fn check_uyyvyy411_rgb(width: usize, matrix: ColorMatrix, full_range: bool) {
   let p = packed_yuv411_buffer(width, 37);

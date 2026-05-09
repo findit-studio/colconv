@@ -10,8 +10,10 @@
 //! AVX‑512 lacks a cross‑lane single‑instruction byte permute
 //! (`vpermb` is AVX‑512_VBMI which we don't gate on). The deinterleave
 //! is therefore decomposed into four parallel 16‑px windows using the
-//! same SSE4.1 shuffle pattern; the extracted Y / U / V byte vectors
-//! are then concatenated into AVX‑512 registers for the wide Q15 math.
+//! same SSE4.1 shuffle pattern; the extracted Y / U / V bytes stay in
+//! `__m128i` registers and are concatenated directly into `__m512i`s
+//! via `_mm512_inserti32x4` + `_mm512_permutexvar_epi32` (no per‑iter
+//! stack scratch; see [`deinterleave_64px`]).
 //!
 //! 1. Eight 16‑byte loads — `(p0_a, p0_b)` per window covering bytes
 //!    `[w*24 .. w*24+16]` and `[w*24+8 .. w*24+24]` for `w ∈ 0..4`.
@@ -20,8 +22,11 @@
 //! 2. Per window: extract 16 Y bytes (two `_mm_shuffle_epi8` +
 //!    `_mm_unpacklo_epi64`) and 4 U + 4 V bytes (two
 //!    `_mm_shuffle_epi8` + OR). Concatenate the four windows' Y
-//!    vectors into one `__m512i`; concatenate U bytes (16 total) and
-//!    V bytes (16 total) into `__m128i`s.
+//!    vectors via `_mm512_inserti32x4` to produce `y_vec`. Concatenate
+//!    the four `uv` vectors the same way and split via
+//!    `_mm512_permutexvar_epi32` into a low 128‑bit lane carrying
+//!    `[u0,u1,u2,u3]` (one u32 per window) and a second lane carrying
+//!    the four V quadlets.
 //! 3. Widen U / V to i32x16 each, run the standard AVX‑512 Q15 chroma
 //!    math (`(cu*u_d + cv*v_d + RND) >> 15`) producing 16 i16 chroma
 //!    values per channel.
@@ -31,10 +36,166 @@
 //! 5. Standard `scale_y` + saturating add + `narrow_u8x64` →
 //!    `write_rgb_64` / `write_rgba_64`.
 //! 6. Scalar tail for `width % 64 != 0`.
+//!
+//! ## Removed stack spill
+//!
+//! Earlier revisions of this kernel held the 4 windows' Y / U / V
+//! bytes in `[0u8; 64]` and `[0u8; 16]` stack arrays, then reloaded
+//! them via `_mm512_loadu_si512` / `_mm_loadu_si128`. Each iteration
+//! paid for stack zero‑init + 5 stores + 3 loads of bytes already
+//! resident in vector registers. The current path keeps everything in
+//! registers (4 × `_mm512_inserti32x4` + 1 × `_mm512_permutexvar_epi32`
+//! for U/V; 4 × `_mm512_inserti32x4` for Y), shaving ~96 + 16 + 16
+//! bytes of per‑iter stack traffic.
 
 use core::arch::x86_64::*;
 
 use super::*;
+
+/// Loads 4 overlapping 16‑byte windows from `packed` starting at
+/// `block` and returns the 64 deinterleaved Y bytes as one `__m512i`
+/// plus the 16 U bytes and 16 V bytes packed into the low 128 bits of
+/// two `__m128i` registers — all in registers, no stack scratch.
+///
+/// # Safety
+///
+/// Caller has verified AVX‑512F + AVX‑512BW. `packed.len() >= block +
+/// 96` (i.e. at least 96 bytes readable from `packed.as_ptr().add(block)`).
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn deinterleave_64px(
+  packed: &[u8],
+  block: usize,
+  y_mask_p0: __m128i,
+  y_mask_p1: __m128i,
+  uv_mask_p0: __m128i,
+  uv_mask_p1: __m128i,
+  uv_split_perm: __m512i,
+) -> (__m512i, __m128i, __m128i) {
+  // SAFETY: AVX‑512BW availability is the caller's obligation;
+  // `packed.len() >= block + 96` is the documented contract.
+  unsafe {
+    // Per 16‑px window deinterleave (4 windows, w ∈ 0..4): two
+    // overlapping 16‑byte loads at offsets `block + w*24 + {0,8}`.
+    // Each window produces 16 Y bytes and 4 U + 4 V bytes that we
+    // keep in `__m128i` registers.
+    let p0_a = _mm_loadu_si128(packed.as_ptr().add(block).cast());
+    let p0_b = _mm_loadu_si128(packed.as_ptr().add(block + 8).cast());
+    let p1_a = _mm_loadu_si128(packed.as_ptr().add(block + 24).cast());
+    let p1_b = _mm_loadu_si128(packed.as_ptr().add(block + 32).cast());
+    let p2_a = _mm_loadu_si128(packed.as_ptr().add(block + 48).cast());
+    let p2_b = _mm_loadu_si128(packed.as_ptr().add(block + 56).cast());
+    let p3_a = _mm_loadu_si128(packed.as_ptr().add(block + 72).cast());
+    let p3_b = _mm_loadu_si128(packed.as_ptr().add(block + 80).cast());
+
+    let y0 = _mm_unpacklo_epi64(
+      _mm_shuffle_epi8(p0_a, y_mask_p0),
+      _mm_shuffle_epi8(p0_b, y_mask_p1),
+    );
+    let y1 = _mm_unpacklo_epi64(
+      _mm_shuffle_epi8(p1_a, y_mask_p0),
+      _mm_shuffle_epi8(p1_b, y_mask_p1),
+    );
+    let y2 = _mm_unpacklo_epi64(
+      _mm_shuffle_epi8(p2_a, y_mask_p0),
+      _mm_shuffle_epi8(p2_b, y_mask_p1),
+    );
+    let y3 = _mm_unpacklo_epi64(
+      _mm_shuffle_epi8(p3_a, y_mask_p0),
+      _mm_shuffle_epi8(p3_b, y_mask_p1),
+    );
+
+    // Concatenate 4 × `__m128i` Y into one `__m512i`.
+    let mut y_vec = _mm512_castsi128_si512(y0);
+    y_vec = _mm512_inserti32x4::<1>(y_vec, y1);
+    y_vec = _mm512_inserti32x4::<2>(y_vec, y2);
+    y_vec = _mm512_inserti32x4::<3>(y_vec, y3);
+
+    // Per‑window UV: low 4 bytes = U[w0..w3], bytes 4..7 = V[w0..w3];
+    // bytes 8..15 are zero (the OR masks only target bytes 0..7).
+    let uv0 = _mm_or_si128(
+      _mm_shuffle_epi8(p0_a, uv_mask_p0),
+      _mm_shuffle_epi8(p0_b, uv_mask_p1),
+    );
+    let uv1 = _mm_or_si128(
+      _mm_shuffle_epi8(p1_a, uv_mask_p0),
+      _mm_shuffle_epi8(p1_b, uv_mask_p1),
+    );
+    let uv2 = _mm_or_si128(
+      _mm_shuffle_epi8(p2_a, uv_mask_p0),
+      _mm_shuffle_epi8(p2_b, uv_mask_p1),
+    );
+    let uv3 = _mm_or_si128(
+      _mm_shuffle_epi8(p3_a, uv_mask_p0),
+      _mm_shuffle_epi8(p3_b, uv_mask_p1),
+    );
+
+    // Stack the 4 windows into one `__m512i`, one window per 128‑bit lane.
+    // After insert: lane w (i32 lanes 4w..4w+3) = [w_U, w_V, 0, 0].
+    let mut uv_vec = _mm512_castsi128_si512(uv0);
+    uv_vec = _mm512_inserti32x4::<1>(uv_vec, uv1);
+    uv_vec = _mm512_inserti32x4::<2>(uv_vec, uv2);
+    uv_vec = _mm512_inserti32x4::<3>(uv_vec, uv3);
+
+    // `uv_split_perm` = `[0,4,8,12, 1,5,9,13, dc, dc, …]`. After
+    // permute: i32 lanes 0..3 = `[w0_U, w1_U, w2_U, w3_U]` (= 16 U
+    // bytes contiguous in the low 128‑bit lane); i32 lanes 4..7 =
+    // `[w0_V, w1_V, w2_V, w3_V]` (= 16 V bytes in the second lane).
+    let uv_packed = _mm512_permutexvar_epi32(uv_split_perm, uv_vec);
+    let u_packed = _mm512_castsi512_si128(uv_packed);
+    let v_packed = _mm512_extracti32x4_epi32::<1>(uv_packed);
+
+    (y_vec, u_packed, v_packed)
+  }
+}
+
+/// Y‑only deinterleave for the luma kernels — same window pattern as
+/// [`deinterleave_64px`] but skips the U/V work.
+///
+/// # Safety
+///
+/// Caller has verified AVX‑512F + AVX‑512BW. `packed.len() >= block + 96`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn deinterleave_64px_y_only(
+  packed: &[u8],
+  block: usize,
+  y_mask_p0: __m128i,
+  y_mask_p1: __m128i,
+) -> __m512i {
+  // SAFETY: forwarded from the caller's `target_feature` context.
+  unsafe {
+    let p0_a = _mm_loadu_si128(packed.as_ptr().add(block).cast());
+    let p0_b = _mm_loadu_si128(packed.as_ptr().add(block + 8).cast());
+    let p1_a = _mm_loadu_si128(packed.as_ptr().add(block + 24).cast());
+    let p1_b = _mm_loadu_si128(packed.as_ptr().add(block + 32).cast());
+    let p2_a = _mm_loadu_si128(packed.as_ptr().add(block + 48).cast());
+    let p2_b = _mm_loadu_si128(packed.as_ptr().add(block + 56).cast());
+    let p3_a = _mm_loadu_si128(packed.as_ptr().add(block + 72).cast());
+    let p3_b = _mm_loadu_si128(packed.as_ptr().add(block + 80).cast());
+    let y0 = _mm_unpacklo_epi64(
+      _mm_shuffle_epi8(p0_a, y_mask_p0),
+      _mm_shuffle_epi8(p0_b, y_mask_p1),
+    );
+    let y1 = _mm_unpacklo_epi64(
+      _mm_shuffle_epi8(p1_a, y_mask_p0),
+      _mm_shuffle_epi8(p1_b, y_mask_p1),
+    );
+    let y2 = _mm_unpacklo_epi64(
+      _mm_shuffle_epi8(p2_a, y_mask_p0),
+      _mm_shuffle_epi8(p2_b, y_mask_p1),
+    );
+    let y3 = _mm_unpacklo_epi64(
+      _mm_shuffle_epi8(p3_a, y_mask_p0),
+      _mm_shuffle_epi8(p3_b, y_mask_p1),
+    );
+    let mut y_vec = _mm512_castsi128_si512(y0);
+    y_vec = _mm512_inserti32x4::<1>(y_vec, y1);
+    y_vec = _mm512_inserti32x4::<2>(y_vec, y2);
+    y_vec = _mm512_inserti32x4::<3>(y_vec, y3);
+    y_vec
+  }
+}
 
 /// AVX‑512 UYYVYY411 → packed RGB. Semantics match
 /// [`scalar::uyyvyy411_to_rgb_row`] byte‑identically.
@@ -169,44 +330,23 @@ unsafe fn uyyvyy411_to_rgb_or_rgba_row<const ALPHA: bool>(
     let perm_low = _mm512_setr_epi32(0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0);
     let perm_high = _mm512_setr_epi32(4, 0, 0, 0, 5, 0, 0, 0, 6, 0, 0, 0, 7, 0, 0, 0);
 
+    // U/V split permute (see `deinterleave_64px`): gathers i32 lane 0
+    // (= 4 U bytes) of windows 0..3 into low 128 bits, and i32 lane 1
+    // (= 4 V bytes) into the second 128 bits. High half is don't‑care.
+    let uv_split_perm = _mm512_setr_epi32(0, 4, 8, 12, 1, 5, 9, 13, 0, 0, 0, 0, 0, 0, 0, 0);
+
     let mut x = 0usize;
     while x + 64 <= width {
       let block = (x / 4) * 6;
-
-      // Per 16-px window (4 windows, w ∈ 0..4): two overlapping 16-byte
-      // loads at offsets `block + w*24 + {0,8}`. Each window produces
-      // 16 Y bytes and 4 U + 4 V bytes.
-      let mut y_packed_arr = [0u8; 64];
-      let mut u_packed_arr = [0u8; 16];
-      let mut v_packed_arr = [0u8; 16];
-      for w in 0..4 {
-        let off = block + w * 24;
-        let p_a = _mm_loadu_si128(packed.as_ptr().add(off).cast());
-        let p_b = _mm_loadu_si128(packed.as_ptr().add(off + 8).cast());
-        let y16 = _mm_unpacklo_epi64(
-          _mm_shuffle_epi8(p_a, y_mask_p0),
-          _mm_shuffle_epi8(p_b, y_mask_p1),
-        );
-        let uv = _mm_or_si128(
-          _mm_shuffle_epi8(p_a, uv_mask_p0),
-          _mm_shuffle_epi8(p_b, uv_mask_p1),
-        );
-        _mm_storeu_si128(y_packed_arr.as_mut_ptr().add(w * 16).cast(), y16);
-        // Low 4 bytes of `uv` = 4 U bytes; bytes 4..7 = 4 V bytes.
-        core::ptr::copy_nonoverlapping(
-          &uv as *const __m128i as *const u8,
-          u_packed_arr.as_mut_ptr().add(w * 4),
-          4,
-        );
-        core::ptr::copy_nonoverlapping(
-          (&uv as *const __m128i as *const u8).add(4),
-          v_packed_arr.as_mut_ptr().add(w * 4),
-          4,
-        );
-      }
-      let y_vec = _mm512_loadu_si512(y_packed_arr.as_ptr().cast());
-      let u_packed = _mm_loadu_si128(u_packed_arr.as_ptr().cast());
-      let v_packed = _mm_loadu_si128(v_packed_arr.as_ptr().cast());
+      let (y_vec, u_packed, v_packed) = deinterleave_64px(
+        packed,
+        block,
+        y_mask_p0,
+        y_mask_p1,
+        uv_mask_p0,
+        uv_mask_p1,
+        uv_split_perm,
+      );
 
       // Widen 16 U / 16 V bytes → i32x16 each.
       let u_i32 = _mm512_sub_epi32(_mm512_cvtepu8_epi32(u_packed), _mm512_set1_epi32(128));
@@ -323,18 +463,7 @@ pub(crate) unsafe fn uyyvyy411_to_luma_row(packed: &[u8], luma_out: &mut [u8], w
     let mut x = 0usize;
     while x + 64 <= width {
       let block = (x / 4) * 6;
-      let mut y_packed_arr = [0u8; 64];
-      for w in 0..4 {
-        let off = block + w * 24;
-        let p_a = _mm_loadu_si128(packed.as_ptr().add(off).cast());
-        let p_b = _mm_loadu_si128(packed.as_ptr().add(off + 8).cast());
-        let y16 = _mm_unpacklo_epi64(
-          _mm_shuffle_epi8(p_a, y_mask_p0),
-          _mm_shuffle_epi8(p_b, y_mask_p1),
-        );
-        _mm_storeu_si128(y_packed_arr.as_mut_ptr().add(w * 16).cast(), y16);
-      }
-      let y_vec = _mm512_loadu_si512(y_packed_arr.as_ptr().cast());
+      let y_vec = deinterleave_64px_y_only(packed, block, y_mask_p0, y_mask_p1);
       _mm512_storeu_si512(luma_out.as_mut_ptr().add(x).cast(), y_vec);
       x += 64;
     }
@@ -375,18 +504,7 @@ pub(crate) unsafe fn uyyvyy411_to_luma_u16_row(packed: &[u8], out: &mut [u16], w
     let mut x = 0usize;
     while x + 64 <= width {
       let block = (x / 4) * 6;
-      let mut y_packed_arr = [0u8; 64];
-      for w in 0..4 {
-        let off = block + w * 24;
-        let p_a = _mm_loadu_si128(packed.as_ptr().add(off).cast());
-        let p_b = _mm_loadu_si128(packed.as_ptr().add(off + 8).cast());
-        let y16 = _mm_unpacklo_epi64(
-          _mm_shuffle_epi8(p_a, y_mask_p0),
-          _mm_shuffle_epi8(p_b, y_mask_p1),
-        );
-        _mm_storeu_si128(y_packed_arr.as_mut_ptr().add(w * 16).cast(), y16);
-      }
-      let y_vec = _mm512_loadu_si512(y_packed_arr.as_ptr().cast());
+      let y_vec = deinterleave_64px_y_only(packed, block, y_mask_p0, y_mask_p1);
       // Widen 64 u8 → 64 u16 via two `_mm512_cvtepu8_epi16` calls on
       // the two 256‑bit halves.
       let y_lo_256 = _mm512_castsi512_si256(y_vec);

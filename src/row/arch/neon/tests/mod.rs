@@ -84,3 +84,12 @@ pub(super) fn interleave_uv(u_full: &[u16], v_full: &[u16]) -> std::vec::Vec<u16
   }
   out
 }
+
+/// Deterministic packed UYYVYY411 buffer: `width * 3 / 2` bytes per
+/// row, hash-like seed per byte position. Shared across the
+/// packed‑4:1:1 SIMD parity tests.
+pub(super) fn packed_yuv411_buffer(width: usize, seed: usize) -> std::vec::Vec<u8> {
+  (0..width * 3 / 2)
+    .map(|i| ((i.wrapping_mul(seed).wrapping_add(seed * 3)) & 0xFF) as u8)
+    .collect()
+}
