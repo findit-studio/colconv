@@ -74,10 +74,22 @@ impl<'a> MixedSinker<'a, Uyyvyy411> {
   /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(1)?;
-    if buf.len() < expected {
+    // `buf` is `&mut [u16]`, so `buf.len()` is in u16 elements. Compute
+    // the expected length explicitly in elements (`width * height`)
+    // rather than reusing `frame_bytes` — its name implies bytes, even
+    // though for `channels = 1` it numerically matches the element
+    // count for a single-channel buffer.
+    let expected_elems =
+      (self.width)
+        .checked_mul(self.height)
+        .ok_or(MixedSinkerError::GeometryOverflow {
+          width: self.width,
+          height: self.height,
+          channels: 1,
+        })?;
+    if buf.len() < expected_elems {
       return Err(MixedSinkerError::LumaU16BufferTooShort {
-        expected,
+        expected: expected_elems,
         actual: buf.len(),
       });
     }

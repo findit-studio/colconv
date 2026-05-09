@@ -73,8 +73,10 @@ pub enum Uyyvyy411FrameError {
     /// Row count that overflowed against the stride.
     rows: u32,
   },
-  /// `width * 3 / 2` overflows `u32`.
-  #[error("width * 3 / 2 overflows u32 ({width} too large)")]
+  /// `width * 3` overflows `u32` (the checked op prior to the exact
+  /// `/ 2` that yields the row stride). Reachable only at extreme
+  /// widths — well beyond practical raster sizes.
+  #[error("width * 3 overflows u32 ({width} too large)")]
   WidthOverflow {
     /// The supplied width.
     width: u32,

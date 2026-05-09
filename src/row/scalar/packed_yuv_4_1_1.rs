@@ -39,7 +39,7 @@ pub(crate) fn uyyvyy411_to_rgb_or_rgba_row<const ALPHA: bool>(
   );
 
   let bpp: usize = if ALPHA { 4 } else { 3 };
-  debug_assert!(out.len() >= width * bpp, "out row too short for {bpp}bpp");
+  debug_assert!(out.len() >= width * bpp, "out row too short for {}bpp", bpp);
 
   let coeffs = Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = range_params_n::<8, 8>(full_range);

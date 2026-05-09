@@ -1,9 +1,10 @@
 //! Packed YUV 4:1:1 (8-bit) dispatchers — Tier 5.25 source-side
 //! support for `uyyvyy411` (DV legacy).
 //!
-//! Two row-conversion entries (RGB, RGBA) plus one luma-extraction
-//! entry. Routes through the standard `cfg_select!` per-arch block;
-//! `use_simd = false` forces scalar.
+//! Two row-conversion entries (RGB, RGBA) plus two luma-extraction
+//! entries (`uyyvyy411_to_luma_row` for u8, `uyyvyy411_to_luma_u16_row`
+//! for zero-extended u16). Routes through the standard `cfg_select!`
+//! per-arch block; `use_simd = false` forces scalar.
 //!
 //! Width must be a multiple of 4 — fast-path-asserted at every public
 //! entry to gate entry into unsafe SIMD loads.
