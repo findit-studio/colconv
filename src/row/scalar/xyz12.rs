@@ -709,6 +709,18 @@ mod tests {
     u16::from_ne_bytes((code << 4).to_be_bytes())
   }
 
+  /// LE wire fixture variant of `pack12_le` that also stuffs the low
+  /// 4 wire bits with `low_bits` (`0..=0xF`). The reserved-low-bits
+  /// invariant is set on the **logical** wire value before LE byte
+  /// re-encoding, so the dirty bits land at the LE low byte's low
+  /// nibble on every host. ORing `low_bits` *after* `pack12_le` would
+  /// only work on LE: on BE, `pack12_le(code)` returns the byte-swapped
+  /// host word, so the OR clobbers the high byte instead.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn pack12_le_dirty(code: u16, low_bits: u16) -> u16 {
+    u16::from_ne_bytes(((code << 4) | (low_bits & 0xF)).to_le_bytes())
+  }
+
   #[test]
   fn xyz12_to_rgb_f32_dci_p3_mid_gray() {
     let xyz: [u16; 3] = [pack12_le(0x800), pack12_le(0x800), pack12_le(0x800)];
@@ -885,9 +897,9 @@ mod tests {
     // discards them before the OETF).
     let xyz_clean: [u16; 3] = [pack12_le(0x800), pack12_le(0x800), pack12_le(0x800)];
     let xyz_dirty: [u16; 3] = [
-      pack12_le(0x800) | 0x000F,
-      pack12_le(0x800) | 0x000A,
-      pack12_le(0x800) | 0x0007,
+      pack12_le_dirty(0x800, 0xF),
+      pack12_le_dirty(0x800, 0xA),
+      pack12_le_dirty(0x800, 0x7),
     ];
     let mut out_clean = [0_u8; 3];
     let mut out_dirty = [0_u8; 3];

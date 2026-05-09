@@ -17,6 +17,18 @@ fn as_le_u16(host: &[u16]) -> std::vec::Vec<u16> {
     .collect()
 }
 
+/// Re-encode a host-native f32 slice as LE-encoded byte storage. The
+/// `Grayf32Frame` plane contract is FFmpeg `grayf32le` — i.e. f32 bit
+/// patterns whose underlying bytes are little-endian. Sink kernels apply
+/// `u32::from_le` (via `<BE = false>`) to recover the host-native f32:
+/// no-op on LE hosts, byte-swap on BE.
+fn as_le_f32(host: &[f32]) -> std::vec::Vec<f32> {
+  host
+    .iter()
+    .map(|v| f32::from_bits(u32::from_ne_bytes(v.to_bits().to_le_bytes())))
+    .collect()
+}
+
 // Gray formats are luma-only; full_range and matrix are unused by the kernels
 // but are required by the walker signature. Use full_range=true, Bt709.
 const FR: bool = true;
@@ -152,14 +164,18 @@ fn gray16_with_rgb_shifts_to_u8() {
 
 #[test]
 fn gray16_with_luma_u16_copies_plane() {
-  let plane: Vec<u16> = (0u16..16).map(|x| x * 4096).collect();
+  // Host-native intended luma values; the plane bytes must be LE-encoded
+  // so the `<BE = false>` Gray16 kernel decodes them to `intended` on
+  // every host (no-op LE / byte-swap BE).
+  let intended: Vec<u16> = (0u16..16).map(|x| x * 4096).collect();
+  let plane = as_le_u16(&intended);
   let frame = make_gray16_frame(&plane, 4, 4);
   let mut lu16 = std::vec![0u16; 16];
   let mut sink = MixedSinker::<crate::yuv::Gray16>::new(4, 4)
     .with_luma_u16(&mut lu16)
     .unwrap();
   gray16_to(&frame, FR, M, &mut sink).unwrap();
-  assert_eq!(lu16, plane);
+  assert_eq!(lu16, intended);
 }
 
 #[test]
@@ -479,14 +495,15 @@ fn gray16_limited_range_hsv_v_is_rescaled() {
 #[test]
 fn grayf32_with_luma_f32_passthrough() {
   // NaN, out-of-range, and normal values all pass through unchanged.
-  let data: std::vec::Vec<f32> = std::vec![0.0, 0.25, 0.5, 0.75, 1.0, 1.5, -0.5, f32::NAN];
-  let frame = Grayf32Frame::new(&data, 8, 1, 8);
+  let intended: std::vec::Vec<f32> = std::vec![0.0, 0.25, 0.5, 0.75, 1.0, 1.5, -0.5, f32::NAN];
+  let plane = as_le_f32(&intended);
+  let frame = Grayf32Frame::new(&plane, 8, 1, 8);
   let mut out = std::vec![0.0f32; 8];
   let mut sink = MixedSinker::<crate::yuv::Grayf32>::new(8, 1)
     .with_luma_f32(&mut out)
     .unwrap();
   grayf32_to(&frame, FR, M, &mut sink).unwrap();
-  for (i, (&a, &b)) in data.iter().zip(out.iter()).enumerate() {
+  for (i, (&a, &b)) in intended.iter().zip(out.iter()).enumerate() {
     if a.is_nan() {
       assert!(b.is_nan(), "pixel {i}: expected NaN");
     } else {
@@ -497,14 +514,15 @@ fn grayf32_with_luma_f32_passthrough() {
 
 #[test]
 fn grayf32_with_rgb_f32_replicates_losslessly() {
-  let data: std::vec::Vec<f32> = std::vec![0.25, 0.75, 1.5, -0.5];
-  let frame = Grayf32Frame::new(&data, 4, 1, 4);
+  let intended: std::vec::Vec<f32> = std::vec![0.25, 0.75, 1.5, -0.5];
+  let plane = as_le_f32(&intended);
+  let frame = Grayf32Frame::new(&plane, 4, 1, 4);
   let mut out = std::vec![0.0f32; 4 * 3];
   let mut sink = MixedSinker::<crate::yuv::Grayf32>::new(4, 1)
     .with_rgb_f32(&mut out)
     .unwrap();
   grayf32_to(&frame, FR, M, &mut sink).unwrap();
-  for (x, &y) in data.iter().enumerate() {
+  for (x, &y) in intended.iter().enumerate() {
     assert_eq!(out[x * 3], y, "pixel {x} R");
     assert_eq!(out[x * 3 + 1], y, "pixel {x} G");
     assert_eq!(out[x * 3 + 2], y, "pixel {x} B");
@@ -514,8 +532,9 @@ fn grayf32_with_rgb_f32_replicates_losslessly() {
 #[test]
 fn grayf32_with_rgb_saturates() {
   // -0.5 → 0, 0.5 → 128, 1.0 → 255, 1.5 → 255
-  let data: std::vec::Vec<f32> = std::vec![-0.5, 0.0, 0.5, 1.0, 1.5];
-  let frame = Grayf32Frame::new(&data, 5, 1, 5);
+  let intended: std::vec::Vec<f32> = std::vec![-0.5, 0.0, 0.5, 1.0, 1.5];
+  let plane = as_le_f32(&intended);
+  let frame = Grayf32Frame::new(&plane, 5, 1, 5);
   let mut rgb = std::vec![0u8; 5 * 3];
   let mut sink = MixedSinker::<crate::yuv::Grayf32>::new(5, 1)
     .with_rgb(&mut rgb)
@@ -530,8 +549,9 @@ fn grayf32_with_rgb_saturates() {
 
 #[test]
 fn grayf32_with_hsv_h0_s0_v_saturated() {
-  let data: std::vec::Vec<f32> = std::vec![0.0, 0.5, 1.0];
-  let frame = Grayf32Frame::new(&data, 3, 1, 3);
+  let intended: std::vec::Vec<f32> = std::vec![0.0, 0.5, 1.0];
+  let plane = as_le_f32(&intended);
+  let frame = Grayf32Frame::new(&plane, 3, 1, 3);
   let mut h = std::vec![0xFFu8; 3];
   let mut s = std::vec![0xFFu8; 3];
   let mut v = std::vec![0u8; 3];
@@ -547,8 +567,9 @@ fn grayf32_with_hsv_h0_s0_v_saturated() {
 #[test]
 fn grayf32_with_luma_u16_and_rgb_u16() {
   // 1×1 frame: Y = 0.5 → luma_u16 ≈ 32768, rgb_u16 ≈ [32768, 32768, 32768]
-  let data = std::vec![0.5f32];
-  let frame = Grayf32Frame::new(&data, 1, 1, 1);
+  let intended = std::vec![0.5f32];
+  let plane = as_le_f32(&intended);
+  let frame = Grayf32Frame::new(&plane, 1, 1, 1);
   let mut lu16 = std::vec![0u16; 1];
   let mut rgb_u16 = std::vec![0u16; 3];
   let mut sink = MixedSinker::<crate::yuv::Grayf32>::new(1, 1)
@@ -569,8 +590,9 @@ fn grayf32_with_luma_u16_and_rgb_u16() {
 )]
 fn grayf32_width_128_and_130_smoke() {
   for &w in &[128usize, 130usize] {
-    let data: std::vec::Vec<f32> = (0..w).map(|i| i as f32 / w as f32).collect();
-    let frame = Grayf32Frame::new(&data, w as u32, 1, w as u32);
+    let intended: std::vec::Vec<f32> = (0..w).map(|i| i as f32 / w as f32).collect();
+    let plane = as_le_f32(&intended);
+    let frame = Grayf32Frame::new(&plane, w as u32, 1, w as u32);
     let mut rgb = std::vec![0u8; w * 3];
     let mut luma_f32 = std::vec![0.0f32; w];
     let mut sink = MixedSinker::<crate::yuv::Grayf32>::new(w, 1)
@@ -775,8 +797,10 @@ fn ya8_width_128_and_130_smoke() {
 
 #[test]
 fn ya16_with_rgba_u16_source_alpha() {
-  // 1-pixel: Y=0x8000, A=0x4000
-  let packed: std::vec::Vec<u16> = std::vec![0x8000, 0x4000];
+  // 1-pixel: Y=0x8000, A=0x4000. The Ya16 plane is FFmpeg
+  // `AV_PIX_FMT_YA16LE`-byte-encoded; wrap host-native samples via
+  // `as_le_u16` so kernels recover host-native values on every host.
+  let packed = as_le_u16(&[0x8000u16, 0x4000]);
   let frame = Ya16Frame::new(&packed, 1, 1, 2);
   let mut rgba_u16 = std::vec![0u16; 4];
   let mut luma_u16 = std::vec![0u16; 1];
@@ -793,7 +817,7 @@ fn ya16_with_rgba_u16_source_alpha() {
 #[test]
 fn ya16_with_rgba_u8_source_alpha_shifted() {
   // 2-pixel: [Y=0x8000, A=0x4000], [Y=0xFFFF, A=0x8000]
-  let packed: std::vec::Vec<u16> = std::vec![0x8000, 0x4000, 0xFFFF, 0x8000];
+  let packed = as_le_u16(&[0x8000u16, 0x4000, 0xFFFF, 0x8000]);
   let frame = Ya16Frame::new(&packed, 2, 1, 4);
   let mut rgba = std::vec![0u8; 8];
   let mut sink = MixedSinker::<crate::yuv::Ya16>::new(2, 1)
@@ -808,7 +832,7 @@ fn ya16_with_rgba_u8_source_alpha_shifted() {
 
 #[test]
 fn ya16_with_rgb_and_rgba_strategy_a_plus() {
-  let packed: std::vec::Vec<u16> = std::vec![0x8000, 0x4000, 0x2000, 0xC000];
+  let packed = as_le_u16(&[0x8000u16, 0x4000, 0x2000, 0xC000]);
   let frame = Ya16Frame::new(&packed, 2, 1, 4);
   let mut rgb = std::vec![0u8; 6];
   let mut rgba = std::vec![0u8; 8];
@@ -829,7 +853,7 @@ fn ya16_with_rgb_and_rgba_strategy_a_plus() {
 
 #[test]
 fn ya16_with_hsv_h0_s0_v_shifted() {
-  let packed: std::vec::Vec<u16> = std::vec![0x8000, 0x4000, 0xFFFF, 0x0000];
+  let packed = as_le_u16(&[0x8000u16, 0x4000, 0xFFFF, 0x0000]);
   let frame = Ya16Frame::new(&packed, 2, 1, 4);
   let mut h = std::vec![0xFFu8; 2];
   let mut s = std::vec![0xFFu8; 2];
@@ -983,9 +1007,10 @@ fn ya16_combined_rgb_u16_and_rgba_u16_alpha_matches_standalone_le_encoded() {
 )]
 fn ya16_width_128_and_130_smoke() {
   for &w in &[128usize, 130usize] {
-    let packed: std::vec::Vec<u16> = (0..w)
+    let intended: std::vec::Vec<u16> = (0..w)
       .flat_map(|i| [(i as u16) << 8, (255u16 - i as u16) << 8])
       .collect();
+    let packed = as_le_u16(&intended);
     let frame = Ya16Frame::new(&packed, w as u32, 1, (w * 2) as u32);
     let mut rgba = std::vec![0u8; w * 4];
     let mut luma_u16 = std::vec![0u16; w];
