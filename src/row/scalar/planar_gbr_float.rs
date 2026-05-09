@@ -606,6 +606,7 @@ mod tests {
 
   // ---- gbrpf32_to_rgb_row --------------------------------------------------
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gbrpf32_to_rgb_clamps_and_scales() {
     // Values: 0.0, 0.5, 1.0, 1.5, -0.1, NaN → 0, 128, 255, 255, 0, 0
@@ -625,6 +626,7 @@ mod tests {
     }
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gbrpf32_to_rgb_channel_reorder() {
     // G=0.0, B=0.5, R=1.0 → packed R=255, G=0, B=128
@@ -666,6 +668,7 @@ mod tests {
     assert_eq!(out[3], 0xFF, "alpha must be 0xFF");
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gbrpf32_to_rgba_clamps_and_scales() {
     let vals = [0.0f32, 0.5, 1.0, 1.5, -0.1];
@@ -698,6 +701,7 @@ mod tests {
 
   // ---- gbrpf32_to_rgb_u16_row ----------------------------------------------
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gbrpf32_to_rgb_u16_clamps_and_scales() {
     // NaN passes through f32::clamp unchanged (Rust 1.50+); `NaN as u16` saturates to 0.
@@ -760,6 +764,7 @@ mod tests {
 
   // ---- gbrpf32_to_rgb_f32_row (lossless) ------------------------------------
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gbrpf32_to_rgb_f32_lossless_passthrough() {
     // HDR 2.5, NaN, Inf, negative all preserved bit-exact.
@@ -807,6 +812,7 @@ mod tests {
     assert_eq!(out[3], 1.0, "alpha must be 1.0");
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gbrpf32_to_rgba_f32_lossless_passthrough() {
     let r = [2.5f32];
@@ -937,6 +943,7 @@ mod tests {
     assert_eq!(out[0], 0);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gbrpf32_to_luma_max_gives_255() {
     let g = [1.0f32];
@@ -982,6 +989,7 @@ mod tests {
     assert_eq!(out[0], 0);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gbrpf32_to_luma_u16_max_gives_255_zero_extended() {
     let g = [1.0f32];
@@ -1030,6 +1038,7 @@ mod tests {
     assert_eq!(s[0], 0, "S must be 0 for achromatic");
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gbrpf32_to_hsv_achromatic_white() {
     let g = [1.0f32];
@@ -1066,6 +1075,7 @@ mod tests {
 
   // ---- gbrapf32_to_rgba_row ------------------------------------------------
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gbrapf32_to_rgba_source_alpha_passthrough() {
     let g = [0.5f32];
@@ -1078,6 +1088,7 @@ mod tests {
     assert_eq!(out[3], 128, "alpha from source plane");
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gbrapf32_to_rgba_source_alpha_clamps() {
     let g = [0.5f32];
@@ -1113,6 +1124,7 @@ mod tests {
 
   // ---- gbrapf32_to_rgba_u16_row --------------------------------------------
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gbrapf32_to_rgba_u16_source_alpha_passthrough() {
     let g = [0.5f32];
@@ -1125,6 +1137,7 @@ mod tests {
     assert_eq!(out[3], 32768, "u16 alpha from source plane");
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gbrapf32_to_rgba_u16_source_alpha_clamps() {
     let g = [0.5f32];
@@ -1159,6 +1172,7 @@ mod tests {
 
   // ---- gbrapf32_to_rgba_f32_row (lossless source α) -------------------------
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gbrapf32_to_rgba_f32_lossless_passthrough() {
     // HDR 2.5, NaN, Inf, negative all preserved — including in α
@@ -1171,6 +1185,7 @@ mod tests {
     assert_eq!(out[3], 2.5, "HDR alpha preserved bit-exact");
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gbrapf32_to_rgba_f32_nan_alpha_preserved() {
     let g = [0.5f32];

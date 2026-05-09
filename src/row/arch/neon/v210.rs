@@ -18,33 +18,8 @@
 
 use core::arch::aarch64::*;
 
-use super::*;
+use super::{endian::load_endian_u32x4, *};
 use crate::{ColorMatrix, row::scalar};
-
-/// Loads 16 bytes as 4 × `u32` in **little-endian** order regardless
-/// of host endianness. v210 words are documented LE; on big-endian
-/// aarch64 (rare — `aarch64_be-*` custom targets) the plain
-/// `vld1q_u32` would put bytes in reversed positions within each
-/// lane and corrupt every subsequent shift-and-mask. Mirrors the
-/// `x2_load_le_u32x4` helper in `packed_rgb.rs` (X2RGB10 / X2BGR10
-/// share the same LE-word constraint). Defining a local helper
-/// avoids cross-file visibility hassle since `x2_load_le_u32x4` is
-/// `pub(super) fn` but not re-exported via the mod's glob.
-///
-/// # Safety
-///
-/// Caller must ensure `ptr` has at least 16 bytes readable.
-#[inline(always)]
-unsafe fn v210_load_le_u32x4(ptr: *const u8) -> uint32x4_t {
-  unsafe {
-    let raw = vld1q_u32(ptr as *const u32);
-    if cfg!(target_endian = "big") {
-      vreinterpretq_u32_u8(vrev32q_u8(vreinterpretq_u8_u32(raw)))
-    } else {
-      raw
-    }
-  }
-}
 
 /// Unpacks one 16-byte v210 word into three u16x8 vectors holding
 /// 10-bit samples in their low bits:
@@ -65,10 +40,12 @@ unsafe fn v210_load_le_u32x4(ptr: *const u8) -> uint32x4_t {
 /// Caller must ensure `ptr` has at least 16 bytes readable.
 #[inline]
 #[target_feature(enable = "neon")]
-unsafe fn unpack_v210_word_neon(ptr: *const u8) -> (uint16x8_t, uint16x8_t, uint16x8_t) {
+unsafe fn unpack_v210_word_neon<const BE: bool>(
+  ptr: *const u8,
+) -> (uint16x8_t, uint16x8_t, uint16x8_t) {
   // SAFETY: caller obligation — `ptr` has 16 bytes readable.
   unsafe {
-    let words = v210_load_le_u32x4(ptr);
+    let words = load_endian_u32x4::<BE>(ptr);
     let mask10 = vdupq_n_u32(0x3FF);
     let low10 = vandq_u32(words, mask10);
     let mid10 = vandq_u32(vshrq_n_u32::<10>(words), mask10);
@@ -132,12 +109,12 @@ unsafe fn unpack_v210_word_neon(ptr: *const u8) -> (uint16x8_t, uint16x8_t, uint
   }
 }
 
-/// NEON v210 → packed RGB / RGBA (u8). Const-generic on `ALPHA`:
-/// `false` writes 3 bytes per pixel, `true` writes 4 bytes per
-/// pixel with `α = 0xFF`. Output bit depth is u8 (downshifted from
+/// NEON v210 → packed RGB / RGBA (u8). Const-generic on `ALPHA` and `BE`.
+/// `BE = true` selects big-endian u32 word decoding (each 32-bit packed
+/// word stored BE on the wire). Output bit depth is u8 (downshifted from
 /// the native 10-bit Q15 pipeline via `range_params_n::<10, 8>`).
 ///
-/// Byte-identical to `scalar::v210_to_rgb_or_rgba_row::<ALPHA>` for
+/// Byte-identical to `scalar::v210_to_rgb_or_rgba_row::<ALPHA, BE>` for
 /// every input.
 ///
 /// # Safety
@@ -148,7 +125,7 @@ unsafe fn unpack_v210_word_neon(ptr: *const u8) -> (uint16x8_t, uint16x8_t, uint
 /// 4. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn v210_to_rgb_or_rgba_row<const ALPHA: bool>(
+pub(crate) unsafe fn v210_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   packed: &[u8],
   out: &mut [u8],
   width: usize,
@@ -185,7 +162,7 @@ pub(crate) unsafe fn v210_to_rgb_or_rgba_row<const ALPHA: bool>(
     let cbv = vdupq_n_s32(coeffs.b_v());
 
     for w in 0..full_words {
-      let (y_vec, u_vec, v_vec) = unpack_v210_word_neon(packed.as_ptr().add(w * 16));
+      let (y_vec, u_vec, v_vec) = unpack_v210_word_neon::<BE>(packed.as_ptr().add(w * 16));
 
       let y_i16 = vreinterpretq_s16_u16(y_vec);
 
@@ -255,14 +232,21 @@ pub(crate) unsafe fn v210_to_rgb_or_rgba_row<const ALPHA: bool>(
       let tail_packed = &packed[full_words * 16..total_words * 16];
       let tail_out = &mut out[tail_start_px * bpp..width * bpp];
       let tail_w = width - tail_start_px;
-      scalar::v210_to_rgb_or_rgba_row::<ALPHA>(tail_packed, tail_out, tail_w, matrix, full_range);
+      scalar::v210_to_rgb_or_rgba_row::<ALPHA, BE>(
+        tail_packed,
+        tail_out,
+        tail_w,
+        matrix,
+        full_range,
+      );
     }
   }
 }
 
 /// NEON v210 → packed `u16` RGB / RGBA at native 10-bit depth
-/// (low-bit-packed). Byte-identical to
-/// `scalar::v210_to_rgb_u16_or_rgba_u16_row::<ALPHA>`.
+/// (low-bit-packed). `BE = true` selects big-endian u32 word decoding.
+/// Byte-identical to
+/// `scalar::v210_to_rgb_u16_or_rgba_u16_row::<ALPHA, BE>`.
 ///
 /// # Safety
 ///
@@ -272,7 +256,7 @@ pub(crate) unsafe fn v210_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// 4. `out.len() >= width * (if ALPHA { 4 } else { 3 })` (`u16` elements).
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn v210_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
+pub(crate) unsafe fn v210_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   packed: &[u8],
   out: &mut [u16],
   width: usize,
@@ -309,7 +293,7 @@ pub(crate) unsafe fn v210_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
     let cbv = vdupq_n_s32(coeffs.b_v());
 
     for w in 0..full_words {
-      let (y_vec, u_vec, v_vec) = unpack_v210_word_neon(packed.as_ptr().add(w * 16));
+      let (y_vec, u_vec, v_vec) = unpack_v210_word_neon::<BE>(packed.as_ptr().add(w * 16));
 
       let y_i16 = vreinterpretq_s16_u16(y_vec);
       let u_i16 = vsubq_s16(vreinterpretq_s16_u16(u_vec), bias_v);
@@ -362,7 +346,7 @@ pub(crate) unsafe fn v210_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
       let tail_packed = &packed[full_words * 16..total_words * 16];
       let tail_out = &mut out[tail_start_px * bpp..width * bpp];
       let tail_w = width - tail_start_px;
-      scalar::v210_to_rgb_u16_or_rgba_u16_row::<ALPHA>(
+      scalar::v210_to_rgb_u16_or_rgba_u16_row::<ALPHA, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -375,7 +359,8 @@ pub(crate) unsafe fn v210_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 
 /// NEON v210 → 8-bit luma. Y values are downshifted from 10-bit to
 /// 8-bit via `>> 2`. Bypasses the YUV → RGB pipeline entirely.
-/// Byte-identical to `scalar::v210_to_luma_row`.
+/// `BE = true` selects big-endian u32 word decoding.
+/// Byte-identical to `scalar::v210_to_luma_row::<BE>`.
 ///
 /// # Safety
 ///
@@ -385,7 +370,11 @@ pub(crate) unsafe fn v210_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool>(
 /// 4. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn v210_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn v210_to_luma_row<const BE: bool>(
+  packed: &[u8],
+  luma_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(width.is_multiple_of(2), "v210 requires even width");
   let total_words = width.div_ceil(6);
   let full_words = width / 6;
@@ -395,7 +384,7 @@ pub(crate) unsafe fn v210_to_luma_row(packed: &[u8], luma_out: &mut [u8], width:
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
     for w in 0..full_words {
-      let (y_vec, _, _) = unpack_v210_word_neon(packed.as_ptr().add(w * 16));
+      let (y_vec, _, _) = unpack_v210_word_neon::<BE>(packed.as_ptr().add(w * 16));
       // Downshift 10-bit Y by 2 → 8-bit, narrow to u8x8.
       let y_u8 = vqmovn_u16(vshrq_n_u16::<2>(y_vec));
       // Store 6 of the 8 lanes: stack buffer + copy_from_slice.
@@ -408,14 +397,15 @@ pub(crate) unsafe fn v210_to_luma_row(packed: &[u8], luma_out: &mut [u8], width:
       let tail_packed = &packed[full_words * 16..total_words * 16];
       let tail_out = &mut luma_out[tail_start_px..width];
       let tail_w = width - tail_start_px;
-      scalar::v210_to_luma_row(tail_packed, tail_out, tail_w);
+      scalar::v210_to_luma_row::<BE>(tail_packed, tail_out, tail_w);
     }
   }
 }
 
 /// NEON v210 → native-depth `u16` luma (low-bit-packed). Each output
 /// `u16` carries the source's 10-bit Y value in its low 10 bits.
-/// Byte-identical to `scalar::v210_to_luma_u16_row`.
+/// `BE = true` selects big-endian u32 word decoding.
+/// Byte-identical to `scalar::v210_to_luma_u16_row::<BE>`.
 ///
 /// # Safety
 ///
@@ -425,7 +415,11 @@ pub(crate) unsafe fn v210_to_luma_row(packed: &[u8], luma_out: &mut [u8], width:
 /// 4. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn v210_to_luma_u16_row(packed: &[u8], luma_out: &mut [u16], width: usize) {
+pub(crate) unsafe fn v210_to_luma_u16_row<const BE: bool>(
+  packed: &[u8],
+  luma_out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(width.is_multiple_of(2), "v210 requires even width");
   let total_words = width.div_ceil(6);
   let full_words = width / 6;
@@ -435,7 +429,7 @@ pub(crate) unsafe fn v210_to_luma_u16_row(packed: &[u8], luma_out: &mut [u16], w
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
     for w in 0..full_words {
-      let (y_vec, _, _) = unpack_v210_word_neon(packed.as_ptr().add(w * 16));
+      let (y_vec, _, _) = unpack_v210_word_neon::<BE>(packed.as_ptr().add(w * 16));
       // Store 6 of the 8 u16 lanes via stack buffer + copy_from_slice.
       let mut tmp = [0u16; 8];
       vst1q_u16(tmp.as_mut_ptr(), y_vec);
@@ -446,7 +440,7 @@ pub(crate) unsafe fn v210_to_luma_u16_row(packed: &[u8], luma_out: &mut [u16], w
       let tail_packed = &packed[full_words * 16..total_words * 16];
       let tail_out = &mut luma_out[tail_start_px..width];
       let tail_w = width - tail_start_px;
-      scalar::v210_to_luma_u16_row(tail_packed, tail_out, tail_w);
+      scalar::v210_to_luma_u16_row::<BE>(tail_packed, tail_out, tail_w);
     }
   }
 }

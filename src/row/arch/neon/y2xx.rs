@@ -36,6 +36,26 @@ use core::arch::aarch64::*;
 use super::*;
 use crate::{ColorMatrix, row::scalar};
 
+/// Host-endian gate for Y2xx SIMD bodies.
+///
+/// `vld2q_u16` deinterleaves using **host-native** u16 reads, so the SIMD
+/// body is only correct when the encoded byte order matches the host. The
+/// truth table (mirrors PR #82 `9c7d533` / PR #85 `9e678b0` / PR #86
+/// `b7fb9d3` host-endian gate fixes):
+///
+/// | wire `BE` | host       | `BE == HOST_NATIVE_BE` | path   | correct via    |
+/// |-----------|------------|------------------------|--------|----------------|
+/// | false     | LE         | true                   | SIMD   | host-native LE |
+/// | false     | BE         | false                  | scalar | `from_le`      |
+/// | true      | LE         | false                  | scalar | `from_be`      |
+/// | true      | BE         | true                   | SIMD   | host-native BE |
+///
+/// The previous `if !BE` gate only covered rows 1+3 (LE-host) and would
+/// run the SIMD body for LE-encoded data on a BE host (e.g. `aarch64_be`),
+/// where `vld2q_u16` reads LE bytes as host-native (BE) and corrupts every
+/// sample.
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
 /// Loads 8 Y2xx pixels (16 u16 samples = 32 bytes) and unpacks them
 /// into three 8‑lane vectors:
 /// - `y_vec`: lanes 0..8 = Y0..Y7 in `[0, 2^BITS - 1]`.
@@ -83,11 +103,13 @@ unsafe fn unpack_y2xx_8px_neon(
 }
 
 /// NEON Y2xx → packed RGB / RGBA u8. Const‑generic over
-/// `BITS ∈ {10, 12}` and `ALPHA ∈ {false, true}`. Output bit depth is
-/// u8 (downshifted from the native BITS Q15 pipeline via
-/// `range_params_n::<BITS, 8>`).
+/// `BITS ∈ {10, 12}`, `ALPHA ∈ {false, true}`, and `BE ∈ {false, true}`.
+/// `BE = true` selects big-endian u16 decoding for the input samples.
+/// The NEON loop runs only when `BE == HOST_NATIVE_BE` (i.e. the wire
+/// endianness already matches the host); otherwise the scalar kernel
+/// handles the full row (covers cross-endian decode on either host).
 ///
-/// Byte‑identical to `scalar::y2xx_n_to_rgb_or_rgba_row::<BITS, ALPHA>`
+/// Byte‑identical to `scalar::y2xx_n_to_rgb_or_rgba_row::<BITS, ALPHA, BE>`
 /// for every input.
 ///
 /// # Safety
@@ -98,7 +120,11 @@ unsafe fn unpack_y2xx_8px_neon(
 /// 4. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool>(
+pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<
+  const BITS: u32,
+  const ALPHA: bool,
+  const BE: bool,
+>(
   packed: &[u16],
   out: &mut [u8],
   width: usize,
@@ -126,86 +152,93 @@ pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: boo
   // by the `while x + 8 <= width` loop and the caller-promised slice
   // lengths checked above.
   unsafe {
-    let rnd_v = vdupq_n_s32(RND);
-    let y_off_v = vdupq_n_s16(y_off as i16);
-    let y_scale_v = vdupq_n_s32(y_scale);
-    let c_scale_v = vdupq_n_s32(c_scale);
-    let bias_v = vdupq_n_s16(bias as i16);
-    let shr_count = vdupq_n_s16(-((16 - BITS) as i16));
-    let cru = vdupq_n_s32(coeffs.r_u());
-    let crv = vdupq_n_s32(coeffs.r_v());
-    let cgu = vdupq_n_s32(coeffs.g_u());
-    let cgv = vdupq_n_s32(coeffs.g_v());
-    let cbu = vdupq_n_s32(coeffs.b_u());
-    let cbv = vdupq_n_s32(coeffs.b_v());
-
+    // SIMD body runs only when the wire byte order matches the host
+    // (`BE == HOST_NATIVE_BE`); otherwise scalar handles the full row
+    // via `from_le` / `from_be`.
     let mut x = 0usize;
-    while x + 8 <= width {
-      let (y_vec, u_vec, v_vec) = unpack_y2xx_8px_neon(packed.as_ptr().add(x * 2), shr_count);
+    if BE == HOST_NATIVE_BE {
+      let rnd_v = vdupq_n_s32(RND);
+      let y_off_v = vdupq_n_s16(y_off as i16);
+      let y_scale_v = vdupq_n_s32(y_scale);
+      let c_scale_v = vdupq_n_s32(c_scale);
+      let bias_v = vdupq_n_s16(bias as i16);
+      let shr_count = vdupq_n_s16(-((16 - BITS) as i16));
+      let cru = vdupq_n_s32(coeffs.r_u());
+      let crv = vdupq_n_s32(coeffs.r_v());
+      let cgu = vdupq_n_s32(coeffs.g_u());
+      let cgv = vdupq_n_s32(coeffs.g_v());
+      let cbu = vdupq_n_s32(coeffs.b_u());
+      let cbv = vdupq_n_s32(coeffs.b_v());
 
-      let y_i16 = vreinterpretq_s16_u16(y_vec);
+      while x + 8 <= width {
+        let (y_vec, u_vec, v_vec) = unpack_y2xx_8px_neon(packed.as_ptr().add(x * 2), shr_count);
 
-      // Subtract chroma bias (e.g. 512 for 10‑bit) — fits i16 since
-      // each chroma sample is ≤ 2^BITS - 1 ≤ 4095.
-      let u_i16 = vsubq_s16(vreinterpretq_s16_u16(u_vec), bias_v);
-      let v_i16 = vsubq_s16(vreinterpretq_s16_u16(v_vec), bias_v);
+        let y_i16 = vreinterpretq_s16_u16(y_vec);
 
-      // Widen 8‑lane i16 chroma to two i32x4 halves for the Q15
-      // multiplies. Only lanes 0..3 of `_lo` are valid; `_hi` is
-      // entirely don't-care (duplicate of `_lo`). We feed both
-      // halves through `chroma_i16x8` to recycle the helper exactly;
-      // the don't-care output lanes are discarded by `vzip1q_s16`
-      // below (which only consumes lanes 0..3).
-      let u_lo_i32 = vmovl_s16(vget_low_s16(u_i16));
-      let u_hi_i32 = vmovl_s16(vget_high_s16(u_i16));
-      let v_lo_i32 = vmovl_s16(vget_low_s16(v_i16));
-      let v_hi_i32 = vmovl_s16(vget_high_s16(v_i16));
+        // Subtract chroma bias (e.g. 512 for 10‑bit) — fits i16 since
+        // each chroma sample is ≤ 2^BITS - 1 ≤ 4095.
+        let u_i16 = vsubq_s16(vreinterpretq_s16_u16(u_vec), bias_v);
+        let v_i16 = vsubq_s16(vreinterpretq_s16_u16(v_vec), bias_v);
 
-      let u_d_lo = q15_shift(vaddq_s32(vmulq_s32(u_lo_i32, c_scale_v), rnd_v));
-      let u_d_hi = q15_shift(vaddq_s32(vmulq_s32(u_hi_i32, c_scale_v), rnd_v));
-      let v_d_lo = q15_shift(vaddq_s32(vmulq_s32(v_lo_i32, c_scale_v), rnd_v));
-      let v_d_hi = q15_shift(vaddq_s32(vmulq_s32(v_hi_i32, c_scale_v), rnd_v));
+        // Widen 8‑lane i16 chroma to two i32x4 halves for the Q15
+        // multiplies. Only lanes 0..3 of `_lo` are valid; `_hi` is
+        // entirely don't-care (duplicate of `_lo`). We feed both
+        // halves through `chroma_i16x8` to recycle the helper exactly;
+        // the don't-care output lanes are discarded by `vzip1q_s16`
+        // below (which only consumes lanes 0..3).
+        let u_lo_i32 = vmovl_s16(vget_low_s16(u_i16));
+        let u_hi_i32 = vmovl_s16(vget_high_s16(u_i16));
+        let v_lo_i32 = vmovl_s16(vget_low_s16(v_i16));
+        let v_hi_i32 = vmovl_s16(vget_high_s16(v_i16));
 
-      // 8‑lane chroma vectors with valid data in lanes 0..3.
-      let r_chroma = chroma_i16x8(cru, crv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
-      let g_chroma = chroma_i16x8(cgu, cgv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
-      let b_chroma = chroma_i16x8(cbu, cbv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
+        let u_d_lo = q15_shift(vaddq_s32(vmulq_s32(u_lo_i32, c_scale_v), rnd_v));
+        let u_d_hi = q15_shift(vaddq_s32(vmulq_s32(u_hi_i32, c_scale_v), rnd_v));
+        let v_d_lo = q15_shift(vaddq_s32(vmulq_s32(v_lo_i32, c_scale_v), rnd_v));
+        let v_d_hi = q15_shift(vaddq_s32(vmulq_s32(v_hi_i32, c_scale_v), rnd_v));
 
-      // Each chroma sample covers 2 Y lanes (4:2:2): duplicate via
-      // `vzip1q_s16` so lanes 0..7 of `r_dup` align with Y0..Y7.
-      // `vzip1q_s16` interleaves the low 4 lanes of each operand:
-      //   [c0, c0, c1, c1, c2, c2, c3, c3]
-      let r_dup = vzip1q_s16(r_chroma, r_chroma);
-      let g_dup = vzip1q_s16(g_chroma, g_chroma);
-      let b_dup = vzip1q_s16(b_chroma, b_chroma);
+        // 8‑lane chroma vectors with valid data in lanes 0..3.
+        let r_chroma = chroma_i16x8(cru, crv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
+        let g_chroma = chroma_i16x8(cgu, cgv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
+        let b_chroma = chroma_i16x8(cbu, cbv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
 
-      // Y scale: `(Y - y_off) * y_scale + RND >> 15` → i16x8.
-      let y_scaled = scale_y(y_i16, y_off_v, y_scale_v, rnd_v);
+        // Each chroma sample covers 2 Y lanes (4:2:2): duplicate via
+        // `vzip1q_s16` so lanes 0..7 of `r_dup` align with Y0..Y7.
+        // `vzip1q_s16` interleaves the low 4 lanes of each operand:
+        //   [c0, c0, c1, c1, c2, c2, c3, c3]
+        let r_dup = vzip1q_s16(r_chroma, r_chroma);
+        let g_dup = vzip1q_s16(g_chroma, g_chroma);
+        let b_dup = vzip1q_s16(b_chroma, b_chroma);
 
-      // u8 narrow with saturation. 8 valid lanes per channel.
-      let r_u8 = vqmovun_s16(vqaddq_s16(y_scaled, r_dup));
-      let g_u8 = vqmovun_s16(vqaddq_s16(y_scaled, g_dup));
-      let b_u8 = vqmovun_s16(vqaddq_s16(y_scaled, b_dup));
+        // Y scale: `(Y - y_off) * y_scale + RND >> 15` → i16x8.
+        let y_scaled = scale_y(y_i16, y_off_v, y_scale_v, rnd_v);
 
-      if ALPHA {
-        let alpha = vdup_n_u8(0xFF);
-        vst4_u8(
-          out.as_mut_ptr().add(x * 4),
-          uint8x8x4_t(r_u8, g_u8, b_u8, alpha),
-        );
-      } else {
-        vst3_u8(out.as_mut_ptr().add(x * 3), uint8x8x3_t(r_u8, g_u8, b_u8));
+        // u8 narrow with saturation. 8 valid lanes per channel.
+        let r_u8 = vqmovun_s16(vqaddq_s16(y_scaled, r_dup));
+        let g_u8 = vqmovun_s16(vqaddq_s16(y_scaled, g_dup));
+        let b_u8 = vqmovun_s16(vqaddq_s16(y_scaled, b_dup));
+
+        if ALPHA {
+          let alpha = vdup_n_u8(0xFF);
+          vst4_u8(
+            out.as_mut_ptr().add(x * 4),
+            uint8x8x4_t(r_u8, g_u8, b_u8, alpha),
+          );
+        } else {
+          vst3_u8(out.as_mut_ptr().add(x * 3), uint8x8x3_t(r_u8, g_u8, b_u8));
+        }
+
+        x += 8;
       }
-
-      x += 8;
     }
 
-    // Scalar tail — remaining < 8 pixels (always even per 4:2:2).
+    // Scalar tail — remaining < 8 pixels (always even per 4:2:2), or
+    // full-row fallback when `BE != HOST_NATIVE_BE` (cross-endian decode
+    // on either host).
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::y2xx_n_to_rgb_or_rgba_row::<BITS, ALPHA>(
+      scalar::y2xx_n_to_rgb_or_rgba_row::<BITS, ALPHA, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -218,10 +251,12 @@ pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: boo
 
 /// NEON Y2xx → packed `u16` RGB / RGBA at native BITS depth
 /// (low‑bit‑packed: BITS active bits in the low N of each `u16`).
-/// Const‑generic over `BITS ∈ {10, 12}`.
+/// Const‑generic over `BITS ∈ {10, 12}`, `ALPHA`, and `BE`.
+/// The NEON loop runs only when `BE == HOST_NATIVE_BE`; otherwise the
+/// scalar kernel handles the full row (cross-endian decode).
 ///
 /// Byte‑identical to
-/// `scalar::y2xx_n_to_rgb_u16_or_rgba_u16_row::<BITS, ALPHA>`.
+/// `scalar::y2xx_n_to_rgb_u16_or_rgba_u16_row::<BITS, ALPHA, BE>`.
 ///
 /// # Safety
 ///
@@ -231,7 +266,11 @@ pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: boo
 /// 4. `out.len() >= width * (if ALPHA { 4 } else { 3 })` (`u16` elements).
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn y2xx_n_to_rgb_u16_or_rgba_u16_row<const BITS: u32, const ALPHA: bool>(
+pub(crate) unsafe fn y2xx_n_to_rgb_u16_or_rgba_u16_row<
+  const BITS: u32,
+  const ALPHA: bool,
+  const BE: bool,
+>(
   packed: &[u16],
   out: &mut [u16],
   width: usize,
@@ -257,71 +296,76 @@ pub(crate) unsafe fn y2xx_n_to_rgb_u16_or_rgba_u16_row<const BITS: u32, const AL
 
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
-    let rnd_v = vdupq_n_s32(RND);
-    let y_off_v = vdupq_n_s16(y_off as i16);
-    let y_scale_v = vdupq_n_s32(y_scale);
-    let c_scale_v = vdupq_n_s32(c_scale);
-    let bias_v = vdupq_n_s16(bias as i16);
-    let shr_count = vdupq_n_s16(-((16 - BITS) as i16));
-    let max_v = vdupq_n_s16(out_max);
-    let zero_v = vdupq_n_s16(0);
-    let cru = vdupq_n_s32(coeffs.r_u());
-    let crv = vdupq_n_s32(coeffs.r_v());
-    let cgu = vdupq_n_s32(coeffs.g_u());
-    let cgv = vdupq_n_s32(coeffs.g_v());
-    let cbu = vdupq_n_s32(coeffs.b_u());
-    let cbv = vdupq_n_s32(coeffs.b_v());
-
+    // SIMD body runs only when the wire byte order matches the host
+    // (`BE == HOST_NATIVE_BE`); otherwise scalar handles the full row
+    // via `from_le` / `from_be`.
     let mut x = 0usize;
-    while x + 8 <= width {
-      let (y_vec, u_vec, v_vec) = unpack_y2xx_8px_neon(packed.as_ptr().add(x * 2), shr_count);
+    if BE == HOST_NATIVE_BE {
+      let rnd_v = vdupq_n_s32(RND);
+      let y_off_v = vdupq_n_s16(y_off as i16);
+      let y_scale_v = vdupq_n_s32(y_scale);
+      let c_scale_v = vdupq_n_s32(c_scale);
+      let bias_v = vdupq_n_s16(bias as i16);
+      let shr_count = vdupq_n_s16(-((16 - BITS) as i16));
+      let max_v = vdupq_n_s16(out_max);
+      let zero_v = vdupq_n_s16(0);
+      let cru = vdupq_n_s32(coeffs.r_u());
+      let crv = vdupq_n_s32(coeffs.r_v());
+      let cgu = vdupq_n_s32(coeffs.g_u());
+      let cgv = vdupq_n_s32(coeffs.g_v());
+      let cbu = vdupq_n_s32(coeffs.b_u());
+      let cbv = vdupq_n_s32(coeffs.b_v());
 
-      let y_i16 = vreinterpretq_s16_u16(y_vec);
-      let u_i16 = vsubq_s16(vreinterpretq_s16_u16(u_vec), bias_v);
-      let v_i16 = vsubq_s16(vreinterpretq_s16_u16(v_vec), bias_v);
+      while x + 8 <= width {
+        let (y_vec, u_vec, v_vec) = unpack_y2xx_8px_neon(packed.as_ptr().add(x * 2), shr_count);
 
-      let u_lo_i32 = vmovl_s16(vget_low_s16(u_i16));
-      let u_hi_i32 = vmovl_s16(vget_high_s16(u_i16));
-      let v_lo_i32 = vmovl_s16(vget_low_s16(v_i16));
-      let v_hi_i32 = vmovl_s16(vget_high_s16(v_i16));
+        let y_i16 = vreinterpretq_s16_u16(y_vec);
+        let u_i16 = vsubq_s16(vreinterpretq_s16_u16(u_vec), bias_v);
+        let v_i16 = vsubq_s16(vreinterpretq_s16_u16(v_vec), bias_v);
 
-      let u_d_lo = q15_shift(vaddq_s32(vmulq_s32(u_lo_i32, c_scale_v), rnd_v));
-      let u_d_hi = q15_shift(vaddq_s32(vmulq_s32(u_hi_i32, c_scale_v), rnd_v));
-      let v_d_lo = q15_shift(vaddq_s32(vmulq_s32(v_lo_i32, c_scale_v), rnd_v));
-      let v_d_hi = q15_shift(vaddq_s32(vmulq_s32(v_hi_i32, c_scale_v), rnd_v));
+        let u_lo_i32 = vmovl_s16(vget_low_s16(u_i16));
+        let u_hi_i32 = vmovl_s16(vget_high_s16(u_i16));
+        let v_lo_i32 = vmovl_s16(vget_low_s16(v_i16));
+        let v_hi_i32 = vmovl_s16(vget_high_s16(v_i16));
 
-      let r_chroma = chroma_i16x8(cru, crv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
-      let g_chroma = chroma_i16x8(cgu, cgv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
-      let b_chroma = chroma_i16x8(cbu, cbv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
+        let u_d_lo = q15_shift(vaddq_s32(vmulq_s32(u_lo_i32, c_scale_v), rnd_v));
+        let u_d_hi = q15_shift(vaddq_s32(vmulq_s32(u_hi_i32, c_scale_v), rnd_v));
+        let v_d_lo = q15_shift(vaddq_s32(vmulq_s32(v_lo_i32, c_scale_v), rnd_v));
+        let v_d_hi = q15_shift(vaddq_s32(vmulq_s32(v_hi_i32, c_scale_v), rnd_v));
 
-      let r_dup = vzip1q_s16(r_chroma, r_chroma);
-      let g_dup = vzip1q_s16(g_chroma, g_chroma);
-      let b_dup = vzip1q_s16(b_chroma, b_chroma);
+        let r_chroma = chroma_i16x8(cru, crv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
+        let g_chroma = chroma_i16x8(cgu, cgv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
+        let b_chroma = chroma_i16x8(cbu, cbv, u_d_lo, v_d_lo, u_d_hi, v_d_hi, rnd_v);
 
-      let y_scaled = scale_y(y_i16, y_off_v, y_scale_v, rnd_v);
+        let r_dup = vzip1q_s16(r_chroma, r_chroma);
+        let g_dup = vzip1q_s16(g_chroma, g_chroma);
+        let b_dup = vzip1q_s16(b_chroma, b_chroma);
 
-      // Native‑depth output: clamp to [0, (1 << BITS) - 1]. `vqaddq_s16`
-      // saturates at i16 bounds (no‑op here since |sum| stays well
-      // inside i16 for BITS ≤ 12), then max/min clamps to the BITS range.
-      let r = clamp_u16_max(vqaddq_s16(y_scaled, r_dup), zero_v, max_v);
-      let g = clamp_u16_max(vqaddq_s16(y_scaled, g_dup), zero_v, max_v);
-      let b = clamp_u16_max(vqaddq_s16(y_scaled, b_dup), zero_v, max_v);
+        let y_scaled = scale_y(y_i16, y_off_v, y_scale_v, rnd_v);
 
-      if ALPHA {
-        let alpha = vdupq_n_u16(out_max as u16);
-        vst4q_u16(out.as_mut_ptr().add(x * 4), uint16x8x4_t(r, g, b, alpha));
-      } else {
-        vst3q_u16(out.as_mut_ptr().add(x * 3), uint16x8x3_t(r, g, b));
+        // Native‑depth output: clamp to [0, (1 << BITS) - 1]. `vqaddq_s16`
+        // saturates at i16 bounds (no‑op here since |sum| stays well
+        // inside i16 for BITS ≤ 12), then max/min clamps to the BITS range.
+        let r = clamp_u16_max(vqaddq_s16(y_scaled, r_dup), zero_v, max_v);
+        let g = clamp_u16_max(vqaddq_s16(y_scaled, g_dup), zero_v, max_v);
+        let b = clamp_u16_max(vqaddq_s16(y_scaled, b_dup), zero_v, max_v);
+
+        if ALPHA {
+          let alpha = vdupq_n_u16(out_max as u16);
+          vst4q_u16(out.as_mut_ptr().add(x * 4), uint16x8x4_t(r, g, b, alpha));
+        } else {
+          vst3q_u16(out.as_mut_ptr().add(x * 3), uint16x8x3_t(r, g, b));
+        }
+
+        x += 8;
       }
-
-      x += 8;
     }
 
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      scalar::y2xx_n_to_rgb_u16_or_rgba_u16_row::<BITS, ALPHA>(
+      scalar::y2xx_n_to_rgb_u16_or_rgba_u16_row::<BITS, ALPHA, BE>(
         tail_packed,
         tail_out,
         tail_w,
@@ -335,9 +379,10 @@ pub(crate) unsafe fn y2xx_n_to_rgb_u16_or_rgba_u16_row<const BITS: u32, const AL
 /// NEON Y2xx → 8‑bit luma. Y values are downshifted from BITS to 8
 /// via `>> (BITS - 8)` after the `>> (16 - BITS)` MSB‑alignment, i.e.
 /// a single `>> 8` from the raw u16 sample. Bypasses the YUV → RGB
-/// pipeline entirely.
+/// pipeline entirely. NEON runs only when `BE == HOST_NATIVE_BE`;
+/// otherwise the scalar kernel handles the full row.
 ///
-/// Byte‑identical to `scalar::y2xx_n_to_luma_row::<BITS>`.
+/// Byte‑identical to `scalar::y2xx_n_to_luma_row::<BITS, BE>`.
 ///
 /// # Safety
 ///
@@ -347,7 +392,7 @@ pub(crate) unsafe fn y2xx_n_to_rgb_u16_or_rgba_u16_row<const BITS: u32, const AL
 /// 4. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn y2xx_n_to_luma_row<const BITS: u32>(
+pub(crate) unsafe fn y2xx_n_to_luma_row<const BITS: u32, const BE: bool>(
   packed: &[u16],
   luma_out: &mut [u8],
   width: usize,
@@ -364,30 +409,36 @@ pub(crate) unsafe fn y2xx_n_to_luma_row<const BITS: u32>(
 
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
+    // SIMD body runs only when the wire byte order matches the host
+    // (`BE == HOST_NATIVE_BE`); otherwise scalar handles the full row.
     let mut x = 0usize;
-    while x + 8 <= width {
-      // `vld2q_u16` deinterleaves; `pair.0` is 8 raw Y u16 samples
-      // (still MSB‑aligned at BITS ≤ 12, low bits zero).
-      let pair = vld2q_u16(packed.as_ptr().add(x * 2));
-      // `>> (16 - BITS)` then `>> (BITS - 8)` collapses to `>> 8`
-      // for any BITS ∈ {10, 12} — the constant fold gives the same
-      // result whether we shift in two stages or one.
-      let y_u8 = vshrn_n_u16::<8>(pair.0);
-      vst1_u8(luma_out.as_mut_ptr().add(x), y_u8);
-      x += 8;
+    if BE == HOST_NATIVE_BE {
+      while x + 8 <= width {
+        // `vld2q_u16` deinterleaves; `pair.0` is 8 raw Y u16 samples
+        // (still MSB‑aligned at BITS ≤ 12, low bits zero).
+        let pair = vld2q_u16(packed.as_ptr().add(x * 2));
+        // `>> (16 - BITS)` then `>> (BITS - 8)` collapses to `>> 8`
+        // for any BITS ∈ {10, 12} — the constant fold gives the same
+        // result whether we shift in two stages or one.
+        let y_u8 = vshrn_n_u16::<8>(pair.0);
+        vst1_u8(luma_out.as_mut_ptr().add(x), y_u8);
+        x += 8;
+      }
     }
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut luma_out[x..width];
       let tail_w = width - x;
-      scalar::y2xx_n_to_luma_row::<BITS>(tail_packed, tail_out, tail_w);
+      scalar::y2xx_n_to_luma_row::<BITS, BE>(tail_packed, tail_out, tail_w);
     }
   }
 }
 
 /// NEON Y2xx → native‑depth `u16` luma (low‑bit‑packed). Each output
 /// `u16` carries the source's BITS-bit Y value in its low BITS bits.
-/// Byte‑identical to `scalar::y2xx_n_to_luma_u16_row::<BITS>`.
+/// NEON runs only when `BE == HOST_NATIVE_BE`; otherwise the scalar
+/// kernel handles the full row.
+/// Byte‑identical to `scalar::y2xx_n_to_luma_u16_row::<BITS, BE>`.
 ///
 /// # Safety
 ///
@@ -397,7 +448,7 @@ pub(crate) unsafe fn y2xx_n_to_luma_row<const BITS: u32>(
 /// 4. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn y2xx_n_to_luma_u16_row<const BITS: u32>(
+pub(crate) unsafe fn y2xx_n_to_luma_u16_row<const BITS: u32, const BE: bool>(
   packed: &[u16],
   luma_out: &mut [u16],
   width: usize,
@@ -414,21 +465,25 @@ pub(crate) unsafe fn y2xx_n_to_luma_u16_row<const BITS: u32>(
 
   // SAFETY: caller's obligation per the safety contract above.
   unsafe {
-    let shr_count = vdupq_n_s16(-((16 - BITS) as i16));
+    // SIMD body runs only when the wire byte order matches the host
+    // (`BE == HOST_NATIVE_BE`); otherwise scalar handles the full row.
     let mut x = 0usize;
-    while x + 8 <= width {
-      let pair = vld2q_u16(packed.as_ptr().add(x * 2));
-      // Right‑shift by `(16 - BITS)` to bring MSB‑aligned samples
-      // into low‑bit‑packed form for the native‑depth u16 output.
-      let y_low = vshlq_u16(pair.0, shr_count);
-      vst1q_u16(luma_out.as_mut_ptr().add(x), y_low);
-      x += 8;
+    if BE == HOST_NATIVE_BE {
+      let shr_count = vdupq_n_s16(-((16 - BITS) as i16));
+      while x + 8 <= width {
+        let pair = vld2q_u16(packed.as_ptr().add(x * 2));
+        // Right‑shift by `(16 - BITS)` to bring MSB‑aligned samples
+        // into low‑bit‑packed form for the native‑depth u16 output.
+        let y_low = vshlq_u16(pair.0, shr_count);
+        vst1q_u16(luma_out.as_mut_ptr().add(x), y_low);
+        x += 8;
+      }
     }
     if x < width {
       let tail_packed = &packed[x * 2..width * 2];
       let tail_out = &mut luma_out[x..width];
       let tail_w = width - x;
-      scalar::y2xx_n_to_luma_u16_row::<BITS>(tail_packed, tail_out, tail_w);
+      scalar::y2xx_n_to_luma_u16_row::<BITS, BE>(tail_packed, tail_out, tail_w);
     }
   }
 }

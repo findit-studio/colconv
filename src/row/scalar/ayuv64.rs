@@ -285,6 +285,16 @@ mod tests {
   /// Limited-range BT.709, neutral chroma U=V=32768.
   /// Black:  Y=4096  (limited-range black at 16-bit: 16 * 256 = 4096).
   /// White:  Y=60160 (limited-range white at 16-bit: 235 * 256 = 60160).
+  ///
+  /// LE-host gate: builds host-native `Vec<u16>` fixtures via `pack_ayuv64`
+  /// and calls the scalar kernel with `<BE = false>`, which applies
+  /// `u16::from_le`. On BE hosts (s390x / powerpc64) the host-native
+  /// storage doesn't match LE byte order, so `from_le` swaps bytes and
+  /// corrupts the fixture before the math runs (same pattern as PR #82
+  /// 8f2e329, PR #83 56342c0, PR #85 57d9064, PR #87 9b6521b). BE-host
+  /// correctness is covered by `ayuv64_be_roundtrip_matches_byte_swapped_le`,
+  /// which builds fixtures via `to_le_bytes` / `to_be_bytes`.
+  #[cfg(target_endian = "little")]
   #[test]
   fn ayuv64_known_pattern_rgb_limited_range() {
     let p_black = pack_ayuv64(0xFFFF, 4096, 32768, 32768);
@@ -332,6 +342,12 @@ mod tests {
 
   /// Luma u8: Y at slot 1, extracted via >> 8 (high byte only).
   /// Y=0xFFFF → 0xFF; Y=0x4000 → 0x40.
+  ///
+  /// LE-host gate: host-native `pack_ayuv64` fixture (Y=0x4000 is non-
+  /// palindromic in bytes) + `<BE = false>` kernel path → `from_le`
+  /// byte-swaps the fixture on BE hosts and corrupts the Y field before
+  /// extraction.
+  #[cfg(target_endian = "little")]
   #[test]
   fn ayuv64_luma_extract_u8_high_byte() {
     let p0 = pack_ayuv64(0, 0xFFFF, 0, 0);
@@ -344,6 +360,12 @@ mod tests {
 
   /// Luma u16: Y at slot 1, written direct (no shift).
   /// Y=0xABCD → 0xABCD; Y=0x1234 → 0x1234.
+  ///
+  /// LE-host gate: host-native `pack_ayuv64` fixture (Y=0xABCD / 0x1234
+  /// are non-palindromic in bytes) + `<BE = false>` kernel path →
+  /// `from_le` byte-swaps the fixture on BE hosts and corrupts the Y
+  /// field before extraction.
+  #[cfg(target_endian = "little")]
   #[test]
   fn ayuv64_luma_extract_u16_direct() {
     let p0 = pack_ayuv64(0, 0xABCD, 0, 0);
