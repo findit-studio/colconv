@@ -49,7 +49,7 @@ fn powf32(x: f32, y: f32) -> f32 {
 /// Used by the `oetf_srgb_reference_f64` test oracle — production
 /// `oetf_srgb` uses the polynomial table in `xyz12_constants`, not
 /// `powf`, so this helper is only needed in the test harness.
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn powf64(x: f64, y: f64) -> f64 {
   #[cfg(feature = "std")]

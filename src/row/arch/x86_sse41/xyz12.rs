@@ -43,7 +43,10 @@
 
 use core::arch::x86_64::*;
 
-use super::endian::load_endian_u16x8;
+use super::{
+  super::x86_common::{write_rgb_u8_8, write_rgba_u8_8},
+  endian::load_endian_u16x8,
+};
 use crate::{
   DcpTargetGamut,
   row::scalar::{
@@ -329,20 +332,10 @@ pub(crate) unsafe fn xyz12_to_rgb_row<const BE: bool>(
       let r_u8 = _mm_packus_epi16(r_u16, zero_si);
       let g_u8 = _mm_packus_epi16(g_u16, zero_si);
       let b_u8 = _mm_packus_epi16(b_u16, zero_si);
-      // Interleave 8 pixels of (R, G, B) bytes into 24-byte output via stack
-      // staging — same pattern as Tier 8's `write_rgb_16` consumers.
-      let mut tmp_r = [0u8; 16];
-      let mut tmp_g = [0u8; 16];
-      let mut tmp_b = [0u8; 16];
-      _mm_storeu_si128(tmp_r.as_mut_ptr() as *mut __m128i, r_u8);
-      _mm_storeu_si128(tmp_g.as_mut_ptr() as *mut __m128i, g_u8);
-      _mm_storeu_si128(tmp_b.as_mut_ptr() as *mut __m128i, b_u8);
-      let dst = rgb_out.as_mut_ptr().add(x * 3);
-      for i in 0..PIXELS_PER_ITER {
-        *dst.add(i * 3) = tmp_r[i];
-        *dst.add(i * 3 + 1) = tmp_g[i];
-        *dst.add(i * 3 + 2) = tmp_b[i];
-      }
+      // In-register 8-pixel RGB interleave via the shared `write_rgb_u8_8`
+      // helper — replaces a 3× stack-temp + per-pixel scalar scatter
+      // (Copilot review, PR #91 Comment 2).
+      write_rgb_u8_8(r_u8, g_u8, b_u8, rgb_out.as_mut_ptr().add(x * 3));
       x += PIXELS_PER_ITER;
     }
     if x < width {
@@ -402,19 +395,11 @@ pub(crate) unsafe fn xyz12_to_rgba_row<const BE: bool>(
       let r_u8 = _mm_packus_epi16(r_u16, zero_si);
       let g_u8 = _mm_packus_epi16(g_u16, zero_si);
       let b_u8 = _mm_packus_epi16(b_u16, zero_si);
-      let mut tmp_r = [0u8; 16];
-      let mut tmp_g = [0u8; 16];
-      let mut tmp_b = [0u8; 16];
-      _mm_storeu_si128(tmp_r.as_mut_ptr() as *mut __m128i, r_u8);
-      _mm_storeu_si128(tmp_g.as_mut_ptr() as *mut __m128i, g_u8);
-      _mm_storeu_si128(tmp_b.as_mut_ptr() as *mut __m128i, b_u8);
-      let dst = rgba_out.as_mut_ptr().add(x * 4);
-      for i in 0..PIXELS_PER_ITER {
-        *dst.add(i * 4) = tmp_r[i];
-        *dst.add(i * 4 + 1) = tmp_g[i];
-        *dst.add(i * 4 + 2) = tmp_b[i];
-        *dst.add(i * 4 + 3) = 0xFF;
-      }
+      let a_u8 = _mm_set1_epi8(-1_i8);
+      // In-register 8-pixel RGBA interleave via the shared `write_rgba_u8_8`
+      // helper — replaces a 3× stack-temp + per-pixel scalar scatter
+      // (Copilot review, PR #91 Comment 2).
+      write_rgba_u8_8(r_u8, g_u8, b_u8, a_u8, rgba_out.as_mut_ptr().add(x * 4));
       x += PIXELS_PER_ITER;
     }
     if x < width {

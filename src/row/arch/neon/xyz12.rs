@@ -31,10 +31,13 @@
 //!    per lane via `oetf_srgb` (192-segment polynomial) — same 0-ULP
 //!    parity contract.
 //! 6. **Clamp + scale + integer narrow + interleave** are vectorized:
-//!    `vminq_f32` / `vmaxq_f32` for `[0, 1]` clamp, `vcvtnq_u32_f32` for
-//!    round-half-to-even cast, `vqmovn_u32` / `vqmovn_u16` for
-//!    saturating narrow, `vst3_u8` / `vst3_u16` / `vst4_u8` /
-//!    `vst4_u16` for interleaved store.
+//!    `vminq_f32` / `vmaxq_f32` for `[0, 1]` clamp, then `+ 0.5` followed
+//!    by `vcvtq_u32_f32` (truncating cast) — i.e. **round-half-up**, so
+//!    the cast matches the scalar reference's `(c × max + 0.5) as T`
+//!    (NOT `vcvtnq_u32_f32` round-half-to-even, which would diverge by
+//!    1 ULP at exact `*.5` ties). `vqmovn_u32` / `vqmovn_u16` perform
+//!    the saturating narrow; `vst3_u8` / `vst3_u16` / `vst4_u8` /
+//!    `vst4_u16` perform the interleaved store.
 //!
 //! Width remainder (`width % 4`) is handled by the scalar reference
 //! kernel (`scalar::xyz12::xyz12_to_*_row::<BE>`).
@@ -231,14 +234,14 @@ unsafe fn load_xyz_linear<const BE: bool>(
   }
 }
 
-/// Vectorized clamp `[0, 1]` × `scale` followed by round-to-nearest
+/// Vectorized clamp `[0, 1]` × `scale` followed by **round-half-up**
 /// cast to u32 then saturating narrow to u16.
 ///
-/// The scalar reference is `((c.clamp(0,1) * scale) + 0.5) as int`
-/// which is round-half-up; `vcvtnq_u32_f32` is round-half-to-even.
-/// They agree on every value except exact `*.5` ties, which never
-/// occur in the scaled integer-narrow path because the OETF + scale
-/// product is dense in `[0, scale]` rather than discrete half-integers.
+/// The scalar reference is `((c.clamp(0,1) * scale) + 0.5) as int`,
+/// i.e. round-half-up. We mirror it with `+ 0.5` then `vcvtq_u32_f32`
+/// (truncating cast) — bit-exact across all inputs. (NEON's
+/// `vcvtnq_u32_f32` is round-half-to-even, which would diverge by
+/// 1 ULP at exact `*.5` ties; we deliberately avoid it.)
 /// Re-tested by the SIMD-vs-scalar parity tests below.
 #[inline(always)]
 unsafe fn clamp_scale_to_u16x4(v: float32x4_t, scale: float32x4_t) -> uint16x4_t {

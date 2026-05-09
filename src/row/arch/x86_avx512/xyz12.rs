@@ -39,7 +39,10 @@
 
 use core::arch::x86_64::*;
 
-use super::super::x86_sse41::endian::load_endian_u16x8;
+use super::super::{
+  x86_common::{write_rgb_16, write_rgba_16},
+  x86_sse41::endian::load_endian_u16x8,
+};
 use crate::{
   DcpTargetGamut,
   row::scalar::{
@@ -297,22 +300,25 @@ pub(crate) unsafe fn xyz12_to_rgb_row<const BE: bool>(
       let r_u16 = narrow_u32x16_to_u16x16(r_u32);
       let g_u16 = narrow_u32x16_to_u16x16(g_u32);
       let b_u16 = narrow_u32x16_to_u16x16(b_u32);
-      // Pack u16x16 → u8x16 via _mm256_packus_epi16(v, zero) then
-      // 64-bit permute fixup, OR just store u16 to a temp array and
-      // narrow scalar-style (16 truncations is cheap vs the OETF
-      // workload).
-      let mut tmp_r = [0u16; 16];
-      let mut tmp_g = [0u16; 16];
-      let mut tmp_b = [0u16; 16];
-      _mm256_storeu_si256(tmp_r.as_mut_ptr() as *mut __m256i, r_u16);
-      _mm256_storeu_si256(tmp_g.as_mut_ptr() as *mut __m256i, g_u16);
-      _mm256_storeu_si256(tmp_b.as_mut_ptr() as *mut __m256i, b_u16);
-      let dst = rgb_out.as_mut_ptr().add(x * 3);
-      for i in 0..PIXELS_PER_ITER {
-        *dst.add(i * 3) = tmp_r[i] as u8;
-        *dst.add(i * 3 + 1) = tmp_g[i] as u8;
-        *dst.add(i * 3 + 2) = tmp_b[i] as u8;
-      }
+      // Pack u16x16 → u8x16: AVX2 `packus_epi16` is per-128-bit-lane,
+      // so a `permute4x64_epi64::<0xD8>` fixup restores the natural
+      // [0..15] u8 order in the low 128 bits. Same idiom as
+      // `planar_gbr_high_bit::rgb48_to_rgb_row`.
+      let zero256 = _mm256_setzero_si256();
+      let r_u8 = _mm256_castsi256_si128(_mm256_permute4x64_epi64::<0xD8>(_mm256_packus_epi16(
+        r_u16, zero256,
+      )));
+      let g_u8 = _mm256_castsi256_si128(_mm256_permute4x64_epi64::<0xD8>(_mm256_packus_epi16(
+        g_u16, zero256,
+      )));
+      let b_u8 = _mm256_castsi256_si128(_mm256_permute4x64_epi64::<0xD8>(_mm256_packus_epi16(
+        b_u16, zero256,
+      )));
+      // In-register 16-pixel RGB interleave via the shared
+      // `write_rgb_16` helper (48-byte store) — replaces the prior
+      // 3× `[u16; 16]` stack-temp + per-pixel scalar scatter
+      // (Copilot review, PR #91 Comment 2).
+      write_rgb_16(r_u8, g_u8, b_u8, rgb_out.as_mut_ptr().add(x * 3));
       x += PIXELS_PER_ITER;
     }
     if x < width {
@@ -361,19 +367,22 @@ pub(crate) unsafe fn xyz12_to_rgba_row<const BE: bool>(
       let r_u16 = narrow_u32x16_to_u16x16(r_u32);
       let g_u16 = narrow_u32x16_to_u16x16(g_u32);
       let b_u16 = narrow_u32x16_to_u16x16(b_u32);
-      let mut tmp_r = [0u16; 16];
-      let mut tmp_g = [0u16; 16];
-      let mut tmp_b = [0u16; 16];
-      _mm256_storeu_si256(tmp_r.as_mut_ptr() as *mut __m256i, r_u16);
-      _mm256_storeu_si256(tmp_g.as_mut_ptr() as *mut __m256i, g_u16);
-      _mm256_storeu_si256(tmp_b.as_mut_ptr() as *mut __m256i, b_u16);
-      let dst = rgba_out.as_mut_ptr().add(x * 4);
-      for i in 0..PIXELS_PER_ITER {
-        *dst.add(i * 4) = tmp_r[i] as u8;
-        *dst.add(i * 4 + 1) = tmp_g[i] as u8;
-        *dst.add(i * 4 + 2) = tmp_b[i] as u8;
-        *dst.add(i * 4 + 3) = 0xFF;
-      }
+      let zero256 = _mm256_setzero_si256();
+      let r_u8 = _mm256_castsi256_si128(_mm256_permute4x64_epi64::<0xD8>(_mm256_packus_epi16(
+        r_u16, zero256,
+      )));
+      let g_u8 = _mm256_castsi256_si128(_mm256_permute4x64_epi64::<0xD8>(_mm256_packus_epi16(
+        g_u16, zero256,
+      )));
+      let b_u8 = _mm256_castsi256_si128(_mm256_permute4x64_epi64::<0xD8>(_mm256_packus_epi16(
+        b_u16, zero256,
+      )));
+      let a_u8 = _mm_set1_epi8(-1_i8);
+      // In-register 16-pixel RGBA interleave via the shared
+      // `write_rgba_16` helper (64-byte store) — replaces the prior
+      // 3× `[u16; 16]` stack-temp + per-pixel scalar scatter
+      // (Copilot review, PR #91 Comment 2).
+      write_rgba_16(r_u8, g_u8, b_u8, a_u8, rgba_out.as_mut_ptr().add(x * 4));
       x += PIXELS_PER_ITER;
     }
     if x < width {
