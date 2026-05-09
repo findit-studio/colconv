@@ -43,6 +43,7 @@ fn as_be_u16_buf(buf: &[u16]) -> std::vec::Vec<u16> {
 // ---- yuv_420p_n (planar 4:2:0 high-bit) -----------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuv_420p10_be_parity_u8() {
   if !neon_available() {
     return;
@@ -88,6 +89,7 @@ fn neon_yuv_420p10_be_parity_u8() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuv_420p10_be_parity_u16() {
   if !neon_available() {
     return;
@@ -131,6 +133,7 @@ fn neon_yuv_420p10_be_parity_u16() {
 // ---- yuv_444p_n (planar 4:4:4 high-bit) -----------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuv_444p12_be_parity_u8() {
   if !neon_available() {
     return;
@@ -174,6 +177,7 @@ fn neon_yuv_444p12_be_parity_u8() {
 // ---- yuv_*p16 (16-bit planar) ----------------------------------------
 
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuv_420p16_be_parity_u8() {
   if !neon_available() {
     return;
@@ -215,6 +219,7 @@ fn neon_yuv_420p16_be_parity_u8() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuv_444p16_be_parity_u16() {
   if !neon_available() {
     return;
@@ -264,6 +269,7 @@ fn neon_yuv_444p16_be_parity_u16() {
 // this patch (codex review on PR #89).
 
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p010_be_parity_u8() {
   if !neon_available() {
     return;
@@ -288,6 +294,7 @@ fn neon_p010_be_parity_u8() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p012_be_parity_u16() {
   if !neon_available() {
     return;
@@ -315,6 +322,7 @@ fn neon_p012_be_parity_u16() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p410_be_parity_u8() {
   if !neon_available() {
     return;
@@ -339,6 +347,7 @@ fn neon_p410_be_parity_u8() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p412_be_parity_u16() {
   if !neon_available() {
     return;
@@ -373,6 +382,7 @@ fn neon_p412_be_parity_u16() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p016_be_parity_u8() {
   if !neon_available() {
     return;
@@ -397,6 +407,7 @@ fn neon_p016_be_parity_u8() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p016_be_parity_u16() {
   if !neon_available() {
     return;
@@ -423,6 +434,7 @@ fn neon_p016_be_parity_u16() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p416_be_parity_u16() {
   if !neon_available() {
     return;

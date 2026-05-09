@@ -80,6 +80,11 @@ pub use dispatch::{
   planar_gbr_high_bit::*, pn::*, rgb_f16_ops::*, rgb_float_ops::*, rgb_ops::*, v30x::*, v210::*,
   v410::*, vuya::*, vuyx::*, xv36::*, y210::*, y212::*, y216::*, yuv420::*, yuv444::*, yuva::*,
 };
+// Tier 12 — Xyz12 dispatchers depend on `f32::powf`, which is only
+// available with `feature = "std"` or `feature = "alloc"` (the latter
+// pulls in `libm`). Mirror the same gate on the re-export.
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub use dispatch::xyz12::*;
 // Mono1bit dispatchers — pub(crate) so sinker code can reach them via
 // `crate::row::monoblack_to_*` / `crate::row::monowhite_to_*` without
 // reaching into `dispatch::mono1bit` internals directly.

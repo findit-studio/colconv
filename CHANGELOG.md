@@ -1,5 +1,82 @@
 # CHANGELOG
 
+## Unreleased — Tier 12 — Xyz12 (DCP / digital-cinema XYZ) source format
+
+Closes Tier 12. New source-side pixel format `Xyz12` (`AV_PIX_FMT_XYZ12LE`
+/ `AV_PIX_FMT_XYZ12BE`): 12-bit packed CIE XYZ in `X, Y, Z` order, three
+u16 elements per pixel — active 12 bits in `[15:4]`, low 4 bits zero
+(per FFmpeg `AV_PIX_FMT_XYZ12LE/BE`). Const-generic
+`Xyz12Frame<const BE: bool>` with type aliases `Xyz12LeFrame` /
+`Xyz12BeFrame`. The conversion chain is the heaviest in colconv: SMPTE
+ST 428-1 §8 inverse OETF → 3×3 matrix to one of three target gamuts
+(DCI-P3 / Rec.709 / Rec.2020) → sRGB-shape forward OETF → integer narrow.
+
+11 sinker outputs:
+
+- `with_rgb` / `with_rgba` — full pipeline → packed u8 RGB / RGBA
+  (alpha = `0xFF`)
+- `with_rgb_u16` / `with_rgba_u16` — full pipeline + full-range
+  `[0, 1] × 65535` scaling (alpha = `0xFFFF`)
+- `with_rgb_f32` — lossless linear-RGB f32 (matrix only, OETF skipped,
+  no clamp; out-of-gamut negative R/G/B and HDR > 1 preserved bit-exact)
+- `with_xyz_f32` — lossless linear XYZ f32 (only step-1 inverse OETF;
+  no matrix, no gamma, no clamp)
+- `with_rgb_f16` / `with_rgba_f16` — full pipeline + clamp `[0, 1]` +
+  IEEE-754 RNE narrow to f16 (alpha = `1.0`)
+- `with_luma` / `with_luma_u16` — staged through u8 RGB scratch, then
+  `xyz12_rgb_to_luma_row` / `xyz12_rgb_to_luma_u16_row` with
+  gamut-matched Q15 weights from `luma_weights_q15_for_gamut`
+  (BT.709 for Rec709, dedicated DCI-P3 weights `(6865, 23645, 2258)`
+  for theatrical DciP3, BT.2020Ncl for Rec2020).
+- `with_hsv` — same staging, then `rgb_to_hsv_row`
+
+Native SIMD across all 5 backends (NEON 4 px/iter, SSE4.1 8 px/iter,
+AVX2 8 px/iter, AVX-512 16 px/iter, wasm-simd128 8 px/iter). The
+matmul, integer narrow, and interleaved store are vectorized; the
+SMPTE 428-1 inverse OETF and sRGB-shape forward OETF run **scalar per
+lane** via the same scalar functions the reference kernel uses,
+preserving the 0-ULP scalar↔SIMD parity contract by construction. The
+sRGB OETF uses a 192-segment piecewise polynomial (≤ 2 ULP vs the
+f64-narrowed reference). FMA is intentionally NOT used in the matmul —
+single-rounding FMA breaks the 0-ULP parity contract on integer-narrow
+output paths.
+
+**Fix (codex round-2 high):** the `DcpTargetGamut::DciP3` matrix
+previously used D65 white (i.e. it was actually decoding to the
+Apple/web Display-P3 / `display-p3` colour space, NOT to the
+theatrical SMPTE ST 428-1 / RP 431-2 §5.1 DCI-white target
+documented in the variant's rustdoc and module-level docs).
+The `M_XYZ_TO_RGB_DCI_P3` constant is now re-derived with DCI white
+`(0.314, 0.351)` (~6300 K) per RP 431-2 §5.1; the f32 RGB output of
+every `DciP3`-targeted `xyz12_to` caller therefore changes. Callers
+who specifically wanted Display-P3 D65 desktop preview should use
+`Rec709` instead, or open a follow-up issue requesting an explicit
+`DisplayP3D65` variant.
+
+**Fix (codex round-2 medium):** the `with_luma` / `with_luma_u16`
+paths previously routed `DcpTargetGamut::DciP3` through
+`ColorMatrix::Bt709` (D65 luma weights), biasing luma values for
+saturated content under the theatrical DCI-P3 target. The luma path
+is rewired to use a dedicated Q15 triple
+`(6865, 23645, 2258)` derived from the DCI-white-pointed RGB→XYZ
+matrix Y row (`Y = 0.2095 R + 0.7216 G + 0.0689 B`, sum = 32768
+exactly).
+
+To make these fixes verifiable beyond scalar↔SIMD parity, seven
+**independent reference-vector tests** were added to
+`src/row/scalar/xyz12.rs`: `xyz12_dci_p3_zero_input_zero_output_reference`,
+`xyz12_dci_p3_mid_gray_reference_dci_white`,
+`xyz12_dci_p3_peak_white_reference`,
+`xyz12_dci_p3_x_only_axis_reference`,
+`xyz12_rec709_mid_gray_reference`, `xyz12_rec2020_mid_gray_reference`,
+`xyz12_rgb_to_luma_dci_p3_pure_red_reference`,
+`xyz12_rgb_to_luma_u16_dci_p3_pure_green_reference`, and
+`xyz12_rgb_to_luma_uniform_gray_reproduces_input_all_gamuts`. These
+pin colorimetric correctness against expected values computed
+independently of the kernel implementation (closed-form
+primary-scaling derivation in f64, with Y-row luma weights
+normalised to the gamut's white-point Y).
+
 ## Unreleased — Tier 15 — Mono1bit (monoblack/monowhite) source formats
 
 Closes Tier 15. Two new source-side pixel formats:

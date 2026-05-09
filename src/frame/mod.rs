@@ -28,6 +28,7 @@ mod semi_planar_8bit;
 mod subsampled_high_bit_planar;
 mod subsampled_high_bit_pn;
 mod v210;
+mod xyz12;
 mod y2xx;
 mod yuva;
 
@@ -53,6 +54,7 @@ pub use semi_planar_8bit::*;
 pub use subsampled_high_bit_planar::*;
 pub use subsampled_high_bit_pn::*;
 pub use v210::*;
+pub use xyz12::*;
 pub use y2xx::*;
 pub use yuva::*;
 

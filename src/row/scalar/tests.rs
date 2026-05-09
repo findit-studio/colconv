@@ -240,6 +240,7 @@ fn hsv_pure_blue_matches_opencv() {
 // ---- yuv_420p_n_to_rgb_row (10-bit → u8) -----------------------------
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv420p10_rgb_black_full_range() {
   // Y=0, neutral chroma (512 in 10-bit) → black.
   let y = [0u16; 4];
@@ -251,6 +252,7 @@ fn yuv420p10_rgb_black_full_range() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv420p10_rgb_white_full_range() {
   // 10-bit full-range white is Y=1023.
   let y = [1023u16; 4];
@@ -262,6 +264,7 @@ fn yuv420p10_rgb_white_full_range() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv420p10_rgb_gray_is_gray() {
   // Mid-gray 10-bit Y=512 ↔ 8-bit 128. Within ±1 for Q15 rounding.
   let y = [512u16; 4];
@@ -278,6 +281,7 @@ fn yuv420p10_rgb_gray_is_gray() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv420p10_rgb_limited_range_black_and_white() {
   // 10-bit limited: Y=64 → black, Y=940 → white.
   let y = [64u16, 64, 940, 940];
@@ -292,6 +296,7 @@ fn yuv420p10_rgb_limited_range_black_and_white() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv420p10_rgb_chroma_shared_across_pair() {
   // Two 10-bit Y values sharing chroma: output is gray = Y>>2.
   let y = [200u16, 800, 200, 800];
@@ -310,6 +315,7 @@ fn yuv420p10_rgb_chroma_shared_across_pair() {
 // ---- yuv_420p_n_to_rgb_u16_row (10-bit → 10-bit u16) ----------------
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv420p10_rgb_u16_black_full_range() {
   let y = [0u16; 4];
   let u = [512u16; 2];
@@ -320,6 +326,7 @@ fn yuv420p10_rgb_u16_black_full_range() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv420p10_rgb_u16_white_full_range() {
   // 10-bit input Y=1023, full-range scale=1 → output Y=1023 on each channel.
   let y = [1023u16; 4];
@@ -331,6 +338,7 @@ fn yuv420p10_rgb_u16_white_full_range() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv420p10_rgb_u16_limited_range_endpoints() {
   // Limited-range: Y=64 → 0, Y=940 → 1023 in 10-bit output.
   let y = [64u16, 940];
@@ -343,6 +351,7 @@ fn yuv420p10_rgb_u16_limited_range_endpoints() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv420p10_rgb_u16_preserves_full_10bit_precision() {
   // Sanity: the u16 path retains native-depth precision, so two
   // inputs that round to the same u8 are distinguishable in u16.
@@ -386,6 +395,7 @@ fn yuv420p10_bt709_ycgco_differ_for_chroma() {
 // White Y = 1023 << 6 = 0xFFC0, neutral UV = 512 << 6 = 0x8000.
 
 #[test]
+#[cfg(target_endian = "little")]
 fn p010_rgb_black_full_range() {
   // Y = 0, neutral UV → black.
   let y = [0u16; 4];
@@ -396,6 +406,7 @@ fn p010_rgb_black_full_range() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn p010_rgb_white_full_range() {
   // Y = 0xFFC0 = 1023 << 6, neutral UV → white.
   let y = [0xFFC0u16; 4];
@@ -406,6 +417,7 @@ fn p010_rgb_white_full_range() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn p010_rgb_gray_is_gray() {
   // 10-bit mid-gray Y=512 → P010 Y = 512 << 6 = 0x8000.
   let y = [0x8000u16; 4];
@@ -421,6 +433,7 @@ fn p010_rgb_gray_is_gray() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn p010_rgb_limited_range_endpoints() {
   // 10-bit limited black Y=64 → P010 = 64 << 6 = 0x1000.
   // 10-bit limited white Y=940 → P010 = 940 << 6 = 0xEB00.
@@ -470,6 +483,7 @@ fn p010_matches_yuv420p10_when_shifted() {
 // ---- p010_to_rgb_u16_row (P010 → native-depth u16) --------------------
 
 #[test]
+#[cfg(target_endian = "little")]
 fn p010_rgb_u16_white_full_range() {
   let y = [0xFFC0u16; 4];
   let uv = [0x8000u16; 4];
@@ -479,6 +493,7 @@ fn p010_rgb_u16_white_full_range() {
 }
 
 #[test]
+#[cfg(target_endian = "little")]
 fn p010_rgb_u16_limited_range_endpoints() {
   let y = [0x1000u16, 0xEB00];
   let uv = [0x8000u16, 0x8000];
@@ -491,6 +506,7 @@ fn p010_rgb_u16_limited_range_endpoints() {
 // ---- yuv_444p_n_to_rgba_row (10-bit → u8 RGBA) ----------------------
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv444p10_rgba_gray_alpha_is_ff() {
   // Mid-gray 10-bit Y=512 ↔ 8-bit ≈128. RGBA stride is 4 bytes/px;
   // alpha must be 0xFF on every pixel.
@@ -516,6 +532,7 @@ fn yuv444p10_rgba_gray_alpha_is_ff() {
 // ---- yuv_444p_n_to_rgba_u16_row (10-bit → 10-bit u16 RGBA) ---------
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv444p10_rgba_u16_gray_alpha_is_1023() {
   // 10-bit u16 RGBA: alpha element is `(1 << BITS) - 1 = 1023`.
   let y = [512u16; 4];
@@ -540,6 +557,7 @@ fn yuv444p10_rgba_u16_gray_alpha_is_1023() {
 // ---- yuv_444p16_to_rgba_row (16-bit → u8 RGBA) ----------------------
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv444p16_rgba_gray_alpha_is_ff() {
   // 16-bit mid-gray Y = 0x8000 → 8-bit ≈128. Alpha = 0xFF.
   let y = [0x8000u16; 4];
@@ -564,6 +582,7 @@ fn yuv444p16_rgba_gray_alpha_is_ff() {
 // ---- yuv_444p16_to_rgba_u16_row (16-bit → 16-bit u16 RGBA) ---------
 
 #[test]
+#[cfg(target_endian = "little")]
 fn yuv444p16_rgba_u16_gray_alpha_is_ffff() {
   // 16-bit u16 RGBA: alpha element is `0xFFFF`.
   let y = [0x8000u16; 4];
@@ -589,6 +608,7 @@ fn yuv444p16_rgba_u16_gray_alpha_is_ffff() {
 // ---- p_n_444_to_rgba_row (P410 → u8 RGBA) ---------------------------
 
 #[test]
+#[cfg(target_endian = "little")]
 fn p410_rgba_gray_alpha_is_ff() {
   // P410: 10 active bits in HIGH 10 of each u16. Mid-gray 10-bit
   // Y=512 → P410 Y = 0x8000. UV interleaved: U V U V ... full width.
@@ -614,6 +634,7 @@ fn p410_rgba_gray_alpha_is_ff() {
 // ---- p_n_444_16_to_rgba_u16_row (P416 → 16-bit u16 RGBA) -----------
 
 #[test]
+#[cfg(target_endian = "little")]
 fn p416_rgba_u16_gray_alpha_is_ffff() {
   // P416: full 16-bit samples. Mid-gray Y=0x8000, neutral UV=0x8000.
   // 16-bit u16 RGBA: alpha element is `0xFFFF`.
