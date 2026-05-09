@@ -7,6 +7,7 @@ use crate::{
 
 // ---- Rgb48 -----------------------------------------------------------------
 
+#[cfg(target_endian = "little")]
 #[test]
 fn rgb48_with_rgb_u16_identity() {
   // Native passthrough: each channel copied verbatim (no shift).
@@ -20,6 +21,7 @@ fn rgb48_with_rgb_u16_identity() {
   assert_eq!(out, vec![0x1234u16, 0x5678, 0x9ABC]);
 }
 
+#[cfg(target_endian = "little")]
 #[test]
 fn rgb48_with_rgb_narrows_correctly() {
   // Each 16-bit channel narrowed >> 8: 0xFF00 → 0xFF, 0x8000 → 0x80, 0x0100 → 0x01.
@@ -53,6 +55,7 @@ fn rgb48_with_rgba_u16_forces_0xffff() {
   assert_eq!(out[3], 0xFFFF);
 }
 
+#[cfg(target_endian = "little")]
 #[test]
 fn rgb48_with_rgb_u16_and_rgba_u16_both_correct() {
   // Two pixels: verify identity copy for RGB and forced alpha for RGBA.
@@ -73,6 +76,7 @@ fn rgb48_with_rgb_u16_and_rgba_u16_both_correct() {
   assert_eq!(rgba_u16[7], 0xFFFF);
 }
 
+#[cfg(target_endian = "little")]
 #[test]
 fn rgb48_with_luma_non_zero_for_nonzero_input() {
   // Any non-zero equal R/G/B → non-zero luma.
@@ -86,6 +90,7 @@ fn rgb48_with_luma_non_zero_for_nonzero_input() {
   assert_ne!(luma[0], 0);
 }
 
+#[cfg(target_endian = "little")]
 #[test]
 fn rgb48_with_luma_u16_non_zero_for_nonzero_input() {
   let src: Vec<u16> = vec![0x8000, 0x8000, 0x8000];
@@ -120,6 +125,7 @@ fn rgb48_simd_matches_scalar() {
 
 // ---- Bgr48 -----------------------------------------------------------------
 
+#[cfg(target_endian = "little")]
 #[test]
 fn bgr48_channel_order_swapped_vs_rgb48() {
   // B=0x1000, G=0x2000, R=0x3000 stored in BGR input order.
@@ -169,6 +175,7 @@ fn bgr48_with_rgba_u16_forces_0xffff() {
 
 // ---- Rgba64 ----------------------------------------------------------------
 
+#[cfg(target_endian = "little")]
 #[test]
 fn rgba64_with_rgba_passes_source_alpha_u8() {
   // R=0xFFFF, G=0x8000, B=0x0000, A=0xABFF → alpha byte = 0xABFF >> 8 = 0xAB.
@@ -182,6 +189,7 @@ fn rgba64_with_rgba_passes_source_alpha_u8() {
   assert_eq!(out[3], 0xAB); // 0xABFF >> 8 = 0xAB
 }
 
+#[cfg(target_endian = "little")]
 #[test]
 fn rgba64_with_rgba_u16_passes_source_alpha_native() {
   // Source α = 0xABCD must be preserved verbatim (no shift).
@@ -284,6 +292,7 @@ fn rgba64_with_rgb_u16_drops_alpha() {
 
 // ---- Bgra64 ----------------------------------------------------------------
 
+#[cfg(target_endian = "little")]
 #[test]
 fn bgra64_channel_order_and_alpha_preserved() {
   // B=0x1000, G=0x2000, R=0x3000, A=0xAAAA in BGRA source order.
@@ -353,6 +362,7 @@ fn bgra64_strategy_a_plus_u16_path_byte_identical() {
   assert_eq!(rgba_u16_combo, rgba_u16_only);
 }
 
+#[cfg(target_endian = "little")]
 #[test]
 fn bgra64_with_rgba_u16_passes_source_alpha_native() {
   let src: Vec<u16> = vec![0x1000, 0x2000, 0x3000, 0xBEEF];
@@ -395,6 +405,7 @@ fn rgba64_row_shape_mismatch_returns_error() {
   assert!(matches!(err, MixedSinkerError::RowShapeMismatch { .. }));
 }
 
+#[cfg(target_endian = "little")]
 #[test]
 fn rgb48_multi_row_frame() {
   // 2×2 frame: verify correct row-by-row accumulation.

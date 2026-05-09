@@ -432,6 +432,7 @@ mod tests {
     );
   }
 
+  #[cfg(target_endian = "little")]
   /// Known value: 0x1234 >> 8 = 0x12.
   #[test]
   fn rgb48_to_rgb_narrow_known_value() {
@@ -487,6 +488,7 @@ mod tests {
     assert!(out.iter().all(|&v| v == 0xFF), "expected all 0xFF");
   }
 
+  #[cfg(target_endian = "little")]
   /// Channel-order swap: Bgr48 `[B=0x1234, G=0x5678, R=0x9ABC]`
   /// → `with_rgb_u16` → `[R=0x9ABC, G=0x5678, B=0x1234]`.
   #[test]
@@ -500,6 +502,7 @@ mod tests {
     assert_eq!(out[2], 0x1234, "B (was at src[0])");
   }
 
+  #[cfg(target_endian = "little")]
   /// u8 RGB output: same swap + narrow.
   #[test]
   fn bgr48_to_rgb_channel_order_and_narrow() {
@@ -511,6 +514,7 @@ mod tests {
     assert_eq!(out[2], 0x12, "B");
   }
 
+  #[cfg(target_endian = "little")]
   /// rgba output: swapped channels + forced alpha = 0xFF.
   #[test]
   fn bgr48_to_rgba_channel_order_and_alpha() {
@@ -555,6 +559,7 @@ mod tests {
     assert!(out.iter().all(|&v| v == 0xFF), "expected all 0xFF");
   }
 
+  #[cfg(target_endian = "little")]
   /// Source alpha is preserved in u16 passthrough at position 3.
   #[test]
   fn rgba64_to_rgba_u16_source_alpha_preserved() {
@@ -568,6 +573,7 @@ mod tests {
     assert_eq!(out[3], 0xABCD, "alpha must be preserved as-is");
   }
 
+  #[cfg(target_endian = "little")]
   /// Source alpha is depth-converted (>> 8) in u8 rgba output.
   #[test]
   fn rgba64_to_rgba_source_alpha_depth_converted() {
@@ -580,6 +586,7 @@ mod tests {
     assert_eq!(out[3], 0xAB, "alpha narrowed >> 8");
   }
 
+  #[cfg(target_endian = "little")]
   /// rgb path drops alpha, narrows.
   #[test]
   fn rgba64_to_rgb_drops_alpha() {
@@ -635,6 +642,7 @@ mod tests {
     assert_eq!(out[3], 0x4444, "A preserved as-is");
   }
 
+  #[cfg(target_endian = "little")]
   /// u8 rgba output: swap + narrow + source alpha depth-converted.
   #[test]
   fn bgra64_to_rgba_channel_order_and_alpha_narrowed() {
@@ -647,6 +655,7 @@ mod tests {
     assert_eq!(out[3], 0xAB, "alpha narrowed >> 8");
   }
 
+  #[cfg(target_endian = "little")]
   /// rgb path drops alpha and swaps channels.
   #[test]
   fn bgra64_to_rgb_drops_alpha_and_swaps() {
@@ -671,6 +680,7 @@ mod tests {
 
   // ---- Multi-pixel width tests ---------------------------------------------
 
+  #[cfg(target_endian = "little")]
   /// Width=3 Rgb48→rgb: verify correct stride indexing.
   #[test]
   fn rgb48_to_rgb_multi_pixel_width() {

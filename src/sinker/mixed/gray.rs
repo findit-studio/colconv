@@ -1592,6 +1592,10 @@ mod tests {
   fn make_gray8_frame(data: &[u8], w: u32, h: u32) -> Gray8Frame<'_> {
     Gray8Frame::new(data, w, h, w)
   }
+  // Only used by `gray10_with_*` tests, all of which are gated to LE hosts
+  // because their `Vec<u16>` plane fixtures travel through `from_le` on the
+  // sink path and would be byte-swapped on a BE host.
+  #[cfg(target_endian = "little")]
   fn make_gray10_frame(data: &[u16], w: u32, h: u32) -> GrayNFrame<'_, 10> {
     GrayNFrame::new(data, w, h, w)
   }
@@ -1672,6 +1676,7 @@ mod tests {
     assert_eq!(v, plane.as_slice(), "V must equal Y");
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray10_with_rgb_masks_and_shifts() {
     // 10-bit sample: value 512 = 0b10_0000_0000, masked = 512, >> 2 = 128
@@ -1687,6 +1692,7 @@ mod tests {
     assert_eq!(rgb[3..6], [128, 128, 128]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray10_with_luma_u16_masks_only() {
     // 10-bit, over-range sample: 0x0800 (bit 11 set) masked → 0.
@@ -1700,6 +1706,7 @@ mod tests {
     assert_eq!(lu16, [0x0000, 0x03FF, 0x0200, 0x0001]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray16_with_rgb_shifts_to_u8() {
     // Gray16 sample 0x8000 → >> 8 = 0x80 = 128.
@@ -1717,6 +1724,7 @@ mod tests {
     assert_eq!(rgb[9..12], [0x01, 0x01, 0x01]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray16_with_luma_u16_copies_plane() {
     let plane: Vec<u16> = (0u16..16).map(|x| x * 4096).collect();
@@ -1729,6 +1737,7 @@ mod tests {
     assert_eq!(lu16, plane);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray16_with_rgba_u16_alpha_is_0xffff() {
     let plane = [0x1234u16; 4];
@@ -1744,6 +1753,7 @@ mod tests {
     }
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray9_walker_smoke_test() {
     use crate::frame::GrayNFrame;
@@ -1758,6 +1768,7 @@ mod tests {
     assert_eq!(luma, [50, 50, 50, 50]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray12_walker_smoke_test() {
     use crate::frame::GrayNFrame;
@@ -1772,6 +1783,7 @@ mod tests {
     assert_eq!(luma, [255, 255, 255, 255]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray14_walker_smoke_test() {
     use crate::frame::GrayNFrame;
@@ -1886,6 +1898,7 @@ mod tests {
     assert_eq!(v, [255, 255, 255, 255], "V must be 255 for white");
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray10_limited_range_black_and_white() {
     use crate::frame::GrayNFrame;
@@ -1903,6 +1916,7 @@ mod tests {
     assert_eq!(rgb[9..12], [255, 255, 255], "Y=940 → white");
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray12_limited_range_black_and_white() {
     use crate::frame::GrayNFrame;
@@ -1920,6 +1934,7 @@ mod tests {
     assert_eq!(rgb[9..12], [255, 255, 255], "Y=3760 → white");
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray14_limited_range_black_and_white() {
     use crate::frame::GrayNFrame;
@@ -1937,6 +1952,7 @@ mod tests {
     assert_eq!(rgb[9..12], [255, 255, 255], "Y=15040 → white");
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray16_limited_range_black_and_white() {
     // 16-bit: black=4096, white=60160, range=56064.
@@ -1953,6 +1969,7 @@ mod tests {
     assert_eq!(rgb[9..12], [255, 255, 255], "Y=60160 → white");
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray16_limited_range_luma_passthrough_unchanged() {
     // Luma u16 must copy raw Y regardless of full_range.
@@ -1982,6 +1999,7 @@ mod tests {
     }
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray16_limited_range_rgba_u16_channels_rescale_at_boundaries() {
     // Regression for the i32-overflow bug at BITS=16: limited-range white
@@ -2010,6 +2028,7 @@ mod tests {
     }
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray16_limited_range_rgb_u16_channels_rescale_at_boundaries() {
     // Same i32-overflow regression on the with_rgb_u16 path.
@@ -2024,6 +2043,7 @@ mod tests {
     assert_eq!(&rgb_u16[3..6], &[65535, 65535, 65535]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn gray16_limited_range_hsv_v_is_rescaled() {
     // HSV V must reflect limited-range rescaling.
@@ -2043,6 +2063,7 @@ mod tests {
 
   // ---- Grayf32 integration tests ----------------------------------------------
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_with_luma_f32_passthrough() {
     // NaN, out-of-range, and normal values all pass through unchanged.
@@ -2062,6 +2083,7 @@ mod tests {
     }
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_with_rgb_f32_replicates_losslessly() {
     let data: std::vec::Vec<f32> = std::vec![0.25, 0.75, 1.5, -0.5];
@@ -2078,6 +2100,7 @@ mod tests {
     }
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_with_rgb_saturates() {
     // -0.5 → 0, 0.5 → 128, 1.0 → 255, 1.5 → 255
@@ -2095,6 +2118,7 @@ mod tests {
     assert_eq!(&rgb[12..15], &[255, 255, 255]); // 1.5 clamps to 255
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_with_hsv_h0_s0_v_saturated() {
     let data: std::vec::Vec<f32> = std::vec![0.0, 0.5, 1.0];
@@ -2111,6 +2135,7 @@ mod tests {
     assert_eq!(v, [0, 128, 255]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_with_luma_u16_and_rgb_u16() {
     // 1×1 frame: Y = 0.5 → luma_u16 ≈ 32768, rgb_u16 ≈ [32768, 32768, 32768]
@@ -2340,6 +2365,7 @@ mod tests {
 
   // ---- Ya16 integration tests -------------------------------------------------
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn ya16_with_rgba_u16_source_alpha() {
     // 1-pixel: Y=0x8000, A=0x4000
@@ -2357,6 +2383,7 @@ mod tests {
     assert_eq!(luma_u16[0], 0x8000);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn ya16_with_rgba_u8_source_alpha_shifted() {
     // 2-pixel: [Y=0x8000, A=0x4000], [Y=0xFFFF, A=0x8000]
@@ -2373,6 +2400,7 @@ mod tests {
     assert_eq!(&rgba[4..8], &[0xFF, 0xFF, 0xFF, 0x80]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn ya16_with_rgb_and_rgba_strategy_a_plus() {
     let packed: std::vec::Vec<u16> = std::vec![0x8000, 0x4000, 0x2000, 0xC000];
@@ -2394,6 +2422,7 @@ mod tests {
     assert_eq!(&rgba[4..8], &[0x20, 0x20, 0x20, 0xC0]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn ya16_with_hsv_h0_s0_v_shifted() {
     let packed: std::vec::Vec<u16> = std::vec![0x8000, 0x4000, 0xFFFF, 0x0000];

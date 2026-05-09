@@ -286,6 +286,7 @@ mod tests {
     assert_eq!(out, [0, 0, 0]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgb_max() {
     let plane = [1.0f32];
@@ -294,6 +295,7 @@ mod tests {
     assert_eq!(out, [255, 255, 255]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgb_mid() {
     // Mid-gray Y=0.5 with round-half-up:
@@ -308,6 +310,7 @@ mod tests {
     assert_eq!(out, [128, 128, 128]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgb_saturates_high() {
     let plane = [1.5f32];
@@ -334,6 +337,7 @@ mod tests {
     assert_eq!(out, [0, 0, 0, 0xFF]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgba_max_alpha_opaque() {
     let plane = [1.0f32];
@@ -352,6 +356,7 @@ mod tests {
     assert_eq!(out, [0, 0, 0]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgb_u16_max() {
     let plane = [1.0f32];
@@ -360,6 +365,7 @@ mod tests {
     assert_eq!(out, [65535, 65535, 65535]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgb_u16_saturates_high() {
     let plane = [2.0f32];
@@ -370,6 +376,7 @@ mod tests {
 
   // ---- grayf32_to_rgba_u16_row ---------------------------------------------
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgba_u16_opaque() {
     let plane = [1.0f32];
@@ -380,6 +387,7 @@ mod tests {
 
   // ---- grayf32_to_rgb_f32_row ----------------------------------------------
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgb_f32_lossless_replicate() {
     // Non-clamped value preserved exactly.
@@ -389,6 +397,7 @@ mod tests {
     assert_eq!(out, [1.5, 1.5, 1.5]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgb_f32_negative_preserved() {
     let plane = [-0.5f32];
@@ -407,6 +416,7 @@ mod tests {
     assert_eq!(out, [0]);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_luma_max() {
     let plane = [1.0f32];
@@ -417,6 +427,7 @@ mod tests {
 
   // ---- grayf32_to_luma_u16_row ---------------------------------------------
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_luma_u16_max() {
     let plane = [1.0f32];
@@ -427,6 +438,7 @@ mod tests {
 
   // ---- grayf32_to_luma_f32_row ---------------------------------------------
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_luma_f32_identity() {
     let plane = [0.0f32, 0.5, 1.0, 1.5, -0.1];
@@ -450,6 +462,7 @@ mod tests {
     assert_eq!(v[0], 0);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_hsv_max() {
     let plane = [1.0f32];
@@ -462,6 +475,7 @@ mod tests {
     assert_eq!(v[0], 255);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_hsv_mid() {
     // 0.5 → (0.5 * 255 + 0.5) as u8 = 128
@@ -475,6 +489,7 @@ mod tests {
     assert_eq!(v[0], 128);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_hsv_clamps_hdr() {
     // HDR value > 1.0 saturates to V=255.
@@ -486,6 +501,7 @@ mod tests {
     assert_eq!(v[0], 255);
   }
 
+  #[cfg(target_endian = "little")]
   #[test]
   fn grayf32_to_rgb_multi_pixel() {
     let plane = [0.0f32, 1.0, 0.5];
