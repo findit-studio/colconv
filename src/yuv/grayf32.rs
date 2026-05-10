@@ -4,8 +4,11 @@
 //! Stride is in f32 elements. No chroma planes exist.
 //!
 //! The marker carries `<const BE: bool = false>`: `Grayf32` (= `Grayf32<false>`)
-//! is the LE source; `Grayf32<true>` is the BE source. The walker
-//! [`grayf32_to::<BE>`] propagates `BE` from [`Grayf32Frame<'_, BE>`] into the
+//! is the LE source; `Grayf32<true>` is the BE source. Two walker entry points
+//! are emitted: [`grayf32_to`] is an LE-only compatibility wrapper preserving
+//! the single-generic signature `grayf32_to::<S>`;
+//! [`grayf32_to_endian::<S, BE>`] is the const-generic entry point for
+//! BE-aware callers, propagating `BE` from [`Grayf32Frame<'_, BE>`] into the
 //! sinker dispatch. The kernel reinterprets each `f32` via byte-swapped `u32`
 //! bits when `BE = true`.
 

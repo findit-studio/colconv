@@ -2,13 +2,16 @@
 //! (FFmpeg `ya16{le,be}` / `AV_PIX_FMT_YA16{LE,BE}`).
 //!
 //! Single `u16` plane packed as `[Y0, A0, Y1, A1, ...]`. Each pixel occupies
-//! 2 u16 elements; stride covers `width × 2` u16 elements. Alpha is real source
-//! α at element slot 1 of every pixel pair.
+//! 2 u16 elements; stride is in u16 elements and must be `≥ width × 2` (may
+//! include row padding). Alpha is real source α at element slot 1 of every
+//! pixel pair.
 //!
 //! The marker carries `<const BE: bool = false>`: `Ya16` (= `Ya16<false>`) is
-//! the LE source; `Ya16<true>` is the BE source. The walker
-//! [`ya16_to::<BE>`] propagates `BE` from [`Ya16Frame<'_, BE>`] into the
-//! sinker dispatch.
+//! the LE source; `Ya16<true>` is the BE source. Two walker entry points are
+//! emitted: [`ya16_to`] is an LE-only compatibility wrapper preserving the
+//! single-generic signature `ya16_to::<S>`; [`ya16_to_endian::<S, BE>`] is
+//! the const-generic entry point for BE-aware callers, propagating `BE`
+//! from [`Ya16Frame<'_, BE>`] into the sinker dispatch.
 
 use crate::frame::Ya16Frame;
 
@@ -77,6 +80,23 @@ mod tests {
     }
   }
   impl Ya16Sink<false> for CountingSink {}
+
+  // Compile-pass regression for the codex / Copilot finding on PR #106
+  // (`packed_be` arm). Switching the Ya16 walker macro from `packed`
+  // to `packed_be` without an LE wrapper would change the public
+  // `ya16_to` signature from one generic param (`S`) to two
+  // (`S, const BE: bool`), breaking downstream callers using the explicit
+  // sink spelling `ya16_to::<MySink>(...)`. Function-position
+  // const-generic defaults aren't allowed, so the macro emits an LE-only
+  // wrapper preserving the original signature; this test pins it.
+  #[test]
+  fn ya16_to_explicit_turbofish_one_generic_compiles() {
+    #[allow(clippy::type_complexity)]
+    fn _check<S: Ya16Sink>() {
+      let _: fn(&crate::frame::Ya16LeFrame<'_>, bool, ColorMatrix, &mut S) -> Result<(), S::Error> =
+        ya16_to::<S>;
+    }
+  }
 
   #[test]
   fn ya16_walker_visits_every_row_once() {

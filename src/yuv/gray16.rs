@@ -3,9 +3,11 @@
 //! Single `u16` luma plane, all 16 bits active. No chroma.
 //!
 //! The marker carries `<const BE: bool = false>`: `Gray16` (= `Gray16<false>`)
-//! is the LE source; `Gray16<true>` is the BE source. The walker
-//! [`gray16_to::<BE>`] propagates `BE` from [`Gray16Frame<'_, BE>`] into the
-//! sinker dispatch.
+//! is the LE source; `Gray16<true>` is the BE source. Two walker entry points
+//! are emitted: [`gray16_to`] is an LE-only compatibility wrapper preserving
+//! the single-generic signature `gray16_to::<S>`; [`gray16_to_endian::<S, BE>`]
+//! is the const-generic entry point for BE-aware callers, propagating `BE`
+//! from [`Gray16Frame<'_, BE>`] into the sinker dispatch.
 
 use crate::frame::Gray16Frame;
 

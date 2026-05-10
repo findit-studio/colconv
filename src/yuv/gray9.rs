@@ -1,9 +1,11 @@
 //! Walker spec for `Gray9` (FFmpeg `gray9{le,be}`).
 //!
 //! The marker carries `<const BE: bool = false>`: `Gray9` (= `Gray9<false>`)
-//! is the LE source; `Gray9<true>` is the BE source. The walker
-//! [`gray9_to::<BE>`] propagates `BE` from [`Gray9Frame<'_, BE>`] into the
-//! sinker dispatch.
+//! is the LE source; `Gray9<true>` is the BE source. Two walker entry points
+//! are emitted: [`gray9_to`] is an LE-only compatibility wrapper preserving
+//! the single-generic signature `gray9_to::<S>`; [`gray9_to_endian::<S, BE>`]
+//! is the const-generic entry point for BE-aware callers, propagating `BE`
+//! from [`Gray9Frame<'_, BE>`] into the sinker dispatch.
 
 use crate::frame::{Gray9Frame, GrayNFrame};
 
