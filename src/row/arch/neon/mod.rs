@@ -47,6 +47,7 @@ pub(crate) mod mono1bit;
 mod packed_rgb;
 mod packed_rgb_16bit;
 mod packed_rgb_float;
+mod packed_yuv_4_1_1;
 mod packed_yuv_8bit;
 pub(crate) mod pal8;
 mod planar_gbr;
@@ -77,6 +78,7 @@ pub(crate) use packed_rgb::*;
 #[allow(unused_imports)]
 pub(crate) use packed_rgb_16bit::*;
 pub(crate) use packed_rgb_float::*;
+pub(crate) use packed_yuv_4_1_1::*;
 pub(crate) use packed_yuv_8bit::*;
 pub(crate) use planar_gbr::*;
 pub(crate) use planar_gbr_float::*;

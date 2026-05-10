@@ -81,6 +81,7 @@ pub(crate) mod mono1bit;
 mod packed_rgb;
 mod packed_rgb_16bit;
 mod packed_rgb_float;
+mod packed_yuv_4_1_1;
 mod packed_yuv_8bit;
 mod planar_gbr;
 mod planar_gbr_float;
@@ -113,6 +114,7 @@ pub(crate) use packed_rgb::*;
 #[allow(unused_imports)] // dispatcher wired in dispatch-wiring step
 pub(crate) use packed_rgb_16bit::*;
 pub(crate) use packed_rgb_float::*;
+pub(crate) use packed_yuv_4_1_1::*;
 pub(crate) use packed_yuv_8bit::*;
 pub(crate) use planar_gbr::*;
 pub(crate) use planar_gbr_float::*;

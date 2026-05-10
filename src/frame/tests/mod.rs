@@ -9,6 +9,7 @@ mod packed_rgb_16bit;
 mod packed_rgb_8bit;
 mod packed_rgb_f16;
 mod packed_rgb_float;
+mod packed_yuv_4_1_1;
 mod packed_yuv_4_4_4;
 mod packed_yuv_8bit;
 mod pal8;
