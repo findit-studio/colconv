@@ -50,6 +50,7 @@ walker! {
     row: Ayuv64Row,
     sink: Ayuv64Sink,
     walker: ayuv64_to,
+    walker_endian: ayuv64_to_endian,
     buf_field: packed,
     elem_type: u16,
     row_elems: |w| w * 4,

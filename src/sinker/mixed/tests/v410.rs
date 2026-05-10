@@ -476,7 +476,7 @@ fn v410_le_be_roundtrip_byte_identical() {
     .with_simd(false)
     .with_rgba(&mut out_be)
     .unwrap();
-  v410_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+  v410_to_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
 
   assert_eq!(
     out_le, out_be,

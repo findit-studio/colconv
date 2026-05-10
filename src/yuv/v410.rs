@@ -36,6 +36,7 @@ walker! {
     row: V410Row,
     sink: V410Sink,
     walker: v410_to,
+    walker_endian: v410_to_endian,
     buf_field: packed,
     elem_type: u32,
     row_elems: |w| w,

@@ -1010,7 +1010,7 @@ fn ayuv64_le_be_roundtrip_byte_identical() {
     .with_simd(false)
     .with_rgba(&mut out_be_rgba)
     .unwrap();
-  ayuv64_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+  ayuv64_to_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
 
   assert_eq!(
     out_le_rgba, out_be_rgba,
@@ -1030,7 +1030,7 @@ fn ayuv64_le_be_roundtrip_byte_identical() {
     .with_simd(false)
     .with_rgba_u16(&mut out_be_rgba_u16)
     .unwrap();
-  ayuv64_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be_u16).unwrap();
+  ayuv64_to_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be_u16).unwrap();
 
   assert_eq!(
     out_le_rgba_u16, out_be_rgba_u16,
@@ -1098,7 +1098,7 @@ fn ayuv64_le_be_roundtrip_strategy_a_plus_byte_identical() {
     .unwrap()
     .with_rgba_u16(&mut out_be_rgba_u16)
     .unwrap();
-  ayuv64_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+  ayuv64_to_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
 
   assert_eq!(out_le_rgb, out_be_rgb, "AYUV64 A+ RGB u8 LE/BE diverge");
   assert_eq!(out_le_rgba, out_be_rgba, "AYUV64 A+ RGBA u8 LE/BE diverge");

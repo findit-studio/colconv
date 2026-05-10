@@ -39,6 +39,7 @@ walker! {
     row: Xv36Row,
     sink: Xv36Sink,
     walker: xv36_to,
+    walker_endian: xv36_to_endian,
     buf_field: packed,
     elem_type: u16,
     row_elems: |w| w * 4,
