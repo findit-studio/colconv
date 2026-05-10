@@ -389,6 +389,237 @@ fn xyz12_be_byte_swap_matches_le() {
   assert_eq!(out_le, out_be);
 }
 
+/// Builds a row-padded Xyz12 frame with a varying-pattern of 12-bit
+/// `(X, Y, Z)` codes — exercises every byte-position so any byte-swap
+/// regression in the BE path surfaces. `pack` chooses the wire-format
+/// (high-bit-packed LE or BE).
+fn pattern_xyz12_frame(width: u32, height: u32, pack: fn(u16) -> u16) -> std::vec::Vec<u16> {
+  let w = width as usize;
+  let h = height as usize;
+  let mut buf = std::vec![0u16; w * h * 3];
+  // 12-bit codes spread across the active range, including extremes.
+  // Distinct values per channel surface any X/Y/Z swap regression.
+  let codes: [u16; 6] = [0x000, 0x123, 0x456, 0x789, 0xABC, 0xFFF];
+  for (i, c) in buf.iter_mut().enumerate() {
+    *c = pack(codes[i % codes.len()]);
+  }
+  buf
+}
+
+/// Runs the full LE/BE round-trip across every Xyz12 sinker output
+/// path under the given `simd` flag and `target_gamut`. All paths
+/// must be byte-identical between the LE and BE encodings of the
+/// same logical 12-bit codes — proves `<const BE>` propagates from
+/// frame → walker → row marker → sinker → row kernel for every
+/// output kernel (rgb, rgba, rgb_u16, rgba_u16, rgb_f32, rgb_f16,
+/// rgba_f16, luma, luma_u16, hsv, xyz_f32 — staging-shared paths
+/// included).
+#[allow(clippy::too_many_lines)]
+fn assert_xyz12_le_be_roundtrip_all_outputs(
+  width: u32,
+  height: u32,
+  target_gamut: DcpTargetGamut,
+  simd: bool,
+) {
+  let w = width as usize;
+  let h = height as usize;
+  let pix_le = pattern_xyz12_frame(width, height, pack12_le);
+  let pix_be = pattern_xyz12_frame(width, height, pack12_be);
+  let src_le = Xyz12LeFrame::try_new(&pix_le, width, height, 3 * width).unwrap();
+  let src_be = Xyz12BeFrame::try_new(&pix_be, width, height, 3 * width).unwrap();
+
+  let mut le_rgb = std::vec![0u8; w * h * 3];
+  let mut le_rgba = std::vec![0u8; w * h * 4];
+  let mut le_rgb_u16 = std::vec![0u16; w * h * 3];
+  let mut le_rgba_u16 = std::vec![0u16; w * h * 4];
+  let mut le_rgb_f32 = std::vec![0.0f32; w * h * 3];
+  let mut le_xyz_f32 = std::vec![0.0f32; w * h * 3];
+  let mut le_rgb_f16 = std::vec![half::f16::ZERO; w * h * 3];
+  let mut le_rgba_f16 = std::vec![half::f16::ZERO; w * h * 4];
+  let mut le_luma = std::vec![0u8; w * h];
+  let mut le_luma_u16 = std::vec![0u16; w * h];
+  let mut le_h = std::vec![0u8; w * h];
+  let mut le_s = std::vec![0u8; w * h];
+  let mut le_v = std::vec![0u8; w * h];
+
+  let mut be_rgb = std::vec![0u8; w * h * 3];
+  let mut be_rgba = std::vec![0u8; w * h * 4];
+  let mut be_rgb_u16 = std::vec![0u16; w * h * 3];
+  let mut be_rgba_u16 = std::vec![0u16; w * h * 4];
+  let mut be_rgb_f32 = std::vec![0.0f32; w * h * 3];
+  let mut be_xyz_f32 = std::vec![0.0f32; w * h * 3];
+  let mut be_rgb_f16 = std::vec![half::f16::ZERO; w * h * 3];
+  let mut be_rgba_f16 = std::vec![half::f16::ZERO; w * h * 4];
+  let mut be_luma = std::vec![0u8; w * h];
+  let mut be_luma_u16 = std::vec![0u16; w * h];
+  let mut be_h = std::vec![0u8; w * h];
+  let mut be_s = std::vec![0u8; w * h];
+  let mut be_v = std::vec![0u8; w * h];
+
+  {
+    let mut sink_le = MixedSinker::<Xyz12Le>::new(w, h)
+      .with_simd(simd)
+      .with_rgb(&mut le_rgb)
+      .unwrap()
+      .with_rgba(&mut le_rgba)
+      .unwrap()
+      .with_rgb_u16(&mut le_rgb_u16)
+      .unwrap()
+      .with_rgba_u16(&mut le_rgba_u16)
+      .unwrap()
+      .with_rgb_f32(&mut le_rgb_f32)
+      .unwrap()
+      .with_xyz_f32(&mut le_xyz_f32)
+      .unwrap()
+      .with_rgb_f16(&mut le_rgb_f16)
+      .unwrap()
+      .with_rgba_f16(&mut le_rgba_f16)
+      .unwrap()
+      .with_luma(&mut le_luma)
+      .unwrap()
+      .with_luma_u16(&mut le_luma_u16)
+      .unwrap()
+      .with_hsv(&mut le_h, &mut le_s, &mut le_v)
+      .unwrap();
+    xyz12_to(&src_le, target_gamut, &mut sink_le).unwrap();
+  }
+  {
+    let mut sink_be = MixedSinker::<Xyz12Be>::new(w, h)
+      .with_simd(simd)
+      .with_rgb(&mut be_rgb)
+      .unwrap()
+      .with_rgba(&mut be_rgba)
+      .unwrap()
+      .with_rgb_u16(&mut be_rgb_u16)
+      .unwrap()
+      .with_rgba_u16(&mut be_rgba_u16)
+      .unwrap()
+      .with_rgb_f32(&mut be_rgb_f32)
+      .unwrap()
+      .with_xyz_f32(&mut be_xyz_f32)
+      .unwrap()
+      .with_rgb_f16(&mut be_rgb_f16)
+      .unwrap()
+      .with_rgba_f16(&mut be_rgba_f16)
+      .unwrap()
+      .with_luma(&mut be_luma)
+      .unwrap()
+      .with_luma_u16(&mut be_luma_u16)
+      .unwrap()
+      .with_hsv(&mut be_h, &mut be_s, &mut be_v)
+      .unwrap();
+    xyz12_to(&src_be, target_gamut, &mut sink_be).unwrap();
+  }
+
+  // Every output path must be bit-identical (or bit-identical f32/f16
+  // patterns — the kernels are deterministic per `<BE>` since the
+  // post-load value is the same logical 12-bit code).
+  assert_eq!(le_rgb, be_rgb, "rgb (simd={simd}, gamut={target_gamut:?})");
+  assert_eq!(
+    le_rgba, be_rgba,
+    "rgba (simd={simd}, gamut={target_gamut:?})"
+  );
+  assert_eq!(
+    le_rgb_u16, be_rgb_u16,
+    "rgb_u16 (simd={simd}, gamut={target_gamut:?})"
+  );
+  assert_eq!(
+    le_rgba_u16, be_rgba_u16,
+    "rgba_u16 (simd={simd}, gamut={target_gamut:?})"
+  );
+  assert_eq!(
+    le_rgb_f32
+      .iter()
+      .map(|v| v.to_bits())
+      .collect::<std::vec::Vec<_>>(),
+    be_rgb_f32
+      .iter()
+      .map(|v| v.to_bits())
+      .collect::<std::vec::Vec<_>>(),
+    "rgb_f32 (simd={simd}, gamut={target_gamut:?})"
+  );
+  assert_eq!(
+    le_xyz_f32
+      .iter()
+      .map(|v| v.to_bits())
+      .collect::<std::vec::Vec<_>>(),
+    be_xyz_f32
+      .iter()
+      .map(|v| v.to_bits())
+      .collect::<std::vec::Vec<_>>(),
+    "xyz_f32 (simd={simd}, gamut={target_gamut:?})"
+  );
+  assert_eq!(
+    le_rgb_f16
+      .iter()
+      .map(|v| v.to_bits())
+      .collect::<std::vec::Vec<_>>(),
+    be_rgb_f16
+      .iter()
+      .map(|v| v.to_bits())
+      .collect::<std::vec::Vec<_>>(),
+    "rgb_f16 (simd={simd}, gamut={target_gamut:?})"
+  );
+  assert_eq!(
+    le_rgba_f16
+      .iter()
+      .map(|v| v.to_bits())
+      .collect::<std::vec::Vec<_>>(),
+    be_rgba_f16
+      .iter()
+      .map(|v| v.to_bits())
+      .collect::<std::vec::Vec<_>>(),
+    "rgba_f16 (simd={simd}, gamut={target_gamut:?})"
+  );
+  assert_eq!(
+    le_luma, be_luma,
+    "luma (simd={simd}, gamut={target_gamut:?})"
+  );
+  assert_eq!(
+    le_luma_u16, be_luma_u16,
+    "luma_u16 (simd={simd}, gamut={target_gamut:?})"
+  );
+  assert_eq!(le_h, be_h, "hsv.h (simd={simd}, gamut={target_gamut:?})");
+  assert_eq!(le_s, be_s, "hsv.s (simd={simd}, gamut={target_gamut:?})");
+  assert_eq!(le_v, be_v, "hsv.v (simd={simd}, gamut={target_gamut:?})");
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn xyz12_le_be_roundtrip_all_outputs_scalar_dcip3() {
+  assert_xyz12_le_be_roundtrip_all_outputs(16, 4, DcpTargetGamut::DciP3, false);
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn xyz12_le_be_roundtrip_all_outputs_scalar_rec709() {
+  assert_xyz12_le_be_roundtrip_all_outputs(16, 4, DcpTargetGamut::Rec709, false);
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn xyz12_le_be_roundtrip_all_outputs_scalar_rec2020() {
+  assert_xyz12_le_be_roundtrip_all_outputs(16, 4, DcpTargetGamut::Rec2020, false);
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn xyz12_le_be_roundtrip_all_outputs_simd_dcip3() {
+  assert_xyz12_le_be_roundtrip_all_outputs(16, 4, DcpTargetGamut::DciP3, true);
+}
+
 #[test]
 #[cfg_attr(
   miri,
