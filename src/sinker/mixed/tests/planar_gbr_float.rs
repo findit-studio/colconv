@@ -1845,33 +1845,38 @@ fn gbrpf32_le_be_roundtrip_byte_identical() {
   let b_be = as_be_f32_buf(&intended);
   let r_be = as_be_f32_buf(&intended);
 
-  let stride = w as u32;
-  let frame_le = Gbrpf32LeFrame::try_new(
-    &g_le, &b_le, &r_le, w as u32, h as u32, stride, stride, stride,
-  )
-  .unwrap();
-  let mut out_le = std::vec![0u8; w * h * 4];
-  let mut sink_le = MixedSinker::<Gbrpf32>::new(w, h)
-    .with_simd(false)
-    .with_rgba(&mut out_le)
+  // Cover both scalar and SIMD dispatch — the SIMD path catches missing
+  // `<BE>` propagation in the SIMD-aware row kernels that scalar misses.
+  for use_simd in [false, true] {
+    let stride = w as u32;
+    let frame_le = Gbrpf32LeFrame::try_new(
+      &g_le, &b_le, &r_le, w as u32, h as u32, stride, stride, stride,
+    )
     .unwrap();
-  gbrpf32_to(&frame_le, &mut sink_le).unwrap();
+    let mut out_le = std::vec![0u8; w * h * 4];
+    let mut sink_le = MixedSinker::<Gbrpf32>::new(w, h)
+      .with_simd(use_simd)
+      .with_rgba(&mut out_le)
+      .unwrap();
+    gbrpf32_to(&frame_le, &mut sink_le).unwrap();
 
-  let frame_be = Gbrpf32BeFrame::try_new(
-    &g_be, &b_be, &r_be, w as u32, h as u32, stride, stride, stride,
-  )
-  .unwrap();
-  let mut out_be = std::vec![0u8; w * h * 4];
-  let mut sink_be = MixedSinker::<Gbrpf32<true>>::new(w, h)
-    .with_simd(false)
-    .with_rgba(&mut out_be)
+    let frame_be = Gbrpf32BeFrame::try_new(
+      &g_be, &b_be, &r_be, w as u32, h as u32, stride, stride, stride,
+    )
     .unwrap();
-  gbrpf32_to(&frame_be, &mut sink_be).unwrap();
+    let mut out_be = std::vec![0u8; w * h * 4];
+    let mut sink_be = MixedSinker::<Gbrpf32<true>>::new(w, h)
+      .with_simd(use_simd)
+      .with_rgba(&mut out_be)
+      .unwrap();
+    // BE-frame call must use the `_endian` helper.
+    gbrpf32_to_endian(&frame_be, &mut sink_be).unwrap();
 
-  assert_eq!(
-    out_le, out_be,
-    "Gbrpf32 LE/BE outputs diverge — `<const BE>` propagation broken"
-  );
+    assert_eq!(
+      out_le, out_be,
+      "Gbrpf32 LE/BE outputs diverge — `<const BE>` propagation broken (use_simd={use_simd})",
+    );
+  }
 }
 
 #[test]
@@ -1903,33 +1908,35 @@ fn gbrapf32_le_be_roundtrip_byte_identical() {
   let r_be = as_be_f32_buf(&intended);
   let a_be = as_be_f32_buf(&intended);
 
-  let stride = w as u32;
-  let frame_le = Gbrapf32LeFrame::try_new(
-    &g_le, &b_le, &r_le, &a_le, w as u32, h as u32, stride, stride, stride, stride,
-  )
-  .unwrap();
-  let mut out_le = std::vec![0u8; w * h * 4];
-  let mut sink_le = MixedSinker::<Gbrapf32>::new(w, h)
-    .with_simd(false)
-    .with_rgba(&mut out_le)
+  for use_simd in [false, true] {
+    let stride = w as u32;
+    let frame_le = Gbrapf32LeFrame::try_new(
+      &g_le, &b_le, &r_le, &a_le, w as u32, h as u32, stride, stride, stride, stride,
+    )
     .unwrap();
-  gbrapf32_to(&frame_le, &mut sink_le).unwrap();
+    let mut out_le = std::vec![0u8; w * h * 4];
+    let mut sink_le = MixedSinker::<Gbrapf32>::new(w, h)
+      .with_simd(use_simd)
+      .with_rgba(&mut out_le)
+      .unwrap();
+    gbrapf32_to(&frame_le, &mut sink_le).unwrap();
 
-  let frame_be = Gbrapf32BeFrame::try_new(
-    &g_be, &b_be, &r_be, &a_be, w as u32, h as u32, stride, stride, stride, stride,
-  )
-  .unwrap();
-  let mut out_be = std::vec![0u8; w * h * 4];
-  let mut sink_be = MixedSinker::<Gbrapf32<true>>::new(w, h)
-    .with_simd(false)
-    .with_rgba(&mut out_be)
+    let frame_be = Gbrapf32BeFrame::try_new(
+      &g_be, &b_be, &r_be, &a_be, w as u32, h as u32, stride, stride, stride, stride,
+    )
     .unwrap();
-  gbrapf32_to(&frame_be, &mut sink_be).unwrap();
+    let mut out_be = std::vec![0u8; w * h * 4];
+    let mut sink_be = MixedSinker::<Gbrapf32<true>>::new(w, h)
+      .with_simd(use_simd)
+      .with_rgba(&mut out_be)
+      .unwrap();
+    gbrapf32_to_endian(&frame_be, &mut sink_be).unwrap();
 
-  assert_eq!(
-    out_le, out_be,
-    "Gbrapf32 LE/BE outputs diverge — `<const BE>` propagation broken"
-  );
+    assert_eq!(
+      out_le, out_be,
+      "Gbrapf32 LE/BE outputs diverge — `<const BE>` propagation broken (use_simd={use_simd})",
+    );
+  }
 }
 
 #[test]
@@ -1958,33 +1965,35 @@ fn gbrpf16_le_be_roundtrip_byte_identical() {
   let b_be = as_be_f16_buf(&intended);
   let r_be = as_be_f16_buf(&intended);
 
-  let stride = w as u32;
-  let frame_le = Gbrpf16LeFrame::try_new(
-    &g_le, &b_le, &r_le, w as u32, h as u32, stride, stride, stride,
-  )
-  .unwrap();
-  let mut out_le = std::vec![0u8; w * h * 4];
-  let mut sink_le = MixedSinker::<Gbrpf16>::new(w, h)
-    .with_simd(false)
-    .with_rgba(&mut out_le)
+  for use_simd in [false, true] {
+    let stride = w as u32;
+    let frame_le = Gbrpf16LeFrame::try_new(
+      &g_le, &b_le, &r_le, w as u32, h as u32, stride, stride, stride,
+    )
     .unwrap();
-  gbrpf16_to(&frame_le, &mut sink_le).unwrap();
+    let mut out_le = std::vec![0u8; w * h * 4];
+    let mut sink_le = MixedSinker::<Gbrpf16>::new(w, h)
+      .with_simd(use_simd)
+      .with_rgba(&mut out_le)
+      .unwrap();
+    gbrpf16_to(&frame_le, &mut sink_le).unwrap();
 
-  let frame_be = Gbrpf16BeFrame::try_new(
-    &g_be, &b_be, &r_be, w as u32, h as u32, stride, stride, stride,
-  )
-  .unwrap();
-  let mut out_be = std::vec![0u8; w * h * 4];
-  let mut sink_be = MixedSinker::<Gbrpf16<true>>::new(w, h)
-    .with_simd(false)
-    .with_rgba(&mut out_be)
+    let frame_be = Gbrpf16BeFrame::try_new(
+      &g_be, &b_be, &r_be, w as u32, h as u32, stride, stride, stride,
+    )
     .unwrap();
-  gbrpf16_to(&frame_be, &mut sink_be).unwrap();
+    let mut out_be = std::vec![0u8; w * h * 4];
+    let mut sink_be = MixedSinker::<Gbrpf16<true>>::new(w, h)
+      .with_simd(use_simd)
+      .with_rgba(&mut out_be)
+      .unwrap();
+    gbrpf16_to_endian(&frame_be, &mut sink_be).unwrap();
 
-  assert_eq!(
-    out_le, out_be,
-    "Gbrpf16 LE/BE outputs diverge — `<const BE>` propagation broken"
-  );
+    assert_eq!(
+      out_le, out_be,
+      "Gbrpf16 LE/BE outputs diverge — `<const BE>` propagation broken (use_simd={use_simd})",
+    );
+  }
 }
 
 #[test]
@@ -2016,31 +2025,33 @@ fn gbrapf16_le_be_roundtrip_byte_identical() {
   let r_be = as_be_f16_buf(&intended);
   let a_be = as_be_f16_buf(&intended);
 
-  let stride = w as u32;
-  let frame_le = Gbrapf16LeFrame::try_new(
-    &g_le, &b_le, &r_le, &a_le, w as u32, h as u32, stride, stride, stride, stride,
-  )
-  .unwrap();
-  let mut out_le = std::vec![0u8; w * h * 4];
-  let mut sink_le = MixedSinker::<Gbrapf16>::new(w, h)
-    .with_simd(false)
-    .with_rgba(&mut out_le)
+  for use_simd in [false, true] {
+    let stride = w as u32;
+    let frame_le = Gbrapf16LeFrame::try_new(
+      &g_le, &b_le, &r_le, &a_le, w as u32, h as u32, stride, stride, stride, stride,
+    )
     .unwrap();
-  gbrapf16_to(&frame_le, &mut sink_le).unwrap();
+    let mut out_le = std::vec![0u8; w * h * 4];
+    let mut sink_le = MixedSinker::<Gbrapf16>::new(w, h)
+      .with_simd(use_simd)
+      .with_rgba(&mut out_le)
+      .unwrap();
+    gbrapf16_to(&frame_le, &mut sink_le).unwrap();
 
-  let frame_be = Gbrapf16BeFrame::try_new(
-    &g_be, &b_be, &r_be, &a_be, w as u32, h as u32, stride, stride, stride, stride,
-  )
-  .unwrap();
-  let mut out_be = std::vec![0u8; w * h * 4];
-  let mut sink_be = MixedSinker::<Gbrapf16<true>>::new(w, h)
-    .with_simd(false)
-    .with_rgba(&mut out_be)
+    let frame_be = Gbrapf16BeFrame::try_new(
+      &g_be, &b_be, &r_be, &a_be, w as u32, h as u32, stride, stride, stride, stride,
+    )
     .unwrap();
-  gbrapf16_to(&frame_be, &mut sink_be).unwrap();
+    let mut out_be = std::vec![0u8; w * h * 4];
+    let mut sink_be = MixedSinker::<Gbrapf16<true>>::new(w, h)
+      .with_simd(use_simd)
+      .with_rgba(&mut out_be)
+      .unwrap();
+    gbrapf16_to_endian(&frame_be, &mut sink_be).unwrap();
 
-  assert_eq!(
-    out_le, out_be,
-    "Gbrapf16 LE/BE outputs diverge — `<const BE>` propagation broken"
-  );
+    assert_eq!(
+      out_le, out_be,
+      "Gbrapf16 LE/BE outputs diverge — `<const BE>` propagation broken (use_simd={use_simd})",
+    );
+  }
 }

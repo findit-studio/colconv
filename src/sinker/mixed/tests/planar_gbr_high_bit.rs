@@ -583,7 +583,7 @@ fn as_le_u16(host: &[u16]) -> std::vec::Vec<u16> {
 }
 
 macro_rules! gbrp_le_be_roundtrip {
-  ($name:ident, $marker:ident, $le_alias:ident, $be_alias:ident, $walker:ident, $bits:literal) => {
+  ($name:ident, $marker:ident, $le_alias:ident, $be_alias:ident, $walker:ident, $walker_endian:ident, $bits:literal) => {
     #[test]
     #[cfg_attr(miri, ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri")]
     fn $name() {
@@ -609,32 +609,44 @@ macro_rules! gbrp_le_be_roundtrip {
       let b_be = as_be_u16(&intended);
       let r_be = as_be_u16(&intended);
 
-      let stride = w as u32;
-      let frame_le =
-        crate::frame::$le_alias::try_new(&g_le, &b_le, &r_le, w as u32, h as u32, stride, stride, stride)
-          .unwrap();
-      let mut out_le = std::vec![0u8; w * h * 4];
-      let mut sink_le = MixedSinker::<$marker>::new(w, h)
-        .with_simd(false)
-        .with_rgba(&mut out_le)
+      // Cover both scalar and SIMD dispatch — the SIMD path catches missing
+      // `<BE>` propagation in the SIMD-aware row kernels that scalar misses.
+      for use_simd in [false, true] {
+        let stride = w as u32;
+        let frame_le = crate::frame::$le_alias::try_new(
+          &g_le, &b_le, &r_le, w as u32, h as u32, stride, stride, stride,
+        )
         .unwrap();
-      $walker(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
-
-      let frame_be =
-        crate::frame::$be_alias::try_new(&g_be, &b_be, &r_be, w as u32, h as u32, stride, stride, stride)
+        let mut out_le = std::vec![0u8; w * h * 4];
+        let mut sink_le = MixedSinker::<$marker>::new(w, h)
+          .with_simd(use_simd)
+          .with_rgba(&mut out_le)
           .unwrap();
-      let mut out_be = std::vec![0u8; w * h * 4];
-      let mut sink_be = MixedSinker::<$marker<true>>::new(w, h)
-        .with_simd(false)
-        .with_rgba(&mut out_be)
-        .unwrap();
-      $walker(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+        $walker(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
 
-      assert_eq!(
-        out_le,
-        out_be,
-        concat!(stringify!($marker), " LE/BE outputs diverge — `<const BE>` propagation broken"),
-      );
+        let frame_be = crate::frame::$be_alias::try_new(
+          &g_be, &b_be, &r_be, w as u32, h as u32, stride, stride, stride,
+        )
+        .unwrap();
+        let mut out_be = std::vec![0u8; w * h * 4];
+        let mut sink_be = MixedSinker::<$marker<true>>::new(w, h)
+          .with_simd(use_simd)
+          .with_rgba(&mut out_be)
+          .unwrap();
+        // BE-frame call must use the `_endian` helper — the LE-only wrapper
+        // is signature-bound to `Frame<'_, false>`.
+        $walker_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+        assert_eq!(
+          out_le,
+          out_be,
+          concat!(
+            stringify!($marker),
+            " LE/BE outputs diverge — `<const BE>` propagation broken (use_simd={})",
+          ),
+          use_simd,
+        );
+      }
     }
   };
 }
@@ -645,6 +657,7 @@ gbrp_le_be_roundtrip!(
   Gbrp9LeFrame,
   Gbrp9BeFrame,
   gbrp9_to,
+  gbrp9_to_endian,
   9
 );
 gbrp_le_be_roundtrip!(
@@ -653,6 +666,7 @@ gbrp_le_be_roundtrip!(
   Gbrp10LeFrame,
   Gbrp10BeFrame,
   gbrp10_to,
+  gbrp10_to_endian,
   10
 );
 gbrp_le_be_roundtrip!(
@@ -661,6 +675,7 @@ gbrp_le_be_roundtrip!(
   Gbrp12LeFrame,
   Gbrp12BeFrame,
   gbrp12_to,
+  gbrp12_to_endian,
   12
 );
 gbrp_le_be_roundtrip!(
@@ -669,6 +684,7 @@ gbrp_le_be_roundtrip!(
   Gbrp14LeFrame,
   Gbrp14BeFrame,
   gbrp14_to,
+  gbrp14_to_endian,
   14
 );
 gbrp_le_be_roundtrip!(
@@ -677,11 +693,12 @@ gbrp_le_be_roundtrip!(
   Gbrp16LeFrame,
   Gbrp16BeFrame,
   gbrp16_to,
+  gbrp16_to_endian,
   16
 );
 
 macro_rules! gbrap_le_be_roundtrip {
-  ($name:ident, $marker:ident, $le_alias:ident, $be_alias:ident, $walker:ident, $bits:literal) => {
+  ($name:ident, $marker:ident, $le_alias:ident, $be_alias:ident, $walker:ident, $walker_endian:ident, $bits:literal) => {
     #[test]
     #[cfg_attr(miri, ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri")]
     fn $name() {
@@ -709,47 +726,59 @@ macro_rules! gbrap_le_be_roundtrip {
       let r_be = as_be_u16(&intended);
       let a_be = as_be_u16(&intended);
 
-      let stride = w as u32;
-      let frame_le = crate::frame::$le_alias::try_new(
-        &g_le, &b_le, &r_le, &a_le, w as u32, h as u32, stride, stride, stride, stride,
-      )
-      .unwrap();
-      // Exercise both u8 and u16 RGBA paths to cover gbra_to_rgba_*_row plus the
-      // alpha_extract::copy_alpha_plane_u16 / u16_to_u8 propagation.
-      let mut out_le_rgba = std::vec![0u8; w * h * 4];
-      let mut out_le_rgba_u16 = std::vec![0u16; w * h * 4];
-      let mut sink_le = MixedSinker::<$marker>::new(w, h)
-        .with_simd(false)
-        .with_rgba(&mut out_le_rgba)
-        .unwrap()
-        .with_rgba_u16(&mut out_le_rgba_u16)
+      // Cover both scalar and SIMD dispatch.
+      for use_simd in [false, true] {
+        let stride = w as u32;
+        let frame_le = crate::frame::$le_alias::try_new(
+          &g_le, &b_le, &r_le, &a_le, w as u32, h as u32, stride, stride, stride, stride,
+        )
         .unwrap();
-      $walker(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+        // Exercise both u8 and u16 RGBA paths to cover gbra_to_rgba_*_row plus the
+        // alpha_extract::copy_alpha_plane_u16 / u16_to_u8 propagation.
+        let mut out_le_rgba = std::vec![0u8; w * h * 4];
+        let mut out_le_rgba_u16 = std::vec![0u16; w * h * 4];
+        let mut sink_le = MixedSinker::<$marker>::new(w, h)
+          .with_simd(use_simd)
+          .with_rgba(&mut out_le_rgba)
+          .unwrap()
+          .with_rgba_u16(&mut out_le_rgba_u16)
+          .unwrap();
+        $walker(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
 
-      let frame_be = crate::frame::$be_alias::try_new(
-        &g_be, &b_be, &r_be, &a_be, w as u32, h as u32, stride, stride, stride, stride,
-      )
-      .unwrap();
-      let mut out_be_rgba = std::vec![0u8; w * h * 4];
-      let mut out_be_rgba_u16 = std::vec![0u16; w * h * 4];
-      let mut sink_be = MixedSinker::<$marker<true>>::new(w, h)
-        .with_simd(false)
-        .with_rgba(&mut out_be_rgba)
-        .unwrap()
-        .with_rgba_u16(&mut out_be_rgba_u16)
+        let frame_be = crate::frame::$be_alias::try_new(
+          &g_be, &b_be, &r_be, &a_be, w as u32, h as u32, stride, stride, stride, stride,
+        )
         .unwrap();
-      $walker(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+        let mut out_be_rgba = std::vec![0u8; w * h * 4];
+        let mut out_be_rgba_u16 = std::vec![0u16; w * h * 4];
+        let mut sink_be = MixedSinker::<$marker<true>>::new(w, h)
+          .with_simd(use_simd)
+          .with_rgba(&mut out_be_rgba)
+          .unwrap()
+          .with_rgba_u16(&mut out_be_rgba_u16)
+          .unwrap();
+        // BE-frame call must use the `_endian` helper.
+        $walker_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
 
-      assert_eq!(
-        out_le_rgba,
-        out_be_rgba,
-        concat!(stringify!($marker), " RGBA u8 LE/BE outputs diverge"),
-      );
-      assert_eq!(
-        out_le_rgba_u16,
-        out_be_rgba_u16,
-        concat!(stringify!($marker), " RGBA u16 LE/BE outputs diverge"),
-      );
+        assert_eq!(
+          out_le_rgba,
+          out_be_rgba,
+          concat!(
+            stringify!($marker),
+            " RGBA u8 LE/BE outputs diverge (use_simd={})",
+          ),
+          use_simd,
+        );
+        assert_eq!(
+          out_le_rgba_u16,
+          out_be_rgba_u16,
+          concat!(
+            stringify!($marker),
+            " RGBA u16 LE/BE outputs diverge (use_simd={})",
+          ),
+          use_simd,
+        );
+      }
     }
   };
 }
@@ -760,6 +789,7 @@ gbrap_le_be_roundtrip!(
   Gbrap10LeFrame,
   Gbrap10BeFrame,
   gbrap10_to,
+  gbrap10_to_endian,
   10
 );
 gbrap_le_be_roundtrip!(
@@ -768,6 +798,7 @@ gbrap_le_be_roundtrip!(
   Gbrap12LeFrame,
   Gbrap12BeFrame,
   gbrap12_to,
+  gbrap12_to_endian,
   12
 );
 gbrap_le_be_roundtrip!(
@@ -776,6 +807,7 @@ gbrap_le_be_roundtrip!(
   Gbrap14LeFrame,
   Gbrap14BeFrame,
   gbrap14_to,
+  gbrap14_to_endian,
   14
 );
 gbrap_le_be_roundtrip!(
@@ -784,5 +816,6 @@ gbrap_le_be_roundtrip!(
   Gbrap16LeFrame,
   Gbrap16BeFrame,
   gbrap16_to,
+  gbrap16_to_endian,
   16
 );

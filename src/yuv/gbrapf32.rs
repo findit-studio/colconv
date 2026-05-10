@@ -10,7 +10,11 @@
 //! source. The walker [`gbrapf32_to::<BE>`] propagates `BE` from
 //! [`Gbrapf32Frame<'_, BE>`] into the sinker dispatch.
 
-use crate::{PixelSink, SourceFormat, frame::Gbrapf32Frame, sealed::Sealed};
+use crate::{
+  PixelSink, SourceFormat,
+  frame::{Gbrapf32Frame, Gbrapf32LeFrame},
+  sealed::Sealed,
+};
 
 /// Zero-sized marker for the planar GBRAP float-32 source format
 /// (`AV_PIX_FMT_GBRAPF32{LE,BE}`). `<const BE: bool>` defaults to `false`.
@@ -74,8 +78,9 @@ pub trait Gbrapf32Sink<const BE: bool = false>:
 
 /// Walks a [`Gbrapf32Frame<'_, BE>`] row by row, dispatching each row to
 /// the sink. Propagates `<const BE: bool>` from the frame into
-/// [`Gbrapf32Sink<BE>`].
-pub fn gbrapf32_to<S, const BE: bool>(
+/// [`Gbrapf32Sink<BE>`]. Use the LE-only [`gbrapf32_to`] wrapper for
+/// pre-Phase-4 explicit-turbofish callers.
+pub fn gbrapf32_to_endian<S, const BE: bool>(
   src: &Gbrapf32Frame<'_, BE>,
   sink: &mut S,
 ) -> Result<(), S::Error>
@@ -105,10 +110,27 @@ where
   Ok(())
 }
 
+/// LE-only back-compat wrapper preserving the pre-Phase-4 walker
+/// signature. Forwards to [`gbrapf32_to_endian`] with `BE = false`.
+///
+/// Rust forbids defaults on function-position const-generic parameters,
+/// so an explicit-turbofish caller written before the Phase-4 BE
+/// migration (`gbrapf32_to::<MySink>(...)`) would otherwise fail to
+/// compile. Keeping this single-generic wrapper preserves source
+/// compatibility for those call sites. BE-aware callers should use
+/// [`gbrapf32_to_endian`] directly.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn gbrapf32_to<S>(src: &Gbrapf32LeFrame<'_>, sink: &mut S) -> Result<(), S::Error>
+where
+  S: Gbrapf32Sink<false>,
+{
+  gbrapf32_to_endian::<S, false>(src, sink)
+}
+
 #[cfg(all(test, feature = "std"))]
 mod tests {
   use super::*;
-  use crate::{PixelSink, frame::Gbrapf32LeFrame};
+  use crate::PixelSink;
   use core::convert::Infallible;
 
   struct CountingSink {
@@ -132,6 +154,17 @@ mod tests {
   }
 
   impl Gbrapf32Sink for CountingSink {}
+
+  // Compile-pass regression for the codex round-1 finding on PR #109
+  // (hand-written `gbrapf32_to`). See `gbrpf32::tests` for full rationale.
+  // BE-aware callers should use `gbrapf32_to_endian::<S, BE>` directly.
+  #[test]
+  fn gbrapf32_to_explicit_turbofish_one_generic_compiles() {
+    #[allow(clippy::type_complexity)]
+    fn _check<S: Gbrapf32Sink>() {
+      let _: fn(&Gbrapf32LeFrame<'_>, &mut S) -> Result<(), S::Error> = gbrapf32_to::<S>;
+    }
+  }
 
   #[test]
   fn gbrapf32_walker_visits_every_row_once() {

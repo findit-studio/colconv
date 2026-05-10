@@ -10,7 +10,11 @@
 //! The walker [`gbrpf16_to::<BE>`] propagates `BE` from
 //! [`Gbrpf16Frame<'_, BE>`] into the sinker dispatch.
 
-use crate::{PixelSink, SourceFormat, frame::Gbrpf16Frame, sealed::Sealed};
+use crate::{
+  PixelSink, SourceFormat,
+  frame::{Gbrpf16Frame, Gbrpf16LeFrame},
+  sealed::Sealed,
+};
 
 /// Zero-sized marker for the planar GBR float-16 source format
 /// (`AV_PIX_FMT_GBRPF16{LE,BE}`). `<const BE: bool>` defaults to `false`.
@@ -72,8 +76,9 @@ pub trait Gbrpf16Sink<const BE: bool = false>:
 
 /// Walks a [`Gbrpf16Frame<'_, BE>`] row by row, dispatching each row to the
 /// sink. Propagates `<const BE: bool>` from the frame into
-/// [`Gbrpf16Sink<BE>`].
-pub fn gbrpf16_to<S, const BE: bool>(
+/// [`Gbrpf16Sink<BE>`]. Use the LE-only [`gbrpf16_to`] wrapper for
+/// pre-Phase-4 explicit-turbofish callers.
+pub fn gbrpf16_to_endian<S, const BE: bool>(
   src: &Gbrpf16Frame<'_, BE>,
   sink: &mut S,
 ) -> Result<(), S::Error>
@@ -100,10 +105,27 @@ where
   Ok(())
 }
 
+/// LE-only back-compat wrapper preserving the pre-Phase-4 walker
+/// signature. Forwards to [`gbrpf16_to_endian`] with `BE = false`.
+///
+/// Rust forbids defaults on function-position const-generic parameters,
+/// so an explicit-turbofish caller written before the Phase-4 BE
+/// migration (`gbrpf16_to::<MySink>(...)`) would otherwise fail to
+/// compile. Keeping this single-generic wrapper preserves source
+/// compatibility for those call sites. BE-aware callers should use
+/// [`gbrpf16_to_endian`] directly.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn gbrpf16_to<S>(src: &Gbrpf16LeFrame<'_>, sink: &mut S) -> Result<(), S::Error>
+where
+  S: Gbrpf16Sink<false>,
+{
+  gbrpf16_to_endian::<S, false>(src, sink)
+}
+
 #[cfg(all(test, feature = "std"))]
 mod tests {
   use super::*;
-  use crate::{PixelSink, frame::Gbrpf16LeFrame};
+  use crate::PixelSink;
   use core::convert::Infallible;
 
   struct CountingSink {
@@ -127,6 +149,17 @@ mod tests {
   }
 
   impl Gbrpf16Sink for CountingSink {}
+
+  // Compile-pass regression for the codex round-1 finding on PR #109
+  // (hand-written `gbrpf16_to`). See `gbrpf32::tests` for full rationale.
+  // BE-aware callers should use `gbrpf16_to_endian::<S, BE>` directly.
+  #[test]
+  fn gbrpf16_to_explicit_turbofish_one_generic_compiles() {
+    #[allow(clippy::type_complexity)]
+    fn _check<S: Gbrpf16Sink>() {
+      let _: fn(&Gbrpf16LeFrame<'_>, &mut S) -> Result<(), S::Error> = gbrpf16_to::<S>;
+    }
+  }
 
   #[test]
   fn gbrpf16_walker_visits_every_row_once() {

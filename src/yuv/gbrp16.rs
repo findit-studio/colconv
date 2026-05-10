@@ -17,6 +17,7 @@ walker! {
     row: Gbrp16Row,
     sink: Gbrp16Sink,
     walker: gbrp16_to,
+    walker_endian: gbrp16_to_endian,
     walker_inner: gbrp16_walker,
     elem_type: u16,
     row_doc: "One output row of a [`Gbrp16`] source — three full-width\n\

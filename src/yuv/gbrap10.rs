@@ -18,6 +18,7 @@ walker! {
     row: Gbrap10Row,
     sink: Gbrap10Sink,
     walker: gbrap10_to,
+    walker_endian: gbrap10_to_endian,
     walker_inner: gbrap10_walker,
     elem_type: u16,
     row_doc: "One output row of a [`Gbrap10`] source — four full-width\n\
@@ -43,4 +44,26 @@ impl<'a> Gbrap10Row<'a> {
     self.v()
   }
   // Alpha row is already exposed as `self.a()` by the macro — no rename needed.
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+  use super::*;
+  use crate::ColorMatrix;
+
+  // Compile-pass regression for the codex round-1 finding on PR #109
+  // (`planar4_bits_be` arm). See `gbrp10::tests` for the full rationale.
+  // BE-aware callers should use `gbrap10_to_endian::<S, BE>` directly.
+  #[test]
+  fn gbrap10_to_explicit_turbofish_one_generic_compiles() {
+    #[allow(clippy::type_complexity)]
+    fn _check<S: Gbrap10Sink>() {
+      let _: fn(
+        &crate::frame::Gbrap10LeFrame<'_>,
+        bool,
+        ColorMatrix,
+        &mut S,
+      ) -> Result<(), S::Error> = gbrap10_to::<S>;
+    }
+  }
 }

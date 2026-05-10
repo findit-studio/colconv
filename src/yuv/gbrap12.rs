@@ -18,6 +18,7 @@ walker! {
     row: Gbrap12Row,
     sink: Gbrap12Sink,
     walker: gbrap12_to,
+    walker_endian: gbrap12_to_endian,
     walker_inner: gbrap12_walker,
     elem_type: u16,
     row_doc: "One output row of a [`Gbrap12`] source — four full-width\n\

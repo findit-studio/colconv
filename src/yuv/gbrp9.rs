@@ -23,6 +23,7 @@ walker! {
     row: Gbrp9Row,
     sink: Gbrp9Sink,
     walker: gbrp9_to,
+    walker_endian: gbrp9_to_endian,
     walker_inner: gbrp9_walker,
     elem_type: u16,
     row_doc: "One output row of a [`Gbrp9`] source — three full-width\n\
