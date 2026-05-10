@@ -1334,17 +1334,21 @@ pub enum Yuv410pFrameError {
 /// subsampling: every chroma sample covers four Y columns horizontally
 /// while chroma rows are fully sampled vertically. Compared to 4:2:2
 /// (half-width chroma) the only change is the horizontal stride: U/V
-/// planes are `width / 4` wide instead of `width / 2`.
+/// planes are `width.div_ceil(4)` wide instead of `width / 2`.
 ///
 /// Three planes:
 /// - `y` — full-size luma, `y_stride >= width`, length `>=
 ///   y_stride * height`.
 /// - `u` / `v` — **quarter-width**, **full-height** chroma,
-///   `u_stride >= width / 4`, length `>= u_stride * height`.
+///   `u_stride >= width.div_ceil(4)`, length `>= u_stride * height`.
 ///
-/// `width` must be a multiple of 4 (4:1:1 subsamples chroma 4:1
-/// horizontally — odd or 2-mod-4 widths leave Y columns without a
-/// paired chroma sample, and the SIMD kernels assume `width % 4 == 0`).
+/// `width` may be any non-zero value — non-4-aligned widths are
+/// accepted. Chroma row width is `width.div_ceil(4)`, matching
+/// FFmpeg's `AV_PIX_FMT_YUV411P` descriptor (`log2_chroma_w = 2`,
+/// ceiling right shift). For widths not divisible by 4, the trailing
+/// 1..3 Y columns share the final chroma sample (a partial 1..3-pixel
+/// chroma group). The SIMD kernels stride a multiple-of-4 Y block and
+/// the per-row scalar tail picks up that 1..3-pixel remainder.
 /// `height` has no parity constraint — chroma is full-height.
 ///
 /// Common in DV-NTSC video (legacy). Extremely rare on modern

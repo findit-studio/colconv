@@ -408,14 +408,19 @@ pub enum RowSlice {
   /// Quarter‑width U (Cb) plane in a planar 4:1:1 / 4:1:0 source
   /// ([`Yuv411p`](crate::yuv::Yuv411p) — DV-NTSC legacy;
   /// [`Yuv410p`](crate::yuv::Yuv410p) — Cinepak / extreme-old codecs).
-  /// `width / 4` bytes per row — each chroma sample covers four Y
-  /// columns horizontally. In 4:1:0 the same chroma row also covers
-  /// four consecutive Y rows vertically; in 4:1:1 chroma is full-height.
+  /// `width.div_ceil(4)` bytes per row — each chroma sample covers
+  /// four Y columns horizontally. Yuv410p enforces `width % 4 == 0`
+  /// at the frame layer (so `width.div_ceil(4) == width / 4`); Yuv411p
+  /// accepts arbitrary widths via FFmpeg ceiling chroma. In 4:1:0 the
+  /// same chroma row also covers four consecutive Y rows vertically;
+  /// in 4:1:1 chroma is full-height.
   #[display("U Quarter")]
   UQuarter,
   /// Quarter‑width V (Cr) plane in a planar 4:1:1 / 4:1:0 source
   /// ([`Yuv411p`](crate::yuv::Yuv411p) /
-  /// [`Yuv410p`](crate::yuv::Yuv410p)). `width / 4` bytes per row.
+  /// [`Yuv410p`](crate::yuv::Yuv410p)). `width.div_ceil(4)` bytes per
+  /// row (see [`Self::UQuarter`] for the Yuv410p-vs-Yuv411p
+  /// width-rounding distinction).
   #[display("V Quarter")]
   VQuarter,
   /// Half‑width interleaved UV plane in a semi‑planar 4:2:0 source

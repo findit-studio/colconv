@@ -639,14 +639,20 @@ macro_rules! walker {
       pub fn y(&self) -> &'a [$elem] {
         self.y
       }
-      /// Quarter-width U (Cb) row — `width / 4` samples. Each sample
-      /// is duplicated across 4 adjacent Y columns by the kernel
-      /// (4:1:1 / 4:1:0).
+      /// Quarter-width U (Cb) row — `width.div_ceil(4)` samples. Each
+      /// sample is duplicated across 4 adjacent Y columns by the kernel
+      /// (4:1:1 / 4:1:0). For Yuv410p `width % 4 == 0` is enforced at
+      /// the frame layer so `width.div_ceil(4) == width / 4`; Yuv411p
+      /// accepts arbitrary widths via FFmpeg ceiling chroma, so the
+      /// final chroma sample may cover a partial 1..3-pixel group of
+      /// trailing Y columns.
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn u_quarter(&self) -> &'a [$elem] {
         self.u_quarter
       }
-      /// Quarter-width V (Cr) row — `width / 4` samples (4:1:1 / 4:1:0).
+      /// Quarter-width V (Cr) row — `width.div_ceil(4)` samples
+      /// (4:1:1 / 4:1:0). See [`Self::u_quarter`] for the Yuv410p-vs-
+      /// Yuv411p width-rounding distinction.
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn v_quarter(&self) -> &'a [$elem] {
         self.v_quarter

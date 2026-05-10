@@ -32,7 +32,9 @@ walker! {
               horizontally (one chroma sample per four Y columns).",
     walker_doc: "Converts a YUV 4:1:1 frame by walking its rows and feeding each\n\
                  one to the [`Yuv411pSink`]. Chroma advances every row (full-height\n\
-                 chroma like 4:2:2); the chroma row covers `width / 4` samples\n\
-                 (4× horizontal subsampling).",
+                 chroma like 4:2:2); the chroma row covers `width.div_ceil(4)`\n\
+                 samples (4× horizontal subsampling, FFmpeg ceiling — for widths\n\
+                 not divisible by 4 the final chroma sample covers a partial\n\
+                 1..3-pixel group of trailing Y columns).",
   }
 }
