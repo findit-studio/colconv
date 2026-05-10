@@ -18,11 +18,39 @@ walker! {
     row: Gray9Row,
     sink: Gray9Sink,
     walker: gray9_to,
+    walker_endian: gray9_to_endian,
     walker_inner: gray9_to_inner,
     elem_type: u16,
     row_doc: "A single row from a [`Gray9Frame`].",
     walker_doc: "Walks a [`Gray9Frame<'_, BE>`] row by row, dispatching each \
                  row to the sink. Propagates `<const BE: bool>` from the \
                  frame into [`Gray9Sink<BE>`].",
+  }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+  use super::*;
+  use crate::ColorMatrix;
+
+  // Compile-pass regression for the codex round-1 finding on PR #106
+  // (`planar1_bits_be` arm). Switching the Gray9 walker macro from
+  // `planar1_bits` to `planar1_bits_be` without an LE wrapper would change
+  // the public `gray9_to` signature from one generic param (`S`) to two
+  // (`S, const BE: bool`), breaking downstream callers using the explicit
+  // sink spelling `gray9_to::<MySink>(...)`. Function-position
+  // const-generic defaults aren't allowed, so the macro emits an LE-only
+  // wrapper preserving the original signature; this test pins it.
+  #[test]
+  fn gray9_to_explicit_turbofish_one_generic_compiles() {
+    #[allow(clippy::type_complexity)]
+    fn _check<S: Gray9Sink>() {
+      let _: fn(
+        &crate::frame::Gray9LeFrame<'_>,
+        bool,
+        ColorMatrix,
+        &mut S,
+      ) -> Result<(), S::Error> = gray9_to::<S>;
+    }
   }
 }

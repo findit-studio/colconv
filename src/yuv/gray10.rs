@@ -16,11 +16,33 @@ walker! {
     row: Gray10Row,
     sink: Gray10Sink,
     walker: gray10_to,
+    walker_endian: gray10_to_endian,
     walker_inner: gray10_to_inner,
     elem_type: u16,
     row_doc: "A single row from a [`Gray10Frame`].",
     walker_doc: "Walks a [`Gray10Frame<'_, BE>`] row by row, dispatching each \
                  row to the sink. Propagates `<const BE: bool>` from the \
                  frame into [`Gray10Sink<BE>`].",
+  }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+  use super::*;
+  use crate::ColorMatrix;
+
+  // Compile-pass regression for the codex round-1 finding on PR #106
+  // (`planar1_bits_be` arm). See `gray9::tests` for the full rationale.
+  #[test]
+  fn gray10_to_explicit_turbofish_one_generic_compiles() {
+    #[allow(clippy::type_complexity)]
+    fn _check<S: Gray10Sink>() {
+      let _: fn(
+        &crate::frame::Gray10LeFrame<'_>,
+        bool,
+        ColorMatrix,
+        &mut S,
+      ) -> Result<(), S::Error> = gray10_to::<S>;
+    }
   }
 }
