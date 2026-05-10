@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+  util::{be_encoded_u16_buf, le_encoded_u16_buf},
+  *,
+};
 
 // ---- Yuv420pFrame16 / Yuv420p10Frame ----------------------------------
 //
@@ -590,18 +593,6 @@ fn p012_try_new_checked_accepts_low_packed_flat_content_by_design() {
 // (2) a negative case where a sample is invalid even after `from_le`
 // normalization, ensuring the validator still surfaces real errors.
 
-/// Build a `Vec<u16>` representing the LE-encoded byte layout of
-/// `intended` (i.e., what FFmpeg would emit on the wire). On an LE
-/// host the result equals `intended` element-wise; on a BE host every
-/// element is byte-swapped relative to `intended`.
-fn le_encoded_u16_buf(intended: &[u16]) -> std::vec::Vec<u16> {
-  let bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
-  bytes
-    .chunks_exact(2)
-    .map(|b| u16::from_ne_bytes([b[0], b[1]]))
-    .collect()
-}
-
 #[test]
 fn yuv420p10_try_new_checked_accepts_le_encoded_buffer_on_any_host() {
   // 10-bit-low-packed white = 1023 (LE bytes [0xFF, 0x03]).
@@ -699,17 +690,6 @@ fn p012_try_new_checked_accepts_le_encoded_buffer_on_any_host() {
 //
 // These tests build BE-encoded byte buffers so on every host the
 // validator sees the post-`from_be` logical sample.
-
-/// Build a `Vec<u16>` representing the BE-encoded byte layout of
-/// `intended` (i.e. what FFmpeg would emit on the wire for `*BE`
-/// formats). Mirror of [`le_encoded_u16_buf`].
-fn be_encoded_u16_buf(intended: &[u16]) -> std::vec::Vec<u16> {
-  let bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_be_bytes()).collect();
-  bytes
-    .chunks_exact(2)
-    .map(|b| u16::from_ne_bytes([b[0], b[1]]))
-    .collect()
-}
 
 #[test]
 fn p010_be_try_new_checked_accepts_be_encoded_buffer_on_any_host() {

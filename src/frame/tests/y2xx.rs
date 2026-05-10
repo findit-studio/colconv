@@ -1,20 +1,10 @@
-use super::super::{
-  Y2xxFrame, Y2xxFrameError, Y210BeFrame, Y210Frame, Y210LeFrame, Y212BeFrame, Y212Frame,
-  Y216BeFrame, Y216Frame,
+use super::{
+  super::{
+    Y2xxFrame, Y2xxFrameError, Y210BeFrame, Y210Frame, Y210LeFrame, Y212BeFrame, Y212Frame,
+    Y216BeFrame, Y216Frame,
+  },
+  util::le_encoded_u16_buf,
 };
-
-// Build a `Vec<u16>` whose in-memory byte layout is the LE-encoded byte
-// representation of `intended` (i.e., what FFmpeg would emit on the wire).
-// On an LE host the result equals `intended` element-wise; on a BE host
-// every element is byte-swapped relative to `intended`. Matches the
-// `le_encoded_u16_buf` helpers in the high-bit subsampled-frame test files.
-fn le_encoded_u16_buf(intended: &[u16]) -> std::vec::Vec<u16> {
-  let bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
-  bytes
-    .chunks_exact(2)
-    .map(|b| u16::from_ne_bytes([b[0], b[1]]))
-    .collect()
-}
 
 #[test]
 fn y210_frame_try_new_accepts_valid_tight() {

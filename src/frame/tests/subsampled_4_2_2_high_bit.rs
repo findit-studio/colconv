@@ -1,4 +1,4 @@
-use super::*;
+use super::{util::le_encoded_u16_buf, *};
 
 // ---- Yuv422pFrame16::try_new_checked ---------------------------------
 
@@ -131,14 +131,6 @@ fn yuv422p16_try_new_checked_accepts_full_u16_range() {
 // BE host every `u16` is byte-swapped. The validator must `from_le`-
 // normalize before the range check on both hosts. See the comment at
 // the bottom of `subsampled_4_2_0_high_bit.rs` for the full rationale.
-
-fn le_encoded_u16_buf(intended: &[u16]) -> std::vec::Vec<u16> {
-  let bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
-  bytes
-    .chunks_exact(2)
-    .map(|b| u16::from_ne_bytes([b[0], b[1]]))
-    .collect()
-}
 
 #[test]
 fn yuv422p10_try_new_checked_accepts_le_encoded_buffer_on_any_host() {

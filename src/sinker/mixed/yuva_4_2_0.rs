@@ -667,8 +667,8 @@ fn yuva420p_high_bit_process<
       let rgba_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row = rgba_u16_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
       expand_rgb_u16_to_rgba_u16_row::<BITS>(rgb_u16_row, rgba_u16_row, w);
-      // BE = false: this sinker handles only LE-encoded high-bit Yuva*p inputs
-      // today. Phase 4 will plumb a `<const BE: bool>` from the row type here.
+      // `BE` is plumbed from the row type so the alpha-plane copy honors
+      // the same wire endianness as the caller's high-bit Yuva*p input.
       crate::row::alpha_extract::copy_alpha_plane_u16::<BITS, BE>(a_row, rgba_u16_row, w, use_simd);
     }
   } else if want_rgba_u16 {

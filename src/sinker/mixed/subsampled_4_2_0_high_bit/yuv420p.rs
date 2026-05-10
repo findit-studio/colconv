@@ -155,9 +155,10 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv420p9<BE>> {
       let dst = &mut luma[one_plane_start..one_plane_end];
       for (d, &s) in dst.iter_mut().zip(row.y().iter()) {
         // Normalize BE-encoded wire bytes to host-native before the
-        // luma downshift — without this, a valid BE sample like
-        // mid-gray `0x0200` (10-bit) would be read as `0x0002` on a
-        // LE host and the `>> (BITS - 8)` would write 0 instead of 128.
+        // luma downshift — without this, a valid BE mid-gray sample
+        // (`1 << (BITS - 1)`, e.g. `0x0100` for 9-bit, `0x0200` for
+        // 10-bit, `0x0800` for 12-bit) would be byte-swapped on a LE
+        // host and the `>> (BITS - 8)` would write 0 instead of 128.
         let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         *d = (logical >> (BITS - 8)) as u8;
       }
@@ -458,9 +459,10 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv420p10<BE>> {
       let dst = &mut luma[one_plane_start..one_plane_end];
       for (d, &s) in dst.iter_mut().zip(row.y().iter()) {
         // Normalize BE-encoded wire bytes to host-native before the
-        // luma downshift — without this, a valid BE sample like
-        // mid-gray `0x0200` (10-bit) would be read as `0x0002` on a
-        // LE host and the `>> (BITS - 8)` would write 0 instead of 128.
+        // luma downshift — without this, a valid BE mid-gray sample
+        // (`1 << (BITS - 1)`, e.g. `0x0100` for 9-bit, `0x0200` for
+        // 10-bit, `0x0800` for 12-bit) would be byte-swapped on a LE
+        // host and the `>> (BITS - 8)` would write 0 instead of 128.
         let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         *d = (logical >> (BITS - 8)) as u8;
       }
@@ -742,9 +744,10 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv420p12<BE>> {
       let dst = &mut luma[one_plane_start..one_plane_end];
       for (d, &s) in dst.iter_mut().zip(row.y().iter()) {
         // Normalize BE-encoded wire bytes to host-native before the
-        // luma downshift — without this, a valid BE sample like
-        // mid-gray `0x0200` (10-bit) would be read as `0x0002` on a
-        // LE host and the `>> (BITS - 8)` would write 0 instead of 128.
+        // luma downshift — without this, a valid BE mid-gray sample
+        // (`1 << (BITS - 1)`, e.g. `0x0100` for 9-bit, `0x0200` for
+        // 10-bit, `0x0800` for 12-bit) would be byte-swapped on a LE
+        // host and the `>> (BITS - 8)` would write 0 instead of 128.
         let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         *d = (logical >> (BITS - 8)) as u8;
       }
@@ -1014,9 +1017,10 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv420p14<BE>> {
       let dst = &mut luma[one_plane_start..one_plane_end];
       for (d, &s) in dst.iter_mut().zip(row.y().iter()) {
         // Normalize BE-encoded wire bytes to host-native before the
-        // luma downshift — without this, a valid BE sample like
-        // mid-gray `0x0200` (10-bit) would be read as `0x0002` on a
-        // LE host and the `>> (BITS - 8)` would write 0 instead of 128.
+        // luma downshift — without this, a valid BE mid-gray sample
+        // (`1 << (BITS - 1)`, e.g. `0x0100` for 9-bit, `0x0200` for
+        // 10-bit, `0x0800` for 12-bit) would be byte-swapped on a LE
+        // host and the `>> (BITS - 8)` would write 0 instead of 128.
         let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         *d = (logical >> (BITS - 8)) as u8;
       }
@@ -1285,9 +1289,10 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv420p16<BE>> {
       let dst = &mut luma[one_plane_start..one_plane_end];
       for (d, &s) in dst.iter_mut().zip(row.y().iter()) {
         // Normalize BE-encoded wire bytes to host-native before the
-        // luma downshift — without this, a valid BE sample like
-        // mid-gray `0x0200` (10-bit) would be read as `0x0002` on a
-        // LE host and the `>> (BITS - 8)` would write 0 instead of 128.
+        // luma downshift — without this, a valid BE mid-gray sample
+        // (`1 << (BITS - 1)`, e.g. `0x0100` for 9-bit, `0x0200` for
+        // 10-bit, `0x0800` for 12-bit) would be byte-swapped on a LE
+        // host and the `>> (BITS - 8)` would write 0 instead of 128.
         let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         *d = (logical >> (BITS - 8)) as u8;
       }
