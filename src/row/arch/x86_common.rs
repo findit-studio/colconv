@@ -25,9 +25,20 @@ const BSWAP_U32X4_MASK: __m128i =
 ///
 /// # Safety
 ///
-/// Same contract as `_mm_loadu_si128` plus `_mm_shuffle_epi8` (SSSE3,
-/// always available in SSE4.1+ contexts). `ptr` must point to at least
-/// 16 readable bytes; alignment is unrestricted.
+/// - `ptr` must point to at least 16 readable bytes; alignment is
+///   unrestricted (this is `_mm_loadu_si128`, not `_mm_load_si128`).
+/// - **SSE2** must be available in the caller's `target_feature`
+///   context for `_mm_loadu_si128`.
+/// - **SSSE3** must be available in the caller's `target_feature`
+///   context when `BE = true` for `_mm_shuffle_epi8`. SSE4.1 is the
+///   typical caller floor here; in Rust's target-feature model
+///   `sse4.1` enables `ssse3` (LLVM's SSE feature dependency chain),
+///   so callers gated `#[target_feature(enable = "sse4.1")]` (or any
+///   superset such as `avx2` / `avx512bw`) satisfy this requirement
+///   without an extra `enable = "ssse3"`. The `BE = false` branch
+///   issues no SSSE3 instruction, so SSE2 alone is sufficient there;
+///   the merged const-generic body is still gated by the strictest of
+///   the two paths, the SSSE3 requirement.
 #[inline(always)]
 pub(super) unsafe fn x2_load_endian_u32x4<const BE: bool>(ptr: *const u8) -> __m128i {
   unsafe {

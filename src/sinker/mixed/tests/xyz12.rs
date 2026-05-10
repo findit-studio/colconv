@@ -27,9 +27,33 @@ fn pack12_be(code: u16) -> u16 {
   u16::from_ne_bytes((code << 4).to_be_bytes())
 }
 
-/// Builds a row-padded Xyz12LE frame with a constant 12-bit `(X, Y, Z)`
-/// triple. Inputs are 12-bit codes; the helper applies the high-bit
-/// packing.
+/// Bit-pattern equality for `f32` slices — elementwise `to_bits()`
+/// comparison via `iter().zip()` (no temporary `Vec` allocations).
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn bits_eq_f32(a: &[f32], b: &[f32]) -> bool {
+  a.len() == b.len()
+    && a
+      .iter()
+      .zip(b.iter())
+      .all(|(x, y)| x.to_bits() == y.to_bits())
+}
+
+/// Bit-pattern equality for `half::f16` slices — same allocation-free
+/// pattern as [`bits_eq_f32`].
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn bits_eq_f16(a: &[half::f16], b: &[half::f16]) -> bool {
+  a.len() == b.len()
+    && a
+      .iter()
+      .zip(b.iter())
+      .all(|(x, y)| x.to_bits() == y.to_bits())
+}
+
+/// Builds a tightly packed Xyz12LE frame with a constant 12-bit
+/// `(X, Y, Z)` triple. Inputs are 12-bit codes; the helper applies the
+/// high-bit packing. Allocation is exactly `w * h * 3` `u16` elements
+/// and the frame uses stride `3 * width`, so no per-row padding bytes
+/// are present (row-stride coverage lives in other tests).
 fn solid_xyz12_frame_le(width: u32, height: u32, x: u16, y: u16, z: u16) -> Vec<u16> {
   let w = width as usize;
   let h = height as usize;
@@ -43,7 +67,8 @@ fn solid_xyz12_frame_le(width: u32, height: u32, x: u16, y: u16, z: u16) -> Vec<
 }
 
 /// Builds the BE-wire variant of `solid_xyz12_frame_le` for the same
-/// 12-bit codes (host-independent via `pack12_be`).
+/// 12-bit codes (host-independent via `pack12_be`). Same tightly packed
+/// allocation: `w * h * 3` `u16` elements with stride `3 * width`.
 fn solid_xyz12_frame_be(width: u32, height: u32, x: u16, y: u16, z: u16) -> Vec<u16> {
   let w = width as usize;
   let h = height as usize;
@@ -389,16 +414,21 @@ fn xyz12_be_byte_swap_matches_le() {
   assert_eq!(out_le, out_be);
 }
 
-/// Builds a row-padded Xyz12 frame with a varying-pattern of 12-bit
+/// Builds a tightly packed Xyz12 frame with a varying-pattern of 12-bit
 /// `(X, Y, Z)` codes — exercises every byte-position so any byte-swap
-/// regression in the BE path surfaces. `pack` chooses the wire-format
-/// (high-bit-packed LE or BE).
+/// regression in the BE path surfaces. Allocation is exactly `w * h * 3`
+/// `u16` elements with stride `3 * width` (no row padding). `pack`
+/// chooses the wire-format (high-bit-packed LE or BE).
 fn pattern_xyz12_frame(width: u32, height: u32, pack: fn(u16) -> u16) -> std::vec::Vec<u16> {
   let w = width as usize;
   let h = height as usize;
   let mut buf = std::vec![0u16; w * h * 3];
   // 12-bit codes spread across the active range, including extremes.
-  // Distinct values per channel surface any X/Y/Z swap regression.
+  // The 6-code cycle has length coprime with 3 (the X/Y/Z stride), so
+  // the mapping of (code, channel) advances by one step per pixel —
+  // every (channel, code) pair appears within the first six pixels.
+  // That suffices to surface an X/Y/Z swap regression even though each
+  // channel does not get its own private sequence.
   let codes: [u16; 6] = [0x000, 0x123, 0x456, 0x789, 0xABC, 0xFFF];
   for (i, c) in buf.iter_mut().enumerate() {
     *c = pack(codes[i % codes.len()]);
@@ -527,48 +557,20 @@ fn assert_xyz12_le_be_roundtrip_all_outputs(
     le_rgba_u16, be_rgba_u16,
     "rgba_u16 (simd={simd}, gamut={target_gamut:?})"
   );
-  assert_eq!(
-    le_rgb_f32
-      .iter()
-      .map(|v| v.to_bits())
-      .collect::<std::vec::Vec<_>>(),
-    be_rgb_f32
-      .iter()
-      .map(|v| v.to_bits())
-      .collect::<std::vec::Vec<_>>(),
+  assert!(
+    bits_eq_f32(&le_rgb_f32, &be_rgb_f32),
     "rgb_f32 (simd={simd}, gamut={target_gamut:?})"
   );
-  assert_eq!(
-    le_xyz_f32
-      .iter()
-      .map(|v| v.to_bits())
-      .collect::<std::vec::Vec<_>>(),
-    be_xyz_f32
-      .iter()
-      .map(|v| v.to_bits())
-      .collect::<std::vec::Vec<_>>(),
+  assert!(
+    bits_eq_f32(&le_xyz_f32, &be_xyz_f32),
     "xyz_f32 (simd={simd}, gamut={target_gamut:?})"
   );
-  assert_eq!(
-    le_rgb_f16
-      .iter()
-      .map(|v| v.to_bits())
-      .collect::<std::vec::Vec<_>>(),
-    be_rgb_f16
-      .iter()
-      .map(|v| v.to_bits())
-      .collect::<std::vec::Vec<_>>(),
+  assert!(
+    bits_eq_f16(&le_rgb_f16, &be_rgb_f16),
     "rgb_f16 (simd={simd}, gamut={target_gamut:?})"
   );
-  assert_eq!(
-    le_rgba_f16
-      .iter()
-      .map(|v| v.to_bits())
-      .collect::<std::vec::Vec<_>>(),
-    be_rgba_f16
-      .iter()
-      .map(|v| v.to_bits())
-      .collect::<std::vec::Vec<_>>(),
+  assert!(
+    bits_eq_f16(&le_rgba_f16, &be_rgba_f16),
     "rgba_f16 (simd={simd}, gamut={target_gamut:?})"
   );
   assert_eq!(
@@ -587,7 +589,7 @@ fn assert_xyz12_le_be_roundtrip_all_outputs(
 #[test]
 #[cfg_attr(
   miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
 )]
 fn xyz12_le_be_roundtrip_all_outputs_scalar_dcip3() {
   assert_xyz12_le_be_roundtrip_all_outputs(16, 4, DcpTargetGamut::DciP3, false);
@@ -596,7 +598,7 @@ fn xyz12_le_be_roundtrip_all_outputs_scalar_dcip3() {
 #[test]
 #[cfg_attr(
   miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
 )]
 fn xyz12_le_be_roundtrip_all_outputs_scalar_rec709() {
   assert_xyz12_le_be_roundtrip_all_outputs(16, 4, DcpTargetGamut::Rec709, false);
@@ -605,7 +607,7 @@ fn xyz12_le_be_roundtrip_all_outputs_scalar_rec709() {
 #[test]
 #[cfg_attr(
   miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  ignore = "half::f16 uses inline assembly on aarch64 unsupported by Miri"
 )]
 fn xyz12_le_be_roundtrip_all_outputs_scalar_rec2020() {
   assert_xyz12_le_be_roundtrip_all_outputs(16, 4, DcpTargetGamut::Rec2020, false);
