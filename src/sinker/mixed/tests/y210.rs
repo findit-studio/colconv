@@ -470,7 +470,7 @@ fn y210_le_be_roundtrip_byte_identical() {
     .unwrap()
     .with_luma_u16(&mut out_be_luma_u16)
     .unwrap();
-  y210_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+  y210_to_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
 
   assert_eq!(
     out_le_rgba, out_be_rgba,

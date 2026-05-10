@@ -284,7 +284,7 @@ fn x2rgb10_le_be_roundtrip_byte_identical() {
     .with_simd(false)
     .with_rgba(&mut out_be)
     .unwrap();
-  x2rgb10_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+  x2rgb10_to_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
 
   assert_eq!(
     out_le, out_be,
@@ -314,7 +314,7 @@ fn x2bgr10_le_be_roundtrip_byte_identical() {
     .with_simd(false)
     .with_rgba(&mut out_be)
     .unwrap();
-  x2bgr10_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+  x2bgr10_to_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
 
   assert_eq!(
     out_le, out_be,

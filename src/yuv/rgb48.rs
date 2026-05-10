@@ -30,6 +30,7 @@ walker! {
     row: Rgb48Row,
     sink: Rgb48Sink,
     walker: rgb48_to,
+    walker_endian: rgb48_to_endian,
     buf_field: rgb48,
     elem_type: u16,
     row_elems: |w| w * 3,
@@ -110,5 +111,25 @@ mod tests {
     };
     walks_le(&frame, &mut sink).unwrap();
     assert_eq!(sink.rows_seen, 4);
+  }
+
+  // Compile-pass regression for the codex finding (PR #105 review). Switching
+  // from `walker!(packed)` to `walker!(packed_be)` would otherwise change the
+  // public `rgb48_to` signature from one generic param (`S`) to two
+  // (`S, const BE: bool`), which breaks downstream callers using the previous
+  // explicit sink spelling `rgb48_to::<MySink>(...)`. Function-position
+  // const-generic defaults aren't allowed, so the macro emits an LE-only
+  // wrapper preserving the original signature.
+  #[test]
+  fn rgb48_to_explicit_turbofish_one_generic_compiles() {
+    #[allow(clippy::type_complexity)]
+    fn _check<S: Rgb48Sink>() {
+      let _: fn(
+        &crate::frame::Rgb48LeFrame<'_>,
+        bool,
+        ColorMatrix,
+        &mut S,
+      ) -> Result<(), S::Error> = rgb48_to::<S>;
+    }
   }
 }

@@ -32,6 +32,7 @@ walker! {
     row: X2Bgr10Row,
     sink: X2Bgr10Sink,
     walker: x2bgr10_to,
+    walker_endian: x2bgr10_to_endian,
     buf_field: x2bgr10,
     elem_type: u8,
     row_elems: |w| w * 4,

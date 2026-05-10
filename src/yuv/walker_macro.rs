@@ -166,6 +166,15 @@ macro_rules! walker {
   // The Row type itself is **not** parameterized on BE — Row is just borrowed
   // bytes; the kernel monomorphization picks up `BE` from the sinker type.
   //
+  // Two walker fns are generated:
+  //   - `$walker_endian<S, const BE: bool>(&$frame<'_, BE>, ...)` — the
+  //     full const-generic helper (LE + BE callers).
+  //   - `$walker<S>(&$frame<'_, false>, ...)` — LE-only back-compat
+  //     wrapper preserving the pre-Phase-4 (`packed`) signature so
+  //     downstream explicit-turbofish callers (`$walker::<MySink>(...)`)
+  //     keep compiling. Function-position const-generic defaults aren't
+  //     allowed by Rust, so the wrapper is required for source compat.
+  //
   // Used by Tier 8 trial: Rgb48, Bgr48, Rgba64, Bgra64, X2Rgb10, X2Bgr10.
   //
   // NOTE: The Y2xx family (Y210/Y212/Y216) is intentionally handled by a
@@ -187,6 +196,7 @@ macro_rules! walker {
       row: $row:ident,
       sink: $sink:ident,
       walker: $walker:ident,
+      walker_endian: $walker_endian:ident,
       buf_field: $buf:ident,
       elem_type: $elem:ty,
       row_elems: |$w:ident| $row_elems:expr,
@@ -261,7 +271,7 @@ macro_rules! walker {
 
     $(#[$walker_meta])*
     #[doc = $walker_doc]
-    pub fn $walker<S, const BE: bool>(
+    pub fn $walker_endian<S, const BE: bool>(
       src: &$frame<'_, BE>,
       full_range: bool,
       matrix: $crate::ColorMatrix,
@@ -285,6 +295,29 @@ macro_rules! walker {
       }
       Ok(())
     }
+
+    /// LE-only back-compat wrapper preserving the pre-Phase-4 `packed`
+    /// walker signature. Forwards to the const-generic helper with
+    /// `BE = false`.
+    ///
+    /// Rust forbids defaults on function-position const-generic
+    /// parameters, so an explicit-turbofish caller written before the
+    /// `packed` → `packed_be` migration (`$walker::<MySink>(...)`)
+    /// would otherwise fail to compile. Keeping this single-generic
+    /// wrapper preserves source compatibility for those call sites.
+    /// BE-aware callers should use the `_endian` helper directly.
+    #[cfg_attr(not(tarpaulin), inline(always))]
+    pub fn $walker<S>(
+      src: &$frame<'_, false>,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error>
+    where
+      S: $sink<false>,
+    {
+      $walker_endian::<S, false>(src, full_range, matrix, sink)
+    }
   };
 
   // ---------- packed_be_y2xx (single-buffer Y2xx with `<const BE>`) --------
@@ -299,6 +332,14 @@ macro_rules! walker {
   // The marker, Sink subtrait, and Row are identical in shape to
   // `packed_be`. The walker fn signature differs: the frame parameter
   // is `&Y2xxFrame<'_, BITS, BE>` instead of `&$frame<'_, BE>`.
+  //
+  // Two walker fns are generated (mirroring `packed_be`):
+  //   - `$walker_endian<S, const BE: bool>(&Y2xxFrame<'_, BITS, BE>, ...)`
+  //     — the full const-generic helper (LE + BE callers).
+  //   - `$walker<S>(&Y2xxFrame<'_, BITS, false>, ...)` — LE-only
+  //     back-compat wrapper preserving the pre-Phase-4 signature so
+  //     downstream explicit-turbofish callers (`$walker::<MySink>(...)`)
+  //     keep compiling.
   //
   // Used by Tier 4: Y210, Y212, Y216 (each pinning a different BITS
   // literal).
@@ -320,6 +361,7 @@ macro_rules! walker {
       row: $row:ident,
       sink: $sink:ident,
       walker: $walker:ident,
+      walker_endian: $walker_endian:ident,
       buf_field: $buf:ident,
       elem_type: $elem:ty,
       row_elems: |$w:ident| $row_elems:expr,
@@ -389,7 +431,7 @@ macro_rules! walker {
 
     $(#[$walker_meta])*
     #[doc = $walker_doc]
-    pub fn $walker<S, const BE: bool>(
+    pub fn $walker_endian<S, const BE: bool>(
       src: &$crate::frame::$frame_inner<'_, $bits, BE>,
       full_range: bool,
       matrix: $crate::ColorMatrix,
@@ -412,6 +454,28 @@ macro_rules! walker {
         sink.process($row::new($buf, row, matrix, full_range))?;
       }
       Ok(())
+    }
+
+    /// LE-only back-compat wrapper preserving the pre-Phase-4 walker
+    /// signature. Forwards to the const-generic helper with `BE = false`.
+    ///
+    /// Rust forbids defaults on function-position const-generic
+    /// parameters, so an explicit-turbofish caller written before the
+    /// `packed` → `packed_be_y2xx` migration (`$walker::<MySink>(...)`)
+    /// would otherwise fail to compile. Keeping this single-generic
+    /// wrapper preserves source compatibility for those call sites.
+    /// BE-aware callers should use the `_endian` helper directly.
+    #[cfg_attr(not(tarpaulin), inline(always))]
+    pub fn $walker<S>(
+      src: &$crate::frame::$frame_inner<'_, $bits, false>,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error>
+    where
+      S: $sink<false>,
+    {
+      $walker_endian::<S, false>(src, full_range, matrix, sink)
     }
   };
 

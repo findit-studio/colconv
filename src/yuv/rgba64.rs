@@ -30,6 +30,7 @@ walker! {
     row: Rgba64Row,
     sink: Rgba64Sink,
     walker: rgba64_to,
+    walker_endian: rgba64_to_endian,
     buf_field: rgba64,
     elem_type: u16,
     row_elems: |w| w * 4,

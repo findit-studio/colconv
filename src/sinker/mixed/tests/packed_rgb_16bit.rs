@@ -554,7 +554,7 @@ fn rgb48_le_be_roundtrip_byte_identical() {
     .with_simd(false)
     .with_rgba(&mut out_be)
     .unwrap();
-  rgb48_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+  rgb48_to_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
 
   assert_eq!(
     out_le, out_be,
@@ -589,7 +589,7 @@ fn bgr48_le_be_roundtrip_byte_identical() {
     .with_simd(false)
     .with_rgba(&mut out_be)
     .unwrap();
-  bgr48_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+  bgr48_to_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
 
   assert_eq!(
     out_le, out_be,
@@ -633,7 +633,7 @@ fn rgba64_le_be_roundtrip_byte_identical() {
     .unwrap()
     .with_rgba_u16(&mut out_be_rgba_u16)
     .unwrap();
-  rgba64_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+  rgba64_to_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
 
   assert_eq!(
     out_le_rgba, out_be_rgba,
@@ -679,7 +679,7 @@ fn bgra64_le_be_roundtrip_byte_identical() {
     .unwrap()
     .with_rgba_u16(&mut out_be_rgba_u16)
     .unwrap();
-  bgra64_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+  bgra64_to_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
 
   assert_eq!(
     out_le_rgba, out_be_rgba,
