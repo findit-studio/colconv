@@ -1122,9 +1122,10 @@ impl PixelSink for MixedSinker<'_, Yuv440p> {
 //
 // 4:1:1 planar 8-bit — quarter-width chroma, full-height. DV-NTSC
 // legacy. Per-row math reuses the dedicated `yuv_411_to_rgb_row` /
-// `yuv_411_to_rgba_row` family (1→4 chroma upsample). Width must be
-// a multiple of 4 (validated at frame construction; re-asserted in
-// `begin_frame` and `process` for direct callers).
+// `yuv_411_to_rgba_row` family (1→4 chroma upsample). Following
+// FFmpeg's `AV_PIX_FMT_YUV411P` semantics, chroma row width is
+// `width.div_ceil(4)`: non-4-aligned widths get a partial 1..3-pixel
+// final chroma group, handled by the scalar tail.
 
 impl<'a> MixedSinker<'a, Yuv411p> {
   /// Attaches a packed 32-bit RGBA output buffer.
@@ -1200,13 +1201,10 @@ impl PixelSink for MixedSinker<'_, Yuv411p> {
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    // 4:1:1 quarters chroma horizontally — reject `width % 4 != 0`
-    // up front. The underlying row primitives assume `width & 3 == 0`
-    // and would panic on the first `process` call otherwise
-    // (`MixedSinker::new` is infallible and accepts any width).
-    if self.width & 3 != 0 {
-      return Err(MixedSinkerError::OddWidth { width: self.width });
-    }
+    // FFmpeg-compatible: arbitrary widths accepted (chroma row is
+    // `width.div_ceil(4)` samples; the scalar kernel handles a
+    // partial 1..3-pixel final chroma group). No width-parity
+    // restriction here.
     check_dimensions_match(self.width, self.height, width, height)
   }
 
@@ -1216,16 +1214,11 @@ impl PixelSink for MixedSinker<'_, Yuv411p> {
     let idx = row.row();
     let use_simd = self.simd;
 
-    // Defense in depth — `begin_frame` already validated `width`,
-    // but direct `process` callers may have skipped it. Reuse
-    // `OddWidth` for the `width % 4 != 0` rejection: the variant
-    // semantically covers width-parity violations, and 4:1:1 is
-    // legacy enough that adding a dedicated `WidthNotMultipleOfFour`
-    // variant on a public, non-exhaustive error type would be
-    // overkill.
-    if w & 3 != 0 {
-      return Err(MixedSinkerError::OddWidth { width: w });
-    }
+    // Chroma row shape: `width.div_ceil(4)` samples (FFmpeg
+    // `AV_PIX_FMT_YUV411P`). For widths divisible by 4 this matches
+    // `w / 4`; for non-aligned widths the trailing 1..3 Y pixels
+    // share the last (partial) chroma sample.
+    let chroma_w = w.div_ceil(4);
     if row.y().len() != w {
       return Err(MixedSinkerError::RowShapeMismatch {
         which: RowSlice::Y,
@@ -1234,19 +1227,19 @@ impl PixelSink for MixedSinker<'_, Yuv411p> {
         actual: row.y().len(),
       });
     }
-    if row.u_quarter().len() != w / 4 {
+    if row.u_quarter().len() != chroma_w {
       return Err(MixedSinkerError::RowShapeMismatch {
         which: RowSlice::UQuarter,
         row: idx,
-        expected: w / 4,
+        expected: chroma_w,
         actual: row.u_quarter().len(),
       });
     }
-    if row.v_quarter().len() != w / 4 {
+    if row.v_quarter().len() != chroma_w {
       return Err(MixedSinkerError::RowShapeMismatch {
         which: RowSlice::VQuarter,
         row: idx,
-        expected: w / 4,
+        expected: chroma_w,
         actual: row.v_quarter().len(),
       });
     }

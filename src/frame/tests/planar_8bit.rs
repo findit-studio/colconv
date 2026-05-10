@@ -109,7 +109,8 @@ fn yuv410p_planes() -> (std::vec::Vec<u8>, std::vec::Vec<u8>, std::vec::Vec<u8>)
 fn planes_411(w: u32, h: u32) -> (std::vec::Vec<u8>, std::vec::Vec<u8>, std::vec::Vec<u8>) {
   let ws = w as usize;
   let hs = h as usize;
-  let cw = ws / 4;
+  // FFmpeg `AV_PIX_FMT_YUV411P`: chroma row width = `width.div_ceil(4)`.
+  let cw = ws.div_ceil(4);
   (
     std::vec![0u8; ws * hs],
     std::vec![128u8; cw * hs],
@@ -269,20 +270,55 @@ fn yuv411p_try_new_rejects_zero_dim() {
 }
 
 #[test]
-fn yuv411p_try_new_rejects_width_not_multiple_of_4() {
-  for w in [1u32, 2, 3, 5, 6, 7, 9, 14, 15, 17, 18] {
+fn yuv411p_try_new_accepts_non_4_aligned_widths() {
+  // FFmpeg `AV_PIX_FMT_YUV411P` defines chroma width via ceiling
+  // right shift (`(w + 3) >> 2`). Construction must accept any
+  // non-zero width and size chroma rows accordingly: 1→1, 2→1, 3→1,
+  // 5→2, 6→2, 7→2, 17→5, 641→161.
+  for (w, expected_cw) in [
+    (1u32, 1u32),
+    (2, 1),
+    (3, 1),
+    (5, 2),
+    (6, 2),
+    (7, 2),
+    (9, 3),
+    (17, 5),
+    (641, 161),
+  ] {
     let ws = w as usize;
-    let y = std::vec![0u8; ws.next_multiple_of(4) * 8];
-    // Use plenty of chroma so the only-failing constraint is the
-    // width-parity check.
-    let u = std::vec![128u8; ws * 8];
-    let v = std::vec![128u8; ws * 8];
-    let e = Yuv411pFrame::try_new(&y, &u, &v, w, 8, w.next_multiple_of(4), w, w).unwrap_err();
-    assert!(
-      matches!(e, Yuv411pFrameError::WidthNotMultipleOfFour { width } if width == w),
-      "width={w}: {e:?}"
-    );
+    let cws = expected_cw as usize;
+    let h: u32 = 4;
+    let hs = h as usize;
+    let y = std::vec![0u8; ws * hs];
+    let u = std::vec![128u8; cws * hs];
+    let v = std::vec![128u8; cws * hs];
+    let f = Yuv411pFrame::try_new(&y, &u, &v, w, h, w, expected_cw, expected_cw)
+      .unwrap_or_else(|e| panic!("width={w} (chroma={expected_cw}) should be valid: {e:?}"));
+    assert_eq!(f.width(), w, "width={w}");
+    assert_eq!(f.u_stride(), expected_cw, "width={w}");
+    assert_eq!(f.v_stride(), expected_cw, "width={w}");
   }
+}
+
+#[test]
+fn yuv411p_try_new_rejects_chroma_stride_below_div_ceil_4() {
+  // Width=5 → chroma_width = 2; passing u_stride=1 must fail with
+  // the new ceil-shift validator.
+  let y = std::vec![0u8; 5 * 4];
+  let u = std::vec![128u8; 2 * 4];
+  let v = std::vec![128u8; 2 * 4];
+  let e = Yuv411pFrame::try_new(&y, &u, &v, 5, 4, 5, 1, 2).unwrap_err();
+  assert!(
+    matches!(
+      e,
+      Yuv411pFrameError::UStrideTooSmall {
+        chroma_width: 2,
+        u_stride: 1
+      }
+    ),
+    "{e:?}"
+  );
 }
 
 #[test]

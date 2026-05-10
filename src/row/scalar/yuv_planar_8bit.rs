@@ -473,11 +473,16 @@ pub(crate) fn yuv_444_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: boo
 /// Same range / matrix semantics as [`yuv_420_to_rgb_row`]; only the
 /// chroma indexing differs (`x / 4` instead of `x / 2`).
 ///
+/// FFmpeg-compatible widths: arbitrary `width` is accepted. Chroma
+/// row size is `width.div_ceil(4)` samples; widths not divisible by
+/// 4 leave a partial 1..3-pixel final chroma group, where the last
+/// chroma sample covers the trailing 1..3 Y pixels.
+///
 /// # Panics (debug builds)
 ///
-/// - `width % 4 == 0` (4:1:1 quarters chroma columns).
-/// - `y.len() >= width`, `u_quarter.len() >= width / 4`,
-///   `v_quarter.len() >= width / 4`, `rgb_out.len() >= 3 * width`.
+/// - `y.len() >= width`, `u_quarter.len() >= width.div_ceil(4)`,
+///   `v_quarter.len() >= width.div_ceil(4)`,
+///   `rgb_out.len() >= 3 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn yuv_411_to_rgb_row(
   y: &[u8],
@@ -519,11 +524,16 @@ pub(crate) fn yuv_411_to_rgba_row(
 /// 4:1:1 has no alpha-source variant: there is no `Yuva411p` source
 /// format in FFmpeg, so `ALPHA_SRC` is unconditional `false`.
 ///
+/// FFmpeg-compatible widths: chroma row width is
+/// `width.div_ceil(4)` samples. The kernel processes full 4-pixel
+/// chroma groups, then handles a trailing 1..3-pixel partial group
+/// (when `width % 4 != 0`) by reusing the final chroma sample for
+/// the remaining Y pixels.
+///
 /// # Panics (debug builds)
 ///
-/// - `width % 4 == 0`.
-/// - `y.len() >= width`, `u_quarter.len() >= width / 4`,
-///   `v_quarter.len() >= width / 4`,
+/// - `y.len() >= width`, `u_quarter.len() >= width.div_ceil(4)`,
+///   `v_quarter.len() >= width.div_ceil(4)`,
 ///   `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
@@ -535,10 +545,15 @@ pub(crate) fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  debug_assert_eq!(width & 3, 0, "YUV 4:1:1 requires width % 4 == 0");
   debug_assert!(y.len() >= width, "y row too short");
-  debug_assert!(u_quarter.len() >= width / 4, "u_quarter row too short");
-  debug_assert!(v_quarter.len() >= width / 4, "v_quarter row too short");
+  debug_assert!(
+    u_quarter.len() >= width.div_ceil(4),
+    "u_quarter row too short"
+  );
+  debug_assert!(
+    v_quarter.len() >= width.div_ceil(4),
+    "v_quarter row too short"
+  );
   let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(out.len() >= width * bpp, "out row too short for {bpp}bpp");
 
@@ -546,9 +561,13 @@ pub(crate) fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
   let (y_off, y_scale, c_scale) = range_params_n::<8, 8>(full_range);
   const RND: i32 = 1 << 14;
 
-  // Process four pixels per iteration — they share one chroma sample.
+  // Aligned body: process full 4-pixel chroma groups. `body_end` is
+  // the largest multiple of 4 not exceeding `width`; the trailing
+  // 1..3 Y pixels (if any) are handled in the partial-group block
+  // below using the final (partial) chroma sample.
+  let body_end = width & !3;
   let mut x = 0;
-  while x < width {
+  while x < body_end {
     let c_idx = x / 4;
     let u_d = ((u_quarter[c_idx] as i32 - 128) * c_scale + RND) >> 15;
     let v_d = ((v_quarter[c_idx] as i32 - 128) * c_scale + RND) >> 15;
@@ -577,5 +596,33 @@ pub(crate) fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
     }
 
     x += 4;
+  }
+
+  // Trailing 1..3-pixel partial chroma group (FFmpeg ceil-shift
+  // chroma). When `width` isn't a multiple of 4, the final chroma
+  // sample at index `width.div_ceil(4) - 1` covers the remaining
+  // Y pixels at columns `body_end..width`. Width 5 → body_end=4,
+  // 1 trailing Y at column 4, paired with chroma[1] (the partial
+  // 1-pixel group). Width 641 → body_end=640, 1 trailing Y at
+  // column 640, paired with chroma[160]. Same per-pixel math as
+  // the body — only the iteration shape changes.
+  if x < width {
+    let c_idx = x / 4; // == body_end / 4 == width.div_ceil(4) - 1.
+    let u_d = ((u_quarter[c_idx] as i32 - 128) * c_scale + RND) >> 15;
+    let v_d = ((v_quarter[c_idx] as i32 - 128) * c_scale + RND) >> 15;
+    let r_chroma = (coeffs.r_u() * u_d + coeffs.r_v() * v_d + RND) >> 15;
+    let g_chroma = (coeffs.g_u() * u_d + coeffs.g_v() * v_d + RND) >> 15;
+    let b_chroma = (coeffs.b_u() * u_d + coeffs.b_v() * v_d + RND) >> 15;
+    while x < width {
+      let y_k = ((y[x] as i32 - y_off) * y_scale + RND) >> 15;
+      let pos = x * bpp;
+      out[pos] = clamp_u8(y_k + r_chroma);
+      out[pos + 1] = clamp_u8(y_k + g_chroma);
+      out[pos + 2] = clamp_u8(y_k + b_chroma);
+      if ALPHA {
+        out[pos + 3] = 0xFF;
+      }
+      x += 1;
+    }
   }
 }

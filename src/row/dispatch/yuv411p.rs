@@ -53,11 +53,17 @@ pub fn yuv_411_to_rgb_row(
   // internal sanity checks. `rgb_min` uses `checked_mul` because
   // `3 * width` can wrap `usize` on 32-bit targets (wasm32, i686)
   // for extreme widths.
-  assert_eq!(width & 3, 0, "YUV 4:1:1 requires width % 4 == 0");
+  //
+  // FFmpeg `AV_PIX_FMT_YUV411P`: arbitrary widths accepted; chroma
+  // row width is `width.div_ceil(4)` samples. SIMD bodies stride
+  // 16/32/64 Y pixels (multiples of 4) and the scalar kernel handles
+  // the trailing 1..N-1 Y pixels — including a final partial 1..3-
+  // pixel chroma group when `width % 4 != 0`.
+  let chroma_min = width.div_ceil(4);
   let rgb_min = rgb_row_bytes(width);
   assert!(y.len() >= width, "y row too short");
-  assert!(u_quarter.len() >= width / 4, "u_quarter row too short");
-  assert!(v_quarter.len() >= width / 4, "v_quarter row too short");
+  assert!(u_quarter.len() >= chroma_min, "u_quarter row too short");
+  assert!(v_quarter.len() >= chroma_min, "v_quarter row too short");
   assert!(rgb_out.len() >= rgb_min, "rgb_out row too short");
 
   if use_simd {
@@ -151,13 +157,14 @@ pub fn yuv_411_to_rgba_row(
   use_simd: bool,
 ) {
   // Runtime asserts at the dispatcher boundary — see
-  // [`yuv_411_to_rgb_row`] for rationale, including the checked
-  // `width × 4` multiplication via [`rgba_row_bytes`].
-  assert_eq!(width & 3, 0, "YUV 4:1:1 requires width % 4 == 0");
+  // [`yuv_411_to_rgb_row`] for rationale (FFmpeg div_ceil(4) chroma
+  // semantics), including the checked `width × 4` multiplication via
+  // [`rgba_row_bytes`].
+  let chroma_min = width.div_ceil(4);
   let rgba_min = rgba_row_bytes(width);
   assert!(y.len() >= width, "y row too short");
-  assert!(u_quarter.len() >= width / 4, "u_quarter row too short");
-  assert!(v_quarter.len() >= width / 4, "v_quarter row too short");
+  assert!(u_quarter.len() >= chroma_min, "u_quarter row too short");
+  assert!(v_quarter.len() >= chroma_min, "v_quarter row too short");
   assert!(rgba_out.len() >= rgba_min, "rgba_out row too short");
 
   if use_simd {

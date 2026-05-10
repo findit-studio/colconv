@@ -686,9 +686,13 @@ macro_rules! walker {
       let y_stride = src.y_stride() as usize;
       let u_stride = src.u_stride() as usize;
       let v_stride = src.v_stride() as usize;
-      // 4:1:1 / 4:1:0 quarter chroma horizontally; the frame validator
-      // already guarantees `w % 4 == 0`, so this is exact.
-      let chroma_width = w / 4;
+      // 4:1:1 / 4:1:0 quarter chroma horizontally. Yuv410p still
+      // requires `w % 4 == 0` at the frame layer; Yuv411p relaxes to
+      // FFmpeg-style ceiling chroma (`(w + 3) >> 2`) so non-4-aligned
+      // widths get a partial 1..3-pixel final chroma group. Using
+      // `div_ceil(4)` here is exact for both: for 4-multiple widths
+      // `div_ceil(4) == w / 4`.
+      let chroma_width = w.div_ceil(4);
 
       let y_plane = src.y();
       let u_plane = src.u();

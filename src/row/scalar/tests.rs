@@ -349,6 +349,97 @@ fn yuv411_rgb_limited_range_black_and_white() {
   }
 }
 
+#[test]
+fn yuv411_rgb_widths_1_through_3_partial_chroma_only() {
+  // Widths 1, 2, 3 produce a single chroma sample serving all luma.
+  // FFmpeg ceil-shift: chroma_width = width.div_ceil(4) = 1.
+  // With neutral chroma (128) and full-range, R=G=B=Y for each pixel.
+  for w in [1usize, 2, 3] {
+    let y: std::vec::Vec<u8> = (0..w as u8).map(|i| (i + 1) * 30).collect();
+    let u = [128u8; 1];
+    let v = [128u8; 1];
+    let mut rgb = std::vec![0u8; 3 * w];
+    yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, w, ColorMatrix::Bt601, true);
+    for x in 0..w {
+      let (r, g, b) = (rgb[x * 3], rgb[x * 3 + 1], rgb[x * 3 + 2]);
+      assert_eq!(r, g, "width={w} px={x}: r={r} g={g}");
+      assert_eq!(g, b, "width={w} px={x}: g={g} b={b}");
+      assert!(r.abs_diff(y[x]) <= 1, "width={w} px={x}: r={r} y={}", y[x]);
+    }
+  }
+}
+
+#[test]
+fn yuv411_rgb_widths_5_6_7_partial_tail_uses_last_chroma() {
+  // Widths 5, 6, 7 → chroma_width=2; first 4 luma share chroma[0],
+  // trailing 1..3 luma share chroma[1] (the partial group). Use
+  // distinct chroma to verify the boundary.
+  for w in [5usize, 6, 7] {
+    let y = std::vec![128u8; w];
+    let u = [128u8, 128];
+    // First chroma drives red boost (V=200), second drives blue boost (V=64).
+    let v = [200u8, 64];
+    let mut rgb = std::vec![0u8; 3 * w];
+    yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, w, ColorMatrix::Bt601, true);
+    // First four pixels: red > blue.
+    for x in 0..4 {
+      let r = rgb[x * 3];
+      let b = rgb[x * 3 + 2];
+      assert!(
+        r > b,
+        "width={w} px={x}: r={r} should be > b={b} (chroma[0])"
+      );
+    }
+    // Trailing pixels (4..w): blue > red (chroma[1] partial group).
+    for x in 4..w {
+      let r = rgb[x * 3];
+      let b = rgb[x * 3 + 2];
+      assert!(
+        r < b,
+        "width={w} px={x}: r={r} should be < b={b} (chroma[1] partial)"
+      );
+    }
+  }
+}
+
+#[test]
+fn yuv411_rgba_widths_5_through_7_alpha_opaque() {
+  // RGBA tail must still write 0xFF alpha for every pixel, including
+  // the partial-chroma trailing 1..3 luma samples.
+  for w in [5usize, 6, 7] {
+    let y = std::vec![128u8; w];
+    let u = std::vec![128u8; 2];
+    let v = std::vec![128u8; 2];
+    let mut rgba = std::vec![0u8; 4 * w];
+    yuv_411_to_rgba_row(&y, &u, &v, &mut rgba, w, ColorMatrix::Bt601, true);
+    for x in 0..w {
+      assert_eq!(rgba[x * 4 + 3], 0xFF, "width={w} alpha at px {x}");
+    }
+  }
+}
+
+#[test]
+fn yuv411_rgb_width_641_realistic_cropped() {
+  // Realistic non-4-aligned width from codex finding: 641 → chroma
+  // width 161; the SIMD body (when present) skips the trailing 1
+  // pixel which is handled by the partial-chroma scalar path.
+  // Verify no panic, output length correct, last pixel matches Y.
+  let w = 641usize;
+  let y: std::vec::Vec<u8> = (0..w).map(|i| (i % 256) as u8).collect();
+  let u = std::vec![128u8; 161];
+  let v = std::vec![128u8; 161];
+  let mut rgb = std::vec![0u8; 3 * w];
+  yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, w, ColorMatrix::Bt601, true);
+  // Neutral chroma → R=G=B≈Y. Spot-check first, mid, and last pixel
+  // (the last is the partial-tail one — y[640] inside chroma[160]).
+  for &x in &[0usize, 320, 639, 640] {
+    let (r, g, b) = (rgb[x * 3], rgb[x * 3 + 1], rgb[x * 3 + 2]);
+    assert_eq!(r, g, "px {x}");
+    assert_eq!(g, b, "px {x}");
+    assert!(r.abs_diff(y[x]) <= 1, "px {x}: r={r} y={}", y[x]);
+  }
+}
+
 // ---- rgb_to_hsv_row --------------------------------------------------
 
 #[test]

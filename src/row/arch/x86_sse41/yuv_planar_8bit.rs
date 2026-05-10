@@ -772,13 +772,19 @@ unsafe fn yuv_410_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// matches the SSE4.1 4:2:0 block size but loads 1/4 the chroma
 /// per iteration.
 ///
+/// FFmpeg-compatible widths: arbitrary `width` accepted. Chroma row
+/// is `width.div_ceil(4)` samples; the SIMD body strides 16 Y pixels
+/// (multiple of 4), and the trailing 1..15 Y pixels — including any
+/// partial 1..3-pixel chroma group — fall through to the scalar
+/// reference.
+///
 /// # Safety
 ///
 /// 1. **SSE4.1 must be available on the current CPU.**
-/// 2. `width % 4 == 0` (4:1:1 quarters chroma columns).
-/// 3. `y.len() >= width`, `u_quarter.len() >= width / 4`,
-///    `v_quarter.len() >= width / 4`.
-/// 4. `rgb_out.len() >= 3 * width`.
+/// 2. `y.len() >= width`,
+///    `u_quarter.len() >= width.div_ceil(4)`,
+///    `v_quarter.len() >= width.div_ceil(4)`.
+/// 3. `rgb_out.len() >= 3 * width`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
 pub(crate) unsafe fn yuv_411_to_rgb_row(
@@ -846,10 +852,10 @@ pub(crate) unsafe fn yuv_411_to_rgba_row(
 /// # Safety
 ///
 /// 1. **SSE4.1 must be available on the current CPU.**
-/// 2. `width % 4 == 0`.
-/// 3. `y.len() >= width`, `u_quarter.len() >= width / 4`,
-///    `v_quarter.len() >= width / 4`.
-/// 4. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
+/// 2. `y.len() >= width`,
+///    `u_quarter.len() >= width.div_ceil(4)`,
+///    `v_quarter.len() >= width.div_ceil(4)`.
+/// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "sse4.1")]
 unsafe fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
@@ -861,10 +867,9 @@ unsafe fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  debug_assert_eq!(width & 3, 0, "YUV 4:1:1 requires width % 4 == 0");
   debug_assert!(y.len() >= width);
-  debug_assert!(u_quarter.len() >= width / 4);
-  debug_assert!(v_quarter.len() >= width / 4);
+  debug_assert!(u_quarter.len() >= width.div_ceil(4));
+  debug_assert!(v_quarter.len() >= width.div_ceil(4));
   let bpp: usize = if ALPHA { 4 } else { 3 };
   debug_assert!(out.len() >= width * bpp);
 
@@ -991,13 +996,16 @@ unsafe fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
       x += 16;
     }
 
-    // Scalar tail. 4:1:1 requires width % 4 == 0 but the SIMD loop
-    // strides 16, so widths in {4, 8, 12, 20, 24, 28, ...} leave a
-    // multiple-of-4 tail.
+    // Scalar tail. The SIMD loop strides 16 Y pixels (multiple of 4),
+    // so `x` is a multiple of 4 ≤ width. The remaining 0..15 Y pixels
+    // and chroma samples up to `width.div_ceil(4)` (FFmpeg ceil-shift)
+    // — which may include a partial 1..3-pixel final chroma group —
+    // are handled by the scalar reference.
     if x < width {
       let tail_w = width - x;
-      let tail_u = &u_quarter[x / 4..width / 4];
-      let tail_v = &v_quarter[x / 4..width / 4];
+      let chroma_end = width.div_ceil(4);
+      let tail_u = &u_quarter[x / 4..chroma_end];
+      let tail_v = &v_quarter[x / 4..chroma_end];
       let tail_out = &mut out[x * bpp..width * bpp];
       if ALPHA {
         scalar::yuv_411_to_rgba_row(

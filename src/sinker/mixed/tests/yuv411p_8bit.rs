@@ -3,15 +3,16 @@
 //! (RGB + RGBA both attached → run RGB kernel once, fan out via
 //! `expand_rgb_to_rgba_row`).
 //!
-//! 4:1:1 is DV-NTSC legacy with quarter-width chroma. Frame width
-//! must be a multiple of 4; the sinker rejects other widths through
-//! `MixedSinkerError::OddWidth` (variant reused — see the impl-side
-//! comment in `planar_8bit.rs`).
+//! 4:1:1 is DV-NTSC legacy with quarter-width chroma. FFmpeg's
+//! `AV_PIX_FMT_YUV411P` defines chroma row width as
+//! `width.div_ceil(4)`, so non-4-aligned widths are accepted; the
+//! scalar tail handles the partial 1..3-pixel final chroma group.
 
 use super::*;
 
 /// Build a solid 4:1:1 frame with the given Y / U / V byte values.
-/// Uses contiguous strides (`y_stride = w`, `u_stride = v_stride = w / 4`).
+/// Uses contiguous strides (`y_stride = w`, `u_stride = v_stride =
+/// w.div_ceil(4)` per FFmpeg's `AV_PIX_FMT_YUV411P` ceil-shift rule).
 fn solid_yuv411p_frame(
   width: u32,
   height: u32,
@@ -21,7 +22,7 @@ fn solid_yuv411p_frame(
 ) -> (std::vec::Vec<u8>, std::vec::Vec<u8>, std::vec::Vec<u8>) {
   let w = width as usize;
   let h = height as usize;
-  let cw = w / 4;
+  let cw = w.div_ceil(4);
   (
     std::vec![y; w * h],
     std::vec![u; cw * h],
@@ -176,23 +177,21 @@ fn yuv411p_hsv_only_allocates_scratch_and_produces_gray_hsv() {
 }
 
 #[test]
-fn yuv411p_rejects_width_not_multiple_of_four() {
-  // Width=15 isn't a multiple of 4 → frame construction fails.
+fn yuv411p_accepts_non_4_aligned_widths_via_div_ceil() {
+  // FFmpeg `AV_PIX_FMT_YUV411P` defines chroma width as
+  // `width.div_ceil(4)`. Width=15 → chroma_width=4 (3 full 4-pixel
+  // groups + 1 partial 3-pixel group sharing the last chroma sample).
+  // Both frame construction and `begin_frame` must accept it.
   let yp = std::vec![0u8; 15 * 4];
   let up = std::vec![128u8; 4 * 4];
   let vp = std::vec![128u8; 4 * 4];
-  let err = Yuv411pFrame::try_new(&yp, &up, &vp, 15, 4, 15, 4, 4).unwrap_err();
-  assert!(matches!(
-    err,
-    Yuv411pFrameError::WidthNotMultipleOfFour { width: 15 }
-  ));
+  let frame = Yuv411pFrame::try_new(&yp, &up, &vp, 15, 4, 15, 4, 4)
+    .expect("width=15 valid: chroma row carries 4 samples per FFmpeg semantics");
+  assert_eq!(frame.width(), 15);
 
-  // The sinker also rejects via begin_frame (defense in depth — direct
-  // process callers may have skipped frame validation).
   let mut sink: MixedSinker<'_, Yuv411p> = MixedSinker::new(15usize, 4usize);
-  let err =
-    <MixedSinker<'_, Yuv411p> as crate::PixelSink>::begin_frame(&mut sink, 15, 4).unwrap_err();
-  assert!(matches!(err, MixedSinkerError::OddWidth { width: 15 }));
+  <MixedSinker<'_, Yuv411p> as crate::PixelSink>::begin_frame(&mut sink, 15, 4)
+    .expect("begin_frame should accept non-4-aligned width");
 }
 
 #[test]

@@ -1367,11 +1367,16 @@ impl<'a> Yuv411pFrame<'a> {
   ///
   /// Returns [`Yuv411pFrameError`] if any of:
   /// - `width` or `height` is zero,
-  /// - `width % 4 != 0` (4:1:1 quarters chroma horizontally; both
-  ///   the walker and SIMD kernels assume `width & 3 == 0`),
-  /// - `y_stride < width`, `u_stride < width / 4`, or
-  ///   `v_stride < width / 4`,
+  /// - `y_stride < width`, `u_stride < width.div_ceil(4)`, or
+  ///   `v_stride < width.div_ceil(4)`,
   /// - any plane is too short to cover its declared rows.
+  ///
+  /// Non-4-aligned widths are accepted: chroma row width is
+  /// `width.div_ceil(4)`, matching FFmpeg's `AV_PIX_FMT_YUV411P`
+  /// descriptor (`log2_chroma_w = 2`, ceiling right shift). For
+  /// e.g. `width = 641`, the chroma row carries 161 samples and the
+  /// final chroma sample covers the trailing 1 Y column. Per-row
+  /// scalar / SIMD kernels handle the partial-width tail.
   #[cfg_attr(not(tarpaulin), inline(always))]
   #[allow(clippy::too_many_arguments)]
   pub const fn try_new(
@@ -1387,18 +1392,15 @@ impl<'a> Yuv411pFrame<'a> {
     if width == 0 || height == 0 {
       return Err(Yuv411pFrameError::ZeroDimension { width, height });
     }
-    // 4:1:1 subsamples chroma 4:1 in width: one chroma sample covers
-    // four Y columns. Widths that aren't a multiple of 4 leave the
-    // trailing Y columns without a paired chroma sample, so reject
-    // them at construction. The SIMD kernels also assume
-    // `width & 3 == 0` for tail-free chroma slicing.
-    if width & 3 != 0 {
-      return Err(Yuv411pFrameError::WidthNotMultipleOfFour { width });
-    }
     if y_stride < width {
       return Err(Yuv411pFrameError::YStrideTooSmall { width, y_stride });
     }
-    let chroma_width = width / 4;
+    // 4:1:1 subsamples chroma 4:1 in width. FFmpeg's
+    // `AV_PIX_FMT_YUV411P` defines chroma width via a ceiling right
+    // shift (`(width + 3) >> 2`), so widths not divisible by 4 leave
+    // the trailing 1..3 Y columns paired with the last chroma sample
+    // (a partial 1..3-pixel chroma group).
+    let chroma_width = width.div_ceil(4);
     if u_stride < chroma_width {
       return Err(Yuv411pFrameError::UStrideTooSmall {
         chroma_width,
@@ -1512,7 +1514,7 @@ impl<'a> Yuv411pFrame<'a> {
     self.v
   }
 
-  /// Frame width in pixels. Always a multiple of 4.
+  /// Frame width in pixels.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn width(&self) -> u32 {
     self.width
@@ -1530,13 +1532,13 @@ impl<'a> Yuv411pFrame<'a> {
     self.y_stride
   }
 
-  /// Byte stride of the U plane (`>= width / 4`).
+  /// Byte stride of the U plane (`>= width.div_ceil(4)`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn u_stride(&self) -> u32 {
     self.u_stride
   }
 
-  /// Byte stride of the V plane (`>= width / 4`).
+  /// Byte stride of the V plane (`>= width.div_ceil(4)`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn v_stride(&self) -> u32 {
     self.v_stride
@@ -1555,10 +1557,12 @@ pub enum Yuv411pFrameError {
     /// The supplied height.
     height: u32,
   },
-  /// `width % 4 != 0`. 4:1:1 subsamples chroma 4:1 in width, so each
-  /// chroma column pairs four Y columns. Widths that aren't a multiple
-  /// of 4 leave the trailing Y columns without a paired chroma sample,
-  /// and the SIMD kernels assume `width & 3 == 0`.
+  /// **No longer produced.** Originally rejected `width % 4 != 0`,
+  /// but [`Yuv411pFrame::try_new`] now accepts arbitrary widths via
+  /// FFmpeg-compatible `chroma_width = width.div_ceil(4)`. The variant
+  /// is preserved for backward compatibility with external code that
+  /// matches it explicitly. The enum is `#[non_exhaustive]`, so
+  /// downstream `match` arms must already include a wildcard.
   #[error("width ({width}) is not a multiple of 4; YUV411p / 4:1:1 requires width % 4 == 0")]
   WidthNotMultipleOfFour {
     /// The supplied width.
@@ -1572,18 +1576,18 @@ pub enum Yuv411pFrameError {
     /// The supplied Y-plane stride.
     y_stride: u32,
   },
-  /// `u_stride < width / 4`.
+  /// `u_stride < width.div_ceil(4)`.
   #[error("u_stride ({u_stride}) is smaller than chroma width ({chroma_width})")]
   UStrideTooSmall {
-    /// The required minimum chroma-plane stride (`width / 4`).
+    /// The required minimum chroma-plane stride (`width.div_ceil(4)`).
     chroma_width: u32,
     /// The supplied U-plane stride.
     u_stride: u32,
   },
-  /// `v_stride < width / 4`.
+  /// `v_stride < width.div_ceil(4)`.
   #[error("v_stride ({v_stride}) is smaller than chroma width ({chroma_width})")]
   VStrideTooSmall {
-    /// The required minimum chroma-plane stride.
+    /// The required minimum chroma-plane stride (`width.div_ceil(4)`).
     chroma_width: u32,
     /// The supplied V-plane stride.
     v_stride: u32,

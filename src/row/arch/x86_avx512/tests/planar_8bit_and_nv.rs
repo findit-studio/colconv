@@ -1211,12 +1211,14 @@ fn yuv_410_avx512_rgba_matches_scalar_widths() {
 // tier the dispatcher would pick on the current runner.
 
 fn check_yuv411_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-  assert_eq!(width & 3, 0, "test fixture must use width % 4 == 0");
+  // FFmpeg `AV_PIX_FMT_YUV411P`: chroma row = `width.div_ceil(4)`.
+  assert!(width > 0);
+  let chroma_w = width.div_ceil(4);
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
-  let u: std::vec::Vec<u8> = (0..width / 4)
+  let u: std::vec::Vec<u8> = (0..chroma_w)
     .map(|i| ((i * 53 + 23) & 0xFF) as u8)
     .collect();
-  let v: std::vec::Vec<u8> = (0..width / 4)
+  let v: std::vec::Vec<u8> = (0..chroma_w)
     .map(|i| ((i * 71 + 91) & 0xFF) as u8)
     .collect();
   let mut rgb_scalar = std::vec![0u8; width * 3];
@@ -1283,13 +1285,42 @@ fn avx512_yuv411_matches_scalar_width_1920() {
   check_yuv411_equivalence(1920, ColorMatrix::Bt709, false);
 }
 
+#[test]
+#[cfg_attr(miri, ignore = "AVX-512 SIMD intrinsics unsupported by Miri")]
+fn avx512_yuv411_matches_scalar_non_4_aligned_widths() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  // Codex round-2 finding: FFmpeg `AV_PIX_FMT_YUV411P` accepts any
+  // width via `chroma_width = width.div_ceil(4)`. Widths < 64 stay
+  // entirely in the scalar tail; larger non-4-aligned widths exercise
+  // the AVX-512 64-pixel SIMD body + partial-chroma scalar tail
+  // boundary.
+  for w in [1usize, 2, 3, 5, 6, 7, 17, 31, 33, 47, 65, 127, 641] {
+    check_yuv411_equivalence(w, ColorMatrix::Bt601, true);
+    check_yuv411_equivalence(w, ColorMatrix::Bt709, false);
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "AVX-512 SIMD intrinsics unsupported by Miri")]
+fn avx512_yuv411_rgba_matches_scalar_non_4_aligned_widths() {
+  if !std::arch::is_x86_feature_detected!("avx512bw") {
+    return;
+  }
+  for w in [1usize, 2, 3, 5, 6, 7, 17, 65, 641] {
+    check_yuv411_rgba_equivalence(w, ColorMatrix::Bt601, true);
+  }
+}
+
 fn check_yuv411_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
-  assert_eq!(width & 3, 0, "test fixture must use width % 4 == 0");
+  assert!(width > 0);
+  let chroma_w = width.div_ceil(4);
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
-  let u: std::vec::Vec<u8> = (0..width / 4)
+  let u: std::vec::Vec<u8> = (0..chroma_w)
     .map(|i| ((i * 53 + 23) & 0xFF) as u8)
     .collect();
-  let v: std::vec::Vec<u8> = (0..width / 4)
+  let v: std::vec::Vec<u8> = (0..chroma_w)
     .map(|i| ((i * 71 + 91) & 0xFF) as u8)
     .collect();
   let mut rgba_scalar = std::vec![0u8; width * 4];
