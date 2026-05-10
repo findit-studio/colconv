@@ -436,11 +436,9 @@ pub(crate) unsafe fn x2rgb10_to_rgb_row<const BE: bool>(
 
   unsafe {
     let mut x = 0usize;
-    if !BE {
-      while x + 16 <= width {
-        x2rgb10_to_rgb_16_pixels(x2rgb10.as_ptr().add(x * 4), rgb_out.as_mut_ptr().add(x * 3));
-        x += 16;
-      }
+    while x + 16 <= width {
+      x2rgb10_to_rgb_16_pixels::<BE>(x2rgb10.as_ptr().add(x * 4), rgb_out.as_mut_ptr().add(x * 3));
+      x += 16;
     }
     if x < width {
       scalar::x2rgb10_to_rgb_row::<BE>(
@@ -465,14 +463,12 @@ pub(crate) unsafe fn x2rgb10_to_rgba_row<const BE: bool>(
 
   unsafe {
     let mut x = 0usize;
-    if !BE {
-      while x + 16 <= width {
-        x2rgb10_to_rgba_16_pixels(
-          x2rgb10.as_ptr().add(x * 4),
-          rgba_out.as_mut_ptr().add(x * 4),
-        );
-        x += 16;
-      }
+    while x + 16 <= width {
+      x2rgb10_to_rgba_16_pixels::<BE>(
+        x2rgb10.as_ptr().add(x * 4),
+        rgba_out.as_mut_ptr().add(x * 4),
+      );
+      x += 16;
     }
     if x < width {
       scalar::x2rgb10_to_rgba_row::<BE>(
@@ -498,14 +494,12 @@ pub(crate) unsafe fn x2rgb10_to_rgb_u16_row<const BE: bool>(
 
   unsafe {
     let mut x = 0usize;
-    if !BE {
-      while x + 8 <= width {
-        x2rgb10_to_rgb_u16_8_pixels(
-          x2rgb10.as_ptr().add(x * 4),
-          rgb_out.as_mut_ptr().add(x * 3).cast::<u8>(),
-        );
-        x += 8;
-      }
+    while x + 8 <= width {
+      x2rgb10_to_rgb_u16_8_pixels::<BE>(
+        x2rgb10.as_ptr().add(x * 4),
+        rgb_out.as_mut_ptr().add(x * 3).cast::<u8>(),
+      );
+      x += 8;
     }
     if x < width {
       scalar::x2rgb10_to_rgb_u16_row::<BE>(
@@ -530,11 +524,9 @@ pub(crate) unsafe fn x2bgr10_to_rgb_row<const BE: bool>(
 
   unsafe {
     let mut x = 0usize;
-    if !BE {
-      while x + 16 <= width {
-        x2bgr10_to_rgb_16_pixels(x2bgr10.as_ptr().add(x * 4), rgb_out.as_mut_ptr().add(x * 3));
-        x += 16;
-      }
+    while x + 16 <= width {
+      x2bgr10_to_rgb_16_pixels::<BE>(x2bgr10.as_ptr().add(x * 4), rgb_out.as_mut_ptr().add(x * 3));
+      x += 16;
     }
     if x < width {
       scalar::x2bgr10_to_rgb_row::<BE>(
@@ -559,14 +551,12 @@ pub(crate) unsafe fn x2bgr10_to_rgba_row<const BE: bool>(
 
   unsafe {
     let mut x = 0usize;
-    if !BE {
-      while x + 16 <= width {
-        x2bgr10_to_rgba_16_pixels(
-          x2bgr10.as_ptr().add(x * 4),
-          rgba_out.as_mut_ptr().add(x * 4),
-        );
-        x += 16;
-      }
+    while x + 16 <= width {
+      x2bgr10_to_rgba_16_pixels::<BE>(
+        x2bgr10.as_ptr().add(x * 4),
+        rgba_out.as_mut_ptr().add(x * 4),
+      );
+      x += 16;
     }
     if x < width {
       scalar::x2bgr10_to_rgba_row::<BE>(
@@ -591,14 +581,12 @@ pub(crate) unsafe fn x2bgr10_to_rgb_u16_row<const BE: bool>(
 
   unsafe {
     let mut x = 0usize;
-    if !BE {
-      while x + 8 <= width {
-        x2bgr10_to_rgb_u16_8_pixels(
-          x2bgr10.as_ptr().add(x * 4),
-          rgb_out.as_mut_ptr().add(x * 3).cast::<u8>(),
-        );
-        x += 8;
-      }
+    while x + 8 <= width {
+      x2bgr10_to_rgb_u16_8_pixels::<BE>(
+        x2bgr10.as_ptr().add(x * 4),
+        rgb_out.as_mut_ptr().add(x * 3).cast::<u8>(),
+      );
+      x += 8;
     }
     if x < width {
       scalar::x2bgr10_to_rgb_u16_row::<BE>(
