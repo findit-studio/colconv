@@ -49,13 +49,36 @@ use thiserror::Error;
 ///
 /// Construct via [`Self::try_new`] (fallible) or [`Self::new`]
 /// (panics on invalid input).
+///
+/// # Endian contract — `<const BE: bool = false>`
+///
+/// The `<const BE: bool>` parameter selects the per-32-bit-word byte order:
+/// `false` (default) → LE-encoded words (the de-facto standard SMPTE-272M
+/// V210 wire format used by FFmpeg / DeckLink / NDI), `true` → BE-encoded
+/// words (rare, but supported for symmetry with the rest of the Phase 4
+/// `Frame<const BE>` family). Downstream row kernels handle the byte-swap
+/// (or no-op) under the hood — callers do **not** pre-swap.
+///
+/// # Aliases
+/// - [`V210LeFrame`] = `V210Frame<'a, false>` — explicit LE (default).
+/// - [`V210BeFrame`] = `V210Frame<'a, true>` — explicit BE.
 #[derive(Debug, Clone, Copy)]
-pub struct V210Frame<'a> {
+pub struct V210Frame<'a, const BE: bool = false> {
   v210: &'a [u8],
   width: u32,
   height: u32,
   stride: u32,
 }
+
+/// LE-encoded `V210Frame` — the canonical SMPTE-272M wire layout.
+/// Equivalent to `V210Frame<'a>` (the default `BE = false`); provided as
+/// an explicit alias for callers who want to document the endianness at
+/// the type level.
+pub type V210LeFrame<'a> = V210Frame<'a, false>;
+
+/// BE-encoded `V210Frame` — each 32-bit word's bytes are big-endian; the
+/// downstream row kernels byte-swap before unpacking the 10-bit samples.
+pub type V210BeFrame<'a> = V210Frame<'a, true>;
 
 /// Errors returned by [`V210Frame::try_new`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
@@ -116,7 +139,7 @@ pub enum V210FrameError {
   },
 }
 
-impl<'a> V210Frame<'a> {
+impl<'a, const BE: bool> V210Frame<'a, BE> {
   /// Validates and constructs a [`V210Frame`].
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn try_new(
@@ -204,5 +227,12 @@ impl<'a> V210Frame<'a> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn stride(&self) -> u32 {
     self.stride
+  }
+  /// Returns the compile-time BE flag — `true` if the per-word bytes are
+  /// BE-encoded, `false` if LE-encoded (the canonical SMPTE-272M layout).
+  /// Runtime mirror of the `<const BE: bool>` type parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
   }
 }

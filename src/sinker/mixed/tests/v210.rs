@@ -436,3 +436,77 @@ fn v210_reconstructed_from_yuv422p10_matches_yuv422p10_to_rgb() {
 
   assert_eq!(rgb_planar, rgb_packed);
 }
+
+// ====================================================================================
+// Phase 4 — Frame BE flag, Tier 4 V210 LE/BE round-trip parity test.
+//
+// V210 packs 12 × 10-bit samples into a 16-byte word as four 32-bit LE u32s.
+// `<const BE>` swaps each 32-bit word's bytes; the kernel reads them via
+// `load_endian_u32::<BE>` so the sample bits land in the same logical
+// positions regardless of wire byte order.
+//
+// Pattern mirrors the Y210 / Y212 / Y216 LE/BE tests; see
+// `sinker/mixed/tests/y210.rs` for the rationale.
+// ====================================================================================
+
+/// Re-encode a v210 plane as **BE-encoded** byte storage by byte-swapping
+/// each 32-bit word in-place. The kernel's `load_endian_u32::<true>` undoes
+/// the swap to recover the same 10-bit samples.
+fn v210_as_be(plane_le: &[u8]) -> Vec<u8> {
+  assert_eq!(
+    plane_le.len() % 4,
+    0,
+    "v210 plane length must be word-aligned"
+  );
+  let mut out = Vec::with_capacity(plane_le.len());
+  for chunk in plane_le.chunks_exact(4) {
+    let w = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    out.extend_from_slice(&w.to_be_bytes());
+  }
+  out
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn v210_le_be_roundtrip_byte_identical() {
+  // Mid-range 10-bit samples (Y=600, U=400, V=700).
+  let intended = solid_v210_frame(12, 4, 600, 400, 700);
+  let pix_le = intended.clone();
+  let pix_be = v210_as_be(&intended);
+
+  // 12-pixel row at canonical 16-byte word size: ceil(12/6)*16 = 32 bytes.
+  let stride: u32 = 32;
+  let frame_le = V210LeFrame::try_new(&pix_le, 12, 4, stride).unwrap();
+  let mut out_le_rgba = std::vec![0u8; 12 * 4 * 4];
+  let mut out_le_luma_u16 = std::vec![0u16; 12 * 4];
+  let mut sink_le = MixedSinker::<V210>::new(12, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le_rgba)
+    .unwrap()
+    .with_luma_u16(&mut out_le_luma_u16)
+    .unwrap();
+  v210_to(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+
+  let frame_be = V210BeFrame::try_new(&pix_be, 12, 4, stride).unwrap();
+  let mut out_be_rgba = std::vec![0u8; 12 * 4 * 4];
+  let mut out_be_luma_u16 = std::vec![0u16; 12 * 4];
+  let mut sink_be = MixedSinker::<V210<true>>::new(12, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be_rgba)
+    .unwrap()
+    .with_luma_u16(&mut out_be_luma_u16)
+    .unwrap();
+  v210_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le_rgba, out_be_rgba,
+    "V210 RGBA u8 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+  assert_eq!(
+    out_le_luma_u16, out_be_luma_u16,
+    "V210 luma u16 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}

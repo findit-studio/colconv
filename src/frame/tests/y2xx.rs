@@ -1,4 +1,7 @@
-use super::super::{Y2xxFrame, Y2xxFrameError, Y210Frame, Y212Frame, Y216Frame};
+use super::super::{
+  Y2xxFrame, Y2xxFrameError, Y210BeFrame, Y210Frame, Y210LeFrame, Y212BeFrame, Y212Frame,
+  Y216BeFrame, Y216Frame,
+};
 
 // Build a `Vec<u16>` whose in-memory byte layout is the LE-encoded byte
 // representation of `intended` (i.e., what FFmpeg would emit on the wire).
@@ -373,4 +376,68 @@ fn y216_frame_try_new_checked_accepts_valid_tight() {
 fn y216_frame_new_panics_on_invalid() {
   let buf: [u16; 0] = [];
   let _ = Y216Frame::new(&buf, 0, 0, 0);
+}
+
+// ---- Phase 4 Tier 4: BE alias smoke tests ------------------------------------
+
+#[test]
+fn y210_be_frame_alias_constructs() {
+  // Phase 4 Tier 4: `Y210BeFrame` alias resolves to `Y2xxFrame<'_, 10, true>`.
+  let buf = std::vec![0u16; 8 * 2];
+  let f = Y210BeFrame::try_new(&buf, 4, 2, 8).unwrap();
+  assert!(f.is_be());
+  assert_eq!(f.width(), 4);
+  assert_eq!(f.height(), 2);
+}
+
+#[test]
+fn y212_be_frame_alias_constructs() {
+  let buf = std::vec![0u16; 8 * 2];
+  let f = Y212BeFrame::try_new(&buf, 4, 2, 8).unwrap();
+  assert!(f.is_be());
+}
+
+#[test]
+fn y216_be_frame_alias_constructs() {
+  let buf = std::vec![0u16; 8 * 2];
+  let f = Y216BeFrame::try_new(&buf, 4, 2, 8).unwrap();
+  assert!(f.is_be());
+}
+
+#[test]
+fn y210_le_frame_alias_is_default() {
+  // Default `Y210Frame` (LE) and explicit `Y210LeFrame` resolve to the same type.
+  let buf = std::vec![0u16; 8 * 2];
+  let f_default = Y210Frame::try_new(&buf, 4, 2, 8).unwrap();
+  let f_explicit = Y210LeFrame::try_new(&buf, 4, 2, 8).unwrap();
+  assert!(!f_default.is_be());
+  assert!(!f_explicit.is_be());
+}
+
+#[test]
+fn y210_be_frame_try_new_checked_validates_be_encoded_low_bits() {
+  // BE-encoded plane: each u16 sample is `to_be_bytes` reinterpreted as
+  // host u16. On an LE host the bytes are byte-swapped relative to the
+  // intended logical sample. `try_new_checked::<10, true>` must use
+  // `from_be` to recover the host-native sample before checking low bits.
+  let intended: std::vec::Vec<u16> = (0..8).map(|i| (i << 6) as u16).collect(); // valid 10-bit MSB
+  let pix_be: std::vec::Vec<u16> = intended
+    .iter()
+    .map(|v| u16::from_ne_bytes(v.to_be_bytes()))
+    .collect();
+  Y210BeFrame::try_new_checked(&pix_be, 4, 1, 8)
+    .expect("valid BE-encoded 10-bit MSB-aligned plane should pass");
+}
+
+#[test]
+fn y210_be_frame_try_new_checked_rejects_be_encoded_low_bits() {
+  // Sample with low bits set (0x0001 — 10-bit value with bit 0 set under
+  // wrong alignment). Encode as BE and ensure validation rejects.
+  let intended: std::vec::Vec<u16> = std::vec![0x0001u16; 8];
+  let pix_be: std::vec::Vec<u16> = intended
+    .iter()
+    .map(|v| u16::from_ne_bytes(v.to_be_bytes()))
+    .collect();
+  let err = Y210BeFrame::try_new_checked(&pix_be, 4, 1, 8).unwrap_err();
+  assert_eq!(err, Y2xxFrameError::SampleLowBitsSet);
 }
