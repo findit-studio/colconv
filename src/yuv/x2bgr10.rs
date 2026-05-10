@@ -1,7 +1,11 @@
-//! Packed **X2BGR10** source (`AV_PIX_FMT_X2BGR10LE`) — 10 bits per
-//! channel, 32-bit little-endian word with `(MSB) 2X | 10B | 10G |
-//! 10R (LSB)`. Channel positions reversed relative to
-//! [`super::X2Rgb10`].
+//! Packed **X2BGR10** source (`AV_PIX_FMT_X2BGR10{LE,BE}`) — 10 bits per
+//! channel, 32-bit word with `(MSB) 2X | 10B | 10G | 10R (LSB)`. Channel
+//! positions reversed relative to [`super::X2Rgb10`].
+//!
+//! The marker carries `<const BE: bool = false>`: `X2Bgr10` (= `X2Bgr10<false>`)
+//! is the LE source; `X2Bgr10<true>` is the BE source. The walker
+//! [`x2bgr10_to::<BE>`] propagates `BE` from [`X2Bgr10Frame<'_, BE>`] into the
+//! sinker dispatch.
 //!
 //! Outputs (Ship 9e):
 //! - `with_rgb` — `x2bgr10_to_rgb_row` (extract the 10-bit channels
@@ -18,11 +22,13 @@
 use crate::frame::X2Bgr10Frame;
 
 walker! {
-  packed {
-    /// Zero‑sized marker for the packed **X2BGR10** (LE) source format.
+  packed_be {
+    /// Zero‑sized marker for the packed **X2BGR10** source format
+    /// (`AV_PIX_FMT_X2BGR10{LE,BE}`). `<const BE: bool>` defaults to `false`
+    /// (LE); the alias `X2Bgr10` resolves to `X2Bgr10<false>`.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: X2Bgr10,
-    frame: X2Bgr10Frame<'_>,
+    frame: X2Bgr10Frame,
     row: X2Bgr10Row,
     sink: X2Bgr10Sink,
     walker: x2bgr10_to,
@@ -31,10 +37,12 @@ walker! {
     row_elems: |w| w * 4,
     row_doc: concat!(
       "One output row of an [`X2Bgr10`] source — `width * 4` bytes\n",
-      "laid out as `width` little-endian `u32` pixels with packing\n",
-      "`(MSB) 2X | 10B | 10G | 10R (LSB)`.\n",
+      "laid out as `width` `u32` pixels with packing\n",
+      "`(MSB) 2X | 10B | 10G | 10R (LSB)`. The byte order of each\n",
+      "32-bit word is selected by the parent\n",
+      "[`X2Bgr10Frame<'_, BE>`] / sinker `<const BE>` parameter.\n",
       "\n",
-      "Bit layout per 32-bit word (LE):\n",
+      "Bit layout per 32-bit word:\n",
       "\n",
       "| Bits   | Field |\n",
       "|--------|-------|\n",
@@ -44,10 +52,12 @@ walker! {
       "| 9:0    | R (10 bits) |\n",
       "\n",
       "Channel positions reversed relative to [`crate::yuv::X2Rgb10`].\n",
-      "Sink authors: each pixel is one little-endian `u32` reconstructed\n",
-      "from 4 consecutive bytes of the slice. Each 10-bit channel ranges\n",
-      "`[0, 1023]`.",
+      "Sink authors: each pixel is one `u32` reconstructed from 4\n",
+      "consecutive bytes of the slice in the BE-or-LE order set by the\n",
+      "Frame. Each 10-bit channel ranges `[0, 1023]`.",
     ),
-    walker_doc: "Walks an [`X2Bgr10Frame`] row by row into the sink.",
+    walker_doc: "Walks an [`X2Bgr10Frame<'_, BE>`] row by row into the sink. \
+                 Propagates `<const BE: bool>` from the frame into \
+                 [`X2Bgr10Sink<BE>`].",
   }
 }

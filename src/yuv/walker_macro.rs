@@ -154,6 +154,127 @@ macro_rules! walker {
     }
   };
 
+  // ---------- packed_be (single-buffer with `<const BE: bool>`) -------------
+  //
+  // Phase 4 — Frame BE flag. Same shape as `packed { ... }` above, but the
+  // marker, Sink subtrait, and walker fn carry a `<const BE: bool>` parameter
+  // (defaulted on the marker to `false` for back-compat). The frame type is
+  // expected to also be `<'a, const BE: bool>` (defaulted to `false`). Sinker
+  // impls then specialize as `MixedSinker<Marker<BE>>` and propagate `BE`
+  // into the row-kernel call.
+  //
+  // The Row type itself is **not** parameterized on BE — Row is just borrowed
+  // bytes; the kernel monomorphization picks up `BE` from the sinker type.
+  //
+  // Used by Tier 8 trial: Rgb48, Bgr48, Rgba64, Bgra64, X2Rgb10, X2Bgr10.
+  (
+    packed_be {
+      $(#[$marker_meta:meta])*
+      marker: $marker:ident,
+      frame: $frame:ident,
+      row: $row:ident,
+      sink: $sink:ident,
+      walker: $walker:ident,
+      buf_field: $buf:ident,
+      elem_type: $elem:ty,
+      row_elems: |$w:ident| $row_elems:expr,
+      $(#[$row_meta:meta])*
+      row_doc: $row_doc:expr,
+      $(#[$walker_meta:meta])*
+      walker_doc: $walker_doc:expr,
+    }
+  ) => {
+    $(#[$marker_meta])*
+    pub struct $marker<const BE: bool = false>;
+
+    impl<const BE: bool> $crate::sealed::Sealed for $marker<BE> {}
+    impl<const BE: bool> $crate::SourceFormat for $marker<BE> {}
+
+    $(#[$row_meta])*
+    #[doc = $row_doc]
+    #[derive(Debug, Clone, Copy)]
+    pub struct $row<'a> {
+      $buf: &'a [$elem],
+      row: usize,
+      matrix: $crate::ColorMatrix,
+      full_range: bool,
+    }
+
+    impl<'a> $row<'a> {
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub(crate) fn new(
+        $buf: &'a [$elem],
+        row: usize,
+        matrix: $crate::ColorMatrix,
+        full_range: bool,
+      ) -> Self {
+        Self { $buf, row, matrix, full_range }
+      }
+      /// Packed source row.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn $buf(&self) -> &'a [$elem] {
+        self.$buf
+      }
+      /// Output row index within the frame.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn row(&self) -> usize {
+        self.row
+      }
+      /// YUV/RGB conversion matrix carried through from the kernel call.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn matrix(&self) -> $crate::ColorMatrix {
+        self.matrix
+      }
+      /// Full-range vs limited-range flag carried through from the
+      /// kernel call.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn full_range(&self) -> bool {
+        self.full_range
+      }
+    }
+
+    /// Sinks that consume rows of this source format. The `<const BE>`
+    /// parameter encodes the source byte-order — sinkers typically impl
+    /// for one specific `BE` matching their stored `MixedSinker<Marker<BE>>`
+    /// monomorphization. The Row type does not carry `BE`; the BE-aware
+    /// kernel dispatch happens inside `process` via the sinker's own
+    /// `<const BE>` parameter.
+    ///
+    /// `BE` defaults to `false` (LE) so downstream LE-only custom sinks
+    /// can keep writing `impl $sink for MySink` / `S: $sink` without
+    /// migrating to an explicit const argument.
+    pub trait $sink<const BE: bool = false>:
+      for<'a> $crate::PixelSink<Input<'a> = $row<'a>>
+    {}
+
+    $(#[$walker_meta])*
+    #[doc = $walker_doc]
+    pub fn $walker<S, const BE: bool>(
+      src: &$frame<'_, BE>,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error>
+    where
+      S: $sink<BE>,
+    {
+      sink.begin_frame(src.width(), src.height())?;
+
+      let $w = src.width() as usize;
+      let h = src.height() as usize;
+      let stride = src.stride() as usize;
+      let row_elems: usize = $row_elems;
+      let plane = src.$buf();
+
+      for row in 0..h {
+        let start = row * stride;
+        let $buf = &plane[start..start + row_elems];
+        sink.process($row::new($buf, row, matrix, full_range))?;
+      }
+      Ok(())
+    }
+  };
+
   // ---------- semi-planar (2 planes: Y + interleaved chroma) ---------------
   //
   // Used by Nv* (8-bit) and P*/P*1*/P*2*/P*4* (high-bit-packed u16)
