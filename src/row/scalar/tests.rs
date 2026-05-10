@@ -832,3 +832,87 @@ fn rgbf16_scalar_rgb_f16_is_copy() {
     "rgbf16_to_rgb_f16 must be a byte-identical copy"
   );
 }
+
+// ---- Tier 5.25 packed YUV 4:1:1 — UYYVYY411 -------------------------
+
+/// Builds a single-row UYYVYY411 packed buffer with constant
+/// `(Y, U, V)` per 6-byte / 4-pixel block.
+fn uyyvyy411_solid_row(width: usize, y: u8, u: u8, v: u8) -> std::vec::Vec<u8> {
+  assert_eq!(width & 3, 0);
+  let mut buf = std::vec![0u8; width * 3 / 2];
+  for col in (0..width).step_by(4) {
+    let blk = (col / 4) * 6;
+    buf[blk] = u;
+    buf[blk + 1] = y;
+    buf[blk + 2] = y;
+    buf[blk + 3] = v;
+    buf[blk + 4] = y;
+    buf[blk + 5] = y;
+  }
+  buf
+}
+
+#[test]
+fn uyyvyy411_to_rgb_row_solid_gray_full_range() {
+  // (Y=128, U=V=128) full-range BT.601 → mid-gray RGB (≈128, 128, 128).
+  let w = 16;
+  let p = uyyvyy411_solid_row(w, 128, 128, 128);
+  let mut rgb = std::vec![0u8; w * 3];
+  uyyvyy411_to_rgb_row(&p, &mut rgb, w, ColorMatrix::Bt601, true);
+  for px in rgb.chunks(3) {
+    assert!(px[0].abs_diff(128) <= 1);
+    assert_eq!(px[0], px[1]);
+    assert_eq!(px[1], px[2]);
+  }
+}
+
+#[test]
+fn uyyvyy411_to_rgba_row_solid_gray_alpha_opaque() {
+  let w = 16;
+  let p = uyyvyy411_solid_row(w, 128, 128, 128);
+  let mut rgba = std::vec![0u8; w * 4];
+  uyyvyy411_to_rgba_row(&p, &mut rgba, w, ColorMatrix::Bt601, true);
+  for px in rgba.chunks(4) {
+    assert_eq!(px[3], 0xFF);
+  }
+}
+
+#[test]
+fn uyyvyy411_to_luma_row_extracts_y_at_offsets_1_2_4_5() {
+  // Hand-crafted 1 block: U=10, Y0=20, Y1=30, V=40, Y2=50, Y3=60.
+  let p = std::vec![10u8, 20, 30, 40, 50, 60];
+  let mut luma = std::vec![0u8; 4];
+  uyyvyy411_to_luma_row(&p, &mut luma, 4);
+  assert_eq!(luma, std::vec![20u8, 30, 50, 60]);
+}
+
+#[test]
+fn uyyvyy411_to_luma_u16_row_zero_extends_y_bytes() {
+  let p = std::vec![10u8, 20, 30, 40, 50, 60];
+  let mut luma = std::vec![0u16; 4];
+  uyyvyy411_to_luma_u16_row(&p, &mut luma, 4);
+  assert_eq!(luma, std::vec![20u16, 30, 50, 60]);
+}
+
+#[test]
+fn uyyvyy411_chroma_shared_across_4_pixels_decodes_via_y_only_variation() {
+  // With Y0..Y3 distinct but shared (U, V), each output pixel must
+  // map back to a Y-distinct grayscale (since U=V=128 zeroes the
+  // chroma contribution under BT.601 full-range).
+  // Block: U=128, Y0=64, Y1=96, V=128, Y2=160, Y3=224.
+  let p = std::vec![128u8, 64, 96, 128, 160, 224];
+  let mut rgb = std::vec![0u8; 4 * 3];
+  uyyvyy411_to_rgb_row(&p, &mut rgb, 4, ColorMatrix::Bt601, true);
+  let lumas = [64u8, 96, 160, 224];
+  for (i, expected) in lumas.iter().enumerate() {
+    let r = rgb[i * 3];
+    let g = rgb[i * 3 + 1];
+    let b = rgb[i * 3 + 2];
+    assert_eq!(r, g, "px {i} R==G");
+    assert_eq!(g, b, "px {i} G==B");
+    assert!(
+      r.abs_diff(*expected) <= 1,
+      "px {i} expected {expected}, got {r}"
+    );
+  }
+}
