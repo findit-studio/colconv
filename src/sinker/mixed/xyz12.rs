@@ -23,7 +23,7 @@
 //!   then `xyz12_rgb_to_luma_row` / `xyz12_rgb_to_luma_u16_row` with
 //!   the gamut-derived Q15 weights (BT.709 for Rec709,
 //!   `(6865, 23645, 2258)` for DciP3 theatrical, BT.2020Ncl for
-//!   Rec2020 — see [`crate::yuv::luma_weights_q15_for_gamut`]). Codex
+//!   Rec2020 — see [`crate::source::luma_weights_q15_for_gamut`]). Codex
 //!   round-2 medium fix: the prior implementation re-used the BT.709
 //!   triple for DciP3, which biased luma for saturated content under
 //!   the theatrical DCI-white target.
@@ -40,7 +40,7 @@ use crate::{
     xyz12_to_rgb_f32_row, xyz12_to_rgb_row, xyz12_to_rgb_u16_row, xyz12_to_rgba_f16_row,
     xyz12_to_rgba_row, xyz12_to_rgba_u16_row, xyz12_to_xyz_f32_row,
   },
-  yuv::{Xyz12, Xyz12Row, Xyz12Sink},
+  source::{Xyz12, Xyz12Row, Xyz12Sink},
 };
 
 // ---- Xyz12<BE> impl ----------------------------------------------------
@@ -78,8 +78,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Xyz12<BE>> {
   /// source's *native integer precision* in a u16 carrier. The `Xyz12`
   /// variant has no native RGB precision — it is always derived
   /// through the gamut matrix — so it instead applies full-range
-  /// scaling, matching the [`Rgbf32`](crate::yuv::Rgbf32) and
-  /// [`Rgbf16`](crate::yuv::Rgbf16) divergence.
+  /// scaling, matching the [`Rgbf32`](crate::source::Rgbf32) and
+  /// [`Rgbf16`](crate::source::Rgbf16) divergence.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;

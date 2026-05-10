@@ -43,7 +43,7 @@ use crate::{
     v210_to_luma_row_endian, v210_to_luma_u16_row_endian, v210_to_rgb_row_endian,
     v210_to_rgb_u16_row_endian, v210_to_rgba_row_endian, v210_to_rgba_u16_row_endian,
   },
-  yuv::{V210, V210Row, V210Sink},
+  source::{V210, V210Row, V210Sink},
 };
 
 impl<'a, const BE: bool> MixedSinker<'a, V210<BE>> {

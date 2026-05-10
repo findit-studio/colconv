@@ -44,7 +44,7 @@ use crate::{
     yuyv422_to_rgb_row, yuyv422_to_rgba_row, yvyu422_to_luma_row, yvyu422_to_luma_u16_row,
     yvyu422_to_rgb_row, yvyu422_to_rgba_row,
   },
-  yuv::{
+  source::{
     Uyvy422, Uyvy422Row, Uyvy422Sink, Yuyv422, Yuyv422Row, Yuyv422Sink, Yvyu422, Yvyu422Row,
     Yvyu422Sink,
   },

@@ -3,7 +3,7 @@
 use super::{MixedSinker, MixedSinkerError, RowSlice, check_dimensions_match};
 use crate::{
   PixelSink, row,
-  yuv::{Monoblack, MonoblackRow, MonoblackSink, Monowhite, MonowhiteRow, MonowhiteSink},
+  source::{Monoblack, MonoblackRow, MonoblackSink, Monowhite, MonowhiteRow, MonowhiteSink},
 };
 
 // ---- Monoblack impl ---------------------------------------------------------

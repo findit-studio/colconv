@@ -195,7 +195,7 @@ pub fn rgb_to_luma_u16_row(
 
 /// Drops the alpha byte from packed `R, G, B, A` input, producing
 /// packed `R, G, B` output (`4 * width` → `3 * width` bytes). Used
-/// by [`Rgba`](crate::yuv::Rgba) sinker's RGB / luma / HSV paths
+/// by [`Rgba`](crate::source::Rgba) sinker's RGB / luma / HSV paths
 /// (Ship 9b).
 ///
 /// `use_simd = false` forces the scalar reference path.
@@ -261,7 +261,7 @@ pub fn rgba_to_rgb_row(rgba: &[u8], rgb_out: &mut [u8], width: usize, use_simd: 
 /// Swaps R↔B in packed `B, G, R, A` input, producing packed
 /// `R, G, B, A` (alpha preserved). Self-inverse, so the same
 /// dispatcher can be called for either direction. Used by
-/// [`Bgra`](crate::yuv::Bgra) sinker's RGBA-output path.
+/// [`Bgra`](crate::source::Bgra) sinker's RGBA-output path.
 ///
 /// `use_simd = false` forces the scalar reference path.
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -324,7 +324,7 @@ pub fn bgra_to_rgba_row(bgra: &[u8], rgba_out: &mut [u8], width: usize, use_simd
 
 /// Swaps R↔B and drops alpha from packed `B, G, R, A` input,
 /// producing packed `R, G, B` (`4 * width` → `3 * width` bytes).
-/// Used by [`Bgra`](crate::yuv::Bgra) sinker's RGB / luma / HSV
+/// Used by [`Bgra`](crate::source::Bgra) sinker's RGB / luma / HSV
 /// paths.
 ///
 /// `use_simd = false` forces the scalar reference path.
@@ -473,7 +473,7 @@ fn swap_rb_channels_row(input: &[u8], output: &mut [u8], width: usize, use_simd:
 
 /// Drops the leading alpha byte from packed `A, R, G, B` input,
 /// producing packed `R, G, B` output (`4 * width` → `3 * width`
-/// bytes). Used by [`Argb`](crate::yuv::Argb) sinker's RGB / luma /
+/// bytes). Used by [`Argb`](crate::source::Argb) sinker's RGB / luma /
 /// HSV paths (Ship 9c).
 ///
 /// `use_simd = false` forces the scalar reference path.
@@ -538,7 +538,7 @@ pub fn argb_to_rgb_row(argb: &[u8], rgb_out: &mut [u8], width: usize, use_simd: 
 
 /// Swaps R↔B and drops leading alpha from packed `A, B, G, R`
 /// input, producing packed `R, G, B`. Used by
-/// [`Abgr`](crate::yuv::Abgr) sinker's RGB / luma / HSV paths.
+/// [`Abgr`](crate::source::Abgr) sinker's RGB / luma / HSV paths.
 ///
 /// `use_simd = false` forces the scalar reference path.
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -596,7 +596,7 @@ pub fn abgr_to_rgb_row(abgr: &[u8], rgb_out: &mut [u8], width: usize, use_simd: 
 
 /// Rotates leading alpha to trailing position in packed `A, R, G, B`
 /// input, producing packed `R, G, B, A` (alpha pass-through). Used
-/// by [`Argb`](crate::yuv::Argb) sinker's RGBA-output path.
+/// by [`Argb`](crate::source::Argb) sinker's RGBA-output path.
 ///
 /// `use_simd = false` forces the scalar reference path.
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -653,7 +653,7 @@ pub fn argb_to_rgba_row(argb: &[u8], rgba_out: &mut [u8], width: usize, use_simd
 
 /// Reverses byte order in packed `A, B, G, R` input, producing
 /// packed `R, G, B, A`. Self-inverse: same routine handles
-/// `RGBA → ABGR`. Used by [`Abgr`](crate::yuv::Abgr) sinker's
+/// `RGBA → ABGR`. Used by [`Abgr`](crate::source::Abgr) sinker's
 /// RGBA-output path.
 ///
 /// `use_simd = false` forces the scalar reference path.
@@ -711,7 +711,7 @@ pub fn abgr_to_rgba_row(abgr: &[u8], rgba_out: &mut [u8], width: usize, use_simd
 
 /// Drops the leading padding byte from packed `X, R, G, B` input,
 /// producing packed `R, G, B, A` with `A = 0xFF` (Ship 9d). Used by
-/// [`Xrgb`](crate::yuv::Xrgb) sinker's RGBA-output path.
+/// [`Xrgb`](crate::source::Xrgb) sinker's RGBA-output path.
 ///
 /// `use_simd = false` forces the scalar reference path.
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -768,7 +768,7 @@ pub fn xrgb_to_rgba_row(xrgb: &[u8], rgba_out: &mut [u8], width: usize, use_simd
 
 /// Drops the trailing padding byte from packed `R, G, B, X` input,
 /// producing packed `R, G, B, A` with `A = 0xFF`. Used by
-/// [`Rgbx`](crate::yuv::Rgbx) sinker's RGBA-output path.
+/// [`Rgbx`](crate::source::Rgbx) sinker's RGBA-output path.
 ///
 /// `use_simd = false` forces the scalar reference path.
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -825,7 +825,7 @@ pub fn rgbx_to_rgba_row(rgbx: &[u8], rgba_out: &mut [u8], width: usize, use_simd
 
 /// Reverses RGB and drops leading padding from packed `X, B, G, R`
 /// input, producing packed `R, G, B, A` with `A = 0xFF`. Used by
-/// [`Xbgr`](crate::yuv::Xbgr) sinker's RGBA-output path.
+/// [`Xbgr`](crate::source::Xbgr) sinker's RGBA-output path.
 ///
 /// `use_simd = false` forces the scalar reference path.
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -882,7 +882,7 @@ pub fn xbgr_to_rgba_row(xbgr: &[u8], rgba_out: &mut [u8], width: usize, use_simd
 
 /// Reverses RGB and drops trailing padding from packed `B, G, R, X`
 /// input, producing packed `R, G, B, A` with `A = 0xFF`. Used by
-/// [`Bgrx`](crate::yuv::Bgrx) sinker's RGBA-output path.
+/// [`Bgrx`](crate::source::Bgrx) sinker's RGBA-output path.
 ///
 /// `use_simd = false` forces the scalar reference path.
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -943,7 +943,7 @@ pub fn bgrx_to_rgba_row(bgrx: &[u8], rgba_out: &mut [u8], width: usize, use_simd
 
 /// Drops the 2-bit padding and down-shifts each 10-bit channel to
 /// 8 bits, producing packed `R, G, B` from `X2RGB10` LE input
-/// (Ship 9e). Used by [`X2Rgb10`](crate::yuv::X2Rgb10) sinker's RGB
+/// (Ship 9e). Used by [`X2Rgb10`](crate::source::X2Rgb10) sinker's RGB
 /// / luma / HSV staging path.
 ///
 /// `use_simd = false` forces the scalar reference path.

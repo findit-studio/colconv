@@ -35,7 +35,7 @@ use crate::{
     Yuva444p16LeFrame,
   },
   sinker::mixed::MixedSinker,
-  yuv::{
+  source::{
     P010, P012, P016, P210, P212, P216, P410, P412, P416, Yuv420p9, Yuv420p10, Yuv420p12,
     Yuv420p14, Yuv420p16, Yuv422p9, Yuv422p10, Yuv422p12, Yuv422p14, Yuv422p16, Yuv440p10,
     Yuv440p12, Yuv444p9, Yuv444p10, Yuv444p12, Yuv444p14, Yuv444p16, Yuva420p9, Yuva420p10,

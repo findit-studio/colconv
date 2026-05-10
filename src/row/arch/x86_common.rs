@@ -549,7 +549,7 @@ pub(super) unsafe fn drop_alpha_16_pixels(input_ptr: *const u8, output_ptr: *mut
 /// input bytes → 48 output bytes). Same compaction shape as
 /// [`drop_alpha_16_pixels`], but each pixel triple is read at
 /// offsets `(+1, +2, +3)` (R, G, B) since alpha is at the **leading**
-/// position. Used by the Ship 9c [`Argb`](crate::yuv::Argb)
+/// position. Used by the Ship 9c [`Argb`](crate::source::Argb)
 /// `with_rgb` / `with_luma` / `with_hsv` paths.
 ///
 /// # Safety
@@ -590,7 +590,7 @@ pub(super) unsafe fn argb_to_rgb_16_pixels(input_ptr: *const u8, output_ptr: *mu
 /// packed ABGR pixels (64 input bytes → 48 output bytes). Each
 /// pixel triple is read at offsets `(+3, +2, +1)` (R, G, B from
 /// `A, B, G, R` input). Used by the Ship 9c
-/// [`Abgr`](crate::yuv::Abgr) `with_rgb` / `with_luma` / `with_hsv`
+/// [`Abgr`](crate::source::Abgr) `with_rgb` / `with_luma` / `with_hsv`
 /// paths.
 ///
 /// # Safety
@@ -669,8 +669,8 @@ pub(super) unsafe fn abgr_to_rgba_4_pixels(input_ptr: *const u8, output_ptr: *mu
 
 // ===== Padding-byte helpers (Ship 9d) ====================================
 //
-// Used by the [`Xrgb`](crate::yuv::Xrgb) / [`Rgbx`](crate::yuv::Rgbx) /
-// [`Xbgr`](crate::yuv::Xbgr) / [`Bgrx`](crate::yuv::Bgrx) source-side
+// Used by the [`Xrgb`](crate::source::Xrgb) / [`Rgbx`](crate::source::Rgbx) /
+// [`Xbgr`](crate::source::Xbgr) / [`Bgrx`](crate::source::Bgrx) source-side
 // `with_rgba` paths. Each helper takes 4 input pixels (16 bytes), pulls
 // R/G/B from the appropriate byte offsets, and forces the alpha lane
 // to `0xFF` via OR with a constant. The padding byte's value is

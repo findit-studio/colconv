@@ -43,7 +43,7 @@ use crate::{
     y212_to_luma_row_endian, y212_to_luma_u16_row_endian, y212_to_rgb_row_endian,
     y212_to_rgb_u16_row_endian, y212_to_rgba_row_endian, y212_to_rgba_u16_row_endian,
   },
-  yuv::{Y212, Y212Row, Y212Sink},
+  source::{Y212, Y212Row, Y212Sink},
 };
 
 impl<'a, const BE: bool> MixedSinker<'a, Y212<BE>> {

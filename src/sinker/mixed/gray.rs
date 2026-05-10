@@ -53,7 +53,7 @@ use crate::{
     ya16_to_luma_u16_row, ya16_to_rgb_row, ya16_to_rgb_u16_row, ya16_to_rgba_row,
     ya16_to_rgba_u16_row,
   },
-  yuv::{
+  source::{
     Gray8, Gray8Row, Gray8Sink, Gray16, Gray16Row, Gray16Sink, Grayf32, Grayf32Row, Grayf32Sink,
     Ya8, Ya8Row, Ya8Sink, Ya16, Ya16Row, Ya16Sink,
   },
@@ -543,7 +543,7 @@ macro_rules! impl_gray_n_sinker {
 }
 
 // Import the gray walker types for the macro instantiation.
-use crate::yuv::{
+use crate::source::{
   Gray9, Gray9Row, Gray9Sink, Gray10, Gray10Row, Gray10Sink, Gray12, Gray12Row, Gray12Sink, Gray14,
   Gray14Row, Gray14Sink,
 };

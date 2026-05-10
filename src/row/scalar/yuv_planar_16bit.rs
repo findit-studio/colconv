@@ -79,7 +79,7 @@ pub(crate) fn yuv_420p16_to_rgba_row<const BE: bool>(
 /// contract as [`yuv_420p16_to_rgba_row`] for R/G/B; the per-pixel
 /// alpha byte is sourced from `a_src` (depth-converted by `>> 8`)
 /// instead of being constant `0xFF`. Used by the YUVA 4:2:0 source
-/// family ([`crate::yuv::Yuva420p16`] in tranche 8b‑2a).
+/// family ([`crate::source::Yuva420p16`] in tranche 8b‑2a).
 ///
 /// Thin wrapper over [`yuv_420p16_to_rgb_or_rgba_row`] with
 /// `ALPHA = true, ALPHA_SRC = true`.
@@ -255,7 +255,7 @@ pub(crate) fn yuv_420p16_to_rgba_u16_row<const BE: bool>(
 /// the per-pixel alpha element is sourced from `a_src` (already at
 /// the source's native bit depth — no shift needed) instead of being
 /// the opaque maximum `0xFFFF`. Used by the YUVA 4:2:0 source family
-/// ([`crate::yuv::Yuva420p16`] in tranche 8b‑2a).
+/// ([`crate::source::Yuva420p16`] in tranche 8b‑2a).
 ///
 /// Thin wrapper over [`yuv_420p16_to_rgb_or_rgba_u16_row`] with
 /// `ALPHA = true, ALPHA_SRC = true`.
@@ -417,7 +417,7 @@ pub(crate) fn yuv_444p16_to_rgba_row<const BE: bool>(
 /// contract as [`yuv_444p16_to_rgba_row`] for R/G/B; the per-pixel
 /// alpha byte is **sourced from `a_src`** (depth-converted via
 /// `>> 8` to fit `u8`) instead of being constant `0xFF`. Used by the
-/// YUVA 4:4:4 source family ([`crate::yuv::Yuva444p16`] in tranche
+/// YUVA 4:4:4 source family ([`crate::source::Yuva444p16`] in tranche
 /// 8b‑5a).
 ///
 /// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_row`] with
@@ -565,7 +565,7 @@ pub(crate) fn yuv_444p16_to_rgba_u16_row<const BE: bool>(
 /// per-pixel alpha element is sourced from `a_src` (already at the
 /// source's native bit depth — no shift needed) instead of being the
 /// opaque maximum `0xFFFF`. Used by the YUVA 4:4:4 source family
-/// ([`crate::yuv::Yuva444p16`] in tranche 8b‑5a).
+/// ([`crate::source::Yuva444p16`] in tranche 8b‑5a).
 ///
 /// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_u16_row`] with
 /// `ALPHA = true, ALPHA_SRC = true`.

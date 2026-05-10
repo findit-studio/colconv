@@ -37,7 +37,7 @@ use crate::{
     rgb555_to_rgba_row, rgb555_to_rgba_u16_row, rgb565_to_rgb_row, rgb565_to_rgb_u16_row,
     rgb565_to_rgba_row, rgb565_to_rgba_u16_row,
   },
-  yuv::{
+  source::{
     Bgr444, Bgr444Row, Bgr444Sink, Bgr555, Bgr555Row, Bgr555Sink, Bgr565, Bgr565Row, Bgr565Sink,
     Rgb444, Rgb444Row, Rgb444Sink, Rgb555, Rgb555Row, Rgb555Sink, Rgb565, Rgb565Row, Rgb565Sink,
   },

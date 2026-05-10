@@ -45,7 +45,7 @@ use colconv::{
     yuva444p10_to_rgba_u16_row, yuva444p16_to_rgba_row, yuva444p16_to_rgba_u16_row,
   },
   sinker::MixedSinker,
-  yuv::{Yuva444p, Yuva444p10, Yuva444p16, yuva444p_to, yuva444p10_to, yuva444p16_to},
+  source::{Yuva444p, Yuva444p10, Yuva444p16, yuva444p_to, yuva444p10_to, yuva444p16_to},
 };
 
 /// Multi-row frame height — amortizes per-frame `MixedSinker` setup across

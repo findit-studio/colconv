@@ -1,101 +1,107 @@
-//! YUV source kernels.
+//! Source pixel-format kernels.
 //!
-//! One sub-module and kernel per YUV pixel-format family.
+//! One sub-module and kernel per source pixel-format family. Despite
+//! the historical `yuv` working name, this module holds **all** source
+//! formats — YUV (planar / semi-planar / packed), RGB (packed 8-bit /
+//! 10-bit / 16-bit / float), GBR (planar), Gray / Mono, and CIE XYZ
+//! (DCP). The folder was renamed from `yuv/` to `source/` in v0.1.0; a
+//! `#[deprecated]` `crate::yuv` alias is kept through the v0.1.0
+//! release for downstream callers and will be removed in v0.2.0.
 //!
 //! # Shipped (8-bit 4:2:0)
 //!
-//! - [`Yuv420p`](crate::yuv::Yuv420p) — the mainline 4:2:0 **planar**
+//! - [`Yuv420p`](crate::source::Yuv420p) — the mainline 4:2:0 **planar**
 //!   layout (H.264 / HEVC / AV1 / VP9 software‑decode default).
-//! - [`Nv12`](crate::yuv::Nv12) — 4:2:0 **semi‑planar** with interleaved
+//! - [`Nv12`](crate::source::Nv12) — 4:2:0 **semi‑planar** with interleaved
 //!   UV (VideoToolbox / VA‑API / NVDEC / D3D11VA hardware‑decode
 //!   default).
-//! - [`Nv21`](crate::yuv::Nv21) — 4:2:0 semi‑planar with **VU**-ordered
+//! - [`Nv21`](crate::source::Nv21) — 4:2:0 semi‑planar with **VU**-ordered
 //!   chroma (Android MediaCodec default).
 //!
 //! # Shipped (8-bit 4:2:2 / 4:4:0 / 4:4:4)
 //!
-//! - [`Yuv422p`](crate::yuv::Yuv422p) — 4:2:2 **planar** (libx264
+//! - [`Yuv422p`](crate::source::Yuv422p) — 4:2:2 **planar** (libx264
 //!   default for chroma‑rich captures, ProRes Proxy at 8 bits).
 //!   Reuses the 4:2:0 per‑row kernel; differs only in the vertical
 //!   walker.
-//! - [`Nv16`](crate::yuv::Nv16) — 4:2:2 semi‑planar, UV‑ordered.
-//!   Reuses [`Nv12`](crate::yuv::Nv12)'s per‑row kernel; the 4:2:0
+//! - [`Nv16`](crate::source::Nv16) — 4:2:2 semi‑planar, UV‑ordered.
+//!   Reuses [`Nv12`](crate::source::Nv12)'s per‑row kernel; the 4:2:0
 //!   vs 4:2:2 difference is purely in the vertical walker.
-//! - [`Yuv440p`](crate::yuv::Yuv440p) — 4:4:0 planar (full‑width
+//! - [`Yuv440p`](crate::source::Yuv440p) — 4:4:0 planar (full‑width
 //!   chroma × half‑height — axis‑flipped 4:2:2). Mostly seen from
 //!   JPEG decoders that subsample vertically only. Reuses
-//!   [`Yuv444p`](crate::yuv::Yuv444p)'s per‑row kernel; only the
+//!   [`Yuv444p`](crate::source::Yuv444p)'s per‑row kernel; only the
 //!   walker reads chroma row `r / 2`.
-//! - [`Yuv444p`](crate::yuv::Yuv444p) — 4:4:4 **planar** (libx264
+//! - [`Yuv444p`](crate::source::Yuv444p) — 4:4:4 **planar** (libx264
 //!   default for screen capture / RGB‑source re‑encodes). Dedicated
 //!   kernel family — chroma is 1:1 with Y, no duplication step.
-//! - [`Nv24`](crate::yuv::Nv24) — 4:4:4 semi‑planar, UV‑ordered.
+//! - [`Nv24`](crate::source::Nv24) — 4:4:4 semi‑planar, UV‑ordered.
 //!   Dedicated kernel family (chroma is 1:1 with Y, no
 //!   duplication step).
-//! - [`Nv42`](crate::yuv::Nv42) — 4:4:4 semi‑planar, **VU**‑ordered.
-//!   Shares kernels with [`Nv24`](crate::yuv::Nv24) via a `SWAP_UV`
-//!   const generic, the same way [`Nv21`](crate::yuv::Nv21) pairs
-//!   with [`Nv12`](crate::yuv::Nv12).
+//! - [`Nv42`](crate::source::Nv42) — 4:4:4 semi‑planar, **VU**‑ordered.
+//!   Shares kernels with [`Nv24`](crate::source::Nv24) via a `SWAP_UV`
+//!   const generic, the same way [`Nv21`](crate::source::Nv21) pairs
+//!   with [`Nv12`](crate::source::Nv12).
 //!
 //! # Shipped (high-bit-depth 4:2:0 / 4:2:2 / 4:4:0 / 4:4:4, low-bit-packed planar)
 //!
-//! - [`Yuv420p9`](crate::yuv::Yuv420p9) /
-//!   [`Yuv422p9`](crate::yuv::Yuv422p9) /
-//!   [`Yuv444p9`](crate::yuv::Yuv444p9) — 9 bits per sample (AVC High
+//! - [`Yuv420p9`](crate::source::Yuv420p9) /
+//!   [`Yuv422p9`](crate::source::Yuv422p9) /
+//!   [`Yuv444p9`](crate::source::Yuv444p9) — 9 bits per sample (AVC High
 //!   9 profile only — niche; HEVC / VP9 / AV1 don't produce 9‑bit).
 //!   Const‑generic kernel reuse at `BITS = 9`.
-//! - [`Yuv420p10`](crate::yuv::Yuv420p10) — 4:2:0 planar at 10 bits
+//! - [`Yuv420p10`](crate::source::Yuv420p10) — 4:2:0 planar at 10 bits
 //!   per sample (HDR10 / 10‑bit SDR software decode).
-//! - [`Yuv420p12`](crate::yuv::Yuv420p12) — 4:2:0 planar at 12 bits
+//! - [`Yuv420p12`](crate::source::Yuv420p12) — 4:2:0 planar at 12 bits
 //!   per sample (HEVC Main 12 / VP9 Profile 3 software decode).
-//! - [`Yuv420p14`](crate::yuv::Yuv420p14) — 4:2:0 planar at 14 bits
+//! - [`Yuv420p14`](crate::source::Yuv420p14) — 4:2:0 planar at 14 bits
 //!   per sample (grading / mastering pipelines).
-//! - [`Yuv420p16`](crate::yuv::Yuv420p16) — 4:2:0 planar at 16 bits
+//! - [`Yuv420p16`](crate::source::Yuv420p16) — 4:2:0 planar at 16 bits
 //!   per sample (reference / intermediate HDR, runs on the parallel
 //!   i64 kernel family).
-//! - [`Yuv422p10`](crate::yuv::Yuv422p10) /
-//!   [`Yuv422p12`](crate::yuv::Yuv422p12) /
-//!   [`Yuv422p14`](crate::yuv::Yuv422p14) /
-//!   [`Yuv422p16`](crate::yuv::Yuv422p16) — 4:2:2 planar at 10 / 12 /
+//! - [`Yuv422p10`](crate::source::Yuv422p10) /
+//!   [`Yuv422p12`](crate::source::Yuv422p12) /
+//!   [`Yuv422p14`](crate::source::Yuv422p14) /
+//!   [`Yuv422p16`](crate::source::Yuv422p16) — 4:2:2 planar at 10 / 12 /
 //!   14 / 16 bits (ProRes 422 LT/HQ, DNxHD/HR). Reuses the 4:2:0
 //!   per‑row kernels at the corresponding `BITS`.
-//! - [`Yuv440p10`](crate::yuv::Yuv440p10) /
-//!   [`Yuv440p12`](crate::yuv::Yuv440p12) — 4:4:0 planar at 10 / 12
+//! - [`Yuv440p10`](crate::source::Yuv440p10) /
+//!   [`Yuv440p12`](crate::source::Yuv440p12) — 4:4:0 planar at 10 / 12
 //!   bits. Reuses the 4:4:4 const‑generic kernel family; only the
 //!   walker reads chroma row `r / 2`. (No 9 / 14 / 16‑bit variants
 //!   exist in FFmpeg.)
-//! - [`Yuv444p10`](crate::yuv::Yuv444p10) /
-//!   [`Yuv444p12`](crate::yuv::Yuv444p12) /
-//!   [`Yuv444p14`](crate::yuv::Yuv444p14) — 4:4:4 planar at 10 / 12 /
+//! - [`Yuv444p10`](crate::source::Yuv444p10) /
+//!   [`Yuv444p12`](crate::source::Yuv444p12) /
+//!   [`Yuv444p14`](crate::source::Yuv444p14) — 4:4:4 planar at 10 / 12 /
 //!   14 bits (ProRes 4444 / 4444 XQ, mastering pipelines).
-//! - [`Yuv444p16`](crate::yuv::Yuv444p16) — 4:4:4 planar at 16 bits
+//! - [`Yuv444p16`](crate::source::Yuv444p16) — 4:4:4 planar at 16 bits
 //!   per sample (NVDEC / CUDA 4:4:4 HDR download target). Runs on
 //!   the parallel i64 kernel family.
 //!
 //! # Shipped (high-bit-depth 4:2:0, high-bit-packed semi-planar)
 //!
-//! - [`P010`](crate::yuv::P010) — 4:2:0 semi‑planar at 10 bits per
+//! - [`P010`](crate::source::P010) — 4:2:0 semi‑planar at 10 bits per
 //!   sample, high‑bit‑packed (HDR hardware decode: VideoToolbox,
 //!   VA‑API, NVDEC, D3D11VA, Intel QSV).
-//! - [`P012`](crate::yuv::P012) — 4:2:0 semi‑planar at 12 bits per
+//! - [`P012`](crate::source::P012) — 4:2:0 semi‑planar at 12 bits per
 //!   sample, high‑bit‑packed (HEVC Main 12 / VP9 Profile 3 hardware
 //!   decode).
-//! - [`P016`](crate::yuv::P016) — 4:2:0 semi‑planar at 16 bits per
+//! - [`P016`](crate::source::P016) — 4:2:0 semi‑planar at 16 bits per
 //!   sample (reference). At 16 bits the high‑vs‑low packing
 //!   distinction degenerates — every bit is active.
 //!
 //! # Shipped (high-bit-depth 4:2:2 / 4:4:4, high-bit-packed semi-planar)
 //!
-//! - [`P210`](crate::yuv::P210) /
-//!   [`P212`](crate::yuv::P212) /
-//!   [`P216`](crate::yuv::P216) — 4:2:2 semi‑planar at 10 / 12 / 16
+//! - [`P210`](crate::source::P210) /
+//!   [`P212`](crate::source::P212) /
+//!   [`P216`](crate::source::P216) — 4:2:2 semi‑planar at 10 / 12 / 16
 //!   bits. Reuses the 4:2:0 P‑family per‑row kernels verbatim
 //!   (half‑width interleaved UV layout is identical); only the walker
 //!   reads chroma row `r` instead of `r / 2`. NVDEC / CUDA HDR 4:2:2
 //!   download targets.
-//! - [`P410`](crate::yuv::P410) /
-//!   [`P412`](crate::yuv::P412) /
-//!   [`P416`](crate::yuv::P416) — 4:4:4 semi‑planar at 10 / 12 / 16
+//! - [`P410`](crate::source::P410) /
+//!   [`P412`](crate::source::P412) /
+//!   [`P416`](crate::source::P416) — 4:4:4 semi‑planar at 10 / 12 / 16
 //!   bits. Full‑width interleaved UV (`2 * width` u16 elements per
 //!   row, one `U, V` pair per pixel). Dedicated row‑kernel family
 //!   `p_n_444_to_rgb_*<BITS>` + `p_n_444_16_to_rgb_*`. NVDEC / CUDA
@@ -116,12 +122,12 @@
 //!
 //! # Shipped (packed RGB sources)
 //!
-//! - [`Rgb24`](crate::yuv::Rgb24) — packed `R, G, B` 8‑bit (3 bytes
+//! - [`Rgb24`](crate::source::Rgb24) — packed `R, G, B` 8‑bit (3 bytes
 //!   per pixel), single plane. Source-side feed for callers that
 //!   already hold packed RGB and want HSV / luma / RGBA via the
 //!   standard `MixedSinker` channels (Ship 9a).
-//! - [`Bgr24`](crate::yuv::Bgr24) — packed `B, G, R` 8‑bit. Reuses
-//!   [`Rgb24`](crate::yuv::Rgb24)'s sink pipeline behind a
+//! - [`Bgr24`](crate::source::Bgr24) — packed `B, G, R` 8‑bit. Reuses
+//!   [`Rgb24`](crate::source::Rgb24)'s sink pipeline behind a
 //!   `bgr_to_rgb_row` swap into the existing `rgb_scratch` buffer.
 //! - [`Rgba`] — packed `R, G, B, A` 8‑bit (4 bytes per pixel), single
 //!   plane; alpha is real (not padding) and is passed through to RGBA
@@ -161,28 +167,28 @@
 //!
 //! # Shipped (8-bit planar GBR sources — Tier 10)
 //!
-//! - [`Gbrp`](crate::yuv::Gbrp) — three full-resolution `u8` planes in
+//! - [`Gbrp`](crate::source::Gbrp) — three full-resolution `u8` planes in
 //!   **G, B, R** order (`AV_PIX_FMT_GBRP`). Per-row kernels
 //!   `gbr_to_rgb_row` / `gbr_to_rgba_opaque_row` interleave the planes
 //!   into packed RGB / RGBA without a chroma matrix step (input is
 //!   already component RGB). Native SIMD on every backend (NEON /
 //!   SSE4.1 / AVX2 / AVX-512 / wasm-simd128).
-//! - [`Gbrap`](crate::yuv::Gbrap) — four planes (G, B, R, A) at 8 bits
+//! - [`Gbrap`](crate::source::Gbrap) — four planes (G, B, R, A) at 8 bits
 //!   per channel (`AV_PIX_FMT_GBRAP`). Adds a real per-pixel alpha
 //!   plane (1:1 with G); kernel `gbra_to_rgba_row` interleaves all
 //!   four planes into packed RGBA in one pass.
 //!
 //! # Shipped (planar GBR high-bit-depth sources — Tier 10b)
 //!
-//! - [`Gbrp9`](crate::yuv::Gbrp9) / [`Gbrp10`](crate::yuv::Gbrp10) /
-//!   [`Gbrp12`](crate::yuv::Gbrp12) / [`Gbrp14`](crate::yuv::Gbrp14) /
-//!   [`Gbrp16`](crate::yuv::Gbrp16) — three full-resolution `u16` planes
+//! - [`Gbrp9`](crate::source::Gbrp9) / [`Gbrp10`](crate::source::Gbrp10) /
+//!   [`Gbrp12`](crate::source::Gbrp12) / [`Gbrp14`](crate::source::Gbrp14) /
+//!   [`Gbrp16`](crate::source::Gbrp16) — three full-resolution `u16` planes
 //!   in G, B, R order at 9 / 10 / 12 / 14 / 16 bits per sample
 //!   (`AV_PIX_FMT_GBRP{9,10,12,14,16}LE`). Samples in the low `BITS`
 //!   bits of each `u16`. Const-generic `BITS` kernel family; scalar
 //!   kernels in `planar_gbr_high_bit.rs`.
-//! - [`Gbrap10`](crate::yuv::Gbrap10) / [`Gbrap12`](crate::yuv::Gbrap12) /
-//!   [`Gbrap14`](crate::yuv::Gbrap14) / [`Gbrap16`](crate::yuv::Gbrap16) —
+//! - [`Gbrap10`](crate::source::Gbrap10) / [`Gbrap12`](crate::source::Gbrap12) /
+//!   [`Gbrap14`](crate::source::Gbrap14) / [`Gbrap16`](crate::source::Gbrap16) —
 //!   four planes (G, B, R, A) at 10 / 12 / 14 / 16 bits
 //!   (`AV_PIX_FMT_GBRAP{10,12,14,16}LE`). Alpha is real per-pixel α at
 //!   native depth; Strategy A+ sinker path for simultaneous RGB + RGBA
