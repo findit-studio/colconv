@@ -1,18 +1,31 @@
 //! Packed 16-bit RGB/BGR and RGBA/BGRA source frames:
-//! - `AV_PIX_FMT_RGB48LE`  → [`Rgb48Frame`]  (R, G, B; stride in u16 elements ≥ 3 × width)
-//! - `AV_PIX_FMT_BGR48LE`  → [`Bgr48Frame`]  (B, G, R; stride in u16 elements ≥ 3 × width)
-//! - `AV_PIX_FMT_RGBA64LE` → [`Rgba64Frame`] (R, G, B, A; stride in u16 elements ≥ 4 × width)
-//! - `AV_PIX_FMT_BGRA64LE` → [`Bgra64Frame`] (B, G, R, A; stride in u16 elements ≥ 4 × width)
+//! - `AV_PIX_FMT_RGB48{LE,BE}`  → [`Rgb48Frame`]  (R, G, B; stride in u16 elements ≥ 3 × width)
+//! - `AV_PIX_FMT_BGR48{LE,BE}`  → [`Bgr48Frame`]  (B, G, R; stride in u16 elements ≥ 3 × width)
+//! - `AV_PIX_FMT_RGBA64{LE,BE}` → [`Rgba64Frame`] (R, G, B, A; stride in u16 elements ≥ 4 × width)
+//! - `AV_PIX_FMT_BGRA64{LE,BE}` → [`Bgra64Frame`] (B, G, R, A; stride in u16 elements ≥ 4 × width)
 //!
-//! # Endian contract — **LE-encoded bytes**
+//! # Endian contract — `<const BE: bool = false>`
 //!
-//! The `&[u16]` plane is the **LE-encoded byte layout** reinterpreted as
-//! `u16`, matching the FFmpeg `*LE` pixel-format suffix in the format name.
-//! On a little-endian host (every CI runner today) LE bytes _are_ host-native,
-//! so `&[u16]` is also a host-native u16 slice; on a big-endian host the bytes
-//! have to be byte-swapped back to host-native before arithmetic. Downstream
-//! row kernels handle this byte-swap (or no-op on LE) under the hood —
-//! callers do **not** pre-swap.
+//! Each frame type carries a `<const BE: bool>` parameter that defaults to
+//! `false` (LE-encoded bytes). The parameter encodes the **byte order of the
+//! plane bytes**, matching the FFmpeg `*LE` / `*BE` pixel-format suffix in the
+//! format name:
+//!
+//! - `BE = false` (`Rgb48Frame<'_, false>` aka [`Rgb48LeFrame`]) — plane bytes
+//!   are LE-encoded, matching `AV_PIX_FMT_RGB48LE`. On a little-endian host
+//!   (every CI runner today) LE bytes _are_ host-native, so `&[u16]` is also a
+//!   host-native u16 slice; on a big-endian host the bytes have to be
+//!   byte-swapped back to host-native before arithmetic.
+//! - `BE = true` (`Rgb48Frame<'_, true>` aka [`Rgb48BeFrame`]) — plane bytes
+//!   are BE-encoded, matching `AV_PIX_FMT_RGB48BE`. On a little-endian host
+//!   the bytes are byte-swapped before arithmetic; on a big-endian host they
+//!   are host-native.
+//!
+//! Downstream row kernels handle the byte-swap (or no-op) under the hood —
+//! callers do **not** pre-swap. The `BE` parameter on `Frame` propagates
+//! through the walker (`rgb48_to::<BE>(...)`) into the sinker dispatch
+//! (`MixedSinker<Rgb48<BE>>`), which monomorphizes the kernel call as
+//! `rgb48_to_*_row_endian::<BE>(...)`.
 //!
 //! Stride is in **u16 elements** (not bytes). Callers holding a raw FFmpeg
 //! byte buffer should cast via `bytemuck::cast_slice` (which checks alignment
@@ -69,30 +82,46 @@ pub enum Rgb48FrameError {
   },
 }
 
-/// A validated packed **RGB48** frame (`AV_PIX_FMT_RGB48LE`) — three `u16`
-/// samples per pixel in `R, G, B` order.
+/// A validated packed **RGB48** frame (`AV_PIX_FMT_RGB48{LE,BE}`) — three
+/// `u16` samples per pixel in `R, G, B` order.
 ///
-/// The `&[u16]` plane is the **LE-encoded byte layout** reinterpreted as
-/// `u16`, matching the FFmpeg `*LE` pixel-format suffix in the format name.
-/// On a little-endian host (every CI runner today) LE bytes _are_ host-native,
-/// so `&[u16]` is also a host-native u16 slice; on a big-endian host the
-/// bytes have to be byte-swapped back to host-native before arithmetic.
-/// Downstream row kernels handle this byte-swap (or no-op on LE) under the
-/// hood — callers do **not** pre-swap.
+/// The `<const BE: bool>` parameter selects the plane byte order: `false`
+/// (default) → LE-encoded bytes (`AV_PIX_FMT_RGB48LE`), `true` → BE-encoded
+/// bytes (`AV_PIX_FMT_RGB48BE`). Downstream row kernels handle the byte-swap
+/// (or no-op) under the hood — callers do **not** pre-swap.
 ///
 /// `stride` is in **u16 elements** (≥ `3 * width`). Callers holding byte
 /// buffers from FFmpeg should cast via `bytemuck::cast_slice` and divide
 /// `linesize[0]` by 2 before constructing.
+///
+/// # Aliases
+/// - [`Rgb48LeFrame`] = `Rgb48Frame<'a, false>` — explicit LE.
+/// - [`Rgb48BeFrame`] = `Rgb48Frame<'a, true>` — explicit BE.
 #[derive(Debug, Clone, Copy)]
-pub struct Rgb48Frame<'a> {
+pub struct Rgb48Frame<'a, const BE: bool = false> {
   rgb48: &'a [u16],
   width: u32,
   height: u32,
   stride: u32,
 }
 
-impl<'a> Rgb48Frame<'a> {
+/// LE-encoded `Rgb48Frame` (`AV_PIX_FMT_RGB48LE`). Equivalent to the default
+/// `Rgb48Frame<'a>`; provided as an explicit alias for callers who want to
+/// document the endianness at the type level.
+pub type Rgb48LeFrame<'a> = Rgb48Frame<'a, false>;
+
+/// BE-encoded `Rgb48Frame` (`AV_PIX_FMT_RGB48BE`). Plane bytes are
+/// big-endian-encoded `u16` samples; downstream row kernels byte-swap under
+/// the hood.
+pub type Rgb48BeFrame<'a> = Rgb48Frame<'a, true>;
+
+impl<'a, const BE: bool> Rgb48Frame<'a, BE> {
   /// Constructs a new [`Rgb48Frame`], validating dimensions and plane length.
+  ///
+  /// The `<const BE: bool>` parameter selects whether the supplied `rgb48`
+  /// slice is interpreted as LE-encoded bytes (`BE = false`, default) or
+  /// BE-encoded bytes (`BE = true`). The byte-swap is performed inside the
+  /// row kernels — this constructor does no I/O on the bytes.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn try_new(
     rgb48: &'a [u16],
@@ -162,6 +191,13 @@ impl<'a> Rgb48Frame<'a> {
   pub const fn stride(&self) -> u32 {
     self.stride
   }
+  /// Returns the compile-time BE flag — `true` if plane bytes are BE-encoded
+  /// (`AV_PIX_FMT_RGB48BE`), `false` if LE-encoded (`AV_PIX_FMT_RGB48LE`).
+  /// Runtime mirror of the `<const BE: bool>` type parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
+  }
 }
 
 // ---- Bgr48Frame --------------------------------------------------------------
@@ -210,31 +246,35 @@ pub enum Bgr48FrameError {
   },
 }
 
-/// A validated packed **BGR48** frame (`AV_PIX_FMT_BGR48LE`) — three `u16`
-/// samples per pixel in `B, G, R` order. Channel order is reversed relative
-/// to [`Rgb48Frame`]; stride convention and element type are identical.
+/// A validated packed **BGR48** frame (`AV_PIX_FMT_BGR48{LE,BE}`) — three
+/// `u16` samples per pixel in `B, G, R` order. Channel order is reversed
+/// relative to [`Rgb48Frame`]; stride convention and element type are
+/// identical.
 ///
-/// The `&[u16]` plane is the **LE-encoded byte layout** reinterpreted as
-/// `u16`, matching the FFmpeg `*LE` pixel-format suffix in the format name.
-/// On a little-endian host (every CI runner today) LE bytes _are_ host-native,
-/// so `&[u16]` is also a host-native u16 slice; on a big-endian host the
-/// bytes have to be byte-swapped back to host-native before arithmetic.
-/// Downstream row kernels handle this byte-swap (or no-op on LE) under the
-/// hood — callers do **not** pre-swap.
+/// The `<const BE: bool>` parameter selects the plane byte order; see
+/// [`Rgb48Frame`] for the full contract.
 ///
-/// `stride` is in **u16 elements** (≥ `3 * width`). Callers holding byte
-/// buffers from FFmpeg should cast via `bytemuck::cast_slice` and divide
-/// `linesize[0]` by 2 before constructing.
+/// # Aliases
+/// - [`Bgr48LeFrame`] = `Bgr48Frame<'a, false>`.
+/// - [`Bgr48BeFrame`] = `Bgr48Frame<'a, true>`.
 #[derive(Debug, Clone, Copy)]
-pub struct Bgr48Frame<'a> {
+pub struct Bgr48Frame<'a, const BE: bool = false> {
   bgr48: &'a [u16],
   width: u32,
   height: u32,
   stride: u32,
 }
 
-impl<'a> Bgr48Frame<'a> {
+/// LE-encoded `Bgr48Frame` (`AV_PIX_FMT_BGR48LE`).
+pub type Bgr48LeFrame<'a> = Bgr48Frame<'a, false>;
+
+/// BE-encoded `Bgr48Frame` (`AV_PIX_FMT_BGR48BE`).
+pub type Bgr48BeFrame<'a> = Bgr48Frame<'a, true>;
+
+impl<'a, const BE: bool> Bgr48Frame<'a, BE> {
   /// Constructs a new [`Bgr48Frame`], validating dimensions and plane length.
+  /// `<const BE: bool>` selects LE (`false`, default) vs BE (`true`) plane
+  /// byte order; row kernels perform the byte-swap.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn try_new(
     bgr48: &'a [u16],
@@ -304,6 +344,11 @@ impl<'a> Bgr48Frame<'a> {
   pub const fn stride(&self) -> u32 {
     self.stride
   }
+  /// Runtime mirror of the `<const BE: bool>` type parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
+  }
 }
 
 // ---- Rgba64Frame -------------------------------------------------------------
@@ -352,31 +397,34 @@ pub enum Rgba64FrameError {
   },
 }
 
-/// A validated packed **RGBA64** frame (`AV_PIX_FMT_RGBA64LE`) — four `u16`
-/// samples per pixel in `R, G, B, A` order. The alpha channel is real
+/// A validated packed **RGBA64** frame (`AV_PIX_FMT_RGBA64{LE,BE}`) — four
+/// `u16` samples per pixel in `R, G, B, A` order. The alpha channel is real
 /// (not padding) and is passed through by `with_rgba` / `with_rgba_u16`.
 ///
-/// The `&[u16]` plane is the **LE-encoded byte layout** reinterpreted as
-/// `u16`, matching the FFmpeg `*LE` pixel-format suffix in the format name.
-/// On a little-endian host (every CI runner today) LE bytes _are_ host-native,
-/// so `&[u16]` is also a host-native u16 slice; on a big-endian host the
-/// bytes have to be byte-swapped back to host-native before arithmetic.
-/// Downstream row kernels handle this byte-swap (or no-op on LE) under the
-/// hood — callers do **not** pre-swap.
+/// The `<const BE: bool>` parameter selects the plane byte order; see
+/// [`Rgb48Frame`] for the full contract.
 ///
-/// `stride` is in **u16 elements** (≥ `4 * width`). Callers holding byte
-/// buffers from FFmpeg should cast via `bytemuck::cast_slice` and divide
-/// `linesize[0]` by 2 before constructing.
+/// # Aliases
+/// - [`Rgba64LeFrame`] = `Rgba64Frame<'a, false>`.
+/// - [`Rgba64BeFrame`] = `Rgba64Frame<'a, true>`.
 #[derive(Debug, Clone, Copy)]
-pub struct Rgba64Frame<'a> {
+pub struct Rgba64Frame<'a, const BE: bool = false> {
   rgba64: &'a [u16],
   width: u32,
   height: u32,
   stride: u32,
 }
 
-impl<'a> Rgba64Frame<'a> {
+/// LE-encoded `Rgba64Frame` (`AV_PIX_FMT_RGBA64LE`).
+pub type Rgba64LeFrame<'a> = Rgba64Frame<'a, false>;
+
+/// BE-encoded `Rgba64Frame` (`AV_PIX_FMT_RGBA64BE`).
+pub type Rgba64BeFrame<'a> = Rgba64Frame<'a, true>;
+
+impl<'a, const BE: bool> Rgba64Frame<'a, BE> {
   /// Constructs a new [`Rgba64Frame`], validating dimensions and plane length.
+  /// `<const BE: bool>` selects LE (`false`, default) vs BE (`true`) plane
+  /// byte order; row kernels perform the byte-swap.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn try_new(
     rgba64: &'a [u16],
@@ -446,6 +494,11 @@ impl<'a> Rgba64Frame<'a> {
   pub const fn stride(&self) -> u32 {
     self.stride
   }
+  /// Runtime mirror of the `<const BE: bool>` type parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
+  }
 }
 
 // ---- Bgra64Frame -------------------------------------------------------------
@@ -494,32 +547,35 @@ pub enum Bgra64FrameError {
   },
 }
 
-/// A validated packed **BGRA64** frame (`AV_PIX_FMT_BGRA64LE`) — four `u16`
-/// samples per pixel in `B, G, R, A` order. Channel order is reversed on the
-/// first three elements relative to [`Rgba64Frame`]; alpha at position 3 is
-/// real and is passed through by `with_rgba` / `with_rgba_u16`.
+/// A validated packed **BGRA64** frame (`AV_PIX_FMT_BGRA64{LE,BE}`) — four
+/// `u16` samples per pixel in `B, G, R, A` order. Channel order is reversed
+/// on the first three elements relative to [`Rgba64Frame`]; alpha at position
+/// 3 is real and is passed through by `with_rgba` / `with_rgba_u16`.
 ///
-/// The `&[u16]` plane is the **LE-encoded byte layout** reinterpreted as
-/// `u16`, matching the FFmpeg `*LE` pixel-format suffix in the format name.
-/// On a little-endian host (every CI runner today) LE bytes _are_ host-native,
-/// so `&[u16]` is also a host-native u16 slice; on a big-endian host the
-/// bytes have to be byte-swapped back to host-native before arithmetic.
-/// Downstream row kernels handle this byte-swap (or no-op on LE) under the
-/// hood — callers do **not** pre-swap.
+/// The `<const BE: bool>` parameter selects the plane byte order; see
+/// [`Rgb48Frame`] for the full contract.
 ///
-/// `stride` is in **u16 elements** (≥ `4 * width`). Callers holding byte
-/// buffers from FFmpeg should cast via `bytemuck::cast_slice` and divide
-/// `linesize[0]` by 2 before constructing.
+/// # Aliases
+/// - [`Bgra64LeFrame`] = `Bgra64Frame<'a, false>`.
+/// - [`Bgra64BeFrame`] = `Bgra64Frame<'a, true>`.
 #[derive(Debug, Clone, Copy)]
-pub struct Bgra64Frame<'a> {
+pub struct Bgra64Frame<'a, const BE: bool = false> {
   bgra64: &'a [u16],
   width: u32,
   height: u32,
   stride: u32,
 }
 
-impl<'a> Bgra64Frame<'a> {
+/// LE-encoded `Bgra64Frame` (`AV_PIX_FMT_BGRA64LE`).
+pub type Bgra64LeFrame<'a> = Bgra64Frame<'a, false>;
+
+/// BE-encoded `Bgra64Frame` (`AV_PIX_FMT_BGRA64BE`).
+pub type Bgra64BeFrame<'a> = Bgra64Frame<'a, true>;
+
+impl<'a, const BE: bool> Bgra64Frame<'a, BE> {
   /// Constructs a new [`Bgra64Frame`], validating dimensions and plane length.
+  /// `<const BE: bool>` selects LE (`false`, default) vs BE (`true`) plane
+  /// byte order; row kernels perform the byte-swap.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn try_new(
     bgra64: &'a [u16],
@@ -588,5 +644,10 @@ impl<'a> Bgra64Frame<'a> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn stride(&self) -> u32 {
     self.stride
+  }
+  /// Runtime mirror of the `<const BE: bool>` type parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
   }
 }

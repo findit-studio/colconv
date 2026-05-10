@@ -6,17 +6,19 @@
 //! the 4:2:0 `p_n_to_rgb_*<12>` family verbatim; only the walker
 //! reads chroma row `r` instead of `r / 2` (4:2:2 vs 4:2:0).
 
-use crate::frame::P212Frame;
+use crate::frame::PnFrame422;
 
 walker! {
-  semi_planar {
+  semi_planar_be {
     /// Zero‑sized marker for the P212 source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: P212,
-    frame: P212Frame<'_>,
+    frame: PnFrame422<'_, 12, BE>,
+    frame_le: PnFrame422<'_, 12, false>,
     row: P212Row,
     sink: P212Sink,
     walker: p212_to,
+    walker_endian: p212_to_endian,
     elem_type: u16,
     chroma_field: uv_half,
     chroma_plane: uv,

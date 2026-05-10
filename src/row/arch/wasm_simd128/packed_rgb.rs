@@ -1,6 +1,6 @@
 use core::arch::wasm32::*;
 
-use super::*;
+use super::{endian::load_endian_u32x4, *};
 
 // ===== BGR ↔ RGB byte swap ==============================================
 
@@ -634,92 +634,90 @@ pub(crate) unsafe fn x2rgb10_to_rgb_row<const BE: bool>(
   unsafe {
     let mask_3ff = u32x4_splat(0x3FF);
     let mut x = 0usize;
-    if !BE {
-      while x + 16 <= width {
-        let p0 = v128_load(x2rgb10.as_ptr().add(x * 4).cast());
-        let p1 = v128_load(x2rgb10.as_ptr().add(x * 4 + 16).cast());
-        let p2 = v128_load(x2rgb10.as_ptr().add(x * 4 + 32).cast());
-        let p3 = v128_load(x2rgb10.as_ptr().add(x * 4 + 48).cast());
+    while x + 16 <= width {
+      let p0 = load_endian_u32x4::<BE>(x2rgb10.as_ptr().add(x * 4));
+      let p1 = load_endian_u32x4::<BE>(x2rgb10.as_ptr().add(x * 4 + 16));
+      let p2 = load_endian_u32x4::<BE>(x2rgb10.as_ptr().add(x * 4 + 32));
+      let p3 = load_endian_u32x4::<BE>(x2rgb10.as_ptr().add(x * 4 + 48));
 
-        // Extract 10-bit channels as u32x4 (low 10 bits set per lane).
-        // X2RGB10: R at >>20, G at >>10, B at >>0.
-        let r0 = v128_and(u32x4_shr(p0, 20), mask_3ff);
-        let r1 = v128_and(u32x4_shr(p1, 20), mask_3ff);
-        let r2 = v128_and(u32x4_shr(p2, 20), mask_3ff);
-        let r3 = v128_and(u32x4_shr(p3, 20), mask_3ff);
-        let g0 = v128_and(u32x4_shr(p0, 10), mask_3ff);
-        let g1 = v128_and(u32x4_shr(p1, 10), mask_3ff);
-        let g2 = v128_and(u32x4_shr(p2, 10), mask_3ff);
-        let g3 = v128_and(u32x4_shr(p3, 10), mask_3ff);
-        let b0 = v128_and(p0, mask_3ff);
-        let b1 = v128_and(p1, mask_3ff);
-        let b2 = v128_and(p2, mask_3ff);
-        let b3 = v128_and(p3, mask_3ff);
+      // Extract 10-bit channels as u32x4 (low 10 bits set per lane).
+      // X2RGB10: R at >>20, G at >>10, B at >>0.
+      let r0 = v128_and(u32x4_shr(p0, 20), mask_3ff);
+      let r1 = v128_and(u32x4_shr(p1, 20), mask_3ff);
+      let r2 = v128_and(u32x4_shr(p2, 20), mask_3ff);
+      let r3 = v128_and(u32x4_shr(p3, 20), mask_3ff);
+      let g0 = v128_and(u32x4_shr(p0, 10), mask_3ff);
+      let g1 = v128_and(u32x4_shr(p1, 10), mask_3ff);
+      let g2 = v128_and(u32x4_shr(p2, 10), mask_3ff);
+      let g3 = v128_and(u32x4_shr(p3, 10), mask_3ff);
+      let b0 = v128_and(p0, mask_3ff);
+      let b1 = v128_and(p1, mask_3ff);
+      let b2 = v128_and(p2, mask_3ff);
+      let b3 = v128_and(p3, mask_3ff);
 
-        // Down-shift 10-bit → 8-bit.
-        let r0_u8 = u32x4_shr(r0, 2);
-        let r1_u8 = u32x4_shr(r1, 2);
-        let r2_u8 = u32x4_shr(r2, 2);
-        let r3_u8 = u32x4_shr(r3, 2);
-        let g0_u8 = u32x4_shr(g0, 2);
-        let g1_u8 = u32x4_shr(g1, 2);
-        let g2_u8 = u32x4_shr(g2, 2);
-        let g3_u8 = u32x4_shr(g3, 2);
-        let b0_u8 = u32x4_shr(b0, 2);
-        let b1_u8 = u32x4_shr(b1, 2);
-        let b2_u8 = u32x4_shr(b2, 2);
-        let b3_u8 = u32x4_shr(b3, 2);
+      // Down-shift 10-bit → 8-bit.
+      let r0_u8 = u32x4_shr(r0, 2);
+      let r1_u8 = u32x4_shr(r1, 2);
+      let r2_u8 = u32x4_shr(r2, 2);
+      let r3_u8 = u32x4_shr(r3, 2);
+      let g0_u8 = u32x4_shr(g0, 2);
+      let g1_u8 = u32x4_shr(g1, 2);
+      let g2_u8 = u32x4_shr(g2, 2);
+      let g3_u8 = u32x4_shr(g3, 2);
+      let b0_u8 = u32x4_shr(b0, 2);
+      let b1_u8 = u32x4_shr(b1, 2);
+      let b2_u8 = u32x4_shr(b2, 2);
+      let b3_u8 = u32x4_shr(b3, 2);
 
-        // u32x4 → u16x8 (saturating narrow).
-        let r_lo = u16x8_narrow_i32x4(r0_u8, r1_u8);
-        let r_hi = u16x8_narrow_i32x4(r2_u8, r3_u8);
-        let g_lo = u16x8_narrow_i32x4(g0_u8, g1_u8);
-        let g_hi = u16x8_narrow_i32x4(g2_u8, g3_u8);
-        let b_lo = u16x8_narrow_i32x4(b0_u8, b1_u8);
-        let b_hi = u16x8_narrow_i32x4(b2_u8, b3_u8);
+      // u32x4 → u16x8 (saturating narrow).
+      let r_lo = u16x8_narrow_i32x4(r0_u8, r1_u8);
+      let r_hi = u16x8_narrow_i32x4(r2_u8, r3_u8);
+      let g_lo = u16x8_narrow_i32x4(g0_u8, g1_u8);
+      let g_hi = u16x8_narrow_i32x4(g2_u8, g3_u8);
+      let b_lo = u16x8_narrow_i32x4(b0_u8, b1_u8);
+      let b_hi = u16x8_narrow_i32x4(b2_u8, b3_u8);
 
-        // u16x8 → u8x16.
-        let r_u8 = u8x16_narrow_i16x8(r_lo, r_hi);
-        let g_u8 = u8x16_narrow_i16x8(g_lo, g_hi);
-        let b_u8 = u8x16_narrow_i16x8(b_lo, b_hi);
+      // u16x8 → u8x16.
+      let r_u8 = u8x16_narrow_i16x8(r_lo, r_hi);
+      let g_u8 = u8x16_narrow_i16x8(g_lo, g_hi);
+      let b_u8 = u8x16_narrow_i16x8(b_lo, b_hi);
 
-        // Interleave (R, G, B) into 48 packed bytes via the same
-        // 9-shuffle pattern used by the YUV→RGB kernels.
-        let r_mask0 = i8x16(0, -1, -1, 1, -1, -1, 2, -1, -1, 3, -1, -1, 4, -1, -1, 5);
-        let g_mask0 = i8x16(-1, 0, -1, -1, 1, -1, -1, 2, -1, -1, 3, -1, -1, 4, -1, -1);
-        let b_mask0 = i8x16(-1, -1, 0, -1, -1, 1, -1, -1, 2, -1, -1, 3, -1, -1, 4, -1);
-        let out0 = v128_or(
-          v128_or(u8x16_swizzle(r_u8, r_mask0), u8x16_swizzle(g_u8, g_mask0)),
-          u8x16_swizzle(b_u8, b_mask0),
-        );
-        let r_mask1 = i8x16(-1, -1, 6, -1, -1, 7, -1, -1, 8, -1, -1, 9, -1, -1, 10, -1);
-        let g_mask1 = i8x16(5, -1, -1, 6, -1, -1, 7, -1, -1, 8, -1, -1, 9, -1, -1, 10);
-        let b_mask1 = i8x16(-1, 5, -1, -1, 6, -1, -1, 7, -1, -1, 8, -1, -1, 9, -1, -1);
-        let out1 = v128_or(
-          v128_or(u8x16_swizzle(r_u8, r_mask1), u8x16_swizzle(g_u8, g_mask1)),
-          u8x16_swizzle(b_u8, b_mask1),
-        );
-        let r_mask2 = i8x16(
-          -1, 11, -1, -1, 12, -1, -1, 13, -1, -1, 14, -1, -1, 15, -1, -1,
-        );
-        let g_mask2 = i8x16(
-          -1, -1, 11, -1, -1, 12, -1, -1, 13, -1, -1, 14, -1, -1, 15, -1,
-        );
-        let b_mask2 = i8x16(
-          10, -1, -1, 11, -1, -1, 12, -1, -1, 13, -1, -1, 14, -1, -1, 15,
-        );
-        let out2 = v128_or(
-          v128_or(u8x16_swizzle(r_u8, r_mask2), u8x16_swizzle(g_u8, g_mask2)),
-          u8x16_swizzle(b_u8, b_mask2),
-        );
+      // Interleave (R, G, B) into 48 packed bytes via the same
+      // 9-shuffle pattern used by the YUV→RGB kernels.
+      let r_mask0 = i8x16(0, -1, -1, 1, -1, -1, 2, -1, -1, 3, -1, -1, 4, -1, -1, 5);
+      let g_mask0 = i8x16(-1, 0, -1, -1, 1, -1, -1, 2, -1, -1, 3, -1, -1, 4, -1, -1);
+      let b_mask0 = i8x16(-1, -1, 0, -1, -1, 1, -1, -1, 2, -1, -1, 3, -1, -1, 4, -1);
+      let out0 = v128_or(
+        v128_or(u8x16_swizzle(r_u8, r_mask0), u8x16_swizzle(g_u8, g_mask0)),
+        u8x16_swizzle(b_u8, b_mask0),
+      );
+      let r_mask1 = i8x16(-1, -1, 6, -1, -1, 7, -1, -1, 8, -1, -1, 9, -1, -1, 10, -1);
+      let g_mask1 = i8x16(5, -1, -1, 6, -1, -1, 7, -1, -1, 8, -1, -1, 9, -1, -1, 10);
+      let b_mask1 = i8x16(-1, 5, -1, -1, 6, -1, -1, 7, -1, -1, 8, -1, -1, 9, -1, -1);
+      let out1 = v128_or(
+        v128_or(u8x16_swizzle(r_u8, r_mask1), u8x16_swizzle(g_u8, g_mask1)),
+        u8x16_swizzle(b_u8, b_mask1),
+      );
+      let r_mask2 = i8x16(
+        -1, 11, -1, -1, 12, -1, -1, 13, -1, -1, 14, -1, -1, 15, -1, -1,
+      );
+      let g_mask2 = i8x16(
+        -1, -1, 11, -1, -1, 12, -1, -1, 13, -1, -1, 14, -1, -1, 15, -1,
+      );
+      let b_mask2 = i8x16(
+        10, -1, -1, 11, -1, -1, 12, -1, -1, 13, -1, -1, 14, -1, -1, 15,
+      );
+      let out2 = v128_or(
+        v128_or(u8x16_swizzle(r_u8, r_mask2), u8x16_swizzle(g_u8, g_mask2)),
+        u8x16_swizzle(b_u8, b_mask2),
+      );
 
-        v128_store(rgb_out.as_mut_ptr().add(x * 3).cast(), out0);
-        v128_store(rgb_out.as_mut_ptr().add(x * 3 + 16).cast(), out1);
-        v128_store(rgb_out.as_mut_ptr().add(x * 3 + 32).cast(), out2);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3).cast(), out0);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3 + 16).cast(), out1);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3 + 32).cast(), out2);
 
-        x += 16;
-      }
-    } // end if !BE
+      x += 16;
+    }
     if x < width {
       scalar::x2rgb10_to_rgb_row::<BE>(
         &x2rgb10[x * 4..width * 4],
@@ -746,35 +744,33 @@ pub(crate) unsafe fn x2rgb10_to_rgba_row<const BE: bool>(
     let mask_3ff = u32x4_splat(0x3FF);
     let alpha_const = u32x4_splat(0xFF00_0000);
     let mut x = 0usize;
-    if !BE {
-      while x + 4 <= width {
-        let pix = v128_load(x2rgb10.as_ptr().add(x * 4).cast());
+    while x + 4 <= width {
+      let pix = load_endian_u32x4::<BE>(x2rgb10.as_ptr().add(x * 4));
 
-        // Extract 10-bit channels into u32 lanes, down-shift to u8.
-        let r = v128_and(u32x4_shr(pix, 20), mask_3ff);
-        let g = v128_and(u32x4_shr(pix, 10), mask_3ff);
-        let b = v128_and(pix, mask_3ff);
-        let r = u32x4_shr(r, 2);
-        let g = u32x4_shr(g, 2);
-        let b = u32x4_shr(b, 2);
+      // Extract 10-bit channels into u32 lanes, down-shift to u8.
+      let r = v128_and(u32x4_shr(pix, 20), mask_3ff);
+      let g = v128_and(u32x4_shr(pix, 10), mask_3ff);
+      let b = v128_and(pix, mask_3ff);
+      let r = u32x4_shr(r, 2);
+      let g = u32x4_shr(g, 2);
+      let b = u32x4_shr(b, 2);
 
-        // Pack (R, G, B, 0xFF) bytes per pixel.
-        // Each channel value is in low byte of its u32 lane.
-        // Shuffle to byte positions: R→[0,4,8,12], G→[1,5,9,13], B→[2,6,10,14], A→[3,7,11,15].
-        let r_mask = i8x16(0, -1, -1, -1, 4, -1, -1, -1, 8, -1, -1, -1, 12, -1, -1, -1);
-        let g_mask = i8x16(-1, 0, -1, -1, -1, 4, -1, -1, -1, 8, -1, -1, -1, 12, -1, -1);
-        let b_mask = i8x16(-1, -1, 0, -1, -1, -1, 4, -1, -1, -1, 8, -1, -1, -1, 12, -1);
-        let out = v128_or(
-          v128_or(
-            v128_or(u8x16_swizzle(r, r_mask), u8x16_swizzle(g, g_mask)),
-            u8x16_swizzle(b, b_mask),
-          ),
-          alpha_const,
-        );
+      // Pack (R, G, B, 0xFF) bytes per pixel.
+      // Each channel value is in low byte of its u32 lane.
+      // Shuffle to byte positions: R→[0,4,8,12], G→[1,5,9,13], B→[2,6,10,14], A→[3,7,11,15].
+      let r_mask = i8x16(0, -1, -1, -1, 4, -1, -1, -1, 8, -1, -1, -1, 12, -1, -1, -1);
+      let g_mask = i8x16(-1, 0, -1, -1, -1, 4, -1, -1, -1, 8, -1, -1, -1, 12, -1, -1);
+      let b_mask = i8x16(-1, -1, 0, -1, -1, -1, 4, -1, -1, -1, 8, -1, -1, -1, 12, -1);
+      let out = v128_or(
+        v128_or(
+          v128_or(u8x16_swizzle(r, r_mask), u8x16_swizzle(g, g_mask)),
+          u8x16_swizzle(b, b_mask),
+        ),
+        alpha_const,
+      );
 
-        v128_store(rgba_out.as_mut_ptr().add(x * 4).cast(), out);
-        x += 4;
-      }
+      v128_store(rgba_out.as_mut_ptr().add(x * 4).cast(), out);
+      x += 4;
     }
     if x < width {
       scalar::x2rgb10_to_rgba_row::<BE>(
@@ -800,65 +796,63 @@ pub(crate) unsafe fn x2rgb10_to_rgb_u16_row<const BE: bool>(
   unsafe {
     let mask_3ff = u32x4_splat(0x3FF);
     let mut x = 0usize;
-    if !BE {
-      while x + 8 <= width {
-        let p0 = v128_load(x2rgb10.as_ptr().add(x * 4).cast());
-        let p1 = v128_load(x2rgb10.as_ptr().add(x * 4 + 16).cast());
+    while x + 8 <= width {
+      let p0 = load_endian_u32x4::<BE>(x2rgb10.as_ptr().add(x * 4));
+      let p1 = load_endian_u32x4::<BE>(x2rgb10.as_ptr().add(x * 4 + 16));
 
-        let r0 = v128_and(u32x4_shr(p0, 20), mask_3ff);
-        let r1 = v128_and(u32x4_shr(p1, 20), mask_3ff);
-        let g0 = v128_and(u32x4_shr(p0, 10), mask_3ff);
-        let g1 = v128_and(u32x4_shr(p1, 10), mask_3ff);
-        let b0 = v128_and(p0, mask_3ff);
-        let b1 = v128_and(p1, mask_3ff);
+      let r0 = v128_and(u32x4_shr(p0, 20), mask_3ff);
+      let r1 = v128_and(u32x4_shr(p1, 20), mask_3ff);
+      let g0 = v128_and(u32x4_shr(p0, 10), mask_3ff);
+      let g1 = v128_and(u32x4_shr(p1, 10), mask_3ff);
+      let b0 = v128_and(p0, mask_3ff);
+      let b1 = v128_and(p1, mask_3ff);
 
-        let r = u16x8_narrow_i32x4(r0, r1);
-        let g = u16x8_narrow_i32x4(g0, g1);
-        let b = u16x8_narrow_i32x4(b0, b1);
+      let r = u16x8_narrow_i32x4(r0, r1);
+      let g = u16x8_narrow_i32x4(g0, g1);
+      let b = u16x8_narrow_i32x4(b0, b1);
 
-        // Interleave (R, G, B) u16x8 into 24 u16 elements.
-        // Element granularity is u16 (2 bytes); shuffle masks below
-        // index by byte. For u16-per-element interleave, byte mask
-        // pulls 2 consecutive bytes per element.
-        let r_mask0 = i8x16(0, 1, -1, -1, -1, -1, 2, 3, -1, -1, -1, -1, 4, 5, -1, -1);
-        let g_mask0 = i8x16(-1, -1, 0, 1, -1, -1, -1, -1, 2, 3, -1, -1, -1, -1, 4, 5);
-        let b_mask0 = i8x16(-1, -1, -1, -1, 0, 1, -1, -1, -1, -1, 2, 3, -1, -1, -1, -1);
-        let out0 = v128_or(
-          v128_or(u8x16_swizzle(r, r_mask0), u8x16_swizzle(g, g_mask0)),
-          u8x16_swizzle(b, b_mask0),
-        );
-        // Block 1 (output u16s 8..15 = [B2, R3, G3, B3, R4, G4, B4, R5]).
-        // Each u16 takes 2 bytes; the channel vectors hold element `i` at
-        // byte indices `(2*i, 2*i+1)`.
-        let r_mask1 = i8x16(-1, -1, 6, 7, -1, -1, -1, -1, 8, 9, -1, -1, -1, -1, 10, 11);
-        let g_mask1 = i8x16(-1, -1, -1, -1, 6, 7, -1, -1, -1, -1, 8, 9, -1, -1, -1, -1);
-        let b_mask1 = i8x16(4, 5, -1, -1, -1, -1, 6, 7, -1, -1, -1, -1, 8, 9, -1, -1);
-        let out1 = v128_or(
-          v128_or(u8x16_swizzle(r, r_mask1), u8x16_swizzle(g, g_mask1)),
-          u8x16_swizzle(b, b_mask1),
-        );
-        // Block 2 (output u16s 16..23 = [G5, B5, R6, G6, B6, R7, G7, B7]).
-        let r_mask2 = i8x16(
-          -1, -1, -1, -1, 12, 13, -1, -1, -1, -1, 14, 15, -1, -1, -1, -1,
-        );
-        let g_mask2 = i8x16(
-          10, 11, -1, -1, -1, -1, 12, 13, -1, -1, -1, -1, 14, 15, -1, -1,
-        );
-        let b_mask2 = i8x16(
-          -1, -1, 10, 11, -1, -1, -1, -1, 12, 13, -1, -1, -1, -1, 14, 15,
-        );
-        let out2 = v128_or(
-          v128_or(u8x16_swizzle(r, r_mask2), u8x16_swizzle(g, g_mask2)),
-          u8x16_swizzle(b, b_mask2),
-        );
+      // Interleave (R, G, B) u16x8 into 24 u16 elements.
+      // Element granularity is u16 (2 bytes); shuffle masks below
+      // index by byte. For u16-per-element interleave, byte mask
+      // pulls 2 consecutive bytes per element.
+      let r_mask0 = i8x16(0, 1, -1, -1, -1, -1, 2, 3, -1, -1, -1, -1, 4, 5, -1, -1);
+      let g_mask0 = i8x16(-1, -1, 0, 1, -1, -1, -1, -1, 2, 3, -1, -1, -1, -1, 4, 5);
+      let b_mask0 = i8x16(-1, -1, -1, -1, 0, 1, -1, -1, -1, -1, 2, 3, -1, -1, -1, -1);
+      let out0 = v128_or(
+        v128_or(u8x16_swizzle(r, r_mask0), u8x16_swizzle(g, g_mask0)),
+        u8x16_swizzle(b, b_mask0),
+      );
+      // Block 1 (output u16s 8..15 = [B2, R3, G3, B3, R4, G4, B4, R5]).
+      // Each u16 takes 2 bytes; the channel vectors hold element `i` at
+      // byte indices `(2*i, 2*i+1)`.
+      let r_mask1 = i8x16(-1, -1, 6, 7, -1, -1, -1, -1, 8, 9, -1, -1, -1, -1, 10, 11);
+      let g_mask1 = i8x16(-1, -1, -1, -1, 6, 7, -1, -1, -1, -1, 8, 9, -1, -1, -1, -1);
+      let b_mask1 = i8x16(4, 5, -1, -1, -1, -1, 6, 7, -1, -1, -1, -1, 8, 9, -1, -1);
+      let out1 = v128_or(
+        v128_or(u8x16_swizzle(r, r_mask1), u8x16_swizzle(g, g_mask1)),
+        u8x16_swizzle(b, b_mask1),
+      );
+      // Block 2 (output u16s 16..23 = [G5, B5, R6, G6, B6, R7, G7, B7]).
+      let r_mask2 = i8x16(
+        -1, -1, -1, -1, 12, 13, -1, -1, -1, -1, 14, 15, -1, -1, -1, -1,
+      );
+      let g_mask2 = i8x16(
+        10, 11, -1, -1, -1, -1, 12, 13, -1, -1, -1, -1, 14, 15, -1, -1,
+      );
+      let b_mask2 = i8x16(
+        -1, -1, 10, 11, -1, -1, -1, -1, 12, 13, -1, -1, -1, -1, 14, 15,
+      );
+      let out2 = v128_or(
+        v128_or(u8x16_swizzle(r, r_mask2), u8x16_swizzle(g, g_mask2)),
+        u8x16_swizzle(b, b_mask2),
+      );
 
-        v128_store(rgb_out.as_mut_ptr().add(x * 3).cast(), out0);
-        v128_store(rgb_out.as_mut_ptr().add(x * 3 + 8).cast(), out1);
-        v128_store(rgb_out.as_mut_ptr().add(x * 3 + 16).cast(), out2);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3).cast(), out0);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3 + 8).cast(), out1);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3 + 16).cast(), out2);
 
-        x += 8;
-      }
-    } // end if !BE
+      x += 8;
+    }
     if x < width {
       scalar::x2rgb10_to_rgb_u16_row::<BE>(
         &x2rgb10[x * 4..width * 4],
@@ -884,73 +878,71 @@ pub(crate) unsafe fn x2bgr10_to_rgb_row<const BE: bool>(
   unsafe {
     let mask_3ff = u32x4_splat(0x3FF);
     let mut x = 0usize;
-    if !BE {
-      while x + 16 <= width {
-        let p0 = v128_load(x2bgr10.as_ptr().add(x * 4).cast());
-        let p1 = v128_load(x2bgr10.as_ptr().add(x * 4 + 16).cast());
-        let p2 = v128_load(x2bgr10.as_ptr().add(x * 4 + 32).cast());
-        let p3 = v128_load(x2bgr10.as_ptr().add(x * 4 + 48).cast());
+    while x + 16 <= width {
+      let p0 = load_endian_u32x4::<BE>(x2bgr10.as_ptr().add(x * 4));
+      let p1 = load_endian_u32x4::<BE>(x2bgr10.as_ptr().add(x * 4 + 16));
+      let p2 = load_endian_u32x4::<BE>(x2bgr10.as_ptr().add(x * 4 + 32));
+      let p3 = load_endian_u32x4::<BE>(x2bgr10.as_ptr().add(x * 4 + 48));
 
-        // X2BGR10: R at low 10, G at >>10, B at >>20.
-        let r0 = u32x4_shr(v128_and(p0, mask_3ff), 2);
-        let r1 = u32x4_shr(v128_and(p1, mask_3ff), 2);
-        let r2 = u32x4_shr(v128_and(p2, mask_3ff), 2);
-        let r3 = u32x4_shr(v128_and(p3, mask_3ff), 2);
-        let g0 = u32x4_shr(v128_and(u32x4_shr(p0, 10), mask_3ff), 2);
-        let g1 = u32x4_shr(v128_and(u32x4_shr(p1, 10), mask_3ff), 2);
-        let g2 = u32x4_shr(v128_and(u32x4_shr(p2, 10), mask_3ff), 2);
-        let g3 = u32x4_shr(v128_and(u32x4_shr(p3, 10), mask_3ff), 2);
-        let b0 = u32x4_shr(v128_and(u32x4_shr(p0, 20), mask_3ff), 2);
-        let b1 = u32x4_shr(v128_and(u32x4_shr(p1, 20), mask_3ff), 2);
-        let b2 = u32x4_shr(v128_and(u32x4_shr(p2, 20), mask_3ff), 2);
-        let b3 = u32x4_shr(v128_and(u32x4_shr(p3, 20), mask_3ff), 2);
+      // X2BGR10: R at low 10, G at >>10, B at >>20.
+      let r0 = u32x4_shr(v128_and(p0, mask_3ff), 2);
+      let r1 = u32x4_shr(v128_and(p1, mask_3ff), 2);
+      let r2 = u32x4_shr(v128_and(p2, mask_3ff), 2);
+      let r3 = u32x4_shr(v128_and(p3, mask_3ff), 2);
+      let g0 = u32x4_shr(v128_and(u32x4_shr(p0, 10), mask_3ff), 2);
+      let g1 = u32x4_shr(v128_and(u32x4_shr(p1, 10), mask_3ff), 2);
+      let g2 = u32x4_shr(v128_and(u32x4_shr(p2, 10), mask_3ff), 2);
+      let g3 = u32x4_shr(v128_and(u32x4_shr(p3, 10), mask_3ff), 2);
+      let b0 = u32x4_shr(v128_and(u32x4_shr(p0, 20), mask_3ff), 2);
+      let b1 = u32x4_shr(v128_and(u32x4_shr(p1, 20), mask_3ff), 2);
+      let b2 = u32x4_shr(v128_and(u32x4_shr(p2, 20), mask_3ff), 2);
+      let b3 = u32x4_shr(v128_and(u32x4_shr(p3, 20), mask_3ff), 2);
 
-        let r_lo = u16x8_narrow_i32x4(r0, r1);
-        let r_hi = u16x8_narrow_i32x4(r2, r3);
-        let g_lo = u16x8_narrow_i32x4(g0, g1);
-        let g_hi = u16x8_narrow_i32x4(g2, g3);
-        let b_lo = u16x8_narrow_i32x4(b0, b1);
-        let b_hi = u16x8_narrow_i32x4(b2, b3);
+      let r_lo = u16x8_narrow_i32x4(r0, r1);
+      let r_hi = u16x8_narrow_i32x4(r2, r3);
+      let g_lo = u16x8_narrow_i32x4(g0, g1);
+      let g_hi = u16x8_narrow_i32x4(g2, g3);
+      let b_lo = u16x8_narrow_i32x4(b0, b1);
+      let b_hi = u16x8_narrow_i32x4(b2, b3);
 
-        let r_u8 = u8x16_narrow_i16x8(r_lo, r_hi);
-        let g_u8 = u8x16_narrow_i16x8(g_lo, g_hi);
-        let b_u8 = u8x16_narrow_i16x8(b_lo, b_hi);
+      let r_u8 = u8x16_narrow_i16x8(r_lo, r_hi);
+      let g_u8 = u8x16_narrow_i16x8(g_lo, g_hi);
+      let b_u8 = u8x16_narrow_i16x8(b_lo, b_hi);
 
-        let r_mask0 = i8x16(0, -1, -1, 1, -1, -1, 2, -1, -1, 3, -1, -1, 4, -1, -1, 5);
-        let g_mask0 = i8x16(-1, 0, -1, -1, 1, -1, -1, 2, -1, -1, 3, -1, -1, 4, -1, -1);
-        let b_mask0 = i8x16(-1, -1, 0, -1, -1, 1, -1, -1, 2, -1, -1, 3, -1, -1, 4, -1);
-        let out0 = v128_or(
-          v128_or(u8x16_swizzle(r_u8, r_mask0), u8x16_swizzle(g_u8, g_mask0)),
-          u8x16_swizzle(b_u8, b_mask0),
-        );
-        let r_mask1 = i8x16(-1, -1, 6, -1, -1, 7, -1, -1, 8, -1, -1, 9, -1, -1, 10, -1);
-        let g_mask1 = i8x16(5, -1, -1, 6, -1, -1, 7, -1, -1, 8, -1, -1, 9, -1, -1, 10);
-        let b_mask1 = i8x16(-1, 5, -1, -1, 6, -1, -1, 7, -1, -1, 8, -1, -1, 9, -1, -1);
-        let out1 = v128_or(
-          v128_or(u8x16_swizzle(r_u8, r_mask1), u8x16_swizzle(g_u8, g_mask1)),
-          u8x16_swizzle(b_u8, b_mask1),
-        );
-        let r_mask2 = i8x16(
-          -1, 11, -1, -1, 12, -1, -1, 13, -1, -1, 14, -1, -1, 15, -1, -1,
-        );
-        let g_mask2 = i8x16(
-          -1, -1, 11, -1, -1, 12, -1, -1, 13, -1, -1, 14, -1, -1, 15, -1,
-        );
-        let b_mask2 = i8x16(
-          10, -1, -1, 11, -1, -1, 12, -1, -1, 13, -1, -1, 14, -1, -1, 15,
-        );
-        let out2 = v128_or(
-          v128_or(u8x16_swizzle(r_u8, r_mask2), u8x16_swizzle(g_u8, g_mask2)),
-          u8x16_swizzle(b_u8, b_mask2),
-        );
+      let r_mask0 = i8x16(0, -1, -1, 1, -1, -1, 2, -1, -1, 3, -1, -1, 4, -1, -1, 5);
+      let g_mask0 = i8x16(-1, 0, -1, -1, 1, -1, -1, 2, -1, -1, 3, -1, -1, 4, -1, -1);
+      let b_mask0 = i8x16(-1, -1, 0, -1, -1, 1, -1, -1, 2, -1, -1, 3, -1, -1, 4, -1);
+      let out0 = v128_or(
+        v128_or(u8x16_swizzle(r_u8, r_mask0), u8x16_swizzle(g_u8, g_mask0)),
+        u8x16_swizzle(b_u8, b_mask0),
+      );
+      let r_mask1 = i8x16(-1, -1, 6, -1, -1, 7, -1, -1, 8, -1, -1, 9, -1, -1, 10, -1);
+      let g_mask1 = i8x16(5, -1, -1, 6, -1, -1, 7, -1, -1, 8, -1, -1, 9, -1, -1, 10);
+      let b_mask1 = i8x16(-1, 5, -1, -1, 6, -1, -1, 7, -1, -1, 8, -1, -1, 9, -1, -1);
+      let out1 = v128_or(
+        v128_or(u8x16_swizzle(r_u8, r_mask1), u8x16_swizzle(g_u8, g_mask1)),
+        u8x16_swizzle(b_u8, b_mask1),
+      );
+      let r_mask2 = i8x16(
+        -1, 11, -1, -1, 12, -1, -1, 13, -1, -1, 14, -1, -1, 15, -1, -1,
+      );
+      let g_mask2 = i8x16(
+        -1, -1, 11, -1, -1, 12, -1, -1, 13, -1, -1, 14, -1, -1, 15, -1,
+      );
+      let b_mask2 = i8x16(
+        10, -1, -1, 11, -1, -1, 12, -1, -1, 13, -1, -1, 14, -1, -1, 15,
+      );
+      let out2 = v128_or(
+        v128_or(u8x16_swizzle(r_u8, r_mask2), u8x16_swizzle(g_u8, g_mask2)),
+        u8x16_swizzle(b_u8, b_mask2),
+      );
 
-        v128_store(rgb_out.as_mut_ptr().add(x * 3).cast(), out0);
-        v128_store(rgb_out.as_mut_ptr().add(x * 3 + 16).cast(), out1);
-        v128_store(rgb_out.as_mut_ptr().add(x * 3 + 32).cast(), out2);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3).cast(), out0);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3 + 16).cast(), out1);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3 + 32).cast(), out2);
 
-        x += 16;
-      }
-    } // end if !BE
+      x += 16;
+    }
     if x < width {
       scalar::x2bgr10_to_rgb_row::<BE>(
         &x2bgr10[x * 4..width * 4],
@@ -977,29 +969,27 @@ pub(crate) unsafe fn x2bgr10_to_rgba_row<const BE: bool>(
     let mask_3ff = u32x4_splat(0x3FF);
     let alpha_const = u32x4_splat(0xFF00_0000);
     let mut x = 0usize;
-    if !BE {
-      while x + 4 <= width {
-        let pix = v128_load(x2bgr10.as_ptr().add(x * 4).cast());
+    while x + 4 <= width {
+      let pix = load_endian_u32x4::<BE>(x2bgr10.as_ptr().add(x * 4));
 
-        // X2BGR10 channel positions: R at low, G mid, B high.
-        let r = u32x4_shr(v128_and(pix, mask_3ff), 2);
-        let g = u32x4_shr(v128_and(u32x4_shr(pix, 10), mask_3ff), 2);
-        let b = u32x4_shr(v128_and(u32x4_shr(pix, 20), mask_3ff), 2);
+      // X2BGR10 channel positions: R at low, G mid, B high.
+      let r = u32x4_shr(v128_and(pix, mask_3ff), 2);
+      let g = u32x4_shr(v128_and(u32x4_shr(pix, 10), mask_3ff), 2);
+      let b = u32x4_shr(v128_and(u32x4_shr(pix, 20), mask_3ff), 2);
 
-        let r_mask = i8x16(0, -1, -1, -1, 4, -1, -1, -1, 8, -1, -1, -1, 12, -1, -1, -1);
-        let g_mask = i8x16(-1, 0, -1, -1, -1, 4, -1, -1, -1, 8, -1, -1, -1, 12, -1, -1);
-        let b_mask = i8x16(-1, -1, 0, -1, -1, -1, 4, -1, -1, -1, 8, -1, -1, -1, 12, -1);
-        let out = v128_or(
-          v128_or(
-            v128_or(u8x16_swizzle(r, r_mask), u8x16_swizzle(g, g_mask)),
-            u8x16_swizzle(b, b_mask),
-          ),
-          alpha_const,
-        );
+      let r_mask = i8x16(0, -1, -1, -1, 4, -1, -1, -1, 8, -1, -1, -1, 12, -1, -1, -1);
+      let g_mask = i8x16(-1, 0, -1, -1, -1, 4, -1, -1, -1, 8, -1, -1, -1, 12, -1, -1);
+      let b_mask = i8x16(-1, -1, 0, -1, -1, -1, 4, -1, -1, -1, 8, -1, -1, -1, 12, -1);
+      let out = v128_or(
+        v128_or(
+          v128_or(u8x16_swizzle(r, r_mask), u8x16_swizzle(g, g_mask)),
+          u8x16_swizzle(b, b_mask),
+        ),
+        alpha_const,
+      );
 
-        v128_store(rgba_out.as_mut_ptr().add(x * 4).cast(), out);
-        x += 4;
-      }
+      v128_store(rgba_out.as_mut_ptr().add(x * 4).cast(), out);
+      x += 4;
     }
     if x < width {
       scalar::x2bgr10_to_rgba_row::<BE>(
@@ -1025,61 +1015,59 @@ pub(crate) unsafe fn x2bgr10_to_rgb_u16_row<const BE: bool>(
   unsafe {
     let mask_3ff = u32x4_splat(0x3FF);
     let mut x = 0usize;
-    if !BE {
-      while x + 8 <= width {
-        let p0 = v128_load(x2bgr10.as_ptr().add(x * 4).cast());
-        let p1 = v128_load(x2bgr10.as_ptr().add(x * 4 + 16).cast());
+    while x + 8 <= width {
+      let p0 = load_endian_u32x4::<BE>(x2bgr10.as_ptr().add(x * 4));
+      let p1 = load_endian_u32x4::<BE>(x2bgr10.as_ptr().add(x * 4 + 16));
 
-        let r0 = v128_and(p0, mask_3ff);
-        let r1 = v128_and(p1, mask_3ff);
-        let g0 = v128_and(u32x4_shr(p0, 10), mask_3ff);
-        let g1 = v128_and(u32x4_shr(p1, 10), mask_3ff);
-        let b0 = v128_and(u32x4_shr(p0, 20), mask_3ff);
-        let b1 = v128_and(u32x4_shr(p1, 20), mask_3ff);
+      let r0 = v128_and(p0, mask_3ff);
+      let r1 = v128_and(p1, mask_3ff);
+      let g0 = v128_and(u32x4_shr(p0, 10), mask_3ff);
+      let g1 = v128_and(u32x4_shr(p1, 10), mask_3ff);
+      let b0 = v128_and(u32x4_shr(p0, 20), mask_3ff);
+      let b1 = v128_and(u32x4_shr(p1, 20), mask_3ff);
 
-        let r = u16x8_narrow_i32x4(r0, r1);
-        let g = u16x8_narrow_i32x4(g0, g1);
-        let b = u16x8_narrow_i32x4(b0, b1);
+      let r = u16x8_narrow_i32x4(r0, r1);
+      let g = u16x8_narrow_i32x4(g0, g1);
+      let b = u16x8_narrow_i32x4(b0, b1);
 
-        let r_mask0 = i8x16(0, 1, -1, -1, -1, -1, 2, 3, -1, -1, -1, -1, 4, 5, -1, -1);
-        let g_mask0 = i8x16(-1, -1, 0, 1, -1, -1, -1, -1, 2, 3, -1, -1, -1, -1, 4, 5);
-        let b_mask0 = i8x16(-1, -1, -1, -1, 0, 1, -1, -1, -1, -1, 2, 3, -1, -1, -1, -1);
-        let out0 = v128_or(
-          v128_or(u8x16_swizzle(r, r_mask0), u8x16_swizzle(g, g_mask0)),
-          u8x16_swizzle(b, b_mask0),
-        );
-        // Block 1 (output u16s 8..15 = [B2, R3, G3, B3, R4, G4, B4, R5]).
-        // Each u16 takes 2 bytes; the channel vectors hold element `i` at
-        // byte indices `(2*i, 2*i+1)`.
-        let r_mask1 = i8x16(-1, -1, 6, 7, -1, -1, -1, -1, 8, 9, -1, -1, -1, -1, 10, 11);
-        let g_mask1 = i8x16(-1, -1, -1, -1, 6, 7, -1, -1, -1, -1, 8, 9, -1, -1, -1, -1);
-        let b_mask1 = i8x16(4, 5, -1, -1, -1, -1, 6, 7, -1, -1, -1, -1, 8, 9, -1, -1);
-        let out1 = v128_or(
-          v128_or(u8x16_swizzle(r, r_mask1), u8x16_swizzle(g, g_mask1)),
-          u8x16_swizzle(b, b_mask1),
-        );
-        // Block 2 (output u16s 16..23 = [G5, B5, R6, G6, B6, R7, G7, B7]).
-        let r_mask2 = i8x16(
-          -1, -1, -1, -1, 12, 13, -1, -1, -1, -1, 14, 15, -1, -1, -1, -1,
-        );
-        let g_mask2 = i8x16(
-          10, 11, -1, -1, -1, -1, 12, 13, -1, -1, -1, -1, 14, 15, -1, -1,
-        );
-        let b_mask2 = i8x16(
-          -1, -1, 10, 11, -1, -1, -1, -1, 12, 13, -1, -1, -1, -1, 14, 15,
-        );
-        let out2 = v128_or(
-          v128_or(u8x16_swizzle(r, r_mask2), u8x16_swizzle(g, g_mask2)),
-          u8x16_swizzle(b, b_mask2),
-        );
+      let r_mask0 = i8x16(0, 1, -1, -1, -1, -1, 2, 3, -1, -1, -1, -1, 4, 5, -1, -1);
+      let g_mask0 = i8x16(-1, -1, 0, 1, -1, -1, -1, -1, 2, 3, -1, -1, -1, -1, 4, 5);
+      let b_mask0 = i8x16(-1, -1, -1, -1, 0, 1, -1, -1, -1, -1, 2, 3, -1, -1, -1, -1);
+      let out0 = v128_or(
+        v128_or(u8x16_swizzle(r, r_mask0), u8x16_swizzle(g, g_mask0)),
+        u8x16_swizzle(b, b_mask0),
+      );
+      // Block 1 (output u16s 8..15 = [B2, R3, G3, B3, R4, G4, B4, R5]).
+      // Each u16 takes 2 bytes; the channel vectors hold element `i` at
+      // byte indices `(2*i, 2*i+1)`.
+      let r_mask1 = i8x16(-1, -1, 6, 7, -1, -1, -1, -1, 8, 9, -1, -1, -1, -1, 10, 11);
+      let g_mask1 = i8x16(-1, -1, -1, -1, 6, 7, -1, -1, -1, -1, 8, 9, -1, -1, -1, -1);
+      let b_mask1 = i8x16(4, 5, -1, -1, -1, -1, 6, 7, -1, -1, -1, -1, 8, 9, -1, -1);
+      let out1 = v128_or(
+        v128_or(u8x16_swizzle(r, r_mask1), u8x16_swizzle(g, g_mask1)),
+        u8x16_swizzle(b, b_mask1),
+      );
+      // Block 2 (output u16s 16..23 = [G5, B5, R6, G6, B6, R7, G7, B7]).
+      let r_mask2 = i8x16(
+        -1, -1, -1, -1, 12, 13, -1, -1, -1, -1, 14, 15, -1, -1, -1, -1,
+      );
+      let g_mask2 = i8x16(
+        10, 11, -1, -1, -1, -1, 12, 13, -1, -1, -1, -1, 14, 15, -1, -1,
+      );
+      let b_mask2 = i8x16(
+        -1, -1, 10, 11, -1, -1, -1, -1, 12, 13, -1, -1, -1, -1, 14, 15,
+      );
+      let out2 = v128_or(
+        v128_or(u8x16_swizzle(r, r_mask2), u8x16_swizzle(g, g_mask2)),
+        u8x16_swizzle(b, b_mask2),
+      );
 
-        v128_store(rgb_out.as_mut_ptr().add(x * 3).cast(), out0);
-        v128_store(rgb_out.as_mut_ptr().add(x * 3 + 8).cast(), out1);
-        v128_store(rgb_out.as_mut_ptr().add(x * 3 + 16).cast(), out2);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3).cast(), out0);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3 + 8).cast(), out1);
+      v128_store(rgb_out.as_mut_ptr().add(x * 3 + 16).cast(), out2);
 
-        x += 8;
-      }
-    } // end if !BE
+      x += 8;
+    }
     if x < width {
       scalar::x2bgr10_to_rgb_u16_row::<BE>(
         &x2bgr10[x * 4..width * 4],

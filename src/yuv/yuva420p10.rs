@@ -11,24 +11,50 @@
 //! `yuv_420p_n_to_rgba*_with_alpha_src_row::<10>` scalar path. Per‑arch
 //! SIMD wiring lands in 8b‑2b (`u8` RGBA) and 8b‑2c (`u16` RGBA).
 
-use crate::frame::{Yuva420p10Frame, Yuva420pFrame16};
+use crate::frame::Yuva420pFrame16;
 
 walker! {
-  planar4_bits {
+  planar4_bits_be {
     /// Zero‑sized marker for the YUVA 4:2:0 **10‑bit** source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuva420p10,
-    frame: Yuva420p10Frame<'_>,
-    generic_frame: Yuva420pFrame16<'_, BITS>,
+    frame: Yuva420pFrame16<'_, 10, BE>,
+    frame_le: Yuva420pFrame16<'_, 10, false>,
+    generic_frame: Yuva420pFrame16<'_, BITS, BE>,
     bits: 10,
     row: Yuva420p10Row,
     sink: Yuva420p10Sink,
     walker: yuva420p10_to,
+    walker_endian: yuva420p10_to_endian,
     walker_inner: yuva420p10_walker,
     elem_type: u16,
     chroma_h: half,
     chroma_v: half,
     row_doc: "One output row of a [`Yuva420p10`] source.",
     walker_doc: "Walks a [`Yuva420p10Frame`] row by row into the sink.",
+  }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+  use super::*;
+  use crate::ColorMatrix;
+
+  // Compile-pass regression for the codex round-1 finding on PR #110
+  // (`planar4_bits_be` arm). The macro emits an LE-only `yuva420p10_to`
+  // wrapper alongside the const-generic `yuva420p10_to_endian` so
+  // explicit-turbofish callers like `yuva420p10_to::<MySink>(...)` keep
+  // compiling.
+  #[test]
+  fn yuva420p10_to_explicit_turbofish_one_generic_compiles() {
+    #[allow(clippy::type_complexity)]
+    fn _check<S: Yuva420p10Sink>() {
+      let _: fn(
+        &crate::frame::Yuva420p10LeFrame<'_>,
+        bool,
+        ColorMatrix,
+        &mut S,
+      ) -> Result<(), S::Error> = yuva420p10_to::<S>;
+    }
   }
 }

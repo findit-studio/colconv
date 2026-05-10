@@ -33,7 +33,7 @@ use crate::{
 
 // ---- Rgbf32 impl -------------------------------------------------------
 
-impl<'a> MixedSinker<'a, Rgbf32> {
+impl<'a, const BE: bool> MixedSinker<'a, Rgbf32<BE>> {
   /// Attaches a packed **8-bit** RGBA output buffer. Source values are
   /// clamped to `[0, 1]` and scaled by 255; alpha is forced to `0xFF`
   /// (the float source has no alpha channel).
@@ -156,9 +156,9 @@ impl<'a> MixedSinker<'a, Rgbf32> {
   }
 }
 
-impl Rgbf32Sink for MixedSinker<'_, Rgbf32> {}
+impl<const BE: bool> Rgbf32Sink<BE> for MixedSinker<'_, Rgbf32<BE>> {}
 
-impl PixelSink for MixedSinker<'_, Rgbf32> {
+impl<const BE: bool> PixelSink for MixedSinker<'_, Rgbf32<BE>> {
   type Input<'r> = Rgbf32Row<'r>;
   type Error = MixedSinkerError;
 
@@ -209,20 +209,20 @@ impl PixelSink for MixedSinker<'_, Rgbf32> {
     if let Some(buf) = rgb_f32.as_deref_mut() {
       let f32_start = one_plane_start * 3;
       let f32_end = one_plane_end * 3;
-      rgbf32_to_rgb_f32_row::<false>(rgb_in, &mut buf[f32_start..f32_end], w, use_simd);
+      rgbf32_to_rgb_f32_row::<BE>(rgb_in, &mut buf[f32_start..f32_end], w, use_simd);
     }
 
     // u16 RGB output — direct float→u16 conversion (no staging).
     if let Some(buf) = rgb_u16.as_deref_mut() {
       let u16_start = one_plane_start * 3;
       let u16_end = one_plane_end * 3;
-      rgbf32_to_rgb_u16_row::<false>(rgb_in, &mut buf[u16_start..u16_end], w, use_simd);
+      rgbf32_to_rgb_u16_row::<BE>(rgb_in, &mut buf[u16_start..u16_end], w, use_simd);
     }
 
     // u16 RGBA output — direct float→u16 conversion (no staging).
     if let Some(buf) = rgba_u16.as_deref_mut() {
       let rgba_row = rgba_u16_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
-      rgbf32_to_rgba_u16_row::<false>(rgb_in, rgba_row, w, use_simd);
+      rgbf32_to_rgba_u16_row::<BE>(rgb_in, rgba_row, w, use_simd);
     }
 
     // u8 RGBA standalone fast path — direct float→u8 conversion when
@@ -237,7 +237,7 @@ impl PixelSink for MixedSinker<'_, Rgbf32> {
     if want_rgba_u8 && !need_u8_rgb {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      rgbf32_to_rgba_row::<false>(rgb_in, rgba_row, w, use_simd);
+      rgbf32_to_rgba_row::<BE>(rgb_in, rgba_row, w, use_simd);
       return Ok(());
     }
 
@@ -257,7 +257,7 @@ impl PixelSink for MixedSinker<'_, Rgbf32> {
       w,
       h,
     )?;
-    rgbf32_to_rgb_row::<false>(rgb_in, rgb_row, w, use_simd);
+    rgbf32_to_rgb_row::<BE>(rgb_in, rgb_row, w, use_simd);
 
     if let Some(luma) = luma.as_deref_mut() {
       rgb_to_luma_row(
@@ -299,7 +299,7 @@ impl PixelSink for MixedSinker<'_, Rgbf32> {
     // less memory pass for combined `with_rgb + with_rgba` callers.
     if let Some(buf) = rgba.as_deref_mut() {
       let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
-      rgbf32_to_rgba_row::<false>(rgb_in, rgba_row, w, use_simd);
+      rgbf32_to_rgba_row::<BE>(rgb_in, rgba_row, w, use_simd);
     }
 
     Ok(())

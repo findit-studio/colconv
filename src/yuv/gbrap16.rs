@@ -1,4 +1,4 @@
-//! Planar GBR+A 16-bit (`AV_PIX_FMT_GBRAP16LE`) — four full-resolution
+//! Planar GBR+A 16-bit (`AV_PIX_FMT_GBRAP16{LE,BE}`) — four full-resolution
 //! `u16` planes in **G, B, R, A** order (FFmpeg convention).
 //!
 //! All 16 bits of each `u16` element are active (full `u16` range).
@@ -7,24 +7,23 @@
 use crate::frame::{Gbrap16Frame, GbrapHighBitFrame};
 
 walker! {
-  planar4_bits {
+  planar4_bits_be {
     /// Zero-sized marker for the planar GBR+A 16-bit source format
-    /// (`AV_PIX_FMT_GBRAP16LE`).
+    /// (`AV_PIX_FMT_GBRAP16{LE,BE}`). `<const BE: bool>` defaults to `false`.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Gbrap16,
-    frame: Gbrap16Frame<'_>,
-    generic_frame: GbrapHighBitFrame<'_, BITS>,
+    frame: Gbrap16Frame,
+    generic_frame: GbrapHighBitFrame,
     bits: 16,
     row: Gbrap16Row,
     sink: Gbrap16Sink,
     walker: gbrap16_to,
+    walker_endian: gbrap16_to_endian,
     walker_inner: gbrap16_walker,
     elem_type: u16,
-    chroma_h: full,
-    chroma_v: full,
     row_doc: "One output row of a [`Gbrap16`] source — four full-width\n\
               `u16` planes in G / B / R / A order (full 16-bit range).",
-    walker_doc: "Walks a [`Gbrap16Frame`] row by row into the sink.",
+    walker_doc: "Walks a [`Gbrap16Frame<'_, BE>`] row by row into the sink.",
   }
 }
 

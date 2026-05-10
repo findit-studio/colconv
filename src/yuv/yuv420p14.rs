@@ -12,20 +12,22 @@
 //! (~10⁹ ≤ 2³¹), so the Q15 pipeline stays unchanged. 16‑bit would
 //! overflow and needs a separate kernel family.
 
-use crate::frame::{Yuv420p14Frame, Yuv420pFrame16};
+use crate::frame::Yuv420pFrame16;
 
 walker! {
-  planar3_bits {
+  planar3_bits_be {
     /// Zero‑sized marker for the YUV 4:2:0 **14‑bit** source format. Used
     /// as the `F` type parameter on [`crate::sinker::MixedSinker`].
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuv420p14,
-    frame: Yuv420p14Frame<'_>,
-    generic_frame: Yuv420pFrame16<'_, BITS>,
+    frame: Yuv420pFrame16<'_, 14, BE>,
+    frame_le: Yuv420pFrame16<'_, 14, false>,
+    generic_frame: Yuv420pFrame16<'_, BITS, BE>,
     bits: 14,
     row: Yuv420p14Row,
     sink: Yuv420p14Sink,
     walker: yuv420p14_to,
+    walker_endian: yuv420p14_to_endian,
     walker_inner: yuv420p14_walker,
     elem_type: u16,
     chroma_h: half,

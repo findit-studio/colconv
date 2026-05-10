@@ -1,5 +1,10 @@
-//! Packed RGB48 source (`AV_PIX_FMT_RGB48LE`) — 16 bits per channel,
+//! Packed RGB48 source (`AV_PIX_FMT_RGB48{LE,BE}`) — 16 bits per channel,
 //! `u16` element order `R, G, B`. Stride in u16 elements (≥ `3 * width`).
+//!
+//! The marker carries `<const BE: bool = false>`: `Rgb48` (= `Rgb48<false>`)
+//! is the LE source; `Rgb48<true>` is the BE source. The walker
+//! [`rgb48_to::<BE>`] propagates `BE` from [`Rgb48Frame<'_, BE>`] into the
+//! sinker dispatch.
 //!
 //! Outputs (Tier 8 finish):
 //! - `with_rgb`      — narrow each channel `>> 8`, pack as R, G, B.
@@ -15,20 +20,28 @@
 use crate::frame::Rgb48Frame;
 
 walker! {
-  packed {
-    /// Zero-sized marker for the packed **RGB48** (`AV_PIX_FMT_RGB48LE`) source format.
+  packed_be {
+    /// Zero-sized marker for the packed **RGB48** source format
+    /// (`AV_PIX_FMT_RGB48{LE,BE}`). `<const BE: bool>` defaults to `false`
+    /// (LE); the alias `Rgb48` resolves to `Rgb48<false>`.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Rgb48,
-    frame: Rgb48Frame<'_>,
+    frame: Rgb48Frame,
     row: Rgb48Row,
     sink: Rgb48Sink,
     walker: rgb48_to,
+    walker_endian: rgb48_to_endian,
     buf_field: rgb48,
     elem_type: u16,
     row_elems: |w| w * 3,
     row_doc: "One row of an [`Rgb48`] source — `width * 3` u16 elements \
-              (`R, G, B` per pixel, each channel 16 bits).",
-    walker_doc: "Walks an [`Rgb48Frame`] row by row into the sink.",
+              (`R, G, B` per pixel, each channel 16 bits). Endianness is \
+              recorded on the parent [`Rgb48Frame<'_, BE>`] / sinker, not on \
+              the Row itself — the kernel monomorphizes on `BE` at the \
+              sinker dispatch.",
+    walker_doc: "Walks an [`Rgb48Frame<'_, BE>`] row by row into the sink. \
+                 Propagates `<const BE: bool>` from the frame into \
+                 [`Rgb48Sink<BE>`].",
   }
 }
 
@@ -72,5 +85,51 @@ mod tests {
     assert_eq!(sink.rows_seen, 4);
     assert_eq!(sink.last_width, 12); // width * 3 u16 elements per row
     assert_eq!(sink.last_row_idx, 3);
+  }
+
+  // Compile-pass regression for the LE-only custom sink spelling. The
+  // generated `$sink<const BE: bool = false>` carries an LE default so
+  // downstream callers can keep writing `impl Rgb48Sink for MySink`
+  // (no `<false>`) and `S: Rgb48Sink` bounds. This mirrors the fix for
+  // codex high-severity finding on `walker_macro.rs:242`.
+  #[test]
+  fn rgb48_sink_le_default_compiles_without_const_arg() {
+    // `impl Rgb48Sink for CountingSink` (above) would already fail to
+    // compile if the LE default regressed; this test additionally pins
+    // the bare-bound form `S: Rgb48Sink` and confirms it monomorphizes
+    // to the LE walker.
+    fn walks_le<S: Rgb48Sink>(frame: &Rgb48Frame<'_>, sink: &mut S) -> Result<(), S::Error> {
+      rgb48_to(frame, true, ColorMatrix::Bt709, sink)
+    }
+
+    let buf = std::vec![0u16; 12 * 4];
+    let frame = Rgb48Frame::new(&buf, 4, 4, 12);
+    let mut sink = CountingSink {
+      rows_seen: 0,
+      last_width: 0,
+      last_row_idx: 0,
+    };
+    walks_le(&frame, &mut sink).unwrap();
+    assert_eq!(sink.rows_seen, 4);
+  }
+
+  // Compile-pass regression for the codex finding (PR #105 review). Switching
+  // from `walker!(packed)` to `walker!(packed_be)` would otherwise change the
+  // public `rgb48_to` signature from one generic param (`S`) to two
+  // (`S, const BE: bool`), which breaks downstream callers using the previous
+  // explicit sink spelling `rgb48_to::<MySink>(...)`. Function-position
+  // const-generic defaults aren't allowed, so the macro emits an LE-only
+  // wrapper preserving the original signature.
+  #[test]
+  fn rgb48_to_explicit_turbofish_one_generic_compiles() {
+    #[allow(clippy::type_complexity)]
+    fn _check<S: Rgb48Sink>() {
+      let _: fn(
+        &crate::frame::Rgb48LeFrame<'_>,
+        bool,
+        ColorMatrix,
+        &mut S,
+      ) -> Result<(), S::Error> = rgb48_to::<S>;
+    }
   }
 }

@@ -8,6 +8,49 @@
 
 use core::arch::x86_64::*;
 
+/// Per-u32-lane byte-swap shuffle mask, shared by the BE-aware 10-bit
+/// packed-RGB loaders below. SSSE3's `_mm_shuffle_epi8` selects byte
+/// `mask[i]` of the input for each output byte, so this mask reverses
+/// the four bytes inside every 32-bit lane.
+const BSWAP_U32X4_MASK: __m128i =
+  unsafe { core::mem::transmute([3u8, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12]) };
+
+/// Endian-aware 16-byte load (4 × u32) for X2RGB10 / X2BGR10 input.
+///
+/// On every modern x86 host (LE), `BE = false` is a plain
+/// `_mm_loadu_si128`, and `BE = true` adds a single `_mm_shuffle_epi8`
+/// per 16-byte chunk to byte-swap each u32 lane into host-native order
+/// for the subsequent shift-and-mask field extraction. The const-bool
+/// monomorphization eliminates the branch at compile time.
+///
+/// # Safety
+///
+/// - `ptr` must point to at least 16 readable bytes; alignment is
+///   unrestricted (this is `_mm_loadu_si128`, not `_mm_load_si128`).
+/// - **SSE2** must be available in the caller's `target_feature`
+///   context for `_mm_loadu_si128`.
+/// - **SSSE3** must be available in the caller's `target_feature`
+///   context when `BE = true` for `_mm_shuffle_epi8`. SSE4.1 is the
+///   typical caller floor here; in Rust's target-feature model
+///   `sse4.1` enables `ssse3` (LLVM's SSE feature dependency chain),
+///   so callers gated `#[target_feature(enable = "sse4.1")]` (or any
+///   superset such as `avx2` / `avx512bw`) satisfy this requirement
+///   without an extra `enable = "ssse3"`. The `BE = false` branch
+///   issues no SSSE3 instruction, so SSE2 alone is sufficient there;
+///   the merged const-generic body is still gated by the strictest of
+///   the two paths, the SSSE3 requirement.
+#[inline(always)]
+pub(super) unsafe fn x2_load_endian_u32x4<const BE: bool>(ptr: *const u8) -> __m128i {
+  unsafe {
+    let v = _mm_loadu_si128(ptr.cast());
+    if BE {
+      _mm_shuffle_epi8(v, BSWAP_U32X4_MASK)
+    } else {
+      v
+    }
+  }
+}
+
 /// Writes 16 pixels of packed RGB (48 bytes) from three u8x16 channel
 /// vectors.
 ///
@@ -837,12 +880,15 @@ unsafe fn pack_u32x4_quad_to_u8x16(v0: __m128i, v1: __m128i, v2: __m128i, v3: __
 ///   inside [`pack_u32x4_quad_to_u8x16`] uses `_mm_packus_epi32`,
 ///   which is SSE4.1 — SSSE3 alone is not enough.
 #[inline(always)]
-pub(super) unsafe fn x2rgb10_to_rgb_16_pixels(input_ptr: *const u8, output_ptr: *mut u8) {
+pub(super) unsafe fn x2rgb10_to_rgb_16_pixels<const BE: bool>(
+  input_ptr: *const u8,
+  output_ptr: *mut u8,
+) {
   unsafe {
-    let p0 = _mm_loadu_si128(input_ptr.cast());
-    let p1 = _mm_loadu_si128(input_ptr.add(16).cast());
-    let p2 = _mm_loadu_si128(input_ptr.add(32).cast());
-    let p3 = _mm_loadu_si128(input_ptr.add(48).cast());
+    let p0 = x2_load_endian_u32x4::<BE>(input_ptr);
+    let p1 = x2_load_endian_u32x4::<BE>(input_ptr.add(16));
+    let p2 = x2_load_endian_u32x4::<BE>(input_ptr.add(32));
+    let p3 = x2_load_endian_u32x4::<BE>(input_ptr.add(48));
 
     // X2RGB10: R at bits 20..29, G at 10..19, B at 0..9.
     // Down-shift by 2 → u8 channel value lives in bits 22..29 / 12..19 / 2..9.
@@ -883,12 +929,15 @@ pub(super) unsafe fn x2rgb10_to_rgb_16_pixels(input_ptr: *const u8, output_ptr: 
 ///   [`x2rgb10_to_rgb_16_pixels`] for the rationale —
 ///   `_mm_packus_epi32` inside the shared narrow helper is SSE4.1.
 #[inline(always)]
-pub(super) unsafe fn x2rgb10_to_rgba_16_pixels(input_ptr: *const u8, output_ptr: *mut u8) {
+pub(super) unsafe fn x2rgb10_to_rgba_16_pixels<const BE: bool>(
+  input_ptr: *const u8,
+  output_ptr: *mut u8,
+) {
   unsafe {
-    let p0 = _mm_loadu_si128(input_ptr.cast());
-    let p1 = _mm_loadu_si128(input_ptr.add(16).cast());
-    let p2 = _mm_loadu_si128(input_ptr.add(32).cast());
-    let p3 = _mm_loadu_si128(input_ptr.add(48).cast());
+    let p0 = x2_load_endian_u32x4::<BE>(input_ptr);
+    let p1 = x2_load_endian_u32x4::<BE>(input_ptr.add(16));
+    let p2 = x2_load_endian_u32x4::<BE>(input_ptr.add(32));
+    let p3 = x2_load_endian_u32x4::<BE>(input_ptr.add(48));
 
     let r = pack_u32x4_quad_to_u8x16(
       extract_10bit_to_u8_lane::<22>(p0),
@@ -926,10 +975,13 @@ pub(super) unsafe fn x2rgb10_to_rgba_16_pixels(input_ptr: *const u8, output_ptr:
 /// - **SSE4.1** must be available — `_mm_packus_epi32` is SSE4.1,
 ///   not SSSE3.
 #[inline(always)]
-pub(super) unsafe fn x2rgb10_to_rgb_u16_8_pixels(input_ptr: *const u8, output_ptr: *mut u8) {
+pub(super) unsafe fn x2rgb10_to_rgb_u16_8_pixels<const BE: bool>(
+  input_ptr: *const u8,
+  output_ptr: *mut u8,
+) {
   unsafe {
-    let p0 = _mm_loadu_si128(input_ptr.cast());
-    let p1 = _mm_loadu_si128(input_ptr.add(16).cast());
+    let p0 = x2_load_endian_u32x4::<BE>(input_ptr);
+    let p1 = x2_load_endian_u32x4::<BE>(input_ptr.add(16));
 
     // Two-stage narrow u32x4×2 → u16x8 (no second narrow needed —
     // u16 is already the destination element type).
@@ -952,12 +1004,15 @@ pub(super) unsafe fn x2rgb10_to_rgb_u16_8_pixels(input_ptr: *const u8, output_pt
 /// X2BGR10 LE counterpart of [`x2rgb10_to_rgb_16_pixels`]. Channel
 /// shift positions are swapped: R at bits 0..9, B at 20..29.
 #[inline(always)]
-pub(super) unsafe fn x2bgr10_to_rgb_16_pixels(input_ptr: *const u8, output_ptr: *mut u8) {
+pub(super) unsafe fn x2bgr10_to_rgb_16_pixels<const BE: bool>(
+  input_ptr: *const u8,
+  output_ptr: *mut u8,
+) {
   unsafe {
-    let p0 = _mm_loadu_si128(input_ptr.cast());
-    let p1 = _mm_loadu_si128(input_ptr.add(16).cast());
-    let p2 = _mm_loadu_si128(input_ptr.add(32).cast());
-    let p3 = _mm_loadu_si128(input_ptr.add(48).cast());
+    let p0 = x2_load_endian_u32x4::<BE>(input_ptr);
+    let p1 = x2_load_endian_u32x4::<BE>(input_ptr.add(16));
+    let p2 = x2_load_endian_u32x4::<BE>(input_ptr.add(32));
+    let p3 = x2_load_endian_u32x4::<BE>(input_ptr.add(48));
 
     let r = pack_u32x4_quad_to_u8x16(
       extract_10bit_to_u8_lane::<2>(p0),
@@ -983,12 +1038,15 @@ pub(super) unsafe fn x2bgr10_to_rgb_16_pixels(input_ptr: *const u8, output_ptr: 
 
 /// X2BGR10 LE counterpart of [`x2rgb10_to_rgba_16_pixels`].
 #[inline(always)]
-pub(super) unsafe fn x2bgr10_to_rgba_16_pixels(input_ptr: *const u8, output_ptr: *mut u8) {
+pub(super) unsafe fn x2bgr10_to_rgba_16_pixels<const BE: bool>(
+  input_ptr: *const u8,
+  output_ptr: *mut u8,
+) {
   unsafe {
-    let p0 = _mm_loadu_si128(input_ptr.cast());
-    let p1 = _mm_loadu_si128(input_ptr.add(16).cast());
-    let p2 = _mm_loadu_si128(input_ptr.add(32).cast());
-    let p3 = _mm_loadu_si128(input_ptr.add(48).cast());
+    let p0 = x2_load_endian_u32x4::<BE>(input_ptr);
+    let p1 = x2_load_endian_u32x4::<BE>(input_ptr.add(16));
+    let p2 = x2_load_endian_u32x4::<BE>(input_ptr.add(32));
+    let p3 = x2_load_endian_u32x4::<BE>(input_ptr.add(48));
 
     let r = pack_u32x4_quad_to_u8x16(
       extract_10bit_to_u8_lane::<2>(p0),
@@ -1015,10 +1073,13 @@ pub(super) unsafe fn x2bgr10_to_rgba_16_pixels(input_ptr: *const u8, output_ptr:
 
 /// X2BGR10 LE counterpart of [`x2rgb10_to_rgb_u16_8_pixels`].
 #[inline(always)]
-pub(super) unsafe fn x2bgr10_to_rgb_u16_8_pixels(input_ptr: *const u8, output_ptr: *mut u8) {
+pub(super) unsafe fn x2bgr10_to_rgb_u16_8_pixels<const BE: bool>(
+  input_ptr: *const u8,
+  output_ptr: *mut u8,
+) {
   unsafe {
-    let p0 = _mm_loadu_si128(input_ptr.cast());
-    let p1 = _mm_loadu_si128(input_ptr.add(16).cast());
+    let p0 = x2_load_endian_u32x4::<BE>(input_ptr);
+    let p1 = x2_load_endian_u32x4::<BE>(input_ptr.add(16));
 
     let r = _mm_packus_epi32(
       extract_10bit_to_u16_lane::<0>(p0),

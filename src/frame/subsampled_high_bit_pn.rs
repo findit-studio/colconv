@@ -57,7 +57,7 @@ use thiserror::Error;
 /// independent output — wrong colors, but consistently wrong across
 /// scalar + every SIMD backend, which is visible in any output diff.
 #[derive(Debug, Clone, Copy)]
-pub struct PnFrame<'a, const BITS: u32> {
+pub struct PnFrame<'a, const BITS: u32, const BE: bool = false> {
   y: &'a [u16],
   uv: &'a [u16],
   width: u32,
@@ -66,7 +66,7 @@ pub struct PnFrame<'a, const BITS: u32> {
   uv_stride: u32,
 }
 
-impl<'a, const BITS: u32> PnFrame<'a, BITS> {
+impl<'a, const BITS: u32, const BE: bool> PnFrame<'a, BITS, BE> {
   /// Constructs a new [`P010Frame`], validating dimensions and plane
   /// lengths. Strides are in `u16` **samples**.
   ///
@@ -252,7 +252,7 @@ impl<'a, const BITS: u32> PnFrame<'a, BITS> {
       for (col, &s) in y[start..start + w].iter().enumerate() {
         // Normalize from LE-encoded wire to host-native before the
         // bit check (no-op on LE host, byte-swap on BE host).
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical & low_mask != 0 {
           return Err(PnFrameError::SampleLowBitsSet {
             plane: PnFramePlane::Y,
@@ -266,7 +266,7 @@ impl<'a, const BITS: u32> PnFrame<'a, BITS> {
     for row in 0..chroma_h {
       let start = row * uv_stride as usize;
       for (col, &s) in uv[start..start + uv_w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical & low_mask != 0 {
           return Err(PnFrameError::SampleLowBitsSet {
             plane: PnFramePlane::Uv,
@@ -327,15 +327,21 @@ impl<'a, const BITS: u32> PnFrame<'a, BITS> {
   pub const fn bits(&self) -> u32 {
     BITS
   }
+
+  /// Compile-time BE flag mirror — `true` if plane bytes are BE-encoded
+  /// (`AV_PIX_FMT_P0**BE`), `false` if LE-encoded (`AV_PIX_FMT_P0**LE`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
+  }
 }
 
-/// Type alias for a validated P010 frame (10‑bit, high‑bit‑packed).
-/// Use this name at call sites for readability.
+/// LE-encoded P010 frame (`AV_PIX_FMT_P010LE`). BE counterpart:
+/// [`P010BeFrame`].
 pub type P010Frame<'a> = PnFrame<'a, 10>;
 
-/// Type alias for a validated P012 frame (12‑bit, high‑bit‑packed).
-/// Same layout as [`P010Frame`] but with 12 active bits in the high
-/// 12 of each `u16` (`sample = value << 4`, low 4 bits zero).
+/// LE-encoded P012 frame (`AV_PIX_FMT_P012LE`). BE counterpart:
+/// [`P012BeFrame`].
 pub type P012Frame<'a> = PnFrame<'a, 12>;
 
 /// Type alias for a validated P016 frame (16‑bit, no high-vs-low
@@ -352,6 +358,21 @@ pub type P012Frame<'a> = PnFrame<'a, 12>;
 /// narrowing back. The 10/12 paths stay on the i32 pipeline
 /// unchanged.
 pub type P016Frame<'a> = PnFrame<'a, 16>;
+
+// ---- Phase 4 — explicit LE/BE aliases for the P0xx (4:2:0) Pn family ----
+
+/// LE-encoded `P010Frame` (`AV_PIX_FMT_P010LE`).
+pub type P010LeFrame<'a> = PnFrame<'a, 10, false>;
+/// BE-encoded `P010Frame` (`AV_PIX_FMT_P010BE`).
+pub type P010BeFrame<'a> = PnFrame<'a, 10, true>;
+/// LE-encoded `P012Frame` (`AV_PIX_FMT_P012LE`).
+pub type P012LeFrame<'a> = PnFrame<'a, 12, false>;
+/// BE-encoded `P012Frame` (`AV_PIX_FMT_P012BE`).
+pub type P012BeFrame<'a> = PnFrame<'a, 12, true>;
+/// LE-encoded `P016Frame` (`AV_PIX_FMT_P016LE`).
+pub type P016LeFrame<'a> = PnFrame<'a, 16, false>;
+/// BE-encoded `P016Frame` (`AV_PIX_FMT_P016BE`).
+pub type P016BeFrame<'a> = PnFrame<'a, 16, true>;
 
 /// A validated **4:2:2** semi-planar high-bit-packed frame, generic
 /// over `const BITS: u32 ∈ {10, 12, 16}`.
@@ -391,7 +412,7 @@ pub type P016Frame<'a> = PnFrame<'a, 16>;
 /// for the full discussion of why this is a packing sanity check, not
 /// a provenance validator.
 #[derive(Debug, Clone, Copy)]
-pub struct PnFrame422<'a, const BITS: u32> {
+pub struct PnFrame422<'a, const BITS: u32, const BE: bool = false> {
   y: &'a [u16],
   uv: &'a [u16],
   width: u32,
@@ -400,7 +421,7 @@ pub struct PnFrame422<'a, const BITS: u32> {
   uv_stride: u32,
 }
 
-impl<'a, const BITS: u32> PnFrame422<'a, BITS> {
+impl<'a, const BITS: u32, const BE: bool> PnFrame422<'a, BITS, BE> {
   /// Constructs a new [`PnFrame422`], validating dimensions, plane
   /// lengths, and the `BITS` parameter.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -525,7 +546,7 @@ impl<'a, const BITS: u32> PnFrame422<'a, BITS> {
     for row in 0..h {
       let start = row * y_stride as usize;
       for (col, &s) in y[start..start + w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical & low_mask != 0 {
           return Err(PnFrameError::SampleLowBitsSet {
             plane: PnFramePlane::Y,
@@ -540,7 +561,7 @@ impl<'a, const BITS: u32> PnFrame422<'a, BITS> {
     for row in 0..h {
       let start = row * uv_stride as usize;
       for (col, &s) in uv[start..start + uv_w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical & low_mask != 0 {
           return Err(PnFrameError::SampleLowBitsSet {
             plane: PnFramePlane::Uv,
@@ -590,18 +611,35 @@ impl<'a, const BITS: u32> PnFrame422<'a, BITS> {
   pub const fn bits(&self) -> u32 {
     BITS
   }
+  /// Compile-time BE flag mirror — `true` if plane bytes are BE-encoded
+  /// (`AV_PIX_FMT_P2**BE`), `false` if LE-encoded.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
+  }
 }
 
-/// 4:2:2 semi-planar, 10-bit (`AV_PIX_FMT_P210LE`). Alias over
-/// [`PnFrame422`]`<10>`.
+/// LE-encoded 4:2:2 semi-planar, 10-bit (`AV_PIX_FMT_P210LE`).
 pub type P210Frame<'a> = PnFrame422<'a, 10>;
-/// 4:2:2 semi-planar, 12-bit (`AV_PIX_FMT_P212LE`, FFmpeg 5.0+).
-/// Alias over [`PnFrame422`]`<12>`.
+/// LE-encoded 4:2:2 semi-planar, 12-bit (`AV_PIX_FMT_P212LE`).
 pub type P212Frame<'a> = PnFrame422<'a, 12>;
-/// 4:2:2 semi-planar, 16-bit (`AV_PIX_FMT_P216LE`). Alias over
-/// [`PnFrame422`]`<16>`. At 16 bits the high-vs-low packing
-/// distinction degenerates — every bit is active.
+/// LE-encoded 4:2:2 semi-planar, 16-bit (`AV_PIX_FMT_P216LE`).
 pub type P216Frame<'a> = PnFrame422<'a, 16>;
+
+// ---- Phase 4 — explicit LE/BE aliases for the P2xx (4:2:2) Pn family ----
+
+/// LE-encoded `P210Frame` (`AV_PIX_FMT_P210LE`).
+pub type P210LeFrame<'a> = PnFrame422<'a, 10, false>;
+/// BE-encoded `P210Frame` (`AV_PIX_FMT_P210BE`).
+pub type P210BeFrame<'a> = PnFrame422<'a, 10, true>;
+/// LE-encoded `P212Frame` (`AV_PIX_FMT_P212LE`).
+pub type P212LeFrame<'a> = PnFrame422<'a, 12, false>;
+/// BE-encoded `P212Frame` (`AV_PIX_FMT_P212BE`).
+pub type P212BeFrame<'a> = PnFrame422<'a, 12, true>;
+/// LE-encoded `P216Frame` (`AV_PIX_FMT_P216LE`).
+pub type P216LeFrame<'a> = PnFrame422<'a, 16, false>;
+/// BE-encoded `P216Frame` (`AV_PIX_FMT_P216BE`).
+pub type P216BeFrame<'a> = PnFrame422<'a, 16, true>;
 
 /// A validated **4:4:4** semi-planar high-bit-packed frame, generic
 /// over `const BITS: u32 ∈ {10, 12, 16}`.
@@ -627,7 +665,7 @@ pub type P216Frame<'a> = PnFrame422<'a, 16>;
 /// No width-parity constraint (4:4:4 chroma is 1:1 with Y, not paired
 /// horizontally).
 #[derive(Debug, Clone, Copy)]
-pub struct PnFrame444<'a, const BITS: u32> {
+pub struct PnFrame444<'a, const BITS: u32, const BE: bool = false> {
   y: &'a [u16],
   uv: &'a [u16],
   width: u32,
@@ -636,7 +674,7 @@ pub struct PnFrame444<'a, const BITS: u32> {
   uv_stride: u32,
 }
 
-impl<'a, const BITS: u32> PnFrame444<'a, BITS> {
+impl<'a, const BITS: u32, const BE: bool> PnFrame444<'a, BITS, BE> {
   /// Constructs a new [`PnFrame444`], validating dimensions, plane
   /// lengths, and the `BITS` parameter.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -767,7 +805,7 @@ impl<'a, const BITS: u32> PnFrame444<'a, BITS> {
     for row in 0..h {
       let start = row * y_stride as usize;
       for (col, &s) in y[start..start + w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical & low_mask != 0 {
           return Err(PnFrameError::SampleLowBitsSet {
             plane: PnFramePlane::Y,
@@ -781,7 +819,7 @@ impl<'a, const BITS: u32> PnFrame444<'a, BITS> {
     for row in 0..h {
       let start = row * uv_stride as usize;
       for (col, &s) in uv[start..start + uv_w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical & low_mask != 0 {
           return Err(PnFrameError::SampleLowBitsSet {
             plane: PnFramePlane::Uv,
@@ -831,17 +869,35 @@ impl<'a, const BITS: u32> PnFrame444<'a, BITS> {
   pub const fn bits(&self) -> u32 {
     BITS
   }
+  /// Compile-time BE flag mirror — `true` if plane bytes are BE-encoded
+  /// (`AV_PIX_FMT_P4**BE`), `false` if LE-encoded.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
+  }
 }
 
-/// 4:4:4 semi-planar, 10-bit (`AV_PIX_FMT_P410LE`). Alias over
-/// [`PnFrame444`]`<10>`.
+/// LE-encoded 4:4:4 semi-planar, 10-bit (`AV_PIX_FMT_P410LE`).
 pub type P410Frame<'a> = PnFrame444<'a, 10>;
-/// 4:4:4 semi-planar, 12-bit (`AV_PIX_FMT_P412LE`, FFmpeg 5.0+).
-/// Alias over [`PnFrame444`]`<12>`.
+/// LE-encoded 4:4:4 semi-planar, 12-bit (`AV_PIX_FMT_P412LE`).
 pub type P412Frame<'a> = PnFrame444<'a, 12>;
-/// 4:4:4 semi-planar, 16-bit (`AV_PIX_FMT_P416LE`). Alias over
-/// [`PnFrame444`]`<16>`.
+/// LE-encoded 4:4:4 semi-planar, 16-bit (`AV_PIX_FMT_P416LE`).
 pub type P416Frame<'a> = PnFrame444<'a, 16>;
+
+// ---- Phase 4 — explicit LE/BE aliases for the P4xx (4:4:4) Pn family ----
+
+/// LE-encoded `P410Frame` (`AV_PIX_FMT_P410LE`).
+pub type P410LeFrame<'a> = PnFrame444<'a, 10, false>;
+/// BE-encoded `P410Frame` (`AV_PIX_FMT_P410BE`).
+pub type P410BeFrame<'a> = PnFrame444<'a, 10, true>;
+/// LE-encoded `P412Frame` (`AV_PIX_FMT_P412LE`).
+pub type P412LeFrame<'a> = PnFrame444<'a, 12, false>;
+/// BE-encoded `P412Frame` (`AV_PIX_FMT_P412BE`).
+pub type P412BeFrame<'a> = PnFrame444<'a, 12, true>;
+/// LE-encoded `P416Frame` (`AV_PIX_FMT_P416LE`).
+pub type P416LeFrame<'a> = PnFrame444<'a, 16, false>;
+/// BE-encoded `P416Frame` (`AV_PIX_FMT_P416BE`).
+pub type P416BeFrame<'a> = PnFrame444<'a, 16, true>;
 
 /// Identifies which plane of a [`PnFrame`] a
 /// [`PnFrameError::SampleLowBitsSet`] refers to.

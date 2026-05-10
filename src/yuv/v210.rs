@@ -2,6 +2,11 @@
 //! capture format. Each 16-byte word holds 6 pixels (12 × 10-bit
 //! samples). See [`crate::frame::V210Frame`] for layout details.
 //!
+//! The marker carries `<const BE: bool = false>`: `V210` (= `V210<false>`)
+//! is the LE source (the canonical SMPTE-272M wire layout); `V210<true>`
+//! is the BE source. The walker [`v210_to::<BE>`] propagates `BE` from
+//! [`V210Frame<'_, BE>`] into the sinker dispatch.
+//!
 //! Outputs are produced via:
 //! - `with_rgb` / `with_rgba` — packed YUV → RGB Q15 pipeline at
 //!   BITS=10, downshifted to u8.
@@ -17,19 +22,27 @@
 use crate::frame::V210Frame;
 
 walker! {
-  packed {
+  packed_be {
     /// Zero-sized marker for the packed **v210** source format.
+    /// `<const BE: bool>` defaults to `false` (LE — the canonical
+    /// SMPTE-272M layout); `V210` resolves to `V210<false>`.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: V210,
-    frame: V210Frame<'_>,
+    frame: V210Frame,
     row: V210Row,
     sink: V210Sink,
     walker: v210_to,
+    walker_endian: v210_to_endian,
     buf_field: v210,
     elem_type: u8,
     row_elems: |w| w.div_ceil(6) * 16,
-    row_doc: "One row of a [`V210`] source — `(width / 6) * 16` packed bytes.",
-    walker_doc: "Walks a [`V210Frame`] row by row into the sink.",
+    row_doc: "One row of a [`V210`] source — `(width / 6) * 16` packed bytes. \
+              Endianness is recorded on the parent [`V210Frame<'_, BE>`] / \
+              sinker, not on the Row itself — the kernel receives `BE` as \
+              the runtime `big_endian` argument from the sinker dispatch.",
+    walker_doc: "Walks a [`V210Frame<'_, BE>`] row by row into the sink. \
+                 Propagates `<const BE: bool>` from the frame into \
+                 [`V210Sink<BE>`].",
   }
 }
 

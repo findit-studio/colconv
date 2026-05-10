@@ -5,6 +5,12 @@
 //! in each u16 (low 4 bits = 0). See [`crate::frame::Y212Frame`]
 //! for layout details.
 //!
+//! The marker carries `<const BE: bool = false>`: `Y212` (= `Y212<false>`)
+//! is the LE source; `Y212<true>` is the BE source. The walker
+//! [`y212_to::<BE>`] propagates `BE` from
+//! [`Y2xxFrame<'_, 12, BE>`](crate::frame::Y2xxFrame) into the
+//! sinker dispatch.
+//!
 //! Outputs are produced via:
 //! - `with_rgb` / `with_rgba` — packed YUV → RGB Q15 pipeline at
 //!   BITS=12, downshifted to u8.
@@ -17,17 +23,22 @@
 //! - `with_hsv` — stages an internal RGB scratch and runs the
 //!   existing `rgb_to_hsv_row` kernel.
 
-use crate::frame::Y212Frame;
+// `Y212Frame` is referenced through `$crate::frame::Y2xxFrame<'_, 12, BE>` by
+// the `packed_be_y2xx` walker arm; no outer import needed.
 
 walker! {
-  packed {
-    /// Zero-sized marker for the packed **Y212** source format.
+  packed_be_y2xx {
+    /// Zero-sized marker for the packed **Y212** source format
+    /// (`AV_PIX_FMT_Y212{LE,BE}`). `<const BE: bool>` defaults to `false`
+    /// (LE); `Y212` resolves to `Y212<false>`.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Y212,
-    frame: Y212Frame<'_>,
+    frame_inner: Y2xxFrame,
+    bits: 12,
     row: Y212Row,
     sink: Y212Sink,
     walker: y212_to,
+    walker_endian: y212_to_endian,
     buf_field: packed,
     elem_type: u16,
     row_elems: |w| w * 2,
@@ -46,9 +57,16 @@ walker! {
       "| 3        | V     | bits `15:4` (12-bit) |\n",
       "\n",
       "Full range Y: `[0, 4095]` (12-bit MSB-aligned in u16). Limited\n",
-      "range Y: `[256, 3760]`, limited range chroma: `[256, 3840]`.",
+      "range Y: `[256, 3760]`, limited range chroma: `[256, 3840]`.\n",
+      "\n",
+      "Endianness is recorded on the parent \
+       [`Y2xxFrame<'_, 12, BE>`](crate::frame::Y2xxFrame) / sinker,\n",
+      "not on the Row itself — the kernel receives `BE` as the runtime\n",
+      "`big_endian` argument from the sinker dispatch.",
     ),
-    walker_doc: "Walks a [`Y212Frame`] row by row into the sink.",
+    walker_doc: "Walks a [`Y2xxFrame<'_, 12, BE>`](crate::frame::Y2xxFrame) row \
+                 by row into the sink. Propagates `<const BE: bool>` from the \
+                 frame into [`Y212Sink<BE>`].",
   }
 }
 
@@ -91,5 +109,18 @@ mod tests {
     assert_eq!(sink.rows_seen, 4);
     assert_eq!(sink.last_width, 8);
     assert_eq!(sink.last_row_idx, 3);
+  }
+
+  // Compile-pass regression for the codex finding (PR #105 review,
+  // `packed_be_y2xx` arm). See `y210::tests` for full rationale: the LE-only
+  // wrapper preserves the pre-Phase-4 single-generic public signature so
+  // explicit-turbofish callers like `y212_to::<MySink>(...)` keep compiling.
+  #[test]
+  fn y212_to_explicit_turbofish_one_generic_compiles() {
+    #[allow(clippy::type_complexity)]
+    fn _check<S: Y212Sink>() {
+      let _: fn(&crate::frame::Y212LeFrame<'_>, bool, ColorMatrix, &mut S) -> Result<(), S::Error> =
+        y212_to::<S>;
+    }
   }
 }

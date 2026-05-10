@@ -13,18 +13,20 @@
 //! `scalar::p16_to_rgb_*` plus the matching per-backend SIMD kernels,
 //! which widen the chroma matrix multiply to i64.
 
-use crate::frame::P016Frame;
+use crate::frame::PnFrame;
 
 walker! {
-  semi_planar {
+  semi_planar_be {
     /// Zero‑sized marker for the P016 source format. Used as the `F` type
     /// parameter on [`crate::sinker::MixedSinker`].
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: P016,
-    frame: P016Frame<'_>,
+    frame: PnFrame<'_, 16, BE>,
+    frame_le: PnFrame<'_, 16, false>,
     row: P016Row,
     sink: P016Sink,
     walker: p016_to,
+    walker_endian: p016_to_endian,
     elem_type: u16,
     chroma_field: uv_half,
     chroma_plane: uv,

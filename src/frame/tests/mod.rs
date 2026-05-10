@@ -1,5 +1,7 @@
 use super::*;
 
+mod util;
+
 mod bayer;
 mod grayf32;
 mod legacy_rgb;

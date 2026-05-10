@@ -5,17 +5,19 @@
 //! family (chroma matrix multiply-add overflows i32 at 16 bits, same
 //! rationale as `p16_to_rgb_*` and `yuv444p16_to_rgb_*`).
 
-use crate::frame::P416Frame;
+use crate::frame::PnFrame444;
 
 walker! {
-  semi_planar {
+  semi_planar_be {
     /// Zero‑sized marker for the P416 source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: P416,
-    frame: P416Frame<'_>,
+    frame: PnFrame444<'_, 16, BE>,
+    frame_le: PnFrame444<'_, 16, false>,
     row: P416Row,
     sink: P416Sink,
     walker: p416_to,
+    walker_endian: p416_to_endian,
     elem_type: u16,
     chroma_field: uv_full,
     chroma_plane: uv,

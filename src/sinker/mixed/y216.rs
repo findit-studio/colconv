@@ -48,7 +48,7 @@ use crate::{
   yuv::{Y216, Y216Row, Y216Sink},
 };
 
-impl<'a> MixedSinker<'a, Y216> {
+impl<'a, const BE: bool> MixedSinker<'a, Y216<BE>> {
   /// Attaches a packed **8-bit** RGBA output buffer. Alpha is filled
   /// with constant `0xFF` (Y216 has no alpha channel).
   ///
@@ -143,9 +143,9 @@ impl<'a> MixedSinker<'a, Y216> {
   }
 }
 
-impl Y216Sink for MixedSinker<'_, Y216> {}
+impl<const BE: bool> Y216Sink<BE> for MixedSinker<'_, Y216<BE>> {}
 
-impl PixelSink for MixedSinker<'_, Y216> {
+impl<const BE: bool> PixelSink for MixedSinker<'_, Y216<BE>> {
   type Input<'r> = Y216Row<'r>;
   type Error = MixedSinkerError;
 
@@ -213,7 +213,7 @@ impl PixelSink for MixedSinker<'_, Y216> {
         &mut buf[one_plane_start..one_plane_end],
         w,
         use_simd,
-        false,
+        BE,
       );
     }
     // Luma u16 — extract 16-bit Y values at native depth (direct
@@ -224,7 +224,7 @@ impl PixelSink for MixedSinker<'_, Y216> {
         &mut buf[one_plane_start..one_plane_end],
         w,
         use_simd,
-        false,
+        BE,
       );
     }
 
@@ -245,7 +245,7 @@ impl PixelSink for MixedSinker<'_, Y216> {
         row.matrix(),
         row.full_range(),
         use_simd,
-        false,
+        BE,
       );
     } else if want_rgb_u16 {
       let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
@@ -266,7 +266,7 @@ impl PixelSink for MixedSinker<'_, Y216> {
         row.matrix(),
         row.full_range(),
         use_simd,
-        false,
+        BE,
       );
       if want_rgba_u16 {
         // Strategy A u16 fan-out — derive RGBA from the just-computed
@@ -297,7 +297,7 @@ impl PixelSink for MixedSinker<'_, Y216> {
         row.matrix(),
         row.full_range(),
         use_simd,
-        false,
+        BE,
       );
       return Ok(());
     }
@@ -321,7 +321,7 @@ impl PixelSink for MixedSinker<'_, Y216> {
       row.matrix(),
       row.full_range(),
       use_simd,
-      false,
+      BE,
     );
 
     if let Some(hsv) = hsv.as_mut() {

@@ -367,3 +367,58 @@ fn y212_reconstructed_from_yuv422p12_matches_yuv422p12_to_rgb() {
 
   assert_eq!(rgb_planar, rgb_packed);
 }
+
+// ====================================================================================
+// Phase 4 — Frame BE flag, Tier 4 Y212 LE/BE round-trip parity test.
+// Mirrors the Y210 / V210 / Y216 LE/BE tests; see y210.rs for the full pattern.
+// ====================================================================================
+
+fn y212_as_be_u16(host: &[u16]) -> Vec<u16> {
+  host
+    .iter()
+    .map(|v| u16::from_ne_bytes(v.to_be_bytes()))
+    .collect()
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn y212_le_be_roundtrip_byte_identical() {
+  // Mid-range 12-bit Y/U/V samples (MSB-aligned).
+  let intended = solid_y212_frame(8, 4, 2400, 1600, 2800);
+  let pix_le = intended.clone();
+  let pix_be = y212_as_be_u16(&intended);
+
+  let frame_le = Y212LeFrame::try_new(&pix_le, 8, 4, 16).unwrap();
+  let mut out_le_rgba = std::vec![0u8; 8 * 4 * 4];
+  let mut out_le_luma_u16 = std::vec![0u16; 8 * 4];
+  let mut sink_le = MixedSinker::<Y212>::new(8, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le_rgba)
+    .unwrap()
+    .with_luma_u16(&mut out_le_luma_u16)
+    .unwrap();
+  y212_to(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+
+  let frame_be = Y212BeFrame::try_new(&pix_be, 8, 4, 16).unwrap();
+  let mut out_be_rgba = std::vec![0u8; 8 * 4 * 4];
+  let mut out_be_luma_u16 = std::vec![0u16; 8 * 4];
+  let mut sink_be = MixedSinker::<Y212<true>>::new(8, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be_rgba)
+    .unwrap()
+    .with_luma_u16(&mut out_be_luma_u16)
+    .unwrap();
+  y212_to_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le_rgba, out_be_rgba,
+    "Y212 RGBA u8 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+  assert_eq!(
+    out_le_luma_u16, out_be_luma_u16,
+    "Y212 luma u16 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}

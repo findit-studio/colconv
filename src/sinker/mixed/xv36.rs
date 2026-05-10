@@ -50,7 +50,7 @@ use crate::{
   yuv::{Xv36, Xv36Row, Xv36Sink},
 };
 
-impl<'a> MixedSinker<'a, Xv36> {
+impl<'a, const BE: bool> MixedSinker<'a, Xv36<BE>> {
   /// Attaches a packed **8-bit** RGBA output buffer. Alpha is filled
   /// with constant `0xFF` (XV36 A slot is padding — not a real alpha
   /// channel).
@@ -147,9 +147,9 @@ impl<'a> MixedSinker<'a, Xv36> {
   }
 }
 
-impl Xv36Sink for MixedSinker<'_, Xv36> {}
+impl<const BE: bool> Xv36Sink<BE> for MixedSinker<'_, Xv36<BE>> {}
 
-impl PixelSink for MixedSinker<'_, Xv36> {
+impl<const BE: bool> PixelSink for MixedSinker<'_, Xv36<BE>> {
   type Input<'r> = Xv36Row<'r>;
   type Error = MixedSinkerError;
 
@@ -209,7 +209,7 @@ impl PixelSink for MixedSinker<'_, Xv36> {
         &mut buf[one_plane_start..one_plane_end],
         w,
         use_simd,
-        false,
+        BE,
       );
     }
     // Luma u16 — extract 12-bit Y values at native depth (shift >> 4
@@ -220,7 +220,7 @@ impl PixelSink for MixedSinker<'_, Xv36> {
         &mut buf[one_plane_start..one_plane_end],
         w,
         use_simd,
-        false,
+        BE,
       );
     }
 
@@ -241,7 +241,7 @@ impl PixelSink for MixedSinker<'_, Xv36> {
         row.matrix(),
         row.full_range(),
         use_simd,
-        false,
+        BE,
       );
     } else if want_rgb_u16 {
       let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
@@ -262,7 +262,7 @@ impl PixelSink for MixedSinker<'_, Xv36> {
         row.matrix(),
         row.full_range(),
         use_simd,
-        false,
+        BE,
       );
       if want_rgba_u16 {
         // Strategy A u16 fan-out — derive RGBA from the just-computed
@@ -293,7 +293,7 @@ impl PixelSink for MixedSinker<'_, Xv36> {
         row.matrix(),
         row.full_range(),
         use_simd,
-        false,
+        BE,
       );
       return Ok(());
     }
@@ -317,7 +317,7 @@ impl PixelSink for MixedSinker<'_, Xv36> {
       row.matrix(),
       row.full_range(),
       use_simd,
-      false,
+      BE,
     );
 
     if let Some(hsv) = hsv.as_mut() {

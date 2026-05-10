@@ -5,15 +5,33 @@
 //! All are 1-plane formats — the single Y (luma) plane carries
 //! the entire pixel payload. No chroma planes exist.
 //!
-//! - `Grayf32Frame` — single f32 plane (FFmpeg `grayf32le`), stride in f32 elements.
+//! - `Grayf32Frame<const BE>` — single f32 plane (FFmpeg `grayf32{le,be}`),
+//!   stride in f32 elements.
 //! - `Ya8Frame` — single u8 packed plane `[Y, A, Y, A, ...]` (FFmpeg `ya8`).
-//! - `Ya16Frame` — single u16 packed plane `[Y, A, Y, A, ...]` (FFmpeg `ya16le`).
+//!   No `<const BE>` — 8-bit byte order is identity.
+//! - `Ya16Frame<const BE>` — single u16 packed plane `[Y, A, Y, A, ...]`
+//!   (FFmpeg `ya16{le,be}`).
 //!
-//! - `Gray8Frame` — 1 plane of `u8` (FFmpeg `gray` / `AV_PIX_FMT_GRAY8`).
-//! - `GrayNFrame<BITS>` — 1 plane of `u16`, `BITS` active low bits
-//!   (FFmpeg `gray9le` / `gray10le` / `gray12le` / `gray14le`).
-//! - `Gray16Frame` — 1 plane of `u16`, all 16 bits active
-//!   (FFmpeg `gray16le`).
+//! - `Gray8Frame` — 1 plane of `u8` (FFmpeg `gray` / `AV_PIX_FMT_GRAY8`). No
+//!   `<const BE>` — 8-bit byte order is identity.
+//! - `GrayNFrame<BITS, const BE>` — 1 plane of `u16`, `BITS` active low bits
+//!   (FFmpeg `gray9{le,be}` / `gray10{le,be}` / `gray12{le,be}` / `gray14{le,be}`).
+//! - `Gray16Frame<const BE>` — 1 plane of `u16`, all 16 bits active
+//!   (FFmpeg `gray16{le,be}`).
+//!
+//! # Endian contract — `<const BE: bool = false>`
+//!
+//! Each high-bit / float frame type carries a `<const BE: bool>` parameter
+//! that defaults to `false` (LE-encoded bytes). The parameter encodes the
+//! **byte order of the plane bytes**, matching the FFmpeg `*LE` / `*BE`
+//! pixel-format suffix. Downstream row kernels handle the byte-swap (or
+//! no-op) under the hood — callers do **not** pre-swap. The `BE` parameter
+//! propagates through the walker (e.g. `gray16_to::<BE>(...)`) into the
+//! sinker dispatch (e.g. `MixedSinker<Gray16<BE>>`), which monomorphizes
+//! the kernel call as `gray16_to_*_row::<BE>(...)`.
+//!
+//! 8-bit formats (`Gray8`, `Ya8`) are **not** const-generic on `BE` because
+//! single-byte values have no byte order to swap.
 
 use derive_more::IsVariant;
 use thiserror::Error;
@@ -155,22 +173,28 @@ pub enum Gray8FrameError {
 /// A validated high-bit-depth gray-scale frame (9/10/12/14 bits).
 ///
 /// Single `u16` plane with `BITS` active low bits per sample (low-bit-packed,
-/// matching FFmpeg `gray9le` / `gray10le` / `gray12le` / `gray14le`).
-/// Upper `16 - BITS` bits of each sample are expected to be zero; the kernels
-/// AND-mask every load to `(1 << BITS) - 1` for backend consistency.
+/// matching FFmpeg `gray9{le,be}` / `gray10{le,be}` / `gray12{le,be}` /
+/// `gray14{le,be}`). Upper `16 - BITS` bits of each sample are expected to
+/// be zero; the kernels AND-mask every load to `(1 << BITS) - 1` for backend
+/// consistency.
+///
+/// The `<const BE: bool>` parameter selects the plane byte order: `false`
+/// (default) → LE-encoded bytes, `true` → BE-encoded bytes. Downstream row
+/// kernels perform the byte-swap (or no-op) under the hood — callers do
+/// **not** pre-swap.
 ///
 /// Stride is in **samples** (`u16` elements), not bytes. Callers with byte
 /// buffers from FFmpeg should cast via `bytemuck::cast_slice` and divide
 /// `linesize[0]` by 2 before constructing.
 #[derive(Debug, Clone, Copy)]
-pub struct GrayNFrame<'a, const BITS: u32> {
+pub struct GrayNFrame<'a, const BITS: u32, const BE: bool = false> {
   y: &'a [u16],
   width: u32,
   height: u32,
   y_stride: u32,
 }
 
-impl<'a, const BITS: u32> GrayNFrame<'a, BITS> {
+impl<'a, const BITS: u32, const BE: bool> GrayNFrame<'a, BITS, BE> {
   /// Constructs a new [`GrayNFrame`], validating dimensions, plane length,
   /// and the `BITS` parameter (`BITS` must be 9, 10, 12, or 14).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -244,20 +268,46 @@ impl<'a, const BITS: u32> GrayNFrame<'a, BITS> {
   pub const fn y_stride(&self) -> u32 {
     self.y_stride
   }
+
+  /// Returns the compile-time BE flag — `true` if plane bytes are BE-encoded
+  /// (`gray*be`), `false` if LE-encoded (`gray*le`). Runtime mirror of the
+  /// `<const BE: bool>` type parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
+  }
 }
 
-/// 9-bit low-packed gray frame (FFmpeg `gray9le`). Each sample is a `u16` with
-/// the low 9 bits active; the upper 7 bits are zero (or ignored).
-pub type Gray9Frame<'a> = GrayNFrame<'a, 9>;
-/// 10-bit low-packed gray frame (FFmpeg `gray10le`). Each sample is a `u16`
-/// with the low 10 bits active; the upper 6 bits are zero (or ignored).
-pub type Gray10Frame<'a> = GrayNFrame<'a, 10>;
-/// 12-bit low-packed gray frame (FFmpeg `gray12le`). Each sample is a `u16`
-/// with the low 12 bits active; the upper 4 bits are zero (or ignored).
-pub type Gray12Frame<'a> = GrayNFrame<'a, 12>;
-/// 14-bit low-packed gray frame (FFmpeg `gray14le`). Each sample is a `u16`
-/// with the low 14 bits active; the upper 2 bits are zero (or ignored).
-pub type Gray14Frame<'a> = GrayNFrame<'a, 14>;
+/// 9-bit low-packed gray frame (FFmpeg `gray9{le,be}`). Each sample is a `u16`
+/// with the low 9 bits active; the upper 7 bits are zero (or ignored).
+/// `<const BE>` defaults to `false` (LE).
+pub type Gray9Frame<'a, const BE: bool = false> = GrayNFrame<'a, 9, BE>;
+/// 10-bit low-packed gray frame (FFmpeg `gray10{le,be}`). `<const BE>`
+/// defaults to `false` (LE).
+pub type Gray10Frame<'a, const BE: bool = false> = GrayNFrame<'a, 10, BE>;
+/// 12-bit low-packed gray frame (FFmpeg `gray12{le,be}`). `<const BE>`
+/// defaults to `false` (LE).
+pub type Gray12Frame<'a, const BE: bool = false> = GrayNFrame<'a, 12, BE>;
+/// 14-bit low-packed gray frame (FFmpeg `gray14{le,be}`). `<const BE>`
+/// defaults to `false` (LE).
+pub type Gray14Frame<'a, const BE: bool = false> = GrayNFrame<'a, 14, BE>;
+
+/// LE-encoded `Gray9Frame` (`AV_PIX_FMT_GRAY9LE`).
+pub type Gray9LeFrame<'a> = GrayNFrame<'a, 9, false>;
+/// BE-encoded `Gray9Frame` (`AV_PIX_FMT_GRAY9BE`).
+pub type Gray9BeFrame<'a> = GrayNFrame<'a, 9, true>;
+/// LE-encoded `Gray10Frame` (`AV_PIX_FMT_GRAY10LE`).
+pub type Gray10LeFrame<'a> = GrayNFrame<'a, 10, false>;
+/// BE-encoded `Gray10Frame` (`AV_PIX_FMT_GRAY10BE`).
+pub type Gray10BeFrame<'a> = GrayNFrame<'a, 10, true>;
+/// LE-encoded `Gray12Frame` (`AV_PIX_FMT_GRAY12LE`).
+pub type Gray12LeFrame<'a> = GrayNFrame<'a, 12, false>;
+/// BE-encoded `Gray12Frame` (`AV_PIX_FMT_GRAY12BE`).
+pub type Gray12BeFrame<'a> = GrayNFrame<'a, 12, true>;
+/// LE-encoded `Gray14Frame` (`AV_PIX_FMT_GRAY14LE`).
+pub type Gray14LeFrame<'a> = GrayNFrame<'a, 14, false>;
+/// BE-encoded `Gray14Frame` (`AV_PIX_FMT_GRAY14BE`).
+pub type Gray14BeFrame<'a> = GrayNFrame<'a, 14, true>;
 
 /// Errors returned by [`GrayNFrame::try_new`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
@@ -307,17 +357,31 @@ pub enum GrayNFrameError {
 
 /// A validated 16-bit gray-scale frame.
 ///
-/// Single `u16` plane, all 16 bits active (FFmpeg `gray16le`).
+/// Single `u16` plane, all 16 bits active (FFmpeg `gray16{le,be}`).
 /// Stride is in **samples** (`u16` elements), not bytes.
+///
+/// The `<const BE: bool>` parameter selects the plane byte order: `false`
+/// (default) → LE-encoded bytes (`AV_PIX_FMT_GRAY16LE`), `true` → BE-encoded
+/// bytes (`AV_PIX_FMT_GRAY16BE`). Downstream row kernels handle the byte-swap.
+///
+/// # Aliases
+/// - [`Gray16LeFrame`] = `Gray16Frame<'a, false>`.
+/// - [`Gray16BeFrame`] = `Gray16Frame<'a, true>`.
 #[derive(Debug, Clone, Copy)]
-pub struct Gray16Frame<'a> {
+pub struct Gray16Frame<'a, const BE: bool = false> {
   y: &'a [u16],
   width: u32,
   height: u32,
   y_stride: u32,
 }
 
-impl<'a> Gray16Frame<'a> {
+/// LE-encoded `Gray16Frame` (`AV_PIX_FMT_GRAY16LE`).
+pub type Gray16LeFrame<'a> = Gray16Frame<'a, false>;
+
+/// BE-encoded `Gray16Frame` (`AV_PIX_FMT_GRAY16BE`).
+pub type Gray16BeFrame<'a> = Gray16Frame<'a, true>;
+
+impl<'a, const BE: bool> Gray16Frame<'a, BE> {
   /// Constructs a new [`Gray16Frame`], validating dimensions and plane length.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn try_new(
@@ -387,6 +451,14 @@ impl<'a> Gray16Frame<'a> {
   pub const fn y_stride(&self) -> u32 {
     self.y_stride
   }
+
+  /// Returns the compile-time BE flag — `true` if plane bytes are BE-encoded
+  /// (`AV_PIX_FMT_GRAY16BE`), `false` if LE-encoded (`AV_PIX_FMT_GRAY16LE`).
+  /// Runtime mirror of the `<const BE: bool>` type parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
+  }
 }
 
 /// Errors returned by [`Gray16Frame::try_new`].
@@ -429,24 +501,41 @@ pub enum Gray16FrameError {
 
 // ---- Grayf32Frame -----------------------------------------------------------
 
-/// A validated 32-bit float gray-scale frame (FFmpeg `grayf32le`).
+/// A validated 32-bit float gray-scale frame (FFmpeg `grayf32{le,be}`).
 ///
 /// Single `f32` plane. Nominal luma range `[0.0, 1.0]`; HDR > 1.0 is permitted
 /// and not rejected at construction. Out-of-range values are clamped during
 /// output conversion.
 ///
+/// The `<const BE: bool>` parameter selects the **bit-pattern byte order** of
+/// each `f32` element: `false` (default) → LE-encoded bytes
+/// (`AV_PIX_FMT_GRAYF32LE`), `true` → BE-encoded bytes
+/// (`AV_PIX_FMT_GRAYF32BE`). Downstream row kernels load each `f32` via a
+/// byte-swapped `u32` bit pattern when `BE = true` — callers do **not**
+/// pre-swap.
+///
 /// Stride is in **f32 elements** (not bytes). Callers holding a byte buffer
 /// from FFmpeg should cast via `bytemuck::cast_slice` and divide
 /// `linesize[0]` by 4 before constructing.
+///
+/// # Aliases
+/// - [`Grayf32LeFrame`] = `Grayf32Frame<'a, false>`.
+/// - [`Grayf32BeFrame`] = `Grayf32Frame<'a, true>`.
 #[derive(Debug, Clone, Copy)]
-pub struct Grayf32Frame<'a> {
+pub struct Grayf32Frame<'a, const BE: bool = false> {
   y: &'a [f32],
   width: u32,
   height: u32,
   y_stride: u32, // in f32 elements
 }
 
-impl<'a> Grayf32Frame<'a> {
+/// LE-encoded `Grayf32Frame` (`AV_PIX_FMT_GRAYF32LE`).
+pub type Grayf32LeFrame<'a> = Grayf32Frame<'a, false>;
+
+/// BE-encoded `Grayf32Frame` (`AV_PIX_FMT_GRAYF32BE`).
+pub type Grayf32BeFrame<'a> = Grayf32Frame<'a, true>;
+
+impl<'a, const BE: bool> Grayf32Frame<'a, BE> {
   /// Constructs a new [`Grayf32Frame`], validating dimensions and plane length.
   ///
   /// Returns [`Grayf32FrameError`] if:
@@ -521,6 +610,15 @@ impl<'a> Grayf32Frame<'a> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn y_stride(&self) -> u32 {
     self.y_stride
+  }
+
+  /// Returns the compile-time BE flag — `true` if plane bytes are BE-encoded
+  /// (`AV_PIX_FMT_GRAYF32BE`), `false` if LE-encoded
+  /// (`AV_PIX_FMT_GRAYF32LE`). Runtime mirror of the `<const BE: bool>` type
+  /// parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
   }
 }
 
@@ -717,22 +815,37 @@ pub enum Ya8FrameError {
 
 // ---- Ya16Frame --------------------------------------------------------------
 
-/// A validated 16-bit gray + alpha packed frame (FFmpeg `ya16le` / `AV_PIX_FMT_YA16LE`).
+/// A validated 16-bit gray + alpha packed frame
+/// (FFmpeg `ya16{le,be}` / `AV_PIX_FMT_YA16{LE,BE}`).
 ///
 /// Single `u16` plane in packed `[Y0, A0, Y1, A1, ...]` layout. Each pixel
 /// occupies 2 u16 elements: the luma Y element followed by the alpha A element.
 ///
+/// The `<const BE: bool>` parameter selects the plane byte order: `false`
+/// (default) → LE-encoded bytes (`AV_PIX_FMT_YA16LE`), `true` → BE-encoded
+/// bytes (`AV_PIX_FMT_YA16BE`). Downstream row kernels handle the byte-swap.
+///
 /// Stride is in **u16 elements** (stride covers `width × 2` elements per active
 /// row, plus any padding). Callers from FFmpeg should divide `linesize[0]` by 2.
+///
+/// # Aliases
+/// - [`Ya16LeFrame`] = `Ya16Frame<'a, false>`.
+/// - [`Ya16BeFrame`] = `Ya16Frame<'a, true>`.
 #[derive(Debug, Clone, Copy)]
-pub struct Ya16Frame<'a> {
+pub struct Ya16Frame<'a, const BE: bool = false> {
   packed: &'a [u16],
   width: u32,
   height: u32,
   stride: u32, // in u16 elements
 }
 
-impl<'a> Ya16Frame<'a> {
+/// LE-encoded `Ya16Frame` (`AV_PIX_FMT_YA16LE`).
+pub type Ya16LeFrame<'a> = Ya16Frame<'a, false>;
+
+/// BE-encoded `Ya16Frame` (`AV_PIX_FMT_YA16BE`).
+pub type Ya16BeFrame<'a> = Ya16Frame<'a, true>;
+
+impl<'a, const BE: bool> Ya16Frame<'a, BE> {
   /// Constructs a new [`Ya16Frame`], validating dimensions and plane length.
   ///
   /// Returns [`Ya16FrameError`] if:
@@ -819,6 +932,14 @@ impl<'a> Ya16Frame<'a> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn stride(&self) -> u32 {
     self.stride
+  }
+
+  /// Returns the compile-time BE flag — `true` if plane bytes are BE-encoded
+  /// (`AV_PIX_FMT_YA16BE`), `false` if LE-encoded (`AV_PIX_FMT_YA16LE`).
+  /// Runtime mirror of the `<const BE: bool>` type parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
   }
 }
 

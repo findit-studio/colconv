@@ -5,14 +5,14 @@ use super::*;
 #[test]
 fn x2rgb10_frame_try_new_accepts_valid_tight() {
   let buf = std::vec![0u8; 16 * 4 * 4];
-  X2Rgb10Frame::try_new(&buf, 16, 4, 64).expect("valid");
+  X2Rgb10LeFrame::try_new(&buf, 16, 4, 64).expect("valid");
 }
 
 #[test]
 fn x2rgb10_frame_try_new_rejects_short_plane() {
   let small = std::vec![0u8; 16 * 4];
   assert!(matches!(
-    X2Rgb10Frame::try_new(&small, 16, 4, 64),
+    X2Rgb10LeFrame::try_new(&small, 16, 4, 64),
     Err(X2Rgb10FrameError::PlaneTooShort { .. })
   ));
 }
@@ -21,7 +21,7 @@ fn x2rgb10_frame_try_new_rejects_short_plane() {
 fn x2rgb10_frame_try_new_rejects_zero_dimension() {
   let buf = std::vec![0u8; 16 * 4 * 4];
   assert!(matches!(
-    X2Rgb10Frame::try_new(&buf, 0, 4, 64),
+    X2Rgb10LeFrame::try_new(&buf, 0, 4, 64),
     Err(X2Rgb10FrameError::ZeroDimension { .. })
   ));
 }
@@ -30,7 +30,7 @@ fn x2rgb10_frame_try_new_rejects_zero_dimension() {
 fn x2rgb10_frame_try_new_rejects_stride_too_small() {
   let buf = std::vec![0u8; 16 * 4 * 4];
   assert!(matches!(
-    X2Rgb10Frame::try_new(&buf, 16, 4, 63),
+    X2Rgb10LeFrame::try_new(&buf, 16, 4, 63),
     Err(X2Rgb10FrameError::StrideTooSmall { .. })
   ));
 }
@@ -39,20 +39,29 @@ fn x2rgb10_frame_try_new_rejects_stride_too_small() {
 #[should_panic(expected = "invalid X2Rgb10Frame")]
 fn x2rgb10_frame_new_panics_on_invalid() {
   let buf = std::vec![0u8; 10];
-  let _ = X2Rgb10Frame::new(&buf, 16, 4, 64);
+  let _ = X2Rgb10LeFrame::new(&buf, 16, 4, 64);
+}
+
+#[test]
+fn x2rgb10_be_frame_alias_constructs() {
+  // Phase 4: BE alias resolves to `X2Rgb10Frame<'_, true>`.
+  let buf = std::vec![0u8; 16 * 4 * 4];
+  let f = X2Rgb10BeFrame::try_new(&buf, 16, 4, 64).expect("valid");
+  assert!(f.is_be());
+  assert_eq!(f.width(), 16);
 }
 
 #[test]
 fn x2bgr10_frame_try_new_accepts_valid_tight() {
   let buf = std::vec![0u8; 16 * 4 * 4];
-  X2Bgr10Frame::try_new(&buf, 16, 4, 64).expect("valid");
+  X2Bgr10LeFrame::try_new(&buf, 16, 4, 64).expect("valid");
 }
 
 #[test]
 fn x2bgr10_frame_try_new_rejects_short_plane() {
   let small = std::vec![0u8; 16 * 4];
   assert!(matches!(
-    X2Bgr10Frame::try_new(&small, 16, 4, 64),
+    X2Bgr10LeFrame::try_new(&small, 16, 4, 64),
     Err(X2Bgr10FrameError::PlaneTooShort { .. })
   ));
 }
@@ -61,5 +70,12 @@ fn x2bgr10_frame_try_new_rejects_short_plane() {
 #[should_panic(expected = "invalid X2Bgr10Frame")]
 fn x2bgr10_frame_new_panics_on_invalid() {
   let buf = std::vec![0u8; 10];
-  let _ = X2Bgr10Frame::new(&buf, 16, 4, 64);
+  let _ = X2Bgr10LeFrame::new(&buf, 16, 4, 64);
+}
+
+#[test]
+fn x2bgr10_be_frame_alias_constructs() {
+  let buf = std::vec![0u8; 16 * 4 * 4];
+  let f = X2Bgr10BeFrame::try_new(&buf, 16, 4, 64).expect("valid");
+  assert!(f.is_be());
 }

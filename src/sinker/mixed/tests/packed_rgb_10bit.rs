@@ -233,3 +233,91 @@ fn x2bgr10_simd_matches_scalar_with_random_input() {
   assert_eq!(rgb_u16_simd, rgb_u16_scalar, "RGB u16 output diverges");
   assert_eq!(luma_simd, luma_scalar, "Luma output diverges");
 }
+
+// ====================================================================================
+// Phase 4 — Frame BE flag, Tier 8 trial. LE+BE round-trip parity tests for the
+// 10-bit packed RGB family.
+//
+// Each X2Rgb10/X2Bgr10 pixel is a 32-bit word; the LE-encoded plane stores it
+// `to_le_bytes`, the BE-encoded plane stores it `to_be_bytes`. Both must yield
+// byte-identical sinker output (kernel byte-swaps under the hood).
+// ====================================================================================
+
+fn pack_x2rgb10_word(r10: u32, g10: u32, b10: u32) -> u32 {
+  ((r10 & 0x3FF) << 20) | ((g10 & 0x3FF) << 10) | (b10 & 0x3FF)
+}
+
+fn pack_x2bgr10_word(r10: u32, g10: u32, b10: u32) -> u32 {
+  ((b10 & 0x3FF) << 20) | ((g10 & 0x3FF) << 10) | (r10 & 0x3FF)
+}
+
+fn x2_plane_bytes<F: Fn(usize) -> u32>(width: u32, height: u32, word_at: F, be: bool) -> Vec<u8> {
+  let n = (width as usize) * (height as usize);
+  let mut buf = std::vec![0u8; n * 4];
+  for (i, chunk) in buf.chunks_mut(4).enumerate() {
+    let w = word_at(i);
+    let bytes = if be { w.to_be_bytes() } else { w.to_le_bytes() };
+    chunk.copy_from_slice(&bytes);
+  }
+  buf
+}
+
+#[test]
+fn x2rgb10_le_be_roundtrip_byte_identical() {
+  let words: Vec<u32> = (0..16 * 4)
+    .map(|i| pack_x2rgb10_word(0x100 + i as u32, 0x200, 0x080 + (i as u32 & 0xF)))
+    .collect();
+  let pix_le = x2_plane_bytes(16, 4, |i| words[i], false);
+  let pix_be = x2_plane_bytes(16, 4, |i| words[i], true);
+
+  let frame_le = X2Rgb10Frame::try_new(&pix_le, 16, 4, 64).unwrap();
+  let mut out_le = vec![0u8; 16 * 4 * 4];
+  let mut sink_le = MixedSinker::<X2Rgb10>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le)
+    .unwrap();
+  x2rgb10_to(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+
+  let frame_be = X2Rgb10BeFrame::try_new(&pix_be, 16, 4, 64).unwrap();
+  let mut out_be = vec![0u8; 16 * 4 * 4];
+  let mut sink_be = MixedSinker::<X2Rgb10<true>>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be)
+    .unwrap();
+  x2rgb10_to_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le, out_be,
+    "X2Rgb10 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}
+
+#[test]
+fn x2bgr10_le_be_roundtrip_byte_identical() {
+  let words: Vec<u32> = (0..16 * 4)
+    .map(|i| pack_x2bgr10_word(0x100 + i as u32, 0x200, 0x080 + (i as u32 & 0xF)))
+    .collect();
+  let pix_le = x2_plane_bytes(16, 4, |i| words[i], false);
+  let pix_be = x2_plane_bytes(16, 4, |i| words[i], true);
+
+  let frame_le = X2Bgr10Frame::try_new(&pix_le, 16, 4, 64).unwrap();
+  let mut out_le = vec![0u8; 16 * 4 * 4];
+  let mut sink_le = MixedSinker::<X2Bgr10>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le)
+    .unwrap();
+  x2bgr10_to(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+
+  let frame_be = X2Bgr10BeFrame::try_new(&pix_be, 16, 4, 64).unwrap();
+  let mut out_be = vec![0u8; 16 * 4 * 4];
+  let mut sink_be = MixedSinker::<X2Bgr10<true>>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be)
+    .unwrap();
+  x2bgr10_to_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le, out_be,
+    "X2Bgr10 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}

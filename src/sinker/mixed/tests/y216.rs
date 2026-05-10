@@ -385,3 +385,58 @@ fn y216_planar_parity_with_yuv422p16() {
   y216_to(&y216, false, ColorMatrix::Bt709, &mut y_sink2).unwrap();
   assert_eq!(p_rgb_u16, y_rgb_u16, "Y216 vs Yuv422p16 u16 RGB diverges");
 }
+
+// ====================================================================================
+// Phase 4 — Frame BE flag, Tier 4 Y216 LE/BE round-trip parity test.
+// Mirrors the Y210 / Y212 / V210 LE/BE tests; see y210.rs for the full pattern.
+// ====================================================================================
+
+fn y216_as_be_u16(host: &[u16]) -> Vec<u16> {
+  host
+    .iter()
+    .map(|v| u16::from_ne_bytes(v.to_be_bytes()))
+    .collect()
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn y216_le_be_roundtrip_byte_identical() {
+  // Mid-range full 16-bit samples (no MSB alignment for Y216).
+  let intended = solid_y216_frame(8, 4, 38400, 25600, 44800);
+  let pix_le = intended.clone();
+  let pix_be = y216_as_be_u16(&intended);
+
+  let frame_le = Y216LeFrame::try_new(&pix_le, 8, 4, 16).unwrap();
+  let mut out_le_rgba = std::vec![0u8; 8 * 4 * 4];
+  let mut out_le_luma_u16 = std::vec![0u16; 8 * 4];
+  let mut sink_le = MixedSinker::<Y216>::new(8, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le_rgba)
+    .unwrap()
+    .with_luma_u16(&mut out_le_luma_u16)
+    .unwrap();
+  y216_to(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+
+  let frame_be = Y216BeFrame::try_new(&pix_be, 8, 4, 16).unwrap();
+  let mut out_be_rgba = std::vec![0u8; 8 * 4 * 4];
+  let mut out_be_luma_u16 = std::vec![0u16; 8 * 4];
+  let mut sink_be = MixedSinker::<Y216<true>>::new(8, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be_rgba)
+    .unwrap()
+    .with_luma_u16(&mut out_be_luma_u16)
+    .unwrap();
+  y216_to_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le_rgba, out_be_rgba,
+    "Y216 RGBA u8 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+  assert_eq!(
+    out_le_luma_u16, out_be_luma_u16,
+    "Y216 luma u16 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}

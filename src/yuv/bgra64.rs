@@ -1,5 +1,10 @@
-//! Packed BGRA64 source (`AV_PIX_FMT_BGRA64LE`) — 16 bits per channel,
+//! Packed BGRA64 source (`AV_PIX_FMT_BGRA64{LE,BE}`) — 16 bits per channel,
 //! `u16` element order `B, G, R, A`. Stride in u16 elements (≥ `4 * width`).
+//!
+//! The marker carries `<const BE: bool = false>`: `Bgra64` (= `Bgra64<false>`)
+//! is the LE source; `Bgra64<true>` is the BE source. The walker
+//! [`bgra64_to::<BE>`] propagates `BE` from [`Bgra64Frame<'_, BE>`] into the
+//! sinker dispatch.
 //!
 //! Outputs (Tier 8 finish):
 //! - `with_rgb`      — swap B↔R, drop alpha, narrow each channel `>> 8`, pack as R, G, B.
@@ -16,20 +21,27 @@
 use crate::frame::Bgra64Frame;
 
 walker! {
-  packed {
-    /// Zero-sized marker for the packed **BGRA64** (`AV_PIX_FMT_BGRA64LE`) source format.
+  packed_be {
+    /// Zero-sized marker for the packed **BGRA64** source format
+    /// (`AV_PIX_FMT_BGRA64{LE,BE}`). `<const BE: bool>` defaults to `false`
+    /// (LE); the alias `Bgra64` resolves to `Bgra64<false>`.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Bgra64,
-    frame: Bgra64Frame<'_>,
+    frame: Bgra64Frame,
     row: Bgra64Row,
     sink: Bgra64Sink,
     walker: bgra64_to,
+    walker_endian: bgra64_to_endian,
     buf_field: bgra64,
     elem_type: u16,
     row_elems: |w| w * 4,
     row_doc: "One row of a [`Bgra64`] source — `width * 4` u16 elements \
-              (`B, G, R, A` per pixel, each channel 16 bits; alpha is real).",
-    walker_doc: "Walks a [`Bgra64Frame`] row by row into the sink.",
+              (`B, G, R, A` per pixel, each channel 16 bits; alpha is real). \
+              Endianness is recorded on the parent [`Bgra64Frame<'_, BE>`] / \
+              sinker, not on the Row itself.",
+    walker_doc: "Walks a [`Bgra64Frame<'_, BE>`] row by row into the sink. \
+                 Propagates `<const BE: bool>` from the frame into \
+                 [`Bgra64Sink<BE>`].",
   }
 }
 

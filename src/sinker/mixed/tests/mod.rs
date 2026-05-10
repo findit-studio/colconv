@@ -19,6 +19,7 @@ mod packed_rgb_float;
 mod packed_yuv_4_1_1;
 mod packed_yuv_8bit;
 mod pal8;
+mod phase4_yuv_hb_be_roundtrip;
 mod planar_gbr;
 mod planar_gbr_float;
 mod planar_gbr_high_bit;
@@ -56,4 +57,43 @@ pub(super) fn pseudo_random_u8(buf: &mut [u8], seed: u32) {
     state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
     *b = (state >> 16) as u8;
   }
+}
+
+// Host-independent **wire-byte** encoders for `&[u16]` / `&[u32]` test
+// fixtures. Frames carry bytes, not numbers — so a sinker test that
+// wants to feed an LE-wire `0x1234` u16 needs the underlying byte view
+// to be `[0x34, 0x12]` regardless of host endianness; ditto BE wants
+// `[0x12, 0x34]`. The pattern `T::from_ne_bytes(v.to_{le,be}_bytes())`
+// achieves exactly that: on LE hosts `as_le_*` is identity and `as_be_*`
+// byte-swaps; on BE hosts (e.g. s390x) the polarity flips. Centralising
+// these here matches the `le_encoded_u16_buf` convention from the
+// `frame/tests/` fixture builders (PR #95/#96) and keeps the call sites
+// in xv36/v410/ayuv64 sinker tests self-documenting.
+
+/// Encode a logical `u16` as host-independent **LE-wire** byte storage.
+#[cfg(feature = "std")]
+#[inline]
+pub(super) fn as_le_u16(v: u16) -> u16 {
+  u16::from_ne_bytes(v.to_le_bytes())
+}
+
+/// Encode a logical `u16` as host-independent **BE-wire** byte storage.
+#[cfg(feature = "std")]
+#[inline]
+pub(super) fn as_be_u16(v: u16) -> u16 {
+  u16::from_ne_bytes(v.to_be_bytes())
+}
+
+/// Encode a logical `u32` as host-independent **LE-wire** byte storage.
+#[cfg(feature = "std")]
+#[inline]
+pub(super) fn as_le_u32(v: u32) -> u32 {
+  u32::from_ne_bytes(v.to_le_bytes())
+}
+
+/// Encode a logical `u32` as host-independent **BE-wire** byte storage.
+#[cfg(feature = "std")]
+#[inline]
+pub(super) fn as_be_u32(v: u32) -> u32 {
+  u32::from_ne_bytes(v.to_be_bytes())
 }
