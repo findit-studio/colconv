@@ -447,6 +447,15 @@ pub enum Xv36FrameError {
     /// Configured height.
     rows: u32,
   },
+  /// Source-compat unit variant retained from the pre-PR-#107 public
+  /// API. Reserved for back-compatibility — never emitted by current
+  /// code (which now reports the offending element via
+  /// [`Self::SampleLowBitsSetAt`]). Kept as a unit variant so existing
+  /// downstream `match Xv36FrameError::SampleLowBitsSet` arms keep
+  /// compiling. `#[non_exhaustive]` does not make changing an existing
+  /// variant's shape source-compatible, hence this preservation.
+  #[error("Xv36Frame: sample has non-zero low 4 bits (expected MSB-aligned XV36 data)")]
+  SampleLowBitsSet,
   /// `try_new_checked` only: a sample's low 4 bits are non-zero
   /// after normalizing the byte-storage `u16` to the logical sample
   /// value (`u16::from_be` for `Xv36BeFrame`, `u16::from_le` for
@@ -455,10 +464,14 @@ pub enum Xv36FrameError {
   ///
   /// `value` is the **logical** sample (post-normalization) so the
   /// reported nibble is comparable across hosts and BE/LE flags.
+  ///
+  /// Distinct from the legacy [`Self::SampleLowBitsSet`] unit variant
+  /// (preserved for source-compat) — this carries the diagnostic
+  /// `index` + `value` payload added in PR #107.
   #[error(
     "Xv36Frame: sample {value:#06x} at element {index} has non-zero low 4 bits (expected MSB-aligned XV36 data)"
   )]
-  SampleLowBitsSet {
+  SampleLowBitsSetAt {
     /// Element index (in `u16` slots) within the packed plane.
     index: usize,
     /// Offending sample value, normalized to host-native via
@@ -551,7 +564,7 @@ impl<'a, const BE: bool> Xv36Frame<'a, BE> {
           u16::from_le(sample)
         };
         if logical & 0x000F != 0 {
-          return Err(Xv36FrameError::SampleLowBitsSet {
+          return Err(Xv36FrameError::SampleLowBitsSetAt {
             index: start + col,
             value: logical,
           });
@@ -573,8 +586,10 @@ impl<'a, const BE: bool> Xv36Frame<'a, BE> {
         Xv36FrameError::StrideTooSmall { .. } => panic!("invalid Xv36Frame: stride too small"),
         Xv36FrameError::PlaneTooShort { .. } => panic!("invalid Xv36Frame: plane too short"),
         Xv36FrameError::GeometryOverflow { .. } => panic!("invalid Xv36Frame: geometry overflow"),
-        // SampleLowBitsSet is only emitted by try_new_checked.
-        Xv36FrameError::SampleLowBitsSet { .. } => {
+        // SampleLowBitsSet/SampleLowBitsSetAt are only emitted by
+        // try_new_checked (and SampleLowBitsSet is reserved unit
+        // variant for back-compat — never emitted).
+        Xv36FrameError::SampleLowBitsSet | Xv36FrameError::SampleLowBitsSetAt { .. } => {
           panic!("invalid Xv36Frame: sample low bits set (unreachable from try_new)")
         }
       },

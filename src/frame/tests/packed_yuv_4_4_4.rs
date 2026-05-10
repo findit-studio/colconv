@@ -254,7 +254,7 @@ fn xv36_frame_try_new_checked_rejects_low_bits_set() {
   let err = Xv36LeFrame::try_new_checked(&buf, 4, 4, 16).unwrap_err();
   assert!(matches!(
     err,
-    Xv36FrameError::SampleLowBitsSet {
+    Xv36FrameError::SampleLowBitsSetAt {
       index: 5,
       value: 0xABCD,
     }
@@ -273,26 +273,28 @@ fn xv36_frame_try_new_checked_rejects_low_bits_set() {
 
 #[test]
 fn xv36_be_frame_try_new_checked_accepts_be_encoded_msb_aligned_on_any_host() {
-  // Logical sample 0xABC0 (low 4 bits zero) encoded BE as host bytes
-  // [0xAB, 0xC0] → on a LE host `u16::from_le_bytes([0xAB, 0xC0])` =
-  // 0xC0AB; the validator must `u16::from_be(0xC0AB)` = 0xABC0 first.
+  // Logical sample 0xABC0 (low 4 bits zero) encoded BE as wire bytes
+  // [0xAB, 0xC0]. Use `from_ne_bytes` so the byte storage of the u16
+  // matches the wire bytes on every host (mirrors PR #95 round 2 fix
+  // for `pack12_le`); then the validator's `u16::from_be` recovers
+  // logical 0xABC0 regardless of host endianness.
   let mut buf = vec![0u16; 64];
-  let be_word = u16::from_le_bytes([0xAB, 0xC0]); // wire bytes [0xAB, 0xC0]
+  let be_word = u16::from_ne_bytes([0xAB, 0xC0]); // wire bytes [0xAB, 0xC0] on any host
   buf.fill(be_word);
   Xv36BeFrame::try_new_checked(&buf, 4, 4, 16).expect("valid BE-encoded MSB-aligned XV36");
 }
 
 #[test]
 fn xv36_be_frame_try_new_checked_rejects_be_encoded_low_bits_set_on_any_host() {
-  // Logical sample 0xABCD (low 4 bits = 0xD ≠ 0) encoded BE as host
+  // Logical sample 0xABCD (low 4 bits = 0xD ≠ 0) encoded BE as wire
   // bytes [0xAB, 0xCD]. Validator must reject after BE normalization.
   let mut buf = vec![0u16; 64];
-  let be_word = u16::from_le_bytes([0xAB, 0xCD]); // wire bytes [0xAB, 0xCD]
+  let be_word = u16::from_ne_bytes([0xAB, 0xCD]); // wire bytes [0xAB, 0xCD] on any host
   buf[5] = be_word;
   let err = Xv36BeFrame::try_new_checked(&buf, 4, 4, 16).unwrap_err();
   assert!(matches!(
     err,
-    Xv36FrameError::SampleLowBitsSet {
+    Xv36FrameError::SampleLowBitsSetAt {
       index: 5,
       value: 0xABCD,
     }
@@ -305,12 +307,12 @@ fn xv36_be_frame_try_new_checked_rejects_be_encoded_low_nibble_only() {
   // host this was 0x0D00 (low nibble 0) and falsely *accepted*. Post-
   // fix the BE normalization restores 0x000D and rejects.
   let mut buf = vec![0u16; 64];
-  let be_word = u16::from_le_bytes([0x00, 0x0D]); // wire bytes [0x00, 0x0D]
+  let be_word = u16::from_ne_bytes([0x00, 0x0D]); // wire bytes [0x00, 0x0D] on any host
   buf[7] = be_word;
   let err = Xv36BeFrame::try_new_checked(&buf, 4, 4, 16).unwrap_err();
   assert!(matches!(
     err,
-    Xv36FrameError::SampleLowBitsSet {
+    Xv36FrameError::SampleLowBitsSetAt {
       index: 7,
       value: 0x000D,
     }
@@ -319,10 +321,12 @@ fn xv36_be_frame_try_new_checked_rejects_be_encoded_low_nibble_only() {
 
 #[test]
 fn xv36_le_frame_try_new_checked_accepts_le_encoded_msb_aligned_on_any_host() {
-  // Symmetric LE counterpart: logical 0xABC0 encoded LE as host
-  // bytes [0xC0, 0xAB] is host-native 0xABC0 on a LE host (no-op).
+  // Symmetric LE counterpart: logical 0xABC0 encoded LE as wire bytes
+  // [0xC0, 0xAB]. Use `from_ne_bytes` so the u16 byte storage matches
+  // the wire bytes on every host; the validator's `u16::from_le`
+  // recovers logical 0xABC0 regardless of host endianness.
   let mut buf = vec![0u16; 64];
-  let le_word = u16::from_le_bytes([0xC0, 0xAB]);
+  let le_word = u16::from_ne_bytes([0xC0, 0xAB]); // wire bytes [0xC0, 0xAB] on any host
   buf.fill(le_word);
   Xv36LeFrame::try_new_checked(&buf, 4, 4, 16).expect("valid LE-encoded MSB-aligned XV36");
 }
@@ -330,12 +334,12 @@ fn xv36_le_frame_try_new_checked_accepts_le_encoded_msb_aligned_on_any_host() {
 #[test]
 fn xv36_le_frame_try_new_checked_rejects_le_encoded_low_bits_set_on_any_host() {
   let mut buf = vec![0u16; 64];
-  let le_word = u16::from_le_bytes([0xCD, 0xAB]); // logical 0xABCD on every host
+  let le_word = u16::from_ne_bytes([0xCD, 0xAB]); // wire bytes [0xCD, 0xAB] = logical 0xABCD on any host
   buf[3] = le_word;
   let err = Xv36LeFrame::try_new_checked(&buf, 4, 4, 16).unwrap_err();
   assert!(matches!(
     err,
-    Xv36FrameError::SampleLowBitsSet {
+    Xv36FrameError::SampleLowBitsSetAt {
       index: 3,
       value: 0xABCD,
     }
