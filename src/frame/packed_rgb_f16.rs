@@ -76,7 +76,7 @@ pub enum Rgbf16FrameError {
 ///   little-endian host (every CI runner today) LE bytes _are_ host-native,
 ///   so `&[half::f16]` is also a host-native f16 slice; on a big-endian
 ///   host the bytes have to be byte-swapped back to host-native (via
-///   `f16::from_bits(u16::from_le(elem.to_bits()))`) before arithmetic.
+///   `half::f16::from_bits(u16::from_le(elem.to_bits()))`) before arithmetic.
 /// - `BE = true` (`Rgbf16Frame<'_, true>` aka [`Rgbf16BeFrame`]) — plane
 ///   bytes are BE-encoded, matching `AV_PIX_FMT_RGBF16BE`. On a
 ///   little-endian host the bytes are byte-swapped before arithmetic; on a

@@ -36,7 +36,7 @@ fn rgbf16_with_rgb_clamps_to_u8() {
     half::f16::from_f32(2.0),
     half::f16::from_f32(-0.5),
   );
-  let src = Rgbf16Frame::try_new(&pix, 16, 4, 16 * 3).unwrap();
+  let src = Rgbf16LeFrame::try_new(&pix, 16, 4, 16 * 3).unwrap();
 
   let mut rgb_out = std::vec![0u8; 16 * 4 * 3];
   let mut sink = MixedSinker::<Rgbf16>::new(16, 4)
@@ -62,7 +62,7 @@ fn rgbf16_with_rgb_u16_clamps_to_u16() {
     half::f16::from_f32(1.0),
     half::f16::from_f32(1.5),
   );
-  let src = Rgbf16Frame::try_new(&pix, 16, 4, 16 * 3).unwrap();
+  let src = Rgbf16LeFrame::try_new(&pix, 16, 4, 16 * 3).unwrap();
 
   let mut rgb_out = std::vec![0u16; 16 * 4 * 3];
   let mut sink = MixedSinker::<Rgbf16>::new(16, 4)
@@ -96,7 +96,7 @@ fn rgbf16_with_rgb_f16_is_lossless() {
   let pix: std::vec::Vec<half::f16> = (0..n_pixels * 3)
     .map(|i| half::f16::from_f32(vals_f32[i % vals_f32.len()]))
     .collect();
-  let src = Rgbf16Frame::try_new(&pix, 16, 4, 16 * 3).unwrap();
+  let src = Rgbf16LeFrame::try_new(&pix, 16, 4, 16 * 3).unwrap();
 
   let mut rgb_out = std::vec![half::f16::ZERO; 16 * 4 * 3];
   let mut sink = MixedSinker::<Rgbf16>::new(16, 4)
@@ -120,7 +120,7 @@ fn rgbf16_with_rgb_f32_widens_losslessly() {
   let pix: std::vec::Vec<half::f16> = (0..n_pixels * 3)
     .map(|i| half::f16::from_f32(vals_f32[i % vals_f32.len()]))
     .collect();
-  let src = Rgbf16Frame::try_new(&pix, 16, 4, 16 * 3).unwrap();
+  let src = Rgbf16LeFrame::try_new(&pix, 16, 4, 16 * 3).unwrap();
 
   let mut rgb_out = std::vec![0.0f32; 16 * 4 * 3];
   let mut sink = MixedSinker::<Rgbf16>::new(16, 4)
@@ -147,7 +147,7 @@ fn rgbf16_with_luma_u8() {
     half::f16::from_f32(1.0),
     half::f16::from_f32(1.0),
   );
-  let src = Rgbf16Frame::try_new(&pix, 16, 4, 16 * 3).unwrap();
+  let src = Rgbf16LeFrame::try_new(&pix, 16, 4, 16 * 3).unwrap();
 
   let mut luma_out = std::vec![0u8; 16 * 4];
   let mut sink = MixedSinker::<Rgbf16>::new(16, 4)
@@ -173,7 +173,7 @@ fn rgbf16_with_luma_u16() {
     half::f16::from_f32(1.0),
     half::f16::from_f32(1.0),
   );
-  let src = Rgbf16Frame::try_new(&pix, 16, 4, 16 * 3).unwrap();
+  let src = Rgbf16LeFrame::try_new(&pix, 16, 4, 16 * 3).unwrap();
 
   let mut luma_out = std::vec![0u16; 16 * 4];
   let mut sink = MixedSinker::<Rgbf16>::new(16, 4)
@@ -201,7 +201,7 @@ fn rgbf16_with_hsv() {
     half::f16::ZERO,
     half::f16::ZERO,
   );
-  let src = Rgbf16Frame::try_new(&pix, 16, 4, 16 * 3).unwrap();
+  let src = Rgbf16LeFrame::try_new(&pix, 16, 4, 16 * 3).unwrap();
 
   let n = 16 * 4;
   let mut h_out = std::vec![0u8; n];
@@ -242,7 +242,7 @@ fn rgbf16_simd_matches_scalar_with_random_input() {
     };
     *v = half::f16::from_f32(f);
   }
-  let src = Rgbf16Frame::try_new(&pix, w as u32, h as u32, (w * 3) as u32).unwrap();
+  let src = Rgbf16LeFrame::try_new(&pix, w as u32, h as u32, (w * 3) as u32).unwrap();
 
   let mut rgb_simd = std::vec![0u8; w * h * 3];
   let mut rgb_scalar = std::vec![0u8; w * h * 3];
@@ -353,7 +353,7 @@ fn rgbf16_sinker_le_encoded_frame_decodes_correctly() {
     .iter()
     .map(|&v| half::f16::from_bits(v.to_bits().to_le()))
     .collect();
-  let src = Rgbf16Frame::try_new(&pix, 16, 4, 16 * 3).unwrap();
+  let src = Rgbf16LeFrame::try_new(&pix, 16, 4, 16 * 3).unwrap();
 
   let mut rgb_f16_out = std::vec![half::f16::ZERO; 16 * 4 * 3];
   let mut sink = MixedSinker::<Rgbf16>::new(16, 4)
@@ -417,7 +417,7 @@ fn rgbf16_le_be_roundtrip_byte_identical() {
   let pix_be = as_be_rgbf16(&intended);
 
   // LE path — default `Rgbf16` marker.
-  let frame_le = Rgbf16Frame::try_new(&pix_le, 16, 4, 16 * 3).unwrap();
+  let frame_le = Rgbf16LeFrame::try_new(&pix_le, 16, 4, 16 * 3).unwrap();
   let mut out_le = std::vec![half::f16::ZERO; 16 * 4 * 3];
   let mut sink_le = MixedSinker::<Rgbf16>::new(16, 4)
     .with_simd(false)

@@ -56,7 +56,7 @@ walker! {
 #[cfg(all(test, feature = "std"))]
 mod tests {
   use super::*;
-  use crate::{ColorMatrix, PixelSink, frame::Rgbf32Frame};
+  use crate::{ColorMatrix, PixelSink, frame::Rgbf32LeFrame};
   use core::convert::Infallible;
 
   struct CountingSink {
@@ -81,12 +81,12 @@ mod tests {
   // (no `<false>`) and `S: Rgbf32Sink` bounds.
   #[test]
   fn rgbf32_sink_le_default_compiles_without_const_arg() {
-    fn walks_le<S: Rgbf32Sink>(frame: &Rgbf32Frame<'_>, sink: &mut S) -> Result<(), S::Error> {
+    fn walks_le<S: Rgbf32Sink>(frame: &Rgbf32LeFrame<'_>, sink: &mut S) -> Result<(), S::Error> {
       rgbf32_to(frame, true, ColorMatrix::Bt709, sink)
     }
 
     let buf = std::vec![0.0_f32; 12 * 4];
-    let frame = Rgbf32Frame::new(&buf, 4, 4, 12);
+    let frame = Rgbf32LeFrame::new(&buf, 4, 4, 12);
     let mut sink = CountingSink { rows_seen: 0 };
     walks_le(&frame, &mut sink).unwrap();
     assert_eq!(sink.rows_seen, 4);
