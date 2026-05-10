@@ -64,7 +64,7 @@ impl<'a> MixedSinker<'a, Vuyx> {
   /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(1)?;
+    let expected = self.frame_pixels()?;
     if buf.len() < expected {
       return Err(MixedSinkerError::LumaU16BufferTooShort {
         expected,
