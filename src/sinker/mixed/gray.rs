@@ -247,7 +247,7 @@ impl PixelSink for MixedSinker<'_, Gray8> {
 /// `PixelSink::process` impls via their per-format `const BITS: u32`.
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
-fn process_gray_n<'a, const BITS: u32>(
+fn process_gray_n<'a, const BITS: u32, const BE: bool>(
   w: usize,
   h: usize,
   idx: usize,
@@ -268,7 +268,7 @@ fn process_gray_n<'a, const BITS: u32>(
 
   // Luma u8 — always passes raw Y through, no full_range rescaling.
   if let Some(buf) = luma.as_deref_mut() {
-    gray_n_to_luma_row::<BITS, false>(
+    gray_n_to_luma_row::<BITS, BE>(
       y_plane,
       &mut buf[one_plane_start..one_plane_end],
       w,
@@ -278,7 +278,7 @@ fn process_gray_n<'a, const BITS: u32>(
 
   // Luma u16 — always passes raw Y through, no full_range rescaling.
   if let Some(buf) = luma_u16.as_deref_mut() {
-    gray_n_to_luma_u16_row::<BITS, false>(
+    gray_n_to_luma_u16_row::<BITS, BE>(
       y_plane,
       &mut buf[one_plane_start..one_plane_end],
       w,
@@ -294,7 +294,7 @@ fn process_gray_n<'a, const BITS: u32>(
     let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
     let rgba_u16_row =
       rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-    gray_n_to_rgba_u16_row::<BITS, false>(y_plane, rgba_u16_row, w, use_simd, full_range);
+    gray_n_to_rgba_u16_row::<BITS, BE>(y_plane, rgba_u16_row, w, use_simd, full_range);
   } else if want_rgb_u16 {
     let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
     let rgb_plane_start = one_plane_start * 3;
@@ -306,7 +306,7 @@ fn process_gray_n<'a, const BITS: u32>(
         channels: 3,
       })?;
     let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-    gray_n_to_rgb_u16_row::<BITS, false>(y_plane, rgb_u16_row, w, use_simd, full_range);
+    gray_n_to_rgb_u16_row::<BITS, BE>(y_plane, rgb_u16_row, w, use_simd, full_range);
     if want_rgba_u16 {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
@@ -324,7 +324,7 @@ fn process_gray_n<'a, const BITS: u32>(
   if want_rgba && !want_rgb && !want_hsv {
     let rgba_buf = rgba.as_deref_mut().unwrap();
     let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-    gray_n_to_rgba_row::<BITS, false>(y_plane, rgba_row, w, use_simd, full_range);
+    gray_n_to_rgba_row::<BITS, BE>(y_plane, rgba_row, w, use_simd, full_range);
     return Ok(());
   }
 
@@ -332,7 +332,7 @@ fn process_gray_n<'a, const BITS: u32>(
   // (rescaled if limited-range).
   if want_hsv && !want_rgb && !want_rgba {
     let hsv = hsv.as_mut().unwrap();
-    gray_n_to_hsv_row::<BITS, false>(
+    gray_n_to_hsv_row::<BITS, BE>(
       y_plane,
       &mut hsv.h[one_plane_start..one_plane_end],
       &mut hsv.s[one_plane_start..one_plane_end],
@@ -356,7 +356,7 @@ fn process_gray_n<'a, const BITS: u32>(
     w,
     h,
   )?;
-  gray_n_to_rgb_row::<BITS, false>(y_plane, rgb_row, w, use_simd, full_range);
+  gray_n_to_rgb_row::<BITS, BE>(y_plane, rgb_row, w, use_simd, full_range);
 
   if let Some(hsv) = hsv.as_mut() {
     rgb_to_hsv_row(
@@ -405,8 +405,8 @@ fn check_gray_n_row_shape(
 // ---- Per-bit-depth builder impls for GrayN ----------------------------------
 
 macro_rules! impl_gray_n_sinker {
-  ($marker:ty, $row:ident, $sink:ty, $bits:expr) => {
-    impl<'a> MixedSinker<'a, $marker> {
+  ($marker:ident, $row:ident, $sink:ident, $bits:expr) => {
+    impl<'a, const BE: bool> MixedSinker<'a, $marker<BE>> {
       /// Attaches an 8-bit RGBA output buffer. Alpha is forced to `0xFF`.
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -492,9 +492,9 @@ macro_rules! impl_gray_n_sinker {
       }
     }
 
-    impl $sink for MixedSinker<'_, $marker> {}
+    impl<const BE: bool> $sink<BE> for MixedSinker<'_, $marker<BE>> {}
 
-    impl PixelSink for MixedSinker<'_, $marker> {
+    impl<const BE: bool> PixelSink for MixedSinker<'_, $marker<BE>> {
       type Input<'r> = $row<'r>;
       type Error = MixedSinkerError;
 
@@ -521,7 +521,7 @@ macro_rules! impl_gray_n_sinker {
           rgb_scratch,
           ..
         } = self;
-        process_gray_n::<$bits>(
+        process_gray_n::<$bits, BE>(
           w,
           h,
           idx,
@@ -555,7 +555,7 @@ impl_gray_n_sinker!(Gray14, Gray14Row, Gray14Sink, 14);
 
 // ---- Gray16 impl ------------------------------------------------------------
 
-impl<'a> MixedSinker<'a, Gray16> {
+impl<'a, const BE: bool> MixedSinker<'a, Gray16<BE>> {
   /// Attaches an 8-bit RGBA output buffer. Alpha is forced to `0xFF`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -640,9 +640,9 @@ impl<'a> MixedSinker<'a, Gray16> {
   }
 }
 
-impl Gray16Sink for MixedSinker<'_, Gray16> {}
+impl<const BE: bool> Gray16Sink<BE> for MixedSinker<'_, Gray16<BE>> {}
 
-impl PixelSink for MixedSinker<'_, Gray16> {
+impl<const BE: bool> PixelSink for MixedSinker<'_, Gray16<BE>> {
   type Input<'r> = Gray16Row<'r>;
   type Error = MixedSinkerError;
 
@@ -690,7 +690,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
 
     // Luma u8 — shift >> 8.
     if let Some(buf) = luma.as_deref_mut() {
-      gray16_to_luma_row::<false>(
+      gray16_to_luma_row::<BE>(
         y_plane,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -700,7 +700,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
 
     // Luma u16 — identity copy.
     if let Some(buf) = luma_u16.as_deref_mut() {
-      gray16_to_luma_u16_row::<false>(
+      gray16_to_luma_u16_row::<BE>(
         y_plane,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -716,7 +716,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-      gray16_to_rgba_u16_row::<false>(y_plane, rgba_u16_row, w, use_simd, full_range);
+      gray16_to_rgba_u16_row::<BE>(y_plane, rgba_u16_row, w, use_simd, full_range);
     } else if want_rgb_u16 {
       let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
       let rgb_plane_start = one_plane_start * 3;
@@ -729,7 +729,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
             channels: 3,
           })?;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      gray16_to_rgb_u16_row::<false>(y_plane, rgb_u16_row, w, use_simd, full_range);
+      gray16_to_rgb_u16_row::<BE>(y_plane, rgb_u16_row, w, use_simd, full_range);
       if want_rgba_u16 {
         let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
         let rgba_u16_row =
@@ -750,7 +750,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
     if want_rgba && !need_rgb_kernel && !want_hsv {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      gray16_to_rgba_row::<false>(y_plane, rgba_row, w, use_simd, full_range);
+      gray16_to_rgba_row::<BE>(y_plane, rgba_row, w, use_simd, full_range);
       return Ok(());
     }
 
@@ -758,7 +758,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
     // Skip RGB scratch entirely when only HSV (and optionally RGBA) is needed.
     if want_hsv && !want_rgb {
       let hsv = hsv.as_mut().unwrap();
-      gray16_to_hsv_row::<false>(
+      gray16_to_hsv_row::<BE>(
         y_plane,
         &mut hsv.h[one_plane_start..one_plane_end],
         &mut hsv.s[one_plane_start..one_plane_end],
@@ -769,7 +769,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
       );
       if let Some(buf) = rgba.as_deref_mut() {
         let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
-        gray16_to_rgba_row::<false>(y_plane, rgba_row, w, use_simd, full_range);
+        gray16_to_rgba_row::<BE>(y_plane, rgba_row, w, use_simd, full_range);
       }
       return Ok(());
     }
@@ -786,7 +786,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
       w,
       h,
     )?;
-    gray16_to_rgb_row::<false>(y_plane, rgb_row, w, use_simd, full_range);
+    gray16_to_rgb_row::<BE>(y_plane, rgb_row, w, use_simd, full_range);
 
     if let Some(hsv) = hsv.as_mut() {
       rgb_to_hsv_row(
@@ -810,7 +810,7 @@ impl PixelSink for MixedSinker<'_, Gray16> {
 
 // ---- Grayf32 impl -----------------------------------------------------------
 
-impl<'a> MixedSinker<'a, Grayf32> {
+impl<'a, const BE: bool> MixedSinker<'a, Grayf32<BE>> {
   /// Attaches an 8-bit RGBA output buffer. α is forced to `0xFF`
   /// (Grayf32 has no alpha channel).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -933,9 +933,9 @@ impl<'a> MixedSinker<'a, Grayf32> {
   }
 }
 
-impl Grayf32Sink for MixedSinker<'_, Grayf32> {}
+impl<const BE: bool> Grayf32Sink<BE> for MixedSinker<'_, Grayf32<BE>> {}
 
-impl PixelSink for MixedSinker<'_, Grayf32> {
+impl<const BE: bool> PixelSink for MixedSinker<'_, Grayf32<BE>> {
   type Input<'r> = Grayf32Row<'r>;
   type Error = MixedSinkerError;
 
@@ -970,7 +970,7 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
 
     // luma f32 pass-through — highest priority (no clamp, no round).
     if let Some(buf) = self.luma_f32.as_deref_mut() {
-      grayf32_to_luma_f32_row::<false>(
+      grayf32_to_luma_f32_row::<BE>(
         y_plane,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -988,12 +988,12 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
           height: h,
           channels: 3,
         })?;
-      grayf32_to_rgb_f32_row::<false>(y_plane, &mut buf[rgb_f32_start..rgb_f32_end], w, use_simd);
+      grayf32_to_rgb_f32_row::<BE>(y_plane, &mut buf[rgb_f32_start..rgb_f32_end], w, use_simd);
     }
 
     // luma u8.
     if let Some(buf) = self.luma.as_deref_mut() {
-      grayf32_to_luma_row::<false>(
+      grayf32_to_luma_row::<BE>(
         y_plane,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -1003,7 +1003,7 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
 
     // luma u16.
     if let Some(buf) = self.luma_u16.as_deref_mut() {
-      grayf32_to_luma_u16_row::<false>(
+      grayf32_to_luma_u16_row::<BE>(
         y_plane,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -1019,7 +1019,7 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
       let rgba_u16_buf = self.rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-      grayf32_to_rgba_u16_row::<false>(y_plane, rgba_u16_row, w, use_simd);
+      grayf32_to_rgba_u16_row::<BE>(y_plane, rgba_u16_row, w, use_simd);
     } else if want_rgb_u16 {
       let rgb_u16_buf = self.rgb_u16.as_deref_mut().unwrap();
       let rgb_plane_start = one_plane_start * 3;
@@ -1032,7 +1032,7 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
             channels: 3,
           })?;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      grayf32_to_rgb_u16_row::<false>(y_plane, rgb_u16_row, w, use_simd);
+      grayf32_to_rgb_u16_row::<BE>(y_plane, rgb_u16_row, w, use_simd);
       if want_rgba_u16 {
         let rgba_u16_buf = self.rgba_u16.as_deref_mut().unwrap();
         let rgba_u16_row =
@@ -1050,14 +1050,14 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
     if want_rgba && !want_rgb && !want_hsv {
       let rgba_buf = self.rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      grayf32_to_rgba_row::<false>(y_plane, rgba_row, w, use_simd);
+      grayf32_to_rgba_row::<BE>(y_plane, rgba_row, w, use_simd);
       return Ok(());
     }
 
     // Standalone HSV fast path — Grayf32 always has H=0, S=0, V=clamp(Y)×255.
     if want_hsv && !want_rgb {
       let hsv = self.hsv.as_mut().unwrap();
-      grayf32_to_hsv_row::<false>(
+      grayf32_to_hsv_row::<BE>(
         y_plane,
         &mut hsv.h[one_plane_start..one_plane_end],
         &mut hsv.s[one_plane_start..one_plane_end],
@@ -1067,7 +1067,7 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
       );
       if let Some(buf) = self.rgba.as_deref_mut() {
         let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
-        grayf32_to_rgba_row::<false>(y_plane, rgba_row, w, use_simd);
+        grayf32_to_rgba_row::<BE>(y_plane, rgba_row, w, use_simd);
       }
       return Ok(());
     }
@@ -1084,7 +1084,7 @@ impl PixelSink for MixedSinker<'_, Grayf32> {
       w,
       h,
     )?;
-    grayf32_to_rgb_row::<false>(y_plane, rgb_row, w, use_simd);
+    grayf32_to_rgb_row::<BE>(y_plane, rgb_row, w, use_simd);
 
     if let Some(hsv) = self.hsv.as_mut() {
       rgb_to_hsv_row(
@@ -1335,7 +1335,7 @@ impl PixelSink for MixedSinker<'_, Ya8> {
 
 // ---- Ya16 impl --------------------------------------------------------------
 
-impl<'a> MixedSinker<'a, Ya16> {
+impl<'a, const BE: bool> MixedSinker<'a, Ya16<BE>> {
   /// Attaches an 8-bit RGBA output buffer. α is `source_A >> 8`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -1417,9 +1417,9 @@ impl<'a> MixedSinker<'a, Ya16> {
   }
 }
 
-impl Ya16Sink for MixedSinker<'_, Ya16> {}
+impl<const BE: bool> Ya16Sink<BE> for MixedSinker<'_, Ya16<BE>> {}
 
-impl PixelSink for MixedSinker<'_, Ya16> {
+impl<const BE: bool> PixelSink for MixedSinker<'_, Ya16<BE>> {
   type Input<'r> = Ya16Row<'r>;
   type Error = MixedSinkerError;
 
@@ -1454,7 +1454,7 @@ impl PixelSink for MixedSinker<'_, Ya16> {
 
     // luma u8 — `Y >> 8`.
     if let Some(buf) = self.luma.as_deref_mut() {
-      ya16_to_luma_row::<false>(
+      ya16_to_luma_row::<BE>(
         packed,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -1464,7 +1464,7 @@ impl PixelSink for MixedSinker<'_, Ya16> {
 
     // luma u16 — native pass-through.
     if let Some(buf) = self.luma_u16.as_deref_mut() {
-      ya16_to_luma_u16_row::<false>(
+      ya16_to_luma_u16_row::<BE>(
         packed,
         &mut buf[one_plane_start..one_plane_end],
         w,
@@ -1480,7 +1480,7 @@ impl PixelSink for MixedSinker<'_, Ya16> {
       let rgba_u16_buf = self.rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-      ya16_to_rgba_u16_row::<false>(packed, rgba_u16_row, w, use_simd);
+      ya16_to_rgba_u16_row::<BE>(packed, rgba_u16_row, w, use_simd);
     } else if want_rgb_u16 {
       let rgb_u16_buf = self.rgb_u16.as_deref_mut().unwrap();
       let rgb_plane_start = one_plane_start * 3;
@@ -1493,15 +1493,16 @@ impl PixelSink for MixedSinker<'_, Ya16> {
             channels: 3,
           })?;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      ya16_to_rgb_u16_row::<false>(packed, rgb_u16_row, w, use_simd);
+      ya16_to_rgb_u16_row::<BE>(packed, rgb_u16_row, w, use_simd);
       if want_rgba_u16 {
         let rgba_u16_buf = self.rgba_u16.as_deref_mut().unwrap();
         let rgba_u16_row =
           rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
         expand_rgb_u16_to_rgba_u16_row::<16>(rgb_u16_row, rgba_u16_row, w);
-        // Patch α from source (native u16 depth). `Ya16Frame` is LE-encoded
-        // per the unified Frame contract → `BE = false`.
-        copy_alpha_ya_u16::<false>(packed, rgba_u16_row, w);
+        // Patch α from source (native u16 depth). `BE` is propagated from
+        // the parent `Ya16Frame<'_, BE>` so the loader byte-swaps correctly
+        // for both LE and BE inputs.
+        copy_alpha_ya_u16::<BE>(packed, rgba_u16_row, w);
       }
     }
 
@@ -1514,14 +1515,14 @@ impl PixelSink for MixedSinker<'_, Ya16> {
     if want_rgba && !want_rgb && !want_hsv {
       let rgba_buf = self.rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      ya16_to_rgba_row::<false>(packed, rgba_row, w, use_simd);
+      ya16_to_rgba_row::<BE>(packed, rgba_row, w, use_simd);
       return Ok(());
     }
 
     // Standalone HSV fast path.
     if want_hsv && !want_rgb && !want_rgba {
       let hsv = self.hsv.as_mut().unwrap();
-      ya16_to_hsv_row::<false>(
+      ya16_to_hsv_row::<BE>(
         packed,
         &mut hsv.h[one_plane_start..one_plane_end],
         &mut hsv.s[one_plane_start..one_plane_end],
@@ -1545,7 +1546,7 @@ impl PixelSink for MixedSinker<'_, Ya16> {
       w,
       h,
     )?;
-    ya16_to_rgb_row::<false>(packed, rgb_row, w, use_simd);
+    ya16_to_rgb_row::<BE>(packed, rgb_row, w, use_simd);
 
     if let Some(hsv) = self.hsv.as_mut() {
       rgb_to_hsv_row(
@@ -1563,8 +1564,8 @@ impl PixelSink for MixedSinker<'_, Ya16> {
       let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
       expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
       // Overwrite the α channel with real source α (>> 8 for u8 output).
-      // `Ya16Frame` is LE-encoded per the unified Frame contract → `BE = false`.
-      copy_alpha_ya_u16_to_u8::<false>(packed, rgba_row, w);
+      // `BE` is propagated from the parent `Ya16Frame<'_, BE>`.
+      copy_alpha_ya_u16_to_u8::<BE>(packed, rgba_row, w);
     }
 
     Ok(())
