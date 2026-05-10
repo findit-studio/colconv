@@ -32,6 +32,7 @@ walker! {
     row: V210Row,
     sink: V210Sink,
     walker: v210_to,
+    walker_endian: v210_to_endian,
     buf_field: v210,
     elem_type: u8,
     row_elems: |w| w.div_ceil(6) * 16,

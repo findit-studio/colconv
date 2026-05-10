@@ -387,7 +387,7 @@ pub use rgbx::{Rgbx, RgbxRow, RgbxSink, rgbx_to};
 pub use uyvy422::{Uyvy422, Uyvy422Row, Uyvy422Sink, uyvy422_to};
 pub use uyyvyy411::{Uyyvyy411, Uyyvyy411Row, Uyyvyy411Sink, uyyvyy411_to};
 pub use v30x::{V30X, V30XRow, V30XSink, v30x_to};
-pub use v210::{V210, V210Row, V210Sink, v210_to};
+pub use v210::{V210, V210Row, V210Sink, v210_to, v210_to_endian};
 pub use v410::{V410, V410Row, V410Sink, v410_to};
 pub use vuya::{Vuya, VuyaRow, VuyaSink, vuya_to};
 pub use vuyx::{Vuyx, VuyxRow, VuyxSink, vuyx_to};

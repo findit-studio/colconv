@@ -101,6 +101,7 @@ mod tests {
   // wrapper preserving the original signature.
   #[test]
   fn rgbf32_to_explicit_turbofish_one_generic_compiles() {
+    #[allow(clippy::type_complexity)]
     fn _check<S: Rgbf32Sink>() {
       let _: fn(
         &crate::frame::Rgbf32LeFrame<'_>,

@@ -122,6 +122,7 @@ mod tests {
   // wrapper preserving the original signature.
   #[test]
   fn rgb48_to_explicit_turbofish_one_generic_compiles() {
+    #[allow(clippy::type_complexity)]
     fn _check<S: Rgb48Sink>() {
       let _: fn(
         &crate::frame::Rgb48LeFrame<'_>,
