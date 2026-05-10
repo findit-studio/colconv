@@ -15,7 +15,7 @@ const EPSILON_F32: f32 = 4e-6;
 /// hosts.
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn pack12_le(code: u16) -> u16 {
-  u16::from_le_bytes((code << 4).to_le_bytes())
+  u16::from_ne_bytes((code << 4).to_le_bytes())
 }
 
 /// Encodes a 12-bit code into the high-bit-packed BE wire `u16` —

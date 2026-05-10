@@ -24,7 +24,7 @@ fn xyz12_plane(width: usize, seed: u32) -> std::vec::Vec<u16> {
     .map(|_| {
       state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
       let code = (state & 0x0FFF) as u16;
-      u16::from_le_bytes((code << 4).to_le_bytes())
+      u16::from_ne_bytes((code << 4).to_le_bytes())
     })
     .collect()
 }
@@ -38,9 +38,9 @@ fn xyz12_plane_dirty(width: usize, seed: u32) -> std::vec::Vec<u16> {
     .map(|i| {
       state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
       let code = (state & 0x0FFF) as u16;
-      let clean = u16::from_le_bytes((code << 4).to_le_bytes());
+      let clean = u16::from_ne_bytes((code << 4).to_le_bytes());
       let dirt: u16 = if i % 2 == 0 { 0x000F } else { 0x000A };
-      clean | u16::from_le_bytes(dirt.to_le_bytes())
+      clean | u16::from_ne_bytes(dirt.to_le_bytes())
     })
     .collect()
 }
