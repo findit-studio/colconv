@@ -1,6 +1,9 @@
 use super::*;
 use crate::{
-  frame::{Bgr48Frame, Bgra64Frame, Rgb48Frame, Rgba64Frame},
+  frame::{
+    Bgr48BeFrame, Bgr48Frame, Bgra64BeFrame, Bgra64Frame, Rgb48BeFrame, Rgb48Frame, Rgba64BeFrame,
+    Rgba64Frame,
+  },
   sinker::mixed::MixedSinker,
   yuv::{Bgr48, Bgra64, Rgb48, Rgba64, bgr48_to, bgra64_to, rgb48_to, rgba64_to},
 };
@@ -491,5 +494,199 @@ fn rgb48_sinker_le_encoded_frame_decodes_correctly() {
   assert_eq!(
     rgb_u16_out, intended,
     "Rgb48 sinker LE-encoded plane decoded incorrectly (BE-contract regression)"
+  );
+}
+
+// ====================================================================================
+// Phase 4 — Frame BE flag, Tier 8 trial. LE+BE round-trip parity tests.
+//
+// Pattern (per format):
+//   1. Build a host-native `intended` u16 plane.
+//   2. Encode the plane as LE bytes (`to_le_bytes`) → `pix_le`. Build
+//      `MarkerLeFrame` + `MixedSinker<Marker<false>>`. Walk; collect output A.
+//   3. Encode the same plane as BE bytes (`to_be_bytes`) → `pix_be`. Build
+//      `MarkerBeFrame` + `MixedSinker<Marker<true>>`. Walk; collect output B.
+//   4. Assert `A == B` byte-identical.
+//
+// Output A and B must be byte-identical because the kernel byte-swaps under
+// the hood — the same logical samples should yield the same RGBA bytes
+// regardless of input byte order. This catches:
+//   - missing `<BE>` propagation in sinker call sites,
+//   - regressions in the `load_endian_u16::<BE>` byte-swap path,
+//   - mismatches between `MixedSinker<Rgb48<true>>` and the BE row kernels.
+// ====================================================================================
+
+/// Re-encode a host-native u16 slice as **BE-encoded** byte storage. Used to
+/// build `*BeFrame` planes whose bytes are big-endian; the kernel swaps them
+/// back to host-native via `from_be`.
+fn as_be_u16(host: &[u16]) -> std::vec::Vec<u16> {
+  host
+    .iter()
+    .map(|v| u16::from_ne_bytes(v.to_be_bytes()))
+    .collect()
+}
+
+#[test]
+fn rgb48_le_be_roundtrip_byte_identical() {
+  // Mix of patterns to surface any byte-swap regression.
+  let intended: std::vec::Vec<u16> = (0..16 * 4 * 3)
+    .map(|i| match i % 4 {
+      0 => 0x1234,
+      1 => 0xABCD,
+      2 => 0x00FF,
+      _ => 0xFF00,
+    })
+    .collect();
+  let pix_le = as_le_u16(&intended);
+  let pix_be = as_be_u16(&intended);
+
+  let frame_le = Rgb48Frame::try_new(&pix_le, 16, 4, 16 * 3).unwrap();
+  let mut out_le = vec![0u8; 16 * 4 * 4];
+  let mut sink_le = MixedSinker::<Rgb48>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le)
+    .unwrap();
+  rgb48_to(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+
+  let frame_be = Rgb48BeFrame::try_new(&pix_be, 16, 4, 16 * 3).unwrap();
+  let mut out_be = vec![0u8; 16 * 4 * 4];
+  let mut sink_be = MixedSinker::<Rgb48<true>>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be)
+    .unwrap();
+  rgb48_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le, out_be,
+    "Rgb48 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}
+
+#[test]
+fn bgr48_le_be_roundtrip_byte_identical() {
+  let intended: std::vec::Vec<u16> = (0..16 * 4 * 3)
+    .map(|i| match i % 4 {
+      0 => 0x1234,
+      1 => 0xABCD,
+      2 => 0x00FF,
+      _ => 0xFF00,
+    })
+    .collect();
+  let pix_le = as_le_u16(&intended);
+  let pix_be = as_be_u16(&intended);
+
+  let frame_le = Bgr48Frame::try_new(&pix_le, 16, 4, 16 * 3).unwrap();
+  let mut out_le = vec![0u8; 16 * 4 * 4];
+  let mut sink_le = MixedSinker::<Bgr48>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le)
+    .unwrap();
+  bgr48_to(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+
+  let frame_be = Bgr48BeFrame::try_new(&pix_be, 16, 4, 16 * 3).unwrap();
+  let mut out_be = vec![0u8; 16 * 4 * 4];
+  let mut sink_be = MixedSinker::<Bgr48<true>>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be)
+    .unwrap();
+  bgr48_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le, out_be,
+    "Bgr48 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}
+
+#[test]
+fn rgba64_le_be_roundtrip_byte_identical() {
+  let intended: std::vec::Vec<u16> = (0..16 * 4 * 4)
+    .map(|i| match i % 5 {
+      0 => 0x1234,
+      1 => 0xABCD,
+      2 => 0x00FF,
+      3 => 0xFF00,
+      _ => 0x7FFF,
+    })
+    .collect();
+  let pix_le = as_le_u16(&intended);
+  let pix_be = as_be_u16(&intended);
+
+  // Exercise both u8 and u16 RGBA paths via `with_rgba` + `with_rgba_u16`
+  // (Strategy A+ standalone), which cover all four `rgba64_to_*` kernels.
+  let frame_le = Rgba64Frame::try_new(&pix_le, 16, 4, 16 * 4).unwrap();
+  let mut out_le_rgba = vec![0u8; 16 * 4 * 4];
+  let mut out_le_rgba_u16 = vec![0u16; 16 * 4 * 4];
+  let mut sink_le = MixedSinker::<Rgba64>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le_rgba)
+    .unwrap()
+    .with_rgba_u16(&mut out_le_rgba_u16)
+    .unwrap();
+  rgba64_to(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+
+  let frame_be = Rgba64BeFrame::try_new(&pix_be, 16, 4, 16 * 4).unwrap();
+  let mut out_be_rgba = vec![0u8; 16 * 4 * 4];
+  let mut out_be_rgba_u16 = vec![0u16; 16 * 4 * 4];
+  let mut sink_be = MixedSinker::<Rgba64<true>>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be_rgba)
+    .unwrap()
+    .with_rgba_u16(&mut out_be_rgba_u16)
+    .unwrap();
+  rgba64_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le_rgba, out_be_rgba,
+    "Rgba64 RGBA u8 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+  assert_eq!(
+    out_le_rgba_u16, out_be_rgba_u16,
+    "Rgba64 RGBA u16 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}
+
+#[test]
+fn bgra64_le_be_roundtrip_byte_identical() {
+  let intended: std::vec::Vec<u16> = (0..16 * 4 * 4)
+    .map(|i| match i % 5 {
+      0 => 0x1234,
+      1 => 0xABCD,
+      2 => 0x00FF,
+      3 => 0xFF00,
+      _ => 0x7FFF,
+    })
+    .collect();
+  let pix_le = as_le_u16(&intended);
+  let pix_be = as_be_u16(&intended);
+
+  let frame_le = Bgra64Frame::try_new(&pix_le, 16, 4, 16 * 4).unwrap();
+  let mut out_le_rgba = vec![0u8; 16 * 4 * 4];
+  let mut out_le_rgba_u16 = vec![0u16; 16 * 4 * 4];
+  let mut sink_le = MixedSinker::<Bgra64>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le_rgba)
+    .unwrap()
+    .with_rgba_u16(&mut out_le_rgba_u16)
+    .unwrap();
+  bgra64_to(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+
+  let frame_be = Bgra64BeFrame::try_new(&pix_be, 16, 4, 16 * 4).unwrap();
+  let mut out_be_rgba = vec![0u8; 16 * 4 * 4];
+  let mut out_be_rgba_u16 = vec![0u16; 16 * 4 * 4];
+  let mut sink_be = MixedSinker::<Bgra64<true>>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be_rgba)
+    .unwrap()
+    .with_rgba_u16(&mut out_be_rgba_u16)
+    .unwrap();
+  bgra64_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le_rgba, out_be_rgba,
+    "Bgra64 RGBA u8 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+  assert_eq!(
+    out_le_rgba_u16, out_be_rgba_u16,
+    "Bgra64 RGBA u16 LE/BE outputs diverge — `<const BE>` propagation broken"
   );
 }

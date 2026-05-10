@@ -1,5 +1,10 @@
-//! Packed RGB48 source (`AV_PIX_FMT_RGB48LE`) — 16 bits per channel,
+//! Packed RGB48 source (`AV_PIX_FMT_RGB48{LE,BE}`) — 16 bits per channel,
 //! `u16` element order `R, G, B`. Stride in u16 elements (≥ `3 * width`).
+//!
+//! The marker carries `<const BE: bool = false>`: `Rgb48` (= `Rgb48<false>`)
+//! is the LE source; `Rgb48<true>` is the BE source. The walker
+//! [`rgb48_to::<BE>`] propagates `BE` from [`Rgb48Frame<'_, BE>`] into the
+//! sinker dispatch.
 //!
 //! Outputs (Tier 8 finish):
 //! - `with_rgb`      — narrow each channel `>> 8`, pack as R, G, B.
@@ -15,11 +20,13 @@
 use crate::frame::Rgb48Frame;
 
 walker! {
-  packed {
-    /// Zero-sized marker for the packed **RGB48** (`AV_PIX_FMT_RGB48LE`) source format.
+  packed_be {
+    /// Zero-sized marker for the packed **RGB48** source format
+    /// (`AV_PIX_FMT_RGB48{LE,BE}`). `<const BE: bool>` defaults to `false`
+    /// (LE); the alias `Rgb48` resolves to `Rgb48<false>`.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Rgb48,
-    frame: Rgb48Frame<'_>,
+    frame: Rgb48Frame,
     row: Rgb48Row,
     sink: Rgb48Sink,
     walker: rgb48_to,
@@ -27,8 +34,13 @@ walker! {
     elem_type: u16,
     row_elems: |w| w * 3,
     row_doc: "One row of an [`Rgb48`] source — `width * 3` u16 elements \
-              (`R, G, B` per pixel, each channel 16 bits).",
-    walker_doc: "Walks an [`Rgb48Frame`] row by row into the sink.",
+              (`R, G, B` per pixel, each channel 16 bits). Endianness is \
+              recorded on the parent [`Rgb48Frame<'_, BE>`] / sinker, not on \
+              the Row itself — the kernel monomorphizes on `BE` at the \
+              sinker dispatch.",
+    walker_doc: "Walks an [`Rgb48Frame<'_, BE>`] row by row into the sink. \
+                 Propagates `<const BE: bool>` from the frame into \
+                 [`Rgb48Sink<BE>`].",
   }
 }
 
@@ -56,7 +68,7 @@ mod tests {
       Ok(())
     }
   }
-  impl Rgb48Sink for CountingSink {}
+  impl Rgb48Sink<false> for CountingSink {}
 
   #[test]
   fn rgb48_walker_visits_every_row_once() {

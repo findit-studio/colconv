@@ -1,5 +1,10 @@
-//! Packed RGBA64 source (`AV_PIX_FMT_RGBA64LE`) — 16 bits per channel,
+//! Packed RGBA64 source (`AV_PIX_FMT_RGBA64{LE,BE}`) — 16 bits per channel,
 //! `u16` element order `R, G, B, A`. Stride in u16 elements (≥ `4 * width`).
+//!
+//! The marker carries `<const BE: bool = false>`: `Rgba64` (= `Rgba64<false>`)
+//! is the LE source; `Rgba64<true>` is the BE source. The walker
+//! [`rgba64_to::<BE>`] propagates `BE` from [`Rgba64Frame<'_, BE>`] into the
+//! sinker dispatch.
 //!
 //! Outputs (Tier 8 finish):
 //! - `with_rgb`      — drop alpha, narrow each R/G/B channel `>> 8`, pack as R, G, B.
@@ -15,11 +20,13 @@
 use crate::frame::Rgba64Frame;
 
 walker! {
-  packed {
-    /// Zero-sized marker for the packed **RGBA64** (`AV_PIX_FMT_RGBA64LE`) source format.
+  packed_be {
+    /// Zero-sized marker for the packed **RGBA64** source format
+    /// (`AV_PIX_FMT_RGBA64{LE,BE}`). `<const BE: bool>` defaults to `false`
+    /// (LE); the alias `Rgba64` resolves to `Rgba64<false>`.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Rgba64,
-    frame: Rgba64Frame<'_>,
+    frame: Rgba64Frame,
     row: Rgba64Row,
     sink: Rgba64Sink,
     walker: rgba64_to,
@@ -27,8 +34,12 @@ walker! {
     elem_type: u16,
     row_elems: |w| w * 4,
     row_doc: "One row of an [`Rgba64`] source — `width * 4` u16 elements \
-              (`R, G, B, A` per pixel, each channel 16 bits; alpha is real).",
-    walker_doc: "Walks an [`Rgba64Frame`] row by row into the sink.",
+              (`R, G, B, A` per pixel, each channel 16 bits; alpha is real). \
+              Endianness is recorded on the parent [`Rgba64Frame<'_, BE>`] / \
+              sinker, not on the Row itself.",
+    walker_doc: "Walks an [`Rgba64Frame<'_, BE>`] row by row into the sink. \
+                 Propagates `<const BE: bool>` from the frame into \
+                 [`Rgba64Sink<BE>`].",
   }
 }
 
@@ -56,7 +67,7 @@ mod tests {
       Ok(())
     }
   }
-  impl Rgba64Sink for CountingSink {}
+  impl Rgba64Sink<false> for CountingSink {}
 
   #[test]
   fn rgba64_walker_visits_every_row_once() {
