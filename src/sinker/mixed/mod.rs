@@ -357,16 +357,17 @@ pub enum MixedSinkerError {
     width: usize,
   },
 
-  /// The sinker's configured `width` is not a multiple of 4. Packed
-  /// 4:1:1 ([`Uyyvyy411`](crate::source::Uyyvyy411)) shares one chroma
-  /// pair across 4 luma samples, so each 6-byte block covers exactly
-  /// 4 pixels — widths not divisible by 4 can't form a complete
-  /// final block. `MixedSinker::new` is infallible and accepts any
-  /// width, so this error surfaces the misconfiguration at
+  /// The sinker's configured `width` is not a multiple of 4. Used by
+  /// 4:1:0 ([`Yuv410p`](crate::source::Yuv410p)) and packed 4:1:1
+  /// ([`Uyyvyy411`](crate::source::Uyyvyy411)): both subsample chroma
+  /// horizontally by 4, so each row kernel operates on 4-pixel chroma
+  /// groups and widths not divisible by 4 can't form a complete final
+  /// group. `MixedSinker::new` is infallible and accepts any width, so
+  /// this error surfaces the misconfiguration at
   /// [`PixelSink::begin_frame`] / [`PixelSink::process`] before any
   /// row primitive is invoked.
   #[error(
-    "MixedSinker configured width {width} is not a multiple of 4; packed YUV 4:1:1 requires width divisible by 4"
+    "MixedSinker configured width {width} is not a multiple of 4; 4:1:0 / 4:1:1 require width divisible by 4"
   )]
   WidthNotMultipleOf4 {
     /// Sink's configured width.

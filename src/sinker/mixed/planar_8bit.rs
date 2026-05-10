@@ -358,7 +358,7 @@ impl PixelSink for MixedSinker<'_, Yuv410p> {
     // it — guard at the sinker boundary so unsafe SIMD dispatchers
     // never see a non-multiple-of-4 width.
     if self.width & 3 != 0 {
-      return Err(MixedSinkerError::OddWidth { width: self.width });
+      return Err(MixedSinkerError::WidthNotMultipleOf4 { width: self.width });
     }
     check_dimensions_match(self.width, self.height, width, height)
   }
@@ -369,12 +369,9 @@ impl PixelSink for MixedSinker<'_, Yuv410p> {
     let idx = row.row();
     let use_simd = self.simd;
 
-    // Defense in depth — see Yuv420p impl. `OddWidth` is reused for
-    // the "non-multiple-of-4" case here since the variant's payload
-    // (the offending width) is what callers need; the kind is
-    // already format-specific via the Sinker type parameter.
+    // Defense in depth — see Yuv420p impl.
     if w & 3 != 0 {
-      return Err(MixedSinkerError::OddWidth { width: w });
+      return Err(MixedSinkerError::WidthNotMultipleOf4 { width: w });
     }
     if row.y().len() != w {
       return Err(MixedSinkerError::RowShapeMismatch {

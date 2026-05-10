@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed
+
+- `MixedSinker<Yuv410p>` now returns `MixedSinkerError::WidthNotMultipleOf4`
+  (instead of the format-agnostic `OddWidth`) when configured with a width
+  not divisible by 4. `OddWidth`'s error message is scoped to 4:2:0 even
+  width, which was misleading for the 4:1:0 chroma-group constraint.
+  `WidthNotMultipleOf4` already covered the matching `Uyyvyy411` sinker
+  case and matches the format-specific `Yuv410pFrameError::WidthNotMultipleOf4`
+  produced by `Yuv410pFrame::try_new`. Variant doc + display string updated
+  to mention both 4:1:0 and 4:1:1.
+
 ### BREAKING
 
 - `crate::yuv` module renamed to `crate::source` to reflect that it holds
