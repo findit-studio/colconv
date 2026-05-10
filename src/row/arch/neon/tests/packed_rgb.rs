@@ -346,12 +346,10 @@ fn x2bgr10_to_rgb_u16_neon_matches_scalar_widths() {
 
 // ---- SIMD-level BE-vs-LE parity for X2RGB10 / X2BGR10 -------------------
 //
-// The X2 SIMD bodies are LE-only (`if !BE` gate falls through to scalar for
-// BE), but the parity test is still meaningful: `<false>` exercises the SIMD
-// body on LE bytes; `<true>` exercises the scalar reference on BE bytes
-// (which is where the host-independence of the byte-buffer construction
-// matters). Both must produce identical output. Width 33 ensures the SIMD
-// body executes (NEON does 16 px / iter).
+// Post PR #104 fix: both `<false>` and `<true>` exercise the real SIMD body
+// (LE via plain `vld1q_u32`, BE via `load_endian_u32x4::<true>`'s extra
+// `vrev32q_u8`). Width 33 crosses the 16-pixel SIMD boundary so the body
+// runs at least twice and the scalar tail handles the leftover.
 
 fn pseudo_random_x2_intended(width: usize, seed: u32) -> std::vec::Vec<u32> {
   let mut state = seed;
@@ -429,4 +427,84 @@ fn neon_x2bgr10_be_le_simd_parity_width33() {
     x2bgr10_to_rgb_u16_row::<true>(&be, &mut out_be, 33);
   }
   assert_eq!(out_le, out_be, "x2bgr10→rgb_u16 SIMD BE/LE parity");
+}
+
+// ---- BE-input SIMD-vs-scalar parity (PR #104 follow-up) ------------------
+//
+// Pre-fix, the NEON X2 10-bit kernels gated their SIMD body on `if !BE` and
+// silently fell through to scalar for BE input. With the BE-aware load
+// (`load_endian_u32x4::<BE>`), BE now exercises the real SIMD path.
+
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn neon_x2rgb10_be_simd_matches_scalar() {
+  for w in [1usize, 7, 15, 16, 17, 31, 32, 33, 1920, 1921] {
+    let input = pseudo_random_rgba(w);
+    let mut s_rgb = std::vec![0u8; w * 3];
+    let mut n_rgb = std::vec![0u8; w * 3];
+    scalar::x2rgb10_to_rgb_row::<true>(&input, &mut s_rgb, w);
+    unsafe {
+      x2rgb10_to_rgb_row::<true>(&input, &mut n_rgb, w);
+    }
+    assert_eq!(s_rgb, n_rgb, "NEON x2rgb10_to_rgb<BE> diverges (width={w})");
+
+    let mut s_rgba = std::vec![0u8; w * 4];
+    let mut n_rgba = std::vec![0u8; w * 4];
+    scalar::x2rgb10_to_rgba_row::<true>(&input, &mut s_rgba, w);
+    unsafe {
+      x2rgb10_to_rgba_row::<true>(&input, &mut n_rgba, w);
+    }
+    assert_eq!(
+      s_rgba, n_rgba,
+      "NEON x2rgb10_to_rgba<BE> diverges (width={w})"
+    );
+
+    let mut s_u16 = std::vec![0u16; w * 3];
+    let mut n_u16 = std::vec![0u16; w * 3];
+    scalar::x2rgb10_to_rgb_u16_row::<true>(&input, &mut s_u16, w);
+    unsafe {
+      x2rgb10_to_rgb_u16_row::<true>(&input, &mut n_u16, w);
+    }
+    assert_eq!(
+      s_u16, n_u16,
+      "NEON x2rgb10_to_rgb_u16<BE> diverges (width={w})"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
+fn neon_x2bgr10_be_simd_matches_scalar() {
+  for w in [1usize, 7, 15, 16, 17, 31, 32, 33, 1920, 1921] {
+    let input = pseudo_random_rgba(w);
+    let mut s_rgb = std::vec![0u8; w * 3];
+    let mut n_rgb = std::vec![0u8; w * 3];
+    scalar::x2bgr10_to_rgb_row::<true>(&input, &mut s_rgb, w);
+    unsafe {
+      x2bgr10_to_rgb_row::<true>(&input, &mut n_rgb, w);
+    }
+    assert_eq!(s_rgb, n_rgb, "NEON x2bgr10_to_rgb<BE> diverges (width={w})");
+
+    let mut s_rgba = std::vec![0u8; w * 4];
+    let mut n_rgba = std::vec![0u8; w * 4];
+    scalar::x2bgr10_to_rgba_row::<true>(&input, &mut s_rgba, w);
+    unsafe {
+      x2bgr10_to_rgba_row::<true>(&input, &mut n_rgba, w);
+    }
+    assert_eq!(
+      s_rgba, n_rgba,
+      "NEON x2bgr10_to_rgba<BE> diverges (width={w})"
+    );
+
+    let mut s_u16 = std::vec![0u16; w * 3];
+    let mut n_u16 = std::vec![0u16; w * 3];
+    scalar::x2bgr10_to_rgb_u16_row::<true>(&input, &mut s_u16, w);
+    unsafe {
+      x2bgr10_to_rgb_u16_row::<true>(&input, &mut n_u16, w);
+    }
+    assert_eq!(
+      s_u16, n_u16,
+      "NEON x2bgr10_to_rgb_u16<BE> diverges (width={w})"
+    );
+  }
 }
