@@ -20,11 +20,13 @@ walker! {
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuva422p10,
     frame: Yuva422pFrame16<'_, 10, BE>,
+    frame_le: Yuva422pFrame16<'_, 10, false>,
     generic_frame: Yuva422pFrame16<'_, BITS, BE>,
     bits: 10,
     row: Yuva422p10Row,
     sink: Yuva422p10Sink,
     walker: yuva422p10_to,
+    walker_endian: yuva422p10_to_endian,
     walker_inner: yuva422p10_walker,
     elem_type: u16,
     chroma_h: half,

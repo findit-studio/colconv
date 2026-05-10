@@ -2224,9 +2224,11 @@ macro_rules! walker {
       $(#[$marker_meta:meta])*
       marker: $marker:ident,
       frame: $frame:ty,
+      frame_le: $frame_le:ty,
       row: $row:ident,
       sink: $sink:ident,
       walker: $walker:ident,
+      walker_endian: $walker_endian:ident,
       elem_type: $elem:ty,
       chroma_h: $chroma_h:tt,
       chroma_v: $chroma_v:tt,
@@ -2240,9 +2242,11 @@ macro_rules! walker {
       $(#[$marker_meta])*
       marker: $marker,
       frame: $frame,
+      frame_le: $frame_le,
       row: $row,
       sink: $sink,
       walker: $walker,
+      walker_endian: $walker_endian,
       elem_type: $elem,
       chroma_v: $chroma_v,
       $(#[$row_meta])*
@@ -2262,9 +2266,11 @@ macro_rules! walker {
       $(#[$marker_meta:meta])*
       marker: $marker:ident,
       frame: $frame:ty,
+      frame_le: $frame_le:ty,
       row: $row:ident,
       sink: $sink:ident,
       walker: $walker:ident,
+      walker_endian: $walker_endian:ident,
       elem_type: $elem:ty,
       chroma_h: $chroma_h:tt,
       chroma_v: $chroma_v:tt,
@@ -2278,9 +2284,11 @@ macro_rules! walker {
       $(#[$marker_meta])*
       marker: $marker,
       frame: $frame,
+      frame_le: $frame_le,
       row: $row,
       sink: $sink,
       walker: $walker,
+      walker_endian: $walker_endian,
       elem_type: $elem,
       chroma_v: $chroma_v,
       $(#[$row_meta])*
@@ -2311,11 +2319,13 @@ macro_rules! walker {
       $(#[$marker_meta:meta])*
       marker: $marker:ident,
       frame: $frame:ty,
+      frame_le: $frame_le:ty,
       generic_frame: $gframe:ty,
       bits: $bits:expr,
       row: $row:ident,
       sink: $sink:ident,
       walker: $walker:ident,
+      walker_endian: $walker_endian:ident,
       walker_inner: $walker_inner:ident,
       elem_type: $elem:ty,
       chroma_h: $chroma_h:tt,
@@ -2330,11 +2340,13 @@ macro_rules! walker {
       $(#[$marker_meta])*
       marker: $marker,
       frame: $frame,
+      frame_le: $frame_le,
       generic_frame: $gframe,
       bits: $bits,
       row: $row,
       sink: $sink,
       walker: $walker,
+      walker_endian: $walker_endian,
       walker_inner: $walker_inner,
       elem_type: $elem,
       chroma_v: $chroma_v,
@@ -2355,11 +2367,13 @@ macro_rules! walker {
       $(#[$marker_meta:meta])*
       marker: $marker:ident,
       frame: $frame:ty,
+      frame_le: $frame_le:ty,
       generic_frame: $gframe:ty,
       bits: $bits:expr,
       row: $row:ident,
       sink: $sink:ident,
       walker: $walker:ident,
+      walker_endian: $walker_endian:ident,
       walker_inner: $walker_inner:ident,
       elem_type: $elem:ty,
       chroma_h: $chroma_h:tt,
@@ -2374,11 +2388,13 @@ macro_rules! walker {
       $(#[$marker_meta])*
       marker: $marker,
       frame: $frame,
+      frame_le: $frame_le,
       generic_frame: $gframe,
       bits: $bits,
       row: $row,
       sink: $sink,
       walker: $walker,
+      walker_endian: $walker_endian,
       walker_inner: $walker_inner,
       elem_type: $elem,
       chroma_v: $chroma_v,
@@ -2406,9 +2422,11 @@ macro_rules! walker {
       $(#[$marker_meta:meta])*
       marker: $marker:ident,
       frame: $frame:ty,
+      frame_le: $frame_le:ty,
       row: $row:ident,
       sink: $sink:ident,
       walker: $walker:ident,
+      walker_endian: $walker_endian:ident,
       elem_type: $elem:ty,
       chroma_field: $chroma_field:ident,
       chroma_plane: $chroma_plane:ident,
@@ -2492,7 +2510,7 @@ macro_rules! walker {
 
     $(#[$walker_meta])*
     #[doc = $walker_doc]
-    pub fn $walker<S, const BE: bool>(
+    pub fn $walker_endian<S, const BE: bool>(
       src: &$frame,
       full_range: bool,
       matrix: $crate::ColorMatrix,
@@ -2524,6 +2542,20 @@ macro_rules! walker {
       }
       Ok(())
     }
+
+    /// LE-only back-compat wrapper. See `@p3_emit_be half` for rationale.
+    #[cfg_attr(not(tarpaulin), inline(always))]
+    pub fn $walker<S>(
+      src: &$frame_le,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error>
+    where
+      S: $sink<false>,
+    {
+      $walker_endian::<S, false>(src, full_range, matrix, sink)
+    }
   };
 
   // ---------- planar3 BE-generic emitters: half ----------------------------
@@ -2531,9 +2563,11 @@ macro_rules! walker {
     $(#[$marker_meta:meta])*
     marker: $marker:ident,
     frame: $frame:ty,
+    frame_le: $frame_le:ty,
     row: $row:ident,
     sink: $sink:ident,
     walker: $walker:ident,
+    walker_endian: $walker_endian:ident,
     elem_type: $elem:ty,
     chroma_v: $chroma_v:tt,
     $(#[$row_meta:meta])*
@@ -2612,7 +2646,7 @@ macro_rules! walker {
 
     $(#[$walker_meta])*
     #[doc = $walker_doc]
-    pub fn $walker<S, const BE: bool>(
+    pub fn $walker_endian<S, const BE: bool>(
       src: &$frame,
       full_range: bool,
       matrix: $crate::ColorMatrix,
@@ -2648,6 +2682,25 @@ macro_rules! walker {
       }
       Ok(())
     }
+
+    /// LE-only back-compat wrapper preserving the pre-Phase-4 walker
+    /// signature. Forwards to the const-generic helper with `BE = false`.
+    /// Function-position const-generic defaults aren't allowed by Rust,
+    /// so existing explicit-turbofish callers (`$walker::<MySink>(...)`)
+    /// would otherwise fail to compile. BE-aware callers should use the
+    /// `_endian` helper directly.
+    #[cfg_attr(not(tarpaulin), inline(always))]
+    pub fn $walker<S>(
+      src: &$frame_le,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error>
+    where
+      S: $sink<false>,
+    {
+      $walker_endian::<S, false>(src, full_range, matrix, sink)
+    }
   };
 
   // ---------- planar3 BE-generic emitters: full ----------------------------
@@ -2655,9 +2708,11 @@ macro_rules! walker {
     $(#[$marker_meta:meta])*
     marker: $marker:ident,
     frame: $frame:ty,
+    frame_le: $frame_le:ty,
     row: $row:ident,
     sink: $sink:ident,
     walker: $walker:ident,
+    walker_endian: $walker_endian:ident,
     elem_type: $elem:ty,
     chroma_v: $chroma_v:tt,
     $(#[$row_meta:meta])*
@@ -2736,7 +2791,7 @@ macro_rules! walker {
 
     $(#[$walker_meta])*
     #[doc = $walker_doc]
-    pub fn $walker<S, const BE: bool>(
+    pub fn $walker_endian<S, const BE: bool>(
       src: &$frame,
       full_range: bool,
       matrix: $crate::ColorMatrix,
@@ -2771,6 +2826,21 @@ macro_rules! walker {
       }
       Ok(())
     }
+
+    /// LE-only back-compat wrapper. See the `half`-variant of this arm
+    /// for rationale.
+    #[cfg_attr(not(tarpaulin), inline(always))]
+    pub fn $walker<S>(
+      src: &$frame_le,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error>
+    where
+      S: $sink<false>,
+    {
+      $walker_endian::<S, false>(src, full_range, matrix, sink)
+    }
   };
 
   // ---------- planar4 BE-generic emitters: full ----------------------------
@@ -2778,9 +2848,11 @@ macro_rules! walker {
     $(#[$marker_meta:meta])*
     marker: $marker:ident,
     frame: $frame:ty,
+    frame_le: $frame_le:ty,
     row: $row:ident,
     sink: $sink:ident,
     walker: $walker:ident,
+    walker_endian: $walker_endian:ident,
     elem_type: $elem:ty,
     chroma_v: $chroma_v:tt,
     $(#[$row_meta:meta])*
@@ -2866,7 +2938,7 @@ macro_rules! walker {
 
     $(#[$walker_meta])*
     #[doc = $walker_doc]
-    pub fn $walker<S, const BE: bool>(
+    pub fn $walker_endian<S, const BE: bool>(
       src: &$frame,
       full_range: bool,
       matrix: $crate::ColorMatrix,
@@ -2908,6 +2980,20 @@ macro_rules! walker {
       }
       Ok(())
     }
+
+    /// LE-only back-compat wrapper. See `@p3_emit_be half` for rationale.
+    #[cfg_attr(not(tarpaulin), inline(always))]
+    pub fn $walker<S>(
+      src: &$frame_le,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error>
+    where
+      S: $sink<false>,
+    {
+      $walker_endian::<S, false>(src, full_range, matrix, sink)
+    }
   };
 
   // ---------- planar3 BITS+BE-generic emitters: half -----------------------
@@ -2915,11 +3001,13 @@ macro_rules! walker {
     $(#[$marker_meta:meta])*
     marker: $marker:ident,
     frame: $frame:ty,
+    frame_le: $frame_le:ty,
     generic_frame: $gframe:ty,
     bits: $bits:expr,
     row: $row:ident,
     sink: $sink:ident,
     walker: $walker:ident,
+    walker_endian: $walker_endian:ident,
     walker_inner: $walker_inner:ident,
     elem_type: $elem:ty,
     chroma_v: $chroma_v:tt,
@@ -2999,7 +3087,7 @@ macro_rules! walker {
 
     $(#[$walker_meta])*
     #[doc = $walker_doc]
-    pub fn $walker<S, const BE: bool>(
+    pub fn $walker_endian<S, const BE: bool>(
       src: &$frame,
       full_range: bool,
       matrix: $crate::ColorMatrix,
@@ -3009,6 +3097,20 @@ macro_rules! walker {
       S: $sink<BE>,
     {
       $walker_inner::<{ $bits }, BE, S>(src, full_range, matrix, sink)
+    }
+
+    /// LE-only back-compat wrapper. See `@p3_emit_be half` for rationale.
+    #[cfg_attr(not(tarpaulin), inline(always))]
+    pub fn $walker<S>(
+      src: &$frame_le,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error>
+    where
+      S: $sink<false>,
+    {
+      $walker_endian::<S, false>(src, full_range, matrix, sink)
     }
 
     #[cfg_attr(not(tarpaulin), inline(always))]
@@ -3055,11 +3157,13 @@ macro_rules! walker {
     $(#[$marker_meta:meta])*
     marker: $marker:ident,
     frame: $frame:ty,
+    frame_le: $frame_le:ty,
     generic_frame: $gframe:ty,
     bits: $bits:expr,
     row: $row:ident,
     sink: $sink:ident,
     walker: $walker:ident,
+    walker_endian: $walker_endian:ident,
     walker_inner: $walker_inner:ident,
     elem_type: $elem:ty,
     chroma_v: $chroma_v:tt,
@@ -3139,7 +3243,7 @@ macro_rules! walker {
 
     $(#[$walker_meta])*
     #[doc = $walker_doc]
-    pub fn $walker<S, const BE: bool>(
+    pub fn $walker_endian<S, const BE: bool>(
       src: &$frame,
       full_range: bool,
       matrix: $crate::ColorMatrix,
@@ -3149,6 +3253,20 @@ macro_rules! walker {
       S: $sink<BE>,
     {
       $walker_inner::<{ $bits }, BE, S>(src, full_range, matrix, sink)
+    }
+
+    /// LE-only back-compat wrapper. See `@p3_emit_be half` for rationale.
+    #[cfg_attr(not(tarpaulin), inline(always))]
+    pub fn $walker<S>(
+      src: &$frame_le,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error>
+    where
+      S: $sink<false>,
+    {
+      $walker_endian::<S, false>(src, full_range, matrix, sink)
     }
 
     #[cfg_attr(not(tarpaulin), inline(always))]
@@ -3194,11 +3312,13 @@ macro_rules! walker {
     $(#[$marker_meta:meta])*
     marker: $marker:ident,
     frame: $frame:ty,
+    frame_le: $frame_le:ty,
     generic_frame: $gframe:ty,
     bits: $bits:expr,
     row: $row:ident,
     sink: $sink:ident,
     walker: $walker:ident,
+    walker_endian: $walker_endian:ident,
     walker_inner: $walker_inner:ident,
     elem_type: $elem:ty,
     chroma_v: $chroma_v:tt,
@@ -3285,7 +3405,7 @@ macro_rules! walker {
 
     $(#[$walker_meta])*
     #[doc = $walker_doc]
-    pub fn $walker<S, const BE: bool>(
+    pub fn $walker_endian<S, const BE: bool>(
       src: &$frame,
       full_range: bool,
       matrix: $crate::ColorMatrix,
@@ -3295,6 +3415,20 @@ macro_rules! walker {
       S: $sink<BE>,
     {
       $walker_inner::<{ $bits }, BE, S>(src, full_range, matrix, sink)
+    }
+
+    /// LE-only back-compat wrapper. See `@p3_emit_be half` for rationale.
+    #[cfg_attr(not(tarpaulin), inline(always))]
+    pub fn $walker<S>(
+      src: &$frame_le,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error>
+    where
+      S: $sink<false>,
+    {
+      $walker_endian::<S, false>(src, full_range, matrix, sink)
     }
 
     #[cfg_attr(not(tarpaulin), inline(always))]
@@ -3348,11 +3482,13 @@ macro_rules! walker {
     $(#[$marker_meta:meta])*
     marker: $marker:ident,
     frame: $frame:ty,
+    frame_le: $frame_le:ty,
     generic_frame: $gframe:ty,
     bits: $bits:expr,
     row: $row:ident,
     sink: $sink:ident,
     walker: $walker:ident,
+    walker_endian: $walker_endian:ident,
     walker_inner: $walker_inner:ident,
     elem_type: $elem:ty,
     chroma_v: $chroma_v:tt,
@@ -3439,7 +3575,7 @@ macro_rules! walker {
 
     $(#[$walker_meta])*
     #[doc = $walker_doc]
-    pub fn $walker<S, const BE: bool>(
+    pub fn $walker_endian<S, const BE: bool>(
       src: &$frame,
       full_range: bool,
       matrix: $crate::ColorMatrix,
@@ -3449,6 +3585,20 @@ macro_rules! walker {
       S: $sink<BE>,
     {
       $walker_inner::<{ $bits }, BE, S>(src, full_range, matrix, sink)
+    }
+
+    /// LE-only back-compat wrapper. See `@p3_emit_be half` for rationale.
+    #[cfg_attr(not(tarpaulin), inline(always))]
+    pub fn $walker<S>(
+      src: &$frame_le,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error>
+    where
+      S: $sink<false>,
+    {
+      $walker_endian::<S, false>(src, full_range, matrix, sink)
     }
 
     #[cfg_attr(not(tarpaulin), inline(always))]

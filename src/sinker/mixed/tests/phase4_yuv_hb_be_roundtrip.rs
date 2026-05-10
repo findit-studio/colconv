@@ -40,12 +40,21 @@ use crate::{
     Yuv420p14, Yuv420p16, Yuv422p9, Yuv422p10, Yuv422p12, Yuv422p14, Yuv422p16, Yuv440p10,
     Yuv440p12, Yuv444p9, Yuv444p10, Yuv444p12, Yuv444p14, Yuv444p16, Yuva420p9, Yuva420p10,
     Yuva420p16, Yuva422p9, Yuva422p10, Yuva422p12, Yuva422p16, Yuva444p9, Yuva444p10, Yuva444p12,
-    Yuva444p14, Yuva444p16, p010_to, p012_to, p016_to, p210_to, p212_to, p216_to, p410_to, p412_to,
-    p416_to, yuv420p9_to, yuv420p10_to, yuv420p12_to, yuv420p14_to, yuv420p16_to, yuv422p9_to,
-    yuv422p10_to, yuv422p12_to, yuv422p14_to, yuv422p16_to, yuv440p10_to, yuv440p12_to,
-    yuv444p9_to, yuv444p10_to, yuv444p12_to, yuv444p14_to, yuv444p16_to, yuva420p9_to,
-    yuva420p10_to, yuva420p16_to, yuva422p9_to, yuva422p10_to, yuva422p12_to, yuva422p16_to,
-    yuva444p9_to, yuva444p10_to, yuva444p12_to, yuva444p14_to, yuva444p16_to,
+    Yuva444p14, Yuva444p16, p010_to, p010_to_endian, p012_to, p012_to_endian, p016_to,
+    p016_to_endian, p210_to, p210_to_endian, p212_to, p212_to_endian, p216_to, p216_to_endian,
+    p410_to, p410_to_endian, p412_to, p412_to_endian, p416_to, p416_to_endian, yuv420p9_to,
+    yuv420p9_to_endian, yuv420p10_to, yuv420p10_to_endian, yuv420p12_to, yuv420p12_to_endian,
+    yuv420p14_to, yuv420p14_to_endian, yuv420p16_to, yuv420p16_to_endian, yuv422p9_to,
+    yuv422p9_to_endian, yuv422p10_to, yuv422p10_to_endian, yuv422p12_to, yuv422p12_to_endian,
+    yuv422p14_to, yuv422p14_to_endian, yuv422p16_to, yuv422p16_to_endian, yuv440p10_to,
+    yuv440p10_to_endian, yuv440p12_to, yuv440p12_to_endian, yuv444p9_to, yuv444p9_to_endian,
+    yuv444p10_to, yuv444p10_to_endian, yuv444p12_to, yuv444p12_to_endian, yuv444p14_to,
+    yuv444p14_to_endian, yuv444p16_to, yuv444p16_to_endian, yuva420p9_to, yuva420p9_to_endian,
+    yuva420p10_to, yuva420p10_to_endian, yuva420p16_to, yuva420p16_to_endian, yuva422p9_to,
+    yuva422p9_to_endian, yuva422p10_to, yuva422p10_to_endian, yuva422p12_to, yuva422p12_to_endian,
+    yuva422p16_to, yuva422p16_to_endian, yuva444p9_to, yuva444p9_to_endian, yuva444p10_to,
+    yuva444p10_to_endian, yuva444p12_to, yuva444p12_to_endian, yuva444p14_to, yuva444p14_to_endian,
+    yuva444p16_to, yuva444p16_to_endian,
   },
 };
 
@@ -111,6 +120,7 @@ macro_rules! planar3_be_roundtrip_test {
     marker_le = $marker_le:ty,
     marker_be = $marker_be:ty,
     walker = $walker:expr,
+    walker_endian = $walker_endian:ident,
     max_value = $max_value:expr,
     chroma_w_div = $chroma_w_div:expr,
     chroma_h_div = $chroma_h_div:expr,
@@ -137,25 +147,37 @@ macro_rules! planar3_be_roundtrip_test {
       let frame_le =
         $frame_le::try_new(&y_le, &u_le, &v_le, w, h, w, cw as u32, cw as u32).unwrap();
       let mut out_le = vec![0u8; (w * h * 4) as usize];
+      let mut luma_le = vec![0u8; (w * h) as usize];
       let mut sink_le = MixedSinker::<$marker_le>::new(w as usize, h as usize)
         .with_simd(false)
         .with_rgba(&mut out_le)
+        .unwrap()
+        .with_luma(&mut luma_le)
         .unwrap();
       $walker(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
 
       let frame_be =
         $frame_be::try_new(&y_be, &u_be, &v_be, w, h, w, cw as u32, cw as u32).unwrap();
       let mut out_be = vec![0u8; (w * h * 4) as usize];
+      let mut luma_be = vec![0u8; (w * h) as usize];
       let mut sink_be = MixedSinker::<$marker_be>::new(w as usize, h as usize)
         .with_simd(false)
         .with_rgba(&mut out_be)
+        .unwrap()
+        .with_luma(&mut luma_be)
         .unwrap();
-      $walker(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+      $walker_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
 
       assert_eq!(
         out_le,
         out_be,
         "{} LE/BE outputs diverge — `<const BE>` propagation broken",
+        stringify!($name),
+      );
+      assert_eq!(
+        luma_le,
+        luma_be,
+        "{} LE/BE luma diverge — BE luma fast-path normalization broken",
         stringify!($name),
       );
     }
@@ -165,106 +187,106 @@ macro_rules! planar3_be_roundtrip_test {
 planar3_be_roundtrip_test!(
   yuv420p9_le_be_roundtrip_byte_identical,
   frame_le = Yuv420p9LeFrame, frame_be = Yuv420p9BeFrame,
-  marker_le = Yuv420p9, marker_be = Yuv420p9<true>, walker = yuv420p9_to,
+  marker_le = Yuv420p9, marker_be = Yuv420p9<true>, walker = yuv420p9_to, walker_endian = yuv420p9_to_endian,
   max_value = 0x01FF, chroma_w_div = 2, chroma_h_div = 2,
 );
 planar3_be_roundtrip_test!(
   yuv420p10_le_be_roundtrip_byte_identical,
   frame_le = Yuv420p10LeFrame, frame_be = Yuv420p10BeFrame,
-  marker_le = Yuv420p10, marker_be = Yuv420p10<true>, walker = yuv420p10_to,
+  marker_le = Yuv420p10, marker_be = Yuv420p10<true>, walker = yuv420p10_to, walker_endian = yuv420p10_to_endian,
   max_value = 0x03FF, chroma_w_div = 2, chroma_h_div = 2,
 );
 planar3_be_roundtrip_test!(
   yuv420p12_le_be_roundtrip_byte_identical,
   frame_le = Yuv420p12LeFrame, frame_be = Yuv420p12BeFrame,
-  marker_le = Yuv420p12, marker_be = Yuv420p12<true>, walker = yuv420p12_to,
+  marker_le = Yuv420p12, marker_be = Yuv420p12<true>, walker = yuv420p12_to, walker_endian = yuv420p12_to_endian,
   max_value = 0x0FFF, chroma_w_div = 2, chroma_h_div = 2,
 );
 planar3_be_roundtrip_test!(
   yuv420p14_le_be_roundtrip_byte_identical,
   frame_le = Yuv420p14LeFrame, frame_be = Yuv420p14BeFrame,
-  marker_le = Yuv420p14, marker_be = Yuv420p14<true>, walker = yuv420p14_to,
+  marker_le = Yuv420p14, marker_be = Yuv420p14<true>, walker = yuv420p14_to, walker_endian = yuv420p14_to_endian,
   max_value = 0x3FFF, chroma_w_div = 2, chroma_h_div = 2,
 );
 planar3_be_roundtrip_test!(
   yuv420p16_le_be_roundtrip_byte_identical,
   frame_le = Yuv420p16LeFrame, frame_be = Yuv420p16BeFrame,
-  marker_le = Yuv420p16, marker_be = Yuv420p16<true>, walker = yuv420p16_to,
+  marker_le = Yuv420p16, marker_be = Yuv420p16<true>, walker = yuv420p16_to, walker_endian = yuv420p16_to_endian,
   max_value = 0xFFFF, chroma_w_div = 2, chroma_h_div = 2,
 );
 
 planar3_be_roundtrip_test!(
   yuv422p9_le_be_roundtrip_byte_identical,
   frame_le = Yuv422p9LeFrame, frame_be = Yuv422p9BeFrame,
-  marker_le = Yuv422p9, marker_be = Yuv422p9<true>, walker = yuv422p9_to,
+  marker_le = Yuv422p9, marker_be = Yuv422p9<true>, walker = yuv422p9_to, walker_endian = yuv422p9_to_endian,
   max_value = 0x01FF, chroma_w_div = 2, chroma_h_div = 1,
 );
 planar3_be_roundtrip_test!(
   yuv422p10_le_be_roundtrip_byte_identical,
   frame_le = Yuv422p10LeFrame, frame_be = Yuv422p10BeFrame,
-  marker_le = Yuv422p10, marker_be = Yuv422p10<true>, walker = yuv422p10_to,
+  marker_le = Yuv422p10, marker_be = Yuv422p10<true>, walker = yuv422p10_to, walker_endian = yuv422p10_to_endian,
   max_value = 0x03FF, chroma_w_div = 2, chroma_h_div = 1,
 );
 planar3_be_roundtrip_test!(
   yuv422p12_le_be_roundtrip_byte_identical,
   frame_le = Yuv422p12LeFrame, frame_be = Yuv422p12BeFrame,
-  marker_le = Yuv422p12, marker_be = Yuv422p12<true>, walker = yuv422p12_to,
+  marker_le = Yuv422p12, marker_be = Yuv422p12<true>, walker = yuv422p12_to, walker_endian = yuv422p12_to_endian,
   max_value = 0x0FFF, chroma_w_div = 2, chroma_h_div = 1,
 );
 planar3_be_roundtrip_test!(
   yuv422p14_le_be_roundtrip_byte_identical,
   frame_le = Yuv422p14LeFrame, frame_be = Yuv422p14BeFrame,
-  marker_le = Yuv422p14, marker_be = Yuv422p14<true>, walker = yuv422p14_to,
+  marker_le = Yuv422p14, marker_be = Yuv422p14<true>, walker = yuv422p14_to, walker_endian = yuv422p14_to_endian,
   max_value = 0x3FFF, chroma_w_div = 2, chroma_h_div = 1,
 );
 planar3_be_roundtrip_test!(
   yuv422p16_le_be_roundtrip_byte_identical,
   frame_le = Yuv422p16LeFrame, frame_be = Yuv422p16BeFrame,
-  marker_le = Yuv422p16, marker_be = Yuv422p16<true>, walker = yuv422p16_to,
+  marker_le = Yuv422p16, marker_be = Yuv422p16<true>, walker = yuv422p16_to, walker_endian = yuv422p16_to_endian,
   max_value = 0xFFFF, chroma_w_div = 2, chroma_h_div = 1,
 );
 
 planar3_be_roundtrip_test!(
   yuv444p9_le_be_roundtrip_byte_identical,
   frame_le = Yuv444p9LeFrame, frame_be = Yuv444p9BeFrame,
-  marker_le = Yuv444p9, marker_be = Yuv444p9<true>, walker = yuv444p9_to,
+  marker_le = Yuv444p9, marker_be = Yuv444p9<true>, walker = yuv444p9_to, walker_endian = yuv444p9_to_endian,
   max_value = 0x01FF, chroma_w_div = 1, chroma_h_div = 1,
 );
 planar3_be_roundtrip_test!(
   yuv444p10_le_be_roundtrip_byte_identical,
   frame_le = Yuv444p10LeFrame, frame_be = Yuv444p10BeFrame,
-  marker_le = Yuv444p10, marker_be = Yuv444p10<true>, walker = yuv444p10_to,
+  marker_le = Yuv444p10, marker_be = Yuv444p10<true>, walker = yuv444p10_to, walker_endian = yuv444p10_to_endian,
   max_value = 0x03FF, chroma_w_div = 1, chroma_h_div = 1,
 );
 planar3_be_roundtrip_test!(
   yuv444p12_le_be_roundtrip_byte_identical,
   frame_le = Yuv444p12LeFrame, frame_be = Yuv444p12BeFrame,
-  marker_le = Yuv444p12, marker_be = Yuv444p12<true>, walker = yuv444p12_to,
+  marker_le = Yuv444p12, marker_be = Yuv444p12<true>, walker = yuv444p12_to, walker_endian = yuv444p12_to_endian,
   max_value = 0x0FFF, chroma_w_div = 1, chroma_h_div = 1,
 );
 planar3_be_roundtrip_test!(
   yuv444p14_le_be_roundtrip_byte_identical,
   frame_le = Yuv444p14LeFrame, frame_be = Yuv444p14BeFrame,
-  marker_le = Yuv444p14, marker_be = Yuv444p14<true>, walker = yuv444p14_to,
+  marker_le = Yuv444p14, marker_be = Yuv444p14<true>, walker = yuv444p14_to, walker_endian = yuv444p14_to_endian,
   max_value = 0x3FFF, chroma_w_div = 1, chroma_h_div = 1,
 );
 planar3_be_roundtrip_test!(
   yuv444p16_le_be_roundtrip_byte_identical,
   frame_le = Yuv444p16LeFrame, frame_be = Yuv444p16BeFrame,
-  marker_le = Yuv444p16, marker_be = Yuv444p16<true>, walker = yuv444p16_to,
+  marker_le = Yuv444p16, marker_be = Yuv444p16<true>, walker = yuv444p16_to, walker_endian = yuv444p16_to_endian,
   max_value = 0xFFFF, chroma_w_div = 1, chroma_h_div = 1,
 );
 
 planar3_be_roundtrip_test!(
   yuv440p10_le_be_roundtrip_byte_identical,
   frame_le = Yuv440p10LeFrame, frame_be = Yuv440p10BeFrame,
-  marker_le = Yuv440p10, marker_be = Yuv440p10<true>, walker = yuv440p10_to,
+  marker_le = Yuv440p10, marker_be = Yuv440p10<true>, walker = yuv440p10_to, walker_endian = yuv440p10_to_endian,
   max_value = 0x03FF, chroma_w_div = 1, chroma_h_div = 2,
 );
 planar3_be_roundtrip_test!(
   yuv440p12_le_be_roundtrip_byte_identical,
   frame_le = Yuv440p12LeFrame, frame_be = Yuv440p12BeFrame,
-  marker_le = Yuv440p12, marker_be = Yuv440p12<true>, walker = yuv440p12_to,
+  marker_le = Yuv440p12, marker_be = Yuv440p12<true>, walker = yuv440p12_to, walker_endian = yuv440p12_to_endian,
   max_value = 0x0FFF, chroma_w_div = 1, chroma_h_div = 2,
 );
 
@@ -278,6 +300,7 @@ macro_rules! planar4_be_roundtrip_test {
     marker_le = $marker_le:ty,
     marker_be = $marker_be:ty,
     walker = $walker:expr,
+    walker_endian = $walker_endian:ident,
     max_value = $max_value:expr,
     chroma_w_div = $chroma_w_div:expr,
     chroma_h_div = $chroma_h_div:expr,
@@ -307,25 +330,37 @@ macro_rules! planar4_be_roundtrip_test {
       let frame_le =
         $frame_le::try_new(&y_le, &u_le, &v_le, &a_le, w, h, w, cw as u32, cw as u32, w).unwrap();
       let mut out_le = vec![0u8; (w * h * 4) as usize];
+      let mut luma_le = vec![0u8; (w * h) as usize];
       let mut sink_le = MixedSinker::<$marker_le>::new(w as usize, h as usize)
         .with_simd(false)
         .with_rgba(&mut out_le)
+        .unwrap()
+        .with_luma(&mut luma_le)
         .unwrap();
       $walker(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
 
       let frame_be =
         $frame_be::try_new(&y_be, &u_be, &v_be, &a_be, w, h, w, cw as u32, cw as u32, w).unwrap();
       let mut out_be = vec![0u8; (w * h * 4) as usize];
+      let mut luma_be = vec![0u8; (w * h) as usize];
       let mut sink_be = MixedSinker::<$marker_be>::new(w as usize, h as usize)
         .with_simd(false)
         .with_rgba(&mut out_be)
+        .unwrap()
+        .with_luma(&mut luma_be)
         .unwrap();
-      $walker(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+      $walker_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
 
       assert_eq!(
         out_le,
         out_be,
         "{} LE/BE outputs diverge — `<const BE>` propagation broken",
+        stringify!($name),
+      );
+      assert_eq!(
+        luma_le,
+        luma_be,
+        "{} LE/BE luma diverge — BE luma fast-path normalization broken",
         stringify!($name),
       );
     }
@@ -335,75 +370,75 @@ macro_rules! planar4_be_roundtrip_test {
 planar4_be_roundtrip_test!(
   yuva420p9_le_be_roundtrip_byte_identical,
   frame_le = Yuva420p9LeFrame, frame_be = Yuva420p9BeFrame,
-  marker_le = Yuva420p9, marker_be = Yuva420p9<true>, walker = yuva420p9_to,
+  marker_le = Yuva420p9, marker_be = Yuva420p9<true>, walker = yuva420p9_to, walker_endian = yuva420p9_to_endian,
   max_value = 0x01FF, chroma_w_div = 2, chroma_h_div = 2,
 );
 planar4_be_roundtrip_test!(
   yuva420p10_le_be_roundtrip_byte_identical,
   frame_le = Yuva420p10LeFrame, frame_be = Yuva420p10BeFrame,
-  marker_le = Yuva420p10, marker_be = Yuva420p10<true>, walker = yuva420p10_to,
+  marker_le = Yuva420p10, marker_be = Yuva420p10<true>, walker = yuva420p10_to, walker_endian = yuva420p10_to_endian,
   max_value = 0x03FF, chroma_w_div = 2, chroma_h_div = 2,
 );
 planar4_be_roundtrip_test!(
   yuva420p16_le_be_roundtrip_byte_identical,
   frame_le = Yuva420p16LeFrame, frame_be = Yuva420p16BeFrame,
-  marker_le = Yuva420p16, marker_be = Yuva420p16<true>, walker = yuva420p16_to,
+  marker_le = Yuva420p16, marker_be = Yuva420p16<true>, walker = yuva420p16_to, walker_endian = yuva420p16_to_endian,
   max_value = 0xFFFF, chroma_w_div = 2, chroma_h_div = 2,
 );
 
 planar4_be_roundtrip_test!(
   yuva422p9_le_be_roundtrip_byte_identical,
   frame_le = Yuva422p9LeFrame, frame_be = Yuva422p9BeFrame,
-  marker_le = Yuva422p9, marker_be = Yuva422p9<true>, walker = yuva422p9_to,
+  marker_le = Yuva422p9, marker_be = Yuva422p9<true>, walker = yuva422p9_to, walker_endian = yuva422p9_to_endian,
   max_value = 0x01FF, chroma_w_div = 2, chroma_h_div = 1,
 );
 planar4_be_roundtrip_test!(
   yuva422p10_le_be_roundtrip_byte_identical,
   frame_le = Yuva422p10LeFrame, frame_be = Yuva422p10BeFrame,
-  marker_le = Yuva422p10, marker_be = Yuva422p10<true>, walker = yuva422p10_to,
+  marker_le = Yuva422p10, marker_be = Yuva422p10<true>, walker = yuva422p10_to, walker_endian = yuva422p10_to_endian,
   max_value = 0x03FF, chroma_w_div = 2, chroma_h_div = 1,
 );
 planar4_be_roundtrip_test!(
   yuva422p12_le_be_roundtrip_byte_identical,
   frame_le = Yuva422p12LeFrame, frame_be = Yuva422p12BeFrame,
-  marker_le = Yuva422p12, marker_be = Yuva422p12<true>, walker = yuva422p12_to,
+  marker_le = Yuva422p12, marker_be = Yuva422p12<true>, walker = yuva422p12_to, walker_endian = yuva422p12_to_endian,
   max_value = 0x0FFF, chroma_w_div = 2, chroma_h_div = 1,
 );
 planar4_be_roundtrip_test!(
   yuva422p16_le_be_roundtrip_byte_identical,
   frame_le = Yuva422p16LeFrame, frame_be = Yuva422p16BeFrame,
-  marker_le = Yuva422p16, marker_be = Yuva422p16<true>, walker = yuva422p16_to,
+  marker_le = Yuva422p16, marker_be = Yuva422p16<true>, walker = yuva422p16_to, walker_endian = yuva422p16_to_endian,
   max_value = 0xFFFF, chroma_w_div = 2, chroma_h_div = 1,
 );
 
 planar4_be_roundtrip_test!(
   yuva444p9_le_be_roundtrip_byte_identical,
   frame_le = Yuva444p9LeFrame, frame_be = Yuva444p9BeFrame,
-  marker_le = Yuva444p9, marker_be = Yuva444p9<true>, walker = yuva444p9_to,
+  marker_le = Yuva444p9, marker_be = Yuva444p9<true>, walker = yuva444p9_to, walker_endian = yuva444p9_to_endian,
   max_value = 0x01FF, chroma_w_div = 1, chroma_h_div = 1,
 );
 planar4_be_roundtrip_test!(
   yuva444p10_le_be_roundtrip_byte_identical,
   frame_le = Yuva444p10LeFrame, frame_be = Yuva444p10BeFrame,
-  marker_le = Yuva444p10, marker_be = Yuva444p10<true>, walker = yuva444p10_to,
+  marker_le = Yuva444p10, marker_be = Yuva444p10<true>, walker = yuva444p10_to, walker_endian = yuva444p10_to_endian,
   max_value = 0x03FF, chroma_w_div = 1, chroma_h_div = 1,
 );
 planar4_be_roundtrip_test!(
   yuva444p12_le_be_roundtrip_byte_identical,
   frame_le = Yuva444p12LeFrame, frame_be = Yuva444p12BeFrame,
-  marker_le = Yuva444p12, marker_be = Yuva444p12<true>, walker = yuva444p12_to,
+  marker_le = Yuva444p12, marker_be = Yuva444p12<true>, walker = yuva444p12_to, walker_endian = yuva444p12_to_endian,
   max_value = 0x0FFF, chroma_w_div = 1, chroma_h_div = 1,
 );
 planar4_be_roundtrip_test!(
   yuva444p14_le_be_roundtrip_byte_identical,
   frame_le = Yuva444p14LeFrame, frame_be = Yuva444p14BeFrame,
-  marker_le = Yuva444p14, marker_be = Yuva444p14<true>, walker = yuva444p14_to,
+  marker_le = Yuva444p14, marker_be = Yuva444p14<true>, walker = yuva444p14_to, walker_endian = yuva444p14_to_endian,
   max_value = 0x3FFF, chroma_w_div = 1, chroma_h_div = 1,
 );
 planar4_be_roundtrip_test!(
   yuva444p16_le_be_roundtrip_byte_identical,
   frame_le = Yuva444p16LeFrame, frame_be = Yuva444p16BeFrame,
-  marker_le = Yuva444p16, marker_be = Yuva444p16<true>, walker = yuva444p16_to,
+  marker_le = Yuva444p16, marker_be = Yuva444p16<true>, walker = yuva444p16_to, walker_endian = yuva444p16_to_endian,
   max_value = 0xFFFF, chroma_w_div = 1, chroma_h_div = 1,
 );
 
@@ -420,6 +455,7 @@ macro_rules! pn_be_roundtrip_test {
     marker_le = $marker_le:ty,
     marker_be = $marker_be:ty,
     walker = $walker:expr,
+    walker_endian = $walker_endian:ident,
     max_value = $max_value:expr,
     chroma_w_factor = $chroma_w_factor:expr,
     chroma_h_div = $chroma_h_div:expr,
@@ -442,24 +478,36 @@ macro_rules! pn_be_roundtrip_test {
 
       let frame_le = $frame_le::try_new(&y_le, &uv_le, w, h, w, uv_row_elems as u32).unwrap();
       let mut out_le = vec![0u8; (w * h * 4) as usize];
+      let mut luma_le = vec![0u8; (w * h) as usize];
       let mut sink_le = MixedSinker::<$marker_le>::new(w as usize, h as usize)
         .with_simd(false)
         .with_rgba(&mut out_le)
+        .unwrap()
+        .with_luma(&mut luma_le)
         .unwrap();
       $walker(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
 
       let frame_be = $frame_be::try_new(&y_be, &uv_be, w, h, w, uv_row_elems as u32).unwrap();
       let mut out_be = vec![0u8; (w * h * 4) as usize];
+      let mut luma_be = vec![0u8; (w * h) as usize];
       let mut sink_be = MixedSinker::<$marker_be>::new(w as usize, h as usize)
         .with_simd(false)
         .with_rgba(&mut out_be)
+        .unwrap()
+        .with_luma(&mut luma_be)
         .unwrap();
-      $walker(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+      $walker_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
 
       assert_eq!(
         out_le,
         out_be,
         "{} LE/BE outputs diverge — `<const BE>` propagation broken",
+        stringify!($name),
+      );
+      assert_eq!(
+        luma_le,
+        luma_be,
+        "{} LE/BE luma diverge — BE luma fast-path normalization broken",
         stringify!($name),
       );
     }
@@ -469,54 +517,54 @@ macro_rules! pn_be_roundtrip_test {
 pn_be_roundtrip_test!(
   p010_le_be_roundtrip_byte_identical,
   frame_le = P010LeFrame, frame_be = P010BeFrame,
-  marker_le = P010, marker_be = P010<true>, walker = p010_to,
+  marker_le = P010, marker_be = P010<true>, walker = p010_to, walker_endian = p010_to_endian,
   max_value = 0xFFC0, chroma_w_factor = 1, chroma_h_div = 2,
 );
 pn_be_roundtrip_test!(
   p012_le_be_roundtrip_byte_identical,
   frame_le = P012LeFrame, frame_be = P012BeFrame,
-  marker_le = P012, marker_be = P012<true>, walker = p012_to,
+  marker_le = P012, marker_be = P012<true>, walker = p012_to, walker_endian = p012_to_endian,
   max_value = 0xFFF0, chroma_w_factor = 1, chroma_h_div = 2,
 );
 pn_be_roundtrip_test!(
   p016_le_be_roundtrip_byte_identical,
   frame_le = P016LeFrame, frame_be = P016BeFrame,
-  marker_le = P016, marker_be = P016<true>, walker = p016_to,
+  marker_le = P016, marker_be = P016<true>, walker = p016_to, walker_endian = p016_to_endian,
   max_value = 0xFFFF, chroma_w_factor = 1, chroma_h_div = 2,
 );
 pn_be_roundtrip_test!(
   p210_le_be_roundtrip_byte_identical,
   frame_le = P210LeFrame, frame_be = P210BeFrame,
-  marker_le = P210, marker_be = P210<true>, walker = p210_to,
+  marker_le = P210, marker_be = P210<true>, walker = p210_to, walker_endian = p210_to_endian,
   max_value = 0xFFC0, chroma_w_factor = 1, chroma_h_div = 1,
 );
 pn_be_roundtrip_test!(
   p212_le_be_roundtrip_byte_identical,
   frame_le = P212LeFrame, frame_be = P212BeFrame,
-  marker_le = P212, marker_be = P212<true>, walker = p212_to,
+  marker_le = P212, marker_be = P212<true>, walker = p212_to, walker_endian = p212_to_endian,
   max_value = 0xFFF0, chroma_w_factor = 1, chroma_h_div = 1,
 );
 pn_be_roundtrip_test!(
   p216_le_be_roundtrip_byte_identical,
   frame_le = P216LeFrame, frame_be = P216BeFrame,
-  marker_le = P216, marker_be = P216<true>, walker = p216_to,
+  marker_le = P216, marker_be = P216<true>, walker = p216_to, walker_endian = p216_to_endian,
   max_value = 0xFFFF, chroma_w_factor = 1, chroma_h_div = 1,
 );
 pn_be_roundtrip_test!(
   p410_le_be_roundtrip_byte_identical,
   frame_le = P410LeFrame, frame_be = P410BeFrame,
-  marker_le = P410, marker_be = P410<true>, walker = p410_to,
+  marker_le = P410, marker_be = P410<true>, walker = p410_to, walker_endian = p410_to_endian,
   max_value = 0xFFC0, chroma_w_factor = 2, chroma_h_div = 1,
 );
 pn_be_roundtrip_test!(
   p412_le_be_roundtrip_byte_identical,
   frame_le = P412LeFrame, frame_be = P412BeFrame,
-  marker_le = P412, marker_be = P412<true>, walker = p412_to,
+  marker_le = P412, marker_be = P412<true>, walker = p412_to, walker_endian = p412_to_endian,
   max_value = 0xFFF0, chroma_w_factor = 2, chroma_h_div = 1,
 );
 pn_be_roundtrip_test!(
   p416_le_be_roundtrip_byte_identical,
   frame_le = P416LeFrame, frame_be = P416BeFrame,
-  marker_le = P416, marker_be = P416<true>, walker = p416_to,
+  marker_le = P416, marker_be = P416<true>, walker = p416_to, walker_endian = p416_to_endian,
   max_value = 0xFFFF, chroma_w_factor = 2, chroma_h_div = 1,
 );

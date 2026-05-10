@@ -146,7 +146,10 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P210<BE>> {
     if let Some(luma) = luma.as_deref_mut() {
       let dst = &mut luma[one_plane_start..one_plane_end];
       for (d, &s) in dst.iter_mut().zip(row.y().iter()) {
-        *d = (s >> 8) as u8;
+        // Normalize BE-encoded wire bytes to host-native before the
+        // luma downshift — see P010 luma path for rationale.
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+        *d = (logical >> 8) as u8;
       }
     }
 
@@ -404,7 +407,10 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P212<BE>> {
     if let Some(luma) = luma.as_deref_mut() {
       let dst = &mut luma[one_plane_start..one_plane_end];
       for (d, &s) in dst.iter_mut().zip(row.y().iter()) {
-        *d = (s >> 8) as u8;
+        // Normalize BE-encoded wire bytes to host-native before the
+        // luma downshift — see P010 luma path for rationale.
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+        *d = (logical >> 8) as u8;
       }
     }
 
@@ -663,7 +669,10 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P216<BE>> {
     if let Some(luma) = luma.as_deref_mut() {
       let dst = &mut luma[one_plane_start..one_plane_end];
       for (d, &s) in dst.iter_mut().zip(row.y().iter()) {
-        *d = (s >> 8) as u8;
+        // Normalize BE-encoded wire bytes to host-native before the
+        // luma downshift — see P010 luma path for rationale.
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+        *d = (logical >> 8) as u8;
       }
     }
 

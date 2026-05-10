@@ -13,9 +13,11 @@ walker! {
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: P416,
     frame: PnFrame444<'_, 16, BE>,
+    frame_le: PnFrame444<'_, 16, false>,
     row: P416Row,
     sink: P416Sink,
     walker: p416_to,
+    walker_endian: p416_to_endian,
     elem_type: u16,
     chroma_field: uv_full,
     chroma_plane: uv,

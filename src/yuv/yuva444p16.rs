@@ -26,9 +26,11 @@ walker! {
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuva444p16,
     frame: Yuva444pFrame16<'_, 16, BE>,
+    frame_le: Yuva444pFrame16<'_, 16, false>,
     row: Yuva444p16Row,
     sink: Yuva444p16Sink,
     walker: yuva444p16_to,
+    walker_endian: yuva444p16_to_endian,
     elem_type: u16,
     chroma_h: full,
     chroma_v: full,

@@ -252,7 +252,7 @@ impl<'a, const BITS: u32, const BE: bool> PnFrame<'a, BITS, BE> {
       for (col, &s) in y[start..start + w].iter().enumerate() {
         // Normalize from LE-encoded wire to host-native before the
         // bit check (no-op on LE host, byte-swap on BE host).
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical & low_mask != 0 {
           return Err(PnFrameError::SampleLowBitsSet {
             plane: PnFramePlane::Y,
@@ -266,7 +266,7 @@ impl<'a, const BITS: u32, const BE: bool> PnFrame<'a, BITS, BE> {
     for row in 0..chroma_h {
       let start = row * uv_stride as usize;
       for (col, &s) in uv[start..start + uv_w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical & low_mask != 0 {
           return Err(PnFrameError::SampleLowBitsSet {
             plane: PnFramePlane::Uv,
@@ -546,7 +546,7 @@ impl<'a, const BITS: u32, const BE: bool> PnFrame422<'a, BITS, BE> {
     for row in 0..h {
       let start = row * y_stride as usize;
       for (col, &s) in y[start..start + w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical & low_mask != 0 {
           return Err(PnFrameError::SampleLowBitsSet {
             plane: PnFramePlane::Y,
@@ -561,7 +561,7 @@ impl<'a, const BITS: u32, const BE: bool> PnFrame422<'a, BITS, BE> {
     for row in 0..h {
       let start = row * uv_stride as usize;
       for (col, &s) in uv[start..start + uv_w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical & low_mask != 0 {
           return Err(PnFrameError::SampleLowBitsSet {
             plane: PnFramePlane::Uv,
@@ -805,7 +805,7 @@ impl<'a, const BITS: u32, const BE: bool> PnFrame444<'a, BITS, BE> {
     for row in 0..h {
       let start = row * y_stride as usize;
       for (col, &s) in y[start..start + w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical & low_mask != 0 {
           return Err(PnFrameError::SampleLowBitsSet {
             plane: PnFramePlane::Y,
@@ -819,7 +819,7 @@ impl<'a, const BITS: u32, const BE: bool> PnFrame444<'a, BITS, BE> {
     for row in 0..h {
       let start = row * uv_stride as usize;
       for (col, &s) in uv[start..start + uv_w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical & low_mask != 0 {
           return Err(PnFrameError::SampleLowBitsSet {
             plane: PnFramePlane::Uv,

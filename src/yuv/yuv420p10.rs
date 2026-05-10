@@ -32,11 +32,13 @@ walker! {
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuv420p10,
     frame: Yuv420pFrame16<'_, 10, BE>,
+    frame_le: Yuv420pFrame16<'_, 10, false>,
     generic_frame: Yuv420pFrame16<'_, BITS, BE>,
     bits: 10,
     row: Yuv420p10Row,
     sink: Yuv420p10Sink,
     walker: yuv420p10_to,
+    walker_endian: yuv420p10_to_endian,
     walker_inner: yuv420p10_walker,
     elem_type: u16,
     chroma_h: half,
@@ -47,5 +49,29 @@ walker! {
     walker_doc: "Converts a 10‑bit YUV 4:2:0 frame by walking its rows and feeding\n\
                  each one to the [`Yuv420p10Sink`]. See [`super::yuv420p_to`] for\n\
                  the shared design rationale.",
+  }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+  use super::*;
+  use crate::ColorMatrix;
+
+  // Compile-pass regression for the codex round-1 finding on PR #110
+  // (`planar3_bits_be` arm). The macro emits an LE-only `yuv420p10_to`
+  // wrapper alongside the const-generic `yuv420p10_to_endian` so
+  // explicit-turbofish callers like `yuv420p10_to::<MySink>(...)` keep
+  // compiling.
+  #[test]
+  fn yuv420p10_to_explicit_turbofish_one_generic_compiles() {
+    #[allow(clippy::type_complexity)]
+    fn _check<S: Yuv420p10Sink>() {
+      let _: fn(
+        &crate::frame::Yuv420p10LeFrame<'_>,
+        bool,
+        ColorMatrix,
+        &mut S,
+      ) -> Result<(), S::Error> = yuv420p10_to::<S>;
+    }
   }
 }

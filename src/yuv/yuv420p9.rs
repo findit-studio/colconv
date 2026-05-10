@@ -15,11 +15,13 @@ walker! {
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuv420p9,
     frame: Yuv420pFrame16<'_, 9, BE>,
+    frame_le: Yuv420pFrame16<'_, 9, false>,
     generic_frame: Yuv420pFrame16<'_, BITS, BE>,
     bits: 9,
     row: Yuv420p9Row,
     sink: Yuv420p9Sink,
     walker: yuv420p9_to,
+    walker_endian: yuv420p9_to_endian,
     walker_inner: yuv420p9_walker,
     elem_type: u16,
     chroma_h: half,

@@ -679,7 +679,7 @@ impl<'a, const BITS: u32, const BE: bool> Yuva420pFrame16<'a, BITS, BE> {
       for (col, &s) in y[start..start + w].iter().enumerate() {
         // Normalize from LE-encoded wire to host-native before the
         // range check (no-op on LE host, byte-swap on BE host).
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuva420pFrame16Error::SampleOutOfRange {
             plane: Yuva420pFrame16Plane::Y,
@@ -693,7 +693,7 @@ impl<'a, const BITS: u32, const BE: bool> Yuva420pFrame16<'a, BITS, BE> {
     for row in 0..chroma_h {
       let start = row * u_stride as usize;
       for (col, &s) in u[start..start + chroma_w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuva420pFrame16Error::SampleOutOfRange {
             plane: Yuva420pFrame16Plane::U,
@@ -707,7 +707,7 @@ impl<'a, const BITS: u32, const BE: bool> Yuva420pFrame16<'a, BITS, BE> {
     for row in 0..chroma_h {
       let start = row * v_stride as usize;
       for (col, &s) in v[start..start + chroma_w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuva420pFrame16Error::SampleOutOfRange {
             plane: Yuva420pFrame16Plane::V,
@@ -721,7 +721,7 @@ impl<'a, const BITS: u32, const BE: bool> Yuva420pFrame16<'a, BITS, BE> {
     for row in 0..h {
       let start = row * a_stride as usize;
       for (col, &s) in a[start..start + w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuva420pFrame16Error::SampleOutOfRange {
             plane: Yuva420pFrame16Plane::A,

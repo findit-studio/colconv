@@ -688,3 +688,99 @@ fn p012_try_new_checked_accepts_le_encoded_buffer_on_any_host() {
   P012Frame::try_new_checked(&y, &uv, 16, 8, 16, 16)
     .expect("LE-encoded valid P012 must be accepted on both LE and BE hosts");
 }
+
+// ---- BE checked-constructor regressions -------------------------------
+//
+// `try_new_checked` on `*BeFrame` (i.e. `<const BE = true>`) MUST
+// normalize via `u16::from_be` before the bit / range check. Without
+// the BE flag wired into the validator, valid BE samples (e.g. P010
+// white = 0xFFC0 BE-encoded as bytes [0xFF, 0xC0], read host-native
+// as 0xFFC0 on BE host or 0xC0FF on LE host) would falsely fail.
+//
+// These tests build BE-encoded byte buffers so on every host the
+// validator sees the post-`from_be` logical sample.
+
+/// Build a `Vec<u16>` representing the BE-encoded byte layout of
+/// `intended` (i.e. what FFmpeg would emit on the wire for `*BE`
+/// formats). Mirror of [`le_encoded_u16_buf`].
+fn be_encoded_u16_buf(intended: &[u16]) -> std::vec::Vec<u16> {
+  let bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_be_bytes()).collect();
+  bytes
+    .chunks_exact(2)
+    .map(|b| u16::from_ne_bytes([b[0], b[1]]))
+    .collect()
+}
+
+#[test]
+fn p010_be_try_new_checked_accepts_be_encoded_buffer_on_any_host() {
+  // Valid P010 white sample = 0xFFC0 (10 active bits in high 10).
+  // Encoded BE on the wire as bytes [0xFF, 0xC0]; on a LE host these
+  // read back as host-native 0xC0FF (low 6 bits = 0x3F). Without the
+  // BE-aware normalization, the validator would reject every sample.
+  let intended_y = std::vec![0xFFC0u16; 16 * 8];
+  let intended_uv = std::vec![0x8000u16; 16 * 4];
+  let y = be_encoded_u16_buf(&intended_y);
+  let uv = be_encoded_u16_buf(&intended_uv);
+  P010BeFrame::try_new_checked(&y, &uv, 16, 8, 16, 16)
+    .expect("BE-encoded valid P010 must be accepted on both LE and BE hosts");
+}
+
+#[test]
+fn p010_be_try_new_checked_rejects_be_encoded_low_bits_set() {
+  // Logical 0xFFCF after `from_be` normalization has low 4 bits set
+  // (low 6-bit mask = 0x000F & 0x3F = 0x0F). The validator must
+  // surface this as `SampleLowBitsSet` even on a LE host where the
+  // raw u16 reads as 0xCFFF before normalization.
+  let mut intended_y = std::vec![0xFFC0u16; 16 * 8];
+  intended_y[3 * 16 + 5] = 0xFFCF;
+  let intended_uv = std::vec![0x8000u16; 16 * 4];
+  let y = be_encoded_u16_buf(&intended_y);
+  let uv = be_encoded_u16_buf(&intended_uv);
+  let e = P010BeFrame::try_new_checked(&y, &uv, 16, 8, 16, 16).unwrap_err();
+  assert!(matches!(
+    e,
+    PnFrameError::SampleLowBitsSet {
+      plane: PnFramePlane::Y,
+      value: 0xFFCF,
+      low_bits: 6,
+      ..
+    }
+  ));
+}
+
+#[test]
+fn yuv420p10_be_try_new_checked_accepts_be_encoded_buffer_on_any_host() {
+  // 10-bit-low-packed white = 1023; BE-encoded on the wire so on a LE
+  // host the raw u16 reads as 0xFF03. The validator must `from_be`
+  // back to 1023 before the range check.
+  let intended_y = std::vec![1023u16; 16 * 8];
+  let intended_uv = std::vec![512u16; 8 * 4];
+  let y = be_encoded_u16_buf(&intended_y);
+  let u = be_encoded_u16_buf(&intended_uv);
+  let v = be_encoded_u16_buf(&intended_uv);
+  Yuv420p10BeFrame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8)
+    .expect("BE-encoded valid yuv420p10be must be accepted on both LE and BE hosts");
+}
+
+#[test]
+fn yuv420p10_be_try_new_checked_rejects_be_encoded_out_of_range() {
+  // Logical 1024 (just above 10-bit max) BE-encoded — must be rejected
+  // on every host.
+  let intended_y = std::vec![0u16; 16 * 8];
+  let mut intended_u = std::vec![512u16; 8 * 4];
+  intended_u[2 * 8 + 3] = 1024;
+  let intended_v = std::vec![512u16; 8 * 4];
+  let y = be_encoded_u16_buf(&intended_y);
+  let u = be_encoded_u16_buf(&intended_u);
+  let v = be_encoded_u16_buf(&intended_v);
+  let e = Yuv420p10BeFrame::try_new_checked(&y, &u, &v, 16, 8, 16, 8, 8).unwrap_err();
+  assert!(matches!(
+    e,
+    Yuv420pFrame16Error::SampleOutOfRange {
+      plane: Yuv420pFrame16Plane::U,
+      value: 1024,
+      max_valid: 1023,
+      ..
+    }
+  ));
+}
