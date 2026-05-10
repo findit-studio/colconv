@@ -74,8 +74,8 @@ pub(crate) fn yuv_420p_n_to_rgba_row<const BITS: u32, const BE: bool>(
 /// contract as [`yuv_420p_n_to_rgba_row`] for R/G/B; the per-pixel
 /// alpha byte is sourced from `a_src` (depth-converted by
 /// `BITS - 8` shift) instead of being constant `0xFF`. Used by the
-/// YUVA 4:2:0 source family ([`crate::yuv::Yuva420p9`] /
-/// [`crate::yuv::Yuva420p10`] in tranche 8b‑2a).
+/// YUVA 4:2:0 source family ([`crate::source::Yuva420p9`] /
+/// [`crate::source::Yuva420p10`] in tranche 8b‑2a).
 ///
 /// Thin wrapper over [`yuv_420p_n_to_rgb_or_rgba_row`] with
 /// `ALPHA = true, ALPHA_SRC = true`.
@@ -307,7 +307,7 @@ pub(crate) fn yuv_420p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
 /// element is sourced from `a_src` (already at the source's native
 /// bit depth) instead of being the opaque maximum
 /// `(1 << BITS) - 1`. Used by the YUVA 4:2:0 source family
-/// ([`crate::yuv::Yuva420p9`] / [`crate::yuv::Yuva420p10`] in
+/// ([`crate::source::Yuva420p9`] / [`crate::source::Yuva420p10`] in
 /// tranche 8b‑2a).
 ///
 /// Thin wrapper over [`yuv_420p_n_to_rgb_or_rgba_u16_row`] with
@@ -507,7 +507,7 @@ pub(crate) fn yuv_444p_n_to_rgba_row<const BITS: u32, const BE: bool>(
 /// numerical contract as [`yuv_444p_n_to_rgba_row`] for R/G/B; the
 /// per-pixel alpha byte is sourced from `a_src` (depth-converted by
 /// `BITS - 8` shift) instead of being constant `0xFF`. Used by the
-/// YUVA source family ([`crate::yuv::Yuva444p10`] in tranche 8b‑1a).
+/// YUVA source family ([`crate::source::Yuva444p10`] in tranche 8b‑1a).
 ///
 /// Thin wrapper over [`yuv_444p_n_to_rgb_or_rgba_row`] with
 /// `ALPHA = true, ALPHA_SRC = true`.
@@ -688,7 +688,7 @@ pub(crate) fn yuv_444p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
 /// for R/G/B; the per-pixel alpha element is sourced from `a_src`
 /// (already at the source's native bit depth) instead of being the
 /// opaque maximum `(1 << BITS) - 1`. Used by the YUVA source family
-/// ([`crate::yuv::Yuva444p10`] in tranche 8b‑1a).
+/// ([`crate::source::Yuva444p10`] in tranche 8b‑1a).
 ///
 /// Thin wrapper over [`yuv_444p_n_to_rgb_or_rgba_u16_row`] with
 /// `ALPHA = true, ALPHA_SRC = true`.

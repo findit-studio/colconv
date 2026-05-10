@@ -2,10 +2,15 @@
 //! crate.
 //!
 //! Currently ships [`MixedSinker`](mixed::MixedSinker), which writes
-//! any subset of `{RGB, Luma, HSV}` into caller-provided buffers.
-//! It has per-format `PixelSink` impls for all eight shipped YUV
-//! source formats (see [`crate::yuv`] for the list). Narrow newtype
-//! shortcuts (luma-only, RGB-only, HSV-only) are a follow-up.
+//! any subset of `{RGB, RGBA, Luma, LumaU16, HSV, RGB-u16, RGBA-u16,
+//! RGB-f32, RGB-f16, XYZ-f32}` into caller-provided buffers. It has
+//! per-format `PixelSink` impls for every shipped source format —
+//! YUV planar / semi-planar / packed (8-bit, 9-16-bit, P010/P210/P410
+//! families), packed RGB / RGBA / GBR planar (8-bit through f32),
+//! Gray / Ya / Mono, packed YUV-α (AYUV64 / VUYA / VUYX), and DCP
+//! XYZ12. See [`crate::source`] for the canonical format list.
+//! Narrow newtype shortcuts (luma-only, RGB-only, HSV-only) are a
+//! follow-up.
 //!
 //! `MixedSinker` keeps a lazily‑grown `Vec<u8>` scratch buffer for
 //! the HSV‑without‑RGB path, so it is only compiled under the `std`

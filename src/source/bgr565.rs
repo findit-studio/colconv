@@ -36,7 +36,7 @@ walker! {
               | 10:5   | G (6 bits, range [0, 63]) |\n\
               | 4:0    | R (5 bits, range [0, 31]) |\n\
               \n\
-              Channel positions reversed vs [`crate::yuv::Rgb565`].\n\
+              Channel positions reversed vs [`crate::source::Rgb565`].\n\
               No source alpha; RGBA outputs force α=`0xFF` / `0xFFFF`.",
     walker_doc: "Walks a [`Bgr565Frame`] row by row into the sink.",
   }

@@ -45,7 +45,7 @@ use crate::{
     v410_to_luma_u16_row, v410_to_rgb_row, v410_to_rgb_u16_row, v410_to_rgba_row,
     v410_to_rgba_u16_row,
   },
-  yuv::{V410, V410Row, V410Sink},
+  source::{V410, V410Row, V410Sink},
 };
 
 impl<'a, const BE: bool> MixedSinker<'a, V410<BE>> {

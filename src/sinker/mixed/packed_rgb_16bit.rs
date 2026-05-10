@@ -43,7 +43,7 @@ use crate::{
     rgb48_to_rgba_u16_row_endian, rgba64_to_rgb_row_endian, rgba64_to_rgb_u16_row_endian,
     rgba64_to_rgba_row_endian, rgba64_to_rgba_u16_row_endian,
   },
-  yuv::{
+  source::{
     Bgr48, Bgr48Row, Bgr48Sink, Bgra64, Bgra64Row, Bgra64Sink, Rgb48, Rgb48Row, Rgb48Sink, Rgba64,
     Rgba64Row, Rgba64Sink,
   },

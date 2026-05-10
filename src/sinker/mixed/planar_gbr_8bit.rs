@@ -35,7 +35,7 @@ use crate::{
     expand_rgb_to_rgba_row, gbr_to_rgb_row, gbr_to_rgba_opaque_row, gbra_to_rgba_row,
     rgb_to_hsv_row, rgb_to_luma_row, rgb_to_luma_u16_row,
   },
-  yuv::{Gbrap, GbrapRow, GbrapSink, Gbrp, GbrpRow, GbrpSink},
+  source::{Gbrap, GbrapRow, GbrapSink, Gbrp, GbrpRow, GbrpSink},
 };
 
 // ---- Gbrp impl ----------------------------------------------------------

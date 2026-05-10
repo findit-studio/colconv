@@ -28,7 +28,7 @@ use crate::{
     rgb_to_hsv_row, rgb_to_luma_row, rgb_to_luma_u16_row, rgbf32_to_rgb_f32_row, rgbf32_to_rgb_row,
     rgbf32_to_rgb_u16_row, rgbf32_to_rgba_row, rgbf32_to_rgba_u16_row,
   },
-  yuv::{Rgbf32, Rgbf32Row, Rgbf32Sink},
+  source::{Rgbf32, Rgbf32Row, Rgbf32Sink},
 };
 
 // ---- Rgbf32 impl -------------------------------------------------------

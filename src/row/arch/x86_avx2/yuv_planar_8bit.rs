@@ -629,7 +629,7 @@ pub(crate) unsafe fn yuv_444_to_rgba_row(
 /// AVX2 YUVA 4:4:4 → packed **RGBA** with source alpha. R/G/B are
 /// byte-identical to [`yuv_444_to_rgb_row`]; the per-pixel alpha byte
 /// is sourced from `a_src` (8-bit, no shift needed) instead of being
-/// constant `0xFF`. Used by [`crate::yuv::Yuva444p`].
+/// constant `0xFF`. Used by [`crate::source::Yuva444p`].
 ///
 /// Thin wrapper over [`yuv_444_to_rgb_or_rgba_row`] with
 /// `ALPHA = true, ALPHA_SRC = true`.

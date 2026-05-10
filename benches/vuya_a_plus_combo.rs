@@ -32,7 +32,7 @@ use colconv::{
   frame::VuyaFrame,
   row::{vuya_to_rgb_row, vuya_to_rgba_row},
   sinker::MixedSinker,
-  yuv::{Vuya, vuya_to},
+  source::{Vuya, vuya_to},
 };
 
 /// A small but >1 row count so per-frame `MixedSinker` setup cost is amortized

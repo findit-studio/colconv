@@ -45,7 +45,7 @@ use crate::{
     gbrpf32_to_rgb_u16_row, gbrpf32_to_rgba_f16_row, gbrpf32_to_rgba_f32_row, gbrpf32_to_rgba_row,
     gbrpf32_to_rgba_u16_row, scalar::alpha_extract::copy_alpha_plane_f32_to_u8,
   },
-  yuv::{Gbrapf32, Gbrapf32Row, Gbrapf32Sink, Gbrpf32, Gbrpf32Row, Gbrpf32Sink},
+  source::{Gbrapf32, Gbrapf32Row, Gbrapf32Sink, Gbrpf32, Gbrpf32Row, Gbrpf32Sink},
 };
 
 // Float-planar GBR sources are already component RGB (no chroma matrix).

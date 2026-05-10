@@ -59,7 +59,7 @@ use crate::{
     bgra_to_rgb_row, bgra_to_rgba_row, bgrx_to_rgba_row, expand_rgb_to_rgba_row, rgb_to_hsv_row,
     rgb_to_luma_row, rgba_to_rgb_row, rgbx_to_rgba_row, xbgr_to_rgba_row, xrgb_to_rgba_row,
   },
-  yuv::{
+  source::{
     Abgr, AbgrRow, AbgrSink, Argb, ArgbRow, ArgbSink, Bgr24, Bgr24Row, Bgr24Sink, Bgra, BgraRow,
     BgraSink, Bgrx, BgrxRow, BgrxSink, Rgb24, Rgb24Row, Rgb24Sink, Rgba, RgbaRow, RgbaSink, Rgbx,
     RgbxRow, RgbxSink, Xbgr, XbgrRow, XbgrSink, Xrgb, XrgbRow, XrgbSink,

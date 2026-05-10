@@ -1,6 +1,6 @@
 //! Walker spec for `Gray10` (FFmpeg `gray10{le,be}`).
 //!
-//! The marker carries `<const BE: bool = false>`; see [`Gray9`](crate::yuv::Gray9)
+//! The marker carries `<const BE: bool = false>`; see [`Gray9`](crate::source::Gray9)
 //! for the full BE-flag contract.
 
 use crate::frame::{Gray10Frame, GrayNFrame};

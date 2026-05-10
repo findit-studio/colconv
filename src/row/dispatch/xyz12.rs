@@ -593,8 +593,8 @@ pub fn xyz12_to_rgba_f16_row<const BE: bool>(
 /// Inputs the staged `u8` packed RGB row produced by
 /// [`xyz12_to_rgb_row`] and emits a single-channel `u8` luma plane
 /// using the gamut-derived Q15 weights from
-/// [`crate::yuv::luma_weights_q15_for_gamut`] (carried on
-/// [`crate::yuv::Xyz12Row::luma_q15`]).
+/// [`crate::source::luma_weights_q15_for_gamut`] (carried on
+/// [`crate::source::Xyz12Row::luma_q15`]).
 ///
 /// **No SIMD** path: per-pixel cost (one Q15 dot product) is dwarfed
 /// by the upstream 6× scalar `powf` work in the matmul + OETF stages.

@@ -52,7 +52,7 @@ walker! {
       "| 19:10  | G (10 bits) |\n",
       "| 9:0    | R (10 bits) |\n",
       "\n",
-      "Channel positions reversed relative to [`crate::yuv::X2Rgb10`].\n",
+      "Channel positions reversed relative to [`crate::source::X2Rgb10`].\n",
       "Sink authors: each pixel is one `u32` reconstructed from 4\n",
       "consecutive bytes of the slice in the BE-or-LE order set by the\n",
       "Frame. Each 10-bit channel ranges `[0, 1023]`.",

@@ -34,7 +34,7 @@ use crate::{
     expand_rgb_to_rgba_row, rgb_to_hsv_row, uyyvyy411_to_luma_row, uyyvyy411_to_luma_u16_row,
     uyyvyy411_to_rgb_row, uyyvyy411_to_rgba_row,
   },
-  yuv::{Uyyvyy411, Uyyvyy411Row, Uyyvyy411Sink},
+  source::{Uyyvyy411, Uyyvyy411Row, Uyyvyy411Sink},
 };
 
 impl<'a> MixedSinker<'a, Uyyvyy411> {

@@ -1,4 +1,4 @@
-//! Packed YUV 4:4:4 10-bit `V30X` source — sibling of [`crate::yuv::V410`]
+//! Packed YUV 4:4:4 10-bit `V30X` source — sibling of [`crate::source::V410`]
 //! with opposite padding position (FFmpeg `AV_PIX_FMT_V30XLE`). Each row is a
 //! sequence of u32 words; one word per pixel. The 10-bit V / Y / U
 //! channels are bit-packed per word with 2 bits of padding at the LSB (see
@@ -51,7 +51,7 @@ walker! {
       "(msb) 10V | 10Y | 10U | 2X (lsb)\n",
       "```\n",
       "\n",
-      "Sibling of [`crate::yuv::V410`] with the 2-bit padding shifted\n",
+      "Sibling of [`crate::source::V410`] with the 2-bit padding shifted\n",
       "from the MSB to the LSB.\n",
       "\n",
       "Full range: `[0, 1023]` (10-bit). Limited range Y: `[64, 940]`,\n",

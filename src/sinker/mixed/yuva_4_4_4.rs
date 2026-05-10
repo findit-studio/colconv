@@ -1,8 +1,8 @@
 //! Sinker impls for source-side YUVA 4:4:4 formats —
-//! [`Yuva444p9`](crate::yuv::Yuva444p9),
-//! [`Yuva444p10`](crate::yuv::Yuva444p10),
-//! [`Yuva444p12`](crate::yuv::Yuva444p12), and
-//! [`Yuva444p14`](crate::yuv::Yuva444p14). The 16-bit sibling
+//! [`Yuva444p9`](crate::source::Yuva444p9),
+//! [`Yuva444p10`](crate::source::Yuva444p10),
+//! [`Yuva444p12`](crate::source::Yuva444p12), and
+//! [`Yuva444p14`](crate::source::Yuva444p14). The 16-bit sibling
 //! (`Yuva444p16`) needs its own SIMD work and lands in Ship 8b‑5.
 //!
 //! For each format:
@@ -30,7 +30,7 @@ use super::{
   MixedSinker, MixedSinkerError, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch,
   rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
-use crate::{PixelSink, row::*, yuv::*};
+use crate::{PixelSink, row::*, source::*};
 
 // ---- Yuva444p impl (8-bit) ---------------------------------------------
 

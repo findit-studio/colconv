@@ -1,5 +1,5 @@
 use super::*;
-use crate::{ColorMatrix, frame::*, raw::*, yuv::*};
+use crate::{ColorMatrix, frame::*, raw::*, source::*};
 
 // Per-format-family submodules. Each houses tests + format-local
 // helpers (`solid_*_frame` builders); cross-cutting helpers

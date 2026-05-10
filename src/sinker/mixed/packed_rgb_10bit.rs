@@ -36,7 +36,7 @@ use crate::{
     x2bgr10_to_rgba_row_endian, x2rgb10_to_rgb_row_endian, x2rgb10_to_rgb_u16_row_endian,
     x2rgb10_to_rgba_row_endian,
   },
-  yuv::{X2Bgr10, X2Bgr10Row, X2Bgr10Sink, X2Rgb10, X2Rgb10Row, X2Rgb10Sink},
+  source::{X2Bgr10, X2Bgr10Row, X2Bgr10Sink, X2Rgb10, X2Rgb10Row, X2Rgb10Sink},
 };
 
 // ---- X2Rgb10 -----------------------------------------------------------
