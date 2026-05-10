@@ -31,6 +31,7 @@ walker! {
     row: Bgra64Row,
     sink: Bgra64Sink,
     walker: bgra64_to,
+    walker_endian: bgra64_to_endian,
     buf_field: bgra64,
     elem_type: u16,
     row_elems: |w| w * 4,

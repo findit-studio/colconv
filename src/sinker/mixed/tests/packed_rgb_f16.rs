@@ -432,7 +432,7 @@ fn rgbf16_le_be_roundtrip_byte_identical() {
     .with_simd(false)
     .with_rgb_f16(&mut out_be)
     .unwrap();
-  rgbf16_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+  rgbf16_to_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
 
   // Both outputs must equal the intended host-native values bit-for-bit.
   assert_eq!(

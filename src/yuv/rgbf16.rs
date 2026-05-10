@@ -41,6 +41,7 @@ walker! {
     row: Rgbf16Row,
     sink: Rgbf16Sink,
     walker: rgbf16_to,
+    walker_endian: rgbf16_to_endian,
     buf_field: rgb,
     elem_type: half::f16,
     row_elems: |w| w * 3,
@@ -94,5 +95,24 @@ mod tests {
     let mut sink = CountingSink { rows_seen: 0 };
     walks_le(&frame, &mut sink).unwrap();
     assert_eq!(sink.rows_seen, 4);
+  }
+
+  // Compile-pass regression for the codex finding (PR #105 review). Switching
+  // from `walker!(packed)` to `walker!(packed_be)` would otherwise change the
+  // public `rgbf16_to` signature from one generic param (`S`) to two
+  // (`S, const BE: bool`), which breaks downstream callers using the previous
+  // explicit sink spelling `rgbf16_to::<MySink>(...)`. Function-position
+  // const-generic defaults aren't allowed, so the macro emits an LE-only
+  // wrapper preserving the original signature.
+  #[test]
+  fn rgbf16_to_explicit_turbofish_one_generic_compiles() {
+    fn _check<S: Rgbf16Sink>() {
+      let _: fn(
+        &crate::frame::Rgbf16LeFrame<'_>,
+        bool,
+        ColorMatrix,
+        &mut S,
+      ) -> Result<(), S::Error> = rgbf16_to::<S>;
+    }
   }
 }

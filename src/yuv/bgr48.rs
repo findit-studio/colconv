@@ -31,6 +31,7 @@ walker! {
     row: Bgr48Row,
     sink: Bgr48Sink,
     walker: bgr48_to,
+    walker_endian: bgr48_to_endian,
     buf_field: bgr48,
     elem_type: u16,
     row_elems: |w| w * 3,
