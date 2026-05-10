@@ -7,7 +7,7 @@
 //!
 //! The marker carries `<const BE: bool = false>`: `Gbrpf32`
 //! (= `Gbrpf32<false>`) is the LE source; `Gbrpf32<true>` is the BE source.
-//! The walker [`gbrpf32_to::<BE>`] propagates `BE` from
+//! The walker [`gbrpf32_to_endian`] propagates `BE` from
 //! [`Gbrpf32Frame<'_, BE>`] into the sinker dispatch.
 
 use crate::{

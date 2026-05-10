@@ -4,9 +4,9 @@
 //! Samples are stored in the low 9 bits of each `u16` element.
 //!
 //! The marker carries `<const BE: bool = false>`: `Gbrp9` (= `Gbrp9<false>`)
-//! is the LE source; `Gbrp9<true>` is the BE source. The walker
-//! [`gbrp9_to::<BE>`] propagates `BE` from [`Gbrp9Frame<'_, BE>`] into the
-//! sinker dispatch.
+//! is the LE source; `Gbrp9<true>` is the BE source. The endian-aware walker
+//! [`gbrp9_to_endian`] propagates `BE` from [`Gbrp9Frame<'_, BE>`] into the
+//! sinker dispatch, while [`gbrp9_to`] is the LE-only wrapper.
 
 use crate::frame::{Gbrp9Frame, GbrpHighBitFrame};
 

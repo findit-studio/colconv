@@ -1806,16 +1806,24 @@ fn as_be_f32_buf(host: &[f32]) -> std::vec::Vec<f32> {
 fn as_le_f16_buf(host: &[half::f16]) -> std::vec::Vec<half::f16> {
   host
     .iter()
-    .map(|v| half::f16::from_le_bytes(v.to_le_bytes()))
+    .map(|v| {
+      let bits = v.to_bits();
+      let native_bits = u16::from_ne_bytes(bits.to_le_bytes());
+      half::f16::from_bits(native_bits)
+    })
     .collect()
 }
 
 fn as_be_f16_buf(host: &[half::f16]) -> std::vec::Vec<half::f16> {
-  // Encode bits as BE, reinterpret as a host-native f16 (so the resulting
-  // `&[half::f16]` slice has the BE byte pattern when read through bytes).
+  // Encode bits as BE, then reinterpret those bytes as a host-native f16 so
+  // the resulting `&[half::f16]` slice has the BE byte pattern in memory.
   host
     .iter()
-    .map(|v| half::f16::from_le_bytes(v.to_be_bytes()))
+    .map(|v| {
+      let bits = v.to_bits();
+      let native_bits = u16::from_ne_bytes(bits.to_be_bytes());
+      half::f16::from_bits(native_bits)
+    })
     .collect()
 }
 
