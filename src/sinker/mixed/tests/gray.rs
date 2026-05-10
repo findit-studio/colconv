@@ -1024,3 +1024,289 @@ fn ya16_width_128_and_130_smoke() {
     assert_eq!(&rgba[0..4], &[0, 0, 0, 0xFF], "w={w} px0");
   }
 }
+
+// ====================================================================================
+// Phase 4 — Frame BE flag, Tier 11. LE+BE round-trip parity tests.
+//
+// Pattern (per format):
+//   1. Build a host-native `intended` plane.
+//   2. Encode the plane as LE bytes → `pix_le`. Build `*LeFrame` +
+//      `MixedSinker<Marker<false>>`. Walk; collect output A.
+//   3. Encode the same plane as BE bytes → `pix_be`. Build `*BeFrame` +
+//      `MixedSinker<Marker<true>>`. Walk; collect output B.
+//   4. Assert `A == B` byte-identical.
+//
+// Output A and B must be byte-identical because the kernel byte-swaps under
+// the hood — the same logical samples should yield the same RGBA bytes
+// regardless of input byte order.
+// ====================================================================================
+
+use crate::{
+  frame::{
+    Gray9BeFrame, Gray9LeFrame, Gray10BeFrame, Gray10LeFrame, Gray12BeFrame, Gray12LeFrame,
+    Gray14BeFrame, Gray14LeFrame, Gray16BeFrame, Gray16LeFrame, Grayf32BeFrame, Grayf32LeFrame,
+    Ya16BeFrame, Ya16LeFrame,
+  },
+  yuv::{Gray9, Gray10, Gray12, Gray14, Gray16, Grayf32, Ya16},
+};
+
+/// Re-encode a host-native u16 slice as **BE-encoded** byte storage. Used to
+/// build `*BeFrame` planes whose bytes are big-endian; the kernel swaps them
+/// back to host-native via `from_be`.
+fn as_be_u16(host: &[u16]) -> std::vec::Vec<u16> {
+  host
+    .iter()
+    .map(|v| u16::from_ne_bytes(v.to_be_bytes()))
+    .collect()
+}
+
+/// Re-encode a host-native f32 slice as **BE-encoded** byte storage.
+fn as_be_f32(host: &[f32]) -> std::vec::Vec<f32> {
+  host
+    .iter()
+    .map(|v| f32::from_bits(u32::from_ne_bytes(v.to_bits().to_be_bytes())))
+    .collect()
+}
+
+#[test]
+fn gray9_le_be_roundtrip_byte_identical() {
+  let intended: std::vec::Vec<u16> = (0..16 * 4).map(|i| ((i * 7) as u16) & 0x01FF).collect();
+  let pix_le = as_le_u16(&intended);
+  let pix_be = as_be_u16(&intended);
+
+  let frame_le = Gray9LeFrame::try_new(&pix_le, 16, 4, 16).unwrap();
+  let mut out_le = std::vec![0u8; 16 * 4 * 4];
+  let mut sink_le = MixedSinker::<Gray9>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le)
+    .unwrap();
+  gray9_to(&frame_le, true, M, &mut sink_le).unwrap();
+
+  let frame_be = Gray9BeFrame::try_new(&pix_be, 16, 4, 16).unwrap();
+  let mut out_be = std::vec![0u8; 16 * 4 * 4];
+  let mut sink_be = MixedSinker::<Gray9<true>>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be)
+    .unwrap();
+  gray9_to(&frame_be, true, M, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le, out_be,
+    "Gray9 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}
+
+#[test]
+fn gray10_le_be_roundtrip_byte_identical() {
+  let intended: std::vec::Vec<u16> = (0..16 * 4).map(|i| ((i * 11) as u16) & 0x03FF).collect();
+  let pix_le = as_le_u16(&intended);
+  let pix_be = as_be_u16(&intended);
+
+  let frame_le = Gray10LeFrame::try_new(&pix_le, 16, 4, 16).unwrap();
+  let mut out_le = std::vec![0u8; 16 * 4 * 4];
+  let mut sink_le = MixedSinker::<Gray10>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le)
+    .unwrap();
+  gray10_to(&frame_le, true, M, &mut sink_le).unwrap();
+
+  let frame_be = Gray10BeFrame::try_new(&pix_be, 16, 4, 16).unwrap();
+  let mut out_be = std::vec![0u8; 16 * 4 * 4];
+  let mut sink_be = MixedSinker::<Gray10<true>>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be)
+    .unwrap();
+  gray10_to(&frame_be, true, M, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le, out_be,
+    "Gray10 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}
+
+#[test]
+fn gray12_le_be_roundtrip_byte_identical() {
+  let intended: std::vec::Vec<u16> = (0..16 * 4).map(|i| ((i * 17) as u16) & 0x0FFF).collect();
+  let pix_le = as_le_u16(&intended);
+  let pix_be = as_be_u16(&intended);
+
+  let frame_le = Gray12LeFrame::try_new(&pix_le, 16, 4, 16).unwrap();
+  let mut out_le = std::vec![0u8; 16 * 4 * 4];
+  let mut sink_le = MixedSinker::<Gray12>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le)
+    .unwrap();
+  gray12_to(&frame_le, true, M, &mut sink_le).unwrap();
+
+  let frame_be = Gray12BeFrame::try_new(&pix_be, 16, 4, 16).unwrap();
+  let mut out_be = std::vec![0u8; 16 * 4 * 4];
+  let mut sink_be = MixedSinker::<Gray12<true>>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be)
+    .unwrap();
+  gray12_to(&frame_be, true, M, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le, out_be,
+    "Gray12 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}
+
+#[test]
+fn gray14_le_be_roundtrip_byte_identical() {
+  let intended: std::vec::Vec<u16> = (0..16 * 4).map(|i| ((i * 23) as u16) & 0x3FFF).collect();
+  let pix_le = as_le_u16(&intended);
+  let pix_be = as_be_u16(&intended);
+
+  let frame_le = Gray14LeFrame::try_new(&pix_le, 16, 4, 16).unwrap();
+  let mut out_le = std::vec![0u8; 16 * 4 * 4];
+  let mut sink_le = MixedSinker::<Gray14>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le)
+    .unwrap();
+  gray14_to(&frame_le, true, M, &mut sink_le).unwrap();
+
+  let frame_be = Gray14BeFrame::try_new(&pix_be, 16, 4, 16).unwrap();
+  let mut out_be = std::vec![0u8; 16 * 4 * 4];
+  let mut sink_be = MixedSinker::<Gray14<true>>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be)
+    .unwrap();
+  gray14_to(&frame_be, true, M, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le, out_be,
+    "Gray14 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}
+
+#[test]
+fn gray16_le_be_roundtrip_byte_identical() {
+  let intended: std::vec::Vec<u16> = (0..16 * 4)
+    .map(|i| match i % 4 {
+      0 => 0x1234,
+      1 => 0xABCD,
+      2 => 0x00FF,
+      _ => 0xFF00,
+    })
+    .collect();
+  let pix_le = as_le_u16(&intended);
+  let pix_be = as_be_u16(&intended);
+
+  // Exercise both u8 RGBA and u16 luma paths.
+  let frame_le = Gray16LeFrame::try_new(&pix_le, 16, 4, 16).unwrap();
+  let mut out_le_rgba = std::vec![0u8; 16 * 4 * 4];
+  let mut out_le_luma_u16 = std::vec![0u16; 16 * 4];
+  let mut sink_le = MixedSinker::<Gray16>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le_rgba)
+    .unwrap()
+    .with_luma_u16(&mut out_le_luma_u16)
+    .unwrap();
+  gray16_to(&frame_le, true, M, &mut sink_le).unwrap();
+
+  let frame_be = Gray16BeFrame::try_new(&pix_be, 16, 4, 16).unwrap();
+  let mut out_be_rgba = std::vec![0u8; 16 * 4 * 4];
+  let mut out_be_luma_u16 = std::vec![0u16; 16 * 4];
+  let mut sink_be = MixedSinker::<Gray16<true>>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be_rgba)
+    .unwrap()
+    .with_luma_u16(&mut out_be_luma_u16)
+    .unwrap();
+  gray16_to(&frame_be, true, M, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le_rgba, out_be_rgba,
+    "Gray16 RGBA u8 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+  assert_eq!(
+    out_le_luma_u16, out_be_luma_u16,
+    "Gray16 luma u16 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}
+
+#[test]
+fn grayf32_le_be_roundtrip_byte_identical() {
+  // Mix of values to surface any byte-swap regression. Includes typical
+  // luma values (0.0, 0.25, 0.5, 0.75, 1.0) plus HDR (>1) and sub-zero.
+  let intended: std::vec::Vec<f32> = (0..16 * 4)
+    .map(|i| match i % 5 {
+      0 => 0.0f32,
+      1 => 0.25,
+      2 => 0.5,
+      3 => 0.75,
+      _ => 1.0,
+    })
+    .collect();
+  let pix_le = as_le_f32(&intended);
+  let pix_be = as_be_f32(&intended);
+
+  let frame_le = Grayf32LeFrame::try_new(&pix_le, 16, 4, 16).unwrap();
+  let mut out_le = std::vec![0u8; 16 * 4 * 4];
+  let mut sink_le = MixedSinker::<Grayf32>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le)
+    .unwrap();
+  grayf32_to(&frame_le, true, M, &mut sink_le).unwrap();
+
+  let frame_be = Grayf32BeFrame::try_new(&pix_be, 16, 4, 16).unwrap();
+  let mut out_be = std::vec![0u8; 16 * 4 * 4];
+  let mut sink_be = MixedSinker::<Grayf32<true>>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be)
+    .unwrap();
+  grayf32_to(&frame_be, true, M, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le, out_be,
+    "Grayf32 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}
+
+#[test]
+fn ya16_le_be_roundtrip_byte_identical() {
+  // 16 px × 4 rows × 2 u16 (Y,A) per pixel = 128 u16 elements.
+  let intended: std::vec::Vec<u16> = (0..16 * 4 * 2)
+    .map(|i| match i % 4 {
+      0 => 0x1234, // Y
+      1 => 0xABCD, // A
+      2 => 0x00FF, // Y
+      _ => 0xFF00, // A
+    })
+    .collect();
+  let pix_le = as_le_u16(&intended);
+  let pix_be = as_be_u16(&intended);
+
+  // Exercise both u8 RGBA (with α copy) and u16 RGBA (with α copy) paths.
+  let frame_le = Ya16LeFrame::try_new(&pix_le, 16, 4, 16 * 2).unwrap();
+  let mut out_le_rgba = std::vec![0u8; 16 * 4 * 4];
+  let mut out_le_rgba_u16 = std::vec![0u16; 16 * 4 * 4];
+  let mut sink_le = MixedSinker::<Ya16>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le_rgba)
+    .unwrap()
+    .with_rgba_u16(&mut out_le_rgba_u16)
+    .unwrap();
+  ya16_to(&frame_le, true, M, &mut sink_le).unwrap();
+
+  let frame_be = Ya16BeFrame::try_new(&pix_be, 16, 4, 16 * 2).unwrap();
+  let mut out_be_rgba = std::vec![0u8; 16 * 4 * 4];
+  let mut out_be_rgba_u16 = std::vec![0u16; 16 * 4 * 4];
+  let mut sink_be = MixedSinker::<Ya16<true>>::new(16, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be_rgba)
+    .unwrap()
+    .with_rgba_u16(&mut out_be_rgba_u16)
+    .unwrap();
+  ya16_to(&frame_be, true, M, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le_rgba, out_be_rgba,
+    "Ya16 RGBA u8 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+  assert_eq!(
+    out_le_rgba_u16, out_be_rgba_u16,
+    "Ya16 RGBA u16 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}
