@@ -38,6 +38,7 @@ walker! {
     row: Y210Row,
     sink: Y210Sink,
     walker: y210_to,
+    walker_endian: y210_to_endian,
     buf_field: packed,
     elem_type: u16,
     row_elems: |w| w * 2,
@@ -108,5 +109,22 @@ mod tests {
     assert_eq!(sink.rows_seen, 4);
     assert_eq!(sink.last_width, 8);
     assert_eq!(sink.last_row_idx, 3);
+  }
+
+  // Compile-pass regression for the codex finding (PR #105 review,
+  // `packed_be_y2xx` arm). Switching the Y2xx walker macro from a single
+  // `walker:` field to the `packed_be_y2xx` arm without an LE wrapper would
+  // change the public `y210_to` signature from one generic param (`S`) to
+  // two (`S, const BE: bool`), breaking downstream callers using the
+  // explicit sink spelling `y210_to::<MySink>(...)`. Function-position
+  // const-generic defaults aren't allowed, so the macro emits an LE-only
+  // wrapper preserving the original signature; this test pins it.
+  #[test]
+  fn y210_to_explicit_turbofish_one_generic_compiles() {
+    #[allow(clippy::type_complexity)]
+    fn _check<S: Y210Sink>() {
+      let _: fn(&crate::frame::Y210LeFrame<'_>, bool, ColorMatrix, &mut S) -> Result<(), S::Error> =
+        y210_to::<S>;
+    }
   }
 }

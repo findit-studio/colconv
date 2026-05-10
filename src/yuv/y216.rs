@@ -36,6 +36,7 @@ walker! {
     row: Y216Row,
     sink: Y216Sink,
     walker: y216_to,
+    walker_endian: y216_to_endian,
     buf_field: packed,
     elem_type: u16,
     row_elems: |w| w * 2,
@@ -106,5 +107,18 @@ mod tests {
     assert_eq!(sink.rows_seen, 4);
     assert_eq!(sink.last_width, 8);
     assert_eq!(sink.last_row_idx, 3);
+  }
+
+  // Compile-pass regression for the codex finding (PR #105 review,
+  // `packed_be_y2xx` arm). See `y210::tests` for full rationale: the LE-only
+  // wrapper preserves the pre-Phase-4 single-generic public signature so
+  // explicit-turbofish callers like `y216_to::<MySink>(...)` keep compiling.
+  #[test]
+  fn y216_to_explicit_turbofish_one_generic_compiles() {
+    #[allow(clippy::type_complexity)]
+    fn _check<S: Y216Sink>() {
+      let _: fn(&crate::frame::Y216LeFrame<'_>, bool, ColorMatrix, &mut S) -> Result<(), S::Error> =
+        y216_to::<S>;
+    }
   }
 }
