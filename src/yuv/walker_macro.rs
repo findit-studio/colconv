@@ -167,6 +167,18 @@ macro_rules! walker {
   // bytes; the kernel monomorphization picks up `BE` from the sinker type.
   //
   // Used by Tier 8 trial: Rgb48, Bgr48, Rgba64, Bgra64, X2Rgb10, X2Bgr10.
+  //
+  // NOTE: The Y2xx family (Y210/Y212/Y216) is intentionally handled by a
+  // separate `packed_be_y2xx` arm below rather than reusing this arm. The
+  // axis of difference is the *frame type's const-generic shape*: this arm
+  // emits `&$frame<'_, BE>` (one const param), while the Y2xx frame is
+  // `Y2xxFrame<'a, BITS, BE>` (two const params, requiring the BITS literal
+  // to be threaded through the macro spec). A unified arm would either need
+  // an awkward optional `bits:` metavariable conditionally injected into the
+  // type spelling, or a `frame_ty: $ty` capture that requires every existing
+  // caller of this arm to migrate from the `frame: $ident` shorthand.
+  // Neither buys much over keeping the two arms parallel, so we accept the
+  // duplication. See the symmetric note on `packed_be_y2xx` below.
   (
     packed_be {
       $(#[$marker_meta:meta])*
@@ -290,6 +302,15 @@ macro_rules! walker {
   //
   // Used by Tier 4: Y210, Y212, Y216 (each pinning a different BITS
   // literal).
+  //
+  // NOTE: This arm is kept separate from `packed_be` rather than unified
+  // for the reason called out at the head of the `packed_be` arm: the
+  // const-generic shape of the frame type (1 vs 2 const params) is the
+  // axis of difference, and folding both into one arm would need either a
+  // conditional `bits:` metavariable injected into the type spelling or a
+  // breaking migration of every existing `packed_be` caller from the
+  // `frame: $ident` shorthand to a full `frame_ty: $ty` capture. Two
+  // ~80-line arms with a clearly named distinction is the cleaner trade.
   (
     packed_be_y2xx {
       $(#[$marker_meta:meta])*

@@ -5,7 +5,8 @@
 //!
 //! The marker carries `<const BE: bool = false>`: `Y216` (= `Y216<false>`)
 //! is the LE source; `Y216<true>` is the BE source. The walker
-//! [`y216_to::<BE>`] propagates `BE` from [`Y216Frame<'_, BE>`] into the
+//! [`y216_to::<BE>`] propagates `BE` from
+//! [`Y2xxFrame<'_, 16, BE>`](crate::frame::Y2xxFrame) into the
 //! sinker dispatch.
 //!
 //! Outputs are produced via:
@@ -55,13 +56,14 @@ walker! {
       "Full range Y: `[0, 65535]` (16-bit). Limited range Y: `[4096,\n",
       "60160]`, limited range chroma: `[4096, 61440]`.\n",
       "\n",
-      "Endianness is recorded on the parent [`Y216Frame<'_, BE>`] / sinker,\n",
+      "Endianness is recorded on the parent \
+       [`Y2xxFrame<'_, 16, BE>`](crate::frame::Y2xxFrame) / sinker,\n",
       "not on the Row itself — the kernel receives `BE` as the runtime\n",
       "`big_endian` argument from the sinker dispatch.",
     ),
-    walker_doc: "Walks a [`Y216Frame<'_, BE>`] row by row into the sink. \
-                 Propagates `<const BE: bool>` from the frame into \
-                 [`Y216Sink<BE>`].",
+    walker_doc: "Walks a [`Y2xxFrame<'_, 16, BE>`](crate::frame::Y2xxFrame) row \
+                 by row into the sink. Propagates `<const BE: bool>` from the \
+                 frame into [`Y216Sink<BE>`].",
   }
 }
 
