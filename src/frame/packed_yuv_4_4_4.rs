@@ -447,11 +447,24 @@ pub enum Xv36FrameError {
     /// Configured height.
     rows: u32,
   },
-  /// `try_new_checked` only: a sample's low 4 bits are non-zero.
-  /// Diagnoses callers feeding low-bit-packed data (e.g.
-  /// `yuv444p12le` mistakenly handed to an XV36 path).
-  #[error("Xv36Frame: sample with non-zero low 4 bits found; expected MSB-aligned data")]
-  SampleLowBitsSet,
+  /// `try_new_checked` only: a sample's low 4 bits are non-zero
+  /// after normalizing the byte-storage `u16` to the logical sample
+  /// value (`u16::from_be` for `Xv36BeFrame`, `u16::from_le` for
+  /// `Xv36LeFrame`). Diagnoses callers feeding low-bit-packed data
+  /// (e.g. `yuv444p12le` mistakenly handed to an XV36 path).
+  ///
+  /// `value` is the **logical** sample (post-normalization) so the
+  /// reported nibble is comparable across hosts and BE/LE flags.
+  #[error(
+    "Xv36Frame: sample {value:#06x} at element {index} has non-zero low 4 bits (expected MSB-aligned XV36 data)"
+  )]
+  SampleLowBitsSet {
+    /// Element index (in `u16` slots) within the packed plane.
+    index: usize,
+    /// Offending sample value, normalized to host-native via
+    /// `u16::from_be`/`u16::from_le` per the `BE` flag.
+    value: u16,
+  },
 }
 
 impl<'a, const BE: bool> Xv36Frame<'a, BE> {
@@ -502,6 +515,19 @@ impl<'a, const BE: bool> Xv36Frame<'a, BE> {
   /// Like [`Self::try_new`] but additionally rejects samples whose
   /// low 4 bits are non-zero. Validates the MSB-alignment invariant
   /// (low 4 bits zero per the XV36 encoding).
+  ///
+  /// Per the BE/LE byte-storage contract documented on the type,
+  /// each `u16` slot is normalized via `u16::from_be` (when
+  /// `BE = true`) or `u16::from_le` (when `BE = false`) before the
+  /// low-nibble check, so the test operates on the intended logical
+  /// sample value on every host. Without this normalization a valid
+  /// `Xv36BeFrame` sample such as `0xABC0` (BE bytes `[0xAB, 0xC0]`)
+  /// reads as host-native `0xC0AB` on a little-endian host and the
+  /// validator would falsely reject every row; conversely, true low-
+  /// bit-set BE samples could be judged against the wrong nibble.
+  /// Mirrors the `PnFrame::try_new_checked` BE-normalization pattern
+  /// (PR #89 `b9a6c19`). The reported `value` is the normalized
+  /// logical sample.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn try_new_checked(
     packed: &'a [u16],
@@ -515,9 +541,20 @@ impl<'a, const BE: bool> Xv36Frame<'a, BE> {
     let stride_us = stride as usize;
     for row in 0..h {
       let start = row * stride_us;
-      for &sample in &packed[start..start + row_elems] {
-        if sample & 0x000F != 0 {
-          return Err(Xv36FrameError::SampleLowBitsSet);
+      for (col, &sample) in packed[start..start + row_elems].iter().enumerate() {
+        // Normalize byte-storage word to host-native logical sample
+        // before the low-nibble check (no-op on matching-endian host,
+        // byte-swap otherwise).
+        let logical = if BE {
+          u16::from_be(sample)
+        } else {
+          u16::from_le(sample)
+        };
+        if logical & 0x000F != 0 {
+          return Err(Xv36FrameError::SampleLowBitsSet {
+            index: start + col,
+            value: logical,
+          });
         }
       }
     }
@@ -537,7 +574,7 @@ impl<'a, const BE: bool> Xv36Frame<'a, BE> {
         Xv36FrameError::PlaneTooShort { .. } => panic!("invalid Xv36Frame: plane too short"),
         Xv36FrameError::GeometryOverflow { .. } => panic!("invalid Xv36Frame: geometry overflow"),
         // SampleLowBitsSet is only emitted by try_new_checked.
-        Xv36FrameError::SampleLowBitsSet => {
+        Xv36FrameError::SampleLowBitsSet { .. } => {
           panic!("invalid Xv36Frame: sample low bits set (unreachable from try_new)")
         }
       },
