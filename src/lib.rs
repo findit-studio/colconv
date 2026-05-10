@@ -26,10 +26,11 @@
 //!
 //! # Supported source formats
 //!
-//! Shipped (4:2:0, 4:2:2, and 4:4:4 subsampling):
+//! Shipped (4:1:1, 4:2:0, 4:2:2, 4:4:0, and 4:4:4 subsampling):
 //!
 //! | Family           | Bit depth | Subsampling | Packing                  | FFmpeg name           |
 //! | ---------------- | --------- | ----------- | ------------------------ | --------------------- |
+//! | [`Yuv411p`]      |  8        | 4:1:1       | planar (DV-NTSC legacy)  | `yuv411p`             |
 //! | [`Yuv420p`]      |  8        | 4:2:0       | planar                   | `yuv420p`             |
 //! | [`Yuv422p`]      |  8        | 4:2:2       | planar                   | `yuv422p`             |
 //! | [`Yuv440p`]      |  8        | 4:4:0       | planar                   | `yuv440p`             |

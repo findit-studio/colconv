@@ -1,5 +1,54 @@
 # CHANGELOG
 
+## Unreleased — Tier 1.6 — Yuv411p (DV-NTSC legacy 4:1:1 planar)
+
+Closes Tier 1.6. New source-side pixel format `Yuv411p`
+(`AV_PIX_FMT_YUV411P`): 8-bit planar 4:1:1 YUV — full-resolution Y plus
+**quarter-width**, full-height U / V. One chroma sample covers four Y
+columns horizontally; chroma is fully sampled vertically (one chroma
+row per Y row, like 4:2:2). Non-4-aligned widths are accepted: chroma
+row width is `width.div_ceil(4)`, matching FFmpeg's
+`AV_PIX_FMT_YUV411P` descriptor (`log2_chroma_w = 2`, ceiling right
+shift). For widths not divisible by 4 the trailing 1..3 Y columns
+share the final chroma sample (a partial 1..3-pixel chroma group);
+the per-row scalar tail covers that remainder. Common in DV-NTSC
+video (legacy); included for FFmpeg ingest completeness.
+
+Output coverage on `MixedSinker<Yuv411p>` matches the rest of the
+8-bit planar family: `with_rgb`, `with_rgba` (alpha = `0xFF` —
+Yuv411p has no alpha plane), `with_luma` (Y-plane copy), `with_luma_u16`
+(zero-extend), `with_hsv` (staged through RGB scratch), and Strategy A
+fan-out when both `with_rgb` and `with_rgba` are attached
+(RGB kernel runs once; `expand_rgb_to_rgba_row` pads alpha).
+
+Backends: scalar + full SIMD coverage on every supported tier (NEON
+aarch64, SSE4.1 / AVX2 / AVX-512BW x86_64, wasm32 simd128). Every SIMD
+backend runs the same Q15 sequence as the scalar reference — math is
+byte-identical, verified by per-backend parity tests. Each kernel
+strides a multiple-of-4 Y block and the per-row scalar tail picks up
+the trailing 1..3 Y columns paired with the final (partial) chroma
+sample for non-4-aligned widths.
+
+- **NEON** (`aarch64`) — 16 Y / 4 chroma per iteration. The 1→4 chroma
+  upsample is materialized in registers via a paired `vzip_s16`
+  cascade (i16x4 → i16x8 → i16x16) matching the 16 Y lanes.
+- **SSE4.1** (16 / 4) — two-pass `_mm_unpack*_epi16` cascade. 4 chroma
+  loaded via a u32 read splatted with `_mm_cvtsi32_si128`.
+- **AVX2** (32 / 8) — split 8 chroma into low4 / high4 inside the XMM
+  half, then per-128-bit two-pass `_mm_unpack*_epi16` cascade per
+  half (no AVX2 lane-crossing fixup needed — the chroma split is
+  already lane-aligned). 8 chroma loaded via a u64 read.
+- **AVX-512BW** (64 / 16) — one `_mm512_permutexvar_epi16` per channel
+  per Y half with explicit 4× duplicate indices — cleanest 4×
+  fan-out of any backend (no unpack chain).
+- **wasm-simd128** (16 / 4) — two `i8x16_shuffle` calls per channel
+  with compile-time byte indices duplicating each i16 chroma lane 4×.
+
+Structural analog: yuv422p (full-height chroma; only the horizontal
+subsampling factor changes from 2× to 4×). Yuv411p shares the same
+`@p3_emit quarter` walker-macro arm as Yuv410p; the two differ only
+in the `chroma_v` selector (`full` for 4:1:1, `quarter` for 4:1:0).
+
 ## Unreleased — Tier 1 — Yuv410p (Cinepak / Sorenson legacy 4:1:0 planar)
 
 Closes Tier 1 row 7 (P3 legacy). New source-side pixel format `Yuv410p`

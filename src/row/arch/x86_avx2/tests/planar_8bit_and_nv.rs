@@ -1186,3 +1186,212 @@ fn yuv_410_avx2_rgba_matches_scalar_widths() {
     check_yuv_410_rgba_equivalence(w, ColorMatrix::YCgCo, false);
   }
 }
+
+// ---- yuv_411_to_rgb_row equivalence (AVX2 ↔ scalar) ------------------
+//
+// Direct backend test for the 4:1:1 path: bypasses the public dispatcher
+// so the AVX2 1→4 chroma upsample is exercised regardless of what tier
+// the dispatcher would pick on the current runner.
+
+fn check_yuv411_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
+  // FFmpeg `AV_PIX_FMT_YUV411P`: chroma row = `width.div_ceil(4)`.
+  assert!(width > 0);
+  let chroma_w = width.div_ceil(4);
+  let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
+  let u: std::vec::Vec<u8> = (0..chroma_w)
+    .map(|i| ((i * 53 + 23) & 0xFF) as u8)
+    .collect();
+  let v: std::vec::Vec<u8> = (0..chroma_w)
+    .map(|i| ((i * 71 + 91) & 0xFF) as u8)
+    .collect();
+  let mut rgb_scalar = std::vec![0u8; width * 3];
+  let mut rgb_simd = std::vec![0u8; width * 3];
+
+  scalar::yuv_411_to_rgb_row(&y, &u, &v, &mut rgb_scalar, width, matrix, full_range);
+  unsafe {
+    yuv_411_to_rgb_row(&y, &u, &v, &mut rgb_simd, width, matrix, full_range);
+  }
+
+  if rgb_scalar != rgb_simd {
+    let first_diff = rgb_scalar
+      .iter()
+      .zip(rgb_simd.iter())
+      .position(|(a, b)| a != b)
+      .unwrap();
+    panic!(
+      "AVX2 yuv_411 diverges from scalar at byte {first_diff} (width={width}, matrix={matrix:?}, full_range={full_range}): scalar={} avx2={}",
+      rgb_scalar[first_diff], rgb_simd[first_diff]
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "AVX2 SIMD intrinsics unsupported by Miri")]
+fn avx2_yuv411_matches_scalar_all_matrices_32() {
+  if !std::arch::is_x86_feature_detected!("avx2") {
+    return;
+  }
+  // Width 32 = exactly one AVX2 iteration with no scalar tail.
+  for m in [
+    ColorMatrix::Bt601,
+    ColorMatrix::Bt709,
+    ColorMatrix::Bt2020Ncl,
+    ColorMatrix::Smpte240m,
+    ColorMatrix::Fcc,
+    ColorMatrix::YCgCo,
+  ] {
+    for full in [true, false] {
+      check_yuv411_equivalence(32, m, full);
+    }
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "AVX2 SIMD intrinsics unsupported by Miri")]
+fn avx2_yuv411_matches_scalar_tail_widths() {
+  if !std::arch::is_x86_feature_detected!("avx2") {
+    return;
+  }
+  // Widths that leave a non-trivial scalar tail (not multiple of 32
+  // but multiple of 4).
+  for w in [4usize, 8, 12, 20, 28, 36, 44, 60, 100, 132, 252] {
+    check_yuv411_equivalence(w, ColorMatrix::Bt601, false);
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "AVX2 SIMD intrinsics unsupported by Miri")]
+fn avx2_yuv411_matches_scalar_width_1920() {
+  if !std::arch::is_x86_feature_detected!("avx2") {
+    return;
+  }
+  check_yuv411_equivalence(1920, ColorMatrix::Bt709, false);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "AVX2 SIMD intrinsics unsupported by Miri")]
+fn avx2_yuv411_matches_scalar_non_4_aligned_widths() {
+  if !std::arch::is_x86_feature_detected!("avx2") {
+    return;
+  }
+  // Codex round-2 finding: FFmpeg `AV_PIX_FMT_YUV411P` accepts any
+  // width via `chroma_width = width.div_ceil(4)`. Widths < 32 stay
+  // entirely in the scalar tail; larger non-4-aligned widths exercise
+  // the AVX2 32-pixel SIMD body + partial-chroma scalar tail boundary.
+  for w in [1usize, 2, 3, 5, 6, 7, 17, 31, 33, 47, 641] {
+    check_yuv411_equivalence(w, ColorMatrix::Bt601, true);
+    check_yuv411_equivalence(w, ColorMatrix::Bt709, false);
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "AVX2 SIMD intrinsics unsupported by Miri")]
+fn avx2_yuv411_rgba_matches_scalar_non_4_aligned_widths() {
+  if !std::arch::is_x86_feature_detected!("avx2") {
+    return;
+  }
+  for w in [1usize, 2, 3, 5, 6, 7, 17, 641] {
+    check_yuv411_rgba_equivalence(w, ColorMatrix::Bt601, true);
+  }
+}
+
+// Direct regression for the AVX2 chroma fan-out lane bug: at width=32
+// the kernel reads 8 chroma samples (c0..c7) and must fan c0..c3 across
+// pixels 0..15 and c4..c7 across pixels 16..31. A previous version
+// broadcast c0..c7 into both 128-bit lanes and relied on per-lane
+// `_mm256_unpacklo_epi16`, which only consumes lanes 0..3 of each lane
+// and therefore expanded c0..c3 in BOTH halves (pixels 16..31 silently
+// reused the first half's chroma).
+//
+// Pick a fixture where c0..c3 are far from c4..c7 so any reuse is a
+// large RGB delta. The Y plane is constant so any divergence comes
+// from the chroma fan-out alone.
+#[test]
+#[cfg_attr(miri, ignore = "AVX2 SIMD intrinsics unsupported by Miri")]
+fn avx2_yuv411_chroma_fanout_low_high_split() {
+  if !std::arch::is_x86_feature_detected!("avx2") {
+    return;
+  }
+  // Width 32 = exactly one AVX2 iteration, no scalar tail.
+  let width = 32usize;
+  let y: std::vec::Vec<u8> = std::vec![128u8; width];
+  // c0..c3 (low half, pixels 0..15) vs c4..c7 (high half, pixels 16..31)
+  // chosen far apart in the chroma plane.
+  let u: std::vec::Vec<u8> = std::vec![10, 20, 30, 40, 200, 210, 220, 230];
+  let v: std::vec::Vec<u8> = std::vec![230, 220, 210, 200, 40, 30, 20, 10];
+
+  for &m in &[
+    ColorMatrix::Bt601,
+    ColorMatrix::Bt709,
+    ColorMatrix::Bt2020Ncl,
+    ColorMatrix::YCgCo,
+  ] {
+    for full in [true, false] {
+      let mut rgb_scalar = std::vec![0u8; width * 3];
+      let mut rgb_simd = std::vec![0u8; width * 3];
+      scalar::yuv_411_to_rgb_row(&y, &u, &v, &mut rgb_scalar, width, m, full);
+      unsafe {
+        yuv_411_to_rgb_row(&y, &u, &v, &mut rgb_simd, width, m, full);
+      }
+      assert_eq!(
+        rgb_scalar, rgb_simd,
+        "AVX2 yuv_411 RGB chroma fan-out diverges (matrix={m:?}, full_range={full})"
+      );
+
+      let mut rgba_scalar = std::vec![0u8; width * 4];
+      let mut rgba_simd = std::vec![0u8; width * 4];
+      scalar::yuv_411_to_rgba_row(&y, &u, &v, &mut rgba_scalar, width, m, full);
+      unsafe {
+        yuv_411_to_rgba_row(&y, &u, &v, &mut rgba_simd, width, m, full);
+      }
+      assert_eq!(
+        rgba_scalar, rgba_simd,
+        "AVX2 yuv_411 RGBA chroma fan-out diverges (matrix={m:?}, full_range={full})"
+      );
+    }
+  }
+}
+
+fn check_yuv411_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
+  assert!(width > 0);
+  let chroma_w = width.div_ceil(4);
+  let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
+  let u: std::vec::Vec<u8> = (0..chroma_w)
+    .map(|i| ((i * 53 + 23) & 0xFF) as u8)
+    .collect();
+  let v: std::vec::Vec<u8> = (0..chroma_w)
+    .map(|i| ((i * 71 + 91) & 0xFF) as u8)
+    .collect();
+  let mut rgba_scalar = std::vec![0u8; width * 4];
+  let mut rgba_simd = std::vec![0u8; width * 4];
+
+  scalar::yuv_411_to_rgba_row(&y, &u, &v, &mut rgba_scalar, width, matrix, full_range);
+  unsafe {
+    yuv_411_to_rgba_row(&y, &u, &v, &mut rgba_simd, width, matrix, full_range);
+  }
+
+  assert_eq!(
+    rgba_scalar, rgba_simd,
+    "AVX2 yuv_411 RGBA diverges (width={width}, matrix={matrix:?}, full_range={full_range})"
+  );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "AVX2 SIMD intrinsics unsupported by Miri")]
+fn avx2_yuv411_rgba_matches_scalar_widths() {
+  if !std::arch::is_x86_feature_detected!("avx2") {
+    return;
+  }
+  for &m in &[
+    ColorMatrix::Bt601,
+    ColorMatrix::Bt709,
+    ColorMatrix::Bt2020Ncl,
+    ColorMatrix::YCgCo,
+  ] {
+    for full in [true, false] {
+      for &w in &[32usize, 64, 128, 256, 1920] {
+        check_yuv411_rgba_equivalence(w, m, full);
+      }
+    }
+  }
+}

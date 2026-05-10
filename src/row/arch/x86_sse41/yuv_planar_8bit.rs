@@ -761,3 +761,273 @@ unsafe fn yuv_410_to_rgb_or_rgba_row<const ALPHA: bool>(
     }
   }
 }
+
+// ---- YUV 4:1:1 → RGB / RGBA (SSE4.1) -----------------------------------
+
+/// SSE4.1 YUV 4:1:1 planar → packed RGB. One chroma sample drives four
+/// Y pixels (1→4 nearest-neighbor upsample in registers).
+///
+/// Same Q15 arithmetic as the scalar reference; output is byte-
+/// identical. Processes 16 Y / 4 chroma samples per iteration —
+/// matches the SSE4.1 4:2:0 block size but loads 1/4 the chroma
+/// per iteration.
+///
+/// FFmpeg-compatible widths: arbitrary `width` accepted. Chroma row
+/// is `width.div_ceil(4)` samples; the SIMD body strides 16 Y pixels
+/// (multiple of 4), and the trailing 1..15 Y pixels — including any
+/// partial 1..3-pixel chroma group — fall through to the scalar
+/// reference.
+///
+/// # Safety
+///
+/// 1. **SSE4.1 must be available on the current CPU.**
+/// 2. `y.len() >= width`,
+///    `u_quarter.len() >= width.div_ceil(4)`,
+///    `v_quarter.len() >= width.div_ceil(4)`.
+/// 3. `rgb_out.len() >= 3 * width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_411_to_rgb_row(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller-checked SSE4.1 availability + slice bounds — see
+  // [`yuv_411_to_rgb_or_rgba_row`] safety contract.
+  unsafe {
+    yuv_411_to_rgb_or_rgba_row::<false>(
+      y, u_quarter, v_quarter, rgb_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// SSE4.1 YUV 4:1:1 planar → packed **RGBA** (8-bit). Same contract as
+/// [`yuv_411_to_rgb_row`] but writes 4 bytes per pixel via
+/// [`write_rgba_16`] (R, G, B, `0xFF`).
+///
+/// # Safety
+///
+/// Same as [`yuv_411_to_rgb_row`] except `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn yuv_411_to_rgba_row(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller-checked SSE4.1 availability + slice bounds — see
+  // [`yuv_411_to_rgb_or_rgba_row`] safety contract.
+  unsafe {
+    yuv_411_to_rgb_or_rgba_row::<true>(
+      y, u_quarter, v_quarter, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// Shared SSE4.1 YUV 4:1:1 kernel. Processes 16 Y pixels (= 4 chroma
+/// samples) per iteration; the 1→4 chroma upsample is materialized
+/// in registers via paired `_mm_unpacklo_epi16` / `_mm_unpackhi_epi16`
+/// cascades:
+///
+/// 1. Compute 4 chroma values as i16 in the low 4 lanes of an i16x8.
+/// 2. Stage 1: `_mm_unpacklo_epi16(c, c)` →
+///    `[c0,c0, c1,c1, c2,c2, c3,c3]` (8 lanes), each chroma duplicated
+///    once.
+/// 3. Stage 2: `_mm_unpacklo_epi16(d, d)` →
+///    `[c0,c0,c0,c0, c1,c1,c1,c1]` (8 lanes for Y[0..8]);
+///    `_mm_unpackhi_epi16(d, d)` → `[c2,c2,c2,c2, c3,c3,c3,c3]`
+///    (8 lanes for Y[8..16]).
+///
+/// 4:1:1 has no source-alpha variant (no `Yuva411p` exists), so the
+/// const-generic surface stays 1-D (`ALPHA` only).
+///
+/// # Safety
+///
+/// 1. **SSE4.1 must be available on the current CPU.**
+/// 2. `y.len() >= width`,
+///    `u_quarter.len() >= width.div_ceil(4)`,
+///    `v_quarter.len() >= width.div_ceil(4)`.
+/// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+unsafe fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(y.len() >= width);
+  debug_assert!(u_quarter.len() >= width.div_ceil(4));
+  debug_assert!(v_quarter.len() >= width.div_ceil(4));
+  let bpp: usize = if ALPHA { 4 } else { 3 };
+  debug_assert!(out.len() >= width * bpp);
+
+  let coeffs = scalar::Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = scalar::range_params_n::<8, 8>(full_range);
+  const RND: i32 = 1 << 14;
+
+  // SAFETY: SSE4.1 availability is the caller's obligation per the
+  // `# Safety` section. All pointer adds below are bounded by the
+  // `while x + 16 <= width` loop condition and the caller-promised
+  // slice lengths.
+  unsafe {
+    let rnd_v = _mm_set1_epi32(RND);
+    let y_off_v = _mm_set1_epi16(y_off as i16);
+    let y_scale_v = _mm_set1_epi32(y_scale);
+    let c_scale_v = _mm_set1_epi32(c_scale);
+    let mid128 = _mm_set1_epi16(128);
+    let cru = _mm_set1_epi32(coeffs.r_u());
+    let crv = _mm_set1_epi32(coeffs.r_v());
+    let cgu = _mm_set1_epi32(coeffs.g_u());
+    let cgv = _mm_set1_epi32(coeffs.g_v());
+    let cbu = _mm_set1_epi32(coeffs.b_u());
+    let cbv = _mm_set1_epi32(coeffs.b_v());
+    let alpha_u8 = _mm_set1_epi8(-1); // 0xFF as i8
+
+    let mut x = 0usize;
+    while x + 16 <= width {
+      // Load 16 Y bytes.
+      let y_vec = _mm_loadu_si128(y.as_ptr().add(x).cast());
+
+      // Load 4 chroma bytes per 16 Y pixels via a 32-bit unaligned
+      // read; place them in the low 4 lanes of a u8x16 by `cvtsi32_si128`
+      // (zeros the upper 96 bits). Then widen to i16 in the low 4
+      // lanes — the upper 4 i16 lanes will be zero (chroma midpoint
+      // 128 subtracted gives -128 nominally, but those lanes are
+      // never used because chroma only spans lanes 0..3).
+      let u_4 = u_quarter.as_ptr().add(x / 4) as *const i32;
+      let v_4 = v_quarter.as_ptr().add(x / 4) as *const i32;
+      let u_word = core::ptr::read_unaligned(u_4);
+      let v_word = core::ptr::read_unaligned(v_4);
+
+      let u_u8 = _mm_cvtsi32_si128(u_word);
+      let v_u8 = _mm_cvtsi32_si128(v_word);
+      // _mm_cvtepu8_epi16 widens the low 8 bytes to i16x8; only lanes
+      // 0..3 hold real chroma data — lanes 4..7 are zero.
+      let u_i16 = _mm_sub_epi16(_mm_cvtepu8_epi16(u_u8), mid128);
+      let v_i16 = _mm_sub_epi16(_mm_cvtepu8_epi16(v_u8), mid128);
+
+      // Promote the low 4 i16 lanes to i32x4 for the Q15 multiplies.
+      let u_i32 = _mm_cvtepi16_epi32(u_i16);
+      let v_i32 = _mm_cvtepi16_epi32(v_i16);
+
+      // u_d / v_d as i32x4 (4 chroma values).
+      let u_d = q15_shift(_mm_add_epi32(_mm_mullo_epi32(u_i32, c_scale_v), rnd_v));
+      let v_d = q15_shift(_mm_add_epi32(_mm_mullo_epi32(v_i32, c_scale_v), rnd_v));
+
+      // Per-channel chroma contribution as i32x4. Narrow to i16 in
+      // the low 4 lanes via `_mm_packs_epi32(x, x)`: lanes 0..3 hold
+      // the real values, lanes 4..7 are a duplicate (which we discard
+      // by only consuming lanes 0..3 in the unpack cascade below).
+      let r_i32 = q15_shift(_mm_add_epi32(
+        _mm_add_epi32(_mm_mullo_epi32(cru, u_d), _mm_mullo_epi32(crv, v_d)),
+        rnd_v,
+      ));
+      let g_i32 = q15_shift(_mm_add_epi32(
+        _mm_add_epi32(_mm_mullo_epi32(cgu, u_d), _mm_mullo_epi32(cgv, v_d)),
+        rnd_v,
+      ));
+      let b_i32 = q15_shift(_mm_add_epi32(
+        _mm_add_epi32(_mm_mullo_epi32(cbu, u_d), _mm_mullo_epi32(cbv, v_d)),
+        rnd_v,
+      ));
+
+      // Pack i32x4 → i16x8; the chroma we care about is duplicated
+      // across the low 4 and high 4 lanes after `packs(x, x)`. We
+      // only consume the low 4 lanes (the unpack cascade below
+      // duplicates from there).
+      let r_low = _mm_packs_epi32(r_i32, r_i32);
+      let g_low = _mm_packs_epi32(g_i32, g_i32);
+      let b_low = _mm_packs_epi32(b_i32, b_i32);
+
+      // 1→4 nearest-neighbor upsample. Stage 1: duplicate the 4 low
+      // chroma lanes into 8 lanes via `_mm_unpacklo_epi16(c, c)` →
+      // [c0,c0, c1,c1, c2,c2, c3,c3]. Stage 2: re-apply
+      // unpacklo / unpackhi on that result to land at
+      // [c0,c0,c0,c0, c1,c1,c1,c1] (low 8 Y) and
+      // [c2,c2,c2,c2, c3,c3,c3,c3] (high 8 Y).
+      let r_dup8 = _mm_unpacklo_epi16(r_low, r_low);
+      let g_dup8 = _mm_unpacklo_epi16(g_low, g_low);
+      let b_dup8 = _mm_unpacklo_epi16(b_low, b_low);
+
+      let r_lo16 = _mm_unpacklo_epi16(r_dup8, r_dup8);
+      let g_lo16 = _mm_unpacklo_epi16(g_dup8, g_dup8);
+      let b_lo16 = _mm_unpacklo_epi16(b_dup8, b_dup8);
+      let r_hi16 = _mm_unpackhi_epi16(r_dup8, r_dup8);
+      let g_hi16 = _mm_unpackhi_epi16(g_dup8, g_dup8);
+      let b_hi16 = _mm_unpackhi_epi16(b_dup8, b_dup8);
+
+      // Y path: widen low / high 8 Y to i16x8, scale.
+      let y_low_i16 = _mm_cvtepu8_epi16(y_vec);
+      let y_high_i16 = _mm_cvtepu8_epi16(_mm_srli_si128::<8>(y_vec));
+      let y_scaled_lo = scale_y(y_low_i16, y_off_v, y_scale_v, rnd_v);
+      let y_scaled_hi = scale_y(y_high_i16, y_off_v, y_scale_v, rnd_v);
+
+      // Saturating i16 add Y + chroma per channel.
+      let b_lo = _mm_adds_epi16(y_scaled_lo, b_lo16);
+      let b_hi = _mm_adds_epi16(y_scaled_hi, b_hi16);
+      let g_lo = _mm_adds_epi16(y_scaled_lo, g_lo16);
+      let g_hi = _mm_adds_epi16(y_scaled_hi, g_hi16);
+      let r_lo = _mm_adds_epi16(y_scaled_lo, r_lo16);
+      let r_hi = _mm_adds_epi16(y_scaled_hi, r_hi16);
+
+      // Saturate-narrow to u8x16 per channel.
+      let b_u8 = _mm_packus_epi16(b_lo, b_hi);
+      let g_u8 = _mm_packus_epi16(g_lo, g_hi);
+      let r_u8 = _mm_packus_epi16(r_lo, r_hi);
+
+      if ALPHA {
+        write_rgba_16(r_u8, g_u8, b_u8, alpha_u8, out.as_mut_ptr().add(x * 4));
+      } else {
+        write_rgb_16(r_u8, g_u8, b_u8, out.as_mut_ptr().add(x * 3));
+      }
+
+      x += 16;
+    }
+
+    // Scalar tail. The SIMD loop strides 16 Y pixels (multiple of 4),
+    // so `x` is a multiple of 4 ≤ width. The remaining 0..15 Y pixels
+    // and chroma samples up to `width.div_ceil(4)` (FFmpeg ceil-shift)
+    // — which may include a partial 1..3-pixel final chroma group —
+    // are handled by the scalar reference.
+    if x < width {
+      let tail_w = width - x;
+      let chroma_end = width.div_ceil(4);
+      let tail_u = &u_quarter[x / 4..chroma_end];
+      let tail_v = &v_quarter[x / 4..chroma_end];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      if ALPHA {
+        scalar::yuv_411_to_rgba_row(
+          &y[x..width],
+          tail_u,
+          tail_v,
+          tail_out,
+          tail_w,
+          matrix,
+          full_range,
+        );
+      } else {
+        scalar::yuv_411_to_rgb_row(
+          &y[x..width],
+          tail_u,
+          tail_v,
+          tail_out,
+          tail_w,
+          matrix,
+          full_range,
+        );
+      }
+    }
+  }
+}

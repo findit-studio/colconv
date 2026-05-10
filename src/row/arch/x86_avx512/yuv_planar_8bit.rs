@@ -833,3 +833,285 @@ unsafe fn yuv_444_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
     }
   }
 }
+
+// ---- YUV 4:1:1 → RGB / RGBA (AVX-512BW) --------------------------------
+
+/// AVX-512 YUV 4:1:1 planar → packed RGB. One chroma sample drives four
+/// Y pixels (1→4 nearest-neighbor upsample). Processes 64 Y / 16 chroma
+/// samples per iteration — matches the AVX-512 4:2:0 block size with
+/// 1/4 the chroma load count.
+///
+/// Same Q15 arithmetic as the scalar reference; output is byte-identical.
+///
+/// FFmpeg-compatible widths: arbitrary `width` accepted. Chroma row
+/// is `width.div_ceil(4)` samples; the SIMD body strides 64 Y pixels
+/// (multiple of 4), and the trailing 1..63 Y pixels — including any
+/// partial 1..3-pixel chroma group — fall through to the scalar
+/// reference.
+///
+/// # Safety
+///
+/// 1. **AVX-512F + AVX-512BW must be available on the current CPU.**
+/// 2. `y.len() >= width`,
+///    `u_quarter.len() >= width.div_ceil(4)`,
+///    `v_quarter.len() >= width.div_ceil(4)`.
+/// 3. `rgb_out.len() >= 3 * width`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn yuv_411_to_rgb_row(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller-checked AVX-512BW availability + slice bounds — see
+  // [`yuv_411_to_rgb_or_rgba_row`] safety contract.
+  unsafe {
+    yuv_411_to_rgb_or_rgba_row::<false>(
+      y, u_quarter, v_quarter, rgb_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// AVX-512 YUV 4:1:1 planar → packed **RGBA** (8-bit). Same contract as
+/// [`yuv_411_to_rgb_row`] but writes 4 bytes per pixel via
+/// [`write_rgba_64`] (R, G, B, `0xFF`).
+///
+/// # Safety
+///
+/// Same as [`yuv_411_to_rgb_row`] except `rgba_out.len() >= 4 * width`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn yuv_411_to_rgba_row(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller-checked AVX-512BW availability + slice bounds — see
+  // [`yuv_411_to_rgb_or_rgba_row`] safety contract.
+  unsafe {
+    yuv_411_to_rgb_or_rgba_row::<true>(
+      y, u_quarter, v_quarter, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// Shared AVX-512 YUV 4:1:1 kernel. Processes 64 Y pixels (= 16 chroma
+/// samples) per iteration; the 1→4 chroma upsample is materialized
+/// across two i16x32 vectors via `_mm512_permutexvar_epi16` with a
+/// repeat-each-lane-4-times index pattern:
+///
+/// 1. Load 16 chroma bytes via `_mm_loadu_si128`, widen → i16x16
+///    (`__m256i`), subtract 128, sign-extend → i32x16 (`__m512i`).
+/// 2. Compute per-channel chroma → i32x16, then saturating-pack to i16
+///    via `_mm512_packs_epi32(x, x)`. Apply the standard `pack_fixup`
+///    permute so that c0..c15 land in the low 256 bits of `__m512i`.
+/// 3. Cross-lane 1→4 fan-out via `_mm512_permutexvar_epi16` with two
+///    index vectors:
+///    - `dup_lo32_idx = [0×4, 1×4, 2×4, ..., 7×4]` → i16x32 covering
+///      Y[0..32].
+///    - `dup_hi32_idx = [8×4, 9×4, 10×4, ..., 15×4]` → i16x32 covering
+///      Y[32..64].
+///
+/// 4:1:1 has no source-alpha variant (no `Yuva411p` exists), so the
+/// const-generic surface stays 1-D (`ALPHA` only).
+///
+/// # Safety
+///
+/// 1. **AVX-512F + AVX-512BW must be available on the current CPU.**
+/// 2. `y.len() >= width`,
+///    `u_quarter.len() >= width.div_ceil(4)`,
+///    `v_quarter.len() >= width.div_ceil(4)`.
+/// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(y.len() >= width);
+  debug_assert!(u_quarter.len() >= width.div_ceil(4));
+  debug_assert!(v_quarter.len() >= width.div_ceil(4));
+  let bpp: usize = if ALPHA { 4 } else { 3 };
+  debug_assert!(out.len() >= width * bpp);
+
+  let coeffs = scalar::Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = scalar::range_params_n::<8, 8>(full_range);
+  const RND: i32 = 1 << 14;
+
+  // SAFETY: AVX-512BW availability is the caller's obligation per the
+  // `# Safety` section. All pointer adds below are bounded by the
+  // `while x + 64 <= width` loop condition and the caller-promised
+  // slice lengths.
+  unsafe {
+    let rnd_v = _mm512_set1_epi32(RND);
+    let y_off_v = _mm512_set1_epi16(y_off as i16);
+    let y_scale_v = _mm512_set1_epi32(y_scale);
+    let c_scale_v = _mm512_set1_epi32(c_scale);
+    let mid128 = _mm512_set1_epi16(128);
+    let cru = _mm512_set1_epi32(coeffs.r_u());
+    let crv = _mm512_set1_epi32(coeffs.r_v());
+    let cgu = _mm512_set1_epi32(coeffs.g_u());
+    let cgv = _mm512_set1_epi32(coeffs.g_v());
+    let cbu = _mm512_set1_epi32(coeffs.b_u());
+    let cbv = _mm512_set1_epi32(coeffs.b_v());
+    let alpha_u8 = _mm512_set1_epi8(-1); // 0xFF as i8
+
+    // Lane-fixup permute (used by chroma_i16x32 / scale_y / narrow_u8x64).
+    let pack_fixup = _mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7);
+
+    // 1→4 fan-out indices for cross-lane `_mm512_permutexvar_epi16`.
+    // Build [0×4, 1×4, 2×4, …, 7×4] (32 i16 lanes) for the low half
+    // (covering Y[0..32]) and the analogous [8×4 … 15×4] for the high
+    // half (Y[32..64]). Constructed once per call from the i16 layout
+    // above; AVX-512 has no `setr_epi16`, so we build via `set_epi16`
+    // listing lane 31 first.
+    let dup_lo32_idx = _mm512_set_epi16(
+      7, 7, 7, 7, 6, 6, 6, 6, 5, 5, 5, 5, 4, 4, 4, 4, 3, 3, 3, 3, 2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0,
+      0,
+    );
+    let dup_hi32_idx = _mm512_set_epi16(
+      15, 15, 15, 15, 14, 14, 14, 14, 13, 13, 13, 13, 12, 12, 12, 12, 11, 11, 11, 11, 10, 10, 10,
+      10, 9, 9, 9, 9, 8, 8, 8, 8,
+    );
+
+    let mut x = 0usize;
+    while x + 64 <= width {
+      // Load 64 Y bytes.
+      let y_vec = _mm512_loadu_si512(y.as_ptr().add(x).cast());
+
+      // Load 16 chroma bytes per 64 Y pixels (4:1:1 quarter-rate).
+      let u_16 = _mm_loadu_si128(u_quarter.as_ptr().add(x / 4).cast());
+      let v_16 = _mm_loadu_si128(v_quarter.as_ptr().add(x / 4).cast());
+
+      // Widen 16 u8 → i16x16 (__m256i), subtract 128. Then sign-extend
+      // to i32x16 (__m512i) for the Q15 multiplies. Only the low 256
+      // bits of the i32x16 hold real chroma (16 chroma values, 16 lanes
+      // — the entire i32x16); we operate at full 512-bit width. To
+      // reuse `chroma_i16x32` (which expects two i32x16 inputs), we
+      // pass `u_d` as both halves, but only consume the i16x16 half
+      // (lanes 0..15) of its result.
+      let u_i16_256 = _mm256_sub_epi16(_mm256_cvtepu8_epi16(u_16), _mm512_castsi512_si256(mid128));
+      let v_i16_256 = _mm256_sub_epi16(_mm256_cvtepu8_epi16(v_16), _mm512_castsi512_si256(mid128));
+
+      let u_i32 = _mm512_cvtepi16_epi32(u_i16_256);
+      let v_i32 = _mm512_cvtepi16_epi32(v_i16_256);
+
+      let u_d = q15_shift(_mm512_add_epi32(
+        _mm512_mullo_epi32(u_i32, c_scale_v),
+        rnd_v,
+      ));
+      let v_d = q15_shift(_mm512_add_epi32(
+        _mm512_mullo_epi32(v_i32, c_scale_v),
+        rnd_v,
+      ));
+
+      // Per-channel chroma → i16x16 in the low 256 bits of an __m512i.
+      // `_mm512_packs_epi32(x, x)` produces lane-split [c0..3, c0..3,
+      // c4..7, c4..7, c8..11, c8..11, c12..15, c12..15]; permute via
+      // `pack_fixup = [0,2,4,6,1,3,5,7]` puts c0..c15 in the low 256
+      // bits and a duplicate in the high 256 bits (which we don't use).
+      let r_i32 = q15_shift(_mm512_add_epi32(
+        _mm512_add_epi32(_mm512_mullo_epi32(cru, u_d), _mm512_mullo_epi32(crv, v_d)),
+        rnd_v,
+      ));
+      let g_i32 = q15_shift(_mm512_add_epi32(
+        _mm512_add_epi32(_mm512_mullo_epi32(cgu, u_d), _mm512_mullo_epi32(cgv, v_d)),
+        rnd_v,
+      ));
+      let b_i32 = q15_shift(_mm512_add_epi32(
+        _mm512_add_epi32(_mm512_mullo_epi32(cbu, u_d), _mm512_mullo_epi32(cbv, v_d)),
+        rnd_v,
+      ));
+
+      let r_c16 = _mm512_permutexvar_epi64(pack_fixup, _mm512_packs_epi32(r_i32, r_i32));
+      let g_c16 = _mm512_permutexvar_epi64(pack_fixup, _mm512_packs_epi32(g_i32, g_i32));
+      let b_c16 = _mm512_permutexvar_epi64(pack_fixup, _mm512_packs_epi32(b_i32, b_i32));
+
+      // 1→4 cross-lane fan-out via `_mm512_permutexvar_epi16`. Each of
+      // the 16 chroma values maps to 4 Y lanes (32 Y per output → 64
+      // total). Result is two i16x32 vectors covering the 64 Y lanes
+      // in natural order — no further fixup required.
+      let r_dup_lo = _mm512_permutexvar_epi16(dup_lo32_idx, r_c16);
+      let r_dup_hi = _mm512_permutexvar_epi16(dup_hi32_idx, r_c16);
+      let g_dup_lo = _mm512_permutexvar_epi16(dup_lo32_idx, g_c16);
+      let g_dup_hi = _mm512_permutexvar_epi16(dup_hi32_idx, g_c16);
+      let b_dup_lo = _mm512_permutexvar_epi16(dup_lo32_idx, b_c16);
+      let b_dup_hi = _mm512_permutexvar_epi16(dup_hi32_idx, b_c16);
+
+      // Y path: widen 64 Y to two i16x32, scale (with the standard
+      // pack fixup applied inside `scale_y`).
+      let y_low_i16 = _mm512_cvtepu8_epi16(_mm512_castsi512_si256(y_vec));
+      let y_high_i16 = _mm512_cvtepu8_epi16(_mm512_extracti64x4_epi64::<1>(y_vec));
+      let y_scaled_lo = scale_y(y_low_i16, y_off_v, y_scale_v, rnd_v, pack_fixup);
+      let y_scaled_hi = scale_y(y_high_i16, y_off_v, y_scale_v, rnd_v, pack_fixup);
+
+      // Saturating i16 add Y + chroma per channel.
+      let b_lo = _mm512_adds_epi16(y_scaled_lo, b_dup_lo);
+      let b_hi = _mm512_adds_epi16(y_scaled_hi, b_dup_hi);
+      let g_lo = _mm512_adds_epi16(y_scaled_lo, g_dup_lo);
+      let g_hi = _mm512_adds_epi16(y_scaled_hi, g_dup_hi);
+      let r_lo = _mm512_adds_epi16(y_scaled_lo, r_dup_lo);
+      let r_hi = _mm512_adds_epi16(y_scaled_hi, r_dup_hi);
+
+      // Saturate-narrow to u8x64 per channel.
+      let b_u8 = narrow_u8x64(b_lo, b_hi, pack_fixup);
+      let g_u8 = narrow_u8x64(g_lo, g_hi, pack_fixup);
+      let r_u8 = narrow_u8x64(r_lo, r_hi, pack_fixup);
+
+      if ALPHA {
+        write_rgba_64(r_u8, g_u8, b_u8, alpha_u8, out.as_mut_ptr().add(x * 4));
+      } else {
+        write_rgb_64(r_u8, g_u8, b_u8, out.as_mut_ptr().add(x * 3));
+      }
+
+      x += 64;
+    }
+
+    // Scalar tail. The SIMD loop strides 64 Y pixels (multiple of 4),
+    // so `x` is a multiple of 4 ≤ width. The remaining 0..63 Y pixels
+    // and chroma samples up to `width.div_ceil(4)` (FFmpeg ceil-shift)
+    // — which may include a partial 1..3-pixel final chroma group —
+    // are handled by the scalar reference.
+    if x < width {
+      let tail_w = width - x;
+      let chroma_end = width.div_ceil(4);
+      let tail_u = &u_quarter[x / 4..chroma_end];
+      let tail_v = &v_quarter[x / 4..chroma_end];
+      let tail_out = &mut out[x * bpp..width * bpp];
+      if ALPHA {
+        scalar::yuv_411_to_rgba_row(
+          &y[x..width],
+          tail_u,
+          tail_v,
+          tail_out,
+          tail_w,
+          matrix,
+          full_range,
+        );
+      } else {
+        scalar::yuv_411_to_rgb_row(
+          &y[x..width],
+          tail_u,
+          tail_v,
+          tail_out,
+          tail_w,
+          matrix,
+          full_range,
+        );
+      }
+    }
+  }
+}

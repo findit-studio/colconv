@@ -104,10 +104,33 @@ fn yuv410p_planes() -> (std::vec::Vec<u8>, std::vec::Vec<u8>, std::vec::Vec<u8>)
   )
 }
 
+// ---- Yuv411pFrame::try_new -------------------------------------------
+
+fn planes_411(w: u32, h: u32) -> (std::vec::Vec<u8>, std::vec::Vec<u8>, std::vec::Vec<u8>) {
+  let ws = w as usize;
+  let hs = h as usize;
+  // FFmpeg `AV_PIX_FMT_YUV411P`: chroma row width = `width.div_ceil(4)`.
+  let cw = ws.div_ceil(4);
+  (
+    std::vec![0u8; ws * hs],
+    std::vec![128u8; cw * hs],
+    std::vec![128u8; cw * hs],
+  )
+}
+
 #[test]
 fn yuv410p_try_new_accepts_valid_tight() {
   let (y, u, v) = yuv410p_planes();
   let f = Yuv410pFrame::try_new(&y, &u, &v, 16, 8, 16, 4, 4).expect("valid");
+  assert_eq!(f.width(), 16);
+  assert_eq!(f.height(), 8);
+  assert_eq!(f.u_stride(), 4);
+}
+
+#[test]
+fn yuv411p_try_new_accepts_valid_tight() {
+  let (y, u, v) = planes_411(16, 8);
+  let f = Yuv411pFrame::try_new(&y, &u, &v, 16, 8, 16, 4, 4).expect("valid");
   assert_eq!(f.width(), 16);
   assert_eq!(f.height(), 8);
   assert_eq!(f.u_stride(), 4);
@@ -237,4 +260,116 @@ fn yuv410p_try_new_rejects_y_geometry_overflow() {
   let v: [u8; 0] = [];
   let e = Yuv410pFrame::try_new(&y, &u, &v, big, big, big, big / 4, big / 4).unwrap_err();
   assert!(matches!(e, Yuv410pFrameError::GeometryOverflow { .. }));
+}
+
+#[test]
+fn yuv411p_try_new_rejects_zero_dim() {
+  let (y, u, v) = planes_411(16, 8);
+  let e = Yuv411pFrame::try_new(&y, &u, &v, 0, 8, 16, 4, 4).unwrap_err();
+  assert!(matches!(e, Yuv411pFrameError::ZeroDimension { .. }));
+}
+
+#[test]
+fn yuv411p_try_new_accepts_non_4_aligned_widths() {
+  // FFmpeg `AV_PIX_FMT_YUV411P` defines chroma width via ceiling
+  // right shift (`(w + 3) >> 2`). Construction must accept any
+  // non-zero width and size chroma rows accordingly: 1→1, 2→1, 3→1,
+  // 5→2, 6→2, 7→2, 17→5, 641→161.
+  for (w, expected_cw) in [
+    (1u32, 1u32),
+    (2, 1),
+    (3, 1),
+    (5, 2),
+    (6, 2),
+    (7, 2),
+    (9, 3),
+    (17, 5),
+    (641, 161),
+  ] {
+    let ws = w as usize;
+    let cws = expected_cw as usize;
+    let h: u32 = 4;
+    let hs = h as usize;
+    let y = std::vec![0u8; ws * hs];
+    let u = std::vec![128u8; cws * hs];
+    let v = std::vec![128u8; cws * hs];
+    let f = Yuv411pFrame::try_new(&y, &u, &v, w, h, w, expected_cw, expected_cw)
+      .unwrap_or_else(|e| panic!("width={w} (chroma={expected_cw}) should be valid: {e:?}"));
+    assert_eq!(f.width(), w, "width={w}");
+    assert_eq!(f.u_stride(), expected_cw, "width={w}");
+    assert_eq!(f.v_stride(), expected_cw, "width={w}");
+  }
+}
+
+#[test]
+fn yuv411p_try_new_rejects_chroma_stride_below_div_ceil_4() {
+  // Width=5 → chroma_width = 2; passing u_stride=1 must fail with
+  // the new ceil-shift validator.
+  let y = std::vec![0u8; 5 * 4];
+  let u = std::vec![128u8; 2 * 4];
+  let v = std::vec![128u8; 2 * 4];
+  let e = Yuv411pFrame::try_new(&y, &u, &v, 5, 4, 5, 1, 2).unwrap_err();
+  assert!(
+    matches!(
+      e,
+      Yuv411pFrameError::UStrideTooSmall {
+        chroma_width: 2,
+        u_stride: 1
+      }
+    ),
+    "{e:?}"
+  );
+}
+
+#[test]
+fn yuv411p_try_new_accepts_odd_height() {
+  // 16x9 — chroma is full-height, so height=9 needs 9 rows of 4-byte
+  // chroma each (no `div_ceil(2)` like 4:2:0).
+  let y = std::vec![0u8; 16 * 9];
+  let u = std::vec![128u8; 4 * 9];
+  let v = std::vec![128u8; 4 * 9];
+  let f = Yuv411pFrame::try_new(&y, &u, &v, 16, 9, 16, 4, 4).expect("odd height valid");
+  assert_eq!(f.height(), 9);
+}
+
+#[test]
+fn yuv411p_try_new_rejects_y_stride_under_width() {
+  let (y, u, v) = planes_411(16, 8);
+  let e = Yuv411pFrame::try_new(&y, &u, &v, 16, 8, 8, 4, 4).unwrap_err();
+  assert!(matches!(e, Yuv411pFrameError::YStrideTooSmall { .. }));
+}
+
+#[test]
+fn yuv411p_try_new_rejects_u_stride_under_chroma_width() {
+  let (y, u, v) = planes_411(16, 8);
+  // chroma_width = 4; passing u_stride = 3 must fail.
+  let e = Yuv411pFrame::try_new(&y, &u, &v, 16, 8, 16, 3, 4).unwrap_err();
+  assert!(matches!(e, Yuv411pFrameError::UStrideTooSmall { .. }));
+}
+
+#[test]
+fn yuv411p_try_new_rejects_short_y_plane() {
+  let y = std::vec![0u8; 10];
+  let u = std::vec![128u8; 4 * 8];
+  let v = std::vec![128u8; 4 * 8];
+  let e = Yuv411pFrame::try_new(&y, &u, &v, 16, 8, 16, 4, 4).unwrap_err();
+  assert!(matches!(e, Yuv411pFrameError::YPlaneTooShort { .. }));
+}
+
+#[test]
+fn yuv411p_try_new_rejects_short_u_plane() {
+  let y = std::vec![0u8; 16 * 8];
+  let u = std::vec![128u8; 4];
+  let v = std::vec![128u8; 4 * 8];
+  let e = Yuv411pFrame::try_new(&y, &u, &v, 16, 8, 16, 4, 4).unwrap_err();
+  assert!(matches!(e, Yuv411pFrameError::UPlaneTooShort { .. }));
+}
+
+#[test]
+#[should_panic(expected = "invalid Yuv411pFrame")]
+fn yuv411p_new_panics_on_invalid() {
+  let y = std::vec![0u8; 10];
+  let u = std::vec![128u8; 4 * 8];
+  let v = std::vec![128u8; 4 * 8];
+  let _ = Yuv411pFrame::new(&y, &u, &v, 16, 8, 16, 4, 4);
 }

@@ -190,8 +190,6 @@
 //!
 //! # Not yet shipped
 //!
-//! - **Legacy planar** (`Yuv411p`, `Yuv410p`) — DV / Cinepak only;
-//!   uncommon enough that adding them would be speculative.
 //! - **Big-endian 10-bit packed RGB** (`X2RGB10BE` / `X2BGR10BE`).
 //!   Most modern systems are LE; BE can be added as a thin wrapper
 //!   over the LE kernel (byte-swap on read) when a caller needs it.
@@ -287,6 +285,7 @@ mod y216;
 mod ya16;
 mod ya8;
 mod yuv410p;
+mod yuv411p;
 mod yuv420p;
 mod yuv420p10;
 mod yuv420p12;
@@ -404,6 +403,7 @@ pub use y216::{Y216, Y216Row, Y216Sink, y216_to};
 pub use ya8::{Ya8, Ya8Row, Ya8Sink, ya8_to};
 pub use ya16::{Ya16, Ya16Row, Ya16Sink, ya16_to};
 pub use yuv410p::{Yuv410p, Yuv410pRow, Yuv410pSink, yuv410p_to};
+pub use yuv411p::{Yuv411p, Yuv411pRow, Yuv411pSink, yuv411p_to};
 pub use yuv420p::{Yuv420p, Yuv420pRow, Yuv420pSink, yuv420p_to};
 pub use yuv420p9::{Yuv420p9, Yuv420p9Row, Yuv420p9Sink, yuv420p9_to};
 pub use yuv420p10::{Yuv420p10, Yuv420p10Row, Yuv420p10Sink, yuv420p10_to};

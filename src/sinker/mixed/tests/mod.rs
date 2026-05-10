@@ -37,6 +37,7 @@ mod y210;
 mod y212;
 mod y216;
 mod yuv410p_8bit;
+mod yuv411p_8bit;
 mod yuv420p_8bit;
 mod yuva;
 

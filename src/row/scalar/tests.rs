@@ -226,6 +226,220 @@ fn yuv420_rgb_bt601_vs_bt709_differ_for_chroma() {
   );
 }
 
+// ---- yuv_411_to_rgb_row (4:1:1 — quarter-width chroma) ---------------
+
+#[test]
+fn yuv411_rgb_black() {
+  // Full-range Y=0, neutral chroma → black. width=4 means one chroma
+  // sample drives all four Y pixels (the full sub-block).
+  let y = [0u8; 4];
+  let u = [128u8; 1];
+  let v = [128u8; 1];
+  let mut rgb = [0u8; 12];
+  yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  assert!(rgb.iter().all(|&c| c == 0), "got {rgb:?}");
+}
+
+#[test]
+fn yuv411_rgb_white_full_range() {
+  let y = [255u8; 4];
+  let u = [128u8; 1];
+  let v = [128u8; 1];
+  let mut rgb = [0u8; 12];
+  yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  assert!(rgb.iter().all(|&c| c == 255), "got {rgb:?}");
+}
+
+#[test]
+fn yuv411_rgb_gray_is_gray() {
+  let y = [128u8; 4];
+  let u = [128u8; 1];
+  let v = [128u8; 1];
+  let mut rgb = [0u8; 12];
+  yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  for x in 0..4 {
+    let (r, g, b) = (rgb[x * 3], rgb[x * 3 + 1], rgb[x * 3 + 2]);
+    assert_eq!(r, g);
+    assert_eq!(g, b);
+    assert!(r.abs_diff(128) <= 1, "got {r}");
+  }
+}
+
+#[test]
+fn yuv411_rgb_chroma_shared_across_quartet() {
+  // Four Y values with same chroma: differing Y produces differing
+  // luminance but same chroma-driven offsets. Validates that pixels
+  // x..x+3 share the upsampled chroma sample.
+  let y = [50u8, 100, 150, 200];
+  let u = [128u8; 1];
+  let v = [128u8; 1];
+  let mut rgb = [0u8; 12];
+  yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  // With neutral chroma, output is gray = Y for each pixel.
+  assert_eq!(rgb[0], 50);
+  assert_eq!(rgb[3], 100);
+  assert_eq!(rgb[6], 150);
+  assert_eq!(rgb[9], 200);
+}
+
+#[test]
+fn yuv411_rgb_two_chroma_blocks() {
+  // 8-pixel row with two different chroma blocks. Sub-block 0 (Y[0..4])
+  // gets chroma[0]; sub-block 1 (Y[4..8]) gets chroma[1]. Validates
+  // the `c_idx = x / 4` indexing.
+  let y = [128u8; 8];
+  // First quartet: red-ward (V=200); second: green-ward (V=64).
+  let u = [128u8, 128];
+  let v = [200u8, 64];
+  let mut rgb = [0u8; 24];
+  yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, 8, ColorMatrix::Bt601, true);
+  // First four pixels: red boost.
+  for x in 0..4 {
+    let r = rgb[x * 3];
+    let b = rgb[x * 3 + 2];
+    assert!(r > b, "px {x}: r={r} should be > b={b} for V=200");
+  }
+  // Last four pixels: blue boost (V=64 → cyan-ish).
+  for x in 4..8 {
+    let r = rgb[x * 3];
+    let b = rgb[x * 3 + 2];
+    assert!(r < b, "px {x}: r={r} should be < b={b} for V=64");
+  }
+}
+
+#[test]
+fn yuv411_rgba_alpha_is_opaque() {
+  // RGBA wrapper writes four bytes per pixel with constant 0xFF
+  // alpha; the first three bytes match yuv_411_to_rgb_row.
+  let y = [200u8, 100, 50, 150];
+  let u = [128u8; 1];
+  let v = [128u8; 1];
+  let mut rgba = [0u8; 16];
+  yuv_411_to_rgba_row(&y, &u, &v, &mut rgba, 4, ColorMatrix::Bt601, true);
+  for x in 0..4 {
+    assert_eq!(rgba[x * 4 + 3], 0xFF, "alpha at px {x}");
+  }
+  // R/G/B match `yuv_411_to_rgb_row` byte-for-byte.
+  let mut rgb = [0u8; 12];
+  yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, 4, ColorMatrix::Bt601, true);
+  for x in 0..4 {
+    assert_eq!(rgba[x * 4], rgb[x * 3]);
+    assert_eq!(rgba[x * 4 + 1], rgb[x * 3 + 1]);
+    assert_eq!(rgba[x * 4 + 2], rgb[x * 3 + 2]);
+  }
+}
+
+#[test]
+fn yuv411_rgb_limited_range_black_and_white() {
+  // Y=16 → black, Y=235 → white in limited range. Two quartets.
+  let y = [16u8, 16, 16, 16, 235, 235, 235, 235];
+  let u = [128u8; 2];
+  let v = [128u8; 2];
+  let mut rgb = [0u8; 24];
+  yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, 8, ColorMatrix::Bt601, false);
+  for x in 0..4 {
+    assert_eq!((rgb[x * 3], rgb[x * 3 + 1], rgb[x * 3 + 2]), (0, 0, 0));
+  }
+  for x in 4..8 {
+    assert_eq!(
+      (rgb[x * 3], rgb[x * 3 + 1], rgb[x * 3 + 2]),
+      (255, 255, 255),
+      "limited-range Y=235 should be white"
+    );
+  }
+}
+
+#[test]
+fn yuv411_rgb_widths_1_through_3_partial_chroma_only() {
+  // Widths 1, 2, 3 produce a single chroma sample serving all luma.
+  // FFmpeg ceil-shift: chroma_width = width.div_ceil(4) = 1.
+  // With neutral chroma (128) and full-range, R=G=B=Y for each pixel.
+  for w in [1usize, 2, 3] {
+    let y: std::vec::Vec<u8> = (0..w as u8).map(|i| (i + 1) * 30).collect();
+    let u = [128u8; 1];
+    let v = [128u8; 1];
+    let mut rgb = std::vec![0u8; 3 * w];
+    yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, w, ColorMatrix::Bt601, true);
+    for x in 0..w {
+      let (r, g, b) = (rgb[x * 3], rgb[x * 3 + 1], rgb[x * 3 + 2]);
+      assert_eq!(r, g, "width={w} px={x}: r={r} g={g}");
+      assert_eq!(g, b, "width={w} px={x}: g={g} b={b}");
+      assert!(r.abs_diff(y[x]) <= 1, "width={w} px={x}: r={r} y={}", y[x]);
+    }
+  }
+}
+
+#[test]
+fn yuv411_rgb_widths_5_6_7_partial_tail_uses_last_chroma() {
+  // Widths 5, 6, 7 → chroma_width=2; first 4 luma share chroma[0],
+  // trailing 1..3 luma share chroma[1] (the partial group). Use
+  // distinct chroma to verify the boundary.
+  for w in [5usize, 6, 7] {
+    let y = std::vec![128u8; w];
+    let u = [128u8, 128];
+    // First chroma drives red boost (V=200), second drives blue boost (V=64).
+    let v = [200u8, 64];
+    let mut rgb = std::vec![0u8; 3 * w];
+    yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, w, ColorMatrix::Bt601, true);
+    // First four pixels: red > blue.
+    for x in 0..4 {
+      let r = rgb[x * 3];
+      let b = rgb[x * 3 + 2];
+      assert!(
+        r > b,
+        "width={w} px={x}: r={r} should be > b={b} (chroma[0])"
+      );
+    }
+    // Trailing pixels (4..w): blue > red (chroma[1] partial group).
+    for x in 4..w {
+      let r = rgb[x * 3];
+      let b = rgb[x * 3 + 2];
+      assert!(
+        r < b,
+        "width={w} px={x}: r={r} should be < b={b} (chroma[1] partial)"
+      );
+    }
+  }
+}
+
+#[test]
+fn yuv411_rgba_widths_5_through_7_alpha_opaque() {
+  // RGBA tail must still write 0xFF alpha for every pixel, including
+  // the partial-chroma trailing 1..3 luma samples.
+  for w in [5usize, 6, 7] {
+    let y = std::vec![128u8; w];
+    let u = std::vec![128u8; 2];
+    let v = std::vec![128u8; 2];
+    let mut rgba = std::vec![0u8; 4 * w];
+    yuv_411_to_rgba_row(&y, &u, &v, &mut rgba, w, ColorMatrix::Bt601, true);
+    for x in 0..w {
+      assert_eq!(rgba[x * 4 + 3], 0xFF, "width={w} alpha at px {x}");
+    }
+  }
+}
+
+#[test]
+fn yuv411_rgb_width_641_realistic_cropped() {
+  // Realistic non-4-aligned width from codex finding: 641 → chroma
+  // width 161; the SIMD body (when present) skips the trailing 1
+  // pixel which is handled by the partial-chroma scalar path.
+  // Verify no panic, output length correct, last pixel matches Y.
+  let w = 641usize;
+  let y: std::vec::Vec<u8> = (0..w).map(|i| (i % 256) as u8).collect();
+  let u = std::vec![128u8; 161];
+  let v = std::vec![128u8; 161];
+  let mut rgb = std::vec![0u8; 3 * w];
+  yuv_411_to_rgb_row(&y, &u, &v, &mut rgb, w, ColorMatrix::Bt601, true);
+  // Neutral chroma → R=G=B≈Y. Spot-check first, mid, and last pixel
+  // (the last is the partial-tail one — y[640] inside chroma[160]).
+  for &x in &[0usize, 320, 639, 640] {
+    let (r, g, b) = (rgb[x * 3], rgb[x * 3 + 1], rgb[x * 3 + 2]);
+    assert_eq!(r, g, "px {x}");
+    assert_eq!(g, b, "px {x}");
+    assert!(r.abs_diff(y[x]) <= 1, "px {x}: r={r} y={}", y[x]);
+  }
+}
+
 // ---- rgb_to_hsv_row --------------------------------------------------
 
 #[test]
