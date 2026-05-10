@@ -425,3 +425,55 @@ fn v410_rgba_u16_buffer_too_short_returns_err() {
     }
   ));
 }
+
+// ====================================================================================
+// Phase 4 Tier 5 — Frame BE flag, V410 LE+BE round-trip parity test.
+//
+// V410 packs each pixel as one u32 word. The BE wire variant byte-swaps each
+// word before bit-extraction. Encoding the same logical (U, Y, V) triplet as
+// LE bytes vs BE bytes and feeding through `MixedSinker<V410<false>>` vs
+// `MixedSinker<V410<true>>` must produce byte-identical output.
+// ====================================================================================
+
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn v410_le_be_roundtrip_byte_identical() {
+  // Build a logical (U, Y, V) pattern; encode as LE-bytes and BE-bytes
+  // separately; assert sinker outputs match.
+  let pack = |u: u32, y: u32, v: u32| -> u32 { (v << 20) | (y << 10) | u };
+  let logical: std::vec::Vec<u32> = (0..8 * 4)
+    .map(|i| match i % 4 {
+      0 => pack(512, 512, 512),
+      1 => pack(100, 700, 300),
+      2 => pack(900, 64, 64),
+      _ => pack(64, 940, 960),
+    })
+    .collect();
+  let pix_le: std::vec::Vec<u32> = logical.iter().map(|&w| as_le_u32(w)).collect();
+  let pix_be: std::vec::Vec<u32> = logical.iter().map(|&w| as_be_u32(w)).collect();
+
+  let frame_le = V410LeFrame::try_new(&pix_le, 8, 4, 8).unwrap();
+  let mut out_le = std::vec![0u8; 8 * 4 * 4];
+  let mut sink_le = MixedSinker::<V410>::new(8, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le)
+    .unwrap();
+  v410_to(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+
+  let frame_be = V410BeFrame::try_new(&pix_be, 8, 4, 8).unwrap();
+  let mut out_be = std::vec![0u8; 8 * 4 * 4];
+  let mut sink_be = MixedSinker::<V410<true>>::new(8, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be)
+    .unwrap();
+  v410_to_endian(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le, out_be,
+    "V410 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}

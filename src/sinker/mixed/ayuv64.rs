@@ -57,7 +57,7 @@ use crate::{
   yuv::{Ayuv64, Ayuv64Row, Ayuv64Sink},
 };
 
-impl<'a> MixedSinker<'a, Ayuv64> {
+impl<'a, const BE: bool> MixedSinker<'a, Ayuv64<BE>> {
   /// Attaches a packed **8-bit** RGBA output buffer. When AYUV64 is the
   /// source, the per-pixel alpha value is **sourced from the A u16 at
   /// slot 0 of each pixel quadruple**, depth-converted to u8 via `>> 8`
@@ -191,9 +191,9 @@ impl<'a> MixedSinker<'a, Ayuv64> {
   }
 }
 
-impl Ayuv64Sink for MixedSinker<'_, Ayuv64> {}
+impl<const BE: bool> Ayuv64Sink<BE> for MixedSinker<'_, Ayuv64<BE>> {}
 
-impl PixelSink for MixedSinker<'_, Ayuv64> {
+impl<const BE: bool> PixelSink for MixedSinker<'_, Ayuv64<BE>> {
   type Input<'r> = Ayuv64Row<'r>;
   type Error = MixedSinkerError;
 
@@ -252,7 +252,7 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         &mut buf[one_plane_start..one_plane_end],
         w,
         use_simd,
-        false,
+        BE,
       );
     }
 
@@ -264,7 +264,7 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         &mut buf[one_plane_start..one_plane_end],
         w,
         use_simd,
-        false,
+        BE,
       );
     }
 
@@ -292,7 +292,7 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         row.matrix(),
         row.full_range(),
         use_simd,
-        false,
+        BE,
       );
       return Ok(());
     }
@@ -311,7 +311,7 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         row.matrix(),
         row.full_range(),
         use_simd,
-        false,
+        BE,
       );
       return Ok(());
     }
@@ -339,7 +339,7 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         row.matrix(),
         row.full_range(),
         use_simd,
-        false,
+        BE,
       );
 
       if let Some(hsv) = hsv.as_mut() {
@@ -362,8 +362,9 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         let rgba_buf = rgba.as_deref_mut().unwrap();
         let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
         expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
-        // `Ayuv64Frame` is LE-encoded per the unified Frame contract → `BE = false`.
-        crate::row::alpha_extract::copy_alpha_packed_u16x4_to_u8_at_0::<false>(
+        // BE propagated from the parent `Ayuv64Frame<'_, BE>` via the
+        // sinker's `MixedSinker<Ayuv64<BE>>` monomorphization (Phase 4).
+        crate::row::alpha_extract::copy_alpha_packed_u16x4_to_u8_at_0::<BE>(
           packed, rgba_row, w, use_simd,
         );
       }
@@ -382,7 +383,7 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         row.matrix(),
         row.full_range(),
         use_simd,
-        false,
+        BE,
       );
     }
 
@@ -406,7 +407,7 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         row.matrix(),
         row.full_range(),
         use_simd,
-        false,
+        BE,
       );
 
       // Strategy A+ combo (u16): RGBA u16 also attached — derive from the
@@ -419,8 +420,9 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         let rgba_u16_row =
           rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
         expand_rgb_u16_to_rgba_u16_row::<16>(rgb_u16_row, rgba_u16_row, w);
-        // `Ayuv64Frame` is LE-encoded per the unified Frame contract → `BE = false`.
-        crate::row::alpha_extract::copy_alpha_packed_u16x4_at_0::<false>(
+        // BE propagated from the parent `Ayuv64Frame<'_, BE>` via the
+        // sinker's `MixedSinker<Ayuv64<BE>>` monomorphization (Phase 4).
+        crate::row::alpha_extract::copy_alpha_packed_u16x4_at_0::<BE>(
           packed,
           rgba_u16_row,
           w,
@@ -443,7 +445,7 @@ impl PixelSink for MixedSinker<'_, Ayuv64> {
         row.matrix(),
         row.full_range(),
         use_simd,
-        false,
+        BE,
       );
     }
 
