@@ -68,7 +68,7 @@ use crate::{
 
 macro_rules! impl_gbrp_high_bit {
   ($marker:ident, $sink:ident, $row:ident, $bits:literal) => {
-    impl<'a> MixedSinker<'a, crate::yuv::$marker> {
+    impl<'a, const BE: bool> MixedSinker<'a, crate::yuv::$marker<BE>> {
       /// Attaches a packed **`u16`** RGB output buffer. Samples are in
       /// `[0, (1 << BITS) - 1]` (native depth, no depth conversion).
       /// Length is measured in `u16` **elements** (`width × height × 3`).
@@ -160,9 +160,9 @@ macro_rules! impl_gbrp_high_bit {
       }
     }
 
-    impl crate::yuv::$sink for MixedSinker<'_, crate::yuv::$marker> {}
+    impl<const BE: bool> crate::yuv::$sink<BE> for MixedSinker<'_, crate::yuv::$marker<BE>> {}
 
-    impl PixelSink for MixedSinker<'_, crate::yuv::$marker> {
+    impl<const BE: bool> PixelSink for MixedSinker<'_, crate::yuv::$marker<BE>> {
       type Input<'r> = crate::yuv::$row<'r>;
       type Error = MixedSinkerError;
 
@@ -237,7 +237,7 @@ macro_rules! impl_gbrp_high_bit {
           let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
           let rgba_u16_row =
             rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-          gbr_to_rgba_opaque_u16_high_bit_row::<BITS, false>(
+          gbr_to_rgba_opaque_u16_high_bit_row::<BITS, BE>(
             g_in,
             b_in,
             r_in,
@@ -257,7 +257,7 @@ macro_rules! impl_gbrp_high_bit {
               })?;
           let rgb_plane_start = one_plane_start * 3;
           let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-          gbr_to_rgb_u16_high_bit_row::<BITS, false>(g_in, b_in, r_in, rgb_u16_row, w, use_simd);
+          gbr_to_rgb_u16_high_bit_row::<BITS, BE>(g_in, b_in, r_in, rgb_u16_row, w, use_simd);
           if want_rgba_u16 {
             let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
             let rgba_u16_row =
@@ -271,7 +271,7 @@ macro_rules! impl_gbrp_high_bit {
         // going through the u8 staging path, so it is independent of whether
         // RGB staging happens below.
         if let Some(luma_u16_buf) = luma_u16.as_deref_mut() {
-          gbr_to_luma_u16_high_bit_row::<BITS, false>(
+          gbr_to_luma_u16_high_bit_row::<BITS, BE>(
             g_in,
             b_in,
             r_in,
@@ -294,7 +294,7 @@ macro_rules! impl_gbrp_high_bit {
         if want_rgba && !need_rgb_staging {
           let rgba_buf = rgba.as_deref_mut().unwrap();
           let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-          gbr_to_rgba_opaque_high_bit_row::<BITS, false>(g_in, b_in, r_in, rgba_row, w, use_simd);
+          gbr_to_rgba_opaque_high_bit_row::<BITS, BE>(g_in, b_in, r_in, rgba_row, w, use_simd);
           return Ok(());
         }
 
@@ -311,7 +311,7 @@ macro_rules! impl_gbrp_high_bit {
           w,
           h,
         )?;
-        gbr_to_rgb_high_bit_row::<BITS, false>(g_in, b_in, r_in, rgb_row, w, use_simd);
+        gbr_to_rgb_high_bit_row::<BITS, BE>(g_in, b_in, r_in, rgb_row, w, use_simd);
 
         if let Some(luma) = luma.as_deref_mut() {
           rgb_to_luma_row(
@@ -349,7 +349,7 @@ macro_rules! impl_gbrp_high_bit {
 
 macro_rules! impl_gbrap_high_bit {
   ($marker:ident, $sink:ident, $row:ident, $bits:literal) => {
-    impl<'a> MixedSinker<'a, crate::yuv::$marker> {
+    impl<'a, const BE: bool> MixedSinker<'a, crate::yuv::$marker<BE>> {
       /// Attaches a packed **`u16`** RGB output buffer. Samples are in
       /// `[0, (1 << BITS) - 1]` (native depth, no depth conversion).
       /// Length is measured in `u16` **elements** (`width × height × 3`).
@@ -440,9 +440,9 @@ macro_rules! impl_gbrap_high_bit {
       }
     }
 
-    impl crate::yuv::$sink for MixedSinker<'_, crate::yuv::$marker> {}
+    impl<const BE: bool> crate::yuv::$sink<BE> for MixedSinker<'_, crate::yuv::$marker<BE>> {}
 
-    impl PixelSink for MixedSinker<'_, crate::yuv::$marker> {
+    impl<const BE: bool> PixelSink for MixedSinker<'_, crate::yuv::$marker<BE>> {
       type Input<'r> = crate::yuv::$row<'r>;
       type Error = MixedSinkerError;
 
@@ -526,7 +526,7 @@ macro_rules! impl_gbrap_high_bit {
           let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
           let rgba_u16_row =
             rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-          gbra_to_rgba_u16_high_bit_row::<BITS, false>(
+          gbra_to_rgba_u16_high_bit_row::<BITS, BE>(
             g_in,
             b_in,
             r_in,
@@ -547,7 +547,7 @@ macro_rules! impl_gbrap_high_bit {
               })?;
           let rgb_plane_start = one_plane_start * 3;
           let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-          gbr_to_rgb_u16_high_bit_row::<BITS, false>(g_in, b_in, r_in, rgb_u16_row, w, use_simd);
+          gbr_to_rgb_u16_high_bit_row::<BITS, BE>(g_in, b_in, r_in, rgb_u16_row, w, use_simd);
           if want_rgba_u16 {
             // Strategy A+: expand RGB → RGBA, then overwrite α from source plane.
             let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
@@ -555,11 +555,10 @@ macro_rules! impl_gbrap_high_bit {
               rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
             expand_rgb_u16_to_rgba_u16_row::<BITS>(rgb_u16_row, rgba_u16_row, w);
             // Overwrite α slot from source plane (native depth, no shift).
-            // BE flag hard-wired to `false`: this sinker only handles LE-encoded
-            // GBR/GBRA inputs today (Tier 10b). Phase 4 will wire the kernel's
-            // `<const BE: bool>` through here (matches the LE-only `false` in
-            // the sibling `gbr_to_rgb_u16_high_bit_row::<BITS, false>` call).
-            alpha_extract::copy_alpha_plane_u16::<BITS, false>(a_in, rgba_u16_row, w, use_simd);
+            // BE propagated from the parent `GbrapHighBitFrame<'_, BITS, BE>`
+            // via the sinker's `MixedSinker<GbrapN<BE>>` monomorphization
+            // (Phase 4, Tier 10b).
+            alpha_extract::copy_alpha_plane_u16::<BITS, BE>(a_in, rgba_u16_row, w, use_simd);
           }
         }
 
@@ -568,7 +567,7 @@ macro_rules! impl_gbrap_high_bit {
         // going through the u8 staging path, so it is independent of whether
         // RGB staging happens below.
         if let Some(luma_u16_buf) = luma_u16.as_deref_mut() {
-          gbr_to_luma_u16_high_bit_row::<BITS, false>(
+          gbr_to_luma_u16_high_bit_row::<BITS, BE>(
             g_in,
             b_in,
             r_in,
@@ -591,7 +590,7 @@ macro_rules! impl_gbrap_high_bit {
         if want_rgba && !need_rgb_staging {
           let rgba_buf = rgba.as_deref_mut().unwrap();
           let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-          gbra_to_rgba_high_bit_row::<BITS, false>(g_in, b_in, r_in, a_in, rgba_row, w, use_simd);
+          gbra_to_rgba_high_bit_row::<BITS, BE>(g_in, b_in, r_in, a_in, rgba_row, w, use_simd);
           return Ok(());
         }
 
@@ -608,7 +607,7 @@ macro_rules! impl_gbrap_high_bit {
           w,
           h,
         )?;
-        gbr_to_rgb_high_bit_row::<BITS, false>(g_in, b_in, r_in, rgb_row, w, use_simd);
+        gbr_to_rgb_high_bit_row::<BITS, BE>(g_in, b_in, r_in, rgb_row, w, use_simd);
 
         if let Some(luma) = luma.as_deref_mut() {
           rgb_to_luma_row(
@@ -637,8 +636,8 @@ macro_rules! impl_gbrap_high_bit {
           // overwrite α bytes from the source A plane.
           let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
           expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
-          // BE flag hard-wired to `false`: see the rgba_u16 branch above.
-          alpha_extract::copy_alpha_plane_u16_to_u8::<BITS, false>(a_in, rgba_row, w, use_simd);
+          // BE propagated from the parent frame (Phase 4, Tier 10b).
+          alpha_extract::copy_alpha_plane_u16_to_u8::<BITS, BE>(a_in, rgba_row, w, use_simd);
         }
 
         Ok(())

@@ -1,13 +1,23 @@
 //! Float-domain planar GBR source frames:
-//! - `AV_PIX_FMT_GBRPF32LE`  → [`Gbrpf32Frame`]  (G, B, R planes, `f32` elements)
-//! - `AV_PIX_FMT_GBRAPF32LE` → [`Gbrapf32Frame`] (G, B, R, A planes, `f32` elements)
-//! - `AV_PIX_FMT_GBRPF16LE`  → [`Gbrpf16Frame`]  (G, B, R planes, `half::f16`)
-//! - `AV_PIX_FMT_GBRAPF16LE` → [`Gbrapf16Frame`] (G, B, R, A planes, `half::f16`)
+//! - `AV_PIX_FMT_GBRPF32{LE,BE}`  → [`Gbrpf32Frame`]  (G, B, R planes, `f32` elements)
+//! - `AV_PIX_FMT_GBRAPF32{LE,BE}` → [`Gbrapf32Frame`] (G, B, R, A planes, `f32` elements)
+//! - `AV_PIX_FMT_GBRPF16{LE,BE}`  → [`Gbrpf16Frame`]  (G, B, R planes, `half::f16`)
+//! - `AV_PIX_FMT_GBRAPF16{LE,BE}` → [`Gbrapf16Frame`] (G, B, R, A planes, `half::f16`)
 //!
 //! Stride is in **elements** (not bytes). Sample range nominal `[0, 1]`; HDR > 1.0
 //! is permitted on every accessor that documents it. NaN / Inf are preserved on
 //! lossless pass-through paths and clamped on integer-output paths via
 //! IEEE `min(max(x, 0.0), 1.0)`.
+//!
+//! # Endian contract — `<const BE: bool = false>`
+//!
+//! Each frame type carries a `<const BE: bool>` parameter that defaults to
+//! `false` (LE-encoded plane bytes, matching the FFmpeg `*LE` suffix). Set
+//! `BE = true` to consume `*BE`-encoded plane bytes; row kernels perform the
+//! byte-swap (or no-op on host-native bit pattern) under the hood — callers
+//! do **not** pre-swap. The `BE` parameter on `Frame` propagates through the
+//! walker (`gbrpfXX_to::<BE>(...)`) into the sinker dispatch, which
+//! monomorphizes the kernel call as `gbrpfXX_to_*_row::<BE>(...)`.
 
 use derive_more::IsVariant;
 use thiserror::Error;
@@ -141,28 +151,28 @@ const fn check_plane(
 // Gbrpf32Frame — three f32 planes, no alpha
 // ---------------------------------------------------------------------------
 
-/// A validated planar GBR float-32 frame (`AV_PIX_FMT_GBRPF32LE`).
+/// A validated planar GBR float-32 frame (`AV_PIX_FMT_GBRPF32{LE,BE}`).
 ///
 /// Three full-resolution `f32` planes in **G, B, R** order. Stride is in
 /// `f32` elements. Nominal range `[0.0, 1.0]`; HDR values > 1.0 are
 /// preserved bit-exact on lossless pass-through outputs and clamped to
 /// `[0.0, 1.0]` on integer-output paths.
 ///
-/// # Endian contract — **LE-encoded bytes**
-///
-/// The three `&[f32]` planes are the **LE-encoded byte layout** reinterpreted
-/// as `f32`, matching the FFmpeg `*LE` pixel-format suffix in the format
-/// name. On a little-endian host (every CI runner today) LE bytes _are_
-/// host-native, so the slices are also host-native float slices; on a
-/// big-endian host the bytes have to be byte-swapped back to host-native
-/// before arithmetic. Downstream row kernels handle this byte-swap (or
-/// no-op on LE) under the hood — callers do **not** pre-swap.
+/// The `<const BE: bool>` parameter selects the plane byte order: `false`
+/// (default) → LE-encoded bytes (`AV_PIX_FMT_GBRPF32LE`), `true` → BE-encoded
+/// bytes (`AV_PIX_FMT_GBRPF32BE`). Downstream row kernels handle the
+/// byte-swap of the float bit pattern (or no-op) under the hood — callers
+/// do **not** pre-swap.
 ///
 /// Stride is in **f32 elements** (not bytes). Callers holding byte buffers
 /// from FFmpeg should cast via `bytemuck::cast_slice` and divide each
 /// `linesize[i]` by 4 before constructing.
+///
+/// # Aliases
+/// - [`Gbrpf32LeFrame`] = `Gbrpf32Frame<'a, false>`.
+/// - [`Gbrpf32BeFrame`] = `Gbrpf32Frame<'a, true>`.
 #[derive(Debug, Clone, Copy)]
-pub struct Gbrpf32Frame<'a> {
+pub struct Gbrpf32Frame<'a, const BE: bool = false> {
   g: &'a [f32],
   b: &'a [f32],
   r: &'a [f32],
@@ -173,7 +183,12 @@ pub struct Gbrpf32Frame<'a> {
   r_stride: u32,
 }
 
-impl<'a> Gbrpf32Frame<'a> {
+/// LE-encoded `Gbrpf32Frame` (`AV_PIX_FMT_GBRPF32LE`).
+pub type Gbrpf32LeFrame<'a> = Gbrpf32Frame<'a, false>;
+/// BE-encoded `Gbrpf32Frame` (`AV_PIX_FMT_GBRPF32BE`).
+pub type Gbrpf32BeFrame<'a> = Gbrpf32Frame<'a, true>;
+
+impl<'a, const BE: bool> Gbrpf32Frame<'a, BE> {
   /// Constructs a new [`Gbrpf32Frame`], validating dimensions and plane
   /// lengths. Returns [`GbrFloatFrameError`] if any precondition fails.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -253,33 +268,33 @@ impl<'a> Gbrpf32Frame<'a> {
   pub const fn r_stride(&self) -> u32 {
     self.r_stride
   }
+  /// Returns the compile-time BE flag — `true` if plane bytes are BE-encoded
+  /// (`AV_PIX_FMT_GBRPF32BE`), `false` if LE-encoded (`AV_PIX_FMT_GBRPF32LE`).
+  /// Runtime mirror of the `<const BE: bool>` type parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Gbrapf32Frame — four f32 planes, with alpha
 // ---------------------------------------------------------------------------
 
-/// A validated planar GBR+A float-32 frame (`AV_PIX_FMT_GBRAPF32LE`).
+/// A validated planar GBR+A float-32 frame (`AV_PIX_FMT_GBRAPF32{LE,BE}`).
 ///
 /// Four full-resolution `f32` planes in **G, B, R, A** order. Alpha is
 /// real per-pixel; nominal range `[0.0, 1.0]` (opaque = 1.0). Stride is
 /// in `f32` elements.
 ///
-/// # Endian contract — **LE-encoded bytes**
+/// The `<const BE: bool>` parameter selects the plane byte order; see
+/// [`Gbrpf32Frame`] for the contract.
 ///
-/// The four `&[f32]` planes are the **LE-encoded byte layout** reinterpreted
-/// as `f32`, matching the FFmpeg `*LE` pixel-format suffix in the format
-/// name. On a little-endian host (every CI runner today) LE bytes _are_
-/// host-native, so the slices are also host-native float slices; on a
-/// big-endian host the bytes have to be byte-swapped back to host-native
-/// before arithmetic. Downstream row kernels handle this byte-swap (or
-/// no-op on LE) under the hood — callers do **not** pre-swap.
-///
-/// Stride is in **f32 elements** (not bytes). Callers holding byte buffers
-/// from FFmpeg should cast via `bytemuck::cast_slice` and divide each
-/// `linesize[i]` by 4 before constructing.
+/// # Aliases
+/// - [`Gbrapf32LeFrame`] = `Gbrapf32Frame<'a, false>`.
+/// - [`Gbrapf32BeFrame`] = `Gbrapf32Frame<'a, true>`.
 #[derive(Debug, Clone, Copy)]
-pub struct Gbrapf32Frame<'a> {
+pub struct Gbrapf32Frame<'a, const BE: bool = false> {
   g: &'a [f32],
   b: &'a [f32],
   r: &'a [f32],
@@ -292,7 +307,12 @@ pub struct Gbrapf32Frame<'a> {
   a_stride: u32,
 }
 
-impl<'a> Gbrapf32Frame<'a> {
+/// LE-encoded `Gbrapf32Frame` (`AV_PIX_FMT_GBRAPF32LE`).
+pub type Gbrapf32LeFrame<'a> = Gbrapf32Frame<'a, false>;
+/// BE-encoded `Gbrapf32Frame` (`AV_PIX_FMT_GBRAPF32BE`).
+pub type Gbrapf32BeFrame<'a> = Gbrapf32Frame<'a, true>;
+
+impl<'a, const BE: bool> Gbrapf32Frame<'a, BE> {
   /// Constructs a new [`Gbrapf32Frame`], validating dimensions and plane
   /// lengths.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -389,33 +409,34 @@ impl<'a> Gbrapf32Frame<'a> {
   pub const fn a_stride(&self) -> u32 {
     self.a_stride
   }
+  /// Returns the compile-time BE flag — `true` if plane bytes are BE-encoded
+  /// (`AV_PIX_FMT_GBRAPF32BE`), `false` if LE-encoded
+  /// (`AV_PIX_FMT_GBRAPF32LE`). Runtime mirror of the `<const BE: bool>`
+  /// type parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Gbrpf16Frame — three half::f16 planes, no alpha
 // ---------------------------------------------------------------------------
 
-/// A validated planar GBR float-16 frame (`AV_PIX_FMT_GBRPF16LE`).
+/// A validated planar GBR float-16 frame (`AV_PIX_FMT_GBRPF16{LE,BE}`).
 ///
 /// Three full-resolution [`half::f16`] planes in **G, B, R** order. Stride
 /// is in `f16` elements. Nominal range `[0.0, 1.0]`; HDR values > 1.0 are
 /// permitted (saturation to `+Inf` occurs on f16→f32 narrowing paths).
 ///
-/// # Endian contract — **LE-encoded bytes**
+/// The `<const BE: bool>` parameter selects the plane byte order; see
+/// [`Gbrpf32Frame`] for the contract.
 ///
-/// The three `&[half::f16]` planes are the **LE-encoded byte layout**
-/// reinterpreted as `f16`, matching the FFmpeg `*LE` pixel-format suffix in
-/// the format name. On a little-endian host (every CI runner today) LE
-/// bytes _are_ host-native, so the slices are also host-native f16 slices;
-/// on a big-endian host the bytes have to be byte-swapped back to
-/// host-native before arithmetic. Downstream row kernels handle this
-/// byte-swap (or no-op on LE) under the hood — callers do **not** pre-swap.
-///
-/// Stride is in **f16 elements** (not bytes). Callers holding byte buffers
-/// from FFmpeg should cast via `bytemuck::cast_slice` and divide each
-/// `linesize[i]` by 2 before constructing.
+/// # Aliases
+/// - [`Gbrpf16LeFrame`] = `Gbrpf16Frame<'a, false>`.
+/// - [`Gbrpf16BeFrame`] = `Gbrpf16Frame<'a, true>`.
 #[derive(Debug, Clone, Copy)]
-pub struct Gbrpf16Frame<'a> {
+pub struct Gbrpf16Frame<'a, const BE: bool = false> {
   g: &'a [half::f16],
   b: &'a [half::f16],
   r: &'a [half::f16],
@@ -426,7 +447,12 @@ pub struct Gbrpf16Frame<'a> {
   r_stride: u32,
 }
 
-impl<'a> Gbrpf16Frame<'a> {
+/// LE-encoded `Gbrpf16Frame` (`AV_PIX_FMT_GBRPF16LE`).
+pub type Gbrpf16LeFrame<'a> = Gbrpf16Frame<'a, false>;
+/// BE-encoded `Gbrpf16Frame` (`AV_PIX_FMT_GBRPF16BE`).
+pub type Gbrpf16BeFrame<'a> = Gbrpf16Frame<'a, true>;
+
+impl<'a, const BE: bool> Gbrpf16Frame<'a, BE> {
   /// Constructs a new [`Gbrpf16Frame`], validating dimensions and plane
   /// lengths.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -506,33 +532,34 @@ impl<'a> Gbrpf16Frame<'a> {
   pub const fn r_stride(&self) -> u32 {
     self.r_stride
   }
+  /// Returns the compile-time BE flag — `true` if plane bytes are BE-encoded
+  /// (`AV_PIX_FMT_GBRPF16BE`), `false` if LE-encoded
+  /// (`AV_PIX_FMT_GBRPF16LE`). Runtime mirror of the `<const BE: bool>`
+  /// type parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Gbrapf16Frame — four half::f16 planes, with alpha
 // ---------------------------------------------------------------------------
 
-/// A validated planar GBR+A float-16 frame (`AV_PIX_FMT_GBRAPF16LE`).
+/// A validated planar GBR+A float-16 frame (`AV_PIX_FMT_GBRAPF16{LE,BE}`).
 ///
 /// Four full-resolution [`half::f16`] planes in **G, B, R, A** order.
 /// Alpha is real per-pixel; nominal range `[0.0, 1.0]`. Stride is in
 /// `f16` elements.
 ///
-/// # Endian contract — **LE-encoded bytes**
+/// The `<const BE: bool>` parameter selects the plane byte order; see
+/// [`Gbrpf32Frame`] for the contract.
 ///
-/// The four `&[half::f16]` planes are the **LE-encoded byte layout**
-/// reinterpreted as `f16`, matching the FFmpeg `*LE` pixel-format suffix in
-/// the format name. On a little-endian host (every CI runner today) LE
-/// bytes _are_ host-native, so the slices are also host-native f16 slices;
-/// on a big-endian host the bytes have to be byte-swapped back to
-/// host-native before arithmetic. Downstream row kernels handle this
-/// byte-swap (or no-op on LE) under the hood — callers do **not** pre-swap.
-///
-/// Stride is in **f16 elements** (not bytes). Callers holding byte buffers
-/// from FFmpeg should cast via `bytemuck::cast_slice` and divide each
-/// `linesize[i]` by 2 before constructing.
+/// # Aliases
+/// - [`Gbrapf16LeFrame`] = `Gbrapf16Frame<'a, false>`.
+/// - [`Gbrapf16BeFrame`] = `Gbrapf16Frame<'a, true>`.
 #[derive(Debug, Clone, Copy)]
-pub struct Gbrapf16Frame<'a> {
+pub struct Gbrapf16Frame<'a, const BE: bool = false> {
   g: &'a [half::f16],
   b: &'a [half::f16],
   r: &'a [half::f16],
@@ -545,7 +572,12 @@ pub struct Gbrapf16Frame<'a> {
   a_stride: u32,
 }
 
-impl<'a> Gbrapf16Frame<'a> {
+/// LE-encoded `Gbrapf16Frame` (`AV_PIX_FMT_GBRAPF16LE`).
+pub type Gbrapf16LeFrame<'a> = Gbrapf16Frame<'a, false>;
+/// BE-encoded `Gbrapf16Frame` (`AV_PIX_FMT_GBRAPF16BE`).
+pub type Gbrapf16BeFrame<'a> = Gbrapf16Frame<'a, true>;
+
+impl<'a, const BE: bool> Gbrapf16Frame<'a, BE> {
   /// Constructs a new [`Gbrapf16Frame`], validating dimensions and plane
   /// lengths.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -641,5 +673,13 @@ impl<'a> Gbrapf16Frame<'a> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn a_stride(&self) -> u32 {
     self.a_stride
+  }
+  /// Returns the compile-time BE flag — `true` if plane bytes are BE-encoded
+  /// (`AV_PIX_FMT_GBRAPF16BE`), `false` if LE-encoded
+  /// (`AV_PIX_FMT_GBRAPF16LE`). Runtime mirror of the `<const BE: bool>`
+  /// type parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
   }
 }

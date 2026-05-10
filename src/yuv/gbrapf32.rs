@@ -1,19 +1,28 @@
-//! Walker for the `Gbrapf32` source format (`AV_PIX_FMT_GBRAPF32LE`) — four
+//! Walker for the `Gbrapf32` source format (`AV_PIX_FMT_GBRAPF32{LE,BE}`) — four
 //! full-resolution `f32` planes in **G, B, R, A** order.
 //!
 //! Alpha is real per-pixel; nominal range `[0.0, 1.0]` (opaque = 1.0).
 //! Integer outputs clamp colour channels to `[0.0, 1.0]` before scaling;
 //! float outputs are lossless pass-through.
+//!
+//! The marker carries `<const BE: bool = false>`: `Gbrapf32`
+//! (= `Gbrapf32<false>`) is the LE source; `Gbrapf32<true>` is the BE
+//! source. The walker [`gbrapf32_to::<BE>`] propagates `BE` from
+//! [`Gbrapf32Frame<'_, BE>`] into the sinker dispatch.
 
-use crate::{PixelSink, SourceFormat, frame::Gbrapf32Frame, sealed::Sealed};
+use crate::{
+  PixelSink, SourceFormat,
+  frame::{Gbrapf32Frame, Gbrapf32LeFrame},
+  sealed::Sealed,
+};
 
 /// Zero-sized marker for the planar GBRAP float-32 source format
-/// (`AV_PIX_FMT_GBRAPF32LE`).
+/// (`AV_PIX_FMT_GBRAPF32{LE,BE}`). `<const BE: bool>` defaults to `false`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct Gbrapf32;
+pub struct Gbrapf32<const BE: bool = false>;
 
-impl Sealed for Gbrapf32 {}
-impl SourceFormat for Gbrapf32 {}
+impl<const BE: bool> Sealed for Gbrapf32<BE> {}
+impl<const BE: bool> SourceFormat for Gbrapf32<BE> {}
 
 /// One output row from a [`Gbrapf32Frame`] — four full-width `f32` slices
 /// in G / B / R / A order. Use [`Self::g`] / [`Self::b`] / [`Self::r`] /
@@ -60,11 +69,24 @@ impl<'a> Gbrapf32Row<'a> {
   }
 }
 
-/// Sinks that consume rows of a [`Gbrapf32`] source.
-pub trait Gbrapf32Sink: for<'a> PixelSink<Input<'a> = Gbrapf32Row<'a>> {}
+/// Sinks that consume rows of a [`Gbrapf32`] source. Defaults to LE
+/// (`BE = false`) for back-compat.
+pub trait Gbrapf32Sink<const BE: bool = false>:
+  for<'a> PixelSink<Input<'a> = Gbrapf32Row<'a>>
+{
+}
 
-/// Walks a [`Gbrapf32Frame`] row by row, dispatching each row to the sink.
-pub fn gbrapf32_to<S: Gbrapf32Sink>(src: &Gbrapf32Frame<'_>, sink: &mut S) -> Result<(), S::Error> {
+/// Walks a [`Gbrapf32Frame<'_, BE>`] row by row, dispatching each row to
+/// the sink. Propagates `<const BE: bool>` from the frame into
+/// [`Gbrapf32Sink<BE>`]. Use the LE-only [`gbrapf32_to`] wrapper for
+/// pre-Phase-4 explicit-turbofish callers.
+pub fn gbrapf32_to_endian<S, const BE: bool>(
+  src: &Gbrapf32Frame<'_, BE>,
+  sink: &mut S,
+) -> Result<(), S::Error>
+where
+  S: Gbrapf32Sink<BE>,
+{
   sink.begin_frame(src.width(), src.height())?;
 
   let w = src.width() as usize;
@@ -88,10 +110,27 @@ pub fn gbrapf32_to<S: Gbrapf32Sink>(src: &Gbrapf32Frame<'_>, sink: &mut S) -> Re
   Ok(())
 }
 
+/// LE-only back-compat wrapper preserving the pre-Phase-4 walker
+/// signature. Forwards to [`gbrapf32_to_endian`] with `BE = false`.
+///
+/// Rust forbids defaults on function-position const-generic parameters,
+/// so an explicit-turbofish caller written before the Phase-4 BE
+/// migration (`gbrapf32_to::<MySink>(...)`) would otherwise fail to
+/// compile. Keeping this single-generic wrapper preserves source
+/// compatibility for those call sites. BE-aware callers should use
+/// [`gbrapf32_to_endian`] directly.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn gbrapf32_to<S>(src: &Gbrapf32LeFrame<'_>, sink: &mut S) -> Result<(), S::Error>
+where
+  S: Gbrapf32Sink<false>,
+{
+  gbrapf32_to_endian::<S, false>(src, sink)
+}
+
 #[cfg(all(test, feature = "std"))]
 mod tests {
   use super::*;
-  use crate::{PixelSink, frame::Gbrapf32Frame};
+  use crate::PixelSink;
   use core::convert::Infallible;
 
   struct CountingSink {
@@ -116,10 +155,21 @@ mod tests {
 
   impl Gbrapf32Sink for CountingSink {}
 
+  // Compile-pass regression for the codex round-1 finding on PR #109
+  // (hand-written `gbrapf32_to`). See `gbrpf32::tests` for full rationale.
+  // BE-aware callers should use `gbrapf32_to_endian::<S, BE>` directly.
+  #[test]
+  fn gbrapf32_to_explicit_turbofish_one_generic_compiles() {
+    #[allow(clippy::type_complexity)]
+    fn _check<S: Gbrapf32Sink>() {
+      let _: fn(&Gbrapf32LeFrame<'_>, &mut S) -> Result<(), S::Error> = gbrapf32_to::<S>;
+    }
+  }
+
   #[test]
   fn gbrapf32_walker_visits_every_row_once() {
     let buf = std::vec![1.0f32; 4 * 4];
-    let frame = Gbrapf32Frame::try_new(&buf, &buf, &buf, &buf, 4, 4, 4, 4, 4, 4).unwrap();
+    let frame = Gbrapf32LeFrame::try_new(&buf, &buf, &buf, &buf, 4, 4, 4, 4, 4, 4).unwrap();
     let mut sink = CountingSink {
       rows_seen: 0,
       last_a_len: 0,
