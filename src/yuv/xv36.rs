@@ -1,10 +1,15 @@
 //! Packed YUV 4:4:4 12-bit `XV36` source — high-bit-depth packed
-//! capture format (FFmpeg `AV_PIX_FMT_XV36LE`). Each pixel is a u16
-//! quadruple `U(16) ‖ Y(16) ‖ V(16) ‖ A(16)` with each channel using
-//! the high 12 bits (low 4 bits zero, MSB-aligned at 12-bit). The
-//! `X` prefix means the A slot is padding — read but discarded;
+//! capture format (FFmpeg `AV_PIX_FMT_XV36{LE,BE}`). Each pixel is a
+//! u16 quadruple `U(16) ‖ Y(16) ‖ V(16) ‖ A(16)` with each channel
+//! using the high 12 bits (low 4 bits zero, MSB-aligned at 12-bit).
+//! The `X` prefix means the A slot is padding — read but discarded;
 //! RGBA outputs force α = max. See [`crate::frame::Xv36Frame`] for
 //! layout details.
+//!
+//! The marker carries `<const BE: bool = false>`: `Xv36` (=
+//! `Xv36<false>`) is the LE source; `Xv36<true>` is the BE source.
+//! The walker [`xv36_to::<BE>`] propagates `BE` from
+//! [`Xv36Frame<'_, BE>`] into the sinker dispatch.
 //!
 //! Outputs are produced via:
 //! - `with_rgb` / `with_rgba` — packed YUV → RGB Q15 pipeline at
@@ -24,11 +29,13 @@
 use crate::frame::Xv36Frame;
 
 walker! {
-  packed {
-    /// Zero-sized marker for the packed **XV36** source format.
+  packed_be {
+    /// Zero-sized marker for the packed **XV36** source format
+    /// (`AV_PIX_FMT_XV36{LE,BE}`). `<const BE: bool>` defaults to
+    /// `false` (LE); the alias `Xv36` resolves to `Xv36<false>`.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Xv36,
-    frame: Xv36Frame<'_>,
+    frame: Xv36Frame,
     row: Xv36Row,
     sink: Xv36Sink,
     walker: xv36_to,
@@ -50,9 +57,13 @@ walker! {
       "| 3        | A     | bits `15:4` (padding)|\n",
       "\n",
       "Full range: `[0, 4095]` (12-bit). Limited range Y: `[256, 3760]`,\n",
-      "limited range chroma: `[256, 3840]`.",
+      "limited range chroma: `[256, 3840]`. Endianness is recorded on\n",
+      "the parent [`Xv36Frame<'_, BE>`] / sinker, not on the Row itself —\n",
+      "the kernel monomorphizes on `BE` at the sinker dispatch.",
     ),
-    walker_doc: "Walks an [`Xv36Frame`] row by row into the sink.",
+    walker_doc: "Walks an [`Xv36Frame<'_, BE>`] row by row into the sink. \
+                 Propagates `<const BE: bool>` from the frame into \
+                 [`Xv36Sink<BE>`].",
   }
 }
 

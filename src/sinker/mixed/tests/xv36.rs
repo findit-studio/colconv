@@ -439,3 +439,60 @@ fn xv36_buffer_too_short_for_rgba_u16_returns_err() {
     }
   ));
 }
+
+// ====================================================================================
+// Phase 4 Tier 5 — Frame BE flag, XV36 LE+BE round-trip parity test.
+//
+// XV36 packs each pixel as four u16 channels (`U, Y, V, A`), 12-bit MSB-aligned.
+// The BE wire variant byte-swaps each u16 channel before extraction. Encoding
+// the same logical samples as LE bytes vs BE bytes and feeding through
+// `MixedSinker<Xv36<false>>` vs `MixedSinker<Xv36<true>>` must produce
+// byte-identical output.
+// ====================================================================================
+
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn xv36_le_be_roundtrip_byte_identical() {
+  // Build a logical (U, Y, V, A) MSB-aligned u16 quadruple stream.
+  let logical: std::vec::Vec<u16> = (0..8 * 4 * 4)
+    .map(|i| match i % 4 {
+      0 => 0x0800u16, // U = 0x080 << 4
+      1 => 0x4000u16, // Y = 0x400 << 4
+      2 => 0xA000u16, // V = 0xA00 << 4
+      _ => 0x0000u16, // A = padding
+    })
+    .collect();
+  let pix_le: std::vec::Vec<u16> = logical
+    .iter()
+    .map(|&v| u16::from_ne_bytes(v.to_le_bytes()))
+    .collect();
+  let pix_be: std::vec::Vec<u16> = logical
+    .iter()
+    .map(|&v| u16::from_ne_bytes(v.to_be_bytes()))
+    .collect();
+
+  let frame_le = Xv36LeFrame::try_new(&pix_le, 8, 4, 8 * 4).unwrap();
+  let mut out_le = std::vec![0u8; 8 * 4 * 4];
+  let mut sink_le = MixedSinker::<Xv36>::new(8, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le)
+    .unwrap();
+  xv36_to(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+
+  let frame_be = Xv36BeFrame::try_new(&pix_be, 8, 4, 8 * 4).unwrap();
+  let mut out_be = std::vec![0u8; 8 * 4 * 4];
+  let mut sink_be = MixedSinker::<Xv36<true>>::new(8, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be)
+    .unwrap();
+  xv36_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le, out_be,
+    "Xv36 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}

@@ -958,3 +958,156 @@ fn ayuv64_strategy_a_plus_u16_matches_independent_kernel() {
     }
   }
 }
+
+// ====================================================================================
+// Phase 4 Tier 5 — Frame BE flag, AYUV64 LE+BE round-trip parity tests.
+//
+// AYUV64 packs each pixel as four u16 channels (`A, Y, U, V`), 16-bit native.
+// The BE wire variant byte-swaps each u16 channel before extraction. Encoding
+// the same logical samples as LE bytes vs BE bytes and feeding through
+// `MixedSinker<Ayuv64<false>>` vs `MixedSinker<Ayuv64<true>>` must produce
+// byte-identical output for both u8 and u16 RGBA paths (also exercising the
+// alpha_extract `<BE>` propagation in the Strategy A+ combo path).
+// ====================================================================================
+
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn ayuv64_le_be_roundtrip_byte_identical() {
+  // Build a logical (A, Y, U, V) u16 quadruple stream with non-trivial values.
+  let logical: std::vec::Vec<u16> = (0..8 * 4 * 4)
+    .map(|i| match i % 4 {
+      0 => 0xABCDu16, // A — real source alpha
+      1 => 0x8000u16, // Y
+      2 => 0x4000u16, // U
+      _ => 0xC000u16, // V
+    })
+    .collect();
+  let pix_le: std::vec::Vec<u16> = logical
+    .iter()
+    .map(|&v| u16::from_ne_bytes(v.to_le_bytes()))
+    .collect();
+  let pix_be: std::vec::Vec<u16> = logical
+    .iter()
+    .map(|&v| u16::from_ne_bytes(v.to_be_bytes()))
+    .collect();
+
+  // Standalone u8 RGBA path (`ayuv64_to_rgba_row` directly).
+  let frame_le = Ayuv64LeFrame::try_new(&pix_le, 8, 4, 8 * 4).unwrap();
+  let mut out_le_rgba = std::vec![0u8; 8 * 4 * 4];
+  let mut sink_le = MixedSinker::<Ayuv64>::new(8, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le_rgba)
+    .unwrap();
+  ayuv64_to(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+
+  let frame_be = Ayuv64BeFrame::try_new(&pix_be, 8, 4, 8 * 4).unwrap();
+  let mut out_be_rgba = std::vec![0u8; 8 * 4 * 4];
+  let mut sink_be = MixedSinker::<Ayuv64<true>>::new(8, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be_rgba)
+    .unwrap();
+  ayuv64_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le_rgba, out_be_rgba,
+    "AYUV64 RGBA u8 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+
+  // Standalone u16 RGBA path (`ayuv64_to_rgba_u16_row` directly).
+  let mut out_le_rgba_u16 = std::vec![0u16; 8 * 4 * 4];
+  let mut sink_le_u16 = MixedSinker::<Ayuv64>::new(8, 4)
+    .with_simd(false)
+    .with_rgba_u16(&mut out_le_rgba_u16)
+    .unwrap();
+  ayuv64_to(&frame_le, true, ColorMatrix::Bt709, &mut sink_le_u16).unwrap();
+
+  let mut out_be_rgba_u16 = std::vec![0u16; 8 * 4 * 4];
+  let mut sink_be_u16 = MixedSinker::<Ayuv64<true>>::new(8, 4)
+    .with_simd(false)
+    .with_rgba_u16(&mut out_be_rgba_u16)
+    .unwrap();
+  ayuv64_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be_u16).unwrap();
+
+  assert_eq!(
+    out_le_rgba_u16, out_be_rgba_u16,
+    "AYUV64 RGBA u16 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}
+
+#[test]
+#[cfg(all(test, feature = "std"))]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn ayuv64_le_be_roundtrip_strategy_a_plus_byte_identical() {
+  // Strategy A+ combo path: with_rgb + with_rgba (and the u16 analog).
+  // Exercises `expand_rgb_to_rgba_row` + `alpha_extract::copy_alpha_*::<BE>`
+  // — without `<BE>` propagation through alpha_extract, the BE output would
+  // diverge.
+  let logical: std::vec::Vec<u16> = (0..8 * 4 * 4)
+    .map(|i| match i % 4 {
+      0 => 0x55AAu16, // A
+      1 => 0x8000u16, // Y
+      2 => 0x4000u16, // U
+      _ => 0xC000u16, // V
+    })
+    .collect();
+  let pix_le: std::vec::Vec<u16> = logical
+    .iter()
+    .map(|&v| u16::from_ne_bytes(v.to_le_bytes()))
+    .collect();
+  let pix_be: std::vec::Vec<u16> = logical
+    .iter()
+    .map(|&v| u16::from_ne_bytes(v.to_be_bytes()))
+    .collect();
+
+  let frame_le = Ayuv64LeFrame::try_new(&pix_le, 8, 4, 8 * 4).unwrap();
+  let mut out_le_rgb = std::vec![0u8; 8 * 4 * 3];
+  let mut out_le_rgba = std::vec![0u8; 8 * 4 * 4];
+  let mut out_le_rgb_u16 = std::vec![0u16; 8 * 4 * 3];
+  let mut out_le_rgba_u16 = std::vec![0u16; 8 * 4 * 4];
+  let mut sink_le = MixedSinker::<Ayuv64>::new(8, 4)
+    .with_simd(false)
+    .with_rgb(&mut out_le_rgb)
+    .unwrap()
+    .with_rgba(&mut out_le_rgba)
+    .unwrap()
+    .with_rgb_u16(&mut out_le_rgb_u16)
+    .unwrap()
+    .with_rgba_u16(&mut out_le_rgba_u16)
+    .unwrap();
+  ayuv64_to(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+
+  let frame_be = Ayuv64BeFrame::try_new(&pix_be, 8, 4, 8 * 4).unwrap();
+  let mut out_be_rgb = std::vec![0u8; 8 * 4 * 3];
+  let mut out_be_rgba = std::vec![0u8; 8 * 4 * 4];
+  let mut out_be_rgb_u16 = std::vec![0u16; 8 * 4 * 3];
+  let mut out_be_rgba_u16 = std::vec![0u16; 8 * 4 * 4];
+  let mut sink_be = MixedSinker::<Ayuv64<true>>::new(8, 4)
+    .with_simd(false)
+    .with_rgb(&mut out_be_rgb)
+    .unwrap()
+    .with_rgba(&mut out_be_rgba)
+    .unwrap()
+    .with_rgb_u16(&mut out_be_rgb_u16)
+    .unwrap()
+    .with_rgba_u16(&mut out_be_rgba_u16)
+    .unwrap();
+  ayuv64_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+  assert_eq!(out_le_rgb, out_be_rgb, "AYUV64 A+ RGB u8 LE/BE diverge");
+  assert_eq!(out_le_rgba, out_be_rgba, "AYUV64 A+ RGBA u8 LE/BE diverge");
+  assert_eq!(
+    out_le_rgb_u16, out_be_rgb_u16,
+    "AYUV64 A+ RGB u16 LE/BE diverge"
+  );
+  assert_eq!(
+    out_le_rgba_u16, out_be_rgba_u16,
+    "AYUV64 A+ RGBA u16 LE/BE diverge"
+  );
+}

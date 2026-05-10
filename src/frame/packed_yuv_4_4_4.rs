@@ -36,13 +36,36 @@ use thiserror::Error;
 ///
 /// Each row holds exactly `width` u32 words (`stride >= width`); the
 /// plane occupies `stride * height` u32 elements.
+///
+/// # Endian contract — `<const BE: bool = false>`
+///
+/// The `<const BE: bool>` parameter selects the per-word byte order:
+/// `false` (default) → LE-encoded u32 words (V410 wire format,
+/// QuickTime / FFmpeg `AV_PIX_FMT_V410`); `true` → BE-encoded u32
+/// words (matches QuickTime-style BE V410 streams). Each u32 word is
+/// byte-swapped under the hood by the row kernels — callers do **not**
+/// pre-swap.
+///
+/// # Aliases
+/// - [`V410LeFrame`] = `V410Frame<'a, false>` — explicit LE.
+/// - [`V410BeFrame`] = `V410Frame<'a, true>` — explicit BE.
 #[derive(Debug, Clone, Copy)]
-pub struct V410Frame<'a> {
+pub struct V410Frame<'a, const BE: bool = false> {
   packed: &'a [u32],
   width: u32,
   height: u32,
   stride: u32,
 }
+
+/// LE-encoded `V410Frame` (`AV_PIX_FMT_V410` / `AV_PIX_FMT_XV30LE`).
+/// Equivalent to the default `V410Frame<'a>`; provided as an explicit
+/// alias for callers who want to document the endianness at the type
+/// level.
+pub type V410LeFrame<'a> = V410Frame<'a, false>;
+
+/// BE-encoded `V410Frame`. Per-word u32s are big-endian-encoded;
+/// downstream row kernels byte-swap each word before bit-extraction.
+pub type V410BeFrame<'a> = V410Frame<'a, true>;
 
 /// Errors returned by [`V410Frame::try_new`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
@@ -84,8 +107,14 @@ pub enum V410FrameError {
   },
 }
 
-impl<'a> V410Frame<'a> {
+impl<'a, const BE: bool> V410Frame<'a, BE> {
   /// Validates and constructs a [`V410Frame`].
+  ///
+  /// The `<const BE: bool>` parameter selects whether the supplied
+  /// `packed` slice is interpreted as LE-encoded u32 words
+  /// (`BE = false`, default) or BE-encoded u32 words (`BE = true`).
+  /// The byte-swap is performed inside the row kernels — this
+  /// constructor does no I/O on the words.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn try_new(
     packed: &'a [u32],
@@ -163,6 +192,13 @@ impl<'a> V410Frame<'a> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn stride(&self) -> u32 {
     self.stride
+  }
+  /// Returns the compile-time BE flag — `true` if the plane u32 words
+  /// are BE-encoded, `false` if LE-encoded. Runtime mirror of the
+  /// `<const BE: bool>` type parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
   }
 }
 
@@ -336,13 +372,33 @@ impl<'a> V30XFrame<'a> {
 ///
 /// Each row holds exactly `width × 4` u16 elements (`stride >=
 /// width × 4`); the plane occupies `stride * height` u16 elements.
+///
+/// # Endian contract — `<const BE: bool = false>`
+///
+/// The `<const BE: bool>` parameter selects the per-channel u16 byte
+/// order: `false` (default) → LE-encoded bytes (`AV_PIX_FMT_XV36LE`),
+/// `true` → BE-encoded bytes (`AV_PIX_FMT_XV36BE`). Each u16 channel
+/// is byte-swapped under the hood by the row kernels — callers do
+/// **not** pre-swap.
+///
+/// # Aliases
+/// - [`Xv36LeFrame`] = `Xv36Frame<'a, false>` — explicit LE.
+/// - [`Xv36BeFrame`] = `Xv36Frame<'a, true>` — explicit BE.
 #[derive(Debug, Clone, Copy)]
-pub struct Xv36Frame<'a> {
+pub struct Xv36Frame<'a, const BE: bool = false> {
   packed: &'a [u16],
   width: u32,
   height: u32,
   stride: u32,
 }
+
+/// LE-encoded `Xv36Frame` (`AV_PIX_FMT_XV36LE`). Equivalent to the
+/// default `Xv36Frame<'a>`; provided as an explicit alias.
+pub type Xv36LeFrame<'a> = Xv36Frame<'a, false>;
+
+/// BE-encoded `Xv36Frame` (`AV_PIX_FMT_XV36BE`). Per-channel u16s are
+/// big-endian-encoded; downstream row kernels byte-swap each channel.
+pub type Xv36BeFrame<'a> = Xv36Frame<'a, true>;
 
 /// Errors returned by [`Xv36Frame::try_new`] and
 /// [`Xv36Frame::try_new_checked`].
@@ -398,8 +454,11 @@ pub enum Xv36FrameError {
   SampleLowBitsSet,
 }
 
-impl<'a> Xv36Frame<'a> {
+impl<'a, const BE: bool> Xv36Frame<'a, BE> {
   /// Validates and constructs an [`Xv36Frame`].
+  ///
+  /// `<const BE: bool>` selects LE (`false`, default) vs BE (`true`)
+  /// per-channel u16 byte order; row kernels perform the byte-swap.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn try_new(
     packed: &'a [u16],
@@ -507,6 +566,14 @@ impl<'a> Xv36Frame<'a> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn stride(&self) -> u32 {
     self.stride
+  }
+  /// Returns the compile-time BE flag — `true` if per-channel u16s
+  /// are BE-encoded (`AV_PIX_FMT_XV36BE`), `false` if LE-encoded
+  /// (`AV_PIX_FMT_XV36LE`). Runtime mirror of the `<const BE: bool>`
+  /// type parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
   }
 }
 
@@ -845,13 +912,34 @@ impl<'a> VuyxFrame<'a> {
 ///
 /// Each row holds exactly `width × 4` u16 elements (`stride >=
 /// width × 4`); the plane occupies `stride * height` u16 elements.
+///
+/// # Endian contract — `<const BE: bool = false>`
+///
+/// The `<const BE: bool>` parameter selects the per-channel u16 byte
+/// order: `false` (default) → LE-encoded bytes (`AV_PIX_FMT_AYUV64LE`),
+/// `true` → BE-encoded bytes (`AV_PIX_FMT_AYUV64BE`). Each u16 channel
+/// is byte-swapped under the hood by the row kernels — callers do
+/// **not** pre-swap.
+///
+/// # Aliases
+/// - [`Ayuv64LeFrame`] = `Ayuv64Frame<'a, false>` — explicit LE.
+/// - [`Ayuv64BeFrame`] = `Ayuv64Frame<'a, true>` — explicit BE.
 #[derive(Debug, Clone, Copy)]
-pub struct Ayuv64Frame<'a> {
+pub struct Ayuv64Frame<'a, const BE: bool = false> {
   packed: &'a [u16],
   width: u32,
   height: u32,
   stride: u32,
 }
+
+/// LE-encoded `Ayuv64Frame` (`AV_PIX_FMT_AYUV64LE`). Equivalent to
+/// the default `Ayuv64Frame<'a>`; provided as an explicit alias.
+pub type Ayuv64LeFrame<'a> = Ayuv64Frame<'a, false>;
+
+/// BE-encoded `Ayuv64Frame` (`AV_PIX_FMT_AYUV64BE`). Per-channel u16s
+/// are big-endian-encoded; downstream row kernels byte-swap each
+/// channel.
+pub type Ayuv64BeFrame<'a> = Ayuv64Frame<'a, true>;
 
 /// Errors returned by [`Ayuv64Frame::try_new`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
@@ -901,8 +989,11 @@ pub enum Ayuv64FrameError {
   },
 }
 
-impl<'a> Ayuv64Frame<'a> {
+impl<'a, const BE: bool> Ayuv64Frame<'a, BE> {
   /// Validates and constructs an [`Ayuv64Frame`].
+  ///
+  /// `<const BE: bool>` selects LE (`false`, default) vs BE (`true`)
+  /// per-channel u16 byte order; row kernels perform the byte-swap.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn try_new(
     packed: &'a [u16],
@@ -984,5 +1075,13 @@ impl<'a> Ayuv64Frame<'a> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn stride(&self) -> u32 {
     self.stride
+  }
+  /// Returns the compile-time BE flag — `true` if per-channel u16s
+  /// are BE-encoded (`AV_PIX_FMT_AYUV64BE`), `false` if LE-encoded
+  /// (`AV_PIX_FMT_AYUV64LE`). Runtime mirror of the `<const BE: bool>`
+  /// type parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
   }
 }

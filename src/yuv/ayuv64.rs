@@ -1,6 +1,11 @@
 //! Packed YUV 4:4:4 16-bit + source α `AYUV64` source format
-//! (FFmpeg `AV_PIX_FMT_AYUV64LE`). Each pixel is a u16 quadruple
+//! (FFmpeg `AV_PIX_FMT_AYUV64{LE,BE}`). Each pixel is a u16 quadruple
 //! `A(16) ‖ Y(16) ‖ U(16) ‖ V(16)` = 8 bytes.
+//!
+//! The marker carries `<const BE: bool = false>`: `Ayuv64` (=
+//! `Ayuv64<false>`) is the LE source; `Ayuv64<true>` is the BE source.
+//! The walker [`ayuv64_to::<BE>`] propagates `BE` from
+//! [`Ayuv64Frame<'_, BE>`] into the sinker dispatch.
 //!
 //! | u16 slot | Field | Notes                            |
 //! |----------|-------|----------------------------------|
@@ -35,11 +40,13 @@
 use crate::frame::Ayuv64Frame;
 
 walker! {
-  packed {
-    /// Zero-sized marker for the packed **AYUV64** source format.
+  packed_be {
+    /// Zero-sized marker for the packed **AYUV64** source format
+    /// (`AV_PIX_FMT_AYUV64{LE,BE}`). `<const BE: bool>` defaults to
+    /// `false` (LE); the alias `Ayuv64` resolves to `Ayuv64<false>`.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Ayuv64,
-    frame: Ayuv64Frame<'_>,
+    frame: Ayuv64Frame,
     row: Ayuv64Row,
     sink: Ayuv64Sink,
     walker: ayuv64_to,
@@ -65,9 +72,13 @@ walker! {
       "row-kernel layer.\n",
       "\n",
       "Full range: `[0, 65535]` (16-bit). Limited range Y: `[4096, 60160]`,\n",
-      "limited range chroma: `[4096, 61440]`.",
+      "limited range chroma: `[4096, 61440]`. Endianness is recorded on\n",
+      "the parent [`Ayuv64Frame<'_, BE>`] / sinker, not on the Row\n",
+      "itself — the kernel monomorphizes on `BE` at the sinker dispatch.",
     ),
-    walker_doc: "Walks an [`Ayuv64Frame`] row by row into the sink.",
+    walker_doc: "Walks an [`Ayuv64Frame<'_, BE>`] row by row into the sink. \
+                 Propagates `<const BE: bool>` from the frame into \
+                 [`Ayuv64Sink<BE>`].",
   }
 }
 
