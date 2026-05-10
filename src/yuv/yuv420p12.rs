@@ -11,16 +11,16 @@
 //! Ships in colconv v0.2a alongside [`super::Yuv420p14`] and
 //! [`super::P012`]. Kernel semantics match [`super::Yuv420p10`].
 
-use crate::frame::{Yuv420p12Frame, Yuv420pFrame16};
+use crate::frame::Yuv420pFrame16;
 
 walker! {
-  planar3_bits {
+  planar3_bits_be {
     /// Zero‑sized marker for the YUV 4:2:0 **12‑bit** source format. Used
     /// as the `F` type parameter on [`crate::sinker::MixedSinker`].
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuv420p12,
-    frame: Yuv420p12Frame<'_>,
-    generic_frame: Yuv420pFrame16<'_, BITS>,
+    frame: Yuv420pFrame16<'_, 12, BE>,
+    generic_frame: Yuv420pFrame16<'_, BITS, BE>,
     bits: 12,
     row: Yuv420p12Row,
     sink: Yuv420p12Sink,

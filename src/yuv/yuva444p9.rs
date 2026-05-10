@@ -12,14 +12,14 @@
 //! kernels, so the dispatcher selects SIMD when `use_simd` is true
 //! and falls back to scalar otherwise.
 
-use crate::frame::Yuva444p9Frame;
+use crate::frame::Yuva444pFrame16;
 
 walker! {
-  planar4 {
+  planar4_be {
     /// Zero‑sized marker for the YUVA 4:4:4 **9‑bit** source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuva444p9,
-    frame: Yuva444p9Frame<'_>,
+    frame: Yuva444pFrame16<'_, 9, BE>,
     row: Yuva444p9Row,
     sink: Yuva444p9Sink,
     walker: yuva444p9_to,

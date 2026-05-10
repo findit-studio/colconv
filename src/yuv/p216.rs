@@ -5,14 +5,14 @@
 //! reuses the 4:2:0 `p16_to_rgb_*` parallel i64-chroma family
 //! verbatim; only the walker reads chroma row `r` instead of `r / 2`.
 
-use crate::frame::P216Frame;
+use crate::frame::PnFrame422;
 
 walker! {
-  semi_planar {
+  semi_planar_be {
     /// Zero‑sized marker for the P216 source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: P216,
-    frame: P216Frame<'_>,
+    frame: PnFrame422<'_, 16, BE>,
     row: P216Row,
     sink: P216Sink,
     walker: p216_to,

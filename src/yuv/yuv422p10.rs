@@ -5,14 +5,14 @@
 //! family — [`crate::row::yuv420p10_to_rgb_row`] — verbatim. See
 //! [`super::Yuv422p`] for the axis‑difference rationale.
 
-use crate::frame::Yuv422p10Frame;
+use crate::frame::Yuv422pFrame16;
 
 walker! {
-  planar3 {
+  planar3_be {
     /// Zero‑sized marker for the YUV 4:2:2 **10‑bit** source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuv422p10,
-    frame: Yuv422p10Frame<'_>,
+    frame: Yuv422pFrame16<'_, 10, BE>,
     row: Yuv422p10Row,
     sink: Yuv422p10Sink,
     walker: yuv422p10_to,

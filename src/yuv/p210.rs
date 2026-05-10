@@ -12,14 +12,14 @@
 //! interleaved); only the walker reads chroma row `r` instead of
 //! `r / 2`.
 
-use crate::frame::P210Frame;
+use crate::frame::PnFrame422;
 
 walker! {
-  semi_planar {
+  semi_planar_be {
     /// Zero‑sized marker for the P210 source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: P210,
-    frame: P210Frame<'_>,
+    frame: PnFrame422<'_, 10, BE>,
     row: P210Row,
     sink: P210Sink,
     walker: p210_to,

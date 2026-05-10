@@ -6,7 +6,7 @@ use crate::{PixelSink, row::*, yuv::*};
 
 // ---- P010 impl ---------------------------------------------------------
 
-impl<'a> MixedSinker<'a, P010> {
+impl<'a, const BE: bool> MixedSinker<'a, P010<BE>> {
   /// Attaches a packed **`u16`** RGB output buffer. Mirrors
   /// [`MixedSinker<Yuv420p10>::with_rgb_u16`] — compile‑time gated to
   /// sinkers whose source format populates native‑depth RGB.
@@ -85,9 +85,9 @@ impl<'a> MixedSinker<'a, P010> {
   }
 }
 
-impl P010Sink for MixedSinker<'_, P010> {}
+impl<const BE: bool> P010Sink<BE> for MixedSinker<'_, P010<BE>> {}
 
-impl PixelSink for MixedSinker<'_, P010> {
+impl<const BE: bool> PixelSink for MixedSinker<'_, P010<BE>> {
   type Input<'r> = P010Row<'r>;
   type Error = MixedSinkerError;
 
@@ -170,7 +170,7 @@ impl PixelSink for MixedSinker<'_, P010> {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-      p010_to_rgba_u16_row(
+      p010_to_rgba_u16_row_endian(
         row.y(),
         row.uv_half(),
         rgba_u16_row,
@@ -178,6 +178,7 @@ impl PixelSink for MixedSinker<'_, P010> {
         row.matrix(),
         row.full_range(),
         use_simd,
+        BE,
       );
     } else if want_rgb_u16 {
       let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
@@ -191,7 +192,7 @@ impl PixelSink for MixedSinker<'_, P010> {
           })?;
       let rgb_plane_start = one_plane_start * 3;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      p010_to_rgb_u16_row(
+      p010_to_rgb_u16_row_endian(
         row.y(),
         row.uv_half(),
         rgb_u16_row,
@@ -199,6 +200,7 @@ impl PixelSink for MixedSinker<'_, P010> {
         row.matrix(),
         row.full_range(),
         use_simd,
+        BE,
       );
       if want_rgba_u16 {
         let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
@@ -217,7 +219,7 @@ impl PixelSink for MixedSinker<'_, P010> {
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      p010_to_rgba_row(
+      p010_to_rgba_row_endian(
         row.y(),
         row.uv_half(),
         rgba_row,
@@ -225,6 +227,7 @@ impl PixelSink for MixedSinker<'_, P010> {
         row.matrix(),
         row.full_range(),
         use_simd,
+        BE,
       );
       return Ok(());
     }
@@ -242,7 +245,7 @@ impl PixelSink for MixedSinker<'_, P010> {
       h,
     )?;
 
-    p010_to_rgb_row(
+    p010_to_rgb_row_endian(
       row.y(),
       row.uv_half(),
       rgb_row,
@@ -250,6 +253,7 @@ impl PixelSink for MixedSinker<'_, P010> {
       row.matrix(),
       row.full_range(),
       use_simd,
+      BE,
     );
 
     if let Some(hsv) = hsv.as_mut() {
@@ -274,7 +278,7 @@ impl PixelSink for MixedSinker<'_, P010> {
 
 // ---- P012 impl ---------------------------------------------------------
 
-impl<'a> MixedSinker<'a, P012> {
+impl<'a, const BE: bool> MixedSinker<'a, P012<BE>> {
   /// Attaches a packed **`u16`** RGB output buffer. Produces 12‑bit
   /// output in **low‑bit‑packed** `yuv420p12le` convention (values in
   /// `[0, 4095]` in the low 12 of each `u16`, upper 4 zero) —
@@ -347,9 +351,9 @@ impl<'a> MixedSinker<'a, P012> {
   }
 }
 
-impl P012Sink for MixedSinker<'_, P012> {}
+impl<const BE: bool> P012Sink<BE> for MixedSinker<'_, P012<BE>> {}
 
-impl PixelSink for MixedSinker<'_, P012> {
+impl<const BE: bool> PixelSink for MixedSinker<'_, P012<BE>> {
   type Input<'r> = P012Row<'r>;
   type Error = MixedSinkerError;
 
@@ -431,7 +435,7 @@ impl PixelSink for MixedSinker<'_, P012> {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-      p012_to_rgba_u16_row(
+      p012_to_rgba_u16_row_endian(
         row.y(),
         row.uv_half(),
         rgba_u16_row,
@@ -439,6 +443,7 @@ impl PixelSink for MixedSinker<'_, P012> {
         row.matrix(),
         row.full_range(),
         use_simd,
+        BE,
       );
     } else if want_rgb_u16 {
       let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
@@ -452,7 +457,7 @@ impl PixelSink for MixedSinker<'_, P012> {
           })?;
       let rgb_plane_start = one_plane_start * 3;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      p012_to_rgb_u16_row(
+      p012_to_rgb_u16_row_endian(
         row.y(),
         row.uv_half(),
         rgb_u16_row,
@@ -460,6 +465,7 @@ impl PixelSink for MixedSinker<'_, P012> {
         row.matrix(),
         row.full_range(),
         use_simd,
+        BE,
       );
       if want_rgba_u16 {
         let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
@@ -478,7 +484,7 @@ impl PixelSink for MixedSinker<'_, P012> {
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      p012_to_rgba_row(
+      p012_to_rgba_row_endian(
         row.y(),
         row.uv_half(),
         rgba_row,
@@ -486,6 +492,7 @@ impl PixelSink for MixedSinker<'_, P012> {
         row.matrix(),
         row.full_range(),
         use_simd,
+        BE,
       );
       return Ok(());
     }
@@ -503,7 +510,7 @@ impl PixelSink for MixedSinker<'_, P012> {
       h,
     )?;
 
-    p012_to_rgb_row(
+    p012_to_rgb_row_endian(
       row.y(),
       row.uv_half(),
       rgb_row,
@@ -511,6 +518,7 @@ impl PixelSink for MixedSinker<'_, P012> {
       row.matrix(),
       row.full_range(),
       use_simd,
+      BE,
     );
 
     if let Some(hsv) = hsv.as_mut() {
@@ -535,7 +543,7 @@ impl PixelSink for MixedSinker<'_, P012> {
 
 // ---- P016 impl ---------------------------------------------------------
 
-impl<'a> MixedSinker<'a, P016> {
+impl<'a, const BE: bool> MixedSinker<'a, P016<BE>> {
   /// Attaches a packed **`u16`** RGB output buffer. Produces 16‑bit
   /// output in `[0, 65535]` — at 16 bits there is no high‑ vs
   /// low‑packing distinction, so the output matches
@@ -605,9 +613,9 @@ impl<'a> MixedSinker<'a, P016> {
   }
 }
 
-impl P016Sink for MixedSinker<'_, P016> {}
+impl<const BE: bool> P016Sink<BE> for MixedSinker<'_, P016<BE>> {}
 
-impl PixelSink for MixedSinker<'_, P016> {
+impl<const BE: bool> PixelSink for MixedSinker<'_, P016<BE>> {
   type Input<'r> = P016Row<'r>;
   type Error = MixedSinkerError;
 
@@ -684,7 +692,7 @@ impl PixelSink for MixedSinker<'_, P016> {
       let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
       let rgba_u16_row =
         rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
-      p016_to_rgba_u16_row(
+      p016_to_rgba_u16_row_endian(
         row.y(),
         row.uv_half(),
         rgba_u16_row,
@@ -692,6 +700,7 @@ impl PixelSink for MixedSinker<'_, P016> {
         row.matrix(),
         row.full_range(),
         use_simd,
+        BE,
       );
     } else if want_rgb_u16 {
       let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
@@ -705,7 +714,7 @@ impl PixelSink for MixedSinker<'_, P016> {
           })?;
       let rgb_plane_start = one_plane_start * 3;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
-      p016_to_rgb_u16_row(
+      p016_to_rgb_u16_row_endian(
         row.y(),
         row.uv_half(),
         rgb_u16_row,
@@ -713,6 +722,7 @@ impl PixelSink for MixedSinker<'_, P016> {
         row.matrix(),
         row.full_range(),
         use_simd,
+        BE,
       );
       if want_rgba_u16 {
         let rgba_u16_buf = rgba_u16.as_deref_mut().unwrap();
@@ -731,7 +741,7 @@ impl PixelSink for MixedSinker<'_, P016> {
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
-      p016_to_rgba_row(
+      p016_to_rgba_row_endian(
         row.y(),
         row.uv_half(),
         rgba_row,
@@ -739,6 +749,7 @@ impl PixelSink for MixedSinker<'_, P016> {
         row.matrix(),
         row.full_range(),
         use_simd,
+        BE,
       );
       return Ok(());
     }
@@ -756,7 +767,7 @@ impl PixelSink for MixedSinker<'_, P016> {
       h,
     )?;
 
-    p016_to_rgb_row(
+    p016_to_rgb_row_endian(
       row.y(),
       row.uv_half(),
       rgb_row,
@@ -764,6 +775,7 @@ impl PixelSink for MixedSinker<'_, P016> {
       row.matrix(),
       row.full_range(),
       use_simd,
+      BE,
     );
 
     if let Some(hsv) = hsv.as_mut() {

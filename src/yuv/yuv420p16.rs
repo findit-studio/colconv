@@ -11,16 +11,16 @@
 //! kernels, which carry i64 intermediates for the chroma matrix
 //! multiply. The 10/12/14 families stay on the Q15 i32 pipeline.
 
-use crate::frame::{Yuv420p16Frame, Yuv420pFrame16};
+use crate::frame::Yuv420pFrame16;
 
 walker! {
-  planar3_bits {
+  planar3_bits_be {
     /// Zero‑sized marker for the YUV 4:2:0 **16‑bit** source format. Used
     /// as the `F` type parameter on [`crate::sinker::MixedSinker`].
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuv420p16,
-    frame: Yuv420p16Frame<'_>,
-    generic_frame: Yuv420pFrame16<'_, BITS>,
+    frame: Yuv420pFrame16<'_, 16, BE>,
+    generic_frame: Yuv420pFrame16<'_, BITS, BE>,
     bits: 16,
     row: Yuv420p16Row,
     sink: Yuv420p16Sink,

@@ -7,14 +7,14 @@
 //! to `crate::row`) verbatim — same shape (half-width chroma per
 //! row), only the vertical walk differs.
 
-use crate::frame::Yuv422p9Frame;
+use crate::frame::Yuv422pFrame16;
 
 walker! {
-  planar3 {
+  planar3_be {
     /// Zero‑sized marker for the YUV 4:2:2 **9‑bit** source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuv422p9,
-    frame: Yuv422p9Frame<'_>,
+    frame: Yuv422pFrame16<'_, 9, BE>,
     row: Yuv422p9Row,
     sink: Yuv422p9Sink,
     walker: yuv422p9_to,

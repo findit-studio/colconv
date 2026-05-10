@@ -13,22 +13,26 @@
 //! share one chroma row (4:2:0), chroma is nearest‑neighbor upsampled
 //! in registers inside the row primitive.
 
-use crate::frame::{Yuv420p10Frame, Yuv420pFrame16};
+use crate::frame::Yuv420pFrame16;
 
 walker! {
-  planar3_bits {
+  planar3_bits_be {
     /// Zero‑sized marker for the YUV 4:2:0 **10‑bit** source format. Used
     /// as the `F` type parameter on [`crate::sinker::MixedSinker`].
+    ///
+    /// Phase 4 — `<const BE: bool = false>` selects LE vs BE plane bytes
+    /// (`AV_PIX_FMT_YUV420P10LE` vs `AV_PIX_FMT_YUV420P10BE`). The
+    /// default keeps existing LE-only callers compiling unchanged.
     ///
     /// 12‑bit and 14‑bit siblings ship as separate markers
     /// ([`super::Yuv420p12`] / [`super::Yuv420p14`]) on the same
     /// [`Yuv420pFrame16`] struct with different `BITS` values. 16‑bit
-    /// needs a different kernel family (Q15 chroma_sum overflows i32) and
-    /// is not yet shipped.
+    /// uses a different kernel family (Q15 chroma_sum overflows i32 and
+    /// gets a parallel i64 path).
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuv420p10,
-    frame: Yuv420p10Frame<'_>,
-    generic_frame: Yuv420pFrame16<'_, BITS>,
+    frame: Yuv420pFrame16<'_, 10, BE>,
+    generic_frame: Yuv420pFrame16<'_, BITS, BE>,
     bits: 10,
     row: Yuv420p10Row,
     sink: Yuv420p10Sink,

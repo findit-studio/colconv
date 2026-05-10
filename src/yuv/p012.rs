@@ -12,15 +12,15 @@
 //! Conversion semantics mirror [`super::P010`] on the layout side and
 //! [`super::Yuv420p12`] on the Q‑math side.
 
-use crate::frame::P012Frame;
+use crate::frame::PnFrame;
 
 walker! {
-  semi_planar {
+  semi_planar_be {
     /// Zero‑sized marker for the P012 source format. Used as the `F` type
     /// parameter on [`crate::sinker::MixedSinker`].
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: P012,
-    frame: P012Frame<'_>,
+    frame: PnFrame<'_, 12, BE>,
     row: P012Row,
     sink: P012Sink,
     walker: p012_to,

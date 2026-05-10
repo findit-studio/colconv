@@ -5,14 +5,14 @@
 //! same rationale as [`super::Yuv420p16`] (`coeff × u_d` at 16 bits
 //! overflows i32 for Bt2020 blue).
 
-use crate::frame::Yuv444p16Frame;
+use crate::frame::Yuv444pFrame16;
 
 walker! {
-  planar3 {
+  planar3_be {
     /// Zero‑sized marker for the YUV 4:4:4 **16‑bit** source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuv444p16,
-    frame: Yuv444p16Frame<'_>,
+    frame: Yuv444pFrame16<'_, 16, BE>,
     row: Yuv444p16Row,
     sink: Yuv444p16Sink,
     walker: yuv444p16_to,

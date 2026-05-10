@@ -15,15 +15,15 @@
 //! each `u16` load right by 6 to extract the 10‑bit value before
 //! running the same Q15 pipeline used by [`super::Yuv420p10`].
 
-use crate::frame::P010Frame;
+use crate::frame::PnFrame;
 
 walker! {
-  semi_planar {
+  semi_planar_be {
     /// Zero‑sized marker for the P010 source format. Used as the `F` type
     /// parameter on [`crate::sinker::MixedSinker`].
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: P010,
-    frame: P010Frame<'_>,
+    frame: PnFrame<'_, 10, BE>,
     row: P010Row,
     sink: P010Sink,
     walker: p010_to,

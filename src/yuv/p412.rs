@@ -5,14 +5,14 @@
 //! 12 positions of each `u16` (low 4 bits zero). Per-row kernel reuses
 //! the 4:4:4 `p_n_444_to_rgb_*<12>` family; chroma is full-width × full-height.
 
-use crate::frame::P412Frame;
+use crate::frame::PnFrame444;
 
 walker! {
-  semi_planar {
+  semi_planar_be {
     /// Zero‑sized marker for the P412 source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: P412,
-    frame: P412Frame<'_>,
+    frame: PnFrame444<'_, 12, BE>,
     row: P412Row,
     sink: P412Sink,
     walker: p412_to,

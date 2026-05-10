@@ -139,7 +139,7 @@ pub enum Yuva444pFrame16Plane {
 /// plane is at the source's bit depth, low-bit-packed in `u16`,
 /// matching the Y/U/V planes).
 #[derive(Debug, Clone, Copy)]
-pub struct Yuva444pFrame16<'a, const BITS: u32> {
+pub struct Yuva444pFrame16<'a, const BITS: u32, const BE: bool = false> {
   y: &'a [u16],
   u: &'a [u16],
   v: &'a [u16],
@@ -152,7 +152,7 @@ pub struct Yuva444pFrame16<'a, const BITS: u32> {
   a_stride: u32,
 }
 
-impl<'a, const BITS: u32> Yuva444pFrame16<'a, BITS> {
+impl<'a, const BITS: u32, const BE: bool> Yuva444pFrame16<'a, BITS, BE> {
   /// Constructs a new [`Yuva444pFrame16`].
   #[cfg_attr(not(tarpaulin), inline(always))]
   #[allow(clippy::too_many_arguments)]
@@ -458,27 +458,51 @@ impl<'a, const BITS: u32> Yuva444pFrame16<'a, BITS> {
   pub const fn bits(&self) -> u32 {
     BITS
   }
+  /// Compile-time BE flag mirror — `true` if plane bytes are BE-encoded
+  /// (`AV_PIX_FMT_YUVA444P*BE`), `false` if LE-encoded.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
+  }
 }
 
-/// 4:4:4 planar with alpha, 9-bit (`AV_PIX_FMT_YUVA444P9LE`). Alias
-/// over [`Yuva444pFrame16`]`<9>`. Niche format (AVC High 9 + α only).
+/// LE-encoded 4:4:4 planar with alpha, 9-bit (`AV_PIX_FMT_YUVA444P9LE`).
 pub type Yuva444p9Frame<'a> = Yuva444pFrame16<'a, 9>;
-/// 4:4:4 planar with alpha, 10-bit (`AV_PIX_FMT_YUVA444P10LE`). Alias
-/// over [`Yuva444pFrame16`]`<10>`. The highest-value VFX format —
-/// maps to ProRes 4444+α and similar mastering pipelines.
+/// LE-encoded 4:4:4 planar with alpha, 10-bit (`AV_PIX_FMT_YUVA444P10LE`).
 pub type Yuva444p10Frame<'a> = Yuva444pFrame16<'a, 10>;
-/// 4:4:4 planar with alpha, 12-bit (`AV_PIX_FMT_YUVA444P12LE`). Alias
-/// over [`Yuva444pFrame16`]`<12>`. Reuses the BITS-generic 4:4:4
-/// kernel templates that already cover `BITS ∈ {9, 10, 12, 14}`.
+/// LE-encoded 4:4:4 planar with alpha, 12-bit (`AV_PIX_FMT_YUVA444P12LE`).
 pub type Yuva444p12Frame<'a> = Yuva444pFrame16<'a, 12>;
-/// 4:4:4 planar with alpha, 14-bit. Alias over [`Yuva444pFrame16`]`<14>`.
-/// FFmpeg does not ship this depth, but the colconv 4:4:4 BITS-generic
-/// kernel templates already cover it for symmetry with [`Yuv444p14Frame`].
+/// LE-encoded 4:4:4 planar with alpha, 14-bit. FFmpeg does not ship
+/// this depth, but the colconv 4:4:4 BITS-generic kernel templates
+/// already cover it.
 pub type Yuva444p14Frame<'a> = Yuva444pFrame16<'a, 14>;
-/// 4:4:4 planar with alpha, 16-bit (`AV_PIX_FMT_YUVA444P16LE`). Alias
-/// over [`Yuva444pFrame16`]`<16>`. Uses the dedicated i64 4:4:4
-/// 16-bit kernel family (mirrors [`Yuva420p16Frame`]).
+/// LE-encoded 4:4:4 planar with alpha, 16-bit (`AV_PIX_FMT_YUVA444P16LE`).
+/// Uses the dedicated i64 4:4:4 16-bit kernel family.
 pub type Yuva444p16Frame<'a> = Yuva444pFrame16<'a, 16>;
+
+// ---- Phase 4 — explicit LE/BE aliases for the YUVA 4:4:4 HB family ----
+
+/// LE-encoded `Yuva444p9Frame` (`AV_PIX_FMT_YUVA444P9LE`).
+pub type Yuva444p9LeFrame<'a> = Yuva444pFrame16<'a, 9, false>;
+/// BE-encoded `Yuva444p9Frame` (`AV_PIX_FMT_YUVA444P9BE`).
+pub type Yuva444p9BeFrame<'a> = Yuva444pFrame16<'a, 9, true>;
+/// LE-encoded `Yuva444p10Frame` (`AV_PIX_FMT_YUVA444P10LE`).
+pub type Yuva444p10LeFrame<'a> = Yuva444pFrame16<'a, 10, false>;
+/// BE-encoded `Yuva444p10Frame` (`AV_PIX_FMT_YUVA444P10BE`).
+pub type Yuva444p10BeFrame<'a> = Yuva444pFrame16<'a, 10, true>;
+/// LE-encoded `Yuva444p12Frame` (`AV_PIX_FMT_YUVA444P12LE`).
+pub type Yuva444p12LeFrame<'a> = Yuva444pFrame16<'a, 12, false>;
+/// BE-encoded `Yuva444p12Frame` (`AV_PIX_FMT_YUVA444P12BE`).
+pub type Yuva444p12BeFrame<'a> = Yuva444pFrame16<'a, 12, true>;
+/// LE-encoded `Yuva444p14Frame` (no FFmpeg-shipped BE variant; provided
+/// for symmetry with the rest of the family).
+pub type Yuva444p14LeFrame<'a> = Yuva444pFrame16<'a, 14, false>;
+/// BE-encoded `Yuva444p14Frame`.
+pub type Yuva444p14BeFrame<'a> = Yuva444pFrame16<'a, 14, true>;
+/// LE-encoded `Yuva444p16Frame` (`AV_PIX_FMT_YUVA444P16LE`).
+pub type Yuva444p16LeFrame<'a> = Yuva444pFrame16<'a, 16, false>;
+/// BE-encoded `Yuva444p16Frame` (`AV_PIX_FMT_YUVA444P16BE`).
+pub type Yuva444p16BeFrame<'a> = Yuva444pFrame16<'a, 16, true>;
 
 /// Errors returned by [`Yuva444pFrame::try_new`].
 ///

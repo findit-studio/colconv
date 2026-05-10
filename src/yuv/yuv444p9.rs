@@ -4,14 +4,14 @@
 //! each `u16`. Niche format (AVC High 9 profile only). Reuses the
 //! const-generic `yuv_444p_n_to_rgb_*<BITS>` kernel family.
 
-use crate::frame::Yuv444p9Frame;
+use crate::frame::Yuv444pFrame16;
 
 walker! {
-  planar3 {
+  planar3_be {
     /// Zero‑sized marker for the YUV 4:4:4 **9‑bit** source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuv444p9,
-    frame: Yuv444p9Frame<'_>,
+    frame: Yuv444pFrame16<'_, 9, BE>,
     row: Yuv444p9Row,
     sink: Yuv444p9Sink,
     walker: yuv444p9_to,

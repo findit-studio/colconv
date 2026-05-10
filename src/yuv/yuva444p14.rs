@@ -16,14 +16,14 @@
 //! already covers `BITS ∈ {9, 10, 12, 14}`, so the dispatcher selects
 //! SIMD when `use_simd` is true and falls back to scalar otherwise.
 
-use crate::frame::Yuva444p14Frame;
+use crate::frame::Yuva444pFrame16;
 
 walker! {
-  planar4 {
+  planar4_be {
     /// Zero‑sized marker for the YUVA 4:4:4 **14‑bit** source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuva444p14,
-    frame: Yuva444p14Frame<'_>,
+    frame: Yuva444pFrame16<'_, 14, BE>,
     row: Yuva444p14Row,
     sink: Yuva444p14Sink,
     walker: yuva444p14_to,

@@ -1,14 +1,14 @@
 //! YUV 4:2:2 planar 12‑bit (`AV_PIX_FMT_YUV422P12LE`). See
 //! [`super::Yuv422p10`] for the 4:2:2 family structure.
 
-use crate::frame::Yuv422p12Frame;
+use crate::frame::Yuv422pFrame16;
 
 walker! {
-  planar3 {
+  planar3_be {
     /// Zero‑sized marker for the YUV 4:2:2 **12‑bit** source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuv422p12,
-    frame: Yuv422p12Frame<'_>,
+    frame: Yuv422pFrame16<'_, 12, BE>,
     row: Yuv422p12Row,
     sink: Yuv422p12Sink,
     walker: yuv422p12_to,

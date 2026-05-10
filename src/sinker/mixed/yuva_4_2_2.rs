@@ -208,7 +208,7 @@ impl PixelSink for MixedSinker<'_, Yuva422p> {
 
 // ---- Yuva422p9 impl ---------------------------------------------------
 
-impl<'a> MixedSinker<'a, Yuva422p9> {
+impl<'a, const BE: bool> MixedSinker<'a, Yuva422p9<BE>> {
   /// Attaches a packed **8-bit** RGBA output buffer. Source-derived
   /// alpha (depth-converted via `>> 1`).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -273,9 +273,9 @@ impl<'a> MixedSinker<'a, Yuva422p9> {
   }
 }
 
-impl Yuva422p9Sink for MixedSinker<'_, Yuva422p9> {}
+impl<const BE: bool> Yuva422p9Sink<BE> for MixedSinker<'_, Yuva422p9<BE>> {}
 
-impl PixelSink for MixedSinker<'_, Yuva422p9> {
+impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva422p9<BE>> {
   type Input<'r> = Yuva422p9Row<'r>;
   type Error = MixedSinkerError;
 
@@ -287,7 +287,7 @@ impl PixelSink for MixedSinker<'_, Yuva422p9> {
   }
 
   fn process(&mut self, row: Yuva422p9Row<'_>) -> Result<(), Self::Error> {
-    yuva422p_high_bit_process::<9, _, _, _, _>(
+    yuva422p_high_bit_process::<9, BE, _, _, _, _>(
       self,
       row.row(),
       row.y(),
@@ -300,17 +300,17 @@ impl PixelSink for MixedSinker<'_, Yuva422p9> {
       RowSlice::UHalf9,
       RowSlice::VHalf9,
       RowSlice::AFull9,
-      yuv420p9_to_rgb_row,
-      yuv420p9_to_rgb_u16_row,
-      yuva420p9_to_rgba_row,
-      yuva420p9_to_rgba_u16_row,
+      yuv420p9_to_rgb_row_endian,
+      yuv420p9_to_rgb_u16_row_endian,
+      yuva420p9_to_rgba_row_endian,
+      yuva420p9_to_rgba_u16_row_endian,
     )
   }
 }
 
 // ---- Yuva422p10 impl --------------------------------------------------
 
-impl<'a> MixedSinker<'a, Yuva422p10> {
+impl<'a, const BE: bool> MixedSinker<'a, Yuva422p10<BE>> {
   /// Attaches a packed **8-bit** RGBA output buffer. Source-derived
   /// alpha (depth-converted via `>> 2`).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -374,9 +374,9 @@ impl<'a> MixedSinker<'a, Yuva422p10> {
   }
 }
 
-impl Yuva422p10Sink for MixedSinker<'_, Yuva422p10> {}
+impl<const BE: bool> Yuva422p10Sink<BE> for MixedSinker<'_, Yuva422p10<BE>> {}
 
-impl PixelSink for MixedSinker<'_, Yuva422p10> {
+impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva422p10<BE>> {
   type Input<'r> = Yuva422p10Row<'r>;
   type Error = MixedSinkerError;
 
@@ -388,7 +388,7 @@ impl PixelSink for MixedSinker<'_, Yuva422p10> {
   }
 
   fn process(&mut self, row: Yuva422p10Row<'_>) -> Result<(), Self::Error> {
-    yuva422p_high_bit_process::<10, _, _, _, _>(
+    yuva422p_high_bit_process::<10, BE, _, _, _, _>(
       self,
       row.row(),
       row.y(),
@@ -401,17 +401,17 @@ impl PixelSink for MixedSinker<'_, Yuva422p10> {
       RowSlice::UHalf10,
       RowSlice::VHalf10,
       RowSlice::AFull10,
-      yuv420p10_to_rgb_row,
-      yuv420p10_to_rgb_u16_row,
-      yuva420p10_to_rgba_row,
-      yuva420p10_to_rgba_u16_row,
+      yuv420p10_to_rgb_row_endian,
+      yuv420p10_to_rgb_u16_row_endian,
+      yuva420p10_to_rgba_row_endian,
+      yuva420p10_to_rgba_u16_row_endian,
     )
   }
 }
 
 // ---- Yuva422p12 impl --------------------------------------------------
 
-impl<'a> MixedSinker<'a, Yuva422p12> {
+impl<'a, const BE: bool> MixedSinker<'a, Yuva422p12<BE>> {
   /// Attaches a packed **8-bit** RGBA output buffer. Source-derived
   /// alpha (depth-converted via `>> 4`).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -475,9 +475,9 @@ impl<'a> MixedSinker<'a, Yuva422p12> {
   }
 }
 
-impl Yuva422p12Sink for MixedSinker<'_, Yuva422p12> {}
+impl<const BE: bool> Yuva422p12Sink<BE> for MixedSinker<'_, Yuva422p12<BE>> {}
 
-impl PixelSink for MixedSinker<'_, Yuva422p12> {
+impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva422p12<BE>> {
   type Input<'r> = Yuva422p12Row<'r>;
   type Error = MixedSinkerError;
 
@@ -489,7 +489,7 @@ impl PixelSink for MixedSinker<'_, Yuva422p12> {
   }
 
   fn process(&mut self, row: Yuva422p12Row<'_>) -> Result<(), Self::Error> {
-    yuva422p_high_bit_process::<12, _, _, _, _>(
+    yuva422p_high_bit_process::<12, BE, _, _, _, _>(
       self,
       row.row(),
       row.y(),
@@ -502,17 +502,17 @@ impl PixelSink for MixedSinker<'_, Yuva422p12> {
       RowSlice::UHalf12,
       RowSlice::VHalf12,
       RowSlice::AFull12,
-      yuv420p12_to_rgb_row,
-      yuv420p12_to_rgb_u16_row,
-      yuva420p12_to_rgba_row,
-      yuva420p12_to_rgba_u16_row,
+      yuv420p12_to_rgb_row_endian,
+      yuv420p12_to_rgb_u16_row_endian,
+      yuva420p12_to_rgba_row_endian,
+      yuva420p12_to_rgba_u16_row_endian,
     )
   }
 }
 
 // ---- Yuva422p16 impl --------------------------------------------------
 
-impl<'a> MixedSinker<'a, Yuva422p16> {
+impl<'a, const BE: bool> MixedSinker<'a, Yuva422p16<BE>> {
   /// Attaches a packed **8-bit** RGBA output buffer. Source-derived
   /// alpha (depth-converted via `>> 8`).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -576,9 +576,9 @@ impl<'a> MixedSinker<'a, Yuva422p16> {
   }
 }
 
-impl Yuva422p16Sink for MixedSinker<'_, Yuva422p16> {}
+impl<const BE: bool> Yuva422p16Sink<BE> for MixedSinker<'_, Yuva422p16<BE>> {}
 
-impl PixelSink for MixedSinker<'_, Yuva422p16> {
+impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva422p16<BE>> {
   type Input<'r> = Yuva422p16Row<'r>;
   type Error = MixedSinkerError;
 
@@ -590,7 +590,7 @@ impl PixelSink for MixedSinker<'_, Yuva422p16> {
   }
 
   fn process(&mut self, row: Yuva422p16Row<'_>) -> Result<(), Self::Error> {
-    yuva422p_high_bit_process::<16, _, _, _, _>(
+    yuva422p_high_bit_process::<16, BE, _, _, _, _>(
       self,
       row.row(),
       row.y(),
@@ -603,10 +603,10 @@ impl PixelSink for MixedSinker<'_, Yuva422p16> {
       RowSlice::UHalf16,
       RowSlice::VHalf16,
       RowSlice::AFull16,
-      yuv420p16_to_rgb_row,
-      yuv420p16_to_rgb_u16_row,
-      yuva420p16_to_rgba_row,
-      yuva420p16_to_rgba_u16_row,
+      yuv420p16_to_rgb_row_endian,
+      yuv420p16_to_rgb_u16_row_endian,
+      yuva420p16_to_rgba_row_endian,
+      yuva420p16_to_rgba_u16_row_endian,
     )
   }
 }
@@ -623,10 +623,11 @@ impl PixelSink for MixedSinker<'_, Yuva422p16> {
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn yuva422p_high_bit_process<
   const BITS: u32,
+  const BE: bool,
   F: crate::SourceFormat,
-  RgbRowFn: Fn(&[u16], &[u16], &[u16], &mut [u8], usize, crate::ColorMatrix, bool, bool),
-  RgbU16RowFn: Fn(&[u16], &[u16], &[u16], &mut [u16], usize, crate::ColorMatrix, bool, bool),
-  RgbaRowFn: Fn(&[u16], &[u16], &[u16], &[u16], &mut [u8], usize, crate::ColorMatrix, bool, bool),
+  RgbRowFn: Fn(&[u16], &[u16], &[u16], &mut [u8], usize, crate::ColorMatrix, bool, bool, bool),
+  RgbU16RowFn: Fn(&[u16], &[u16], &[u16], &mut [u16], usize, crate::ColorMatrix, bool, bool, bool),
+  RgbaRowFn: Fn(&[u16], &[u16], &[u16], &[u16], &mut [u8], usize, crate::ColorMatrix, bool, bool, bool),
 >(
   sinker: &mut MixedSinker<'_, F>,
   idx: usize,
@@ -651,6 +652,7 @@ fn yuva422p_high_bit_process<
     &mut [u16],
     usize,
     crate::ColorMatrix,
+    bool,
     bool,
     bool,
   ),
@@ -751,6 +753,7 @@ fn yuva422p_high_bit_process<
       matrix,
       full_range,
       use_simd,
+      BE,
     );
     if want_rgba_u16 {
       // Combo: expand rgb_u16_row → rgba_u16_row, then overwrite α slot.
@@ -759,12 +762,7 @@ fn yuva422p_high_bit_process<
       expand_rgb_u16_to_rgba_u16_row::<BITS>(rgb_u16_row, rgba_u16_row, w);
       // BE = false: this sinker handles only LE-encoded high-bit Yuva*p inputs
       // today. Phase 4 will plumb a `<const BE: bool>` from the row type here.
-      crate::row::alpha_extract::copy_alpha_plane_u16::<BITS, false>(
-        a_row,
-        rgba_u16_row,
-        w,
-        use_simd,
-      );
+      crate::row::alpha_extract::copy_alpha_plane_u16::<BITS, BE>(a_row, rgba_u16_row, w, use_simd);
     }
   } else if want_rgba_u16 {
     // Standalone rgba_u16: delegate to the alpha-source-aware dispatcher.
@@ -780,6 +778,7 @@ fn yuva422p_high_bit_process<
       matrix,
       full_range,
       use_simd,
+      BE,
     );
   }
 
@@ -793,7 +792,7 @@ fn yuva422p_high_bit_process<
     let rgba_buf = rgba.as_deref_mut().unwrap();
     let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
     rgba_dispatch(
-      y_row, u_half_row, v_half_row, a_row, rgba_row, w, matrix, full_range, use_simd,
+      y_row, u_half_row, v_half_row, a_row, rgba_row, w, matrix, full_range, use_simd, BE,
     );
     return Ok(());
   }
@@ -811,7 +810,7 @@ fn yuva422p_high_bit_process<
     h,
   )?;
   rgb_dispatch(
-    y_row, u_half_row, v_half_row, rgb_row, w, matrix, full_range, use_simd,
+    y_row, u_half_row, v_half_row, rgb_row, w, matrix, full_range, use_simd, BE,
   );
 
   if let Some(hsv) = hsv.as_mut() {
@@ -834,9 +833,7 @@ fn yuva422p_high_bit_process<
     let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
     expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
     // BE = false: see the rgba_u16 branch above for rationale.
-    crate::row::alpha_extract::copy_alpha_plane_u16_to_u8::<BITS, false>(
-      a_row, rgba_row, w, use_simd,
-    );
+    crate::row::alpha_extract::copy_alpha_plane_u16_to_u8::<BITS, BE>(a_row, rgba_row, w, use_simd);
   }
 
   Ok(())

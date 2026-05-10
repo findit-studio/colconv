@@ -5,14 +5,14 @@
 //! shape (full-width chroma, no horizontal duplication); only the
 //! walker reads chroma row `r / 2`.
 
-use crate::frame::Yuv440p10Frame;
+use crate::frame::Yuv440pFrame16;
 
 walker! {
-  planar3 {
+  planar3_be {
     /// Zero‑sized marker for the YUV 4:4:0 **10‑bit** source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuv440p10,
-    frame: Yuv440p10Frame<'_>,
+    frame: Yuv440pFrame16<'_, 10, BE>,
     row: Yuv440p10Row,
     sink: Yuv440p10Sink,
     walker: yuv440p10_to,
