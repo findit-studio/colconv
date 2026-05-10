@@ -72,20 +72,7 @@ impl<'a> MixedSinker<'a, Yuv420p> {
   /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    // `buf` is `&mut [u16]`, so `buf.len()` is a u16-element count.
-    // Compute the required u16 element count directly to avoid the
-    // byte-vs-element ambiguity of `frame_bytes(1)` (which happens
-    // to coincide numerically at `channels == 1` but reads as a
-    // byte count). Overflow check matches `frame_bytes`.
-    let expected =
-      self
-        .width
-        .checked_mul(self.height)
-        .ok_or(MixedSinkerError::GeometryOverflow {
-          width: self.width,
-          height: self.height,
-          channels: 1,
-        })?;
+    let expected = self.frame_pixels()?;
     if buf.len() < expected {
       return Err(MixedSinkerError::LumaU16BufferTooShort {
         expected,
@@ -344,20 +331,7 @@ impl<'a> MixedSinker<'a, Yuv410p> {
   /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    // `buf` is `&mut [u16]`, so `buf.len()` is a u16-element count.
-    // Compute the required u16 element count directly to avoid the
-    // byte-vs-element ambiguity of `frame_bytes(1)` (which happens
-    // to coincide numerically at `channels == 1` but reads as a
-    // byte count). Overflow check matches `frame_bytes`.
-    let expected =
-      self
-        .width
-        .checked_mul(self.height)
-        .ok_or(MixedSinkerError::GeometryOverflow {
-          width: self.width,
-          height: self.height,
-          channels: 1,
-        })?;
+    let expected = self.frame_pixels()?;
     if buf.len() < expected {
       return Err(MixedSinkerError::LumaU16BufferTooShort {
         expected,
@@ -578,20 +552,7 @@ impl<'a> MixedSinker<'a, Yuv422p> {
   /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    // `buf` is `&mut [u16]`, so `buf.len()` is a u16-element count.
-    // Compute the required u16 element count directly to avoid the
-    // byte-vs-element ambiguity of `frame_bytes(1)` (which happens
-    // to coincide numerically at `channels == 1` but reads as a
-    // byte count). Overflow check matches `frame_bytes`.
-    let expected =
-      self
-        .width
-        .checked_mul(self.height)
-        .ok_or(MixedSinkerError::GeometryOverflow {
-          width: self.width,
-          height: self.height,
-          channels: 1,
-        })?;
+    let expected = self.frame_pixels()?;
     if buf.len() < expected {
       return Err(MixedSinkerError::LumaU16BufferTooShort {
         expected,
@@ -802,20 +763,7 @@ impl<'a> MixedSinker<'a, Yuv444p> {
   /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    // `buf` is `&mut [u16]`, so `buf.len()` is a u16-element count.
-    // Compute the required u16 element count directly to avoid the
-    // byte-vs-element ambiguity of `frame_bytes(1)` (which happens
-    // to coincide numerically at `channels == 1` but reads as a
-    // byte count). Overflow check matches `frame_bytes`.
-    let expected =
-      self
-        .width
-        .checked_mul(self.height)
-        .ok_or(MixedSinkerError::GeometryOverflow {
-          width: self.width,
-          height: self.height,
-          channels: 1,
-        })?;
+    let expected = self.frame_pixels()?;
     if buf.len() < expected {
       return Err(MixedSinkerError::LumaU16BufferTooShort {
         expected,
@@ -1016,20 +964,7 @@ impl<'a> MixedSinker<'a, Yuv440p> {
   /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    // `buf` is `&mut [u16]`, so `buf.len()` is a u16-element count.
-    // Compute the required u16 element count directly to avoid the
-    // byte-vs-element ambiguity of `frame_bytes(1)` (which happens
-    // to coincide numerically at `channels == 1` but reads as a
-    // byte count). Overflow check matches `frame_bytes`.
-    let expected =
-      self
-        .width
-        .checked_mul(self.height)
-        .ok_or(MixedSinkerError::GeometryOverflow {
-          width: self.width,
-          height: self.height,
-          channels: 1,
-        })?;
+    let expected = self.frame_pixels()?;
     if buf.len() < expected {
       return Err(MixedSinkerError::LumaU16BufferTooShort {
         expected,
@@ -1234,20 +1169,7 @@ impl<'a> MixedSinker<'a, Yuv411p> {
   /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    // `buf` is `&mut [u16]`, so `buf.len()` is a u16-element count.
-    // Compute the required u16 element count directly to avoid the
-    // byte-vs-element ambiguity of `frame_bytes(1)` (which happens
-    // to coincide numerically at `channels == 1` but reads as a
-    // byte count). Overflow check matches `frame_bytes`.
-    let expected =
-      self
-        .width
-        .checked_mul(self.height)
-        .ok_or(MixedSinkerError::GeometryOverflow {
-          width: self.width,
-          height: self.height,
-          channels: 1,
-        })?;
+    let expected = self.frame_pixels()?;
     if buf.len() < expected {
       return Err(MixedSinkerError::LumaU16BufferTooShort {
         expected,
