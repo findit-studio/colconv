@@ -11,8 +11,9 @@
 //!
 //! The row the Sink receives (`Self::Input<'_>`) has a shape that
 //! reflects the source format: [`source::Yuv420pRow`] carries Y / U / V
-//! slices plus matrix / range metadata; future packed‑RGB row types
-//! (`Rgb24Row`, `Bgr24Row`) will carry a single packed slice; etc.
+//! slices plus matrix / range metadata; packed‑RGB row types
+//! (e.g. [`source::Rgb24Row`], [`source::Bgr24Row`]) carry a single
+//! packed slice; etc.
 //! Each source family declares a subtrait
 //! (`Yuv420pSink: PixelSink<Input<'_> = Yuv420pRow<'_>>`) so kernel
 //! signatures stay sharp.
@@ -160,22 +161,23 @@
 //!
 //! # Not yet shipped (follow-up)
 //!
-//! - **Packed RGB sources** (`Rgb24`, `Bgr24`, `Rgba`, `Bgra`,
-//!   `Rgba1010102`, etc.) — Tier 6+.
-//! - **Additional packed YUV** — Tiers 3 and 4 are already supported
-//!   ([`source::Yuyv422`] / [`source::Uyvy422`] / [`source::Yvyu422`] in Tier
-//!   3; [`V210`] / [`Y210`] / [`Y212`] / [`Y216`] in Tier 4). **Tier 5
-//!   is now CLOSED**: first tranche ([`V410`] / [`V30X`]) shipped in
-//!   0.13.0; second tranche ([`Xv36`]) in 0.14.0; third tranche
-//!   ([`Vuya`] / [`Vuyx`]) in 0.15.0; fourth and final tranche
-//!   ([`Ayuv64`]) in 0.16.0. Remaining follow-up: `UYYVYY411`.
-//! - **Alpha + RGBA output** (Ship 8) — `with_rgba` /
-//!   `with_rgba_u16` `MixedSinker` accessors plus native YUVA
-//!   frame types.
 //! - **Bayer SIMD backends** — Tier 14 currently dispatches to the
 //!   scalar reference path on every target; NEON / SSE4.1 / AVX2 /
 //!   AVX-512 / wasm simd128 follow-ups will land per the established
 //!   backend-symmetry pattern.
+//! - **Cinema-camera RAW source formats** — vendor-decoded sensor RGB
+//!   in camera-native log + gamut (LogC4 / S-Log3 / REDLog3G10 /
+//!   Canon Log 2/3 / BMD Film Gen 5 / V-Log / F-Log) → working-space
+//!   conversion via inverse-OETF + 3×3 matrix + sRGB OETF. Roadmap
+//!   tracked in `docs/superpowers/plans/2026-05-07-be-rollout-tracking.md`
+//!   under "Cinema Camera RAW Support Roadmap". Mirrors the Tier 12
+//!   ([`source::Xyz12`]) shape: per-vendor source format, full
+//!   `MixedSinker` output coverage, polynomial OETF, 5 SIMD backends.
+//! - **Higher-quality Bayer demosaic** — current scalar Bayer kernel
+//!   does bilinear demosaic; AHD / Malvar / DCB are quality levers
+//!   for cinema-grade proxies (CinemaDNG / DJI Inspire workflows).
+//! - **3D LUT (`.cube`) row kernel** — for OCIO-style color management
+//!   in cinema pipelines.
 //!
 //! See [`source`] for the per-format module-level breakdown and
 //! [`frame`] for the validated frame types plus the `BITS` const
@@ -249,17 +251,6 @@ pub mod raw;
 pub mod row;
 pub mod sinker;
 pub mod source;
-
-/// Deprecated alias for [`source`]. Use `crate::source` instead — the
-/// `yuv` folder name was misleading (it held all source pixel formats,
-/// not just YUV). Will be removed in v0.2.0.
-#[deprecated(
-  since = "0.1.0",
-  note = "use `crate::source` instead; the `yuv` name was misleading"
-)]
-pub mod yuv {
-  pub use crate::source::*;
-}
 
 /// A per-row sink for color-converted pixel data.
 ///

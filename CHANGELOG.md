@@ -7,10 +7,9 @@
 - `crate::yuv` module renamed to `crate::source` to reflect that it holds
   all source pixel formats (RGB, GBR, Gray, Mono, XYZ, etc.), not just
   YUV. The previous folder name had outgrown its scope (~30 of 119 files
-  were actual YUV). A `#[deprecated]` `crate::yuv` alias is provided for
-  the v0.1.0 release; it will be removed in v0.2.0. Migrate by replacing
-  `crate::yuv::*` / `colconv::yuv::*` with `crate::source::*` /
-  `colconv::source::*`.
+  were actual YUV). No back-compat shim — the crate is pre-publish, so
+  callers migrate directly: `crate::yuv::*` / `colconv::yuv::*` →
+  `crate::source::*` / `colconv::source::*`.
 
 ## Unreleased — Tier 1.6 — Yuv411p (DV-NTSC legacy 4:1:1 planar)
 
