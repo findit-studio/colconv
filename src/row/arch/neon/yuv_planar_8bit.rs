@@ -961,29 +961,57 @@ unsafe fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
     let mut x = 0usize;
     while x + 16 <= width {
       let y_vec = vld1q_u8(y.as_ptr().add(x));
-      // 4 chroma samples per 16 Y pixels. Load as 4 u8 lanes via a
-      // u32 broadcast: read 4 bytes into a `u32`, splat into a vector,
-      // reinterpret to u8x16. The first 4 lanes hold the four chroma
-      // samples we care about; we then zero-extend to the i16x4 form
-      // we need for the math.
-      let u_4 = u_quarter.as_ptr().add(x / 4) as *const u32;
-      let v_4 = v_quarter.as_ptr().add(x / 4) as *const u32;
-      let u_word = core::ptr::read_unaligned(u_4);
-      let v_word = core::ptr::read_unaligned(v_4);
+      // Load 4 chroma bytes per plane via four `vld1_lane_u8` byte
+      // loads. Each `vld1_lane_u8` writes the byte at `ptr + i` into
+      // u8x8 lane i, so the resulting lane order is
+      // `[c0, c1, c2, c3, _, _, _, _]` regardless of host endianness.
+      // The earlier `(*const u32).read_unaligned() + vcreate_u8`
+      // sequence was native-endian dependent — on big-endian aarch64
+      // it would reorder the chroma bytes, putting U/V samples on the
+      // wrong horizontal pixel groups. The 4:1:0 NEON kernel above
+      // uses the same byte-lane cascade for the same reason.
+      //
+      // We initialise the u8x8 to zero and write only the four low
+      // lanes; the upper 4 lanes stay zero and are sliced off via
+      // `vget_low_s16` after `vmovl_u8`, so their values do not
+      // matter.
+      //
+      // SAFETY: the outer `while x + 16 <= width` bound and the
+      // caller-guaranteed `u_quarter.len() >= width / 4` precondition
+      // give `x / 4 + 4 <= u_quarter.len()` (and likewise for V), so
+      // each of the four byte reads is in-bounds.
+      let u_chroma_ptr = u_quarter.as_ptr().add(x / 4);
+      let v_chroma_ptr = v_quarter.as_ptr().add(x / 4);
+      let zero_u8x8 = vdup_n_u8(0);
+      let u_u8x8 = vld1_lane_u8::<3>(
+        u_chroma_ptr.add(3),
+        vld1_lane_u8::<2>(
+          u_chroma_ptr.add(2),
+          vld1_lane_u8::<1>(
+            u_chroma_ptr.add(1),
+            vld1_lane_u8::<0>(u_chroma_ptr, zero_u8x8),
+          ),
+        ),
+      );
+      let v_u8x8 = vld1_lane_u8::<3>(
+        v_chroma_ptr.add(3),
+        vld1_lane_u8::<2>(
+          v_chroma_ptr.add(2),
+          vld1_lane_u8::<1>(
+            v_chroma_ptr.add(1),
+            vld1_lane_u8::<0>(v_chroma_ptr, zero_u8x8),
+          ),
+        ),
+      );
 
-      // Pack the 4 u8 chroma samples into the low 4 lanes of a u8x8;
-      // widen to i16x4 in the low half of an i16x8.
-      let u_u8x8 = vcreate_u8(u_word as u64);
-      let v_u8x8 = vcreate_u8(v_word as u64);
+      // Widen 4 chroma samples to i16x8. Lanes 0..3 carry the four
+      // chroma samples; lanes 4..7 stay zero from the `vdup_n_u8(0)`
+      // initializer and are discarded via `vget_low_s16` below.
       let u_i16 = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(u_u8x8)), mid128);
       let v_i16 = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(v_u8x8)), mid128);
 
-      // Only the low 4 lanes (lanes 0..3) of u_i16 / v_i16 hold real
-      // chroma data. `vcreate_u8(u_word as u64)` zero-extends the
-      // 32-bit `u_word` into the low 64 bits of a u8x8, so lanes 4..7
-      // are zero (not a duplicate of the word) — but we never read
-      // them: only the low 4 lanes feed the 1→4 fanout cascade below.
-      // Promote the low 4 lanes to i32x4.
+      // Promote the low 4 lanes to i32x4 — these carry the meaningful
+      // chroma samples that feed the 1→4 fanout cascade below.
       let u_i32 = vmovl_s16(vget_low_s16(u_i16));
       let v_i32 = vmovl_s16(vget_low_s16(v_i16));
 
