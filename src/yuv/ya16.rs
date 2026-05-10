@@ -26,6 +26,7 @@ walker! {
     row: Ya16Row,
     sink: Ya16Sink,
     walker: ya16_to,
+    walker_endian: ya16_to_endian,
     buf_field: packed,
     elem_type: u16,
     row_elems: |w| w * 2,

@@ -4,6 +4,7 @@ use crate::{
   sinker::MixedSinker,
   yuv::{
     gray8_to, gray9_to, gray10_to, gray12_to, gray14_to, gray16_to, grayf32_to, ya8_to, ya16_to,
+    ya16_to_endian,
   },
 };
 
@@ -1299,7 +1300,7 @@ fn ya16_le_be_roundtrip_byte_identical() {
     .unwrap()
     .with_rgba_u16(&mut out_be_rgba_u16)
     .unwrap();
-  ya16_to(&frame_be, true, M, &mut sink_be).unwrap();
+  ya16_to_endian(&frame_be, true, M, &mut sink_be).unwrap();
 
   assert_eq!(
     out_le_rgba, out_be_rgba,

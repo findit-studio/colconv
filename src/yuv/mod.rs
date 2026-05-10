@@ -401,7 +401,7 @@ pub use y210::{Y210, Y210Row, Y210Sink, y210_to, y210_to_endian};
 pub use y212::{Y212, Y212Row, Y212Sink, y212_to, y212_to_endian};
 pub use y216::{Y216, Y216Row, Y216Sink, y216_to, y216_to_endian};
 pub use ya8::{Ya8, Ya8Row, Ya8Sink, ya8_to};
-pub use ya16::{Ya16, Ya16Row, Ya16Sink, ya16_to};
+pub use ya16::{Ya16, Ya16Row, Ya16Sink, ya16_to, ya16_to_endian};
 pub use yuv410p::{Yuv410p, Yuv410pRow, Yuv410pSink, yuv410p_to};
 pub use yuv411p::{Yuv411p, Yuv411pRow, Yuv411pSink, yuv411p_to};
 pub use yuv420p::{Yuv420p, Yuv420pRow, Yuv420pSink, yuv420p_to};
