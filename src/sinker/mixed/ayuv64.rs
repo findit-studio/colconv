@@ -54,7 +54,7 @@ use crate::{
     ayuv64_to_rgba_row, ayuv64_to_rgba_u16_row, expand_rgb_to_rgba_row,
     expand_rgb_u16_to_rgba_u16_row, rgb_to_hsv_row,
   },
-  yuv::{Ayuv64, Ayuv64Row, Ayuv64Sink},
+  source::{Ayuv64, Ayuv64Row, Ayuv64Sink},
 };
 
 impl<'a, const BE: bool> MixedSinker<'a, Ayuv64<BE>> {

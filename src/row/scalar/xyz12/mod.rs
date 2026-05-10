@@ -424,7 +424,7 @@ pub(crate) fn xyz12_to_rgba_f16_row<const BE: bool>(
 
 /// XYZ12 luma kernel (u8 output). `luma_q15` carries the gamut-matched
 /// Q15 coefficients `(k_r, k_g, k_b)` from
-/// [`crate::yuv::luma_weights_q15_for_gamut`]. Output is full-range Y'
+/// [`crate::source::luma_weights_q15_for_gamut`]. Output is full-range Y'
 /// in `[0, 255]` — XYZ12's gamma-encoded RGB is full-range by
 /// construction (no studio-range concept).
 #[cfg_attr(not(tarpaulin), inline(always))]

@@ -5,58 +5,58 @@
 //! parameter. One `PixelSink` impl per supported format. Currently
 //! ships impls for:
 //!
-//! - **8‑bit planar**: [`Yuv411p`](crate::yuv::Yuv411p),
-//!   [`Yuv420p`](crate::yuv::Yuv420p),
-//!   [`Yuv422p`](crate::yuv::Yuv422p),
-//!   [`Yuv440p`](crate::yuv::Yuv440p),
-//!   [`Yuv444p`](crate::yuv::Yuv444p).
-//! - **8‑bit semi‑planar**: [`Nv12`](crate::yuv::Nv12),
-//!   [`Nv21`](crate::yuv::Nv21), [`Nv16`](crate::yuv::Nv16),
-//!   [`Nv24`](crate::yuv::Nv24), [`Nv42`](crate::yuv::Nv42).
+//! - **8‑bit planar**: [`Yuv411p`](crate::source::Yuv411p),
+//!   [`Yuv420p`](crate::source::Yuv420p),
+//!   [`Yuv422p`](crate::source::Yuv422p),
+//!   [`Yuv440p`](crate::source::Yuv440p),
+//!   [`Yuv444p`](crate::source::Yuv444p).
+//! - **8‑bit semi‑planar**: [`Nv12`](crate::source::Nv12),
+//!   [`Nv21`](crate::source::Nv21), [`Nv16`](crate::source::Nv16),
+//!   [`Nv24`](crate::source::Nv24), [`Nv42`](crate::source::Nv42).
 //! - **9/10/12/14/16‑bit planar 4:2:0**:
-//!   [`Yuv420p9`](crate::yuv::Yuv420p9),
-//!   [`Yuv420p10`](crate::yuv::Yuv420p10),
-//!   [`Yuv420p12`](crate::yuv::Yuv420p12),
-//!   [`Yuv420p14`](crate::yuv::Yuv420p14),
-//!   [`Yuv420p16`](crate::yuv::Yuv420p16).
+//!   [`Yuv420p9`](crate::source::Yuv420p9),
+//!   [`Yuv420p10`](crate::source::Yuv420p10),
+//!   [`Yuv420p12`](crate::source::Yuv420p12),
+//!   [`Yuv420p14`](crate::source::Yuv420p14),
+//!   [`Yuv420p16`](crate::source::Yuv420p16).
 //! - **9/10/12/14/16‑bit planar 4:2:2**:
-//!   [`Yuv422p9`](crate::yuv::Yuv422p9),
-//!   [`Yuv422p10`](crate::yuv::Yuv422p10),
-//!   [`Yuv422p12`](crate::yuv::Yuv422p12),
-//!   [`Yuv422p14`](crate::yuv::Yuv422p14),
-//!   [`Yuv422p16`](crate::yuv::Yuv422p16).
+//!   [`Yuv422p9`](crate::source::Yuv422p9),
+//!   [`Yuv422p10`](crate::source::Yuv422p10),
+//!   [`Yuv422p12`](crate::source::Yuv422p12),
+//!   [`Yuv422p14`](crate::source::Yuv422p14),
+//!   [`Yuv422p16`](crate::source::Yuv422p16).
 //! - **10/12‑bit planar 4:4:0**:
-//!   [`Yuv440p10`](crate::yuv::Yuv440p10),
-//!   [`Yuv440p12`](crate::yuv::Yuv440p12).
+//!   [`Yuv440p10`](crate::source::Yuv440p10),
+//!   [`Yuv440p12`](crate::source::Yuv440p12).
 //! - **9/10/12/14/16‑bit planar 4:4:4**:
-//!   [`Yuv444p9`](crate::yuv::Yuv444p9),
-//!   [`Yuv444p10`](crate::yuv::Yuv444p10),
-//!   [`Yuv444p12`](crate::yuv::Yuv444p12),
-//!   [`Yuv444p14`](crate::yuv::Yuv444p14),
-//!   [`Yuv444p16`](crate::yuv::Yuv444p16).
+//!   [`Yuv444p9`](crate::source::Yuv444p9),
+//!   [`Yuv444p10`](crate::source::Yuv444p10),
+//!   [`Yuv444p12`](crate::source::Yuv444p12),
+//!   [`Yuv444p14`](crate::source::Yuv444p14),
+//!   [`Yuv444p16`](crate::source::Yuv444p16).
 //! - **10/12/16‑bit semi‑planar high‑bit‑packed 4:2:0**:
-//!   [`P010`](crate::yuv::P010), [`P012`](crate::yuv::P012),
-//!   [`P016`](crate::yuv::P016).
+//!   [`P010`](crate::source::P010), [`P012`](crate::source::P012),
+//!   [`P016`](crate::source::P016).
 //! - **10/12/16‑bit semi‑planar high‑bit‑packed 4:2:2**:
-//!   [`P210`](crate::yuv::P210), [`P212`](crate::yuv::P212),
-//!   [`P216`](crate::yuv::P216).
+//!   [`P210`](crate::source::P210), [`P212`](crate::source::P212),
+//!   [`P216`](crate::source::P216).
 //! - **10/12/16‑bit semi‑planar high‑bit‑packed 4:4:4**:
-//!   [`P410`](crate::yuv::P410), [`P412`](crate::yuv::P412),
-//!   [`P416`](crate::yuv::P416).
+//!   [`P410`](crate::source::P410), [`P412`](crate::source::P412),
+//!   [`P416`](crate::source::P416).
 //! - **YUVA (alpha-bearing planar)**: the entire FFmpeg-shipped
 //!   YUVA family — `Yuva420p` / `Yuva420p9/10/16`, `Yuva422p` /
 //!   `Yuva422p9/10/12/16`, `Yuva444p` / `Yuva444p9/10/12/14/16`.
 //!   Source-side alpha pass-through to `with_rgba` /
 //!   `with_rgba_u16`, with native SIMD on every backend.
 //! - **8‑bit packed RGB sources** (Tier 6):
-//!   [`Rgb24`](crate::yuv::Rgb24) (`R, G, B` bytes),
-//!   [`Bgr24`](crate::yuv::Bgr24) (`B, G, R` bytes),
-//!   [`Rgba`](crate::yuv::Rgba) (`R, G, B, A` bytes),
-//!   [`Bgra`](crate::yuv::Bgra) (`B, G, R, A` bytes),
-//!   [`Argb`](crate::yuv::Argb) (`A, R, G, B` bytes — leading alpha),
-//!   [`Abgr`](crate::yuv::Abgr) (`A, B, G, R` bytes — leading alpha),
-//!   [`Xrgb`](crate::yuv::Xrgb) / [`Rgbx`](crate::yuv::Rgbx) /
-//!   [`Xbgr`](crate::yuv::Xbgr) / [`Bgrx`](crate::yuv::Bgrx)
+//!   [`Rgb24`](crate::source::Rgb24) (`R, G, B` bytes),
+//!   [`Bgr24`](crate::source::Bgr24) (`B, G, R` bytes),
+//!   [`Rgba`](crate::source::Rgba) (`R, G, B, A` bytes),
+//!   [`Bgra`](crate::source::Bgra) (`B, G, R, A` bytes),
+//!   [`Argb`](crate::source::Argb) (`A, R, G, B` bytes — leading alpha),
+//!   [`Abgr`](crate::source::Abgr) (`A, B, G, R` bytes — leading alpha),
+//!   [`Xrgb`](crate::source::Xrgb) / [`Rgbx`](crate::source::Rgbx) /
+//!   [`Xbgr`](crate::source::Xbgr) / [`Bgrx`](crate::source::Bgrx)
 //!   (4-byte packed RGB with one ignored padding byte at the leading
 //!   or trailing position).
 //!   The source row is already 8‑bit RGB at the byte level —
@@ -67,8 +67,8 @@
 //!   padding-byte family), `with_luma` derives Y' from R/G/B,
 //!   `with_hsv` reuses the existing kernel.
 //! - **8‑bit planar GBR sources** (Tier 10):
-//!   [`Gbrp`](crate::yuv::Gbrp) (three planes: G, B, R) and
-//!   [`Gbrap`](crate::yuv::Gbrap) (four planes: G, B, R, A — real
+//!   [`Gbrp`](crate::source::Gbrp) (three planes: G, B, R) and
+//!   [`Gbrap`](crate::source::Gbrap) (four planes: G, B, R, A — real
 //!   per-pixel α). Both reuse the standard `with_rgb` / `with_rgba` /
 //!   `with_luma` / `with_luma_u16` / `with_hsv` channels via dedicated
 //!   `gbr_to_rgb_row` / `gbra_to_rgba_row` / `gbr_to_rgba_opaque_row`
@@ -76,8 +76,8 @@
 //!   RGB). `Gbrap`'s `with_rgb + with_rgba` combo uses Strategy A+
 //!   (expand RGB → RGBA, then α-overwrite from the source plane).
 //! - **10‑bit packed RGB sources** (Tier 6 — Ship 9e):
-//!   [`X2Rgb10`](crate::yuv::X2Rgb10) and
-//!   [`X2Bgr10`](crate::yuv::X2Bgr10). Each pixel is a 32-bit LE word
+//!   [`X2Rgb10`](crate::source::X2Rgb10) and
+//!   [`X2Bgr10`](crate::source::X2Bgr10). Each pixel is a 32-bit LE word
 //!   with `(MSB) 2X | 10c2 | 10c1 | 10c0 (LSB)` (R/G/B for X2RGB10,
 //!   B/G/R for X2BGR10). Unlike the 8‑bit byte-shuffle family above,
 //!   the source is **not** byte-aligned RGB — every output path
@@ -153,7 +153,7 @@ pub enum MixedSinkerError {
   /// `u16` RGB buffer attached via [`MixedSinker::with_rgb_u16`] /
   /// [`MixedSinker::set_rgb_u16`] is shorter than `width × height × 3`
   /// `u16` elements. Only the high‑bit‑depth source impls
-  /// (currently [`Yuv420p10`](crate::yuv::Yuv420p10)) write into this
+  /// (currently [`Yuv420p10`](crate::source::Yuv420p10)) write into this
   /// buffer.
   #[error("MixedSinker rgb_u16 buffer too short: expected >= {expected} elements, got {actual}")]
   RgbU16BufferTooShort {
@@ -204,7 +204,7 @@ pub enum MixedSinkerError {
   /// `f32` RGB buffer attached via per-format `with_rgb_f32` /
   /// `set_rgb_f32` is shorter than `width × height × 3` `f32` elements.
   /// Only float-source impls (currently
-  /// [`Rgbf32`](crate::yuv::Rgbf32)) write into this buffer.
+  /// [`Rgbf32`](crate::source::Rgbf32)) write into this buffer.
   #[error("MixedSinker rgb_f32 buffer too short: expected >= {expected} elements, got {actual}")]
   RgbF32BufferTooShort {
     /// Minimum `f32` elements required (`width × height × 3`).
@@ -216,7 +216,7 @@ pub enum MixedSinkerError {
   /// `half::f16` RGB buffer attached via per-format `with_rgb_f16` /
   /// `set_rgb_f16` is shorter than `width × height × 3` `f16` elements.
   /// Only half-float-source impls (currently
-  /// [`Rgbf16`](crate::yuv::Rgbf16)) write into this buffer.
+  /// [`Rgbf16`](crate::source::Rgbf16)) write into this buffer.
   #[error("MixedSinker rgb_f16 buffer too short: expected >= {expected} elements, got {actual}")]
   RgbF16BufferTooShort {
     /// Minimum `f16` elements required (`width × height × 3`).
@@ -249,7 +249,7 @@ pub enum MixedSinkerError {
 
   /// `f32` XYZ buffer attached via `with_xyz_f32` / `set_xyz_f32` is
   /// shorter than `width × height × 3` `f32` elements. Only the
-  /// [`Xyz12`](crate::yuv::Xyz12) source impl writes into this buffer.
+  /// [`Xyz12`](crate::source::Xyz12) source impl writes into this buffer.
   #[error("MixedSinker xyz_f32 buffer too short: expected >= {expected} elements, got {actual}")]
   XyzF32BufferTooShort {
     /// Minimum `f32` elements required (`width × height × 3`).
@@ -358,7 +358,7 @@ pub enum MixedSinkerError {
   },
 
   /// The sinker's configured `width` is not a multiple of 4. Packed
-  /// 4:1:1 ([`Uyyvyy411`](crate::yuv::Uyyvyy411)) shares one chroma
+  /// 4:1:1 ([`Uyyvyy411`](crate::source::Uyyvyy411)) shares one chroma
   /// pair across 4 luma samples, so each 6-byte block covers exactly
   /// 4 pixels — widths not divisible by 4 can't form a complete
   /// final block. `MixedSinker::new` is infallible and accepts any
@@ -406,8 +406,8 @@ pub enum RowSlice {
   #[display("V Half")]
   VHalf,
   /// Quarter‑width U (Cb) plane in a planar 4:1:1 / 4:1:0 source
-  /// ([`Yuv411p`](crate::yuv::Yuv411p) — DV-NTSC legacy;
-  /// [`Yuv410p`](crate::yuv::Yuv410p) — Cinepak / extreme-old codecs).
+  /// ([`Yuv411p`](crate::source::Yuv411p) — DV-NTSC legacy;
+  /// [`Yuv410p`](crate::source::Yuv410p) — Cinepak / extreme-old codecs).
   /// `width.div_ceil(4)` bytes per row — each chroma sample covers
   /// four Y columns horizontally. Yuv410p enforces `width % 4 == 0`
   /// at the frame layer (so `width.div_ceil(4) == width / 4`); Yuv411p
@@ -417,8 +417,8 @@ pub enum RowSlice {
   #[display("U Quarter")]
   UQuarter,
   /// Quarter‑width V (Cr) plane in a planar 4:1:1 / 4:1:0 source
-  /// ([`Yuv411p`](crate::yuv::Yuv411p) /
-  /// [`Yuv410p`](crate::yuv::Yuv410p)). `width.div_ceil(4)` bytes per
+  /// ([`Yuv411p`](crate::source::Yuv411p) /
+  /// [`Yuv410p`](crate::source::Yuv410p)). `width.div_ceil(4)` bytes per
   /// row (see [`Self::UQuarter`] for the Yuv410p-vs-Yuv411p
   /// width-rounding distinction).
   #[display("V Quarter")]
@@ -433,15 +433,15 @@ pub enum RowSlice {
   #[display("VU Half")]
   VuHalf,
   /// Full-width U (Cb) plane in a planar 4:4:4 source
-  /// ([`Yuv444p`](crate::yuv::Yuv444p)). `width` bytes per row.
+  /// ([`Yuv444p`](crate::source::Yuv444p)). `width` bytes per row.
   #[display("U Full")]
   UFull,
   /// Full-width V (Cr) plane in a planar 4:4:4 source
-  /// ([`Yuv444p`](crate::yuv::Yuv444p)). `width` bytes per row.
+  /// ([`Yuv444p`](crate::source::Yuv444p)). `width` bytes per row.
   #[display("V Full")]
   VFull,
   /// Full-width alpha plane in an 8‑bit YUVA source
-  /// ([`Yuva420p`](crate::yuv::Yuva420p)). `width` bytes per row
+  /// ([`Yuva420p`](crate::source::Yuva420p)). `width` bytes per row
   /// (1:1 with Y).
   #[display("A Full")]
   AFull,
@@ -453,7 +453,7 @@ pub enum RowSlice {
   #[display("V Full 10")]
   VFull10,
   /// Full-width alpha row of a **10-bit** 4:4:4 planar source with an
-  /// alpha plane ([`Yuva444p10`](crate::yuv::Yuva444p10)). `u16`
+  /// alpha plane ([`Yuva444p10`](crate::source::Yuva444p10)). `u16`
   /// samples, `width` elements, low-bit-packed.
   #[display("A Full 10")]
   AFull10,
@@ -464,8 +464,8 @@ pub enum RowSlice {
   #[display("V Full 12")]
   VFull12,
   /// Full-width alpha row of a **12-bit** YUVA planar source
-  /// ([`Yuva422p12`](crate::yuv::Yuva422p12) /
-  /// [`Yuva444p12`](crate::yuv::Yuva444p12)). `u16` samples, `width`
+  /// ([`Yuva422p12`](crate::source::Yuva422p12) /
+  /// [`Yuva444p12`](crate::source::Yuva444p12)). `u16` samples, `width`
   /// elements, low-bit-packed.
   #[display("A Full 12")]
   AFull12,
@@ -476,25 +476,25 @@ pub enum RowSlice {
   #[display("V Full 14")]
   VFull14,
   /// Full-width alpha row of a **14-bit** YUVA planar source
-  /// ([`Yuva444p14`](crate::yuv::Yuva444p14)). `u16` samples, `width`
+  /// ([`Yuva444p14`](crate::source::Yuva444p14)). `u16` samples, `width`
   /// elements, low-bit-packed.
   #[display("A Full 14")]
   AFull14,
   /// Full‑width interleaved UV plane in a semi‑planar **4:4:4** source
-  /// ([`Nv24`](crate::yuv::Nv24)). Each row is `U0, V0, U1, V1, …` for
+  /// ([`Nv24`](crate::source::Nv24)). Each row is `U0, V0, U1, V1, …` for
   /// `width` pairs (`2 * width` bytes). One UV pair per Y pixel — no
   /// chroma subsampling.
   #[display("UV Full")]
   UvFull,
   /// Full‑width interleaved VU plane in a semi‑planar **4:4:4** source
-  /// ([`Nv42`](crate::yuv::Nv42)). Each row is `V0, U0, V1, U1, …` for
+  /// ([`Nv42`](crate::source::Nv42)). Each row is `V0, U0, V1, U1, …` for
   /// `width` pairs — byte order swapped relative to [`Self::UvFull`].
   #[display("VU Full")]
   VuFull,
   /// Full‑width Y row of a **9‑bit** planar source
-  /// ([`Yuv420p9`](crate::yuv::Yuv420p9) /
-  /// [`Yuv422p9`](crate::yuv::Yuv422p9) /
-  /// [`Yuv444p9`](crate::yuv::Yuv444p9)). `u16` samples, `width`
+  /// ([`Yuv420p9`](crate::source::Yuv420p9) /
+  /// [`Yuv422p9`](crate::source::Yuv422p9) /
+  /// [`Yuv444p9`](crate::source::Yuv444p9)). `u16` samples, `width`
   /// elements (low 9 bits active).
   #[display("Y9")]
   Y9,
@@ -513,7 +513,7 @@ pub enum RowSlice {
   #[display("V Full 9")]
   VFull9,
   /// Full-width alpha row of a **9-bit** YUVA planar source
-  /// ([`Yuva420p9`](crate::yuv::Yuva420p9)). `u16` samples, `width`
+  /// ([`Yuva420p9`](crate::source::Yuva420p9)). `u16` samples, `width`
   /// elements, low-bit-packed.
   #[display("A Full 9")]
   AFull9,
@@ -569,8 +569,8 @@ pub enum RowSlice {
   #[display("V Half 14")]
   VHalf14,
   /// Full‑width Y row of a **16‑bit** source — used for both the
-  /// planar ([`Yuv420p16`](crate::yuv::Yuv420p16)) and semi‑planar
-  /// ([`P016`](crate::yuv::P016)) families. At 16 bits there is no
+  /// planar ([`Yuv420p16`](crate::source::Yuv420p16)) and semi‑planar
+  /// ([`P016`](crate::source::P016)) families. At 16 bits there is no
   /// high‑vs‑low packing distinction.
   #[display("Y16")]
   Y16,
@@ -583,18 +583,18 @@ pub enum RowSlice {
   #[display("V Half 16")]
   VHalf16,
   /// Half‑width interleaved UV row of a **16‑bit semi‑planar** source
-  /// ([`P016`](crate::yuv::P016)). `u16` samples, `width` elements.
+  /// ([`P016`](crate::source::P016)). `u16` samples, `width` elements.
   #[display("UV Half 16")]
   UvHalf16,
   /// Full-width alpha row of a **16-bit** YUVA planar source
-  /// ([`Yuva420p16`](crate::yuv::Yuva420p16) /
-  /// [`Yuva444p16`](crate::yuv::Yuva444p16)). `u16` samples,
+  /// ([`Yuva420p16`](crate::source::Yuva420p16) /
+  /// [`Yuva444p16`](crate::source::Yuva444p16)). `u16` samples,
   /// `width` elements (full u16 range).
   #[display("A Full 16")]
   AFull16,
   /// Full-width U row of a **16-bit** 4:4:4 planar source
-  /// ([`Yuv444p16`](crate::yuv::Yuv444p16) /
-  /// [`Yuva444p16`](crate::yuv::Yuva444p16)). `u16` samples,
+  /// ([`Yuv444p16`](crate::source::Yuv444p16) /
+  /// [`Yuva444p16`](crate::source::Yuva444p16)). `u16` samples,
   /// `width` elements (full u16 range).
   #[display("U Full 16")]
   UFull16,
@@ -603,17 +603,17 @@ pub enum RowSlice {
   #[display("V Full 16")]
   VFull16,
   /// Full‑width interleaved UV row of a **10‑bit semi‑planar 4:4:4**
-  /// source ([`P410`](crate::yuv::P410)). `u16` samples, `2 * width`
+  /// source ([`P410`](crate::source::P410)). `u16` samples, `2 * width`
   /// elements, high‑bit‑packed.
   #[display("UV Full 10")]
   UvFull10,
   /// Full‑width interleaved UV row of a **12‑bit semi‑planar 4:4:4**
-  /// source ([`P412`](crate::yuv::P412)). `u16` samples, `2 * width`
+  /// source ([`P412`](crate::source::P412)). `u16` samples, `2 * width`
   /// elements, high‑bit‑packed.
   #[display("UV Full 12")]
   UvFull12,
   /// Full‑width interleaved UV row of a **16‑bit semi‑planar 4:4:4**
-  /// source ([`P416`](crate::yuv::P416)). `u16` samples, `2 * width`
+  /// source ([`P416`](crate::source::P416)). `u16` samples, `2 * width`
   /// elements (no high/low packing distinction at 16 bits).
   #[display("UV Full 16")]
   UvFull16,
@@ -658,125 +658,125 @@ pub enum RowSlice {
   /// the 256-entry BGRA palette carried alongside in `Pal8Row`.
   #[display("Pal8 index row")]
   Pal8IndexRow,
-  /// Packed **RGB565** LE row of an [`Rgb565`](crate::yuv::Rgb565) source.
+  /// Packed **RGB565** LE row of an [`Rgb565`](crate::source::Rgb565) source.
   /// `2 * width` `u8` bytes — one `u16` LE word per pixel.
   #[display("RGB565 packed")]
   Rgb565Packed,
-  /// Packed **BGR565** LE row of a [`Bgr565`](crate::yuv::Bgr565) source.
+  /// Packed **BGR565** LE row of a [`Bgr565`](crate::source::Bgr565) source.
   /// Same `2 * width` byte shape as [`Rgb565Packed`](Self::Rgb565Packed)
   /// with R↔B channel positions swapped.
   #[display("BGR565 packed")]
   Bgr565Packed,
-  /// Packed **RGB555** LE row of an [`Rgb555`](crate::yuv::Rgb555) source.
+  /// Packed **RGB555** LE row of an [`Rgb555`](crate::source::Rgb555) source.
   /// `2 * width` `u8` bytes — one `u16` LE word per pixel (bit 15 unused).
   #[display("RGB555 packed")]
   Rgb555Packed,
-  /// Packed **BGR555** LE row of a [`Bgr555`](crate::yuv::Bgr555) source.
+  /// Packed **BGR555** LE row of a [`Bgr555`](crate::source::Bgr555) source.
   /// Same shape as [`Rgb555Packed`](Self::Rgb555Packed) with R↔B swapped.
   #[display("BGR555 packed")]
   Bgr555Packed,
-  /// Packed **RGB444** LE row of an [`Rgb444`](crate::yuv::Rgb444) source.
+  /// Packed **RGB444** LE row of an [`Rgb444`](crate::source::Rgb444) source.
   /// `2 * width` `u8` bytes — one `u16` LE word per pixel (bits [15:12]
   /// unused).
   #[display("RGB444 packed")]
   Rgb444Packed,
-  /// Packed **BGR444** LE row of a [`Bgr444`](crate::yuv::Bgr444) source.
+  /// Packed **BGR444** LE row of a [`Bgr444`](crate::source::Bgr444) source.
   /// Same shape as [`Rgb444Packed`](Self::Rgb444Packed) with R↔B swapped.
   #[display("BGR444 packed")]
   Bgr444Packed,
-  /// Packed `R, G, B` row of an [`Rgb24`](crate::yuv::Rgb24) source.
+  /// Packed `R, G, B` row of an [`Rgb24`](crate::source::Rgb24) source.
   /// `3 * width` `u8` bytes.
   #[display("RGB packed")]
   RgbPacked,
-  /// Packed `B, G, R` row of a [`Bgr24`](crate::yuv::Bgr24) source.
+  /// Packed `B, G, R` row of a [`Bgr24`](crate::source::Bgr24) source.
   /// `3 * width` `u8` bytes (channel-order swapped relative to
   /// [`RgbPacked`](Self::RgbPacked)).
   #[display("BGR packed")]
   BgrPacked,
-  /// Packed `R, G, B, A` row of an [`Rgba`](crate::yuv::Rgba) source.
+  /// Packed `R, G, B, A` row of an [`Rgba`](crate::source::Rgba) source.
   /// `4 * width` `u8` bytes — alpha is real (not padding).
   #[display("RGBA packed")]
   RgbaPacked,
-  /// Packed `B, G, R, A` row of a [`Bgra`](crate::yuv::Bgra) source.
+  /// Packed `B, G, R, A` row of a [`Bgra`](crate::source::Bgra) source.
   /// `4 * width` `u8` bytes — alpha lane preserved, channel order
   /// swapped on the first three bytes relative to
   /// [`RgbaPacked`](Self::RgbaPacked).
   #[display("BGRA packed")]
   BgraPacked,
-  /// Packed `A, R, G, B` row of an [`Argb`](crate::yuv::Argb) source.
+  /// Packed `A, R, G, B` row of an [`Argb`](crate::source::Argb) source.
   /// `4 * width` `u8` bytes — alpha at the **leading** position vs
   /// [`RgbaPacked`](Self::RgbaPacked).
   #[display("ARGB packed")]
   ArgbPacked,
-  /// Packed `A, B, G, R` row of an [`Abgr`](crate::yuv::Abgr) source.
+  /// Packed `A, B, G, R` row of an [`Abgr`](crate::source::Abgr) source.
   /// `4 * width` `u8` bytes — leading alpha + reversed RGB order vs
   /// [`ArgbPacked`](Self::ArgbPacked).
   #[display("ABGR packed")]
   AbgrPacked,
-  /// Packed `X, R, G, B` row of an [`Xrgb`](crate::yuv::Xrgb) source
+  /// Packed `X, R, G, B` row of an [`Xrgb`](crate::source::Xrgb) source
   /// (FFmpeg `0rgb`). `4 * width` `u8` bytes — leading **padding**
   /// byte (not alpha).
   #[display("XRGB packed")]
   XrgbPacked,
-  /// Packed `R, G, B, X` row of an [`Rgbx`](crate::yuv::Rgbx) source
+  /// Packed `R, G, B, X` row of an [`Rgbx`](crate::source::Rgbx) source
   /// (FFmpeg `rgb0`). `4 * width` `u8` bytes — trailing padding byte.
   #[display("RGBX packed")]
   RgbxPacked,
-  /// Packed `X, B, G, R` row of an [`Xbgr`](crate::yuv::Xbgr) source
+  /// Packed `X, B, G, R` row of an [`Xbgr`](crate::source::Xbgr) source
   /// (FFmpeg `0bgr`). `4 * width` `u8` bytes — leading padding byte
   /// + reversed RGB order vs [`XrgbPacked`](Self::XrgbPacked).
   #[display("XBGR packed")]
   XbgrPacked,
-  /// Packed `B, G, R, X` row of a [`Bgrx`](crate::yuv::Bgrx) source
+  /// Packed `B, G, R, X` row of a [`Bgrx`](crate::source::Bgrx) source
   /// (FFmpeg `bgr0`). `4 * width` `u8` bytes — trailing padding byte
   /// + reversed RGB order vs [`RgbxPacked`](Self::RgbxPacked).
   #[display("BGRX packed")]
   BgrxPacked,
   /// Packed `X2RGB10` LE row of an
-  /// [`X2Rgb10`](crate::yuv::X2Rgb10) source. `4 * width` `u8` bytes
+  /// [`X2Rgb10`](crate::source::X2Rgb10) source. `4 * width` `u8` bytes
   /// (one little-endian `u32` per pixel with `(MSB) 2X | 10R | 10G |
   /// 10B (LSB)` packing).
   #[display("X2RGB10 packed")]
   X2Rgb10Packed,
   /// Packed `X2BGR10` LE row of an
-  /// [`X2Bgr10`](crate::yuv::X2Bgr10) source. `4 * width` `u8` bytes
+  /// [`X2Bgr10`](crate::source::X2Bgr10) source. `4 * width` `u8` bytes
   /// — channel positions reversed relative to
   /// [`X2Rgb10Packed`](Self::X2Rgb10Packed).
   #[display("X2BGR10 packed")]
   X2Bgr10Packed,
   /// Packed `Y0, U0, Y1, V0, …` row of a
-  /// [`Yuyv422`](crate::yuv::Yuyv422) source (FFmpeg `yuyv422` /
+  /// [`Yuyv422`](crate::source::Yuyv422) source (FFmpeg `yuyv422` /
   /// YUY2). `2 * width` `u8` bytes — Y in even byte positions, U/V
   /// in odd positions with U preceding V.
   #[display("YUYV422 packed")]
   Yuyv422Packed,
   /// Packed `U0, Y0, V0, Y1, …` row of a
-  /// [`Uyvy422`](crate::yuv::Uyvy422) source (FFmpeg `uyvy422` /
+  /// [`Uyvy422`](crate::source::Uyvy422) source (FFmpeg `uyvy422` /
   /// UYVY). `2 * width` `u8` bytes — Y in odd byte positions, U/V
   /// in even positions with U preceding V.
   #[display("UYVY422 packed")]
   Uyvy422Packed,
   /// Packed `Y0, V0, Y1, U0, …` row of a
-  /// [`Yvyu422`](crate::yuv::Yvyu422) source (FFmpeg `yvyu422` /
+  /// [`Yvyu422`](crate::source::Yvyu422) source (FFmpeg `yvyu422` /
   /// YVYU). `2 * width` `u8` bytes — Y in even byte positions, V/U
   /// in odd positions with V preceding U (chroma order swapped vs
   /// [`Yuyv422Packed`](Self::Yuyv422Packed)).
   #[display("YVYU422 packed")]
   Yvyu422Packed,
   /// Packed `U0, Y0, Y1, V0, Y2, Y3, …` row of a
-  /// [`Uyyvyy411`](crate::yuv::Uyyvyy411) source (FFmpeg
+  /// [`Uyyvyy411`](crate::source::Uyyvyy411) source (FFmpeg
   /// `uyyvyy411`). `width * 3 / 2` `u8` bytes — one (U, V) chroma
   /// pair shared across 4 luma samples (4:1:1 horizontal
   /// subsampling, 12 bpp, DV legacy).
   #[display("UYYVYY411 packed")]
   Uyyvyy411Packed,
-  /// Packed `v210` row of a [`V210`](crate::yuv::V210) source —
+  /// Packed `v210` row of a [`V210`](crate::source::V210) source —
   /// Tier 4 10-bit pro-broadcast SDI capture format. Each 16-byte
   /// word holds 12 × 10-bit samples = 6 pixels (4:2:2: 6 Y +
   /// 3 Cb + 3 Cr). Row length: `(width / 6) * 16` `u8` bytes.
   #[display("V210 packed")]
   V210Packed,
-  /// Packed `y210` row of a [`Y210`](crate::yuv::Y210) source —
+  /// Packed `y210` row of a [`Y210`](crate::source::Y210) source —
   /// Tier 4 10-bit MSB-aligned in u16 with YUYV422 byte order.
   /// Row length: `2 * width` `u16` elements (= `4 * width` bytes).
   #[display("Y210 packed")]
@@ -819,17 +819,17 @@ pub enum RowSlice {
   /// bytes).
   #[display("AYUV64 packed")]
   Ayuv64Packed,
-  /// Packed `R, G, B` row of an [`Rgbf32`](crate::yuv::Rgbf32) source —
+  /// Packed `R, G, B` row of an [`Rgbf32`](crate::source::Rgbf32) source —
   /// Tier 9 32-bit float per channel. Row length: `3 * width` `f32`
   /// elements (= `12 * width` bytes).
   #[display("RGBF32 packed")]
   RgbF32Packed,
-  /// Packed `R, G, B` row of an [`Rgbf16`](crate::yuv::Rgbf16) source —
+  /// Packed `R, G, B` row of an [`Rgbf16`](crate::source::Rgbf16) source —
   /// Tier 9 16-bit half-precision float per channel. Row length:
   /// `3 * width` `half::f16` elements (= `6 * width` bytes).
   #[display("RGBF16 packed")]
   RgbF16Packed,
-  /// Packed `X, Y, Z` row of an [`Xyz12`](crate::yuv::Xyz12) source —
+  /// Packed `X, Y, Z` row of an [`Xyz12`](crate::source::Xyz12) source —
   /// Tier 12 12-bit CIE XYZ packed in u16 triples — active 12 bits
   /// in `[15:4]`, low 4 bits zero (per FFmpeg
   /// `AV_PIX_FMT_XYZ12LE/BE`). Row length: `3 * width` `u16` elements
@@ -837,8 +837,8 @@ pub enum RowSlice {
   #[display("XYZ12 packed")]
   Xyz12Packed,
   /// Green plane row of an 8-bit planar GBR source
-  /// ([`Gbrp`](crate::yuv::Gbrp) /
-  /// [`Gbrap`](crate::yuv::Gbrap)). `u8` samples, `width` elements.
+  /// ([`Gbrp`](crate::source::Gbrp) /
+  /// [`Gbrap`](crate::source::Gbrap)). `u8` samples, `width` elements.
   #[display("G plane")]
   GPlane,
   /// Blue plane row of an 8-bit planar GBR source. `u8` samples,
@@ -857,20 +857,20 @@ pub enum RowSlice {
   /// `Gbrapf16`). `half::f16` samples, `width` elements per plane.
   #[display("GBR f16 plane")]
   GbrF16Plane,
-  /// Packed `R, G, B` row of an [`Rgb48`](crate::yuv::Rgb48) source —
+  /// Packed `R, G, B` row of an [`Rgb48`](crate::source::Rgb48) source —
   /// `width * 3` u16 elements (each channel 16 bits, R, G, B order).
   #[display("RGB48 packed")]
   Rgb48Packed,
-  /// Packed `B, G, R` row of a [`Bgr48`](crate::yuv::Bgr48) source —
+  /// Packed `B, G, R` row of a [`Bgr48`](crate::source::Bgr48) source —
   /// `width * 3` u16 elements (channel order reversed vs
   /// [`Rgb48Packed`](Self::Rgb48Packed)).
   #[display("BGR48 packed")]
   Bgr48Packed,
-  /// Packed `R, G, B, A` row of an [`Rgba64`](crate::yuv::Rgba64) source —
+  /// Packed `R, G, B, A` row of an [`Rgba64`](crate::source::Rgba64) source —
   /// `width * 4` u16 elements (each channel 16 bits; alpha is real).
   #[display("RGBA64 packed")]
   Rgba64Packed,
-  /// Packed `B, G, R, A` row of a [`Bgra64`](crate::yuv::Bgra64) source —
+  /// Packed `B, G, R, A` row of a [`Bgra64`](crate::source::Bgra64) source —
   /// `width * 4` u16 elements (channel order reversed on RGB vs
   /// [`Rgba64Packed`](Self::Rgba64Packed); alpha at slot 3 is real).
   #[display("BGRA64 packed")]
@@ -911,7 +911,7 @@ pub struct MixedSinker<'a, F: SourceFormat> {
   luma_f32: Option<&'a mut [f32]>,
   hsv: Option<HsvBuffers<'a>>,
   /// Lossless linear-XYZ pass-through buffer used by the
-  /// [`Xyz12`](crate::yuv::Xyz12) source's `with_xyz_f32` accessor.
+  /// [`Xyz12`](crate::source::Xyz12) source's `with_xyz_f32` accessor.
   /// `None` for every other source format.
   xyz_f32: Option<&'a mut [f32]>,
   width: usize,
@@ -1290,7 +1290,7 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
 
   /// Returns `true` iff the sinker will write `u16` RGB at the
   /// source's native bit depth. Only high‑bit‑depth source impls
-  /// (currently [`Yuv420p10`](crate::yuv::Yuv420p10)) honor this
+  /// (currently [`Yuv420p10`](crate::source::Yuv420p10)) honor this
   /// buffer — attaching it on an 8‑bit source format is legal but
   /// no writes occur.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -1299,7 +1299,7 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
   }
 
   /// Returns `true` iff the sinker will write `f32` RGB. Only
-  /// float-source impls (currently [`Rgbf32`](crate::yuv::Rgbf32))
+  /// float-source impls (currently [`Rgbf32`](crate::source::Rgbf32))
   /// honor this buffer.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn produces_rgb_f32(&self) -> bool {
@@ -1307,7 +1307,7 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
   }
 
   /// Returns `true` iff the sinker will write `half::f16` RGB. Only
-  /// half-float-source impls (currently [`Rgbf16`](crate::yuv::Rgbf16))
+  /// half-float-source impls (currently [`Rgbf16`](crate::source::Rgbf16))
   /// honor this buffer.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn produces_rgb_f16(&self) -> bool {
@@ -1846,7 +1846,7 @@ mod api_smoke_tests {
   #[test]
   fn mixed_sinker_default_does_not_produce_luma_u16() {
     // Use the currently available V210 source format marker for this smoke test.
-    let sink: MixedSinker<'_, crate::yuv::V210> = MixedSinker::new(6, 1);
+    let sink: MixedSinker<'_, crate::source::V210> = MixedSinker::new(6, 1);
     assert!(!sink.produces_luma_u16());
   }
 

@@ -2,7 +2,7 @@ use crate::{
   ColorMatrix,
   frame::{Gray8Frame, Gray16Frame, GrayNFrame, Grayf32Frame, Ya8Frame, Ya16Frame},
   sinker::MixedSinker,
-  yuv::{
+  source::{
     gray8_to, gray9_to, gray9_to_endian, gray10_to, gray10_to_endian, gray12_to, gray12_to_endian,
     gray14_to, gray14_to_endian, gray16_to, gray16_to_endian, grayf32_to, grayf32_to_endian,
     ya8_to, ya16_to, ya16_to_endian,
@@ -52,7 +52,7 @@ fn gray8_with_rgb_broadcasts_to_packed() {
   let plane = [0u8, 64, 128, 255];
   let frame = make_gray8_frame(&plane, 4, 1);
   let mut rgb = std::vec![0u8; 4 * 3];
-  let mut sink = MixedSinker::<crate::yuv::Gray8>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray8>::new(4, 1)
     .with_rgb(&mut rgb)
     .unwrap();
   gray8_to(&frame, FR, M, &mut sink).unwrap();
@@ -68,7 +68,7 @@ fn gray8_with_rgba_alpha_is_0xff() {
   let plane = [100u8; 4];
   let frame = make_gray8_frame(&plane, 4, 1);
   let mut rgba = std::vec![0u8; 4 * 4];
-  let mut sink = MixedSinker::<crate::yuv::Gray8>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray8>::new(4, 1)
     .with_rgba(&mut rgba)
     .unwrap();
   gray8_to(&frame, FR, M, &mut sink).unwrap();
@@ -84,7 +84,7 @@ fn gray8_with_luma_copies_plane() {
   let plane: Vec<u8> = (0..16u8).collect();
   let frame = make_gray8_frame(&plane, 4, 4);
   let mut luma = std::vec![0u8; 16];
-  let mut sink = MixedSinker::<crate::yuv::Gray8>::new(4, 4)
+  let mut sink = MixedSinker::<crate::source::Gray8>::new(4, 4)
     .with_luma(&mut luma)
     .unwrap();
   gray8_to(&frame, FR, M, &mut sink).unwrap();
@@ -96,7 +96,7 @@ fn gray8_with_luma_u16_zero_extends() {
   let plane = [0u8, 64, 128, 255];
   let frame = make_gray8_frame(&plane, 4, 1);
   let mut lu16 = std::vec![0u16; 4];
-  let mut sink = MixedSinker::<crate::yuv::Gray8>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray8>::new(4, 1)
     .with_luma_u16(&mut lu16)
     .unwrap();
   gray8_to(&frame, FR, M, &mut sink).unwrap();
@@ -110,7 +110,7 @@ fn gray8_with_hsv_h_s_zero_v_equals_y() {
   let mut h = std::vec![0xFFu8; 4];
   let mut s = std::vec![0xFFu8; 4];
   let mut v = std::vec![0u8; 4];
-  let mut sink = MixedSinker::<crate::yuv::Gray8>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray8>::new(4, 1)
     .with_hsv(&mut h, &mut s, &mut v)
     .unwrap();
   gray8_to(&frame, FR, M, &mut sink).unwrap();
@@ -125,7 +125,7 @@ fn gray10_with_rgb_masks_and_shifts() {
   let plane = as_le_u16(&[512u16; 4]);
   let frame = make_gray10_frame(&plane, 4, 1);
   let mut rgb = std::vec![0u8; 12];
-  let mut sink = MixedSinker::<crate::yuv::Gray10>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray10>::new(4, 1)
     .with_rgb(&mut rgb)
     .unwrap();
   gray10_to(&frame, FR, M, &mut sink).unwrap();
@@ -140,7 +140,7 @@ fn gray10_with_luma_u16_masks_only() {
   let plane = as_le_u16(&[0x0800u16, 0x03FFu16, 0x0200u16, 0x0001u16]);
   let frame = make_gray10_frame(&plane, 4, 1);
   let mut lu16 = std::vec![0u16; 4];
-  let mut sink = MixedSinker::<crate::yuv::Gray10>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray10>::new(4, 1)
     .with_luma_u16(&mut lu16)
     .unwrap();
   gray10_to(&frame, FR, M, &mut sink).unwrap();
@@ -153,7 +153,7 @@ fn gray16_with_rgb_shifts_to_u8() {
   let plane = as_le_u16(&[0x8000u16, 0xFFFFu16, 0x0000u16, 0x0100u16]);
   let frame = make_gray16_frame(&plane, 4, 1);
   let mut rgb = std::vec![0u8; 12];
-  let mut sink = MixedSinker::<crate::yuv::Gray16>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray16>::new(4, 1)
     .with_rgb(&mut rgb)
     .unwrap();
   gray16_to(&frame, FR, M, &mut sink).unwrap();
@@ -173,7 +173,7 @@ fn gray16_with_luma_u16_copies_plane() {
   let plane = as_le_u16(&intended);
   let frame = make_gray16_frame(&plane, 4, 4);
   let mut lu16 = std::vec![0u16; 16];
-  let mut sink = MixedSinker::<crate::yuv::Gray16>::new(4, 4)
+  let mut sink = MixedSinker::<crate::source::Gray16>::new(4, 4)
     .with_luma_u16(&mut lu16)
     .unwrap();
   gray16_to(&frame, FR, M, &mut sink).unwrap();
@@ -185,7 +185,7 @@ fn gray16_with_rgba_u16_alpha_is_0xffff() {
   let plane = as_le_u16(&[0x1234u16; 4]);
   let frame = make_gray16_frame(&plane, 4, 1);
   let mut rgba_u16 = std::vec![0u16; 16];
-  let mut sink = MixedSinker::<crate::yuv::Gray16>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray16>::new(4, 1)
     .with_rgba_u16(&mut rgba_u16)
     .unwrap();
   gray16_to(&frame, FR, M, &mut sink).unwrap();
@@ -201,7 +201,7 @@ fn gray9_walker_smoke_test() {
   let plane = as_le_u16(&[100u16; 4]);
   let frame: GrayNFrame<'_, 9> = GrayNFrame::new(&plane, 4, 1, 4);
   let mut luma = std::vec![0u8; 4];
-  let mut sink = MixedSinker::<crate::yuv::Gray9>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray9>::new(4, 1)
     .with_luma(&mut luma)
     .unwrap();
   gray9_to(&frame, FR, M, &mut sink).unwrap();
@@ -215,7 +215,7 @@ fn gray12_walker_smoke_test() {
   let plane = as_le_u16(&[0x0FFFu16; 4]);
   let frame: GrayNFrame<'_, 12> = GrayNFrame::new(&plane, 4, 1, 4);
   let mut luma = std::vec![0u8; 4];
-  let mut sink = MixedSinker::<crate::yuv::Gray12>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray12>::new(4, 1)
     .with_luma(&mut luma)
     .unwrap();
   gray12_to(&frame, FR, M, &mut sink).unwrap();
@@ -229,7 +229,7 @@ fn gray14_walker_smoke_test() {
   let plane = as_le_u16(&[0x3FFFu16; 4]);
   let frame: GrayNFrame<'_, 14> = GrayNFrame::new(&plane, 4, 1, 4);
   let mut luma = std::vec![0u8; 4];
-  let mut sink = MixedSinker::<crate::yuv::Gray14>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray14>::new(4, 1)
     .with_luma(&mut luma)
     .unwrap();
   gray14_to(&frame, FR, M, &mut sink).unwrap();
@@ -252,7 +252,7 @@ fn gray8_limited_range_black_maps_to_zero() {
   let plane = [16u8; 4];
   let frame = make_gray8_frame(&plane, 4, 1);
   let mut rgb = std::vec![0xFFu8; 12];
-  let mut sink = MixedSinker::<crate::yuv::Gray8>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray8>::new(4, 1)
     .with_rgb(&mut rgb)
     .unwrap();
   gray8_to(&frame, false, M, &mut sink).unwrap();
@@ -267,7 +267,7 @@ fn gray8_limited_range_white_maps_to_255() {
   let plane = [235u8; 4];
   let frame = make_gray8_frame(&plane, 4, 1);
   let mut rgb = std::vec![0u8; 12];
-  let mut sink = MixedSinker::<crate::yuv::Gray8>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray8>::new(4, 1)
     .with_rgb(&mut rgb)
     .unwrap();
   gray8_to(&frame, false, M, &mut sink).unwrap();
@@ -282,7 +282,7 @@ fn gray8_limited_range_midpoint() {
   let plane = [125u8; 4];
   let frame = make_gray8_frame(&plane, 4, 1);
   let mut rgb = std::vec![0u8; 12];
-  let mut sink = MixedSinker::<crate::yuv::Gray8>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray8>::new(4, 1)
     .with_rgb(&mut rgb)
     .unwrap();
   gray8_to(&frame, false, M, &mut sink).unwrap();
@@ -297,7 +297,7 @@ fn gray8_limited_range_luma_passthrough_unchanged() {
   let plane = [16u8, 235u8, 125u8, 0u8];
   let frame = make_gray8_frame(&plane, 4, 1);
   let mut luma = std::vec![0xAAu8; 4];
-  let mut sink = MixedSinker::<crate::yuv::Gray8>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray8>::new(4, 1)
     .with_luma(&mut luma)
     .unwrap();
   gray8_to(&frame, false, M, &mut sink).unwrap();
@@ -310,7 +310,7 @@ fn gray8_limited_range_rgba_alpha_is_0xff() {
   let plane = [235u8; 4];
   let frame = make_gray8_frame(&plane, 4, 1);
   let mut rgba = std::vec![0u8; 16];
-  let mut sink = MixedSinker::<crate::yuv::Gray8>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray8>::new(4, 1)
     .with_rgba(&mut rgba)
     .unwrap();
   gray8_to(&frame, false, M, &mut sink).unwrap();
@@ -328,7 +328,7 @@ fn gray8_limited_range_hsv_v_is_rescaled() {
   let mut h = std::vec![0xFFu8; 4];
   let mut s = std::vec![0xFFu8; 4];
   let mut v = std::vec![0u8; 4];
-  let mut sink = MixedSinker::<crate::yuv::Gray8>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray8>::new(4, 1)
     .with_hsv(&mut h, &mut s, &mut v)
     .unwrap();
   gray8_to(&frame, false, M, &mut sink).unwrap();
@@ -344,7 +344,7 @@ fn gray10_limited_range_black_and_white() {
   let plane = as_le_u16(&[64u16, 940, 64, 940]);
   let frame: GrayNFrame<'_, 10> = GrayNFrame::new(&plane, 4, 1, 4);
   let mut rgb = std::vec![0x80u8; 12];
-  let mut sink = MixedSinker::<crate::yuv::Gray10>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray10>::new(4, 1)
     .with_rgb(&mut rgb)
     .unwrap();
   gray10_to(&frame, false, M, &mut sink).unwrap();
@@ -361,7 +361,7 @@ fn gray12_limited_range_black_and_white() {
   let plane = as_le_u16(&[256u16, 3760, 256, 3760]);
   let frame: GrayNFrame<'_, 12> = GrayNFrame::new(&plane, 4, 1, 4);
   let mut rgb = std::vec![0x80u8; 12];
-  let mut sink = MixedSinker::<crate::yuv::Gray12>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray12>::new(4, 1)
     .with_rgb(&mut rgb)
     .unwrap();
   gray12_to(&frame, false, M, &mut sink).unwrap();
@@ -378,7 +378,7 @@ fn gray14_limited_range_black_and_white() {
   let plane = as_le_u16(&[1024u16, 15040, 1024, 15040]);
   let frame: GrayNFrame<'_, 14> = GrayNFrame::new(&plane, 4, 1, 4);
   let mut rgb = std::vec![0x80u8; 12];
-  let mut sink = MixedSinker::<crate::yuv::Gray14>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray14>::new(4, 1)
     .with_rgb(&mut rgb)
     .unwrap();
   gray14_to(&frame, false, M, &mut sink).unwrap();
@@ -394,7 +394,7 @@ fn gray16_limited_range_black_and_white() {
   let plane = as_le_u16(&[4096u16, 60160, 4096, 60160]);
   let frame = make_gray16_frame(&plane, 4, 1);
   let mut rgb = std::vec![0x80u8; 12];
-  let mut sink = MixedSinker::<crate::yuv::Gray16>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray16>::new(4, 1)
     .with_rgb(&mut rgb)
     .unwrap();
   gray16_to(&frame, false, M, &mut sink).unwrap();
@@ -410,7 +410,7 @@ fn gray16_limited_range_luma_passthrough_unchanged() {
   let plane = as_le_u16(&[4096u16, 60160, 32768, 0]);
   let frame = make_gray16_frame(&plane, 4, 1);
   let mut lu16 = std::vec![0u16; 4];
-  let mut sink = MixedSinker::<crate::yuv::Gray16>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray16>::new(4, 1)
     .with_luma_u16(&mut lu16)
     .unwrap();
   gray16_to(&frame, false, M, &mut sink).unwrap();
@@ -424,7 +424,7 @@ fn gray16_limited_range_rgba_u16_alpha_is_0xffff() {
   let plane = as_le_u16(&[4096u16; 4]);
   let frame = make_gray16_frame(&plane, 4, 1);
   let mut rgba_u16 = std::vec![0u16; 16];
-  let mut sink = MixedSinker::<crate::yuv::Gray16>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray16>::new(4, 1)
     .with_rgba_u16(&mut rgba_u16)
     .unwrap();
   gray16_to(&frame, false, M, &mut sink).unwrap();
@@ -443,7 +443,7 @@ fn gray16_limited_range_rgba_u16_channels_rescale_at_boundaries() {
   let plane = as_le_u16(&[4096u16, 60160u16, 65535u16, 0u16]);
   let frame = make_gray16_frame(&plane, 4, 1);
   let mut rgba_u16 = std::vec![0u16; 16];
-  let mut sink = MixedSinker::<crate::yuv::Gray16>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray16>::new(4, 1)
     .with_rgba_u16(&mut rgba_u16)
     .unwrap();
   gray16_to(&frame, false, M, &mut sink).unwrap();
@@ -467,7 +467,7 @@ fn gray16_limited_range_rgb_u16_channels_rescale_at_boundaries() {
   let plane = as_le_u16(&[4096u16, 60160u16]);
   let frame = make_gray16_frame(&plane, 2, 1);
   let mut rgb_u16 = std::vec![0u16; 6];
-  let mut sink = MixedSinker::<crate::yuv::Gray16>::new(2, 1)
+  let mut sink = MixedSinker::<crate::source::Gray16>::new(2, 1)
     .with_rgb_u16(&mut rgb_u16)
     .unwrap();
   gray16_to(&frame, false, M, &mut sink).unwrap();
@@ -483,7 +483,7 @@ fn gray16_limited_range_hsv_v_is_rescaled() {
   let mut h = std::vec![0xFFu8; 4];
   let mut s = std::vec![0xFFu8; 4];
   let mut v = std::vec![0u8; 4];
-  let mut sink = MixedSinker::<crate::yuv::Gray16>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Gray16>::new(4, 1)
     .with_hsv(&mut h, &mut s, &mut v)
     .unwrap();
   gray16_to(&frame, false, M, &mut sink).unwrap();
@@ -501,7 +501,7 @@ fn grayf32_with_luma_f32_passthrough() {
   let plane = as_le_f32(&intended);
   let frame = Grayf32Frame::new(&plane, 8, 1, 8);
   let mut out = std::vec![0.0f32; 8];
-  let mut sink = MixedSinker::<crate::yuv::Grayf32>::new(8, 1)
+  let mut sink = MixedSinker::<crate::source::Grayf32>::new(8, 1)
     .with_luma_f32(&mut out)
     .unwrap();
   grayf32_to(&frame, FR, M, &mut sink).unwrap();
@@ -520,7 +520,7 @@ fn grayf32_with_rgb_f32_replicates_losslessly() {
   let plane = as_le_f32(&intended);
   let frame = Grayf32Frame::new(&plane, 4, 1, 4);
   let mut out = std::vec![0.0f32; 4 * 3];
-  let mut sink = MixedSinker::<crate::yuv::Grayf32>::new(4, 1)
+  let mut sink = MixedSinker::<crate::source::Grayf32>::new(4, 1)
     .with_rgb_f32(&mut out)
     .unwrap();
   grayf32_to(&frame, FR, M, &mut sink).unwrap();
@@ -538,7 +538,7 @@ fn grayf32_with_rgb_saturates() {
   let plane = as_le_f32(&intended);
   let frame = Grayf32Frame::new(&plane, 5, 1, 5);
   let mut rgb = std::vec![0u8; 5 * 3];
-  let mut sink = MixedSinker::<crate::yuv::Grayf32>::new(5, 1)
+  let mut sink = MixedSinker::<crate::source::Grayf32>::new(5, 1)
     .with_rgb(&mut rgb)
     .unwrap();
   grayf32_to(&frame, FR, M, &mut sink).unwrap();
@@ -557,7 +557,7 @@ fn grayf32_with_hsv_h0_s0_v_saturated() {
   let mut h = std::vec![0xFFu8; 3];
   let mut s = std::vec![0xFFu8; 3];
   let mut v = std::vec![0u8; 3];
-  let mut sink = MixedSinker::<crate::yuv::Grayf32>::new(3, 1)
+  let mut sink = MixedSinker::<crate::source::Grayf32>::new(3, 1)
     .with_hsv(&mut h, &mut s, &mut v)
     .unwrap();
   grayf32_to(&frame, FR, M, &mut sink).unwrap();
@@ -574,7 +574,7 @@ fn grayf32_with_luma_u16_and_rgb_u16() {
   let frame = Grayf32Frame::new(&plane, 1, 1, 1);
   let mut lu16 = std::vec![0u16; 1];
   let mut rgb_u16 = std::vec![0u16; 3];
-  let mut sink = MixedSinker::<crate::yuv::Grayf32>::new(1, 1)
+  let mut sink = MixedSinker::<crate::source::Grayf32>::new(1, 1)
     .with_luma_u16(&mut lu16)
     .unwrap()
     .with_rgb_u16(&mut rgb_u16)
@@ -597,7 +597,7 @@ fn grayf32_width_128_and_130_smoke() {
     let frame = Grayf32Frame::new(&plane, w as u32, 1, w as u32);
     let mut rgb = std::vec![0u8; w * 3];
     let mut luma_f32 = std::vec![0.0f32; w];
-    let mut sink = MixedSinker::<crate::yuv::Grayf32>::new(w, 1)
+    let mut sink = MixedSinker::<crate::source::Grayf32>::new(w, 1)
       .with_rgb(&mut rgb)
       .unwrap()
       .with_luma_f32(&mut luma_f32)
@@ -643,7 +643,7 @@ fn grayf32_width_128_and_130_smoke() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn grayf32_sinker_le_encoded_frame_decodes_correctly() {
-  use crate::yuv::Grayf32;
+  use crate::source::Grayf32;
 
   // Host-native intended values (mix in-range, HDR, negative).
   let w = 16usize;
@@ -716,7 +716,7 @@ fn ya8_with_rgb_and_rgba_strategy_a_plus() {
   let frame = Ya8Frame::new(&packed, 2, 1, 4);
   let mut rgb = std::vec![0u8; 6];
   let mut rgba = std::vec![0u8; 8];
-  let mut sink = MixedSinker::<crate::yuv::Ya8>::new(2, 1)
+  let mut sink = MixedSinker::<crate::source::Ya8>::new(2, 1)
     .with_rgb(&mut rgb)
     .unwrap()
     .with_rgba(&mut rgba)
@@ -736,7 +736,7 @@ fn ya8_standalone_rgba_source_alpha() {
   let packed: std::vec::Vec<u8> = std::vec![77, 11, 88, 22];
   let frame = Ya8Frame::new(&packed, 2, 1, 4);
   let mut rgba = std::vec![0u8; 8];
-  let mut sink = MixedSinker::<crate::yuv::Ya8>::new(2, 1)
+  let mut sink = MixedSinker::<crate::source::Ya8>::new(2, 1)
     .with_rgba(&mut rgba)
     .unwrap();
   ya8_to(&frame, FR, M, &mut sink).unwrap();
@@ -749,7 +749,7 @@ fn ya8_with_luma_u16_zero_extends() {
   let packed: std::vec::Vec<u8> = std::vec![200, 50, 100, 25];
   let frame = Ya8Frame::new(&packed, 2, 1, 4);
   let mut lu16 = std::vec![0u16; 2];
-  let mut sink = MixedSinker::<crate::yuv::Ya8>::new(2, 1)
+  let mut sink = MixedSinker::<crate::source::Ya8>::new(2, 1)
     .with_luma_u16(&mut lu16)
     .unwrap();
   ya8_to(&frame, FR, M, &mut sink).unwrap();
@@ -763,7 +763,7 @@ fn ya8_with_hsv_h0_s0_v_y() {
   let mut h = std::vec![0xFFu8; 2];
   let mut s = std::vec![0xFFu8; 2];
   let mut v = std::vec![0u8; 2];
-  let mut sink = MixedSinker::<crate::yuv::Ya8>::new(2, 1)
+  let mut sink = MixedSinker::<crate::source::Ya8>::new(2, 1)
     .with_hsv(&mut h, &mut s, &mut v)
     .unwrap();
   ya8_to(&frame, FR, M, &mut sink).unwrap();
@@ -783,7 +783,7 @@ fn ya8_width_128_and_130_smoke() {
     let frame = Ya8Frame::new(&packed, w as u32, 1, (w * 2) as u32);
     let mut rgb = std::vec![0u8; w * 3];
     let mut rgba = std::vec![0u8; w * 4];
-    let mut sink = MixedSinker::<crate::yuv::Ya8>::new(w, 1)
+    let mut sink = MixedSinker::<crate::source::Ya8>::new(w, 1)
       .with_rgb(&mut rgb)
       .unwrap()
       .with_rgba(&mut rgba)
@@ -806,7 +806,7 @@ fn ya16_with_rgba_u16_source_alpha() {
   let frame = Ya16Frame::new(&packed, 1, 1, 2);
   let mut rgba_u16 = std::vec![0u16; 4];
   let mut luma_u16 = std::vec![0u16; 1];
-  let mut sink = MixedSinker::<crate::yuv::Ya16>::new(1, 1)
+  let mut sink = MixedSinker::<crate::source::Ya16>::new(1, 1)
     .with_rgba_u16(&mut rgba_u16)
     .unwrap()
     .with_luma_u16(&mut luma_u16)
@@ -822,7 +822,7 @@ fn ya16_with_rgba_u8_source_alpha_shifted() {
   let packed = as_le_u16(&[0x8000u16, 0x4000, 0xFFFF, 0x8000]);
   let frame = Ya16Frame::new(&packed, 2, 1, 4);
   let mut rgba = std::vec![0u8; 8];
-  let mut sink = MixedSinker::<crate::yuv::Ya16>::new(2, 1)
+  let mut sink = MixedSinker::<crate::source::Ya16>::new(2, 1)
     .with_rgba(&mut rgba)
     .unwrap();
   ya16_to(&frame, FR, M, &mut sink).unwrap();
@@ -838,7 +838,7 @@ fn ya16_with_rgb_and_rgba_strategy_a_plus() {
   let frame = Ya16Frame::new(&packed, 2, 1, 4);
   let mut rgb = std::vec![0u8; 6];
   let mut rgba = std::vec![0u8; 8];
-  let mut sink = MixedSinker::<crate::yuv::Ya16>::new(2, 1)
+  let mut sink = MixedSinker::<crate::source::Ya16>::new(2, 1)
     .with_rgb(&mut rgb)
     .unwrap()
     .with_rgba(&mut rgba)
@@ -860,7 +860,7 @@ fn ya16_with_hsv_h0_s0_v_shifted() {
   let mut h = std::vec![0xFFu8; 2];
   let mut s = std::vec![0xFFu8; 2];
   let mut v = std::vec![0u8; 2];
-  let mut sink = MixedSinker::<crate::yuv::Ya16>::new(2, 1)
+  let mut sink = MixedSinker::<crate::source::Ya16>::new(2, 1)
     .with_hsv(&mut h, &mut s, &mut v)
     .unwrap();
   ya16_to(&frame, FR, M, &mut sink).unwrap();
@@ -920,7 +920,7 @@ fn ya16_combined_rgb_and_rgba_alpha_matches_standalone_le_encoded() {
   let mut rgb_combined = std::vec![0u8; (w * h * 3) as usize];
   let mut rgba_combined = std::vec![0u8; (w * h * 4) as usize];
   {
-    let mut sink = MixedSinker::<crate::yuv::Ya16>::new(w as usize, h as usize)
+    let mut sink = MixedSinker::<crate::source::Ya16>::new(w as usize, h as usize)
       .with_simd(false)
       .with_rgb(&mut rgb_combined)
       .unwrap()
@@ -933,7 +933,7 @@ fn ya16_combined_rgb_and_rgba_alpha_matches_standalone_le_encoded() {
   // `ya16_to_rgba_row::<false>` kernel. Same scalar-only rationale.
   let mut rgba_standalone = std::vec![0u8; (w * h * 4) as usize];
   {
-    let mut sink = MixedSinker::<crate::yuv::Ya16>::new(w as usize, h as usize)
+    let mut sink = MixedSinker::<crate::source::Ya16>::new(w as usize, h as usize)
       .with_simd(false)
       .with_rgba(&mut rgba_standalone)
       .unwrap();
@@ -978,7 +978,7 @@ fn ya16_combined_rgb_u16_and_rgba_u16_alpha_matches_standalone_le_encoded() {
   let mut rgb_combined = std::vec![0u16; (w * h * 3) as usize];
   let mut rgba_combined = std::vec![0u16; (w * h * 4) as usize];
   {
-    let mut sink = MixedSinker::<crate::yuv::Ya16>::new(w as usize, h as usize)
+    let mut sink = MixedSinker::<crate::source::Ya16>::new(w as usize, h as usize)
       .with_simd(false)
       .with_rgb_u16(&mut rgb_combined)
       .unwrap()
@@ -989,7 +989,7 @@ fn ya16_combined_rgb_u16_and_rgba_u16_alpha_matches_standalone_le_encoded() {
 
   let mut rgba_standalone = std::vec![0u16; (w * h * 4) as usize];
   {
-    let mut sink = MixedSinker::<crate::yuv::Ya16>::new(w as usize, h as usize)
+    let mut sink = MixedSinker::<crate::source::Ya16>::new(w as usize, h as usize)
       .with_simd(false)
       .with_rgba_u16(&mut rgba_standalone)
       .unwrap();
@@ -1016,7 +1016,7 @@ fn ya16_width_128_and_130_smoke() {
     let frame = Ya16Frame::new(&packed, w as u32, 1, (w * 2) as u32);
     let mut rgba = std::vec![0u8; w * 4];
     let mut luma_u16 = std::vec![0u16; w];
-    let mut sink = MixedSinker::<crate::yuv::Ya16>::new(w, 1)
+    let mut sink = MixedSinker::<crate::source::Ya16>::new(w, 1)
       .with_rgba(&mut rgba)
       .unwrap()
       .with_luma_u16(&mut luma_u16)
@@ -1049,7 +1049,7 @@ use crate::{
     Gray14BeFrame, Gray14LeFrame, Gray16BeFrame, Gray16LeFrame, Grayf32BeFrame, Grayf32LeFrame,
     Ya16BeFrame, Ya16LeFrame,
   },
-  yuv::{Gray9, Gray10, Gray12, Gray14, Gray16, Grayf32, Ya16},
+  source::{Gray9, Gray10, Gray12, Gray14, Gray16, Grayf32, Ya16},
 };
 
 /// Re-encode a host-native u16 slice as **BE-encoded** byte storage. Used to

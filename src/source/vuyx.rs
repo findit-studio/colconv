@@ -3,7 +3,7 @@
 //! `V(8) ‖ U(8) ‖ Y(8) ‖ A(8)` where the A byte is **padding**
 //! (not real alpha). The A byte is read but discarded; RGBA outputs
 //! always force α=`0xFF`. See [`crate::frame::VuyxFrame`] for layout
-//! details. For the source-α sibling, see [`crate::yuv::Vuya`].
+//! details. For the source-α sibling, see [`crate::source::Vuya`].
 //!
 //! Outputs are produced via:
 //! - `with_rgb` — packed YUV → RGB 8-bit pipeline; padding discarded.

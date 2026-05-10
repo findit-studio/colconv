@@ -50,7 +50,7 @@ pub(crate) fn bgra_to_rgba_row(bgra: &[u8], rgba_out: &mut [u8], width: usize) {
 
 /// Swaps R↔B and drops alpha from packed `B, G, R, A` input,
 /// producing packed `R, G, B` (`4 * width` → `3 * width` bytes).
-/// Used by [`Bgra`](crate::yuv::Bgra) sinker's RGB / luma / HSV
+/// Used by [`Bgra`](crate::source::Bgra) sinker's RGB / luma / HSV
 /// paths — stages a single RGB scratch row that all three reuse.
 ///
 /// # Panics
@@ -106,7 +106,7 @@ pub(crate) fn argb_to_rgb_row(argb: &[u8], rgb_out: &mut [u8], width: usize) {
 
 /// Swaps R↔B and drops the leading alpha byte from packed
 /// `A, B, G, R` input, producing packed `R, G, B`. Used by
-/// [`Abgr`](crate::yuv::Abgr) sinker's RGB / luma / HSV paths —
+/// [`Abgr`](crate::source::Abgr) sinker's RGB / luma / HSV paths —
 /// stages a single RGB scratch row that all three reuse.
 ///
 /// # Panics

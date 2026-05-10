@@ -45,7 +45,7 @@ use crate::{
     expand_rgb_to_rgba_row, rgb_to_hsv_row, vuyx_to_luma_row, vuyx_to_luma_u16_row,
     vuyx_to_rgb_row, vuyx_to_rgba_row,
   },
-  yuv::{Vuyx, VuyxRow, VuyxSink},
+  source::{Vuyx, VuyxRow, VuyxSink},
 };
 
 impl<'a> MixedSinker<'a, Vuyx> {

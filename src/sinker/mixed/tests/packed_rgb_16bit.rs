@@ -5,7 +5,7 @@ use crate::{
     Rgba64Frame,
   },
   sinker::mixed::MixedSinker,
-  yuv::{Bgr48, Bgra64, Rgb48, Rgba64, bgr48_to, bgra64_to, rgb48_to, rgba64_to},
+  source::{Bgr48, Bgra64, Rgb48, Rgba64, bgr48_to, bgra64_to, rgb48_to, rgba64_to},
 };
 
 /// Re-encode a host-native u16 slice as LE-encoded byte storage. Sink kernels
@@ -387,7 +387,7 @@ fn bgra64_with_rgba_u16_passes_source_alpha_native() {
 
 #[test]
 fn rgb48_row_shape_mismatch_returns_error() {
-  use crate::{PixelSink, sinker::mixed::MixedSinkerError, yuv::Rgb48Row};
+  use crate::{PixelSink, sinker::mixed::MixedSinkerError, source::Rgb48Row};
   let mut out = vec![0u8; 6];
   let mut sinker = MixedSinker::<Rgb48>::new(2, 1).with_rgb(&mut out).unwrap();
   sinker.begin_frame(2, 1).unwrap();
@@ -400,7 +400,7 @@ fn rgb48_row_shape_mismatch_returns_error() {
 
 #[test]
 fn rgba64_row_shape_mismatch_returns_error() {
-  use crate::{PixelSink, sinker::mixed::MixedSinkerError, yuv::Rgba64Row};
+  use crate::{PixelSink, sinker::mixed::MixedSinkerError, source::Rgba64Row};
   let mut out = vec![0u8; 8];
   let mut sinker = MixedSinker::<Rgba64>::new(2, 1)
     .with_rgba(&mut out)

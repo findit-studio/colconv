@@ -31,7 +31,7 @@ use crate::{
     rgbf16_to_rgb_f32_row, rgbf16_to_rgb_row, rgbf16_to_rgb_u16_row, rgbf16_to_rgba_row,
     rgbf16_to_rgba_u16_row,
   },
-  yuv::{Rgbf16, Rgbf16Row, Rgbf16Sink},
+  source::{Rgbf16, Rgbf16Row, Rgbf16Sink},
 };
 
 // ---- Rgbf16 impl -------------------------------------------------------

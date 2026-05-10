@@ -58,7 +58,7 @@ pub(crate) fn yuv_420_to_rgba_row(
 /// contract as [`yuv_420_to_rgba_row`] for R/G/B; the per-pixel alpha
 /// byte is sourced from `a_src` (one byte per pixel, full-width)
 /// instead of being constant `0xFF`. Used by the YUVA source family
-/// ([`crate::yuv::Yuva420p`] in tranche 8b‑2a).
+/// ([`crate::source::Yuva420p`] in tranche 8b‑2a).
 ///
 /// Thin wrapper over [`yuv_420_to_rgb_or_rgba_row`] with
 /// `ALPHA = true, ALPHA_SRC = true`.
@@ -361,7 +361,7 @@ pub(crate) fn yuv_444_to_rgba_row(
 /// YUVA 4:4:4 planar → packed `R, G, B, A` quadruplets with the
 /// per-pixel alpha byte sourced from `a_src` instead of constant
 /// `0xFF`. R/G/B are byte-identical to [`yuv_444_to_rgb_row`]. Used
-/// by the YUVA 4:4:4 source family ([`crate::yuv::Yuva444p`]).
+/// by the YUVA 4:4:4 source family ([`crate::source::Yuva444p`]).
 ///
 /// Thin wrapper over [`yuv_444_to_rgb_or_rgba_row`] with
 /// `ALPHA = true, ALPHA_SRC = true`.

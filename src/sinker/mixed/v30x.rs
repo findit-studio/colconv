@@ -51,7 +51,7 @@ use crate::{
     v30x_to_luma_u16_row, v30x_to_rgb_row, v30x_to_rgb_u16_row, v30x_to_rgba_row,
     v30x_to_rgba_u16_row,
   },
-  yuv::{V30X, V30XRow, V30XSink},
+  source::{V30X, V30XRow, V30XSink},
 };
 
 impl<'a> MixedSinker<'a, V30X> {

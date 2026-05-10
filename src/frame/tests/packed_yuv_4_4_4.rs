@@ -242,15 +242,21 @@ fn xv36_frame_try_new_rejects_short_plane() {
 
 #[test]
 fn xv36_frame_try_new_checked_accepts_msb_aligned() {
-  let mut buf = vec![0u16; 64];
-  buf.fill(0xABC0); // low 4 bits = 0
+  // Use LE-encoded byte storage so the test passes on every host. On BE,
+  // raw `0xABC0` as host-native u16 has bytes `[AB, C0]`; the validator's
+  // `u16::from_le` swap reads them as `0xC0AB` (low nibble = 0xB ≠ 0 →
+  // false reject). `le_encoded_u16_buf` produces u16 whose in-memory
+  // bytes ARE the LE wire bytes on every host.
+  let buf = super::util::le_encoded_u16_buf(&[0xABC0u16; 64]);
   Xv36LeFrame::try_new_checked(&buf, 4, 4, 16).unwrap();
 }
 
 #[test]
 fn xv36_frame_try_new_checked_rejects_low_bits_set() {
-  let mut buf = vec![0u16; 64];
-  buf[5] = 0xABCD; // low 4 bits = 0xD ≠ 0 (in active row range)
+  // Same host-independence consideration as the accepts test above.
+  let mut intended = std::vec![0xABC0u16; 64];
+  intended[5] = 0xABCD; // low 4 bits = 0xD ≠ 0 (in active row range)
+  let buf = super::util::le_encoded_u16_buf(&intended);
   let err = Xv36LeFrame::try_new_checked(&buf, 4, 4, 16).unwrap_err();
   assert!(matches!(
     err,

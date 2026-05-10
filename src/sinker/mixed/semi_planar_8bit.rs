@@ -4,7 +4,7 @@ use super::{
   MixedSinker, MixedSinkerError, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch,
   rgba_plane_row_slice,
 };
-use crate::{PixelSink, row::*, yuv::*};
+use crate::{PixelSink, row::*, source::*};
 
 // ---- Nv12 impl ----------------------------------------------------------
 

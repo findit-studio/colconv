@@ -68,7 +68,7 @@ use crate::{
 
 macro_rules! impl_gbrp_high_bit {
   ($marker:ident, $sink:ident, $row:ident, $bits:literal) => {
-    impl<'a, const BE: bool> MixedSinker<'a, crate::yuv::$marker<BE>> {
+    impl<'a, const BE: bool> MixedSinker<'a, crate::source::$marker<BE>> {
       /// Attaches a packed **`u16`** RGB output buffer. Samples are in
       /// `[0, (1 << BITS) - 1]` (native depth, no depth conversion).
       /// Length is measured in `u16` **elements** (`width × height × 3`).
@@ -160,17 +160,17 @@ macro_rules! impl_gbrp_high_bit {
       }
     }
 
-    impl<const BE: bool> crate::yuv::$sink<BE> for MixedSinker<'_, crate::yuv::$marker<BE>> {}
+    impl<const BE: bool> crate::source::$sink<BE> for MixedSinker<'_, crate::source::$marker<BE>> {}
 
-    impl<const BE: bool> PixelSink for MixedSinker<'_, crate::yuv::$marker<BE>> {
-      type Input<'r> = crate::yuv::$row<'r>;
+    impl<const BE: bool> PixelSink for MixedSinker<'_, crate::source::$marker<BE>> {
+      type Input<'r> = crate::source::$row<'r>;
       type Error = MixedSinkerError;
 
       fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
         check_dimensions_match(self.width, self.height, width, height)
       }
 
-      fn process(&mut self, row: crate::yuv::$row<'_>) -> Result<(), Self::Error> {
+      fn process(&mut self, row: crate::source::$row<'_>) -> Result<(), Self::Error> {
         const BITS: u32 = $bits;
         let w = self.width;
         let h = self.height;
@@ -349,7 +349,7 @@ macro_rules! impl_gbrp_high_bit {
 
 macro_rules! impl_gbrap_high_bit {
   ($marker:ident, $sink:ident, $row:ident, $bits:literal) => {
-    impl<'a, const BE: bool> MixedSinker<'a, crate::yuv::$marker<BE>> {
+    impl<'a, const BE: bool> MixedSinker<'a, crate::source::$marker<BE>> {
       /// Attaches a packed **`u16`** RGB output buffer. Samples are in
       /// `[0, (1 << BITS) - 1]` (native depth, no depth conversion).
       /// Length is measured in `u16` **elements** (`width × height × 3`).
@@ -440,17 +440,17 @@ macro_rules! impl_gbrap_high_bit {
       }
     }
 
-    impl<const BE: bool> crate::yuv::$sink<BE> for MixedSinker<'_, crate::yuv::$marker<BE>> {}
+    impl<const BE: bool> crate::source::$sink<BE> for MixedSinker<'_, crate::source::$marker<BE>> {}
 
-    impl<const BE: bool> PixelSink for MixedSinker<'_, crate::yuv::$marker<BE>> {
-      type Input<'r> = crate::yuv::$row<'r>;
+    impl<const BE: bool> PixelSink for MixedSinker<'_, crate::source::$marker<BE>> {
+      type Input<'r> = crate::source::$row<'r>;
       type Error = MixedSinkerError;
 
       fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
         check_dimensions_match(self.width, self.height, width, height)
       }
 
-      fn process(&mut self, row: crate::yuv::$row<'_>) -> Result<(), Self::Error> {
+      fn process(&mut self, row: crate::source::$row<'_>) -> Result<(), Self::Error> {
         const BITS: u32 = $bits;
         let w = self.width;
         let h = self.height;

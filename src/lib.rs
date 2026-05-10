@@ -10,9 +10,10 @@
 //! custom — and writes into whatever buffers it owns.
 //!
 //! The row the Sink receives (`Self::Input<'_>`) has a shape that
-//! reflects the source format: [`yuv::Yuv420pRow`] carries Y / U / V
-//! slices plus matrix / range metadata; future packed‑RGB row types
-//! (`Rgb24Row`, `Bgr24Row`) will carry a single packed slice; etc.
+//! reflects the source format: [`source::Yuv420pRow`] carries Y / U / V
+//! slices plus matrix / range metadata; packed‑RGB row types
+//! (e.g. [`source::Rgb24Row`], [`source::Bgr24Row`]) carry a single
+//! packed slice; etc.
 //! Each source family declares a subtrait
 //! (`Yuv420pSink: PixelSink<Input<'_> = Yuv420pRow<'_>>`) so kernel
 //! signatures stay sharp.
@@ -78,9 +79,9 @@
 //! | [`Ayuv64`]       | 16        | 4:4:4       | packed u16 quadruple, source α  | `ayuv64le`     |
 //! | [`Gbrp`]         |  8        | 4:4:4       | planar GBR (3 planes)            | `gbrp`        |
 //! | [`Gbrap`]        |  8        | 4:4:4       | planar GBR + A (4 planes, source α) | `gbrap`   |
-//! | [`Xyz12`](crate::yuv::Xyz12) | 12 | 4:4:4 | packed CIE XYZ (3 × u16, high-bit-packed: bits `[15:4]`) | `xyz12le` / `xyz12be` |
+//! | [`Xyz12`](crate::source::Xyz12) | 12 | 4:4:4 | packed CIE XYZ (3 × u16, high-bit-packed: bits `[15:4]`) | `xyz12le` / `xyz12be` |
 //!
-//! [`Xyz12`](crate::yuv::Xyz12) is the **DCP / digital-cinema** source format. Decoding
+//! [`Xyz12`](crate::source::Xyz12) is the **DCP / digital-cinema** source format. Decoding
 //! it requires a SMPTE ST 428-1 §8 inverse OETF, a 3×3 matrix to one
 //! of three target gamuts ([`DcpTargetGamut::DciP3`] /
 //! [`DcpTargetGamut::Rec709`] / [`DcpTargetGamut::Rec2020`]), then a
@@ -160,75 +161,76 @@
 //!
 //! # Not yet shipped (follow-up)
 //!
-//! - **Packed RGB sources** (`Rgb24`, `Bgr24`, `Rgba`, `Bgra`,
-//!   `Rgba1010102`, etc.) — Tier 6+.
-//! - **Additional packed YUV** — Tiers 3 and 4 are already supported
-//!   ([`yuv::Yuyv422`] / [`yuv::Uyvy422`] / [`yuv::Yvyu422`] in Tier
-//!   3; [`V210`] / [`Y210`] / [`Y212`] / [`Y216`] in Tier 4). **Tier 5
-//!   is now CLOSED**: first tranche ([`V410`] / [`V30X`]) shipped in
-//!   0.13.0; second tranche ([`Xv36`]) in 0.14.0; third tranche
-//!   ([`Vuya`] / [`Vuyx`]) in 0.15.0; fourth and final tranche
-//!   ([`Ayuv64`]) in 0.16.0. Remaining follow-up: `UYYVYY411`.
-//! - **Alpha + RGBA output** (Ship 8) — `with_rgba` /
-//!   `with_rgba_u16` `MixedSinker` accessors plus native YUVA
-//!   frame types.
 //! - **Bayer SIMD backends** — Tier 14 currently dispatches to the
 //!   scalar reference path on every target; NEON / SSE4.1 / AVX2 /
 //!   AVX-512 / wasm simd128 follow-ups will land per the established
 //!   backend-symmetry pattern.
+//! - **Cinema-camera RAW source formats** — vendor-decoded sensor RGB
+//!   in camera-native log + gamut (LogC4 / S-Log3 / REDLog3G10 /
+//!   Canon Log 2/3 / BMD Film Gen 5 / V-Log / F-Log) → working-space
+//!   conversion via inverse-OETF + 3×3 matrix + sRGB OETF. Roadmap
+//!   tracked in `docs/superpowers/plans/2026-05-07-be-rollout-tracking.md`
+//!   under "Cinema Camera RAW Support Roadmap". Mirrors the Tier 12
+//!   ([`source::Xyz12`]) shape: per-vendor source format, full
+//!   `MixedSinker` output coverage, polynomial OETF, 5 SIMD backends.
+//! - **Higher-quality Bayer demosaic** — current scalar Bayer kernel
+//!   does bilinear demosaic; AHD / Malvar / DCB are quality levers
+//!   for cinema-grade proxies (CinemaDNG / DJI Inspire workflows).
+//! - **3D LUT (`.cube`) row kernel** — for OCIO-style color management
+//!   in cinema pipelines.
 //!
-//! See [`yuv`] for the per-format module-level breakdown and
+//! See [`source`] for the per-format module-level breakdown and
 //! [`frame`] for the validated frame types plus the `BITS` const
 //! generic on the high-bit-depth families (`Yuv420pFrame16<BITS>`
 //! and `PnFrame<BITS>`).
 //!
-//! [`Yuv420p`]: crate::yuv::Yuv420p
-//! [`Yuv422p`]: crate::yuv::Yuv422p
-//! [`Yuv440p`]: crate::yuv::Yuv440p
-//! [`Yuv444p`]: crate::yuv::Yuv444p
-//! [`Nv12`]: crate::yuv::Nv12
-//! [`Nv16`]: crate::yuv::Nv16
-//! [`Nv21`]: crate::yuv::Nv21
-//! [`Nv24`]: crate::yuv::Nv24
-//! [`Nv42`]: crate::yuv::Nv42
-//! [`Yuv420p9`]: crate::yuv::Yuv420p9
-//! [`Yuv420p10`]: crate::yuv::Yuv420p10
-//! [`Yuv420p12`]: crate::yuv::Yuv420p12
-//! [`Yuv420p14`]: crate::yuv::Yuv420p14
-//! [`Yuv420p16`]: crate::yuv::Yuv420p16
-//! [`Yuv422p9`]: crate::yuv::Yuv422p9
-//! [`Yuv422p10`]: crate::yuv::Yuv422p10
-//! [`Yuv422p12`]: crate::yuv::Yuv422p12
-//! [`Yuv422p14`]: crate::yuv::Yuv422p14
-//! [`Yuv422p16`]: crate::yuv::Yuv422p16
-//! [`Yuv440p10`]: crate::yuv::Yuv440p10
-//! [`Yuv440p12`]: crate::yuv::Yuv440p12
-//! [`Yuv444p9`]: crate::yuv::Yuv444p9
-//! [`Yuv444p10`]: crate::yuv::Yuv444p10
-//! [`Yuv444p12`]: crate::yuv::Yuv444p12
-//! [`Yuv444p14`]: crate::yuv::Yuv444p14
-//! [`Yuv444p16`]: crate::yuv::Yuv444p16
-//! [`P010`]: crate::yuv::P010
-//! [`P012`]: crate::yuv::P012
-//! [`P016`]: crate::yuv::P016
-//! [`P210`]: crate::yuv::P210
-//! [`P212`]: crate::yuv::P212
-//! [`P216`]: crate::yuv::P216
-//! [`P410`]: crate::yuv::P410
-//! [`P412`]: crate::yuv::P412
-//! [`P416`]: crate::yuv::P416
-//! [`V210`]: crate::yuv::V210
-//! [`Y210`]: crate::yuv::Y210
-//! [`Y212`]: crate::yuv::Y212
-//! [`Y216`]: crate::yuv::Y216
-//! [`V410`]: crate::yuv::V410
-//! [`V30X`]: crate::yuv::V30X
-//! [`Xv36`]: crate::yuv::Xv36
-//! [`Vuya`]: crate::yuv::Vuya
-//! [`Vuyx`]: crate::yuv::Vuyx
-//! [`Ayuv64`]: crate::yuv::Ayuv64
-//! [`Gbrp`]: crate::yuv::Gbrp
-//! [`Gbrap`]: crate::yuv::Gbrap
+//! [`Yuv420p`]: crate::source::Yuv420p
+//! [`Yuv422p`]: crate::source::Yuv422p
+//! [`Yuv440p`]: crate::source::Yuv440p
+//! [`Yuv444p`]: crate::source::Yuv444p
+//! [`Nv12`]: crate::source::Nv12
+//! [`Nv16`]: crate::source::Nv16
+//! [`Nv21`]: crate::source::Nv21
+//! [`Nv24`]: crate::source::Nv24
+//! [`Nv42`]: crate::source::Nv42
+//! [`Yuv420p9`]: crate::source::Yuv420p9
+//! [`Yuv420p10`]: crate::source::Yuv420p10
+//! [`Yuv420p12`]: crate::source::Yuv420p12
+//! [`Yuv420p14`]: crate::source::Yuv420p14
+//! [`Yuv420p16`]: crate::source::Yuv420p16
+//! [`Yuv422p9`]: crate::source::Yuv422p9
+//! [`Yuv422p10`]: crate::source::Yuv422p10
+//! [`Yuv422p12`]: crate::source::Yuv422p12
+//! [`Yuv422p14`]: crate::source::Yuv422p14
+//! [`Yuv422p16`]: crate::source::Yuv422p16
+//! [`Yuv440p10`]: crate::source::Yuv440p10
+//! [`Yuv440p12`]: crate::source::Yuv440p12
+//! [`Yuv444p9`]: crate::source::Yuv444p9
+//! [`Yuv444p10`]: crate::source::Yuv444p10
+//! [`Yuv444p12`]: crate::source::Yuv444p12
+//! [`Yuv444p14`]: crate::source::Yuv444p14
+//! [`Yuv444p16`]: crate::source::Yuv444p16
+//! [`P010`]: crate::source::P010
+//! [`P012`]: crate::source::P012
+//! [`P016`]: crate::source::P016
+//! [`P210`]: crate::source::P210
+//! [`P212`]: crate::source::P212
+//! [`P216`]: crate::source::P216
+//! [`P410`]: crate::source::P410
+//! [`P412`]: crate::source::P412
+//! [`P416`]: crate::source::P416
+//! [`V210`]: crate::source::V210
+//! [`Y210`]: crate::source::Y210
+//! [`Y212`]: crate::source::Y212
+//! [`Y216`]: crate::source::Y216
+//! [`V410`]: crate::source::V410
+//! [`V30X`]: crate::source::V30X
+//! [`Xv36`]: crate::source::Xv36
+//! [`Vuya`]: crate::source::Vuya
+//! [`Vuyx`]: crate::source::Vuyx
+//! [`Ayuv64`]: crate::source::Ayuv64
+//! [`Gbrp`]: crate::source::Gbrp
+//! [`Gbrap`]: crate::source::Gbrap
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -248,7 +250,7 @@ pub mod frame;
 pub mod raw;
 pub mod row;
 pub mod sinker;
-pub mod yuv;
+pub mod source;
 
 /// A per-row sink for color-converted pixel data.
 ///
@@ -260,8 +262,8 @@ pub mod yuv;
 /// # Input type
 ///
 /// Each source family pins the associated `Input` to a concrete row
-/// struct via a subtrait. For example, [`yuv::Yuv420pSink`] requires
-/// `for<'a> PixelSink<Input<'a> = yuv::Yuv420pRow<'a>>`. A single
+/// struct via a subtrait. For example, [`source::Yuv420pSink`] requires
+/// `for<'a> PixelSink<Input<'a> = source::Yuv420pRow<'a>>`. A single
 /// concrete sink type can therefore only consume one source format —
 /// which is intentional. To handle multiple sources, use the
 /// `SourceFormat` type-parameter pattern demonstrated by
@@ -305,7 +307,7 @@ pub mod yuv;
 ///
 /// ```ignore
 /// use core::convert::Infallible;
-/// use colconv::{PixelSink, yuv::Yuv420pRow};
+/// use colconv::{PixelSink, source::Yuv420pRow};
 ///
 /// struct RowCounter(usize);
 /// impl PixelSink for RowCounter {
@@ -322,7 +324,7 @@ pub mod yuv;
 ///
 /// ```ignore
 /// use std::io::{self, BufWriter, Write};
-/// use colconv::{PixelSink, yuv::Yuv420pRow};
+/// use colconv::{PixelSink, source::Yuv420pRow};
 ///
 /// struct FileSink { w: BufWriter<std::fs::File> }
 ///
@@ -339,7 +341,7 @@ pub mod yuv;
 /// cleanly through the caller's code.
 pub trait PixelSink {
   /// The shape of one input unit chosen by the per-format subtrait —
-  /// e.g. [`yuv::Yuv420pRow`] for YUV 4:2:0, one row at a time.
+  /// e.g. [`source::Yuv420pRow`] for YUV 4:2:0, one row at a time.
   type Input<'a>;
 
   /// The error type surfaced by this sink. Use
@@ -446,7 +448,7 @@ pub enum ColorMatrix {
 }
 
 /// Target RGB gamut for the XYZ → RGB matrix step in the
-/// [`Xyz12`](crate::yuv::Xyz12) source pipeline (`xyz12_to`).
+/// [`Xyz12`](crate::source::Xyz12) source pipeline (`xyz12_to`).
 ///
 /// The Digital Cinema Package (`AV_PIX_FMT_XYZ12LE`) source carries
 /// CIE XYZ samples that need a 3×3 matrix conversion to a target RGB
@@ -506,7 +508,7 @@ impl Default for DcpTargetGamut {
 ///
 /// Used as a type parameter on sinks that specialize per source —
 /// [`sinker::MixedSinker<'_, F>`] for example. Implementors are the
-/// zero-sized markers in [`yuv`], [`rgb`](sinker) etc.
+/// zero-sized markers in [`source`], [`rgb`](sinker) etc.
 pub trait SourceFormat: sealed::Sealed {}
 
 /// Internal module implementing the sealed‑trait pattern for
@@ -529,4 +531,4 @@ struct HsvBuffers<'a> {
 }
 
 pub use frame::{Ayuv64Frame, Ayuv64FrameError};
-pub use yuv::{Ayuv64, Ayuv64Row, Ayuv64Sink, ayuv64_to};
+pub use source::{Ayuv64, Ayuv64Row, Ayuv64Sink, ayuv64_to};

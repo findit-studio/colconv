@@ -52,10 +52,10 @@ macro_rules! test_gbrp_saturation_u16 {
       let r = std::vec![max; w * h];
       let src = solid_gbrp_frame::<$bits>(&g, &b, &r, w as u32, h as u32);
       let mut out = std::vec![0u16; w * h * 3];
-      let mut sink = MixedSinker::<crate::yuv::$marker>::new(w, h)
+      let mut sink = MixedSinker::<crate::source::$marker>::new(w, h)
         .with_rgb_u16(&mut out)
         .unwrap();
-      crate::yuv::$walker(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+      crate::source::$walker(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
       for (i, &v) in out.iter().enumerate() {
         assert_eq!(v, max, "u16 output[{i}] must be {max} (max for BITS={}) but got {v}", $bits);
       }
@@ -84,10 +84,10 @@ macro_rules! test_gbrp_saturation_u8 {
       let r = std::vec![max; w * h];
       let src = solid_gbrp_frame::<$bits>(&g, &b, &r, w as u32, h as u32);
       let mut out = std::vec![0u8; w * h * 3];
-      let mut sink = MixedSinker::<crate::yuv::$marker>::new(w, h)
+      let mut sink = MixedSinker::<crate::source::$marker>::new(w, h)
         .with_rgb(&mut out)
         .unwrap();
-      crate::yuv::$walker(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+      crate::source::$walker(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
       for (i, &v) in out.iter().enumerate() {
         assert_eq!(v, 0xFF, "u8 output[{i}] must be 0xFF for max BITS={} input but got {v}", $bits);
       }
@@ -117,10 +117,10 @@ macro_rules! test_gbrp_channel_reorder {
       let r = std::vec![200u16 << shift; w * h];
       let src = solid_gbrp_frame::<$bits>(&g, &b, &r, w as u32, h as u32);
       let mut out_u8 = std::vec![0u8; w * h * 3];
-      let mut sink = MixedSinker::<crate::yuv::$marker>::new(w, h)
+      let mut sink = MixedSinker::<crate::source::$marker>::new(w, h)
         .with_rgb(&mut out_u8)
         .unwrap();
-      crate::yuv::$walker(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+      crate::source::$walker(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
       for i in 0..w * h {
         assert_eq!(out_u8[i * 3],     200, "R[{i}] mismatch");
         assert_eq!(out_u8[i * 3 + 1], 100, "G[{i}] mismatch");
@@ -161,21 +161,21 @@ macro_rules! test_gbrap_strategy_a_plus {
       // Reference: standalone with_rgba (direct 4-channel kernel).
       let src_ref = solid_gbrap_frame::<$bits>(&g, &b, &r, &a, w as u32, h as u32);
       let mut rgba_ref = std::vec![0u8; n * 4];
-      let mut sink_ref = MixedSinker::<crate::yuv::$marker>::new(w, h)
+      let mut sink_ref = MixedSinker::<crate::source::$marker>::new(w, h)
         .with_rgba(&mut rgba_ref)
         .unwrap();
-      crate::yuv::$walker(&src_ref, false, ColorMatrix::Bt709, &mut sink_ref).unwrap();
+      crate::source::$walker(&src_ref, false, ColorMatrix::Bt709, &mut sink_ref).unwrap();
 
       // Combo: with_rgb + with_rgba (Strategy A+).
       let src_combo = solid_gbrap_frame::<$bits>(&g, &b, &r, &a, w as u32, h as u32);
       let mut rgb_combo = std::vec![0u8; n * 3];
       let mut rgba_combo = std::vec![0u8; n * 4];
-      let mut sink_combo = MixedSinker::<crate::yuv::$marker>::new(w, h)
+      let mut sink_combo = MixedSinker::<crate::source::$marker>::new(w, h)
         .with_rgb(&mut rgb_combo)
         .unwrap()
         .with_rgba(&mut rgba_combo)
         .unwrap();
-      crate::yuv::$walker(&src_combo, false, ColorMatrix::Bt709, &mut sink_combo).unwrap();
+      crate::source::$walker(&src_combo, false, ColorMatrix::Bt709, &mut sink_combo).unwrap();
 
       // RGBA bytes must be identical between standalone and combo paths.
       assert_eq!(
@@ -249,21 +249,21 @@ macro_rules! test_gbrap_strategy_a_plus_u16 {
       // Reference: standalone with_rgba_u16 (direct 4-channel kernel).
       let src_ref = solid_gbrap_frame::<$bits>(&g, &b, &r, &a, w as u32, h as u32);
       let mut rgba_u16_ref = std::vec![0u16; n * 4];
-      let mut sink_ref = MixedSinker::<crate::yuv::$marker>::new(w, h)
+      let mut sink_ref = MixedSinker::<crate::source::$marker>::new(w, h)
         .with_rgba_u16(&mut rgba_u16_ref)
         .unwrap();
-      crate::yuv::$walker(&src_ref, false, ColorMatrix::Bt709, &mut sink_ref).unwrap();
+      crate::source::$walker(&src_ref, false, ColorMatrix::Bt709, &mut sink_ref).unwrap();
 
       // Combo: with_rgb_u16 + with_rgba_u16 (Strategy A+ native-depth).
       let src_combo = solid_gbrap_frame::<$bits>(&g, &b, &r, &a, w as u32, h as u32);
       let mut rgb_u16_combo = std::vec![0u16; n * 3];
       let mut rgba_u16_combo = std::vec![0u16; n * 4];
-      let mut sink_combo = MixedSinker::<crate::yuv::$marker>::new(w, h)
+      let mut sink_combo = MixedSinker::<crate::source::$marker>::new(w, h)
         .with_rgb_u16(&mut rgb_u16_combo)
         .unwrap()
         .with_rgba_u16(&mut rgba_u16_combo)
         .unwrap();
-      crate::yuv::$walker(&src_combo, false, ColorMatrix::Bt709, &mut sink_combo).unwrap();
+      crate::source::$walker(&src_combo, false, ColorMatrix::Bt709, &mut sink_combo).unwrap();
 
       // RGBA u16 elements must be byte-exact between standalone and combo paths.
       assert_eq!(
@@ -378,10 +378,10 @@ macro_rules! test_gbrap_alpha_downshift {
 
       let src = solid_gbrap_frame::<$bits>(&g, &b, &r, &a, w as u32, h as u32);
       let mut rgba = std::vec![0u8; n * 4];
-      let mut sink = MixedSinker::<crate::yuv::$marker>::new(w, h)
+      let mut sink = MixedSinker::<crate::source::$marker>::new(w, h)
         .with_rgba(&mut rgba)
         .unwrap();
-      crate::yuv::$walker(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+      crate::source::$walker(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
 
       let shift = $bits - 8;
       for i in 0..n {
@@ -427,16 +427,16 @@ macro_rules! test_gbrp_simd_matches_scalar {
       let mut rgba_scal = std::vec![0u8; n * 4];
 
       {
-        let mut sink = MixedSinker::<crate::yuv::$marker>::new(w, h)
+        let mut sink = MixedSinker::<crate::source::$marker>::new(w, h)
           .with_rgb(&mut rgb_simd).unwrap()
           .with_rgba(&mut rgba_simd).unwrap();
-        crate::yuv::$walker(&src_simd, true, ColorMatrix::Bt709, &mut sink).unwrap();
+        crate::source::$walker(&src_simd, true, ColorMatrix::Bt709, &mut sink).unwrap();
       }
       {
-        let mut sink = MixedSinker::<crate::yuv::$marker>::new(w, h)
+        let mut sink = MixedSinker::<crate::source::$marker>::new(w, h)
           .with_rgb(&mut rgb_scal).unwrap()
           .with_rgba(&mut rgba_scal).unwrap();
-        crate::yuv::$walker(&src_scal, false, ColorMatrix::Bt709, &mut sink).unwrap();
+        crate::source::$walker(&src_scal, false, ColorMatrix::Bt709, &mut sink).unwrap();
       }
 
       assert_eq!(rgb_simd, rgb_scal, "rgb SIMD≠scalar for BITS={} w={}", $bits, $w);
@@ -480,14 +480,14 @@ macro_rules! test_gbrap_simd_matches_scalar {
       let mut rgba_scal = std::vec![0u8; n * 4];
 
       {
-        let mut sink = MixedSinker::<crate::yuv::$marker>::new(w, h)
+        let mut sink = MixedSinker::<crate::source::$marker>::new(w, h)
           .with_rgba(&mut rgba_simd).unwrap();
-        crate::yuv::$walker(&src_simd, true, ColorMatrix::Bt709, &mut sink).unwrap();
+        crate::source::$walker(&src_simd, true, ColorMatrix::Bt709, &mut sink).unwrap();
       }
       {
-        let mut sink = MixedSinker::<crate::yuv::$marker>::new(w, h)
+        let mut sink = MixedSinker::<crate::source::$marker>::new(w, h)
           .with_rgba(&mut rgba_scal).unwrap();
-        crate::yuv::$walker(&src_scal, false, ColorMatrix::Bt709, &mut sink).unwrap();
+        crate::source::$walker(&src_scal, false, ColorMatrix::Bt709, &mut sink).unwrap();
       }
 
       assert_eq!(rgba_simd, rgba_scal, "rgba SIMD≠scalar for BITS={} w={}", $bits, $w);
