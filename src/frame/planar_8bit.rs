@@ -1327,3 +1327,306 @@ pub enum Yuv410pFrameError {
     rows: u32,
   },
 }
+
+/// A validated YUV 4:1:1 planar frame (`AV_PIX_FMT_YUV411P`).
+///
+/// 4:1:1 = **quarter-width**, full-height chroma. Legacy DV-NTSC
+/// subsampling: every chroma sample covers four Y columns horizontally
+/// while chroma rows are fully sampled vertically. Compared to 4:2:2
+/// (half-width chroma) the only change is the horizontal stride: U/V
+/// planes are `width.div_ceil(4)` wide instead of `width / 2`.
+///
+/// Three planes:
+/// - `y` — full-size luma, `y_stride >= width`, length `>=
+///   y_stride * height`.
+/// - `u` / `v` — **quarter-width**, **full-height** chroma,
+///   `u_stride >= width.div_ceil(4)`, length `>= u_stride * height`.
+///
+/// `width` may be any non-zero value — non-4-aligned widths are
+/// accepted. Chroma row width is `width.div_ceil(4)`, matching
+/// FFmpeg's `AV_PIX_FMT_YUV411P` descriptor (`log2_chroma_w = 2`,
+/// ceiling right shift). For widths not divisible by 4, the trailing
+/// 1..3 Y columns share the final chroma sample (a partial 1..3-pixel
+/// chroma group). The SIMD kernels stride a multiple-of-4 Y block and
+/// the per-row scalar tail picks up that 1..3-pixel remainder.
+/// `height` has no parity constraint — chroma is full-height.
+///
+/// Common in DV-NTSC video (legacy). Extremely rare on modern
+/// pipelines; the format is included for FFmpeg ingest completeness.
+#[derive(Debug, Clone, Copy)]
+pub struct Yuv411pFrame<'a> {
+  y: &'a [u8],
+  u: &'a [u8],
+  v: &'a [u8],
+  width: u32,
+  height: u32,
+  y_stride: u32,
+  u_stride: u32,
+  v_stride: u32,
+}
+
+impl<'a> Yuv411pFrame<'a> {
+  /// Constructs a new [`Yuv411pFrame`], validating dimensions and
+  /// plane lengths.
+  ///
+  /// Returns [`Yuv411pFrameError`] if any of:
+  /// - `width` or `height` is zero,
+  /// - `y_stride < width`, `u_stride < width.div_ceil(4)`, or
+  ///   `v_stride < width.div_ceil(4)`,
+  /// - any plane is too short to cover its declared rows.
+  ///
+  /// Non-4-aligned widths are accepted: chroma row width is
+  /// `width.div_ceil(4)`, matching FFmpeg's `AV_PIX_FMT_YUV411P`
+  /// descriptor (`log2_chroma_w = 2`, ceiling right shift). For
+  /// e.g. `width = 641`, the chroma row carries 161 samples and the
+  /// final chroma sample covers the trailing 1 Y column. Per-row
+  /// scalar / SIMD kernels handle the partial-width tail.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  #[allow(clippy::too_many_arguments)]
+  pub const fn try_new(
+    y: &'a [u8],
+    u: &'a [u8],
+    v: &'a [u8],
+    width: u32,
+    height: u32,
+    y_stride: u32,
+    u_stride: u32,
+    v_stride: u32,
+  ) -> Result<Self, Yuv411pFrameError> {
+    if width == 0 || height == 0 {
+      return Err(Yuv411pFrameError::ZeroDimension { width, height });
+    }
+    if y_stride < width {
+      return Err(Yuv411pFrameError::YStrideTooSmall { width, y_stride });
+    }
+    // 4:1:1 subsamples chroma 4:1 in width. FFmpeg's
+    // `AV_PIX_FMT_YUV411P` defines chroma width via a ceiling right
+    // shift (`(width + 3) >> 2`), so widths not divisible by 4 leave
+    // the trailing 1..3 Y columns paired with the last chroma sample
+    // (a partial 1..3-pixel chroma group).
+    let chroma_width = width.div_ceil(4);
+    if u_stride < chroma_width {
+      return Err(Yuv411pFrameError::UStrideTooSmall {
+        chroma_width,
+        u_stride,
+      });
+    }
+    if v_stride < chroma_width {
+      return Err(Yuv411pFrameError::VStrideTooSmall {
+        chroma_width,
+        v_stride,
+      });
+    }
+
+    // Plane sizes use `checked_mul` because `stride * height` can
+    // wrap `usize` on 32-bit targets (wasm32, i686) for extreme
+    // dimensions. Same rationale as [`Yuv420pFrame::try_new`].
+    let y_min = match (y_stride as usize).checked_mul(height as usize) {
+      Some(v) => v,
+      None => {
+        return Err(Yuv411pFrameError::GeometryOverflow {
+          stride: y_stride,
+          rows: height,
+        });
+      }
+    };
+    if y.len() < y_min {
+      return Err(Yuv411pFrameError::YPlaneTooShort {
+        expected: y_min,
+        actual: y.len(),
+      });
+    }
+    // 4:1:1: chroma is full-height — no `div_ceil(2)`.
+    let u_min = match (u_stride as usize).checked_mul(height as usize) {
+      Some(v) => v,
+      None => {
+        return Err(Yuv411pFrameError::GeometryOverflow {
+          stride: u_stride,
+          rows: height,
+        });
+      }
+    };
+    if u.len() < u_min {
+      return Err(Yuv411pFrameError::UPlaneTooShort {
+        expected: u_min,
+        actual: u.len(),
+      });
+    }
+    let v_min = match (v_stride as usize).checked_mul(height as usize) {
+      Some(v) => v,
+      None => {
+        return Err(Yuv411pFrameError::GeometryOverflow {
+          stride: v_stride,
+          rows: height,
+        });
+      }
+    };
+    if v.len() < v_min {
+      return Err(Yuv411pFrameError::VPlaneTooShort {
+        expected: v_min,
+        actual: v.len(),
+      });
+    }
+
+    Ok(Self {
+      y,
+      u,
+      v,
+      width,
+      height,
+      y_stride,
+      u_stride,
+      v_stride,
+    })
+  }
+
+  /// Constructs a new [`Yuv411pFrame`], panicking on invalid inputs.
+  /// Prefer [`Self::try_new`] when inputs may be invalid at runtime.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  #[allow(clippy::too_many_arguments)]
+  pub const fn new(
+    y: &'a [u8],
+    u: &'a [u8],
+    v: &'a [u8],
+    width: u32,
+    height: u32,
+    y_stride: u32,
+    u_stride: u32,
+    v_stride: u32,
+  ) -> Self {
+    match Self::try_new(y, u, v, width, height, y_stride, u_stride, v_stride) {
+      Ok(frame) => frame,
+      Err(_) => panic!("invalid Yuv411pFrame dimensions or plane lengths"),
+    }
+  }
+
+  /// Y (luma) plane bytes. Row `r` starts at byte offset `r * y_stride()`.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn y(&self) -> &'a [u8] {
+    self.y
+  }
+
+  /// U (Cb) plane bytes. Quarter-width, full-height (one row per Y row).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn u(&self) -> &'a [u8] {
+    self.u
+  }
+
+  /// V (Cr) plane bytes. Quarter-width, full-height.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn v(&self) -> &'a [u8] {
+    self.v
+  }
+
+  /// Frame width in pixels.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn width(&self) -> u32 {
+    self.width
+  }
+
+  /// Frame height in pixels.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn height(&self) -> u32 {
+    self.height
+  }
+
+  /// Byte stride of the Y plane (`>= width`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn y_stride(&self) -> u32 {
+    self.y_stride
+  }
+
+  /// Byte stride of the U plane (`>= width.div_ceil(4)`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn u_stride(&self) -> u32 {
+    self.u_stride
+  }
+
+  /// Byte stride of the V plane (`>= width.div_ceil(4)`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn v_stride(&self) -> u32 {
+    self.v_stride
+  }
+}
+
+/// Errors returned by [`Yuv411pFrame::try_new`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[non_exhaustive]
+pub enum Yuv411pFrameError {
+  /// `width` or `height` was zero.
+  #[error("width ({width}) or height ({height}) is zero")]
+  ZeroDimension {
+    /// The supplied width.
+    width: u32,
+    /// The supplied height.
+    height: u32,
+  },
+  /// **No longer produced.** Originally rejected `width % 4 != 0`,
+  /// but [`Yuv411pFrame::try_new`] now accepts arbitrary widths via
+  /// FFmpeg-compatible `chroma_width = width.div_ceil(4)`. The variant
+  /// is preserved for backward compatibility with external code that
+  /// matches it explicitly. The enum is `#[non_exhaustive]`, so
+  /// downstream `match` arms must already include a wildcard.
+  #[error("width ({width}) is not a multiple of 4; YUV411p / 4:1:1 requires width % 4 == 0")]
+  WidthNotMultipleOfFour {
+    /// The supplied width.
+    width: u32,
+  },
+  /// `y_stride < width`.
+  #[error("y_stride ({y_stride}) is smaller than width ({width})")]
+  YStrideTooSmall {
+    /// Declared frame width in pixels.
+    width: u32,
+    /// The supplied Y-plane stride.
+    y_stride: u32,
+  },
+  /// `u_stride < width.div_ceil(4)`.
+  #[error("u_stride ({u_stride}) is smaller than chroma width ({chroma_width})")]
+  UStrideTooSmall {
+    /// The required minimum chroma-plane stride (`width.div_ceil(4)`).
+    chroma_width: u32,
+    /// The supplied U-plane stride.
+    u_stride: u32,
+  },
+  /// `v_stride < width.div_ceil(4)`.
+  #[error("v_stride ({v_stride}) is smaller than chroma width ({chroma_width})")]
+  VStrideTooSmall {
+    /// The required minimum chroma-plane stride (`width.div_ceil(4)`).
+    chroma_width: u32,
+    /// The supplied V-plane stride.
+    v_stride: u32,
+  },
+  /// Y plane is shorter than `y_stride * height` bytes.
+  #[error("Y plane has {actual} bytes but at least {expected} are required")]
+  YPlaneTooShort {
+    /// Minimum bytes required.
+    expected: usize,
+    /// Actual bytes supplied.
+    actual: usize,
+  },
+  /// U plane is shorter than `u_stride * height` bytes.
+  #[error("U plane has {actual} bytes but at least {expected} are required")]
+  UPlaneTooShort {
+    /// Minimum bytes required.
+    expected: usize,
+    /// Actual bytes supplied.
+    actual: usize,
+  },
+  /// V plane is shorter than `v_stride * height` bytes.
+  #[error("V plane has {actual} bytes but at least {expected} are required")]
+  VPlaneTooShort {
+    /// Minimum bytes required.
+    expected: usize,
+    /// Actual bytes supplied.
+    actual: usize,
+  },
+  /// `stride * rows` does not fit in `usize` (can only fire on 32-bit
+  /// targets — wasm32, i686 — with extreme dimensions).
+  #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
+  GeometryOverflow {
+    /// Stride of the plane whose size overflowed.
+    stride: u32,
+    /// Row count that overflowed against the stride.
+    rows: u32,
+  },
+}
