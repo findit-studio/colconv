@@ -367,3 +367,84 @@ fn rgbf16_sinker_le_encoded_frame_decodes_correctly() {
     "Rgbf16 sinker LE-encoded plane decoded incorrectly"
   );
 }
+
+// ====================================================================================
+// Phase 4 — Rgbf16 LE/BE round-trip
+//
+// Build host-independent fixtures for the same logical samples in BOTH plane
+// orderings (LE-encoded bytes and BE-encoded bytes) and run them through the
+// matching `Rgbf16<BE>` sinker monomorphizations. Output A and B must be
+// byte-identical because the kernel byte-swaps under the hood — the same
+// logical samples should yield the same f16 outputs regardless of input byte
+// order. This catches:
+//   - missing `<BE>` propagation in the rgbf16 sinker call sites,
+//   - regressions in the `f16::from_bits(u16::from_le/be(...))` swap path,
+//   - mismatches between `MixedSinker<Rgbf16<true>>` and the BE row kernels.
+//
+// Gated on miri because `half::f16::from_f32` (used to build the fixture)
+// expands to inline `asm!` on platforms with hardware f16 support, which miri
+// rejects. The plain LE-decode regression above already covers BE-host miri
+// (via s390x / powerpc64) using f32 fixtures that don't need hardware f16.
+// ====================================================================================
+
+/// Re-encode a host-native f16 slice as **LE-encoded** byte storage.
+fn as_le_rgbf16(host: &[half::f16]) -> Vec<half::f16> {
+  host
+    .iter()
+    .map(|&v| half::f16::from_bits(u16::from_ne_bytes(v.to_bits().to_le_bytes())))
+    .collect()
+}
+
+/// Re-encode a host-native f16 slice as **BE-encoded** byte storage.
+fn as_be_rgbf16(host: &[half::f16]) -> Vec<half::f16> {
+  host
+    .iter()
+    .map(|&v| half::f16::from_bits(u16::from_ne_bytes(v.to_bits().to_be_bytes())))
+    .collect()
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "half::f16::from_f32 uses inline asm (fcvt) unsupported by Miri"
+)]
+fn rgbf16_le_be_roundtrip_byte_identical() {
+  let vals_f32 = [0.5f32, 1.5, -0.25, 100.0];
+  let intended: Vec<half::f16> = (0..16 * 4 * 3)
+    .map(|i| half::f16::from_f32(vals_f32[i % vals_f32.len()]))
+    .collect();
+  let pix_le = as_le_rgbf16(&intended);
+  let pix_be = as_be_rgbf16(&intended);
+
+  // LE path — default `Rgbf16` marker.
+  let frame_le = Rgbf16Frame::try_new(&pix_le, 16, 4, 16 * 3).unwrap();
+  let mut out_le = std::vec![half::f16::ZERO; 16 * 4 * 3];
+  let mut sink_le = MixedSinker::<Rgbf16>::new(16, 4)
+    .with_simd(false)
+    .with_rgb_f16(&mut out_le)
+    .unwrap();
+  rgbf16_to(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+
+  // BE path — explicit `Rgbf16<true>` monomorphization.
+  let frame_be = Rgbf16BeFrame::try_new(&pix_be, 16, 4, 16 * 3).unwrap();
+  let mut out_be = std::vec![half::f16::ZERO; 16 * 4 * 3];
+  let mut sink_be = MixedSinker::<Rgbf16<true>>::new(16, 4)
+    .with_simd(false)
+    .with_rgb_f16(&mut out_be)
+    .unwrap();
+  rgbf16_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+  // Both outputs must equal the intended host-native values bit-for-bit.
+  assert_eq!(
+    out_le, intended,
+    "Rgbf16 LE plane decoded to wrong host-native values"
+  );
+  assert_eq!(
+    out_be, intended,
+    "Rgbf16 BE plane decoded to wrong host-native values — `<const BE>` propagation broken"
+  );
+  assert_eq!(
+    out_le, out_be,
+    "Rgbf16 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}

@@ -302,3 +302,84 @@ fn rgbf32_sinker_le_encoded_frame_decodes_correctly() {
     "Rgbf32 sinker LE-encoded plane decoded incorrectly"
   );
 }
+
+// ====================================================================================
+// Phase 4 — Rgbf32 LE/BE round-trip
+//
+// Build host-independent fixtures for the same logical samples in BOTH plane
+// orderings (LE-encoded bytes and BE-encoded bytes) and run them through the
+// matching `Rgbf32<BE>` sinker monomorphizations. Output A and B must be
+// byte-identical because the kernel byte-swaps under the hood — the same
+// logical samples should yield the same f32 outputs regardless of input byte
+// order. This catches:
+//   - missing `<BE>` propagation in the rgbf32 sinker call sites,
+//   - regressions in the `f32::from_bits(u32::from_le/be(...))` swap path,
+//   - mismatches between `MixedSinker<Rgbf32<true>>` and the BE row kernels.
+// ====================================================================================
+
+/// Re-encode a host-native f32 slice as **LE-encoded** byte storage. Used to
+/// build `Rgbf32LeFrame` planes whose bytes are little-endian; the kernel
+/// recovers host-native via `from_le` on the bit pattern.
+fn as_le_rgbf32(host: &[f32]) -> Vec<f32> {
+  host
+    .iter()
+    .map(|&v| f32::from_bits(u32::from_ne_bytes(v.to_bits().to_le_bytes())))
+    .collect()
+}
+
+/// Re-encode a host-native f32 slice as **BE-encoded** byte storage. Used to
+/// build `Rgbf32BeFrame` planes whose bytes are big-endian; the kernel
+/// recovers host-native via `from_be` on the bit pattern.
+fn as_be_rgbf32(host: &[f32]) -> Vec<f32> {
+  host
+    .iter()
+    .map(|&v| f32::from_bits(u32::from_ne_bytes(v.to_bits().to_be_bytes())))
+    .collect()
+}
+
+#[test]
+fn rgbf32_le_be_roundtrip_byte_identical() {
+  // Mix HDR, in-range, and negative values to surface any swap regression.
+  let intended: Vec<f32> = (0..16 * 4 * 3)
+    .map(|i| match i % 4 {
+      0 => 0.5,
+      1 => 1.5,
+      2 => -0.25,
+      _ => 100.0,
+    })
+    .collect();
+  let pix_le = as_le_rgbf32(&intended);
+  let pix_be = as_be_rgbf32(&intended);
+
+  // LE path — default `Rgbf32` marker.
+  let frame_le = Rgbf32Frame::try_new(&pix_le, 16, 4, 16 * 3).unwrap();
+  let mut out_le = std::vec![0.0f32; 16 * 4 * 3];
+  let mut sink_le = MixedSinker::<Rgbf32>::new(16, 4)
+    .with_simd(false)
+    .with_rgb_f32(&mut out_le)
+    .unwrap();
+  rgbf32_to(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+
+  // BE path — explicit `Rgbf32<true>` monomorphization.
+  let frame_be = Rgbf32BeFrame::try_new(&pix_be, 16, 4, 16 * 3).unwrap();
+  let mut out_be = std::vec![0.0f32; 16 * 4 * 3];
+  let mut sink_be = MixedSinker::<Rgbf32<true>>::new(16, 4)
+    .with_simd(false)
+    .with_rgb_f32(&mut out_be)
+    .unwrap();
+  rgbf32_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+  // Both outputs must equal the intended host-native values bit-for-bit.
+  assert_eq!(
+    out_le, intended,
+    "Rgbf32 LE plane decoded to wrong host-native values"
+  );
+  assert_eq!(
+    out_be, intended,
+    "Rgbf32 BE plane decoded to wrong host-native values — `<const BE>` propagation broken"
+  );
+  assert_eq!(
+    out_le, out_be,
+    "Rgbf32 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}

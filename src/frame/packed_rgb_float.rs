@@ -65,39 +65,62 @@ pub enum Rgbf32FrameError {
 /// per-format convention that stride aligns with the underlying slice
 /// element type. No width parity constraint.
 ///
-/// # Endian contract — **LE-encoded bytes** (`AV_PIX_FMT_RGBF32LE`)
+/// # Endian contract — `<const BE: bool = false>`
 ///
-/// The `&[f32]` plane is the **LE-encoded byte layout** reinterpreted as
-/// `f32`. This frame maps to FFmpeg `AV_PIX_FMT_RGBF32LE`. FFmpeg also
-/// defines `AV_PIX_FMT_RGBF32BE` and an unsuffixed `AV_PIX_FMT_RGBF32`
-/// alias that is **target-endian** (resolves to `RGBF32LE` on LE hosts and
-/// `RGBF32BE` on BE hosts). **Callers on a BE host who hold target-endian
-/// `AV_PIX_FMT_RGBF32` bytes must convert them to LE before constructing
-/// this frame** — otherwise the LE-decode contract here would re-interpret
-/// the BE bytes as LE and produce byte-swapped float data. The 4-channel
-/// `AV_PIX_FMT_RGBAF32LE` / `AV_PIX_FMT_RGBAF32BE` pair follows the same
-/// `*LE` convention; this frame uses the analogous LE binding.
+/// The `<const BE: bool>` parameter selects the plane byte order, matching
+/// the FFmpeg `*LE` / `*BE` pixel-format suffix in the format name:
 ///
-/// On a little-endian host (every CI runner today) LE bytes _are_
-/// host-native, so `&[f32]` is also a host-native float slice; on a
-/// big-endian host the bytes have to be byte-swapped back to host-native
-/// before arithmetic. Downstream row kernels handle this byte-swap (or
-/// no-op on LE) under the hood — callers do **not** pre-swap.
+/// - `BE = false` (`Rgbf32Frame<'_, false>` aka [`Rgbf32LeFrame`]) — plane
+///   bytes are LE-encoded, matching `AV_PIX_FMT_RGBF32LE`. On a
+///   little-endian host (every CI runner today) LE bytes _are_ host-native,
+///   so `&[f32]` is also a host-native float slice; on a big-endian host
+///   the bytes have to be byte-swapped back to host-native (via
+///   `f32::from_bits(u32::from_le(elem.to_bits()))`) before arithmetic.
+/// - `BE = true` (`Rgbf32Frame<'_, true>` aka [`Rgbf32BeFrame`]) — plane
+///   bytes are BE-encoded, matching `AV_PIX_FMT_RGBF32BE`. On a
+///   little-endian host the bytes are byte-swapped before arithmetic; on a
+///   big-endian host they are host-native.
+///
+/// FFmpeg also defines an unsuffixed `AV_PIX_FMT_RGBF32` alias that is
+/// **target-endian** (resolves to `RGBF32LE` on LE hosts and `RGBF32BE` on
+/// BE hosts). Callers holding target-endian bytes should pick the
+/// `<const BE>` parameter that matches the host they were produced on.
+///
+/// Downstream row kernels handle the byte-swap (or no-op) under the hood —
+/// callers do **not** pre-swap. The `BE` parameter on `Frame` propagates
+/// through the walker (`rgbf32_to::<BE>(...)`) into the sinker dispatch
+/// (`MixedSinker<Rgbf32<BE>>`), which monomorphizes the kernel call as
+/// `rgbf32_to_*_row::<BE>(...)`.
 ///
 /// Stride is in **f32 elements** (not bytes). Callers holding a byte buffer
 /// from FFmpeg should cast via `bytemuck::cast_slice` and divide
 /// `linesize[0]` by 4 before constructing.
 #[derive(Debug, Clone, Copy)]
-pub struct Rgbf32Frame<'a> {
+pub struct Rgbf32Frame<'a, const BE: bool = false> {
   rgb: &'a [f32],
   width: u32,
   height: u32,
   stride: u32,
 }
 
-impl<'a> Rgbf32Frame<'a> {
+/// LE-encoded `Rgbf32Frame` (`AV_PIX_FMT_RGBF32LE`). Equivalent to the
+/// default `Rgbf32Frame<'a>`; provided as an explicit alias for callers who
+/// want to document the endianness at the type level.
+pub type Rgbf32LeFrame<'a> = Rgbf32Frame<'a, false>;
+
+/// BE-encoded `Rgbf32Frame` (`AV_PIX_FMT_RGBF32BE`). Plane bytes are
+/// big-endian-encoded `f32` samples; downstream row kernels byte-swap under
+/// the hood.
+pub type Rgbf32BeFrame<'a> = Rgbf32Frame<'a, true>;
+
+impl<'a, const BE: bool> Rgbf32Frame<'a, BE> {
   /// Constructs a new [`Rgbf32Frame`], validating dimensions and
   /// plane length.
+  ///
+  /// The `<const BE: bool>` parameter selects whether the supplied `rgb`
+  /// slice is interpreted as LE-encoded bytes (`BE = false`, default) or
+  /// BE-encoded bytes (`BE = true`). The byte-swap is performed inside the
+  /// row kernels — this constructor does no I/O on the bytes.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn try_new(
     rgb: &'a [f32],
@@ -167,5 +190,12 @@ impl<'a> Rgbf32Frame<'a> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn stride(&self) -> u32 {
     self.stride
+  }
+  /// Returns the compile-time BE flag — `true` if plane bytes are BE-encoded
+  /// (`AV_PIX_FMT_RGBF32BE`), `false` if LE-encoded (`AV_PIX_FMT_RGBF32LE`).
+  /// Runtime mirror of the `<const BE: bool>` type parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
   }
 }
