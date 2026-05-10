@@ -97,7 +97,7 @@ impl<'a> MixedSinker<'a, Gray8> {
   /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(1)?;
+    let expected = self.frame_pixels()?;
     if buf.len() < expected {
       return Err(MixedSinkerError::LumaU16BufferTooShort {
         expected,
@@ -480,7 +480,7 @@ macro_rules! impl_gray_n_sinker {
       /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-        let expected = self.frame_bytes(1)?;
+        let expected = self.frame_pixels()?;
         if buf.len() < expected {
           return Err(MixedSinkerError::LumaU16BufferTooShort {
             expected,
@@ -628,7 +628,7 @@ impl<'a> MixedSinker<'a, Gray16> {
   /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(1)?;
+    let expected = self.frame_pixels()?;
     if buf.len() < expected {
       return Err(MixedSinkerError::LumaU16BufferTooShort {
         expected,
@@ -881,7 +881,7 @@ impl<'a> MixedSinker<'a, Grayf32> {
   /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(1)?;
+    let expected = self.frame_pixels()?;
     if buf.len() < expected {
       return Err(MixedSinkerError::LumaU16BufferTooShort {
         expected,
@@ -1178,7 +1178,7 @@ impl<'a> MixedSinker<'a, Ya8> {
   /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(1)?;
+    let expected = self.frame_pixels()?;
     if buf.len() < expected {
       return Err(MixedSinkerError::LumaU16BufferTooShort {
         expected,
@@ -1405,7 +1405,7 @@ impl<'a> MixedSinker<'a, Ya16> {
   /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(1)?;
+    let expected = self.frame_pixels()?;
     if buf.len() < expected {
       return Err(MixedSinkerError::LumaU16BufferTooShort {
         expected,

@@ -1427,6 +1427,30 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
         channels,
       })
   }
+
+  /// Full-frame element count (`width × height`) for a single-channel
+  /// `&[T]` buffer, with overflow checking. Used by `set_luma_u16`
+  /// (and prospective `set_luma_f32` / `set_luma_f16`) preflight
+  /// checks where `buf.len()` is in `T` elements rather than bytes,
+  /// so [`frame_bytes(1)`](Self::frame_bytes)'s "byte" naming would
+  /// invite a future 2x/4x undercount if the buffer's element type
+  /// changed. The byte and element counts coincide numerically at
+  /// `channels == 1`, but the names should not.
+  ///
+  /// Returns `Err(GeometryOverflow { channels: 1 })` on overflow —
+  /// matches what `frame_bytes(1)` would have returned, so this is a
+  /// drop-in clarity rename.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn frame_pixels(&self) -> Result<usize, MixedSinkerError> {
+    self
+      .width
+      .checked_mul(self.height)
+      .ok_or(MixedSinkerError::GeometryOverflow {
+        width: self.width,
+        height: self.height,
+        channels: 1,
+      })
+  }
 }
 
 impl<'a, F: SourceFormat> MixedSinker<'a, F> {
