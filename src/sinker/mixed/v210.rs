@@ -46,7 +46,7 @@ use crate::{
   yuv::{V210, V210Row, V210Sink},
 };
 
-impl<'a> MixedSinker<'a, V210> {
+impl<'a, const BE: bool> MixedSinker<'a, V210<BE>> {
   /// Attaches a packed **8-bit** RGBA output buffer. Alpha is filled
   /// with constant `0xFF` (v210 has no alpha channel).
   ///
@@ -141,9 +141,9 @@ impl<'a> MixedSinker<'a, V210> {
   }
 }
 
-impl V210Sink for MixedSinker<'_, V210> {}
+impl<const BE: bool> V210Sink<BE> for MixedSinker<'_, V210<BE>> {}
 
-impl PixelSink for MixedSinker<'_, V210> {
+impl<const BE: bool> PixelSink for MixedSinker<'_, V210<BE>> {
   type Input<'r> = V210Row<'r>;
   type Error = MixedSinkerError;
 
@@ -212,7 +212,7 @@ impl PixelSink for MixedSinker<'_, V210> {
         &mut buf[one_plane_start..one_plane_end],
         w,
         use_simd,
-        false,
+        BE,
       );
     }
     // Luma u16 — extract 10-bit Y values at native depth.
@@ -222,7 +222,7 @@ impl PixelSink for MixedSinker<'_, V210> {
         &mut buf[one_plane_start..one_plane_end],
         w,
         use_simd,
-        false,
+        BE,
       );
     }
 
@@ -243,7 +243,7 @@ impl PixelSink for MixedSinker<'_, V210> {
         row.matrix(),
         row.full_range(),
         use_simd,
-        false,
+        BE,
       );
     } else if want_rgb_u16 {
       let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
@@ -264,7 +264,7 @@ impl PixelSink for MixedSinker<'_, V210> {
         row.matrix(),
         row.full_range(),
         use_simd,
-        false,
+        BE,
       );
       if want_rgba_u16 {
         // Strategy A u16 fan-out — derive RGBA from the just-computed
@@ -295,7 +295,7 @@ impl PixelSink for MixedSinker<'_, V210> {
         row.matrix(),
         row.full_range(),
         use_simd,
-        false,
+        BE,
       );
       return Ok(());
     }
@@ -319,7 +319,7 @@ impl PixelSink for MixedSinker<'_, V210> {
       row.matrix(),
       row.full_range(),
       use_simd,
-      false,
+      BE,
     );
 
     if let Some(hsv) = hsv.as_mut() {

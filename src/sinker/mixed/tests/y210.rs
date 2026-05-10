@@ -409,3 +409,75 @@ fn y210_matches_v210_with_same_logical_samples() {
 
   assert_eq!(rgb_v210, rgb_y210);
 }
+
+// ====================================================================================
+// Phase 4 — Frame BE flag, Tier 4 Y210 LE/BE round-trip parity test.
+//
+// Pattern mirrors PR #103 (Tier 8 trial) — see
+// `src/sinker/mixed/tests/packed_rgb_16bit.rs` for the full rationale:
+//   1. Build an LE-encoded plane (host-native on every CI host).
+//   2. Build the same logical plane re-encoded as BE bytes via
+//      `to_be_bytes` → `from_ne_bytes`.
+//   3. Walk both with the matching `Y210LeFrame` / `Y210BeFrame` +
+//      `MixedSinker<Y210<{false,true}>>` pairs.
+//   4. Assert the outputs are byte-identical: the kernels' runtime
+//      `big_endian` argument must restore host-native samples on both
+//      paths so the RGBA bytes match exactly.
+//
+// Catches `<const BE>` propagation regressions in the Y210 sinker.
+// ====================================================================================
+
+/// Re-encode a host-native u16 slice as **BE-encoded** byte storage. Used to
+/// build `Y210BeFrame` planes whose bytes are big-endian; the kernel swaps
+/// them back to host-native via `from_be`.
+fn y210_as_be_u16(host: &[u16]) -> Vec<u16> {
+  host
+    .iter()
+    .map(|v| u16::from_ne_bytes(v.to_be_bytes()))
+    .collect()
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn y210_le_be_roundtrip_byte_identical() {
+  // Mid-range Y/U/V samples that exercise both luma and chroma paths.
+  let intended = solid_y210_frame(8, 4, 600, 400, 700);
+  let pix_le = intended.clone();
+  let pix_be = y210_as_be_u16(&intended);
+
+  // LE path.
+  let frame_le = Y210LeFrame::try_new(&pix_le, 8, 4, 16).unwrap();
+  let mut out_le_rgba = std::vec![0u8; 8 * 4 * 4];
+  let mut out_le_luma_u16 = std::vec![0u16; 8 * 4];
+  let mut sink_le = MixedSinker::<Y210>::new(8, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_le_rgba)
+    .unwrap()
+    .with_luma_u16(&mut out_le_luma_u16)
+    .unwrap();
+  y210_to(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+
+  // BE path.
+  let frame_be = Y210BeFrame::try_new(&pix_be, 8, 4, 16).unwrap();
+  let mut out_be_rgba = std::vec![0u8; 8 * 4 * 4];
+  let mut out_be_luma_u16 = std::vec![0u16; 8 * 4];
+  let mut sink_be = MixedSinker::<Y210<true>>::new(8, 4)
+    .with_simd(false)
+    .with_rgba(&mut out_be_rgba)
+    .unwrap()
+    .with_luma_u16(&mut out_be_luma_u16)
+    .unwrap();
+  y210_to(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+  assert_eq!(
+    out_le_rgba, out_be_rgba,
+    "Y210 RGBA u8 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+  assert_eq!(
+    out_le_luma_u16, out_be_luma_u16,
+    "Y210 luma u16 LE/BE outputs diverge — `<const BE>` propagation broken"
+  );
+}

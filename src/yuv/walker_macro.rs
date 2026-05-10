@@ -167,6 +167,18 @@ macro_rules! walker {
   // bytes; the kernel monomorphization picks up `BE` from the sinker type.
   //
   // Used by Tier 8 trial: Rgb48, Bgr48, Rgba64, Bgra64, X2Rgb10, X2Bgr10.
+  //
+  // NOTE: The Y2xx family (Y210/Y212/Y216) is intentionally handled by a
+  // separate `packed_be_y2xx` arm below rather than reusing this arm. The
+  // axis of difference is the *frame type's const-generic shape*: this arm
+  // emits `&$frame<'_, BE>` (one const param), while the Y2xx frame is
+  // `Y2xxFrame<'a, BITS, BE>` (two const params, requiring the BITS literal
+  // to be threaded through the macro spec). A unified arm would either need
+  // an awkward optional `bits:` metavariable conditionally injected into the
+  // type spelling, or a `frame_ty: $ty` capture that requires every existing
+  // caller of this arm to migrate from the `frame: $ident` shorthand.
+  // Neither buys much over keeping the two arms parallel, so we accept the
+  // duplication. See the symmetric note on `packed_be_y2xx` below.
   (
     packed_be {
       $(#[$marker_meta:meta])*
@@ -265,6 +277,134 @@ macro_rules! walker {
       let stride = src.stride() as usize;
       let row_elems: usize = $row_elems;
       let plane = src.$buf();
+
+      for row in 0..h {
+        let start = row * stride;
+        let $buf = &plane[start..start + row_elems];
+        sink.process($row::new($buf, row, matrix, full_range))?;
+      }
+      Ok(())
+    }
+  };
+
+  // ---------- packed_be_y2xx (single-buffer Y2xx with `<const BE>`) --------
+  //
+  // Phase 4 Tier 4 — variant of `packed_be` for the Y2xx family
+  // (`Y210`/`Y212`/`Y216`) whose underlying frame type is the shared
+  // `Y2xxFrame<'a, const BITS: u32, const BE: bool = false>`. The macro
+  // takes both the underlying `frame_inner: $frame_inner:ident` (always
+  // `Y2xxFrame`) and the `bits: $bits:literal` BITS literal so it can
+  // emit `$frame_inner<'_, $bits, BE>` in the walker signature.
+  //
+  // The marker, Sink subtrait, and Row are identical in shape to
+  // `packed_be`. The walker fn signature differs: the frame parameter
+  // is `&Y2xxFrame<'_, BITS, BE>` instead of `&$frame<'_, BE>`.
+  //
+  // Used by Tier 4: Y210, Y212, Y216 (each pinning a different BITS
+  // literal).
+  //
+  // NOTE: This arm is kept separate from `packed_be` rather than unified
+  // for the reason called out at the head of the `packed_be` arm: the
+  // const-generic shape of the frame type (1 vs 2 const params) is the
+  // axis of difference, and folding both into one arm would need either a
+  // conditional `bits:` metavariable injected into the type spelling or a
+  // breaking migration of every existing `packed_be` caller from the
+  // `frame: $ident` shorthand to a full `frame_ty: $ty` capture. Two
+  // ~80-line arms with a clearly named distinction is the cleaner trade.
+  (
+    packed_be_y2xx {
+      $(#[$marker_meta:meta])*
+      marker: $marker:ident,
+      frame_inner: $frame_inner:ident,
+      bits: $bits:literal,
+      row: $row:ident,
+      sink: $sink:ident,
+      walker: $walker:ident,
+      buf_field: $buf:ident,
+      elem_type: $elem:ty,
+      row_elems: |$w:ident| $row_elems:expr,
+      $(#[$row_meta:meta])*
+      row_doc: $row_doc:expr,
+      $(#[$walker_meta:meta])*
+      walker_doc: $walker_doc:expr,
+    }
+  ) => {
+    $(#[$marker_meta])*
+    pub struct $marker<const BE: bool = false>;
+
+    impl<const BE: bool> $crate::sealed::Sealed for $marker<BE> {}
+    impl<const BE: bool> $crate::SourceFormat for $marker<BE> {}
+
+    $(#[$row_meta])*
+    #[doc = $row_doc]
+    #[derive(Debug, Clone, Copy)]
+    pub struct $row<'a> {
+      $buf: &'a [$elem],
+      row: usize,
+      matrix: $crate::ColorMatrix,
+      full_range: bool,
+    }
+
+    impl<'a> $row<'a> {
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub(crate) fn new(
+        $buf: &'a [$elem],
+        row: usize,
+        matrix: $crate::ColorMatrix,
+        full_range: bool,
+      ) -> Self {
+        Self { $buf, row, matrix, full_range }
+      }
+      /// Packed source row.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn $buf(&self) -> &'a [$elem] {
+        self.$buf
+      }
+      /// Output row index within the frame.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn row(&self) -> usize {
+        self.row
+      }
+      /// YUV/RGB conversion matrix carried through from the kernel call.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn matrix(&self) -> $crate::ColorMatrix {
+        self.matrix
+      }
+      /// Full-range vs limited-range flag carried through from the
+      /// kernel call.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn full_range(&self) -> bool {
+        self.full_range
+      }
+    }
+
+    /// Sinks that consume rows of this Y2xx source format. The `<const BE>`
+    /// parameter encodes the source byte-order — sinkers typically impl
+    /// for one specific `BE`. `BE` defaults to `false` (LE) so downstream
+    /// LE-only custom sinks can keep writing `impl $sink for MySink`
+    /// without migrating to an explicit const argument.
+    pub trait $sink<const BE: bool = false>:
+      for<'a> $crate::PixelSink<Input<'a> = $row<'a>>
+    {}
+
+    $(#[$walker_meta])*
+    #[doc = $walker_doc]
+    pub fn $walker<S, const BE: bool>(
+      src: &$crate::frame::$frame_inner<'_, $bits, BE>,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error>
+    where
+      S: $sink<BE>,
+    {
+      sink.begin_frame(src.width(), src.height())?;
+
+      let $w = src.width() as usize;
+      let h = src.height() as usize;
+      let stride = src.stride() as usize;
+      let row_elems: usize = $row_elems;
+      let plane = src.packed();
 
       for row in 0..h {
         let start = row * stride;

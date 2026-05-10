@@ -5,6 +5,12 @@
 //! in each u16 (low 6 bits = 0). See [`crate::frame::Y210Frame`]
 //! for layout details.
 //!
+//! The marker carries `<const BE: bool = false>`: `Y210` (= `Y210<false>`)
+//! is the LE source; `Y210<true>` is the BE source. The walker
+//! [`y210_to::<BE>`] propagates `BE` from
+//! [`Y2xxFrame<'_, 10, BE>`](crate::frame::Y2xxFrame) into the
+//! sinker dispatch.
+//!
 //! Outputs are produced via:
 //! - `with_rgb` / `with_rgba` — packed YUV → RGB Q15 pipeline at
 //!   BITS=10, downshifted to u8.
@@ -17,14 +23,18 @@
 //! - `with_hsv` — stages an internal RGB scratch and runs the
 //!   existing `rgb_to_hsv_row` kernel.
 
-use crate::frame::Y210Frame;
+// `Y210Frame` is referenced through `$crate::frame::Y2xxFrame<'_, 10, BE>` by
+// the `packed_be_y2xx` walker arm; no outer import needed.
 
 walker! {
-  packed {
-    /// Zero-sized marker for the packed **Y210** source format.
+  packed_be_y2xx {
+    /// Zero-sized marker for the packed **Y210** source format
+    /// (`AV_PIX_FMT_Y210{LE,BE}`). `<const BE: bool>` defaults to `false`
+    /// (LE); `Y210` resolves to `Y210<false>`.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Y210,
-    frame: Y210Frame<'_>,
+    frame_inner: Y2xxFrame,
+    bits: 10,
     row: Y210Row,
     sink: Y210Sink,
     walker: y210_to,
@@ -46,9 +56,16 @@ walker! {
       "| 3        | V     | bits `15:6` (10-bit) |\n",
       "\n",
       "Full range Y: `[0, 1023]` (10-bit MSB-aligned in u16). Limited\n",
-      "range Y: `[64, 940]`, limited range chroma: `[64, 960]`.",
+      "range Y: `[64, 940]`, limited range chroma: `[64, 960]`.\n",
+      "\n",
+      "Endianness is recorded on the parent \
+       [`Y2xxFrame<'_, 10, BE>`](crate::frame::Y2xxFrame) / sinker,\n",
+      "not on the Row itself — the kernel receives `BE` as the runtime\n",
+      "`big_endian` argument from the sinker dispatch.",
     ),
-    walker_doc: "Walks a [`Y210Frame`] row by row into the sink.",
+    walker_doc: "Walks a [`Y2xxFrame<'_, 10, BE>`](crate::frame::Y2xxFrame) row \
+                 by row into the sink. Propagates `<const BE: bool>` from the \
+                 frame into [`Y210Sink<BE>`].",
   }
 }
 

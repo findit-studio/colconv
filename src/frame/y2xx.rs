@@ -5,23 +5,34 @@
 //! u16 quadruples (`Y₀, U, Y₁, V`). Active bits are MSB-aligned;
 //! low `(16 - BITS)` bits are zero.
 //!
-//! | Format | BITS | FFmpeg pix_fmt           | Active bit width | Low bits |
-//! |--------|------|--------------------------|------------------|----------|
-//! | Y210   | 10   | `AV_PIX_FMT_Y210LE`      | bits[15:6]       | bits[5:0] = 0 |
-//! | Y212   | 12   | `AV_PIX_FMT_Y212LE`      | bits[15:4]       | bits[3:0] = 0 |
-//! | Y216   | 16   | `AV_PIX_FMT_Y216LE`      | bits[15:0]       | n/a (full range) |
+//! | Format | BITS | FFmpeg pix_fmt              | Active bit width | Low bits |
+//! |--------|------|-----------------------------|------------------|----------|
+//! | Y210   | 10   | `AV_PIX_FMT_Y210{LE,BE}`    | bits[15:6]       | bits[5:0] = 0 |
+//! | Y212   | 12   | `AV_PIX_FMT_Y212{LE,BE}`    | bits[15:4]       | bits[3:0] = 0 |
+//! | Y216   | 16   | `AV_PIX_FMT_Y216{LE,BE}`    | bits[15:0]       | n/a (full range) |
 //!
 //! Width must be even (4:2:2 chroma subsampling).
 //!
-//! # Endian contract — **LE-encoded bytes**
+//! # Endian contract — `<const BE: bool = false>`
 //!
-//! The `&[u16]` plane is the **LE-encoded byte layout** reinterpreted as
-//! `u16`, matching the FFmpeg `*LE` pixel-format suffix in each format's
-//! name. On a little-endian host (every CI runner today) LE bytes _are_
-//! host-native, so `&[u16]` is also a host-native u16 slice; on a
-//! big-endian host the bytes have to be byte-swapped back to host-native
-//! before arithmetic. Downstream row kernels handle this byte-swap (or
-//! no-op on LE) under the hood — callers do **not** pre-swap.
+//! Each frame type carries a `<const BE: bool>` parameter that defaults to
+//! `false` (LE-encoded bytes). The parameter encodes the **byte order of the
+//! plane bytes**, matching the FFmpeg `*LE` / `*BE` pixel-format suffix:
+//!
+//! - `BE = false` (default; e.g. `Y210LeFrame`) — plane bytes are LE-encoded,
+//!   matching `AV_PIX_FMT_Y210LE`. On a little-endian host (every CI runner
+//!   today) LE bytes _are_ host-native, so `&[u16]` is also a host-native
+//!   `u16` slice; on a big-endian host the bytes have to be byte-swapped
+//!   back to host-native before arithmetic.
+//! - `BE = true` (e.g. `Y210BeFrame`) — plane bytes are BE-encoded, matching
+//!   `AV_PIX_FMT_Y210BE`. On a little-endian host the bytes are byte-swapped
+//!   before arithmetic; on a big-endian host they are host-native.
+//!
+//! Downstream row kernels handle the byte-swap (or no-op) under the hood —
+//! callers do **not** pre-swap. The `BE` parameter on `Frame` propagates
+//! through the walker (`y210_to::<BE>(...)`) into the sinker dispatch
+//! (`MixedSinker<Y210<BE>>`), which forwards `BE` as the runtime
+//! `big_endian` argument of the `*_row_endian` kernels.
 //!
 //! Stride is in **u16 elements** (not bytes). Callers holding a raw
 //! FFmpeg byte buffer should cast via `bytemuck::cast_slice` (which
@@ -37,43 +48,72 @@ use thiserror::Error;
 
 /// Validated wrapper around a packed YUV 4:2:2 high-bit-depth plane
 /// for the `Y210` / `Y212` / `Y216` family
-/// (`AV_PIX_FMT_Y210LE` / `Y212LE` / `Y216LE`).
+/// (`AV_PIX_FMT_Y210{LE,BE}` / `Y212{LE,BE}` / `Y216{LE,BE}`).
 ///
-/// `BITS` selects the active sample width: 10, 12, or 16. Construct
-/// via [`Self::try_new`] (fallible) or [`Self::new`] (panics on
-/// invalid input). For `BITS ∈ {10, 12}` the optional
+/// `BITS` selects the active sample width: 10, 12, or 16. The
+/// `<const BE: bool>` parameter selects the plane byte order: `false`
+/// (default) → LE-encoded bytes (`AV_PIX_FMT_Y2xxLE`), `true` →
+/// BE-encoded bytes (`AV_PIX_FMT_Y2xxBE`). Construct via
+/// [`Self::try_new`] (fallible) or [`Self::new`] (panics on invalid
+/// input). For `BITS ∈ {10, 12}` the optional
 /// [`Self::try_new_checked`] additionally verifies that every
 /// sample's low `(16 - BITS)` bits are zero (matches the
 /// `P010::try_new_checked` pattern).
 ///
-/// The `&[u16]` plane is the **LE-encoded byte layout** reinterpreted
-/// as `u16`, matching the FFmpeg `*LE` pixel-format convention. On a
-/// little-endian host (every CI runner today) LE bytes _are_
-/// host-native, so `&[u16]` is also a host-native u16 slice; on a
-/// big-endian host the bytes have to be byte-swapped back to
-/// host-native before arithmetic. Downstream row kernels handle the
-/// byte-swap under the hood — callers do **not** pre-swap. Callers
-/// holding raw FFmpeg byte buffers should cast via
+/// The `&[u16]` plane is the **LE- or BE-encoded byte layout**
+/// reinterpreted as `u16`, matching the FFmpeg `*LE`/`*BE`
+/// pixel-format convention. Downstream row kernels handle the
+/// byte-swap (or no-op) under the hood — callers do **not** pre-swap.
+/// Callers holding raw FFmpeg byte buffers should cast via
 /// `bytemuck::cast_slice` and divide `linesize[0]` by 2 before
 /// constructing.
 #[derive(Debug, Clone, Copy)]
-pub struct Y2xxFrame<'a, const BITS: u32> {
+pub struct Y2xxFrame<'a, const BITS: u32, const BE: bool = false> {
   packed: &'a [u16],
   width: u32,
   height: u32,
   stride: u32,
 }
 
-/// Y210 alias — 10-bit MSB-aligned packed YUV 4:2:2.
-pub type Y210Frame<'a> = Y2xxFrame<'a, 10>;
+/// Y210 alias — 10-bit MSB-aligned packed YUV 4:2:2, **LE-encoded** plane
+/// bytes (`AV_PIX_FMT_Y210LE`). Concrete alias resolving to
+/// `Y2xxFrame<'a, 10, false>` so existing call sites
+/// (`Y210Frame::try_new(...)`) compile unchanged. For BE plane bytes,
+/// use [`Y210BeFrame`].
+pub type Y210Frame<'a> = Y2xxFrame<'a, 10, false>;
 
-/// Y212 alias — 12-bit MSB-aligned packed YUV 4:2:2.
-pub type Y212Frame<'a> = Y2xxFrame<'a, 12>;
+/// LE-encoded `Y210Frame` (`AV_PIX_FMT_Y210LE`). Equivalent to
+/// [`Y210Frame`]; provided as an explicit alias for callers who want to
+/// document the endianness at the type level.
+pub type Y210LeFrame<'a> = Y2xxFrame<'a, 10, false>;
+
+/// BE-encoded `Y210Frame` (`AV_PIX_FMT_Y210BE`). Plane bytes are
+/// big-endian-encoded `u16` samples; downstream row kernels byte-swap under
+/// the hood. Drives the `MixedSinker<Y210<true>>` monomorphization.
+pub type Y210BeFrame<'a> = Y2xxFrame<'a, 10, true>;
+
+/// Y212 alias — 12-bit MSB-aligned packed YUV 4:2:2, **LE-encoded** plane
+/// bytes (`AV_PIX_FMT_Y212LE`). For BE plane bytes, use [`Y212BeFrame`].
+pub type Y212Frame<'a> = Y2xxFrame<'a, 12, false>;
+
+/// LE-encoded `Y212Frame` (`AV_PIX_FMT_Y212LE`).
+pub type Y212LeFrame<'a> = Y2xxFrame<'a, 12, false>;
+
+/// BE-encoded `Y212Frame` (`AV_PIX_FMT_Y212BE`).
+pub type Y212BeFrame<'a> = Y2xxFrame<'a, 12, true>;
 
 /// Y216 alias — 16-bit packed YUV 4:2:2 (full-range u16 samples,
-/// no MSB-alignment shift). For Y216, [`Self::try_new_checked`] is
-/// equivalent to [`Self::try_new`] (no low bits to verify).
-pub type Y216Frame<'a> = Y2xxFrame<'a, 16>;
+/// no MSB-alignment shift), **LE-encoded** plane bytes
+/// (`AV_PIX_FMT_Y216LE`). For Y216, [`Self::try_new_checked`] is
+/// equivalent to [`Self::try_new`] (no low bits to verify). For BE plane
+/// bytes, use [`Y216BeFrame`].
+pub type Y216Frame<'a> = Y2xxFrame<'a, 16, false>;
+
+/// LE-encoded `Y216Frame` (`AV_PIX_FMT_Y216LE`).
+pub type Y216LeFrame<'a> = Y2xxFrame<'a, 16, false>;
+
+/// BE-encoded `Y216Frame` (`AV_PIX_FMT_Y216BE`).
+pub type Y216BeFrame<'a> = Y2xxFrame<'a, 16, true>;
 
 /// Errors returned by [`Y2xxFrame::try_new`] and
 /// [`Y2xxFrame::try_new_checked`].
@@ -143,7 +183,7 @@ pub enum Y2xxFrameError {
   SampleLowBitsSet,
 }
 
-impl<'a, const BITS: u32> Y2xxFrame<'a, BITS> {
+impl<'a, const BITS: u32, const BE: bool> Y2xxFrame<'a, BITS, BE> {
   /// Validates and constructs a [`Y2xxFrame`].
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn try_new(
@@ -196,15 +236,16 @@ impl<'a, const BITS: u32> Y2xxFrame<'a, BITS> {
   /// `BITS ∈ {10, 12}`; for `BITS = 16` this delegates to
   /// [`Self::try_new`] (no low bits to check).
   ///
-  /// Per the LE-encoded byte contract on the type-level docs, samples
-  /// are validated **after** `u16::from_le` normalization so the bit
-  /// check operates on the intended logical sample value on every host.
-  /// On little-endian hosts `from_le` is a no-op (the host-native `u16`
-  /// already matches the wire); on big-endian hosts it byte-swaps each
-  /// `u16` back into host-native form. Without this normalization a
+  /// Per the byte-encoding contract on the type-level docs, samples are
+  /// validated **after** byte-order normalization (`u16::from_le` for
+  /// `BE = false`, `u16::from_be` for `BE = true`) so the bit check
+  /// operates on the intended logical sample value on every host. On
+  /// little-endian hosts `from_le` is a no-op and `from_be` byte-swaps;
+  /// on big-endian hosts the roles flip. Without this normalization a
   /// valid `Y210LE` plane on a BE host would have its MSB-aligned
   /// samples appear byte-swapped (low bits set in the host-native
-  /// reading) and the validator would falsely reject every row.
+  /// reading) and the validator would falsely reject every row — and
+  /// vice-versa for `Y210BE` on an LE host.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn try_new_checked(
     packed: &'a [u16],
@@ -221,9 +262,16 @@ impl<'a, const BITS: u32> Y2xxFrame<'a, BITS> {
       for row in 0..h {
         let start = row * stride_us;
         for &sample in &packed[start..start + row_elems] {
-          // Normalize from LE-encoded wire to host-native before the
-          // bit check (no-op on LE host, byte-swap on BE host).
-          if u16::from_le(sample) & low_mask != 0 {
+          // Normalize from wire byte order to host-native before the
+          // bit check. `BE = false` → `from_le` (no-op on LE host,
+          // byte-swap on BE host); `BE = true` → `from_be` (byte-swap
+          // on LE host, no-op on BE host).
+          let host = if BE {
+            u16::from_be(sample)
+          } else {
+            u16::from_le(sample)
+          };
+          if host & low_mask != 0 {
             return Err(Y2xxFrameError::SampleLowBitsSet);
           }
         }
@@ -284,5 +332,12 @@ impl<'a, const BITS: u32> Y2xxFrame<'a, BITS> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn stride(&self) -> u32 {
     self.stride
+  }
+  /// Returns the compile-time BE flag — `true` if plane bytes are BE-encoded
+  /// (`AV_PIX_FMT_Y2xxBE`), `false` if LE-encoded (`AV_PIX_FMT_Y2xxLE`).
+  /// Runtime mirror of the `<const BE: bool>` type parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
   }
 }

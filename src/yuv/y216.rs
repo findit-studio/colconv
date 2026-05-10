@@ -3,6 +3,12 @@
 //! quadruples (`Y₀, U, Y₁, V`); all 16 bits per sample are active.
 //! See [`crate::frame::Y216Frame`] for layout details.
 //!
+//! The marker carries `<const BE: bool = false>`: `Y216` (= `Y216<false>`)
+//! is the LE source; `Y216<true>` is the BE source. The walker
+//! [`y216_to::<BE>`] propagates `BE` from
+//! [`Y2xxFrame<'_, 16, BE>`](crate::frame::Y2xxFrame) into the
+//! sinker dispatch.
+//!
 //! Outputs are produced via:
 //! - `with_rgb` / `with_rgba` — packed YUV → RGB Q15 pipeline at
 //!   BITS=16, downshifted to u8.
@@ -15,14 +21,18 @@
 //! - `with_hsv` — stages an internal RGB scratch and runs the
 //!   existing `rgb_to_hsv_row` kernel.
 
-use crate::frame::Y216Frame;
+// `Y216Frame` is referenced through `$crate::frame::Y2xxFrame<'_, 16, BE>` by
+// the `packed_be_y2xx` walker arm; no outer import needed.
 
 walker! {
-  packed {
-    /// Zero-sized marker for the packed **Y216** source format.
+  packed_be_y2xx {
+    /// Zero-sized marker for the packed **Y216** source format
+    /// (`AV_PIX_FMT_Y216{LE,BE}`). `<const BE: bool>` defaults to `false`
+    /// (LE); `Y216` resolves to `Y216<false>`.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Y216,
-    frame: Y216Frame<'_>,
+    frame_inner: Y2xxFrame,
+    bits: 16,
     row: Y216Row,
     sink: Y216Sink,
     walker: y216_to,
@@ -44,9 +54,16 @@ walker! {
       "| 3        | V     | bits `15:0` (16-bit) |\n",
       "\n",
       "Full range Y: `[0, 65535]` (16-bit). Limited range Y: `[4096,\n",
-      "60160]`, limited range chroma: `[4096, 61440]`.",
+      "60160]`, limited range chroma: `[4096, 61440]`.\n",
+      "\n",
+      "Endianness is recorded on the parent \
+       [`Y2xxFrame<'_, 16, BE>`](crate::frame::Y2xxFrame) / sinker,\n",
+      "not on the Row itself — the kernel receives `BE` as the runtime\n",
+      "`big_endian` argument from the sinker dispatch.",
     ),
-    walker_doc: "Walks a [`Y216Frame`] row by row into the sink.",
+    walker_doc: "Walks a [`Y2xxFrame<'_, 16, BE>`](crate::frame::Y2xxFrame) row \
+                 by row into the sink. Propagates `<const BE: bool>` from the \
+                 frame into [`Y216Sink<BE>`].",
   }
 }
 
