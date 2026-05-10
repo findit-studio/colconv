@@ -239,7 +239,11 @@ macro_rules! walker {
     /// monomorphization. The Row type does not carry `BE`; the BE-aware
     /// kernel dispatch happens inside `process` via the sinker's own
     /// `<const BE>` parameter.
-    pub trait $sink<const BE: bool>:
+    ///
+    /// `BE` defaults to `false` (LE) so downstream LE-only custom sinks
+    /// can keep writing `impl $sink for MySink` / `S: $sink` without
+    /// migrating to an explicit const argument.
+    pub trait $sink<const BE: bool = false>:
       for<'a> $crate::PixelSink<Input<'a> = $row<'a>>
     {}
 

@@ -67,7 +67,7 @@ mod tests {
       Ok(())
     }
   }
-  impl Rgba64Sink<false> for CountingSink {}
+  impl Rgba64Sink for CountingSink {}
 
   #[test]
   fn rgba64_walker_visits_every_row_once() {

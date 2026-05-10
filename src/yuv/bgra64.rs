@@ -68,7 +68,7 @@ mod tests {
       Ok(())
     }
   }
-  impl Bgra64Sink<false> for CountingSink {}
+  impl Bgra64Sink for CountingSink {}
 
   #[test]
   fn bgra64_walker_visits_every_row_once() {

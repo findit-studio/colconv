@@ -68,7 +68,7 @@ mod tests {
       Ok(())
     }
   }
-  impl Bgr48Sink<false> for CountingSink {}
+  impl Bgr48Sink for CountingSink {}
 
   #[test]
   fn bgr48_walker_visits_every_row_once() {

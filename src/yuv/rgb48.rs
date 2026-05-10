@@ -68,7 +68,7 @@ mod tests {
       Ok(())
     }
   }
-  impl Rgb48Sink<false> for CountingSink {}
+  impl Rgb48Sink for CountingSink {}
 
   #[test]
   fn rgb48_walker_visits_every_row_once() {
@@ -84,5 +84,31 @@ mod tests {
     assert_eq!(sink.rows_seen, 4);
     assert_eq!(sink.last_width, 12); // width * 3 u16 elements per row
     assert_eq!(sink.last_row_idx, 3);
+  }
+
+  // Compile-pass regression for the LE-only custom sink spelling. The
+  // generated `$sink<const BE: bool = false>` carries an LE default so
+  // downstream callers can keep writing `impl Rgb48Sink for MySink`
+  // (no `<false>`) and `S: Rgb48Sink` bounds. This mirrors the fix for
+  // codex high-severity finding on `walker_macro.rs:242`.
+  #[test]
+  fn rgb48_sink_le_default_compiles_without_const_arg() {
+    // `impl Rgb48Sink for CountingSink` (above) would already fail to
+    // compile if the LE default regressed; this test additionally pins
+    // the bare-bound form `S: Rgb48Sink` and confirms it monomorphizes
+    // to the LE walker.
+    fn walks_le<S: Rgb48Sink>(frame: &Rgb48Frame<'_>, sink: &mut S) -> Result<(), S::Error> {
+      rgb48_to(frame, true, ColorMatrix::Bt709, sink)
+    }
+
+    let buf = std::vec![0u16; 12 * 4];
+    let frame = Rgb48Frame::new(&buf, 4, 4, 12);
+    let mut sink = CountingSink {
+      rows_seen: 0,
+      last_width: 0,
+      last_row_idx: 0,
+    };
+    walks_le(&frame, &mut sink).unwrap();
+    assert_eq!(sink.rows_seen, 4);
   }
 }
