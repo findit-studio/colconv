@@ -1,29 +1,32 @@
-//! Planar GBR 10-bit (`AV_PIX_FMT_GBRP10LE`) — three full-resolution
+//! Planar GBR 10-bit (`AV_PIX_FMT_GBRP10{LE,BE}`) — three full-resolution
 //! `u16` planes in **G, B, R** order (FFmpeg convention).
 //!
 //! Samples are stored in the low 10 bits of each `u16` element.
+//!
+//! The marker carries `<const BE: bool = false>`: `Gbrp10` (= `Gbrp10<false>`)
+//! is the LE source; `Gbrp10<true>` is the BE source. The walker
+//! [`gbrp10_to::<BE>`] propagates `BE` from [`Gbrp10Frame<'_, BE>`] into the
+//! sinker dispatch.
 
 use crate::frame::{Gbrp10Frame, GbrpHighBitFrame};
 
 walker! {
-  planar3_bits {
+  planar3_bits_be {
     /// Zero-sized marker for the planar GBR 10-bit source format
-    /// (`AV_PIX_FMT_GBRP10LE`).
+    /// (`AV_PIX_FMT_GBRP10{LE,BE}`). `<const BE: bool>` defaults to `false`.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Gbrp10,
-    frame: Gbrp10Frame<'_>,
-    generic_frame: GbrpHighBitFrame<'_, BITS>,
+    frame: Gbrp10Frame,
+    generic_frame: GbrpHighBitFrame,
     bits: 10,
     row: Gbrp10Row,
     sink: Gbrp10Sink,
     walker: gbrp10_to,
     walker_inner: gbrp10_walker,
     elem_type: u16,
-    chroma_h: full,
-    chroma_v: full,
     row_doc: "One output row of a [`Gbrp10`] source — three full-width\n\
               `u16` planes in G / B / R order (samples in low 10 bits).",
-    walker_doc: "Walks a [`Gbrp10Frame`] row by row into the sink.",
+    walker_doc: "Walks a [`Gbrp10Frame<'_, BE>`] row by row into the sink.",
   }
 }
 

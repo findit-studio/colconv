@@ -551,3 +551,238 @@ test_gbrap_simd_matches_scalar!(
   16,
   130
 );
+
+// ====================================================================================
+// Phase 4 — Frame BE flag, Tier 10b. LE+BE round-trip parity tests.
+//
+// Per-format pattern: build a host-native u16 plane, encode once as LE bytes
+// and once as BE bytes (via `to_le_bytes` / `to_be_bytes`), drive each
+// through its `MixedSinker<MarkerN<BE>>` monomorphization, and assert the
+// outputs are byte-identical. The kernel byte-swaps under the hood, so the
+// same logical samples must yield the same RGBA output regardless of plane
+// byte order. This catches missing `<BE>` propagation in sinker call sites
+// or in the `gbr_to_*_high_bit_row::<BITS, BE>` dispatch.
+// ====================================================================================
+
+/// Re-encode a host-native u16 slice as **BE-encoded** byte storage. Used to
+/// build `*BeFrame` planes whose bytes are big-endian; the kernel swaps them
+/// back to host-native via `from_be`.
+fn as_be_u16(host: &[u16]) -> std::vec::Vec<u16> {
+  host
+    .iter()
+    .map(|v| u16::from_ne_bytes(v.to_be_bytes()))
+    .collect()
+}
+
+/// Re-encode a host-native u16 slice as **LE-encoded** byte storage.
+fn as_le_u16(host: &[u16]) -> std::vec::Vec<u16> {
+  host
+    .iter()
+    .map(|v| u16::from_ne_bytes(v.to_le_bytes()))
+    .collect()
+}
+
+macro_rules! gbrp_le_be_roundtrip {
+  ($name:ident, $marker:ident, $le_alias:ident, $be_alias:ident, $walker:ident, $bits:literal) => {
+    #[test]
+    #[cfg_attr(miri, ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri")]
+    fn $name() {
+      let w = 16usize;
+      let h = 4usize;
+      let mask: u16 = ((1u32 << $bits) - 1) as u16;
+      // Mix of patterns within the bit-width range.
+      let intended: std::vec::Vec<u16> = (0..w * h)
+        .map(|i| {
+          let raw: u16 = match i % 4 {
+            0 => 0x1234,
+            1 => 0xABCD,
+            2 => 0x00FF,
+            _ => 0x7FFF,
+          };
+          raw & mask
+        })
+        .collect();
+      let g_le = as_le_u16(&intended);
+      let b_le = as_le_u16(&intended);
+      let r_le = as_le_u16(&intended);
+      let g_be = as_be_u16(&intended);
+      let b_be = as_be_u16(&intended);
+      let r_be = as_be_u16(&intended);
+
+      let stride = w as u32;
+      let frame_le =
+        crate::frame::$le_alias::try_new(&g_le, &b_le, &r_le, w as u32, h as u32, stride, stride, stride)
+          .unwrap();
+      let mut out_le = std::vec![0u8; w * h * 4];
+      let mut sink_le = MixedSinker::<$marker>::new(w, h)
+        .with_simd(false)
+        .with_rgba(&mut out_le)
+        .unwrap();
+      $walker(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+
+      let frame_be =
+        crate::frame::$be_alias::try_new(&g_be, &b_be, &r_be, w as u32, h as u32, stride, stride, stride)
+          .unwrap();
+      let mut out_be = std::vec![0u8; w * h * 4];
+      let mut sink_be = MixedSinker::<$marker<true>>::new(w, h)
+        .with_simd(false)
+        .with_rgba(&mut out_be)
+        .unwrap();
+      $walker(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+      assert_eq!(
+        out_le,
+        out_be,
+        concat!(stringify!($marker), " LE/BE outputs diverge — `<const BE>` propagation broken"),
+      );
+    }
+  };
+}
+
+gbrp_le_be_roundtrip!(
+  gbrp9_le_be_roundtrip,
+  Gbrp9,
+  Gbrp9LeFrame,
+  Gbrp9BeFrame,
+  gbrp9_to,
+  9
+);
+gbrp_le_be_roundtrip!(
+  gbrp10_le_be_roundtrip,
+  Gbrp10,
+  Gbrp10LeFrame,
+  Gbrp10BeFrame,
+  gbrp10_to,
+  10
+);
+gbrp_le_be_roundtrip!(
+  gbrp12_le_be_roundtrip,
+  Gbrp12,
+  Gbrp12LeFrame,
+  Gbrp12BeFrame,
+  gbrp12_to,
+  12
+);
+gbrp_le_be_roundtrip!(
+  gbrp14_le_be_roundtrip,
+  Gbrp14,
+  Gbrp14LeFrame,
+  Gbrp14BeFrame,
+  gbrp14_to,
+  14
+);
+gbrp_le_be_roundtrip!(
+  gbrp16_le_be_roundtrip,
+  Gbrp16,
+  Gbrp16LeFrame,
+  Gbrp16BeFrame,
+  gbrp16_to,
+  16
+);
+
+macro_rules! gbrap_le_be_roundtrip {
+  ($name:ident, $marker:ident, $le_alias:ident, $be_alias:ident, $walker:ident, $bits:literal) => {
+    #[test]
+    #[cfg_attr(miri, ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri")]
+    fn $name() {
+      let w = 16usize;
+      let h = 4usize;
+      let mask: u16 = ((1u32 << $bits) - 1) as u16;
+      let intended: std::vec::Vec<u16> = (0..w * h)
+        .map(|i| {
+          let raw: u16 = match i % 5 {
+            0 => 0x1234,
+            1 => 0xABCD,
+            2 => 0x00FF,
+            3 => 0x7FFF,
+            _ => 0x5555,
+          };
+          raw & mask
+        })
+        .collect();
+      let g_le = as_le_u16(&intended);
+      let b_le = as_le_u16(&intended);
+      let r_le = as_le_u16(&intended);
+      let a_le = as_le_u16(&intended);
+      let g_be = as_be_u16(&intended);
+      let b_be = as_be_u16(&intended);
+      let r_be = as_be_u16(&intended);
+      let a_be = as_be_u16(&intended);
+
+      let stride = w as u32;
+      let frame_le = crate::frame::$le_alias::try_new(
+        &g_le, &b_le, &r_le, &a_le, w as u32, h as u32, stride, stride, stride, stride,
+      )
+      .unwrap();
+      // Exercise both u8 and u16 RGBA paths to cover gbra_to_rgba_*_row plus the
+      // alpha_extract::copy_alpha_plane_u16 / u16_to_u8 propagation.
+      let mut out_le_rgba = std::vec![0u8; w * h * 4];
+      let mut out_le_rgba_u16 = std::vec![0u16; w * h * 4];
+      let mut sink_le = MixedSinker::<$marker>::new(w, h)
+        .with_simd(false)
+        .with_rgba(&mut out_le_rgba)
+        .unwrap()
+        .with_rgba_u16(&mut out_le_rgba_u16)
+        .unwrap();
+      $walker(&frame_le, true, ColorMatrix::Bt709, &mut sink_le).unwrap();
+
+      let frame_be = crate::frame::$be_alias::try_new(
+        &g_be, &b_be, &r_be, &a_be, w as u32, h as u32, stride, stride, stride, stride,
+      )
+      .unwrap();
+      let mut out_be_rgba = std::vec![0u8; w * h * 4];
+      let mut out_be_rgba_u16 = std::vec![0u16; w * h * 4];
+      let mut sink_be = MixedSinker::<$marker<true>>::new(w, h)
+        .with_simd(false)
+        .with_rgba(&mut out_be_rgba)
+        .unwrap()
+        .with_rgba_u16(&mut out_be_rgba_u16)
+        .unwrap();
+      $walker(&frame_be, true, ColorMatrix::Bt709, &mut sink_be).unwrap();
+
+      assert_eq!(
+        out_le_rgba,
+        out_be_rgba,
+        concat!(stringify!($marker), " RGBA u8 LE/BE outputs diverge"),
+      );
+      assert_eq!(
+        out_le_rgba_u16,
+        out_be_rgba_u16,
+        concat!(stringify!($marker), " RGBA u16 LE/BE outputs diverge"),
+      );
+    }
+  };
+}
+
+gbrap_le_be_roundtrip!(
+  gbrap10_le_be_roundtrip,
+  Gbrap10,
+  Gbrap10LeFrame,
+  Gbrap10BeFrame,
+  gbrap10_to,
+  10
+);
+gbrap_le_be_roundtrip!(
+  gbrap12_le_be_roundtrip,
+  Gbrap12,
+  Gbrap12LeFrame,
+  Gbrap12BeFrame,
+  gbrap12_to,
+  12
+);
+gbrap_le_be_roundtrip!(
+  gbrap14_le_be_roundtrip,
+  Gbrap14,
+  Gbrap14LeFrame,
+  Gbrap14BeFrame,
+  gbrap14_to,
+  14
+);
+gbrap_le_be_roundtrip!(
+  gbrap16_le_be_roundtrip,
+  Gbrap16,
+  Gbrap16LeFrame,
+  Gbrap16BeFrame,
+  gbrap16_to,
+  16
+);

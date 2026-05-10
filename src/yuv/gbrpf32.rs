@@ -1,22 +1,32 @@
-//! Walker for the `Gbrpf32` source format (`AV_PIX_FMT_GBRPF32LE`) — three
+//! Walker for the `Gbrpf32` source format (`AV_PIX_FMT_GBRPF32{LE,BE}`) — three
 //! full-resolution `f32` planes in **G, B, R** order.
 //!
 //! Nominal range `[0.0, 1.0]`; HDR values > 1.0 are permitted. Integer
 //! outputs clamp to `[0.0, 1.0]` before scaling; float outputs are
 //! lossless pass-through.
+//!
+//! The marker carries `<const BE: bool = false>`: `Gbrpf32`
+//! (= `Gbrpf32<false>`) is the LE source; `Gbrpf32<true>` is the BE source.
+//! The walker [`gbrpf32_to::<BE>`] propagates `BE` from
+//! [`Gbrpf32Frame<'_, BE>`] into the sinker dispatch.
 
 use crate::{PixelSink, SourceFormat, frame::Gbrpf32Frame, sealed::Sealed};
 
 /// Zero-sized marker for the planar GBR float-32 source format
-/// (`AV_PIX_FMT_GBRPF32LE`).
+/// (`AV_PIX_FMT_GBRPF32{LE,BE}`). `<const BE: bool>` defaults to `false`
+/// (LE).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct Gbrpf32;
+pub struct Gbrpf32<const BE: bool = false>;
 
-impl Sealed for Gbrpf32 {}
-impl SourceFormat for Gbrpf32 {}
+impl<const BE: bool> Sealed for Gbrpf32<BE> {}
+impl<const BE: bool> SourceFormat for Gbrpf32<BE> {}
 
 /// One output row from a [`Gbrpf32Frame`] — three full-width `f32` slices
 /// in G / B / R order. Use [`Self::g`] / [`Self::b`] / [`Self::r`].
+///
+/// The Row type is **not** parameterized on `BE` — Row is just borrowed
+/// samples; the kernel monomorphization picks up `BE` from the sinker
+/// type's `MixedSinker<Gbrpf32<BE>>` parameterization.
 #[derive(Debug, Clone, Copy)]
 pub struct Gbrpf32Row<'a> {
   g: &'a [f32],
@@ -53,11 +63,24 @@ impl<'a> Gbrpf32Row<'a> {
   }
 }
 
-/// Sinks that consume rows of a [`Gbrpf32`] source.
-pub trait Gbrpf32Sink: for<'a> PixelSink<Input<'a> = Gbrpf32Row<'a>> {}
+/// Sinks that consume rows of a [`Gbrpf32`] source. The `<const BE>`
+/// parameter encodes the source byte-order (LE bit pattern vs BE bit
+/// pattern of the f32). Defaults to `false` (LE) for back-compat.
+pub trait Gbrpf32Sink<const BE: bool = false>:
+  for<'a> PixelSink<Input<'a> = Gbrpf32Row<'a>>
+{
+}
 
-/// Walks a [`Gbrpf32Frame`] row by row, dispatching each row to the sink.
-pub fn gbrpf32_to<S: Gbrpf32Sink>(src: &Gbrpf32Frame<'_>, sink: &mut S) -> Result<(), S::Error> {
+/// Walks a [`Gbrpf32Frame<'_, BE>`] row by row, dispatching each row to the
+/// sink. Propagates `<const BE: bool>` from the frame into
+/// [`Gbrpf32Sink<BE>`].
+pub fn gbrpf32_to<S, const BE: bool>(
+  src: &Gbrpf32Frame<'_, BE>,
+  sink: &mut S,
+) -> Result<(), S::Error>
+where
+  S: Gbrpf32Sink<BE>,
+{
   sink.begin_frame(src.width(), src.height())?;
 
   let w = src.width() as usize;
@@ -81,7 +104,7 @@ pub fn gbrpf32_to<S: Gbrpf32Sink>(src: &Gbrpf32Frame<'_>, sink: &mut S) -> Resul
 #[cfg(all(test, feature = "std"))]
 mod tests {
   use super::*;
-  use crate::{PixelSink, frame::Gbrpf32Frame};
+  use crate::{PixelSink, frame::Gbrpf32LeFrame};
   use core::convert::Infallible;
 
   struct CountingSink {
@@ -110,7 +133,7 @@ mod tests {
   fn gbrpf32_walker_visits_every_row_once() {
     // 4 px × 4 rows, tight stride
     let buf = std::vec![0.5f32; 4 * 4];
-    let frame = Gbrpf32Frame::try_new(&buf, &buf, &buf, 4, 4, 4, 4, 4).unwrap();
+    let frame = Gbrpf32LeFrame::try_new(&buf, &buf, &buf, 4, 4, 4, 4, 4).unwrap();
     let mut sink = CountingSink {
       rows_seen: 0,
       last_g_len: 0,

@@ -1,19 +1,24 @@
-//! Walker for the `Gbrapf16` source format (`AV_PIX_FMT_GBRAPF16LE`) — four
+//! Walker for the `Gbrapf16` source format (`AV_PIX_FMT_GBRAPF16{LE,BE}`) — four
 //! full-resolution `half::f16` planes in **G, B, R, A** order.
 //!
 //! Alpha is real per-pixel; nominal range `[0.0, 1.0]` (opaque = 1.0).
 //! Integer outputs widen to `f32` then clamp; float outputs are lossless
 //! interleave.
+//!
+//! The marker carries `<const BE: bool = false>`: `Gbrapf16`
+//! (= `Gbrapf16<false>`) is the LE source; `Gbrapf16<true>` is the BE
+//! source. The walker [`gbrapf16_to::<BE>`] propagates `BE` from
+//! [`Gbrapf16Frame<'_, BE>`] into the sinker dispatch.
 
 use crate::{PixelSink, SourceFormat, frame::Gbrapf16Frame, sealed::Sealed};
 
 /// Zero-sized marker for the planar GBRAP float-16 source format
-/// (`AV_PIX_FMT_GBRAPF16LE`).
+/// (`AV_PIX_FMT_GBRAPF16{LE,BE}`). `<const BE: bool>` defaults to `false`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct Gbrapf16;
+pub struct Gbrapf16<const BE: bool = false>;
 
-impl Sealed for Gbrapf16 {}
-impl SourceFormat for Gbrapf16 {}
+impl<const BE: bool> Sealed for Gbrapf16<BE> {}
+impl<const BE: bool> SourceFormat for Gbrapf16<BE> {}
 
 /// One output row from a [`Gbrapf16Frame`] — four full-width `half::f16`
 /// slices in G / B / R / A order. Use [`Self::g`] / [`Self::b`] /
@@ -66,11 +71,23 @@ impl<'a> Gbrapf16Row<'a> {
   }
 }
 
-/// Sinks that consume rows of a [`Gbrapf16`] source.
-pub trait Gbrapf16Sink: for<'a> PixelSink<Input<'a> = Gbrapf16Row<'a>> {}
+/// Sinks that consume rows of a [`Gbrapf16`] source. Defaults to LE
+/// (`BE = false`) for back-compat.
+pub trait Gbrapf16Sink<const BE: bool = false>:
+  for<'a> PixelSink<Input<'a> = Gbrapf16Row<'a>>
+{
+}
 
-/// Walks a [`Gbrapf16Frame`] row by row, dispatching each row to the sink.
-pub fn gbrapf16_to<S: Gbrapf16Sink>(src: &Gbrapf16Frame<'_>, sink: &mut S) -> Result<(), S::Error> {
+/// Walks a [`Gbrapf16Frame<'_, BE>`] row by row, dispatching each row to
+/// the sink. Propagates `<const BE: bool>` from the frame into
+/// [`Gbrapf16Sink<BE>`].
+pub fn gbrapf16_to<S, const BE: bool>(
+  src: &Gbrapf16Frame<'_, BE>,
+  sink: &mut S,
+) -> Result<(), S::Error>
+where
+  S: Gbrapf16Sink<BE>,
+{
   sink.begin_frame(src.width(), src.height())?;
 
   let w = src.width() as usize;
@@ -97,7 +114,7 @@ pub fn gbrapf16_to<S: Gbrapf16Sink>(src: &Gbrapf16Frame<'_>, sink: &mut S) -> Re
 #[cfg(all(test, feature = "std"))]
 mod tests {
   use super::*;
-  use crate::{PixelSink, frame::Gbrapf16Frame};
+  use crate::{PixelSink, frame::Gbrapf16LeFrame};
   use core::convert::Infallible;
 
   struct CountingSink {
@@ -125,7 +142,7 @@ mod tests {
   #[test]
   fn gbrapf16_walker_visits_every_row_once() {
     let buf = std::vec![half::f16::ONE; 4 * 4];
-    let frame = Gbrapf16Frame::try_new(&buf, &buf, &buf, &buf, 4, 4, 4, 4, 4, 4).unwrap();
+    let frame = Gbrapf16LeFrame::try_new(&buf, &buf, &buf, &buf, 4, 4, 4, 4, 4, 4).unwrap();
     let mut sink = CountingSink {
       rows_seen: 0,
       last_a_len: 0,

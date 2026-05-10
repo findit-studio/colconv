@@ -479,6 +479,316 @@ macro_rules! walker {
     }
   };
 
+  // ---------- planar3_bits_be (3 planes: Y/U/V, BITS + BE generic) ---------
+  //
+  // Phase 4 — Frame BE flag, Tier 10b. Same shape as `planar3_bits` (full
+  // chroma_h + full chroma_v only — the GBR planar layout has no chroma
+  // subsampling), but the marker, Sink subtrait, walker fn, and walker_inner
+  // carry a `<const BE: bool>` parameter (defaulted on the marker / Sink to
+  // `false` for back-compat). The generic frame is expected to be
+  // `<'a, const BITS: u32, const BE: bool>` (defaulted to `false`); the
+  // per-format frame alias is `<'a, const BE: bool>` and is bound here.
+  //
+  // The Row type is **not** parameterized on BE — Row is just borrowed
+  // samples; the kernel monomorphization picks up `BE` from the sinker
+  // type's `MixedSinker<Marker<BE>>` parameterization.
+  //
+  // Used by Tier 10b: Gbrp9/10/12/14/16.
+  (
+    planar3_bits_be {
+      $(#[$marker_meta:meta])*
+      marker: $marker:ident,
+      frame: $frame:ident,
+      generic_frame: $gframe:ident,
+      bits: $bits:expr,
+      row: $row:ident,
+      sink: $sink:ident,
+      walker: $walker:ident,
+      walker_inner: $walker_inner:ident,
+      elem_type: $elem:ty,
+      $(#[$row_meta:meta])*
+      row_doc: $row_doc:expr,
+      $(#[$walker_meta:meta])*
+      walker_doc: $walker_doc:expr,
+    }
+  ) => {
+    $(#[$marker_meta])*
+    pub struct $marker<const BE: bool = false>;
+
+    impl<const BE: bool> $crate::sealed::Sealed for $marker<BE> {}
+    impl<const BE: bool> $crate::SourceFormat for $marker<BE> {}
+
+    $(#[$row_meta])*
+    #[doc = $row_doc]
+    #[derive(Debug, Clone, Copy)]
+    pub struct $row<'a> {
+      y: &'a [$elem],
+      u: &'a [$elem],
+      v: &'a [$elem],
+      row: usize,
+      matrix: $crate::ColorMatrix,
+      full_range: bool,
+    }
+
+    impl<'a> $row<'a> {
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      #[allow(clippy::too_many_arguments)]
+      pub(crate) fn new(
+        y: &'a [$elem],
+        u: &'a [$elem],
+        v: &'a [$elem],
+        row: usize,
+        matrix: $crate::ColorMatrix,
+        full_range: bool,
+      ) -> Self {
+        Self { y, u, v, row, matrix, full_range }
+      }
+      /// Full-width Y row.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn y(&self) -> &'a [$elem] {
+        self.y
+      }
+      /// Full-width U row.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn u(&self) -> &'a [$elem] {
+        self.u
+      }
+      /// Full-width V row.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn v(&self) -> &'a [$elem] {
+        self.v
+      }
+      /// Output row index within the frame.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn row(&self) -> usize {
+        self.row
+      }
+      /// Conversion matrix carried through from the kernel call.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn matrix(&self) -> $crate::ColorMatrix {
+        self.matrix
+      }
+      /// Full-range flag carried through from the kernel call.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn full_range(&self) -> bool {
+        self.full_range
+      }
+    }
+
+    /// Sinks that consume rows of this source format. The `<const BE>`
+    /// parameter encodes the source byte-order — sinkers typically impl
+    /// for one specific `BE` matching their stored `MixedSinker<Marker<BE>>`
+    /// monomorphization. Defaults to `false` (LE) for back-compat.
+    pub trait $sink<const BE: bool = false>:
+      for<'a> $crate::PixelSink<Input<'a> = $row<'a>>
+    {}
+
+    $(#[$walker_meta])*
+    #[doc = $walker_doc]
+    pub fn $walker<S, const BE: bool>(
+      src: &$frame<'_, BE>,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error>
+    where
+      S: $sink<BE>,
+    {
+      $walker_inner::<{ $bits }, BE, S>(src, full_range, matrix, sink)
+    }
+
+    #[cfg_attr(not(tarpaulin), inline(always))]
+    fn $walker_inner<const BITS: u32, const BE: bool, S>(
+      src: &$gframe<'_, BITS, BE>,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error>
+    where
+      S: $sink<BE>,
+    {
+      sink.begin_frame(src.width(), src.height())?;
+
+      let w = src.width() as usize;
+      let h = src.height() as usize;
+      let y_stride = src.y_stride() as usize;
+      let u_stride = src.u_stride() as usize;
+      let v_stride = src.v_stride() as usize;
+
+      let y_plane = src.y();
+      let u_plane = src.u();
+      let v_plane = src.v();
+
+      for row in 0..h {
+        let y_start = row * y_stride;
+        let y = &y_plane[y_start..y_start + w];
+
+        let u_start = row * u_stride;
+        let v_start = row * v_stride;
+        let u = &u_plane[u_start..u_start + w];
+        let v = &v_plane[v_start..v_start + w];
+
+        sink.process($row::new(y, u, v, row, matrix, full_range))?;
+      }
+      Ok(())
+    }
+  };
+
+  // ---------- planar4_bits_be (4 planes: Y/U/V/A, BITS + BE generic) -------
+  //
+  // Phase 4 — Frame BE flag, Tier 10b. Same shape as `planar4_bits` (full
+  // chroma_h + full chroma_v only) with `<const BE: bool>` propagation.
+  // Used by Tier 10b: Gbrap10/12/14/16.
+  (
+    planar4_bits_be {
+      $(#[$marker_meta:meta])*
+      marker: $marker:ident,
+      frame: $frame:ident,
+      generic_frame: $gframe:ident,
+      bits: $bits:expr,
+      row: $row:ident,
+      sink: $sink:ident,
+      walker: $walker:ident,
+      walker_inner: $walker_inner:ident,
+      elem_type: $elem:ty,
+      $(#[$row_meta:meta])*
+      row_doc: $row_doc:expr,
+      $(#[$walker_meta:meta])*
+      walker_doc: $walker_doc:expr,
+    }
+  ) => {
+    $(#[$marker_meta])*
+    pub struct $marker<const BE: bool = false>;
+
+    impl<const BE: bool> $crate::sealed::Sealed for $marker<BE> {}
+    impl<const BE: bool> $crate::SourceFormat for $marker<BE> {}
+
+    $(#[$row_meta])*
+    #[doc = $row_doc]
+    #[derive(Debug, Clone, Copy)]
+    pub struct $row<'a> {
+      y: &'a [$elem],
+      u: &'a [$elem],
+      v: &'a [$elem],
+      a: &'a [$elem],
+      row: usize,
+      matrix: $crate::ColorMatrix,
+      full_range: bool,
+    }
+
+    impl<'a> $row<'a> {
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      #[allow(clippy::too_many_arguments)]
+      pub(crate) fn new(
+        y: &'a [$elem],
+        u: &'a [$elem],
+        v: &'a [$elem],
+        a: &'a [$elem],
+        row: usize,
+        matrix: $crate::ColorMatrix,
+        full_range: bool,
+      ) -> Self {
+        Self { y, u, v, a, row, matrix, full_range }
+      }
+      /// Full-width Y row.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn y(&self) -> &'a [$elem] {
+        self.y
+      }
+      /// Full-width U row.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn u(&self) -> &'a [$elem] {
+        self.u
+      }
+      /// Full-width V row.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn v(&self) -> &'a [$elem] {
+        self.v
+      }
+      /// Full-width alpha row.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub fn a(&self) -> &'a [$elem] {
+        self.a
+      }
+      /// Output row index within the frame.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn row(&self) -> usize {
+        self.row
+      }
+      /// Conversion matrix carried through from the kernel call.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn matrix(&self) -> $crate::ColorMatrix {
+        self.matrix
+      }
+      /// Full-range flag carried through from the kernel call.
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn full_range(&self) -> bool {
+        self.full_range
+      }
+    }
+
+    /// Sinks that consume rows of this source format. Defaults to `false`
+    /// (LE) for back-compat.
+    pub trait $sink<const BE: bool = false>:
+      for<'a> $crate::PixelSink<Input<'a> = $row<'a>>
+    {}
+
+    $(#[$walker_meta])*
+    #[doc = $walker_doc]
+    pub fn $walker<S, const BE: bool>(
+      src: &$frame<'_, BE>,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error>
+    where
+      S: $sink<BE>,
+    {
+      $walker_inner::<{ $bits }, BE, S>(src, full_range, matrix, sink)
+    }
+
+    #[cfg_attr(not(tarpaulin), inline(always))]
+    fn $walker_inner<const BITS: u32, const BE: bool, S>(
+      src: &$gframe<'_, BITS, BE>,
+      full_range: bool,
+      matrix: $crate::ColorMatrix,
+      sink: &mut S,
+    ) -> Result<(), S::Error>
+    where
+      S: $sink<BE>,
+    {
+      sink.begin_frame(src.width(), src.height())?;
+
+      let w = src.width() as usize;
+      let h = src.height() as usize;
+      let y_stride = src.y_stride() as usize;
+      let u_stride = src.u_stride() as usize;
+      let v_stride = src.v_stride() as usize;
+      let a_stride = src.a_stride() as usize;
+
+      let y_plane = src.y();
+      let u_plane = src.u();
+      let v_plane = src.v();
+      let a_plane = src.a();
+
+      for row in 0..h {
+        let y_start = row * y_stride;
+        let y = &y_plane[y_start..y_start + w];
+
+        let u_start = row * u_stride;
+        let v_start = row * v_stride;
+        let u = &u_plane[u_start..u_start + w];
+        let v = &v_plane[v_start..v_start + w];
+
+        let a_start = row * a_stride;
+        let a = &a_plane[a_start..a_start + w];
+
+        sink.process($row::new(y, u, v, a, row, matrix, full_range))?;
+      }
+      Ok(())
+    }
+  };
+
   // ---------- semi-planar (2 planes: Y + interleaved chroma) ---------------
   //
   // Used by Nv* (8-bit) and P*/P*1*/P*2*/P*4* (high-bit-packed u16)
