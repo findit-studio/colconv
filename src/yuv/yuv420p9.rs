@@ -7,19 +7,21 @@
 //! the AND-mask to `0x1FF` and the Q15 scale via
 //! `range_params_n::<9, _>`.
 
-use crate::frame::{Yuv420p9Frame, Yuv420pFrame16};
+use crate::frame::Yuv420pFrame16;
 
 walker! {
-  planar3_bits {
+  planar3_bits_be {
     /// Zero‑sized marker for the YUV 4:2:0 **9‑bit** source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuv420p9,
-    frame: Yuv420p9Frame<'_>,
-    generic_frame: Yuv420pFrame16<'_, BITS>,
+    frame: Yuv420pFrame16<'_, 9, BE>,
+    frame_le: Yuv420pFrame16<'_, 9, false>,
+    generic_frame: Yuv420pFrame16<'_, BITS, BE>,
     bits: 9,
     row: Yuv420p9Row,
     sink: Yuv420p9Sink,
     walker: yuv420p9_to,
+    walker_endian: yuv420p9_to_endian,
     walker_inner: yuv420p9_walker,
     elem_type: u16,
     chroma_h: half,

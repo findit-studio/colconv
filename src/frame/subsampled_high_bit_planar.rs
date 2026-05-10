@@ -73,7 +73,7 @@ use thiserror::Error;
 /// `height` may be odd and is handled via `height.div_ceil(2)` in
 /// chroma‑row sizing.
 #[derive(Debug, Clone, Copy)]
-pub struct Yuv420pFrame16<'a, const BITS: u32> {
+pub struct Yuv420pFrame16<'a, const BITS: u32, const BE: bool = false> {
   y: &'a [u16],
   u: &'a [u16],
   v: &'a [u16],
@@ -84,7 +84,7 @@ pub struct Yuv420pFrame16<'a, const BITS: u32> {
   v_stride: u32,
 }
 
-impl<'a, const BITS: u32> Yuv420pFrame16<'a, BITS> {
+impl<'a, const BITS: u32, const BE: bool> Yuv420pFrame16<'a, BITS, BE> {
   /// Constructs a new [`Yuv420pFrame16`], validating dimensions, plane
   /// lengths, and the `BITS` parameter.
   ///
@@ -282,7 +282,7 @@ impl<'a, const BITS: u32> Yuv420pFrame16<'a, BITS> {
       for (col, &s) in y[start..start + w].iter().enumerate() {
         // Normalize from LE-encoded wire to host-native before the
         // range check (no-op on LE host, byte-swap on BE host).
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::Y,
@@ -296,7 +296,7 @@ impl<'a, const BITS: u32> Yuv420pFrame16<'a, BITS> {
     for row in 0..chroma_h {
       let start = row * u_stride as usize;
       for (col, &s) in u[start..start + chroma_w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::U,
@@ -310,7 +310,7 @@ impl<'a, const BITS: u32> Yuv420pFrame16<'a, BITS> {
     for row in 0..chroma_h {
       let start = row * v_stride as usize;
       for (col, &s) in v[start..start + chroma_w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::V,
@@ -382,46 +382,71 @@ impl<'a, const BITS: u32> Yuv420pFrame16<'a, BITS> {
   pub const fn bits(&self) -> u32 {
     BITS
   }
+
+  /// Returns the compile-time BE flag — `true` if plane bytes are
+  /// BE-encoded (`AV_PIX_FMT_YUV420P*BE`), `false` if LE-encoded
+  /// (`AV_PIX_FMT_YUV420P*LE`). Runtime mirror of the
+  /// `<const BE: bool>` type parameter.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
+  }
 }
 
-/// Type alias for a validated YUV 4:2:0 planar frame at 10 bits per
-/// sample (`AV_PIX_FMT_YUV420P10LE`). Tight wrapper over
-/// [`Yuv420pFrame16`] with `BITS == 10` — use this name at call sites
-/// for readability.
+/// LE-encoded type alias for a validated YUV 4:2:0 planar frame at 10
+/// bits per sample (`AV_PIX_FMT_YUV420P10LE`). Tight wrapper over
+/// [`Yuv420pFrame16`] with `BITS == 10`, `BE == false`. The BE-encoded
+/// counterpart is [`Yuv420p10BeFrame`].
 pub type Yuv420p10Frame<'a> = Yuv420pFrame16<'a, 10>;
 
-/// Type alias for a validated YUV 4:2:0 planar frame at 9 bits per
-/// sample (`AV_PIX_FMT_YUV420P9LE`). Tight wrapper over
-/// [`Yuv420pFrame16`] with `BITS == 9` — same low‑bit‑packed `u16`
-/// layout as [`Yuv420p10Frame`] / [`Yuv420p12Frame`], just with 9
-/// active bits in the low 9 of each element (upper 7 bits zero).
-/// Niche format — AVC High 9 profile only; HEVC/VP9/AV1 don't
-/// produce 9-bit. Reuses the same Q15 i32 kernel family as 10/12/14.
+/// LE-encoded YUV 4:2:0 planar frame at 9 bits per sample
+/// (`AV_PIX_FMT_YUV420P9LE`). BE counterpart: [`Yuv420p9BeFrame`].
 pub type Yuv420p9Frame<'a> = Yuv420pFrame16<'a, 9>;
 
-/// Type alias for a validated YUV 4:2:0 planar frame at 12 bits per
-/// sample (`AV_PIX_FMT_YUV420P12LE`). Tight wrapper over
-/// [`Yuv420pFrame16`] with `BITS == 12` — same low‑bit‑packed `u16`
-/// layout as [`Yuv420p10Frame`], just with 12 active bits in the
-/// low 12 of each element (upper 4 bits zero).
+/// LE-encoded YUV 4:2:0 planar frame at 12 bits per sample
+/// (`AV_PIX_FMT_YUV420P12LE`). BE counterpart: [`Yuv420p12BeFrame`].
 pub type Yuv420p12Frame<'a> = Yuv420pFrame16<'a, 12>;
 
-/// Type alias for a validated YUV 4:2:0 planar frame at 14 bits per
-/// sample (`AV_PIX_FMT_YUV420P14LE`). Tight wrapper over
-/// [`Yuv420pFrame16`] with `BITS == 14` — same low‑bit‑packed `u16`
-/// layout as [`Yuv420p10Frame`], just with 14 active bits in the
-/// low 14 of each element (upper 2 bits zero).
+/// LE-encoded YUV 4:2:0 planar frame at 14 bits per sample
+/// (`AV_PIX_FMT_YUV420P14LE`). BE counterpart: [`Yuv420p14BeFrame`].
 pub type Yuv420p14Frame<'a> = Yuv420pFrame16<'a, 14>;
 
-/// Type alias for a validated YUV 4:2:0 planar frame at 16 bits per
-/// sample (`AV_PIX_FMT_YUV420P16LE`). Tight wrapper over
-/// [`Yuv420pFrame16`] with `BITS == 16` — the full `u16` range is
-/// active (no upper-bit zero guarantee). **Uses a parallel i64
-/// kernel family** because the Q15 chroma sum overflows i32 at
-/// 16 bits; scalar + SIMD kernels named `yuv_420p16_to_rgb_*`
-/// instead of the `yuv_420p_n_to_rgb_*<BITS>` family that covers
-/// 10/12/14.
+/// LE-encoded YUV 4:2:0 planar frame at 16 bits per sample
+/// (`AV_PIX_FMT_YUV420P16LE`). BE counterpart: [`Yuv420p16BeFrame`].
+/// **Uses a parallel i64 kernel family** because the Q15 chroma sum
+/// overflows i32 at 16 bits.
 pub type Yuv420p16Frame<'a> = Yuv420pFrame16<'a, 16>;
+
+// ---- Phase 4 — explicit LE/BE aliases for the 4:2:0 planar HB family ----
+//
+// The original aliases (`Yuv420p10Frame` etc.) default to `BE = false`
+// (LE-encoded plane bytes); the `*BeFrame` aliases pin `BE = true` for
+// callers who hold BE-encoded byte buffers (`AV_PIX_FMT_YUV420P*BE`).
+// The `*LeFrame` aliases mirror the default explicitly so callers that
+// want to document endianness at the type level can do so symmetrically
+// to the BE aliases.
+
+/// LE-encoded `Yuv420p9Frame` (`AV_PIX_FMT_YUV420P9LE`).
+pub type Yuv420p9LeFrame<'a> = Yuv420pFrame16<'a, 9, false>;
+/// BE-encoded `Yuv420p9Frame` (`AV_PIX_FMT_YUV420P9BE`). Plane bytes
+/// are byte-swapped at load by the row kernels.
+pub type Yuv420p9BeFrame<'a> = Yuv420pFrame16<'a, 9, true>;
+/// LE-encoded `Yuv420p10Frame` (`AV_PIX_FMT_YUV420P10LE`).
+pub type Yuv420p10LeFrame<'a> = Yuv420pFrame16<'a, 10, false>;
+/// BE-encoded `Yuv420p10Frame` (`AV_PIX_FMT_YUV420P10BE`).
+pub type Yuv420p10BeFrame<'a> = Yuv420pFrame16<'a, 10, true>;
+/// LE-encoded `Yuv420p12Frame` (`AV_PIX_FMT_YUV420P12LE`).
+pub type Yuv420p12LeFrame<'a> = Yuv420pFrame16<'a, 12, false>;
+/// BE-encoded `Yuv420p12Frame` (`AV_PIX_FMT_YUV420P12BE`).
+pub type Yuv420p12BeFrame<'a> = Yuv420pFrame16<'a, 12, true>;
+/// LE-encoded `Yuv420p14Frame` (`AV_PIX_FMT_YUV420P14LE`).
+pub type Yuv420p14LeFrame<'a> = Yuv420pFrame16<'a, 14, false>;
+/// BE-encoded `Yuv420p14Frame` (`AV_PIX_FMT_YUV420P14BE`).
+pub type Yuv420p14BeFrame<'a> = Yuv420pFrame16<'a, 14, true>;
+/// LE-encoded `Yuv420p16Frame` (`AV_PIX_FMT_YUV420P16LE`).
+pub type Yuv420p16LeFrame<'a> = Yuv420pFrame16<'a, 16, false>;
+/// BE-encoded `Yuv420p16Frame` (`AV_PIX_FMT_YUV420P16BE`).
+pub type Yuv420p16BeFrame<'a> = Yuv420pFrame16<'a, 16, true>;
 
 /// Errors returned by [`Yuv420pFrame16::try_new`]. Variant shape
 /// mirrors [`Yuv420pFrameError`], with `UnsupportedBits` added for
@@ -559,7 +584,7 @@ pub enum Yuv420pFrame16Plane {
 /// [`Yuv422p10Frame`] / [`Yuv422p12Frame`] / [`Yuv422p14Frame`] /
 /// [`Yuv422p16Frame`] aliases at call sites.
 #[derive(Debug, Clone, Copy)]
-pub struct Yuv422pFrame16<'a, const BITS: u32> {
+pub struct Yuv422pFrame16<'a, const BITS: u32, const BE: bool = false> {
   y: &'a [u16],
   u: &'a [u16],
   v: &'a [u16],
@@ -570,7 +595,7 @@ pub struct Yuv422pFrame16<'a, const BITS: u32> {
   v_stride: u32,
 }
 
-impl<'a, const BITS: u32> Yuv422pFrame16<'a, BITS> {
+impl<'a, const BITS: u32, const BE: bool> Yuv422pFrame16<'a, BITS, BE> {
   /// Constructs a new [`Yuv422pFrame16`].
   #[cfg_attr(not(tarpaulin), inline(always))]
   #[allow(clippy::too_many_arguments)]
@@ -732,7 +757,7 @@ impl<'a, const BITS: u32> Yuv422pFrame16<'a, BITS> {
     for row in 0..h {
       let start = row * y_stride as usize;
       for (col, &s) in y[start..start + w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::Y,
@@ -746,7 +771,7 @@ impl<'a, const BITS: u32> Yuv422pFrame16<'a, BITS> {
     for row in 0..chroma_h {
       let start = row * u_stride as usize;
       for (col, &s) in u[start..start + chroma_w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::U,
@@ -760,7 +785,7 @@ impl<'a, const BITS: u32> Yuv422pFrame16<'a, BITS> {
     for row in 0..chroma_h {
       let start = row * v_stride as usize;
       for (col, &s) in v[start..start + chroma_w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::V,
@@ -819,27 +844,59 @@ impl<'a, const BITS: u32> Yuv422pFrame16<'a, BITS> {
   pub const fn bits(&self) -> u32 {
     BITS
   }
+  /// Compile-time BE flag mirror — `true` if plane bytes are BE-encoded
+  /// (`AV_PIX_FMT_YUV422P*BE`), `false` if LE-encoded.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
+  }
 }
 
-/// 4:2:2 planar, 9-bit (`AV_PIX_FMT_YUV422P9LE`). Alias over
-/// [`Yuv422pFrame16`]`<9>`. Niche format; reuses the same Q15 i32
-/// kernel family as the 10/12/14 siblings.
+/// LE-encoded 4:2:2 planar, 9-bit (`AV_PIX_FMT_YUV422P9LE`). BE
+/// counterpart: [`Yuv422p9BeFrame`].
 pub type Yuv422p9Frame<'a> = Yuv422pFrame16<'a, 9>;
-/// 4:2:2 planar, 10-bit. Alias over [`Yuv422pFrame16`]`<10>`.
+/// LE-encoded 4:2:2 planar, 10-bit (`AV_PIX_FMT_YUV422P10LE`). BE
+/// counterpart: [`Yuv422p10BeFrame`].
 pub type Yuv422p10Frame<'a> = Yuv422pFrame16<'a, 10>;
-/// 4:2:2 planar, 12-bit. Alias over [`Yuv422pFrame16`]`<12>`.
+/// LE-encoded 4:2:2 planar, 12-bit (`AV_PIX_FMT_YUV422P12LE`). BE
+/// counterpart: [`Yuv422p12BeFrame`].
 pub type Yuv422p12Frame<'a> = Yuv422pFrame16<'a, 12>;
-/// 4:2:2 planar, 14-bit. Alias over [`Yuv422pFrame16`]`<14>`.
+/// LE-encoded 4:2:2 planar, 14-bit (`AV_PIX_FMT_YUV422P14LE`). BE
+/// counterpart: [`Yuv422p14BeFrame`].
 pub type Yuv422p14Frame<'a> = Yuv422pFrame16<'a, 14>;
-/// 4:2:2 planar, 16-bit. Alias over [`Yuv422pFrame16`]`<16>`. Uses
-/// the parallel i64 kernel family (see `yuv_422p16_to_rgb_*`).
+/// LE-encoded 4:2:2 planar, 16-bit (`AV_PIX_FMT_YUV422P16LE`). BE
+/// counterpart: [`Yuv422p16BeFrame`]. Uses the parallel i64 kernel
+/// family.
 pub type Yuv422p16Frame<'a> = Yuv422pFrame16<'a, 16>;
+
+// ---- Phase 4 — explicit LE/BE aliases for the 4:2:2 planar HB family ----
+
+/// LE-encoded `Yuv422p9Frame` (`AV_PIX_FMT_YUV422P9LE`).
+pub type Yuv422p9LeFrame<'a> = Yuv422pFrame16<'a, 9, false>;
+/// BE-encoded `Yuv422p9Frame` (`AV_PIX_FMT_YUV422P9BE`).
+pub type Yuv422p9BeFrame<'a> = Yuv422pFrame16<'a, 9, true>;
+/// LE-encoded `Yuv422p10Frame` (`AV_PIX_FMT_YUV422P10LE`).
+pub type Yuv422p10LeFrame<'a> = Yuv422pFrame16<'a, 10, false>;
+/// BE-encoded `Yuv422p10Frame` (`AV_PIX_FMT_YUV422P10BE`).
+pub type Yuv422p10BeFrame<'a> = Yuv422pFrame16<'a, 10, true>;
+/// LE-encoded `Yuv422p12Frame` (`AV_PIX_FMT_YUV422P12LE`).
+pub type Yuv422p12LeFrame<'a> = Yuv422pFrame16<'a, 12, false>;
+/// BE-encoded `Yuv422p12Frame` (`AV_PIX_FMT_YUV422P12BE`).
+pub type Yuv422p12BeFrame<'a> = Yuv422pFrame16<'a, 12, true>;
+/// LE-encoded `Yuv422p14Frame` (`AV_PIX_FMT_YUV422P14LE`).
+pub type Yuv422p14LeFrame<'a> = Yuv422pFrame16<'a, 14, false>;
+/// BE-encoded `Yuv422p14Frame` (`AV_PIX_FMT_YUV422P14BE`).
+pub type Yuv422p14BeFrame<'a> = Yuv422pFrame16<'a, 14, true>;
+/// LE-encoded `Yuv422p16Frame` (`AV_PIX_FMT_YUV422P16LE`).
+pub type Yuv422p16LeFrame<'a> = Yuv422pFrame16<'a, 16, false>;
+/// BE-encoded `Yuv422p16Frame` (`AV_PIX_FMT_YUV422P16BE`).
+pub type Yuv422p16BeFrame<'a> = Yuv422pFrame16<'a, 16, true>;
 
 /// A validated planar 4:4:4 `u16`-backed frame, generic over
 /// `const BITS: u32 ∈ {10, 12, 14, 16}`. All three planes are
 /// full-size. No width parity constraint.
 #[derive(Debug, Clone, Copy)]
-pub struct Yuv444pFrame16<'a, const BITS: u32> {
+pub struct Yuv444pFrame16<'a, const BITS: u32, const BE: bool = false> {
   y: &'a [u16],
   u: &'a [u16],
   v: &'a [u16],
@@ -850,7 +907,7 @@ pub struct Yuv444pFrame16<'a, const BITS: u32> {
   v_stride: u32,
 }
 
-impl<'a, const BITS: u32> Yuv444pFrame16<'a, BITS> {
+impl<'a, const BITS: u32, const BE: bool> Yuv444pFrame16<'a, BITS, BE> {
   /// Constructs a new [`Yuv444pFrame16`].
   #[cfg_attr(not(tarpaulin), inline(always))]
   #[allow(clippy::too_many_arguments)]
@@ -1004,7 +1061,7 @@ impl<'a, const BITS: u32> Yuv444pFrame16<'a, BITS> {
     for row in 0..h {
       let start = row * y_stride as usize;
       for (col, &s) in y[start..start + w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::Y,
@@ -1018,7 +1075,7 @@ impl<'a, const BITS: u32> Yuv444pFrame16<'a, BITS> {
     for row in 0..h {
       let start = row * u_stride as usize;
       for (col, &s) in u[start..start + w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::U,
@@ -1032,7 +1089,7 @@ impl<'a, const BITS: u32> Yuv444pFrame16<'a, BITS> {
     for row in 0..h {
       let start = row * v_stride as usize;
       for (col, &s) in v[start..start + w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::V,
@@ -1091,21 +1148,48 @@ impl<'a, const BITS: u32> Yuv444pFrame16<'a, BITS> {
   pub const fn bits(&self) -> u32 {
     BITS
   }
+  /// Compile-time BE flag mirror — `true` if plane bytes are BE-encoded
+  /// (`AV_PIX_FMT_YUV444P*BE`), `false` if LE-encoded.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
+  }
 }
 
-/// 4:4:4 planar, 9-bit (`AV_PIX_FMT_YUV444P9LE`). Alias over
-/// [`Yuv444pFrame16`]`<9>`. Niche; reuses the same Q15 i32 kernel
-/// family as the 10/12/14 siblings.
+/// LE-encoded 4:4:4 planar, 9-bit (`AV_PIX_FMT_YUV444P9LE`).
 pub type Yuv444p9Frame<'a> = Yuv444pFrame16<'a, 9>;
-/// 4:4:4 planar, 10-bit. Alias over [`Yuv444pFrame16`]`<10>`.
+/// LE-encoded 4:4:4 planar, 10-bit (`AV_PIX_FMT_YUV444P10LE`).
 pub type Yuv444p10Frame<'a> = Yuv444pFrame16<'a, 10>;
-/// 4:4:4 planar, 12-bit. Alias over [`Yuv444pFrame16`]`<12>`.
+/// LE-encoded 4:4:4 planar, 12-bit (`AV_PIX_FMT_YUV444P12LE`).
 pub type Yuv444p12Frame<'a> = Yuv444pFrame16<'a, 12>;
-/// 4:4:4 planar, 14-bit. Alias over [`Yuv444pFrame16`]`<14>`.
+/// LE-encoded 4:4:4 planar, 14-bit (`AV_PIX_FMT_YUV444P14LE`).
 pub type Yuv444p14Frame<'a> = Yuv444pFrame16<'a, 14>;
-/// 4:4:4 planar, 16-bit. Alias over [`Yuv444pFrame16`]`<16>`. Uses
-/// the parallel i64 kernel family (see `yuv_444p16_to_rgb_*`).
+/// LE-encoded 4:4:4 planar, 16-bit (`AV_PIX_FMT_YUV444P16LE`). Uses
+/// the parallel i64 kernel family.
 pub type Yuv444p16Frame<'a> = Yuv444pFrame16<'a, 16>;
+
+// ---- Phase 4 — explicit LE/BE aliases for the 4:4:4 planar HB family ----
+
+/// LE-encoded `Yuv444p9Frame` (`AV_PIX_FMT_YUV444P9LE`).
+pub type Yuv444p9LeFrame<'a> = Yuv444pFrame16<'a, 9, false>;
+/// BE-encoded `Yuv444p9Frame` (`AV_PIX_FMT_YUV444P9BE`).
+pub type Yuv444p9BeFrame<'a> = Yuv444pFrame16<'a, 9, true>;
+/// LE-encoded `Yuv444p10Frame` (`AV_PIX_FMT_YUV444P10LE`).
+pub type Yuv444p10LeFrame<'a> = Yuv444pFrame16<'a, 10, false>;
+/// BE-encoded `Yuv444p10Frame` (`AV_PIX_FMT_YUV444P10BE`).
+pub type Yuv444p10BeFrame<'a> = Yuv444pFrame16<'a, 10, true>;
+/// LE-encoded `Yuv444p12Frame` (`AV_PIX_FMT_YUV444P12LE`).
+pub type Yuv444p12LeFrame<'a> = Yuv444pFrame16<'a, 12, false>;
+/// BE-encoded `Yuv444p12Frame` (`AV_PIX_FMT_YUV444P12BE`).
+pub type Yuv444p12BeFrame<'a> = Yuv444pFrame16<'a, 12, true>;
+/// LE-encoded `Yuv444p14Frame` (`AV_PIX_FMT_YUV444P14LE`).
+pub type Yuv444p14LeFrame<'a> = Yuv444pFrame16<'a, 14, false>;
+/// BE-encoded `Yuv444p14Frame` (`AV_PIX_FMT_YUV444P14BE`).
+pub type Yuv444p14BeFrame<'a> = Yuv444pFrame16<'a, 14, true>;
+/// LE-encoded `Yuv444p16Frame` (`AV_PIX_FMT_YUV444P16LE`).
+pub type Yuv444p16LeFrame<'a> = Yuv444pFrame16<'a, 16, false>;
+/// BE-encoded `Yuv444p16Frame` (`AV_PIX_FMT_YUV444P16BE`).
+pub type Yuv444p16BeFrame<'a> = Yuv444pFrame16<'a, 16, true>;
 
 /// Errors returned by [`Yuv440pFrame16::try_new`] and
 /// [`Yuv440pFrame16::try_new_checked`]. Transparent alias of
@@ -1128,7 +1212,7 @@ pub type Yuv440pFrame16Error = Yuv420pFrame16Error;
 /// FFmpeg variants: `yuv440p10le`, `yuv440p12le`. No 9/14/16-bit
 /// variants exist in FFmpeg, so [`Self::try_new`] rejects them.
 #[derive(Debug, Clone, Copy)]
-pub struct Yuv440pFrame16<'a, const BITS: u32> {
+pub struct Yuv440pFrame16<'a, const BITS: u32, const BE: bool = false> {
   y: &'a [u16],
   u: &'a [u16],
   v: &'a [u16],
@@ -1139,7 +1223,7 @@ pub struct Yuv440pFrame16<'a, const BITS: u32> {
   v_stride: u32,
 }
 
-impl<'a, const BITS: u32> Yuv440pFrame16<'a, BITS> {
+impl<'a, const BITS: u32, const BE: bool> Yuv440pFrame16<'a, BITS, BE> {
   /// Constructs a new [`Yuv440pFrame16`].
   #[cfg_attr(not(tarpaulin), inline(always))]
   #[allow(clippy::too_many_arguments)]
@@ -1293,7 +1377,7 @@ impl<'a, const BITS: u32> Yuv440pFrame16<'a, BITS> {
     for row in 0..h {
       let start = row * y_stride as usize;
       for (col, &s) in y[start..start + w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::Y,
@@ -1307,7 +1391,7 @@ impl<'a, const BITS: u32> Yuv440pFrame16<'a, BITS> {
     for row in 0..chroma_h {
       let start = row * u_stride as usize;
       for (col, &s) in u[start..start + w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::U,
@@ -1321,7 +1405,7 @@ impl<'a, const BITS: u32> Yuv440pFrame16<'a, BITS> {
     for row in 0..chroma_h {
       let start = row * v_stride as usize;
       for (col, &s) in v[start..start + w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuv420pFrame16Error::SampleOutOfRange {
             plane: Yuv420pFrame16Plane::V,
@@ -1380,11 +1464,26 @@ impl<'a, const BITS: u32> Yuv440pFrame16<'a, BITS> {
   pub const fn bits(&self) -> u32 {
     BITS
   }
+  /// Compile-time BE flag mirror — `true` if plane bytes are BE-encoded
+  /// (`AV_PIX_FMT_YUV440P*BE`), `false` if LE-encoded.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
+  }
 }
 
-/// 4:4:0 planar, 10-bit (`AV_PIX_FMT_YUV440P10LE`). Alias over
-/// [`Yuv440pFrame16`]`<10>`.
+/// LE-encoded 4:4:0 planar, 10-bit (`AV_PIX_FMT_YUV440P10LE`).
 pub type Yuv440p10Frame<'a> = Yuv440pFrame16<'a, 10>;
-/// 4:4:0 planar, 12-bit (`AV_PIX_FMT_YUV440P12LE`). Alias over
-/// [`Yuv440pFrame16`]`<12>`.
+/// LE-encoded 4:4:0 planar, 12-bit (`AV_PIX_FMT_YUV440P12LE`).
 pub type Yuv440p12Frame<'a> = Yuv440pFrame16<'a, 12>;
+
+// ---- Phase 4 — explicit LE/BE aliases for the 4:4:0 planar HB family ----
+
+/// LE-encoded `Yuv440p10Frame` (`AV_PIX_FMT_YUV440P10LE`).
+pub type Yuv440p10LeFrame<'a> = Yuv440pFrame16<'a, 10, false>;
+/// BE-encoded `Yuv440p10Frame` (`AV_PIX_FMT_YUV440P10BE`).
+pub type Yuv440p10BeFrame<'a> = Yuv440pFrame16<'a, 10, true>;
+/// LE-encoded `Yuv440p12Frame` (`AV_PIX_FMT_YUV440P12LE`).
+pub type Yuv440p12LeFrame<'a> = Yuv440pFrame16<'a, 12, false>;
+/// BE-encoded `Yuv440p12Frame` (`AV_PIX_FMT_YUV440P12BE`).
+pub type Yuv440p12BeFrame<'a> = Yuv440pFrame16<'a, 12, true>;

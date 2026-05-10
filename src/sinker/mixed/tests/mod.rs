@@ -19,6 +19,7 @@ mod packed_rgb_float;
 mod packed_yuv_4_1_1;
 mod packed_yuv_8bit;
 mod pal8;
+mod phase4_yuv_hb_be_roundtrip;
 mod planar_gbr;
 mod planar_gbr_float;
 mod planar_gbr_high_bit;

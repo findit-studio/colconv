@@ -15,18 +15,20 @@
 //! each `u16` load right by 6 to extract the 10‑bit value before
 //! running the same Q15 pipeline used by [`super::Yuv420p10`].
 
-use crate::frame::P010Frame;
+use crate::frame::PnFrame;
 
 walker! {
-  semi_planar {
+  semi_planar_be {
     /// Zero‑sized marker for the P010 source format. Used as the `F` type
     /// parameter on [`crate::sinker::MixedSinker`].
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: P010,
-    frame: P010Frame<'_>,
+    frame: PnFrame<'_, 10, BE>,
+    frame_le: PnFrame<'_, 10, false>,
     row: P010Row,
     sink: P010Sink,
     walker: p010_to,
+    walker_endian: p010_to_endian,
     elem_type: u16,
     chroma_field: uv_half,
     chroma_plane: uv,
@@ -39,5 +41,24 @@ walker! {
               is high-bit-packed (10 active bits in the high 10 of each element).",
     walker_doc: "Converts a P010 frame by walking its rows and feeding each one to\n\
                  the [`P010Sink`]. `chroma_row = row / 2` (4:2:0).",
+  }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+  use super::*;
+  use crate::ColorMatrix;
+
+  // Compile-pass regression for the codex round-1 finding on PR #110
+  // (`semi_planar_be` arm). The macro emits an LE-only `p010_to` wrapper
+  // alongside the const-generic `p010_to_endian` so explicit-turbofish
+  // callers like `p010_to::<MySink>(...)` keep compiling.
+  #[test]
+  fn p010_to_explicit_turbofish_one_generic_compiles() {
+    #[allow(clippy::type_complexity)]
+    fn _check<S: P010Sink>() {
+      let _: fn(&crate::frame::P010LeFrame<'_>, bool, ColorMatrix, &mut S) -> Result<(), S::Error> =
+        p010_to::<S>;
+    }
   }
 }

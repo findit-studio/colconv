@@ -12,19 +12,21 @@
 //! 4:2:0 (half-width U/V); the 4:2:0 vs 4:2:2 difference is purely in
 //! the vertical walker.
 
-use crate::frame::{Yuva422p16Frame, Yuva422pFrame16};
+use crate::frame::Yuva422pFrame16;
 
 walker! {
-  planar4_bits {
+  planar4_bits_be {
     /// Zero‑sized marker for the YUVA 4:2:2 **16‑bit** source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuva422p16,
-    frame: Yuva422p16Frame<'_>,
-    generic_frame: Yuva422pFrame16<'_, BITS>,
+    frame: Yuva422pFrame16<'_, 16, BE>,
+    frame_le: Yuva422pFrame16<'_, 16, false>,
+    generic_frame: Yuva422pFrame16<'_, BITS, BE>,
     bits: 16,
     row: Yuva422p16Row,
     sink: Yuva422p16Sink,
     walker: yuva422p16_to,
+    walker_endian: yuva422p16_to_endian,
     walker_inner: yuva422p16_walker,
     elem_type: u16,
     chroma_h: half,

@@ -3,17 +3,19 @@
 //! Full-width × half-height chroma at 12 bits per sample. Reuses
 //! the const-generic `yuv_444p_n_to_rgb_*<12>` kernel family.
 
-use crate::frame::Yuv440p12Frame;
+use crate::frame::Yuv440pFrame16;
 
 walker! {
-  planar3 {
+  planar3_be {
     /// Zero‑sized marker for the YUV 4:4:0 **12‑bit** source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuv440p12,
-    frame: Yuv440p12Frame<'_>,
+    frame: Yuv440pFrame16<'_, 12, BE>,
+    frame_le: Yuv440pFrame16<'_, 12, false>,
     row: Yuv440p12Row,
     sink: Yuv440p12Sink,
     walker: yuv440p12_to,
+    walker_endian: yuv440p12_to_endian,
     elem_type: u16,
     chroma_h: full,
     chroma_v: half,

@@ -472,7 +472,7 @@ pub enum Yuva422pFrame16Plane {
 /// full-height (4:2:2 chroma subsamples horizontally only), A
 /// full-width × full-height (alpha is at luma resolution).
 #[derive(Debug, Clone, Copy)]
-pub struct Yuva422pFrame16<'a, const BITS: u32> {
+pub struct Yuva422pFrame16<'a, const BITS: u32, const BE: bool = false> {
   y: &'a [u16],
   u: &'a [u16],
   v: &'a [u16],
@@ -485,7 +485,7 @@ pub struct Yuva422pFrame16<'a, const BITS: u32> {
   a_stride: u32,
 }
 
-impl<'a, const BITS: u32> Yuva422pFrame16<'a, BITS> {
+impl<'a, const BITS: u32, const BE: bool> Yuva422pFrame16<'a, BITS, BE> {
   /// Constructs a new [`Yuva422pFrame16`], validating dimensions,
   /// plane lengths, and the `BITS` parameter.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -689,7 +689,7 @@ impl<'a, const BITS: u32> Yuva422pFrame16<'a, BITS> {
       for (col, &s) in y[start..start + w].iter().enumerate() {
         // Normalize from LE-encoded wire to host-native before the
         // range check (no-op on LE host, byte-swap on BE host).
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuva422pFrame16Error::SampleOutOfRange {
             plane: Yuva422pFrame16Plane::Y,
@@ -703,7 +703,7 @@ impl<'a, const BITS: u32> Yuva422pFrame16<'a, BITS> {
     for row in 0..h {
       let start = row * u_stride as usize;
       for (col, &s) in u[start..start + chroma_w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuva422pFrame16Error::SampleOutOfRange {
             plane: Yuva422pFrame16Plane::U,
@@ -717,7 +717,7 @@ impl<'a, const BITS: u32> Yuva422pFrame16<'a, BITS> {
     for row in 0..h {
       let start = row * v_stride as usize;
       for (col, &s) in v[start..start + chroma_w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuva422pFrame16Error::SampleOutOfRange {
             plane: Yuva422pFrame16Plane::V,
@@ -731,7 +731,7 @@ impl<'a, const BITS: u32> Yuva422pFrame16<'a, BITS> {
     for row in 0..h {
       let start = row * a_stride as usize;
       for (col, &s) in a[start..start + w].iter().enumerate() {
-        let logical = u16::from_le(s);
+        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
         if logical > max_valid {
           return Err(Yuva422pFrame16Error::SampleOutOfRange {
             plane: Yuva422pFrame16Plane::A,
@@ -800,22 +800,42 @@ impl<'a, const BITS: u32> Yuva422pFrame16<'a, BITS> {
   pub const fn bits(&self) -> u32 {
     BITS
   }
+  /// Compile-time BE flag mirror — `true` if plane bytes are BE-encoded
+  /// (`AV_PIX_FMT_YUVA422P*BE`), `false` if LE-encoded.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn is_be(&self) -> bool {
+    BE
+  }
 }
 
-/// 4:2:2 planar with alpha, 9-bit (`AV_PIX_FMT_YUVA422P9LE`). Alias
-/// over [`Yuva422pFrame16`]`<9>`.
+/// LE-encoded 4:2:2 planar with alpha, 9-bit (`AV_PIX_FMT_YUVA422P9LE`).
 pub type Yuva422p9Frame<'a> = Yuva422pFrame16<'a, 9>;
 
-/// 4:2:2 planar with alpha, 10-bit (`AV_PIX_FMT_YUVA422P10LE`). Alias
-/// over [`Yuva422pFrame16`]`<10>`.
+/// LE-encoded 4:2:2 planar with alpha, 10-bit (`AV_PIX_FMT_YUVA422P10LE`).
 pub type Yuva422p10Frame<'a> = Yuva422pFrame16<'a, 10>;
 
-/// 4:2:2 planar with alpha, 12-bit (`AV_PIX_FMT_YUVA422P12LE`). Alias
-/// over [`Yuva422pFrame16`]`<12>`. Reuses the BITS-generic 4:2:2
-/// kernel templates that already cover `BITS ∈ {9, 10, 12, 14}`.
+/// LE-encoded 4:2:2 planar with alpha, 12-bit (`AV_PIX_FMT_YUVA422P12LE`).
 pub type Yuva422p12Frame<'a> = Yuva422pFrame16<'a, 12>;
 
-/// 4:2:2 planar with alpha, 16-bit (`AV_PIX_FMT_YUVA422P16LE`). Alias
-/// over [`Yuva422pFrame16`]`<16>`. Uses the parallel i64 kernel
-/// family for the u16 RGBA path (mirrors [`Yuva420p16Frame`]).
+/// LE-encoded 4:2:2 planar with alpha, 16-bit (`AV_PIX_FMT_YUVA422P16LE`).
+/// Uses the parallel i64 kernel family for the u16 RGBA path.
 pub type Yuva422p16Frame<'a> = Yuva422pFrame16<'a, 16>;
+
+// ---- Phase 4 — explicit LE/BE aliases for the YUVA 4:2:2 HB family ----
+
+/// LE-encoded `Yuva422p9Frame` (`AV_PIX_FMT_YUVA422P9LE`).
+pub type Yuva422p9LeFrame<'a> = Yuva422pFrame16<'a, 9, false>;
+/// BE-encoded `Yuva422p9Frame` (`AV_PIX_FMT_YUVA422P9BE`).
+pub type Yuva422p9BeFrame<'a> = Yuva422pFrame16<'a, 9, true>;
+/// LE-encoded `Yuva422p10Frame` (`AV_PIX_FMT_YUVA422P10LE`).
+pub type Yuva422p10LeFrame<'a> = Yuva422pFrame16<'a, 10, false>;
+/// BE-encoded `Yuva422p10Frame` (`AV_PIX_FMT_YUVA422P10BE`).
+pub type Yuva422p10BeFrame<'a> = Yuva422pFrame16<'a, 10, true>;
+/// LE-encoded `Yuva422p12Frame` (`AV_PIX_FMT_YUVA422P12LE`).
+pub type Yuva422p12LeFrame<'a> = Yuva422pFrame16<'a, 12, false>;
+/// BE-encoded `Yuva422p12Frame` (`AV_PIX_FMT_YUVA422P12BE`).
+pub type Yuva422p12BeFrame<'a> = Yuva422pFrame16<'a, 12, true>;
+/// LE-encoded `Yuva422p16Frame` (`AV_PIX_FMT_YUVA422P16LE`).
+pub type Yuva422p16LeFrame<'a> = Yuva422pFrame16<'a, 16, false>;
+/// BE-encoded `Yuva422p16Frame` (`AV_PIX_FMT_YUVA422P16BE`).
+pub type Yuva422p16BeFrame<'a> = Yuva422pFrame16<'a, 16, true>;

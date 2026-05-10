@@ -1,4 +1,4 @@
-use super::*;
+use super::{util::le_encoded_u16_buf, *};
 
 // ---- Yuv444pFrame16::try_new_checked ---------------------------------
 
@@ -220,14 +220,6 @@ fn yuv440p12_try_new_checked_rejects_above_4095() {
 // See `subsampled_4_2_0_high_bit.rs` for the full rationale: build
 // planes from LE-encoded bytes so on BE hosts the validator's
 // `u16::from_le` normalization is exercised end-to-end.
-
-fn le_encoded_u16_buf(intended: &[u16]) -> std::vec::Vec<u16> {
-  let bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
-  bytes
-    .chunks_exact(2)
-    .map(|b| u16::from_ne_bytes([b[0], b[1]]))
-    .collect()
-}
 
 #[test]
 fn yuv444p10_try_new_checked_accepts_le_encoded_buffer_on_any_host() {

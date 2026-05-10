@@ -12,17 +12,19 @@
 //! horizontal duplication step). Differs from the 4:2:0 / 4:2:2
 //! `p_n_to_rgb_*<10>` family in the chroma layout only.
 
-use crate::frame::P410Frame;
+use crate::frame::PnFrame444;
 
 walker! {
-  semi_planar {
+  semi_planar_be {
     /// Zero‑sized marker for the P410 source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: P410,
-    frame: P410Frame<'_>,
+    frame: PnFrame444<'_, 10, BE>,
+    frame_le: PnFrame444<'_, 10, false>,
     row: P410Row,
     sink: P410Sink,
     walker: p410_to,
+    walker_endian: p410_to_endian,
     elem_type: u16,
     chroma_field: uv_full,
     chroma_plane: uv,

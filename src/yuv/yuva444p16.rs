@@ -18,17 +18,19 @@
 //! `yuv_444p16_to_rgba*_with_alpha_src_row` scalar paths. Per‑arch
 //! SIMD wiring lands in 8b‑5b (`u8` RGBA) and 8b‑5c (`u16` RGBA).
 
-use crate::frame::Yuva444p16Frame;
+use crate::frame::Yuva444pFrame16;
 
 walker! {
-  planar4 {
+  planar4_be {
     /// Zero‑sized marker for the YUVA 4:4:4 **16‑bit** source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuva444p16,
-    frame: Yuva444p16Frame<'_>,
+    frame: Yuva444pFrame16<'_, 16, BE>,
+    frame_le: Yuva444pFrame16<'_, 16, false>,
     row: Yuva444p16Row,
     sink: Yuva444p16Sink,
     walker: yuva444p16_to,
+    walker_endian: yuva444p16_to_endian,
     elem_type: u16,
     chroma_h: full,
     chroma_v: full,

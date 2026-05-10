@@ -11,19 +11,21 @@
 //! `yuv_420p_n_to_rgba*_with_alpha_src_row::<9>` scalar path. Per‑arch
 //! SIMD wiring lands in 8b‑2b (`u8` RGBA) and 8b‑2c (`u16` RGBA).
 
-use crate::frame::{Yuva420p9Frame, Yuva420pFrame16};
+use crate::frame::Yuva420pFrame16;
 
 walker! {
-  planar4_bits {
+  planar4_bits_be {
     /// Zero‑sized marker for the YUVA 4:2:0 **9‑bit** source format.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     marker: Yuva420p9,
-    frame: Yuva420p9Frame<'_>,
-    generic_frame: Yuva420pFrame16<'_, BITS>,
+    frame: Yuva420pFrame16<'_, 9, BE>,
+    frame_le: Yuva420pFrame16<'_, 9, false>,
+    generic_frame: Yuva420pFrame16<'_, BITS, BE>,
     bits: 9,
     row: Yuva420p9Row,
     sink: Yuva420p9Sink,
     walker: yuva420p9_to,
+    walker_endian: yuva420p9_to_endian,
     walker_inner: yuva420p9_walker,
     elem_type: u16,
     chroma_h: half,
