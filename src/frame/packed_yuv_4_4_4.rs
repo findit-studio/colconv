@@ -22,6 +22,15 @@ use thiserror::Error;
 /// pattern, new name). Each pixel occupies one 32-bit word with the
 /// following little-endian layout (MSB → LSB):
 ///
+/// **Naming caveat — `XV30` vs `V30X`:** the FFmpeg `XV30` rename
+/// (this format, MSB-padded) and the separate `V30X` family
+/// (LSB-padded — see [`V30XFrame`] below) read alike but describe
+/// **opposite** padding positions. The `X` placement in the FourCC
+/// mirrors the padding placement: `XV30` = `X`-then-VYU (X in the
+/// high bits, MSB-padded); `V30X` = VYU-then-`X` (X in the low bits,
+/// LSB-padded). When in doubt, prefer the `AV_PIX_FMT_V410` /
+/// `AV_PIX_FMT_V30XLE` symbol names — they are unambiguous.
+///
 /// | Bits  | Field |
 /// |-------|-------|
 /// | 31:30 | padding (zero) |

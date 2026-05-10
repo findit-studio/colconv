@@ -453,14 +453,8 @@ fn v410_le_be_roundtrip_byte_identical() {
       _ => pack(64, 940, 960),
     })
     .collect();
-  let pix_le: std::vec::Vec<u32> = logical
-    .iter()
-    .map(|&w| u32::from_ne_bytes(w.to_le_bytes()))
-    .collect();
-  let pix_be: std::vec::Vec<u32> = logical
-    .iter()
-    .map(|&w| u32::from_ne_bytes(w.to_be_bytes()))
-    .collect();
+  let pix_le: std::vec::Vec<u32> = logical.iter().map(|&w| as_le_u32(w)).collect();
+  let pix_be: std::vec::Vec<u32> = logical.iter().map(|&w| as_be_u32(w)).collect();
 
   let frame_le = V410LeFrame::try_new(&pix_le, 8, 4, 8).unwrap();
   let mut out_le = std::vec![0u8; 8 * 4 * 4];

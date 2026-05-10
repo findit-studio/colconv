@@ -986,14 +986,8 @@ fn ayuv64_le_be_roundtrip_byte_identical() {
       _ => 0xC000u16, // V
     })
     .collect();
-  let pix_le: std::vec::Vec<u16> = logical
-    .iter()
-    .map(|&v| u16::from_ne_bytes(v.to_le_bytes()))
-    .collect();
-  let pix_be: std::vec::Vec<u16> = logical
-    .iter()
-    .map(|&v| u16::from_ne_bytes(v.to_be_bytes()))
-    .collect();
+  let pix_le: std::vec::Vec<u16> = logical.iter().map(|&v| as_le_u16(v)).collect();
+  let pix_be: std::vec::Vec<u16> = logical.iter().map(|&v| as_be_u16(v)).collect();
 
   // Standalone u8 RGBA path (`ayuv64_to_rgba_row` directly).
   let frame_le = Ayuv64LeFrame::try_new(&pix_le, 8, 4, 8 * 4).unwrap();
@@ -1057,14 +1051,8 @@ fn ayuv64_le_be_roundtrip_strategy_a_plus_byte_identical() {
       _ => 0xC000u16, // V
     })
     .collect();
-  let pix_le: std::vec::Vec<u16> = logical
-    .iter()
-    .map(|&v| u16::from_ne_bytes(v.to_le_bytes()))
-    .collect();
-  let pix_be: std::vec::Vec<u16> = logical
-    .iter()
-    .map(|&v| u16::from_ne_bytes(v.to_be_bytes()))
-    .collect();
+  let pix_le: std::vec::Vec<u16> = logical.iter().map(|&v| as_le_u16(v)).collect();
+  let pix_be: std::vec::Vec<u16> = logical.iter().map(|&v| as_be_u16(v)).collect();
 
   let frame_le = Ayuv64LeFrame::try_new(&pix_le, 8, 4, 8 * 4).unwrap();
   let mut out_le_rgb = std::vec![0u8; 8 * 4 * 3];

@@ -466,14 +466,8 @@ fn xv36_le_be_roundtrip_byte_identical() {
       _ => 0x0000u16, // A = padding
     })
     .collect();
-  let pix_le: std::vec::Vec<u16> = logical
-    .iter()
-    .map(|&v| u16::from_ne_bytes(v.to_le_bytes()))
-    .collect();
-  let pix_be: std::vec::Vec<u16> = logical
-    .iter()
-    .map(|&v| u16::from_ne_bytes(v.to_be_bytes()))
-    .collect();
+  let pix_le: std::vec::Vec<u16> = logical.iter().map(|&v| as_le_u16(v)).collect();
+  let pix_be: std::vec::Vec<u16> = logical.iter().map(|&v| as_be_u16(v)).collect();
 
   let frame_le = Xv36LeFrame::try_new(&pix_le, 8, 4, 8 * 4).unwrap();
   let mut out_le = std::vec![0u8; 8 * 4 * 4];
