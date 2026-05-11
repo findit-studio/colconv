@@ -61,11 +61,7 @@ fn rgb_u16_plane_row_slice(
 ) -> Result<&mut [u16], MixedSinkerError> {
   let end = one_plane_end
     .checked_mul(3)
-    .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-      width,
-      height,
-      channels: 3,
-    }))?;
+    .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(width, height, 3)))?;
   let start = one_plane_start * 3;
   Ok(&mut buf[start..end])
 }
