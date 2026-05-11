@@ -392,12 +392,14 @@ fn non_4_aligned_height_reuses_trailing_chroma_row() {
 }
 
 #[test]
-fn non_multiple_of_4_width_surfaces_width_not_multiple_of_4_error() {
+fn non_multiple_of_4_width_surfaces_width_alignment_multiple_of_four_error() {
   // Yuv410p subsamples chroma 4:1:0, so widths not divisible by 4
   // can't form a complete chroma group. The sinker must return
-  // `WidthNotMultipleOf4` (matching the format-specific frame error
-  // and the Uyyvyy411 sinker convention) — not the format-agnostic
-  // `OddWidth` whose error message is scoped to 4:2:0.
+  // `WidthAlignment` with `WidthAlignmentRequirement::MultipleOfFour`
+  // — matching the format-specific `Yuv410pFrameError::WidthNotMultipleOf4`
+  // returned by `Yuv410pFrame::try_new` and the Uyyvyy411 sinker
+  // convention. The pre-refactor variant `OddWidth` (whose message was
+  // scoped to 4:2:0) is no longer applicable here.
   let mut rgb = std::vec![0u8; 18 * 8 * 3];
   let mut sink = MixedSinker::<Yuv410p>::new(18, 8)
     .with_rgb(&mut rgb)
@@ -409,6 +411,6 @@ fn non_multiple_of_4_width_surfaces_width_not_multiple_of_4_error() {
       18,
       WidthAlignmentRequirement::MultipleOfFour
     )),
-    "expected WidthNotMultipleOf4 {{ width: 18 }}, got {err:?}"
+    "expected WidthAlignment {{ width: 18, required: MultipleOfFour }}, got {err:?}"
   );
 }

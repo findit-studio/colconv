@@ -243,8 +243,9 @@ fn uyyvyy411_process_rejects_width_not_multiple_of_4_at_begin_frame() {
     .with_rgb(&mut rgb)
     .unwrap();
   let err = uyyvyy411_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap_err();
-  // Either DimensionMismatch (caught first) or WidthNotMultipleOf4 — both
-  // are valid first-fault responses; we just need `Err`.
+  // Either DimensionMismatch (caught first) or
+  // WidthAlignment(MultipleOfFour) — both are valid first-fault
+  // responses; we just need `Err`.
   assert!(matches!(
     err,
     MixedSinkerError::DimensionMismatch(_) | MixedSinkerError::WidthAlignment(_)
