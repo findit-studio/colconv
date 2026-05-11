@@ -15,8 +15,6 @@
 //! (`M = CCM · diag(wb)`) before dispatching to the per-row kernel,
 //! so the per-pixel arithmetic is one 3×3 matmul, not two passes.
 
-#![cfg_attr(not(feature = "frame"), allow(dead_code, unused_imports))]
-
 use derive_more::IsVariant;
 use thiserror::Error;
 
@@ -449,6 +447,7 @@ pub enum ColorCorrectionMatrixError {
 /// Internal: fuse white-balance and CCM into a single 3×3 transform
 /// `M = CCM · diag(wb)`. The walker calls this once per frame; the
 /// per-row kernel applies a single 3×3 matmul per pixel.
+#[cfg(feature = "bayer")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn fuse_wb_ccm(wb: &WhiteBalance, ccm: &ColorCorrectionMatrix) -> [[f32; 3]; 3] {
   let m = ccm.as_array();

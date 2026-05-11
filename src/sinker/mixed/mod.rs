@@ -97,10 +97,14 @@
 //! under normal contract violations — so the sink is usable on
 //! `panic = "abort"` targets.
 
-#![cfg_attr(not(feature = "frame"), allow(dead_code, unused_imports))]
-
 use core::marker::PhantomData;
 
+// `Vec<u8>` is only used by the `rgb_scratch` lazy scratch buffer
+// (gated on the same 15-feature any as the per-format `process`
+// impls). The import is left unconditional because gating it would
+// also leave `extern crate alloc as std` unused under
+// `--features "alloc"` alone, which is harder to express.
+#[allow(unused_imports)]
 use std::vec::Vec;
 
 use derive_more::{Display, IsVariant, TryUnwrap, Unwrap};
@@ -110,7 +114,28 @@ use thiserror::Error;
 // `semi_planar_8bit`, `subsampled_4_*_high_bit`, `bayer`). mod.rs only
 // keeps the prelude types and the helpers — neither of which references
 // any specific source-format type.
-use crate::{HsvBuffers, SourceFormat};
+// `HsvBuffers` carries the three HSV planes for `with_hsv`. It is
+// only referenced by per-format `process` impls, so it shares the same
+// 15-feature cfg as the impls themselves.
+#[cfg(any(
+  feature = "bayer",
+  feature = "gbr",
+  feature = "gray",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "xyz",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
+use crate::HsvBuffers;
+use crate::SourceFormat;
 // PixelSink is referenced only via intra-doc links (`[`PixelSink::*`]`)
 // in this file; the rustc lint can't see those uses, so silence it.
 #[allow(unused_imports)]
@@ -1119,15 +1144,57 @@ pub struct MixedSinker<'a, F: SourceFormat> {
   luma: Option<&'a mut [u8]>,
   luma_u16: Option<&'a mut [u16]>,
   luma_f32: Option<&'a mut [f32]>,
+  // `HsvBuffers` is cfg-gated to the same 15-feature any as the
+  // per-format `process` impls that read it.
+  #[cfg(any(
+    feature = "bayer",
+    feature = "gbr",
+    feature = "gray",
+    feature = "mono",
+    feature = "rgb",
+    feature = "rgb-float",
+    feature = "rgb-legacy",
+    feature = "v210",
+    feature = "xyz",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-packed",
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar",
+    feature = "yuva",
+  ))]
   hsv: Option<HsvBuffers<'a>>,
   /// Lossless linear-XYZ pass-through buffer used by the
   /// [`Xyz12`](crate::source::Xyz12) source's `with_xyz_f32` accessor.
   /// `None` for every other source format.
+  #[cfg(feature = "xyz")]
   xyz_f32: Option<&'a mut [f32]>,
   width: usize,
   height: usize,
   /// Lazily grown to `3 * width` bytes when HSV is requested without a
   /// user RGB buffer. Empty otherwise.
+  ///
+  /// Consumed by per-format `process` impls that derive HSV from RGB
+  /// via the lazy scratch path. Under `--features "alloc"` alone (no
+  /// per-format family), no `process` impl reads this field, so the
+  /// cfg enumerates every source family.
+  #[cfg(any(
+    feature = "bayer",
+    feature = "gbr",
+    feature = "gray",
+    feature = "mono",
+    feature = "rgb",
+    feature = "rgb-float",
+    feature = "rgb-legacy",
+    feature = "v210",
+    feature = "xyz",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-packed",
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar",
+    feature = "yuva",
+  ))]
   rgb_scratch: Vec<u8>,
   /// Whether row primitives dispatch to their SIMD backend. Defaults
   /// to `true`; benchmarks flip this with [`Self::with_simd`] /
@@ -1136,9 +1203,10 @@ pub struct MixedSinker<'a, F: SourceFormat> {
   /// Q8 fixed-point luma coefficients `(cr, cg, cb)` such that
   /// `luma = ((cr * R + cg * G + cb * B + 128) >> 8) as u8`. Only
   /// consulted by source impls that *derive* luma from RGB
-  /// (currently the `Bayer` / `Bayer16<BITS>` family — YUV impls
-  /// memcpy from the native Y plane and ignore this field).
-  /// Default: BT.709 `(54, 183, 19)`.
+  /// (currently the `Bayer` / `Bayer16<BITS>` family and the `Pal8`
+  /// mono palette path — YUV impls memcpy from the native Y plane
+  /// and ignore this field). Default: BT.709 `(54, 183, 19)`.
+  #[cfg(any(feature = "bayer", feature = "mono"))]
   luma_coefficients_q8: (u32, u32, u32),
   _fmt: PhantomData<F>,
 }
@@ -1476,10 +1544,45 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
       luma: None,
       luma_u16: None,
       luma_f32: None,
+      #[cfg(any(
+        feature = "bayer",
+        feature = "gbr",
+        feature = "gray",
+        feature = "mono",
+        feature = "rgb",
+        feature = "rgb-float",
+        feature = "rgb-legacy",
+        feature = "v210",
+        feature = "xyz",
+        feature = "y2xx",
+        feature = "yuv-444-packed",
+        feature = "yuv-packed",
+        feature = "yuv-planar",
+        feature = "yuv-semi-planar",
+        feature = "yuva",
+      ))]
       hsv: None,
+      #[cfg(feature = "xyz")]
       xyz_f32: None,
       width,
       height,
+      #[cfg(any(
+        feature = "bayer",
+        feature = "gbr",
+        feature = "gray",
+        feature = "mono",
+        feature = "rgb",
+        feature = "rgb-float",
+        feature = "rgb-legacy",
+        feature = "v210",
+        feature = "xyz",
+        feature = "y2xx",
+        feature = "yuv-444-packed",
+        feature = "yuv-packed",
+        feature = "yuv-planar",
+        feature = "yuv-semi-planar",
+        feature = "yuva",
+      ))]
       rgb_scratch: Vec::new(),
       simd: true,
       // BT.709 by default — matches the implicit weights every
@@ -1487,6 +1590,7 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
       // CCM target. Per-format impls (`MixedSinker<Bayer>` etc.)
       // expose `with_luma_coefficients` for callers whose CCM
       // targets a different gamut.
+      #[cfg(any(feature = "bayer", feature = "mono"))]
       luma_coefficients_q8: (54, 183, 19),
       _fmt: PhantomData,
     }
@@ -1580,6 +1684,27 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
   }
 
   /// Returns `true` iff the sinker will write HSV.
+  ///
+  /// Gated on the same 15-feature any as the `hsv` field — under
+  /// `--features "alloc"` alone, no per-format `process` impl
+  /// compiles, the field doesn't exist, and this getter is also gone.
+  #[cfg(any(
+    feature = "bayer",
+    feature = "gbr",
+    feature = "gray",
+    feature = "mono",
+    feature = "rgb",
+    feature = "rgb-float",
+    feature = "rgb-legacy",
+    feature = "v210",
+    feature = "xyz",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-packed",
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar",
+    feature = "yuva",
+  ))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn produces_hsv(&self) -> bool {
     self.hsv.is_some()
@@ -1651,6 +1776,25 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
   /// (e.g. luma planes) without the channels=1 magic number.
   ///
   /// Returns `Err(GeometryOverflow { channels: 1 })` on overflow.
+  ///
+  /// Consumed by every non-Bayer sinker family; Bayer is RGB-only and
+  /// has no single-channel pixel-count sizing.
+  #[cfg(any(
+    feature = "gbr",
+    feature = "gray",
+    feature = "mono",
+    feature = "rgb",
+    feature = "rgb-float",
+    feature = "rgb-legacy",
+    feature = "v210",
+    feature = "xyz",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-packed",
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar",
+    feature = "yuva",
+  ))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn frame_pixels(&self) -> Result<usize, MixedSinkerError> {
     self
@@ -1748,6 +1892,27 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   /// `e.which()` / `e.expected()` / `e.actual()`) naming the first
   /// short plane, or `Err(MixedSinkerError::GeometryOverflow(_))` on
   /// 32-bit overflow.
+  ///
+  /// HSV is only meaningful when at least one source family is
+  /// compiled, so this method is gated on the same 15-feature any as
+  /// the per-format `process` impls that consume the `hsv` field.
+  #[cfg(any(
+    feature = "bayer",
+    feature = "gbr",
+    feature = "gray",
+    feature = "mono",
+    feature = "rgb",
+    feature = "rgb-float",
+    feature = "rgb-legacy",
+    feature = "v210",
+    feature = "xyz",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-packed",
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar",
+    feature = "yuva",
+  ))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_hsv(
     mut self,
@@ -1760,6 +1925,23 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   }
 
   /// In-place variant of [`with_hsv`](Self::with_hsv).
+  #[cfg(any(
+    feature = "bayer",
+    feature = "gbr",
+    feature = "gray",
+    feature = "mono",
+    feature = "rgb",
+    feature = "rgb-float",
+    feature = "rgb-legacy",
+    feature = "v210",
+    feature = "xyz",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-packed",
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar",
+    feature = "yuva",
+  ))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_hsv(
     &mut self,
@@ -1799,6 +1981,27 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
 /// failure mode, but neither is a panic-worthy bug — the caller can
 /// recover by rebuilding the sinker. Returning `Err` before any row
 /// is processed guarantees no partial output.
+///
+/// Consumed by every per-format `MixedSinker<F>::process` impl.
+/// Under `--features "alloc"` alone (no per-format family), no
+/// `process` impl compiles and this helper would be flagged unused.
+#[cfg(any(
+  feature = "bayer",
+  feature = "gbr",
+  feature = "gray",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "xyz",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn check_dimensions_match(
   configured_w: usize,
@@ -1826,6 +2029,25 @@ pub(super) fn check_dimensions_match(
 /// Centralises the duplicated overflow/bounds-check pattern that every
 /// `MixedSinker<F>::process` impl runs in both the standalone-RGBA
 /// branch and the Strategy-A expand branch.
+///
+/// Consumed by every non-Bayer sinker family (Bayer is RGB-only, no
+/// RGBA path).
+#[cfg(any(
+  feature = "gbr",
+  feature = "gray",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "xyz",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn rgba_plane_row_slice(
   buf: &mut [u8],
@@ -1849,6 +2071,25 @@ pub(super) fn rgba_plane_row_slice(
 /// elements per pixel, so the overflow check is the same, but the byte
 /// offsets differ because each element is 2 bytes. Used by the
 /// high-bit-depth 4:2:0 sinkers that fan `u16` RGB out to `u16` RGBA.
+///
+/// Bayer is RGB-only and packed YUV 4:2:2 / 4:1:1 (`yuv-packed`) emits
+/// u8 only; semi-planar 8-bit NV is also u8-only and never reaches a
+/// u16 RGBA fan-out path, so this helper is unused under those
+/// families.
+#[cfg(any(
+  feature = "gbr",
+  feature = "gray",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "xyz",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuva",
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn rgba_u16_plane_row_slice(
   buf: &mut [u16],
@@ -1875,6 +2116,28 @@ pub(super) fn rgba_u16_plane_row_slice(
 /// `rgb_scratch` is grown via `Vec::resize` only when too small; the
 /// caller keeps the existing capacity across rows so steady-state
 /// processing allocates zero times.
+///
+/// Consumed by per-format `process` impls that need a stable RGB row
+/// buffer (either user-attached or scratch-backed). Under
+/// `--features "alloc"` alone (no per-format family), no impl
+/// compiles and this helper would be flagged unused.
+#[cfg(any(
+  feature = "bayer",
+  feature = "gbr",
+  feature = "gray",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "xyz",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn rgb_row_buf_or_scratch<'a>(
   rgb: Option<&'a mut [u8]>,
@@ -1918,11 +2181,12 @@ pub(super) fn rgb_row_buf_or_scratch<'a>(
 /// `3 * luma.len()` packed bytes; the loop writes one luma
 /// sample per pixel.
 ///
-/// Used by Bayer / Bayer16 [`MixedSinker`] paths whose source has
-/// no native luma plane to memcpy from. YUV source impls take
+/// Used by Bayer / Bayer16 / Pal8 [`MixedSinker`] paths whose source
+/// has no native luma plane to memcpy from. YUV source impls take
 /// their luma directly off the Y plane and don't go through this
 /// helper, so they don't need a configurable coefficient set —
 /// the source's `ColorMatrix` already fixed it at encode time.
+#[cfg(any(feature = "bayer", feature = "mono"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn rgb_row_to_luma_row(rgb: &[u8], luma: &mut [u8], coeffs_q8: (u32, u32, u32)) {
   // Caller's contract: `rgb` packs `3 * luma.len()` bytes. The
@@ -1963,6 +2227,7 @@ pub(super) fn rgb_row_to_luma_row(rgb: &[u8], luma: &mut [u8], coeffs_q8: (u32, 
 ///
 /// Used by format sinker paths that expose a `with_luma_u16` output channel
 /// (e.g. `MixedSinker<Pal8>`).
+#[cfg(feature = "mono")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn rgb_row_to_luma_u16_row(
   rgb: &[u8],

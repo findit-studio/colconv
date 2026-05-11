@@ -88,6 +88,7 @@ pub(crate) unsafe fn yuv_420_to_rgba_row(
 /// # Safety
 ///
 /// Same as [`yuv_420_to_rgba_row`] plus `a_src.len() >= width`.
+#[cfg(feature = "yuva")]
 #[inline]
 #[target_feature(enable = "neon")]
 #[allow(clippy::too_many_arguments)]
@@ -653,6 +654,7 @@ pub(crate) unsafe fn yuv_444_to_rgba_row(
 /// # Safety
 ///
 /// Same as [`yuv_444_to_rgba_row`] plus `a_src.len() >= width`.
+#[cfg(feature = "yuva")]
 #[inline]
 #[target_feature(enable = "neon")]
 #[allow(clippy::too_many_arguments)]

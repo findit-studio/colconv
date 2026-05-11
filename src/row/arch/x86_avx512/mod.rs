@@ -52,8 +52,6 @@
 //!   `[0,1,8,9,2,3,10,11]` and `[4,5,12,13,6,7,14,15]` rebuilds the
 //!   two 32‑Y‑block‑aligned vectors from unpacklo + unpackhi.
 
-#![cfg_attr(not(feature = "frame"), allow(dead_code, unused_imports))]
-
 use core::arch::x86_64::*;
 
 #[allow(unused_imports)]
@@ -73,6 +71,7 @@ pub(super) use crate::{
   },
 };
 
+#[cfg(any(feature = "gbr", feature = "yuv-444-packed", feature = "yuva"))]
 mod alpha_extract;
 #[cfg(feature = "yuv-444-packed")]
 mod ayuv64;
@@ -102,7 +101,10 @@ mod planar_gbr_float;
 mod planar_gbr_high_bit;
 #[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
-#[cfg(feature = "yuv-semi-planar")]
+// See NEON mod.rs for the dual-gate rationale on the 4:2:0 kernels.
+// 4:4:4 kernels need only `yuv-semi-planar` because `dispatch::pn`
+// (yuv-semi-planar-gated, no yuv-planar dependency) also consumes them.
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 mod subsampled_high_bit_pn_4_2_0;
 #[cfg(feature = "yuv-semi-planar")]
 mod subsampled_high_bit_pn_4_4_4;
@@ -122,14 +124,23 @@ pub(crate) mod xyz12;
 mod y216;
 #[cfg(feature = "y2xx")]
 mod y2xx;
+#[cfg(any(
+  feature = "gray",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 mod y_plane_to_luma_u16;
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+// Semi-planar `p16_to_*` lives in `subsampled_high_bit_pn_*`; this file
+// only hosts the planar `yuv_{420,444}p16_to_*` kernels.
+#[cfg(feature = "yuv-planar")]
 mod yuv_planar_16bit;
 #[cfg(feature = "yuv-planar")]
 mod yuv_planar_8bit;
 #[cfg(feature = "yuv-planar")]
 mod yuv_planar_high_bit;
 
+#[cfg(any(feature = "gbr", feature = "yuv-444-packed", feature = "yuva"))]
 pub(crate) use alpha_extract::*;
 #[cfg(feature = "yuv-444-packed")]
 pub(crate) use ayuv64::*;
@@ -161,7 +172,7 @@ pub(crate) use planar_gbr_float::*;
 pub(crate) use planar_gbr_high_bit::*;
 #[cfg(feature = "yuv-semi-planar")]
 pub(crate) use semi_planar_8bit::*;
-#[cfg(feature = "yuv-semi-planar")]
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 pub(crate) use subsampled_high_bit_pn_4_2_0::*;
 #[cfg(feature = "yuv-semi-planar")]
 pub(crate) use subsampled_high_bit_pn_4_4_4::*;
@@ -175,6 +186,12 @@ pub(crate) use v410::*;
 pub(crate) use vuya::*;
 #[cfg(feature = "yuv-444-packed")]
 pub(crate) use xv36::*;
+#[cfg(any(
+  feature = "gray",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 pub(crate) use y_plane_to_luma_u16::*;
 #[cfg(feature = "y2xx")]
 pub(crate) use y2xx::*;
@@ -182,7 +199,7 @@ pub(crate) use y2xx::*;
 pub(crate) use y216::*;
 #[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_8bit::*;
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_16bit::*;
 #[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_high_bit::*;

@@ -2,8 +2,6 @@
 //! organization. All three route through the standard
 //! `cfg_select!` per-arch block; `use_simd = false` forces scalar.
 
-#![cfg_attr(not(feature = "frame"), allow(dead_code, unused_imports))]
-
 #[cfg(any(
   target_arch = "aarch64",
   target_arch = "x86_64",
@@ -18,8 +16,15 @@ use crate::row::simd128_available;
 use crate::row::{avx2_available, avx512_available, sse41_available};
 use crate::{
   ColorMatrix,
-  row::{rgb_row_bytes, rgb_row_elems, rgba_row_bytes, scalar},
+  row::{rgb_row_bytes, scalar},
 };
+// `rgb_row_elems` / `rgba_row_bytes` are consumed only by the
+// `packed_rgb_dispatchers` submodule below, which is itself gated on
+// `feature = "rgb"`. Importing them at file scope without the same
+// gate produces `unused_imports` warnings under non-rgb feature
+// builds.
+#[cfg(feature = "rgb")]
+use crate::row::{rgb_row_elems, rgba_row_bytes};
 
 /// Converts one row of packed RGB to planar HSV (OpenCV 8‑bit
 /// encoding). See `scalar::rgb_to_hsv_row` for semantics.

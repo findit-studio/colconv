@@ -46,6 +46,7 @@ use crate::row::scalar::alpha_extract as scalar;
 /// `packed.3` substituted into the α slot.
 ///
 /// Block size: 16 px / iter (one `vld4q_u8` = 64 bytes).
+#[cfg(feature = "yuv-444-packed")]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn copy_alpha_packed_u8x4_at_3(packed: &[u8], rgba_out: &mut [u8], width: usize) {
@@ -88,6 +89,7 @@ pub(crate) unsafe fn copy_alpha_packed_u8x4_at_3(packed: &[u8], rgba_out: &mut [
 ///
 /// Block size: 8 px / iter (one `vld4q_u16` for src = 64 bytes,
 /// one `vld4_u8` / `vst4_u8` for dst = 32 bytes).
+#[cfg(feature = "yuv-444-packed")]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn copy_alpha_packed_u16x4_to_u8_at_0(
@@ -128,6 +130,7 @@ pub(crate) unsafe fn copy_alpha_packed_u16x4_to_u8_at_0(
 /// `rgba_out[3 + 4*n]` (u16). No depth conversion.
 ///
 /// Block size: 8 px / iter (`vld4q_u16` × 2 = 128 bytes round-trip).
+#[cfg(feature = "yuv-444-packed")]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn copy_alpha_packed_u16x4_at_0(
@@ -168,6 +171,7 @@ pub(crate) unsafe fn copy_alpha_packed_u16x4_at_0(
 /// Block size: 16 px / iter. `vld1q_u8` loads 16 contiguous α bytes;
 /// `vld4q_u8` deinterleaves 16 px of RGBA; we substitute `.3` and
 /// `vst4q_u8` writes back.
+#[cfg(any(feature = "gbr", feature = "yuva"))]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usize) {
@@ -203,6 +207,7 @@ pub(crate) unsafe fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], widt
 /// `vqmovn_u16` would diverge there).
 ///
 /// Block size: 8 px / iter.
+#[cfg(any(feature = "gbr", feature = "yuva"))]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
@@ -260,6 +265,7 @@ pub(crate) unsafe fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
 /// symmetry with the scalar API).
 ///
 /// Block size: 8 px / iter.
+#[cfg(any(feature = "gbr", feature = "yuva"))]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn copy_alpha_plane_u16<const BITS: u32>(

@@ -40,8 +40,6 @@
 //! `crate::row::*` (e.g. `crate::row::yuv_420_to_rgb_row`). Callers
 //! see no API change from the split.
 
-#![cfg_attr(not(feature = "frame"), allow(dead_code, unused_imports))]
-
 pub(crate) mod arch;
 pub(crate) mod dispatch;
 pub(crate) mod scalar;
@@ -51,17 +49,63 @@ pub(crate) mod scalar;
 // is gated on `feature = "std"` / `feature = "alloc"` (needs `Vec`). Without
 // either feature both this re-export and the underlying scalar function would
 // be unused, which is a hard error under `cargo clippy -- -D warnings`.
-#[cfg(any(feature = "std", feature = "alloc"))]
+//
+// Consumer source families — every YUV family except `bayer` / `mono` /
+// `rgb-float` / `rgb-legacy` / `xyz` expands RGB → RGBA via the Strategy A
+// helpers.
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(
+    feature = "gbr",
+    feature = "gray",
+    feature = "rgb",
+    feature = "v210",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-packed",
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar",
+    feature = "yuva",
+  ),
+))]
 pub(crate) use scalar::expand_rgb_to_rgba_row;
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(
+    feature = "gbr",
+    feature = "gray",
+    feature = "rgb",
+    feature = "v210",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-planar",
+    feature = "yuva",
+  ),
+))]
 pub(crate) use scalar::expand_rgb_u16_to_rgba_u16_row;
 
 // Strategy A+ α-extract dispatcher — re-exported at `crate::row::alpha_extract`
 // so source-α sinkers don't have to reach into `dispatch::` internals. Same
 // `feature = "std" | "alloc"` gating as the expand helpers above.
-#[cfg(any(feature = "std", feature = "alloc"))]
+//
+// Consumer source families with a source-α channel: `gbr` (Gbrap), `yuv-444-packed`
+// (AYUV64), and `yuva` (yuva planar) only.
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(feature = "gbr", feature = "yuv-444-packed", feature = "yuva"),
+))]
 pub(crate) use dispatch::alpha_extract;
-#[cfg(any(feature = "std", feature = "alloc"))]
+// `y_plane_to_luma_u16_row` is consumed by every source family that exposes
+// a luma plane to the MixedSinker.
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(
+    feature = "gray",
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar",
+    feature = "yuva",
+  ),
+))]
 pub(crate) use dispatch::y_plane_to_luma_u16::y_plane_to_luma_u16_row;
 
 // Task 3 — packed YUV 4:2:2 luma_u16 dispatchers (pub(crate) because they are
@@ -210,6 +254,27 @@ pub(crate) fn rgb_row_bytes(width: usize) -> usize {
 /// Byte length of one packed‑RGBA row (`width × 4`) with overflow
 /// checking. Same purpose as [`rgb_row_bytes`] for the 4-channel
 /// path used by the RGBA dispatchers.
+///
+/// Used by every non-Bayer dispatcher family that emits packed RGBA
+/// output (Bayer is RGB-only). The 14-way `any(feature)` cfg
+/// enumerates every consumer family explicitly so dead-code analysis
+/// stays strict under non-`frame` feature subsets.
+#[cfg(any(
+  feature = "gbr",
+  feature = "gray",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "xyz",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn rgba_row_bytes(width: usize) -> usize {
   match width.checked_mul(4) {
@@ -225,6 +290,26 @@ pub(crate) fn rgba_row_bytes(width: usize) -> usize {
 /// 32‑bit targets: the product names the number of elements the
 /// caller allocates, and downstream SIMD kernels index with it
 /// directly without re‑multiplying.
+///
+/// Used by every dispatcher family that emits a packed u16-RGB row.
+/// Packed YUV 4:2:2 / 4:1:1 (`yuv-packed`) emits u8 only and does
+/// not consume this helper.
+#[cfg(any(
+  feature = "bayer",
+  feature = "gbr",
+  feature = "gray",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "xyz",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn rgb_row_elems(width: usize) -> usize {
   match width.checked_mul(3) {
@@ -237,6 +322,24 @@ pub(crate) fn rgb_row_elems(width: usize) -> usize {
 /// math to [`rgba_row_bytes`] — the returned value is in `u16`
 /// elements, not bytes. Callers use it to size `&mut [u16]` buffers
 /// for the high-bit-depth `u16` RGBA output path.
+///
+/// Bayer is RGB-only and packed YUV 4:2:2 / 4:1:1 emit u8 only, so
+/// neither consume this helper.
+#[cfg(any(
+  feature = "gbr",
+  feature = "gray",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "xyz",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn rgba_row_elems(width: usize) -> usize {
   match width.checked_mul(4) {
@@ -250,6 +353,7 @@ pub(crate) fn rgba_row_elems(width: usize) -> usize {
 /// 2-element `[Y, A, ...]` interleaved layout used by Ya8 (`&[u8]`)
 /// and Ya16 (`&[u16]`) packed inputs — both index `width × 2`
 /// elements regardless of element width, so this helper covers both.
+#[cfg(feature = "gray")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn ya_row_elems(width: usize) -> usize {
   match width.checked_mul(2) {
@@ -272,6 +376,7 @@ pub(crate) fn ya_row_elems(width: usize) -> usize {
 /// at 1e12 closes the door on direct-row-API callers passing
 /// extreme finite matrices that would silently overflow during
 /// the matmul.
+#[cfg(feature = "bayer")]
 pub(crate) const MAX_FUSED_TRANSFORM_ABS: f32 = 1.0e12;
 
 /// Asserts every element of a 3×3 fused color transform is
@@ -293,6 +398,7 @@ pub(crate) const MAX_FUSED_TRANSFORM_ABS: f32 = 1.0e12;
 /// common case; this is the kernel-boundary backstop for direct
 /// row-API callers and the dispatcher-level guarantee that
 /// matches what validated upstream inputs can produce.
+#[cfg(feature = "bayer")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn assert_color_transform_well_formed(m: &[[f32; 3]; 3]) {
   let mut row = 0;
@@ -323,6 +429,7 @@ pub(crate) fn assert_color_transform_well_formed(m: &[[f32; 3]; 3]) {
 /// length feeds into unsafe SIMD kernels' bounds via the dispatcher's
 /// `assert!`, so an unchecked multiplication on 32-bit targets could
 /// silently admit an undersized buffer.
+#[cfg(feature = "yuv-semi-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn uv_full_row_elems(width: usize) -> usize {
   match width.checked_mul(2) {
@@ -339,6 +446,7 @@ pub(crate) fn uv_full_row_elems(width: usize) -> usize {
 /// which gates entry into unsafe SIMD loads. An unchecked
 /// multiplication on 32-bit targets could silently admit an
 /// undersized `packed` slice.
+#[cfg(any(feature = "rgb-legacy", feature = "yuv-packed"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn packed_yuv422_row_bytes(width: usize) -> usize {
   match width.checked_mul(2) {
@@ -355,6 +463,7 @@ pub(crate) fn packed_yuv422_row_bytes(width: usize) -> usize {
 /// gates entry into unsafe SIMD loads. Computed as
 /// `(width × 3) / 2` so the intermediate `width × 3` is the only
 /// product that can overflow on 32-bit targets at extreme widths.
+#[cfg(feature = "yuv-packed")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn packed_yuv411_row_bytes(width: usize) -> usize {
   match width.checked_mul(3) {
@@ -372,6 +481,7 @@ pub(crate) fn packed_yuv411_row_bytes(width: usize) -> usize {
 /// Same `checked_mul` rationale as [`rgb_row_bytes`] — the returned
 /// byte count gates entry into unsafe SIMD loads. Panics if the
 /// multiplication overflows.
+#[cfg(feature = "v210")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn v210_row_bytes(width: usize) -> usize {
   let words = width.div_ceil(6);
@@ -385,6 +495,7 @@ pub(crate) fn v210_row_bytes(width: usize) -> usize {
 /// elements) with overflow checking. Used by the Y210 / Y212 / Y216
 /// dispatchers to gate entry into unsafe SIMD loads. Same
 /// `checked_mul` rationale as [`rgb_row_bytes`].
+#[cfg(feature = "y2xx")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn y2xx_row_elems(width: usize) -> usize {
   match width.checked_mul(2) {
@@ -434,7 +545,15 @@ pub(crate) const fn neon_available() -> bool {
 /// NEON without `fp16`; calling `vcvt_f32_f16` there raises SIGILL.
 /// The Rgbf16 NEON dispatchers gate on `neon_available() &&
 /// fp16_available()` and fall back to scalar when this returns false.
-#[cfg(all(target_arch = "aarch64", feature = "std"))]
+///
+/// Consumers: `rgb-float` (`dispatch::rgb_f16_ops`) and `gbr`
+/// (`dispatch::planar_gbr_float`). Other source-format families do
+/// not consume the FP16 helpers, so the cfg matches them exactly.
+#[cfg(all(
+  target_arch = "aarch64",
+  feature = "std",
+  any(feature = "gbr", feature = "rgb-float"),
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn fp16_available() -> bool {
   if cfg!(colconv_force_scalar) {
@@ -444,7 +563,11 @@ pub(crate) fn fp16_available() -> bool {
 }
 
 /// FP16 availability on aarch64 — no‑std variant (compile‑time).
-#[cfg(all(target_arch = "aarch64", not(feature = "std")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  not(feature = "std"),
+  any(feature = "gbr", feature = "rgb-float"),
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) const fn fp16_available() -> bool {
   !cfg!(colconv_force_scalar) && cfg!(target_feature = "fp16")

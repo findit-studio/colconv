@@ -6,8 +6,6 @@
 //! `#[inline(always)]` guarantees they inline into the caller,
 //! inheriting its `#[target_feature]` context.
 
-#![cfg_attr(not(feature = "frame"), allow(dead_code, unused_imports))]
-
 use core::arch::x86_64::*;
 
 /// Per-u32-lane byte-swap shuffle mask, shared by the BE-aware 10-bit

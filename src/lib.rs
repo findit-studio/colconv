@@ -235,7 +235,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
-#![cfg_attr(not(feature = "frame"), allow(dead_code, unused_imports))]
 #![deny(missing_docs)]
 
 #[cfg(all(not(feature = "std"), feature = "alloc"))]
@@ -262,7 +261,31 @@ pub use videoframe::SourceFormat;
 
 /// The three output planes for HSV, bundled so `MixedSinker` stores a
 /// single `Option<HsvBuffers>` rather than three independent options.
-#[cfg(any(feature = "std", feature = "alloc"))]
+///
+/// Consumed by every per-format `MixedSinker<F>::process` impl that
+/// supports HSV output. Under `--features "alloc"` alone (no per-format
+/// family), no `process` impl compiles and the struct's fields would
+/// be flagged unread, so the cfg enumerates every source family.
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(
+    feature = "bayer",
+    feature = "gbr",
+    feature = "gray",
+    feature = "mono",
+    feature = "rgb",
+    feature = "rgb-float",
+    feature = "rgb-legacy",
+    feature = "v210",
+    feature = "xyz",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-packed",
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar",
+    feature = "yuva",
+  ),
+))]
 struct HsvBuffers<'a> {
   h: &'a mut [u8],
   s: &'a mut [u8],

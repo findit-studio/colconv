@@ -31,6 +31,7 @@ use super::*;
 ///    `v_half.len() >= width / 2`, `rgb_out.len() >= 3 * width`.
 ///
 /// Thin wrapper over [`yuv_420p16_to_rgb_or_rgba_row`] with `ALPHA = false`.
+#[cfg(feature = "yuv-planar")]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn yuv_420p16_to_rgb_row<const BE: bool>(
@@ -57,6 +58,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_row<const BE: bool>(
 /// # Safety
 ///
 /// Same as [`yuv_420p16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[cfg(feature = "yuv-planar")]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn yuv_420p16_to_rgba_row<const BE: bool>(
@@ -87,6 +89,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgba_row<const BE: bool>(
 /// # Safety
 ///
 /// Same as [`yuv_420p16_to_rgba_row`] plus `a_src.len() >= width`.
+#[cfg(feature = "yuva")]
 #[inline]
 #[target_feature(enable = "neon")]
 #[allow(clippy::too_many_arguments)]
@@ -132,6 +135,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgba_with_alpha_src_row<const BE: bool>(
 ///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
 /// 4. When `ALPHA_SRC = true`: `a_src` must be `Some(_)` and
 ///    `a_src.unwrap().len() >= width`.
+#[cfg(feature = "yuv-planar")]
 #[inline]
 #[target_feature(enable = "neon")]
 #[allow(clippy::too_many_arguments)]
@@ -301,6 +305,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_row<
 /// 2. `width & 1 == 0`.
 /// 3. `y.len() >= width`, `u_half.len() >= width / 2`,
 ///    `v_half.len() >= width / 2`, `rgb_out.len() >= 3 * width`.
+#[cfg(feature = "yuv-planar")]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn yuv_420p16_to_rgb_u16_row<const BE: bool>(
@@ -325,6 +330,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_u16_row<const BE: bool>(
 /// # Safety
 ///
 /// Same as [`yuv_420p16_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
+#[cfg(feature = "yuv-planar")]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn yuv_420p16_to_rgba_u16_row<const BE: bool>(
@@ -354,6 +360,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgba_u16_row<const BE: bool>(
 /// # Safety
 ///
 /// Same as [`yuv_420p16_to_rgba_u16_row`] plus `a_src.len() >= width`.
+#[cfg(feature = "yuva")]
 #[inline]
 #[target_feature(enable = "neon")]
 #[allow(clippy::too_many_arguments)]
@@ -398,6 +405,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgba_u16_with_alpha_src_row<const BE: bool>(
 ///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
 /// 4. When `ALPHA_SRC = true`: `a_src` must be `Some(_)` and
 ///    `a_src.unwrap().len() >= width`.
+#[cfg(feature = "yuv-planar")]
 #[inline]
 #[target_feature(enable = "neon")]
 #[allow(clippy::too_many_arguments)]
@@ -602,6 +610,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_u16_row<
 /// # Safety
 ///
 /// Same as [`yuv_444p_n_to_rgb_row`] but with full `u16` samples.
+#[cfg(feature = "yuv-planar")]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn yuv_444p16_to_rgb_row<const BE: bool>(
@@ -630,6 +639,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_row<const BE: bool>(
 /// # Safety
 ///
 /// Same as [`yuv_444p16_to_rgb_row`] but `rgba_out.len() >= 4 * width`.
+#[cfg(feature = "yuv-planar")]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn yuv_444p16_to_rgba_row<const BE: bool>(
@@ -660,6 +670,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgba_row<const BE: bool>(
 /// # Safety
 ///
 /// Same as [`yuv_444p16_to_rgba_row`] plus `a_src.len() >= width`.
+#[cfg(feature = "yuva")]
 #[inline]
 #[target_feature(enable = "neon")]
 #[allow(clippy::too_many_arguments)]
@@ -703,6 +714,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgba_with_alpha_src_row<const BE: bool>(
 ///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
 /// 3. If `ALPHA_SRC = true`, `a_src` is `Some(_)` with
 ///    `a_src.len() >= width`.
+#[cfg(feature = "yuv-planar")]
 #[inline]
 #[target_feature(enable = "neon")]
 #[allow(clippy::too_many_arguments)]
@@ -884,6 +896,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_row<
 /// # Safety
 ///
 /// Same as [`yuv_444p16_to_rgb_row`] but `rgb_out: &mut [u16]`.
+#[cfg(feature = "yuv-planar")]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn yuv_444p16_to_rgb_u16_row<const BE: bool>(
@@ -912,6 +925,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_u16_row<const BE: bool>(
 /// # Safety
 ///
 /// Same as [`yuv_444p16_to_rgb_u16_row`] plus `rgba_out.len() >= 4 * width`.
+#[cfg(feature = "yuv-planar")]
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn yuv_444p16_to_rgba_u16_row<const BE: bool>(
@@ -942,6 +956,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgba_u16_row<const BE: bool>(
 /// # Safety
 ///
 /// Same as [`yuv_444p16_to_rgba_u16_row`] plus `a_src.len() >= width`.
+#[cfg(feature = "yuva")]
 #[inline]
 #[target_feature(enable = "neon")]
 #[allow(clippy::too_many_arguments)]
@@ -986,6 +1001,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgba_u16_with_alpha_src_row<const BE: bool>(
 ///    `out.len() >= width * if ALPHA { 4 } else { 3 }`.
 /// 3. If `ALPHA_SRC = true`, `a_src` is `Some(_)` with
 ///    `a_src.len() >= width`.
+#[cfg(feature = "yuv-planar")]
 #[inline]
 #[target_feature(enable = "neon")]
 #[allow(clippy::too_many_arguments)]

@@ -9,6 +9,9 @@
 //! dispatcher functions reaches them through those same re-exports.
 //! Callers see no API change from the split.
 
+// Consumers: source families with a source-α channel (`gbr` Gbrap,
+// `yuv-444-packed` AYUV64, `yuva` planar α).
+#[cfg(any(feature = "gbr", feature = "yuv-444-packed", feature = "yuva"))]
 pub(crate) mod alpha_extract;
 #[cfg(feature = "yuv-444-packed")]
 pub(super) mod ayuv64;
@@ -71,6 +74,14 @@ pub(super) mod y210;
 pub(super) mod y212;
 #[cfg(feature = "y2xx")]
 pub(super) mod y216;
+// Consumers: source families that ship a u8 luma plane to MixedSinker's
+// u16 luma fan-out (`gray`, `yuv-planar`, `yuv-semi-planar`, `yuva`).
+#[cfg(any(
+  feature = "gray",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 pub(crate) mod y_plane_to_luma_u16;
 #[cfg(feature = "gray")]
 pub(super) mod ya16;

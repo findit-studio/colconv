@@ -15,6 +15,7 @@
 /// VUYA → u8 RGBA: gather α from `packed[3 + 4*n]` into `rgba_out[3 + 4*n]`.
 ///
 /// VUYA layout per pixel: `[V(8), U(8), Y(8), A(8)]` — α is at slot 3.
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) fn copy_alpha_packed_u8x4_at_3(packed: &[u8], rgba_out: &mut [u8], width: usize) {
   debug_assert!(packed.len() >= width * 4, "packed too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
@@ -36,6 +37,7 @@ pub(crate) fn copy_alpha_packed_u8x4_at_3(packed: &[u8], rgba_out: &mut [u8], wi
 /// source the conversion compiles to a no-op; otherwise it is a
 /// `swap_bytes`. Without this a BE host (e.g., s390x) processing the
 /// LE-encoded Frame would emit a byte-reversed α byte.
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0<const BE: bool>(
   packed: &[u16],
   rgba_out: &mut [u8],
@@ -58,6 +60,7 @@ pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0<const BE: bool>(
 ///
 /// `BE` selects the **byte order** of the encoded source `packed` plane.
 /// See [`copy_alpha_packed_u16x4_to_u8_at_0`] for the full rationale.
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) fn copy_alpha_packed_u16x4_at_0<const BE: bool>(
   packed: &[u16],
   rgba_out: &mut [u16],
@@ -137,7 +140,9 @@ pub(crate) fn copy_alpha_packed_u16x4_at_3<const BE: bool>(
 }
 
 /// Yuva420p / 422p / 444p u8 → u8 RGBA: scatter α plane into
-/// `rgba_out[3 + 4*n]`.
+/// `rgba_out[3 + 4*n]`. Consumed by Yuva planar (`yuva`) and Gbrap
+/// (`gbr`) source families.
+#[cfg(any(feature = "gbr", feature = "yuva"))]
 pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usize) {
   debug_assert!(alpha.len() >= width, "alpha plane too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
@@ -172,6 +177,7 @@ pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usiz
 /// See sibling inline-α kernels (`yuva_4_*` row impls) for the same
 /// pattern with comment "silently turning over-range alpha into
 /// transparent output".
+#[cfg(any(feature = "gbr", feature = "yuva"))]
 pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32, const BE: bool>(
   alpha: &[u16],
   rgba_out: &mut [u8],
@@ -209,6 +215,7 @@ pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32, const BE: bool>(
 /// from #81 so scalar and SIMD stay byte-for-byte equivalent on every
 /// host. Without this, a BE host processing LE source data would emit
 /// a byte-reversed α plane.
+#[cfg(any(feature = "gbr", feature = "yuva"))]
 pub(crate) fn copy_alpha_plane_u16<const BITS: u32, const BE: bool>(
   alpha: &[u16],
   rgba_out: &mut [u16],
@@ -233,6 +240,7 @@ pub(crate) fn copy_alpha_plane_u16<const BITS: u32, const BE: bool>(
 /// Ya8 → u8 RGBA: gather A from `packed[1 + 2*n]` into `rgba_out[3 + 4*n]`.
 ///
 /// Ya8 layout per pixel: `[Y(8), A(8)]` — α is at odd byte offsets (slot 1).
+#[cfg(feature = "gray")]
 pub(crate) fn copy_alpha_ya_u8(packed: &[u8], rgba_out: &mut [u8], width: usize) {
   debug_assert!(packed.len() >= width * 2, "packed too short");
   debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
@@ -252,6 +260,7 @@ pub(crate) fn copy_alpha_ya_u8(packed: &[u8], rgba_out: &mut [u8], width: usize)
 /// host-native order via `u16::from_le` / `u16::from_be` before the
 /// `>> 8` depth conversion. Without this a BE host processing the
 /// LE-encoded Frame would emit a byte-reversed α byte.
+#[cfg(feature = "gray")]
 pub(crate) fn copy_alpha_ya_u16_to_u8<const BE: bool>(
   packed: &[u16],
   rgba_out: &mut [u8],
@@ -274,6 +283,7 @@ pub(crate) fn copy_alpha_ya_u16_to_u8<const BE: bool>(
 ///
 /// `BE` selects the **byte order** of the encoded source `packed` plane.
 /// See [`copy_alpha_ya_u16_to_u8`] for the full rationale.
+#[cfg(feature = "gray")]
 pub(crate) fn copy_alpha_ya_u16<const BE: bool>(
   packed: &[u16],
   rgba_out: &mut [u16],
