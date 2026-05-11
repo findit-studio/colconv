@@ -7,8 +7,11 @@
 //! active per sample (unlike Y210 / Y212 which MSB-align 10 / 12-bit
 //! samples with low bits zero). The sinker's configured width must be
 //! **even** (4:2:2 chroma pair); odd widths surface as
-//! [`MixedSinkerError::OddWidth`] before any kernel runs, preserving
-//! the no-panic contract.
+//! [`MixedSinkerError::WidthAlignment`] (with
+//! [`WidthAlignmentRequirement::Even`]) before any kernel runs,
+//! preserving the no-panic contract.
+//!
+//! [`WidthAlignmentRequirement::Even`]: super::WidthAlignmentRequirement::Even
 //!
 //! Outputs map to the sink's standard channels:
 //! - `with_rgb` / `with_rgba` — packed YUV → RGB Q15 pipeline at

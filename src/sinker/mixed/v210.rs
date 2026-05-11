@@ -6,8 +6,11 @@
 //! with 6 Y + 3 Cb + 3 Cr per word). The sinker's configured width
 //! must be **even** (4:2:2 chroma pair) — partial last words (widths
 //! not divisible by 6, e.g. 720p = 1280) are supported. Odd widths
-//! surface as [`MixedSinkerError::OddWidth`] before any kernel runs,
+//! surface as [`MixedSinkerError::WidthAlignment`] (with
+//! [`WidthAlignmentRequirement::Even`]) before any kernel runs,
 //! preserving the no-panic contract.
+//!
+//! [`WidthAlignmentRequirement::Even`]: super::WidthAlignmentRequirement::Even
 //!
 //! Outputs map to the sink's standard channels:
 //! - `with_rgb` / `with_rgba` — packed YUV → RGB Q15 pipeline at

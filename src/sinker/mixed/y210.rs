@@ -5,8 +5,11 @@
 //! Y210 packs 4 × MSB-aligned 10-bit samples per `u16` quadruple
 //! (`Y₀, U, Y₁, V`) — 2 pixels per quadruple (4:2:2). The sinker's
 //! configured width must be **even** (4:2:2 chroma pair); odd widths
-//! surface as [`MixedSinkerError::OddWidth`] before any kernel runs,
+//! surface as [`MixedSinkerError::WidthAlignment`] (with
+//! [`WidthAlignmentRequirement::Even`]) before any kernel runs,
 //! preserving the no-panic contract.
+//!
+//! [`WidthAlignmentRequirement::Even`]: super::WidthAlignmentRequirement::Even
 //!
 //! Outputs map to the sink's standard channels:
 //! - `with_rgb` / `with_rgba` — packed YUV → RGB Q15 pipeline at

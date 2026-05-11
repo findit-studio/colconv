@@ -1738,8 +1738,10 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   }
 
   /// Attaches three HSV output planes. Returns
-  /// `Err(HsvPlaneTooShort { which, .. })` naming the first short
-  /// plane, or `Err(GeometryOverflow)` on 32‑bit overflow.
+  /// `Err(MixedSinkerError::HsvPlaneTooShort(e))` (inspect via
+  /// `e.which()` / `e.expected()` / `e.actual()`) naming the first
+  /// short plane, or `Err(MixedSinkerError::GeometryOverflow(_))` on
+  /// 32-bit overflow.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_hsv(
     mut self,

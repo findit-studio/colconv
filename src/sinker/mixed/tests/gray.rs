@@ -1125,6 +1125,10 @@ macro_rules! gray_planar_u16_le_be_roundtrip_test {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn gray9_le_be_roundtrip_byte_identical() {
   gray_planar_u16_le_be_roundtrip_test! {
     label: "Gray9",
@@ -1138,6 +1142,10 @@ fn gray9_le_be_roundtrip_byte_identical() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn gray10_le_be_roundtrip_byte_identical() {
   gray_planar_u16_le_be_roundtrip_test! {
     label: "Gray10",
@@ -1151,6 +1159,10 @@ fn gray10_le_be_roundtrip_byte_identical() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn gray12_le_be_roundtrip_byte_identical() {
   gray_planar_u16_le_be_roundtrip_test! {
     label: "Gray12",
@@ -1164,6 +1176,10 @@ fn gray12_le_be_roundtrip_byte_identical() {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn gray14_le_be_roundtrip_byte_identical() {
   gray_planar_u16_le_be_roundtrip_test! {
     label: "Gray14",
@@ -1230,6 +1246,10 @@ macro_rules! gray16_dual_output_le_be_roundtrip_test {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn gray16_le_be_roundtrip_byte_identical() {
   gray16_dual_output_le_be_roundtrip_test! {
     label: "Gray16",
@@ -1292,6 +1312,10 @@ macro_rules! grayf32_le_be_roundtrip_test {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn grayf32_le_be_roundtrip_byte_identical() {
   // Mix of values to surface any byte-swap regression. Includes typical
   // luma values (0.0, 0.25, 0.5, 0.75, 1.0) plus HDR (>1) and sub-zero.
@@ -1370,6 +1394,10 @@ macro_rules! ya16_le_be_roundtrip_test {
 }
 
 #[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn ya16_le_be_roundtrip_byte_identical() {
   ya16_le_be_roundtrip_test! {
     label: "Ya16",
