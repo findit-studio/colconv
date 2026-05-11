@@ -64,36 +64,65 @@ pub(crate) use dispatch::y_plane_to_luma_u16::y_plane_to_luma_u16_row;
 
 // Task 3 — packed YUV 4:2:2 luma_u16 dispatchers (pub(crate) because they are
 // consumed only by the MixedSinker impls, not the public API).
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(feature = "yuv-packed", any(feature = "std", feature = "alloc")))]
 pub(crate) use dispatch::packed_yuv422::{
   uyvy422_to_luma_u16_row, yuyv422_to_luma_u16_row, yvyu422_to_luma_u16_row,
 };
 
 // Tier 5.25 — packed YUV 4:1:1 luma_u16 dispatcher (pub(crate); MixedSinker only).
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(feature = "yuv-packed", any(feature = "std", feature = "alloc")))]
 pub(crate) use dispatch::packed_yuv411::uyyvyy411_to_luma_u16_row;
 
 // Task 4 — packed YUV 4:4:4 (VUYA / VUYX) luma_u16 dispatchers.
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(feature = "yuv-444-packed", any(feature = "std", feature = "alloc")))]
 pub(crate) use dispatch::vuya::vuya_to_luma_u16_row;
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(feature = "yuv-444-packed", any(feature = "std", feature = "alloc")))]
 pub(crate) use dispatch::vuyx::vuyx_to_luma_u16_row;
 
-pub use dispatch::{
-  ayuv64::*, bayer::*, legacy_rgb::*, nv::*, packed_yuv411::*, packed_yuv422::*, pal8::*,
-  planar_gbr::*, planar_gbr_high_bit::*, pn::*, rgb_f16_ops::*, rgb_float_ops::*, rgb_ops::*,
-  v30x::*, v210::*, v410::*, vuya::*, vuyx::*, xv36::*, y210::*, y212::*, y216::*, yuv411p::*,
-  yuv420::*, yuv444::*, yuva::*,
-};
+#[cfg(feature = "yuv-444-packed")]
+pub use dispatch::ayuv64::*;
+#[cfg(feature = "bayer")]
+pub use dispatch::bayer::*;
+#[cfg(feature = "rgb-legacy")]
+pub use dispatch::legacy_rgb::*;
+#[cfg(feature = "yuv-semi-planar")]
+pub use dispatch::nv::*;
+#[cfg(feature = "yuv-packed")]
+pub use dispatch::{packed_yuv411::*, packed_yuv422::*};
+#[cfg(feature = "mono")]
+pub use dispatch::pal8::*;
+#[cfg(feature = "gbr")]
+pub use dispatch::{planar_gbr::*, planar_gbr_high_bit::*};
+#[cfg(feature = "yuv-semi-planar")]
+pub use dispatch::pn::*;
+#[cfg(feature = "rgb-float")]
+pub use dispatch::{rgb_f16_ops::*, rgb_float_ops::*};
+// rgb_ops contains the cross-format `rgb_to_hsv_row` / `rgb_to_luma_row`
+// / `rgb_to_luma_u16_row` helpers used by every sinker, as well as the
+// `rgb`-family packed RGB/RGBA dispatchers. Always re-exported so HSV /
+// luma derivations stay reachable when the `rgb` family is disabled.
+pub use dispatch::rgb_ops::*;
+#[cfg(feature = "yuv-444-packed")]
+pub use dispatch::{v30x::*, v410::*, vuya::*, vuyx::*, xv36::*};
+#[cfg(feature = "v210")]
+pub use dispatch::v210::*;
+#[cfg(feature = "y2xx")]
+pub use dispatch::{y210::*, y212::*, y216::*};
+#[cfg(feature = "yuv-planar")]
+pub use dispatch::yuv411p::*;
+#[cfg(feature = "yuv-planar")]
+pub use dispatch::{yuv420::*, yuv444::*};
+#[cfg(feature = "yuva")]
+pub use dispatch::yuva::*;
 // Tier 12 — Xyz12 dispatchers depend on `f32::powf`, which is only
 // available with `feature = "std"` or `feature = "alloc"` (the latter
 // pulls in `libm`). Mirror the same gate on the re-export.
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(feature = "xyz", any(feature = "std", feature = "alloc")))]
 pub use dispatch::xyz12::*;
 // Mono1bit dispatchers — pub(crate) so sinker code can reach them via
 // `crate::row::monoblack_to_*` / `crate::row::monowhite_to_*` without
 // reaching into `dispatch::mono1bit` internals directly.
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(feature = "mono", any(feature = "std", feature = "alloc")))]
 pub(crate) use dispatch::mono1bit::*;
 // Tier 8 finish — packed 16-bit RGB dispatcher re-exports.
 // The four basic converters (→rgb, →rgba, →rgb_u16, →rgba_u16) per format are
@@ -108,6 +137,7 @@ pub(crate) use dispatch::mono1bit::*;
 //   callers compile unchanged.
 // - `foo_endian::<const BE: bool>` — endian-aware form (added in Tier 8 for
 //   the BE-on-BE-host plane contract). Used by sinker code internally.
+#[cfg(feature = "rgb")]
 pub use dispatch::packed_rgb_16bit::{
   bgr48_to_rgb_row, bgr48_to_rgb_row_endian, bgr48_to_rgb_u16_row, bgr48_to_rgb_u16_row_endian,
   bgr48_to_rgba_row, bgr48_to_rgba_row_endian, bgr48_to_rgba_u16_row, bgr48_to_rgba_u16_row_endian,
@@ -120,6 +150,7 @@ pub use dispatch::packed_rgb_16bit::{
   rgba64_to_rgba_u16_row, rgba64_to_rgba_u16_row_endian,
 };
 // luma + HSV variants take an extra rgb_scratch parameter — sinker wired in Task 9.
+#[cfg(feature = "rgb")]
 #[allow(unused_imports)]
 pub(crate) use dispatch::packed_rgb_16bit::{
   bgr48_to_hsv_row, bgr48_to_hsv_row_endian, bgr48_to_luma_row, bgr48_to_luma_row_endian,
@@ -131,17 +162,17 @@ pub(crate) use dispatch::packed_rgb_16bit::{
   rgba64_to_luma_u16_row_endian,
 };
 // Gray dispatchers are pub(crate) — sinker code uses them via crate::row::gray*_row.
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(feature = "gray", any(feature = "std", feature = "alloc")))]
 pub(crate) use dispatch::gray::*;
 // Grayf32 / Ya8 / Ya16 dispatchers — pub(crate) for sinker use.
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(feature = "gray", any(feature = "std", feature = "alloc")))]
 pub(crate) use dispatch::grayf32::*;
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(feature = "gray", any(feature = "std", feature = "alloc")))]
 pub(crate) use dispatch::ya8::*;
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(feature = "gray", any(feature = "std", feature = "alloc")))]
 pub(crate) use dispatch::ya16::*;
 // Planar GBR float dispatchers — pub(crate) for sinker use (MixedSinker<Gbrpf32> etc.).
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(feature = "gbr", any(feature = "std", feature = "alloc")))]
 pub(crate) use dispatch::planar_gbr_float::*;
 
 // `yuv_444p_n_to_rgb_u16_row` is consumed by the 32-bit overflow test
@@ -149,7 +180,7 @@ pub(crate) use dispatch::planar_gbr_float::*;
 // the dispatch submodule keeps it as `pub(crate)`, so glob `pub use`
 // doesn't pick it up. Gated on the same cfg the test uses to avoid
 // `unused_imports` on builds that don't compile the test.
-#[cfg(all(test, feature = "std", target_pointer_width = "32"))]
+#[cfg(all(test, feature = "std", feature = "yuv-planar", target_pointer_width = "32"))]
 pub(crate) use dispatch::yuv444::yuv_444p_n_to_rgb_u16_row;
 
 // ---- shared dispatcher helpers ---------------------------------------

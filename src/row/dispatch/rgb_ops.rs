@@ -193,6 +193,18 @@ pub fn rgb_to_luma_u16_row(
   scalar::rgb_to_luma_u16_row(rgb, luma_out, width, matrix, full_range);
 }
 
+// ============================================================================
+// Packed RGB / RGBA / X2RGB10 / X2BGR10 dispatchers below — all gated on the
+// `rgb` family feature. They depend on `scalar::packed_rgb` / `arch::*::packed_rgb`
+// SIMD backends, which themselves only compile under `feature = "rgb"`.
+// The cross-format HSV / luma helpers above this point are always available
+// because every sinker derives them from RGB.
+// ============================================================================
+
+#[cfg(feature = "rgb")]
+mod packed_rgb_dispatchers {
+use super::*;
+
 /// Drops the alpha byte from packed `R, G, B, A` input, producing
 /// packed `R, G, B` output (`4 * width` → `3 * width` bytes). Used
 /// by [`Rgba`](crate::source::Rgba) sinker's RGB / luma / HSV paths
@@ -1285,3 +1297,8 @@ pub fn x2bgr10_to_rgb_u16_row_endian<const BE: bool>(
 pub fn x2bgr10_to_rgb_u16_row(x2bgr10: &[u8], rgb_out: &mut [u16], width: usize, use_simd: bool) {
   x2bgr10_to_rgb_u16_row_endian::<false>(x2bgr10, rgb_out, width, use_simd)
 }
+
+}  // end of `mod packed_rgb_dispatchers`
+
+#[cfg(feature = "rgb")]
+pub use packed_rgb_dispatchers::*;

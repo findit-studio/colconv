@@ -46,21 +46,28 @@
 //! `BayerRow{,16}` borrow. The sink owns the RGB output buffer for
 //! the lifetime of the run; the kernel writes into it in place.
 
+#[cfg(feature = "bayer")]
 mod bayer;
+#[cfg(feature = "bayer")]
 mod bayer16;
+#[cfg(feature = "mono")]
 mod pal8;
 mod types;
 
 // Markers, Row types, Sink subtraits, and (for Pal8) the walker fn
 // are now sourced from videoframe::source via the per-module re-exports.
+#[cfg(feature = "bayer")]
 pub use bayer::{Bayer, BayerRow, BayerSink, bayer_to};
+#[cfg(feature = "bayer")]
 pub use bayer16::{
   Bayer10, Bayer12, Bayer14, Bayer16, Bayer16Bit, BayerRow16, BayerSink16, bayer16_to,
 };
+#[cfg(feature = "mono")]
 pub use pal8::{Pal8, Pal8Row, Pal8Sink, pal8_to};
 pub use types::{
   BayerDemosaic, BayerPattern, ColorCorrectionMatrix, ColorCorrectionMatrixError, WbChannel,
   WhiteBalance, WhiteBalanceError,
 };
 
+#[cfg(feature = "bayer")]
 pub(crate) use types::fuse_wb_ccm;

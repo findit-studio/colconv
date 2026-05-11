@@ -1995,40 +1995,75 @@ pub(super) fn rgb_row_to_luma_u16_row(
 // `LumaCoefficients` API. Per-format `with_rgba` / `set_rgba` builders
 // and `PixelSink` impls live in the child modules below.
 
+#[cfg(feature = "yuv-444-packed")]
 mod ayuv64;
+#[cfg(feature = "bayer")]
 mod bayer;
+#[cfg(feature = "gray")]
 mod gray;
+#[cfg(feature = "rgb-legacy")]
 mod legacy_rgb;
+#[cfg(feature = "mono")]
 mod mono1bit;
+#[cfg(feature = "rgb")]
 mod packed_rgb_10bit;
+#[cfg(feature = "rgb")]
 mod packed_rgb_16bit;
+#[cfg(feature = "rgb")]
 mod packed_rgb_8bit;
+#[cfg(feature = "rgb-float")]
 mod packed_rgb_f16;
+#[cfg(feature = "rgb-float")]
 mod packed_rgb_float;
+#[cfg(feature = "yuv-packed")]
 mod packed_yuv_4_1_1;
+#[cfg(feature = "yuv-packed")]
 mod packed_yuv_8bit;
+#[cfg(feature = "mono")]
 mod pal8;
+#[cfg(feature = "yuv-planar")]
 mod planar_8bit;
+#[cfg(feature = "gbr")]
 mod planar_gbr_8bit;
+#[cfg(feature = "gbr")]
 mod planar_gbr_f16;
+#[cfg(feature = "gbr")]
 mod planar_gbr_float;
+#[cfg(feature = "gbr")]
 mod planar_gbr_high_bit;
+#[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
+#[cfg(feature = "yuv-planar")]
 mod subsampled_4_2_0_high_bit;
+#[cfg(feature = "yuv-planar")]
 mod subsampled_4_2_2_high_bit;
+#[cfg(feature = "yuv-planar")]
 mod subsampled_4_4_4_high_bit;
+#[cfg(feature = "v210")]
 mod v210;
+#[cfg(feature = "yuv-444-packed")]
 mod v30x;
+#[cfg(feature = "yuv-444-packed")]
 mod v410;
+#[cfg(feature = "yuv-444-packed")]
 mod vuya;
+#[cfg(feature = "yuv-444-packed")]
 mod vuyx;
+#[cfg(feature = "yuv-444-packed")]
 mod xv36;
+#[cfg(feature = "xyz")]
 mod xyz12;
+#[cfg(feature = "y2xx")]
 mod y210;
+#[cfg(feature = "y2xx")]
 mod y212;
+#[cfg(feature = "y2xx")]
 mod y216;
+#[cfg(feature = "yuva")]
 mod yuva_4_2_0;
+#[cfg(feature = "yuva")]
 mod yuva_4_2_2;
+#[cfg(feature = "yuva")]
 mod yuva_4_4_4;
 
 #[cfg(all(test, feature = "std"))]

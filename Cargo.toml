@@ -166,17 +166,42 @@ alloc = ["libm", "videoframe/alloc"]
 std = ["thiserror/default", "videoframe/std"]
 
 # Umbrella — enables every per-family sub-feature below (mirrors
-# videoframe's `frame` umbrella).
-frame = ["videoframe/frame"]
+# videoframe's `frame` umbrella). Activates videoframe's frame umbrella
+# and every colconv per-family feature so the internal sinker / row /
+# dispatch / SIMD-backend modules for every format are compiled in.
+frame = [
+  "videoframe/frame",
+  "yuv-planar",
+  "yuv-semi-planar",
+  "yuva",
+  "yuv-packed",
+  "yuv-444-packed",
+  "y2xx",
+  "v210",
+  "rgb",
+  "rgb-float",
+  "rgb-legacy",
+  "gbr",
+  "gray",
+  "bayer",
+  "xyz",
+  "mono",
+]
 
 # Per-family pass-throughs. Each colconv feature activates the
 # matching videoframe feature so frame types and source markers for
-# that family are available. colconv's internal sinker / row kernels
-# are not yet gated per-family (that is a future tier); the `frame`
-# default ensures the existing full-surface test suite compiles.
+# that family are available, AND gates colconv's internal sinker /
+# row / dispatch / SIMD-backend modules for the format-specific code.
+# Cross-format helpers (Q15 ranges, rgb_expand, hsv, raw::types,
+# alpha_extract, y_plane_to_luma_u16) stay always-available.
 yuv-planar      = ["videoframe/yuv-planar"]
 yuv-semi-planar = ["videoframe/yuv-semi-planar"]
-yuva            = ["videoframe/yuva"]
+# YUVA shares 4:2:0 / 4:2:2 / 4:4:4 planar kernels with the
+# `yuv-planar` family (4-plane buffers, drop or pass the alpha
+# plane through the same `yuv_*p*_to_rgba_with_alpha_src_row`
+# kernels). Auto-enable `yuv-planar` so the underlying SIMD /
+# scalar primitives compile.
+yuva            = ["videoframe/yuva", "yuv-planar"]
 yuv-packed      = ["videoframe/yuv-packed"]
 yuv-444-packed  = ["videoframe/yuv-444-packed"]
 y2xx            = ["videoframe/y2xx"]

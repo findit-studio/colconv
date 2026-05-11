@@ -268,5 +268,7 @@ struct HsvBuffers<'a> {
   v: &'a mut [u8],
 }
 
+#[cfg(feature = "yuv-444-packed")]
 pub use frame::{Ayuv64Frame, Ayuv64FrameError};
+#[cfg(feature = "yuv-444-packed")]
 pub use source::{Ayuv64, Ayuv64Row, Ayuv64Sink, ayuv64_to};

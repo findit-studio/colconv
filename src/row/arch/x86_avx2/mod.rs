@@ -58,68 +58,118 @@ pub(super) use crate::{
 };
 
 mod alpha_extract;
+#[cfg(feature = "yuv-444-packed")]
 mod ayuv64;
 pub(crate) mod endian;
+#[cfg(feature = "gray")]
 mod gray;
 mod hsv;
+#[cfg(feature = "rgb-legacy")]
 pub(crate) mod legacy_rgb;
+#[cfg(feature = "mono")]
 pub(crate) mod mono1bit;
+#[cfg(feature = "rgb")]
 mod packed_rgb;
+#[cfg(feature = "rgb")]
 mod packed_rgb_16bit;
+#[cfg(feature = "rgb-float")]
 mod packed_rgb_float;
+#[cfg(feature = "yuv-packed")]
 mod packed_yuv_4_1_1;
+#[cfg(feature = "yuv-packed")]
 mod packed_yuv_8bit;
+#[cfg(feature = "gbr")]
 mod planar_gbr;
+#[cfg(feature = "gbr")]
 mod planar_gbr_float;
+#[cfg(feature = "gbr")]
 mod planar_gbr_high_bit;
+#[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
+#[cfg(feature = "yuv-semi-planar")]
 mod subsampled_high_bit_pn_4_2_0;
+#[cfg(feature = "yuv-semi-planar")]
 mod subsampled_high_bit_pn_4_4_4;
+#[cfg(feature = "v210")]
 mod v210;
+#[cfg(feature = "yuv-444-packed")]
 mod v30x;
+#[cfg(feature = "yuv-444-packed")]
 mod v410;
+#[cfg(feature = "yuv-444-packed")]
 mod vuya;
+#[cfg(feature = "yuv-444-packed")]
 mod xv36;
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(feature = "xyz", any(feature = "std", feature = "alloc")))]
 pub(crate) mod xyz12;
+#[cfg(feature = "y2xx")]
 mod y216;
+#[cfg(feature = "y2xx")]
 mod y2xx;
 mod y_plane_to_luma_u16;
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 mod yuv_planar_16bit;
+#[cfg(feature = "yuv-planar")]
 mod yuv_planar_8bit;
+#[cfg(feature = "yuv-planar")]
 mod yuv_planar_high_bit;
 
 pub(crate) use alpha_extract::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use ayuv64::*;
+#[cfg(feature = "gray")]
 pub(crate) use gray::*;
 pub(crate) use hsv::*;
+#[cfg(feature = "rgb-legacy")]
 #[allow(unused_imports)] // dispatcher wired in Task 6
 pub(crate) use legacy_rgb::*;
+#[cfg(feature = "mono")]
 pub(crate) use mono1bit::*;
+#[cfg(feature = "rgb")]
 pub(crate) use packed_rgb::*;
+#[cfg(feature = "rgb")]
 #[allow(unused_imports)] // dispatcher wired in later task
 pub(crate) use packed_rgb_16bit::*;
+#[cfg(feature = "rgb-float")]
 pub(crate) use packed_rgb_float::*;
+#[cfg(feature = "yuv-packed")]
 pub(crate) use packed_yuv_4_1_1::*;
+#[cfg(feature = "yuv-packed")]
 pub(crate) use packed_yuv_8bit::*;
+#[cfg(feature = "gbr")]
 pub(crate) use planar_gbr::*;
+#[cfg(feature = "gbr")]
 #[allow(unused_imports)] // dispatcher wired in Task 8 (MixedSinker)
 pub(crate) use planar_gbr_float::*;
+#[cfg(feature = "gbr")]
 #[allow(unused_imports)] // dispatcher wired in Task 9
 pub(crate) use planar_gbr_high_bit::*;
+#[cfg(feature = "yuv-semi-planar")]
 pub(crate) use semi_planar_8bit::*;
+#[cfg(feature = "yuv-semi-planar")]
 pub(crate) use subsampled_high_bit_pn_4_2_0::*;
+#[cfg(feature = "yuv-semi-planar")]
 pub(crate) use subsampled_high_bit_pn_4_4_4::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use v30x::*;
+#[cfg(feature = "v210")]
 pub(crate) use v210::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use v410::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use vuya::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use xv36::*;
 pub(crate) use y_plane_to_luma_u16::*;
+#[cfg(feature = "y2xx")]
 pub(crate) use y2xx::*;
+#[cfg(feature = "y2xx")]
 pub(crate) use y216::*;
+#[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_8bit::*;
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 pub(crate) use yuv_planar_16bit::*;
+#[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_high_bit::*;
 
 // ---- Shared helpers (used across submodules) -------------------------

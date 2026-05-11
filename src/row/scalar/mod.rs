@@ -36,42 +36,75 @@ use crate::ColorMatrix;
 // cross-cutting helpers (`clamp_u8`, `q15_*`, `bits_mask`,
 // `Coefficients`, …) that every family pulls in.
 pub(crate) mod alpha_extract;
+#[cfg(feature = "yuv-444-packed")]
 mod ayuv64;
+#[cfg(feature = "bayer")]
 mod bayer;
+#[cfg(feature = "gray")]
 pub(crate) mod gray;
+#[cfg(feature = "gray")]
 pub(crate) mod grayf32;
 mod hsv;
+#[cfg(feature = "rgb-legacy")]
 pub(crate) mod legacy_rgb;
+#[cfg(feature = "mono")]
 pub(crate) mod mono1bit;
+#[cfg(feature = "rgb")]
 mod packed_rgb;
+#[cfg(feature = "rgb")]
 mod packed_rgb_16bit;
+#[cfg(feature = "rgb-float")]
 mod packed_rgb_float;
+#[cfg(feature = "yuv-packed")]
 mod packed_yuv_4_1_1;
+#[cfg(feature = "yuv-packed")]
 mod packed_yuv_8bit;
+#[cfg(feature = "mono")]
 pub(crate) mod pal8;
+#[cfg(feature = "gbr")]
 mod planar_gbr;
+#[cfg(feature = "gbr")]
 pub(crate) mod planar_gbr_f16;
+#[cfg(feature = "gbr")]
 pub(crate) mod planar_gbr_float;
+#[cfg(feature = "gbr")]
 pub(crate) mod planar_gbr_high_bit;
 mod rgb_expand;
+#[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
+#[cfg(feature = "yuv-semi-planar")]
 mod subsampled_high_bit_pn;
+#[cfg(feature = "v210")]
 mod v210;
+#[cfg(feature = "yuv-444-packed")]
 mod v30x;
+#[cfg(feature = "yuv-444-packed")]
 mod v410;
+#[cfg(feature = "yuv-444-packed")]
 mod vuya;
+#[cfg(feature = "yuv-444-packed")]
 mod xv36;
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(feature = "xyz", any(feature = "std", feature = "alloc")))]
 pub(crate) mod xyz12;
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(feature = "xyz", any(feature = "std", feature = "alloc")))]
 pub(crate) mod xyz12_constants;
+#[cfg(feature = "y2xx")]
 mod y216;
+#[cfg(feature = "y2xx")]
 mod y2xx;
 pub(crate) mod y_plane_to_luma_u16;
+#[cfg(feature = "gray")]
 pub(crate) mod ya16;
+#[cfg(feature = "gray")]
 pub(crate) mod ya8;
+// yuv_planar_16bit also contains the P016 semi-planar 4:2:0 / P216
+// semi-planar 4:2:2 / P416 semi-planar 4:4:4 16-bit kernels (`p16_to_rgb*_row`),
+// so compile whenever either `yuv-planar` or `yuv-semi-planar` is enabled.
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 mod yuv_planar_16bit;
+#[cfg(feature = "yuv-planar")]
 mod yuv_planar_8bit;
+#[cfg(feature = "yuv-planar")]
 mod yuv_planar_high_bit;
 
 // alpha_extract functions are imported directly by dispatch::alpha_extract
@@ -80,55 +113,84 @@ mod yuv_planar_high_bit;
 // suppress unused-imports until then.
 #[allow(unused_imports)]
 pub(crate) use alpha_extract::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use ayuv64::*;
+#[cfg(feature = "bayer")]
 pub(crate) use bayer::*;
 // legacy_rgb functions are consumed by the dispatcher via `use crate::row::{..., scalar};`
 // and called as `scalar::legacy_rgb::...`.
 // This glob re-exports them into the scalar namespace for direct callers (SIMD tails, tests).
+#[cfg(feature = "rgb-legacy")]
 #[allow(unused_imports)]
 pub(crate) use legacy_rgb::*;
 // gray functions are consumed by dispatch::gray via `crate::row::scalar::gray as scalar`.
 // This glob re-exports them into the scalar namespace for direct callers (SIMD tails, tests).
+#[cfg(feature = "gray")]
 #[allow(unused_imports)]
 pub(crate) use gray::*;
+#[cfg(feature = "gray")]
 #[allow(unused_imports)]
 pub(crate) use grayf32::*;
 pub(crate) use hsv::*;
 // mono1bit functions are consumed by dispatch via the module path.
+#[cfg(feature = "mono")]
 #[allow(unused_imports)]
 pub(crate) use mono1bit::*;
+#[cfg(feature = "rgb")]
 pub(crate) use packed_rgb::*;
+#[cfg(feature = "rgb")]
 pub(crate) use packed_rgb_16bit::*;
+#[cfg(feature = "rgb-float")]
 pub(crate) use packed_rgb_float::*;
+#[cfg(feature = "yuv-packed")]
 pub(crate) use packed_yuv_4_1_1::*;
+#[cfg(feature = "yuv-packed")]
 pub(crate) use packed_yuv_8bit::*;
+#[cfg(feature = "gbr")]
 pub(crate) use planar_gbr::*;
+#[cfg(feature = "gbr")]
 #[allow(unused_imports)]
 pub(crate) use planar_gbr_f16::*;
+#[cfg(feature = "gbr")]
 #[allow(unused_imports)]
 pub(crate) use planar_gbr_float::*;
+#[cfg(feature = "gbr")]
 pub(crate) use planar_gbr_high_bit::*;
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub(crate) use rgb_expand::*;
+#[cfg(feature = "yuv-semi-planar")]
 pub(crate) use semi_planar_8bit::*;
+#[cfg(feature = "yuv-semi-planar")]
 pub(crate) use subsampled_high_bit_pn::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use v30x::*;
+#[cfg(feature = "v210")]
 pub(crate) use v210::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use v410::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use vuya::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use xv36::*;
 // `xyz12` and `xyz12_constants` are crate-internal modules; consumers (dispatcher
 // + SIMD tails) reach in via `crate::row::scalar::xyz12::xyz12_to_rgb_row::<BE>`
 // rather than a glob re-export, so the constants table and helpers stay
 // addressable without polluting the scalar namespace.
+#[cfg(feature = "y2xx")]
 pub(crate) use y2xx::*;
+#[cfg(feature = "y2xx")]
 pub(crate) use y216::*;
+#[cfg(feature = "gray")]
 #[allow(unused_imports)]
 pub(crate) use ya8::*;
+#[cfg(feature = "gray")]
 #[allow(unused_imports)]
 pub(crate) use ya16::*;
+#[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_8bit::*;
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 pub(crate) use yuv_planar_16bit::*;
+#[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_high_bit::*;
 
 // ---- Shared scalar helpers (used across all conversion families) -------
