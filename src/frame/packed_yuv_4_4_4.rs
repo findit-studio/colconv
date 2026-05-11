@@ -9,7 +9,7 @@
 //! source α / α-as-padding semantics); Ship 12d adds [`Ayuv64Frame`]
 //! (16-bit native, source α).
 
-use derive_more::IsVariant;
+use derive_more::{IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
 /// Validated wrapper around a packed YUV 4:4:4 10-bit `V410` plane.
@@ -411,9 +411,11 @@ pub type Xv36BeFrame<'a> = Xv36Frame<'a, true>;
 
 /// Errors returned by [`Xv36Frame::try_new`] and
 /// [`Xv36Frame::try_new_checked`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Xv36FrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width == 0` or `height == 0`.
   #[error("Xv36Frame: zero dimension width={width} height={height}")]
   ZeroDimension {
@@ -422,6 +424,8 @@ pub enum Xv36FrameError {
     /// Configured height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width × 4` overflows `u32`. Only reachable on 32-bit targets
   /// with extreme widths.
   #[error("Xv36Frame: width {width} × 4 overflows u32 (per-row u16 element count)")]
@@ -429,6 +433,8 @@ pub enum Xv36FrameError {
     /// Configured width.
     width: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < width × 4` (u16 elements). Each row needs at least
   /// `width × 4` u16 elements (= `width × 8` bytes) to hold all
   /// pixels.
@@ -439,6 +445,8 @@ pub enum Xv36FrameError {
     /// Caller-supplied stride.
     stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `packed.len() < expected`. The packed plane is too short.
   #[error("Xv36Frame: plane too short: expected >= {expected} u16 elements, got {actual}")]
   PlaneTooShort {
@@ -447,6 +455,8 @@ pub enum Xv36FrameError {
     /// Caller-supplied plane length in u16 elements.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`. Only reachable on 32-bit
   /// targets with extreme dimensions.
   #[error("Xv36Frame: stride × height overflows usize (stride={stride}, rows={rows})")]
@@ -480,6 +490,8 @@ pub enum Xv36FrameError {
   #[error(
     "Xv36Frame: sample {value:#06x} at element {index} has non-zero low 4 bits (expected MSB-aligned XV36 data)"
   )]
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   SampleLowBitsSetAt {
     /// Element index (in `u16` slots) within the packed plane.
     index: usize,

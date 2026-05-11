@@ -33,8 +33,9 @@
 //! then fan out to RGBA via `expand_rgb_to_rgba_row`. Same on the u16 path.
 
 use super::{
-  MixedSinker, MixedSinkerError, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
+  RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  rgba_u16_plane_row_slice,
 };
 use crate::{
   PixelSink,
@@ -65,7 +66,7 @@ impl<'a> MixedSinker<'a, Gray8> {
   /// Attaches an 8-bit RGBA output buffer. Alpha is forced to `0xFF`
   /// (Gray8 has no alpha channel).
   ///
-  /// Returns `Err(RgbaBufferTooShort)` if `buf.len() < width × height × 4`,
+  /// Returns `Err(InsufficientRgbaBuffer)` if `buf.len() < width × height × 4`,
   /// or `Err(GeometryOverflow)` on 32-bit overflow.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -75,12 +76,11 @@ impl<'a> MixedSinker<'a, Gray8> {
   /// In-place variant of [`with_rgba`](Self::with_rgba).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -99,10 +99,9 @@ impl<'a> MixedSinker<'a, Gray8> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -127,18 +126,17 @@ impl PixelSink for MixedSinker<'_, Gray8> {
 
     // Row shape check — defense-in-depth before any unsafe kernel.
     if row.y().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch {
-        which: RowSlice::Y,
-        row: idx,
-        expected: w,
-        actual: row.y().len(),
-      });
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::Y,
+        idx,
+        w,
+        row.y().len(),
+      )));
     }
     if idx >= h {
-      return Err(MixedSinkerError::RowIndexOutOfRange {
-        row: idx,
-        configured_height: h,
-      });
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, h),
+      ));
     }
 
     let Self {
@@ -300,11 +298,9 @@ fn process_gray_n<'a, const BITS: u32, const BE: bool>(
     let rgb_plane_start = one_plane_start * 3;
     let rgb_plane_end = one_plane_end
       .checked_mul(3)
-      .ok_or(MixedSinkerError::GeometryOverflow {
-        width: w,
-        height: h,
-        channels: 3,
-      })?;
+      .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+        w, h, 3,
+      )))?;
     let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
     gray_n_to_rgb_u16_row::<BITS, BE>(y_plane, rgb_u16_row, w, use_simd, full_range);
     if want_rgba_u16 {
@@ -386,18 +382,17 @@ fn check_gray_n_row_shape(
   h: usize,
 ) -> Result<(), MixedSinkerError> {
   if y_len != w {
-    return Err(MixedSinkerError::RowShapeMismatch {
-      which: RowSlice::Y,
-      row: idx,
-      expected: w,
-      actual: y_len,
-    });
+    return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+      RowSlice::Y,
+      idx,
+      w,
+      y_len,
+    )));
   }
   if idx >= h {
-    return Err(MixedSinkerError::RowIndexOutOfRange {
-      row: idx,
-      configured_height: h,
-    });
+    return Err(MixedSinkerError::RowIndexOutOfRange(
+      RowIndexOutOfRange::new(idx, h),
+    ));
   }
   Ok(())
 }
@@ -416,12 +411,11 @@ macro_rules! impl_gray_n_sinker {
       /// In-place variant of [`with_rgba`](Self::with_rgba).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
-        let expected = self.frame_bytes(4)?;
+        let expected = self.frame_elems(4)?;
         if buf.len() < expected {
-          return Err(MixedSinkerError::RgbaBufferTooShort {
-            expected,
-            actual: buf.len(),
-          });
+          return Err(MixedSinkerError::InsufficientRgbaBuffer(
+            InsufficientBuffer::new(expected, buf.len()),
+          ));
         }
         self.rgba = Some(buf);
         Ok(self)
@@ -437,12 +431,11 @@ macro_rules! impl_gray_n_sinker {
       /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-        let expected = self.frame_bytes(3)?;
+        let expected = self.frame_elems(3)?;
         if buf.len() < expected {
-          return Err(MixedSinkerError::RgbU16BufferTooShort {
-            expected,
-            actual: buf.len(),
-          });
+          return Err(MixedSinkerError::InsufficientRgbU16Buffer(
+            InsufficientBuffer::new(expected, buf.len()),
+          ));
         }
         self.rgb_u16 = Some(buf);
         Ok(self)
@@ -459,12 +452,11 @@ macro_rules! impl_gray_n_sinker {
       /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-        let expected = self.frame_bytes(4)?;
+        let expected = self.frame_elems(4)?;
         if buf.len() < expected {
-          return Err(MixedSinkerError::RgbaU16BufferTooShort {
-            expected,
-            actual: buf.len(),
-          });
+          return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
+            InsufficientBuffer::new(expected, buf.len()),
+          ));
         }
         self.rgba_u16 = Some(buf);
         Ok(self)
@@ -482,10 +474,9 @@ macro_rules! impl_gray_n_sinker {
       pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
         let expected = self.frame_pixels()?;
         if buf.len() < expected {
-          return Err(MixedSinkerError::LumaU16BufferTooShort {
-            expected,
-            actual: buf.len(),
-          });
+          return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+            InsufficientBuffer::new(expected, buf.len()),
+          ));
         }
         self.luma_u16 = Some(buf);
         Ok(self)
@@ -565,12 +556,11 @@ impl<'a, const BE: bool> MixedSinker<'a, Gray16<BE>> {
   /// In-place variant of [`with_rgba`](Self::with_rgba).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -586,12 +576,11 @@ impl<'a, const BE: bool> MixedSinker<'a, Gray16<BE>> {
   /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(3)?;
+    let expected = self.frame_elems(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientRgbU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -607,12 +596,11 @@ impl<'a, const BE: bool> MixedSinker<'a, Gray16<BE>> {
   /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaU16BufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba_u16 = Some(buf);
     Ok(self)
@@ -630,10 +618,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Gray16<BE>> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -659,18 +646,17 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gray16<BE>> {
     let full_range = row.full_range();
 
     if row.y().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch {
-        which: RowSlice::Y,
-        row: idx,
-        expected: w,
-        actual: row.y().len(),
-      });
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::Y,
+        idx,
+        w,
+        row.y().len(),
+      )));
     }
     if idx >= h {
-      return Err(MixedSinkerError::RowIndexOutOfRange {
-        row: idx,
-        configured_height: h,
-      });
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, h),
+      ));
     }
 
     let Self {
@@ -723,11 +709,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gray16<BE>> {
       let rgb_plane_end =
         one_plane_end
           .checked_mul(3)
-          .ok_or(MixedSinkerError::GeometryOverflow {
-            width: w,
-            height: h,
-            channels: 3,
-          })?;
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+            w, h, 3,
+          )))?;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
       gray16_to_rgb_u16_row::<BE>(y_plane, rgb_u16_row, w, use_simd, full_range);
       if want_rgba_u16 {
@@ -821,12 +805,11 @@ impl<'a, const BE: bool> MixedSinker<'a, Grayf32<BE>> {
   /// In-place variant of [`with_rgba`](Self::with_rgba).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -841,12 +824,11 @@ impl<'a, const BE: bool> MixedSinker<'a, Grayf32<BE>> {
   /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(3)?;
+    let expected = self.frame_elems(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientRgbU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -861,12 +843,11 @@ impl<'a, const BE: bool> MixedSinker<'a, Grayf32<BE>> {
   /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaU16BufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba_u16 = Some(buf);
     Ok(self)
@@ -883,10 +864,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Grayf32<BE>> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -901,12 +881,11 @@ impl<'a, const BE: bool> MixedSinker<'a, Grayf32<BE>> {
   /// In-place variant of [`with_rgb_f32`](Self::with_rgb_f32).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgb_f32(&mut self, buf: &'a mut [f32]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(3)?;
+    let expected = self.frame_elems(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbF32BufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientRgbF32Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgb_f32 = Some(buf);
     Ok(self)
@@ -921,12 +900,11 @@ impl<'a, const BE: bool> MixedSinker<'a, Grayf32<BE>> {
   /// In-place variant of [`with_luma_f32`](Self::with_luma_f32).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_luma_f32(&mut self, buf: &'a mut [f32]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(1)?;
+    let expected = self.frame_elems(1)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaF32BufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientLumaF32Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.luma_f32 = Some(buf);
     Ok(self)
@@ -950,18 +928,17 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Grayf32<BE>> {
     let use_simd = self.simd;
 
     if row.y().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch {
-        which: RowSlice::Y,
-        row: idx,
-        expected: w,
-        actual: row.y().len(),
-      });
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::Y,
+        idx,
+        w,
+        row.y().len(),
+      )));
     }
     if idx >= h {
-      return Err(MixedSinkerError::RowIndexOutOfRange {
-        row: idx,
-        configured_height: h,
-      });
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, h),
+      ));
     }
 
     let y_plane = row.y();
@@ -983,11 +960,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Grayf32<BE>> {
       let rgb_f32_start = one_plane_start * 3;
       let rgb_f32_end = one_plane_end
         .checked_mul(3)
-        .ok_or(MixedSinkerError::GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 3,
-        })?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 3,
+        )))?;
       grayf32_to_rgb_f32_row::<BE>(y_plane, &mut buf[rgb_f32_start..rgb_f32_end], w, use_simd);
     }
 
@@ -1026,11 +1001,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Grayf32<BE>> {
       let rgb_plane_end =
         one_plane_end
           .checked_mul(3)
-          .ok_or(MixedSinkerError::GeometryOverflow {
-            width: w,
-            height: h,
-            channels: 3,
-          })?;
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+            w, h, 3,
+          )))?;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
       grayf32_to_rgb_u16_row::<BE>(y_plane, rgb_u16_row, w, use_simd);
       if want_rgba_u16 {
@@ -1118,12 +1091,11 @@ impl<'a> MixedSinker<'a, Ya8> {
   /// In-place variant of [`with_rgba`](Self::with_rgba).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -1138,12 +1110,11 @@ impl<'a> MixedSinker<'a, Ya8> {
   /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(3)?;
+    let expected = self.frame_elems(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientRgbU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -1158,12 +1129,11 @@ impl<'a> MixedSinker<'a, Ya8> {
   /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaU16BufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba_u16 = Some(buf);
     Ok(self)
@@ -1180,10 +1150,9 @@ impl<'a> MixedSinker<'a, Ya8> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -1208,18 +1177,17 @@ impl PixelSink for MixedSinker<'_, Ya8> {
     let packed = row.packed(); // &[u8], length = width * 2
 
     if packed.len() != w * 2 {
-      return Err(MixedSinkerError::RowShapeMismatch {
-        which: RowSlice::Y,
-        row: idx,
-        expected: w * 2,
-        actual: packed.len(),
-      });
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::Y,
+        idx,
+        w * 2,
+        packed.len(),
+      )));
     }
     if idx >= h {
-      return Err(MixedSinkerError::RowIndexOutOfRange {
-        row: idx,
-        configured_height: h,
-      });
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, h),
+      ));
     }
 
     let one_plane_start = idx * w;
@@ -1251,11 +1219,9 @@ impl PixelSink for MixedSinker<'_, Ya8> {
       let rgb_plane_end =
         one_plane_end
           .checked_mul(3)
-          .ok_or(MixedSinkerError::GeometryOverflow {
-            width: w,
-            height: h,
-            channels: 3,
-          })?;
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+            w, h, 3,
+          )))?;
       ya8_to_rgb_u16_row(
         packed,
         &mut buf[rgb_plane_start..rgb_plane_end],
@@ -1345,12 +1311,11 @@ impl<'a, const BE: bool> MixedSinker<'a, Ya16<BE>> {
   /// In-place variant of [`with_rgba`](Self::with_rgba).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -1365,12 +1330,11 @@ impl<'a, const BE: bool> MixedSinker<'a, Ya16<BE>> {
   /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(3)?;
+    let expected = self.frame_elems(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientRgbU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -1385,12 +1349,11 @@ impl<'a, const BE: bool> MixedSinker<'a, Ya16<BE>> {
   /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaU16BufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba_u16 = Some(buf);
     Ok(self)
@@ -1407,10 +1370,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Ya16<BE>> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -1435,18 +1397,17 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Ya16<BE>> {
     let packed = row.packed(); // &[u16], length = width * 2
 
     if packed.len() != w * 2 {
-      return Err(MixedSinkerError::RowShapeMismatch {
-        which: RowSlice::Y,
-        row: idx,
-        expected: w * 2,
-        actual: packed.len(),
-      });
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::Y,
+        idx,
+        w * 2,
+        packed.len(),
+      )));
     }
     if idx >= h {
-      return Err(MixedSinkerError::RowIndexOutOfRange {
-        row: idx,
-        configured_height: h,
-      });
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, h),
+      ));
     }
 
     let one_plane_start = idx * w;
@@ -1487,11 +1448,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Ya16<BE>> {
       let rgb_plane_end =
         one_plane_end
           .checked_mul(3)
-          .ok_or(MixedSinkerError::GeometryOverflow {
-            width: w,
-            height: h,
-            channels: 3,
-          })?;
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+            w, h, 3,
+          )))?;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
       ya16_to_rgb_u16_row::<BE>(packed, rgb_u16_row, w, use_simd);
       if want_rgba_u16 {

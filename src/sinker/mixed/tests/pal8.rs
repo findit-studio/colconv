@@ -382,18 +382,14 @@ fn pal8_error_row_shape_mismatch() {
   let err = sink.process(row).unwrap_err();
 
   match err {
-    MixedSinkerError::RowShapeMismatch {
-      which,
-      expected,
-      actual,
-      ..
-    } => {
+    MixedSinkerError::RowShapeMismatch(e) => {
       assert!(
-        which.is_pal_8_index_row(),
-        "which must be Pal8IndexRow, got {which}"
+        e.which().is_pal_8_index_row(),
+        "which must be Pal8IndexRow, got {}",
+        e.which()
       );
-      assert_eq!(expected, width);
-      assert_eq!(actual, 2);
+      assert_eq!(e.expected(), width);
+      assert_eq!(e.actual(), 2);
     }
     other => panic!("expected RowShapeMismatch, got {other:?}"),
   }

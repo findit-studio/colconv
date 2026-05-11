@@ -39,8 +39,9 @@
 //! of the 8-bit `Gbrap` sinker post-codex-fix.
 
 use super::{
-  MixedSinker, MixedSinkerError, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
+  RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  rgba_u16_plane_row_slice,
 };
 use crate::{
   PixelSink,
@@ -80,12 +81,11 @@ macro_rules! impl_gbrp_high_bit {
       /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-        let expected = self.frame_bytes(3)?;
+        let expected = self.frame_elems(3)?;
         if buf.len() < expected {
-          return Err(MixedSinkerError::RgbU16BufferTooShort {
-            expected,
-            actual: buf.len(),
-          });
+          return Err(MixedSinkerError::InsufficientRgbU16Buffer(
+            InsufficientBuffer::new(expected, buf.len()),
+          ));
         }
         self.rgb_u16 = Some(buf);
         Ok(self)
@@ -102,12 +102,11 @@ macro_rules! impl_gbrp_high_bit {
       /// In-place variant of [`with_rgba`](Self::with_rgba).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
-        let expected = self.frame_bytes(4)?;
+        let expected = self.frame_elems(4)?;
         if buf.len() < expected {
-          return Err(MixedSinkerError::RgbaBufferTooShort {
-            expected,
-            actual: buf.len(),
-          });
+          return Err(MixedSinkerError::InsufficientRgbaBuffer(
+            InsufficientBuffer::new(expected, buf.len()),
+          ));
         }
         self.rgba = Some(buf);
         Ok(self)
@@ -123,12 +122,11 @@ macro_rules! impl_gbrp_high_bit {
       /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-        let expected = self.frame_bytes(4)?;
+        let expected = self.frame_elems(4)?;
         if buf.len() < expected {
-          return Err(MixedSinkerError::RgbaU16BufferTooShort {
-            expected,
-            actual: buf.len(),
-          });
+          return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
+            InsufficientBuffer::new(expected, buf.len()),
+          ));
         }
         self.rgba_u16 = Some(buf);
         Ok(self)
@@ -150,10 +148,9 @@ macro_rules! impl_gbrp_high_bit {
       pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
         let expected = self.frame_pixels()?;
         if buf.len() < expected {
-          return Err(MixedSinkerError::LumaU16BufferTooShort {
-            expected,
-            actual: buf.len(),
-          });
+          return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+            InsufficientBuffer::new(expected, buf.len()),
+          ));
         }
         self.luma_u16 = Some(buf);
         Ok(self)
@@ -178,34 +175,33 @@ macro_rules! impl_gbrp_high_bit {
         let use_simd = self.simd;
 
         if row.g().len() != w {
-          return Err(MixedSinkerError::RowShapeMismatch {
-            which: RowSlice::GPlane,
-            row: idx,
-            expected: w,
-            actual: row.g().len(),
-          });
+          return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+            RowSlice::GPlane,
+            idx,
+            w,
+            row.g().len(),
+          )));
         }
         if row.b().len() != w {
-          return Err(MixedSinkerError::RowShapeMismatch {
-            which: RowSlice::BPlane,
-            row: idx,
-            expected: w,
-            actual: row.b().len(),
-          });
+          return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+            RowSlice::BPlane,
+            idx,
+            w,
+            row.b().len(),
+          )));
         }
         if row.r().len() != w {
-          return Err(MixedSinkerError::RowShapeMismatch {
-            which: RowSlice::RPlane,
-            row: idx,
-            expected: w,
-            actual: row.r().len(),
-          });
+          return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+            RowSlice::RPlane,
+            idx,
+            w,
+            row.r().len(),
+          )));
         }
         if idx >= h {
-          return Err(MixedSinkerError::RowIndexOutOfRange {
-            row: idx,
-            configured_height: h,
-          });
+          return Err(MixedSinkerError::RowIndexOutOfRange(
+            RowIndexOutOfRange::new(idx, h),
+          ));
         }
 
         let Self {
@@ -250,11 +246,9 @@ macro_rules! impl_gbrp_high_bit {
           let rgb_plane_end =
             one_plane_end
               .checked_mul(3)
-              .ok_or(MixedSinkerError::GeometryOverflow {
-                width: w,
-                height: h,
-                channels: 3,
-              })?;
+              .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+                w, h, 3,
+              )))?;
           let rgb_plane_start = one_plane_start * 3;
           let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
           gbr_to_rgb_u16_high_bit_row::<BITS, BE>(g_in, b_in, r_in, rgb_u16_row, w, use_simd);
@@ -361,12 +355,11 @@ macro_rules! impl_gbrap_high_bit {
       /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-        let expected = self.frame_bytes(3)?;
+        let expected = self.frame_elems(3)?;
         if buf.len() < expected {
-          return Err(MixedSinkerError::RgbU16BufferTooShort {
-            expected,
-            actual: buf.len(),
-          });
+          return Err(MixedSinkerError::InsufficientRgbU16Buffer(
+            InsufficientBuffer::new(expected, buf.len()),
+          ));
         }
         self.rgb_u16 = Some(buf);
         Ok(self)
@@ -383,12 +376,11 @@ macro_rules! impl_gbrap_high_bit {
       /// In-place variant of [`with_rgba`](Self::with_rgba).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
-        let expected = self.frame_bytes(4)?;
+        let expected = self.frame_elems(4)?;
         if buf.len() < expected {
-          return Err(MixedSinkerError::RgbaBufferTooShort {
-            expected,
-            actual: buf.len(),
-          });
+          return Err(MixedSinkerError::InsufficientRgbaBuffer(
+            InsufficientBuffer::new(expected, buf.len()),
+          ));
         }
         self.rgba = Some(buf);
         Ok(self)
@@ -405,12 +397,11 @@ macro_rules! impl_gbrap_high_bit {
       /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-        let expected = self.frame_bytes(4)?;
+        let expected = self.frame_elems(4)?;
         if buf.len() < expected {
-          return Err(MixedSinkerError::RgbaU16BufferTooShort {
-            expected,
-            actual: buf.len(),
-          });
+          return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
+            InsufficientBuffer::new(expected, buf.len()),
+          ));
         }
         self.rgba_u16 = Some(buf);
         Ok(self)
@@ -430,10 +421,9 @@ macro_rules! impl_gbrap_high_bit {
       pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
         let expected = self.frame_pixels()?;
         if buf.len() < expected {
-          return Err(MixedSinkerError::LumaU16BufferTooShort {
-            expected,
-            actual: buf.len(),
-          });
+          return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+            InsufficientBuffer::new(expected, buf.len()),
+          ));
         }
         self.luma_u16 = Some(buf);
         Ok(self)
@@ -458,42 +448,41 @@ macro_rules! impl_gbrap_high_bit {
         let use_simd = self.simd;
 
         if row.g().len() != w {
-          return Err(MixedSinkerError::RowShapeMismatch {
-            which: RowSlice::GPlane,
-            row: idx,
-            expected: w,
-            actual: row.g().len(),
-          });
+          return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+            RowSlice::GPlane,
+            idx,
+            w,
+            row.g().len(),
+          )));
         }
         if row.b().len() != w {
-          return Err(MixedSinkerError::RowShapeMismatch {
-            which: RowSlice::BPlane,
-            row: idx,
-            expected: w,
-            actual: row.b().len(),
-          });
+          return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+            RowSlice::BPlane,
+            idx,
+            w,
+            row.b().len(),
+          )));
         }
         if row.r().len() != w {
-          return Err(MixedSinkerError::RowShapeMismatch {
-            which: RowSlice::RPlane,
-            row: idx,
-            expected: w,
-            actual: row.r().len(),
-          });
+          return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+            RowSlice::RPlane,
+            idx,
+            w,
+            row.r().len(),
+          )));
         }
         if row.a().len() != w {
-          return Err(MixedSinkerError::RowShapeMismatch {
-            which: RowSlice::AFull,
-            row: idx,
-            expected: w,
-            actual: row.a().len(),
-          });
+          return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+            RowSlice::AFull,
+            idx,
+            w,
+            row.a().len(),
+          )));
         }
         if idx >= h {
-          return Err(MixedSinkerError::RowIndexOutOfRange {
-            row: idx,
-            configured_height: h,
-          });
+          return Err(MixedSinkerError::RowIndexOutOfRange(
+            RowIndexOutOfRange::new(idx, h),
+          ));
         }
 
         let Self {
@@ -540,11 +529,9 @@ macro_rules! impl_gbrap_high_bit {
           let rgb_plane_end =
             one_plane_end
               .checked_mul(3)
-              .ok_or(MixedSinkerError::GeometryOverflow {
-                width: w,
-                height: h,
-                channels: 3,
-              })?;
+              .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+                w, h, 3,
+              )))?;
           let rgb_plane_start = one_plane_start * 3;
           let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
           gbr_to_rgb_u16_high_bit_row::<BITS, BE>(g_in, b_in, r_in, rgb_u16_row, w, use_simd);

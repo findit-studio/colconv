@@ -281,7 +281,10 @@ fn v210_odd_width_returns_err() {
   let buf = std::vec![0u8; 16];
   let row = V210Row::new(&buf, 0, ColorMatrix::Bt601, true);
   let err = sink.process(row).err().unwrap();
-  assert!(matches!(err, MixedSinkerError::OddWidth { width: 7 }));
+  assert_eq!(
+    err,
+    MixedSinkerError::WidthAlignment(WidthAlignment::new(7, WidthAlignmentRequirement::Even))
+  );
 }
 
 #[test]
@@ -323,12 +326,7 @@ fn v210_process_rejects_short_packed_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
-      which: RowSlice::V210Packed,
-      row: 0,
-      expected: 16,
-      actual: 15,
-    }
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::V210Packed, 0, 16, 15))
   );
 }
 
@@ -338,15 +336,12 @@ fn v210_luma_u16_buffer_too_short_returns_err() {
   let mut luma = std::vec![0u16; 6 * 7];
   let result = MixedSinker::<V210>::new(6, 8).with_luma_u16(&mut luma);
   let Err(err) = result else {
-    panic!("expected LumaU16BufferTooShort");
+    panic!("expected InsufficientLumaU16Buffer");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::LumaU16BufferTooShort {
-      expected: 48,
-      actual: 42,
-    }
-  ));
+    MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(48, 42))
+  );
 }
 
 // ---- Planar parity oracle (Task 12) -----------------------------------

@@ -1097,8 +1097,14 @@ macro_rules! gray_planar_u16_le_be_roundtrip_test {
 
     // Cover both scalar (`with_simd(false)`) and SIMD (`with_simd(true)`)
     // dispatch paths so the codex round-1 finding (BE parity tests bypassing
-    // SIMD) is closed.
-    for &use_simd in &[false, true] {
+    // SIMD) is closed. Under Miri, drop the SIMD iteration only — Miri can't
+    // run the NEON/x86 intrinsics, but the scalar BE/LE path is exactly what
+    // Miri exists to verify, so we keep that arm.
+    #[cfg(miri)]
+    let modes: &[bool] = &[false];
+    #[cfg(not(miri))]
+    let modes: &[bool] = &[false, true];
+    for &use_simd in modes {
       let frame_le = $le_frame::try_new(&pix_le, 16, 4, 16).unwrap();
       let mut out_le = std::vec![0u8; 16 * 4 * 4];
       let mut sink_le = MixedSinker::<$marker>::new(16, 4)
@@ -1191,7 +1197,13 @@ macro_rules! gray16_dual_output_le_be_roundtrip_test {
     let pix_le = as_le_u16(&intended);
     let pix_be = as_be_u16(&intended);
 
-    for &use_simd in &[false, true] {
+    // Drop SIMD iteration under Miri (NEON/x86 intrinsics unsupported);
+    // keep scalar arm so Miri still verifies the BE/LE byte path.
+    #[cfg(miri)]
+    let modes: &[bool] = &[false];
+    #[cfg(not(miri))]
+    let modes: &[bool] = &[false, true];
+    for &use_simd in modes {
       // Exercise both u8 RGBA and u16 luma paths.
       let frame_le = $le_frame::try_new(&pix_le, 16, 4, 16).unwrap();
       let mut out_le_rgba = std::vec![0u8; 16 * 4 * 4];
@@ -1265,7 +1277,13 @@ macro_rules! grayf32_le_be_roundtrip_test {
     let pix_le = as_le_f32(&intended);
     let pix_be = as_be_f32(&intended);
 
-    for &use_simd in &[false, true] {
+    // Drop SIMD iteration under Miri (NEON/x86 intrinsics unsupported);
+    // keep scalar arm so Miri still verifies the BE/LE byte path.
+    #[cfg(miri)]
+    let modes: &[bool] = &[false];
+    #[cfg(not(miri))]
+    let modes: &[bool] = &[false, true];
+    for &use_simd in modes {
       let frame_le = $le_frame::try_new(&pix_le, 16, 4, 16).unwrap();
       let mut out_le = std::vec![0u8; 16 * 4 * 4];
       let mut sink_le = MixedSinker::<$marker>::new(16, 4)
@@ -1331,7 +1349,13 @@ macro_rules! ya16_le_be_roundtrip_test {
     let pix_le = as_le_u16(&intended);
     let pix_be = as_be_u16(&intended);
 
-    for &use_simd in &[false, true] {
+    // Drop SIMD iteration under Miri (NEON/x86 intrinsics unsupported);
+    // keep scalar arm so Miri still verifies the BE/LE byte path.
+    #[cfg(miri)]
+    let modes: &[bool] = &[false];
+    #[cfg(not(miri))]
+    let modes: &[bool] = &[false, true];
+    for &use_simd in modes {
       // Exercise both u8 RGBA (with α copy) and u16 RGBA (with α copy) paths.
       let frame_le = $le_frame::try_new(&pix_le, 16, 4, 16 * 2).unwrap();
       let mut out_le_rgba = std::vec![0u8; 16 * 4 * 4];

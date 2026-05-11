@@ -2,6 +2,114 @@
 
 ## Unreleased
 
+### Changed (BREAKING — pre-publish, no published version impacted)
+
+- **`MixedSinkerError` refactored to newtype-tuple variants with private-field
+  payload structs.** Every variant now wraps a dedicated payload struct;
+  payload fields are private, accessed via `pub const fn` getters. Callers
+  matching on `MixedSinkerError` must update their patterns from struct-field
+  syntax to newtype destructuring + accessor calls.
+
+  - Per-variant payload structs (all in `crate::sinker`): `InsufficientBuffer`,
+    `DimensionMismatch`, `GeometryOverflow`, `InsufficientHsvPlane`,
+    `RowIndexOutOfRange`, `RowShapeMismatch`, `WidthAlignment`. Discriminator
+    enum `WidthAlignmentRequirement` is also re-exported. Each struct exposes
+    `pub const fn new(...)` plus one `pub const fn field(&self) -> T` getter
+    per field.
+
+  - All 12 `Insufficient*Buffer` variants share one `InsufficientBuffer`
+    payload (DRY). The variant name still distinguishes the buffer (rgb /
+    rgba_u16 / luma / xyz_f32 / etc.) and the per-variant `Display` carries
+    the unit (bytes vs. elements). (Formerly named `BufferTooShort`; renamed
+    via the `Insufficient*` refactoring below.)
+
+  - `OddWidth { width }` + `WidthNotMultipleOf4 { width }` are **consolidated**
+    into one `WidthAlignment(WidthAlignment)` variant whose payload carries
+    `width()` and a `required()` discriminator (`WidthAlignmentRequirement::
+    Even` for 4:2:0 / 4:2:2; `MultipleOfFour` for planar `Yuv410p` and packed
+    `Uyyvyy411`). Planar `Yuv411p` accepts non-4-aligned widths via
+    `width.div_ceil(4)` and is **not** covered by `MultipleOfFour`. The
+    format-agnostic `OddWidth` misnomer is retired.
+
+  - **Migration patterns** (the new accessor-based shape):
+
+    ```rust
+    // Before
+    match err {
+      MixedSinkerError::DimensionMismatch { configured_w, configured_h, frame_w, frame_h } => {
+        eprintln!("size mismatch: {configured_w}x{configured_h} vs {frame_w}x{frame_h}");
+      }
+      MixedSinkerError::RgbBufferTooShort { expected, actual } => { /* ... */ }
+      MixedSinkerError::OddWidth { width } => { /* ... */ }
+      MixedSinkerError::WidthNotMultipleOf4 { width } => { /* ... */ }
+      _ => {}
+    }
+
+    // After (current API)
+    match err {
+      MixedSinkerError::DimensionMismatch(e) => {
+        eprintln!(
+          "size mismatch: {}x{} vs {}x{}",
+          e.configured_w(), e.configured_h(), e.frame_w(), e.frame_h(),
+        );
+      }
+      MixedSinkerError::InsufficientRgbBuffer(e) => {
+        let _ = (e.expected(), e.actual());
+      }
+      MixedSinkerError::WidthAlignment(e) => {
+        let _ = (e.width(), e.required()); // e.required() ∈ {Even, MultipleOfFour}
+      }
+      _ => {}
+    }
+    ```
+
+    For the audit-driven Yuv410p case, the variant produced by a non-4-aligned
+    `MixedSinker<Yuv410p>` width is now `WidthAlignment(WidthAlignment::new(w,
+    WidthAlignmentRequirement::MultipleOfFour))` — replacing the prior
+    misleading `OddWidth { width: w }`.
+
+- **`MixedSinkerError` `*BufferTooShort` / `HsvPlaneTooShort` → `Insufficient*`
+  rename.** All 12 length-shortfall variants and their payload structs have been
+  renamed to use the `Insufficient*` prefix for consistency and readability:
+
+  - `BufferTooShort` payload struct → `InsufficientBuffer` (shared across all
+    12 buffer variants — DRY preserved).
+  - `HsvPlaneTooShort` payload struct → `InsufficientHsvPlane`.
+  - 12 variant renames: e.g. `RgbBufferTooShort(BufferTooShort)` →
+    `InsufficientRgbBuffer(InsufficientBuffer)`, and so on for all
+    `Rgb/RgbU16/Rgba/RgbaU16/RgbF32/RgbF16/RgbaF32/RgbaF16/XyzF32/LumaF32/
+    Luma/LumaU16` variants.
+  - `HsvPlaneTooShort(HsvPlaneTooShort)` → `InsufficientHsvPlane(InsufficientHsvPlane)`.
+  - Display strings updated: `"X buffer too short:"` → `"insufficient X buffer:"`;
+    `"hsv {:?} plane too short:"` → `"insufficient hsv {:?} plane:"`.
+    Callers parsing error messages must update accordingly.
+  - `IsVariant`-derived predicates: new names are e.g.
+    `is_insufficient_rgb_buffer()`, `is_insufficient_hsv_plane()`.
+  - Frame errors (`PlaneTooShort`, `StrideTooSmall`, etc.) are **not** affected.
+
+  **Migration** (source-level breaking change, pre-publish):
+
+  ```rust
+  // Before
+  MixedSinkerError::RgbBufferTooShort(e) => { let _ = (e.expected(), e.actual()); }
+  MixedSinkerError::HsvPlaneTooShort(e)  => { let _ = (e.which(), e.expected(), e.actual()); }
+
+  // After
+  MixedSinkerError::InsufficientRgbBuffer(e) => { let _ = (e.expected(), e.actual()); }
+  MixedSinkerError::InsufficientHsvPlane(e)  => { let _ = (e.which(), e.expected(), e.actual()); }
+  ```
+
+  Re-exports in `crate::sinker`: `BufferTooShort` → `InsufficientBuffer`,
+  `HsvPlaneTooShort` → `InsufficientHsvPlane`.
+
+- **`derive_more::IsVariant` derived on every `*Error` enum** (69 enums across
+  28 files) — `err.is_<variant>()` predicates available everywhere.
+  `derive_more::TryUnwrap` and `derive_more::Unwrap` additionally derived on
+  the 3 enums where they generate methods (`MixedSinkerError`,
+  `Xv36FrameError`, `Y2xxFrameError` — i.e. those with tuple/unit variants).
+  derive_more 2.x cannot synthesize `unwrap_*` for struct variants, so the
+  remaining 66 all-struct-variant enums get only `IsVariant`.
+
 ### BREAKING
 
 - `crate::yuv` module renamed to `crate::source` to reflect that it holds

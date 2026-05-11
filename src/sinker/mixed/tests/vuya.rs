@@ -276,12 +276,7 @@ fn vuya_width_mismatch_returns_error() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
-      which: RowSlice::VuyaPacked,
-      row: 0,
-      expected: 64 * 4, // 256
-      actual: 512,
-    }
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::VuyaPacked, 0, 64 * 4, 512))
   );
 }
 
@@ -296,13 +291,10 @@ fn vuya_row_index_oor_returns_error() {
   let packed = std::vec![0u8; 4 * 4]; // width=4, 4 bytes per pixel
   let row = VuyaRow::new(&packed, 2, ColorMatrix::Bt709, false);
   let err = sink.process(row).err().unwrap();
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RowIndexOutOfRange {
-      row: 2,
-      configured_height: 2,
-    }
-  ));
+    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange::new(2, 2))
+  );
 }
 
 // ---- 9: RGB buffer too short ----------------------------------------------
@@ -314,15 +306,12 @@ fn vuya_rgb_buffer_too_short_returns_error() {
   let mut rgb = std::vec![0u8; 95];
   let result = MixedSinker::<Vuya>::new(8, 4).with_rgb(&mut rgb);
   let Err(err) = result else {
-    panic!("expected RgbBufferTooShort");
+    panic!("expected InsufficientRgbBuffer");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RgbBufferTooShort {
-      expected: 96,
-      actual: 95,
-    }
-  ));
+    MixedSinkerError::InsufficientRgbBuffer(InsufficientBuffer::new(96, 95))
+  );
 }
 
 // ---- 10: RGBA buffer too short --------------------------------------------
@@ -334,15 +323,12 @@ fn vuya_rgba_buffer_too_short_returns_error() {
   let mut rgba = std::vec![0u8; 90];
   let result = MixedSinker::<Vuya>::new(6, 4).with_rgba(&mut rgba);
   let Err(err) = result else {
-    panic!("expected RgbaBufferTooShort");
+    panic!("expected InsufficientRgbaBuffer");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RgbaBufferTooShort {
-      expected: 96,
-      actual: 90,
-    }
-  ));
+    MixedSinkerError::InsufficientRgbaBuffer(InsufficientBuffer::new(96, 90))
+  );
 }
 
 // ---- 11: Luma buffer too short --------------------------------------------
@@ -354,15 +340,12 @@ fn vuya_luma_buffer_too_short_returns_error() {
   let mut luma = std::vec![0u8; 20];
   let result = MixedSinker::<Vuya>::new(8, 3).with_luma(&mut luma);
   let Err(err) = result else {
-    panic!("expected LumaBufferTooShort");
+    panic!("expected InsufficientLumaBuffer");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::LumaBufferTooShort {
-      expected: 24,
-      actual: 20,
-    }
-  ));
+    MixedSinkerError::InsufficientLumaBuffer(InsufficientBuffer::new(24, 20))
+  );
 }
 
 // ---- 12: HSV buffer too short (H plane) -----------------------------------
@@ -376,15 +359,12 @@ fn vuya_hsv_buffer_too_short_returns_error() {
   let mut v = std::vec![0u8; 16];
   let result = MixedSinker::<Vuya>::new(4, 4).with_hsv(&mut h, &mut s, &mut v);
   let Err(err) = result else {
-    panic!("expected HsvPlaneTooShort");
+    panic!("expected InsufficientHsvPlane");
   };
   assert!(matches!(
-    err,
-    MixedSinkerError::HsvPlaneTooShort {
-      which: HsvPlane::H,
-      expected: 16,
-      actual: 15,
-    }
+    &err,
+    MixedSinkerError::InsufficientHsvPlane(e)
+      if matches!(e.which(), HsvPlane::H) && e.expected() == 16 && e.actual() == 15
   ));
 }
 
@@ -632,16 +612,11 @@ fn vuya_luma_u16_buffer_too_short_returns_err() {
   let mut luma = std::vec![0u16; 4 * 4 - 1];
   let result = MixedSinker::<Vuya>::new(4, 4).with_luma_u16(&mut luma);
   let Err(err) = result else {
-    panic!("expected LumaU16BufferTooShort");
+    panic!("expected InsufficientLumaU16Buffer");
   };
-  assert!(
-    matches!(
-      err,
-      MixedSinkerError::LumaU16BufferTooShort {
-        expected: 16,
-        actual: 15
-      }
-    ),
+  assert_eq!(
+    err,
+    MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(16, 15)),
     "unexpected error: {err:?}"
   );
 }
