@@ -33,8 +33,9 @@
 //! RGBA buffer directly without staging RGB.
 
 use super::{
-  MixedSinker, MixedSinkerError, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice,
+  BufferTooShort, GeometryOverflow, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
+  RowShapeMismatch, RowSlice, WidthAlignment, WidthAlignmentRequirement, check_dimensions_match,
+  rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
 use crate::{
   PixelSink,
@@ -69,10 +70,10 @@ impl<'a> MixedSinker<'a, Yuyv422> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort {
+      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -91,10 +92,10 @@ impl<'a> MixedSinker<'a, Yuyv422> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort {
+      return Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -110,7 +111,10 @@ impl PixelSink for MixedSinker<'_, Yuyv422> {
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     check_dimensions_match(self.width, self.height, width, height)?;
     if self.width & 1 != 0 {
-      return Err(MixedSinkerError::OddWidth { width: self.width });
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment {
+        width: self.width,
+        required: WidthAlignmentRequirement::Even,
+      }));
     }
     Ok(())
   }
@@ -122,27 +126,32 @@ impl PixelSink for MixedSinker<'_, Yuyv422> {
     let use_simd = self.simd;
 
     if w & 1 != 0 {
-      return Err(MixedSinkerError::OddWidth { width: w });
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment {
+        width: w,
+        required: WidthAlignmentRequirement::Even,
+      }));
     }
 
-    let packed_expected = w.checked_mul(2).ok_or(MixedSinkerError::GeometryOverflow {
-      width: w,
-      height: h,
-      channels: 2,
-    })?;
+    let packed_expected =
+      w.checked_mul(2)
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
+          width: w,
+          height: h,
+          channels: 2,
+        }))?;
     if row.yuyv().len() != packed_expected {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::Yuyv422Packed,
         row: idx,
         expected: packed_expected,
         actual: row.yuyv().len(),
-      });
+      }));
     }
     if idx >= self.height {
-      return Err(MixedSinkerError::RowIndexOutOfRange {
+      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
         row: idx,
         configured_height: self.height,
-      });
+      }));
     }
 
     let Self {
@@ -255,10 +264,10 @@ impl<'a> MixedSinker<'a, Uyvy422> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort {
+      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -277,10 +286,10 @@ impl<'a> MixedSinker<'a, Uyvy422> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort {
+      return Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -296,7 +305,10 @@ impl PixelSink for MixedSinker<'_, Uyvy422> {
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     check_dimensions_match(self.width, self.height, width, height)?;
     if self.width & 1 != 0 {
-      return Err(MixedSinkerError::OddWidth { width: self.width });
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment {
+        width: self.width,
+        required: WidthAlignmentRequirement::Even,
+      }));
     }
     Ok(())
   }
@@ -308,27 +320,32 @@ impl PixelSink for MixedSinker<'_, Uyvy422> {
     let use_simd = self.simd;
 
     if w & 1 != 0 {
-      return Err(MixedSinkerError::OddWidth { width: w });
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment {
+        width: w,
+        required: WidthAlignmentRequirement::Even,
+      }));
     }
 
-    let packed_expected = w.checked_mul(2).ok_or(MixedSinkerError::GeometryOverflow {
-      width: w,
-      height: h,
-      channels: 2,
-    })?;
+    let packed_expected =
+      w.checked_mul(2)
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
+          width: w,
+          height: h,
+          channels: 2,
+        }))?;
     if row.uyvy().len() != packed_expected {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::Uyvy422Packed,
         row: idx,
         expected: packed_expected,
         actual: row.uyvy().len(),
-      });
+      }));
     }
     if idx >= self.height {
-      return Err(MixedSinkerError::RowIndexOutOfRange {
+      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
         row: idx,
         configured_height: self.height,
-      });
+      }));
     }
 
     let Self {
@@ -434,10 +451,10 @@ impl<'a> MixedSinker<'a, Yvyu422> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort {
+      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -456,10 +473,10 @@ impl<'a> MixedSinker<'a, Yvyu422> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort {
+      return Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -475,7 +492,10 @@ impl PixelSink for MixedSinker<'_, Yvyu422> {
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     check_dimensions_match(self.width, self.height, width, height)?;
     if self.width & 1 != 0 {
-      return Err(MixedSinkerError::OddWidth { width: self.width });
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment {
+        width: self.width,
+        required: WidthAlignmentRequirement::Even,
+      }));
     }
     Ok(())
   }
@@ -487,27 +507,32 @@ impl PixelSink for MixedSinker<'_, Yvyu422> {
     let use_simd = self.simd;
 
     if w & 1 != 0 {
-      return Err(MixedSinkerError::OddWidth { width: w });
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment {
+        width: w,
+        required: WidthAlignmentRequirement::Even,
+      }));
     }
 
-    let packed_expected = w.checked_mul(2).ok_or(MixedSinkerError::GeometryOverflow {
-      width: w,
-      height: h,
-      channels: 2,
-    })?;
+    let packed_expected =
+      w.checked_mul(2)
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
+          width: w,
+          height: h,
+          channels: 2,
+        }))?;
     if row.yvyu().len() != packed_expected {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::Yvyu422Packed,
         row: idx,
         expected: packed_expected,
         actual: row.yvyu().len(),
-      });
+      }));
     }
     if idx >= self.height {
-      return Err(MixedSinkerError::RowIndexOutOfRange {
+      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
         row: idx,
         configured_height: self.height,
-      });
+      }));
     }
 
     let Self {

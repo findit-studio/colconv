@@ -263,12 +263,12 @@ fn vuyx_width_mismatch_returns_error() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
       which: RowSlice::VuyxPacked,
       row: 0,
-      expected: 64 * 4, // 256
-      actual: 512,
-    }
+      expected: 64 * 4,
+      actual: 512
+    })
   );
 }
 
@@ -285,10 +285,10 @@ fn vuyx_row_index_oor_returns_error() {
   let err = sink.process(row).err().unwrap();
   assert!(matches!(
     err,
-    MixedSinkerError::RowIndexOutOfRange {
+    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
       row: 2,
-      configured_height: 2,
-    }
+      configured_height: 2
+    })
   ));
 }
 
@@ -305,10 +305,10 @@ fn vuyx_rgb_buffer_too_short_returns_error() {
   };
   assert!(matches!(
     err,
-    MixedSinkerError::RgbBufferTooShort {
+    MixedSinkerError::RgbBufferTooShort(BufferTooShort {
       expected: 96,
-      actual: 95,
-    }
+      actual: 95
+    })
   ));
 }
 
@@ -325,10 +325,10 @@ fn vuyx_rgba_buffer_too_short_returns_error() {
   };
   assert!(matches!(
     err,
-    MixedSinkerError::RgbaBufferTooShort {
+    MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
       expected: 96,
-      actual: 90,
-    }
+      actual: 90
+    })
   ));
 }
 
@@ -345,10 +345,10 @@ fn vuyx_luma_buffer_too_short_returns_error() {
   };
   assert!(matches!(
     err,
-    MixedSinkerError::LumaBufferTooShort {
+    MixedSinkerError::LumaBufferTooShort(BufferTooShort {
       expected: 24,
-      actual: 20,
-    }
+      actual: 20
+    })
   ));
 }
 
@@ -367,11 +367,11 @@ fn vuyx_hsv_buffer_too_short_returns_error() {
   };
   assert!(matches!(
     err,
-    MixedSinkerError::HsvPlaneTooShort {
+    MixedSinkerError::HsvPlaneTooShort(HsvPlaneTooShort {
       which: HsvPlane::H,
       expected: 16,
-      actual: 15,
-    }
+      actual: 15
+    })
   ));
 }
 
@@ -416,10 +416,10 @@ fn vuyx_luma_u16_buffer_too_short_returns_err() {
   assert!(
     matches!(
       err,
-      MixedSinkerError::LumaU16BufferTooShort {
+      MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
         expected: 16,
         actual: 15
-      }
+      })
     ),
     "unexpected error: {err:?}"
   );

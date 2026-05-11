@@ -25,8 +25,9 @@
 //! The same Strategy A+ applies to `with_rgb_u16 + with_rgba_u16`.
 
 use super::{
-  MixedSinker, MixedSinkerError, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch,
-  rgb_row_to_luma_row, rgb_row_to_luma_u16_row, rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  BufferTooShort, GeometryOverflow, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
+  RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgb_row_to_luma_row,
+  rgb_row_to_luma_u16_row, rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
 use crate::{
   PixelSink,
@@ -56,10 +57,10 @@ impl<'a> MixedSinker<'a, Pal8> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort {
+      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -79,10 +80,10 @@ impl<'a> MixedSinker<'a, Pal8> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort {
+      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -102,10 +103,10 @@ impl<'a> MixedSinker<'a, Pal8> {
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaU16BufferTooShort {
+      return Err(MixedSinkerError::RgbaU16BufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.rgba_u16 = Some(buf);
     Ok(self)
@@ -125,10 +126,10 @@ impl<'a> MixedSinker<'a, Pal8> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort {
+      return Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -159,18 +160,18 @@ impl PixelSink for MixedSinker<'_, Pal8> {
     // that drives the sink manually (e.g. in tests) needs a clean error rather
     // than an out-of-bounds index inside the kernel.
     if row.row().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::Pal8IndexRow,
         row: idx,
         expected: w,
         actual: row.row().len(),
-      });
+      }));
     }
     if idx >= h {
-      return Err(MixedSinkerError::RowIndexOutOfRange {
+      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
         row: idx,
         configured_height: h,
-      });
+      }));
     }
 
     // Capture Copy fields before the `Self { .. }` destructure to avoid
@@ -225,11 +226,11 @@ impl PixelSink for MixedSinker<'_, Pal8> {
       let rgb_plane_end =
         one_plane_end
           .checked_mul(3)
-          .ok_or(MixedSinkerError::GeometryOverflow {
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
             width: w,
             height: h,
             channels: 3,
-          })?;
+          }))?;
       pal8_to_rgb_row(
         indices,
         palette,
@@ -271,11 +272,11 @@ impl PixelSink for MixedSinker<'_, Pal8> {
       let rgb_plane_end =
         one_plane_end
           .checked_mul(3)
-          .ok_or(MixedSinkerError::GeometryOverflow {
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
             width: w,
             height: h,
             channels: 3,
-          })?;
+          }))?;
       pal8_to_rgb_u16_row(
         indices,
         palette,

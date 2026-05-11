@@ -393,10 +393,10 @@ fn xv36_zero_dim_returns_err() {
   let err = sink.process(row).err().unwrap();
   assert!(matches!(
     err,
-    MixedSinkerError::RowIndexOutOfRange {
+    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
       row: 1,
-      configured_height: 1,
-    }
+      configured_height: 1
+    })
   ));
 }
 
@@ -412,12 +412,12 @@ fn xv36_process_rejects_short_packed_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
       which: RowSlice::Xv36Packed,
       row: 0,
       expected: 24,
-      actual: 23,
-    }
+      actual: 23
+    })
   );
 }
 
@@ -433,10 +433,10 @@ fn xv36_buffer_too_short_for_rgba_u16_returns_err() {
   };
   assert!(matches!(
     err,
-    MixedSinkerError::RgbaU16BufferTooShort {
+    MixedSinkerError::RgbaU16BufferTooShort(BufferTooShort {
       expected: 192,
-      actual: 168,
-    }
+      actual: 168
+    })
   ));
 }
 

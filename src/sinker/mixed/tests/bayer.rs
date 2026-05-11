@@ -266,12 +266,12 @@ fn bayer_mixed_sinker_returns_row_shape_mismatch_on_bad_above() {
   let err = sinker.process(row).unwrap_err();
   assert!(matches!(
     err,
-    MixedSinkerError::RowShapeMismatch {
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
       which: RowSlice::BayerAbove,
       expected: 8,
       actual: 7,
       ..
-    }
+    })
   ));
 }
 
@@ -299,12 +299,12 @@ fn bayer16_mixed_sinker_returns_row_shape_mismatch_on_bad_mid() {
   let err = sinker.process(row).unwrap_err();
   assert!(matches!(
     err,
-    MixedSinkerError::RowShapeMismatch {
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
       which: RowSlice::Bayer16Mid,
       expected: 8,
       actual: 7,
       ..
-    }
+    })
   ));
 }
 

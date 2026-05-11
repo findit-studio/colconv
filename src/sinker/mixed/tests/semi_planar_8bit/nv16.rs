@@ -244,10 +244,10 @@ fn nv16_rgba_buffer_too_short_returns_err() {
   };
   assert!(matches!(
     err,
-    MixedSinkerError::RgbaBufferTooShort {
+    MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
       expected: 512,
-      actual: 511,
-    }
+      actual: 511
+    })
   ));
 }
 
@@ -365,7 +365,13 @@ fn nv16_odd_width_sink_returns_err_at_begin_frame() {
   let (yp, uvp) = solid_nv16_frame(16, 8, 0, 0, 0); // dummy 16-wide frame
   let src = Nv16Frame::new(&yp, &uvp, 16, 8, 16, 16);
   let err = nv16_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap_err();
-  assert!(matches!(err, MixedSinkerError::OddWidth { width: 15 }));
+  assert!(matches!(
+    err,
+    MixedSinkerError::WidthAlignment(WidthAlignment {
+      width: 15,
+      required: WidthAlignmentRequirement::Even
+    })
+  ));
 }
 
 // ---- with_luma_u16 (Task 2) -----------------------------------------------
@@ -411,9 +417,9 @@ fn nv16_luma_u16_buffer_too_short_returns_err() {
   let result = MixedSinker::<Nv16>::new(16, 8).with_luma_u16(&mut buf);
   assert!(matches!(
     result,
-    Err(MixedSinkerError::LumaU16BufferTooShort {
+    Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
       expected: 128,
-      actual: 127,
-    })
+      actual: 127
+    }))
   ));
 }

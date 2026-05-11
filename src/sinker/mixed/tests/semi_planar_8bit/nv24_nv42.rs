@@ -278,7 +278,7 @@ fn nv24_width_mismatch_returns_err() {
   let (yp, uvp) = solid_nv24_frame(17, 8, 0, 0, 0);
   let src = Nv24Frame::new(&yp, &uvp, 17, 8, 17, 34);
   let err = nv24_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap_err();
-  assert!(matches!(err, MixedSinkerError::DimensionMismatch { .. }));
+  assert!(matches!(err, MixedSinkerError::DimensionMismatch(_)));
 }
 
 #[test]
@@ -291,12 +291,12 @@ fn nv24_process_rejects_short_uv_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
       which: RowSlice::UvFull,
       row: 0,
       expected: 32,
-      actual: 31,
-    }
+      actual: 31
+    })
   );
 }
 
@@ -310,10 +310,10 @@ fn nv24_process_rejects_out_of_range_row_idx() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowIndexOutOfRange {
+    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
       row: 8,
-      configured_height: 8,
-    }
+      configured_height: 8
+    })
   );
 }
 
@@ -327,12 +327,12 @@ fn nv42_process_rejects_short_vu_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
       which: RowSlice::VuFull,
       row: 0,
       expected: 32,
-      actual: 31,
-    }
+      actual: 31
+    })
   );
 }
 
@@ -405,10 +405,10 @@ fn nv24_rgba_buffer_too_short_returns_err() {
   };
   assert!(matches!(
     err,
-    MixedSinkerError::RgbaBufferTooShort {
+    MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
       expected: 512,
-      actual: 511,
-    }
+      actual: 511
+    })
   ));
 }
 
@@ -519,10 +519,10 @@ fn nv42_rgba_buffer_too_short_returns_err() {
   };
   assert!(matches!(
     err,
-    MixedSinkerError::RgbaBufferTooShort {
+    MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
       expected: 512,
-      actual: 511,
-    }
+      actual: 511
+    })
   ));
 }
 
@@ -1077,10 +1077,10 @@ fn nv24_luma_u16_buffer_too_short_returns_err() {
   let result = MixedSinker::<Nv24>::new(16, 8).with_luma_u16(&mut buf);
   assert!(matches!(
     result,
-    Err(MixedSinkerError::LumaU16BufferTooShort {
+    Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
       expected: 128,
-      actual: 127,
-    })
+      actual: 127
+    }))
   ));
 }
 
@@ -1125,9 +1125,9 @@ fn nv42_luma_u16_buffer_too_short_returns_err() {
   let result = MixedSinker::<Nv42>::new(16, 8).with_luma_u16(&mut buf);
   assert!(matches!(
     result,
-    Err(MixedSinkerError::LumaU16BufferTooShort {
+    Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
       expected: 128,
-      actual: 127,
-    })
+      actual: 127
+    }))
   ));
 }

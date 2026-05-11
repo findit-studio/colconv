@@ -99,7 +99,7 @@ fn yuva420p_rgba_buf_too_short_returns_err() {
     .with_rgba(&mut rgba)
     .err()
     .expect("expected RgbaBufferTooShort");
-  assert!(matches!(err, MixedSinkerError::RgbaBufferTooShort { .. }));
+  assert!(matches!(err, MixedSinkerError::RgbaBufferTooShort(_)));
 }
 
 #[test]
@@ -308,7 +308,7 @@ fn yuva420p9_rgba_buf_too_short_returns_err() {
     .with_rgba(&mut rgba)
     .err()
     .expect("expected RgbaBufferTooShort");
-  assert!(matches!(err, MixedSinkerError::RgbaBufferTooShort { .. }));
+  assert!(matches!(err, MixedSinkerError::RgbaBufferTooShort(_)));
 }
 
 #[test]
@@ -318,10 +318,7 @@ fn yuva420p9_rgba_u16_buf_too_short_returns_err() {
     .with_rgba_u16(&mut rgba)
     .err()
     .expect("expected RgbaU16BufferTooShort");
-  assert!(matches!(
-    err,
-    MixedSinkerError::RgbaU16BufferTooShort { .. }
-  ));
+  assert!(matches!(err, MixedSinkerError::RgbaU16BufferTooShort(_)));
 }
 
 #[test]
@@ -489,7 +486,7 @@ fn yuva420p10_rgba_buf_too_short_returns_err() {
     .with_rgba(&mut rgba)
     .err()
     .expect("expected RgbaBufferTooShort");
-  assert!(matches!(err, MixedSinkerError::RgbaBufferTooShort { .. }));
+  assert!(matches!(err, MixedSinkerError::RgbaBufferTooShort(_)));
 }
 
 #[test]
@@ -663,7 +660,7 @@ fn yuva420p16_rgba_buf_too_short_returns_err() {
     .with_rgba(&mut rgba)
     .err()
     .expect("expected RgbaBufferTooShort");
-  assert!(matches!(err, MixedSinkerError::RgbaBufferTooShort { .. }));
+  assert!(matches!(err, MixedSinkerError::RgbaBufferTooShort(_)));
 }
 
 #[test]
@@ -673,10 +670,7 @@ fn yuva420p16_rgba_u16_buf_too_short_returns_err() {
     .with_rgba_u16(&mut rgba)
     .err()
     .expect("expected RgbaU16BufferTooShort");
-  assert!(matches!(
-    err,
-    MixedSinkerError::RgbaU16BufferTooShort { .. }
-  ));
+  assert!(matches!(err, MixedSinkerError::RgbaU16BufferTooShort(_)));
 }
 
 #[test]

@@ -145,7 +145,7 @@ fn yuv420p12_rgb_u16_too_short_returns_err() {
     .with_rgb_u16(&mut rgb)
     .err()
     .unwrap();
-  assert!(matches!(err, MixedSinkerError::RgbU16BufferTooShort { .. }));
+  assert!(matches!(err, MixedSinkerError::RgbU16BufferTooShort(_)));
 }
 
 #[test]
@@ -573,7 +573,7 @@ fn p012_rgb_u16_too_short_returns_err() {
     .with_rgb_u16(&mut rgb)
     .err()
     .unwrap();
-  assert!(matches!(err, MixedSinkerError::RgbU16BufferTooShort { .. }));
+  assert!(matches!(err, MixedSinkerError::RgbU16BufferTooShort(_)));
 }
 
 #[test]

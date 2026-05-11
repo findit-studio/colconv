@@ -338,9 +338,9 @@ fn nv21_luma_u16_buffer_too_short_returns_err() {
   let result = MixedSinker::<Nv21>::new(16, 8).with_luma_u16(&mut buf);
   assert!(matches!(
     result,
-    Err(MixedSinkerError::LumaU16BufferTooShort {
+    Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
       expected: 128,
-      actual: 127,
-    })
+      actual: 127
+    }))
   ));
 }

@@ -382,12 +382,12 @@ fn pal8_error_row_shape_mismatch() {
   let err = sink.process(row).unwrap_err();
 
   match err {
-    MixedSinkerError::RowShapeMismatch {
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
       which,
       expected,
       actual,
       ..
-    } => {
+    }) => {
       assert!(
         which.is_pal_8_index_row(),
         "which must be Pal8IndexRow, got {which}"

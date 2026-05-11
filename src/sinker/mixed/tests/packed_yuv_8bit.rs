@@ -269,7 +269,7 @@ fn yuyv422_width_mismatch_returns_err() {
   let buf = solid_yuyv422_frame(18, 8, 0, 0, 0);
   let src = Yuyv422Frame::new(&buf, 18, 8, 36);
   let err = yuyv422_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap_err();
-  assert!(matches!(err, MixedSinkerError::DimensionMismatch { .. }));
+  assert!(matches!(err, MixedSinkerError::DimensionMismatch(_)));
 }
 
 #[test]
@@ -283,12 +283,12 @@ fn yuyv422_process_rejects_short_packed_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
       which: RowSlice::Yuyv422Packed,
       row: 0,
       expected: 32,
-      actual: 31,
-    }
+      actual: 31
+    })
   );
 }
 
@@ -303,10 +303,10 @@ fn yuyv422_process_rejects_out_of_range_row_idx() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowIndexOutOfRange {
+    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
       row: 8,
-      configured_height: 8,
-    }
+      configured_height: 8
+    })
   );
 }
 
@@ -317,7 +317,13 @@ fn yuyv422_odd_width_rejected_in_begin_frame() {
     .with_rgb(&mut rgb)
     .unwrap();
   let err = sink.begin_frame(17, 8).err().unwrap();
-  assert_eq!(err, MixedSinkerError::OddWidth { width: 17 });
+  assert_eq!(
+    err,
+    MixedSinkerError::WidthAlignment(WidthAlignment {
+      width: 17,
+      required: WidthAlignmentRequirement::Even
+    })
+  );
 }
 
 #[test]
@@ -329,10 +335,10 @@ fn yuyv422_rgba_buffer_too_short_returns_err() {
   };
   assert!(matches!(
     err,
-    MixedSinkerError::RgbaBufferTooShort {
+    MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
       expected: 512,
-      actual: 511,
-    }
+      actual: 511
+    })
   ));
 }
 
@@ -452,12 +458,12 @@ fn uyvy422_process_rejects_short_packed_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
       which: RowSlice::Uyvy422Packed,
       row: 0,
       expected: 32,
-      actual: 31,
-    }
+      actual: 31
+    })
   );
 }
 
@@ -577,12 +583,12 @@ fn yvyu422_process_rejects_short_packed_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
       which: RowSlice::Yvyu422Packed,
       row: 0,
       expected: 32,
-      actual: 31,
-    }
+      actual: 31
+    })
   );
 }
 
@@ -900,10 +906,10 @@ fn yuyv422_luma_u16_buffer_too_short_returns_err() {
   assert!(
     matches!(
       err,
-      MixedSinkerError::LumaU16BufferTooShort {
+      MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
         expected: 16,
         actual: 15
-      }
+      })
     ),
     "unexpected error: {err:?}"
   );
@@ -945,10 +951,10 @@ fn uyvy422_luma_u16_buffer_too_short_returns_err() {
   assert!(
     matches!(
       err,
-      MixedSinkerError::LumaU16BufferTooShort {
+      MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
         expected: 16,
         actual: 15
-      }
+      })
     ),
     "unexpected error: {err:?}"
   );
@@ -990,10 +996,10 @@ fn yvyu422_luma_u16_buffer_too_short_returns_err() {
   assert!(
     matches!(
       err,
-      MixedSinkerError::LumaU16BufferTooShort {
+      MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
         expected: 16,
         actual: 15
-      }
+      })
     ),
     "unexpected error: {err:?}"
   );

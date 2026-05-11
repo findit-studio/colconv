@@ -26,8 +26,8 @@
 //! when they land in Tier 10b).
 
 use super::{
-  MixedSinker, MixedSinkerError, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice,
+  BufferTooShort, MixedSinker, MixedSinkerError, RowIndexOutOfRange, RowShapeMismatch, RowSlice,
+  check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
 use crate::{
   PixelSink,
@@ -57,10 +57,10 @@ impl<'a> MixedSinker<'a, Gbrp> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort {
+      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -79,10 +79,10 @@ impl<'a> MixedSinker<'a, Gbrp> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort {
+      return Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -108,34 +108,34 @@ impl PixelSink for MixedSinker<'_, Gbrp> {
     // Defense-in-depth row-shape checks; the walker normally pre-
     // validates these via `begin_frame` + the per-row slice math.
     if row.g().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::GPlane,
         row: idx,
         expected: w,
         actual: row.g().len(),
-      });
+      }));
     }
     if row.b().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::BPlane,
         row: idx,
         expected: w,
         actual: row.b().len(),
-      });
+      }));
     }
     if row.r().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::RPlane,
         row: idx,
         expected: w,
         actual: row.r().len(),
-      });
+      }));
     }
     if idx >= self.height {
-      return Err(MixedSinkerError::RowIndexOutOfRange {
+      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
         row: idx,
         configured_height: self.height,
-      });
+      }));
     }
 
     let Self {
@@ -256,10 +256,10 @@ impl<'a> MixedSinker<'a, Gbrap> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort {
+      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -278,10 +278,10 @@ impl<'a> MixedSinker<'a, Gbrap> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort {
+      return Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -305,42 +305,42 @@ impl PixelSink for MixedSinker<'_, Gbrap> {
     let use_simd = self.simd;
 
     if row.g().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::GPlane,
         row: idx,
         expected: w,
         actual: row.g().len(),
-      });
+      }));
     }
     if row.b().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::BPlane,
         row: idx,
         expected: w,
         actual: row.b().len(),
-      });
+      }));
     }
     if row.r().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::RPlane,
         row: idx,
         expected: w,
         actual: row.r().len(),
-      });
+      }));
     }
     if row.a().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::AFull,
         row: idx,
         expected: w,
         actual: row.a().len(),
-      });
+      }));
     }
     if idx >= self.height {
-      return Err(MixedSinkerError::RowIndexOutOfRange {
+      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
         row: idx,
         configured_height: self.height,
-      });
+      }));
     }
 
     let Self {

@@ -379,12 +379,12 @@ fn v410_process_rejects_short_packed_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
       which: RowSlice::V410Packed,
       row: 0,
       expected: 6,
-      actual: 5,
-    }
+      actual: 5
+    })
   );
 }
 
@@ -400,10 +400,10 @@ fn v410_process_rejects_row_index_out_of_range() {
   let err = sink.process(row).err().unwrap();
   assert!(matches!(
     err,
-    MixedSinkerError::RowIndexOutOfRange {
+    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
       row: 1,
-      configured_height: 1,
-    }
+      configured_height: 1
+    })
   ));
 }
 
@@ -419,10 +419,10 @@ fn v410_rgba_u16_buffer_too_short_returns_err() {
   };
   assert!(matches!(
     err,
-    MixedSinkerError::RgbaU16BufferTooShort {
+    MixedSinkerError::RgbaU16BufferTooShort(BufferTooShort {
       expected: 192,
-      actual: 168,
-    }
+      actual: 168
+    })
   ));
 }
 

@@ -1,8 +1,9 @@
 //! Bayer / Bayer16 RAW `MixedSinker` impls.
 
 use super::{
-  LumaCoefficients, MixedSinker, MixedSinkerError, RowSlice, check_dimensions_match,
-  rgb_row_buf_or_scratch, rgb_row_to_luma_row,
+  BufferTooShort, GeometryOverflow, LumaCoefficients, MixedSinker, MixedSinkerError,
+  RowIndexOutOfRange, RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch,
+  rgb_row_to_luma_row,
 };
 use crate::{PixelSink, raw::*, row::*};
 
@@ -59,34 +60,34 @@ impl PixelSink for MixedSinker<'_, Bayer> {
     // no-panic contract: bad lengths surface as `RowShapeMismatch`,
     // not as a kernel-level `assert!` panic.
     if row.mid().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::BayerMid,
         row: idx,
         expected: w,
         actual: row.mid().len(),
-      });
+      }));
     }
     if row.above().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::BayerAbove,
         row: idx,
         expected: w,
         actual: row.above().len(),
-      });
+      }));
     }
     if row.below().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::BayerBelow,
         row: idx,
         expected: w,
         actual: row.below().len(),
-      });
+      }));
     }
     if idx >= self.height {
-      return Err(MixedSinkerError::RowIndexOutOfRange {
+      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
         row: idx,
         configured_height: self.height,
-      });
+      }));
     }
 
     // `Copy`, captured before the `Self { .. }` destructure so the
@@ -182,10 +183,10 @@ impl<'a, const BITS: u32> MixedSinker<'a, Bayer16<BITS>> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort {
+      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -237,34 +238,34 @@ impl<const BITS: u32> PixelSink for MixedSinker<'_, Bayer16<BITS>> {
 
     // See the 8-bit Bayer impl for the row-shape rationale.
     if row.mid().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::Bayer16Mid,
         row: idx,
         expected: w,
         actual: row.mid().len(),
-      });
+      }));
     }
     if row.above().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::Bayer16Above,
         row: idx,
         expected: w,
         actual: row.above().len(),
-      });
+      }));
     }
     if row.below().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::Bayer16Below,
         row: idx,
         expected: w,
         actual: row.below().len(),
-      });
+      }));
     }
     if idx >= self.height {
-      return Err(MixedSinkerError::RowIndexOutOfRange {
+      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
         row: idx,
         configured_height: self.height,
-      });
+      }));
     }
 
     // `Copy`, captured before the `Self { .. }` destructure so the
@@ -289,11 +290,11 @@ impl<const BITS: u32> PixelSink for MixedSinker<'_, Bayer16<BITS>> {
       let rgb_plane_end =
         one_plane_end
           .checked_mul(3)
-          .ok_or(MixedSinkerError::GeometryOverflow {
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
             width: w,
             height: h,
             channels: 3,
-          })?;
+          }))?;
       let rgb_plane_start = one_plane_start * 3;
       bayer16_to_rgb_u16_row::<BITS>(
         row.above(),

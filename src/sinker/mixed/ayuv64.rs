@@ -44,8 +44,9 @@
 //!   `copy_alpha_packed_u16x4_at_0` overwrites α from packed slot 0.
 
 use super::{
-  MixedSinker, MixedSinkerError, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  BufferTooShort, GeometryOverflow, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
+  RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  rgba_u16_plane_row_slice,
 };
 use crate::{
   PixelSink,
@@ -88,10 +89,10 @@ impl<'a, const BE: bool> MixedSinker<'a, Ayuv64<BE>> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort {
+      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -115,10 +116,10 @@ impl<'a, const BE: bool> MixedSinker<'a, Ayuv64<BE>> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort {
+      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -153,10 +154,10 @@ impl<'a, const BE: bool> MixedSinker<'a, Ayuv64<BE>> {
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaU16BufferTooShort {
+      return Err(MixedSinkerError::RgbaU16BufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.rgba_u16 = Some(buf);
     Ok(self)
@@ -181,10 +182,10 @@ impl<'a, const BE: bool> MixedSinker<'a, Ayuv64<BE>> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort {
+      return Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -209,24 +210,26 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Ayuv64<BE>> {
     let use_simd = self.simd;
 
     // AYUV64 row = `width × 4` u16 elements (one quadruple per pixel).
-    let packed_expected = w.checked_mul(4).ok_or(MixedSinkerError::GeometryOverflow {
-      width: w,
-      height: h,
-      channels: 4,
-    })?;
+    let packed_expected =
+      w.checked_mul(4)
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
+          width: w,
+          height: h,
+          channels: 4,
+        }))?;
     if row.packed().len() != packed_expected {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::Ayuv64Packed,
         row: idx,
         expected: packed_expected,
         actual: row.packed().len(),
-      });
+      }));
     }
     if idx >= self.height {
-      return Err(MixedSinkerError::RowIndexOutOfRange {
+      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
         row: idx,
         configured_height: self.height,
-      });
+      }));
     }
 
     let Self {
@@ -393,11 +396,11 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Ayuv64<BE>> {
       let rgb_plane_end =
         one_plane_end
           .checked_mul(3)
-          .ok_or(MixedSinkerError::GeometryOverflow {
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
             width: w,
             height: h,
             channels: 3,
-          })?;
+          }))?;
       let rgb_plane_start = one_plane_start * 3;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
       ayuv64_to_rgb_u16_row(

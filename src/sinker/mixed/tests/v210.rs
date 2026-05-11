@@ -281,7 +281,13 @@ fn v210_odd_width_returns_err() {
   let buf = std::vec![0u8; 16];
   let row = V210Row::new(&buf, 0, ColorMatrix::Bt601, true);
   let err = sink.process(row).err().unwrap();
-  assert!(matches!(err, MixedSinkerError::OddWidth { width: 7 }));
+  assert!(matches!(
+    err,
+    MixedSinkerError::WidthAlignment(WidthAlignment {
+      width: 7,
+      required: WidthAlignmentRequirement::Even
+    })
+  ));
 }
 
 #[test]
@@ -323,12 +329,12 @@ fn v210_process_rejects_short_packed_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
       which: RowSlice::V210Packed,
       row: 0,
       expected: 16,
-      actual: 15,
-    }
+      actual: 15
+    })
   );
 }
 
@@ -342,10 +348,10 @@ fn v210_luma_u16_buffer_too_short_returns_err() {
   };
   assert!(matches!(
     err,
-    MixedSinkerError::LumaU16BufferTooShort {
+    MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
       expected: 48,
-      actual: 42,
-    }
+      actual: 42
+    })
   ));
 }
 

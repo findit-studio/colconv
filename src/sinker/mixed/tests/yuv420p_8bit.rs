@@ -265,10 +265,10 @@ fn rgba_buffer_too_short_returns_err() {
   };
   assert!(matches!(
     err,
-    MixedSinkerError::RgbaBufferTooShort {
+    MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
       expected: 512,
-      actual: 511,
-    }
+      actual: 511
+    })
   ));
 }
 
@@ -517,9 +517,9 @@ fn yuv420p_luma_u16_buffer_too_short_returns_err() {
   let result = MixedSinker::<Yuv420p>::new(16, 8).with_luma_u16(&mut buf);
   assert!(matches!(
     result,
-    Err(MixedSinkerError::LumaU16BufferTooShort {
+    Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
       expected: 128,
-      actual: 127,
-    })
+      actual: 127
+    }))
   ));
 }

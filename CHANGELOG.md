@@ -13,6 +13,33 @@
   produced by `Yuv410pFrame::try_new`. Variant doc + display string updated
   to mention both 4:1:0 and 4:1:1.
 
+### Changed
+
+- **`MixedSinkerError` newtype refactor** — all 18 struct-style variants now
+  wrap dedicated public payload structs. Callers matching on `MixedSinkerError`
+  must update their patterns (source-level breaking change; acceptable
+  pre-publish):
+
+  - Every variant like `DimensionMismatch { configured_w, … }` becomes
+    `DimensionMismatch(DimensionMismatch { configured_w, … })`, and so on
+    for all 18 variants.
+
+  - All 11 `*BufferTooShort` variants share one `BufferTooShort { expected,
+    actual }` payload (DRY). Previously each carried its own anonymous struct
+    fields.
+
+  - `OddWidth { width }` + `WidthNotMultipleOf4 { width }` are consolidated
+    into a single `WidthAlignment(WidthAlignment { width, required })` variant.
+    `WidthAlignmentRequirement::{Even, MultipleOfFour}` discriminates the two
+    cases: `Even` for 4:2:0 / 4:2:2 (previously `OddWidth`), `MultipleOfFour`
+    for 4:1:0 / 4:1:1 (previously `WidthNotMultipleOf4`). The format-agnostic
+    `OddWidth` misnomer is retired.
+
+  - New public payload structs re-exported from `crate::sinker`:
+    `BufferTooShort`, `DimensionMismatch`, `GeometryOverflow`,
+    `HsvPlaneTooShort`, `RowIndexOutOfRange`, `RowShapeMismatch`,
+    `WidthAlignment`, `WidthAlignmentRequirement`.
+
 ### BREAKING
 
 - `crate::yuv` module renamed to `crate::source` to reflect that it holds

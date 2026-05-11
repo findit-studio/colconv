@@ -254,7 +254,13 @@ fn y210_odd_width_returns_err() {
   let buf = std::vec![0u16; 6];
   let row = Y210Row::new(&buf, 0, ColorMatrix::Bt601, true);
   let err = sink.process(row).err().unwrap();
-  assert!(matches!(err, MixedSinkerError::OddWidth { width: 3 }));
+  assert!(matches!(
+    err,
+    MixedSinkerError::WidthAlignment(WidthAlignment {
+      width: 3,
+      required: WidthAlignmentRequirement::Even
+    })
+  ));
 }
 
 #[test]
@@ -268,12 +274,12 @@ fn y210_process_rejects_short_packed_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
       which: RowSlice::Y210Packed,
       row: 0,
       expected: 12,
-      actual: 11,
-    }
+      actual: 11
+    })
   );
 }
 
@@ -287,10 +293,10 @@ fn y210_luma_u16_buffer_too_short_returns_err() {
   };
   assert!(matches!(
     err,
-    MixedSinkerError::LumaU16BufferTooShort {
+    MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
       expected: 48,
-      actual: 42,
-    }
+      actual: 42
+    })
   ));
 }
 

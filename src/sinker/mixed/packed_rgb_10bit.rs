@@ -26,8 +26,8 @@
 //! padding-source sinkers don't fan out a `u16` RGBA output.
 
 use super::{
-  MixedSinker, MixedSinkerError, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice,
+  BufferTooShort, GeometryOverflow, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
+  RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
 use crate::{
   PixelSink,
@@ -56,10 +56,10 @@ impl<'a, const BE: bool> MixedSinker<'a, X2Rgb10<BE>> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort {
+      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -80,10 +80,10 @@ impl<'a, const BE: bool> MixedSinker<'a, X2Rgb10<BE>> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort {
+      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -107,18 +107,18 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, X2Rgb10<BE>> {
     let use_simd = self.simd;
 
     if row.x2rgb10().len() != w * 4 {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::X2Rgb10Packed,
         row: idx,
         expected: w * 4,
         actual: row.x2rgb10().len(),
-      });
+      }));
     }
     if idx >= self.height {
-      return Err(MixedSinkerError::RowIndexOutOfRange {
+      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
         row: idx,
         configured_height: self.height,
-      });
+      }));
     }
 
     let Self {
@@ -187,11 +187,11 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, X2Rgb10<BE>> {
       let rgb_plane_end =
         one_plane_end
           .checked_mul(3)
-          .ok_or(MixedSinkerError::GeometryOverflow {
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
             width: w,
             height: h,
             channels: 3,
-          })?;
+          }))?;
       let rgb_plane_start = one_plane_start * 3;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
       x2rgb10_to_rgb_u16_row_endian::<BE>(x2rgb10_in, rgb_u16_row, w, use_simd);
@@ -217,10 +217,10 @@ impl<'a, const BE: bool> MixedSinker<'a, X2Bgr10<BE>> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort {
+      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -239,10 +239,10 @@ impl<'a, const BE: bool> MixedSinker<'a, X2Bgr10<BE>> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort {
+      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort {
         expected,
         actual: buf.len(),
-      });
+      }));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -266,18 +266,18 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, X2Bgr10<BE>> {
     let use_simd = self.simd;
 
     if row.x2bgr10().len() != w * 4 {
-      return Err(MixedSinkerError::RowShapeMismatch {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
         which: RowSlice::X2Bgr10Packed,
         row: idx,
         expected: w * 4,
         actual: row.x2bgr10().len(),
-      });
+      }));
     }
     if idx >= self.height {
-      return Err(MixedSinkerError::RowIndexOutOfRange {
+      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
         row: idx,
         configured_height: self.height,
-      });
+      }));
     }
 
     let Self {
@@ -343,11 +343,11 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, X2Bgr10<BE>> {
       let rgb_plane_end =
         one_plane_end
           .checked_mul(3)
-          .ok_or(MixedSinkerError::GeometryOverflow {
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
             width: w,
             height: h,
             channels: 3,
-          })?;
+          }))?;
       let rgb_plane_start = one_plane_start * 3;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
       x2bgr10_to_rgb_u16_row_endian::<BE>(x2bgr10_in, rgb_u16_row, w, use_simd);

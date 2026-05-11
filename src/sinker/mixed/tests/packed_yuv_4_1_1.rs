@@ -212,7 +212,7 @@ fn uyyvyy411_width_mismatch_returns_err() {
   let buf = solid_uyyvyy411_frame(20, 8, 0, 0, 0);
   let src = Uyyvyy411Frame::new(&buf, 20, 8, 30);
   let err = uyyvyy411_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap_err();
-  assert!(matches!(err, MixedSinkerError::DimensionMismatch { .. }));
+  assert!(matches!(err, MixedSinkerError::DimensionMismatch(_)));
 }
 
 #[test]
@@ -227,12 +227,12 @@ fn uyyvyy411_process_rejects_short_packed_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
       which: RowSlice::Uyyvyy411Packed,
       row: 0,
       expected: 24,
-      actual: 23,
-    }
+      actual: 23
+    })
   );
 }
 
@@ -252,6 +252,6 @@ fn uyyvyy411_process_rejects_width_not_multiple_of_4_at_begin_frame() {
   // are valid first-fault responses; we just need `Err`.
   assert!(matches!(
     err,
-    MixedSinkerError::DimensionMismatch { .. } | MixedSinkerError::WidthNotMultipleOf4 { .. }
+    MixedSinkerError::DimensionMismatch(_) | MixedSinkerError::WidthAlignment(_)
   ));
 }
