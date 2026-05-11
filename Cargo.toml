@@ -161,16 +161,41 @@ name = "pal8_simd"
 harness = false
 
 [features]
-default = ["std"]
-alloc = ["libm"]
-std = ["thiserror/default"]
+default = ["std", "frame"]
+alloc = ["libm", "videoframe/alloc"]
+std = ["thiserror/default", "videoframe/std"]
+
+# Umbrella — enables every per-family sub-feature below (mirrors
+# videoframe's `frame` umbrella).
+frame = ["videoframe/frame"]
+
+# Per-family pass-throughs. Each colconv feature activates the
+# matching videoframe feature so frame types and source markers for
+# that family are available. colconv's internal sinker / row kernels
+# are not yet gated per-family (that is a future tier); the `frame`
+# default ensures the existing full-surface test suite compiles.
+yuv-planar      = ["videoframe/yuv-planar"]
+yuv-semi-planar = ["videoframe/yuv-semi-planar"]
+yuva            = ["videoframe/yuva"]
+yuv-packed      = ["videoframe/yuv-packed"]
+yuv-444-packed  = ["videoframe/yuv-444-packed"]
+y2xx            = ["videoframe/y2xx"]
+v210            = ["videoframe/v210"]
+rgb             = ["videoframe/rgb"]
+rgb-float       = ["videoframe/rgb-float"]
+rgb-legacy      = ["videoframe/rgb-legacy"]
+gbr             = ["videoframe/gbr"]
+gray            = ["videoframe/gray"]
+bayer           = ["videoframe/bayer"]
+xyz             = ["videoframe/xyz"]
+mono            = ["videoframe/mono"]
 
 [dependencies]
 derive_more = { version = "2", default-features = false, features = ["display", "is_variant", "try_unwrap", "unwrap"] }
 half = { version = "2", default-features = false }
 thiserror = { version = "2", default-features = false }
 libm = { version = "0.2", optional = true }
-videoframe = { path = "../videoframe", features = ["frame"] }
+videoframe = { path = "../videoframe", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"

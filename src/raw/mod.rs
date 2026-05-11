@@ -51,6 +51,8 @@ mod bayer16;
 mod pal8;
 mod types;
 
+// Markers, Row types, Sink subtraits, and (for Pal8) the walker fn
+// are now sourced from videoframe::source via the per-module re-exports.
 pub use bayer::{Bayer, BayerRow, BayerSink, bayer_to};
 pub use bayer16::{
   Bayer10, Bayer12, Bayer14, Bayer16, Bayer16Bit, BayerRow16, BayerSink16, bayer16_to,

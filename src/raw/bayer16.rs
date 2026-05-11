@@ -22,26 +22,15 @@
 //! [`BayerFrame16`](crate::frame::BayerFrame16).
 
 use crate::{
-  PixelSink, SourceFormat,
+  PixelSink,
   frame::BayerFrame16,
   raw::{BayerDemosaic, BayerPattern, ColorCorrectionMatrix, WhiteBalance, fuse_wb_ccm},
 };
 
-/// Zero-sized marker for the high-bit-depth Bayer source family.
-/// Parameterized on the active bit depth `BITS` ∈ {10, 12, 14, 16}.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct Bayer16<const BITS: u32>;
-
-impl<const BITS: u32> SourceFormat for Bayer16<BITS> {}
-
-/// Type-aliased markers for readability at call sites.
-pub type Bayer10 = Bayer16<10>;
-/// 12-bit Bayer source marker.
-pub type Bayer12 = Bayer16<12>;
-/// 14-bit Bayer source marker.
-pub type Bayer14 = Bayer16<14>;
-/// 16-bit Bayer source marker.
-pub type Bayer16Bit = Bayer16<16>;
+// The Bayer16 marker family now lives in videoframe::source. Re-export
+// everything so downstream code that uses `colconv::raw::Bayer16<BITS>`,
+// `colconv::raw::Bayer10`, etc. keeps compiling unchanged.
+pub use videoframe::source::{Bayer10, Bayer12, Bayer14, Bayer16, Bayer16Bit};
 
 /// One output row of a high-bit-depth Bayer source handed to a
 /// [`BayerSink16<BITS>`].

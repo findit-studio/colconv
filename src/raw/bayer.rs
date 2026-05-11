@@ -8,18 +8,16 @@
 //! pass; the sink owns the RGB output buffer.
 
 use crate::{
-  PixelSink, SourceFormat,
+  PixelSink,
   frame::BayerFrame,
   raw::{BayerDemosaic, BayerPattern, ColorCorrectionMatrix, WhiteBalance, fuse_wb_ccm},
 };
 
-/// Zero-sized marker for the 8-bit Bayer source format. Used as the
-/// `F` type parameter on [`crate::sinker::MixedSinker`] (once
-/// integrated).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct Bayer;
-
-impl SourceFormat for Bayer {}
+// The Bayer marker now lives in videoframe::source and implements
+// videoframe::SourceFormat via its own sealed impl.  Re-export it at
+// this path so downstream code that uses `colconv::raw::Bayer` keeps
+// working without changes.
+pub use videoframe::source::Bayer;
 
 /// One output row of a Bayer source handed to a [`BayerSink`].
 ///

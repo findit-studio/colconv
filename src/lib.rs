@@ -253,22 +253,11 @@ pub use videoframe::PixelSink;
 
 pub use videoframe::color::{ColorMatrix, DcpTargetGamut};
 
-/// Sealed marker trait identifying a source pixel format.
-///
-/// Used as a type parameter on sinks that specialize per source —
-/// [`sinker::MixedSinker<'_, F>`] for example. Implementors are the
-/// zero-sized markers in [`source`] (re-exported from `videoframe`) and
-/// colconv's own [`raw`] module.
-///
-/// All markers from `videoframe::source` satisfy this trait via a blanket
-/// implementation. Colconv-specific markers (`raw::Bayer`,
-/// `raw::Bayer16<BITS>`, `raw::Pal8`) implement it directly.
-pub trait SourceFormat {}
-
-// Blanket impl: every videoframe source-format marker satisfies colconv's
-// SourceFormat bound. This covers Yuv420p, Nv12, Rgb24, and all other
-// markers re-exported through crate::source.
-impl<T: videoframe::SourceFormat> SourceFormat for T {}
+// All source-format markers — including `raw::Bayer`, `raw::Bayer16<BITS>`,
+// and `raw::Pal8` — now live in `videoframe::source` and implement
+// `videoframe::SourceFormat` directly through the sealed trait.  No local
+// blanket-impl workaround is needed any more.
+pub use videoframe::SourceFormat;
 
 /// The three output planes for HSV, bundled so `MixedSinker` stores a
 /// single `Option<HsvBuffers>` rather than three independent options.
