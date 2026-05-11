@@ -232,22 +232,25 @@ fn uyyvyy411_process_rejects_short_packed_slice() {
 }
 
 #[test]
-fn uyyvyy411_process_rejects_width_not_multiple_of_4_at_begin_frame() {
+fn uyyvyy411_begin_frame_rejects_width_not_multiple_of_4() {
   // Sinker configured with a width that's not a multiple of 4 — the
   // begin_frame guard surfaces it before any row primitive runs.
-  let buf = solid_uyyvyy411_frame(16, 8, 0, 0, 0);
-  let src = Uyyvyy411Frame::new(&buf, 16, 8, 24);
-  // Configure sinker at width 18 (even but not a multiple of 4).
+  // Call begin_frame directly with matching dimensions so the
+  // dimension-match check passes and the width-alignment check fires.
+  // (Going through `uyyvyy411_to(...)` with a 16×8 frame against an
+  // 18-wide sink would short-circuit on DimensionMismatch and never
+  // exercise the alignment guard.)
   let mut rgb = std::vec![0u8; 18 * 8 * 3];
   let mut sink = MixedSinker::<Uyyvyy411>::new(18, 8)
     .with_rgb(&mut rgb)
     .unwrap();
-  let err = uyyvyy411_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap_err();
-  // Either DimensionMismatch (caught first) or
-  // WidthAlignment(MultipleOfFour) — both are valid first-fault
-  // responses; we just need `Err`.
-  assert!(matches!(
+  let err = sink.begin_frame(18, 8).unwrap_err();
+  assert_eq!(
     err,
-    MixedSinkerError::DimensionMismatch(_) | MixedSinkerError::WidthAlignment(_)
-  ));
+    MixedSinkerError::WidthAlignment(WidthAlignment::new(
+      18,
+      WidthAlignmentRequirement::MultipleOfFour
+    )),
+    "expected WidthAlignment {{ width: 18, required: MultipleOfFour }}, got {err:?}"
+  );
 }
