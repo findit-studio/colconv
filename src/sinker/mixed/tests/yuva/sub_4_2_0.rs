@@ -98,8 +98,8 @@ fn yuva420p_rgba_buf_too_short_returns_err() {
   let err = MixedSinker::<Yuva420p>::new(16, 8)
     .with_rgba(&mut rgba)
     .err()
-    .expect("expected RgbaBufferTooShort");
-  assert!(matches!(err, MixedSinkerError::RgbaBufferTooShort(_)));
+    .expect("expected InsufficientRgbaBuffer");
+  assert!(matches!(err, MixedSinkerError::InsufficientRgbaBuffer(_)));
 }
 
 #[test]
@@ -307,8 +307,8 @@ fn yuva420p9_rgba_buf_too_short_returns_err() {
   let err = MixedSinker::<Yuva420p9>::new(16, 8)
     .with_rgba(&mut rgba)
     .err()
-    .expect("expected RgbaBufferTooShort");
-  assert!(matches!(err, MixedSinkerError::RgbaBufferTooShort(_)));
+    .expect("expected InsufficientRgbaBuffer");
+  assert!(matches!(err, MixedSinkerError::InsufficientRgbaBuffer(_)));
 }
 
 #[test]
@@ -317,8 +317,11 @@ fn yuva420p9_rgba_u16_buf_too_short_returns_err() {
   let err = MixedSinker::<Yuva420p9>::new(16, 8)
     .with_rgba_u16(&mut rgba)
     .err()
-    .expect("expected RgbaU16BufferTooShort");
-  assert!(matches!(err, MixedSinkerError::RgbaU16BufferTooShort(_)));
+    .expect("expected InsufficientRgbaU16Buffer");
+  assert!(matches!(
+    err,
+    MixedSinkerError::InsufficientRgbaU16Buffer(_)
+  ));
 }
 
 #[test]
@@ -485,8 +488,8 @@ fn yuva420p10_rgba_buf_too_short_returns_err() {
   let err = MixedSinker::<Yuva420p10>::new(16, 8)
     .with_rgba(&mut rgba)
     .err()
-    .expect("expected RgbaBufferTooShort");
-  assert!(matches!(err, MixedSinkerError::RgbaBufferTooShort(_)));
+    .expect("expected InsufficientRgbaBuffer");
+  assert!(matches!(err, MixedSinkerError::InsufficientRgbaBuffer(_)));
 }
 
 #[test]
@@ -659,8 +662,8 @@ fn yuva420p16_rgba_buf_too_short_returns_err() {
   let err = MixedSinker::<Yuva420p16>::new(16, 8)
     .with_rgba(&mut rgba)
     .err()
-    .expect("expected RgbaBufferTooShort");
-  assert!(matches!(err, MixedSinkerError::RgbaBufferTooShort(_)));
+    .expect("expected InsufficientRgbaBuffer");
+  assert!(matches!(err, MixedSinkerError::InsufficientRgbaBuffer(_)));
 }
 
 #[test]
@@ -669,8 +672,11 @@ fn yuva420p16_rgba_u16_buf_too_short_returns_err() {
   let err = MixedSinker::<Yuva420p16>::new(16, 8)
     .with_rgba_u16(&mut rgba)
     .err()
-    .expect("expected RgbaU16BufferTooShort");
-  assert!(matches!(err, MixedSinkerError::RgbaU16BufferTooShort(_)));
+    .expect("expected InsufficientRgbaU16Buffer");
+  assert!(matches!(
+    err,
+    MixedSinkerError::InsufficientRgbaU16Buffer(_)
+  ));
 }
 
 #[test]

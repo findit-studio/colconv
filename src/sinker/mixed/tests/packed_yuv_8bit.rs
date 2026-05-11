@@ -320,11 +320,11 @@ fn yuyv422_rgba_buffer_too_short_returns_err() {
   let mut rgba_short = std::vec![0u8; 16 * 8 * 4 - 1];
   let result = MixedSinker::<Yuyv422>::new(16, 8).with_rgba(&mut rgba_short);
   let Err(err) = result else {
-    panic!("expected RgbaBufferTooShort error");
+    panic!("expected InsufficientRgbaBuffer error");
   };
   assert_eq!(
     err,
-    MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(512, 511))
+    MixedSinkerError::InsufficientRgbaBuffer(InsufficientBuffer::new(512, 511))
   );
 }
 
@@ -877,11 +877,11 @@ fn yuyv422_luma_u16_buffer_too_short_returns_err() {
   let mut luma = std::vec![0u16; 4 * 4 - 1];
   let result = MixedSinker::<Yuyv422>::new(4, 4).with_luma_u16(&mut luma);
   let Err(err) = result else {
-    panic!("expected LumaU16BufferTooShort");
+    panic!("expected InsufficientLumaU16Buffer");
   };
   assert_eq!(
     err,
-    MixedSinkerError::LumaU16BufferTooShort(BufferTooShort::new(16, 15)),
+    MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(16, 15)),
     "unexpected error: {err:?}"
   );
 }
@@ -917,11 +917,11 @@ fn uyvy422_luma_u16_buffer_too_short_returns_err() {
   let mut luma = std::vec![0u16; 4 * 4 - 1];
   let result = MixedSinker::<Uyvy422>::new(4, 4).with_luma_u16(&mut luma);
   let Err(err) = result else {
-    panic!("expected LumaU16BufferTooShort");
+    panic!("expected InsufficientLumaU16Buffer");
   };
   assert_eq!(
     err,
-    MixedSinkerError::LumaU16BufferTooShort(BufferTooShort::new(16, 15)),
+    MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(16, 15)),
     "unexpected error: {err:?}"
   );
 }
@@ -957,11 +957,11 @@ fn yvyu422_luma_u16_buffer_too_short_returns_err() {
   let mut luma = std::vec![0u16; 4 * 4 - 1];
   let result = MixedSinker::<Yvyu422>::new(4, 4).with_luma_u16(&mut luma);
   let Err(err) = result else {
-    panic!("expected LumaU16BufferTooShort");
+    panic!("expected InsufficientLumaU16Buffer");
   };
   assert_eq!(
     err,
-    MixedSinkerError::LumaU16BufferTooShort(BufferTooShort::new(16, 15)),
+    MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(16, 15)),
     "unexpected error: {err:?}"
   );
 }

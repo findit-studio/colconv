@@ -25,7 +25,7 @@
 //! alpha pad) instead of running a second YUV→RGB kernel.
 
 use super::{
-  BufferTooShort, GeometryOverflow, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
+  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
   RowShapeMismatch, RowSlice, WidthAlignment, WidthAlignmentRequirement, check_dimensions_match,
   rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
@@ -42,7 +42,7 @@ impl<'a> MixedSinker<'a, Uyyvyy411> {
   /// Attaches a packed **8-bit** RGBA output buffer. Alpha is filled
   /// with constant `0xFF` (the source has no alpha channel).
   ///
-  /// Returns `Err(RgbaBufferTooShort)` if
+  /// Returns `Err(InsufficientRgbaBuffer)` if
   /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -55,10 +55,9 @@ impl<'a> MixedSinker<'a, Uyyvyy411> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -77,8 +76,8 @@ impl<'a> MixedSinker<'a, Uyyvyy411> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected_elems = self.frame_pixels()?;
     if buf.len() < expected_elems {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(
-        BufferTooShort::new(expected_elems, buf.len()),
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected_elems, buf.len()),
       ));
     }
     self.luma_u16 = Some(buf);

@@ -165,21 +165,21 @@ impl DimensionMismatch {
   }
 }
 
-/// Generic "buffer too short" payload, shared across every
-/// `MixedSinkerError::*BufferTooShort` variant. `expected` / `actual`
+/// Generic "insufficient buffer" payload, shared across every
+/// `MixedSinkerError::Insufficient*Buffer` variant. `expected` / `actual`
 /// are expressed in the unit reported by each variant's Display
 /// impl (`bytes` for the byte buffers, `elements` for the typed
 /// `u16` / `f32` / `f16` buffers).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BufferTooShort {
+pub struct InsufficientBuffer {
   /// Minimum elements (bytes or typed elements) required.
   expected: usize,
   /// Elements supplied.
   actual: usize,
 }
 
-impl BufferTooShort {
-  /// Constructs a new `BufferTooShort` payload.
+impl InsufficientBuffer {
+  /// Constructs a new `InsufficientBuffer` payload.
   #[inline]
   pub const fn new(expected: usize, actual: usize) -> Self {
     Self { expected, actual }
@@ -199,9 +199,9 @@ impl BufferTooShort {
 }
 
 /// HSV plane identification and size mismatch payload for
-/// [`MixedSinkerError::HsvPlaneTooShort`].
+/// [`MixedSinkerError::InsufficientHsvPlane`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HsvPlaneTooShort {
+pub struct InsufficientHsvPlane {
   /// Which HSV plane was short (H, S, or V).
   which: HsvPlane,
   /// Minimum bytes required (`width × height`).
@@ -210,8 +210,8 @@ pub struct HsvPlaneTooShort {
   actual: usize,
 }
 
-impl HsvPlaneTooShort {
-  /// Constructs a new `HsvPlaneTooShort` payload.
+impl InsufficientHsvPlane {
+  /// Constructs a new `InsufficientHsvPlane` payload.
   #[inline]
   pub const fn new(which: HsvPlane, expected: usize, actual: usize) -> Self {
     Self {
@@ -429,6 +429,11 @@ impl core::fmt::Display for WidthAlignmentRequirement {
 /// All variants are recoverable: the sinker never mutates caller
 /// buffers on an error return, so the caller can inspect the variant,
 /// rebuild or resize buffers, and retry.
+///
+/// **Note (API change):** the former `*BufferTooShort` / `HsvPlaneTooShort`
+/// variants were renamed to `Insufficient*Buffer` / `InsufficientHsvPlane`
+/// and their payload structs renamed from `BufferTooShort` /
+/// `HsvPlaneTooShort` to `InsufficientBuffer` / `InsufficientHsvPlane`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum MixedSinkerError {
@@ -443,30 +448,30 @@ pub enum MixedSinkerError {
 
   /// RGB buffer attached via [`MixedSinker::with_rgb`] /
   /// [`MixedSinker::set_rgb`] is shorter than `width × height × 3`.
-  #[error("MixedSinker rgb buffer too short: expected >= {} bytes, got {}", .0.expected(), .0.actual())]
-  RgbBufferTooShort(BufferTooShort),
+  #[error("MixedSinker insufficient rgb buffer: expected >= {} bytes, got {}", .0.expected(), .0.actual())]
+  InsufficientRgbBuffer(InsufficientBuffer),
 
   /// `u16` RGB buffer attached via [`MixedSinker::with_rgb_u16`] /
   /// [`MixedSinker::set_rgb_u16`] is shorter than `width × height × 3`
   /// `u16` elements. Only the high‑bit‑depth source impls
   /// (currently [`Yuv420p10`](crate::source::Yuv420p10)) write into this
   /// buffer.
-  #[error("MixedSinker rgb_u16 buffer too short: expected >= {} elements, got {}", .0.expected(), .0.actual())]
-  RgbU16BufferTooShort(BufferTooShort),
+  #[error("MixedSinker insufficient rgb_u16 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
+  InsufficientRgbU16Buffer(InsufficientBuffer),
 
   /// Native-depth `u16` luma buffer attached via per-format
   /// `with_luma_u16` is shorter than `width × height` `u16`
   /// elements. Tier 4 sources (V210 / Y210 / Y212 / Y216) are the
   /// first consumers of this API.
-  #[error("MixedSinker luma_u16 buffer too short: expected >= {} elements, got {}", .0.expected(), .0.actual())]
-  LumaU16BufferTooShort(BufferTooShort),
+  #[error("MixedSinker insufficient luma_u16 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
+  InsufficientLumaU16Buffer(InsufficientBuffer),
 
   /// RGBA buffer attached via [`MixedSinker::with_rgba`] /
   /// [`MixedSinker::set_rgba`] is shorter than `width × height × 4`.
   /// The fourth byte per pixel is alpha — opaque (`0xFF`) by default
   /// when the source has no alpha plane.
-  #[error("MixedSinker rgba buffer too short: expected >= {} bytes, got {}", .0.expected(), .0.actual())]
-  RgbaBufferTooShort(BufferTooShort),
+  #[error("MixedSinker insufficient rgba buffer: expected >= {} bytes, got {}", .0.expected(), .0.actual())]
+  InsufficientRgbaBuffer(InsufficientBuffer),
 
   /// `u16` RGBA buffer attached via `with_rgba_u16` / `set_rgba_u16`
   /// (per-format impl, not yet shipped on any sink) is shorter than
@@ -474,53 +479,53 @@ pub enum MixedSinkerError {
   /// impls write into this buffer; the fourth `u16` per pixel is
   /// alpha — opaque (`(1 << BITS) - 1`) by default when the source
   /// has no alpha plane.
-  #[error("MixedSinker rgba_u16 buffer too short: expected >= {} elements, got {}", .0.expected(), .0.actual())]
-  RgbaU16BufferTooShort(BufferTooShort),
+  #[error("MixedSinker insufficient rgba_u16 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
+  InsufficientRgbaU16Buffer(InsufficientBuffer),
 
   /// `f32` RGB buffer attached via per-format `with_rgb_f32` /
   /// `set_rgb_f32` is shorter than `width × height × 3` `f32` elements.
   /// Only float-source impls (currently
   /// [`Rgbf32`](crate::source::Rgbf32)) write into this buffer.
-  #[error("MixedSinker rgb_f32 buffer too short: expected >= {} elements, got {}", .0.expected(), .0.actual())]
-  RgbF32BufferTooShort(BufferTooShort),
+  #[error("MixedSinker insufficient rgb_f32 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
+  InsufficientRgbF32Buffer(InsufficientBuffer),
 
   /// `half::f16` RGB buffer attached via per-format `with_rgb_f16` /
   /// `set_rgb_f16` is shorter than `width × height × 3` `f16` elements.
   /// Only half-float-source impls (currently
   /// [`Rgbf16`](crate::source::Rgbf16)) write into this buffer.
-  #[error("MixedSinker rgb_f16 buffer too short: expected >= {} elements, got {}", .0.expected(), .0.actual())]
-  RgbF16BufferTooShort(BufferTooShort),
+  #[error("MixedSinker insufficient rgb_f16 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
+  InsufficientRgbF16Buffer(InsufficientBuffer),
 
   /// `f32` RGBA buffer attached via per-format `with_rgba_f32` /
   /// `set_rgba_f32` is shorter than `width × height × 4` `f32` elements.
   /// Only float-planar-GBR source impls write into this buffer.
-  #[error("MixedSinker rgba_f32 buffer too short: expected >= {} elements, got {}", .0.expected(), .0.actual())]
-  RgbaF32BufferTooShort(BufferTooShort),
+  #[error("MixedSinker insufficient rgba_f32 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
+  InsufficientRgbaF32Buffer(InsufficientBuffer),
 
   /// `half::f16` RGBA buffer attached via per-format `with_rgba_f16` /
   /// `set_rgba_f16` is shorter than `width × height × 4` `f16` elements.
   /// Only float-planar-GBR source impls write into this buffer.
-  #[error("MixedSinker rgba_f16 buffer too short: expected >= {} elements, got {}", .0.expected(), .0.actual())]
-  RgbaF16BufferTooShort(BufferTooShort),
+  #[error("MixedSinker insufficient rgba_f16 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
+  InsufficientRgbaF16Buffer(InsufficientBuffer),
 
   /// `f32` XYZ buffer attached via `with_xyz_f32` / `set_xyz_f32` is
   /// shorter than `width × height × 3` `f32` elements. Only the
   /// [`Xyz12`](crate::source::Xyz12) source impl writes into this buffer.
-  #[error("MixedSinker xyz_f32 buffer too short: expected >= {} elements, got {}", .0.expected(), .0.actual())]
-  XyzF32BufferTooShort(BufferTooShort),
+  #[error("MixedSinker insufficient xyz_f32 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
+  InsufficientXyzF32Buffer(InsufficientBuffer),
 
   /// `f32` luma buffer attached via `with_luma_f32` / `set_luma_f32` is
   /// shorter than `width × height` `f32` elements.
-  #[error("MixedSinker luma_f32 buffer too short: expected >= {} elements, got {}", .0.expected(), .0.actual())]
-  LumaF32BufferTooShort(BufferTooShort),
+  #[error("MixedSinker insufficient luma_f32 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
+  InsufficientLumaF32Buffer(InsufficientBuffer),
 
   /// Luma buffer is shorter than `width × height`.
-  #[error("MixedSinker luma buffer too short: expected >= {} bytes, got {}", .0.expected(), .0.actual())]
-  LumaBufferTooShort(BufferTooShort),
+  #[error("MixedSinker insufficient luma buffer: expected >= {} bytes, got {}", .0.expected(), .0.actual())]
+  InsufficientLumaBuffer(InsufficientBuffer),
 
   /// One of the three HSV planes is shorter than `width × height`.
-  #[error("MixedSinker hsv {:?} plane too short: expected >= {} bytes, got {}", .0.which(), .0.expected(), .0.actual())]
-  HsvPlaneTooShort(HsvPlaneTooShort),
+  #[error("MixedSinker insufficient hsv {:?} plane: expected >= {} bytes, got {}", .0.which(), .0.expected(), .0.actual())]
+  InsufficientHsvPlane(InsufficientHsvPlane),
 
   /// Declared frame geometry does not fit in `usize`. Only reachable
   /// on 32‑bit targets (wasm32, i686) with extreme dimensions.
@@ -578,7 +583,7 @@ pub enum MixedSinkerError {
 }
 
 /// Identifies which of the three HSV planes a
-/// [`MixedSinkerError::HsvPlaneTooShort`] refers to.
+/// [`MixedSinkerError::InsufficientHsvPlane`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HsvPlane {
   /// Hue plane.
@@ -1658,7 +1663,7 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
 
 impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   /// Attaches a packed 24-bit RGB output buffer.
-  /// Returns `Err(RgbBufferTooShort)` if `buf.len() < width × height × 3`,
+  /// Returns `Err(InsufficientRgbBuffer)` if `buf.len() < width × height × 3`,
   /// or `Err(GeometryOverflow)` on 32‑bit targets when the product
   /// overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -1672,10 +1677,9 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   pub fn set_rgb(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbBufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgb = Some(buf);
     Ok(self)
@@ -1715,7 +1719,7 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   // native‑depth RGBA.
 
   /// Attaches a single-plane luma output buffer.
-  /// Returns `Err(LumaBufferTooShort)` if `buf.len() < width × height`,
+  /// Returns `Err(InsufficientLumaBuffer)` if `buf.len() < width × height`,
   /// or `Err(GeometryOverflow)` on 32‑bit overflow.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -1728,17 +1732,16 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   pub fn set_luma(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(1)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaBufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientLumaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.luma = Some(buf);
     Ok(self)
   }
 
   /// Attaches three HSV output planes. Returns
-  /// `Err(MixedSinkerError::HsvPlaneTooShort(e))` (inspect via
+  /// `Err(MixedSinkerError::InsufficientHsvPlane(e))` (inspect via
   /// `e.which()` / `e.expected()` / `e.actual()`) naming the first
   /// short plane, or `Err(MixedSinkerError::GeometryOverflow(_))` on
   /// 32-bit overflow.
@@ -1763,25 +1766,19 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   ) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(1)?;
     if h.len() < expected {
-      return Err(MixedSinkerError::HsvPlaneTooShort(HsvPlaneTooShort::new(
-        HsvPlane::H,
-        expected,
-        h.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientHsvPlane(
+        InsufficientHsvPlane::new(HsvPlane::H, expected, h.len()),
+      ));
     }
     if s.len() < expected {
-      return Err(MixedSinkerError::HsvPlaneTooShort(HsvPlaneTooShort::new(
-        HsvPlane::S,
-        expected,
-        s.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientHsvPlane(
+        InsufficientHsvPlane::new(HsvPlane::S, expected, s.len()),
+      ));
     }
     if v.len() < expected {
-      return Err(MixedSinkerError::HsvPlaneTooShort(HsvPlaneTooShort::new(
-        HsvPlane::V,
-        expected,
-        v.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientHsvPlane(
+        InsufficientHsvPlane::new(HsvPlane::V, expected, v.len()),
+      ));
     }
     self.hsv = Some(HsvBuffers { h, s, v });
     Ok(self)
@@ -2049,7 +2046,7 @@ mod api_smoke_tests {
 
   #[test]
   fn luma_u16_buffer_too_short_error_displays() {
-    let err = MixedSinkerError::LumaU16BufferTooShort(BufferTooShort::new(100, 50));
+    let err = MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(100, 50));
     let msg = format!("{err}");
     assert!(msg.contains("100"));
     assert!(msg.contains("50"));

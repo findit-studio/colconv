@@ -1,7 +1,7 @@
 //! 8-bit semi-planar YUV `MixedSinker` impls: Nv12 / Nv16 / Nv21 / Nv24 / Nv42.
 
 use super::{
-  BufferTooShort, GeometryOverflow, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
+  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
   RowShapeMismatch, RowSlice, WidthAlignment, WidthAlignmentRequirement, check_dimensions_match,
   rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
@@ -23,7 +23,7 @@ impl<'a> MixedSinker<'a, Nv12> {
   /// YUVA source impls will copy alpha through from the source
   /// plane.
   ///
-  /// Returns `Err(RgbaBufferTooShort)` if
+  /// Returns `Err(InsufficientRgbaBuffer)` if
   /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -37,10 +37,9 @@ impl<'a> MixedSinker<'a, Nv12> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -60,8 +59,8 @@ impl<'a> MixedSinker<'a, Nv12> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.luma_u16 = Some(buf);
@@ -239,7 +238,7 @@ impl<'a> MixedSinker<'a, Nv16> {
   /// rationale and constraints. NV16 has no alpha plane, so every
   /// alpha byte is filled with `0xFF` (opaque).
   ///
-  /// Returns `Err(RgbaBufferTooShort)` if
+  /// Returns `Err(InsufficientRgbaBuffer)` if
   /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -253,10 +252,9 @@ impl<'a> MixedSinker<'a, Nv16> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -276,8 +274,8 @@ impl<'a> MixedSinker<'a, Nv16> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.luma_u16 = Some(buf);
@@ -445,7 +443,7 @@ impl<'a> MixedSinker<'a, Nv21> {
   /// rationale and constraints. NV21 has no alpha plane, so every
   /// alpha byte is filled with `0xFF` (opaque).
   ///
-  /// Returns `Err(RgbaBufferTooShort)` if
+  /// Returns `Err(InsufficientRgbaBuffer)` if
   /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -459,10 +457,9 @@ impl<'a> MixedSinker<'a, Nv21> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -482,8 +479,8 @@ impl<'a> MixedSinker<'a, Nv21> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.luma_u16 = Some(buf);
@@ -652,7 +649,7 @@ impl<'a> MixedSinker<'a, Nv24> {
   /// rationale and constraints. Nv24 has no alpha plane, so every
   /// alpha byte is filled with `0xFF` (opaque).
   ///
-  /// Returns `Err(RgbaBufferTooShort)` if
+  /// Returns `Err(InsufficientRgbaBuffer)` if
   /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -666,10 +663,9 @@ impl<'a> MixedSinker<'a, Nv24> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -689,8 +685,8 @@ impl<'a> MixedSinker<'a, Nv24> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.luma_u16 = Some(buf);
@@ -853,7 +849,7 @@ impl<'a> MixedSinker<'a, Nv42> {
   /// See [`MixedSinker::<Nv24>::with_rgba`] for the same rationale and
   /// constraints; Nv42 differs only in chroma byte order (V before U).
   ///
-  /// Returns `Err(RgbaBufferTooShort)` if
+  /// Returns `Err(InsufficientRgbaBuffer)` if
   /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -867,10 +863,9 @@ impl<'a> MixedSinker<'a, Nv42> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -890,8 +885,8 @@ impl<'a> MixedSinker<'a, Nv42> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.luma_u16 = Some(buf);

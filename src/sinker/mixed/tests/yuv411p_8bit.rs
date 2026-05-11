@@ -251,7 +251,7 @@ fn yuv411p_luma_u16_buffer_too_short_returns_err() {
     .unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::LumaU16BufferTooShort(BufferTooShort::new(128, 127))
+    MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(128, 127))
   );
 }
 

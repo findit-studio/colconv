@@ -144,8 +144,8 @@ fn yuva444p10_rgba_buf_too_short_returns_err() {
   let err = MixedSinker::<Yuva444p10>::new(16, 8)
     .with_rgba(&mut rgba)
     .err()
-    .expect("expected RgbaBufferTooShort");
-  assert!(matches!(err, MixedSinkerError::RgbaBufferTooShort(_)));
+    .expect("expected InsufficientRgbaBuffer");
+  assert!(matches!(err, MixedSinkerError::InsufficientRgbaBuffer(_)));
 }
 
 #[test]
@@ -154,8 +154,11 @@ fn yuva444p10_rgba_u16_buf_too_short_returns_err() {
   let err = MixedSinker::<Yuva444p10>::new(16, 8)
     .with_rgba_u16(&mut rgba)
     .err()
-    .expect("expected RgbaU16BufferTooShort");
-  assert!(matches!(err, MixedSinkerError::RgbaU16BufferTooShort(_)));
+    .expect("expected InsufficientRgbaU16Buffer");
+  assert!(matches!(
+    err,
+    MixedSinkerError::InsufficientRgbaU16Buffer(_)
+  ));
 }
 
 // ---- Yuva444p10 alpha-drop paths (Codex PR #32 review fix #1) ----

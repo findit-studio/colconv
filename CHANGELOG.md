@@ -10,17 +10,18 @@
   matching on `MixedSinkerError` must update their patterns from struct-field
   syntax to newtype destructuring + accessor calls.
 
-  - Per-variant payload structs (all in `crate::sinker`): `BufferTooShort`,
-    `DimensionMismatch`, `GeometryOverflow`, `HsvPlaneTooShort`,
+  - Per-variant payload structs (all in `crate::sinker`): `InsufficientBuffer`,
+    `DimensionMismatch`, `GeometryOverflow`, `InsufficientHsvPlane`,
     `RowIndexOutOfRange`, `RowShapeMismatch`, `WidthAlignment`. Discriminator
     enum `WidthAlignmentRequirement` is also re-exported. Each struct exposes
     `pub const fn new(...)` plus one `pub const fn field(&self) -> T` getter
     per field.
 
-  - All 11 `*BufferTooShort` variants share one `BufferTooShort` payload
-    (DRY). The variant name still distinguishes the buffer (rgb / rgba_u16 /
-    luma / xyz_f32 / etc.) and the per-variant `Display` carries the unit
-    (bytes vs. elements).
+  - All 12 `Insufficient*Buffer` variants share one `InsufficientBuffer`
+    payload (DRY). The variant name still distinguishes the buffer (rgb /
+    rgba_u16 / luma / xyz_f32 / etc.) and the per-variant `Display` carries
+    the unit (bytes vs. elements). (Formerly named `BufferTooShort`; renamed
+    via the `Insufficient*` refactoring below.)
 
   - `OddWidth { width }` + `WidthNotMultipleOf4 { width }` are **consolidated**
     into one `WidthAlignment(WidthAlignment)` variant whose payload carries
@@ -44,7 +45,7 @@
       _ => {}
     }
 
-    // After
+    // After (current API)
     match err {
       MixedSinkerError::DimensionMismatch(e) => {
         eprintln!(
@@ -52,7 +53,7 @@
           e.configured_w(), e.configured_h(), e.frame_w(), e.frame_h(),
         );
       }
-      MixedSinkerError::RgbBufferTooShort(e) => {
+      MixedSinkerError::InsufficientRgbBuffer(e) => {
         let _ = (e.expected(), e.actual());
       }
       MixedSinkerError::WidthAlignment(e) => {
@@ -66,6 +67,40 @@
     `MixedSinker<Yuv410p>` width is now `WidthAlignment(WidthAlignment::new(w,
     WidthAlignmentRequirement::MultipleOfFour))` — replacing the prior
     misleading `OddWidth { width: w }`.
+
+- **`MixedSinkerError` `*BufferTooShort` / `HsvPlaneTooShort` → `Insufficient*`
+  rename.** All 12 length-shortfall variants and their payload structs have been
+  renamed to use the `Insufficient*` prefix for consistency and readability:
+
+  - `BufferTooShort` payload struct → `InsufficientBuffer` (shared across all
+    12 buffer variants — DRY preserved).
+  - `HsvPlaneTooShort` payload struct → `InsufficientHsvPlane`.
+  - 12 variant renames: e.g. `RgbBufferTooShort(BufferTooShort)` →
+    `InsufficientRgbBuffer(InsufficientBuffer)`, and so on for all
+    `Rgb/RgbU16/Rgba/RgbaU16/RgbF32/RgbF16/RgbaF32/RgbaF16/XyzF32/LumaF32/
+    Luma/LumaU16` variants.
+  - `HsvPlaneTooShort(HsvPlaneTooShort)` → `InsufficientHsvPlane(InsufficientHsvPlane)`.
+  - Display strings updated: `"X buffer too short:"` → `"insufficient X buffer:"`;
+    `"hsv {:?} plane too short:"` → `"insufficient hsv {:?} plane:"`.
+    Callers parsing error messages must update accordingly.
+  - `IsVariant`-derived predicates: new names are e.g.
+    `is_insufficient_rgb_buffer()`, `is_insufficient_hsv_plane()`.
+  - Frame errors (`PlaneTooShort`, `StrideTooSmall`, etc.) are **not** affected.
+
+  **Migration** (source-level breaking change, pre-publish):
+
+  ```rust
+  // Before
+  MixedSinkerError::RgbBufferTooShort(e) => { let _ = (e.expected(), e.actual()); }
+  MixedSinkerError::HsvPlaneTooShort(e)  => { let _ = (e.which(), e.expected(), e.actual()); }
+
+  // After
+  MixedSinkerError::InsufficientRgbBuffer(e) => { let _ = (e.expected(), e.actual()); }
+  MixedSinkerError::InsufficientHsvPlane(e)  => { let _ = (e.which(), e.expected(), e.actual()); }
+  ```
+
+  Re-exports in `crate::sinker`: `BufferTooShort` → `InsufficientBuffer`,
+  `HsvPlaneTooShort` → `InsufficientHsvPlane`.
 
 - **`derive_more::IsVariant` derived on every `*Error` enum** (69 enums across
   28 files) — `err.is_<variant>()` predicates available everywhere.

@@ -29,7 +29,7 @@
 //! fans out, then `copy_alpha_packed_u16x4_at_3` overwrites α from slot 3.
 
 use super::{
-  BufferTooShort, GeometryOverflow, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
+  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
   RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
   rgba_u16_plane_row_slice,
 };
@@ -56,7 +56,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgb48<BE>> {
   /// Attaches a packed **8-bit** RGBA output buffer. Each 16-bit channel is
   /// narrowed `>> 8` and alpha is forced to `0xFF` (no source alpha in Rgb48).
   ///
-  /// Returns `Err(RgbaBufferTooShort)` if `buf.len() < width × height × 4`,
+  /// Returns `Err(InsufficientRgbaBuffer)` if `buf.len() < width × height × 4`,
   /// or `Err(GeometryOverflow)` on 32-bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -68,10 +68,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgb48<BE>> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -80,7 +79,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgb48<BE>> {
   /// Attaches a native **`u16`** RGB output buffer. Length in `u16` **elements**
   /// (`width × height × 3`). Channels are passed through verbatim (no shift).
   ///
-  /// Returns `Err(RgbU16BufferTooShort)` if the buffer is too short.
+  /// Returns `Err(InsufficientRgbU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;
@@ -91,10 +90,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgb48<BE>> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -103,7 +101,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgb48<BE>> {
   /// Attaches a native **`u16`** RGBA output buffer. Length in `u16` **elements**
   /// (`width × height × 4`). Alpha is forced to `0xFFFF` (no source alpha).
   ///
-  /// Returns `Err(RgbaU16BufferTooShort)` if the buffer is too short.
+  /// Returns `Err(InsufficientRgbaU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -114,8 +112,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgb48<BE>> {
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaU16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.rgba_u16 = Some(buf);
@@ -125,7 +123,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgb48<BE>> {
   /// Attaches a native **`u16`** luma output buffer. Length in `u16` **elements**
   /// (`width × height`). Y' is computed at 8-bit precision and zero-extended.
   ///
-  /// Returns `Err(LumaU16BufferTooShort)` if the buffer is too short.
+  /// Returns `Err(InsufficientLumaU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -136,8 +134,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgb48<BE>> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.luma_u16 = Some(buf);
@@ -278,7 +276,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgr48<BE>> {
   /// on output; each 16-bit channel is narrowed `>> 8`; alpha is forced to
   /// `0xFF` (no source alpha in Bgr48).
   ///
-  /// Returns `Err(RgbaBufferTooShort)` if `buf.len() < width × height × 4`.
+  /// Returns `Err(InsufficientRgbaBuffer)` if `buf.len() < width × height × 4`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
     self.set_rgba(buf)?;
@@ -289,10 +287,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgr48<BE>> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -301,7 +298,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgr48<BE>> {
   /// Attaches a native **`u16`** RGB output buffer. Length in `u16` **elements**
   /// (`width × height × 3`). B/R channels are swapped on output; no shift.
   ///
-  /// Returns `Err(RgbU16BufferTooShort)` if the buffer is too short.
+  /// Returns `Err(InsufficientRgbU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;
@@ -312,10 +309,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgr48<BE>> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -324,7 +320,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgr48<BE>> {
   /// Attaches a native **`u16`** RGBA output buffer. Length in `u16` **elements**
   /// (`width × height × 4`). B/R channels swapped; alpha forced to `0xFFFF`.
   ///
-  /// Returns `Err(RgbaU16BufferTooShort)` if the buffer is too short.
+  /// Returns `Err(InsufficientRgbaU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -335,8 +331,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgr48<BE>> {
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaU16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.rgba_u16 = Some(buf);
@@ -346,7 +342,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgr48<BE>> {
   /// Attaches a native **`u16`** luma output buffer (`width × height` elements).
   /// Y' is computed at 8-bit precision and zero-extended to u16.
   ///
-  /// Returns `Err(LumaU16BufferTooShort)` if the buffer is too short.
+  /// Returns `Err(InsufficientLumaU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -357,8 +353,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgr48<BE>> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.luma_u16 = Some(buf);
@@ -503,7 +499,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgba64<BE>> {
   /// `copy_alpha_packed_u16x4_to_u8_at_3` overwrites the α slot from the
   /// source — output is byte-identical to the standalone path.
   ///
-  /// Returns `Err(RgbaBufferTooShort)` if `buf.len() < width × height × 4`.
+  /// Returns `Err(InsufficientRgbaBuffer)` if `buf.len() < width × height × 4`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
     self.set_rgba(buf)?;
@@ -514,10 +510,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgba64<BE>> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -526,7 +521,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgba64<BE>> {
   /// Attaches a native **`u16`** RGB output buffer. Length in `u16` **elements**
   /// (`width × height × 3`). Alpha slot dropped (RGB only, 3 channels).
   ///
-  /// Returns `Err(RgbU16BufferTooShort)` if the buffer is too short.
+  /// Returns `Err(InsufficientRgbU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;
@@ -537,10 +532,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgba64<BE>> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -556,7 +550,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgba64<BE>> {
   /// `copy_alpha_packed_u16x4_at_3` overwrites α — output byte-identical
   /// to the standalone `rgba64_to_rgba_u16_row` path.
   ///
-  /// Returns `Err(RgbaU16BufferTooShort)` if the buffer is too short.
+  /// Returns `Err(InsufficientRgbaU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -567,8 +561,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgba64<BE>> {
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaU16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.rgba_u16 = Some(buf);
@@ -578,7 +572,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgba64<BE>> {
   /// Attaches a native **`u16`** luma output buffer (`width × height` elements).
   /// Y' is derived from narrowed u8 RGB and zero-extended to u16.
   ///
-  /// Returns `Err(LumaU16BufferTooShort)` if the buffer is too short.
+  /// Returns `Err(InsufficientLumaU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -589,8 +583,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgba64<BE>> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.luma_u16 = Some(buf);
@@ -794,7 +788,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgra64<BE>> {
   /// Same Strategy A+ semantics as [`MixedSinker::<Rgba64>::with_rgba`] —
   /// see that method's doc for the standalone vs combo behaviour.
   ///
-  /// Returns `Err(RgbaBufferTooShort)` if `buf.len() < width × height × 4`.
+  /// Returns `Err(InsufficientRgbaBuffer)` if `buf.len() < width × height × 4`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
     self.set_rgba(buf)?;
@@ -805,10 +799,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgra64<BE>> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -817,7 +810,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgra64<BE>> {
   /// Attaches a native **`u16`** RGB output buffer. B/R channels swapped on
   /// output; length in `u16` **elements** (`width × height × 3`).
   ///
-  /// Returns `Err(RgbU16BufferTooShort)` if the buffer is too short.
+  /// Returns `Err(InsufficientRgbU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;
@@ -828,10 +821,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgra64<BE>> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -841,7 +833,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgra64<BE>> {
   /// source α at slot 3 copied verbatim. Length in `u16` **elements**
   /// (`width × height × 4`).
   ///
-  /// Returns `Err(RgbaU16BufferTooShort)` if the buffer is too short.
+  /// Returns `Err(InsufficientRgbaU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -852,8 +844,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgra64<BE>> {
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaU16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.rgba_u16 = Some(buf);
@@ -863,7 +855,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgra64<BE>> {
   /// Attaches a native **`u16`** luma output buffer (`width × height` elements).
   /// Y' is derived from narrowed u8 RGB and zero-extended to u16.
   ///
-  /// Returns `Err(LumaU16BufferTooShort)` if the buffer is too short.
+  /// Returns `Err(InsufficientLumaU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -874,8 +866,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgra64<BE>> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.luma_u16 = Some(buf);

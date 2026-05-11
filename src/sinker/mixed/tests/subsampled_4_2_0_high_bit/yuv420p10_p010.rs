@@ -149,7 +149,7 @@ fn yuv420p10_rgb_u16_too_short_returns_err() {
     .with_rgb_u16(&mut rgb)
     .err()
     .unwrap();
-  assert!(matches!(err, MixedSinkerError::RgbU16BufferTooShort(_)));
+  assert!(matches!(err, MixedSinkerError::InsufficientRgbU16Buffer(_)));
 }
 
 #[test]
@@ -317,8 +317,8 @@ fn yuv420p10_rgba_too_short_returns_err() {
   let err = MixedSinker::<Yuv420p10>::new(16, 8)
     .with_rgba(&mut rgba)
     .err()
-    .expect("expected RgbaBufferTooShort");
-  assert!(matches!(err, MixedSinkerError::RgbaBufferTooShort(_)));
+    .expect("expected InsufficientRgbaBuffer");
+  assert!(matches!(err, MixedSinkerError::InsufficientRgbaBuffer(_)));
 }
 
 #[test]
@@ -327,8 +327,11 @@ fn yuv420p10_rgba_u16_too_short_returns_err() {
   let err = MixedSinker::<Yuv420p10>::new(16, 8)
     .with_rgba_u16(&mut rgba)
     .err()
-    .expect("expected RgbaU16BufferTooShort");
-  assert!(matches!(err, MixedSinkerError::RgbaU16BufferTooShort(_)));
+    .expect("expected InsufficientRgbaU16Buffer");
+  assert!(matches!(
+    err,
+    MixedSinkerError::InsufficientRgbaU16Buffer(_)
+  ));
 }
 
 // ---- P010 --------------------------------------------------------------
@@ -493,7 +496,7 @@ fn p010_rgb_u16_too_short_returns_err() {
     .with_rgb_u16(&mut rgb)
     .err()
     .unwrap();
-  assert!(matches!(err, MixedSinkerError::RgbU16BufferTooShort(_)));
+  assert!(matches!(err, MixedSinkerError::InsufficientRgbU16Buffer(_)));
 }
 
 #[test]

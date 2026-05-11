@@ -306,11 +306,11 @@ fn vuya_rgb_buffer_too_short_returns_error() {
   let mut rgb = std::vec![0u8; 95];
   let result = MixedSinker::<Vuya>::new(8, 4).with_rgb(&mut rgb);
   let Err(err) = result else {
-    panic!("expected RgbBufferTooShort");
+    panic!("expected InsufficientRgbBuffer");
   };
   assert_eq!(
     err,
-    MixedSinkerError::RgbBufferTooShort(BufferTooShort::new(96, 95))
+    MixedSinkerError::InsufficientRgbBuffer(InsufficientBuffer::new(96, 95))
   );
 }
 
@@ -323,11 +323,11 @@ fn vuya_rgba_buffer_too_short_returns_error() {
   let mut rgba = std::vec![0u8; 90];
   let result = MixedSinker::<Vuya>::new(6, 4).with_rgba(&mut rgba);
   let Err(err) = result else {
-    panic!("expected RgbaBufferTooShort");
+    panic!("expected InsufficientRgbaBuffer");
   };
   assert_eq!(
     err,
-    MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(96, 90))
+    MixedSinkerError::InsufficientRgbaBuffer(InsufficientBuffer::new(96, 90))
   );
 }
 
@@ -340,11 +340,11 @@ fn vuya_luma_buffer_too_short_returns_error() {
   let mut luma = std::vec![0u8; 20];
   let result = MixedSinker::<Vuya>::new(8, 3).with_luma(&mut luma);
   let Err(err) = result else {
-    panic!("expected LumaBufferTooShort");
+    panic!("expected InsufficientLumaBuffer");
   };
   assert_eq!(
     err,
-    MixedSinkerError::LumaBufferTooShort(BufferTooShort::new(24, 20))
+    MixedSinkerError::InsufficientLumaBuffer(InsufficientBuffer::new(24, 20))
   );
 }
 
@@ -359,11 +359,11 @@ fn vuya_hsv_buffer_too_short_returns_error() {
   let mut v = std::vec![0u8; 16];
   let result = MixedSinker::<Vuya>::new(4, 4).with_hsv(&mut h, &mut s, &mut v);
   let Err(err) = result else {
-    panic!("expected HsvPlaneTooShort");
+    panic!("expected InsufficientHsvPlane");
   };
   assert!(matches!(
     &err,
-    MixedSinkerError::HsvPlaneTooShort(e)
+    MixedSinkerError::InsufficientHsvPlane(e)
       if matches!(e.which(), HsvPlane::H) && e.expected() == 16 && e.actual() == 15
   ));
 }
@@ -612,11 +612,11 @@ fn vuya_luma_u16_buffer_too_short_returns_err() {
   let mut luma = std::vec![0u16; 4 * 4 - 1];
   let result = MixedSinker::<Vuya>::new(4, 4).with_luma_u16(&mut luma);
   let Err(err) = result else {
-    panic!("expected LumaU16BufferTooShort");
+    panic!("expected InsufficientLumaU16Buffer");
   };
   assert_eq!(
     err,
-    MixedSinkerError::LumaU16BufferTooShort(BufferTooShort::new(16, 15)),
+    MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(16, 15)),
     "unexpected error: {err:?}"
   );
 }

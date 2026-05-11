@@ -407,11 +407,11 @@ fn v410_rgba_u16_buffer_too_short_returns_err() {
   let mut rgba = std::vec![0u16; 6 * 7 * 4];
   let result = MixedSinker::<V410>::new(6, 8).with_rgba_u16(&mut rgba);
   let Err(err) = result else {
-    panic!("expected RgbaU16BufferTooShort");
+    panic!("expected InsufficientRgbaU16Buffer");
   };
   assert_eq!(
     err,
-    MixedSinkerError::RgbaU16BufferTooShort(BufferTooShort::new(192, 168))
+    MixedSinkerError::InsufficientRgbaU16Buffer(InsufficientBuffer::new(192, 168))
   );
 }
 

@@ -287,11 +287,11 @@ fn y216_luma_u16_buffer_too_short_returns_err() {
   let mut luma = std::vec![0u16; 6 * 7];
   let result = MixedSinker::<Y216>::new(6, 8).with_luma_u16(&mut luma);
   let Err(err) = result else {
-    panic!("expected LumaU16BufferTooShort");
+    panic!("expected InsufficientLumaU16Buffer");
   };
   assert_eq!(
     err,
-    MixedSinkerError::LumaU16BufferTooShort(BufferTooShort::new(48, 42))
+    MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(48, 42))
   );
 }
 

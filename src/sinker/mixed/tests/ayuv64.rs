@@ -504,11 +504,11 @@ fn ayuv64_rgb_buffer_too_short_returns_error() {
   let mut rgb = std::vec![0u8; 95];
   let result = MixedSinker::<Ayuv64>::new(8, 4).with_rgb(&mut rgb);
   let Err(err) = result else {
-    panic!("expected RgbBufferTooShort");
+    panic!("expected InsufficientRgbBuffer");
   };
   assert_eq!(
     err,
-    MixedSinkerError::RgbBufferTooShort(BufferTooShort::new(96, 95))
+    MixedSinkerError::InsufficientRgbBuffer(InsufficientBuffer::new(96, 95))
   );
 }
 
@@ -521,11 +521,11 @@ fn ayuv64_rgba_buffer_too_short_returns_error() {
   let mut rgba = std::vec![0u8; 90];
   let result = MixedSinker::<Ayuv64>::new(6, 4).with_rgba(&mut rgba);
   let Err(err) = result else {
-    panic!("expected RgbaBufferTooShort");
+    panic!("expected InsufficientRgbaBuffer");
   };
   assert_eq!(
     err,
-    MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(96, 90))
+    MixedSinkerError::InsufficientRgbaBuffer(InsufficientBuffer::new(96, 90))
   );
 }
 
@@ -538,11 +538,11 @@ fn ayuv64_rgb_u16_buffer_too_short_returns_error() {
   let mut rgb = std::vec![0u16; 90];
   let result = MixedSinker::<Ayuv64>::new(8, 4).with_rgb_u16(&mut rgb);
   let Err(err) = result else {
-    panic!("expected RgbU16BufferTooShort");
+    panic!("expected InsufficientRgbU16Buffer");
   };
   assert_eq!(
     err,
-    MixedSinkerError::RgbU16BufferTooShort(BufferTooShort::new(96, 90))
+    MixedSinkerError::InsufficientRgbU16Buffer(InsufficientBuffer::new(96, 90))
   );
 }
 
@@ -555,11 +555,11 @@ fn ayuv64_rgba_u16_buffer_too_short_returns_error() {
   let mut rgba = std::vec![0u16; 88];
   let result = MixedSinker::<Ayuv64>::new(6, 4).with_rgba_u16(&mut rgba);
   let Err(err) = result else {
-    panic!("expected RgbaU16BufferTooShort");
+    panic!("expected InsufficientRgbaU16Buffer");
   };
   assert_eq!(
     err,
-    MixedSinkerError::RgbaU16BufferTooShort(BufferTooShort::new(96, 88))
+    MixedSinkerError::InsufficientRgbaU16Buffer(InsufficientBuffer::new(96, 88))
   );
 }
 
@@ -572,11 +572,11 @@ fn ayuv64_luma_buffer_too_short_returns_error() {
   let mut luma = std::vec![0u8; 20];
   let result = MixedSinker::<Ayuv64>::new(8, 3).with_luma(&mut luma);
   let Err(err) = result else {
-    panic!("expected LumaBufferTooShort");
+    panic!("expected InsufficientLumaBuffer");
   };
   assert_eq!(
     err,
-    MixedSinkerError::LumaBufferTooShort(BufferTooShort::new(24, 20))
+    MixedSinkerError::InsufficientLumaBuffer(InsufficientBuffer::new(24, 20))
   );
 }
 
@@ -589,11 +589,11 @@ fn ayuv64_luma_u16_buffer_too_short_returns_error() {
   let mut luma = std::vec![0u16; 20];
   let result = MixedSinker::<Ayuv64>::new(8, 3).with_luma_u16(&mut luma);
   let Err(err) = result else {
-    panic!("expected LumaU16BufferTooShort");
+    panic!("expected InsufficientLumaU16Buffer");
   };
   assert_eq!(
     err,
-    MixedSinkerError::LumaU16BufferTooShort(BufferTooShort::new(24, 20))
+    MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(24, 20))
   );
 }
 
@@ -608,11 +608,11 @@ fn ayuv64_hsv_buffer_too_short_returns_error() {
   let mut v = std::vec![0u8; 16];
   let result = MixedSinker::<Ayuv64>::new(4, 4).with_hsv(&mut h, &mut s, &mut v);
   let Err(err) = result else {
-    panic!("expected HsvPlaneTooShort");
+    panic!("expected InsufficientHsvPlane");
   };
   assert!(matches!(
     &err,
-    MixedSinkerError::HsvPlaneTooShort(e)
+    MixedSinkerError::InsufficientHsvPlane(e)
       if matches!(e.which(), HsvPlane::H) && e.expected() == 16 && e.actual() == 15
   ));
 }

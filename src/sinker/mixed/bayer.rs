@@ -1,7 +1,7 @@
 //! Bayer / Bayer16 RAW `MixedSinker` impls.
 
 use super::{
-  BufferTooShort, GeometryOverflow, LumaCoefficients, MixedSinker, MixedSinkerError,
+  GeometryOverflow, InsufficientBuffer, LumaCoefficients, MixedSinker, MixedSinkerError,
   RowIndexOutOfRange, RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch,
   rgb_row_to_luma_row,
 };
@@ -167,7 +167,7 @@ impl<'a, const BITS: u32> MixedSinker<'a, Bayer16<BITS>> {
   /// (10-bit white = 1023, 12-bit = 4095, 14-bit = 16383, 16-bit =
   /// 65535) — matches the rest of the high-bit-depth crate.
   ///
-  /// Returns `Err(RgbU16BufferTooShort)` if
+  /// Returns `Err(InsufficientRgbU16Buffer)` if
   /// `buf.len() < width × height × 3`, or `Err(GeometryOverflow)`
   /// on 32-bit overflow.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -182,10 +182,9 @@ impl<'a, const BITS: u32> MixedSinker<'a, Bayer16<BITS>> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)

@@ -36,7 +36,7 @@
 //!   `expand_rgb_to_rgba_row` (α=`0xFF`). No second kernel call.
 
 use super::{
-  BufferTooShort, GeometryOverflow, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
+  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
   RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
 use crate::{
@@ -54,7 +54,7 @@ impl<'a> MixedSinker<'a, Vuyx> {
   /// (`out[x] = Y_byte as u16`). Length in u16 **elements**
   /// (`width × height`).
   ///
-  /// Returns `Err(LumaU16BufferTooShort)` if `buf.len() < width × height`,
+  /// Returns `Err(InsufficientLumaU16Buffer)` if `buf.len() < width × height`,
   /// or `Err(GeometryOverflow)` on 32-bit targets.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -66,8 +66,8 @@ impl<'a> MixedSinker<'a, Vuyx> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.luma_u16 = Some(buf);
@@ -78,7 +78,7 @@ impl<'a> MixedSinker<'a, Vuyx> {
   /// source, the per-pixel alpha byte is always forced to `0xFF` —
   /// the X (padding) byte in the source is never read as alpha.
   ///
-  /// Returns `Err(RgbaBufferTooShort)` if
+  /// Returns `Err(InsufficientRgbaBuffer)` if
   /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   ///
@@ -100,10 +100,9 @@ impl<'a> MixedSinker<'a, Vuyx> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba = Some(buf);
     Ok(self)

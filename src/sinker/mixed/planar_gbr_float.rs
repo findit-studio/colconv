@@ -33,7 +33,7 @@
 //! - `with_rgba_f16` — `gbrapf32_to_rgba_f16_row` (α narrowed f32 → f16 RNE).
 
 use super::{
-  BufferTooShort, GeometryOverflow, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
+  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
   RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
   rgba_u16_plane_row_slice,
 };
@@ -69,10 +69,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrpf32<BE>> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -91,10 +90,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrpf32<BE>> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -113,8 +111,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrpf32<BE>> {
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaU16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.rgba_u16 = Some(buf);
@@ -134,10 +132,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrpf32<BE>> {
   pub fn set_rgb_f32(&mut self, buf: &'a mut [f32]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbF32BufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbF32Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgb_f32 = Some(buf);
     Ok(self)
@@ -155,8 +152,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrpf32<BE>> {
   pub fn set_rgba_f32(&mut self, buf: &'a mut [f32]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaF32BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientRgbaF32Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.rgba_f32 = Some(buf);
@@ -177,10 +174,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrpf32<BE>> {
   pub fn set_rgb_f16(&mut self, buf: &'a mut [half::f16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbF16BufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbF16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgb_f16 = Some(buf);
     Ok(self)
@@ -199,8 +195,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrpf32<BE>> {
   pub fn set_rgba_f16(&mut self, buf: &'a mut [half::f16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaF16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientRgbaF16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.rgba_f16 = Some(buf);
@@ -220,8 +216,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrpf32<BE>> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.luma_u16 = Some(buf);
@@ -441,10 +437,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrapf32<BE>> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -462,10 +457,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrapf32<BE>> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -484,8 +478,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrapf32<BE>> {
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaU16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.rgba_u16 = Some(buf);
@@ -504,10 +498,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrapf32<BE>> {
   pub fn set_rgb_f32(&mut self, buf: &'a mut [f32]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbF32BufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbF32Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgb_f32 = Some(buf);
     Ok(self)
@@ -526,8 +519,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrapf32<BE>> {
   pub fn set_rgba_f32(&mut self, buf: &'a mut [f32]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaF32BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientRgbaF32Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.rgba_f32 = Some(buf);
@@ -546,10 +539,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrapf32<BE>> {
   pub fn set_rgb_f16(&mut self, buf: &'a mut [half::f16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbF16BufferTooShort(BufferTooShort::new(
-        expected,
-        buf.len(),
-      )));
+      return Err(MixedSinkerError::InsufficientRgbF16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgb_f16 = Some(buf);
     Ok(self)
@@ -568,8 +560,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrapf32<BE>> {
   pub fn set_rgba_f16(&mut self, buf: &'a mut [half::f16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaF16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientRgbaF16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.rgba_f16 = Some(buf);
@@ -589,8 +581,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrapf32<BE>> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(
-        BufferTooShort::new(expected, buf.len()),
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
       ));
     }
     self.luma_u16 = Some(buf);

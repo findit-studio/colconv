@@ -124,7 +124,7 @@ fn nv12_with_simd_false_matches_with_simd_true() {
 // time, not part-way through processing. Catching the mistake before
 // any rows are written avoids partially-mutated caller buffers
 // flagged by the adversarial review. With the fallible API these
-// surface as `Err(MixedSinkerError::*BufferTooShort)` / `HsvPlaneTooShort`.
+// surface as `Err(MixedSinkerError::Insufficient*Buffer)` / `InsufficientHsvPlane`.
 
 #[test]
 #[cfg_attr(
@@ -139,7 +139,7 @@ fn attach_short_rgb_returns_err() {
     .unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RgbBufferTooShort(BufferTooShort::new(16 * 8 * 3, 16 * 8 * 3 - 1))
+    MixedSinkerError::InsufficientRgbBuffer(InsufficientBuffer::new(16 * 8 * 3, 16 * 8 * 3 - 1))
   );
 }
 
@@ -156,7 +156,7 @@ fn attach_short_luma_returns_err() {
     .unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::LumaBufferTooShort(BufferTooShort::new(16 * 8, 16 * 8 - 1))
+    MixedSinkerError::InsufficientLumaBuffer(InsufficientBuffer::new(16 * 8, 16 * 8 - 1))
   );
 }
 
@@ -175,7 +175,11 @@ fn attach_short_hsv_returns_err() {
     .unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::HsvPlaneTooShort(HsvPlaneTooShort::new(HsvPlane::V, 16 * 8, 16 * 8 - 1))
+    MixedSinkerError::InsufficientHsvPlane(InsufficientHsvPlane::new(
+      HsvPlane::V,
+      16 * 8,
+      16 * 8 - 1
+    ))
   );
 }
 
@@ -656,11 +660,11 @@ fn nv12_rgba_buffer_too_short_returns_err() {
   let mut rgba_short = std::vec![0u8; 16 * 8 * 4 - 1];
   let result = MixedSinker::<Nv12>::new(16, 8).with_rgba(&mut rgba_short);
   let Err(err) = result else {
-    panic!("expected RgbaBufferTooShort error");
+    panic!("expected InsufficientRgbaBuffer error");
   };
   assert_eq!(
     err,
-    MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(512, 511))
+    MixedSinkerError::InsufficientRgbaBuffer(InsufficientBuffer::new(512, 511))
   );
 }
 
@@ -813,6 +817,6 @@ fn nv12_luma_u16_buffer_too_short_returns_err() {
     .unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::LumaU16BufferTooShort(BufferTooShort::new(128, 127))
+    MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(128, 127))
   );
 }
