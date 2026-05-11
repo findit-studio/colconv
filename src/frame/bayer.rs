@@ -1,4 +1,4 @@
-use derive_more::IsVariant;
+use derive_more::{IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
 /// A validated Bayer-mosaic frame at 8 bits per sample.
@@ -320,9 +320,11 @@ pub type Bayer14Frame<'a> = BayerFrame16<'a, 14>;
 pub type Bayer16Frame<'a> = BayerFrame16<'a, 16>;
 
 /// Errors returned by [`BayerFrame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum BayerFrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -331,6 +333,8 @@ pub enum BayerFrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < width`.
   #[error("stride ({stride}) is smaller than width ({width})")]
   StrideTooSmall {
@@ -339,6 +343,8 @@ pub enum BayerFrameError {
     /// The supplied plane stride.
     stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Plane is shorter than `stride * height` bytes.
   #[error("Bayer plane has {actual} bytes but at least {expected} are required")]
   PlaneTooShort {
@@ -347,6 +353,8 @@ pub enum BayerFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (can only fire on
   /// 32‑bit targets — wasm32, i686 — with extreme dimensions).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
@@ -359,15 +367,19 @@ pub enum BayerFrameError {
 }
 
 /// Errors returned by [`BayerFrame16::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum BayerFrame16Error {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `BITS` const-generic parameter is not one of `{10, 12, 14, 16}`.
   #[error("BITS ({bits}) is not 10, 12, 14, or 16")]
   UnsupportedBits {
     /// The supplied `BITS` value.
     bits: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -376,6 +388,8 @@ pub enum BayerFrame16Error {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < width` (in `u16` samples).
   #[error("stride ({stride}) is smaller than width ({width})")]
   StrideTooSmall {
@@ -384,6 +398,8 @@ pub enum BayerFrame16Error {
     /// The supplied plane stride (samples).
     stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Plane is shorter than `stride * height` samples.
   #[error("Bayer plane has {actual} samples but at least {expected} are required")]
   PlaneTooShort {
@@ -392,6 +408,8 @@ pub enum BayerFrame16Error {
     /// Actual samples supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (32‑bit targets only).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -400,6 +418,8 @@ pub enum BayerFrame16Error {
     /// Row count that overflowed against the stride.
     rows: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// A sample's value exceeds `(1 << BITS) - 1` — the sample's
   /// high `16 - BITS` bits are non-zero, which is invalid under
   /// the low-packed Bayer16 convention. Returned by

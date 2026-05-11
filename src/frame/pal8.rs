@@ -3,13 +3,15 @@
 //! Each pixel is a `u8` index into a 256-entry BGRA palette carried
 //! alongside the pixel buffer. See [`Pal8Frame::try_new`] for layout details.
 
-use derive_more::IsVariant;
+use derive_more::{IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
 /// Error returned by [`Pal8Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Pal8FrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("zero width or height: {width}×{height}")]
   ZeroDimension {
@@ -18,6 +20,8 @@ pub enum Pal8FrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < width`.
   #[error("stride {stride} < width {width}")]
   StrideTooSmall {
@@ -26,6 +30,8 @@ pub enum Pal8FrameError {
     /// The supplied plane stride.
     stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize` (can only fire on 32-bit targets).
   #[error("geometry overflow: stride {stride} × rows {rows} exceeds usize")]
   GeometryOverflow {
@@ -34,6 +40,8 @@ pub enum Pal8FrameError {
     /// Row count that overflowed against the stride.
     rows: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Pixel data is shorter than `stride * height` bytes.
   #[error("pixel data too short: expected >= {expected} bytes, got {actual}")]
   PlaneTooShort {

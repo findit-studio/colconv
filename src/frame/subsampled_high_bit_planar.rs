@@ -1,4 +1,4 @@
-use derive_more::{Display, IsVariant};
+use derive_more::{Display, IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
 /// A validated YUV 4:2:0 planar frame at bit depths > 8 (10/12/14).
@@ -452,9 +452,11 @@ pub type Yuv420p16BeFrame<'a> = Yuv420pFrame16<'a, 16, true>;
 /// mirrors [`Yuv420pFrameError`], with `UnsupportedBits` added for
 /// the new `BITS` parameter and all sizes expressed in **samples**
 /// (`u16` elements) instead of bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Yuv420pFrame16Error {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `BITS` was not one of the supported depths (10, 12, 14, 16).
   /// 8‑bit frames should use [`Yuv420pFrame`]; 16‑bit is supported,
   /// but uses a different kernel family (see [`Yuv420pFrame16`] docs).
@@ -463,6 +465,8 @@ pub enum Yuv420pFrame16Error {
     /// The unsupported value of the `BITS` const parameter.
     bits: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -471,6 +475,8 @@ pub enum Yuv420pFrame16Error {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` was odd. Same 4:2:0 rationale as
   /// [`Yuv420pFrameError::OddWidth`].
   #[error("width ({width}) is odd; YUV420p / 4:2:0 requires even width")]
@@ -478,6 +484,8 @@ pub enum Yuv420pFrame16Error {
     /// The supplied width.
     width: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `y_stride < width` (in samples).
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -486,6 +494,8 @@ pub enum Yuv420pFrame16Error {
     /// The supplied Y‑plane stride (samples).
     y_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `u_stride < ceil(width / 2)` (in samples).
   #[error("u_stride ({u_stride}) is smaller than chroma width ({chroma_width})")]
   UStrideTooSmall {
@@ -494,6 +504,8 @@ pub enum Yuv420pFrame16Error {
     /// The supplied U‑plane stride (samples).
     u_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `v_stride < ceil(width / 2)` (in samples).
   #[error("v_stride ({v_stride}) is smaller than chroma width ({chroma_width})")]
   VStrideTooSmall {
@@ -502,6 +514,8 @@ pub enum Yuv420pFrame16Error {
     /// The supplied V‑plane stride (samples).
     v_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Y plane is shorter than `y_stride * height` samples.
   #[error("Y plane has {actual} samples but at least {expected} are required")]
   YPlaneTooShort {
@@ -510,6 +524,8 @@ pub enum Yuv420pFrame16Error {
     /// Actual samples supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// U plane is shorter than `u_stride * ceil(height / 2)` samples.
   #[error("U plane has {actual} samples but at least {expected} are required")]
   UPlaneTooShort {
@@ -518,6 +534,8 @@ pub enum Yuv420pFrame16Error {
     /// Actual samples supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// V plane is shorter than `v_stride * ceil(height / 2)` samples.
   #[error("V plane has {actual} samples but at least {expected} are required")]
   VPlaneTooShort {
@@ -526,6 +544,8 @@ pub enum Yuv420pFrame16Error {
     /// Actual samples supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * rows` overflows `usize` (32‑bit targets only).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -544,6 +564,8 @@ pub enum Yuv420pFrame16Error {
   #[error(
     "sample {value} on plane {plane} at element {index} exceeds {max_valid} ((1 << BITS) - 1)"
   )]
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   SampleOutOfRange {
     /// Which plane the offending sample lives on.
     plane: Yuv420pFrame16Plane,

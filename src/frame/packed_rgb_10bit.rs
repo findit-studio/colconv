@@ -14,14 +14,16 @@
 //! `stride` is in **bytes** (not `u32` words). Plane length must be at least
 //! `stride * height` bytes.
 
-use derive_more::IsVariant;
+use derive_more::{IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
 /// Errors returned by [`X2Rgb10Frame::try_new`]. Variant shape mirrors
 /// the [`RgbaFrameError`] family.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum X2Rgb10FrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -30,6 +32,8 @@ pub enum X2Rgb10FrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < 4 * width`.
   #[error("stride ({stride}) is smaller than 4 * width ({min_stride})")]
   StrideTooSmall {
@@ -38,6 +42,8 @@ pub enum X2Rgb10FrameError {
     /// The supplied stride.
     stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Plane is shorter than `stride * height` bytes.
   #[error("X2RGB10 plane has {actual} bytes but at least {expected} are required")]
   PlaneTooShort {
@@ -46,6 +52,8 @@ pub enum X2Rgb10FrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`.
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -54,6 +62,8 @@ pub enum X2Rgb10FrameError {
     /// Row count that overflowed against the stride.
     rows: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `4 * width` overflows `u32`.
   #[error("4 * width overflows u32 ({width} too large)")]
   WidthOverflow {
@@ -175,9 +185,11 @@ impl<'a, const BE: bool> X2Rgb10Frame<'a, BE> {
 }
 
 /// Errors returned by [`X2Bgr10Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum X2Bgr10FrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -186,6 +198,8 @@ pub enum X2Bgr10FrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < 4 * width`.
   #[error("stride ({stride}) is smaller than 4 * width ({min_stride})")]
   StrideTooSmall {
@@ -194,6 +208,8 @@ pub enum X2Bgr10FrameError {
     /// The supplied stride.
     stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Plane is shorter than `stride * height` bytes.
   #[error("X2BGR10 plane has {actual} bytes but at least {expected} are required")]
   PlaneTooShort {
@@ -202,6 +218,8 @@ pub enum X2Bgr10FrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`.
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -210,6 +228,8 @@ pub enum X2Bgr10FrameError {
     /// Row count that overflowed against the stride.
     rows: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `4 * width` overflows `u32`.
   #[error("4 * width overflows u32 ({width} too large)")]
   WidthOverflow {

@@ -9,7 +9,7 @@
 //!
 //! FFmpeg names: `AV_PIX_FMT_MONOBLACK`, `AV_PIX_FMT_MONOWHITE`.
 
-use derive_more::IsVariant;
+use derive_more::{IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
 /// A validated 1-bit-per-pixel monochrome frame.
@@ -135,9 +135,11 @@ pub type MonoblackFrame<'a> = MonoFrame<'a, false>;
 pub type MonowhiteFrame<'a> = MonoFrame<'a, true>;
 
 /// Errors returned by [`MonoFrame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum MonoFrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -146,6 +148,8 @@ pub enum MonoFrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < ceil(width / 8)`.
   #[error("stride ({stride}) is smaller than ceil(width / 8) = {min_stride}")]
   StrideTooSmall {
@@ -156,6 +160,8 @@ pub enum MonoFrameError {
     /// Minimum required stride.
     min_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Data plane is shorter than `stride * height` bytes.
   #[error("data plane has {actual} bytes but at least {expected} are required")]
   DataPlaneTooShort {
@@ -164,6 +170,8 @@ pub enum MonoFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (32-bit targets only).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {

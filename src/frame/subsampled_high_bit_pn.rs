@@ -1,4 +1,4 @@
-use derive_more::{Display, IsVariant};
+use derive_more::{Display, IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
 /// A validated P010 (semi‑planar 4:2:0, 10‑bit `u16`) frame.
@@ -914,9 +914,11 @@ pub type P010FramePlane = PnFramePlane;
 
 /// Errors returned by [`PnFrame::try_new`] and
 /// [`PnFrame::try_new_checked`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum PnFrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `BITS` was not one of the supported high‑bit‑packed depths
   /// (10, 12, 16). 14 exists in the planar `yuv420p14le` family but
   /// not as a Pn hardware output.
@@ -925,6 +927,8 @@ pub enum PnFrameError {
     /// The unsupported value of the `BITS` const parameter.
     bits: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -933,6 +937,8 @@ pub enum PnFrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` was odd. Returned by [`PnFrame::try_new`] (4:2:0) and
   /// [`PnFrame422::try_new`] (4:2:2) — both subsample chroma 2:1
   /// horizontally and pair `(U, V)` per chroma sample, so the frame
@@ -943,6 +949,8 @@ pub enum PnFrameError {
     /// The supplied width.
     width: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `y_stride < width` (in `u16` samples).
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -951,6 +959,8 @@ pub enum PnFrameError {
     /// The supplied Y‑plane stride (samples).
     y_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `uv_stride` is smaller than the interleaved UV row payload
   /// one chroma row must hold (in `u16` elements). The required
   /// payload depends on the format: `width` for 4:2:0 / 4:2:2
@@ -973,10 +983,14 @@ pub enum PnFrameError {
   #[error(
     "uv_stride ({uv_stride}) is odd; semi-planar interleaved UV requires an even u16-element stride"
   )]
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   UvStrideOdd {
     /// The supplied UV‑plane stride (samples).
     uv_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Y plane is shorter than `y_stride * height` samples.
   #[error("Y plane has {actual} samples but at least {expected} are required")]
   YPlaneTooShort {
@@ -985,6 +999,8 @@ pub enum PnFrameError {
     /// Actual samples supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// UV plane is shorter than `uv_stride * ceil(height / 2)` samples.
   #[error("UV plane has {actual} samples but at least {expected} are required")]
   UvPlaneTooShort {
@@ -993,6 +1009,8 @@ pub enum PnFrameError {
     /// Actual samples supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Size arithmetic overflowed. Fires for either
   /// `stride * rows` exceeding `usize::MAX` (the usual case, only
   /// reachable on 32‑bit targets like wasm32 / i686 with extreme
@@ -1021,6 +1039,8 @@ pub enum PnFrameError {
   #[error(
     "sample {value:#06x} on plane {plane} at element {index} has non-zero low {low_bits} bits (not a valid Pn sample at the declared BITS)"
   )]
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   SampleLowBitsSet {
     /// Which plane the offending sample lives on.
     plane: PnFramePlane,

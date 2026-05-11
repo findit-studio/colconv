@@ -166,7 +166,7 @@ alloc = ["libm"]
 std = ["thiserror/default"]
 
 [dependencies]
-derive_more = { version = "2", default-features = false, features = ["display", "is_variant"] }
+derive_more = { version = "2", default-features = false, features = ["display", "is_variant", "try_unwrap", "unwrap"] }
 half = { version = "2", default-features = false }
 thiserror = { version = "2", default-features = false }
 libm = { version = "0.2", optional = true }

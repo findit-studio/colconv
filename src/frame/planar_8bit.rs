@@ -1,4 +1,4 @@
-use derive_more::IsVariant;
+use derive_more::{IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
 /// A validated YUV 4:2:0 planar frame.
@@ -410,9 +410,11 @@ impl<'a> Yuv422pFrame<'a> {
 }
 
 /// Errors returned by [`Yuv422pFrame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Yuv422pFrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -421,12 +423,16 @@ pub enum Yuv422pFrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` was odd. 4:2:2 subsamples chroma 2:1 in width.
   #[error("width ({width}) is odd; 4:2:2 requires even width")]
   OddWidth {
     /// The supplied width.
     width: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `y_stride < width`.
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -435,6 +441,8 @@ pub enum Yuv422pFrameError {
     /// The supplied Y‑plane stride.
     y_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `u_stride` is smaller than the half-width chroma row.
   #[error("u_stride ({u_stride}) is smaller than chroma width ({chroma_width})")]
   UStrideTooSmall {
@@ -443,6 +451,8 @@ pub enum Yuv422pFrameError {
     /// The supplied U‑plane stride.
     u_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `v_stride` is smaller than the half-width chroma row.
   #[error("v_stride ({v_stride}) is smaller than chroma width ({chroma_width})")]
   VStrideTooSmall {
@@ -451,6 +461,8 @@ pub enum Yuv422pFrameError {
     /// The supplied V‑plane stride.
     v_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Y plane is shorter than `y_stride * height` bytes.
   #[error("Y plane has {actual} bytes but at least {expected} are required")]
   YPlaneTooShort {
@@ -459,6 +471,8 @@ pub enum Yuv422pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// U plane is shorter than `u_stride * height` bytes.
   #[error("U plane has {actual} bytes but at least {expected} are required")]
   UPlaneTooShort {
@@ -467,6 +481,8 @@ pub enum Yuv422pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// V plane is shorter than `v_stride * height` bytes.
   #[error("V plane has {actual} bytes but at least {expected} are required")]
   VPlaneTooShort {
@@ -475,6 +491,8 @@ pub enum Yuv422pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (32‑bit targets only).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -666,9 +684,11 @@ impl<'a> Yuv444pFrame<'a> {
 }
 
 /// Errors returned by [`Yuv444pFrame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Yuv444pFrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -677,6 +697,8 @@ pub enum Yuv444pFrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `y_stride < width`.
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -685,6 +707,8 @@ pub enum Yuv444pFrameError {
     /// The supplied Y‑plane stride.
     y_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `u_stride < width`.
   #[error("u_stride ({u_stride}) is smaller than width ({width})")]
   UStrideTooSmall {
@@ -693,6 +717,8 @@ pub enum Yuv444pFrameError {
     /// The supplied U‑plane stride.
     u_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `v_stride < width`.
   #[error("v_stride ({v_stride}) is smaller than width ({width})")]
   VStrideTooSmall {
@@ -701,6 +727,8 @@ pub enum Yuv444pFrameError {
     /// The supplied V‑plane stride.
     v_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Y plane is shorter than `y_stride * height` bytes.
   #[error("Y plane has {actual} bytes but at least {expected} are required")]
   YPlaneTooShort {
@@ -709,6 +737,8 @@ pub enum Yuv444pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// U plane is shorter than `u_stride * height` bytes.
   #[error("U plane has {actual} bytes but at least {expected} are required")]
   UPlaneTooShort {
@@ -717,6 +747,8 @@ pub enum Yuv444pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// V plane is shorter than `v_stride * height` bytes.
   #[error("V plane has {actual} bytes but at least {expected} are required")]
   VPlaneTooShort {
@@ -725,6 +757,8 @@ pub enum Yuv444pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (32‑bit targets only).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -933,9 +967,11 @@ impl<'a> Yuv440pFrame<'a> {
 pub type Yuv440pFrameError = Yuv444pFrameError;
 
 /// Errors returned by [`Yuv420pFrame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Yuv420pFrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -944,6 +980,8 @@ pub enum Yuv420pFrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` was odd. YUV420p / 4:2:0 subsamples chroma 2:1 in width,
   /// so each chroma column pairs two Y columns — odd widths leave the
   /// last Y column without a paired chroma sample, and the SIMD
@@ -954,6 +992,8 @@ pub enum Yuv420pFrameError {
     /// The supplied width.
     width: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `y_stride < width`.
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -962,6 +1002,8 @@ pub enum Yuv420pFrameError {
     /// The supplied Y-plane stride.
     y_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `u_stride < ceil(width / 2)`.
   #[error("u_stride ({u_stride}) is smaller than chroma width ({chroma_width})")]
   UStrideTooSmall {
@@ -970,6 +1012,8 @@ pub enum Yuv420pFrameError {
     /// The supplied U-plane stride.
     u_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `v_stride < ceil(width / 2)`.
   #[error("v_stride ({v_stride}) is smaller than chroma width ({chroma_width})")]
   VStrideTooSmall {
@@ -978,6 +1022,8 @@ pub enum Yuv420pFrameError {
     /// The supplied V-plane stride.
     v_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Y plane is shorter than `y_stride * height` bytes.
   #[error("Y plane has {actual} bytes but at least {expected} are required")]
   YPlaneTooShort {
@@ -986,6 +1032,8 @@ pub enum Yuv420pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// U plane is shorter than `u_stride * (height / 2)` bytes.
   #[error("U plane has {actual} bytes but at least {expected} are required")]
   UPlaneTooShort {
@@ -994,6 +1042,8 @@ pub enum Yuv420pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// V plane is shorter than `v_stride * (height / 2)` bytes.
   #[error("V plane has {actual} bytes but at least {expected} are required")]
   VPlaneTooShort {
@@ -1002,6 +1052,8 @@ pub enum Yuv420pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (can only fire on 32‑bit
   /// targets — wasm32, i686 — with extreme dimensions).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
@@ -1251,9 +1303,11 @@ impl<'a> Yuv410pFrame<'a> {
 }
 
 /// Errors returned by [`Yuv410pFrame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Yuv410pFrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -1262,6 +1316,8 @@ pub enum Yuv410pFrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` is not a multiple of 4. 4:1:0 subsamples chroma 4:1 in
   /// width — partial 4-column chroma blocks have no defined coverage.
   #[error("width ({width}) is not a multiple of 4; YUV410p / 4:1:0 requires width % 4 == 0")]
@@ -1269,6 +1325,8 @@ pub enum Yuv410pFrameError {
     /// The supplied width.
     width: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `y_stride < width`.
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -1277,6 +1335,8 @@ pub enum Yuv410pFrameError {
     /// The supplied Y-plane stride.
     y_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `u_stride < width / 4`.
   #[error("u_stride ({u_stride}) is smaller than chroma width ({chroma_width})")]
   UStrideTooSmall {
@@ -1285,6 +1345,8 @@ pub enum Yuv410pFrameError {
     /// The supplied U-plane stride.
     u_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `v_stride < width / 4`.
   #[error("v_stride ({v_stride}) is smaller than chroma width ({chroma_width})")]
   VStrideTooSmall {
@@ -1293,6 +1355,8 @@ pub enum Yuv410pFrameError {
     /// The supplied V-plane stride.
     v_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Y plane is shorter than `y_stride * height` bytes.
   #[error("Y plane has {actual} bytes but at least {expected} are required")]
   YPlaneTooShort {
@@ -1301,6 +1365,8 @@ pub enum Yuv410pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// U plane is shorter than `u_stride * height.div_ceil(4)` bytes.
   #[error("U plane has {actual} bytes but at least {expected} are required")]
   UPlaneTooShort {
@@ -1309,6 +1375,8 @@ pub enum Yuv410pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// V plane is shorter than `v_stride * height.div_ceil(4)` bytes.
   #[error("V plane has {actual} bytes but at least {expected} are required")]
   VPlaneTooShort {
@@ -1317,6 +1385,8 @@ pub enum Yuv410pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (32‑bit targets only,
   /// extreme dimensions).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
@@ -1550,9 +1620,11 @@ impl<'a> Yuv411pFrame<'a> {
 }
 
 /// Errors returned by [`Yuv411pFrame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Yuv411pFrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -1561,6 +1633,8 @@ pub enum Yuv411pFrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// **No longer produced.** Originally rejected `width % 4 != 0`,
   /// but [`Yuv411pFrame::try_new`] now accepts arbitrary widths via
   /// FFmpeg-compatible `chroma_width = width.div_ceil(4)`. The variant
@@ -1572,6 +1646,8 @@ pub enum Yuv411pFrameError {
     /// The supplied width.
     width: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `y_stride < width`.
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -1580,6 +1656,8 @@ pub enum Yuv411pFrameError {
     /// The supplied Y-plane stride.
     y_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `u_stride < width.div_ceil(4)`.
   #[error("u_stride ({u_stride}) is smaller than chroma width ({chroma_width})")]
   UStrideTooSmall {
@@ -1588,6 +1666,8 @@ pub enum Yuv411pFrameError {
     /// The supplied U-plane stride.
     u_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `v_stride < width.div_ceil(4)`.
   #[error("v_stride ({v_stride}) is smaller than chroma width ({chroma_width})")]
   VStrideTooSmall {
@@ -1596,6 +1676,8 @@ pub enum Yuv411pFrameError {
     /// The supplied V-plane stride.
     v_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Y plane is shorter than `y_stride * height` bytes.
   #[error("Y plane has {actual} bytes but at least {expected} are required")]
   YPlaneTooShort {
@@ -1604,6 +1686,8 @@ pub enum Yuv411pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// U plane is shorter than `u_stride * height` bytes.
   #[error("U plane has {actual} bytes but at least {expected} are required")]
   UPlaneTooShort {
@@ -1612,6 +1696,8 @@ pub enum Yuv411pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// V plane is shorter than `v_stride * height` bytes.
   #[error("V plane has {actual} bytes but at least {expected} are required")]
   VPlaneTooShort {
@@ -1620,6 +1706,8 @@ pub enum Yuv411pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (can only fire on 32-bit
   /// targets — wasm32, i686 — with extreme dimensions).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]

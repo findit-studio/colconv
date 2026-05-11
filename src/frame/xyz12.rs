@@ -36,16 +36,18 @@
 //! two FFmpeg variants. The byte-swap is a compile-time const branch in
 //! every row kernel; the `BE = false` path is a no-op.
 
-use derive_more::IsVariant;
+use derive_more::{IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
 /// Errors returned by [`Xyz12Frame::try_new`].
 ///
 /// Variant shape mirrors [`super::Rgbf32FrameError`] but with all sizes
 /// expressed in **samples** (`u16` elements) instead of bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Xyz12FrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -54,6 +56,8 @@ pub enum Xyz12FrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < 3 * width` (in u16 elements).
   #[error("stride ({stride}) is smaller than 3 * width ({min_stride}) u16 elements")]
   StrideTooSmall {
@@ -62,6 +66,8 @@ pub enum Xyz12FrameError {
     /// The supplied stride.
     stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Plane is shorter than `stride * height` u16 elements.
   #[error("XYZ12 plane has {actual} u16 elements but at least {expected} are required")]
   PlaneTooShort {
@@ -70,6 +76,8 @@ pub enum Xyz12FrameError {
     /// Actual u16 elements supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`.
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -78,6 +86,8 @@ pub enum Xyz12FrameError {
     /// Row count that overflowed against the stride.
     rows: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `3 * width` overflows `u32`.
   #[error("3 * width overflows u32 ({width} too large)")]
   WidthOverflow {

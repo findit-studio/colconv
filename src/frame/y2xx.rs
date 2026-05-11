@@ -43,7 +43,7 @@
 //! Used by Ship 11b (Y210), Ship 11c (Y212 — wiring-only), and
 //! Ship 11d (Y216 — separate kernel family with i64 chroma path).
 
-use derive_more::IsVariant;
+use derive_more::{IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
 /// Validated wrapper around a packed YUV 4:2:2 high-bit-depth plane
@@ -117,15 +117,19 @@ pub type Y216BeFrame<'a> = Y2xxFrame<'a, 16, true>;
 
 /// Errors returned by [`Y2xxFrame::try_new`] and
 /// [`Y2xxFrame::try_new_checked`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Y2xxFrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `BITS ∉ {10, 12, 16}`.
   #[error("Y2xxFrame: unsupported BITS {bits}; must be 10, 12, or 16")]
   UnsupportedBits {
     /// `BITS` const-generic value.
     bits: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width == 0` or `height == 0`.
   #[error("Y2xxFrame: zero dimension width={width} height={height}")]
   ZeroDimension {
@@ -134,12 +138,16 @@ pub enum Y2xxFrameError {
     /// Configured height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width % 2 != 0`. 4:2:2 subsampling requires even width.
   #[error("Y2xxFrame: width {width} is odd; 4:2:2 chroma subsampling requires even width")]
   OddWidth {
     /// Configured width.
     width: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < width * 2` (u16 elements). Each row needs at least
   /// `width × 2` u16 elements (= `width × 4` bytes) to hold all
   /// pixels.
@@ -150,6 +158,8 @@ pub enum Y2xxFrameError {
     /// Caller-supplied stride.
     stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `packed.len() < expected`. The packed plane is too short for
   /// the declared geometry (in u16 elements).
   #[error("Y2xxFrame: plane too short: expected >= {expected} u16 elements, got {actual}")]
@@ -159,6 +169,8 @@ pub enum Y2xxFrameError {
     /// Caller-supplied plane length in u16 elements.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * height` overflows `u32`. Only reachable on 32-bit
   /// targets with extreme dimensions.
   #[error("Y2xxFrame: stride × height overflows u32 (stride={stride}, rows={rows})")]
@@ -168,6 +180,8 @@ pub enum Y2xxFrameError {
     /// Configured height.
     rows: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width × 2` overflows `u32`. Only reachable on 32-bit targets
   /// with extreme widths.
   #[error("Y2xxFrame: width {width} × 2 overflows u32 (per-row u16 element count)")]

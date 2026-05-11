@@ -33,7 +33,7 @@
 //! 8-bit formats (`Gray8`, `Ya8`) are **not** const-generic on `BE` because
 //! single-byte values have no byte order to swap.
 
-use derive_more::IsVariant;
+use derive_more::{IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
 // ---- Gray8Frame -----------------------------------------------------------
@@ -131,9 +131,11 @@ impl<'a> Gray8Frame<'a> {
 }
 
 /// Errors returned by [`Gray8Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Gray8FrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -142,6 +144,8 @@ pub enum Gray8FrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `y_stride < width`.
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -150,6 +154,8 @@ pub enum Gray8FrameError {
     /// The supplied Y-plane stride.
     y_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Y plane is shorter than `y_stride * height` bytes.
   #[error("Y plane has {actual} bytes but at least {expected} are required")]
   YPlaneTooShort {
@@ -158,6 +164,8 @@ pub enum Gray8FrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (32-bit targets only).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -310,15 +318,19 @@ pub type Gray14LeFrame<'a> = GrayNFrame<'a, 14, false>;
 pub type Gray14BeFrame<'a> = GrayNFrame<'a, 14, true>;
 
 /// Errors returned by [`GrayNFrame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum GrayNFrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `BITS` must be 9, 10, 12, or 14.
   #[error("unsupported bit depth {bits}; GrayNFrame supports 9, 10, 12, or 14")]
   UnsupportedBits {
     /// The unsupported bit depth.
     bits: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -327,6 +339,8 @@ pub enum GrayNFrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `y_stride < width`.
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -335,6 +349,8 @@ pub enum GrayNFrameError {
     /// The supplied Y-plane stride (in u16 elements).
     y_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Y plane is shorter than `y_stride * height` samples.
   #[error("Y plane has {actual} elements but at least {expected} are required")]
   YPlaneTooShort {
@@ -343,6 +359,8 @@ pub enum GrayNFrameError {
     /// Actual samples supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (32-bit targets only).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -462,9 +480,11 @@ impl<'a, const BE: bool> Gray16Frame<'a, BE> {
 }
 
 /// Errors returned by [`Gray16Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Gray16FrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -473,6 +493,8 @@ pub enum Gray16FrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `y_stride < width`.
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -481,6 +503,8 @@ pub enum Gray16FrameError {
     /// The supplied Y-plane stride (in u16 elements).
     y_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Y plane is shorter than `y_stride * height` samples.
   #[error("Y plane has {actual} elements but at least {expected} are required")]
   YPlaneTooShort {
@@ -489,6 +513,8 @@ pub enum Gray16FrameError {
     /// Actual samples supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (32-bit targets only).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -623,9 +649,11 @@ impl<'a, const BE: bool> Grayf32Frame<'a, BE> {
 }
 
 /// Errors returned by [`Grayf32Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Grayf32FrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -634,6 +662,8 @@ pub enum Grayf32FrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `y_stride < width`.
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -642,6 +672,8 @@ pub enum Grayf32FrameError {
     /// The supplied Y-plane stride (in f32 elements).
     y_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Y plane is shorter than `y_stride * height` f32 elements.
   #[error("Y plane has {actual} elements but at least {expected} are required")]
   YPlaneTooShort {
@@ -650,6 +682,8 @@ pub enum Grayf32FrameError {
     /// Actual elements supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (32-bit targets only).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -768,9 +802,11 @@ impl<'a> Ya8Frame<'a> {
 }
 
 /// Errors returned by [`Ya8Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Ya8FrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -779,6 +815,8 @@ pub enum Ya8FrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < width * 2` (too narrow to fit 2 bytes per pixel).
   #[error("stride ({stride}) is smaller than width ({width}) × 2 = {min_stride}")]
   StrideTooSmall {
@@ -789,6 +827,8 @@ pub enum Ya8FrameError {
     /// Minimum required stride (`width * 2`).
     min_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Packed plane is shorter than `stride * height` bytes.
   #[error("packed plane has {actual} bytes but at least {expected} are required")]
   PlaneTooShort {
@@ -797,6 +837,8 @@ pub enum Ya8FrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (32-bit targets only).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -805,6 +847,8 @@ pub enum Ya8FrameError {
     /// Row count that overflowed against the stride.
     rows: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width * 2` overflows `u32` (only reachable when `width > 2^31`).
   #[error("width ({width}) × 2 overflows u32")]
   WidthOverflow {
@@ -944,9 +988,11 @@ impl<'a, const BE: bool> Ya16Frame<'a, BE> {
 }
 
 /// Errors returned by [`Ya16Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Ya16FrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -955,6 +1001,8 @@ pub enum Ya16FrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < width * 2` (too narrow to fit 2 u16 per pixel).
   #[error("stride ({stride}) is smaller than width ({width}) × 2 = {min_stride}")]
   StrideTooSmall {
@@ -965,6 +1013,8 @@ pub enum Ya16FrameError {
     /// Minimum required stride (`width * 2`).
     min_stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Packed plane is shorter than `stride * height` u16 elements.
   #[error("packed plane has {actual} elements but at least {expected} are required")]
   PlaneTooShort {
@@ -973,6 +1023,8 @@ pub enum Ya16FrameError {
     /// Actual elements supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (32-bit targets only).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -981,6 +1033,8 @@ pub enum Ya16FrameError {
     /// Row count that overflowed against the stride.
     rows: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width * 2` overflows `u32` (only reachable when `width > 2^31`).
   #[error("width ({width}) × 2 overflows u32")]
   WidthOverflow {

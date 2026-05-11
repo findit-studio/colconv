@@ -1,4 +1,4 @@
-use derive_more::IsVariant;
+use derive_more::{IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
 // ============================================================
@@ -11,9 +11,11 @@ use thiserror::Error;
 /// All six frame types (`Rgb565Frame`, `Bgr565Frame`, `Rgb555Frame`,
 /// `Bgr555Frame`, `Rgb444Frame`, `Bgr444Frame`) share this error enum and
 /// perform validation in the same order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum LegacyRgbFrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -22,6 +24,8 @@ pub enum LegacyRgbFrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < 2 * width`.
   #[error("stride ({stride}) is smaller than 2 * width ({min_stride})")]
   StrideTooSmall {
@@ -30,6 +34,8 @@ pub enum LegacyRgbFrameError {
     /// The supplied stride.
     stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Plane is shorter than `stride * height` bytes.
   #[error("plane has {actual} bytes but at least {expected} are required")]
   PlaneTooShort {
@@ -38,6 +44,8 @@ pub enum LegacyRgbFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`.
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -46,6 +54,8 @@ pub enum LegacyRgbFrameError {
     /// Row count that overflowed against the stride.
     rows: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `2 * width` overflows `u32`.
   #[error("2 * width overflows u32 ({width} too large)")]
   WidthOverflow {

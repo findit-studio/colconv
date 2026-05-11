@@ -1,4 +1,4 @@
-use derive_more::IsVariant;
+use derive_more::{IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
 // ============================================================
@@ -6,9 +6,11 @@ use thiserror::Error;
 // ============================================================
 
 /// Errors returned by [`Rgbf32Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Rgbf32FrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -17,6 +19,8 @@ pub enum Rgbf32FrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < 3 * width` `f32` elements. Each row needs `3 * width`
   /// `f32` samples for packed RGB float.
   #[error("stride ({stride}) is smaller than 3 * width ({min_stride}) f32 elements")]
@@ -26,6 +30,8 @@ pub enum Rgbf32FrameError {
     /// The supplied stride.
     stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Plane is shorter than `stride * height` `f32` elements.
   #[error("RGBF32 plane has {actual} f32 elements but at least {expected} are required")]
   PlaneTooShort {
@@ -34,6 +40,8 @@ pub enum Rgbf32FrameError {
     /// Actual `f32` elements supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`.
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -42,6 +50,8 @@ pub enum Rgbf32FrameError {
     /// Row count that overflowed against the stride.
     rows: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `3 * width` overflows `u32`.
   #[error("3 * width overflows u32 ({width} too large)")]
   WidthOverflow {

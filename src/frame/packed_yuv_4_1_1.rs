@@ -1,4 +1,4 @@
-use derive_more::IsVariant;
+use derive_more::{IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
 // ============================================================
@@ -28,9 +28,11 @@ use thiserror::Error;
 // [`super::packed_yuv_8bit`].
 
 /// Errors returned by [`Uyyvyy411Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Uyyvyy411FrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -39,6 +41,8 @@ pub enum Uyyvyy411FrameError {
     /// The supplied height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width` was not a multiple of 4. Packed YUV 4:1:1 shares one
   /// chroma pair across 4 luma samples, so each 6-byte block covers
   /// exactly 4 pixels — widths not divisible by 4 can't form a
@@ -48,6 +52,8 @@ pub enum Uyyvyy411FrameError {
     /// The supplied width.
     width: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < width * 3 / 2`. Each row needs `width * 3 / 2` bytes
   /// (6 bytes per 4-pixel block, 12 bpp).
   #[error("stride ({stride}) is smaller than width * 3 / 2 ({min_stride})")]
@@ -57,6 +63,8 @@ pub enum Uyyvyy411FrameError {
     /// The supplied stride.
     stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// Plane is shorter than `stride * height` bytes.
   #[error("UYYVYY411 plane has {actual} bytes but at least {expected} are required")]
   PlaneTooShort {
@@ -65,6 +73,8 @@ pub enum Uyyvyy411FrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`.
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -73,6 +83,8 @@ pub enum Uyyvyy411FrameError {
     /// Row count that overflowed against the stride.
     rows: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width * 3` overflows `u32` (the checked op prior to the exact
   /// `/ 2` that yields the row stride). Reachable only at extreme
   /// widths — well beyond practical raster sizes.

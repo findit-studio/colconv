@@ -42,7 +42,7 @@
 //! packed buffer and then byte-compares against an FFmpeg-produced
 //! reference at the canonical stride.
 
-use derive_more::IsVariant;
+use derive_more::{IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
 /// Validated wrapper around a packed `v210` plane.
@@ -81,9 +81,11 @@ pub type V210LeFrame<'a> = V210Frame<'a, false>;
 pub type V210BeFrame<'a> = V210Frame<'a, true>;
 
 /// Errors returned by [`V210Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum V210FrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width == 0` or `height == 0`.
   #[error("V210Frame: zero dimension width={width} height={height}")]
   ZeroDimension {
@@ -92,6 +94,8 @@ pub enum V210FrameError {
     /// Configured height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width % 2 != 0`. v210 is 4:2:2 (chroma pair), so width must be
   /// even. Partial last words (widths not divisible by 6) are supported
   /// — the last word emits 2 or 4 valid pixels — so only the chroma-pair
@@ -101,6 +105,8 @@ pub enum V210FrameError {
     /// Configured width.
     width: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < width.div_ceil(6) * 16`. Each row needs at least
   /// `ceil(width / 6) * 16` bytes to hold all pixels (the final partial
   /// word still occupies 16 bytes even if only 2 or 4 samples are
@@ -112,6 +118,8 @@ pub enum V210FrameError {
     /// Caller-supplied stride.
     stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `v210.len() < expected`. The packed plane is too short for the
   /// declared geometry.
   #[error("V210Frame: plane too short: expected >= {expected} bytes, got {actual}")]
@@ -121,6 +129,8 @@ pub enum V210FrameError {
     /// Caller-supplied plane length.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * height` overflows `u32`. Only reachable on 32-bit
   /// targets with extreme dimensions.
   #[error("V210Frame: stride×height overflows u32 (stride={stride}, rows={rows})")]
@@ -130,6 +140,8 @@ pub enum V210FrameError {
     /// Configured height.
     rows: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `ceil(width / 6) * 16` overflows `u32`. Only reachable on 32-bit
   /// targets with extreme widths.
   #[error("V210Frame: row size in bytes (ceil(width / 6) × 16) overflows u32")]

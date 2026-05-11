@@ -9,7 +9,7 @@
 //! source α / α-as-padding semantics); Ship 12d adds [`Ayuv64Frame`]
 //! (16-bit native, source α).
 
-use derive_more::IsVariant;
+use derive_more::{IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
 /// Validated wrapper around a packed YUV 4:4:4 10-bit `V410` plane.
@@ -77,9 +77,11 @@ pub type V410LeFrame<'a> = V410Frame<'a, false>;
 pub type V410BeFrame<'a> = V410Frame<'a, true>;
 
 /// Errors returned by [`V410Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum V410FrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width == 0` or `height == 0`.
   #[error("V410Frame: zero dimension width={width} height={height}")]
   ZeroDimension {
@@ -88,6 +90,8 @@ pub enum V410FrameError {
     /// Configured height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < width`. Each row needs at least `width` u32 words.
   #[error("V410Frame: stride {stride} u32 elements is below the minimum {min_stride}")]
   StrideTooSmall {
@@ -96,6 +100,8 @@ pub enum V410FrameError {
     /// Caller-supplied stride.
     stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `packed.len() < expected`. The packed plane is too short for
   /// the declared geometry.
   #[error("V410Frame: plane too short: expected >= {expected} u32 elements, got {actual}")]
@@ -105,6 +111,8 @@ pub enum V410FrameError {
     /// Caller-supplied plane length in u32 elements.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`. Only reachable on 32-bit
   /// targets with extreme dimensions.
   #[error("V410Frame: stride × height overflows usize (stride={stride}, rows={rows})")]
@@ -239,9 +247,11 @@ pub struct V30XFrame<'a> {
 }
 
 /// Errors returned by [`V30XFrame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum V30XFrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width == 0` or `height == 0`.
   #[error("V30XFrame: zero dimension width={width} height={height}")]
   ZeroDimension {
@@ -250,6 +260,8 @@ pub enum V30XFrameError {
     /// Configured height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < width`. Each row needs at least `width` u32 words.
   #[error("V30XFrame: stride {stride} u32 elements is below the minimum {min_stride}")]
   StrideTooSmall {
@@ -258,6 +270,8 @@ pub enum V30XFrameError {
     /// Caller-supplied stride.
     stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `packed.len() < expected`. The packed plane is too short for
   /// the declared geometry.
   #[error("V30XFrame: plane too short: expected >= {expected} u32 elements, got {actual}")]
@@ -267,6 +281,8 @@ pub enum V30XFrameError {
     /// Caller-supplied plane length in u32 elements.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`. Only reachable on 32-bit
   /// targets with extreme dimensions.
   #[error("V30XFrame: stride × height overflows usize (stride={stride}, rows={rows})")]
@@ -411,9 +427,11 @@ pub type Xv36BeFrame<'a> = Xv36Frame<'a, true>;
 
 /// Errors returned by [`Xv36Frame::try_new`] and
 /// [`Xv36Frame::try_new_checked`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Xv36FrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width == 0` or `height == 0`.
   #[error("Xv36Frame: zero dimension width={width} height={height}")]
   ZeroDimension {
@@ -422,6 +440,8 @@ pub enum Xv36FrameError {
     /// Configured height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width × 4` overflows `u32`. Only reachable on 32-bit targets
   /// with extreme widths.
   #[error("Xv36Frame: width {width} × 4 overflows u32 (per-row u16 element count)")]
@@ -429,6 +449,8 @@ pub enum Xv36FrameError {
     /// Configured width.
     width: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < width × 4` (u16 elements). Each row needs at least
   /// `width × 4` u16 elements (= `width × 8` bytes) to hold all
   /// pixels.
@@ -439,6 +461,8 @@ pub enum Xv36FrameError {
     /// Caller-supplied stride.
     stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `packed.len() < expected`. The packed plane is too short.
   #[error("Xv36Frame: plane too short: expected >= {expected} u16 elements, got {actual}")]
   PlaneTooShort {
@@ -447,6 +471,8 @@ pub enum Xv36FrameError {
     /// Caller-supplied plane length in u16 elements.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`. Only reachable on 32-bit
   /// targets with extreme dimensions.
   #[error("Xv36Frame: stride × height overflows usize (stride={stride}, rows={rows})")]
@@ -480,6 +506,8 @@ pub enum Xv36FrameError {
   #[error(
     "Xv36Frame: sample {value:#06x} at element {index} has non-zero low 4 bits (expected MSB-aligned XV36 data)"
   )]
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   SampleLowBitsSetAt {
     /// Element index (in `u16` slots) within the packed plane.
     index: usize,
@@ -666,9 +694,11 @@ pub struct VuyaFrame<'a> {
 }
 
 /// Errors returned by [`VuyaFrame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum VuyaFrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width == 0` or `height == 0`.
   #[error("VuyaFrame: zero dimension width={width} height={height}")]
   ZeroDimension {
@@ -677,6 +707,8 @@ pub enum VuyaFrameError {
     /// Configured height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width × 4` overflows `u32`. Only reachable on 32-bit targets
   /// with extreme widths.
   #[error("VuyaFrame: width {width} × 4 overflows u32 (per-row byte count)")]
@@ -684,6 +716,8 @@ pub enum VuyaFrameError {
     /// Configured width.
     width: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < width × 4` (bytes). Each row needs at least
   /// `width × 4` bytes to hold all pixels.
   #[error("VuyaFrame: stride {stride} bytes is below the minimum {min_stride}")]
@@ -693,6 +727,8 @@ pub enum VuyaFrameError {
     /// Caller-supplied stride.
     stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `packed.len() < expected`. The packed plane is too short.
   #[error("VuyaFrame: plane too short: expected >= {expected} bytes, got {actual}")]
   PlaneTooShort {
@@ -701,6 +737,8 @@ pub enum VuyaFrameError {
     /// Caller-supplied plane length in bytes.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`. Only reachable on 32-bit
   /// targets with extreme dimensions.
   #[error("VuyaFrame: stride × height overflows usize (stride={stride}, rows={rows})")]
@@ -824,9 +862,11 @@ pub struct VuyxFrame<'a> {
 }
 
 /// Errors returned by [`VuyxFrame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum VuyxFrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width == 0` or `height == 0`.
   #[error("VuyxFrame: zero dimension width={width} height={height}")]
   ZeroDimension {
@@ -835,6 +875,8 @@ pub enum VuyxFrameError {
     /// Configured height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width × 4` overflows `u32`. Only reachable on 32-bit targets
   /// with extreme widths.
   #[error("VuyxFrame: width {width} × 4 overflows u32 (per-row byte count)")]
@@ -842,6 +884,8 @@ pub enum VuyxFrameError {
     /// Configured width.
     width: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < width × 4` (bytes). Each row needs at least
   /// `width × 4` bytes to hold all pixels.
   #[error("VuyxFrame: stride {stride} bytes is below the minimum {min_stride}")]
@@ -851,6 +895,8 @@ pub enum VuyxFrameError {
     /// Caller-supplied stride.
     stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `packed.len() < expected`. The packed plane is too short.
   #[error("VuyxFrame: plane too short: expected >= {expected} bytes, got {actual}")]
   PlaneTooShort {
@@ -859,6 +905,8 @@ pub enum VuyxFrameError {
     /// Caller-supplied plane length in bytes.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`. Only reachable on 32-bit
   /// targets with extreme dimensions.
   #[error("VuyxFrame: stride × height overflows usize (stride={stride}, rows={rows})")]
@@ -1003,9 +1051,11 @@ pub type Ayuv64LeFrame<'a> = Ayuv64Frame<'a, false>;
 pub type Ayuv64BeFrame<'a> = Ayuv64Frame<'a, true>;
 
 /// Errors returned by [`Ayuv64Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum Ayuv64FrameError {
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width == 0` or `height == 0`.
   #[error("Ayuv64Frame: zero dimension width={width} height={height}")]
   ZeroDimension {
@@ -1014,6 +1064,8 @@ pub enum Ayuv64FrameError {
     /// Configured height.
     height: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `width × 4` overflows `u32`. Only reachable on 32-bit targets
   /// with extreme widths.
   #[error("Ayuv64Frame: width {width} × 4 overflows u32 (per-row u16 element count)")]
@@ -1021,6 +1073,8 @@ pub enum Ayuv64FrameError {
     /// Configured width.
     width: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride < width × 4` (u16 elements). Each row needs at least
   /// `width × 4` u16 elements (= `width × 8` bytes) to hold all
   /// pixels.
@@ -1031,6 +1085,8 @@ pub enum Ayuv64FrameError {
     /// Caller-supplied stride.
     stride: u32,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `packed.len() < expected`. The packed plane is too short.
   #[error("Ayuv64Frame: plane too short: expected >= {expected} u16 elements, got {actual}")]
   PlaneTooShort {
@@ -1039,6 +1095,8 @@ pub enum Ayuv64FrameError {
     /// Caller-supplied plane length in u16 elements.
     actual: usize,
   },
+  #[unwrap(ignore)]
+  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`. Only reachable on 32-bit
   /// targets with extreme dimensions.
   #[error("Ayuv64Frame: stride × height overflows usize (stride={stride}, rows={rows})")]
