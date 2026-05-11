@@ -983,8 +983,8 @@ fn rgb565_rgba_buffer_too_short_returns_error() {
   let mut too_short = std::vec![0u8; 3]; // needs width*height*4
   let result = MixedSinker::<Rgb565>::new(4, 1).with_rgba(&mut too_short);
   assert!(
-    matches!(result, Err(MixedSinkerError::RgbaBufferTooShort { .. })),
-    "Expected RgbaBufferTooShort"
+    matches!(result, Err(MixedSinkerError::InsufficientRgbaBuffer(_))),
+    "Expected InsufficientRgbaBuffer"
   );
 }
 
@@ -993,8 +993,8 @@ fn rgb565_rgb_u16_buffer_too_short_returns_error() {
   let mut too_short = std::vec![0u16; 1]; // needs width*height*3
   let result = MixedSinker::<Rgb565>::new(4, 1).with_rgb_u16(&mut too_short);
   assert!(
-    matches!(result, Err(MixedSinkerError::RgbU16BufferTooShort { .. })),
-    "Expected RgbU16BufferTooShort"
+    matches!(result, Err(MixedSinkerError::InsufficientRgbU16Buffer(_))),
+    "Expected InsufficientRgbU16Buffer"
   );
 }
 
@@ -1003,8 +1003,8 @@ fn rgb565_rgba_u16_buffer_too_short_returns_error() {
   let mut too_short = std::vec![0u16; 1]; // needs width*height*4
   let result = MixedSinker::<Rgb565>::new(4, 1).with_rgba_u16(&mut too_short);
   assert!(
-    matches!(result, Err(MixedSinkerError::RgbaU16BufferTooShort { .. })),
-    "Expected RgbaU16BufferTooShort"
+    matches!(result, Err(MixedSinkerError::InsufficientRgbaU16Buffer(_))),
+    "Expected InsufficientRgbaU16Buffer"
   );
 }
 
@@ -1013,8 +1013,8 @@ fn rgb565_luma_u16_buffer_too_short_returns_error() {
   let mut too_short = std::vec![0u16; 0]; // needs width*height
   let result = MixedSinker::<Rgb565>::new(4, 1).with_luma_u16(&mut too_short);
   assert!(
-    matches!(result, Err(MixedSinkerError::LumaU16BufferTooShort { .. })),
-    "Expected LumaU16BufferTooShort"
+    matches!(result, Err(MixedSinkerError::InsufficientLumaU16Buffer(_))),
+    "Expected InsufficientLumaU16Buffer"
   );
 }
 
@@ -1023,8 +1023,8 @@ fn bgr565_rgba_buffer_too_short_returns_error() {
   let mut too_short = std::vec![0u8; 3];
   let result = MixedSinker::<Bgr565>::new(4, 1).with_rgba(&mut too_short);
   assert!(
-    matches!(result, Err(MixedSinkerError::RgbaBufferTooShort { .. })),
-    "Expected RgbaBufferTooShort"
+    matches!(result, Err(MixedSinkerError::InsufficientRgbaBuffer(_))),
+    "Expected InsufficientRgbaBuffer"
   );
 }
 
@@ -1033,8 +1033,8 @@ fn rgb555_rgba_buffer_too_short_returns_error() {
   let mut too_short = std::vec![0u8; 3];
   let result = MixedSinker::<Rgb555>::new(4, 1).with_rgba(&mut too_short);
   assert!(
-    matches!(result, Err(MixedSinkerError::RgbaBufferTooShort { .. })),
-    "Expected RgbaBufferTooShort"
+    matches!(result, Err(MixedSinkerError::InsufficientRgbaBuffer(_))),
+    "Expected InsufficientRgbaBuffer"
   );
 }
 
@@ -1043,7 +1043,7 @@ fn bgr444_rgba_buffer_too_short_returns_error() {
   let mut too_short = std::vec![0u8; 3];
   let result = MixedSinker::<Bgr444>::new(4, 1).with_rgba(&mut too_short);
   assert!(
-    matches!(result, Err(MixedSinkerError::RgbaBufferTooShort { .. })),
-    "Expected RgbaBufferTooShort"
+    matches!(result, Err(MixedSinkerError::InsufficientRgbaBuffer(_))),
+    "Expected InsufficientRgbaBuffer"
   );
 }

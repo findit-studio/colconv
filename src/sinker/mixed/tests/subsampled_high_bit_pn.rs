@@ -664,8 +664,8 @@ fn yuv422p10_rgba_too_short_returns_err() {
   let err = MixedSinker::<Yuv422p10>::new(16, 8)
     .with_rgba(&mut rgba)
     .err()
-    .expect("expected RgbaBufferTooShort");
-  assert!(matches!(err, MixedSinkerError::RgbaBufferTooShort { .. }));
+    .expect("expected InsufficientRgbaBuffer");
+  assert!(matches!(err, MixedSinkerError::InsufficientRgbaBuffer(_)));
 }
 
 #[test]
@@ -674,10 +674,10 @@ fn yuv422p10_rgba_u16_too_short_returns_err() {
   let err = MixedSinker::<Yuv422p10>::new(16, 8)
     .with_rgba_u16(&mut rgba)
     .err()
-    .expect("expected RgbaU16BufferTooShort");
+    .expect("expected InsufficientRgbaU16Buffer");
   assert!(matches!(
     err,
-    MixedSinkerError::RgbaU16BufferTooShort { .. }
+    MixedSinkerError::InsufficientRgbaU16Buffer(_)
   ));
 }
 
@@ -870,8 +870,8 @@ fn yuv444p10_rgba_too_short_returns_err() {
   let err = MixedSinker::<Yuv444p10>::new(16, 8)
     .with_rgba(&mut rgba)
     .err()
-    .expect("expected RgbaBufferTooShort");
-  assert!(matches!(err, MixedSinkerError::RgbaBufferTooShort { .. }));
+    .expect("expected InsufficientRgbaBuffer");
+  assert!(matches!(err, MixedSinkerError::InsufficientRgbaBuffer(_)));
 }
 
 #[test]
@@ -880,10 +880,10 @@ fn yuv444p10_rgba_u16_too_short_returns_err() {
   let err = MixedSinker::<Yuv444p10>::new(16, 8)
     .with_rgba_u16(&mut rgba)
     .err()
-    .expect("expected RgbaU16BufferTooShort");
+    .expect("expected InsufficientRgbaU16Buffer");
   assert!(matches!(
     err,
-    MixedSinkerError::RgbaU16BufferTooShort { .. }
+    MixedSinkerError::InsufficientRgbaU16Buffer(_)
   ));
 }
 

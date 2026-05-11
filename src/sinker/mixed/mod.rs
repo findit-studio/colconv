@@ -101,7 +101,7 @@ use core::marker::PhantomData;
 
 use std::vec::Vec;
 
-use derive_more::{Display, IsVariant};
+use derive_more::{Display, IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
 // Per-format imports moved to the child modules (`planar_8bit`,
@@ -114,78 +114,364 @@ use crate::{HsvBuffers, SourceFormat};
 #[allow(unused_imports)]
 use crate::PixelSink;
 
+/// Frame dimensions handed to `begin_frame` don't match the sinker's
+/// configured size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DimensionMismatch {
+  /// Width declared at sinker construction.
+  configured_w: usize,
+  /// Height declared at sinker construction.
+  configured_h: usize,
+  /// Width of the frame handed to the walker.
+  frame_w: u32,
+  /// Height of the frame handed to the walker.
+  frame_h: u32,
+}
+
+impl DimensionMismatch {
+  /// Constructs a new `DimensionMismatch` payload.
+  #[inline]
+  pub const fn new(configured_w: usize, configured_h: usize, frame_w: u32, frame_h: u32) -> Self {
+    Self {
+      configured_w,
+      configured_h,
+      frame_w,
+      frame_h,
+    }
+  }
+
+  /// Width declared at sinker construction.
+  #[inline]
+  pub const fn configured_w(&self) -> usize {
+    self.configured_w
+  }
+
+  /// Height declared at sinker construction.
+  #[inline]
+  pub const fn configured_h(&self) -> usize {
+    self.configured_h
+  }
+
+  /// Width of the frame handed to the walker.
+  #[inline]
+  pub const fn frame_w(&self) -> u32 {
+    self.frame_w
+  }
+
+  /// Height of the frame handed to the walker.
+  #[inline]
+  pub const fn frame_h(&self) -> u32 {
+    self.frame_h
+  }
+}
+
+/// Generic "insufficient buffer" payload, shared across every
+/// `MixedSinkerError::Insufficient*Buffer` variant. `expected` / `actual`
+/// are expressed in the unit reported by each variant's Display
+/// impl (`bytes` for the byte buffers, `elements` for the typed
+/// `u16` / `f32` / `f16` buffers).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InsufficientBuffer {
+  /// Minimum elements (bytes or typed elements) required.
+  expected: usize,
+  /// Elements supplied.
+  actual: usize,
+}
+
+impl InsufficientBuffer {
+  /// Constructs a new `InsufficientBuffer` payload.
+  #[inline]
+  pub const fn new(expected: usize, actual: usize) -> Self {
+    Self { expected, actual }
+  }
+
+  /// Minimum elements (bytes or typed elements) required.
+  #[inline]
+  pub const fn expected(&self) -> usize {
+    self.expected
+  }
+
+  /// Elements supplied.
+  #[inline]
+  pub const fn actual(&self) -> usize {
+    self.actual
+  }
+}
+
+/// HSV plane identification and size mismatch payload for
+/// [`MixedSinkerError::InsufficientHsvPlane`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InsufficientHsvPlane {
+  /// Which HSV plane was short (H, S, or V).
+  which: HsvPlane,
+  /// Minimum bytes required (`width × height`).
+  expected: usize,
+  /// Bytes supplied.
+  actual: usize,
+}
+
+impl InsufficientHsvPlane {
+  /// Constructs a new `InsufficientHsvPlane` payload.
+  #[inline]
+  pub const fn new(which: HsvPlane, expected: usize, actual: usize) -> Self {
+    Self {
+      which,
+      expected,
+      actual,
+    }
+  }
+
+  /// Which HSV plane was short (H, S, or V).
+  #[inline]
+  pub const fn which(&self) -> HsvPlane {
+    self.which
+  }
+
+  /// Minimum bytes required (`width × height`).
+  #[inline]
+  pub const fn expected(&self) -> usize {
+    self.expected
+  }
+
+  /// Bytes supplied.
+  #[inline]
+  pub const fn actual(&self) -> usize {
+    self.actual
+  }
+}
+
+/// Frame-size overflow payload for [`MixedSinkerError::GeometryOverflow`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeometryOverflow {
+  /// Configured width.
+  width: usize,
+  /// Configured height.
+  height: usize,
+  /// Channel count the overflowing product was computed with.
+  channels: usize,
+}
+
+impl GeometryOverflow {
+  /// Constructs a new `GeometryOverflow` payload.
+  #[inline]
+  pub const fn new(width: usize, height: usize, channels: usize) -> Self {
+    Self {
+      width,
+      height,
+      channels,
+    }
+  }
+
+  /// Configured width.
+  #[inline]
+  pub const fn width(&self) -> usize {
+    self.width
+  }
+
+  /// Configured height.
+  #[inline]
+  pub const fn height(&self) -> usize {
+    self.height
+  }
+
+  /// Channel count the overflowing product was computed with.
+  #[inline]
+  pub const fn channels(&self) -> usize {
+    self.channels
+  }
+}
+
+/// Row shape mismatch payload for [`MixedSinkerError::RowShapeMismatch`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RowShapeMismatch {
+  /// Which slice mismatched. See [`RowSlice`] for variants.
+  which: RowSlice,
+  /// Row index reported by the offending row.
+  row: usize,
+  /// Expected slice length in elements of the slice's element type.
+  expected: usize,
+  /// Actual slice length in the same unit as `expected`.
+  actual: usize,
+}
+
+impl RowShapeMismatch {
+  /// Constructs a new `RowShapeMismatch` payload.
+  #[inline]
+  pub const fn new(which: RowSlice, row: usize, expected: usize, actual: usize) -> Self {
+    Self {
+      which,
+      row,
+      expected,
+      actual,
+    }
+  }
+
+  /// Which slice mismatched. See [`RowSlice`] for variants.
+  #[inline]
+  pub const fn which(&self) -> RowSlice {
+    self.which
+  }
+
+  /// Row index reported by the offending row.
+  #[inline]
+  pub const fn row(&self) -> usize {
+    self.row
+  }
+
+  /// Expected slice length in elements of the slice's element type.
+  #[inline]
+  pub const fn expected(&self) -> usize {
+    self.expected
+  }
+
+  /// Actual slice length in the same unit as `expected`.
+  #[inline]
+  pub const fn actual(&self) -> usize {
+    self.actual
+  }
+}
+
+/// Row-index-out-of-range payload for [`MixedSinkerError::RowIndexOutOfRange`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RowIndexOutOfRange {
+  /// Row index reported by the offending row.
+  row: usize,
+  /// Sink's configured height.
+  configured_height: usize,
+}
+
+impl RowIndexOutOfRange {
+  /// Constructs a new `RowIndexOutOfRange` payload.
+  #[inline]
+  pub const fn new(row: usize, configured_height: usize) -> Self {
+    Self {
+      row,
+      configured_height,
+    }
+  }
+
+  /// Row index reported by the offending row.
+  #[inline]
+  pub const fn row(&self) -> usize {
+    self.row
+  }
+
+  /// Sink's configured height.
+  #[inline]
+  pub const fn configured_height(&self) -> usize {
+    self.configured_height
+  }
+}
+
+/// Width-alignment violation. Replaces the prior `OddWidth` and
+/// `WidthNotMultipleOf4` variants — both expressed the same
+/// "configured width doesn't satisfy the format's chroma-group
+/// stride" failure, just at different granularities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WidthAlignment {
+  /// Sink's configured width.
+  width: usize,
+  /// The alignment requirement that was violated.
+  required: WidthAlignmentRequirement,
+}
+
+impl WidthAlignment {
+  /// Constructs a new `WidthAlignment` payload.
+  #[inline]
+  pub const fn new(width: usize, required: WidthAlignmentRequirement) -> Self {
+    Self { width, required }
+  }
+
+  /// Sink's configured width.
+  #[inline]
+  pub const fn width(&self) -> usize {
+    self.width
+  }
+
+  /// The alignment requirement that was violated.
+  #[inline]
+  pub const fn required(&self) -> WidthAlignmentRequirement {
+    self.required
+  }
+}
+
+/// Discriminates which width-alignment rule was violated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum WidthAlignmentRequirement {
+  /// Width must be even — 4:2:0 / 4:2:2 chroma-pair stride.
+  Even,
+  /// Width must be a multiple of 4. Fired by planar 4:1:0
+  /// ([`Yuv410p`](crate::source::Yuv410p)) and packed 4:1:1
+  /// ([`Uyyvyy411`](crate::source::Uyyvyy411)). Note: planar 4:1:1
+  /// ([`Yuv411p`](crate::source::Yuv411p)) accepts non-4-aligned
+  /// widths via `width.div_ceil(4)` for the chroma row and is NOT
+  /// covered by this discriminant.
+  MultipleOfFour,
+}
+
+impl core::fmt::Display for WidthAlignmentRequirement {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    match self {
+      Self::Even => f.write_str("is odd; 4:2:0 / 4:2:2 require even width"),
+      Self::MultipleOfFour => f.write_str(
+        "is not a multiple of 4; planar 4:1:0 (Yuv410p) and packed 4:1:1 \
+         (Uyyvyy411) require width divisible by 4 — planar 4:1:1 (Yuv411p) \
+         accepts non-4-aligned widths and does not produce this error",
+      ),
+    }
+  }
+}
+
 /// Errors returned by [`MixedSinker`] configuration and per-frame
 /// preflight.
 ///
 /// All variants are recoverable: the sinker never mutates caller
 /// buffers on an error return, so the caller can inspect the variant,
 /// rebuild or resize buffers, and retry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+///
+/// **Note (API change):** the former `*BufferTooShort` / `HsvPlaneTooShort`
+/// variants were renamed to `Insufficient*Buffer` / `InsufficientHsvPlane`
+/// and their payload structs renamed from `BufferTooShort` /
+/// `HsvPlaneTooShort` to `InsufficientBuffer` / `InsufficientHsvPlane`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum MixedSinkerError {
   /// The frame handed to the walker does not match the dimensions
   /// declared at [`MixedSinker::new`]. Returned from
   /// [`PixelSink::begin_frame`] before any row is processed.
   #[error(
-    "MixedSinker frame dimensions mismatch: configured {configured_w}×{configured_h} but got {frame_w}×{frame_h}"
+    "MixedSinker frame dimensions mismatch: configured {}×{} but got {}×{}",
+    .0.configured_w(), .0.configured_h(), .0.frame_w(), .0.frame_h()
   )]
-  DimensionMismatch {
-    /// Width declared at sinker construction.
-    configured_w: usize,
-    /// Height declared at sinker construction.
-    configured_h: usize,
-    /// Width of the frame handed to the walker.
-    frame_w: u32,
-    /// Height of the frame handed to the walker.
-    frame_h: u32,
-  },
+  DimensionMismatch(DimensionMismatch),
 
   /// RGB buffer attached via [`MixedSinker::with_rgb`] /
   /// [`MixedSinker::set_rgb`] is shorter than `width × height × 3`.
-  #[error("MixedSinker rgb buffer too short: expected >= {expected} bytes, got {actual}")]
-  RgbBufferTooShort {
-    /// Minimum bytes required (`width × height × 3`).
-    expected: usize,
-    /// Bytes supplied.
-    actual: usize,
-  },
+  #[error("MixedSinker insufficient rgb buffer: expected >= {} bytes, got {}", .0.expected(), .0.actual())]
+  InsufficientRgbBuffer(InsufficientBuffer),
 
   /// `u16` RGB buffer attached via [`MixedSinker::with_rgb_u16`] /
   /// [`MixedSinker::set_rgb_u16`] is shorter than `width × height × 3`
   /// `u16` elements. Only the high‑bit‑depth source impls
   /// (currently [`Yuv420p10`](crate::source::Yuv420p10)) write into this
   /// buffer.
-  #[error("MixedSinker rgb_u16 buffer too short: expected >= {expected} elements, got {actual}")]
-  RgbU16BufferTooShort {
-    /// Minimum `u16` elements required (`width × height × 3`).
-    expected: usize,
-    /// `u16` elements supplied.
-    actual: usize,
-  },
+  #[error("MixedSinker insufficient rgb_u16 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
+  InsufficientRgbU16Buffer(InsufficientBuffer),
 
   /// Native-depth `u16` luma buffer attached via per-format
   /// `with_luma_u16` is shorter than `width × height` `u16`
   /// elements. Tier 4 sources (V210 / Y210 / Y212 / Y216) are the
   /// first consumers of this API.
-  #[error("MixedSinker luma_u16 buffer too short: expected >= {expected} elements, got {actual}")]
-  LumaU16BufferTooShort {
-    /// Minimum `u16` elements required (`width × height`).
-    expected: usize,
-    /// `u16` elements supplied.
-    actual: usize,
-  },
+  #[error("MixedSinker insufficient luma_u16 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
+  InsufficientLumaU16Buffer(InsufficientBuffer),
 
   /// RGBA buffer attached via [`MixedSinker::with_rgba`] /
   /// [`MixedSinker::set_rgba`] is shorter than `width × height × 4`.
   /// The fourth byte per pixel is alpha — opaque (`0xFF`) by default
   /// when the source has no alpha plane.
-  #[error("MixedSinker rgba buffer too short: expected >= {expected} bytes, got {actual}")]
-  RgbaBufferTooShort {
-    /// Minimum bytes required (`width × height × 4`).
-    expected: usize,
-    /// Bytes supplied.
-    actual: usize,
-  },
+  #[error("MixedSinker insufficient rgba buffer: expected >= {} bytes, got {}", .0.expected(), .0.actual())]
+  InsufficientRgbaBuffer(InsufficientBuffer),
 
   /// `u16` RGBA buffer attached via `with_rgba_u16` / `set_rgba_u16`
   /// (per-format impl, not yet shipped on any sink) is shorter than
@@ -193,112 +479,58 @@ pub enum MixedSinkerError {
   /// impls write into this buffer; the fourth `u16` per pixel is
   /// alpha — opaque (`(1 << BITS) - 1`) by default when the source
   /// has no alpha plane.
-  #[error("MixedSinker rgba_u16 buffer too short: expected >= {expected} elements, got {actual}")]
-  RgbaU16BufferTooShort {
-    /// Minimum `u16` elements required (`width × height × 4`).
-    expected: usize,
-    /// `u16` elements supplied.
-    actual: usize,
-  },
+  #[error("MixedSinker insufficient rgba_u16 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
+  InsufficientRgbaU16Buffer(InsufficientBuffer),
 
   /// `f32` RGB buffer attached via per-format `with_rgb_f32` /
   /// `set_rgb_f32` is shorter than `width × height × 3` `f32` elements.
   /// Only float-source impls (currently
   /// [`Rgbf32`](crate::source::Rgbf32)) write into this buffer.
-  #[error("MixedSinker rgb_f32 buffer too short: expected >= {expected} elements, got {actual}")]
-  RgbF32BufferTooShort {
-    /// Minimum `f32` elements required (`width × height × 3`).
-    expected: usize,
-    /// `f32` elements supplied.
-    actual: usize,
-  },
+  #[error("MixedSinker insufficient rgb_f32 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
+  InsufficientRgbF32Buffer(InsufficientBuffer),
 
   /// `half::f16` RGB buffer attached via per-format `with_rgb_f16` /
   /// `set_rgb_f16` is shorter than `width × height × 3` `f16` elements.
   /// Only half-float-source impls (currently
   /// [`Rgbf16`](crate::source::Rgbf16)) write into this buffer.
-  #[error("MixedSinker rgb_f16 buffer too short: expected >= {expected} elements, got {actual}")]
-  RgbF16BufferTooShort {
-    /// Minimum `f16` elements required (`width × height × 3`).
-    expected: usize,
-    /// `f16` elements supplied.
-    actual: usize,
-  },
+  #[error("MixedSinker insufficient rgb_f16 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
+  InsufficientRgbF16Buffer(InsufficientBuffer),
 
   /// `f32` RGBA buffer attached via per-format `with_rgba_f32` /
   /// `set_rgba_f32` is shorter than `width × height × 4` `f32` elements.
   /// Only float-planar-GBR source impls write into this buffer.
-  #[error("MixedSinker rgba_f32 buffer too short: expected >= {expected} elements, got {actual}")]
-  RgbaF32BufferTooShort {
-    /// Minimum `f32` elements required (`width × height × 4`).
-    expected: usize,
-    /// `f32` elements supplied.
-    actual: usize,
-  },
+  #[error("MixedSinker insufficient rgba_f32 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
+  InsufficientRgbaF32Buffer(InsufficientBuffer),
 
   /// `half::f16` RGBA buffer attached via per-format `with_rgba_f16` /
   /// `set_rgba_f16` is shorter than `width × height × 4` `f16` elements.
   /// Only float-planar-GBR source impls write into this buffer.
-  #[error("MixedSinker rgba_f16 buffer too short: expected >= {expected} elements, got {actual}")]
-  RgbaF16BufferTooShort {
-    /// Minimum `f16` elements required (`width × height × 4`).
-    expected: usize,
-    /// `f16` elements supplied.
-    actual: usize,
-  },
+  #[error("MixedSinker insufficient rgba_f16 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
+  InsufficientRgbaF16Buffer(InsufficientBuffer),
 
   /// `f32` XYZ buffer attached via `with_xyz_f32` / `set_xyz_f32` is
   /// shorter than `width × height × 3` `f32` elements. Only the
   /// [`Xyz12`](crate::source::Xyz12) source impl writes into this buffer.
-  #[error("MixedSinker xyz_f32 buffer too short: expected >= {expected} elements, got {actual}")]
-  XyzF32BufferTooShort {
-    /// Minimum `f32` elements required (`width × height × 3`).
-    expected: usize,
-    /// `f32` elements supplied.
-    actual: usize,
-  },
+  #[error("MixedSinker insufficient xyz_f32 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
+  InsufficientXyzF32Buffer(InsufficientBuffer),
 
   /// `f32` luma buffer attached via `with_luma_f32` / `set_luma_f32` is
   /// shorter than `width × height` `f32` elements.
-  #[error("MixedSinker luma_f32 buffer too short: expected >= {expected} elements, got {actual}")]
-  LumaF32BufferTooShort {
-    /// Minimum `f32` elements required (`width × height`).
-    expected: usize,
-    /// `f32` elements supplied.
-    actual: usize,
-  },
+  #[error("MixedSinker insufficient luma_f32 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
+  InsufficientLumaF32Buffer(InsufficientBuffer),
 
   /// Luma buffer is shorter than `width × height`.
-  #[error("MixedSinker luma buffer too short: expected >= {expected} bytes, got {actual}")]
-  LumaBufferTooShort {
-    /// Minimum bytes required (`width × height`).
-    expected: usize,
-    /// Bytes supplied.
-    actual: usize,
-  },
+  #[error("MixedSinker insufficient luma buffer: expected >= {} bytes, got {}", .0.expected(), .0.actual())]
+  InsufficientLumaBuffer(InsufficientBuffer),
 
   /// One of the three HSV planes is shorter than `width × height`.
-  #[error("MixedSinker hsv {which:?} plane too short: expected >= {expected} bytes, got {actual}")]
-  HsvPlaneTooShort {
-    /// Which HSV plane was short (H, S, or V).
-    which: HsvPlane,
-    /// Minimum bytes required (`width × height`).
-    expected: usize,
-    /// Bytes supplied.
-    actual: usize,
-  },
+  #[error("MixedSinker insufficient hsv {:?} plane: expected >= {} bytes, got {}", .0.which(), .0.expected(), .0.actual())]
+  InsufficientHsvPlane(InsufficientHsvPlane),
 
   /// Declared frame geometry does not fit in `usize`. Only reachable
   /// on 32‑bit targets (wasm32, i686) with extreme dimensions.
-  #[error("MixedSinker frame size overflows usize: {width} × {height} × channels={channels}")]
-  GeometryOverflow {
-    /// Configured width.
-    width: usize,
-    /// Configured height.
-    height: usize,
-    /// Channel count the overflowing product was computed with.
-    channels: usize,
-  },
+  #[error("MixedSinker frame size overflows usize: {} × {} × channels={}", .0.width(), .0.height(), .0.channels())]
+  GeometryOverflow(GeometryOverflow),
 
   /// A row handed directly to [`PixelSink::process`] has a slice
   /// length that doesn't match the sink's configured width. Returned
@@ -314,19 +546,10 @@ pub enum MixedSinkerError {
   /// message deliberately says "elements" rather than "bytes" so the
   /// same variant can serve both the `u8` and `u16` row families.
   #[error(
-    "MixedSinker row shape mismatch at row {row}: {which} slice has {actual} elements, expected {expected}"
+    "MixedSinker row shape mismatch at row {}: {} slice has {} elements, expected {}",
+    .0.row(), .0.which(), .0.actual(), .0.expected()
   )]
-  RowShapeMismatch {
-    /// Which slice mismatched. See [`RowSlice`] for variants.
-    which: RowSlice,
-    /// Row index reported by the offending row.
-    row: usize,
-    /// Expected slice length in elements of the slice's element type
-    /// (`u8` for 8‑bit source rows; `u16` for 10‑bit source rows).
-    expected: usize,
-    /// Actual slice length in the same unit as `expected`.
-    actual: usize,
-  },
+  RowShapeMismatch(RowShapeMismatch),
 
   /// A row handed to [`PixelSink::process`] has `row.row() >=
   /// configured_height`. The walker bounds `idx < height` via its
@@ -334,48 +557,33 @@ pub enum MixedSinkerError {
   /// dimension check, but a direct caller could pass any value.
   /// Returning an error instead of slice-indexing past the end keeps
   /// the no-panic contract intact.
-  #[error("MixedSinker row index {row} is out of range for configured height {configured_height}")]
-  RowIndexOutOfRange {
-    /// Row index reported by the offending row.
-    row: usize,
-    /// Sink's configured height.
-    configured_height: usize,
-  },
-
-  /// The sinker's configured `width` is odd. 4:2:0 formats
-  /// (YUV420p / NV12 / NV21, plus future 4:2:2 variants) subsample
-  /// chroma 2:1 in width, and the row primitives (scalar + every
-  /// SIMD backend) assume `width & 1 == 0` — calling them with an
-  /// odd width panics. `MixedSinker::new` is infallible and accepts
-  /// any width, so this error surfaces the misconfiguration at the
-  /// first use site ([`PixelSink::begin_frame`] or
-  /// [`PixelSink::process`]) before any row primitive is invoked,
-  /// preserving the no-panic contract.
-  #[error("MixedSinker configured width {width} is odd; 4:2:0 formats require even width")]
-  OddWidth {
-    /// Sink's configured width.
-    width: usize,
-  },
-
-  /// The sinker's configured `width` is not a multiple of 4. Packed
-  /// 4:1:1 ([`Uyyvyy411`](crate::source::Uyyvyy411)) shares one chroma
-  /// pair across 4 luma samples, so each 6-byte block covers exactly
-  /// 4 pixels — widths not divisible by 4 can't form a complete
-  /// final block. `MixedSinker::new` is infallible and accepts any
-  /// width, so this error surfaces the misconfiguration at
-  /// [`PixelSink::begin_frame`] / [`PixelSink::process`] before any
-  /// row primitive is invoked.
   #[error(
-    "MixedSinker configured width {width} is not a multiple of 4; packed YUV 4:1:1 requires width divisible by 4"
+    "MixedSinker row index {} is out of range for configured height {}",
+    .0.row(), .0.configured_height()
   )]
-  WidthNotMultipleOf4 {
-    /// Sink's configured width.
-    width: usize,
-  },
+  RowIndexOutOfRange(RowIndexOutOfRange),
+
+  /// The sinker's configured `width` violates the format's chroma-group
+  /// stride requirement. For 4:2:0 / 4:2:2 formats the width must be
+  /// even (`WidthAlignmentRequirement::Even`); for planar 4:1:0
+  /// ([`Yuv410p`](crate::source::Yuv410p)) and packed 4:1:1
+  /// ([`Uyyvyy411`](crate::source::Uyyvyy411)) the width must be a
+  /// multiple of 4 (`WidthAlignmentRequirement::MultipleOfFour`).
+  /// Planar 4:1:1 ([`Yuv411p`](crate::source::Yuv411p)) accepts
+  /// non-4-aligned widths via `width.div_ceil(4)` and does not produce
+  /// this error. Supersedes the former `OddWidth` (even-only) and
+  /// `WidthNotMultipleOf4` variants.
+  ///
+  /// `MixedSinker::new` is infallible and accepts any width, so this error
+  /// surfaces the misconfiguration at the first use site
+  /// ([`PixelSink::begin_frame`] or [`PixelSink::process`]) before any row
+  /// primitive is invoked, preserving the no-panic contract.
+  #[error("MixedSinker configured width {} {}", .0.width(), .0.required())]
+  WidthAlignment(WidthAlignment),
 }
 
 /// Identifies which of the three HSV planes a
-/// [`MixedSinkerError::HsvPlaneTooShort`] refers to.
+/// [`MixedSinkerError::InsufficientHsvPlane`] refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HsvPlane {
   /// Hue plane.
@@ -1411,51 +1619,52 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
     self
   }
 
-  /// Full-frame size in bytes for a given channel count, with
-  /// overflow checking. Returns `Err(GeometryOverflow)` if
-  /// `width × height × channels` cannot fit in `usize` — only
-  /// reachable on 32‑bit targets with extreme dimensions.
+  /// Full-frame slot count (`width × height × channels`) with overflow
+  /// checking. The result is the minimum required `buf.len()` for any
+  /// `&[T]` buffer holding `channels` slots per pixel — bytes for
+  /// `&[u8]`, `u16` elements for `&[u16]`, `f32` elements for `&[f32]`,
+  /// `f16` elements for `&[half::f16]`. The function does NOT scale by
+  /// element size; callers compare against `buf.len()` (which Rust
+  /// reports in elements of the slice's element type).
+  ///
+  /// Returns `Err(GeometryOverflow)` if the product cannot fit in
+  /// `usize` — only reachable on 32‑bit targets with extreme dimensions.
   #[cfg_attr(not(tarpaulin), inline(always))]
-  fn frame_bytes(&self, channels: usize) -> Result<usize, MixedSinkerError> {
+  fn frame_elems(&self, channels: usize) -> Result<usize, MixedSinkerError> {
     self
       .width
       .checked_mul(self.height)
       .and_then(|n| n.checked_mul(channels))
-      .ok_or(MixedSinkerError::GeometryOverflow {
-        width: self.width,
-        height: self.height,
+      .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+        self.width,
+        self.height,
         channels,
-      })
+      )))
   }
 
   /// Full-frame element count (`width × height`) for a single-channel
-  /// `&[T]` buffer, with overflow checking. Used by `set_luma_u16`
-  /// (and prospective `set_luma_f32` / `set_luma_f16`) preflight
-  /// checks where `buf.len()` is in `T` elements rather than bytes,
-  /// so [`frame_bytes(1)`](Self::frame_bytes)'s "byte" naming would
-  /// invite a future 2x/4x undercount if the buffer's element type
-  /// changed. The byte and element counts coincide numerically at
-  /// `channels == 1`, but the names should not.
+  /// `&[T]` buffer, with overflow checking. Equivalent to
+  /// [`frame_elems(1)`](Self::frame_elems) numerically, but the
+  /// dedicated name documents "one slot per pixel" at the call site
+  /// (e.g. luma planes) without the channels=1 magic number.
   ///
-  /// Returns `Err(GeometryOverflow { channels: 1 })` on overflow —
-  /// matches what `frame_bytes(1)` would have returned, so this is a
-  /// drop-in clarity rename.
+  /// Returns `Err(GeometryOverflow { channels: 1 })` on overflow.
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn frame_pixels(&self) -> Result<usize, MixedSinkerError> {
     self
       .width
       .checked_mul(self.height)
-      .ok_or(MixedSinkerError::GeometryOverflow {
-        width: self.width,
-        height: self.height,
-        channels: 1,
-      })
+      .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+        self.width,
+        self.height,
+        1,
+      )))
   }
 }
 
 impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   /// Attaches a packed 24-bit RGB output buffer.
-  /// Returns `Err(RgbBufferTooShort)` if `buf.len() < width × height × 3`,
+  /// Returns `Err(InsufficientRgbBuffer)` if `buf.len() < width × height × 3`,
   /// or `Err(GeometryOverflow)` on 32‑bit targets when the product
   /// overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -1467,12 +1676,11 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   /// In-place variant of [`with_rgb`](Self::with_rgb).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgb(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(3)?;
+    let expected = self.frame_elems(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbBufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientRgbBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.rgb = Some(buf);
     Ok(self)
@@ -1512,7 +1720,7 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   // native‑depth RGBA.
 
   /// Attaches a single-plane luma output buffer.
-  /// Returns `Err(LumaBufferTooShort)` if `buf.len() < width × height`,
+  /// Returns `Err(InsufficientLumaBuffer)` if `buf.len() < width × height`,
   /// or `Err(GeometryOverflow)` on 32‑bit overflow.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -1523,20 +1731,21 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   /// In-place variant of [`with_luma`](Self::with_luma).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_luma(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(1)?;
+    let expected = self.frame_elems(1)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaBufferTooShort {
-        expected,
-        actual: buf.len(),
-      });
+      return Err(MixedSinkerError::InsufficientLumaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
     }
     self.luma = Some(buf);
     Ok(self)
   }
 
   /// Attaches three HSV output planes. Returns
-  /// `Err(HsvPlaneTooShort { which, .. })` naming the first short
-  /// plane, or `Err(GeometryOverflow)` on 32‑bit overflow.
+  /// `Err(MixedSinkerError::InsufficientHsvPlane(e))` (inspect via
+  /// `e.which()` / `e.expected()` / `e.actual()`) naming the first
+  /// short plane, or `Err(MixedSinkerError::GeometryOverflow(_))` on
+  /// 32-bit overflow.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_hsv(
     mut self,
@@ -1556,27 +1765,21 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
     s: &'a mut [u8],
     v: &'a mut [u8],
   ) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(1)?;
+    let expected = self.frame_elems(1)?;
     if h.len() < expected {
-      return Err(MixedSinkerError::HsvPlaneTooShort {
-        which: HsvPlane::H,
-        expected,
-        actual: h.len(),
-      });
+      return Err(MixedSinkerError::InsufficientHsvPlane(
+        InsufficientHsvPlane::new(HsvPlane::H, expected, h.len()),
+      ));
     }
     if s.len() < expected {
-      return Err(MixedSinkerError::HsvPlaneTooShort {
-        which: HsvPlane::S,
-        expected,
-        actual: s.len(),
-      });
+      return Err(MixedSinkerError::InsufficientHsvPlane(
+        InsufficientHsvPlane::new(HsvPlane::S, expected, s.len()),
+      ));
     }
     if v.len() < expected {
-      return Err(MixedSinkerError::HsvPlaneTooShort {
-        which: HsvPlane::V,
-        expected,
-        actual: v.len(),
-      });
+      return Err(MixedSinkerError::InsufficientHsvPlane(
+        InsufficientHsvPlane::new(HsvPlane::V, expected, v.len()),
+      ));
     }
     self.hsv = Some(HsvBuffers { h, s, v });
     Ok(self)
@@ -1604,12 +1807,12 @@ pub(super) fn check_dimensions_match(
   let fw = frame_w as usize;
   let fh = frame_h as usize;
   if fw != configured_w || fh != configured_h {
-    return Err(MixedSinkerError::DimensionMismatch {
+    return Err(MixedSinkerError::DimensionMismatch(DimensionMismatch::new(
       configured_w,
       configured_h,
       frame_w,
       frame_h,
-    });
+    )));
   }
   Ok(())
 }
@@ -1631,11 +1834,9 @@ pub(super) fn rgba_plane_row_slice(
 ) -> Result<&mut [u8], MixedSinkerError> {
   let end = one_plane_end
     .checked_mul(4)
-    .ok_or(MixedSinkerError::GeometryOverflow {
-      width,
-      height,
-      channels: 4,
-    })?;
+    .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+      width, height, 4,
+    )))?;
   let start = one_plane_start * 4; // ≤ end, fits.
   Ok(&mut buf[start..end])
 }
@@ -1656,11 +1857,9 @@ pub(super) fn rgba_u16_plane_row_slice(
 ) -> Result<&mut [u16], MixedSinkerError> {
   let end = one_plane_end
     .checked_mul(4)
-    .ok_or(MixedSinkerError::GeometryOverflow {
-      width,
-      height,
-      channels: 4,
-    })?;
+    .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+      width, height, 4,
+    )))?;
   let start = one_plane_start * 4; // ≤ end, fits.
   Ok(&mut buf[start..end])
 }
@@ -1687,22 +1886,18 @@ pub(super) fn rgb_row_buf_or_scratch<'a>(
     Some(buf) => {
       let end = one_plane_end
         .checked_mul(3)
-        .ok_or(MixedSinkerError::GeometryOverflow {
-          width,
-          height,
-          channels: 3,
-        })?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          width, height, 3,
+        )))?;
       let start = one_plane_start * 3;
       Ok(&mut buf[start..end])
     }
     None => {
       let row_bytes = width
         .checked_mul(3)
-        .ok_or(MixedSinkerError::GeometryOverflow {
-          width,
-          height,
-          channels: 3,
-        })?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          width, height, 3,
+        )))?;
       if rgb_scratch.len() < row_bytes {
         rgb_scratch.resize(row_bytes, 0);
       }
@@ -1737,7 +1932,7 @@ pub(super) fn rgb_row_to_luma_row(rgb: &[u8], luma: &mut [u8], coeffs_q8: (u32, 
   // failure under tests.
   //
   // `checked_mul` instead of `3 * luma.len()` because, while the
-  // existing `frame_bytes` validation in caller paths makes the
+  // existing `frame_elems` validation in caller paths makes the
   // product fit, a future caller passing a raw slice with no such
   // upstream check could trigger a `usize` overflow inside the
   // assert message itself (panic before the assertion runs).
@@ -1852,10 +2047,7 @@ mod api_smoke_tests {
 
   #[test]
   fn luma_u16_buffer_too_short_error_displays() {
-    let err = MixedSinkerError::LumaU16BufferTooShort {
-      expected: 100,
-      actual: 50,
-    };
+    let err = MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(100, 50));
     let msg = format!("{err}");
     assert!(msg.contains("100"));
     assert!(msg.contains("50"));

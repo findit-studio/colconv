@@ -391,13 +391,10 @@ fn xv36_zero_dim_returns_err() {
   let packed = [0u16; 4 * 4]; // width=4, 4 u16 elements per pixel
   let row = Xv36Row::new(&packed, 1, ColorMatrix::Bt601, true);
   let err = sink.process(row).err().unwrap();
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RowIndexOutOfRange {
-      row: 1,
-      configured_height: 1,
-    }
-  ));
+    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange::new(1, 1))
+  );
 }
 
 #[test]
@@ -412,12 +409,7 @@ fn xv36_process_rejects_short_packed_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
-      which: RowSlice::Xv36Packed,
-      row: 0,
-      expected: 24,
-      actual: 23,
-    }
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::Xv36Packed, 0, 24, 23))
   );
 }
 
@@ -429,15 +421,12 @@ fn xv36_buffer_too_short_for_rgba_u16_returns_err() {
   let mut rgba = std::vec![0u16; 6 * 7 * 4];
   let result = MixedSinker::<Xv36>::new(6, 8).with_rgba_u16(&mut rgba);
   let Err(err) = result else {
-    panic!("expected RgbaU16BufferTooShort");
+    panic!("expected InsufficientRgbaU16Buffer");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RgbaU16BufferTooShort {
-      expected: 192,
-      actual: 168,
-    }
-  ));
+    MixedSinkerError::InsufficientRgbaU16Buffer(InsufficientBuffer::new(192, 168))
+  );
 }
 
 // ====================================================================================

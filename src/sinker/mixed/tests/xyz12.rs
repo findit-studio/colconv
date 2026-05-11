@@ -736,7 +736,7 @@ fn xyz12_short_buffer_rejected_at_attach() {
   let res = MixedSinker::<Xyz12Le>::new(8, 4).with_rgb(&mut rgb_out);
   assert!(matches!(
     res,
-    Err(MixedSinkerError::RgbBufferTooShort { .. })
+    Err(MixedSinkerError::InsufficientRgbBuffer(_))
   ));
 }
 
@@ -750,7 +750,7 @@ fn xyz12_short_xyz_f32_buffer_rejected_at_attach() {
   let res = MixedSinker::<Xyz12Le>::new(8, 4).with_xyz_f32(&mut xyz_out);
   assert!(matches!(
     res,
-    Err(MixedSinkerError::XyzF32BufferTooShort { .. })
+    Err(MixedSinkerError::InsufficientXyzF32Buffer(_))
   ));
 }
 
@@ -768,8 +768,5 @@ fn xyz12_dimension_mismatch_rejected_at_begin_frame() {
     .with_rgb(&mut rgb_out)
     .unwrap();
   let res = xyz12_to(&src, DcpTargetGamut::DciP3, &mut sink);
-  assert!(matches!(
-    res,
-    Err(MixedSinkerError::DimensionMismatch { .. })
-  ));
+  assert!(matches!(res, Err(MixedSinkerError::DimensionMismatch(_))));
 }

@@ -261,15 +261,12 @@ fn rgba_buffer_too_short_returns_err() {
   let mut rgba_short = std::vec![0u8; 16 * 8 * 4 - 1];
   let result = MixedSinker::<Yuv420p>::new(16, 8).with_rgba(&mut rgba_short);
   let Err(err) = result else {
-    panic!("expected RgbaBufferTooShort error");
+    panic!("expected InsufficientRgbaBuffer error");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RgbaBufferTooShort {
-      expected: 512,
-      actual: 511,
-    }
-  ));
+    MixedSinkerError::InsufficientRgbaBuffer(InsufficientBuffer::new(512, 511))
+  );
 }
 
 #[test]
@@ -514,12 +511,12 @@ fn yuv420p_with_luma_u16_extracts_y_zero_extended() {
 #[test]
 fn yuv420p_luma_u16_buffer_too_short_returns_err() {
   let mut buf = std::vec![0u16; 16 * 8 - 1];
-  let result = MixedSinker::<Yuv420p>::new(16, 8).with_luma_u16(&mut buf);
-  assert!(matches!(
-    result,
-    Err(MixedSinkerError::LumaU16BufferTooShort {
-      expected: 128,
-      actual: 127,
-    })
-  ));
+  let err = MixedSinker::<Yuv420p>::new(16, 8)
+    .with_luma_u16(&mut buf)
+    .err()
+    .unwrap();
+  assert_eq!(
+    err,
+    MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(128, 127))
+  );
 }

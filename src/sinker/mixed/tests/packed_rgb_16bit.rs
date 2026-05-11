@@ -395,7 +395,7 @@ fn rgb48_row_shape_mismatch_returns_error() {
   let data = vec![0u16; 3];
   let row = Rgb48Row::new(&data, 0, ColorMatrix::Bt709, true);
   let err = sinker.process(row).unwrap_err();
-  assert!(matches!(err, MixedSinkerError::RowShapeMismatch { .. }));
+  assert!(matches!(err, MixedSinkerError::RowShapeMismatch(_)));
 }
 
 #[test]
@@ -410,7 +410,7 @@ fn rgba64_row_shape_mismatch_returns_error() {
   let data = vec![0u16; 4];
   let row = Rgba64Row::new(&data, 0, ColorMatrix::Bt709, true);
   let err = sinker.process(row).unwrap_err();
-  assert!(matches!(err, MixedSinkerError::RowShapeMismatch { .. }));
+  assert!(matches!(err, MixedSinkerError::RowShapeMismatch(_)));
 }
 
 #[test]

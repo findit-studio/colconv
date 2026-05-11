@@ -278,7 +278,7 @@ fn nv24_width_mismatch_returns_err() {
   let (yp, uvp) = solid_nv24_frame(17, 8, 0, 0, 0);
   let src = Nv24Frame::new(&yp, &uvp, 17, 8, 17, 34);
   let err = nv24_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap_err();
-  assert!(matches!(err, MixedSinkerError::DimensionMismatch { .. }));
+  assert!(matches!(err, MixedSinkerError::DimensionMismatch(_)));
 }
 
 #[test]
@@ -291,12 +291,7 @@ fn nv24_process_rejects_short_uv_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
-      which: RowSlice::UvFull,
-      row: 0,
-      expected: 32,
-      actual: 31,
-    }
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::UvFull, 0, 32, 31))
   );
 }
 
@@ -310,10 +305,7 @@ fn nv24_process_rejects_out_of_range_row_idx() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowIndexOutOfRange {
-      row: 8,
-      configured_height: 8,
-    }
+    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange::new(8, 8))
   );
 }
 
@@ -327,12 +319,7 @@ fn nv42_process_rejects_short_vu_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
-      which: RowSlice::VuFull,
-      row: 0,
-      expected: 32,
-      actual: 31,
-    }
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::VuFull, 0, 32, 31))
   );
 }
 
@@ -401,15 +388,12 @@ fn nv24_rgba_buffer_too_short_returns_err() {
   let mut rgba_short = std::vec![0u8; 16 * 8 * 4 - 1];
   let result = MixedSinker::<Nv24>::new(16, 8).with_rgba(&mut rgba_short);
   let Err(err) = result else {
-    panic!("expected RgbaBufferTooShort error");
+    panic!("expected InsufficientRgbaBuffer error");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RgbaBufferTooShort {
-      expected: 512,
-      actual: 511,
-    }
-  ));
+    MixedSinkerError::InsufficientRgbaBuffer(InsufficientBuffer::new(512, 511))
+  );
 }
 
 #[test]
@@ -515,15 +499,12 @@ fn nv42_rgba_buffer_too_short_returns_err() {
   let mut rgba_short = std::vec![0u8; 16 * 8 * 4 - 1];
   let result = MixedSinker::<Nv42>::new(16, 8).with_rgba(&mut rgba_short);
   let Err(err) = result else {
-    panic!("expected RgbaBufferTooShort error");
+    panic!("expected InsufficientRgbaBuffer error");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RgbaBufferTooShort {
-      expected: 512,
-      actual: 511,
-    }
-  ));
+    MixedSinkerError::InsufficientRgbaBuffer(InsufficientBuffer::new(512, 511))
+  );
 }
 
 #[test]
@@ -1074,14 +1055,14 @@ fn nv24_with_luma_u16_extracts_y_zero_extended() {
 #[test]
 fn nv24_luma_u16_buffer_too_short_returns_err() {
   let mut buf = std::vec![0u16; 16 * 8 - 1];
-  let result = MixedSinker::<Nv24>::new(16, 8).with_luma_u16(&mut buf);
-  assert!(matches!(
-    result,
-    Err(MixedSinkerError::LumaU16BufferTooShort {
-      expected: 128,
-      actual: 127,
-    })
-  ));
+  let err = MixedSinker::<Nv24>::new(16, 8)
+    .with_luma_u16(&mut buf)
+    .err()
+    .unwrap();
+  assert_eq!(
+    err,
+    MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(128, 127))
+  );
 }
 
 #[test]
@@ -1122,12 +1103,12 @@ fn nv42_with_luma_u16_extracts_y_zero_extended() {
 #[test]
 fn nv42_luma_u16_buffer_too_short_returns_err() {
   let mut buf = std::vec![0u16; 16 * 8 - 1];
-  let result = MixedSinker::<Nv42>::new(16, 8).with_luma_u16(&mut buf);
-  assert!(matches!(
-    result,
-    Err(MixedSinkerError::LumaU16BufferTooShort {
-      expected: 128,
-      actual: 127,
-    })
-  ));
+  let err = MixedSinker::<Nv42>::new(16, 8)
+    .with_luma_u16(&mut buf)
+    .err()
+    .unwrap();
+  assert_eq!(
+    err,
+    MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(128, 127))
+  );
 }

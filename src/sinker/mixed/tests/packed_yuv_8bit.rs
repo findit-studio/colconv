@@ -269,7 +269,7 @@ fn yuyv422_width_mismatch_returns_err() {
   let buf = solid_yuyv422_frame(18, 8, 0, 0, 0);
   let src = Yuyv422Frame::new(&buf, 18, 8, 36);
   let err = yuyv422_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap_err();
-  assert!(matches!(err, MixedSinkerError::DimensionMismatch { .. }));
+  assert!(matches!(err, MixedSinkerError::DimensionMismatch(_)));
 }
 
 #[test]
@@ -283,12 +283,7 @@ fn yuyv422_process_rejects_short_packed_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
-      which: RowSlice::Yuyv422Packed,
-      row: 0,
-      expected: 32,
-      actual: 31,
-    }
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::Yuyv422Packed, 0, 32, 31))
   );
 }
 
@@ -303,10 +298,7 @@ fn yuyv422_process_rejects_out_of_range_row_idx() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowIndexOutOfRange {
-      row: 8,
-      configured_height: 8,
-    }
+    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange::new(8, 8))
   );
 }
 
@@ -317,7 +309,10 @@ fn yuyv422_odd_width_rejected_in_begin_frame() {
     .with_rgb(&mut rgb)
     .unwrap();
   let err = sink.begin_frame(17, 8).err().unwrap();
-  assert_eq!(err, MixedSinkerError::OddWidth { width: 17 });
+  assert_eq!(
+    err,
+    MixedSinkerError::WidthAlignment(WidthAlignment::new(17, WidthAlignmentRequirement::Even))
+  );
 }
 
 #[test]
@@ -325,15 +320,12 @@ fn yuyv422_rgba_buffer_too_short_returns_err() {
   let mut rgba_short = std::vec![0u8; 16 * 8 * 4 - 1];
   let result = MixedSinker::<Yuyv422>::new(16, 8).with_rgba(&mut rgba_short);
   let Err(err) = result else {
-    panic!("expected RgbaBufferTooShort error");
+    panic!("expected InsufficientRgbaBuffer error");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RgbaBufferTooShort {
-      expected: 512,
-      actual: 511,
-    }
-  ));
+    MixedSinkerError::InsufficientRgbaBuffer(InsufficientBuffer::new(512, 511))
+  );
 }
 
 // ---- Uyvy422 MixedSinker -----------------------------------------------
@@ -452,12 +444,7 @@ fn uyvy422_process_rejects_short_packed_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
-      which: RowSlice::Uyvy422Packed,
-      row: 0,
-      expected: 32,
-      actual: 31,
-    }
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::Uyvy422Packed, 0, 32, 31))
   );
 }
 
@@ -577,12 +564,7 @@ fn yvyu422_process_rejects_short_packed_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
-      which: RowSlice::Yvyu422Packed,
-      row: 0,
-      expected: 32,
-      actual: 31,
-    }
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::Yvyu422Packed, 0, 32, 31))
   );
 }
 
@@ -895,16 +877,11 @@ fn yuyv422_luma_u16_buffer_too_short_returns_err() {
   let mut luma = std::vec![0u16; 4 * 4 - 1];
   let result = MixedSinker::<Yuyv422>::new(4, 4).with_luma_u16(&mut luma);
   let Err(err) = result else {
-    panic!("expected LumaU16BufferTooShort");
+    panic!("expected InsufficientLumaU16Buffer");
   };
-  assert!(
-    matches!(
-      err,
-      MixedSinkerError::LumaU16BufferTooShort {
-        expected: 16,
-        actual: 15
-      }
-    ),
+  assert_eq!(
+    err,
+    MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(16, 15)),
     "unexpected error: {err:?}"
   );
 }
@@ -940,16 +917,11 @@ fn uyvy422_luma_u16_buffer_too_short_returns_err() {
   let mut luma = std::vec![0u16; 4 * 4 - 1];
   let result = MixedSinker::<Uyvy422>::new(4, 4).with_luma_u16(&mut luma);
   let Err(err) = result else {
-    panic!("expected LumaU16BufferTooShort");
+    panic!("expected InsufficientLumaU16Buffer");
   };
-  assert!(
-    matches!(
-      err,
-      MixedSinkerError::LumaU16BufferTooShort {
-        expected: 16,
-        actual: 15
-      }
-    ),
+  assert_eq!(
+    err,
+    MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(16, 15)),
     "unexpected error: {err:?}"
   );
 }
@@ -985,16 +957,11 @@ fn yvyu422_luma_u16_buffer_too_short_returns_err() {
   let mut luma = std::vec![0u16; 4 * 4 - 1];
   let result = MixedSinker::<Yvyu422>::new(4, 4).with_luma_u16(&mut luma);
   let Err(err) = result else {
-    panic!("expected LumaU16BufferTooShort");
+    panic!("expected InsufficientLumaU16Buffer");
   };
-  assert!(
-    matches!(
-      err,
-      MixedSinkerError::LumaU16BufferTooShort {
-        expected: 16,
-        actual: 15
-      }
-    ),
+  assert_eq!(
+    err,
+    MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(16, 15)),
     "unexpected error: {err:?}"
   );
 }

@@ -124,7 +124,7 @@ fn nv12_with_simd_false_matches_with_simd_true() {
 // time, not part-way through processing. Catching the mistake before
 // any rows are written avoids partially-mutated caller buffers
 // flagged by the adversarial review. With the fallible API these
-// surface as `Err(MixedSinkerError::*BufferTooShort)` / `HsvPlaneTooShort`.
+// surface as `Err(MixedSinkerError::Insufficient*Buffer)` / `InsufficientHsvPlane`.
 
 #[test]
 #[cfg_attr(
@@ -139,10 +139,7 @@ fn attach_short_rgb_returns_err() {
     .unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RgbBufferTooShort {
-      expected: 16 * 8 * 3,
-      actual: 16 * 8 * 3 - 1,
-    }
+    MixedSinkerError::InsufficientRgbBuffer(InsufficientBuffer::new(16 * 8 * 3, 16 * 8 * 3 - 1))
   );
 }
 
@@ -159,10 +156,7 @@ fn attach_short_luma_returns_err() {
     .unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::LumaBufferTooShort {
-      expected: 16 * 8,
-      actual: 16 * 8 - 1,
-    }
+    MixedSinkerError::InsufficientLumaBuffer(InsufficientBuffer::new(16 * 8, 16 * 8 - 1))
   );
 }
 
@@ -181,11 +175,11 @@ fn attach_short_hsv_returns_err() {
     .unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::HsvPlaneTooShort {
-      which: HsvPlane::V,
-      expected: 16 * 8,
-      actual: 16 * 8 - 1,
-    }
+    MixedSinkerError::InsufficientHsvPlane(InsufficientHsvPlane::new(
+      HsvPlane::V,
+      16 * 8,
+      16 * 8 - 1
+    ))
   );
 }
 
@@ -210,12 +204,7 @@ fn taller_frame_returns_err_before_any_row_written() {
     .unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::DimensionMismatch {
-      configured_w: 16,
-      configured_h: 8,
-      frame_w: 16,
-      frame_h: 10,
-    }
+    MixedSinkerError::DimensionMismatch(DimensionMismatch::new(16, 8, 16, 10))
   );
   assert!(
     luma.iter().all(|&b| b == SENTINEL),
@@ -246,12 +235,7 @@ fn shorter_frame_returns_err_before_any_row_written() {
     .unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::DimensionMismatch {
-      configured_w: 16,
-      configured_h: 8,
-      frame_w: 16,
-      frame_h: 4,
-    }
+    MixedSinkerError::DimensionMismatch(DimensionMismatch::new(16, 8, 16, 4))
   );
   assert!(
     luma.iter().all(|&b| b == SENTINEL),
@@ -275,12 +259,9 @@ fn nv12_width_mismatch_returns_err() {
     .unwrap();
   assert!(
     matches!(
-      err,
-      MixedSinkerError::DimensionMismatch {
-        configured_w: 32,
-        frame_w: 16,
-        ..
-      }
+      &err,
+      MixedSinkerError::DimensionMismatch(e)
+        if e.configured_w() == 32 && e.frame_w() == 16
     ),
     "unexpected error variant: {err:?}"
   );
@@ -304,12 +285,9 @@ fn yuv420p_width_mismatch_returns_err() {
     .unwrap();
   assert!(
     matches!(
-      err,
-      MixedSinkerError::DimensionMismatch {
-        configured_w: 32,
-        frame_w: 16,
-        ..
-      }
+      &err,
+      MixedSinkerError::DimensionMismatch(e)
+        if e.configured_w() == 32 && e.frame_w() == 16
     ),
     "unexpected error variant: {err:?}"
   );
@@ -332,7 +310,7 @@ fn nv12_shorter_frame_returns_err_before_any_row_written() {
   let err = nv12_to(&src, true, ColorMatrix::Bt601, &mut sink)
     .err()
     .unwrap();
-  assert!(matches!(err, MixedSinkerError::DimensionMismatch { .. }));
+  assert!(matches!(err, MixedSinkerError::DimensionMismatch(_)));
   assert!(
     luma.iter().all(|&b| b == SENTINEL),
     "no rows should have been written before the Err"
@@ -396,12 +374,7 @@ fn yuv420p_process_rejects_short_y_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
-      which: RowSlice::Y,
-      row: 0,
-      expected: 16,
-      actual: 15,
-    }
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::Y, 0, 16, 15))
   );
 }
 
@@ -422,12 +395,7 @@ fn yuv420p_process_rejects_short_u_half() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
-      which: RowSlice::UHalf,
-      row: 0,
-      expected: 8,
-      actual: 7,
-    }
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::UHalf, 0, 8, 7))
   );
 }
 
@@ -450,10 +418,7 @@ fn yuv420p_process_rejects_out_of_range_row_idx() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowIndexOutOfRange {
-      row: 8,
-      configured_height: 8,
-    }
+    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange::new(8, 8))
   );
 }
 
@@ -482,7 +447,10 @@ fn yuv420p_odd_width_sink_returns_err_at_begin_frame() {
     .with_rgb(&mut rgb)
     .unwrap();
   let err = sink.begin_frame(w as u32, h as u32).err().unwrap();
-  assert_eq!(err, MixedSinkerError::OddWidth { width: 15 });
+  assert_eq!(
+    err,
+    MixedSinkerError::WidthAlignment(WidthAlignment::new(15, WidthAlignmentRequirement::Even))
+  );
   // Silence unused-vec warnings — these would have been the plane data.
   let _ = (y, u, v);
 }
@@ -504,7 +472,10 @@ fn yuv420p_odd_width_sink_returns_err_at_direct_process() {
   let v = [128u8; 7];
   let row = Yuv420pRow::new(&y, &u, &v, 0, ColorMatrix::Bt601, true);
   let err = sink.process(row).err().unwrap();
-  assert_eq!(err, MixedSinkerError::OddWidth { width: 15 });
+  assert_eq!(
+    err,
+    MixedSinkerError::WidthAlignment(WidthAlignment::new(15, WidthAlignmentRequirement::Even))
+  );
 }
 
 #[test]
@@ -518,7 +489,10 @@ fn nv12_odd_width_sink_returns_err_at_begin_frame() {
   let mut rgb = std::vec![0u8; 16 * 8 * 3];
   let mut sink = MixedSinker::<Nv12>::new(w, h).with_rgb(&mut rgb).unwrap();
   let err = sink.begin_frame(w as u32, h as u32).err().unwrap();
-  assert_eq!(err, MixedSinkerError::OddWidth { width: 15 });
+  assert_eq!(
+    err,
+    MixedSinkerError::WidthAlignment(WidthAlignment::new(15, WidthAlignmentRequirement::Even))
+  );
 }
 
 #[test]
@@ -533,7 +507,10 @@ fn nv12_odd_width_sink_returns_err_at_direct_process() {
   let uv = [128u8; 15];
   let row = Nv12Row::new(&y, &uv, 0, ColorMatrix::Bt601, true);
   let err = sink.process(row).err().unwrap();
-  assert_eq!(err, MixedSinkerError::OddWidth { width: 15 });
+  assert_eq!(
+    err,
+    MixedSinkerError::WidthAlignment(WidthAlignment::new(15, WidthAlignmentRequirement::Even))
+  );
 }
 
 #[test]
@@ -550,12 +527,7 @@ fn nv12_process_rejects_short_uv_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
-      which: RowSlice::UvHalf,
-      row: 0,
-      expected: 16,
-      actual: 15,
-    }
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::UvHalf, 0, 16, 15))
   );
 }
 
@@ -573,10 +545,7 @@ fn nv12_process_rejects_out_of_range_row_idx() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowIndexOutOfRange {
-      row: 8,
-      configured_height: 8,
-    }
+    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange::new(8, 8))
   );
 }
 
@@ -691,15 +660,12 @@ fn nv12_rgba_buffer_too_short_returns_err() {
   let mut rgba_short = std::vec![0u8; 16 * 8 * 4 - 1];
   let result = MixedSinker::<Nv12>::new(16, 8).with_rgba(&mut rgba_short);
   let Err(err) = result else {
-    panic!("expected RgbaBufferTooShort error");
+    panic!("expected InsufficientRgbaBuffer error");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RgbaBufferTooShort {
-      expected: 512,
-      actual: 511,
-    }
-  ));
+    MixedSinkerError::InsufficientRgbaBuffer(InsufficientBuffer::new(512, 511))
+  );
 }
 
 #[test]
@@ -845,12 +811,12 @@ fn nv12_with_luma_u16_extracts_y_zero_extended() {
 #[test]
 fn nv12_luma_u16_buffer_too_short_returns_err() {
   let mut buf = std::vec![0u16; 16 * 8 - 1];
-  let result = MixedSinker::<Nv12>::new(16, 8).with_luma_u16(&mut buf);
-  assert!(matches!(
-    result,
-    Err(MixedSinkerError::LumaU16BufferTooShort {
-      expected: 128,
-      actual: 127,
-    })
-  ));
+  let err = MixedSinker::<Nv12>::new(16, 8)
+    .with_luma_u16(&mut buf)
+    .err()
+    .unwrap();
+  assert_eq!(
+    err,
+    MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(128, 127))
+  );
 }

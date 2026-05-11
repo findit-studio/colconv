@@ -245,14 +245,14 @@ fn yuv411p_luma_u16_buffer_too_short_returns_err() {
   // must be rejected — this would have slipped through if the check
   // had compared `buf.len()` (u16 count) against a byte count.
   let mut buf = std::vec![0u16; 16 * 8 - 1];
-  let result = MixedSinker::<Yuv411p>::new(16, 8).with_luma_u16(&mut buf);
-  assert!(matches!(
-    result,
-    Err(MixedSinkerError::LumaU16BufferTooShort {
-      expected: 128,
-      actual: 127,
-    })
-  ));
+  let err = MixedSinker::<Yuv411p>::new(16, 8)
+    .with_luma_u16(&mut buf)
+    .err()
+    .unwrap();
+  assert_eq!(
+    err,
+    MixedSinkerError::InsufficientLumaU16Buffer(InsufficientBuffer::new(128, 127))
+  );
 }
 
 #[test]

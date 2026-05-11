@@ -379,12 +379,7 @@ fn v410_process_rejects_short_packed_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch {
-      which: RowSlice::V410Packed,
-      row: 0,
-      expected: 6,
-      actual: 5,
-    }
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::V410Packed, 0, 6, 5))
   );
 }
 
@@ -398,13 +393,10 @@ fn v410_process_rejects_row_index_out_of_range() {
   let packed = [0u32; 4];
   let row = V410Row::new(&packed, 1, ColorMatrix::Bt601, true);
   let err = sink.process(row).err().unwrap();
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RowIndexOutOfRange {
-      row: 1,
-      configured_height: 1,
-    }
-  ));
+    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange::new(1, 1))
+  );
 }
 
 #[test]
@@ -415,15 +407,12 @@ fn v410_rgba_u16_buffer_too_short_returns_err() {
   let mut rgba = std::vec![0u16; 6 * 7 * 4];
   let result = MixedSinker::<V410>::new(6, 8).with_rgba_u16(&mut rgba);
   let Err(err) = result else {
-    panic!("expected RgbaU16BufferTooShort");
+    panic!("expected InsufficientRgbaU16Buffer");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RgbaU16BufferTooShort {
-      expected: 192,
-      actual: 168,
-    }
-  ));
+    MixedSinkerError::InsufficientRgbaU16Buffer(InsufficientBuffer::new(192, 168))
+  );
 }
 
 // ====================================================================================
