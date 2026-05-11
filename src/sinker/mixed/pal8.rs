@@ -221,11 +221,9 @@ impl PixelSink for MixedSinker<'_, Pal8> {
       let rgb_plane_end =
         one_plane_end
           .checked_mul(3)
-          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-            width: w,
-            height: h,
-            channels: 3,
-          }))?;
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+            w, h, 3,
+          )))?;
       pal8_to_rgb_row(
         indices,
         palette,
@@ -267,11 +265,9 @@ impl PixelSink for MixedSinker<'_, Pal8> {
       let rgb_plane_end =
         one_plane_end
           .checked_mul(3)
-          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-            width: w,
-            height: h,
-            channels: 3,
-          }))?;
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+            w, h, 3,
+          )))?;
       pal8_to_rgb_u16_row(
         indices,
         palette,

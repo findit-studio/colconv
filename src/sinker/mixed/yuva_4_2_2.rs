@@ -748,11 +748,9 @@ fn yuva422p_high_bit_process<
     let buf = rgb_u16.as_deref_mut().unwrap();
     let rgb_plane_end = one_plane_end
       .checked_mul(3)
-      .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-        width: w,
-        height: h,
-        channels: 3,
-      }))?;
+      .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+        w, h, 3,
+      )))?;
     let rgb_plane_start = one_plane_start * 3;
     let rgb_u16_row = &mut buf[rgb_plane_start..rgb_plane_end];
     rgb_u16_dispatch(

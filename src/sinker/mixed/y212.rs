@@ -176,11 +176,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Y212<BE>> {
     // packing 2 pixels each).
     let packed_expected =
       w.checked_mul(2)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 2,
-        }))?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 2,
+        )))?;
     if row.packed().len() != packed_expected {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
         RowSlice::Y212Packed,
@@ -256,11 +254,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Y212<BE>> {
       let rgb_plane_end =
         one_plane_end
           .checked_mul(3)
-          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-            width: w,
-            height: h,
-            channels: 3,
-          }))?;
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+            w, h, 3,
+          )))?;
       let rgb_plane_start = one_plane_start * 3;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
       y212_to_rgb_u16_row_endian(

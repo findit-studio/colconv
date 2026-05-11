@@ -723,11 +723,9 @@ impl PixelSink for MixedSinker<'_, Nv24> {
     // targets with very large widths.
     let uv_expected =
       w.checked_mul(2)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 2,
-        }))?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 2,
+        )))?;
     if row.uv().len() != uv_expected {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
         RowSlice::UvFull,
@@ -920,11 +918,9 @@ impl PixelSink for MixedSinker<'_, Nv42> {
     }
     let vu_expected =
       w.checked_mul(2)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 2,
-        }))?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 2,
+        )))?;
     if row.vu().len() != vu_expected {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
         RowSlice::VuFull,

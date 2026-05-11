@@ -129,11 +129,9 @@ impl PixelSink for MixedSinker<'_, Vuyx> {
     // VUYX row = `width × 4` bytes (one quadruple per pixel).
     let packed_expected =
       w.checked_mul(4)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 4,
-        }))?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 4,
+        )))?;
     if row.packed().len() != packed_expected {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
         RowSlice::VuyxPacked,

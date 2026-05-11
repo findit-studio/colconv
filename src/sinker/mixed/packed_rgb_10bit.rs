@@ -184,11 +184,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, X2Rgb10<BE>> {
       let rgb_plane_end =
         one_plane_end
           .checked_mul(3)
-          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-            width: w,
-            height: h,
-            channels: 3,
-          }))?;
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+            w, h, 3,
+          )))?;
       let rgb_plane_start = one_plane_start * 3;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
       x2rgb10_to_rgb_u16_row_endian::<BE>(x2rgb10_in, rgb_u16_row, w, use_simd);
@@ -337,11 +335,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, X2Bgr10<BE>> {
       let rgb_plane_end =
         one_plane_end
           .checked_mul(3)
-          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-            width: w,
-            height: h,
-            channels: 3,
-          }))?;
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+            w, h, 3,
+          )))?;
       let rgb_plane_start = one_plane_start * 3;
       let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
       x2bgr10_to_rgb_u16_row_endian::<BE>(x2bgr10_in, rgb_u16_row, w, use_simd);

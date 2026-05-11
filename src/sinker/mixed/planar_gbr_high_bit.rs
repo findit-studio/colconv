@@ -246,11 +246,9 @@ macro_rules! impl_gbrp_high_bit {
           let rgb_plane_end =
             one_plane_end
               .checked_mul(3)
-              .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-                width: w,
-                height: h,
-                channels: 3,
-              }))?;
+              .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+                w, h, 3,
+              )))?;
           let rgb_plane_start = one_plane_start * 3;
           let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
           gbr_to_rgb_u16_high_bit_row::<BITS, BE>(g_in, b_in, r_in, rgb_u16_row, w, use_simd);
@@ -531,11 +529,9 @@ macro_rules! impl_gbrap_high_bit {
           let rgb_plane_end =
             one_plane_end
               .checked_mul(3)
-              .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-                width: w,
-                height: h,
-                channels: 3,
-              }))?;
+              .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+                w, h, 3,
+              )))?;
           let rgb_plane_start = one_plane_start * 3;
           let rgb_u16_row = &mut rgb_u16_buf[rgb_plane_start..rgb_plane_end];
           gbr_to_rgb_u16_high_bit_row::<BITS, BE>(g_in, b_in, r_in, rgb_u16_row, w, use_simd);

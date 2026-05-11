@@ -290,11 +290,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrpf32<BE>> {
       let start = one_plane_start * 4;
       let end = one_plane_end
         .checked_mul(4)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 4,
-        }))?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 4,
+        )))?;
       gbrpf32_to_rgba_f32_row::<BE>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
@@ -310,11 +308,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrpf32<BE>> {
       let start = one_plane_start * 4;
       let end = one_plane_end
         .checked_mul(4)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 4,
-        }))?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 4,
+        )))?;
       gbrpf32_to_rgba_f16_row::<BE>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
@@ -667,11 +663,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrapf32<BE>> {
       let start = one_plane_start * 4;
       let end = one_plane_end
         .checked_mul(4)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 4,
-        }))?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 4,
+        )))?;
       gbrapf32_to_rgba_f32_row::<BE>(g_in, b_in, r_in, a_in, &mut buf[start..end], w, use_simd);
     }
 
@@ -687,11 +681,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrapf32<BE>> {
       let start = one_plane_start * 4;
       let end = one_plane_end
         .checked_mul(4)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 4,
-        }))?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 4,
+        )))?;
       gbrapf32_to_rgba_f16_row::<BE>(g_in, b_in, r_in, a_in, &mut buf[start..end], w, use_simd);
     }
 

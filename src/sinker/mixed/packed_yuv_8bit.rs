@@ -132,11 +132,9 @@ impl PixelSink for MixedSinker<'_, Yuyv422> {
 
     let packed_expected =
       w.checked_mul(2)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 2,
-        }))?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 2,
+        )))?;
     if row.yuyv().len() != packed_expected {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
         RowSlice::Yuyv422Packed,
@@ -323,11 +321,9 @@ impl PixelSink for MixedSinker<'_, Uyvy422> {
 
     let packed_expected =
       w.checked_mul(2)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 2,
-        }))?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 2,
+        )))?;
     if row.uyvy().len() != packed_expected {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
         RowSlice::Uyvy422Packed,
@@ -507,11 +503,9 @@ impl PixelSink for MixedSinker<'_, Yvyu422> {
 
     let packed_expected =
       w.checked_mul(2)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 2,
-        }))?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 2,
+        )))?;
     if row.yvyu().len() != packed_expected {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
         RowSlice::Yvyu422Packed,

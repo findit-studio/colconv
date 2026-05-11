@@ -161,11 +161,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Rgb48<BE>> {
 
     let packed_expected =
       w.checked_mul(3)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 3,
-        }))?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 3,
+        )))?;
     if row.rgb48().len() != packed_expected {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
         RowSlice::Rgb48Packed,
@@ -249,13 +247,11 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Rgb48<BE>> {
 
     // u16 RGB — native passthrough.
     if let Some(buf) = rgb_u16.as_deref_mut() {
-      let end = pe
-        .checked_mul(3)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 3,
-        }))?;
+      let end =
+        pe.checked_mul(3)
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+            w, h, 3,
+          )))?;
       rgb48_to_rgb_u16_row_endian::<BE>(in48, &mut buf[ps * 3..end], w, use_simd);
     }
 
@@ -380,11 +376,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Bgr48<BE>> {
 
     let packed_expected =
       w.checked_mul(3)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 3,
-        }))?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 3,
+        )))?;
     if row.bgr48().len() != packed_expected {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
         RowSlice::Bgr48Packed,
@@ -464,13 +458,11 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Bgr48<BE>> {
     }
 
     if let Some(buf) = rgb_u16.as_deref_mut() {
-      let end = pe
-        .checked_mul(3)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 3,
-        }))?;
+      let end =
+        pe.checked_mul(3)
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+            w, h, 3,
+          )))?;
       bgr48_to_rgb_u16_row_endian::<BE>(in48, &mut buf[ps * 3..end], w, use_simd);
     }
 
@@ -610,11 +602,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>> {
 
     let packed_expected =
       w.checked_mul(4)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 4,
-        }))?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 4,
+        )))?;
     if row.rgba64().len() != packed_expected {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
         RowSlice::Rgba64Packed,
@@ -739,13 +729,11 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>> {
 
     if want_rgb_u16 {
       let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
-      let end = pe
-        .checked_mul(3)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 3,
-        }))?;
+      let end =
+        pe.checked_mul(3)
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+            w, h, 3,
+          )))?;
       let rgb_u16_row = &mut rgb_u16_buf[ps * 3..end];
       rgba64_to_rgb_u16_row_endian::<BE>(in64, rgb_u16_row, w, use_simd);
 
@@ -893,11 +881,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Bgra64<BE>> {
 
     let packed_expected =
       w.checked_mul(4)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 4,
-        }))?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 4,
+        )))?;
     if row.bgra64().len() != packed_expected {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
         RowSlice::Bgra64Packed,
@@ -1013,13 +999,11 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Bgra64<BE>> {
     // u16 RGB path.
     if want_rgb_u16 {
       let rgb_u16_buf = rgb_u16.as_deref_mut().unwrap();
-      let end = pe
-        .checked_mul(3)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 3,
-        }))?;
+      let end =
+        pe.checked_mul(3)
+          .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+            w, h, 3,
+          )))?;
       let rgb_u16_row = &mut rgb_u16_buf[ps * 3..end];
       bgra64_to_rgb_u16_row_endian::<BE>(in64, rgb_u16_row, w, use_simd);
 

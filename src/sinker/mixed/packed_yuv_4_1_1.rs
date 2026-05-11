@@ -121,11 +121,9 @@ impl PixelSink for MixedSinker<'_, Uyyvyy411> {
     let packed_expected =
       w.checked_mul(3)
         .map(|n| n / 2)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 3,
-        }))?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 3,
+        )))?;
     if row.uyyvyy().len() != packed_expected {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
         RowSlice::Uyyvyy411Packed,

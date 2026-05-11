@@ -316,11 +316,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrpf16<BE>> {
       let start = one_plane_start * 4;
       let end = one_plane_end
         .checked_mul(4)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 4,
-        }))?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 4,
+        )))?;
       gbrpf16_to_rgba_f16_row::<BE>(g_in, b_in, r_in, &mut buf[start..end], w, use_simd);
     }
 
@@ -716,11 +714,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrapf16<BE>> {
       let start = one_plane_start * 4;
       let end = one_plane_end
         .checked_mul(4)
-        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow {
-          width: w,
-          height: h,
-          channels: 4,
-        }))?;
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w, h, 4,
+        )))?;
       gbrapf16_to_rgba_f16_row::<BE>(g_in, b_in, r_in, a_in, &mut buf[start..end], w, use_simd);
     }
 
