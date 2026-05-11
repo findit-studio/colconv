@@ -227,12 +227,7 @@ fn uyyvyy411_process_rejects_short_packed_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
-      which: RowSlice::Uyyvyy411Packed,
-      row: 0,
-      expected: 24,
-      actual: 23
-    })
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::Uyyvyy411Packed, 0, 24, 23))
   );
 }
 

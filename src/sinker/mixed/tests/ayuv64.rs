@@ -469,12 +469,12 @@ fn ayuv64_width_mismatch_returns_error() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
-      which: RowSlice::Ayuv64Packed,
-      row: 0,
-      expected: 64 * 4,
-      actual: 512
-    })
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+      RowSlice::Ayuv64Packed,
+      0,
+      64 * 4,
+      512
+    ))
   );
 }
 
@@ -489,13 +489,10 @@ fn ayuv64_row_index_oor_returns_error() {
   let packed = std::vec![0u16; 4 * 4]; // width=4, 4 u16 elements per pixel
   let row = Ayuv64Row::new(&packed, 2, ColorMatrix::Bt709, false);
   let err = sink.process(row).err().unwrap();
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
-      row: 2,
-      configured_height: 2
-    })
-  ));
+    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange::new(2, 2))
+  );
 }
 
 // ---- 14: RGB buffer too short ----------------------------------------------
@@ -509,13 +506,10 @@ fn ayuv64_rgb_buffer_too_short_returns_error() {
   let Err(err) = result else {
     panic!("expected RgbBufferTooShort");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RgbBufferTooShort(BufferTooShort {
-      expected: 96,
-      actual: 95
-    })
-  ));
+    MixedSinkerError::RgbBufferTooShort(BufferTooShort::new(96, 95))
+  );
 }
 
 // ---- 15: RGBA buffer too short ---------------------------------------------
@@ -529,13 +523,10 @@ fn ayuv64_rgba_buffer_too_short_returns_error() {
   let Err(err) = result else {
     panic!("expected RgbaBufferTooShort");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
-      expected: 96,
-      actual: 90
-    })
-  ));
+    MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(96, 90))
+  );
 }
 
 // ---- 16: RGB u16 buffer too short ------------------------------------------
@@ -549,13 +540,10 @@ fn ayuv64_rgb_u16_buffer_too_short_returns_error() {
   let Err(err) = result else {
     panic!("expected RgbU16BufferTooShort");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RgbU16BufferTooShort(BufferTooShort {
-      expected: 96,
-      actual: 90
-    })
-  ));
+    MixedSinkerError::RgbU16BufferTooShort(BufferTooShort::new(96, 90))
+  );
 }
 
 // ---- 17: RGBA u16 buffer too short -----------------------------------------
@@ -569,13 +557,10 @@ fn ayuv64_rgba_u16_buffer_too_short_returns_error() {
   let Err(err) = result else {
     panic!("expected RgbaU16BufferTooShort");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RgbaU16BufferTooShort(BufferTooShort {
-      expected: 96,
-      actual: 88
-    })
-  ));
+    MixedSinkerError::RgbaU16BufferTooShort(BufferTooShort::new(96, 88))
+  );
 }
 
 // ---- 18: Luma buffer too short ---------------------------------------------
@@ -589,13 +574,10 @@ fn ayuv64_luma_buffer_too_short_returns_error() {
   let Err(err) = result else {
     panic!("expected LumaBufferTooShort");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::LumaBufferTooShort(BufferTooShort {
-      expected: 24,
-      actual: 20
-    })
-  ));
+    MixedSinkerError::LumaBufferTooShort(BufferTooShort::new(24, 20))
+  );
 }
 
 // ---- 19: Luma u16 buffer too short -----------------------------------------
@@ -609,13 +591,10 @@ fn ayuv64_luma_u16_buffer_too_short_returns_error() {
   let Err(err) = result else {
     panic!("expected LumaU16BufferTooShort");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
-      expected: 24,
-      actual: 20
-    })
-  ));
+    MixedSinkerError::LumaU16BufferTooShort(BufferTooShort::new(24, 20))
+  );
 }
 
 // ---- 20: HSV buffer too short (H plane) ------------------------------------
@@ -632,12 +611,9 @@ fn ayuv64_hsv_buffer_too_short_returns_error() {
     panic!("expected HsvPlaneTooShort");
   };
   assert!(matches!(
-    err,
-    MixedSinkerError::HsvPlaneTooShort(HsvPlaneTooShort {
-      which: HsvPlane::H,
-      expected: 16,
-      actual: 15
-    })
+    &err,
+    MixedSinkerError::HsvPlaneTooShort(e)
+      if matches!(e.which(), HsvPlane::H) && e.expected() == 16 && e.actual() == 15
   ));
 }
 

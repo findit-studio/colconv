@@ -55,10 +55,10 @@ impl<'a> MixedSinker<'a, Uyyvyy411> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
+      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
         expected,
-        actual: buf.len(),
-      }));
+        buf.len(),
+      )));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -77,10 +77,9 @@ impl<'a> MixedSinker<'a, Uyyvyy411> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected_elems = self.frame_pixels()?;
     if buf.len() < expected_elems {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
-        expected: expected_elems,
-        actual: buf.len(),
-      }));
+      return Err(MixedSinkerError::LumaU16BufferTooShort(
+        BufferTooShort::new(expected_elems, buf.len()),
+      ));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -96,10 +95,10 @@ impl PixelSink for MixedSinker<'_, Uyyvyy411> {
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     check_dimensions_match(self.width, self.height, width, height)?;
     if self.width & 3 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment {
-        width: self.width,
-        required: WidthAlignmentRequirement::MultipleOfFour,
-      }));
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
+        self.width,
+        WidthAlignmentRequirement::MultipleOfFour,
+      )));
     }
     Ok(())
   }
@@ -111,10 +110,10 @@ impl PixelSink for MixedSinker<'_, Uyyvyy411> {
     let use_simd = self.simd;
 
     if w & 3 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment {
-        width: w,
-        required: WidthAlignmentRequirement::MultipleOfFour,
-      }));
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
+        w,
+        WidthAlignmentRequirement::MultipleOfFour,
+      )));
     }
 
     // Row length: `width * 3 / 2` (12 bpp). `w` is a multiple of 4 by
@@ -129,18 +128,17 @@ impl PixelSink for MixedSinker<'_, Uyyvyy411> {
           channels: 3,
         }))?;
     if row.uyyvyy().len() != packed_expected {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
-        which: RowSlice::Uyyvyy411Packed,
-        row: idx,
-        expected: packed_expected,
-        actual: row.uyyvyy().len(),
-      }));
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::Uyyvyy411Packed,
+        idx,
+        packed_expected,
+        row.uyyvyy().len(),
+      )));
     }
     if idx >= self.height {
-      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
-        row: idx,
-        configured_height: self.height,
-      }));
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, self.height),
+      ));
     }
 
     let Self {

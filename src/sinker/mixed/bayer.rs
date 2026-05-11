@@ -60,34 +60,33 @@ impl PixelSink for MixedSinker<'_, Bayer> {
     // no-panic contract: bad lengths surface as `RowShapeMismatch`,
     // not as a kernel-level `assert!` panic.
     if row.mid().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
-        which: RowSlice::BayerMid,
-        row: idx,
-        expected: w,
-        actual: row.mid().len(),
-      }));
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::BayerMid,
+        idx,
+        w,
+        row.mid().len(),
+      )));
     }
     if row.above().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
-        which: RowSlice::BayerAbove,
-        row: idx,
-        expected: w,
-        actual: row.above().len(),
-      }));
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::BayerAbove,
+        idx,
+        w,
+        row.above().len(),
+      )));
     }
     if row.below().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
-        which: RowSlice::BayerBelow,
-        row: idx,
-        expected: w,
-        actual: row.below().len(),
-      }));
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::BayerBelow,
+        idx,
+        w,
+        row.below().len(),
+      )));
     }
     if idx >= self.height {
-      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
-        row: idx,
-        configured_height: self.height,
-      }));
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, self.height),
+      ));
     }
 
     // `Copy`, captured before the `Self { .. }` destructure so the
@@ -183,10 +182,10 @@ impl<'a, const BITS: u32> MixedSinker<'a, Bayer16<BITS>> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort {
+      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort::new(
         expected,
-        actual: buf.len(),
-      }));
+        buf.len(),
+      )));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -238,34 +237,33 @@ impl<const BITS: u32> PixelSink for MixedSinker<'_, Bayer16<BITS>> {
 
     // See the 8-bit Bayer impl for the row-shape rationale.
     if row.mid().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
-        which: RowSlice::Bayer16Mid,
-        row: idx,
-        expected: w,
-        actual: row.mid().len(),
-      }));
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::Bayer16Mid,
+        idx,
+        w,
+        row.mid().len(),
+      )));
     }
     if row.above().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
-        which: RowSlice::Bayer16Above,
-        row: idx,
-        expected: w,
-        actual: row.above().len(),
-      }));
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::Bayer16Above,
+        idx,
+        w,
+        row.above().len(),
+      )));
     }
     if row.below().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
-        which: RowSlice::Bayer16Below,
-        row: idx,
-        expected: w,
-        actual: row.below().len(),
-      }));
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::Bayer16Below,
+        idx,
+        w,
+        row.below().len(),
+      )));
     }
     if idx >= self.height {
-      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
-        row: idx,
-        configured_height: self.height,
-      }));
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, self.height),
+      ));
     }
 
     // `Copy`, captured before the `Self { .. }` destructure so the

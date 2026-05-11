@@ -64,10 +64,10 @@ impl<'a, const BE: bool> MixedSinker<'a, V210<BE>> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
+      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
         expected,
-        actual: buf.len(),
-      }));
+        buf.len(),
+      )));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -86,10 +86,10 @@ impl<'a, const BE: bool> MixedSinker<'a, V210<BE>> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort {
+      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort::new(
         expected,
-        actual: buf.len(),
-      }));
+        buf.len(),
+      )));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -108,10 +108,9 @@ impl<'a, const BE: bool> MixedSinker<'a, V210<BE>> {
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaU16BufferTooShort(BufferTooShort {
-        expected,
-        actual: buf.len(),
-      }));
+      return Err(MixedSinkerError::RgbaU16BufferTooShort(
+        BufferTooShort::new(expected, buf.len()),
+      ));
     }
     self.rgba_u16 = Some(buf);
     Ok(self)
@@ -132,10 +131,9 @@ impl<'a, const BE: bool> MixedSinker<'a, V210<BE>> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
-        expected,
-        actual: buf.len(),
-      }));
+      return Err(MixedSinkerError::LumaU16BufferTooShort(
+        BufferTooShort::new(expected, buf.len()),
+      ));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -151,10 +149,10 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, V210<BE>> {
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     check_dimensions_match(self.width, self.height, width, height)?;
     if !self.width.is_multiple_of(2) {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment {
-        width: self.width,
-        required: WidthAlignmentRequirement::Even,
-      }));
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
+        self.width,
+        WidthAlignmentRequirement::Even,
+      )));
     }
     Ok(())
   }
@@ -167,10 +165,10 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, V210<BE>> {
     let use_simd = self.simd;
 
     if !w.is_multiple_of(2) {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment {
-        width: w,
-        required: WidthAlignmentRequirement::Even,
-      }));
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
+        w,
+        WidthAlignmentRequirement::Even,
+      )));
     }
 
     let packed_expected =
@@ -182,18 +180,17 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, V210<BE>> {
           channels: 16,
         }))?;
     if row.v210().len() != packed_expected {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
-        which: RowSlice::V210Packed,
-        row: idx,
-        expected: packed_expected,
-        actual: row.v210().len(),
-      }));
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::V210Packed,
+        idx,
+        packed_expected,
+        row.v210().len(),
+      )));
     }
     if idx >= self.height {
-      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
-        row: idx,
-        configured_height: self.height,
-      }));
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, self.height),
+      ));
     }
 
     let Self {

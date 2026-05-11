@@ -254,13 +254,10 @@ fn y210_odd_width_returns_err() {
   let buf = std::vec![0u16; 6];
   let row = Y210Row::new(&buf, 0, ColorMatrix::Bt601, true);
   let err = sink.process(row).err().unwrap();
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::WidthAlignment(WidthAlignment {
-      width: 3,
-      required: WidthAlignmentRequirement::Even
-    })
-  ));
+    MixedSinkerError::WidthAlignment(WidthAlignment::new(3, WidthAlignmentRequirement::Even))
+  );
 }
 
 #[test]
@@ -274,12 +271,7 @@ fn y210_process_rejects_short_packed_slice() {
   let err = sink.process(row).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
-      which: RowSlice::Y210Packed,
-      row: 0,
-      expected: 12,
-      actual: 11
-    })
+    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::Y210Packed, 0, 12, 11))
   );
 }
 
@@ -291,13 +283,10 @@ fn y210_luma_u16_buffer_too_short_returns_err() {
   let Err(err) = result else {
     panic!("expected LumaU16BufferTooShort");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
-      expected: 48,
-      actual: 42
-    })
-  ));
+    MixedSinkerError::LumaU16BufferTooShort(BufferTooShort::new(48, 42))
+  );
 }
 
 // ---- Cross-format oracles (Task 11) -----------------------------------

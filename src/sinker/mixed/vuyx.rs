@@ -66,10 +66,9 @@ impl<'a> MixedSinker<'a, Vuyx> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
-        expected,
-        actual: buf.len(),
-      }));
+      return Err(MixedSinkerError::LumaU16BufferTooShort(
+        BufferTooShort::new(expected, buf.len()),
+      ));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -101,10 +100,10 @@ impl<'a> MixedSinker<'a, Vuyx> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
+      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
         expected,
-        actual: buf.len(),
-      }));
+        buf.len(),
+      )));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -137,18 +136,17 @@ impl PixelSink for MixedSinker<'_, Vuyx> {
           channels: 4,
         }))?;
     if row.packed().len() != packed_expected {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
-        which: RowSlice::VuyxPacked,
-        row: idx,
-        expected: packed_expected,
-        actual: row.packed().len(),
-      }));
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::VuyxPacked,
+        idx,
+        packed_expected,
+        row.packed().len(),
+      )));
     }
     if idx >= self.height {
-      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
-        row: idx,
-        configured_height: self.height,
-      }));
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, self.height),
+      ));
     }
 
     let Self {

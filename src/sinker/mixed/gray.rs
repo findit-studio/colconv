@@ -78,10 +78,10 @@ impl<'a> MixedSinker<'a, Gray8> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
+      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
         expected,
-        actual: buf.len(),
-      }));
+        buf.len(),
+      )));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -100,10 +100,9 @@ impl<'a> MixedSinker<'a, Gray8> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
-        expected,
-        actual: buf.len(),
-      }));
+      return Err(MixedSinkerError::LumaU16BufferTooShort(
+        BufferTooShort::new(expected, buf.len()),
+      ));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -128,18 +127,17 @@ impl PixelSink for MixedSinker<'_, Gray8> {
 
     // Row shape check — defense-in-depth before any unsafe kernel.
     if row.y().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
-        which: RowSlice::Y,
-        row: idx,
-        expected: w,
-        actual: row.y().len(),
-      }));
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::Y,
+        idx,
+        w,
+        row.y().len(),
+      )));
     }
     if idx >= h {
-      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
-        row: idx,
-        configured_height: h,
-      }));
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, h),
+      ));
     }
 
     let Self {
@@ -387,18 +385,17 @@ fn check_gray_n_row_shape(
   h: usize,
 ) -> Result<(), MixedSinkerError> {
   if y_len != w {
-    return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
-      which: RowSlice::Y,
-      row: idx,
-      expected: w,
-      actual: y_len,
-    }));
+    return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+      RowSlice::Y,
+      idx,
+      w,
+      y_len,
+    )));
   }
   if idx >= h {
-    return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
-      row: idx,
-      configured_height: h,
-    }));
+    return Err(MixedSinkerError::RowIndexOutOfRange(
+      RowIndexOutOfRange::new(idx, h),
+    ));
   }
   Ok(())
 }
@@ -419,10 +416,10 @@ macro_rules! impl_gray_n_sinker {
       pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
         let expected = self.frame_bytes(4)?;
         if buf.len() < expected {
-          return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
+          return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
             expected,
-            actual: buf.len(),
-          }));
+            buf.len(),
+          )));
         }
         self.rgba = Some(buf);
         Ok(self)
@@ -440,10 +437,10 @@ macro_rules! impl_gray_n_sinker {
       pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
         let expected = self.frame_bytes(3)?;
         if buf.len() < expected {
-          return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort {
+          return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort::new(
             expected,
-            actual: buf.len(),
-          }));
+            buf.len(),
+          )));
         }
         self.rgb_u16 = Some(buf);
         Ok(self)
@@ -462,10 +459,9 @@ macro_rules! impl_gray_n_sinker {
       pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
         let expected = self.frame_bytes(4)?;
         if buf.len() < expected {
-          return Err(MixedSinkerError::RgbaU16BufferTooShort(BufferTooShort {
-            expected,
-            actual: buf.len(),
-          }));
+          return Err(MixedSinkerError::RgbaU16BufferTooShort(
+            BufferTooShort::new(expected, buf.len()),
+          ));
         }
         self.rgba_u16 = Some(buf);
         Ok(self)
@@ -483,10 +479,9 @@ macro_rules! impl_gray_n_sinker {
       pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
         let expected = self.frame_pixels()?;
         if buf.len() < expected {
-          return Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
-            expected,
-            actual: buf.len(),
-          }));
+          return Err(MixedSinkerError::LumaU16BufferTooShort(
+            BufferTooShort::new(expected, buf.len()),
+          ));
         }
         self.luma_u16 = Some(buf);
         Ok(self)
@@ -568,10 +563,10 @@ impl<'a, const BE: bool> MixedSinker<'a, Gray16<BE>> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
+      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
         expected,
-        actual: buf.len(),
-      }));
+        buf.len(),
+      )));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -589,10 +584,10 @@ impl<'a, const BE: bool> MixedSinker<'a, Gray16<BE>> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort {
+      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort::new(
         expected,
-        actual: buf.len(),
-      }));
+        buf.len(),
+      )));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -610,10 +605,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Gray16<BE>> {
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaU16BufferTooShort(BufferTooShort {
-        expected,
-        actual: buf.len(),
-      }));
+      return Err(MixedSinkerError::RgbaU16BufferTooShort(
+        BufferTooShort::new(expected, buf.len()),
+      ));
     }
     self.rgba_u16 = Some(buf);
     Ok(self)
@@ -631,10 +625,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Gray16<BE>> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
-        expected,
-        actual: buf.len(),
-      }));
+      return Err(MixedSinkerError::LumaU16BufferTooShort(
+        BufferTooShort::new(expected, buf.len()),
+      ));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -660,18 +653,17 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gray16<BE>> {
     let full_range = row.full_range();
 
     if row.y().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
-        which: RowSlice::Y,
-        row: idx,
-        expected: w,
-        actual: row.y().len(),
-      }));
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::Y,
+        idx,
+        w,
+        row.y().len(),
+      )));
     }
     if idx >= h {
-      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
-        row: idx,
-        configured_height: h,
-      }));
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, h),
+      ));
     }
 
     let Self {
@@ -824,10 +816,10 @@ impl<'a, const BE: bool> MixedSinker<'a, Grayf32<BE>> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
+      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
         expected,
-        actual: buf.len(),
-      }));
+        buf.len(),
+      )));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -844,10 +836,10 @@ impl<'a, const BE: bool> MixedSinker<'a, Grayf32<BE>> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort {
+      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort::new(
         expected,
-        actual: buf.len(),
-      }));
+        buf.len(),
+      )));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -864,10 +856,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Grayf32<BE>> {
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaU16BufferTooShort(BufferTooShort {
-        expected,
-        actual: buf.len(),
-      }));
+      return Err(MixedSinkerError::RgbaU16BufferTooShort(
+        BufferTooShort::new(expected, buf.len()),
+      ));
     }
     self.rgba_u16 = Some(buf);
     Ok(self)
@@ -884,10 +875,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Grayf32<BE>> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
-        expected,
-        actual: buf.len(),
-      }));
+      return Err(MixedSinkerError::LumaU16BufferTooShort(
+        BufferTooShort::new(expected, buf.len()),
+      ));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -904,10 +894,10 @@ impl<'a, const BE: bool> MixedSinker<'a, Grayf32<BE>> {
   pub fn set_rgb_f32(&mut self, buf: &'a mut [f32]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbF32BufferTooShort(BufferTooShort {
+      return Err(MixedSinkerError::RgbF32BufferTooShort(BufferTooShort::new(
         expected,
-        actual: buf.len(),
-      }));
+        buf.len(),
+      )));
     }
     self.rgb_f32 = Some(buf);
     Ok(self)
@@ -924,10 +914,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Grayf32<BE>> {
   pub fn set_luma_f32(&mut self, buf: &'a mut [f32]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(1)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaF32BufferTooShort(BufferTooShort {
-        expected,
-        actual: buf.len(),
-      }));
+      return Err(MixedSinkerError::LumaF32BufferTooShort(
+        BufferTooShort::new(expected, buf.len()),
+      ));
     }
     self.luma_f32 = Some(buf);
     Ok(self)
@@ -951,18 +940,17 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Grayf32<BE>> {
     let use_simd = self.simd;
 
     if row.y().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
-        which: RowSlice::Y,
-        row: idx,
-        expected: w,
-        actual: row.y().len(),
-      }));
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::Y,
+        idx,
+        w,
+        row.y().len(),
+      )));
     }
     if idx >= h {
-      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
-        row: idx,
-        configured_height: h,
-      }));
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, h),
+      ));
     }
 
     let y_plane = row.y();
@@ -1121,10 +1109,10 @@ impl<'a> MixedSinker<'a, Ya8> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
+      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
         expected,
-        actual: buf.len(),
-      }));
+        buf.len(),
+      )));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -1141,10 +1129,10 @@ impl<'a> MixedSinker<'a, Ya8> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort {
+      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort::new(
         expected,
-        actual: buf.len(),
-      }));
+        buf.len(),
+      )));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -1161,10 +1149,9 @@ impl<'a> MixedSinker<'a, Ya8> {
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaU16BufferTooShort(BufferTooShort {
-        expected,
-        actual: buf.len(),
-      }));
+      return Err(MixedSinkerError::RgbaU16BufferTooShort(
+        BufferTooShort::new(expected, buf.len()),
+      ));
     }
     self.rgba_u16 = Some(buf);
     Ok(self)
@@ -1181,10 +1168,9 @@ impl<'a> MixedSinker<'a, Ya8> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
-        expected,
-        actual: buf.len(),
-      }));
+      return Err(MixedSinkerError::LumaU16BufferTooShort(
+        BufferTooShort::new(expected, buf.len()),
+      ));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -1209,18 +1195,17 @@ impl PixelSink for MixedSinker<'_, Ya8> {
     let packed = row.packed(); // &[u8], length = width * 2
 
     if packed.len() != w * 2 {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
-        which: RowSlice::Y,
-        row: idx,
-        expected: w * 2,
-        actual: packed.len(),
-      }));
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::Y,
+        idx,
+        w * 2,
+        packed.len(),
+      )));
     }
     if idx >= h {
-      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
-        row: idx,
-        configured_height: h,
-      }));
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, h),
+      ));
     }
 
     let one_plane_start = idx * w;
@@ -1348,10 +1333,10 @@ impl<'a, const BE: bool> MixedSinker<'a, Ya16<BE>> {
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
+      return Err(MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(
         expected,
-        actual: buf.len(),
-      }));
+        buf.len(),
+      )));
     }
     self.rgba = Some(buf);
     Ok(self)
@@ -1368,10 +1353,10 @@ impl<'a, const BE: bool> MixedSinker<'a, Ya16<BE>> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(3)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort {
+      return Err(MixedSinkerError::RgbU16BufferTooShort(BufferTooShort::new(
         expected,
-        actual: buf.len(),
-      }));
+        buf.len(),
+      )));
     }
     self.rgb_u16 = Some(buf);
     Ok(self)
@@ -1388,10 +1373,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Ya16<BE>> {
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_bytes(4)?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::RgbaU16BufferTooShort(BufferTooShort {
-        expected,
-        actual: buf.len(),
-      }));
+      return Err(MixedSinkerError::RgbaU16BufferTooShort(
+        BufferTooShort::new(expected, buf.len()),
+      ));
     }
     self.rgba_u16 = Some(buf);
     Ok(self)
@@ -1408,10 +1392,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Ya16<BE>> {
   pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     let expected = self.frame_pixels()?;
     if buf.len() < expected {
-      return Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
-        expected,
-        actual: buf.len(),
-      }));
+      return Err(MixedSinkerError::LumaU16BufferTooShort(
+        BufferTooShort::new(expected, buf.len()),
+      ));
     }
     self.luma_u16 = Some(buf);
     Ok(self)
@@ -1436,18 +1419,17 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Ya16<BE>> {
     let packed = row.packed(); // &[u16], length = width * 2
 
     if packed.len() != w * 2 {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch {
-        which: RowSlice::Y,
-        row: idx,
-        expected: w * 2,
-        actual: packed.len(),
-      }));
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::Y,
+        idx,
+        w * 2,
+        packed.len(),
+      )));
     }
     if idx >= h {
-      return Err(MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange {
-        row: idx,
-        configured_height: h,
-      }));
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, h),
+      ));
     }
 
     let one_plane_start = idx * w;

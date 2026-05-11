@@ -175,13 +175,10 @@ fn yuv444p_rgba_buffer_too_short_returns_err() {
   let Err(err) = result else {
     panic!("expected RgbaBufferTooShort error");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
-      expected: 512,
-      actual: 511
-    })
-  ));
+    MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(512, 511))
+  );
 }
 
 #[test]
@@ -725,13 +722,10 @@ fn yuv422p_rgba_buffer_too_short_returns_err() {
   let Err(err) = result else {
     panic!("expected RgbaBufferTooShort error");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
-      expected: 512,
-      actual: 511
-    })
-  ));
+    MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(512, 511))
+  );
 }
 
 #[test]
@@ -1170,13 +1164,10 @@ fn yuv440p_rgba_buffer_too_short_returns_err() {
   let Err(err) = result else {
     panic!("expected RgbaBufferTooShort error");
   };
-  assert!(matches!(
+  assert_eq!(
     err,
-    MixedSinkerError::RgbaBufferTooShort(BufferTooShort {
-      expected: 512,
-      actual: 511
-    })
-  ));
+    MixedSinkerError::RgbaBufferTooShort(BufferTooShort::new(512, 511))
+  );
 }
 
 #[test]
@@ -1507,14 +1498,14 @@ fn yuv422p_with_luma_u16_extracts_y_zero_extended() {
 #[test]
 fn yuv422p_luma_u16_buffer_too_short_returns_err() {
   let mut buf = std::vec![0u16; 16 * 8 - 1];
-  let result = MixedSinker::<Yuv422p>::new(16, 8).with_luma_u16(&mut buf);
-  assert!(matches!(
-    result,
-    Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
-      expected: 128,
-      actual: 127
-    }))
-  ));
+  let err = MixedSinker::<Yuv422p>::new(16, 8)
+    .with_luma_u16(&mut buf)
+    .err()
+    .unwrap();
+  assert_eq!(
+    err,
+    MixedSinkerError::LumaU16BufferTooShort(BufferTooShort::new(128, 127))
+  );
 }
 
 #[test]
@@ -1558,14 +1549,14 @@ fn yuv444p_with_luma_u16_extracts_y_zero_extended() {
 #[test]
 fn yuv444p_luma_u16_buffer_too_short_returns_err() {
   let mut buf = std::vec![0u16; 16 * 8 - 1];
-  let result = MixedSinker::<Yuv444p>::new(16, 8).with_luma_u16(&mut buf);
-  assert!(matches!(
-    result,
-    Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
-      expected: 128,
-      actual: 127
-    }))
-  ));
+  let err = MixedSinker::<Yuv444p>::new(16, 8)
+    .with_luma_u16(&mut buf)
+    .err()
+    .unwrap();
+  assert_eq!(
+    err,
+    MixedSinkerError::LumaU16BufferTooShort(BufferTooShort::new(128, 127))
+  );
 }
 
 #[test]
@@ -1611,12 +1602,12 @@ fn yuv440p_with_luma_u16_extracts_y_zero_extended() {
 #[test]
 fn yuv440p_luma_u16_buffer_too_short_returns_err() {
   let mut buf = std::vec![0u16; 16 * 8 - 1];
-  let result = MixedSinker::<Yuv440p>::new(16, 8).with_luma_u16(&mut buf);
-  assert!(matches!(
-    result,
-    Err(MixedSinkerError::LumaU16BufferTooShort(BufferTooShort {
-      expected: 128,
-      actual: 127
-    }))
-  ));
+  let err = MixedSinker::<Yuv440p>::new(16, 8)
+    .with_luma_u16(&mut buf)
+    .err()
+    .unwrap();
+  assert_eq!(
+    err,
+    MixedSinkerError::LumaU16BufferTooShort(BufferTooShort::new(128, 127))
+  );
 }
