@@ -19,7 +19,7 @@
 //! walker (`gbrpfXX_to::<BE>(...)`) into the sinker dispatch, which
 //! monomorphizes the kernel call as `gbrpfXX_to_*_row::<BE>(...)`.
 
-use derive_more::{IsVariant, TryUnwrap, Unwrap};
+use derive_more::IsVariant;
 use thiserror::Error;
 
 // ---------------------------------------------------------------------------
@@ -28,11 +28,9 @@ use thiserror::Error;
 
 /// Errors returned by the `try_new` constructors on the four float-domain
 /// planar GBR frame types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum GbrFloatFrameError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("zero width or height: {width}×{height}")]
   ZeroDimension {
@@ -42,8 +40,6 @@ pub enum GbrFloatFrameError {
     height: u32,
   },
 
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width × height` exceeds `i32::MAX` (the FFmpeg plane-size ceiling).
   #[error("dimension overflow: {width}×{height} exceeds i32::MAX")]
   DimensionOverflow {
@@ -53,8 +49,6 @@ pub enum GbrFloatFrameError {
     height: u32,
   },
 
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// A plane slice is shorter than `stride * (height - 1) + width`.
   #[error("plane '{plane}' too short: expected >= {expected}, got {actual}")]
   PlaneTooShort {
@@ -66,8 +60,6 @@ pub enum GbrFloatFrameError {
     actual: usize,
   },
 
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// A plane's stride is less than `width` (in elements).
   #[error("stride for plane '{plane}' must be >= width: stride={stride}, width={width}")]
   StrideBelowWidth {
@@ -79,8 +71,6 @@ pub enum GbrFloatFrameError {
     width: u32,
   },
 
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride * (height - 1) + width` overflows `usize` (32-bit targets only).
   #[error("plane '{plane}' geometry overflows usize: stride={stride}, height={height}")]
   GeometryOverflow {

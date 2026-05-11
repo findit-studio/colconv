@@ -37,7 +37,7 @@
 //! stable deterministic output. Scanning every sample at video rates is
 //! prohibitive — same rationale as `Yuv420pFrame16`.
 
-use derive_more::{IsVariant, TryUnwrap, Unwrap};
+use derive_more::IsVariant;
 use thiserror::Error;
 
 /// A validated planar GBR frame at high bit depth (`AV_PIX_FMT_GBRP{9,10,12,14,16}{LE,BE}`).
@@ -284,11 +284,9 @@ impl<'a, const BITS: u32, const BE: bool> GbrpHighBitFrame<'a, BITS, BE> {
 ///
 /// Variant shape mirrors [`super::GbrpFrameError`] but with all sizes
 /// expressed in **samples** (`u16` elements) instead of bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum GbrpHighBitFrameError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -297,8 +295,6 @@ pub enum GbrpHighBitFrameError {
     /// The supplied height.
     height: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `g_stride < width` (in samples).
   #[error("g_stride ({g_stride}) is smaller than width ({width})")]
   GStrideTooSmall {
@@ -307,8 +303,6 @@ pub enum GbrpHighBitFrameError {
     /// The supplied G-plane stride (samples).
     g_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `b_stride < width` (in samples).
   #[error("b_stride ({b_stride}) is smaller than width ({width})")]
   BStrideTooSmall {
@@ -317,8 +311,6 @@ pub enum GbrpHighBitFrameError {
     /// The supplied B-plane stride (samples).
     b_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `r_stride < width` (in samples).
   #[error("r_stride ({r_stride}) is smaller than width ({width})")]
   RStrideTooSmall {
@@ -327,8 +319,6 @@ pub enum GbrpHighBitFrameError {
     /// The supplied R-plane stride (samples).
     r_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// G plane is shorter than `g_stride * height` samples.
   #[error("G plane has {actual} samples but at least {expected} are required")]
   GPlaneTooShort {
@@ -337,8 +327,6 @@ pub enum GbrpHighBitFrameError {
     /// Actual samples supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// B plane is shorter than `b_stride * height` samples.
   #[error("B plane has {actual} samples but at least {expected} are required")]
   BPlaneTooShort {
@@ -347,8 +335,6 @@ pub enum GbrpHighBitFrameError {
     /// Actual samples supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// R plane is shorter than `r_stride * height` samples.
   #[error("R plane has {actual} samples but at least {expected} are required")]
   RPlaneTooShort {
@@ -357,8 +343,6 @@ pub enum GbrpHighBitFrameError {
     /// Actual samples supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (32-bit targets only).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -678,11 +662,9 @@ impl<'a, const BITS: u32, const BE: bool> GbrapHighBitFrame<'a, BITS, BE> {
 /// Errors returned by [`GbrapHighBitFrame::try_new`].
 ///
 /// Mirrors [`GbrpHighBitFrameError`] extended with `A`-plane variants.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum GbrapHighBitFrameError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -691,8 +673,6 @@ pub enum GbrapHighBitFrameError {
     /// The supplied height.
     height: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `g_stride < width` (in samples).
   #[error("g_stride ({g_stride}) is smaller than width ({width})")]
   GStrideTooSmall {
@@ -701,8 +681,6 @@ pub enum GbrapHighBitFrameError {
     /// The supplied G-plane stride (samples).
     g_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `b_stride < width` (in samples).
   #[error("b_stride ({b_stride}) is smaller than width ({width})")]
   BStrideTooSmall {
@@ -711,8 +689,6 @@ pub enum GbrapHighBitFrameError {
     /// The supplied B-plane stride (samples).
     b_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `r_stride < width` (in samples).
   #[error("r_stride ({r_stride}) is smaller than width ({width})")]
   RStrideTooSmall {
@@ -721,8 +697,6 @@ pub enum GbrapHighBitFrameError {
     /// The supplied R-plane stride (samples).
     r_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `a_stride < width` (in samples).
   #[error("a_stride ({a_stride}) is smaller than width ({width})")]
   AStrideTooSmall {
@@ -731,8 +705,6 @@ pub enum GbrapHighBitFrameError {
     /// The supplied A-plane stride (samples).
     a_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// G plane is shorter than `g_stride * height` samples.
   #[error("G plane has {actual} samples but at least {expected} are required")]
   GPlaneTooShort {
@@ -741,8 +713,6 @@ pub enum GbrapHighBitFrameError {
     /// Actual samples supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// B plane is shorter than `b_stride * height` samples.
   #[error("B plane has {actual} samples but at least {expected} are required")]
   BPlaneTooShort {
@@ -751,8 +721,6 @@ pub enum GbrapHighBitFrameError {
     /// Actual samples supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// R plane is shorter than `r_stride * height` samples.
   #[error("R plane has {actual} samples but at least {expected} are required")]
   RPlaneTooShort {
@@ -761,8 +729,6 @@ pub enum GbrapHighBitFrameError {
     /// Actual samples supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// A plane is shorter than `a_stride * height` samples.
   #[error("A plane has {actual} samples but at least {expected} are required")]
   APlaneTooShort {
@@ -771,8 +737,6 @@ pub enum GbrapHighBitFrameError {
     /// Actual samples supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (32-bit targets only).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {

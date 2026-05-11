@@ -33,17 +33,15 @@
 //! pointer casts to `&[u16]` are undefined behaviour if the byte buffer is
 //! not 2-byte aligned.
 
-use derive_more::{IsVariant, TryUnwrap, Unwrap};
+use derive_more::IsVariant;
 use thiserror::Error;
 
 // ---- Rgb48Frame --------------------------------------------------------------
 
 /// Errors returned by [`Rgb48Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum Rgb48FrameError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -52,8 +50,6 @@ pub enum Rgb48FrameError {
     /// The supplied height.
     height: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride < 3 * width` (in u16 elements).
   #[error("stride ({stride}) is smaller than 3 * width ({min_stride}) u16 elements")]
   StrideTooSmall {
@@ -62,8 +58,6 @@ pub enum Rgb48FrameError {
     /// The supplied stride.
     stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// Plane is shorter than `stride * height` u16 elements.
   #[error("RGB48 plane has {actual} u16 elements but at least {expected} are required")]
   PlaneTooShort {
@@ -72,8 +66,6 @@ pub enum Rgb48FrameError {
     /// Actual u16 elements supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`.
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -82,8 +74,6 @@ pub enum Rgb48FrameError {
     /// Row count that overflowed against the stride.
     rows: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `3 * width` overflows `u32`.
   #[error("3 * width overflows u32 ({width} too large)")]
   WidthOverflow {
@@ -213,11 +203,9 @@ impl<'a, const BE: bool> Rgb48Frame<'a, BE> {
 // ---- Bgr48Frame --------------------------------------------------------------
 
 /// Errors returned by [`Bgr48Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum Bgr48FrameError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -226,8 +214,6 @@ pub enum Bgr48FrameError {
     /// The supplied height.
     height: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride < 3 * width` (in u16 elements).
   #[error("stride ({stride}) is smaller than 3 * width ({min_stride}) u16 elements")]
   StrideTooSmall {
@@ -236,8 +222,6 @@ pub enum Bgr48FrameError {
     /// The supplied stride.
     stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// Plane is shorter than `stride * height` u16 elements.
   #[error("BGR48 plane has {actual} u16 elements but at least {expected} are required")]
   PlaneTooShort {
@@ -246,8 +230,6 @@ pub enum Bgr48FrameError {
     /// Actual u16 elements supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`.
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -256,8 +238,6 @@ pub enum Bgr48FrameError {
     /// Row count that overflowed against the stride.
     rows: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `3 * width` overflows `u32`.
   #[error("3 * width overflows u32 ({width} too large)")]
   WidthOverflow {
@@ -374,11 +354,9 @@ impl<'a, const BE: bool> Bgr48Frame<'a, BE> {
 // ---- Rgba64Frame -------------------------------------------------------------
 
 /// Errors returned by [`Rgba64Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum Rgba64FrameError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -387,8 +365,6 @@ pub enum Rgba64FrameError {
     /// The supplied height.
     height: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride < 4 * width` (in u16 elements).
   #[error("stride ({stride}) is smaller than 4 * width ({min_stride}) u16 elements")]
   StrideTooSmall {
@@ -397,8 +373,6 @@ pub enum Rgba64FrameError {
     /// The supplied stride.
     stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// Plane is shorter than `stride * height` u16 elements.
   #[error("RGBA64 plane has {actual} u16 elements but at least {expected} are required")]
   PlaneTooShort {
@@ -407,8 +381,6 @@ pub enum Rgba64FrameError {
     /// Actual u16 elements supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`.
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -417,8 +389,6 @@ pub enum Rgba64FrameError {
     /// Row count that overflowed against the stride.
     rows: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `4 * width` overflows `u32`.
   #[error("4 * width overflows u32 ({width} too large)")]
   WidthOverflow {
@@ -534,11 +504,9 @@ impl<'a, const BE: bool> Rgba64Frame<'a, BE> {
 // ---- Bgra64Frame -------------------------------------------------------------
 
 /// Errors returned by [`Bgra64Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum Bgra64FrameError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -547,8 +515,6 @@ pub enum Bgra64FrameError {
     /// The supplied height.
     height: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride < 4 * width` (in u16 elements).
   #[error("stride ({stride}) is smaller than 4 * width ({min_stride}) u16 elements")]
   StrideTooSmall {
@@ -557,8 +523,6 @@ pub enum Bgra64FrameError {
     /// The supplied stride.
     stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// Plane is shorter than `stride * height` u16 elements.
   #[error("BGRA64 plane has {actual} u16 elements but at least {expected} are required")]
   PlaneTooShort {
@@ -567,8 +531,6 @@ pub enum Bgra64FrameError {
     /// Actual u16 elements supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`.
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -577,8 +539,6 @@ pub enum Bgra64FrameError {
     /// Row count that overflowed against the stride.
     rows: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `4 * width` overflows `u32`.
   #[error("4 * width overflows u32 ({width} too large)")]
   WidthOverflow {

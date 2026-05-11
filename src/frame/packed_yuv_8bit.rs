@@ -1,4 +1,4 @@
-use derive_more::{IsVariant, TryUnwrap, Unwrap};
+use derive_more::IsVariant;
 use thiserror::Error;
 
 // ============================================================
@@ -19,11 +19,9 @@ use thiserror::Error;
 // packed-RGB frame types.
 
 /// Errors returned by [`Yuyv422Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum Yuyv422FrameError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -32,8 +30,6 @@ pub enum Yuyv422FrameError {
     /// The supplied height.
     height: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` was odd. Packed YUV 4:2:2 pairs two Y samples per
   /// chroma pair, so each 2-pixel block needs exactly 4 bytes —
   /// odd widths can't form a complete final block.
@@ -42,8 +38,6 @@ pub enum Yuyv422FrameError {
     /// The supplied width.
     width: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride < 2 * width`. Each row needs `2 * width` bytes
   /// (4 bytes per 2-pixel block).
   #[error("stride ({stride}) is smaller than 2 * width ({min_stride})")]
@@ -53,8 +47,6 @@ pub enum Yuyv422FrameError {
     /// The supplied stride.
     stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// Plane is shorter than `stride * height` bytes.
   #[error("YUYV plane has {actual} bytes but at least {expected} are required")]
   PlaneTooShort {
@@ -63,8 +55,6 @@ pub enum Yuyv422FrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`.
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -73,8 +63,6 @@ pub enum Yuyv422FrameError {
     /// Row count that overflowed against the stride.
     rows: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `2 * width` overflows `u32`.
   #[error("2 * width overflows u32 ({width} too large)")]
   WidthOverflow {
@@ -176,11 +164,9 @@ impl<'a> Yuyv422Frame<'a> {
 
 /// Errors returned by [`Uyvy422Frame::try_new`]. Variant shape
 /// mirrors [`Yuyv422FrameError`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum Uyvy422FrameError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -189,16 +175,12 @@ pub enum Uyvy422FrameError {
     /// The supplied height.
     height: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` was odd.
   #[error("width ({width}) is odd; packed YUV 4:2:2 requires even width")]
   OddWidth {
     /// The supplied width.
     width: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride < 2 * width`.
   #[error("stride ({stride}) is smaller than 2 * width ({min_stride})")]
   StrideTooSmall {
@@ -207,8 +189,6 @@ pub enum Uyvy422FrameError {
     /// The supplied stride.
     stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// Plane is shorter than `stride * height` bytes.
   #[error("UYVY plane has {actual} bytes but at least {expected} are required")]
   PlaneTooShort {
@@ -217,8 +197,6 @@ pub enum Uyvy422FrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`.
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -227,8 +205,6 @@ pub enum Uyvy422FrameError {
     /// Row count that overflowed against the stride.
     rows: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `2 * width` overflows `u32`.
   #[error("2 * width overflows u32 ({width} too large)")]
   WidthOverflow {
@@ -331,11 +307,9 @@ impl<'a> Uyvy422Frame<'a> {
 
 /// Errors returned by [`Yvyu422Frame::try_new`]. Variant shape
 /// mirrors [`Yuyv422FrameError`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum Yvyu422FrameError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -344,16 +318,12 @@ pub enum Yvyu422FrameError {
     /// The supplied height.
     height: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` was odd.
   #[error("width ({width}) is odd; packed YUV 4:2:2 requires even width")]
   OddWidth {
     /// The supplied width.
     width: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride < 2 * width`.
   #[error("stride ({stride}) is smaller than 2 * width ({min_stride})")]
   StrideTooSmall {
@@ -362,8 +332,6 @@ pub enum Yvyu422FrameError {
     /// The supplied stride.
     stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// Plane is shorter than `stride * height` bytes.
   #[error("YVYU plane has {actual} bytes but at least {expected} are required")]
   PlaneTooShort {
@@ -372,8 +340,6 @@ pub enum Yvyu422FrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride * height` overflows `usize`.
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -382,8 +348,6 @@ pub enum Yvyu422FrameError {
     /// Row count that overflowed against the stride.
     rows: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `2 * width` overflows `u32`.
   #[error("2 * width overflows u32 ({width} too large)")]
   WidthOverflow {

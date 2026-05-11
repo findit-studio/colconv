@@ -15,7 +15,7 @@
 //! (`M = CCM · diag(wb)`) before dispatching to the per-row kernel,
 //! so the per-pixel arithmetic is one 3×3 matmul, not two passes.
 
-use derive_more::{IsVariant, TryUnwrap, Unwrap};
+use derive_more::IsVariant;
 use thiserror::Error;
 
 /// Bayer pattern — which sensor color sits at the top-left of the
@@ -376,11 +376,9 @@ pub enum WbChannel {
 }
 
 /// Errors returned by [`WhiteBalance::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, IsVariant, Error)]
 #[non_exhaustive]
 pub enum WhiteBalanceError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// A gain is non-finite (NaN, +∞, or -∞).
   #[error("WhiteBalance.{channel:?} is non-finite (got {value})")]
   NonFinite {
@@ -389,8 +387,6 @@ pub enum WhiteBalanceError {
     /// The offending gain value.
     value: f32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// A gain is negative. Zero is allowed (zeroes the channel).
   #[error("WhiteBalance.{channel:?} is negative (got {value})")]
   Negative {
@@ -399,8 +395,6 @@ pub enum WhiteBalanceError {
     /// The offending gain value.
     value: f32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// A gain exceeds [`WhiteBalance::MAX_GAIN`] (`1e6`). The bound
   /// is far above any realistic camera value but closes the door
   /// on finite-but-pathological metadata that would overflow
@@ -417,11 +411,9 @@ pub enum WhiteBalanceError {
 }
 
 /// Errors returned by [`ColorCorrectionMatrix::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, IsVariant, Error)]
 #[non_exhaustive]
 pub enum ColorCorrectionMatrixError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// An element is non-finite (NaN, +∞, or -∞).
   #[error("ColorCorrectionMatrix[{row}][{col}] is non-finite (got {value})")]
   NonFinite {
@@ -439,8 +431,6 @@ pub enum ColorCorrectionMatrixError {
   #[error(
     "ColorCorrectionMatrix[{row}][{col}] = {value} exceeds the magnitude bound (|coeff| ≤ {max_abs})"
   )]
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   OutOfBounds {
     /// Row index of the offending element (0..3).
     row: usize,

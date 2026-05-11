@@ -9,7 +9,7 @@
 //! stride ≥ width per plane. No chroma subsampling (planar RGB has none
 //! by definition), so widths and heights have no parity constraint.
 
-use derive_more::{IsVariant, TryUnwrap, Unwrap};
+use derive_more::IsVariant;
 use thiserror::Error;
 
 /// A validated 8-bit planar GBR frame (`AV_PIX_FMT_GBRP`).
@@ -230,11 +230,9 @@ impl<'a> GbrpFrame<'a> {
 /// Variant shape mirrors [`super::Yuv444pFrameError`] — same full-width
 /// per-plane validation, no width-parity constraint — but with `G` /
 /// `B` / `R` plane names instead of `Y` / `U` / `V`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum GbrpFrameError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -243,8 +241,6 @@ pub enum GbrpFrameError {
     /// The supplied height.
     height: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `g_stride < width`.
   #[error("g_stride ({g_stride}) is smaller than width ({width})")]
   GStrideTooSmall {
@@ -253,8 +249,6 @@ pub enum GbrpFrameError {
     /// The supplied G-plane stride.
     g_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `b_stride < width`.
   #[error("b_stride ({b_stride}) is smaller than width ({width})")]
   BStrideTooSmall {
@@ -263,8 +257,6 @@ pub enum GbrpFrameError {
     /// The supplied B-plane stride.
     b_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `r_stride < width`.
   #[error("r_stride ({r_stride}) is smaller than width ({width})")]
   RStrideTooSmall {
@@ -273,8 +265,6 @@ pub enum GbrpFrameError {
     /// The supplied R-plane stride.
     r_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// G plane is shorter than `g_stride * height` bytes.
   #[error("G plane has {actual} bytes but at least {expected} are required")]
   GPlaneTooShort {
@@ -283,8 +273,6 @@ pub enum GbrpFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// B plane is shorter than `b_stride * height` bytes.
   #[error("B plane has {actual} bytes but at least {expected} are required")]
   BPlaneTooShort {
@@ -293,8 +281,6 @@ pub enum GbrpFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// R plane is shorter than `r_stride * height` bytes.
   #[error("R plane has {actual} bytes but at least {expected} are required")]
   RPlaneTooShort {
@@ -303,8 +289,6 @@ pub enum GbrpFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (32-bit targets only).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -555,11 +539,9 @@ impl<'a> GbrapFrame<'a> {
 /// Variant shape mirrors [`GbrpFrameError`] extended with `A`-plane
 /// variants (matching the YUVA-pattern from
 /// [`super::Yuva444pFrameError`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum GbrapFrameError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -568,8 +550,6 @@ pub enum GbrapFrameError {
     /// The supplied height.
     height: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `g_stride < width`.
   #[error("g_stride ({g_stride}) is smaller than width ({width})")]
   GStrideTooSmall {
@@ -578,8 +558,6 @@ pub enum GbrapFrameError {
     /// The supplied G-plane stride.
     g_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `b_stride < width`.
   #[error("b_stride ({b_stride}) is smaller than width ({width})")]
   BStrideTooSmall {
@@ -588,8 +566,6 @@ pub enum GbrapFrameError {
     /// The supplied B-plane stride.
     b_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `r_stride < width`.
   #[error("r_stride ({r_stride}) is smaller than width ({width})")]
   RStrideTooSmall {
@@ -598,8 +574,6 @@ pub enum GbrapFrameError {
     /// The supplied R-plane stride.
     r_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `a_stride < width`.
   #[error("a_stride ({a_stride}) is smaller than width ({width})")]
   AStrideTooSmall {
@@ -608,8 +582,6 @@ pub enum GbrapFrameError {
     /// The supplied A-plane stride.
     a_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// G plane is shorter than `g_stride * height` bytes.
   #[error("G plane has {actual} bytes but at least {expected} are required")]
   GPlaneTooShort {
@@ -618,8 +590,6 @@ pub enum GbrapFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// B plane is shorter than `b_stride * height` bytes.
   #[error("B plane has {actual} bytes but at least {expected} are required")]
   BPlaneTooShort {
@@ -628,8 +598,6 @@ pub enum GbrapFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// R plane is shorter than `r_stride * height` bytes.
   #[error("R plane has {actual} bytes but at least {expected} are required")]
   RPlaneTooShort {
@@ -638,8 +606,6 @@ pub enum GbrapFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// A plane is shorter than `a_stride * height` bytes.
   #[error("A plane has {actual} bytes but at least {expected} are required")]
   APlaneTooShort {
@@ -648,8 +614,6 @@ pub enum GbrapFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (32-bit targets only).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {

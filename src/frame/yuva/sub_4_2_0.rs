@@ -1,4 +1,4 @@
-use derive_more::{Display, IsVariant, TryUnwrap, Unwrap};
+use derive_more::{Display, IsVariant};
 use thiserror::Error;
 
 /// Errors returned by [`Yuva420pFrame::try_new`].
@@ -7,11 +7,9 @@ use thiserror::Error;
 /// extended with [`Self::AStrideTooSmall`] / [`Self::APlaneTooShort`]
 /// for the 4:2:0 alpha plane (full-width × full-height — alpha is at
 /// luma resolution, only chroma is subsampled).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum Yuva420pFrameError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -20,16 +18,12 @@ pub enum Yuva420pFrameError {
     /// The supplied height.
     height: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` was odd. YUVA420p / 4:2:0 subsamples chroma 2:1 in width.
   #[error("width ({width}) is odd; YUVA420p / 4:2:0 requires even width")]
   OddWidth {
     /// The supplied width.
     width: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `y_stride < width`.
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -38,8 +32,6 @@ pub enum Yuva420pFrameError {
     /// The supplied Y-plane stride.
     y_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `u_stride < ceil(width / 2)`.
   #[error("u_stride ({u_stride}) is smaller than chroma width ({chroma_width})")]
   UStrideTooSmall {
@@ -48,8 +40,6 @@ pub enum Yuva420pFrameError {
     /// The supplied U-plane stride.
     u_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `v_stride < ceil(width / 2)`.
   #[error("v_stride ({v_stride}) is smaller than chroma width ({chroma_width})")]
   VStrideTooSmall {
@@ -58,8 +48,6 @@ pub enum Yuva420pFrameError {
     /// The supplied V-plane stride.
     v_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `a_stride < width`. The alpha plane is full-width × full-height
   /// (1:1 with Y, like Yuv444p planes — only chroma is subsampled in
   /// 4:2:0).
@@ -70,8 +58,6 @@ pub enum Yuva420pFrameError {
     /// The supplied A-plane stride.
     a_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// Y plane is shorter than `y_stride * height` bytes.
   #[error("Y plane has {actual} bytes but at least {expected} are required")]
   YPlaneTooShort {
@@ -80,8 +66,6 @@ pub enum Yuva420pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// U plane is shorter than `u_stride * height.div_ceil(2)` bytes.
   #[error("U plane has {actual} bytes but at least {expected} are required")]
   UPlaneTooShort {
@@ -90,8 +74,6 @@ pub enum Yuva420pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// V plane is shorter than `v_stride * height.div_ceil(2)` bytes.
   #[error("V plane has {actual} bytes but at least {expected} are required")]
   VPlaneTooShort {
@@ -100,8 +82,6 @@ pub enum Yuva420pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// A plane is shorter than `a_stride * height` bytes.
   #[error("A plane has {actual} bytes but at least {expected} are required")]
   APlaneTooShort {
@@ -110,8 +90,6 @@ pub enum Yuva420pFrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride * rows` overflows `usize` (32-bit targets only).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -358,11 +336,9 @@ impl<'a> Yuva420pFrame<'a> {
 /// Variant shape mirrors [`Yuv420pFrame16Error`] extended with the
 /// `A`-plane variants ([`Self::AStrideTooSmall`] /
 /// [`Self::APlaneTooShort`]) for the 4:2:0 alpha plane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum Yuva420pFrame16Error {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `BITS` was not one of the supported depths (9, 10, 16). FFmpeg
   /// only ships `yuva420p9le`, `yuva420p10le`, `yuva420p16le` — no
   /// 12/14-bit YUVA 4:2:0 pixel formats exist.
@@ -371,8 +347,6 @@ pub enum Yuva420pFrame16Error {
     /// The unsupported value of the `BITS` const parameter.
     bits: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -381,16 +355,12 @@ pub enum Yuva420pFrame16Error {
     /// The supplied height.
     height: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` was odd.
   #[error("width ({width}) is odd; YUVA420p / 4:2:0 requires even width")]
   OddWidth {
     /// The supplied width.
     width: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `y_stride < width` (in samples).
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -399,8 +369,6 @@ pub enum Yuva420pFrame16Error {
     /// The supplied Y-plane stride (samples).
     y_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `u_stride < ceil(width / 2)` (in samples).
   #[error("u_stride ({u_stride}) is smaller than chroma width ({chroma_width})")]
   UStrideTooSmall {
@@ -409,8 +377,6 @@ pub enum Yuva420pFrame16Error {
     /// The supplied U-plane stride (samples).
     u_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `v_stride < ceil(width / 2)` (in samples).
   #[error("v_stride ({v_stride}) is smaller than chroma width ({chroma_width})")]
   VStrideTooSmall {
@@ -419,8 +385,6 @@ pub enum Yuva420pFrame16Error {
     /// The supplied V-plane stride (samples).
     v_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `a_stride < width` (in samples).
   #[error("a_stride ({a_stride}) is smaller than width ({width})")]
   AStrideTooSmall {
@@ -429,8 +393,6 @@ pub enum Yuva420pFrame16Error {
     /// The supplied A-plane stride (samples).
     a_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// Y plane is shorter than `y_stride * height` samples.
   #[error("Y plane has {actual} samples but at least {expected} are required")]
   YPlaneTooShort {
@@ -439,8 +401,6 @@ pub enum Yuva420pFrame16Error {
     /// Actual samples supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// U plane is shorter than `u_stride * ceil(height / 2)` samples.
   #[error("U plane has {actual} samples but at least {expected} are required")]
   UPlaneTooShort {
@@ -449,8 +409,6 @@ pub enum Yuva420pFrame16Error {
     /// Actual samples supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// V plane is shorter than `v_stride * ceil(height / 2)` samples.
   #[error("V plane has {actual} samples but at least {expected} are required")]
   VPlaneTooShort {
@@ -459,8 +417,6 @@ pub enum Yuva420pFrame16Error {
     /// Actual samples supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// A plane is shorter than `a_stride * height` samples.
   #[error("A plane has {actual} samples but at least {expected} are required")]
   APlaneTooShort {
@@ -469,8 +425,6 @@ pub enum Yuva420pFrame16Error {
     /// Actual samples supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride * rows` overflows `usize` (32-bit targets only).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {
@@ -484,8 +438,6 @@ pub enum Yuva420pFrame16Error {
   #[error(
     "sample {value} on plane {plane} at element {index} exceeds {max_valid} ((1 << BITS) - 1)"
   )]
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   SampleOutOfRange {
     /// Which plane the offending sample lives on.
     plane: Yuva420pFrame16Plane,

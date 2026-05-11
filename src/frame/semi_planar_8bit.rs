@@ -1,4 +1,4 @@
-use derive_more::{IsVariant, TryUnwrap, Unwrap};
+use derive_more::IsVariant;
 use thiserror::Error;
 
 /// A validated NV12 (semi‑planar 4:2:0) frame.
@@ -176,11 +176,9 @@ impl<'a> Nv12Frame<'a> {
 }
 
 /// Errors returned by [`Nv12Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum Nv12FrameError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -189,8 +187,6 @@ pub enum Nv12FrameError {
     /// The supplied height.
     height: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` was odd. 4:2:0 subsamples chroma 2:1 in width, so each
   /// chroma column pairs two Y columns — odd widths leave the last Y
   /// column without a paired chroma sample, and the SIMD kernels
@@ -201,8 +197,6 @@ pub enum Nv12FrameError {
     /// The supplied width.
     width: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `y_stride < width`.
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -211,8 +205,6 @@ pub enum Nv12FrameError {
     /// The supplied Y‑plane stride.
     y_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `uv_stride` is smaller than the `width` bytes of interleaved UV
   /// payload one chroma row must hold.
   #[error("uv_stride ({uv_stride}) is smaller than UV row payload ({uv_row_bytes} bytes)")]
@@ -222,8 +214,6 @@ pub enum Nv12FrameError {
     /// The supplied UV‑plane stride.
     uv_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// Y plane is shorter than `y_stride * height` bytes.
   #[error("Y plane has {actual} bytes but at least {expected} are required")]
   YPlaneTooShort {
@@ -232,8 +222,6 @@ pub enum Nv12FrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// UV plane is shorter than `uv_stride * ceil(height / 2)` bytes.
   #[error("UV plane has {actual} bytes but at least {expected} are required")]
   UvPlaneTooShort {
@@ -242,8 +230,6 @@ pub enum Nv12FrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (can only fire on 32‑bit
   /// targets — wasm32, i686 — with extreme dimensions).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
@@ -428,11 +414,9 @@ impl<'a> Nv16Frame<'a> {
 }
 
 /// Errors returned by [`Nv16Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum Nv16FrameError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -441,16 +425,12 @@ pub enum Nv16FrameError {
     /// The supplied height.
     height: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` was odd. 4:2:2 subsamples chroma 2:1 in width.
   #[error("width ({width}) is odd; 4:2:2 requires even width")]
   OddWidth {
     /// The supplied width.
     width: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `y_stride < width`.
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -459,8 +439,6 @@ pub enum Nv16FrameError {
     /// The supplied Y‑plane stride.
     y_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `uv_stride` is smaller than the `width` bytes of interleaved UV
   /// payload one chroma row must hold.
   #[error("uv_stride ({uv_stride}) is smaller than UV row payload ({uv_row_bytes} bytes)")]
@@ -470,8 +448,6 @@ pub enum Nv16FrameError {
     /// The supplied UV‑plane stride.
     uv_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// Y plane is shorter than `y_stride * height` bytes.
   #[error("Y plane has {actual} bytes but at least {expected} are required")]
   YPlaneTooShort {
@@ -480,8 +456,6 @@ pub enum Nv16FrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// UV plane is shorter than `uv_stride * height` bytes.
   #[error("UV plane has {actual} bytes but at least {expected} are required")]
   UvPlaneTooShort {
@@ -490,8 +464,6 @@ pub enum Nv16FrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize` (can only fire on 32‑bit
   /// targets — wasm32, i686 — with extreme dimensions).
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
@@ -671,11 +643,9 @@ impl<'a> Nv24Frame<'a> {
 }
 
 /// Errors returned by [`Nv24Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum Nv24FrameError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -684,8 +654,6 @@ pub enum Nv24FrameError {
     /// The supplied height.
     height: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `y_stride < width`.
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -694,8 +662,6 @@ pub enum Nv24FrameError {
     /// The supplied Y‑plane stride.
     y_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `uv_stride` is smaller than the `2 * width` bytes of interleaved
   /// UV payload one chroma row must hold.
   #[error("uv_stride ({uv_stride}) is smaller than UV row payload ({uv_row_bytes} bytes)")]
@@ -705,8 +671,6 @@ pub enum Nv24FrameError {
     /// The supplied UV‑plane stride.
     uv_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// Y plane is shorter than `y_stride * height` bytes.
   #[error("Y plane has {actual} bytes but at least {expected} are required")]
   YPlaneTooShort {
@@ -715,8 +679,6 @@ pub enum Nv24FrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// UV plane is shorter than `uv_stride * height` bytes.
   #[error("UV plane has {actual} bytes but at least {expected} are required")]
   UvPlaneTooShort {
@@ -725,8 +687,6 @@ pub enum Nv24FrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// Size arithmetic overflowed. Fires for either
   /// `stride * rows` exceeding `usize::MAX` (the usual case) **or**
   /// the `width * 2` computation for the UV-row-payload length
@@ -890,11 +850,9 @@ impl<'a> Nv42Frame<'a> {
 }
 
 /// Errors returned by [`Nv42Frame::try_new`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum Nv42FrameError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -903,8 +861,6 @@ pub enum Nv42FrameError {
     /// The supplied height.
     height: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `y_stride < width`.
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -913,8 +869,6 @@ pub enum Nv42FrameError {
     /// The supplied Y‑plane stride.
     y_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `vu_stride` is smaller than the `2 * width` bytes of interleaved
   /// VU payload one chroma row must hold.
   #[error("vu_stride ({vu_stride}) is smaller than VU row payload ({vu_row_bytes} bytes)")]
@@ -924,8 +878,6 @@ pub enum Nv42FrameError {
     /// The supplied VU‑plane stride.
     vu_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// Y plane is shorter than `y_stride * height` bytes.
   #[error("Y plane has {actual} bytes but at least {expected} are required")]
   YPlaneTooShort {
@@ -934,8 +886,6 @@ pub enum Nv42FrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// VU plane is shorter than `vu_stride * height` bytes.
   #[error("VU plane has {actual} bytes but at least {expected} are required")]
   VuPlaneTooShort {
@@ -944,8 +894,6 @@ pub enum Nv42FrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// Size arithmetic overflowed. Fires for either
   /// `stride * rows` exceeding `usize::MAX` (the usual case) **or**
   /// the `width * 2` computation for the VU-row-payload length
@@ -1122,11 +1070,9 @@ impl<'a> Nv21Frame<'a> {
 /// Errors returned by [`Nv21Frame::try_new`]. Variant shape is
 /// identical to [`Nv12FrameError`] — only the "UV" → "VU" naming
 /// changes to match the plane's byte order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IsVariant, Error)]
 #[non_exhaustive]
 pub enum Nv21FrameError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` or `height` was zero.
   #[error("width ({width}) or height ({height}) is zero")]
   ZeroDimension {
@@ -1135,16 +1081,12 @@ pub enum Nv21FrameError {
     /// The supplied height.
     height: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `width` was odd. Same rationale as [`Nv12FrameError::OddWidth`].
   #[error("width ({width}) is odd; 4:2:0 requires even width")]
   OddWidth {
     /// The supplied width.
     width: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `y_stride < width`.
   #[error("y_stride ({y_stride}) is smaller than width ({width})")]
   YStrideTooSmall {
@@ -1153,8 +1095,6 @@ pub enum Nv21FrameError {
     /// The supplied Y‑plane stride.
     y_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `vu_stride` is smaller than the `width` bytes of interleaved VU
   /// payload one chroma row must hold.
   #[error("vu_stride ({vu_stride}) is smaller than VU row payload ({vu_row_bytes} bytes)")]
@@ -1164,8 +1104,6 @@ pub enum Nv21FrameError {
     /// The supplied VU‑plane stride.
     vu_stride: u32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// Y plane is shorter than `y_stride * height` bytes.
   #[error("Y plane has {actual} bytes but at least {expected} are required")]
   YPlaneTooShort {
@@ -1174,8 +1112,6 @@ pub enum Nv21FrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// VU plane is shorter than `vu_stride * ceil(height / 2)` bytes.
   #[error("VU plane has {actual} bytes but at least {expected} are required")]
   VuPlaneTooShort {
@@ -1184,8 +1120,6 @@ pub enum Nv21FrameError {
     /// Actual bytes supplied.
     actual: usize,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// `stride * rows` does not fit in `usize`.
   #[error("declared geometry overflows usize: stride={stride} * rows={rows}")]
   GeometryOverflow {

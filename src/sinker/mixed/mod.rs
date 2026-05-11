@@ -1342,11 +1342,9 @@ pub enum LumaChannel {
 
 /// Errors returned by [`CustomLumaCoefficients::try_new`] (and the
 /// convenience [`LumaCoefficients::try_custom`]).
-#[derive(Debug, Clone, Copy, PartialEq, IsVariant, TryUnwrap, Unwrap, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, IsVariant, Error)]
 #[non_exhaustive]
 pub enum LumaCoefficientsError {
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// A weight is non-finite (NaN, +∞, or -∞).
   #[error("CustomLumaCoefficients.{channel:?} is non-finite (got {value})")]
   NonFinite {
@@ -1355,8 +1353,6 @@ pub enum LumaCoefficientsError {
     /// The offending weight value.
     value: f32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// A weight is negative. Zero is allowed (zeroes the channel).
   #[error("CustomLumaCoefficients.{channel:?} is negative (got {value})")]
   Negative {
@@ -1365,8 +1361,6 @@ pub enum LumaCoefficientsError {
     /// The offending weight value.
     value: f32,
   },
-  #[unwrap(ignore)]
-  #[try_unwrap(ignore)]
   /// A weight exceeds [`CustomLumaCoefficients::MAX_COEFFICIENT`]
   /// (`10.0`). The bound is far above any realistic luma weight
   /// but closes the door on values that would saturate the
