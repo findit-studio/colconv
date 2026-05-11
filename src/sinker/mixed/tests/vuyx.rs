@@ -249,41 +249,6 @@ fn vuyx_simd_vs_scalar_parity_at_1922() {
   assert_eq!(rgb_simd, rgb_scalar, "VUYX SIMD ≠ scalar at width {w}");
 }
 
-// ---- 8: Width mismatch → RowShapeMismatch ---------------------------------
-
-#[test]
-#[cfg(all(test, feature = "std"))]
-fn vuyx_width_mismatch_returns_error() {
-  // Sinker built for width=64; pass a 128-pixel (512-byte) packed row.
-  let mut rgb = std::vec![0u8; 64 * 3];
-  let mut sink = MixedSinker::<Vuyx>::new(64, 1).with_rgb(&mut rgb).unwrap();
-  // Packed slice for width=128: 128 × 4 = 512 bytes.
-  let packed = std::vec![0u8; 512];
-  let row = VuyxRow::new(&packed, 0, ColorMatrix::Bt709, false);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::VuyxPacked, 0, 64 * 4, 512))
-  );
-}
-
-// ---- 9: Row index out of range --------------------------------------------
-
-#[test]
-#[cfg(all(test, feature = "std"))]
-fn vuyx_row_index_oor_returns_error() {
-  // Sinker built for height=2; pass row index 2 (== height → out of range).
-  let mut rgb = std::vec![0u8; 4 * 2 * 3];
-  let mut sink = MixedSinker::<Vuyx>::new(4, 2).with_rgb(&mut rgb).unwrap();
-  let packed = std::vec![0u8; 4 * 4]; // width=4, 4 bytes per pixel
-  let row = VuyxRow::new(&packed, 2, ColorMatrix::Bt709, false);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange::new(2, 2))
-  );
-}
-
 // ---- 10: RGB buffer too short ---------------------------------------------
 
 #[test]

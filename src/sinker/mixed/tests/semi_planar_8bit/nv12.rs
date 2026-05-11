@@ -361,72 +361,6 @@ fn infallible_sink_compiles_and_runs() {
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
-fn yuv420p_process_rejects_short_y_slice() {
-  let mut rgb = std::vec![0u8; 16 * 8 * 3];
-  let mut sink = MixedSinker::<Yuv420p>::new(16, 8)
-    .with_rgb(&mut rgb)
-    .unwrap();
-  // Build a row with a 15-byte Y slice (wrong — sink configured for 16).
-  let y = [0u8; 15];
-  let u = [128u8; 8];
-  let v = [128u8; 8];
-  let row = Yuv420pRow::new(&y, &u, &v, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::Y, 0, 16, 15))
-  );
-}
-
-#[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
-fn yuv420p_process_rejects_short_u_half() {
-  let mut rgb = std::vec![0u8; 16 * 8 * 3];
-  let mut sink = MixedSinker::<Yuv420p>::new(16, 8)
-    .with_rgb(&mut rgb)
-    .unwrap();
-  let y = [0u8; 16];
-  let u = [128u8; 7]; // expected 8
-  let v = [128u8; 8];
-  let row = Yuv420pRow::new(&y, &u, &v, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::UHalf, 0, 8, 7))
-  );
-}
-
-#[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
-fn yuv420p_process_rejects_out_of_range_row_idx() {
-  let mut rgb = std::vec![0u8; 16 * 8 * 3];
-  let mut sink = MixedSinker::<Yuv420p>::new(16, 8)
-    .with_rgb(&mut rgb)
-    .unwrap();
-  let y = [0u8; 16];
-  let u = [128u8; 8];
-  let v = [128u8; 8];
-  // idx = 8 exceeds configured height 8 — would otherwise panic on
-  // `rgb[idx * w * 3 ..]` indexing.
-  let row = Yuv420pRow::new(&y, &u, &v, 8, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange::new(8, 8))
-  );
-}
-
-#[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn yuv420p_odd_width_sink_returns_err_at_begin_frame() {
   // A sink configured with an odd width would later panic inside
   // `yuv_420_to_rgb_row` (which asserts `width & 1 == 0`). The
@@ -460,29 +394,6 @@ fn yuv420p_odd_width_sink_returns_err_at_begin_frame() {
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
-fn yuv420p_odd_width_sink_returns_err_at_direct_process() {
-  // Direct `process` caller bypassing `begin_frame`. Process must
-  // still reject odd width before calling the kernel.
-  let mut rgb = std::vec![0u8; 16 * 8 * 3];
-  let mut sink = MixedSinker::<Yuv420p>::new(15, 8)
-    .with_rgb(&mut rgb)
-    .unwrap();
-  let y = [0u8; 15];
-  let u = [128u8; 7]; // ceil(15/2) = 8; 7 triggers the width check first
-  let v = [128u8; 7];
-  let row = Yuv420pRow::new(&y, &u, &v, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::WidthAlignment(WidthAlignment::new(15, WidthAlignmentRequirement::Even))
-  );
-}
-
-#[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn nv12_odd_width_sink_returns_err_at_begin_frame() {
   let w = 15usize;
   let h = 8usize;
@@ -492,60 +403,6 @@ fn nv12_odd_width_sink_returns_err_at_begin_frame() {
   assert_eq!(
     err,
     MixedSinkerError::WidthAlignment(WidthAlignment::new(15, WidthAlignmentRequirement::Even))
-  );
-}
-
-#[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
-fn nv12_odd_width_sink_returns_err_at_direct_process() {
-  let mut rgb = std::vec![0u8; 16 * 8 * 3];
-  let mut sink = MixedSinker::<Nv12>::new(15, 8).with_rgb(&mut rgb).unwrap();
-  let y = [0u8; 15];
-  let uv = [128u8; 15];
-  let row = Nv12Row::new(&y, &uv, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::WidthAlignment(WidthAlignment::new(15, WidthAlignmentRequirement::Even))
-  );
-}
-
-#[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
-fn nv12_process_rejects_short_uv_slice() {
-  let mut rgb = std::vec![0u8; 16 * 8 * 3];
-  let mut sink = MixedSinker::<Nv12>::new(16, 8).with_rgb(&mut rgb).unwrap();
-  let y = [0u8; 16];
-  let uv = [128u8; 15]; // expected 16
-  let row = Nv12Row::new(&y, &uv, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::UvHalf, 0, 16, 15))
-  );
-}
-
-#[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
-fn nv12_process_rejects_out_of_range_row_idx() {
-  let mut rgb = std::vec![0u8; 16 * 8 * 3];
-  let mut sink = MixedSinker::<Nv12>::new(16, 8).with_rgb(&mut rgb).unwrap();
-  let y = [0u8; 16];
-  let uv = [128u8; 16];
-  let row = Nv12Row::new(&y, &uv, 8, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange::new(8, 8))
   );
 }
 

@@ -385,6 +385,16 @@ impl Coefficients {
         b_u: -32768,
         b_v: -32768,
       },
+      // ColorMatrix is #[non_exhaustive] in videoframe; fall back to BT.709
+      // for any future variants added there before colconv is updated.
+      _ => Self {
+        r_u: 0,
+        r_v: 51606,
+        g_u: -6136,
+        g_v: -15339,
+        b_u: 60808,
+        b_v: 0,
+      },
     }
   }
 

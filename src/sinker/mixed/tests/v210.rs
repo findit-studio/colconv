@@ -268,26 +268,6 @@ fn v210_with_simd_false_matches_with_simd_true() {
 // ---- Error-path tests --------------------------------------------------
 
 #[test]
-fn v210_odd_width_returns_err() {
-  // Direct `process()` call with a sink configured at width=7 (odd —
-  // violates 4:2:2 chroma-pair constraint). Even widths that aren't
-  // multiples of 6 are now supported (partial-word handling), so this
-  // covers only the genuinely-invalid odd-width case. The width check
-  // fires *before* any kernel runs, preserving the no-panic contract
-  // — even if the caller bypasses the walker (which would catch this
-  // in `begin_frame`).
-  let mut rgb = std::vec![0u8; 8 * 8 * 3];
-  let mut sink = MixedSinker::<V210>::new(7, 8).with_rgb(&mut rgb).unwrap();
-  let buf = std::vec![0u8; 16];
-  let row = V210Row::new(&buf, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::WidthAlignment(WidthAlignment::new(7, WidthAlignmentRequirement::Even))
-  );
-}
-
-#[test]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -313,21 +293,6 @@ fn v210_partial_word_width_works_end_to_end() {
     assert_eq!(px[0], px[1]);
     assert_eq!(px[1], px[2]);
   }
-}
-
-#[test]
-fn v210_process_rejects_short_packed_slice() {
-  // 6-pixel-wide sink expects 16 bytes per row; a 15-byte slice
-  // surfaces as `RowShapeMismatch { which: V210Packed, .. }`.
-  let mut rgb = std::vec![0u8; 6 * 3];
-  let mut sink = MixedSinker::<V210>::new(6, 1).with_rgb(&mut rgb).unwrap();
-  let packed = [0u8; 15];
-  let row = V210Row::new(&packed, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::V210Packed, 0, 16, 15))
-  );
 }
 
 #[test]

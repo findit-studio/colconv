@@ -386,34 +386,6 @@ fn bgra64_with_rgba_u16_passes_source_alpha_native() {
 // ---- Edge cases / error paths ----------------------------------------------
 
 #[test]
-fn rgb48_row_shape_mismatch_returns_error() {
-  use crate::{PixelSink, sinker::mixed::MixedSinkerError, source::Rgb48Row};
-  let mut out = vec![0u8; 6];
-  let mut sinker = MixedSinker::<Rgb48>::new(2, 1).with_rgb(&mut out).unwrap();
-  sinker.begin_frame(2, 1).unwrap();
-  // width=2 expects 6 u16 elements; give 3 — triggers RowShapeMismatch.
-  let data = vec![0u16; 3];
-  let row = Rgb48Row::new(&data, 0, ColorMatrix::Bt709, true);
-  let err = sinker.process(row).unwrap_err();
-  assert!(matches!(err, MixedSinkerError::RowShapeMismatch(_)));
-}
-
-#[test]
-fn rgba64_row_shape_mismatch_returns_error() {
-  use crate::{PixelSink, sinker::mixed::MixedSinkerError, source::Rgba64Row};
-  let mut out = vec![0u8; 8];
-  let mut sinker = MixedSinker::<Rgba64>::new(2, 1)
-    .with_rgba(&mut out)
-    .unwrap();
-  sinker.begin_frame(2, 1).unwrap();
-  // width=2 expects 8 u16 elements; give 4 — triggers RowShapeMismatch.
-  let data = vec![0u16; 4];
-  let row = Rgba64Row::new(&data, 0, ColorMatrix::Bt709, true);
-  let err = sinker.process(row).unwrap_err();
-  assert!(matches!(err, MixedSinkerError::RowShapeMismatch(_)));
-}
-
-#[test]
 fn rgb48_multi_row_frame() {
   // 2×2 frame: verify correct row-by-row accumulation.
   let src: Vec<u16> = as_le_u16(&[

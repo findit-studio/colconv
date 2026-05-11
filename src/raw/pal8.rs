@@ -5,7 +5,7 @@
 //! palette so the sink can perform one lookup per pixel without
 //! storing the palette on the sinker itself.
 
-use crate::{PixelSink, SourceFormat, frame::Pal8Frame, sealed::Sealed};
+use crate::{PixelSink, SourceFormat, frame::Pal8Frame};
 
 /// Zero-sized marker for the 8-bit indexed-color (`AV_PIX_FMT_PAL8`) source
 /// format. Used as the `F` type parameter on
@@ -13,7 +13,6 @@ use crate::{PixelSink, SourceFormat, frame::Pal8Frame, sealed::Sealed};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Pal8;
 
-impl Sealed for Pal8 {}
 impl SourceFormat for Pal8 {}
 
 /// One output row of a `PAL8` source handed to a [`Pal8Sink`].

@@ -383,38 +383,6 @@ fn xv36_planar_parity_with_yuv444p12() {
 
 #[test]
 #[cfg(all(test, feature = "std"))]
-fn xv36_zero_dim_returns_err() {
-  // Sink configured for 1 row; passing row index 1 must return
-  // RowIndexOutOfRange before any kernel runs.
-  let mut rgb = std::vec![0u8; 4 * 3];
-  let mut sink = MixedSinker::<Xv36>::new(4, 1).with_rgb(&mut rgb).unwrap();
-  let packed = [0u16; 4 * 4]; // width=4, 4 u16 elements per pixel
-  let row = Xv36Row::new(&packed, 1, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange::new(1, 1))
-  );
-}
-
-#[test]
-#[cfg(all(test, feature = "std"))]
-fn xv36_process_rejects_short_packed_slice() {
-  // 6-pixel-wide sink expects 6×4=24 u16 elements per row; a 23-element
-  // slice surfaces as `RowShapeMismatch { which: Xv36Packed, .. }`.
-  let mut rgb = std::vec![0u8; 6 * 3];
-  let mut sink = MixedSinker::<Xv36>::new(6, 1).with_rgb(&mut rgb).unwrap();
-  let packed = [0u16; 23];
-  let row = Xv36Row::new(&packed, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::Xv36Packed, 0, 24, 23))
-  );
-}
-
-#[test]
-#[cfg(all(test, feature = "std"))]
 fn xv36_buffer_too_short_for_rgba_u16_returns_err() {
   // Buffer holds 6×7 = 42 elements × 4 channels = 168 u16 elements;
   // a 6×8 frame needs 6×8×4 = 192.

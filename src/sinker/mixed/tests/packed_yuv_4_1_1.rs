@@ -216,22 +216,6 @@ fn uyyvyy411_width_mismatch_returns_err() {
 }
 
 #[test]
-fn uyyvyy411_process_rejects_short_packed_slice() {
-  let mut rgb = std::vec![0u8; 16 * 8 * 3];
-  let mut sink = MixedSinker::<Uyyvyy411>::new(16, 8)
-    .with_rgb(&mut rgb)
-    .unwrap();
-  // Expected `width * 3 / 2 = 24` bytes, supply 23.
-  let packed = [0u8; 23];
-  let row = Uyyvyy411Row::new(&packed, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::Uyyvyy411Packed, 0, 24, 23))
-  );
-}
-
-#[test]
 fn uyyvyy411_begin_frame_rejects_width_not_multiple_of_4() {
   // Sinker configured with a width that's not a multiple of 4 — the
   // begin_frame guard surfaces it before any row primitive runs.

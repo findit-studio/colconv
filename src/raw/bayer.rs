@@ -11,7 +11,6 @@ use crate::{
   PixelSink, SourceFormat,
   frame::BayerFrame,
   raw::{BayerDemosaic, BayerPattern, ColorCorrectionMatrix, WhiteBalance, fuse_wb_ccm},
-  sealed::Sealed,
 };
 
 /// Zero-sized marker for the 8-bit Bayer source format. Used as the
@@ -20,7 +19,6 @@ use crate::{
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Bayer;
 
-impl Sealed for Bayer {}
 impl SourceFormat for Bayer {}
 
 /// One output row of a Bayer source handed to a [`BayerSink`].

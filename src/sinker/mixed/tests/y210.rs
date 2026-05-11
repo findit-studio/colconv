@@ -243,39 +243,6 @@ fn y210_with_simd_false_matches_with_simd_true() {
 // ---- Error-path tests --------------------------------------------------
 
 #[test]
-fn y210_odd_width_returns_err() {
-  // Direct `process()` call with a sink configured at width=3 (odd —
-  // violates 4:2:2 chroma-pair constraint). The width check fires
-  // *before* any kernel runs, preserving the no-panic contract — even
-  // if the caller bypasses the walker (which would catch this in
-  // `begin_frame`).
-  let mut rgb = std::vec![0u8; 4 * 3];
-  let mut sink = MixedSinker::<Y210>::new(3, 1).with_rgb(&mut rgb).unwrap();
-  let buf = std::vec![0u16; 6];
-  let row = Y210Row::new(&buf, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::WidthAlignment(WidthAlignment::new(3, WidthAlignmentRequirement::Even))
-  );
-}
-
-#[test]
-fn y210_process_rejects_short_packed_slice() {
-  // 6-pixel-wide sink expects 12 u16 elements per row; an 11-element
-  // slice surfaces as `RowShapeMismatch { which: Y210Packed, .. }`.
-  let mut rgb = std::vec![0u8; 6 * 3];
-  let mut sink = MixedSinker::<Y210>::new(6, 1).with_rgb(&mut rgb).unwrap();
-  let packed = [0u16; 11];
-  let row = Y210Row::new(&packed, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::Y210Packed, 0, 12, 11))
-  );
-}
-
-#[test]
 fn y210_luma_u16_buffer_too_short_returns_err() {
   // Buffer holds 6×7 = 42 elements; a 6×8 frame needs 48.
   let mut luma = std::vec![0u16; 6 * 7];

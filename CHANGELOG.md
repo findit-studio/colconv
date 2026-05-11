@@ -119,6 +119,26 @@
   callers migrate directly: `crate::yuv::*` / `colconv::yuv::*` →
   `crate::source::*` / `colconv::source::*`.
 
+### Changed (BREAKING — pre-publish)
+
+- `crate::frame::*` and `crate::source::*` are now re-exports from
+  the new `videoframe` crate (path dep). Existing paths
+  (`colconv::frame::Yuv420pFrame`, `colconv::source::Yuv420p`,
+  `colconv::ColorMatrix`, `colconv::PixelSink`,
+  `colconv::SourceFormat`, `colconv::DcpTargetGamut`) continue to
+  resolve via the re-exports — no source-level break for downstream
+  callers using those paths.
+- Source-format marker ZSTs (`Yuv420p`, `Nv12`, etc.) now require
+  `::new()` construction (`Yuv420p::new()` instead of bare
+  `Yuv420p`). Inherited from videoframe's marker convention.
+  Type-parameter usage (`MixedSinker::<Yuv420p>`) is unaffected.
+- `colconv::SourceFormat` is now an unsealed blanket trait: all
+  `videoframe::SourceFormat` implementors satisfy it automatically.
+  Colconv-specific raw markers (`raw::Bayer`, `raw::Bayer16<BITS>`,
+  `raw::Pal8`) implement it directly. No deps removed — `derive_more`,
+  `thiserror`, `half`, and `libm` are all still directly used by
+  colconv's remaining modules.
+
 ## Unreleased — Tier 1.6 — Yuv411p (DV-NTSC legacy 4:1:1 planar)
 
 Closes Tier 1.6. New source-side pixel format `Yuv411p`

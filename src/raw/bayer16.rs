@@ -25,7 +25,6 @@ use crate::{
   PixelSink, SourceFormat,
   frame::BayerFrame16,
   raw::{BayerDemosaic, BayerPattern, ColorCorrectionMatrix, WhiteBalance, fuse_wb_ccm},
-  sealed::Sealed,
 };
 
 /// Zero-sized marker for the high-bit-depth Bayer source family.
@@ -33,7 +32,6 @@ use crate::{
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Bayer16<const BITS: u32>;
 
-impl<const BITS: u32> Sealed for Bayer16<BITS> {}
 impl<const BITS: u32> SourceFormat for Bayer16<BITS> {}
 
 /// Type-aliased markers for readability at call sites.

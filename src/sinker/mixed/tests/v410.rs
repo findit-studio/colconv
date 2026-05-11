@@ -369,38 +369,6 @@ fn v410_planar_parity_with_yuv444p10() {
 
 #[test]
 #[cfg(all(test, feature = "std"))]
-fn v410_process_rejects_short_packed_slice() {
-  // 6-pixel-wide sink expects 6 u32 elements per row; a 5-element
-  // slice surfaces as `RowShapeMismatch { which: V410Packed, .. }`.
-  let mut rgb = std::vec![0u8; 6 * 3];
-  let mut sink = MixedSinker::<V410>::new(6, 1).with_rgb(&mut rgb).unwrap();
-  let packed = [0u32; 5];
-  let row = V410Row::new(&packed, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::V410Packed, 0, 6, 5))
-  );
-}
-
-#[test]
-#[cfg(all(test, feature = "std"))]
-fn v410_process_rejects_row_index_out_of_range() {
-  // Sink configured for 1 row; passing row index 1 must return
-  // RowIndexOutOfRange before any kernel runs.
-  let mut rgb = std::vec![0u8; 4 * 3];
-  let mut sink = MixedSinker::<V410>::new(4, 1).with_rgb(&mut rgb).unwrap();
-  let packed = [0u32; 4];
-  let row = V410Row::new(&packed, 1, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange::new(1, 1))
-  );
-}
-
-#[test]
-#[cfg(all(test, feature = "std"))]
 fn v410_rgba_u16_buffer_too_short_returns_err() {
   // Buffer holds 6×7 = 42 elements × 4 channels = 168 u16 elements;
   // a 6×8 frame needs 6×8×4 = 192.

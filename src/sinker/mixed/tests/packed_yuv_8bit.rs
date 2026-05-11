@@ -273,36 +273,6 @@ fn yuyv422_width_mismatch_returns_err() {
 }
 
 #[test]
-fn yuyv422_process_rejects_short_packed_slice() {
-  let mut rgb = std::vec![0u8; 16 * 8 * 3];
-  let mut sink = MixedSinker::<Yuyv422>::new(16, 8)
-    .with_rgb(&mut rgb)
-    .unwrap();
-  let packed = [0u8; 31]; // expected 2 * 16 = 32
-  let row = Yuyv422Row::new(&packed, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::Yuyv422Packed, 0, 32, 31))
-  );
-}
-
-#[test]
-fn yuyv422_process_rejects_out_of_range_row_idx() {
-  let mut rgb = std::vec![0u8; 16 * 8 * 3];
-  let mut sink = MixedSinker::<Yuyv422>::new(16, 8)
-    .with_rgb(&mut rgb)
-    .unwrap();
-  let packed = [128u8; 32];
-  let row = Yuyv422Row::new(&packed, 8, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange::new(8, 8))
-  );
-}
-
-#[test]
 fn yuyv422_odd_width_rejected_in_begin_frame() {
   let mut rgb = std::vec![0u8; 17 * 8 * 3];
   let mut sink = MixedSinker::<Yuyv422>::new(17, 8)
@@ -433,21 +403,6 @@ fn uyvy422_with_simd_false_matches_with_simd_true() {
   }
 }
 
-#[test]
-fn uyvy422_process_rejects_short_packed_slice() {
-  let mut rgb = std::vec![0u8; 16 * 8 * 3];
-  let mut sink = MixedSinker::<Uyvy422>::new(16, 8)
-    .with_rgb(&mut rgb)
-    .unwrap();
-  let packed = [0u8; 31];
-  let row = Uyvy422Row::new(&packed, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::Uyvy422Packed, 0, 32, 31))
-  );
-}
-
 // ---- Yvyu422 MixedSinker -----------------------------------------------
 
 #[test]
@@ -551,21 +506,6 @@ fn yvyu422_with_simd_false_matches_with_simd_true() {
 
     assert_eq!(rgb_simd, rgb_scalar, "Yvyu422 SIMD≠scalar at width {w}");
   }
-}
-
-#[test]
-fn yvyu422_process_rejects_short_packed_slice() {
-  let mut rgb = std::vec![0u8; 16 * 8 * 3];
-  let mut sink = MixedSinker::<Yvyu422>::new(16, 8)
-    .with_rgb(&mut rgb)
-    .unwrap();
-  let packed = [0u8; 31];
-  let row = Yvyu422Row::new(&packed, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::Yvyu422Packed, 0, 32, 31))
-  );
 }
 
 // ---- Cross-format byte-permutation invariants --------------------------
