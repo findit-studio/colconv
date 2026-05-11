@@ -401,7 +401,12 @@ impl WidthAlignment {
 pub enum WidthAlignmentRequirement {
   /// Width must be even — 4:2:0 / 4:2:2 chroma-pair stride.
   Even,
-  /// Width must be a multiple of 4 — 4:1:0 / 4:1:1 chroma-group stride.
+  /// Width must be a multiple of 4. Fired by planar 4:1:0
+  /// ([`Yuv410p`](crate::source::Yuv410p)) and packed 4:1:1
+  /// ([`Uyyvyy411`](crate::source::Uyyvyy411)). Note: planar 4:1:1
+  /// ([`Yuv411p`](crate::source::Yuv411p)) accepts non-4-aligned
+  /// widths via `width.div_ceil(4)` for the chroma row and is NOT
+  /// covered by this discriminant.
   MultipleOfFour,
 }
 
@@ -409,9 +414,11 @@ impl core::fmt::Display for WidthAlignmentRequirement {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     match self {
       Self::Even => f.write_str("is odd; 4:2:0 / 4:2:2 require even width"),
-      Self::MultipleOfFour => {
-        f.write_str("is not a multiple of 4; 4:1:0 / 4:1:1 require width divisible by 4")
-      }
+      Self::MultipleOfFour => f.write_str(
+        "is not a multiple of 4; planar 4:1:0 (Yuv410p) and packed 4:1:1 \
+         (Uyyvyy411) require width divisible by 4 — planar 4:1:1 (Yuv411p) \
+         accepts non-4-aligned widths and does not produce this error",
+      ),
     }
   }
 }
@@ -553,10 +560,14 @@ pub enum MixedSinkerError {
 
   /// The sinker's configured `width` violates the format's chroma-group
   /// stride requirement. For 4:2:0 / 4:2:2 formats the width must be
-  /// even (`WidthAlignmentRequirement::Even`); for 4:1:0 / 4:1:1 formats
-  /// the width must be a multiple of 4
-  /// (`WidthAlignmentRequirement::MultipleOfFour`). Supersedes the former
-  /// `OddWidth` (even-only) and `WidthNotMultipleOf4` variants.
+  /// even (`WidthAlignmentRequirement::Even`); for planar 4:1:0
+  /// ([`Yuv410p`](crate::source::Yuv410p)) and packed 4:1:1
+  /// ([`Uyyvyy411`](crate::source::Uyyvyy411)) the width must be a
+  /// multiple of 4 (`WidthAlignmentRequirement::MultipleOfFour`).
+  /// Planar 4:1:1 ([`Yuv411p`](crate::source::Yuv411p)) accepts
+  /// non-4-aligned widths via `width.div_ceil(4)` and does not produce
+  /// this error. Supersedes the former `OddWidth` (even-only) and
+  /// `WidthNotMultipleOf4` variants.
   ///
   /// `MixedSinker::new` is infallible and accepts any width, so this error
   /// surfaces the misconfiguration at the first use site

@@ -2,43 +2,78 @@
 
 ## Unreleased
 
-### Fixed
+### Changed (BREAKING — pre-publish, no published version impacted)
 
-- `MixedSinker<Yuv410p>` now returns `MixedSinkerError::WidthNotMultipleOf4`
-  (instead of the format-agnostic `OddWidth`) when configured with a width
-  not divisible by 4. `OddWidth`'s error message is scoped to 4:2:0 even
-  width, which was misleading for the 4:1:0 chroma-group constraint.
-  `WidthNotMultipleOf4` already covered the matching `Uyyvyy411` sinker
-  case and matches the format-specific `Yuv410pFrameError::WidthNotMultipleOf4`
-  produced by `Yuv410pFrame::try_new`. Variant doc + display string updated
-  to mention both 4:1:0 and 4:1:1.
+- **`MixedSinkerError` refactored to newtype-tuple variants with private-field
+  payload structs.** Every variant now wraps a dedicated payload struct;
+  payload fields are private, accessed via `pub const fn` getters. Callers
+  matching on `MixedSinkerError` must update their patterns from struct-field
+  syntax to newtype destructuring + accessor calls.
 
-### Changed
+  - Per-variant payload structs (all in `crate::sinker`): `BufferTooShort`,
+    `DimensionMismatch`, `GeometryOverflow`, `HsvPlaneTooShort`,
+    `RowIndexOutOfRange`, `RowShapeMismatch`, `WidthAlignment`. Discriminator
+    enum `WidthAlignmentRequirement` is also re-exported. Each struct exposes
+    `pub const fn new(...)` plus one `pub const fn field(&self) -> T` getter
+    per field.
 
-- **`MixedSinkerError` newtype refactor** — all 18 struct-style variants now
-  wrap dedicated public payload structs. Callers matching on `MixedSinkerError`
-  must update their patterns (source-level breaking change; acceptable
-  pre-publish):
+  - All 11 `*BufferTooShort` variants share one `BufferTooShort` payload
+    (DRY). The variant name still distinguishes the buffer (rgb / rgba_u16 /
+    luma / xyz_f32 / etc.) and the per-variant `Display` carries the unit
+    (bytes vs. elements).
 
-  - Every variant like `DimensionMismatch { configured_w, … }` becomes
-    `DimensionMismatch(DimensionMismatch { configured_w, … })`, and so on
-    for all 18 variants.
+  - `OddWidth { width }` + `WidthNotMultipleOf4 { width }` are **consolidated**
+    into one `WidthAlignment(WidthAlignment)` variant whose payload carries
+    `width()` and a `required()` discriminator (`WidthAlignmentRequirement::
+    Even` for 4:2:0 / 4:2:2; `MultipleOfFour` for planar `Yuv410p` and packed
+    `Uyyvyy411`). Planar `Yuv411p` accepts non-4-aligned widths via
+    `width.div_ceil(4)` and is **not** covered by `MultipleOfFour`. The
+    format-agnostic `OddWidth` misnomer is retired.
 
-  - All 11 `*BufferTooShort` variants share one `BufferTooShort { expected,
-    actual }` payload (DRY). Previously each carried its own anonymous struct
-    fields.
+  - **Migration patterns** (the new accessor-based shape):
 
-  - `OddWidth { width }` + `WidthNotMultipleOf4 { width }` are consolidated
-    into a single `WidthAlignment(WidthAlignment { width, required })` variant.
-    `WidthAlignmentRequirement::{Even, MultipleOfFour}` discriminates the two
-    cases: `Even` for 4:2:0 / 4:2:2 (previously `OddWidth`), `MultipleOfFour`
-    for 4:1:0 / 4:1:1 (previously `WidthNotMultipleOf4`). The format-agnostic
-    `OddWidth` misnomer is retired.
+    ```rust
+    // Before
+    match err {
+      MixedSinkerError::DimensionMismatch { configured_w, configured_h, frame_w, frame_h } => {
+        eprintln!("size mismatch: {configured_w}x{configured_h} vs {frame_w}x{frame_h}");
+      }
+      MixedSinkerError::RgbBufferTooShort { expected, actual } => { /* ... */ }
+      MixedSinkerError::OddWidth { width } => { /* ... */ }
+      MixedSinkerError::WidthNotMultipleOf4 { width } => { /* ... */ }
+      _ => {}
+    }
 
-  - New public payload structs re-exported from `crate::sinker`:
-    `BufferTooShort`, `DimensionMismatch`, `GeometryOverflow`,
-    `HsvPlaneTooShort`, `RowIndexOutOfRange`, `RowShapeMismatch`,
-    `WidthAlignment`, `WidthAlignmentRequirement`.
+    // After
+    match err {
+      MixedSinkerError::DimensionMismatch(e) => {
+        eprintln!(
+          "size mismatch: {}x{} vs {}x{}",
+          e.configured_w(), e.configured_h(), e.frame_w(), e.frame_h(),
+        );
+      }
+      MixedSinkerError::RgbBufferTooShort(e) => {
+        let _ = (e.expected(), e.actual());
+      }
+      MixedSinkerError::WidthAlignment(e) => {
+        let _ = (e.width(), e.required()); // e.required() ∈ {Even, MultipleOfFour}
+      }
+      _ => {}
+    }
+    ```
+
+    For the audit-driven Yuv410p case, the variant produced by a non-4-aligned
+    `MixedSinker<Yuv410p>` width is now `WidthAlignment(WidthAlignment::new(w,
+    WidthAlignmentRequirement::MultipleOfFour))` — replacing the prior
+    misleading `OddWidth { width: w }`.
+
+- **`derive_more::IsVariant` derived on every `*Error` enum** (69 enums across
+  28 files) — `err.is_<variant>()` predicates available everywhere.
+  `derive_more::TryUnwrap` and `derive_more::Unwrap` additionally derived on
+  the 3 enums where they generate methods (`MixedSinkerError`,
+  `Xv36FrameError`, `Y2xxFrameError` — i.e. those with tuple/unit variants).
+  derive_more 2.x cannot synthesize `unwrap_*` for struct variants, so the
+  remaining 66 all-struct-variant enums get only `IsVariant`.
 
 ### BREAKING
 
