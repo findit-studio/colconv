@@ -29,6 +29,8 @@
 //! Cross-format consistency on this distinction is verified by the
 //! per-arch SIMD-vs-scalar parity tests.
 
+#![cfg_attr(not(feature = "frame"), allow(dead_code, unused_imports))]
+
 use crate::ColorMatrix;
 
 // Per-conversion-family submodules. Each holds a self-contained

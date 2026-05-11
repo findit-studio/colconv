@@ -38,6 +38,8 @@
 //! `permute2x128_si256` for unpack‑and‑split) to restore natural
 //! element order. Every fixup is called out inline.
 
+#![cfg_attr(not(feature = "frame"), allow(dead_code, unused_imports))]
+
 use core::arch::x86_64::*;
 
 #[allow(unused_imports)]

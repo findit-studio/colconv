@@ -235,6 +235,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
+#![cfg_attr(not(feature = "frame"), allow(dead_code, unused_imports))]
 #![deny(missing_docs)]
 
 #[cfg(all(not(feature = "std"), feature = "alloc"))]

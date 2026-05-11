@@ -40,6 +40,8 @@
 //! `crate::row::*` (e.g. `crate::row::yuv_420_to_rgb_row`). Callers
 //! see no API change from the split.
 
+#![cfg_attr(not(feature = "frame"), allow(dead_code, unused_imports))]
+
 pub(crate) mod arch;
 pub(crate) mod dispatch;
 pub(crate) mod scalar;
@@ -87,14 +89,14 @@ pub use dispatch::bayer::*;
 pub use dispatch::legacy_rgb::*;
 #[cfg(feature = "yuv-semi-planar")]
 pub use dispatch::nv::*;
-#[cfg(feature = "yuv-packed")]
-pub use dispatch::{packed_yuv411::*, packed_yuv422::*};
 #[cfg(feature = "mono")]
 pub use dispatch::pal8::*;
-#[cfg(feature = "gbr")]
-pub use dispatch::{planar_gbr::*, planar_gbr_high_bit::*};
 #[cfg(feature = "yuv-semi-planar")]
 pub use dispatch::pn::*;
+#[cfg(feature = "yuv-packed")]
+pub use dispatch::{packed_yuv411::*, packed_yuv422::*};
+#[cfg(feature = "gbr")]
+pub use dispatch::{planar_gbr::*, planar_gbr_high_bit::*};
 #[cfg(feature = "rgb-float")]
 pub use dispatch::{rgb_f16_ops::*, rgb_float_ops::*};
 // rgb_ops contains the cross-format `rgb_to_hsv_row` / `rgb_to_luma_row`
@@ -102,18 +104,18 @@ pub use dispatch::{rgb_f16_ops::*, rgb_float_ops::*};
 // `rgb`-family packed RGB/RGBA dispatchers. Always re-exported so HSV /
 // luma derivations stay reachable when the `rgb` family is disabled.
 pub use dispatch::rgb_ops::*;
-#[cfg(feature = "yuv-444-packed")]
-pub use dispatch::{v30x::*, v410::*, vuya::*, vuyx::*, xv36::*};
 #[cfg(feature = "v210")]
 pub use dispatch::v210::*;
+#[cfg(feature = "yuv-planar")]
+pub use dispatch::yuv411p::*;
+#[cfg(feature = "yuva")]
+pub use dispatch::yuva::*;
+#[cfg(feature = "yuv-444-packed")]
+pub use dispatch::{v30x::*, v410::*, vuya::*, vuyx::*, xv36::*};
 #[cfg(feature = "y2xx")]
 pub use dispatch::{y210::*, y212::*, y216::*};
 #[cfg(feature = "yuv-planar")]
-pub use dispatch::yuv411p::*;
-#[cfg(feature = "yuv-planar")]
 pub use dispatch::{yuv420::*, yuv444::*};
-#[cfg(feature = "yuva")]
-pub use dispatch::yuva::*;
 // Tier 12 — Xyz12 dispatchers depend on `f32::powf`, which is only
 // available with `feature = "std"` or `feature = "alloc"` (the latter
 // pulls in `libm`). Mirror the same gate on the re-export.
@@ -180,7 +182,12 @@ pub(crate) use dispatch::planar_gbr_float::*;
 // the dispatch submodule keeps it as `pub(crate)`, so glob `pub use`
 // doesn't pick it up. Gated on the same cfg the test uses to avoid
 // `unused_imports` on builds that don't compile the test.
-#[cfg(all(test, feature = "std", feature = "yuv-planar", target_pointer_width = "32"))]
+#[cfg(all(
+  test,
+  feature = "std",
+  feature = "yuv-planar",
+  target_pointer_width = "32"
+))]
 pub(crate) use dispatch::yuv444::yuv_444p_n_to_rgb_u16_row;
 
 // ---- shared dispatcher helpers ---------------------------------------

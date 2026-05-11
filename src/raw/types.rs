@@ -15,6 +15,8 @@
 //! (`M = CCM · diag(wb)`) before dispatching to the per-row kernel,
 //! so the per-pixel arithmetic is one 3×3 matmul, not two passes.
 
+#![cfg_attr(not(feature = "frame"), allow(dead_code, unused_imports))]
+
 use derive_more::IsVariant;
 use thiserror::Error;
 

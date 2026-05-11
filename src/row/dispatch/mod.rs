@@ -91,5 +91,10 @@ pub(super) mod yuva;
 // gained `_endian` entry points; this module asserts that the BE path
 // is reachable and produces byte-identical output to the LE path on
 // matching fixtures.
-#[cfg(all(test, feature = "std", feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg(all(
+  test,
+  feature = "std",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar"
+))]
 mod be_yuv_hb_parity_tests;

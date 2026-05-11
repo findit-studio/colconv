@@ -97,6 +97,8 @@
 //! under normal contract violations — so the sink is usable on
 //! `panic = "abort"` targets.
 
+#![cfg_attr(not(feature = "frame"), allow(dead_code, unused_imports))]
+
 use core::marker::PhantomData;
 
 use std::vec::Vec;
