@@ -1097,8 +1097,14 @@ macro_rules! gray_planar_u16_le_be_roundtrip_test {
 
     // Cover both scalar (`with_simd(false)`) and SIMD (`with_simd(true)`)
     // dispatch paths so the codex round-1 finding (BE parity tests bypassing
-    // SIMD) is closed.
-    for &use_simd in &[false, true] {
+    // SIMD) is closed. Under Miri, drop the SIMD iteration only — Miri can't
+    // run the NEON/x86 intrinsics, but the scalar BE/LE path is exactly what
+    // Miri exists to verify, so we keep that arm.
+    #[cfg(miri)]
+    let modes: &[bool] = &[false];
+    #[cfg(not(miri))]
+    let modes: &[bool] = &[false, true];
+    for &use_simd in modes {
       let frame_le = $le_frame::try_new(&pix_le, 16, 4, 16).unwrap();
       let mut out_le = std::vec![0u8; 16 * 4 * 4];
       let mut sink_le = MixedSinker::<$marker>::new(16, 4)
@@ -1125,10 +1131,6 @@ macro_rules! gray_planar_u16_le_be_roundtrip_test {
 }
 
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn gray9_le_be_roundtrip_byte_identical() {
   gray_planar_u16_le_be_roundtrip_test! {
     label: "Gray9",
@@ -1142,10 +1144,6 @@ fn gray9_le_be_roundtrip_byte_identical() {
 }
 
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn gray10_le_be_roundtrip_byte_identical() {
   gray_planar_u16_le_be_roundtrip_test! {
     label: "Gray10",
@@ -1159,10 +1157,6 @@ fn gray10_le_be_roundtrip_byte_identical() {
 }
 
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn gray12_le_be_roundtrip_byte_identical() {
   gray_planar_u16_le_be_roundtrip_test! {
     label: "Gray12",
@@ -1176,10 +1170,6 @@ fn gray12_le_be_roundtrip_byte_identical() {
 }
 
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn gray14_le_be_roundtrip_byte_identical() {
   gray_planar_u16_le_be_roundtrip_test! {
     label: "Gray14",
@@ -1246,10 +1236,6 @@ macro_rules! gray16_dual_output_le_be_roundtrip_test {
 }
 
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn gray16_le_be_roundtrip_byte_identical() {
   gray16_dual_output_le_be_roundtrip_test! {
     label: "Gray16",
@@ -1312,10 +1298,6 @@ macro_rules! grayf32_le_be_roundtrip_test {
 }
 
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn grayf32_le_be_roundtrip_byte_identical() {
   // Mix of values to surface any byte-swap regression. Includes typical
   // luma values (0.0, 0.25, 0.5, 0.75, 1.0) plus HDR (>1) and sub-zero.
@@ -1394,10 +1376,6 @@ macro_rules! ya16_le_be_roundtrip_test {
 }
 
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn ya16_le_be_roundtrip_byte_identical() {
   ya16_le_be_roundtrip_test! {
     label: "Ya16",

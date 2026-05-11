@@ -527,10 +527,6 @@ fn as_be_u16(host: &[u16]) -> std::vec::Vec<u16> {
 }
 
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn rgb48_le_be_roundtrip_byte_identical() {
   // Mix of patterns to surface any byte-swap regression.
   let intended: std::vec::Vec<u16> = (0..16 * 4 * 3)
@@ -567,10 +563,6 @@ fn rgb48_le_be_roundtrip_byte_identical() {
 }
 
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn bgr48_le_be_roundtrip_byte_identical() {
   let intended: std::vec::Vec<u16> = (0..16 * 4 * 3)
     .map(|i| match i % 4 {
@@ -606,10 +598,6 @@ fn bgr48_le_be_roundtrip_byte_identical() {
 }
 
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn rgba64_le_be_roundtrip_byte_identical() {
   let intended: std::vec::Vec<u16> = (0..16 * 4 * 4)
     .map(|i| match i % 5 {
@@ -658,10 +646,6 @@ fn rgba64_le_be_roundtrip_byte_identical() {
 }
 
 #[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
 fn bgra64_le_be_roundtrip_byte_identical() {
   let intended: std::vec::Vec<u16> = (0..16 * 4 * 4)
     .map(|i| match i % 5 {
