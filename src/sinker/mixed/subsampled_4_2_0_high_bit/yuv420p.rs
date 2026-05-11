@@ -23,7 +23,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p9<BE>> {
   /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(3)?;
+    let expected = self.frame_elems(3)?;
     if buf.len() < expected {
       return Err(MixedSinkerError::InsufficientRgbU16Buffer(
         InsufficientBuffer::new(expected, buf.len()),
@@ -49,7 +49,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p9<BE>> {
   /// In-place variant of [`with_rgba`](Self::with_rgba).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
       return Err(MixedSinkerError::InsufficientRgbaBuffer(
         InsufficientBuffer::new(expected, buf.len()),
@@ -71,7 +71,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p9<BE>> {
   /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
       return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
         InsufficientBuffer::new(expected, buf.len()),
@@ -317,10 +317,10 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p10<BE>> {
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
     // Packed RGB requires `width × height × 3` channel values —
     // that's the same count whether the element type is `u8` or
-    // `u16`, so the [`Self::frame_bytes`] helper (named for the u8
+    // `u16`, so the [`Self::frame_elems`] helper (named for the u8
     // RGB path's byte count) gives the element count here too. No
     // size conversion needed.
-    let expected_elements = self.frame_bytes(3)?;
+    let expected_elements = self.frame_elems(3)?;
     if buf.len() < expected_elements {
       return Err(MixedSinkerError::InsufficientRgbU16Buffer(
         InsufficientBuffer::new(expected_elements, buf.len()),
@@ -342,7 +342,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p10<BE>> {
   /// In-place variant of [`with_rgba`](Self::with_rgba).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
       return Err(MixedSinkerError::InsufficientRgbaBuffer(
         InsufficientBuffer::new(expected, buf.len()),
@@ -364,7 +364,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p10<BE>> {
   /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
       return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
         InsufficientBuffer::new(expected, buf.len()),
@@ -613,7 +613,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p12<BE>> {
   /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected_elements = self.frame_bytes(3)?;
+    let expected_elements = self.frame_elems(3)?;
     if buf.len() < expected_elements {
       return Err(MixedSinkerError::InsufficientRgbU16Buffer(
         InsufficientBuffer::new(expected_elements, buf.len()),
@@ -634,7 +634,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p12<BE>> {
   /// In-place variant of [`with_rgba`](Self::with_rgba).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
       return Err(MixedSinkerError::InsufficientRgbaBuffer(
         InsufficientBuffer::new(expected, buf.len()),
@@ -656,7 +656,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p12<BE>> {
   /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
       return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
         InsufficientBuffer::new(expected, buf.len()),
@@ -888,7 +888,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p14<BE>> {
   /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected_elements = self.frame_bytes(3)?;
+    let expected_elements = self.frame_elems(3)?;
     if buf.len() < expected_elements {
       return Err(MixedSinkerError::InsufficientRgbU16Buffer(
         InsufficientBuffer::new(expected_elements, buf.len()),
@@ -909,7 +909,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p14<BE>> {
   /// In-place variant of [`with_rgba`](Self::with_rgba).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
       return Err(MixedSinkerError::InsufficientRgbaBuffer(
         InsufficientBuffer::new(expected, buf.len()),
@@ -931,7 +931,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p14<BE>> {
   /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
       return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
         InsufficientBuffer::new(expected, buf.len()),
@@ -1160,7 +1160,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p16<BE>> {
   /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected_elements = self.frame_bytes(3)?;
+    let expected_elements = self.frame_elems(3)?;
     if buf.len() < expected_elements {
       return Err(MixedSinkerError::InsufficientRgbU16Buffer(
         InsufficientBuffer::new(expected_elements, buf.len()),
@@ -1181,7 +1181,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p16<BE>> {
   /// In-place variant of [`with_rgba`](Self::with_rgba).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
       return Err(MixedSinkerError::InsufficientRgbaBuffer(
         InsufficientBuffer::new(expected, buf.len()),
@@ -1202,7 +1202,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p16<BE>> {
   /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
       return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
         InsufficientBuffer::new(expected, buf.len()),

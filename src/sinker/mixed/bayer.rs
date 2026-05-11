@@ -180,7 +180,7 @@ impl<'a, const BITS: u32> MixedSinker<'a, Bayer16<BITS>> {
   /// required length is measured in `u16` **elements**, not bytes.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(3)?;
+    let expected = self.frame_elems(3)?;
     if buf.len() < expected {
       return Err(MixedSinkerError::InsufficientRgbU16Buffer(
         InsufficientBuffer::new(expected, buf.len()),

@@ -1619,12 +1619,18 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
     self
   }
 
-  /// Full-frame size in bytes for a given channel count, with
-  /// overflow checking. Returns `Err(GeometryOverflow)` if
-  /// `width × height × channels` cannot fit in `usize` — only
-  /// reachable on 32‑bit targets with extreme dimensions.
+  /// Full-frame slot count (`width × height × channels`) with overflow
+  /// checking. The result is the minimum required `buf.len()` for any
+  /// `&[T]` buffer holding `channels` slots per pixel — bytes for
+  /// `&[u8]`, `u16` elements for `&[u16]`, `f32` elements for `&[f32]`,
+  /// `f16` elements for `&[half::f16]`. The function does NOT scale by
+  /// element size; callers compare against `buf.len()` (which Rust
+  /// reports in elements of the slice's element type).
+  ///
+  /// Returns `Err(GeometryOverflow)` if the product cannot fit in
+  /// `usize` — only reachable on 32‑bit targets with extreme dimensions.
   #[cfg_attr(not(tarpaulin), inline(always))]
-  fn frame_bytes(&self, channels: usize) -> Result<usize, MixedSinkerError> {
+  fn frame_elems(&self, channels: usize) -> Result<usize, MixedSinkerError> {
     self
       .width
       .checked_mul(self.height)
@@ -1637,17 +1643,12 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
   }
 
   /// Full-frame element count (`width × height`) for a single-channel
-  /// `&[T]` buffer, with overflow checking. Used by `set_luma_u16`
-  /// (and prospective `set_luma_f32` / `set_luma_f16`) preflight
-  /// checks where `buf.len()` is in `T` elements rather than bytes,
-  /// so [`frame_bytes(1)`](Self::frame_bytes)'s "byte" naming would
-  /// invite a future 2x/4x undercount if the buffer's element type
-  /// changed. The byte and element counts coincide numerically at
-  /// `channels == 1`, but the names should not.
+  /// `&[T]` buffer, with overflow checking. Equivalent to
+  /// [`frame_elems(1)`](Self::frame_elems) numerically, but the
+  /// dedicated name documents "one slot per pixel" at the call site
+  /// (e.g. luma planes) without the channels=1 magic number.
   ///
-  /// Returns `Err(GeometryOverflow { channels: 1 })` on overflow —
-  /// matches what `frame_bytes(1)` would have returned, so this is a
-  /// drop-in clarity rename.
+  /// Returns `Err(GeometryOverflow { channels: 1 })` on overflow.
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn frame_pixels(&self) -> Result<usize, MixedSinkerError> {
     self
@@ -1675,7 +1676,7 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   /// In-place variant of [`with_rgb`](Self::with_rgb).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgb(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(3)?;
+    let expected = self.frame_elems(3)?;
     if buf.len() < expected {
       return Err(MixedSinkerError::InsufficientRgbBuffer(
         InsufficientBuffer::new(expected, buf.len()),
@@ -1730,7 +1731,7 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   /// In-place variant of [`with_luma`](Self::with_luma).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_luma(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(1)?;
+    let expected = self.frame_elems(1)?;
     if buf.len() < expected {
       return Err(MixedSinkerError::InsufficientLumaBuffer(
         InsufficientBuffer::new(expected, buf.len()),
@@ -1764,7 +1765,7 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
     s: &'a mut [u8],
     v: &'a mut [u8],
   ) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(1)?;
+    let expected = self.frame_elems(1)?;
     if h.len() < expected {
       return Err(MixedSinkerError::InsufficientHsvPlane(
         InsufficientHsvPlane::new(HsvPlane::H, expected, h.len()),
@@ -1931,7 +1932,7 @@ pub(super) fn rgb_row_to_luma_row(rgb: &[u8], luma: &mut [u8], coeffs_q8: (u32, 
   // failure under tests.
   //
   // `checked_mul` instead of `3 * luma.len()` because, while the
-  // existing `frame_bytes` validation in caller paths makes the
+  // existing `frame_elems` validation in caller paths makes the
   // product fit, a future caller passing a raw slice with no such
   // upstream check could trigger a `usize` overflow inside the
   // assert message itself (panic before the assertion runs).

@@ -98,7 +98,7 @@ impl<'a> MixedSinker<'a, Vuya> {
   /// In-place variant of [`with_rgba`](Self::with_rgba).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
-    let expected = self.frame_bytes(4)?;
+    let expected = self.frame_elems(4)?;
     if buf.len() < expected {
       return Err(MixedSinkerError::InsufficientRgbaBuffer(
         InsufficientBuffer::new(expected, buf.len()),
