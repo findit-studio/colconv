@@ -195,7 +195,7 @@ derive_more = { version = "2", default-features = false, features = ["display", 
 half = { version = "2", default-features = false }
 thiserror = { version = "2", default-features = false }
 libm = { version = "0.2", optional = true }
-videoframe = { path = "../videoframe", default-features = false }
+videoframe = { path = "../videoframe/videoframe", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"

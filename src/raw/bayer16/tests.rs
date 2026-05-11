@@ -290,14 +290,12 @@ fn bayer12_try_new_rejects_sample_above_max() {
   let mut raw = std::vec![100u16; (w * h) as usize];
   raw[3] = 4096; // just above 12-bit max
   let e = Bayer12Frame::try_new(&raw, w, h, w).unwrap_err();
-  assert!(matches!(
-    e,
-    crate::frame::BayerFrame16Error::SampleOutOfRange {
-      index: 3,
-      value: 4096,
-      max_valid: 4095,
-    }
-  ));
+  let crate::frame::BayerFrame16Error::SampleOutOfRange(p) = e else {
+    panic!("expected SampleOutOfRange, got {e:?}");
+  };
+  assert_eq!(p.index(), 3);
+  assert_eq!(p.value(), 4096);
+  assert_eq!(p.max_valid(), 4095);
 }
 
 /// Codex-recommended regression: MSB-aligned 12-bit midgray
@@ -310,14 +308,11 @@ fn bayer12_try_new_rejects_msb_aligned_input() {
   let (w, h) = (4u32, 2u32);
   let raw = std::vec![0x8000u16; (w * h) as usize]; // MSB-aligned 12-bit midgray
   let e = Bayer12Frame::try_new(&raw, w, h, w).unwrap_err();
-  assert!(matches!(
-    e,
-    crate::frame::BayerFrame16Error::SampleOutOfRange {
-      value: 0x8000,
-      max_valid: 4095,
-      ..
-    }
-  ));
+  let crate::frame::BayerFrame16Error::SampleOutOfRange(p) = e else {
+    panic!("expected SampleOutOfRange, got {e:?}");
+  };
+  assert_eq!(p.value(), 0x8000);
+  assert_eq!(p.max_valid(), 4095);
 }
 
 /// Codex-recommended partial-output regression: a Bayer12 frame
@@ -334,14 +329,11 @@ fn bayer12_try_new_rejects_bad_sample_in_later_row() {
   let off = (6 * w) as usize + 2;
   raw[off] = 4096; // exceeds 12-bit max
   let e = Bayer12Frame::try_new(&raw, w, h, w).unwrap_err();
-  assert!(matches!(
-    e,
-    crate::frame::BayerFrame16Error::SampleOutOfRange {
-      value: 4096,
-      max_valid: 4095,
-      ..
-    }
-  ));
+  let crate::frame::BayerFrame16Error::SampleOutOfRange(p) = e else {
+    panic!("expected SampleOutOfRange, got {e:?}");
+  };
+  assert_eq!(p.value(), 4096);
+  assert_eq!(p.max_valid(), 4095);
 }
 
 /// Codex-recommended regression: a valid padded RAW buffer
