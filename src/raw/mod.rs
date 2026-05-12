@@ -46,6 +46,8 @@
 //! `BayerRow{,16}` borrow. The sink owns the RGB output buffer for
 //! the lifetime of the run; the kernel writes into it in place.
 
+#[cfg(feature = "bayer")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bayer")))]
 pub use videoframe::frame::{
   BayerDemosaic, BayerPattern, ColorCorrectionMatrix, ColorCorrectionMatrixError, WbChannel,
   WhiteBalance, WhiteBalanceError,
