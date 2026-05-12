@@ -110,36 +110,16 @@ use std::vec::Vec;
 use derive_more::{Display, IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
-// Per-format imports moved to the child modules (`planar_8bit`,
-// `semi_planar_8bit`, `subsampled_4_*_high_bit`, `bayer`). mod.rs only
-// keeps the prelude types and the helpers — neither of which references
-// any specific source-format type.
-// `HsvBuffers` carries the three HSV planes for `with_hsv`. It is
-// only referenced by per-format `process` impls, so it shares the same
-// 15-feature cfg as the impls themselves.
-#[cfg(any(
-  feature = "bayer",
-  feature = "gbr",
-  feature = "gray",
-  feature = "mono",
-  feature = "rgb",
-  feature = "rgb-float",
-  feature = "rgb-legacy",
-  feature = "v210",
-  feature = "xyz",
-  feature = "y2xx",
-  feature = "yuv-444-packed",
-  feature = "yuv-packed",
-  feature = "yuv-planar",
-  feature = "yuv-semi-planar",
-  feature = "yuva",
-))]
-use crate::HsvBuffers;
 use crate::SourceFormat;
 // PixelSink is referenced only via intra-doc links (`[`PixelSink::*`]`)
 // in this file; the rustc lint can't see those uses, so silence it.
 #[allow(unused_imports)]
 use crate::PixelSink;
+
+pub use videoframe::{
+  frame::{WidthAlignment, WidthAlignmentRequirement},
+  source::{HsvFrame, HsvFrameMut, HsvPlane},
+};
 
 /// Frame dimensions handed to `begin_frame` don't match the sinker's
 /// configured size.
@@ -390,66 +370,6 @@ impl RowIndexOutOfRange {
   }
 }
 
-/// Width-alignment violation. Replaces the prior `OddWidth` and
-/// `WidthNotMultipleOf4` variants — both expressed the same
-/// "configured width doesn't satisfy the format's chroma-group
-/// stride" failure, just at different granularities.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WidthAlignment {
-  /// Sink's configured width.
-  width: usize,
-  /// The alignment requirement that was violated.
-  required: WidthAlignmentRequirement,
-}
-
-impl WidthAlignment {
-  /// Constructs a new `WidthAlignment` payload.
-  #[inline]
-  pub const fn new(width: usize, required: WidthAlignmentRequirement) -> Self {
-    Self { width, required }
-  }
-
-  /// Sink's configured width.
-  #[inline]
-  pub const fn width(&self) -> usize {
-    self.width
-  }
-
-  /// The alignment requirement that was violated.
-  #[inline]
-  pub const fn required(&self) -> WidthAlignmentRequirement {
-    self.required
-  }
-}
-
-/// Discriminates which width-alignment rule was violated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum WidthAlignmentRequirement {
-  /// Width must be even — 4:2:0 / 4:2:2 chroma-pair stride.
-  Even,
-  /// Width must be a multiple of 4. Fired by planar 4:1:0
-  /// ([`Yuv410p`](crate::source::Yuv410p)) and packed 4:1:1
-  /// ([`Uyyvyy411`](crate::source::Uyyvyy411)). Note: planar 4:1:1
-  /// ([`Yuv411p`](crate::source::Yuv411p)) accepts non-4-aligned
-  /// widths via `width.div_ceil(4)` for the chroma row and is NOT
-  /// covered by this discriminant.
-  MultipleOfFour,
-}
-
-impl core::fmt::Display for WidthAlignmentRequirement {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    match self {
-      Self::Even => f.write_str("is odd; 4:2:0 / 4:2:2 require even width"),
-      Self::MultipleOfFour => f.write_str(
-        "is not a multiple of 4; planar 4:1:0 (Yuv410p) and packed 4:1:1 \
-         (Uyyvyy411) require width divisible by 4 — planar 4:1:1 (Yuv411p) \
-         accepts non-4-aligned widths and does not produce this error",
-      ),
-    }
-  }
-}
-
 /// Errors returned by [`MixedSinker`] configuration and per-frame
 /// preflight.
 ///
@@ -607,18 +527,6 @@ pub enum MixedSinkerError {
   /// primitive is invoked, preserving the no-panic contract.
   #[error("MixedSinker configured width {} {}", .0.width(), .0.required())]
   WidthAlignment(WidthAlignment),
-}
-
-/// Identifies which of the three HSV planes a
-/// [`MixedSinkerError::InsufficientHsvPlane`] refers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HsvPlane {
-  /// Hue plane.
-  H,
-  /// Saturation plane.
-  S,
-  /// Value plane.
-  V,
 }
 
 /// Identifies which slice of a multi‑plane source row mismatched in
@@ -1144,7 +1052,7 @@ pub struct MixedSinker<'a, F: SourceFormat> {
   luma: Option<&'a mut [u8]>,
   luma_u16: Option<&'a mut [u16]>,
   luma_f32: Option<&'a mut [f32]>,
-  // `HsvBuffers` is cfg-gated to the same 15-feature any as the
+  // `HsvFrameMut` is cfg-gated to the same 15-feature any as the
   // per-format `process` impls that read it.
   #[cfg(any(
     feature = "bayer",
@@ -1163,7 +1071,7 @@ pub struct MixedSinker<'a, F: SourceFormat> {
     feature = "yuv-semi-planar",
     feature = "yuva",
   ))]
-  hsv: Option<HsvBuffers<'a>>,
+  hsv: Option<HsvFrameMut<'a>>,
   /// Lossless linear-XYZ pass-through buffer used by the
   /// [`Xyz12`](crate::source::Xyz12) source's `with_xyz_f32` accessor.
   /// `None` for every other source format.
@@ -1965,7 +1873,7 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
         InsufficientHsvPlane::new(HsvPlane::V, expected, v.len()),
       ));
     }
-    self.hsv = Some(HsvBuffers { h, s, v });
+    self.hsv = Some(HsvFrameMut::new(h, s, v));
     Ok(self)
   }
 }

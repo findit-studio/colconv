@@ -1,6 +1,10 @@
 use super::*;
 use crate::row::bayer_to_rgb_row;
 use core::convert::Infallible;
+use videoframe::{
+  PixelSink,
+  frame::{BayerDemosaic, BayerFrame, BayerPattern, ColorCorrectionMatrix, WhiteBalance},
+};
 
 /// Test sink that captures every output row into a single packed
 /// RGB buffer the test owns. Calls the public dispatcher with

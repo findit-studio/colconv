@@ -409,13 +409,14 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrpf16<BE>> {
         }
 
         if let Some(hsv) = self.hsv.as_mut() {
+          let (h, s, v) = hsv.hsv();
           gbrpf32_to_hsv_row::<HOST_NATIVE_BE>(
             gf,
             bf,
             rf,
-            &mut hsv.h[chunk_plane_start..chunk_plane_end],
-            &mut hsv.s[chunk_plane_start..chunk_plane_end],
-            &mut hsv.v[chunk_plane_start..chunk_plane_end],
+            &mut h[chunk_plane_start..chunk_plane_end],
+            &mut s[chunk_plane_start..chunk_plane_end],
+            &mut v[chunk_plane_start..chunk_plane_end],
             n,
             use_simd,
           );
@@ -824,13 +825,14 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrapf16<BE>> {
         }
 
         if let Some(hsv) = self.hsv.as_mut() {
+          let (h, s, v) = hsv.hsv();
           gbrpf32_to_hsv_row::<HOST_NATIVE_BE>(
             gf,
             bf,
             rf,
-            &mut hsv.h[chunk_plane_start..chunk_plane_end],
-            &mut hsv.s[chunk_plane_start..chunk_plane_end],
-            &mut hsv.v[chunk_plane_start..chunk_plane_end],
+            &mut h[chunk_plane_start..chunk_plane_end],
+            &mut s[chunk_plane_start..chunk_plane_end],
+            &mut v[chunk_plane_start..chunk_plane_end],
             n,
             use_simd,
           );

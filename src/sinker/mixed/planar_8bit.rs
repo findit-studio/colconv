@@ -2,8 +2,7 @@
 
 use super::{
   InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange, RowShapeMismatch,
-  RowSlice, WidthAlignment, WidthAlignmentRequirement, check_dimensions_match,
-  rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  RowSlice, WidthAlignment, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
 use crate::{PixelSink, row::*, source::*};
 
@@ -93,9 +92,8 @@ impl PixelSink for MixedSinker<'_, Yuv420p> {
     // first `process` call otherwise (`MixedSinker::new` is
     // infallible and accepts any width).
     if self.width & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(
         self.width,
-        WidthAlignmentRequirement::Even,
       )));
     }
     check_dimensions_match(self.width, self.height, width, height)
@@ -120,10 +118,7 @@ impl PixelSink for MixedSinker<'_, Yuv420p> {
     // check here (and in `begin_frame`) preserves the no-panic
     // contract for direct `process` callers that skip `begin_frame`.
     if w & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
-        w,
-        WidthAlignmentRequirement::Even,
-      )));
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(w)));
     }
     if row.y().len() != w {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
@@ -258,11 +253,12 @@ impl PixelSink for MixedSinker<'_, Yuv420p> {
 
     // HSV from the RGB row we just wrote.
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -360,10 +356,9 @@ impl PixelSink for MixedSinker<'_, Yuv410p> {
     // it — guard at the sinker boundary so unsafe SIMD dispatchers
     // never see a non-multiple-of-4 width.
     if self.width & 3 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
-        self.width,
-        WidthAlignmentRequirement::MultipleOfFour,
-      )));
+      return Err(MixedSinkerError::WidthAlignment(
+        WidthAlignment::multiple_of_four(self.width),
+      ));
     }
     check_dimensions_match(self.width, self.height, width, height)
   }
@@ -376,10 +371,9 @@ impl PixelSink for MixedSinker<'_, Yuv410p> {
 
     // Defense in depth — see Yuv420p impl.
     if w & 3 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
-        w,
-        WidthAlignmentRequirement::MultipleOfFour,
-      )));
+      return Err(MixedSinkerError::WidthAlignment(
+        WidthAlignment::multiple_of_four(w),
+      ));
     }
     if row.y().len() != w {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
@@ -486,11 +480,12 @@ impl PixelSink for MixedSinker<'_, Yuv410p> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -574,9 +569,8 @@ impl PixelSink for MixedSinker<'_, Yuv422p> {
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     if self.width & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(
         self.width,
-        WidthAlignmentRequirement::Even,
       )));
     }
     check_dimensions_match(self.width, self.height, width, height)
@@ -589,10 +583,7 @@ impl PixelSink for MixedSinker<'_, Yuv422p> {
     let use_simd = self.simd;
 
     if w & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
-        w,
-        WidthAlignmentRequirement::Even,
-      )));
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(w)));
     }
     if row.y().len() != w {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
@@ -702,11 +693,12 @@ impl PixelSink for MixedSinker<'_, Yuv422p> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -900,11 +892,12 @@ impl PixelSink for MixedSinker<'_, Yuv444p> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -1100,11 +1093,12 @@ impl PixelSink for MixedSinker<'_, Yuv440p> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -1313,11 +1307,12 @@ impl PixelSink for MixedSinker<'_, Yuv411p> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );

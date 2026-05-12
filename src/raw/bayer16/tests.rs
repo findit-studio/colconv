@@ -1,3 +1,8 @@
+use videoframe::{
+  PixelSink,
+  frame::{BayerDemosaic, BayerPattern, ColorCorrectionMatrix, WhiteBalance},
+};
+
 use super::*;
 use crate::{
   frame::Bayer12Frame,

@@ -1,4 +1,6 @@
-use super::*;
+use videoframe::frame::{
+  ColorCorrectionMatrix, WbChannel, WhiteBalance, WhiteBalanceError, fuse_wb_ccm,
+};
 
 #[test]
 fn white_balance_neutral_is_default() {
@@ -53,30 +55,18 @@ fn fuse_wb_ccm_scales_columns_by_wb() {
 
 #[test]
 fn wb_try_new_rejects_nan() {
-  let e = WhiteBalance::try_new(f32::NAN, 1.0, 1.0).unwrap_err();
-  assert!(matches!(
-    e,
-    WhiteBalanceError::NonFinite {
-      channel: WbChannel::R,
-      ..
-    }
-  ));
-  let e = WhiteBalance::try_new(1.0, f32::NAN, 1.0).unwrap_err();
-  assert!(matches!(
-    e,
-    WhiteBalanceError::NonFinite {
-      channel: WbChannel::G,
-      ..
-    }
-  ));
-  let e = WhiteBalance::try_new(1.0, 1.0, f32::NAN).unwrap_err();
-  assert!(matches!(
-    e,
-    WhiteBalanceError::NonFinite {
-      channel: WbChannel::B,
-      ..
-    }
-  ));
+  let e = WhiteBalance::try_new(f32::NAN, 1.0, 1.0)
+    .unwrap_err()
+    .unwrap_non_finite();
+  assert!(matches!(e.channel(), WbChannel::R,));
+  let e = WhiteBalance::try_new(1.0, f32::NAN, 1.0)
+    .unwrap_err()
+    .unwrap_non_finite();
+  assert!(matches!(e.channel(), WbChannel::G,));
+  let e = WhiteBalance::try_new(1.0, 1.0, f32::NAN)
+    .unwrap_err()
+    .unwrap_non_finite();
+  assert!(matches!(e.channel(), WbChannel::B,));
 }
 
 #[test]
@@ -89,14 +79,10 @@ fn wb_try_new_rejects_infinity() {
 
 #[test]
 fn wb_try_new_rejects_negative() {
-  let e = WhiteBalance::try_new(-0.1, 1.0, 1.0).unwrap_err();
-  assert!(matches!(
-    e,
-    WhiteBalanceError::Negative {
-      channel: WbChannel::R,
-      ..
-    }
-  ));
+  let e = WhiteBalance::try_new(-0.1, 1.0, 1.0)
+    .unwrap_err()
+    .unwrap_negative();
+  assert!(matches!(e.channel(), WbChannel::R,));
 }
 
 #[test]
@@ -123,22 +109,20 @@ fn wb_new_panics_on_nan() {
 #[test]
 fn ccm_try_new_rejects_nan_off_diagonal() {
   let e = ColorCorrectionMatrix::try_new([[1.0, f32::NAN, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
-    .unwrap_err();
-  assert!(matches!(
-    e,
-    ColorCorrectionMatrixError::NonFinite { row: 0, col: 1, .. }
-  ));
+    .unwrap_err()
+    .unwrap_non_finite();
+  assert_eq!(e.row(), 0);
+  assert_eq!(e.col(), 1);
 }
 
 #[test]
 fn ccm_try_new_rejects_infinity_diagonal() {
   let e =
     ColorCorrectionMatrix::try_new([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, f32::INFINITY]])
-      .unwrap_err();
-  assert!(matches!(
-    e,
-    ColorCorrectionMatrixError::NonFinite { row: 2, col: 2, .. }
-  ));
+      .unwrap_err()
+      .unwrap_non_finite();
+  assert_eq!(e.row(), 2);
+  assert_eq!(e.col(), 2);
 }
 
 #[test]
@@ -179,14 +163,10 @@ fn wb_try_new_rejects_extreme_finite_gain() {
   // though it would pass the NaN / Inf / negative checks. Real
   // camera WB gains are O(1–10); 1e10 is well past the bound
   // and would risk overflowing the per-pixel matmul.
-  let e = WhiteBalance::try_new(1e10, 1.0, 1.0).unwrap_err();
-  assert!(matches!(
-    e,
-    WhiteBalanceError::OutOfBounds {
-      channel: WbChannel::R,
-      ..
-    }
-  ));
+  let e = WhiteBalance::try_new(1e10, 1.0, 1.0)
+    .unwrap_err()
+    .unwrap_out_of_bounds();
+  assert_eq!(e.channel(), WbChannel::R);
 }
 
 #[test]
@@ -203,11 +183,10 @@ fn ccm_try_new_rejects_extreme_finite_coefficient() {
   // that pass the is_finite check but would overflow per-pixel
   // matmul are rejected via OutOfBounds.
   let e = ColorCorrectionMatrix::try_new([[1.0, 0.0, 1e30], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
-    .unwrap_err();
-  assert!(matches!(
-    e,
-    ColorCorrectionMatrixError::OutOfBounds { row: 0, col: 2, .. }
-  ));
+    .unwrap_err()
+    .unwrap_out_of_bounds();
+  assert_eq!(e.row(), 0);
+  assert_eq!(e.col(), 2);
 }
 
 #[test]
@@ -215,11 +194,10 @@ fn ccm_try_new_rejects_extreme_negative_coefficient() {
   // Symmetric negative bound: real CCMs have negative
   // off-diagonals, but only in the realistic ~[-5, 5] range.
   let e = ColorCorrectionMatrix::try_new([[1.0, -1e10, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
-    .unwrap_err();
-  assert!(matches!(
-    e,
-    ColorCorrectionMatrixError::OutOfBounds { row: 0, col: 1, .. }
-  ));
+    .unwrap_err()
+    .unwrap_out_of_bounds();
+  assert_eq!(e.row(), 0);
+  assert_eq!(e.col(), 1);
 }
 
 #[test]

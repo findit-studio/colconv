@@ -231,10 +231,7 @@ fn uyyvyy411_begin_frame_rejects_width_not_multiple_of_4() {
   let err = sink.begin_frame(18, 8).unwrap_err();
   assert_eq!(
     err,
-    MixedSinkerError::WidthAlignment(WidthAlignment::new(
-      18,
-      WidthAlignmentRequirement::MultipleOfFour
-    )),
+    MixedSinkerError::WidthAlignment(WidthAlignment::multiple_of_four(18,)),
     "expected WidthAlignment {{ width: 18, required: MultipleOfFour }}, got {err:?}"
   );
 }

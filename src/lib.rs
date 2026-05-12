@@ -243,54 +243,15 @@ extern crate alloc as std;
 #[cfg(feature = "std")]
 extern crate std;
 
-pub use videoframe::{frame, source};
+pub use videoframe::{
+  PixelSink, SourceFormat,
+  color::{ColorMatrix, DcpTargetGamut},
+  frame, source,
+};
 
 pub mod raw;
 pub mod row;
 pub mod sinker;
-
-pub use videoframe::PixelSink;
-
-pub use videoframe::color::{ColorMatrix, DcpTargetGamut};
-
-// All source-format markers — including `raw::Bayer`, `raw::Bayer16<BITS>`,
-// and `raw::Pal8` — now live in `videoframe::source` and implement
-// `videoframe::SourceFormat` directly through the sealed trait.  No local
-// blanket-impl workaround is needed any more.
-pub use videoframe::SourceFormat;
-
-/// The three output planes for HSV, bundled so `MixedSinker` stores a
-/// single `Option<HsvBuffers>` rather than three independent options.
-///
-/// Consumed by every per-format `MixedSinker<F>::process` impl that
-/// supports HSV output. Under `--features "alloc"` alone (no per-format
-/// family), no `process` impl compiles and the struct's fields would
-/// be flagged unread, so the cfg enumerates every source family.
-#[cfg(all(
-  any(feature = "std", feature = "alloc"),
-  any(
-    feature = "bayer",
-    feature = "gbr",
-    feature = "gray",
-    feature = "mono",
-    feature = "rgb",
-    feature = "rgb-float",
-    feature = "rgb-legacy",
-    feature = "v210",
-    feature = "xyz",
-    feature = "y2xx",
-    feature = "yuv-444-packed",
-    feature = "yuv-packed",
-    feature = "yuv-planar",
-    feature = "yuv-semi-planar",
-    feature = "yuva",
-  ),
-))]
-struct HsvBuffers<'a> {
-  h: &'a mut [u8],
-  s: &'a mut [u8],
-  v: &'a mut [u8],
-}
 
 #[cfg(feature = "yuv-444-packed")]
 pub use frame::{Ayuv64Frame, Ayuv64FrameError};

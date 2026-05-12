@@ -304,11 +304,12 @@ macro_rules! impl_legacy_rgb_sinker {
         }
 
         if let Some(hsv_bufs) = hsv.as_mut() {
+          let (h, s, v) = hsv_bufs.hsv();
           rgb_to_hsv_row(
             rgb_row,
-            &mut hsv_bufs.h[one_plane_start..one_plane_end],
-            &mut hsv_bufs.s[one_plane_start..one_plane_end],
-            &mut hsv_bufs.v[one_plane_start..one_plane_end],
+            &mut h[one_plane_start..one_plane_end],
+            &mut s[one_plane_start..one_plane_end],
+            &mut v[one_plane_start..one_plane_end],
             w,
             use_simd,
           );

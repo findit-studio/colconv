@@ -228,11 +228,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Rgb48<BE>> {
       }
 
       if let Some(hsv_bufs) = hsv.as_mut() {
+        let (h, s, v) = hsv_bufs.hsv();
         rgb_to_hsv_row(
           rgb_row,
-          &mut hsv_bufs.h[ps..pe],
-          &mut hsv_bufs.s[ps..pe],
-          &mut hsv_bufs.v[ps..pe],
+          &mut h[ps..pe],
+          &mut s[ps..pe],
+          &mut v[ps..pe],
           w,
           use_simd,
         );
@@ -441,11 +442,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Bgr48<BE>> {
       }
 
       if let Some(hsv_bufs) = hsv.as_mut() {
+        let (h, s, v) = hsv_bufs.hsv();
         rgb_to_hsv_row(
           rgb_row,
-          &mut hsv_bufs.h[ps..pe],
-          &mut hsv_bufs.s[ps..pe],
-          &mut hsv_bufs.v[ps..pe],
+          &mut h[ps..pe],
+          &mut s[ps..pe],
+          &mut v[ps..pe],
           w,
           use_simd,
         );
@@ -691,11 +693,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>> {
       }
 
       if let Some(hsv_bufs) = hsv.as_mut() {
+        let (h, s, v) = hsv_bufs.hsv();
         rgb_to_hsv_row(
           rgb_row,
-          &mut hsv_bufs.h[ps..pe],
-          &mut hsv_bufs.s[ps..pe],
-          &mut hsv_bufs.v[ps..pe],
+          &mut h[ps..pe],
+          &mut s[ps..pe],
+          &mut v[ps..pe],
           w,
           use_simd,
         );
@@ -966,11 +969,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Bgra64<BE>> {
       }
 
       if let Some(hsv_bufs) = hsv.as_mut() {
+        let (h, s, v) = hsv_bufs.hsv();
         rgb_to_hsv_row(
           rgb_row,
-          &mut hsv_bufs.h[ps..pe],
-          &mut hsv_bufs.s[ps..pe],
-          &mut hsv_bufs.v[ps..pe],
+          &mut h[ps..pe],
+          &mut s[ps..pe],
+          &mut v[ps..pe],
           w,
           use_simd,
         );

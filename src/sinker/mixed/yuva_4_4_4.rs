@@ -177,11 +177,12 @@ impl PixelSink for MixedSinker<'_, Yuva444p> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -911,11 +912,12 @@ fn yuva444p_high_bit_process<
   );
 
   if let Some(hsv) = hsv.as_mut() {
+    let (h, s, v) = hsv.hsv();
     rgb_to_hsv_row(
       rgb_row,
-      &mut hsv.h[one_plane_start..one_plane_end],
-      &mut hsv.s[one_plane_start..one_plane_end],
-      &mut hsv.v[one_plane_start..one_plane_end],
+      &mut h[one_plane_start..one_plane_end],
+      &mut s[one_plane_start..one_plane_end],
+      &mut v[one_plane_start..one_plane_end],
       w,
       use_simd,
     );

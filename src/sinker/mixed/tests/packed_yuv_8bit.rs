@@ -281,7 +281,7 @@ fn yuyv422_odd_width_rejected_in_begin_frame() {
   let err = sink.begin_frame(17, 8).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::WidthAlignment(WidthAlignment::new(17, WidthAlignmentRequirement::Even))
+    MixedSinkerError::WidthAlignment(WidthAlignment::odd(17))
   );
 }
 

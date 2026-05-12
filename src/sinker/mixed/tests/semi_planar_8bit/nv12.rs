@@ -383,7 +383,7 @@ fn yuv420p_odd_width_sink_returns_err_at_begin_frame() {
   let err = sink.begin_frame(w as u32, h as u32).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::WidthAlignment(WidthAlignment::new(15, WidthAlignmentRequirement::Even))
+    MixedSinkerError::WidthAlignment(WidthAlignment::odd(15))
   );
   // Silence unused-vec warnings — these would have been the plane data.
   let _ = (y, u, v);
@@ -402,7 +402,7 @@ fn nv12_odd_width_sink_returns_err_at_begin_frame() {
   let err = sink.begin_frame(w as u32, h as u32).err().unwrap();
   assert_eq!(
     err,
-    MixedSinkerError::WidthAlignment(WidthAlignment::new(15, WidthAlignmentRequirement::Even))
+    MixedSinkerError::WidthAlignment(WidthAlignment::odd(15))
   );
 }
 

@@ -187,11 +187,12 @@ impl PixelSink for MixedSinker<'_, Gray8> {
     // when neither RGB nor RGBA is also requested.
     if want_hsv && !want_rgb && !want_rgba {
       let hsv = hsv.as_mut().unwrap();
+      let (h, s, v) = hsv.hsv();
       gray8_to_hsv_row(
         y_plane,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
         full_range,
@@ -215,11 +216,12 @@ impl PixelSink for MixedSinker<'_, Gray8> {
     gray8_to_rgb_row(y_plane, rgb_row, w, use_simd, full_range);
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -258,7 +260,7 @@ fn process_gray_n<'a, const BITS: u32, const BE: bool>(
   rgba_u16: &mut Option<&'a mut [u16]>,
   luma: &mut Option<&'a mut [u8]>,
   luma_u16: &mut Option<&'a mut [u16]>,
-  hsv: &mut Option<crate::HsvBuffers<'a>>,
+  hsv: &mut Option<videoframe::source::HsvFrameMut<'a>>,
   rgb_scratch: &mut std::vec::Vec<u8>,
 ) -> Result<(), MixedSinkerError> {
   let one_plane_start = idx * w;
@@ -328,11 +330,12 @@ fn process_gray_n<'a, const BITS: u32, const BE: bool>(
   // (rescaled if limited-range).
   if want_hsv && !want_rgb && !want_rgba {
     let hsv = hsv.as_mut().unwrap();
+    let (h, s, v) = hsv.hsv();
     gray_n_to_hsv_row::<BITS, BE>(
       y_plane,
-      &mut hsv.h[one_plane_start..one_plane_end],
-      &mut hsv.s[one_plane_start..one_plane_end],
-      &mut hsv.v[one_plane_start..one_plane_end],
+      &mut h[one_plane_start..one_plane_end],
+      &mut s[one_plane_start..one_plane_end],
+      &mut v[one_plane_start..one_plane_end],
       w,
       use_simd,
       full_range,
@@ -355,11 +358,12 @@ fn process_gray_n<'a, const BITS: u32, const BE: bool>(
   gray_n_to_rgb_row::<BITS, BE>(y_plane, rgb_row, w, use_simd, full_range);
 
   if let Some(hsv) = hsv.as_mut() {
+    let (h, s, v) = hsv.hsv();
     rgb_to_hsv_row(
       rgb_row,
-      &mut hsv.h[one_plane_start..one_plane_end],
-      &mut hsv.s[one_plane_start..one_plane_end],
-      &mut hsv.v[one_plane_start..one_plane_end],
+      &mut h[one_plane_start..one_plane_end],
+      &mut s[one_plane_start..one_plane_end],
+      &mut v[one_plane_start..one_plane_end],
       w,
       use_simd,
     );
@@ -742,11 +746,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gray16<BE>> {
     // Skip RGB scratch entirely when only HSV (and optionally RGBA) is needed.
     if want_hsv && !want_rgb {
       let hsv = hsv.as_mut().unwrap();
+      let (hp, sp, vp) = hsv.hsv();
       gray16_to_hsv_row::<BE>(
         y_plane,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut hp[one_plane_start..one_plane_end],
+        &mut sp[one_plane_start..one_plane_end],
+        &mut vp[one_plane_start..one_plane_end],
         w,
         use_simd,
         full_range,
@@ -773,11 +778,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gray16<BE>> {
     gray16_to_rgb_row::<BE>(y_plane, rgb_row, w, use_simd, full_range);
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -1030,11 +1036,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Grayf32<BE>> {
     // Standalone HSV fast path — Grayf32 always has H=0, S=0, V=clamp(Y)×255.
     if want_hsv && !want_rgb {
       let hsv = self.hsv.as_mut().unwrap();
+      let (hp, sp, vp) = hsv.hsv();
       grayf32_to_hsv_row::<BE>(
         y_plane,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut hp[one_plane_start..one_plane_end],
+        &mut sp[one_plane_start..one_plane_end],
+        &mut vp[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -1060,11 +1067,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Grayf32<BE>> {
     grayf32_to_rgb_row::<BE>(y_plane, rgb_row, w, use_simd);
 
     if let Some(hsv) = self.hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -1250,11 +1258,12 @@ impl PixelSink for MixedSinker<'_, Ya8> {
     // Standalone HSV fast path.
     if want_hsv && !want_rgb && !want_rgba {
       let hsv = self.hsv.as_mut().unwrap();
+      let (h, s, v) = hsv.hsv();
       ya8_to_hsv_row(
         packed,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -1277,11 +1286,12 @@ impl PixelSink for MixedSinker<'_, Ya8> {
     ya8_to_rgb_row(packed, rgb_row, w, use_simd);
 
     if let Some(hsv) = self.hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -1481,11 +1491,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Ya16<BE>> {
     // Standalone HSV fast path.
     if want_hsv && !want_rgb && !want_rgba {
       let hsv = self.hsv.as_mut().unwrap();
+      let (h, s, v) = hsv.hsv();
       ya16_to_hsv_row::<BE>(
         packed,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -1508,11 +1519,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Ya16<BE>> {
     ya16_to_rgb_row::<BE>(packed, rgb_row, w, use_simd);
 
     if let Some(hsv) = self.hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );

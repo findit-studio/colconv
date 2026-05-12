@@ -18,22 +18,6 @@
 //!   (`out[x] = Y_byte as u16`).
 //! - `with_hsv` — stages u8 RGB into the user's RGB buffer (if
 //!   attached) or a scratch buffer, then runs `rgb_to_hsv_row`.
-//!
-//! ## Alpha semantics (`§ 8.3` / `§ 8.4` rules — Strategy A)
-//!
-//! Because VUYX's α is always `0xFF` in every code path (padding byte
-//! is never real alpha), the RGB + RGBA combo can use **Strategy A**
-//! (spec § 8.4): derive RGBA from the just-computed RGB row via
-//! `expand_rgb_to_rgba_row` instead of running a second YUV→RGB kernel.
-//! This produces bit-identical output to calling `vuyx_to_rgba_row`
-//! directly — both paths always produce α=`0xFF`.
-//!
-//! - **Standalone RGBA** (`with_rgba` attached, no `with_rgb`, no
-//!   `with_hsv`): `vuyx_to_rgba_row` runs directly — α forced to
-//!   `0xFF` via the kernel.
-//! - **RGB + RGBA** (both attached, with or without HSV): `with_rgb`
-//!   calls `vuyx_to_rgb_row`; `with_rgba` is derived via Strategy A
-//!   `expand_rgb_to_rgba_row` (α=`0xFF`). No second kernel call.
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
@@ -224,11 +208,12 @@ impl PixelSink for MixedSinker<'_, Vuyx> {
     vuyx_to_rgb_row(packed, rgb_row, w, row.matrix(), row.full_range(), use_simd);
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );

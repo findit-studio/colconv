@@ -364,7 +364,7 @@ fn nv16_odd_width_sink_returns_err_at_begin_frame() {
   let err = nv16_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap_err();
   assert_eq!(
     err,
-    MixedSinkerError::WidthAlignment(WidthAlignment::new(15, WidthAlignmentRequirement::Even))
+    MixedSinkerError::WidthAlignment(WidthAlignment::odd(15))
   );
 }
 

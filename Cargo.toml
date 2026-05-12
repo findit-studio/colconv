@@ -220,7 +220,7 @@ derive_more = { version = "2", default-features = false, features = ["display", 
 half = { version = "2", default-features = false }
 thiserror = { version = "2", default-features = false }
 libm = { version = "0.2", optional = true }
-videoframe = { version = "0.1", default-features = false }
+videoframe = { version = "0.2", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"
@@ -246,7 +246,10 @@ rpath = false
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
-[lints.rust]
+[lints]
+workspace = true
+
+[workspace.lints.rust]
 rust_2018_idioms = "warn"
 single_use_lifetimes = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = [

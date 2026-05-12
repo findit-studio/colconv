@@ -407,10 +407,7 @@ fn non_multiple_of_4_width_surfaces_width_alignment_multiple_of_four_error() {
   let err = sink.begin_frame(18, 8).unwrap_err();
   assert_eq!(
     err,
-    MixedSinkerError::WidthAlignment(WidthAlignment::new(
-      18,
-      WidthAlignmentRequirement::MultipleOfFour
-    )),
+    MixedSinkerError::WidthAlignment(WidthAlignment::multiple_of_four(18,)),
     "expected WidthAlignment {{ width: 18, required: MultipleOfFour }}, got {err:?}"
   );
 }

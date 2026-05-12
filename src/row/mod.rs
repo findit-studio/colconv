@@ -126,64 +126,40 @@ pub(crate) use dispatch::vuya::vuya_to_luma_u16_row;
 pub(crate) use dispatch::vuyx::vuyx_to_luma_u16_row;
 
 #[cfg(feature = "yuv-444-packed")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
 pub use dispatch::ayuv64::*;
 #[cfg(feature = "bayer")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bayer")))]
 pub use dispatch::bayer::*;
 #[cfg(feature = "rgb-legacy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
 pub use dispatch::legacy_rgb::*;
 #[cfg(feature = "yuv-semi-planar")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-semi-planar")))]
 pub use dispatch::nv::*;
 #[cfg(feature = "mono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "mono")))]
 pub use dispatch::pal8::*;
 #[cfg(feature = "yuv-semi-planar")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-semi-planar")))]
 pub use dispatch::pn::*;
 #[cfg(feature = "yuv-packed")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-packed")))]
 pub use dispatch::{packed_yuv411::*, packed_yuv422::*};
 #[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
 pub use dispatch::{planar_gbr::*, planar_gbr_high_bit::*};
 #[cfg(feature = "rgb-float")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb-float")))]
 pub use dispatch::{rgb_f16_ops::*, rgb_float_ops::*};
 // rgb_ops contains the cross-format `rgb_to_hsv_row` / `rgb_to_luma_row`
 // / `rgb_to_luma_u16_row` helpers used by every sinker, as well as the
 // `rgb`-family packed RGB/RGBA dispatchers. Always re-exported so HSV /
 // luma derivations stay reachable when the `rgb` family is disabled.
-pub use dispatch::rgb_ops::*;
-#[cfg(feature = "v210")]
-pub use dispatch::v210::*;
-#[cfg(feature = "yuv-planar")]
-pub use dispatch::yuv411p::*;
-#[cfg(feature = "yuva")]
-pub use dispatch::yuva::*;
-#[cfg(feature = "yuv-444-packed")]
-pub use dispatch::{v30x::*, v410::*, vuya::*, vuyx::*, xv36::*};
-#[cfg(feature = "y2xx")]
-pub use dispatch::{y210::*, y212::*, y216::*};
-#[cfg(feature = "yuv-planar")]
-pub use dispatch::{yuv420::*, yuv444::*};
-// Tier 12 — Xyz12 dispatchers depend on `f32::powf`, which is only
-// available with `feature = "std"` or `feature = "alloc"` (the latter
-// pulls in `libm`). Mirror the same gate on the re-export.
-#[cfg(all(feature = "xyz", any(feature = "std", feature = "alloc")))]
-pub use dispatch::xyz12::*;
-// Mono1bit dispatchers — pub(crate) so sinker code can reach them via
-// `crate::row::monoblack_to_*` / `crate::row::monowhite_to_*` without
-// reaching into `dispatch::mono1bit` internals directly.
 #[cfg(all(feature = "mono", any(feature = "std", feature = "alloc")))]
 pub(crate) use dispatch::mono1bit::*;
-// Tier 8 finish — packed 16-bit RGB dispatcher re-exports.
-// The four basic converters (→rgb, →rgba, →rgb_u16, →rgba_u16) per format are
-// re-exported as `pub`; luma and HSV variants (which require an rgb_scratch
-// parameter) are re-exported as `pub(crate)` for sinker use — the underlying
-// functions in `dispatch::packed_rgb_16bit` are `pub`, but only this
-// re-export visibility is visible outside the crate.
-//
-// Each function exists in two forms:
-// - `foo` — backwards-compatible LE-only wrapper (no const generic), preserves
-//   the pre-Tier 8 public signature so existing little-endian downstream
-//   callers compile unchanged.
-// - `foo_endian::<const BE: bool>` — endian-aware form (added in Tier 8 for
-//   the BE-on-BE-host plane contract). Used by sinker code internally.
 #[cfg(feature = "rgb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
 pub use dispatch::packed_rgb_16bit::{
   bgr48_to_rgb_row, bgr48_to_rgb_row_endian, bgr48_to_rgb_u16_row, bgr48_to_rgb_u16_row_endian,
   bgr48_to_rgba_row, bgr48_to_rgba_row_endian, bgr48_to_rgba_u16_row, bgr48_to_rgba_u16_row_endian,
@@ -195,7 +171,32 @@ pub use dispatch::packed_rgb_16bit::{
   rgba64_to_rgb_u16_row_endian, rgba64_to_rgba_row, rgba64_to_rgba_row_endian,
   rgba64_to_rgba_u16_row, rgba64_to_rgba_u16_row_endian,
 };
-// luma + HSV variants take an extra rgb_scratch parameter — sinker wired in Task 9.
+pub use dispatch::rgb_ops::*;
+#[cfg(feature = "v210")]
+#[cfg_attr(docsrs, doc(cfg(feature = "v210")))]
+pub use dispatch::v210::*;
+#[cfg(all(feature = "xyz", any(feature = "std", feature = "alloc")))]
+#[cfg_attr(
+  docsrs,
+  doc(cfg(all(feature = "xyz", any(feature = "std", feature = "alloc"))))
+)]
+pub use dispatch::xyz12::*;
+#[cfg(feature = "yuv-planar")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-planar")))]
+pub use dispatch::yuv411p::*;
+#[cfg(feature = "yuva")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuva")))]
+pub use dispatch::yuva::*;
+#[cfg(feature = "yuv-444-packed")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
+pub use dispatch::{v30x::*, v410::*, vuya::*, vuyx::*, xv36::*};
+#[cfg(feature = "y2xx")]
+#[cfg_attr(docsrs, doc(cfg(feature = "y2xx")))]
+pub use dispatch::{y210::*, y212::*, y216::*};
+#[cfg(feature = "yuv-planar")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-planar")))]
+pub use dispatch::{yuv420::*, yuv444::*};
+// luma + HSV variants take an extra rgb_scratch parameter
 #[cfg(feature = "rgb")]
 #[allow(unused_imports)]
 pub(crate) use dispatch::packed_rgb_16bit::{
@@ -247,7 +248,7 @@ pub(crate) use dispatch::yuv444::yuv_444p_n_to_rgb_u16_row;
 pub(crate) fn rgb_row_bytes(width: usize) -> usize {
   match width.checked_mul(3) {
     Some(n) => n,
-    None => panic!("width ({width}) × 3 overflows usize"),
+    None => panic!("width ({width}) x 3 overflows usize"),
   }
 }
 
