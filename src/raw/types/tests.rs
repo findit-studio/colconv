@@ -21,6 +21,7 @@ fn ccm_identity_is_default() {
   assert_eq!(m[2], [0.0, 0.0, 1.0]);
 }
 
+#[cfg(feature = "bayer")]
 #[test]
 fn fuse_wb_ccm_with_neutral_wb_returns_ccm() {
   let ccm = ColorCorrectionMatrix::new([[1.0, 0.5, 0.25], [0.0, 0.8, 0.2], [0.1, 0.1, 0.7]]);
@@ -28,6 +29,7 @@ fn fuse_wb_ccm_with_neutral_wb_returns_ccm() {
   assert_eq!(&m, ccm.as_array());
 }
 
+#[cfg(feature = "bayer")]
 #[test]
 fn fuse_wb_ccm_with_identity_ccm_returns_diag_wb() {
   let wb = WhiteBalance::new(1.5, 1.0, 2.0);
@@ -35,6 +37,7 @@ fn fuse_wb_ccm_with_identity_ccm_returns_diag_wb() {
   assert_eq!(m, [[1.5, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 2.0]]);
 }
 
+#[cfg(feature = "bayer")]
 #[test]
 fn fuse_wb_ccm_scales_columns_by_wb() {
   // M = CCM · diag(wb) ⇒ column j of M is column j of CCM × wb_j.
@@ -154,6 +157,7 @@ fn ccm_new_panics_on_nan() {
   let _ = ColorCorrectionMatrix::new([[f32::NAN, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
 }
 
+#[cfg(feature = "bayer")]
 #[test]
 fn fuse_wb_ccm_with_validated_inputs_is_finite() {
   // Sanity: validated inputs always produce a finite fused matrix.
@@ -230,6 +234,7 @@ fn ccm_try_new_accepts_typical_negative_off_diagonal() {
 /// matmul stays finite for the maximum-stress 16-bit input.
 /// `WB.MAX_GAIN * CCM.MAX_COEFFICIENT_ABS * 65535 ≈ 6.55e16`,
 /// well under `f32::MAX ≈ 3.4e38`.
+#[cfg(feature = "bayer")]
 #[test]
 fn fuse_wb_ccm_at_bounds_with_max_sample_stays_finite() {
   let wb = WhiteBalance::try_new(

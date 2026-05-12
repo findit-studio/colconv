@@ -2340,6 +2340,7 @@ mod tests;
 mod api_smoke_tests {
   use super::*;
 
+  #[cfg(feature = "v210")]
   #[test]
   fn mixed_sinker_default_does_not_produce_luma_u16() {
     // Use the currently available V210 source format marker for this smoke test.

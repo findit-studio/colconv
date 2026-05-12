@@ -1165,7 +1165,7 @@ mod overflow_tests {
   }
 }
 
-#[cfg(all(test, feature = "std"))]
+#[cfg(all(test, feature = "std", feature = "bayer"))]
 mod bayer_dispatcher_tests {
   //! Boundary-contract tests for the public Bayer row dispatchers.
   //! Walker / kernel correctness lives in `crate::raw::bayer*` and
