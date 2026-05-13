@@ -41,7 +41,7 @@ unsafe fn load_f32x4<const BE: bool>(ptr: *const f32) -> float32x4_t {
   }
 }
 
-/// f32 RGB → u8 RGB. Clamp `[0, 1]` × 255, saturating round-to-nearest
+/// f32 RGB → u8 RGB. Clamp `[0, 1]` x 255, saturating round-to-nearest
 /// cast.
 ///
 /// When `BE = true` the input `f32` values are big-endian encoded.
@@ -234,7 +234,7 @@ pub(crate) unsafe fn rgbf32_to_rgba_row<const BE: bool>(
   }
 }
 
-/// f32 RGB → u16 RGB. Clamp `[0, 1]` × 65535, saturating cast.
+/// f32 RGB → u16 RGB. Clamp `[0, 1]` x 65535, saturating cast.
 ///
 /// When `BE = true` the input `f32` values are big-endian encoded.
 ///
@@ -448,12 +448,12 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
 // delegate to the existing NEON Rgbf32 downstream kernels. The chunk size is
 // 4 pixels (= 12 f16 values) which matches the Rgbf32 loop granularity.
 //
-// `vcvt_f32_f16` widens 4 × f16 to 4 × f32 in a single FCVT instruction.
+// `vcvt_f32_f16` widens 4 x f16 to 4 x f32 in a single FCVT instruction.
 //
 // For BE: we load the u16 bits via `load_endian_u16x4::<BE>` (loads 4 u16 with
 // byte-swap for BE) into a `uint16x4_t`, then reinterpret as `float16x4_t`
 // before widening with `vcvt_f32_f16`.  `load_endian_u16x4` reads exactly
-// 8 bytes regardless of `BE`, matching the 4 × f16 region the kernel owns
+// 8 bytes regardless of `BE`, matching the 4 x f16 region the kernel owns
 // (a 16-byte load via `load_endian_u16x8` would tail-overread).
 
 use super::endian::load_endian_u16x4;
@@ -484,17 +484,17 @@ const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 /// the byte-swap is applied before the widening conversion. The loader reads
 /// exactly 8 bytes regardless of `BE` so the caller's `ptr` only needs 8
 /// readable bytes (a 16-byte load via `load_endian_u16x8` would tail-overread
-/// the 4 × f16 region the kernel actually owns).
+/// the 4 x f16 region the kernel actually owns).
 ///
 /// # Safety
 ///
 /// * NEON must be available.
-/// * `ptr` must be valid for 4 × u16 reads (8 bytes).
-/// * `out` must be valid for 4 × f32 writes.
+/// * `ptr` must be valid for 4 x u16 reads (8 bytes).
+/// * `out` must be valid for 4 x f32 writes.
 #[inline(always)]
 unsafe fn widen_f16x4<const BE: bool>(ptr: *const half::f16, out: *mut f32) {
   unsafe {
-    // 8-byte load (4 × u16), byte-swapped per-lane when BE = true so the
+    // 8-byte load (4 x u16), byte-swapped per-lane when BE = true so the
     // resulting `uint16x4_t` carries host-native f16 bit patterns ready for
     // `vcvt_f32_f16`.
     let u16x4 = load_endian_u16x4::<BE>(ptr as *const u8);

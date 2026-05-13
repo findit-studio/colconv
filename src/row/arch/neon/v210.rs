@@ -27,7 +27,7 @@ use crate::{ColorMatrix, row::scalar};
 /// - `u_vec`: lanes 0..3 = Cb0..Cb2 (lanes 3..7 are don't-care).
 /// - `v_vec`: lanes 0..3 = Cr0..Cr2 (lanes 3..7 are don't-care).
 ///
-/// Strategy: load 4 × u32 (in little-endian byte order regardless of
+/// Strategy: load 4 x u32 (in little-endian byte order regardless of
 /// host endianness), then three shifted-AND ops yield arrays
 /// `low10`, `mid10`, `high10` (one 10-bit field per 32-bit lane).
 /// Because each 10-bit value sits in the low 16 bits of its 32-bit

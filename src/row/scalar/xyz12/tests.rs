@@ -309,7 +309,7 @@ fn xyz12_to_rgb_f32_preserves_negative_after_matrix() {
 #[test]
 fn xyz12_to_rgb_clamps_at_u8() {
   // x_only_max under Rec.709 → R = +3.5, G = -1.0 → after OETF +
-  // clamp + ×255 → R = 255, G = 0.
+  // clamp + x255 → R = 255, G = 0.
   let xyz: [u16; 3] = [pack12_le(0xFFF), pack12_le(0), pack12_le(0)];
   let mut out = [0_u8; 3];
   xyz12_to_rgb_row::<false>(&xyz, &mut out, 1, DcpTargetGamut::Rec709);
@@ -370,7 +370,7 @@ fn xyz12_to_rgb_u16_full_range_scaling() {
   let mut out = [0_u16; 3];
   xyz12_to_rgb_u16_row::<false>(&xyz, &mut out, 1, DcpTargetGamut::DciP3);
   // Per derivation: rgb_linear = (1.265, 1.044, 1.0) → after OETF +
-  // clamp [0,1] × 65535 → (65535, 65535, 65535).
+  // clamp [0,1] x 65535 → (65535, 65535, 65535).
   assert_eq!(out[0], 65535);
   assert_eq!(out[1], 65535);
   assert_eq!(out[2], 65535);

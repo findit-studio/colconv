@@ -646,13 +646,13 @@ fn luma_u16_high_bit_bits16_limited_range_black_gives_min_offset() {
 // Q15 scale collapsed the top ~250 input codes onto the y_max clamp
 // at BITS=16 (e.g. y_full = 65300 → 60160 instead of ~59955),
 // destroying highlight gradation. The current implementation uses
-// native-depth scaling `(y_full × range) / native_max` where
+// native-depth scaling `(y_full x range) / native_max` where
 // `range = 219 << (BITS - 8)` and `native_max = (1 << BITS) - 1`.
 
 #[test]
 fn luma_u16_high_bit_bits16_limited_range_max_white_maps_to_y_max() {
   // BITS=16, all-white in: y_full clamps to native_max=65535;
-  // y_lim = 4096 + 65535 × 56064 / 65535 = 60160 = 235 << 8.
+  // y_lim = 4096 + 65535 x 56064 / 65535 = 60160 = 235 << 8.
   let g = as_le_u16(&[u16::MAX; 1]);
   let b = as_le_u16(&[u16::MAX; 1]);
   let r = as_le_u16(&[u16::MAX; 1]);
@@ -679,7 +679,7 @@ fn luma_u16_high_bit_bits16_limited_range_near_white_keeps_gradation() {
     let r = as_le_u16(&[v; 1]);
     let mut out = [0u16; 1];
     gbr_to_luma_u16_high_bit_row::<16, false>(&g, &b, &r, &mut out, 1, ColorMatrix::Bt709, false);
-    // Native-depth limited-range: y_lim = 4096 + v × 56064 / 65535
+    // Native-depth limited-range: y_lim = 4096 + v x 56064 / 65535
     let expected = 4096 + ((v as u64 * 56064 + 65535 / 2) / 65535) as u16;
     // Allow ±1 LSB for matrix-multiply rounding (BT.709 weights aren't
     // exactly 1.0 even with all channels equal; tiny Q15 residue).

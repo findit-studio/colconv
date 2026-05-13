@@ -18,7 +18,7 @@
 //!
 //! 1. `XYZ_primary = (x/y, 1, (1 - x - y) / y)` per chromaticity.
 //! 2. Solve `M_unscaled · S = W_xyz` for primary scales S.
-//! 3. `M_rgb_to_xyz` columns = unscaled primary XYZ × S.
+//! 3. `M_rgb_to_xyz` columns = unscaled primary XYZ x S.
 //! 4. `M_xyz_to_rgb = inverse(M_rgb_to_xyz)`.
 //!
 //! All math runs at f64 internally; values below are narrowed to f32
@@ -143,7 +143,7 @@ pub(crate) const M_XYZ_TO_RGB_REC2020: [[f32; 3]; 3] = [
 /// Returns the active XYZ → RGB matrix for the given target gamut.
 ///
 /// `inline(always)` so the lookup compiles into a register-resident
-/// 3×3 constant at the call site for monomorphised dispatch
+/// 3x3 constant at the call site for monomorphised dispatch
 /// (`DcpTargetGamut` is small + Copy).
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) const fn xyz_to_rgb_matrix(g: DcpTargetGamut) -> [[f32; 3]; 3] {
@@ -151,6 +151,9 @@ pub(crate) const fn xyz_to_rgb_matrix(g: DcpTargetGamut) -> [[f32; 3]; 3] {
     DcpTargetGamut::DciP3 => M_XYZ_TO_RGB_DCI_P3,
     DcpTargetGamut::Rec709 => M_XYZ_TO_RGB_REC709,
     DcpTargetGamut::Rec2020 => M_XYZ_TO_RGB_REC2020,
+    // DcpTargetGamut is #[non_exhaustive] in videoframe; fall back to DciP3
+    // for any future variants added there before colconv is updated.
+    _ => M_XYZ_TO_RGB_DCI_P3,
   }
 }
 
@@ -183,7 +186,7 @@ pub(crate) const SAMPLE_MASK: u16 = 0x0FFF;
 // narrowed reference, giving 0-ULP scalar↔SIMD parity by construction
 // and ≤ 2 ULP error vs the reference at 65 536 sweep points.
 //
-// Schedule chosen by the derivation tool: 192 segments × degree 3,
+// Schedule chosen by the derivation tool: 192 segments x degree 3,
 // geometrically-spaced bounds, centered Horner evaluation (per-segment
 // `c[0] + c[1]·(x - center) + c[2]·(x - center)^2 + c[3]·(x - center)^3`).
 // Centering reduces f32 round-off vs the naive `c[0] + c[1]·x + …` form.
@@ -597,7 +600,7 @@ pub(crate) const OETF_POLY_SEG_CENTERS: [f32; OETF_POLY_SEGMENTS] = [
 ];
 
 /// Per-segment ascending-order Horner coefficients (constant
-/// term first, leading term last). Stored as a flat `[f32; N×(D+1)]`
+/// term first, leading term last). Stored as a flat `[f32; Nx(D+1)]`
 /// so both scalar and SIMD evaluators can index by
 /// `seg * (DEG + 1) + i` without an extra indirection. Coefficients
 /// are for the *centered* polynomial (see `OETF_POLY_SEG_CENTERS`).

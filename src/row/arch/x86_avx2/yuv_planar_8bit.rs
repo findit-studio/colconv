@@ -87,6 +87,7 @@ pub(crate) unsafe fn yuv_420_to_rgba_row(
 /// # Safety
 ///
 /// Same as [`yuv_420_to_rgba_row`] plus `a_src.len() >= width`.
+#[cfg(feature = "yuva")]
 #[inline]
 #[target_feature(enable = "avx2")]
 #[allow(clippy::too_many_arguments)]
@@ -255,10 +256,10 @@ unsafe fn yuv_420_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
         } else {
           alpha_u8
         };
-        // 4‑way interleave → packed RGBA (128 bytes = 4 × 32).
+        // 4‑way interleave → packed RGBA (128 bytes = 4 x 32).
         write_rgba_32(r_u8, g_u8, b_u8, a_u8, out.as_mut_ptr().add(x * 4));
       } else {
-        // 3‑way interleave → packed RGB (96 bytes = 3 × 32).
+        // 3‑way interleave → packed RGB (96 bytes = 3 x 32).
         write_rgb_32(r_u8, g_u8, b_u8, out.as_mut_ptr().add(x * 3));
       }
 
@@ -290,9 +291,9 @@ unsafe fn yuv_420_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
 // ---- YUV 4:1:0 AVX2 entries -----------------------------------------
 //
 // 4:1:0: planar YUV with chroma subsampled 4:1 in **both** axes (each
-// (U, V) sample covers a 4×4 luma block; vertical 4× re-use is the
+// (U, V) sample covers a 4x4 luma block; vertical 4x re-use is the
 // walker's job — chroma row = `y_row / 4`). This kernel handles the
-// per-row 4× horizontal upsample. Math is byte-identical to scalar.
+// per-row 4x horizontal upsample. Math is byte-identical to scalar.
 //
 // Block size: 32 Y / 8 chroma per iteration (matches the 4:2:0 AVX2
 // kernel's 32-Y throughput). The chroma upsample is implemented via
@@ -503,15 +504,15 @@ unsafe fn yuv_410_to_rgb_or_rgba_row<const ALPHA: bool>(
       let b_pair_lo = _mm_unpacklo_epi16(b_lo4, b_lo4);
       let b_pair_hi = _mm_unpacklo_epi16(b_hi4, b_hi4);
 
-      // Second pass on each pair: produces i16x8 [c_a×4, c_b×4]
-      // (lo) and [c_c×4, c_d×4] (hi). For each chroma half (lo4 /
+      // Second pass on each pair: produces i16x8 [c_ax4, c_bx4]
+      // (lo) and [c_cx4, c_dx4] (hi). For each chroma half (lo4 /
       // hi4) this gives two i16x8 vectors covering 16 Y lanes
       // (8 + 8). Combining with `_mm256_set_m128i` builds the
       // i16x16 covering Y[0..16] and Y[16..32] per channel.
-      let r_q0 = _mm_unpacklo_epi16(r_pair_lo, r_pair_lo); // c0×4, c1×4 → Y[0..8]
-      let r_q1 = _mm_unpackhi_epi16(r_pair_lo, r_pair_lo); // c2×4, c3×4 → Y[8..16]
-      let r_q2 = _mm_unpacklo_epi16(r_pair_hi, r_pair_hi); // c4×4, c5×4 → Y[16..24]
-      let r_q3 = _mm_unpackhi_epi16(r_pair_hi, r_pair_hi); // c6×4, c7×4 → Y[24..32]
+      let r_q0 = _mm_unpacklo_epi16(r_pair_lo, r_pair_lo); // c0x4, c1x4 → Y[0..8]
+      let r_q1 = _mm_unpackhi_epi16(r_pair_lo, r_pair_lo); // c2x4, c3x4 → Y[8..16]
+      let r_q2 = _mm_unpacklo_epi16(r_pair_hi, r_pair_hi); // c4x4, c5x4 → Y[16..24]
+      let r_q3 = _mm_unpackhi_epi16(r_pair_hi, r_pair_hi); // c6x4, c7x4 → Y[24..32]
       let g_q0 = _mm_unpacklo_epi16(g_pair_lo, g_pair_lo);
       let g_q1 = _mm_unpackhi_epi16(g_pair_lo, g_pair_lo);
       let g_q2 = _mm_unpacklo_epi16(g_pair_hi, g_pair_hi);
@@ -637,6 +638,7 @@ pub(crate) unsafe fn yuv_444_to_rgba_row(
 /// # Safety
 ///
 /// Same as [`yuv_444_to_rgba_row`] plus `a_src.len() >= width`.
+#[cfg(feature = "yuva")]
 #[inline]
 #[target_feature(enable = "avx2")]
 #[allow(clippy::too_many_arguments)]
@@ -1068,13 +1070,13 @@ unsafe fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
       // Stage 2: re-apply per-lane unpack on stage-1 output.
       let u_lo = _mm256_unpacklo_epi16(r_dup8, r_dup8);
       let u_hi = _mm256_unpackhi_epi16(r_dup8, r_dup8);
-      // u_lo: lo lane = [c0,c0,c0,c0, c1,c1,c1,c1]; hi lane = [c4×4, c5×4].
-      // u_hi: lo lane = [c2,c2,c2,c2, c3,c3,c3,c3]; hi lane = [c6×4, c7×4].
+      // u_lo: lo lane = [c0,c0,c0,c0, c1,c1,c1,c1]; hi lane = [c4x4, c5x4].
+      // u_hi: lo lane = [c2,c2,c2,c2, c3,c3,c3,c3]; hi lane = [c6x4, c7x4].
       // Reassemble for natural Y-order:
-      //   r_lo16 (Y[0..16]) = [c0×4, c1×4, c2×4, c3×4]
+      //   r_lo16 (Y[0..16]) = [c0x4, c1x4, c2x4, c3x4]
       //                     = lo-lane(u_lo) ++ lo-lane(u_hi)
       //                     = _mm256_permute2x128::<0x20>(u_lo, u_hi).
-      //   r_hi16 (Y[16..32]) = [c4×4, c5×4, c6×4, c7×4]
+      //   r_hi16 (Y[16..32]) = [c4x4, c5x4, c6x4, c7x4]
       //                     = hi-lane(u_lo) ++ hi-lane(u_hi)
       //                     = _mm256_permute2x128::<0x31>(u_lo, u_hi).
       let r_lo16 = _mm256_permute2x128_si256::<0x20>(u_lo, u_hi);

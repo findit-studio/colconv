@@ -18,7 +18,7 @@ use crate::sinker::MixedSinker;
 // ---- Helpers ---------------------------------------------------------------
 
 /// Build a Gbrpf32 frame with constant colour `(r, g, b)` across
-/// all `width × height` pixels. Returns `(g_plane, b_plane, r_plane)`.
+/// all `width x height` pixels. Returns `(g_plane, b_plane, r_plane)`.
 fn solid_gbrpf32_planes(
   width: usize,
   height: usize,
@@ -1412,7 +1412,7 @@ fn gbrpf16_sinker_widen_path_u16_and_u8_le_encoded_frame_decodes_correctly() {
     gbrpf16_to(&src, &mut sink).unwrap();
   }
 
-  // Assert RGB u16 output matches the intended (clamp+scale × 65535) values.
+  // Assert RGB u16 output matches the intended (clamp+scale x 65535) values.
   let to_u16 = |v: f32| -> u16 { (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16 };
   for i in 0..(w * h) {
     assert_eq!(
@@ -1606,7 +1606,7 @@ fn gbrapf32_strategy_a_plus_le_encoded_u16_alpha_decodes_correctly() {
   );
 
   // Independently assert the α slot reflects the intended values
-  // (clamp × 65535 + 0.5). This catches a hypothetical regression where
+  // (clamp x 65535 + 0.5). This catches a hypothetical regression where
   // both code paths share the same bug.
   let to_u16 = |v: f32| -> u16 { (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16 };
   for i in 0..(w * h) {
@@ -1711,7 +1711,7 @@ fn gbrapf16_strategy_a_plus_post_widen_alpha_decodes_correctly() {
   );
 
   // Independently assert α slot reflects the intended values
-  // (widen → clamp × 255 + 0.5).
+  // (widen → clamp x 255 + 0.5).
   let to_u8 = |v: f32| -> u8 { (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8 };
   for i in 0..(w * h) {
     assert_eq!(

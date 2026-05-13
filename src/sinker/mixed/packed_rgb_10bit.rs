@@ -66,7 +66,7 @@ impl<'a, const BE: bool> MixedSinker<'a, X2Rgb10<BE>> {
 
   /// Attaches a native-depth `u16` RGB output buffer. Length is
   /// measured in `u16` **elements** (not bytes): minimum
-  /// `width × height × 3`. Each 10-bit channel value is preserved
+  /// `width x height x 3`. Each 10-bit channel value is preserved
   /// at full precision in the low 10 bits of its `u16` element
   /// (range `[0, 1023]`).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -161,11 +161,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, X2Rgb10<BE>> {
       }
 
       if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
         rgb_to_hsv_row(
           rgb_row,
-          &mut hsv.h[one_plane_start..one_plane_end],
-          &mut hsv.s[one_plane_start..one_plane_end],
-          &mut hsv.v[one_plane_start..one_plane_end],
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
           w,
           use_simd,
         );
@@ -314,11 +315,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, X2Bgr10<BE>> {
       }
 
       if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
         rgb_to_hsv_row(
           rgb_row,
-          &mut hsv.h[one_plane_start..one_plane_end],
-          &mut hsv.s[one_plane_start..one_plane_end],
-          &mut hsv.v[one_plane_start..one_plane_end],
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
           w,
           use_simd,
         );

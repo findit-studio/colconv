@@ -10,7 +10,7 @@
 //! AYUV64 is 4:4:4 (no chroma subsampling): each pixel is a u16
 //! quadruple `[A(16), Y(16), U(16), V(16)]`. All channels are 16-bit
 //! native — no padding bits, no shift required. Buffer length is
-//! `width × 4` u16 elements — no even-width restriction.
+//! `width x 4` u16 elements — no even-width restriction.
 //!
 //! Source α is real (depth-converted u16 → u8 via `>> 8` for u8 RGBA;
 //! written direct as u16 for u16 RGBA).
@@ -36,14 +36,14 @@ use crate::{
 };
 
 /// Returns the minimum u16-element count of one packed AYUV64 row
-/// (`width × 4`) with overflow checking. Panics if `width × 4` cannot
+/// (`width x 4`) with overflow checking. Panics if `width x 4` cannot
 /// be represented as `usize` (only reachable on 32-bit targets with
 /// extreme widths).
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn ayuv64_packed_elems(width: usize) -> usize {
   match width.checked_mul(4) {
     Some(n) => n,
-    None => panic!("width ({width}) × 4 overflows usize (AYUV64 packed row)"),
+    None => panic!("width ({width}) x 4 overflows usize (AYUV64 packed row)"),
   }
 }
 
@@ -599,7 +599,7 @@ mod tests {
   #[test]
   #[should_panic(expected = "packed row too short")]
   fn ayuv64_dispatcher_rejects_short_packed() {
-    // packed buffer has only 2×4=8 u16 elements for width=4 (needs 4×4=16).
+    // packed buffer has only 2x4=8 u16 elements for width=4 (needs 4x4=16).
     let packed = [0u16; 8];
     let mut rgb = [0u8; 4 * 3];
     ayuv64_to_rgb_row(&packed, &mut rgb, 4, ColorMatrix::Bt709, true, false, false);
@@ -831,16 +831,16 @@ mod tests {
     );
   }
 
-  // ---- 32-bit width × 4 overflow guard ------------------------------------
+  // ---- 32-bit width x 4 overflow guard ------------------------------------
   //
   // AYUV64 packed rows consume `4 * width` u16 elements. Without the
-  // [`ayuv64_packed_elems`] helper a 32-bit caller could overflow `width × 4`
+  // [`ayuv64_packed_elems`] helper a 32-bit caller could overflow `width x 4`
   // to a small value, pass the input-side `assert!` with an undersized
   // slice, and reach unsafe SIMD loads.
 
   #[cfg(target_pointer_width = "32")]
   const OVERFLOW_WIDTH_TIMES_4: usize = {
-    // Smallest width whose `width × 4` overflows 32-bit `usize`.
+    // Smallest width whose `width x 4` overflows 32-bit `usize`.
     (usize::MAX / 4) + 1
   };
 

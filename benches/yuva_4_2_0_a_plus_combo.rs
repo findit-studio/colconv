@@ -18,7 +18,7 @@
 //!
 //! **i64 note**: the u16 RGBA path for BITS=10 (`yuva420p10_to_rgba_u16_row`) stays
 //! on the i32 Q15 kernel family — the i64 chroma-widened path is only needed at
-//! BITS=16 (where `coeff × u_d` can overflow i32). The A+ speedup at BITS=16
+//! BITS=16 (where `coeff x u_d` can overflow i32). The A+ speedup at BITS=16
 //! removes one full i64 chroma kernel invocation per row.
 //!
 //! **Approach: only public APIs.** The A+ side runs through the real `MixedSinker`
@@ -91,7 +91,7 @@ fn bench_yuva420p(c: &mut Criterion) {
   for &w in WIDTHS {
     let w_us = w as usize;
     let h_us = FRAME_HEIGHT as usize;
-    // 4:2:0: Y plane = w×h, UV planes = (w/2)×(h/2), A plane = w×h.
+    // 4:2:0: Y plane = wxh, UV planes = (w/2)x(h/2), A plane = wxh.
     let y_len = w_us * h_us;
     let uv_len = (w_us / 2) * (h_us / 2);
     let a_len = w_us * h_us;
@@ -105,7 +105,7 @@ fn bench_yuva420p(c: &mut Criterion) {
     fill_pseudo_random_u8(&mut v_plane, 0x3333);
     fill_pseudo_random_u8(&mut a_plane, 0x4444);
 
-    // Throughput: RGB (3 bytes/px) + RGBA (4 bytes/px) = 7 bytes/px × w × h.
+    // Throughput: RGB (3 bytes/px) + RGBA (4 bytes/px) = 7 bytes/px x w x h.
     group.throughput(Throughput::Bytes((w_us * 7 * h_us) as u64));
 
     for use_simd in [false, true] {

@@ -5,7 +5,7 @@
 //! per-arch block; `use_simd = false` forces scalar.
 //!
 //! VUYA is 4:4:4 (no chroma subsampling): each pixel is a 4-byte
-//! quadruple `[V(8), U(8), Y(8), A(8)]`. Buffer length is `width × 4`
+//! quadruple `[V(8), U(8), Y(8), A(8)]`. Buffer length is `width x 4`
 //! bytes — no even-width restriction.
 //!
 //! The RGB dispatcher (`vuya_to_rgb_row`) is shared with VUYX because
@@ -31,14 +31,14 @@ use crate::{
 };
 
 /// Returns the minimum byte count of one packed VUYA / VUYX row
-/// (`width × 4`) with overflow checking. Panics if `width × 4` cannot
+/// (`width x 4`) with overflow checking. Panics if `width x 4` cannot
 /// be represented as `usize` (only reachable on 32-bit targets with
 /// extreme widths).
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn vuya_packed_bytes(width: usize) -> usize {
   match width.checked_mul(4) {
     Some(n) => n,
-    None => panic!("width ({width}) × 4 overflows usize (VUYA packed row)"),
+    None => panic!("width ({width}) x 4 overflows usize (VUYA packed row)"),
   }
 }
 
@@ -301,7 +301,7 @@ mod tests {
   #[test]
   #[should_panic(expected = "packed row too short")]
   fn vuya_dispatcher_rejects_short_packed() {
-    // packed buffer has only 2 × 4 = 8 bytes for width = 4 (needs 16).
+    // packed buffer has only 2 x 4 = 8 bytes for width = 4 (needs 16).
     let packed = [0u8; 8];
     let mut rgb = [0u8; 4 * 3];
     vuya_to_rgb_row(&packed, &mut rgb, 4, ColorMatrix::Bt709, true, false);
@@ -362,7 +362,7 @@ mod tests {
     }
   }
 
-  // ---- 32-bit width × 4 overflow guard ------------------------------------
+  // ---- 32-bit width x 4 overflow guard ------------------------------------
 
   #[cfg(target_pointer_width = "32")]
   const OVERFLOW_WIDTH_TIMES_4: usize = (usize::MAX / 4) + 1;

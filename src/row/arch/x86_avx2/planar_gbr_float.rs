@@ -31,7 +31,7 @@
 //!
 //! # Lane-cross discipline
 //!
-//! AVX2 has the 128-bit lane boundary. We narrow `__m256i` (8×i32) to u8/u16
+//! AVX2 has the 128-bit lane boundary. We narrow `__m256i` (8xi32) to u8/u16
 //! by splitting into two `__m128i` halves and using SSE-style packs
 //! (`_mm_packs_epi32`, `_mm_packus_epi32`, `_mm_packus_epi16`); this avoids
 //! the lane-split that 256-bit packs leave behind and matches the Grayf32
@@ -89,8 +89,8 @@ unsafe fn narrow_i32x8_to_u8x8(v: __m256i) -> __m128i {
   unsafe {
     let lo = _mm256_castsi256_si128(v);
     let hi = _mm256_extracti128_si256::<1>(v);
-    let pack16 = _mm_packs_epi32(lo, hi); // 8×i16
-    _mm_packus_epi16(pack16, pack16) // 8×u8 in low 8 bytes
+    let pack16 = _mm_packs_epi32(lo, hi); // 8xi16
+    _mm_packus_epi16(pack16, pack16) // 8xu8 in low 8 bytes
   }
 }
 
@@ -1561,7 +1561,7 @@ pub(crate) unsafe fn gbrpf16_to_rgb_f16_row<const BE: bool>(
   unsafe {
     let mut x = 0usize;
     while x + 8 <= width {
-      // Load 8 × u16 (16 bytes) per plane.
+      // Load 8 x u16 (16 bytes) per plane.
       let gu = endian::load_endian_u16x8::<BE>(g.as_ptr().add(x).cast::<u8>());
       let bu = endian::load_endian_u16x8::<BE>(b.as_ptr().add(x).cast::<u8>());
       let ru = endian::load_endian_u16x8::<BE>(r.as_ptr().add(x).cast::<u8>());

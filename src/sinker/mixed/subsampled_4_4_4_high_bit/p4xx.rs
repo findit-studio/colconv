@@ -98,7 +98,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P410<BE>> {
         row.y().len(),
       )));
     }
-    // 4:4:4 semi-planar: full-width × 2 elements per pair.
+    // 4:4:4 semi-planar: full-width x 2 elements per pair.
     if row.uv_full().len() != 2 * w {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
         RowSlice::UvFull10,
@@ -228,11 +228,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P410<BE>> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -464,11 +465,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P412<BE>> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -704,11 +706,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P416<BE>> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );

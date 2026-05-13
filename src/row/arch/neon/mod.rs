@@ -20,7 +20,7 @@
 //!
 //! 1. Load 16 Y (`vld1q_u8`) + 8 U (`vld1_u8`) + 8 V (`vld1_u8`).
 //! 2. Widen U/V to i16, subtract 128 → `u_i16`, `v_i16`.
-//! 3. Widen to i32 and apply `c_scale` (Q15) → `u_d`, `v_d` (i32x4 × 2).
+//! 3. Widen to i32 and apply `c_scale` (Q15) → `u_d`, `v_d` (i32x4 x 2).
 //! 4. Per channel C ∈ {R, G, B}:
 //!    `C_chroma = (C_u * u_d + C_v * v_d + RND) >> 15` in i32,
 //!    narrow‑saturate to i16x8 (8 lanes = 8 chroma pairs).
@@ -32,77 +32,181 @@
 //! 7. Saturating add Y + chroma per channel → i16x16.
 //! 8. Saturate‑narrow to u8x16 and interleave with `vst3q_u8`.
 
+// Used by the shared helpers below (`clamp_u16_max`, `q15_shift`,
+// `chroma_*`, `scale_y_*`, `bswap_*`) when at least one of the
+// YUV-class or `rgb` source families is enabled. Under feature subsets
+// where no NEON kernel needs these intrinsics (e.g. bayer-only,
+// gbr-only, gray-only, …), this import would otherwise be flagged
+// unused. Submodules carry their own `use core::arch::aarch64::*;`.
+#[cfg(any(
+  feature = "rgb",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 use core::arch::aarch64::*;
 
 #[allow(unused_imports)]
 pub(super) use crate::{ColorMatrix, row::scalar};
 
+// Consumers: source families with a source-α channel (`gbr` Gbrap,
+// `yuv-444-packed` AYUV64, `yuva` planar α).
+#[cfg(any(feature = "gbr", feature = "yuv-444-packed", feature = "yuva"))]
 pub(crate) mod alpha_extract;
+#[cfg(feature = "yuv-444-packed")]
 mod ayuv64;
 pub(crate) mod endian;
+#[cfg(feature = "gray")]
 mod gray;
 mod hsv;
+#[cfg(feature = "rgb-legacy")]
 pub(crate) mod legacy_rgb;
+#[cfg(feature = "mono")]
 pub(crate) mod mono1bit;
+#[cfg(feature = "rgb")]
 mod packed_rgb;
+#[cfg(feature = "rgb")]
 mod packed_rgb_16bit;
+#[cfg(feature = "rgb-float")]
 mod packed_rgb_float;
+#[cfg(feature = "yuv-packed")]
 mod packed_yuv_4_1_1;
+#[cfg(feature = "yuv-packed")]
 mod packed_yuv_8bit;
+#[cfg(feature = "mono")]
 pub(crate) mod pal8;
+#[cfg(feature = "gbr")]
 mod planar_gbr;
+#[cfg(feature = "gbr")]
 mod planar_gbr_float;
+#[cfg(feature = "gbr")]
 mod planar_gbr_high_bit;
+#[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
+// The Pn 4:2:0 (P010/P012/P016) NEON kernels are consumed only by
+// `dispatch::yuv420::p{010,012,016}`, which is gated by
+// `feature = "yuv-semi-planar"` but lives under the
+// `feature = "yuv-planar"`-gated `dispatch::yuv420` parent — so this
+// kernel compiles only when *both* features are on.
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 mod subsampled_high_bit_pn_4_2_0;
+// The Pn 4:4:4 NEON kernels are reachable from `dispatch::pn`
+// (yuv-semi-planar only) as well as from `dispatch::yuv444::p{410,412,416}`
+// (yuv-planar + yuv-semi-planar), so a single `yuv-semi-planar` gate
+// suffices.
+#[cfg(feature = "yuv-semi-planar")]
 mod subsampled_high_bit_pn_4_4_4;
+#[cfg(feature = "v210")]
 mod v210;
+#[cfg(feature = "yuv-444-packed")]
 mod v30x;
+#[cfg(feature = "yuv-444-packed")]
 mod v410;
+#[cfg(feature = "yuv-444-packed")]
 mod vuya;
+#[cfg(feature = "yuv-444-packed")]
 mod xv36;
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(feature = "xyz", any(feature = "std", feature = "alloc")))]
 pub(crate) mod xyz12;
+#[cfg(feature = "y2xx")]
 mod y216;
+#[cfg(feature = "y2xx")]
 mod y2xx;
+// See `dispatch::mod.rs` for the consumer list.
+#[cfg(any(
+  feature = "gray",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 pub(crate) mod y_plane_to_luma_u16;
+// The NEON variant of this file only hosts the `yuv_{420,444}p16_to_*`
+// kernels (planar). The semi-planar `p16_to_*` kernels live in
+// `subsampled_high_bit_pn_4_2_0` / `subsampled_high_bit_pn_4_4_4`. So
+// a single `yuv-planar` gate suffices here — unlike the scalar variant.
+#[cfg(feature = "yuv-planar")]
 mod yuv_planar_16bit;
+#[cfg(feature = "yuv-planar")]
 mod yuv_planar_8bit;
+#[cfg(feature = "yuv-planar")]
 mod yuv_planar_high_bit;
 
+#[cfg(any(feature = "gbr", feature = "yuv-444-packed", feature = "yuva"))]
 pub(crate) use alpha_extract::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use ayuv64::*;
+#[cfg(feature = "gray")]
 pub(crate) use gray::*;
 pub(crate) use hsv::*;
+#[cfg(feature = "rgb")]
 pub(crate) use packed_rgb::*;
+#[cfg(feature = "rgb")]
 #[allow(unused_imports)]
 pub(crate) use packed_rgb_16bit::*;
+#[cfg(feature = "rgb-float")]
 pub(crate) use packed_rgb_float::*;
+#[cfg(feature = "yuv-packed")]
 pub(crate) use packed_yuv_4_1_1::*;
+#[cfg(feature = "yuv-packed")]
 pub(crate) use packed_yuv_8bit::*;
+#[cfg(feature = "gbr")]
 pub(crate) use planar_gbr::*;
+#[cfg(feature = "gbr")]
 pub(crate) use planar_gbr_float::*;
+#[cfg(feature = "gbr")]
 pub(crate) use planar_gbr_high_bit::*;
+#[cfg(feature = "yuv-semi-planar")]
 pub(crate) use semi_planar_8bit::*;
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 pub(crate) use subsampled_high_bit_pn_4_2_0::*;
+#[cfg(feature = "yuv-semi-planar")]
 pub(crate) use subsampled_high_bit_pn_4_4_4::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use v30x::*;
+#[cfg(feature = "v210")]
 pub(crate) use v210::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use v410::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use vuya::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use xv36::*;
+#[cfg(any(
+  feature = "gray",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 pub(crate) use y_plane_to_luma_u16::*;
+#[cfg(feature = "y2xx")]
 pub(crate) use y2xx::*;
+#[cfg(feature = "y2xx")]
 pub(crate) use y216::*;
+#[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_8bit::*;
+#[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_16bit::*;
+#[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_high_bit::*;
 
 // ---- Shared helpers (used across submodules) -------------------------
 
 /// Clamps an i16x8 vector to `[0, max]` and reinterprets to u16x8.
 /// Used by native-depth u16 output paths (10/12/14 bit) to avoid
-/// `vqmovun_s16`'s u8 saturation.
+/// `vqmovun_s16`'s u8 saturation. Reachable only from native-depth
+/// YUV kernel families.
+#[cfg(any(
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[inline(always)]
 pub(super) fn clamp_u16_max(v: int16x8_t, zero_v: int16x8_t, max_v: int16x8_t) -> uint16x8_t {
   unsafe { vreinterpretq_u16_s16(vminq_s16(vmaxq_s16(v, zero_v), max_v)) }
@@ -121,7 +225,17 @@ pub(super) fn clamp_u16_max(v: int16x8_t, zero_v: int16x8_t, max_v: int16x8_t) -
 // a context where NEON is explicitly enabled — not just implicitly
 // via the aarch64 target's default feature set.
 
-/// `>>_a 15` shift (arithmetic, sign‑extending).
+/// `>>_a 15` shift (arithmetic, sign‑extending). Used by every NEON
+/// YUV-class kernel after the Q15 multiply.
+#[cfg(any(
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[inline(always)]
 pub(super) fn q15_shift(v: int32x4_t) -> int32x4_t {
   unsafe { vshrq_n_s32::<15>(v) }
@@ -130,6 +244,15 @@ pub(super) fn q15_shift(v: int32x4_t) -> int32x4_t {
 /// Build an i16x8 channel chroma vector from the 8 paired i32 chroma
 /// samples. Mirrors the scalar
 /// `(coeff_u * u_d + coeff_v * v_d + RND) >> 15`.
+#[cfg(any(
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[inline(always)]
 pub(super) fn chroma_i16x8(
   cu: int32x4_t,
@@ -154,6 +277,15 @@ pub(super) fn chroma_i16x8(
 }
 
 /// `(Y - y_off) * y_scale + RND >> 15` returned as i16x8 (8 Y pixels).
+#[cfg(any(
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[inline(always)]
 pub(super) fn scale_y(
   y_i16: int16x8_t,
@@ -182,6 +314,13 @@ pub(super) fn scale_y(
 /// Unsigned-widens via `vmovl_u16`, subtracts `y_off` in i32, multiplies
 /// by `y_scale` (small for u8 output — no i32 overflow), Q15-shifts, and
 /// narrows to i16x8 with `vqmovn_s32`.
+#[cfg(any(
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[inline(always)]
 pub(super) fn scale_y_u16_to_i16(
   y_vec: uint16x8_t,
@@ -207,7 +346,14 @@ pub(super) fn scale_y_u16_to_i16(
 /// `(cu*u_d + cv*v_d + RND) >> 15` in i64 for 4 chroma values → i32x4.
 ///
 /// Used by the 16-bit u16-output path where `coeff * u_d` exceeds i32.
-/// `vmull_s32` widens each 32×32 product to 64 bits, avoiding overflow.
+/// `vmull_s32` widens each 32x32 product to 64 bits, avoiding overflow.
+#[cfg(any(
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[inline(always)]
 pub(super) fn chroma_i64x4(
   cu: int32x4_t,
@@ -237,9 +383,16 @@ pub(super) fn chroma_i64x4(
 
 /// Scale 4 u16 Y pixels via i64 widening for the 16-bit u16-output path.
 ///
-/// `(y - y_off) * y_scale` can reach ~2.35×10⁹ at 16-bit limited range,
+/// `(y - y_off) * y_scale` can reach ~2.35x10⁹ at 16-bit limited range,
 /// overflowing i32. `vmull_s32` widens to i64 before the Q15 shift.
 /// Input `y_u32` is already unsigned-widened and reinterpreted as i32.
+#[cfg(any(
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[inline(always)]
 pub(super) fn scale_y_u16_i64(
   y_i32: int32x4_t,
@@ -263,7 +416,12 @@ pub(super) fn scale_y_u16_i64(
 ///
 /// Used by the conditional byte-swap helpers below to decide whether a raw
 /// NEON load already matches the wire endian. Without this, the helpers
-/// would only correctly handle two of the four `host × wire` quadrants.
+/// would only correctly handle two of the four `host x wire` quadrants.
+#[cfg(any(
+  feature = "rgb",
+  feature = "yuv-444-packed",
+  feature = "yuv-semi-planar"
+))]
 const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 
 /// Conditionally byte-swap 8 u16 lanes in a NEON register so that the
@@ -288,6 +446,11 @@ const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 /// Mirrors PR #82's `9c7d533` dispatcher routing fix and PR #85's
 /// `9e678b0` Ya16 SIMD gate — both addressed the same bug class
 /// (only swapping on `BE = true` rather than `BE != HOST_NATIVE_BE`).
+#[cfg(any(
+  feature = "rgb",
+  feature = "yuv-444-packed",
+  feature = "yuv-semi-planar"
+))]
 #[inline(always)]
 pub(super) unsafe fn bswap_u16x8_if_be<const BE: bool>(v: uint16x8_t) -> uint16x8_t {
   if BE != HOST_NATIVE_BE {
@@ -306,6 +469,7 @@ pub(super) unsafe fn bswap_u16x8_if_be<const BE: bool>(v: uint16x8_t) -> uint16x
 ///
 /// Used by the V410 kernel after `vld1q_u32` to correct u32 words loaded
 /// from a wire-encoded buffer.
+#[cfg(feature = "yuv-444-packed")]
 #[inline(always)]
 pub(super) unsafe fn bswap_u32x4_if_be<const BE: bool>(v: uint32x4_t) -> uint32x4_t {
   if BE != HOST_NATIVE_BE {

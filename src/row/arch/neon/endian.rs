@@ -19,7 +19,7 @@ use core::arch::aarch64::*;
 
 // ---- u16x4 loaders ---------------------------------------------------------
 
-/// Loads 4 × u16 from `ptr` (LE-encoded on disk/wire) into host-native order.
+/// Loads 4 x u16 from `ptr` (LE-encoded on disk/wire) into host-native order.
 ///
 /// # Safety
 ///
@@ -33,7 +33,7 @@ pub(crate) unsafe fn load_le_u16x4(ptr: *const u8) -> uint16x4_t {
   v
 }
 
-/// Loads 4 × u16 from `ptr` (BE-encoded on disk/wire) into host-native order.
+/// Loads 4 x u16 from `ptr` (BE-encoded on disk/wire) into host-native order.
 ///
 /// # Safety
 ///
@@ -63,7 +63,7 @@ pub(crate) unsafe fn load_endian_u16x4<const BE: bool>(ptr: *const u8) -> uint16
 
 // ---- u16x8 loaders ---------------------------------------------------------
 
-/// Loads 8 × u16 from `ptr` (LE-encoded on disk/wire) into host-native order.
+/// Loads 8 x u16 from `ptr` (LE-encoded on disk/wire) into host-native order.
 ///
 /// # Safety
 ///
@@ -77,7 +77,7 @@ pub(crate) unsafe fn load_le_u16x8(ptr: *const u8) -> uint16x8_t {
   v
 }
 
-/// Loads 8 × u16 from `ptr` (BE-encoded on disk/wire) into host-native order.
+/// Loads 8 x u16 from `ptr` (BE-encoded on disk/wire) into host-native order.
 ///
 /// # Safety
 ///
@@ -109,7 +109,7 @@ pub(crate) unsafe fn load_endian_u16x8<const BE: bool>(ptr: *const u8) -> uint16
 
 // ---- u32x4 loaders ---------------------------------------------------------
 
-/// Loads 4 × u32 from `ptr` (LE-encoded on disk/wire) into host-native order.
+/// Loads 4 x u32 from `ptr` (LE-encoded on disk/wire) into host-native order.
 ///
 /// # Safety
 ///
@@ -123,7 +123,7 @@ pub(crate) unsafe fn load_le_u32x4(ptr: *const u8) -> uint32x4_t {
   v
 }
 
-/// Loads 4 × u32 from `ptr` (BE-encoded on disk/wire) into host-native order.
+/// Loads 4 x u32 from `ptr` (BE-encoded on disk/wire) into host-native order.
 ///
 /// # Safety
 ///

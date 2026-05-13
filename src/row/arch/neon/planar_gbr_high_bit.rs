@@ -2,7 +2,7 @@
 //!
 //! All functions are const-generic over `BITS ∈ {9, 10, 12, 14, 16}` and
 //! `BE: bool` (endianness of the source u16 planes).
-//! Lane width: 8 pixels per iteration (`vld1q_u16` = 8 × u16).
+//! Lane width: 8 pixels per iteration (`vld1q_u16` = 8 x u16).
 //! `vst3q_u16` / `vst4q_u16` do the 3-way / 4-way u16 interleave in a
 //! single hardware instruction. Scalar tails handle the remainder.
 //!
@@ -272,7 +272,7 @@ pub(crate) unsafe fn gbr_to_rgb_u16_high_bit_row<const BITS: u32, const BE: bool
       let r_v = vandq_u16(load_endian_u16x8::<BE>(r.as_ptr().add(x).cast()), mask_v);
       let g_v = vandq_u16(load_endian_u16x8::<BE>(g.as_ptr().add(x).cast()), mask_v);
       let b_v = vandq_u16(load_endian_u16x8::<BE>(b.as_ptr().add(x).cast()), mask_v);
-      // vst3q_u16 stores 8×3 = 24 u16 interleaved as R,G,B per pixel.
+      // vst3q_u16 stores 8x3 = 24 u16 interleaved as R,G,B per pixel.
       let triple = uint16x8x3_t(r_v, g_v, b_v);
       vst3q_u16(rgb_u16_out.as_mut_ptr().add(x * 3), triple);
       x += 8;

@@ -72,7 +72,7 @@ macro_rules! impl_gbrp_high_bit {
     impl<'a, const BE: bool> MixedSinker<'a, crate::source::$marker<BE>> {
       /// Attaches a packed **`u16`** RGB output buffer. Samples are in
       /// `[0, (1 << BITS) - 1]` (native depth, no depth conversion).
-      /// Length is measured in `u16` **elements** (`width × height × 3`).
+      /// Length is measured in `u16` **elements** (`width x height x 3`).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
         self.set_rgb_u16(buf)?;
@@ -93,7 +93,7 @@ macro_rules! impl_gbrp_high_bit {
 
       /// Attaches a packed **8-bit** RGBA output buffer. Alpha is opaque
       /// (`0xFF`) — the GBR format has no alpha plane. Length in bytes
-      /// (`width × height × 4`).
+      /// (`width x height x 4`).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
         self.set_rgba(buf)?;
@@ -113,7 +113,7 @@ macro_rules! impl_gbrp_high_bit {
       }
 
       /// Attaches a packed **`u16`** RGBA output buffer. Alpha is opaque
-      /// (`(1 << BITS) - 1`). Length in `u16` elements (`width × height × 4`).
+      /// (`(1 << BITS) - 1`). Length in `u16` elements (`width x height x 4`).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
         self.set_rgba_u16(buf)?;
@@ -137,7 +137,7 @@ macro_rules! impl_gbrp_high_bit {
       /// 256-level banding that the old u8-intermediate path produced. Values
       /// are in `[0, (1 << BITS) - 1]` (full-range) or
       /// `[16 << (BITS - 8), 235 << (BITS - 8)]` (limited-range). Length in
-      /// `u16` elements (`width × height`).
+      /// `u16` elements (`width x height`).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
         self.set_luma_u16(buf)?;
@@ -319,11 +319,12 @@ macro_rules! impl_gbrp_high_bit {
         }
 
         if let Some(hsv) = hsv.as_mut() {
+          let (h, s, v) = hsv.hsv();
           rgb_to_hsv_row(
             rgb_row,
-            &mut hsv.h[one_plane_start..one_plane_end],
-            &mut hsv.s[one_plane_start..one_plane_end],
-            &mut hsv.v[one_plane_start..one_plane_end],
+            &mut h[one_plane_start..one_plane_end],
+            &mut s[one_plane_start..one_plane_end],
+            &mut v[one_plane_start..one_plane_end],
             w,
             use_simd,
           );
@@ -346,7 +347,7 @@ macro_rules! impl_gbrap_high_bit {
     impl<'a, const BE: bool> MixedSinker<'a, crate::source::$marker<BE>> {
       /// Attaches a packed **`u16`** RGB output buffer. Samples are in
       /// `[0, (1 << BITS) - 1]` (native depth, no depth conversion).
-      /// Length is measured in `u16` **elements** (`width × height × 3`).
+      /// Length is measured in `u16` **elements** (`width x height x 3`).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
         self.set_rgb_u16(buf)?;
@@ -367,7 +368,7 @@ macro_rules! impl_gbrap_high_bit {
 
       /// Attaches a packed **8-bit** RGBA output buffer. Alpha is sourced
       /// from the source A plane, downshifted by `BITS - 8`.
-      /// Length in bytes (`width × height × 4`).
+      /// Length in bytes (`width x height x 4`).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
         self.set_rgba(buf)?;
@@ -388,7 +389,7 @@ macro_rules! impl_gbrap_high_bit {
 
       /// Attaches a packed **`u16`** RGBA output buffer. Alpha is sourced
       /// from the source A plane at native depth (no depth conversion).
-      /// Length in `u16` elements (`width × height × 4`).
+      /// Length in `u16` elements (`width x height x 4`).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
         self.set_rgba_u16(buf)?;
@@ -410,7 +411,7 @@ macro_rules! impl_gbrap_high_bit {
       /// Attaches a `u16` luma output buffer. Same derivation as `GbrpN` —
       /// computed directly from native-precision G/B/R planes via Q15
       /// coefficients (native-depth, no banding). Length in `u16` elements
-      /// (`width × height`).
+      /// (`width x height`).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
         self.set_luma_u16(buf)?;
@@ -608,11 +609,12 @@ macro_rules! impl_gbrap_high_bit {
         }
 
         if let Some(hsv) = hsv.as_mut() {
+          let (h, s, v) = hsv.hsv();
           rgb_to_hsv_row(
             rgb_row,
-            &mut hsv.h[one_plane_start..one_plane_end],
-            &mut hsv.s[one_plane_start..one_plane_end],
-            &mut hsv.v[one_plane_start..one_plane_end],
+            &mut h[one_plane_start..one_plane_end],
+            &mut s[one_plane_start..one_plane_end],
+            &mut v[one_plane_start..one_plane_end],
             w,
             use_simd,
           );

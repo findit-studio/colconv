@@ -75,7 +75,7 @@ pub(crate) unsafe fn xv36_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
 
     let mut x = 0usize;
     while x + 8 <= width {
-      // Load 8 XV36 quadruples (8 × 4 × u16 = 64 bytes).
+      // Load 8 XV36 quadruples (8 x 4 x u16 = 64 bytes).
       // vld4q_u16 deinterleaves: .0=U8, .1=Y8, .2=V8, .3=A8 (padding).
       let q = vld4q_u16(packed.as_ptr().add(x * 4));
       // Apply BE byte-swap per-channel if needed.

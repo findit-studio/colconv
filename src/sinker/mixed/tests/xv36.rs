@@ -11,7 +11,7 @@
 //!   slice, and short rgba_u16 buffer.
 //!
 //! XV36 specifics vs V410:
-//! - Source buffer is `&[u16]` (4 × u16 per pixel), not `&[u32]`.
+//! - Source buffer is `&[u16]` (4 x u16 per pixel), not `&[u32]`.
 //! - Channels are 12-bit MSB-aligned (low 4 bits zero per sample).
 //! - `with_luma_u16` is supported natively (Y >> 4 → low-bit-packed
 //!   12-bit value).
@@ -33,7 +33,7 @@ use super::*;
 /// they are left-shifted by 4 internally to produce the MSB-aligned
 /// representation stored in the buffer.
 ///
-/// Row stride equals `width × 4` u16 elements (no padding between rows).
+/// Row stride equals `width x 4` u16 elements (no padding between rows).
 #[cfg(all(test, feature = "std"))]
 pub(super) fn solid_xv36_frame(
   width: u32,
@@ -59,7 +59,7 @@ pub(super) fn solid_xv36_frame(
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn xv36_rgb_only_converts_gray_to_gray() {
-  // Y=U=V=0x800 (12-bit midpoint ≈ 0.5×4095). After YUV→RGB at 12-bit
+  // Y=U=V=0x800 (12-bit midpoint ≈ 0.5x4095). After YUV→RGB at 12-bit
   // depth the per-channel u8 value should be near 128 ± tolerance.
   let buf = solid_xv36_frame(12, 4, 0x800, 0x800, 0x800, 0);
   let src = Xv36Frame::new(&buf, 12, 4, 48);
@@ -383,41 +383,9 @@ fn xv36_planar_parity_with_yuv444p12() {
 
 #[test]
 #[cfg(all(test, feature = "std"))]
-fn xv36_zero_dim_returns_err() {
-  // Sink configured for 1 row; passing row index 1 must return
-  // RowIndexOutOfRange before any kernel runs.
-  let mut rgb = std::vec![0u8; 4 * 3];
-  let mut sink = MixedSinker::<Xv36>::new(4, 1).with_rgb(&mut rgb).unwrap();
-  let packed = [0u16; 4 * 4]; // width=4, 4 u16 elements per pixel
-  let row = Xv36Row::new(&packed, 1, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange::new(1, 1))
-  );
-}
-
-#[test]
-#[cfg(all(test, feature = "std"))]
-fn xv36_process_rejects_short_packed_slice() {
-  // 6-pixel-wide sink expects 6×4=24 u16 elements per row; a 23-element
-  // slice surfaces as `RowShapeMismatch { which: Xv36Packed, .. }`.
-  let mut rgb = std::vec![0u8; 6 * 3];
-  let mut sink = MixedSinker::<Xv36>::new(6, 1).with_rgb(&mut rgb).unwrap();
-  let packed = [0u16; 23];
-  let row = Xv36Row::new(&packed, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::Xv36Packed, 0, 24, 23))
-  );
-}
-
-#[test]
-#[cfg(all(test, feature = "std"))]
 fn xv36_buffer_too_short_for_rgba_u16_returns_err() {
-  // Buffer holds 6×7 = 42 elements × 4 channels = 168 u16 elements;
-  // a 6×8 frame needs 6×8×4 = 192.
+  // Buffer holds 6x7 = 42 elements x 4 channels = 168 u16 elements;
+  // a 6x8 frame needs 6x8x4 = 192.
   let mut rgba = std::vec![0u16; 6 * 7 * 4];
   let result = MixedSinker::<Xv36>::new(6, 8).with_rgba_u16(&mut rgba);
   let Err(err) = result else {

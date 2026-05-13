@@ -161,15 +161,66 @@ name = "pal8_simd"
 harness = false
 
 [features]
-default = ["std"]
-alloc = ["libm"]
-std = ["thiserror/default"]
+default = ["std", "frame"]
+alloc = ["libm", "videoframe/alloc"]
+std = ["thiserror/default", "videoframe/std"]
+
+# Umbrella — enables every per-family sub-feature below (mirrors
+# videoframe's `frame` umbrella). Activates videoframe's frame umbrella
+# and every colconv per-family feature so the internal sinker / row /
+# dispatch / SIMD-backend modules for every format are compiled in.
+frame = [
+  "videoframe/frame",
+  "yuv-planar",
+  "yuv-semi-planar",
+  "yuva",
+  "yuv-packed",
+  "yuv-444-packed",
+  "y2xx",
+  "v210",
+  "rgb",
+  "rgb-float",
+  "rgb-legacy",
+  "gbr",
+  "gray",
+  "bayer",
+  "xyz",
+  "mono",
+]
+
+# Per-family pass-throughs. Each colconv feature activates the
+# matching videoframe feature so frame types and source markers for
+# that family are available, AND gates colconv's internal sinker /
+# row / dispatch / SIMD-backend modules for the format-specific code.
+# Cross-format helpers (Q15 ranges, rgb_expand, hsv, raw::types,
+# alpha_extract, y_plane_to_luma_u16) stay always-available.
+yuv-planar      = ["videoframe/yuv-planar"]
+yuv-semi-planar = ["videoframe/yuv-semi-planar"]
+# YUVA shares 4:2:0 / 4:2:2 / 4:4:4 planar kernels with the
+# `yuv-planar` family (4-plane buffers, drop or pass the alpha
+# plane through the same `yuv_*p*_to_rgba_with_alpha_src_row`
+# kernels). Auto-enable `yuv-planar` so the underlying SIMD /
+# scalar primitives compile.
+yuva            = ["videoframe/yuva", "yuv-planar"]
+yuv-packed      = ["videoframe/yuv-packed"]
+yuv-444-packed  = ["videoframe/yuv-444-packed"]
+y2xx            = ["videoframe/y2xx"]
+v210            = ["videoframe/v210"]
+rgb             = ["videoframe/rgb"]
+rgb-float       = ["videoframe/rgb-float"]
+rgb-legacy      = ["videoframe/rgb-legacy"]
+gbr             = ["videoframe/gbr"]
+gray            = ["videoframe/gray"]
+bayer           = ["videoframe/bayer"]
+xyz             = ["videoframe/xyz"]
+mono            = ["videoframe/mono"]
 
 [dependencies]
 derive_more = { version = "2", default-features = false, features = ["display", "is_variant", "try_unwrap", "unwrap"] }
 half = { version = "2", default-features = false }
 thiserror = { version = "2", default-features = false }
 libm = { version = "0.2", optional = true }
+videoframe = { version = "0.2", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"
@@ -195,7 +246,10 @@ rpath = false
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
-[lints.rust]
+[lints]
+workspace = true
+
+[workspace.lints.rust]
 rust_2018_idioms = "warn"
 single_use_lifetimes = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = [

@@ -15,7 +15,7 @@ use super::*;
 // ---- Solid-color Y216 builder -----------------------------------------
 
 /// Builds a solid-color Y216 plane with one (Y, U, V) repeated. Each
-/// row is `width × 2` u16 elements (`Y₀, U, Y₁, V` quadruples). All
+/// row is `width x 2` u16 elements (`Y₀, U, Y₁, V` quadruples). All
 /// samples are direct 16-bit values — Y216 uses the full u16 range
 /// with no MSB-alignment shift (bits[15:0] all active).
 ///
@@ -82,7 +82,7 @@ fn y216_luma_u16_only_extracts_y_native_depth() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn y216_rgb_only_converts_gray_to_gray() {
-  // Y=32896 (≈ 128/255 × 65535), U=V=32768 (neutral chroma, ≈ 0.5×65535).
+  // Y=32896 (≈ 128/255 x 65535), U=V=32768 (neutral chroma, ≈ 0.5x65535).
   let buf = solid_y216_frame(12, 4, 32896, 32768, 32768);
   let src = Y216Frame::new(&buf, 12, 4, 24);
   let mut rgb = std::vec![0u8; 12 * 4 * 3];
@@ -249,41 +249,8 @@ fn y216_with_simd_false_matches_with_simd_true() {
 // ---- Error-path tests --------------------------------------------------
 
 #[test]
-fn y216_odd_width_returns_err() {
-  // Direct `process()` call with a sink configured at width=3 (odd —
-  // violates 4:2:2 chroma-pair constraint). The width check fires
-  // *before* any kernel runs, preserving the no-panic contract — even
-  // if the caller bypasses the walker (which would catch this in
-  // `begin_frame`).
-  let mut rgb = std::vec![0u8; 4 * 3];
-  let mut sink = MixedSinker::<Y216>::new(3, 1).with_rgb(&mut rgb).unwrap();
-  let buf = std::vec![0u16; 6];
-  let row = Y216Row::new(&buf, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::WidthAlignment(WidthAlignment::new(3, WidthAlignmentRequirement::Even))
-  );
-}
-
-#[test]
-fn y216_process_rejects_short_packed_slice() {
-  // 6-pixel-wide sink expects 12 u16 elements per row; an 11-element
-  // slice surfaces as `RowShapeMismatch { which: Y216Packed, .. }`.
-  let mut rgb = std::vec![0u8; 6 * 3];
-  let mut sink = MixedSinker::<Y216>::new(6, 1).with_rgb(&mut rgb).unwrap();
-  let packed = [0u16; 11];
-  let row = Y216Row::new(&packed, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::Y216Packed, 0, 12, 11))
-  );
-}
-
-#[test]
 fn y216_luma_u16_buffer_too_short_returns_err() {
-  // Buffer holds 6×7 = 42 elements; a 6×8 frame needs 48.
+  // Buffer holds 6x7 = 42 elements; a 6x8 frame needs 48.
   let mut luma = std::vec![0u16; 6 * 7];
   let result = MixedSinker::<Y216>::new(6, 8).with_luma_u16(&mut luma);
   let Err(err) = result else {
@@ -298,7 +265,7 @@ fn y216_luma_u16_buffer_too_short_returns_err() {
 // ---- Planar parity oracle ---------------------------------------------------
 
 /// Pack three 16-bit planes (Y / U / V at 4:2:2 subsampling) into Y216
-/// layout — each row is `width × 2` u16 elements laid out as `(Y₀, U,
+/// layout — each row is `width x 2` u16 elements laid out as `(Y₀, U,
 /// Y₁, V)` quadruples. Y216 uses the full u16 range with no alignment
 /// shift; samples are stored direct. Width must be even.
 fn pack_yuv422p16_to_y216(

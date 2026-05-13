@@ -24,7 +24,7 @@
 //!   Source α (A channel): `vshrn_n_u16::<8>` narrows u16 → u8 (high byte).
 //!
 //! - u16 output: i64 chroma via `chroma_i64x4_neon` to avoid i32
-//!   overflow at BITS=16/16 (peak ~3.7×10⁹ for BT.2020 limited). Y
+//!   overflow at BITS=16/16 (peak ~3.7x10⁹ for BT.2020 limited). Y
 //!   scaled via `scale_y_u16_i64`. Source α written direct as u16.
 //!
 //! ## Tail
@@ -94,7 +94,7 @@ pub(crate) unsafe fn ayuv64_to_rgb_or_rgba_row<
 
     let mut x = 0usize;
     while x + 16 <= width {
-      // Two vld4q_u16 loads: each deinterleaves 8 pixels (8 × 4 × u16 = 64 bytes).
+      // Two vld4q_u16 loads: each deinterleaves 8 pixels (8 x 4 x u16 = 64 bytes).
       // Channel order: .0=A, .1=Y, .2=U, .3=V (AYUV64 native layout).
       let q_lo = vld4q_u16(packed.as_ptr().add(x * 4));
       let q_hi = vld4q_u16(packed.as_ptr().add(x * 4 + 32));
@@ -289,7 +289,7 @@ pub(crate) unsafe fn ayuv64_to_rgb_u16_or_rgba_u16_row<
       let v_hi_u16 = bswap_u16x8_if_be::<BE>(q_hi.3);
 
       // Chroma: widen u16 → i32, subtract bias, apply c_scale (Q15).
-      // 4:4:4 — 8 per-pixel chroma values per half, split into 2 × i32x4.
+      // 4:4:4 — 8 per-pixel chroma values per half, split into 2 x i32x4.
       // lo half: pixels 0..7, further split into lo0 (0..3) and lo1 (4..7).
       let u_lo0_i32 = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(u_lo_u16)));
       let u_lo1_i32 = vreinterpretq_s32_u32(vmovl_u16(vget_high_u16(u_lo_u16)));
@@ -468,7 +468,7 @@ pub(crate) unsafe fn ayuv64_to_rgba_row<const BE: bool>(
   }
 }
 
-/// NEON AYUV64 → packed **RGB u16** (3 × u16 per pixel). Source α discarded.
+/// NEON AYUV64 → packed **RGB u16** (3 x u16 per pixel). Source α discarded.
 #[inline]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn ayuv64_to_rgb_u16_row<const BE: bool>(
@@ -485,7 +485,7 @@ pub(crate) unsafe fn ayuv64_to_rgb_u16_row<const BE: bool>(
   }
 }
 
-/// NEON AYUV64 → packed **RGBA u16** (4 × u16 per pixel). Source A u16
+/// NEON AYUV64 → packed **RGBA u16** (4 x u16 per pixel). Source A u16
 /// is written direct (no conversion).
 #[inline]
 #[target_feature(enable = "neon")]

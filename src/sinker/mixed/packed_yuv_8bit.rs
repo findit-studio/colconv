@@ -34,8 +34,8 @@
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, WidthAlignment, WidthAlignmentRequirement, check_dimensions_match,
-  rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match, rgb_row_buf_or_scratch,
+  rgba_plane_row_slice,
 };
 use crate::{
   PixelSink,
@@ -58,7 +58,7 @@ impl<'a> MixedSinker<'a, Yuyv422> {
   /// with constant `0xFF` (the source has no alpha channel).
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -80,7 +80,7 @@ impl<'a> MixedSinker<'a, Yuyv422> {
 
   /// Attaches a **`u16`** luma output buffer. Y bytes are zero-extended
   /// to u16 (`out[x] = Y_byte as u16`). Length in u16 **elements**
-  /// (`width × height`).
+  /// (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -109,9 +109,8 @@ impl PixelSink for MixedSinker<'_, Yuyv422> {
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     check_dimensions_match(self.width, self.height, width, height)?;
     if self.width & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(
         self.width,
-        WidthAlignmentRequirement::Even,
       )));
     }
     Ok(())
@@ -124,10 +123,7 @@ impl PixelSink for MixedSinker<'_, Yuyv422> {
     let use_simd = self.simd;
 
     if w & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
-        w,
-        WidthAlignmentRequirement::Even,
-      )));
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(w)));
     }
 
     let packed_expected =
@@ -218,11 +214,12 @@ impl PixelSink for MixedSinker<'_, Yuyv422> {
     yuyv422_to_rgb_row(packed, rgb_row, w, row.matrix(), row.full_range(), use_simd);
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -269,7 +266,7 @@ impl<'a> MixedSinker<'a, Uyvy422> {
 
   /// Attaches a **`u16`** luma output buffer. Y bytes (at offset 1 of
   /// each UYVY pair) are zero-extended to u16. Length in u16 **elements**
-  /// (`width × height`).
+  /// (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -298,9 +295,8 @@ impl PixelSink for MixedSinker<'_, Uyvy422> {
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     check_dimensions_match(self.width, self.height, width, height)?;
     if self.width & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(
         self.width,
-        WidthAlignmentRequirement::Even,
       )));
     }
     Ok(())
@@ -313,10 +309,7 @@ impl PixelSink for MixedSinker<'_, Uyvy422> {
     let use_simd = self.simd;
 
     if w & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
-        w,
-        WidthAlignmentRequirement::Even,
-      )));
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(w)));
     }
 
     let packed_expected =
@@ -403,11 +396,12 @@ impl PixelSink for MixedSinker<'_, Uyvy422> {
     uyvy422_to_rgb_row(packed, rgb_row, w, row.matrix(), row.full_range(), use_simd);
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -451,7 +445,7 @@ impl<'a> MixedSinker<'a, Yvyu422> {
 
   /// Attaches a **`u16`** luma output buffer. Y bytes are zero-extended
   /// to u16 (`out[x] = Y_byte as u16`). Length in u16 **elements**
-  /// (`width × height`).
+  /// (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -480,9 +474,8 @@ impl PixelSink for MixedSinker<'_, Yvyu422> {
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     check_dimensions_match(self.width, self.height, width, height)?;
     if self.width & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(
         self.width,
-        WidthAlignmentRequirement::Even,
       )));
     }
     Ok(())
@@ -495,10 +488,7 @@ impl PixelSink for MixedSinker<'_, Yvyu422> {
     let use_simd = self.simd;
 
     if w & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
-        w,
-        WidthAlignmentRequirement::Even,
-      )));
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(w)));
     }
 
     let packed_expected =
@@ -585,11 +575,12 @@ impl PixelSink for MixedSinker<'_, Yvyu422> {
     yvyu422_to_rgb_row(packed, rgb_row, w, row.matrix(), row.full_range(), use_simd);
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );

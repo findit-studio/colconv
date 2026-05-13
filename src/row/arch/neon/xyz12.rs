@@ -3,7 +3,7 @@
 //! Each kernel processes **4 pixels per SIMD iteration** in `float32x4_t`
 //! lanes. Pipeline steps:
 //!
-//! 1. `vld3_u16` deinterleaves 12 packed u16 (`X, Y, Z` × 4 pixels) into
+//! 1. `vld3_u16` deinterleaves 12 packed u16 (`X, Y, Z` x 4 pixels) into
 //!    three `uint16x4_t` channel vectors. `vld3_u16` materializes each
 //!    lane in **host-native** u16 byte order, so the SIMD body only
 //!    runs when `BE == HOST_NATIVE_BE`; cross-endian inputs fall back
@@ -22,7 +22,7 @@
 //!    same f32 hardware floor that ruled out polynomial vectorization
 //!    of the sRGB OETF, so a scalar fall-through preserves the 0-ULP
 //!    parity contract between scalar and SIMD.
-//! 4. **3×3 matmul** to one of three target gamuts is fully vectorized
+//! 4. **3x3 matmul** to one of three target gamuts is fully vectorized
 //!    via `vmulq_f32 + vaddq_f32` chains. We deliberately avoid
 //!    `vfmaq_f32` (FMA) — single-rounding semantics would diverge by
 //!    up to 0.5 ULP from the scalar's mul-then-add schedule, breaking
@@ -33,7 +33,7 @@
 //! 6. **Clamp + scale + integer narrow + interleave** are vectorized:
 //!    `vminq_f32` / `vmaxq_f32` for `[0, 1]` clamp, then `+ 0.5` followed
 //!    by `vcvtq_u32_f32` (truncating cast) — i.e. **round-half-up**, so
-//!    the cast matches the scalar reference's `(c × max + 0.5) as T`
+//!    the cast matches the scalar reference's `(c x max + 0.5) as T`
 //!    (NOT `vcvtnq_u32_f32` round-half-to-even, which would diverge by
 //!    1 ULP at exact `*.5` ties). `vqmovn_u32` / `vqmovn_u16` perform
 //!    the saturating narrow; `vst3_u8` / `vst3_u16` / `vst4_u8` /
@@ -49,7 +49,7 @@
 //! the scalar's mul-then-add rounding schedule lane-for-lane) or *is*
 //! the scalar reference (per-lane OETF calls reuse the scalar
 //! `smpte428_inverse_oetf` / `oetf_srgb` directly). The narrow + clamp
-//! mirrors the scalar's `(c × max + 0.5)` round-half-up + saturating
+//! mirrors the scalar's `(c x max + 0.5)` round-half-up + saturating
 //! integer cast.
 
 use core::arch::aarch64::*;
@@ -85,7 +85,7 @@ const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 
 // ---- Internal helpers --------------------------------------------------
 
-/// Loads 4 packed XYZ12 pixels (12 u16 = `X, Y, Z` × 4) deinterleaved
+/// Loads 4 packed XYZ12 pixels (12 u16 = `X, Y, Z` x 4) deinterleaved
 /// into `(X4, Y4, Z4)` u16x4 channel vectors.
 ///
 /// Caller obligation: `BE == HOST_NATIVE_BE`. `vld3_u16` materializes
@@ -149,7 +149,7 @@ unsafe fn oetf_srgb_scalar4(v: float32x4_t) -> float32x4_t {
   }
 }
 
-/// Vectorized 3×3 matmul: `[R G B]^T = M · [X Y Z]^T`.
+/// Vectorized 3x3 matmul: `[R G B]^T = M · [X Y Z]^T`.
 ///
 /// Uses plain `vmulq_f32 + vaddq_f32` (NOT FMA) so the f32 rounding
 /// schedule is identical to the scalar reference's
@@ -234,7 +234,7 @@ unsafe fn load_xyz_linear<const BE: bool>(
   }
 }
 
-/// Vectorized clamp `[0, 1]` × `scale` followed by **round-half-up**
+/// Vectorized clamp `[0, 1]` x `scale` followed by **round-half-up**
 /// cast to u32 then saturating narrow to u16.
 ///
 /// The scalar reference is `((c.clamp(0,1) * scale) + 0.5) as int`,
@@ -377,7 +377,7 @@ pub(crate) unsafe fn xyz12_to_rgba_row<const BE: bool>(
   }
 }
 
-/// XYZ12 → packed u16 RGB (full-range scaling, ×65535).
+/// XYZ12 → packed u16 RGB (full-range scaling, x65535).
 ///
 /// # Safety
 ///

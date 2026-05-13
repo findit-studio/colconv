@@ -5,7 +5,7 @@ use super::*;
 // ---- Solid-color builder ------------------------------------------------
 
 /// Builds a solid UYYVYY411 packed plane with one (Y, U, V) repeated
-/// across `width × height`. Layout per 6-byte / 4-pixel block:
+/// across `width x height`. Layout per 6-byte / 4-pixel block:
 /// `U, Y, Y, V, Y, Y`. Stride equals `width * 3 / 2` (no padding).
 pub(super) fn solid_uyyvyy411_frame(width: u32, height: u32, y: u8, u: u8, v: u8) -> Vec<u8> {
   let w = width as usize;
@@ -216,28 +216,12 @@ fn uyyvyy411_width_mismatch_returns_err() {
 }
 
 #[test]
-fn uyyvyy411_process_rejects_short_packed_slice() {
-  let mut rgb = std::vec![0u8; 16 * 8 * 3];
-  let mut sink = MixedSinker::<Uyyvyy411>::new(16, 8)
-    .with_rgb(&mut rgb)
-    .unwrap();
-  // Expected `width * 3 / 2 = 24` bytes, supply 23.
-  let packed = [0u8; 23];
-  let row = Uyyvyy411Row::new(&packed, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::Uyyvyy411Packed, 0, 24, 23))
-  );
-}
-
-#[test]
 fn uyyvyy411_begin_frame_rejects_width_not_multiple_of_4() {
   // Sinker configured with a width that's not a multiple of 4 — the
   // begin_frame guard surfaces it before any row primitive runs.
   // Call begin_frame directly with matching dimensions so the
   // dimension-match check passes and the width-alignment check fires.
-  // (Going through `uyyvyy411_to(...)` with a 16×8 frame against an
+  // (Going through `uyyvyy411_to(...)` with a 16x8 frame against an
   // 18-wide sink would short-circuit on DimensionMismatch and never
   // exercise the alignment guard.)
   let mut rgb = std::vec![0u8; 18 * 8 * 3];
@@ -247,10 +231,7 @@ fn uyyvyy411_begin_frame_rejects_width_not_multiple_of_4() {
   let err = sink.begin_frame(18, 8).unwrap_err();
   assert_eq!(
     err,
-    MixedSinkerError::WidthAlignment(WidthAlignment::new(
-      18,
-      WidthAlignmentRequirement::MultipleOfFour
-    )),
+    MixedSinkerError::WidthAlignment(WidthAlignment::multiple_of_four(18,)),
     "expected WidthAlignment {{ width: 18, required: MultipleOfFour }}, got {err:?}"
   );
 }

@@ -35,100 +35,217 @@ use crate::ColorMatrix;
 // cluster of scalar reference kernels; `mod.rs` retains only the
 // cross-cutting helpers (`clamp_u8`, `q15_*`, `bits_mask`,
 // `Coefficients`, …) that every family pulls in.
+// Consumers: source families with a source-α channel (`gbr` Gbrap,
+// `gray` Ya8 / Ya16, `rgb` 16-bit RGBA at_3, `yuv-444-packed`
+// AYUV64 / VUYA, `yuva` planar α).
+#[cfg(any(
+  feature = "gbr",
+  feature = "gray",
+  feature = "rgb",
+  feature = "yuv-444-packed",
+  feature = "yuva",
+))]
 pub(crate) mod alpha_extract;
+#[cfg(feature = "yuv-444-packed")]
 mod ayuv64;
+#[cfg(feature = "bayer")]
 mod bayer;
+#[cfg(feature = "gray")]
 pub(crate) mod gray;
+#[cfg(feature = "gray")]
 pub(crate) mod grayf32;
 mod hsv;
+#[cfg(feature = "rgb-legacy")]
 pub(crate) mod legacy_rgb;
+#[cfg(feature = "mono")]
 pub(crate) mod mono1bit;
+#[cfg(feature = "rgb")]
 mod packed_rgb;
+#[cfg(feature = "rgb")]
 mod packed_rgb_16bit;
+#[cfg(feature = "rgb-float")]
 mod packed_rgb_float;
+#[cfg(feature = "yuv-packed")]
 mod packed_yuv_4_1_1;
+#[cfg(feature = "yuv-packed")]
 mod packed_yuv_8bit;
+#[cfg(feature = "mono")]
 pub(crate) mod pal8;
+#[cfg(feature = "gbr")]
 mod planar_gbr;
+#[cfg(feature = "gbr")]
 pub(crate) mod planar_gbr_f16;
+#[cfg(feature = "gbr")]
 pub(crate) mod planar_gbr_float;
+#[cfg(feature = "gbr")]
 pub(crate) mod planar_gbr_high_bit;
 mod rgb_expand;
+#[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
+// `subsampled_high_bit_pn` provides the scalar reference kernels for
+// both the 4:2:0 (P010 / P012 / P016) and 4:4:4 (P410 / P412 / P416)
+// families. The 4:4:4 helpers are consumed by `dispatch::pn`
+// (yuv-semi-planar-gated, no yuv-planar dep), so a single
+// `yuv-semi-planar` gate keeps them reachable. The 4:2:0 helpers are
+// flagged unused under yuv-semi-planar alone (their dispatchers live
+// under the yuv-planar-gated `dispatch::yuv420` parent) — see the
+// per-fn cfg in `subsampled_high_bit_pn.rs` itself.
+#[cfg(feature = "yuv-semi-planar")]
 mod subsampled_high_bit_pn;
+#[cfg(feature = "v210")]
 mod v210;
+#[cfg(feature = "yuv-444-packed")]
 mod v30x;
+#[cfg(feature = "yuv-444-packed")]
 mod v410;
+#[cfg(feature = "yuv-444-packed")]
 mod vuya;
+#[cfg(feature = "yuv-444-packed")]
 mod xv36;
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(feature = "xyz", any(feature = "std", feature = "alloc")))]
 pub(crate) mod xyz12;
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(feature = "xyz", any(feature = "std", feature = "alloc")))]
 pub(crate) mod xyz12_constants;
+#[cfg(feature = "y2xx")]
 mod y216;
+#[cfg(feature = "y2xx")]
 mod y2xx;
+// See `dispatch::mod.rs` for the consumer list.
+#[cfg(any(
+  feature = "gray",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 pub(crate) mod y_plane_to_luma_u16;
+#[cfg(feature = "gray")]
 pub(crate) mod ya16;
+#[cfg(feature = "gray")]
 pub(crate) mod ya8;
+// yuv_planar_16bit also contains the P016 semi-planar 4:2:0 / P216
+// semi-planar 4:2:2 / P416 semi-planar 4:4:4 16-bit kernels (`p16_to_rgb*_row`),
+// so compile whenever either `yuv-planar` or `yuv-semi-planar` is enabled.
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 mod yuv_planar_16bit;
+#[cfg(feature = "yuv-planar")]
 mod yuv_planar_8bit;
+#[cfg(feature = "yuv-planar")]
 mod yuv_planar_high_bit;
 
 // alpha_extract functions are imported directly by dispatch::alpha_extract
 // via `crate::row::scalar::alpha_extract as scalar` (the module path).
 // This glob re-exports into `crate::row::scalar::*` for Task 8+ callers;
 // suppress unused-imports until then.
+#[cfg(any(
+  feature = "gbr",
+  feature = "gray",
+  feature = "rgb",
+  feature = "yuv-444-packed",
+  feature = "yuva",
+))]
 #[allow(unused_imports)]
 pub(crate) use alpha_extract::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use ayuv64::*;
+#[cfg(feature = "bayer")]
 pub(crate) use bayer::*;
 // legacy_rgb functions are consumed by the dispatcher via `use crate::row::{..., scalar};`
 // and called as `scalar::legacy_rgb::...`.
 // This glob re-exports them into the scalar namespace for direct callers (SIMD tails, tests).
+#[cfg(feature = "rgb-legacy")]
 #[allow(unused_imports)]
 pub(crate) use legacy_rgb::*;
 // gray functions are consumed by dispatch::gray via `crate::row::scalar::gray as scalar`.
 // This glob re-exports them into the scalar namespace for direct callers (SIMD tails, tests).
+#[cfg(feature = "gray")]
 #[allow(unused_imports)]
 pub(crate) use gray::*;
+#[cfg(feature = "gray")]
 #[allow(unused_imports)]
 pub(crate) use grayf32::*;
 pub(crate) use hsv::*;
 // mono1bit functions are consumed by dispatch via the module path.
+#[cfg(feature = "mono")]
 #[allow(unused_imports)]
 pub(crate) use mono1bit::*;
+#[cfg(feature = "rgb")]
 pub(crate) use packed_rgb::*;
+#[cfg(feature = "rgb")]
 pub(crate) use packed_rgb_16bit::*;
+#[cfg(feature = "rgb-float")]
 pub(crate) use packed_rgb_float::*;
+#[cfg(feature = "yuv-packed")]
 pub(crate) use packed_yuv_4_1_1::*;
+#[cfg(feature = "yuv-packed")]
 pub(crate) use packed_yuv_8bit::*;
+#[cfg(feature = "gbr")]
 pub(crate) use planar_gbr::*;
+#[cfg(feature = "gbr")]
 #[allow(unused_imports)]
 pub(crate) use planar_gbr_f16::*;
+#[cfg(feature = "gbr")]
 #[allow(unused_imports)]
 pub(crate) use planar_gbr_float::*;
+#[cfg(feature = "gbr")]
 pub(crate) use planar_gbr_high_bit::*;
-#[cfg(any(feature = "std", feature = "alloc"))]
+// Same consumer set as the `rgb_expand` helpers themselves: every source
+// family that fans an RGB row out to an RGBA row via Strategy A
+// (Bayer is RGB-only, mono / rgb-float / rgb-legacy / xyz never go
+// through the fan-out, so they're excluded).
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(
+    feature = "gbr",
+    feature = "gray",
+    feature = "rgb",
+    feature = "v210",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-packed",
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar",
+    feature = "yuva",
+  ),
+))]
 pub(crate) use rgb_expand::*;
+#[cfg(feature = "yuv-semi-planar")]
 pub(crate) use semi_planar_8bit::*;
+#[cfg(feature = "yuv-semi-planar")]
 pub(crate) use subsampled_high_bit_pn::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use v30x::*;
+#[cfg(feature = "v210")]
 pub(crate) use v210::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use v410::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use vuya::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use xv36::*;
 // `xyz12` and `xyz12_constants` are crate-internal modules; consumers (dispatcher
 // + SIMD tails) reach in via `crate::row::scalar::xyz12::xyz12_to_rgb_row::<BE>`
 // rather than a glob re-export, so the constants table and helpers stay
 // addressable without polluting the scalar namespace.
+#[cfg(feature = "y2xx")]
 pub(crate) use y2xx::*;
+#[cfg(feature = "y2xx")]
 pub(crate) use y216::*;
+#[cfg(feature = "gray")]
 #[allow(unused_imports)]
 pub(crate) use ya8::*;
+#[cfg(feature = "gray")]
 #[allow(unused_imports)]
 pub(crate) use ya16::*;
+#[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_8bit::*;
+// The file is compiled whenever either family is on, but its public
+// items are gated more tightly: `yuv_{420,444}p16_to_*` need
+// `yuv-planar`, and `p16_to_*` needs both `yuv-planar` and
+// `yuv-semi-planar`. So the re-export only carries items when
+// `yuv-planar` is enabled.
+#[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_16bit::*;
+#[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_high_bit::*;
 
 // ---- Shared scalar helpers (used across all conversion families) -------
@@ -152,6 +269,7 @@ pub(crate) use yuv_planar_high_bit::*;
 /// # Safety
 ///
 /// `ptr` must point to at least 2 readable bytes.
+#[cfg(feature = "y2xx")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) unsafe fn load_endian_u16<const BE: bool>(ptr: *const u8) -> u16 {
   let bytes = unsafe { [*ptr, *ptr.add(1)] };
@@ -176,6 +294,7 @@ pub(super) unsafe fn load_endian_u16<const BE: bool>(ptr: *const u8) -> u16 {
 /// # Safety
 ///
 /// `ptr` must point to at least 4 readable bytes.
+#[cfg(feature = "v210")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) unsafe fn load_endian_u32<const BE: bool>(ptr: *const u8) -> u32 {
   let bytes = unsafe { [*ptr, *ptr.add(1), *ptr.add(2), *ptr.add(3)] };
@@ -186,6 +305,15 @@ pub(super) unsafe fn load_endian_u32<const BE: bool>(ptr: *const u8) -> u32 {
   }
 }
 
+#[cfg(any(
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn clamp_u8(v: i32) -> u8 {
   v.clamp(0, 255) as u8
@@ -207,6 +335,7 @@ pub(super) fn clamp_u8(v: i32) -> u8 {
 /// would corrupt rows on s390x / other BE hosts. See
 /// `fix(be-tier10b): make scalar BE conversion target-endian aware`
 /// for the codex finding that motivated this contract crate-wide.
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar", feature = "yuva",))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) const fn load_u16<const BE: bool>(v: u16) -> u16 {
   if BE { u16::from_be(v) } else { u16::from_le(v) }
@@ -215,6 +344,14 @@ pub(super) const fn load_u16<const BE: bool>(v: u16) -> u16 {
 /// `(sample * scale_q15 + RND) >> 15`. With input masked to BITS,
 /// the `sample * scale` product cannot overflow i32 for any
 /// reasonable `OUT_BITS ≤ 16`, so plain arithmetic is sufficient.
+#[cfg(any(
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn q15_scale(sample: i32, scale_q15: i32) -> i32 {
   (sample * scale_q15 + (1 << 14)) >> 15
@@ -222,6 +359,14 @@ pub(super) fn q15_scale(sample: i32, scale_q15: i32) -> i32 {
 
 /// `(c_u * u_d + c_v * v_d + RND) >> 15`. Chroma sum max ≈ 10⁹ for
 /// 14‑bit masked input, well within i32.
+#[cfg(any(
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn q15_chroma(c_u: i32, u_d: i32, c_v: i32, v_d: i32) -> i32 {
   (c_u * u_d + c_v * v_d + (1 << 14)) >> 15
@@ -231,6 +376,13 @@ pub(super) fn q15_chroma(c_u: i32, u_d: i32, c_v: i32, v_d: i32) -> i32 {
 /// max ≈ 4.3·10⁹ at 16-bit limited range — above i32 but well within
 /// i64. Result after the shift is bounded by ~130 000 so the final
 /// `as i32` narrow is lossless.
+#[cfg(any(
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn q15_chroma64(c_u: i32, u_d: i32, c_v: i32, v_d: i32) -> i32 {
   let sum = (c_u as i64) * (u_d as i64) + (c_v as i64) * (v_d as i64);
@@ -242,6 +394,13 @@ pub(super) fn q15_chroma64(c_u: i32, u_d: i32, c_v: i32, v_d: i32) -> i32 {
 /// reach ~2.35·10⁹ — just over i32::MAX — when unclamped `u16` input
 /// exceeds the nominal limited-range Y max. Result after the shift
 /// is bounded by ~65 536 so the final `as i32` narrow is lossless.
+#[cfg(any(
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn q15_scale64(sample: i32, scale_q15: i32) -> i32 {
   (((sample as i64) * (scale_q15 as i64) + (1 << 14)) >> 15) as i32
@@ -251,6 +410,7 @@ pub(super) fn q15_scale64(sample: i32, scale_q15: i32) -> i32 {
 /// Returns `0x03FF` for 10‑bit, `0x0FFF` for 12‑bit, `0x3FFF` for
 /// 14‑bit. SIMD backends splat this into a vector constant and AND
 /// every load against it.
+#[cfg(any(feature = "gray", feature = "yuv-planar", feature = "yuva"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) const fn bits_mask<const BITS: u32>() -> u16 {
   ((1u32 << BITS) - 1) as u16
@@ -259,6 +419,14 @@ pub(super) const fn bits_mask<const BITS: u32>() -> u16 {
 /// Chroma bias for input bit depth `BITS` — `128 << (BITS - 8)`.
 /// 128 for 8‑bit, 512 for 10‑bit, 2048 for 12‑bit, 8192 for 14‑bit.
 /// Exposed at module visibility so SIMD backends can reuse it.
+#[cfg(any(
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) const fn chroma_bias<const BITS: u32>() -> i32 {
   128i32 << (BITS - 8)
@@ -283,6 +451,15 @@ pub(super) const fn chroma_bias<const BITS: u32>() -> i32 {
 ///   chroma maps `[16·k, 240·k]` to `[0, out_max]`, where
 ///   `k = 1 << (BITS - 8)`. Matches FFmpeg's `AVCOL_RANGE_MPEG`
 ///   semantics.
+#[cfg(any(
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) const fn range_params_n<const BITS: u32, const OUT_BITS: u32>(
   full_range: bool,
@@ -315,6 +492,15 @@ pub(super) const fn range_params_n<const BITS: u32, const OUT_BITS: u32>(
 /// where `u_d = U - 128`, `v_d = V - 128`. Standard matrices
 /// (BT.601, BT.709, BT.2020-NCL, SMPTE 240M, FCC) have sparse layout
 /// with `r_u = b_v = 0`; YCgCo uses all six entries.
+#[cfg(any(
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 pub(super) struct Coefficients {
   r_u: i32,
   r_v: i32,
@@ -324,6 +510,15 @@ pub(super) struct Coefficients {
   b_v: i32,
 }
 
+#[cfg(any(
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 impl Coefficients {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub(super) const fn for_matrix(m: ColorMatrix) -> Self {
@@ -385,6 +580,16 @@ impl Coefficients {
         b_u: -32768,
         b_v: -32768,
       },
+      // ColorMatrix is #[non_exhaustive] in videoframe; fall back to BT.709
+      // for any future variants added there before colconv is updated.
+      _ => Self {
+        r_u: 0,
+        r_v: 51606,
+        g_u: -6136,
+        g_v: -15339,
+        b_u: 60808,
+        b_v: 0,
+      },
     }
   }
 
@@ -421,6 +626,7 @@ impl Coefficients {
 ///
 /// This is the shared implementation behind both `bgr_to_rgb_row` and
 /// `rgb_to_bgr_row` — the transformation is a self‑inverse.
+#[cfg(feature = "rgb")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn bgr_rgb_swap_row(input: &[u8], output: &mut [u8], width: usize) {
   debug_assert!(input.len() >= width * 3, "input row too short");

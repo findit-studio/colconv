@@ -22,6 +22,7 @@ use super::{load_u16, *};
 /// - `width` must be even.
 /// - `y.len() >= width`, `uv_half.len() >= width`,
 ///   `rgb_out.len() >= 3 * width`.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn p_n_to_rgb_row<const BITS: u32, const BE: bool>(
   y: &[u16],
@@ -46,6 +47,7 @@ pub(crate) fn p_n_to_rgb_row<const BITS: u32, const BE: bool>(
 // follow-up SIMD/dispatcher PR. Until then this thin wrapper has no
 // caller. P016 has its own kernel family
 // ([`p16_to_rgb_or_rgba_row`]) — never routed here.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn p_n_to_rgba_row<const BITS: u32, const BE: bool>(
   y: &[u16],
@@ -67,6 +69,7 @@ pub(crate) fn p_n_to_rgba_row<const BITS: u32, const BE: bool>(
 /// - `width` must be even.
 /// - `y.len() >= width`, `uv_half.len() >= width`,
 ///   `out.len() >= width * if ALPHA { 4 } else { 3 }`.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool, const BE: bool>(
   y: &[u16],
@@ -156,6 +159,7 @@ pub(crate) fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool, const B
 /// - `width` must be even.
 /// - `y.len() >= width`, `uv_half.len() >= width`,
 ///   `rgb_out.len() >= 3 * width`.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn p_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
@@ -180,6 +184,7 @@ pub(crate) fn p_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
 // the follow-up SIMD/dispatcher PR. Until then this thin wrapper has
 // no caller. P016 has its own u16 kernel family
 // ([`p16_to_rgb_or_rgba_u16_row`]) — never routed here.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   y: &[u16],
@@ -201,6 +206,7 @@ pub(crate) fn p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
 /// - `width` must be even.
 /// - `y.len() >= width`, `uv_half.len() >= width`,
 ///   `out.len() >= width * if ALPHA { 4 } else { 3 }` (`u16` elements).
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool, const BE: bool>(
   y: &[u16],
@@ -545,7 +551,7 @@ pub(crate) fn p_n_444_16_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
 /// Converts one row of P416 to **native-depth `u16`** packed RGB —
 /// full-range output in `[0, 65535]`. Chroma multiply-add runs in i64
 /// (same rationale as `p16_to_rgb_u16_row` and
-/// `yuv_444p16_to_rgb_u16_row`: `coeff × u_d` overflows i32 at 16
+/// `yuv_444p16_to_rgb_u16_row`: `coeff x u_d` overflows i32 at 16
 /// bits for the BT.2020 blue coefficient).
 ///
 /// Thin wrapper over [`p_n_444_16_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.

@@ -16,7 +16,7 @@
 use core::arch::x86_64::*;
 
 use super::endian::load_endian_u32x8;
-// For f16 widen we need 128-bit u16 load (8 × u16).
+// For f16 widen we need 128-bit u16 load (8 x u16).
 use super::scalar;
 use crate::row::arch::x86_sse41::endian::load_endian_u16x8;
 
@@ -97,7 +97,7 @@ pub(crate) unsafe fn rgbf32_to_rgb_row<const BE: bool>(
       let i1 = clamp_scale_to_u32_256(v1, zero, one, scale);
       let i2 = clamp_scale_to_u32_256(v2, zero, one, scale);
 
-      // Two-step narrow: i32x8×3 → u8x24. We saturate-pack i32→i16 then
+      // Two-step narrow: i32x8x3 → u8x24. We saturate-pack i32→i16 then
       // i16→u8.
       let i01 = _mm256_packs_epi32(i0, i1);
       // After `_mm256_packs_epi32` the 128-bit lanes are interleaved
@@ -371,15 +371,15 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
 
 // ---- Tier 9 — Rgbf16 AVX2 + F16C entry points ------------------------------
 //
-// `_mm256_cvtph_ps` (F16C) widens 8 × f16 (stored as 8 × i16 in a __m128i)
-// to 8 × f32 in a __m256.  We load 16 bytes (8 f16 values) via
+// `_mm256_cvtph_ps` (F16C) widens 8 x f16 (stored as 8 x i16 in a __m128i)
+// to 8 x f32 in a __m256.  We load 16 bytes (8 f16 values) via
 // `load_endian_u16x8::<BE>` which routes to a host-native pass-through when
 // the on-disk encoding matches host-native and to a byte-swap shuffle
 // otherwise — correct on both LE and BE hosts.
 //
 // `#[target_feature(enable = "avx2,f16c")]` ensures both features are active.
 
-/// Widen 8 × f16 (at `ptr`, 16 bytes) to 8 × f32 (returned as `__m256`).
+/// Widen 8 x f16 (at `ptr`, 16 bytes) to 8 x f32 (returned as `__m256`).
 ///
 /// For `BE = true` the f16 values are stored big-endian; bytes are swapped
 /// before the F16C widening conversion. The historical `BE = false` branch
@@ -391,7 +391,7 @@ pub(crate) unsafe fn rgbf32_to_rgb_f32_row<const BE: bool>(
 /// # Safety
 ///
 /// * AVX2 + F16C must be available.
-/// * `ptr` must be valid for 16 bytes (8 × u16 / f16).
+/// * `ptr` must be valid for 16 bytes (8 x u16 / f16).
 #[inline]
 #[target_feature(enable = "avx2,f16c")]
 unsafe fn widen_f16x8_avx<const BE: bool>(ptr: *const half::f16) -> __m256 {

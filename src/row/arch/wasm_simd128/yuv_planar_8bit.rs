@@ -87,6 +87,7 @@ pub(crate) unsafe fn yuv_420_to_rgba_row(
 /// # Safety
 ///
 /// Same as [`yuv_420_to_rgba_row`] plus `a_src.len() >= width`.
+#[cfg(feature = "yuva")]
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(clippy::too_many_arguments)]
@@ -210,7 +211,7 @@ unsafe fn yuv_420_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
       // into its pair slot → two i16x8 vectors covering 16 Y lanes.
       // Each i16 value is 2 bytes, so byte‑level shuffle indices
       // `[0,1,0,1, 2,3,2,3, 4,5,4,5, 6,7,6,7]` duplicate the low
-      // 4 × i16 lanes; `[8..15 paired]` duplicates the high 4.
+      // 4 x i16 lanes; `[8..15 paired]` duplicates the high 4.
       let r_dup_lo = dup_lo(r_chroma);
       let r_dup_hi = dup_hi(r_chroma);
       let g_dup_lo = dup_lo(g_chroma);
@@ -281,14 +282,14 @@ unsafe fn yuv_420_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
 // ---- YUV 4:1:0 wasm simd128 entries ---------------------------------
 //
 // 4:1:0: planar YUV with chroma subsampled 4:1 in **both** axes. Each
-// (U, V) sample covers a 4×4 luma block; vertical 4× re-use is the
-// walker's job. This kernel handles the per-row 4× horizontal
+// (U, V) sample covers a 4x4 luma block; vertical 4x re-use is the
+// walker's job. This kernel handles the per-row 4x horizontal
 // upsample. Math is byte-identical to scalar.
 //
 // Block size: 16 Y / 4 chroma per iteration (matches the 4:2:0
 // simd128 kernel's 16-Y throughput). The chroma fan-out uses two
 // `i8x16_shuffle` invocations with compile-time byte indices that
-// duplicate each i16 chroma lane 4×.
+// duplicate each i16 chroma lane 4x.
 
 /// wasm simd128 YUV 4:1:0 → packed RGB. Semantics match
 /// [`scalar::yuv_410_to_rgb_row`] byte-identically.
@@ -359,8 +360,8 @@ pub(crate) unsafe fn yuv_410_to_rgba_row(
 /// 3. `u_d = (u * c_scale + RND) >> 15`, same for `v_d` (i32x4).
 /// 4. Per channel: `(C_u*u_d + C_v*v_d + RND) >> 15` (i32x4),
 ///    saturate-narrow to i16x8 (low 4 lanes carry chroma).
-/// 5. 4× fan-out via two `i8x16_shuffle` calls with byte indices
-///    duplicating each i16 chroma lane 4×:
+/// 5. 4x fan-out via two `i8x16_shuffle` calls with byte indices
+///    duplicating each i16 chroma lane 4x:
 ///    - low (covers Y[0..8]):
 ///      `[c0,c0,c0,c0, c1,c1,c1,c1]` → byte indices
 ///      `[0,1,0,1,0,1,0,1, 2,3,2,3,2,3,2,3]`.
@@ -469,7 +470,7 @@ unsafe fn yuv_410_to_rgb_or_rgba_row<const ALPHA: bool>(
       let g_chroma = i16x8_narrow_i32x4(g_i32, g_i32);
       let b_chroma = i16x8_narrow_i32x4(b_i32, b_i32);
 
-      // 4× fan-out: each chroma lane to 4 adjacent slots.
+      // 4x fan-out: each chroma lane to 4 adjacent slots.
       // Low half (Y[0..8]): [c0,c0,c0,c0, c1,c1,c1,c1].
       // High half (Y[8..16]): [c2,c2,c2,c2, c3,c3,c3,c3].
       let r_dup_lo =
@@ -591,6 +592,7 @@ pub(crate) unsafe fn yuv_444_to_rgba_row(
 /// # Safety
 ///
 /// Same as [`yuv_444_to_rgba_row`] plus `a_src.len() >= width`.
+#[cfg(feature = "yuva")]
 #[inline]
 #[target_feature(enable = "simd128")]
 #[allow(clippy::too_many_arguments)]

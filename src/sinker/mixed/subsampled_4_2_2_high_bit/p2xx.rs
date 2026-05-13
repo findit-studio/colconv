@@ -1,7 +1,7 @@
 use super::super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, WidthAlignment, WidthAlignmentRequirement, check_dimensions_match,
-  rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match, rgb_row_buf_or_scratch,
+  rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
 use crate::{PixelSink, row::*, source::*};
 
@@ -15,7 +15,7 @@ use crate::{PixelSink, row::*, source::*};
 impl<'a, const BE: bool> MixedSinker<'a, P210<BE>> {
   /// Attaches a packed **`u16`** RGB output buffer. 10-bit
   /// **low-bit-packed** output (yuv420p10le convention, not P210
-  /// packing). Length is in `u16` elements: `width × height × 3`.
+  /// packing). Length is in `u16` elements: `width x height x 3`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;
@@ -59,7 +59,7 @@ impl<'a, const BE: bool> MixedSinker<'a, P210<BE>> {
   /// Attaches a packed **`u16`** RGBA output buffer. Output is
   /// **low‑bit‑packed** 10‑bit values (`yuv420p10le` convention) — not
   /// P210 high‑bit packing. Length is measured in `u16` **elements**
-  /// (`width × height × 4`). Alpha element is `(1 << 10) - 1`.
+  /// (`width x height x 4`). Alpha element is `(1 << 10) - 1`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -87,9 +87,8 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P210<BE>> {
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     if self.width & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(
         self.width,
-        WidthAlignmentRequirement::Even,
       )));
     }
     check_dimensions_match(self.width, self.height, width, height)
@@ -106,10 +105,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P210<BE>> {
     let use_simd = self.simd;
 
     if w & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
-        w,
-        WidthAlignmentRequirement::Even,
-      )));
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(w)));
     }
     if row.y().len() != w {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
@@ -250,11 +246,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P210<BE>> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -320,7 +317,7 @@ impl<'a, const BE: bool> MixedSinker<'a, P212<BE>> {
   /// Attaches a packed **`u16`** RGBA output buffer. Output is
   /// **low‑bit‑packed** 12‑bit values (`yuv420p12le` convention) — not
   /// P212 high‑bit packing. Length is measured in `u16` **elements**
-  /// (`width × height × 4`). Alpha element is `(1 << 12) - 1`.
+  /// (`width x height x 4`). Alpha element is `(1 << 12) - 1`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -348,9 +345,8 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P212<BE>> {
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     if self.width & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(
         self.width,
-        WidthAlignmentRequirement::Even,
       )));
     }
     check_dimensions_match(self.width, self.height, width, height)
@@ -367,10 +363,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P212<BE>> {
     let use_simd = self.simd;
 
     if w & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
-        w,
-        WidthAlignmentRequirement::Even,
-      )));
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(w)));
     }
     if row.y().len() != w {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
@@ -511,11 +504,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P212<BE>> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -580,7 +574,7 @@ impl<'a, const BE: bool> MixedSinker<'a, P216<BE>> {
 
   /// Attaches a packed **`u16`** RGBA output buffer. Output covers the
   /// full `u16` range `[0, 65535]` (16 active bits). Length is
-  /// measured in `u16` **elements** (`width × height × 4`). Alpha
+  /// measured in `u16` **elements** (`width x height x 4`). Alpha
   /// element is `0xFFFF`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -609,9 +603,8 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P216<BE>> {
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     if self.width & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(
         self.width,
-        WidthAlignmentRequirement::Even,
       )));
     }
     check_dimensions_match(self.width, self.height, width, height)
@@ -628,10 +621,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P216<BE>> {
     let use_simd = self.simd;
 
     if w & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
-        w,
-        WidthAlignmentRequirement::Even,
-      )));
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(w)));
     }
     if row.y().len() != w {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
@@ -771,11 +761,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P216<BE>> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );

@@ -79,7 +79,7 @@ fn bench(c: &mut Criterion) {
     fill_pseudo_random_p010(&mut uv, 0x2222);
     let mut rgb = std::vec![0u16; w * 3];
 
-    // u16 output writes 2× the bytes of u8.
+    // u16 output writes 2x the bytes of u8.
     group_u16.throughput(Throughput::Bytes((w * 3 * 2) as u64));
 
     for use_simd in [false, true] {

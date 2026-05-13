@@ -438,7 +438,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_u16_row<
       let v_d_lo = i32x4_shr(i32x4_add(i32x4_mul(v_lo_i32, c_scale_i32), rnd_i32), 15);
       let v_d_hi = i32x4_shr(i32x4_add(i32x4_mul(v_hi_i32, c_scale_i32), rnd_i32), 15);
 
-      // 4 chroma_i64x2 calls per channel (2 halves × 2 sub-halves).
+      // 4 chroma_i64x2 calls per channel (2 halves x 2 sub-halves).
       let u_d_lo_lo = i64x2_extend_low_i32x4(u_d_lo);
       let u_d_lo_hi = i64x2_extend_high_i32x4(u_d_lo);
       let u_d_hi_lo = i64x2_extend_low_i32x4(u_d_hi);
@@ -469,7 +469,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_u16_row<
       let b_ch_lo = combine_i64x2_pair_to_i32x4(b_ch_lo_lo, b_ch_lo_hi);
       let b_ch_hi = combine_i64x2_pair_to_i32x4(b_ch_hi_lo, b_ch_hi_hi);
 
-      // Y: widen 8 u16 → 2 × i32x4, subtract y_off, scale in i64.
+      // Y: widen 8 u16 → 2 x i32x4, subtract y_off, scale in i64.
       let y_lo_u32 = u32x4_extend_low_u16x8(y_vec);
       let y_hi_u32 = u32x4_extend_high_u16x8(y_vec);
       let y_lo_i32 = i32x4_sub(y_lo_u32, y_off32);
@@ -964,7 +964,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_u16_row<
       let u_d = i32x4_shr(i32x4_add(i32x4_mul(u_i32, c_scale_i32), rnd_i32), 15);
       let v_d = i32x4_shr(i32x4_add(i32x4_mul(v_i32, c_scale_i32), rnd_i32), 15);
 
-      // Widen to 2 × i64x2 for the chroma i64 pipeline.
+      // Widen to 2 x i64x2 for the chroma i64 pipeline.
       let u_d_lo = i64x2_extend_low_i32x4(u_d);
       let u_d_hi = i64x2_extend_high_i32x4(u_d);
       let v_d_lo = i64x2_extend_low_i32x4(v_d);
@@ -987,7 +987,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_u16_row<
       let (g_dup_lo, g_dup_hi) = chroma_dup_i32x4_u16(g_ch_i32);
       let (b_dup_lo, b_dup_hi) = chroma_dup_i32x4_u16(b_ch_i32);
 
-      // Y: widen 8 u16 → 2 × i32x4, subtract y_off, scale in i64.
+      // Y: widen 8 u16 → 2 x i32x4, subtract y_off, scale in i64.
       let y_lo_u32 = u32x4_extend_low_u16x8(y_vec);
       let y_hi_u32 = u32x4_extend_high_u16x8(y_vec);
       let y_lo_i32 = i32x4_sub(y_lo_u32, y_off32);

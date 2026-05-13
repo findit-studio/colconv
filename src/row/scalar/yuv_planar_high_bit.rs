@@ -86,6 +86,13 @@ pub(crate) fn yuv_420p_n_to_rgba_row<const BITS: u32, const BE: bool>(
 /// - `y.len() >= width`, `u_half.len() >= width / 2`,
 ///   `v_half.len() >= width / 2`, `a_src.len() >= width`,
 ///   `rgba_out.len() >= 4 * width`.
+// Reachable from the arch tails (`yuv_420p_n_to_rgb_or_rgba_row<…,
+// ALPHA_SRC = true>` and friends) which always reference this symbol
+// at syntax expansion regardless of the monomorphization. Const-eval
+// prunes the call when `ALPHA_SRC = false`, so under `yuv-planar`
+// alone Rust sees it as dead. See `yuv_planar_8bit.rs` for the
+// per-item `#[allow(dead_code)]` rationale.
+#[allow(dead_code)]
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn yuv_420p_n_to_rgba_with_alpha_src_row<const BITS: u32, const BE: bool>(
@@ -246,7 +253,7 @@ pub(crate) fn yuv_420p_n_to_rgb_or_rgba_row<
 /// conversion, so the output retains the full dynamic range of the
 /// source for HDR tone mapping, 10‑bit scene analysis, and similar
 /// downstream work. Callers who only need 8‑bit output should prefer
-/// [`yuv_420p_n_to_rgb_row`], which is ~2× faster.
+/// [`yuv_420p_n_to_rgb_row`], which is ~2x faster.
 ///
 /// Thin wrapper over [`yuv_420p_n_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.
 ///
@@ -320,6 +327,9 @@ pub(crate) fn yuv_420p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
 ///   `v_half.len() >= width / 2`, `a_src.len() >= width`,
 ///   `rgba_out.len() >= 4 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
+// See `yuv_420p_n_to_rgba_with_alpha_src_row` for the per-item
+// `#[allow(dead_code)]` rationale.
+#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn yuv_420p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32, const BE: bool>(
   y: &[u16],
@@ -517,6 +527,9 @@ pub(crate) fn yuv_444p_n_to_rgba_row<const BITS: u32, const BE: bool>(
 /// - `y.len() >= width`, `u.len() >= width`, `v.len() >= width`,
 ///   `a_src.len() >= width`, `rgba_out.len() >= 4 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
+// See `yuv_420p_n_to_rgba_with_alpha_src_row` for the per-item
+// `#[allow(dead_code)]` rationale.
+#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn yuv_444p_n_to_rgba_with_alpha_src_row<const BITS: u32, const BE: bool>(
   y: &[u16],
@@ -698,6 +711,9 @@ pub(crate) fn yuv_444p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
 /// - `y.len() >= width`, `u.len() >= width`, `v.len() >= width`,
 ///   `a_src.len() >= width`, `rgba_out.len() >= 4 * width`.
 #[cfg_attr(not(tarpaulin), inline(always))]
+// See `yuv_420p_n_to_rgba_with_alpha_src_row` for the per-item
+// `#[allow(dead_code)]` rationale.
+#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn yuv_444p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32, const BE: bool>(
   y: &[u16],

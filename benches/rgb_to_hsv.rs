@@ -29,7 +29,7 @@ fn bench(c: &mut Criterion) {
     let mut s = std::vec![0u8; w];
     let mut v = std::vec![0u8; w];
 
-    // Throughput in HSV output bytes (3 planes × width) — matches the
+    // Throughput in HSV output bytes (3 planes x width) — matches the
     // YUV→RGB bench so MB/s figures are apples to apples.
     group.throughput(Throughput::Bytes((w * 3) as u64));
 

@@ -445,7 +445,7 @@ planar4_be_roundtrip_test!(
 // ---- semi-planar (Pn) ----------------------------------------------------
 
 /// `chroma_w_factor`: u16 elements per row of UV plane = `factor * width`.
-/// 4:2:0 / 4:2:2: 1 (half-width × {two, one} U,V pairs interleaved =
+/// 4:2:0 / 4:2:2: 1 (half-width x {two, one} U,V pairs interleaved =
 /// `width` elements). 4:4:4: 2 (full-width pairs = `2 * width`).
 macro_rules! pn_be_roundtrip_test {
   (

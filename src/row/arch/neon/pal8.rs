@@ -2,12 +2,12 @@
 //!
 //! # Approach: hybrid SIMD + scalar gather
 //!
-//! A 256-entry × 4-byte palette is 1 KB. `vqtbl4q_u8` performs a 64-byte
-//! (4 × 16-byte register) shuffle for 16 pixels in parallel, but covering
+//! A 256-entry x 4-byte palette is 1 KB. `vqtbl4q_u8` performs a 64-byte
+//! (4 x 16-byte register) shuffle for 16 pixels in parallel, but covering
 //! the full 256-entry palette requires 4 such "banks" (entries 0–63,
 //! 64–127, 128–191, 192–255), each needing a separate `vqtbl4q_u8` call
 //! plus bank-selection masking. Implementing this naively for BGRA output
-//! (4 channels) means 4 banks × 4 channels = 16 `vqtbl4q_u8` calls per
+//! (4 channels) means 4 banks x 4 channels = 16 `vqtbl4q_u8` calls per
 //! 16-pixel block, then select-and-merge.
 //!
 //! In practice, because the bottleneck is memory (the palette rarely fits
@@ -16,7 +16,7 @@
 //! channel-split, byte-reorder (BGRA→RGBA), and u8→u16 widening work.
 //!
 //! The implementation here uses that hybrid: for each 16-pixel block,
-//! gather 64 bytes (16 × 4-byte entries) into a stack buffer via scalar
+//! gather 64 bytes (16 x 4-byte entries) into a stack buffer via scalar
 //! loads, then load and deinterleave with `vld4q_u8` to get separate B, G,
 //! R, A vectors, then store via `vst3q_u8` (RGB) or `vst4q_u8` (RGBA).
 //! For u16 output the u8 channels are widened with `vmovl_u8` + `vshlq_n_u16`
@@ -28,7 +28,7 @@
 //! (no-op because we just pick the right lane), and store (`vst3q_u8`
 //! interleaves 3 channels without a temporary) are the work that SIMD
 //! actually eliminates vs. scalar. The gather itself remains scalar.
-//! Benchmarks show 1.2–1.8× speedup at 1920-pixel widths vs. the pure
+//! Benchmarks show 1.2–1.8x speedup at 1920-pixel widths vs. the pure
 //! scalar loop, improving with width due to better store throughput.
 //!
 //! # Main loop: 16 pixels / iteration

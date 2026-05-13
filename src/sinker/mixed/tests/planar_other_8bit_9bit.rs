@@ -734,10 +734,10 @@ fn yuv422p_rgba_buffer_too_short_returns_err() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn yuv422p_rgba_simd_matches_scalar_with_random_yuv() {
-  // Random per-pixel YUV across all matrices × both ranges. Width
+  // Random per-pixel YUV across all matrices x both ranges. Width
   // 1922 forces both the SIMD main loop AND a scalar tail across
   // every backend block size (16/32/64). 4:2:2 chroma is full-
-  // height, so up/vp use `w/2 × h` instead of `w/2 × h/2`.
+  // height, so up/vp use `w/2 x h` instead of `w/2 x h/2`.
   let w = 1922usize;
   let h = 4usize;
   let mut yp = std::vec![0u8; w * h];
@@ -869,7 +869,7 @@ pub(super) fn solid_yuv440p_n_frame(
 )]
 fn yuv420p9_gray_to_gray() {
   let (yp, up, vp) = solid_yuv422p_n_frame(16, 8, 256, 256, 256);
-  // 4:2:0 chroma is w/2 × h/2; reuse the 4:2:2 helper's `cw * h` and
+  // 4:2:0 chroma is w/2 x h/2; reuse the 4:2:2 helper's `cw * h` and
   // truncate to the 4:2:0 layout (cw = 8, ch = 4).
   let up = up[..8 * 4].to_vec();
   let vp = vp[..8 * 4].to_vec();

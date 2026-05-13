@@ -69,6 +69,17 @@ pub(crate) fn yuv_420_to_rgba_row(
 /// - `y.len() >= width`, `u_half.len() >= width / 2`,
 ///   `v_half.len() >= width / 2`, `a_src.len() >= width`,
 ///   `rgba_out.len() >= 4 * width`.
+// Reachable only via the yuva dispatcher in `dispatch::yuva` (gated by
+// `feature = "yuva"`). The arch-side `yuv_420_to_rgb_or_rgba_row<…,
+// ALPHA_SRC = true>` tail-calls into here for widths not divisible by
+// the SIMD block. Const evaluation prunes that branch when the public
+// wrapper is monomorphized with `ALPHA_SRC = false`, so under
+// `yuv-planar` alone Rust sees the helper as dead. A symbol cfg gate
+// can't help — `scalar::yuv_420_to_rgba_with_alpha_src_row` must
+// resolve at name lookup, before const eval. `#[allow(dead_code)]`
+// covers this single helper without re-enabling the workaround
+// crate-wide.
+#[allow(dead_code)]
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn yuv_420_to_rgba_with_alpha_src_row(
@@ -160,7 +171,7 @@ pub(crate) fn yuv_420_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: boo
     let u_d = ((u_half[c_idx] as i32 - 128) * c_scale + RND) >> 15;
     let v_d = ((v_half[c_idx] as i32 - 128) * c_scale + RND) >> 15;
 
-    // Single-round per channel keeps the math faithful to a 1×2 3x3
+    // Single-round per channel keeps the math faithful to a 1x2 3x3
     // matrix multiply. All six coefficients are used; standard
     // matrices (BT.601 / 709 / 2020) have `r_u = b_v = 0` so those
     // terms vanish. YCgCo uses all six.
@@ -203,7 +214,7 @@ pub(crate) fn yuv_420_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: boo
     x += 2;
   }
 }
-// ---- YUV 4:1:0 → RGB (fused: 4× horizontal upsample + convert) -------
+// ---- YUV 4:1:0 → RGB (fused: 4x horizontal upsample + convert) -------
 
 /// Converts one row of 4:1:0 YUV — Y at full width, U/V at
 /// **quarter-width** — directly to packed RGB. Each chroma sample
@@ -370,6 +381,9 @@ pub(crate) fn yuv_444_to_rgba_row(
 ///
 /// - `y.len() >= width`, `u.len() >= width`, `v.len() >= width`,
 ///   `a_src.len() >= width`, `rgba_out.len() >= 4 * width`.
+// See `yuv_420_to_rgba_with_alpha_src_row` for the per-item
+// `#[allow(dead_code)]` rationale.
+#[allow(dead_code)]
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn yuv_444_to_rgba_with_alpha_src_row(
@@ -572,7 +586,7 @@ pub(crate) fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
     let u_d = ((u_quarter[c_idx] as i32 - 128) * c_scale + RND) >> 15;
     let v_d = ((v_quarter[c_idx] as i32 - 128) * c_scale + RND) >> 15;
 
-    // Single-round per channel keeps the math faithful to a 1×4 3x3
+    // Single-round per channel keeps the math faithful to a 1x4 3x3
     // matrix multiply. All four pixels in this group share the chroma
     // contributions — only Y differs.
     let r_chroma = (coeffs.r_u() * u_d + coeffs.r_v() * v_d + RND) >> 15;

@@ -64,9 +64,9 @@ const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 /// Loads 8 Y216 pixels (16 u16 samples = 32 bytes) and extracts
 /// the Y, U, V vectors **without any right-shift** (BITS=16, already
 /// full-range). Returns `(y_vec, u_vec, v_vec)` where:
-/// - `y_vec`: 8 × u16 lanes holding Y0..Y7.
-/// - `u_vec`: low 4 × u16 lanes U0..U3 (lanes 4..7 zeroed; don't-care).
-/// - `v_vec`: low 4 × u16 lanes V0..V3 (lanes 4..7 zeroed; don't-care).
+/// - `y_vec`: 8 x u16 lanes holding Y0..Y7.
+/// - `u_vec`: low 4 x u16 lanes U0..U3 (lanes 4..7 zeroed; don't-care).
+/// - `v_vec`: low 4 x u16 lanes V0..V3 (lanes 4..7 zeroed; don't-care).
 ///
 /// Mirrors `unpack_y2xx_8px_wasm` from `y2xx.rs` but omits the
 /// `u16x8_shr` calls (shr_count = 0 would be a no-op).
@@ -309,11 +309,11 @@ pub(crate) unsafe fn y216_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE
         let u_i32 = i32x4_extend_low_i16x8(u_i16);
         let v_i32 = i32x4_extend_low_i16x8(v_i16);
 
-        // Q15 scale → 4 × i32 chroma deltas.
+        // Q15 scale → 4 x i32 chroma deltas.
         let u_d = i32x4_shr(i32x4_add(i32x4_mul(u_i32, c_scale_i32), rnd_i32), 15);
         let v_d = i32x4_shr(i32x4_add(i32x4_mul(v_i32, c_scale_i32), rnd_i32), 15);
 
-        // Widen to 2 × i64x2 for i64 chroma pipeline.
+        // Widen to 2 x i64x2 for i64 chroma pipeline.
         let u_d_lo = i64x2_extend_low_i32x4(u_d);
         let u_d_hi = i64x2_extend_high_i32x4(u_d);
         let v_d_lo = i64x2_extend_low_i32x4(v_d);
@@ -338,7 +338,7 @@ pub(crate) unsafe fn y216_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE
         let (g_dup_lo, g_dup_hi) = chroma_dup_i32x4_u16(g_ch_i32);
         let (b_dup_lo, b_dup_hi) = chroma_dup_i32x4_u16(b_ch_i32);
 
-        // Y: unsigned widen 8 u16 → 2 × i32x4, subtract y_off, scale in i64.
+        // Y: unsigned widen 8 u16 → 2 x i32x4, subtract y_off, scale in i64.
         let y_lo_u32 = u32x4_extend_low_u16x8(y_vec);
         let y_hi_u32 = u32x4_extend_high_u16x8(y_vec);
         let y_lo_i32 = i32x4_sub(y_lo_u32, y_off32);

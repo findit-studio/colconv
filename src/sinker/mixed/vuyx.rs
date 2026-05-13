@@ -4,7 +4,7 @@
 //! VUYX (FFmpeg `AV_PIX_FMT_VUYX`) packs **four u8 bytes per pixel**
 //! (`[V, U, Y, X]`). The X byte is **padding** — not real source alpha.
 //! RGBA outputs always force α to `0xFF`; the padding byte is ignored.
-//! The packed slice type is `&[u8]`, with `4 × width` byte elements per
+//! The packed slice type is `&[u8]`, with `4 x width` byte elements per
 //! row. There is no chroma subsampling — every pixel carries its own
 //! independent V / U / Y triplet (4:4:4).
 //!
@@ -18,22 +18,6 @@
 //!   (`out[x] = Y_byte as u16`).
 //! - `with_hsv` — stages u8 RGB into the user's RGB buffer (if
 //!   attached) or a scratch buffer, then runs `rgb_to_hsv_row`.
-//!
-//! ## Alpha semantics (`§ 8.3` / `§ 8.4` rules — Strategy A)
-//!
-//! Because VUYX's α is always `0xFF` in every code path (padding byte
-//! is never real alpha), the RGB + RGBA combo can use **Strategy A**
-//! (spec § 8.4): derive RGBA from the just-computed RGB row via
-//! `expand_rgb_to_rgba_row` instead of running a second YUV→RGB kernel.
-//! This produces bit-identical output to calling `vuyx_to_rgba_row`
-//! directly — both paths always produce α=`0xFF`.
-//!
-//! - **Standalone RGBA** (`with_rgba` attached, no `with_rgb`, no
-//!   `with_hsv`): `vuyx_to_rgba_row` runs directly — α forced to
-//!   `0xFF` via the kernel.
-//! - **RGB + RGBA** (both attached, with or without HSV): `with_rgb`
-//!   calls `vuyx_to_rgb_row`; `with_rgba` is derived via Strategy A
-//!   `expand_rgb_to_rgba_row` (α=`0xFF`). No second kernel call.
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
@@ -52,9 +36,9 @@ impl<'a> MixedSinker<'a, Vuyx> {
   /// Attaches a **`u16`** luma output buffer. Y bytes from the packed VUYX
   /// `[V, U, Y, X]` layout are zero-extended to u16
   /// (`out[x] = Y_byte as u16`). Length in u16 **elements**
-  /// (`width × height`).
+  /// (`width x height`).
   ///
-  /// Returns `Err(InsufficientLumaU16Buffer)` if `buf.len() < width × height`,
+  /// Returns `Err(InsufficientLumaU16Buffer)` if `buf.len() < width x height`,
   /// or `Err(GeometryOverflow)` on 32-bit targets.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -79,7 +63,7 @@ impl<'a> MixedSinker<'a, Vuyx> {
   /// the X (padding) byte in the source is never read as alpha.
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   ///
   /// ## Strategy note
@@ -126,7 +110,7 @@ impl PixelSink for MixedSinker<'_, Vuyx> {
     let idx = row.row();
     let use_simd = self.simd;
 
-    // VUYX row = `width × 4` bytes (one quadruple per pixel).
+    // VUYX row = `width x 4` bytes (one quadruple per pixel).
     let packed_expected =
       w.checked_mul(4)
         .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
@@ -224,11 +208,12 @@ impl PixelSink for MixedSinker<'_, Vuyx> {
     vuyx_to_rgb_row(packed, rgb_row, w, row.matrix(), row.full_range(), use_simd);
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );

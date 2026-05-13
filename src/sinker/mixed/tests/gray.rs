@@ -48,7 +48,7 @@ fn make_gray16_frame(data: &[u16], w: u32, h: u32) -> Gray16Frame<'_> {
 
 #[test]
 fn gray8_with_rgb_broadcasts_to_packed() {
-  // 4×1 frame: [0, 64, 128, 255]
+  // 4x1 frame: [0, 64, 128, 255]
   let plane = [0u8, 64, 128, 255];
   let frame = make_gray8_frame(&plane, 4, 1);
   let mut rgb = std::vec![0u8; 4 * 3];
@@ -436,7 +436,7 @@ fn gray16_limited_range_rgba_u16_alpha_is_0xffff() {
 #[test]
 fn gray16_limited_range_rgba_u16_channels_rescale_at_boundaries() {
   // Regression for the i32-overflow bug at BITS=16: limited-range white
-  // 60160 × max_native 65535 ≈ 3.67e9 overflows i32. Math runs in i64;
+  // 60160 x max_native 65535 ≈ 3.67e9 overflows i32. Math runs in i64;
   // assert that RGB channels reach black=0 and white=65535 at the
   // limited-range boundaries (codex finding requested
   // u16-channel-value asserts, not only alpha).
@@ -544,7 +544,7 @@ fn grayf32_with_rgb_saturates() {
   grayf32_to(&frame, FR, M, &mut sink).unwrap();
   assert_eq!(&rgb[0..3], &[0, 0, 0]); // -0.5 clamps to 0
   assert_eq!(&rgb[3..6], &[0, 0, 0]); // 0.0
-  assert_eq!(&rgb[6..9], &[128, 128, 128]); // 0.5 × 255 + 0.5 = 128
+  assert_eq!(&rgb[6..9], &[128, 128, 128]); // 0.5 x 255 + 0.5 = 128
   assert_eq!(&rgb[9..12], &[255, 255, 255]); // 1.0
   assert_eq!(&rgb[12..15], &[255, 255, 255]); // 1.5 clamps to 255
 }
@@ -568,7 +568,7 @@ fn grayf32_with_hsv_h0_s0_v_saturated() {
 
 #[test]
 fn grayf32_with_luma_u16_and_rgb_u16() {
-  // 1×1 frame: Y = 0.5 → luma_u16 ≈ 32768, rgb_u16 ≈ [32768, 32768, 32768]
+  // 1x1 frame: Y = 0.5 → luma_u16 ≈ 32768, rgb_u16 ≈ [32768, 32768, 32768]
   let intended = std::vec![0.5f32];
   let plane = as_le_f32(&intended);
   let frame = Grayf32Frame::new(&plane, 1, 1, 1);
@@ -1402,7 +1402,7 @@ fn ya16_le_be_roundtrip_byte_identical() {
     be_frame: Ya16BeFrame,
     walker_le: ya16_to,
     walker_be: ya16_to_endian,
-    // 16 px × 4 rows × 2 u16 (Y,A) per pixel = 128 u16 elements.
+    // 16 px x 4 rows x 2 u16 (Y,A) per pixel = 128 u16 elements.
     intended: (0..16 * 4 * 2)
       .map(|i| match i % 4 {
         0 => 0x1234, // Y
