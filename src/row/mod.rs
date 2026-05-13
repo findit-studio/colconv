@@ -630,7 +630,11 @@ pub(crate) const fn avx512_available() -> bool {
 /// hardware-accelerated f16→f32 widening path. F16C is checked *in addition*
 /// to the SIMD tier (AVX-512 / AVX2 / SSE4.1) because it is an independent
 /// feature bit that can be absent even on AVX2 machines.
-#[cfg(all(target_arch = "x86_64", feature = "std"))]
+#[cfg(all(
+  target_arch = "x86_64",
+  feature = "std",
+  any(feature = "rgb-float", feature = "gbr"),
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn f16c_available() -> bool {
   if cfg!(colconv_force_scalar) {
@@ -640,7 +644,11 @@ pub(crate) fn f16c_available() -> bool {
 }
 
 /// F16C availability on x86_64 — no‑std variant (compile‑time).
-#[cfg(all(target_arch = "x86_64", not(feature = "std")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  not(feature = "std"),
+  any(feature = "rgb-float", feature = "gbr"),
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) const fn f16c_available() -> bool {
   !cfg!(colconv_force_scalar) && cfg!(target_feature = "f16c")

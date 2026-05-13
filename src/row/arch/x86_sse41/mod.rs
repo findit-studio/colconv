@@ -41,18 +41,46 @@ use core::arch::x86_64::*;
 pub(super) use crate::{
   ColorMatrix,
   row::{
-    arch::x86_common::{
-      abgr_to_rgb_16_pixels, abgr_to_rgba_4_pixels, argb_to_rgb_16_pixels, argb_to_rgba_4_pixels,
-      bgra_to_rgb_16_pixels, bgrx_to_rgba_4_pixels, deinterleave_rgb_16, drop_alpha_16_pixels,
-      rgb_to_hsv_16_pixels, rgb_to_luma_16_pixels, rgbx_to_rgba_4_pixels, swap_rb_16_pixels,
-      swap_rb_alpha_4_pixels, write_rgb_16, write_rgb_u16_8, write_rgba_16, write_rgba_u16_8,
-      x2bgr10_to_rgb_16_pixels, x2bgr10_to_rgb_u16_8_pixels, x2bgr10_to_rgba_16_pixels,
-      x2rgb10_to_rgb_16_pixels, x2rgb10_to_rgb_u16_8_pixels, x2rgb10_to_rgba_16_pixels,
-      xbgr_to_rgba_4_pixels, xrgb_to_rgba_4_pixels,
-    },
+    arch::x86_common::{deinterleave_rgb_16, rgb_to_hsv_16_pixels, rgb_to_luma_16_pixels},
     scalar,
   },
 };
+#[allow(unused_imports)]
+#[cfg(feature = "rgb")]
+pub(super) use crate::row::arch::x86_common::{
+  abgr_to_rgb_16_pixels, abgr_to_rgba_4_pixels, argb_to_rgb_16_pixels, argb_to_rgba_4_pixels,
+  bgra_to_rgb_16_pixels, bgrx_to_rgba_4_pixels, drop_alpha_16_pixels, rgbx_to_rgba_4_pixels,
+  swap_rb_16_pixels, swap_rb_alpha_4_pixels, x2bgr10_to_rgb_16_pixels,
+  x2bgr10_to_rgb_u16_8_pixels, x2bgr10_to_rgba_16_pixels, x2rgb10_to_rgb_16_pixels,
+  x2rgb10_to_rgb_u16_8_pixels, x2rgb10_to_rgba_16_pixels, xbgr_to_rgba_4_pixels,
+  xrgb_to_rgba_4_pixels,
+};
+#[allow(unused_imports)]
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "rgb-legacy",
+  feature = "mono",
+  feature = "rgb",
+  feature = "yuv-packed",
+  feature = "gbr",
+  feature = "yuv-semi-planar",
+  feature = "yuv-planar",
+  feature = "y2xx",
+  feature = "xyz",
+))]
+pub(super) use crate::row::arch::x86_common::{write_rgb_16, write_rgba_16};
+#[allow(unused_imports)]
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "rgb-legacy",
+  feature = "mono",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+))]
+pub(super) use crate::row::arch::x86_common::{write_rgb_u16_8, write_rgba_u16_8};
 
 #[cfg(any(feature = "gbr", feature = "yuv-444-packed", feature = "yuva"))]
 mod alpha_extract;
@@ -193,6 +221,13 @@ pub(crate) use yuv_planar_high_bit::*;
 /// Clamps an i16x8 vector to `[0, max]` for native-depth u16 output
 /// paths (10/12/14 bit). `_mm_packus_epi16` would clip to u8, so we
 /// use explicit min/max with a caller-provided `max`.
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "v210",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+))]
 #[inline(always)]
 pub(super) fn clamp_u16_max(v: __m128i, zero_v: __m128i, max_v: __m128i) -> __m128i {
   unsafe { _mm_min_epi16(_mm_max_epi16(v, zero_v), max_v) }
@@ -213,6 +248,7 @@ pub(super) fn clamp_u16_max(v: __m128i, zero_v: __m128i, max_v: __m128i) -> __m1
 /// `ptr` must point to at least 32 readable bytes (16 `u16`
 /// elements). Caller's `target_feature` must include SSSE3 (via
 /// SSE4.1 or a superset).
+#[cfg(feature = "yuv-semi-planar")]
 #[inline(always)]
 pub(super) unsafe fn deinterleave_uv_u16(ptr: *const u16) -> (__m128i, __m128i) {
   unsafe {
@@ -232,6 +268,14 @@ pub(super) unsafe fn deinterleave_uv_u16(ptr: *const u16) -> (__m128i, __m128i) 
 // ---- helpers (inlined into the target_feature‑enabled caller) ----------
 
 /// `>>_a 15` shift (arithmetic, sign‑extending).
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-semi-planar",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) fn q15_shift(v: __m128i) -> __m128i {
   unsafe { _mm_srai_epi32::<15>(v) }
@@ -241,6 +285,14 @@ pub(super) fn q15_shift(v: __m128i) -> __m128i {
 /// inputs. Mirrors the scalar
 /// `(coeff_u * u_d + coeff_v * v_d + RND) >> 15`, then saturating‑packs
 /// to i16x8. No lane fixup needed at 128 bits.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-semi-planar",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) fn chroma_i16x8(
   cu: __m128i,
@@ -266,6 +318,14 @@ pub(super) fn chroma_i16x8(
 
 /// `(Y - y_off) * y_scale + RND >> 15` applied to an i16x8 vector,
 /// returned as i16x8.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-semi-planar",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) fn scale_y(
   y_i16: __m128i,
@@ -287,6 +347,12 @@ pub(super) fn scale_y(
 
 /// `(Y_u16 - y_off) * y_scale + RND >> 15` for full u16 Y samples
 /// (unsigned widening via `_mm_cvtepu16_epi32`). Returns i16x8.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+))]
 #[inline(always)]
 pub(super) fn scale_y_u16(
   y_u16: __m128i,
@@ -323,6 +389,12 @@ pub(super) fn scale_y_u16(
 /// overcounts by summing `|c_u|+|c_v|` against the same worst-case
 /// chroma; in practice only one of the two is near the peak per
 /// output channel.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) fn srai64_15(x: __m128i) -> __m128i {
   unsafe {
@@ -336,6 +408,12 @@ pub(super) fn srai64_15(x: __m128i) -> __m128i {
 
 /// Computes one i64x2 chroma channel from 2 × i64 (u_d, v_d) inputs.
 /// Returns i64x2 with [`srai64_15`]-shifted results.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) fn chroma_i64x2(
   cu: __m128i,
@@ -355,6 +433,12 @@ pub(super) fn chroma_i64x2(
 /// `(y_minus_off * y_scale + RND) >> 15` in i64 via `_mm_mul_epi32` (even
 /// lanes). Caller must supply an i32x4 that is already `Y - y_off`.
 /// Returns i64x2 for the two even-indexed lanes.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) fn scale_y16_i64(y_minus_off: __m128i, y_scale_v: __m128i, rnd_v: __m128i) -> __m128i {
   unsafe { srai64_15(_mm_add_epi64(_mm_mul_epi32(y_minus_off, y_scale_v), rnd_v)) }

@@ -71,6 +71,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgba_row<const BE: bool>(
 /// # Safety
 ///
 /// Same as [`yuv_444p16_to_rgba_row`] plus `a_src.len() >= width`.
+#[cfg(feature = "yuva")]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[allow(clippy::too_many_arguments)]
@@ -333,6 +334,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgba_u16_row<const BE: bool>(
 /// # Safety
 ///
 /// Same as [`yuv_444p16_to_rgba_u16_row`] plus `a_src.len() >= width`.
+#[cfg(feature = "yuva")]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[allow(clippy::too_many_arguments)]
@@ -646,6 +648,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgba_row<const BE: bool>(
 /// # Safety
 ///
 /// Same as [`yuv_420p16_to_rgba_row`] plus `a_src.len() >= width`.
+#[cfg(feature = "yuva")]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[allow(clippy::too_many_arguments)]
@@ -897,6 +900,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgba_u16_row<const BE: bool>(
 /// # Safety
 ///
 /// Same as [`yuv_420p16_to_rgba_u16_row`] plus `a_src.len() >= width`.
+#[cfg(feature = "yuva")]
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[allow(clippy::too_many_arguments)]

@@ -32,7 +32,7 @@
 //! 7. Saturating i16 add Y + chroma per channel.
 //! 8. Saturate‑narrow to u8x64 per channel, then interleave as packed
 //!    RGB via four calls to the shared [`super::x86_common::write_rgb_16`]
-//!    (192 output bytes = 4 × 48).
+//!    (192 output bytes = 4 x 48).
 //!
 //! # AVX‑512 lane‑crossing fixups
 //!
@@ -58,18 +58,46 @@ use core::arch::x86_64::*;
 pub(super) use crate::{
   ColorMatrix,
   row::{
-    arch::x86_common::{
-      abgr_to_rgb_16_pixels, abgr_to_rgba_4_pixels, argb_to_rgb_16_pixels, argb_to_rgba_4_pixels,
-      bgra_to_rgb_16_pixels, bgrx_to_rgba_4_pixels, deinterleave_rgb_16, drop_alpha_16_pixels,
-      rgb_to_hsv_16_pixels, rgb_to_luma_16_pixels, rgbx_to_rgba_4_pixels, swap_rb_16_pixels,
-      swap_rb_alpha_4_pixels, write_rgb_16, write_rgb_u16_8, write_rgba_16, write_rgba_u16_8,
-      x2bgr10_to_rgb_16_pixels, x2bgr10_to_rgb_u16_8_pixels, x2bgr10_to_rgba_16_pixels,
-      x2rgb10_to_rgb_16_pixels, x2rgb10_to_rgb_u16_8_pixels, x2rgb10_to_rgba_16_pixels,
-      xbgr_to_rgba_4_pixels, xrgb_to_rgba_4_pixels,
-    },
+    arch::x86_common::{deinterleave_rgb_16, rgb_to_hsv_16_pixels, rgb_to_luma_16_pixels},
     scalar,
   },
 };
+#[allow(unused_imports)]
+#[cfg(feature = "rgb")]
+pub(super) use crate::row::arch::x86_common::{
+  abgr_to_rgb_16_pixels, abgr_to_rgba_4_pixels, argb_to_rgb_16_pixels, argb_to_rgba_4_pixels,
+  bgra_to_rgb_16_pixels, bgrx_to_rgba_4_pixels, drop_alpha_16_pixels, rgbx_to_rgba_4_pixels,
+  swap_rb_16_pixels, swap_rb_alpha_4_pixels, x2bgr10_to_rgb_16_pixels,
+  x2bgr10_to_rgb_u16_8_pixels, x2bgr10_to_rgba_16_pixels, x2rgb10_to_rgb_16_pixels,
+  x2rgb10_to_rgb_u16_8_pixels, x2rgb10_to_rgba_16_pixels, xbgr_to_rgba_4_pixels,
+  xrgb_to_rgba_4_pixels,
+};
+#[allow(unused_imports)]
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "rgb-legacy",
+  feature = "mono",
+  feature = "rgb",
+  feature = "yuv-packed",
+  feature = "gbr",
+  feature = "yuv-semi-planar",
+  feature = "yuv-planar",
+  feature = "y2xx",
+  feature = "xyz",
+))]
+pub(super) use crate::row::arch::x86_common::{write_rgb_16, write_rgba_16};
+#[allow(unused_imports)]
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "rgb-legacy",
+  feature = "mono",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+))]
+pub(super) use crate::row::arch::x86_common::{write_rgb_u16_8, write_rgba_u16_8};
 
 #[cfg(any(feature = "gbr", feature = "yuv-444-packed", feature = "yuva"))]
 mod alpha_extract;
@@ -209,6 +237,13 @@ pub(crate) use yuv_planar_high_bit::*;
 /// Clamps an `i16x32` vector to `[0, max]` via AVX‑512
 /// `_mm512_min_epi16` / `_mm512_max_epi16`. Used by native-depth
 /// u16 output paths (10/12/14 bit).
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "v210",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+))]
 #[inline(always)]
 pub(super) fn clamp_u16_max_x32(v: __m512i, zero_v: __m512i, max_v: __m512i) -> __m512i {
   unsafe { _mm512_min_epi16(_mm512_max_epi16(v, zero_v), max_v) }
@@ -225,6 +260,7 @@ pub(super) fn clamp_u16_max_x32(v: __m512i, zero_v: __m512i, max_v: __m512i) -> 
 /// AVX‑512F + AVX‑512BW (so `_mm512_extracti32x4_epi32` is available)
 /// and SSSE3 (for the underlying `_mm_shuffle_epi8` inside
 /// `write_rgb_u16_8`).
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[inline(always)]
 pub(super) unsafe fn write_quarter(r: __m512i, g: __m512i, b: __m512i, idx: u8, ptr: *mut u16) {
   // SAFETY: caller holds the AVX‑512F + SSSE3 target‑feature context.
@@ -268,6 +304,7 @@ pub(super) unsafe fn write_quarter(r: __m512i, g: __m512i, b: __m512i, idx: u8, 
 /// AVX‑512F + AVX‑512BW (so `_mm512_extracti32x4_epi32` is available)
 /// and SSE2 (for the underlying unpack/store inside
 /// `write_rgba_u16_8`).
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[inline(always)]
 pub(super) unsafe fn write_quarter_rgba(
   r: __m512i,
@@ -320,6 +357,7 @@ pub(super) unsafe fn write_quarter_rgba(
 /// `ptr` must point to at least 128 readable bytes (64 `u16`
 /// elements). Caller's `target_feature` must include AVX‑512F +
 /// AVX‑512BW.
+#[cfg(feature = "yuv-semi-planar")]
 #[inline(always)]
 pub(super) unsafe fn deinterleave_uv_u16_avx512(ptr: *const u16) -> (__m512i, __m512i) {
   unsafe {
@@ -355,6 +393,14 @@ pub(super) unsafe fn deinterleave_uv_u16_avx512(ptr: *const u16) -> (__m512i, __
 // ---- helpers (inlined into the target_feature‑enabled caller) ----------
 
 /// `>>_a 15` shift (arithmetic, sign‑extending).
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-semi-planar",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) fn q15_shift(v: __m512i) -> __m512i {
   unsafe { _mm512_srai_epi32::<15>(v) }
@@ -364,6 +410,14 @@ pub(super) fn q15_shift(v: __m512i) -> __m512i {
 /// chroma inputs (lo/hi halves of `u_d` and `v_d`). Mirrors the scalar
 /// `(coeff_u * u_d + coeff_v * v_d + RND) >> 15`, saturating‑packs to
 /// i16x32, then applies `pack_fixup` to restore natural element order.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-semi-planar",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn chroma_i16x32(
@@ -397,6 +451,14 @@ pub(super) fn chroma_i16x32(
 
 /// `(Y - y_off) * y_scale + RND >> 15` applied to an i16x32 vector,
 /// returned as i16x32 (with pack fixup applied).
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-semi-planar",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) fn scale_y(
   y_i16: __m512i,
@@ -419,6 +481,13 @@ pub(super) fn scale_y(
 
 /// Duplicates each of 32 chroma lanes into its adjacent pair slot,
 /// splitting across two i16x32 vectors covering 64 Y lanes.
+#[cfg(any(
+  feature = "yuv-packed",
+  feature = "yuv-semi-planar",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) fn chroma_dup(
   chroma: __m512i,
@@ -436,6 +505,14 @@ pub(super) fn chroma_dup(
 
 /// Saturating‑narrows two i16x32 vectors into one u8x64 with natural
 /// element order.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-semi-planar",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) fn narrow_u8x64(lo: __m512i, hi: __m512i, pack_fixup: __m512i) -> __m512i {
   unsafe { _mm512_permutexvar_epi64(pack_fixup, _mm512_packus_epi16(lo, hi)) }
@@ -448,6 +525,13 @@ pub(super) fn narrow_u8x64(lo: __m512i, hi: __m512i, pack_fixup: __m512i) -> __m
 /// # Safety
 ///
 /// `ptr` must point to at least 192 writable bytes.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) unsafe fn write_rgb_64(r: __m512i, g: __m512i, b: __m512i, ptr: *mut u8) {
   unsafe {
@@ -478,6 +562,13 @@ pub(super) unsafe fn write_rgb_64(r: __m512i, g: __m512i, b: __m512i, ptr: *mut 
 /// # Safety
 ///
 /// `ptr` must point to at least 256 writable bytes.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) unsafe fn write_rgba_64(r: __m512i, g: __m512i, b: __m512i, a: __m512i, ptr: *mut u8) {
   unsafe {
@@ -511,6 +602,12 @@ pub(super) unsafe fn write_rgba_64(r: __m512i, g: __m512i, b: __m512i, a: __m512
 /// `_mm512_mul_epi32` (even i32 lanes → i64x8 products) plus native
 /// `_mm512_srai_epi64`. Result is i64x8 with each lane's low 32 bits
 /// holding the i32-range output.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+))]
 #[inline(always)]
 pub(super) fn chroma_i64x8_avx512(
   cu: __m512i,
@@ -538,6 +635,12 @@ pub(super) fn chroma_i64x8_avx512(
 /// Each i64 lane's low 32 bits contain the result (high 32 are sign);
 /// `_mm512_cvtepi64_epi32` truncates to i32x8 per vector, then
 /// `_mm512_permutex2var_epi32` interleaves them.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+))]
 #[inline(always)]
 pub(super) fn reassemble_i32x16(
   even_i64: __m512i,
@@ -561,6 +664,12 @@ pub(super) fn reassemble_i32x16(
 /// reach ~2.35·10⁹ (> i32::MAX). Splits the input into even and
 /// odd-indexed i32 lanes, multiplies each set via
 /// `_mm512_mul_epi32`, shifts in i64, and reassembles to i32x16.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+))]
 #[inline(always)]
 pub(super) fn scale_y_i32x16_i64(
   y_minus_off: __m512i,
@@ -588,6 +697,13 @@ pub(super) fn scale_y_i32x16_i64(
 /// # Safety
 ///
 /// `ptr` must point to at least 384 writable bytes.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "rgb",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+))]
 #[inline(always)]
 pub(super) unsafe fn write_rgb_u16_32(r: __m512i, g: __m512i, b: __m512i, ptr: *mut u16) {
   unsafe {
@@ -604,7 +720,7 @@ pub(super) unsafe fn write_rgb_u16_32(r: __m512i, g: __m512i, b: __m512i, ptr: *
     let b2: __m128i = _mm512_extracti32x4_epi32::<2>(b);
     let b3: __m128i = _mm512_extracti32x4_epi32::<3>(b);
 
-    // Each `write_rgb_u16_8` writes 8 pixels × 3 × u16 = 48 bytes =
+    // Each `write_rgb_u16_8` writes 8 pixels x 3 x u16 = 48 bytes =
     // 24 u16 elements. Four calls → 96 u16 = 32 pixels.
     write_rgb_u16_8(r0, g0, b0, ptr);
     write_rgb_u16_8(r1, g1, b1, ptr.add(24));
@@ -622,6 +738,12 @@ pub(super) unsafe fn write_rgb_u16_32(r: __m512i, g: __m512i, b: __m512i, ptr: *
 /// # Safety
 ///
 /// `ptr` must point to at least 256 writable bytes.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+))]
 #[inline(always)]
 pub(super) unsafe fn write_rgba_u16_32(
   r: __m512i,
@@ -644,7 +766,7 @@ pub(super) unsafe fn write_rgba_u16_32(
     let b2: __m128i = _mm512_extracti32x4_epi32::<2>(b);
     let b3: __m128i = _mm512_extracti32x4_epi32::<3>(b);
 
-    // Each `write_rgba_u16_8` writes 8 pixels × 4 × u16 = 64 bytes =
+    // Each `write_rgba_u16_8` writes 8 pixels x 4 x u16 = 64 bytes =
     // 32 u16 elements. Four calls → 128 u16 = 32 pixels.
     write_rgba_u16_8(r0, g0, b0, a, ptr);
     write_rgba_u16_8(r1, g1, b1, a, ptr.add(32));
@@ -657,6 +779,12 @@ pub(super) unsafe fn write_rgba_u16_32(
 
 /// `(Y_u16x32 - y_off) * y_scale + RND >> 15` for full u16 Y samples.
 /// Unsigned widening via `_mm512_cvtepu16_epi32`. Returns i16x32.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+))]
 #[inline(always)]
 pub(super) fn scale_y_u16_avx512(
   y_u16x32: __m512i,

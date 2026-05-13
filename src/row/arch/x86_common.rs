@@ -12,10 +12,11 @@ use core::arch::x86_64::*;
 /// packed-RGB loaders below. SSSE3's `_mm_shuffle_epi8` selects byte
 /// `mask[i]` of the input for each output byte, so this mask reverses
 /// the four bytes inside every 32-bit lane.
+#[cfg(feature = "rgb")]
 const BSWAP_U32X4_MASK: __m128i =
   unsafe { core::mem::transmute([3u8, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12]) };
 
-/// Endian-aware 16-byte load (4 × u32) for X2RGB10 / X2BGR10 input.
+/// Endian-aware 16-byte load (4 x u32) for X2RGB10 / X2BGR10 input.
 ///
 /// On every modern x86 host (LE), `BE = false` is a plain
 /// `_mm_loadu_si128`, and `BE = true` adds a single `_mm_shuffle_epi8`
@@ -39,6 +40,7 @@ const BSWAP_U32X4_MASK: __m128i =
 ///   issues no SSSE3 instruction, so SSE2 alone is sufficient there;
 ///   the merged const-generic body is still gated by the strictest of
 ///   the two paths, the SSSE3 requirement.
+#[cfg(feature = "rgb")]
 #[inline(always)]
 pub(super) unsafe fn x2_load_endian_u32x4<const BE: bool>(ptr: *const u8) -> __m128i {
   unsafe {
@@ -77,6 +79,18 @@ pub(super) unsafe fn x2_load_endian_u32x4<const BE: bool>(ptr: *const u8) -> __m
 /// - The calling function must have SSSE3 available (either through
 ///   `#[target_feature(enable = "ssse3")]` / a superset feature like
 ///   `"sse4.1"` or `"avx2"`, or via the target's default feature set).
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "rgb-legacy",
+  feature = "mono",
+  feature = "rgb",
+  feature = "yuv-packed",
+  feature = "gbr",
+  feature = "yuv-semi-planar",
+  feature = "yuv-planar",
+  feature = "y2xx",
+  feature = "xyz",
+))]
 #[inline(always)]
 pub(super) unsafe fn write_rgb_16(r: __m128i, g: __m128i, b: __m128i, ptr: *mut u8) {
   unsafe {
@@ -148,6 +162,18 @@ pub(super) unsafe fn write_rgb_16(r: __m128i, g: __m128i, b: __m128i, ptr: *mut 
 /// - `ptr` must point to at least 64 writable bytes.
 /// - The calling function must have SSSE3 available (via
 ///   `#[target_feature(enable = "ssse3")]` or a superset).
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "rgb-legacy",
+  feature = "mono",
+  feature = "rgb",
+  feature = "yuv-packed",
+  feature = "gbr",
+  feature = "yuv-semi-planar",
+  feature = "yuv-planar",
+  feature = "y2xx",
+  feature = "xyz",
+))]
 #[inline(always)]
 pub(super) unsafe fn write_rgba_16(r: __m128i, g: __m128i, b: __m128i, a: __m128i, ptr: *mut u8) {
   unsafe {
@@ -242,6 +268,7 @@ pub(super) unsafe fn write_rgba_16(r: __m128i, g: __m128i, b: __m128i, a: __m128
 // dead-code warning that becomes a hard error under `RUSTFLAGS=
 // -Dwarnings` (Windows CI failure on PR #91, run 25591669613).
 #[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(feature = "xyz")]
 #[inline(always)]
 pub(super) unsafe fn write_rgb_u8_8(r: __m128i, g: __m128i, b: __m128i, ptr: *mut u8) {
   unsafe {
@@ -300,6 +327,7 @@ pub(super) unsafe fn write_rgb_u8_8(r: __m128i, g: __m128i, b: __m128i, ptr: *mu
 // Same `std` / `alloc` gate as [`write_rgb_u8_8`] — only the xyz12
 // SIMD kernels (gated on those features) consume this helper.
 #[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(feature = "xyz")]
 #[inline(always)]
 pub(super) unsafe fn write_rgba_u8_8(r: __m128i, g: __m128i, b: __m128i, a: __m128i, ptr: *mut u8) {
   unsafe {
@@ -333,6 +361,16 @@ pub(super) unsafe fn write_rgba_u8_8(r: __m128i, g: __m128i, b: __m128i, a: __m1
 ///   unaligned — we use `storeu`).
 /// - The calling function must have SSSE3 available (via SSE4.1 or
 ///   a superset like AVX2 / AVX‑512BW).
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "rgb-legacy",
+  feature = "mono",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+))]
 #[inline(always)]
 pub(super) unsafe fn write_rgb_u16_8(r: __m128i, g: __m128i, b: __m128i, ptr: *mut u16) {
   unsafe {
@@ -392,6 +430,16 @@ pub(super) unsafe fn write_rgb_u16_8(r: __m128i, g: __m128i, b: __m128i, ptr: *m
 /// - The calling function must have SSE2 available (the unpack +
 ///   `storeu_si128` intrinsics; SSE4.1 / AVX2 / AVX-512 supersets all
 ///   satisfy this).
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "rgb-legacy",
+  feature = "mono",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+))]
 #[inline(always)]
 pub(super) unsafe fn write_rgba_u16_8(
   r: __m128i,
@@ -434,6 +482,7 @@ pub(super) unsafe fn write_rgba_u16_8(
 /// - The calling function must have SSSE3 available (either through
 ///   `#[target_feature(enable = "ssse3")]` / a superset feature like
 ///   `"sse4.1"` / `"avx2"` / `"avx512bw"`, or the target's defaults).
+#[cfg(feature = "rgb")]
 #[inline(always)]
 pub(super) unsafe fn swap_rb_16_pixels(input_ptr: *const u8, output_ptr: *mut u8) {
   unsafe {
@@ -492,6 +541,7 @@ pub(super) unsafe fn swap_rb_16_pixels(input_ptr: *const u8, output_ptr: *mut u8
 ///   `#[target_feature(enable = "ssse3")]` or a superset feature
 ///   like `"sse4.1"` / `"avx2"` / `"avx512bw"`, or the target's
 ///   defaults).
+#[cfg(feature = "rgb")]
 #[inline(always)]
 pub(super) unsafe fn swap_rb_alpha_4_pixels(input_ptr: *const u8, output_ptr: *mut u8) {
   unsafe {
@@ -514,6 +564,7 @@ pub(super) unsafe fn swap_rb_alpha_4_pixels(input_ptr: *const u8, output_ptr: *m
 /// - `output_ptr` must point to at least 48 writable bytes.
 /// - `input_ptr` / `output_ptr` ranges must not alias.
 /// - SSSE3 must be available in the caller's `target_feature` context.
+#[cfg(feature = "rgb")]
 #[inline(always)]
 pub(super) unsafe fn drop_alpha_16_pixels(input_ptr: *const u8, output_ptr: *mut u8) {
   unsafe {
@@ -558,6 +609,7 @@ pub(super) unsafe fn drop_alpha_16_pixels(input_ptr: *const u8, output_ptr: *mut
 /// - `output_ptr` must point to at least 48 writable bytes.
 /// - `input_ptr` / `output_ptr` ranges must not alias.
 /// - SSSE3 must be available in the caller's `target_feature` context.
+#[cfg(feature = "rgb")]
 #[inline(always)]
 pub(super) unsafe fn argb_to_rgb_16_pixels(input_ptr: *const u8, output_ptr: *mut u8) {
   unsafe {
@@ -599,6 +651,7 @@ pub(super) unsafe fn argb_to_rgb_16_pixels(input_ptr: *const u8, output_ptr: *mu
 /// - `output_ptr` must point to at least 48 writable bytes.
 /// - `input_ptr` / `output_ptr` ranges must not alias.
 /// - SSSE3 must be available in the caller's `target_feature` context.
+#[cfg(feature = "rgb")]
 #[inline(always)]
 pub(super) unsafe fn abgr_to_rgb_16_pixels(input_ptr: *const u8, output_ptr: *mut u8) {
   unsafe {
@@ -637,6 +690,7 @@ pub(super) unsafe fn abgr_to_rgb_16_pixels(input_ptr: *const u8, output_ptr: *mu
 /// - `output_ptr` must point to at least 16 writable bytes.
 /// - `input_ptr` / `output_ptr` ranges must not alias.
 /// - SSSE3 must be available in the caller's `target_feature` context.
+#[cfg(feature = "rgb")]
 #[inline(always)]
 pub(super) unsafe fn argb_to_rgba_4_pixels(input_ptr: *const u8, output_ptr: *mut u8) {
   unsafe {
@@ -657,6 +711,7 @@ pub(super) unsafe fn argb_to_rgba_4_pixels(input_ptr: *const u8, output_ptr: *mu
 /// - `output_ptr` must point to at least 16 writable bytes.
 /// - `input_ptr` / `output_ptr` ranges must not alias.
 /// - SSSE3 must be available in the caller's `target_feature` context.
+#[cfg(feature = "rgb")]
 #[inline(always)]
 pub(super) unsafe fn abgr_to_rgba_4_pixels(input_ptr: *const u8, output_ptr: *mut u8) {
   unsafe {
@@ -687,6 +742,7 @@ pub(super) unsafe fn abgr_to_rgba_4_pixels(input_ptr: *const u8, output_ptr: *mu
 /// - `output_ptr` must point to at least 16 writable bytes.
 /// - `input_ptr` / `output_ptr` ranges must not alias.
 /// - SSSE3 must be available in the caller's `target_feature` context.
+#[cfg(feature = "rgb")]
 #[inline(always)]
 pub(super) unsafe fn xrgb_to_rgba_4_pixels(input_ptr: *const u8, output_ptr: *mut u8) {
   unsafe {
@@ -712,6 +768,7 @@ pub(super) unsafe fn xrgb_to_rgba_4_pixels(input_ptr: *const u8, output_ptr: *mu
 /// - `output_ptr` must point to at least 16 writable bytes.
 /// - `input_ptr` / `output_ptr` ranges must not alias.
 /// - SSSE3 must be available in the caller's `target_feature` context.
+#[cfg(feature = "rgb")]
 #[inline(always)]
 pub(super) unsafe fn rgbx_to_rgba_4_pixels(input_ptr: *const u8, output_ptr: *mut u8) {
   unsafe {
@@ -733,6 +790,7 @@ pub(super) unsafe fn rgbx_to_rgba_4_pixels(input_ptr: *const u8, output_ptr: *mu
 /// - `output_ptr` must point to at least 16 writable bytes.
 /// - `input_ptr` / `output_ptr` ranges must not alias.
 /// - SSSE3 must be available in the caller's `target_feature` context.
+#[cfg(feature = "rgb")]
 #[inline(always)]
 pub(super) unsafe fn xbgr_to_rgba_4_pixels(input_ptr: *const u8, output_ptr: *mut u8) {
   unsafe {
@@ -754,6 +812,7 @@ pub(super) unsafe fn xbgr_to_rgba_4_pixels(input_ptr: *const u8, output_ptr: *mu
 /// - `output_ptr` must point to at least 16 writable bytes.
 /// - `input_ptr` / `output_ptr` ranges must not alias.
 /// - SSSE3 must be available in the caller's `target_feature` context.
+#[cfg(feature = "rgb")]
 #[inline(always)]
 pub(super) unsafe fn bgrx_to_rgba_4_pixels(input_ptr: *const u8, output_ptr: *mut u8) {
   unsafe {
@@ -778,6 +837,7 @@ pub(super) unsafe fn bgrx_to_rgba_4_pixels(input_ptr: *const u8, output_ptr: *mu
 /// - `output_ptr` must point to at least 48 writable bytes.
 /// - `input_ptr` / `output_ptr` ranges must not alias.
 /// - SSSE3 must be available in the caller's `target_feature` context.
+#[cfg(feature = "rgb")]
 #[inline(always)]
 pub(super) unsafe fn bgra_to_rgb_16_pixels(input_ptr: *const u8, output_ptr: *mut u8) {
   unsafe {
@@ -832,6 +892,7 @@ pub(super) unsafe fn bgra_to_rgb_16_pixels(input_ptr: *const u8, output_ptr: *mu
 /// Caller's `target_feature` must include SSE2 or higher; SSE4.1 and
 /// up include this.
 #[inline(always)]
+#[cfg(feature = "rgb")]
 unsafe fn extract_10bit_to_u8_lane<const SHIFT: i32>(pix: __m128i) -> __m128i {
   unsafe {
     let mask_ff = _mm_set1_epi32(0xFF);
@@ -843,6 +904,7 @@ unsafe fn extract_10bit_to_u8_lane<const SHIFT: i32>(pix: __m128i) -> __m128i {
 /// pixels. Returned vector holds the 10-bit value (range `[0, 1023]`)
 /// in the low `u16` half of each `u32` lane.
 #[inline(always)]
+#[cfg(feature = "rgb")]
 unsafe fn extract_10bit_to_u16_lane<const SHIFT: i32>(pix: __m128i) -> __m128i {
   unsafe {
     let mask_3ff = _mm_set1_epi32(0x3FF);
@@ -850,7 +912,7 @@ unsafe fn extract_10bit_to_u16_lane<const SHIFT: i32>(pix: __m128i) -> __m128i {
   }
 }
 
-/// Packs 4× `u32x4` channel vectors (16 `u8` values laid out one per
+/// Packs 4x `u32x4` channel vectors (16 `u8` values laid out one per
 /// `u32` lane) into a single contiguous `u8x16` channel vector.
 /// Two-stage saturating narrow: `_mm_packus_epi32` for u32→u16,
 /// then `_mm_packus_epi16` for u16→u8.
@@ -858,6 +920,7 @@ unsafe fn extract_10bit_to_u16_lane<const SHIFT: i32>(pix: __m128i) -> __m128i {
 /// Values are bounded to `[0, 255]` upstream, so saturation never
 /// triggers.
 #[inline(always)]
+#[cfg(feature = "rgb")]
 unsafe fn pack_u32x4_quad_to_u8x16(v0: __m128i, v1: __m128i, v2: __m128i, v3: __m128i) -> __m128i {
   unsafe {
     let lo = _mm_packus_epi32(v0, v1);
@@ -880,6 +943,7 @@ unsafe fn pack_u32x4_quad_to_u8x16(v0: __m128i, v1: __m128i, v2: __m128i, v3: __
 ///   inside [`pack_u32x4_quad_to_u8x16`] uses `_mm_packus_epi32`,
 ///   which is SSE4.1 — SSSE3 alone is not enough.
 #[inline(always)]
+#[cfg(feature = "rgb")]
 pub(super) unsafe fn x2rgb10_to_rgb_16_pixels<const BE: bool>(
   input_ptr: *const u8,
   output_ptr: *mut u8,
@@ -929,6 +993,7 @@ pub(super) unsafe fn x2rgb10_to_rgb_16_pixels<const BE: bool>(
 ///   [`x2rgb10_to_rgb_16_pixels`] for the rationale —
 ///   `_mm_packus_epi32` inside the shared narrow helper is SSE4.1.
 #[inline(always)]
+#[cfg(feature = "rgb")]
 pub(super) unsafe fn x2rgb10_to_rgba_16_pixels<const BE: bool>(
   input_ptr: *const u8,
   output_ptr: *mut u8,
@@ -975,6 +1040,7 @@ pub(super) unsafe fn x2rgb10_to_rgba_16_pixels<const BE: bool>(
 /// - **SSE4.1** must be available — `_mm_packus_epi32` is SSE4.1,
 ///   not SSSE3.
 #[inline(always)]
+#[cfg(feature = "rgb")]
 pub(super) unsafe fn x2rgb10_to_rgb_u16_8_pixels<const BE: bool>(
   input_ptr: *const u8,
   output_ptr: *mut u8,
@@ -983,7 +1049,7 @@ pub(super) unsafe fn x2rgb10_to_rgb_u16_8_pixels<const BE: bool>(
     let p0 = x2_load_endian_u32x4::<BE>(input_ptr);
     let p1 = x2_load_endian_u32x4::<BE>(input_ptr.add(16));
 
-    // Two-stage narrow u32x4×2 → u16x8 (no second narrow needed —
+    // Two-stage narrow u32x4x2 → u16x8 (no second narrow needed —
     // u16 is already the destination element type).
     let r = _mm_packus_epi32(
       extract_10bit_to_u16_lane::<20>(p0),
@@ -1004,6 +1070,7 @@ pub(super) unsafe fn x2rgb10_to_rgb_u16_8_pixels<const BE: bool>(
 /// X2BGR10 LE counterpart of [`x2rgb10_to_rgb_16_pixels`]. Channel
 /// shift positions are swapped: R at bits 0..9, B at 20..29.
 #[inline(always)]
+#[cfg(feature = "rgb")]
 pub(super) unsafe fn x2bgr10_to_rgb_16_pixels<const BE: bool>(
   input_ptr: *const u8,
   output_ptr: *mut u8,
@@ -1038,6 +1105,7 @@ pub(super) unsafe fn x2bgr10_to_rgb_16_pixels<const BE: bool>(
 
 /// X2BGR10 LE counterpart of [`x2rgb10_to_rgba_16_pixels`].
 #[inline(always)]
+#[cfg(feature = "rgb")]
 pub(super) unsafe fn x2bgr10_to_rgba_16_pixels<const BE: bool>(
   input_ptr: *const u8,
   output_ptr: *mut u8,
@@ -1073,6 +1141,7 @@ pub(super) unsafe fn x2bgr10_to_rgba_16_pixels<const BE: bool>(
 
 /// X2BGR10 LE counterpart of [`x2rgb10_to_rgb_u16_8_pixels`].
 #[inline(always)]
+#[cfg(feature = "rgb")]
 pub(super) unsafe fn x2bgr10_to_rgb_u16_8_pixels<const BE: bool>(
   input_ptr: *const u8,
   output_ptr: *mut u8,
@@ -1104,7 +1173,7 @@ pub(super) unsafe fn x2bgr10_to_rgb_u16_8_pixels<const BE: bool>(
 // branch cascade uses `_mm_blendv_ps` in the same
 // `delta == 0 → v == r → v == g → v == b` priority as the scalar.
 // For division we use `_mm_rcp_ps` followed by one Newton‑Raphson
-// refinement step (`rcp * (2 - v * rcp)`) — ~3× faster than true
+// refinement step (`rcp * (2 - v * rcp)`) — ~3x faster than true
 // `_mm_div_ps` at the cost of ±1 LSB in S/H. `#[inline(always)]`
 // guarantees each helper inlines into its caller, so the
 // SSSE3+SSE4.1 intrinsics execute in whatever `target_feature` context
@@ -1189,9 +1258,9 @@ fn f32x4_quad_to_u8x16(a: __m128, b: __m128, c: __m128, d: __m128) -> __m128i {
     let bi = _mm_cvttps_epi32(b);
     let ci = _mm_cvttps_epi32(c);
     let di = _mm_cvttps_epi32(d);
-    let ab = _mm_packus_epi32(ai, bi); // i32x4 × 2 → u16x8
+    let ab = _mm_packus_epi32(ai, bi); // i32x4 x 2 → u16x8
     let cd = _mm_packus_epi32(ci, di);
-    _mm_packus_epi16(ab, cd) // u16x8 × 2 → u8x16
+    _mm_packus_epi16(ab, cd) // u16x8 x 2 → u8x16
   }
 }
 
@@ -1303,7 +1372,7 @@ pub(super) unsafe fn rgb_to_hsv_16_pixels(
   unsafe {
     let (r_u8, g_u8, b_u8) = deinterleave_rgb_16(input_ptr);
 
-    // Widen each channel to 4 × f32x4 groups (16 pixels → 4 groups of
+    // Widen each channel to 4 x f32x4 groups (16 pixels → 4 groups of
     // 4 lanes each).
     let (r0, r1, r2, r3) = u8x16_to_f32x4_quad(r_u8);
     let (g0, g1, g2, g3) = u8x16_to_f32x4_quad(g_u8);
@@ -1330,7 +1399,7 @@ pub(super) unsafe fn rgb_to_hsv_16_pixels(
 // applies a second Q15 multiply (`28142 / 32768`) plus the +16 offset.
 //
 // Bit‑identical to scalar `rgb_to_luma_row`. Shared by SSE4.1 / AVX2 /
-// AVX‑512 backends — each calls [`rgb_to_luma_16_pixels`] 1× / 2× / 4×
+// AVX‑512 backends — each calls [`rgb_to_luma_16_pixels`] 1x / 2x / 4x
 // per iteration.
 
 /// Computes Y' for 16 RGB pixels (48 input bytes, 16 output bytes).
@@ -1359,7 +1428,7 @@ pub(super) unsafe fn rgb_to_luma_16_pixels(
   full_range: bool,
 ) {
   unsafe {
-    // Deinterleave 16 RGB pixels → 3 × u8x16 channel vectors.
+    // Deinterleave 16 RGB pixels → 3 x u8x16 channel vectors.
     let (r_u8, g_u8, b_u8) = deinterleave_rgb_16(input_ptr);
 
     // Y_full per i32x4 quarter: (k_r·R + k_g·G + k_b·B + RND) >> 15.
@@ -1371,7 +1440,7 @@ pub(super) unsafe fn rgb_to_luma_16_pixels(
     let y2 = q15_luma_quarter::<8>(r_u8, g_u8, b_u8, kr_v, kg_v, kb_v, rnd_v);
     let y3 = q15_luma_quarter::<12>(r_u8, g_u8, b_u8, kr_v, kg_v, kb_v, rnd_v);
 
-    // Pack i32x4×2 → i16x8 (saturating); two i16x8 then pack → u8x16
+    // Pack i32x4x2 → i16x8 (saturating); two i16x8 then pack → u8x16
     // (saturating). The i32 → i16 step preserves the [0, 255] window
     // (negatives clamp to 0, > 32767 clamp to 32767). The i16 → u8
     // step performs the final [0, 255] clamp.
@@ -1434,7 +1503,7 @@ fn limited_range_scale_16(y_clamp_u8: __m128i, rnd_v: __m128i) -> __m128i {
   unsafe {
     let scale = _mm_set1_epi32(28142);
     let off = _mm_set1_epi16(16);
-    // Widen u8x16 → i16x8×2 (zero‑extend; samples are in [0, 255]).
+    // Widen u8x16 → i16x8x2 (zero‑extend; samples are in [0, 255]).
     let y_lo_i16 = _mm_cvtepu8_epi16(y_clamp_u8);
     let y_hi_i16 = _mm_cvtepu8_epi16(_mm_srli_si128::<8>(y_clamp_u8));
     let y_lim_lo = limited_range_quarter(y_lo_i16, scale, rnd_v);
