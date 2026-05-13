@@ -5,7 +5,7 @@ use super::*;
 // ---- Solid-color builder ------------------------------------------------
 
 /// Builds a solid UYYVYY411 packed plane with one (Y, U, V) repeated
-/// across `width × height`. Layout per 6-byte / 4-pixel block:
+/// across `width x height`. Layout per 6-byte / 4-pixel block:
 /// `U, Y, Y, V, Y, Y`. Stride equals `width * 3 / 2` (no padding).
 pub(super) fn solid_uyyvyy411_frame(width: u32, height: u32, y: u8, u: u8, v: u8) -> Vec<u8> {
   let w = width as usize;
@@ -221,7 +221,7 @@ fn uyyvyy411_begin_frame_rejects_width_not_multiple_of_4() {
   // begin_frame guard surfaces it before any row primitive runs.
   // Call begin_frame directly with matching dimensions so the
   // dimension-match check passes and the width-alignment check fires.
-  // (Going through `uyyvyy411_to(...)` with a 16×8 frame against an
+  // (Going through `uyyvyy411_to(...)` with a 16x8 frame against an
   // 18-wide sink would short-circuit on DimensionMismatch and never
   // exercise the alignment guard.)
   let mut rgb = std::vec![0u8; 18 * 8 * 3];

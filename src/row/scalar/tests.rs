@@ -969,7 +969,7 @@ fn p410_rgba_gray_alpha_is_ff() {
   // P410: 10 active bits in HIGH 10 of each u16. Mid-gray 10-bit
   // Y=512 → P410 Y = 0x8000. UV interleaved: U V U V ... full width.
   let y = as_le_u16(&[0x8000u16; 4]);
-  // 4 pixels × (U,V) per pixel = 8 elements.
+  // 4 pixels x (U,V) per pixel = 8 elements.
   let uv = as_le_u16(&[0x8000u16; 8]);
   let mut rgba = [0u8; 16];
   p_n_444_to_rgba_row::<10, false>(&y, &uv, &mut rgba, 4, ColorMatrix::Bt601, true);

@@ -141,7 +141,7 @@ pub(crate) unsafe fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool, 
 
     let mut x = 0usize;
     while x + 32 <= width {
-      // 32 Y = two u16×16 loads, shifted right by `16 - BITS`. BE
+      // 32 Y = two u16x16 loads, shifted right by `16 - BITS`. BE
       // input is byte-swapped via `load_endian_u16x16::<BE>` for Y,
       // and via `byteswap_u16x16::<BE>` after deinterleave for UV.
       let y_low_i16 = _mm256_srl_epi16(
@@ -283,8 +283,8 @@ pub(crate) unsafe fn p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
 }
 
 /// Shared AVX2 Pn → native-depth `u16` kernel. `ALPHA = false` writes
-/// RGB triples via 4× `write_rgb_u16_8` per 32-pixel block;
-/// `ALPHA = true` writes RGBA quads via 4× `write_rgba_u16_8` with
+/// RGB triples via 4x `write_rgb_u16_8` per 32-pixel block;
+/// `ALPHA = true` writes RGBA quads via 4x `write_rgba_u16_8` with
 /// constant alpha `(1 << BITS) - 1`. P016 has its own kernel family —
 /// never routed here.
 ///

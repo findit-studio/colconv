@@ -15,7 +15,7 @@ use crate::{PixelSink, row::*, source::*};
 impl<'a, const BE: bool> MixedSinker<'a, P210<BE>> {
   /// Attaches a packed **`u16`** RGB output buffer. 10-bit
   /// **low-bit-packed** output (yuv420p10le convention, not P210
-  /// packing). Length is in `u16` elements: `width × height × 3`.
+  /// packing). Length is in `u16` elements: `width x height x 3`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;
@@ -59,7 +59,7 @@ impl<'a, const BE: bool> MixedSinker<'a, P210<BE>> {
   /// Attaches a packed **`u16`** RGBA output buffer. Output is
   /// **low‑bit‑packed** 10‑bit values (`yuv420p10le` convention) — not
   /// P210 high‑bit packing. Length is measured in `u16` **elements**
-  /// (`width × height × 4`). Alpha element is `(1 << 10) - 1`.
+  /// (`width x height x 4`). Alpha element is `(1 << 10) - 1`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -317,7 +317,7 @@ impl<'a, const BE: bool> MixedSinker<'a, P212<BE>> {
   /// Attaches a packed **`u16`** RGBA output buffer. Output is
   /// **low‑bit‑packed** 12‑bit values (`yuv420p12le` convention) — not
   /// P212 high‑bit packing. Length is measured in `u16` **elements**
-  /// (`width × height × 4`). Alpha element is `(1 << 12) - 1`.
+  /// (`width x height x 4`). Alpha element is `(1 << 12) - 1`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -574,7 +574,7 @@ impl<'a, const BE: bool> MixedSinker<'a, P216<BE>> {
 
   /// Attaches a packed **`u16`** RGBA output buffer. Output covers the
   /// full `u16` range `[0, 65535]` (16 active bits). Length is
-  /// measured in `u16` **elements** (`width × height × 4`). Alpha
+  /// measured in `u16` **elements** (`width x height x 4`). Alpha
   /// element is `0xFFFF`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {

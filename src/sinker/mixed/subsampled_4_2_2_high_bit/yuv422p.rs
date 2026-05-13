@@ -37,7 +37,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv422p9<BE>> {
   /// pixel is alpha = `0xFF` (Yuv422p9 has no alpha plane).
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -59,7 +59,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv422p9<BE>> {
 
   /// Attaches a packed **`u16`** RGBA output buffer. 9‑bit low‑packed
   /// (`(1 << 9) - 1 = 511` max). Length is measured in `u16`
-  /// **elements** (`width × height × 4`). Alpha element is
+  /// **elements** (`width x height x 4`). Alpha element is
   /// `(1 << 9) - 1`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -326,7 +326,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv422p10<BE>> {
 
   /// Attaches a packed **`u16`** RGBA output buffer. 10‑bit
   /// low‑packed (`(1 << 10) - 1 = 1023` max). Length is measured in
-  /// `u16` **elements** (`width × height × 4`). Alpha element is
+  /// `u16` **elements** (`width x height x 4`). Alpha element is
   /// `(1 << 10) - 1`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -584,7 +584,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv422p12<BE>> {
 
   /// Attaches a packed **`u16`** RGBA output buffer. 12‑bit
   /// low‑packed (`(1 << 12) - 1 = 4095` max). Length is measured in
-  /// `u16` **elements** (`width × height × 4`). Alpha element is
+  /// `u16` **elements** (`width x height x 4`). Alpha element is
   /// `(1 << 12) - 1`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -842,7 +842,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv422p14<BE>> {
 
   /// Attaches a packed **`u16`** RGBA output buffer. 14‑bit
   /// low‑packed (`(1 << 14) - 1 = 16383` max). Length is measured in
-  /// `u16` **elements** (`width × height × 4`). Alpha element is
+  /// `u16` **elements** (`width x height x 4`). Alpha element is
   /// `(1 << 14) - 1`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -1107,7 +1107,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv422p16<BE>> {
 
   /// Attaches a packed **`u16`** RGBA output buffer. Output covers the
   /// full `u16` range `[0, 65535]` (16 active bits, no packing). Length
-  /// is measured in `u16` **elements** (`width × height × 4`). Alpha
+  /// is measured in `u16` **elements** (`width x height x 4`). Alpha
   /// element is `0xFFFF`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {

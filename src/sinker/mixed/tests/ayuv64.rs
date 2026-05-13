@@ -40,7 +40,7 @@ use super::*;
 ///   word 2: U (Cb chroma, 16-bit native)
 ///   word 3: V (Cr chroma, 16-bit native)
 ///
-/// Row stride equals `width × 4` u16 elements (no padding).
+/// Row stride equals `width x 4` u16 elements (no padding).
 #[cfg(all(test, feature = "std"))]
 pub(super) fn solid_ayuv64_frame(
   width: u32,
@@ -458,7 +458,7 @@ fn ayuv64_simd_vs_scalar_parity_at_1922_u16() {
 #[test]
 #[cfg(all(test, feature = "std"))]
 fn ayuv64_rgb_buffer_too_short_returns_error() {
-  // 8×4 frame needs 8 × 4 × 3 = 96 bytes; supply only 95.
+  // 8x4 frame needs 8 x 4 x 3 = 96 bytes; supply only 95.
   let mut rgb = std::vec![0u8; 95];
   let result = MixedSinker::<Ayuv64>::new(8, 4).with_rgb(&mut rgb);
   let Err(err) = result else {
@@ -475,7 +475,7 @@ fn ayuv64_rgb_buffer_too_short_returns_error() {
 #[test]
 #[cfg(all(test, feature = "std"))]
 fn ayuv64_rgba_buffer_too_short_returns_error() {
-  // 6×4 frame needs 6 × 4 × 4 = 96 bytes; supply only 90.
+  // 6x4 frame needs 6 x 4 x 4 = 96 bytes; supply only 90.
   let mut rgba = std::vec![0u8; 90];
   let result = MixedSinker::<Ayuv64>::new(6, 4).with_rgba(&mut rgba);
   let Err(err) = result else {
@@ -492,7 +492,7 @@ fn ayuv64_rgba_buffer_too_short_returns_error() {
 #[test]
 #[cfg(all(test, feature = "std"))]
 fn ayuv64_rgb_u16_buffer_too_short_returns_error() {
-  // 8×4 frame needs 8 × 4 × 3 = 96 u16 elements; supply only 90.
+  // 8x4 frame needs 8 x 4 x 3 = 96 u16 elements; supply only 90.
   let mut rgb = std::vec![0u16; 90];
   let result = MixedSinker::<Ayuv64>::new(8, 4).with_rgb_u16(&mut rgb);
   let Err(err) = result else {
@@ -509,7 +509,7 @@ fn ayuv64_rgb_u16_buffer_too_short_returns_error() {
 #[test]
 #[cfg(all(test, feature = "std"))]
 fn ayuv64_rgba_u16_buffer_too_short_returns_error() {
-  // 6×4 frame needs 6 × 4 × 4 = 96 u16 elements; supply only 88.
+  // 6x4 frame needs 6 x 4 x 4 = 96 u16 elements; supply only 88.
   let mut rgba = std::vec![0u16; 88];
   let result = MixedSinker::<Ayuv64>::new(6, 4).with_rgba_u16(&mut rgba);
   let Err(err) = result else {
@@ -526,7 +526,7 @@ fn ayuv64_rgba_u16_buffer_too_short_returns_error() {
 #[test]
 #[cfg(all(test, feature = "std"))]
 fn ayuv64_luma_buffer_too_short_returns_error() {
-  // 8×3 frame needs 8 × 3 = 24 bytes; supply 20.
+  // 8x3 frame needs 8 x 3 = 24 bytes; supply 20.
   let mut luma = std::vec![0u8; 20];
   let result = MixedSinker::<Ayuv64>::new(8, 3).with_luma(&mut luma);
   let Err(err) = result else {
@@ -543,7 +543,7 @@ fn ayuv64_luma_buffer_too_short_returns_error() {
 #[test]
 #[cfg(all(test, feature = "std"))]
 fn ayuv64_luma_u16_buffer_too_short_returns_error() {
-  // 8×3 frame needs 8 × 3 = 24 u16 elements; supply 20.
+  // 8x3 frame needs 8 x 3 = 24 u16 elements; supply 20.
   let mut luma = std::vec![0u16; 20];
   let result = MixedSinker::<Ayuv64>::new(8, 3).with_luma_u16(&mut luma);
   let Err(err) = result else {
@@ -560,7 +560,7 @@ fn ayuv64_luma_u16_buffer_too_short_returns_error() {
 #[test]
 #[cfg(all(test, feature = "std"))]
 fn ayuv64_hsv_buffer_too_short_returns_error() {
-  // 4×4 frame needs 16 bytes per HSV plane; supply H with only 15.
+  // 4x4 frame needs 16 bytes per HSV plane; supply H with only 15.
   let mut h = std::vec![0u8; 15];
   let mut s = std::vec![0u8; 16];
   let mut v = std::vec![0u8; 16];
@@ -605,7 +605,7 @@ fn ayuv64_planar_parity_with_yuva444p16() {
   //   - Yuva444p16 with_rgba_u16 → yuva444p16_to_rgba_u16_row: source α direct.
   //   Both formats write α direct as u16, so RGBA u16 alpha is byte-identical.
   //
-  // Use width=64 × height=4 (covers SIMD main loop + scalar tail).
+  // Use width=64 x height=4 (covers SIMD main loop + scalar tail).
 
   let width = 64usize;
   let height = 4usize;

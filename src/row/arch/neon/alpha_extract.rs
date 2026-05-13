@@ -82,7 +82,7 @@ pub(crate) unsafe fn copy_alpha_packed_u8x4_at_3(packed: &[u8], rgba_out: &mut [
 /// `rgba_out[3 + 4*n]` (u8) with depth-conv `>> 8`.
 ///
 /// AYUV64 layout: `[A(16), Y(16), U(16), V(16)]`. We use `vld4q_u16`
-/// to pull 8 px × 4 ch in 64-bit lanes, take `.0` as the α u16 vector,
+/// to pull 8 px x 4 ch in 64-bit lanes, take `.0` as the α u16 vector,
 /// narrow to u8 via `vshrn_n_u16::<8>`, then load the 8-px RGBA via
 /// the 64-bit `vld4_u8` (32 bytes), substitute `.3`, and store back
 /// via `vst4_u8`.
@@ -129,7 +129,7 @@ pub(crate) unsafe fn copy_alpha_packed_u16x4_to_u8_at_0(
 /// AYUV64 → u16 RGBA: gather α from `packed[0 + 4*n]` (u16) into
 /// `rgba_out[3 + 4*n]` (u16). No depth conversion.
 ///
-/// Block size: 8 px / iter (`vld4q_u16` × 2 = 128 bytes round-trip).
+/// Block size: 8 px / iter (`vld4q_u16` x 2 = 128 bytes round-trip).
 #[cfg(feature = "yuv-444-packed")]
 #[inline]
 #[target_feature(enable = "neon")]

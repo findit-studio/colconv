@@ -118,7 +118,7 @@ fn limited_n_to_full_u8<const BITS: u32>(y: u16) -> u8 {
 ///
 /// Math runs in `i64` to keep the `(y - black) * max_native` product safe at
 /// `BITS = 16`: limited-range white `60160` minus black `4096` times
-/// `max_native = 65535` is `~3.67 × 10^9`, which overflows `i32`. Lower bit
+/// `max_native = 65535` is `~3.67 x 10^9`, which overflows `i32`. Lower bit
 /// depths fit in `i32` but using `i64` uniformly keeps one signature and
 /// avoids per-BITS branches.
 #[inline(always)]

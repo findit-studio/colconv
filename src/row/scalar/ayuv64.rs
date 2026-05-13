@@ -145,11 +145,11 @@ pub(crate) fn ayuv64_to_rgba_row<const BE: bool>(
 // ---- u16 output (i64 chroma) -------------------------------------------
 
 /// Shared scalar kernel for AYUV64 → packed **RGB u16** (`ALPHA = false,
-/// ALPHA_SRC = false`, 3 × u16 per pixel) or → packed **RGBA u16**
-/// (`ALPHA = true, ALPHA_SRC = true`, 4 × u16 per pixel + source α direct).
+/// ALPHA_SRC = false`, 3 x u16 per pixel) or → packed **RGBA u16**
+/// (`ALPHA = true, ALPHA_SRC = true`, 4 x u16 per pixel + source α direct).
 ///
 /// Uses **i64 chroma** via `q15_chroma64` because at BITS=16/16 the
-/// Q15 chroma sums exceed i32 range (peak ~3.7×10⁹ for BT.2020-NCL at
+/// Q15 chroma sums exceed i32 range (peak ~3.7x10⁹ for BT.2020-NCL at
 /// limited range). Source α is written direct as u16 (no conversion).
 ///
 /// # Panics (debug builds)
@@ -213,7 +213,7 @@ pub(crate) fn ayuv64_to_rgb_u16_or_rgba_u16_row<
 
 // ---- RGB / RGBA u16 thin wrappers ---------------------------------------
 
-/// Scalar AYUV64 → packed **RGB u16** (3 × u16 per pixel). Source α discarded.
+/// Scalar AYUV64 → packed **RGB u16** (3 x u16 per pixel). Source α discarded.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn ayuv64_to_rgb_u16_row<const BE: bool>(
   packed: &[u16],
@@ -225,7 +225,7 @@ pub(crate) fn ayuv64_to_rgb_u16_row<const BE: bool>(
   ayuv64_to_rgb_u16_or_rgba_u16_row::<false, false, BE>(packed, rgb_out, width, matrix, full_range);
 }
 
-/// Scalar AYUV64 → packed **RGBA u16** (4 × u16 per pixel). The source A u16
+/// Scalar AYUV64 → packed **RGBA u16** (4 x u16 per pixel). The source A u16
 /// at slot 0 of each pixel quadruple is written direct (no conversion).
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn ayuv64_to_rgba_u16_row<const BE: bool>(

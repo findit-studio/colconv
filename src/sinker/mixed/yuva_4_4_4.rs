@@ -23,7 +23,7 @@
 //! identical — only the depth-named row primitives, the `RowSlice`
 //! variants used in error reports, and the depth-conversion shift
 //! (`BITS - 8`) for luma differ. They share the
-//! [`yuva444p_high_bit_process`] helper to avoid 4× of the same ~70
+//! [`yuva444p_high_bit_process`] helper to avoid 4x of the same ~70
 //! lines.
 
 use super::{
@@ -713,7 +713,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva444p16<BE>> {
 // identical — only the depth-named row primitives, the `RowSlice`
 // variants used in error reports, and the depth-conversion shift
 // (`BITS - 8`) for luma differ. Factor into a generic helper to avoid
-// 2× of the same ~70 lines.
+// 2x of the same ~70 lines.
 //
 // 4:4:4 chroma is full-width (one U / V sample per Y pixel — no
 // chroma duplication step), unlike the 4:2:0 sibling helper which

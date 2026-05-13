@@ -2,7 +2,7 @@
 //! 10-bit pro-broadcast SDI). Full output coverage: u8 + native-depth
 //! u16 RGB / RGBA / luma + u8 HSV.
 //!
-//! v210 packs 12 × 10-bit samples per 16-byte word = 6 pixels (4:2:2
+//! v210 packs 12 x 10-bit samples per 16-byte word = 6 pixels (4:2:2
 //! with 6 Y + 3 Cb + 3 Cr per word). The sinker's configured width
 //! must be **even** (4:2:2 chroma pair) — partial last words (widths
 //! not divisible by 6, e.g. 720p = 1280) are supported. Odd widths
@@ -55,7 +55,7 @@ impl<'a, const BE: bool> MixedSinker<'a, V210<BE>> {
   /// with constant `0xFF` (v210 has no alpha channel).
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -77,7 +77,7 @@ impl<'a, const BE: bool> MixedSinker<'a, V210<BE>> {
 
   /// Attaches a packed **`u16`** RGB output buffer. 10-bit
   /// low-bit-packed (`[0, 1023]`); length is measured in `u16`
-  /// **elements** (`width × height × 3`).
+  /// **elements** (`width x height x 3`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;
@@ -98,7 +98,7 @@ impl<'a, const BE: bool> MixedSinker<'a, V210<BE>> {
 
   /// Attaches a packed **`u16`** RGBA output buffer. 10-bit
   /// low-bit-packed (`[0, 1023]`); alpha element is `1023`. Length
-  /// is measured in `u16` **elements** (`width × height × 4`).
+  /// is measured in `u16` **elements** (`width x height x 4`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -121,7 +121,7 @@ impl<'a, const BE: bool> MixedSinker<'a, V210<BE>> {
   /// the first consumer of this Tier 4 API: the 10-bit Y samples
   /// are extracted directly out of the v210 word packing into the
   /// caller's `u16` buffer (low-bit-packed, `[0, 1023]`). Length
-  /// is measured in `u16` **elements** (`width × height`).
+  /// is measured in `u16` **elements** (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;

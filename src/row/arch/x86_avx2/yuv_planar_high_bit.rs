@@ -414,10 +414,10 @@ pub(crate) unsafe fn yuv_420p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32, 
 }
 
 /// Shared AVX2 high-bit YUV 4:2:0 → native-depth `u16` kernel.
-/// - `ALPHA = false, ALPHA_SRC = false`: 4× `write_rgb_u16_8`.
-/// - `ALPHA = true, ALPHA_SRC = false`: 4× `write_rgba_u16_8` with
+/// - `ALPHA = false, ALPHA_SRC = false`: 4x `write_rgb_u16_8`.
+/// - `ALPHA = true, ALPHA_SRC = false`: 4x `write_rgba_u16_8` with
 ///   constant alpha `(1 << BITS) - 1`.
-/// - `ALPHA = true, ALPHA_SRC = true`: 4× `write_rgba_u16_8` with the
+/// - `ALPHA = true, ALPHA_SRC = true`: 4x `write_rgba_u16_8` with the
 ///   alpha lanes loaded from `a_src` and masked to BITS.
 ///
 /// # Safety
@@ -1087,11 +1087,11 @@ pub(crate) unsafe fn yuv_444p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32, 
 
 /// Shared AVX2 high-bit YUV 4:4:4 → native-depth `u16` kernel for
 /// [`yuv_444p_n_to_rgb_u16_row`] (`ALPHA = false, ALPHA_SRC = false`,
-/// 4× `write_rgb_u16_8`), [`yuv_444p_n_to_rgba_u16_row`] (`ALPHA = true,
-/// ALPHA_SRC = false`, 4× `write_rgba_u16_8` with constant alpha
+/// 4x `write_rgb_u16_8`), [`yuv_444p_n_to_rgba_u16_row`] (`ALPHA = true,
+/// ALPHA_SRC = false`, 4x `write_rgba_u16_8` with constant alpha
 /// `(1 << BITS) - 1`) and
 /// [`yuv_444p_n_to_rgba_u16_with_alpha_src_row`] (`ALPHA = true,
-/// ALPHA_SRC = true`, 4× `write_rgba_u16_8` with the alpha lane loaded
+/// ALPHA_SRC = true`, 4x `write_rgba_u16_8` with the alpha lane loaded
 /// from `a_src` and masked to native bit depth — no shift since both
 /// the source alpha and the u16 output element are at the same native
 /// bit depth).

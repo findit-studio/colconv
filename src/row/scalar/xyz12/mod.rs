@@ -12,7 +12,7 @@
 //! 1. SMPTE ST 428-1 §8 inverse-OETF:
 //!    `xyz_lin = (x_u12 / 4095)^2.6 / 0.91653`. Applied to each X/Y/Z
 //!    sample independently.
-//! 2. 3×3 matmul against the active gamut's `M_xyz_to_rgb` constant.
+//! 2. 3x3 matmul against the active gamut's `M_xyz_to_rgb` constant.
 //! 3. sRGB-shape OETF (12.92 linear segment + `1.055 * c^(1/2.4) -
 //!    0.055` upper segment). Skipped for f32-output paths
 //!    (`xyz12_to_rgb_f32_row` / `xyz12_to_xyz_f32_row`).
@@ -105,7 +105,7 @@ pub(crate) fn smpte428_inverse_oetf(x_u12: u16) -> f32 {
   powf32(normalised, 2.6_f32) * SMPTE428_INV_NORM
 }
 
-/// Applies a 3×3 matrix to a linear XYZ vector, returning linear RGB.
+/// Applies a 3x3 matrix to a linear XYZ vector, returning linear RGB.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn matmul3_xyz_rgb(m: &[[f32; 3]; 3], xyz: [f32; 3]) -> [f32; 3] {
   let [x, y, z] = xyz;
@@ -226,7 +226,7 @@ pub(crate) fn xyz12_pixel_to_xyz_linear<const BE: bool>(triple: &[u16; 3]) -> [f
 // ---------------------------------------------------------------------------
 
 /// XYZ12 → packed RGB (u8). Full pipeline: inverse-OETF + matmul +
-/// sRGB OETF + clamp + ×255 + round-half-up.
+/// sRGB OETF + clamp + x255 + round-half-up.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn xyz12_to_rgb_row<const BE: bool>(
   xyz: &[u16],
@@ -271,7 +271,7 @@ pub(crate) fn xyz12_to_rgba_row<const BE: bool>(
 }
 
 /// XYZ12 → packed RGB (u16). Full pipeline; full-range scaling
-/// `[0, 1] × 65535 + round-half-up`.
+/// `[0, 1] x 65535 + round-half-up`.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn xyz12_to_rgb_u16_row<const BE: bool>(
   xyz: &[u16],
@@ -418,7 +418,7 @@ pub(crate) fn xyz12_to_rgba_f16_row<const BE: bool>(
 // `Xyz12Row::luma_q15()`), bypassing the `ColorMatrix` enum entirely.
 //
 // No SIMD path: luma cost (one Q15 multiply-add per channel) is dwarfed
-// by the upstream 6× scalar `powf` work in the matmul + OETF stages —
+// by the upstream 6x scalar `powf` work in the matmul + OETF stages —
 // vectorising luma here gives no measurable win.
 // ---------------------------------------------------------------------------
 

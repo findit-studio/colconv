@@ -4,7 +4,7 @@
 //! Walker hands each output row to a [`BayerSink`] together with
 //! the three row-aligned slices the demosaic kernel needs (`above`,
 //! `mid`, `below`) and the fused `M = CCM · diag(wb)` transform.
-//! The kernel does the bilinear demosaic and the 3×3 matmul in one
+//! The kernel does the bilinear demosaic and the 3x3 matmul in one
 //! pass; the sink owns the RGB output buffer.
 
 // The Bayer marker now lives in videoframe::source and implements

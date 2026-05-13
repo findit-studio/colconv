@@ -98,7 +98,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P410<BE>> {
         row.y().len(),
       )));
     }
-    // 4:4:4 semi-planar: full-width × 2 elements per pair.
+    // 4:4:4 semi-planar: full-width x 2 elements per pair.
     if row.uv_full().len() != 2 * w {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
         RowSlice::UvFull10,

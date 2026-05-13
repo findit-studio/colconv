@@ -178,13 +178,13 @@ sample for non-4-aligned widths.
   half (no AVX2 lane-crossing fixup needed — the chroma split is
   already lane-aligned). 8 chroma loaded via a u64 read.
 - **AVX-512BW** (64 / 16) — one `_mm512_permutexvar_epi16` per channel
-  per Y half with explicit 4× duplicate indices — cleanest 4×
+  per Y half with explicit 4x duplicate indices — cleanest 4x
   fan-out of any backend (no unpack chain).
 - **wasm-simd128** (16 / 4) — two `i8x16_shuffle` calls per channel
-  with compile-time byte indices duplicating each i16 chroma lane 4×.
+  with compile-time byte indices duplicating each i16 chroma lane 4x.
 
 Structural analog: yuv422p (full-height chroma; only the horizontal
-subsampling factor changes from 2× to 4×). Yuv411p shares the same
+subsampling factor changes from 2x to 4x). Yuv411p shares the same
 `@p3_emit quarter` walker-macro arm as Yuv410p; the two differ only
 in the `chroma_v` selector (`full` for 4:1:1, `quarter` for 4:1:0).
 
@@ -192,14 +192,14 @@ in the `chroma_v` selector (`full` for 4:1:1, `quarter` for 4:1:0).
 
 Closes Tier 1 row 7 (P3 legacy). New source-side pixel format `Yuv410p`
 (`AV_PIX_FMT_YUV410P`): 8-bit planar YUV with chroma subsampled 4:1 in
-**both** axes — one (U, V) sample covers a 4×4 block of 16 luma
+**both** axes — one (U, V) sample covers a 4x4 block of 16 luma
 pixels. Mostly historical interest (Cinepak / Sorenson Spark / FFmpeg's
 `yuv410p` test fixtures); modern pipelines almost never see it.
 
 `Yuv410pFrame<'a>` — three u8 planes (Y full-size, U/V quarter-width
 quarter-height). `width` must be a multiple of 4, while `height` may
 be any non-zero value. Construction validates plane lengths, strides,
-and 32-bit `stride × rows` overflow.
+and 32-bit `stride x rows` overflow.
 
 `MixedSinker<Yuv410p>` outputs:
 
@@ -217,7 +217,7 @@ aarch64, SSE4.1 / AVX2 / AVX-512 x86_64, wasm32 simd128). Every SIMD
 backend runs the same Q15 sequence as the scalar reference — math is
 byte-identical, verified by per-backend parity tests.
 
-Per-backend block size (Y per iter / chroma per iter) and 4×
+Per-backend block size (Y per iter / chroma per iter) and 4x
 horizontal upsample method:
 
 - **NEON** (16 / 4): two-pass `vzip*q_s16` cascade fans each chroma
@@ -229,14 +229,14 @@ horizontal upsample method:
   half (no AVX2 lane-crossing fixup needed — the chroma split is
   already lane-aligned). 8 chroma loaded via a u64 read.
 - **AVX-512** (64 / 16): one `_mm512_permutexvar_epi16` per channel
-  per Y half with explicit 4× duplicate indices — cleanest 4×
+  per Y half with explicit 4x duplicate indices — cleanest 4x
   fan-out of any backend (no unpack chain).
 - **wasm-simd128** (16 / 4): two `i8x16_shuffle` calls per channel
-  with compile-time byte indices duplicating each i16 chroma lane 4×.
+  with compile-time byte indices duplicating each i16 chroma lane 4x.
 
 Structural analog: [`Yuv420pFrame`] for the vertical-subsampling
 walker shape (chroma_row = `row / 4` for 4:1:0 vs `row / 2` for 4:2:0)
-combined with 4× horizontal subsampling. The walker macro grew a new
+combined with 4x horizontal subsampling. The walker macro grew a new
 `chroma_h: quarter` emitter and a `@chroma_row quarter` selector.
 
 ## Unreleased — Tier 12 — Xyz12 (DCP / digital-cinema XYZ) source format
@@ -247,7 +247,7 @@ u16 elements per pixel — active 12 bits in `[15:4]`, low 4 bits zero
 (per FFmpeg `AV_PIX_FMT_XYZ12LE/BE`). Const-generic
 `Xyz12Frame<const BE: bool>` with type aliases `Xyz12LeFrame` /
 `Xyz12BeFrame`. The conversion chain is the heaviest in colconv: SMPTE
-ST 428-1 §8 inverse OETF → 3×3 matrix to one of three target gamuts
+ST 428-1 §8 inverse OETF → 3x3 matrix to one of three target gamuts
 (DCI-P3 / Rec.709 / Rec.2020) → sRGB-shape forward OETF → integer narrow.
 
 11 sinker outputs:
@@ -255,7 +255,7 @@ ST 428-1 §8 inverse OETF → 3×3 matrix to one of three target gamuts
 - `with_rgb` / `with_rgba` — full pipeline → packed u8 RGB / RGBA
   (alpha = `0xFF`)
 - `with_rgb_u16` / `with_rgba_u16` — full pipeline + full-range
-  `[0, 1] × 65535` scaling (alpha = `0xFFFF`)
+  `[0, 1] x 65535` scaling (alpha = `0xFFFF`)
 - `with_rgb_f32` — lossless linear-RGB f32 (matrix only, OETF skipped,
   no clamp; out-of-gamut negative R/G/B and HDR > 1 preserved bit-exact)
 - `with_xyz_f32` — lossless linear XYZ f32 (only step-1 inverse OETF;
@@ -384,21 +384,21 @@ Closes Tier 13. New source-side pixel format `Pal8` (`AV_PIX_FMT_PAL8`):
 
   | kernel           | width | scalar      | NEON        | speedup |
   |------------------|-------|-------------|-------------|---------|
-  | pal8_to_rgb      |   256 |   139.7 ns  |   123.5 ns  |  1.13×  |
-  | pal8_to_rgb      |  1280 |   667.6 ns  |   490.5 ns  |  1.36×  |
-  | pal8_to_rgb      |  1920 |   985.7 ns  |   744.6 ns  |  1.32×  |
-  | pal8_to_rgba     |   256 |   165.0 ns  |    83.7 ns  |  1.97×  |
-  | pal8_to_rgba     |  1280 |   794.2 ns  |   404.9 ns  |  1.96×  |
-  | pal8_to_rgba     |  1920 |  1197.8 ns  |   608.5 ns  |  1.97×  |
-  | pal8_to_rgb_u16  |   256 |   152.1 ns  |    83.3 ns  |  1.83×  |
-  | pal8_to_rgb_u16  |  1280 |   735.9 ns  |   404.0 ns  |  1.82×  |
-  | pal8_to_rgb_u16  |  1920 |  1085.2 ns  |   601.6 ns  |  1.80×  |
-  | pal8_to_rgba_u16 |   256 |   180.7 ns  |   133.0 ns  |  1.36×  |
-  | pal8_to_rgba_u16 |  1280 |   896.9 ns  |   680.5 ns  |  1.32×  |
-  | pal8_to_rgba_u16 |  1920 |  1342.5 ns  |   999.5 ns  |  1.34×  |
+  | pal8_to_rgb      |   256 |   139.7 ns  |   123.5 ns  |  1.13x  |
+  | pal8_to_rgb      |  1280 |   667.6 ns  |   490.5 ns  |  1.36x  |
+  | pal8_to_rgb      |  1920 |   985.7 ns  |   744.6 ns  |  1.32x  |
+  | pal8_to_rgba     |   256 |   165.0 ns  |    83.7 ns  |  1.97x  |
+  | pal8_to_rgba     |  1280 |   794.2 ns  |   404.9 ns  |  1.96x  |
+  | pal8_to_rgba     |  1920 |  1197.8 ns  |   608.5 ns  |  1.97x  |
+  | pal8_to_rgb_u16  |   256 |   152.1 ns  |    83.3 ns  |  1.83x  |
+  | pal8_to_rgb_u16  |  1280 |   735.9 ns  |   404.0 ns  |  1.82x  |
+  | pal8_to_rgb_u16  |  1920 |  1085.2 ns  |   601.6 ns  |  1.80x  |
+  | pal8_to_rgba_u16 |   256 |   180.7 ns  |   133.0 ns  |  1.36x  |
+  | pal8_to_rgba_u16 |  1280 |   896.9 ns  |   680.5 ns  |  1.32x  |
+  | pal8_to_rgba_u16 |  1920 |  1342.5 ns  |   999.5 ns  |  1.34x  |
 
-  Analysis: SIMD wins 1.3–2.0× across all kernels. The RGBA kernels benefit
-  most (~2×) because `vst4q_u8` eliminates 4 independent byte-stride writes
+  Analysis: SIMD wins 1.3–2.0x across all kernels. The RGBA kernels benefit
+  most (~2x) because `vst4q_u8` eliminates 4 independent byte-stride writes
   that the scalar loop serializes. The gather itself is scalar and is the
   primary bottleneck; the SIMD benefit comes entirely from cheaper
   deinterleave + interleaved store, not from vectorized LUT access. The full
@@ -436,7 +436,7 @@ RGBA → α-extract scatters source α into slot 3. New helpers:
 `copy_alpha_plane_f32`, plus `copy_alpha_plane_f16` for f16-native paths.
 
 ~85 new tests: per-format scalar correctness (~24), per-backend SIMD
-parity (5 × 8 kernels = 40), round-half-up regression (5), cross-format
+parity (5 x 8 kernels = 40), round-half-up regression (5), cross-format
 planar parity (6), Strategy A+ byte-equivalence (4), HDR pass-through (4),
 32-bit dispatcher overflow guards (4).
 
@@ -478,7 +478,7 @@ pattern used by all other formats.
 
 Key implementation details:
 
-- **Grayf32 output model**: clamp `[0, 1]`, scale × 255 (u8) or × 65535
+- **Grayf32 output model**: clamp `[0, 1]`, scale x 255 (u8) or x 65535
   (u16) with MXCSR-independent rounding; lossless f32 pass-throughs
   (`rgb_f32`, `luma_f32`) added to `MixedSinker` struct.
 - **Ya8 / Ya16 RGBA**: Strategy A+ — RGB kernel first, then
@@ -529,8 +529,8 @@ Architecture:
   kernels — zero math duplication.
 
 Accessors on `MixedSinker<'_, Rgbf16>`:
-- `with_rgb` / `with_rgba` (clamp [0,1] × 255 → u8)
-- `with_rgb_u16` / `with_rgba_u16` (clamp [0,1] × 65535 → u16; full-range scaling
+- `with_rgb` / `with_rgba` (clamp [0,1] x 255 → u8)
+- `with_rgb_u16` / `with_rgba_u16` (clamp [0,1] x 65535 → u16; full-range scaling
   — same divergence-from-integer-source-family note as `Rgbf32`)
 - `with_rgb_f16` (NEW — lossless half-float pass-through)
 - `with_rgb_f32` (lossless widening)
@@ -539,7 +539,7 @@ Accessors on `MixedSinker<'_, Rgbf16>`:
 Test coverage:
 - 9 frame constructor tests (mirroring Rgbf32Frame).
 - 6 scalar parity tests (rgbf16 vs rgbf32-after-widen, bit-exact).
-- 6 SIMD scalar-equivalence tests per backend × 5 backends = 30 SIMD tests.
+- 6 SIMD scalar-equivalence tests per backend x 5 backends = 30 SIMD tests.
 - Sinker integration tests mirroring the Rgbf32 sinker pattern.
 
 F16C runtime detection on x86 with scalar fallback when F16C is unavailable
@@ -631,8 +631,8 @@ the `with_rgb + with_rgba` combo case previously ran the chroma kernel
 TWICE — once for RGB output, once for RGBA-with-source-α. Strategy A+
 now runs the chroma kernel ONCE, expands RGB → RGBA via the existing
 `expand_rgb_to_rgba_row` helper, then overwrites the α slot with a cheap
-α-extract pass from the source. Cost: 1× chroma + 1× expand + 1× α-overwrite
-instead of 2× chroma. Impact is largest for 16-bit (u16) outputs, where
+α-extract pass from the source. Cost: 1x chroma + 1x expand + 1x α-overwrite
+instead of 2x chroma. Impact is largest for 16-bit (u16) outputs, where
 the chroma kernel uses i64 arithmetic (Q15 sums overflow i32 at 16-bit
 input) — that kernel now runs once instead of twice.
 
@@ -693,7 +693,7 @@ This is **PR 3 of the 4-PR Tier 5 closure megaship**:
 Pure test additions; no public API or behavior change.
 
 Backports the multi-channel lane-order regression test pattern from
-Ship 12d (AYUV64) to all existing SIMD-deinterleave formats × every
+Ship 12d (AYUV64) to all existing SIMD-deinterleave formats x every
 backend. The new pattern encodes the pixel index in TWO channels
 independently (Y + U for non-α formats, Y + A for VUYA) and asserts:
 
@@ -711,7 +711,7 @@ Two real bugs were caught in this PR's audit:
   SIMD path. Fixed by bumping W to 16 (≥2 SIMD iterations).
 - V30X SSE4.1 had the same issue and was fixed identically.
 
-All lane-order tests now use W = 2× SIMD entry threshold, so each
+All lane-order tests now use W = 2x SIMD entry threshold, so each
 test exercises ≥2 full SIMD main-loop iterations rather than only
 the scalar tail.
 
@@ -773,7 +773,7 @@ shipped:
 Three follow-up cleanup PRs are queued (per the Tier 5 closure
 megaship plan):
 - Multi-channel lane-order backport to existing Tier 4 / 5
-  formats × every backend
+  formats x every backend
 - 8-bit planar `range_params` → `range_params_n::<8, 8>` migration
 - Strategy A+ design + impl (post-Strategy-A α-overwrite hook
   across all source-α formats)
@@ -868,7 +868,7 @@ rgbf32 / gbrpf32 — VFX archetype's biggest unmet need).
 New RAW source family for camera-RAW pipelines (RED R3D, Blackmagic
 BRAW, Nikon NRAW, FFmpeg `bayer_*`). `colconv` covers demosaic
 onwards: vendor SDKs decode the camera bitstream into a Bayer plane,
-`colconv` runs bilinear demosaic + per-channel white balance + 3×3
+`colconv` runs bilinear demosaic + per-channel white balance + 3x3
 color-correction in a single per-row kernel.
 
 ### New types (all in `colconv::raw`)
@@ -883,7 +883,7 @@ color-correction in a single per-row kernel.
   [`WhiteBalanceError`]), panicking `::new`, `::neutral`,
   accessors, `Default = neutral()`. `WbChannel` enum names which
   channel failed validation.
-- `ColorCorrectionMatrix` — 3×3 newtype with `::try_new`
+- `ColorCorrectionMatrix` — 3x3 newtype with `::try_new`
   (validating: rejects any non-finite element via
   [`ColorCorrectionMatrixError`]; negative entries are allowed
   because real CCMs subtract crosstalk), panicking `::new`,
@@ -893,7 +893,7 @@ color-correction in a single per-row kernel.
 
 - `BayerFrame<'a>` — single `&[u8]` plane. Odd widths and heights
   are accepted (cropped Bayer planes are real workflow output; the
-  walker / kernel handle partial 2×2 tiles via edge clamping).
+  walker / kernel handle partial 2x2 tiles via edge clamping).
 - `BayerFrame16<'a, const BITS: u32>` — `&[u16]` **low-packed** at
   `BITS` ∈ {10, 12, 14, 16} (active samples in the low `BITS` bits,
   valid range `[0, (1 << BITS) - 1]`). Matches the planar
@@ -1085,7 +1085,7 @@ scope for this vertical slice; other 4:4:4 variants land later):
 
 - `scalar::yuv_444p_n_to_rgb_or_rgba_row<BITS, ALPHA, ALPHA_SRC>` (u8)
 - `scalar::yuv_444p_n_to_rgb_or_rgba_u16_row<BITS, ALPHA, ALPHA_SRC>` (u16)
-- Same SIMD templates × 5 backends (NEON / SSE4.1 / AVX2 / AVX-512 /
+- Same SIMD templates x 5 backends (NEON / SSE4.1 / AVX2 / AVX-512 /
   wasm simd128) — refactor in PRs #33 (u8) and #34 (u16).
 
 Per-pixel store branched on three combinations:
@@ -1115,7 +1115,7 @@ Per-pixel store branched on three combinations:
 
 ### Tests
 
-- **Per-backend SIMD equivalence tests**: 30 per backend × 5 backends
+- **Per-backend SIMD equivalence tests**: 30 per backend x 5 backends
   for `Yuva444p10` (5 u8 added in PR #33 + 5 u16 added in PR #34).
   Solid-alpha + random-alpha + tail-width coverage. All x86 tests
   carry `is_x86_feature_detected!` early-return guards.
@@ -1169,7 +1169,7 @@ downstream of `colconv` benefits.
   attached, `process` runs the YUV→RGB kernel once and fans out to
   RGBA via `expand_rgb_to_rgba_row` / `expand_rgb_u16_to_rgba_u16_row<BITS>`
   (memory-bound copy + alpha pad, ~7W bytes/row) instead of running
-  the YUV math twice. ~2× speedup for the both-buffers caller.
+  the YUV math twice. ~2x speedup for the both-buffers caller.
 
 ### Mass-apply tracker
 
@@ -1226,7 +1226,7 @@ helpers added in tranche 5: `vst4q_u8` / `vst4q_u16` (NEON),
 - Per-arch RGBA equivalence tests: ~30 per high-bit family across all
   5 backends — tranche 5 added 4:2:0 (u8 + u16, BITS=9/10/12/14 + 16
   + Pn); tranche 7b/7c added 4:4:4 (u8 + u16, BITS=9/10/12/14 + 16 +
-  Pn-444). All matrices × ranges × natural-block + tail widths.
+  Pn-444). All matrices x ranges x natural-block + tail widths.
 - Sinker integration tests: 8 in PR #26 (4:2:0), 8 in PR #28 (4:2:2),
   6 in PR #29 (4:4:4 scalar), 9 in PR #31 (4:4:4 + Yuv440p10 cross-
   family kernel-reuse proof). Cover standalone-RGBA, Strategy A
@@ -1324,8 +1324,8 @@ identical to 4:2:0.
   full + limited range, all matrices.
 - 25 new per-arch SIMD scalar-equivalence tests for the new
   `p_n_444_to_rgb_*<BITS>` and `p_n_444_16_to_rgb_*` kernels —
-  5 tests × 5 backends (NEON, SSE4.1, AVX2, AVX-512, wasm simd128).
-  Cover all 6 ColorMatrix variants × full + limited range at the
+  5 tests x 5 backends (NEON, SSE4.1, AVX2, AVX-512, wasm simd128).
+  Cover all 6 ColorMatrix variants x full + limited range at the
   backend's natural width, plus tail widths {1, 3, 7, 8, 9, 15, 16,
   17, 31, 33, 47, 63, 65, 95, 127, 129, 1920, 1921} forcing
   scalar-tail fallback at every block-size boundary.
@@ -1453,7 +1453,7 @@ implementations on AVX2 and wasm simd128:
   was rational when `_mm256_srai_epi64` was unavailable, but the
   `srai64_15` bias trick scales cleanly to 256 bits via
   `_mm256_srli_epi64` + offset. New AVX2 kernels process 16 pixels
-  per iter — 2× the SSE4.1 rate.
+  per iter — 2x the SSE4.1 rate.
 - **wasm simd128**: all three previously fell through to scalar. The
   "no native i64 arithmetic shift" rationale became stale once
   `i64x2_shr_s` stabilized. New wasm kernels use `i64x2_mul` +
@@ -1465,16 +1465,16 @@ Every 16-bit u16-output path is now native on every backend.
 
 37 new tests total:
 - 11 `MixedSinker` integration tests (10 `gray → gray` sanity checks
-  covering every new format × u8/u16 output, plus a `yuv422p ↔
+  covering every new format x u8/u16 output, plus a `yuv422p ↔
   yuv420p` equivalence check that pins the shared-row-kernel
   contract).
 - 6 NEON arch equivalence tests for `yuv_444p_n` and `yuv_444p16`
   across all six matrices, full/limited range, and odd-width tails
   (1, 3, 15, 17, 32, 33, 1920, 1921).
 - 10 per-arch `yuv_444_to_rgb_row` scalar-equivalence tests (2 per
-  backend × 5 backends).
+  backend x 5 backends).
 - 10 per-arch `yuv_444p_n<BITS>` scalar-equivalence tests on x86 +
-  wasm (4 kernels × SSE4.1 / AVX2 / AVX-512 / wasm, covering 10/12/14
+  wasm (4 kernels x SSE4.1 / AVX2 / AVX-512 / wasm, covering 10/12/14
   and widths straddling each backend's block size).
 
 Total suite: **273 passed on aarch64** (up from 254 at v0.5). x86
@@ -1489,7 +1489,7 @@ and wasm tests run in CI on their respective targets.
   the same width.
 - `yuv_444p_to_rgb`, `yuv_444p10_to_rgb`, `yuv_444p12_to_rgb`,
   `yuv_444p14_to_rgb`, `yuv_444p16_to_rgb` — dedicated 4:4:4
-  kernels. NEON 4× over scalar on the 8-bit kernel (~1.6 GiB/s
+  kernels. NEON 4x over scalar on the 8-bit kernel (~1.6 GiB/s
   scalar → ~6.4 GiB/s NEON at 1080p).
 
 ## Ship 5 — NV16 / NV24 / NV42
@@ -1514,13 +1514,13 @@ and wasm tests run in CI on their respective targets.
 
 Native NV24 / NV42 kernels across all five arches:
 
-| Backend   | Block (Y × UV bytes) | Relative to SSE4.1 |
+| Backend   | Block (Y x UV bytes) | Relative to SSE4.1 |
 | --------- | -------------------- | ------------------ |
-| NEON      | 16 × 32              | 1×                 |
-| SSE4.1    | 16 × 32              | 1× (baseline)      |
-| AVX2      | 32 × 64              | ~2×                |
-| AVX-512   | 64 × 128             | ~4×                |
-| wasm      | 16 × 32              | 1×                 |
+| NEON      | 16 x 32              | 1x                 |
+| SSE4.1    | 16 x 32              | 1x (baseline)      |
+| AVX2      | 32 x 64              | ~2x                |
+| AVX-512   | 64 x 128             | ~4x                |
+| wasm      | 16 x 32              | 1x                 |
 
 The 4:4:4 layout simplifies the main loop vs NV12/NV21 — no
 horizontal chroma duplication since UV is 1:1 with Y.
@@ -1531,7 +1531,7 @@ horizontal chroma duplication since UV is 1:1 with Y.
   now run a native 32-pixel-per-iter kernel using
   `_mm512_srai_epi64` + `_mm512_mul_epi32` +
   `_mm512_permutex2var_epi32` reassembly, replacing the 8-pixel
-  SSE4.1 delegation that Ship 4b shipped. ~4× throughput
+  SSE4.1 delegation that Ship 4b shipped. ~4x throughput
   improvement on AVX-512 CPUs.
 - AVX2 u16 paths still delegate to SSE4.1 (AVX2 lacks
   `_mm256_srai_epi64`; reimplementing the `srai64_15` bias trick at
@@ -1542,14 +1542,14 @@ horizontal chroma duplication since UV is 1:1 with Y.
 34 new tests total:
 - 15 frame validation tests for `Nv16Frame` / `Nv24Frame` /
   `Nv42Frame` including odd-width + odd-height acceptance for 4:4:4,
-  `u32` overflow on the `2 × width` chroma stride.
+  `u32` overflow on the `2 x width` chroma stride.
 - 13 MixedSinker integration tests including the cross-format
   parity checks `nv16_matches_nv12_mixed_sinker_with_duplicated_chroma`
   and `nv42_matches_nv24_mixed_sinker_with_swapped_chroma` (the
   latter uses width 33 to exercise the no-parity contract), plus
   error-path tests mirroring the NV12 suite.
-- 6 NEON arch equivalence tests across 6 matrices × full/limited
-  range × odd-width tails (1, 3, 15, 17, 33).
+- 6 NEON arch equivalence tests across 6 matrices x full/limited
+  range x odd-width tails (1, 3, 15, 17, 33).
 
 Total suite: 254 passed on aarch64 (up from 204 at v0.4b).
 

@@ -1085,7 +1085,7 @@ pub fn bgr444_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
 #[cfg(all(test, feature = "std"))]
 mod tests {
   //! Regression tests for the 32-bit overflow guards. Input side uses
-  //! [`packed_yuv422_row_bytes`] (width × 2); output side uses
+  //! [`packed_yuv422_row_bytes`] (width x 2); output side uses
   //! [`rgb_row_bytes`] / [`rgba_row_bytes`] / [`rgb_row_elems`] /
   //! [`rgba_row_elems`]. Any of the four can overflow independently on a
   //! 32-bit target, so each has at least one dedicated test.
@@ -1093,7 +1093,7 @@ mod tests {
   #[cfg(target_pointer_width = "32")]
   use super::*;
 
-  /// Smallest width whose `width × 2` overflows 32-bit `usize`.
+  /// Smallest width whose `width x 2` overflows 32-bit `usize`.
   /// On a 32-bit target `usize::MAX == 2^32 - 1`, so `usize::MAX / 2 ==
   /// 2^31 - 1` (odd); adding 1 gives `2^31` (even). The parity fixup is
   /// a safety guard in case the arithmetic differs on a hypothetical platform.
@@ -1103,7 +1103,7 @@ mod tests {
     c + (c & 1)
   };
 
-  /// Smallest width whose `width × 3` overflows 32-bit `usize`.
+  /// Smallest width whose `width x 3` overflows 32-bit `usize`.
   /// `usize::MAX / 3 == 1_431_655_765` (always odd on 32-bit), so `+ 1`
   /// gives an even value. The parity fixup keeps correctness on edge cases.
   #[cfg(target_pointer_width = "32")]
@@ -1112,7 +1112,7 @@ mod tests {
     c + (c & 1)
   };
 
-  /// Smallest width whose `width × 4` overflows 32-bit `usize`.
+  /// Smallest width whose `width x 4` overflows 32-bit `usize`.
   /// `usize::MAX / 4 == 2^30 - 1` (odd on 32-bit), so `+ 1` is `2^30` (even).
   #[cfg(target_pointer_width = "32")]
   const OVERFLOW_WIDTH_X4: usize = {
@@ -1120,7 +1120,7 @@ mod tests {
     c + (c & 1)
   };
 
-  /// Input-side `width × 2` overflow: `packed_yuv422_row_bytes` panics
+  /// Input-side `width x 2` overflow: `packed_yuv422_row_bytes` panics
   /// before the output guard is reached. Exercises the input path that is
   /// unique to legacy RGB (2 bytes/pixel) versus 3- or 4-channel outputs.
   #[cfg(target_pointer_width = "32")]
@@ -1132,7 +1132,7 @@ mod tests {
     rgb565_to_rgb_row(&src, &mut rgb, OVERFLOW_WIDTH_X2, false);
   }
 
-  /// Output-side `width × 3` overflow: the input fits (OVERFLOW_WIDTH_X3 <
+  /// Output-side `width x 3` overflow: the input fits (OVERFLOW_WIDTH_X3 <
   /// OVERFLOW_WIDTH_X2 on 32-bit), but `rgb_row_bytes` panics on the
   /// output-buffer calculation.
   #[cfg(target_pointer_width = "32")]
@@ -1144,7 +1144,7 @@ mod tests {
     rgb565_to_rgb_row(&src, &mut rgb, OVERFLOW_WIDTH_X3, false);
   }
 
-  /// Output-side `width × 4` overflow via rgba output: `rgba_row_bytes` panics.
+  /// Output-side `width x 4` overflow via rgba output: `rgba_row_bytes` panics.
   /// OVERFLOW_WIDTH_X4 < OVERFLOW_WIDTH_X2 on 32-bit, so input guard passes.
   #[cfg(target_pointer_width = "32")]
   #[test]
@@ -1155,7 +1155,7 @@ mod tests {
     rgb565_to_rgba_row(&src, &mut rgba, OVERFLOW_WIDTH_X4, false);
   }
 
-  /// u16 output-side `width × 3` element overflow: `rgb_row_elems` panics.
+  /// u16 output-side `width x 3` element overflow: `rgb_row_elems` panics.
   /// Uses `bgr444_to_rgb_u16_row` to cover a different format and the u16 path.
   #[cfg(target_pointer_width = "32")]
   #[test]

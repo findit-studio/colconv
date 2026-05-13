@@ -4,7 +4,7 @@
 //! AYUV64 (FFmpeg `AV_PIX_FMT_AYUV64LE`) packs **four u16 slots per
 //! pixel** (`[A, Y, U, V]`). All channels are 16-bit native — no
 //! padding bits, no shift required. The A slot is **real source alpha**
-//! — not padding. The packed slice type is `&[u16]`, with `4 × width`
+//! — not padding. The packed slice type is `&[u16]`, with `4 x width`
 //! u16 elements per row. There is no chroma subsampling — every pixel
 //! carries its own independent A / Y / U / V quadruple (4:4:4).
 //!
@@ -65,7 +65,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Ayuv64<BE>> {
   /// — not forced to `0xFF`.
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   ///
   /// ## Strategy note
@@ -98,11 +98,11 @@ impl<'a, const BE: bool> MixedSinker<'a, Ayuv64<BE>> {
   }
 
   /// Attaches a packed **`u16`** RGB output buffer. Native 16-bit depth;
-  /// length is measured in `u16` **elements** (`width × height × 3`).
+  /// length is measured in `u16` **elements** (`width x height x 3`).
   /// Alpha is discarded.
   ///
   /// Returns `Err(InsufficientRgbU16Buffer)` if
-  /// `buf.len() < width × height × 3`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 3`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -126,10 +126,10 @@ impl<'a, const BE: bool> MixedSinker<'a, Ayuv64<BE>> {
   /// Attaches a packed **`u16`** RGBA output buffer. Native 16-bit
   /// depth; source α u16 at slot 0 of each pixel quadruple is written
   /// **direct** (no conversion). Length is measured in `u16`
-  /// **elements** (`width × height × 4`).
+  /// **elements** (`width x height x 4`).
   ///
   /// Returns `Err(InsufficientRgbaU16Buffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   ///
   /// ## Strategy note
@@ -163,10 +163,10 @@ impl<'a, const BE: bool> MixedSinker<'a, Ayuv64<BE>> {
   /// Attaches a native-depth **`u16`** luma output buffer. The 16-bit Y
   /// value at slot 1 of each AYUV64 quadruple is written direct (no
   /// shift — 16-bit native). Length is measured in `u16` **elements**
-  /// (`width × height`).
+  /// (`width x height`).
   ///
   /// Returns `Err(InsufficientLumaU16Buffer)` if
-  /// `buf.len() < width × height`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -205,7 +205,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Ayuv64<BE>> {
     let idx = row.row();
     let use_simd = self.simd;
 
-    // AYUV64 row = `width × 4` u16 elements (one quadruple per pixel).
+    // AYUV64 row = `width x 4` u16 elements (one quadruple per pixel).
     let packed_expected =
       w.checked_mul(4)
         .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(

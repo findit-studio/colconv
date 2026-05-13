@@ -177,7 +177,7 @@ fn mixed_all_outputs_populated() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn vertical_chroma_subsampling_4x_each_chroma_row_covers_4_y_rows() {
-  // Build a 16×8 frame with two distinct chroma blocks vertically:
+  // Build a 16x8 frame with two distinct chroma blocks vertically:
   // chroma row 0 covers Y rows 0..3, chroma row 1 covers Y rows 4..7.
   // Set chroma block 0 to (U=80, V=180) and block 1 to (U=160, V=80) —
   // distinct enough to produce visibly different RGB across the
@@ -238,7 +238,7 @@ fn vertical_chroma_subsampling_4x_each_chroma_row_covers_4_y_rows() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn horizontal_chroma_subsampling_4x_each_chroma_sample_covers_4_y_columns() {
-  // Build a 16×4 frame with two distinct chroma samples per row:
+  // Build a 16x4 frame with two distinct chroma samples per row:
   // sample 0 covers Y columns 0..3, sample 1 covers Y columns 4..7,
   // sample 2 covers Y columns 8..11, sample 3 covers Y columns 12..15.
   let w = 16usize;

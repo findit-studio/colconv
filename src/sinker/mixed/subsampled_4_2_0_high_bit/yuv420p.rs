@@ -39,7 +39,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p9<BE>> {
   /// pixel is alpha = `0xFF` (Yuv420p9 has no alpha plane).
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -61,7 +61,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p9<BE>> {
 
   /// Attaches a packed **`u16`** RGBA output buffer. 9‑bit low‑packed
   /// (`(1 << 9) - 1 = 511` max). Length is measured in `u16`
-  /// **elements** (`width × height × 4`). Alpha element is
+  /// **elements** (`width x height x 4`). Alpha element is
   /// `(1 << 9) - 1`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -293,14 +293,14 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p10<BE>> {
   /// silent no‑op that would leave the caller's buffer stale.
   ///
   /// Length is measured in `u16` **elements** (not bytes): minimum
-  /// `width × height × 3`. Each element carries a 10‑bit value in
+  /// `width x height x 3`. Each element carries a 10‑bit value in
   /// the **low** 10 bits (upper 6 bits zero), matching FFmpeg's
   /// `yuv420p10le` convention. This is **not** the `p010` layout
   /// (which stores samples in the high 10 bits); callers feeding a
   /// p010 consumer must shift the output left by 6.
   ///
   /// Returns `Err(InsufficientRgbU16Buffer)` if
-  /// `buf.len() < width × height × 3`, or `Err(GeometryOverflow)`
+  /// `buf.len() < width x height x 3`, or `Err(GeometryOverflow)`
   /// on 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -312,7 +312,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p10<BE>> {
   /// required length is measured in `u16` **elements**, not bytes.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
-    // Packed RGB requires `width × height × 3` channel values —
+    // Packed RGB requires `width x height x 3` channel values —
     // that's the same count whether the element type is `u8` or
     // `u16`, so the [`Self::frame_elems`] helper (named for the u8
     // RGB path's byte count) gives the element count here too. No
@@ -351,7 +351,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p10<BE>> {
 
   /// Attaches a packed **`u16`** RGBA output buffer. 10‑bit
   /// low‑packed (`(1 << 10) - 1 = 1023` max). Length is measured in
-  /// `u16` **elements** (`width × height × 4`). Alpha element is
+  /// `u16` **elements** (`width x height x 4`). Alpha element is
   /// `(1 << 10) - 1`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -596,8 +596,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p12<BE>> {
   /// Attaches a packed **`u16`** RGB output buffer. Mirrors
   /// [`MixedSinker<Yuv420p10>::with_rgb_u16`] but produces 12‑bit
   /// output (values in `[0, 4095]` in the low 12 of each `u16`, upper
-  /// 4 zero). Length is measured in `u16` **elements** (`width ×
-  /// height × 3`).
+  /// 4 zero). Length is measured in `u16` **elements** (`width x
+  /// height x 3`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;
@@ -640,7 +640,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p12<BE>> {
 
   /// Attaches a packed **`u16`** RGBA output buffer. 12‑bit
   /// low‑packed (`(1 << 12) - 1 = 4095` max). Length is measured in
-  /// `u16` **elements** (`width × height × 4`). Alpha element is
+  /// `u16` **elements** (`width x height x 4`). Alpha element is
   /// `(1 << 12) - 1`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -868,8 +868,8 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv420p12<BE>> {
 impl<'a, const BE: bool> MixedSinker<'a, Yuv420p14<BE>> {
   /// Attaches a packed **`u16`** RGB output buffer. Produces 14‑bit
   /// output (values in `[0, 16383]` in the low 14 of each `u16`, upper
-  /// 2 zero). Length is measured in `u16` **elements** (`width ×
-  /// height × 3`).
+  /// 2 zero). Length is measured in `u16` **elements** (`width x
+  /// height x 3`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;
@@ -912,7 +912,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p14<BE>> {
 
   /// Attaches a packed **`u16`** RGBA output buffer. 14‑bit
   /// low‑packed (`(1 << 14) - 1 = 16383` max). Length is measured in
-  /// `u16` **elements** (`width × height × 4`). Alpha element is
+  /// `u16` **elements** (`width x height x 4`). Alpha element is
   /// `(1 << 14) - 1`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -1138,7 +1138,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv420p14<BE>> {
 impl<'a, const BE: bool> MixedSinker<'a, Yuv420p16<BE>> {
   /// Attaches a packed **`u16`** RGB output buffer. Produces 16‑bit
   /// output (values in `[0, 65535]` — full `u16` range). Length is
-  /// measured in `u16` **elements** (`width × height × 3`).
+  /// measured in `u16` **elements** (`width x height x 3`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;
@@ -1181,7 +1181,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv420p16<BE>> {
 
   /// Attaches a packed **`u16`** RGBA output buffer. 16‑bit output
   /// (full `u16` range). Length is measured in `u16` **elements**
-  /// (`width × height × 4`). Alpha element is `u16::MAX`.
+  /// (`width x height x 4`). Alpha element is `u16::MAX`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;

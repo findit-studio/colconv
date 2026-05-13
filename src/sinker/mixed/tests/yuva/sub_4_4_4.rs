@@ -377,7 +377,7 @@ fn solid_yuva444p9_frame(
 ) -> (Vec<u16>, Vec<u16>, Vec<u16>, Vec<u16>) {
   let w = width as usize;
   let h = height as usize;
-  // 4:4:4: chroma full-width × full-height.
+  // 4:4:4: chroma full-width x full-height.
   (
     std::vec![y; w * h],
     std::vec![u; w * h],
@@ -529,7 +529,7 @@ fn solid_yuva444p_frame_u16(
 ) -> (Vec<u16>, Vec<u16>, Vec<u16>, Vec<u16>) {
   let w = width as usize;
   let h = height as usize;
-  // 4:4:4: chroma full-width × full-height; alpha 1:1 with Y.
+  // 4:4:4: chroma full-width x full-height; alpha 1:1 with Y.
   (
     std::vec![y; w * h],
     std::vec![u; w * h],
@@ -878,7 +878,7 @@ fn solid_yuva444p_frame(
 ) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
   let w = width as usize;
   let h = height as usize;
-  // 4:4:4: chroma full-width × full-height; alpha 1:1 with Y.
+  // 4:4:4: chroma full-width x full-height; alpha 1:1 with Y.
   (
     std::vec![y; w * h],
     std::vec![u; w * h],

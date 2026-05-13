@@ -1,11 +1,11 @@
 //! Sinker impl for the Tier 9 packed-half-float-RGB **source** format
 //! ([`Rgbf16`] — FFmpeg `AV_PIX_FMT_RGBF16`).
 //!
-//! Each pixel is `3 × half::f16` (linear `R, G, B`). Output paths:
-//! - `with_rgb` — clamp `[0, 1]` × 255 → packed `R, G, B` u8
+//! Each pixel is `3 x half::f16` (linear `R, G, B`). Output paths:
+//! - `with_rgb` — clamp `[0, 1]` x 255 → packed `R, G, B` u8
 //!   (`rgbf16_to_rgb_row`).
 //! - `with_rgba` — same conversion + constant `0xFF` alpha.
-//! - `with_rgb_u16` — clamp `[0, 1]` × 65535 → packed `R, G, B` u16.
+//! - `with_rgb_u16` — clamp `[0, 1]` x 65535 → packed `R, G, B` u16.
 //!   **Full-range scaling** (see [`with_rgb_u16`](MixedSinker::with_rgb_u16)
 //!   for the divergence note vs the integer-source family).
 //! - `with_rgba_u16` — same + constant `0xFFFF` alpha.
@@ -59,9 +59,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgbf16<BE>> {
     Ok(self)
   }
 
-  /// Attaches a `u16` RGB output buffer (`width × height × 3`
+  /// Attaches a `u16` RGB output buffer (`width x height x 3`
   /// elements). Each `half::f16` channel is clamped to `[0, 1]` and
-  /// **scaled to the full u16 range** (×65535).
+  /// **scaled to the full u16 range** (x65535).
   ///
   /// # Naming consistency note
   ///
@@ -89,7 +89,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgbf16<BE>> {
     Ok(self)
   }
 
-  /// Attaches a `u16` RGBA output buffer. Same `[0, 1]` × 65535
+  /// Attaches a `u16` RGBA output buffer. Same `[0, 1]` x 65535
   /// **full-range scaling** as
   /// [`with_rgb_u16`](Self::with_rgb_u16); alpha is forced to `0xFFFF`
   /// (the float source has no alpha channel). See
@@ -134,7 +134,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgbf16<BE>> {
     Ok(self)
   }
 
-  /// Attaches a `half::f16` RGB output buffer (`width × height × 3`
+  /// Attaches a `half::f16` RGB output buffer (`width x height x 3`
   /// elements). The source is copied **losslessly** — HDR values > 1.0
   /// and negative values are preserved bit-exact. This is a direct
   /// `copy_from_slice` — no conversion is performed.

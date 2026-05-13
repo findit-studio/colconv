@@ -522,12 +522,12 @@ unsafe fn yuv_444_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
 // ---- YUV 4:1:0 SSE4.1 entries ---------------------------------------
 //
 // 4:1:0: planar YUV with chroma subsampled 4:1 in **both** axes.
-// Each (U, V) sample covers a 4×4 block of 16 luma pixels. The
-// vertical 4× re-use is the walker's job (chroma row = `y_row / 4`);
-// this kernel handles the per-row 4× horizontal upsample. Math is
+// Each (U, V) sample covers a 4x4 block of 16 luma pixels. The
+// vertical 4x re-use is the walker's job (chroma row = `y_row / 4`);
+// this kernel handles the per-row 4x horizontal upsample. Math is
 // byte-identical to scalar by construction (same Q15 sequence, same
 // saturating-narrow primitives) — only the chroma fan-out shape
-// differs from 4:2:0 (4× duplication via two unpacklo/unpackhi
+// differs from 4:2:0 (4x duplication via two unpacklo/unpackhi
 // chains instead of one).
 
 /// SSE4.1 YUV 4:1:0 → packed RGB. Semantics match
@@ -591,7 +591,7 @@ pub(crate) unsafe fn yuv_410_to_rgba_row(
 /// [`write_rgba_16`] with constant `0xFF` alpha). Math is
 /// byte-identical to `scalar::yuv_410_to_rgb_or_rgba_row::<ALPHA>` —
 /// same Q15 sequence and saturating-narrow primitives as the 4:2:0
-/// SSE4.1 kernel; only the chroma-fanout shape differs (4×
+/// SSE4.1 kernel; only the chroma-fanout shape differs (4x
 /// horizontal duplication).
 ///
 /// Pipeline per 16 Y pixels:
@@ -603,7 +603,7 @@ pub(crate) unsafe fn yuv_410_to_rgba_row(
 /// 4. Per channel C ∈ {R, G, B}:
 ///    `C_chroma = (C_u * u_d + C_v * v_d + RND) >> 15` (i32x4),
 ///    saturate-narrow to i16x8 (low 4 lanes carry the chroma).
-/// 5. Duplicate each of the 4 chroma lanes 4× via two unpack passes:
+/// 5. Duplicate each of the 4 chroma lanes 4x via two unpack passes:
 ///    `unpacklo_epi16` once gives `[c0,c0,c1,c1,c2,c2,c3,c3]`, then
 ///    a second `unpacklo`/`unpackhi` on that vector gives
 ///    `[c0,c0,c0,c0,c1,c1,c1,c1]` (lo) and
@@ -702,7 +702,7 @@ unsafe fn yuv_410_to_rgb_or_rgba_row<const ALPHA: bool>(
       let g_chroma = _mm_packs_epi32(g_i32, g_i32);
       let b_chroma = _mm_packs_epi32(b_i32, b_i32);
 
-      // 4× horizontal upsample. Two unpack passes to fan each chroma
+      // 4x horizontal upsample. Two unpack passes to fan each chroma
       // lane to 4 adjacent slots:
       //   pass 1: unpacklo([c0,c1,c2,c3,_,_,_,_], same)
       //         = [c0,c0, c1,c1, c2,c2, c3,c3]

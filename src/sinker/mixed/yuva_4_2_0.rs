@@ -511,7 +511,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva420p16<BE>> {
 // structurally identical — only the depth-named row primitives, the
 // `RowSlice` variants used in error reports, and the depth-conversion
 // shift (`BITS - 8`) for luma differ. Factor the shared body into a
-// generic helper to avoid 3× of the same ~70 lines.
+// generic helper to avoid 3x of the same ~70 lines.
 //
 // Strategy A combine for the alpha-drop paths (rgb_u16 alpha-drop +
 // rgba_u16 source alpha): runs the rgb_u16 kernel into the caller

@@ -213,7 +213,7 @@ pub(crate) fn yuv_420p16_to_rgb_or_rgba_row<
 /// Converts one row of **16-bit** YUV 4:2:0 to **native-depth `u16`**
 /// packed RGB — full-range output in `[0, 65535]`. **Runs the
 /// chroma matrix multiply in i64** to accommodate the wider
-/// `coeff × u_d` product at 16 → 16-bit scaling.
+/// `coeff x u_d` product at 16 → 16-bit scaling.
 ///
 /// Thin wrapper over [`yuv_420p16_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.
 ///
@@ -387,7 +387,7 @@ pub(crate) fn yuv_420p16_to_rgb_or_rgba_u16_row<
 }
 
 /// YUV 4:4:4 planar **16‑bit** → packed **8‑bit** RGB. Same i32
-/// chroma pipeline as 10/12/14 (output‑range scaling keeps `coeff × u_d`
+/// chroma pipeline as 10/12/14 (output‑range scaling keeps `coeff x u_d`
 /// inside i32 for u8 target). 1:1 chroma per Y pixel, no width parity.
 ///
 /// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_row`] with `ALPHA = false`.
@@ -538,7 +538,7 @@ pub(crate) fn yuv_444p16_to_rgb_or_rgba_row<
 }
 
 /// YUV 4:4:4 planar **16‑bit** → packed **native‑depth `u16`** RGB.
-/// Widens chroma matrix multiply to i64 (Bt2020 `b_u × u_d` reaches
+/// Widens chroma matrix multiply to i64 (Bt2020 `b_u x u_d` reaches
 /// ~2.31·10⁹ at limited‑range 16→u16 — overflows i32). Y path widens
 /// via [`q15_scale64`] to handle unclamped Y samples above the
 /// limited‑range nominal max.

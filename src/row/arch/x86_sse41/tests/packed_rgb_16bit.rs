@@ -466,7 +466,7 @@ fn sse41_bgra64_to_rgba_u16_width1_tail_only() {
 // =============================================================================
 //
 // Buffers built host-independently via `to_le_bytes` / `to_be_bytes`. Width
-// 17 = 2 × 8-lane SSE4.1 SIMD body + 1 scalar tail.
+// 17 = 2 x 8-lane SSE4.1 SIMD body + 1 scalar tail.
 
 fn make_le_be_pair_u16(intended: &[u16]) -> (std::vec::Vec<u16>, std::vec::Vec<u16>) {
   let le_bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
@@ -686,8 +686,8 @@ fn sse41_bgra64_be_le_simd_parity_width17() {
 //
 // Co-located here (rather than in the dead-code `tests/packed_rgb.rs` which
 // is not declared in `tests/mod.rs`) so they are actually compiled and run.
-// Width 33 = 2 × 16-lane SSE4.1 SIMD body + 1 scalar tail (u8 outputs);
-// the u16 output kernel uses 8 px / iter, so 33 = 4 × 8 + 1.
+// Width 33 = 2 x 16-lane SSE4.1 SIMD body + 1 scalar tail (u8 outputs);
+// the u16 output kernel uses 8 px / iter, so 33 = 4 x 8 + 1.
 
 fn pseudo_random_x2_intended(width: usize, seed: u32) -> std::vec::Vec<u32> {
   let mut state = seed;

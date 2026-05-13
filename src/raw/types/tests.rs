@@ -42,7 +42,7 @@ fn fuse_wb_ccm_with_identity_ccm_returns_diag_wb() {
 #[cfg(feature = "bayer")]
 #[test]
 fn fuse_wb_ccm_scales_columns_by_wb() {
-  // M = CCM · diag(wb) ⇒ column j of M is column j of CCM × wb_j.
+  // M = CCM · diag(wb) ⇒ column j of M is column j of CCM x wb_j.
   let ccm = ColorCorrectionMatrix::new([[1.0, 2.0, 4.0], [8.0, 16.0, 32.0], [64.0, 128.0, 256.0]]);
   let wb = WhiteBalance::new(0.5, 1.0, 0.25);
   let m = fuse_wb_ccm(&wb, &ccm);

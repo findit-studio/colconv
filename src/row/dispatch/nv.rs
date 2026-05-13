@@ -39,7 +39,7 @@ pub fn nv12_to_rgb_row(
 ) {
   // Runtime asserts at the dispatcher boundary (see
   // [`yuv_420_to_rgb_row`] for rationale, including the checked
-  // `width × 3` multiplication).
+  // `width x 3` multiplication).
   assert_eq!(width & 1, 0, "NV12 requires even width");
   let rgb_min = rgb_row_bytes(width);
   assert!(y.len() >= width, "y row too short");
@@ -200,7 +200,7 @@ pub fn nv12_to_rgba_row(
 ) {
   // Runtime asserts at the dispatcher boundary — see
   // [`yuv_420_to_rgba_row`] for rationale, including the checked
-  // `width × 4` multiplication via [`rgba_row_bytes`].
+  // `width x 4` multiplication via [`rgba_row_bytes`].
   assert_eq!(width & 1, 0, "NV12 requires even width");
   let rgba_min = rgba_row_bytes(width);
   assert!(y.len() >= width, "y row too short");
@@ -355,7 +355,7 @@ pub fn nv24_to_rgb_row(
   // check before entering unsafe SIMD paths.
   let uv_min = match width.checked_mul(2) {
     Some(n) => n,
-    None => panic!("width ({width}) × 2 overflows usize"),
+    None => panic!("width ({width}) x 2 overflows usize"),
   };
   assert!(y.len() >= width, "y row too short");
   assert!(uv.len() >= uv_min, "uv row too short");
@@ -429,7 +429,7 @@ pub fn nv42_to_rgb_row(
   let rgb_min = rgb_row_bytes(width);
   let vu_min = match width.checked_mul(2) {
     Some(n) => n,
-    None => panic!("width ({width}) × 2 overflows usize"),
+    None => panic!("width ({width}) x 2 overflows usize"),
   };
   assert!(y.len() >= width, "y row too short");
   assert!(vu.len() >= vu_min, "vu row too short");
@@ -506,7 +506,7 @@ pub fn nv24_to_rgba_row(
   let rgba_min = rgba_row_bytes(width);
   let uv_min = match width.checked_mul(2) {
     Some(n) => n,
-    None => panic!("width ({width}) × 2 overflows usize"),
+    None => panic!("width ({width}) x 2 overflows usize"),
   };
   assert!(y.len() >= width, "y row too short");
   assert!(uv.len() >= uv_min, "uv row too short");
@@ -579,7 +579,7 @@ pub fn nv42_to_rgba_row(
   let rgba_min = rgba_row_bytes(width);
   let vu_min = match width.checked_mul(2) {
     Some(n) => n,
-    None => panic!("width ({width}) × 2 overflows usize"),
+    None => panic!("width ({width}) x 2 overflows usize"),
   };
   assert!(y.len() >= width, "y row too short");
   assert!(vu.len() >= vu_min, "vu row too short");

@@ -66,7 +66,7 @@ impl<'a> MixedSinker<'a, Gray8> {
   /// Attaches an 8-bit RGBA output buffer. Alpha is forced to `0xFF`
   /// (Gray8 has no alpha channel).
   ///
-  /// Returns `Err(InsufficientRgbaBuffer)` if `buf.len() < width × height × 4`,
+  /// Returns `Err(InsufficientRgbaBuffer)` if `buf.len() < width x height x 4`,
   /// or `Err(GeometryOverflow)` on 32-bit overflow.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -88,7 +88,7 @@ impl<'a> MixedSinker<'a, Gray8> {
 
   /// Attaches a u16 luma output buffer. Gray8 Y bytes are zero-extended
   /// to u16 (each output element equals `y_byte as u16`). Length measured
-  /// in `u16` elements (`width × height`).
+  /// in `u16` elements (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -426,7 +426,7 @@ macro_rules! impl_gray_n_sinker {
       }
 
       /// Attaches a u16 RGB output buffer. Samples are masked to the low
-      /// `BITS` bits; length is in `u16` elements (`width × height × 3`).
+      /// `BITS` bits; length is in `u16` elements (`width x height x 3`).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
         self.set_rgb_u16(buf)?;
@@ -447,7 +447,7 @@ macro_rules! impl_gray_n_sinker {
 
       /// Attaches a u16 RGBA output buffer. Samples masked to low `BITS` bits;
       /// alpha = `(1 << BITS) - 1` (full-range opaque). Length in `u16` elements
-      /// (`width × height × 4`).
+      /// (`width x height x 4`).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
         self.set_rgba_u16(buf)?;
@@ -467,7 +467,7 @@ macro_rules! impl_gray_n_sinker {
       }
 
       /// Attaches a u16 luma output buffer. Samples masked to low `BITS`
-      /// bits; length in `u16` elements (`width × height`).
+      /// bits; length in `u16` elements (`width x height`).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
         self.set_luma_u16(buf)?;
@@ -571,7 +571,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Gray16<BE>> {
   }
 
   /// Attaches a u16 RGB output buffer (`>> 8` is NOT applied — native
-  /// 16-bit broadcast). Length in `u16` elements (`width × height × 3`).
+  /// 16-bit broadcast). Length in `u16` elements (`width x height x 3`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;
@@ -591,7 +591,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Gray16<BE>> {
   }
 
   /// Attaches a u16 RGBA output buffer (native 16-bit broadcast; alpha
-  /// = `0xFFFF`). Length in `u16` elements (`width × height × 4`).
+  /// = `0xFFFF`). Length in `u16` elements (`width x height x 4`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -611,7 +611,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Gray16<BE>> {
   }
 
   /// Attaches a u16 luma output buffer (identity copy of the Gray16 Y
-  /// plane). Length in `u16` elements (`width × height`).
+  /// plane). Length in `u16` elements (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -859,7 +859,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Grayf32<BE>> {
     Ok(self)
   }
 
-  /// Attaches a u16 luma output buffer (`clamp(Y,0,1) × 65535`).
+  /// Attaches a u16 luma output buffer (`clamp(Y,0,1) x 65535`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -1033,7 +1033,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Grayf32<BE>> {
       return Ok(());
     }
 
-    // Standalone HSV fast path — Grayf32 always has H=0, S=0, V=clamp(Y)×255.
+    // Standalone HSV fast path — Grayf32 always has H=0, S=0, V=clamp(Y)x255.
     if want_hsv && !want_rgb {
       let hsv = self.hsv.as_mut().unwrap();
       let (hp, sp, vp) = hsv.hsv();

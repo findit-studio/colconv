@@ -530,7 +530,7 @@ pub(crate) unsafe fn gray16_to_hsv_row<const BE: bool>(
 
 // ---- Grayf32 ----------------------------------------------------------------
 
-/// AVX2 `grayf32_to_rgb_row`: clamp [0,1] × 255 → u8, broadcast Y → R=G=B.
+/// AVX2 `grayf32_to_rgb_row`: clamp [0,1] x 255 → u8, broadcast Y → R=G=B.
 ///
 /// Uses MXCSR-independent round-half-up: `+ 0.5` then `_mm256_cvttps_epi32`
 /// (matches the scalar `(y * scale + 0.5) as T` contract).
@@ -560,11 +560,11 @@ pub(crate) unsafe fn grayf32_to_rgb_row<const BE: bool>(
       let clamped = _mm256_min_ps(_mm256_max_ps(y, zero), one);
       let scaled = _mm256_mul_ps(clamped, scale);
       let int32 = _mm256_cvttps_epi32(_mm256_add_ps(scaled, _mm256_set1_ps(0.5)));
-      // Narrow 8×i32 → 8×u8 via two pack steps.
+      // Narrow 8xi32 → 8xu8 via two pack steps.
       let lo = _mm256_castsi256_si128(int32);
       let hi = _mm256_extracti128_si256::<1>(int32);
-      let pack16 = _mm_packs_epi32(lo, hi); // 8×i16
-      let pack8 = _mm_packus_epi16(pack16, pack16); // 8×u8 in low 8 bytes
+      let pack16 = _mm_packs_epi32(lo, hi); // 8xi16
+      let pack8 = _mm_packus_epi16(pack16, pack16); // 8xu8 in low 8 bytes
       // Extract 8 bytes and scatter to RGB triples.
       let val = _mm_cvtsi128_si64(pack8) as u64;
       let ybuf = val.to_le_bytes();
@@ -582,7 +582,7 @@ pub(crate) unsafe fn grayf32_to_rgb_row<const BE: bool>(
   }
 }
 
-/// AVX2 `grayf32_to_rgba_row`: clamp [0,1] × 255 → u8, broadcast + α=0xFF.
+/// AVX2 `grayf32_to_rgba_row`: clamp [0,1] x 255 → u8, broadcast + α=0xFF.
 ///
 /// # Safety
 /// AVX2 must be available.
@@ -629,7 +629,7 @@ pub(crate) unsafe fn grayf32_to_rgba_row<const BE: bool>(
   }
 }
 
-/// AVX2 `grayf32_to_rgb_u16_row`: clamp [0,1] × 65535 → u16, broadcast.
+/// AVX2 `grayf32_to_rgb_u16_row`: clamp [0,1] x 65535 → u16, broadcast.
 ///
 /// # Safety
 /// AVX2 must be available.
@@ -655,10 +655,10 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row<const BE: bool>(
       let clamped = _mm256_min_ps(_mm256_max_ps(y, zero), one);
       let scaled = _mm256_mul_ps(clamped, scale);
       let int32 = _mm256_cvttps_epi32(_mm256_add_ps(scaled, _mm256_set1_ps(0.5)));
-      // Narrow 8×i32 → 8×u16 using AVX2 packus path.
+      // Narrow 8xi32 → 8xu16 using AVX2 packus path.
       let lo = _mm256_castsi256_si128(int32);
       let hi = _mm256_extracti128_si256::<1>(int32);
-      let pack16 = _mm_packus_epi32(lo, hi); // 8×u16 (values in [0,65535], no saturation)
+      let pack16 = _mm_packus_epi32(lo, hi); // 8xu16 (values in [0,65535], no saturation)
       // Extract u16 values unrolled (const lane requirement).
       let base = x * 3;
       let v0 = _mm_extract_epi16::<0>(pack16) as u16;
@@ -701,7 +701,7 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row<const BE: bool>(
   }
 }
 
-/// AVX2 `grayf32_to_rgba_u16_row`: clamp [0,1] × 65535 → u16, broadcast + α=0xFFFF.
+/// AVX2 `grayf32_to_rgba_u16_row`: clamp [0,1] x 65535 → u16, broadcast + α=0xFFFF.
 ///
 /// # Safety
 /// AVX2 must be available.
@@ -801,7 +801,7 @@ pub(crate) unsafe fn grayf32_to_rgb_f32_row<const BE: bool>(
   scalar::grayf32_to_rgb_f32_row::<BE>(y_plane, out, width);
 }
 
-/// AVX2 `grayf32_to_luma_row`: clamp [0,1] × 255 → u8. 8 px/iter.
+/// AVX2 `grayf32_to_luma_row`: clamp [0,1] x 255 → u8. 8 px/iter.
 ///
 /// # Safety
 /// AVX2 must be available.
@@ -841,7 +841,7 @@ pub(crate) unsafe fn grayf32_to_luma_row<const BE: bool>(
   }
 }
 
-/// AVX2 `grayf32_to_luma_u16_row`: clamp [0,1] × 65535 → u16. 8 px/iter.
+/// AVX2 `grayf32_to_luma_u16_row`: clamp [0,1] x 65535 → u16. 8 px/iter.
 ///
 /// # Safety
 /// AVX2 must be available.
@@ -869,7 +869,7 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row<const BE: bool>(
       let int32 = _mm256_cvttps_epi32(_mm256_add_ps(scaled, _mm256_set1_ps(0.5)));
       let lo = _mm256_castsi256_si128(int32);
       let hi = _mm256_extracti128_si256::<1>(int32);
-      let pack16 = _mm_packus_epi32(lo, hi); // 8×u16
+      let pack16 = _mm_packus_epi32(lo, hi); // 8xu16
       _mm_storeu_si128(out.as_mut_ptr().add(x).cast::<__m128i>(), pack16);
       x += 8;
     }
@@ -897,7 +897,7 @@ pub(crate) unsafe fn grayf32_to_luma_f32_row<const BE: bool>(
   scalar::grayf32_to_luma_f32_row::<BE>(y_plane, out, width);
 }
 
-/// AVX2 `grayf32_to_hsv_row`: H=0, S=0, V = clamp(Y,0,1)×255. 8 px/iter.
+/// AVX2 `grayf32_to_hsv_row`: H=0, S=0, V = clamp(Y,0,1)x255. 8 px/iter.
 ///
 /// # Safety
 /// AVX2 must be available.

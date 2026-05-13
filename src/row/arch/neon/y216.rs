@@ -357,7 +357,7 @@ pub(crate) unsafe fn y216_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE
         let b_cd_hi0 = vzip1q_s32(b_ch_hi, b_ch_hi);
         let b_cd_hi1 = vzip2q_s32(b_ch_hi, b_ch_hi);
 
-        // i64 Y scale: (y - y_off) * y_scale can reach ~2.35×10⁹ at limited range.
+        // i64 Y scale: (y - y_off) * y_scale can reach ~2.35x10⁹ at limited range.
         // Split each 8-lane Y into two i32x4 halves for scale_y_u16_i64.
         // y_lo_0 = Y0..Y3, y_lo_1 = Y4..Y7; y_hi_0 = Y8..Y11, y_hi_1 = Y12..Y15.
         let y_lo_0 = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(pair_lo.0)));
@@ -405,9 +405,9 @@ pub(crate) unsafe fn y216_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE
         );
 
         // Each u16x8 covers 8 pixels.  Two stores per format (lo + hi).
-        // For ALPHA: each vst4q_u16 writes 8 RGBA pixels (8 × 4 × 2 = 64 bytes).
+        // For ALPHA: each vst4q_u16 writes 8 RGBA pixels (8 x 4 x 2 = 64 bytes).
         //   Offset for lo: x*4 u16. Offset for hi: x*4+32 u16.
-        // For RGB:  each vst3q_u16 writes 8 RGB pixels (8 × 3 × 2 = 48 bytes).
+        // For RGB:  each vst3q_u16 writes 8 RGB pixels (8 x 3 x 2 = 48 bytes).
         //   Offset for lo: x*3 u16. Offset for hi: x*3+24 u16.
         if ALPHA {
           vst4q_u16(

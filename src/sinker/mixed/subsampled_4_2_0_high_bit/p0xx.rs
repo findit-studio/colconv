@@ -13,7 +13,7 @@ impl<'a, const BE: bool> MixedSinker<'a, P010<BE>> {
   /// sinkers whose source format populates native‑depth RGB.
   ///
   /// Length is measured in `u16` **elements** (not bytes): minimum
-  /// `width × height × 3`. Output is **low‑bit‑packed** (10‑bit
+  /// `width x height x 3`. Output is **low‑bit‑packed** (10‑bit
   /// values in the low 10 of each `u16`, upper 6 zero) — matches
   /// FFmpeg `yuv420p10le` convention. This is **not** P010 packing
   /// (which puts the 10 bits in the high 10); callers feeding a P010
@@ -63,7 +63,7 @@ impl<'a, const BE: bool> MixedSinker<'a, P010<BE>> {
   /// Attaches a packed **`u16`** RGBA output buffer. Output is
   /// **low‑bit‑packed** 10‑bit values (`yuv420p10le` convention) — not
   /// P010 high‑bit packing. Length is measured in `u16` **elements**
-  /// (`width × height × 4`). Alpha element is `(1 << 10) - 1`.
+  /// (`width x height x 4`). Alpha element is `(1 << 10) - 1`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -330,7 +330,7 @@ impl<'a, const BE: bool> MixedSinker<'a, P012<BE>> {
   /// Attaches a packed **`u16`** RGBA output buffer. Output is
   /// **low‑bit‑packed** 12‑bit values (`yuv420p12le` convention) —
   /// not P012 high‑bit packing. Length is measured in `u16`
-  /// **elements** (`width × height × 4`). Alpha element is
+  /// **elements** (`width x height x 4`). Alpha element is
   /// `(1 << 12) - 1`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -595,7 +595,7 @@ impl<'a, const BE: bool> MixedSinker<'a, P016<BE>> {
 
   /// Attaches a packed **`u16`** RGBA output buffer. 16‑bit output
   /// (full `u16` range). Length is measured in `u16` **elements**
-  /// (`width × height × 4`). Alpha element is `u16::MAX`.
+  /// (`width x height x 4`). Alpha element is `u16::MAX`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;

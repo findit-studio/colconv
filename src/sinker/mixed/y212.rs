@@ -2,7 +2,7 @@
 //! 12-bit packed YUV 4:2:2 with MSB-aligned u16 samples). Full output
 //! coverage: u8 + native-depth u16 RGB / RGBA / luma + u8 HSV.
 //!
-//! Y212 packs 4 × MSB-aligned 12-bit samples per `u16` quadruple
+//! Y212 packs 4 x MSB-aligned 12-bit samples per `u16` quadruple
 //! (`Y₀, U, Y₁, V`) — 2 pixels per quadruple (4:2:2). The sinker's
 //! configured width must be **even** (4:2:2 chroma pair); odd widths
 //! surface as [`MixedSinkerError::WidthAlignment`] (with
@@ -55,7 +55,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Y212<BE>> {
   /// with constant `0xFF` (Y212 has no alpha channel).
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -77,7 +77,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Y212<BE>> {
 
   /// Attaches a packed **`u16`** RGB output buffer. 12-bit
   /// low-bit-packed (`[0, 4095]`); length is measured in `u16`
-  /// **elements** (`width × height × 3`).
+  /// **elements** (`width x height x 3`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;
@@ -98,7 +98,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Y212<BE>> {
 
   /// Attaches a packed **`u16`** RGBA output buffer. 12-bit
   /// low-bit-packed (`[0, 4095]`); alpha element is `4095`. Length
-  /// is measured in `u16` **elements** (`width × height × 4`).
+  /// is measured in `u16` **elements** (`width x height x 4`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -121,7 +121,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Y212<BE>> {
   /// Y samples are extracted directly out of the Y212 quadruples
   /// (MSB-aligned `>> 4`) into the caller's `u16` buffer
   /// (low-bit-packed, `[0, 4095]`). Length is measured in `u16`
-  /// **elements** (`width × height`).
+  /// **elements** (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -168,7 +168,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Y212<BE>> {
       return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(w)));
     }
 
-    // Y212 row = `width × 2` u16 elements (Y₀, U, Y₁, V quadruples
+    // Y212 row = `width x 2` u16 elements (Y₀, U, Y₁, V quadruples
     // packing 2 pixels each).
     let packed_expected =
       w.checked_mul(2)

@@ -15,7 +15,7 @@ use super::*;
 // ---- Solid-color Y210 builder -----------------------------------------
 
 /// Builds a solid-color Y210 plane with one (Y, U, V) repeated. Each
-/// row is `width × 2` u16 elements (`Y₀, U, Y₁, V` quadruples). All
+/// row is `width x 2` u16 elements (`Y₀, U, Y₁, V` quadruples). All
 /// samples are MSB-aligned 10-bit: each `u16` value's active 10 bits
 /// occupy bits[15:6] and bits[5:0] are zero.
 ///
@@ -244,7 +244,7 @@ fn y210_with_simd_false_matches_with_simd_true() {
 
 #[test]
 fn y210_luma_u16_buffer_too_short_returns_err() {
-  // Buffer holds 6×7 = 42 elements; a 6×8 frame needs 48.
+  // Buffer holds 6x7 = 42 elements; a 6x8 frame needs 48.
   let mut luma = std::vec![0u16; 6 * 7];
   let result = MixedSinker::<Y210>::new(6, 8).with_luma_u16(&mut luma);
   let Err(err) = result else {
@@ -267,7 +267,7 @@ fn y210_luma_u16_buffer_too_short_returns_err() {
 //    byte-identical RGB.
 
 /// Pack three 10-bit planes (Y / U / V at 4:2:2 subsampling) into the
-/// Y210 layout — each row is `width × 2` u16 elements laid out as
+/// Y210 layout — each row is `width x 2` u16 elements laid out as
 /// `(Y₀, U, Y₁, V)` quadruples with each sample MSB-aligned (active 10
 /// bits in bits[15:6]). Width must be even.
 fn pack_yuv422p10_to_y210(

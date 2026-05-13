@@ -17,7 +17,7 @@
 //! per row.
 //!
 //! **4:4:4 chroma note**: unlike 4:2:0/4:2:2, the 4:4:4 chroma planes are
-//! full-width × full-height (no duplication step). The Q15 i32 4:4:4 kernel family
+//! full-width x full-height (no duplication step). The Q15 i32 4:4:4 kernel family
 //! (`yuv444p10_to_rgb_row` etc.) is distinct from the 4:2:0 family; the A+ win
 //! arises the same way (one chroma kernel invocation saved per row).
 //!
@@ -90,7 +90,7 @@ fn bench_yuva444p(c: &mut Criterion) {
   for &w in WIDTHS {
     let w_us = w as usize;
     let h_us = FRAME_HEIGHT as usize;
-    // 4:4:4: all planes are full-width × full-height.
+    // 4:4:4: all planes are full-width x full-height.
     let plane_len = w_us * h_us;
 
     let mut y_plane = std::vec![0u8; plane_len];
@@ -102,7 +102,7 @@ fn bench_yuva444p(c: &mut Criterion) {
     fill_pseudo_random_u8(&mut v_plane, 0xCC33);
     fill_pseudo_random_u8(&mut a_plane, 0xDD44);
 
-    // Throughput: u8 RGB (3 bytes/px) + u8 RGBA (4 bytes/px) = 7 bytes/px × w × h.
+    // Throughput: u8 RGB (3 bytes/px) + u8 RGBA (4 bytes/px) = 7 bytes/px x w x h.
     group.throughput(Throughput::Bytes((w_us * 7 * h_us) as u64));
 
     for use_simd in [false, true] {

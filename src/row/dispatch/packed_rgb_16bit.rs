@@ -3,7 +3,7 @@
 //!
 //! 28 public functions:
 //!   4 source formats (Rgb48, Bgr48, Rgba64, Bgra64)
-//!   × 7 outputs (rgb, rgba, rgb_u16, rgba_u16, luma, luma_u16, hsv)
+//!   x 7 outputs (rgb, rgba, rgb_u16, rgba_u16, luma, luma_u16, hsv)
 //!
 //! All dispatchers validate input/output bounds via the shared
 //! `rgb_row_bytes` / `rgba_row_bytes` / `rgb_row_elems` / `rgba_row_elems`
@@ -14,11 +14,11 @@
 //! **SIMD dispatch (wasm32):** wasm-simd128 → scalar (wired in later task).
 //!
 //! **Input element-strides**
-//! - Rgb48 / Bgr48: source row is `width × 3` u16 elements.
-//! - Rgba64 / Bgra64: source row is `width × 4` u16 elements.
+//! - Rgb48 / Bgr48: source row is `width x 3` u16 elements.
+//! - Rgba64 / Bgra64: source row is `width x 4` u16 elements.
 //!
 //! **Luma / HSV signatures** take an extra `rgb_scratch: &mut [u8]` parameter
-//! (length ≥ `width × 3` bytes). The dispatcher first narrows the source to
+//! (length ≥ `width x 3` bytes). The dispatcher first narrows the source to
 //! u8 RGB into that scratch, then applies the luma or HSV kernel. This lets
 //! the sinker reuse its managed scratch rather than forcing a heap allocation
 //! at the row level.
@@ -43,25 +43,25 @@ use crate::{
 
 // ---- input-side element-count helpers -----------------------------------
 
-/// Minimum u16-element count of one packed 3-channel row (`width × 3`).
-/// Panics if `width × 3` overflows `usize` (only possible on 32-bit targets
+/// Minimum u16-element count of one packed 3-channel row (`width x 3`).
+/// Panics if `width x 3` overflows `usize` (only possible on 32-bit targets
 /// with extreme widths). Result feeds the dispatcher input-side `assert!`.
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn rgb48_packed_elems(width: usize) -> usize {
   match width.checked_mul(3) {
     Some(n) => n,
-    None => panic!("width ({width}) × 3 overflows usize (Rgb48/Bgr48 packed row)"),
+    None => panic!("width ({width}) x 3 overflows usize (Rgb48/Bgr48 packed row)"),
   }
 }
 
-/// Minimum u16-element count of one packed 4-channel row (`width × 4`).
-/// Panics if `width × 4` overflows `usize`. Result feeds the dispatcher
+/// Minimum u16-element count of one packed 4-channel row (`width x 4`).
+/// Panics if `width x 4` overflows `usize`. Result feeds the dispatcher
 /// input-side `assert!`.
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn rgba64_packed_elems(width: usize) -> usize {
   match width.checked_mul(4) {
     Some(n) => n,
-    None => panic!("width ({width}) × 4 overflows usize (Rgba64/Bgra64 packed row)"),
+    None => panic!("width ({width}) x 4 overflows usize (Rgba64/Bgra64 packed row)"),
   }
 }
 
@@ -282,7 +282,7 @@ pub fn rgb48_to_rgba_u16_row(rgb48: &[u16], rgba_out: &mut [u16], width: usize, 
 }
 
 /// Derives 8-bit luma from one row of `Rgb48` source. Narrows to u8 RGB via
-/// `rgb48_to_rgb_row` into `rgb_scratch` (length ≥ `width × 3`), then applies
+/// `rgb48_to_rgb_row` into `rgb_scratch` (length ≥ `width x 3`), then applies
 /// `rgb_to_luma_row`. `use_simd = false` forces the scalar path for both steps.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
@@ -1995,7 +1995,7 @@ mod tests {
   // ---- 32-bit width overflow guards ----------------------------------------
   //
   // On 32-bit targets (wasm32, i686) `usize` is 32 bits. A caller could pass a
-  // `width` value that causes `width × 3` or `width × 4` to silently wrap to
+  // `width` value that causes `width x 3` or `width x 4` to silently wrap to
   // a small value, making an undersized buffer pass the bound check and
   // potentially reaching unsafe SIMD loads downstream. The `rgb48_packed_elems`
   // and `rgba64_packed_elems` helpers use `checked_mul` and panic on overflow.

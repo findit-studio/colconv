@@ -166,7 +166,7 @@ jobs:
   # kernel (SSE4.1, AVX2, AVX-512) actually executes and compares
   # against the scalar LUT reference.
   #
-  # SDE slowdown is ~5-10×, so the lib test suite runs in ~30-60s
+  # SDE slowdown is ~5-10x, so the lib test suite runs in ~30-60s
   # instead of ~1s — still well within the free-runner budget.
   test-sde:
     name: test-sde-avx512

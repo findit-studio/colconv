@@ -551,7 +551,7 @@ pub(crate) fn p_n_444_16_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
 /// Converts one row of P416 to **native-depth `u16`** packed RGB —
 /// full-range output in `[0, 65535]`. Chroma multiply-add runs in i64
 /// (same rationale as `p16_to_rgb_u16_row` and
-/// `yuv_444p16_to_rgb_u16_row`: `coeff × u_d` overflows i32 at 16
+/// `yuv_444p16_to_rgb_u16_row`: `coeff x u_d` overflows i32 at 16
 /// bits for the BT.2020 blue coefficient).
 ///
 /// Thin wrapper over [`p_n_444_16_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.

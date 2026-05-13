@@ -56,7 +56,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgb48<BE>> {
   /// Attaches a packed **8-bit** RGBA output buffer. Each 16-bit channel is
   /// narrowed `>> 8` and alpha is forced to `0xFF` (no source alpha in Rgb48).
   ///
-  /// Returns `Err(InsufficientRgbaBuffer)` if `buf.len() < width × height × 4`,
+  /// Returns `Err(InsufficientRgbaBuffer)` if `buf.len() < width x height x 4`,
   /// or `Err(GeometryOverflow)` on 32-bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -77,7 +77,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgb48<BE>> {
   }
 
   /// Attaches a native **`u16`** RGB output buffer. Length in `u16` **elements**
-  /// (`width × height × 3`). Channels are passed through verbatim (no shift).
+  /// (`width x height x 3`). Channels are passed through verbatim (no shift).
   ///
   /// Returns `Err(InsufficientRgbU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -99,7 +99,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgb48<BE>> {
   }
 
   /// Attaches a native **`u16`** RGBA output buffer. Length in `u16` **elements**
-  /// (`width × height × 4`). Alpha is forced to `0xFFFF` (no source alpha).
+  /// (`width x height x 4`). Alpha is forced to `0xFFFF` (no source alpha).
   ///
   /// Returns `Err(InsufficientRgbaU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -121,7 +121,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgb48<BE>> {
   }
 
   /// Attaches a native **`u16`** luma output buffer. Length in `u16` **elements**
-  /// (`width × height`). Y' is computed at 8-bit precision and zero-extended.
+  /// (`width x height`). Y' is computed at 8-bit precision and zero-extended.
   ///
   /// Returns `Err(InsufficientLumaU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -273,7 +273,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgr48<BE>> {
   /// on output; each 16-bit channel is narrowed `>> 8`; alpha is forced to
   /// `0xFF` (no source alpha in Bgr48).
   ///
-  /// Returns `Err(InsufficientRgbaBuffer)` if `buf.len() < width × height × 4`.
+  /// Returns `Err(InsufficientRgbaBuffer)` if `buf.len() < width x height x 4`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
     self.set_rgba(buf)?;
@@ -293,7 +293,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgr48<BE>> {
   }
 
   /// Attaches a native **`u16`** RGB output buffer. Length in `u16` **elements**
-  /// (`width × height × 3`). B/R channels are swapped on output; no shift.
+  /// (`width x height x 3`). B/R channels are swapped on output; no shift.
   ///
   /// Returns `Err(InsufficientRgbU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -315,7 +315,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgr48<BE>> {
   }
 
   /// Attaches a native **`u16`** RGBA output buffer. Length in `u16` **elements**
-  /// (`width × height × 4`). B/R channels swapped; alpha forced to `0xFFFF`.
+  /// (`width x height x 4`). B/R channels swapped; alpha forced to `0xFFFF`.
   ///
   /// Returns `Err(InsufficientRgbaU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -336,7 +336,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgr48<BE>> {
     Ok(self)
   }
 
-  /// Attaches a native **`u16`** luma output buffer (`width × height` elements).
+  /// Attaches a native **`u16`** luma output buffer (`width x height` elements).
   /// Y' is computed at 8-bit precision and zero-extended to u16.
   ///
   /// Returns `Err(InsufficientLumaU16Buffer)` if the buffer is too short.
@@ -493,7 +493,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgba64<BE>> {
   /// `copy_alpha_packed_u16x4_to_u8_at_3` overwrites the α slot from the
   /// source — output is byte-identical to the standalone path.
   ///
-  /// Returns `Err(InsufficientRgbaBuffer)` if `buf.len() < width × height × 4`.
+  /// Returns `Err(InsufficientRgbaBuffer)` if `buf.len() < width x height x 4`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
     self.set_rgba(buf)?;
@@ -513,7 +513,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgba64<BE>> {
   }
 
   /// Attaches a native **`u16`** RGB output buffer. Length in `u16` **elements**
-  /// (`width × height × 3`). Alpha slot dropped (RGB only, 3 channels).
+  /// (`width x height x 3`). Alpha slot dropped (RGB only, 3 channels).
   ///
   /// Returns `Err(InsufficientRgbU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -535,7 +535,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgba64<BE>> {
   }
 
   /// Attaches a native **`u16`** RGBA output buffer. Length in `u16` **elements**
-  /// (`width × height × 4`). Source α at slot 3 is copied verbatim (no shift).
+  /// (`width x height x 4`). Source α at slot 3 is copied verbatim (no shift).
   ///
   /// ## Strategy note
   ///
@@ -563,7 +563,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgba64<BE>> {
     Ok(self)
   }
 
-  /// Attaches a native **`u16`** luma output buffer (`width × height` elements).
+  /// Attaches a native **`u16`** luma output buffer (`width x height` elements).
   /// Y' is derived from narrowed u8 RGB and zero-extended to u16.
   ///
   /// Returns `Err(InsufficientLumaU16Buffer)` if the buffer is too short.
@@ -779,7 +779,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgra64<BE>> {
   /// Same Strategy A+ semantics as [`MixedSinker::<Rgba64>::with_rgba`] —
   /// see that method's doc for the standalone vs combo behaviour.
   ///
-  /// Returns `Err(InsufficientRgbaBuffer)` if `buf.len() < width × height × 4`.
+  /// Returns `Err(InsufficientRgbaBuffer)` if `buf.len() < width x height x 4`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
     self.set_rgba(buf)?;
@@ -799,7 +799,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgra64<BE>> {
   }
 
   /// Attaches a native **`u16`** RGB output buffer. B/R channels swapped on
-  /// output; length in `u16` **elements** (`width × height × 3`).
+  /// output; length in `u16` **elements** (`width x height x 3`).
   ///
   /// Returns `Err(InsufficientRgbU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -822,7 +822,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgra64<BE>> {
 
   /// Attaches a native **`u16`** RGBA output buffer. B/R channels swapped;
   /// source α at slot 3 copied verbatim. Length in `u16` **elements**
-  /// (`width × height × 4`).
+  /// (`width x height x 4`).
   ///
   /// Returns `Err(InsufficientRgbaU16Buffer)` if the buffer is too short.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -843,7 +843,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Bgra64<BE>> {
     Ok(self)
   }
 
-  /// Attaches a native **`u16`** luma output buffer (`width × height` elements).
+  /// Attaches a native **`u16`** luma output buffer (`width x height` elements).
   /// Y' is derived from narrowed u8 RGB and zero-extended to u16.
   ///
   /// Returns `Err(InsufficientLumaU16Buffer)` if the buffer is too short.

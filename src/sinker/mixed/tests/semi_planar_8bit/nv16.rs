@@ -381,7 +381,7 @@ fn nv16_with_luma_u16_extracts_y_zero_extended() {
   let n = width * height;
 
   let mut yp = std::vec![0u8; n];
-  // NV16: UV plane is full-height, half-width pairs → width bytes per row × height rows.
+  // NV16: UV plane is full-height, half-width pairs → width bytes per row x height rows.
   let mut uvp = std::vec![0u8; width * height];
   pseudo_random_u8(&mut yp, 0xC0FFEE);
   pseudo_random_u8(&mut uvp, 0xBADF00D);

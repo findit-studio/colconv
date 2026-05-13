@@ -85,7 +85,7 @@ const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 
 impl<'a, const BE: bool> MixedSinker<'a, Gbrpf16<BE>> {
   /// Attaches a packed **8-bit** RGBA output buffer. α is forced to `0xFF`
-  /// (Gbrpf16 has no alpha channel). Length in bytes (`width × height × 4`).
+  /// (Gbrpf16 has no alpha channel). Length in bytes (`width x height x 4`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
     self.set_rgba(buf)?;
@@ -105,8 +105,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrpf16<BE>> {
   }
 
   /// Attaches a packed **`u16`** RGB output buffer. Each f16 channel is
-  /// widened to f32, clamped to `[0, 1]`, and scaled × 65535.
-  /// Length in `u16` elements (`width × height × 3`).
+  /// widened to f32, clamped to `[0, 1]`, and scaled x 65535.
+  /// Length in `u16` elements (`width x height x 3`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;
@@ -126,8 +126,8 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrpf16<BE>> {
   }
 
   /// Attaches a packed **`u16`** RGBA output buffer. Same full-range scaling
-  /// (× 65535) as `with_rgb_u16`; α is constant `0xFFFF`.
-  /// Length in `u16` elements (`width × height × 4`).
+  /// (x 65535) as `with_rgb_u16`; α is constant `0xFFFF`.
+  /// Length in `u16` elements (`width x height x 4`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -148,7 +148,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrpf16<BE>> {
 
   /// Attaches a packed **`f32`** RGB output buffer. f16 channels are widened
   /// to f32 — lossless (f16 ⊂ f32). HDR and special values preserved.
-  /// Length in `f32` elements (`width × height × 3`).
+  /// Length in `f32` elements (`width x height x 3`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_f32(mut self, buf: &'a mut [f32]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_f32(buf)?;
@@ -168,7 +168,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrpf16<BE>> {
   }
 
   /// Attaches a packed **`f32`** RGBA output buffer. f16 widened to f32;
-  /// α is constant `1.0f32`. Length in `f32` elements (`width × height × 4`).
+  /// α is constant `1.0f32`. Length in `f32` elements (`width x height x 4`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_f32(mut self, buf: &'a mut [f32]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_f32(buf)?;
@@ -189,7 +189,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrpf16<BE>> {
 
   /// Attaches a packed **`half::f16`** RGB output buffer. Lossless planar →
   /// packed interleave — no conversion. HDR values, NaN, and Inf preserved
-  /// bit-exact. Length in `half::f16` elements (`width × height × 3`).
+  /// bit-exact. Length in `half::f16` elements (`width x height x 3`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_f16(mut self, buf: &'a mut [half::f16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_f16(buf)?;
@@ -210,7 +210,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrpf16<BE>> {
 
   /// Attaches a packed **`half::f16`** RGBA output buffer. Lossless planar →
   /// packed interleave with constant α = `half::f16::from_f32(1.0)`.
-  /// Length in `half::f16` elements (`width × height × 4`).
+  /// Length in `half::f16` elements (`width x height x 4`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_f16(mut self, buf: &'a mut [half::f16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_f16(buf)?;
@@ -231,7 +231,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrpf16<BE>> {
 
   /// Attaches a `u16` luma output buffer. f16 channels are widened to f32,
   /// then luma is derived (clamp + round-half-up) and zero-extended to u16.
-  /// Length in `u16` elements (`width × height`).
+  /// Length in `u16` elements (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -475,8 +475,8 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrpf16<BE>> {
 
 impl<'a, const BE: bool> MixedSinker<'a, Gbrapf16<BE>> {
   /// Attaches a packed **8-bit** RGBA output buffer. α is sourced from the
-  /// A plane (real per-pixel α, clamped to `[0, 1]` and scaled × 255).
-  /// Length in bytes (`width × height × 4`).
+  /// A plane (real per-pixel α, clamped to `[0, 1]` and scaled x 255).
+  /// Length in bytes (`width x height x 4`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
     self.set_rgba(buf)?;
@@ -496,7 +496,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrapf16<BE>> {
   }
 
   /// Attaches a packed **`u16`** RGB output buffer. Widened f16 → f32,
-  /// clamped, scaled × 65535. Length in `u16` elements (`width × height × 3`).
+  /// clamped, scaled x 65535. Length in `u16` elements (`width x height x 3`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;
@@ -516,7 +516,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrapf16<BE>> {
   }
 
   /// Attaches a packed **`u16`** RGBA output buffer. Source α widened f16 → f32,
-  /// clamped × 65535. Length in `u16` elements (`width × height × 4`).
+  /// clamped x 65535. Length in `u16` elements (`width x height x 4`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -536,7 +536,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrapf16<BE>> {
   }
 
   /// Attaches a packed **`f32`** RGB output buffer. f16 widened to f32
-  /// (lossless). Length in `f32` elements (`width × height × 3`).
+  /// (lossless). Length in `f32` elements (`width x height x 3`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_f32(mut self, buf: &'a mut [f32]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_f32(buf)?;
@@ -557,7 +557,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrapf16<BE>> {
 
   /// Attaches a packed **`f32`** RGBA output buffer. Source α widened f16 → f32
   /// (lossless; HDR, NaN, Inf preserved). Length in `f32` elements
-  /// (`width × height × 4`).
+  /// (`width x height x 4`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_f32(mut self, buf: &'a mut [f32]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_f32(buf)?;
@@ -577,7 +577,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrapf16<BE>> {
   }
 
   /// Attaches a packed **`half::f16`** RGB output buffer. Lossless f16
-  /// interleave. Length in `half::f16` elements (`width × height × 3`).
+  /// interleave. Length in `half::f16` elements (`width x height x 3`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_f16(mut self, buf: &'a mut [half::f16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_f16(buf)?;
@@ -598,7 +598,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrapf16<BE>> {
 
   /// Attaches a packed **`half::f16`** RGBA output buffer. Source α is passed
   /// through losslessly (HDR, NaN, Inf preserved bit-exact).
-  /// Length in `half::f16` elements (`width × height × 4`).
+  /// Length in `half::f16` elements (`width x height x 4`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_f16(mut self, buf: &'a mut [half::f16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_f16(buf)?;
@@ -619,7 +619,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Gbrapf16<BE>> {
 
   /// Attaches a `u16` luma output buffer. f16 channels widened to f32, then
   /// luma derived (clamp + round-half-up) and zero-extended to u16.
-  /// Length in `u16` elements (`width × height`).
+  /// Length in `u16` elements (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -896,7 +896,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrapf16<BE>> {
   }
 }
 
-/// Widen a `half::f16` α plane to f32, clamp to `[0, 1]`, scale × 255,
+/// Widen a `half::f16` α plane to f32, clamp to `[0, 1]`, scale x 255,
 /// and scatter into the RGBA slot 3 of a u8 RGBA buffer.
 ///
 /// Used by `Gbrapf16` Strategy A+ and standalone-RGBA paths to overwrite

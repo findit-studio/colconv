@@ -1,8 +1,8 @@
 //! Scalar reference kernels for the Y216 packed YUV 4:2:2 family
 //! (BITS=16, full-range u16 samples). Separated from `y2xx.rs`
 //! because the u16 native-depth output path uses i64 chroma to
-//! avoid overflow — at BITS=16, `q15_coeff × chroma + q15_coeff
-//! × chroma` exceeds i32 range. Mirrors
+//! avoid overflow — at BITS=16, `q15_coeff x chroma + q15_coeff
+//! x chroma` exceeds i32 range. Mirrors
 //! `src/row/scalar/yuv_planar_16bit.rs`'s i64 chroma scalar
 //! pattern but sourced from YUYV-shaped u16 quadruples rather
 //! than separate Y/U/V planes.

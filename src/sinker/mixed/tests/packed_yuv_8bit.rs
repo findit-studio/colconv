@@ -5,7 +5,7 @@ use super::*;
 // ---- Solid-color builders ----------------------------------------------
 
 /// Builds a solid YUYV422 packed plane with one (Y, U, V) repeated
-/// across `width × height`. Layout per 2-pixel block:
+/// across `width x height`. Layout per 2-pixel block:
 /// `Y0, U0, Y1, V0`. Stride equals `2 * width` (no padding).
 pub(super) fn solid_yuyv422_frame(width: u32, height: u32, y: u8, u: u8, v: u8) -> Vec<u8> {
   let w = width as usize;

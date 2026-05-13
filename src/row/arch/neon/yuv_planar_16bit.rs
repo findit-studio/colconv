@@ -13,8 +13,8 @@ use super::*;
 //    (`vmovl_u16` → `vreinterpretq_s32_u32`).
 //
 // 2. For u16 output: `c_scale ≈ 37445` (limited range), so `coeff * u_d`
-//    reaches ~2.17×10⁹ > i32 max; `y_scale ≈ 38304`, so `(y−y_off)*y_scale`
-//    reaches ~2.35×10⁹ > i32 max. Both Y and chroma are widened to i64 via
+//    reaches ~2.17x10⁹ > i32 max; `y_scale ≈ 38304`, so `(y−y_off)*y_scale`
+//    reaches ~2.35x10⁹ > i32 max. Both Y and chroma are widened to i64 via
 //    `vmull_s32` and shifted back with `vshrq_n_s64::<15>`.
 //
 // For u8 output: `c_scale ≈ 127`, so i32 is sufficient throughout.
@@ -484,7 +484,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_u16_row<
       let v_d_lo = q15_shift(vaddq_s32(vmulq_s32(v_lo_i32, c_scale_v), rnd_v));
       let v_d_hi = q15_shift(vaddq_s32(vmulq_s32(v_hi_i32, c_scale_v), rnd_v));
 
-      // i64 chroma: coeff * u_d can reach ~2.17×10⁹ at 16-bit scales.
+      // i64 chroma: coeff * u_d can reach ~2.17x10⁹ at 16-bit scales.
       let r_ch_lo = chroma_i64x4(cru, crv, u_d_lo, v_d_lo, rnd64);
       let r_ch_hi = chroma_i64x4(cru, crv, u_d_hi, v_d_hi, rnd64);
       let g_ch_lo = chroma_i64x4(cgu, cgv, u_d_lo, v_d_lo, rnd64);
@@ -506,7 +506,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_u16_row<
       let b_cd_hi0 = vzip1q_s32(b_ch_hi, b_ch_hi);
       let b_cd_hi1 = vzip2q_s32(b_ch_hi, b_ch_hi);
 
-      // i64 Y: (y - y_off) * y_scale can reach ~2.35×10⁹ at limited range.
+      // i64 Y: (y - y_off) * y_scale can reach ~2.35x10⁹ at limited range.
       let y_lo_0 = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(y_vec_lo)));
       let y_lo_1 = vreinterpretq_s32_u32(vmovl_u16(vget_high_u16(y_vec_lo)));
       let y_hi_0 = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(y_vec_hi)));

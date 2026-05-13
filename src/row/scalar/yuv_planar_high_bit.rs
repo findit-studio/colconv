@@ -253,7 +253,7 @@ pub(crate) fn yuv_420p_n_to_rgb_or_rgba_row<
 /// conversion, so the output retains the full dynamic range of the
 /// source for HDR tone mapping, 10‑bit scene analysis, and similar
 /// downstream work. Callers who only need 8‑bit output should prefer
-/// [`yuv_420p_n_to_rgb_row`], which is ~2× faster.
+/// [`yuv_420p_n_to_rgb_row`], which is ~2x faster.
 ///
 /// Thin wrapper over [`yuv_420p_n_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.
 ///

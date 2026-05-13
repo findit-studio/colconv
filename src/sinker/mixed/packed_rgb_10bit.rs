@@ -66,7 +66,7 @@ impl<'a, const BE: bool> MixedSinker<'a, X2Rgb10<BE>> {
 
   /// Attaches a native-depth `u16` RGB output buffer. Length is
   /// measured in `u16` **elements** (not bytes): minimum
-  /// `width × height × 3`. Each 10-bit channel value is preserved
+  /// `width x height x 3`. Each 10-bit channel value is preserved
   /// at full precision in the low 10 bits of its `u16` element
   /// (range `[0, 1023]`).
   #[cfg_attr(not(tarpaulin), inline(always))]

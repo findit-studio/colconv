@@ -24,7 +24,7 @@ impl<'a> MixedSinker<'a, Nv12> {
   /// plane.
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -47,7 +47,7 @@ impl<'a> MixedSinker<'a, Nv12> {
 
   /// Attaches a `u16` luma output buffer. The 8-bit Y plane samples
   /// are zero-extended into `u16`. Length is measured in `u16`
-  /// elements (`width × height`).
+  /// elements (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -134,7 +134,7 @@ impl PixelSink for MixedSinker<'_, Nv12> {
 
     // Single-plane row ranges are guaranteed to fit; RGB / RGBA
     // ranges use checked arithmetic (see the Yuv420p impl above for
-    // the full rationale — hsv-only attachment never validated × 3).
+    // the full rationale — hsv-only attachment never validated x 3).
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
@@ -236,7 +236,7 @@ impl<'a> MixedSinker<'a, Nv16> {
   /// alpha byte is filled with `0xFF` (opaque).
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -259,7 +259,7 @@ impl<'a> MixedSinker<'a, Nv16> {
 
   /// Attaches a `u16` luma output buffer. The 8-bit Y plane samples
   /// are zero-extended into `u16`. Length is measured in `u16`
-  /// elements (`width × height`).
+  /// elements (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -438,7 +438,7 @@ impl<'a> MixedSinker<'a, Nv21> {
   /// alpha byte is filled with `0xFF` (opaque).
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -461,7 +461,7 @@ impl<'a> MixedSinker<'a, Nv21> {
 
   /// Attaches a `u16` luma output buffer. The 8-bit Y plane samples
   /// are zero-extended into `u16`. Length is measured in `u16`
-  /// elements (`width × height`).
+  /// elements (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -641,7 +641,7 @@ impl<'a> MixedSinker<'a, Nv24> {
   /// alpha byte is filled with `0xFF` (opaque).
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -664,7 +664,7 @@ impl<'a> MixedSinker<'a, Nv24> {
 
   /// Attaches a `u16` luma output buffer. The 8-bit Y plane samples
   /// are zero-extended into `u16`. Length is measured in `u16`
-  /// elements (`width × height`).
+  /// elements (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -840,7 +840,7 @@ impl<'a> MixedSinker<'a, Nv42> {
   /// constraints; Nv42 differs only in chroma byte order (V before U).
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -863,7 +863,7 @@ impl<'a> MixedSinker<'a, Nv42> {
 
   /// Attaches a `u16` luma output buffer. The 8-bit Y plane samples
   /// are zero-extended into `u16`. Length is measured in `u16`
-  /// elements (`width × height`).
+  /// elements (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;

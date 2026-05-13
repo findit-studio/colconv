@@ -547,7 +547,7 @@ pub(crate) unsafe fn gray16_to_rgba_row<const BE: bool>(
   }
 }
 
-/// NEON `gray16_to_rgb_u16_row`: identity broadcast × 3.
+/// NEON `gray16_to_rgb_u16_row`: identity broadcast x 3.
 ///
 /// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
@@ -585,7 +585,7 @@ pub(crate) unsafe fn gray16_to_rgb_u16_row<const BE: bool>(
   }
 }
 
-/// NEON `gray16_to_rgba_u16_row`: identity broadcast × 3 + α=0xFFFF.
+/// NEON `gray16_to_rgba_u16_row`: identity broadcast x 3 + α=0xFFFF.
 ///
 /// For `full_range = false`, falls back to scalar (limited-range rescaling).
 ///
@@ -731,7 +731,7 @@ pub(crate) unsafe fn gray16_to_hsv_row<const BE: bool>(
 
 // ---- Grayf32 -----------------------------------------------------------------
 
-/// NEON `grayf32_to_rgb_row`: clamp [0,1] × 255 → u8, broadcast Y → R=G=B.
+/// NEON `grayf32_to_rgb_row`: clamp [0,1] x 255 → u8, broadcast Y → R=G=B.
 ///
 /// Block size 8 px (two float32x4_t loads, vst3_u8 interleave store).
 ///
@@ -777,7 +777,7 @@ pub(crate) unsafe fn grayf32_to_rgb_row<const BE: bool>(
   }
 }
 
-/// NEON `grayf32_to_rgba_row`: clamp [0,1] × 255 → u8, broadcast Y → R=G=B, α=0xFF.
+/// NEON `grayf32_to_rgba_row`: clamp [0,1] x 255 → u8, broadcast Y → R=G=B, α=0xFF.
 ///
 /// # Safety
 /// NEON must be available. `y_plane.len() >= width`. `out.len() >= width * 4`.
@@ -819,7 +819,7 @@ pub(crate) unsafe fn grayf32_to_rgba_row<const BE: bool>(
   }
 }
 
-/// NEON `grayf32_to_rgb_u16_row`: clamp [0,1] × 65535 → u16, broadcast Y → R=G=B.
+/// NEON `grayf32_to_rgb_u16_row`: clamp [0,1] x 65535 → u16, broadcast Y → R=G=B.
 ///
 /// # Safety
 /// NEON must be available. `y_plane.len() >= width`. `out.len() >= width * 3`.
@@ -855,7 +855,7 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row<const BE: bool>(
   }
 }
 
-/// NEON `grayf32_to_rgba_u16_row`: clamp [0,1] × 65535 → u16, broadcast + α=0xFFFF.
+/// NEON `grayf32_to_rgba_u16_row`: clamp [0,1] x 65535 → u16, broadcast + α=0xFFFF.
 ///
 /// # Safety
 /// NEON must be available. `y_plane.len() >= width`. `out.len() >= width * 4`.
@@ -926,7 +926,7 @@ pub(crate) unsafe fn grayf32_to_rgb_f32_row<const BE: bool>(
   }
 }
 
-/// NEON `grayf32_to_luma_row`: clamp [0,1] × 255 → u8 luma.
+/// NEON `grayf32_to_luma_row`: clamp [0,1] x 255 → u8 luma.
 ///
 /// # Safety
 /// NEON must be available.
@@ -967,7 +967,7 @@ pub(crate) unsafe fn grayf32_to_luma_row<const BE: bool>(
   }
 }
 
-/// NEON `grayf32_to_luma_u16_row`: clamp [0,1] × 65535 → u16 luma.
+/// NEON `grayf32_to_luma_u16_row`: clamp [0,1] x 65535 → u16 luma.
 ///
 /// # Safety
 /// NEON must be available.
@@ -1031,7 +1031,7 @@ pub(crate) unsafe fn grayf32_to_luma_f32_row<const BE: bool>(
   }
 }
 
-/// NEON `grayf32_to_hsv_row`: H=0, S=0, V = clamp(Y,0,1)×255. Gray fast-path.
+/// NEON `grayf32_to_hsv_row`: H=0, S=0, V = clamp(Y,0,1)x255. Gray fast-path.
 ///
 /// # Safety
 /// NEON must be available.

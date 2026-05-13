@@ -14,12 +14,12 @@
 //! ### Rgb48 / Bgr48 (stride-3)
 //!
 //! 16 pixels = 48 u16 = 96 bytes.  Processed as **two** 8-pixel SSE4.1-style
-//! half-iterations (each 24 u16, 3 × 128-bit loads) under the AVX2
+//! half-iterations (each 24 u16, 3 x 128-bit loads) under the AVX2
 //! `target_feature` context.  The deinterleave helper is the same
 //! `_mm_shuffle_epi8` + OR approach as the SSE4.1 sibling; both SSE4.1 and
 //! SSSE3 are subsets of AVX2 so `_mm_*` intrinsics are freely available.
 //!
-//! This avoids the much more complex 3 × 256-bit cross-lane shuffle that a
+//! This avoids the much more complex 3 x 256-bit cross-lane shuffle that a
 //! single 16-pixel deinterleave would require (the stride-3 pattern does not
 //! tile cleanly across two 128-bit lanes of one `__m256i`).  The outer loop
 //! still advances 16 pixels per iteration, matching the plan's stated
@@ -27,7 +27,7 @@
 //!
 //! ### Rgba64 / Bgra64 (stride-4)
 //!
-//! 16 pixels = 64 u16 = 128 bytes = 4 × `_mm256_loadu_si256`.
+//! 16 pixels = 64 u16 = 128 bytes = 4 x `_mm256_loadu_si256`.
 //!
 //! The deinterleave uses the `_mm256_permute2x128_si256` reshape +
 //! 3-level `_mm256_unpacklo/hi_epi16` + `_mm256_unpackhi/lo_epi64` cascade
@@ -66,7 +66,7 @@ use super::*;
 // =============================================================================
 //
 // Re-use the SSE4.1 byte-shuffle deinterleave pattern.  Each call handles
-// 8 pixels (24 u16 = 3 × 128-bit loads), and the outer loop calls it twice
+// 8 pixels (24 u16 = 3 x 128-bit loads), and the outer loop calls it twice
 // to process 16 pixels per iteration.
 //
 // The byte layout for 8 pixels of stride-3 u16:
@@ -127,7 +127,7 @@ unsafe fn deinterleave_rgb48_8px(
 // Rgba64 / Bgra64 helpers — stride-4, 16-pixel deinterleave (`__m256i`)
 // =============================================================================
 //
-// 16 pixels × 4 u16 channels = 64 u16 = 128 bytes.
+// 16 pixels x 4 u16 channels = 64 u16 = 128 bytes.
 //
 // Layout after 4 contiguous `_mm256_loadu_si256`:
 //
@@ -257,7 +257,7 @@ unsafe fn deinterleave_rgba64_cascade(
 }
 
 /// Deinterleave 16 pixels of stride-4 u16 (Rgba64 or Bgra64) from four
-/// `__m256i` loads into four separate u16×16 channel vectors in natural order.
+/// `__m256i` loads into four separate u16x16 channel vectors in natural order.
 ///
 /// Returns `(ch0, ch1, ch2, ch3)` in memory order.
 /// For Rgba64: `(R, G, B, A)`. For Bgra64: `(B, G, R, A)`.
@@ -282,7 +282,7 @@ unsafe fn deinterleave_rgba64_16px(
 // u16 → u8 narrowing for __m256i: `>> 8` + `packus_epi16` + lane fix
 // =============================================================================
 
-/// Narrow a u16×16 vector to u8×16 (in the low 128-bit half) via logical
+/// Narrow a u16x16 vector to u8x16 (in the low 128-bit half) via logical
 /// right-shift by 8, then `packus_epi16`, then `permute4x64_epi64::<0xD8>`.
 ///
 /// Equivalent to scalar `(v >> 8) as u8`.
@@ -302,7 +302,7 @@ unsafe fn narrow_u16x16_to_u8x16(v: __m256i, zero: __m256i) -> __m128i {
 /// Compile-time host endianness. `true` on BE targets, `false` on LE.
 ///
 /// Used by the byte-swap helpers below to gate the swap on
-/// `BE != HOST_NATIVE_BE`, covering all four `wire × host` quadrants. Mirrors
+/// `BE != HOST_NATIVE_BE`, covering all four `wire x host` quadrants. Mirrors
 /// the gate established in `gray.rs` and the canonical NEON
 /// `bswap_u16x8_if_be` helper.
 const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
@@ -359,7 +359,7 @@ unsafe fn byteswap256_if_be<const BE: bool>(v: __m256i) -> __m256i {
 
 /// AVX2 Rgb48 → packed u8 RGB. 16 pixels per outer iteration.
 ///
-/// Processes two 8-pixel halves (3 × 128-bit loads each) under the AVX2
+/// Processes two 8-pixel halves (3 x 128-bit loads each) under the AVX2
 /// target_feature, exploiting that SSE4.1/SSSE3 are AVX2 subsets. Each half
 /// deinterleaves with shuffle masks, narrows via `>> 8`, writes 8 pixels
 /// (24 bytes). 16 pixels are produced per outer loop iteration.
@@ -383,7 +383,7 @@ pub(crate) unsafe fn avx2_rgb48_to_rgb_row<const BE: bool>(
   unsafe {
     let zero = _mm_setzero_si128();
     let mut x = 0usize;
-    // Process 16 pixels per outer iteration (2 × 8-pixel halves).
+    // Process 16 pixels per outer iteration (2 x 8-pixel halves).
     while x + 16 <= width {
       let ptr = rgb48.as_ptr().add(x * 3);
 
@@ -400,7 +400,7 @@ pub(crate) unsafe fn avx2_rgb48_to_rgb_row<const BE: bool>(
       core::ptr::copy_nonoverlapping(tmp0.as_ptr(), rgb_out.as_mut_ptr().add(x * 3), 24);
 
       // Second half: pixels x+8..x+15
-      let ptr8 = ptr.add(24); // 24 u16 ahead = 8 pixels × 3 channels
+      let ptr8 = ptr.add(24); // 24 u16 ahead = 8 pixels x 3 channels
       let v3 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.cast()));
       let v4 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.add(8).cast()));
       let v5 = byteswap128_if_be::<BE>(_mm_loadu_si128(ptr8.add(16).cast()));
@@ -787,7 +787,7 @@ pub(crate) unsafe fn avx2_bgr48_to_rgba_u16_row<const BE: bool>(
 
 /// AVX2 Rgba64 → packed u8 RGB. 16 pixels per SIMD iteration. Alpha discarded.
 ///
-/// Loads 4 × `__m256i` (64 u16 = 16 pixels), deinterleaves via the
+/// Loads 4 x `__m256i` (64 u16 = 16 pixels), deinterleaves via the
 /// cascade helper, narrows via `>> 8` + `packus_epi16` + lane fix, writes
 /// 16 pixels (48 bytes) via `write_rgb_16` on the low 128 bits.
 /// When `BE = true` each loaded register is byte-swapped before deinterleaving.
@@ -1161,10 +1161,10 @@ pub(crate) unsafe fn avx2_bgra64_to_rgba_u16_row<const BE: bool>(
 }
 
 // =============================================================================
-// Helper: narrow u16×8 (128-bit) to u8×8 (used by stride-3 paths)
+// Helper: narrow u16x8 (128-bit) to u8x8 (used by stride-3 paths)
 // =============================================================================
 
-/// Narrow a u16×8 vector to u8×8 (in the low half) via logical right-shift by 8.
+/// Narrow a u16x8 vector to u8x8 (in the low half) via logical right-shift by 8.
 ///
 /// Equivalent to scalar `(v >> 8) as u8`. Zero-packs the high half.
 #[inline(always)]

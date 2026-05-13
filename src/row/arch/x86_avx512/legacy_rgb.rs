@@ -1,7 +1,7 @@
 //! AVX-512 (F + BW) kernels for legacy 16-bit packed-RGB source formats (Tier 7).
 //!
-//! Six source formats × 4 output variants = 24 kernels. Each format word is a
-//! little-endian `u16` at 32 pixels per iteration (`_mm512_loadu_si512` = 32 × u16).
+//! Six source formats x 4 output variants = 24 kernels. Each format word is a
+//! little-endian `u16` at 32 pixels per iteration (`_mm512_loadu_si512` = 32 x u16).
 //!
 //! # Bit extraction (AVX-512)
 //!
@@ -75,7 +75,7 @@ unsafe fn expand4(c: __m512i) -> __m512i {
 ///
 /// # Safety
 ///
-/// `ptr` must point to at least 96 writable bytes (32 pixels × 3 bytes).
+/// `ptr` must point to at least 96 writable bytes (32 pixels x 3 bytes).
 /// Caller must be in an `avx512f,avx512bw` target-feature context.
 #[inline(always)]
 unsafe fn write_rgb_32_from_u16lanes(
@@ -141,7 +141,7 @@ unsafe fn write_rgb_32_from_u16lanes(
 ///
 /// # Safety
 ///
-/// `ptr` must point to at least 128 writable bytes (32 pixels × 4 bytes).
+/// `ptr` must point to at least 128 writable bytes (32 pixels x 4 bytes).
 /// `alpha_u8` must be a valid `__m128i` of u8 lanes all set to `0xFF`.
 /// Caller must be in an `avx512f,avx512bw` target-feature context.
 #[inline(always)]
@@ -209,7 +209,7 @@ unsafe fn write_rgba_32_from_u16lanes(
 ///
 /// # Safety
 ///
-/// `ptr` must point to at least 96 writable `u16` elements (32 pixels × 3).
+/// `ptr` must point to at least 96 writable `u16` elements (32 pixels x 3).
 /// Caller must be in an `avx512f,avx512bw` target-feature context.
 #[inline(always)]
 unsafe fn write_rgb_u16_32_quarters(r: __m512i, g: __m512i, b: __m512i, ptr: *mut u16) {
@@ -245,7 +245,7 @@ unsafe fn write_rgb_u16_32_quarters(r: __m512i, g: __m512i, b: __m512i, ptr: *mu
 ///
 /// # Safety
 ///
-/// `ptr` must point to at least 128 writable `u16` elements (32 pixels × 4).
+/// `ptr` must point to at least 128 writable `u16` elements (32 pixels x 4).
 /// `alpha` is a splatted `__m128i` with all 8 u16 lanes = `0xFFFF`.
 /// Caller must be in an `avx512f,avx512bw` target-feature context.
 #[inline(always)]

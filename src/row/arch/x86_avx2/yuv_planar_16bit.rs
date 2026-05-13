@@ -3,7 +3,7 @@ use core::arch::x86_64::*;
 use super::*;
 
 /// AVX2 YUV 4:4:4 planar **16-bit** → packed **u8** RGB. Stays on
-/// the i32 Q15 pipeline — output-range scaling keeps `coeff × u_d`
+/// the i32 Q15 pipeline — output-range scaling keeps `coeff x u_d`
 /// within i32 for u8 output. 32 pixels per iter.
 ///
 /// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_row`] with `ALPHA = false`.
@@ -289,7 +289,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_row<
 
 /// AVX2 YUV 4:4:4 planar **16-bit** → packed **u16** RGB. Native
 /// 256-bit kernel using the [`srai64_15_x4`] bias trick (AVX2 lacks
-/// `_mm256_srai_epi64`). Processes 16 pixels per iteration — 2× the
+/// `_mm256_srai_epi64`). Processes 16 pixels per iteration — 2x the
 /// SSE4.1 rate, and no chroma-duplication step since 4:4:4 chroma
 /// is 1:1 with Y.
 ///
@@ -856,7 +856,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_row<
 /// AVX2 YUV 4:2:0 16-bit → packed **16-bit** RGB. Native 256-bit
 /// kernel using the [`srai64_15_x4`] bias trick (AVX2 lacks
 /// `_mm256_srai_epi64`; `_mm256_srli_epi64` + offset gives the same
-/// result for `|x| < 2^32`). 16 pixels per iteration — 2× SSE4.1's
+/// result for `|x| < 2^32`). 16 pixels per iteration — 2x SSE4.1's
 /// 8-pixel rate.
 ///
 /// # Safety
@@ -944,10 +944,10 @@ pub(crate) unsafe fn yuv_420p16_to_rgba_u16_with_alpha_src_row<const BE: bool>(
 }
 
 /// Shared AVX2 16-bit YUV 4:2:0 → native-depth `u16` kernel.
-/// - `ALPHA = false, ALPHA_SRC = false`: 2× `write_rgb_u16_8`.
-/// - `ALPHA = true, ALPHA_SRC = false`: 2× `write_rgba_u16_8` with
+/// - `ALPHA = false, ALPHA_SRC = false`: 2x `write_rgb_u16_8`.
+/// - `ALPHA = true, ALPHA_SRC = false`: 2x `write_rgba_u16_8` with
 ///   constant alpha `0xFFFF`.
-/// - `ALPHA = true, ALPHA_SRC = true`: 2× `write_rgba_u16_8` with the
+/// - `ALPHA = true, ALPHA_SRC = true`: 2x `write_rgba_u16_8` with the
 ///   alpha lanes loaded from `a_src` (full-range u16).
 ///
 /// # Safety
@@ -1039,7 +1039,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_u16_row<
       let u_i32 = _mm256_cvtepi16_epi32(u_i16);
       let v_i32 = _mm256_cvtepi16_epi32(v_i16);
 
-      // Scale UV in i32 (|u_centered × c_scale| ≤ 32768 × ~38300
+      // Scale UV in i32 (|u_centered x c_scale| ≤ 32768 x ~38300
       // ≈ 1.26·10⁹ — fits i32).
       let rnd32_v = _mm256_set1_epi32(1 << 14);
       let u_d = q15_shift(_mm256_add_epi32(
@@ -1067,7 +1067,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_u16_row<
       let g_ch_i32 = reassemble_i64x4_to_i32x8(g_ch_even, g_ch_odd);
       let b_ch_i32 = reassemble_i64x4_to_i32x8(b_ch_even, b_ch_odd);
 
-      // Duplicate chroma for 2 Y per pair (16 chroma-dup → 2 × 8 lanes).
+      // Duplicate chroma for 2 Y per pair (16 chroma-dup → 2 x 8 lanes).
       let (r_dup_lo, r_dup_hi) = chroma_dup_i32(r_ch_i32);
       let (g_dup_lo, g_dup_hi) = chroma_dup_i32(g_ch_i32);
       let (b_dup_lo, b_dup_hi) = chroma_dup_i32(b_ch_i32);

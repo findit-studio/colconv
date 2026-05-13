@@ -65,7 +65,7 @@ fn bench_u8(c: &mut Criterion) {
     let row_elems = w_us * 4; // u16 elements per row
     let stride = w * 4;
 
-    // AYUV64 frame: width × height × 4 u16 elements.
+    // AYUV64 frame: width x height x 4 u16 elements.
     let mut packed = std::vec![0u16; row_elems * h_us];
     fill_pseudo_random_u16(&mut packed, 0x1111);
 

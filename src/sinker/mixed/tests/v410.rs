@@ -80,7 +80,7 @@ fn v410_with_luma_u16_extracts_y_native_depth() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn v410_rgb_only_converts_gray_to_gray() {
-  // Y=512, U=V=512 (neutral chroma at 10-bit midpoint ≈ 0.5×1023).
+  // Y=512, U=V=512 (neutral chroma at 10-bit midpoint ≈ 0.5x1023).
   // Mid-gray input should yield mid-gray output at ~128 ± tolerance.
   let buf = solid_v410_frame(12, 4, 512, 512, 512);
   let src = V410Frame::new(&buf, 12, 4, 12);
@@ -370,8 +370,8 @@ fn v410_planar_parity_with_yuv444p10() {
 #[test]
 #[cfg(all(test, feature = "std"))]
 fn v410_rgba_u16_buffer_too_short_returns_err() {
-  // Buffer holds 6×7 = 42 elements × 4 channels = 168 u16 elements;
-  // a 6×8 frame needs 6×8×4 = 192.
+  // Buffer holds 6x7 = 42 elements x 4 channels = 168 u16 elements;
+  // a 6x8 frame needs 6x8x4 = 192.
   let mut rgba = std::vec![0u16; 6 * 7 * 4];
   let result = MixedSinker::<V410>::new(6, 8).with_rgba_u16(&mut rgba);
   let Err(err) = result else {

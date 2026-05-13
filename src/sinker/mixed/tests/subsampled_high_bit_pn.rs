@@ -21,7 +21,7 @@ fn solid_p2x0_frame(
   let cw = w / 2;
   let shift = 16 - bits;
   let y = std::vec![y_value << shift; w * h];
-  // 4:2:2: full-height chroma, half-width × 2 elements per pair.
+  // 4:2:2: full-height chroma, half-width x 2 elements per pair.
   let uv: Vec<u16> = (0..cw * h)
     .flat_map(|_| [u_value << shift, v_value << shift])
     .collect();
@@ -42,7 +42,7 @@ fn solid_p4x0_frame(
   let h = height as usize;
   let shift = 16 - bits;
   let y = std::vec![y_value << shift; w * h];
-  // 4:4:4: full-height × full-width × 2 elements per pair.
+  // 4:4:4: full-height x full-width x 2 elements per pair.
   let uv: Vec<u16> = (0..w * h)
     .flat_map(|_| [u_value << shift, v_value << shift])
     .collect();
@@ -225,7 +225,7 @@ fn p216_rgba_u16_only_native_depth_gray_with_opaque_alpha() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn p410_gray_to_gray() {
-  // 4:4:4: uv_stride = 2 * width = 32 (16 pairs × 2 elements).
+  // 4:4:4: uv_stride = 2 * width = 32 (16 pairs x 2 elements).
   let (yp, uvp) = solid_p4x0_frame(16, 8, 10, 512, 512, 512);
   let src = P410Frame::new(&yp, &uvp, 16, 8, 16, 32);
 

@@ -9,7 +9,7 @@
 //!
 //! XV36 is 4:4:4 (no chroma subsampling): each pixel is a u16
 //! quadruple `[U, Y, V, A]` MSB-aligned at 12-bit (low 4 bits zero
-//! per sample). Buffer length is `width × 4` u16 elements — no
+//! per sample). Buffer length is `width x 4` u16 elements — no
 //! even-width restriction.
 //!
 //! `be_input = true` selects the big-endian wire variant: each u16
@@ -33,14 +33,14 @@ use crate::{
 };
 
 /// Returns the minimum u16-element count of one packed XV36 row
-/// (`width × 4`) with overflow checking. Panics if `width × 4` cannot
+/// (`width x 4`) with overflow checking. Panics if `width x 4` cannot
 /// be represented as `usize` (only reachable on 32-bit targets with
 /// extreme widths).
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn xv36_packed_elems(width: usize) -> usize {
   match width.checked_mul(4) {
     Some(n) => n,
-    None => panic!("width ({width}) × 4 overflows usize (XV36 packed row)"),
+    None => panic!("width ({width}) x 4 overflows usize (XV36 packed row)"),
   }
 }
 
@@ -732,18 +732,18 @@ mod tests {
     );
   }
 
-  // ---- 32-bit width × 4 overflow guard ------------------------------------
+  // ---- 32-bit width x 4 overflow guard ------------------------------------
   //
   // XV36 packed rows consume `4 * width` u16 elements. Without the
-  // [`xv36_packed_elems`] helper a 32-bit caller could overflow `width × 4`
+  // [`xv36_packed_elems`] helper a 32-bit caller could overflow `width x 4`
   // to a small value, pass the input-side `assert!` with an undersized
   // slice, and reach unsafe SIMD loads.
 
   #[cfg(target_pointer_width = "32")]
   const OVERFLOW_WIDTH_TIMES_4: usize = {
-    // Smallest width whose `width × 4` overflows 32-bit `usize`.
+    // Smallest width whose `width x 4` overflows 32-bit `usize`.
     // `usize::MAX / 4` on 32-bit is `(2^32 - 1) / 4 = 1073741823`, so
-    // `+ 1` gives `1073741824` which × 4 wraps to 0.
+    // `+ 1` gives `1073741824` which x 4 wraps to 0.
     (usize::MAX / 4) + 1
   };
 

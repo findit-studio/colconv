@@ -45,8 +45,8 @@ impl<'a> MixedSinker<'a, Gbrp> {
   /// source has no alpha channel, so every alpha byte is filled with
   /// constant `0xFF` (opaque).
   ///
-  /// Returns `Err(InsufficientRgbaBuffer)` if `buf.len() < width × height
-  /// × 4`, or `Err(GeometryOverflow)` on 32-bit overflow.
+  /// Returns `Err(InsufficientRgbaBuffer)` if `buf.len() < width x height
+  /// x 4`, or `Err(GeometryOverflow)` on 32-bit overflow.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
     self.set_rgba(buf)?;

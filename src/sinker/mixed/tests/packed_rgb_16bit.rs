@@ -387,7 +387,7 @@ fn bgra64_with_rgba_u16_passes_source_alpha_native() {
 
 #[test]
 fn rgb48_multi_row_frame() {
-  // 2×2 frame: verify correct row-by-row accumulation.
+  // 2x2 frame: verify correct row-by-row accumulation.
   let src: Vec<u16> = as_le_u16(&[
     0xFF00, 0x0000, 0x0000, // row 0, px 0: R=0xFF, G=0x00, B=0x00
     0x0000, 0xFF00, 0x0000, // row 0, px 1: R=0x00, G=0xFF, B=0x00

@@ -51,7 +51,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Yuv444p9<BE>> {
 
   /// Attaches a packed **`u16`** RGBA output buffer. 9-bit low-packed
   /// (`(1 << 9) - 1 = 511` max). Length is measured in `u16`
-  /// **elements** (`width × height × 4`). Alpha element is `(1 << 9) - 1`.
+  /// **elements** (`width x height x 4`). Alpha element is `(1 << 9) - 1`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;

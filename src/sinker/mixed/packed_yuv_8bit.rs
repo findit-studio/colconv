@@ -58,7 +58,7 @@ impl<'a> MixedSinker<'a, Yuyv422> {
   /// with constant `0xFF` (the source has no alpha channel).
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -80,7 +80,7 @@ impl<'a> MixedSinker<'a, Yuyv422> {
 
   /// Attaches a **`u16`** luma output buffer. Y bytes are zero-extended
   /// to u16 (`out[x] = Y_byte as u16`). Length in u16 **elements**
-  /// (`width × height`).
+  /// (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -266,7 +266,7 @@ impl<'a> MixedSinker<'a, Uyvy422> {
 
   /// Attaches a **`u16`** luma output buffer. Y bytes (at offset 1 of
   /// each UYVY pair) are zero-extended to u16. Length in u16 **elements**
-  /// (`width × height`).
+  /// (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -445,7 +445,7 @@ impl<'a> MixedSinker<'a, Yvyu422> {
 
   /// Attaches a **`u16`** luma output buffer. Y bytes are zero-extended
   /// to u16 (`out[x] = Y_byte as u16`). Length in u16 **elements**
-  /// (`width × height`).
+  /// (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;

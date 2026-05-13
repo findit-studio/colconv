@@ -20,7 +20,7 @@
 //!
 //! 1. Load 16 Y (`vld1q_u8`) + 8 U (`vld1_u8`) + 8 V (`vld1_u8`).
 //! 2. Widen U/V to i16, subtract 128 → `u_i16`, `v_i16`.
-//! 3. Widen to i32 and apply `c_scale` (Q15) → `u_d`, `v_d` (i32x4 × 2).
+//! 3. Widen to i32 and apply `c_scale` (Q15) → `u_d`, `v_d` (i32x4 x 2).
 //! 4. Per channel C ∈ {R, G, B}:
 //!    `C_chroma = (C_u * u_d + C_v * v_d + RND) >> 15` in i32,
 //!    narrow‑saturate to i16x8 (8 lanes = 8 chroma pairs).
@@ -346,7 +346,7 @@ pub(super) fn scale_y_u16_to_i16(
 /// `(cu*u_d + cv*v_d + RND) >> 15` in i64 for 4 chroma values → i32x4.
 ///
 /// Used by the 16-bit u16-output path where `coeff * u_d` exceeds i32.
-/// `vmull_s32` widens each 32×32 product to 64 bits, avoiding overflow.
+/// `vmull_s32` widens each 32x32 product to 64 bits, avoiding overflow.
 #[cfg(any(
   feature = "y2xx",
   feature = "yuv-444-packed",
@@ -383,7 +383,7 @@ pub(super) fn chroma_i64x4(
 
 /// Scale 4 u16 Y pixels via i64 widening for the 16-bit u16-output path.
 ///
-/// `(y - y_off) * y_scale` can reach ~2.35×10⁹ at 16-bit limited range,
+/// `(y - y_off) * y_scale` can reach ~2.35x10⁹ at 16-bit limited range,
 /// overflowing i32. `vmull_s32` widens to i64 before the Q15 shift.
 /// Input `y_u32` is already unsigned-widened and reinterpreted as i32.
 #[cfg(any(
@@ -416,7 +416,7 @@ pub(super) fn scale_y_u16_i64(
 ///
 /// Used by the conditional byte-swap helpers below to decide whether a raw
 /// NEON load already matches the wire endian. Without this, the helpers
-/// would only correctly handle two of the four `host × wire` quadrants.
+/// would only correctly handle two of the four `host x wire` quadrants.
 #[cfg(any(
   feature = "rgb",
   feature = "yuv-444-packed",

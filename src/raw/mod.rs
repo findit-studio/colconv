@@ -3,7 +3,7 @@
 //! `colconv` ingests Bayer-mosaic frames produced by upstream
 //! camera-RAW pipelines (RED REDline / R3D, Blackmagic RAW / BRAW,
 //! Nikon NRAW SDK, FFmpeg's `bayer_*` decoders) and runs demosaic +
-//! white balance + 3×3 color-correction in a single per-row kernel.
+//! white balance + 3x3 color-correction in a single per-row kernel.
 //!
 //! # Scope
 //!
@@ -20,19 +20,19 @@
 //! legitimately render with different choices):
 //!
 //! - [`BayerPattern`] — which sensor color sits at the top-left of
-//!   the repeating 2×2 tile.
+//!   the repeating 2x2 tile.
 //! - [`WhiteBalance`] — per-channel R / G / B gains.
-//! - [`ColorCorrectionMatrix`] — 3×3 RGB→RGB transform from sensor
+//! - [`ColorCorrectionMatrix`] — 3x3 RGB→RGB transform from sensor
 //!   primaries into the working space.
 //!
 //! The walker fuses [`WhiteBalance`] and [`ColorCorrectionMatrix`]
-//! into a single 3×3 transform (`M = CCM · diag(wb)`) once at
-//! `*_to` entry, so the per-pixel arithmetic is one 3×3 matmul.
+//! into a single 3x3 transform (`M = CCM · diag(wb)`) once at
+//! `*_to` entry, so the per-pixel arithmetic is one 3x3 matmul.
 //!
 //! # Demosaic algorithm
 //!
 //! Selected via [`BayerDemosaic`]. Currently only
-//! [`BayerDemosaic::Bilinear`] (3×3 row window, 4-tap horizontal /
+//! [`BayerDemosaic::Bilinear`] (3x3 row window, 4-tap horizontal /
 //! vertical average for the missing channels) is wired up. The enum
 //! is `#[non_exhaustive]` so future variants (e.g. Malvar-He-Cutler)
 //! can land without a breaking change.

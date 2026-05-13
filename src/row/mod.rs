@@ -238,7 +238,7 @@ pub(crate) use dispatch::yuv444::yuv_444p_n_to_rgb_u16_row;
 // ---- shared dispatcher helpers ---------------------------------------
 
 /// Computes the byte length of one packed‑RGB row with overflow
-/// checking. Panics if `width × 3` cannot be represented as `usize`
+/// checking. Panics if `width x 3` cannot be represented as `usize`
 /// (only reachable on 32‑bit targets — wasm32, i686 — with extreme
 /// widths). Callers use the returned length as the minimum buffer
 /// size they hand to unsafe SIMD kernels, so an unchecked
@@ -252,7 +252,7 @@ pub(crate) fn rgb_row_bytes(width: usize) -> usize {
   }
 }
 
-/// Byte length of one packed‑RGBA row (`width × 4`) with overflow
+/// Byte length of one packed‑RGBA row (`width x 4`) with overflow
 /// checking. Same purpose as [`rgb_row_bytes`] for the 4-channel
 /// path used by the RGBA dispatchers.
 ///
@@ -280,14 +280,14 @@ pub(crate) fn rgb_row_bytes(width: usize) -> usize {
 pub(crate) fn rgba_row_bytes(width: usize) -> usize {
   match width.checked_mul(4) {
     Some(n) => n,
-    None => panic!("width ({width}) × 4 overflows usize"),
+    None => panic!("width ({width}) x 4 overflows usize"),
   }
 }
 
-/// Element count of one packed `u16`‑RGB row (`width × 3`). Identical
+/// Element count of one packed `u16`‑RGB row (`width x 3`). Identical
 /// math to [`rgb_row_bytes`] — the returned value is in `u16`
 /// elements, not bytes. Callers use it to size `&mut [u16]` buffers
-/// for the `u16` output path. `width × 3` overflow still matters on
+/// for the `u16` output path. `width x 3` overflow still matters on
 /// 32‑bit targets: the product names the number of elements the
 /// caller allocates, and downstream SIMD kernels index with it
 /// directly without re‑multiplying.
@@ -315,11 +315,11 @@ pub(crate) fn rgba_row_bytes(width: usize) -> usize {
 pub(crate) fn rgb_row_elems(width: usize) -> usize {
   match width.checked_mul(3) {
     Some(n) => n,
-    None => panic!("width ({width}) × 3 overflows usize"),
+    None => panic!("width ({width}) x 3 overflows usize"),
   }
 }
 
-/// Element count of one packed `u16`-RGBA row (`width × 4`). Identical
+/// Element count of one packed `u16`-RGBA row (`width x 4`). Identical
 /// math to [`rgba_row_bytes`] — the returned value is in `u16`
 /// elements, not bytes. Callers use it to size `&mut [u16]` buffers
 /// for the high-bit-depth `u16` RGBA output path.
@@ -345,29 +345,29 @@ pub(crate) fn rgb_row_elems(width: usize) -> usize {
 pub(crate) fn rgba_row_elems(width: usize) -> usize {
   match width.checked_mul(4) {
     Some(n) => n,
-    None => panic!("width ({width}) × 4 overflows usize"),
+    None => panic!("width ({width}) x 4 overflows usize"),
   }
 }
 
-/// Element count of one packed YA (luma + alpha) row (`width × 2`)
+/// Element count of one packed YA (luma + alpha) row (`width x 2`)
 /// with overflow checking. Same purpose as [`rgb_row_bytes`] for the
 /// 2-element `[Y, A, ...]` interleaved layout used by Ya8 (`&[u8]`)
-/// and Ya16 (`&[u16]`) packed inputs — both index `width × 2`
+/// and Ya16 (`&[u16]`) packed inputs — both index `width x 2`
 /// elements regardless of element width, so this helper covers both.
 #[cfg(feature = "gray")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn ya_row_elems(width: usize) -> usize {
   match width.checked_mul(2) {
     Some(n) => n,
-    None => panic!("width ({width}) × 2 overflows usize"),
+    None => panic!("width ({width}) x 2 overflows usize"),
   }
 }
 
 /// Maximum permitted magnitude of any element of a fused color
 /// transform handed to a Bayer row dispatcher.
 ///
-/// Set to `WhiteBalance::MAX_GAIN × ColorCorrectionMatrix::MAX_COEFFICIENT_ABS
-/// = 1e6 × 1e6 = 1e12`, which is the largest absolute value any
+/// Set to `WhiteBalance::MAX_GAIN x ColorCorrectionMatrix::MAX_COEFFICIENT_ABS
+/// = 1e6 x 1e6 = 1e12`, which is the largest absolute value any
 /// fused entry can take when the upstream WB / CCM were
 /// validated through [`crate::raw::WhiteBalance::try_new`] /
 /// [`crate::raw::ColorCorrectionMatrix::try_new`]. The overflow
@@ -380,7 +380,7 @@ pub(crate) fn ya_row_elems(width: usize) -> usize {
 #[cfg(feature = "bayer")]
 pub(crate) const MAX_FUSED_TRANSFORM_ABS: f32 = 1.0e12;
 
-/// Asserts every element of a 3×3 fused color transform is
+/// Asserts every element of a 3x3 fused color transform is
 /// **finite and within the magnitude bound**
 /// ([`MAX_FUSED_TRANSFORM_ABS`]).
 ///
@@ -414,7 +414,7 @@ pub(crate) fn assert_color_transform_well_formed(m: &[[f32; 3]; 3]) {
       assert!(
         v.abs() <= MAX_FUSED_TRANSFORM_ABS,
         "color transform m[{row}][{col}] = {v} exceeds magnitude bound \
-         (|coeff| ≤ {MAX_FUSED_TRANSFORM_ABS}); validated WB × CCM cannot \
+         (|coeff| ≤ {MAX_FUSED_TRANSFORM_ABS}); validated WB x CCM cannot \
          produce values past this bound"
       );
       col += 1;
@@ -423,7 +423,7 @@ pub(crate) fn assert_color_transform_well_formed(m: &[[f32; 3]; 3]) {
   }
 }
 
-/// Element count of one full-width interleaved-UV row (`width × 2`)
+/// Element count of one full-width interleaved-UV row (`width x 2`)
 /// for semi-planar 4:4:4 sources (`P410` / `P412` / `P416`). One
 /// `(U, V)` pair per pixel = `2 * width` `u16` elements per row.
 /// Same `checked_mul` rationale as [`rgb_row_bytes`] — the returned
@@ -435,11 +435,11 @@ pub(crate) fn assert_color_transform_well_formed(m: &[[f32; 3]; 3]) {
 pub(crate) fn uv_full_row_elems(width: usize) -> usize {
   match width.checked_mul(2) {
     Some(n) => n,
-    None => panic!("width ({width}) × 2 overflows usize (UV row)"),
+    None => panic!("width ({width}) x 2 overflows usize (UV row)"),
   }
 }
 
-/// Byte length of one packed YUV 4:2:2 row (`width × 2`) for
+/// Byte length of one packed YUV 4:2:2 row (`width x 2`) for
 /// `Yuyv422` / `Uyvy422` / `Yvyu422` sources. Two bytes per pixel
 /// (one `Y` + one half of an interleaved `U`/`V` pair). Same
 /// `checked_mul` rationale as [`rgb_row_bytes`] — the returned byte
@@ -452,24 +452,24 @@ pub(crate) fn uv_full_row_elems(width: usize) -> usize {
 pub(crate) fn packed_yuv422_row_bytes(width: usize) -> usize {
   match width.checked_mul(2) {
     Some(n) => n,
-    None => panic!("width ({width}) × 2 overflows usize (packed YUV 4:2:2 row)"),
+    None => panic!("width ({width}) x 2 overflows usize (packed YUV 4:2:2 row)"),
   }
 }
 
-/// Byte length of one packed YUV 4:1:1 row (`width × 3 / 2`) for
+/// Byte length of one packed YUV 4:1:1 row (`width x 3 / 2`) for
 /// the `Uyyvyy411` source. 6 bytes per 4-pixel block (12 bpp). Width
 /// must be a multiple of 4 — callers assert this separately. Same
 /// `checked_mul` rationale as [`rgb_row_bytes`]: the returned byte
 /// count feeds into the dispatcher's input-side `assert!`, which
 /// gates entry into unsafe SIMD loads. Computed as
-/// `(width × 3) / 2` so the intermediate `width × 3` is the only
+/// `(width x 3) / 2` so the intermediate `width x 3` is the only
 /// product that can overflow on 32-bit targets at extreme widths.
 #[cfg(feature = "yuv-packed")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn packed_yuv411_row_bytes(width: usize) -> usize {
   match width.checked_mul(3) {
     Some(n) => n / 2,
-    None => panic!("width ({width}) × 3 / 2 overflows usize (packed YUV 4:1:1 row)"),
+    None => panic!("width ({width}) x 3 / 2 overflows usize (packed YUV 4:1:1 row)"),
   }
 }
 
@@ -488,11 +488,11 @@ pub(crate) fn v210_row_bytes(width: usize) -> usize {
   let words = width.div_ceil(6);
   match words.checked_mul(16) {
     Some(n) => n,
-    None => panic!("width ({width}) / 6 × 16 overflows usize (v210 row)"),
+    None => panic!("width ({width}) / 6 x 16 overflows usize (v210 row)"),
   }
 }
 
-/// Element count of one packed `Y2xx` row (`width × 2` u16
+/// Element count of one packed `Y2xx` row (`width x 2` u16
 /// elements) with overflow checking. Used by the Y210 / Y212 / Y216
 /// dispatchers to gate entry into unsafe SIMD loads. Same
 /// `checked_mul` rationale as [`rgb_row_bytes`].
@@ -501,7 +501,7 @@ pub(crate) fn v210_row_bytes(width: usize) -> usize {
 pub(crate) fn y2xx_row_elems(width: usize) -> usize {
   match width.checked_mul(2) {
     Some(n) => n,
-    None => panic!("width ({width}) × 2 overflows usize (Y2xx row)"),
+    None => panic!("width ({width}) x 2 overflows usize (Y2xx row)"),
   }
 }
 
@@ -665,10 +665,10 @@ pub(crate) const fn simd128_available() -> bool {
 #[cfg(all(test, feature = "std"))]
 mod overflow_tests {
   //! 32-bit RGB-row-bytes overflow regressions for the public
-  //! dispatchers. `width × 3` can wrap `usize` on wasm32 / i686 for
+  //! dispatchers. `width x 3` can wrap `usize` on wasm32 / i686 for
   //! extreme widths; the shared [`rgb_row_bytes`] helper rejects
   //! these before any unsafe kernel sees them. Tests are gated on
-  //! 32-bit because `u32 × 3` never wraps 64-bit `usize`.
+  //! 32-bit because `u32 x 3` never wraps 64-bit `usize`.
 
   #[cfg(target_pointer_width = "32")]
   use super::*;
@@ -766,7 +766,7 @@ mod overflow_tests {
     bgr_to_rgb_row(&input, &mut output, OVERFLOW_WIDTH, false);
   }
 
-  // ---- Tier 10 planar GBR dispatchers — `width × {3, 4}` overflow ----
+  // ---- Tier 10 planar GBR dispatchers — `width x {3, 4}` overflow ----
   //
   // The Tier 10 GBR sources interleave G/B/R (and optional A) planes
   // into packed RGB / RGBA. The dispatcher uses [`rgb_row_bytes`] /
@@ -809,14 +809,14 @@ mod overflow_tests {
     gbra_to_rgba_row(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
   }
 
-  // ---- Tier 10b planar GBR high-bit dispatchers — `width × {3,4}` overflow
+  // ---- Tier 10b planar GBR high-bit dispatchers — `width x {3,4}` overflow
   //
   // The high-bit (`GbrpN` / `GbrapN`) dispatchers must guard their output
   // buffer sizes against `width * {3, 4}` wrapping on 32-bit targets.
   // Each {3, 4}-channel-output entry point gets an independent regression
   // test so future guard removals surface individually. The native-depth
   // luma dispatcher (`gbr_to_luma_u16_high_bit_row`) is omitted because
-  // it doesn't perform a width × N multiply — output length is `width`
+  // it doesn't perform a width x N multiply — output length is `width`
   // exactly, so there is no wrapping path to guard.
 
   #[cfg(target_pointer_width = "32")]
@@ -887,7 +887,7 @@ mod overflow_tests {
     gbra_to_rgba_u16_high_bit_row::<10, false>(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
   }
 
-  // ---- Tier 11 gray dispatchers — `width × {3, 4}` overflow ----
+  // ---- Tier 11 gray dispatchers — `width x {3, 4}` overflow ----
   //
   // The gray RGB / RGBA / RGB-u16 / RGBA-u16 dispatchers route through
   // [`rgb_row_bytes`] / [`rgba_row_bytes`] / [`rgb_row_elems`] /
@@ -1028,7 +1028,7 @@ mod overflow_tests {
     );
   }
 
-  // ---- Packed YUV 4:2:2 dispatchers — `width × 2` overflow ----
+  // ---- Packed YUV 4:2:2 dispatchers — `width x 2` overflow ----
   //
   // The packed Tier 3 sources (Yuyv422 / Uyvy422 / Yvyu422) consume
   // `2 * width` bytes per row. Without the [`packed_yuv422_row_bytes`]
@@ -1038,8 +1038,8 @@ mod overflow_tests {
   // entry point gets its own regression so a future regression on
   // any one of them surfaces independently.
 
-  /// Smallest even width whose `width × 2` overflows 32-bit `usize`
-  /// without first failing the `width × 3` overflow guard the
+  /// Smallest even width whose `width x 2` overflows 32-bit `usize`
+  /// without first failing the `width x 3` overflow guard the
   /// 3-channel-output dispatchers also enforce. On 32-bit
   /// `usize::MAX / 2 == 2^31 - 1` is odd, so `+ 1` produces an
   /// even value (`2^31`); the `+ (candidate & 1)` is a parity
@@ -1125,7 +1125,7 @@ mod overflow_tests {
     yvyu422_to_luma_row(&p, &mut luma, OVERFLOW_WIDTH_TIMES_2, false);
   }
 
-  // ---- v210 dispatcher — `(width / 6) × 16` overflow ----
+  // ---- v210 dispatcher — `(width / 6) x 16` overflow ----
   //
   // The v210 source (Tier 4) packs 6 pixels per 16-byte word, so the
   // row's byte count is `(width / 6) * 16`. Without the
@@ -1143,7 +1143,7 @@ mod overflow_tests {
     v210_to_rgb_row(&p, &mut rgb, candidate, ColorMatrix::Bt601, true, false);
   }
 
-  // ---- Y2xx dispatcher — `width × 2` overflow ----
+  // ---- Y2xx dispatcher — `width x 2` overflow ----
   //
   // Y210 (and the upcoming Y212 / Y216) sources consume `2 * width`
   // u16 elements per row (one quadruple per chroma pair = 4 u16 per
@@ -1155,7 +1155,7 @@ mod overflow_tests {
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn y210_dispatcher_rejects_width_times_2_overflow() {
-    // Reuse OVERFLOW_WIDTH_TIMES_2 — an even width whose `× 2`
+    // Reuse OVERFLOW_WIDTH_TIMES_2 — an even width whose `x 2`
     // overflows 32-bit `usize`. The previous `(usize::MAX / 2) + 2`
     // value was odd on i686 (since `usize::MAX / 2` is odd) and
     // tripped the even-width check before the overflow guard,
@@ -1306,7 +1306,7 @@ mod bayer_dispatcher_tests {
   /// finite-but-extreme matrices that would overflow during the
   /// per-pixel matmul. The dispatcher's
   /// `assert_color_transform_well_formed` enforces the same
-  /// magnitude bound (1e12) that validated WB × CCM can produce.
+  /// magnitude bound (1e12) that validated WB x CCM can produce.
   #[test]
   #[should_panic(expected = "exceeds magnitude bound")]
   fn bayer_dispatcher_rejects_finite_extreme_m() {

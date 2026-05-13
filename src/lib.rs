@@ -67,7 +67,7 @@
 //! | [`P410`]         | 10        | 4:4:4       | semi-planar, high-packed | `p410le`              |
 //! | [`P412`]         | 12        | 4:4:4       | semi-planar, high-packed | `p412le`              |
 //! | [`P416`]         | 16        | 4:4:4       | semi-planar              | `p416le`              |
-//! | [`V210`]         | 10        | 4:2:2       | packed (3 × 10-bit/u32)  | `v210`                |
+//! | [`V210`]         | 10        | 4:2:2       | packed (3 x 10-bit/u32)  | `v210`                |
 //! | [`Y210`]         | 10        | 4:2:2       | packed, MSB-aligned u16  | `y210le`              |
 //! | [`Y212`]         | 12        | 4:2:2       | packed, MSB-aligned u16  | `y212le`              |
 //! | [`Y216`]         | 16        | 4:2:2       | packed, full-range u16   | `y216le`              |
@@ -79,10 +79,10 @@
 //! | [`Ayuv64`]       | 16        | 4:4:4       | packed u16 quadruple, source α  | `ayuv64le`     |
 //! | [`Gbrp`]         |  8        | 4:4:4       | planar GBR (3 planes)            | `gbrp`        |
 //! | [`Gbrap`]        |  8        | 4:4:4       | planar GBR + A (4 planes, source α) | `gbrap`   |
-//! | [`Xyz12`](crate::source::Xyz12) | 12 | 4:4:4 | packed CIE XYZ (3 × u16, high-bit-packed: bits `[15:4]`) | `xyz12le` / `xyz12be` |
+//! | [`Xyz12`](crate::source::Xyz12) | 12 | 4:4:4 | packed CIE XYZ (3 x u16, high-bit-packed: bits `[15:4]`) | `xyz12le` / `xyz12be` |
 //!
 //! [`Xyz12`](crate::source::Xyz12) is the **DCP / digital-cinema** source format. Decoding
-//! it requires a SMPTE ST 428-1 §8 inverse OETF, a 3×3 matrix to one
+//! it requires a SMPTE ST 428-1 §8 inverse OETF, a 3x3 matrix to one
 //! of three target gamuts ([`DcpTargetGamut::DciP3`] /
 //! [`DcpTargetGamut::Rec709`] / [`DcpTargetGamut::Rec2020`]), then a
 //! sRGB-shape forward OETF and integer narrow. Every backend is
@@ -93,7 +93,7 @@
 //!
 //! [`raw::Bayer`] (8-bit) and [`raw::Bayer16<BITS>`] (10/12/14/16-bit
 //! low-packed `u16`, range `[0, (1 << BITS) - 1]`) feed bilinear
-//! demosaic + white balance + 3×3
+//! demosaic + white balance + 3x3
 //! color-correction in a single per-row kernel. Caller supplies
 //! [`raw::BayerPattern`] (BGGR / RGGB / GRBG / GBRG),
 //! [`raw::WhiteBalance`] gains, and a [`raw::ColorCorrectionMatrix`].
@@ -141,7 +141,7 @@
 //! - **16-bit family** — dedicated `yuv_420p16_to_rgb_*`,
 //!   `yuv444p16_to_rgb_*`, `p16_to_rgb_*`. [`Yuv422p16`] reuses the
 //!   4:2:0 16-bit kernels by shape equivalence. The **u8-output**
-//!   kernels stay on i32 (output-range scaling keeps `coeff × u_d`
+//!   kernels stay on i32 (output-range scaling keeps `coeff x u_d`
 //!   within i32). The **u16-output** kernels widen the chroma matrix
 //!   multiply-add to i64 to avoid the ~2.31·10⁹ chroma-channel sum
 //!   overflowing i32 at `BITS == 16`; the Y path also widens to i64
@@ -168,7 +168,7 @@
 //! - **Cinema-camera RAW source formats** — vendor-decoded sensor RGB
 //!   in camera-native log + gamut (LogC4 / S-Log3 / REDLog3G10 /
 //!   Canon Log 2/3 / BMD Film Gen 5 / V-Log / F-Log) → working-space
-//!   conversion via inverse-OETF + 3×3 matrix + sRGB OETF. Roadmap
+//!   conversion via inverse-OETF + 3x3 matrix + sRGB OETF. Roadmap
 //!   tracked in `docs/superpowers/plans/2026-05-07-be-rollout-tracking.md`
 //!   under "Cinema Camera RAW Support Roadmap". Mirrors the Tier 12
 //!   ([`source::Xyz12`]) shape: per-vendor source format, full

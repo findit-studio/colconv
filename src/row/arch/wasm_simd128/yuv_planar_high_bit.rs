@@ -392,10 +392,10 @@ pub(crate) unsafe fn yuv_420p_n_to_rgba_u16_with_alpha_src_row<const BITS: u32, 
 }
 
 /// Shared wasm simd128 high-bit YUV 4:2:0 → native-depth `u16` kernel.
-/// - `ALPHA = false, ALPHA_SRC = false`: 2× `write_rgb_u16_8`.
-/// - `ALPHA = true, ALPHA_SRC = false`: 2× `write_rgba_u16_8` with
+/// - `ALPHA = false, ALPHA_SRC = false`: 2x `write_rgb_u16_8`.
+/// - `ALPHA = true, ALPHA_SRC = false`: 2x `write_rgba_u16_8` with
 ///   constant alpha `(1 << BITS) - 1`.
-/// - `ALPHA = true, ALPHA_SRC = true`: 2× `write_rgba_u16_8` with the
+/// - `ALPHA = true, ALPHA_SRC = true`: 2x `write_rgba_u16_8` with the
 ///   alpha lanes loaded from `a_src` and masked to BITS.
 ///
 /// # Safety
