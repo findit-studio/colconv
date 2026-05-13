@@ -1,11 +1,11 @@
 //! Sinker impl for the Tier 9 packed-float-RGB **source** format
 //! ([`Rgbf32`] — FFmpeg `AV_PIX_FMT_RGBF32`).
 //!
-//! Each pixel is `3 × f32` (linear `R, G, B`). Output paths:
-//! - `with_rgb` — clamp `[0, 1]` × 255 → packed `R, G, B` u8
+//! Each pixel is `3 x f32` (linear `R, G, B`). Output paths:
+//! - `with_rgb` — clamp `[0, 1]` x 255 → packed `R, G, B` u8
 //!   (`rgbf32_to_rgb_row`).
 //! - `with_rgba` — same conversion + constant `0xFF` alpha.
-//! - `with_rgb_u16` — clamp `[0, 1]` × 65535 → packed `R, G, B` u16.
+//! - `with_rgb_u16` — clamp `[0, 1]` x 65535 → packed `R, G, B` u16.
 //! - `with_rgba_u16` — same + constant `0xFFFF` alpha.
 //! - `with_rgb_f32` — **lossless** float pass-through (HDR values >
 //!   1.0 and negatives are preserved).
@@ -56,9 +56,9 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgbf32<BE>> {
     Ok(self)
   }
 
-  /// Attaches a `u16` RGB output buffer (`width × height × 3`
+  /// Attaches a `u16` RGB output buffer (`width x height x 3`
   /// elements). Each `f32` channel is clamped to `[0, 1]` and **scaled
-  /// to the full u16 range** (×65535).
+  /// to the full u16 range** (x65535).
   ///
   /// # Naming consistency note
   ///
@@ -86,7 +86,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Rgbf32<BE>> {
     Ok(self)
   }
 
-  /// Attaches a `u16` RGBA output buffer. Same `[0, 1]` × 65535
+  /// Attaches a `u16` RGBA output buffer. Same `[0, 1]` x 65535
   /// **full-range scaling** as
   /// [`with_rgb_u16`](Self::with_rgb_u16); alpha is forced to `0xFFFF`
   /// (the float source has no alpha channel). See
@@ -277,11 +277,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Rgbf32<BE>> {
     }
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );

@@ -59,7 +59,7 @@ fn rgb24_with_luma_derives_bt709_full_range() {
     .unwrap();
   rgb24_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
 
-  // 0.2126 × 255 = 54.213 → 54 after rounding.
+  // 0.2126 x 255 = 54.213 → 54 after rounding.
   for &y in &luma {
     assert!(y.abs_diff(54) <= 1, "got Y={y}");
   }

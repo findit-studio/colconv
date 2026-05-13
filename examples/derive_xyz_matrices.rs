@@ -97,7 +97,7 @@ fn xyz_from_xy(xy: (f64, f64)) -> [f64; 3] {
   [big_x, big_y, big_z]
 }
 
-/// Inverse of a 3×3 matrix via cofactor expansion. Returns None if the
+/// Inverse of a 3x3 matrix via cofactor expansion. Returns None if the
 /// determinant is below `epsilon` (singular).
 fn invert3(m: &Mat3) -> Option<Mat3> {
   let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
@@ -143,7 +143,7 @@ fn matvec3(m: &Mat3, v: &[f64; 3]) -> [f64; 3] {
   ]
 }
 
-/// Derives `M_rgb_to_xyz` (3×3 f64) for a single gamut. Used both as
+/// Derives `M_rgb_to_xyz` (3x3 f64) for a single gamut. Used both as
 /// the inverse-target for `derive_xyz_to_rgb` and to read off luma
 /// coefficients (the Y row, normalised so the three weights sum to 1
 /// at the gamut's white point).
@@ -188,7 +188,7 @@ fn print_luma_coeffs(name: &str, m_rgb_to_xyz: &Mat3) {
   println!();
 }
 
-/// Derives M_xyz_to_rgb (3×3 f64) for a single gamut.
+/// Derives M_xyz_to_rgb (3x3 f64) for a single gamut.
 fn derive_xyz_to_rgb(g: &GamutCoords) -> Mat3 {
   let r_xyz = xyz_from_xy(g.r);
   let g_xyz = xyz_from_xy(g.g);
@@ -253,7 +253,7 @@ fn derive_xyz_to_rgb(g: &GamutCoords) -> Mat3 {
   m_xyz_to_rgb
 }
 
-/// Pretty-print a 3×3 matrix as Rust f32 literals.
+/// Pretty-print a 3x3 matrix as Rust f32 literals.
 ///
 /// `white` is the gamut's chromaticity white point — used to label the
 /// generated comment as either D65 (Bt709 / DisplayP3D65 / Bt2020Ncl)

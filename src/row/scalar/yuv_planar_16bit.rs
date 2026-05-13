@@ -1,3 +1,9 @@
+// `super::*` brings in shared scalar helpers (`Coefficients`,
+// `q15_chroma*`, `chroma_bias`, …). Every function in this file is
+// cfg-gated on `yuv-planar` or `all(yuv-planar, yuv-semi-planar)`, so
+// under `yuv-semi-planar` alone the file body collapses and these
+// imports become unused.
+#[cfg(feature = "yuv-planar")]
 use super::{load_u16, *};
 
 // ---- 16-bit YUV 4:2:0 → RGB (parallel kernel family) -------------------
@@ -35,6 +41,7 @@ use super::{load_u16, *};
 /// - `width` must be even.
 /// - `y.len() >= width`, `u_half.len() >= width / 2`,
 ///   `v_half.len() >= width / 2`, `rgb_out.len() >= 3 * width`.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn yuv_420p16_to_rgb_row<const BE: bool>(
   y: &[u16],
@@ -60,6 +67,7 @@ pub(crate) fn yuv_420p16_to_rgb_row<const BE: bool>(
 // Scalar prep for Ship 8 Tranche 5a: the public dispatcher
 // `row::yuv420p16_to_rgba_row` lands in the follow-up SIMD/dispatcher
 // PR. Until then this thin wrapper has no caller.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn yuv_420p16_to_rgba_row<const BE: bool>(
   y: &[u16],
@@ -90,6 +98,7 @@ pub(crate) fn yuv_420p16_to_rgba_row<const BE: bool>(
 /// - `y.len() >= width`, `u_half.len() >= width / 2`,
 ///   `v_half.len() >= width / 2`, `a_src.len() >= width`,
 ///   `rgba_out.len() >= 4 * width`.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn yuv_420p16_to_rgba_with_alpha_src_row<const BE: bool>(
@@ -125,6 +134,7 @@ pub(crate) fn yuv_420p16_to_rgba_with_alpha_src_row<const BE: bool>(
 /// [`yuv_420p16_to_rgb_or_rgba_u16_row`]). Source alpha at 16-bit
 /// depth-converts to u8 via `>> 8`; no mask is needed since every
 /// u16 is in range.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn yuv_420p16_to_rgb_or_rgba_row<
@@ -203,7 +213,7 @@ pub(crate) fn yuv_420p16_to_rgb_or_rgba_row<
 /// Converts one row of **16-bit** YUV 4:2:0 to **native-depth `u16`**
 /// packed RGB — full-range output in `[0, 65535]`. **Runs the
 /// chroma matrix multiply in i64** to accommodate the wider
-/// `coeff × u_d` product at 16 → 16-bit scaling.
+/// `coeff x u_d` product at 16 → 16-bit scaling.
 ///
 /// Thin wrapper over [`yuv_420p16_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.
 ///
@@ -211,6 +221,7 @@ pub(crate) fn yuv_420p16_to_rgb_or_rgba_row<
 ///
 /// Same contract as [`yuv_420p16_to_rgb_row`] plus `rgb_out` is
 /// measured in `u16` elements.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn yuv_420p16_to_rgb_u16_row<const BE: bool>(
   y: &[u16],
@@ -235,6 +246,7 @@ pub(crate) fn yuv_420p16_to_rgb_u16_row<const BE: bool>(
 // Scalar prep for Ship 8 Tranche 5b: the public dispatcher
 // `row::yuv420p16_to_rgba_u16_row` lands in the follow-up SIMD/dispatcher
 // PR. Until then this thin wrapper has no caller.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn yuv_420p16_to_rgba_u16_row<const BE: bool>(
   y: &[u16],
@@ -266,6 +278,7 @@ pub(crate) fn yuv_420p16_to_rgba_u16_row<const BE: bool>(
 /// - `y.len() >= width`, `u_half.len() >= width / 2`,
 ///   `v_half.len() >= width / 2`, `a_src.len() >= width`,
 ///   `rgba_out.len() >= 4 * width`.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn yuv_420p16_to_rgba_u16_with_alpha_src_row<const BE: bool>(
@@ -299,6 +312,7 @@ pub(crate) fn yuv_420p16_to_rgba_u16_with_alpha_src_row<const BE: bool>(
 /// Uses i64 chroma multiply (same rationale as
 /// [`yuv_420p16_to_rgb_u16_row`]). Source alpha at 16-bit is already
 /// at native depth (full u16 range, no `bits_mask` needed).
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn yuv_420p16_to_rgb_or_rgba_u16_row<
@@ -373,10 +387,11 @@ pub(crate) fn yuv_420p16_to_rgb_or_rgba_u16_row<
 }
 
 /// YUV 4:4:4 planar **16‑bit** → packed **8‑bit** RGB. Same i32
-/// chroma pipeline as 10/12/14 (output‑range scaling keeps `coeff × u_d`
+/// chroma pipeline as 10/12/14 (output‑range scaling keeps `coeff x u_d`
 /// inside i32 for u8 target). 1:1 chroma per Y pixel, no width parity.
 ///
 /// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_row`] with `ALPHA = false`.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn yuv_444p16_to_rgb_row<const BE: bool>(
   y: &[u16],
@@ -398,6 +413,7 @@ pub(crate) fn yuv_444p16_to_rgb_row<const BE: bool>(
 /// (`0xFF`, opaque).
 ///
 /// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_row`] with `ALPHA = true`.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn yuv_444p16_to_rgba_row<const BE: bool>(
   y: &[u16],
@@ -427,6 +443,7 @@ pub(crate) fn yuv_444p16_to_rgba_row<const BE: bool>(
 ///
 /// - `y.len() >= width`, `u.len() >= width`, `v.len() >= width`,
 ///   `a_src.len() >= width`, `rgba_out.len() >= 4 * width`.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn yuv_444p16_to_rgba_with_alpha_src_row<const BE: bool>(
@@ -462,6 +479,7 @@ pub(crate) fn yuv_444p16_to_rgba_with_alpha_src_row<const BE: bool>(
 /// [`yuv_444p16_to_rgb_or_rgba_u16_row`]). Source alpha at 16-bit
 /// depth-converts to u8 via `>> 8`; no mask is needed since every
 /// u16 is in range.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn yuv_444p16_to_rgb_or_rgba_row<
@@ -520,12 +538,13 @@ pub(crate) fn yuv_444p16_to_rgb_or_rgba_row<
 }
 
 /// YUV 4:4:4 planar **16‑bit** → packed **native‑depth `u16`** RGB.
-/// Widens chroma matrix multiply to i64 (Bt2020 `b_u × u_d` reaches
+/// Widens chroma matrix multiply to i64 (Bt2020 `b_u x u_d` reaches
 /// ~2.31·10⁹ at limited‑range 16→u16 — overflows i32). Y path widens
 /// via [`q15_scale64`] to handle unclamped Y samples above the
 /// limited‑range nominal max.
 ///
 /// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn yuv_444p16_to_rgb_u16_row<const BE: bool>(
   y: &[u16],
@@ -545,6 +564,7 @@ pub(crate) fn yuv_444p16_to_rgb_u16_row<const BE: bool>(
 /// — alpha element is `0xFFFF` (opaque maximum at 16‑bit).
 ///
 /// Thin wrapper over [`yuv_444p16_to_rgb_or_rgba_u16_row`] with `ALPHA = true`.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn yuv_444p16_to_rgba_u16_row<const BE: bool>(
   y: &[u16],
@@ -574,6 +594,7 @@ pub(crate) fn yuv_444p16_to_rgba_u16_row<const BE: bool>(
 ///
 /// - `y.len() >= width`, `u.len() >= width`, `v.len() >= width`,
 ///   `a_src.len() >= width`, `rgba_out.len() >= 4 * width`.
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn yuv_444p16_to_rgba_u16_with_alpha_src_row<const BE: bool>(
@@ -607,6 +628,7 @@ pub(crate) fn yuv_444p16_to_rgba_u16_with_alpha_src_row<const BE: bool>(
 ///
 /// Uses i64 chroma multiply (same rationale as
 /// [`yuv_444p16_to_rgb_u16_row`]).
+#[cfg(feature = "yuv-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn yuv_444p16_to_rgb_or_rgba_u16_row<
@@ -679,6 +701,7 @@ pub(crate) fn yuv_444p16_to_rgb_or_rgba_u16_row<
 ///   `rgb_out.len() >= 3 * width`.
 ///
 /// Thin wrapper over [`p16_to_rgb_or_rgba_row`] with `ALPHA = false`.
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn p16_to_rgb_row<const BE: bool>(
   y: &[u16],
@@ -700,6 +723,7 @@ pub(crate) fn p16_to_rgb_row<const BE: bool>(
 // Scalar prep for Ship 8 Tranche 5a: the public dispatcher
 // `row::p016_to_rgba_row` lands in the follow-up SIMD/dispatcher PR.
 // Until then this thin wrapper has no caller.
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn p16_to_rgba_row<const BE: bool>(
   y: &[u16],
@@ -714,6 +738,7 @@ pub(crate) fn p16_to_rgba_row<const BE: bool>(
 
 /// Shared P016 → 8-bit RGB / RGBA kernel. `ALPHA = false` emits 3 bpp;
 /// `ALPHA = true` emits 4 bpp with constant `0xFF` alpha.
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn p16_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   y: &[u16],
@@ -770,6 +795,7 @@ pub(crate) fn p16_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
 /// runs in i64 (same reasoning as [`yuv_420p16_to_rgb_u16_row`]).
 ///
 /// Thin wrapper over [`p16_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn p16_to_rgb_u16_row<const BE: bool>(
   y: &[u16],
@@ -790,6 +816,7 @@ pub(crate) fn p16_to_rgb_u16_row<const BE: bool>(
 // Scalar prep for Ship 8 Tranche 5b: the public dispatcher
 // `row::p016_to_rgba_u16_row` lands in the follow-up SIMD/dispatcher
 // PR. Until then this thin wrapper has no caller.
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn p16_to_rgba_u16_row<const BE: bool>(
   y: &[u16],
@@ -807,6 +834,7 @@ pub(crate) fn p16_to_rgba_u16_row<const BE: bool>(
 /// alpha.
 ///
 /// Uses i64 chroma multiply (same rationale as [`yuv_420p16_to_rgb_or_rgba_u16_row`]).
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   y: &[u16],

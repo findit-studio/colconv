@@ -44,7 +44,7 @@ impl<'a> MixedSinker<'a, Pal8> {
   ///
   /// Alpha byte per pixel is sourced from the palette entry's `A` field
   /// (FFmpeg PAL8 `[B, G, R, A]` order). Returns `Err(InsufficientRgbaBuffer)`
-  /// if `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// if `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32-bit overflow.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -67,7 +67,7 @@ impl<'a> MixedSinker<'a, Pal8> {
 
   /// Attaches a packed `u16` RGB output buffer. Each 8-bit palette channel is
   /// widened via `(x << 8) | x` (`0 → 0x0000`, `255 → 0xFFFF`). Alpha is
-  /// dropped. Length measured in `u16` elements (`width × height × 3`).
+  /// dropped. Length measured in `u16` elements (`width x height x 3`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;
@@ -89,7 +89,7 @@ impl<'a> MixedSinker<'a, Pal8> {
 
   /// Attaches a packed `u16` RGBA output buffer. Each 8-bit palette channel
   /// (including alpha) is widened via `(x << 8) | x`. Length measured in
-  /// `u16` elements (`width × height × 4`).
+  /// `u16` elements (`width x height x 4`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -111,7 +111,7 @@ impl<'a> MixedSinker<'a, Pal8> {
 
   /// Attaches a `u16` luma output buffer. The luma byte derived from RGB is
   /// widened via `(y << 8) | y` (`0 → 0x0000`, `255 → 0xFFFF`). Length
-  /// measured in `u16` elements (`width × height`).
+  /// measured in `u16` elements (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -317,11 +317,12 @@ impl PixelSink for MixedSinker<'_, Pal8> {
       }
 
       if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
         rgb_to_hsv_row(
           rgb_row,
-          &mut hsv.h[one_plane_start..one_plane_end],
-          &mut hsv.s[one_plane_start..one_plane_end],
-          &mut hsv.v[one_plane_start..one_plane_end],
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
           w,
           use_simd,
         );

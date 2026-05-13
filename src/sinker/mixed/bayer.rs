@@ -144,11 +144,12 @@ impl PixelSink for MixedSinker<'_, Bayer> {
     }
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -163,12 +164,12 @@ impl<'a, const BITS: u32> MixedSinker<'a, Bayer16<BITS>> {
   /// Attaches a packed **`u16`** RGB output buffer.
   ///
   /// Length is measured in `u16` **elements** (not bytes): minimum
-  /// `width × height × 3`. Output is **low-packed** at `BITS`
+  /// `width x height x 3`. Output is **low-packed** at `BITS`
   /// (10-bit white = 1023, 12-bit = 4095, 14-bit = 16383, 16-bit =
   /// 65535) — matches the rest of the high-bit-depth crate.
   ///
   /// Returns `Err(InsufficientRgbU16Buffer)` if
-  /// `buf.len() < width × height × 3`, or `Err(GeometryOverflow)`
+  /// `buf.len() < width x height x 3`, or `Err(GeometryOverflow)`
   /// on 32-bit overflow.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -343,11 +344,12 @@ impl<const BITS: u32> PixelSink for MixedSinker<'_, Bayer16<BITS>> {
     }
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );

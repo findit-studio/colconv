@@ -41,7 +41,7 @@ fn f32_to_u16(y: f32) -> u16 {
 
 // ---- kernel implementations -------------------------------------------------
 
-/// Grayf32 → packed u8 RGB. Clamp [0,1] × 255 → u8, broadcast R=G=B=Y.
+/// Grayf32 → packed u8 RGB. Clamp [0,1] x 255 → u8, broadcast R=G=B=Y.
 ///
 /// When `BE = true`, each f32 element is loaded via byte-swapped u32 bits.
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -88,7 +88,7 @@ pub(crate) fn grayf32_to_rgba_row<const BE: bool>(
   }
 }
 
-/// Grayf32 → packed u16 RGB. Clamp [0,1] × 65535 → u16, broadcast R=G=B=Y.
+/// Grayf32 → packed u16 RGB. Clamp [0,1] x 65535 → u16, broadcast R=G=B=Y.
 ///
 /// When `BE = true`, each f32 element is loaded via byte-swapped u32 bits.
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -164,7 +164,7 @@ pub(crate) fn grayf32_to_rgb_f32_row<const BE: bool>(
   }
 }
 
-/// Grayf32 → luma u8. Clamp [0,1] × 255 → u8.
+/// Grayf32 → luma u8. Clamp [0,1] x 255 → u8.
 ///
 /// When `BE = true`, each f32 element is loaded via byte-swapped u32 bits.
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -185,7 +185,7 @@ pub(crate) fn grayf32_to_luma_row<const BE: bool>(
   }
 }
 
-/// Grayf32 → luma u16. Clamp [0,1] × 65535 → u16.
+/// Grayf32 → luma u16. Clamp [0,1] x 65535 → u16.
 ///
 /// When `BE = true`, each f32 element is loaded via byte-swapped u32 bits.
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -243,7 +243,7 @@ pub(crate) fn grayf32_to_luma_f32_row<const BE: bool>(
   }
 }
 
-/// Grayf32 → HSV u8. Gray fast-path: H=0, S=0, V = clamp(Y, 0, 1) × 255.
+/// Grayf32 → HSV u8. Gray fast-path: H=0, S=0, V = clamp(Y, 0, 1) x 255.
 ///
 /// When `BE = true`, each f32 element is loaded via byte-swapped u32 bits.
 /// Gray sources are achromatic (saturation = 0 identically). H is fixed to 0

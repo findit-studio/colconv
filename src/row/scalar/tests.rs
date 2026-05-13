@@ -3,6 +3,7 @@ use super::*;
 // Helper: re-encode a host-native u16 slice as the LE-encoded byte layout so
 // kernels called with `BE = false` recover the intended values via `from_le`
 // on both LE (no-op) and BE (byte-swap) hosts.
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 fn as_le_u16(host: &[u16]) -> std::vec::Vec<u16> {
   host
     .iter()
@@ -11,6 +12,7 @@ fn as_le_u16(host: &[u16]) -> std::vec::Vec<u16> {
 }
 
 // Same idea for `half::f16` slices.
+#[cfg(feature = "rgb-float")]
 fn as_le_f16(host: &[half::f16]) -> std::vec::Vec<half::f16> {
   host
     .iter()
@@ -19,6 +21,7 @@ fn as_le_f16(host: &[half::f16]) -> std::vec::Vec<half::f16> {
 }
 
 // Same idea for `f32` slices.
+#[cfg(feature = "rgb-float")]
 fn as_le_f32(host: &[f32]) -> std::vec::Vec<f32> {
   host
     .iter()
@@ -28,6 +31,22 @@ fn as_le_f32(host: &[f32]) -> std::vec::Vec<f32> {
 
 // ---- expand_rgb_to_rgba_row -----------------------------------------
 
+#[cfg(any(
+  feature = "bayer",
+  feature = "gbr",
+  feature = "gray",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[test]
 fn expand_rgb_to_rgba_row_pads_alpha_and_preserves_rgb() {
   // Each source pixel's R/G/B must land in the matching slot, with
@@ -43,6 +62,22 @@ fn expand_rgb_to_rgba_row_pads_alpha_and_preserves_rgb() {
   }
 }
 
+#[cfg(any(
+  feature = "bayer",
+  feature = "gbr",
+  feature = "gray",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[test]
 fn expand_rgb_to_rgba_row_only_writes_first_width_pixels() {
   // Caller may pass over-sized RGBA buffers; we must not stomp on
@@ -60,6 +95,22 @@ fn expand_rgb_to_rgba_row_only_writes_first_width_pixels() {
   }
 }
 
+#[cfg(any(
+  feature = "bayer",
+  feature = "gbr",
+  feature = "gray",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[test]
 fn expand_rgb_to_rgba_row_zero_width_is_noop() {
   let rgb: std::vec::Vec<u8> = std::vec::Vec::new();
@@ -70,6 +121,7 @@ fn expand_rgb_to_rgba_row_zero_width_is_noop() {
 
 // ---- yuv_420_to_rgb_row ----------------------------------------------
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420_rgb_black() {
   // Full-range Y=0, neutral chroma → black.
@@ -81,6 +133,7 @@ fn yuv420_rgb_black() {
   assert!(rgb.iter().all(|&c| c == 0), "got {rgb:?}");
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420_rgb_white_full_range() {
   let y = [255u8; 4];
@@ -91,6 +144,7 @@ fn yuv420_rgb_white_full_range() {
   assert!(rgb.iter().all(|&c| c == 255), "got {rgb:?}");
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420_rgb_gray_is_gray() {
   let y = [128u8; 4];
@@ -106,6 +160,7 @@ fn yuv420_rgb_gray_is_gray() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420_rgb_chroma_shared_across_pair() {
   // Two Y values with same chroma: differing Y produces differing
@@ -123,6 +178,7 @@ fn yuv420_rgb_chroma_shared_across_pair() {
   assert_eq!(rgb[9], 200);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420_rgb_limited_range_black_and_white() {
   // Y=16 → black, Y=235 → white in limited range.
@@ -145,6 +201,7 @@ fn yuv420_rgb_limited_range_black_and_white() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420_rgb_ycgco_neutral_is_gray() {
   // Y=128, Cg=128 (U), Co=128 (V) — neutral chroma → gray.
@@ -160,6 +217,7 @@ fn yuv420_rgb_ycgco_neutral_is_gray() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420_rgb_ycgco_high_cg_is_green() {
   // U plane = Cg; Cg > 128 means green-ward shift.
@@ -181,6 +239,7 @@ fn yuv420_rgb_ycgco_high_cg_is_green() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420_rgb_ycgco_high_co_is_red() {
   // V plane = Co; Co > 128 means orange/red-ward shift.
@@ -202,6 +261,7 @@ fn yuv420_rgb_ycgco_high_co_is_red() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420_rgb_bt601_vs_bt709_differ_for_chroma() {
   // Moderate chroma (V=200) so the red channel doesn't saturate on
@@ -228,6 +288,7 @@ fn yuv420_rgb_bt601_vs_bt709_differ_for_chroma() {
 
 // ---- yuv_411_to_rgb_row (4:1:1 — quarter-width chroma) ---------------
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv411_rgb_black() {
   // Full-range Y=0, neutral chroma → black. width=4 means one chroma
@@ -240,6 +301,7 @@ fn yuv411_rgb_black() {
   assert!(rgb.iter().all(|&c| c == 0), "got {rgb:?}");
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv411_rgb_white_full_range() {
   let y = [255u8; 4];
@@ -250,6 +312,7 @@ fn yuv411_rgb_white_full_range() {
   assert!(rgb.iter().all(|&c| c == 255), "got {rgb:?}");
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv411_rgb_gray_is_gray() {
   let y = [128u8; 4];
@@ -265,6 +328,7 @@ fn yuv411_rgb_gray_is_gray() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv411_rgb_chroma_shared_across_quartet() {
   // Four Y values with same chroma: differing Y produces differing
@@ -282,6 +346,7 @@ fn yuv411_rgb_chroma_shared_across_quartet() {
   assert_eq!(rgb[9], 200);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv411_rgb_two_chroma_blocks() {
   // 8-pixel row with two different chroma blocks. Sub-block 0 (Y[0..4])
@@ -307,6 +372,7 @@ fn yuv411_rgb_two_chroma_blocks() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv411_rgba_alpha_is_opaque() {
   // RGBA wrapper writes four bytes per pixel with constant 0xFF
@@ -329,6 +395,7 @@ fn yuv411_rgba_alpha_is_opaque() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv411_rgb_limited_range_black_and_white() {
   // Y=16 → black, Y=235 → white in limited range. Two quartets.
@@ -349,6 +416,7 @@ fn yuv411_rgb_limited_range_black_and_white() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv411_rgb_widths_1_through_3_partial_chroma_only() {
   // Widths 1, 2, 3 produce a single chroma sample serving all luma.
@@ -369,6 +437,7 @@ fn yuv411_rgb_widths_1_through_3_partial_chroma_only() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv411_rgb_widths_5_6_7_partial_tail_uses_last_chroma() {
   // Widths 5, 6, 7 → chroma_width=2; first 4 luma share chroma[0],
@@ -402,6 +471,7 @@ fn yuv411_rgb_widths_5_6_7_partial_tail_uses_last_chroma() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv411_rgba_widths_5_through_7_alpha_opaque() {
   // RGBA tail must still write 0xFF alpha for every pixel, including
@@ -418,6 +488,7 @@ fn yuv411_rgba_widths_5_through_7_alpha_opaque() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv411_rgb_width_641_realistic_cropped() {
   // Realistic non-4-aligned width from codex finding: 641 → chroma
@@ -479,6 +550,7 @@ fn hsv_pure_blue_matches_opencv() {
 
 // ---- yuv_420p_n_to_rgb_row (10-bit → u8) -----------------------------
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420p10_rgb_black_full_range() {
   // Y=0, neutral chroma (512 in 10-bit) → black.
@@ -490,6 +562,7 @@ fn yuv420p10_rgb_black_full_range() {
   assert!(rgb.iter().all(|&c| c == 0), "got {rgb:?}");
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420p10_rgb_white_full_range() {
   // 10-bit full-range white is Y=1023.
@@ -501,6 +574,7 @@ fn yuv420p10_rgb_white_full_range() {
   assert!(rgb.iter().all(|&c| c == 255), "got {rgb:?}");
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420p10_rgb_gray_is_gray() {
   // Mid-gray 10-bit Y=512 ↔ 8-bit 128. Within ±1 for Q15 rounding.
@@ -517,6 +591,7 @@ fn yuv420p10_rgb_gray_is_gray() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420p10_rgb_limited_range_black_and_white() {
   // 10-bit limited: Y=64 → black, Y=940 → white.
@@ -531,6 +606,7 @@ fn yuv420p10_rgb_limited_range_black_and_white() {
   assert_eq!((rgb[9], rgb[10], rgb[11]), (255, 255, 255));
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420p10_rgb_chroma_shared_across_pair() {
   // Two 10-bit Y values sharing chroma: output is gray = Y>>2.
@@ -549,6 +625,7 @@ fn yuv420p10_rgb_chroma_shared_across_pair() {
 
 // ---- yuv_420p_n_to_rgb_u16_row (10-bit → 10-bit u16) ----------------
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420p10_rgb_u16_black_full_range() {
   let y = as_le_u16(&[0u16; 4]);
@@ -559,6 +636,7 @@ fn yuv420p10_rgb_u16_black_full_range() {
   assert!(rgb.iter().all(|&c| c == 0), "got {rgb:?}");
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420p10_rgb_u16_white_full_range() {
   // 10-bit input Y=1023, full-range scale=1 → output Y=1023 on each channel.
@@ -570,6 +648,7 @@ fn yuv420p10_rgb_u16_white_full_range() {
   assert!(rgb.iter().all(|&c| c == 1023), "got {rgb:?}");
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420p10_rgb_u16_limited_range_endpoints() {
   // Limited-range: Y=64 → 0, Y=940 → 1023 in 10-bit output.
@@ -582,6 +661,7 @@ fn yuv420p10_rgb_u16_limited_range_endpoints() {
   assert_eq!((rgb[3], rgb[4], rgb[5]), (1023, 1023, 1023));
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420p10_rgb_u16_preserves_full_10bit_precision() {
   // Sanity: the u16 path retains native-depth precision, so two
@@ -599,6 +679,7 @@ fn yuv420p10_rgb_u16_preserves_full_10bit_precision() {
   assert_ne!(rgb16[0], rgb16[3]);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv420p10_bt709_ycgco_differ_for_chroma() {
   // Non-neutral chroma — different matrices produce different RGB.
@@ -625,6 +706,7 @@ fn yuv420p10_bt709_ycgco_differ_for_chroma() {
 // P010 samples: 10 active bits in the HIGH 10 of each u16.
 // White Y = 1023 << 6 = 0xFFC0, neutral UV = 512 << 6 = 0x8000.
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn p010_rgb_black_full_range() {
   // Y = 0, neutral UV → black.
@@ -635,6 +717,7 @@ fn p010_rgb_black_full_range() {
   assert!(rgb.iter().all(|&c| c == 0), "got {rgb:?}");
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn p010_rgb_white_full_range() {
   // Y = 0xFFC0 = 1023 << 6, neutral UV → white.
@@ -645,6 +728,7 @@ fn p010_rgb_white_full_range() {
   assert!(rgb.iter().all(|&c| c == 255), "got {rgb:?}");
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn p010_rgb_gray_is_gray() {
   // 10-bit mid-gray Y=512 → P010 Y = 512 << 6 = 0x8000.
@@ -660,6 +744,7 @@ fn p010_rgb_gray_is_gray() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn p010_rgb_limited_range_endpoints() {
   // 10-bit limited black Y=64 → P010 = 64 << 6 = 0x1000.
@@ -674,6 +759,7 @@ fn p010_rgb_limited_range_endpoints() {
   assert_eq!((rgb[9], rgb[10], rgb[11]), (255, 255, 255));
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn p010_matches_yuv420p10_when_shifted() {
   // Handing the same logical samples to P010 (high-packed) and
@@ -755,6 +841,7 @@ fn p010_matches_yuv420p10_when_shifted() {
 
 // ---- p010_to_rgb_u16_row (P010 → native-depth u16) --------------------
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn p010_rgb_u16_white_full_range() {
   let y = as_le_u16(&[0xFFC0u16; 4]);
@@ -764,6 +851,7 @@ fn p010_rgb_u16_white_full_range() {
   assert!(rgb.iter().all(|&c| c == 1023), "got {rgb:?}");
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn p010_rgb_u16_limited_range_endpoints() {
   let y = as_le_u16(&[0x1000u16, 0xEB00]);
@@ -776,6 +864,7 @@ fn p010_rgb_u16_limited_range_endpoints() {
 
 // ---- yuv_444p_n_to_rgba_row (10-bit → u8 RGBA) ----------------------
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv444p10_rgba_gray_alpha_is_ff() {
   // Mid-gray 10-bit Y=512 ↔ 8-bit ≈128. RGBA stride is 4 bytes/px;
@@ -801,6 +890,7 @@ fn yuv444p10_rgba_gray_alpha_is_ff() {
 
 // ---- yuv_444p_n_to_rgba_u16_row (10-bit → 10-bit u16 RGBA) ---------
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv444p10_rgba_u16_gray_alpha_is_1023() {
   // 10-bit u16 RGBA: alpha element is `(1 << BITS) - 1 = 1023`.
@@ -825,6 +915,7 @@ fn yuv444p10_rgba_u16_gray_alpha_is_1023() {
 
 // ---- yuv_444p16_to_rgba_row (16-bit → u8 RGBA) ----------------------
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv444p16_rgba_gray_alpha_is_ff() {
   // 16-bit mid-gray Y = 0x8000 → 8-bit ≈128. Alpha = 0xFF.
@@ -849,6 +940,7 @@ fn yuv444p16_rgba_gray_alpha_is_ff() {
 
 // ---- yuv_444p16_to_rgba_u16_row (16-bit → 16-bit u16 RGBA) ---------
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv444p16_rgba_u16_gray_alpha_is_ffff() {
   // 16-bit u16 RGBA: alpha element is `0xFFFF`.
@@ -874,12 +966,13 @@ fn yuv444p16_rgba_u16_gray_alpha_is_ffff() {
 
 // ---- p_n_444_to_rgba_row (P410 → u8 RGBA) ---------------------------
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn p410_rgba_gray_alpha_is_ff() {
   // P410: 10 active bits in HIGH 10 of each u16. Mid-gray 10-bit
   // Y=512 → P410 Y = 0x8000. UV interleaved: U V U V ... full width.
   let y = as_le_u16(&[0x8000u16; 4]);
-  // 4 pixels × (U,V) per pixel = 8 elements.
+  // 4 pixels x (U,V) per pixel = 8 elements.
   let uv = as_le_u16(&[0x8000u16; 8]);
   let mut rgba = [0u8; 16];
   p_n_444_to_rgba_row::<10, false>(&y, &uv, &mut rgba, 4, ColorMatrix::Bt601, true);
@@ -899,6 +992,7 @@ fn p410_rgba_gray_alpha_is_ff() {
 
 // ---- p_n_444_16_to_rgba_u16_row (P416 → 16-bit u16 RGBA) -----------
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn p416_rgba_u16_gray_alpha_is_ffff() {
   // P416: full 16-bit samples. Mid-gray Y=0x8000, neutral UV=0x8000.
@@ -937,6 +1031,7 @@ fn p416_rgba_u16_gray_alpha_is_ffff() {
 /// 9 representative half-float inputs (LE-encoded) plus the matching
 /// widened f32 slice (also LE-encoded). Each output channel position
 /// sees every input value at some pixel.
+#[cfg(feature = "rgb-float")]
 fn rgbf16_test_inputs() -> (Vec<half::f16>, Vec<f32>, usize) {
   let inputs_f32: [f32; 9] = [0.0, 1.0, 0.5, 65504.0, 1e-5, -0.5, 2.5, 0.999, 0.001];
   let width = inputs_f32.len();
@@ -947,6 +1042,7 @@ fn rgbf16_test_inputs() -> (Vec<half::f16>, Vec<f32>, usize) {
   (as_le_f16(&rgb_in_host), as_le_f32(&widened_host), width)
 }
 
+#[cfg(feature = "rgb-float")]
 #[test]
 #[cfg_attr(
   miri,
@@ -961,6 +1057,7 @@ fn rgbf16_scalar_rgb_matches_widen_then_rgbf32() {
   assert_eq!(out_f16, out_via_f32, "rgbf16_to_rgb scalar parity");
 }
 
+#[cfg(feature = "rgb-float")]
 #[test]
 #[cfg_attr(
   miri,
@@ -975,6 +1072,7 @@ fn rgbf16_scalar_rgba_matches_widen_then_rgbf32() {
   assert_eq!(out_f16, out_via_f32, "rgbf16_to_rgba scalar parity");
 }
 
+#[cfg(feature = "rgb-float")]
 #[test]
 #[cfg_attr(
   miri,
@@ -989,6 +1087,7 @@ fn rgbf16_scalar_rgb_u16_matches_widen_then_rgbf32() {
   assert_eq!(out_f16, out_via_f32, "rgbf16_to_rgb_u16 scalar parity");
 }
 
+#[cfg(feature = "rgb-float")]
 #[test]
 #[cfg_attr(
   miri,
@@ -1003,6 +1102,7 @@ fn rgbf16_scalar_rgba_u16_matches_widen_then_rgbf32() {
   assert_eq!(out_f16, out_via_f32, "rgbf16_to_rgba_u16 scalar parity");
 }
 
+#[cfg(feature = "rgb-float")]
 #[test]
 #[cfg_attr(
   miri,
@@ -1026,6 +1126,7 @@ fn rgbf16_scalar_rgb_f32_matches_element_wise_widen() {
   );
 }
 
+#[cfg(feature = "rgb-float")]
 #[test]
 #[cfg_attr(
   miri,
@@ -1051,6 +1152,7 @@ fn rgbf16_scalar_rgb_f16_is_copy() {
 
 /// Builds a single-row UYYVYY411 packed buffer with constant
 /// `(Y, U, V)` per 6-byte / 4-pixel block.
+#[cfg(feature = "yuv-packed")]
 fn uyyvyy411_solid_row(width: usize, y: u8, u: u8, v: u8) -> std::vec::Vec<u8> {
   assert_eq!(width & 3, 0);
   let mut buf = std::vec![0u8; width * 3 / 2];
@@ -1066,6 +1168,7 @@ fn uyyvyy411_solid_row(width: usize, y: u8, u: u8, v: u8) -> std::vec::Vec<u8> {
   buf
 }
 
+#[cfg(feature = "yuv-packed")]
 #[test]
 fn uyyvyy411_to_rgb_row_solid_gray_full_range() {
   // (Y=128, U=V=128) full-range BT.601 → mid-gray RGB (≈128, 128, 128).
@@ -1080,6 +1183,7 @@ fn uyyvyy411_to_rgb_row_solid_gray_full_range() {
   }
 }
 
+#[cfg(feature = "yuv-packed")]
 #[test]
 fn uyyvyy411_to_rgba_row_solid_gray_alpha_opaque() {
   let w = 16;
@@ -1091,6 +1195,7 @@ fn uyyvyy411_to_rgba_row_solid_gray_alpha_opaque() {
   }
 }
 
+#[cfg(feature = "yuv-packed")]
 #[test]
 fn uyyvyy411_to_luma_row_extracts_y_at_offsets_1_2_4_5() {
   // Hand-crafted 1 block: U=10, Y0=20, Y1=30, V=40, Y2=50, Y3=60.
@@ -1100,6 +1205,7 @@ fn uyyvyy411_to_luma_row_extracts_y_at_offsets_1_2_4_5() {
   assert_eq!(luma, std::vec![20u8, 30, 50, 60]);
 }
 
+#[cfg(feature = "yuv-packed")]
 #[test]
 fn uyyvyy411_to_luma_u16_row_zero_extends_y_bytes() {
   let p = std::vec![10u8, 20, 30, 40, 50, 60];
@@ -1108,6 +1214,7 @@ fn uyyvyy411_to_luma_u16_row_zero_extends_y_bytes() {
   assert_eq!(luma, std::vec![20u16, 30, 50, 60]);
 }
 
+#[cfg(feature = "yuv-packed")]
 #[test]
 fn uyyvyy411_chroma_shared_across_4_pixels_decodes_via_y_only_variation() {
   // With Y0..Y3 distinct but shared (U, V), each output pixel must

@@ -67,7 +67,7 @@ jobs:
 
           # Note: no AVX-512 bench tier. GitHub-hosted free runners are
           # AMD Milan (no AVX-512), and emulated numbers from Intel SDE
-          # are ~5-10× off real hardware — not worth measuring. Test
+          # are ~5-10x off real hardware — not worth measuring. Test
           # correctness of the AVX-512 kernel is covered by the
           # `test-sde` job in ci.yml instead.
 

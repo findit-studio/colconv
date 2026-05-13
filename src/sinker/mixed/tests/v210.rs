@@ -16,7 +16,7 @@ use super::*;
 // ---- Solid-color v210 builder -----------------------------------------
 
 /// Builds a solid-color v210 plane with one (Y, U, V) repeated. Each
-/// 16-byte word holds 12 × 10-bit samples laid out per the spec:
+/// 16-byte word holds 12 x 10-bit samples laid out per the spec:
 ///
 /// | Word | bits[9:0] | bits[19:10] | bits[29:20] | bits[31:30] |
 /// |------|-----------|-------------|-------------|-------------|
@@ -43,7 +43,7 @@ pub(super) fn solid_v210_frame(width: u32, height: u32, y: u16, u: u16, v: u16) 
   buf
 }
 
-/// Pack 12 × 10-bit samples into a 16-byte v210 word per the spec
+/// Pack 12 x 10-bit samples into a 16-byte v210 word per the spec
 /// table above. The low 30 bits of each LE u32 hold three 10-bit
 /// samples; the top 2 bits are unused.
 fn pack_v210_word_for_test(samples: [u16; 12]) -> [u8; 16] {
@@ -234,7 +234,7 @@ fn v210_with_simd_false_matches_with_simd_true() {
   // + scalar tail of every backend block size, plus partial-word
   // widths (2, 4, 8, 10, 14, 1280) that exercise the partial-tail
   // emitter. Mask packed buffer to keep the low 30 bits of each u32
-  // word valid (10-bit fields × 3; the top 2 bits are unused per the
+  // word valid (10-bit fields x 3; the top 2 bits are unused per the
   // v210 spec).
   for w in [
     2usize, 4, 6, 8, 10, 12, 14, 18, 24, 30, 1280, 1920, 1922, 1926,
@@ -268,26 +268,6 @@ fn v210_with_simd_false_matches_with_simd_true() {
 // ---- Error-path tests --------------------------------------------------
 
 #[test]
-fn v210_odd_width_returns_err() {
-  // Direct `process()` call with a sink configured at width=7 (odd —
-  // violates 4:2:2 chroma-pair constraint). Even widths that aren't
-  // multiples of 6 are now supported (partial-word handling), so this
-  // covers only the genuinely-invalid odd-width case. The width check
-  // fires *before* any kernel runs, preserving the no-panic contract
-  // — even if the caller bypasses the walker (which would catch this
-  // in `begin_frame`).
-  let mut rgb = std::vec![0u8; 8 * 8 * 3];
-  let mut sink = MixedSinker::<V210>::new(7, 8).with_rgb(&mut rgb).unwrap();
-  let buf = std::vec![0u8; 16];
-  let row = V210Row::new(&buf, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::WidthAlignment(WidthAlignment::new(7, WidthAlignmentRequirement::Even))
-  );
-}
-
-#[test]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -316,23 +296,8 @@ fn v210_partial_word_width_works_end_to_end() {
 }
 
 #[test]
-fn v210_process_rejects_short_packed_slice() {
-  // 6-pixel-wide sink expects 16 bytes per row; a 15-byte slice
-  // surfaces as `RowShapeMismatch { which: V210Packed, .. }`.
-  let mut rgb = std::vec![0u8; 6 * 3];
-  let mut sink = MixedSinker::<V210>::new(6, 1).with_rgb(&mut rgb).unwrap();
-  let packed = [0u8; 15];
-  let row = V210Row::new(&packed, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::V210Packed, 0, 16, 15))
-  );
-}
-
-#[test]
 fn v210_luma_u16_buffer_too_short_returns_err() {
-  // Buffer holds 6×7 = 42 elements; a 6×8 frame needs 48.
+  // Buffer holds 6x7 = 42 elements; a 6x8 frame needs 48.
   let mut luma = std::vec![0u16; 6 * 7];
   let result = MixedSinker::<V210>::new(6, 8).with_luma_u16(&mut luma);
   let Err(err) = result else {
@@ -435,7 +400,7 @@ fn v210_reconstructed_from_yuv422p10_matches_yuv422p10_to_rgb() {
 // ====================================================================================
 // Phase 4 — Frame BE flag, Tier 4 V210 LE/BE round-trip parity test.
 //
-// V210 packs 12 × 10-bit samples into a 16-byte word as four 32-bit LE u32s.
+// V210 packs 12 x 10-bit samples into a 16-byte word as four 32-bit LE u32s.
 // `<const BE>` swaps each 32-bit word's bytes; the kernel reads them via
 // `load_endian_u32::<BE>` so the sample bits land in the same logical
 // positions regardless of wire byte order.

@@ -120,7 +120,7 @@ unsafe fn uyyvyy411_to_rgb_or_rgba_row<const ALPHA: bool>(
     let alpha_u8 = vdupq_n_u8(0xFF);
 
     // Fan‑out tables: each input chroma byte (or i16 lane) replicated
-    // 4× into adjacent output lanes via `vqtbl1q_u8`. The tables index
+    // 4x into adjacent output lanes via `vqtbl1q_u8`. The tables index
     // into the chroma vector (16 bytes = 8 i16 lanes); each output i16
     // (2 bytes) reads from a fixed 2-byte source.
     //
@@ -133,7 +133,7 @@ unsafe fn uyyvyy411_to_rgb_or_rgba_row<const ALPHA: bool>(
     // output byte 2k+1 reads source byte 2*(k/4)+1.
     let dup_lo_tbl = vld1q_u8([0u8, 1, 0, 1, 0, 1, 0, 1, 2, 3, 2, 3, 2, 3, 2, 3].as_ptr());
     let dup_hi_tbl = vld1q_u8([4u8, 5, 4, 5, 4, 5, 4, 5, 6, 7, 6, 7, 6, 7, 6, 7].as_ptr());
-    // For Y[16..32] chroma output: read i16 lanes 4..7 of source (4×).
+    // For Y[16..32] chroma output: read i16 lanes 4..7 of source (4x).
     let dup_lo_tbl2 = vld1q_u8([8u8, 9, 8, 9, 8, 9, 8, 9, 10, 11, 10, 11, 10, 11, 10, 11].as_ptr());
     let dup_hi_tbl2 = vld1q_u8(
       [
@@ -200,7 +200,7 @@ unsafe fn uyyvyy411_to_rgb_or_rgba_row<const ALPHA: bool>(
       let b_dup_3 = vreinterpretq_s16_u8(vqtbl1q_u8(vreinterpretq_u8_s16(b_chroma), dup_lo_tbl2));
       let b_dup_4 = vreinterpretq_s16_u8(vqtbl1q_u8(vreinterpretq_u8_s16(b_chroma), dup_hi_tbl2));
 
-      // Y path identical to packed_yuv_8bit. Need 4 × i16x8 vectors of
+      // Y path identical to packed_yuv_8bit. Need 4 x i16x8 vectors of
       // scaled Y to cover the 32 Y pixels.
       let y_lo_lo = vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(y_lo16)));
       let y_lo_hi = vreinterpretq_s16_u16(vmovl_u8(vget_high_u8(y_lo16)));
@@ -333,7 +333,7 @@ pub(crate) unsafe fn uyyvyy411_to_luma_u16_row(packed: &[u8], out: &mut [u16], w
       let l2 = v3.2;
       let y_lo16 = vzip1q_u8(l1, l2);
       let y_hi16 = vzip2q_u8(l1, l2);
-      // Widen each 16 u8 → 16 u16 = 32 bytes via 2× `vmovl_u8`.
+      // Widen each 16 u8 → 16 u16 = 32 bytes via 2x `vmovl_u8`.
       let w0 = vmovl_u8(vget_low_u8(y_lo16));
       let w1 = vmovl_u8(vget_high_u8(y_lo16));
       let w2 = vmovl_u8(vget_low_u8(y_hi16));

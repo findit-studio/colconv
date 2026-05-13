@@ -1,7 +1,7 @@
 //! NEON kernels for legacy 16-bit packed-RGB source formats (Tier 7).
 //!
-//! Six source formats × 4 output variants = 24 kernels. Each format word is a
-//! little-endian `u16` at 8 pixels per iteration (`vld1q_u16` = 8 × u16).
+//! Six source formats x 4 output variants = 24 kernels. Each format word is a
+//! little-endian `u16` at 8 pixels per iteration (`vld1q_u16` = 8 x u16).
 //!
 //! # Bit extraction
 //!

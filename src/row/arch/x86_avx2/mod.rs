@@ -41,85 +41,181 @@
 use core::arch::x86_64::*;
 
 #[allow(unused_imports)]
+#[cfg(feature = "rgb")]
+pub(super) use crate::row::arch::x86_common::{
+  abgr_to_rgb_16_pixels, abgr_to_rgba_4_pixels, argb_to_rgb_16_pixels, argb_to_rgba_4_pixels,
+  bgra_to_rgb_16_pixels, bgrx_to_rgba_4_pixels, drop_alpha_16_pixels, rgbx_to_rgba_4_pixels,
+  swap_rb_16_pixels, swap_rb_alpha_4_pixels, x2bgr10_to_rgb_16_pixels, x2bgr10_to_rgb_u16_8_pixels,
+  x2bgr10_to_rgba_16_pixels, x2rgb10_to_rgb_16_pixels, x2rgb10_to_rgb_u16_8_pixels,
+  x2rgb10_to_rgba_16_pixels, xbgr_to_rgba_4_pixels, xrgb_to_rgba_4_pixels,
+};
+#[allow(unused_imports)]
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "rgb-legacy",
+  feature = "mono",
+  feature = "rgb",
+  feature = "yuv-packed",
+  feature = "gbr",
+  feature = "yuv-semi-planar",
+  feature = "yuv-planar",
+  feature = "y2xx",
+  feature = "xyz",
+))]
+pub(super) use crate::row::arch::x86_common::{write_rgb_16, write_rgba_16};
+#[allow(unused_imports)]
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "rgb-legacy",
+  feature = "mono",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+))]
+pub(super) use crate::row::arch::x86_common::{write_rgb_u16_8, write_rgba_u16_8};
+#[allow(unused_imports)]
 pub(super) use crate::{
   ColorMatrix,
   row::{
-    arch::x86_common::{
-      abgr_to_rgb_16_pixels, abgr_to_rgba_4_pixels, argb_to_rgb_16_pixels, argb_to_rgba_4_pixels,
-      bgra_to_rgb_16_pixels, bgrx_to_rgba_4_pixels, deinterleave_rgb_16, drop_alpha_16_pixels,
-      rgb_to_hsv_16_pixels, rgb_to_luma_16_pixels, rgbx_to_rgba_4_pixels, swap_rb_16_pixels,
-      swap_rb_alpha_4_pixels, write_rgb_16, write_rgb_u16_8, write_rgba_16, write_rgba_u16_8,
-      x2bgr10_to_rgb_16_pixels, x2bgr10_to_rgb_u16_8_pixels, x2bgr10_to_rgba_16_pixels,
-      x2rgb10_to_rgb_16_pixels, x2rgb10_to_rgb_u16_8_pixels, x2rgb10_to_rgba_16_pixels,
-      xbgr_to_rgba_4_pixels, xrgb_to_rgba_4_pixels,
-    },
+    arch::x86_common::{deinterleave_rgb_16, rgb_to_hsv_16_pixels, rgb_to_luma_16_pixels},
     scalar,
   },
 };
 
+#[cfg(any(feature = "gbr", feature = "yuv-444-packed", feature = "yuva"))]
 mod alpha_extract;
+#[cfg(feature = "yuv-444-packed")]
 mod ayuv64;
 pub(crate) mod endian;
+#[cfg(feature = "gray")]
 mod gray;
 mod hsv;
+#[cfg(feature = "rgb-legacy")]
 pub(crate) mod legacy_rgb;
+#[cfg(feature = "mono")]
 pub(crate) mod mono1bit;
+#[cfg(feature = "rgb")]
 mod packed_rgb;
+#[cfg(feature = "rgb")]
 mod packed_rgb_16bit;
+#[cfg(feature = "rgb-float")]
 mod packed_rgb_float;
+#[cfg(feature = "yuv-packed")]
 mod packed_yuv_4_1_1;
+#[cfg(feature = "yuv-packed")]
 mod packed_yuv_8bit;
+#[cfg(feature = "gbr")]
 mod planar_gbr;
+#[cfg(feature = "gbr")]
 mod planar_gbr_float;
+#[cfg(feature = "gbr")]
 mod planar_gbr_high_bit;
+#[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
+// See NEON mod.rs for the dual-gate rationale on the 4:2:0 kernels.
+// 4:4:4 kernels need only `yuv-semi-planar` because `dispatch::pn`
+// (yuv-semi-planar-gated, no yuv-planar dependency) also consumes them.
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 mod subsampled_high_bit_pn_4_2_0;
+#[cfg(feature = "yuv-semi-planar")]
 mod subsampled_high_bit_pn_4_4_4;
+#[cfg(feature = "v210")]
 mod v210;
+#[cfg(feature = "yuv-444-packed")]
 mod v30x;
+#[cfg(feature = "yuv-444-packed")]
 mod v410;
+#[cfg(feature = "yuv-444-packed")]
 mod vuya;
+#[cfg(feature = "yuv-444-packed")]
 mod xv36;
-#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg(all(feature = "xyz", any(feature = "std", feature = "alloc")))]
 pub(crate) mod xyz12;
+#[cfg(feature = "y2xx")]
 mod y216;
+#[cfg(feature = "y2xx")]
 mod y2xx;
+#[cfg(any(
+  feature = "gray",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 mod y_plane_to_luma_u16;
+// The x86_avx2 variant of this file only hosts the `yuv_{420,444}p16_to_*`
+// kernels (planar). Semi-planar `p16_to_*` lives in `subsampled_high_bit_pn_*`.
+#[cfg(feature = "yuv-planar")]
 mod yuv_planar_16bit;
+#[cfg(feature = "yuv-planar")]
 mod yuv_planar_8bit;
+#[cfg(feature = "yuv-planar")]
 mod yuv_planar_high_bit;
 
+#[cfg(any(feature = "gbr", feature = "yuv-444-packed", feature = "yuva"))]
 pub(crate) use alpha_extract::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use ayuv64::*;
+#[cfg(feature = "gray")]
 pub(crate) use gray::*;
 pub(crate) use hsv::*;
+#[cfg(feature = "rgb-legacy")]
 #[allow(unused_imports)] // dispatcher wired in Task 6
 pub(crate) use legacy_rgb::*;
+#[cfg(feature = "mono")]
 pub(crate) use mono1bit::*;
+#[cfg(feature = "rgb")]
 pub(crate) use packed_rgb::*;
+#[cfg(feature = "rgb")]
 #[allow(unused_imports)] // dispatcher wired in later task
 pub(crate) use packed_rgb_16bit::*;
+#[cfg(feature = "rgb-float")]
 pub(crate) use packed_rgb_float::*;
+#[cfg(feature = "yuv-packed")]
 pub(crate) use packed_yuv_4_1_1::*;
+#[cfg(feature = "yuv-packed")]
 pub(crate) use packed_yuv_8bit::*;
+#[cfg(feature = "gbr")]
 pub(crate) use planar_gbr::*;
+#[cfg(feature = "gbr")]
 #[allow(unused_imports)] // dispatcher wired in Task 8 (MixedSinker)
 pub(crate) use planar_gbr_float::*;
+#[cfg(feature = "gbr")]
 #[allow(unused_imports)] // dispatcher wired in Task 9
 pub(crate) use planar_gbr_high_bit::*;
+#[cfg(feature = "yuv-semi-planar")]
 pub(crate) use semi_planar_8bit::*;
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 pub(crate) use subsampled_high_bit_pn_4_2_0::*;
+#[cfg(feature = "yuv-semi-planar")]
 pub(crate) use subsampled_high_bit_pn_4_4_4::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use v30x::*;
+#[cfg(feature = "v210")]
 pub(crate) use v210::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use v410::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use vuya::*;
+#[cfg(feature = "yuv-444-packed")]
 pub(crate) use xv36::*;
+#[cfg(any(
+  feature = "gray",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 pub(crate) use y_plane_to_luma_u16::*;
+#[cfg(feature = "y2xx")]
 pub(crate) use y2xx::*;
+#[cfg(feature = "y2xx")]
 pub(crate) use y216::*;
+#[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_8bit::*;
+#[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_16bit::*;
+#[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_high_bit::*;
 
 // ---- Shared helpers (used across submodules) -------------------------
@@ -128,6 +224,13 @@ pub(crate) use yuv_planar_high_bit::*;
 /// / `_mm256_max_epi16`. Used by native-depth u16 output paths
 /// (10/12/14 bit) where `_mm256_packus_epi16` would incorrectly
 /// clip to u8.
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "v210",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+))]
 #[inline(always)]
 pub(super) fn clamp_u16_max_x16(v: __m256i, zero_v: __m256i, max_v: __m256i) -> __m256i {
   unsafe { _mm256_min_epi16(_mm256_max_epi16(v, zero_v), max_v) }
@@ -150,6 +253,7 @@ pub(super) fn clamp_u16_max_x16(v: __m256i, zero_v: __m256i, max_v: __m256i) -> 
 ///
 /// `ptr` must point to at least 64 readable bytes (32 `u16`
 /// elements). Caller's `target_feature` must include AVX2.
+#[cfg(feature = "yuv-semi-planar")]
 #[inline(always)]
 pub(super) unsafe fn deinterleave_uv_u16_avx2(ptr: *const u16) -> (__m256i, __m256i) {
   unsafe {
@@ -169,7 +273,7 @@ pub(super) unsafe fn deinterleave_uv_u16_avx2(ptr: *const u16) -> (__m256i, __m2
     let s0 = _mm256_shuffle_epi8(uv0, split_mask);
     let s1 = _mm256_shuffle_epi8(uv1, split_mask);
 
-    // Permute 4×64 within each vector to get [U0..U7, V0..V7] and
+    // Permute 4x64 within each vector to get [U0..U7, V0..V7] and
     // [U8..U15, V8..V15]. Mask 0xD8 = (3,1,2,0) → picks 64-bit
     // chunks 0, 2, 1, 3 from the source, rearranging
     // [A, B, C, D] → [A, C, B, D].
@@ -188,18 +292,34 @@ pub(super) unsafe fn deinterleave_uv_u16_avx2(ptr: *const u16) -> (__m256i, __m2
 // context from the caller flows through) --------------------------------
 
 /// `>>_a 15` shift (arithmetic, sign‑extending).
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-semi-planar",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) fn q15_shift(v: __m256i) -> __m256i {
   unsafe { _mm256_srai_epi32::<15>(v) }
 }
 
-/// Computes one i16x16 chroma channel vector from the 4 × i32x8 chroma
+/// Computes one i16x16 chroma channel vector from the 4 x i32x8 chroma
 /// inputs (lo/hi splits of u_d and v_d). Mirrors the scalar
 /// `(coeff_u * u_d + coeff_v * v_d + RND) >> 15`, then saturating‑packs
 /// to i16x16 and **fixes the lane order** with
 /// `permute4x64_epi64::<0xD8>` so the result is in natural
 /// `[0..16)` element order rather than the per‑lane‑split form
 /// `_mm256_packs_epi32` produces.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-semi-planar",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) fn chroma_i16x16(
   cu: __m256i,
@@ -236,6 +356,14 @@ pub(super) fn chroma_i16x16(
 /// returned as i16x16. The Q15 multiply uses i32 widening identical to
 /// scalar, then the result is saturating‑packed back to i16 (result is
 /// in [0, 255] range so no saturation occurs in practice).
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-semi-planar",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) fn scale_y(
   y_i16: __m256i,
@@ -268,6 +396,13 @@ pub(super) fn scale_y(
 /// interleaved‑but‑lane‑split outputs; `_mm256_permute2x128_si256`
 /// with selectors 0x20 / 0x31 selects the matching halves from each
 /// unpack to restore the per‑Y‑block order above.
+#[cfg(any(
+  feature = "yuv-packed",
+  feature = "yuv-semi-planar",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) fn chroma_dup(chroma: __m256i) -> (__m256i, __m256i) {
   unsafe {
@@ -288,6 +423,14 @@ pub(super) fn chroma_dup(chroma: __m256i) -> (__m256i, __m256i) {
 /// Saturating‑narrows two i16x16 vectors into one u8x32 with natural
 /// element order. `_mm256_packus_epi16` is per‑lane and produces
 /// lane‑split u8x32; `permute4x64_epi64::<0xD8>` fixes it.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-semi-planar",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) fn narrow_u8x32(lo: __m256i, hi: __m256i) -> __m256i {
   unsafe { _mm256_permute4x64_epi64::<0xD8>(_mm256_packus_epi16(lo, hi)) }
@@ -300,6 +443,13 @@ pub(super) fn narrow_u8x32(lo: __m256i, hi: __m256i) -> __m256i {
 /// # Safety
 ///
 /// `ptr` must point to at least 96 writable bytes.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) unsafe fn write_rgb_32(r: __m256i, g: __m256i, b: __m256i, ptr: *mut u8) {
   unsafe {
@@ -323,6 +473,13 @@ pub(super) unsafe fn write_rgb_32(r: __m256i, g: __m256i, b: __m256i, ptr: *mut 
 /// # Safety
 ///
 /// `ptr` must point to at least 128 writable bytes.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+  feature = "yuv-planar",
+))]
 #[inline(always)]
 pub(super) unsafe fn write_rgba_32(r: __m256i, g: __m256i, b: __m256i, a: __m256i, ptr: *mut u8) {
   unsafe {
@@ -344,6 +501,12 @@ pub(super) unsafe fn write_rgba_32(r: __m256i, g: __m256i, b: __m256i, a: __m256
 
 /// `(Y_u16x16 - y_off) * y_scale + RND >> 15` for full u16 Y samples.
 /// Unsigned widening via `_mm256_cvtepu16_epi32`. Returns i16x16.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+))]
 #[inline(always)]
 pub(super) fn scale_y_u16_avx2(
   y_u16x16: __m256i,
@@ -385,17 +548,17 @@ pub(super) fn scale_y_u16_avx2(
 /// value is wrong (silently produces garbage chroma — visible color
 /// corruption on output).
 ///
-/// ## Worst-case bound table for the supported matrix × range × bit-depth grid
+/// ## Worst-case bound table for the supported matrix x range x bit-depth grid
 ///
 /// The currently-shipped matrices stay well below `2^32 ≈ 4.29·10^9`,
-/// but the headroom is only ~1.8× at 16-bit limited range with BT.2020:
+/// but the headroom is only ~1.8x at 16-bit limited range with BT.2020:
 ///
 /// | Source bit-depth | Matrix    | Range    | Worst-case |x| | Headroom |
 /// |------------------|-----------|----------|----------------|----------|
-/// | 16 (Y216/AYUV64) | BT.2020   | limited  | ~2.45·10^9     | 1.75×    |
-/// | 16 (Y216/AYUV64) | BT.709    | limited  | ~2.30·10^9     | 1.87×    |
-/// | 16 (Y216/AYUV64) | BT.601    | limited  | ~2.20·10^9     | 1.95×    |
-/// | 14 / 12 / 10     | (any)     | (any)    | ≤ 4·10^8       | ≥ 10×    |
+/// | 16 (Y216/AYUV64) | BT.2020   | limited  | ~2.45·10^9     | 1.75x    |
+/// | 16 (Y216/AYUV64) | BT.709    | limited  | ~2.30·10^9     | 1.87x    |
+/// | 16 (Y216/AYUV64) | BT.601    | limited  | ~2.20·10^9     | 1.95x    |
+/// | 14 / 12 / 10     | (any)     | (any)    | ≤ 4·10^8       | ≥ 10x    |
 ///
 /// **Future-warning**: if a new matrix adds coefficients larger than
 /// ~96k (Q15) OR a new format expands the chroma range past ±32768,
@@ -404,6 +567,12 @@ pub(super) fn scale_y_u16_avx2(
 ///
 /// In debug builds, a sample of the input lanes is asserted under the
 /// bound to catch regressions early.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+))]
 #[inline(always)]
 pub(super) fn srai64_15_x4(x: __m256i) -> __m256i {
   unsafe {
@@ -427,10 +596,16 @@ pub(super) fn srai64_15_x4(x: __m256i) -> __m256i {
   }
 }
 
-/// Computes one i64x4 chroma channel from 4 × i64 (u_d, v_d) inputs
+/// Computes one i64x4 chroma channel from 4 x i64 (u_d, v_d) inputs
 /// using `_mm256_mul_epi32` (even-indexed i32 lanes → 4 i64 products
 /// per call). Returns i64x4 with [`srai64_15_x4`]-shifted results in
 /// the low 32 bits of each i64 lane.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+))]
 #[inline(always)]
 pub(super) fn chroma_i64x4_avx2(
   cu: __m256i,
@@ -453,6 +628,12 @@ pub(super) fn chroma_i64x4_avx2(
 /// odd.low32[3]]`. Same shape as the SSE4.1
 /// `_mm_unpacklo_epi64(_mm_unpacklo_epi32(even, odd),
 /// _mm_unpackhi_epi32(even, odd))` pattern, lifted to 256 bits.
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+))]
 #[inline(always)]
 pub(super) fn reassemble_i64x4_to_i32x8(even: __m256i, odd: __m256i) -> __m256i {
   unsafe {
@@ -467,6 +648,12 @@ pub(super) fn reassemble_i64x4_to_i32x8(even: __m256i, odd: __m256i) -> __m256i 
 /// lanes of an i32x8 Y stream, returning an i32x8 result. Needs i64
 /// because limited-range 16→u16 `(Y - y_off) * y_scale` can reach
 /// ~2.35·10⁹ (> i32::MAX).
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "y2xx",
+))]
 #[inline(always)]
 pub(super) fn scale_y_i32x8_i64(
   y_minus_off: __m256i,
@@ -493,6 +680,7 @@ pub(super) fn scale_y_i32x8_i64(
 ///
 /// Mirrors the i16 `chroma_dup` helper's lane-cross restoration
 /// pattern (`_mm256_permute2x128_si256::<0x20>` / `<0x31>`).
+#[cfg(any(feature = "yuv-planar", feature = "y2xx"))]
 #[inline(always)]
 pub(super) fn chroma_dup_i32(chroma: __m256i) -> (__m256i, __m256i) {
   unsafe {

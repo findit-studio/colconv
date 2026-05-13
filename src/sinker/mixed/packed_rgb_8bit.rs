@@ -149,11 +149,12 @@ impl PixelSink for MixedSinker<'_, Rgb24> {
 
     // HSV — direct from source RGB.
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_in,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -279,11 +280,12 @@ impl PixelSink for MixedSinker<'_, Bgr24> {
     }
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -396,11 +398,12 @@ impl PixelSink for MixedSinker<'_, Rgba> {
       }
 
       if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
         rgb_to_hsv_row(
           rgb_row,
-          &mut hsv.h[one_plane_start..one_plane_end],
-          &mut hsv.s[one_plane_start..one_plane_end],
-          &mut hsv.v[one_plane_start..one_plane_end],
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
           w,
           use_simd,
         );
@@ -515,11 +518,12 @@ impl PixelSink for MixedSinker<'_, Bgra> {
       }
 
       if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
         rgb_to_hsv_row(
           rgb_row,
-          &mut hsv.h[one_plane_start..one_plane_end],
-          &mut hsv.s[one_plane_start..one_plane_end],
-          &mut hsv.v[one_plane_start..one_plane_end],
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
           w,
           use_simd,
         );
@@ -634,11 +638,12 @@ impl PixelSink for MixedSinker<'_, Argb> {
       }
 
       if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
         rgb_to_hsv_row(
           rgb_row,
-          &mut hsv.h[one_plane_start..one_plane_end],
-          &mut hsv.s[one_plane_start..one_plane_end],
-          &mut hsv.v[one_plane_start..one_plane_end],
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
           w,
           use_simd,
         );
@@ -753,11 +758,12 @@ impl PixelSink for MixedSinker<'_, Abgr> {
       }
 
       if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
         rgb_to_hsv_row(
           rgb_row,
-          &mut hsv.h[one_plane_start..one_plane_end],
-          &mut hsv.s[one_plane_start..one_plane_end],
-          &mut hsv.v[one_plane_start..one_plane_end],
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
           w,
           use_simd,
         );
@@ -873,11 +879,12 @@ impl PixelSink for MixedSinker<'_, Xrgb> {
       }
 
       if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
         rgb_to_hsv_row(
           rgb_row,
-          &mut hsv.h[one_plane_start..one_plane_end],
-          &mut hsv.s[one_plane_start..one_plane_end],
-          &mut hsv.v[one_plane_start..one_plane_end],
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
           w,
           use_simd,
         );
@@ -989,11 +996,12 @@ impl PixelSink for MixedSinker<'_, Rgbx> {
       }
 
       if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
         rgb_to_hsv_row(
           rgb_row,
-          &mut hsv.h[one_plane_start..one_plane_end],
-          &mut hsv.s[one_plane_start..one_plane_end],
-          &mut hsv.v[one_plane_start..one_plane_end],
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
           w,
           use_simd,
         );
@@ -1106,11 +1114,12 @@ impl PixelSink for MixedSinker<'_, Xbgr> {
       }
 
       if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
         rgb_to_hsv_row(
           rgb_row,
-          &mut hsv.h[one_plane_start..one_plane_end],
-          &mut hsv.s[one_plane_start..one_plane_end],
-          &mut hsv.v[one_plane_start..one_plane_end],
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
           w,
           use_simd,
         );
@@ -1223,11 +1232,12 @@ impl PixelSink for MixedSinker<'_, Bgrx> {
       }
 
       if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
         rgb_to_hsv_row(
           rgb_row,
-          &mut hsv.h[one_plane_start..one_plane_end],
-          &mut hsv.s[one_plane_start..one_plane_end],
-          &mut hsv.v[one_plane_start..one_plane_end],
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
           w,
           use_simd,
         );

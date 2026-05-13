@@ -424,7 +424,7 @@ fn with_simd_false_matches_with_simd_true() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn stride_padded_source_reads_correct_pixels() {
-  // 16×8 frame, Y stride 32 (padding), chroma stride 16.
+  // 16x8 frame, Y stride 32 (padding), chroma stride 16.
   let w = 16usize;
   let h = 8usize;
   let y_stride = 32usize;

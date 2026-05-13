@@ -2,8 +2,7 @@
 
 use super::{
   InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange, RowShapeMismatch,
-  RowSlice, WidthAlignment, WidthAlignmentRequirement, check_dimensions_match,
-  rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  RowSlice, WidthAlignment, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
 use crate::{PixelSink, row::*, source::*};
 
@@ -27,7 +26,7 @@ impl<'a> MixedSinker<'a, Yuv420p> {
   /// source plane.
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   ///
   /// ```compile_fail
@@ -62,7 +61,7 @@ impl<'a> MixedSinker<'a, Yuv420p> {
   /// Attaches a `u16` luma output buffer. The 8-bit Y plane samples
   /// are zero-extended into `u16` (i.e. each output element equals
   /// `y_byte as u16`). Length is measured in `u16` elements
-  /// (`width × height`).
+  /// (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -93,9 +92,8 @@ impl PixelSink for MixedSinker<'_, Yuv420p> {
     // first `process` call otherwise (`MixedSinker::new` is
     // infallible and accepts any width).
     if self.width & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(
         self.width,
-        WidthAlignmentRequirement::Even,
       )));
     }
     check_dimensions_match(self.width, self.height, width, height)
@@ -120,10 +118,7 @@ impl PixelSink for MixedSinker<'_, Yuv420p> {
     // check here (and in `begin_frame`) preserves the no-panic
     // contract for direct `process` callers that skip `begin_frame`.
     if w & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
-        w,
-        WidthAlignmentRequirement::Even,
-      )));
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(w)));
     }
     if row.y().len() != w {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
@@ -168,8 +163,8 @@ impl PixelSink for MixedSinker<'_, Yuv420p> {
     } = self;
 
     // Single-plane row ranges are guaranteed not to overflow: `idx <
-    // h` and `with_luma` / `with_hsv` validated `w × h × 1` fits
-    // usize, so `(idx + 1) * w ≤ h * w` fits too. The `× 3` RGB
+    // h` and `with_luma` / `with_hsv` validated `w x h x 1` fits
+    // usize, so `(idx + 1) * w ≤ h * w` fits too. The `x 3` RGB
     // ranges are only needed when RGB output is requested — computed
     // lazily below with overflow checking.
     let one_plane_start = idx * w;
@@ -227,11 +222,11 @@ impl PixelSink for MixedSinker<'_, Yuv420p> {
     // Either way, the slice we hold is `&mut [u8]` that we then
     // reborrow as `&[u8]` for the HSV step.
     //
-    // RGB byte ranges use `checked_mul` because `w × 3` (and
-    // `(idx + 1) × w × 3`) can wrap 32-bit `usize` for large widths
+    // RGB byte ranges use `checked_mul` because `w x 3` (and
+    // `(idx + 1) x w x 3`) can wrap 32-bit `usize` for large widths
     // even when the single-plane ranges fit — a caller can attach
-    // only `with_hsv` (which validates `w × h × 1`) and never go
-    // through the `× 3` check at buffer attachment. Overflow here
+    // only `with_hsv` (which validates `w x h x 1`) and never go
+    // through the `x 3` check at buffer attachment. Overflow here
     // returns `GeometryOverflow` instead of panicking inside the row
     // dispatcher's own checked multiplication.
     let rgb_row = rgb_row_buf_or_scratch(
@@ -258,11 +253,12 @@ impl PixelSink for MixedSinker<'_, Yuv420p> {
 
     // HSV from the RGB row we just wrote.
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -302,7 +298,7 @@ impl<'a> MixedSinker<'a, Yuv410p> {
   /// filled with `0xFF` (opaque).
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32-bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -360,10 +356,9 @@ impl PixelSink for MixedSinker<'_, Yuv410p> {
     // it — guard at the sinker boundary so unsafe SIMD dispatchers
     // never see a non-multiple-of-4 width.
     if self.width & 3 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
-        self.width,
-        WidthAlignmentRequirement::MultipleOfFour,
-      )));
+      return Err(MixedSinkerError::WidthAlignment(
+        WidthAlignment::multiple_of_four(self.width),
+      ));
     }
     check_dimensions_match(self.width, self.height, width, height)
   }
@@ -376,10 +371,9 @@ impl PixelSink for MixedSinker<'_, Yuv410p> {
 
     // Defense in depth — see Yuv420p impl.
     if w & 3 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
-        w,
-        WidthAlignmentRequirement::MultipleOfFour,
-      )));
+      return Err(MixedSinkerError::WidthAlignment(
+        WidthAlignment::multiple_of_four(w),
+      ));
     }
     if row.y().len() != w {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
@@ -486,11 +480,12 @@ impl PixelSink for MixedSinker<'_, Yuv410p> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -522,7 +517,7 @@ impl<'a> MixedSinker<'a, Yuv422p> {
   /// alpha byte is filled with `0xFF` (opaque).
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -545,7 +540,7 @@ impl<'a> MixedSinker<'a, Yuv422p> {
 
   /// Attaches a `u16` luma output buffer. The 8-bit Y plane samples
   /// are zero-extended into `u16`. Length is measured in `u16`
-  /// elements (`width × height`).
+  /// elements (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -574,9 +569,8 @@ impl PixelSink for MixedSinker<'_, Yuv422p> {
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     if self.width & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(
         self.width,
-        WidthAlignmentRequirement::Even,
       )));
     }
     check_dimensions_match(self.width, self.height, width, height)
@@ -589,10 +583,7 @@ impl PixelSink for MixedSinker<'_, Yuv422p> {
     let use_simd = self.simd;
 
     if w & 1 != 0 {
-      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::new(
-        w,
-        WidthAlignmentRequirement::Even,
-      )));
+      return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(w)));
     }
     if row.y().len() != w {
       return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
@@ -702,11 +693,12 @@ impl PixelSink for MixedSinker<'_, Yuv422p> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -736,7 +728,7 @@ impl<'a> MixedSinker<'a, Yuv444p> {
   /// alpha byte is filled with `0xFF` (opaque).
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -759,7 +751,7 @@ impl<'a> MixedSinker<'a, Yuv444p> {
 
   /// Attaches a `u16` luma output buffer. The 8-bit Y plane samples
   /// are zero-extended into `u16`. Length is measured in `u16`
-  /// elements (`width × height`).
+  /// elements (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -900,11 +892,12 @@ impl PixelSink for MixedSinker<'_, Yuv444p> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -934,7 +927,7 @@ impl<'a> MixedSinker<'a, Yuv440p> {
   /// filled with `0xFF` (opaque).
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -957,7 +950,7 @@ impl<'a> MixedSinker<'a, Yuv440p> {
 
   /// Attaches a `u16` luma output buffer. The 8-bit Y plane samples
   /// are zero-extended into `u16`. Length is measured in `u16`
-  /// elements (`width × height`).
+  /// elements (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -1100,11 +1093,12 @@ impl PixelSink for MixedSinker<'_, Yuv440p> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );
@@ -1136,7 +1130,7 @@ impl<'a> MixedSinker<'a, Yuv411p> {
   /// filled with `0xFF` (opaque).
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32-bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -1159,7 +1153,7 @@ impl<'a> MixedSinker<'a, Yuv411p> {
 
   /// Attaches a `u16` luma output buffer. The 8-bit Y plane samples
   /// are zero-extended into `u16`. Length is measured in `u16`
-  /// elements (`width × height`).
+  /// elements (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -1313,11 +1307,12 @@ impl PixelSink for MixedSinker<'_, Yuv411p> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );

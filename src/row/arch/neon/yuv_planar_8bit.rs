@@ -88,6 +88,7 @@ pub(crate) unsafe fn yuv_420_to_rgba_row(
 /// # Safety
 ///
 /// Same as [`yuv_420_to_rgba_row`] plus `a_src.len() >= width`.
+#[cfg(feature = "yuva")]
 #[inline]
 #[target_feature(enable = "neon")]
 #[allow(clippy::too_many_arguments)]
@@ -364,7 +365,7 @@ pub(crate) unsafe fn yuv_410_to_rgba_row(
 /// with constant `0xFF` alpha). Math is byte-identical to
 /// `scalar::yuv_410_to_rgb_or_rgba_row::<ALPHA>` — same Q15 sequence
 /// and saturating-narrow primitives as the 4:2:0 NEON kernel; only
-/// the chroma-fanout shape differs (4× horizontal duplication).
+/// the chroma-fanout shape differs (4x horizontal duplication).
 ///
 /// Pipeline per 16 Y pixels:
 /// 1. Load 16 Y, 4 U, 4 V (the chroma planes are quarter-width).
@@ -373,7 +374,7 @@ pub(crate) unsafe fn yuv_410_to_rgba_row(
 /// 4. Per channel C ∈ {R, G, B}:
 ///    `C_chroma = (C_u * u_d + C_v * v_d + RND) >> 15` (i32x4),
 ///    narrow-saturate to i16x4.
-/// 5. Duplicate each of the 4 chroma lanes 4× to fill an i16x8 pair
+/// 5. Duplicate each of the 4 chroma lanes 4x to fill an i16x8 pair
 ///    of vectors covering 16 Y lanes — `vzip1` / `vzip2` chained gives
 ///    `[c0,c0,c0,c0,c1,c1,c1,c1]` and `[c2,c2,c2,c2,c3,c3,c3,c3]`.
 /// 6. Y path → i16x8 pair via `scale_y`.
@@ -503,13 +504,13 @@ unsafe fn yuv_410_to_rgb_or_rgba_row<const ALPHA: bool>(
       let g_i16x4 = vqmovn_s32(g_i32);
       let b_i16x4 = vqmovn_s32(b_i32);
 
-      // Duplicate each chroma lane 4× to cover 16 Y lanes:
+      // Duplicate each chroma lane 4x to cover 16 Y lanes:
       //   chroma  = [c0, c1, c2, c3]                       (i16x4)
       //   dup_lo  = [c0, c0, c0, c0, c1, c1, c1, c1]       (covers Y lanes 0..7)
       //   dup_hi  = [c2, c2, c2, c2, c3, c3, c3, c3]       (covers Y lanes 8..15)
       //
-      // Lane-fanout sequence (two zip layers for 4× duplication, mirroring
-      // the 4:2:0 kernel which only needs one zip for 2× duplication):
+      // Lane-fanout sequence (two zip layers for 4x duplication, mirroring
+      // the 4:2:0 kernel which only needs one zip for 2x duplication):
       //   1. `vcombine_s16` two copies of the i16x4 → i16x8 = [c0..c3, c0..c3].
       //   2. `vzip1q_s16(x, x)` interleaves lanes [0,0,1,1,2,2,3,3] →
       //      `pair = [c0,c0,c1,c1, c2,c2,c3,c3]`.
@@ -653,6 +654,7 @@ pub(crate) unsafe fn yuv_444_to_rgba_row(
 /// # Safety
 ///
 /// Same as [`yuv_444_to_rgba_row`] plus `a_src.len() >= width`.
+#[cfg(feature = "yuva")]
 #[inline]
 #[target_feature(enable = "neon")]
 #[allow(clippy::too_many_arguments)]
@@ -1054,7 +1056,7 @@ unsafe fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
       // Stage 2: combine those two i16x4 halves back into one i16x8,
       // giving [c0,c0,c1,c1,c2,c2,c3,c3]. Then run `vzip1q_s16(s,s)`
       // and `vzip2q_s16(s,s)` over that 8-lane vector to land at
-      // [c0×4,c1×4] (low) and [c2×4,c3×4] (high), matching the 16 Y
+      // [c0x4,c1x4] (low) and [c2x4,c3x4] (high), matching the 16 Y
       // lanes.
       let r_dup8 = vcombine_s16(vzip1_s16(r_low4, r_low4), vzip2_s16(r_low4, r_low4));
       let g_dup8 = vcombine_s16(vzip1_s16(g_low4, g_low4), vzip2_s16(g_low4, g_low4));

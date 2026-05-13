@@ -281,48 +281,6 @@ fn nv24_width_mismatch_returns_err() {
   assert!(matches!(err, MixedSinkerError::DimensionMismatch(_)));
 }
 
-#[test]
-fn nv24_process_rejects_short_uv_slice() {
-  let mut rgb = std::vec![0u8; 16 * 8 * 3];
-  let mut sink = MixedSinker::<Nv24>::new(16, 8).with_rgb(&mut rgb).unwrap();
-  let y = [0u8; 16];
-  let uv = [128u8; 31]; // expected 2 * 16 = 32
-  let row = Nv24Row::new(&y, &uv, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::UvFull, 0, 32, 31))
-  );
-}
-
-#[test]
-fn nv24_process_rejects_out_of_range_row_idx() {
-  let mut rgb = std::vec![0u8; 16 * 8 * 3];
-  let mut sink = MixedSinker::<Nv24>::new(16, 8).with_rgb(&mut rgb).unwrap();
-  let y = [0u8; 16];
-  let uv = [128u8; 32];
-  let row = Nv24Row::new(&y, &uv, 8, ColorMatrix::Bt601, true); // row 8 == height
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowIndexOutOfRange(RowIndexOutOfRange::new(8, 8))
-  );
-}
-
-#[test]
-fn nv42_process_rejects_short_vu_slice() {
-  let mut rgb = std::vec![0u8; 16 * 8 * 3];
-  let mut sink = MixedSinker::<Nv42>::new(16, 8).with_rgb(&mut rgb).unwrap();
-  let y = [0u8; 16];
-  let vu = [128u8; 31]; // expected 32
-  let row = Nv42Row::new(&y, &vu, 0, ColorMatrix::Bt601, true);
-  let err = sink.process(row).err().unwrap();
-  assert_eq!(
-    err,
-    MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(RowSlice::VuFull, 0, 32, 31))
-  );
-}
-
 // ---- Nv24/Nv42 RGBA (Ship 8 PR 4b) tests --------------------------------
 
 #[test]

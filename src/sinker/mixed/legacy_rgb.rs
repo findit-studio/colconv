@@ -49,7 +49,7 @@ use crate::{
 // ============================================================================
 
 /// Slice out a `3 * width` `u16` sub-range from a flat u16 RGB plane.
-/// Returns `Err(GeometryOverflow)` on 32-bit targets if `one_plane_end × 3`
+/// Returns `Err(GeometryOverflow)` on 32-bit targets if `one_plane_end x 3`
 /// wraps `usize`.
 #[inline(always)]
 fn rgb_u16_plane_row_slice(
@@ -101,7 +101,7 @@ macro_rules! impl_legacy_rgb_sinker {
       /// constant `0xFF` (this source format has no alpha channel).
       ///
       /// Returns `Err(InsufficientRgbaBuffer)` if
-      /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+      /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
       /// 32-bit targets when the product overflows.
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -124,7 +124,7 @@ macro_rules! impl_legacy_rgb_sinker {
 
       /// Attaches a **native-depth `u16`** RGB output buffer. Each channel is
       /// stored low-bit aligned at its native bit width — no expansion applied.
-      /// Length is measured in `u16` elements (`width × height × 3`).
+      /// Length is measured in `u16` elements (`width x height x 3`).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
         self.set_rgb_u16(buf)?;
@@ -147,7 +147,7 @@ macro_rules! impl_legacy_rgb_sinker {
       /// Attaches a **native-depth `u16`** RGBA output buffer. Same native
       /// bit-width channels as `with_rgb_u16` plus α=`0xFFFF` (the source
       /// has no alpha). Length is measured in `u16` elements
-      /// (`width × height × 4`).
+      /// (`width x height x 4`).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
         self.set_rgba_u16(buf)?;
@@ -170,7 +170,7 @@ macro_rules! impl_legacy_rgb_sinker {
       /// Attaches a **`u16`** luma output buffer. Luma is derived from
       /// expanded u8 RGB via `rgb_to_luma_u16_row` (zero-extended `u8`
       /// result, range `[0, 255]`). No native luma precision exists for
-      /// these formats. Length in `u16` elements (`width × height`).
+      /// these formats. Length in `u16` elements (`width x height`).
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
         self.set_luma_u16(buf)?;
@@ -304,11 +304,12 @@ macro_rules! impl_legacy_rgb_sinker {
         }
 
         if let Some(hsv_bufs) = hsv.as_mut() {
+          let (h, s, v) = hsv_bufs.hsv();
           rgb_to_hsv_row(
             rgb_row,
-            &mut hsv_bufs.h[one_plane_start..one_plane_end],
-            &mut hsv_bufs.s[one_plane_start..one_plane_end],
-            &mut hsv_bufs.v[one_plane_start..one_plane_end],
+            &mut h[one_plane_start..one_plane_end],
+            &mut s[one_plane_start..one_plane_end],
+            &mut v[one_plane_start..one_plane_end],
             w,
             use_simd,
           );

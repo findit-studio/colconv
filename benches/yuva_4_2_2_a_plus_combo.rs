@@ -21,7 +21,7 @@
 //! Yuva420p — `yuv_420_to_rgb_row` / `yuva420p_to_rgba_row` (8-bit) and
 //! `yuv420p10_to_rgb_row` / `yuva420p10_to_rgba_row` (10-bit). The only
 //! difference from Yuva420p is in the vertical walker: 4:2:2 chroma rows are
-//! full-height (not half-height), so the UV planes have `(w/2) × h` elements.
+//! full-height (not half-height), so the UV planes have `(w/2) x h` elements.
 //!
 //! **Approach: only public APIs.** The A+ side runs through the real `MixedSinker`
 //! flow. The 2-kernel side hits the public per-row dispatchers directly.
@@ -92,7 +92,7 @@ fn bench_yuva422p(c: &mut Criterion) {
   for &w in WIDTHS {
     let w_us = w as usize;
     let h_us = FRAME_HEIGHT as usize;
-    // 4:2:2: Y plane = w×h, UV planes = (w/2)×h (full-height chroma), A = w×h.
+    // 4:2:2: Y plane = wxh, UV planes = (w/2)xh (full-height chroma), A = wxh.
     let y_len = w_us * h_us;
     let uv_len = (w_us / 2) * h_us;
     let a_len = w_us * h_us;
@@ -106,7 +106,7 @@ fn bench_yuva422p(c: &mut Criterion) {
     fill_pseudo_random_u8(&mut v_plane, 0x7733);
     fill_pseudo_random_u8(&mut a_plane, 0x8844);
 
-    // Throughput: u8 RGB (3 bytes/px) + u8 RGBA (4 bytes/px) = 7 bytes/px × w × h.
+    // Throughput: u8 RGB (3 bytes/px) + u8 RGBA (4 bytes/px) = 7 bytes/px x w x h.
     group.throughput(Throughput::Bytes((w_us * 7 * h_us) as u64));
 
     for use_simd in [false, true] {
@@ -418,7 +418,7 @@ fn bench_yuva422p16_u8(c: &mut Criterion) {
   for &w in WIDTHS {
     let w_us = w as usize;
     let h_us = FRAME_HEIGHT as usize;
-    // 4:2:2: Y plane = w×h, UV planes = (w/2)×h (full-height chroma), A = w×h.
+    // 4:2:2: Y plane = wxh, UV planes = (w/2)xh (full-height chroma), A = wxh.
     let y_len = w_us * h_us;
     let uv_len = (w_us / 2) * h_us;
     let a_len = w_us * h_us;
@@ -432,7 +432,7 @@ fn bench_yuva422p16_u8(c: &mut Criterion) {
     fill_pseudo_random_u16_full(&mut v_plane, 0x7735);
     fill_pseudo_random_u16_full(&mut a_plane, 0x8846);
 
-    // Throughput: u8 RGB (3 bytes/px) + u8 RGBA (4 bytes/px) = 7 bytes/px × w × h.
+    // Throughput: u8 RGB (3 bytes/px) + u8 RGBA (4 bytes/px) = 7 bytes/px x w x h.
     group.throughput(Throughput::Bytes((w_us * 7 * h_us) as u64));
 
     for use_simd in [false, true] {

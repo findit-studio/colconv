@@ -109,7 +109,7 @@ pub(crate) unsafe fn gbrpf32_to_rgb_row<const BE: bool>(
       let gi = narrow_to_u8(scale_round_u32(gv, scale, half));
       let bi = narrow_to_u8(scale_round_u32(bv, scale, half));
       let ri = narrow_to_u8(scale_round_u32(rv, scale, half));
-      // vst3_u8 writes 24 bytes; only 12 are valid (4 pixels × 3 channels).
+      // vst3_u8 writes 24 bytes; only 12 are valid (4 pixels x 3 channels).
       let mut tmp = [0u8; 24];
       vst3_u8(tmp.as_mut_ptr(), uint8x8x3_t(ri, gi, bi));
       out
@@ -161,7 +161,7 @@ pub(crate) unsafe fn gbrpf32_to_rgba_row<const BE: bool>(
       let gi = narrow_to_u8(scale_round_u32(gv, scale, half));
       let bi = narrow_to_u8(scale_round_u32(bv, scale, half));
       let ri = narrow_to_u8(scale_round_u32(rv, scale, half));
-      // vst4_u8 writes 32 bytes; 16 are valid (4 pixels × 4 channels).
+      // vst4_u8 writes 32 bytes; 16 are valid (4 pixels x 4 channels).
       let mut tmp = [0u8; 32];
       vst4_u8(tmp.as_mut_ptr(), uint8x8x4_t(ri, gi, bi, alpha));
       out
@@ -212,7 +212,7 @@ pub(crate) unsafe fn gbrpf32_to_rgb_u16_row<const BE: bool>(
       let gu = vqmovn_u32(scale_round_u32(gv, scale, half));
       let bu = vqmovn_u32(scale_round_u32(bv, scale, half));
       let ru = vqmovn_u32(scale_round_u32(rv, scale, half));
-      // vst3_u16 writes 24 bytes; 24 are valid (4 pixels × 3 × 2 bytes).
+      // vst3_u16 writes 24 bytes; 24 are valid (4 pixels x 3 x 2 bytes).
       vst3_u16(out.as_mut_ptr().add(x * 3), uint16x4x3_t(ru, gu, bu));
       x += 4;
     }
@@ -260,7 +260,7 @@ pub(crate) unsafe fn gbrpf32_to_rgba_u16_row<const BE: bool>(
       let gu = vqmovn_u32(scale_round_u32(gv, scale, half));
       let bu = vqmovn_u32(scale_round_u32(bv, scale, half));
       let ru = vqmovn_u32(scale_round_u32(rv, scale, half));
-      // vst4_u16 writes 32 bytes; 32 are valid (4 pixels × 4 × 2 bytes).
+      // vst4_u16 writes 32 bytes; 32 are valid (4 pixels x 4 x 2 bytes).
       vst4_u16(out.as_mut_ptr().add(x * 4), uint16x4x4_t(ru, gu, bu, alpha));
       x += 4;
     }

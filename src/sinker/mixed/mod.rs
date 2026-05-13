@@ -99,20 +99,27 @@
 
 use core::marker::PhantomData;
 
+// `Vec<u8>` is only used by the `rgb_scratch` lazy scratch buffer
+// (gated on the same 15-feature any as the per-format `process`
+// impls). The import is left unconditional because gating it would
+// also leave `extern crate alloc as std` unused under
+// `--features "alloc"` alone, which is harder to express.
+#[allow(unused_imports)]
 use std::vec::Vec;
 
 use derive_more::{Display, IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
-// Per-format imports moved to the child modules (`planar_8bit`,
-// `semi_planar_8bit`, `subsampled_4_*_high_bit`, `bayer`). mod.rs only
-// keeps the prelude types and the helpers — neither of which references
-// any specific source-format type.
-use crate::{HsvBuffers, SourceFormat};
+use crate::SourceFormat;
 // PixelSink is referenced only via intra-doc links (`[`PixelSink::*`]`)
 // in this file; the rustc lint can't see those uses, so silence it.
 #[allow(unused_imports)]
 use crate::PixelSink;
+
+pub use videoframe::{
+  frame::{WidthAlignment, WidthAlignmentRequirement},
+  source::{HsvFrame, HsvFrameMut, HsvPlane},
+};
 
 /// Frame dimensions handed to `begin_frame` don't match the sinker's
 /// configured size.
@@ -204,7 +211,7 @@ impl InsufficientBuffer {
 pub struct InsufficientHsvPlane {
   /// Which HSV plane was short (H, S, or V).
   which: HsvPlane,
-  /// Minimum bytes required (`width × height`).
+  /// Minimum bytes required (`width x height`).
   expected: usize,
   /// Bytes supplied.
   actual: usize,
@@ -227,7 +234,7 @@ impl InsufficientHsvPlane {
     self.which
   }
 
-  /// Minimum bytes required (`width × height`).
+  /// Minimum bytes required (`width x height`).
   #[inline]
   pub const fn expected(&self) -> usize {
     self.expected
@@ -363,66 +370,6 @@ impl RowIndexOutOfRange {
   }
 }
 
-/// Width-alignment violation. Replaces the prior `OddWidth` and
-/// `WidthNotMultipleOf4` variants — both expressed the same
-/// "configured width doesn't satisfy the format's chroma-group
-/// stride" failure, just at different granularities.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WidthAlignment {
-  /// Sink's configured width.
-  width: usize,
-  /// The alignment requirement that was violated.
-  required: WidthAlignmentRequirement,
-}
-
-impl WidthAlignment {
-  /// Constructs a new `WidthAlignment` payload.
-  #[inline]
-  pub const fn new(width: usize, required: WidthAlignmentRequirement) -> Self {
-    Self { width, required }
-  }
-
-  /// Sink's configured width.
-  #[inline]
-  pub const fn width(&self) -> usize {
-    self.width
-  }
-
-  /// The alignment requirement that was violated.
-  #[inline]
-  pub const fn required(&self) -> WidthAlignmentRequirement {
-    self.required
-  }
-}
-
-/// Discriminates which width-alignment rule was violated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum WidthAlignmentRequirement {
-  /// Width must be even — 4:2:0 / 4:2:2 chroma-pair stride.
-  Even,
-  /// Width must be a multiple of 4. Fired by planar 4:1:0
-  /// ([`Yuv410p`](crate::source::Yuv410p)) and packed 4:1:1
-  /// ([`Uyyvyy411`](crate::source::Uyyvyy411)). Note: planar 4:1:1
-  /// ([`Yuv411p`](crate::source::Yuv411p)) accepts non-4-aligned
-  /// widths via `width.div_ceil(4)` for the chroma row and is NOT
-  /// covered by this discriminant.
-  MultipleOfFour,
-}
-
-impl core::fmt::Display for WidthAlignmentRequirement {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    match self {
-      Self::Even => f.write_str("is odd; 4:2:0 / 4:2:2 require even width"),
-      Self::MultipleOfFour => f.write_str(
-        "is not a multiple of 4; planar 4:1:0 (Yuv410p) and packed 4:1:1 \
-         (Uyyvyy411) require width divisible by 4 — planar 4:1:1 (Yuv411p) \
-         accepts non-4-aligned widths and does not produce this error",
-      ),
-    }
-  }
-}
-
 /// Errors returned by [`MixedSinker`] configuration and per-frame
 /// preflight.
 ///
@@ -441,18 +388,18 @@ pub enum MixedSinkerError {
   /// declared at [`MixedSinker::new`]. Returned from
   /// [`PixelSink::begin_frame`] before any row is processed.
   #[error(
-    "MixedSinker frame dimensions mismatch: configured {}×{} but got {}×{}",
+    "MixedSinker frame dimensions mismatch: configured {}x{} but got {}x{}",
     .0.configured_w(), .0.configured_h(), .0.frame_w(), .0.frame_h()
   )]
   DimensionMismatch(DimensionMismatch),
 
   /// RGB buffer attached via [`MixedSinker::with_rgb`] /
-  /// [`MixedSinker::set_rgb`] is shorter than `width × height × 3`.
+  /// [`MixedSinker::set_rgb`] is shorter than `width x height x 3`.
   #[error("MixedSinker insufficient rgb buffer: expected >= {} bytes, got {}", .0.expected(), .0.actual())]
   InsufficientRgbBuffer(InsufficientBuffer),
 
   /// `u16` RGB buffer attached via [`MixedSinker::with_rgb_u16`] /
-  /// [`MixedSinker::set_rgb_u16`] is shorter than `width × height × 3`
+  /// [`MixedSinker::set_rgb_u16`] is shorter than `width x height x 3`
   /// `u16` elements. Only the high‑bit‑depth source impls
   /// (currently [`Yuv420p10`](crate::source::Yuv420p10)) write into this
   /// buffer.
@@ -460,14 +407,14 @@ pub enum MixedSinkerError {
   InsufficientRgbU16Buffer(InsufficientBuffer),
 
   /// Native-depth `u16` luma buffer attached via per-format
-  /// `with_luma_u16` is shorter than `width × height` `u16`
+  /// `with_luma_u16` is shorter than `width x height` `u16`
   /// elements. Tier 4 sources (V210 / Y210 / Y212 / Y216) are the
   /// first consumers of this API.
   #[error("MixedSinker insufficient luma_u16 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
   InsufficientLumaU16Buffer(InsufficientBuffer),
 
   /// RGBA buffer attached via [`MixedSinker::with_rgba`] /
-  /// [`MixedSinker::set_rgba`] is shorter than `width × height × 4`.
+  /// [`MixedSinker::set_rgba`] is shorter than `width x height x 4`.
   /// The fourth byte per pixel is alpha — opaque (`0xFF`) by default
   /// when the source has no alpha plane.
   #[error("MixedSinker insufficient rgba buffer: expected >= {} bytes, got {}", .0.expected(), .0.actual())]
@@ -475,7 +422,7 @@ pub enum MixedSinkerError {
 
   /// `u16` RGBA buffer attached via `with_rgba_u16` / `set_rgba_u16`
   /// (per-format impl, not yet shipped on any sink) is shorter than
-  /// `width × height × 4` `u16` elements. Only high‑bit‑depth source
+  /// `width x height x 4` `u16` elements. Only high‑bit‑depth source
   /// impls write into this buffer; the fourth `u16` per pixel is
   /// alpha — opaque (`(1 << BITS) - 1`) by default when the source
   /// has no alpha plane.
@@ -483,53 +430,53 @@ pub enum MixedSinkerError {
   InsufficientRgbaU16Buffer(InsufficientBuffer),
 
   /// `f32` RGB buffer attached via per-format `with_rgb_f32` /
-  /// `set_rgb_f32` is shorter than `width × height × 3` `f32` elements.
+  /// `set_rgb_f32` is shorter than `width x height x 3` `f32` elements.
   /// Only float-source impls (currently
   /// [`Rgbf32`](crate::source::Rgbf32)) write into this buffer.
   #[error("MixedSinker insufficient rgb_f32 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
   InsufficientRgbF32Buffer(InsufficientBuffer),
 
   /// `half::f16` RGB buffer attached via per-format `with_rgb_f16` /
-  /// `set_rgb_f16` is shorter than `width × height × 3` `f16` elements.
+  /// `set_rgb_f16` is shorter than `width x height x 3` `f16` elements.
   /// Only half-float-source impls (currently
   /// [`Rgbf16`](crate::source::Rgbf16)) write into this buffer.
   #[error("MixedSinker insufficient rgb_f16 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
   InsufficientRgbF16Buffer(InsufficientBuffer),
 
   /// `f32` RGBA buffer attached via per-format `with_rgba_f32` /
-  /// `set_rgba_f32` is shorter than `width × height × 4` `f32` elements.
+  /// `set_rgba_f32` is shorter than `width x height x 4` `f32` elements.
   /// Only float-planar-GBR source impls write into this buffer.
   #[error("MixedSinker insufficient rgba_f32 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
   InsufficientRgbaF32Buffer(InsufficientBuffer),
 
   /// `half::f16` RGBA buffer attached via per-format `with_rgba_f16` /
-  /// `set_rgba_f16` is shorter than `width × height × 4` `f16` elements.
+  /// `set_rgba_f16` is shorter than `width x height x 4` `f16` elements.
   /// Only float-planar-GBR source impls write into this buffer.
   #[error("MixedSinker insufficient rgba_f16 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
   InsufficientRgbaF16Buffer(InsufficientBuffer),
 
   /// `f32` XYZ buffer attached via `with_xyz_f32` / `set_xyz_f32` is
-  /// shorter than `width × height × 3` `f32` elements. Only the
+  /// shorter than `width x height x 3` `f32` elements. Only the
   /// [`Xyz12`](crate::source::Xyz12) source impl writes into this buffer.
   #[error("MixedSinker insufficient xyz_f32 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
   InsufficientXyzF32Buffer(InsufficientBuffer),
 
   /// `f32` luma buffer attached via `with_luma_f32` / `set_luma_f32` is
-  /// shorter than `width × height` `f32` elements.
+  /// shorter than `width x height` `f32` elements.
   #[error("MixedSinker insufficient luma_f32 buffer: expected >= {} elements, got {}", .0.expected(), .0.actual())]
   InsufficientLumaF32Buffer(InsufficientBuffer),
 
-  /// Luma buffer is shorter than `width × height`.
+  /// Luma buffer is shorter than `width x height`.
   #[error("MixedSinker insufficient luma buffer: expected >= {} bytes, got {}", .0.expected(), .0.actual())]
   InsufficientLumaBuffer(InsufficientBuffer),
 
-  /// One of the three HSV planes is shorter than `width × height`.
+  /// One of the three HSV planes is shorter than `width x height`.
   #[error("MixedSinker insufficient hsv {:?} plane: expected >= {} bytes, got {}", .0.which(), .0.expected(), .0.actual())]
   InsufficientHsvPlane(InsufficientHsvPlane),
 
   /// Declared frame geometry does not fit in `usize`. Only reachable
   /// on 32‑bit targets (wasm32, i686) with extreme dimensions.
-  #[error("MixedSinker frame size overflows usize: {} × {} × channels={}", .0.width(), .0.height(), .0.channels())]
+  #[error("MixedSinker frame size overflows usize: {} x {} x channels={}", .0.width(), .0.height(), .0.channels())]
   GeometryOverflow(GeometryOverflow),
 
   /// A row handed directly to [`PixelSink::process`] has a slice
@@ -580,18 +527,6 @@ pub enum MixedSinkerError {
   /// primitive is invoked, preserving the no-panic contract.
   #[error("MixedSinker configured width {} {}", .0.width(), .0.required())]
   WidthAlignment(WidthAlignment),
-}
-
-/// Identifies which of the three HSV planes a
-/// [`MixedSinkerError::InsufficientHsvPlane`] refers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HsvPlane {
-  /// Hue plane.
-  H,
-  /// Saturation plane.
-  S,
-  /// Value plane.
-  V,
 }
 
 /// Identifies which slice of a multi‑plane source row mismatched in
@@ -980,7 +915,7 @@ pub enum RowSlice {
   Uyyvyy411Packed,
   /// Packed `v210` row of a [`V210`](crate::source::V210) source —
   /// Tier 4 10-bit pro-broadcast SDI capture format. Each 16-byte
-  /// word holds 12 × 10-bit samples = 6 pixels (4:2:2: 6 Y +
+  /// word holds 12 x 10-bit samples = 6 pixels (4:2:2: 6 Y +
   /// 3 Cb + 3 Cr). Row length: `(width / 6) * 16` `u8` bytes.
   #[display("V210 packed")]
   V210Packed,
@@ -1117,15 +1052,57 @@ pub struct MixedSinker<'a, F: SourceFormat> {
   luma: Option<&'a mut [u8]>,
   luma_u16: Option<&'a mut [u16]>,
   luma_f32: Option<&'a mut [f32]>,
-  hsv: Option<HsvBuffers<'a>>,
+  // `HsvFrameMut` is cfg-gated to the same 15-feature any as the
+  // per-format `process` impls that read it.
+  #[cfg(any(
+    feature = "bayer",
+    feature = "gbr",
+    feature = "gray",
+    feature = "mono",
+    feature = "rgb",
+    feature = "rgb-float",
+    feature = "rgb-legacy",
+    feature = "v210",
+    feature = "xyz",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-packed",
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar",
+    feature = "yuva",
+  ))]
+  hsv: Option<HsvFrameMut<'a>>,
   /// Lossless linear-XYZ pass-through buffer used by the
   /// [`Xyz12`](crate::source::Xyz12) source's `with_xyz_f32` accessor.
   /// `None` for every other source format.
+  #[cfg(feature = "xyz")]
   xyz_f32: Option<&'a mut [f32]>,
   width: usize,
   height: usize,
   /// Lazily grown to `3 * width` bytes when HSV is requested without a
   /// user RGB buffer. Empty otherwise.
+  ///
+  /// Consumed by per-format `process` impls that derive HSV from RGB
+  /// via the lazy scratch path. Under `--features "alloc"` alone (no
+  /// per-format family), no `process` impl reads this field, so the
+  /// cfg enumerates every source family.
+  #[cfg(any(
+    feature = "bayer",
+    feature = "gbr",
+    feature = "gray",
+    feature = "mono",
+    feature = "rgb",
+    feature = "rgb-float",
+    feature = "rgb-legacy",
+    feature = "v210",
+    feature = "xyz",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-packed",
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar",
+    feature = "yuva",
+  ))]
   rgb_scratch: Vec<u8>,
   /// Whether row primitives dispatch to their SIMD backend. Defaults
   /// to `true`; benchmarks flip this with [`Self::with_simd`] /
@@ -1134,9 +1111,10 @@ pub struct MixedSinker<'a, F: SourceFormat> {
   /// Q8 fixed-point luma coefficients `(cr, cg, cb)` such that
   /// `luma = ((cr * R + cg * G + cb * B + 128) >> 8) as u8`. Only
   /// consulted by source impls that *derive* luma from RGB
-  /// (currently the `Bayer` / `Bayer16<BITS>` family — YUV impls
-  /// memcpy from the native Y plane and ignore this field).
-  /// Default: BT.709 `(54, 183, 19)`.
+  /// (currently the `Bayer` / `Bayer16<BITS>` family and the `Pal8`
+  /// mono palette path — YUV impls memcpy from the native Y plane
+  /// and ignore this field). Default: BT.709 `(54, 183, 19)`.
+  #[cfg(any(feature = "bayer", feature = "mono"))]
   luma_coefficients_q8: (u32, u32, u32),
   _fmt: PhantomData<F>,
 }
@@ -1474,10 +1452,45 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
       luma: None,
       luma_u16: None,
       luma_f32: None,
+      #[cfg(any(
+        feature = "bayer",
+        feature = "gbr",
+        feature = "gray",
+        feature = "mono",
+        feature = "rgb",
+        feature = "rgb-float",
+        feature = "rgb-legacy",
+        feature = "v210",
+        feature = "xyz",
+        feature = "y2xx",
+        feature = "yuv-444-packed",
+        feature = "yuv-packed",
+        feature = "yuv-planar",
+        feature = "yuv-semi-planar",
+        feature = "yuva",
+      ))]
       hsv: None,
+      #[cfg(feature = "xyz")]
       xyz_f32: None,
       width,
       height,
+      #[cfg(any(
+        feature = "bayer",
+        feature = "gbr",
+        feature = "gray",
+        feature = "mono",
+        feature = "rgb",
+        feature = "rgb-float",
+        feature = "rgb-legacy",
+        feature = "v210",
+        feature = "xyz",
+        feature = "y2xx",
+        feature = "yuv-444-packed",
+        feature = "yuv-packed",
+        feature = "yuv-planar",
+        feature = "yuv-semi-planar",
+        feature = "yuva",
+      ))]
       rgb_scratch: Vec::new(),
       simd: true,
       // BT.709 by default — matches the implicit weights every
@@ -1485,6 +1498,7 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
       // CCM target. Per-format impls (`MixedSinker<Bayer>` etc.)
       // expose `with_luma_coefficients` for callers whose CCM
       // targets a different gamut.
+      #[cfg(any(feature = "bayer", feature = "mono"))]
       luma_coefficients_q8: (54, 183, 19),
       _fmt: PhantomData,
     }
@@ -1578,6 +1592,27 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
   }
 
   /// Returns `true` iff the sinker will write HSV.
+  ///
+  /// Gated on the same 15-feature any as the `hsv` field — under
+  /// `--features "alloc"` alone, no per-format `process` impl
+  /// compiles, the field doesn't exist, and this getter is also gone.
+  #[cfg(any(
+    feature = "bayer",
+    feature = "gbr",
+    feature = "gray",
+    feature = "mono",
+    feature = "rgb",
+    feature = "rgb-float",
+    feature = "rgb-legacy",
+    feature = "v210",
+    feature = "xyz",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-packed",
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar",
+    feature = "yuva",
+  ))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn produces_hsv(&self) -> bool {
     self.hsv.is_some()
@@ -1619,7 +1654,7 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
     self
   }
 
-  /// Full-frame slot count (`width × height × channels`) with overflow
+  /// Full-frame slot count (`width x height x channels`) with overflow
   /// checking. The result is the minimum required `buf.len()` for any
   /// `&[T]` buffer holding `channels` slots per pixel — bytes for
   /// `&[u8]`, `u16` elements for `&[u16]`, `f32` elements for `&[f32]`,
@@ -1642,13 +1677,32 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
       )))
   }
 
-  /// Full-frame element count (`width × height`) for a single-channel
+  /// Full-frame element count (`width x height`) for a single-channel
   /// `&[T]` buffer, with overflow checking. Equivalent to
   /// [`frame_elems(1)`](Self::frame_elems) numerically, but the
   /// dedicated name documents "one slot per pixel" at the call site
   /// (e.g. luma planes) without the channels=1 magic number.
   ///
   /// Returns `Err(GeometryOverflow { channels: 1 })` on overflow.
+  ///
+  /// Consumed by every non-Bayer sinker family; Bayer is RGB-only and
+  /// has no single-channel pixel-count sizing.
+  #[cfg(any(
+    feature = "gbr",
+    feature = "gray",
+    feature = "mono",
+    feature = "rgb",
+    feature = "rgb-float",
+    feature = "rgb-legacy",
+    feature = "v210",
+    feature = "xyz",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-packed",
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar",
+    feature = "yuva",
+  ))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn frame_pixels(&self) -> Result<usize, MixedSinkerError> {
     self
@@ -1664,7 +1718,7 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
 
 impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   /// Attaches a packed 24-bit RGB output buffer.
-  /// Returns `Err(InsufficientRgbBuffer)` if `buf.len() < width × height × 3`,
+  /// Returns `Err(InsufficientRgbBuffer)` if `buf.len() < width x height x 3`,
   /// or `Err(GeometryOverflow)` on 32‑bit targets when the product
   /// overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -1720,7 +1774,7 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   // native‑depth RGBA.
 
   /// Attaches a single-plane luma output buffer.
-  /// Returns `Err(InsufficientLumaBuffer)` if `buf.len() < width × height`,
+  /// Returns `Err(InsufficientLumaBuffer)` if `buf.len() < width x height`,
   /// or `Err(GeometryOverflow)` on 32‑bit overflow.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -1746,6 +1800,27 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   /// `e.which()` / `e.expected()` / `e.actual()`) naming the first
   /// short plane, or `Err(MixedSinkerError::GeometryOverflow(_))` on
   /// 32-bit overflow.
+  ///
+  /// HSV is only meaningful when at least one source family is
+  /// compiled, so this method is gated on the same 15-feature any as
+  /// the per-format `process` impls that consume the `hsv` field.
+  #[cfg(any(
+    feature = "bayer",
+    feature = "gbr",
+    feature = "gray",
+    feature = "mono",
+    feature = "rgb",
+    feature = "rgb-float",
+    feature = "rgb-legacy",
+    feature = "v210",
+    feature = "xyz",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-packed",
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar",
+    feature = "yuva",
+  ))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_hsv(
     mut self,
@@ -1758,6 +1833,23 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   }
 
   /// In-place variant of [`with_hsv`](Self::with_hsv).
+  #[cfg(any(
+    feature = "bayer",
+    feature = "gbr",
+    feature = "gray",
+    feature = "mono",
+    feature = "rgb",
+    feature = "rgb-float",
+    feature = "rgb-legacy",
+    feature = "v210",
+    feature = "xyz",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-packed",
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar",
+    feature = "yuva",
+  ))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn set_hsv(
     &mut self,
@@ -1781,7 +1873,7 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
         InsufficientHsvPlane::new(HsvPlane::V, expected, v.len()),
       ));
     }
-    self.hsv = Some(HsvBuffers { h, s, v });
+    self.hsv = Some(HsvFrameMut::new(h, s, v));
     Ok(self)
   }
 }
@@ -1791,12 +1883,33 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
 /// [`PixelSink::begin_frame`] in every `MixedSinker<F>` impl.
 ///
 /// The sinker's RGB / luma / HSV buffers were sized for
-/// `configured_w × configured_h`. A shorter frame would silently
+/// `configured_w x configured_h`. A shorter frame would silently
 /// leave the bottom rows of those buffers stale from the previous
 /// frame; a taller frame would overrun them. Either is a real
 /// failure mode, but neither is a panic-worthy bug — the caller can
 /// recover by rebuilding the sinker. Returning `Err` before any row
 /// is processed guarantees no partial output.
+///
+/// Consumed by every per-format `MixedSinker<F>::process` impl.
+/// Under `--features "alloc"` alone (no per-format family), no
+/// `process` impl compiles and this helper would be flagged unused.
+#[cfg(any(
+  feature = "bayer",
+  feature = "gbr",
+  feature = "gray",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "xyz",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn check_dimensions_match(
   configured_w: usize,
@@ -1818,12 +1931,31 @@ pub(super) fn check_dimensions_match(
 }
 
 /// Slice the RGBA row out of an attached RGBA plane buffer. Returns
-/// `Err(GeometryOverflow)` if `one_plane_end × 4` wraps `usize` (only
+/// `Err(GeometryOverflow)` if `one_plane_end x 4` wraps `usize` (only
 /// reachable on 32-bit targets at extreme dimensions).
 ///
 /// Centralises the duplicated overflow/bounds-check pattern that every
 /// `MixedSinker<F>::process` impl runs in both the standalone-RGBA
 /// branch and the Strategy-A expand branch.
+///
+/// Consumed by every non-Bayer sinker family (Bayer is RGB-only, no
+/// RGBA path).
+#[cfg(any(
+  feature = "gbr",
+  feature = "gray",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "xyz",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn rgba_plane_row_slice(
   buf: &mut [u8],
@@ -1843,10 +1975,29 @@ pub(super) fn rgba_plane_row_slice(
 
 /// `u16` analogue of [`rgba_plane_row_slice`] — slices the RGBA row out
 /// of an attached `u16` RGBA plane buffer. This helper indexes in `u16`
-/// elements, not bytes: like the `u8` variant, RGBA rows use `× 4`
+/// elements, not bytes: like the `u8` variant, RGBA rows use `x 4`
 /// elements per pixel, so the overflow check is the same, but the byte
 /// offsets differ because each element is 2 bytes. Used by the
 /// high-bit-depth 4:2:0 sinkers that fan `u16` RGB out to `u16` RGBA.
+///
+/// Bayer is RGB-only and packed YUV 4:2:2 / 4:1:1 (`yuv-packed`) emits
+/// u8 only; semi-planar 8-bit NV is also u8-only and never reaches a
+/// u16 RGBA fan-out path, so this helper is unused under those
+/// families.
+#[cfg(any(
+  feature = "gbr",
+  feature = "gray",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "xyz",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuva",
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn rgba_u16_plane_row_slice(
   buf: &mut [u16],
@@ -1867,12 +2018,34 @@ pub(super) fn rgba_u16_plane_row_slice(
 /// Pick an RGB row buffer for the kernel to write into: caller's RGB
 /// plane slice when attached, or the growing scratch buffer otherwise
 /// (HSV-only callers don't allocate an RGB plane). Returns
-/// `Err(GeometryOverflow)` if `width × 3` or `one_plane_end × 3` wraps
+/// `Err(GeometryOverflow)` if `width x 3` or `one_plane_end x 3` wraps
 /// `usize` — see [`rgba_plane_row_slice`] for the rationale.
 ///
 /// `rgb_scratch` is grown via `Vec::resize` only when too small; the
 /// caller keeps the existing capacity across rows so steady-state
 /// processing allocates zero times.
+///
+/// Consumed by per-format `process` impls that need a stable RGB row
+/// buffer (either user-attached or scratch-backed). Under
+/// `--features "alloc"` alone (no per-format family), no impl
+/// compiles and this helper would be flagged unused.
+#[cfg(any(
+  feature = "bayer",
+  feature = "gbr",
+  feature = "gray",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "xyz",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn rgb_row_buf_or_scratch<'a>(
   rgb: Option<&'a mut [u8]>,
@@ -1916,11 +2089,12 @@ pub(super) fn rgb_row_buf_or_scratch<'a>(
 /// `3 * luma.len()` packed bytes; the loop writes one luma
 /// sample per pixel.
 ///
-/// Used by Bayer / Bayer16 [`MixedSinker`] paths whose source has
-/// no native luma plane to memcpy from. YUV source impls take
+/// Used by Bayer / Bayer16 / Pal8 [`MixedSinker`] paths whose source
+/// has no native luma plane to memcpy from. YUV source impls take
 /// their luma directly off the Y plane and don't go through this
 /// helper, so they don't need a configurable coefficient set —
 /// the source's `ColorMatrix` already fixed it at encode time.
+#[cfg(any(feature = "bayer", feature = "mono"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn rgb_row_to_luma_row(rgb: &[u8], luma: &mut [u8], coeffs_q8: (u32, u32, u32)) {
   // Caller's contract: `rgb` packs `3 * luma.len()` bytes. The
@@ -1942,7 +2116,7 @@ pub(super) fn rgb_row_to_luma_row(rgb: &[u8], luma: &mut [u8], coeffs_q8: (u32, 
       .len()
       .checked_mul(3)
       .is_some_and(|need| rgb.len() >= need),
-    "rgb_row_to_luma_row: rgb.len()={} but need {} (= 3 × luma.len()={})",
+    "rgb_row_to_luma_row: rgb.len()={} but need {} (= 3 x luma.len()={})",
     rgb.len(),
     luma.len().saturating_mul(3),
     luma.len(),
@@ -1961,6 +2135,7 @@ pub(super) fn rgb_row_to_luma_row(rgb: &[u8], luma: &mut [u8], coeffs_q8: (u32, 
 ///
 /// Used by format sinker paths that expose a `with_luma_u16` output channel
 /// (e.g. `MixedSinker<Pal8>`).
+#[cfg(feature = "mono")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn rgb_row_to_luma_u16_row(
   rgb: &[u8],
@@ -1972,7 +2147,7 @@ pub(super) fn rgb_row_to_luma_u16_row(
       .len()
       .checked_mul(3)
       .is_some_and(|need| rgb.len() >= need),
-    "rgb_row_to_luma_u16_row: rgb.len()={} but need {} (= 3 × luma_u16.len()={})",
+    "rgb_row_to_luma_u16_row: rgb.len()={} but need {} (= 3 x luma_u16.len()={})",
     rgb.len(),
     luma_u16.len().saturating_mul(3),
     luma_u16.len(),
@@ -1995,40 +2170,75 @@ pub(super) fn rgb_row_to_luma_u16_row(
 // `LumaCoefficients` API. Per-format `with_rgba` / `set_rgba` builders
 // and `PixelSink` impls live in the child modules below.
 
+#[cfg(feature = "yuv-444-packed")]
 mod ayuv64;
+#[cfg(feature = "bayer")]
 mod bayer;
+#[cfg(feature = "gray")]
 mod gray;
+#[cfg(feature = "rgb-legacy")]
 mod legacy_rgb;
+#[cfg(feature = "mono")]
 mod mono1bit;
+#[cfg(feature = "rgb")]
 mod packed_rgb_10bit;
+#[cfg(feature = "rgb")]
 mod packed_rgb_16bit;
+#[cfg(feature = "rgb")]
 mod packed_rgb_8bit;
+#[cfg(feature = "rgb-float")]
 mod packed_rgb_f16;
+#[cfg(feature = "rgb-float")]
 mod packed_rgb_float;
+#[cfg(feature = "yuv-packed")]
 mod packed_yuv_4_1_1;
+#[cfg(feature = "yuv-packed")]
 mod packed_yuv_8bit;
+#[cfg(feature = "mono")]
 mod pal8;
+#[cfg(feature = "yuv-planar")]
 mod planar_8bit;
+#[cfg(feature = "gbr")]
 mod planar_gbr_8bit;
+#[cfg(feature = "gbr")]
 mod planar_gbr_f16;
+#[cfg(feature = "gbr")]
 mod planar_gbr_float;
+#[cfg(feature = "gbr")]
 mod planar_gbr_high_bit;
+#[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
+#[cfg(feature = "yuv-planar")]
 mod subsampled_4_2_0_high_bit;
+#[cfg(feature = "yuv-planar")]
 mod subsampled_4_2_2_high_bit;
+#[cfg(feature = "yuv-planar")]
 mod subsampled_4_4_4_high_bit;
+#[cfg(feature = "v210")]
 mod v210;
+#[cfg(feature = "yuv-444-packed")]
 mod v30x;
+#[cfg(feature = "yuv-444-packed")]
 mod v410;
+#[cfg(feature = "yuv-444-packed")]
 mod vuya;
+#[cfg(feature = "yuv-444-packed")]
 mod vuyx;
+#[cfg(feature = "yuv-444-packed")]
 mod xv36;
+#[cfg(feature = "xyz")]
 mod xyz12;
+#[cfg(feature = "y2xx")]
 mod y210;
+#[cfg(feature = "y2xx")]
 mod y212;
+#[cfg(feature = "y2xx")]
 mod y216;
+#[cfg(feature = "yuva")]
 mod yuva_4_2_0;
+#[cfg(feature = "yuva")]
 mod yuva_4_2_2;
+#[cfg(feature = "yuva")]
 mod yuva_4_4_4;
 
 #[cfg(all(test, feature = "std"))]
@@ -2038,6 +2248,7 @@ mod tests;
 mod api_smoke_tests {
   use super::*;
 
+  #[cfg(feature = "v210")]
   #[test]
   fn mixed_sinker_default_does_not_produce_luma_u16() {
     // Use the currently available V210 source format marker for this smoke test.

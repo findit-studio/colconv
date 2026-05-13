@@ -61,7 +61,7 @@ fn bench(c: &mut Criterion) {
     let row_bytes = w_us * 4;
     let stride = w * 4;
 
-    // VUYA frame: width × height × 4 bytes.
+    // VUYA frame: width x height x 4 bytes.
     let mut packed = std::vec![0u8; row_bytes * h_us];
     fill_pseudo_random(&mut packed, 0x1111);
 

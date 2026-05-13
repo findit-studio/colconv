@@ -41,6 +41,7 @@ use crate::row::{avx2_available, avx512_available, sse41_available};
 /// Selects the highest available SIMD backend; falls back to scalar.
 /// When `use_simd` is `false` (`MixedSinker::with_simd(false)`), the
 /// SIMD cascade is bypassed and scalar runs directly.
+#[cfg(feature = "yuv-444-packed")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn copy_alpha_packed_u8x4_at_3(
   packed: &[u8],
@@ -103,6 +104,7 @@ pub(crate) fn copy_alpha_packed_u8x4_at_3(
 /// source. The dispatcher computes
 /// `safe_for_simd = !BE && cfg!(target_endian = "little")` and falls
 /// back to the target-endian-aware scalar in every other quadrant.
+#[cfg(feature = "yuv-444-packed")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0<const BE: bool>(
   packed: &[u16],
@@ -164,6 +166,7 @@ pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0<const BE: bool>(
 /// `BE` selects the source `packed` plane byte order. See
 /// [`copy_alpha_packed_u16x4_to_u8_at_0`] for the rationale: SIMD is
 /// only correct on LE host with LE source; scalar is target-endian-aware.
+#[cfg(feature = "yuv-444-packed")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn copy_alpha_packed_u16x4_at_0<const BE: bool>(
   packed: &[u16],
@@ -221,6 +224,7 @@ pub(crate) fn copy_alpha_packed_u16x4_at_0<const BE: bool>(
 ///
 /// Selects the highest available SIMD backend; falls back to scalar.
 /// When `use_simd` is `false`, calls scalar directly.
+#[cfg(any(feature = "gbr", feature = "yuva"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usize, use_simd: bool) {
   if !use_simd {
@@ -297,6 +301,7 @@ pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usiz
 /// Selects the highest available SIMD backend on LE-host with LE-data;
 /// falls back to scalar otherwise. When `use_simd` is `false`, calls
 /// scalar directly.
+#[cfg(any(feature = "gbr", feature = "yuva"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32, const BE: bool>(
   alpha: &[u16],
@@ -367,6 +372,7 @@ pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32, const BE: bool>(
 /// Selects the highest available SIMD backend on LE-host with LE-data;
 /// falls back to scalar otherwise. When `use_simd` is `false`, calls
 /// scalar directly.
+#[cfg(any(feature = "gbr", feature = "yuva"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn copy_alpha_plane_u16<const BITS: u32, const BE: bool>(
   alpha: &[u16],

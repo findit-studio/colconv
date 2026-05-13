@@ -165,7 +165,7 @@ fn remez<F: Fn(f64) -> f64>(
   let mut error_e = 0.0_f64;
 
   for _iter in 0..iters {
-    // 1. Solve the (n × n) linear system.
+    // 1. Solve the (n x n) linear system.
     //
     //    [1 (x_i - c) (x_i - c)^2 ... (-1)^i] · [c_0 c_1 ... c_d E]^T = f(x_i)
     let mut mat = vec![vec![0.0_f64; n]; n];
@@ -526,7 +526,7 @@ fn main() {
     let max_ulp = fitted.iter().map(|s| s.max_ulp_f32).max().unwrap();
     let coef_count = fitted.iter().map(|s| s.coeffs_f32.len()).sum::<usize>();
     println!(
-      "  candidate: {} segs × deg {}  →  max ULP = {}  ({} f32 coeffs total)",
+      "  candidate: {} segs x deg {}  →  max ULP = {}  ({} f32 coeffs total)",
       n_segs, deg, max_ulp, coef_count
     );
     if max_ulp <= target_ulp && chosen.is_none() {
@@ -546,7 +546,7 @@ fn main() {
     std::process::exit(2);
   };
 
-  println!("\n# Chosen schedule: {} segments × degree {}", n_segs, deg);
+  println!("\n# Chosen schedule: {} segments x degree {}", n_segs, deg);
   println!("#");
   println!("# Per-segment summary:");
   let max_ulp_overall = segs.iter().map(|s| s.max_ulp_f32).max().unwrap();
@@ -598,7 +598,7 @@ fn main() {
 
   println!(
     "\n/// Per-segment ascending-order Horner coefficients (constant\n\
-     /// term first, leading term last). Stored as a flat `[f32; N×(D+1)]`\n\
+     /// term first, leading term last). Stored as a flat `[f32; Nx(D+1)]`\n\
      /// so both scalar and SIMD evaluators can index by\n\
      /// `seg * (DEG + 1) + i` without an extra indirection. Coefficients\n\
      /// are for the *centered* polynomial (see `OETF_POLY_SEG_CENTERS`)."

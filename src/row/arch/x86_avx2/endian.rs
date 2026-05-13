@@ -44,7 +44,7 @@ const BYTESWAP_MASK_U32: __m256i = unsafe {
 
 // ---- u16x16 loaders --------------------------------------------------------
 
-/// Loads 16 × u16 from `ptr` (LE-encoded on disk/wire) into host-native order.
+/// Loads 16 x u16 from `ptr` (LE-encoded on disk/wire) into host-native order.
 ///
 /// # Safety
 ///
@@ -58,7 +58,7 @@ pub(crate) unsafe fn load_le_u16x16(ptr: *const u8) -> __m256i {
   v
 }
 
-/// Loads 16 × u16 from `ptr` (BE-encoded on disk/wire) into host-native order.
+/// Loads 16 x u16 from `ptr` (BE-encoded on disk/wire) into host-native order.
 ///
 /// # Safety
 ///
@@ -89,16 +89,16 @@ pub(crate) unsafe fn load_endian_u16x16<const BE: bool>(ptr: *const u8) -> __m25
 
 // ---- u16x8 loaders (via _mm_loadu_si128, for f16 widening) ----------------
 //
-// AVX2 kernels widen 8 × f16 using `_mm256_cvtph_ps(__m128i)`, which requires
+// AVX2 kernels widen 8 x f16 using `_mm256_cvtph_ps(__m128i)`, which requires
 // a 128-bit lane load.  The helpers below provide endian-aware loading of
-// that 16-byte (8 × u16) block.
+// that 16-byte (8 x u16) block.
 
 /// SSSE3 `_mm_shuffle_epi8` mask that swaps bytes within every 2-byte (u16)
 /// lane.
 const BYTESWAP_MASK_U16X8: __m128i =
   unsafe { core::mem::transmute([1u8, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14]) };
 
-/// Loads 8 × u16 (16 bytes) from `ptr` (LE-encoded) into a `__m128i`,
+/// Loads 8 x u16 (16 bytes) from `ptr` (LE-encoded) into a `__m128i`,
 /// host-native order.
 ///
 /// # Safety
@@ -113,7 +113,7 @@ pub(crate) unsafe fn load_le_u16x8(ptr: *const u8) -> __m128i {
   v
 }
 
-/// Loads 8 × u16 (16 bytes) from `ptr` (BE-encoded) into a `__m128i`,
+/// Loads 8 x u16 (16 bytes) from `ptr` (BE-encoded) into a `__m128i`,
 /// host-native order.
 ///
 /// # Safety
@@ -144,7 +144,7 @@ pub(crate) unsafe fn load_endian_u16x8<const BE: bool>(ptr: *const u8) -> __m128
 
 // ---- u32x8 loaders ---------------------------------------------------------
 
-/// Loads 8 × u32 from `ptr` (LE-encoded on disk/wire) into host-native order.
+/// Loads 8 x u32 from `ptr` (LE-encoded on disk/wire) into host-native order.
 ///
 /// # Safety
 ///
@@ -158,7 +158,7 @@ pub(crate) unsafe fn load_le_u32x8(ptr: *const u8) -> __m256i {
   v
 }
 
-/// Loads 8 × u32 from `ptr` (BE-encoded on disk/wire) into host-native order.
+/// Loads 8 x u32 from `ptr` (BE-encoded on disk/wire) into host-native order.
 ///
 /// # Safety
 ///

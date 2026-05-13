@@ -1,6 +1,10 @@
 use super::*;
 use crate::row::bayer_to_rgb_row;
 use core::convert::Infallible;
+use videoframe::{
+  PixelSink,
+  frame::{BayerDemosaic, BayerFrame, BayerPattern, ColorCorrectionMatrix, WhiteBalance},
+};
 
 /// Test sink that captures every output row into a single packed
 /// RGB buffer the test owns. Calls the public dispatcher with
@@ -230,7 +234,7 @@ fn bayer_walker_calls_sink_once_per_row() {
 
 #[test]
 fn bayer_walker_handles_odd_width_and_height_full_frame() {
-  // 15×7 RGGB-tiled solid red. Mirror-by-2 boundary handling
+  // 15x7 RGGB-tiled solid red. Mirror-by-2 boundary handling
   // means every output pixel — interior and border — should
   // match the expected channel.
   let (w, h) = (15u32, 7u32);
@@ -255,7 +259,7 @@ fn bayer_walker_handles_odd_width_and_height_full_frame() {
 
 #[test]
 fn bayer_walker_handles_2x2_minimum_tile() {
-  // 2×2 RGGB-filled red. Smallest frame that still has a
+  // 2x2 RGGB-filled red. Smallest frame that still has a
   // complete CFA tile. Mirror-by-2 maps `row -1 → row 1` and
   // `row 2 → row 0`, so each row of the 2-row frame uses the
   // other row as both `above` and `below`. Same for columns.
@@ -281,7 +285,7 @@ fn bayer_walker_handles_2x2_minimum_tile() {
 
 #[test]
 fn bayer_walker_handles_1x1() {
-  // 1×1 corner case — every "neighbor" clamps to the single
+  // 1x1 corner case — every "neighbor" clamps to the single
   // sample. Demosaic must run without panicking.
   let raw = std::vec![123u8];
   let frame = BayerFrame::try_new(&raw, 1, 1, 1).unwrap();
@@ -327,7 +331,7 @@ fn bayer_walker_supplies_mirror_by_2_row_borrows() {
   }
   impl BayerSink for EdgeCapture {}
 
-  // 4×4 plane where every row's first byte is the row index. So
+  // 4x4 plane where every row's first byte is the row index. So
   // mid_row(r)[0] == r, and mirror-by-2 should produce
   // above_first = [1, 0, 1, 2] and below_first = [1, 2, 3, 2].
   let raw: std::vec::Vec<u8> = (0..16u8).map(|i| i / 4).collect();

@@ -1,7 +1,7 @@
 // ---- Tier 9 packed-float-RGB helpers (Rgbf32) -------------------------
 //
 // Compact float→integer conversion kernels behind the [`Rgbf32`]
-// source-side sinker family. Each pixel is `3 × f32` (linear R, G, B).
+// source-side sinker family. Each pixel is `3 x f32` (linear R, G, B).
 // HDR values > 1.0 saturate to the output range; values < 0.0 clamp
 // to 0.
 //

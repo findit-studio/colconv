@@ -504,7 +504,7 @@ pub(crate) unsafe fn gray16_to_hsv_row<const BE: bool>(
 
 // ---- Grayf32 ----------------------------------------------------------------
 
-/// AVX-512 `grayf32_to_rgb_row`: clamp [0,1] × 255 → u8, broadcast Y → R=G=B.
+/// AVX-512 `grayf32_to_rgb_row`: clamp [0,1] x 255 → u8, broadcast Y → R=G=B.
 ///
 /// Uses MXCSR-independent round-half-up: `+ 0.5` then `_mm512_cvttps_epi32`
 /// (matches the scalar `(y * scale + 0.5) as T` contract). Block: 16 px.
@@ -534,7 +534,7 @@ pub(crate) unsafe fn grayf32_to_rgb_row<const BE: bool>(
         _mm512_mul_ps(clamped, scale),
         _mm512_set1_ps(0.5),
       ));
-      // 16×i32 → 16×u8 via saturating narrow.
+      // 16xi32 → 16xu8 via saturating narrow.
       let pack8: __m128i = _mm512_cvtusepi32_epi8(int32);
       // Store 16 bytes then scatter to RGB triples.
       let mut ybuf = [0u8; 16];
@@ -553,7 +553,7 @@ pub(crate) unsafe fn grayf32_to_rgb_row<const BE: bool>(
   }
 }
 
-/// AVX-512 `grayf32_to_rgba_row`: clamp [0,1] × 255 → u8, broadcast + α=0xFF.
+/// AVX-512 `grayf32_to_rgba_row`: clamp [0,1] x 255 → u8, broadcast + α=0xFF.
 ///
 /// # Safety
 /// AVX-512F must be available.
@@ -597,7 +597,7 @@ pub(crate) unsafe fn grayf32_to_rgba_row<const BE: bool>(
   }
 }
 
-/// AVX-512 `grayf32_to_rgb_u16_row`: clamp [0,1] × 65535 → u16, broadcast.
+/// AVX-512 `grayf32_to_rgb_u16_row`: clamp [0,1] x 65535 → u16, broadcast.
 ///
 /// # Safety
 /// AVX-512F must be available.
@@ -624,7 +624,7 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row<const BE: bool>(
         _mm512_mul_ps(clamped, scale),
         _mm512_set1_ps(0.5),
       ));
-      // 16×i32 → 16×u16 via _mm512_cvtusepi32_epi16 (saturating, but values in [0,65535]).
+      // 16xi32 → 16xu16 via _mm512_cvtusepi32_epi16 (saturating, but values in [0,65535]).
       let pack16: __m256i = _mm512_cvtusepi32_epi16(int32);
       // Store 16 u16 values then scatter to 3-channel output.
       let mut vbuf = [0u16; 16];
@@ -643,7 +643,7 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row<const BE: bool>(
   }
 }
 
-/// AVX-512 `grayf32_to_rgba_u16_row`: clamp [0,1] × 65535 → u16, broadcast + α=0xFFFF.
+/// AVX-512 `grayf32_to_rgba_u16_row`: clamp [0,1] x 65535 → u16, broadcast + α=0xFFFF.
 ///
 /// # Safety
 /// AVX-512F must be available.
@@ -709,7 +709,7 @@ pub(crate) unsafe fn grayf32_to_rgb_f32_row<const BE: bool>(
   scalar::grayf32_to_rgb_f32_row::<BE>(y_plane, out, width);
 }
 
-/// AVX-512 `grayf32_to_luma_row`: clamp [0,1] × 255 → u8. 16 px/iter.
+/// AVX-512 `grayf32_to_luma_row`: clamp [0,1] x 255 → u8. 16 px/iter.
 ///
 /// # Safety
 /// AVX-512F must be available.
@@ -745,7 +745,7 @@ pub(crate) unsafe fn grayf32_to_luma_row<const BE: bool>(
   }
 }
 
-/// AVX-512 `grayf32_to_luma_u16_row`: clamp [0,1] × 65535 → u16. 16 px/iter.
+/// AVX-512 `grayf32_to_luma_u16_row`: clamp [0,1] x 65535 → u16. 16 px/iter.
 ///
 /// # Safety
 /// AVX-512F must be available.
@@ -799,7 +799,7 @@ pub(crate) unsafe fn grayf32_to_luma_f32_row<const BE: bool>(
   scalar::grayf32_to_luma_f32_row::<BE>(y_plane, out, width);
 }
 
-/// AVX-512 `grayf32_to_hsv_row`: H=0, S=0, V = clamp(Y,0,1)×255. 16 px/iter.
+/// AVX-512 `grayf32_to_hsv_row`: H=0, S=0, V = clamp(Y,0,1)x255. 16 px/iter.
 ///
 /// # Safety
 /// AVX-512F must be available.

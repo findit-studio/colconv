@@ -443,7 +443,7 @@ pub(crate) unsafe fn p_n_444_to_rgb_or_rgba_u16_row<
 
 /// NEON P416 (semi-planar 4:4:4, 16-bit) → packed **u8** RGB.
 /// Y and chroma both stay on i32 (output-range scaling keeps `coeff
-/// × u_d` within i32 for u8 output). Mirror `yuv_444p16_to_rgb_row`
+/// x u_d` within i32 for u8 output). Mirror `yuv_444p16_to_rgb_row`
 /// with full-width interleaved UV via `vld2q_u16`.
 ///
 /// Thin wrapper over [`p_n_444_16_to_rgb_or_rgba_row`] with `ALPHA = false`.

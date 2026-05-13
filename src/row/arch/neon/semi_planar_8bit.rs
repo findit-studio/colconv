@@ -132,7 +132,7 @@ pub(crate) unsafe fn nv21_to_rgba_row(
 ///    verifies this; direct callers are responsible.
 /// 2. `width & 1 == 0`.
 /// 3. `y.len() >= width`.
-/// 4. `uv_or_vu_half.len() >= width` (2 × (width / 2) interleaved bytes).
+/// 4. `uv_or_vu_half.len() >= width` (2 x (width / 2) interleaved bytes).
 /// 5. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 ///
 /// Bounds are `debug_assert`-checked; release builds trust the caller
@@ -247,7 +247,7 @@ unsafe fn nv12_or_nv21_to_rgb_or_rgba_row_impl<const SWAP_UV: bool, const ALPHA:
     }
 
     // Scalar tail for the 0..14 leftover pixels. Dispatch to the
-    // matching scalar kernel based on SWAP_UV × ALPHA.
+    // matching scalar kernel based on SWAP_UV x ALPHA.
     if x < width {
       let tail_y = &y[x..width];
       let tail_uv = &uv_or_vu_half[x..width];

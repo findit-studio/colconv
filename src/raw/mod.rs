@@ -3,7 +3,7 @@
 //! `colconv` ingests Bayer-mosaic frames produced by upstream
 //! camera-RAW pipelines (RED REDline / R3D, Blackmagic RAW / BRAW,
 //! Nikon NRAW SDK, FFmpeg's `bayer_*` decoders) and runs demosaic +
-//! white balance + 3×3 color-correction in a single per-row kernel.
+//! white balance + 3x3 color-correction in a single per-row kernel.
 //!
 //! # Scope
 //!
@@ -20,19 +20,19 @@
 //! legitimately render with different choices):
 //!
 //! - [`BayerPattern`] — which sensor color sits at the top-left of
-//!   the repeating 2×2 tile.
+//!   the repeating 2x2 tile.
 //! - [`WhiteBalance`] — per-channel R / G / B gains.
-//! - [`ColorCorrectionMatrix`] — 3×3 RGB→RGB transform from sensor
+//! - [`ColorCorrectionMatrix`] — 3x3 RGB→RGB transform from sensor
 //!   primaries into the working space.
 //!
 //! The walker fuses [`WhiteBalance`] and [`ColorCorrectionMatrix`]
-//! into a single 3×3 transform (`M = CCM · diag(wb)`) once at
-//! `*_to` entry, so the per-pixel arithmetic is one 3×3 matmul.
+//! into a single 3x3 transform (`M = CCM · diag(wb)`) once at
+//! `*_to` entry, so the per-pixel arithmetic is one 3x3 matmul.
 //!
 //! # Demosaic algorithm
 //!
 //! Selected via [`BayerDemosaic`]. Currently only
-//! [`BayerDemosaic::Bilinear`] (3×3 row window, 4-tap horizontal /
+//! [`BayerDemosaic::Bilinear`] (3x3 row window, 4-tap horizontal /
 //! vertical average for the missing channels) is wired up. The enum
 //! is `#[non_exhaustive]` so future variants (e.g. Malvar-He-Cutler)
 //! can land without a breaking change.
@@ -46,19 +46,30 @@
 //! `BayerRow{,16}` borrow. The sink owns the RGB output buffer for
 //! the lifetime of the run; the kernel writes into it in place.
 
-mod bayer;
-mod bayer16;
-mod pal8;
-mod types;
-
-pub use bayer::{Bayer, BayerRow, BayerSink, bayer_to};
-pub use bayer16::{
-  Bayer10, Bayer12, Bayer14, Bayer16, Bayer16Bit, BayerRow16, BayerSink16, bayer16_to,
-};
-pub use pal8::{Pal8, Pal8Row, Pal8Sink, pal8_to};
-pub use types::{
+#[cfg(feature = "bayer")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bayer")))]
+pub use videoframe::frame::{
   BayerDemosaic, BayerPattern, ColorCorrectionMatrix, ColorCorrectionMatrixError, WbChannel,
   WhiteBalance, WhiteBalanceError,
 };
 
-pub(crate) use types::fuse_wb_ccm;
+#[cfg(feature = "bayer")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bayer")))]
+mod bayer;
+#[cfg(feature = "bayer")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bayer")))]
+pub use bayer::*;
+#[cfg(feature = "bayer")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bayer")))]
+mod bayer16;
+#[cfg(feature = "bayer")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bayer")))]
+pub use bayer16::*;
+#[cfg(feature = "mono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "mono")))]
+mod pal8;
+mod types;
+
+#[cfg(feature = "mono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "mono")))]
+pub use pal8::*;

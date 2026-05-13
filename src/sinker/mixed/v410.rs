@@ -54,7 +54,7 @@ impl<'a, const BE: bool> MixedSinker<'a, V410<BE>> {
   /// with constant `0xFF` (V410 has no alpha channel).
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -76,7 +76,7 @@ impl<'a, const BE: bool> MixedSinker<'a, V410<BE>> {
 
   /// Attaches a packed **`u16`** RGB output buffer. 10-bit
   /// low-bit-packed (`[0, 1023]`); length is measured in `u16`
-  /// **elements** (`width × height × 3`).
+  /// **elements** (`width x height x 3`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;
@@ -98,7 +98,7 @@ impl<'a, const BE: bool> MixedSinker<'a, V410<BE>> {
   /// Attaches a packed **`u16`** RGBA output buffer. 10-bit
   /// low-bit-packed (`[0, 1023]`); alpha element is `0x3FF` (10-bit
   /// max). Length is measured in `u16` **elements**
-  /// (`width × height × 4`).
+  /// (`width x height x 4`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -120,7 +120,7 @@ impl<'a, const BE: bool> MixedSinker<'a, V410<BE>> {
   /// Attaches a native-depth **`u16`** luma output buffer. The 10-bit
   /// Y samples are extracted from each V410 word at native depth,
   /// low-bit-packed in `u16` (`[0, 1023]`). Length is measured in
-  /// `u16` **elements** (`width × height`).
+  /// `u16` **elements** (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -307,11 +307,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, V410<BE>> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );

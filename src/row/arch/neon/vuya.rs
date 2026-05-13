@@ -80,7 +80,7 @@ pub(crate) unsafe fn vuya_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC:
 
     let mut x = 0usize;
     while x + 16 <= width {
-      // Load 16 VUYA quadruples (16 × 4 × u8 = 64 bytes).
+      // Load 16 VUYA quadruples (16 x 4 x u8 = 64 bytes).
       // vld4q_u8 deinterleaves: .0=V16, .1=U16, .2=Y16, .3=A16.
       let q = vld4q_u8(packed.as_ptr().add(x * 4));
       let v_raw = q.0; // uint8x16_t — 16 V bytes

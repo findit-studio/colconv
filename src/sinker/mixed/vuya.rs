@@ -3,7 +3,7 @@
 //!
 //! VUYA (FFmpeg `AV_PIX_FMT_VUYA`) packs **four u8 bytes per pixel**
 //! (`[V, U, Y, A]`). The A byte is **real source alpha** — not padding.
-//! The packed slice type is `&[u8]`, with `4 × width` byte elements per
+//! The packed slice type is `&[u8]`, with `4 x width` byte elements per
 //! row. There is no chroma subsampling — every pixel carries its own
 //! independent V / U / Y triplet (4:4:4).
 //!
@@ -49,9 +49,9 @@ impl<'a> MixedSinker<'a, Vuya> {
   /// Attaches a **`u16`** luma output buffer. Y bytes from the packed VUYA
   /// `[V, U, Y, A]` layout are zero-extended to u16
   /// (`out[x] = Y_byte as u16`). Length in u16 **elements**
-  /// (`width × height`).
+  /// (`width x height`).
   ///
-  /// Returns `Err(InsufficientLumaU16Buffer)` if `buf.len() < width × height`,
+  /// Returns `Err(InsufficientLumaU16Buffer)` if `buf.len() < width x height`,
   /// or `Err(GeometryOverflow)` on 32-bit targets.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -76,7 +76,7 @@ impl<'a> MixedSinker<'a, Vuya> {
   /// each pixel quadruple** — not forced to `0xFF`.
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   ///
   /// ## Strategy note
@@ -126,7 +126,7 @@ impl PixelSink for MixedSinker<'_, Vuya> {
     let idx = row.row();
     let use_simd = self.simd;
 
-    // VUYA row = `width × 4` bytes (one quadruple per pixel).
+    // VUYA row = `width x 4` bytes (one quadruple per pixel).
     let packed_expected =
       w.checked_mul(4)
         .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
@@ -199,11 +199,12 @@ impl PixelSink for MixedSinker<'_, Vuya> {
       vuya_to_rgb_row(packed, rgb_row, w, row.matrix(), row.full_range(), use_simd);
 
       if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
         rgb_to_hsv_row(
           rgb_row,
-          &mut hsv.h[one_plane_start..one_plane_end],
-          &mut hsv.s[one_plane_start..one_plane_end],
-          &mut hsv.v[one_plane_start..one_plane_end],
+          &mut h[one_plane_start..one_plane_end],
+          &mut s[one_plane_start..one_plane_end],
+          &mut v[one_plane_start..one_plane_end],
           w,
           use_simd,
         );

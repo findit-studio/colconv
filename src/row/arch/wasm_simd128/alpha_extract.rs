@@ -48,6 +48,7 @@ use crate::row::scalar::alpha_extract as scalar;
 /// # Safety
 ///
 /// `simd128` must be enabled at compile time. Both slices must be `>= width * 4`.
+#[cfg(feature = "yuv-444-packed")]
 #[inline]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn copy_alpha_packed_u8x4_at_3(packed: &[u8], rgba_out: &mut [u8], width: usize) {
@@ -97,6 +98,7 @@ pub(crate) unsafe fn copy_alpha_packed_u8x4_at_3(packed: &[u8], rgba_out: &mut [
 ///
 /// `simd128` must be enabled at compile time.
 /// `packed.len() >= width * 4`; `rgba_out.len() >= width * 4`.
+#[cfg(feature = "yuv-444-packed")]
 #[inline]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn copy_alpha_packed_u16x4_to_u8_at_0(
@@ -174,6 +176,7 @@ pub(crate) unsafe fn copy_alpha_packed_u16x4_to_u8_at_0(
 ///
 /// `simd128` must be enabled at compile time.
 /// Both slices must be `>= width * 4` elements.
+#[cfg(feature = "yuv-444-packed")]
 #[inline]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn copy_alpha_packed_u16x4_at_0(
@@ -249,6 +252,7 @@ pub(crate) unsafe fn copy_alpha_packed_u16x4_at_0(
 ///
 /// `simd128` must be enabled at compile time.
 /// `alpha.len() >= width`; `rgba_out.len() >= width * 4`.
+#[cfg(any(feature = "gbr", feature = "yuva"))]
 #[inline]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usize) {
@@ -304,6 +308,7 @@ pub(crate) unsafe fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], widt
 ///
 /// `simd128` must be enabled at compile time.
 /// `alpha.len() >= width`; `rgba_out.len() >= width * 4`.
+#[cfg(any(feature = "gbr", feature = "yuva"))]
 #[inline]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
@@ -385,6 +390,7 @@ pub(crate) unsafe fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
 ///
 /// `simd128` must be enabled at compile time.
 /// `alpha.len() >= width`; `rgba_out.len() >= width * 4` elements.
+#[cfg(any(feature = "gbr", feature = "yuva"))]
 #[inline]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn copy_alpha_plane_u16<const BITS: u32>(

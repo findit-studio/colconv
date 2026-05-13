@@ -6,7 +6,7 @@
 //! (`[U, Y, V, A]`) with each channel MSB-aligned at 12-bit (low 4 bits
 //! zero per sample). The `X` prefix means the A slot is padding — it is
 //! read but always discarded; RGBA outputs force α to the 12-bit opaque
-//! maximum. The packed slice type is `&[u16]`, with `4 × width` u16
+//! maximum. The packed slice type is `&[u16]`, with `4 x width` u16
 //! elements per row. There is no chroma subsampling — every pixel
 //! carries its own independent U / Y / V triplet (4:4:4).
 //!
@@ -57,7 +57,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Xv36<BE>> {
   /// channel).
   ///
   /// Returns `Err(InsufficientRgbaBuffer)` if
-  /// `buf.len() < width × height × 4`, or `Err(GeometryOverflow)` on
+  /// `buf.len() < width x height x 4`, or `Err(GeometryOverflow)` on
   /// 32‑bit targets when the product overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -79,7 +79,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Xv36<BE>> {
 
   /// Attaches a packed **`u16`** RGB output buffer. 12-bit
   /// low-bit-packed (`[0, 4095]`); length is measured in `u16`
-  /// **elements** (`width × height × 3`).
+  /// **elements** (`width x height x 3`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgb_u16(buf)?;
@@ -101,7 +101,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Xv36<BE>> {
   /// Attaches a packed **`u16`** RGBA output buffer. 12-bit
   /// low-bit-packed (`[0, 4095]`); alpha element is `0x0FFF` (12-bit
   /// max). Length is measured in `u16` **elements**
-  /// (`width × height × 4`).
+  /// (`width x height x 4`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_rgba_u16(buf)?;
@@ -124,7 +124,7 @@ impl<'a, const BE: bool> MixedSinker<'a, Xv36<BE>> {
   /// Y samples are extracted from each XV36 quadruple by shifting
   /// `>> 4` (removes the 4 low padding bits), yielding low-bit-packed
   /// 12-bit values in `[0, 4095]`. Length is measured in `u16`
-  /// **elements** (`width × height`).
+  /// **elements** (`width x height`).
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
     self.set_luma_u16(buf)?;
@@ -162,7 +162,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Xv36<BE>> {
     let idx = row.row();
     let use_simd = self.simd;
 
-    // XV36 row = `width × 4` u16 elements (one quadruple per pixel).
+    // XV36 row = `width x 4` u16 elements (one quadruple per pixel).
     let packed_expected =
       w.checked_mul(4)
         .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
@@ -315,11 +315,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Xv36<BE>> {
     );
 
     if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
       rgb_to_hsv_row(
         rgb_row,
-        &mut hsv.h[one_plane_start..one_plane_end],
-        &mut hsv.s[one_plane_start..one_plane_end],
-        &mut hsv.v[one_plane_start..one_plane_end],
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
         w,
         use_simd,
       );

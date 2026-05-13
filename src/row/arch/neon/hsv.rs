@@ -226,7 +226,7 @@ fn f32x4_quad_to_u8x16(
 /// bytes, one `vst1q_u8` luma store = 16 output bytes). Coefficients
 /// are hoisted outside the loop — `matrix` is selected once via
 /// `luma_coefficients_q15`, then splatted to i16x4 vectors so the
-/// in‑loop multiplies use `vmull_s16` (i16 × i16 → i32 widening).
+/// in‑loop multiplies use `vmull_s16` (i16 x i16 → i32 widening).
 ///
 /// # Safety
 ///
@@ -250,7 +250,7 @@ pub(crate) unsafe fn rgb_to_luma_row(
   // are safe (only register operations) but live inside the same
   // unsafe context as the load/multiply chain.
   // All matrix coefficients fit in i16 (max ≈ 23436 ≪ 32767), so we
-  // can use the cheap i16×i16 → i32 widening multiply (`vmull_s16`).
+  // can use the cheap i16xi16 → i32 widening multiply (`vmull_s16`).
   let kr_v = vdup_n_s16(k_r as i16);
   let kg_v = vdup_n_s16(k_g as i16);
   let kb_v = vdup_n_s16(k_b as i16);
@@ -266,14 +266,14 @@ pub(crate) unsafe fn rgb_to_luma_row(
   unsafe {
     let mut x = 0usize;
     while x + 16 <= width {
-      // Deinterleave 16 RGB pixels (48 bytes) → 3 × u8x16 channels.
+      // Deinterleave 16 RGB pixels (48 bytes) → 3 x u8x16 channels.
       let rgb_vec = vld3q_u8(rgb.as_ptr().add(x * 3));
       let r_u8 = rgb_vec.0;
       let g_u8 = rgb_vec.1;
       let b_u8 = rgb_vec.2;
 
       // Widen each u8x16 to two i16x8 halves (zero‑extend), since
-      // every sample is in [0, 255] and the multiply target is i16 × i16.
+      // every sample is in [0, 255] and the multiply target is i16 x i16.
       let r_lo_u16 = vmovl_u8(vget_low_u8(r_u8));
       let r_hi_u16 = vmovl_u8(vget_high_u8(r_u8));
       let g_lo_u16 = vmovl_u8(vget_low_u8(g_u8));
@@ -332,7 +332,7 @@ pub(crate) unsafe fn rgb_to_luma_row(
       let y_hi_i16 = vcombine_s16(vqmovn_s32(y2), vqmovn_s32(y3));
 
       let y_u8 = if full_range {
-        // Saturate‑narrow i16x8×2 → u8x16 ([0,255] clamp).
+        // Saturate‑narrow i16x8x2 → u8x16 ([0,255] clamp).
         vcombine_u8(vqmovun_s16(y_lo_i16), vqmovun_s16(y_hi_i16))
       } else {
         // Limited‑range post‑scale: clamp Y_full to [0,255] first

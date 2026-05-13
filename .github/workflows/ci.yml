@@ -56,7 +56,7 @@ jobs:
     - name: Install cargo-hack
       run: cargo install cargo-hack
     - name: Apply clippy lints
-      run: cargo hack clippy --each-feature
+      run: cargo hack clippy --feature-powerset --group-features yuv-planar,yuv-semi-planar,yuva,yuv-packed,yuv-444-packed,y2xx,v210,rgb,rgb-float,rgb-legacy,gbr,gray,bayer,xyz,mono,frame
 
   # Run tests on some extra platforms
   cross:
@@ -126,7 +126,7 @@ jobs:
     - name: Install cargo-hack
       run: cargo install cargo-hack
     - name: Run build
-      run: cargo hack build --feature-powerset
+      run: cargo hack build --feature-powerset --group-features yuv-planar,yuv-semi-planar,yuva,yuv-packed,yuv-444-packed,y2xx,v210,rgb,rgb-float,rgb-legacy,gbr,gray,bayer,xyz,mono,frame
 
   test:
     name: test
@@ -155,7 +155,7 @@ jobs:
     - name: Install cargo-hack
       run: cargo install cargo-hack
     - name: Run test
-      run: cargo hack test --feature-powerset
+      run: cargo hack test --feature-powerset --group-features yuv-planar,yuv-semi-planar,yuva,yuv-packed,yuv-444-packed,y2xx,v210,rgb,rgb-float,rgb-legacy,gbr,gray,bayer,xyz,mono,frame
 
   # Run the x86_64 test suite under Intel SDE with Ice Lake (`-icx`)
   # emulation. The standard ubuntu-latest runner is AMD Milan (no
@@ -166,7 +166,7 @@ jobs:
   # kernel (SSE4.1, AVX2, AVX-512) actually executes and compares
   # against the scalar LUT reference.
   #
-  # SDE slowdown is ~5-10×, so the lib test suite runs in ~30-60s
+  # SDE slowdown is ~5-10x, so the lib test suite runs in ~30-60s
   # instead of ~1s — still well within the free-runner budget.
   test-sde:
     name: test-sde-avx512

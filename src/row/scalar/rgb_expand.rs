@@ -23,7 +23,25 @@
 // `crate::sinker::mixed`, gated on `feature = "std"` / `"alloc"`. Without
 // either feature the helper would be unused and `-D dead_code` (set by
 // `cargo clippy -- -D warnings` on CI) would fail the build.
-#[cfg(any(feature = "std", feature = "alloc"))]
+//
+// Consumer source families — every non-Bayer / non-mono /
+// non-rgb-float / non-rgb-legacy / non-xyz source family expands
+// RGB → RGBA via the Strategy A fan-out.
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(
+    feature = "gbr",
+    feature = "gray",
+    feature = "rgb",
+    feature = "v210",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-packed",
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar",
+    feature = "yuva",
+  ),
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn expand_rgb_to_rgba_row(rgb: &[u8], rgba_out: &mut [u8], width: usize) {
   debug_assert!(rgb.len() >= width * 3, "rgb row too short");
@@ -65,7 +83,22 @@ pub(crate) fn expand_rgb_to_rgba_row(rgb: &[u8], rgba_out: &mut [u8], width: usi
 // on the u16 path) lands in the follow-up Tranche 5b PR. `dead_code`
 // allow lets this prep PR ship the foundation without the eventual call
 // site.
-#[cfg(any(feature = "std", feature = "alloc"))]
+//
+// Same consumer set as `expand_rgb_to_rgba_row` minus the families that
+// don't emit u16 RGB (`yuv-packed`, `yuv-semi-planar`).
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(
+    feature = "gbr",
+    feature = "gray",
+    feature = "rgb",
+    feature = "v210",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-planar",
+    feature = "yuva",
+  ),
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn expand_rgb_u16_to_rgba_u16_row<const BITS: u32>(
   rgb: &[u16],

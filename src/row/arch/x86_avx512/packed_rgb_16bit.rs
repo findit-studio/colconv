@@ -15,14 +15,14 @@
 //! ### Rgb48 / Bgr48 (stride-3)
 //!
 //! 32 pixels = 96 u16 = 192 bytes. Processed as **four** 8-pixel SSE4.1-style
-//! half-iterations (each 24 u16, 3 × 128-bit loads) under the AVX-512
+//! half-iterations (each 24 u16, 3 x 128-bit loads) under the AVX-512
 //! `target_feature` context. SSE4.1 and SSSE3 are subsets of AVX-512 so
 //! `_mm_*` intrinsics are freely available. This avoids complex stride-3
 //! cross-lane permutes in 512-bit registers that do not tile cleanly.
 //!
 //! ### Rgba64 / Bgra64 (stride-4)
 //!
-//! 32 pixels = 128 u16 = 256 bytes = 4 × `_mm512_loadu_si512`.
+//! 32 pixels = 128 u16 = 256 bytes = 4 x `_mm512_loadu_si512`.
 //!
 //! The deinterleave uses a 3-level `_mm512_unpacklo/hi_epi16` cascade mirroring
 //! the AVX2 sibling (xv36.rs pattern), followed by `_mm512_permutexvar_epi64`
@@ -106,7 +106,7 @@ unsafe fn deinterleave_rgb48_8px(
 // Rgba64 / Bgra64 helpers — stride-4, 32-pixel deinterleave (__m512i)
 // =============================================================================
 //
-// 32 pixels × 4 u16 channels = 128 u16 = 256 bytes.
+// 32 pixels x 4 u16 channels = 128 u16 = 256 bytes.
 //
 // Layout after 4 contiguous `_mm512_loadu_si512` (each 32 u16 = 8 pixels):
 //
@@ -178,7 +178,7 @@ static COMBINE_HALVES_IDX: [i16; 32] = [
 ];
 
 /// Deinterleave 32 pixels of stride-4 u16 (Rgba64 or Bgra64) from four
-/// `__m512i` loads into four separate u16×32 channel vectors in natural
+/// `__m512i` loads into four separate u16x32 channel vectors in natural
 /// pixel order.
 ///
 /// Returns `(ch0, ch1, ch2, ch3)` in memory order.
@@ -231,7 +231,7 @@ unsafe fn deinterleave_rgba64_32px(
 // u16 → u8 narrowing via srli::<8> + cvtusepi16_epi8
 // =============================================================================
 
-/// Narrow a u16×32 vector to u8×32 (256-bit result) via logical right-shift
+/// Narrow a u16x32 vector to u8x32 (256-bit result) via logical right-shift
 /// by 8, then saturating unsigned narrow with `_mm512_cvtusepi16_epi8`.
 ///
 /// Equivalent to scalar `(v >> 8) as u8`.
@@ -245,7 +245,7 @@ unsafe fn narrow_u16x32_to_u8x32(v: __m512i) -> __m256i {
 /// Compile-time host endianness. `true` on BE targets, `false` on LE.
 ///
 /// Used by the byte-swap helpers below to gate the swap on
-/// `BE != HOST_NATIVE_BE`, covering all four `wire × host` quadrants. Mirrors
+/// `BE != HOST_NATIVE_BE`, covering all four `wire x host` quadrants. Mirrors
 /// the gate established in `gray.rs` and the canonical NEON
 /// `bswap_u16x8_if_be` helper.
 const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
@@ -303,7 +303,7 @@ unsafe fn byteswap512_if_be<const BE: bool>(v: __m512i) -> __m512i {
 
 /// AVX-512 Rgb48 → packed u8 RGB. 32 pixels per outer iteration.
 ///
-/// Processes four 8-pixel halves (3 × 128-bit loads each) under the
+/// Processes four 8-pixel halves (3 x 128-bit loads each) under the
 /// AVX-512 target_feature context (SSE4.1/SSSE3 are subsets). Narrows
 /// each channel via `>> 8` and writes 8 pixels (24 bytes) per half.
 /// When `BE = true` each loaded register is byte-swapped before deinterleaving.
@@ -326,7 +326,7 @@ pub(crate) unsafe fn avx512_rgb48_to_rgb_row<const BE: bool>(
   unsafe {
     let zero = _mm_setzero_si128();
     let mut x = 0usize;
-    // Process 32 pixels per outer iteration (4 × 8-pixel halves).
+    // Process 32 pixels per outer iteration (4 x 8-pixel halves).
     while x + 32 <= width {
       let ptr = rgb48.as_ptr().add(x * 3);
       // Half 0: pixels x..x+7
@@ -751,7 +751,7 @@ pub(crate) unsafe fn avx512_bgr48_to_rgba_u16_row<const BE: bool>(
 // =============================================================================
 
 /// AVX-512 Rgba64 → packed u8 RGB. 32 pixels per SIMD iteration.
-/// Loads 4 × `__m512i` (128 u16 = 32 pixels), deinterleaves via the
+/// Loads 4 x `__m512i` (128 u16 = 32 pixels), deinterleaves via the
 /// AVX-512 cascade helper, narrows via `>> 8` + `cvtusepi16_epi8`, writes
 /// 32 pixels (96 bytes) via `write_rgb_16` on 128-bit quarters.
 ///
@@ -890,7 +890,7 @@ pub(crate) unsafe fn avx512_rgba64_to_rgb_u16_row<const BE: bool>(
       let raw2 = byteswap512_if_be::<BE>(_mm512_loadu_si512(ptr.add(64).cast()));
       let raw3 = byteswap512_if_be::<BE>(_mm512_loadu_si512(ptr.add(96).cast()));
       let (r_u16, g_u16, b_u16, _a) = deinterleave_rgba64_32px(raw0, raw1, raw2, raw3);
-      // Use the shared write_rgb_u16_32 helper (writes 32 px = 4 × 8-px chunks).
+      // Use the shared write_rgb_u16_32 helper (writes 32 px = 4 x 8-px chunks).
       write_rgb_u16_32(r_u16, g_u16, b_u16, rgb_out.as_mut_ptr().add(x * 3));
       x += 32;
     }
@@ -1188,10 +1188,10 @@ pub(crate) unsafe fn avx512_bgra64_to_rgba_u16_row<const BE: bool>(
 }
 
 // =============================================================================
-// Helper: narrow u16×8 (128-bit) to u8×8 (used by stride-3 paths)
+// Helper: narrow u16x8 (128-bit) to u8x8 (used by stride-3 paths)
 // =============================================================================
 
-/// Narrow a u16×8 vector to u8×8 (in the low half) via logical right-shift by 8.
+/// Narrow a u16x8 vector to u8x8 (in the low half) via logical right-shift by 8.
 ///
 /// Equivalent to scalar `(v >> 8) as u8`. Zero-packs the high half.
 #[inline(always)]

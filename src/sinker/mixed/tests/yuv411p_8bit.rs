@@ -241,7 +241,7 @@ fn yuv411p_simd_matches_scalar_with_random_yuv() {
 #[test]
 fn yuv411p_luma_u16_buffer_too_short_returns_err() {
   // Regression: validation must measure `buf.len()` in u16 elements,
-  // not bytes. A buffer one element short of `width × height` u16s
+  // not bytes. A buffer one element short of `width x height` u16s
   // must be rejected — this would have slipped through if the check
   // had compared `buf.len()` (u16 count) against a byte count.
   let mut buf = std::vec![0u16; 16 * 8 - 1];
@@ -258,7 +258,7 @@ fn yuv411p_luma_u16_buffer_too_short_returns_err() {
 #[test]
 fn yuv411p_luma_u16_buffer_exactly_sized_accepts() {
   // Companion to the negative test above: an exactly-sized buffer
-  // (`width × height` u16 elements) must be accepted. Pins down the
+  // (`width x height` u16 elements) must be accepted. Pins down the
   // boundary condition so the negative test can't pass for the wrong
   // reason (e.g. an off-by-one in the opposite direction).
   let mut buf = std::vec![0u16; 16 * 8];

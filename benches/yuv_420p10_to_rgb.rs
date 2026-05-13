@@ -4,7 +4,7 @@
 //! - `u8_simd` / `u8_scalar` — native‑SIMD vs scalar on the u8 output
 //!   path (analogous to the 8‑bit bench).
 //! - `u16_simd` / `u16_scalar` — same pair for the native‑depth u16
-//!   output path. The u16 path writes 2× the bytes so the MB/s
+//!   output path. The u16 path writes 2x the bytes so the MB/s
 //!   figure is comparable only within the u16 column.
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
@@ -80,7 +80,7 @@ fn bench(c: &mut Criterion) {
     fill_pseudo_random_u16(&mut v, 0x3333);
     let mut rgb = std::vec![0u16; w * 3];
 
-    // u16 output writes 2× the bytes of u8.
+    // u16 output writes 2x the bytes of u8.
     group_u16.throughput(Throughput::Bytes((w * 3 * 2) as u64));
 
     for use_simd in [false, true] {
