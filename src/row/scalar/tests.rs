@@ -3,6 +3,7 @@ use super::*;
 // Helper: re-encode a host-native u16 slice as the LE-encoded byte layout so
 // kernels called with `BE = false` recover the intended values via `from_le`
 // on both LE (no-op) and BE (byte-swap) hosts.
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 fn as_le_u16(host: &[u16]) -> std::vec::Vec<u16> {
   host
     .iter()
@@ -11,6 +12,7 @@ fn as_le_u16(host: &[u16]) -> std::vec::Vec<u16> {
 }
 
 // Same idea for `half::f16` slices.
+#[cfg(feature = "rgb-float")]
 fn as_le_f16(host: &[half::f16]) -> std::vec::Vec<half::f16> {
   host
     .iter()
@@ -19,6 +21,7 @@ fn as_le_f16(host: &[half::f16]) -> std::vec::Vec<half::f16> {
 }
 
 // Same idea for `f32` slices.
+#[cfg(feature = "rgb-float")]
 fn as_le_f32(host: &[f32]) -> std::vec::Vec<f32> {
   host
     .iter()
@@ -1028,6 +1031,7 @@ fn p416_rgba_u16_gray_alpha_is_ffff() {
 /// 9 representative half-float inputs (LE-encoded) plus the matching
 /// widened f32 slice (also LE-encoded). Each output channel position
 /// sees every input value at some pixel.
+#[cfg(feature = "rgb-float")]
 fn rgbf16_test_inputs() -> (Vec<half::f16>, Vec<f32>, usize) {
   let inputs_f32: [f32; 9] = [0.0, 1.0, 0.5, 65504.0, 1e-5, -0.5, 2.5, 0.999, 0.001];
   let width = inputs_f32.len();
@@ -1148,6 +1152,7 @@ fn rgbf16_scalar_rgb_f16_is_copy() {
 
 /// Builds a single-row UYYVYY411 packed buffer with constant
 /// `(Y, U, V)` per 6-byte / 4-pixel block.
+#[cfg(feature = "yuv-packed")]
 fn uyyvyy411_solid_row(width: usize, y: u8, u: u8, v: u8) -> std::vec::Vec<u8> {
   assert_eq!(width & 3, 0);
   let mut buf = std::vec![0u8; width * 3 / 2];

@@ -1,5 +1,51 @@
+#[cfg(any(
+  feature = "bayer",
+  feature = "gbr",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "xyz",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 use super::*;
-use crate::{ColorMatrix, frame::*, raw::*, source::*};
+#[cfg(any(
+  feature = "gbr",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
+use crate::ColorMatrix;
+#[cfg(any(
+  feature = "gbr",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "xyz",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
+use crate::{frame::*, source::*};
 
 // Per-format-family submodules. Each houses tests + format-local
 // helpers (`solid_*_frame` builders); cross-cutting helpers
@@ -77,6 +123,14 @@ mod yuv420p_8bit;
 #[cfg(feature = "yuva")]
 mod yuva;
 
+#[cfg(any(
+  feature = "gbr",
+  feature = "v210",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuva",
+))]
 pub(super) fn pseudo_random_u16_low_n_bits(buf: &mut [u16], seed: u32, bits: u32) {
   let mask = ((1u32 << bits) - 1) as u16;
   let mut state = seed;
@@ -86,6 +140,16 @@ pub(super) fn pseudo_random_u16_low_n_bits(buf: &mut [u16], seed: u32, bits: u32
   }
 }
 
+#[cfg(any(
+  feature = "gbr",
+  feature = "rgb",
+  feature = "v210",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
 pub(super) fn pseudo_random_u8(buf: &mut [u8], seed: u32) {
   let mut state = seed;
   for b in buf {
@@ -106,28 +170,46 @@ pub(super) fn pseudo_random_u8(buf: &mut [u8], seed: u32) {
 // in xv36/v410/ayuv64 sinker tests self-documenting.
 
 /// Encode a logical `u16` as host-independent **LE-wire** byte storage.
-#[cfg(feature = "std")]
+#[cfg(all(
+  feature = "std",
+  any(
+    feature = "gbr",
+    feature = "gray",
+    feature = "rgb",
+    feature = "yuv-444-packed",
+    feature = "yuv-planar",
+  )
+))]
 #[inline]
 pub(super) fn as_le_u16(v: u16) -> u16 {
   u16::from_ne_bytes(v.to_le_bytes())
 }
 
 /// Encode a logical `u16` as host-independent **BE-wire** byte storage.
-#[cfg(feature = "std")]
+#[cfg(all(
+  feature = "std",
+  any(
+    feature = "gbr",
+    feature = "gray",
+    feature = "rgb",
+    feature = "yuv-444-packed",
+    feature = "yuv-planar",
+  )
+))]
 #[inline]
 pub(super) fn as_be_u16(v: u16) -> u16 {
   u16::from_ne_bytes(v.to_be_bytes())
 }
 
 /// Encode a logical `u32` as host-independent **LE-wire** byte storage.
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "yuv-444-packed"))]
 #[inline]
 pub(super) fn as_le_u32(v: u32) -> u32 {
   u32::from_ne_bytes(v.to_le_bytes())
 }
 
 /// Encode a logical `u32` as host-independent **BE-wire** byte storage.
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "yuv-444-packed"))]
 #[inline]
 pub(super) fn as_be_u32(v: u32) -> u32 {
   u32::from_ne_bytes(v.to_be_bytes())
