@@ -38,22 +38,13 @@
 use core::arch::x86_64::*;
 
 #[allow(unused_imports)]
-pub(super) use crate::{
-  ColorMatrix,
-  row::{
-    arch::x86_common::{deinterleave_rgb_16, rgb_to_hsv_16_pixels, rgb_to_luma_16_pixels},
-    scalar,
-  },
-};
-#[allow(unused_imports)]
 #[cfg(feature = "rgb")]
 pub(super) use crate::row::arch::x86_common::{
   abgr_to_rgb_16_pixels, abgr_to_rgba_4_pixels, argb_to_rgb_16_pixels, argb_to_rgba_4_pixels,
   bgra_to_rgb_16_pixels, bgrx_to_rgba_4_pixels, drop_alpha_16_pixels, rgbx_to_rgba_4_pixels,
-  swap_rb_16_pixels, swap_rb_alpha_4_pixels, x2bgr10_to_rgb_16_pixels,
-  x2bgr10_to_rgb_u16_8_pixels, x2bgr10_to_rgba_16_pixels, x2rgb10_to_rgb_16_pixels,
-  x2rgb10_to_rgb_u16_8_pixels, x2rgb10_to_rgba_16_pixels, xbgr_to_rgba_4_pixels,
-  xrgb_to_rgba_4_pixels,
+  swap_rb_16_pixels, swap_rb_alpha_4_pixels, x2bgr10_to_rgb_16_pixels, x2bgr10_to_rgb_u16_8_pixels,
+  x2bgr10_to_rgba_16_pixels, x2rgb10_to_rgb_16_pixels, x2rgb10_to_rgb_u16_8_pixels,
+  x2rgb10_to_rgba_16_pixels, xbgr_to_rgba_4_pixels, xrgb_to_rgba_4_pixels,
 };
 #[allow(unused_imports)]
 #[cfg(any(
@@ -81,6 +72,14 @@ pub(super) use crate::row::arch::x86_common::{write_rgb_16, write_rgba_16};
   feature = "y2xx",
 ))]
 pub(super) use crate::row::arch::x86_common::{write_rgb_u16_8, write_rgba_u16_8};
+#[allow(unused_imports)]
+pub(super) use crate::{
+  ColorMatrix,
+  row::{
+    arch::x86_common::{deinterleave_rgb_16, rgb_to_hsv_16_pixels, rgb_to_luma_16_pixels},
+    scalar,
+  },
+};
 
 #[cfg(any(feature = "gbr", feature = "yuv-444-packed", feature = "yuva"))]
 mod alpha_extract;
