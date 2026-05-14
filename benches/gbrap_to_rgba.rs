@@ -28,10 +28,14 @@ fn bench(c: &mut Criterion) {
     let mut b_plane = std::vec![0u8; w];
     let mut r = std::vec![0u8; w];
     let mut a = std::vec![0u8; w];
-    fill_pseudo_random(&mut g, 0xDDDD);
-    fill_pseudo_random(&mut b_plane, 0xEEEE);
-    fill_pseudo_random(&mut r, 0xFFFF);
-    fill_pseudo_random(&mut a, 0x1010);
+    // Widely-spaced 32-bit seeds so per-plane LCG streams are
+    // independent from the first iteration (the LCG diverges
+    // quickly even with close seeds, but spaced seeds keep
+    // early-iter outputs visibly different across planes).
+    fill_pseudo_random(&mut g, 0xDEAD_BEEF);
+    fill_pseudo_random(&mut b_plane, 0xCAFE_F00D);
+    fill_pseudo_random(&mut r, 0x1234_5678);
+    fill_pseudo_random(&mut a, 0xA5A5_5A5A);
     let mut rgba = std::vec![0u8; w * 4];
 
     group.throughput(Throughput::Bytes((w * 4) as u64));

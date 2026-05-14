@@ -23,7 +23,12 @@ fn fill_pseudo_random(buf: &mut [u8], seed: u32) {
 fn bench(c: &mut Criterion) {
   const WIDTHS: &[usize] = &[1280, 1920, 3840];
 
-  let mut group = c.benchmark_group("rgba_to_rgb_row");
+  // Group name reflects the bench-file name so `cargo bench --bench
+  // rgba_to_luma` puts its results under a matching Criterion path.
+  // What we actually measure is the α-drop primitive (`rgba_to_rgb_row`)
+  // — the RGBA-specific half of the RGBA→luma chain; the RGB→luma half
+  // lives in `rgb24_to_luma`.
+  let mut group = c.benchmark_group("rgba_to_luma_alpha_drop");
 
   for &w in WIDTHS {
     let mut rgba = std::vec![0u8; w * 4];

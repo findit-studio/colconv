@@ -26,7 +26,8 @@ fn bench(c: &mut Criterion) {
   const WIDTHS: &[usize] = &[1280, 1920, 3840];
   const MATRIX: ColorMatrix = ColorMatrix::Bt2020Ncl;
   const FULL_RANGE: bool = false;
-  // LE wire — matches FFmpeg `AV_PIX_FMT_X2RGB10LE` / QuickTime v410 default.
+  // LE wire — matches FFmpeg `AV_PIX_FMT_Y410` / QuickTime `v410` default
+  // (packed 4:4:4 10-bit YUV, one u32 per pixel).
   const BE_INPUT: bool = false;
 
   let mut group = c.benchmark_group("v410_to_rgb_row");
