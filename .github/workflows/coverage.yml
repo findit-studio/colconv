@@ -73,37 +73,61 @@ jobs:
             exclude_arch: "--exclude-files 'src/**/arch/x86_*.rs' --exclude-files 'src/**/arch/wasm_*.rs'"
 
           # ---- x86_64 (Linux) ----
-          # Standard ubuntu-latest is AMD EPYC (no AVX-512), so the
-          # default tier exercises AVX2 at runtime. The avx512 tier
-          # below uses a GitHub-hosted larger runner (Intel Ice Lake
-          # with AVX-512BW) to actually cover the AVX-512 dispatcher
-          # branch and kernel.
+          # Standard ubuntu-latest is AMD EPYC Milan — has AVX2 but no
+          # AVX-512. The default tier exercises whichever top tier the
+          # runner supports at runtime (AVX2 in practice). For AVX-512
+          # coverage we run tarpaulin under Intel SDE (`sde-avx512` tier
+          # below) since no free GitHub runner has the hardware.
           - os: ubuntu-latest
             label: linux-x86_64
             rustflags: ''
+            sde_cpu: ''
             exclude_arch: "--exclude-files 'src/**/arch/neon*.rs' --exclude-files 'src/**/arch/wasm_*.rs'"
-          # Note: no AVX-512 coverage tier. Free GH runners are AMD
-          # Milan (no AVX-512); the AVX-512 kernel is exercised under
-          # Intel SDE via the `test-sde` job in ci.yml, which proves
-          # correctness without needing to spill coverage-through-SDE
-          # complexity into this workflow.
           - os: ubuntu-latest
             label: linux-x86_64-avx2-max
             rustflags: '--cfg colconv_disable_avx512'
+            sde_cpu: ''
             exclude_arch: "--exclude-files 'src/**/arch/neon*.rs' --exclude-files 'src/**/arch/wasm_*.rs'"
           - os: ubuntu-latest
             label: linux-x86_64-sse41-max
             rustflags: '--cfg colconv_disable_avx512 --cfg colconv_disable_avx2'
+            sde_cpu: ''
             exclude_arch: "--exclude-files 'src/**/arch/neon*.rs' --exclude-files 'src/**/arch/wasm_*.rs'"
           - os: ubuntu-latest
             label: linux-x86_64-scalar
             rustflags: '--cfg colconv_force_scalar'
+            sde_cpu: ''
+            exclude_arch: "--exclude-files 'src/**/arch/neon*.rs' --exclude-files 'src/**/arch/wasm_*.rs'"
+
+          # SDE-based tiers — emulated Intel CPUs covering kernels that
+          # the AMD Milan runner can't reach natively. Tarpaulin uses
+          # the LLVM source-based engine so the instrumented binary is
+          # self-contained and runs cleanly under SDE via the cargo
+          # target-runner env var. Slower than native (~5-10x) but still
+          # well within free-runner budget.
+          #
+          # `-icx` = Ice Lake (Server) — AVX-512BW, AVX-512VL, AVX-512F,
+          # AVX-512DQ. Covers every AVX-512 kernel + its dispatcher branch.
+          - os: ubuntu-latest
+            label: linux-x86_64-sde-avx512
+            rustflags: ''
+            sde_cpu: 'icx'
+            exclude_arch: "--exclude-files 'src/**/arch/neon*.rs' --exclude-files 'src/**/arch/wasm_*.rs'"
+          # `-skx` = Skylake (Server). Wait — Skylake server does have
+          # AVX-512. Use `-skl` = Skylake (Client / 6th-gen Core), which
+          # is AVX2-max (no AVX-512), to lock the AVX2 kernel in on a
+          # deterministic Intel core (vs the AMD-native default tier).
+          - os: ubuntu-latest
+            label: linux-x86_64-sde-avx2
+            rustflags: ''
+            sde_cpu: 'skl'
             exclude_arch: "--exclude-files 'src/**/arch/neon*.rs' --exclude-files 'src/**/arch/wasm_*.rs'"
 
           # ---- x86_64 (Windows) ----
           - os: windows-latest
             label: windows-x86_64
             rustflags: ''
+            sde_cpu: ''
             exclude_arch: "--exclude-files 'src/**/arch/neon*.rs' --exclude-files 'src/**/arch/wasm_*.rs'"
     runs-on: ${{ matrix.os }}
     env:
@@ -117,11 +141,30 @@ jobs:
       - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin
 
+      - name: Install Intel SDE
+        if: matrix.sde_cpu != ''
+        uses: petarpetrovt/setup-sde@v4.0
+        with:
+          sdeVersion: 9.33.0
+          environmentVariableName: SDE_PATH
+
       - name: Generate coverage
         shell: bash
+        # SDE tiers route the test binary through `sde64 -<cpu> --`
+        # via the cargo target-runner env var so tarpaulin's
+        # LLVM-instrumented binary executes under the emulated CPU.
+        # The LLVM engine is mandatory for SDE — the default ptrace
+        # engine fights SDE's instruction interception.
         run: |
           mkdir -p coverage
+          if [ -n "${{ matrix.sde_cpu }}" ]; then
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER="$SDE_PATH/sde64 -${{ matrix.sde_cpu }} --"
+            ENGINE_FLAG="--engine llvm"
+          else
+            ENGINE_FLAG=""
+          fi
           cargo tarpaulin \
+            $ENGINE_FLAG \
             --all-features \
             --run-types tests \
             --exclude-files 'benches/*' \
@@ -151,6 +194,8 @@ jobs:
           - linux-x86_64-avx2-max
           - linux-x86_64-sse41-max
           - linux-x86_64-scalar
+          - linux-x86_64-sde-avx512
+          - linux-x86_64-sde-avx2
           - windows-x86_64
     steps:
       - uses: actions/checkout@v6
