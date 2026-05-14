@@ -46,15 +46,17 @@ env:
 # - x86_64 Windows: validates the MSVC toolchain compiles the intrinsic-
 #   heavy modules and reports coverage of their default runtime path.
 #
-# tarpaulin 0.22+ supports macOS and Windows via the LLVM instrumentation
-# engine (the default on non-Linux hosts). On Linux it uses ptrace.
-# Codecov merges uploads for the same commit, so the final dashboard
-# shows the union of every tier's reports.
+# Coverage is collected with `cargo-llvm-cov` — LLVM source-based
+# instrumentation (compile-time `-C instrument-coverage`, runtime
+# `profraw` profile dump). One engine across every host (macOS,
+# Linux, Windows) so the per-platform numbers compose uniformly when
+# Codecov merges them.
 #
-# Each platform excludes SIMD files it *cannot* compile (gated behind
-# `#[cfg(target_arch)]`). Without exclusion, tarpaulin would count them
-# as 0/N uncovered lines, dragging down the per-platform number. After
-# Codecov merges, every arch file is covered by its native hosts.
+# Each platform excludes the SIMD files it *cannot* compile (gated
+# behind `#[cfg(target_arch)]`) via `--ignore-filename-regex`. Without
+# exclusion those files would show as 0/N uncovered, dragging the
+# per-platform number down. After Codecov merges, every arch file
+# is covered by its native host.
 
 jobs:
   coverage:
@@ -66,45 +68,47 @@ jobs:
           - os: macos-latest
             label: macos-aarch64
             rustflags: ''
-            exclude_arch: "--exclude-files 'src/**/arch/x86_*.rs' --exclude-files 'src/**/arch/wasm_*.rs'"
+            sde_cpu: ''
+            ignore_regex: 'src/.*arch/x86_|src/.*arch/wasm_'
           - os: macos-latest
             label: macos-aarch64-scalar
             rustflags: '--cfg colconv_force_scalar'
-            exclude_arch: "--exclude-files 'src/**/arch/x86_*.rs' --exclude-files 'src/**/arch/wasm_*.rs'"
+            sde_cpu: ''
+            ignore_regex: 'src/.*arch/x86_|src/.*arch/wasm_'
 
           # ---- x86_64 (Linux) ----
           # Standard ubuntu-latest is AMD EPYC Milan — has AVX2 but no
           # AVX-512. The default tier exercises whichever top tier the
           # runner supports at runtime (AVX2 in practice). For AVX-512
-          # coverage we run tarpaulin under Intel SDE (`sde-avx512` tier
+          # coverage we run cargo-llvm-cov under Intel SDE (`sde-avx512` tier
           # below) since no free GitHub runner has the hardware.
           - os: ubuntu-latest
             label: linux-x86_64
             rustflags: ''
             sde_cpu: ''
-            exclude_arch: "--exclude-files 'src/**/arch/neon*.rs' --exclude-files 'src/**/arch/wasm_*.rs'"
+            ignore_regex: 'src/.*arch/neon|src/.*arch/wasm_'
           - os: ubuntu-latest
             label: linux-x86_64-avx2-max
             rustflags: '--cfg colconv_disable_avx512'
             sde_cpu: ''
-            exclude_arch: "--exclude-files 'src/**/arch/neon*.rs' --exclude-files 'src/**/arch/wasm_*.rs'"
+            ignore_regex: 'src/.*arch/neon|src/.*arch/wasm_'
           - os: ubuntu-latest
             label: linux-x86_64-sse41-max
             rustflags: '--cfg colconv_disable_avx512 --cfg colconv_disable_avx2'
             sde_cpu: ''
-            exclude_arch: "--exclude-files 'src/**/arch/neon*.rs' --exclude-files 'src/**/arch/wasm_*.rs'"
+            ignore_regex: 'src/.*arch/neon|src/.*arch/wasm_'
           - os: ubuntu-latest
             label: linux-x86_64-scalar
             rustflags: '--cfg colconv_force_scalar'
             sde_cpu: ''
-            exclude_arch: "--exclude-files 'src/**/arch/neon*.rs' --exclude-files 'src/**/arch/wasm_*.rs'"
+            ignore_regex: 'src/.*arch/neon|src/.*arch/wasm_'
 
           # SDE-based tiers — emulated Intel CPUs covering kernels that
-          # the AMD Milan runner can't reach natively. Tarpaulin uses
-          # the LLVM source-based engine so the instrumented binary is
-          # self-contained and runs cleanly under SDE via the cargo
-          # target-runner env var. Slower than native (~5-10x) but still
-          # well within free-runner budget.
+          # the AMD Milan runner can't reach natively. cargo-llvm-cov
+          # produces a self-contained instrumented binary that runs
+          # cleanly under SDE via the cargo target-runner env var.
+          # Slower than native (~5-10x) but still well within free-
+          # runner budget.
           #
           # `-icx` = Ice Lake (Server) — AVX-512BW, AVX-512VL, AVX-512F,
           # AVX-512DQ. Covers every AVX-512 kernel + its dispatcher branch.
@@ -112,7 +116,7 @@ jobs:
             label: linux-x86_64-sde-avx512
             rustflags: ''
             sde_cpu: 'icx'
-            exclude_arch: "--exclude-files 'src/**/arch/neon*.rs' --exclude-files 'src/**/arch/wasm_*.rs'"
+            ignore_regex: 'src/.*arch/neon|src/.*arch/wasm_'
           # `-skx` = Skylake (Server). Wait — Skylake server does have
           # AVX-512. Use `-skl` = Skylake (Client / 6th-gen Core), which
           # is AVX2-max (no AVX-512), to lock the AVX2 kernel in on a
@@ -121,14 +125,14 @@ jobs:
             label: linux-x86_64-sde-avx2
             rustflags: ''
             sde_cpu: 'skl'
-            exclude_arch: "--exclude-files 'src/**/arch/neon*.rs' --exclude-files 'src/**/arch/wasm_*.rs'"
+            ignore_regex: 'src/.*arch/neon|src/.*arch/wasm_'
 
           # ---- x86_64 (Windows) ----
           - os: windows-latest
             label: windows-x86_64
             rustflags: ''
             sde_cpu: ''
-            exclude_arch: "--exclude-files 'src/**/arch/neon*.rs' --exclude-files 'src/**/arch/wasm_*.rs'"
+            ignore_regex: 'src/.*arch/neon|src/.*arch/wasm_'
     runs-on: ${{ matrix.os }}
     env:
       RUSTFLAGS: ${{ matrix.rustflags }}
@@ -136,10 +140,15 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Install Rust
-        run: rustup update stable --no-self-update && rustup default stable
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup component add llvm-tools-preview
 
-      - name: Install cargo-tarpaulin
-        run: cargo install cargo-tarpaulin
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
 
       - name: Install Intel SDE
         if: matrix.sde_cpu != ''
@@ -151,26 +160,21 @@ jobs:
       - name: Generate coverage
         shell: bash
         # SDE tiers route the test binary through `sde64 -<cpu> --`
-        # via the cargo target-runner env var so tarpaulin's
-        # LLVM-instrumented binary executes under the emulated CPU.
-        # The LLVM engine is mandatory for SDE — the default ptrace
-        # engine fights SDE's instruction interception.
+        # via the cargo target-runner env var. cargo-llvm-cov's
+        # instrumentation is baked into the binary at compile time
+        # via `-C instrument-coverage`, so there's no runtime engine
+        # to fight with SDE.
         run: |
           mkdir -p coverage
           if [ -n "${{ matrix.sde_cpu }}" ]; then
             export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER="$SDE_PATH/sde64 -${{ matrix.sde_cpu }} --"
-            ENGINE_FLAG="--engine llvm"
-          else
-            ENGINE_FLAG=""
           fi
-          cargo tarpaulin \
-            $ENGINE_FLAG \
+          cargo llvm-cov \
             --all-features \
-            --run-types tests \
-            --exclude-files 'benches/*' \
-            ${{ matrix.exclude_arch }} \
-            --out xml \
-            --output-dir coverage
+            --workspace \
+            --ignore-filename-regex '${{ matrix.ignore_regex }}' \
+            --cobertura \
+            --output-path coverage/cobertura.xml
         continue-on-error: false
 
       - name: Upload coverage artifact
