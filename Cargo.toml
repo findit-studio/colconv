@@ -160,6 +160,158 @@ harness = false
 name = "pal8_simd"
 harness = false
 
+[[bench]]
+name = "yuyv422_to_rgb"
+harness = false
+
+[[bench]]
+name = "uyvy422_to_rgb"
+harness = false
+
+[[bench]]
+name = "yvyu422_to_rgb"
+harness = false
+
+[[bench]]
+name = "uyyvyy411_to_rgb"
+harness = false
+
+[[bench]]
+name = "yuv_411p_to_rgb"
+harness = false
+
+[[bench]]
+name = "yuv_410p_to_rgb"
+harness = false
+
+[[bench]]
+name = "yuv_440p_to_rgb"
+harness = false
+
+[[bench]]
+name = "yuv_440p10_to_rgb"
+harness = false
+
+[[bench]]
+name = "yuv_440p12_to_rgb"
+harness = false
+
+[[bench]]
+name = "y210_to_rgb"
+harness = false
+
+[[bench]]
+name = "y212_to_rgb"
+harness = false
+
+[[bench]]
+name = "y216_to_rgb"
+harness = false
+
+[[bench]]
+name = "v210_to_rgb"
+harness = false
+
+[[bench]]
+name = "v30x_to_rgb"
+harness = false
+
+[[bench]]
+name = "v410_to_rgb"
+harness = false
+
+[[bench]]
+name = "xv36_to_rgb"
+harness = false
+
+[[bench]]
+name = "vuyx_to_rgb"
+harness = false
+
+[[bench]]
+name = "rgb24_to_luma"
+harness = false
+
+[[bench]]
+name = "rgba_to_luma"
+harness = false
+
+[[bench]]
+name = "bgr24_to_rgb"
+harness = false
+
+[[bench]]
+name = "rgb48_to_rgb"
+harness = false
+
+[[bench]]
+name = "rgba64_to_rgba"
+harness = false
+
+[[bench]]
+name = "x2rgb10_to_rgb"
+harness = false
+
+[[bench]]
+name = "rgbf32_to_rgb"
+harness = false
+
+[[bench]]
+name = "rgbf16_to_rgb"
+harness = false
+
+[[bench]]
+name = "rgb565_to_rgb"
+harness = false
+
+[[bench]]
+name = "gbrp_to_rgb"
+harness = false
+
+[[bench]]
+name = "gbrap_to_rgba"
+harness = false
+
+[[bench]]
+name = "gbrp12_to_rgb"
+harness = false
+
+[[bench]]
+name = "gbrpf32_to_rgb"
+harness = false
+
+[[bench]]
+name = "gray8_to_rgb"
+harness = false
+
+[[bench]]
+name = "gray16_to_rgb"
+harness = false
+
+[[bench]]
+name = "grayf32_to_rgb"
+harness = false
+
+[[bench]]
+name = "ya8_to_rgba"
+harness = false
+
+[[bench]]
+name = "bayer_to_rgb"
+harness = false
+
+[[bench]]
+name = "bayer16_to_rgb"
+harness = false
+
+[[bench]]
+name = "xyz12_to_rgb"
+harness = false
+
+[[bench]]
+name = "monoblack_to_rgb"
+harness = false
+
 [features]
 default = ["std", "frame"]
 alloc = ["libm", "videoframe/alloc"]
