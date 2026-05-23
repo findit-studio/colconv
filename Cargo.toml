@@ -372,7 +372,7 @@ derive_more = { version = "2", default-features = false, features = ["display", 
 half = { version = "2", default-features = false }
 thiserror = { version = "2", default-features = false }
 libm = { version = "0.2", optional = true }
-videoframe = { version = "0.2", default-features = false }
+videoframe = { version = "0.3", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"
