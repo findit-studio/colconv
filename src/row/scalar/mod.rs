@@ -580,7 +580,7 @@ impl Coefficients {
         b_u: -32768,
         b_v: -32768,
       },
-      // ColorMatrix is #[non_exhaustive] in videoframe; fall back to BT.709
+      // ColorMatrix is #[non_exhaustive] in mediaframe; fall back to BT.709
       // for any future variants added there before colconv is updated.
       _ => Self {
         r_u: 0,

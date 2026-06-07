@@ -1,4 +1,4 @@
-use videoframe::{
+use mediaframe::{
   PixelSink,
   frame::{BayerDemosaic, BayerPattern, ColorCorrectionMatrix, WhiteBalance},
 };

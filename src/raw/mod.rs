@@ -48,7 +48,7 @@
 
 #[cfg(feature = "bayer")]
 #[cfg_attr(docsrs, doc(cfg(feature = "bayer")))]
-pub use videoframe::frame::{
+pub use mediaframe::frame::{
   BayerDemosaic, BayerPattern, ColorCorrectionMatrix, ColorCorrectionMatrixError, WbChannel,
   WhiteBalance, WhiteBalanceError,
 };

@@ -260,7 +260,7 @@ fn process_gray_n<'a, const BITS: u32, const BE: bool>(
   rgba_u16: &mut Option<&'a mut [u16]>,
   luma: &mut Option<&'a mut [u8]>,
   luma_u16: &mut Option<&'a mut [u16]>,
-  hsv: &mut Option<videoframe::source::HsvFrameMut<'a>>,
+  hsv: &mut Option<mediaframe::source::HsvFrameMut<'a>>,
   rgb_scratch: &mut std::vec::Vec<u8>,
 ) -> Result<(), MixedSinkerError> {
   let one_plane_start = idx * w;

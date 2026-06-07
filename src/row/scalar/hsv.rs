@@ -95,7 +95,7 @@ pub(crate) const fn luma_coefficients_q15(matrix: ColorMatrix) -> (i32, i32, i32
     ColorMatrix::Smpte240m => (6947, 22971, 2851),
     // YCgCo: Y = 0.25 R + 0.5 G + 0.25 B (lossless integer).
     ColorMatrix::YCgCo => (8192, 16384, 8192),
-    // ColorMatrix is #[non_exhaustive] in videoframe; fall back to BT.709
+    // ColorMatrix is #[non_exhaustive] in mediaframe; fall back to BT.709
     // for any future variants added there before colconv is updated.
     _ => (6966, 23436, 2366),
   }
