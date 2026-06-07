@@ -1,7 +1,7 @@
 use super::*;
 use crate::row::bayer_to_rgb_row;
 use core::convert::Infallible;
-use videoframe::{
+use mediaframe::{
   PixelSink,
   frame::{BayerDemosaic, BayerFrame, BayerPattern, ColorCorrectionMatrix, WhiteBalance},
 };

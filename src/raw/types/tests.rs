@@ -1,4 +1,4 @@
-use videoframe::frame::{
+use mediaframe::frame::{
   ColorCorrectionMatrix, WbChannel, WhiteBalance, WhiteBalanceError, fuse_wb_ccm,
 };
 

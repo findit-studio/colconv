@@ -314,15 +314,15 @@ harness = false
 
 [features]
 default = ["std", "frame"]
-alloc = ["libm", "videoframe/alloc"]
-std = ["thiserror/default", "videoframe/std"]
+alloc = ["libm", "mediaframe/alloc"]
+std = ["thiserror/default", "mediaframe/std"]
 
 # Umbrella — enables every per-family sub-feature below (mirrors
-# videoframe's `frame` umbrella). Activates videoframe's frame umbrella
+# mediaframe's `frame` umbrella). Activates mediaframe's frame umbrella
 # and every colconv per-family feature so the internal sinker / row /
 # dispatch / SIMD-backend modules for every format are compiled in.
 frame = [
-  "videoframe/frame",
+  "mediaframe/frame",
   "yuv-planar",
   "yuv-semi-planar",
   "yuva",
@@ -341,38 +341,38 @@ frame = [
 ]
 
 # Per-family pass-throughs. Each colconv feature activates the
-# matching videoframe feature so frame types and source markers for
+# matching mediaframe feature so frame types and source markers for
 # that family are available, AND gates colconv's internal sinker /
 # row / dispatch / SIMD-backend modules for the format-specific code.
 # Cross-format helpers (Q15 ranges, rgb_expand, hsv, raw::types,
 # alpha_extract, y_plane_to_luma_u16) stay always-available.
-yuv-planar      = ["videoframe/yuv-planar"]
-yuv-semi-planar = ["videoframe/yuv-semi-planar"]
+yuv-planar      = ["mediaframe/yuv-planar"]
+yuv-semi-planar = ["mediaframe/yuv-semi-planar"]
 # YUVA shares 4:2:0 / 4:2:2 / 4:4:4 planar kernels with the
 # `yuv-planar` family (4-plane buffers, drop or pass the alpha
 # plane through the same `yuv_*p*_to_rgba_with_alpha_src_row`
 # kernels). Auto-enable `yuv-planar` so the underlying SIMD /
 # scalar primitives compile.
-yuva            = ["videoframe/yuva", "yuv-planar"]
-yuv-packed      = ["videoframe/yuv-packed"]
-yuv-444-packed  = ["videoframe/yuv-444-packed"]
-y2xx            = ["videoframe/y2xx"]
-v210            = ["videoframe/v210"]
-rgb             = ["videoframe/rgb"]
-rgb-float       = ["videoframe/rgb-float"]
-rgb-legacy      = ["videoframe/rgb-legacy"]
-gbr             = ["videoframe/gbr"]
-gray            = ["videoframe/gray"]
-bayer           = ["videoframe/bayer"]
-xyz             = ["videoframe/xyz"]
-mono            = ["videoframe/mono"]
+yuva            = ["mediaframe/yuva", "yuv-planar"]
+yuv-packed      = ["mediaframe/yuv-packed"]
+yuv-444-packed  = ["mediaframe/yuv-444-packed"]
+y2xx            = ["mediaframe/y2xx"]
+v210            = ["mediaframe/v210"]
+rgb             = ["mediaframe/rgb"]
+rgb-float       = ["mediaframe/rgb-float"]
+rgb-legacy      = ["mediaframe/rgb-legacy"]
+gbr             = ["mediaframe/gbr"]
+gray            = ["mediaframe/gray"]
+bayer           = ["mediaframe/bayer"]
+xyz             = ["mediaframe/xyz"]
+mono            = ["mediaframe/mono"]
 
 [dependencies]
 derive_more = { version = "2", default-features = false, features = ["display", "is_variant", "try_unwrap", "unwrap"] }
 half = { version = "2", default-features = false }
 thiserror = { version = "2", default-features = false }
 libm = { version = "0.2", optional = true }
-videoframe = { version = "0.2", default-features = false }
+mediaframe = { version = "0.1", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"

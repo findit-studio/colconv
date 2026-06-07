@@ -116,7 +116,7 @@ use crate::SourceFormat;
 #[allow(unused_imports)]
 use crate::PixelSink;
 
-pub use videoframe::{
+pub use mediaframe::{
   frame::{WidthAlignment, WidthAlignmentRequirement},
   source::{HsvFrame, HsvFrameMut, HsvPlane},
 };
