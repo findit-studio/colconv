@@ -21,10 +21,10 @@
 //! right-shift by `(16 - BITS)` before constructing
 //! [`BayerFrame16`](crate::frame::BayerFrame16).
 
-// The Bayer16 marker family now lives in videoframe::source. Re-export
+// The Bayer16 marker family now lives in mediaframe::source. Re-export
 // everything so downstream code that uses `colconv::raw::Bayer16<BITS>`,
 // `colconv::raw::Bayer10`, etc. keeps compiling unchanged.
-pub use videoframe::{
+pub use mediaframe::{
   frame::{
     Bayer10Frame, Bayer12Frame, Bayer14Frame, Bayer16Frame, BayerFrame16Error, BayerRow16,
     BayerSink16, bayer16_to,

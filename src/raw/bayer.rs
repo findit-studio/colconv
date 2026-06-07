@@ -7,11 +7,11 @@
 //! The kernel does the bilinear demosaic and the 3x3 matmul in one
 //! pass; the sink owns the RGB output buffer.
 
-// The Bayer marker now lives in videoframe::source and implements
-// videoframe::SourceFormat via its own sealed impl.  Re-export it at
+// The Bayer marker now lives in mediaframe::source and implements
+// mediaframe::SourceFormat via its own sealed impl.  Re-export it at
 // this path so downstream code that uses `colconv::raw::Bayer` keeps
 // working without changes.
-pub use videoframe::{
+pub use mediaframe::{
   frame::{BayerFrameError, BayerRow, BayerSink, bayer_to},
   source::Bayer,
 };

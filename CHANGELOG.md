@@ -4,6 +4,17 @@
 
 ### Changed (BREAKING — pre-publish, no published version impacted)
 
+- **Dep `videoframe` 0.2 → `mediaframe` 0.1 (crate rename).** Upstream
+  `videoframe` was renamed to `mediaframe` (charter broadened from
+  pixel/frame to all media-stream vocab); old `videoframe 0.x` is being
+  yanked. Colconv's source paths flip in lockstep: every
+  `videoframe::frame::*` / `videoframe::source::*` / crate-root
+  `videoframe::*` re-export becomes `mediaframe::*`. All 18 feature
+  forwards (`yuv-planar`, `bayer`, `rgb`, `xyz`, `mono`, …) rename their
+  forwarded sub-feature from `"videoframe/<name>"` to
+  `"mediaframe/<name>"` — feature names on colconv's own surface are
+  unchanged, so downstream callers only update their imports.
+
 - **`MixedSinkerError` refactored to newtype-tuple variants with private-field
   payload structs.** Every variant now wraps a dedicated payload struct;
   payload fields are private, accessed via `pub const fn` getters. Callers

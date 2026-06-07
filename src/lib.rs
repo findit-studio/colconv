@@ -243,10 +243,16 @@ extern crate alloc as std;
 #[cfg(feature = "std")]
 extern crate std;
 
-pub use videoframe::{
-  PixelSink, SourceFormat,
-  color::{ColorMatrix, DcpTargetGamut},
-  frame, source,
+pub use mediaframe::{
+  PixelSink,
+  SourceFormat,
+  // `mediaframe::color::Matrix` is re-exported as `ColorMatrix` so colconv's
+  // public surface and every internal `crate::ColorMatrix` reference keep
+  // the disambiguated name (`videoframe::color::ColorMatrix` was renamed to
+  // `Matrix` upstream during the videoframe → mediaframe rename).
+  color::{DcpTargetGamut, Matrix as ColorMatrix},
+  frame,
+  source,
 };
 
 pub mod raw;
