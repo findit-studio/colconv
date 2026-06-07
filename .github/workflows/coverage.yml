@@ -153,10 +153,10 @@ jobs:
       - name: Install Intel SDE
         if: matrix.sde_cpu != ''
         # v5.0: own-repo Release LFS binaries instead of Intel CDN
-        # (fixes HTTP 202 flakes). 9.33.0 dropped → use 10.8.0.
+        # (fixes HTTP 202 flakes). `sdeVersion` omitted → action's
+        # bundled default (its tested-latest within this major).
         uses: petarpetrovt/setup-sde@v5.0
         with:
-          sdeVersion: 10.8.0
           environmentVariableName: SDE_PATH
 
       - name: Generate coverage

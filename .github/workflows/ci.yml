@@ -188,12 +188,13 @@ jobs:
       - name: Install Intel SDE
         # v5.0 distributes binaries from this action's own GitHub Releases
         # rather than fetching from Intel's CDN — the latter has been
-        # returning HTTP 202 (still-processing) intermittently. v5.0 dropped
-        # 9.33.0 support; 10.8.0 is the new default and exposes the same
-        # AVX-512F/BW/DQ/VL/VNNI/BF16 surface under `-icx`.
+        # returning HTTP 202 (still-processing) intermittently. `sdeVersion`
+        # is intentionally omitted so the action's bundled default (its
+        # tested-latest within this major) is used; bump the action major
+        # to pick up future SDE bumps. AVX-512F/BW/DQ/VL/VNNI/BF16 under
+        # `-icx` is stable across 9.x and 10.x.
         uses: petarpetrovt/setup-sde@v5.0
         with:
-          sdeVersion: 10.8.0
           environmentVariableName: SDE_PATH
       - name: Run tests under SDE (-icx, Ice Lake AVX-512)
         # The `petarpetrovt/setup-sde` action exports `SDE_PATH` but
