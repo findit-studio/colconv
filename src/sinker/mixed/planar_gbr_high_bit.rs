@@ -36,7 +36,7 @@
 //!    `alpha_extract::copy_alpha_plane_u16_to_u8::<BITS>`.
 //!
 //! This avoids two calls to the full 4-channel kernel and matches the shape
-//! of the 8-bit `Gbrap` sinker post-codex-fix.
+//! of the 8-bit `Gbrap` sinker.
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
@@ -544,8 +544,7 @@ macro_rules! impl_gbrap_high_bit {
             expand_rgb_u16_to_rgba_u16_row::<BITS>(rgb_u16_row, rgba_u16_row, w);
             // Overwrite α slot from source plane (native depth, no shift).
             // BE propagated from the parent `GbrapHighBitFrame<'_, BITS, BE>`
-            // via the sinker's `MixedSinker<GbrapN<BE>>` monomorphization
-            // (Phase 4, Tier 10b).
+            // via the sinker's `MixedSinker<GbrapN<BE>>` monomorphization.
             alpha_extract::copy_alpha_plane_u16::<BITS, BE>(a_in, rgba_u16_row, w, use_simd);
           }
         }
@@ -625,7 +624,7 @@ macro_rules! impl_gbrap_high_bit {
           // overwrite α bytes from the source A plane.
           let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
           expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
-          // BE propagated from the parent frame (Phase 4, Tier 10b).
+          // BE propagated from the parent frame.
           alpha_extract::copy_alpha_plane_u16_to_u8::<BITS, BE>(a_in, rgba_row, w, use_simd);
         }
 

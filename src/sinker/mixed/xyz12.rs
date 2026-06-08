@@ -23,10 +23,9 @@
 //!   then `xyz12_rgb_to_luma_row` / `xyz12_rgb_to_luma_u16_row` with
 //!   the gamut-derived Q15 weights (BT.709 for Rec709,
 //!   `(6865, 23645, 2258)` for DciP3 theatrical, BT.2020Ncl for
-//!   Rec2020 — see [`crate::source::luma_weights_q15_for_gamut`]). Codex
-//!   round-2 medium fix: the prior implementation re-used the BT.709
-//!   triple for DciP3, which biased luma for saturated content under
-//!   the theatrical DCI-white target.
+//!   Rec2020 — see [`crate::source::luma_weights_q15_for_gamut`]). The
+//!   DciP3 triple is not the BT.709 one: re-using BT.709 would bias luma
+//!   for saturated content under the theatrical DCI-white target.
 //! - `with_hsv` — same staging, then `rgb_to_hsv_row`.
 
 use super::{

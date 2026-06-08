@@ -59,11 +59,8 @@
 use core::arch::x86_64::*;
 
 use super::*;
-
-// =============================================================================
 // Rgb48 / Bgr48 helpers — stride-3, 8-pixel deinterleave (SSE4.1 width under
 // AVX2 target_feature)
-// =============================================================================
 //
 // Re-use the SSE4.1 byte-shuffle deinterleave pattern.  Each call handles
 // 8 pixels (24 u16 = 3 x 128-bit loads), and the outer loop calls it twice
@@ -123,9 +120,7 @@ unsafe fn deinterleave_rgb48_8px(
   }
 }
 
-// =============================================================================
-// Rgba64 / Bgra64 helpers — stride-4, 16-pixel deinterleave (`__m256i`)
-// =============================================================================
+// Rgba64 / Bgra64 helpers — stride-4, 16-pixel deinterleave (`__m256i`).
 //
 // 16 pixels x 4 u16 channels = 64 u16 = 128 bytes.
 //
@@ -278,10 +273,7 @@ unsafe fn deinterleave_rgba64_16px(
   }
 }
 
-// =============================================================================
-// u16 → u8 narrowing for __m256i: `>> 8` + `packus_epi16` + lane fix
-// =============================================================================
-
+// u16 → u8 narrowing for __m256i: `>> 8` + `packus_epi16` + lane fix.
 /// Narrow a u16x16 vector to u8x16 (in the low 128-bit half) via logical
 /// right-shift by 8, then `packus_epi16`, then `permute4x64_epi64::<0xD8>`.
 ///
@@ -353,10 +345,7 @@ unsafe fn byteswap256_if_be<const BE: bool>(v: __m256i) -> __m256i {
   }
 }
 
-// =============================================================================
-// Rgb48 (R, G, B — 3 u16 elements per pixel)
-// =============================================================================
-
+// Rgb48 (R, G, B — 3 u16 elements per pixel).
 /// AVX2 Rgb48 → packed u8 RGB. 16 pixels per outer iteration.
 ///
 /// Processes two 8-pixel halves (3 x 128-bit loads each) under the AVX2
@@ -570,10 +559,7 @@ pub(crate) unsafe fn avx2_rgb48_to_rgba_u16_row<const BE: bool>(
   }
 }
 
-// =============================================================================
-// Bgr48 (B, G, R — 3 u16 elements per pixel)
-// =============================================================================
-
+// Bgr48 (B, G, R — 3 u16 elements per pixel).
 /// AVX2 Bgr48 → packed u8 RGB. 16 pixels per outer iteration.
 ///
 /// `deinterleave_rgb48_8px` yields `(B, G, R)` in source memory order;
@@ -781,10 +767,7 @@ pub(crate) unsafe fn avx2_bgr48_to_rgba_u16_row<const BE: bool>(
   }
 }
 
-// =============================================================================
-// Rgba64 (R, G, B, A — 4 u16 elements per pixel)
-// =============================================================================
-
+// Rgba64 (R, G, B, A — 4 u16 elements per pixel).
 /// AVX2 Rgba64 → packed u8 RGB. 16 pixels per SIMD iteration. Alpha discarded.
 ///
 /// Loads 4 x `__m256i` (64 u16 = 16 pixels), deinterleaves via the
@@ -970,10 +953,7 @@ pub(crate) unsafe fn avx2_rgba64_to_rgba_u16_row<const BE: bool>(
   }
 }
 
-// =============================================================================
-// Bgra64 (B, G, R, A — 4 u16 elements per pixel)
-// =============================================================================
-
+// Bgra64 (B, G, R, A — 4 u16 elements per pixel).
 /// AVX2 Bgra64 → packed u8 RGB. 16 pixels per SIMD iteration.
 /// B↔R swap; alpha discarded.
 ///
@@ -1160,10 +1140,7 @@ pub(crate) unsafe fn avx2_bgra64_to_rgba_u16_row<const BE: bool>(
   }
 }
 
-// =============================================================================
-// Helper: narrow u16x8 (128-bit) to u8x8 (used by stride-3 paths)
-// =============================================================================
-
+// Helper: narrow u16x8 (128-bit) to u8x8 (used by stride-3 paths).
 /// Narrow a u16x8 vector to u8x8 (in the low half) via logical right-shift by 8.
 ///
 /// Equivalent to scalar `(v >> 8) as u8`. Zero-packs the high half.

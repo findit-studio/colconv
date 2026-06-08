@@ -640,13 +640,12 @@ fn luma_u16_high_bit_bits16_limited_range_black_gives_min_offset() {
   );
 }
 
-// ---- Limited-range native-depth scaling boundary regression ---------
+// Limited-range native-depth scaling boundary regression.
 //
-// Codex review #4233323791 caught that an earlier 8-bit `219/255`
-// Q15 scale collapsed the top ~250 input codes onto the y_max clamp
-// at BITS=16 (e.g. y_full = 65300 → 60160 instead of ~59955),
-// destroying highlight gradation. The current implementation uses
-// native-depth scaling `(y_full x range) / native_max` where
+// An 8-bit `219/255` Q15 scale collapses the top ~250 input codes onto
+// the y_max clamp at BITS=16 (e.g. y_full = 65300 → 60160 instead of
+// ~59955), destroying highlight gradation. The current implementation
+// uses native-depth scaling `(y_full x range) / native_max` where
 // `range = 219 << (BITS - 8)` and `native_max = (1 << BITS) - 1`.
 
 #[test]
@@ -671,8 +670,8 @@ fn luma_u16_high_bit_bits16_limited_range_near_white_keeps_gradation() {
   // Setting all 3 channels equal makes the matrix multiply produce
   // y_full ≈ input, so we can probe the limited-range scaling at
   // specific y_full values. y_full = 65000 / 65300 / 65500 must each
-  // produce a distinct y_lim — the buggy 8-bit ratio would clamp the
-  // top two onto y_max=60160, destroying the gradation codex flagged.
+  // produce a distinct y_lim — an 8-bit ratio would clamp the top
+  // two onto y_max=60160, destroying the gradation.
   for &v in &[65000u16, 65300, 65500] {
     let g = as_le_u16(&[v; 1]);
     let b = as_le_u16(&[v; 1]);

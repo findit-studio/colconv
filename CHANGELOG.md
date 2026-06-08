@@ -291,7 +291,7 @@ f64-narrowed reference). FMA is intentionally NOT used in the matmul —
 single-rounding FMA breaks the 0-ULP parity contract on integer-narrow
 output paths.
 
-**Fix (codex round-2 high):** the `DcpTargetGamut::DciP3` matrix
+**Fix (high):** the `DcpTargetGamut::DciP3` matrix
 previously used D65 white (i.e. it was actually decoding to the
 Apple/web Display-P3 / `display-p3` colour space, NOT to the
 theatrical SMPTE ST 428-1 / RP 431-2 §5.1 DCI-white target
@@ -303,7 +303,7 @@ who specifically wanted Display-P3 D65 desktop preview should use
 `Rec709` instead, or open a follow-up issue requesting an explicit
 `DisplayP3D65` variant.
 
-**Fix (codex round-2 medium):** the `with_luma` / `with_luma_u16`
+**Fix (medium):** the `with_luma` / `with_luma_u16`
 paths previously routed `DcpTargetGamut::DciP3` through
 `ColorMatrix::Bt709` (D65 luma weights), biasing luma values for
 saturated content under the theatrical DCI-P3 target. The luma path
@@ -339,7 +339,7 @@ wasm-simd128). 16-64 px / iter via bit-mask broadcast + test-nonzero pattern.
 Each format exposes 7 sinker accessors: with_rgb, with_rgba, with_rgb_u16,
 with_rgba_u16, with_luma, with_luma_u16, with_hsv. ~1730+ tests.
 
-**Fix (codex high):** u16 outputs (`with_luma_u16`, `with_rgb_u16`, `with_rgba_u16`)
+**Fix (high):** u16 outputs (`with_luma_u16`, `with_rgb_u16`, `with_rgba_u16`)
 now zero-extend the 8-bit luma value to u16 — white maps to 0x00FF, not 0xFFFF.
 This matches Gray8's `with_luma_u16` / `with_rgb_u16` / `with_rgba_u16` contract
 (zero-extend computed 8-bit luma rather than rescaling). Alpha in `with_rgba_u16`
@@ -1109,7 +1109,7 @@ Per-pixel store branched on three combinations:
 
 `!ALPHA_SRC || ALPHA` const-asserted at every template top.
 
-### Hardenings (Codex review fixes)
+### Hardenings
 
 - **Source alpha is masked with `bits_mask::<BITS>()` before depth
   conversion** — `Yuva444p10Frame::try_new` accepts unchecked u16
@@ -1132,8 +1132,8 @@ Per-pixel store branched on three combinations:
   carry `is_x86_feature_detected!` early-return guards.
 - **Sinker integration tests**: 17 (PR #32 added 7 covering alpha
   pass-through / opacity contracts / buffer-too-short error paths;
-  PR #32 review-fix added 7 covering alpha-drop paths + Strategy A
-  combine; PR #32 review-fix added 2 covering overrange-alpha
+  follow-up PR #32 work added 7 covering alpha-drop paths + Strategy A
+  combine; follow-up work added 2 covering overrange-alpha
   masking).
 - **Test count growth**: 578 → 588 on aarch64-darwin host (583 after
   PR #33, 588 after PR #34); +5 NEON tests run at each tranche; the

@@ -443,9 +443,9 @@ const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 /// Used by the packed YUV 4:4:4 kernels (XV36, AYUV64) after `vld4q_u16`
 /// to correct samples loaded from a wire-encoded buffer.
 ///
-/// Mirrors PR #82's `9c7d533` dispatcher routing fix and PR #85's
-/// `9e678b0` Ya16 SIMD gate — both addressed the same bug class
-/// (only swapping on `BE = true` rather than `BE != HOST_NATIVE_BE`).
+/// Mirrors the same gate shape as the dispatcher routing fix and the
+/// Ya16 SIMD gate — only swapping on `BE = true` (instead of on
+/// `BE != HOST_NATIVE_BE`) double-swaps on BE hosts.
 #[cfg(any(
   feature = "rgb",
   feature = "yuv-444-packed",

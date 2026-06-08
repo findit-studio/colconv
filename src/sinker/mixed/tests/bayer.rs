@@ -347,8 +347,8 @@ fn bayer_with_luma_coefficients_solid_red_differs_by_preset() {
   // Solid red after demosaic is `(255, 0, 0)` everywhere
   // (`bayer_mixed_sinker_with_rgb_red_interior` proves this).
   // Luma reduces to `(cr * 255 + 128) >> 8` for each preset, so
-  // each coefficient set must produce a different value. The
-  // hard-coded BT.709 bug Codex flagged would make these all 54.
+  // each coefficient set must produce a different value. A
+  // hard-coded BT.709 implementation would make these all 54.
   let bt709 = bayer8_solid_red_luma(LumaCoefficients::Bt709);
   let bt2020 = bayer8_solid_red_luma(LumaCoefficients::Bt2020);
   let bt601 = bayer8_solid_red_luma(LumaCoefficients::Bt601);

@@ -30,10 +30,7 @@ fn legacy_rgb_plane(width: usize, seed: u32) -> std::vec::Vec<u8> {
   out
 }
 
-// ============================================================================
-// RGB565
-// ============================================================================
-
+// RGB565.
 #[test]
 #[cfg_attr(miri, ignore = "wasm SIMD intrinsics unsupported by Miri")]
 fn wasm_rgb565_to_rgb_matches_scalar() {
@@ -98,10 +95,7 @@ fn wasm_rgb565_to_rgba_u16_matches_scalar() {
   }
 }
 
-// ============================================================================
-// BGR565
-// ============================================================================
-
+// BGR565.
 #[test]
 #[cfg_attr(miri, ignore = "wasm SIMD intrinsics unsupported by Miri")]
 fn wasm_bgr565_to_rgb_matches_scalar() {
@@ -166,10 +160,7 @@ fn wasm_bgr565_to_rgba_u16_matches_scalar() {
   }
 }
 
-// ============================================================================
-// RGB555
-// ============================================================================
-
+// RGB555.
 #[test]
 #[cfg_attr(miri, ignore = "wasm SIMD intrinsics unsupported by Miri")]
 fn wasm_rgb555_to_rgb_matches_scalar() {
@@ -234,10 +225,7 @@ fn wasm_rgb555_to_rgba_u16_matches_scalar() {
   }
 }
 
-// ============================================================================
-// BGR555
-// ============================================================================
-
+// BGR555.
 #[test]
 #[cfg_attr(miri, ignore = "wasm SIMD intrinsics unsupported by Miri")]
 fn wasm_bgr555_to_rgb_matches_scalar() {
@@ -302,10 +290,7 @@ fn wasm_bgr555_to_rgba_u16_matches_scalar() {
   }
 }
 
-// ============================================================================
-// RGB444
-// ============================================================================
-
+// RGB444.
 #[test]
 #[cfg_attr(miri, ignore = "wasm SIMD intrinsics unsupported by Miri")]
 fn wasm_rgb444_to_rgb_matches_scalar() {
@@ -370,10 +355,7 @@ fn wasm_rgb444_to_rgba_u16_matches_scalar() {
   }
 }
 
-// ============================================================================
-// BGR444
-// ============================================================================
-
+// BGR444.
 #[test]
 #[cfg_attr(miri, ignore = "wasm SIMD intrinsics unsupported by Miri")]
 fn wasm_bgr444_to_rgb_matches_scalar() {

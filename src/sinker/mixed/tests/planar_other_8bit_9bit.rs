@@ -113,7 +113,7 @@ fn yuv444p_gray_to_gray() {
   }
 }
 
-// ---- Yuv444p RGBA (Ship 8 PR 4a) tests ----------------------------------
+// Yuv444p RGBA tests.
 
 #[test]
 #[cfg_attr(
@@ -654,7 +654,7 @@ fn yuv422p_matches_yuv420p_luma_when_chroma_matches() {
   assert_eq!(rgb422, rgb420);
 }
 
-// ---- Yuv422p RGBA (Ship 8 PR 3) tests -----------------------------------
+// Yuv422p RGBA tests.
 //
 // Yuv422p reuses the Yuv420p `_to_rgba_row` dispatcher (same row
 // contract). Tests mirror the Yuv420p RGBA set; the cross-format
@@ -1102,7 +1102,7 @@ fn yuv440p_gray_to_gray() {
   }
 }
 
-// ---- Yuv440p RGBA (Ship 8 PR 4c) tests --------------------------------
+// Yuv440p RGBA tests.
 
 #[test]
 #[cfg_attr(

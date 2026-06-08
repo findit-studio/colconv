@@ -68,8 +68,7 @@ const SAMPLE_MASK_U16: u16 = 0x0FFF;
 
 /// Compile-time host endianness. `vld3_u16` deinterleaves using
 /// **host-native** u16 reads, so the SIMD body is only correct when
-/// the encoded byte order matches the host. The truth table (mirrors
-/// PR #82 / #85 / #87 / #88 / #89 host-endian gate fixes):
+/// the encoded byte order matches the host. Truth table:
 ///
 /// | wire `BE` | host       | `BE == HOST_NATIVE_BE` | path   | correct via    |
 /// |-----------|------------|------------------------|--------|----------------|

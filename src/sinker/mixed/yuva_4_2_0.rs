@@ -13,8 +13,7 @@
 //!   corresponding `Yuv420p*` source would produce given the same
 //!   Y/U/V data. Without these paths `MixedSinker::with_rgb` /
 //!   `with_luma` / `with_hsv` (declared on the generic impl) would
-//!   silently accept a buffer and never write it (Codex PR #32 review
-//!   fix #1 — applied upfront here).
+//!   silently accept a buffer and never write it.
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,

@@ -430,8 +430,7 @@ fn rgb48_multi_row_frame() {
 /// driven by miri on s390x / powerpc64; gating it out of miri would skip
 /// exactly the host where BE corruption would surface.
 ///
-/// Mirrors the `rgbf32_sinker_le_encoded_frame_decodes_correctly` pattern
-/// added in PR #92's `5b42065` / `3b1d716`.
+/// Mirrors the `rgbf32_sinker_le_encoded_frame_decodes_correctly` pattern.
 #[test]
 fn rgb48_sinker_le_encoded_frame_decodes_correctly() {
   // Mix high / mid / low / asymmetric byte patterns so any byte-swap regression
@@ -468,8 +467,6 @@ fn rgb48_sinker_le_encoded_frame_decodes_correctly() {
     "Rgb48 sinker LE-encoded plane decoded incorrectly (BE-contract regression)"
   );
 }
-
-// ====================================================================================
 // Phase 4 — Frame BE flag, Tier 8 trial. LE+BE round-trip parity tests.
 //
 // Pattern (per format):
@@ -486,8 +483,6 @@ fn rgb48_sinker_le_encoded_frame_decodes_correctly() {
 //   - missing `<BE>` propagation in sinker call sites,
 //   - regressions in the `load_endian_u16::<BE>` byte-swap path,
 //   - mismatches between `MixedSinker<Rgb48<true>>` and the BE row kernels.
-// ====================================================================================
-
 /// Re-encode a host-native u16 slice as **BE-encoded** byte storage. Used to
 /// build `*BeFrame` planes whose bytes are big-endian; the kernel swaps them
 /// back to host-native via `from_be`.

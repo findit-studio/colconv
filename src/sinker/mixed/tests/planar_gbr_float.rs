@@ -862,7 +862,7 @@ fn gbrapf32_rgba_f16_strategy_a_plus_matches_independent_kernel() {
   );
 }
 
-// ---- LE-encoded byte contract regressions (post-#83/#84/#85 audit) --------
+// LE-encoded byte contract regressions.
 //
 // Each of the four float planar GBR Frame types is documented as
 // LE-encoded bytes reinterpreted as `f32` / `half::f16` (FFmpeg `*LE`
@@ -875,18 +875,16 @@ fn gbrapf32_rgba_f16_strategy_a_plus_matches_independent_kernel() {
 //
 // Vacuous on LE host (where `to_le` is identity so the LE-encoded plane is
 // host-native already), but on a BE host any regression that drops the
-// `::<false>` routing would be caught here — kernel without `from_le` would
-// emit byte-swapped bit-patterns, failing the bit-exact assertion below.
-//
-// Mirrors the `Grayf32` regression added in PR #85's `52f8191`.
+// `::<false>` routing would be caught here — a kernel without `from_le`
+// would emit byte-swapped bit-patterns, failing the bit-exact assertion
+// below.
 
 /// LE-encoded byte contract regression for [`Gbrpf32`].
 ///
 /// Forces `with_simd(false)` so the test runs purely scalar — no SIMD
 /// intrinsics — which lets it execute under `cargo miri test`. BE CI is
-/// driven by miri on s390x / powerpc64; gating it out of miri (per the
-/// codex 4th-pass finding) would skip exactly the host where BE corruption
-/// would surface.
+/// driven by miri on s390x / powerpc64; gating this test out of miri
+/// would skip exactly the host where BE corruption would surface.
 #[test]
 fn gbrpf32_sinker_le_encoded_frame_decodes_correctly() {
   let w = 16usize;
@@ -1441,14 +1439,14 @@ fn gbrpf16_sinker_widen_path_u16_and_u8_le_encoded_frame_decodes_correctly() {
   );
 }
 
-// ---- LE-encoded Strategy A+ alpha-patch regressions (codex 3rd-pass) ------
+// LE-encoded Strategy A+ alpha-patch regressions.
 //
 // The `copy_alpha_plane_f32_to_u8` (and `copy_alpha_plane_f32_to_u16`,
-// `copy_alpha_plane_f32`) helper used to read each f32 α sample as
-// host-native, which silently corrupted the α slot on BE hosts processing
+// `copy_alpha_plane_f32`) helpers must read each f32 α sample with the
+// same LE/host-endian gate as the rest of the float planar pipeline. A
+// host-native read silently corrupts the α slot on BE hosts processing
 // the LE-encoded `Gbrapf32Frame` α plane (the byte-swapped bits clamp to
 // near-zero or near-one, producing α = 0 or 255 regardless of intent).
-// Same bug class as the u16 alpha-patch helpers fixed in cf26058.
 //
 // These regressions trigger the **Strategy A+ combo path** (`with_rgb` +
 // `with_rgba`, `with_rgb_u16` + `with_rgba_u16`) on a Frame whose α plane
@@ -1459,11 +1457,11 @@ fn gbrpf16_sinker_widen_path_u16_and_u8_le_encoded_frame_decodes_correctly() {
 // SIMD widths (15, 17) exercise scalar-tail correctness in addition to
 // any vectorized body.
 
-/// Codex 3rd-pass regression: Gbrapf32 Strategy A+ (`with_rgb` + `with_rgba`)
-/// on a LE-encoded f32 α plane must reproduce standalone `with_rgba` output
-/// byte-for-byte. The standalone path uses `gbrapf32_to_rgba_row::<false>`
-/// (already endian-aware), so any deviation indicates the Strategy A+
-/// alpha-patch path corrupted the α plane.
+/// Gbrapf32 Strategy A+ (`with_rgb` + `with_rgba`) on a LE-encoded f32 α
+/// plane must reproduce standalone `with_rgba` output byte-for-byte. The
+/// standalone path uses `gbrapf32_to_rgba_row::<false>` (already endian-
+/// aware), so any deviation indicates the Strategy A+ alpha-patch path
+/// corrupted the α plane.
 ///
 /// Forces `with_simd(false)` so the test is miri-safe and runs on BE-host
 /// miri CI. See the `gbrpf32_sinker_le_encoded_frame_decodes_correctly`
@@ -1535,8 +1533,8 @@ fn gbrapf32_strategy_a_plus_le_encoded_frame_alpha_decodes_correctly() {
   );
 }
 
-/// Codex 3rd-pass regression: Gbrapf32 Strategy A+ (`with_rgb_u16` +
-/// `with_rgba_u16`) on a LE-encoded f32 α plane. Defense-in-depth: the
+/// Gbrapf32 Strategy A+ (`with_rgb_u16` + `with_rgba_u16`) on a
+/// LE-encoded f32 α plane. Defense-in-depth: the
 /// current sinker calls `gbrapf32_to_rgba_u16_row::<false>` directly here
 /// (no alpha-patch helper invocation), but any future routing change that
 /// switches to the alpha-patch helper must keep BE-host correctness.
@@ -1618,8 +1616,8 @@ fn gbrapf32_strategy_a_plus_le_encoded_u16_alpha_decodes_correctly() {
   }
 }
 
-/// Codex 3rd-pass regression: Gbrapf16 Strategy A+ (`with_rgb` + `with_rgba`)
-/// on a LE-encoded f16 α plane. This exercises the **post-widen** routing
+/// Gbrapf16 Strategy A+ (`with_rgb` + `with_rgba`) on a LE-encoded f16
+/// α plane. This exercises the **post-widen** routing
 /// pattern in `widen_and_scatter_f16_alpha_to_u8`: the f16 α plane is
 /// widened to host-native f32 scratch via `widen_f16_be_to_host_f32::<false>`,
 /// then the alpha-patch helper must consume that scratch with

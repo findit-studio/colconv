@@ -8,7 +8,7 @@
 //!
 //! `+ 0.5` then `vcvtq_u32_f32` (truncation toward zero). This is the
 //! round-half-up contract shared with the scalar kernels — MXCSR-independent
-//! and consistent with PR #74 / Rgbf32.
+//! and consistent with the Rgbf32 path.
 //!
 //! # Rounding (f32 → f16)
 //!
@@ -38,8 +38,7 @@ use crate::{
 /// scratch must be routed via `HOST_NATIVE_BE` so the downstream kernel's
 /// `from_le` / `from_be` loaders no-op the swap. Without this routing the
 /// SIMD scalar tail double-byte-swaps on `BE`-source-on-LE-host (and
-/// symmetrically `LE`-source-on-BE-host) — codex PR #84 Finding 1
-/// follow-up to commit `8627280`.
+/// symmetrically `LE`-source-on-BE-host).
 const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 
 // ---- shared helpers ---------------------------------------------------------

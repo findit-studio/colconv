@@ -44,9 +44,7 @@ use crate::{
   },
 };
 
-// ============================================================================
-// Shared helpers — checked accessor for the u16 RGB plane row slice
-// ============================================================================
+// Shared helper: checked accessor for the u16 RGB plane row slice.
 
 /// Slice out a `3 * width` `u16` sub-range from a flat u16 RGB plane.
 /// Returns `Err(GeometryOverflow)` on 32-bit targets if `one_plane_end x 3`
@@ -68,9 +66,7 @@ fn rgb_u16_plane_row_slice(
   Ok(&mut buf[start..end])
 }
 
-// ============================================================================
 // Macro: emit one complete sinker impl block for a legacy RGB format.
-// ============================================================================
 //
 // Parameters:
 //   $marker      — marker type (e.g. `Rgb565`)
@@ -328,9 +324,7 @@ macro_rules! impl_legacy_rgb_sinker {
   };
 }
 
-// ============================================================================
-// Six format instantiations
-// ============================================================================
+// Six format instantiations.
 
 impl_legacy_rgb_sinker! {
   marker:      Rgb565,

@@ -260,12 +260,12 @@ fn avx2_p416_be_parity_u16() {
   assert_eq!(out_le, out_be);
 }
 
-// ---- BE-input SIMD-vs-scalar parity for X2RGB10 / X2BGR10 ----------------
+// BE-input SIMD-vs-scalar parity for X2RGB10 / X2BGR10.
 //
-// PR #104 follow-up: pre-fix, the AVX2 X2 10-bit kernels gated their SIMD
-// body on `if !BE` and silently fell through to scalar for BE input. With
-// the BE-aware load (`x2_load_endian_u32x4::<BE>`) in `x86_common`, BE now
-// exercises the real SIMD path. Widths cross the 32-pixel SIMD boundary.
+// Without a BE-aware load (`x2_load_endian_u32x4::<BE>`) the AVX2 X2
+// 10-bit kernels gate their SIMD body on `if !BE` and silently fall
+// through to scalar for BE input. Widths below cross the 32-pixel SIMD
+// boundary.
 
 fn x2_packed_input(width: usize, seed: u32) -> std::vec::Vec<u8> {
   let mut state = seed;

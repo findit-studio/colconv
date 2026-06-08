@@ -8,10 +8,10 @@
 //! BE-encoded bytes. Both kernels therefore decode to the intended
 //! host-native u16 samples and must produce byte-identical output.
 //!
-//! The earlier `swap_bytes` pattern was vacuous on BE hosts (both
-//! `kernel::<false>` and `kernel::<true>` produced equal-but-wrong
-//! outputs and the assert passed without exercising the BE-host
-//! decode path). Mirrors PR #82 / #85 / #87 / #88 fixture rewrites.
+//! The naive `swap_bytes` pattern is vacuous on BE hosts (both
+//! `kernel::<false>` and `kernel::<true>` produce equal-but-wrong
+//! outputs and the assert passes without exercising the BE-host
+//! decode path).
 
 use crate::row::neon_available;
 
@@ -260,13 +260,13 @@ fn neon_yuv_444p16_be_parity_u16() {
   assert_eq!(out_le, out_be);
 }
 
-// ---- p_n / p_n_444 (semi-planar high-bit-packed) --------------------
+// p_n / p_n_444 (semi-planar high-bit-packed).
 //
-// The 4:2:0 (`p_n_to_*`) and 4:4:4 (`p_n_444_to_*`) NEON kernels deinterleave
-// UV via `vld2q_u16`, which materializes lanes in host-native order.  Their
-// per-lane byte-swap therefore must trigger on `BE != HOST_NATIVE_BE`, not
-// just `BE`.  These regression tests catch the BE-host miscompile fixed in
-// this patch (codex review on PR #89).
+// The 4:2:0 (`p_n_to_*`) and 4:4:4 (`p_n_444_to_*`) NEON kernels
+// deinterleave UV via `vld2q_u16`, which materializes lanes in host-native
+// order. Their per-lane byte-swap therefore must trigger on
+// `BE != HOST_NATIVE_BE`, not just `BE`. These regression tests pin that
+// gate against a BE-host miscompile.
 
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
@@ -301,7 +301,7 @@ fn neon_p012_be_parity_u16() {
   }
   // Native-depth u16 output exercises `p_n_to_rgb_or_rgba_u16_row`,
   // the second `vld2q_u16` + `deinterleave_endian::<BE>` site in
-  // `subsampled_high_bit_pn_4_2_0.rs` (line 366 in the codex finding).
+  // `subsampled_high_bit_pn_4_2_0.rs`.
   let width = 32;
   let y_intended = p_n_packed_plane::<12>(width, 149);
   let u_half = p_n_packed_plane::<12>(width / 2, 151);
@@ -354,7 +354,7 @@ fn neon_p412_be_parity_u16() {
   }
   // Native-depth u16 output exercises `p_n_444_to_rgb_or_rgba_u16_row`,
   // the second `vld2q_u16` + `deinterleave_endian::<BE>` site in
-  // `subsampled_high_bit_pn_4_4_4.rs` (line 360-363 in the codex finding).
+  // `subsampled_high_bit_pn_4_4_4.rs`.
   let width = 32;
   let y_intended = p_n_packed_plane::<12>(width, 163);
   let u_full = high_bit_plane::<12>(width, 167);

@@ -188,8 +188,8 @@ fn neon_ayuv64_lane_order_per_pixel_y_and_a() {
   );
 }
 
-/// SIMD-level BE-vs-LE parity test: probes the `bswap_u16x8_if_be<BE>` gate
-/// added in `b7fb9d3` (PR #86) at the SIMD layer for AYUV64.
+/// SIMD-level BE-vs-LE parity test: probes the `bswap_u16x8_if_be<BE>`
+/// gate at the SIMD layer for AYUV64.
 ///
 /// Covers all four valid `(ALPHA, ALPHA_SRC)` quadrant subsets used by the
 /// public API: (false,false) and (true,true). Source-α paths route the α

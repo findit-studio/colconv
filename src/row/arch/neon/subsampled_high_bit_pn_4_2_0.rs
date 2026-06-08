@@ -9,8 +9,7 @@ use super::*;
 ///
 /// `vld2q_u16` materializes lanes in the **host-native** u16 byte order
 /// regardless of the wire encoding, so the swap must trigger on
-/// `BE != HOST_NATIVE_BE` (mirrors PR #82 / #85 / #87 / #88 fixes).
-/// Truth table:
+/// `BE != HOST_NATIVE_BE`. Truth table:
 ///
 /// | wire `BE` | host       | gate    | action            |
 /// |-----------|------------|---------|-------------------|

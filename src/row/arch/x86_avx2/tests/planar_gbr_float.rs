@@ -7,10 +7,10 @@ use super::super::*;
 // F16C-gated tests additionally call `is_x86_feature_detected!("f16c")`.
 //
 // Lane-order regression tests use asymmetric R/G/B/A patterns
-// (`R[n] = n+1`, `G[n] = 2n+1`, `B[n] = 3n+1`, `A[n] = 4n+1`) — see
-// PR #73 / Ship 12d / AYUV64 lessons for why uniform-input tests miss
-// per-channel mask bugs. The per-pixel asymmetry distinguishes channels
-// after interleave so a swapped R/G/B mask trips the assertion.
+// (`R[n] = n+1`, `G[n] = 2n+1`, `B[n] = 3n+1`, `A[n] = 4n+1`) — uniform-
+// input tests miss per-channel mask bugs (see the AYUV64 lane-order
+// failure mode). The per-pixel asymmetry distinguishes channels after
+// interleave so a swapped R/G/B mask trips the assertion.
 
 const WIDTHS: &[usize] = &[1, 4, 5, 7, 8, 9, 15, 16, 17, 24, 32, 33, 64, 65, 128, 130];
 
@@ -1377,14 +1377,13 @@ fn avx2_gbrapf16_to_rgba_f16_be_parity() {
   }
 }
 
-// ---- BE parity: SIMD-tail Gbrpf16 → u8/u16 (8 px lane × non-multiple widths) ---
+// BE parity: SIMD-tail Gbrpf16 → u8/u16 at 8 px lane × non-multiple widths.
 //
-// Codex PR #84 Finding 1 follow-up: the SIMD scalar tail in
-// `gbrpf16_to_*_row_f16c` widens f16 → f32 then routes the scalar f32 kernel.
-// Without normalizing the f16 bits first via `from_be` / `from_le`, the
-// BE-source-on-LE-host path double-byte-swaps. AVX2 lane = 8, so widths
-// 5 / 7 / 33 = 8·0 + 5, 8·0 + 7, 8·4 + 1 — each exercises a different
-// non-multiple tail length.
+// The SIMD scalar tail in `gbrpf16_to_*_row_f16c` widens f16 → f32 then
+// routes the scalar f32 kernel. Without normalizing the f16 bits first via
+// `from_be` / `from_le`, the BE-source-on-LE-host path double-byte-swaps.
+// AVX2 lane = 8, so widths 5 / 7 / 33 = 8·0 + 5, 8·0 + 7, 8·4 + 1 — each
+// exercises a different non-multiple tail length.
 const SIMD_TAIL_WIDTHS: &[usize] = &[5, 7, 33];
 
 #[test]
@@ -1579,12 +1578,12 @@ fn avx2_gbrapf16_to_rgba_u16_simd_tail_be_parity() {
   }
 }
 
-// ---- BE parity: SIMD-tail Gbrpf16/Gbrapf16 → f32 (codex 3rd-pass follow-up)
+// BE parity: SIMD-tail Gbrpf16/Gbrapf16 → f32.
 //
 // Same bug class as the integer-output tails but for the f16 → f32 lossless
-// row kernels: the tail widened BE-encoded f16 bits via host-native `to_f32`
-// then routed scratch through `scalar::gbrpf32_to_*_f32_row::<BE>` which
-// byte-swapped the (already-wrong) f32 again. AVX2 lane = 8, so widths
+// row kernels: a tail that widens BE-encoded f16 bits via host-native
+// `to_f32` and routes scratch through `scalar::gbrpf32_to_*_f32_row::<BE>`
+// byte-swaps the (already-wrong) f32 again. AVX2 lane = 8, so widths
 // 5 / 7 / 33 each exercise a different non-multiple tail length.
 
 #[test]

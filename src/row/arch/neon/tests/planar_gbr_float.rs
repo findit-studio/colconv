@@ -1030,16 +1030,16 @@ fn neon_gbrapf16_to_rgba_f16_be_parity() {
   }
 }
 
-// ---- BE parity: SIMD-tail Gbrpf16 → u8 RGB (4 px lane × non-multiple widths) ---
+// BE parity: SIMD-tail Gbrpf16 → u8 RGB at 4 px lane × non-multiple widths.
 //
-// Codex PR #84 Finding 1 follow-up: the SIMD scalar tail in
-// `gbrpf16_to_rgb_row_fp16` widens f16 → f32 then routes the scalar f32
-// kernel. Without normalizing the f16 bits first, the BE-source-on-LE-host
-// path double-byte-swaps (raw `to_f32` widens BE bits as if host-native,
-// then `scalar::gbrpf32_to_rgb_row::<true>` byte-swaps the f32). At widths
-// that are not a multiple of the SIMD lane count (4 for NEON), the tail is
-// reached and the bug manifests. Widths 5 / 7 / 33 = 4·1 + 1, 4·1 + 3,
-// 4·8 + 1 — each exercises a different tail length.
+// The SIMD scalar tail in `gbrpf16_to_rgb_row_fp16` widens f16 → f32 then
+// routes the scalar f32 kernel. Without normalizing the f16 bits first, the
+// BE-source-on-LE-host path double-byte-swaps (raw `to_f32` widens BE bits
+// as if host-native, then `scalar::gbrpf32_to_rgb_row::<true>` byte-swaps
+// the f32). At widths that are not a multiple of the SIMD lane count
+// (4 for NEON), the tail is reached and the bug manifests. Widths
+// 5 / 7 / 33 = 4·1 + 1, 4·1 + 3, 4·8 + 1 — each exercises a different tail
+// length.
 const SIMD_TAIL_WIDTHS: &[usize] = &[5, 7, 33];
 
 #[test]
@@ -1244,15 +1244,14 @@ fn neon_gbrapf16_to_rgba_u16_simd_tail_be_parity() {
   }
 }
 
-// ---- BE parity: SIMD-tail Gbrpf16 → f32 RGB --------------------------------
+// BE parity: SIMD-tail Gbrpf16 → f32 RGB.
 //
-// Codex PR #84 3rd-pass found that the f16 → f32 lossless tail paths had the
-// same double-byte-swap bug class as the integer-output tails fixed in the
-// previous commit (04cded3). At widths that are not a multiple of 4 (NEON
-// SIMD lane count), the scalar tail widened BE-encoded f16 bits as host-
-// native via `to_f32` then routed scratch through `scalar::gbrpf32_to_*::<BE>`
-// which byte-swapped the (already-wrong) f32 again. Widths 5 / 7 / 33 each
-// exercise a different tail length.
+// The f16 → f32 lossless tail paths share the double-byte-swap bug class
+// of the integer-output tails. At widths that are not a multiple of 4
+// (NEON SIMD lane count), a scalar tail that widens BE-encoded f16 bits
+// as host-native via `to_f32` and routes scratch through
+// `scalar::gbrpf32_to_*::<BE>` byte-swaps the (already-wrong) f32 again.
+// Widths 5 / 7 / 33 each exercise a different tail length.
 
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]

@@ -299,21 +299,20 @@ test_gbrap_strategy_a_plus_u16!(
   16
 );
 
-// ---- Strategy A+ at non-multiple width (31) — exercises SIMD scalar tail ---
+// Strategy A+ at non-multiple width (31) exercises the SIMD scalar tail.
 //
 // The SIMD α-extract backends (`copy_alpha_plane_u16{_to_u8}`) hardcode
 // `scalar::<BITS, false>` for the tail (e.g. NEON block size 8 + width 31
-// leaves 7 px in the tail; AVX2/AVX-512 likewise). Codex's 4th-pass review
-// of PR #82 found that the prior dispatcher routing
-// (`need_swap = BE != cfg!(target_endian = "big")`) admitted SIMD on
-// BE-host/BE-data: the vector body's host-native loads are correct there,
-// but the LE-only scalar tail then byte-swaps already-native u16 samples,
-// silently corrupting α at non-multiple widths. The fix is to route SIMD
-// only for the LE-host/LE-data quadrant; these tests at width 31 exercise
-// the SIMD tail path on supported (LE) hosts, locking in the parity
-// guarantee for the LE/LE quadrant. (The LE/BE, BE/LE, BE/BE quadrants
-// are exercised at the scalar level by the `target_endian`-aware scalar
-// helper itself; the new dispatcher routes them to scalar always.)
+// leaves 7 px in the tail; AVX2/AVX-512 likewise). The prior dispatcher
+// routing (`need_swap = BE != cfg!(target_endian = "big")`) admitted SIMD
+// on BE-host/BE-data: the vector body's host-native loads are correct
+// there, but the LE-only scalar tail then byte-swaps already-native u16
+// samples, silently corrupting α at non-multiple widths. SIMD is now
+// gated to the LE-host/LE-data quadrant only; these tests at width 31
+// exercise the SIMD tail path on supported (LE) hosts and pin the parity
+// guarantee for that quadrant. (The LE/BE, BE/LE, BE/BE quadrants are
+// exercised at the scalar level by the `target_endian`-aware scalar
+// helper; the dispatcher routes them to scalar always.)
 
 test_gbrap_strategy_a_plus_u16!(
   gbrap10_strategy_a_plus_u16_matches_standalone_w31,
@@ -552,8 +551,7 @@ test_gbrap_simd_matches_scalar!(
   130
 );
 
-// ====================================================================================
-// Phase 4 — Frame BE flag, Tier 10b. LE+BE round-trip parity tests.
+// Frame BE flag — LE+BE round-trip parity tests.
 //
 // Per-format pattern: build a host-native u16 plane, encode once as LE bytes
 // and once as BE bytes (via `to_le_bytes` / `to_be_bytes`), drive each
@@ -562,7 +560,6 @@ test_gbrap_simd_matches_scalar!(
 // same logical samples must yield the same RGBA output regardless of plane
 // byte order. This catches missing `<BE>` propagation in sinker call sites
 // or in the `gbr_to_*_high_bit_row::<BITS, BE>` dispatch.
-// ====================================================================================
 
 /// Re-encode a host-native u16 slice as **BE-encoded** byte storage. Used to
 /// build `*BeFrame` planes whose bytes are big-endian; the kernel swaps them

@@ -371,11 +371,9 @@ fn y210_matches_v210_with_same_logical_samples() {
 
   assert_eq!(rgb_v210, rgb_y210);
 }
-
-// ====================================================================================
 // Phase 4 — Frame BE flag, Tier 4 Y210 LE/BE round-trip parity test.
 //
-// Pattern mirrors PR #103 (Tier 8 trial) — see
+// Pattern mirrors the Tier 8 trial — see
 // `src/sinker/mixed/tests/packed_rgb_16bit.rs` for the full rationale:
 //   1. Build an LE-encoded plane (host-native on every CI host).
 //   2. Build the same logical plane re-encoded as BE bytes via
@@ -387,8 +385,6 @@ fn y210_matches_v210_with_same_logical_samples() {
 //      paths so the RGBA bytes match exactly.
 //
 // Catches `<const BE>` propagation regressions in the Y210 sinker.
-// ====================================================================================
-
 /// Re-encode a host-native u16 slice as **BE-encoded** byte storage. Used to
 /// build `Y210BeFrame` planes whose bytes are big-endian; the kernel swaps
 /// them back to host-native via `from_be`.

@@ -248,9 +248,9 @@ fn neon_v210_lane_order_per_pixel_y_and_u() {
 // v210 packs three 10-bit samples per 32-bit word; the LE/BE wire forms
 // differ by the byte order of each 32-bit word. We materialize both
 // forms from raw bytes via `to_le_bytes` / `to_be_bytes` so the test
-// is host-independent (mirrors PR #86 `6924907` for V410). Locks down
-// the `BE == HOST_NATIVE_BE` host-endian gate fix on the NEON v210 SIMD
-// body.
+// is host-independent (same shape as the V410 BE/LE parity test). Locks
+// down the `BE == HOST_NATIVE_BE` host-endian gate on the NEON v210
+// SIMD body.
 
 fn build_le_be_v210(words: usize, seed: usize) -> (std::vec::Vec<u8>, std::vec::Vec<u8>) {
   // Build the intended u32 words first, then materialize LE-byte and

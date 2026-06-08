@@ -329,12 +329,8 @@ fn y212_reconstructed_from_yuv422p12_matches_yuv422p12_to_rgb() {
 
   assert_eq!(rgb_planar, rgb_packed);
 }
-
-// ====================================================================================
 // Phase 4 — Frame BE flag, Tier 4 Y212 LE/BE round-trip parity test.
 // Mirrors the Y210 / V210 / Y216 LE/BE tests; see y210.rs for the full pattern.
-// ====================================================================================
-
 fn y212_as_be_u16(host: &[u16]) -> Vec<u16> {
   host
     .iter()

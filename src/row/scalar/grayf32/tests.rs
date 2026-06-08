@@ -328,8 +328,7 @@ fn grayf32_be_parity_luma() {
   assert_eq!(out_le, out_be, "BE and LE grayf32 luma outputs must agree");
 }
 
-/// Closes Copilot review PR #85 finding 3: the existing `grayf32_be_parity_*`
-/// suite covers the integer-output paths but never exercises the lossless
+/// The integer-output `grayf32_be_parity_*` tests don't reach the lossless
 /// `grayf32_to_luma_f32_row::<true>` (BE-encoded f32 → host-native f32)
 /// fast/slow paths. Build a single host-native `intended` fixture,
 /// materialise it as LE / BE byte storage, run both kernels, pin both

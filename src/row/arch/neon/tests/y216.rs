@@ -172,18 +172,16 @@ fn neon_y216_lane_order_per_pixel_y_and_u() {
   );
 }
 
-// ---- Host-independent BE/LE SIMD parity tests ----------------------------
+// Host-independent BE/LE SIMD parity tests.
 //
-// Built per PR #86 `6924907` pattern: construct LE/BE buffers from raw
-// bytes via `to_le_bytes` / `to_be_bytes` and reinterpret as host-native
-// `u16` via `from_ne_bytes`. The byte-level encoding is host-independent —
-// on every host the LE buffer carries the intended values as LE-encoded
-// bytes and the BE buffer carries the same values as BE-encoded bytes —
-// so both kernel monomorphizations decode to the same logical values and
-// produce byte-identical output on both LE and BE hosts. Locks down the
-// `BE == HOST_NATIVE_BE` host-endian gate fix applied to the NEON Y216
-// SIMD bodies (mirrors PR #82 `9c7d533` / PR #85 `9e678b0` /
-// PR #86 `b7fb9d3`).
+// Constructs LE/BE buffers from raw bytes via `to_le_bytes` /
+// `to_be_bytes` and reinterprets as host-native `u16` via `from_ne_bytes`.
+// The byte-level encoding is host-independent — on every host the LE
+// buffer carries the intended values as LE-encoded bytes and the BE
+// buffer carries the same values as BE-encoded bytes — so both kernel
+// monomorphizations decode to the same logical values and produce
+// byte-identical output on both LE and BE hosts. Locks down the
+// `BE == HOST_NATIVE_BE` host-endian gate on the NEON Y216 SIMD bodies.
 
 fn build_le_be_y216(width: usize, seed: usize) -> (std::vec::Vec<u16>, std::vec::Vec<u16>) {
   let intended = pseudo_random_y216(width, seed);

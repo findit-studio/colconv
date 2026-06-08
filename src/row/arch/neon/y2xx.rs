@@ -39,9 +39,8 @@ use crate::{ColorMatrix, row::scalar};
 /// Host-endian gate for Y2xx SIMD bodies.
 ///
 /// `vld2q_u16` deinterleaves using **host-native** u16 reads, so the SIMD
-/// body is only correct when the encoded byte order matches the host. The
-/// truth table (mirrors PR #82 `9c7d533` / PR #85 `9e678b0` / PR #86
-/// `b7fb9d3` host-endian gate fixes):
+/// body is only correct when the encoded byte order matches the host.
+/// Truth table:
 ///
 /// | wire `BE` | host       | `BE == HOST_NATIVE_BE` | path   | correct via    |
 /// |-----------|------------|------------------------|--------|----------------|

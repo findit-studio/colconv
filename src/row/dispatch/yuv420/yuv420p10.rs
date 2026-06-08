@@ -561,8 +561,7 @@ pub fn yuv420p10_to_rgba_u16_row(
 // Host-independent BE parity tests — fixtures built byte-wise via
 // `to_le_bytes` / `to_be_bytes` and reinterpreted with `from_ne_bytes`,
 // so the LE and BE variants exercise the dispatcher's `BE=false` and
-// `BE=true` paths regardless of host endianness. Mirrors PR #82
-// `8f2e329` and the per-arch test convention.
+// `BE=true` paths regardless of host endianness.
 mod be_parity_tests {
   use super::*;
 

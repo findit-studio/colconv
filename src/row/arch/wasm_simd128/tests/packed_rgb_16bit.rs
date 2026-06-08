@@ -25,10 +25,7 @@ fn widths() -> &'static [usize] {
   &[1, 7, 8, 9, 15, 16, 17, 31, 32, 33]
 }
 
-// =============================================================================
-// Rgb48 kernels
-// =============================================================================
-
+// Rgb48 kernels.
 #[cfg(target_feature = "simd128")]
 #[test]
 fn wasm_rgb48_to_rgb_matches_scalar() {
@@ -81,10 +78,7 @@ fn wasm_rgb48_to_rgba_u16_matches_scalar() {
   }
 }
 
-// =============================================================================
-// Bgr48 kernels
-// =============================================================================
-
+// Bgr48 kernels.
 #[cfg(target_feature = "simd128")]
 #[test]
 fn wasm_bgr48_to_rgb_matches_scalar() {
@@ -137,10 +131,7 @@ fn wasm_bgr48_to_rgba_u16_matches_scalar() {
   }
 }
 
-// =============================================================================
-// Rgba64 kernels
-// =============================================================================
-
+// Rgba64 kernels.
 #[cfg(target_feature = "simd128")]
 #[test]
 fn wasm_rgba64_to_rgb_matches_scalar() {
@@ -193,10 +184,7 @@ fn wasm_rgba64_to_rgba_u16_matches_scalar() {
   }
 }
 
-// =============================================================================
-// Bgra64 kernels
-// =============================================================================
-
+// Bgra64 kernels.
 #[cfg(target_feature = "simd128")]
 #[test]
 fn wasm_bgra64_to_rgb_matches_scalar() {
@@ -249,9 +237,7 @@ fn wasm_bgra64_to_rgba_u16_matches_scalar() {
   }
 }
 
-// =============================================================================
-// Lane-order regression tests (Codex Bug 1: stride-4 deinterleave)
-// =============================================================================
+// Lane-order regression tests for the stride-4 deinterleave.
 //
 // These tests use asymmetric per-pixel channel inputs that catch
 // per-pixel mixing bugs that uniform-value tests miss. The earlier
@@ -375,9 +361,7 @@ fn wasm_bgra64_to_rgb_u16_lane_order_regression() {
   }
 }
 
-// =============================================================================
-// SIMD-level BE-vs-LE parity tests (probes `BE != HOST_NATIVE_BE` gate)
-// =============================================================================
+// SIMD-level BE-vs-LE parity tests (probes `BE != HOST_NATIVE_BE` gate).
 //
 // Buffers built host-independently via `to_le_bytes` / `to_be_bytes`. Width
 // 17 = 2 × 8-lane wasm-simd128 SIMD body + 1 scalar tail.
@@ -583,9 +567,7 @@ fn wasm_bgra64_be_le_simd_parity_width17() {
   );
 }
 
-// =============================================================================
-// X2RGB10 / X2BGR10 SIMD-level BE-vs-LE parity tests
-// =============================================================================
+// X2RGB10 / X2BGR10 SIMD-level BE-vs-LE parity tests.
 //
 // Co-located here (rather than in `tests/packed_rgb.rs` which is not
 // declared in `tests/mod.rs`) so they are actually compiled and run.

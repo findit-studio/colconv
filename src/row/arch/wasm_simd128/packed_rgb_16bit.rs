@@ -40,10 +40,7 @@ use core::arch::wasm32::*;
 
 use super::*;
 
-// =============================================================================
-// Stride-3 deinterleave helper (8 pixels, 3 × v128 loads)
-// =============================================================================
-
+// Stride-3 deinterleave helper (8 pixels, 3 × v128 loads).
 /// Deinterleave 8 pixels of stride-3 u16 from three `v128` loads into
 /// `(ch0, ch1, ch2)` channel vectors, each holding 8 u16 values in natural order.
 ///
@@ -131,10 +128,7 @@ unsafe fn deinterleave_rgb48_8px(v0: v128, v1: v128, v2: v128) -> (v128, v128, v
   (ch0, ch1, ch2)
 }
 
-// =============================================================================
-// Stride-4 deinterleave helper (8 pixels, 4 × v128 loads)
-// =============================================================================
-
+// Stride-4 deinterleave helper (8 pixels, 4 × v128 loads).
 /// Deinterleave 8 pixels of stride-4 u16 from four `v128` loads into
 /// `(ch0, ch1, ch2, ch3)` channel vectors, each holding 8 u16 values in natural order.
 ///
@@ -198,10 +192,7 @@ unsafe fn deinterleave_rgba64_8px(
   (ch0, ch1, ch2, ch3)
 }
 
-// =============================================================================
-// u16 → u8 narrowing helper
-// =============================================================================
-
+// u16 → u8 narrowing helper.
 /// Narrow a u16×8 vector to u8×8 (in the low half) via logical right-shift by 8.
 ///
 /// Equivalent to scalar `(v >> 8) as u8`. Packs the zero high-half via
@@ -253,10 +244,7 @@ unsafe fn byteswap_if_be<const BE: bool>(v: v128) -> v128 {
   }
 }
 
-// =============================================================================
-// Rgb48 (R, G, B — 3 u16 elements per pixel)
-// =============================================================================
-
+// Rgb48 (R, G, B — 3 u16 elements per pixel).
 /// wasm-simd128 Rgb48 → packed u8 RGB. 8 pixels per iteration.
 ///
 /// Three `v128_load` calls deinterleave into `(R, G, B)` u16×8 via
@@ -412,10 +400,7 @@ pub(crate) unsafe fn wasm_rgb48_to_rgba_u16_row<const BE: bool>(
   }
 }
 
-// =============================================================================
-// Bgr48 (B, G, R — 3 u16 elements per pixel)
-// =============================================================================
-
+// Bgr48 (B, G, R — 3 u16 elements per pixel).
 /// wasm-simd128 Bgr48 → packed u8 RGB. 8 pixels per iteration.
 /// B↔R swap via passing `(ch2=R, ch1=G, ch0=B)` to write helpers.
 ///
@@ -571,10 +556,7 @@ pub(crate) unsafe fn wasm_bgr48_to_rgba_u16_row<const BE: bool>(
   }
 }
 
-// =============================================================================
-// Rgba64 (R, G, B, A — 4 u16 elements per pixel)
-// =============================================================================
-
+// Rgba64 (R, G, B, A — 4 u16 elements per pixel).
 /// wasm-simd128 Rgba64 → packed u8 RGB. 8 pixels per SIMD iteration.
 /// Alpha discarded.
 ///
@@ -730,10 +712,7 @@ pub(crate) unsafe fn wasm_rgba64_to_rgba_u16_row<const BE: bool>(
   }
 }
 
-// =============================================================================
-// Bgra64 (B, G, R, A — 4 u16 elements per pixel)
-// =============================================================================
-
+// Bgra64 (B, G, R, A — 4 u16 elements per pixel).
 /// wasm-simd128 Bgra64 → packed u8 RGB. 8 pixels per SIMD iteration.
 /// B↔R swap; alpha discarded.
 ///

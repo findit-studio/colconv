@@ -48,12 +48,8 @@
 use core::arch::x86_64::*;
 
 use super::*;
-
-// =============================================================================
 // Shared deinterleave helper (stride-3, 8-pixel, SSE4.1-level — same masks as
 // the AVX2 and SSE4.1 siblings)
-// =============================================================================
-
 /// Deinterleave 8 pixels of stride-3 u16 from three `__m128i` loads into
 /// `(ch0, ch1, ch2)` channel vectors, each holding 8 u16 values.
 ///
@@ -102,9 +98,7 @@ unsafe fn deinterleave_rgb48_8px(
   }
 }
 
-// =============================================================================
-// Rgba64 / Bgra64 helpers — stride-4, 32-pixel deinterleave (__m512i)
-// =============================================================================
+// Rgba64 / Bgra64 helpers — stride-4, 32-pixel deinterleave (__m512i).
 //
 // 32 pixels x 4 u16 channels = 128 u16 = 256 bytes.
 //
@@ -227,10 +221,7 @@ unsafe fn deinterleave_rgba64_32px(
   }
 }
 
-// =============================================================================
-// u16 → u8 narrowing via srli::<8> + cvtusepi16_epi8
-// =============================================================================
-
+// u16 → u8 narrowing via srli::<8> + cvtusepi16_epi8.
 /// Narrow a u16x32 vector to u8x32 (256-bit result) via logical right-shift
 /// by 8, then saturating unsigned narrow with `_mm512_cvtusepi16_epi8`.
 ///
@@ -297,10 +288,7 @@ unsafe fn byteswap512_if_be<const BE: bool>(v: __m512i) -> __m512i {
   }
 }
 
-// =============================================================================
-// Rgb48 (R, G, B — 3 u16 elements per pixel)
-// =============================================================================
-
+// Rgb48 (R, G, B — 3 u16 elements per pixel).
 /// AVX-512 Rgb48 → packed u8 RGB. 32 pixels per outer iteration.
 ///
 /// Processes four 8-pixel halves (3 x 128-bit loads each) under the
@@ -539,10 +527,7 @@ pub(crate) unsafe fn avx512_rgb48_to_rgba_u16_row<const BE: bool>(
   }
 }
 
-// =============================================================================
-// Bgr48 (B, G, R — 3 u16 elements per pixel)
-// =============================================================================
-
+// Bgr48 (B, G, R — 3 u16 elements per pixel).
 /// AVX-512 Bgr48 → packed u8 RGB. 32 pixels per outer iteration.
 /// B↔R swap via passing `(ch2, ch1, ch0)` to write helpers.
 /// When `BE = true` each loaded register is byte-swapped before deinterleaving.
@@ -746,10 +731,7 @@ pub(crate) unsafe fn avx512_bgr48_to_rgba_u16_row<const BE: bool>(
   }
 }
 
-// =============================================================================
-// Rgba64 (R, G, B, A — 4 u16 elements per pixel)
-// =============================================================================
-
+// Rgba64 (R, G, B, A — 4 u16 elements per pixel).
 /// AVX-512 Rgba64 → packed u8 RGB. 32 pixels per SIMD iteration.
 /// Loads 4 x `__m512i` (128 u16 = 32 pixels), deinterleaves via the
 /// AVX-512 cascade helper, narrows via `>> 8` + `cvtusepi16_epi8`, writes
@@ -969,10 +951,7 @@ pub(crate) unsafe fn avx512_rgba64_to_rgba_u16_row<const BE: bool>(
   }
 }
 
-// =============================================================================
-// Bgra64 (B, G, R, A — 4 u16 elements per pixel)
-// =============================================================================
-
+// Bgra64 (B, G, R, A — 4 u16 elements per pixel).
 /// AVX-512 Bgra64 → packed u8 RGB. 32 pixels per SIMD iteration.
 /// B↔R swap; alpha discarded.
 ///
@@ -1187,10 +1166,7 @@ pub(crate) unsafe fn avx512_bgra64_to_rgba_u16_row<const BE: bool>(
   }
 }
 
-// =============================================================================
-// Helper: narrow u16x8 (128-bit) to u8x8 (used by stride-3 paths)
-// =============================================================================
-
+// Helper: narrow u16x8 (128-bit) to u8x8 (used by stride-3 paths).
 /// Narrow a u16x8 vector to u8x8 (in the low half) via logical right-shift by 8.
 ///
 /// Equivalent to scalar `(v >> 8) as u8`. Zero-packs the high half.

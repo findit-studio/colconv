@@ -136,7 +136,7 @@ fn nv21_matches_nv12_mixed_sinker_with_swapped_chroma() {
   assert_eq!(rgb_nv12, rgb_nv21);
 }
 
-// ---- NV21 RGBA (Ship 8 PR 2) tests --------------------------------------
+// NV21 RGBA tests.
 //
 // Mirrors the NV12 RGBA tests. The cross-format invariant against
 // NV12 RGBA (with byte-swapped chroma) catches the case where

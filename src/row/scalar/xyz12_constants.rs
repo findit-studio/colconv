@@ -46,17 +46,15 @@
 //! (ITU-R BT.2020-2): derived matrix values agree to 4–5 decimals
 //! with each standard's published inverse.
 //!
-//! # Codex round-2 fix (2026-05-09)
+//! # `DciP3` decodes to DCI white, not D65
 //!
-//! Pre-fix code used D65 white for the `DciP3` variant, which
-//! corresponds to "Display-P3" (Apple / web / ICC `display-p3`) — not
-//! the SMPTE ST 428 / DCP theatrical decode target. The `M_XYZ_TO_RGB_DCI_P3`
-//! constant has been re-derived with DCI white `(0.314, 0.351)` per
-//! SMPTE RP 431-2 §5.1; this changes the f32 matrix coefficients and
-//! therefore the f32 RGB output values for every `DciP3`-targeted
-//! `xyz12_to` caller. Callers who specifically wanted Display-P3 D65
-//! desktop preview should select `Rec709` (or open a follow-up issue
-//! for an explicit `DisplayP3D65` variant).
+//! `M_XYZ_TO_RGB_DCI_P3` is derived with DCI white `(0.314, 0.351)` per
+//! SMPTE RP 431-2 §5.1, **not** D65 — D65 would produce "Display-P3"
+//! (Apple / web / ICC `display-p3`), which is a different target. Using
+//! the wrong white biases every `DciP3`-targeted `xyz12_to` caller's f32
+//! RGB output. Callers who specifically want Display-P3 D65 desktop
+//! preview should select `Rec709` (or request an explicit `DisplayP3D65`
+//! variant).
 
 use crate::DcpTargetGamut;
 
@@ -95,10 +93,8 @@ pub(crate) const M_XYZ_TO_RGB_REC709: [[f32; 3]; 3] = [
 /// want desktop preview should select `Rec709` (sRGB / Display-P3
 /// approximation) or pre-adapt the XYZ themselves before decoding.
 ///
-/// Codex round-2 finding (high): the original v0.24.0-pre constant
-/// used D65 (Display-P3 / "P3-D65"), producing systematically biased
-/// white balance for the documented DCP / SMPTE ST 428 use case. This
-/// constant is the corrected DCI-white target.
+/// Using D65 here (Display-P3 / "P3-D65") would systematically bias
+/// white balance for the documented DCP / SMPTE ST 428 use case.
 ///
 /// f64 source values (from `examples/derive_xyz_matrices.rs`,
 /// re-derived with the closed-form primary-scaling algorithm):
