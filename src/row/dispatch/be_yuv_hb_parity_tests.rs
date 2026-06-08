@@ -1,6 +1,5 @@
 //! Dispatch-level BE/LE parity tests for the high-bit YUV planar and
-//! P-format row dispatchers (codex round-3 follow-up on
-//! `feat/be-yuv-hb`).
+//! P-format row dispatchers.
 //!
 //! Each test asserts that `<format>_to_<output>_row_endian(.., true)`
 //! on a BE-encoded fixture produces byte-identical output to
@@ -12,7 +11,6 @@
 //! pair exercises the swap path, regardless of whether the host is LE
 //! or BE.
 //!
-//! Mirrors PR #82 `8f2e329` and the per-arch BE/LE parity tests.
 //! Tests run with SIMD active where the host CPU supports it; the
 //! `#[cfg_attr(miri, ignore)]` guard avoids exercising SIMD intrinsics
 //! under Miri.
@@ -723,12 +721,12 @@ fn p416_dispatch_be_le_parity() {
   }
 }
 
-// ---- YUVA dispatch parity (codex round-5 follow-up) ---------------------
+// YUVA dispatch parity.
 //
 // Mirrors the non-alpha YUV high-bit dispatcher tests above. Adds
 // dispatch-level BE/LE parity coverage for the YUVA 4:2:0 and 4:4:4
-// families — which were missed by round-3 and forced through
-// `BE = false` regardless of the source contract. Uses the same
+// families (otherwise the YUVA dispatch path goes through
+// `BE = false` regardless of the source contract). Uses the same
 // `to_le_bytes` / `to_be_bytes` host-independent fixture pattern;
 // asserts byte-identical output between
 // `_endian(LE_buf, false)` and `_endian(BE_buf, true)` for both

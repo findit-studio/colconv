@@ -259,13 +259,12 @@ fn rgbf32_simd_matches_scalar_with_random_input() {
 /// LE-encoded bytes; if it skipped the swap (e.g. `::<HOST_NATIVE_BE>` on
 /// BE), the output would be byte-swapped relative to `intended`.
 ///
-/// Mirrors the `Grayf32` regression added in PR #85's `52f8191`.
+/// Mirrors the `Grayf32` LE-encoded byte contract regression.
 ///
 /// Forces `with_simd(false)` so this test runs purely scalar — no SIMD
 /// intrinsics — which lets it execute under `cargo miri test`. BE CI is
-/// driven by miri on s390x / powerpc64; gating it out of miri (per the
-/// codex 4th-pass finding) would skip exactly the host where BE corruption
-/// would surface.
+/// driven by miri on s390x / powerpc64; gating this test out of miri
+/// would skip exactly the host where BE corruption would surface.
 #[test]
 fn rgbf32_sinker_le_encoded_frame_decodes_correctly() {
   // Mix HDR, in-range, and negative values — the f32 lossless path must
@@ -302,8 +301,6 @@ fn rgbf32_sinker_le_encoded_frame_decodes_correctly() {
     "Rgbf32 sinker LE-encoded plane decoded incorrectly"
   );
 }
-
-// ====================================================================================
 // Phase 4 — Rgbf32 LE/BE round-trip
 //
 // Build host-independent fixtures for the same logical samples in BOTH plane
@@ -315,8 +312,6 @@ fn rgbf32_sinker_le_encoded_frame_decodes_correctly() {
 //   - missing `<BE>` propagation in the rgbf32 sinker call sites,
 //   - regressions in the `f32::from_bits(u32::from_le/be(...))` swap path,
 //   - mismatches between `MixedSinker<Rgbf32<true>>` and the BE row kernels.
-// ====================================================================================
-
 /// Re-encode a host-native f32 slice as **LE-encoded** byte storage. Used to
 /// build `Rgbf32LeFrame` planes whose bytes are little-endian; the kernel
 /// recovers host-native via `from_le` on the bit pattern.

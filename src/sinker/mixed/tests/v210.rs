@@ -396,8 +396,6 @@ fn v210_reconstructed_from_yuv422p10_matches_yuv422p10_to_rgb() {
 
   assert_eq!(rgb_planar, rgb_packed);
 }
-
-// ====================================================================================
 // Phase 4 — Frame BE flag, Tier 4 V210 LE/BE round-trip parity test.
 //
 // V210 packs 12 x 10-bit samples into a 16-byte word as four 32-bit LE u32s.
@@ -407,8 +405,6 @@ fn v210_reconstructed_from_yuv422p10_matches_yuv422p10_to_rgb() {
 //
 // Pattern mirrors the Y210 / Y212 / Y216 LE/BE tests; see
 // `sinker/mixed/tests/y210.rs` for the rationale.
-// ====================================================================================
-
 /// Re-encode a v210 plane as **BE-encoded** byte storage by byte-swapping
 /// each 32-bit word in-place. The kernel's `load_endian_u32::<true>` undoes
 /// the swap to recover the same 10-bit samples.

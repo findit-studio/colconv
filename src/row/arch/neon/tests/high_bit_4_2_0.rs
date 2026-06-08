@@ -229,9 +229,8 @@ fn neon_yuv420p9_matches_scalar_tail_and_large_widths() {
 /// - `p010`: 10 active bits in the high 10 of each `u16`
 ///   (`sample << 6`) — the canonical mispacking mistake.
 /// - `ycgco_worst`: `Y=[0x8000; W]`, `U=[0; W/2]`, `V=[0x8000; W/2]`
-///   — the specific Codex‑identified case that used to produce
-///   `(1023, 0, 0)` on scalar vs `(0, 0, 0)` on NEON before the
-///   load‑time mask was added.
+///   — the specific case that used to produce `(1023, 0, 0)` on scalar
+///   vs `(0, 0, 0)` on NEON before the load‑time mask was added.
 /// - `random`: arbitrary upper‑bit flips with no particular pattern.
 ///
 /// Each variant runs through every color matrix × range × both

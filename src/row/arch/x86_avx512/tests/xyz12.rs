@@ -150,14 +150,14 @@ fn avx512_xyz12_to_rgba_matches_scalar() {
   }
 }
 
-// ---- In-register store regression coverage (PR #91 Comment 2) -----------
+// In-register store regression coverage.
 //
-// The u8 RGB / RGBA store paths were rewritten to use the shared
-// `write_rgb_16` / `write_rgba_16` `_mm_shuffle_epi8` interleave
-// helpers instead of a 3× `[u16; 16]` stack-temp + per-pixel scalar
-// scatter. These tests pin block-multiple widths (16, 32) that hit
-// the SIMD fast path exclusively (no scalar tail), confirming
-// byte-identical output against the scalar reference.
+// The u8 RGB / RGBA store paths use the shared `write_rgb_16` /
+// `write_rgba_16` `_mm_shuffle_epi8` interleave helpers instead of a
+// 3× `[u16; 16]` stack-temp + per-pixel scalar scatter. These tests pin
+// block-multiple widths (16, 32) that hit the SIMD fast path exclusively
+// (no scalar tail), confirming byte-identical output against the scalar
+// reference.
 
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]

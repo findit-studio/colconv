@@ -74,10 +74,9 @@ use crate::{
 ///
 /// Without this routing the f16 → f32 widen path double-byte-swaps on
 /// `BE`-source-on-LE-host (and symmetrically `LE`-source-on-BE-host),
-/// corrupting every integer / luma / HSV output (codex PR #84 Finding 1).
-/// This is the **dispatch-layer** complement of the SIMD-backend-internal
-/// `HOST_NATIVE_BE` introduced in `c3a6478` for the rgbf16 widen-then-convert
-/// paths.
+/// corrupting every integer / luma / HSV output. This is the
+/// **dispatch-layer** complement of the SIMD-backend-internal
+/// `HOST_NATIVE_BE` used for the rgbf16 widen-then-convert paths.
 const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 
 /// Widen `n` `half::f16` values from `src[offset..offset + n]` into

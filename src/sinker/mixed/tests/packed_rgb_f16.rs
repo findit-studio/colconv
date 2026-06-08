@@ -323,13 +323,12 @@ fn rgbf16_simd_matches_scalar_with_random_input() {
 /// kernel must apply `u16::from_le` to recover host-native f16 bit-patterns
 /// from the LE-encoded bytes.
 ///
-/// Mirrors the `Grayf32` regression added in PR #85's `52f8191`.
+/// Mirrors the `Grayf32` LE-encoded byte contract regression.
 ///
 /// Forces `with_simd(false)` so this test runs purely scalar — no SIMD
 /// intrinsics — which lets it execute under `cargo miri test`. BE CI is
-/// driven by miri on s390x / powerpc64; gating it out of miri (per the
-/// codex 4th-pass finding) would skip exactly the host where BE corruption
-/// would surface.
+/// driven by miri on s390x / powerpc64; gating this test out of miri
+/// would skip exactly the host where BE corruption would surface.
 ///
 /// Re-gated on miri because the fixture builder calls `half::f16::from_f32`,
 /// which on aarch64 / x86 / x86_64 with `target_feature = "fp16"` (or F16C)
@@ -367,8 +366,6 @@ fn rgbf16_sinker_le_encoded_frame_decodes_correctly() {
     "Rgbf16 sinker LE-encoded plane decoded incorrectly"
   );
 }
-
-// ====================================================================================
 // Phase 4 — Rgbf16 LE/BE round-trip
 //
 // Build host-independent fixtures for the same logical samples in BOTH plane
@@ -385,8 +382,6 @@ fn rgbf16_sinker_le_encoded_frame_decodes_correctly() {
 // expands to inline `asm!` on platforms with hardware f16 support, which miri
 // rejects. The plain LE-decode regression above already covers BE-host miri
 // (via s390x / powerpc64) using f32 fixtures that don't need hardware f16.
-// ====================================================================================
-
 /// Re-encode a host-native f16 slice as **LE-encoded** byte storage.
 fn as_le_rgbf16(host: &[half::f16]) -> Vec<half::f16> {
   host

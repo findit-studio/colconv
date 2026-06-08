@@ -1121,8 +1121,7 @@ pub(crate) unsafe fn ya8_to_hsv_row(
 /// The SSE4.1 Ya16 SIMD bodies use `_mm_loadu_si128` + fixed `_mm_shuffle_epi8`
 /// masks (`13,12,9,8,5,4,1,0` etc.) that gather the **host-native** high byte
 /// of each Ya16 word. They are only correct when the encoded byte order matches
-/// the host. The full truth table (mirrors PR #82 `9c7d533` dispatcher routing
-/// fix):
+/// the host. Truth table:
 ///
 /// | data BE | host BE | `BE != HOST_NATIVE_BE` | path   | correct via       |
 /// |---------|---------|------------------------|--------|-------------------|

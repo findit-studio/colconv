@@ -1150,8 +1150,7 @@ pub(crate) unsafe fn ya8_to_hsv_row(
 ///
 /// The AVX2 Ya16 SIMD bodies use `_mm256_loadu_si256` + fixed shuffle masks
 /// that gather the **host-native** high byte of each Ya16 word. They are only
-/// correct when the encoded byte order matches the host. The full truth table
-/// (mirrors PR #82 `9c7d533` dispatcher routing fix):
+/// correct when the encoded byte order matches the host. Truth table:
 ///
 /// | data BE | host BE | `BE != HOST_NATIVE_BE` | path   | correct via       |
 /// |---------|---------|------------------------|--------|-------------------|

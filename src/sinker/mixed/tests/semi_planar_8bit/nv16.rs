@@ -175,7 +175,7 @@ fn nv16_matches_nv12_mixed_sinker_with_duplicated_chroma() {
   assert_eq!(rgb_nv16, rgb_nv12);
 }
 
-// ---- NV16 RGBA (Ship 8 PR 3) tests --------------------------------------
+// NV16 RGBA tests.
 //
 // NV16 reuses the NV12 `_to_rgba_row` dispatcher (4:2:2's row
 // contract is identical to NV12's). Tests mirror the NV12 set;

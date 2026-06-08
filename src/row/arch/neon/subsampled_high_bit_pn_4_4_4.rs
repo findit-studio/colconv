@@ -19,9 +19,8 @@ use super::*;
 ///
 /// `vld2q_u16` materializes lanes in the **host-native** u16 byte order
 /// regardless of the wire encoding, so the swap must trigger on
-/// `BE != HOST_NATIVE_BE` (mirrors PR #82 / #85 / #87 / #88 fixes).
-/// See [`bswap_u16x8_if_be`](super::bswap_u16x8_if_be) for the truth
-/// table; this wrapper just applies it to both UV halves.
+/// `BE != HOST_NATIVE_BE`. See [`bswap_u16x8_if_be`](super::bswap_u16x8_if_be)
+/// for the truth table; this wrapper just applies it to both UV halves.
 #[inline(always)]
 unsafe fn deinterleave_endian<const BE: bool>(pair: uint16x8x2_t) -> uint16x8x2_t {
   unsafe {

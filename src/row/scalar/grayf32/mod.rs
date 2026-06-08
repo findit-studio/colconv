@@ -224,8 +224,7 @@ pub(crate) fn grayf32_to_luma_f32_row<const BE: bool>(
   // (LE-encoded data on LE host, or BE-encoded data on BE host.) The
   // const-generic `BE == HOST_NATIVE_BE` branch is dead-code-eliminated
   // per monomorphization, so this becomes a single `copy_from_slice` call
-  // with no swap loop. Mirrors the `rgbf32_to_rgb_f32_row` fast path
-  // landed in PR #83 (`b915754`).
+  // with no swap loop. Mirrors the `rgbf32_to_rgb_f32_row` fast path.
   const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
   if BE == HOST_NATIVE_BE {
     luma_f32_out[..width].copy_from_slice(&plane[..width]);

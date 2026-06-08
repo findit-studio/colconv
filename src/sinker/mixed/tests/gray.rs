@@ -438,8 +438,7 @@ fn gray16_limited_range_rgba_u16_channels_rescale_at_boundaries() {
   // Regression for the i32-overflow bug at BITS=16: limited-range white
   // 60160 x max_native 65535 ≈ 3.67e9 overflows i32. Math runs in i64;
   // assert that RGB channels reach black=0 and white=65535 at the
-  // limited-range boundaries (codex finding requested
-  // u16-channel-value asserts, not only alpha).
+  // limited-range boundaries (pinning u16-channel values, not just alpha).
   let plane = as_le_u16(&[4096u16, 60160u16, 65535u16, 0u16]);
   let frame = make_gray16_frame(&plane, 4, 1);
   let mut rgba_u16 = std::vec![0u16; 16];
@@ -610,8 +609,7 @@ fn grayf32_width_128_and_130_smoke() {
   }
 }
 
-/// Sinker-layer Frame-contract regression for codex 3rd-pass review of
-/// PR #85.
+/// Sinker-layer Frame-contract regression for `Grayf32`.
 ///
 /// [`Grayf32Frame`] documents its `&[f32]` plane as **FFmpeg `grayf32le`**
 /// (see `src/frame/gray.rs`): the byte layout is little-endian-encoded f32,
@@ -635,8 +633,7 @@ fn grayf32_width_128_and_130_smoke() {
 /// catches any regression that drops the `::<false>` routing.
 ///
 /// Replaces the two earlier (incorrectly-typed) regressions that assumed
-/// `Grayf32Frame` was host-native f32; the codex 3rd-pass review of
-/// commit `1bd851a` caught the contract conflict.
+/// `Grayf32Frame` was host-native f32.
 #[test]
 #[cfg_attr(
   miri,
@@ -871,8 +868,8 @@ fn ya16_with_hsv_h0_s0_v_shifted() {
 
 /// Strategy A+ (combined `with_rgb` + `with_rgba`) must produce α bytes
 /// byte-identical to the standalone `with_rgba` path. Locks down the
-/// codex-flagged corruption where a BE host processing the LE-encoded
-/// `Ya16Frame` would otherwise diverge between the two paths: standalone
+/// corruption where a BE host processing the LE-encoded `Ya16Frame`
+/// would otherwise diverge between the two paths: standalone
 /// uses the endian-aware `ya16_to_rgba_row::<false>` kernel; combined
 /// expanded RGB → RGBA then patched α via `copy_alpha_ya_u16_to_u8` which
 /// previously read raw `packed[n*2+1]` host-native and so emitted a
@@ -1026,8 +1023,6 @@ fn ya16_width_128_and_130_smoke() {
     assert_eq!(&rgba[0..4], &[0, 0, 0, 0xFF], "w={w} px0");
   }
 }
-
-// ====================================================================================
 // Phase 4 — Frame BE flag, Tier 11. LE+BE round-trip parity tests.
 //
 // Pattern (per format):
@@ -1041,8 +1036,6 @@ fn ya16_width_128_and_130_smoke() {
 // Output A and B must be byte-identical because the kernel byte-swaps under
 // the hood — the same logical samples should yield the same RGBA bytes
 // regardless of input byte order.
-// ====================================================================================
-
 use crate::{
   frame::{
     Gray9BeFrame, Gray9LeFrame, Gray10BeFrame, Gray10LeFrame, Gray12BeFrame, Gray12LeFrame,
@@ -1070,14 +1063,12 @@ fn as_be_f32(host: &[f32]) -> std::vec::Vec<f32> {
     .collect()
 }
 
-// ----------------------------------------------------------------------------
 // LE/BE parity helper macros. Each format's intent + frame ctor + sink shape
 // varies, so we factor the boilerplate (the `for use_simd in [false, true]`
 // loop, walker invocations, and the divergence assert) and let each call
 // site supply only what's unique. Mirrors the
 // `planar3_be_roundtrip_test! / planar4_be_roundtrip_test! / pn_be_roundtrip_test!`
-// precedent established in PR #110.
-// ----------------------------------------------------------------------------
+// shape used elsewhere.
 
 /// Single-output u16 parity test (Gray9/10/12/14): one `with_rgba` sink and a
 /// masked-u16 `intended` pattern.
@@ -1096,8 +1087,8 @@ macro_rules! gray_planar_u16_le_be_roundtrip_test {
     let pix_be = as_be_u16(&intended);
 
     // Cover both scalar (`with_simd(false)`) and SIMD (`with_simd(true)`)
-    // dispatch paths so the codex round-1 finding (BE parity tests bypassing
-    // SIMD) is closed. Under Miri, drop the SIMD iteration only — Miri can't
+    // dispatch paths so neither alone can mask a BE-parity divergence.
+    // Under Miri, drop the SIMD iteration only — Miri can't
     // run the NEON/x86 intrinsics, but the scalar BE/LE path is exactly what
     // Miri exists to verify, so we keep that arm.
     #[cfg(miri)]

@@ -882,8 +882,7 @@ pub(crate) unsafe fn ya8_to_hsv_row(
 /// The wasm-simd128 Ya16 SIMD bodies use `v128_load` + fixed swizzle masks
 /// (`0,1,4,5,8,9,12,13,...`) plus `u16x8_shr` that gather the **host-native**
 /// high byte of each Ya16 word. They are only correct when the encoded byte
-/// order matches the host. The full truth table (mirrors PR #82 `9c7d533`
-/// dispatcher routing fix):
+/// order matches the host. Truth table:
 ///
 /// | data BE | host BE | `BE != HOST_NATIVE_BE` | path   | correct via       |
 /// |---------|---------|------------------------|--------|-------------------|

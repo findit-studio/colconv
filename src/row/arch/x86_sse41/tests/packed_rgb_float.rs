@@ -101,7 +101,7 @@ fn rgbf32_to_rgb_row_simd_matches_scalar_under_truncate_mxcsr() {
 
   assert_eq!(
     simd_out, scalar_out,
-    "SSE4.1 SIMD diverged from scalar under truncate MXCSR (Codex #69)"
+    "SSE4.1 SIMD diverged from scalar under truncate MXCSR"
   );
 }
 

@@ -33,10 +33,7 @@ use core::arch::wasm32::*;
 
 use crate::row::scalar::alpha_extract as scalar;
 
-// ---------------------------------------------------------------------------
-// Helper 1: VUYA u8 → u8 RGBA  (α at packed slot 3)
-// ---------------------------------------------------------------------------
-
+// Helper 1: VUYA u8 → u8 RGBA  (α at packed slot 3).
 /// VUYA → u8 RGBA: gather α from `packed[3 + 4*n]` into `rgba_out[3 + 4*n]`.
 ///
 /// VUYA layout per pixel: `[V(8), U(8), Y(8), A(8)]` — α is at slot 3, which
@@ -82,10 +79,7 @@ pub(crate) unsafe fn copy_alpha_packed_u8x4_at_3(packed: &[u8], rgba_out: &mut [
   }
 }
 
-// ---------------------------------------------------------------------------
-// Helper 2: AYUV64 u16 → u8 RGBA  (α at packed slot 0, depth >> 8)
-// ---------------------------------------------------------------------------
-
+// Helper 2: AYUV64 u16 → u8 RGBA  (α at packed slot 0, depth >> 8).
 /// AYUV64 → u8 RGBA: gather α from `packed[0 + 4*n]` (u16) into
 /// `rgba_out[3 + 4*n]` (u8) with depth-conv `>> 8`.
 ///
@@ -163,10 +157,7 @@ pub(crate) unsafe fn copy_alpha_packed_u16x4_to_u8_at_0(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Helper 3: AYUV64 u16 → u16 RGBA  (α at packed slot 0, no depth conv)
-// ---------------------------------------------------------------------------
-
+// Helper 3: AYUV64 u16 → u16 RGBA  (α at packed slot 0, no depth conv).
 /// AYUV64 → u16 RGBA: gather α from `packed[0 + 4*n]` (u16) into
 /// `rgba_out[3 + 4*n]` (u16). No depth conversion.
 ///
@@ -238,10 +229,7 @@ pub(crate) unsafe fn copy_alpha_packed_u16x4_at_0(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Helper 4: α plane u8 → u8 RGBA
-// ---------------------------------------------------------------------------
-
+// Helper 4: α plane u8 → u8 RGBA.
 /// Yuva420p / 422p / 444p u8 → u8 RGBA: scatter α plane into
 /// `rgba_out[3 + 4*n]`.
 ///
@@ -292,10 +280,7 @@ pub(crate) unsafe fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], widt
   }
 }
 
-// ---------------------------------------------------------------------------
-// Helper 5: α plane u16 → u8 RGBA  (depth-conv >> (BITS - 8))
-// ---------------------------------------------------------------------------
-
+// Helper 5: α plane u16 → u8 RGBA  (depth-conv >> (BITS - 8)).
 /// Yuva*p9/10/12/14 → u8 RGBA: scatter α plane (u16) into
 /// `rgba_out[3 + 4*n]` (u8) with depth-conv `>> (BITS - 8)`.
 ///
@@ -376,10 +361,7 @@ pub(crate) unsafe fn copy_alpha_plane_u16_to_u8<const BITS: u32>(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Helper 6: α plane u16 → u16 RGBA  (no depth conv)
-// ---------------------------------------------------------------------------
-
+// Helper 6: α plane u16 → u16 RGBA  (no depth conv).
 /// Yuva*p9/10/12/14/16 → u16 RGBA: scatter α plane (u16) into
 /// `rgba_out[3 + 4*n]` (u16). No depth conversion. `BITS` is informational.
 ///
@@ -459,10 +441,7 @@ pub(crate) unsafe fn copy_alpha_plane_u16<const BITS: u32>(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
+// Tests.
 #[cfg(all(test, feature = "std"))]
 mod tests {
   use crate::row::scalar::alpha_extract as scalar;

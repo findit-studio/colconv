@@ -9,11 +9,10 @@
 //!
 //! `_mm_add_ps(scaled, _mm_set1_ps(0.5))` then `_mm_cvttps_epi32` (truncate
 //! toward zero). This is the round-half-up contract shared with the scalar
-//! kernels — MXCSR-independent and consistent with PR #74 / Grayf32.
+//! kernels — MXCSR-independent and consistent with the Grayf32 path.
 //!
 //! **Do NOT use `_MM_FROUND_TO_NEAREST_INT` for integer narrowing** —
-//! that gives banker's rounding, not round-half-up (codex-validated PR #74
-//! fix).
+//! that gives banker's rounding, not round-half-up.
 //!
 //! # Rounding (f32 → f16)
 //!
@@ -50,8 +49,7 @@ use crate::{
 /// scratch must be routed via `HOST_NATIVE_BE` so the downstream kernel's
 /// `from_le` / `from_be` loaders no-op the swap. Without this routing the
 /// SIMD scalar tail double-byte-swaps on `BE`-source-on-LE-host (and
-/// symmetrically `LE`-source-on-BE-host) — codex PR #84 Finding 1
-/// follow-up to commit `8627280`.
+/// symmetrically `LE`-source-on-BE-host).
 const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 
 // ---- shared helpers ----------------------------------------------------------

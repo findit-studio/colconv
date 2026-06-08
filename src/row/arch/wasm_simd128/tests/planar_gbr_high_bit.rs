@@ -257,17 +257,17 @@ fn simd128_gbra_to_rgba_u16_high_bit_matches_scalar_bits16() {
   }
 }
 
-// ---- BE parity: simd128<BITS, true> on BE-encoded storage must match -------
-// simd128<BITS, false> on LE-encoded storage. Each plane is built from the ----
-// same host-native `intended` buffer, then re-encoded with `to_le_bytes` /  --
-// `to_be_bytes` so the kernels' `from_le` / `from_be` decode it back to the -
-// same logical values on every host. The previous helper (`swap_bytes` of   -
-// host-native data) was vacuous: on BE the `<false>` path would byte-swap   -
-// host-native into wrong logical values while the `<true>` path on the      -
-// swapped buffer produced the same wrong values, so equality could pass on  -
-// a corrupted decode. Each test now also pins the LE output to an absolute  -
-// expected value computed independently from the host-native intended       -
-// planes (mirror of the scalar fix in PR #95 commit 6ad8242). ---------------
+// BE parity: simd128<BITS, true> on BE-encoded storage must match
+// simd128<BITS, false> on LE-encoded storage. Each plane is built from
+// the same host-native `intended` buffer, then re-encoded with
+// `to_le_bytes` / `to_be_bytes` so the kernels' `from_le` / `from_be`
+// decode it back to the same logical values on every host. A naive
+// `swap_bytes` of host-native data is vacuous: on BE the `<false>` path
+// would byte-swap host-native into wrong logical values while the
+// `<true>` path on the swapped buffer produced the same wrong values,
+// so equality could pass on a corrupted decode. Each test also pins
+// the LE output to an absolute expected value computed independently
+// from the host-native intended planes.
 
 /// Re-encode host-native `u16` samples as LE byte storage. On a LE host this
 /// is identity; on a BE host each element is byte-swapped so the kernel's

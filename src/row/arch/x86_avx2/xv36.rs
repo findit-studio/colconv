@@ -144,8 +144,7 @@ unsafe fn unpack_xv36_16px_avx2<const BE: bool>(ptr: *const u16) -> (__m256i, __
     //   hi lane (px 8..15): [U8, U9, U10, U11, U12, U13, U14, U15]
     //
     // No 4x64 cross-lane permute is needed — applying one would scramble
-    // the result to [0..3, 8..11, 4..7, 12..15] (Codex review caught this
-    // dead permute that shipped with the original reshape fix).
+    // the result to [0..3, 8..11, 4..7, 12..15].
     let u_raw = _mm256_unpacklo_epi64(s3_lo, s4_lo);
     let y_raw = _mm256_unpackhi_epi64(s3_lo, s4_lo);
     let v_raw = _mm256_unpacklo_epi64(s3_hi, s4_hi);

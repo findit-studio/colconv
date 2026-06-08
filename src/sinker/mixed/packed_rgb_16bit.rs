@@ -713,7 +713,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>> {
         let rgba_row = rgba_plane_row_slice(rgba_buf, ps, pe, w, h)?;
         expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
         // BE propagated from the parent `Rgba64Frame<'_, BE>` via the
-        // sinker's `MixedSinker<Rgba64<BE>>` monomorphization (Phase 4).
+        // sinker's `MixedSinker<Rgba64<BE>>` monomorphization.
         crate::row::scalar::alpha_extract::copy_alpha_packed_u16x4_to_u8_at_3::<BE>(
           in64, rgba_row, w,
         );
@@ -748,7 +748,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>> {
         let rgba_u16_row = rgba_u16_plane_row_slice(rgba_u16_buf, ps, pe, w, h)?;
         expand_rgb_u16_to_rgba_u16_row::<16>(rgb_u16_row, rgba_u16_row, w);
         // BE propagated from the parent `Rgba64Frame<'_, BE>` via the
-        // sinker's `MixedSinker<Rgba64<BE>>` monomorphization (Phase 4).
+        // sinker's `MixedSinker<Rgba64<BE>>` monomorphization.
         crate::row::scalar::alpha_extract::copy_alpha_packed_u16x4_at_3::<BE>(
           in64,
           rgba_u16_row,
@@ -986,7 +986,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Bgra64<BE>> {
         let rgba_row = rgba_plane_row_slice(rgba_buf, ps, pe, w, h)?;
         expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
         // BE propagated from the parent `Bgra64Frame<'_, BE>` via the
-        // sinker's `MixedSinker<Bgra64<BE>>` monomorphization (Phase 4).
+        // sinker's `MixedSinker<Bgra64<BE>>` monomorphization.
         crate::row::scalar::alpha_extract::copy_alpha_packed_u16x4_to_u8_at_3::<BE>(
           in64, rgba_row, w,
         );
@@ -1017,7 +1017,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Bgra64<BE>> {
         let rgba_u16_row = rgba_u16_plane_row_slice(rgba_u16_buf, ps, pe, w, h)?;
         expand_rgb_u16_to_rgba_u16_row::<16>(rgb_u16_row, rgba_u16_row, w);
         // BE propagated from the parent `Bgra64Frame<'_, BE>` via the
-        // sinker's `MixedSinker<Bgra64<BE>>` monomorphization (Phase 4).
+        // sinker's `MixedSinker<Bgra64<BE>>` monomorphization.
         crate::row::scalar::alpha_extract::copy_alpha_packed_u16x4_at_3::<BE>(
           in64,
           rgba_u16_row,

@@ -527,10 +527,10 @@ fn p416_walker_simd_matches_scalar_with_random_chroma() {
   }
 }
 
-// ---- Ship 8 PR 5d: high-bit 4:2:2 RGBA wiring -------------------------
+// High-bit 4:2:2 RGBA wiring.
 //
 // Strategy A combine for the eight 4:2:2 high-bit sinker formats wired
-// in the 4:2:2 high-bit file. Mirrors the 4:2:0 PR #26 test suite;
+// in the 4:2:2 high-bit file. Mirrors the 4:2:0 test suite shape;
 // covers Yuv422p10 (planar BITS-generic), Yuv422p16 (planar 16-bit
 // dedicated kernel), and P210 (semi-planar BITS-generic) — the row
 // layer is exhaustively tested elsewhere.
@@ -732,15 +732,15 @@ fn yuv422p16_rgba_u16_only_native_depth_gray_with_opaque_alpha() {
   }
 }
 
-// ===== Ship 8 Tranche 7c — high-bit 4:4:4 RGBA sinker tests ==========
+// High-bit 4:4:4 RGBA sinker tests.
 //
-// Mirrors PR #26's 4:2:0 coverage scope: representative formats only,
-// not exhaustive per-format. Yuv444p10 covers the BITS-generic planar
-// path; P410 covers the Pn semi-planar path; Yuv444p16 covers the
-// 16-bit dedicated kernel; Yuv440p10 covers the 4:4:0 kernel-reuse
-// path. The remaining 4:4:4 high-bit formats (9/12/14, P412/P416,
-// Yuv440p12) are exercised by row-layer tests + the compile-time
-// guarantee that the new sinker builders typecheck.
+// Representative coverage of the 4:4:4 high-bit family — not exhaustive
+// per-format. Yuv444p10 covers the BITS-generic planar path; P410 covers
+// the Pn semi-planar path; Yuv444p16 covers the 16-bit dedicated kernel;
+// Yuv440p10 covers the 4:4:0 kernel-reuse path. The remaining 4:4:4
+// high-bit formats (9/12/14, P412/P416, Yuv440p12) are exercised by
+// row-layer tests + the compile-time guarantee that the sinker builders
+// typecheck.
 
 #[test]
 #[cfg_attr(

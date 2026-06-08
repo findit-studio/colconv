@@ -50,10 +50,7 @@ fn make_rgba64_asymmetric(width: usize) -> std::vec::Vec<u16> {
   src
 }
 
-// =============================================================================
-// Rgb48 → u8 RGB
-// =============================================================================
-
+// Rgb48 → u8 RGB.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx2_rgb48_to_rgb_matches_scalar_width17() {
@@ -123,10 +120,7 @@ fn avx2_rgb48_to_rgb_lane_order_regression() {
   );
 }
 
-// =============================================================================
-// Rgb48 → u8 RGBA
-// =============================================================================
-
+// Rgb48 → u8 RGBA.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx2_rgb48_to_rgba_matches_scalar_width17() {
@@ -144,10 +138,7 @@ fn avx2_rgb48_to_rgba_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Rgb48 → u16 RGB
-// =============================================================================
-
+// Rgb48 → u16 RGB.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx2_rgb48_to_rgb_u16_matches_scalar_width17() {
@@ -183,10 +174,7 @@ fn avx2_rgb48_to_rgb_u16_lane_order_regression() {
   );
 }
 
-// =============================================================================
-// Rgb48 → u16 RGBA
-// =============================================================================
-
+// Rgb48 → u16 RGBA.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx2_rgb48_to_rgba_u16_matches_scalar_width17() {
@@ -204,10 +192,7 @@ fn avx2_rgb48_to_rgba_u16_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Bgr48 → u8 RGB
-// =============================================================================
-
+// Bgr48 → u8 RGB.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx2_bgr48_to_rgb_matches_scalar_width17() {
@@ -262,10 +247,7 @@ fn avx2_bgr48_to_rgb_lane_order_regression() {
   );
 }
 
-// =============================================================================
-// Bgr48 → u8 RGBA
-// =============================================================================
-
+// Bgr48 → u8 RGBA.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx2_bgr48_to_rgba_matches_scalar_width17() {
@@ -283,10 +265,7 @@ fn avx2_bgr48_to_rgba_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Bgr48 → u16 RGB
-// =============================================================================
-
+// Bgr48 → u16 RGB.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx2_bgr48_to_rgb_u16_matches_scalar_width17() {
@@ -304,10 +283,7 @@ fn avx2_bgr48_to_rgb_u16_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Bgr48 → u16 RGBA
-// =============================================================================
-
+// Bgr48 → u16 RGBA.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx2_bgr48_to_rgba_u16_matches_scalar_width17() {
@@ -325,10 +301,7 @@ fn avx2_bgr48_to_rgba_u16_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Rgba64 → u8 RGB
-// =============================================================================
-
+// Rgba64 → u8 RGB.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx2_rgba64_to_rgb_matches_scalar_width17() {
@@ -381,10 +354,7 @@ fn avx2_rgba64_to_rgb_lane_order_regression() {
   );
 }
 
-// =============================================================================
-// Rgba64 → u8 RGBA
-// =============================================================================
-
+// Rgba64 → u8 RGBA.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx2_rgba64_to_rgba_matches_scalar_width17() {
@@ -420,10 +390,7 @@ fn avx2_rgba64_to_rgba_lane_order_regression() {
   );
 }
 
-// =============================================================================
-// Rgba64 → u16 RGB
-// =============================================================================
-
+// Rgba64 → u16 RGB.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx2_rgba64_to_rgb_u16_matches_scalar_width17() {
@@ -459,10 +426,7 @@ fn avx2_rgba64_to_rgb_u16_lane_order_regression() {
   );
 }
 
-// =============================================================================
-// Rgba64 → u16 RGBA
-// =============================================================================
-
+// Rgba64 → u16 RGBA.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx2_rgba64_to_rgba_u16_matches_scalar_width17() {
@@ -515,10 +479,7 @@ fn avx2_rgba64_to_rgba_u16_lane_order_regression() {
   );
 }
 
-// =============================================================================
-// Bgra64 → u8 RGB
-// =============================================================================
-
+// Bgra64 → u8 RGB.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx2_bgra64_to_rgb_matches_scalar_width17() {
@@ -554,10 +515,7 @@ fn avx2_bgra64_to_rgb_lane_order_regression() {
   );
 }
 
-// =============================================================================
-// Bgra64 → u8 RGBA
-// =============================================================================
-
+// Bgra64 → u8 RGBA.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx2_bgra64_to_rgba_matches_scalar_width17() {
@@ -593,10 +551,7 @@ fn avx2_bgra64_to_rgba_lane_order_regression() {
   );
 }
 
-// =============================================================================
-// Bgra64 → u16 RGB
-// =============================================================================
-
+// Bgra64 → u16 RGB.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx2_bgra64_to_rgb_u16_matches_scalar_width17() {
@@ -614,10 +569,7 @@ fn avx2_bgra64_to_rgb_u16_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Bgra64 → u16 RGBA
-// =============================================================================
-
+// Bgra64 → u16 RGBA.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn avx2_bgra64_to_rgba_u16_matches_scalar_width17() {
@@ -669,8 +621,6 @@ fn avx2_bgra64_to_rgba_u16_lane_order_regression() {
     "bgra64→rgba_u16 lane order (B↔R swap + alpha preserve): SIMD vs scalar mismatch"
   );
 }
-
-// =============================================================================
 // Hand-derived per-pixel lane-order checks for stride-4 (Rgba64 / Bgra64).
 //
 // The `*_lane_order_regression` tests above use `make_rgba64_asymmetric`
@@ -782,9 +732,7 @@ fn avx2_bgra64_to_rgb_u16_lane_order_handcheck() {
   }
 }
 
-// =============================================================================
-// SIMD-level BE-vs-LE parity tests (probes `BE != HOST_NATIVE_BE` gate)
-// =============================================================================
+// SIMD-level BE-vs-LE parity tests (probes `BE != HOST_NATIVE_BE` gate).
 //
 // Buffers built host-independently via `to_le_bytes` / `to_be_bytes`. Width
 // 33 = 2 × 16-lane AVX2 SIMD body + 1 scalar tail.
@@ -1001,9 +949,7 @@ fn avx2_bgra64_be_le_simd_parity_width33() {
   );
 }
 
-// =============================================================================
-// X2RGB10 / X2BGR10 SIMD-level BE-vs-LE parity tests
-// =============================================================================
+// X2RGB10 / X2BGR10 SIMD-level BE-vs-LE parity tests.
 //
 // Co-located here (rather than in the dead-code `tests/packed_rgb.rs` which
 // is not declared in `tests/mod.rs`) so they are actually compiled and run.

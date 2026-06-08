@@ -122,9 +122,9 @@ fn nv12_with_simd_false_matches_with_simd_true() {
 //
 // Undersized RGB / luma / HSV buffers must be rejected at attachment
 // time, not part-way through processing. Catching the mistake before
-// any rows are written avoids partially-mutated caller buffers
-// flagged by the adversarial review. With the fallible API these
-// surface as `Err(MixedSinkerError::Insufficient*Buffer)` / `InsufficientHsvPlane`.
+// any rows are written avoids partially-mutated caller buffers. With
+// the fallible API these surface as
+// `Err(MixedSinkerError::Insufficient*Buffer)` / `InsufficientHsvPlane`.
 
 #[test]
 #[cfg_attr(
@@ -454,7 +454,7 @@ fn nv12_matches_yuv420p_mixed_sinker() {
   assert_eq!(rgb_yuv420p, rgb_nv12);
 }
 
-// ---- NV12 RGBA (Ship 8 PR 2) tests --------------------------------------
+// NV12 RGBA tests.
 //
 // Mirrors the Yuv420p RGBA test set. Adds a cross-format invariant
 // proving NV12 RGBA is byte-identical to Yuv420p RGBA when fed the

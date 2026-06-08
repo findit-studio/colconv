@@ -348,10 +348,8 @@ fn y216_planar_parity_with_yuv422p16() {
   assert_eq!(p_rgb_u16, y_rgb_u16, "Y216 vs Yuv422p16 u16 RGB diverges");
 }
 
-// ====================================================================================
-// Phase 4 — Frame BE flag, Tier 4 Y216 LE/BE round-trip parity test.
+// Frame BE flag — Y216 LE/BE round-trip parity test.
 // Mirrors the Y210 / Y212 / V210 LE/BE tests; see y210.rs for the full pattern.
-// ====================================================================================
 
 fn y216_as_be_u16(host: &[u16]) -> Vec<u16> {
   host

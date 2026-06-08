@@ -161,12 +161,13 @@ fn yuva444p10_rgba_u16_buf_too_short_returns_err() {
   ));
 }
 
-// ---- Yuva444p10 alpha-drop paths (Codex PR #32 review fix #1) ----
+// Yuva444p10 alpha-drop paths.
 //
 // `with_rgb` / `with_luma` / `with_hsv` are declared on the generic
 // `MixedSinker<F>` impl, so attaching them to a `MixedSinker::<Yuva444p10>`
-// is callable. Previously the `process` impl only wrote `rgba` /
-// `rgba_u16` and silently returned Ok, leaving these buffers stale.
+// is callable. The `process` impl must dispatch them (not just `rgba` /
+// `rgba_u16`) — otherwise these buffers stay stale and `process` silently
+// returns Ok.
 // These tests pin that the alpha-drop paths now write byte-identical
 // output to what `MixedSinker::<Yuv444p10>` would produce on the same
 // Y/U/V data.
@@ -305,7 +306,7 @@ fn yuva444p10_with_rgb_and_with_rgba_both_write_buffers() {
   }
 }
 
-// ---- Yuva444p10 overrange alpha clamping (Codex PR #32 review fix #2) ----
+// Yuva444p10 overrange alpha clamping.
 //
 // `Yuva444p10Frame::try_new` admits any `&[u16]` for the alpha plane
 // without per-sample validation (only `try_new_checked` validates).
@@ -1968,7 +1969,7 @@ fn yuva444p16_strategy_a_plus_u16_matches_independent_kernel() {
   }
 }
 
-// ---- Yuva444p10 A+ overrange-α regression (Codex PR #63 review fix #1) ----
+// Yuva444p10 A+ overrange-α regression.
 //
 // `Yuva444p10Frame::try_new` admits raw u16 α samples without per-pixel
 // validation, so over-range values (e.g., 0x0500 at BITS=10) can reach

@@ -66,9 +66,7 @@ use core::arch::x86_64::*;
 
 use super::*;
 
-// =============================================================================
-// Deinterleave helpers — Rgb48 / Bgr48 (3 u16 per pixel, 3 loads per 8 px)
-// =============================================================================
+// Deinterleave helpers — Rgb48 / Bgr48 (3 u16 per pixel, 3 loads per 8 px).
 //
 // After three 128-bit loads for 8 pixels of a stride-3 u16 source:
 //
@@ -171,9 +169,7 @@ unsafe fn deinterleave_rgb48_8px(
   }
 }
 
-// =============================================================================
-// Deinterleave helpers — Rgba64 / Bgra64 (4 u16 per pixel, 4 loads per 8 px)
-// =============================================================================
+// Deinterleave helpers — Rgba64 / Bgra64 (4 u16 per pixel, 4 loads per 8 px).
 //
 // After four 128-bit loads for 8 pixels of a stride-4 u16 source:
 //
@@ -294,10 +290,7 @@ unsafe fn deinterleave_rgba64_8px(
   }
 }
 
-// =============================================================================
-// u16 → u8 narrowing: `>> 8` + `_mm_packus_epi16`
-// =============================================================================
-
+// u16 → u8 narrowing: `>> 8` + `_mm_packus_epi16`.
 /// Narrow a u16×8 vector to u8×8 (in the low half) via logical right-shift by 8.
 ///
 /// Equivalent to scalar `(v >> 8) as u8`. Zero-packs the high half.
@@ -344,10 +337,7 @@ unsafe fn byteswap_if_be<const BE: bool>(v: __m128i) -> __m128i {
   }
 }
 
-// =============================================================================
-// Rgb48 (R, G, B — 3 u16 elements per pixel)
-// =============================================================================
-
+// Rgb48 (R, G, B — 3 u16 elements per pixel).
 /// SSE4.1 Rgb48 → packed u8 RGB. 8 pixels per SIMD iteration.
 ///
 /// Loads 3 × 128-bit chunks (24 u16), deinterleaves with shuffle masks,
@@ -517,10 +507,7 @@ pub(crate) unsafe fn sse41_rgb48_to_rgba_u16_row<const BE: bool>(
   }
 }
 
-// =============================================================================
-// Bgr48 (B, G, R — 3 u16 elements per pixel)
-// =============================================================================
-
+// Bgr48 (B, G, R — 3 u16 elements per pixel).
 /// SSE4.1 Bgr48 → packed u8 RGB. 8 pixels per SIMD iteration.
 ///
 /// `deinterleave_rgb48_8px` yields `(B, G, R)` in source memory order;
@@ -690,10 +677,7 @@ pub(crate) unsafe fn sse41_bgr48_to_rgba_u16_row<const BE: bool>(
   }
 }
 
-// =============================================================================
-// Rgba64 (R, G, B, A — 4 u16 elements per pixel)
-// =============================================================================
-
+// Rgba64 (R, G, B, A — 4 u16 elements per pixel).
 /// SSE4.1 Rgba64 → packed u8 RGB. 8 pixels per SIMD iteration. Alpha discarded.
 ///
 /// When `BE = true` each loaded register is byte-swapped before deinterleaving.
@@ -857,10 +841,7 @@ pub(crate) unsafe fn sse41_rgba64_to_rgba_u16_row<const BE: bool>(
   }
 }
 
-// =============================================================================
-// Bgra64 (B, G, R, A — 4 u16 elements per pixel)
-// =============================================================================
-
+// Bgra64 (B, G, R, A — 4 u16 elements per pixel).
 /// SSE4.1 Bgra64 → packed u8 RGB. 8 pixels per SIMD iteration.
 /// B↔R swap; alpha discarded.
 ///

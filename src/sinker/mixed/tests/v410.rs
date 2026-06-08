@@ -382,16 +382,12 @@ fn v410_rgba_u16_buffer_too_short_returns_err() {
     MixedSinkerError::InsufficientRgbaU16Buffer(InsufficientBuffer::new(192, 168))
   );
 }
-
-// ====================================================================================
 // Phase 4 Tier 5 — Frame BE flag, V410 LE+BE round-trip parity test.
 //
 // V410 packs each pixel as one u32 word. The BE wire variant byte-swaps each
 // word before bit-extraction. Encoding the same logical (U, Y, V) triplet as
 // LE bytes vs BE bytes and feeding through `MixedSinker<V410<false>>` vs
 // `MixedSinker<V410<true>>` must produce byte-identical output.
-// ====================================================================================
-
 #[test]
 #[cfg(all(test, feature = "std"))]
 #[cfg_attr(

@@ -262,9 +262,7 @@ pub(crate) use yuv_planar_high_bit::*;
 /// is a plain load (no swap) and the `BE = false` branch swaps; on
 /// an LE host the polarity reverses. This is the strict-superset-of-
 /// bugs alternative to a naive `if BE { x.swap_bytes() }` pattern,
-/// which would corrupt rows on s390x / other BE hosts. See
-/// `fix(be-tier10b): make scalar BE conversion target-endian aware`
-/// for the codex finding that motivated this contract crate-wide.
+/// which would corrupt rows on s390x / other BE hosts.
 ///
 /// # Safety
 ///
@@ -289,7 +287,7 @@ pub(super) unsafe fn load_endian_u16<const BE: bool>(ptr: *const u8) -> u16 {
 /// each emit a `bswap` only when the source byte order differs from
 /// the host CPU's native order, matching the SIMD `load_endian_u32x*`
 /// helpers. See [`load_endian_u16`] for the full target-endian
-/// contract and the codex motivation.
+/// contract.
 ///
 /// # Safety
 ///
@@ -332,9 +330,7 @@ pub(super) fn clamp_u8(v: i32) -> u8 {
 /// through (no swap) and the `BE = false` branch swaps; on an LE host
 /// the polarity reverses. This is the strict-superset-of-bugs
 /// alternative to a naive `if BE { v.swap_bytes() }` pattern, which
-/// would corrupt rows on s390x / other BE hosts. See
-/// `fix(be-tier10b): make scalar BE conversion target-endian aware`
-/// for the codex finding that motivated this contract crate-wide.
+/// would corrupt rows on s390x / other BE hosts.
 #[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar", feature = "yuva",))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) const fn load_u16<const BE: bool>(v: u16) -> u16 {

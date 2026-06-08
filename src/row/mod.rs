@@ -1300,8 +1300,8 @@ mod bayer_dispatcher_tests {
     );
   }
 
-  /// Codex regression (round 8): a direct row-API caller that
-  /// bypasses [`crate::raw::WhiteBalance::try_new`] /
+  /// A direct row-API caller that bypasses
+  /// [`crate::raw::WhiteBalance::try_new`] /
   /// [`crate::raw::ColorCorrectionMatrix::try_new`] cannot inject
   /// finite-but-extreme matrices that would overflow during the
   /// per-pixel matmul. The dispatcher's

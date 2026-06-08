@@ -250,10 +250,9 @@ pub(super) unsafe fn write_rgba_16(r: __m128i, g: __m128i, b: __m128i, a: __m128
 /// bytes 0..7 of each channel — exactly the valid range for 8-pixel
 /// inputs).
 ///
-/// This replaces the prior pattern of round-tripping each channel
-/// through a 16-byte stack array and a per-pixel scalar scatter loop,
-/// which limited SIMD's benefit on the output stage (Copilot review,
-/// PR #91 Comment 2).
+/// This avoids round-tripping each channel through a 16-byte stack
+/// array and a per-pixel scalar scatter loop, which would limit SIMD's
+/// benefit on the output stage.
 ///
 /// # Safety
 ///
@@ -266,7 +265,7 @@ pub(super) unsafe fn write_rgba_16(r: __m128i, g: __m128i, b: __m128i, a: __m128
 // (`x86_sse41::xyz12`, `x86_avx2::xyz12`) are gated the same way.
 // Without this gate `cargo build --no-default-features` fires a
 // dead-code warning that becomes a hard error under `RUSTFLAGS=
-// -Dwarnings` (Windows CI failure on PR #91, run 25591669613).
+// -Dwarnings` on Windows CI.
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg(feature = "xyz")]
 #[inline(always)]
@@ -314,9 +313,9 @@ pub(super) unsafe fn write_rgb_u8_8(r: __m128i, g: __m128i, b: __m128i, ptr: *mu
 ///    `[R0,G0,B0,A0, R1,G1,B1,A1, R2,G2,B2,A2, R3,G3,B3,A3]`.
 /// 4. `rgba_hi = unpackhi_epi16(rg, ba)` produces pixels 4..7.
 ///
-/// Two `_mm_storeu_si128` writes emit the 32-byte output. This
-/// replaces the prior 4-channel scalar scatter (Copilot review, PR
-/// #91 Comment 2).
+/// Two `_mm_storeu_si128` writes emit the 32-byte output. This avoids
+/// a 4-channel scalar scatter that would limit SIMD's benefit on the
+/// output stage.
 ///
 /// # Safety
 ///

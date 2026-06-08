@@ -55,8 +55,7 @@ use crate::{ColorMatrix, row::scalar};
 ///
 /// SIMD deinterleave / fixed-shuffle paths use **host-native** u16 reads,
 /// so the SIMD body is only correct when the encoded byte order matches
-/// the host. The truth table (mirrors PR #82 `9c7d533` / PR #85 `9e678b0`
-/// / PR #86 `b7fb9d3` host-endian gate fixes):
+/// the host. Truth table:
 ///
 /// | wire `BE` | host       | `BE == HOST_NATIVE_BE` | path   | correct via    |
 /// |-----------|------------|------------------------|--------|----------------|

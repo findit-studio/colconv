@@ -69,12 +69,8 @@ fn powf64(x: f64, y: f64) -> f64 {
     libm::pow(x, y)
   }
 }
-
-// ---------------------------------------------------------------------------
 // Helpers — kept `pub(crate)` so SIMD backends can re-use the OETF
 // formula in their scalar tail / scalar-`powf` lanes.
-// ---------------------------------------------------------------------------
-
 /// Reads a packed XYZ12 sample with byte-swap if `BE` is set, then
 /// extracts the active 12-bit code from the high-bit-packed `u16`.
 ///
@@ -221,10 +217,7 @@ pub(crate) fn xyz12_pixel_to_xyz_linear<const BE: bool>(triple: &[u16; 3]) -> [f
   ]
 }
 
-// ---------------------------------------------------------------------------
 // Per-output kernels.
-// ---------------------------------------------------------------------------
-
 /// XYZ12 → packed RGB (u8). Full pipeline: inverse-OETF + matmul +
 /// sRGB OETF + clamp + x255 + round-half-up.
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -405,23 +398,19 @@ pub(crate) fn xyz12_to_rgba_f16_row<const BE: bool>(
   }
 }
 
-// ---------------------------------------------------------------------------
 // XYZ12-specific RGB → luma helpers.
 //
-// Codex round-2 medium finding (2026-05-09): the prior implementation
-// routed the `with_luma` / `with_luma_u16` paths through the YUV-leaning
-// `ColorMatrix` enum (BT.709 for both DciP3 and Rec709 targets, BT.2020Ncl
-// for Rec2020). For saturated colours under the DCI-P3 target this
-// produces biased luma — DCI-P3's perceptual brightness has its own
-// weights derived from the DCI-white-pointed RGB→XYZ matrix Y row.
-// These helpers take the gamut-derived Q15 weights directly (carried on
+// Routing the `with_luma` / `with_luma_u16` paths through the YUV-leaning
+// `ColorMatrix` enum (BT.709 for both DciP3 and Rec709 targets,
+// BT.2020Ncl for Rec2020) biases luma for saturated colours under the
+// DCI-P3 target — DCI-P3's perceptual brightness has its own weights
+// derived from the DCI-white-pointed RGB→XYZ matrix Y row. These helpers
+// take the gamut-derived Q15 weights directly (carried on
 // `Xyz12Row::luma_q15()`), bypassing the `ColorMatrix` enum entirely.
 //
 // No SIMD path: luma cost (one Q15 multiply-add per channel) is dwarfed
 // by the upstream 6x scalar `powf` work in the matmul + OETF stages —
 // vectorising luma here gives no measurable win.
-// ---------------------------------------------------------------------------
-
 /// XYZ12 luma kernel (u8 output). `luma_q15` carries the gamut-matched
 /// Q15 coefficients `(k_r, k_g, k_b)` from
 /// [`crate::source::luma_weights_q15_for_gamut`]. Output is full-range Y'
