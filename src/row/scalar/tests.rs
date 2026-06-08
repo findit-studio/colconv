@@ -491,9 +491,9 @@ fn yuv411_rgba_widths_5_through_7_alpha_opaque() {
 #[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv411_rgb_width_641_realistic_cropped() {
-  // Realistic non-4-aligned width from codex finding: 641 → chroma
-  // width 161; the SIMD body (when present) skips the trailing 1
-  // pixel which is handled by the partial-chroma scalar path.
+  // Realistic non-4-aligned width: 641 → chroma width 161; the SIMD
+  // body (when present) skips the trailing 1 pixel which is handled
+  // by the partial-chroma scalar path.
   // Verify no panic, output length correct, last pixel matches Y.
   let w = 641usize;
   let y: std::vec::Vec<u8> = (0..w).map(|i| (i % 256) as u8).collect();

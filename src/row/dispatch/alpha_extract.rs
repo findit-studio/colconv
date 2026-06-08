@@ -31,10 +31,7 @@ use crate::row::simd128_available;
 #[cfg(target_arch = "x86_64")]
 use crate::row::{avx2_available, avx512_available, sse41_available};
 
-// ---------------------------------------------------------------------------
-// Helper 1: VUYA u8 → u8 RGBA  (α at packed slot 3)
-// ---------------------------------------------------------------------------
-
+// Helper 1: VUYA u8 → u8 RGBA  (α at packed slot 3).
 /// Runtime-dispatched α-extract for VUYA: gather α from
 /// `packed[3 + 4*n]` into `rgba_out[3 + 4*n]`.
 ///
@@ -89,10 +86,7 @@ pub(crate) fn copy_alpha_packed_u8x4_at_3(
   scalar::copy_alpha_packed_u8x4_at_3(packed, rgba_out, width);
 }
 
-// ---------------------------------------------------------------------------
-// Helper 2: AYUV64 u16 → u8 RGBA  (α at packed slot 0, depth >> 8)
-// ---------------------------------------------------------------------------
-
+// Helper 2: AYUV64 u16 → u8 RGBA  (α at packed slot 0, depth >> 8).
 /// Runtime-dispatched α-extract for AYUV64 → u8 RGBA: gather α from
 /// `packed[0 + 4*n]` (u16) into `rgba_out[3 + 4*n]` (u8) via `>> 8`.
 ///
@@ -155,10 +149,7 @@ pub(crate) fn copy_alpha_packed_u16x4_to_u8_at_0<const BE: bool>(
   scalar::copy_alpha_packed_u16x4_to_u8_at_0::<BE>(packed, rgba_out, width);
 }
 
-// ---------------------------------------------------------------------------
-// Helper 3: AYUV64 u16 → u16 RGBA  (α at packed slot 0, no depth conv)
-// ---------------------------------------------------------------------------
-
+// Helper 3: AYUV64 u16 → u16 RGBA  (α at packed slot 0, no depth conv).
 /// Runtime-dispatched α-extract for AYUV64 → u16 RGBA: gather α from
 /// `packed[0 + 4*n]` (u16) into `rgba_out[3 + 4*n]` (u16). No depth
 /// conversion.
@@ -215,10 +206,7 @@ pub(crate) fn copy_alpha_packed_u16x4_at_0<const BE: bool>(
   scalar::copy_alpha_packed_u16x4_at_0::<BE>(packed, rgba_out, width);
 }
 
-// ---------------------------------------------------------------------------
-// Helper 4: α plane u8 → u8 RGBA
-// ---------------------------------------------------------------------------
-
+// Helper 4: α plane u8 → u8 RGBA.
 /// Runtime-dispatched α-extract for planar Yuva u8: scatter α plane
 /// into `rgba_out[3 + 4*n]`.
 ///
@@ -267,10 +255,7 @@ pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usiz
   scalar::copy_alpha_plane_u8(alpha, rgba_out, width);
 }
 
-// ---------------------------------------------------------------------------
-// Helper 5: α plane u16 → u8 RGBA  (depth-conv >> (BITS-8))
-// ---------------------------------------------------------------------------
-
+// Helper 5: α plane u16 → u8 RGBA  (depth-conv >> (BITS-8)).
 /// Runtime-dispatched α-extract for planar Yuva*p high-bit → u8 RGBA:
 /// scatter α plane (u16) into `rgba_out[3 + 4*n]` (u8) with
 /// depth-conv `>> (BITS - 8)`.
@@ -296,7 +281,7 @@ pub(crate) fn copy_alpha_plane_u8(alpha: &[u8], rgba_out: &mut [u8], width: usiz
 /// - LE data, LE host: `!false && true  = true`  → SIMD (host-native LE u16 loads correct, tail `from_le` is no-op)
 /// - LE data, BE host: `!false && false = false` → scalar (handles via `from_le`)
 /// - BE data, LE host: `!true  && true  = false` → scalar (handles via `from_be`)
-/// - BE data, BE host: `!true  && false = false` → scalar (handles via `from_be`; SIMD vector body would be correct but tail `from_le` would corrupt non-multiple widths — see codex 4th-pass review of PR #82)
+/// - BE data, BE host: `!true  && false = false` → scalar (handles via `from_be`; SIMD vector body would be correct but the tail's `from_le` would corrupt non-multiple widths)
 ///
 /// Selects the highest available SIMD backend on LE-host with LE-data;
 /// falls back to scalar otherwise. When `use_simd` is `false`, calls
@@ -353,10 +338,7 @@ pub(crate) fn copy_alpha_plane_u16_to_u8<const BITS: u32, const BE: bool>(
   scalar::copy_alpha_plane_u16_to_u8::<BITS, BE>(alpha, rgba_out, width);
 }
 
-// ---------------------------------------------------------------------------
-// Helper 6: α plane u16 → u16 RGBA  (no depth conv)
-// ---------------------------------------------------------------------------
-
+// Helper 6: α plane u16 → u16 RGBA  (no depth conv).
 /// Runtime-dispatched α-extract for planar Yuva*p high-bit → u16 RGBA:
 /// scatter α plane (u16) into `rgba_out[3 + 4*n]` (u16). No depth
 /// conversion.

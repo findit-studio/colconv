@@ -79,8 +79,7 @@ fn gray8_to_hsv_h0_s0_v_y() {
 // an LE-encoded payload — producing a different (corrupted) value than the
 // test expects.  The kernel itself is correct; this is purely a
 // fixture-vs-kernel byte-order mismatch on BE hosts (same class as the
-// PR #82 alpha_extract / planar_gbr_high_bit gates in `8f2e329` and the
-// PR #83 Rgbf16 gates in `56342c0`).
+// alpha_extract / planar_gbr_high_bit and Rgbf16 BE gates).
 //
 // Kernel BE-host correctness is locked down separately by the dedicated
 // `gray*_be_parity_*` tests further down in this module, which build the

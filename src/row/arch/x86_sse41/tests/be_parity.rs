@@ -260,16 +260,15 @@ fn sse41_p416_be_parity_u16() {
   assert_eq!(out_le, out_be);
 }
 
-// ---- BE-input SIMD-vs-scalar parity for X2RGB10 / X2BGR10 ----------------
+// BE-input SIMD-vs-scalar parity for X2RGB10 / X2BGR10.
 //
-// PR #104 follow-up: pre-fix, the SSE4.1 X2 10-bit kernels gated their SIMD
-// body on `if !BE` and silently fell through to scalar for BE input. With
-// the BE-aware load (`x2_load_endian_u32x4::<BE>`) in `x86_common`, BE now
-// exercises the real SIMD path. The width sweep crosses the 16-pixel
-// boundary so a regression to scalar fallback would still pass the parity
-// check (since it would compare scalar to scalar) — but the test below
-// also asserts against a hand-built deterministic input where each byte
-// has a distinct position, exercising every byte-swap lane.
+// Without a BE-aware load (`x2_load_endian_u32x4::<BE>`) the SSE4.1 X2
+// 10-bit kernels gate their SIMD body on `if !BE` and silently fall
+// through to scalar for BE input. The width sweep below crosses the
+// 16-pixel boundary so a regression to scalar fallback would still pass
+// the parity check (since it would compare scalar to scalar) — but the
+// test also asserts against a hand-built deterministic input where each
+// byte has a distinct position, exercising every byte-swap lane.
 
 fn x2_packed_input(width: usize, seed: u32) -> std::vec::Vec<u8> {
   let mut state = seed;

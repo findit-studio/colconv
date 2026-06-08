@@ -1004,10 +1004,10 @@ fn wasm_yuv411_matches_scalar_width_1920() {
 #[test]
 #[cfg_attr(miri, ignore = "wasm SIMD intrinsics unsupported by Miri")]
 fn wasm_yuv411_matches_scalar_non_4_aligned_widths() {
-  // Codex round-2 finding: FFmpeg `AV_PIX_FMT_YUV411P` accepts any
-  // width via `chroma_width = width.div_ceil(4)`. Widths < 16 stay
-  // entirely in the scalar tail; larger non-4-aligned widths exercise
-  // the wasm 16-pixel SIMD body + partial-chroma scalar tail boundary.
+  // FFmpeg `AV_PIX_FMT_YUV411P` accepts any width via
+  // `chroma_width = width.div_ceil(4)`. Widths < 16 stay entirely in the
+  // scalar tail; larger non-4-aligned widths exercise the wasm 16-pixel
+  // SIMD body + partial-chroma scalar tail boundary.
   for w in [1usize, 2, 3, 5, 6, 7, 17, 31, 33, 47, 641] {
     check_yuv411_equivalence(w, ColorMatrix::Bt601, true);
     check_yuv411_equivalence(w, ColorMatrix::Bt709, false);

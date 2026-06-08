@@ -166,8 +166,8 @@ pub(super) fn pseudo_random_u8(buf: &mut [u8], seed: u32) {
 // achieves exactly that: on LE hosts `as_le_*` is identity and `as_be_*`
 // byte-swaps; on BE hosts (e.g. s390x) the polarity flips. Centralising
 // these here matches the `le_encoded_u16_buf` convention from the
-// `frame/tests/` fixture builders (PR #95/#96) and keeps the call sites
-// in xv36/v410/ayuv64 sinker tests self-documenting.
+// `frame/tests/` fixture builders and keeps the call sites in
+// xv36/v410/ayuv64 sinker tests self-documenting.
 
 /// Encode a logical `u16` as host-independent **LE-wire** byte storage.
 #[cfg(all(

@@ -188,10 +188,10 @@ fn neon_v410_lane_order_per_pixel_y_and_u() {
   );
 }
 
-/// SIMD-level BE-vs-LE parity test: probes the `bswap_u32x4_if_be<BE>` gate
-/// added in `b7fb9d3` (PR #86) at the SIMD layer, which existing tests miss
-/// (per-backend tests use `BE=false`; dispatcher BE-vs-LE comparisons use
-/// `use_simd=false`).
+/// SIMD-level BE-vs-LE parity test: probes the `bswap_u32x4_if_be<BE>`
+/// gate at the SIMD layer (per-backend tests use `BE=false`; dispatcher
+/// BE-vs-LE comparisons use `use_simd=false`, so this gate is otherwise
+/// untested).
 ///
 /// On an LE host:
 /// - SIMD `<BE=false>` on LE input  → gate doesn't fire → exercises no-swap path.

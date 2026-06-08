@@ -107,7 +107,7 @@ fn xyz12_with_rgb_zero_input_zero_output() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn xyz12_with_rgb_max_input_clamps_to_255() {
-  // (4095, 4095, 4095) under DCI-P3 (DCI white, post round-2 fix) →
+  // (4095, 4095, 4095) under DCI-P3 (DCI white) →
   // linear ~(1.383, 1.001, 1.151) → after clamp [0,1] + OETF + x255
   // → all channels saturate to 255.
   let pix = solid_xyz12_frame_le(8, 4, 0xFFF, 0xFFF, 0xFFF);

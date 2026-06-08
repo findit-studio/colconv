@@ -48,10 +48,7 @@ use core::arch::aarch64::*;
 use super::bswap_u16x8_if_be;
 use crate::row::scalar;
 
-// =============================================================================
-// Rgb48 (R, G, B — 3 u16 elements per pixel)
-// =============================================================================
-
+// Rgb48 (R, G, B — 3 u16 elements per pixel).
 /// NEON Rgb48 → packed u8 RGB. 8 pixels per SIMD iteration.
 ///
 /// `vld3q_u16` deinterleaves into `(R, G, B)` u16x8; `vshrn_n_u16::<8>`
@@ -210,10 +207,7 @@ pub(crate) unsafe fn neon_rgb48_to_rgba_u16_row<const BE: bool>(
   }
 }
 
-// =============================================================================
-// Bgr48 (B, G, R — 3 u16 elements per pixel)
-// =============================================================================
-
+// Bgr48 (B, G, R — 3 u16 elements per pixel).
 /// NEON Bgr48 → packed u8 RGB. 8 pixels per SIMD iteration.
 ///
 /// `vld3q_u16` deinterleaves into `(B, G, R)` u16x8; channels are swapped
@@ -373,10 +367,7 @@ pub(crate) unsafe fn neon_bgr48_to_rgba_u16_row<const BE: bool>(
   }
 }
 
-// =============================================================================
-// Rgba64 (R, G, B, A — 4 u16 elements per pixel)
-// =============================================================================
-
+// Rgba64 (R, G, B, A — 4 u16 elements per pixel).
 /// NEON Rgba64 → packed u8 RGB. 8 pixels per SIMD iteration. Alpha discarded.
 ///
 /// `vld4q_u16` deinterleaves into `(R, G, B, A)` u16x8; R/G/B narrowed;
@@ -537,10 +528,7 @@ pub(crate) unsafe fn neon_rgba64_to_rgba_u16_row<const BE: bool>(
   }
 }
 
-// =============================================================================
-// Bgra64 (B, G, R, A — 4 u16 elements per pixel)
-// =============================================================================
-
+// Bgra64 (B, G, R, A — 4 u16 elements per pixel).
 /// NEON Bgra64 → packed u8 RGB. 8 pixels per SIMD iteration.
 /// B↔R swap; alpha discarded.
 ///

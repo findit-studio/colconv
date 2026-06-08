@@ -36,10 +36,7 @@ use crate::row::{
   packed_yuv422_row_bytes, rgb_row_bytes, rgb_row_elems, rgba_row_bytes, rgba_row_elems, scalar,
 };
 
-// ============================================================================
-// RGB565 (R5 G6 B5 — bits [15:11] [10:5] [4:0])
-// ============================================================================
-
+// RGB565 (R5 G6 B5 — bits [15:11] [10:5] [4:0]).
 /// Dispatches RGB565 → packed `R, G, B` bytes to the best available backend.
 ///
 /// Channels are expanded via bit-replication to full u8:
@@ -218,10 +215,7 @@ pub fn rgb565_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   scalar::legacy_rgb::rgb565_to_rgba_u16_row(src, rgba_out, width);
 }
 
-// ============================================================================
-// BGR565 (B5 G6 R5 — bits [15:11]=B5, [10:5]=G6, [4:0]=R5)
-// ============================================================================
-
+// BGR565 (B5 G6 R5 — bits [15:11]=B5, [10:5]=G6, [4:0]=R5).
 /// Dispatches BGR565 → packed `R, G, B` bytes (output always R-first) to the
 /// best available backend. `use_simd = false` forces scalar.
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -390,10 +384,7 @@ pub fn bgr565_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   scalar::legacy_rgb::bgr565_to_rgba_u16_row(src, rgba_out, width);
 }
 
-// ============================================================================
-// RGB555 (1X R5 G5 B5 — bits [14:10]=R5, [9:5]=G5, [4:0]=B5, bit 15 ignored)
-// ============================================================================
-
+// RGB555 (1X R5 G5 B5 — bits [14:10]=R5, [9:5]=G5, [4:0]=B5, bit 15 ignored).
 /// Dispatches RGB555 → packed `R, G, B` bytes to the best available backend.
 /// `use_simd = false` forces scalar.
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -562,10 +553,7 @@ pub fn rgb555_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   scalar::legacy_rgb::rgb555_to_rgba_u16_row(src, rgba_out, width);
 }
 
-// ============================================================================
-// BGR555 (1X B5 G5 R5 — bits [14:10]=B5, [9:5]=G5, [4:0]=R5, bit 15 ignored)
-// ============================================================================
-
+// BGR555 (1X B5 G5 R5 — bits [14:10]=B5, [9:5]=G5, [4:0]=R5, bit 15 ignored).
 /// Dispatches BGR555 → packed `R, G, B` bytes (output always R-first) to the
 /// best available backend. `use_simd = false` forces scalar.
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -734,10 +722,7 @@ pub fn bgr555_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   scalar::legacy_rgb::bgr555_to_rgba_u16_row(src, rgba_out, width);
 }
 
-// ============================================================================
-// RGB444 (4X R4 G4 B4 — bits [11:8]=R4, [7:4]=G4, [3:0]=B4, bits [15:12] ignored)
-// ============================================================================
-
+// RGB444 (4X R4 G4 B4 — bits [11:8]=R4, [7:4]=G4, [3:0]=B4, bits [15:12] ignored).
 /// Dispatches RGB444 → packed `R, G, B` bytes to the best available backend.
 /// `use_simd = false` forces scalar.
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -906,10 +891,7 @@ pub fn rgb444_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   scalar::legacy_rgb::rgb444_to_rgba_u16_row(src, rgba_out, width);
 }
 
-// ============================================================================
-// BGR444 (4X B4 G4 R4 — bits [11:8]=B4, [7:4]=G4, [3:0]=R4, bits [15:12] ignored)
-// ============================================================================
-
+// BGR444 (4X B4 G4 R4 — bits [11:8]=B4, [7:4]=G4, [3:0]=R4, bits [15:12] ignored).
 /// Dispatches BGR444 → packed `R, G, B` bytes (output always R-first) to the
 /// best available backend. `use_simd = false` forces scalar.
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -1078,10 +1060,7 @@ pub fn bgr444_to_rgba_u16_row(src: &[u8], rgba_out: &mut [u16], width: usize, us
   scalar::legacy_rgb::bgr444_to_rgba_u16_row(src, rgba_out, width);
 }
 
-// ============================================================================
-// Overflow-guard tests — 32-bit target only
-// ============================================================================
-
+// Overflow-guard tests — 32-bit target only.
 #[cfg(all(test, feature = "std"))]
 mod tests {
   //! Regression tests for the 32-bit overflow guards. Input side uses

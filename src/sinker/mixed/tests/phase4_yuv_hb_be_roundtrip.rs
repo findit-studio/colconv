@@ -10,10 +10,10 @@
 //!   - mismatches between `MixedSinker<Marker<true>>` and the BE row
 //!     kernels.
 //!
-//! The tests cover all 30+ formats migrated in this PR via a small
-//! helper-macro pattern that reduces each format to a 5-line test
-//! body. Per-format helpers (`as_le_u16` / `as_be_u16` / matching
-//! intended-sample generation) live at module scope.
+//! The tests cover all 30+ migrated formats via a small helper-macro
+//! pattern that reduces each format to a 5-line test body. Per-format
+//! helpers (`as_le_u16` / `as_be_u16` / matching intended-sample
+//! generation) live at module scope.
 
 use crate::{
   ColorMatrix,

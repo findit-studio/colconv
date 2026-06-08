@@ -462,8 +462,8 @@ pub(crate) fn gbr_to_luma_u16_high_bit_row<const BITS: u32, const BE: bool>(
     // is wrong here because it scales Y_full by `219/255 ≈ 0.85882`
     // when the correct native ratio is `range / native_max ≈ 0.85546`
     // at BITS=16. The ~0.4% overshoot makes the top ~250 input codes
-    // collapse onto the y_max clamp, destroying highlight gradation
-    // (codex review). The exact form below uses i64 throughout —
+    // collapse onto the y_max clamp, destroying highlight gradation.
+    // The exact form below uses i64 throughout —
     // `range x native_max < 2^32` for BITS ≤ 16 — and a +native_max/2
     // bias for round-half-up semantics.
     let y_off = (16i64) << (BITS - 8);

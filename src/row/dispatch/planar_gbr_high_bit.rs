@@ -34,10 +34,7 @@ use crate::{
   row::{rgb_row_bytes, rgb_row_elems, rgba_row_bytes, rgba_row_elems, scalar},
 };
 
-// ---------------------------------------------------------------------------
-// 1. G/B/R → packed R,G,B  (u8 output)
-// ---------------------------------------------------------------------------
-
+// 1. G/B/R → packed R,G,B  (u8 output).
 /// Interleaves three planar G/B/R `u16` rows into packed `R, G, B` **bytes**.
 /// Downshifts each sample by `BITS - 8`. `use_simd = false` forces scalar.
 /// When `BE = true`, input u16 samples are big-endian and byte-swapped first.
@@ -104,10 +101,7 @@ pub fn gbr_to_rgb_high_bit_row<const BITS: u32, const BE: bool>(
   scalar::gbr_to_rgb_high_bit_row::<BITS, BE>(g, b, r, rgb_out, width);
 }
 
-// ---------------------------------------------------------------------------
-// 2. G/B/R → packed R,G,B  (u16 output, native depth)
-// ---------------------------------------------------------------------------
-
+// 2. G/B/R → packed R,G,B  (u16 output, native depth).
 /// Interleaves three planar G/B/R `u16` rows into packed `R, G, B` **u16**
 /// elements. Samples are copied as-is (no depth conversion); values stay in
 /// `[0, (1 << BITS) - 1]`. `use_simd = false` forces scalar.
@@ -191,10 +185,7 @@ pub fn gbr_to_rgb_u16_high_bit_row<const BITS: u32, const BE: bool>(
   scalar::gbr_to_rgb_u16_high_bit_row::<BITS, BE>(g, b, r, rgb_u16_out, width);
 }
 
-// ---------------------------------------------------------------------------
-// 3. G/B/R → packed R,G,B,0xFF  (u8 output, opaque α)
-// ---------------------------------------------------------------------------
-
+// 3. G/B/R → packed R,G,B,0xFF  (u8 output, opaque α).
 /// Interleaves three planar G/B/R `u16` rows into packed `R, G, B, A` **bytes**
 /// with constant α = `0xFF`. Used by `GbrpN` for standalone `with_rgba` path.
 /// `use_simd = false` forces scalar.
@@ -278,10 +269,7 @@ pub fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32, const BE: bool>(
   scalar::gbr_to_rgba_opaque_high_bit_row::<BITS, BE>(g, b, r, rgba_out, width);
 }
 
-// ---------------------------------------------------------------------------
-// 4. G/B/R → packed R,G,B,(1<<BITS)-1  (u16 output, opaque α)
-// ---------------------------------------------------------------------------
-
+// 4. G/B/R → packed R,G,B,(1<<BITS)-1  (u16 output, opaque α).
 /// Interleaves three planar G/B/R `u16` rows into packed `R, G, B, A`
 /// **u16** elements with constant α = `(1 << BITS) - 1` (native-depth
 /// opaque). Used by `GbrpN` for standalone `with_rgba_u16` path.
@@ -368,10 +356,7 @@ pub fn gbr_to_rgba_opaque_u16_high_bit_row<const BITS: u32, const BE: bool>(
   scalar::gbr_to_rgba_opaque_u16_high_bit_row::<BITS, BE>(g, b, r, rgba_u16_out, width);
 }
 
-// ---------------------------------------------------------------------------
-// 5. G/B/R/A → packed R,G,B,A  (u8 output, real source α)
-// ---------------------------------------------------------------------------
-
+// 5. G/B/R/A → packed R,G,B,A  (u8 output, real source α).
 /// Interleaves four planar G/B/R/A `u16` rows into packed `R, G, B, A`
 /// **bytes**. Alpha is downshifted by `BITS - 8` (real source α, not
 /// constant). `use_simd = false` forces scalar.
@@ -452,10 +437,7 @@ pub fn gbra_to_rgba_high_bit_row<const BITS: u32, const BE: bool>(
   scalar::gbra_to_rgba_high_bit_row::<BITS, BE>(g, b, r, a, rgba_out, width);
 }
 
-// ---------------------------------------------------------------------------
-// 6. G/B/R/A → packed R,G,B,A  (u16 output, real source α, no depth conv)
-// ---------------------------------------------------------------------------
-
+// 6. G/B/R/A → packed R,G,B,A  (u16 output, real source α, no depth conv).
 /// Interleaves four planar G/B/R/A `u16` rows into packed `R, G, B, A`
 /// **u16** elements. Alpha is copied directly without depth conversion (values
 /// stay in `[0, (1 << BITS) - 1]`). `use_simd = false` forces scalar.
@@ -544,10 +526,7 @@ pub fn gbra_to_rgba_u16_high_bit_row<const BITS: u32, const BE: bool>(
   scalar::gbra_to_rgba_u16_high_bit_row::<BITS, BE>(g, b, r, a, rgba_u16_out, width);
 }
 
-// ---------------------------------------------------------------------------
-// 7. G/B/R → luma Y'  (u16 output, native depth)
-// ---------------------------------------------------------------------------
-
+// 7. G/B/R → luma Y'  (u16 output, native depth).
 /// Derives luma (Y') from three planar G/B/R `u16` rows at native bit
 /// depth. Scalar-only for now — SIMD can be added later.
 ///

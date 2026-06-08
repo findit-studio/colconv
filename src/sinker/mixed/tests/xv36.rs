@@ -396,8 +396,6 @@ fn xv36_buffer_too_short_for_rgba_u16_returns_err() {
     MixedSinkerError::InsufficientRgbaU16Buffer(InsufficientBuffer::new(192, 168))
   );
 }
-
-// ====================================================================================
 // Phase 4 Tier 5 — Frame BE flag, XV36 LE+BE round-trip parity test.
 //
 // XV36 packs each pixel as four u16 channels (`U, Y, V, A`), 12-bit MSB-aligned.
@@ -405,8 +403,6 @@ fn xv36_buffer_too_short_for_rgba_u16_returns_err() {
 // the same logical samples as LE bytes vs BE bytes and feeding through
 // `MixedSinker<Xv36<false>>` vs `MixedSinker<Xv36<true>>` must produce
 // byte-identical output.
-// ====================================================================================
-
 #[test]
 #[cfg(all(test, feature = "std"))]
 #[cfg_attr(

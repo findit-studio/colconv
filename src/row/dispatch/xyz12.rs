@@ -600,10 +600,9 @@ pub fn xyz12_to_rgba_f16_row<const BE: bool>(
 /// by the upstream 6× scalar `powf` work in the matmul + OETF stages.
 /// `use_simd` is accepted for sinker-API uniformity and ignored.
 ///
-/// Codex round-2 medium fix: prior code used `rgb_to_luma_row` with
-/// `ColorMatrix::Bt709` for both DciP3 and Rec709 targets; that biases
-/// luma for saturated content under DCI-P3, which has its own weights
-/// from the DCI-white-pointed RGB→XYZ matrix Y row.
+/// DciP3 must use its own Q15 weights (derived from the DCI-white-pointed
+/// RGB→XYZ matrix Y row); the BT.709 triple biases luma for saturated
+/// content under DCI-P3.
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub fn xyz12_rgb_to_luma_row(
   rgb: &[u8],

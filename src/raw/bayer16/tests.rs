@@ -303,11 +303,10 @@ fn bayer12_try_new_rejects_sample_above_max() {
   assert_eq!(p.max_valid(), 4095);
 }
 
-/// Codex-recommended regression: MSB-aligned 12-bit midgray
-/// (e.g., `2048 << 4 = 0x8000`) is exactly the common
-/// packing-mismatch bug, where a caller forgot to right-shift
-/// before constructing the `Bayer12Frame`. Now caught at
-/// construction as `Result::Err` instead of a runtime panic.
+/// MSB-aligned 12-bit midgray (e.g., `2048 << 4 = 0x8000`) is
+/// exactly the common packing-mismatch bug, where a caller forgot
+/// to right-shift before constructing the `Bayer12Frame`. Caught
+/// at construction as `Result::Err` instead of a runtime panic.
 #[test]
 fn bayer12_try_new_rejects_msb_aligned_input() {
   let (w, h) = (4u32, 2u32);
@@ -320,13 +319,12 @@ fn bayer12_try_new_rejects_msb_aligned_input() {
   assert_eq!(p.max_valid(), 4095);
 }
 
-/// Codex-recommended partial-output regression: a Bayer12 frame
-/// with a bad sample in a *later* row used to trigger a runtime
-/// panic mid-walk; now `try_new` catches the bad sample upfront
-/// and returns `Err`, so the user's output buffer is never
-/// touched. (The `bayer16_to` walker can no longer be reached
-/// with bad sample data because no `BayerFrame16<BITS>` value
-/// can exist with out-of-range samples.)
+/// A Bayer12 frame with a bad sample in a *later* row would
+/// otherwise trigger a runtime panic mid-walk; `try_new` catches
+/// the bad sample upfront and returns `Err`, so the user's output
+/// buffer is never touched. (The `bayer16_to` walker cannot be
+/// reached with bad sample data because no `BayerFrame16<BITS>`
+/// value can exist with out-of-range samples.)
 #[test]
 fn bayer12_try_new_rejects_bad_sample_in_later_row() {
   let (w, h) = (4u32, 8u32);
@@ -341,11 +339,10 @@ fn bayer12_try_new_rejects_bad_sample_in_later_row() {
   assert_eq!(p.max_valid(), 4095);
 }
 
-/// Codex-recommended regression: a valid padded RAW buffer
-/// (`stride > width`) with **stale high bits in the row
-/// padding** must NOT trip the upfront pre-pass. The walker
-/// only reads the active per-row region (`r * stride .. r *
-/// stride + width`) so padding bytes are out of scope.
+/// A valid padded RAW buffer (`stride > width`) with **stale high
+/// bits in the row padding** must NOT trip the upfront pre-pass.
+/// The walker only reads the active per-row region (`r * stride ..
+/// r * stride + width`) so padding bytes are out of scope.
 #[test]
 fn bayer12_walker_accepts_padded_stride_with_dirty_padding() {
   let w: u32 = 4;

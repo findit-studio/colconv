@@ -208,8 +208,8 @@ fn ccm_try_new_accepts_typical_negative_off_diagonal() {
     .expect("typical CCM valid");
 }
 
-/// Codex regression: even at the bound, fusion + per-pixel
-/// matmul stays finite for the maximum-stress 16-bit input.
+/// Even at the bound, fusion + per-pixel matmul stays finite
+/// for the maximum-stress 16-bit input.
 /// `WB.MAX_GAIN * CCM.MAX_COEFFICIENT_ABS * 65535 ≈ 6.55e16`,
 /// well under `f32::MAX ≈ 3.4e38`.
 #[cfg(feature = "bayer")]

@@ -281,7 +281,7 @@ fn nv24_width_mismatch_returns_err() {
   assert!(matches!(err, MixedSinkerError::DimensionMismatch(_)));
 }
 
-// ---- Nv24/Nv42 RGBA (Ship 8 PR 4b) tests --------------------------------
+// Nv24/Nv42 RGBA tests.
 
 #[test]
 #[cfg_attr(

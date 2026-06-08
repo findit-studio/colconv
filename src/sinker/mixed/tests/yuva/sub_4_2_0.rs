@@ -109,8 +109,7 @@ fn yuva420p_rgba_buf_too_short_returns_err() {
 )]
 fn yuva420p_with_rgb_alpha_drop_matches_yuv420p() {
   // alpha-drop path: with_rgb on Yuva420p must equal with_rgb on
-  // Yuv420p given the same Y/U/V data. Codex PR #32 review fix #1
-  // applied upfront here.
+  // Yuv420p given the same Y/U/V data.
   let (yp, up, vp) = solid_yuv420p_frame(16, 8, 180, 60, 200);
   let (yp_a, up_a, vp_a, ap) = solid_yuva420p_frame(16, 8, 180, 60, 200, 128);
 

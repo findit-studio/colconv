@@ -6,10 +6,10 @@
 //!
 //! `f32x4_add(scaled, half)` then `i32x4_trunc_sat_f32x4` (truncate toward
 //! zero). This is the round-half-up contract shared with the scalar / NEON /
-//! SSE4.1 / AVX2 / AVX-512 kernels — consistent with PR #74 / Grayf32.
+//! SSE4.1 / AVX2 / AVX-512 kernels — consistent with the Grayf32 path.
 //!
 //! **Do NOT use `f32x4_nearest` for integer narrowing** — that gives
-//! banker's rounding, not round-half-up (codex-validated PR #74 fix).
+//! banker's rounding, not round-half-up.
 //!
 //! # Rounding (f32 → f16)
 //!
@@ -45,8 +45,7 @@ use crate::{
 /// **Note:** wasm-simd128 has no native f16 widening intrinsic, so the
 /// "SIMD-aligned" body of the f16 row kernels in this file uses the same
 /// scalar widening pattern as the tail. Both code paths therefore need the
-/// same `HOST_NATIVE_BE` routing — codex PR #84 Finding 1 follow-up to
-/// commit `8627280`.
+/// same `HOST_NATIVE_BE` routing.
 const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 
 // ---- shared helpers ----------------------------------------------------------

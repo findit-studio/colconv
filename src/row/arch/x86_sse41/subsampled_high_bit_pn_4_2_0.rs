@@ -11,10 +11,9 @@ const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 ///
 /// Used after `deinterleave_uv_u16` (or other UV-interleaved loads) to
 /// apply byte-swapping that `load_endian_u16x8` cannot perform for
-/// shuffled-then-loaded values. The gate is `BE != HOST_NATIVE_BE`
-/// (mirrors PR #82 / #85 / #87 / #88), so a hypothetical BE-x86 host
-/// would not double-swap. When the gate folds to `false` at compile
-/// time, the call compiles away entirely.
+/// shuffled-then-loaded values. The gate is `BE != HOST_NATIVE_BE`, so a
+/// hypothetical BE-x86 host would not double-swap. When the gate folds to
+/// `false` at compile time, the call compiles away entirely.
 #[inline(always)]
 unsafe fn byteswap_u16x8<const BE: bool>(v: __m128i) -> __m128i {
   if BE != HOST_NATIVE_BE {

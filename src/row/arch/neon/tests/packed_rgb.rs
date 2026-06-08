@@ -344,12 +344,12 @@ fn x2bgr10_to_rgb_u16_neon_matches_scalar_widths() {
   }
 }
 
-// ---- SIMD-level BE-vs-LE parity for X2RGB10 / X2BGR10 -------------------
+// SIMD-level BE-vs-LE parity for X2RGB10 / X2BGR10.
 //
-// Post PR #104 fix: both `<false>` and `<true>` exercise the real SIMD body
-// (LE via plain `vld1q_u32`, BE via `load_endian_u32x4::<true>`'s extra
-// `vrev32q_u8`). Width 33 crosses the 16-pixel SIMD boundary so the body
-// runs at least twice and the scalar tail handles the leftover.
+// Both `<false>` and `<true>` exercise the real SIMD body (LE via plain
+// `vld1q_u32`, BE via `load_endian_u32x4::<true>`'s extra `vrev32q_u8`).
+// Width 33 crosses the 16-pixel SIMD boundary so the body runs at least
+// twice and the scalar tail handles the leftover.
 
 fn pseudo_random_x2_intended(width: usize, seed: u32) -> std::vec::Vec<u32> {
   let mut state = seed;
@@ -429,11 +429,11 @@ fn neon_x2bgr10_be_le_simd_parity_width33() {
   assert_eq!(out_le, out_be, "x2bgr10→rgb_u16 SIMD BE/LE parity");
 }
 
-// ---- BE-input SIMD-vs-scalar parity (PR #104 follow-up) ------------------
+// BE-input SIMD-vs-scalar parity.
 //
-// Pre-fix, the NEON X2 10-bit kernels gated their SIMD body on `if !BE` and
-// silently fell through to scalar for BE input. With the BE-aware load
-// (`load_endian_u32x4::<BE>`), BE now exercises the real SIMD path.
+// Without a BE-aware load (`load_endian_u32x4::<BE>`) the NEON X2 10-bit
+// kernels gate their SIMD body on `if !BE` and silently fall through to
+// scalar for BE input.
 
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]

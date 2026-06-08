@@ -22,10 +22,7 @@ fn make_rgba64_src(width: usize, seed: u16) -> std::vec::Vec<u16> {
     .collect()
 }
 
-// =============================================================================
-// Rgb48
-// =============================================================================
-
+// Rgb48.
 #[cfg(target_arch = "aarch64")]
 #[cfg_attr(miri, ignore = "NEON intrinsics not supported under Miri")]
 #[test]
@@ -80,10 +77,7 @@ fn neon_rgb48_to_rgba_u16_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Bgr48
-// =============================================================================
-
+// Bgr48.
 #[cfg(target_arch = "aarch64")]
 #[cfg_attr(miri, ignore = "NEON intrinsics not supported under Miri")]
 #[test]
@@ -138,10 +132,7 @@ fn neon_bgr48_to_rgba_u16_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Rgba64
-// =============================================================================
-
+// Rgba64.
 #[cfg(target_arch = "aarch64")]
 #[cfg_attr(miri, ignore = "NEON intrinsics not supported under Miri")]
 #[test]
@@ -196,10 +187,7 @@ fn neon_rgba64_to_rgba_u16_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Bgra64
-// =============================================================================
-
+// Bgra64.
 #[cfg(target_arch = "aarch64")]
 #[cfg_attr(miri, ignore = "NEON intrinsics not supported under Miri")]
 #[test]
@@ -254,10 +242,7 @@ fn neon_bgra64_to_rgba_u16_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Exact-8 width: verify no-tail path works correctly
-// =============================================================================
-
+// Exact-8 width: verify no-tail path works correctly.
 #[cfg(target_arch = "aarch64")]
 #[cfg_attr(miri, ignore = "NEON intrinsics not supported under Miri")]
 #[test]
@@ -288,10 +273,7 @@ fn neon_rgba64_to_rgba_exact8_matches_scalar() {
   );
 }
 
-// =============================================================================
-// Tail-only width=1: no SIMD path, scalar only
-// =============================================================================
-
+// Tail-only width=1: no SIMD path, scalar only.
 #[cfg(target_arch = "aarch64")]
 #[cfg_attr(miri, ignore = "NEON intrinsics not supported under Miri")]
 #[test]
@@ -322,9 +304,7 @@ fn neon_bgra64_to_rgba_u16_width1_scalar_tail_only() {
   );
 }
 
-// =============================================================================
-// SIMD-level BE-vs-LE parity tests
-// =============================================================================
+// SIMD-level BE-vs-LE parity tests.
 //
 // These probe the `bswap_u16x8_if_be<BE>` gate (`BE != HOST_NATIVE_BE`) at
 // the SIMD layer. Existing tests above use `BE=false` only and never exercise
@@ -337,7 +317,7 @@ fn neon_bgra64_to_rgba_u16_width1_scalar_tail_only() {
 // LE-encoded bytes and `be_buf` carries the same values as BE-encoded bytes.
 // Both `kernel<BE=false>(le_buf)` and `kernel<BE=true>(be_buf)` should
 // therefore decode to the same intended host-native u16 values and produce
-// identical RGB output. Mirrors PR #86's `87d682f` / `6924907` patterns.
+// identical RGB output.
 //
 // Width 17 = 2 × 8-lane SIMD body + 1 scalar tail, ensuring the SIMD body
 // is exercised (not just the scalar tail).

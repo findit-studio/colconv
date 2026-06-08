@@ -470,7 +470,7 @@ fn vuya_planar_parity_with_yuva444p() {
 /// at all (range, matrix) combinations. See spec § 6.1.
 ///
 /// Validates byte-identity by running the sinker combo path (which uses
-/// A+ post-PR4) against the scalar inline-α kernel directly.
+/// A+) against the scalar inline-α kernel directly.
 #[test]
 #[cfg(all(test, feature = "std"))]
 #[cfg_attr(
@@ -495,7 +495,7 @@ fn vuya_strategy_a_plus_matches_independent_kernel() {
       ColorMatrix::Fcc,
       ColorMatrix::YCgCo,
     ] {
-      // Sinker path (uses A+ post-PR4).
+      // Sinker path (uses A+).
       let mut sinker_rgb = std::vec![0u8; width * height * 3];
       let mut sinker_rgba = std::vec![0u8; width * height * 4];
       {
@@ -586,15 +586,14 @@ fn vuya_luma_u16_buffer_too_short_returns_err() {
   );
 }
 
-// ---- 15: Strategy A+ honors with_simd(false) (Codex PR #63 review fix #2) ----
+// Strategy A+ honors `with_simd(false)`.
 //
 // `MixedSinker::with_simd(false)` is a documented public knob (used by
 // benchmarks, fuzzers, and differential testing). All existing kernel
 // calls thread `use_simd = self.simd` to row-level dispatchers; the
-// new alpha_extract::* helpers introduced in PR #63 also
-// accept the flag now (previously they always selected the highest
-// available SIMD backend, silently bypassing the knob for the α-extract
-// step of A+).
+// `alpha_extract::*` helpers also accept the flag (otherwise they would
+// always select the highest available SIMD backend, silently bypassing
+// the knob for the α-extract step of A+).
 //
 // This test exercises the scalar-fallback path through the dispatcher
 // and pins that with_simd(false) still produces correct output when

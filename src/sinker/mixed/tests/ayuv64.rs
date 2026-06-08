@@ -892,8 +892,6 @@ fn ayuv64_strategy_a_plus_u16_matches_independent_kernel() {
     }
   }
 }
-
-// ====================================================================================
 // Phase 4 Tier 5 — Frame BE flag, AYUV64 LE+BE round-trip parity tests.
 //
 // AYUV64 packs each pixel as four u16 channels (`A, Y, U, V`), 16-bit native.
@@ -902,8 +900,6 @@ fn ayuv64_strategy_a_plus_u16_matches_independent_kernel() {
 // `MixedSinker<Ayuv64<false>>` vs `MixedSinker<Ayuv64<true>>` must produce
 // byte-identical output for both u8 and u16 RGBA paths (also exercising the
 // alpha_extract `<BE>` propagation in the Strategy A+ combo path).
-// ====================================================================================
-
 #[test]
 #[cfg(all(test, feature = "std"))]
 #[cfg_attr(

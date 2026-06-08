@@ -23,10 +23,7 @@ fn make_rgba64_src(width: usize, seed: u16) -> std::vec::Vec<u16> {
     .collect()
 }
 
-// =============================================================================
-// Rgb48 → u8 RGB
-// =============================================================================
-
+// Rgb48 → u8 RGB.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_rgb48_to_rgb_matches_scalar_width17() {
@@ -78,10 +75,7 @@ fn sse41_rgb48_to_rgb_width1_tail_only() {
   );
 }
 
-// =============================================================================
-// Rgb48 → u8 RGBA
-// =============================================================================
-
+// Rgb48 → u8 RGBA.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_rgb48_to_rgba_matches_scalar_width17() {
@@ -99,10 +93,7 @@ fn sse41_rgb48_to_rgba_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Rgb48 → u16 RGB
-// =============================================================================
-
+// Rgb48 → u16 RGB.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_rgb48_to_rgb_u16_matches_scalar_width17() {
@@ -120,10 +111,7 @@ fn sse41_rgb48_to_rgb_u16_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Rgb48 → u16 RGBA
-// =============================================================================
-
+// Rgb48 → u16 RGBA.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_rgb48_to_rgba_u16_matches_scalar_width17() {
@@ -141,10 +129,7 @@ fn sse41_rgb48_to_rgba_u16_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Bgr48 → u8 RGB
-// =============================================================================
-
+// Bgr48 → u8 RGB.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_bgr48_to_rgb_matches_scalar_width17() {
@@ -179,10 +164,7 @@ fn sse41_bgr48_to_rgb_exact8_matches_scalar() {
   );
 }
 
-// =============================================================================
-// Bgr48 → u8 RGBA
-// =============================================================================
-
+// Bgr48 → u8 RGBA.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_bgr48_to_rgba_matches_scalar_width17() {
@@ -200,10 +182,7 @@ fn sse41_bgr48_to_rgba_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Bgr48 → u16 RGB
-// =============================================================================
-
+// Bgr48 → u16 RGB.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_bgr48_to_rgb_u16_matches_scalar_width17() {
@@ -221,10 +200,7 @@ fn sse41_bgr48_to_rgb_u16_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Bgr48 → u16 RGBA
-// =============================================================================
-
+// Bgr48 → u16 RGBA.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_bgr48_to_rgba_u16_matches_scalar_width17() {
@@ -242,10 +218,7 @@ fn sse41_bgr48_to_rgba_u16_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Rgba64 → u8 RGB
-// =============================================================================
-
+// Rgba64 → u8 RGB.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_rgba64_to_rgb_matches_scalar_width17() {
@@ -280,10 +253,7 @@ fn sse41_rgba64_to_rgb_exact8_matches_scalar() {
   );
 }
 
-// =============================================================================
-// Rgba64 → u8 RGBA
-// =============================================================================
-
+// Rgba64 → u8 RGBA.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_rgba64_to_rgba_matches_scalar_width17() {
@@ -301,10 +271,7 @@ fn sse41_rgba64_to_rgba_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Rgba64 → u16 RGB
-// =============================================================================
-
+// Rgba64 → u16 RGB.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_rgba64_to_rgb_u16_matches_scalar_width17() {
@@ -322,10 +289,7 @@ fn sse41_rgba64_to_rgb_u16_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Rgba64 → u16 RGBA
-// =============================================================================
-
+// Rgba64 → u16 RGBA.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_rgba64_to_rgba_u16_matches_scalar_width17() {
@@ -360,10 +324,7 @@ fn sse41_rgba64_to_rgba_u16_width1_tail_only() {
   );
 }
 
-// =============================================================================
-// Bgra64 → u8 RGB
-// =============================================================================
-
+// Bgra64 → u8 RGB.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_bgra64_to_rgb_matches_scalar_width17() {
@@ -381,10 +342,7 @@ fn sse41_bgra64_to_rgb_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Bgra64 → u8 RGBA
-// =============================================================================
-
+// Bgra64 → u8 RGBA.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_bgra64_to_rgba_matches_scalar_width17() {
@@ -402,10 +360,7 @@ fn sse41_bgra64_to_rgba_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Bgra64 → u16 RGB
-// =============================================================================
-
+// Bgra64 → u16 RGB.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_bgra64_to_rgb_u16_matches_scalar_width17() {
@@ -423,10 +378,7 @@ fn sse41_bgra64_to_rgb_u16_matches_scalar_width17() {
   );
 }
 
-// =============================================================================
-// Bgra64 → u16 RGBA
-// =============================================================================
-
+// Bgra64 → u16 RGBA.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_bgra64_to_rgba_u16_matches_scalar_width17() {
@@ -461,9 +413,7 @@ fn sse41_bgra64_to_rgba_u16_width1_tail_only() {
   );
 }
 
-// =============================================================================
-// SIMD-level BE-vs-LE parity tests (probes `BE != HOST_NATIVE_BE` gate)
-// =============================================================================
+// SIMD-level BE-vs-LE parity tests (probes `BE != HOST_NATIVE_BE` gate).
 //
 // Buffers built host-independently via `to_le_bytes` / `to_be_bytes`. Width
 // 17 = 2 x 8-lane SSE4.1 SIMD body + 1 scalar tail.
@@ -680,9 +630,7 @@ fn sse41_bgra64_be_le_simd_parity_width17() {
   );
 }
 
-// =============================================================================
-// X2RGB10 / X2BGR10 SIMD-level BE-vs-LE parity tests
-// =============================================================================
+// X2RGB10 / X2BGR10 SIMD-level BE-vs-LE parity tests.
 //
 // Co-located here (rather than in the dead-code `tests/packed_rgb.rs` which
 // is not declared in `tests/mod.rs`) so they are actually compiled and run.

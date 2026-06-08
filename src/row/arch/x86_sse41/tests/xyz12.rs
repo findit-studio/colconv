@@ -138,14 +138,13 @@ fn sse41_xyz12_to_rgba_matches_scalar() {
   }
 }
 
-// ---- In-register store regression coverage (PR #91 Comment 2) -----------
+// In-register store regression coverage.
 //
-// The u8 RGB / RGBA store paths were rewritten to use in-register
-// `_mm_shuffle_epi8` (RGB) / `_mm_unpacklo_epi8` (RGBA) interleave
-// instead of a 3× stack-temp + per-pixel scalar scatter. These tests
-// pin block-multiple widths (16, 32) that hit the SIMD fast path
-// exclusively (no scalar tail), confirming byte-identical output
-// against the scalar reference.
+// The u8 RGB / RGBA store paths use in-register `_mm_shuffle_epi8` (RGB)
+// / `_mm_unpacklo_epi8` (RGBA) interleave instead of a 3× stack-temp +
+// per-pixel scalar scatter. These tests pin block-multiple widths
+// (16, 32) that hit the SIMD fast path exclusively (no scalar tail),
+// confirming byte-identical output against the scalar reference.
 
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]

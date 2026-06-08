@@ -8,10 +8,10 @@ use super::super::*;
 // F16C-gated tests additionally call `is_x86_feature_detected!("f16c")`.
 //
 // Lane-order regression tests use asymmetric R/G/B/A patterns
-// (`R[n] = n+1`, `G[n] = 2n+1`, `B[n] = 3n+1`, `A[n] = 4n+1`) — see
-// PR #73 / Ship 12d / AYUV64 lessons for why uniform-input tests miss
-// per-channel mask bugs. The per-pixel asymmetry distinguishes channels
-// after interleave so a swapped R/G/B mask trips the assertion.
+// (`R[n] = n+1`, `G[n] = 2n+1`, `B[n] = 3n+1`, `A[n] = 4n+1`) — uniform-
+// input tests miss per-channel mask bugs (see the AYUV64 lane-order
+// failure mode). The per-pixel asymmetry distinguishes channels after
+// interleave so a swapped R/G/B mask trips the assertion.
 
 const WIDTHS: &[usize] = &[
   1, 4, 5, 7, 8, 9, 15, 16, 17, 24, 31, 32, 33, 47, 48, 64, 65, 128, 130,

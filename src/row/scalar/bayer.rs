@@ -1,7 +1,4 @@
-// =============================================================================
-// Bayer demosaic + WB + CCM
-// =============================================================================
-
+// Bayer demosaic + WB + CCM.
 /// Scalar bilinear demosaic + 3×3 matmul for one row of an 8-bit
 /// Bayer plane.
 ///

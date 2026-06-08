@@ -564,12 +564,12 @@ fn neon_p416_matches_scalar_tail_widths() {
   }
 }
 
-// ---- High-bit 4:4:4 u8 RGBA equivalence (Ship 8 Tranche 7b) ---------
+// High-bit 4:4:4 u8 RGBA equivalence.
 //
-// Mirrors the 4:2:0 RGBA pattern in PR #25 (Tranche 5a). Each kernel
-// family — Yuv444p_n (BITS-generic), Yuv444p16, Pn_444 (BITS-generic),
-// Pn_444_16 — has its NEON RGBA kernel byte-pinned against the scalar
-// reference at the natural width and a sweep of tail widths.
+// Mirrors the 4:2:0 RGBA pattern. Each kernel family — Yuv444p_n
+// (BITS-generic), Yuv444p16, Pn_444 (BITS-generic), Pn_444_16 — has its
+// NEON RGBA kernel byte-pinned against the scalar reference at the
+// natural width and a sweep of tail widths.
 
 fn check_yuv444p_n_u8_neon_rgba_equivalence<const BITS: u32>(
   width: usize,

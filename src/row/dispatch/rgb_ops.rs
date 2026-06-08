@@ -199,15 +199,11 @@ pub fn rgb_to_luma_u16_row(
 
   scalar::rgb_to_luma_u16_row(rgb, luma_out, width, matrix, full_range);
 }
-
-// ============================================================================
 // Packed RGB / RGBA / X2RGB10 / X2BGR10 dispatchers below — all gated on the
 // `rgb` family feature. They depend on `scalar::packed_rgb` / `arch::*::packed_rgb`
 // SIMD backends, which themselves only compile under `feature = "rgb"`.
 // The cross-format HSV / luma helpers above this point are always available
 // because every sinker derives them from RGB.
-// ============================================================================
-
 #[cfg(feature = "rgb")]
 mod packed_rgb_dispatchers {
   use super::*;
@@ -956,10 +952,7 @@ mod packed_rgb_dispatchers {
     scalar::bgrx_to_rgba_row(bgrx, rgba_out, width);
   }
 
-  // =============================================================================
-  // 10-bit packed RGB dispatchers (Ship 9e)
-  // =============================================================================
-
+  // 10-bit packed RGB dispatchers (Ship 9e).
   /// Drops the 2-bit padding and down-shifts each 10-bit channel to
   /// 8 bits, producing packed `R, G, B` from `X2RGB10` LE input
   /// (Ship 9e). Used by [`X2Rgb10`](crate::source::X2Rgb10) sinker's RGB

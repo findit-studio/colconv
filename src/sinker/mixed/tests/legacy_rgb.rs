@@ -1,8 +1,6 @@
 use super::*;
 
-// ============================================================================
-// Frame-building helpers
-// ============================================================================
+// Frame-building helpers.
 
 /// Build a frame buffer where every pixel has the given LE u16 word value.
 fn solid_frame_le16(width: u32, height: u32, pixel: u16) -> std::vec::Vec<u8> {
@@ -28,9 +26,7 @@ fn random_legacy_frame(width: u32, height: u32, seed: u32, mask: u16) -> std::ve
   buf
 }
 
-// ============================================================================
-// Section 1 — SIMD-vs-scalar parity (all 6 formats)
-// ============================================================================
+// SIMD-vs-scalar parity (all 6 formats).
 
 #[test]
 #[cfg_attr(
@@ -301,9 +297,7 @@ fn bgr444_simd_matches_scalar() {
   assert_eq!(rgba_simd, rgba_scalar, "BGR444 rgba output diverges");
 }
 
-// ============================================================================
-// Section 2 — u8 RGBA alpha = 0xFF (all 6 formats)
-// ============================================================================
+// u8 RGBA alpha = 0xFF (all 6 formats).
 
 #[test]
 #[cfg_attr(
@@ -416,9 +410,7 @@ fn bgr444_rgba_forces_alpha_ff() {
   }
 }
 
-// ============================================================================
-// Section 3 — u16 RGBA alpha = 0xFFFF (3 representative formats)
-// ============================================================================
+// u16 RGBA alpha = 0xFFFF (3 representative formats).
 
 #[test]
 #[cfg_attr(
@@ -474,9 +466,7 @@ fn rgb444_rgba_u16_forces_alpha_ffff() {
   }
 }
 
-// ============================================================================
-// Section 4 — u16 native precision (no expansion)
-// ============================================================================
+// u16 native precision (no expansion).
 
 #[test]
 #[cfg_attr(
@@ -535,9 +525,7 @@ fn rgb444_u16_native_precision_max() {
   }
 }
 
-// ============================================================================
-// Section 5 — channel expansion correctness (known pixel values)
-// ============================================================================
+// Channel expansion correctness (known pixel values).
 
 #[test]
 #[cfg_attr(
@@ -652,9 +640,7 @@ fn rgb444_known_pixel_all_ones_expands_to_255() {
   }
 }
 
-// ============================================================================
-// Section 6 — BGR channel-order correctness
-// ============================================================================
+// BGR channel-order correctness.
 
 #[test]
 #[cfg_attr(
@@ -714,9 +700,7 @@ fn bgr444_channel_order_r_in_low_bits() {
   }
 }
 
-// ============================================================================
-// Section 7 — luma_u16 is zero-extended u8 luma (range [0, 255])
-// ============================================================================
+// luma_u16 is zero-extended u8 luma (range [0, 255]).
 
 #[test]
 #[cfg_attr(
@@ -806,9 +790,7 @@ fn rgb444_luma_u16_matches_luma_u8_zero_extended() {
   );
 }
 
-// ============================================================================
-// Section 8 — luma_u16 values stay in [0, 255]
-// ============================================================================
+// luma_u16 values stay in [0, 255].
 
 #[test]
 #[cfg_attr(
@@ -858,9 +840,7 @@ fn rgb555_luma_u16_in_u8_range() {
   );
 }
 
-// ============================================================================
-// Section 9 — HSV output is non-trivial for non-gray content
-// ============================================================================
+// HSV output is non-trivial for non-gray content.
 
 #[test]
 #[cfg_attr(
@@ -920,9 +900,7 @@ fn rgb555_hsv_pure_blue_hue() {
   );
 }
 
-// ============================================================================
-// Section 10 — walker round-trip (width=1 edge case)
-// ============================================================================
+// Walker round-trip (width=1 edge case).
 
 #[test]
 #[cfg_attr(
@@ -974,9 +952,7 @@ fn rgb444_width_one_round_trip() {
   );
 }
 
-// ============================================================================
-// Section 11 — error paths: buffer too short
-// ============================================================================
+// Error paths: buffer too short.
 
 #[test]
 fn rgb565_rgba_buffer_too_short_returns_error() {

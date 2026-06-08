@@ -21,10 +21,7 @@ fn legacy_rgb_plane(width: usize, seed: u32) -> std::vec::Vec<u8> {
   out
 }
 
-// ============================================================================
-// RGB565
-// ============================================================================
-
+// RGB565.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_rgb565_to_rgb_matches_scalar() {
@@ -109,10 +106,7 @@ fn sse41_rgb565_to_rgba_u16_matches_scalar() {
   }
 }
 
-// ============================================================================
-// BGR565
-// ============================================================================
-
+// BGR565.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_bgr565_to_rgb_matches_scalar() {
@@ -197,10 +191,7 @@ fn sse41_bgr565_to_rgba_u16_matches_scalar() {
   }
 }
 
-// ============================================================================
-// RGB555
-// ============================================================================
-
+// RGB555.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_rgb555_to_rgb_matches_scalar() {
@@ -285,10 +276,7 @@ fn sse41_rgb555_to_rgba_u16_matches_scalar() {
   }
 }
 
-// ============================================================================
-// BGR555
-// ============================================================================
-
+// BGR555.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_bgr555_to_rgb_matches_scalar() {
@@ -373,10 +361,7 @@ fn sse41_bgr555_to_rgba_u16_matches_scalar() {
   }
 }
 
-// ============================================================================
-// RGB444
-// ============================================================================
-
+// RGB444.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_rgb444_to_rgb_matches_scalar() {
@@ -461,10 +446,7 @@ fn sse41_rgb444_to_rgba_u16_matches_scalar() {
   }
 }
 
-// ============================================================================
-// BGR444
-// ============================================================================
-
+// BGR444.
 #[test]
 #[cfg_attr(miri, ignore = "x86 SIMD intrinsics unsupported by Miri")]
 fn sse41_bgr444_to_rgb_matches_scalar() {

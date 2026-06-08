@@ -1306,8 +1306,7 @@ pub(crate) unsafe fn ya8_to_hsv_row(
 /// Host-endian gate for Ya16 SIMD bodies.
 ///
 /// `vld2q_u16` deinterleaves using **host-native** u16 reads, so the SIMD body
-/// is only correct when the encoded byte order matches the host. The full
-/// truth table (mirrors PR #82 `9c7d533` dispatcher routing fix):
+/// is only correct when the encoded byte order matches the host. Truth table:
 ///
 /// | data BE | host BE | `BE != HOST_NATIVE_BE` | path   | correct via       |
 /// |---------|---------|------------------------|--------|-------------------|

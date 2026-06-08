@@ -233,16 +233,12 @@ fn x2bgr10_simd_matches_scalar_with_random_input() {
   assert_eq!(rgb_u16_simd, rgb_u16_scalar, "RGB u16 output diverges");
   assert_eq!(luma_simd, luma_scalar, "Luma output diverges");
 }
-
-// ====================================================================================
 // Phase 4 — Frame BE flag, Tier 8 trial. LE+BE round-trip parity tests for the
 // 10-bit packed RGB family.
 //
 // Each X2Rgb10/X2Bgr10 pixel is a 32-bit word; the LE-encoded plane stores it
 // `to_le_bytes`, the BE-encoded plane stores it `to_be_bytes`. Both must yield
 // byte-identical sinker output (kernel byte-swaps under the hood).
-// ====================================================================================
-
 fn pack_x2rgb10_word(r10: u32, g10: u32, b10: u32) -> u32 {
   ((r10 & 0x3FF) << 20) | ((g10 & 0x3FF) << 10) | (b10 & 0x3FF)
 }

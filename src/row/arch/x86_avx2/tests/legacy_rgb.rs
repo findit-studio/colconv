@@ -25,10 +25,7 @@ fn legacy_rgb_plane(width: usize, seed: u32) -> std::vec::Vec<u8> {
   out
 }
 
-// ============================================================================
-// RGB565 — parity tests (scalar vs AVX2)
-// ============================================================================
-
+// RGB565 — parity tests (scalar vs AVX2).
 #[test]
 #[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
 fn avx2_rgb565_to_rgb_matches_scalar() {
@@ -198,10 +195,7 @@ fn avx2_rgb565_lane_order_b_only() {
   assert_eq!(out_avx2, expected, "AVX2 rgb565 B-only values wrong");
 }
 
-// ============================================================================
-// BGR565 — parity tests
-// ============================================================================
-
+// BGR565 — parity tests.
 #[test]
 #[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
 fn avx2_bgr565_to_rgb_matches_scalar() {
@@ -311,10 +305,7 @@ fn avx2_bgr565_lane_order_r_in_low_bits() {
   );
 }
 
-// ============================================================================
-// RGB555 — parity tests
-// ============================================================================
-
+// RGB555 — parity tests.
 #[test]
 #[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
 fn avx2_rgb555_to_rgb_matches_scalar() {
@@ -441,10 +432,7 @@ fn avx2_rgb555_lane_order_b_only() {
   assert_eq!(out_avx2, expected, "AVX2 rgb555 B-only values wrong");
 }
 
-// ============================================================================
-// BGR555 — parity tests
-// ============================================================================
-
+// BGR555 — parity tests.
 #[test]
 #[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
 fn avx2_bgr555_to_rgb_matches_scalar() {
@@ -529,10 +517,7 @@ fn avx2_bgr555_to_rgba_u16_matches_scalar() {
   }
 }
 
-// ============================================================================
-// RGB444 — parity tests
-// ============================================================================
-
+// RGB444 — parity tests.
 #[test]
 #[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
 fn avx2_rgb444_to_rgb_matches_scalar() {
@@ -659,10 +644,7 @@ fn avx2_rgb444_lane_order_b_only() {
   assert_eq!(out_avx2, expected, "AVX2 rgb444 B-only values wrong");
 }
 
-// ============================================================================
-// BGR444 — parity tests
-// ============================================================================
-
+// BGR444 — parity tests.
 #[test]
 #[cfg_attr(miri, ignore = "x86 AVX2 SIMD intrinsics unsupported by Miri")]
 fn avx2_bgr444_to_rgb_matches_scalar() {

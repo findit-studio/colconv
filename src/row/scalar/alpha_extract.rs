@@ -453,15 +453,15 @@ mod tests {
       .collect()
   }
 
-  // -- Scalar references for the BE-parity tests --
+  // Scalar references for the BE-parity tests.
   //
   // These walk host-native `intended` buffers and reproduce the kernel's
   // documented behaviour without going through any byte-order conversion.
   // Pinning the LE / BE outputs against these absolute references prevents
   // the parity assertion from passing in lock-step on two equally corrupt
-  // decode paths (the bug codex round-2 flagged: a vacuous `swap_bytes`
-  // construction lets both `<false>` and `<true>` agree on byte-reversed
-  // garbage on a big-endian host).
+  // decode paths (a vacuous `swap_bytes` construction otherwise lets both
+  // `<false>` and `<true>` agree on byte-reversed garbage on a big-endian
+  // host).
 
   /// Reference for `copy_alpha_packed_u16x4_to_u8_at_0`: gather α from
   /// slot 0 of every 4-element u16 tuple, depth-convert `>> 8`, scatter to
@@ -620,7 +620,7 @@ mod tests {
   /// `as_le_u16` / `as_be_u16`, so the kernel's `from_le` / `from_be`
   /// recovers the same logical u16 values on every host. Pin both outputs
   /// against an absolute scalar reference so the parity assertion cannot
-  /// pass on two equally corrupt decodes (codex round-2).
+  /// pass on two equally corrupt decodes.
   #[test]
   fn copy_alpha_packed_u16x4_to_u8_at_0_be_parity_with_swapped_buffer() {
     let intended: std::vec::Vec<u16> = std::vec![0x1234, 100, 200, 300, 0xABCD, 101, 201, 301];
@@ -728,9 +728,9 @@ mod tests {
   /// `intended` fixture via `as_le_u16` / `as_be_u16` so each kernel decodes
   /// the same logical u16 values on every host. Pin both outputs against an
   /// absolute scalar reference so the parity assertion cannot pass on two
-  /// equally corrupt decodes (codex round-2: the prior `swap_bytes` host-side
-  /// construction was vacuous on a BE host because both flags decoded
-  /// byte-reversed values that happened to match).
+  /// equally corrupt decodes (a `swap_bytes` host-side construction is
+  /// vacuous on a BE host because both flags decode byte-reversed values
+  /// that happen to match).
   #[test]
   fn copy_alpha_plane_u16_to_u8_be_parity_with_swapped_buffer() {
     let intended: std::vec::Vec<u16> = std::vec![0x3FF, 0x1FF, 0x0500, 0xFFFF, 0x07FF, 0x0123];
@@ -747,7 +747,7 @@ mod tests {
   }
 
   /// BE parity for the u16-output variant. Host-independent fixture +
-  /// absolute reference assertion (codex round-2).
+  /// absolute reference assertion.
   #[test]
   fn copy_alpha_plane_u16_be_parity_with_swapped_buffer() {
     let intended: std::vec::Vec<u16> = std::vec![0xFFFF, 0x0500, 0x07FF, 0x0123, 0x3FF, 0x000];
@@ -791,9 +791,9 @@ mod tests {
 
   /// BE parity for Ya16 → u8 RGBA. Build LE / BE source buffers from a
   /// single host-native `intended` fixture via `as_le_u16` / `as_be_u16`
-  /// and pin both outputs against an absolute scalar reference (codex
-  /// round-2: the prior `swap_bytes` construction was vacuous on a BE host
-  /// because both flags then decoded byte-reversed values that matched).
+  /// and pin both outputs against an absolute scalar reference (a
+  /// `swap_bytes` construction is vacuous on a BE host because both flags
+  /// then decode byte-reversed values that match).
   #[test]
   fn copy_alpha_ya_u16_to_u8_be_parity_with_swapped_buffer() {
     let intended: std::vec::Vec<u16> = std::vec![0x1234, 0xABCD, 0x5678, 0xFF00, 0x0001, 0x00FF];
@@ -810,7 +810,7 @@ mod tests {
   }
 
   /// BE parity for Ya16 → u16 RGBA (16-bit α path). Host-independent fixture
-  /// + absolute reference assertion (codex round-2).
+  /// + absolute reference assertion.
   #[test]
   fn copy_alpha_ya_u16_be_parity_with_swapped_buffer() {
     let intended: std::vec::Vec<u16> = std::vec![0x1234, 0xABCD, 0x5678, 0x9ABC, 0x0001, 0x00FF];
@@ -881,9 +881,9 @@ mod tests {
   /// single host-native `intended` fixture via `as_le_f32` / `as_be_f32` so
   /// each kernel's `u32::from_le` / `u32::from_be` recovers the same logical
   /// bit pattern on every host. Pin both outputs against an absolute scalar
-  /// reference (codex round-2: the prior `to_bits().swap_bytes()` host-side
-  /// construction was vacuous on a BE host because both flags decoded
-  /// byte-reversed bits that matched after clamp+scale).
+  /// reference (a `to_bits().swap_bytes()` construction is vacuous on a BE
+  /// host because both flags decode byte-reversed bits that match after
+  /// clamp+scale).
   #[test]
   fn copy_alpha_plane_f32_to_u8_be_parity_with_swapped_buffer() {
     let intended: std::vec::Vec<f32> = std::vec![0.0f32, 0.25, 0.5, 0.75, 1.0, 1.5, -0.1, 0.123];
@@ -900,7 +900,7 @@ mod tests {
   }
 
   /// BE parity for Gbrapf32 → u16 RGBA. Host-independent fixture + absolute
-  /// reference assertion (codex round-2).
+  /// reference assertion.
   #[test]
   fn copy_alpha_plane_f32_to_u16_be_parity_with_swapped_buffer() {
     let intended: std::vec::Vec<f32> = std::vec![0.0f32, 0.25, 0.5, 0.75, 1.0, 1.5, -0.1, 0.123];
@@ -923,8 +923,8 @@ mod tests {
   /// equal the host-native bit-pattern of `intended` on every host.
   /// NaN bit-patterns may differ across hardware after a `from_bits → to_bits`
   /// round-trip, so we compare on the bit representation of finite, non-NaN
-  /// samples only (codex round-2: pin against an absolute reference, not just
-  /// LE-vs-BE parity).
+  /// samples only — pin against an absolute reference, not just LE-vs-BE
+  /// parity.
   #[test]
   fn copy_alpha_plane_f32_be_parity_with_swapped_buffer() {
     let intended: std::vec::Vec<f32> =
@@ -996,7 +996,7 @@ mod tests {
   }
 
   /// BE parity for Rgba64 / Bgra64 alpha-at-slot-3 → u8 RGBA.
-  /// Host-independent fixture + absolute reference assertion (codex round-2).
+  /// Host-independent fixture + absolute reference assertion.
   #[test]
   fn copy_alpha_packed_u16x4_to_u8_at_3_be_parity_with_swapped_buffer() {
     let intended: std::vec::Vec<u16> = std::vec![100, 200, 300, 0xABFF, 101, 201, 301, 0x1234];
@@ -1013,7 +1013,7 @@ mod tests {
   }
 
   /// BE parity for Rgba64 / Bgra64 alpha-at-slot-3 → u16 RGBA.
-  /// Host-independent fixture + absolute reference assertion (codex round-2).
+  /// Host-independent fixture + absolute reference assertion.
   #[test]
   fn copy_alpha_packed_u16x4_at_3_be_parity_with_swapped_buffer() {
     let intended: std::vec::Vec<u16> = std::vec![100, 200, 300, 0xABFF, 101, 201, 301, 0x1234];

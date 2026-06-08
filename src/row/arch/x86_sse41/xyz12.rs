@@ -333,8 +333,7 @@ pub(crate) unsafe fn xyz12_to_rgb_row<const BE: bool>(
       let g_u8 = _mm_packus_epi16(g_u16, zero_si);
       let b_u8 = _mm_packus_epi16(b_u16, zero_si);
       // In-register 8-pixel RGB interleave via the shared `write_rgb_u8_8`
-      // helper — replaces a 3× stack-temp + per-pixel scalar scatter
-      // (Copilot review, PR #91 Comment 2).
+      // helper avoids a 3× stack-temp + per-pixel scalar scatter.
       write_rgb_u8_8(r_u8, g_u8, b_u8, rgb_out.as_mut_ptr().add(x * 3));
       x += PIXELS_PER_ITER;
     }
@@ -397,8 +396,7 @@ pub(crate) unsafe fn xyz12_to_rgba_row<const BE: bool>(
       let b_u8 = _mm_packus_epi16(b_u16, zero_si);
       let a_u8 = _mm_set1_epi8(-1_i8);
       // In-register 8-pixel RGBA interleave via the shared `write_rgba_u8_8`
-      // helper — replaces a 3× stack-temp + per-pixel scalar scatter
-      // (Copilot review, PR #91 Comment 2).
+      // helper avoids a 3× stack-temp + per-pixel scalar scatter.
       write_rgba_u8_8(r_u8, g_u8, b_u8, a_u8, rgba_out.as_mut_ptr().add(x * 4));
       x += PIXELS_PER_ITER;
     }

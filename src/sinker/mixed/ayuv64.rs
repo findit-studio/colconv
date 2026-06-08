@@ -360,7 +360,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Ayuv64<BE>> {
         let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
         expand_rgb_to_rgba_row(rgb_row, rgba_row, w);
         // BE propagated from the parent `Ayuv64Frame<'_, BE>` via the
-        // sinker's `MixedSinker<Ayuv64<BE>>` monomorphization (Phase 4).
+        // sinker's `MixedSinker<Ayuv64<BE>>` monomorphization.
         crate::row::alpha_extract::copy_alpha_packed_u16x4_to_u8_at_0::<BE>(
           packed, rgba_row, w, use_simd,
         );
@@ -416,7 +416,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Ayuv64<BE>> {
           rgba_u16_plane_row_slice(rgba_u16_buf, one_plane_start, one_plane_end, w, h)?;
         expand_rgb_u16_to_rgba_u16_row::<16>(rgb_u16_row, rgba_u16_row, w);
         // BE propagated from the parent `Ayuv64Frame<'_, BE>` via the
-        // sinker's `MixedSinker<Ayuv64<BE>>` monomorphization (Phase 4).
+        // sinker's `MixedSinker<Ayuv64<BE>>` monomorphization.
         crate::row::alpha_extract::copy_alpha_packed_u16x4_at_0::<BE>(
           packed,
           rgba_u16_row,
