@@ -117,7 +117,9 @@ impl Resampler for AreaResampler {
 /// exact reserve cannot reallocate, so refusal is the only failure
 /// and it surfaces as the error instead of aborting.
 #[cfg(feature = "yuv-planar")]
-fn try_zeroed<T: Clone + Default>(n: usize) -> Result<Vec<T>, std::collections::TryReserveError> {
+pub(crate) fn try_zeroed<T: Clone + Default>(
+  n: usize,
+) -> Result<Vec<T>, std::collections::TryReserveError> {
   let mut buf = Vec::new();
   buf.try_reserve_exact(n)?;
   buf.resize(n, T::default());
@@ -265,8 +267,16 @@ pub struct ResamplePlan {
 
 impl ResamplePlan {
   /// Builds the exact area plan for `src -> out`. The strategy has
-  /// already validated zero, upscale, and identity geometry.
-  fn area(src_w: usize, src_h: usize, out_w: usize, out_h: usize) -> Result<Self, ResampleError> {
+  /// already validated zero, upscale, and identity geometry. Also the
+  /// constructor for auxiliary plane grids: the native tier plans a
+  /// subsampled format's chroma grid against the same output geometry,
+  /// where the coverage may run in the upsample direction.
+  pub(crate) fn area(
+    src_w: usize,
+    src_h: usize,
+    out_w: usize,
+    out_h: usize,
+  ) -> Result<Self, ResampleError> {
     let fail = |e: AxisError| match e {
       AxisError::Overflow => ResampleError::Overflow(PlanGeometry::new(src_w, src_h, out_w, out_h)),
       AxisError::Alloc => {

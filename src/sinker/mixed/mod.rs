@@ -1218,6 +1218,17 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// [`MixedSinkerError::ResampleOutputsChanged`].
   #[cfg(feature = "yuv-planar")]
   resample_outputs: Option<FrozenOutputs>,
+  /// Whether resampled processing may take the native decimation tier
+  /// (bin native planes, convert once at output resolution). Defaults
+  /// to `true`; benchmarks and differential tests flip it to force the
+  /// row-stage tier — the [`Self::with_simd`] pattern. Gated like the
+  /// engine; widens per routed family.
+  #[cfg(feature = "yuv-planar")]
+  native: bool,
+  /// Native-tier join state for the 4:2:0 planar family; lazily
+  /// created in `process`, reset in `begin_frame`.
+  #[cfg(feature = "yuv-planar")]
+  native_420: Option<planar_8bit::NativeYuv420>,
   /// Lazily grown to `3 * width` bytes when HSV is requested without a
   /// user RGB buffer. Empty otherwise.
   ///
@@ -1634,6 +1645,10 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       luma_stream: None,
       #[cfg(feature = "yuv-planar")]
       resample_outputs: None,
+      #[cfg(feature = "yuv-planar")]
+      native: true,
+      #[cfg(feature = "yuv-planar")]
+      native_420: None,
       #[cfg(any(
         feature = "bayer",
         feature = "gbr",
@@ -1819,6 +1834,37 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn simd(&self) -> bool {
     self.simd
+  }
+
+  /// Returns `true` iff resampled processing may take the native
+  /// decimation tier. See [`Self::with_native`].
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn native(&self) -> bool {
+    self.native
+  }
+
+  /// Toggles the native decimation tier in place. See
+  /// [`Self::with_native`] for the consuming builder variant.
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn set_native(&mut self, native: bool) -> &mut Self {
+    self.native = native;
+    self
+  }
+
+  /// Sets whether resampled processing may take the native decimation
+  /// tier (bin native planes, convert once at output resolution).
+  /// Defaults to `true` — pass `false` to force the row-stage tier
+  /// (convert at source resolution, then bin), intended for benchmarks
+  /// and differential testing, mirroring [`Self::with_simd`]. The two
+  /// tiers bin identical luma and differ on color only by per-pixel
+  /// rounding inside the conversion.
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn with_native(mut self, native: bool) -> Self {
+    self.set_native(native);
+    self
   }
 
   /// Toggles the SIMD dispatch in place. See [`Self::with_simd`] for the
