@@ -566,8 +566,11 @@ pub(crate) struct AreaStream {
   channels: usize,
   /// `src_w * src_h` — the exact normalization denominator.
   denom: u64,
-  /// H-reduced current source row, `out_w * channels`.
-  h_tmp: Vec<u64>,
+  /// H-reduced current source row, `out_w * channels`. `u32` is
+  /// exact: an H-sum is at most `src_w * 255`, and creation bounds
+  /// `src_w` accordingly — the narrower lanes are what lets the
+  /// H-pass auto-vectorize.
+  h_tmp: Vec<u32>,
   /// In-flight output-row accumulators, `out_w * channels`.
   acc: Vec<u64>,
   /// Finalized staging row handed to `emit`, `out_w * channels`.
@@ -596,6 +599,13 @@ impl AreaStream {
     channels: usize,
   ) -> Result<Self, ResampleError> {
     let geometry = || PlanGeometry::new(src_w, src_h, h.out_len(), v.out_len());
+    // Exactness bounds: H-sums live in u32 (so src_w * 255 must fit),
+    // V-accumulation in u64 (so denom * 255 must fit). Both reject
+    // only absurd magnitudes — a >16.8-million-pixel-wide plane for
+    // the former.
+    if src_w as u64 > u64::from(u32::MAX) / 255 {
+      return Err(ResampleError::Overflow(geometry()));
+    }
     let denom = (src_w as u64)
       .checked_mul(src_h as u64)
       .filter(|d| *d <= u64::MAX / 255)
@@ -669,9 +679,9 @@ impl AreaStream {
       let (start, weights) = h.span(j);
       let base = j * c;
       for ch in 0..c {
-        let mut sum = 0u64;
+        let mut sum = 0u32;
         for (i, &w) in weights.iter().enumerate() {
-          sum += w as u64 * row[(start + i) * c + ch] as u64;
+          sum += w as u32 * u32::from(row[(start + i) * c + ch]);
         }
         self.h_tmp[base + ch] = sum;
       }
@@ -692,7 +702,7 @@ impl AreaStream {
       };
       let w = w as u64;
       for (a, t) in self.acc.iter_mut().zip(self.h_tmp.iter()) {
-        *a += w * *t;
+        *a += w * u64::from(*t);
       }
       if idx + 1 != weights.len() {
         return Ok(());
