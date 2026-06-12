@@ -1891,11 +1891,22 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
 
   /// Sets whether resampled processing may take the native decimation
   /// tier (bin native planes, convert once at output resolution).
-  /// Defaults to `true` — pass `false` to force the row-stage tier
-  /// (convert at source resolution, then bin), intended for benchmarks
-  /// and differential testing, mirroring [`Self::with_simd`]. The two
-  /// tiers bin identical luma and differ on color only by per-pixel
-  /// rounding inside the conversion.
+  /// Defaults to `true`, mirroring [`Self::with_simd`].
+  ///
+  /// The tiers differ in color SEMANTICS, not just speed: native
+  /// averages in the source (YUV) domain and converts once — the
+  /// fused semantics video pipelines (libswscale-class) produce —
+  /// while the row-stage tier converts every source pixel first and
+  /// averages in RGB, matching `cv2.INTER_AREA` applied to decoded
+  /// RGB. Luma is bit-identical either way (both tiers bin the same Y
+  /// plane). In-gamut color differs only by per-pixel rounding;
+  /// OUT-OF-GAMUT content (super-blacks/whites, illegal chroma
+  /// excursions) diverges as far as the content sits outside the
+  /// gamut — unbounded in principle, with measured examples of
+  /// 34/255 on a mild extreme checkerboard and 117/255 on a crafted
+  /// Bt2020 limited-range case (both pinned by regression). Pass
+  /// `false` for strict RGB-domain `INTER_AREA` semantics at
+  /// source-resolution conversion cost.
   #[cfg(feature = "yuv-planar")]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn with_native(mut self, native: bool) -> Self {

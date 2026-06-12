@@ -653,6 +653,83 @@ fn native_odd_height_color_matches_row_stage() {
 }
 
 #[test]
+fn native_saturated_divergence_is_characterized() {
+  // The two tiers differ in conversion ORDER: native averages in the
+  // source (YUV) domain and clamps once after the mean; row-stage
+  // clamps per pixel before averaging. On in-gamut content that is
+  // rounding noise; on out-of-gamut content the divergence is
+  // unbounded in principle — these two measured cases pin a mild and
+  // a crafted example so the docs cannot understate it. Luma stays
+  // bit-identical everywhere (both tiers bin the same Y plane).
+
+  // Mild: alternating super-black/super-white extreme-chroma
+  // checkerboard, 8x8 -> 4x4 Bt709 limited. Measured max 34.
+  let y: Vec<u8> = (0..64u32)
+    .map(|i| if i % 2 == 0 { 2 } else { 250 })
+    .collect();
+  let u: Vec<u8> = (0..16u32)
+    .map(|i| if i % 2 == 0 { 10 } else { 245 })
+    .collect();
+  let v: Vec<u8> = (0..16u32)
+    .map(|i| if i % 2 == 0 { 240 } else { 12 })
+    .collect();
+  let src = Yuv420pFrame::new(&y, &u, &v, 8, 8, 8, 4, 4);
+  let run = |native: bool| {
+    let mut rgb = vec![0u8; OUT * OUT * 3];
+    let mut luma = vec![0u8; OUT * OUT];
+    let mut sink =
+      MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_native(native)
+        .with_rgb(&mut rgb)
+        .unwrap()
+        .with_luma(&mut luma)
+        .unwrap();
+    yuv420p_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+    (rgb, luma)
+  };
+  let (n_rgb, n_luma) = run(true);
+  let (r_rgb, r_luma) = run(false);
+  assert_eq!(n_luma, r_luma, "luma must stay bit-identical");
+  let max = n_rgb
+    .iter()
+    .zip(r_rgb.iter())
+    .map(|(a, b)| a.abs_diff(*b))
+    .max()
+    .unwrap();
+  assert!((4..=48).contains(&max), "mild case drifted: {max}");
+
+  // Crafted: 4x4 -> 1x1, Bt2020Ncl limited, planes built to push the
+  // mean far from the per-pixel clamps. Measured max 117.
+  let y: Vec<u8> = vec![
+    64, 32, 245, 240, 2, 10, 128, 224, 235, 240, 245, 250, 245, 255, 245, 224,
+  ];
+  let u: Vec<u8> = vec![128, 250, 16, 240];
+  let v: Vec<u8> = vec![192, 10, 64, 10];
+  let src = Yuv420pFrame::new(&y, &u, &v, 4, 4, 4, 2, 2);
+  let run = |native: bool| {
+    let mut rgb = vec![0u8; 3];
+    let mut sink =
+      MixedSinker::<Yuv420p, AreaResampler>::with_resampler(4, 4, AreaResampler::to(1, 1))
+        .unwrap()
+        .with_native(native)
+        .with_rgb(&mut rgb)
+        .unwrap();
+    yuv420p_to(&src, false, ColorMatrix::Bt2020Ncl, &mut sink).unwrap();
+    rgb
+  };
+  let n = run(true);
+  let r = run(false);
+  let max = n
+    .iter()
+    .zip(r.iter())
+    .map(|(a, b)| a.abs_diff(*b))
+    .max()
+    .unwrap();
+  assert!((64..=140).contains(&max), "crafted case drifted: {max}");
+}
+
+#[test]
 fn native_join_upgrades_when_color_attaches_next_frame() {
   // Frame 1 runs luma-only (native join created WITHOUT its chroma
   // half); RGB+HSV attach before frame 2. The join must rebuild with

@@ -28,7 +28,13 @@ breaking changes bump the `x` in `0.x.y`.
   on): Y, U and V are binned at full output resolution on their own
   grids and converted once per output row through the 4:4:4 kernels,
   so no alignment constraint applies to the output geometry and
-  luma-only sinks never read the chroma planes. `Rgb24` routes the
+  luma-only sinks never read the chroma planes. Color semantics:
+  native averages in the YUV domain then converts (libswscale-class
+  fused semantics; luma bit-identical, in-gamut color within rounding;
+  out-of-gamut content diverges as far as it sits outside the gamut —
+  measured examples of 34/255 and 117/255 are pinned by regression);
+  `with_native(false)` selects strict RGB-domain `INTER_AREA`
+  semantics instead. `Rgb24` routes the
   fused path with no conversion step at all (binning the packed row
   IS the work). Gate numbers (1080p -> 336x189, scalar engine):
   native rgb+hsv 3.7ms vs row-stage 5.7ms; luma-only 1.9ms either
