@@ -19,6 +19,14 @@ breaking changes bump the `x` in `0.x.y`.
   (`out_width()` / `out_height()`); `begin_frame` keeps validating
   walkers against the source geometry. Under the default
   `NoopResampler` (identity plan) behavior is unchanged.
+- Fused downscale now runs end-to-end for `Yuv420p`: the row-stage
+  streaming engine area-averages each converted source row into the
+  output geometry with exact `u64` integer arithmetic (round-half-up
+  by `src_w * src_h`), emitting every output row on its last
+  contributing source row. All output channels participate (`RGB`,
+  `RGBA`, `Luma`, `Luma u16`, `HSV` — HSV/RGBA derive from the
+  resampled RGB row); luma-only sinks touch just the Y plane. Other
+  formats keep the compile-time pin until they wire in.
 - New `resample` module: sealed `Resampler` trait, `NoopResampler`,
   `AreaResampler` (exact `cv2.INTER_AREA`-convention area span plans —
   per-axis integer coverage weights, fractional ratios included),

@@ -1,10 +1,16 @@
 //! 8-bit planar YUV `MixedSinker` impls: Yuv410p / Yuv420p / Yuv422p / Yuv444p / Yuv440p.
 
 use super::{
-  InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange, RowShapeMismatch,
-  RowSlice, WidthAlignment, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  FrozenOutputs, GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError,
+  ResampleOutputsChanged, RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment,
+  check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
-use crate::{PixelSink, row::*, source::*};
+use crate::{
+  PixelSink,
+  resample::{AreaStream, OutOfSequenceRow, PlanGeometry, ResampleError, ResamplePlan},
+  row::*,
+  source::*,
+};
 
 // ---- Yuv420p impl --------------------------------------------------------
 
@@ -82,7 +88,7 @@ impl<'a, R> MixedSinker<'a, Yuv420p, R> {
   }
 }
 
-impl PixelSink for MixedSinker<'_, Yuv420p> {
+impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
   type Input<'r> = Yuv420pRow<'r>;
   type Error = MixedSinkerError;
 
@@ -96,7 +102,19 @@ impl PixelSink for MixedSinker<'_, Yuv420p> {
         self.width,
       )));
     }
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    // New frame: restart the row-stage streams (the streams are
+    // lazily created in `process`, so a direct-`process` caller that
+    // skips `begin_frame` still gets a correctly initialized first
+    // frame).
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: Yuv420pRow<'_>) -> Result<(), Self::Error> {
@@ -159,8 +177,32 @@ impl PixelSink for MixedSinker<'_, Yuv420p> {
       luma_u16,
       hsv,
       rgb_scratch,
+      plan,
+      rgb_stream,
+      luma_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: the row-stage tier converts this source row
+    // at source width, then area-streams it to the output geometry.
+    if let Some(plan) = plan.as_ref() {
+      return yuv420p_process_resampled(
+        plan,
+        rgb_stream,
+        luma_stream,
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch,
+        &row,
+        w,
+        use_simd,
+      );
+    }
 
     // Single-plane row ranges are guaranteed not to overflow: `idx <
     // h` and `with_luma` / `with_hsv` validated `w x h x 1` fits
@@ -273,7 +315,181 @@ impl PixelSink for MixedSinker<'_, Yuv420p> {
   }
 }
 
-impl Yuv420pSink for MixedSinker<'_, Yuv420p> {}
+impl<R> Yuv420pSink for MixedSinker<'_, Yuv420p, R> {}
+
+/// Row-stage resampled path for [`MixedSinker<Yuv420p, R>`]: luma
+/// streams straight off the Y plane (chroma untouched), the color
+/// group converts the row at source width into the scratch and
+/// streams the RGB; HSV and RGBA derive from each finalized output
+/// row. Buffer indexing is panic-free: every output buffer was
+/// validated against the plan's output geometry at attach time, and
+/// the stream emits `out_y < out_h` in order.
+#[allow(clippy::too_many_arguments)]
+fn yuv420p_process_resampled(
+  plan: &ResamplePlan,
+  rgb_stream: &mut Option<AreaStream>,
+  luma_stream: &mut Option<AreaStream>,
+  resample_outputs: &mut Option<FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgb_scratch: &mut std::vec::Vec<u8>,
+  row: &Yuv420pRow<'_>,
+  w: usize,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  let ow = plan.out_w();
+  let idx = row.row();
+  let need_luma = luma.is_some() || luma_u16.is_some();
+  let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
+
+  // Atomic preflight: every fallible step runs before any stream is
+  // fed, so a failed call mutates no caller output and the frame can
+  // restart via begin_frame.
+  //
+  // (1) The attached-output configuration — presence AND buffer
+  // identity — is frozen at the frame's first processed row: streams
+  // carry frame progress, so an output joining, leaving, or swapping
+  // buffers later would silently miss or split already-finalized
+  // rows.
+  let snapshot = FrozenOutputs::snapshot(
+    luma.as_deref(),
+    luma_u16.as_deref(),
+    rgb.as_deref(),
+    rgba.as_deref(),
+    hsv.as_mut().map(|f| {
+      let (h, s, v) = f.hsv();
+      (&h[..], &s[..], &v[..])
+    }),
+  );
+  match resample_outputs {
+    None => *resample_outputs = Some(snapshot),
+    Some(frozen) if *frozen != snapshot => {
+      return Err(MixedSinkerError::ResampleOutputsChanged(
+        ResampleOutputsChanged::new(idx),
+      ));
+    }
+    Some(_) => {}
+  }
+  // (2) Create every requested stream, then check all of them against
+  // this row index; a stream attached mid-frame starts at row 0 and
+  // fails here.
+  if need_luma && luma_stream.is_none() {
+    *luma_stream = Some(AreaStream::new(plan, 1)?);
+  }
+  if need_color && rgb_stream.is_none() {
+    *rgb_stream = Some(AreaStream::new(plan, 3)?);
+  }
+  for stream in [
+    if need_luma {
+      luma_stream.as_ref()
+    } else {
+      None
+    },
+    if need_color {
+      rgb_stream.as_ref()
+    } else {
+      None
+    },
+  ]
+  .into_iter()
+  .flatten()
+  {
+    if stream.next_y() != idx {
+      return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+        OutOfSequenceRow::new(stream.next_y(), idx),
+      )));
+    }
+  }
+  // (3) Color-group preparation is also fallible (scratch sizing) and
+  // scratch-mutating, so it runs before the luma feed too. The user
+  // RGB buffer is output-sized; the source-width row always lands in
+  // the scratch. (The overflow arm is defense in depth: any geometry
+  // large enough to wrap w * 3 cannot plan — its span arena alloc is
+  // out of reach first.)
+  let color_row = if need_color {
+    let row_bytes =
+      w.checked_mul(3)
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          w,
+          plan.src_h(),
+          3,
+        )))?;
+    if rgb_scratch.len() < row_bytes {
+      // Same recoverable-allocation contract as the planner and the
+      // stream buffers: the scratch is source-width-proportional, so
+      // refusal surfaces as an error in the preflight phase instead
+      // of aborting inside infallible growth. The exact reserve makes
+      // the resize below incapable of reallocating.
+      rgb_scratch
+        .try_reserve_exact(row_bytes - rgb_scratch.len())
+        .map_err(|_| {
+          MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          )))
+        })?;
+      rgb_scratch.resize(row_bytes, 0);
+    }
+    let scratch = &mut rgb_scratch[..row_bytes];
+    yuv_420_to_rgb_row(
+      row.y(),
+      row.u_half(),
+      row.v_half(),
+      scratch,
+      w,
+      row.matrix(),
+      row.full_range(),
+      use_simd,
+    );
+    Some(scratch)
+  } else {
+    None
+  };
+
+  if need_luma {
+    let stream = luma_stream.as_mut().expect("created in the preflight");
+    stream.feed_row(plan, idx, row.y(), |oy, out_row| {
+      if let Some(buf) = luma.as_deref_mut() {
+        buf[oy * ow..(oy + 1) * ow].copy_from_slice(out_row);
+      }
+      if let Some(buf) = luma_u16.as_deref_mut() {
+        for (dst, &src) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(out_row) {
+          *dst = src as u16;
+        }
+      }
+    })?;
+  }
+
+  if let Some(scratch) = color_row {
+    let stream = rgb_stream.as_mut().expect("created in the preflight");
+    stream.feed_row(plan, idx, scratch, |oy, out_row| {
+      if let Some(buf) = rgb.as_deref_mut() {
+        buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_row);
+      }
+      if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
+        rgb_to_hsv_row(
+          out_row,
+          &mut h[oy * ow..(oy + 1) * ow],
+          &mut s[oy * ow..(oy + 1) * ow],
+          &mut v[oy * ow..(oy + 1) * ow],
+          ow,
+          use_simd,
+        );
+      }
+      if let Some(buf) = rgba.as_deref_mut() {
+        expand_rgb_to_rgba_row(out_row, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
+      }
+    })?;
+  }
+
+  Ok(())
+}
 
 // ---- Yuv410p impl -------------------------------------------------------
 //
