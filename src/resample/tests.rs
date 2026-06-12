@@ -266,10 +266,14 @@ fn stream_creation_fails_recoverably_on_huge_row_buffers() {
 #[test]
 fn area_chroma_420_reports_allocation_failure_as_such() {
   // Allocator refusal on the paired vertical axis must surface as
-  // AllocationFailed, not be misclassified as geometry Overflow: the
-  // starts arena for a usize::MAX/32 output height trips capacity
-  // overflow deterministically while every arithmetic check passes.
-  let err = ResamplePlan::area_chroma_420(4, 8, 2, usize::MAX / 32).unwrap_err();
+  // AllocationFailed, not be misclassified as geometry Overflow. The
+  // magnitude must sit in the CAPACITY-OVERFLOW zone (entries x 8
+  // bytes above isize::MAX), where try_reserve fails deterministically
+  // WITHOUT touching the allocator — a smaller huge request would be
+  // a real multi-exabyte allocation that hosts refuse but miri aborts
+  // on. usize::MAX/8 starts entries overflow capacity while every
+  // arithmetic check still passes.
+  let err = ResamplePlan::area_chroma_420(4, 8, 2, usize::MAX / 8).unwrap_err();
   assert!(err.is_allocation_failed(), "got {err:?}");
 }
 
