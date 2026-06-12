@@ -41,6 +41,9 @@ jobs:
         run: |
           tokeit --lang rust
       - name: Upload total loc to GitHub Gist
+        # Secret-dependent: GIST_PAT is not exposed to pull_request runs
+        # and the badge gist should only track main anyway.
+        if: github.event_name != 'pull_request'
         uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GIST_PAT }}
