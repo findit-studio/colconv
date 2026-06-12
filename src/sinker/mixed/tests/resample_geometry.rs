@@ -619,6 +619,50 @@ fn native_solid_frame_exact_all_outputs() {
 }
 
 #[test]
+fn native_join_upgrades_when_color_attaches_next_frame() {
+  // Frame 1 runs luma-only (native join created WITHOUT its chroma
+  // half); RGB+HSV attach before frame 2. The join must rebuild with
+  // chroma for the new frame — not silently skip the color outputs.
+  let yp = vec![120u8; 64];
+  let up = vec![90u8; 16];
+  let vp = vec![170u8; 16];
+  let src = Yuv420pFrame::new(&yp, &up, &vp, 8, 8, 8, 4, 4);
+
+  let mut full_rgb = vec![0u8; SRC * SRC * 3];
+  let mut full = MixedSinker::<Yuv420p>::new(SRC, SRC)
+    .with_rgb(&mut full_rgb)
+    .unwrap();
+  yuv420p_to(&src, false, ColorMatrix::Bt709, &mut full).unwrap();
+
+  let mut luma = vec![0u8; OUT * OUT];
+  let mut rgb = vec![0u8; OUT * OUT * 3];
+  let mut h = vec![0u8; OUT * OUT];
+  let mut s_ = vec![0u8; OUT * OUT];
+  let mut v_ = vec![0u8; OUT * OUT];
+  {
+    let mut sink =
+      MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_luma(&mut luma)
+        .unwrap();
+    yuv420p_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+
+    sink.set_rgb(&mut rgb).unwrap();
+    sink.set_hsv(&mut h, &mut s_, &mut v_).unwrap();
+    yuv420p_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+  assert!(luma.iter().all(|&l| l == 120));
+  for px in rgb.chunks_exact(3) {
+    assert_eq!(
+      (px[0], px[1], px[2]),
+      (full_rgb[0], full_rgb[1], full_rgb[2]),
+      "color silently skipped after attaching mid-stream"
+    );
+  }
+  assert!(v_.iter().all(|&x| x != 0), "hsv V plane untouched");
+}
+
+#[test]
 fn identity_area_full_pipeline_matches_new_sink() {
   let (yp, up, vp) = gradient_frame_planes();
   let src = Yuv420pFrame::new(&yp, &up, &vp, 8, 8, 8, 4, 4);

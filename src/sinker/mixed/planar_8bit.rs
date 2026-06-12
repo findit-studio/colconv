@@ -465,6 +465,16 @@ fn yuv420p_process_native(
   let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
 
   frozen_outputs_check(resample_outputs, luma, luma_u16, rgb, rgba, hsv, idx)?;
+  // The join's chroma half is fixed at creation; if the frame's color
+  // capability differs (outputs attached since the previous frame —
+  // the frozen check pins them WITHIN a frame, not across frames),
+  // rebuild it rather than silently skip or needlessly read chroma.
+  if native_420
+    .as_ref()
+    .is_some_and(|join| join.chroma.is_some() != need_color)
+  {
+    *native_420 = None;
+  }
   let join = match native_420 {
     Some(join) => join,
     None => native_420.insert(NativeYuv420::new(plan, w, h, need_color)?),
