@@ -1,9 +1,9 @@
 //! 8-bit planar YUV `MixedSinker` impls: Yuv410p / Yuv420p / Yuv422p / Yuv444p / Yuv440p.
 
 use super::{
-  FrozenOutputs, GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError,
-  ResampleOutputsChanged, RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment,
-  check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
+  RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match, frozen_outputs_check,
+  rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
 use crate::{
   PixelSink,
@@ -348,42 +348,6 @@ impl<R> Yuv420pSink for MixedSinker<'_, Yuv420p, R> {}
 /// row. Buffer indexing is panic-free: every output buffer was
 /// validated against the plan's output geometry at attach time, and
 /// the stream emits `out_y < out_h` in order.
-/// The attached-output configuration — presence AND buffer identity —
-/// is frozen at a resampled frame's first processed row: streams carry
-/// frame progress, so an output joining, leaving, or swapping buffers
-/// later would silently miss or split already-finalized rows. Shared
-/// by both resampling tiers.
-#[allow(clippy::too_many_arguments)]
-fn frozen_outputs_check(
-  resample_outputs: &mut Option<FrozenOutputs>,
-  luma: &Option<&mut [u8]>,
-  luma_u16: &Option<&mut [u16]>,
-  rgb: &Option<&mut [u8]>,
-  rgba: &Option<&mut [u8]>,
-  hsv: &mut Option<HsvFrameMut<'_>>,
-  idx: usize,
-) -> Result<(), MixedSinkerError> {
-  let snapshot = FrozenOutputs::snapshot(
-    luma.as_deref(),
-    luma_u16.as_deref(),
-    rgb.as_deref(),
-    rgba.as_deref(),
-    hsv.as_mut().map(|f| {
-      let (h, s, v) = f.hsv();
-      (&h[..], &s[..], &v[..])
-    }),
-  );
-  match resample_outputs {
-    None => *resample_outputs = Some(snapshot),
-    Some(frozen) if *frozen != snapshot => {
-      return Err(MixedSinkerError::ResampleOutputsChanged(
-        ResampleOutputsChanged::new(idx),
-      ));
-    }
-    Some(_) => {}
-  }
-  Ok(())
-}
 
 /// Native decimation join for 4:2:0 planar sources: Y streams on the
 /// frame grid, U and V on the chroma grid (half width, ceil-half
@@ -395,42 +359,56 @@ fn frozen_outputs_check(
 /// may lead another by at most one source row (the grids are within a
 /// factor of two), which two slots absorb.
 pub(super) struct NativeYuv420 {
-  /// Chroma-grid plan against the same output geometry.
-  chroma: ResamplePlan,
   y: AreaStream,
-  u: AreaStream,
-  v: AreaStream,
-  /// Two-slot staging rings, `2 * out_w` each (slot = `out_y & 1`).
+  /// Two-slot staging ring, `2 * out_w` (slot = `out_y & 1`).
   y_stage: std::vec::Vec<u8>,
-  u_stage: std::vec::Vec<u8>,
-  v_stage: std::vec::Vec<u8>,
+  /// Chroma half of the join — absent for luma-only sinks, which
+  /// therefore never read the chroma planes (the documented fast
+  /// path). Safe to decide at creation: the frozen-output contract
+  /// makes the attached set frame-constant.
+  chroma: Option<NativeChroma>,
   /// `staged[plane][slot]` — plane 0 = Y, 1 = U, 2 = V.
   staged: [[bool; 2]; 3],
   /// Next output row to finalize.
   next_emit: usize,
 }
 
+/// Chroma-grid streams and staging of [`NativeYuv420`].
+pub(super) struct NativeChroma {
+  /// Chroma-grid plan against the same output geometry.
+  plan: ResamplePlan,
+  u: AreaStream,
+  v: AreaStream,
+  u_stage: std::vec::Vec<u8>,
+  v_stage: std::vec::Vec<u8>,
+}
+
 impl NativeYuv420 {
-  fn new(plan: &ResamplePlan, w: usize, h: usize) -> Result<Self, ResampleError> {
-    let cw = w / 2;
-    let ch = h.div_ceil(2);
-    let chroma = ResamplePlan::area(cw, ch, plan.out_w(), plan.out_h())?;
+  fn new(plan: &ResamplePlan, w: usize, h: usize, need_color: bool) -> Result<Self, ResampleError> {
     let y = AreaStream::new(plan.h(), plan.v(), w, h, 1)?;
-    let u = AreaStream::new(chroma.h(), chroma.v(), cw, ch, 1)?;
-    let v = AreaStream::new(chroma.h(), chroma.v(), cw, ch, 1)?;
     let alloc =
       |_| ResampleError::AllocationFailed(PlanGeometry::new(w, h, plan.out_w(), plan.out_h()));
     let stage_len = plan.out_w().checked_mul(2).ok_or_else(|| {
       ResampleError::Overflow(PlanGeometry::new(w, h, plan.out_w(), plan.out_h()))
     })?;
+    let chroma = if need_color {
+      let cw = w / 2;
+      let ch = h.div_ceil(2);
+      let cplan = ResamplePlan::area(cw, ch, plan.out_w(), plan.out_h())?;
+      Some(NativeChroma {
+        u: AreaStream::new(cplan.h(), cplan.v(), cw, ch, 1)?,
+        v: AreaStream::new(cplan.h(), cplan.v(), cw, ch, 1)?,
+        plan: cplan,
+        u_stage: try_zeroed(stage_len).map_err(alloc)?,
+        v_stage: try_zeroed(stage_len).map_err(alloc)?,
+      })
+    } else {
+      None
+    };
     Ok(Self {
-      chroma,
       y,
-      u,
-      v,
       y_stage: try_zeroed(stage_len).map_err(alloc)?,
-      u_stage: try_zeroed(stage_len).map_err(alloc)?,
-      v_stage: try_zeroed(stage_len).map_err(alloc)?,
+      chroma,
       staged: [[false; 2]; 3],
       next_emit: 0,
     })
@@ -438,8 +416,10 @@ impl NativeYuv420 {
 
   fn reset(&mut self) {
     self.y.reset();
-    self.u.reset();
-    self.v.reset();
+    if let Some(chroma) = self.chroma.as_mut() {
+      chroma.u.reset();
+      chroma.v.reset();
+    }
     self.staged = [[false; 2]; 3];
     self.next_emit = 0;
   }
@@ -454,12 +434,14 @@ impl NativeYuv420 {
         OutOfSequenceRow::new(self.y.next_y(), idx),
       )));
     }
-    let chroma_expected = idx.div_ceil(2);
-    for stream in [&self.u, &self.v] {
-      if stream.next_y() != chroma_expected {
-        return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
-          OutOfSequenceRow::new(stream.next_y().saturating_mul(2), idx),
-        )));
+    if let Some(chroma) = self.chroma.as_ref() {
+      let chroma_expected = idx.div_ceil(2);
+      for stream in [&chroma.u, &chroma.v] {
+        if stream.next_y() != chroma_expected {
+          return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+            OutOfSequenceRow::new(stream.next_y().saturating_mul(2), idx),
+          )));
+        }
       }
     }
     Ok(())
@@ -493,7 +475,7 @@ fn yuv420p_process_native(
   frozen_outputs_check(resample_outputs, luma, luma_u16, rgb, rgba, hsv, idx)?;
   let join = match native_420 {
     Some(join) => join,
-    None => native_420.insert(NativeYuv420::new(plan, w, h)?),
+    None => native_420.insert(NativeYuv420::new(plan, w, h, need_color)?),
   };
   join.check_sequence(idx)?;
   if need_color {
@@ -521,13 +503,9 @@ fn yuv420p_process_native(
 
   // Feed the planes; everything past this point is infallible.
   let NativeYuv420 {
-    chroma,
     y,
-    u,
-    v,
     y_stage,
-    u_stage,
-    v_stage,
+    chroma,
     staged,
     next_emit,
   } = join;
@@ -536,30 +514,41 @@ fn yuv420p_process_native(
     y_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
     staged[0][slot] = true;
   })?;
-  if idx % 2 == 0 {
-    let cidx = idx / 2;
-    u.feed_row(chroma.h(), chroma.v(), cidx, row.u_half(), |oy, out_row| {
-      let slot = oy & 1;
-      u_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
-      staged[1][slot] = true;
-    })?;
-    v.feed_row(chroma.h(), chroma.v(), cidx, row.v_half(), |oy, out_row| {
-      let slot = oy & 1;
-      v_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
-      staged[2][slot] = true;
-    })?;
+  if let Some(c) = chroma.as_mut() {
+    if idx % 2 == 0 {
+      let cidx = idx / 2;
+      let NativeChroma {
+        plan: cplan,
+        u,
+        v,
+        u_stage,
+        v_stage,
+      } = c;
+      u.feed_row(cplan.h(), cplan.v(), cidx, row.u_half(), |oy, out_row| {
+        let slot = oy & 1;
+        u_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
+        staged[1][slot] = true;
+      })?;
+      v.feed_row(cplan.h(), cplan.v(), cidx, row.v_half(), |oy, out_row| {
+        let slot = oy & 1;
+        v_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
+        staged[2][slot] = true;
+      })?;
+    }
   }
 
-  // Drain every output row all three planes have staged.
+  // Drain every output row whose participating planes are staged.
   while *next_emit < plan.out_h() {
     let slot = *next_emit & 1;
-    if !(staged[0][slot] && staged[1][slot] && staged[2][slot]) {
+    let chroma_ready = match chroma.as_ref() {
+      Some(_) => staged[1][slot] && staged[2][slot],
+      None => true,
+    };
+    if !(staged[0][slot] && chroma_ready) {
       break;
     }
     let oy = *next_emit;
     let y_row = &y_stage[slot * ow..slot * ow + ow];
-    let u_row = &u_stage[slot * ow..slot * ow + ow];
-    let v_row = &v_stage[slot * ow..slot * ow + ow];
 
     if let Some(buf) = luma.as_deref_mut() {
       buf[oy * ow..(oy + 1) * ow].copy_from_slice(y_row);
@@ -569,7 +558,9 @@ fn yuv420p_process_native(
         *dst = src as u16;
       }
     }
-    if need_color {
+    if let Some(c) = chroma.as_ref() {
+      let u_row = &c.u_stage[slot * ow..slot * ow + ow];
+      let v_row = &c.v_stage[slot * ow..slot * ow + ow];
       let out_rgb = &mut rgb_scratch[..ow * 3];
       yuv_444_to_rgb_row(
         y_row,
@@ -612,7 +603,7 @@ fn yuv420p_process_resampled(
   plan: &ResamplePlan,
   rgb_stream: &mut Option<AreaStream>,
   luma_stream: &mut Option<AreaStream>,
-  resample_outputs: &mut Option<FrozenOutputs>,
+  resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
   luma: &mut Option<&mut [u8]>,

@@ -379,13 +379,13 @@ impl RowIndexOutOfRange {
 /// the per-frame immutability check — in safe code a mid-frame
 /// `set_*` necessarily supplies a different borrow, so an identity
 /// change is exactly a reattachment.
-#[cfg(feature = "yuv-planar")]
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct FrozenOutputs {
   idents: [(usize, usize); 7],
 }
 
-#[cfg(feature = "yuv-planar")]
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
 impl FrozenOutputs {
   /// Identity of one attached buffer: `(data pointer, length)`, or
   /// `(0, 0)` for an absent output (a slice pointer is never null).
@@ -421,6 +421,42 @@ impl FrozenOutputs {
       ],
     }
   }
+}
+
+/// Enforces the per-frame frozen output configuration for resampling
+/// sinkers — presence AND buffer identity of every output the emit
+/// closures consult. Shared by every routed format's resampled paths.
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn frozen_outputs_check(
+  resample_outputs: &mut Option<FrozenOutputs>,
+  luma: &Option<&mut [u8]>,
+  luma_u16: &Option<&mut [u16]>,
+  rgb: &Option<&mut [u8]>,
+  rgba: &Option<&mut [u8]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  idx: usize,
+) -> Result<(), MixedSinkerError> {
+  let snapshot = FrozenOutputs::snapshot(
+    luma.as_deref(),
+    luma_u16.as_deref(),
+    rgb.as_deref(),
+    rgba.as_deref(),
+    hsv.as_mut().map(|f| {
+      let (h, s, v) = f.hsv();
+      (&h[..], &s[..], &v[..])
+    }),
+  );
+  match resample_outputs {
+    None => *resample_outputs = Some(snapshot),
+    Some(frozen) if *frozen != snapshot => {
+      return Err(MixedSinkerError::ResampleOutputsChanged(
+        ResampleOutputsChanged::new(idx),
+      ));
+    }
+    Some(_) => {}
+  }
+  Ok(())
 }
 
 /// Mid-frame output-set change payload for
@@ -1206,7 +1242,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// that route non-identity plans. Lazily created in `process`,
   /// reset in `begin_frame`. Gated like the engine itself, widening
   /// as families wire in.
-  #[cfg(feature = "yuv-planar")]
+  #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
   rgb_stream: Option<crate::resample::AreaStream>,
   #[cfg(feature = "yuv-planar")]
   luma_stream: Option<crate::resample::AreaStream>,
@@ -1216,7 +1252,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// closures consult, so both membership changes and same-channel
   /// buffer replacement trip
   /// [`MixedSinkerError::ResampleOutputsChanged`].
-  #[cfg(feature = "yuv-planar")]
+  #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
   resample_outputs: Option<FrozenOutputs>,
   /// Whether resampled processing may take the native decimation tier
   /// (bin native planes, convert once at output resolution). Defaults
@@ -1639,11 +1675,11 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       out_width,
       out_height,
       plan: None,
-      #[cfg(feature = "yuv-planar")]
+      #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
       rgb_stream: None,
       #[cfg(feature = "yuv-planar")]
       luma_stream: None,
-      #[cfg(feature = "yuv-planar")]
+      #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
       resample_outputs: None,
       #[cfg(feature = "yuv-planar")]
       native: true,

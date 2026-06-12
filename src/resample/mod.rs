@@ -116,7 +116,7 @@ impl Resampler for AreaResampler {
 /// Zero-filled buffer via fallible reservation: `resize` after an
 /// exact reserve cannot reallocate, so refusal is the only failure
 /// and it surfaces as the error instead of aborting.
-#[cfg(feature = "yuv-planar")]
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
 pub(crate) fn try_zeroed<T: Clone + Default>(
   n: usize,
 ) -> Result<Vec<T>, std::collections::TryReserveError> {
@@ -230,8 +230,8 @@ impl AxisSpans {
 
   /// Number of output samples on this axis.
   // Consumed by the area streaming engine, which is gated to the
-  // families that route through it (currently yuv-planar).
-  #[cfg_attr(not(feature = "yuv-planar"), allow(dead_code))]
+  // families that route through it.
+  #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub(crate) fn out_len(&self) -> usize {
     self.starts.len()
@@ -239,8 +239,8 @@ impl AxisSpans {
 
   /// `(first source cell, overlap weights)` for output index `j`;
   // Consumed by the area streaming engine, which is gated to the
-  // families that route through it (currently yuv-planar).
-  #[cfg_attr(not(feature = "yuv-planar"), allow(dead_code))]
+  // families that route through it.
+  #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
   /// `j` must be below [`Self::out_len`].
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub(crate) fn span(&self, j: usize) -> (usize, &[usize]) {
@@ -313,8 +313,8 @@ impl ResamplePlan {
 
   /// Horizontal-axis spans.
   // Consumed by the area streaming engine, which is gated to the
-  // families that route through it (currently yuv-planar).
-  #[cfg_attr(not(feature = "yuv-planar"), allow(dead_code))]
+  // families that route through it.
+  #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub(crate) const fn h(&self) -> &AxisSpans {
     &self.h
@@ -322,8 +322,8 @@ impl ResamplePlan {
 
   /// Vertical-axis spans.
   // Consumed by the area streaming engine, which is gated to the
-  // families that route through it (currently yuv-planar).
-  #[cfg_attr(not(feature = "yuv-planar"), allow(dead_code))]
+  // families that route through it.
+  #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub(crate) const fn v(&self) -> &AxisSpans {
     &self.v
@@ -435,7 +435,7 @@ impl ZeroOutputDimension {
 /// against `ceil(d / 2)` without any widening arithmetic.
 // Consumed by the area streaming engine (gated to routed families)
 // and its std-gated tests; allowed to idle in the remaining combos.
-#[cfg_attr(not(feature = "yuv-planar"), allow(dead_code))]
+#[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
 fn round_div_half_up(a: u64, d: u64) -> u64 {
   let q = a / d;
   let r = a % d;
@@ -464,7 +464,7 @@ fn round_div_half_up(a: u64, d: u64) -> u64 {
 ///
 /// Gated to the families that route through it (currently
 /// `yuv-planar`); the gate widens as formats wire in.
-#[cfg(feature = "yuv-planar")]
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
 #[derive(Debug)]
 pub(crate) struct AreaStream {
   channels: usize,
@@ -482,7 +482,7 @@ pub(crate) struct AreaStream {
   next_y: usize,
 }
 
-#[cfg(feature = "yuv-planar")]
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
 impl AreaStream {
   /// Creates a stream for `channels` interleaved channels of the
   /// plan's geometry. Fails with [`ResampleError::Overflow`] when the

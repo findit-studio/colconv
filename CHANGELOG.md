@@ -19,6 +19,16 @@ breaking changes bump the `x` in `0.x.y`.
   (`out_width()` / `out_height()`); `begin_frame` keeps validating
   walkers against the source geometry. Under the default
   `NoopResampler` (identity plan) behavior is unchanged.
+- The native decimation tier for `Yuv420p` (`with_native`, default
+  on): Y, U and V are binned at full output resolution on their own
+  grids and converted once per output row through the 4:4:4 kernels,
+  so no alignment constraint applies to the output geometry and
+  luma-only sinks never read the chroma planes. `Rgb24` routes the
+  fused path with no conversion step at all (binning the packed row
+  IS the work). Gate numbers (1080p -> 336x189, scalar engine):
+  native rgb+hsv 3.7ms vs row-stage 5.7ms; luma-only 1.9ms either
+  tier; full-res conversion baseline 0.83ms — engine SIMD is the
+  next lever and is tracked for P2.
 - Fused downscale now runs end-to-end for `Yuv420p`: the row-stage
   streaming engine area-averages each converted source row into the
   output geometry with exact `u64` integer arithmetic (round-half-up

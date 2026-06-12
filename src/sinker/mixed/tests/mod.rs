@@ -90,6 +90,8 @@ mod planar_gbr_high_bit;
 mod planar_other_8bit_9bit;
 #[cfg(feature = "yuv-planar")]
 mod resample_geometry;
+#[cfg(feature = "rgb")]
+mod resample_rgb24;
 #[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
 #[cfg(feature = "yuv-planar")]

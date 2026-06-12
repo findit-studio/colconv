@@ -50,10 +50,12 @@
 
 use super::{
   InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange, RowShapeMismatch,
-  RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  RowSlice, check_dimensions_match, frozen_outputs_check, rgb_row_buf_or_scratch,
+  rgba_plane_row_slice,
 };
 use crate::{
   PixelSink,
+  resample::{AreaStream, OutOfSequenceRow, ResampleError, ResamplePlan},
   row::{
     abgr_to_rgb_row, abgr_to_rgba_row, argb_to_rgb_row, argb_to_rgba_row, bgr_to_rgb_row,
     bgra_to_rgb_row, bgra_to_rgba_row, bgrx_to_rgba_row, expand_rgb_to_rgba_row, rgb_to_hsv_row,
@@ -90,14 +92,19 @@ impl<'a, R> MixedSinker<'a, Rgb24, R> {
   }
 }
 
-impl Rgb24Sink for MixedSinker<'_, Rgb24> {}
+impl<R> Rgb24Sink for MixedSinker<'_, Rgb24, R> {}
 
-impl PixelSink for MixedSinker<'_, Rgb24> {
+impl<R> PixelSink for MixedSinker<'_, Rgb24, R> {
   type Input<'r> = Rgb24Row<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: Rgb24Row<'_>) -> Result<(), Self::Error> {
@@ -126,8 +133,30 @@ impl PixelSink for MixedSinker<'_, Rgb24> {
       luma,
       hsv,
       rgb_scratch: _,
+      plan,
+      rgb_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: the source row IS interleaved RGB, so the
+    // fused path feeds it to the area stream directly — there is no
+    // conversion step, making the native and row-stage tiers one and
+    // the same for this family. Luma / HSV / RGBA derive from each
+    // finalized output row.
+    if let Some(plan) = plan.as_ref() {
+      return rgb24_process_resampled(
+        plan,
+        rgb_stream,
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        hsv,
+        &row,
+        use_simd,
+      );
+    }
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
@@ -175,6 +204,75 @@ impl PixelSink for MixedSinker<'_, Rgb24> {
 
     Ok(())
   }
+}
+
+/// Fused downscale for [`MixedSinker<Rgb24, R>`]: the packed source
+/// row feeds the 3-channel area stream with no conversion step; RGB
+/// copies, and luma / HSV / RGBA derive from each finalized output
+/// row. Same atomic preflight contracts as every resampled path.
+#[allow(clippy::too_many_arguments)]
+fn rgb24_process_resampled(
+  plan: &ResamplePlan,
+  rgb_stream: &mut Option<AreaStream>,
+  resample_outputs: &mut Option<super::FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  hsv: &mut Option<super::HsvFrameMut<'_>>,
+  row: &Rgb24Row<'_>,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  let ow = plan.out_w();
+  let idx = row.row();
+
+  frozen_outputs_check(resample_outputs, luma, &None, rgb, rgba, hsv, idx)?;
+  let stream = match rgb_stream {
+    Some(stream) => stream,
+    None => rgb_stream.insert(AreaStream::new(
+      plan.h(),
+      plan.v(),
+      plan.src_w(),
+      plan.src_h(),
+      3,
+    )?),
+  };
+  if stream.next_y() != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(stream.next_y(), idx),
+    )));
+  }
+
+  stream.feed_row(plan.h(), plan.v(), idx, row.rgb(), |oy, out_row| {
+    if let Some(buf) = rgb.as_deref_mut() {
+      buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_row);
+    }
+    if let Some(buf) = luma.as_deref_mut() {
+      rgb_to_luma_row(
+        out_row,
+        &mut buf[oy * ow..(oy + 1) * ow],
+        ow,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+    }
+    if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
+      rgb_to_hsv_row(
+        out_row,
+        &mut h[oy * ow..(oy + 1) * ow],
+        &mut s[oy * ow..(oy + 1) * ow],
+        &mut v[oy * ow..(oy + 1) * ow],
+        ow,
+        use_simd,
+      );
+    }
+    if let Some(buf) = rgba.as_deref_mut() {
+      expand_rgb_to_rgba_row(out_row, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
+    }
+  })?;
+
+  Ok(())
 }
 
 // ---- Bgr24 impl --------------------------------------------------------
