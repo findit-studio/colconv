@@ -56,7 +56,7 @@ const GBR_FLOAT_FULL_RANGE: bool = true;
 
 // ---- Gbrpf32 accessor impl block ----------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Gbrpf32<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Gbrpf32<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. α is forced to `0xFF`
   /// (Gbrpf32 has no alpha channel). Length in bytes (`width x height x 4`).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -420,7 +420,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrpf32<BE>> {
 
 // ---- Gbrapf32 accessor impl block ----------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Gbrapf32<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Gbrapf32<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. α is sourced from the
   /// A plane (real per-pixel α, clamped to `[0, 1]` and scaled x 255).
   /// Length in bytes (`width x height x 4`).

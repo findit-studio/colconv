@@ -31,6 +31,7 @@
 #![cfg_attr(not(feature = "std"), allow(dead_code))]
 
 #[cfg(target_arch = "x86_64")]
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 use crate::row::scalar::alpha_extract as scalar;

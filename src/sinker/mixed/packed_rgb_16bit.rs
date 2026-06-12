@@ -52,7 +52,7 @@ use crate::{
 
 // ---- Rgb48 -----------------------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Rgb48<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Rgb48<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Each 16-bit channel is
   /// narrowed `>> 8` and alpha is forced to `0xFF` (no source alpha in Rgb48).
   ///
@@ -268,7 +268,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Rgb48<BE>> {
 
 // ---- Bgr48 -----------------------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Bgr48<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Bgr48<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. B/R channels are swapped
   /// on output; each 16-bit channel is narrowed `>> 8`; alpha is forced to
   /// `0xFF` (no source alpha in Bgr48).
@@ -479,7 +479,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Bgr48<BE>> {
 
 // ---- Rgba64 ----------------------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Rgba64<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Rgba64<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Each 16-bit channel is
   /// narrowed `>> 8`; the **source alpha** at slot 3 of each pixel is
   /// depth-converted and passed through (not forced to `0xFF`).
@@ -771,7 +771,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>> {
 
 // ---- Bgra64 ----------------------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Bgra64<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Bgra64<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. B/R channels swapped on
   /// output; each 16-bit channel narrowed `>> 8`; the **source alpha** at slot
   /// 3 of each pixel is depth-converted and passed through (not forced).

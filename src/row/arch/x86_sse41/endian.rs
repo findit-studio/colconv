@@ -16,6 +16,7 @@
 //! stable Rust; the transmutes are always safe — `__m128i` is a plain 128-bit
 //! bag of bits.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 // ---- Byte-swap shuffle masks -----------------------------------------------

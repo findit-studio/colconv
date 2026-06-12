@@ -7,7 +7,7 @@ use crate::{PixelSink, row::*, source::*};
 
 // ---- Yuv444p9 impl -----------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuv444p9<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuv444p9<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. 9-bit low-packed.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -259,7 +259,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv444p9<BE>> {
 
 // ---- Yuv444p10 / 12 / 14 impl ------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuv444p10<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuv444p10<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. 10-bit low-packed.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -507,7 +507,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv444p10<BE>> {
   }
 }
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuv444p12<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuv444p12<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. 12-bit low-packed.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -755,7 +755,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv444p12<BE>> {
   }
 }
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuv444p14<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuv444p14<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. 14-bit low-packed.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -1003,7 +1003,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv444p14<BE>> {
   }
 }
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuv444p16<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuv444p16<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. Output covers
   /// full `u16` range `[0, 65535]`.
   #[cfg_attr(not(tarpaulin), inline(always))]

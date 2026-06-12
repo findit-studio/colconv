@@ -27,6 +27,7 @@
 //! The branch is resolved at monomorphisation — `BE = false` compiles
 //! to a plain `_mm_loadu_si128`.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 use super::{endian::load_endian_u16x8, *};

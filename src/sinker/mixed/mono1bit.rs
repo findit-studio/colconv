@@ -11,7 +11,7 @@ use crate::{
 
 // ---- Monoblack impl ---------------------------------------------------------
 
-impl<'a> MixedSinker<'a, Monoblack> {
+impl<'a, R> MixedSinker<'a, Monoblack, R> {
   /// Attaches a packed **`u8`** RGBA output buffer.
   ///
   /// Length is measured in `u8` **bytes**: minimum `width * height * 4`.
@@ -222,7 +222,7 @@ impl PixelSink for MixedSinker<'_, Monoblack> {
 
 // ---- Monowhite impl ---------------------------------------------------------
 
-impl<'a> MixedSinker<'a, Monowhite> {
+impl<'a, R> MixedSinker<'a, Monowhite, R> {
   /// Attaches a packed **`u8`** RGBA output buffer.
   ///
   /// Length is measured in `u8` **bytes**: minimum `width * height * 4`.

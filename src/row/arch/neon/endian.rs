@@ -15,6 +15,7 @@
 //! The `if BE { ... } else { ... }` in the dispatcher is eliminated by the
 //! compiler — each monomorphization sees only one branch.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
 // ---- u16x4 loaders ---------------------------------------------------------

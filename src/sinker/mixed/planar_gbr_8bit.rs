@@ -40,7 +40,7 @@ use crate::{
 
 // ---- Gbrp impl ----------------------------------------------------------
 
-impl<'a> MixedSinker<'a, Gbrp> {
+impl<'a, R> MixedSinker<'a, Gbrp, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. The 8-bit GBR
   /// source has no alpha channel, so every alpha byte is filled with
   /// constant `0xFF` (opaque).
@@ -240,7 +240,7 @@ impl PixelSink for MixedSinker<'_, Gbrp> {
 
 // ---- Gbrap impl ---------------------------------------------------------
 
-impl<'a> MixedSinker<'a, Gbrap> {
+impl<'a, R> MixedSinker<'a, Gbrap, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Alpha is sourced
   /// from the source's A plane (real per-pixel α, not constant
   /// `0xFF`).

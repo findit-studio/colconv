@@ -14,6 +14,7 @@
 
 #![cfg_attr(not(feature = "std"), allow(dead_code))]
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 use crate::row::{

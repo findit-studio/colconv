@@ -51,7 +51,7 @@ use crate::{
   source::{Xv36, Xv36Row, Xv36Sink},
 };
 
-impl<'a, const BE: bool> MixedSinker<'a, Xv36<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Xv36<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Alpha is filled
   /// with constant `0xFF` (XV36 A slot is padding — not a real alpha
   /// channel).

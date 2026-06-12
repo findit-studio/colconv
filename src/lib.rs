@@ -256,6 +256,8 @@ pub use mediaframe::{
 };
 
 pub mod raw;
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub mod resample;
 pub mod row;
 pub mod sinker;
 

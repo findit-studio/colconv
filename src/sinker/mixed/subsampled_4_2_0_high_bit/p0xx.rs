@@ -7,7 +7,7 @@ use crate::{PixelSink, row::*, source::*};
 
 // ---- P010 impl ---------------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, P010<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, P010<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. Mirrors
   /// [`MixedSinker<Yuv420p10>::with_rgb_u16`] — compile‑time gated to
   /// sinkers whose source format populates native‑depth RGB.
@@ -281,7 +281,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P010<BE>> {
 
 // ---- P012 impl ---------------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, P012<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, P012<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. Produces 12‑bit
   /// output in **low‑bit‑packed** `yuv420p12le` convention (values in
   /// `[0, 4095]` in the low 12 of each `u16`, upper 4 zero) —
@@ -548,7 +548,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P012<BE>> {
 
 // ---- P016 impl ---------------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, P016<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, P016<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. Produces 16‑bit
   /// output in `[0, 65535]` — at 16 bits there is no high‑ vs
   /// low‑packing distinction, so the output matches

@@ -12,7 +12,7 @@ use crate::{PixelSink, row::*, source::*};
 // `yuv420p9_to_rgb_*` row primitives (which dispatch to
 // `yuv_420p_n_to_rgb_*<9>` internally).
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuv420p9<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuv420p9<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. 9‑bit low‑packed
   /// (`(1 << 9) - 1 = 511` max).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -285,7 +285,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv420p9<BE>> {
 
 // ---- Yuv420p10 impl -----------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuv420p10<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuv420p10<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. Only available on
   /// sinkers whose source format populates native‑depth `u16` RGB —
   /// calling `with_rgb_u16` on an 8‑bit source sinker (e.g.
@@ -592,7 +592,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv420p10<BE>> {
 
 // ---- Yuv420p12 impl ----------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuv420p12<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuv420p12<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. Mirrors
   /// [`MixedSinker<Yuv420p10>::with_rgb_u16`] but produces 12‑bit
   /// output (values in `[0, 4095]` in the low 12 of each `u16`, upper
@@ -865,7 +865,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv420p12<BE>> {
 
 // ---- Yuv420p14 impl ----------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuv420p14<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuv420p14<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. Produces 14‑bit
   /// output (values in `[0, 16383]` in the low 14 of each `u16`, upper
   /// 2 zero). Length is measured in `u16` **elements** (`width x
@@ -1135,7 +1135,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv420p14<BE>> {
 
 // ---- Yuv420p16 impl ----------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuv420p16<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuv420p16<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. Produces 16‑bit
   /// output (values in `[0, 65535]` — full `u16` range). Length is
   /// measured in `u16` **elements** (`width x height x 3`).

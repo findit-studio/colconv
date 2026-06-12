@@ -52,7 +52,7 @@ use crate::{
   source::{Y216, Y216Row, Y216Sink},
 };
 
-impl<'a, const BE: bool> MixedSinker<'a, Y216<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Y216<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Alpha is filled
   /// with constant `0xFF` (Y216 has no alpha channel).
   ///

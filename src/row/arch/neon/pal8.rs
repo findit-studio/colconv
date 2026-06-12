@@ -44,6 +44,7 @@
 //!
 //! Scalar tail handles any remaining pixels (width % 16 != 0).
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
 use crate::row::scalar::pal8 as scalar_pal8;

@@ -53,7 +53,7 @@ use crate::{
 
 // ---- Yuyv422 impl ------------------------------------------------------
 
-impl<'a> MixedSinker<'a, Yuyv422> {
+impl<'a, R> MixedSinker<'a, Yuyv422, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Alpha is filled
   /// with constant `0xFF` (the source has no alpha channel).
   ///
@@ -239,7 +239,7 @@ impl PixelSink for MixedSinker<'_, Yuyv422> {
 
 // ---- Uyvy422 impl ------------------------------------------------------
 
-impl<'a> MixedSinker<'a, Uyvy422> {
+impl<'a, R> MixedSinker<'a, Uyvy422, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Alpha is filled
   /// with constant `0xFF` (the source has no alpha channel).
   ///
@@ -418,7 +418,7 @@ impl PixelSink for MixedSinker<'_, Uyvy422> {
 
 // ---- Yvyu422 impl ------------------------------------------------------
 
-impl<'a> MixedSinker<'a, Yvyu422> {
+impl<'a, R> MixedSinker<'a, Yvyu422, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Alpha is filled
   /// with constant `0xFF` (the source has no alpha channel).
   ///

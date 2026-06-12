@@ -92,7 +92,7 @@ macro_rules! impl_legacy_rgb_sinker {
   ) => {
     // ---- per-format accessors ------------------------------------------------
 
-    impl<'a> MixedSinker<'a, $marker> {
+    impl<'a, R> MixedSinker<'a, $marker, R> {
       /// Attaches a packed **8-bit** RGBA output buffer. Alpha is filled with
       /// constant `0xFF` (this source format has no alpha channel).
       ///

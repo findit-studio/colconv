@@ -10,6 +10,7 @@
 //! lands on a pixel boundary; the scalar tail handles the leftover
 //! 0–15 pixels.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 use super::endian::load_endian_u32x16;

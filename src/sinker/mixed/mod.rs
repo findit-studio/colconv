@@ -110,7 +110,10 @@ use std::vec::Vec;
 use derive_more::{Display, IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
-use crate::SourceFormat;
+use crate::{
+  SourceFormat,
+  resample::{NoopResampler, ResampleError, Resampler},
+};
 // PixelSink is referenced only via intra-doc links (`[`PixelSink::*`]`)
 // in this file; the rustc lint can't see those uses, so silence it.
 #[allow(unused_imports)]
@@ -527,6 +530,13 @@ pub enum MixedSinkerError {
   /// primitive is invoked, preserving the no-panic contract.
   #[error("MixedSinker configured width {} {}", .0.width(), .0.required())]
   WidthAlignment(WidthAlignment),
+
+  /// Building the resampling plan failed in
+  /// [`MixedSinker::with_resampler`]: the strategy rejected the
+  /// requested output geometry. Surfaces before the sinker exists, so
+  /// no buffer state is touched.
+  #[error(transparent)]
+  Resample(#[from] ResampleError),
 }
 
 /// Identifies which slice of a multi‑plane source row mismatched in
@@ -1034,13 +1044,27 @@ pub enum RowSlice {
 /// RGB buffer serves as the intermediate for HSV and no scratch is
 /// allocated.
 ///
-/// # Type parameter
+/// # Type parameters
 ///
 /// `F` identifies the source format — `Yuv420p`, `Nv12`, `Nv21`,
 /// `Yuv420p10`, `Yuv420p12`, `Yuv420p14`, `P010`, `P012`, etc. Each
 /// format provides its own `impl PixelSink for MixedSinker<'_, F>`.
 /// See the module‑level docs for the full list of shipped impls.
-pub struct MixedSinker<'a, F: SourceFormat> {
+///
+/// `R` is the resampling strategy deciding the sinker's **output**
+/// geometry, injected via [`Self::with_resampler`]. The default
+/// [`NoopResampler`] is the identity:
+/// output geometry == source geometry, i.e. exactly the historical
+/// behavior of [`Self::new`]. Output buffers always validate against
+/// the output geometry; [`PixelSink::begin_frame`] always validates
+/// the walker against the source geometry.
+///
+/// Until the resampling engine lands, the per-format [`PixelSink`]
+/// impls are pinned to the default strategy: a sinker built with a
+/// non-identity strategy can attach (output-validated) buffers but
+/// does not implement [`PixelSink`], so routing it through a walker is
+/// a compile error rather than a geometry-mismatch panic.
+pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   rgb: Option<&'a mut [u8]>,
   rgb_u16: Option<&'a mut [u16]>,
   rgb_f32: Option<&'a mut [f32]>,
@@ -1079,6 +1103,12 @@ pub struct MixedSinker<'a, F: SourceFormat> {
   xyz_f32: Option<&'a mut [f32]>,
   width: usize,
   height: usize,
+  /// Output geometry from the resampler's plan; equals
+  /// `(width, height)` under the identity plan. Every output-buffer
+  /// length validation sizes against these, never against the source
+  /// geometry.
+  out_width: usize,
+  out_height: usize,
   /// Lazily grown to `3 * width` bytes when HSV is requested without a
   /// user RGB buffer. Empty otherwise.
   ///
@@ -1117,6 +1147,7 @@ pub struct MixedSinker<'a, F: SourceFormat> {
   #[cfg(any(feature = "bayer", feature = "mono"))]
   luma_coefficients_q8: (u32, u32, u32),
   _fmt: PhantomData<F>,
+  _resampler: PhantomData<R>,
 }
 
 /// Luma coefficient set for sources that derive luma from RGB.
@@ -1431,15 +1462,26 @@ impl Default for LumaCoefficients {
   }
 }
 
-impl<F: SourceFormat> MixedSinker<'_, F> {
-  /// Creates an empty [`MixedSinker`] for the given output dimensions.
+impl<F: SourceFormat> MixedSinker<'_, F, NoopResampler> {
+  /// Creates an empty [`MixedSinker`] for the given dimensions, with
+  /// the identity resampler (output geometry == source geometry).
   /// Attach output buffers with `with_rgb` / `with_luma` / `with_hsv`;
   /// each attachment validates that the buffer is at least
   /// `width * height * bytes_per_pixel` so short-buffer bugs surface
   /// *before* any rows are written — not after half the frame has
-  /// been mutated.
+  /// been mutated. For a sinker whose outputs land at a smaller
+  /// geometry, construct via [`MixedSinker::with_resampler`] instead.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn new(width: usize, height: usize) -> Self {
+    Self::with_geometry(width, height, width, height)
+  }
+}
+
+impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
+  /// Field initializer shared by [`MixedSinker::new`] and
+  /// [`MixedSinker::with_resampler`]: source geometry plus the output
+  /// geometry that buffer validation sizes against.
+  fn with_geometry(width: usize, height: usize, out_width: usize, out_height: usize) -> Self {
     Self {
       rgb: None,
       rgb_u16: None,
@@ -1474,6 +1516,8 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
       xyz_f32: None,
       width,
       height,
+      out_width,
+      out_height,
       #[cfg(any(
         feature = "bayer",
         feature = "gbr",
@@ -1501,6 +1545,7 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
       #[cfg(any(feature = "bayer", feature = "mono"))]
       luma_coefficients_q8: (54, 183, 19),
       _fmt: PhantomData,
+      _resampler: PhantomData,
     }
   }
 
@@ -1630,6 +1675,22 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
     self.height
   }
 
+  /// Output width in pixels — what output buffers validate against.
+  /// Equals [`Self::width`] unless constructed via
+  /// [`MixedSinker::with_resampler`] with a non-identity plan.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn out_width(&self) -> usize {
+    self.out_width
+  }
+
+  /// Output height in pixels — what output buffers validate against.
+  /// Equals [`Self::height`] unless constructed via
+  /// [`MixedSinker::with_resampler`] with a non-identity plan.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn out_height(&self) -> usize {
+    self.out_height
+  }
+
   /// Returns `true` iff row primitives dispatch to their SIMD backend.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn simd(&self) -> bool {
@@ -1654,8 +1715,10 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
     self
   }
 
-  /// Full-frame slot count (`width x height x channels`) with overflow
-  /// checking. The result is the minimum required `buf.len()` for any
+  /// Full-frame slot count (`out_width x out_height x channels`) with
+  /// overflow checking — **output** geometry, since this sizes the
+  /// caller's output buffers (`out == source` under the identity
+  /// plan). The result is the minimum required `buf.len()` for any
   /// `&[T]` buffer holding `channels` slots per pixel — bytes for
   /// `&[u8]`, `u16` elements for `&[u16]`, `f32` elements for `&[f32]`,
   /// `f16` elements for `&[half::f16]`. The function does NOT scale by
@@ -1667,19 +1730,19 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn frame_elems(&self, channels: usize) -> Result<usize, MixedSinkerError> {
     self
-      .width
-      .checked_mul(self.height)
+      .out_width
+      .checked_mul(self.out_height)
       .and_then(|n| n.checked_mul(channels))
       .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
-        self.width,
-        self.height,
+        self.out_width,
+        self.out_height,
         channels,
       )))
   }
 
-  /// Full-frame element count (`width x height`) for a single-channel
-  /// `&[T]` buffer, with overflow checking. Equivalent to
-  /// [`frame_elems(1)`](Self::frame_elems) numerically, but the
+  /// Full-frame element count (`out_width x out_height`) for a
+  /// single-channel `&[T]` buffer, with overflow checking. Equivalent
+  /// to [`frame_elems(1)`](Self::frame_elems) numerically, but the
   /// dedicated name documents "one slot per pixel" at the call site
   /// (e.g. luma planes) without the channels=1 magic number.
   ///
@@ -1706,20 +1769,54 @@ impl<F: SourceFormat> MixedSinker<'_, F> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn frame_pixels(&self) -> Result<usize, MixedSinkerError> {
     self
-      .width
-      .checked_mul(self.height)
+      .out_width
+      .checked_mul(self.out_height)
       .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
-        self.width,
-        self.height,
+        self.out_width,
+        self.out_height,
         1,
       )))
   }
 }
 
-impl<'a, F: SourceFormat> MixedSinker<'a, F> {
+impl<'a, F: SourceFormat, R> MixedSinker<'a, F, R> {
+  /// Creates an empty [`MixedSinker`] whose **output geometry** is
+  /// decided by `resampler`: [`Resampler::plan`] runs once, here, and
+  /// every buffer attached afterwards validates against the resulting
+  /// output geometry. [`PixelSink::begin_frame`] keeps validating the
+  /// walker against the `width x height` **source** geometry, so the
+  /// existing frame-mismatch protection is unchanged.
+  ///
+  /// With [`NoopResampler`] this is equivalent to [`MixedSinker::new`]
+  /// (identity plan, infallible in practice).
+  ///
+  /// Per-format [`PixelSink`] impls are currently pinned to the
+  /// default strategy (see the type-level docs), so a sinker built
+  /// here with any other strategy validates buffers against its
+  /// output geometry but cannot yet process frames.
+  ///
+  /// # Errors
+  ///
+  /// [`MixedSinkerError::Resample`] when the strategy rejects the
+  /// requested output geometry — see
+  /// [`ResampleError`].
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_resampler(width: usize, height: usize, resampler: R) -> Result<Self, MixedSinkerError>
+  where
+    R: Resampler,
+  {
+    let (out_width, out_height) = match resampler.plan(width, height)? {
+      Some(plan) => plan.out_dims(),
+      None => (width, height),
+    };
+    Ok(Self::with_geometry(width, height, out_width, out_height))
+  }
+
   /// Attaches a packed 24-bit RGB output buffer.
-  /// Returns `Err(InsufficientRgbBuffer)` if `buf.len() < width x height x 3`,
-  /// or `Err(GeometryOverflow)` on 32‑bit targets when the product
+  /// Returns `Err(InsufficientRgbBuffer)` if
+  /// `buf.len() < out_width x out_height x 3` (output geometry; equals
+  /// `width x height x 3` under the default identity resampler), or
+  /// `Err(GeometryOverflow)` on 32‑bit targets when the product
   /// overflows.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -1774,8 +1871,9 @@ impl<'a, F: SourceFormat> MixedSinker<'a, F> {
   // native‑depth RGBA.
 
   /// Attaches a single-plane luma output buffer.
-  /// Returns `Err(InsufficientLumaBuffer)` if `buf.len() < width x height`,
-  /// or `Err(GeometryOverflow)` on 32‑bit overflow.
+  /// Returns `Err(InsufficientLumaBuffer)` if
+  /// `buf.len() < out_width x out_height` (output geometry), or
+  /// `Err(GeometryOverflow)` on 32‑bit overflow.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_luma(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
     self.set_luma(buf)?;

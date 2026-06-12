@@ -38,7 +38,7 @@ use crate::{
   source::{Uyyvyy411, Uyyvyy411Row, Uyyvyy411Sink},
 };
 
-impl<'a> MixedSinker<'a, Uyyvyy411> {
+impl<'a, R> MixedSinker<'a, Uyyvyy411, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Alpha is filled
   /// with constant `0xFF` (the source has no alpha channel).
   ///

@@ -83,7 +83,7 @@ const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 
 // ---- Gbrpf16 accessor impl block ----------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Gbrpf16<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Gbrpf16<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. α is forced to `0xFF`
   /// (Gbrpf16 has no alpha channel). Length in bytes (`width x height x 4`).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -473,7 +473,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrpf16<BE>> {
 
 // ---- Gbrapf16 accessor impl block ----------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Gbrapf16<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Gbrapf16<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. α is sourced from the
   /// A plane (real per-pixel α, clamped to `[0, 1]` and scaled x 255).
   /// Length in bytes (`width x height x 4`).

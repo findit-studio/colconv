@@ -35,7 +35,7 @@ use crate::{PixelSink, row::*, source::*};
 
 // ---- Yuva444p impl (8-bit) ---------------------------------------------
 
-impl<'a> MixedSinker<'a, Yuva444p> {
+impl<'a, R> MixedSinker<'a, Yuva444p, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. The 8-bit YUVA
   /// 4:4:4 source is converted to 8-bit RGBA via the same Q15 i32
   /// 8-bit kernel that backs [`MixedSinker<Yuv444p>::with_rgba`]; the
@@ -204,7 +204,7 @@ impl PixelSink for MixedSinker<'_, Yuva444p> {
 
 // ---- Yuva444p9 impl ---------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuva444p9<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuva444p9<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. The 9-bit YUVA
   /// source is converted to 8-bit RGBA via the same `BITS = 9` Q15
   /// kernel family used by [`MixedSinker<Yuv444p9>::with_rgba`]; the
@@ -305,7 +305,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva444p9<BE>> {
 
 // ---- Yuva444p10 impl --------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuva444p10<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuva444p10<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. The 10-bit YUVA
   /// source is converted to 8-bit RGBA via the same `BITS = 10` Q15
   /// kernel family used by [`MixedSinker<Yuv444p10>::with_rgba`]; the
@@ -406,7 +406,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva444p10<BE>> {
 
 // ---- Yuva444p12 impl --------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuva444p12<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuva444p12<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. The 12-bit YUVA
   /// source is converted to 8-bit RGBA via the same `BITS = 12` Q15
   /// kernel family used by [`MixedSinker<Yuv444p12>::with_rgba`]; the
@@ -507,7 +507,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva444p12<BE>> {
 
 // ---- Yuva444p14 impl --------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuva444p14<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuva444p14<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. The 14-bit YUVA
   /// source is converted to 8-bit RGBA via the same `BITS = 14` Q15
   /// kernel family used by [`MixedSinker<Yuv444p14>::with_rgba`]; the
@@ -608,7 +608,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva444p14<BE>> {
 
 // ---- Yuva444p16 impl --------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuva444p16<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuva444p16<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. The 16-bit YUVA
   /// source is converted to 8-bit RGBA via the same `BITS = 16` Q15
   /// kernel family used by [`MixedSinker<Yuv444p16>::with_rgba`]; the

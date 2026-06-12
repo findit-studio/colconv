@@ -62,7 +62,7 @@ use crate::{
 
 // ---- Gray8 impl -------------------------------------------------------------
 
-impl<'a> MixedSinker<'a, Gray8> {
+impl<'a, R> MixedSinker<'a, Gray8, R> {
   /// Attaches an 8-bit RGBA output buffer. Alpha is forced to `0xFF`
   /// (Gray8 has no alpha channel).
   ///
@@ -405,7 +405,7 @@ fn check_gray_n_row_shape(
 
 macro_rules! impl_gray_n_sinker {
   ($marker:ident, $row:ident, $sink:ident, $bits:expr) => {
-    impl<'a, const BE: bool> MixedSinker<'a, $marker<BE>> {
+    impl<'a, R, const BE: bool> MixedSinker<'a, $marker<BE>, R> {
       /// Attaches an 8-bit RGBA output buffer. Alpha is forced to `0xFF`.
       #[cfg_attr(not(tarpaulin), inline(always))]
       pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -550,7 +550,7 @@ impl_gray_n_sinker!(Gray14, Gray14Row, Gray14Sink, 14);
 
 // ---- Gray16 impl ------------------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Gray16<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Gray16<BE>, R> {
   /// Attaches an 8-bit RGBA output buffer. Alpha is forced to `0xFF`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -800,7 +800,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gray16<BE>> {
 
 // ---- Grayf32 impl -----------------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Grayf32<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Grayf32<BE>, R> {
   /// Attaches an 8-bit RGBA output buffer. α is forced to `0xFF`
   /// (Grayf32 has no alpha channel).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -1089,7 +1089,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Grayf32<BE>> {
 
 // ---- Ya8 impl ---------------------------------------------------------------
 
-impl<'a> MixedSinker<'a, Ya8> {
+impl<'a, R> MixedSinker<'a, Ya8, R> {
   /// Attaches an 8-bit RGBA output buffer. α is passed from the source.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
@@ -1311,7 +1311,7 @@ impl PixelSink for MixedSinker<'_, Ya8> {
 
 // ---- Ya16 impl --------------------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Ya16<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Ya16<BE>, R> {
   /// Attaches an 8-bit RGBA output buffer. α is `source_A >> 8`.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {

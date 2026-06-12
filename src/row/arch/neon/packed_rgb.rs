@@ -1,3 +1,4 @@
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
 use super::endian::load_endian_u32x4;

@@ -28,6 +28,7 @@
 //! backend's own `endian.rs` (512-bit shuffle). 8-pixel tail iterations use
 //! `load_endian_u16x8::<BE>` from the SSE4.1 `endian.rs` (128-bit shuffle).
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 use super::{endian::load_endian_u16x32, *};

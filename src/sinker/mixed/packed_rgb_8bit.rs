@@ -68,7 +68,7 @@ use crate::{
 
 // ---- Rgb24 impl --------------------------------------------------------
 
-impl<'a> MixedSinker<'a, Rgb24> {
+impl<'a, R> MixedSinker<'a, Rgb24, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Alpha is filled
   /// with constant `0xFF` (the source has no alpha channel).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -179,7 +179,7 @@ impl PixelSink for MixedSinker<'_, Rgb24> {
 
 // ---- Bgr24 impl --------------------------------------------------------
 
-impl<'a> MixedSinker<'a, Bgr24> {
+impl<'a, R> MixedSinker<'a, Bgr24, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Channel order
   /// is swapped on output (input is `B, G, R`; output is `R, G, B,
   /// 0xFF`). Alpha is filled with constant `0xFF` (the source has
@@ -302,7 +302,7 @@ impl PixelSink for MixedSinker<'_, Bgr24> {
 
 // ---- Rgba impl (Ship 9b) -----------------------------------------------
 
-impl<'a> MixedSinker<'a, Rgba> {
+impl<'a, R> MixedSinker<'a, Rgba, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. The source row
   /// is already RGBA — the per-pixel write is a memcpy of the
   /// source bytes (alpha is **passed through**, not forced to
@@ -422,7 +422,7 @@ impl PixelSink for MixedSinker<'_, Rgba> {
 
 // ---- Bgra impl (Ship 9b) -----------------------------------------------
 
-impl<'a> MixedSinker<'a, Bgra> {
+impl<'a, R> MixedSinker<'a, Bgra, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Channel order
   /// is swapped on output (input is `B, G, R, A`; output is
   /// `R, G, B, A`). Alpha is **passed through** from the source,
@@ -542,7 +542,7 @@ impl PixelSink for MixedSinker<'_, Bgra> {
 
 // ---- Argb impl (Ship 9c) -----------------------------------------------
 
-impl<'a> MixedSinker<'a, Argb> {
+impl<'a, R> MixedSinker<'a, Argb, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Channel layout
   /// is rotated on output (input is `A, R, G, B`; output is
   /// `R, G, B, A`). Alpha is **passed through** from the source,
@@ -662,7 +662,7 @@ impl PixelSink for MixedSinker<'_, Argb> {
 
 // ---- Abgr impl (Ship 9c) -----------------------------------------------
 
-impl<'a> MixedSinker<'a, Abgr> {
+impl<'a, R> MixedSinker<'a, Abgr, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Channel layout
   /// is fully reversed on output (input is `A, B, G, R`; output is
   /// `R, G, B, A`). Alpha is **passed through** from the source,
@@ -782,7 +782,7 @@ impl PixelSink for MixedSinker<'_, Abgr> {
 
 // ---- Xrgb impl (Ship 9d) -----------------------------------------------
 
-impl<'a> MixedSinker<'a, Xrgb> {
+impl<'a, R> MixedSinker<'a, Xrgb, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. The leading
   /// padding byte from the source is dropped and alpha is forced to
   /// `0xFF` (the source has no real alpha — the X byte's value is
@@ -903,7 +903,7 @@ impl PixelSink for MixedSinker<'_, Xrgb> {
 
 // ---- Rgbx impl (Ship 9d) -----------------------------------------------
 
-impl<'a> MixedSinker<'a, Rgbx> {
+impl<'a, R> MixedSinker<'a, Rgbx, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. The trailing
   /// padding byte from the source is replaced with `A = 0xFF`.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -1019,7 +1019,7 @@ impl PixelSink for MixedSinker<'_, Rgbx> {
 
 // ---- Xbgr impl (Ship 9d) -----------------------------------------------
 
-impl<'a> MixedSinker<'a, Xbgr> {
+impl<'a, R> MixedSinker<'a, Xbgr, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Channel order
   /// is reversed and the leading padding byte is replaced with
   /// `A = 0xFF` (input is `X, B, G, R`; output is `R, G, B, 0xFF`).
@@ -1137,7 +1137,7 @@ impl PixelSink for MixedSinker<'_, Xbgr> {
 
 // ---- Bgrx impl (Ship 9d) -----------------------------------------------
 
-impl<'a> MixedSinker<'a, Bgrx> {
+impl<'a, R> MixedSinker<'a, Bgrx, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Channel order
   /// is reversed and the trailing padding byte is replaced with
   /// `A = 0xFF` (input is `B, G, R, X`; output is `R, G, B, 0xFF`).

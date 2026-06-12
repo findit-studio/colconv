@@ -48,6 +48,7 @@
   feature = "yuv-semi-planar",
   feature = "yuva",
 ))]
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
 #[allow(unused_imports)]

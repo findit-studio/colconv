@@ -5,6 +5,7 @@
 //! interleaved in one shot. Both kernels process 16 pixels per
 //! iteration with a scalar tail.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
 use crate::row::scalar;

@@ -31,6 +31,7 @@
 //!
 //! Pixels less than the next 8‑px multiple fall through to scalar.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
 use super::*;

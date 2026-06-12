@@ -26,6 +26,7 @@
 //!
 //! `width % 4` remaining pixels fall through to `scalar::v410_*`.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
 use super::*;
