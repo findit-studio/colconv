@@ -13,6 +13,12 @@
 // `yuv-444-packed` AYUV64, `yuva` planar α).
 #[cfg(any(feature = "gbr", feature = "yuv-444-packed", feature = "yuva"))]
 pub(crate) mod alpha_extract;
+// Consumer: the fused-downscale engine (`crate::resample`).
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(feature = "yuv-planar", feature = "rgb")
+))]
+pub(super) mod area_reduce;
 #[cfg(feature = "yuv-444-packed")]
 pub(super) mod ayuv64;
 #[cfg(feature = "bayer")]

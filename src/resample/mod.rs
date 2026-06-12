@@ -312,6 +312,50 @@ impl AxisSpans {
       &self.weights[self.offsets[j]..self.offsets[j + 1]],
     )
   }
+
+  /// Plan-time zero-padded u16 copy of the weight arena for the SIMD
+  /// H-pass: every span padded to a multiple of 8 so kernels run pure
+  /// wide loads, with the zero lanes annihilating samples past a
+  /// span's last tap. Returns empty vectors — routing the dispatcher
+  /// to the scalar reference — when a weight cannot fit u16 (output
+  /// dimension past `u16::MAX`), on arithmetic overflow, or when the
+  /// allocation is refused: the staging arena is an optional
+  /// accelerator, never a reason to fail stream creation.
+  #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
+  fn padded_u16(&self) -> (Vec<u16>, Vec<usize>) {
+    let out = self.out_len();
+    if out > usize::from(u16::MAX) {
+      return (Vec::new(), Vec::new());
+    }
+    let mut total = 0usize;
+    for j in 0..out {
+      let k = self.offsets[j + 1] - self.offsets[j];
+      let Some(t) = k
+        .div_ceil(8)
+        .checked_mul(8)
+        .and_then(|p| total.checked_add(p))
+      else {
+        return (Vec::new(), Vec::new());
+      };
+      total = t;
+    }
+    let mut w16 = Vec::new();
+    let mut off = Vec::new();
+    if w16.try_reserve_exact(total).is_err() || off.try_reserve_exact(out + 1).is_err() {
+      return (Vec::new(), Vec::new());
+    }
+    off.push(0);
+    for j in 0..out {
+      let (_, span) = self.span(j);
+      for &w in span {
+        debug_assert!(w <= usize::from(u16::MAX), "weight bounded by out_len");
+        w16.push(w as u16);
+      }
+      w16.resize(w16.len() + (span.len().div_ceil(8) * 8 - span.len()), 0);
+      off.push(w16.len());
+    }
+    (w16, off)
+  }
 }
 
 /// Output-geometry product of [`Resampler::plan`], built once at
@@ -575,6 +619,12 @@ pub(crate) struct AreaStream {
   acc: Vec<u64>,
   /// Finalized staging row handed to `emit`, `out_w * channels`.
   out_tmp: Vec<u8>,
+  /// Zero-padded u16 H-weight arena for the SIMD backends (see
+  /// [`AxisSpans::padded_u16`]); empty routes the dispatcher to
+  /// scalar.
+  h_w16: Vec<u16>,
+  /// Per-span offsets into `h_w16`, `out_w + 1` entries when present.
+  h_w16_off: Vec<usize>,
   /// Next output row to finalize.
   cur_out: usize,
   /// Next source row the frame expects; rows are strictly sequential.
@@ -619,12 +669,15 @@ impl AreaStream {
     // small-constant, so refusal surfaces as an error rather than an
     // abort on the first processed row.
     let alloc = |_| ResampleError::AllocationFailed(geometry());
+    let (h_w16, h_w16_off) = h.padded_u16();
     Ok(Self {
       channels,
       denom,
       h_tmp: try_zeroed(n).map_err(alloc)?,
       acc: try_zeroed(n).map_err(alloc)?,
       out_tmp: try_zeroed(n).map_err(alloc)?,
+      h_w16,
+      h_w16_off,
       cur_out: 0,
       next_y: 0,
     })
@@ -662,6 +715,7 @@ impl AreaStream {
     v: &AxisSpans,
     y: usize,
     row: &[u8],
+    use_simd: bool,
     mut emit: impl FnMut(usize, &[u8]),
   ) -> Result<(), ResampleError> {
     if y != self.next_y {
@@ -674,18 +728,17 @@ impl AreaStream {
     if self.cur_out >= v.out_len() {
       return Ok(());
     }
-    let c = self.channels;
-    for j in 0..h.out_len() {
-      let (start, weights) = h.span(j);
-      let base = j * c;
-      for ch in 0..c {
-        let mut sum = 0u32;
-        for (i, &w) in weights.iter().enumerate() {
-          sum += w as u32 * u32::from(row[(start + i) * c + ch]);
-        }
-        self.h_tmp[base + ch] = sum;
-      }
-    }
+    crate::row::area_h_reduce_row(
+      row,
+      self.channels,
+      &h.starts,
+      &h.offsets,
+      &h.weights,
+      &self.h_w16,
+      &self.h_w16_off,
+      &mut self.h_tmp,
+      use_simd,
+    );
     // A source row contributes to at most two output rows (a downscale
     // span covers a source cell at most twice); the loop runs the
     // second pass only when the next span starts on this same row.

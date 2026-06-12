@@ -513,7 +513,7 @@ fn yuv420p_process_native(
     staged,
     next_emit,
   } = join;
-  y.feed_row(plan.h(), plan.v(), idx, row.y(), |oy, out_row| {
+  y.feed_row(plan.h(), plan.v(), idx, row.y(), use_simd, |oy, out_row| {
     let slot = oy & 1;
     y_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
     staged[0][slot] = true;
@@ -529,16 +529,30 @@ fn yuv420p_process_native(
       u_stage,
       v_stage,
     } = c;
-    u.feed_row(cplan.h(), cplan.v(), cidx, row.u_half(), |oy, out_row| {
-      let slot = oy & 1;
-      u_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
-      staged[1][slot] = true;
-    })?;
-    v.feed_row(cplan.h(), cplan.v(), cidx, row.v_half(), |oy, out_row| {
-      let slot = oy & 1;
-      v_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
-      staged[2][slot] = true;
-    })?;
+    u.feed_row(
+      cplan.h(),
+      cplan.v(),
+      cidx,
+      row.u_half(),
+      use_simd,
+      |oy, out_row| {
+        let slot = oy & 1;
+        u_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
+        staged[1][slot] = true;
+      },
+    )?;
+    v.feed_row(
+      cplan.h(),
+      cplan.v(),
+      cidx,
+      row.v_half(),
+      use_simd,
+      |oy, out_row| {
+        let slot = oy & 1;
+        v_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
+        staged[2][slot] = true;
+      },
+    )?;
   }
 
   // Drain every output row whose participating planes are staged.
@@ -719,7 +733,7 @@ fn yuv420p_process_resampled(
 
   if need_luma {
     let stream = luma_stream.as_mut().expect("created in the preflight");
-    stream.feed_row(plan.h(), plan.v(), idx, row.y(), |oy, out_row| {
+    stream.feed_row(plan.h(), plan.v(), idx, row.y(), use_simd, |oy, out_row| {
       if let Some(buf) = luma.as_deref_mut() {
         buf[oy * ow..(oy + 1) * ow].copy_from_slice(out_row);
       }
@@ -733,7 +747,7 @@ fn yuv420p_process_resampled(
 
   if let Some(scratch) = color_row {
     let stream = rgb_stream.as_mut().expect("created in the preflight");
-    stream.feed_row(plan.h(), plan.v(), idx, scratch, |oy, out_row| {
+    stream.feed_row(plan.h(), plan.v(), idx, scratch, use_simd, |oy, out_row| {
       if let Some(buf) = rgb.as_deref_mut() {
         buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_row);
       }

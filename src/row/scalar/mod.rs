@@ -46,6 +46,13 @@ use crate::ColorMatrix;
   feature = "yuva",
 ))]
 pub(crate) mod alpha_extract;
+// Consumer: the fused-downscale engine (`crate::resample`), compiled
+// under `any(std, alloc)`.
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(feature = "yuv-planar", feature = "rgb")
+))]
+pub(crate) mod area_reduce;
 #[cfg(feature = "yuv-444-packed")]
 mod ayuv64;
 #[cfg(feature = "bayer")]

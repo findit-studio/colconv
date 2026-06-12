@@ -179,7 +179,7 @@ fn stream_collect(plan: &ResamplePlan, src: &[u8], channels: usize) -> std::vec:
   for y in 0..plan.src_h() {
     let row = &src[y * src_w * channels..(y + 1) * src_w * channels];
     stream
-      .feed_row(plan.h(), plan.v(), y, row, |oy, finalized| {
+      .feed_row(plan.h(), plan.v(), y, row, true, |oy, finalized| {
         emitted.push(oy);
         out[oy * out_w * channels..(oy + 1) * out_w * channels].copy_from_slice(finalized);
       })
@@ -311,7 +311,7 @@ fn stream_rejects_out_of_order_duplicate_and_skipped_rows() {
 
   // Out of order from the start: row 1 before row 0.
   let err = stream
-    .feed_row(plan.h(), plan.v(), 1, &row, |_, _| {})
+    .feed_row(plan.h(), plan.v(), 1, &row, true, |_, _| {})
     .unwrap_err();
   match err {
     ResampleError::OutOfSequenceRow(e) => {
@@ -321,18 +321,18 @@ fn stream_rejects_out_of_order_duplicate_and_skipped_rows() {
   }
   // The rejected row must not have touched stream state.
   stream
-    .feed_row(plan.h(), plan.v(), 0, &row, |_, _| {})
+    .feed_row(plan.h(), plan.v(), 0, &row, true, |_, _| {})
     .unwrap();
 
   // Duplicate.
   let err = stream
-    .feed_row(plan.h(), plan.v(), 0, &row, |_, _| {})
+    .feed_row(plan.h(), plan.v(), 0, &row, true, |_, _| {})
     .unwrap_err();
   assert!(err.is_out_of_sequence_row());
 
   // Skipped.
   let err = stream
-    .feed_row(plan.h(), plan.v(), 2, &row, |_, _| {})
+    .feed_row(plan.h(), plan.v(), 2, &row, true, |_, _| {})
     .unwrap_err();
   match err {
     ResampleError::OutOfSequenceRow(e) => {
@@ -344,7 +344,7 @@ fn stream_rejects_out_of_order_duplicate_and_skipped_rows() {
   // reset() restarts the sequence.
   stream.reset();
   stream
-    .feed_row(plan.h(), plan.v(), 0, &row, |_, _| {})
+    .feed_row(plan.h(), plan.v(), 0, &row, true, |_, _| {})
     .unwrap();
 }
 
@@ -407,7 +407,7 @@ fn area_matches_cv2_inter_area_within_one_lsb() {
     for y in 0..src_h {
       let row = &src[y * src_w * channels..(y + 1) * src_w * channels];
       stream
-        .feed_row(plan.h(), plan.v(), y, row, |oy, finalized| {
+        .feed_row(plan.h(), plan.v(), y, row, true, |oy, finalized| {
           ours[oy * out_w * channels..(oy + 1) * out_w * channels].copy_from_slice(finalized);
         })
         .expect("rows in order");
@@ -504,4 +504,60 @@ fn area_overflow_rejected() {
     .plan(usize::MAX - 1, 1)
     .unwrap_err();
   assert!(err.is_overflow(), "got {err:?}");
+}
+
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[test]
+fn h_pass_simd_matches_scalar_bit_exact() {
+  // Differential against the scalar reference at the h_tmp level —
+  // the u8 finalize divide downstream could mask a small H-sum error,
+  // so the raw u32 sums are compared directly. Geometries cover
+  // single-chunk spans with tails (1920->336: 6-7 taps), multi-chunk
+  // spans (640->7: ~92 taps), 2-tap spans whose final span lands on
+  // the row-end staging path (4096->4095), tiny all-staged rows, and
+  // an output width past the u16 weight bound (70000->66000), where
+  // the dispatcher falls back to scalar.
+  let cases = [
+    (1920usize, 336usize, 1usize),
+    (1920, 336, 3),
+    (640, 7, 1),
+    (640, 7, 3),
+    (4096, 4095, 1),
+    (4096, 4095, 3),
+    (5, 4, 3),
+    (8, 3, 1),
+    (70_000, 66_000, 1),
+  ];
+  for &(src_w, out_w, channels) in &cases {
+    let plan = AreaResampler::to(out_w, 1)
+      .plan(src_w, 2)
+      .expect("valid geometry")
+      .expect("strict downscale");
+    let mut scalar = AreaStream::new(plan.h(), plan.v(), src_w, 2, channels).unwrap();
+    let mut simd = AreaStream::new(plan.h(), plan.v(), src_w, 2, channels).unwrap();
+    let mut row = std::vec![0u8; src_w * channels];
+    for y in 0..2usize {
+      lcg_fill(&mut row, (src_w * 31 + out_w * 7 + channels + y) as u32);
+      let mut scalar_rows = std::vec::Vec::new();
+      let mut simd_rows = std::vec::Vec::new();
+      scalar
+        .feed_row(plan.h(), plan.v(), y, &row, false, |oy, r| {
+          scalar_rows.push((oy, r.to_vec()));
+        })
+        .unwrap();
+      simd
+        .feed_row(plan.h(), plan.v(), y, &row, true, |oy, r| {
+          simd_rows.push((oy, r.to_vec()));
+        })
+        .unwrap();
+      assert_eq!(
+        scalar.h_tmp, simd.h_tmp,
+        "h_tmp diverged: src_w={src_w} out_w={out_w} c={channels} y={y}"
+      );
+      assert_eq!(
+        scalar_rows, simd_rows,
+        "emitted rows diverged: src_w={src_w} out_w={out_w} c={channels}"
+      );
+    }
+  }
 }
