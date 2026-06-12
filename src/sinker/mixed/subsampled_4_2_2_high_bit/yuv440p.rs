@@ -10,7 +10,7 @@ use crate::{PixelSink, row::*, source::*};
 // 4:4:0 planar 10‑bit. Same row math as 4:4:4 10-bit; reuses
 // `yuv444p10_to_rgb_*`. Walker handles the half-height chroma.
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuv440p10<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuv440p10<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. 10-bit low-packed.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -259,7 +259,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv440p10<BE>> {
 
 // ---- Yuv440p12 impl -----------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuv440p12<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuv440p12<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. 12-bit low-packed.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {

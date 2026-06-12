@@ -49,7 +49,7 @@ use crate::{
   source::{V410, V410Row, V410Sink},
 };
 
-impl<'a, const BE: bool> MixedSinker<'a, V410<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, V410<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Alpha is filled
   /// with constant `0xFF` (V410 has no alpha channel).
   ///

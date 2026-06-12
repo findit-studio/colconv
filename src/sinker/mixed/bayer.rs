@@ -9,7 +9,7 @@ use crate::{PixelSink, raw::*, row::*};
 
 // ---- Bayer (8-bit) impl --------------------------------------------------
 
-impl MixedSinker<'_, Bayer> {
+impl<R> MixedSinker<'_, Bayer, R> {
   /// Sets the luma coefficient set used to derive the luma plane
   /// from demosaiced RGB. Only matters when `with_luma` is also
   /// attached. Default: [`LumaCoefficients::Bt709`].
@@ -160,7 +160,7 @@ impl PixelSink for MixedSinker<'_, Bayer> {
 
 // ---- Bayer16<BITS> impl --------------------------------------------------
 
-impl<'a, const BITS: u32> MixedSinker<'a, Bayer16<BITS>> {
+impl<'a, R, const BITS: u32> MixedSinker<'a, Bayer16<BITS>, R> {
   /// Attaches a packed **`u16`** RGB output buffer.
   ///
   /// Length is measured in `u16` **elements** (not bytes): minimum

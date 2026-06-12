@@ -58,7 +58,7 @@ use crate::{
   source::{Ayuv64, Ayuv64Row, Ayuv64Sink},
 };
 
-impl<'a, const BE: bool> MixedSinker<'a, Ayuv64<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Ayuv64<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. When AYUV64 is the
   /// source, the per-pixel alpha value is **sourced from the A u16 at
   /// slot 0 of each pixel quadruple**, depth-converted to u8 via `>> 8`

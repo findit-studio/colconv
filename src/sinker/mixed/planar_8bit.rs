@@ -8,7 +8,7 @@ use crate::{PixelSink, row::*, source::*};
 
 // ---- Yuv420p impl --------------------------------------------------------
 
-impl<'a> MixedSinker<'a, Yuv420p> {
+impl<'a, R> MixedSinker<'a, Yuv420p, R> {
   /// Attaches a packed 32‑bit RGBA output buffer.
   ///
   /// Only available on sinker types whose `PixelSink` impl writes
@@ -290,7 +290,7 @@ impl Yuv420pSink for MixedSinker<'_, Yuv420p> {}
 // RGB+RGBA combo: run the 3-channel kernel once, fan out via
 // `expand_rgb_to_rgba_row`.
 
-impl<'a> MixedSinker<'a, Yuv410p> {
+impl<'a, R> MixedSinker<'a, Yuv410p, R> {
   /// Attaches a packed 32-bit RGBA output buffer.
   ///
   /// See [`MixedSinker::<Yuv420p>::with_rgba`] for the rationale and
@@ -508,7 +508,7 @@ impl PixelSink for MixedSinker<'_, Yuv410p> {
 // (and `yuv_420_to_rgba_row` for the RGBA path) — no new kernels
 // needed.
 
-impl<'a> MixedSinker<'a, Yuv422p> {
+impl<'a, R> MixedSinker<'a, Yuv422p, R> {
   /// Attaches a packed 32‑bit RGBA output buffer.
   ///
   /// Only available on sinker types whose `PixelSink` impl writes
@@ -719,7 +719,7 @@ impl PixelSink for MixedSinker<'_, Yuv422p> {
 // constraint. Uses the `yuv_444_to_rgb_row` / `yuv_444_to_rgba_row`
 // kernel family.
 
-impl<'a> MixedSinker<'a, Yuv444p> {
+impl<'a, R> MixedSinker<'a, Yuv444p, R> {
   /// Attaches a packed 32‑bit RGBA output buffer.
   ///
   /// Only available on sinker types whose `PixelSink` impl writes
@@ -919,7 +919,7 @@ impl PixelSink for MixedSinker<'_, Yuv444p> {
 // `r / 2`. Reuses `yuv_444_to_rgb_row` and `yuv_444_to_rgba_row`
 // verbatim.
 
-impl<'a> MixedSinker<'a, Yuv440p> {
+impl<'a, R> MixedSinker<'a, Yuv440p, R> {
   /// Attaches a packed 32‑bit RGBA output buffer.
   ///
   /// See [`MixedSinker::<Yuv420p>::with_rgba`] for the rationale and
@@ -1122,7 +1122,7 @@ impl PixelSink for MixedSinker<'_, Yuv440p> {
 // `width.div_ceil(4)`: non-4-aligned widths get a partial 1..3-pixel
 // final chroma group, handled by the scalar tail.
 
-impl<'a> MixedSinker<'a, Yuv411p> {
+impl<'a, R> MixedSinker<'a, Yuv411p, R> {
   /// Attaches a packed 32-bit RGBA output buffer.
   ///
   /// See [`MixedSinker::<Yuv420p>::with_rgba`] for the rationale and

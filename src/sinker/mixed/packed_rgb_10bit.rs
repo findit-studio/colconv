@@ -41,7 +41,7 @@ use crate::{
 
 // ---- X2Rgb10 -----------------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, X2Rgb10<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, X2Rgb10<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Each 10-bit
   /// channel is down-shifted to 8 bits and alpha is forced to
   /// `0xFF` (the source has no real alpha — the 2-bit field is
@@ -199,7 +199,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, X2Rgb10<BE>> {
 
 // ---- X2Bgr10 -----------------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, X2Bgr10<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, X2Bgr10<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Channel order
   /// is reversed on output (input bit positions: `R` at low, `B` at
   /// high) and alpha is forced to `0xFF`.

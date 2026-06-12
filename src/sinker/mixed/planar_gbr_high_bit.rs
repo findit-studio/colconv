@@ -69,7 +69,7 @@ use crate::{
 
 macro_rules! impl_gbrp_high_bit {
   ($marker:ident, $sink:ident, $row:ident, $bits:literal) => {
-    impl<'a, const BE: bool> MixedSinker<'a, crate::source::$marker<BE>> {
+    impl<'a, R, const BE: bool> MixedSinker<'a, crate::source::$marker<BE>, R> {
       /// Attaches a packed **`u16`** RGB output buffer. Samples are in
       /// `[0, (1 << BITS) - 1]` (native depth, no depth conversion).
       /// Length is measured in `u16` **elements** (`width x height x 3`).
@@ -344,7 +344,7 @@ macro_rules! impl_gbrp_high_bit {
 
 macro_rules! impl_gbrap_high_bit {
   ($marker:ident, $sink:ident, $row:ident, $bits:literal) => {
-    impl<'a, const BE: bool> MixedSinker<'a, crate::source::$marker<BE>> {
+    impl<'a, R, const BE: bool> MixedSinker<'a, crate::source::$marker<BE>, R> {
       /// Attaches a packed **`u16`** RGB output buffer. Samples are in
       /// `[0, (1 << BITS) - 1]` (native depth, no depth conversion).
       /// Length is measured in `u16` **elements** (`width x height x 3`).

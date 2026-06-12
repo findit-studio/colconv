@@ -37,7 +37,7 @@ use crate::{
 
 // ---- Rgbf16 impl -------------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Rgbf16<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Rgbf16<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Source values are
   /// clamped to `[0, 1]` and scaled by 255; alpha is forced to `0xFF`
   /// (the float source has no alpha channel).

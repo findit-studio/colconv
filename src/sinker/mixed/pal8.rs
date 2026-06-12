@@ -39,7 +39,7 @@ use crate::{
 
 // ---- Format-specific accessor block ----------------------------------------
 
-impl<'a> MixedSinker<'a, Pal8> {
+impl<'a, R> MixedSinker<'a, Pal8, R> {
   /// Attaches a packed 8-bit RGBA output buffer.
   ///
   /// Alpha byte per pixel is sourced from the palette entry's `A` field

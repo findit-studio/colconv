@@ -8,6 +8,23 @@ breaking changes bump the `x` in `0.x.y`.
 
 ## Unreleased
 
+### Added
+
+- `MixedSinker` gains a resampling-strategy type parameter
+  (`R = NoopResampler`) and a `with_resampler(width, height, resampler)`
+  constructor: the strategy's plan fixes the sinker's **output
+  geometry** once, before any buffer attaches. Output buffers
+  (`with_rgb` / `with_luma` / `with_hsv` / per-format `with_rgba`,
+  `with_luma_u16`, …) now validate against the output geometry
+  (`out_width()` / `out_height()`); `begin_frame` keeps validating
+  walkers against the source geometry. Under the default
+  `NoopResampler` (identity plan) behavior is unchanged.
+- New `resample` module: sealed `Resampler` trait, `NoopResampler`,
+  `ResamplePlan`, and structured `ResampleError` (wrapped by the new
+  `MixedSinkerError::Resample` variant). Groundwork for the fused
+  downscale-first walk (#123, #124, #125); the area streaming engine
+  lands next.
+
 ## 0.1.0 — 2026-06-08
 
 Initial public release. colconv is a `no_std`-friendly SIMD-dispatched

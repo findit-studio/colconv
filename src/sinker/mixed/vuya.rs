@@ -45,7 +45,7 @@ use crate::{
   source::{Vuya, VuyaRow, VuyaSink},
 };
 
-impl<'a> MixedSinker<'a, Vuya> {
+impl<'a, R> MixedSinker<'a, Vuya, R> {
   /// Attaches a **`u16`** luma output buffer. Y bytes from the packed VUYA
   /// `[V, U, Y, A]` layout are zero-extended to u16
   /// (`out[x] = Y_byte as u16`). Length in u16 **elements**

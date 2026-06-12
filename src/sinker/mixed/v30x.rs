@@ -55,7 +55,7 @@ use crate::{
   source::{V30X, V30XRow, V30XSink},
 };
 
-impl<'a> MixedSinker<'a, V30X> {
+impl<'a, R> MixedSinker<'a, V30X, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Alpha is filled
   /// with constant `0xFF` (V30X has no alpha channel).
   ///

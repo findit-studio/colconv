@@ -12,7 +12,7 @@ use crate::{PixelSink, row::*, source::*};
 // only the walker reads chroma row `r` instead of `r / 2`. Reuses the
 // `p010_to_rgb_*` row primitives verbatim.
 
-impl<'a, const BE: bool> MixedSinker<'a, P210<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, P210<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. 10-bit
   /// **low-bit-packed** output (yuv420p10le convention, not P210
   /// packing). Length is in `u16` elements: `width x height x 3`.
@@ -271,7 +271,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P210<BE>> {
 // 4:2:2 high-bit-packed semi-planar (12-bit). Reuses `p012_to_rgb_*`
 // row primitives — only the walker reads chroma row `r` not `r / 2`.
 
-impl<'a, const BE: bool> MixedSinker<'a, P212<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, P212<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. 12-bit
   /// **low-bit-packed** output.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -528,7 +528,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P212<BE>> {
 //
 // 4:2:2 16-bit semi-planar. Reuses `p016_to_rgb_*` row primitives.
 
-impl<'a, const BE: bool> MixedSinker<'a, P216<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, P216<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. 16-bit output
   /// (full `[0, 65535]` range, every bit active).
   #[cfg_attr(not(tarpaulin), inline(always))]

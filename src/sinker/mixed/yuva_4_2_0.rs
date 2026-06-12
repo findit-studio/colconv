@@ -24,7 +24,7 @@ use crate::{PixelSink, row::*, source::*};
 
 // ---- Yuva420p impl (8-bit) ---------------------------------------------
 
-impl<'a> MixedSinker<'a, Yuva420p> {
+impl<'a, R> MixedSinker<'a, Yuva420p, R> {
   /// Attaches a packed **8‑bit** RGBA output buffer. The 8‑bit YUVA
   /// source is converted to 8‑bit RGBA via the same Q15 i32 8‑bit
   /// kernel that backs [`MixedSinker<Yuv420p>::with_rgba`]; the
@@ -205,7 +205,7 @@ impl PixelSink for MixedSinker<'_, Yuva420p> {
 
 // ---- Yuva420p9 impl ---------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuva420p9<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuva420p9<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Source-derived
   /// alpha (depth-converted via `>> 1`).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -306,7 +306,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva420p9<BE>> {
 
 // ---- Yuva420p10 impl --------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuva420p10<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuva420p10<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Source-derived
   /// alpha (depth-converted via `>> 2`).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -406,7 +406,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva420p10<BE>> {
 
 // ---- Yuva420p16 impl --------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuva420p16<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuva420p16<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Source-derived
   /// alpha (depth-converted via `>> 8`).
   #[cfg_attr(not(tarpaulin), inline(always))]

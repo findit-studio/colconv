@@ -45,7 +45,7 @@ use crate::{
 
 // ---- Xyz12<BE> impl ----------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Xyz12<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Xyz12<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Alpha forced to
   /// `0xFF` (no source alpha plane).
   #[cfg_attr(not(tarpaulin), inline(always))]

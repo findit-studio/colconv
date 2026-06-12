@@ -12,7 +12,7 @@ use crate::{PixelSink, row::*, source::*};
 // `p410_to_rgb_*` row primitives (which dispatch to the
 // `p_n_444_to_rgb_*<10>` family).
 
-impl<'a, const BE: bool> MixedSinker<'a, P410<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, P410<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. 10-bit low-packed.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -250,7 +250,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P410<BE>> {
 
 // ---- P412 impl ----------------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, P412<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, P412<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. 12-bit low-packed.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -490,7 +490,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P412<BE>> {
 // 4:4:4 16-bit semi-planar. Uses `p416_to_rgb_*` (parallel i64-chroma
 // family for u16 output, i32 for u8).
 
-impl<'a, const BE: bool> MixedSinker<'a, P416<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, P416<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. 16-bit output
   /// (full `[0, 65535]` range).
   #[cfg_attr(not(tarpaulin), inline(always))]

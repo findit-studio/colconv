@@ -29,7 +29,7 @@ use crate::{PixelSink, row::*, source::*};
 
 // ---- Yuva422p impl (8-bit) ---------------------------------------------
 
-impl<'a> MixedSinker<'a, Yuva422p> {
+impl<'a, R> MixedSinker<'a, Yuva422p, R> {
   /// Attaches a packed **8‑bit** RGBA output buffer. The 8‑bit YUVA
   /// 4:2:2 source is converted to 8‑bit RGBA via the same Q15 i32
   /// 8‑bit kernel that backs [`MixedSinker<Yuv422p>::with_rgba`] (the
@@ -210,7 +210,7 @@ impl PixelSink for MixedSinker<'_, Yuva422p> {
 
 // ---- Yuva422p9 impl ---------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuva422p9<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuva422p9<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Source-derived
   /// alpha (depth-converted via `>> 1`).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -311,7 +311,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva422p9<BE>> {
 
 // ---- Yuva422p10 impl --------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuva422p10<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuva422p10<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Source-derived
   /// alpha (depth-converted via `>> 2`).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -411,7 +411,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva422p10<BE>> {
 
 // ---- Yuva422p12 impl --------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuva422p12<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuva422p12<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Source-derived
   /// alpha (depth-converted via `>> 4`).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -511,7 +511,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva422p12<BE>> {
 
 // ---- Yuva422p16 impl --------------------------------------------------
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuva422p16<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuva422p16<BE>, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Source-derived
   /// alpha (depth-converted via `>> 8`).
   #[cfg_attr(not(tarpaulin), inline(always))]

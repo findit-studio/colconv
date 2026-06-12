@@ -9,7 +9,7 @@ use crate::{PixelSink, row::*, source::*};
 
 // ---- Nv12 impl ----------------------------------------------------------
 
-impl<'a> MixedSinker<'a, Nv12> {
+impl<'a, R> MixedSinker<'a, Nv12, R> {
   /// Attaches a packed 32‑bit RGBA output buffer.
   ///
   /// Only available on sinker types whose `PixelSink` impl writes
@@ -227,7 +227,7 @@ impl PixelSink for MixedSinker<'_, Nv12> {
 // `nv12_to_rgb_row` / `nv12_to_rgba_row` dispatchers — no new kernels
 // needed.
 
-impl<'a> MixedSinker<'a, Nv16> {
+impl<'a, R> MixedSinker<'a, Nv16, R> {
   /// Attaches a packed 32‑bit RGBA output buffer.
   ///
   /// Only available on sinker types whose `PixelSink` impl writes
@@ -429,7 +429,7 @@ impl PixelSink for MixedSinker<'_, Nv16> {
 // the U/V byte-order difference. Only the trait `Input<'r>` and the
 // primitive name change.
 
-impl<'a> MixedSinker<'a, Nv21> {
+impl<'a, R> MixedSinker<'a, Nv21, R> {
   /// Attaches a packed 32‑bit RGBA output buffer.
   ///
   /// Only available on sinker types whose `PixelSink` impl writes
@@ -632,7 +632,7 @@ impl PixelSink for MixedSinker<'_, Nv21> {
 // is its own family (`nv24_to_rgb_row`) since chroma is no longer
 // duplicated across columns.
 
-impl<'a> MixedSinker<'a, Nv24> {
+impl<'a, R> MixedSinker<'a, Nv24, R> {
   /// Attaches a packed 32‑bit RGBA output buffer.
   ///
   /// Only available on sinker types whose `PixelSink` impl writes
@@ -833,7 +833,7 @@ impl PixelSink for MixedSinker<'_, Nv24> {
 // Structurally identical to the Nv24 impl — the row primitive hides
 // the V/U byte-order difference.
 
-impl<'a> MixedSinker<'a, Nv42> {
+impl<'a, R> MixedSinker<'a, Nv42, R> {
   /// Attaches a packed 32‑bit RGBA output buffer.
   ///
   /// See [`MixedSinker::<Nv24>::with_rgba`] for the same rationale and

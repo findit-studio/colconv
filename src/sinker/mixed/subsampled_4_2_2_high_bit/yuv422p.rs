@@ -11,7 +11,7 @@ use crate::{PixelSink, row::*, source::*};
 // U / V), one chroma row per Y row instead of one per two. Reuses
 // `yuv420p9_to_rgb_*` row primitives verbatim.
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuv422p9<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuv422p9<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. 9-bit low-packed.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -282,7 +282,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv422p9<BE>> {
 // `yuv420p10_to_rgb_*` / `yuv420p12_to_rgb_*` / `yuv420p14_to_rgb_*`
 // verbatim — no new row kernels.
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuv422p10<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuv422p10<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. 10-bit low-packed
   /// values (`(1 << 10) - 1 = 1023` max).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -541,7 +541,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv422p10<BE>> {
   }
 }
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuv422p12<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuv422p12<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. 12-bit low-packed.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -799,7 +799,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>> {
   }
 }
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuv422p14<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuv422p14<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. 14-bit low-packed.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
@@ -1062,7 +1062,7 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>> {
 // 16-bit family. Yuv422p16 reuses the 4:2:0 16-bit kernel family
 // (identical per-row shape); Yuv444p16 has its own kernels.
 
-impl<'a, const BE: bool> MixedSinker<'a, Yuv422p16<BE>> {
+impl<'a, R, const BE: bool> MixedSinker<'a, Yuv422p16<BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer. Output covers
   /// full `u16` range `[0, 65535]` (16 active bits, no packing).
   #[cfg_attr(not(tarpaulin), inline(always))]

@@ -88,6 +88,8 @@ mod planar_gbr_float;
 mod planar_gbr_high_bit;
 #[cfg(feature = "yuv-planar")]
 mod planar_other_8bit_9bit;
+#[cfg(feature = "yuv-planar")]
+mod resample_geometry;
 #[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
 #[cfg(feature = "yuv-planar")]
