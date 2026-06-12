@@ -35,4 +35,16 @@ cargo miri setup
 
 export MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-symbolic-alignment-check"
 
+# 32-bit targets share one 4 GB address space across the whole lib
+# test binary, and miri's default partial address reuse
+# (-Zmiri-address-reuse-rate=0.5) exhausts it near the end of the
+# suite — the failure then surfaces as "no more free addresses" in
+# whichever test happens to run last. Full reuse keeps the run inside
+# the space; 64-bit cells keep the stricter default.
+case "$TARGET" in
+  i686-*)
+    export MIRIFLAGS="$MIRIFLAGS -Zmiri-address-reuse-rate=1.0 -Zmiri-address-reuse-cross-thread-rate=1.0"
+    ;;
+esac
+
 cargo miri test --lib --tests --target "$TARGET"

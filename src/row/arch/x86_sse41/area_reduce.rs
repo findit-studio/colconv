@@ -19,37 +19,23 @@
 use core::arch::x86_64::*;
 
 /// Sums the four u32 lanes of `acc`.
-///
-/// # Safety
-///
-/// SSE4.1 must be available.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-unsafe fn hsum_u32(acc: __m128i) -> u32 {
-  // SAFETY: lane-wise shuffles and adds on an initialized vector.
-  unsafe {
-    let hi = _mm_shuffle_epi32::<0b01_00_11_10>(acc);
-    let s = _mm_add_epi32(acc, hi);
-    let s2 = _mm_add_epi32(s, _mm_shuffle_epi32::<0b00_00_00_01>(s));
-    _mm_cvtsi128_si32(s2) as u32
-  }
+fn hsum_u32(acc: __m128i) -> u32 {
+  let hi = _mm_shuffle_epi32::<0b01_00_11_10>(acc);
+  let s = _mm_add_epi32(acc, hi);
+  let s2 = _mm_add_epi32(s, _mm_shuffle_epi32::<0b00_00_00_01>(s));
+  _mm_cvtsi128_si32(s2) as u32
 }
 
 /// Accumulates the eight exact u32 products of `s16 * w` into `acc`.
-///
-/// # Safety
-///
-/// SSE4.1 must be available. Both inputs hold 8 u16 lanes.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-unsafe fn mac_u16x8(acc: __m128i, s16: __m128i, w: __m128i) -> __m128i {
-  // SAFETY: lane-wise multiplies and adds on initialized vectors.
-  unsafe {
-    let lo = _mm_mullo_epi16(s16, w);
-    let hi = _mm_mulhi_epu16(s16, w);
-    let acc = _mm_add_epi32(acc, _mm_unpacklo_epi16(lo, hi));
-    _mm_add_epi32(acc, _mm_unpackhi_epi16(lo, hi))
-  }
+fn mac_u16x8(acc: __m128i, s16: __m128i, w: __m128i) -> __m128i {
+  let lo = _mm_mullo_epi16(s16, w);
+  let hi = _mm_mulhi_epu16(s16, w);
+  let acc = _mm_add_epi32(acc, _mm_unpacklo_epi16(lo, hi));
+  _mm_add_epi32(acc, _mm_unpackhi_epi16(lo, hi))
 }
 
 /// # Safety
@@ -114,27 +100,24 @@ pub(crate) unsafe fn area_h_reduce_row_c3(
   // (bytes 0..16) or lane g - 8 of the second (bytes 8..24); each
   // channel's eight samples (g = ch + 3t) gather from whichever load
   // holds them, with -1 zeroing the other mask's lane.
-  // SAFETY (macro-free constant builds): compile-time constants.
-  let (m0, m1): ([__m128i; 3], [__m128i; 3]) = unsafe {
-    (
-      [
-        _mm_set_epi8(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 15, 12, 9, 6, 3, 0),
-        _mm_set_epi8(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 13, 10, 7, 4, 1),
-        _mm_set_epi8(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 14, 11, 8, 5, 2),
-      ],
-      [
-        _mm_set_epi8(
-          -1, -1, -1, -1, -1, -1, -1, -1, 13, 10, -1, -1, -1, -1, -1, -1,
-        ),
-        _mm_set_epi8(
-          -1, -1, -1, -1, -1, -1, -1, -1, 14, 11, 8, -1, -1, -1, -1, -1,
-        ),
-        _mm_set_epi8(
-          -1, -1, -1, -1, -1, -1, -1, -1, 15, 12, 9, -1, -1, -1, -1, -1,
-        ),
-      ],
-    )
-  };
+  let (m0, m1): ([__m128i; 3], [__m128i; 3]) = (
+    [
+      _mm_set_epi8(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 15, 12, 9, 6, 3, 0),
+      _mm_set_epi8(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 13, 10, 7, 4, 1),
+      _mm_set_epi8(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 14, 11, 8, 5, 2),
+    ],
+    [
+      _mm_set_epi8(
+        -1, -1, -1, -1, -1, -1, -1, -1, 13, 10, -1, -1, -1, -1, -1, -1,
+      ),
+      _mm_set_epi8(
+        -1, -1, -1, -1, -1, -1, -1, -1, 14, 11, 8, -1, -1, -1, -1, -1,
+      ),
+      _mm_set_epi8(
+        -1, -1, -1, -1, -1, -1, -1, -1, 15, 12, 9, -1, -1, -1, -1, -1,
+      ),
+    ],
+  );
   for (j, &start) in starts.iter().enumerate() {
     let span = &w16[w16_off[j]..w16_off[j + 1]];
     // SAFETY: the two 16-byte loads cover bytes 0..24 of the chunk and
@@ -169,5 +152,43 @@ pub(crate) unsafe fn area_h_reduce_row_c3(
         h_tmp[j * 3 + ch] = hsum_u32(acc[ch]);
       }
     }
+  }
+}
+
+/// V-pass AXPY: `acc[i] += w * h_tmp[i]`, exact u64 lanes via
+/// `_mm_mul_epu32` over even/odd u32 lanes re-paired with
+/// `_mm_unpacklo/hi_epi64` (4 elements per iteration).
+///
+/// # Safety
+///
+/// SSE4.1 must be available. `h_tmp.len() >= acc.len()`; every
+/// product-sum stays within u64 (the engine's denominator bound).
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn area_v_accumulate(acc: &mut [u64], h_tmp: &[u32], w: u32) {
+  let n = acc.len();
+  debug_assert!(h_tmp.len() >= n, "h_tmp too short");
+  // Each 64-bit lane's low half holds `w` (high half zero), the form
+  // `_mm_mul_epu32` consumes.
+  let wv = _mm_set1_epi64x(i64::from(w));
+  let mut i = 0usize;
+  // SAFETY: loop guard `i + 4 <= n` with `h_tmp.len() >= n` keeps all
+  // loads and stores in bounds.
+  unsafe {
+    while i + 4 <= n {
+      let t = _mm_loadu_si128(h_tmp.as_ptr().add(i).cast());
+      let even = _mm_mul_epu32(t, wv);
+      let odd = _mm_mul_epu32(_mm_srli_epi64::<32>(t), wv);
+      let a01 = _mm_loadu_si128(acc.as_ptr().add(i).cast());
+      let a23 = _mm_loadu_si128(acc.as_ptr().add(i + 2).cast());
+      let p01 = _mm_unpacklo_epi64(even, odd);
+      let p23 = _mm_unpackhi_epi64(even, odd);
+      _mm_storeu_si128(acc.as_mut_ptr().add(i).cast(), _mm_add_epi64(a01, p01));
+      _mm_storeu_si128(acc.as_mut_ptr().add(i + 2).cast(), _mm_add_epi64(a23, p23));
+      i += 4;
+    }
+  }
+  for k in i..n {
+    acc[k] += u64::from(w) * u64::from(h_tmp[k]);
   }
 }

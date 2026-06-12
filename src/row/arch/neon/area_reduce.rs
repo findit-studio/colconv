@@ -112,3 +112,37 @@ pub(crate) unsafe fn area_h_reduce_row_c3(
     }
   }
 }
+
+/// V-pass AXPY: `acc[i] += w * h_tmp[i]`, exact u64 lanes via
+/// `vmull_u32`/`vmull_high_u32` (4 elements per iteration).
+///
+/// # Safety
+///
+/// NEON must be available (baseline on aarch64).
+/// `h_tmp.len() >= acc.len()`; every product-sum stays within u64
+/// (the engine's denominator bound).
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn area_v_accumulate(acc: &mut [u64], h_tmp: &[u32], w: u32) {
+  let n = acc.len();
+  debug_assert!(h_tmp.len() >= n, "h_tmp too short");
+  let wq = vdupq_n_u32(w);
+  let mut i = 0usize;
+  // SAFETY: loop guard `i + 4 <= n` with `h_tmp.len() >= n` keeps all
+  // loads and stores in bounds.
+  unsafe {
+    while i + 4 <= n {
+      let t = vld1q_u32(h_tmp.as_ptr().add(i));
+      let a0 = vld1q_u64(acc.as_ptr().add(i));
+      let a1 = vld1q_u64(acc.as_ptr().add(i + 2));
+      let p0 = vmull_u32(vget_low_u32(t), vget_low_u32(wq));
+      let p1 = vmull_high_u32(t, wq);
+      vst1q_u64(acc.as_mut_ptr().add(i), vaddq_u64(a0, p0));
+      vst1q_u64(acc.as_mut_ptr().add(i + 2), vaddq_u64(a1, p1));
+      i += 4;
+    }
+  }
+  for k in i..n {
+    acc[k] += u64::from(w) * u64::from(h_tmp[k]);
+  }
+}

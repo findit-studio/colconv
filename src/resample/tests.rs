@@ -179,7 +179,7 @@ fn stream_collect(plan: &ResamplePlan, src: &[u8], channels: usize) -> std::vec:
   for y in 0..plan.src_h() {
     let row = &src[y * src_w * channels..(y + 1) * src_w * channels];
     stream
-      .feed_row(plan.h(), plan.v(), y, row, true, |oy, finalized| {
+      .feed_row(y, row, true, |oy, finalized| {
         emitted.push(oy);
         out[oy * out_w * channels..(oy + 1) * out_w * channels].copy_from_slice(finalized);
       })
@@ -242,11 +242,15 @@ fn stream_identity_vertical_axis_emits_every_row() {
 #[cfg(feature = "yuv-planar")]
 #[test]
 fn stream_creation_fails_recoverably_on_huge_row_buffers() {
-  // Row buffers whose u64 backing exceeds isize::MAX bytes must
-  // surface AllocationFailed via capacity overflow, not abort. Real
-  // spans, magnitude driven through the channel count: 4 outputs x
-  // usize::MAX / 32 channels is representable as a length but never
-  // reservable.
+  // Row buffers that can never be reserved must surface
+  // AllocationFailed via capacity overflow — the magnitude has to sit
+  // in the CAPACITY-OVERFLOW zone for the SMALLEST arena element
+  // (h_tmp is u32, so entries x 4 bytes must exceed isize::MAX);
+  // anything smaller is a real near-exabyte allocator request that
+  // hosts refuse but sanitizers and miri abort on. Real spans,
+  // magnitude driven through the channel count: 4 outputs x
+  // usize::MAX / 16 channels is representable as a length but puts
+  // every per-element arena past capacity.
   let plan = AreaResampler::to(4, 4)
     .plan(8, 8)
     .expect("valid")
@@ -256,7 +260,7 @@ fn stream_creation_fails_recoverably_on_huge_row_buffers() {
     plan.v(),
     plan.src_w(),
     plan.src_h(),
-    usize::MAX / 32,
+    usize::MAX / 16,
   )
   .unwrap_err();
   assert!(err.is_allocation_failed(), "got {err:?}");
@@ -310,9 +314,7 @@ fn stream_rejects_out_of_order_duplicate_and_skipped_rows() {
   let mut stream = AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 1).unwrap();
 
   // Out of order from the start: row 1 before row 0.
-  let err = stream
-    .feed_row(plan.h(), plan.v(), 1, &row, true, |_, _| {})
-    .unwrap_err();
+  let err = stream.feed_row(1, &row, true, |_, _| {}).unwrap_err();
   match err {
     ResampleError::OutOfSequenceRow(e) => {
       assert_eq!((e.expected(), e.got()), (0, 1));
@@ -320,20 +322,14 @@ fn stream_rejects_out_of_order_duplicate_and_skipped_rows() {
     other => panic!("expected OutOfSequenceRow, got {other:?}"),
   }
   // The rejected row must not have touched stream state.
-  stream
-    .feed_row(plan.h(), plan.v(), 0, &row, true, |_, _| {})
-    .unwrap();
+  stream.feed_row(0, &row, true, |_, _| {}).unwrap();
 
   // Duplicate.
-  let err = stream
-    .feed_row(plan.h(), plan.v(), 0, &row, true, |_, _| {})
-    .unwrap_err();
+  let err = stream.feed_row(0, &row, true, |_, _| {}).unwrap_err();
   assert!(err.is_out_of_sequence_row());
 
   // Skipped.
-  let err = stream
-    .feed_row(plan.h(), plan.v(), 2, &row, true, |_, _| {})
-    .unwrap_err();
+  let err = stream.feed_row(2, &row, true, |_, _| {}).unwrap_err();
   match err {
     ResampleError::OutOfSequenceRow(e) => {
       assert_eq!((e.expected(), e.got()), (1, 2));
@@ -343,9 +339,7 @@ fn stream_rejects_out_of_order_duplicate_and_skipped_rows() {
 
   // reset() restarts the sequence.
   stream.reset();
-  stream
-    .feed_row(plan.h(), plan.v(), 0, &row, true, |_, _| {})
-    .unwrap();
+  stream.feed_row(0, &row, true, |_, _| {}).unwrap();
 }
 
 #[test]
@@ -407,7 +401,7 @@ fn area_matches_cv2_inter_area_within_one_lsb() {
     for y in 0..src_h {
       let row = &src[y * src_w * channels..(y + 1) * src_w * channels];
       stream
-        .feed_row(plan.h(), plan.v(), y, row, true, |oy, finalized| {
+        .feed_row(y, row, true, |oy, finalized| {
           ours[oy * out_w * channels..(oy + 1) * out_w * channels].copy_from_slice(finalized);
         })
         .expect("rows in order");
@@ -498,12 +492,21 @@ fn area_tiny_output_huge_source_fails_recoverably() {
 
 #[test]
 fn area_overflow_rejected() {
-  // src_w * out_w cannot be represented: the span grid for the
-  // horizontal axis would overflow usize.
+  // Hostile dimensions must surface a structured error, and which one
+  // is pointer-width-dependent. On 64-bit targets the u64 span-grid
+  // product src_w * out_w overflows and is rejected as Overflow. On
+  // 32-bit targets that product always fits u64 — the grid
+  // coordinates were widened precisely so 32-bit dims cannot overflow
+  // them — so the same call runs on to the span arenas, whose
+  // capacity-overflow reservation (entries times element size above
+  // isize::MAX, no allocator touch) surfaces as AllocationFailed.
   let err = AreaResampler::to(usize::MAX / 2, 1)
     .plan(usize::MAX - 1, 1)
     .unwrap_err();
+  #[cfg(target_pointer_width = "64")]
   assert!(err.is_overflow(), "got {err:?}");
+  #[cfg(target_pointer_width = "32")]
+  assert!(err.is_allocation_failed(), "got {err:?}");
 }
 
 #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
@@ -517,18 +520,28 @@ fn h_pass_simd_matches_scalar_bit_exact() {
   // the row-end staging path (4096->4095), tiny all-staged rows, and
   // an output width past the u16 weight bound (70000->66000), where
   // the dispatcher falls back to scalar.
-  let cases = [
-    (1920usize, 336usize, 1usize),
-    (1920, 336, 3),
-    (640, 7, 1),
-    (640, 7, 3),
-    (4096, 4095, 1),
-    (4096, 4095, 3),
-    (5, 4, 3),
-    (8, 3, 1),
-    (70_000, 66_000, 1),
-  ];
-  for &(src_w, out_w, channels) in &cases {
+  // Miri keeps every allocation's address live for the whole process,
+  // and the i686 cell has 4 GB of address space shared by the entire
+  // suite — the large geometries would exhaust it (the failure then
+  // surfaces in whatever unrelated test runs last). The small cases
+  // still cover chunked spans, staged row-ends, and both channel
+  // counts under Miri; the full list runs on every native lane.
+  let cases: &[(usize, usize, usize)] = if cfg!(miri) {
+    &[(64, 7, 1), (64, 7, 3), (12, 11, 3), (8, 3, 1), (5, 4, 3)]
+  } else {
+    &[
+      (1920, 336, 1),
+      (1920, 336, 3),
+      (640, 7, 1),
+      (640, 7, 3),
+      (4096, 4095, 1),
+      (4096, 4095, 3),
+      (5, 4, 3),
+      (8, 3, 1),
+      (70_000, 66_000, 1),
+    ]
+  };
+  for &(src_w, out_w, channels) in cases {
     let plan = AreaResampler::to(out_w, 1)
       .plan(src_w, 2)
       .expect("valid geometry")
@@ -541,18 +554,22 @@ fn h_pass_simd_matches_scalar_bit_exact() {
       let mut scalar_rows = std::vec::Vec::new();
       let mut simd_rows = std::vec::Vec::new();
       scalar
-        .feed_row(plan.h(), plan.v(), y, &row, false, |oy, r| {
+        .feed_row(y, &row, false, |oy, r| {
           scalar_rows.push((oy, r.to_vec()));
         })
         .unwrap();
       simd
-        .feed_row(plan.h(), plan.v(), y, &row, true, |oy, r| {
+        .feed_row(y, &row, true, |oy, r| {
           simd_rows.push((oy, r.to_vec()));
         })
         .unwrap();
       assert_eq!(
         scalar.h_tmp, simd.h_tmp,
         "h_tmp diverged: src_w={src_w} out_w={out_w} c={channels} y={y}"
+      );
+      assert_eq!(
+        scalar.acc, simd.acc,
+        "acc diverged: src_w={src_w} out_w={out_w} c={channels} y={y}"
       );
       assert_eq!(
         scalar_rows, simd_rows,

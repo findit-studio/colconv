@@ -313,48 +313,23 @@ impl AxisSpans {
     )
   }
 
-  /// Plan-time zero-padded u16 copy of the weight arena for the SIMD
-  /// H-pass: every span padded to a multiple of 8 so kernels run pure
-  /// wide loads, with the zero lanes annihilating samples past a
-  /// span's last tap. Returns empty vectors — routing the dispatcher
-  /// to the scalar reference — when a weight cannot fit u16 (output
-  /// dimension past `u16::MAX`), on arithmetic overflow, or when the
-  /// allocation is refused: the staging arena is an optional
-  /// accelerator, never a reason to fail stream creation.
+  /// Fallible deep copy following the planner's recoverable-allocation
+  /// contract — used by [`AreaStream`] to own its geometry for the
+  /// frame, so scalar and SIMD passes cannot be fed mismatched spans.
   #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
-  fn padded_u16(&self) -> (Vec<u16>, Vec<usize>) {
-    let out = self.out_len();
-    if out > usize::from(u16::MAX) {
-      return (Vec::new(), Vec::new());
+  fn try_clone(&self) -> Result<Self, AxisError> {
+    fn copy<T: Copy>(src: &[T]) -> Result<Vec<T>, AxisError> {
+      let mut v = Vec::new();
+      v.try_reserve_exact(src.len())
+        .map_err(|_| AxisError::Alloc)?;
+      v.extend_from_slice(src);
+      Ok(v)
     }
-    let mut total = 0usize;
-    for j in 0..out {
-      let k = self.offsets[j + 1] - self.offsets[j];
-      let Some(t) = k
-        .div_ceil(8)
-        .checked_mul(8)
-        .and_then(|p| total.checked_add(p))
-      else {
-        return (Vec::new(), Vec::new());
-      };
-      total = t;
-    }
-    let mut w16 = Vec::new();
-    let mut off = Vec::new();
-    if w16.try_reserve_exact(total).is_err() || off.try_reserve_exact(out + 1).is_err() {
-      return (Vec::new(), Vec::new());
-    }
-    off.push(0);
-    for j in 0..out {
-      let (_, span) = self.span(j);
-      for &w in span {
-        debug_assert!(w <= usize::from(u16::MAX), "weight bounded by out_len");
-        w16.push(w as u16);
-      }
-      w16.resize(w16.len() + (span.len().div_ceil(8) * 8 - span.len()), 0);
-      off.push(w16.len());
-    }
-    (w16, off)
+    Ok(Self {
+      starts: copy(&self.starts)?,
+      offsets: copy(&self.offsets)?,
+      weights: copy(&self.weights)?,
+    })
   }
 }
 
@@ -607,6 +582,12 @@ fn round_div_half_up(a: u64, d: u64) -> u64 {
 #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
 #[derive(Debug)]
 pub(crate) struct AreaStream {
+  /// Owned horizontal spans — both the scalar reference and the SIMD
+  /// arena consume exactly this geometry; a caller cannot supply a
+  /// divergent plan per row.
+  h: AxisSpans,
+  /// Owned vertical spans.
+  v: AxisSpans,
   channels: usize,
   /// `src_w * src_h` — the exact normalization denominator.
   denom: u64,
@@ -619,12 +600,10 @@ pub(crate) struct AreaStream {
   acc: Vec<u64>,
   /// Finalized staging row handed to `emit`, `out_w * channels`.
   out_tmp: Vec<u8>,
-  /// Zero-padded u16 H-weight arena for the SIMD backends (see
-  /// [`AxisSpans::padded_u16`]); empty routes the dispatcher to
+  /// Plan-time SIMD staging for the H-pass
+  /// ([`crate::row::PaddedSpans`]); `None` routes the dispatcher to
   /// scalar.
-  h_w16: Vec<u16>,
-  /// Per-span offsets into `h_w16`, `out_w + 1` entries when present.
-  h_w16_off: Vec<usize>,
+  h_padded: Option<crate::row::PaddedSpans>,
   /// Next output row to finalize.
   cur_out: usize,
   /// Next source row the frame expects; rows are strictly sequential.
@@ -669,15 +648,22 @@ impl AreaStream {
     // small-constant, so refusal surfaces as an error rather than an
     // abort on the first processed row.
     let alloc = |_| ResampleError::AllocationFailed(geometry());
-    let (h_w16, h_w16_off) = h.padded_u16();
+    let h = h
+      .try_clone()
+      .map_err(|_| ResampleError::AllocationFailed(geometry()))?;
+    let v = v
+      .try_clone()
+      .map_err(|_| ResampleError::AllocationFailed(geometry()))?;
+    let h_padded = crate::row::PaddedSpans::build(&h.starts, &h.offsets, &h.weights);
     Ok(Self {
+      h,
+      v,
       channels,
       denom,
       h_tmp: try_zeroed(n).map_err(alloc)?,
       acc: try_zeroed(n).map_err(alloc)?,
       out_tmp: try_zeroed(n).map_err(alloc)?,
-      h_w16,
-      h_w16_off,
+      h_padded,
       cur_out: 0,
       next_y: 0,
     })
@@ -711,8 +697,6 @@ impl AreaStream {
   /// can resume with the expected row.
   pub(crate) fn feed_row(
     &mut self,
-    h: &AxisSpans,
-    v: &AxisSpans,
     y: usize,
     row: &[u8],
     use_simd: bool,
@@ -725,17 +709,16 @@ impl AreaStream {
       )));
     }
     self.next_y += 1;
-    if self.cur_out >= v.out_len() {
+    if self.cur_out >= self.v.out_len() {
       return Ok(());
     }
     crate::row::area_h_reduce_row(
       row,
       self.channels,
-      &h.starts,
-      &h.offsets,
-      &h.weights,
-      &self.h_w16,
-      &self.h_w16_off,
+      &self.h.starts,
+      &self.h.offsets,
+      &self.h.weights,
+      self.h_padded.as_ref(),
       &mut self.h_tmp,
       use_simd,
     );
@@ -746,17 +729,14 @@ impl AreaStream {
       // With rows strictly sequential, `y` always lies in the current
       // span; the two defensive exits keep the no-panic contract if
       // that invariant is ever broken by a future edit.
-      let (start, weights) = v.span(self.cur_out);
+      let (start, weights) = self.v.span(self.cur_out);
       let Some(idx) = y.checked_sub(start) else {
         return Ok(());
       };
       let Some(&w) = weights.get(idx) else {
         return Ok(());
       };
-      let w = w as u64;
-      for (a, t) in self.acc.iter_mut().zip(self.h_tmp.iter()) {
-        *a += w * u64::from(*t);
-      }
+      crate::row::area_v_accumulate(&mut self.acc, &self.h_tmp, w as u64, use_simd);
       if idx + 1 != weights.len() {
         return Ok(());
       }
@@ -766,7 +746,7 @@ impl AreaStream {
       }
       emit(self.cur_out, &self.out_tmp);
       self.cur_out += 1;
-      if self.cur_out >= v.out_len() || v.span(self.cur_out).0 != y {
+      if self.cur_out >= self.v.out_len() || self.v.span(self.cur_out).0 != y {
         return Ok(());
       }
     }

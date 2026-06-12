@@ -242,42 +242,35 @@ fn rgb24_process_resampled(
     )));
   }
 
-  stream.feed_row(
-    plan.h(),
-    plan.v(),
-    idx,
-    row.rgb(),
-    use_simd,
-    |oy, out_row| {
-      if let Some(buf) = rgb.as_deref_mut() {
-        buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_row);
-      }
-      if let Some(buf) = luma.as_deref_mut() {
-        rgb_to_luma_row(
-          out_row,
-          &mut buf[oy * ow..(oy + 1) * ow],
-          ow,
-          row.matrix(),
-          row.full_range(),
-          use_simd,
-        );
-      }
-      if let Some(hsv) = hsv.as_mut() {
-        let (h, s, v) = hsv.hsv();
-        rgb_to_hsv_row(
-          out_row,
-          &mut h[oy * ow..(oy + 1) * ow],
-          &mut s[oy * ow..(oy + 1) * ow],
-          &mut v[oy * ow..(oy + 1) * ow],
-          ow,
-          use_simd,
-        );
-      }
-      if let Some(buf) = rgba.as_deref_mut() {
-        expand_rgb_to_rgba_row(out_row, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
-      }
-    },
-  )?;
+  stream.feed_row(idx, row.rgb(), use_simd, |oy, out_row| {
+    if let Some(buf) = rgb.as_deref_mut() {
+      buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_row);
+    }
+    if let Some(buf) = luma.as_deref_mut() {
+      rgb_to_luma_row(
+        out_row,
+        &mut buf[oy * ow..(oy + 1) * ow],
+        ow,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+    }
+    if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
+      rgb_to_hsv_row(
+        out_row,
+        &mut h[oy * ow..(oy + 1) * ow],
+        &mut s[oy * ow..(oy + 1) * ow],
+        &mut v[oy * ow..(oy + 1) * ow],
+        ow,
+        use_simd,
+      );
+    }
+    if let Some(buf) = rgba.as_deref_mut() {
+      expand_rgb_to_rgba_row(out_row, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
+    }
+  })?;
 
   Ok(())
 }

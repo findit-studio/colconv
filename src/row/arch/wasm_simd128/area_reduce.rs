@@ -183,3 +183,37 @@ pub(crate) unsafe fn area_h_reduce_row_c3(
     }
   }
 }
+
+/// V-pass AXPY: `acc[i] += w * h_tmp[i]`, exact u64 lanes via
+/// `u64x2_extmul_low/high_u32x4` (4 elements per iteration).
+///
+/// # Safety
+///
+/// simd128 must be enabled at compile time.
+/// `h_tmp.len() >= acc.len()`; every product-sum stays within u64
+/// (the engine's denominator bound).
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn area_v_accumulate(acc: &mut [u64], h_tmp: &[u32], w: u32) {
+  let n = acc.len();
+  debug_assert!(h_tmp.len() >= n, "h_tmp too short");
+  let wq = u32x4_splat(w);
+  let mut i = 0usize;
+  // SAFETY: loop guard `i + 4 <= n` with `h_tmp.len() >= n` keeps all
+  // loads and stores in bounds.
+  unsafe {
+    while i + 4 <= n {
+      let t = v128_load(h_tmp.as_ptr().add(i).cast());
+      let a01 = v128_load(acc.as_ptr().add(i).cast());
+      let a23 = v128_load(acc.as_ptr().add(i + 2).cast());
+      let p01 = u64x2_extmul_low_u32x4(t, wq);
+      let p23 = u64x2_extmul_high_u32x4(t, wq);
+      v128_store(acc.as_mut_ptr().add(i).cast(), i64x2_add(a01, p01));
+      v128_store(acc.as_mut_ptr().add(i + 2).cast(), i64x2_add(a23, p23));
+      i += 4;
+    }
+  }
+  for k in i..n {
+    acc[k] += u64::from(w) * u64::from(h_tmp[k]);
+  }
+}

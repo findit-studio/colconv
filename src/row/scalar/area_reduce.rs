@@ -27,3 +27,12 @@ pub(crate) fn area_h_reduce_row(
     }
   }
 }
+
+/// V-pass AXPY reference: `acc[i] += w * h_tmp[i]` over the H-reduced
+/// row. Products and sums are exact in u64 by the engine's
+/// denominator bound (`denom * 255 <= u64::MAX`).
+pub(crate) fn area_v_accumulate(acc: &mut [u64], h_tmp: &[u32], w: u64) {
+  for (a, t) in acc.iter_mut().zip(h_tmp.iter()) {
+    *a += w * u64::from(*t);
+  }
+}
