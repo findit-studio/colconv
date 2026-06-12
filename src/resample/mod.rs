@@ -135,6 +135,7 @@ fn gcd(mut a: usize, mut b: usize) -> usize {
 
 /// Why one axis of span planning failed; [`ResamplePlan::area`] maps
 /// these onto [`ResampleError`] with the full two-axis geometry.
+#[derive(Debug)]
 enum AxisError {
   /// A grid product or arena length is unrepresentable.
   Overflow,
@@ -477,14 +478,24 @@ impl AreaStream {
   /// plan's geometry. Fails with [`ResampleError::Overflow`] when the
   /// normalization denominator (or `denom * 255`, the accumulator
   /// bound that keeps every sum exact in `u64`) is unrepresentable.
-  pub(crate) fn new(plan: &ResamplePlan, channels: usize) -> Result<Self, ResampleError> {
-    let geometry = || PlanGeometry::new(plan.src_w(), plan.src_h(), plan.out_w(), plan.out_h());
-    let denom = (plan.src_w() as u64)
-      .checked_mul(plan.src_h() as u64)
+  /// `h`/`v` are the plane's own span sets and `src_w`/`src_h` its
+  /// own grid (the chroma planes of a subsampled format run smaller
+  /// grids — and possibly the upsample direction — against the same
+  /// output geometry).
+  pub(crate) fn new(
+    h: &AxisSpans,
+    v: &AxisSpans,
+    src_w: usize,
+    src_h: usize,
+    channels: usize,
+  ) -> Result<Self, ResampleError> {
+    let geometry = || PlanGeometry::new(src_w, src_h, h.out_len(), v.out_len());
+    let denom = (src_w as u64)
+      .checked_mul(src_h as u64)
       .filter(|d| *d <= u64::MAX / 255)
       .ok_or_else(|| ResampleError::Overflow(geometry()))?;
-    let n = plan
-      .out_w()
+    let n = h
+      .out_len()
       .checked_mul(channels)
       .ok_or_else(|| ResampleError::Overflow(geometry()))?;
     // Row buffers follow the planner's recoverable-allocation
@@ -531,7 +542,8 @@ impl AreaStream {
   /// can resume with the expected row.
   pub(crate) fn feed_row(
     &mut self,
-    plan: &ResamplePlan,
+    h: &AxisSpans,
+    v: &AxisSpans,
     y: usize,
     row: &[u8],
     mut emit: impl FnMut(usize, &[u8]),
@@ -543,11 +555,9 @@ impl AreaStream {
       )));
     }
     self.next_y += 1;
-    let v = plan.v();
     if self.cur_out >= v.out_len() {
       return Ok(());
     }
-    let h = plan.h();
     let c = self.channels;
     for j in 0..h.out_len() {
       let (start, weights) = h.span(j);

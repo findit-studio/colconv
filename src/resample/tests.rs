@@ -90,6 +90,26 @@ fn area_fractional_spans_8_to_3() {
 }
 
 #[test]
+fn area_spans_handle_the_upsample_direction() {
+  // The coverage math is direction-agnostic; the native tier feeds
+  // chroma grids through it (8x8 -> 6x6 frame means 4 -> 6 chroma).
+  // Hand-derived: out pixel intervals of length 4 on the x6 grid.
+  let spans = AxisSpans::area(4, 6).expect("upsample coverage is valid");
+  assert_eq!(spans.out_len(), 6);
+  let expected: [(usize, &[usize]); 6] = [
+    (0, &[4]),
+    (0, &[2, 2]),
+    (1, &[4]),
+    (2, &[4]),
+    (2, &[2, 2]),
+    (3, &[4]),
+  ];
+  for (j, &(start, weights)) in expected.iter().enumerate() {
+    assert_eq!(spans.span(j), (start, weights), "span {j}");
+  }
+}
+
+#[test]
 fn area_spans_partition_the_source() {
   // The NaFlex case: 1920x1080 -> 336x189 (x40/7 per axis). Every span
   // sums to the source dimension, starts strictly increase, tap counts
@@ -152,13 +172,14 @@ fn direct_area_2d(plan: &ResamplePlan, src: &[u8], channels: usize) -> std::vec:
 fn stream_collect(plan: &ResamplePlan, src: &[u8], channels: usize) -> std::vec::Vec<u8> {
   let (out_w, out_h) = plan.out_dims();
   let src_w = plan.src_w();
-  let mut stream = AreaStream::new(plan, channels).expect("realistic geometry");
+  let mut stream = AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), channels)
+    .expect("realistic geometry");
   let mut out = std::vec![0u8; out_w * out_h * channels];
   let mut emitted = std::vec::Vec::new();
   for y in 0..plan.src_h() {
     let row = &src[y * src_w * channels..(y + 1) * src_w * channels];
     stream
-      .feed_row(plan, y, row, |oy, finalized| {
+      .feed_row(plan.h(), plan.v(), y, row, |oy, finalized| {
         emitted.push(oy);
         out[oy * out_w * channels..(oy + 1) * out_w * channels].copy_from_slice(finalized);
       })
@@ -220,30 +241,24 @@ fn stream_identity_vertical_axis_emits_every_row() {
 
 #[cfg(feature = "yuv-planar")]
 #[test]
-fn stream_creation_fails_recoverably_on_huge_output_rows() {
-  // Synthetic plan (in-crate test privilege: private fields) whose
-  // output width makes the u64 row buffers exceed isize::MAX bytes:
-  // creation must surface AllocationFailed via capacity overflow, not
-  // abort — the planner can never produce such a plan publicly
-  // because its own arenas refuse first, so this pins the stream's
-  // contract directly.
-  let plan = ResamplePlan {
-    src_w: 8,
-    src_h: 8,
-    out_w: usize::MAX / 32,
-    out_h: 1,
-    h: AxisSpans {
-      starts: std::vec::Vec::new(),
-      offsets: std::vec::Vec::new(),
-      weights: std::vec::Vec::new(),
-    },
-    v: AxisSpans {
-      starts: std::vec::Vec::new(),
-      offsets: std::vec::Vec::new(),
-      weights: std::vec::Vec::new(),
-    },
-  };
-  let err = AreaStream::new(&plan, 1).unwrap_err();
+fn stream_creation_fails_recoverably_on_huge_row_buffers() {
+  // Row buffers whose u64 backing exceeds isize::MAX bytes must
+  // surface AllocationFailed via capacity overflow, not abort. Real
+  // spans, magnitude driven through the channel count: 4 outputs x
+  // usize::MAX / 32 channels is representable as a length but never
+  // reservable.
+  let plan = AreaResampler::to(4, 4)
+    .plan(8, 8)
+    .expect("valid")
+    .expect("non-identity");
+  let err = AreaStream::new(
+    plan.h(),
+    plan.v(),
+    plan.src_w(),
+    plan.src_h(),
+    usize::MAX / 32,
+  )
+  .unwrap_err();
   assert!(err.is_allocation_failed(), "got {err:?}");
 }
 
@@ -255,10 +270,12 @@ fn stream_rejects_out_of_order_duplicate_and_skipped_rows() {
     .expect("valid")
     .expect("non-identity");
   let row = [0u8; 8];
-  let mut stream = AreaStream::new(&plan, 1).unwrap();
+  let mut stream = AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 1).unwrap();
 
   // Out of order from the start: row 1 before row 0.
-  let err = stream.feed_row(&plan, 1, &row, |_, _| {}).unwrap_err();
+  let err = stream
+    .feed_row(plan.h(), plan.v(), 1, &row, |_, _| {})
+    .unwrap_err();
   match err {
     ResampleError::OutOfSequenceRow(e) => {
       assert_eq!((e.expected(), e.got()), (0, 1));
@@ -266,14 +283,20 @@ fn stream_rejects_out_of_order_duplicate_and_skipped_rows() {
     other => panic!("expected OutOfSequenceRow, got {other:?}"),
   }
   // The rejected row must not have touched stream state.
-  stream.feed_row(&plan, 0, &row, |_, _| {}).unwrap();
+  stream
+    .feed_row(plan.h(), plan.v(), 0, &row, |_, _| {})
+    .unwrap();
 
   // Duplicate.
-  let err = stream.feed_row(&plan, 0, &row, |_, _| {}).unwrap_err();
+  let err = stream
+    .feed_row(plan.h(), plan.v(), 0, &row, |_, _| {})
+    .unwrap_err();
   assert!(err.is_out_of_sequence_row());
 
   // Skipped.
-  let err = stream.feed_row(&plan, 2, &row, |_, _| {}).unwrap_err();
+  let err = stream
+    .feed_row(plan.h(), plan.v(), 2, &row, |_, _| {})
+    .unwrap_err();
   match err {
     ResampleError::OutOfSequenceRow(e) => {
       assert_eq!((e.expected(), e.got()), (1, 2));
@@ -283,7 +306,9 @@ fn stream_rejects_out_of_order_duplicate_and_skipped_rows() {
 
   // reset() restarts the sequence.
   stream.reset();
-  stream.feed_row(&plan, 0, &row, |_, _| {}).unwrap();
+  stream
+    .feed_row(plan.h(), plan.v(), 0, &row, |_, _| {})
+    .unwrap();
 }
 
 #[test]

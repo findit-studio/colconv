@@ -377,10 +377,22 @@ fn yuv420p_process_resampled(
   // this row index; a stream attached mid-frame starts at row 0 and
   // fails here.
   if need_luma && luma_stream.is_none() {
-    *luma_stream = Some(AreaStream::new(plan, 1)?);
+    *luma_stream = Some(AreaStream::new(
+      plan.h(),
+      plan.v(),
+      plan.src_w(),
+      plan.src_h(),
+      1,
+    )?);
   }
   if need_color && rgb_stream.is_none() {
-    *rgb_stream = Some(AreaStream::new(plan, 3)?);
+    *rgb_stream = Some(AreaStream::new(
+      plan.h(),
+      plan.v(),
+      plan.src_w(),
+      plan.src_h(),
+      3,
+    )?);
   }
   for stream in [
     if need_luma {
@@ -453,7 +465,7 @@ fn yuv420p_process_resampled(
 
   if need_luma {
     let stream = luma_stream.as_mut().expect("created in the preflight");
-    stream.feed_row(plan, idx, row.y(), |oy, out_row| {
+    stream.feed_row(plan.h(), plan.v(), idx, row.y(), |oy, out_row| {
       if let Some(buf) = luma.as_deref_mut() {
         buf[oy * ow..(oy + 1) * ow].copy_from_slice(out_row);
       }
@@ -467,7 +479,7 @@ fn yuv420p_process_resampled(
 
   if let Some(scratch) = color_row {
     let stream = rgb_stream.as_mut().expect("created in the preflight");
-    stream.feed_row(plan, idx, scratch, |oy, out_row| {
+    stream.feed_row(plan.h(), plan.v(), idx, scratch, |oy, out_row| {
       if let Some(buf) = rgb.as_deref_mut() {
         buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_row);
       }
