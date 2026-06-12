@@ -4,10 +4,7 @@
 
 use crate::{
   PixelSink,
-  resample::{
-    NoopResampler, ResampleError,
-    test_support::{AlwaysFails, FixedDownscale},
-  },
+  resample::{AreaResampler, NoopResampler, ResampleError},
   sinker::{MixedSinker, MixedSinkerError, mixed::HsvPlane},
   source::Yuv420p,
 };
@@ -15,9 +12,9 @@ use crate::{
 const SRC: usize = 8;
 const OUT: usize = 4;
 
-fn downscaled<'a>() -> MixedSinker<'a, Yuv420p, FixedDownscale> {
-  MixedSinker::<Yuv420p, FixedDownscale>::with_resampler(SRC, SRC, FixedDownscale::new(OUT, OUT))
-    .expect("fixed downscale plan never fails")
+fn downscaled<'a>() -> MixedSinker<'a, Yuv420p, AreaResampler> {
+  MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+    .expect("8x8 -> 4x4 area plan never fails")
 }
 
 #[test]
@@ -32,6 +29,14 @@ fn with_resampler_noop_matches_new() {
   let sink = MixedSinker::<Yuv420p, NoopResampler>::with_resampler(SRC, SRC, NoopResampler)
     .expect("identity plan never fails");
   assert_eq!((sink.width(), sink.height()), (SRC, SRC));
+  assert_eq!((sink.out_width(), sink.out_height()), (SRC, SRC));
+}
+
+#[test]
+fn with_resampler_area_identity_matches_new() {
+  let sink =
+    MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(SRC, SRC))
+      .expect("identity area plan never fails");
   assert_eq!((sink.out_width(), sink.out_height()), (SRC, SRC));
 }
 
@@ -137,9 +142,10 @@ fn begin_frame_still_validates_source_geometry() {
 
 #[test]
 fn plan_error_surfaces_as_mixed_sinker_error() {
-  let err = MixedSinker::<Yuv420p, AlwaysFails>::with_resampler(SRC, SRC, AlwaysFails)
-    .map(|_| ())
-    .unwrap_err();
+  let err =
+    MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(0, 0))
+      .map(|_| ())
+      .unwrap_err();
   assert!(matches!(
     err,
     MixedSinkerError::Resample(ResampleError::ZeroOutputDimension(_))

@@ -20,10 +20,12 @@ breaking changes bump the `x` in `0.x.y`.
   walkers against the source geometry. Under the default
   `NoopResampler` (identity plan) behavior is unchanged.
 - New `resample` module: sealed `Resampler` trait, `NoopResampler`,
+  `AreaResampler` (exact `cv2.INTER_AREA`-convention area span plans —
+  per-axis integer coverage weights, fractional ratios included),
   `ResamplePlan`, and structured `ResampleError` (wrapped by the new
   `MixedSinkerError::Resample` variant). Groundwork for the fused
-  downscale-first walk (#123, #124, #125); the area streaming engine
-  lands next.
+  downscale-first walk (#123, #125); the streaming engine that
+  executes non-identity plans lands next.
 
 ## 0.1.0 — 2026-06-08
 

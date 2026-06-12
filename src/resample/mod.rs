@@ -13,7 +13,11 @@
 //! The trait is sealed — resampling strategies ship with this crate.
 //! [`NoopResampler`], the default `R` of
 //! [`MixedSinker`](crate::sinker::MixedSinker), is the identity
-//! strategy.
+//! strategy; [`AreaResampler`] plans area (box-coverage) downscales.
+//! The streaming engine that executes non-identity plans lands with
+//! the per-format route dispatch.
+
+use std::vec::Vec;
 
 use derive_more::{IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
@@ -56,25 +60,193 @@ impl Resampler for NoopResampler {
   }
 }
 
-/// Output-geometry product of [`Resampler::plan`], built once at
-/// sinker construction.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResamplePlan {
-  /// Output width in pixels.
+/// Area (box-coverage) downscale strategy — the `cv2.INTER_AREA`
+/// convention that analysis pipelines are calibrated against. Plans
+/// exact integer coverage spans on both axes, fractional ratios
+/// included (1920 -> 336 is a x40/7 scale). Requesting the source
+/// geometry plans the identity (`Ok(None)`); upscaling on either axis
+/// is rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AreaResampler {
   out_w: usize,
-  /// Output height in pixels.
   out_h: usize,
 }
 
-impl ResamplePlan {
-  /// Constructs a plan with the given output geometry.
-  ///
-  /// Gated to `std` test builds alongside [`test_support`] — its only
-  /// callers — so feature-powerset test builds without `std` don't
-  /// carry a dead constructor under `-D warnings`.
-  #[cfg(all(test, feature = "std"))]
-  pub(crate) const fn new(out_w: usize, out_h: usize) -> Self {
+impl AreaResampler {
+  /// Strategy producing an `out_w x out_h` output frame.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn to(out_w: usize, out_h: usize) -> Self {
     Self { out_w, out_h }
+  }
+
+  /// Requested output width.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn out_w(&self) -> usize {
+    self.out_w
+  }
+
+  /// Requested output height.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn out_h(&self) -> usize {
+    self.out_h
+  }
+}
+
+impl sealed::Sealed for AreaResampler {}
+
+impl Resampler for AreaResampler {
+  fn plan(&self, src_w: usize, src_h: usize) -> Result<Option<ResamplePlan>, ResampleError> {
+    if self.out_w == 0 || self.out_h == 0 {
+      return Err(ResampleError::ZeroOutputDimension(
+        ZeroOutputDimension::new(self.out_w, self.out_h),
+      ));
+    }
+    if self.out_w > src_w || self.out_h > src_h {
+      return Err(ResampleError::UpscaleUnsupported(UpscaleUnsupported::new(
+        src_w, src_h, self.out_w, self.out_h,
+      )));
+    }
+    if self.out_w == src_w && self.out_h == src_h {
+      return Ok(None);
+    }
+    ResamplePlan::area(src_w, src_h, self.out_w, self.out_h).map(Some)
+  }
+}
+
+/// Per-axis area-coverage spans of a [`ResamplePlan`]: for each output
+/// index, the first contributing source cell plus the integer overlap
+/// weight of every contributing cell.
+///
+/// Geometry lives on the axis's `x out` integer grid — output pixel
+/// `j` covers `[j * src, (j + 1) * src)` and source cell `i` covers
+/// `[i * out, (i + 1) * out)` — so weights are exact for fractional
+/// ratios and every span sums to `src`, the normalization denominator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AxisSpans {
+  /// First contributing source cell per output index.
+  starts: Vec<usize>,
+  /// Prefix offsets into `weights`; `out_len() + 1` entries.
+  offsets: Vec<usize>,
+  /// Concatenated per-span overlap weights.
+  weights: Vec<usize>,
+}
+
+impl AxisSpans {
+  /// Builds the exact area spans for one `src -> out` axis. `None`
+  /// when `src * out` overflows `usize`; that product bounds every
+  /// intermediate term, so checking it once up front (before any
+  /// allocation) keeps the loop in plain arithmetic.
+  fn area(src: usize, out: usize) -> Option<Self> {
+    src.checked_mul(out)?;
+    let mut starts = Vec::with_capacity(out);
+    let mut offsets = Vec::with_capacity(out + 1);
+    let mut weights = Vec::new();
+    offsets.push(0);
+    for j in 0..out {
+      let lo = j * src;
+      let hi = lo + src;
+      let start = lo / out;
+      starts.push(start);
+      for i in start..hi.div_ceil(out) {
+        let cell_lo = i * out;
+        let cell_hi = cell_lo + out;
+        weights.push(cell_hi.min(hi) - cell_lo.max(lo));
+      }
+      offsets.push(weights.len());
+    }
+    Some(Self {
+      starts,
+      offsets,
+      weights,
+    })
+  }
+
+  /// Number of output samples on this axis.
+  // Consumed by the std-gated tests until the streaming engine becomes
+  // the first non-test caller; the allowance disappears with it.
+  #[cfg_attr(not(all(test, feature = "std")), allow(dead_code))]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) fn out_len(&self) -> usize {
+    self.starts.len()
+  }
+
+  /// `(first source cell, overlap weights)` for output index `j`;
+  // Consumed by the std-gated tests until the streaming engine becomes
+  // the first non-test caller; the allowance disappears with it.
+  #[cfg_attr(not(all(test, feature = "std")), allow(dead_code))]
+  /// `j` must be below [`Self::out_len`].
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) fn span(&self, j: usize) -> (usize, &[usize]) {
+    (
+      self.starts[j],
+      &self.weights[self.offsets[j]..self.offsets[j + 1]],
+    )
+  }
+}
+
+/// Output-geometry product of [`Resampler::plan`], built once at
+/// sinker construction. Carries the per-axis area spans the streaming
+/// engine consumes; the source dimensions double as the spans'
+/// normalization denominators.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResamplePlan {
+  src_w: usize,
+  src_h: usize,
+  out_w: usize,
+  out_h: usize,
+  h: AxisSpans,
+  v: AxisSpans,
+}
+
+impl ResamplePlan {
+  /// Builds the exact area plan for `src -> out`. The strategy has
+  /// already validated zero, upscale, and identity geometry.
+  fn area(src_w: usize, src_h: usize, out_w: usize, out_h: usize) -> Result<Self, ResampleError> {
+    match (AxisSpans::area(src_w, out_w), AxisSpans::area(src_h, out_h)) {
+      (Some(h), Some(v)) => Ok(Self {
+        src_w,
+        src_h,
+        out_w,
+        out_h,
+        h,
+        v,
+      }),
+      _ => Err(ResampleError::Overflow(PlanOverflow::new(
+        src_w, src_h, out_w, out_h,
+      ))),
+    }
+  }
+
+  /// Source width in pixels — the horizontal spans' normalization
+  /// denominator.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn src_w(&self) -> usize {
+    self.src_w
+  }
+
+  /// Source height in pixels — the vertical spans' normalization
+  /// denominator.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn src_h(&self) -> usize {
+    self.src_h
+  }
+
+  /// Horizontal-axis spans.
+  // Consumed by the std-gated tests until the streaming engine becomes
+  // the first non-test caller; the allowance disappears with it.
+  #[cfg_attr(not(all(test, feature = "std")), allow(dead_code))]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) const fn h(&self) -> &AxisSpans {
+    &self.h
+  }
+
+  /// Vertical-axis spans.
+  // Consumed by the std-gated tests until the streaming engine becomes
+  // the first non-test caller; the allowance disappears with it.
+  #[cfg_attr(not(all(test, feature = "std")), allow(dead_code))]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) const fn v(&self) -> &AxisSpans {
+    &self.v
   }
 
   /// Output width in pixels.
@@ -177,6 +349,56 @@ impl ZeroOutputDimension {
   }
 }
 
+/// Geometry payload for [`ResampleError::Overflow`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlanOverflow {
+  /// Source width.
+  src_w: usize,
+  /// Source height.
+  src_h: usize,
+  /// Requested output width.
+  out_w: usize,
+  /// Requested output height.
+  out_h: usize,
+}
+
+impl PlanOverflow {
+  /// Constructs a new `PlanOverflow` payload.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn new(src_w: usize, src_h: usize, out_w: usize, out_h: usize) -> Self {
+    Self {
+      src_w,
+      src_h,
+      out_w,
+      out_h,
+    }
+  }
+
+  /// Source width.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn src_w(&self) -> usize {
+    self.src_w
+  }
+
+  /// Source height.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn src_h(&self) -> usize {
+    self.src_h
+  }
+
+  /// Requested output width.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn out_w(&self) -> usize {
+    self.out_w
+  }
+
+  /// Requested output height.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn out_h(&self) -> usize {
+    self.out_h
+  }
+}
+
 /// Errors returned by [`Resampler::plan`] while validating the
 /// requested output geometry at sinker construction.
 ///
@@ -200,50 +422,15 @@ pub enum ResampleError {
     .0.out_w(), .0.out_h()
   )]
   ZeroOutputDimension(ZeroOutputDimension),
-}
 
-/// Test-only strategies exercising the geometry split without a real
-/// resampling engine. Gated to `std` test builds: every consumer
-/// (this module's own tests and the sinker geometry tests) is
-/// `std`-gated, and a plain `cfg(test)` gate would leave these
-/// fixtures dead — and denied — in feature-powerset test builds
-/// without `std`.
-#[cfg(all(test, feature = "std"))]
-pub(crate) mod test_support {
-  use super::{ResampleError, ResamplePlan, Resampler, ZeroOutputDimension, sealed::Sealed};
-
-  /// Plans a fixed output geometry regardless of source geometry.
-  pub(crate) struct FixedDownscale {
-    out_w: usize,
-    out_h: usize,
-  }
-
-  impl FixedDownscale {
-    pub(crate) const fn new(out_w: usize, out_h: usize) -> Self {
-      Self { out_w, out_h }
-    }
-  }
-
-  impl Sealed for FixedDownscale {}
-
-  impl Resampler for FixedDownscale {
-    fn plan(&self, _src_w: usize, _src_h: usize) -> Result<Option<ResamplePlan>, ResampleError> {
-      Ok(Some(ResamplePlan::new(self.out_w, self.out_h)))
-    }
-  }
-
-  /// Always rejects the plan, for error-propagation tests.
-  pub(crate) struct AlwaysFails;
-
-  impl Sealed for AlwaysFails {}
-
-  impl Resampler for AlwaysFails {
-    fn plan(&self, _src_w: usize, _src_h: usize) -> Result<Option<ResamplePlan>, ResampleError> {
-      Err(ResampleError::ZeroOutputDimension(
-        ZeroOutputDimension::new(0, 0),
-      ))
-    }
-  }
+  /// Building the span tables would overflow `usize`: a per-axis
+  /// `source x output` product is unrepresentable. Only reachable
+  /// with extreme dimensions (32-bit targets foremost).
+  #[error(
+    "resample plan geometry overflows usize: source {}x{}, output {}x{}",
+    .0.src_w(), .0.src_h(), .0.out_w(), .0.out_h()
+  )]
+  Overflow(PlanOverflow),
 }
 
 #[cfg(all(test, feature = "std"))]
