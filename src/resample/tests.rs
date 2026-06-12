@@ -264,6 +264,17 @@ fn stream_creation_fails_recoverably_on_huge_row_buffers() {
 
 #[cfg(feature = "yuv-planar")]
 #[test]
+fn area_chroma_420_reports_allocation_failure_as_such() {
+  // Allocator refusal on the paired vertical axis must surface as
+  // AllocationFailed, not be misclassified as geometry Overflow: the
+  // starts arena for a usize::MAX/32 output height trips capacity
+  // overflow deterministically while every arithmetic check passes.
+  let err = ResamplePlan::area_chroma_420(4, 8, 2, usize::MAX / 32).unwrap_err();
+  assert!(err.is_allocation_failed(), "got {err:?}");
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
 fn area_halved_weights_the_odd_tail_row_by_its_luma_coverage() {
   // 4:2:0 vertical pairing over luma height 9 -> 3 outputs: chroma
   // cells span luma-row pairs except the single-row tail. On the x3

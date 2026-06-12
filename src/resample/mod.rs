@@ -238,19 +238,26 @@ impl AxisSpans {
   /// with numerator and denominator doubled, which round-half-up
   /// preserves exactly).
   #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
-  fn area_halved(src_full: usize, out: usize) -> Option<Self> {
+  fn area_halved(src_full: usize, out: usize) -> Result<Self, AxisError> {
     let src64 = src_full as u64;
     let out64 = out as u64;
-    src64.checked_mul(out64)?;
+    src64.checked_mul(out64).ok_or(AxisError::Overflow)?;
     let cells = src_full.div_ceil(2);
-    let taps = Self::area_taps(src_full, out)?; // upper bound; exact reserve below is safe
-    let offsets_len = out.checked_add(1)?;
+    // Upper bound; the exact reservation below never reallocates.
+    let taps = Self::area_taps(src_full, out).ok_or(AxisError::Overflow)?;
+    let offsets_len = out.checked_add(1).ok_or(AxisError::Overflow)?;
     let mut starts = Vec::new();
-    starts.try_reserve_exact(out).ok()?;
+    starts
+      .try_reserve_exact(out)
+      .map_err(|_| AxisError::Alloc)?;
     let mut offsets = Vec::new();
-    offsets.try_reserve_exact(offsets_len).ok()?;
+    offsets
+      .try_reserve_exact(offsets_len)
+      .map_err(|_| AxisError::Alloc)?;
     let mut weights = Vec::new();
-    weights.try_reserve_exact(taps).ok()?;
+    weights
+      .try_reserve_exact(taps)
+      .map_err(|_| AxisError::Alloc)?;
     offsets.push(0);
     for j in 0..out64 {
       let lo = j * src64;
@@ -277,7 +284,7 @@ impl AxisSpans {
       }
       offsets.push(weights.len());
     }
-    Some(Self {
+    Ok(Self {
       starts,
       offsets,
       weights,
@@ -370,14 +377,12 @@ impl ResamplePlan {
       || ResampleError::Overflow(PlanGeometry::new(chroma_w, luma_h, out_w, out_h));
     let fail_alloc =
       || ResampleError::AllocationFailed(PlanGeometry::new(chroma_w, luma_h, out_w, out_h));
-    let h = AxisSpans::area(chroma_w, out_w).map_err(|e| match e {
+    let fail = |e: AxisError| match e {
       AxisError::Overflow => fail_overflow(),
       AxisError::Alloc => fail_alloc(),
-    })?;
-    // area_halved reports both failure kinds as None; the only
-    // unrepresentable quantities are the same grid products the
-    // overflow payload describes.
-    let v = AxisSpans::area_halved(luma_h, out_h).ok_or_else(fail_overflow)?;
+    };
+    let h = AxisSpans::area(chroma_w, out_w).map_err(fail)?;
+    let v = AxisSpans::area_halved(luma_h, out_h).map_err(fail)?;
     Ok(Self {
       src_w: chroma_w,
       src_h: luma_h,
