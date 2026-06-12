@@ -32,6 +32,7 @@
 //! `chroma_i16x16` / `chroma_dup` / `scale_y` / `q15_shift` /
 //! `clamp_u16_max_x16` calls.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 use super::{endian::load_endian_u32x8, *};

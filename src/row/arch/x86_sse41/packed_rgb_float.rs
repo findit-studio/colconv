@@ -16,6 +16,7 @@
 //! integer-output paths) keep the loop boundary on a pixel boundary
 //! so the scalar tail handles only the final 0–3 pixels.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 use super::{endian::load_endian_u32x4, scalar};

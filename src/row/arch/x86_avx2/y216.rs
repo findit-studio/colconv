@@ -26,6 +26,7 @@
 //!
 //! `width % 32` (u8) or `width % 16` (u16) → `scalar::y216_*` fallback.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 use super::*;

@@ -16,6 +16,7 @@
 //! operates per-lane, so the same within-lane byte permutation is applied to
 //! both lanes independently.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 // ---- Byte-swap shuffle masks -----------------------------------------------

@@ -27,6 +27,7 @@
 //!    `vst3q_u8` / `vst4q_u8` interleaved store.
 //! 7. Scalar tail for `width % 32 != 0` (multiple of 4).
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
 use crate::{ColorMatrix, row::scalar};

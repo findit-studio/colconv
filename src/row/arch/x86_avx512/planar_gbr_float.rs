@@ -46,6 +46,7 @@
 //! The 16-pixel loop loads 32 bytes (16 × u16) per plane via
 //! `_mm256_loadu_si256` and scatters as triples / quads in the destination.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 use crate::{

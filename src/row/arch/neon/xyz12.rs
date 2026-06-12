@@ -52,6 +52,7 @@
 //! mirrors the scalar's `(c x max + 0.5)` round-half-up + saturating
 //! integer cast.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
 use crate::{

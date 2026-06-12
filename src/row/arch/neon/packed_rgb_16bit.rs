@@ -43,6 +43,7 @@
 //!
 //! All kernels handle `width % 8` remaining pixels via the scalar reference.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
 use super::bswap_u16x8_if_be;

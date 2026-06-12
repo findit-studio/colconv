@@ -29,6 +29,7 @@
 //! i64 arithmetic width constraint. Final saturation via
 //! `_mm_packus_epi32` (signed i32 → u16).
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 use super::*;

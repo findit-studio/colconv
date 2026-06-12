@@ -52,6 +52,7 @@
 //!   `[0,1,8,9,2,3,10,11]` and `[4,5,12,13,6,7,14,15]` rebuilds the
 //!   two 32‑Y‑block‑aligned vectors from unpacklo + unpackhi.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 #[allow(unused_imports)]

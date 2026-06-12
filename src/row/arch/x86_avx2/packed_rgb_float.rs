@@ -13,6 +13,7 @@
 //! Pixel-aligned chunks of 8 pixels = 24 lanes per iteration so the
 //! tail handles 0–7 leftover pixels.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 use super::endian::load_endian_u32x8;

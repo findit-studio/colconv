@@ -45,6 +45,7 @@
 // dead_code until then.
 #![allow(dead_code)]
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 use super::*;

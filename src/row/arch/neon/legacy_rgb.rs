@@ -38,6 +38,7 @@
 //!
 //! When `width % 8 ≠ 0` the remainder is handled by `scalar::legacy_rgb`.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
 use crate::row::scalar;

@@ -26,6 +26,7 @@
 //!
 //! `width % 8` remaining pixels fall through to `scalar::v410_*`.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 use super::{endian, *};

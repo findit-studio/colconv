@@ -31,6 +31,7 @@
 //!
 //! Treat f16 lanes as opaque `u16` — no arithmetic, no F16C gate needed.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 use crate::{

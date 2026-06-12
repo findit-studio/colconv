@@ -27,6 +27,7 @@
 //! `load_endian_u16x8::<BE>` from the SSE4.1 `endian.rs` (128-bit shuffle).
 //! Both branches are resolved at monomorphisation time.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 use super::{endian::load_endian_u16x16, *};

@@ -21,6 +21,7 @@
 //! by a `vreinterpretq_f32_u32` cast. For LE (BE=false) this is a
 //! pure load; for BE it adds a `vrev32q_u8` byte-swap.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
 use super::{endian::load_endian_u32x4, scalar};

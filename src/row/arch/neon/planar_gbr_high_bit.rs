@@ -20,6 +20,7 @@
 //! per-lane byte-swap via `vrev16q_u8`. The branch is resolved at
 //! monomorphisation — `BE = false` compiles to a plain `vld1q_u16`.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
 use crate::row::scalar;

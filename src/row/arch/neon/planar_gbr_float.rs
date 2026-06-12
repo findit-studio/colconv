@@ -20,6 +20,7 @@
 //! Treat f16 lanes as opaque `u16` for `vst3_u16` / `vst4_u16` — no
 //! arithmetic, so no `fp16` feature gate needed.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
 use crate::{

@@ -57,6 +57,7 @@
 //!
 //! `width % 64` remaining pixels fall through to
 //! `scalar::vuya_to_rgb_or_rgba_row`.
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 use super::*;

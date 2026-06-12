@@ -35,6 +35,7 @@
 //! 8. Saturate‑narrow to u8x16 per channel, then interleave via
 //!    `super::x86_common::write_rgb_16`.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 #[allow(unused_imports)]

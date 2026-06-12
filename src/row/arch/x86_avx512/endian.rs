@@ -15,6 +15,7 @@
 //! lane, so the mask replicates the same within-lane byte permutation across
 //! all four 128-bit lanes of the 512-bit register.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 // ---- Byte-swap shuffle masks -----------------------------------------------

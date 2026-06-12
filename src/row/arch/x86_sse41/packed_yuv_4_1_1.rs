@@ -23,6 +23,7 @@
 //!    `write_rgb_16` / `write_rgba_16`.
 //! 6. Scalar tail for `width % 16 != 0`.
 
+#[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
 use super::*;
