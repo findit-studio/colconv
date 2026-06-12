@@ -17,6 +17,10 @@ rust-version = "1.95.0"
 bench = false
 
 [[bench]]
+name = "fused_downscale"
+harness = false
+
+[[bench]]
 name = "yuv_420_to_rgb"
 harness = false
 

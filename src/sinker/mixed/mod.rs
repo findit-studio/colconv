@@ -379,13 +379,13 @@ impl RowIndexOutOfRange {
 /// the per-frame immutability check — in safe code a mid-frame
 /// `set_*` necessarily supplies a different borrow, so an identity
 /// change is exactly a reattachment.
-#[cfg(feature = "yuv-planar")]
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct FrozenOutputs {
   idents: [(usize, usize); 7],
 }
 
-#[cfg(feature = "yuv-planar")]
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
 impl FrozenOutputs {
   /// Identity of one attached buffer: `(data pointer, length)`, or
   /// `(0, 0)` for an absent output (a slice pointer is never null).
@@ -421,6 +421,42 @@ impl FrozenOutputs {
       ],
     }
   }
+}
+
+/// Enforces the per-frame frozen output configuration for resampling
+/// sinkers — presence AND buffer identity of every output the emit
+/// closures consult. Shared by every routed format's resampled paths.
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn frozen_outputs_check(
+  resample_outputs: &mut Option<FrozenOutputs>,
+  luma: &Option<&mut [u8]>,
+  luma_u16: &Option<&mut [u16]>,
+  rgb: &Option<&mut [u8]>,
+  rgba: &Option<&mut [u8]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  idx: usize,
+) -> Result<(), MixedSinkerError> {
+  let snapshot = FrozenOutputs::snapshot(
+    luma.as_deref(),
+    luma_u16.as_deref(),
+    rgb.as_deref(),
+    rgba.as_deref(),
+    hsv.as_mut().map(|f| {
+      let (h, s, v) = f.hsv();
+      (&h[..], &s[..], &v[..])
+    }),
+  );
+  match resample_outputs {
+    None => *resample_outputs = Some(snapshot),
+    Some(frozen) if *frozen != snapshot => {
+      return Err(MixedSinkerError::ResampleOutputsChanged(
+        ResampleOutputsChanged::new(idx),
+      ));
+    }
+    Some(_) => {}
+  }
+  Ok(())
 }
 
 /// Mid-frame output-set change payload for
@@ -1206,7 +1242,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// that route non-identity plans. Lazily created in `process`,
   /// reset in `begin_frame`. Gated like the engine itself, widening
   /// as families wire in.
-  #[cfg(feature = "yuv-planar")]
+  #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
   rgb_stream: Option<crate::resample::AreaStream>,
   #[cfg(feature = "yuv-planar")]
   luma_stream: Option<crate::resample::AreaStream>,
@@ -1216,8 +1252,19 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// closures consult, so both membership changes and same-channel
   /// buffer replacement trip
   /// [`MixedSinkerError::ResampleOutputsChanged`].
-  #[cfg(feature = "yuv-planar")]
+  #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
   resample_outputs: Option<FrozenOutputs>,
+  /// Whether resampled processing may take the native decimation tier
+  /// (bin native planes, convert once at output resolution). Defaults
+  /// to `true`; benchmarks and differential tests flip it to force the
+  /// row-stage tier — the [`Self::with_simd`] pattern. Gated like the
+  /// engine; widens per routed family.
+  #[cfg(feature = "yuv-planar")]
+  native: bool,
+  /// Native-tier join state for the 4:2:0 planar family; lazily
+  /// created in `process`, reset in `begin_frame`.
+  #[cfg(feature = "yuv-planar")]
+  native_420: Option<planar_8bit::NativeYuv420>,
   /// Lazily grown to `3 * width` bytes when HSV is requested without a
   /// user RGB buffer. Empty otherwise.
   ///
@@ -1628,12 +1675,16 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       out_width,
       out_height,
       plan: None,
-      #[cfg(feature = "yuv-planar")]
+      #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
       rgb_stream: None,
       #[cfg(feature = "yuv-planar")]
       luma_stream: None,
-      #[cfg(feature = "yuv-planar")]
+      #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
       resample_outputs: None,
+      #[cfg(feature = "yuv-planar")]
+      native: true,
+      #[cfg(feature = "yuv-planar")]
+      native_420: None,
       #[cfg(any(
         feature = "bayer",
         feature = "gbr",
@@ -1819,6 +1870,48 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn simd(&self) -> bool {
     self.simd
+  }
+
+  /// Returns `true` iff resampled processing may take the native
+  /// decimation tier. See [`Self::with_native`].
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn native(&self) -> bool {
+    self.native
+  }
+
+  /// Toggles the native decimation tier in place. See
+  /// [`Self::with_native`] for the consuming builder variant.
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn set_native(&mut self, native: bool) -> &mut Self {
+    self.native = native;
+    self
+  }
+
+  /// Sets whether resampled processing may take the native decimation
+  /// tier (bin native planes, convert once at output resolution).
+  /// Defaults to `true`, mirroring [`Self::with_simd`].
+  ///
+  /// The tiers differ in color SEMANTICS, not just speed: native
+  /// averages in the source (YUV) domain and converts once — the
+  /// fused semantics video pipelines (libswscale-class) produce —
+  /// while the row-stage tier converts every source pixel first and
+  /// averages in RGB, matching `cv2.INTER_AREA` applied to decoded
+  /// RGB. Luma is bit-identical either way (both tiers bin the same Y
+  /// plane). In-gamut color differs only by per-pixel rounding;
+  /// OUT-OF-GAMUT content (super-blacks/whites, illegal chroma
+  /// excursions) diverges as far as the content sits outside the
+  /// gamut — unbounded in principle, with measured examples of
+  /// 34/255 on a mild extreme checkerboard and 117/255 on a crafted
+  /// Bt2020 limited-range case (both pinned by regression). Pass
+  /// `false` for strict RGB-domain `INTER_AREA` semantics at
+  /// source-resolution conversion cost.
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn with_native(mut self, native: bool) -> Self {
+    self.set_native(native);
+    self
   }
 
   /// Toggles the SIMD dispatch in place. See [`Self::with_simd`] for the

@@ -494,6 +494,285 @@ fn same_channel_buffer_replacement_rejected_atomically() {
   assert!(v_b.iter().all(|&x| x == 0));
 }
 
+/// Frame with luma gradient and spatially varying chroma — exercises
+/// real conversion math on both tiers.
+fn textured_frame_planes() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+  // Values stay interior to the limited-range gamut: near clamp
+  // boundaries the two tiers diverge by more than rounding
+  // (avg-then-clamp vs clamp-then-avg) — the documented out-of-gamut
+  // caveat, not a defect.
+  let y: Vec<u8> = (0..64u8).map(|i| 60 + i * 2).collect();
+  let u: Vec<u8> = (0..16u8).map(|i| 118 + i).collect();
+  let v: Vec<u8> = (0..16u8).map(|i| 120 + i).collect();
+  (y, u, v)
+}
+
+/// `(rgb, rgba, luma, hsv_h, hsv_v)` planes of one downscale run.
+type DownscaleOutputs = (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>);
+
+fn run_downscale(out_w: usize, out_h: usize, native: bool) -> DownscaleOutputs {
+  let (yp, up, vp) = textured_frame_planes();
+  let src = Yuv420pFrame::new(&yp, &up, &vp, 8, 8, 8, 4, 4);
+  let n = out_w * out_h;
+  let mut rgb = vec![0u8; n * 3];
+  let mut rgba = vec![0u8; n * 4];
+  let mut luma = vec![0u8; n];
+  let mut h = vec![0u8; n];
+  let mut s_ = vec![0u8; n];
+  let mut v_ = vec![0u8; n];
+  {
+    let mut sink = MixedSinker::<Yuv420p, AreaResampler>::with_resampler(
+      SRC,
+      SRC,
+      AreaResampler::to(out_w, out_h),
+    )
+    .unwrap()
+    .with_native(native)
+    .with_rgb(&mut rgb)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_hsv(&mut h, &mut s_, &mut v_)
+    .unwrap();
+    yuv420p_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+  (rgb, rgba, luma, h, v_)
+}
+
+#[test]
+fn native_and_row_stage_luma_bit_identical() {
+  // Both tiers bin the SAME Y plane with the SAME spans and exact
+  // arithmetic: luma must match bit-for-bit, every geometry.
+  for (ow, oh) in [(4, 4), (3, 3), (6, 6), (4, 3)] {
+    let native = run_downscale(ow, oh, true);
+    let row_stage = run_downscale(ow, oh, false);
+    assert_eq!(native.2, row_stage.2, "luma {ow}x{oh}");
+  }
+}
+
+#[test]
+fn native_and_row_stage_color_within_tolerance() {
+  // Native converts AFTER binning (output res); row-stage converts
+  // BEFORE (source res). The orders differ only by per-pixel rounding
+  // and clamping inside the affine conversion: bounded divergence on
+  // in-gamut content. 6x6 exercises the chroma-upsample direction
+  // (4 -> 6 on the chroma grid).
+  for (ow, oh) in [(4, 4), (3, 3), (6, 6), (4, 3)] {
+    let native = run_downscale(ow, oh, true);
+    let row_stage = run_downscale(ow, oh, false);
+    for (name, a, b) in [
+      ("rgb", &native.0, &row_stage.0),
+      ("rgba", &native.1, &row_stage.1),
+      ("hsv-v", &native.4, &row_stage.4),
+    ] {
+      for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+        // Bound: each binned plane rounds within half a step; the
+        // affine conversion amplifies by at most ~1.8 per
+        // coefficient, plus the final per-channel round.
+        let d = x.abs_diff(*y);
+        assert!(
+          d <= 3,
+          "{name} {ow}x{oh} idx {i}: native {x} vs row-stage {y}"
+        );
+      }
+    }
+  }
+}
+
+#[test]
+fn native_solid_frame_exact_all_outputs() {
+  // Constant planes: binning is exact on both grids, so the native
+  // tier must reproduce the full-res conversion exactly.
+  let yp = vec![120u8; 64];
+  let up = vec![90u8; 16];
+  let vp = vec![170u8; 16];
+  let src = Yuv420pFrame::new(&yp, &up, &vp, 8, 8, 8, 4, 4);
+
+  let mut full_rgb = vec![0u8; SRC * SRC * 3];
+  let mut full = MixedSinker::<Yuv420p>::new(SRC, SRC)
+    .with_rgb(&mut full_rgb)
+    .unwrap();
+  yuv420p_to(&src, false, ColorMatrix::Bt709, &mut full).unwrap();
+
+  let mut rgb = vec![0u8; OUT * OUT * 3];
+  let mut luma = vec![0u8; OUT * OUT];
+  {
+    let mut sink =
+      MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_native(true)
+        .with_rgb(&mut rgb)
+        .unwrap()
+        .with_luma(&mut luma)
+        .unwrap();
+    yuv420p_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+  for px in rgb.chunks_exact(3) {
+    assert_eq!(
+      (px[0], px[1], px[2]),
+      (full_rgb[0], full_rgb[1], full_rgb[2])
+    );
+  }
+  assert!(luma.iter().all(|&l| l == 120));
+}
+
+#[test]
+fn native_odd_height_color_matches_row_stage() {
+  // Odd source heights: the final chroma row covers ONE luma row, and
+  // the native tier must weight it accordingly. Row-stage is ground
+  // truth here (it bins converted rows over the uniform luma grid).
+  let h_src = 9usize;
+  let yp: Vec<u8> = (0..(8 * h_src) as u32)
+    .map(|i| 60 + (i % 64) as u8 * 2)
+    .collect();
+  let up: Vec<u8> = (0..(4 * 5)).map(|i| 118 + (i % 16) as u8).collect();
+  let vp: Vec<u8> = (0..(4 * 5)).map(|i| 120 + (i % 16) as u8).collect();
+  let src = Yuv420pFrame::new(&yp, &up, &vp, 8, h_src as u32, 8, 4, 4);
+
+  let run = |native: bool| -> Vec<u8> {
+    let mut rgb = vec![0u8; 2 * 3 * 3];
+    let mut sink =
+      MixedSinker::<Yuv420p, AreaResampler>::with_resampler(8, h_src, AreaResampler::to(2, 3))
+        .unwrap()
+        .with_native(native)
+        .with_rgb(&mut rgb)
+        .unwrap();
+    yuv420p_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+    rgb
+  };
+  let native = run(true);
+  let row_stage = run(false);
+  for (i, (a, b)) in native.iter().zip(row_stage.iter()).enumerate() {
+    assert!(
+      a.abs_diff(*b) <= 3,
+      "odd-height idx {i}: native {a} vs row-stage {b}"
+    );
+  }
+}
+
+#[test]
+fn native_saturated_divergence_is_characterized() {
+  // The two tiers differ in conversion ORDER: native averages in the
+  // source (YUV) domain and clamps once after the mean; row-stage
+  // clamps per pixel before averaging. On in-gamut content that is
+  // rounding noise; on out-of-gamut content the divergence is
+  // unbounded in principle — these two measured cases pin a mild and
+  // a crafted example so the docs cannot understate it. Luma stays
+  // bit-identical everywhere (both tiers bin the same Y plane).
+
+  // Mild: alternating super-black/super-white extreme-chroma
+  // checkerboard, 8x8 -> 4x4 Bt709 limited. Measured max 34.
+  let y: Vec<u8> = (0..64u32)
+    .map(|i| if i % 2 == 0 { 2 } else { 250 })
+    .collect();
+  let u: Vec<u8> = (0..16u32)
+    .map(|i| if i % 2 == 0 { 10 } else { 245 })
+    .collect();
+  let v: Vec<u8> = (0..16u32)
+    .map(|i| if i % 2 == 0 { 240 } else { 12 })
+    .collect();
+  let src = Yuv420pFrame::new(&y, &u, &v, 8, 8, 8, 4, 4);
+  let run = |native: bool| {
+    let mut rgb = vec![0u8; OUT * OUT * 3];
+    let mut luma = vec![0u8; OUT * OUT];
+    let mut sink =
+      MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_native(native)
+        .with_rgb(&mut rgb)
+        .unwrap()
+        .with_luma(&mut luma)
+        .unwrap();
+    yuv420p_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+    (rgb, luma)
+  };
+  let (n_rgb, n_luma) = run(true);
+  let (r_rgb, r_luma) = run(false);
+  assert_eq!(n_luma, r_luma, "luma must stay bit-identical");
+  let max = n_rgb
+    .iter()
+    .zip(r_rgb.iter())
+    .map(|(a, b)| a.abs_diff(*b))
+    .max()
+    .unwrap();
+  assert!((4..=48).contains(&max), "mild case drifted: {max}");
+
+  // Crafted: 4x4 -> 1x1, Bt2020Ncl limited, planes built to push the
+  // mean far from the per-pixel clamps. Measured max 117.
+  let y: Vec<u8> = vec![
+    64, 32, 245, 240, 2, 10, 128, 224, 235, 240, 245, 250, 245, 255, 245, 224,
+  ];
+  let u: Vec<u8> = vec![128, 250, 16, 240];
+  let v: Vec<u8> = vec![192, 10, 64, 10];
+  let src = Yuv420pFrame::new(&y, &u, &v, 4, 4, 4, 2, 2);
+  let run = |native: bool| {
+    let mut rgb = vec![0u8; 3];
+    let mut sink =
+      MixedSinker::<Yuv420p, AreaResampler>::with_resampler(4, 4, AreaResampler::to(1, 1))
+        .unwrap()
+        .with_native(native)
+        .with_rgb(&mut rgb)
+        .unwrap();
+    yuv420p_to(&src, false, ColorMatrix::Bt2020Ncl, &mut sink).unwrap();
+    rgb
+  };
+  let n = run(true);
+  let r = run(false);
+  let max = n
+    .iter()
+    .zip(r.iter())
+    .map(|(a, b)| a.abs_diff(*b))
+    .max()
+    .unwrap();
+  assert!((64..=140).contains(&max), "crafted case drifted: {max}");
+}
+
+#[test]
+fn native_join_upgrades_when_color_attaches_next_frame() {
+  // Frame 1 runs luma-only (native join created WITHOUT its chroma
+  // half); RGB+HSV attach before frame 2. The join must rebuild with
+  // chroma for the new frame — not silently skip the color outputs.
+  let yp = vec![120u8; 64];
+  let up = vec![90u8; 16];
+  let vp = vec![170u8; 16];
+  let src = Yuv420pFrame::new(&yp, &up, &vp, 8, 8, 8, 4, 4);
+
+  let mut full_rgb = vec![0u8; SRC * SRC * 3];
+  let mut full = MixedSinker::<Yuv420p>::new(SRC, SRC)
+    .with_rgb(&mut full_rgb)
+    .unwrap();
+  yuv420p_to(&src, false, ColorMatrix::Bt709, &mut full).unwrap();
+
+  let mut luma = vec![0u8; OUT * OUT];
+  let mut rgb = vec![0u8; OUT * OUT * 3];
+  let mut h = vec![0u8; OUT * OUT];
+  let mut s_ = vec![0u8; OUT * OUT];
+  let mut v_ = vec![0u8; OUT * OUT];
+  {
+    let mut sink =
+      MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_luma(&mut luma)
+        .unwrap();
+    yuv420p_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+
+    sink.set_rgb(&mut rgb).unwrap();
+    sink.set_hsv(&mut h, &mut s_, &mut v_).unwrap();
+    yuv420p_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+  assert!(luma.iter().all(|&l| l == 120));
+  for px in rgb.chunks_exact(3) {
+    assert_eq!(
+      (px[0], px[1], px[2]),
+      (full_rgb[0], full_rgb[1], full_rgb[2]),
+      "color silently skipped after attaching mid-stream"
+    );
+  }
+  assert!(v_.iter().all(|&x| x != 0), "hsv V plane untouched");
+}
+
 #[test]
 fn identity_area_full_pipeline_matches_new_sink() {
   let (yp, up, vp) = gradient_frame_planes();

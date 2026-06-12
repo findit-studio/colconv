@@ -116,8 +116,10 @@ impl Resampler for AreaResampler {
 /// Zero-filled buffer via fallible reservation: `resize` after an
 /// exact reserve cannot reallocate, so refusal is the only failure
 /// and it surfaces as the error instead of aborting.
-#[cfg(feature = "yuv-planar")]
-fn try_zeroed<T: Clone + Default>(n: usize) -> Result<Vec<T>, std::collections::TryReserveError> {
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+pub(crate) fn try_zeroed<T: Clone + Default>(
+  n: usize,
+) -> Result<Vec<T>, std::collections::TryReserveError> {
   let mut buf = Vec::new();
   buf.try_reserve_exact(n)?;
   buf.resize(n, T::default());
@@ -135,6 +137,7 @@ fn gcd(mut a: usize, mut b: usize) -> usize {
 
 /// Why one axis of span planning failed; [`ResamplePlan::area`] maps
 /// these onto [`ResampleError`] with the full two-axis geometry.
+#[derive(Debug)]
 enum AxisError {
   /// A grid product or arena length is unrepresentable.
   Overflow,
@@ -225,10 +228,73 @@ impl AxisSpans {
     })
   }
 
+  /// Builds spans for a 4:2:0-style vertically paired axis: cell `c`
+  /// is the pair of full-grid rows `[2c, 2c + 2)` clipped to
+  /// `src_full`, so an odd trailing row forms a half-width tail cell
+  /// weighted by its true coverage. Weights live on the `x out` grid
+  /// against the FULL-resolution axis — every span sums to
+  /// `src_full`, which is therefore the normalization denominator
+  /// (for even `src_full` this is the uniform chroma-grid weighting
+  /// with numerator and denominator doubled, which round-half-up
+  /// preserves exactly).
+  #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
+  fn area_halved(src_full: usize, out: usize) -> Result<Self, AxisError> {
+    let src64 = src_full as u64;
+    let out64 = out as u64;
+    src64.checked_mul(out64).ok_or(AxisError::Overflow)?;
+    let cells = src_full.div_ceil(2);
+    // Upper bound; the exact reservation below never reallocates.
+    let taps = Self::area_taps(src_full, out).ok_or(AxisError::Overflow)?;
+    let offsets_len = out.checked_add(1).ok_or(AxisError::Overflow)?;
+    let mut starts = Vec::new();
+    starts
+      .try_reserve_exact(out)
+      .map_err(|_| AxisError::Alloc)?;
+    let mut offsets = Vec::new();
+    offsets
+      .try_reserve_exact(offsets_len)
+      .map_err(|_| AxisError::Alloc)?;
+    let mut weights = Vec::new();
+    weights
+      .try_reserve_exact(taps)
+      .map_err(|_| AxisError::Alloc)?;
+    offsets.push(0);
+    for j in 0..out64 {
+      let lo = j * src64;
+      let hi = lo + src64;
+      // First full-grid row touched, mapped to its pair cell.
+      let start = ((lo / out64) / 2) as usize;
+      starts.push(start);
+      let mut c = start as u64;
+      loop {
+        let cell_lo = (2 * c) * out64;
+        let cell_hi = ((2 * c + 2).min(src64)) * out64;
+        if cell_lo >= hi {
+          break;
+        }
+        let w = cell_hi.min(hi) - cell_lo.max(lo);
+        if w == 0 {
+          break;
+        }
+        weights.push(w as usize);
+        if cell_hi >= hi || c as usize + 1 >= cells {
+          break;
+        }
+        c += 1;
+      }
+      offsets.push(weights.len());
+    }
+    Ok(Self {
+      starts,
+      offsets,
+      weights,
+    })
+  }
+
   /// Number of output samples on this axis.
   // Consumed by the area streaming engine, which is gated to the
-  // families that route through it (currently yuv-planar).
-  #[cfg_attr(not(feature = "yuv-planar"), allow(dead_code))]
+  // families that route through it.
+  #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub(crate) fn out_len(&self) -> usize {
     self.starts.len()
@@ -236,8 +302,8 @@ impl AxisSpans {
 
   /// `(first source cell, overlap weights)` for output index `j`;
   // Consumed by the area streaming engine, which is gated to the
-  // families that route through it (currently yuv-planar).
-  #[cfg_attr(not(feature = "yuv-planar"), allow(dead_code))]
+  // families that route through it.
+  #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
   /// `j` must be below [`Self::out_len`].
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub(crate) fn span(&self, j: usize) -> (usize, &[usize]) {
@@ -264,8 +330,16 @@ pub struct ResamplePlan {
 
 impl ResamplePlan {
   /// Builds the exact area plan for `src -> out`. The strategy has
-  /// already validated zero, upscale, and identity geometry.
-  fn area(src_w: usize, src_h: usize, out_w: usize, out_h: usize) -> Result<Self, ResampleError> {
+  /// already validated zero, upscale, and identity geometry. Also the
+  /// constructor for auxiliary plane grids: the native tier plans a
+  /// subsampled format's chroma grid against the same output geometry,
+  /// where the coverage may run in the upsample direction.
+  pub(crate) fn area(
+    src_w: usize,
+    src_h: usize,
+    out_w: usize,
+    out_h: usize,
+  ) -> Result<Self, ResampleError> {
     let fail = |e: AxisError| match e {
       AxisError::Overflow => ResampleError::Overflow(PlanGeometry::new(src_w, src_h, out_w, out_h)),
       AxisError::Alloc => {
@@ -279,6 +353,39 @@ impl ResamplePlan {
     Ok(Self {
       src_w,
       src_h,
+      out_w,
+      out_h,
+      h,
+      v,
+    })
+  }
+
+  /// Builds the 4:2:0 chroma plan for the native tier: horizontal
+  /// spans over the (uniform, exact — frame widths are even) chroma
+  /// width, vertical spans over the LUMA height with paired cells
+  /// ([`AxisSpans::area_halved`]) so an odd trailing luma row weights
+  /// its chroma row by half. The stored source dims are
+  /// `(chroma_w, luma_h)` — the per-plane normalization denominators.
+  #[cfg(feature = "yuv-planar")]
+  pub(crate) fn area_chroma_420(
+    chroma_w: usize,
+    luma_h: usize,
+    out_w: usize,
+    out_h: usize,
+  ) -> Result<Self, ResampleError> {
+    let fail_overflow =
+      || ResampleError::Overflow(PlanGeometry::new(chroma_w, luma_h, out_w, out_h));
+    let fail_alloc =
+      || ResampleError::AllocationFailed(PlanGeometry::new(chroma_w, luma_h, out_w, out_h));
+    let fail = |e: AxisError| match e {
+      AxisError::Overflow => fail_overflow(),
+      AxisError::Alloc => fail_alloc(),
+    };
+    let h = AxisSpans::area(chroma_w, out_w).map_err(fail)?;
+    let v = AxisSpans::area_halved(luma_h, out_h).map_err(fail)?;
+    Ok(Self {
+      src_w: chroma_w,
+      src_h: luma_h,
       out_w,
       out_h,
       h,
@@ -302,8 +409,8 @@ impl ResamplePlan {
 
   /// Horizontal-axis spans.
   // Consumed by the area streaming engine, which is gated to the
-  // families that route through it (currently yuv-planar).
-  #[cfg_attr(not(feature = "yuv-planar"), allow(dead_code))]
+  // families that route through it.
+  #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub(crate) const fn h(&self) -> &AxisSpans {
     &self.h
@@ -311,8 +418,8 @@ impl ResamplePlan {
 
   /// Vertical-axis spans.
   // Consumed by the area streaming engine, which is gated to the
-  // families that route through it (currently yuv-planar).
-  #[cfg_attr(not(feature = "yuv-planar"), allow(dead_code))]
+  // families that route through it.
+  #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub(crate) const fn v(&self) -> &AxisSpans {
     &self.v
@@ -424,7 +531,7 @@ impl ZeroOutputDimension {
 /// against `ceil(d / 2)` without any widening arithmetic.
 // Consumed by the area streaming engine (gated to routed families)
 // and its std-gated tests; allowed to idle in the remaining combos.
-#[cfg_attr(not(feature = "yuv-planar"), allow(dead_code))]
+#[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
 fn round_div_half_up(a: u64, d: u64) -> u64 {
   let q = a / d;
   let r = a % d;
@@ -453,7 +560,7 @@ fn round_div_half_up(a: u64, d: u64) -> u64 {
 ///
 /// Gated to the families that route through it (currently
 /// `yuv-planar`); the gate widens as formats wire in.
-#[cfg(feature = "yuv-planar")]
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
 #[derive(Debug)]
 pub(crate) struct AreaStream {
   channels: usize,
@@ -471,20 +578,30 @@ pub(crate) struct AreaStream {
   next_y: usize,
 }
 
-#[cfg(feature = "yuv-planar")]
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
 impl AreaStream {
   /// Creates a stream for `channels` interleaved channels of the
   /// plan's geometry. Fails with [`ResampleError::Overflow`] when the
   /// normalization denominator (or `denom * 255`, the accumulator
   /// bound that keeps every sum exact in `u64`) is unrepresentable.
-  pub(crate) fn new(plan: &ResamplePlan, channels: usize) -> Result<Self, ResampleError> {
-    let geometry = || PlanGeometry::new(plan.src_w(), plan.src_h(), plan.out_w(), plan.out_h());
-    let denom = (plan.src_w() as u64)
-      .checked_mul(plan.src_h() as u64)
+  /// `h`/`v` are the plane's own span sets and `src_w`/`src_h` its
+  /// own grid (the chroma planes of a subsampled format run smaller
+  /// grids — and possibly the upsample direction — against the same
+  /// output geometry).
+  pub(crate) fn new(
+    h: &AxisSpans,
+    v: &AxisSpans,
+    src_w: usize,
+    src_h: usize,
+    channels: usize,
+  ) -> Result<Self, ResampleError> {
+    let geometry = || PlanGeometry::new(src_w, src_h, h.out_len(), v.out_len());
+    let denom = (src_w as u64)
+      .checked_mul(src_h as u64)
       .filter(|d| *d <= u64::MAX / 255)
       .ok_or_else(|| ResampleError::Overflow(geometry()))?;
-    let n = plan
-      .out_w()
+    let n = h
+      .out_len()
       .checked_mul(channels)
       .ok_or_else(|| ResampleError::Overflow(geometry()))?;
     // Row buffers follow the planner's recoverable-allocation
@@ -531,7 +648,8 @@ impl AreaStream {
   /// can resume with the expected row.
   pub(crate) fn feed_row(
     &mut self,
-    plan: &ResamplePlan,
+    h: &AxisSpans,
+    v: &AxisSpans,
     y: usize,
     row: &[u8],
     mut emit: impl FnMut(usize, &[u8]),
@@ -543,11 +661,9 @@ impl AreaStream {
       )));
     }
     self.next_y += 1;
-    let v = plan.v();
     if self.cur_out >= v.out_len() {
       return Ok(());
     }
-    let h = plan.h();
     let c = self.channels;
     for j in 0..h.out_len() {
       let (start, weights) = h.span(j);
@@ -732,5 +848,7 @@ pub enum ResampleError {
   OutOfSequenceRow(OutOfSequenceRow),
 }
 
+#[cfg(all(test, feature = "std", any(feature = "yuv-planar", feature = "rgb")))]
+mod cv2_goldens;
 #[cfg(all(test, feature = "std"))]
 mod tests;
