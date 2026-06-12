@@ -341,14 +341,6 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
 
 impl<R> Yuv420pSink for MixedSinker<'_, Yuv420p, R> {}
 
-/// Row-stage resampled path for [`MixedSinker<Yuv420p, R>`]: luma
-/// streams straight off the Y plane (chroma untouched), the color
-/// group converts the row at source width into the scratch and
-/// streams the RGB; HSV and RGBA derive from each finalized output
-/// row. Buffer indexing is panic-free: every output buffer was
-/// validated against the plan's output geometry at attach time, and
-/// the stream emits `out_y < out_h` in order.
-
 /// Native decimation join for 4:2:0 planar sources: Y streams on the
 /// frame grid, U and V on the chroma grid (half width, ceil-half
 /// height — possibly the upsample direction), every plane binned to
@@ -514,27 +506,27 @@ fn yuv420p_process_native(
     y_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
     staged[0][slot] = true;
   })?;
-  if let Some(c) = chroma.as_mut() {
-    if idx % 2 == 0 {
-      let cidx = idx / 2;
-      let NativeChroma {
-        plan: cplan,
-        u,
-        v,
-        u_stage,
-        v_stage,
-      } = c;
-      u.feed_row(cplan.h(), cplan.v(), cidx, row.u_half(), |oy, out_row| {
-        let slot = oy & 1;
-        u_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
-        staged[1][slot] = true;
-      })?;
-      v.feed_row(cplan.h(), cplan.v(), cidx, row.v_half(), |oy, out_row| {
-        let slot = oy & 1;
-        v_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
-        staged[2][slot] = true;
-      })?;
-    }
+  if let Some(c) = chroma.as_mut()
+    && idx % 2 == 0
+  {
+    let cidx = idx / 2;
+    let NativeChroma {
+      plan: cplan,
+      u,
+      v,
+      u_stage,
+      v_stage,
+    } = c;
+    u.feed_row(cplan.h(), cplan.v(), cidx, row.u_half(), |oy, out_row| {
+      let slot = oy & 1;
+      u_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
+      staged[1][slot] = true;
+    })?;
+    v.feed_row(cplan.h(), cplan.v(), cidx, row.v_half(), |oy, out_row| {
+      let slot = oy & 1;
+      v_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
+      staged[2][slot] = true;
+    })?;
   }
 
   // Drain every output row whose participating planes are staged.

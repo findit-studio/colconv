@@ -339,6 +339,52 @@ fn stream_constant_input_is_constant() {
   assert!(stream_collect(&plan, &src, 1).iter().all(|&v| v == 173));
 }
 
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+/// Same LCG as `ci/gen_cv2_goldens.py`: the parity sources are
+/// synthesized identically on both sides, so the fixture carries only
+/// cv2's outputs.
+fn lcg_fill(buf: &mut [u8], seed: u32) {
+  let mut state = seed;
+  for b in buf {
+    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+    *b = (state >> 8) as u8;
+  }
+}
+
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[test]
+fn area_matches_cv2_inter_area_within_one_lsb() {
+  // cv2's INTER_AREA uses its own fixed-point/float internals, so the
+  // contract is +-1 LSB against our exact integer area mean — checked
+  // across integer and fractional ratios, gray and interleaved RGB.
+  for &(src_w, src_h, out_w, out_h, channels, seed, golden) in super::cv2_goldens::ALL {
+    let mut src = std::vec![0u8; src_w * src_h * channels];
+    lcg_fill(&mut src, seed);
+    let plan = AreaResampler::to(out_w, out_h)
+      .plan(src_w, src_h)
+      .expect("valid downscale")
+      .expect("non-identity");
+    let mut stream =
+      AreaStream::new(plan.h(), plan.v(), src_w, src_h, channels).expect("realistic geometry");
+    let mut ours = std::vec![0u8; out_w * out_h * channels];
+    for y in 0..src_h {
+      let row = &src[y * src_w * channels..(y + 1) * src_w * channels];
+      stream
+        .feed_row(plan.h(), plan.v(), y, row, |oy, finalized| {
+          ours[oy * out_w * channels..(oy + 1) * out_w * channels].copy_from_slice(finalized);
+        })
+        .expect("rows in order");
+    }
+    assert_eq!(golden.len(), ours.len(), "{src_w}x{src_h}->{out_w}x{out_h}");
+    for (i, (a, b)) in ours.iter().zip(golden.iter()).enumerate() {
+      assert!(
+        a.abs_diff(*b) <= 1,
+        "{src_w}x{src_h}->{out_w}x{out_h} c{channels} idx {i}: ours {a} vs cv2 {b}"
+      );
+    }
+  }
+}
+
 #[test]
 fn plan_error_display_names_geometry() {
   let upscale = ResampleError::UpscaleUnsupported(UpscaleUnsupported::new(1920, 1080, 3840, 2160));

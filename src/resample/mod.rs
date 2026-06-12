@@ -752,5 +752,7 @@ pub enum ResampleError {
   OutOfSequenceRow(OutOfSequenceRow),
 }
 
+#[cfg(all(test, feature = "std", any(feature = "yuv-planar", feature = "rgb")))]
+mod cv2_goldens;
 #[cfg(all(test, feature = "std"))]
 mod tests;
