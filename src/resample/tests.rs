@@ -264,6 +264,28 @@ fn stream_creation_fails_recoverably_on_huge_row_buffers() {
 
 #[cfg(feature = "yuv-planar")]
 #[test]
+fn area_halved_weights_the_odd_tail_row_by_its_luma_coverage() {
+  // 4:2:0 vertical pairing over luma height 9 -> 3 outputs: chroma
+  // cells span luma-row pairs except the single-row tail. On the x3
+  // grid: out0 = (0, [6, 3]), out1 = (1, [3, 6]), out2 = (3, [6, 3])
+  // — the tail cell carries HALF a full cell's weight, and every span
+  // sums to the luma height (the denominator).
+  let spans = AxisSpans::area_halved(9, 3).expect("valid");
+  assert_eq!(spans.out_len(), 3);
+  assert_eq!(spans.span(0), (0, &[6usize, 3][..]));
+  assert_eq!(spans.span(1), (1, &[3usize, 6][..]));
+  assert_eq!(spans.span(2), (3, &[6usize, 3][..]));
+
+  // Even luma heights reduce to uniform double-width cells: identical
+  // normalized weighting to the plain chroma-grid spans, scaled x2.
+  let even = AxisSpans::area_halved(8, 4).expect("valid");
+  for j in 0..4 {
+    assert_eq!(even.span(j), (j, &[8usize][..]));
+  }
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
 fn stream_rejects_out_of_order_duplicate_and_skipped_rows() {
   let plan = AreaResampler::to(4, 4)
     .plan(8, 8)

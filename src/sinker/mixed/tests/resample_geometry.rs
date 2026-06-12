@@ -619,6 +619,40 @@ fn native_solid_frame_exact_all_outputs() {
 }
 
 #[test]
+fn native_odd_height_color_matches_row_stage() {
+  // Odd source heights: the final chroma row covers ONE luma row, and
+  // the native tier must weight it accordingly. Row-stage is ground
+  // truth here (it bins converted rows over the uniform luma grid).
+  let h_src = 9usize;
+  let yp: Vec<u8> = (0..(8 * h_src) as u32)
+    .map(|i| 60 + (i % 64) as u8 * 2)
+    .collect();
+  let up: Vec<u8> = (0..(4 * 5)).map(|i| 118 + (i % 16) as u8).collect();
+  let vp: Vec<u8> = (0..(4 * 5)).map(|i| 120 + (i % 16) as u8).collect();
+  let src = Yuv420pFrame::new(&yp, &up, &vp, 8, h_src as u32, 8, 4, 4);
+
+  let run = |native: bool| -> Vec<u8> {
+    let mut rgb = vec![0u8; 2 * 3 * 3];
+    let mut sink =
+      MixedSinker::<Yuv420p, AreaResampler>::with_resampler(8, h_src, AreaResampler::to(2, 3))
+        .unwrap()
+        .with_native(native)
+        .with_rgb(&mut rgb)
+        .unwrap();
+    yuv420p_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+    rgb
+  };
+  let native = run(true);
+  let row_stage = run(false);
+  for (i, (a, b)) in native.iter().zip(row_stage.iter()).enumerate() {
+    assert!(
+      a.abs_diff(*b) <= 3,
+      "odd-height idx {i}: native {a} vs row-stage {b}"
+    );
+  }
+}
+
+#[test]
 fn native_join_upgrades_when_color_attaches_next_frame() {
   // Frame 1 runs luma-only (native join created WITHOUT its chroma
   // half); RGB+HSV attach before frame 2. The join must rebuild with

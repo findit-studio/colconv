@@ -228,6 +228,62 @@ impl AxisSpans {
     })
   }
 
+  /// Builds spans for a 4:2:0-style vertically paired axis: cell `c`
+  /// is the pair of full-grid rows `[2c, 2c + 2)` clipped to
+  /// `src_full`, so an odd trailing row forms a half-width tail cell
+  /// weighted by its true coverage. Weights live on the `x out` grid
+  /// against the FULL-resolution axis — every span sums to
+  /// `src_full`, which is therefore the normalization denominator
+  /// (for even `src_full` this is the uniform chroma-grid weighting
+  /// with numerator and denominator doubled, which round-half-up
+  /// preserves exactly).
+  #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
+  fn area_halved(src_full: usize, out: usize) -> Option<Self> {
+    let src64 = src_full as u64;
+    let out64 = out as u64;
+    src64.checked_mul(out64)?;
+    let cells = src_full.div_ceil(2);
+    let taps = Self::area_taps(src_full, out)?; // upper bound; exact reserve below is safe
+    let offsets_len = out.checked_add(1)?;
+    let mut starts = Vec::new();
+    starts.try_reserve_exact(out).ok()?;
+    let mut offsets = Vec::new();
+    offsets.try_reserve_exact(offsets_len).ok()?;
+    let mut weights = Vec::new();
+    weights.try_reserve_exact(taps).ok()?;
+    offsets.push(0);
+    for j in 0..out64 {
+      let lo = j * src64;
+      let hi = lo + src64;
+      // First full-grid row touched, mapped to its pair cell.
+      let start = ((lo / out64) / 2) as usize;
+      starts.push(start);
+      let mut c = start as u64;
+      loop {
+        let cell_lo = (2 * c) * out64;
+        let cell_hi = ((2 * c + 2).min(src64)) * out64;
+        if cell_lo >= hi {
+          break;
+        }
+        let w = cell_hi.min(hi) - cell_lo.max(lo);
+        if w == 0 {
+          break;
+        }
+        weights.push(w as usize);
+        if cell_hi >= hi || c as usize + 1 >= cells {
+          break;
+        }
+        c += 1;
+      }
+      offsets.push(weights.len());
+    }
+    Some(Self {
+      starts,
+      offsets,
+      weights,
+    })
+  }
+
   /// Number of output samples on this axis.
   // Consumed by the area streaming engine, which is gated to the
   // families that route through it.
@@ -290,6 +346,41 @@ impl ResamplePlan {
     Ok(Self {
       src_w,
       src_h,
+      out_w,
+      out_h,
+      h,
+      v,
+    })
+  }
+
+  /// Builds the 4:2:0 chroma plan for the native tier: horizontal
+  /// spans over the (uniform, exact — frame widths are even) chroma
+  /// width, vertical spans over the LUMA height with paired cells
+  /// ([`AxisSpans::area_halved`]) so an odd trailing luma row weights
+  /// its chroma row by half. The stored source dims are
+  /// `(chroma_w, luma_h)` — the per-plane normalization denominators.
+  #[cfg(feature = "yuv-planar")]
+  pub(crate) fn area_chroma_420(
+    chroma_w: usize,
+    luma_h: usize,
+    out_w: usize,
+    out_h: usize,
+  ) -> Result<Self, ResampleError> {
+    let fail_overflow =
+      || ResampleError::Overflow(PlanGeometry::new(chroma_w, luma_h, out_w, out_h));
+    let fail_alloc =
+      || ResampleError::AllocationFailed(PlanGeometry::new(chroma_w, luma_h, out_w, out_h));
+    let h = AxisSpans::area(chroma_w, out_w).map_err(|e| match e {
+      AxisError::Overflow => fail_overflow(),
+      AxisError::Alloc => fail_alloc(),
+    })?;
+    // area_halved reports both failure kinds as None; the only
+    // unrepresentable quantities are the same grid products the
+    // overflow payload describes.
+    let v = AxisSpans::area_halved(luma_h, out_h).ok_or_else(fail_overflow)?;
+    Ok(Self {
+      src_w: chroma_w,
+      src_h: luma_h,
       out_w,
       out_h,
       h,
