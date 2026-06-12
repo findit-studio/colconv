@@ -23,6 +23,6 @@ pub mod mixed;
 pub use mixed::{
   CustomLumaCoefficients, DimensionMismatch, GeometryOverflow, InsufficientBuffer,
   InsufficientHsvPlane, LumaChannel, LumaCoefficients, LumaCoefficientsError, MixedSinker,
-  MixedSinkerError, RowIndexOutOfRange, RowShapeMismatch, WidthAlignment,
+  MixedSinkerError, ResampleOutputsChanged, RowIndexOutOfRange, RowShapeMismatch, WidthAlignment,
   WidthAlignmentRequirement,
 };

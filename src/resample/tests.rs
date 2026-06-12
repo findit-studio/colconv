@@ -6,53 +6,394 @@ fn noop_plan_is_identity() {
 }
 
 #[test]
-fn fixed_downscale_fixture_plans_requested_geometry() {
-  let plan = test_support::FixedDownscale::new(4, 2)
-    .plan(8, 8)
-    .expect("fixture never fails")
-    .expect("fixture always plans");
-  assert_eq!(plan.out_dims(), (4, 2));
+fn area_identity_plans_none() {
+  assert_eq!(AreaResampler::to(8, 8).plan(8, 8), Ok(None));
 }
 
 #[test]
-fn always_fails_fixture_surfaces_zero_output_dimension() {
-  assert!(matches!(
-    test_support::AlwaysFails.plan(8, 8),
-    Err(ResampleError::ZeroOutputDimension(_))
-  ));
+fn area_zero_output_rejected() {
+  let err = AreaResampler::to(4, 0).plan(8, 8).unwrap_err();
+  match err {
+    ResampleError::ZeroOutputDimension(e) => {
+      assert_eq!(e.out_w(), 4);
+      assert_eq!(e.out_h(), 0);
+    }
+    other => panic!("expected ZeroOutputDimension, got {other:?}"),
+  }
 }
 
 #[test]
-fn plan_reports_output_geometry() {
-  let plan = ResamplePlan::new(336, 189);
+fn area_upscale_rejected_per_axis() {
+  // Width within bounds, height exceeding: either axis alone trips it.
+  let err = AreaResampler::to(4, 16).plan(8, 8).unwrap_err();
+  match err {
+    ResampleError::UpscaleUnsupported(e) => {
+      assert_eq!((e.src_w(), e.src_h()), (8, 8));
+      assert_eq!((e.out_w(), e.out_h()), (4, 16));
+    }
+    other => panic!("expected UpscaleUnsupported, got {other:?}"),
+  }
+}
+
+#[test]
+fn area_plan_reports_geometry() {
+  let plan = AreaResampler::to(336, 189)
+    .plan(1920, 1080)
+    .expect("valid downscale")
+    .expect("non-identity");
   assert_eq!(plan.out_w(), 336);
   assert_eq!(plan.out_h(), 189);
   assert_eq!(plan.out_dims(), (336, 189));
+  assert_eq!((plan.src_w(), plan.src_h()), (1920, 1080));
 }
 
 #[test]
-fn upscale_unsupported_reports_both_geometries() {
-  let payload = UpscaleUnsupported::new(1920, 1080, 3840, 2160);
-  assert_eq!(payload.src_w(), 1920);
-  assert_eq!(payload.src_h(), 1080);
-  assert_eq!(payload.out_w(), 3840);
-  assert_eq!(payload.out_h(), 2160);
+fn area_integer_ratio_spans() {
+  // 8 -> 4 on both axes: every output pixel covers exactly two source
+  // cells with equal weight (cell width = out on the scaled grid).
+  let plan = AreaResampler::to(4, 4)
+    .plan(8, 8)
+    .expect("valid")
+    .expect("non-identity");
+  for axis in [plan.h(), plan.v()] {
+    assert_eq!(axis.out_len(), 4);
+    for j in 0..4 {
+      let (start, weights) = axis.span(j);
+      assert_eq!(start, 2 * j);
+      assert_eq!(weights, &[4, 4]);
+    }
+  }
+}
 
-  let err = ResampleError::UpscaleUnsupported(payload);
-  assert!(err.is_upscale_unsupported());
-  let msg = format!("{err}");
+#[test]
+fn area_fractional_spans_8_to_3() {
+  // Scale 8/3: out pixel j covers [8j, 8j+8) on the x3 grid, source
+  // cell i covers [3i, 3i+3). Overlaps hand-derived; each span sums to
+  // the denominator (the source dimension, 8).
+  let plan = AreaResampler::to(3, 8)
+    .plan(8, 8)
+    .expect("valid")
+    .expect("non-identity");
+
+  let h = plan.h();
+  assert_eq!(h.out_len(), 3);
+  assert_eq!(h.span(0), (0, &[3usize, 3, 2][..]));
+  assert_eq!(h.span(1), (2, &[1usize, 3, 3, 1][..]));
+  assert_eq!(h.span(2), (5, &[2usize, 3, 3][..]));
+
+  // Vertical axis is identity-sized (8 -> 8): unit spans, full weight.
+  let v = plan.v();
+  assert_eq!(v.out_len(), 8);
+  for j in 0..8 {
+    assert_eq!(v.span(j), (j, &[8usize][..]));
+  }
+}
+
+#[test]
+fn area_spans_partition_the_source() {
+  // The NaFlex case: 1920x1080 -> 336x189 (x40/7 per axis). Every span
+  // sums to the source dimension, starts strictly increase, tap counts
+  // stay within ceil(scale) + 1, and coverage ends exactly at the last
+  // source cell.
+  let plan = AreaResampler::to(336, 189)
+    .plan(1920, 1080)
+    .expect("valid")
+    .expect("non-identity");
+
+  for (axis, src, out) in [(plan.h(), 1920, 336), (plan.v(), 1080, 189)] {
+    assert_eq!(axis.out_len(), out);
+    let mut prev_start = None;
+    for j in 0..out {
+      let (start, weights) = axis.span(j);
+      assert_eq!(weights.iter().sum::<usize>(), src, "span {j} sum");
+      assert!(weights.iter().all(|&w| w > 0), "span {j} zero tap");
+      assert!(weights.len() == 6 || weights.len() == 7, "span {j} taps");
+      if let Some(p) = prev_start {
+        assert!(start > p, "span {j} start not increasing");
+      }
+      prev_start = Some(start);
+    }
+    let (last_start, last_weights) = axis.span(out - 1);
+    assert_eq!(last_start + last_weights.len(), src);
+    assert_eq!(axis.span(0).0, 0);
+  }
+}
+
+/// Direct (non-separable) 2-D area reference: per output pixel,
+/// sum `w_y * w_x * sample` over the full source block via the plan's
+/// own spans, then round-half-up by the `src_w * src_h` denominator.
+/// The streaming engine must reproduce this exactly.
+#[cfg(feature = "yuv-planar")]
+fn direct_area_2d(plan: &ResamplePlan, src: &[u8], channels: usize) -> std::vec::Vec<u8> {
+  let (out_w, out_h) = plan.out_dims();
+  let src_w = plan.src_w();
+  let denom = (src_w as u64) * (plan.src_h() as u64);
+  let mut out = std::vec![0u8; out_w * out_h * channels];
+  for oy in 0..out_h {
+    let (vy, vw) = plan.v().span(oy);
+    for ox in 0..out_w {
+      let (hx, hw) = plan.h().span(ox);
+      for c in 0..channels {
+        let mut acc = 0u64;
+        for (dy, &wy) in vw.iter().enumerate() {
+          for (dx, &wx) in hw.iter().enumerate() {
+            let s = src[((vy + dy) * src_w + hx + dx) * channels + c] as u64;
+            acc += (wy as u64) * (wx as u64) * s;
+          }
+        }
+        out[(oy * out_w + ox) * channels + c] = ((acc + denom / 2) / denom) as u8;
+      }
+    }
+  }
+  out
+}
+
+#[cfg(feature = "yuv-planar")]
+fn stream_collect(plan: &ResamplePlan, src: &[u8], channels: usize) -> std::vec::Vec<u8> {
+  let (out_w, out_h) = plan.out_dims();
+  let src_w = plan.src_w();
+  let mut stream = AreaStream::new(plan, channels).expect("realistic geometry");
+  let mut out = std::vec![0u8; out_w * out_h * channels];
+  let mut emitted = std::vec::Vec::new();
+  for y in 0..plan.src_h() {
+    let row = &src[y * src_w * channels..(y + 1) * src_w * channels];
+    stream
+      .feed_row(plan, y, row, |oy, finalized| {
+        emitted.push(oy);
+        out[oy * out_w * channels..(oy + 1) * out_w * channels].copy_from_slice(finalized);
+      })
+      .expect("rows arrive in order");
+  }
+  assert_eq!(emitted, (0..out_h).collect::<std::vec::Vec<_>>());
+  out
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn stream_matches_direct_2d_reference_fractional() {
+  let plan = AreaResampler::to(3, 3)
+    .plan(8, 8)
+    .expect("valid")
+    .expect("non-identity");
+  let src: std::vec::Vec<u8> = (0..64u8).collect();
+  assert_eq!(
+    stream_collect(&plan, &src, 1),
+    direct_area_2d(&plan, &src, 1)
+  );
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn stream_matches_direct_2d_reference_multichannel() {
+  let plan = AreaResampler::to(4, 3)
+    .plan(8, 8)
+    .expect("valid")
+    .expect("non-identity");
+  // 3 interleaved channels with distinct ramps.
+  let mut src = std::vec![0u8; 8 * 8 * 3];
+  for (i, px) in src.chunks_exact_mut(3).enumerate() {
+    px[0] = i as u8;
+    px[1] = (3 * i % 251) as u8;
+    px[2] = 255 - i as u8;
+  }
+  assert_eq!(
+    stream_collect(&plan, &src, 3),
+    direct_area_2d(&plan, &src, 3)
+  );
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn stream_identity_vertical_axis_emits_every_row() {
+  // 8x8 -> 3x8: vertical axis is identity-sized, so every source row
+  // finalizes exactly one output row.
+  let plan = AreaResampler::to(3, 8)
+    .plan(8, 8)
+    .expect("valid")
+    .expect("non-identity");
+  let src: std::vec::Vec<u8> = (0..64u8).collect();
+  assert_eq!(
+    stream_collect(&plan, &src, 1),
+    direct_area_2d(&plan, &src, 1)
+  );
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn stream_creation_fails_recoverably_on_huge_output_rows() {
+  // Synthetic plan (in-crate test privilege: private fields) whose
+  // output width makes the u64 row buffers exceed isize::MAX bytes:
+  // creation must surface AllocationFailed via capacity overflow, not
+  // abort — the planner can never produce such a plan publicly
+  // because its own arenas refuse first, so this pins the stream's
+  // contract directly.
+  let plan = ResamplePlan {
+    src_w: 8,
+    src_h: 8,
+    out_w: usize::MAX / 32,
+    out_h: 1,
+    h: AxisSpans {
+      starts: std::vec::Vec::new(),
+      offsets: std::vec::Vec::new(),
+      weights: std::vec::Vec::new(),
+    },
+    v: AxisSpans {
+      starts: std::vec::Vec::new(),
+      offsets: std::vec::Vec::new(),
+      weights: std::vec::Vec::new(),
+    },
+  };
+  let err = AreaStream::new(&plan, 1).unwrap_err();
+  assert!(err.is_allocation_failed(), "got {err:?}");
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn stream_rejects_out_of_order_duplicate_and_skipped_rows() {
+  let plan = AreaResampler::to(4, 4)
+    .plan(8, 8)
+    .expect("valid")
+    .expect("non-identity");
+  let row = [0u8; 8];
+  let mut stream = AreaStream::new(&plan, 1).unwrap();
+
+  // Out of order from the start: row 1 before row 0.
+  let err = stream.feed_row(&plan, 1, &row, |_, _| {}).unwrap_err();
+  match err {
+    ResampleError::OutOfSequenceRow(e) => {
+      assert_eq!((e.expected(), e.got()), (0, 1));
+    }
+    other => panic!("expected OutOfSequenceRow, got {other:?}"),
+  }
+  // The rejected row must not have touched stream state.
+  stream.feed_row(&plan, 0, &row, |_, _| {}).unwrap();
+
+  // Duplicate.
+  let err = stream.feed_row(&plan, 0, &row, |_, _| {}).unwrap_err();
+  assert!(err.is_out_of_sequence_row());
+
+  // Skipped.
+  let err = stream.feed_row(&plan, 2, &row, |_, _| {}).unwrap_err();
+  match err {
+    ResampleError::OutOfSequenceRow(e) => {
+      assert_eq!((e.expected(), e.got()), (1, 2));
+    }
+    other => panic!("expected OutOfSequenceRow, got {other:?}"),
+  }
+
+  // reset() restarts the sequence.
+  stream.reset();
+  stream.feed_row(&plan, 0, &row, |_, _| {}).unwrap();
+}
+
+#[test]
+fn round_div_half_up_is_exact_and_overflow_free() {
+  // Equivalence with (a + d/2) / d on small values, both parities.
+  for d in 1u64..=9 {
+    for a in 0u64..=200 {
+      assert_eq!(round_div_half_up(a, d), (a + d / 2) / d, "a={a} d={d}");
+    }
+  }
+  // Boundary: the naive form would wrap; the q/r form must not.
+  let d = u64::MAX / 255;
+  assert_eq!(round_div_half_up(d * 255, d), 255);
+  assert_eq!(round_div_half_up(u64::MAX, u64::MAX), 1);
+  assert_eq!(round_div_half_up(u64::MAX - 1, u64::MAX), 1);
+  assert_eq!(round_div_half_up(u64::MAX / 2, u64::MAX), 0);
+  assert_eq!(round_div_half_up(u64::MAX / 2 + 1, u64::MAX), 1);
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn stream_constant_input_is_constant() {
+  let plan = AreaResampler::to(3, 2)
+    .plan(7, 5)
+    .expect("valid")
+    .expect("non-identity");
+  let src = std::vec![173u8; 7 * 5];
+  assert!(stream_collect(&plan, &src, 1).iter().all(|&v| v == 173));
+}
+
+#[test]
+fn plan_error_display_names_geometry() {
+  let upscale = ResampleError::UpscaleUnsupported(UpscaleUnsupported::new(1920, 1080, 3840, 2160));
+  assert!(upscale.is_upscale_unsupported());
+  let msg = format!("{upscale}");
   assert!(msg.contains("1920x1080"), "{msg}");
   assert!(msg.contains("3840x2160"), "{msg}");
+
+  let zero = ResampleError::ZeroOutputDimension(ZeroOutputDimension::new(0, 189));
+  assert!(zero.is_zero_output_dimension());
+  assert!(format!("{zero}").contains("0x189"));
+
+  let overflow = ResampleError::Overflow(PlanGeometry::new(usize::MAX, 2, 3, 1));
+  let alloc = ResampleError::AllocationFailed(PlanGeometry::new(usize::MAX, 1, 1, 1));
+  assert!(alloc.is_allocation_failed());
+  assert!(format!("{alloc}").contains("allocation"));
+  assert!(overflow.is_overflow());
+  let msg = format!("{overflow}");
+  assert!(msg.contains("3x1"), "{msg}");
 }
 
 #[test]
-fn zero_output_dimension_reports_geometry() {
-  let payload = ZeroOutputDimension::new(0, 189);
-  assert_eq!(payload.out_w(), 0);
-  assert_eq!(payload.out_h(), 189);
+fn area_plans_products_beyond_32_bits() {
+  // 70_000 x 62_000 exceeds u32::MAX: span coordinates run in u64, so
+  // 32-bit targets plan any geometry whose buffers fit (regression
+  // cover runs under the miri i686 jobs).
+  let plan = AreaResampler::to(62_000, 1)
+    .plan(70_000, 2)
+    .expect("coordinates must not overflow 32-bit usize")
+    .expect("non-identity");
+  let h = plan.h();
+  assert_eq!(h.out_len(), 62_000);
+  let (first_start, first) = h.span(0);
+  assert_eq!(first_start, 0);
+  assert_eq!(first.iter().sum::<usize>(), 70_000);
+  let (last_start, last) = h.span(61_999);
+  assert_eq!(last_start + last.len(), 70_000);
+}
 
-  let err = ResampleError::ZeroOutputDimension(payload);
-  assert!(err.is_zero_output_dimension());
-  let msg = format!("{err}");
-  assert!(msg.contains("0x189"), "{msg}");
+#[test]
+fn area_taps_formula_is_exact() {
+  // Weight-arena size has the closed form src + out - gcd(src, out):
+  // every source cell contributes once, plus one shared straddle cell
+  // per unaligned output boundary. Cross-checked against the arenas
+  // the builder actually materializes.
+  for src in 1..=24usize {
+    for out in 1..=src {
+      let expected = AxisSpans::area_taps(src, out).unwrap();
+      let plan = AreaResampler::to(out, 1).plan(src, 1);
+      if out == src {
+        // Identity plans short-circuit before building spans; check
+        // the formula degenerates to src.
+        assert_eq!(expected, src);
+        continue;
+      }
+      let plan = plan.expect("valid").expect("non-identity");
+      let total: usize = (0..out).map(|j| plan.h().span(j).1.len()).sum();
+      assert_eq!(total, expected, "src={src} out={out}");
+    }
+  }
+  // Pure arithmetic at hostile magnitudes — no allocation involved.
+  assert_eq!(AxisSpans::area_taps(usize::MAX, 1), Some(usize::MAX));
+}
+
+#[test]
+fn area_tiny_output_huge_source_fails_recoverably() {
+  // A hostile source dimension from untrusted metadata must surface a
+  // structured error, not abort inside infallible allocation: the
+  // weight arena for usize::MAX taps trips Vec::try_reserve_exact
+  // capacity overflow deterministically.
+  let err = AreaResampler::to(1, 1).plan(usize::MAX, 1).unwrap_err();
+  assert!(err.is_allocation_failed(), "got {err:?}");
+}
+
+#[test]
+fn area_overflow_rejected() {
+  // src_w * out_w cannot be represented: the span grid for the
+  // horizontal axis would overflow usize.
+  let err = AreaResampler::to(usize::MAX / 2, 1)
+    .plan(usize::MAX - 1, 1)
+    .unwrap_err();
+  assert!(err.is_overflow(), "got {err:?}");
 }

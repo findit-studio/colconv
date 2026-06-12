@@ -4,10 +4,7 @@
 
 use crate::{
   PixelSink,
-  resample::{
-    NoopResampler, ResampleError,
-    test_support::{AlwaysFails, FixedDownscale},
-  },
+  resample::{AreaResampler, NoopResampler, ResampleError},
   sinker::{MixedSinker, MixedSinkerError, mixed::HsvPlane},
   source::Yuv420p,
 };
@@ -15,9 +12,9 @@ use crate::{
 const SRC: usize = 8;
 const OUT: usize = 4;
 
-fn downscaled<'a>() -> MixedSinker<'a, Yuv420p, FixedDownscale> {
-  MixedSinker::<Yuv420p, FixedDownscale>::with_resampler(SRC, SRC, FixedDownscale::new(OUT, OUT))
-    .expect("fixed downscale plan never fails")
+fn downscaled<'a>() -> MixedSinker<'a, Yuv420p, AreaResampler> {
+  MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+    .expect("8x8 -> 4x4 area plan never fails")
 }
 
 #[test]
@@ -32,6 +29,14 @@ fn with_resampler_noop_matches_new() {
   let sink = MixedSinker::<Yuv420p, NoopResampler>::with_resampler(SRC, SRC, NoopResampler)
     .expect("identity plan never fails");
   assert_eq!((sink.width(), sink.height()), (SRC, SRC));
+  assert_eq!((sink.out_width(), sink.out_height()), (SRC, SRC));
+}
+
+#[test]
+fn with_resampler_area_identity_matches_new() {
+  let sink =
+    MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(SRC, SRC))
+      .expect("identity area plan never fails");
   assert_eq!((sink.out_width(), sink.out_height()), (SRC, SRC));
 }
 
@@ -123,11 +128,9 @@ fn hsv_planes_validate_against_output_geometry() {
 
 #[test]
 fn begin_frame_still_validates_source_geometry() {
-  // Non-identity sinks deliberately have no `PixelSink` impl until the
-  // streaming engine routes output geometry, so the walker contract is
-  // pinned on the `with_resampler`-built identity sink.
-  let mut sink = MixedSinker::<Yuv420p, NoopResampler>::with_resampler(SRC, SRC, NoopResampler)
-    .expect("identity plan never fails");
+  // The walker contract is unchanged under a non-identity plan: frames
+  // validate against the SOURCE geometry, never the output geometry.
+  let mut sink = downscaled();
   assert!(sink.begin_frame(SRC as u32, SRC as u32).is_ok());
   assert!(matches!(
     sink.begin_frame(OUT as u32, OUT as u32),
@@ -137,11 +140,378 @@ fn begin_frame_still_validates_source_geometry() {
 
 #[test]
 fn plan_error_surfaces_as_mixed_sinker_error() {
-  let err = MixedSinker::<Yuv420p, AlwaysFails>::with_resampler(SRC, SRC, AlwaysFails)
-    .map(|_| ())
-    .unwrap_err();
+  let err =
+    MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(0, 0))
+      .map(|_| ())
+      .unwrap_err();
   assert!(matches!(
     err,
     MixedSinkerError::Resample(ResampleError::ZeroOutputDimension(_))
   ));
+}
+
+// ---- End-to-end fused downscale (Yuv420p row-stage tier) ----------------
+
+use crate::{ColorMatrix, frame::Yuv420pFrame, source::yuv420p_to};
+
+/// 8x8 frame whose Y plane is the row-major ramp `8*row + col` with
+/// neutral chroma: full-range luma equals the Y plane verbatim, so
+/// area means are hand-computable.
+fn gradient_frame_planes() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+  let y: Vec<u8> = (0..64u8).collect();
+  (y, vec![128u8; 16], vec![128u8; 16])
+}
+
+#[test]
+fn downscale_yuv420p_gradient_luma_integer_ratio() {
+  let (yp, up, vp) = gradient_frame_planes();
+  let src = Yuv420pFrame::new(&yp, &up, &vp, 8, 8, 8, 4, 4);
+
+  let mut luma = vec![0u8; OUT * OUT];
+  let mut sink =
+    MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap();
+  yuv420p_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
+
+  // 2x2 block mean of the ramp is `16r + 2c + 4.5`; round-half-up.
+  for r in 0..OUT {
+    for c in 0..OUT {
+      assert_eq!(luma[r * OUT + c], (16 * r + 2 * c + 5) as u8, "({r},{c})");
+    }
+  }
+}
+
+#[test]
+fn downscale_yuv420p_gradient_luma_fractional_ratio() {
+  let (yp, up, vp) = gradient_frame_planes();
+  let src = Yuv420pFrame::new(&yp, &up, &vp, 8, 8, 8, 4, 4);
+
+  let mut luma = vec![0u8; 3 * 3];
+  let mut sink =
+    MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(3, 3))
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap();
+  yuv420p_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
+
+  // Independent reference: direct 2-D area mean over the ramp with the
+  // exact coverage weights (x3 grid), denominator 64, round-half-up.
+  let spans = [
+    (0usize, [3u64, 3, 2].as_slice()),
+    (2, &[1, 3, 3, 1]),
+    (5, &[2, 3, 3]),
+  ];
+  for (r, &(vy, vw)) in spans.iter().enumerate() {
+    for (c, &(hx, hw)) in spans.iter().enumerate() {
+      let mut acc = 0u64;
+      for (dy, &wy) in vw.iter().enumerate() {
+        for (dx, &wx) in hw.iter().enumerate() {
+          acc += wy * wx * (8 * (vy + dy) + hx + dx) as u64;
+        }
+      }
+      let expected = ((acc + 32) / 64) as u8;
+      assert_eq!(luma[r * 3 + c], expected, "({r},{c})");
+    }
+  }
+}
+
+#[test]
+fn downscale_yuv420p_solid_matches_full_res_conversion() {
+  // A solid frame's downscale must equal the full-res conversion's
+  // solid value on every output channel.
+  let yp = vec![120u8; 64];
+  let up = vec![90u8; 16];
+  let vp = vec![170u8; 16];
+  let src = Yuv420pFrame::new(&yp, &up, &vp, 8, 8, 8, 4, 4);
+
+  let mut full_rgb = vec![0u8; SRC * SRC * 3];
+  let mut full_h = vec![0u8; SRC * SRC];
+  let mut full_s = vec![0u8; SRC * SRC];
+  let mut full_v = vec![0u8; SRC * SRC];
+  let mut full = MixedSinker::<Yuv420p>::new(SRC, SRC)
+    .with_rgb(&mut full_rgb)
+    .unwrap()
+    .with_hsv(&mut full_h, &mut full_s, &mut full_v)
+    .unwrap();
+  yuv420p_to(&src, false, ColorMatrix::Bt709, &mut full).unwrap();
+
+  let mut rgb = vec![0u8; OUT * OUT * 3];
+  let mut rgba = vec![0u8; OUT * OUT * 4];
+  let mut luma = vec![0u8; OUT * OUT];
+  let mut luma_u16 = vec![0u16; OUT * OUT];
+  let mut h = vec![0u8; OUT * OUT];
+  let mut s = vec![0u8; OUT * OUT];
+  let mut v = vec![0u8; OUT * OUT];
+  let mut sink =
+    MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+      .unwrap()
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_rgba(&mut rgba)
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap()
+      .with_luma_u16(&mut luma_u16)
+      .unwrap()
+      .with_hsv(&mut h, &mut s, &mut v)
+      .unwrap();
+  yuv420p_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  let (er, eg, eb) = (full_rgb[0], full_rgb[1], full_rgb[2]);
+  for px in rgb.chunks_exact(3) {
+    assert_eq!((px[0], px[1], px[2]), (er, eg, eb));
+  }
+  for px in rgba.chunks_exact(4) {
+    assert_eq!((px[0], px[1], px[2], px[3]), (er, eg, eb, 0xFF));
+  }
+  assert!(luma.iter().all(|&l| l == 120));
+  assert!(luma_u16.iter().all(|&l| l == 120));
+  assert!(h.iter().all(|&x| x == full_h[0]));
+  assert!(s.iter().all(|&x| x == full_s[0]));
+  assert!(v.iter().all(|&x| x == full_v[0]));
+}
+
+#[test]
+fn downscale_luma_only_works_without_rgb_buffers() {
+  let (yp, up, vp) = gradient_frame_planes();
+  let src = Yuv420pFrame::new(&yp, &up, &vp, 8, 8, 8, 4, 4);
+
+  let mut luma = vec![0u8; OUT * OUT];
+  let mut sink =
+    MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap();
+  yuv420p_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
+  assert_eq!(luma[0], 5);
+}
+
+#[test]
+fn downscale_state_resets_between_frames() {
+  let (yp, up, vp) = gradient_frame_planes();
+  let src1 = Yuv420pFrame::new(&yp, &up, &vp, 8, 8, 8, 4, 4);
+  let solid = vec![40u8; 64];
+  let src2 = Yuv420pFrame::new(&solid, &up, &vp, 8, 8, 8, 4, 4);
+
+  let mut luma = vec![0u8; OUT * OUT];
+  let mut sink =
+    MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap();
+  yuv420p_to(&src1, true, ColorMatrix::Bt601, &mut sink).unwrap();
+  yuv420p_to(&src2, true, ColorMatrix::Bt601, &mut sink).unwrap();
+  assert!(
+    luma.iter().all(|&l| l == 40),
+    "second frame must not inherit state"
+  );
+}
+
+#[test]
+fn direct_out_of_order_process_rejected_under_resampling() {
+  use crate::source::Yuv420pRow;
+
+  let mut luma = vec![0u8; OUT * OUT];
+  let mut sink = downscaled().with_luma(&mut luma).unwrap();
+  sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+
+  let y = [0u8; SRC];
+  let u = [128u8; SRC / 2];
+  let v = [128u8; SRC / 2];
+  // Row 3 before rows 0..3: the stream must reject, not corrupt.
+  let err = sink
+    .process(Yuv420pRow::new(&y, &u, &v, 3, ColorMatrix::Bt601, true))
+    .unwrap_err();
+  assert!(matches!(
+    err,
+    MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(_))
+  ));
+}
+
+#[test]
+fn mid_frame_output_reconfiguration_rejected_atomically() {
+  use crate::source::Yuv420pRow;
+
+  let y = [50u8; SRC];
+  let u = [128u8; SRC / 2];
+  let v = [128u8; SRC / 2];
+  let mut rgb = vec![0u8; OUT * OUT * 3];
+
+  // Attaching a new output mid-frame desyncs the (fresh) color stream
+  // from the in-flight luma stream: the call must fail BEFORE any
+  // stream mutates caller output.
+  let mut luma = vec![0u8; OUT * OUT];
+  {
+    let mut sink = downscaled().with_luma(&mut luma).unwrap();
+    sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+    sink
+      .process(Yuv420pRow::new(&y, &u, &v, 0, ColorMatrix::Bt601, true))
+      .unwrap();
+    sink.set_rgb(&mut rgb).unwrap();
+    // Row 1 would have completed luma output row 0.
+    let err = sink
+      .process(Yuv420pRow::new(&y, &u, &v, 1, ColorMatrix::Bt601, true))
+      .unwrap_err();
+    assert!(matches!(err, MixedSinkerError::ResampleOutputsChanged(_)));
+  }
+  assert!(
+    luma.iter().all(|&l| l == 0),
+    "luma mutated on a failed call"
+  );
+
+  // begin_frame restarts every stream on the SAME sink: a full ordered
+  // frame after the failed call succeeds.
+  let mut luma = vec![0u8; OUT * OUT];
+  {
+    let mut rgb = vec![0u8; OUT * OUT * 3];
+    let mut sink = downscaled().with_luma(&mut luma).unwrap();
+    sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+    sink
+      .process(Yuv420pRow::new(&y, &u, &v, 0, ColorMatrix::Bt601, true))
+      .unwrap();
+    sink.set_rgb(&mut rgb).unwrap();
+    sink
+      .process(Yuv420pRow::new(&y, &u, &v, 1, ColorMatrix::Bt601, true))
+      .unwrap_err();
+    sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+    for row in 0..SRC {
+      sink
+        .process(Yuv420pRow::new(&y, &u, &v, row, ColorMatrix::Bt601, true))
+        .unwrap();
+    }
+  }
+  assert!(luma.iter().all(|&l| l == 50));
+}
+
+#[test]
+fn same_group_mid_frame_attachment_rejected_atomically() {
+  use crate::source::Yuv420pRow;
+
+  let y = [50u8; SRC];
+  let u = [128u8; SRC / 2];
+  let v = [128u8; SRC / 2];
+
+  // Color group: HSV joining after RGB has already emitted rows.
+  let mut rgb = vec![0u8; OUT * OUT * 3];
+  let mut h = vec![0u8; OUT * OUT];
+  let mut s_ = vec![0u8; OUT * OUT];
+  let mut v_ = vec![0u8; OUT * OUT];
+  {
+    let mut sink = downscaled().with_rgb(&mut rgb).unwrap();
+    sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+    for row in 0..2 {
+      sink
+        .process(Yuv420pRow::new(&y, &u, &v, row, ColorMatrix::Bt601, true))
+        .unwrap();
+    }
+    sink.set_hsv(&mut h, &mut s_, &mut v_).unwrap();
+    let err = sink
+      .process(Yuv420pRow::new(&y, &u, &v, 2, ColorMatrix::Bt601, true))
+      .unwrap_err();
+    assert!(matches!(err, MixedSinkerError::ResampleOutputsChanged(_)));
+  }
+  assert!(h.iter().all(|&x| x == 0), "late HSV must stay untouched");
+
+  // Luma group: luma_u16 joining after luma has emitted rows.
+  let mut luma = vec![0u8; OUT * OUT];
+  let mut luma16 = vec![0u16; OUT * OUT];
+  {
+    let mut sink = downscaled().with_luma(&mut luma).unwrap();
+    sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+    for row in 0..2 {
+      sink
+        .process(Yuv420pRow::new(&y, &u, &v, row, ColorMatrix::Bt601, true))
+        .unwrap();
+    }
+    sink.set_luma_u16(&mut luma16).unwrap();
+    let err = sink
+      .process(Yuv420pRow::new(&y, &u, &v, 2, ColorMatrix::Bt601, true))
+      .unwrap_err();
+    assert!(matches!(err, MixedSinkerError::ResampleOutputsChanged(_)));
+  }
+  assert!(luma16.iter().all(|&x| x == 0));
+}
+
+#[test]
+fn same_channel_buffer_replacement_rejected_atomically() {
+  use crate::source::Yuv420pRow;
+
+  let y = [50u8; SRC];
+  let u = [128u8; SRC / 2];
+  let v = [128u8; SRC / 2];
+
+  // RGB replaced by a different buffer mid-frame: presence is
+  // unchanged, identity is not — the frame must not split across two
+  // caller buffers.
+  let mut rgb_a = vec![0u8; OUT * OUT * 3];
+  let mut rgb_b = vec![0u8; OUT * OUT * 3];
+  {
+    let mut sink = downscaled().with_rgb(&mut rgb_a).unwrap();
+    sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+    for row in 0..2 {
+      sink
+        .process(Yuv420pRow::new(&y, &u, &v, row, ColorMatrix::Bt601, true))
+        .unwrap();
+    }
+    sink.set_rgb(&mut rgb_b).unwrap();
+    let err = sink
+      .process(Yuv420pRow::new(&y, &u, &v, 2, ColorMatrix::Bt601, true))
+      .unwrap_err();
+    assert!(matches!(err, MixedSinkerError::ResampleOutputsChanged(_)));
+  }
+  assert!(
+    rgb_b.iter().all(|&x| x == 0),
+    "replacement buffer must stay untouched"
+  );
+  assert!(
+    rgb_a[..OUT * 3].iter().all(|&x| x != 0),
+    "original buffer keeps its emitted row"
+  );
+
+  // HSV planes replaced mid-frame: same contract.
+  let mut h_a = vec![0u8; OUT * OUT];
+  let mut s_a = vec![0u8; OUT * OUT];
+  let mut v_a = vec![0u8; OUT * OUT];
+  let mut h_b = vec![0u8; OUT * OUT];
+  let mut s_b = vec![0u8; OUT * OUT];
+  let mut v_b = vec![0u8; OUT * OUT];
+  {
+    let mut sink = downscaled().with_hsv(&mut h_a, &mut s_a, &mut v_a).unwrap();
+    sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+    for row in 0..2 {
+      sink
+        .process(Yuv420pRow::new(&y, &u, &v, row, ColorMatrix::Bt601, true))
+        .unwrap();
+    }
+    sink.set_hsv(&mut h_b, &mut s_b, &mut v_b).unwrap();
+    let err = sink
+      .process(Yuv420pRow::new(&y, &u, &v, 2, ColorMatrix::Bt601, true))
+      .unwrap_err();
+    assert!(matches!(err, MixedSinkerError::ResampleOutputsChanged(_)));
+  }
+  assert!(v_b.iter().all(|&x| x == 0));
+}
+
+#[test]
+fn identity_area_full_pipeline_matches_new_sink() {
+  let (yp, up, vp) = gradient_frame_planes();
+  let src = Yuv420pFrame::new(&yp, &up, &vp, 8, 8, 8, 4, 4);
+
+  let mut direct = vec![0u8; SRC * SRC * 3];
+  let mut sink = MixedSinker::<Yuv420p>::new(SRC, SRC)
+    .with_rgb(&mut direct)
+    .unwrap();
+  yuv420p_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
+
+  let mut via_area = vec![0u8; SRC * SRC * 3];
+  let mut sink =
+    MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(SRC, SRC))
+      .unwrap()
+      .with_rgb(&mut via_area)
+      .unwrap();
+  yuv420p_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
+
+  assert_eq!(direct, via_area);
 }

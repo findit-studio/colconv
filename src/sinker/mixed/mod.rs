@@ -112,7 +112,7 @@ use thiserror::Error;
 
 use crate::{
   SourceFormat,
-  resample::{NoopResampler, ResampleError, Resampler},
+  resample::{NoopResampler, ResampleError, ResamplePlan, Resampler},
 };
 // PixelSink is referenced only via intra-doc links (`[`PixelSink::*`]`)
 // in this file; the rustc lint can't see those uses, so silence it.
@@ -373,6 +373,78 @@ impl RowIndexOutOfRange {
   }
 }
 
+/// Snapshot of a resampled frame's complete output configuration:
+/// presence plus attachment identity (data pointer and length) for
+/// luma, luma_u16, rgb, rgba, and the three HSV planes. Equality is
+/// the per-frame immutability check — in safe code a mid-frame
+/// `set_*` necessarily supplies a different borrow, so an identity
+/// change is exactly a reattachment.
+#[cfg(feature = "yuv-planar")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct FrozenOutputs {
+  idents: [(usize, usize); 7],
+}
+
+#[cfg(feature = "yuv-planar")]
+impl FrozenOutputs {
+  /// Identity of one attached buffer: `(data pointer, length)`, or
+  /// `(0, 0)` for an absent output (a slice pointer is never null).
+  fn ident<T>(buf: Option<&[T]>) -> (usize, usize) {
+    buf.map_or((0, 0), |b| (b.as_ptr() as usize, b.len()))
+  }
+
+  /// Builds the snapshot from the currently attached outputs.
+  pub(super) fn snapshot(
+    luma: Option<&[u8]>,
+    luma_u16: Option<&[u16]>,
+    rgb: Option<&[u8]>,
+    rgba: Option<&[u8]>,
+    hsv: Option<(&[u8], &[u8], &[u8])>,
+  ) -> Self {
+    let (h, s, v) = match hsv {
+      Some((h, s, v)) => (
+        Self::ident(Some(h)),
+        Self::ident(Some(s)),
+        Self::ident(Some(v)),
+      ),
+      None => ((0, 0), (0, 0), (0, 0)),
+    };
+    Self {
+      idents: [
+        Self::ident(luma),
+        Self::ident(luma_u16),
+        Self::ident(rgb),
+        Self::ident(rgba),
+        h,
+        s,
+        v,
+      ],
+    }
+  }
+}
+
+/// Mid-frame output-set change payload for
+/// [`MixedSinkerError::ResampleOutputsChanged`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResampleOutputsChanged {
+  /// Source row whose `process` call observed the changed output set.
+  row: usize,
+}
+
+impl ResampleOutputsChanged {
+  /// Constructs a new `ResampleOutputsChanged` payload.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn new(row: usize) -> Self {
+    Self { row }
+  }
+
+  /// Source row whose `process` call observed the changed output set.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn row(&self) -> usize {
+    self.row
+  }
+}
+
 /// Errors returned by [`MixedSinker`] configuration and per-frame
 /// preflight.
 ///
@@ -537,6 +609,21 @@ pub enum MixedSinkerError {
   /// no buffer state is touched.
   #[error(transparent)]
   Resample(#[from] ResampleError),
+
+  /// On a resampling sinker the attached-output configuration is
+  /// frozen per frame: streams carry frame progress, so an output
+  /// attached, detached, or **replaced with a different buffer**
+  /// after the first processed row would silently miss (or split)
+  /// the rows already finalized. The offending `process` call fails
+  /// before any stream mutates caller output; re-attach and call
+  /// [`PixelSink::begin_frame`] to restart the frame with the new
+  /// configuration. The direct (identity) path is unaffected.
+  #[error(
+    "MixedSinker resampled output set changed mid-frame at source row {}; \
+     restart the frame via begin_frame",
+    .0.row()
+  )]
+  ResampleOutputsChanged(ResampleOutputsChanged),
 }
 
 /// Identifies which slice of a multi‑plane source row mismatched in
@@ -1059,11 +1146,13 @@ pub enum RowSlice {
 /// the output geometry; [`PixelSink::begin_frame`] always validates
 /// the walker against the source geometry.
 ///
-/// Until the resampling engine lands, the per-format [`PixelSink`]
-/// impls are pinned to the default strategy: a sinker built with a
-/// non-identity strategy can attach (output-validated) buffers but
-/// does not implement [`PixelSink`], so routing it through a walker is
-/// a compile error rather than a geometry-mismatch panic.
+/// Formats route non-identity plans as they wire into the streaming
+/// engine (currently [`Yuv420p`](crate::source::Yuv420p)). Every other
+/// per-format [`PixelSink`] impl stays pinned to the default strategy:
+/// a sinker built with a non-identity strategy can attach
+/// (output-validated) buffers but does not implement [`PixelSink`], so
+/// routing it through a walker is a compile error rather than a
+/// geometry-mismatch panic.
 pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   rgb: Option<&'a mut [u8]>,
   rgb_u16: Option<&'a mut [u16]>,
@@ -1109,6 +1198,26 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// geometry.
   out_width: usize,
   out_height: usize,
+  /// The non-identity plan fixed by [`MixedSinker::with_resampler`];
+  /// `None` for [`MixedSinker::new`] and identity plans (the sinker
+  /// then takes the direct conversion path).
+  plan: Option<ResamplePlan>,
+  /// Row-stage area streams (color group / luma group) for formats
+  /// that route non-identity plans. Lazily created in `process`,
+  /// reset in `begin_frame`. Gated like the engine itself, widening
+  /// as families wire in.
+  #[cfg(feature = "yuv-planar")]
+  rgb_stream: Option<crate::resample::AreaStream>,
+  #[cfg(feature = "yuv-planar")]
+  luma_stream: Option<crate::resample::AreaStream>,
+  /// Output configuration frozen at a resampled frame's first
+  /// processed row; `None` between frames. Captures presence AND
+  /// attachment identity (pointer/length) of every output the emit
+  /// closures consult, so both membership changes and same-channel
+  /// buffer replacement trip
+  /// [`MixedSinkerError::ResampleOutputsChanged`].
+  #[cfg(feature = "yuv-planar")]
+  resample_outputs: Option<FrozenOutputs>,
   /// Lazily grown to `3 * width` bytes when HSV is requested without a
   /// user RGB buffer. Empty otherwise.
   ///
@@ -1518,6 +1627,13 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       height,
       out_width,
       out_height,
+      plan: None,
+      #[cfg(feature = "yuv-planar")]
+      rgb_stream: None,
+      #[cfg(feature = "yuv-planar")]
+      luma_stream: None,
+      #[cfg(feature = "yuv-planar")]
+      resample_outputs: None,
       #[cfg(any(
         feature = "bayer",
         feature = "gbr",
@@ -1691,6 +1807,14 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
     self.out_height
   }
 
+  /// The resampling plan fixed at construction — `Some` only for
+  /// sinkers built via [`MixedSinker::with_resampler`] with a
+  /// non-identity strategy.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn resample_plan(&self) -> Option<&ResamplePlan> {
+    self.plan.as_ref()
+  }
+
   /// Returns `true` iff row primitives dispatch to their SIMD backend.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn simd(&self) -> bool {
@@ -1790,10 +1914,12 @@ impl<'a, F: SourceFormat, R> MixedSinker<'a, F, R> {
   /// With [`NoopResampler`] this is equivalent to [`MixedSinker::new`]
   /// (identity plan, infallible in practice).
   ///
-  /// Per-format [`PixelSink`] impls are currently pinned to the
-  /// default strategy (see the type-level docs), so a sinker built
-  /// here with any other strategy validates buffers against its
-  /// output geometry but cannot yet process frames.
+  /// Formats route non-identity plans as they wire into the streaming
+  /// engine (currently [`Yuv420p`](crate::source::Yuv420p)); the
+  /// remaining per-format [`PixelSink`] impls stay pinned to the
+  /// default strategy, so a sinker built here for those formats
+  /// validates buffers against its output geometry but cannot yet
+  /// process frames (see the type-level docs).
   ///
   /// # Errors
   ///
@@ -1805,11 +1931,14 @@ impl<'a, F: SourceFormat, R> MixedSinker<'a, F, R> {
   where
     R: Resampler,
   {
-    let (out_width, out_height) = match resampler.plan(width, height)? {
+    let plan = resampler.plan(width, height)?;
+    let (out_width, out_height) = match plan.as_ref() {
       Some(plan) => plan.out_dims(),
       None => (width, height),
     };
-    Ok(Self::with_geometry(width, height, out_width, out_height))
+    let mut sink = Self::with_geometry(width, height, out_width, out_height);
+    sink.plan = plan;
+    Ok(sink)
   }
 
   /// Attaches a packed 24-bit RGB output buffer.
