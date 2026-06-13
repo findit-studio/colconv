@@ -17,6 +17,14 @@
 //! The streaming engine that executes non-identity plans lands with
 //! the per-format route dispatch.
 
+// The streaming engine compiles for every source family whose gate is
+// widened (so its formats can route in a later PR) but has no consumer
+// until that family is wired up. In a family-only build that has not
+// yet routed — anything outside `yuv-planar` / `rgb` — the engine is
+// legitimately present-but-unused; allow it rather than gate each item
+// on the moving target of "which families route today".
+#![cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
+
 use std::vec::Vec;
 
 use derive_more::{IsVariant, TryUnwrap, Unwrap};
@@ -116,7 +124,15 @@ impl Resampler for AreaResampler {
 /// Zero-filled buffer via fallible reservation: `resize` after an
 /// exact reserve cannot reallocate, so refusal is the only failure
 /// and it surfaces as the error instead of aborting.
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
 pub(crate) fn try_zeroed<T: Clone + Default>(
   n: usize,
 ) -> Result<Vec<T>, std::collections::TryReserveError> {
@@ -563,7 +579,15 @@ fn round_div_half_up(a: u64, d: u64) -> u64 {
 /// finalize. `u8` and `u16` route the SIMD dispatchers and finalize
 /// round-half-up in `u64`; `f32` accumulates in float (scalar; SIMD
 /// follows) and finalizes with a plain divide.
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
 pub(crate) trait AreaSample: Copy + Default {
   /// H-pass accumulator element. Integer samples sum exactly in a wide
   /// integer (`u32` for `u8` — an H-sum reaches `src_w * 255` and the
@@ -596,7 +620,15 @@ pub(crate) trait AreaSample: Copy + Default {
   fn finalize(acc: Self::VAcc, denom: u64) -> Self;
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
 impl AreaSample for u8 {
   type HSum = u32;
   type VAcc = u64;
@@ -635,7 +667,15 @@ impl AreaSample for u8 {
 /// production by the high-bit packed-RGB sinkers (`Rgb48` / `Bgr48`).
 /// Still unreachable under a `yuv-planar`-only build (no high-bit
 /// planar format routes through it yet), hence the `rgb`-gated allow.
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
 #[cfg_attr(not(feature = "rgb"), allow(dead_code))]
 impl AreaSample for u16 {
   type HSum = u64;
@@ -686,7 +726,15 @@ impl AreaSample for u16 {
 /// paths; reachable only from the parity tests until a float source
 /// format routes through it (the dead-code allow drops then, as it did
 /// for `u16` once `Rgb48` landed).
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
 #[allow(dead_code)]
 impl AreaSample for f32 {
   type HSum = f64;
@@ -742,7 +790,15 @@ impl AreaSample for f32 {
 ///
 /// Gated to the families that route through it; the gate widens as
 /// formats wire in.
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
 #[derive(Debug)]
 pub(crate) struct AreaStream<S: AreaSample> {
   /// Owned horizontal spans — both the scalar reference and the SIMD
@@ -775,7 +831,15 @@ pub(crate) struct AreaStream<S: AreaSample> {
   next_y: usize,
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
 impl<S: AreaSample> AreaStream<S> {
   /// Creates a stream for `channels` interleaved channels of the
   /// plan's geometry. Fails with [`ResampleError::Overflow`] when the
@@ -1055,7 +1119,19 @@ pub enum ResampleError {
   OutOfSequenceRow(OutOfSequenceRow),
 }
 
-#[cfg(all(test, feature = "std", any(feature = "yuv-planar", feature = "rgb")))]
+#[cfg(all(
+  test,
+  feature = "std",
+  any(
+    feature = "yuv-planar",
+    feature = "rgb",
+    feature = "gbr",
+    feature = "gray",
+    feature = "xyz",
+    feature = "bayer",
+    feature = "mono"
+  )
+))]
 mod cv2_goldens;
 #[cfg(all(test, feature = "std"))]
 mod tests;

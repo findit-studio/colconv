@@ -99,7 +99,15 @@ pub(crate) use dispatch::alpha_extract;
 // `AreaStream`.
 #[cfg(all(
   any(feature = "std", feature = "alloc"),
-  any(feature = "yuv-planar", feature = "rgb")
+  any(
+    feature = "yuv-planar",
+    feature = "rgb",
+    feature = "gbr",
+    feature = "gray",
+    feature = "xyz",
+    feature = "bayer",
+    feature = "mono"
+  )
 ))]
 pub(crate) use dispatch::area_reduce::{
   PaddedSpans, area_h_reduce_row, area_h_reduce_row_f32, area_h_reduce_row_u16, area_v_accumulate,
