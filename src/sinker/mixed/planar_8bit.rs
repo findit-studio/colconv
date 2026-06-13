@@ -1652,9 +1652,9 @@ impl<'a, R> MixedSinker<'a, Yuv411p, R> {
   }
 }
 
-impl Yuv411pSink for MixedSinker<'_, Yuv411p> {}
+impl<R> Yuv411pSink for MixedSinker<'_, Yuv411p, R> {}
 
-impl PixelSink for MixedSinker<'_, Yuv411p> {
+impl<R> PixelSink for MixedSinker<'_, Yuv411p, R> {
   type Input<'r> = Yuv411pRow<'r>;
   type Error = MixedSinkerError;
 
@@ -1663,7 +1663,14 @@ impl PixelSink for MixedSinker<'_, Yuv411p> {
     // `width.div_ceil(4)` samples; the scalar kernel handles a
     // partial 1..3-pixel final chroma group). No width-parity
     // restriction here.
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    // Resampling carries frame progress in the stream; reset it and
+    // re-freeze the output set so each frame starts clean.
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: Yuv411pRow<'_>) -> Result<(), Self::Error> {
@@ -1714,8 +1721,59 @@ impl PixelSink for MixedSinker<'_, Yuv411p> {
       luma_u16,
       hsv,
       rgb_scratch,
+      plan,
+      rgb_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: freeze the output set, then check stream
+    // sequencing — both before touching the scratch — so a no-output
+    // sink stays a no-op and an out-of-sequence row is rejected
+    // without the source-width allocation/conversion. Only then
+    // upsample chroma into a full-width RGB row (the same
+    // `yuv_411_to_rgb_row` kernel the identity path uses) and feed
+    // the one packed-RGB resample tail. Yuv411p is row-stage only —
+    // every output derives from the binned RGB rows.
+    if let Some(plan) = plan.as_ref() {
+      if !super::packed_rgb_resample_preflight(
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        idx,
+      )? {
+        return Ok(());
+      }
+      let stream = super::packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+      let scratch = super::source_rgb_scratch(rgb_scratch, w, plan)?;
+      yuv_411_to_rgb_row(
+        row.y(),
+        row.u_quarter(),
+        row.v_quarter(),
+        scratch,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+      return super::packed_rgb_resample_emit(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        scratch,
+        row.matrix(),
+        row.full_range(),
+        idx,
+        use_simd,
+      );
+    }
 
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
