@@ -1243,9 +1243,9 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// reset in `begin_frame`. Gated like the engine itself, widening
   /// as families wire in.
   #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
-  rgb_stream: Option<crate::resample::AreaStream>,
+  rgb_stream: Option<crate::resample::AreaStream<u8>>,
   #[cfg(feature = "yuv-planar")]
-  luma_stream: Option<crate::resample::AreaStream>,
+  luma_stream: Option<crate::resample::AreaStream<u8>>,
   /// Output configuration frozen at a resampled frame's first
   /// processed row; `None` between frames. Captures presence AND
   /// attachment identity (pointer/length) of every output the emit
@@ -2487,10 +2487,10 @@ pub(super) fn packed_rgb_resample_preflight(
 /// row, so an out-of-sequence row is rejected without the scratch
 /// allocation/conversion (matching the `Rgb24` / YUV ordering).
 pub(super) fn packed_rgb_resample_stream<'s>(
-  rgb_stream: &'s mut Option<crate::resample::AreaStream>,
+  rgb_stream: &'s mut Option<crate::resample::AreaStream<u8>>,
   plan: &ResamplePlan,
   idx: usize,
-) -> Result<&'s mut crate::resample::AreaStream, MixedSinkerError> {
+) -> Result<&'s mut crate::resample::AreaStream<u8>, MixedSinkerError> {
   let stream = match rgb_stream {
     Some(stream) => stream,
     None => rgb_stream.insert(crate::resample::AreaStream::new(
@@ -2515,7 +2515,7 @@ pub(super) fn packed_rgb_resample_stream<'s>(
 /// each finalized output row.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgb_resample_emit(
-  stream: &mut crate::resample::AreaStream,
+  stream: &mut crate::resample::AreaStream<u8>,
   plan: &ResamplePlan,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
