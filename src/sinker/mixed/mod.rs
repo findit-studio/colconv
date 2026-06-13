@@ -1894,8 +1894,9 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
 
   /// Capacity of the source-row staging scratch — a white-box probe
   /// for the resample ordering tests (a rejected row must not have
-  /// grown the scratch).
-  #[cfg(all(test, feature = "rgb"))]
+  /// grown the scratch). Gated on `std` like the tests that consume it,
+  /// so it is not dead code in the alloc-only test build.
+  #[cfg(all(test, feature = "rgb", feature = "std"))]
   pub(crate) fn rgb_scratch_capacity(&self) -> usize {
     self.rgb_scratch.capacity()
   }
@@ -1903,8 +1904,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   /// Whether the high-bit packed-RGB `u16` area stream has been
   /// created — a white-box probe for the resample ordering tests (an
   /// out-of-sequence first row must be rejected before the stream is
-  /// allocated).
-  #[cfg(all(test, feature = "rgb"))]
+  /// allocated). Gated on `std` like the tests that consume it.
+  #[cfg(all(test, feature = "rgb", feature = "std"))]
   pub(crate) fn rgb_stream_u16_allocated(&self) -> bool {
     self.rgb_stream_u16.is_some()
   }
