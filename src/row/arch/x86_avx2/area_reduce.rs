@@ -318,3 +318,292 @@ pub(crate) unsafe fn area_v_accumulate(acc: &mut [u64], h_tmp: &[u32], w: u32) {
     acc[k] += u64::from(w) * u64::from(h_tmp[k]);
   }
 }
+
+/// Sums the two u64 lanes of a 128-bit accumulator.
+#[inline]
+#[target_feature(enable = "avx2")]
+fn hsum128_u64(acc: __m128i) -> u64 {
+  let hi = _mm_unpackhi_epi64(acc, acc);
+  _mm_cvtsi128_si64(_mm_add_epi64(acc, hi)) as u64
+}
+
+/// Sums the four u64 lanes of a 256-bit accumulator.
+#[inline]
+#[target_feature(enable = "avx2")]
+fn hsum256_u64(acc: __m256i) -> u64 {
+  let lo = _mm256_castsi256_si128(acc);
+  let hi = _mm256_extracti128_si256::<1>(acc);
+  hsum128_u64(_mm_add_epi64(lo, hi))
+}
+
+/// Accumulates the eight exact `u16 * u16 -> u32` products of `s16 * w`
+/// (128-bit, 8 u16 lanes) into the two u64 lanes of `acc`. Unlike the
+/// u8 [`mac128_u16x8`], a `u16` span sum overflows `u32`, so the
+/// products widen to u64 before accumulating. Mirrors the SSE4.1
+/// `mac_u16x8_u64`.
+#[inline]
+#[target_feature(enable = "avx2")]
+fn mac128_u16x8_u64(acc: __m128i, s16: __m128i, w: __m128i) -> __m128i {
+  let lo = _mm_mullo_epi16(s16, w);
+  let hi = _mm_mulhi_epu16(s16, w);
+  let p_lo = _mm_unpacklo_epi16(lo, hi);
+  let p_hi = _mm_unpackhi_epi16(lo, hi);
+  let acc = _mm_add_epi64(acc, _mm_cvtepu32_epi64(p_lo));
+  let acc = _mm_add_epi64(acc, _mm_cvtepu32_epi64(_mm_srli_si128::<8>(p_lo)));
+  let acc = _mm_add_epi64(acc, _mm_cvtepu32_epi64(p_hi));
+  _mm_add_epi64(acc, _mm_cvtepu32_epi64(_mm_srli_si128::<8>(p_hi)))
+}
+
+/// Accumulates the sixteen exact `u16 * u16 -> u32` products of
+/// `s16 * w` (256-bit, 16 u16 lanes) into the four u64 lanes of `acc`.
+/// The `mullo`/`mulhi` pair gives exact u32 products; each
+/// `unpack`-result's eight u32 (per-128-lane order) widen to u64 in
+/// four `_mm256_cvtepu32_epi64` groups before adding. Which u64 lane a
+/// product lands in is immaterial to the final `hsum256_u64`.
+#[inline]
+#[target_feature(enable = "avx2")]
+fn mac256_u16x16_u64(acc: __m256i, s16: __m256i, w: __m256i) -> __m256i {
+  let lo = _mm256_mullo_epi16(s16, w);
+  let hi = _mm256_mulhi_epu16(s16, w);
+  let p_lo = _mm256_unpacklo_epi16(lo, hi);
+  let p_hi = _mm256_unpackhi_epi16(lo, hi);
+  let acc = _mm256_add_epi64(acc, _mm256_cvtepu32_epi64(_mm256_castsi256_si128(p_lo)));
+  let acc = _mm256_add_epi64(
+    acc,
+    _mm256_cvtepu32_epi64(_mm256_extracti128_si256::<1>(p_lo)),
+  );
+  let acc = _mm256_add_epi64(acc, _mm256_cvtepu32_epi64(_mm256_castsi256_si128(p_hi)));
+  _mm256_add_epi64(
+    acc,
+    _mm256_cvtepu32_epi64(_mm256_extracti128_si256::<1>(p_hi)),
+  )
+}
+
+/// One proven 128-bit u16 c1 step for an 8-tap group at `base`, with
+/// row-end staging. Folds the products into the u64 lanes of `acc`.
+/// Mirrors the inner logic of the SSE4.1 `area_h_reduce_row_u16_c1`.
+///
+/// # Safety
+///
+/// AVX2 (⊇ SSE4.1) available; `base < row.len()`; `w8.len() >= 8`.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn c1_group_u16(acc: __m128i, row: &[u16], base: usize, w8: &[u16]) -> __m128i {
+  // SAFETY: the 8-element u16 load is guarded against row.len() or
+  // staged through a zero-filled stack copy; the weight load reads 8
+  // arena u16.
+  unsafe {
+    let s16 = if base + 8 <= row.len() {
+      _mm_loadu_si128(row.as_ptr().add(base).cast())
+    } else {
+      let mut sbuf = [0u16; 8];
+      let take = row.len() - base;
+      sbuf[..take].copy_from_slice(&row[base..]);
+      _mm_loadu_si128(sbuf.as_ptr().cast())
+    };
+    let w = _mm_loadu_si128(w8.as_ptr().cast());
+    mac128_u16x8_u64(acc, s16, w)
+  }
+}
+
+/// 16-bit-element H-pass (1 channel): like [`area_h_reduce_row_c1`] but
+/// the samples load directly as `u16` (no `u8 -> u16` widening) and the
+/// products accumulate in `u64` lanes — a single span sum can exceed
+/// `u32`. The wide path widens 16 taps per iteration into the four u64
+/// lanes of a 256-bit accumulator; boundary and trailing 8-tap groups
+/// fall to the 128-bit `c1_group_u16`, which owns the row-end staging.
+///
+/// # Safety
+///
+/// As [`area_h_reduce_row_c1`], with `row.len() >= cells` `u16`
+/// elements and `h_tmp.len() >= starts.len()`.
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn area_h_reduce_row_u16_c1(
+  row: &[u16],
+  starts: &[usize],
+  w16: &[u16],
+  w16_off: &[usize],
+  h_tmp: &mut [u64],
+) {
+  for (j, &start) in starts.iter().enumerate() {
+    let span = &w16[w16_off[j]..w16_off[j + 1]];
+    let len = span.len();
+    // SAFETY: wide loads run only fully in-bounds (`start + t + 16 <=
+    // row.len()`, in u16 elements); boundary and trailing groups
+    // delegate to `c1_group_u16`, which stages the row end.
+    unsafe {
+      let mut acc = _mm256_setzero_si256();
+      let mut acc128 = _mm_setzero_si128();
+      let mut t = 0usize;
+      while t + 16 <= len && start + t + 16 <= row.len() {
+        let s16 = _mm256_loadu_si256(row.as_ptr().add(start + t).cast());
+        let w = _mm256_loadu_si256(span[t..].as_ptr().cast());
+        acc = mac256_u16x16_u64(acc, s16, w);
+        t += 16;
+      }
+      while t + 8 <= len {
+        acc128 = c1_group_u16(acc128, row, start + t, &span[t..]);
+        t += 8;
+      }
+      h_tmp[j] = hsum256_u64(acc).wrapping_add(hsum128_u64(acc128));
+    }
+  }
+}
+
+/// The SSE4.1 u16 per-channel deinterleave masks: for channel `ch` the
+/// eight samples sit at u16 index `ch + 3t` (byte `2*(ch + 3t)`), split
+/// across the three overlapping 16-byte loads of a 48-byte chunk. Each
+/// mask pulls its load's contributing u16 pairs into output lanes 0..7
+/// and -1 zeroes the rest. Copied verbatim from the SSE4.1
+/// `area_h_reduce_row_u16_c3`.
+#[inline]
+#[target_feature(enable = "avx2")]
+fn c3_u16_masks() -> ([__m128i; 3], [__m128i; 3], [__m128i; 3]) {
+  let m0: [__m128i; 3] = [
+    _mm_set_epi8(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 13, 12, 7, 6, 1, 0),
+    _mm_set_epi8(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 15, 14, 9, 8, 3, 2),
+    _mm_set_epi8(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 11, 10, 5, 4),
+  ];
+  let m1: [__m128i; 3] = [
+    _mm_set_epi8(-1, -1, -1, -1, 15, 14, 9, 8, 3, 2, -1, -1, -1, -1, -1, -1),
+    _mm_set_epi8(-1, -1, -1, -1, -1, -1, 11, 10, 5, 4, -1, -1, -1, -1, -1, -1),
+    _mm_set_epi8(-1, -1, -1, -1, -1, -1, 13, 12, 7, 6, 1, 0, -1, -1, -1, -1),
+  ];
+  let m2: [__m128i; 3] = [
+    _mm_set_epi8(11, 10, 5, 4, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1),
+    _mm_set_epi8(13, 12, 7, 6, 1, 0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1),
+    _mm_set_epi8(15, 14, 9, 8, 3, 2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1),
+  ];
+  (m0, m1, m2)
+}
+
+/// One proven 128-bit u16 c3 step for an 8-pixel group at cell `cell`
+/// (u16 base `cell * 3`), with row-end staging. Folds each channel's
+/// products into the u64 lanes of `acc[ch]`. Mirrors the inner logic of
+/// the SSE4.1 `area_h_reduce_row_u16_c3`.
+///
+/// # Safety
+///
+/// AVX2 (⊇ SSE4.1) available; `cell < cells`; `w8.len() >= 8`; `m0`,
+/// `m1`, `m2` are the SSE u16 c3 masks.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn c3_group_u16(
+  acc: &mut [__m128i; 3],
+  row: &[u16],
+  cell: usize,
+  w8: &[u16],
+  m0: &[__m128i; 3],
+  m1: &[__m128i; 3],
+  m2: &[__m128i; 3],
+) {
+  let base = cell * 3;
+  // SAFETY: the three 16-byte loads cover the chunk's 24 u16 (48 bytes)
+  // and are guarded against row.len() or staged through a zero-filled
+  // 24-u16 copy.
+  unsafe {
+    let (v0, v1, v2) = if base + 24 <= row.len() {
+      (
+        _mm_loadu_si128(row.as_ptr().add(base).cast()),
+        _mm_loadu_si128(row.as_ptr().add(base + 8).cast()),
+        _mm_loadu_si128(row.as_ptr().add(base + 16).cast()),
+      )
+    } else {
+      let mut sbuf = [0u16; 24];
+      let take = row.len() - base;
+      sbuf[..take].copy_from_slice(&row[base..]);
+      (
+        _mm_loadu_si128(sbuf.as_ptr().cast()),
+        _mm_loadu_si128(sbuf.as_ptr().add(8).cast()),
+        _mm_loadu_si128(sbuf.as_ptr().add(16).cast()),
+      )
+    };
+    let w = _mm_loadu_si128(w8.as_ptr().cast());
+    for ch in 0..3 {
+      let gathered = _mm_or_si128(
+        _mm_or_si128(_mm_shuffle_epi8(v0, m0[ch]), _mm_shuffle_epi8(v1, m1[ch])),
+        _mm_shuffle_epi8(v2, m2[ch]),
+      );
+      acc[ch] = mac128_u16x8_u64(acc[ch], gathered, w);
+    }
+  }
+}
+
+/// 16-bit-element H-pass (3-channel interleaved RGB). A `u16` 8-pixel
+/// group spans 24 `u16` (48 bytes), three 16-byte loads — not the
+/// 24-byte two-128-lane pack the u8 c3 wide path uses — so the AVX2
+/// wide path is impractical here and this mirrors the SSE4.1 u16 c3
+/// 128-bit step over every 8-tap chunk (three overlapping loads + nine
+/// `_mm_shuffle_epi8` masks + `mac128_u16x8_u64`). The wide path only
+/// helps extreme downscales anyway.
+///
+/// # Safety
+///
+/// As [`area_h_reduce_row_u16_c1`], with `row.len() >= cells * 3` `u16`
+/// elements and `h_tmp.len() >= starts.len() * 3`.
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn area_h_reduce_row_u16_c3(
+  row: &[u16],
+  starts: &[usize],
+  w16: &[u16],
+  w16_off: &[usize],
+  h_tmp: &mut [u64],
+) {
+  let (m0, m1, m2) = c3_u16_masks();
+  for (j, &start) in starts.iter().enumerate() {
+    let span = &w16[w16_off[j]..w16_off[j + 1]];
+    let len = span.len();
+    // SAFETY: each 8-tap chunk delegates to `c3_group_u16`, which
+    // stages the chunk's 48 bytes against the row end; weights come
+    // from the 8-multiple arena slice.
+    unsafe {
+      let mut acc = [_mm_setzero_si128(); 3];
+      let mut t = 0usize;
+      while t + 8 <= len {
+        c3_group_u16(&mut acc, row, start + t, &span[t..], &m0, &m1, &m2);
+        t += 8;
+      }
+      for ch in 0..3 {
+        h_tmp[j * 3 + ch] = hsum128_u64(acc[ch]);
+      }
+    }
+  }
+}
+
+/// 16-bit-element V-pass AXPY: `acc[i] += w * h_tmp[i]` with `h_tmp`
+/// already `u64`. The `u32 * u64 -> u64` product splits `h_tmp` into
+/// 32-bit halves — `_mm256_mul_epu32` gives `w * lo` and `w * hi`, the
+/// latter shifted up 32 — summed mod 2^64 (exact by the engine bound).
+/// Four elements per iteration; mirrors the SSE4.1
+/// `area_v_accumulate_u16`.
+///
+/// # Safety
+///
+/// AVX2 must be available. `h_tmp.len() >= acc.len()`; every
+/// product-sum stays within u64.
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn area_v_accumulate_u16(acc: &mut [u64], h_tmp: &[u64], w: u32) {
+  let n = acc.len();
+  debug_assert!(h_tmp.len() >= n, "h_tmp too short");
+  let wv = _mm256_set1_epi64x(i64::from(w));
+  let mut i = 0usize;
+  // SAFETY: loop guard `i + 4 <= n` with `h_tmp.len() >= n` keeps all
+  // loads and stores in bounds.
+  unsafe {
+    while i + 4 <= n {
+      let t = _mm256_loadu_si256(h_tmp.as_ptr().add(i).cast());
+      let prod_lo = _mm256_mul_epu32(t, wv);
+      let prod_hi = _mm256_mul_epu32(_mm256_srli_epi64::<32>(t), wv);
+      let prod = _mm256_add_epi64(prod_lo, _mm256_slli_epi64::<32>(prod_hi));
+      let a = _mm256_loadu_si256(acc.as_ptr().add(i).cast());
+      _mm256_storeu_si256(acc.as_mut_ptr().add(i).cast(), _mm256_add_epi64(a, prod));
+      i += 4;
+    }
+  }
+  for k in i..n {
+    acc[k] += u64::from(w) * h_tmp[k];
+  }
+}

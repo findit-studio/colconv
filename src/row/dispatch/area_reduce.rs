@@ -327,15 +327,57 @@ pub(crate) fn area_h_reduce_row_u16(
         }
       },
       target_arch = "x86_64" => {
-        if channels == 1 && sse41_available() {
-          // SAFETY: SSE4.1 verified; arena coherence proven by
-          // construction plus the binds above; h_tmp bound asserted.
-          unsafe { arch::x86_sse41::area_reduce::area_h_reduce_row_u16_c1(row, &p.starts, &p.w16, &p.off, h_tmp); }
+        // Highest available tier wins; all consume the same arena and
+        // are bit-identical. The u16 c1 widens within a span (AVX2 16
+        // taps, AVX-512 32); c3's 48-byte group does not pack into the
+        // wide lanes, so every tier runs the 128-bit c3 step.
+        if channels == 1 {
+          if avx512_available() {
+            // SAFETY: AVX-512F+BW verified; arena coherence proven by
+            // construction plus the binds above; h_tmp bound asserted.
+            unsafe { arch::x86_avx512::area_reduce::area_h_reduce_row_u16_c1(row, &p.starts, &p.w16, &p.off, h_tmp); }
+            return;
+          }
+          if avx2_available() {
+            // SAFETY: AVX2 verified; same arena/bind guarantees.
+            unsafe { arch::x86_avx2::area_reduce::area_h_reduce_row_u16_c1(row, &p.starts, &p.w16, &p.off, h_tmp); }
+            return;
+          }
+          if sse41_available() {
+            // SAFETY: SSE4.1 verified; same arena/bind guarantees.
+            unsafe { arch::x86_sse41::area_reduce::area_h_reduce_row_u16_c1(row, &p.starts, &p.w16, &p.off, h_tmp); }
+            return;
+          }
+        }
+        if channels == 3 {
+          if avx512_available() {
+            // SAFETY: AVX-512F+BW verified; 3-channel variant.
+            unsafe { arch::x86_avx512::area_reduce::area_h_reduce_row_u16_c3(row, &p.starts, &p.w16, &p.off, h_tmp); }
+            return;
+          }
+          if avx2_available() {
+            // SAFETY: AVX2 verified; 3-channel variant.
+            unsafe { arch::x86_avx2::area_reduce::area_h_reduce_row_u16_c3(row, &p.starts, &p.w16, &p.off, h_tmp); }
+            return;
+          }
+          if sse41_available() {
+            // SAFETY: SSE4.1 verified; 3-channel variant.
+            unsafe { arch::x86_sse41::area_reduce::area_h_reduce_row_u16_c3(row, &p.starts, &p.w16, &p.off, h_tmp); }
+            return;
+          }
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() && channels == 1 {
+          // SAFETY: simd128 enabled at compile time; arena coherence
+          // proven by construction plus the binds above; h_tmp bound
+          // asserted.
+          unsafe { arch::wasm_simd128::area_reduce::area_h_reduce_row_u16_c1(row, &p.starts, &p.w16, &p.off, h_tmp); }
           return;
         }
-        if channels == 3 && sse41_available() {
+        if simd128_available() && channels == 3 {
           // SAFETY: as above, 3-channel variant.
-          unsafe { arch::x86_sse41::area_reduce::area_h_reduce_row_u16_c3(row, &p.starts, &p.w16, &p.off, h_tmp); }
+          unsafe { arch::wasm_simd128::area_reduce::area_h_reduce_row_u16_c3(row, &p.starts, &p.w16, &p.off, h_tmp); }
           return;
         }
       },
@@ -356,7 +398,11 @@ pub(crate) fn area_v_accumulate_u16(acc: &mut [u64], h_tmp: &[u64], w: u64, use_
   if !use_simd {
     return scalar::area_v_accumulate_u16(acc, h_tmp, w);
   }
-  #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+  #[cfg(any(
+    target_arch = "aarch64",
+    target_arch = "x86_64",
+    target_arch = "wasm32"
+  ))]
   if let Ok(w32) = u32::try_from(w) {
     cfg_select! {
       target_arch = "aarch64" => {
@@ -367,9 +413,26 @@ pub(crate) fn area_v_accumulate_u16(acc: &mut [u64], h_tmp: &[u64], w: u64, use_
         }
       },
       target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F verified at runtime; bounds asserted above.
+          unsafe { arch::x86_avx512::area_reduce::area_v_accumulate_u16(acc, h_tmp, w32); }
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified at runtime; bounds asserted above.
+          unsafe { arch::x86_avx2::area_reduce::area_v_accumulate_u16(acc, h_tmp, w32); }
+          return;
+        }
         if sse41_available() {
           // SAFETY: SSE4.1 verified at runtime; bounds asserted above.
           unsafe { arch::x86_sse41::area_reduce::area_v_accumulate_u16(acc, h_tmp, w32); }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 enabled at compile time; bounds asserted above.
+          unsafe { arch::wasm_simd128::area_reduce::area_v_accumulate_u16(acc, h_tmp, w32); }
           return;
         }
       },
