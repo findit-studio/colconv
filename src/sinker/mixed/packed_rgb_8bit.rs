@@ -50,12 +50,11 @@
 
 use super::{
   InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange, RowShapeMismatch,
-  RowSlice, check_dimensions_match, frozen_outputs_check, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice, source_rgb_scratch,
+  RowSlice, check_dimensions_match, packed_rgb_resample_emit, packed_rgb_resample_preflight,
+  packed_rgb_resample_stream, rgb_row_buf_or_scratch, rgba_plane_row_slice, source_rgb_scratch,
 };
 use crate::{
   PixelSink,
-  resample::{AreaStream, OutOfSequenceRow, ResampleError, ResamplePlan},
   row::{
     abgr_to_rgb_row, abgr_to_rgba_row, argb_to_rgb_row, argb_to_rgba_row, bgr_to_rgb_row,
     bgra_to_rgb_row, bgra_to_rgba_row, bgrx_to_rgba_row, expand_rgb_to_rgba_row, rgb_to_hsv_row,
@@ -210,115 +209,6 @@ impl<R> PixelSink for MixedSinker<'_, Rgb24, R> {
 
     Ok(())
   }
-}
-
-/// Freezes the output configuration for a resampled packed-RGB frame
-/// and reports whether any output is attached. Run before the
-/// source-row conversion and the stream so a sink with no attached
-/// outputs stays the documented legal no-op (it neither allocates nor
-/// enforces sequencing) while a mid-frame output-set change is still
-/// caught. Mirrors the YUV resample path's freeze-then-conditional
-/// ordering.
-fn packed_rgb_resample_preflight(
-  resample_outputs: &mut Option<super::FrozenOutputs>,
-  rgb: &Option<&mut [u8]>,
-  rgba: &Option<&mut [u8]>,
-  luma: &Option<&mut [u8]>,
-  hsv: &mut Option<super::HsvFrameMut<'_>>,
-  idx: usize,
-) -> Result<bool, MixedSinkerError> {
-  frozen_outputs_check(resample_outputs, luma, &None, rgb, rgba, hsv, idx)?;
-  Ok(rgb.is_some() || rgba.is_some() || luma.is_some() || hsv.is_some())
-}
-
-/// Fused downscale for [`MixedSinker<Rgb24, R>`]: the packed source
-/// row feeds the 3-channel area stream with no conversion step; RGB
-/// copies, and luma / HSV / RGBA derive from each finalized output
-/// row.
-///
-/// `src_rgb` is the **source-width** canonical RGB row — `Rgb24` hands
-/// in its packed source directly (zero copy); channel-swapped or
-/// converting formats stage their row into a source-width scratch
-/// first, so this one tail serves every packed-RGB-canonical source.
-/// The caller runs [`packed_rgb_resample_preflight`] first and skips
-/// the rest when no output is attached.
-///
-/// Lazily creates the 3-channel area stream and checks strict row
-/// sequencing — run **before** a converting format stages its source
-/// row, so an out-of-sequence row is rejected without the scratch
-/// allocation/conversion (matching the `Rgb24` / YUV ordering).
-fn packed_rgb_resample_stream<'s>(
-  rgb_stream: &'s mut Option<AreaStream>,
-  plan: &ResamplePlan,
-  idx: usize,
-) -> Result<&'s mut AreaStream, MixedSinkerError> {
-  let stream = match rgb_stream {
-    Some(stream) => stream,
-    None => rgb_stream.insert(AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?),
-  };
-  if stream.next_y() != idx {
-    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
-      OutOfSequenceRow::new(stream.next_y(), idx),
-    )));
-  }
-  Ok(stream)
-}
-
-/// Feeds the prepared source-width canonical RGB row into the (already
-/// sequence-checked) stream and derives every attached output from
-/// each finalized output row.
-#[allow(clippy::too_many_arguments)]
-fn packed_rgb_resample_emit(
-  stream: &mut AreaStream,
-  plan: &ResamplePlan,
-  rgb: &mut Option<&mut [u8]>,
-  rgba: &mut Option<&mut [u8]>,
-  luma: &mut Option<&mut [u8]>,
-  hsv: &mut Option<super::HsvFrameMut<'_>>,
-  src_rgb: &[u8],
-  matrix: crate::ColorMatrix,
-  full_range: bool,
-  idx: usize,
-  use_simd: bool,
-) -> Result<(), MixedSinkerError> {
-  let ow = plan.out_w();
-  stream.feed_row(idx, src_rgb, use_simd, |oy, out_row| {
-    if let Some(buf) = rgb.as_deref_mut() {
-      buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_row);
-    }
-    if let Some(buf) = luma.as_deref_mut() {
-      rgb_to_luma_row(
-        out_row,
-        &mut buf[oy * ow..(oy + 1) * ow],
-        ow,
-        matrix,
-        full_range,
-        use_simd,
-      );
-    }
-    if let Some(hsv) = hsv.as_mut() {
-      let (h, s, v) = hsv.hsv();
-      rgb_to_hsv_row(
-        out_row,
-        &mut h[oy * ow..(oy + 1) * ow],
-        &mut s[oy * ow..(oy + 1) * ow],
-        &mut v[oy * ow..(oy + 1) * ow],
-        ow,
-        use_simd,
-      );
-    }
-    if let Some(buf) = rgba.as_deref_mut() {
-      expand_rgb_to_rgba_row(out_row, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
-    }
-  })?;
-
-  Ok(())
 }
 
 // ---- Bgr24 impl --------------------------------------------------------
