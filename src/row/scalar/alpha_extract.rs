@@ -466,6 +466,7 @@ mod tests {
   /// Reference for `copy_alpha_packed_u16x4_to_u8_at_0`: gather α from
   /// slot 0 of every 4-element u16 tuple, depth-convert `>> 8`, scatter to
   /// slot 3 of the u8 RGBA quad. Untouched slots stay at the input fill.
+  #[cfg(feature = "yuv-444-packed")]
   fn ref_copy_alpha_packed_u16x4_to_u8_at_0(
     intended: &[u16],
     fill: u8,
@@ -479,6 +480,7 @@ mod tests {
   }
 
   /// Reference for `copy_alpha_packed_u16x4_at_0` (u16 output, no depth conv).
+  #[cfg(feature = "yuv-444-packed")]
   fn ref_copy_alpha_packed_u16x4_at_0(
     intended: &[u16],
     fill: u16,
@@ -494,6 +496,7 @@ mod tests {
   /// Reference for `copy_alpha_plane_u16_to_u8::<BITS, _>`: mask with
   /// `(1 << BITS) - 1`, shift `>> (BITS - 8)`, narrow to u8, scatter to
   /// slot 3 of the u8 RGBA quad.
+  #[cfg(any(feature = "gbr", feature = "yuva"))]
   fn ref_copy_alpha_plane_u16_to_u8<const BITS: u32>(
     intended: &[u16],
     fill: u8,
@@ -509,6 +512,7 @@ mod tests {
   }
 
   /// Reference for `copy_alpha_plane_u16::<BITS, _>` (u16 output, masked).
+  #[cfg(any(feature = "gbr", feature = "yuva"))]
   fn ref_copy_alpha_plane_u16<const BITS: u32>(
     intended: &[u16],
     fill: u16,
@@ -524,6 +528,7 @@ mod tests {
 
   /// Reference for `copy_alpha_ya_u16_to_u8`: gather α from slot 1 of every
   /// 2-element u16 tuple, depth-convert `>> 8`.
+  #[cfg(feature = "gray")]
   fn ref_copy_alpha_ya_u16_to_u8(intended: &[u16], fill: u8, width: usize) -> std::vec::Vec<u8> {
     let mut out = std::vec![fill; width * 4];
     for n in 0..width {
@@ -533,6 +538,7 @@ mod tests {
   }
 
   /// Reference for `copy_alpha_ya_u16` (u16 output, no depth conv).
+  #[cfg(feature = "gray")]
   fn ref_copy_alpha_ya_u16(intended: &[u16], fill: u16, width: usize) -> std::vec::Vec<u16> {
     let mut out = std::vec![fill; width * 4];
     for n in 0..width {
@@ -591,6 +597,7 @@ mod tests {
     out
   }
 
+  #[cfg(feature = "yuv-444-packed")]
   #[test]
   fn copy_alpha_packed_u8x4_at_3_overwrites_only_alpha_slots() {
     let packed = [10, 20, 30, 99, 11, 21, 31, 88, 12, 22, 32, 77];
@@ -599,6 +606,7 @@ mod tests {
     assert_eq!(rgba, std::vec![1, 1, 1, 99, 1, 1, 1, 88, 1, 1, 1, 77]);
   }
 
+  #[cfg(feature = "yuv-444-packed")]
   #[test]
   fn copy_alpha_packed_u16x4_to_u8_at_0_depth_converts_correctly() {
     let packed = as_le_u16(&[0x1234, 100, 200, 300, 0xABCD, 101, 201, 301]);
@@ -607,6 +615,7 @@ mod tests {
     assert_eq!(rgba, std::vec![1, 1, 1, 0x12, 1, 1, 1, 0xAB]);
   }
 
+  #[cfg(feature = "yuv-444-packed")]
   #[test]
   fn copy_alpha_packed_u16x4_at_0_preserves_native_u16() {
     let packed = as_le_u16(&[0x1234, 100, 200, 300, 0xABCD, 101, 201, 301]);
@@ -621,6 +630,7 @@ mod tests {
   /// recovers the same logical u16 values on every host. Pin both outputs
   /// against an absolute scalar reference so the parity assertion cannot
   /// pass on two equally corrupt decodes.
+  #[cfg(feature = "yuv-444-packed")]
   #[test]
   fn copy_alpha_packed_u16x4_to_u8_at_0_be_parity_with_swapped_buffer() {
     let intended: std::vec::Vec<u16> = std::vec![0x1234, 100, 200, 300, 0xABCD, 101, 201, 301];
@@ -638,6 +648,7 @@ mod tests {
 
   /// BE parity for AYUV64 alpha-at-slot-0 → u16 RGBA. Same host-independent
   /// fixture pattern + absolute reference assertion as the u8-output variant.
+  #[cfg(feature = "yuv-444-packed")]
   #[test]
   fn copy_alpha_packed_u16x4_at_0_be_parity_with_swapped_buffer() {
     let intended: std::vec::Vec<u16> = std::vec![0x1234, 100, 200, 300, 0xABCD, 101, 201, 301];
@@ -653,6 +664,7 @@ mod tests {
     assert_eq!(rgba_le, rgba_be, "BE and LE outputs must agree");
   }
 
+  #[cfg(any(feature = "gbr", feature = "yuva"))]
   #[test]
   fn copy_alpha_plane_u8_scatters_into_rgba_alpha_slot() {
     let alpha = std::vec![50u8, 60, 70, 80];
@@ -664,6 +676,7 @@ mod tests {
     );
   }
 
+  #[cfg(any(feature = "gbr", feature = "yuva"))]
   #[test]
   fn copy_alpha_plane_u16_to_u8_depth_converts_at_each_bits_value() {
     // BITS=10
@@ -685,6 +698,7 @@ mod tests {
     assert_eq!(rgba, std::vec![1, 1, 1, 0xFF, 1, 1, 1, 0x80]);
   }
 
+  #[cfg(any(feature = "gbr", feature = "yuva"))]
   #[test]
   fn copy_alpha_plane_u16_preserves_native_u16_within_bits_range() {
     // In-range values pass through unchanged.
@@ -697,6 +711,7 @@ mod tests {
     );
   }
 
+  #[cfg(any(feature = "gbr", feature = "yuva"))]
   #[test]
   fn copy_alpha_plane_u16_masks_overrange_to_bits_range() {
     // Over-range α (e.g., 0xFFFF at BITS=10) must be masked to low BITS.
@@ -712,6 +727,7 @@ mod tests {
     );
   }
 
+  #[cfg(any(feature = "gbr", feature = "yuva"))]
   #[test]
   fn copy_alpha_plane_u16_to_u8_masks_overrange_then_shifts() {
     // Without the BITS mask, 0x0500 at BITS=10 would shift `>> 2` to
@@ -731,6 +747,7 @@ mod tests {
   /// equally corrupt decodes (a `swap_bytes` host-side construction is
   /// vacuous on a BE host because both flags decode byte-reversed values
   /// that happen to match).
+  #[cfg(any(feature = "gbr", feature = "yuva"))]
   #[test]
   fn copy_alpha_plane_u16_to_u8_be_parity_with_swapped_buffer() {
     let intended: std::vec::Vec<u16> = std::vec![0x3FF, 0x1FF, 0x0500, 0xFFFF, 0x07FF, 0x0123];
@@ -748,6 +765,7 @@ mod tests {
 
   /// BE parity for the u16-output variant. Host-independent fixture +
   /// absolute reference assertion.
+  #[cfg(any(feature = "gbr", feature = "yuva"))]
   #[test]
   fn copy_alpha_plane_u16_be_parity_with_swapped_buffer() {
     let intended: std::vec::Vec<u16> = std::vec![0xFFFF, 0x0500, 0x07FF, 0x0123, 0x3FF, 0x000];
@@ -763,6 +781,7 @@ mod tests {
     assert_eq!(rgba_le, rgba_be, "BE and LE outputs must agree");
   }
 
+  #[cfg(feature = "gray")]
   #[test]
   fn copy_alpha_ya_u8_extracts_alpha_from_odd_byte_slots() {
     // Ya8 packed layout: [Y0, A0, Y1, A1, Y2, A2]
@@ -772,6 +791,7 @@ mod tests {
     assert_eq!(rgba, std::vec![1, 1, 1, 99, 1, 1, 1, 88, 1, 1, 1, 77]);
   }
 
+  #[cfg(feature = "gray")]
   #[test]
   fn copy_alpha_ya_u16_to_u8_depth_converts_via_high_byte() {
     // Ya16 packed → u8 RGBA: α >> 8 selects the high byte.
@@ -781,6 +801,7 @@ mod tests {
     assert_eq!(rgba, std::vec![1, 1, 1, 0xAB, 1, 1, 1, 0xFF]);
   }
 
+  #[cfg(feature = "gray")]
   #[test]
   fn copy_alpha_ya_u16_preserves_native_u16() {
     let packed = as_le_u16(&[0x1234, 0xABCD, 0x5678, 0x9ABC]);
@@ -794,6 +815,7 @@ mod tests {
   /// and pin both outputs against an absolute scalar reference (a
   /// `swap_bytes` construction is vacuous on a BE host because both flags
   /// then decode byte-reversed values that match).
+  #[cfg(feature = "gray")]
   #[test]
   fn copy_alpha_ya_u16_to_u8_be_parity_with_swapped_buffer() {
     let intended: std::vec::Vec<u16> = std::vec![0x1234, 0xABCD, 0x5678, 0xFF00, 0x0001, 0x00FF];
@@ -811,6 +833,7 @@ mod tests {
 
   /// BE parity for Ya16 → u16 RGBA (16-bit α path). Host-independent fixture
   /// + absolute reference assertion.
+  #[cfg(feature = "gray")]
   #[test]
   fn copy_alpha_ya_u16_be_parity_with_swapped_buffer() {
     let intended: std::vec::Vec<u16> = std::vec![0x1234, 0xABCD, 0x5678, 0x9ABC, 0x0001, 0x00FF];
