@@ -217,7 +217,7 @@ jobs:
         # runs, and the action hard-fails without it. Coverage GENERATION
         # still runs and gates PRs; only the upload is push-only.
         if: github.event_name != 'pull_request'
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           files: coverage/cobertura.xml
           flags: ${{ matrix.label }}
