@@ -51,7 +51,7 @@
 use super::{
   InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange, RowShapeMismatch,
   RowSlice, check_dimensions_match, frozen_outputs_check, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice,
+  rgba_plane_row_slice, source_rgb_scratch,
 };
 use crate::{
   PixelSink,
@@ -145,15 +145,21 @@ impl<R> PixelSink for MixedSinker<'_, Rgb24, R> {
     // the same for this family. Luma / HSV / RGBA derive from each
     // finalized output row.
     if let Some(plan) = plan.as_ref() {
-      return rgb24_process_resampled(
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, hsv, idx)? {
+        return Ok(());
+      }
+      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+      return packed_rgb_resample_emit(
+        stream,
         plan,
-        rgb_stream,
-        resample_outputs,
         rgb,
         rgba,
         luma,
         hsv,
-        &row,
+        row.rgb(),
+        row.matrix(),
+        row.full_range(),
+        idx,
         use_simd,
       );
     }
@@ -206,26 +212,46 @@ impl<R> PixelSink for MixedSinker<'_, Rgb24, R> {
   }
 }
 
+/// Freezes the output configuration for a resampled packed-RGB frame
+/// and reports whether any output is attached. Run before the
+/// source-row conversion and the stream so a sink with no attached
+/// outputs stays the documented legal no-op (it neither allocates nor
+/// enforces sequencing) while a mid-frame output-set change is still
+/// caught. Mirrors the YUV resample path's freeze-then-conditional
+/// ordering.
+fn packed_rgb_resample_preflight(
+  resample_outputs: &mut Option<super::FrozenOutputs>,
+  rgb: &Option<&mut [u8]>,
+  rgba: &Option<&mut [u8]>,
+  luma: &Option<&mut [u8]>,
+  hsv: &mut Option<super::HsvFrameMut<'_>>,
+  idx: usize,
+) -> Result<bool, MixedSinkerError> {
+  frozen_outputs_check(resample_outputs, luma, &None, rgb, rgba, hsv, idx)?;
+  Ok(rgb.is_some() || rgba.is_some() || luma.is_some() || hsv.is_some())
+}
+
 /// Fused downscale for [`MixedSinker<Rgb24, R>`]: the packed source
 /// row feeds the 3-channel area stream with no conversion step; RGB
 /// copies, and luma / HSV / RGBA derive from each finalized output
-/// row. Same atomic preflight contracts as every resampled path.
-#[allow(clippy::too_many_arguments)]
-fn rgb24_process_resampled(
+/// row.
+///
+/// `src_rgb` is the **source-width** canonical RGB row — `Rgb24` hands
+/// in its packed source directly (zero copy); channel-swapped or
+/// converting formats stage their row into a source-width scratch
+/// first, so this one tail serves every packed-RGB-canonical source.
+/// The caller runs [`packed_rgb_resample_preflight`] first and skips
+/// the rest when no output is attached.
+///
+/// Lazily creates the 3-channel area stream and checks strict row
+/// sequencing — run **before** a converting format stages its source
+/// row, so an out-of-sequence row is rejected without the scratch
+/// allocation/conversion (matching the `Rgb24` / YUV ordering).
+fn packed_rgb_resample_stream<'s>(
+  rgb_stream: &'s mut Option<AreaStream>,
   plan: &ResamplePlan,
-  rgb_stream: &mut Option<AreaStream>,
-  resample_outputs: &mut Option<super::FrozenOutputs>,
-  rgb: &mut Option<&mut [u8]>,
-  rgba: &mut Option<&mut [u8]>,
-  luma: &mut Option<&mut [u8]>,
-  hsv: &mut Option<super::HsvFrameMut<'_>>,
-  row: &Rgb24Row<'_>,
-  use_simd: bool,
-) -> Result<(), MixedSinkerError> {
-  let ow = plan.out_w();
-  let idx = row.row();
-
-  frozen_outputs_check(resample_outputs, luma, &None, rgb, rgba, hsv, idx)?;
+  idx: usize,
+) -> Result<&'s mut AreaStream, MixedSinkerError> {
   let stream = match rgb_stream {
     Some(stream) => stream,
     None => rgb_stream.insert(AreaStream::new(
@@ -241,8 +267,28 @@ fn rgb24_process_resampled(
       OutOfSequenceRow::new(stream.next_y(), idx),
     )));
   }
+  Ok(stream)
+}
 
-  stream.feed_row(idx, row.rgb(), use_simd, |oy, out_row| {
+/// Feeds the prepared source-width canonical RGB row into the (already
+/// sequence-checked) stream and derives every attached output from
+/// each finalized output row.
+#[allow(clippy::too_many_arguments)]
+fn packed_rgb_resample_emit(
+  stream: &mut AreaStream,
+  plan: &ResamplePlan,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  hsv: &mut Option<super::HsvFrameMut<'_>>,
+  src_rgb: &[u8],
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  idx: usize,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  let ow = plan.out_w();
+  stream.feed_row(idx, src_rgb, use_simd, |oy, out_row| {
     if let Some(buf) = rgb.as_deref_mut() {
       buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_row);
     }
@@ -251,8 +297,8 @@ fn rgb24_process_resampled(
         out_row,
         &mut buf[oy * ow..(oy + 1) * ow],
         ow,
-        row.matrix(),
-        row.full_range(),
+        matrix,
+        full_range,
         use_simd,
       );
     }
@@ -301,14 +347,19 @@ impl<'a, R> MixedSinker<'a, Bgr24, R> {
   }
 }
 
-impl Bgr24Sink for MixedSinker<'_, Bgr24> {}
+impl<R> Bgr24Sink for MixedSinker<'_, Bgr24, R> {}
 
-impl PixelSink for MixedSinker<'_, Bgr24> {
+impl<R> PixelSink for MixedSinker<'_, Bgr24, R> {
   type Input<'r> = Bgr24Row<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: Bgr24Row<'_>) -> Result<(), Self::Error> {
@@ -337,8 +388,39 @@ impl PixelSink for MixedSinker<'_, Bgr24> {
       luma,
       hsv,
       rgb_scratch,
+      plan,
+      rgb_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: freeze the output set, then check stream
+    // sequencing — both before touching the scratch — so a no-output
+    // sink stays a no-op and an out-of-sequence row is rejected
+    // without the source-width allocation/swap. Only then stage the
+    // BGR->RGB row and feed the one packed-RGB resample tail.
+    if let Some(plan) = plan.as_ref() {
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, hsv, idx)? {
+        return Ok(());
+      }
+      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+      let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+      bgr_to_rgb_row(row.bgr(), scratch, w, use_simd);
+      return packed_rgb_resample_emit(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        hsv,
+        scratch,
+        row.matrix(),
+        row.full_range(),
+        idx,
+        use_simd,
+      );
+    }
+
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 

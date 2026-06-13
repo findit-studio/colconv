@@ -1866,6 +1866,14 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
     self.plan.as_ref()
   }
 
+  /// Capacity of the source-row staging scratch — a white-box probe
+  /// for the resample ordering tests (a rejected row must not have
+  /// grown the scratch).
+  #[cfg(all(test, feature = "rgb"))]
+  pub(crate) fn rgb_scratch_capacity(&self) -> usize {
+    self.rgb_scratch.capacity()
+  }
+
   /// Returns `true` iff row primitives dispatch to their SIMD backend.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn simd(&self) -> bool {
@@ -2397,6 +2405,48 @@ pub(super) fn rgb_row_buf_or_scratch<'a>(
       Ok(&mut rgb_scratch[..row_bytes])
     }
   }
+}
+
+/// Grows `rgb_scratch` to a **source-width** RGB row (`width * 3`
+/// bytes) and returns the slice, following the planner's recoverable-
+/// allocation contract (the exact reserve makes the resize incapable
+/// of reallocating; refusal surfaces as `AllocationFailed` in the
+/// preflight phase, not an abort in infallible growth).
+///
+/// The shared staging point for packed-RGB-canonical resampled
+/// sources whose row must be channel-swapped or converted to RGB
+/// before feeding the area stream. [`MixedSinker<Rgb24>`] skips it —
+/// its source is already RGB and feeds the stream with zero copy.
+#[cfg(feature = "rgb")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(super) fn source_rgb_scratch<'s>(
+  rgb_scratch: &'s mut Vec<u8>,
+  width: usize,
+  plan: &ResamplePlan,
+) -> Result<&'s mut [u8], MixedSinkerError> {
+  let row_bytes = width
+    .checked_mul(3)
+    .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+      width,
+      plan.src_h(),
+      3,
+    )))?;
+  if rgb_scratch.len() < row_bytes {
+    rgb_scratch
+      .try_reserve_exact(row_bytes - rgb_scratch.len())
+      .map_err(|_| {
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?;
+    rgb_scratch.resize(row_bytes, 0);
+  }
+  Ok(&mut rgb_scratch[..row_bytes])
 }
 
 /// Configurable-coefficients luma derivation from packed
