@@ -703,14 +703,16 @@ impl AreaSample for f32 {
     row: &[f32],
     channels: usize,
     h: &AxisSpans,
-    _padded: Option<&crate::row::PaddedSpans>,
+    padded: Option<&crate::row::PaddedSpans>,
     h_tmp: &mut [f64],
-    _use_simd: bool,
+    use_simd: bool,
   ) {
-    crate::row::area_h_reduce_row_f32(row, channels, &h.starts, &h.offsets, &h.weights, h_tmp);
+    crate::row::area_h_reduce_row_f32(
+      row, channels, &h.starts, &h.offsets, &h.weights, padded, h_tmp, use_simd,
+    );
   }
-  fn v_accumulate(acc: &mut [f64], h_tmp: &[f64], w: u64, _use_simd: bool) {
-    crate::row::area_v_accumulate_f32(acc, h_tmp, w as f64);
+  fn v_accumulate(acc: &mut [f64], h_tmp: &[f64], w: u64, use_simd: bool) {
+    crate::row::area_v_accumulate_f32(acc, h_tmp, w as f64, use_simd);
   }
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn finalize(acc: f64, denom: u64) -> f32 {

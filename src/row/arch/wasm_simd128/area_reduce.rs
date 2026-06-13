@@ -423,3 +423,223 @@ pub(crate) unsafe fn area_v_accumulate_u16(acc: &mut [u64], h_tmp: &[u64], w: u3
     acc[k] += u64::from(w) * h_tmp[k];
   }
 }
+
+/// Sums the two f64 lanes of `v`.
+#[inline]
+#[target_feature(enable = "simd128")]
+fn hsum_pd(v: v128) -> f64 {
+  f64x2_extract_lane::<0>(v) + f64x2_extract_lane::<1>(v)
+}
+
+/// Widens eight `u16` arena weights to four `f64` lane-pairs
+/// `(w0w1, w2w3, w4w5, w6w7)`.
+#[target_feature(enable = "simd128")]
+fn widen_w16_f64(w: v128) -> (v128, v128, v128, v128) {
+  let w_lo = i32x4_extend_low_u16x8(w);
+  let w_hi = i32x4_extend_high_u16x8(w);
+  (
+    f64x2_convert_low_i32x4(w_lo),
+    f64x2_convert_low_i32x4(i32x4_shuffle::<2, 3, 2, 3>(w_lo, w_lo)),
+    f64x2_convert_low_i32x4(w_hi),
+    f64x2_convert_low_i32x4(i32x4_shuffle::<2, 3, 2, 3>(w_hi, w_hi)),
+  )
+}
+
+/// Accumulates eight `f32` samples (`s_lo` lanes 0-3, `s_hi` lanes 4-7)
+/// against four widened weight pairs. A separate multiply then add —
+/// since the integer-weight times f32-sample product is exact in f64,
+/// this matches a fused multiply-add anyway.
+#[target_feature(enable = "simd128")]
+fn mac8_f32(acc: v128, s_lo: v128, s_hi: v128, wf0: v128, wf1: v128, wf2: v128, wf3: v128) -> v128 {
+  // simd128's `promote_low` widens only lanes 0-1, so the high pair of
+  // each f32x4 shuffles down before promoting.
+  let s1 = mask_pd(
+    f64x2_promote_low_f32x4(i32x4_shuffle::<2, 3, 2, 3>(s_lo, s_lo)),
+    wf1,
+  );
+  let s3 = mask_pd(
+    f64x2_promote_low_f32x4(i32x4_shuffle::<2, 3, 2, 3>(s_hi, s_hi)),
+    wf3,
+  );
+  let a = f64x2_add(
+    acc,
+    f64x2_mul(mask_pd(f64x2_promote_low_f32x4(s_lo), wf0), wf0),
+  );
+  let a = f64x2_add(a, f64x2_mul(s1, wf1));
+  let a = f64x2_add(
+    a,
+    f64x2_mul(mask_pd(f64x2_promote_low_f32x4(s_hi), wf2), wf2),
+  );
+  f64x2_add(a, f64x2_mul(s3, wf3))
+}
+
+/// Zeroes the `f64` sample lanes whose weight lane is zero — the arena's
+/// padding lanes. The integer kernels lean on `0 * sample == 0`, but
+/// `0.0 * NaN` and `0.0 * inf` are NaN, so a direct-loaded padding lane
+/// holding a non-finite neighbor would otherwise poison the span.
+#[target_feature(enable = "simd128")]
+fn mask_pd(sf: v128, wf: v128) -> v128 {
+  v128_and(sf, f64x2_ne(wf, f64x2_splat(0.0)))
+}
+
+/// Deinterleaves four interleaved RGB `f32` pixels (`x = R0 G0 B0 R1`,
+/// `y = G1 B1 R2 G2`, `z = B2 R3 G3 B3`) into planar
+/// `(R0..R3, G0..G3, B0..B3)` via two-source `i32x4_shuffle` (lanes
+/// 0..3 select from the first source, 4..7 from the second).
+#[target_feature(enable = "simd128")]
+fn deint3_f32(x: v128, y: v128, z: v128) -> (v128, v128, v128) {
+  let rx = i32x4_shuffle::<0, 3, 0, 3>(x, x);
+  let ryz = i32x4_shuffle::<2, 5, 2, 5>(y, z);
+  let r = i32x4_shuffle::<0, 1, 4, 5>(rx, ryz);
+  let gx = i32x4_shuffle::<1, 4, 1, 4>(x, y);
+  let gyz = i32x4_shuffle::<3, 6, 3, 6>(y, z);
+  let g = i32x4_shuffle::<0, 1, 4, 5>(gx, gyz);
+  let bx = i32x4_shuffle::<2, 5, 2, 5>(x, y);
+  let bz = i32x4_shuffle::<0, 3, 0, 3>(z, z);
+  let b = i32x4_shuffle::<0, 1, 4, 5>(bx, bz);
+  (r, g, b)
+}
+
+/// Float-element H-pass (1 channel): `f32` samples widen to `f64` and
+/// meet the `u16` weights widened to `f64`; the per-span sums live in
+/// `f64`. The products are exact, so the only departure from the scalar
+/// reference is the tap-sum order — float addition does not associate,
+/// so parity is a small tolerance, not bit-exactness.
+///
+/// # Safety
+///
+/// As [`area_h_reduce_row_c1`], with `row.len() >= cells` `f32`
+/// elements and `h_tmp.len() >= starts.len()`.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn area_h_reduce_row_f32_c1(
+  row: &[f32],
+  starts: &[usize],
+  w16: &[u16],
+  w16_off: &[usize],
+  h_tmp: &mut [f64],
+) {
+  for (j, &start) in starts.iter().enumerate() {
+    let span = &w16[w16_off[j]..w16_off[j + 1]];
+    // SAFETY: each 8-element f32 load is fully in-bounds (guarded) or
+    // staged through a zero-filled stack copy; weights come from the
+    // 8-multiple arena slice.
+    unsafe {
+      let mut acc = f64x2_splat(0.0);
+      for (ci, chunk) in span.chunks_exact(8).enumerate() {
+        let base = start + ci * 8;
+        let (s_lo, s_hi) = if base + 8 <= row.len() {
+          (
+            v128_load(row.as_ptr().add(base).cast()),
+            v128_load(row.as_ptr().add(base + 4).cast()),
+          )
+        } else {
+          let mut sbuf = [0f32; 8];
+          let take = row.len() - base;
+          sbuf[..take].copy_from_slice(&row[base..]);
+          (
+            v128_load(sbuf.as_ptr().cast()),
+            v128_load(sbuf.as_ptr().add(4).cast()),
+          )
+        };
+        let w = v128_load(chunk.as_ptr().cast());
+        let (wf0, wf1, wf2, wf3) = widen_w16_f64(w);
+        acc = mac8_f32(acc, s_lo, s_hi, wf0, wf1, wf2, wf3);
+      }
+      h_tmp[j] = hsum_pd(acc);
+    }
+  }
+}
+
+/// Float-element H-pass (3-channel interleaved RGB): two overlapping
+/// four-pixel `i32x4_shuffle` deinterleaves cover the eight-pixel chunk,
+/// each channel sharing one widened weight set.
+///
+/// # Safety
+///
+/// As [`area_h_reduce_row_f32_c1`], with `row.len() >= cells * 3` `f32`
+/// elements and `h_tmp.len() >= starts.len() * 3`.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn area_h_reduce_row_f32_c3(
+  row: &[f32],
+  starts: &[usize],
+  w16: &[u16],
+  w16_off: &[usize],
+  h_tmp: &mut [f64],
+) {
+  for (j, &start) in starts.iter().enumerate() {
+    let span = &w16[w16_off[j]..w16_off[j + 1]];
+    // SAFETY: the six 16-byte loads cover the chunk's 24 f32 and are
+    // either fully in-bounds (guarded) or staged through a zero-filled
+    // 24-element stack copy; weights come from the 8-multiple arena
+    // slice.
+    unsafe {
+      let mut acc0 = f64x2_splat(0.0);
+      let mut acc1 = f64x2_splat(0.0);
+      let mut acc2 = f64x2_splat(0.0);
+      for (ci, chunk) in span.chunks_exact(8).enumerate() {
+        let base = (start + ci * 8) * 3;
+        let mut sbuf = [0f32; 24];
+        let p = if base + 24 <= row.len() {
+          row.as_ptr().add(base)
+        } else {
+          let take = row.len() - base;
+          sbuf[..take].copy_from_slice(&row[base..]);
+          sbuf.as_ptr()
+        };
+        let (r0, g0, b0) = deint3_f32(
+          v128_load(p.cast()),
+          v128_load(p.add(4).cast()),
+          v128_load(p.add(8).cast()),
+        );
+        let (r1, g1, b1) = deint3_f32(
+          v128_load(p.add(12).cast()),
+          v128_load(p.add(16).cast()),
+          v128_load(p.add(20).cast()),
+        );
+        let w = v128_load(chunk.as_ptr().cast());
+        let (wf0, wf1, wf2, wf3) = widen_w16_f64(w);
+        acc0 = mac8_f32(acc0, r0, r1, wf0, wf1, wf2, wf3);
+        acc1 = mac8_f32(acc1, g0, g1, wf0, wf1, wf2, wf3);
+        acc2 = mac8_f32(acc2, b0, b1, wf0, wf1, wf2, wf3);
+      }
+      h_tmp[j * 3] = hsum_pd(acc0);
+      h_tmp[j * 3 + 1] = hsum_pd(acc1);
+      h_tmp[j * 3 + 2] = hsum_pd(acc2);
+    }
+  }
+}
+
+/// Float-element V-pass AXPY: `acc[i] += w * h_tmp[i]` in `f64`. A
+/// separate multiply then add (not a fused multiply-add) so each lane
+/// matches the scalar reference bit-for-bit — the V-pass is
+/// element-wise, with no reordering. Two elements per iteration.
+///
+/// # Safety
+///
+/// simd128 must be enabled at compile time. `h_tmp.len() >= acc.len()`.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn area_v_accumulate_f32(acc: &mut [f64], h_tmp: &[f64], w: f64) {
+  let n = acc.len();
+  debug_assert!(h_tmp.len() >= n, "h_tmp too short");
+  let wv = f64x2_splat(w);
+  let mut i = 0usize;
+  // SAFETY: loop guard `i + 2 <= n` with `h_tmp.len() >= n` keeps all
+  // loads and stores in bounds.
+  unsafe {
+    while i + 2 <= n {
+      let t = v128_load(h_tmp.as_ptr().add(i).cast());
+      let a = v128_load(acc.as_ptr().add(i).cast());
+      v128_store(
+        acc.as_mut_ptr().add(i).cast(),
+        f64x2_add(a, f64x2_mul(t, wv)),
+      );
+      i += 2;
+    }
+  }
+  for k in i..n {
+    acc[k] += w * h_tmp[k];
+  }
+}

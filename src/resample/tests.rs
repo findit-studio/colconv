@@ -935,3 +935,175 @@ fn h_pass_u16_simd_matches_scalar_bit_exact() {
     }
   }
 }
+
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+fn lcg_fill_f32(buf: &mut [f32], seed: u32) {
+  let mut state = seed;
+  for v in buf {
+    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+    // Non-negative values with a fractional part — the realistic shape
+    // of float color samples (XYZ tristimulus, scene-referred RGB), and
+    // the no-cancellation case, so the SIMD-vs-scalar reorder bound stays
+    // tight.
+    let int = ((state >> 8) & 0x3FFF) as f32;
+    let frac = (state & 0xFF) as f32 / 256.0;
+    *v = int + frac;
+  }
+}
+
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+fn assert_close_rel_f64(a: &[f64], b: &[f64], rel: f64, ctx: &str) {
+  assert_eq!(a.len(), b.len(), "{ctx} length");
+  for (i, (&x, &y)) in a.iter().zip(b.iter()).enumerate() {
+    let tol = rel * x.abs().max(y.abs()) + 1e-6;
+    assert!((x - y).abs() <= tol, "{ctx}[{i}]: {x} vs {y} (rel {rel})");
+  }
+}
+
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[test]
+fn h_pass_f32_simd_matches_scalar_within_tolerance() {
+  // Float analogue of `h_pass_u16_simd_matches_scalar_bit_exact`. Float
+  // addition does not associate, so the lane-parallel kernels match the
+  // sequential scalar reference within a small tolerance, not
+  // bit-for-bit — the parity contract for every float-stream SIMD tier.
+  // The f64 H-sums and V-accumulators carry a tight relative bound (the
+  // products are exact, so only the tap-sum order differs); the
+  // finalized f32 rows match within a few ULPs. Same boundary-geometry
+  // ladder as the integer differentials plus a 512x case (spans of ~512
+  // taps, where the reorder is widest): single-chunk spans with tails,
+  // multi-chunk spans, row-end staging, tiny all-staged rows, and the
+  // AVX wide-path remainder widths, both channel counts.
+  let cases: &[(usize, usize, usize)] = if cfg!(miri) {
+    &[(64, 7, 1), (64, 7, 3), (12, 11, 3), (8, 3, 1), (5, 4, 3)]
+  } else {
+    &[
+      (1920, 336, 1),
+      (1920, 336, 3),
+      (640, 7, 1),
+      (640, 7, 3),
+      (4096, 8, 1),
+      (4096, 8, 3),
+      (4096, 4095, 1),
+      (4096, 4095, 3),
+      (5, 4, 3),
+      (8, 3, 1),
+      (256, 8, 1),
+      (256, 8, 3),
+      (264, 8, 1),
+      (264, 8, 3),
+      (336, 8, 1),
+      (336, 8, 3),
+      (400, 8, 1),
+      (400, 8, 3),
+      (120, 8, 1),
+      (160, 8, 3),
+    ]
+  };
+  for &(src_w, out_w, channels) in cases {
+    let plan = AreaResampler::to(out_w, 1)
+      .plan(src_w, 2)
+      .expect("valid geometry")
+      .expect("strict downscale");
+    let mut scalar = AreaStream::<f32>::new(plan.h(), plan.v(), src_w, 2, channels).unwrap();
+    let mut simd = AreaStream::<f32>::new(plan.h(), plan.v(), src_w, 2, channels).unwrap();
+    let mut row = std::vec![0f32; src_w * channels];
+    for y in 0..2usize {
+      lcg_fill_f32(&mut row, (src_w * 31 + out_w * 7 + channels + y) as u32);
+      let mut scalar_rows = std::vec::Vec::new();
+      let mut simd_rows = std::vec::Vec::new();
+      scalar
+        .feed_row(y, &row, false, |oy, r| scalar_rows.push((oy, r.to_vec())))
+        .unwrap();
+      simd
+        .feed_row(y, &row, true, |oy, r| simd_rows.push((oy, r.to_vec())))
+        .unwrap();
+      assert_close_rel_f64(
+        &scalar.h_tmp,
+        &simd.h_tmp,
+        1e-9,
+        &std::format!("h_tmp src_w={src_w} out_w={out_w} c={channels} y={y}"),
+      );
+      assert_close_rel_f64(
+        &scalar.acc,
+        &simd.acc,
+        1e-9,
+        &std::format!("acc src_w={src_w} out_w={out_w} c={channels} y={y}"),
+      );
+      assert_eq!(scalar_rows.len(), simd_rows.len(), "emitted count");
+      for ((soy, srow), (doy, drow)) in scalar_rows.iter().zip(simd_rows.iter()) {
+        assert_eq!(soy, doy, "emitted index");
+        for (i, (&a, &b)) in srow.iter().zip(drow.iter()).enumerate() {
+          let tol = 1e-6 * a.abs().max(b.abs()) + 1e-3;
+          assert!(
+            (a - b).abs() <= tol,
+            "emitted row src_w={src_w} out_w={out_w} c={channels} [{i}]: {a} vs {b}"
+          );
+        }
+      }
+    }
+  }
+}
+
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[test]
+fn h_pass_f32_simd_matches_scalar_with_non_finite_padding() {
+  // The zero-padded weight arena annihilates samples past a span's last
+  // tap by multiplying them by a zero weight — exact for integers, but
+  // `0.0 * NaN` and `0.0 * inf` are NaN, so a non-finite sample in a
+  // padding lane would poison the span it pads. A padding lane
+  // direct-loads a real neighbor the scalar reference never sums for
+  // that output, so a non-finite value there must NOT leak into that
+  // span. These integer-ratio downscales leave 6 padding lanes per
+  // 2-tap span (and 5 per 3-tap span), all direct-loaded; placing
+  // non-finite samples in the low pixels lands them in earlier spans'
+  // padding. The SIMD and scalar streams must agree on which outputs are
+  // finite (and on the finite values), not just on finite inputs.
+  let cases: &[(usize, usize, usize)] =
+    &[(16, 8, 1), (16, 8, 3), (24, 8, 1), (24, 8, 3), (48, 8, 3)];
+  for &(src_w, out_w, channels) in cases {
+    let plan = AreaResampler::to(out_w, 1)
+      .plan(src_w, 2)
+      .expect("valid geometry")
+      .expect("strict downscale");
+    let mut scalar = AreaStream::<f32>::new(plan.h(), plan.v(), src_w, 2, channels).unwrap();
+    let mut simd = AreaStream::<f32>::new(plan.h(), plan.v(), src_w, 2, channels).unwrap();
+    let mut row = std::vec![0f32; src_w * channels];
+    for y in 0..2usize {
+      lcg_fill_f32(&mut row, (src_w * 17 + out_w * 5 + channels + y) as u32);
+      // Non-finite samples in low pixels — padding lanes for earlier
+      // spans, real taps for the spans they belong to.
+      row[2 * channels] = f32::NAN;
+      row[5 * channels + (channels - 1)] = f32::INFINITY;
+      row[9 * channels] = f32::NEG_INFINITY;
+      let mut s_rows = std::vec::Vec::new();
+      let mut d_rows = std::vec::Vec::new();
+      scalar
+        .feed_row(y, &row, false, |oy, r| s_rows.push((oy, r.to_vec())))
+        .unwrap();
+      simd
+        .feed_row(y, &row, true, |oy, r| d_rows.push((oy, r.to_vec())))
+        .unwrap();
+      assert_eq!(s_rows.len(), d_rows.len(), "emitted count");
+      for ((_, srow), (_, drow)) in s_rows.iter().zip(d_rows.iter()) {
+        for (i, (&a, &b)) in srow.iter().zip(drow.iter()).enumerate() {
+          assert_eq!(
+            a.is_finite(),
+            b.is_finite(),
+            "finiteness mismatch src_w={src_w} out_w={out_w} c={channels} [{i}]: scalar {a} simd {b}"
+          );
+          if a.is_finite() {
+            let tol = 1e-6 * a.abs().max(b.abs()) + 1e-3;
+            assert!((a - b).abs() <= tol, "value [{i}]: {a} vs {b}");
+          } else {
+            assert_eq!(
+              a.is_nan(),
+              b.is_nan(),
+              "nan-vs-inf [{i}]: scalar {a} simd {b}"
+            );
+          }
+        }
+      }
+    }
+  }
+}
