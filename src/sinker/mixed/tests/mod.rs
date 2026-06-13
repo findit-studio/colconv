@@ -98,6 +98,8 @@ mod resample_padding_byte;
 mod resample_rgb24;
 #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
 mod resample_yuv411p;
+#[cfg(all(feature = "yuv-planar", feature = "rgb"))]
+mod resample_yuv422_444p;
 #[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
 #[cfg(feature = "yuv-planar")]

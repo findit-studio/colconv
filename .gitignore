@@ -19,3 +19,6 @@ Cargo.lock
 
 docs/
 
+
+# Subagent worktrees (transient)
+.claude/worktrees/

@@ -753,6 +753,8 @@ fn yuv420p_process_resampled(
   Ok(())
 }
 
+// ---- Shared planar single-stream resample tail --------------------------
+//
 // ---- Yuv410p impl -------------------------------------------------------
 //
 // 4:1:0 planar 8-bit (Cinepak / Sorenson legacy, Tier 1 P3). Chroma
@@ -1039,9 +1041,9 @@ impl<'a, R> MixedSinker<'a, Yuv422p, R> {
   }
 }
 
-impl Yuv422pSink for MixedSinker<'_, Yuv422p> {}
+impl<R> Yuv422pSink for MixedSinker<'_, Yuv422p, R> {}
 
-impl PixelSink for MixedSinker<'_, Yuv422p> {
+impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
   type Input<'r> = Yuv422pRow<'r>;
   type Error = MixedSinkerError;
 
@@ -1051,7 +1053,12 @@ impl PixelSink for MixedSinker<'_, Yuv422p> {
         self.width,
       )));
     }
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: Yuv422pRow<'_>) -> Result<(), Self::Error> {
@@ -1100,8 +1107,58 @@ impl PixelSink for MixedSinker<'_, Yuv422p> {
       luma_u16,
       hsv,
       rgb_scratch,
+      plan,
+      rgb_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: convert the source row to canonical RGB at
+    // source width in the shared scratch (same 4:2:0 per-row dispatcher
+    // 4:2:2 reuses on its identity path), then feed the shared planar
+    // resample tail. Row-stage only — converting each source row to RGB
+    // and binning is the whole job. Freeze the output set and check
+    // stream sequencing before staging, so a no-output sink stays a
+    // no-op and an out-of-sequence row is rejected without allocating.
+    if let Some(plan) = plan.as_ref() {
+      if !super::packed_rgb_resample_preflight(
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        idx,
+      )? {
+        return Ok(());
+      }
+      let stream = super::packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+      let scratch = super::source_rgb_scratch(rgb_scratch, w, plan)?;
+      yuv_420_to_rgb_row(
+        row.y(),
+        row.u_half(),
+        row.v_half(),
+        scratch,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+      return super::packed_rgb_resample_emit(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        scratch,
+        row.matrix(),
+        row.full_range(),
+        idx,
+        use_simd,
+      );
+    }
 
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
@@ -1250,14 +1307,19 @@ impl<'a, R> MixedSinker<'a, Yuv444p, R> {
   }
 }
 
-impl Yuv444pSink for MixedSinker<'_, Yuv444p> {}
+impl<R> Yuv444pSink for MixedSinker<'_, Yuv444p, R> {}
 
-impl PixelSink for MixedSinker<'_, Yuv444p> {
+impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
   type Input<'r> = Yuv444pRow<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: Yuv444pRow<'_>) -> Result<(), Self::Error> {
@@ -1303,8 +1365,58 @@ impl PixelSink for MixedSinker<'_, Yuv444p> {
       luma_u16,
       hsv,
       rgb_scratch,
+      plan,
+      rgb_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: convert the source row to canonical RGB at
+    // source width in the shared scratch (the same 4:4:4 kernel the
+    // identity path uses), then feed the shared planar resample tail.
+    // Row-stage only — converting each source row to RGB and binning is
+    // the whole job. Freeze the output set and check stream sequencing
+    // before staging, so a no-output sink stays a no-op and an
+    // out-of-sequence row is rejected without allocating.
+    if let Some(plan) = plan.as_ref() {
+      if !super::packed_rgb_resample_preflight(
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        idx,
+      )? {
+        return Ok(());
+      }
+      let stream = super::packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+      let scratch = super::source_rgb_scratch(rgb_scratch, w, plan)?;
+      yuv_444_to_rgb_row(
+        row.y(),
+        row.u(),
+        row.v(),
+        scratch,
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+      return super::packed_rgb_resample_emit(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        scratch,
+        row.matrix(),
+        row.full_range(),
+        idx,
+        use_simd,
+      );
+    }
 
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
