@@ -10,6 +10,19 @@ breaking changes bump the `x` in `0.x.y`.
 
 ### Added
 
+- SIMD acceleration for the fused-downscale engine (NEON, SSE4.1,
+  wasm-simd128): the area H-pass consumes a plan-time zero-padded u16
+  weight arena — each span padded to a multiple of 8, so the kernels
+  run pure wide loads with zero lanes annihilating samples past the
+  last tap — and the V-pass AXPY widens through exact u64 lanes. Both
+  are bit-identical to the scalar reference (pinned by a pre-divide
+  differential across chunk-boundary, multi-chunk, row-end and
+  u16-fallback geometries) and route through the sinkers' existing
+  `with_simd` switch. Gate numbers (1080p -> 336x189, Apple Silicon):
+  native rgb+hsv 3.7ms -> 2.1ms, row-stage rgb+hsv 5.6ms -> 2.5ms,
+  luma-only 1.9ms -> 0.95ms, fused `Rgb24` 4.5ms -> 1.6ms. x86
+  dispatches at the SSE4.1 tier deliberately: spans chunk in 8 taps,
+  so 128 bits is the kernel's natural width.
 - `MixedSinker` gains a resampling-strategy type parameter
   (`R = NoopResampler`) and a `with_resampler(width, height, resampler)`
   constructor: the strategy's plan fixes the sinker's **output
@@ -38,8 +51,8 @@ breaking changes bump the `x` in `0.x.y`.
   fused path with no conversion step at all (binning the packed row
   IS the work). Gate numbers (1080p -> 336x189, scalar engine):
   native rgb+hsv 3.7ms vs row-stage 5.7ms; luma-only 1.9ms either
-  tier; full-res conversion baseline 0.83ms — engine SIMD is the
-  next lever and is tracked for P2.
+  tier; full-res conversion baseline 0.83ms — superseded by the
+  engine-SIMD entry above.
 - Fused downscale now runs end-to-end for `Yuv420p`: the row-stage
   streaming engine area-averages each converted source row into the
   output geometry with exact `u64` integer arithmetic (round-half-up

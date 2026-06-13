@@ -42,6 +42,11 @@ pub(super) use crate::{ColorMatrix, row::scalar};
 
 #[cfg(any(feature = "gbr", feature = "yuv-444-packed", feature = "yuva"))]
 pub(crate) mod alpha_extract;
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(feature = "yuv-planar", feature = "rgb")
+))]
+pub(crate) mod area_reduce;
 #[cfg(feature = "yuv-444-packed")]
 mod ayuv64;
 pub(crate) mod endian;

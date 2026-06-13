@@ -242,7 +242,7 @@ fn rgb24_process_resampled(
     )));
   }
 
-  stream.feed_row(plan.h(), plan.v(), idx, row.rgb(), |oy, out_row| {
+  stream.feed_row(idx, row.rgb(), use_simd, |oy, out_row| {
     if let Some(buf) = rgb.as_deref_mut() {
       buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_row);
     }

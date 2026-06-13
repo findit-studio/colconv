@@ -95,6 +95,13 @@ pub(crate) use scalar::expand_rgb_u16_to_rgba_u16_row;
   any(feature = "gbr", feature = "yuv-444-packed", feature = "yuva"),
 ))]
 pub(crate) use dispatch::alpha_extract;
+// Fused-downscale H-pass reduction; consumed by `crate::resample`'s
+// `AreaStream`.
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(feature = "yuv-planar", feature = "rgb")
+))]
+pub(crate) use dispatch::area_reduce::{PaddedSpans, area_h_reduce_row, area_v_accumulate};
 // `y_plane_to_luma_u16_row` is consumed by every source family that exposes
 // a luma plane to the MixedSinker.
 #[cfg(all(
