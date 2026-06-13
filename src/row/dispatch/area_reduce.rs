@@ -442,6 +442,172 @@ pub(crate) fn area_v_accumulate_u16(acc: &mut [u64], h_tmp: &[u64], w: u64, use_
   scalar::area_v_accumulate_u16(acc, h_tmp, w);
 }
 
+/// Float-element H-pass dispatcher: like [`area_h_reduce_row`] but the
+/// samples are `f32` and `h_tmp` is `f64`. Shares the same plan-time
+/// [`PaddedSpans`] arena (the integer weights are element-type
+/// independent) and the same construction-proof binds. Unlike the
+/// integer dispatchers the kernels do not reproduce the scalar
+/// reference bit-for-bit: float addition does not associate, so the
+/// reordered tap sum lands within a small tolerance.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn area_h_reduce_row_f32(
+  row: &[f32],
+  channels: usize,
+  starts: &[usize],
+  offsets: &[usize],
+  weights: &[usize],
+  padded: Option<&PaddedSpans>,
+  h_tmp: &mut [f64],
+  use_simd: bool,
+) {
+  let out = starts.len();
+  assert!(offsets.len() == out + 1, "offsets shape");
+  assert!(h_tmp.len() >= out * channels, "h_tmp too short");
+  assert!(weights.len() >= offsets[out], "weights arena too short");
+
+  if use_simd && let Some(p) = padded {
+    assert!(p.starts.len() == out, "padded arena shape");
+    assert!(
+      p.off.len() == out + 1 && p.off[out] <= p.w16.len(),
+      "padded arena layout"
+    );
+    assert!(
+      p.max_reach <= row.len() / channels,
+      "padded arena exceeds row"
+    );
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() && channels == 1 {
+          // SAFETY: NEON availability checked; arena coherence proven
+          // by construction plus the binds above; h_tmp bound asserted.
+          unsafe { arch::neon::area_reduce::area_h_reduce_row_f32_c1(row, &p.starts, &p.w16, &p.off, h_tmp); }
+          return;
+        }
+        if neon_available() && channels == 3 {
+          // SAFETY: as above, 3-channel variant.
+          unsafe { arch::neon::area_reduce::area_h_reduce_row_f32_c3(row, &p.starts, &p.w16, &p.off, h_tmp); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        // Highest available tier wins; all consume the same arena and
+        // land within tolerance of each other. The c1 widens within a
+        // span (AVX2 16 taps, AVX-512 32); c3's interleaved load does
+        // not pack into the wide lanes, so every tier runs the 128-bit
+        // c3 step.
+        if channels == 1 {
+          if avx512_available() {
+            // SAFETY: AVX-512F verified; arena coherence proven by
+            // construction plus the binds above; h_tmp bound asserted.
+            unsafe { arch::x86_avx512::area_reduce::area_h_reduce_row_f32_c1(row, &p.starts, &p.w16, &p.off, h_tmp); }
+            return;
+          }
+          if avx2_available() {
+            // SAFETY: AVX2 verified; same arena/bind guarantees.
+            unsafe { arch::x86_avx2::area_reduce::area_h_reduce_row_f32_c1(row, &p.starts, &p.w16, &p.off, h_tmp); }
+            return;
+          }
+          if sse41_available() {
+            // SAFETY: SSE4.1 verified; same arena/bind guarantees.
+            unsafe { arch::x86_sse41::area_reduce::area_h_reduce_row_f32_c1(row, &p.starts, &p.w16, &p.off, h_tmp); }
+            return;
+          }
+        }
+        if channels == 3 {
+          if avx512_available() {
+            // SAFETY: AVX-512F verified; 3-channel variant.
+            unsafe { arch::x86_avx512::area_reduce::area_h_reduce_row_f32_c3(row, &p.starts, &p.w16, &p.off, h_tmp); }
+            return;
+          }
+          if avx2_available() {
+            // SAFETY: AVX2 verified; 3-channel variant.
+            unsafe { arch::x86_avx2::area_reduce::area_h_reduce_row_f32_c3(row, &p.starts, &p.w16, &p.off, h_tmp); }
+            return;
+          }
+          if sse41_available() {
+            // SAFETY: SSE4.1 verified; 3-channel variant.
+            unsafe { arch::x86_sse41::area_reduce::area_h_reduce_row_f32_c3(row, &p.starts, &p.w16, &p.off, h_tmp); }
+            return;
+          }
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() && channels == 1 {
+          // SAFETY: simd128 enabled at compile time; arena coherence
+          // proven by construction plus the binds above; h_tmp bound
+          // asserted.
+          unsafe { arch::wasm_simd128::area_reduce::area_h_reduce_row_f32_c1(row, &p.starts, &p.w16, &p.off, h_tmp); }
+          return;
+        }
+        if simd128_available() && channels == 3 {
+          // SAFETY: as above, 3-channel variant.
+          unsafe { arch::wasm_simd128::area_reduce::area_h_reduce_row_f32_c3(row, &p.starts, &p.w16, &p.off, h_tmp); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+  scalar::area_h_reduce_row_f32(row, channels, starts, offsets, weights, h_tmp);
+}
+
+/// Float-element V-pass AXPY dispatcher: `acc[i] += w * h_tmp[i]` in
+/// `f64`. The weight is a `f64` (the integer V-weight widened exactly),
+/// so there is no `u32` bound to fall back on; every backend matches the
+/// scalar reference bit-for-bit here (the V-pass is element-wise — no
+/// reordering — so only the H-pass carries the float tolerance).
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn area_v_accumulate_f32(acc: &mut [f64], h_tmp: &[f64], w: f64, use_simd: bool) {
+  assert!(h_tmp.len() >= acc.len(), "h_tmp too short");
+
+  if !use_simd {
+    return scalar::area_v_accumulate_f32(acc, h_tmp, w);
+  }
+  #[cfg(any(
+    target_arch = "aarch64",
+    target_arch = "x86_64",
+    target_arch = "wasm32"
+  ))]
+  {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON availability checked; bounds asserted above.
+          unsafe { arch::neon::area_reduce::area_v_accumulate_f32(acc, h_tmp, w); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX-512F verified at runtime; bounds asserted above.
+          unsafe { arch::x86_avx512::area_reduce::area_v_accumulate_f32(acc, h_tmp, w); }
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified at runtime; bounds asserted above.
+          unsafe { arch::x86_avx2::area_reduce::area_v_accumulate_f32(acc, h_tmp, w); }
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified at runtime; bounds asserted above.
+          unsafe { arch::x86_sse41::area_reduce::area_v_accumulate_f32(acc, h_tmp, w); }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 enabled at compile time; bounds asserted above.
+          unsafe { arch::wasm_simd128::area_reduce::area_v_accumulate_f32(acc, h_tmp, w); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+  scalar::area_v_accumulate_f32(acc, h_tmp, w);
+}
+
 #[cfg(all(test, feature = "std"))]
 mod tests {
   use super::*;

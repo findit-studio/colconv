@@ -375,3 +375,219 @@ pub(crate) unsafe fn area_v_accumulate_u16(acc: &mut [u64], h_tmp: &[u64], w: u3
     acc[k] += u64::from(w) * h_tmp[k];
   }
 }
+
+/// Sums the two f64 lanes of `v`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+fn hsum_pd(v: __m128d) -> f64 {
+  _mm_cvtsd_f64(_mm_add_sd(v, _mm_unpackhi_pd(v, v)))
+}
+
+/// Widens eight `u16` arena weights to four `f64` lane-pairs
+/// `(w0w1, w2w3, w4w5, w6w7)`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+fn widen_w16_f64(w: __m128i) -> (__m128d, __m128d, __m128d, __m128d) {
+  let w_lo = _mm_cvtepu16_epi32(w);
+  let w_hi = _mm_cvtepu16_epi32(_mm_srli_si128::<8>(w));
+  (
+    _mm_cvtepi32_pd(w_lo),
+    _mm_cvtepi32_pd(_mm_unpackhi_epi64(w_lo, w_lo)),
+    _mm_cvtepi32_pd(w_hi),
+    _mm_cvtepi32_pd(_mm_unpackhi_epi64(w_hi, w_hi)),
+  )
+}
+
+/// Accumulates eight `f32` samples (`s_lo` lanes 0-3, `s_hi` lanes 4-7)
+/// against four widened weight pairs. A separate multiply then add —
+/// SSE4.1 has no fused multiply-add, and since the integer-weight times
+/// f32-sample product is exact in f64 the two forms agree anyway.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+fn mac8_f32(
+  acc: __m128d,
+  s_lo: __m128,
+  s_hi: __m128,
+  wf0: __m128d,
+  wf1: __m128d,
+  wf2: __m128d,
+  wf3: __m128d,
+) -> __m128d {
+  let a = _mm_add_pd(acc, _mm_mul_pd(mask_pd(_mm_cvtps_pd(s_lo), wf0), wf0));
+  let a = _mm_add_pd(
+    a,
+    _mm_mul_pd(mask_pd(_mm_cvtps_pd(_mm_movehl_ps(s_lo, s_lo)), wf1), wf1),
+  );
+  let a = _mm_add_pd(a, _mm_mul_pd(mask_pd(_mm_cvtps_pd(s_hi), wf2), wf2));
+  _mm_add_pd(
+    a,
+    _mm_mul_pd(mask_pd(_mm_cvtps_pd(_mm_movehl_ps(s_hi, s_hi)), wf3), wf3),
+  )
+}
+
+/// Zeroes the `f64` sample lanes whose weight lane is zero — the arena's
+/// padding lanes. The integer kernels lean on `0 * sample == 0`, but
+/// `0.0 * NaN` and `0.0 * inf` are NaN, so a direct-loaded padding lane
+/// holding a non-finite neighbor would otherwise poison the span.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+fn mask_pd(sf: __m128d, wf: __m128d) -> __m128d {
+  _mm_and_pd(sf, _mm_cmpneq_pd(wf, _mm_setzero_pd()))
+}
+
+/// Deinterleaves four interleaved RGB `f32` pixels (`x = R0 G0 B0 R1`,
+/// `y = G1 B1 R2 G2`, `z = B2 R3 G3 B3`) into planar
+/// `(R0..R3, G0..G3, B0..B3)` via `_mm_shuffle_ps`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+fn deint3_f32(x: __m128, y: __m128, z: __m128) -> (__m128, __m128, __m128) {
+  let yz_r = _mm_shuffle_ps::<0b00_01_00_10>(y, z);
+  let r = _mm_shuffle_ps::<0b10_00_11_00>(x, yz_r);
+  let xy_g = _mm_shuffle_ps::<0b00_00_00_01>(x, y);
+  let yz_g = _mm_shuffle_ps::<0b00_10_00_11>(y, z);
+  let g = _mm_shuffle_ps::<0b10_00_10_00>(xy_g, yz_g);
+  let xy_b = _mm_shuffle_ps::<0b00_01_00_10>(x, y);
+  let b = _mm_shuffle_ps::<0b11_00_10_00>(xy_b, z);
+  (r, g, b)
+}
+
+/// Float-element H-pass (1 channel): `f32` samples widen to `f64` and
+/// meet the `u16` weights widened to `f64`; the per-span sums live in
+/// `f64`. The products are exact, so the only departure from the scalar
+/// reference is the tap-sum order — float addition does not associate,
+/// so parity is a small tolerance, not bit-exactness.
+///
+/// # Safety
+///
+/// As [`area_h_reduce_row_c1`], with `row.len() >= cells` `f32`
+/// elements and `h_tmp.len() >= starts.len()`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn area_h_reduce_row_f32_c1(
+  row: &[f32],
+  starts: &[usize],
+  w16: &[u16],
+  w16_off: &[usize],
+  h_tmp: &mut [f64],
+) {
+  for (j, &start) in starts.iter().enumerate() {
+    let span = &w16[w16_off[j]..w16_off[j + 1]];
+    // SAFETY: each 8-element f32 load is fully in-bounds (guarded) or
+    // staged through a zero-filled stack copy; weights come from the
+    // 8-multiple arena slice.
+    unsafe {
+      let mut acc = _mm_setzero_pd();
+      for (ci, chunk) in span.chunks_exact(8).enumerate() {
+        let base = start + ci * 8;
+        let (s_lo, s_hi) = if base + 8 <= row.len() {
+          (
+            _mm_loadu_ps(row.as_ptr().add(base)),
+            _mm_loadu_ps(row.as_ptr().add(base + 4)),
+          )
+        } else {
+          let mut sbuf = [0f32; 8];
+          let take = row.len() - base;
+          sbuf[..take].copy_from_slice(&row[base..]);
+          (
+            _mm_loadu_ps(sbuf.as_ptr()),
+            _mm_loadu_ps(sbuf.as_ptr().add(4)),
+          )
+        };
+        let w = _mm_loadu_si128(chunk.as_ptr().cast());
+        let (wf0, wf1, wf2, wf3) = widen_w16_f64(w);
+        acc = mac8_f32(acc, s_lo, s_hi, wf0, wf1, wf2, wf3);
+      }
+      h_tmp[j] = hsum_pd(acc);
+    }
+  }
+}
+
+/// Float-element H-pass (3-channel interleaved RGB): two overlapping
+/// four-pixel `_mm_shuffle_ps` deinterleaves cover the eight-pixel
+/// chunk, each channel sharing one widened weight set.
+///
+/// # Safety
+///
+/// As [`area_h_reduce_row_f32_c1`], with `row.len() >= cells * 3` `f32`
+/// elements and `h_tmp.len() >= starts.len() * 3`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn area_h_reduce_row_f32_c3(
+  row: &[f32],
+  starts: &[usize],
+  w16: &[u16],
+  w16_off: &[usize],
+  h_tmp: &mut [f64],
+) {
+  for (j, &start) in starts.iter().enumerate() {
+    let span = &w16[w16_off[j]..w16_off[j + 1]];
+    // SAFETY: the six 16-byte loads cover the chunk's 24 f32 and are
+    // either fully in-bounds (guarded) or staged through a zero-filled
+    // 24-element stack copy; weights come from the 8-multiple arena
+    // slice.
+    unsafe {
+      let mut acc0 = _mm_setzero_pd();
+      let mut acc1 = _mm_setzero_pd();
+      let mut acc2 = _mm_setzero_pd();
+      for (ci, chunk) in span.chunks_exact(8).enumerate() {
+        let base = (start + ci * 8) * 3;
+        let mut sbuf = [0f32; 24];
+        let p = if base + 24 <= row.len() {
+          row.as_ptr().add(base)
+        } else {
+          let take = row.len() - base;
+          sbuf[..take].copy_from_slice(&row[base..]);
+          sbuf.as_ptr()
+        };
+        let (r0, g0, b0) = deint3_f32(
+          _mm_loadu_ps(p),
+          _mm_loadu_ps(p.add(4)),
+          _mm_loadu_ps(p.add(8)),
+        );
+        let (r1, g1, b1) = deint3_f32(
+          _mm_loadu_ps(p.add(12)),
+          _mm_loadu_ps(p.add(16)),
+          _mm_loadu_ps(p.add(20)),
+        );
+        let w = _mm_loadu_si128(chunk.as_ptr().cast());
+        let (wf0, wf1, wf2, wf3) = widen_w16_f64(w);
+        acc0 = mac8_f32(acc0, r0, r1, wf0, wf1, wf2, wf3);
+        acc1 = mac8_f32(acc1, g0, g1, wf0, wf1, wf2, wf3);
+        acc2 = mac8_f32(acc2, b0, b1, wf0, wf1, wf2, wf3);
+      }
+      h_tmp[j * 3] = hsum_pd(acc0);
+      h_tmp[j * 3 + 1] = hsum_pd(acc1);
+      h_tmp[j * 3 + 2] = hsum_pd(acc2);
+    }
+  }
+}
+
+/// Float-element V-pass AXPY: `acc[i] += w * h_tmp[i]` in `f64`. A
+/// separate multiply then add (not a fused multiply-add) so each lane
+/// matches the scalar reference bit-for-bit — the V-pass is
+/// element-wise, with no reordering. Two elements per iteration.
+///
+/// # Safety
+///
+/// SSE4.1 must be available. `h_tmp.len() >= acc.len()`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn area_v_accumulate_f32(acc: &mut [f64], h_tmp: &[f64], w: f64) {
+  let n = acc.len();
+  debug_assert!(h_tmp.len() >= n, "h_tmp too short");
+  let wv = _mm_set1_pd(w);
+  let mut i = 0usize;
+  // SAFETY: loop guard `i + 2 <= n` with `h_tmp.len() >= n` keeps all
+  // loads and stores in bounds.
+  unsafe {
+    while i + 2 <= n {
+      let t = _mm_loadu_pd(h_tmp.as_ptr().add(i));
+      let a = _mm_loadu_pd(acc.as_ptr().add(i));
+      _mm_storeu_pd(acc.as_mut_ptr().add(i), _mm_add_pd(a, _mm_mul_pd(t, wv)));
+      i += 2;
+    }
+  }
+  for k in i..n {
+    acc[k] += w * h_tmp[k];
+  }
+}

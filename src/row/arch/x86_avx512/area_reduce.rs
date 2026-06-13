@@ -603,3 +603,188 @@ pub(crate) unsafe fn area_v_accumulate_u16(acc: &mut [u64], h_tmp: &[u64], w: u3
     acc[k] += u64::from(w) * h_tmp[k];
   }
 }
+
+/// Widens eight `u16` arena weights to one `__m512d` of eight `f64`
+/// lanes `(w0..w7)`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+fn widen_w16_f64(w: __m128i) -> __m512d {
+  _mm512_cvtepi32_pd(_mm256_cvtepu16_epi32(w))
+}
+
+/// Accumulates eight `f32` samples (`s` lanes 0-7) against eight widened
+/// `f64` weights into a running `__m512d`. A separate multiply then add
+/// — since the integer-weight times f32-sample product is exact in `f64`
+/// the fused and unfused forms agree, so this matches the H-pass scalar
+/// reference up to the tap-sum order.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+fn mac8_f32(acc: __m512d, s: __m256, wf: __m512d) -> __m512d {
+  // Zero the sample lanes whose weight is zero (arena padding) before
+  // the multiply: the integer kernels lean on `0 * sample == 0`, but
+  // `0.0 * NaN` and `0.0 * inf` are NaN, so a direct-loaded padding lane
+  // holding a non-finite neighbor would otherwise poison the span.
+  let keep = _mm512_cmp_pd_mask::<_CMP_NEQ_OQ>(wf, _mm512_setzero_pd());
+  let sf = _mm512_maskz_mov_pd(keep, _mm512_cvtps_pd(s));
+  _mm512_add_pd(acc, _mm512_mul_pd(sf, wf))
+}
+
+/// Deinterleaves four interleaved RGB `f32` pixels (`x = R0 G0 B0 R1`,
+/// `y = G1 B1 R2 G2`, `z = B2 R3 G3 B3`) into planar
+/// `(R0..R3, G0..G3, B0..B3)` via `_mm_shuffle_ps`. The 128-bit SSE4.1
+/// step, run twice per 8-pixel chunk (the RGB group does not pack into
+/// wide lanes, just as the u8 c3 runs its 128-bit gather per tier).
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+fn deint3_f32(x: __m128, y: __m128, z: __m128) -> (__m128, __m128, __m128) {
+  let yz_r = _mm_shuffle_ps::<0b00_01_00_10>(y, z);
+  let r = _mm_shuffle_ps::<0b10_00_11_00>(x, yz_r);
+  let xy_g = _mm_shuffle_ps::<0b00_00_00_01>(x, y);
+  let yz_g = _mm_shuffle_ps::<0b00_10_00_11>(y, z);
+  let g = _mm_shuffle_ps::<0b10_00_10_00>(xy_g, yz_g);
+  let xy_b = _mm_shuffle_ps::<0b00_01_00_10>(x, y);
+  let b = _mm_shuffle_ps::<0b11_00_10_00>(xy_b, z);
+  (r, g, b)
+}
+
+/// Float-element H-pass (1 channel): `f32` samples widen to `f64` and
+/// meet the `u16` weights widened to `f64`; the per-span sums live in
+/// `f64` (see the scalar reference for why the float accumulators are
+/// `f64`). All eight taps of a chunk fit one `__m512d`. The products are
+/// exact (a `u16` weight times a 24-bit `f32` mantissa fits 53 bits), so
+/// the only departure from the scalar reference is the tap-sum order —
+/// float addition does not associate, so parity is a small tolerance,
+/// not the integer kernels' bit-exactness.
+///
+/// # Safety
+///
+/// As [`area_h_reduce_row_c1`], with `row.len() >= cells` `f32` elements
+/// and `h_tmp.len() >= starts.len()`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn area_h_reduce_row_f32_c1(
+  row: &[f32],
+  starts: &[usize],
+  w16: &[u16],
+  w16_off: &[usize],
+  h_tmp: &mut [f64],
+) {
+  for (j, &start) in starts.iter().enumerate() {
+    let span = &w16[w16_off[j]..w16_off[j + 1]];
+    // SAFETY: each 8-element f32 load is fully in-bounds (guarded) or
+    // staged through a zero-filled stack copy; weights come from the
+    // 8-multiple arena slice.
+    unsafe {
+      let mut acc = _mm512_setzero_pd();
+      for (ci, chunk) in span.chunks_exact(8).enumerate() {
+        let base = start + ci * 8;
+        let s = if base + 8 <= row.len() {
+          _mm256_loadu_ps(row.as_ptr().add(base))
+        } else {
+          let mut sbuf = [0f32; 8];
+          let take = row.len() - base;
+          sbuf[..take].copy_from_slice(&row[base..]);
+          _mm256_loadu_ps(sbuf.as_ptr())
+        };
+        let w = _mm_loadu_si128(chunk.as_ptr().cast());
+        acc = mac8_f32(acc, s, widen_w16_f64(w));
+      }
+      h_tmp[j] = _mm512_reduce_add_pd(acc);
+    }
+  }
+}
+
+/// Float-element H-pass (3-channel interleaved RGB): two overlapping
+/// four-pixel `_mm_shuffle_ps` deinterleaves cover the eight-pixel chunk
+/// (the RGB group stays 128-bit — like the u8 c3, which runs its 128-bit
+/// gather per tier), each channel's eight planar samples joined into a
+/// `__m256` and sharing one widened weight set.
+///
+/// # Safety
+///
+/// As [`area_h_reduce_row_f32_c1`], with `row.len() >= cells * 3` `f32`
+/// elements and `h_tmp.len() >= starts.len() * 3`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn area_h_reduce_row_f32_c3(
+  row: &[f32],
+  starts: &[usize],
+  w16: &[u16],
+  w16_off: &[usize],
+  h_tmp: &mut [f64],
+) {
+  for (j, &start) in starts.iter().enumerate() {
+    let span = &w16[w16_off[j]..w16_off[j + 1]];
+    // SAFETY: the six 16-byte loads cover the chunk's 24 f32 and are
+    // either fully in-bounds (guarded) or staged through a zero-filled
+    // 24-element stack copy; weights come from the 8-multiple arena
+    // slice.
+    unsafe {
+      let mut acc0 = _mm512_setzero_pd();
+      let mut acc1 = _mm512_setzero_pd();
+      let mut acc2 = _mm512_setzero_pd();
+      for (ci, chunk) in span.chunks_exact(8).enumerate() {
+        let base = (start + ci * 8) * 3;
+        let mut sbuf = [0f32; 24];
+        let p = if base + 24 <= row.len() {
+          row.as_ptr().add(base)
+        } else {
+          let take = row.len() - base;
+          sbuf[..take].copy_from_slice(&row[base..]);
+          sbuf.as_ptr()
+        };
+        let (r0, g0, b0) = deint3_f32(
+          _mm_loadu_ps(p),
+          _mm_loadu_ps(p.add(4)),
+          _mm_loadu_ps(p.add(8)),
+        );
+        let (r1, g1, b1) = deint3_f32(
+          _mm_loadu_ps(p.add(12)),
+          _mm_loadu_ps(p.add(16)),
+          _mm_loadu_ps(p.add(20)),
+        );
+        let w = _mm_loadu_si128(chunk.as_ptr().cast());
+        let wf = widen_w16_f64(w);
+        acc0 = mac8_f32(acc0, _mm256_set_m128(r1, r0), wf);
+        acc1 = mac8_f32(acc1, _mm256_set_m128(g1, g0), wf);
+        acc2 = mac8_f32(acc2, _mm256_set_m128(b1, b0), wf);
+      }
+      h_tmp[j * 3] = _mm512_reduce_add_pd(acc0);
+      h_tmp[j * 3 + 1] = _mm512_reduce_add_pd(acc1);
+      h_tmp[j * 3 + 2] = _mm512_reduce_add_pd(acc2);
+    }
+  }
+}
+
+/// Float-element V-pass AXPY: `acc[i] += w * h_tmp[i]` in `f64`. A
+/// separate multiply then add (not a fused multiply-add) so each lane
+/// matches the scalar reference bit-for-bit — the V-pass is
+/// element-wise, with no reordering. Eight elements per iteration.
+///
+/// # Safety
+///
+/// AVX-512F must be available. `h_tmp.len() >= acc.len()`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn area_v_accumulate_f32(acc: &mut [f64], h_tmp: &[f64], w: f64) {
+  let n = acc.len();
+  debug_assert!(h_tmp.len() >= n, "h_tmp too short");
+  let wv = _mm512_set1_pd(w);
+  let mut i = 0usize;
+  // SAFETY: loop guard `i + 8 <= n` with `h_tmp.len() >= n` keeps all
+  // loads and stores in bounds.
+  unsafe {
+    while i + 8 <= n {
+      let t = _mm512_loadu_pd(h_tmp.as_ptr().add(i));
+      let a = _mm512_loadu_pd(acc.as_ptr().add(i));
+      _mm512_storeu_pd(
+        acc.as_mut_ptr().add(i),
+        _mm512_add_pd(a, _mm512_mul_pd(t, wv)),
+      );
+      i += 8;
+    }
+  }
+  for k in i..n {
+    acc[k] += w * h_tmp[k];
+  }
+}
