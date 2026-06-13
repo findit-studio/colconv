@@ -101,7 +101,9 @@ pub(crate) use dispatch::alpha_extract;
   any(feature = "std", feature = "alloc"),
   any(feature = "yuv-planar", feature = "rgb")
 ))]
-pub(crate) use dispatch::area_reduce::{PaddedSpans, area_h_reduce_row, area_v_accumulate};
+pub(crate) use dispatch::area_reduce::{
+  PaddedSpans, area_h_reduce_row, area_h_reduce_row_u16, area_v_accumulate, area_v_accumulate_u16,
+};
 // `y_plane_to_luma_u16_row` is consumed by every source family that exposes
 // a luma plane to the MixedSinker.
 #[cfg(all(

@@ -281,6 +281,81 @@ pub(crate) fn area_v_accumulate(acc: &mut [u64], h_tmp: &[u32], w: u64, use_simd
   scalar::area_v_accumulate(acc, h_tmp, w);
 }
 
+/// 16-bit-element H-pass dispatcher: like [`area_h_reduce_row`] but the
+/// samples are `u16` and `h_tmp` is `u64`. Shares the same plan-time
+/// [`PaddedSpans`] arena (the weights are width-independent) and the
+/// same construction-proof binds; only the per-arch kernels differ.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn area_h_reduce_row_u16(
+  row: &[u16],
+  channels: usize,
+  starts: &[usize],
+  offsets: &[usize],
+  weights: &[usize],
+  padded: Option<&PaddedSpans>,
+  h_tmp: &mut [u64],
+  use_simd: bool,
+) {
+  let out = starts.len();
+  assert!(offsets.len() == out + 1, "offsets shape");
+  assert!(h_tmp.len() >= out * channels, "h_tmp too short");
+  assert!(weights.len() >= offsets[out], "weights arena too short");
+
+  if use_simd && let Some(p) = padded {
+    assert!(p.starts.len() == out, "padded arena shape");
+    assert!(
+      p.off.len() == out + 1 && p.off[out] <= p.w16.len(),
+      "padded arena layout"
+    );
+    assert!(
+      p.max_reach <= row.len() / channels,
+      "padded arena exceeds row"
+    );
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() && channels == 1 {
+          // SAFETY: NEON availability checked; arena coherence proven
+          // by construction plus the binds above; h_tmp bound asserted.
+          unsafe { arch::neon::area_reduce::area_h_reduce_row_u16_c1(row, &p.starts, &p.w16, &p.off, h_tmp); }
+          return;
+        }
+        if neon_available() && channels == 3 {
+          // SAFETY: as above, 3-channel variant.
+          unsafe { arch::neon::area_reduce::area_h_reduce_row_u16_c3(row, &p.starts, &p.w16, &p.off, h_tmp); }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+  scalar::area_h_reduce_row_u16(row, channels, starts, offsets, weights, h_tmp);
+}
+
+/// 16-bit-element V-pass AXPY dispatcher: `acc[i] += w * h_tmp[i]` with
+/// `h_tmp` already `u64`. Kernels split the `u32 * u64` product into
+/// 32-bit halves; a weight past `u32::MAX` (output dimension past
+/// `u32::MAX`) takes the scalar reference.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn area_v_accumulate_u16(acc: &mut [u64], h_tmp: &[u64], w: u64, use_simd: bool) {
+  assert!(h_tmp.len() >= acc.len(), "h_tmp too short");
+
+  if !use_simd {
+    return scalar::area_v_accumulate_u16(acc, h_tmp, w);
+  }
+  #[cfg(target_arch = "aarch64")]
+  if let Ok(w32) = u32::try_from(w)
+    && neon_available()
+  {
+    // SAFETY: NEON availability checked; bounds asserted above.
+    unsafe {
+      arch::neon::area_reduce::area_v_accumulate_u16(acc, h_tmp, w32);
+    }
+    return;
+  }
+  scalar::area_v_accumulate_u16(acc, h_tmp, w);
+}
+
 #[cfg(all(test, feature = "std"))]
 mod tests {
   use super::*;
