@@ -326,6 +326,19 @@ pub(crate) fn area_h_reduce_row_u16(
           return;
         }
       },
+      target_arch = "x86_64" => {
+        if channels == 1 && sse41_available() {
+          // SAFETY: SSE4.1 verified; arena coherence proven by
+          // construction plus the binds above; h_tmp bound asserted.
+          unsafe { arch::x86_sse41::area_reduce::area_h_reduce_row_u16_c1(row, &p.starts, &p.w16, &p.off, h_tmp); }
+          return;
+        }
+        if channels == 3 && sse41_available() {
+          // SAFETY: as above, 3-channel variant.
+          unsafe { arch::x86_sse41::area_reduce::area_h_reduce_row_u16_c3(row, &p.starts, &p.w16, &p.off, h_tmp); }
+          return;
+        }
+      },
       _ => {}
     }
   }
@@ -343,15 +356,25 @@ pub(crate) fn area_v_accumulate_u16(acc: &mut [u64], h_tmp: &[u64], w: u64, use_
   if !use_simd {
     return scalar::area_v_accumulate_u16(acc, h_tmp, w);
   }
-  #[cfg(target_arch = "aarch64")]
-  if let Ok(w32) = u32::try_from(w)
-    && neon_available()
-  {
-    // SAFETY: NEON availability checked; bounds asserted above.
-    unsafe {
-      arch::neon::area_reduce::area_v_accumulate_u16(acc, h_tmp, w32);
+  #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+  if let Ok(w32) = u32::try_from(w) {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON availability checked; bounds asserted above.
+          unsafe { arch::neon::area_reduce::area_v_accumulate_u16(acc, h_tmp, w32); }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified at runtime; bounds asserted above.
+          unsafe { arch::x86_sse41::area_reduce::area_v_accumulate_u16(acc, h_tmp, w32); }
+          return;
+        }
+      },
+      _ => {}
     }
-    return;
   }
   scalar::area_v_accumulate_u16(acc, h_tmp, w);
 }
