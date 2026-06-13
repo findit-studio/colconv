@@ -104,6 +104,13 @@ pub(crate) use dispatch::alpha_extract;
 pub(crate) use dispatch::area_reduce::{
   PaddedSpans, area_h_reduce_row, area_h_reduce_row_u16, area_v_accumulate, area_v_accumulate_u16,
 };
+// The float stream has no SIMD tier yet, so it consumes the scalar
+// references directly.
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(feature = "yuv-planar", feature = "rgb")
+))]
+pub(crate) use scalar::area_reduce::{area_h_reduce_row_f32, area_v_accumulate_f32};
 // `y_plane_to_luma_u16_row` is consumed by every source family that exposes
 // a luma plane to the MixedSinker.
 #[cfg(all(

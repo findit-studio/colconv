@@ -71,3 +71,40 @@ pub(crate) fn area_v_accumulate_u16(acc: &mut [u64], h_tmp: &[u64], w: u64) {
     *a += w * *t;
   }
 }
+
+/// Float-element H-pass reference: the samples are `f32` but the
+/// per-span sums are `f64` — the unnormalized area numerator reaches
+/// `denom * sample`, which an `f32` accumulator would round away past
+/// `2^24` (a wide constant image would not round-trip) or overflow to
+/// infinity. The float stream has no SIMD tier yet, so this is its
+/// production H-pass; float adds reorder under any future SIMD, so that
+/// tier's parity is a small tolerance, not the integer streams' 0-ULP.
+pub(crate) fn area_h_reduce_row_f32(
+  row: &[f32],
+  channels: usize,
+  starts: &[usize],
+  offsets: &[usize],
+  weights: &[usize],
+  h_tmp: &mut [f64],
+) {
+  for (j, &start) in starts.iter().enumerate() {
+    let span = &weights[offsets[j]..offsets[j + 1]];
+    let base = j * channels;
+    for ch in 0..channels {
+      let mut sum = 0.0f64;
+      for (i, &w) in span.iter().enumerate() {
+        sum += w as f64 * f64::from(row[(start + i) * channels + ch]);
+      }
+      h_tmp[base + ch] = sum;
+    }
+  }
+}
+
+/// Float-element V-pass AXPY reference: `acc[i] += w * h_tmp[i]` in
+/// `f64` (see [`area_h_reduce_row_f32`] for why the float accumulators
+/// are `f64`).
+pub(crate) fn area_v_accumulate_f32(acc: &mut [f64], h_tmp: &[f64], w: f64) {
+  for (a, t) in acc.iter_mut().zip(h_tmp.iter()) {
+    *a += w * *t;
+  }
+}

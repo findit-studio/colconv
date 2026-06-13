@@ -558,19 +558,28 @@ fn round_div_half_up(a: u64, d: u64) -> u64 {
 }
 
 /// The sample element an [`AreaStream`] resamples — abstracts the
-/// element width, the H-pass accumulator type ([`Self::HSum`]), the
-/// per-axis kernels, and the finalize. `u8` routes the SIMD
-/// dispatchers; `u16` uses scalar paths (SIMD follows).
+/// element width, the H-pass accumulator ([`Self::HSum`]), the V-pass
+/// accumulator ([`Self::VAcc`]), the per-axis kernels, and the
+/// finalize. `u8` and `u16` route the SIMD dispatchers and finalize
+/// round-half-up in `u64`; `f32` accumulates in float (scalar; SIMD
+/// follows) and finalizes with a plain divide.
 #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
 pub(crate) trait AreaSample: Copy + Default {
-  /// H-pass accumulator element. `u8` uses `u32` (an H-sum reaches
-  /// `src_w * 255` and the narrow lanes drive its SIMD kernel); `u16`
-  /// needs `u64` (`src_w * 65535`).
+  /// H-pass accumulator element. Integer samples sum exactly in a wide
+  /// integer (`u32` for `u8` — an H-sum reaches `src_w * 255` and the
+  /// narrow lanes drive its SIMD kernel; `u64` for `u16`); `f32` sums
+  /// in `f32`.
   type HSum: Copy + Default;
-  /// Largest sample value — the H/V overflow bounds scale by it.
-  const MAX_SAMPLE: u64;
-  /// `true` iff an H-sum for a `src_w`-wide plane fits [`Self::HSum`].
+  /// V-pass accumulator element: `u64` for the integer streams (exact
+  /// associative adds, hence 0-ULP SIMD parity), `f32` for the float
+  /// stream (non-associative, hence parity is a small tolerance).
+  type VAcc: Copy + Default;
+  /// `true` iff an H-sum for a `src_w`-wide plane fits [`Self::HSum`]
+  /// without overflow (always `true` for the float stream).
   fn h_sum_fits(src_w: u64) -> bool;
+  /// `true` iff `denom` and the V-accumulation it bounds stay exact
+  /// (always `true` for the float stream, which cannot integer-overflow).
+  fn denom_fits(denom: u64) -> bool;
   /// Reduces one source row into `h_tmp` (per-span weighted sums).
   fn h_reduce(
     row: &[Self],
@@ -580,19 +589,24 @@ pub(crate) trait AreaSample: Copy + Default {
     h_tmp: &mut [Self::HSum],
     use_simd: bool,
   );
-  /// Accumulates `acc[i] += w * h_tmp[i]` into the `u64` V-accumulators.
-  fn v_accumulate(acc: &mut [u64], h_tmp: &[Self::HSum], w: u64, use_simd: bool);
-  /// Finalizes one accumulator — round-half-up divide by `denom`.
-  fn finalize(acc: u64, denom: u64) -> Self;
+  /// Accumulates `acc[i] += w * h_tmp[i]` into the V-accumulators.
+  fn v_accumulate(acc: &mut [Self::VAcc], h_tmp: &[Self::HSum], w: u64, use_simd: bool);
+  /// Finalizes one accumulator — divide by `denom` (round-half-up for
+  /// the integer streams, plain divide for the float stream).
+  fn finalize(acc: Self::VAcc, denom: u64) -> Self;
 }
 
 #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
 impl AreaSample for u8 {
   type HSum = u32;
-  const MAX_SAMPLE: u64 = 255;
+  type VAcc = u64;
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn h_sum_fits(src_w: u64) -> bool {
-    src_w <= u64::from(u32::MAX) / Self::MAX_SAMPLE
+    src_w <= u64::from(u32::MAX) / 255
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn denom_fits(denom: u64) -> bool {
+    denom <= u64::MAX / 255
   }
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn h_reduce(
@@ -617,18 +631,22 @@ impl AreaSample for u8 {
   }
 }
 
-/// 16-bit element path. Scalar for now — its SIMD kernels and the
-/// high-bit sinkers that route through it land in follow-ups; until a
-/// production caller instantiates `AreaStream<u16>` the methods are
-/// reachable only from the parity tests.
+/// 16-bit element path: routes the SIMD dispatchers, consumed in
+/// production by the high-bit packed-RGB sinkers (`Rgb48` / `Bgr48`).
+/// Still unreachable under a `yuv-planar`-only build (no high-bit
+/// planar format routes through it yet), hence the `rgb`-gated allow.
 #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
-#[allow(dead_code)]
+#[cfg_attr(not(feature = "rgb"), allow(dead_code))]
 impl AreaSample for u16 {
   type HSum = u64;
-  const MAX_SAMPLE: u64 = 65535;
+  type VAcc = u64;
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn h_sum_fits(src_w: u64) -> bool {
-    src_w <= u64::MAX / Self::MAX_SAMPLE
+    src_w <= u64::MAX / 65535
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn denom_fits(denom: u64) -> bool {
+    denom <= u64::MAX / 65535
   }
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn h_reduce(
@@ -650,6 +668,53 @@ impl AreaSample for u16 {
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn finalize(acc: u64, denom: u64) -> u16 {
     round_div_half_up(acc, denom) as u16
+  }
+}
+
+/// 32-bit float element path: area-resamples float samples (linear-light
+/// RGB / XYZ). Samples and the emitted output are `f32`, but **both
+/// accumulators are `f64`** ([`Self::HSum`] / [`Self::VAcc`]): the
+/// unnormalized area numerator reaches `denom * sample`, and an `f32`
+/// numerator silently stops summing unit contributions past `2^24` (so
+/// a wide constant image would not round-trip) and can overflow to
+/// infinity for large finite samples. `f64`'s 53-bit mantissa and
+/// vast range keep the numerator exact-enough for any realistic
+/// geometry, so `h_sum_fits` / `denom_fits` need no overflow bound.
+/// The single `f32` rounding is the final divide-and-cast. Scalar for
+/// now; the SIMD kernels follow (their float adds reorder, so that
+/// parity is a small tolerance, not 0-ULP). Gated like the integer
+/// paths; reachable only from the parity tests until a float source
+/// format routes through it (the dead-code allow drops then, as it did
+/// for `u16` once `Rgb48` landed).
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[allow(dead_code)]
+impl AreaSample for f32 {
+  type HSum = f64;
+  type VAcc = f64;
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn h_sum_fits(_src_w: u64) -> bool {
+    true
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn denom_fits(_denom: u64) -> bool {
+    true
+  }
+  fn h_reduce(
+    row: &[f32],
+    channels: usize,
+    h: &AxisSpans,
+    _padded: Option<&crate::row::PaddedSpans>,
+    h_tmp: &mut [f64],
+    _use_simd: bool,
+  ) {
+    crate::row::area_h_reduce_row_f32(row, channels, &h.starts, &h.offsets, &h.weights, h_tmp);
+  }
+  fn v_accumulate(acc: &mut [f64], h_tmp: &[f64], w: u64, _use_simd: bool) {
+    crate::row::area_v_accumulate_f32(acc, h_tmp, w as f64);
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn finalize(acc: f64, denom: u64) -> f32 {
+    (acc / denom as f64) as f32
   }
 }
 
@@ -692,8 +757,10 @@ pub(crate) struct AreaStream<S: AreaSample> {
   /// an H-sum reaching `src_w * 255`; `u64` for `u16`), and creation
   /// bounds `src_w` accordingly via [`AreaSample::h_sum_fits`].
   h_tmp: Vec<S::HSum>,
-  /// In-flight output-row accumulators, `out_w * channels`.
-  acc: Vec<u64>,
+  /// In-flight output-row accumulators, `out_w * channels`. The element
+  /// is [`AreaSample::VAcc`] — `u64` for the integer streams, `f32` for
+  /// the float stream.
+  acc: Vec<S::VAcc>,
   /// Finalized staging row handed to `emit`, `out_w * channels`.
   out_tmp: Vec<S>,
   /// Plan-time SIMD staging for the H-pass
@@ -710,12 +777,12 @@ pub(crate) struct AreaStream<S: AreaSample> {
 impl<S: AreaSample> AreaStream<S> {
   /// Creates a stream for `channels` interleaved channels of the
   /// plan's geometry. Fails with [`ResampleError::Overflow`] when the
-  /// normalization denominator (or `denom * S::MAX_SAMPLE`, the
-  /// accumulator bound that keeps every sum exact in `u64`) is
-  /// unrepresentable. `h`/`v` are the plane's own span sets and
-  /// `src_w`/`src_h` its own grid (the chroma planes of a subsampled
-  /// format run smaller grids — and possibly the upsample direction —
-  /// against the same output geometry).
+  /// normalization denominator (or the per-element accumulator bound it
+  /// must satisfy via [`AreaSample::denom_fits`]) is unrepresentable —
+  /// vacuous for the float stream. `h`/`v` are the plane's own span
+  /// sets and `src_w`/`src_h` its own grid (the chroma planes of a
+  /// subsampled format run smaller grids — and possibly the upsample
+  /// direction — against the same output geometry).
   pub(crate) fn new(
     h: &AxisSpans,
     v: &AxisSpans,
@@ -724,17 +791,17 @@ impl<S: AreaSample> AreaStream<S> {
     channels: usize,
   ) -> Result<Self, ResampleError> {
     let geometry = || PlanGeometry::new(src_w, src_h, h.out_len(), v.out_len());
-    // Exactness bounds: an H-sum must fit S::HSum (so src_w *
-    // S::MAX_SAMPLE fits — u32 for u8, u64 for u16) and V-accumulation
-    // must stay exact in u64 (so denom * S::MAX_SAMPLE fits). Both
-    // reject only absurd magnitudes — a >16.8-million-pixel-wide plane
-    // for the u8 H-sum.
+    // Exactness bounds for the integer streams: an H-sum must fit
+    // S::HSum and the V-accumulation must stay exact in u64. Both reject
+    // only absurd magnitudes (a >16.8-million-pixel-wide plane for the
+    // u8 H-sum); the float stream cannot integer-overflow, so its
+    // predicates are vacuously true.
     if !S::h_sum_fits(src_w as u64) {
       return Err(ResampleError::Overflow(geometry()));
     }
     let denom = (src_w as u64)
       .checked_mul(src_h as u64)
-      .filter(|d| *d <= u64::MAX / S::MAX_SAMPLE)
+      .filter(|d| S::denom_fits(*d))
       .ok_or_else(|| ResampleError::Overflow(geometry()))?;
     let n = h
       .out_len()
@@ -777,7 +844,7 @@ impl<S: AreaSample> AreaStream<S> {
 
   /// Restarts the stream for a new frame.
   pub(crate) fn reset(&mut self) {
-    self.acc.fill(0);
+    self.acc.fill(S::VAcc::default());
     self.cur_out = 0;
     self.next_y = 0;
   }
@@ -837,7 +904,7 @@ impl<S: AreaSample> AreaStream<S> {
       }
       for (o, a) in self.out_tmp.iter_mut().zip(self.acc.iter_mut()) {
         *o = S::finalize(*a, self.denom);
-        *a = 0;
+        *a = S::VAcc::default();
       }
       emit(self.cur_out, &self.out_tmp);
       self.cur_out += 1;

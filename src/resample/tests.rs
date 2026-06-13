@@ -334,6 +334,148 @@ fn stream_u16_exact_2x2_block_mean() {
   );
 }
 
+/// Exact f64 2-D area mean cast to f32 — the ground-truth float
+/// reference. The streaming f32 engine accumulates in f32 (H then V),
+/// whose adds reorder vs this 2-D sum, so it matches only within a
+/// small tolerance, not bit-for-bit.
+#[cfg(feature = "yuv-planar")]
+fn direct_area_2d_f32(plan: &ResamplePlan, src: &[f32], channels: usize) -> std::vec::Vec<f32> {
+  let (out_w, out_h) = plan.out_dims();
+  let src_w = plan.src_w();
+  let denom = (src_w as f64) * (plan.src_h() as f64);
+  let mut out = std::vec![0f32; out_w * out_h * channels];
+  for oy in 0..out_h {
+    let (vy, vw) = plan.v().span(oy);
+    for ox in 0..out_w {
+      let (hx, hw) = plan.h().span(ox);
+      for c in 0..channels {
+        let mut acc = 0f64;
+        for (dy, &wy) in vw.iter().enumerate() {
+          for (dx, &wx) in hw.iter().enumerate() {
+            let s = src[((vy + dy) * src_w + hx + dx) * channels + c] as f64;
+            acc += (wy as f64) * (wx as f64) * s;
+          }
+        }
+        out[(oy * out_w + ox) * channels + c] = (acc / denom) as f32;
+      }
+    }
+  }
+  out
+}
+
+#[cfg(feature = "yuv-planar")]
+fn stream_collect_f32(plan: &ResamplePlan, src: &[f32], channels: usize) -> std::vec::Vec<f32> {
+  let (out_w, out_h) = plan.out_dims();
+  let src_w = plan.src_w();
+  let mut stream = AreaStream::<f32>::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), channels)
+    .expect("realistic geometry");
+  let mut out = std::vec![0f32; out_w * out_h * channels];
+  let mut emitted = std::vec::Vec::new();
+  for y in 0..plan.src_h() {
+    let row = &src[y * src_w * channels..(y + 1) * src_w * channels];
+    stream
+      .feed_row(y, row, false, |oy, finalized| {
+        emitted.push(oy);
+        out[oy * out_w * channels..(oy + 1) * out_w * channels].copy_from_slice(finalized);
+      })
+      .expect("rows arrive in order");
+  }
+  assert_eq!(emitted, (0..out_h).collect::<std::vec::Vec<_>>());
+  out
+}
+
+#[cfg(feature = "yuv-planar")]
+fn assert_f32_close(a: &[f32], b: &[f32], tol: f32) {
+  assert_eq!(a.len(), b.len(), "length");
+  for (i, (&x, &y)) in a.iter().zip(b.iter()).enumerate() {
+    assert!((x - y).abs() <= tol, "index {i}: {x} vs {y} (tol {tol})");
+  }
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn stream_f32_matches_direct_2d_reference_fractional() {
+  let plan = AreaResampler::to(3, 3)
+    .plan(8, 8)
+    .expect("valid")
+    .expect("non-identity");
+  let src: std::vec::Vec<f32> = (0..64).map(|i| i as f32 * 0.1).collect();
+  assert_f32_close(
+    &stream_collect_f32(&plan, &src, 1),
+    &direct_area_2d_f32(&plan, &src, 1),
+    1e-4,
+  );
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn stream_f32_matches_direct_2d_reference_multichannel() {
+  let plan = AreaResampler::to(4, 3)
+    .plan(8, 8)
+    .expect("valid")
+    .expect("non-identity");
+  let mut src = std::vec![0f32; 8 * 8 * 3];
+  for (i, px) in src.chunks_exact_mut(3).enumerate() {
+    px[0] = i as f32 * 0.5;
+    px[1] = 100.0 - i as f32 * 0.25;
+    px[2] = ((7 * i) % 211) as f32;
+  }
+  assert_f32_close(
+    &stream_collect_f32(&plan, &src, 3),
+    &direct_area_2d_f32(&plan, &src, 3),
+    1e-2,
+  );
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn stream_f32_exact_2x2_block_mean() {
+  // Integer-ratio 2x downscale: each output is the plain mean of its
+  // 2x2 block (no round-half-up for float). All values and the divide
+  // by a power-of-two denominator are exact in f32.
+  let plan = AreaResampler::to(2, 2)
+    .plan(4, 4)
+    .expect("valid")
+    .expect("non-identity");
+  let src: std::vec::Vec<f32> = std::vec![
+    1.0, 2.0, 10.0, 12.0, //
+    3.0, 4.0, 14.0, 16.0, //
+    0.5, 1.5, 100.0, 102.0, //
+    2.5, 3.5, 104.0, 106.0, //
+  ];
+  // Quadrant means: (1+2+3+4)/4=2.5; (10+12+14+16)/4=13;
+  // (0.5+1.5+2.5+3.5)/4=2.0; (100+102+104+106)/4=103.
+  assert_f32_close(
+    &stream_collect_f32(&plan, &src, 1),
+    &std::vec![2.5f32, 13.0, 2.0, 103.0],
+    1e-3,
+  );
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn stream_f32_preserves_large_finite_values_without_overflow() {
+  // The stream accumulates the *unnormalized* area numerator
+  // (`denom * sample`) before the final divide. Here `denom = 16` and
+  // `sample = 1e38`, so the numerator is `1.6e39` — past `f32::MAX`
+  // (~3.4e38). An f32 accumulator would overflow to `+inf` and emit
+  // `inf`; the f64 accumulators keep it finite, so the constant
+  // round-trips. (The same f64 accumulators fix the dual failure — a
+  // constant image wider than `2^24` losing unit contributions in an
+  // f32 sum — which a direct test would need a >16.7M-element buffer
+  // to exercise.)
+  let plan = AreaResampler::to(2, 2)
+    .plan(4, 4)
+    .expect("valid")
+    .expect("non-identity");
+  let big = 1.0e38f32;
+  let src = std::vec![big; 4 * 4];
+  for (i, &v) in stream_collect_f32(&plan, &src, 1).iter().enumerate() {
+    assert!(v.is_finite(), "output {i} overflowed to {v}");
+    assert!((v - big).abs() <= big * 1e-5, "output {i}: {v} vs {big}");
+  }
+}
+
 #[cfg(feature = "yuv-planar")]
 #[test]
 fn stream_identity_vertical_axis_emits_every_row() {
