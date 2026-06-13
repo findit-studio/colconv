@@ -223,6 +223,117 @@ fn stream_matches_direct_2d_reference_multichannel() {
   );
 }
 
+/// `u16` analogue of [`direct_area_2d`]: exact 2D area mean over the
+/// full 16-bit sample range, so the reference exercises the wider
+/// (`u64`) horizontal accumulator the `u8` path never reaches.
+#[cfg(feature = "yuv-planar")]
+fn direct_area_2d_u16(plan: &ResamplePlan, src: &[u16], channels: usize) -> std::vec::Vec<u16> {
+  let (out_w, out_h) = plan.out_dims();
+  let src_w = plan.src_w();
+  let denom = (src_w as u64) * (plan.src_h() as u64);
+  let mut out = std::vec![0u16; out_w * out_h * channels];
+  for oy in 0..out_h {
+    let (vy, vw) = plan.v().span(oy);
+    for ox in 0..out_w {
+      let (hx, hw) = plan.h().span(ox);
+      for c in 0..channels {
+        let mut acc = 0u64;
+        for (dy, &wy) in vw.iter().enumerate() {
+          for (dx, &wx) in hw.iter().enumerate() {
+            let s = src[((vy + dy) * src_w + hx + dx) * channels + c] as u64;
+            acc += (wy as u64) * (wx as u64) * s;
+          }
+        }
+        out[(oy * out_w + ox) * channels + c] = ((acc + denom / 2) / denom) as u16;
+      }
+    }
+  }
+  out
+}
+
+#[cfg(feature = "yuv-planar")]
+fn stream_collect_u16(plan: &ResamplePlan, src: &[u16], channels: usize) -> std::vec::Vec<u16> {
+  let (out_w, out_h) = plan.out_dims();
+  let src_w = plan.src_w();
+  let mut stream = AreaStream::<u16>::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), channels)
+    .expect("realistic geometry");
+  let mut out = std::vec![0u16; out_w * out_h * channels];
+  let mut emitted = std::vec::Vec::new();
+  for y in 0..plan.src_h() {
+    let row = &src[y * src_w * channels..(y + 1) * src_w * channels];
+    stream
+      .feed_row(y, row, true, |oy, finalized| {
+        emitted.push(oy);
+        out[oy * out_w * channels..(oy + 1) * out_w * channels].copy_from_slice(finalized);
+      })
+      .expect("rows arrive in order");
+  }
+  assert_eq!(emitted, (0..out_h).collect::<std::vec::Vec<_>>());
+  out
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn stream_u16_matches_direct_2d_reference_fractional() {
+  let plan = AreaResampler::to(3, 3)
+    .plan(8, 8)
+    .expect("valid")
+    .expect("non-identity");
+  // Full-range ramp 0, 1040, …, 65520 — samples above 255 prove the
+  // u16 horizontal accumulator carries the high bits a u8 path drops.
+  let src: std::vec::Vec<u16> = (0..64u16).map(|i| i * 1040).collect();
+  assert_eq!(
+    stream_collect_u16(&plan, &src, 1),
+    direct_area_2d_u16(&plan, &src, 1)
+  );
+}
+
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn stream_u16_matches_direct_2d_reference_multichannel() {
+  let plan = AreaResampler::to(4, 3)
+    .plan(8, 8)
+    .expect("valid")
+    .expect("non-identity");
+  // 3 interleaved channels with distinct full-range ramps.
+  let mut src = std::vec![0u16; 8 * 8 * 3];
+  for (i, px) in src.chunks_exact_mut(3).enumerate() {
+    px[0] = (i as u16) * 1000;
+    px[1] = ((7 * i) % 211) as u16 * 300;
+    px[2] = 65535 - (i as u16) * 1000;
+  }
+  assert_eq!(
+    stream_collect_u16(&plan, &src, 3),
+    direct_area_2d_u16(&plan, &src, 3)
+  );
+}
+
+/// Integer-ratio 2× downscale: every output pixel is an exact
+/// round-half-up mean of its 2×2 source block. Hand-computed
+/// expectations pin the u16 finalize independent of the reference.
+#[cfg(feature = "yuv-planar")]
+#[test]
+fn stream_u16_exact_2x2_block_mean() {
+  let plan = AreaResampler::to(2, 2)
+    .plan(4, 4)
+    .expect("valid")
+    .expect("non-identity");
+  // 4×4 source; each 2×2 quadrant chosen so its mean rounds half-up.
+  let src: std::vec::Vec<u16> = std::vec![
+    60000, 60002, 10, 11, //
+    60004, 60006, 12, 13, //
+    1, 2, 65535, 65533, //
+    3, 5, 65531, 65529, //
+  ];
+  // Quadrant means: (60000+60002+60004+60006)/4 = 60003;
+  // (10+11+12+13)/4 = 11.5 -> 12; (1+2+3+5)/4 = 2.75 -> 3;
+  // (65535+65533+65531+65529)/4 = 65532.
+  assert_eq!(
+    stream_collect_u16(&plan, &src, 1),
+    std::vec![60003u16, 12, 3, 65532]
+  );
+}
+
 #[cfg(feature = "yuv-planar")]
 #[test]
 fn stream_identity_vertical_axis_emits_every_row() {
@@ -255,7 +366,7 @@ fn stream_creation_fails_recoverably_on_huge_row_buffers() {
     .plan(8, 8)
     .expect("valid")
     .expect("non-identity");
-  let err = AreaStream::new(
+  let err = AreaStream::<u8>::new(
     plan.h(),
     plan.v(),
     plan.src_w(),

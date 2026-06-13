@@ -351,7 +351,7 @@ impl<R> Yuv420pSink for MixedSinker<'_, Yuv420p, R> {}
 /// may lead another by at most one source row (the grids are within a
 /// factor of two), which two slots absorb.
 pub(super) struct NativeYuv420 {
-  y: AreaStream,
+  y: AreaStream<u8>,
   /// Two-slot staging ring, `2 * out_w` (slot = `out_y & 1`).
   y_stage: std::vec::Vec<u8>,
   /// Chroma half of the join — absent for luma-only sinks, which
@@ -367,8 +367,8 @@ pub(super) struct NativeYuv420 {
 
 /// Chroma-grid streams and staging of [`NativeYuv420`].
 pub(super) struct NativeChroma {
-  u: AreaStream,
-  v: AreaStream,
+  u: AreaStream<u8>,
+  v: AreaStream<u8>,
   u_stage: std::vec::Vec<u8>,
   v_stage: std::vec::Vec<u8>,
 }
@@ -601,8 +601,8 @@ fn yuv420p_process_native(
 #[allow(clippy::too_many_arguments)]
 fn yuv420p_process_resampled(
   plan: &ResamplePlan,
-  rgb_stream: &mut Option<AreaStream>,
-  luma_stream: &mut Option<AreaStream>,
+  rgb_stream: &mut Option<AreaStream<u8>>,
+  luma_stream: &mut Option<AreaStream<u8>>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -767,8 +767,8 @@ fn yuv420p_process_resampled(
 /// caller output.
 #[allow(clippy::too_many_arguments)]
 fn planar_dual_resample(
-  luma_stream: &mut Option<AreaStream>,
-  rgb_stream: &mut Option<AreaStream>,
+  luma_stream: &mut Option<AreaStream<u8>>,
+  rgb_stream: &mut Option<AreaStream<u8>>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
