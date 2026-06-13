@@ -1,0 +1,159 @@
+//! Fused-downscale coverage for the padding-byte packed family
+//! (`Xrgb` / `Rgbx` / `Xbgr` / `Bgrx`). Each drops its padding byte to
+//! the same canonical RGB and routes the shared packed-RGB resample
+//! tail, so all four must match an `Rgb24` resample of that RGB —
+//! including the RGBA output, whose alpha is forced to `0xFF` (the
+//! padding byte is never real alpha). The source padding byte is a
+//! non-trivial `0x77` so a leak would change the result.
+
+use crate::{
+  ColorMatrix,
+  resample::AreaResampler,
+  sinker::MixedSinker,
+  source::{Bgrx, Rgb24, Rgbx, Xbgr, Xrgb, bgrx_to, rgb24_to, rgbx_to, xbgr_to, xrgb_to},
+};
+use mediaframe::frame::{BgrxFrame, Rgb24Frame, RgbxFrame, XbgrFrame, XrgbFrame};
+
+const SRC: usize = 8;
+const OUT: usize = 4;
+const PAD: u8 = 0x77;
+
+/// `(r, g, b)` ramp for source pixel `i` — interior values so derived
+/// kernels see real math.
+fn rgb_px(i: usize) -> [u8; 3] {
+  [
+    40 + (i as u8) * 2,
+    200 - (i as u8) * 2,
+    60 + ((i % 8) as u8) * 10,
+  ]
+}
+
+/// Canonical RGB frame the four padding sources all decode to.
+fn rgb_ramp() -> Vec<u8> {
+  let mut buf = vec![0u8; SRC * SRC * 3];
+  for (i, px) in buf.chunks_exact_mut(3).enumerate() {
+    px.copy_from_slice(&rgb_px(i));
+  }
+  buf
+}
+
+/// 4-byte source frame; `pack` maps a pixel's RGB to its 4 wire bytes.
+fn frame4(pack: impl Fn([u8; 3]) -> [u8; 4]) -> Vec<u8> {
+  let mut buf = vec![0u8; SRC * SRC * 4];
+  for (i, px) in buf.chunks_exact_mut(4).enumerate() {
+    px.copy_from_slice(&pack(rgb_px(i)));
+  }
+  buf
+}
+
+/// `Rgb24` resample of the canonical RGB with rgb + rgba + luma
+/// attached — the reference every padding format must match.
+fn rgb24_reference() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+  let ramp = rgb_ramp();
+  let src = Rgb24Frame::new(&ramp, SRC as u32, SRC as u32, (SRC * 3) as u32);
+  let (mut rgb, mut rgba, mut luma) = (
+    vec![0u8; OUT * OUT * 3],
+    vec![0u8; OUT * OUT * 4],
+    vec![0u8; OUT * OUT],
+  );
+  {
+    let mut sink =
+      MixedSinker::<Rgb24, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_rgb(&mut rgb)
+        .unwrap()
+        .with_rgba(&mut rgba)
+        .unwrap()
+        .with_luma(&mut luma)
+        .unwrap();
+    rgb24_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+  (rgb, rgba, luma)
+}
+
+macro_rules! padding_format_matches_rgb24 {
+  ($name:ident, $marker:ty, $frame:ident, $walk:ident, $pack:expr) => {
+    #[test]
+    fn $name() {
+      let pix = frame4($pack);
+      let src = $frame::try_new(&pix, SRC as u32, SRC as u32, (SRC * 4) as u32).unwrap();
+      let (mut rgb, mut rgba, mut luma) = (
+        vec![0u8; OUT * OUT * 3],
+        vec![0u8; OUT * OUT * 4],
+        vec![0u8; OUT * OUT],
+      );
+      {
+        let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
+          SRC,
+          SRC,
+          AreaResampler::to(OUT, OUT),
+        )
+        .unwrap()
+        .with_rgb(&mut rgb)
+        .unwrap()
+        .with_rgba(&mut rgba)
+        .unwrap()
+        .with_luma(&mut luma)
+        .unwrap();
+        $walk(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+      }
+      let (rgb_ref, rgba_ref, luma_ref) = rgb24_reference();
+      assert_eq!(rgb, rgb_ref, "rgb");
+      assert_eq!(rgba, rgba_ref, "rgba (alpha forced 0xFF)");
+      assert_eq!(luma, luma_ref, "luma");
+    }
+  };
+}
+
+padding_format_matches_rgb24!(xrgb_resample_matches_rgb24, Xrgb, XrgbFrame, xrgb_to, |[
+  r,
+  g,
+  b,
+]| [
+  PAD, r, g, b
+]);
+padding_format_matches_rgb24!(rgbx_resample_matches_rgb24, Rgbx, RgbxFrame, rgbx_to, |[
+  r,
+  g,
+  b,
+]| [
+  r, g, b, PAD
+]);
+padding_format_matches_rgb24!(xbgr_resample_matches_rgb24, Xbgr, XbgrFrame, xbgr_to, |[
+  r,
+  g,
+  b,
+]| [
+  PAD, b, g, r
+]);
+padding_format_matches_rgb24!(bgrx_resample_matches_rgb24, Bgrx, BgrxFrame, bgrx_to, |[
+  r,
+  g,
+  b,
+]| [
+  b, g, r, PAD
+]);
+
+#[test]
+fn xrgb_identity_plan_matches_new_sink() {
+  let pix = frame4(|[r, g, b]| [PAD, r, g, b]);
+  let src = XrgbFrame::try_new(&pix, SRC as u32, SRC as u32, (SRC * 4) as u32).unwrap();
+
+  let mut direct = vec![0u8; SRC * SRC * 3];
+  {
+    let mut sink = MixedSinker::<Xrgb>::new(SRC, SRC)
+      .with_rgb(&mut direct)
+      .unwrap();
+    xrgb_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+  let mut via_area = vec![0u8; SRC * SRC * 3];
+  {
+    let mut sink =
+      MixedSinker::<Xrgb, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(SRC, SRC))
+        .unwrap()
+        .with_rgb(&mut via_area)
+        .unwrap();
+    xrgb_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+  assert_eq!(direct, via_area);
+}
