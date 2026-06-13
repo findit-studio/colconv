@@ -1,11 +1,10 @@
-//! Fused-downscale coverage for the planar `Yuv422p` / `Yuv444p`
-//! sources routed through the shared planar resample tail. These
-//! formats are row-stage only: each source row is converted to
-//! canonical RGB at source width, then fed to one 3-channel area
-//! stream — exactly the `Bgr24` / `Rgb24` model. So the differential
-//! tests pin **row-stage == convert-then-bin**: the routed planar
-//! output must equal running the converted (identity-path) RGB frame
-//! through the `Rgb24` resample path.
+//! Fused-downscale coverage for `Yuv422p` / `Yuv444p` — routed through
+//! the planar dual-stream resample: **luma / luma_u16 area-resample
+//! the Y plane directly** (the YUV luma contract), while RGB / RGBA /
+//! HSV bin a converted source-width RGB row. So RGB equals an `Rgb24`
+//! resample of the identity-converted frame, and luma equals the
+//! area-downscaled Y plane — *not* RGB-derived luma, pinned under
+//! saturated chroma where the two diverge.
 
 use crate::{
   ColorMatrix,
@@ -18,10 +17,43 @@ use mediaframe::frame::{Rgb24Frame, Yuv422pFrame, Yuv444pFrame};
 const SRC: usize = 8;
 const OUT: usize = 4;
 
-/// Interior-ramp Y / U / V planes for a `SRC x SRC` 4:2:2 frame
-/// (half-width, full-height chroma). Every sample is interior so the
-/// YUV→RGB kernel and the area binning see real math.
-fn yuv422p_planes() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+/// Exact 2x2-block area mean (round-half-up) of an `SRC`-grid plane to
+/// the `OUT` grid — the integer-ratio (2:1) area-downscale reference.
+fn block_mean_2x2(plane: &[u8]) -> Vec<u8> {
+  let mut out = vec![0u8; OUT * OUT];
+  for oy in 0..OUT {
+    for ox in 0..OUT {
+      let mut s = 0u32;
+      for dy in 0..2 {
+        for dx in 0..2 {
+          s += plane[(oy * 2 + dy) * SRC + ox * 2 + dx] as u32;
+        }
+      }
+      out[oy * OUT + ox] = ((s + 2) / 4) as u8;
+    }
+  }
+  out
+}
+
+/// `Rgb24` resample of a full-res converted RGB frame — the colour
+/// reference both formats must match.
+fn rgb24_rgb_reference(converted: &[u8]) -> Vec<u8> {
+  let src = Rgb24Frame::new(converted, SRC as u32, SRC as u32, (SRC * 3) as u32);
+  let mut rgb = vec![0u8; OUT * OUT * 3];
+  {
+    let mut sink =
+      MixedSinker::<Rgb24, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_rgb(&mut rgb)
+        .unwrap();
+    rgb24_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
+  }
+  rgb
+}
+
+// ---- Yuv422p (half-width, full-height chroma) ----
+
+fn yuv422p_ramp() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
   let cw = SRC / 2;
   let mut y = vec![0u8; SRC * SRC];
   let mut u = vec![0u8; cw * SRC];
@@ -38,9 +70,120 @@ fn yuv422p_planes() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
   (y, u, v)
 }
 
-/// Interior-ramp Y / U / V planes for a `SRC x SRC` 4:4:4 frame
-/// (full-width, full-height chroma).
-fn yuv444p_planes() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+fn yuv422p_frame<'a>(y: &'a [u8], u: &'a [u8], v: &'a [u8]) -> Yuv422pFrame<'a> {
+  let cw = (SRC / 2) as u32;
+  Yuv422pFrame::new(y, u, v, SRC as u32, SRC as u32, SRC as u32, cw, cw)
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv422p_resample_rgb_matches_rgb24_of_converted_frame() {
+  let (y, u, v) = yuv422p_ramp();
+  let mut full_rgb = vec![0u8; SRC * SRC * 3];
+  {
+    let mut sink = MixedSinker::<Yuv422p>::new(SRC, SRC)
+      .with_rgb(&mut full_rgb)
+      .unwrap();
+    yuv422p_to(
+      &yuv422p_frame(&y, &u, &v),
+      true,
+      ColorMatrix::Bt601,
+      &mut sink,
+    )
+    .unwrap();
+  }
+  let mut rgb = vec![0u8; OUT * OUT * 3];
+  {
+    let mut sink =
+      MixedSinker::<Yuv422p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_rgb(&mut rgb)
+        .unwrap();
+    yuv422p_to(
+      &yuv422p_frame(&y, &u, &v),
+      true,
+      ColorMatrix::Bt601,
+      &mut sink,
+    )
+    .unwrap();
+  }
+  assert_eq!(
+    rgb,
+    rgb24_rgb_reference(&full_rgb),
+    "rgb: row-stage == convert-then-bin"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv422p_resample_luma_is_area_downscaled_y_plane() {
+  let (y, u, v) = yuv422p_ramp();
+  let (mut luma, mut luma_u16) = (vec![0u8; OUT * OUT], vec![0u16; OUT * OUT]);
+  {
+    let mut sink =
+      MixedSinker::<Yuv422p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_luma(&mut luma)
+        .unwrap()
+        .with_luma_u16(&mut luma_u16)
+        .unwrap();
+    yuv422p_to(
+      &yuv422p_frame(&y, &u, &v),
+      true,
+      ColorMatrix::Bt601,
+      &mut sink,
+    )
+    .unwrap();
+  }
+  let y_ref = block_mean_2x2(&y);
+  assert_eq!(luma, y_ref, "luma must be the area-downscaled Y plane");
+  let y_ref_u16: Vec<u16> = y_ref.iter().map(|&b| b as u16).collect();
+  assert_eq!(
+    luma_u16, y_ref_u16,
+    "luma_u16 must be the area-downscaled Y, zero-extended"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv422p_resample_luma_from_y_not_rgb_under_saturated_chroma() {
+  let cw = SRC / 2;
+  let y = vec![16u8; SRC * SRC];
+  let u = vec![240u8; cw * SRC];
+  let v = vec![16u8; cw * SRC];
+  let mut luma = vec![0u8; OUT * OUT];
+  {
+    let mut sink =
+      MixedSinker::<Yuv422p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_luma(&mut luma)
+        .unwrap();
+    yuv422p_to(
+      &yuv422p_frame(&y, &u, &v),
+      true,
+      ColorMatrix::Bt601,
+      &mut sink,
+    )
+    .unwrap();
+  }
+  assert!(
+    luma.iter().all(|&b| b == 16),
+    "luma must be the Y plane (16), not RGB-derived; got {luma:?}"
+  );
+}
+
+// ---- Yuv444p (full-width, full-height chroma) ----
+
+fn yuv444p_ramp() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
   let mut y = vec![0u8; SRC * SRC];
   let mut u = vec![0u8; SRC * SRC];
   let mut v = vec![0u8; SRC * SRC];
@@ -56,120 +199,196 @@ fn yuv444p_planes() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
   (y, u, v)
 }
 
-/// Build the full-resolution converted RGB frame via the format's
-/// **identity** sink. This is the canonical RGB the resample path bins,
-/// so feeding it through the `Rgb24` resample path is the reference for
-/// the routed planar output.
-fn yuv422p_converted_rgb(y: &[u8], u: &[u8], v: &[u8]) -> Vec<u8> {
-  let cw = SRC / 2;
-  let src = Yuv422pFrame::new(
-    y, u, v, SRC as u32, SRC as u32, SRC as u32, cw as u32, cw as u32,
-  );
-  let mut rgb = vec![0u8; SRC * SRC * 3];
-  let mut sink = MixedSinker::<Yuv422p>::new(SRC, SRC)
-    .with_rgb(&mut rgb)
-    .unwrap();
-  yuv422p_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
-  rgb
-}
-
-fn yuv444p_converted_rgb(y: &[u8], u: &[u8], v: &[u8]) -> Vec<u8> {
-  let src = Yuv444pFrame::new(
+fn yuv444p_frame<'a>(y: &'a [u8], u: &'a [u8], v: &'a [u8]) -> Yuv444pFrame<'a> {
+  Yuv444pFrame::new(
     y, u, v, SRC as u32, SRC as u32, SRC as u32, SRC as u32, SRC as u32,
-  );
-  let mut rgb = vec![0u8; SRC * SRC * 3];
-  let mut sink = MixedSinker::<Yuv444p>::new(SRC, SRC)
-    .with_rgb(&mut rgb)
+  )
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv444p_resample_rgb_matches_rgb24_of_converted_frame() {
+  let (y, u, v) = yuv444p_ramp();
+  let mut full_rgb = vec![0u8; SRC * SRC * 3];
+  {
+    let mut sink = MixedSinker::<Yuv444p>::new(SRC, SRC)
+      .with_rgb(&mut full_rgb)
+      .unwrap();
+    yuv444p_to(
+      &yuv444p_frame(&y, &u, &v),
+      true,
+      ColorMatrix::Bt601,
+      &mut sink,
+    )
     .unwrap();
-  yuv444p_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
-  rgb
-}
-
-/// Run the `Rgb24` resample path on the converted RGB frame — the
-/// reference output set for the routed planar comparison.
-fn rgb24_reference(converted: &[u8]) -> (Vec<u8>, Vec<u8>) {
-  let src = Rgb24Frame::new(converted, SRC as u32, SRC as u32, (SRC * 3) as u32);
+  }
   let mut rgb = vec![0u8; OUT * OUT * 3];
-  let mut luma = vec![0u8; OUT * OUT];
-  {
-    let mut sink =
-      MixedSinker::<Rgb24, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_rgb(&mut rgb)
-        .unwrap()
-        .with_luma(&mut luma)
-        .unwrap();
-    rgb24_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
-  }
-  (rgb, luma)
-}
-
-#[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
-fn yuv422p_resample_matches_rgb24_of_converted_frame() {
-  let (y, u, v) = yuv422p_planes();
-  let cw = SRC / 2;
-  let src = Yuv422pFrame::new(
-    &y, &u, &v, SRC as u32, SRC as u32, SRC as u32, cw as u32, cw as u32,
-  );
-
-  let mut rgb_a = vec![0u8; OUT * OUT * 3];
-  let mut luma_a = vec![0u8; OUT * OUT];
-  {
-    let mut sink =
-      MixedSinker::<Yuv422p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_rgb(&mut rgb_a)
-        .unwrap()
-        .with_luma(&mut luma_a)
-        .unwrap();
-    yuv422p_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
-  }
-
-  let converted = yuv422p_converted_rgb(&y, &u, &v);
-  let (rgb_b, luma_b) = rgb24_reference(&converted);
-
-  assert_eq!(rgb_a, rgb_b, "rgb: row-stage must equal convert-then-bin");
-  assert_eq!(
-    luma_a, luma_b,
-    "luma: row-stage must equal convert-then-bin"
-  );
-}
-
-#[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
-fn yuv444p_resample_matches_rgb24_of_converted_frame() {
-  let (y, u, v) = yuv444p_planes();
-  let src = Yuv444pFrame::new(
-    &y, &u, &v, SRC as u32, SRC as u32, SRC as u32, SRC as u32, SRC as u32,
-  );
-
-  let mut rgb_a = vec![0u8; OUT * OUT * 3];
-  let mut luma_a = vec![0u8; OUT * OUT];
   {
     let mut sink =
       MixedSinker::<Yuv444p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
-        .with_rgb(&mut rgb_a)
-        .unwrap()
-        .with_luma(&mut luma_a)
+        .with_rgb(&mut rgb)
         .unwrap();
-    yuv444p_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
+    yuv444p_to(
+      &yuv444p_frame(&y, &u, &v),
+      true,
+      ColorMatrix::Bt601,
+      &mut sink,
+    )
+    .unwrap();
   }
-
-  let converted = yuv444p_converted_rgb(&y, &u, &v);
-  let (rgb_b, luma_b) = rgb24_reference(&converted);
-
-  assert_eq!(rgb_a, rgb_b, "rgb: row-stage must equal convert-then-bin");
   assert_eq!(
-    luma_a, luma_b,
-    "luma: row-stage must equal convert-then-bin"
+    rgb,
+    rgb24_rgb_reference(&full_rgb),
+    "rgb: row-stage == convert-then-bin"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv444p_resample_luma_is_area_downscaled_y_plane() {
+  let (y, u, v) = yuv444p_ramp();
+  let (mut luma, mut luma_u16) = (vec![0u8; OUT * OUT], vec![0u16; OUT * OUT]);
+  {
+    let mut sink =
+      MixedSinker::<Yuv444p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_luma(&mut luma)
+        .unwrap()
+        .with_luma_u16(&mut luma_u16)
+        .unwrap();
+    yuv444p_to(
+      &yuv444p_frame(&y, &u, &v),
+      true,
+      ColorMatrix::Bt601,
+      &mut sink,
+    )
+    .unwrap();
+  }
+  let y_ref = block_mean_2x2(&y);
+  assert_eq!(luma, y_ref, "luma must be the area-downscaled Y plane");
+  let y_ref_u16: Vec<u16> = y_ref.iter().map(|&b| b as u16).collect();
+  assert_eq!(
+    luma_u16, y_ref_u16,
+    "luma_u16 must be the area-downscaled Y, zero-extended"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv444p_resample_luma_from_y_not_rgb_under_saturated_chroma() {
+  let y = vec![16u8; SRC * SRC];
+  let u = vec![240u8; SRC * SRC];
+  let v = vec![16u8; SRC * SRC];
+  let mut luma = vec![0u8; OUT * OUT];
+  {
+    let mut sink =
+      MixedSinker::<Yuv444p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_luma(&mut luma)
+        .unwrap();
+    yuv444p_to(
+      &yuv444p_frame(&y, &u, &v),
+      true,
+      ColorMatrix::Bt601,
+      &mut sink,
+    )
+    .unwrap();
+  }
+  assert!(
+    luma.iter().all(|&b| b == 16),
+    "luma must be the Y plane (16), not RGB-derived; got {luma:?}"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv422p_resample_reuses_luma_stream_across_frames() {
+  // Reset coverage: a reused sink must reset the Y-plane luma stream
+  // each frame, else frame 2 row 0 is rejected as out-of-sequence.
+  let (y1, u, v) = yuv422p_ramp();
+  let mut y2 = y1.clone();
+  for p in y2.iter_mut() {
+    *p = 255 - *p;
+  }
+  let mut luma = vec![0u8; OUT * OUT];
+  {
+    let mut sink =
+      MixedSinker::<Yuv422p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_luma(&mut luma)
+        .unwrap();
+    yuv422p_to(
+      &yuv422p_frame(&y1, &u, &v),
+      true,
+      ColorMatrix::Bt601,
+      &mut sink,
+    )
+    .unwrap();
+    yuv422p_to(
+      &yuv422p_frame(&y2, &u, &v),
+      true,
+      ColorMatrix::Bt601,
+      &mut sink,
+    )
+    .unwrap();
+  }
+  assert_eq!(
+    luma,
+    block_mean_2x2(&y2),
+    "frame 2 luma must area-downscale frame 2's Y"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuv444p_resample_reuses_luma_stream_across_frames() {
+  let (y1, u, v) = yuv444p_ramp();
+  let mut y2 = y1.clone();
+  for p in y2.iter_mut() {
+    *p = 255 - *p;
+  }
+  let mut luma = vec![0u8; OUT * OUT];
+  {
+    let mut sink =
+      MixedSinker::<Yuv444p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_luma(&mut luma)
+        .unwrap();
+    yuv444p_to(
+      &yuv444p_frame(&y1, &u, &v),
+      true,
+      ColorMatrix::Bt601,
+      &mut sink,
+    )
+    .unwrap();
+    yuv444p_to(
+      &yuv444p_frame(&y2, &u, &v),
+      true,
+      ColorMatrix::Bt601,
+      &mut sink,
+    )
+    .unwrap();
+  }
+  assert_eq!(
+    luma,
+    block_mean_2x2(&y2),
+    "frame 2 luma must area-downscale frame 2's Y"
   );
 }
 
@@ -179,20 +398,20 @@ fn yuv444p_resample_matches_rgb24_of_converted_frame() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn yuv422p_identity_plan_matches_new_sink() {
-  let (y, u, v) = yuv422p_planes();
-  let cw = SRC / 2;
-  let src = Yuv422pFrame::new(
-    &y, &u, &v, SRC as u32, SRC as u32, SRC as u32, cw as u32, cw as u32,
-  );
-
+  let (y, u, v) = yuv422p_ramp();
   let mut direct = vec![0u8; SRC * SRC * 3];
   {
     let mut sink = MixedSinker::<Yuv422p>::new(SRC, SRC)
       .with_rgb(&mut direct)
       .unwrap();
-    yuv422p_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
+    yuv422p_to(
+      &yuv422p_frame(&y, &u, &v),
+      true,
+      ColorMatrix::Bt601,
+      &mut sink,
+    )
+    .unwrap();
   }
-
   let mut via_area = vec![0u8; SRC * SRC * 3];
   {
     let mut sink =
@@ -200,38 +419,13 @@ fn yuv422p_identity_plan_matches_new_sink() {
         .unwrap()
         .with_rgb(&mut via_area)
         .unwrap();
-    yuv422p_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
-  }
-  assert_eq!(direct, via_area);
-}
-
-#[test]
-#[cfg_attr(
-  miri,
-  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
-)]
-fn yuv444p_identity_plan_matches_new_sink() {
-  let (y, u, v) = yuv444p_planes();
-  let src = Yuv444pFrame::new(
-    &y, &u, &v, SRC as u32, SRC as u32, SRC as u32, SRC as u32, SRC as u32,
-  );
-
-  let mut direct = vec![0u8; SRC * SRC * 3];
-  {
-    let mut sink = MixedSinker::<Yuv444p>::new(SRC, SRC)
-      .with_rgb(&mut direct)
-      .unwrap();
-    yuv444p_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
-  }
-
-  let mut via_area = vec![0u8; SRC * SRC * 3];
-  {
-    let mut sink =
-      MixedSinker::<Yuv444p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(SRC, SRC))
-        .unwrap()
-        .with_rgb(&mut via_area)
-        .unwrap();
-    yuv444p_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
+    yuv422p_to(
+      &yuv422p_frame(&y, &u, &v),
+      true,
+      ColorMatrix::Bt601,
+      &mut sink,
+    )
+    .unwrap();
   }
   assert_eq!(direct, via_area);
 }
