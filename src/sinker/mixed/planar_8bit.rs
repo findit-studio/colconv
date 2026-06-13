@@ -646,6 +646,22 @@ fn yuv420p_process_resampled(
   // Create every requested stream, then check all of them against
   // this row index; a stream attached mid-frame starts at row 0 and
   // fails here.
+  // Sequence-check before allocating (mirrors the packed-RGB helpers):
+  // an out-of-sequence first row is rejected before any output-width
+  // buffer is created, so AllocationFailed never masks OutOfSequenceRow.
+  // A no-output call has no stream to sequence and stays a no-op.
+  let expected = if need_luma {
+    luma_stream.as_ref().map_or(0, |stream| stream.next_y())
+  } else if need_color {
+    rgb_stream.as_ref().map_or(0, |stream| stream.next_y())
+  } else {
+    idx
+  };
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
   if need_luma && luma_stream.is_none() {
     *luma_stream = Some(AreaStream::new(
       plan.h(),
@@ -663,27 +679,6 @@ fn yuv420p_process_resampled(
       plan.src_h(),
       3,
     )?);
-  }
-  for stream in [
-    if need_luma {
-      luma_stream.as_ref()
-    } else {
-      None
-    },
-    if need_color {
-      rgb_stream.as_ref()
-    } else {
-      None
-    },
-  ]
-  .into_iter()
-  .flatten()
-  {
-    if stream.next_y() != idx {
-      return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
-        OutOfSequenceRow::new(stream.next_y(), idx),
-      )));
-    }
   }
   // (3) Color-group preparation is also fallible (scratch sizing) and
   // scratch-mutating, so it runs before the luma feed too. The user
@@ -818,6 +813,24 @@ fn planar_dual_resample(
     hsv,
     idx,
   )?;
+  // Sequence-check before allocating (mirrors the packed-RGB helpers):
+  // a fresh stream expects row 0, so an out-of-sequence first row is
+  // rejected before any output-width buffer is created, and
+  // AllocationFailed never masks OutOfSequenceRow. A no-output call
+  // (neither luma nor color) has no stream to sequence and stays a
+  // no-op regardless of the row index.
+  let expected = if need_luma {
+    luma_stream.as_ref().map_or(0, |stream| stream.next_y())
+  } else if need_color {
+    rgb_stream.as_ref().map_or(0, |stream| stream.next_y())
+  } else {
+    idx
+  };
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
   if need_luma && luma_stream.is_none() {
     *luma_stream = Some(AreaStream::new(
       plan.h(),
@@ -835,27 +848,6 @@ fn planar_dual_resample(
       plan.src_h(),
       3,
     )?);
-  }
-  for stream in [
-    if need_luma {
-      luma_stream.as_ref()
-    } else {
-      None
-    },
-    if need_color {
-      rgb_stream.as_ref()
-    } else {
-      None
-    },
-  ]
-  .into_iter()
-  .flatten()
-  {
-    if stream.next_y() != idx {
-      return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
-        OutOfSequenceRow::new(stream.next_y(), idx),
-      )));
-    }
   }
   let color_row = if need_color {
     let scratch = super::source_rgb_scratch(rgb_scratch, w, plan)?;
@@ -971,9 +963,9 @@ impl<'a, R> MixedSinker<'a, Yuv410p, R> {
   }
 }
 
-impl Yuv410pSink for MixedSinker<'_, Yuv410p> {}
+impl<R> Yuv410pSink for MixedSinker<'_, Yuv410p, R> {}
 
-impl PixelSink for MixedSinker<'_, Yuv410p> {
+impl<R> PixelSink for MixedSinker<'_, Yuv410p, R> {
   type Input<'r> = Yuv410pRow<'r>;
   type Error = MixedSinkerError;
 
@@ -990,7 +982,15 @@ impl PixelSink for MixedSinker<'_, Yuv410p> {
         WidthAlignment::multiple_of_four(self.width),
       ));
     }
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: Yuv410pRow<'_>) -> Result<(), Self::Error> {
@@ -1042,8 +1042,53 @@ impl PixelSink for MixedSinker<'_, Yuv410p> {
       luma_u16,
       hsv,
       rgb_scratch,
+      plan,
+      rgb_stream,
+      luma_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: convert the source row to canonical RGB at
+    // source width in the shared scratch (the same `yuv_410_to_rgb_row`
+    // kernel the identity path uses — 4:1:0's 1→4 chroma upsample), then
+    // feed the shared planar resample tail. Row-stage only — converting
+    // each source row to RGB and binning is the whole job. Freeze the
+    // output set and check stream sequencing before staging, so a
+    // no-output sink stays a no-op and an out-of-sequence row is
+    // rejected without allocating.
+    if let Some(plan) = plan.as_ref() {
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      return planar_dual_resample(
+        luma_stream,
+        rgb_stream,
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch,
+        row.y(),
+        w,
+        plan,
+        idx,
+        use_simd,
+        |scratch| {
+          yuv_410_to_rgb_row(
+            row.y(),
+            row.u_quarter(),
+            row.v_quarter(),
+            scratch,
+            w,
+            matrix,
+            full_range,
+            use_simd,
+          );
+        },
+      );
+    }
 
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
@@ -1705,14 +1750,22 @@ impl<'a, R> MixedSinker<'a, Yuv440p, R> {
   }
 }
 
-impl Yuv440pSink for MixedSinker<'_, Yuv440p> {}
+impl<R> Yuv440pSink for MixedSinker<'_, Yuv440p, R> {}
 
-impl PixelSink for MixedSinker<'_, Yuv440p> {
+impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
   type Input<'r> = Yuv440pRow<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: Yuv440pRow<'_>) -> Result<(), Self::Error> {
@@ -1758,8 +1811,53 @@ impl PixelSink for MixedSinker<'_, Yuv440p> {
       luma_u16,
       hsv,
       rgb_scratch,
+      plan,
+      rgb_stream,
+      luma_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: convert the source row to canonical RGB at
+    // source width in the shared scratch (the same `yuv_444_to_rgb_row`
+    // kernel the identity path uses — 4:4:0's per-row math is identical
+    // to 4:4:4, full-width chroma), then feed the shared planar resample
+    // tail. Row-stage only — converting each source row to RGB and
+    // binning is the whole job. Freeze the output set and check stream
+    // sequencing before staging, so a no-output sink stays a no-op and
+    // an out-of-sequence row is rejected without allocating.
+    if let Some(plan) = plan.as_ref() {
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      return planar_dual_resample(
+        luma_stream,
+        rgb_stream,
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch,
+        row.y(),
+        w,
+        plan,
+        idx,
+        use_simd,
+        |scratch| {
+          yuv_444_to_rgb_row(
+            row.y(),
+            row.u(),
+            row.v(),
+            scratch,
+            w,
+            matrix,
+            full_range,
+            use_simd,
+          );
+        },
+      );
+    }
 
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
