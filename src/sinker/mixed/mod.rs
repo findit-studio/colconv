@@ -375,14 +375,16 @@ impl RowIndexOutOfRange {
 
 /// Snapshot of a resampled frame's complete output configuration:
 /// presence plus attachment identity (data pointer and length) for
-/// luma, luma_u16, rgb, rgba, and the three HSV planes. Equality is
-/// the per-frame immutability check — in safe code a mid-frame
-/// `set_*` necessarily supplies a different borrow, so an identity
-/// change is exactly a reattachment.
+/// luma, luma_u16, rgb, rgba, rgb_u16, rgba_u16, and the three HSV
+/// planes. Equality is the per-frame immutability check — in safe code
+/// a mid-frame `set_*` necessarily supplies a different borrow, so an
+/// identity change is exactly a reattachment. The `*_u16` slots are
+/// `(0, 0)` for every u8-only routed format (they attach no u16
+/// output), so adding them leaves those formats' snapshots unchanged.
 #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct FrozenOutputs {
-  idents: [(usize, usize); 7],
+  idents: [(usize, usize); 9],
 }
 
 #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
@@ -394,11 +396,14 @@ impl FrozenOutputs {
   }
 
   /// Builds the snapshot from the currently attached outputs.
+  #[allow(clippy::too_many_arguments)]
   pub(super) fn snapshot(
     luma: Option<&[u8]>,
     luma_u16: Option<&[u16]>,
     rgb: Option<&[u8]>,
     rgba: Option<&[u8]>,
+    rgb_u16: Option<&[u16]>,
+    rgba_u16: Option<&[u16]>,
     hsv: Option<(&[u8], &[u8], &[u8])>,
   ) -> Self {
     let (h, s, v) = match hsv {
@@ -415,6 +420,8 @@ impl FrozenOutputs {
         Self::ident(luma_u16),
         Self::ident(rgb),
         Self::ident(rgba),
+        Self::ident(rgb_u16),
+        Self::ident(rgba_u16),
         h,
         s,
         v,
@@ -434,6 +441,8 @@ pub(super) fn frozen_outputs_check(
   luma_u16: &Option<&mut [u16]>,
   rgb: &Option<&mut [u8]>,
   rgba: &Option<&mut [u8]>,
+  rgb_u16: &Option<&mut [u16]>,
+  rgba_u16: &Option<&mut [u16]>,
   hsv: &mut Option<HsvFrameMut<'_>>,
   idx: usize,
 ) -> Result<(), MixedSinkerError> {
@@ -442,6 +451,8 @@ pub(super) fn frozen_outputs_check(
     luma_u16.as_deref(),
     rgb.as_deref(),
     rgba.as_deref(),
+    rgb_u16.as_deref(),
+    rgba_u16.as_deref(),
     hsv.as_mut().map(|f| {
       let (h, s, v) = f.hsv();
       (&h[..], &s[..], &v[..])
@@ -1244,6 +1255,12 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// as families wire in.
   #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
   rgb_stream: Option<crate::resample::AreaStream<u8>>,
+  /// Row-stage area stream for high-bit packed-RGB sources (`u16`
+  /// elements binned at native depth). Lazily created in `process`,
+  /// reset in `begin_frame`. Gated to `rgb`; widens as high-bit
+  /// families wire in.
+  #[cfg(feature = "rgb")]
+  rgb_stream_u16: Option<crate::resample::AreaStream<u16>>,
   #[cfg(feature = "yuv-planar")]
   luma_stream: Option<crate::resample::AreaStream<u8>>,
   /// Output configuration frozen at a resampled frame's first
@@ -1290,6 +1307,11 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "yuva",
   ))]
   rgb_scratch: Vec<u8>,
+  /// Source-width `u16` RGB staging for high-bit packed-RGB resampling:
+  /// the wire row converts here before feeding [`Self::rgb_stream_u16`].
+  /// Lazily grown to `3 * width` `u16`; empty otherwise. Gated to `rgb`.
+  #[cfg(feature = "rgb")]
+  rgb_scratch_u16: Vec<u16>,
   /// Whether row primitives dispatch to their SIMD backend. Defaults
   /// to `true`; benchmarks flip this with [`Self::with_simd`] /
   /// [`Self::set_simd`] to A/B test scalar vs SIMD on the same frame.
@@ -1677,6 +1699,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       plan: None,
       #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
       rgb_stream: None,
+      #[cfg(feature = "rgb")]
+      rgb_stream_u16: None,
       #[cfg(feature = "yuv-planar")]
       luma_stream: None,
       #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
@@ -1703,6 +1727,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "yuva",
       ))]
       rgb_scratch: Vec::new(),
+      #[cfg(feature = "rgb")]
+      rgb_scratch_u16: Vec::new(),
       simd: true,
       // BT.709 by default — matches the implicit weights every
       // YUV→RGB→luma pipeline uses, and is the most common Bayer
@@ -1872,6 +1898,15 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   #[cfg(all(test, feature = "rgb"))]
   pub(crate) fn rgb_scratch_capacity(&self) -> usize {
     self.rgb_scratch.capacity()
+  }
+
+  /// Whether the high-bit packed-RGB `u16` area stream has been
+  /// created — a white-box probe for the resample ordering tests (an
+  /// out-of-sequence first row must be rejected before the stream is
+  /// allocated).
+  #[cfg(all(test, feature = "rgb"))]
+  pub(crate) fn rgb_stream_u16_allocated(&self) -> bool {
+    self.rgb_stream_u16.is_some()
   }
 
   /// Returns `true` iff row primitives dispatch to their SIMD backend.
@@ -2465,7 +2500,17 @@ pub(super) fn packed_rgb_resample_preflight(
   hsv: &mut Option<HsvFrameMut<'_>>,
   idx: usize,
 ) -> Result<bool, MixedSinkerError> {
-  frozen_outputs_check(resample_outputs, luma, &None, rgb, rgba, hsv, idx)?;
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    &None,
+    rgb,
+    rgba,
+    &None,
+    &None,
+    hsv,
+    idx,
+  )?;
   Ok(rgb.is_some() || rgba.is_some() || luma.is_some() || hsv.is_some())
 }
 
@@ -2491,6 +2536,16 @@ pub(super) fn packed_rgb_resample_stream<'s>(
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::AreaStream<u8>, MixedSinkerError> {
+  // Sequence-check before allocating: a fresh stream expects row 0, so
+  // an out-of-sequence first row is rejected without creating the
+  // output-width buffers — keeping freeze, then sequence-check, then
+  // stage, and never letting AllocationFailed mask OutOfSequenceRow.
+  let expected = rgb_stream.as_ref().map_or(0, |stream| stream.next_y());
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
   let stream = match rgb_stream {
     Some(stream) => stream,
     None => rgb_stream.insert(crate::resample::AreaStream::new(
@@ -2501,11 +2556,6 @@ pub(super) fn packed_rgb_resample_stream<'s>(
       3,
     )?),
   };
-  if stream.next_y() != idx {
-    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
-      crate::resample::OutOfSequenceRow::new(stream.next_y(), idx),
-    )));
-  }
   Ok(stream)
 }
 
@@ -2558,6 +2608,217 @@ pub(super) fn packed_rgb_resample_emit(
     }
   })?;
 
+  Ok(())
+}
+
+/// Source-width `u16` RGB staging for high-bit packed-RGB resampling:
+/// the wire row converts here before feeding [`AreaStream<u16>`]. Grows
+/// `scratch` to `3 * width` `u16` under the planner's
+/// recoverable-allocation contract. Mirrors [`source_rgb_scratch`] for
+/// the 16-bit element path.
+#[cfg(feature = "rgb")]
+pub(super) fn source_rgb_u16_scratch<'s>(
+  scratch: &'s mut Vec<u16>,
+  width: usize,
+  plan: &ResamplePlan,
+) -> Result<&'s mut [u16], MixedSinkerError> {
+  let row = width
+    .checked_mul(3)
+    .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+      width,
+      plan.src_h(),
+      3,
+    )))?;
+  if scratch.len() < row {
+    scratch
+      .try_reserve_exact(row - scratch.len())
+      .map_err(|_| {
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?;
+    scratch.resize(row, 0);
+  }
+  Ok(&mut scratch[..row])
+}
+
+/// Freezes the output configuration for a resampled high-bit
+/// packed-RGB frame — the full u8 **and** u16 output set — and reports
+/// whether any output is attached. Mirrors
+/// [`packed_rgb_resample_preflight`], extended with the native-depth
+/// `rgb_u16` / `rgba_u16` / `luma_u16` channels.
+#[cfg(feature = "rgb")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn packed_rgb_u16_resample_preflight(
+  resample_outputs: &mut Option<FrozenOutputs>,
+  rgb: &Option<&mut [u8]>,
+  rgba: &Option<&mut [u8]>,
+  luma: &Option<&mut [u8]>,
+  rgb_u16: &Option<&mut [u16]>,
+  rgba_u16: &Option<&mut [u16]>,
+  luma_u16: &Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  idx: usize,
+) -> Result<bool, MixedSinkerError> {
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    hsv,
+    idx,
+  )?;
+  Ok(
+    rgb.is_some()
+      || rgba.is_some()
+      || luma.is_some()
+      || rgb_u16.is_some()
+      || rgba_u16.is_some()
+      || luma_u16.is_some()
+      || hsv.is_some(),
+  )
+}
+
+/// Lazily creates the 3-channel `u16` area stream and checks strict row
+/// sequencing — run before the source conversion so an out-of-sequence
+/// row is rejected without the staging work. Mirrors
+/// [`packed_rgb_resample_stream`] for the 16-bit element path.
+#[cfg(feature = "rgb")]
+pub(super) fn packed_rgb_u16_resample_stream<'s>(
+  rgb_stream_u16: &'s mut Option<crate::resample::AreaStream<u16>>,
+  plan: &ResamplePlan,
+  idx: usize,
+) -> Result<&'s mut crate::resample::AreaStream<u16>, MixedSinkerError> {
+  // Sequence-check before allocating (see packed_rgb_resample_stream):
+  // an out-of-sequence first row is rejected without creating the u16
+  // output-width buffers, so AllocationFailed never masks
+  // OutOfSequenceRow.
+  let expected = rgb_stream_u16.as_ref().map_or(0, |stream| stream.next_y());
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  let stream = match rgb_stream_u16 {
+    Some(stream) => stream,
+    None => rgb_stream_u16.insert(crate::resample::AreaStream::new(
+      plan.h(),
+      plan.v(),
+      plan.src_w(),
+      plan.src_h(),
+      3,
+    )?),
+  };
+  Ok(stream)
+}
+
+/// Feeds the prepared source-width `u16` RGB row into the (already
+/// sequence-checked) stream and derives every attached output from each
+/// finalized output row. Binning runs at native 16-bit depth; the
+/// `rgb_u16` / `rgba_u16` outputs copy it directly, while the u8 and
+/// `luma_u16` outputs derive from a single `>> 8` narrowing — the same
+/// source-of-truth ordering the direct Rgb48 path uses (luma /
+/// luma_u16 / hsv all read the narrowed u8 RGB). `narrow_scratch` is
+/// sized to the out-width u8 RGB row only when one of those narrowed
+/// outputs is attached, so a native-u16-only sink neither grows it nor
+/// risks its allocation failure.
+#[cfg(feature = "rgb")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn packed_rgb_u16_resample_emit(
+  stream: &mut crate::resample::AreaStream<u16>,
+  plan: &ResamplePlan,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  rgb_u16: &mut Option<&mut [u16]>,
+  rgba_u16: &mut Option<&mut [u16]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  src_u16: &[u16],
+  narrow_scratch: &mut Vec<u8>,
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  idx: usize,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  let ow = plan.out_w();
+  // The u8 / luma_u16 outputs derive from a `>> 8` narrowing of the
+  // binned row; a native-u16-only sink (only rgb_u16 / rgba_u16) never
+  // touches it, so the out-width u8 scratch is sized — and its
+  // allocation failure risked — only when one of those outputs is
+  // attached. The predicate gates both the sizing here and the use in
+  // the closure, so they cannot drift.
+  let need_narrow =
+    rgb.is_some() || rgba.is_some() || luma.is_some() || luma_u16.is_some() || hsv.is_some();
+  let narrow: &mut [u8] = if need_narrow {
+    source_rgb_scratch(narrow_scratch, ow, plan)?
+  } else {
+    &mut []
+  };
+  stream.feed_row(idx, src_u16, use_simd, |oy, binned| {
+    // Native-depth u16 outputs copy the binned row directly.
+    if let Some(buf) = rgb_u16.as_deref_mut() {
+      buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(binned);
+    }
+    if let Some(buf) = rgba_u16.as_deref_mut() {
+      crate::row::expand_rgb_u16_to_rgba_u16_row::<16>(
+        binned,
+        &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow],
+        ow,
+      );
+    }
+    if need_narrow {
+      let nrow = &mut narrow[..3 * ow];
+      for (d, &s) in nrow.iter_mut().zip(binned.iter()) {
+        *d = (s >> 8) as u8;
+      }
+      if let Some(buf) = rgb.as_deref_mut() {
+        buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(nrow);
+      }
+      if let Some(buf) = rgba.as_deref_mut() {
+        crate::row::expand_rgb_to_rgba_row(nrow, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
+      }
+      if let Some(buf) = luma.as_deref_mut() {
+        crate::row::rgb_to_luma_row(
+          nrow,
+          &mut buf[oy * ow..(oy + 1) * ow],
+          ow,
+          matrix,
+          full_range,
+          use_simd,
+        );
+      }
+      if let Some(buf) = luma_u16.as_deref_mut() {
+        crate::row::rgb_to_luma_u16_row(
+          nrow,
+          &mut buf[oy * ow..(oy + 1) * ow],
+          ow,
+          matrix,
+          full_range,
+          use_simd,
+        );
+      }
+      if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
+        crate::row::rgb_to_hsv_row(
+          nrow,
+          &mut h[oy * ow..(oy + 1) * ow],
+          &mut s[oy * ow..(oy + 1) * ow],
+          &mut v[oy * ow..(oy + 1) * ow],
+          ow,
+          use_simd,
+        );
+      }
+    }
+  })?;
   Ok(())
 }
 

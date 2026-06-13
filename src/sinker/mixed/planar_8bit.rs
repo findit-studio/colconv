@@ -463,7 +463,17 @@ fn yuv420p_process_native(
   let idx = row.row();
   let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
 
-  frozen_outputs_check(resample_outputs, luma, luma_u16, rgb, rgba, hsv, idx)?;
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    &None,
+    &None,
+    hsv,
+    idx,
+  )?;
   // The join's chroma half is fixed at creation; if the frame's color
   // capability differs (outputs attached since the previous frame —
   // the frozen check pins them WITHIN a frame, not across frames),
@@ -622,7 +632,17 @@ fn yuv420p_process_resampled(
   // Atomic preflight: every fallible step runs before any stream is
   // fed, so a failed call mutates no caller output and the frame can
   // restart via begin_frame.
-  frozen_outputs_check(resample_outputs, luma, luma_u16, rgb, rgba, hsv, idx)?;
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    &None,
+    &None,
+    hsv,
+    idx,
+  )?;
   // Create every requested stream, then check all of them against
   // this row index; a stream attached mid-frame starts at row 0 and
   // fails here.
@@ -787,7 +807,17 @@ fn planar_dual_resample(
   let need_luma = luma.is_some() || luma_u16.is_some();
   let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
 
-  frozen_outputs_check(resample_outputs, luma, luma_u16, rgb, rgba, hsv, idx)?;
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    &None,
+    &None,
+    hsv,
+    idx,
+  )?;
   if need_luma && luma_stream.is_none() {
     *luma_stream = Some(AreaStream::new(
       plan.h(),
