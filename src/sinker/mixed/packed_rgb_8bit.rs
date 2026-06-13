@@ -986,14 +986,19 @@ impl<'a, R> MixedSinker<'a, Xrgb, R> {
   }
 }
 
-impl XrgbSink for MixedSinker<'_, Xrgb> {}
+impl<R> XrgbSink for MixedSinker<'_, Xrgb, R> {}
 
-impl PixelSink for MixedSinker<'_, Xrgb> {
+impl<R> PixelSink for MixedSinker<'_, Xrgb, R> {
   type Input<'r> = XrgbRow<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: XrgbRow<'_>) -> Result<(), Self::Error> {
@@ -1022,8 +1027,38 @@ impl PixelSink for MixedSinker<'_, Xrgb> {
       luma,
       hsv,
       rgb_scratch,
+      plan,
+      rgb_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: drop the padding byte to canonical RGB at
+    // source width in the shared scratch, then feed the shared
+    // packed-RGB resample tail (RGBA output gets 0xFF alpha, the
+    // padding-byte contract).
+    if let Some(plan) = plan.as_ref() {
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, hsv, idx)? {
+        return Ok(());
+      }
+      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+      let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+      argb_to_rgb_row(row.xrgb(), scratch, w, use_simd);
+      return packed_rgb_resample_emit(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        hsv,
+        scratch,
+        row.matrix(),
+        row.full_range(),
+        idx,
+        use_simd,
+      );
+    }
+
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
     let xrgb_in = row.xrgb();
@@ -1105,14 +1140,19 @@ impl<'a, R> MixedSinker<'a, Rgbx, R> {
   }
 }
 
-impl RgbxSink for MixedSinker<'_, Rgbx> {}
+impl<R> RgbxSink for MixedSinker<'_, Rgbx, R> {}
 
-impl PixelSink for MixedSinker<'_, Rgbx> {
+impl<R> PixelSink for MixedSinker<'_, Rgbx, R> {
   type Input<'r> = RgbxRow<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: RgbxRow<'_>) -> Result<(), Self::Error> {
@@ -1141,8 +1181,38 @@ impl PixelSink for MixedSinker<'_, Rgbx> {
       luma,
       hsv,
       rgb_scratch,
+      plan,
+      rgb_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: drop the padding byte to canonical RGB at
+    // source width in the shared scratch, then feed the shared
+    // packed-RGB resample tail (RGBA output gets 0xFF alpha, the
+    // padding-byte contract).
+    if let Some(plan) = plan.as_ref() {
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, hsv, idx)? {
+        return Ok(());
+      }
+      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+      let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+      rgba_to_rgb_row(row.rgbx(), scratch, w, use_simd);
+      return packed_rgb_resample_emit(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        hsv,
+        scratch,
+        row.matrix(),
+        row.full_range(),
+        idx,
+        use_simd,
+      );
+    }
+
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
     let rgbx_in = row.rgbx();
@@ -1222,14 +1292,19 @@ impl<'a, R> MixedSinker<'a, Xbgr, R> {
   }
 }
 
-impl XbgrSink for MixedSinker<'_, Xbgr> {}
+impl<R> XbgrSink for MixedSinker<'_, Xbgr, R> {}
 
-impl PixelSink for MixedSinker<'_, Xbgr> {
+impl<R> PixelSink for MixedSinker<'_, Xbgr, R> {
   type Input<'r> = XbgrRow<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: XbgrRow<'_>) -> Result<(), Self::Error> {
@@ -1258,8 +1333,38 @@ impl PixelSink for MixedSinker<'_, Xbgr> {
       luma,
       hsv,
       rgb_scratch,
+      plan,
+      rgb_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: drop the padding byte to canonical RGB at
+    // source width in the shared scratch, then feed the shared
+    // packed-RGB resample tail (RGBA output gets 0xFF alpha, the
+    // padding-byte contract).
+    if let Some(plan) = plan.as_ref() {
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, hsv, idx)? {
+        return Ok(());
+      }
+      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+      let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+      abgr_to_rgb_row(row.xbgr(), scratch, w, use_simd);
+      return packed_rgb_resample_emit(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        hsv,
+        scratch,
+        row.matrix(),
+        row.full_range(),
+        idx,
+        use_simd,
+      );
+    }
+
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
     let xbgr_in = row.xbgr();
@@ -1340,14 +1445,19 @@ impl<'a, R> MixedSinker<'a, Bgrx, R> {
   }
 }
 
-impl BgrxSink for MixedSinker<'_, Bgrx> {}
+impl<R> BgrxSink for MixedSinker<'_, Bgrx, R> {}
 
-impl PixelSink for MixedSinker<'_, Bgrx> {
+impl<R> PixelSink for MixedSinker<'_, Bgrx, R> {
   type Input<'r> = BgrxRow<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: BgrxRow<'_>) -> Result<(), Self::Error> {
@@ -1376,8 +1486,38 @@ impl PixelSink for MixedSinker<'_, Bgrx> {
       luma,
       hsv,
       rgb_scratch,
+      plan,
+      rgb_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: drop the padding byte to canonical RGB at
+    // source width in the shared scratch, then feed the shared
+    // packed-RGB resample tail (RGBA output gets 0xFF alpha, the
+    // padding-byte contract).
+    if let Some(plan) = plan.as_ref() {
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, hsv, idx)? {
+        return Ok(());
+      }
+      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+      let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+      bgra_to_rgb_row(row.bgrx(), scratch, w, use_simd);
+      return packed_rgb_resample_emit(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        hsv,
+        scratch,
+        row.matrix(),
+        row.full_range(),
+        idx,
+        use_simd,
+      );
+    }
+
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
     let bgrx_in = row.bgrx();
