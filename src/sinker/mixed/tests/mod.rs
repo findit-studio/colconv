@@ -98,6 +98,8 @@ mod resample_padding_byte;
 mod resample_rgb24;
 #[cfg(feature = "rgb")]
 mod resample_rgb48;
+#[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
+mod resample_rgbf32;
 #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
 mod resample_yuv410_440p;
 #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
