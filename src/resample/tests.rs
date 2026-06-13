@@ -539,6 +539,25 @@ fn h_pass_simd_matches_scalar_bit_exact() {
       (5, 4, 3),
       (8, 3, 1),
       (70_000, 66_000, 1),
+      // Wide-path boundaries for the AVX kernels (padded span length =
+      // taps rounded up to a multiple of 8): the AVX-512 step consumes
+      // 32 taps, AVX2 consumes 16, and the remainder falls to the
+      // 128-bit step. These ratios place the remainder at each of 0 /
+      // 8 / 16 / 24 taps after the wide chunks, for both channel
+      // counts. Validated on real AVX2 hardware by the avx2-max
+      // coverage job and under SDE for AVX-512.
+      (256, 8, 1), // padded 32: one AVX-512 chunk, no remainder
+      (256, 8, 3),
+      (264, 8, 1), // padded 40: AVX-512 32 + 8 remainder
+      (264, 8, 3),
+      (336, 8, 1), // padded 48: AVX-512 32 + 16 remainder
+      (336, 8, 3),
+      (400, 8, 1), // padded 56: AVX-512 32 + 24 remainder
+      (400, 8, 3),
+      (120, 8, 1), // padded 16: one AVX2 chunk; AVX-512 tail-only
+      (120, 8, 3),
+      (160, 8, 1), // padded 24: AVX2 16 + 8; AVX-512 tail-only
+      (160, 8, 3),
     ]
   };
   for &(src_w, out_w, channels) in cases {
