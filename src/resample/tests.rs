@@ -708,3 +708,88 @@ fn h_pass_simd_matches_scalar_bit_exact() {
     }
   }
 }
+
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+fn lcg_fill_u16(buf: &mut [u16], seed: u32) {
+  let mut state = seed;
+  for b in buf {
+    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+    *b = (state >> 8) as u16;
+  }
+}
+
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[test]
+fn h_pass_u16_simd_matches_scalar_bit_exact() {
+  // u16 analogue of `h_pass_simd_matches_scalar_bit_exact`: the wider
+  // (u64) H-sums and the u32-by-u64 V-pass split-multiply must match
+  // the scalar reference bit-for-bit. Samples span the full 16-bit
+  // range so the high bits a u8 path drops are exercised. Same boundary
+  // geometries: single-chunk spans with tails, multi-chunk spans,
+  // row-end staging (4096->4095), tiny all-staged rows, output past the
+  // u16 weight bound (scalar fallback), and the AVX wide-path remainder
+  // ladder (padded 32/40/48/56/16/24), both channel counts.
+  let cases: &[(usize, usize, usize)] = if cfg!(miri) {
+    &[(64, 7, 1), (64, 7, 3), (12, 11, 3), (8, 3, 1), (5, 4, 3)]
+  } else {
+    &[
+      (1920, 336, 1),
+      (1920, 336, 3),
+      (640, 7, 1),
+      (640, 7, 3),
+      (4096, 4095, 1),
+      (4096, 4095, 3),
+      (5, 4, 3),
+      (8, 3, 1),
+      (70_000, 66_000, 1),
+      (256, 8, 1),
+      (256, 8, 3),
+      (264, 8, 1),
+      (264, 8, 3),
+      (336, 8, 1),
+      (336, 8, 3),
+      (400, 8, 1),
+      (400, 8, 3),
+      (120, 8, 1),
+      (120, 8, 3),
+      (160, 8, 1),
+      (160, 8, 3),
+    ]
+  };
+  for &(src_w, out_w, channels) in cases {
+    let plan = AreaResampler::to(out_w, 1)
+      .plan(src_w, 2)
+      .expect("valid geometry")
+      .expect("strict downscale");
+    let mut scalar = AreaStream::<u16>::new(plan.h(), plan.v(), src_w, 2, channels).unwrap();
+    let mut simd = AreaStream::<u16>::new(plan.h(), plan.v(), src_w, 2, channels).unwrap();
+    let mut row = std::vec![0u16; src_w * channels];
+    for y in 0..2usize {
+      lcg_fill_u16(&mut row, (src_w * 31 + out_w * 7 + channels + y) as u32);
+      let mut scalar_rows = std::vec::Vec::new();
+      let mut simd_rows = std::vec::Vec::new();
+      scalar
+        .feed_row(y, &row, false, |oy, r| {
+          scalar_rows.push((oy, r.to_vec()));
+        })
+        .unwrap();
+      simd
+        .feed_row(y, &row, true, |oy, r| {
+          simd_rows.push((oy, r.to_vec()));
+        })
+        .unwrap();
+      assert_eq!(
+        scalar.h_tmp, simd.h_tmp,
+        "h_tmp diverged: src_w={src_w} out_w={out_w} c={channels} y={y}"
+      );
+      assert_eq!(
+        scalar.acc, simd.acc,
+        "acc diverged: src_w={src_w} out_w={out_w} c={channels} y={y}"
+      );
+      assert_eq!(
+        scalar_rows, simd_rows,
+        "emitted rows diverged: src_w={src_w} out_w={out_w} c={channels}"
+      );
+    }
+  }
+}

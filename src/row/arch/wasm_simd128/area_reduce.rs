@@ -217,3 +217,209 @@ pub(crate) unsafe fn area_v_accumulate(acc: &mut [u64], h_tmp: &[u32], w: u32) {
     acc[k] += u64::from(w) * u64::from(h_tmp[k]);
   }
 }
+
+/// Sums the two u64 lanes of `acc`.
+#[inline]
+#[target_feature(enable = "simd128")]
+fn hsum_u64(acc: v128) -> u64 {
+  u64x2_extract_lane::<0>(acc).wrapping_add(u64x2_extract_lane::<1>(acc))
+}
+
+/// Accumulates the eight exact `u16 * u16 -> u32` products of `s16 * w`
+/// into the two u64 lanes of `acc`. Unlike the u8 [`mac_u16x8`], a `u16`
+/// span sum overflows `u32`, so each exact u32 product (from the
+/// widening `u32x4_extmul_low/high_u16x8`) widens to u64 via
+/// `u64x2_extend_low/high_u32x4` before accumulating.
+#[inline]
+#[target_feature(enable = "simd128")]
+fn mac_u16x8_u64(acc: v128, s16: v128, w: v128) -> v128 {
+  let p_lo = u32x4_extmul_low_u16x8(s16, w);
+  let p_hi = u32x4_extmul_high_u16x8(s16, w);
+  let acc = i64x2_add(acc, u64x2_extend_low_u32x4(p_lo));
+  let acc = i64x2_add(acc, u64x2_extend_high_u32x4(p_lo));
+  let acc = i64x2_add(acc, u64x2_extend_low_u32x4(p_hi));
+  i64x2_add(acc, u64x2_extend_high_u32x4(p_hi))
+}
+
+/// 16-bit-element H-pass (1 channel): like [`area_h_reduce_row_c1`] but
+/// the samples load directly as `u16` and the products accumulate in
+/// `u64` lanes (a single span sum can exceed `u32`).
+///
+/// # Safety
+///
+/// As [`area_h_reduce_row_c1`], with `row.len() >= cells` `u16`
+/// elements and `h_tmp.len() >= starts.len()`.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn area_h_reduce_row_u16_c1(
+  row: &[u16],
+  starts: &[usize],
+  w16: &[u16],
+  w16_off: &[usize],
+  h_tmp: &mut [u64],
+) {
+  for (j, &start) in starts.iter().enumerate() {
+    let span = &w16[w16_off[j]..w16_off[j + 1]];
+    // SAFETY: each 8-element u16 load is fully in-bounds (guarded) or
+    // staged through a zero-filled stack copy; weights come from the
+    // 8-multiple arena slice.
+    unsafe {
+      let mut acc = u64x2_splat(0);
+      for (ci, chunk) in span.chunks_exact(8).enumerate() {
+        let base = start + ci * 8;
+        let s16 = if base + 8 <= row.len() {
+          v128_load(row.as_ptr().add(base).cast())
+        } else {
+          let mut sbuf = [0u16; 8];
+          let take = row.len() - base;
+          sbuf[..take].copy_from_slice(&row[base..]);
+          v128_load(sbuf.as_ptr().cast())
+        };
+        let w = v128_load(chunk.as_ptr().cast());
+        acc = mac_u16x8_u64(acc, s16, w);
+      }
+      h_tmp[j] = hsum_u64(acc);
+    }
+  }
+}
+
+/// 16-bit-element H-pass (3-channel interleaved RGB): each 8-tap chunk
+/// spans 24 `u16` (48 bytes), so three overlapping 16-byte loads cover
+/// it and a per-channel triple of `i8x16_swizzle` masks gathers each
+/// channel's eight samples (a `u16` lives in exactly one load, the other
+/// two masks zeroing that lane with an out-of-range index).
+///
+/// # Safety
+///
+/// As [`area_h_reduce_row_u16_c1`], with `row.len() >= cells * 3` `u16`
+/// elements and `h_tmp.len() >= starts.len() * 3`.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn area_h_reduce_row_u16_c3(
+  row: &[u16],
+  starts: &[usize],
+  w16: &[u16],
+  w16_off: &[usize],
+  h_tmp: &mut [u64],
+) {
+  // For channel ch the eight samples sit at u16 index ch + 3t (byte
+  // 2*(ch + 3t)), split across the three 16-byte loads. Each swizzle
+  // pulls its load's contributing u16 pairs into output lanes 0..7; an
+  // index >= 16 (here 0x80) zeroes the rest, so the per-channel OR of
+  // the three swizzles reassembles the eight samples in order.
+  const M0: [v128; 3] = [
+    u8x16(
+      0, 1, 6, 7, 12, 13, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+    ),
+    u8x16(
+      2, 3, 8, 9, 14, 15, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+    ),
+    u8x16(
+      4, 5, 10, 11, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+    ),
+  ];
+  const M1: [v128; 3] = [
+    u8x16(
+      0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 2, 3, 8, 9, 14, 15, 0x80, 0x80, 0x80, 0x80,
+    ),
+    u8x16(
+      0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 4, 5, 10, 11, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+    ),
+    u8x16(
+      0x80, 0x80, 0x80, 0x80, 0, 1, 6, 7, 12, 13, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+    ),
+  ];
+  const M2: [v128; 3] = [
+    u8x16(
+      0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 4, 5, 10, 11,
+    ),
+    u8x16(
+      0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0, 1, 6, 7, 12, 13,
+    ),
+    u8x16(
+      0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 2, 3, 8, 9, 14, 15,
+    ),
+  ];
+  for (j, &start) in starts.iter().enumerate() {
+    let span = &w16[w16_off[j]..w16_off[j + 1]];
+    // SAFETY: the three 16-byte loads cover bytes 0..48 of the chunk and
+    // are either fully in-bounds (guarded against row.len()) or staged
+    // through a zero-filled 48-byte stack copy; weight loads come from
+    // the 8-multiple arena slice.
+    unsafe {
+      let mut acc = [u64x2_splat(0); 3];
+      for (ci, chunk) in span.chunks_exact(8).enumerate() {
+        let base = (start + ci * 8) * 3;
+        let mut sbuf = [0u16; 24];
+        let (v0, v1, v2) = if base + 24 <= row.len() {
+          (
+            v128_load(row.as_ptr().add(base).cast()),
+            v128_load(row.as_ptr().add(base + 8).cast()),
+            v128_load(row.as_ptr().add(base + 16).cast()),
+          )
+        } else {
+          let take = row.len() - base;
+          sbuf[..take].copy_from_slice(&row[base..]);
+          (
+            v128_load(sbuf.as_ptr().cast()),
+            v128_load(sbuf.as_ptr().add(8).cast()),
+            v128_load(sbuf.as_ptr().add(16).cast()),
+          )
+        };
+        let w = v128_load(chunk.as_ptr().cast());
+        for ch in 0..3 {
+          let gathered = v128_or(
+            v128_or(i8x16_swizzle(v0, M0[ch]), i8x16_swizzle(v1, M1[ch])),
+            i8x16_swizzle(v2, M2[ch]),
+          );
+          acc[ch] = mac_u16x8_u64(acc[ch], gathered, w);
+        }
+      }
+      for ch in 0..3 {
+        h_tmp[j * 3 + ch] = hsum_u64(acc[ch]);
+      }
+    }
+  }
+}
+
+/// 16-bit-element V-pass AXPY: `acc[i] += w * h_tmp[i]` with `h_tmp`
+/// already `u64`. The `u32 * u64 -> u64` product splits each `h_tmp`
+/// lane into 32-bit halves — `i8x16_shuffle` packs both lanes' low
+/// halves (and, separately, high halves) into the low two u32 lanes, so
+/// `u64x2_extmul_low_u32x4` against `w` gives `w * lo` and `w * hi`, the
+/// latter shifted up 32 — summed mod 2^64 (exact by the engine bound).
+/// Two elements per iteration.
+///
+/// # Safety
+///
+/// simd128 must be enabled at compile time. `h_tmp.len() >= acc.len()`;
+/// every product-sum stays within u64.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn area_v_accumulate_u16(acc: &mut [u64], h_tmp: &[u64], w: u32) {
+  let n = acc.len();
+  debug_assert!(h_tmp.len() >= n, "h_tmp too short");
+  let wq = u32x4_splat(w);
+  let mut i = 0usize;
+  // SAFETY: loop guard `i + 2 <= n` with `h_tmp.len() >= n` keeps all
+  // loads and stores in bounds.
+  unsafe {
+    while i + 2 <= n {
+      let t = v128_load(h_tmp.as_ptr().add(i).cast());
+      // Low halves of both u64 lanes -> u32 lanes 0,1; high halves ->
+      // u32 lanes 0,1 of a second vector. `u64x2_extmul_low_u32x4`
+      // consumes exactly those low two lanes.
+      let t_lo = i8x16_shuffle::<0, 1, 2, 3, 8, 9, 10, 11, 16, 17, 18, 19, 24, 25, 26, 27>(t, t);
+      let t_hi = i8x16_shuffle::<4, 5, 6, 7, 12, 13, 14, 15, 20, 21, 22, 23, 28, 29, 30, 31>(t, t);
+      let prod_lo = u64x2_extmul_low_u32x4(t_lo, wq);
+      let prod_hi = u64x2_extmul_low_u32x4(t_hi, wq);
+      let prod = i64x2_add(prod_lo, u64x2_shl(prod_hi, 32));
+      let a = v128_load(acc.as_ptr().add(i).cast());
+      v128_store(acc.as_mut_ptr().add(i).cast(), i64x2_add(a, prod));
+      i += 2;
+    }
+  }
+  for k in i..n {
+    acc[k] += u64::from(w) * h_tmp[k];
+  }
+}

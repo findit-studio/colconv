@@ -630,30 +630,22 @@ impl AreaSample for u16 {
   fn h_sum_fits(src_w: u64) -> bool {
     src_w <= u64::MAX / Self::MAX_SAMPLE
   }
+  #[cfg_attr(not(tarpaulin), inline(always))]
   fn h_reduce(
     row: &[u16],
     channels: usize,
     h: &AxisSpans,
-    _padded: Option<&crate::row::PaddedSpans>,
+    padded: Option<&crate::row::PaddedSpans>,
     h_tmp: &mut [u64],
-    _use_simd: bool,
+    use_simd: bool,
   ) {
-    for j in 0..h.out_len() {
-      let (start, weights) = h.span(j);
-      let base = j * channels;
-      for ch in 0..channels {
-        let mut sum = 0u64;
-        for (i, &w) in weights.iter().enumerate() {
-          sum += w as u64 * u64::from(row[(start + i) * channels + ch]);
-        }
-        h_tmp[base + ch] = sum;
-      }
-    }
+    crate::row::area_h_reduce_row_u16(
+      row, channels, &h.starts, &h.offsets, &h.weights, padded, h_tmp, use_simd,
+    );
   }
-  fn v_accumulate(acc: &mut [u64], h_tmp: &[u64], w: u64, _use_simd: bool) {
-    for (a, t) in acc.iter_mut().zip(h_tmp.iter()) {
-      *a += w * *t;
-    }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn v_accumulate(acc: &mut [u64], h_tmp: &[u64], w: u64, use_simd: bool) {
+    crate::row::area_v_accumulate_u16(acc, h_tmp, w, use_simd);
   }
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn finalize(acc: u64, denom: u64) -> u16 {
