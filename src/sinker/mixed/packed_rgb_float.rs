@@ -23,6 +23,11 @@ use super::{
   RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
   rgba_u16_plane_row_slice,
 };
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+use super::{
+  packed_rgb_f32_resample_emit, packed_rgb_f32_resample_preflight, packed_rgb_f32_resample_stream,
+  source_rgb_f32_scratch,
+};
 use crate::{
   PixelSink,
   row::{
@@ -150,37 +155,22 @@ impl<'a, R, const BE: bool> MixedSinker<'a, Rgbf32<BE>, R> {
     self.rgb_f32 = Some(buf);
     Ok(self)
   }
-}
 
-impl<const BE: bool> Rgbf32Sink<BE> for MixedSinker<'_, Rgbf32<BE>> {}
-
-impl<const BE: bool> PixelSink for MixedSinker<'_, Rgbf32<BE>> {
-  type Input<'r> = Rgbf32Row<'r>;
-  type Error = MixedSinkerError;
-
-  fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
-  }
-
-  fn process(&mut self, row: Rgbf32Row<'_>) -> Result<(), Self::Error> {
+  /// Runs the identity (no-resample) output derivation for one source
+  /// row over every attached output buffer.
+  ///
+  /// This is the parity oracle: the byte-exact output every other path
+  /// (including the area-resample tail) must reproduce for an identity
+  /// plan. It recomputes `w`/`h`/`idx` from `self` + `row` and assumes
+  /// the row shape and index are already validated by the caller.
+  fn rgbf32_process_direct(
+    &mut self,
+    row: Rgbf32Row<'_>,
+    use_simd: bool,
+  ) -> Result<(), MixedSinkerError> {
     let w = self.width;
     let h = self.height;
     let idx = row.row();
-    let use_simd = self.simd;
-
-    if row.rgb().len() != w * 3 {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
-        RowSlice::RgbF32Packed,
-        idx,
-        w * 3,
-        row.rgb().len(),
-      )));
-    }
-    if idx >= self.height {
-      return Err(MixedSinkerError::RowIndexOutOfRange(
-        RowIndexOutOfRange::new(idx, self.height),
-      ));
-    }
 
     let Self {
       rgb,
@@ -299,5 +289,160 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Rgbf32<BE>> {
     }
 
     Ok(())
+  }
+}
+
+// The float area stream + its staging fields exist only when the engine
+// is compiled in (`rgb-float` alone does not pull in the `AreaStream`
+// machinery). When the engine is present the sink accepts any resampler
+// `R` and routes a non-identity plan through the float area tail. When
+// it is absent the sink is pinned to the identity-only `NoopResampler`
+// (the default `R`): there is no `PixelSink` for any other `R`, so a
+// `MixedSinker<Rgbf32, AreaResampler>` cannot be fed rows at all — the
+// type-level fence that keeps output-sized buffers from being indexed
+// with source offsets on a downscale.
+
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+impl<R, const BE: bool> Rgbf32Sink<BE> for MixedSinker<'_, Rgbf32<BE>, R> {}
+
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgbf32<BE>, R> {
+  type Input<'r> = Rgbf32Row<'r>;
+  type Error = MixedSinkerError;
+
+  fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream_f32.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
+  }
+
+  fn process(&mut self, row: Rgbf32Row<'_>) -> Result<(), Self::Error> {
+    let w = self.width;
+    let idx = row.row();
+    let use_simd = self.simd;
+
+    if row.rgb().len() != w * 3 {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::RgbF32Packed,
+        idx,
+        w * 3,
+        row.rgb().len(),
+      )));
+    }
+    if idx >= self.height {
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, self.height),
+      ));
+    }
+
+    let Self {
+      rgb,
+      rgb_u16,
+      rgb_f32,
+      rgba,
+      rgba_u16,
+      luma,
+      luma_u16,
+      hsv,
+      rgb_scratch,
+      rgb_scratch_f32,
+      rgb_stream_f32,
+      resample_outputs,
+      plan,
+      ..
+    } = self;
+
+    // Non-identity plan: convert the wire row to source-width host f32
+    // RGB (lossless), bin it in float, then derive every attached
+    // output from each finalized output row — `rgb_f32` copies the
+    // binned row, every integer output mirrors the direct path's
+    // clamp+scale kernels run over it.
+    if let Some(plan) = plan.as_ref() {
+      if !packed_rgb_f32_resample_preflight(
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        rgb_u16,
+        rgba_u16,
+        luma_u16,
+        rgb_f32,
+        hsv,
+        idx,
+      )? {
+        return Ok(());
+      }
+      let stream = packed_rgb_f32_resample_stream(rgb_stream_f32, plan, idx)?;
+      let src_f32 = source_rgb_f32_scratch(rgb_scratch_f32, w, plan)?;
+      crate::row::rgbf32_to_rgb_f32_row::<BE>(row.rgb(), src_f32, w, use_simd);
+      return packed_rgb_f32_resample_emit(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        rgb_u16,
+        rgba_u16,
+        luma_u16,
+        rgb_f32,
+        hsv,
+        src_f32,
+        rgb_scratch,
+        row.matrix(),
+        row.full_range(),
+        idx,
+        use_simd,
+      );
+    }
+
+    self.rgbf32_process_direct(row, use_simd)
+  }
+}
+
+/// Identity-only fence for engine-absent builds.
+///
+/// Without the resample engine (`yuv-planar`/`rgb`) the float area
+/// machinery is not compiled, so this sink is pinned to the default
+/// [`NoopResampler`](crate::resample::NoopResampler): only the
+/// identity output derivation exists, and no `PixelSink` is provided
+/// for any non-identity resampler. That keeps a downscaling
+/// `MixedSinker<Rgbf32, _>` from existing at the type level.
+#[cfg(not(any(feature = "yuv-planar", feature = "rgb")))]
+impl<const BE: bool> Rgbf32Sink<BE> for MixedSinker<'_, Rgbf32<BE>> {}
+
+/// See the [`Rgbf32Sink`] fence note above: identity-only sink for
+/// engine-absent builds, pinned to `NoopResampler`.
+#[cfg(not(any(feature = "yuv-planar", feature = "rgb")))]
+impl<const BE: bool> PixelSink for MixedSinker<'_, Rgbf32<BE>> {
+  type Input<'r> = Rgbf32Row<'r>;
+  type Error = MixedSinkerError;
+
+  fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
+    check_dimensions_match(self.width, self.height, width, height)
+  }
+
+  fn process(&mut self, row: Rgbf32Row<'_>) -> Result<(), Self::Error> {
+    let w = self.width;
+    let idx = row.row();
+    let use_simd = self.simd;
+
+    if row.rgb().len() != w * 3 {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::RgbF32Packed,
+        idx,
+        w * 3,
+        row.rgb().len(),
+      )));
+    }
+    if idx >= self.height {
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, self.height),
+      ));
+    }
+
+    self.rgbf32_process_direct(row, use_simd)
   }
 }
