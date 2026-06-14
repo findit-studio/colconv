@@ -37,11 +37,37 @@
 //!
 //! This avoids two calls to the full 4-channel kernel and matches the shape
 //! of the 8-bit `Gbrap` sinker.
+//!
+//! # Fused area-resample (`with_resampler`)
+//!
+//! The `GbrpN` sinkers are generic over `R: Resampler`. On a non-identity
+//! plan each scatters its native-depth G/B/R planes into a source-width
+//! packed `u16` RGB row (`gbr_to_rgb_u16_high_bit_row`) and feeds the shared
+//! high-bit packed-RGB resample tail
+//! ([`packed_rgb_u16_resample_emit`](super::packed_rgb_u16_resample_emit) and
+//! siblings) — the `u16` analog of the 8-bit `Gbrp` routing and the same tail
+//! the `Rgb48` / `Bgr48` sources take, parameterized by the source depth
+//! `BITS` so the u8 narrowing (`>> (BITS - 8)`) and the opaque `rgba_u16`
+//! alpha (`(1 << BITS) - 1`) track the native depth rather than a hard-coded
+//! 16. Binning runs at native depth: `rgb_u16` / `rgba_u16` copy the binned
+//! row, while `rgb` / `rgba` / `luma` / `hsv` derive from a single narrowing
+//! of it.
+//!
+//! `luma_u16` is computed at full native precision from the binned native
+//! RGB — via `rgb_to_luma_u16_native_row`, the packed / runtime-`bits` twin
+//! of the direct path's `gbr_to_luma_u16_high_bit_row` — so a resampled
+//! `GbrpN` `luma_u16` is byte-identical to the direct path: full parity on
+//! every output. (`Rgb48` / `Bgr48` keep the tail's narrowed `luma_u16`,
+//! which matches their own narrowed direct path.)
+//!
+//! `GbrapN` stays pinned to `NoopResampler`: alpha-aware area resampling
+//! (the source α must be area-averaged, not expand-stubbed) is a later item.
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
-  rgba_u16_plane_row_slice,
+  RowShapeMismatch, RowSlice, check_dimensions_match, packed_rgb_u16_resample_emit,
+  packed_rgb_u16_resample_preflight, packed_rgb_u16_resample_stream, rgb_row_buf_or_scratch,
+  rgba_plane_row_slice, rgba_u16_plane_row_slice, source_rgb_u16_scratch,
 };
 use crate::{
   PixelSink,
@@ -157,14 +183,22 @@ macro_rules! impl_gbrp_high_bit {
       }
     }
 
-    impl<const BE: bool> crate::source::$sink<BE> for MixedSinker<'_, crate::source::$marker<BE>> {}
+    impl<R, const BE: bool> crate::source::$sink<BE>
+      for MixedSinker<'_, crate::source::$marker<BE>, R>
+    {
+    }
 
-    impl<const BE: bool> PixelSink for MixedSinker<'_, crate::source::$marker<BE>> {
+    impl<R, const BE: bool> PixelSink for MixedSinker<'_, crate::source::$marker<BE>, R> {
       type Input<'r> = crate::source::$row<'r>;
       type Error = MixedSinkerError;
 
       fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-        check_dimensions_match(self.width, self.height, width, height)
+        check_dimensions_match(self.width, self.height, width, height)?;
+        if let Some(stream) = self.rgb_stream_u16.as_mut() {
+          stream.reset();
+        }
+        self.resample_outputs = None;
+        Ok(())
       }
 
       fn process(&mut self, row: crate::source::$row<'_>) -> Result<(), Self::Error> {
@@ -202,6 +236,67 @@ macro_rules! impl_gbrp_high_bit {
           return Err(MixedSinkerError::RowIndexOutOfRange(
             RowIndexOutOfRange::new(idx, h),
           ));
+        }
+
+        // Non-identity plan: scatter the native-depth G/B/R planes into a
+        // source-width packed u16 RGB row and feed the shared high-bit
+        // packed-RGB resample tail (parameterized by BITS) — the u16 analog
+        // of the 8-bit `Gbrp` routing. Binning runs at native depth; rgb_u16
+        // / rgba_u16 copy the binned row, u8 / hsv derive from its
+        // `>> (BITS - 8)` narrowing, and luma_u16 is computed at native
+        // precision from the binned RGB (the packed twin of the direct
+        // path's `gbr_to_luma_u16_high_bit_row`). Freeze
+        // the output set and sequence-check before staging so a no-output
+        // sink stays a no-op and an out-of-sequence row is rejected without
+        // the allocation.
+        if let Some(plan) = self.plan.as_ref() {
+          let Self {
+            rgb,
+            rgb_u16,
+            rgba,
+            rgba_u16,
+            luma,
+            luma_u16,
+            hsv,
+            rgb_scratch,
+            rgb_scratch_u16,
+            rgb_stream_u16,
+            resample_outputs,
+            ..
+          } = self;
+          if !packed_rgb_u16_resample_preflight(
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            rgb_u16,
+            rgba_u16,
+            luma_u16,
+            hsv,
+            idx,
+          )? {
+            return Ok(());
+          }
+          let stream = packed_rgb_u16_resample_stream(rgb_stream_u16, plan, idx)?;
+          let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
+          gbr_to_rgb_u16_high_bit_row::<BITS, BE>(row.g(), row.b(), row.r(), src_u16, w, use_simd);
+          return packed_rgb_u16_resample_emit::<BITS, true>(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            rgb_u16,
+            rgba_u16,
+            luma_u16,
+            hsv,
+            src_u16,
+            rgb_scratch,
+            row.matrix(),
+            row.full_range(),
+            idx,
+            use_simd,
+          );
         }
 
         let Self {

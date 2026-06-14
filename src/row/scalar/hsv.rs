@@ -204,6 +204,63 @@ pub(crate) fn rgb_to_luma_u16_row(
   }
 }
 
+/// Native-precision `u16` luma from a packed, host-order, native-depth
+/// `u16` RGB row (`R,G,B` interleaved, `bits` significant bits per
+/// channel). Mirrors `gbr_to_luma_u16_high_bit_row` bit-for-bit — same
+/// Q15 coefficients, `RND = 1 << 14`, `i64` intermediates, and native
+/// limited-range scaling — but reads the already-host-order binned RGB
+/// the resample tail produces, so `bits` is a runtime argument rather
+/// than a const generic and no byte-swap is applied. The fused
+/// high-bit-GBR path uses this so its resampled `luma_u16` keeps the
+/// direct path's native precision; the 8-bit [`rgb_to_luma_u16_row`]
+/// above is the narrowed flavor the Rgb48 tail uses.
+///
+/// # Panics
+///
+/// Panics if `rgb.len() < 3 * width` or `luma_out.len() < width`.
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(feature = "rgb", feature = "gbr"),
+))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgb_to_luma_u16_native_row(
+  rgb: &[u16],
+  luma_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  bits: u32,
+) {
+  debug_assert!(rgb.len() >= width * 3, "rgb row too short");
+  debug_assert!(luma_out.len() >= width, "luma row too short");
+  let (k_r, k_g, k_b) = luma_coefficients_q15(matrix);
+  let (k_r, k_g, k_b) = (k_r as i64, k_g as i64, k_b as i64);
+  const RND: i64 = 1 << 14;
+  let native_max = ((1u32 << bits) - 1) as i64;
+  if full_range {
+    for x in 0..width {
+      let r = rgb[x * 3] as i64;
+      let g = rgb[x * 3 + 1] as i64;
+      let b = rgb[x * 3 + 2] as i64;
+      let y = (k_r * r + k_g * g + k_b * b + RND) >> 15;
+      luma_out[x] = y.clamp(0, native_max) as u16;
+    }
+  } else {
+    let y_off = 16i64 << (bits - 8);
+    let range = 219i64 << (bits - 8);
+    let y_max = 235i64 << (bits - 8);
+    for x in 0..width {
+      let r = rgb[x * 3] as i64;
+      let g = rgb[x * 3 + 1] as i64;
+      let b = rgb[x * 3 + 2] as i64;
+      let y_full = (k_r * r + k_g * g + k_b * b + RND) >> 15;
+      let y_full_clamped = y_full.clamp(0, native_max);
+      let y_lim = y_off + (y_full_clamped * range + native_max / 2) / native_max;
+      luma_out[x] = y_lim.clamp(y_off, y_max) as u16;
+    }
+  }
+}
+
 /// Scalar RGB → HSV for a single pixel, using the shared division LUTs.
 /// All arithmetic is integer; the two divisions `s = 255*delta/v` and
 /// `h = 30*diff/delta` become `(operand * table[divisor] + RND) >> 12`.
