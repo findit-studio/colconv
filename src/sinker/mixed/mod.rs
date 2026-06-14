@@ -1457,6 +1457,21 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// sink with no f16-plane-derived output. Gated to `gbr`.
   #[cfg(feature = "gbr")]
   rgb_plane_scratch_f16: Vec<half::f16>,
+  /// Out-width **packed** `R, G, B` `half::f16` staging for the
+  /// half-float packed-RGB ([`Rgbf16`](crate::source::Rgbf16)) resample
+  /// tail. There is no `AreaStream<f16>`, so that tail bins in `f32` (the
+  /// shared [`Self::rgb_stream_f32`]) and, per finalized output row,
+  /// **rounds each binned packed `f32` element to `half::f16`** into this
+  /// packed row, then runs the exact direct `rgbf16_*` kernels — so every
+  /// output is byte-identical to a direct `Rgbf16` conversion of the `f32`
+  /// block-mean rounded to f16. Unlike the planar
+  /// [`Gbrpf16`](crate::source::Gbrpf16) tail this row stays **packed** (no
+  /// de-interleave into planes), because the `rgbf16_*` kernels consume
+  /// packed input. Lazily grown to `3 * out_width` `half::f16`; empty for a
+  /// sink with no f16-derived output. Gated like [`Self::rgb_stream_f32`]:
+  /// the `rgb-float` family fences in the engine.
+  #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
+  rgb_packed_scratch_f16: Vec<half::f16>,
   /// Source-width **linear-XYZ** `f32` staging for the
   /// [`Xyz12`](crate::source::Xyz12) resample path: the wire row
   /// converts here (inverse-OETF only, no matrix) before feeding
@@ -1921,6 +1936,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       rgb_plane_scratch_f32: Vec::new(),
       #[cfg(feature = "gbr")]
       rgb_plane_scratch_f16: Vec::new(),
+      #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
+      rgb_packed_scratch_f16: Vec::new(),
       #[cfg(feature = "xyz")]
       xyz_scratch_f32: Vec::new(),
       simd: true,
@@ -2147,6 +2164,20 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   #[cfg(all(test, feature = "gbr", feature = "std"))]
   pub(crate) fn rgb_plane_scratch_f16_capacity(&self) -> usize {
     self.rgb_plane_scratch_f16.capacity()
+  }
+
+  /// Capacity of the half-float packed-RGB ([`Rgbf16`](crate::source::Rgbf16))
+  /// packed f16 scratch row — a white-box probe for the resample tests (a
+  /// no-output sink must not grow it). Gated on the `rgb-float` engine fence
+  /// + `std` like the test that consumes it.
+  #[cfg(all(
+    test,
+    feature = "std",
+    feature = "rgb-float",
+    any(feature = "yuv-planar", feature = "rgb")
+  ))]
+  pub(crate) fn rgb_packed_scratch_f16_capacity(&self) -> usize {
+    self.rgb_packed_scratch_f16.capacity()
   }
 
   /// Whether the [`Xyz12`](crate::source::Xyz12) linear-XYZ `f32` area
@@ -3578,6 +3609,253 @@ pub(super) fn packed_rgb_f32_resample_emit(
           ow,
           use_simd,
         );
+      }
+    }
+  })?;
+  Ok(())
+}
+
+/// Out-width **packed** `R, G, B` `half::f16` staging for the
+/// [`Rgbf16`](crate::source::Rgbf16) arm of the float packed-RGB tail.
+/// There is no `AreaStream<f16>`, so binning runs in `f32`; this emit
+/// rounds each binned packed `f32` element to `half::f16` into this row
+/// and runs the exact direct `rgbf16_*` kernels for every output. Unlike
+/// the planar [`Gbrpf16`](crate::source::Gbrpf16) scratch this row stays
+/// **packed** (no de-interleave). Grows `scratch` to `3 * width`
+/// `half::f16` under the planner's recoverable-allocation contract. Only
+/// the packed f16 emit consumes it.
+#[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
+pub(super) fn rgb_packed_f16_scratch<'s>(
+  scratch: &'s mut Vec<half::f16>,
+  width: usize,
+  plan: &ResamplePlan,
+) -> Result<&'s mut [half::f16], MixedSinkerError> {
+  let row = width
+    .checked_mul(3)
+    .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+      width,
+      plan.out_h(),
+      3,
+    )))?;
+  if scratch.len() < row {
+    scratch
+      .try_reserve_exact(row - scratch.len())
+      .map_err(|_| {
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?;
+    scratch.resize(row, half::f16::ZERO);
+  }
+  Ok(&mut scratch[..row])
+}
+
+/// Feeds the prepared source-width packed `R, G, B` `f32` row (the
+/// [`Rgbf16`](crate::source::Rgbf16) wire widened f16 -> host-native f32)
+/// into the float area stream and derives every attached output from each
+/// finalized output row.
+///
+/// There is no `AreaStream<f16>`, so binning runs in `f32` for precision.
+/// Per finalized output row this tail **rounds the binned packed `f32` row
+/// to `half::f16`** ([`rgb_packed_f16_scratch`]) and runs the **exact
+/// direct `rgbf16_*` kernels** over that packed f16 row. The result is
+/// therefore byte-identical to a direct full-resolution `Rgbf16`
+/// conversion of the frame whose per-pixel f16 `R, G, B` is the `f32` area
+/// mean rounded to f16 (the parity oracle) — because the emit performs the
+/// identical round-then-`rgbf16_*`. The f16-native kernels
+/// (`rgbf16_to_rgb_f16_row` / `..._u16_row` / `..._rgba_u16_row` /
+/// `..._row` / `..._rgba_row`) consume the rounded packed f16 row directly;
+/// the lossless `rgb_f32` output — which the direct path derives by
+/// *widening* the f16 source to f32 — is reproduced by widening the
+/// **rounded** packed f16 row back to f32 (`rgbf16_to_rgb_f32_row`), so it
+/// too matches the f16-rounded oracle, not the raw f32 bin. The u8 RGB /
+/// luma / luma_u16 / hsv outputs stage through a u8 RGB narrowing of the
+/// rounded packed f16 row (`rgbf16_to_rgb_row`, exactly the direct path's
+/// scratch); `rgba` (u8) derives directly from the rounded packed f16 row
+/// via `rgbf16_to_rgba_row`, mirroring the direct path.
+///
+/// The rounded packed f16 row holds **host-native** `half::f16` (rounded
+/// from host-native binned f32), so every `rgbf16_*` kernel — which takes a
+/// wire-endian const and byte-swaps when it differs from the host — is
+/// invoked with `HOST_NATIVE_BE` to make its load a no-op on every host.
+/// `packed_scratch_f16` (the rounded packed row) is sized — and its
+/// allocation failure risked — only when an output is attached;
+/// `narrow_scratch` (the u8 RGB row) only when an output that stages
+/// through it (`rgb` / `luma` / `luma_u16` / `hsv`) is attached. So an
+/// `rgb_f32`-only sink sizes only the packed f16 row, and a no-output sink
+/// sizes neither.
+#[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn packed_rgb_f16_resample_emit(
+  stream: &mut crate::resample::AreaStream<f32>,
+  plan: &ResamplePlan,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  rgb_u16: &mut Option<&mut [u16]>,
+  rgba_u16: &mut Option<&mut [u16]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  rgb_f32: &mut Option<&mut [f32]>,
+  rgb_f16: &mut Option<&mut [half::f16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  src_f32: &[f32],
+  packed_scratch_f16: &mut Vec<half::f16>,
+  narrow_scratch: &mut Vec<u8>,
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  idx: usize,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  // The rounded packed f16 row holds host-native data — the binned row was
+  // decoded to host order during scatter, then rounded with `from_f32`,
+  // which yields host-native `half::f16`. The `rgbf16_*` kernels take a
+  // wire-endian const and byte-swap when it differs from the host, so pass
+  // the host's own endianness to make every load a no-op; otherwise a
+  // big-endian target would corrupt every output.
+  const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
+  let ow = plan.out_w();
+  // Every output derives from the rounded packed f16 row; even `rgb_f32`
+  // does, because the direct `Rgbf16` path widens the f16 source to f32 (so
+  // the oracle's `rgb_f32` is the f32 bin rounded to f16, then widened —
+  // not the raw f32 bin). The predicate gates both the sizing here and the
+  // round in the closure, so they cannot drift; a sink with no output sizes
+  // nothing.
+  let need_round = rgb.is_some()
+    || rgba.is_some()
+    || luma.is_some()
+    || rgb_u16.is_some()
+    || rgba_u16.is_some()
+    || luma_u16.is_some()
+    || rgb_f32.is_some()
+    || rgb_f16.is_some()
+    || hsv.is_some();
+  // The u8 RGB / luma / luma_u16 / hsv outputs stage through a u8 RGB
+  // narrowing of the rounded packed f16 row (exactly the direct path's
+  // `rgbf16_to_rgb_row` scratch); an f32-/f16-/native-u16-only sink never
+  // touches it, so the out-width u8 scratch is sized — and its allocation
+  // failure risked — only when one of those outputs is attached. `rgba`
+  // (u8) derives directly from the rounded f16 row, so it does not need the
+  // narrow row.
+  let need_narrow = rgb.is_some() || luma.is_some() || luma_u16.is_some() || hsv.is_some();
+  // Allocate both scratch rows up front (recoverable) before the stream's
+  // closure writes any caller buffer, so an allocation refusal never leaves
+  // a partially written output.
+  let packed_f16: &mut [half::f16] = if need_round {
+    rgb_packed_f16_scratch(packed_scratch_f16, ow, plan)?
+  } else {
+    &mut []
+  };
+  let narrow: &mut [u8] = if need_narrow {
+    source_rgb_scratch(narrow_scratch, ow, plan)?
+  } else {
+    &mut []
+  };
+  stream.feed_row(idx, src_f32, use_simd, |oy, binned| {
+    if need_round {
+      // Round the binned packed `R, G, B` `f32` row to the packed f16 row
+      // — the exact layout the direct `rgbf16_*` kernels consume, holding
+      // the f32 block mean rounded to f16. (The f32-derived `rgb_f32`
+      // output widens this rounded row back, never the raw bin.)
+      let prow = &mut packed_f16[..3 * ow];
+      for (dst, &src) in prow.iter_mut().zip(binned.iter()) {
+        *dst = half::f16::from_f32(src);
+      }
+      let prow = &prow[..3 * ow];
+
+      // ---- f16-native kernels: consume the rounded packed f16 row
+      // directly, exactly as the direct `Rgbf16` path does ---------------
+      if let Some(buf) = rgb_f16.as_deref_mut() {
+        crate::row::rgbf16_to_rgb_f16_row::<HOST_NATIVE_BE>(
+          prow,
+          &mut buf[oy * 3 * ow..(oy + 1) * 3 * ow],
+          ow,
+          use_simd,
+        );
+      }
+      // Lossless f32 widen of the **rounded** f16 row — the direct path
+      // widens its f16 source to f32, so the oracle's `rgb_f32` is the
+      // bin rounded to f16 then widened (NOT the raw f32 bin).
+      if let Some(buf) = rgb_f32.as_deref_mut() {
+        crate::row::rgbf16_to_rgb_f32_row::<HOST_NATIVE_BE>(
+          prow,
+          &mut buf[oy * 3 * ow..(oy + 1) * 3 * ow],
+          ow,
+          use_simd,
+        );
+      }
+      if let Some(buf) = rgb_u16.as_deref_mut() {
+        crate::row::rgbf16_to_rgb_u16_row::<HOST_NATIVE_BE>(
+          prow,
+          &mut buf[oy * 3 * ow..(oy + 1) * 3 * ow],
+          ow,
+          use_simd,
+        );
+      }
+      if let Some(buf) = rgba_u16.as_deref_mut() {
+        crate::row::rgbf16_to_rgba_u16_row::<HOST_NATIVE_BE>(
+          prow,
+          &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow],
+          ow,
+          use_simd,
+        );
+      }
+      // u8 RGBA — direct f16->u8 clamp+scale, alpha 0xFF (the direct path
+      // emits RGBA straight from the f16 source, not via an expand of the
+      // u8 RGB row).
+      if let Some(buf) = rgba.as_deref_mut() {
+        crate::row::rgbf16_to_rgba_row::<HOST_NATIVE_BE>(
+          prow,
+          &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow],
+          ow,
+          use_simd,
+        );
+      }
+      if need_narrow {
+        let nrow = &mut narrow[..3 * ow];
+        // Stage the u8 RGB row once via the direct path's f16->u8
+        // clamp+scale; rgb / luma / luma_u16 / hsv all read it, matching
+        // the direct Rgbf16 source-of-truth ordering exactly.
+        crate::row::rgbf16_to_rgb_row::<HOST_NATIVE_BE>(prow, nrow, ow, use_simd);
+        if let Some(buf) = rgb.as_deref_mut() {
+          buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(nrow);
+        }
+        if let Some(buf) = luma.as_deref_mut() {
+          crate::row::rgb_to_luma_row(
+            nrow,
+            &mut buf[oy * ow..(oy + 1) * ow],
+            ow,
+            matrix,
+            full_range,
+            use_simd,
+          );
+        }
+        if let Some(buf) = luma_u16.as_deref_mut() {
+          crate::row::rgb_to_luma_u16_row(
+            nrow,
+            &mut buf[oy * ow..(oy + 1) * ow],
+            ow,
+            matrix,
+            full_range,
+            use_simd,
+          );
+        }
+        if let Some(hsv) = hsv.as_mut() {
+          let (h, s, v) = hsv.hsv();
+          crate::row::rgb_to_hsv_row(
+            nrow,
+            &mut h[oy * ow..(oy + 1) * ow],
+            &mut s[oy * ow..(oy + 1) * ow],
+            &mut v[oy * ow..(oy + 1) * ow],
+            ow,
+            use_simd,
+          );
+        }
       }
     }
   })?;
