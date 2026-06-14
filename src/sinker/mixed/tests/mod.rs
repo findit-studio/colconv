@@ -137,6 +137,8 @@ mod resample_rgb24;
 #[cfg(feature = "rgb")]
 mod resample_rgb48;
 #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
+mod resample_rgbf16;
+#[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
 mod resample_rgbf32;
 #[cfg(feature = "xyz")]
 mod resample_xyz12;
