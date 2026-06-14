@@ -2091,6 +2091,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   #[cfg(all(test, feature = "xyz", feature = "std"))]
   pub(crate) fn xyz_scratch_f32_capacity(&self) -> usize {
     self.xyz_scratch_f32.capacity()
+  }
+
   /// Whether the single-plane luma `u8` area stream has been created —
   /// a white-box probe for the [`Gray8`](crate::source::Gray8) resample
   /// ordering tests (an out-of-sequence first row must be rejected
