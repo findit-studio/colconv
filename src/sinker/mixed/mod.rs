@@ -1362,6 +1362,14 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     allow(dead_code)
   )]
   luma_stream: Option<crate::resample::AreaStream<u8>>,
+  /// Row-stage area stream for single-plane **u16** luma binning. Used
+  /// by the [`Gray16`](crate::source::Gray16) source, whose luma plane
+  /// is a native `u16` and so bins at u16 precision (the `u8`
+  /// [`Self::luma_stream`] would lose the low byte). Lazily created in
+  /// `process`, reset in `begin_frame`. Gated to `gray`; widens as u16
+  /// luma families wire in.
+  #[cfg(feature = "gray")]
+  luma_stream_u16: Option<crate::resample::AreaStream<u16>>,
   /// Output configuration frozen at a resampled frame's first
   /// processed row; `None` between frames. Captures presence AND
   /// attachment identity (pointer/length) of every output the emit
@@ -1422,6 +1430,14 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// G/B/R planes here before the same u16 tail).
   #[cfg(any(feature = "rgb", feature = "gbr"))]
   rgb_scratch_u16: Vec<u16>,
+  /// Source-width host-native `u16` luma staging for the
+  /// [`Gray16`](crate::source::Gray16) resample path: the wire `Gray16`
+  /// row converts here (source wire `BE` → host-native u16, the same
+  /// kernel the direct `luma_u16` path uses) before feeding
+  /// [`Self::luma_stream_u16`]. Lazily grown to `width` `u16`; empty
+  /// otherwise. Gated to `gray`.
+  #[cfg(feature = "gray")]
+  luma_scratch_u16: Vec<u16>,
   /// Source-width `f32` RGB staging for packed-float-RGB resampling:
   /// the wire row converts here (host-native, lossless) before feeding
   /// [`Self::rgb_stream_f32`]. Lazily grown to `3 * width` `f32`; empty
@@ -1893,6 +1909,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "mono"
       ))]
       luma_stream: None,
+      #[cfg(feature = "gray")]
+      luma_stream_u16: None,
       #[cfg(any(
         feature = "yuv-planar",
         feature = "rgb",
@@ -1927,6 +1945,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       rgb_scratch: Vec::new(),
       #[cfg(any(feature = "rgb", feature = "gbr"))]
       rgb_scratch_u16: Vec::new(),
+      #[cfg(feature = "gray")]
+      luma_scratch_u16: Vec::new(),
       #[cfg(any(
         all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
         feature = "gbr"
@@ -2115,6 +2135,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       feature = "xyz",
       feature = "bayer",
       feature = "gbr",
+      feature = "gray",
       all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb"))
     )
   ))]
@@ -2207,6 +2228,17 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   #[cfg(all(test, feature = "std", any(feature = "gray", feature = "mono")))]
   pub(crate) fn luma_stream_allocated(&self) -> bool {
     self.luma_stream.is_some()
+  }
+
+  /// Whether the single-channel **u16** luma area stream has been
+  /// created — a white-box probe for the
+  /// [`Gray16`](crate::source::Gray16) resample ordering tests (an
+  /// out-of-sequence first row must be rejected before the stream is
+  /// allocated). Gated on `gray` and `std` like the tests that consume
+  /// it.
+  #[cfg(all(test, feature = "std", feature = "gray"))]
+  pub(crate) fn luma_stream_u16_allocated(&self) -> bool {
+    self.luma_stream_u16.is_some()
   }
 
   /// Returns `true` iff row primitives dispatch to their SIMD backend.
