@@ -34,11 +34,12 @@
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
-  rgba_u16_plane_row_slice,
+  RowShapeMismatch, RowSlice, check_dimensions_match, frozen_outputs_check, rgb_row_buf_or_scratch,
+  rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
 use crate::{
   PixelSink,
+  resample::{AreaStream, OutOfSequenceRow, ResampleError, ResamplePlan},
   row::{
     expand_rgb_to_rgba_row, expand_rgb_u16_to_rgba_u16_row, gray_n_to_hsv_row, gray_n_to_luma_row,
     gray_n_to_luma_u16_row, gray_n_to_rgb_row, gray_n_to_rgb_u16_row, gray_n_to_rgba_row,
@@ -108,14 +109,23 @@ impl<'a, R> MixedSinker<'a, Gray8, R> {
   }
 }
 
-impl Gray8Sink for MixedSinker<'_, Gray8> {}
+impl<R> Gray8Sink for MixedSinker<'_, Gray8, R> {}
 
-impl PixelSink for MixedSinker<'_, Gray8> {
+impl<R> PixelSink for MixedSinker<'_, Gray8, R> {
   type Input<'r> = Gray8Row<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    // New frame: restart the luma stream (lazily created in `process`,
+    // so a direct-`process` caller that skips a fresh stream still gets
+    // a correctly initialized first frame) and clear the frozen output
+    // snapshot.
+    if let Some(stream) = self.luma_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: Gray8Row<'_>) -> Result<(), Self::Error> {
@@ -146,8 +156,36 @@ impl PixelSink for MixedSinker<'_, Gray8> {
       luma_u16,
       hsv,
       rgb_scratch,
+      plan,
+      luma_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: Gray *is* a luma plane, so a single 1-channel
+    // `AreaStream<u8>` bins the source Y row, then every attached output
+    // derives from the binned Y exactly as the direct path does below —
+    // luma copy, luma_u16 zero-extend, RGB broadcast, RGBA broadcast +
+    // 0xFF, HSV (H=0/S=0/V=Y). Row-stage only.
+    if let Some(plan) = plan.as_ref() {
+      let full_range = row.full_range();
+      return gray8_process_resampled(
+        luma_stream,
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch,
+        row.y(),
+        plan,
+        idx,
+        use_simd,
+        full_range,
+      );
+    }
+
     let y_plane = row.y();
     let full_range = row.full_range();
     let one_plane_start = idx * w;
@@ -235,6 +273,187 @@ impl PixelSink for MixedSinker<'_, Gray8> {
 
     Ok(())
   }
+}
+
+/// Row-stage fused downscale for [`Gray8`]: a single 1-channel
+/// `AreaStream<u8>` bins the source Y plane (Gray *is* a luma plane —
+/// luma is not re-derived from RGB), then every attached output derives
+/// from the binned Y row using the very kernels the direct path uses,
+/// so a resampled output equals the direct Gray8 path run over a frame
+/// that already holds the binned Y. Atomic preflight: freeze, sequence
+/// check, stream creation, and (for the colour group) scratch growth
+/// all precede the first feed, so a failure mutates no caller output.
+#[allow(clippy::too_many_arguments)]
+fn gray8_process_resampled(
+  luma_stream: &mut Option<AreaStream<u8>>,
+  resample_outputs: &mut Option<super::FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<mediaframe::source::HsvFrameMut<'_>>,
+  rgb_scratch: &mut std::vec::Vec<u8>,
+  y_row: &[u8],
+  plan: &ResamplePlan,
+  idx: usize,
+  use_simd: bool,
+  full_range: bool,
+) -> Result<(), MixedSinkerError> {
+  let ow = plan.out_w();
+  let want_rgb = rgb.is_some();
+  let want_rgba = rgba.is_some();
+  let want_hsv = hsv.is_some();
+  // The RGB kernel runs when RGB output is requested, or HSV is wanted
+  // alongside RGBA (HSV-only and RGBA-only take dedicated fast paths).
+  let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    &None,
+    &None,
+    &None,
+    hsv,
+    idx,
+  )?;
+  // Sequence-check before allocating (mirrors the planar helpers): a
+  // fresh stream expects row 0, so an out-of-sequence first row is
+  // rejected before the stream or any scratch is created, and
+  // AllocationFailed never masks OutOfSequenceRow. A no-output call has
+  // no stream to sequence and stays a no-op regardless of the row index.
+  let expected = luma_stream.as_ref().map_or(0, |stream| stream.next_y());
+  let any_output = luma.is_some() || luma_u16.is_some() || want_rgb || want_rgba || want_hsv;
+  if any_output && expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  if !any_output {
+    return Ok(());
+  }
+  if luma_stream.is_none() {
+    *luma_stream = Some(AreaStream::new(
+      plan.h(),
+      plan.v(),
+      plan.src_w(),
+      plan.src_h(),
+      1,
+    )?);
+  }
+  // The RGB kernel writes into the user buffer when RGB is attached,
+  // else into an output-width scratch shared with the HSV-from-RGB step.
+  // Size it in the preflight so the feed closure stays infallible.
+  if need_rgb_kernel && !want_rgb {
+    let row_bytes =
+      ow.checked_mul(3)
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          ow,
+          plan.out_h(),
+          3,
+        )))?;
+    if rgb_scratch.len() < row_bytes {
+      rgb_scratch
+        .try_reserve_exact(row_bytes - rgb_scratch.len())
+        .map_err(|_| {
+          MixedSinkerError::Resample(ResampleError::AllocationFailed(
+            crate::resample::PlanGeometry::new(
+              plan.src_w(),
+              plan.src_h(),
+              plan.out_w(),
+              plan.out_h(),
+            ),
+          ))
+        })?;
+      rgb_scratch.resize(row_bytes, 0);
+    }
+  }
+
+  let stream = luma_stream.as_mut().expect("created in the preflight");
+  stream.feed_row(idx, y_row, use_simd, |oy, binned_y| {
+    // Luma u8 — Gray8: Y IS luma; copy the binned row directly.
+    if let Some(buf) = luma.as_deref_mut() {
+      buf[oy * ow..(oy + 1) * ow].copy_from_slice(binned_y);
+    }
+    // Luma u16 — zero-extend the binned Y bytes to u16.
+    if let Some(buf) = luma_u16.as_deref_mut() {
+      y_plane_to_luma_u16_row(binned_y, &mut buf[oy * ow..(oy + 1) * ow], ow, use_simd);
+    }
+
+    // Standalone RGBA fast path — no RGB or HSV requested.
+    if want_rgba && !want_rgb && !want_hsv {
+      let buf = rgba.as_deref_mut().unwrap();
+      gray8_to_rgba_row(
+        binned_y,
+        &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow],
+        ow,
+        use_simd,
+        full_range,
+      );
+      return;
+    }
+
+    // Standalone HSV fast path — H=0/S=0/V=Y with no RGB computation.
+    if want_hsv && !want_rgb && !want_rgba {
+      let hsv = hsv.as_mut().unwrap();
+      let (hp, sp, vp) = hsv.hsv();
+      gray8_to_hsv_row(
+        binned_y,
+        &mut hp[oy * ow..(oy + 1) * ow],
+        &mut sp[oy * ow..(oy + 1) * ow],
+        &mut vp[oy * ow..(oy + 1) * ow],
+        ow,
+        use_simd,
+        full_range,
+      );
+      return;
+    }
+
+    if !need_rgb_kernel {
+      return;
+    }
+
+    // RGB kernel once — into the user buffer if attached, else scratch.
+    if let Some(buf) = rgb.as_deref_mut() {
+      let rgb_row = &mut buf[oy * 3 * ow..(oy + 1) * 3 * ow];
+      gray8_to_rgb_row(binned_y, rgb_row, ow, use_simd, full_range);
+      if let Some(hsv) = hsv.as_mut() {
+        let (hp, sp, vp) = hsv.hsv();
+        rgb_to_hsv_row(
+          rgb_row,
+          &mut hp[oy * ow..(oy + 1) * ow],
+          &mut sp[oy * ow..(oy + 1) * ow],
+          &mut vp[oy * ow..(oy + 1) * ow],
+          ow,
+          use_simd,
+        );
+      }
+      if let Some(buf) = rgba.as_deref_mut() {
+        expand_rgb_to_rgba_row(rgb_row, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
+      }
+    } else {
+      let rgb_row = &mut rgb_scratch[..ow * 3];
+      gray8_to_rgb_row(binned_y, rgb_row, ow, use_simd, full_range);
+      if let Some(hsv) = hsv.as_mut() {
+        let (hp, sp, vp) = hsv.hsv();
+        rgb_to_hsv_row(
+          rgb_row,
+          &mut hp[oy * ow..(oy + 1) * ow],
+          &mut sp[oy * ow..(oy + 1) * ow],
+          &mut vp[oy * ow..(oy + 1) * ow],
+          ow,
+          use_simd,
+        );
+      }
+      if let Some(buf) = rgba.as_deref_mut() {
+        expand_rgb_to_rgba_row(rgb_row, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
+      }
+    }
+  })?;
+
+  Ok(())
 }
 
 // ---- GrayN impl (const BITS) ------------------------------------------------

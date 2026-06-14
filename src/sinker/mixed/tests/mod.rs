@@ -90,8 +90,12 @@ mod planar_gbr_high_bit;
 mod planar_other_8bit_9bit;
 #[cfg(feature = "rgb")]
 mod resample_bgr24;
+#[cfg(feature = "gbr")]
+mod resample_gbrp;
 #[cfg(feature = "yuv-planar")]
 mod resample_geometry;
+#[cfg(feature = "gray")]
+mod resample_gray8;
 #[cfg(feature = "rgb")]
 mod resample_padding_byte;
 #[cfg(feature = "rgb")]
@@ -194,7 +198,6 @@ pub(super) fn pseudo_random_u8(buf: &mut [u8], seed: u32) {
   feature = "std",
   any(
     feature = "gbr",
-    feature = "gray",
     feature = "rgb",
     feature = "yuv-444-packed",
     feature = "yuv-planar",
@@ -210,7 +213,6 @@ pub(super) fn as_le_u16(v: u16) -> u16 {
   feature = "std",
   any(
     feature = "gbr",
-    feature = "gray",
     feature = "rgb",
     feature = "yuv-444-packed",
     feature = "yuv-planar",
