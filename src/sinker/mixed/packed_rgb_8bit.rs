@@ -144,7 +144,7 @@ impl<R> PixelSink for MixedSinker<'_, Rgb24, R> {
     // the same for this family. Luma / HSV / RGBA derive from each
     // finalized output row.
     if let Some(plan) = plan.as_ref() {
-      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, hsv, idx)? {
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, &None, hsv, idx)? {
         return Ok(());
       }
       let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
@@ -154,6 +154,7 @@ impl<R> PixelSink for MixedSinker<'_, Rgb24, R> {
         rgb,
         rgba,
         luma,
+        &mut None,
         hsv,
         row.rgb(),
         row.matrix(),
@@ -290,7 +291,7 @@ impl<R> PixelSink for MixedSinker<'_, Bgr24, R> {
     // without the source-width allocation/swap. Only then stage the
     // BGR->RGB row and feed the one packed-RGB resample tail.
     if let Some(plan) = plan.as_ref() {
-      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, hsv, idx)? {
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, &None, hsv, idx)? {
         return Ok(());
       }
       let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
@@ -302,6 +303,7 @@ impl<R> PixelSink for MixedSinker<'_, Bgr24, R> {
         rgb,
         rgba,
         luma,
+        &mut None,
         hsv,
         scratch,
         row.matrix(),
@@ -928,7 +930,7 @@ impl<R> PixelSink for MixedSinker<'_, Xrgb, R> {
     // packed-RGB resample tail (RGBA output gets 0xFF alpha, the
     // padding-byte contract).
     if let Some(plan) = plan.as_ref() {
-      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, hsv, idx)? {
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, &None, hsv, idx)? {
         return Ok(());
       }
       let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
@@ -940,6 +942,7 @@ impl<R> PixelSink for MixedSinker<'_, Xrgb, R> {
         rgb,
         rgba,
         luma,
+        &mut None,
         hsv,
         scratch,
         row.matrix(),
@@ -1082,7 +1085,7 @@ impl<R> PixelSink for MixedSinker<'_, Rgbx, R> {
     // packed-RGB resample tail (RGBA output gets 0xFF alpha, the
     // padding-byte contract).
     if let Some(plan) = plan.as_ref() {
-      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, hsv, idx)? {
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, &None, hsv, idx)? {
         return Ok(());
       }
       let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
@@ -1094,6 +1097,7 @@ impl<R> PixelSink for MixedSinker<'_, Rgbx, R> {
         rgb,
         rgba,
         luma,
+        &mut None,
         hsv,
         scratch,
         row.matrix(),
@@ -1234,7 +1238,7 @@ impl<R> PixelSink for MixedSinker<'_, Xbgr, R> {
     // packed-RGB resample tail (RGBA output gets 0xFF alpha, the
     // padding-byte contract).
     if let Some(plan) = plan.as_ref() {
-      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, hsv, idx)? {
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, &None, hsv, idx)? {
         return Ok(());
       }
       let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
@@ -1246,6 +1250,7 @@ impl<R> PixelSink for MixedSinker<'_, Xbgr, R> {
         rgb,
         rgba,
         luma,
+        &mut None,
         hsv,
         scratch,
         row.matrix(),
@@ -1387,7 +1392,7 @@ impl<R> PixelSink for MixedSinker<'_, Bgrx, R> {
     // packed-RGB resample tail (RGBA output gets 0xFF alpha, the
     // padding-byte contract).
     if let Some(plan) = plan.as_ref() {
-      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, hsv, idx)? {
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, &None, hsv, idx)? {
         return Ok(());
       }
       let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
@@ -1399,6 +1404,7 @@ impl<R> PixelSink for MixedSinker<'_, Bgrx, R> {
         rgb,
         rgba,
         luma,
+        &mut None,
         hsv,
         scratch,
         row.matrix(),

@@ -2599,7 +2599,6 @@ pub(super) fn source_rgb_scratch<'s>(
   Ok(&mut rgb_scratch[..row_bytes])
 }
 
-#[cfg(feature = "rgb")]
 /// Freezes the output configuration for a resampled packed-RGB frame
 /// and reports whether any output is attached. Run before the
 /// source-row conversion and the stream so a sink with no attached
@@ -2607,18 +2606,21 @@ pub(super) fn source_rgb_scratch<'s>(
 /// enforces sequencing) while a mid-frame output-set change is still
 /// caught. Mirrors the YUV resample path's freeze-then-conditional
 /// ordering.
+#[cfg(any(feature = "rgb", feature = "gbr"))]
+#[cfg_attr(not(any(feature = "rgb", feature = "gbr")), allow(dead_code))]
 pub(super) fn packed_rgb_resample_preflight(
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &Option<&mut [u8]>,
   rgba: &Option<&mut [u8]>,
   luma: &Option<&mut [u8]>,
+  luma_u16: &Option<&mut [u16]>,
   hsv: &mut Option<HsvFrameMut<'_>>,
   idx: usize,
 ) -> Result<bool, MixedSinkerError> {
   frozen_outputs_check(
     resample_outputs,
     luma,
-    &None,
+    luma_u16,
     rgb,
     rgba,
     &None,
@@ -2627,26 +2629,28 @@ pub(super) fn packed_rgb_resample_preflight(
     hsv,
     idx,
   )?;
-  Ok(rgb.is_some() || rgba.is_some() || luma.is_some() || hsv.is_some())
+  Ok(rgb.is_some() || rgba.is_some() || luma.is_some() || luma_u16.is_some() || hsv.is_some())
 }
 
 /// Fused downscale for [`MixedSinker<Rgb24, R>`]: the packed source
 /// row feeds the 3-channel area stream with no conversion step; RGB
-/// copies, and luma / HSV / RGBA derive from each finalized output
-/// row.
+/// copies, and luma / luma_u16 / HSV / RGBA derive from each finalized
+/// output row.
 ///
 /// `src_rgb` is the **source-width** canonical RGB row — `Rgb24` hands
 /// in its packed source directly (zero copy); channel-swapped or
-/// converting formats stage their row into a source-width scratch
-/// first, so this one tail serves every packed-RGB-canonical source.
-/// The caller runs [`packed_rgb_resample_preflight`] first and skips
-/// the rest when no output is attached.
+/// converting formats (the `Bgr24` / padding-byte family, planar
+/// `Gbrp`) stage their row into a source-width scratch first, so this
+/// one tail serves every packed-RGB-canonical source. The caller runs
+/// [`packed_rgb_resample_preflight`] first and skips the rest when no
+/// output is attached.
 ///
-#[cfg(feature = "rgb")]
 /// Lazily creates the 3-channel area stream and checks strict row
 /// sequencing — run **before** a converting format stages its source
 /// row, so an out-of-sequence row is rejected without the scratch
 /// allocation/conversion (matching the `Rgb24` / YUV ordering).
+#[cfg(any(feature = "rgb", feature = "gbr"))]
+#[cfg_attr(not(any(feature = "rgb", feature = "gbr")), allow(dead_code))]
 pub(super) fn packed_rgb_resample_stream<'s>(
   rgb_stream: &'s mut Option<crate::resample::AreaStream<u8>>,
   plan: &ResamplePlan,
@@ -2675,10 +2679,11 @@ pub(super) fn packed_rgb_resample_stream<'s>(
   Ok(stream)
 }
 
-#[cfg(feature = "rgb")]
 /// Feeds the prepared source-width canonical RGB row into the (already
-/// sequence-checked) stream and derives every attached output from
-/// each finalized output row.
+/// sequence-checked) stream and derives every attached output (rgb,
+/// rgba, luma, luma_u16, hsv) from each finalized output row.
+#[cfg(any(feature = "rgb", feature = "gbr"))]
+#[cfg_attr(not(any(feature = "rgb", feature = "gbr")), allow(dead_code))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgb_resample_emit(
   stream: &mut crate::resample::AreaStream<u8>,
@@ -2686,6 +2691,7 @@ pub(super) fn packed_rgb_resample_emit(
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
   luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
   hsv: &mut Option<HsvFrameMut<'_>>,
   src_rgb: &[u8],
   matrix: crate::ColorMatrix,
@@ -2700,6 +2706,16 @@ pub(super) fn packed_rgb_resample_emit(
     }
     if let Some(buf) = luma.as_deref_mut() {
       crate::row::rgb_to_luma_row(
+        out_row,
+        &mut buf[oy * ow..(oy + 1) * ow],
+        ow,
+        matrix,
+        full_range,
+        use_simd,
+      );
+    }
+    if let Some(buf) = luma_u16.as_deref_mut() {
+      crate::row::rgb_to_luma_u16_row(
         out_row,
         &mut buf[oy * ow..(oy + 1) * ow],
         ow,
