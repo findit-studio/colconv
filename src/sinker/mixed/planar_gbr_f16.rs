@@ -44,6 +44,10 @@ use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
   RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
+use super::{
+  packed_rgb_f32_resample_preflight, packed_rgb_f32_resample_stream, planar_gbr_f16_resample_emit,
+  source_rgb_f32_scratch,
+};
 use crate::{
   ColorMatrix, PixelSink,
   row::{
@@ -251,14 +255,33 @@ impl<'a, R, const BE: bool> MixedSinker<'a, Gbrpf16<BE>, R> {
   }
 }
 
-impl<const BE: bool> Gbrpf16Sink<BE> for MixedSinker<'_, Gbrpf16<BE>> {}
+// The half-float planar-GBR sink is generic over the resampler `R`. The
+// `gbr` feature pulls the area-resample engine in (the #146 cascade), so
+// `Gbrpf16` needs no engine fence. There is no `AreaStream<f16>`, so its
+// non-identity plan widens the G/B/R f16 planes to host-native f32,
+// scatters them into a source-width packed `R, G, B` f32 row, and bins in
+// float on the shared `AreaStream<f32>` (the f32 tail's stream) for
+// precision. Per finalized output row the dedicated `gbr` emit
+// de-interleaves the binned packed row directly into G/B/R `half::f16`
+// planes (**rounding** each element with `half::f16::from_f32`) and runs
+// the exact direct `gbrpf16_*` kernels — so every output is
+// byte-identical to a direct `Gbrpf16` conversion of the f32 block-mean
+// rounded to f16. `Gbrapf16` (the 4-plane alpha variant) stays pinned to
+// `NoopResampler`: alpha-aware area resampling is a later batch.
 
-impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrpf16<BE>> {
+impl<R, const BE: bool> Gbrpf16Sink<BE> for MixedSinker<'_, Gbrpf16<BE>, R> {}
+
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Gbrpf16<BE>, R> {
   type Input<'r> = Gbrpf16Row<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream_f32.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: Gbrpf16Row<'_>) -> Result<(), Self::Error> {
@@ -296,6 +319,81 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrpf16<BE>> {
       return Err(MixedSinkerError::RowIndexOutOfRange(
         RowIndexOutOfRange::new(idx, h),
       ));
+    }
+
+    // Non-identity plan: widen the f16 G/B/R planes to host-native f32,
+    // scatter into a source-width packed `R, G, B` f32 row, and bin in
+    // float. The dedicated emit de-interleaves each binned row directly
+    // into G/B/R `half::f16` planes (rounding via `from_f32`) and runs the
+    // exact direct `gbrpf16_*` kernels, so every output stays
+    // byte-identical to a direct `Gbrpf16` conversion of the f32
+    // block-mean rounded to f16.
+    if let Some(plan) = self.plan.as_ref() {
+      let Self {
+        rgb,
+        rgb_u16,
+        rgb_f32,
+        rgba_f32,
+        rgb_f16,
+        rgba_f16,
+        rgba,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch_f32,
+        rgb_plane_scratch_f16,
+        rgb_stream_f32,
+        resample_outputs,
+        ..
+      } = self;
+
+      if !packed_rgb_f32_resample_preflight(
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        rgb_u16,
+        rgba_u16,
+        luma_u16,
+        rgb_f32,
+        rgba_f32,
+        rgb_f16,
+        rgba_f16,
+        hsv,
+        idx,
+      )? {
+        return Ok(());
+      }
+      let stream = packed_rgb_f32_resample_stream(rgb_stream_f32, plan, idx)?;
+      let src_f32 = source_rgb_f32_scratch(rgb_scratch_f32, w, plan)?;
+      // Widen the f16 planes to host-native f32 (chunked, stack-resident),
+      // then interleave into the packed `R, G, B` source row via the
+      // direct `gbrpf32_to_rgb_f32_row`. The widen produces host-native
+      // f32 from the wire-encoded f16 bits, so the interleave kernel runs
+      // with `HOST_NATIVE_BE` to keep its load a no-op on every host.
+      scatter_gbrpf16_to_packed_f32::<BE>(row.g(), row.b(), row.r(), src_f32, w, use_simd);
+      return planar_gbr_f16_resample_emit(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        rgb_u16,
+        rgba_u16,
+        luma_u16,
+        rgb_f32,
+        rgba_f32,
+        rgb_f16,
+        rgba_f16,
+        hsv,
+        src_f32,
+        rgb_plane_scratch_f16,
+        GBR_F16_LUMA_MATRIX,
+        GBR_F16_FULL_RANGE,
+        idx,
+        use_simd,
+      );
     }
 
     let g_in = row.g();
@@ -468,6 +566,47 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrpf16<BE>> {
     }
 
     Ok(())
+  }
+}
+
+/// Widen the `Gbrpf16` G/B/R `half::f16` planes to host-native f32 and
+/// scatter them into a source-width packed `R, G, B` f32 row — the input
+/// the shared `AreaStream<f32>` bins. There is no `AreaStream<f16>`, so
+/// the resample tail bins in f32 for precision; this prepares that input.
+///
+/// Endian routing: `widen_f16_be_to_host_f32::<BE>` bit-normalises the
+/// source-encoded f16 plane bits (LE if `BE = false`, BE if `BE = true`)
+/// to **host-native** f32, then the direct `gbrpf32_to_rgb_f32_row`
+/// interleave runs with `HOST_NATIVE_BE` so its load is a no-op on every
+/// host (the post-widen routing, distinct from the direct Frame-to-kernel
+/// `<BE>` paths). Widening is chunked into stack scratch — no allocation.
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn scatter_gbrpf16_to_packed_f32<const BE: bool>(
+  g: &[half::f16],
+  b: &[half::f16],
+  r: &[half::f16],
+  rgb_out: &mut [f32],
+  width: usize,
+  use_simd: bool,
+) {
+  let mut gf = [0.0f32; WIDEN_CHUNK];
+  let mut bf = [0.0f32; WIDEN_CHUNK];
+  let mut rf = [0.0f32; WIDEN_CHUNK];
+  let mut offset = 0;
+  while offset < width {
+    let n = (width - offset).min(WIDEN_CHUNK);
+    widen_f16_be_to_host_f32::<BE>(g, offset, &mut gf, n);
+    widen_f16_be_to_host_f32::<BE>(b, offset, &mut bf, n);
+    widen_f16_be_to_host_f32::<BE>(r, offset, &mut rf, n);
+    gbrpf32_to_rgb_f32_row::<HOST_NATIVE_BE>(
+      &gf[..n],
+      &bf[..n],
+      &rf[..n],
+      &mut rgb_out[offset * 3..],
+      n,
+      use_simd,
+    );
+    offset += n;
   }
 }
 

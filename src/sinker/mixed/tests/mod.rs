@@ -119,6 +119,8 @@ mod resample_gbr_high_bit;
 #[cfg(feature = "gbr")]
 mod resample_gbrp;
 #[cfg(feature = "gbr")]
+mod resample_gbrpf16;
+#[cfg(feature = "gbr")]
 mod resample_gbrpf32;
 #[cfg(feature = "yuv-planar")]
 mod resample_geometry;
