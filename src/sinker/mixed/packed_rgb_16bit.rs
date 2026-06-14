@@ -221,7 +221,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgb48<BE>, R> {
       let stream = packed_rgb_u16_resample_stream(rgb_stream_u16, plan, idx)?;
       let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
       rgb48_to_rgb_u16_row_endian::<BE>(row.rgb48(), src_u16, w, use_simd);
-      return packed_rgb_u16_resample_emit(
+      return packed_rgb_u16_resample_emit::<16, false>(
         stream,
         plan,
         rgb,
@@ -486,7 +486,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Bgr48<BE>, R> {
       let stream = packed_rgb_u16_resample_stream(rgb_stream_u16, plan, idx)?;
       let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
       bgr48_to_rgb_u16_row_endian::<BE>(row.bgr48(), src_u16, w, use_simd);
-      return packed_rgb_u16_resample_emit(
+      return packed_rgb_u16_resample_emit::<16, false>(
         stream,
         plan,
         rgb,

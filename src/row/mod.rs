@@ -83,6 +83,19 @@ pub(crate) use scalar::expand_rgb_to_rgba_row;
   ),
 ))]
 pub(crate) use scalar::expand_rgb_u16_to_rgba_u16_row;
+// Native-precision `u16` luma from packed host-order `u16` RGB, used by
+// the shared high-bit packed-RGB resample tail
+// (`packed_rgb_u16_resample_emit`) when its `NATIVE_LUMA16` parameter is
+// set — i.e. the fused high-bit planar GBR path, whose `luma_u16` stays
+// byte-identical to the direct `gbr_to_luma_u16_high_bit_row`. The
+// `Rgb48` / `Bgr48` callers pass `NATIVE_LUMA16 = false` and never reach
+// it at runtime, but the generic tail still references the symbol, so the
+// re-export is gated on the same `rgb` / `gbr` consumer set as that tail.
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(feature = "rgb", feature = "gbr"),
+))]
+pub(crate) use scalar::rgb_to_luma_u16_native_row;
 
 // Strategy A+ α-extract dispatcher — re-exported at `crate::row::alpha_extract`
 // so source-α sinkers don't have to reach into `dispatch::` internals. Same

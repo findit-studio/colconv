@@ -115,6 +115,8 @@ mod resample_bayer8;
 #[cfg(feature = "rgb")]
 mod resample_bgr24;
 #[cfg(feature = "gbr")]
+mod resample_gbr_high_bit;
+#[cfg(feature = "gbr")]
 mod resample_gbrp;
 #[cfg(feature = "yuv-planar")]
 mod resample_geometry;

@@ -1311,9 +1311,10 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   rgb_stream: Option<crate::resample::AreaStream<u8>>,
   /// Row-stage area stream for high-bit packed-RGB sources (`u16`
   /// elements binned at native depth). Lazily created in `process`,
-  /// reset in `begin_frame`. Gated to `rgb`; widens as high-bit
-  /// families wire in.
-  #[cfg(feature = "rgb")]
+  /// reset in `begin_frame`. Gated to `rgb` (high-bit packed RGB) and
+  /// `gbr` (high-bit planar GBR scatters into the same u16 tail);
+  /// widens as high-bit families wire in.
+  #[cfg(any(feature = "rgb", feature = "gbr"))]
   rgb_stream_u16: Option<crate::resample::AreaStream<u16>>,
   /// Row-stage area stream for packed-float-RGB sources (`f32`
   /// elements binned in float). Lazily created in `process`, reset in
@@ -1406,8 +1407,10 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   rgb_scratch: Vec<u8>,
   /// Source-width `u16` RGB staging for high-bit packed-RGB resampling:
   /// the wire row converts here before feeding [`Self::rgb_stream_u16`].
-  /// Lazily grown to `3 * width` `u16`; empty otherwise. Gated to `rgb`.
-  #[cfg(feature = "rgb")]
+  /// Lazily grown to `3 * width` `u16`; empty otherwise. Gated to `rgb`
+  /// (high-bit packed RGB) and `gbr` (high-bit planar GBR scatters its
+  /// G/B/R planes here before the same u16 tail).
+  #[cfg(any(feature = "rgb", feature = "gbr"))]
   rgb_scratch_u16: Vec<u16>,
   /// Source-width `f32` RGB staging for packed-float-RGB resampling:
   /// the wire row converts here (host-native, lossless) before feeding
@@ -1817,7 +1820,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "mono"
       ))]
       rgb_stream: None,
-      #[cfg(feature = "rgb")]
+      #[cfg(any(feature = "rgb", feature = "gbr"))]
       rgb_stream_u16: None,
       #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
       rgb_stream_f32: None,
@@ -1865,7 +1868,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "yuva",
       ))]
       rgb_scratch: Vec::new(),
-      #[cfg(feature = "rgb")]
+      #[cfg(any(feature = "rgb", feature = "gbr"))]
       rgb_scratch_u16: Vec::new(),
       #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
       rgb_scratch_f32: Vec::new(),
@@ -2881,7 +2884,7 @@ pub(super) fn packed_rgb_resample_emit(
 /// `scratch` to `3 * width` `u16` under the planner's
 /// recoverable-allocation contract. Mirrors [`source_rgb_scratch`] for
 /// the 16-bit element path.
-#[cfg(feature = "rgb")]
+#[cfg(any(feature = "rgb", feature = "gbr"))]
 pub(super) fn source_rgb_u16_scratch<'s>(
   scratch: &'s mut Vec<u16>,
   width: usize,
@@ -2917,7 +2920,7 @@ pub(super) fn source_rgb_u16_scratch<'s>(
 /// whether any output is attached. Mirrors
 /// [`packed_rgb_resample_preflight`], extended with the native-depth
 /// `rgb_u16` / `rgba_u16` / `luma_u16` channels.
-#[cfg(feature = "rgb")]
+#[cfg(any(feature = "rgb", feature = "gbr"))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgb_u16_resample_preflight(
   resample_outputs: &mut Option<FrozenOutputs>,
@@ -2960,7 +2963,7 @@ pub(super) fn packed_rgb_u16_resample_preflight(
 /// sequencing — run before the source conversion so an out-of-sequence
 /// row is rejected without the staging work. Mirrors
 /// [`packed_rgb_resample_stream`] for the 16-bit element path.
-#[cfg(feature = "rgb")]
+#[cfg(any(feature = "rgb", feature = "gbr"))]
 pub(super) fn packed_rgb_u16_resample_stream<'s>(
   rgb_stream_u16: &'s mut Option<crate::resample::AreaStream<u16>>,
   plan: &ResamplePlan,
@@ -2991,17 +2994,22 @@ pub(super) fn packed_rgb_u16_resample_stream<'s>(
 
 /// Feeds the prepared source-width `u16` RGB row into the (already
 /// sequence-checked) stream and derives every attached output from each
-/// finalized output row. Binning runs at native 16-bit depth; the
-/// `rgb_u16` / `rgba_u16` outputs copy it directly, while the u8 and
-/// `luma_u16` outputs derive from a single `>> 8` narrowing — the same
-/// source-of-truth ordering the direct Rgb48 path uses (luma /
-/// luma_u16 / hsv all read the narrowed u8 RGB). `narrow_scratch` is
-/// sized to the out-width u8 RGB row only when one of those narrowed
-/// outputs is attached, so a native-u16-only sink neither grows it nor
-/// risks its allocation failure.
-#[cfg(feature = "rgb")]
+/// finalized output row. Binning runs at the source's native depth
+/// (`SRC_BITS` active bits per `u16` element); the `rgb_u16` /
+/// `rgba_u16` outputs copy it directly, while the u8 and `luma_u16`
+/// outputs derive from a single `>> (SRC_BITS - 8)` narrowing — the same
+/// source-of-truth ordering the direct path uses (luma / luma_u16 / hsv
+/// all read the narrowed u8 RGB). `SRC_BITS` is `16` for the packed
+/// `Rgb48` / `Bgr48` sources (whose elements are full-range u16) and the
+/// source bit depth for the high-bit planar GBR sources (`Gbrp9` … 14
+/// carry fewer than 16 active bits, so their narrowing shift and opaque
+/// `rgba_u16` alpha both track `SRC_BITS`, not a hard-coded 16).
+/// `narrow_scratch` is sized to the out-width u8 RGB row only when one of
+/// those narrowed outputs is attached, so a native-u16-only sink neither
+/// grows it nor risks its allocation failure.
+#[cfg(any(feature = "rgb", feature = "gbr"))]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn packed_rgb_u16_resample_emit(
+pub(super) fn packed_rgb_u16_resample_emit<const SRC_BITS: u32, const NATIVE_LUMA16: bool>(
   stream: &mut crate::resample::AreaStream<u16>,
   plan: &ResamplePlan,
   rgb: &mut Option<&mut [u8]>,
@@ -3018,15 +3026,24 @@ pub(super) fn packed_rgb_u16_resample_emit(
   idx: usize,
   use_simd: bool,
 ) -> Result<(), MixedSinkerError> {
+  const {
+    assert!(
+      SRC_BITS >= 8 && SRC_BITS <= 16,
+      "SRC_BITS must be in [8, 16]"
+    )
+  };
   let ow = plan.out_w();
-  // The u8 / luma_u16 outputs derive from a `>> 8` narrowing of the
-  // binned row; a native-u16-only sink (only rgb_u16 / rgba_u16) never
-  // touches it, so the out-width u8 scratch is sized — and its
-  // allocation failure risked — only when one of those outputs is
-  // attached. The predicate gates both the sizing here and the use in
+  // The u8 / luma_u16 outputs derive from a `>> (SRC_BITS - 8)`
+  // narrowing of the binned row; a native-u16-only sink (only rgb_u16 /
+  // rgba_u16) never touches it, so the out-width u8 scratch is sized —
+  // and its allocation failure risked — only when one of those outputs
+  // is attached. The predicate gates both the sizing here and the use in
   // the closure, so they cannot drift.
-  let need_narrow =
-    rgb.is_some() || rgba.is_some() || luma.is_some() || luma_u16.is_some() || hsv.is_some();
+  let need_narrow = rgb.is_some()
+    || rgba.is_some()
+    || luma.is_some()
+    || hsv.is_some()
+    || (!NATIVE_LUMA16 && luma_u16.is_some());
   let narrow: &mut [u8] = if need_narrow {
     source_rgb_scratch(narrow_scratch, ow, plan)?
   } else {
@@ -3038,16 +3055,31 @@ pub(super) fn packed_rgb_u16_resample_emit(
       buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(binned);
     }
     if let Some(buf) = rgba_u16.as_deref_mut() {
-      crate::row::expand_rgb_u16_to_rgba_u16_row::<16>(
+      crate::row::expand_rgb_u16_to_rgba_u16_row::<SRC_BITS>(
         binned,
         &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow],
         ow,
       );
     }
+    // Native-precision `luma_u16`: derive directly from the native-depth
+    // binned RGB, byte-identical to the direct
+    // `gbr_to_luma_u16_high_bit_row` path. Only the high-bit-GBR callers
+    // set `NATIVE_LUMA16`; the `Rgb48` / `Bgr48` callers leave it false
+    // and take the narrowed `luma_u16` in the `need_narrow` block below.
+    if NATIVE_LUMA16 && let Some(buf) = luma_u16.as_deref_mut() {
+      crate::row::rgb_to_luma_u16_native_row(
+        binned,
+        &mut buf[oy * ow..(oy + 1) * ow],
+        ow,
+        matrix,
+        full_range,
+        SRC_BITS,
+      );
+    }
     if need_narrow {
       let nrow = &mut narrow[..3 * ow];
       for (d, &s) in nrow.iter_mut().zip(binned.iter()) {
-        *d = (s >> 8) as u8;
+        *d = (s >> (SRC_BITS - 8)) as u8;
       }
       if let Some(buf) = rgb.as_deref_mut() {
         buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(nrow);
@@ -3065,7 +3097,7 @@ pub(super) fn packed_rgb_u16_resample_emit(
           use_simd,
         );
       }
-      if let Some(buf) = luma_u16.as_deref_mut() {
+      if !NATIVE_LUMA16 && let Some(buf) = luma_u16.as_deref_mut() {
         crate::row::rgb_to_luma_u16_row(
           nrow,
           &mut buf[oy * ow..(oy + 1) * ow],
