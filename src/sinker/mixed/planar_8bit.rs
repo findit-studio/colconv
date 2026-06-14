@@ -477,6 +477,7 @@ fn yuv420p_process_native(
     &None,
     &None,
     hsv,
+    &None,
     idx,
   )?;
   // The join's chroma half is fixed at creation; if the frame's color
@@ -651,6 +652,7 @@ fn yuv420p_process_resampled(
     &None,
     &None,
     hsv,
+    &None,
     idx,
   )?;
   // Create every requested stream, then check all of them against
@@ -826,6 +828,7 @@ fn planar_dual_resample(
     &None,
     &None,
     hsv,
+    &None,
     idx,
   )?;
   // Sequence-check before allocating (mirrors the packed-RGB helpers):

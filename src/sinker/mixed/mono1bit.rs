@@ -80,6 +80,7 @@ fn mono_luma_resample(
     &None,
     &None,
     hsv,
+    &None,
     idx,
   )?;
 

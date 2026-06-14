@@ -128,6 +128,8 @@ mod resample_geometry;
 mod resample_gray16;
 #[cfg(feature = "gray")]
 mod resample_gray8;
+#[cfg(feature = "gray")]
+mod resample_grayf32;
 #[cfg(feature = "mono")]
 mod resample_mono;
 #[cfg(feature = "rgb")]
