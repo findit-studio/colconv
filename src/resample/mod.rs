@@ -131,7 +131,13 @@ impl Resampler for AreaResampler {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 pub(crate) fn try_zeroed<T: Clone + Default>(
   n: usize,
@@ -586,7 +592,13 @@ fn round_div_half_up(a: u64, d: u64) -> u64 {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 pub(crate) trait AreaSample: Copy + Default {
   /// H-pass accumulator element. Integer samples sum exactly in a wide
@@ -627,7 +639,13 @@ pub(crate) trait AreaSample: Copy + Default {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 impl AreaSample for u8 {
   type HSum = u32;
@@ -674,7 +692,13 @@ impl AreaSample for u8 {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 #[cfg_attr(not(feature = "rgb"), allow(dead_code))]
 impl AreaSample for u16 {
@@ -733,7 +757,13 @@ impl AreaSample for u16 {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 #[allow(dead_code)]
 impl AreaSample for f32 {
@@ -797,7 +827,13 @@ impl AreaSample for f32 {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 #[derive(Debug)]
 pub(crate) struct AreaStream<S: AreaSample> {
@@ -838,7 +874,13 @@ pub(crate) struct AreaStream<S: AreaSample> {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 impl<S: AreaSample> AreaStream<S> {
   /// Creates a stream for `channels` interleaved channels of the
@@ -1129,7 +1171,13 @@ pub enum ResampleError {
     feature = "gray",
     feature = "xyz",
     feature = "bayer",
-    feature = "mono"
+    feature = "mono",
+    feature = "yuv-semi-planar",
+    feature = "yuv-packed",
+    feature = "yuv-444-packed",
+    feature = "y2xx",
+    feature = "v210",
+    feature = "rgb-legacy"
   )
 ))]
 mod cv2_goldens;

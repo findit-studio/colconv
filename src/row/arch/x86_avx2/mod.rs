@@ -96,7 +96,13 @@ mod alpha_extract;
     feature = "gray",
     feature = "xyz",
     feature = "bayer",
-    feature = "mono"
+    feature = "mono",
+    feature = "yuv-semi-planar",
+    feature = "yuv-packed",
+    feature = "yuv-444-packed",
+    feature = "y2xx",
+    feature = "v210",
+    feature = "rgb-legacy"
   )
 ))]
 pub(crate) mod area_reduce;

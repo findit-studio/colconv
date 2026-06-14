@@ -630,7 +630,13 @@ fn stream_constant_input_is_constant() {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 /// Same LCG as `ci/gen_cv2_goldens.py`: the parity sources are
 /// synthesized identically on both sides, so the fixture carries only
@@ -650,7 +656,13 @@ fn lcg_fill(buf: &mut [u8], seed: u32) {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 #[test]
 fn area_matches_cv2_inter_area_within_one_lsb() {
@@ -785,7 +797,13 @@ fn area_overflow_rejected() {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 #[test]
 fn h_pass_simd_matches_scalar_bit_exact() {
@@ -882,7 +900,13 @@ fn h_pass_simd_matches_scalar_bit_exact() {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 fn lcg_fill_u16(buf: &mut [u16], seed: u32) {
   let mut state = seed;
@@ -899,7 +923,13 @@ fn lcg_fill_u16(buf: &mut [u16], seed: u32) {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 #[test]
 fn h_pass_u16_simd_matches_scalar_bit_exact() {
@@ -983,7 +1013,13 @@ fn h_pass_u16_simd_matches_scalar_bit_exact() {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 fn lcg_fill_f32(buf: &mut [f32], seed: u32) {
   let mut state = seed;
@@ -1006,7 +1042,13 @@ fn lcg_fill_f32(buf: &mut [f32], seed: u32) {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 fn assert_close_rel_f64(a: &[f64], b: &[f64], rel: f64, ctx: &str) {
   assert_eq!(a.len(), b.len(), "{ctx} length");
@@ -1023,7 +1065,13 @@ fn assert_close_rel_f64(a: &[f64], b: &[f64], rel: f64, ctx: &str) {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 #[test]
 fn h_pass_f32_simd_matches_scalar_within_tolerance() {
@@ -1116,7 +1164,13 @@ fn h_pass_f32_simd_matches_scalar_within_tolerance() {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 #[test]
 fn h_pass_f32_simd_matches_scalar_with_non_finite_padding() {
