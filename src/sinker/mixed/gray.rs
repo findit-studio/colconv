@@ -319,6 +319,7 @@ fn gray8_process_resampled(
     &None,
     &None,
     &None,
+    &None,
     hsv,
     idx,
   )?;

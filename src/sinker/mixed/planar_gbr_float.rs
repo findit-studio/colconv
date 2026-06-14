@@ -37,6 +37,10 @@ use super::{
   RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
   rgba_u16_plane_row_slice,
 };
+use super::{
+  packed_rgb_f32_resample_preflight, packed_rgb_f32_resample_stream, planar_gbr_f32_resample_emit,
+  source_rgb_f32_scratch,
+};
 use crate::{
   ColorMatrix, PixelSink,
   row::{
@@ -225,52 +229,33 @@ impl<'a, R, const BE: bool> MixedSinker<'a, Gbrpf32<BE>, R> {
   }
 }
 
-impl<const BE: bool> Gbrpf32Sink<BE> for MixedSinker<'_, Gbrpf32<BE>> {}
+// The float planar-GBR sink is generic over the resampler `R`. The
+// `gbr` feature pulls the area-resample engine in (the #146 cascade), so
+// `Gbrpf32` needs no engine fence — its non-identity plan scatters the
+// G/B/R planes into a source-width packed `R, G, B` f32 row, bins in
+// float on the shared `AreaStream<f32>`, then de-interleaves each binned
+// row back into G/B/R planes and runs the exact direct `gbrpf32_*`
+// kernels (the `rgb-float` tail's packed `rgbf32_*` kernels are not
+// compiled under `gbr`). Every output, `luma_u16` included, is therefore
+// byte-identical to the direct path. `Gbrapf32` (the 4-plane alpha
+// variant) stays pinned to `NoopResampler`: alpha-aware area resampling
+// is a later batch.
 
-impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrpf32<BE>> {
-  type Input<'r> = Gbrpf32Row<'r>;
-  type Error = MixedSinkerError;
+impl<R, const BE: bool> Gbrpf32Sink<BE> for MixedSinker<'_, Gbrpf32<BE>, R> {}
 
-  fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
-  }
-
-  fn process(&mut self, row: Gbrpf32Row<'_>) -> Result<(), Self::Error> {
+impl<R, const BE: bool> MixedSinker<'_, Gbrpf32<BE>, R> {
+  /// Runs the identity (no-resample) output derivation for one source
+  /// row over every attached output buffer — the parity oracle the
+  /// area-resample tail must reproduce for an identity plan. Assumes the
+  /// row shape and index are already validated by the caller.
+  fn gbrpf32_process_direct(
+    &mut self,
+    row: Gbrpf32Row<'_>,
+    use_simd: bool,
+  ) -> Result<(), MixedSinkerError> {
     let w = self.width;
     let h = self.height;
     let idx = row.row();
-    let use_simd = self.simd;
-
-    // Defense-in-depth row-shape checks before any unsafe kernel.
-    if row.g().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
-        RowSlice::GbrF32Plane,
-        idx,
-        w,
-        row.g().len(),
-      )));
-    }
-    if row.b().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
-        RowSlice::GbrF32Plane,
-        idx,
-        w,
-        row.b().len(),
-      )));
-    }
-    if row.r().len() != w {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
-        RowSlice::GbrF32Plane,
-        idx,
-        w,
-        row.r().len(),
-      )));
-    }
-    if idx >= h {
-      return Err(MixedSinkerError::RowIndexOutOfRange(
-        RowIndexOutOfRange::new(idx, h),
-      ));
-    }
 
     let g_in = row.g();
     let b_in = row.b();
@@ -415,6 +400,135 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrpf32<BE>> {
     }
 
     Ok(())
+  }
+}
+
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Gbrpf32<BE>, R> {
+  type Input<'r> = Gbrpf32Row<'r>;
+  type Error = MixedSinkerError;
+
+  fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream_f32.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
+  }
+
+  fn process(&mut self, row: Gbrpf32Row<'_>) -> Result<(), Self::Error> {
+    let w = self.width;
+    let h = self.height;
+    let idx = row.row();
+    let use_simd = self.simd;
+
+    // Defense-in-depth row-shape checks before any unsafe kernel.
+    if row.g().len() != w {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::GbrF32Plane,
+        idx,
+        w,
+        row.g().len(),
+      )));
+    }
+    if row.b().len() != w {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::GbrF32Plane,
+        idx,
+        w,
+        row.b().len(),
+      )));
+    }
+    if row.r().len() != w {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::GbrF32Plane,
+        idx,
+        w,
+        row.r().len(),
+      )));
+    }
+    if idx >= h {
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, h),
+      ));
+    }
+
+    // Non-identity plan: scatter the G/B/R planes into a source-width
+    // packed `R, G, B` f32 row and bin in float. `rgb_f32` copies the
+    // binned row losslessly; every other output is derived by
+    // de-interleaving the binned row back into G/B/R planes and running
+    // the exact direct `gbrpf32_*` kernels, so `luma_u16` (and all
+    // outputs) stay byte-identical to the direct path. The `rgb-float`
+    // tail's packed `rgbf32_*` kernels are absent in a `gbr` build, hence
+    // the dedicated planar emit.
+    if let Some(plan) = self.plan.as_ref() {
+      let Self {
+        rgb,
+        rgb_u16,
+        rgb_f32,
+        rgba_f32,
+        rgb_f16,
+        rgba_f16,
+        rgba,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch_f32,
+        rgb_plane_scratch_f32,
+        rgb_stream_f32,
+        resample_outputs,
+        ..
+      } = self;
+
+      if !packed_rgb_f32_resample_preflight(
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        rgb_u16,
+        rgba_u16,
+        luma_u16,
+        rgb_f32,
+        rgba_f32,
+        rgb_f16,
+        rgba_f16,
+        hsv,
+        idx,
+      )? {
+        return Ok(());
+      }
+      let stream = packed_rgb_f32_resample_stream(rgb_stream_f32, plan, idx)?;
+      let src_f32 = source_rgb_f32_scratch(rgb_scratch_f32, w, plan)?;
+      gbrpf32_to_rgb_f32_row::<BE>(row.g(), row.b(), row.r(), src_f32, w, use_simd);
+      // The packed-float tail's `rgbf32_*` kernels are not compiled under
+      // `gbr`; this dedicated tail de-interleaves each binned row and
+      // re-runs the exact direct `gbrpf32_*` kernels (full parity). The
+      // binned row is host-native, so the kernels run `::<false>`.
+      return planar_gbr_f32_resample_emit(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        rgb_u16,
+        rgba_u16,
+        luma_u16,
+        rgb_f32,
+        rgba_f32,
+        rgb_f16,
+        rgba_f16,
+        hsv,
+        src_f32,
+        rgb_plane_scratch_f32,
+        GBR_FLOAT_LUMA_MATRIX,
+        GBR_FLOAT_FULL_RANGE,
+        idx,
+        use_simd,
+      );
+    }
+
+    self.gbrpf32_process_direct(row, use_simd)
   }
 }
 
