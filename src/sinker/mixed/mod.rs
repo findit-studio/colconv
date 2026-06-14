@@ -1332,12 +1332,11 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// `xyz`), so no separate engine feature is required.
   #[cfg(feature = "xyz")]
   xyz_stream_f32: Option<crate::resample::AreaStream<f32>>,
-  #[cfg(feature = "yuv-planar")]
   /// Row-stage area stream for single-plane luma binning. Used by the
-  /// planar YUV family (Y-plane luma) and the [`Gray8`](crate::source::Gray8)
-  /// source (Gray *is* a luma plane). Lazily created in `process`,
-  /// reset in `begin_frame`. Gated like the engine; widens as families
-  /// wire in.
+  /// planar YUV family (Y-plane luma), the [`Gray8`](crate::source::Gray8)
+  /// source (Gray *is* a luma plane), and `mono` (bin the expanded
+  /// 0/255 luma plane). Lazily created in `process`, reset in
+  /// `begin_frame`. Gated like the engine; widens as families wire in.
   #[cfg(any(
     feature = "yuv-planar",
     feature = "rgb",
@@ -1347,7 +1346,10 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "bayer",
     feature = "mono"
   ))]
-  #[cfg_attr(not(any(feature = "yuv-planar", feature = "gray")), allow(dead_code))]
+  #[cfg_attr(
+    not(any(feature = "yuv-planar", feature = "gray", feature = "mono")),
+    allow(dead_code)
+  )]
   luma_stream: Option<crate::resample::AreaStream<u8>>,
   /// Output configuration frozen at a resampled frame's first
   /// processed row; `None` between frames. Captures presence AND
@@ -1821,7 +1823,6 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       rgb_stream_f32: None,
       #[cfg(feature = "xyz")]
       xyz_stream_f32: None,
-      #[cfg(feature = "yuv-planar")]
       #[cfg(any(
         feature = "yuv-planar",
         feature = "rgb",
@@ -2094,12 +2095,12 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
     self.xyz_scratch_f32.capacity()
   }
 
-  /// Whether the single-plane luma `u8` area stream has been created —
-  /// a white-box probe for the [`Gray8`](crate::source::Gray8) resample
-  /// ordering tests (an out-of-sequence first row must be rejected
-  /// before the stream is allocated). Gated on `gray` and `std` like
-  /// the tests that consume it.
-  #[cfg(all(test, feature = "gray", feature = "std"))]
+  /// Whether the single-channel luma `u8` area stream has been created
+  /// — a white-box probe for the [`Gray8`](crate::source::Gray8) and
+  /// `mono` resample ordering tests (an out-of-sequence first row must
+  /// be rejected before the stream is allocated). Gated on `gray`/`mono`
+  /// and `std` like the tests that consume it.
+  #[cfg(all(test, feature = "std", any(feature = "gray", feature = "mono")))]
   pub(crate) fn luma_stream_allocated(&self) -> bool {
     self.luma_stream.is_some()
   }
@@ -2686,6 +2687,40 @@ pub(super) fn source_rgb_scratch<'s>(
     rgb_scratch.resize(row_bytes, 0);
   }
   Ok(&mut rgb_scratch[..row_bytes])
+}
+
+/// Grows `scratch` to a **source-width** `u8` luma row (`width`
+/// bytes) and returns the slice, following the planner's recoverable-
+/// allocation contract (the exact reserve makes the resize incapable
+/// of reallocating; refusal surfaces as `AllocationFailed` in the
+/// preflight phase, not an abort in infallible growth).
+///
+/// The staging point for `mono` resampling: each 1-bit source row is
+/// expanded to source-width 0/255 luma here before feeding the
+/// single-channel area stream.
+#[cfg(feature = "mono")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(super) fn source_luma_scratch<'s>(
+  scratch: &'s mut Vec<u8>,
+  width: usize,
+  plan: &ResamplePlan,
+) -> Result<&'s mut [u8], MixedSinkerError> {
+  if scratch.len() < width {
+    scratch
+      .try_reserve_exact(width - scratch.len())
+      .map_err(|_| {
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?;
+    scratch.resize(width, 0);
+  }
+  Ok(&mut scratch[..width])
 }
 
 /// Freezes the output configuration for a resampled packed-RGB frame
