@@ -3433,6 +3433,12 @@ pub(super) fn packed_rgb_f32_resample_emit(
   } else {
     &mut []
   };
+  // The binned row is host-native f32 (the scatter decoded the source to
+  // host order before binning), so the `rgbf32_*` kernels — which take a
+  // wire-endian const and `load_f32` accordingly — must be told the data
+  // is already host-order, else a big-endian target byte-swaps it and
+  // corrupts every derived output.
+  const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
   stream.feed_row(idx, src_f32, use_simd, |oy, binned| {
     // Lossless float pass-through — copy the binned row verbatim
     // (mirrors the direct path's `rgbf32_to_rgb_f32_row`; the binned
@@ -3443,7 +3449,7 @@ pub(super) fn packed_rgb_f32_resample_emit(
     // u16 outputs — direct float→u16 clamp+scale (no narrowing stage),
     // exactly as the direct Rgbf32 path derives them from the source.
     if let Some(buf) = rgb_u16.as_deref_mut() {
-      crate::row::rgbf32_to_rgb_u16_row::<false>(
+      crate::row::rgbf32_to_rgb_u16_row::<HOST_NATIVE_BE>(
         binned,
         &mut buf[oy * 3 * ow..(oy + 1) * 3 * ow],
         ow,
@@ -3451,7 +3457,7 @@ pub(super) fn packed_rgb_f32_resample_emit(
       );
     }
     if let Some(buf) = rgba_u16.as_deref_mut() {
-      crate::row::rgbf32_to_rgba_u16_row::<false>(
+      crate::row::rgbf32_to_rgba_u16_row::<HOST_NATIVE_BE>(
         binned,
         &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow],
         ow,
@@ -3462,7 +3468,7 @@ pub(super) fn packed_rgb_f32_resample_emit(
     // path emits RGBA straight from the float source, not via an
     // expand of the u8 RGB row).
     if let Some(buf) = rgba.as_deref_mut() {
-      crate::row::rgbf32_to_rgba_row::<false>(
+      crate::row::rgbf32_to_rgba_row::<HOST_NATIVE_BE>(
         binned,
         &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow],
         ow,
@@ -3474,7 +3480,7 @@ pub(super) fn packed_rgb_f32_resample_emit(
       // Stage the u8 RGB row once via the direct path's float→u8
       // clamp+scale; rgb / luma / luma_u16 / hsv all read it, matching
       // the direct Rgbf32 source-of-truth ordering exactly.
-      crate::row::rgbf32_to_rgb_row::<false>(binned, nrow, ow, use_simd);
+      crate::row::rgbf32_to_rgb_row::<HOST_NATIVE_BE>(binned, nrow, ow, use_simd);
       if let Some(buf) = rgb.as_deref_mut() {
         buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(nrow);
       }
