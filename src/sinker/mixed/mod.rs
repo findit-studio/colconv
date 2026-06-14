@@ -1309,7 +1309,21 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// `rgb-float` does not imply).
   #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
   rgb_stream_f32: Option<crate::resample::AreaStream<f32>>,
-  #[cfg(feature = "yuv-planar")]
+  /// Row-stage area stream for single-plane luma binning. Used by the
+  /// planar YUV family (Y-plane luma) and the [`Gray8`](crate::source::Gray8)
+  /// source (Gray *is* a luma plane). Lazily created in `process`,
+  /// reset in `begin_frame`. Gated like the engine; widens as families
+  /// wire in.
+  #[cfg(any(
+    feature = "yuv-planar",
+    feature = "rgb",
+    feature = "gbr",
+    feature = "gray",
+    feature = "xyz",
+    feature = "bayer",
+    feature = "mono"
+  ))]
+  #[cfg_attr(not(any(feature = "yuv-planar", feature = "gray")), allow(dead_code))]
   luma_stream: Option<crate::resample::AreaStream<u8>>,
   /// Output configuration frozen at a resampled frame's first
   /// processed row; `None` between frames. Captures presence AND
@@ -1774,7 +1788,15 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       rgb_stream_u16: None,
       #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
       rgb_stream_f32: None,
-      #[cfg(feature = "yuv-planar")]
+      #[cfg(any(
+        feature = "yuv-planar",
+        feature = "rgb",
+        feature = "gbr",
+        feature = "gray",
+        feature = "xyz",
+        feature = "bayer",
+        feature = "mono"
+      ))]
       luma_stream: None,
       #[cfg(any(
         feature = "yuv-planar",
@@ -2013,6 +2035,16 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   ))]
   pub(crate) fn rgb_stream_f32_allocated(&self) -> bool {
     self.rgb_stream_f32.is_some()
+  }
+
+  /// Whether the single-plane luma `u8` area stream has been created —
+  /// a white-box probe for the [`Gray8`](crate::source::Gray8) resample
+  /// ordering tests (an out-of-sequence first row must be rejected
+  /// before the stream is allocated). Gated on `gray` and `std` like
+  /// the tests that consume it.
+  #[cfg(all(test, feature = "gray", feature = "std"))]
+  pub(crate) fn luma_stream_allocated(&self) -> bool {
+    self.luma_stream.is_some()
   }
 
   /// Returns `true` iff row primitives dispatch to their SIMD backend.
