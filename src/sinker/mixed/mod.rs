@@ -377,11 +377,12 @@ impl RowIndexOutOfRange {
 /// presence plus attachment identity (data pointer and length) for
 /// luma, luma_u16, rgb, rgba, rgb_u16, rgba_u16, the `rgb_f32` /
 /// `rgba_f32` float-RGB(A) outputs, the `xyz_f32` linear-XYZ output,
-/// the `rgb_f16` / `rgba_f16` half-float outputs, and the three HSV
-/// planes. Equality is the per-frame immutability check — in safe code
-/// a mid-frame `set_*` necessarily supplies a different borrow, so an
-/// identity change is exactly a reattachment. The `*_u16` / `rgb_f32` /
-/// `rgba_f32` / `xyz_f32` / `*_f16` slots are `(0, 0)` for every format
+/// the `rgb_f16` / `rgba_f16` half-float outputs, the `luma_f32`
+/// float-luma output, and the three HSV planes. Equality is the
+/// per-frame immutability check — in safe code a mid-frame `set_*`
+/// necessarily supplies a different borrow, so an identity change is
+/// exactly a reattachment. The `*_u16` / `rgb_f32` / `rgba_f32` /
+/// `xyz_f32` / `*_f16` / `luma_f32` slots are `(0, 0)` for every format
 /// that attaches no such output, so adding them leaves those formats'
 /// snapshots unchanged.
 #[cfg(any(
@@ -391,12 +392,18 @@ impl RowIndexOutOfRange {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct FrozenOutputs {
-  idents: [(usize, usize); 14],
+  idents: [(usize, usize); 15],
 }
 
 #[cfg(any(
@@ -406,7 +413,13 @@ pub(super) struct FrozenOutputs {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
 impl FrozenOutputs {
@@ -431,6 +444,7 @@ impl FrozenOutputs {
     rgb_f16: Option<&[half::f16]>,
     rgba_f16: Option<&[half::f16]>,
     hsv: Option<(&[u8], &[u8], &[u8])>,
+    luma_f32: Option<&[f32]>,
   ) -> Self {
     let (h, s, v) = match hsv {
       Some((h, s, v)) => (
@@ -456,6 +470,7 @@ impl FrozenOutputs {
         h,
         s,
         v,
+        Self::ident(luma_f32),
       ],
     }
   }
@@ -471,7 +486,13 @@ impl FrozenOutputs {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
 #[allow(clippy::too_many_arguments)]
@@ -489,6 +510,7 @@ pub(super) fn frozen_outputs_check(
   rgb_f16: &Option<&mut [half::f16]>,
   rgba_f16: &Option<&mut [half::f16]>,
   hsv: &mut Option<HsvFrameMut<'_>>,
+  luma_f32: &Option<&mut [f32]>,
   idx: usize,
 ) -> Result<(), MixedSinkerError> {
   let snapshot = FrozenOutputs::snapshot(
@@ -507,6 +529,7 @@ pub(super) fn frozen_outputs_check(
       let (h, s, v) = f.hsv();
       (&h[..], &s[..], &v[..])
     }),
+    luma_f32.as_deref(),
   );
   match resample_outputs {
     None => *resample_outputs = Some(snapshot),
@@ -1310,7 +1333,13 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "gray",
     feature = "xyz",
     feature = "bayer",
-    feature = "mono"
+    feature = "mono",
+    feature = "yuv-semi-planar",
+    feature = "yuv-packed",
+    feature = "yuv-444-packed",
+    feature = "y2xx",
+    feature = "v210",
+    feature = "rgb-legacy"
   ))]
   #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
   rgb_stream: Option<crate::resample::AreaStream<u8>>,
@@ -1355,7 +1384,13 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "gray",
     feature = "xyz",
     feature = "bayer",
-    feature = "mono"
+    feature = "mono",
+    feature = "yuv-semi-planar",
+    feature = "yuv-packed",
+    feature = "yuv-444-packed",
+    feature = "y2xx",
+    feature = "v210",
+    feature = "rgb-legacy"
   ))]
   #[cfg_attr(
     not(any(feature = "yuv-planar", feature = "gray", feature = "mono")),
@@ -1370,6 +1405,14 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// luma families wire in.
   #[cfg(feature = "gray")]
   luma_stream_u16: Option<crate::resample::AreaStream<u16>>,
+  /// Row-stage area stream for single-plane **f32** luma binning. Used
+  /// by the [`Grayf32`](crate::source::Grayf32) source, whose luma plane
+  /// is a native `f32` and so bins at f32 precision (the `u8` / `u16`
+  /// luma streams would quantize every sample before averaging). Lazily
+  /// created in `process`, reset in `begin_frame`. Gated to `gray`;
+  /// widens as f32 luma families wire in.
+  #[cfg(feature = "gray")]
+  luma_stream_f32: Option<crate::resample::AreaStream<f32>>,
   /// Output configuration frozen at a resampled frame's first
   /// processed row; `None` between frames. Captures presence AND
   /// attachment identity (pointer/length) of every output the emit
@@ -1383,7 +1426,13 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "gray",
     feature = "xyz",
     feature = "bayer",
-    feature = "mono"
+    feature = "mono",
+    feature = "yuv-semi-planar",
+    feature = "yuv-packed",
+    feature = "yuv-444-packed",
+    feature = "y2xx",
+    feature = "v210",
+    feature = "rgb-legacy"
   ))]
   #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
   resample_outputs: Option<FrozenOutputs>,
@@ -1438,6 +1487,14 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// otherwise. Gated to `gray`.
   #[cfg(feature = "gray")]
   luma_scratch_u16: Vec<u16>,
+  /// Source-width host-native `f32` luma staging for the
+  /// [`Grayf32`](crate::source::Grayf32) resample path: the wire
+  /// `Grayf32` row converts here (source wire `BE` → host-native f32 via
+  /// the same kernel the direct `luma_f32` path uses) before feeding
+  /// [`Self::luma_stream_f32`]. Lazily grown to `width` `f32`; empty
+  /// otherwise. Gated to `gray`.
+  #[cfg(feature = "gray")]
+  luma_scratch_f32: Vec<f32>,
   /// Source-width `f32` RGB staging for packed-float-RGB resampling:
   /// the wire row converts here (host-native, lossless) before feeding
   /// [`Self::rgb_stream_f32`]. Lazily grown to `3 * width` `f32`; empty
@@ -1887,7 +1944,13 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "gray",
         feature = "xyz",
         feature = "bayer",
-        feature = "mono"
+        feature = "mono",
+        feature = "yuv-semi-planar",
+        feature = "yuv-packed",
+        feature = "yuv-444-packed",
+        feature = "y2xx",
+        feature = "v210",
+        feature = "rgb-legacy"
       ))]
       rgb_stream: None,
       #[cfg(any(feature = "rgb", feature = "gbr"))]
@@ -1906,11 +1969,19 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "gray",
         feature = "xyz",
         feature = "bayer",
-        feature = "mono"
+        feature = "mono",
+        feature = "yuv-semi-planar",
+        feature = "yuv-packed",
+        feature = "yuv-444-packed",
+        feature = "y2xx",
+        feature = "v210",
+        feature = "rgb-legacy"
       ))]
       luma_stream: None,
       #[cfg(feature = "gray")]
       luma_stream_u16: None,
+      #[cfg(feature = "gray")]
+      luma_stream_f32: None,
       #[cfg(any(
         feature = "yuv-planar",
         feature = "rgb",
@@ -1918,7 +1989,13 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "gray",
         feature = "xyz",
         feature = "bayer",
-        feature = "mono"
+        feature = "mono",
+        feature = "yuv-semi-planar",
+        feature = "yuv-packed",
+        feature = "yuv-444-packed",
+        feature = "y2xx",
+        feature = "v210",
+        feature = "rgb-legacy"
       ))]
       resample_outputs: None,
       #[cfg(feature = "yuv-planar")]
@@ -1947,6 +2024,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       rgb_scratch_u16: Vec::new(),
       #[cfg(feature = "gray")]
       luma_scratch_u16: Vec::new(),
+      #[cfg(feature = "gray")]
+      luma_scratch_f32: Vec::new(),
       #[cfg(any(
         all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
         feature = "gbr"
@@ -2239,6 +2318,26 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   #[cfg(all(test, feature = "std", feature = "gray"))]
   pub(crate) fn luma_stream_u16_allocated(&self) -> bool {
     self.luma_stream_u16.is_some()
+  }
+
+  /// Whether the single-channel **f32** luma area stream has been
+  /// created — a white-box probe for the
+  /// [`Grayf32`](crate::source::Grayf32) resample ordering tests (an
+  /// out-of-sequence first row must be rejected before the stream is
+  /// allocated). Gated on `gray` and `std` like the tests that consume
+  /// it.
+  #[cfg(all(test, feature = "std", feature = "gray"))]
+  pub(crate) fn luma_stream_f32_allocated(&self) -> bool {
+    self.luma_stream_f32.is_some()
+  }
+
+  /// Capacity of the [`Grayf32`](crate::source::Grayf32) source-row
+  /// host-native `f32` luma staging scratch — a white-box probe for the
+  /// resample tests (a rejected row must not have grown the scratch).
+  /// Gated on `gray` and `std` like the tests that consume it.
+  #[cfg(all(test, feature = "std", feature = "gray"))]
+  pub(crate) fn luma_scratch_f32_capacity(&self) -> usize {
+    self.luma_scratch_f32.capacity()
   }
 
   /// Returns `true` iff row primitives dispatch to their SIMD backend.
@@ -2831,7 +2930,13 @@ pub(super) fn direct_rgb_u16_scratch(
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -2934,6 +3039,7 @@ pub(super) fn packed_rgb_resample_preflight(
     &None,
     &None,
     hsv,
+    &None,
     idx,
   )?;
   Ok(rgb.is_some() || rgba.is_some() || luma.is_some() || luma_u16.is_some() || hsv.is_some())
@@ -3121,6 +3227,7 @@ pub(super) fn packed_rgb_u16_resample_preflight(
     &None,
     &None,
     hsv,
+    &None,
     idx,
   )?;
   Ok(
@@ -3459,6 +3566,7 @@ pub(super) fn packed_rgb_f32_resample_preflight(
     rgb_f16,
     rgba_f16,
     hsv,
+    &None,
     idx,
   )?;
   Ok(
@@ -4470,6 +4578,7 @@ pub(super) fn xyz12_resample_preflight(
     rgb_f16,
     rgba_f16,
     hsv,
+    &None,
     idx,
   )?;
   Ok(
