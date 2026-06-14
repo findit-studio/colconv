@@ -31,7 +31,8 @@
 use super::{
   InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange, RowShapeMismatch,
   RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
-  rgba_u16_plane_row_slice,
+  rgba_u16_plane_row_slice, source_xyz_f32_scratch, xyz12_resample_emit, xyz12_resample_preflight,
+  xyz12_resample_stream,
 };
 use crate::{
   PixelSink,
@@ -223,36 +224,32 @@ impl<'a, R, const BE: bool> MixedSinker<'a, Xyz12<BE>, R> {
   }
 }
 
-impl<const BE: bool> Xyz12Sink<BE> for MixedSinker<'_, Xyz12<BE>> {}
+// `Xyz12` is in the engine gate (the `#145`/`#146` cascade widened the
+// shared `AreaStream` / `FrozenOutputs` cfg to `xyz`), so the streaming
+// engine, the linear-XYZ `f32` area stream, and its staging scratch are
+// always compiled in whenever this `xyz`-gated module is. No engine
+// fence is needed: the sink accepts any resampler `R`, takes the direct
+// conversion under the identity plan, and routes a non-identity plan
+// through the linear-light area tail (`xyz12_resample_*`).
 
-impl<const BE: bool> PixelSink for MixedSinker<'_, Xyz12<BE>> {
-  type Input<'r> = Xyz12Row<'r, BE>;
-  type Error = MixedSinkerError;
+impl<R, const BE: bool> Xyz12Sink<BE> for MixedSinker<'_, Xyz12<BE>, R> {}
 
-  fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
-  }
-
-  fn process(&mut self, row: Xyz12Row<'_, BE>) -> Result<(), Self::Error> {
+impl<R, const BE: bool> MixedSinker<'_, Xyz12<BE>, R> {
+  /// Runs the identity (no-resample) output derivation for one source
+  /// row over every attached output buffer.
+  ///
+  /// This is the parity oracle: the byte-exact output the area-resample
+  /// tail must reproduce for an identity plan. It assumes the row shape
+  /// and index are already validated by the caller.
+  fn xyz12_process_direct(
+    &mut self,
+    row: Xyz12Row<'_, BE>,
+    use_simd: bool,
+  ) -> Result<(), MixedSinkerError> {
     let w = self.width;
     let h = self.height;
     let idx = row.row();
-    let use_simd = self.simd;
     let target_gamut = row.target_gamut();
-
-    if row.xyz().len() != w * 3 {
-      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
-        RowSlice::Xyz12Packed,
-        idx,
-        w * 3,
-        row.xyz().len(),
-      )));
-    }
-    if idx >= self.height {
-      return Err(MixedSinkerError::RowIndexOutOfRange(
-        RowIndexOutOfRange::new(idx, self.height),
-      ));
-    }
 
     let Self {
       rgb,
@@ -411,5 +408,114 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Xyz12<BE>> {
     }
 
     Ok(())
+  }
+}
+
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Xyz12<BE>, R> {
+  type Input<'r> = Xyz12Row<'r, BE>;
+  type Error = MixedSinkerError;
+
+  fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.xyz_stream_f32.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
+  }
+
+  fn process(&mut self, row: Xyz12Row<'_, BE>) -> Result<(), Self::Error> {
+    let w = self.width;
+    let idx = row.row();
+    let use_simd = self.simd;
+    let target_gamut = row.target_gamut();
+    let luma_q15 = row.luma_q15();
+
+    if row.xyz().len() != w * 3 {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::Xyz12Packed,
+        idx,
+        w * 3,
+        row.xyz().len(),
+      )));
+    }
+    if idx >= self.height {
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, self.height),
+      ));
+    }
+
+    let Self {
+      rgb,
+      rgb_u16,
+      rgb_f32,
+      rgb_f16,
+      rgba,
+      rgba_u16,
+      rgba_f16,
+      luma,
+      luma_u16,
+      hsv,
+      xyz_f32,
+      rgb_scratch,
+      xyz_scratch_f32,
+      xyz_stream_f32,
+      resample_outputs,
+      plan,
+      ..
+    } = self;
+
+    // Non-identity plan: convert the wire row to source-width LINEAR XYZ
+    // f32 (inverse-OETF only, pre-matrix), bin it in float (the area
+    // mean is thus taken in linear light), then derive every attached
+    // output from each finalized binned linear-XYZ row. `xyz_f32` copies
+    // the binned XYZ; every other output applies the direct DCP path's
+    // matrix (+ gamma/clamp/narrow) to it — the matrix commutes with the
+    // bin because both are linear, so `M . mean(xyz) == mean(M . xyz)`.
+    if let Some(plan) = plan.as_ref() {
+      if !xyz12_resample_preflight(
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        rgb_u16,
+        rgba_u16,
+        rgb_f32,
+        xyz_f32,
+        rgb_f16,
+        rgba_f16,
+        hsv,
+        idx,
+      )? {
+        return Ok(());
+      }
+      let stream = xyz12_resample_stream(xyz_stream_f32, plan, idx)?;
+      let src_xyz = source_xyz_f32_scratch(xyz_scratch_f32, w, plan)?;
+      xyz12_to_xyz_f32_row::<BE>(row.xyz(), src_xyz, w, use_simd);
+      return xyz12_resample_emit(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        rgb_u16,
+        rgba_u16,
+        rgb_f32,
+        xyz_f32,
+        rgb_f16,
+        rgba_f16,
+        hsv,
+        src_xyz,
+        rgb_scratch,
+        target_gamut,
+        luma_q15,
+        idx,
+        use_simd,
+      );
+    }
+
+    self.xyz12_process_direct(row, use_simd)
   }
 }
