@@ -120,6 +120,8 @@ mod resample_gbrp;
 mod resample_geometry;
 #[cfg(feature = "gray")]
 mod resample_gray8;
+#[cfg(feature = "mono")]
+mod resample_mono;
 #[cfg(feature = "rgb")]
 mod resample_padding_byte;
 #[cfg(feature = "rgb")]
