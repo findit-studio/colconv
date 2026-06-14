@@ -30,6 +30,9 @@ use super::*;
   feature = "yuva",
 ))]
 use crate::ColorMatrix;
+// `frame::*` glob is consumed only by the families whose test files
+// reference unqualified `*Frame` types; the Bayer tests import their
+// frame types locally, so `bayer` is not in this set.
 #[cfg(any(
   feature = "gbr",
   feature = "mono",
@@ -45,7 +48,26 @@ use crate::ColorMatrix;
   feature = "yuv-semi-planar",
   feature = "yuva",
 ))]
-use crate::{frame::*, source::*};
+use crate::frame::*;
+// `source::*` carries the source markers (`Bayer` / `Bayer16` / …) the
+// test files name unqualified — Bayer included.
+#[cfg(any(
+  feature = "bayer",
+  feature = "gbr",
+  feature = "mono",
+  feature = "rgb",
+  feature = "rgb-float",
+  feature = "rgb-legacy",
+  feature = "v210",
+  feature = "xyz",
+  feature = "y2xx",
+  feature = "yuv-444-packed",
+  feature = "yuv-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuva",
+))]
+use crate::source::*;
 
 // Per-format-family submodules. Each houses tests + format-local
 // helpers (`solid_*_frame` builders); cross-cutting helpers
@@ -88,6 +110,8 @@ mod planar_gbr_float;
 mod planar_gbr_high_bit;
 #[cfg(feature = "yuv-planar")]
 mod planar_other_8bit_9bit;
+#[cfg(feature = "bayer")]
+mod resample_bayer8;
 #[cfg(feature = "rgb")]
 mod resample_bgr24;
 #[cfg(feature = "gbr")]

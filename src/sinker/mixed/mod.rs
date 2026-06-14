@@ -2043,6 +2043,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
     any(
       feature = "rgb",
       feature = "xyz",
+      feature = "bayer",
       all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb"))
     )
   ))]
@@ -2694,8 +2695,11 @@ pub(super) fn source_rgb_scratch<'s>(
 /// enforces sequencing) while a mid-frame output-set change is still
 /// caught. Mirrors the YUV resample path's freeze-then-conditional
 /// ordering.
-#[cfg(any(feature = "rgb", feature = "gbr"))]
-#[cfg_attr(not(any(feature = "rgb", feature = "gbr")), allow(dead_code))]
+#[cfg(any(feature = "rgb", feature = "gbr", feature = "bayer"))]
+#[cfg_attr(
+  not(any(feature = "rgb", feature = "gbr", feature = "bayer")),
+  allow(dead_code)
+)]
 pub(super) fn packed_rgb_resample_preflight(
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &Option<&mut [u8]>,
@@ -2740,8 +2744,11 @@ pub(super) fn packed_rgb_resample_preflight(
 /// sequencing — run **before** a converting format stages its source
 /// row, so an out-of-sequence row is rejected without the scratch
 /// allocation/conversion (matching the `Rgb24` / YUV ordering).
-#[cfg(any(feature = "rgb", feature = "gbr"))]
-#[cfg_attr(not(any(feature = "rgb", feature = "gbr")), allow(dead_code))]
+#[cfg(any(feature = "rgb", feature = "gbr", feature = "bayer"))]
+#[cfg_attr(
+  not(any(feature = "rgb", feature = "gbr", feature = "bayer")),
+  allow(dead_code)
+)]
 pub(super) fn packed_rgb_resample_stream<'s>(
   rgb_stream: &'s mut Option<crate::resample::AreaStream<u8>>,
   plan: &ResamplePlan,

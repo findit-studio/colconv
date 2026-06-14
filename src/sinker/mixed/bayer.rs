@@ -2,8 +2,9 @@
 
 use super::{
   GeometryOverflow, InsufficientBuffer, LumaCoefficients, MixedSinker, MixedSinkerError,
-  RowIndexOutOfRange, RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch,
-  rgb_row_to_luma_row,
+  RowIndexOutOfRange, RowShapeMismatch, RowSlice, check_dimensions_match,
+  packed_rgb_resample_preflight, packed_rgb_resample_stream, rgb_row_buf_or_scratch,
+  rgb_row_to_luma_row, source_rgb_scratch,
 };
 use crate::{PixelSink, raw::*, row::*};
 
@@ -36,16 +37,21 @@ impl<R> MixedSinker<'_, Bayer, R> {
   }
 }
 
-impl BayerSink for MixedSinker<'_, Bayer> {}
+impl<R> BayerSink for MixedSinker<'_, Bayer, R> {}
 
-impl PixelSink for MixedSinker<'_, Bayer> {
+impl<R> PixelSink for MixedSinker<'_, Bayer, R> {
   type Input<'r> = BayerRow<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     // Bayer accepts odd dimensions — see `BayerFrame::try_new` for
     // the rationale (cropped Bayer is a real workflow).
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: BayerRow<'_>) -> Result<(), Self::Error> {
@@ -98,8 +104,66 @@ impl PixelSink for MixedSinker<'_, Bayer> {
       luma,
       hsv,
       rgb_scratch,
+      plan,
+      rgb_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: freeze the output set, then check stream
+    // sequencing — both before touching the scratch — so a no-output
+    // sink stays a no-op and an out-of-sequence row is rejected
+    // without the source-width allocation/demosaic. Only then demosaic
+    // the CFA row into the source-width RGB scratch and feed the
+    // 3-channel area stream. Every output derives from each finalized
+    // (binned) RGB row via the *same Bayer derivations the identity
+    // path uses* — Q8-coefficient luma (`rgb_row_to_luma_row`) and the
+    // OpenCV HSV kernel — so a resampled frame matches a direct
+    // demosaic of the source followed by an area-bin of that RGB.
+    // (Bayer carries no `ColorMatrix`/`full_range`, so it cannot share
+    // the packed-RGB tail's `ColorMatrix`-based emit; only the
+    // freeze/stream/scratch plumbing is shared.)
+    if let Some(plan) = plan.as_ref() {
+      // `rgba` and `luma_u16` are never attached on a Bayer sink
+      // (RGB-only family), so those shared-preflight slots are `&None`.
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, &None, luma, &None, hsv, idx)? {
+        return Ok(());
+      }
+      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+      let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+      bayer_to_rgb_row(
+        row.above(),
+        row.mid(),
+        row.below(),
+        row.row_parity(),
+        row.pattern(),
+        row.demosaic(),
+        row.m(),
+        scratch,
+        use_simd,
+      );
+      let ow = plan.out_w();
+      stream.feed_row(idx, scratch, use_simd, |oy, out_row| {
+        if let Some(buf) = rgb.as_deref_mut() {
+          buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_row);
+        }
+        if let Some(buf) = luma.as_deref_mut() {
+          rgb_row_to_luma_row(out_row, &mut buf[oy * ow..(oy + 1) * ow], luma_coeffs_q8);
+        }
+        if let Some(hsv) = hsv.as_mut() {
+          let (h, s, v) = hsv.hsv();
+          rgb_to_hsv_row(
+            out_row,
+            &mut h[oy * ow..(oy + 1) * ow],
+            &mut s[oy * ow..(oy + 1) * ow],
+            &mut v[oy * ow..(oy + 1) * ow],
+            ow,
+            use_simd,
+          );
+        }
+      })?;
+      return Ok(());
+    }
 
     let want_rgb = rgb.is_some();
     let want_luma = luma.is_some();
