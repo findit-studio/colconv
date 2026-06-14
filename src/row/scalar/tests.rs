@@ -31,14 +31,15 @@ fn as_le_f32(host: &[f32]) -> std::vec::Vec<f32> {
 
 // ---- expand_rgb_to_rgba_row -----------------------------------------
 
+// Same consumer set as the `rgb_expand` re-export in `scalar::mod`:
+// `expand_rgb_to_rgba_row` is only re-exported for the families that
+// fan an RGB row out to RGBA via Strategy A (Bayer is RGB-only; mono /
+// rgb-float / rgb-legacy / xyz never go through the fan-out), so the
+// tests for it gate to the same set.
 #[cfg(any(
-  feature = "bayer",
   feature = "gbr",
   feature = "gray",
-  feature = "mono",
   feature = "rgb",
-  feature = "rgb-float",
-  feature = "rgb-legacy",
   feature = "v210",
   feature = "y2xx",
   feature = "yuv-444-packed",
@@ -62,14 +63,15 @@ fn expand_rgb_to_rgba_row_pads_alpha_and_preserves_rgb() {
   }
 }
 
+// Same consumer set as the `rgb_expand` re-export in `scalar::mod`:
+// `expand_rgb_to_rgba_row` is only re-exported for the families that
+// fan an RGB row out to RGBA via Strategy A (Bayer is RGB-only; mono /
+// rgb-float / rgb-legacy / xyz never go through the fan-out), so the
+// tests for it gate to the same set.
 #[cfg(any(
-  feature = "bayer",
   feature = "gbr",
   feature = "gray",
-  feature = "mono",
   feature = "rgb",
-  feature = "rgb-float",
-  feature = "rgb-legacy",
   feature = "v210",
   feature = "y2xx",
   feature = "yuv-444-packed",
@@ -95,14 +97,15 @@ fn expand_rgb_to_rgba_row_only_writes_first_width_pixels() {
   }
 }
 
+// Same consumer set as the `rgb_expand` re-export in `scalar::mod`:
+// `expand_rgb_to_rgba_row` is only re-exported for the families that
+// fan an RGB row out to RGBA via Strategy A (Bayer is RGB-only; mono /
+// rgb-float / rgb-legacy / xyz never go through the fan-out), so the
+// tests for it gate to the same set.
 #[cfg(any(
-  feature = "bayer",
   feature = "gbr",
   feature = "gray",
-  feature = "mono",
   feature = "rgb",
-  feature = "rgb-float",
-  feature = "rgb-legacy",
   feature = "v210",
   feature = "y2xx",
   feature = "yuv-444-packed",
