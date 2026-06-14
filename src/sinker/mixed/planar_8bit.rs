@@ -475,6 +475,7 @@ fn yuv420p_process_native(
     &None,
     &None,
     &None,
+    &None,
     hsv,
     idx,
   )?;
@@ -642,6 +643,7 @@ fn yuv420p_process_resampled(
     luma_u16,
     rgb,
     rgba,
+    &None,
     &None,
     &None,
     &None,
@@ -816,6 +818,7 @@ fn planar_dual_resample(
     luma_u16,
     rgb,
     rgba,
+    &None,
     &None,
     &None,
     &None,

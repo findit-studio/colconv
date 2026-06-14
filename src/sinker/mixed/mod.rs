@@ -375,13 +375,14 @@ impl RowIndexOutOfRange {
 
 /// Snapshot of a resampled frame's complete output configuration:
 /// presence plus attachment identity (data pointer and length) for
-/// luma, luma_u16, rgb, rgba, rgb_u16, rgba_u16, the `rgb_f32`
-/// float-RGB output, the `xyz_f32` linear-XYZ output, and the three
-/// HSV planes. Equality is the per-frame immutability check — in safe
-/// code a mid-frame `set_*` necessarily supplies a different borrow, so
-/// an identity change is exactly a reattachment. The `*_u16` /
-/// `rgb_f32` / `xyz_f32` slots are `(0, 0)` for every format that
-/// attaches no such output, so adding them leaves those formats'
+/// luma, luma_u16, rgb, rgba, rgb_u16, rgba_u16, the `rgb_f32` /
+/// `rgba_f32` float-RGB(A) outputs, the `xyz_f32` linear-XYZ output,
+/// the `rgb_f16` / `rgba_f16` half-float outputs, and the three HSV
+/// planes. Equality is the per-frame immutability check — in safe code
+/// a mid-frame `set_*` necessarily supplies a different borrow, so an
+/// identity change is exactly a reattachment. The `*_u16` / `rgb_f32` /
+/// `rgba_f32` / `xyz_f32` / `*_f16` slots are `(0, 0)` for every format
+/// that attaches no such output, so adding them leaves those formats'
 /// snapshots unchanged.
 #[cfg(any(
   feature = "yuv-planar",
@@ -395,7 +396,7 @@ impl RowIndexOutOfRange {
 #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct FrozenOutputs {
-  idents: [(usize, usize); 13],
+  idents: [(usize, usize); 14],
 }
 
 #[cfg(any(
@@ -425,6 +426,7 @@ impl FrozenOutputs {
     rgb_u16: Option<&[u16]>,
     rgba_u16: Option<&[u16]>,
     rgb_f32: Option<&[f32]>,
+    rgba_f32: Option<&[f32]>,
     xyz_f32: Option<&[f32]>,
     rgb_f16: Option<&[half::f16]>,
     rgba_f16: Option<&[half::f16]>,
@@ -447,6 +449,7 @@ impl FrozenOutputs {
         Self::ident(rgb_u16),
         Self::ident(rgba_u16),
         Self::ident(rgb_f32),
+        Self::ident(rgba_f32),
         Self::ident(xyz_f32),
         Self::ident(rgb_f16),
         Self::ident(rgba_f16),
@@ -481,6 +484,7 @@ pub(super) fn frozen_outputs_check(
   rgb_u16: &Option<&mut [u16]>,
   rgba_u16: &Option<&mut [u16]>,
   rgb_f32: &Option<&mut [f32]>,
+  rgba_f32: &Option<&mut [f32]>,
   xyz_f32: &Option<&mut [f32]>,
   rgb_f16: &Option<&mut [half::f16]>,
   rgba_f16: &Option<&mut [half::f16]>,
@@ -495,6 +499,7 @@ pub(super) fn frozen_outputs_check(
     rgb_u16.as_deref(),
     rgba_u16.as_deref(),
     rgb_f32.as_deref(),
+    rgba_f32.as_deref(),
     xyz_f32.as_deref(),
     rgb_f16.as_deref(),
     rgba_f16.as_deref(),
@@ -1318,10 +1323,15 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   rgb_stream_u16: Option<crate::resample::AreaStream<u16>>,
   /// Row-stage area stream for packed-float-RGB sources (`f32`
   /// elements binned in float). Lazily created in `process`, reset in
-  /// `begin_frame`. Gated to the float family **and** the engine (the
-  /// `AreaStream` machinery is gated to `yuv-planar` / `rgb`, which
-  /// `rgb-float` does not imply).
-  #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
+  /// `begin_frame`. The `rgb-float` family needs the engine fenced in
+  /// (`AreaStream` is gated to `yuv-planar` / `rgb`, which `rgb-float`
+  /// does not imply); the `gbr` family already pulls the engine via the
+  /// #146 cascade, so its float-GBR scatter reaches this same tail with
+  /// no separate fence.
+  #[cfg(any(
+    all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
+    feature = "gbr"
+  ))]
   rgb_stream_f32: Option<crate::resample::AreaStream<f32>>,
   /// Row-stage area stream for the packed-CIE-XYZ-12-bit source
   /// ([`Xyz12`](crate::source::Xyz12)). The wire row converts to
@@ -1415,9 +1425,24 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// Source-width `f32` RGB staging for packed-float-RGB resampling:
   /// the wire row converts here (host-native, lossless) before feeding
   /// [`Self::rgb_stream_f32`]. Lazily grown to `3 * width` `f32`; empty
-  /// otherwise. Gated to the float family **and** the engine.
-  #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
+  /// otherwise. Gated like [`Self::rgb_stream_f32`]: the `rgb-float`
+  /// family fences in the engine, `gbr` already carries it.
+  #[cfg(any(
+    all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
+    feature = "gbr"
+  ))]
   rgb_scratch_f32: Vec<f32>,
+  /// Out-width G/B/R `f32` plane staging for the float planar-GBR
+  /// ([`Gbrpf32`](crate::source::Gbrpf32)) resample tail. That tail
+  /// de-interleaves each binned packed `R, G, B` row back into G/B/R
+  /// planes (`[0..w]` = G, `[w..2w]` = B, `[2w..3w]` = R) so it can run
+  /// the exact direct `gbrpf32_*` kernels — the `rgb-float`
+  /// ([`Rgbf32`](crate::source::Rgbf32)) tail's packed `rgbf32_*` kernels
+  /// are not compiled in a `gbr` build. Lazily grown to `3 * out_width`
+  /// `f32`; empty for an `rgb_f32`-only sink (which copies the binned row
+  /// directly). Gated to `gbr`.
+  #[cfg(feature = "gbr")]
+  rgb_plane_scratch_f32: Vec<f32>,
   /// Source-width **linear-XYZ** `f32` staging for the
   /// [`Xyz12`](crate::source::Xyz12) resample path: the wire row
   /// converts here (inverse-OETF only, no matrix) before feeding
@@ -1822,7 +1847,10 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       rgb_stream: None,
       #[cfg(any(feature = "rgb", feature = "gbr"))]
       rgb_stream_u16: None,
-      #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
+      #[cfg(any(
+        all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
+        feature = "gbr"
+      ))]
       rgb_stream_f32: None,
       #[cfg(feature = "xyz")]
       xyz_stream_f32: None,
@@ -1870,8 +1898,13 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       rgb_scratch: Vec::new(),
       #[cfg(any(feature = "rgb", feature = "gbr"))]
       rgb_scratch_u16: Vec::new(),
-      #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
+      #[cfg(any(
+        all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
+        feature = "gbr"
+      ))]
       rgb_scratch_f32: Vec::new(),
+      #[cfg(feature = "gbr")]
+      rgb_plane_scratch_f32: Vec::new(),
       #[cfg(feature = "xyz")]
       xyz_scratch_f32: Vec::new(),
       simd: true,
@@ -2048,6 +2081,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       feature = "rgb",
       feature = "xyz",
       feature = "bayer",
+      feature = "gbr",
       all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb"))
     )
   ))]
@@ -2067,16 +2101,27 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   /// Whether the packed-float-RGB `f32` area stream has been created —
   /// a white-box probe for the resample ordering tests (an
   /// out-of-sequence first row must be rejected before the stream is
-  /// allocated). Gated on the float family, the engine, and `std` like
-  /// the tests that consume it.
+  /// allocated). Gated on `std` and the families that drive the float
+  /// tail: the `rgb-float` family (fenced to the engine) or `gbr` (which
+  /// already carries the engine).
   #[cfg(all(
     test,
-    feature = "rgb-float",
-    any(feature = "yuv-planar", feature = "rgb"),
-    feature = "std"
+    feature = "std",
+    any(
+      all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
+      feature = "gbr"
+    )
   ))]
   pub(crate) fn rgb_stream_f32_allocated(&self) -> bool {
     self.rgb_stream_f32.is_some()
+  }
+
+  /// Capacity of the float planar-GBR G/B/R plane scratch — a white-box
+  /// probe for the resample tests (an `rgb_f32`-only sink must not grow
+  /// it). Gated on `gbr` + `std` like the test that consumes it.
+  #[cfg(all(test, feature = "gbr", feature = "std"))]
+  pub(crate) fn rgb_plane_scratch_capacity(&self) -> usize {
+    self.rgb_plane_scratch_f32.capacity()
   }
 
   /// Whether the [`Xyz12`](crate::source::Xyz12) linear-XYZ `f32` area
@@ -2799,6 +2844,7 @@ pub(super) fn packed_rgb_resample_preflight(
     &None,
     &None,
     &None,
+    &None,
     hsv,
     idx,
   )?;
@@ -2981,6 +3027,7 @@ pub(super) fn packed_rgb_u16_resample_preflight(
     rgba,
     rgb_u16,
     rgba_u16,
+    &None,
     &None,
     &None,
     &None,
@@ -3168,7 +3215,10 @@ pub(super) fn packed_rgb_u16_resample_emit<const SRC_BITS: u32, const NATIVE_LUM
 /// [`AreaStream<f32>`]. Grows `scratch` to `3 * width` `f32` under the
 /// planner's recoverable-allocation contract. Mirrors
 /// [`source_rgb_u16_scratch`] for the float element path.
-#[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
+#[cfg(any(
+  all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
+  feature = "gbr"
+))]
 pub(super) fn source_rgb_f32_scratch<'s>(
   scratch: &'s mut Vec<f32>,
   width: usize,
@@ -3199,12 +3249,59 @@ pub(super) fn source_rgb_f32_scratch<'s>(
   Ok(&mut scratch[..row])
 }
 
+/// Out-width G/B/R `f32` plane staging for the [`Gbrpf32`](crate::source::Gbrpf32)
+/// arm of the float packed-RGB tail: the dedicated `gbr` emit de-interleaves
+/// each binned packed row back into three planes so it can run the exact
+/// direct `gbrpf32_*` kernels for every output. Grows `scratch` to
+/// `3 * width` `f32` — three contiguous planes — under the planner's
+/// recoverable-allocation contract. Only the `gbr` emit consumes it; the
+/// `rgb-float` ([`Rgbf32`](crate::source::Rgbf32)) caller never allocates it.
+#[cfg(feature = "gbr")]
+pub(super) fn rgb_plane_f32_scratch<'s>(
+  scratch: &'s mut Vec<f32>,
+  width: usize,
+  plan: &ResamplePlan,
+) -> Result<&'s mut [f32], MixedSinkerError> {
+  let row = width
+    .checked_mul(3)
+    .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+      width,
+      plan.out_h(),
+      3,
+    )))?;
+  if scratch.len() < row {
+    scratch
+      .try_reserve_exact(row - scratch.len())
+      .map_err(|_| {
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?;
+    scratch.resize(row, 0.0);
+  }
+  Ok(&mut scratch[..row])
+}
+
 /// Freezes the output configuration for a resampled packed-float-RGB
-/// frame — the full u8 / u16 / `rgb_f32` output set — and reports
+/// frame — the full u8 / u16 / `rgb_f32` output set, plus the
+/// `rgba_f32` / `rgb_f16` / `rgba_f16` outputs the planar-GBR
+/// ([`Gbrpf32`](crate::source::Gbrpf32)) tail derives — and reports
 /// whether any output is attached. Mirrors
 /// [`packed_rgb_u16_resample_preflight`], extended with the lossless
-/// `rgb_f32` channel.
-#[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
+/// `rgb_f32` / `rgba_f32` and the half-float `rgb_f16` / `rgba_f16`
+/// channels. The [`Rgbf32`](crate::source::Rgbf32) caller passes `&None`
+/// for `rgba_f32` / `rgb_f16` / `rgba_f16` (its tail emits none of them);
+/// the `Gbrpf32` caller threads all three so every output its emit
+/// writes participates in the freeze.
+#[cfg(any(
+  all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
+  feature = "gbr"
+))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgb_f32_resample_preflight(
   resample_outputs: &mut Option<FrozenOutputs>,
@@ -3215,6 +3312,9 @@ pub(super) fn packed_rgb_f32_resample_preflight(
   rgba_u16: &Option<&mut [u16]>,
   luma_u16: &Option<&mut [u16]>,
   rgb_f32: &Option<&mut [f32]>,
+  rgba_f32: &Option<&mut [f32]>,
+  rgb_f16: &Option<&mut [half::f16]>,
+  rgba_f16: &Option<&mut [half::f16]>,
   hsv: &mut Option<HsvFrameMut<'_>>,
   idx: usize,
 ) -> Result<bool, MixedSinkerError> {
@@ -3227,9 +3327,10 @@ pub(super) fn packed_rgb_f32_resample_preflight(
     rgb_u16,
     rgba_u16,
     rgb_f32,
+    rgba_f32,
     &None,
-    &None,
-    &None,
+    rgb_f16,
+    rgba_f16,
     hsv,
     idx,
   )?;
@@ -3241,6 +3342,9 @@ pub(super) fn packed_rgb_f32_resample_preflight(
       || rgba_u16.is_some()
       || luma_u16.is_some()
       || rgb_f32.is_some()
+      || rgba_f32.is_some()
+      || rgb_f16.is_some()
+      || rgba_f16.is_some()
       || hsv.is_some(),
   )
 }
@@ -3249,7 +3353,10 @@ pub(super) fn packed_rgb_f32_resample_preflight(
 /// sequencing — run before the source conversion so an out-of-sequence
 /// row is rejected without the staging work. Mirrors
 /// [`packed_rgb_u16_resample_stream`] for the float element path.
-#[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
+#[cfg(any(
+  all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
+  feature = "gbr"
+))]
 pub(super) fn packed_rgb_f32_resample_stream<'s>(
   rgb_stream_f32: &'s mut Option<crate::resample::AreaStream<f32>>,
   plan: &ResamplePlan,
@@ -3407,6 +3514,214 @@ pub(super) fn packed_rgb_f32_resample_emit(
   Ok(())
 }
 
+/// Feeds the prepared source-width packed `R, G, B` `f32` row (the
+/// [`Gbrpf32`](crate::source::Gbrpf32) planes scattered into RGB order)
+/// into the float area stream and derives every attached output from
+/// each finalized output row. The `rgb-float` ([`Rgbf32`]) tail's
+/// per-row `rgbf32_*` clamp/scale kernels are not compiled in a `gbr`
+/// build, so this tail de-interleaves each binned packed row back into
+/// G/B/R planes once and runs the **exact direct `gbrpf32_*` kernels** —
+/// every output, `luma_u16` included, is therefore byte-identical to a
+/// direct full-resolution `Gbrpf32` conversion of the binned frame (the
+/// parity oracle). The binned row is host-native f32, so the kernels run
+/// `::<false>`. `plane_scratch` holds the out-width G/B/R planes
+/// (`[0..ow]` = G, `[ow..2ow]` = B, `[2ow..3ow]` = R); it is sized (and
+/// its allocation failure risked) only when an output that reads the
+/// planes is attached, so an `rgb_f32`-only sink neither grows it nor
+/// risks its allocation. `rgb_f32` copies the binned row directly,
+/// bypassing the planes. The lossless `rgba_f32` and the half-float
+/// `rgb_f16` / `rgba_f16` outputs derive from the same de-interleaved
+/// G/B/R planes via the direct `gbrpf32_to_rgba_f32_row` /
+/// `gbrpf32_to_rgb_f16_row` / `gbrpf32_to_rgba_f16_row` kernels, so they
+/// too are byte-identical to a direct `Gbrpf32` conversion of the binned
+/// frame.
+#[cfg(feature = "gbr")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn planar_gbr_f32_resample_emit(
+  stream: &mut crate::resample::AreaStream<f32>,
+  plan: &ResamplePlan,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  rgb_u16: &mut Option<&mut [u16]>,
+  rgba_u16: &mut Option<&mut [u16]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  rgb_f32: &mut Option<&mut [f32]>,
+  rgba_f32: &mut Option<&mut [f32]>,
+  rgb_f16: &mut Option<&mut [half::f16]>,
+  rgba_f16: &mut Option<&mut [half::f16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  src_f32: &[f32],
+  plane_scratch: &mut Vec<f32>,
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  idx: usize,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  let ow = plan.out_w();
+  // Every output but `rgb_f32` derives from the de-interleaved G/B/R
+  // planes; an `rgb_f32`-only sink copies the binned row and never sizes
+  // the plane scratch. The predicate gates both the sizing here and the
+  // de-interleave in the closure, so they cannot drift. `rgba_f32` and
+  // the f16 outputs run their direct `gbrpf32_*` kernels over the same
+  // planes (byte-identical to the direct path), so they join the gate.
+  let need_planes = rgb.is_some()
+    || rgba.is_some()
+    || luma.is_some()
+    || rgb_u16.is_some()
+    || rgba_u16.is_some()
+    || luma_u16.is_some()
+    || rgba_f32.is_some()
+    || rgb_f16.is_some()
+    || rgba_f16.is_some()
+    || hsv.is_some();
+  let planes: &mut [f32] = if need_planes {
+    rgb_plane_f32_scratch(plane_scratch, ow, plan)?
+  } else {
+    &mut []
+  };
+  stream.feed_row(idx, src_f32, use_simd, |oy, binned| {
+    // Lossless float pass-through — copy the binned packed row verbatim
+    // (the direct path's `gbrpf32_to_rgb_f32_row` over host-native data
+    // is a plain interleave; the binned row is already that interleave).
+    if let Some(buf) = rgb_f32.as_deref_mut() {
+      buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(binned);
+    }
+    if need_planes {
+      // De-interleave the binned packed `R, G, B` row into G/B/R planes
+      // — the exact plane layout the direct `gbrpf32_*` kernels consume.
+      let (g, rest) = planes.split_at_mut(ow);
+      let (b, r) = rest.split_at_mut(ow);
+      for x in 0..ow {
+        r[x] = binned[x * 3];
+        g[x] = binned[x * 3 + 1];
+        b[x] = binned[x * 3 + 2];
+      }
+      let g = &g[..ow];
+      let b = &b[..ow];
+      let r = &r[..ow];
+      // The de-interleaved planes hold host-native f32 (the binned row was
+      // decoded to host order during scatter). The `gbrpf32_*` kernels take
+      // a wire-endian const and byte-swap when it differs from the host, so
+      // pass the host's own endianness to make the load a no-op — otherwise
+      // a big-endian target would corrupt every plane-derived output.
+      const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+      if let Some(buf) = rgb_u16.as_deref_mut() {
+        crate::row::gbrpf32_to_rgb_u16_row::<HOST_NATIVE_BE>(
+          g,
+          b,
+          r,
+          &mut buf[oy * 3 * ow..(oy + 1) * 3 * ow],
+          ow,
+          use_simd,
+        );
+      }
+      if let Some(buf) = rgba_u16.as_deref_mut() {
+        crate::row::gbrpf32_to_rgba_u16_row::<HOST_NATIVE_BE>(
+          g,
+          b,
+          r,
+          &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow],
+          ow,
+          use_simd,
+        );
+      }
+      // Lossless packed `f32` RGBA — alpha forced to 1.0 (the direct
+      // `gbrpf32_to_rgba_f32_row`, which the binned planes feed verbatim).
+      if let Some(buf) = rgba_f32.as_deref_mut() {
+        crate::row::gbrpf32_to_rgba_f32_row::<HOST_NATIVE_BE>(
+          g,
+          b,
+          r,
+          &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow],
+          ow,
+          use_simd,
+        );
+      }
+      // f16 RGB / RGBA — fused f32->f16 narrow + interleave, exactly the
+      // direct `gbrpf32_to_rgb_f16_row` / `gbrpf32_to_rgba_f16_row`.
+      if let Some(buf) = rgb_f16.as_deref_mut() {
+        crate::row::gbrpf32_to_rgb_f16_row::<HOST_NATIVE_BE>(
+          g,
+          b,
+          r,
+          &mut buf[oy * 3 * ow..(oy + 1) * 3 * ow],
+          ow,
+          use_simd,
+        );
+      }
+      if let Some(buf) = rgba_f16.as_deref_mut() {
+        crate::row::gbrpf32_to_rgba_f16_row::<HOST_NATIVE_BE>(
+          g,
+          b,
+          r,
+          &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow],
+          ow,
+          use_simd,
+        );
+      }
+      if let Some(buf) = rgb.as_deref_mut() {
+        crate::row::gbrpf32_to_rgb_row::<HOST_NATIVE_BE>(
+          g,
+          b,
+          r,
+          &mut buf[oy * 3 * ow..(oy + 1) * 3 * ow],
+          ow,
+          use_simd,
+        );
+      }
+      if let Some(buf) = rgba.as_deref_mut() {
+        crate::row::gbrpf32_to_rgba_row::<HOST_NATIVE_BE>(
+          g,
+          b,
+          r,
+          &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow],
+          ow,
+          use_simd,
+        );
+      }
+      if let Some(buf) = luma.as_deref_mut() {
+        crate::row::gbrpf32_to_luma_row::<HOST_NATIVE_BE>(
+          g,
+          b,
+          r,
+          &mut buf[oy * ow..(oy + 1) * ow],
+          ow,
+          matrix,
+          full_range,
+          use_simd,
+        );
+      }
+      if let Some(buf) = luma_u16.as_deref_mut() {
+        crate::row::gbrpf32_to_luma_u16_row::<HOST_NATIVE_BE>(
+          g,
+          b,
+          r,
+          &mut buf[oy * ow..(oy + 1) * ow],
+          ow,
+          matrix,
+          full_range,
+          use_simd,
+        );
+      }
+      if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
+        crate::row::gbrpf32_to_hsv_row::<HOST_NATIVE_BE>(
+          g,
+          b,
+          r,
+          &mut h[oy * ow..(oy + 1) * ow],
+          &mut s[oy * ow..(oy + 1) * ow],
+          &mut v[oy * ow..(oy + 1) * ow],
+          ow,
+          use_simd,
+        );
+      }
+    }
+  })?;
+  Ok(())
+}
+
 // ---- Xyz12 (linear-light area mean) resample tail ----------------------
 //
 // The `Xyz12` source decodes a 2.6-gamma-encoded CIE-XYZ wire sample
@@ -3493,6 +3808,7 @@ pub(super) fn xyz12_resample_preflight(
     rgb_u16,
     rgba_u16,
     rgb_f32,
+    &None,
     xyz_f32,
     rgb_f16,
     rgba_f16,

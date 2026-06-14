@@ -118,6 +118,8 @@ mod resample_bgr24;
 mod resample_gbr_high_bit;
 #[cfg(feature = "gbr")]
 mod resample_gbrp;
+#[cfg(feature = "gbr")]
+mod resample_gbrpf32;
 #[cfg(feature = "yuv-planar")]
 mod resample_geometry;
 #[cfg(feature = "gray")]

@@ -370,6 +370,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgbf32<BE>, R> {
         rgba_u16,
         luma_u16,
         rgb_f32,
+        &None,
+        &None,
+        &None,
         hsv,
         idx,
       )? {
