@@ -11,6 +11,7 @@
 //! Bit-identical to the scalar reference by integer associativity.
 
 #![cfg_attr(not(feature = "std"), allow(dead_code))]
+#![cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
 
 use core::arch::wasm32::*;
 

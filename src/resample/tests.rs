@@ -623,7 +623,15 @@ fn stream_constant_input_is_constant() {
   assert!(stream_collect(&plan, &src, 1).iter().all(|&v| v == 173));
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
 /// Same LCG as `ci/gen_cv2_goldens.py`: the parity sources are
 /// synthesized identically on both sides, so the fixture carries only
 /// cv2's outputs.
@@ -635,7 +643,15 @@ fn lcg_fill(buf: &mut [u8], seed: u32) {
   }
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
 #[test]
 fn area_matches_cv2_inter_area_within_one_lsb() {
   // cv2's INTER_AREA uses its own fixed-point/float internals, so the
@@ -762,7 +778,15 @@ fn area_overflow_rejected() {
   assert!(err.is_allocation_failed(), "got {err:?}");
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
 #[test]
 fn h_pass_simd_matches_scalar_bit_exact() {
   // Differential against the scalar reference at the h_tmp level —
@@ -851,7 +875,15 @@ fn h_pass_simd_matches_scalar_bit_exact() {
   }
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
 fn lcg_fill_u16(buf: &mut [u16], seed: u32) {
   let mut state = seed;
   for b in buf {
@@ -860,7 +892,15 @@ fn lcg_fill_u16(buf: &mut [u16], seed: u32) {
   }
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
 #[test]
 fn h_pass_u16_simd_matches_scalar_bit_exact() {
   // u16 analogue of `h_pass_simd_matches_scalar_bit_exact`: the wider
@@ -936,7 +976,15 @@ fn h_pass_u16_simd_matches_scalar_bit_exact() {
   }
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
 fn lcg_fill_f32(buf: &mut [f32], seed: u32) {
   let mut state = seed;
   for v in buf {
@@ -951,7 +999,15 @@ fn lcg_fill_f32(buf: &mut [f32], seed: u32) {
   }
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
 fn assert_close_rel_f64(a: &[f64], b: &[f64], rel: f64, ctx: &str) {
   assert_eq!(a.len(), b.len(), "{ctx} length");
   for (i, (&x, &y)) in a.iter().zip(b.iter()).enumerate() {
@@ -960,7 +1016,15 @@ fn assert_close_rel_f64(a: &[f64], b: &[f64], rel: f64, ctx: &str) {
   }
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
 #[test]
 fn h_pass_f32_simd_matches_scalar_within_tolerance() {
   // Float analogue of `h_pass_u16_simd_matches_scalar_bit_exact`. Float
@@ -1045,7 +1109,15 @@ fn h_pass_f32_simd_matches_scalar_within_tolerance() {
   }
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
 #[test]
 fn h_pass_f32_simd_matches_scalar_with_non_finite_padding() {
   // The zero-padded weight arena annihilates samples past a span's last

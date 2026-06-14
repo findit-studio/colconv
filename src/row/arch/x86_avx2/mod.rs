@@ -89,7 +89,15 @@ pub(super) use crate::{
 mod alpha_extract;
 #[cfg(all(
   any(feature = "std", feature = "alloc"),
-  any(feature = "yuv-planar", feature = "rgb")
+  any(
+    feature = "yuv-planar",
+    feature = "rgb",
+    feature = "gbr",
+    feature = "gray",
+    feature = "xyz",
+    feature = "bayer",
+    feature = "mono"
+  )
 ))]
 pub(crate) mod area_reduce;
 #[cfg(feature = "yuv-444-packed")]

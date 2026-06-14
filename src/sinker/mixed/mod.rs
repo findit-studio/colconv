@@ -382,13 +382,31 @@ impl RowIndexOutOfRange {
 /// exactly a reattachment. The `*_u16` / `rgb_f32` slots are `(0, 0)`
 /// for every format that attaches no such output, so adding them
 /// leaves those formats' snapshots unchanged.
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
+#[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct FrozenOutputs {
   idents: [(usize, usize); 10],
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
+#[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
 impl FrozenOutputs {
   /// Identity of one attached buffer: `(data pointer, length)`, or
   /// `(0, 0)` for an absent output (a slice pointer is never null).
@@ -436,7 +454,16 @@ impl FrozenOutputs {
 /// Enforces the per-frame frozen output configuration for resampling
 /// sinkers — presence AND buffer identity of every output the emit
 /// closures consult. Shared by every routed format's resampled paths.
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
+#[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn frozen_outputs_check(
   resample_outputs: &mut Option<FrozenOutputs>,
@@ -1258,7 +1285,16 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// that route non-identity plans. Lazily created in `process`,
   /// reset in `begin_frame`. Gated like the engine itself, widening
   /// as families wire in.
-  #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+  #[cfg(any(
+    feature = "yuv-planar",
+    feature = "rgb",
+    feature = "gbr",
+    feature = "gray",
+    feature = "xyz",
+    feature = "bayer",
+    feature = "mono"
+  ))]
+  #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
   rgb_stream: Option<crate::resample::AreaStream<u8>>,
   /// Row-stage area stream for high-bit packed-RGB sources (`u16`
   /// elements binned at native depth). Lazily created in `process`,
@@ -1281,7 +1317,16 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// closures consult, so both membership changes and same-channel
   /// buffer replacement trip
   /// [`MixedSinkerError::ResampleOutputsChanged`].
-  #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+  #[cfg(any(
+    feature = "yuv-planar",
+    feature = "rgb",
+    feature = "gbr",
+    feature = "gray",
+    feature = "xyz",
+    feature = "bayer",
+    feature = "mono"
+  ))]
+  #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
   resample_outputs: Option<FrozenOutputs>,
   /// Whether resampled processing may take the native decimation tier
   /// (bin native planes, convert once at output resolution). Defaults
@@ -1715,7 +1760,15 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       out_width,
       out_height,
       plan: None,
-      #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+      #[cfg(any(
+        feature = "yuv-planar",
+        feature = "rgb",
+        feature = "gbr",
+        feature = "gray",
+        feature = "xyz",
+        feature = "bayer",
+        feature = "mono"
+      ))]
       rgb_stream: None,
       #[cfg(feature = "rgb")]
       rgb_stream_u16: None,
@@ -1723,7 +1776,15 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       rgb_stream_f32: None,
       #[cfg(feature = "yuv-planar")]
       luma_stream: None,
-      #[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+      #[cfg(any(
+        feature = "yuv-planar",
+        feature = "rgb",
+        feature = "gbr",
+        feature = "gray",
+        feature = "xyz",
+        feature = "bayer",
+        feature = "mono"
+      ))]
       resample_outputs: None,
       #[cfg(feature = "yuv-planar")]
       native: true,
@@ -2497,7 +2558,16 @@ pub(super) fn rgb_row_buf_or_scratch<'a>(
 /// sources whose row must be channel-swapped or converted to RGB
 /// before feeding the area stream. [`MixedSinker<Rgb24>`] skips it —
 /// its source is already RGB and feeds the stream with zero copy.
-#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono"
+))]
+#[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn source_rgb_scratch<'s>(
   rgb_scratch: &'s mut Vec<u8>,
