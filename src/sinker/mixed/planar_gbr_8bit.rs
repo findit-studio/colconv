@@ -19,6 +19,17 @@
 //! - `with_hsv` — derived from staged RGB via `rgb_to_hsv_row`
 //!   (existing kernel — no new HSV variant).
 //!
+//! **Fused area-resample** (`with_resampler`): `Gbrp` is generic over
+//! `R: Resampler`. On a non-identity plan it scatters its G/B/R planes
+//! into the source-width packed-RGB scratch and feeds the shared
+//! 3-channel packed-RGB resample tail
+//! ([`packed_rgb_resample_preflight`](super::packed_rgb_resample_preflight)
+//! / `_stream` / `_emit`) — the same path the `Bgr24` / padding-byte
+//! sources take, so every output (rgb, rgba, luma, luma_u16, hsv)
+//! derives from the binned RGB and matches a direct conversion of the
+//! pre-binned frame. `Gbrap` stays pinned to `NoopResampler`:
+//! alpha-aware area resampling is a separate later item.
+//!
 //! 8-bit planar GBR has no `u16` output flavour — `with_rgb_u16` /
 //! `with_rgba_u16` are not declared on these source impls (they'd be
 //! identity passes from u8 source which doesn't justify the extra
@@ -27,7 +38,8 @@
 
 use super::{
   InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange, RowShapeMismatch,
-  RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  RowSlice, check_dimensions_match, packed_rgb_resample_emit, packed_rgb_resample_preflight,
+  packed_rgb_resample_stream, rgb_row_buf_or_scratch, rgba_plane_row_slice, source_rgb_scratch,
 };
 use crate::{
   PixelSink,
@@ -87,14 +99,19 @@ impl<'a, R> MixedSinker<'a, Gbrp, R> {
   }
 }
 
-impl GbrpSink for MixedSinker<'_, Gbrp> {}
+impl<R> GbrpSink for MixedSinker<'_, Gbrp, R> {}
 
-impl PixelSink for MixedSinker<'_, Gbrp> {
+impl<R> PixelSink for MixedSinker<'_, Gbrp, R> {
   type Input<'r> = GbrpRow<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: GbrpRow<'_>) -> Result<(), Self::Error> {
@@ -142,6 +159,9 @@ impl PixelSink for MixedSinker<'_, Gbrp> {
       luma_u16,
       hsv,
       rgb_scratch,
+      plan,
+      rgb_stream,
+      resample_outputs,
       ..
     } = self;
     let one_plane_start = idx * w;
@@ -149,6 +169,37 @@ impl PixelSink for MixedSinker<'_, Gbrp> {
     let g_in = row.g();
     let b_in = row.b();
     let r_in = row.r();
+
+    // Non-identity plan: freeze the output set, then check stream
+    // sequencing — both before touching the scratch — so a no-output
+    // sink stays a no-op and an out-of-sequence row is rejected without
+    // the source-width allocation/interleave. Only then scatter the
+    // G/B/R planes into the source-width packed-RGB scratch and feed the
+    // shared packed-RGB resample tail. luma_u16 derives through the same
+    // tail, mirroring the direct path below for parity (RGBA alpha is
+    // forced to 0xFF — the 3-plane source has no alpha).
+    if let Some(plan) = plan.as_ref() {
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, luma_u16, hsv, idx)? {
+        return Ok(());
+      }
+      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+      let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+      gbr_to_rgb_row(g_in, b_in, r_in, scratch, w, use_simd);
+      return packed_rgb_resample_emit(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        scratch,
+        row.matrix(),
+        row.full_range(),
+        idx,
+        use_simd,
+      );
+    }
 
     // ---- Output mode resolution (Strategy A) -------------------------
     //
