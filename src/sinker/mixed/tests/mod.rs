@@ -125,6 +125,8 @@ mod resample_gbrpf32;
 #[cfg(feature = "yuv-planar")]
 mod resample_geometry;
 #[cfg(feature = "gray")]
+mod resample_gray16;
+#[cfg(feature = "gray")]
 mod resample_gray8;
 #[cfg(feature = "mono")]
 mod resample_mono;
