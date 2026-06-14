@@ -392,7 +392,13 @@ impl RowIndexOutOfRange {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -407,7 +413,13 @@ pub(super) struct FrozenOutputs {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
 impl FrozenOutputs {
@@ -474,7 +486,13 @@ impl FrozenOutputs {
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
 #[allow(clippy::too_many_arguments)]
@@ -1315,7 +1333,13 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "gray",
     feature = "xyz",
     feature = "bayer",
-    feature = "mono"
+    feature = "mono",
+    feature = "yuv-semi-planar",
+    feature = "yuv-packed",
+    feature = "yuv-444-packed",
+    feature = "y2xx",
+    feature = "v210",
+    feature = "rgb-legacy"
   ))]
   #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
   rgb_stream: Option<crate::resample::AreaStream<u8>>,
@@ -1360,7 +1384,13 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "gray",
     feature = "xyz",
     feature = "bayer",
-    feature = "mono"
+    feature = "mono",
+    feature = "yuv-semi-planar",
+    feature = "yuv-packed",
+    feature = "yuv-444-packed",
+    feature = "y2xx",
+    feature = "v210",
+    feature = "rgb-legacy"
   ))]
   #[cfg_attr(
     not(any(feature = "yuv-planar", feature = "gray", feature = "mono")),
@@ -1396,7 +1426,13 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "gray",
     feature = "xyz",
     feature = "bayer",
-    feature = "mono"
+    feature = "mono",
+    feature = "yuv-semi-planar",
+    feature = "yuv-packed",
+    feature = "yuv-444-packed",
+    feature = "y2xx",
+    feature = "v210",
+    feature = "rgb-legacy"
   ))]
   #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
   resample_outputs: Option<FrozenOutputs>,
@@ -1908,7 +1944,13 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "gray",
         feature = "xyz",
         feature = "bayer",
-        feature = "mono"
+        feature = "mono",
+        feature = "yuv-semi-planar",
+        feature = "yuv-packed",
+        feature = "yuv-444-packed",
+        feature = "y2xx",
+        feature = "v210",
+        feature = "rgb-legacy"
       ))]
       rgb_stream: None,
       #[cfg(any(feature = "rgb", feature = "gbr"))]
@@ -1927,7 +1969,13 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "gray",
         feature = "xyz",
         feature = "bayer",
-        feature = "mono"
+        feature = "mono",
+        feature = "yuv-semi-planar",
+        feature = "yuv-packed",
+        feature = "yuv-444-packed",
+        feature = "y2xx",
+        feature = "v210",
+        feature = "rgb-legacy"
       ))]
       luma_stream: None,
       #[cfg(feature = "gray")]
@@ -1941,7 +1989,13 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "gray",
         feature = "xyz",
         feature = "bayer",
-        feature = "mono"
+        feature = "mono",
+        feature = "yuv-semi-planar",
+        feature = "yuv-packed",
+        feature = "yuv-444-packed",
+        feature = "y2xx",
+        feature = "v210",
+        feature = "rgb-legacy"
       ))]
       resample_outputs: None,
       #[cfg(feature = "yuv-planar")]
@@ -2876,7 +2930,13 @@ pub(super) fn direct_rgb_u16_scratch(
   feature = "gray",
   feature = "xyz",
   feature = "bayer",
-  feature = "mono"
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
 ))]
 #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
 #[cfg_attr(not(tarpaulin), inline(always))]
