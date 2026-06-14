@@ -125,6 +125,8 @@ mod resample_gray8;
 #[cfg(feature = "mono")]
 mod resample_mono;
 #[cfg(feature = "rgb")]
+mod resample_packed_rgb_10bit;
+#[cfg(feature = "rgb")]
 mod resample_padding_byte;
 #[cfg(feature = "rgb")]
 mod resample_rgb24;
