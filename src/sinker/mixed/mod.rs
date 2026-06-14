@@ -376,12 +376,13 @@ impl RowIndexOutOfRange {
 /// Snapshot of a resampled frame's complete output configuration:
 /// presence plus attachment identity (data pointer and length) for
 /// luma, luma_u16, rgb, rgba, rgb_u16, rgba_u16, the `rgb_f32`
-/// float-RGB output, and the three HSV planes. Equality is the
-/// per-frame immutability check — in safe code a mid-frame `set_*`
-/// necessarily supplies a different borrow, so an identity change is
-/// exactly a reattachment. The `*_u16` / `rgb_f32` slots are `(0, 0)`
-/// for every format that attaches no such output, so adding them
-/// leaves those formats' snapshots unchanged.
+/// float-RGB output, the `xyz_f32` linear-XYZ output, and the three
+/// HSV planes. Equality is the per-frame immutability check — in safe
+/// code a mid-frame `set_*` necessarily supplies a different borrow, so
+/// an identity change is exactly a reattachment. The `*_u16` /
+/// `rgb_f32` / `xyz_f32` slots are `(0, 0)` for every format that
+/// attaches no such output, so adding them leaves those formats'
+/// snapshots unchanged.
 #[cfg(any(
   feature = "yuv-planar",
   feature = "rgb",
@@ -394,7 +395,7 @@ impl RowIndexOutOfRange {
 #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct FrozenOutputs {
-  idents: [(usize, usize); 10],
+  idents: [(usize, usize); 13],
 }
 
 #[cfg(any(
@@ -424,6 +425,9 @@ impl FrozenOutputs {
     rgb_u16: Option<&[u16]>,
     rgba_u16: Option<&[u16]>,
     rgb_f32: Option<&[f32]>,
+    xyz_f32: Option<&[f32]>,
+    rgb_f16: Option<&[half::f16]>,
+    rgba_f16: Option<&[half::f16]>,
     hsv: Option<(&[u8], &[u8], &[u8])>,
   ) -> Self {
     let (h, s, v) = match hsv {
@@ -443,6 +447,9 @@ impl FrozenOutputs {
         Self::ident(rgb_u16),
         Self::ident(rgba_u16),
         Self::ident(rgb_f32),
+        Self::ident(xyz_f32),
+        Self::ident(rgb_f16),
+        Self::ident(rgba_f16),
         h,
         s,
         v,
@@ -474,6 +481,9 @@ pub(super) fn frozen_outputs_check(
   rgb_u16: &Option<&mut [u16]>,
   rgba_u16: &Option<&mut [u16]>,
   rgb_f32: &Option<&mut [f32]>,
+  xyz_f32: &Option<&mut [f32]>,
+  rgb_f16: &Option<&mut [half::f16]>,
+  rgba_f16: &Option<&mut [half::f16]>,
   hsv: &mut Option<HsvFrameMut<'_>>,
   idx: usize,
 ) -> Result<(), MixedSinkerError> {
@@ -485,6 +495,9 @@ pub(super) fn frozen_outputs_check(
     rgb_u16.as_deref(),
     rgba_u16.as_deref(),
     rgb_f32.as_deref(),
+    xyz_f32.as_deref(),
+    rgb_f16.as_deref(),
+    rgba_f16.as_deref(),
     hsv.as_mut().map(|f| {
       let (h, s, v) = f.hsv();
       (&h[..], &s[..], &v[..])
@@ -1309,6 +1322,16 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// `rgb-float` does not imply).
   #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
   rgb_stream_f32: Option<crate::resample::AreaStream<f32>>,
+  /// Row-stage area stream for the packed-CIE-XYZ-12-bit source
+  /// ([`Xyz12`](crate::source::Xyz12)). The wire row converts to
+  /// **linear XYZ** `f32` (post-OETF, pre-matrix) and bins in float so
+  /// the area mean is taken in linear light — the matrix and gamma are
+  /// applied per finalized output row, after the bin. Gated to `xyz`;
+  /// the engine is already pulled in for `xyz` by the shared
+  /// [`AreaStream`] gate (the `#145`/`#146` cascade widened it to
+  /// `xyz`), so no separate engine feature is required.
+  #[cfg(feature = "xyz")]
+  xyz_stream_f32: Option<crate::resample::AreaStream<f32>>,
   #[cfg(feature = "yuv-planar")]
   luma_stream: Option<crate::resample::AreaStream<u8>>,
   /// Output configuration frozen at a resampled frame's first
@@ -1375,6 +1398,13 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// otherwise. Gated to the float family **and** the engine.
   #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
   rgb_scratch_f32: Vec<f32>,
+  /// Source-width **linear-XYZ** `f32` staging for the
+  /// [`Xyz12`](crate::source::Xyz12) resample path: the wire row
+  /// converts here (inverse-OETF only, no matrix) before feeding
+  /// [`Self::xyz_stream_f32`]. Lazily grown to `3 * width` `f32`; empty
+  /// otherwise. Gated to `xyz`.
+  #[cfg(feature = "xyz")]
+  xyz_scratch_f32: Vec<f32>,
   /// Whether row primitives dispatch to their SIMD backend. Defaults
   /// to `true`; benchmarks flip this with [`Self::with_simd`] /
   /// [`Self::set_simd`] to A/B test scalar vs SIMD on the same frame.
@@ -1774,6 +1804,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       rgb_stream_u16: None,
       #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
       rgb_stream_f32: None,
+      #[cfg(feature = "xyz")]
+      xyz_stream_f32: None,
       #[cfg(feature = "yuv-planar")]
       luma_stream: None,
       #[cfg(any(
@@ -1812,6 +1844,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       rgb_scratch_u16: Vec::new(),
       #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
       rgb_scratch_f32: Vec::new(),
+      #[cfg(feature = "xyz")]
+      xyz_scratch_f32: Vec::new(),
       simd: true,
       // BT.709 by default — matches the implicit weights every
       // YUV→RGB→luma pipeline uses, and is the most common Bayer
@@ -1984,6 +2018,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
     feature = "std",
     any(
       feature = "rgb",
+      feature = "xyz",
       all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb"))
     )
   ))]
@@ -2013,6 +2048,25 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   ))]
   pub(crate) fn rgb_stream_f32_allocated(&self) -> bool {
     self.rgb_stream_f32.is_some()
+  }
+
+  /// Whether the [`Xyz12`](crate::source::Xyz12) linear-XYZ `f32` area
+  /// stream has been created — a white-box probe for the resample
+  /// ordering tests (an out-of-sequence first row must be rejected
+  /// before the stream is allocated). Gated on `xyz` and `std` like the
+  /// tests that consume it.
+  #[cfg(all(test, feature = "xyz", feature = "std"))]
+  pub(crate) fn xyz_stream_f32_allocated(&self) -> bool {
+    self.xyz_stream_f32.is_some()
+  }
+
+  /// Capacity of the [`Xyz12`](crate::source::Xyz12) source-row
+  /// linear-XYZ staging scratch — a white-box probe for the resample
+  /// ordering tests (a rejected row must not have grown the scratch).
+  /// Gated on `xyz` and `std` like the tests that consume it.
+  #[cfg(all(test, feature = "xyz", feature = "std"))]
+  pub(crate) fn xyz_scratch_f32_capacity(&self) -> usize {
+    self.xyz_scratch_f32.capacity()
   }
 
   /// Returns `true` iff row primitives dispatch to their SIMD backend.
@@ -2624,6 +2678,9 @@ pub(super) fn packed_rgb_resample_preflight(
     &None,
     &None,
     &None,
+    &None,
+    &None,
+    &None,
     hsv,
     idx,
   )?;
@@ -2789,6 +2846,9 @@ pub(super) fn packed_rgb_u16_resample_preflight(
     rgba,
     rgb_u16,
     rgba_u16,
+    &None,
+    &None,
+    &None,
     &None,
     hsv,
     idx,
@@ -3003,6 +3063,9 @@ pub(super) fn packed_rgb_f32_resample_preflight(
     rgb_u16,
     rgba_u16,
     rgb_f32,
+    &None,
+    &None,
+    &None,
     hsv,
     idx,
   )?;
@@ -3161,6 +3224,339 @@ pub(super) fn packed_rgb_f32_resample_emit(
           ow,
           matrix,
           full_range,
+          use_simd,
+        );
+      }
+      if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
+        crate::row::rgb_to_hsv_row(
+          nrow,
+          &mut h[oy * ow..(oy + 1) * ow],
+          &mut s[oy * ow..(oy + 1) * ow],
+          &mut v[oy * ow..(oy + 1) * ow],
+          ow,
+          use_simd,
+        );
+      }
+    }
+  })?;
+  Ok(())
+}
+
+// ---- Xyz12 (linear-light area mean) resample tail ----------------------
+//
+// The `Xyz12` source decodes a 2.6-gamma-encoded CIE-XYZ wire sample
+// through SMPTE ST 428-1 §8 inverse-OETF -> linear XYZ -> 3x3 gamut
+// matrix -> sRGB OETF -> narrow. Area-resampling must average in LINEAR
+// light, so the wire row is converted to **linear XYZ** (`xyz12_to_
+// xyz_f32_row`, post-OETF / pre-matrix), binned in float, and the
+// non-linear tail (matrix + gamma + clamp/scale) is applied per
+// finalized output row. Because the bin is a linear combination and the
+// matrix is linear, `M . mean(xyz) == mean(M . xyz)` exactly — the
+// matrix commutes with the bin — so every derived output equals the
+// direct DCP pipeline applied to a frame whose per-pixel linear XYZ is
+// the area mean of the source linear XYZ (the linear-light oracle). The
+// OETF / narrow are per-pixel and run AFTER the matrix, exactly as the
+// direct path does, so they need not commute with the bin.
+
+/// Source-width **linear-XYZ** `f32` staging for the `Xyz12` resample
+/// path: the wire row converts here (inverse-OETF only, no matrix)
+/// before feeding [`AreaStream<f32>`]. Grows `scratch` to `3 * width`
+/// `f32` under the planner's recoverable-allocation contract. Mirrors
+/// [`source_rgb_f32_scratch`] for the linear-XYZ element path.
+#[cfg(feature = "xyz")]
+pub(super) fn source_xyz_f32_scratch<'s>(
+  scratch: &'s mut Vec<f32>,
+  width: usize,
+  plan: &ResamplePlan,
+) -> Result<&'s mut [f32], MixedSinkerError> {
+  let row = width
+    .checked_mul(3)
+    .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+      width,
+      plan.src_h(),
+      3,
+    )))?;
+  if scratch.len() < row {
+    scratch
+      .try_reserve_exact(row - scratch.len())
+      .map_err(|_| {
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?;
+    scratch.resize(row, 0.0);
+  }
+  Ok(&mut scratch[..row])
+}
+
+/// Freezes the output configuration for a resampled `Xyz12` frame — the
+/// full `Xyz12` output set — and reports whether any output is attached.
+/// Mirrors [`packed_rgb_f32_resample_preflight`], with the lossless
+/// `xyz_f32` channel added (and the `rgb_f32` slot reused for the
+/// linear-RGB output). The `rgb_f16` / `rgba_f16` outputs are not
+/// identity-tracked by [`FrozenOutputs`] (it carries no f16 slot), but
+/// the emit still derives them, so they participate in the
+/// "any output attached" predicate that keeps a no-output sink a no-op.
+#[cfg(feature = "xyz")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn xyz12_resample_preflight(
+  resample_outputs: &mut Option<FrozenOutputs>,
+  rgb: &Option<&mut [u8]>,
+  rgba: &Option<&mut [u8]>,
+  luma: &Option<&mut [u8]>,
+  luma_u16: &Option<&mut [u16]>,
+  rgb_u16: &Option<&mut [u16]>,
+  rgba_u16: &Option<&mut [u16]>,
+  rgb_f32: &Option<&mut [f32]>,
+  xyz_f32: &Option<&mut [f32]>,
+  rgb_f16: &Option<&mut [half::f16]>,
+  rgba_f16: &Option<&mut [half::f16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  idx: usize,
+) -> Result<bool, MixedSinkerError> {
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    rgb_f32,
+    xyz_f32,
+    rgb_f16,
+    rgba_f16,
+    hsv,
+    idx,
+  )?;
+  Ok(
+    rgb.is_some()
+      || rgba.is_some()
+      || luma.is_some()
+      || luma_u16.is_some()
+      || rgb_u16.is_some()
+      || rgba_u16.is_some()
+      || rgb_f32.is_some()
+      || xyz_f32.is_some()
+      || rgb_f16.is_some()
+      || rgba_f16.is_some()
+      || hsv.is_some(),
+  )
+}
+
+/// Lazily creates the 3-channel linear-XYZ `f32` area stream and checks
+/// strict row sequencing — run before the source conversion so an
+/// out-of-sequence row is rejected without the staging work. Mirrors
+/// [`packed_rgb_f32_resample_stream`] for the `Xyz12` path.
+#[cfg(feature = "xyz")]
+pub(super) fn xyz12_resample_stream<'s>(
+  xyz_stream_f32: &'s mut Option<crate::resample::AreaStream<f32>>,
+  plan: &ResamplePlan,
+  idx: usize,
+) -> Result<&'s mut crate::resample::AreaStream<f32>, MixedSinkerError> {
+  // Sequence-check before allocating (see packed_rgb_f32_resample_stream):
+  // an out-of-sequence first row is rejected without creating the f32
+  // output-width buffers, so AllocationFailed never masks
+  // OutOfSequenceRow.
+  let expected = xyz_stream_f32.as_ref().map_or(0, |stream| stream.next_y());
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  let stream = match xyz_stream_f32 {
+    Some(stream) => stream,
+    None => xyz_stream_f32.insert(crate::resample::AreaStream::new(
+      plan.h(),
+      plan.v(),
+      plan.src_w(),
+      plan.src_h(),
+      3,
+    )?),
+  };
+  Ok(stream)
+}
+
+/// Feeds the prepared source-width **linear-XYZ** `f32` row into the
+/// (already sequence-checked) stream and derives every attached output
+/// from each finalized binned linear-XYZ output row.
+///
+/// `xyz_f32` copies the binned linear XYZ verbatim. Every other output
+/// applies the direct DCP path's math to the binned XYZ: the gamut
+/// matrix yields linear RGB (`rgb_f32`); the sRGB OETF + clamp/scale +
+/// narrow yield the integer / f16 outputs (`rgb` / `rgba` / `rgb_u16` /
+/// `rgba_u16` / `rgb_f16` / `rgba_f16`); and `luma` / `luma_u16` / `hsv`
+/// derive from the staged u8 RGB row — exactly the direct path's
+/// source-of-truth ordering. The u8 RGB staging row is sized only when
+/// one of the outputs that reads it (`rgb` / `rgba` / `luma` /
+/// `luma_u16` / `hsv`) is attached, so an f32-/f16-only sink neither
+/// grows it nor risks its allocation failure.
+///
+/// `target_gamut` selects the XYZ -> RGB matrix; `luma_q15` carries the
+/// gamut-matched Q15 luma weights (both ride [`Xyz12Row`] on the direct
+/// path). These bind the entire frame via [`FrozenOutputs`] +
+/// `xyz12_to`'s per-frame constants, so they cannot drift mid-frame.
+#[cfg(feature = "xyz")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn xyz12_resample_emit(
+  stream: &mut crate::resample::AreaStream<f32>,
+  plan: &ResamplePlan,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  rgb_u16: &mut Option<&mut [u16]>,
+  rgba_u16: &mut Option<&mut [u16]>,
+  rgb_f32: &mut Option<&mut [f32]>,
+  xyz_f32: &mut Option<&mut [f32]>,
+  rgb_f16: &mut Option<&mut [half::f16]>,
+  rgba_f16: &mut Option<&mut [half::f16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  src_xyz: &[f32],
+  narrow_scratch: &mut Vec<u8>,
+  target_gamut: crate::DcpTargetGamut,
+  luma_q15: (i32, i32, i32),
+  idx: usize,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  use crate::row::scalar::xyz12::{
+    matmul3_xyz_rgb, narrow_unit_to_u8, narrow_unit_to_u16, oetf_srgb,
+  };
+  use crate::row::scalar::xyz12_constants::xyz_to_rgb_matrix;
+  let ow = plan.out_w();
+  let m = xyz_to_rgb_matrix(target_gamut);
+  let one_f16 = half::f16::from_f32(1.0);
+  // The u8 RGB / luma / luma_u16 / hsv outputs stage through a u8 RGB
+  // narrowing of the binned linear XYZ (matrix + OETF + clamp/x255);
+  // an f32-/f16-/native-u16-only sink never touches it, so the
+  // out-width u8 scratch is sized — and its allocation failure risked —
+  // only when one of those outputs is attached. The predicate gates
+  // both the sizing here and the use in the closure, so they cannot
+  // drift. `rgba` (u8) derives directly from the binned XYZ (matrix +
+  // OETF + narrow + alpha, exactly the direct `xyz12_to_rgba_row`), so
+  // it does not need the narrow row.
+  let need_narrow = rgb.is_some() || luma.is_some() || luma_u16.is_some() || hsv.is_some();
+  let narrow: &mut [u8] = if need_narrow {
+    source_rgb_scratch(narrow_scratch, ow, plan)?
+  } else {
+    &mut []
+  };
+  stream.feed_row(idx, src_xyz, use_simd, |oy, binned| {
+    // Lossless linear-XYZ pass-through — copy the binned row verbatim.
+    if let Some(buf) = xyz_f32.as_deref_mut() {
+      buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(binned);
+    }
+    // Linear RGB (matrix only, no OETF / clamp) — out-of-gamut negatives
+    // and HDR > 1 preserved bit-exact, mirroring `xyz12_to_rgb_f32_row`
+    // but over the already-inverse-OETF'd binned XYZ.
+    if let Some(buf) = rgb_f32.as_deref_mut() {
+      let dst = &mut buf[oy * 3 * ow..(oy + 1) * 3 * ow];
+      for x in 0..ow {
+        let i = x * 3;
+        let rgb_lin = matmul3_xyz_rgb(&m, [binned[i], binned[i + 1], binned[i + 2]]);
+        dst[i] = rgb_lin[0];
+        dst[i + 1] = rgb_lin[1];
+        dst[i + 2] = rgb_lin[2];
+      }
+    }
+    // f16 RGB / RGBA — matrix + OETF + clamp [0, 1] + IEEE-754 RNE
+    // narrow, exactly as `xyz12_to_rgb_f16_row` / `xyz12_to_rgba_f16_row`.
+    if let Some(buf) = rgb_f16.as_deref_mut() {
+      let dst = &mut buf[oy * 3 * ow..(oy + 1) * 3 * ow];
+      for x in 0..ow {
+        let i = x * 3;
+        let rgb_lin = matmul3_xyz_rgb(&m, [binned[i], binned[i + 1], binned[i + 2]]);
+        dst[i] = half::f16::from_f32(oetf_srgb(rgb_lin[0]).clamp(0.0, 1.0));
+        dst[i + 1] = half::f16::from_f32(oetf_srgb(rgb_lin[1]).clamp(0.0, 1.0));
+        dst[i + 2] = half::f16::from_f32(oetf_srgb(rgb_lin[2]).clamp(0.0, 1.0));
+      }
+    }
+    if let Some(buf) = rgba_f16.as_deref_mut() {
+      let dst = &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow];
+      for x in 0..ow {
+        let i = x * 3;
+        let o = x * 4;
+        let rgb_lin = matmul3_xyz_rgb(&m, [binned[i], binned[i + 1], binned[i + 2]]);
+        dst[o] = half::f16::from_f32(oetf_srgb(rgb_lin[0]).clamp(0.0, 1.0));
+        dst[o + 1] = half::f16::from_f32(oetf_srgb(rgb_lin[1]).clamp(0.0, 1.0));
+        dst[o + 2] = half::f16::from_f32(oetf_srgb(rgb_lin[2]).clamp(0.0, 1.0));
+        dst[o + 3] = one_f16;
+      }
+    }
+    // u16 RGB / RGBA — matrix + OETF + clamp + x65535 + round-half-up,
+    // exactly as `xyz12_to_rgb_u16_row` / `xyz12_to_rgba_u16_row`.
+    if let Some(buf) = rgb_u16.as_deref_mut() {
+      let dst = &mut buf[oy * 3 * ow..(oy + 1) * 3 * ow];
+      for x in 0..ow {
+        let i = x * 3;
+        let rgb_lin = matmul3_xyz_rgb(&m, [binned[i], binned[i + 1], binned[i + 2]]);
+        dst[i] = narrow_unit_to_u16(oetf_srgb(rgb_lin[0]));
+        dst[i + 1] = narrow_unit_to_u16(oetf_srgb(rgb_lin[1]));
+        dst[i + 2] = narrow_unit_to_u16(oetf_srgb(rgb_lin[2]));
+      }
+    }
+    if let Some(buf) = rgba_u16.as_deref_mut() {
+      let dst = &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow];
+      for x in 0..ow {
+        let i = x * 3;
+        let o = x * 4;
+        let rgb_lin = matmul3_xyz_rgb(&m, [binned[i], binned[i + 1], binned[i + 2]]);
+        dst[o] = narrow_unit_to_u16(oetf_srgb(rgb_lin[0]));
+        dst[o + 1] = narrow_unit_to_u16(oetf_srgb(rgb_lin[1]));
+        dst[o + 2] = narrow_unit_to_u16(oetf_srgb(rgb_lin[2]));
+        dst[o + 3] = 0xFFFF;
+      }
+    }
+    // u8 RGBA — matrix + OETF + clamp + x255 + round-half-up, alpha
+    // 0xFF (exactly `xyz12_to_rgba_row`), derived directly from the
+    // binned XYZ rather than expanded from the staged u8 RGB row.
+    if let Some(buf) = rgba.as_deref_mut() {
+      let dst = &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow];
+      for x in 0..ow {
+        let i = x * 3;
+        let o = x * 4;
+        let rgb_lin = matmul3_xyz_rgb(&m, [binned[i], binned[i + 1], binned[i + 2]]);
+        dst[o] = narrow_unit_to_u8(oetf_srgb(rgb_lin[0]));
+        dst[o + 1] = narrow_unit_to_u8(oetf_srgb(rgb_lin[1]));
+        dst[o + 2] = narrow_unit_to_u8(oetf_srgb(rgb_lin[2]));
+        dst[o + 3] = 0xFF;
+      }
+    }
+    if need_narrow {
+      let nrow = &mut narrow[..3 * ow];
+      // Stage the u8 RGB row once via the direct path's matrix + OETF +
+      // clamp + x255; rgb / rgba / luma / luma_u16 / hsv all read it.
+      for x in 0..ow {
+        let i = x * 3;
+        let rgb_lin = matmul3_xyz_rgb(&m, [binned[i], binned[i + 1], binned[i + 2]]);
+        nrow[i] = narrow_unit_to_u8(oetf_srgb(rgb_lin[0]));
+        nrow[i + 1] = narrow_unit_to_u8(oetf_srgb(rgb_lin[1]));
+        nrow[i + 2] = narrow_unit_to_u8(oetf_srgb(rgb_lin[2]));
+      }
+      if let Some(buf) = rgb.as_deref_mut() {
+        buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(nrow);
+      }
+      if let Some(buf) = luma.as_deref_mut() {
+        crate::row::xyz12_rgb_to_luma_row(
+          nrow,
+          &mut buf[oy * ow..(oy + 1) * ow],
+          ow,
+          luma_q15,
+          use_simd,
+        );
+      }
+      if let Some(buf) = luma_u16.as_deref_mut() {
+        crate::row::xyz12_rgb_to_luma_u16_row(
+          nrow,
+          &mut buf[oy * ow..(oy + 1) * ow],
+          ow,
+          luma_q15,
           use_simd,
         );
       }
