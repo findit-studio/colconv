@@ -2634,11 +2634,51 @@ pub(super) fn rgb_row_buf_or_scratch<'a>(
           width, height, 3,
         )))?;
       if rgb_scratch.len() < row_bytes {
+        rgb_scratch
+          .try_reserve_exact(row_bytes - rgb_scratch.len())
+          .map_err(|_| {
+            MixedSinkerError::Resample(ResampleError::AllocationFailed(
+              crate::resample::PlanGeometry::new(width, height, width, height),
+            ))
+          })?;
         rgb_scratch.resize(row_bytes, 0);
       }
       Ok(&mut rgb_scratch[..row_bytes])
     }
   }
+}
+
+/// Grows `scratch` to a single source-width `u16` RGB row
+/// (`width * 3` elements) for the **direct** (non-resample) path and
+/// returns the slice. Follows the recoverable-allocation contract —
+/// `try_reserve_exact` before the resize, mapping allocator refusal to a
+/// recoverable [`MixedSinkerError`] instead of aborting in `process` — for
+/// the 10-bit packed-RGB `rgba_u16` fan-out, which has no native α kernel
+/// and so stages the native RGB row before
+/// [`expand_rgb_u16_to_rgba_u16_row`].
+#[cfg(feature = "rgb")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(super) fn direct_rgb_u16_scratch(
+  scratch: &mut Vec<u16>,
+  width: usize,
+  height: usize,
+) -> Result<&mut [u16], MixedSinkerError> {
+  let row = width
+    .checked_mul(3)
+    .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+      width, height, 3,
+    )))?;
+  if scratch.len() < row {
+    scratch
+      .try_reserve_exact(row - scratch.len())
+      .map_err(|_| {
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(width, height, width, height),
+        ))
+      })?;
+    scratch.resize(row, 0);
+  }
+  Ok(&mut scratch[..row])
 }
 
 /// Grows `rgb_scratch` to a **source-width** RGB row (`width * 3`
