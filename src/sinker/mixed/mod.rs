@@ -2622,6 +2622,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       feature = "gray",
       feature = "yuv-packed",
       feature = "yuv-444-packed",
+      feature = "yuva",
       feature = "rgb-legacy",
       all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb"))
     )
@@ -3358,6 +3359,30 @@ pub(super) fn rgba_u16_plane_row_slice(
   Ok(&mut buf[start..end])
 }
 
+// Test-only allocation failpoint for the RGB scratch grow in
+// `rgb_row_buf_or_scratch`. When armed, the next call returns the crate's
+// recoverable `AllocationFailed` error WITHOUT growing — letting the
+// failure-path regression tests verify that no caller output buffer is
+// partially written before the scratch preflight. `Cell<bool>` is plenty
+// (single-threaded, take-on-read). Gated on `std` + `yuva` to match the
+// only consumers (`thread_local!` needs `std`; the unit-test tree is
+// `cfg(all(test, std))` and the failure-path tests are `yuva`-gated), so
+// it is not dead code in a `std`-but-no-`yuva` test build.
+#[cfg(all(test, feature = "std", feature = "yuva"))]
+std::thread_local! {
+  static FORCE_RGB_SCRATCH_ALLOC_FAILURE: core::cell::Cell<bool> =
+    const { core::cell::Cell::new(false) };
+}
+
+/// Arms the [`rgb_row_buf_or_scratch`] allocation failpoint for the **next**
+/// call on the current thread, simulating a recoverable allocator refusal of
+/// the RGB scratch grow. The flag is consumed (take-on-read) by that call, so
+/// it fires exactly once and cannot leak into a later test. Test-only.
+#[cfg(all(test, feature = "std", feature = "yuva"))]
+pub(crate) fn arm_rgb_scratch_alloc_failure() {
+  FORCE_RGB_SCRATCH_ALLOC_FAILURE.with(|f| f.set(true));
+}
+
 /// Pick an RGB row buffer for the kernel to write into: caller's RGB
 /// plane slice when attached, or the growing scratch buffer otherwise
 /// (HSV-only callers don't allocate an RGB plane). Returns
@@ -3398,6 +3423,19 @@ pub(super) fn rgb_row_buf_or_scratch<'a>(
   width: usize,
   height: usize,
 ) -> Result<&'a mut [u8], MixedSinkerError> {
+  // Test-only allocation failpoint: simulate a recoverable allocator
+  // refusal for the scratch grow WITHOUT actually exhausting memory, so
+  // the failure-path regression tests can prove no caller output is
+  // partially written before this preflight (see `arm_rgb_scratch_alloc_failure`).
+  // `take()` clears the flag so an armed failure fires exactly once and
+  // never leaks across tests. Strictly test-only — the non-test build is
+  // byte-identical (this hook compiles away entirely).
+  #[cfg(all(test, feature = "std", feature = "yuva"))]
+  if FORCE_RGB_SCRATCH_ALLOC_FAILURE.with(|f| f.take()) {
+    return Err(MixedSinkerError::Resample(ResampleError::AllocationFailed(
+      crate::resample::PlanGeometry::new(width, height, width, height),
+    )));
+  }
   match rgb {
     Some(buf) => {
       let end = one_plane_end
@@ -5486,6 +5524,28 @@ pub(super) fn packed_yuva444_resample<const SRC_BITS: u32>(
   }
 
   Ok(())
+}
+
+/// Resets the packed-YUVA area streams (`rgba_stream`, `rgba_stream_u16`,
+/// `luma_stream_u16`) and clears the frozen output / alpha-mode snapshots
+/// at the start of a new frame for an alpha-aware planar / packed YUVA
+/// sink. The alpha-mode snapshot is re-armed to the sink's current mode so
+/// a per-frame `set_alpha_mode` change is accepted (and a mid-frame change
+/// is rejected by [`check_frozen_alpha_mode`]).
+#[cfg(feature = "yuva")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(super) fn reset_high_bit_yuva_streams<F: SourceFormat, R>(sink: &mut MixedSinker<'_, F, R>) {
+  if let Some(stream) = sink.rgba_stream.as_mut() {
+    stream.reset();
+  }
+  if let Some(stream) = sink.rgba_stream_u16.as_mut() {
+    stream.reset();
+  }
+  if let Some(stream) = sink.luma_stream_u16.as_mut() {
+    stream.reset();
+  }
+  sink.resample_outputs = None;
+  sink.frozen_alpha_mode = Some(sink.alpha_mode);
 }
 
 /// Row-stage fused downscale for the **high-bit packed 4:2:2 YUV**

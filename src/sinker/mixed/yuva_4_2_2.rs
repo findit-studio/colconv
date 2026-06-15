@@ -23,7 +23,8 @@
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
   RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match, check_frozen_alpha_mode,
-  packed_yuva444_resample, rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  deinterleave_y_high_bit, packed_yuva444_resample, reset_high_bit_yuva_streams,
+  rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
 use crate::{PixelSink, row::*, source::*};
 
@@ -244,6 +245,31 @@ impl<R> PixelSink for MixedSinker<'_, Yuva422p, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
+    let want_rgb = rgb.is_some();
+    let want_rgba = rgba.is_some();
+    let want_hsv = hsv.is_some();
+    let need_rgb_kernel = want_rgb || want_hsv;
+
+    // Acquire the u8 RGB row buffer up front — before any caller-output
+    // write below — so an allocator refusal in the HSV-only scratch path
+    // returns a recoverable error rather than leaving a partially-written
+    // caller buffer (luma / luma_u16). `rgb_row_buf_or_scratch` is the
+    // only fallible allocation on this direct path. The RGB kernel
+    // reuses the 4:2:0 row dispatcher (yuv_420_to_rgb_row); per-row
+    // chroma layout is identical to 4:2:2.
+    let rgb_row = if need_rgb_kernel {
+      Some(rgb_row_buf_or_scratch(
+        rgb.as_deref_mut(),
+        rgb_scratch,
+        one_plane_start,
+        one_plane_end,
+        w,
+        h,
+      )?)
+    } else {
+      None
+    };
+
     // Luma — copy the Y plane verbatim (8-bit YUVA's Y is already u8).
     if let Some(luma) = luma.as_deref_mut() {
       luma[one_plane_start..one_plane_end].copy_from_slice(&row.y()[..w]);
@@ -259,11 +285,8 @@ impl<R> PixelSink for MixedSinker<'_, Yuva422p, R> {
       }
     }
 
-    let want_rgb = rgb.is_some();
-    let want_rgba = rgba.is_some();
-    let want_hsv = hsv.is_some();
-    let need_rgb_kernel = want_rgb || want_hsv;
-
+    // `need_rgb_kernel` / `rgb_row` were computed and (when needed)
+    // allocated at the top, before any caller-output write.
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
       let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
@@ -281,21 +304,12 @@ impl<R> PixelSink for MixedSinker<'_, Yuva422p, R> {
       return Ok(());
     }
 
-    if !need_rgb_kernel {
-      return Ok(());
-    }
-
     // RGB kernel — alpha-drop reuses the 4:2:0 row dispatcher
     // (yuv_420_to_rgb_row); per-row chroma layout is identical to
     // 4:2:2.
-    let rgb_row = rgb_row_buf_or_scratch(
-      rgb.as_deref_mut(),
-      rgb_scratch,
-      one_plane_start,
-      one_plane_end,
-      w,
-      h,
-    )?;
+    let Some(rgb_row) = rgb_row else {
+      return Ok(());
+    };
     yuv_420_to_rgb_row(
       row.y(),
       row.u_half(),
@@ -395,11 +409,33 @@ impl<'a, R, const BE: bool> MixedSinker<'a, Yuva422p9<BE>, R> {
     self.rgb_u16 = Some(buf);
     Ok(self)
   }
+
+  /// Attaches a **`u16`** luma output buffer. Luma is the **native Y**
+  /// (the binned Y plane at native depth under a non-identity plan; the
+  /// Y plane verbatim otherwise). Length in u16 **elements**
+  /// (`width x height`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_pixels()?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
 }
 
-impl<const BE: bool> Yuva422p9Sink<BE> for MixedSinker<'_, Yuva422p9<BE>> {}
+impl<R, const BE: bool> Yuva422p9Sink<BE> for MixedSinker<'_, Yuva422p9<BE>, R> {}
 
-impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva422p9<BE>> {
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuva422p9<BE>, R> {
   type Input<'r> = Yuva422p9Row<'r>;
   type Error = MixedSinkerError;
 
@@ -409,11 +445,31 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva422p9<BE>> {
         self.width,
       )));
     }
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    reset_high_bit_yuva_streams(self);
+    Ok(())
   }
 
   fn process(&mut self, row: Yuva422p9Row<'_>) -> Result<(), Self::Error> {
-    yuva422p_high_bit_process::<9, BE, _, _, _, _>(
+    if self.plan.is_some() {
+      return yuva422p_high_bit_resample::<9, BE>(
+        self,
+        row.row(),
+        row.y(),
+        row.u_half(),
+        row.v_half(),
+        row.a(),
+        row.matrix(),
+        row.full_range(),
+        RowSlice::Y9,
+        RowSlice::UHalf9,
+        RowSlice::VHalf9,
+        RowSlice::AFull9,
+        yuva420p9_to_rgba_row_endian,
+        yuva420p9_to_rgba_u16_row_endian,
+      );
+    }
+    yuva422p_high_bit_process::<9, BE, _, _, _, _, _>(
       self,
       row.row(),
       row.y(),
@@ -495,11 +551,33 @@ impl<'a, R, const BE: bool> MixedSinker<'a, Yuva422p10<BE>, R> {
     self.rgb_u16 = Some(buf);
     Ok(self)
   }
+
+  /// Attaches a **`u16`** luma output buffer. Luma is the **native Y**
+  /// (the binned Y plane at native depth under a non-identity plan; the
+  /// Y plane verbatim otherwise). Length in u16 **elements**
+  /// (`width x height`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_pixels()?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
 }
 
-impl<const BE: bool> Yuva422p10Sink<BE> for MixedSinker<'_, Yuva422p10<BE>> {}
+impl<R, const BE: bool> Yuva422p10Sink<BE> for MixedSinker<'_, Yuva422p10<BE>, R> {}
 
-impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva422p10<BE>> {
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuva422p10<BE>, R> {
   type Input<'r> = Yuva422p10Row<'r>;
   type Error = MixedSinkerError;
 
@@ -509,11 +587,31 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva422p10<BE>> {
         self.width,
       )));
     }
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    reset_high_bit_yuva_streams(self);
+    Ok(())
   }
 
   fn process(&mut self, row: Yuva422p10Row<'_>) -> Result<(), Self::Error> {
-    yuva422p_high_bit_process::<10, BE, _, _, _, _>(
+    if self.plan.is_some() {
+      return yuva422p_high_bit_resample::<10, BE>(
+        self,
+        row.row(),
+        row.y(),
+        row.u_half(),
+        row.v_half(),
+        row.a(),
+        row.matrix(),
+        row.full_range(),
+        RowSlice::Y10,
+        RowSlice::UHalf10,
+        RowSlice::VHalf10,
+        RowSlice::AFull10,
+        yuva420p10_to_rgba_row_endian,
+        yuva420p10_to_rgba_u16_row_endian,
+      );
+    }
+    yuva422p_high_bit_process::<10, BE, _, _, _, _, _>(
       self,
       row.row(),
       row.y(),
@@ -595,11 +693,33 @@ impl<'a, R, const BE: bool> MixedSinker<'a, Yuva422p12<BE>, R> {
     self.rgb_u16 = Some(buf);
     Ok(self)
   }
+
+  /// Attaches a **`u16`** luma output buffer. Luma is the **native Y**
+  /// (the binned Y plane at native depth under a non-identity plan; the
+  /// Y plane verbatim otherwise). Length in u16 **elements**
+  /// (`width x height`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_pixels()?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
 }
 
-impl<const BE: bool> Yuva422p12Sink<BE> for MixedSinker<'_, Yuva422p12<BE>> {}
+impl<R, const BE: bool> Yuva422p12Sink<BE> for MixedSinker<'_, Yuva422p12<BE>, R> {}
 
-impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva422p12<BE>> {
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuva422p12<BE>, R> {
   type Input<'r> = Yuva422p12Row<'r>;
   type Error = MixedSinkerError;
 
@@ -609,11 +729,31 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva422p12<BE>> {
         self.width,
       )));
     }
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    reset_high_bit_yuva_streams(self);
+    Ok(())
   }
 
   fn process(&mut self, row: Yuva422p12Row<'_>) -> Result<(), Self::Error> {
-    yuva422p_high_bit_process::<12, BE, _, _, _, _>(
+    if self.plan.is_some() {
+      return yuva422p_high_bit_resample::<12, BE>(
+        self,
+        row.row(),
+        row.y(),
+        row.u_half(),
+        row.v_half(),
+        row.a(),
+        row.matrix(),
+        row.full_range(),
+        RowSlice::Y12,
+        RowSlice::UHalf12,
+        RowSlice::VHalf12,
+        RowSlice::AFull12,
+        yuva420p12_to_rgba_row_endian,
+        yuva420p12_to_rgba_u16_row_endian,
+      );
+    }
+    yuva422p_high_bit_process::<12, BE, _, _, _, _, _>(
       self,
       row.row(),
       row.y(),
@@ -695,11 +835,33 @@ impl<'a, R, const BE: bool> MixedSinker<'a, Yuva422p16<BE>, R> {
     self.rgb_u16 = Some(buf);
     Ok(self)
   }
+
+  /// Attaches a **`u16`** luma output buffer. Luma is the **native Y**
+  /// (the binned Y plane at native depth under a non-identity plan; the
+  /// Y plane verbatim otherwise). Length in u16 **elements**
+  /// (`width x height`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_pixels()?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
 }
 
-impl<const BE: bool> Yuva422p16Sink<BE> for MixedSinker<'_, Yuva422p16<BE>> {}
+impl<R, const BE: bool> Yuva422p16Sink<BE> for MixedSinker<'_, Yuva422p16<BE>, R> {}
 
-impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva422p16<BE>> {
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuva422p16<BE>, R> {
   type Input<'r> = Yuva422p16Row<'r>;
   type Error = MixedSinkerError;
 
@@ -709,11 +871,31 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuva422p16<BE>> {
         self.width,
       )));
     }
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    reset_high_bit_yuva_streams(self);
+    Ok(())
   }
 
   fn process(&mut self, row: Yuva422p16Row<'_>) -> Result<(), Self::Error> {
-    yuva422p_high_bit_process::<16, BE, _, _, _, _>(
+    if self.plan.is_some() {
+      return yuva422p_high_bit_resample::<16, BE>(
+        self,
+        row.row(),
+        row.y(),
+        row.u_half(),
+        row.v_half(),
+        row.a(),
+        row.matrix(),
+        row.full_range(),
+        RowSlice::Y16,
+        RowSlice::UHalf16,
+        RowSlice::VHalf16,
+        RowSlice::AFull16,
+        yuva420p16_to_rgba_row_endian,
+        yuva420p16_to_rgba_u16_row_endian,
+      );
+    }
+    yuva422p_high_bit_process::<16, BE, _, _, _, _, _>(
       self,
       row.row(),
       row.y(),
@@ -748,11 +930,12 @@ fn yuva422p_high_bit_process<
   const BITS: u32,
   const BE: bool,
   F: crate::SourceFormat,
+  R,
   RgbRowFn: Fn(&[u16], &[u16], &[u16], &mut [u8], usize, crate::ColorMatrix, bool, bool, bool),
   RgbU16RowFn: Fn(&[u16], &[u16], &[u16], &mut [u16], usize, crate::ColorMatrix, bool, bool, bool),
   RgbaRowFn: Fn(&[u16], &[u16], &[u16], &[u16], &mut [u8], usize, crate::ColorMatrix, bool, bool, bool),
 >(
-  sinker: &mut MixedSinker<'_, F>,
+  sinker: &mut MixedSinker<'_, F, R>,
   idx: usize,
   y_row: &[u16],
   u_half_row: &[u16],
@@ -831,6 +1014,7 @@ fn yuva422p_high_bit_process<
     rgba,
     rgba_u16,
     luma,
+    luma_u16,
     hsv,
     rgb_scratch,
     ..
@@ -838,15 +1022,45 @@ fn yuva422p_high_bit_process<
   let one_plane_start = idx * w;
   let one_plane_end = one_plane_start + w;
 
-  // ---- luma (alpha-drop; downshift by BITS - 8 to fit u8) -------
-  if let Some(luma) = luma.as_deref_mut() {
-    let dst = &mut luma[one_plane_start..one_plane_end];
-    for (d, &s) in dst.iter_mut().zip(y_row.iter()) {
-      // Normalize BE-encoded wire bytes to host-native before the
-      // luma downshift — see `yuva420p_high_bit_process` luma path
-      // for the rationale.
+  let want_rgb = rgb.is_some();
+  let want_rgba = rgba.is_some();
+  let want_hsv = hsv.is_some();
+  let need_rgb_kernel = want_rgb || want_hsv;
+
+  // Acquire the u8 RGB row buffer up front — before any caller-output
+  // write below — so an allocator refusal in the HSV-only scratch path
+  // returns a recoverable error rather than a partially-written caller
+  // buffer. See `yuva420p_high_bit_process` for the full rationale.
+  let rgb_row = if need_rgb_kernel {
+    Some(rgb_row_buf_or_scratch(
+      rgb.as_deref_mut(),
+      rgb_scratch,
+      one_plane_start,
+      one_plane_end,
+      w,
+      h,
+    )?)
+  } else {
+    None
+  };
+
+  // ---- luma (native Y; luma narrows `>> (BITS - 8)`, luma_u16 is the
+  // host-native logical Y) — see `yuva420p_high_bit_process`. -----------
+  if luma.is_some() || luma_u16.is_some() {
+    let mut luma_row = luma
+      .as_deref_mut()
+      .map(|b| &mut b[one_plane_start..one_plane_end]);
+    let mut luma_u16_row = luma_u16
+      .as_deref_mut()
+      .map(|b| &mut b[one_plane_start..one_plane_end]);
+    for (i, &s) in y_row.iter().enumerate().take(w) {
       let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
-      *d = (logical >> (BITS - 8)) as u8;
+      if let Some(row) = luma_row.as_deref_mut() {
+        row[i] = (logical >> (BITS - 8)) as u8;
+      }
+      if let Some(row) = luma_u16_row.as_deref_mut() {
+        row[i] = logical;
+      }
     }
   }
 
@@ -907,11 +1121,8 @@ fn yuva422p_high_bit_process<
   }
 
   // ---- u8 RGB / RGBA / HSV path ----------------------------------
-  let want_rgb = rgb.is_some();
-  let want_rgba = rgba.is_some();
-  let want_hsv = hsv.is_some();
-  let need_rgb_kernel = want_rgb || want_hsv;
-
+  // `need_rgb_kernel` / `rgb_row` were computed and (when needed)
+  // allocated at the top, before any caller-output write.
   if want_rgba && !need_rgb_kernel {
     let rgba_buf = rgba.as_deref_mut().unwrap();
     let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
@@ -921,18 +1132,9 @@ fn yuva422p_high_bit_process<
     return Ok(());
   }
 
-  if !need_rgb_kernel {
+  let Some(rgb_row) = rgb_row else {
     return Ok(());
-  }
-
-  let rgb_row = rgb_row_buf_or_scratch(
-    rgb.as_deref_mut(),
-    rgb_scratch,
-    one_plane_start,
-    one_plane_end,
-    w,
-    h,
-  )?;
+  };
   rgb_dispatch(
     y_row, u_half_row, v_half_row, rgb_row, w, matrix, full_range, use_simd, BE,
   );
@@ -962,4 +1164,160 @@ fn yuva422p_high_bit_process<
   }
 
   Ok(())
+}
+
+// ---- Shared high-bit YUVA 4:2:2 resample-routing body -----------------
+//
+// The non-identity (downscale) plan branch for the 9 / 10 / 12 / 16-bit
+// YUVA 4:2:2 sinks — the 4:2:2 sibling of the 4:2:0 routing helper. Per-row
+// chroma is half-width (identical to 4:2:0), so the same half-chroma
+// `_to_rgba` / `_to_rgba_u16` kernels apply; the 4:2:0-vs-4:2:2 difference
+// (vertical chroma index `r / 2` vs `r`) is owned by the walker. Routes
+// through the shared packed-YUVA tail with THREE independent binnings: u8
+// colour, the **independent** native u16 colour (never a narrowing of the
+// u8 bin), and the **low-packed** native-Y luma (`deinterleave_y_high_bit`,
+// raw host-native copy — planar YUVA Y is low-packed, so luma is
+// `binned_Y >> (BITS - 8)`, NOT the semi-planar `>> (16 - BITS)` de-pack).
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn yuva422p_high_bit_resample<const BITS: u32, const BE: bool>(
+  sinker: &mut MixedSinker<'_, impl crate::SourceFormat, impl Sized>,
+  idx: usize,
+  y_row: &[u16],
+  u_half_row: &[u16],
+  v_half_row: &[u16],
+  a_row: &[u16],
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  y_slice: RowSlice,
+  u_slice: RowSlice,
+  v_slice: RowSlice,
+  a_slice: RowSlice,
+  rgba_dispatch: fn(
+    &[u16],
+    &[u16],
+    &[u16],
+    &[u16],
+    &mut [u8],
+    usize,
+    crate::ColorMatrix,
+    bool,
+    bool,
+    bool,
+  ),
+  rgba_u16_dispatch: fn(
+    &[u16],
+    &[u16],
+    &[u16],
+    &[u16],
+    &mut [u16],
+    usize,
+    crate::ColorMatrix,
+    bool,
+    bool,
+    bool,
+  ),
+) -> Result<(), MixedSinkerError> {
+  let w = sinker.width;
+  let use_simd = sinker.simd;
+
+  if w & 1 != 0 {
+    return Err(MixedSinkerError::WidthAlignment(WidthAlignment::odd(w)));
+  }
+  if y_row.len() != w {
+    return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+      y_slice,
+      idx,
+      w,
+      y_row.len(),
+    )));
+  }
+  if u_half_row.len() != w / 2 {
+    return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+      u_slice,
+      idx,
+      w / 2,
+      u_half_row.len(),
+    )));
+  }
+  if v_half_row.len() != w / 2 {
+    return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+      v_slice,
+      idx,
+      w / 2,
+      v_half_row.len(),
+    )));
+  }
+  if a_row.len() != w {
+    return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+      a_slice,
+      idx,
+      w,
+      a_row.len(),
+    )));
+  }
+  if idx >= sinker.height {
+    return Err(MixedSinkerError::RowIndexOutOfRange(
+      RowIndexOutOfRange::new(idx, sinker.height),
+    ));
+  }
+
+  let alpha_mode = sinker.alpha_mode;
+  let MixedSinker {
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    luma,
+    luma_u16,
+    hsv,
+    rgba_scratch,
+    rgb_scratch,
+    rgba_scratch_u16,
+    rgba_color_scratch_u16,
+    luma_scratch_u16,
+    plan,
+    rgba_stream,
+    rgba_stream_u16,
+    luma_stream_u16,
+    resample_outputs,
+    frozen_alpha_mode,
+    ..
+  } = sinker;
+  let plan = plan.as_ref().expect("plan.is_some() checked by the caller");
+  check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
+  packed_yuva444_resample::<BITS>(
+    rgba_stream,
+    rgba_stream_u16,
+    luma_stream_u16,
+    resample_outputs,
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    luma,
+    luma_u16,
+    hsv,
+    rgba_scratch,
+    rgb_scratch,
+    rgba_scratch_u16,
+    rgba_color_scratch_u16,
+    luma_scratch_u16,
+    w,
+    plan,
+    idx,
+    use_simd,
+    alpha_mode,
+    |dst| {
+      rgba_dispatch(
+        y_row, u_half_row, v_half_row, a_row, dst, w, matrix, full_range, use_simd, BE,
+      )
+    },
+    |dst| {
+      rgba_u16_dispatch(
+        y_row, u_half_row, v_half_row, a_row, dst, w, matrix, full_range, use_simd, BE,
+      )
+    },
+    |dst| deinterleave_y_high_bit::<BE>(y_row, dst, w),
+  )
 }
