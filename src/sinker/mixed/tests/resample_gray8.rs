@@ -328,6 +328,36 @@ fn gray8_out_of_sequence_first_row_rejected_before_allocation() {
 }
 
 #[test]
+fn gray8_rejected_first_row_does_not_poison_output_retry() {
+  // A rejected out-of-sequence FIRST row must store no frozen-output
+  // snapshot, so retrying row 0 after reconfiguring the output set
+  // succeeds instead of tripping ResampleOutputsChanged against a
+  // snapshot the rejected row should never have committed.
+  let plane = ramp();
+  let mut luma = vec![0u8; OUT * OUT];
+  let mut sink =
+    MixedSinker::<Gray8, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap();
+  sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+  let row3 = &plane[3 * SRC..4 * SRC];
+  let err = sink.process(Gray8Row::new(row3, 3, M, FR)).unwrap_err();
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(_))
+    ),
+    "expected OutOfSequenceRow, got {err:?}"
+  );
+  let mut rgb = vec![0u8; OUT * OUT * 3];
+  sink.set_rgb(&mut rgb).unwrap();
+  sink
+    .process(Gray8Row::new(&plane[..SRC], 0, M, FR))
+    .expect("row 0 must succeed after a rejected out-of-sequence first row");
+}
+
+#[test]
 fn gray8_resample_rejects_mid_frame_out_of_sequence() {
   let plane = ramp();
   let mut luma = vec![0u8; OUT * OUT];

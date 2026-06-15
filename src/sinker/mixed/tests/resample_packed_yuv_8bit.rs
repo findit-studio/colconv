@@ -192,6 +192,7 @@ macro_rules! packed_yuv_resample_suite {
     seq_first: $seq_first_name:ident,
     seq_mid: $seq_mid_name:ident,
     freeze: $freeze_name:ident,
+    poison: $poison_name:ident,
   ) => {
     #[test]
     #[cfg_attr(
@@ -536,6 +537,41 @@ macro_rules! packed_yuv_resample_suite {
         "rejected row mutated the new output"
       );
     }
+
+    #[test]
+    #[cfg_attr(
+      miri,
+      ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+    )]
+    fn $poison_name() {
+      // A rejected out-of-sequence FIRST row must store no frozen-output
+      // snapshot, so retrying row 0 after attaching a NEW output succeeds
+      // instead of tripping ResampleOutputsChanged.
+      let (y, u, v) = yuv_ramp();
+      let packed = $build(&y, &u, &v);
+      let mut luma = vec![0u8; OUT * OUT];
+      let mut sink =
+        MixedSinker::<$fmt, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+          .unwrap()
+          .with_luma(&mut luma)
+          .unwrap();
+      sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+      let err = sink
+        .process($row::new(&packed[3 * 2 * SRC..4 * 2 * SRC], 3, M, FR))
+        .unwrap_err();
+      assert!(
+        matches!(
+          err,
+          MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(_))
+        ),
+        "expected OutOfSequenceRow, got {err:?}"
+      );
+      let mut rgb = vec![0u8; OUT * OUT * 3];
+      sink.set_rgb(&mut rgb).unwrap();
+      sink
+        .process($row::new(&packed[..2 * SRC], 0, M, FR))
+        .expect("row 0 must succeed after a rejected out-of-sequence first row");
+    }
   };
 }
 
@@ -551,6 +587,7 @@ packed_yuv_resample_suite!(
   seq_first: yuyv422_out_of_sequence_first_row_rejected_before_allocation,
   seq_mid: yuyv422_resample_rejects_mid_frame_out_of_sequence,
   freeze: yuyv422_resample_rejects_mid_frame_output_change,
+  poison: yuyv422_rejected_first_row_does_not_poison_output_retry,
 );
 
 packed_yuv_resample_suite!(
@@ -565,6 +602,7 @@ packed_yuv_resample_suite!(
   seq_first: uyvy422_out_of_sequence_first_row_rejected_before_allocation,
   seq_mid: uyvy422_resample_rejects_mid_frame_out_of_sequence,
   freeze: uyvy422_resample_rejects_mid_frame_output_change,
+  poison: uyvy422_rejected_first_row_does_not_poison_output_retry,
 );
 
 packed_yuv_resample_suite!(
@@ -579,4 +617,5 @@ packed_yuv_resample_suite!(
   seq_first: yvyu422_out_of_sequence_first_row_rejected_before_allocation,
   seq_mid: yvyu422_resample_rejects_mid_frame_out_of_sequence,
   freeze: yvyu422_resample_rejects_mid_frame_output_change,
+  poison: yvyu422_rejected_first_row_does_not_poison_output_retry,
 );

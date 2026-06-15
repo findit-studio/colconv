@@ -331,6 +331,88 @@ fn direct_out_of_order_process_rejected_under_resampling() {
 }
 
 #[test]
+fn rejected_first_row_does_not_poison_output_retry_row_stage() {
+  use crate::source::Yuv420pRow;
+
+  // A rejected out-of-sequence FIRST row must store no frozen-output
+  // snapshot, so retrying row 0 after attaching a NEW output succeeds
+  // instead of tripping ResampleOutputsChanged (the row-stage 4:2:0 path).
+  let y = [50u8; SRC];
+  let u = [128u8; SRC / 2];
+  let v = [128u8; SRC / 2];
+  let mut luma = vec![0u8; OUT * OUT];
+  let mut sink = downscaled().with_luma(&mut luma).unwrap();
+  sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+  let err = sink
+    .process(Yuv420pRow::new(&y, &u, &v, 3, ColorMatrix::Bt601, true))
+    .unwrap_err();
+  assert!(matches!(
+    err,
+    MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(_))
+  ));
+  let mut rgb = vec![0u8; OUT * OUT * 3];
+  sink.set_rgb(&mut rgb).unwrap();
+  sink
+    .process(Yuv420pRow::new(&y, &u, &v, 0, ColorMatrix::Bt601, true))
+    .expect("row 0 must succeed after a rejected out-of-sequence first row");
+}
+
+#[test]
+fn rejected_first_row_does_not_poison_output_retry_native() {
+  use crate::source::Yuv420pRow;
+
+  // Same poison contract for the NATIVE 4:2:0 tier (with_native(true)):
+  // a rejected out-of-sequence first row stores no snapshot, so retrying
+  // row 0 after attaching a NEW output succeeds.
+  let y = [50u8; SRC];
+  let u = [128u8; SRC / 2];
+  let v = [128u8; SRC / 2];
+  let mut luma = vec![0u8; OUT * OUT];
+  let mut sink = downscaled().with_native(true).with_luma(&mut luma).unwrap();
+  sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+  let err = sink
+    .process(Yuv420pRow::new(&y, &u, &v, 3, ColorMatrix::Bt601, true))
+    .unwrap_err();
+  assert!(matches!(
+    err,
+    MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(_))
+  ));
+  let mut rgb = vec![0u8; OUT * OUT * 3];
+  sink.set_rgb(&mut rgb).unwrap();
+  sink
+    .process(Yuv420pRow::new(&y, &u, &v, 0, ColorMatrix::Bt601, true))
+    .expect("row 0 must succeed after a rejected out-of-sequence first row");
+}
+
+#[test]
+fn no_output_first_row_does_not_poison_output_retry_native() {
+  use crate::source::Yuv420pRow;
+
+  // The NATIVE 4:2:0 tier always feeds the Y plane on an output-bearing
+  // row (luma is implicit), so its sequence counter is the Y stream — which
+  // has no no-output condition. A no-output call must therefore be gated on
+  // has-output and short-circuit BEFORE the freeze / Y feed / join
+  // allocation; otherwise it snapshots the all-None output set, advances Y,
+  // and a later attach-then-retry of row 0 trips ResampleOutputsChanged (the
+  // frozen all-None set no longer matches) or OutOfSequenceRow (Y already at
+  // row 1). With no output attached, processing a row must be a no-op Ok,
+  // and a subsequent row 0 after attaching an output must succeed.
+  let y = [50u8; SRC];
+  let u = [128u8; SRC / 2];
+  let v = [128u8; SRC / 2];
+  let mut sink = downscaled().with_native(true);
+  sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+  sink
+    .process(Yuv420pRow::new(&y, &u, &v, 0, ColorMatrix::Bt601, true))
+    .expect("a no-output native row must be a no-op Ok");
+  let mut luma = vec![0u8; OUT * OUT];
+  sink.set_luma(&mut luma).unwrap();
+  sink
+    .process(Yuv420pRow::new(&y, &u, &v, 0, ColorMatrix::Bt601, true))
+    .expect("row 0 must succeed after a no-output native call (no poisoned snapshot)");
+}
+
+#[test]
 fn mid_frame_output_reconfiguration_rejected_atomically() {
   use crate::source::Yuv420pRow;
 

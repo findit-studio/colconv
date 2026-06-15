@@ -66,6 +66,26 @@ fn mono_luma_resample(
     || rgba_u16.is_some()
     || hsv.is_some();
 
+  // No-output call: nothing to sequence, stays a no-op (no freeze, no
+  // allocation) regardless of the row index — and stores no frozen-output
+  // snapshot that a later attach-then-retry would trip on.
+  if !any_output {
+    return Ok(());
+  }
+
+  // Sequence-check before the freeze (single luma stream — it advances
+  // every row regardless of which outputs are attached, so a mid-frame
+  // attach never spins a fresh row-0 stream): an out-of-sequence row is
+  // rejected before the freeze, so a rejected row stores no snapshot that
+  // would poison a retry, and before any allocation, so AllocationFailed
+  // never masks OutOfSequenceRow.
+  let expected = luma_stream.as_ref().map_or(0, |stream| stream.next_y());
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+
   frozen_outputs_check(
     resample_outputs,
     luma,
@@ -83,23 +103,6 @@ fn mono_luma_resample(
     &None,
     idx,
   )?;
-
-  // Sequence-check before allocating (mirrors the planar / packed-RGB
-  // helpers): a fresh stream expects row 0, so an out-of-sequence first
-  // row is rejected before the output-width buffers or the source-width
-  // scratch are created, and AllocationFailed never masks
-  // OutOfSequenceRow. A no-output call has no stream to sequence and
-  // stays a no-op regardless of the row index.
-  if any_output {
-    let expected = luma_stream.as_ref().map_or(0, |stream| stream.next_y());
-    if expected != idx {
-      return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
-        OutOfSequenceRow::new(expected, idx),
-      )));
-    }
-  } else {
-    return Ok(());
-  }
 
   if luma_stream.is_none() {
     *luma_stream = Some(AreaStream::new(

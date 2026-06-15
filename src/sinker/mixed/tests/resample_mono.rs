@@ -323,9 +323,13 @@ fn monoblack_resample_no_outputs_is_a_no_op() {
 fn monoblack_resample_begin_frame_resets_stream_sequencing() {
   // `MonoblackRow::new` is crate-private to mediaframe, so a misordered
   // first row cannot be hand-fed to `process` — the out-of-sequence
-  // *rejection* (OutOfSequenceRow) is reachable only through a public
+  // *rejection* (OutOfSequenceRow), and the conditional-ordering
+  // guarantee that a rejected first row stores no frozen-output snapshot
+  // that would poison a row-0 retry, are reachable only through a public
   // row ctor (the macro-generated formats, e.g. the Yuv411p suite, which
-  // shares `mono_luma_resample`'s sequence-check body verbatim). What is
+  // shares `mono_luma_resample`'s sequence-then-freeze body verbatim; the
+  // `..._rejected_first_row_does_not_poison_output_retry` tests on the
+  // single-stream gray paths cover the identical fixed ordering). What is
   // reachable for mono is the positive guarantee the rejection protects:
   // after a full frame advances the stream to `next_y == SRC_H`,
   // `begin_frame` must reset it so the next frame's row 0 is back in

@@ -683,6 +683,37 @@ fn grayf32_out_of_sequence_first_row_rejected_before_allocation() {
 }
 
 #[test]
+fn grayf32_rejected_first_row_does_not_poison_output_retry() {
+  // A rejected out-of-sequence FIRST row must store no frozen-output
+  // snapshot, so retrying row 0 after reconfiguring the output set
+  // succeeds instead of tripping ResampleOutputsChanged.
+  let plane = ramp();
+  let pix = as_le_f32(&plane);
+  let mut luma_f32 = vec![0.0f32; OUT * OUT];
+  let mut sink =
+    MixedSinker::<Grayf32, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+      .unwrap()
+      .with_luma_f32(&mut luma_f32)
+      .unwrap();
+  sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+  let err = sink
+    .process(Grayf32Row::new(&pix[3 * SRC..4 * SRC], 3, M, FR))
+    .unwrap_err();
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(_))
+    ),
+    "expected OutOfSequenceRow, got {err:?}"
+  );
+  let mut rgb_f32 = vec![0.0f32; OUT * OUT * 3];
+  sink.set_rgb_f32(&mut rgb_f32).unwrap();
+  sink
+    .process(Grayf32Row::new(&pix[..SRC], 0, M, FR))
+    .expect("row 0 must succeed after a rejected out-of-sequence first row");
+}
+
+#[test]
 fn grayf32_resample_rejects_mid_frame_out_of_sequence() {
   let plane = ramp();
   let pix = as_le_f32(&plane);

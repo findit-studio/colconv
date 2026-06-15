@@ -484,8 +484,36 @@ pub(super) fn yuv420p_process_native(
   use_simd: bool,
 ) -> Result<(), MixedSinkerError> {
   let ow = plan.out_w();
+  let need_luma = luma.is_some() || luma_u16.is_some();
   let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
 
+  // No-output call: nothing is attached, so there is nothing to sequence
+  // and stays a no-op regardless of the row index — returned before the
+  // freeze, the Y-stream sequence check, and the join allocation so it
+  // stores no frozen-output snapshot that a later attach-then-retry would
+  // trip on. The Y stream is bound to has-output here, not always fed: a
+  // no-output row must not advance it (otherwise the snapshot taken on the
+  // first output-bearing row of a retry mismatches the rejected no-output
+  // row's frozen-as-absent set). Mirrors the resampled twin
+  // (`yuv420p_process_resampled`) and every other multi-stream preflight.
+  if !need_luma && !need_color {
+    return Ok(());
+  }
+
+  // The native 4:2:0 path bins the Y plane on every output-bearing row
+  // (luma is implicit), so the Y stream is the canonical per-row sequence
+  // counter. On the first row of a frame nothing is frozen yet, so reject
+  // an out-of-sequence row here — before the freeze — so a rejected first
+  // row stores no snapshot that would poison a retry. A later row runs the
+  // freeze first (below), so a mid-frame output-set change is reported as
+  // ResampleOutputsChanged rather than masked by the join being rebuilt at
+  // row 0.
+  let expected = native_420.as_ref().map_or(0, |join| join.y.next_y());
+  if resample_outputs.is_none() && expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
   frozen_outputs_check(
     resample_outputs,
     luma,
@@ -661,6 +689,30 @@ pub(super) fn yuv420p_process_resampled(
   // Atomic preflight: every fallible step runs before any stream is
   // fed, so a failed call mutates no caller output and the frame can
   // restart via begin_frame.
+  //
+  // Single sequence check, on whichever stream is fed every row (all
+  // attached streams advance in lockstep). A no-output call has no stream
+  // to sequence and stays a no-op regardless of the row index — returned
+  // before the freeze so it stores no snapshot a later attach-then-retry
+  // would trip on.
+  let expected = if need_luma {
+    luma_stream.as_ref().map_or(0, |stream| stream.next_y())
+  } else if need_color {
+    rgb_stream.as_ref().map_or(0, |stream| stream.next_y())
+  } else {
+    return Ok(());
+  };
+  // First row: reject an out-of-sequence row BEFORE the freeze, so a
+  // rejected first row stores no snapshot that would poison a retry. On a
+  // later row the freeze runs first (below), so a mid-frame output-set
+  // change is reported as ResampleOutputsChanged rather than masked by a
+  // freshly-attached stream's row-0 sequence mismatch (a stream attached
+  // mid-frame starts at row 0).
+  if resample_outputs.is_none() && expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
   frozen_outputs_check(
     resample_outputs,
     luma,
@@ -678,20 +730,6 @@ pub(super) fn yuv420p_process_resampled(
     &None,
     idx,
   )?;
-  // Create every requested stream, then check all of them against
-  // this row index; a stream attached mid-frame starts at row 0 and
-  // fails here.
-  // Sequence-check before allocating (mirrors the packed-RGB helpers):
-  // an out-of-sequence first row is rejected before any output-width
-  // buffer is created, so AllocationFailed never masks OutOfSequenceRow.
-  // A no-output call has no stream to sequence and stays a no-op.
-  let expected = if need_luma {
-    luma_stream.as_ref().map_or(0, |stream| stream.next_y())
-  } else if need_color {
-    rgb_stream.as_ref().map_or(0, |stream| stream.next_y())
-  } else {
-    idx
-  };
   if expected != idx {
     return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
       OutOfSequenceRow::new(expected, idx),

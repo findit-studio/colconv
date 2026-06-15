@@ -188,7 +188,16 @@ impl<R> PixelSink for MixedSinker<'_, Gbrp, R> {
     // tail, mirroring the direct path below for parity (RGBA alpha is
     // forced to 0xFF — the 3-plane source has no alpha).
     if let Some(plan) = plan.as_ref() {
-      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, luma_u16, hsv, idx)? {
+      if !packed_rgb_resample_preflight(
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_stream.as_ref().map_or(0, |s| s.next_y()),
+        idx,
+      )? {
         return Ok(());
       }
       let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
@@ -477,7 +486,16 @@ impl<R> PixelSink for MixedSinker<'_, Gbrap, R> {
       // Straight rgb-only (alpha dropped): stage drop-alpha RGB via the
       // 3-plane `gbr_to_rgb_row` and feed the 3-channel tail (luma_u16
       // included, for parity with the direct path).
-      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, luma_u16, hsv, idx)? {
+      if !packed_rgb_resample_preflight(
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_stream.as_ref().map_or(0, |s| s.next_y()),
+        idx,
+      )? {
         return Ok(());
       }
       let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;

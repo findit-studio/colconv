@@ -126,7 +126,16 @@ impl<R> PixelSink for MixedSinker<'_, Bayer, R> {
     if let Some(plan) = plan.as_ref() {
       // `rgba` and `luma_u16` are never attached on a Bayer sink
       // (RGB-only family), so those shared-preflight slots are `&None`.
-      if !packed_rgb_resample_preflight(resample_outputs, rgb, &None, luma, &None, hsv, idx)? {
+      if !packed_rgb_resample_preflight(
+        resample_outputs,
+        rgb,
+        &None,
+        luma,
+        &None,
+        hsv,
+        rgb_stream.as_ref().map_or(0, |s| s.next_y()),
+        idx,
+      )? {
         return Ok(());
       }
       let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;

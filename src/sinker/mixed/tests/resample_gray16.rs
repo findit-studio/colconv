@@ -496,6 +496,37 @@ fn gray16_out_of_sequence_first_row_rejected_before_allocation() {
 }
 
 #[test]
+fn gray16_rejected_first_row_does_not_poison_output_retry() {
+  // A rejected out-of-sequence FIRST row must store no frozen-output
+  // snapshot, so retrying row 0 after reconfiguring the output set
+  // succeeds instead of tripping ResampleOutputsChanged.
+  let plane = ramp();
+  let pix = as_le_u16(&plane);
+  let mut luma_u16 = vec![0u16; OUT * OUT];
+  let mut sink =
+    MixedSinker::<Gray16, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+      .unwrap()
+      .with_luma_u16(&mut luma_u16)
+      .unwrap();
+  sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+  let err = sink
+    .process(Gray16Row::new(&pix[3 * SRC..4 * SRC], 3, M, FR))
+    .unwrap_err();
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(_))
+    ),
+    "expected OutOfSequenceRow, got {err:?}"
+  );
+  let mut rgb_u16 = vec![0u16; OUT * OUT * 3];
+  sink.set_rgb_u16(&mut rgb_u16).unwrap();
+  sink
+    .process(Gray16Row::new(&pix[..SRC], 0, M, FR))
+    .expect("row 0 must succeed after a rejected out-of-sequence first row");
+}
+
+#[test]
 fn gray16_resample_rejects_mid_frame_out_of_sequence() {
   let plane = ramp();
   let pix = as_le_u16(&plane);

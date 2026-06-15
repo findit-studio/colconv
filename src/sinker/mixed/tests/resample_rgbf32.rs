@@ -333,6 +333,48 @@ fn rgbf32_out_of_sequence_first_row_rejected_before_allocation() {
 }
 
 #[test]
+fn rgbf32_rejected_first_row_does_not_poison_output_retry() {
+  // A rejected out-of-sequence FIRST row must store no frozen-output
+  // snapshot (the split packed-float-RGB preflight rejects the OOS first
+  // row before its freeze), so retrying row 0 after attaching a new output
+  // succeeds instead of tripping ResampleOutputsChanged.
+  let host = packed_frame_f32();
+  let wire = as_le_rgbf32(&host);
+  let mut rgb_f32 = vec![0.0f32; OUT * OUT * 3];
+  let mut sink =
+    MixedSinker::<Rgbf32, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+      .unwrap()
+      .with_rgb_f32(&mut rgb_f32)
+      .unwrap();
+  sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+  let err = sink
+    .process(Rgbf32Row::new(
+      &wire[3 * SRC * 3..4 * SRC * 3],
+      3,
+      ColorMatrix::Bt709,
+      true,
+    ))
+    .unwrap_err();
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(_))
+    ),
+    "expected OutOfSequenceRow, got {err:?}"
+  );
+  let mut luma = vec![0u8; OUT * OUT];
+  sink.set_luma(&mut luma).unwrap();
+  sink
+    .process(Rgbf32Row::new(
+      &wire[..SRC * 3],
+      0,
+      ColorMatrix::Bt709,
+      true,
+    ))
+    .expect("row 0 must succeed after a rejected out-of-sequence first row");
+}
+
+#[test]
 fn rgbf32_mid_frame_out_of_sequence_rejected() {
   let host = packed_frame_f32();
   let wire = as_le_rgbf32(&host);

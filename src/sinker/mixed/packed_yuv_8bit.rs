@@ -116,6 +116,29 @@ fn packed_yuv422_dual_resample(
   let need_luma = luma.is_some() || luma_u16.is_some();
   let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
 
+  // Single sequence check, on whichever stream is fed every row (all
+  // attached streams advance in lockstep). A no-output call (neither luma
+  // nor color) has no stream to sequence and stays a no-op regardless of
+  // the row index — returned before the freeze so it stores no snapshot a
+  // later attach-then-retry would trip on.
+  let expected = if need_luma {
+    luma_stream.as_ref().map_or(0, |stream| stream.next_y())
+  } else if need_color {
+    rgb_stream.as_ref().map_or(0, |stream| stream.next_y())
+  } else {
+    return Ok(());
+  };
+  // First row: reject an out-of-sequence row BEFORE the freeze, so a
+  // rejected first row stores no snapshot that would poison a retry. On a
+  // later row the freeze runs first (below), so a mid-frame output-set
+  // change is reported as ResampleOutputsChanged rather than masked by a
+  // freshly-attached stream's row-0 sequence mismatch (attaching a luma or
+  // colour output mid-frame spins that stream fresh at row 0).
+  if resample_outputs.is_none() && expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
   frozen_outputs_check(
     resample_outputs,
     luma,
@@ -133,19 +156,6 @@ fn packed_yuv422_dual_resample(
     &None,
     idx,
   )?;
-  // Sequence-check before allocating (mirrors the planar / packed-RGB
-  // helpers): a fresh stream expects row 0, so an out-of-sequence first
-  // row is rejected before any output-width buffer or source-width
-  // scratch is created, and AllocationFailed never masks
-  // OutOfSequenceRow. A no-output call (neither luma nor color) has no
-  // stream to sequence and stays a no-op regardless of the row index.
-  let expected = if need_luma {
-    luma_stream.as_ref().map_or(0, |stream| stream.next_y())
-  } else if need_color {
-    rgb_stream.as_ref().map_or(0, |stream| stream.next_y())
-  } else {
-    idx
-  };
   if expected != idx {
     return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
       OutOfSequenceRow::new(expected, idx),

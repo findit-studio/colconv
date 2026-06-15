@@ -285,6 +285,7 @@ macro_rules! impl_gbrp_high_bit {
             rgba_u16,
             luma_u16,
             hsv,
+            rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
             idx,
           )? {
             return Ok(());
@@ -691,6 +692,7 @@ macro_rules! impl_gbrap_high_bit {
             rgba_u16,
             luma_u16,
             hsv,
+            rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
             idx,
           )? {
             return Ok(());

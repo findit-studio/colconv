@@ -486,6 +486,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Xyz12<BE>, R> {
         rgb_f16,
         rgba_f16,
         hsv,
+        xyz_stream_f32.as_ref().map_or(0, |s| s.next_y()),
         idx,
       )? {
         return Ok(());
