@@ -223,6 +223,7 @@ pub(crate) fn rgb_to_luma_u16_row(
   any(
     feature = "rgb",
     feature = "gbr",
+    feature = "gray",
     feature = "yuv-444-packed",
     feature = "y2xx",
     feature = "v210"

@@ -467,16 +467,24 @@ impl<R> PixelSink for MixedSinker<'_, Rgba, R> {
       // 3-channel route), so a flip can neither reroute nor mix modes.
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
       if rgba.is_some() || alpha_mode.is_premultiplied() {
-        return packed_rgba_resample(
+        return packed_rgba_resample::<false>(
           rgba_stream,
+          // No native-Y luma stream: these packed-RGBA sources are
+          // chromatic, so luma is color-derived (`NATIVE_Y_LUMA = false`)
+          // and the Y stream / scratch / de-interleave are inert.
+          &mut None,
           resample_outputs,
           rgb,
           rgba,
+          // 8-bit packed RGBA sources expose no u16 RGB outputs.
+          &mut None,
+          &mut None,
           luma,
           &mut None,
           hsv,
           rgba_scratch,
           rgb_scratch,
+          &mut std::vec::Vec::new(),
           w,
           plan,
           idx,
@@ -485,6 +493,7 @@ impl<R> PixelSink for MixedSinker<'_, Rgba, R> {
           row.matrix(),
           row.full_range(),
           |dst| dst.copy_from_slice(row.rgba()),
+          |_| {},
         );
       }
       if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, &None, hsv, idx)? {
@@ -656,16 +665,24 @@ impl<R> PixelSink for MixedSinker<'_, Bgra, R> {
       // 3-channel route), so a flip can neither reroute nor mix modes.
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
       if rgba.is_some() || alpha_mode.is_premultiplied() {
-        return packed_rgba_resample(
+        return packed_rgba_resample::<false>(
           rgba_stream,
+          // No native-Y luma stream: these packed-RGBA sources are
+          // chromatic, so luma is color-derived (`NATIVE_Y_LUMA = false`)
+          // and the Y stream / scratch / de-interleave are inert.
+          &mut None,
           resample_outputs,
           rgb,
           rgba,
+          // 8-bit packed RGBA sources expose no u16 RGB outputs.
+          &mut None,
+          &mut None,
           luma,
           &mut None,
           hsv,
           rgba_scratch,
           rgb_scratch,
+          &mut std::vec::Vec::new(),
           w,
           plan,
           idx,
@@ -674,6 +691,7 @@ impl<R> PixelSink for MixedSinker<'_, Bgra, R> {
           row.matrix(),
           row.full_range(),
           |dst| bgra_to_rgba_row(row.bgra(), dst, w, use_simd),
+          |_| {},
         );
       }
       if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, &None, hsv, idx)? {
@@ -845,16 +863,24 @@ impl<R> PixelSink for MixedSinker<'_, Argb, R> {
       // 3-channel route), so a flip can neither reroute nor mix modes.
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
       if rgba.is_some() || alpha_mode.is_premultiplied() {
-        return packed_rgba_resample(
+        return packed_rgba_resample::<false>(
           rgba_stream,
+          // No native-Y luma stream: these packed-RGBA sources are
+          // chromatic, so luma is color-derived (`NATIVE_Y_LUMA = false`)
+          // and the Y stream / scratch / de-interleave are inert.
+          &mut None,
           resample_outputs,
           rgb,
           rgba,
+          // 8-bit packed RGBA sources expose no u16 RGB outputs.
+          &mut None,
+          &mut None,
           luma,
           &mut None,
           hsv,
           rgba_scratch,
           rgb_scratch,
+          &mut std::vec::Vec::new(),
           w,
           plan,
           idx,
@@ -863,6 +889,7 @@ impl<R> PixelSink for MixedSinker<'_, Argb, R> {
           row.matrix(),
           row.full_range(),
           |dst| argb_to_rgba_row(row.argb(), dst, w, use_simd),
+          |_| {},
         );
       }
       if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, &None, hsv, idx)? {
@@ -1034,16 +1061,24 @@ impl<R> PixelSink for MixedSinker<'_, Abgr, R> {
       // 3-channel route), so a flip can neither reroute nor mix modes.
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
       if rgba.is_some() || alpha_mode.is_premultiplied() {
-        return packed_rgba_resample(
+        return packed_rgba_resample::<false>(
           rgba_stream,
+          // No native-Y luma stream: these packed-RGBA sources are
+          // chromatic, so luma is color-derived (`NATIVE_Y_LUMA = false`)
+          // and the Y stream / scratch / de-interleave are inert.
+          &mut None,
           resample_outputs,
           rgb,
           rgba,
+          // 8-bit packed RGBA sources expose no u16 RGB outputs.
+          &mut None,
+          &mut None,
           luma,
           &mut None,
           hsv,
           rgba_scratch,
           rgb_scratch,
+          &mut std::vec::Vec::new(),
           w,
           plan,
           idx,
@@ -1052,6 +1087,7 @@ impl<R> PixelSink for MixedSinker<'_, Abgr, R> {
           row.matrix(),
           row.full_range(),
           |dst| abgr_to_rgba_row(row.abgr(), dst, w, use_simd),
+          |_| {},
         );
       }
       if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, &None, hsv, idx)? {
