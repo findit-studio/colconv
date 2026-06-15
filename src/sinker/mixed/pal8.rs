@@ -23,11 +23,24 @@
 //! from the RGBA buffer. This avoids a second palette lookup.
 //!
 //! The same Strategy A+ applies to `with_rgb_u16 + with_rgba_u16`.
+//!
+//! ## Fused area-resample
+//!
+//! Averaging palette *indices* is meaningless, so a non-identity plan
+//! expands each pixel to its palette color (`pal8_to_rgba_row`) and bins
+//! THAT — convert-then-bin, byte-identical to a direct full-res `Pal8`
+//! conversion followed by an area-bin. The canonical `[R, G, B, A]` row
+//! feeds the alpha-aware 4-channel `pal8_rgba_resample` tail (shared
+//! `rgba_stream` / `rgba_scratch`, no Pal8-specific fields), which keeps
+//! the identity path's derivations: Q8 luma over the binned RGB and the
+//! `(x << 8) | x` u16 widening (not the matrix-luma / zero-extension the
+//! genuinely-chromatic packed-RGBA tail uses).
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgb_row_to_luma_row,
-  rgb_row_to_luma_u16_row, rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  RowShapeMismatch, RowSlice, check_dimensions_match, check_frozen_alpha_mode, pal8_rgba_resample,
+  rgb_row_buf_or_scratch, rgb_row_to_luma_row, rgb_row_to_luma_u16_row, rgba_plane_row_slice,
+  rgba_u16_plane_row_slice,
 };
 use crate::{
   PixelSink,
@@ -134,16 +147,31 @@ impl<'a, R> MixedSinker<'a, Pal8, R> {
 
 // ---- Sink trait impl -------------------------------------------------------
 
-impl Pal8Sink for MixedSinker<'_, Pal8> {}
+impl<R> Pal8Sink for MixedSinker<'_, Pal8, R> {}
 
 // ---- PixelSink impl --------------------------------------------------------
+//
+// `Pal8` lives under the `mono` feature, and the resample engine's gate is an
+// `any(...)` that already includes `mono` — so whenever this sink exists the
+// engine is present too. No engine-absent fence is needed (unlike
+// `rgb-float`, whose feature does not pull the engine): the sink accepts any
+// resampler `R` and routes a non-identity plan through `pal8_rgba_resample`.
 
-impl PixelSink for MixedSinker<'_, Pal8> {
+impl<R> PixelSink for MixedSinker<'_, Pal8, R> {
   type Input<'r> = Pal8Row<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    // New frame: restart the 4-channel RGBA color stream (lazily created
+    // in `process`) and re-arm the alpha-mode snapshot, mirroring the
+    // alpha-aware packed-RGBA / Ya8 sinks.
+    if let Some(stream) = self.rgba_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
+    Ok(())
   }
 
   fn process(&mut self, row: Pal8Row<'_>) -> Result<(), Self::Error> {
@@ -172,6 +200,60 @@ impl PixelSink for MixedSinker<'_, Pal8> {
     // Capture Copy fields before the `Self { .. }` destructure to avoid
     // re-borrowing `self` inside the luma path.
     let luma_coeffs_q8 = self.luma_coefficients_q8;
+
+    // Non-identity plan: averaging palette *indices* is meaningless, so the
+    // only sensible area-resample is to expand each pixel to its palette
+    // color (`pal8_to_rgba_row`, real per-entry alpha) and bin THAT — which
+    // is byte-identical to a direct full-res Pal8 -> RGBA convert followed by
+    // an area-bin of the color. Route the same alpha-aware 4-channel tail
+    // the packed-RGBA / Ya8 sources take; luma stays Q8-coefficient-derived
+    // (the direct Pal8 derivation, no matrix/range) and the u16 outputs keep
+    // the direct `(x << 8) | x` full-range widening.
+    if self.plan.is_some() {
+      let alpha_mode = self.alpha_mode;
+      let Self {
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgba_scratch,
+        rgb_scratch,
+        plan,
+        rgba_stream,
+        resample_outputs,
+        frozen_alpha_mode,
+        ..
+      } = self;
+      let plan = plan.as_ref().expect("plan.is_some() checked above");
+      // Snapshotted at begin_frame; reject a mid-frame change before the
+      // single binning route runs.
+      check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
+      let palette = row.palette();
+      let indices = row.row();
+      return pal8_rgba_resample(
+        rgba_stream,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgba_scratch,
+        rgb_scratch,
+        w,
+        plan,
+        idx,
+        use_simd,
+        alpha_mode,
+        luma_coeffs_q8,
+        |dst| pal8_to_rgba_row(indices, palette, dst, use_simd),
+      );
+    }
 
     let Self {
       rgb,
