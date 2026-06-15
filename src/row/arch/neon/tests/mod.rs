@@ -65,7 +65,7 @@ mod yuva;
 
 /// Interleaves per‑pair U, V samples into P010's semi‑planar UV
 /// layout: `[U0, V0, U1, V1, …]`.
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg(feature = "yuv-semi-planar")]
 pub(super) fn p010_uv_interleave(u: &[u16], v: &[u16]) -> std::vec::Vec<u16> {
   let pairs = u.len();
   debug_assert_eq!(u.len(), v.len());
@@ -85,7 +85,7 @@ pub(super) fn planar_n_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec
     .collect()
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg(feature = "yuv-semi-planar")]
 pub(super) fn p_n_packed_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
   let mask = (1u32 << BITS) - 1;
   let shift = 16 - BITS;
@@ -103,7 +103,7 @@ pub(super) fn p16_plane_neon(n: usize, seed: usize) -> std::vec::Vec<u16> {
 
 /// Generates a high-bit-packed `u16` plane: random `BITS`-bit values
 /// shifted left by `16 - BITS` (P410/P412 convention).
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar", feature = "yuva",))]
+#[cfg(feature = "yuv-semi-planar")]
 pub(super) fn high_bit_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
   let mask = ((1u32 << BITS) - 1) as u16;
   let shift = 16 - BITS;
@@ -112,7 +112,7 @@ pub(super) fn high_bit_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec
     .collect()
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar", feature = "yuva",))]
+#[cfg(feature = "yuv-semi-planar")]
 pub(super) fn interleave_uv(u_full: &[u16], v_full: &[u16]) -> std::vec::Vec<u16> {
   debug_assert_eq!(u_full.len(), v_full.len());
   let mut out = std::vec::Vec::with_capacity(u_full.len() * 2);

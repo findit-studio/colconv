@@ -15,10 +15,11 @@
 
 use crate::row::neon_available;
 
-use super::{
-  super::*, high_bit_plane, interleave_uv, p_n_packed_plane, p010_uv_interleave, p16_plane_neon,
-  planar_n_plane,
-};
+use super::{super::*, p16_plane_neon, planar_n_plane};
+// Semi-planar (`p_n` / `p_n_444`) BE-parity helpers — used only by the
+// `yuv-semi-planar`-gated tests below.
+#[cfg(feature = "yuv-semi-planar")]
+use super::{high_bit_plane, interleave_uv, p_n_packed_plane, p010_uv_interleave};
 
 /// Reinterpret an intended-u16 buffer as host-native `u16` carrying
 /// LE-encoded bytes. On LE hosts this is the identity; on BE hosts it
@@ -268,6 +269,7 @@ fn neon_yuv_444p16_be_parity_u16() {
 // `BE != HOST_NATIVE_BE`, not just `BE`. These regression tests pin that
 // gate against a BE-host miscompile.
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p010_be_parity_u8() {
@@ -293,6 +295,7 @@ fn neon_p010_be_parity_u8() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p012_be_parity_u16() {
@@ -321,6 +324,7 @@ fn neon_p012_be_parity_u16() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p410_be_parity_u8() {
@@ -346,6 +350,7 @@ fn neon_p410_be_parity_u8() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p412_be_parity_u16() {
@@ -381,6 +386,7 @@ fn neon_p412_be_parity_u16() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p016_be_parity_u8() {
@@ -406,6 +412,7 @@ fn neon_p016_be_parity_u8() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p016_be_parity_u16() {
@@ -433,6 +440,7 @@ fn neon_p016_be_parity_u16() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p416_be_parity_u16() {
