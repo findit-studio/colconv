@@ -1433,6 +1433,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "rgb",
     feature = "gbr",
     feature = "gray",
+    feature = "yuva",
     feature = "yuv-444-packed"
   ))]
   rgba_stream: Option<crate::resample::AreaStream<u8>>,
@@ -1451,6 +1452,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "rgb",
     feature = "gbr",
     feature = "gray",
+    feature = "yuva",
     feature = "yuv-444-packed"
   ))]
   rgba_stream_u16: Option<crate::resample::AreaStream<u16>>,
@@ -1465,6 +1467,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "rgb",
     feature = "gbr",
     feature = "gray",
+    feature = "yuva",
     feature = "yuv-444-packed"
   ))]
   frozen_alpha_mode: Option<AlphaMode>,
@@ -1538,6 +1541,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// luma families wire in.
   #[cfg(any(
     feature = "gray",
+    feature = "yuva",
     feature = "yuv-444-packed",
     feature = "y2xx",
     feature = "v210"
@@ -1675,6 +1679,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "rgb",
     feature = "gbr",
     feature = "gray",
+    feature = "yuva",
     feature = "yuv-444-packed"
   ))]
   rgba_scratch: Vec<u8>,
@@ -1690,6 +1695,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "rgb",
     feature = "gbr",
     feature = "gray",
+    feature = "yuva",
     feature = "yuv-444-packed"
   ))]
   rgba_scratch_u16: Vec<u16>,
@@ -1706,6 +1712,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "rgb",
     feature = "gbr",
     feature = "gray",
+    feature = "yuva",
     feature = "yuv-444-packed"
   ))]
   rgba_color_scratch_u16: Vec<u16>,
@@ -1720,6 +1727,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// `yuv-444-packed` / `y2xx` / `v210`.
   #[cfg(any(
     feature = "gray",
+    feature = "yuva",
     feature = "yuv-444-packed",
     feature = "y2xx",
     feature = "v210"
@@ -2253,6 +2261,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "rgb",
         feature = "gbr",
         feature = "gray",
+        feature = "yuva",
         feature = "yuv-444-packed"
       ))]
       rgba_stream: None,
@@ -2260,6 +2269,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "rgb",
         feature = "gbr",
         feature = "gray",
+        feature = "yuva",
         feature = "yuv-444-packed"
       ))]
       rgba_stream_u16: None,
@@ -2267,6 +2277,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "rgb",
         feature = "gbr",
         feature = "gray",
+        feature = "yuva",
         feature = "yuv-444-packed"
       ))]
       frozen_alpha_mode: None,
@@ -2297,6 +2308,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       luma_stream: None,
       #[cfg(any(
         feature = "gray",
+        feature = "yuva",
         feature = "yuv-444-packed",
         feature = "y2xx",
         feature = "v210"
@@ -2361,6 +2373,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "rgb",
         feature = "gbr",
         feature = "gray",
+        feature = "yuva",
         feature = "yuv-444-packed"
       ))]
       rgba_scratch: Vec::new(),
@@ -2368,6 +2381,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "rgb",
         feature = "gbr",
         feature = "gray",
+        feature = "yuva",
         feature = "yuv-444-packed"
       ))]
       rgba_scratch_u16: Vec::new(),
@@ -2375,11 +2389,13 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "rgb",
         feature = "gbr",
         feature = "gray",
+        feature = "yuva",
         feature = "yuv-444-packed"
       ))]
       rgba_color_scratch_u16: Vec::new(),
       #[cfg(any(
         feature = "gray",
+        feature = "yuva",
         feature = "yuv-444-packed",
         feature = "y2xx",
         feature = "v210"
@@ -3548,6 +3564,7 @@ pub(super) fn source_luma_scratch<'s>(
 /// path is inert — still link.
 #[cfg(any(
   feature = "gray",
+  feature = "yuva",
   feature = "yuv-444-packed",
   feature = "y2xx",
   feature = "v210",
@@ -4036,6 +4053,7 @@ pub(super) fn packed_rgb_u16_resample_emit<const SRC_BITS: u32, const NATIVE_LUM
   feature = "rgb",
   feature = "gbr",
   feature = "gray",
+  feature = "yuva",
   feature = "yuv-444-packed"
 ))]
 pub(super) fn source_rgba_scratch<'s>(
@@ -4075,6 +4093,7 @@ pub(super) fn source_rgba_scratch<'s>(
   feature = "rgb",
   feature = "gbr",
   feature = "gray",
+  feature = "yuva",
   feature = "yuv-444-packed"
 ))]
 pub(super) fn source_rgba_u16_scratch<'s>(
@@ -4116,6 +4135,7 @@ pub(super) fn source_rgba_u16_scratch<'s>(
   feature = "rgb",
   feature = "gbr",
   feature = "gray",
+  feature = "yuva",
   feature = "yuv-444-packed"
 ))]
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -4143,6 +4163,7 @@ where
   feature = "rgb",
   feature = "gbr",
   feature = "gray",
+  feature = "yuva",
   feature = "yuv-444-packed"
 ))]
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -4160,6 +4181,7 @@ fn unpremultiply_channel(pm: u32, a: u32, max: u32) -> u32 {
   feature = "rgb",
   feature = "gbr",
   feature = "gray",
+  feature = "yuva",
   feature = "yuv-444-packed"
 ))]
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -4188,6 +4210,7 @@ where
   feature = "rgb",
   feature = "gbr",
   feature = "gray",
+  feature = "yuva",
   feature = "yuv-444-packed"
 ))]
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -4214,6 +4237,7 @@ where
   feature = "rgb",
   feature = "gbr",
   feature = "gray",
+  feature = "yuva",
   feature = "yuv-444-packed"
 ))]
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -4239,6 +4263,7 @@ fn drop_alpha_rgba_to_rgb_row<T: Copy>(rgba: &[T], dst: &mut [T], width: usize) 
   feature = "rgb",
   feature = "gbr",
   feature = "gray",
+  feature = "yuva",
   feature = "yuv-444-packed"
 ))]
 pub(super) fn check_frozen_alpha_mode(
@@ -5153,7 +5178,7 @@ pub(super) fn packed_yuv444_triple_resample<const SRC_BITS: u32>(
 /// and before the first feed, so a failure mutates no caller output. The
 /// alpha mode is snapshotted at `begin_frame` and checked by the caller
 /// (via [`check_frozen_alpha_mode`]) before this tail runs.
-#[cfg(feature = "yuv-444-packed")]
+#[cfg(any(feature = "yuv-444-packed", feature = "yuva"))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_yuva444_resample<const SRC_BITS: u32>(
   rgba_stream: &mut Option<crate::resample::AreaStream<u8>>,
