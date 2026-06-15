@@ -445,16 +445,24 @@ impl<R> PixelSink for MixedSinker<'_, Gbrap, R> {
       // 3-channel route), so a flip can neither reroute nor mix modes.
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
       if rgba.is_some() || alpha_mode.is_premultiplied() {
-        return packed_rgba_resample(
+        return packed_rgba_resample::<false>(
           rgba_stream,
+          // No native-Y luma stream: `Gbrap8` luma is color-derived
+          // (`NATIVE_Y_LUMA = false`), so the Y stream / scratch /
+          // de-interleave are inert placeholders.
+          &mut None,
           resample_outputs,
           rgb,
           rgba,
+          // Gbrap has no u16 RGB outputs (8-bit planar source).
+          &mut None,
+          &mut None,
           luma,
           luma_u16,
           hsv,
           rgba_scratch,
           rgb_scratch,
+          &mut std::vec::Vec::new(),
           w,
           plan,
           idx,
@@ -463,6 +471,7 @@ impl<R> PixelSink for MixedSinker<'_, Gbrap, R> {
           row.matrix(),
           row.full_range(),
           |dst| gbra_to_rgba_row(g_in, b_in, r_in, a_in, dst, w, use_simd),
+          |_| {},
         );
       }
       // Straight rgb-only (alpha dropped): stage drop-alpha RGB via the

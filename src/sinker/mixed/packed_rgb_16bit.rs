@@ -770,8 +770,12 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>, R> {
       // 3-channel route), so a flip can neither reroute nor mix modes.
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
       if rgba.is_some() || rgba_u16.is_some() || alpha_mode.is_premultiplied() {
-        return packed_rgba_u16_resample::<16, false>(
+        return packed_rgba_u16_resample::<16, false, false>(
           rgba_stream_u16,
+          // No native-Y luma stream: `Rgba64` / `Bgra64` are chromatic, so
+          // luma is color-derived (`NATIVE_Y_LUMA = false`) and the Y stream
+          // / scratch / de-interleave are inert placeholders.
+          &mut None,
           resample_outputs,
           rgb,
           rgba,
@@ -784,6 +788,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>, R> {
           rgba_color_scratch_u16,
           rgb_scratch,
           rgb_scratch_u16,
+          &mut std::vec::Vec::new(),
           w,
           plan,
           idx,
@@ -792,6 +797,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>, R> {
           matrix,
           full_range,
           |dst| crate::row::rgba64_to_rgba_u16_row_endian::<BE>(in64, dst, w, use_simd),
+          |_| {},
         );
       }
       if !packed_rgb_u16_resample_preflight(
@@ -1152,8 +1158,12 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Bgra64<BE>, R> {
       // 3-channel route), so a flip can neither reroute nor mix modes.
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
       if rgba.is_some() || rgba_u16.is_some() || alpha_mode.is_premultiplied() {
-        return packed_rgba_u16_resample::<16, false>(
+        return packed_rgba_u16_resample::<16, false, false>(
           rgba_stream_u16,
+          // No native-Y luma stream: `Rgba64` / `Bgra64` are chromatic, so
+          // luma is color-derived (`NATIVE_Y_LUMA = false`) and the Y stream
+          // / scratch / de-interleave are inert placeholders.
+          &mut None,
           resample_outputs,
           rgb,
           rgba,
@@ -1166,6 +1176,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Bgra64<BE>, R> {
           rgba_color_scratch_u16,
           rgb_scratch,
           rgb_scratch_u16,
+          &mut std::vec::Vec::new(),
           w,
           plan,
           idx,
@@ -1174,6 +1185,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Bgra64<BE>, R> {
           matrix,
           full_range,
           |dst| crate::row::bgra64_to_rgba_u16_row_endian::<BE>(in64, dst, w, use_simd),
+          |_| {},
         );
       }
       if !packed_rgb_u16_resample_preflight(
