@@ -18,38 +18,58 @@
 use crate::{
   ColorMatrix,
   frame::{
-    P010BeFrame, P010LeFrame, P012BeFrame, P012LeFrame, P016BeFrame, P016LeFrame, P210BeFrame,
-    P210LeFrame, P212BeFrame, P212LeFrame, P216BeFrame, P216LeFrame, P410BeFrame, P410LeFrame,
-    P412BeFrame, P412LeFrame, P416BeFrame, P416LeFrame, Yuv420p9BeFrame, Yuv420p9LeFrame,
-    Yuv420p10BeFrame, Yuv420p10LeFrame, Yuv420p12BeFrame, Yuv420p12LeFrame, Yuv420p14BeFrame,
-    Yuv420p14LeFrame, Yuv420p16BeFrame, Yuv420p16LeFrame, Yuv422p9BeFrame, Yuv422p9LeFrame,
-    Yuv422p10BeFrame, Yuv422p10LeFrame, Yuv422p12BeFrame, Yuv422p12LeFrame, Yuv422p14BeFrame,
-    Yuv422p14LeFrame, Yuv422p16BeFrame, Yuv422p16LeFrame, Yuv440p10BeFrame, Yuv440p10LeFrame,
-    Yuv440p12BeFrame, Yuv440p12LeFrame, Yuv444p9BeFrame, Yuv444p9LeFrame, Yuv444p10BeFrame,
-    Yuv444p10LeFrame, Yuv444p12BeFrame, Yuv444p12LeFrame, Yuv444p14BeFrame, Yuv444p14LeFrame,
-    Yuv444p16BeFrame, Yuv444p16LeFrame, Yuva420p9BeFrame, Yuva420p9LeFrame, Yuva420p10BeFrame,
-    Yuva420p10LeFrame, Yuva420p16BeFrame, Yuva420p16LeFrame, Yuva422p9BeFrame, Yuva422p9LeFrame,
-    Yuva422p10BeFrame, Yuva422p10LeFrame, Yuva422p12BeFrame, Yuva422p12LeFrame, Yuva422p16BeFrame,
-    Yuva422p16LeFrame, Yuva444p9BeFrame, Yuva444p9LeFrame, Yuva444p10BeFrame, Yuva444p10LeFrame,
-    Yuva444p12BeFrame, Yuva444p12LeFrame, Yuva444p14BeFrame, Yuva444p14LeFrame, Yuva444p16BeFrame,
-    Yuva444p16LeFrame,
+    Yuv420p9BeFrame, Yuv420p9LeFrame, Yuv420p10BeFrame, Yuv420p10LeFrame, Yuv420p12BeFrame,
+    Yuv420p12LeFrame, Yuv420p14BeFrame, Yuv420p14LeFrame, Yuv420p16BeFrame, Yuv420p16LeFrame,
+    Yuv422p9BeFrame, Yuv422p9LeFrame, Yuv422p10BeFrame, Yuv422p10LeFrame, Yuv422p12BeFrame,
+    Yuv422p12LeFrame, Yuv422p14BeFrame, Yuv422p14LeFrame, Yuv422p16BeFrame, Yuv422p16LeFrame,
+    Yuv440p10BeFrame, Yuv440p10LeFrame, Yuv440p12BeFrame, Yuv440p12LeFrame, Yuv444p9BeFrame,
+    Yuv444p9LeFrame, Yuv444p10BeFrame, Yuv444p10LeFrame, Yuv444p12BeFrame, Yuv444p12LeFrame,
+    Yuv444p14BeFrame, Yuv444p14LeFrame, Yuv444p16BeFrame, Yuv444p16LeFrame,
   },
   sinker::mixed::MixedSinker,
   source::{
-    P010, P012, P016, P210, P212, P216, P410, P412, P416, Yuv420p9, Yuv420p10, Yuv420p12,
-    Yuv420p14, Yuv420p16, Yuv422p9, Yuv422p10, Yuv422p12, Yuv422p14, Yuv422p16, Yuv440p10,
-    Yuv440p12, Yuv444p9, Yuv444p10, Yuv444p12, Yuv444p14, Yuv444p16, Yuva420p9, Yuva420p10,
-    Yuva420p16, Yuva422p9, Yuva422p10, Yuva422p12, Yuva422p16, Yuva444p9, Yuva444p10, Yuva444p12,
-    Yuva444p14, Yuva444p16, p010_to, p010_to_endian, p012_to, p012_to_endian, p016_to,
-    p016_to_endian, p210_to, p210_to_endian, p212_to, p212_to_endian, p216_to, p216_to_endian,
-    p410_to, p410_to_endian, p412_to, p412_to_endian, p416_to, p416_to_endian, yuv420p9_to,
-    yuv420p9_to_endian, yuv420p10_to, yuv420p10_to_endian, yuv420p12_to, yuv420p12_to_endian,
-    yuv420p14_to, yuv420p14_to_endian, yuv420p16_to, yuv420p16_to_endian, yuv422p9_to,
-    yuv422p9_to_endian, yuv422p10_to, yuv422p10_to_endian, yuv422p12_to, yuv422p12_to_endian,
-    yuv422p14_to, yuv422p14_to_endian, yuv422p16_to, yuv422p16_to_endian, yuv440p10_to,
-    yuv440p10_to_endian, yuv440p12_to, yuv440p12_to_endian, yuv444p9_to, yuv444p9_to_endian,
-    yuv444p10_to, yuv444p10_to_endian, yuv444p12_to, yuv444p12_to_endian, yuv444p14_to,
-    yuv444p14_to_endian, yuv444p16_to, yuv444p16_to_endian, yuva420p9_to, yuva420p9_to_endian,
+    Yuv420p9, Yuv420p10, Yuv420p12, Yuv420p14, Yuv420p16, Yuv422p9, Yuv422p10, Yuv422p12,
+    Yuv422p14, Yuv422p16, Yuv440p10, Yuv440p12, Yuv444p9, Yuv444p10, Yuv444p12, Yuv444p14,
+    Yuv444p16, yuv420p9_to, yuv420p9_to_endian, yuv420p10_to, yuv420p10_to_endian, yuv420p12_to,
+    yuv420p12_to_endian, yuv420p14_to, yuv420p14_to_endian, yuv420p16_to, yuv420p16_to_endian,
+    yuv422p9_to, yuv422p9_to_endian, yuv422p10_to, yuv422p10_to_endian, yuv422p12_to,
+    yuv422p12_to_endian, yuv422p14_to, yuv422p14_to_endian, yuv422p16_to, yuv422p16_to_endian,
+    yuv440p10_to, yuv440p10_to_endian, yuv440p12_to, yuv440p12_to_endian, yuv444p9_to,
+    yuv444p9_to_endian, yuv444p10_to, yuv444p10_to_endian, yuv444p12_to, yuv444p12_to_endian,
+    yuv444p14_to, yuv444p14_to_endian, yuv444p16_to, yuv444p16_to_endian,
+  },
+};
+// Semi-planar (`P0xx` / `P2xx` / `P4xx`) frame / source / walker imports —
+// used only by the `yuv-semi-planar`-gated `pn_be_roundtrip_test!`
+// invocations below.
+#[cfg(feature = "yuv-semi-planar")]
+use crate::{
+  frame::{
+    P010BeFrame, P010LeFrame, P012BeFrame, P012LeFrame, P016BeFrame, P016LeFrame, P210BeFrame,
+    P210LeFrame, P212BeFrame, P212LeFrame, P216BeFrame, P216LeFrame, P410BeFrame, P410LeFrame,
+    P412BeFrame, P412LeFrame, P416BeFrame, P416LeFrame,
+  },
+  source::{
+    P010, P012, P016, P210, P212, P216, P410, P412, P416, p010_to, p010_to_endian, p012_to,
+    p012_to_endian, p016_to, p016_to_endian, p210_to, p210_to_endian, p212_to, p212_to_endian,
+    p216_to, p216_to_endian, p410_to, p410_to_endian, p412_to, p412_to_endian, p416_to,
+    p416_to_endian,
+  },
+};
+// YUVA frame / source / walker imports — used only by the `yuva`-gated
+// `planar4_be_roundtrip_test!` invocations below.
+#[cfg(feature = "yuva")]
+use crate::{
+  frame::{
+    Yuva420p9BeFrame, Yuva420p9LeFrame, Yuva420p10BeFrame, Yuva420p10LeFrame, Yuva420p16BeFrame,
+    Yuva420p16LeFrame, Yuva422p9BeFrame, Yuva422p9LeFrame, Yuva422p10BeFrame, Yuva422p10LeFrame,
+    Yuva422p12BeFrame, Yuva422p12LeFrame, Yuva422p16BeFrame, Yuva422p16LeFrame, Yuva444p9BeFrame,
+    Yuva444p9LeFrame, Yuva444p10BeFrame, Yuva444p10LeFrame, Yuva444p12BeFrame, Yuva444p12LeFrame,
+    Yuva444p14BeFrame, Yuva444p14LeFrame, Yuva444p16BeFrame, Yuva444p16LeFrame,
+  },
+  source::{
+    Yuva420p9, Yuva420p10, Yuva420p16, Yuva422p9, Yuva422p10, Yuva422p12, Yuva422p16, Yuva444p9,
+    Yuva444p10, Yuva444p12, Yuva444p14, Yuva444p16, yuva420p9_to, yuva420p9_to_endian,
     yuva420p10_to, yuva420p10_to_endian, yuva420p16_to, yuva420p16_to_endian, yuva422p9_to,
     yuva422p9_to_endian, yuva422p10_to, yuva422p10_to_endian, yuva422p12_to, yuva422p12_to_endian,
     yuva422p16_to, yuva422p16_to_endian, yuva444p9_to, yuva444p9_to_endian, yuva444p10_to,
@@ -291,6 +311,11 @@ planar3_be_roundtrip_test!(
 );
 
 // ---- planar4 (YUVA) high-bit ---------------------------------------------
+//
+// The generated test fns are `yuva`-gated (inside the expansion) so the
+// invocations below stay unconditional while a `yuv-planar`-without-`yuva`
+// build configures out every YUVA fn (and its YUVA-type references) before
+// name resolution.
 
 macro_rules! planar4_be_roundtrip_test {
   (
@@ -305,6 +330,7 @@ macro_rules! planar4_be_roundtrip_test {
     chroma_w_div = $chroma_w_div:expr,
     chroma_h_div = $chroma_h_div:expr,
   ) => {
+    #[cfg(feature = "yuva")]
     #[test]
     fn $name() {
       let w: u32 = 16;
@@ -460,6 +486,7 @@ macro_rules! pn_be_roundtrip_test {
     chroma_w_factor = $chroma_w_factor:expr,
     chroma_h_div = $chroma_h_div:expr,
   ) => {
+    #[cfg(feature = "yuv-semi-planar")]
     #[test]
     fn $name() {
       let w: u32 = 16;
