@@ -151,6 +151,7 @@ fn neon_rgba_matches_scalar_odd_tail_widths() {
 
 // ---- nv12_to_rgb_row equivalence ------------------------------------
 
+#[cfg(feature = "yuv-semi-planar")]
 /// Scalar‑equivalence fixture for NV12. Builds an interleaved UV row
 /// from the same U/V byte sequences used by the yuv420p fixture so a
 /// single NV12 call should produce byte‑identical output to the
@@ -186,6 +187,7 @@ fn check_nv12_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   }
 }
 
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 /// Cross-format equivalence: the NV12 output must match the YUV420P
 /// output when fed the same U / V bytes interleaved. Guards against
 /// any stray deinterleave bug.
@@ -211,6 +213,7 @@ fn check_nv12_matches_yuv420p(width: usize, matrix: ColorMatrix, full_range: boo
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv12_neon_matches_scalar_all_matrices_16() {
@@ -228,12 +231,14 @@ fn nv12_neon_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv12_neon_matches_scalar_width_1920() {
   check_nv12_equivalence(1920, ColorMatrix::Bt709, false);
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv12_neon_matches_scalar_odd_tail_widths() {
@@ -242,6 +247,7 @@ fn nv12_neon_matches_scalar_odd_tail_widths() {
   }
 }
 
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv12_neon_matches_yuv420p_neon() {
@@ -253,6 +259,7 @@ fn nv12_neon_matches_yuv420p_neon() {
 
 // ---- nv21_to_rgb_row equivalence ------------------------------------
 
+#[cfg(feature = "yuv-semi-planar")]
 /// Scalar-equivalence for NV21. Same pseudo-random byte stream as
 /// the NV12 fixture, just handed to the VU-ordered kernel.
 fn check_nv21_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
@@ -286,6 +293,7 @@ fn check_nv21_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 /// Cross-format invariant: NV21 kernel on a VU-swapped byte stream
 /// must produce byte-identical output to the NV12 kernel on the
 /// UV-ordered original — proves the const-generic `SWAP_UV` path
@@ -320,6 +328,7 @@ fn check_nv21_matches_nv12_with_swapped_uv(width: usize, matrix: ColorMatrix, fu
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv21_neon_matches_scalar_all_matrices_16() {
@@ -337,6 +346,7 @@ fn nv21_neon_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv21_neon_matches_scalar_widths() {
@@ -345,6 +355,7 @@ fn nv21_neon_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv21_neon_matches_nv12_swapped() {
@@ -360,6 +371,7 @@ fn nv21_neon_matches_nv12_swapped() {
 // pattern above. Bypasses the dispatcher so the NEON `vst4q_u8`
 // store is exercised regardless of what tier the dispatcher picks.
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv12_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let uv: std::vec::Vec<u8> = (0..width / 2)
@@ -388,6 +400,7 @@ fn check_nv12_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bo
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv21_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let vu: std::vec::Vec<u8> = (0..width / 2)
@@ -416,6 +429,7 @@ fn check_nv21_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bo
   }
 }
 
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 /// Cross-format invariant: NV12 RGBA must match Yuv420p RGBA on
 /// equivalent UV bytes. Catches U/V swap regressions specific to
 /// the new RGBA store path.
@@ -441,6 +455,7 @@ fn check_nv12_rgba_matches_yuv420p_rgba(width: usize, matrix: ColorMatrix, full_
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv12_neon_rgba_matches_scalar_all_matrices_16() {
@@ -458,6 +473,7 @@ fn nv12_neon_rgba_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv12_neon_rgba_matches_scalar_widths() {
@@ -466,6 +482,7 @@ fn nv12_neon_rgba_matches_scalar_widths() {
   }
 }
 
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv12_neon_rgba_matches_yuv420p_rgba_neon() {
@@ -475,6 +492,7 @@ fn nv12_neon_rgba_matches_yuv420p_rgba_neon() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv21_neon_rgba_matches_scalar_all_matrices_16() {
@@ -492,6 +510,7 @@ fn nv21_neon_rgba_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv21_neon_rgba_matches_scalar_widths() {
@@ -502,6 +521,7 @@ fn nv21_neon_rgba_matches_scalar_widths() {
 
 // ---- nv24_to_rgb_row / nv42_to_rgb_row equivalence ------------------
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv24_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   // NV24: 1 UV pair per Y pixel → 2*width bytes.
@@ -534,6 +554,7 @@ fn check_nv24_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv42_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   // NV42: V first, then U (byte-swapped).
@@ -566,6 +587,7 @@ fn check_nv42_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 /// NV42 kernel on a byte-swapped UV stream must match NV24 on the
 /// original — validates the `SWAP_UV` const generic.
 fn check_nv42_matches_nv24_with_swapped_uv(width: usize, matrix: ColorMatrix, full_range: bool) {
@@ -591,6 +613,7 @@ fn check_nv42_matches_nv24_with_swapped_uv(width: usize, matrix: ColorMatrix, fu
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv24_neon_matches_scalar_all_matrices_16() {
@@ -608,6 +631,7 @@ fn nv24_neon_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv24_neon_matches_scalar_widths() {
@@ -619,6 +643,7 @@ fn nv24_neon_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv42_neon_matches_scalar_all_matrices_16() {
@@ -636,6 +661,7 @@ fn nv42_neon_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv42_neon_matches_scalar_widths() {
@@ -644,6 +670,7 @@ fn nv42_neon_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv42_neon_matches_nv24_swapped() {
@@ -655,6 +682,7 @@ fn nv42_neon_matches_nv24_swapped() {
 
 // ---- nv24_to_rgba_row / nv42_to_rgba_row equivalence ----------------
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv24_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let uv: std::vec::Vec<u8> = (0..width)
@@ -683,6 +711,7 @@ fn check_nv24_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bo
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv42_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let vu: std::vec::Vec<u8> = (0..width)
@@ -711,6 +740,7 @@ fn check_nv42_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bo
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv24_neon_rgba_matches_scalar_all_matrices_16() {
@@ -728,6 +758,7 @@ fn nv24_neon_rgba_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv24_neon_rgba_matches_scalar_widths() {
@@ -736,6 +767,7 @@ fn nv24_neon_rgba_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv42_neon_rgba_matches_scalar_all_matrices_16() {
@@ -753,6 +785,7 @@ fn nv42_neon_rgba_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn nv42_neon_rgba_matches_scalar_widths() {
@@ -870,6 +903,7 @@ fn yuv_444_neon_rgba_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "yuva")]
 fn check_yuv_444_rgba_with_alpha_src_equivalence(
   width: usize,
   matrix: ColorMatrix,
@@ -913,6 +947,7 @@ fn check_yuv_444_rgba_with_alpha_src_equivalence(
   );
 }
 
+#[cfg(feature = "yuva")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuva444p_rgba_matches_scalar_all_matrices() {
@@ -930,6 +965,7 @@ fn neon_yuva444p_rgba_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuva")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuva444p_rgba_matches_scalar_widths_and_alpha() {
@@ -1063,6 +1099,7 @@ fn hsv_neon_matches_scalar_primaries_and_edges() {
 
 // ---- bgr_rgb_swap_row equivalence -----------------------------------
 
+#[cfg(feature = "rgb")]
 fn check_swap_equivalence(width: usize) {
   let input = pseudo_random_bgr(width);
   let mut out_scalar = std::vec![0u8; width * 3];
@@ -1096,6 +1133,7 @@ fn check_swap_equivalence(width: usize) {
   }
 }
 
+#[cfg(feature = "rgb")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn swap_neon_matches_scalar_widths() {
@@ -1104,6 +1142,7 @@ fn swap_neon_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "rgb")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn swap_is_self_inverse() {

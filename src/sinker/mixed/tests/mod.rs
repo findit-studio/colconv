@@ -192,6 +192,10 @@ mod resample_yuv410_440p;
 mod resample_yuv411p;
 #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
 mod resample_yuv422_444p;
+#[cfg(feature = "yuv-planar")]
+mod resample_yuv422p_high_bit;
+#[cfg(feature = "yuv-planar")]
+mod resample_yuv444p_high_bit;
 #[cfg(feature = "yuva")]
 mod resample_yuva420p;
 #[cfg(feature = "yuva")]
@@ -287,12 +291,7 @@ pub(super) fn pseudo_random_u8(buf: &mut [u8], seed: u32) {
 /// Encode a logical `u16` as host-independent **LE-wire** byte storage.
 #[cfg(all(
   feature = "std",
-  any(
-    feature = "gbr",
-    feature = "rgb",
-    feature = "yuv-444-packed",
-    feature = "yuv-planar",
-  )
+  any(feature = "gbr", feature = "rgb", feature = "yuv-444-packed")
 ))]
 #[inline]
 pub(super) fn as_le_u16(v: u16) -> u16 {
@@ -302,12 +301,7 @@ pub(super) fn as_le_u16(v: u16) -> u16 {
 /// Encode a logical `u16` as host-independent **BE-wire** byte storage.
 #[cfg(all(
   feature = "std",
-  any(
-    feature = "gbr",
-    feature = "rgb",
-    feature = "yuv-444-packed",
-    feature = "yuv-planar",
-  )
+  any(feature = "gbr", feature = "rgb", feature = "yuv-444-packed")
 ))]
 #[inline]
 pub(super) fn as_be_u16(v: u16) -> u16 {
