@@ -1348,3 +1348,78 @@ fn yuva420p16_strategy_a_plus_u16_matches_independent_kernel() {
     }
   }
 }
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva420p_direct_luma_u16_with_hsv_no_rgb_buffer_writes_both() {
+  // Recoverable-allocation regression: `with_luma_u16` + `with_hsv` with
+  // NO rgb plane attached routes HSV through the growing rgb scratch. The
+  // fallible scratch grow must be preflighted BEFORE luma_u16 is written,
+  // and both outputs must be produced. luma_u16 is the zero-extended Y;
+  // HSV must match the RGB-attached oracle (same kernel; scratch vs caller
+  // buffer is the only difference).
+  let w = 16usize;
+  let h = 8usize;
+  let cw = w / 2;
+  let ch = h / 2;
+  let mut yp = std::vec![0u8; w * h];
+  let mut up = std::vec![0u8; cw * ch];
+  let mut vp = std::vec![0u8; cw * ch];
+  let mut ap = std::vec![0u8; w * h];
+  pseudo_random_u8(&mut yp, 0x7E57_C0DE);
+  pseudo_random_u8(&mut up, 0x7E57_CAFE);
+  pseudo_random_u8(&mut vp, 0x7E57_BEEF);
+  pseudo_random_u8(&mut ap, 0x7E57_5EED);
+  let src = Yuva420pFrame::try_new(
+    &yp, &up, &vp, &ap, w as u32, h as u32, w as u32, cw as u32, cw as u32, w as u32,
+  )
+  .unwrap();
+
+  // No-rgb scratch path: luma_u16 + hsv only.
+  let mut lu16 = std::vec![0u16; w * h];
+  let mut hh = std::vec![0u8; w * h];
+  let mut ss = std::vec![0u8; w * h];
+  let mut vv = std::vec![0u8; w * h];
+  {
+    let mut sink = MixedSinker::<Yuva420p>::new(w, h)
+      .with_luma_u16(&mut lu16)
+      .unwrap()
+      .with_hsv(&mut hh, &mut ss, &mut vv)
+      .unwrap();
+    yuva420p_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+    // White-box: the HSV-only scratch was preflighted (grown to one
+    // source-width u8 RGB row) — the fix acquires it before the luma_u16
+    // write.
+    assert!(
+      sink.rgb_scratch_capacity() >= w * 3,
+      "HSV rgb scratch was not grown (preflight missing)"
+    );
+  }
+  let lu16_ref: std::vec::Vec<u16> = yp.iter().map(|&b| b as u16).collect();
+  assert_eq!(lu16, lu16_ref, "no-rgb direct luma_u16 == zero-extended Y");
+
+  // Oracle: same source with rgb attached (HSV derives from the caller
+  // buffer instead of scratch) — HSV must be identical.
+  let mut rgb = std::vec![0u8; w * h * 3];
+  let mut oh = std::vec![0u8; w * h];
+  let mut os = std::vec![0u8; w * h];
+  let mut ov = std::vec![0u8; w * h];
+  {
+    let mut sink = MixedSinker::<Yuva420p>::new(w, h)
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_hsv(&mut oh, &mut os, &mut ov)
+      .unwrap();
+    yuva420p_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+  assert_eq!(hh, oh, "scratch-path H == rgb-attached H");
+  assert_eq!(ss, os, "scratch-path S == rgb-attached S");
+  assert_eq!(vv, ov, "scratch-path V == rgb-attached V");
+  assert!(
+    hh.iter().chain(ss.iter()).chain(vv.iter()).any(|&b| b != 0),
+    "HSV scratch path produced no output"
+  );
+}
