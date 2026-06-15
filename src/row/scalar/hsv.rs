@@ -220,7 +220,7 @@ pub(crate) fn rgb_to_luma_u16_row(
 /// Panics if `rgb.len() < 3 * width` or `luma_out.len() < width`.
 #[cfg(all(
   any(feature = "std", feature = "alloc"),
-  any(feature = "rgb", feature = "gbr"),
+  any(feature = "rgb", feature = "gbr", feature = "yuv-444-packed"),
 ))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn rgb_to_luma_u16_native_row(
