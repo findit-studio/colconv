@@ -268,6 +268,7 @@ fn y216_luma_u16_buffer_too_short_returns_err() {
 /// layout — each row is `width x 2` u16 elements laid out as `(Y₀, U,
 /// Y₁, V)` quadruples. Y216 uses the full u16 range with no alignment
 /// shift; samples are stored direct. Width must be even.
+#[cfg(feature = "yuv-planar")]
 fn pack_yuv422p16_to_y216(
   y_plane: &[u16],
   u_plane: &[u16],
@@ -287,6 +288,9 @@ fn pack_yuv422p16_to_y216(
   packed
 }
 
+// Oracle compares against the planar `Yuv422p16` source, so this case
+// only builds when that family is present.
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,

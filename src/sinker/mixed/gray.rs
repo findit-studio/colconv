@@ -35,7 +35,7 @@
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
   RowShapeMismatch, RowSlice, check_dimensions_match, frozen_outputs_check, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  rgba_plane_row_slice, rgba_u16_plane_row_slice, source_luma_u16_scratch,
 };
 use crate::{
   PixelSink,
@@ -1152,21 +1152,7 @@ fn gray16_process_resampled<const BE: bool>(
   }
   // Recoverable source-width host-native u16 luma staging, allocated
   // before any caller-buffer write.
-  if luma_scratch_u16.len() < w {
-    luma_scratch_u16
-      .try_reserve_exact(w - luma_scratch_u16.len())
-      .map_err(|_| {
-        MixedSinkerError::Resample(ResampleError::AllocationFailed(
-          crate::resample::PlanGeometry::new(
-            plan.src_w(),
-            plan.src_h(),
-            plan.out_w(),
-            plan.out_h(),
-          ),
-        ))
-      })?;
-    luma_scratch_u16.resize(w, 0);
-  }
+  let src_luma = source_luma_u16_scratch(luma_scratch_u16, w, plan)?;
   if luma_stream_u16.is_none() {
     *luma_stream_u16 = Some(AreaStream::new(
       plan.h(),
@@ -1178,7 +1164,6 @@ fn gray16_process_resampled<const BE: bool>(
   }
   // Convert the wire Gray16 row to host-native u16 luma — the source
   // wire `::<BE>`, the same kernel the direct `luma_u16` path uses.
-  let src_luma = &mut luma_scratch_u16[..w];
   gray16_to_luma_u16_row::<BE>(y_row, src_luma, w, use_simd);
 
   let stream = luma_stream_u16.as_mut().expect("created in the preflight");

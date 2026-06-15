@@ -160,6 +160,8 @@ mod resample_v410;
 mod resample_xv36;
 #[cfg(feature = "xyz")]
 mod resample_xyz12;
+#[cfg(feature = "y2xx")]
+mod resample_y2xx;
 #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
 mod resample_yuv410_440p;
 #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
