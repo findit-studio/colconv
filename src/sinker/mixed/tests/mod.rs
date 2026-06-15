@@ -121,6 +121,10 @@ mod resample_gbrap_8bit;
 #[cfg(feature = "gbr")]
 mod resample_gbrap_high_bit;
 #[cfg(feature = "gbr")]
+mod resample_gbrapf16;
+#[cfg(feature = "gbr")]
+mod resample_gbrapf32;
+#[cfg(feature = "gbr")]
 mod resample_gbrp;
 #[cfg(feature = "gbr")]
 mod resample_gbrpf16;

@@ -42,11 +42,12 @@
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  RowShapeMismatch, RowSlice, check_dimensions_match, check_frozen_alpha_mode,
+  rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
 use super::{
-  packed_rgb_f32_resample_preflight, packed_rgb_f32_resample_stream, planar_gbr_f16_resample_emit,
-  source_rgb_f32_scratch,
+  packed_rgb_f32_resample_preflight, packed_rgb_f32_resample_stream, packed_rgba_f16_resample,
+  planar_gbr_f16_resample_emit, source_rgb_f32_scratch,
 };
 use crate::{
   ColorMatrix, PixelSink,
@@ -610,6 +611,50 @@ fn scatter_gbrpf16_to_packed_f32<const BE: bool>(
   }
 }
 
+/// Widen the `Gbrapf16` G/B/R/A `half::f16` planes to host-native f32 and
+/// scatter them into a source-width packed `R, G, B, A` f32 row — the input
+/// the 4-channel `AreaStream<f32>` bins. The 4-channel twin of
+/// [`scatter_gbrpf16_to_packed_f32`]: the α plane is widened and interleaved
+/// into slot 3 too (lossless, so resampled alpha is a real area mean).
+///
+/// Endian routing matches the 3-channel scatter: `widen_f16_be_to_host_f32::<BE>`
+/// bit-normalises the source-encoded f16 plane bits to **host-native** f32,
+/// then `gbrapf32_to_rgba_f32_row` interleaves with `HOST_NATIVE_BE` so its
+/// load is a no-op on every host. Widening is chunked into stack scratch.
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn scatter_gbrapf16_to_packed_rgba_f32<const BE: bool>(
+  g: &[half::f16],
+  b: &[half::f16],
+  r: &[half::f16],
+  a: &[half::f16],
+  rgba_out: &mut [f32],
+  width: usize,
+  use_simd: bool,
+) {
+  let mut gf = [0.0f32; WIDEN_CHUNK];
+  let mut bf = [0.0f32; WIDEN_CHUNK];
+  let mut rf = [0.0f32; WIDEN_CHUNK];
+  let mut af = [0.0f32; WIDEN_CHUNK];
+  let mut offset = 0;
+  while offset < width {
+    let n = (width - offset).min(WIDEN_CHUNK);
+    widen_f16_be_to_host_f32::<BE>(g, offset, &mut gf, n);
+    widen_f16_be_to_host_f32::<BE>(b, offset, &mut bf, n);
+    widen_f16_be_to_host_f32::<BE>(r, offset, &mut rf, n);
+    widen_f16_be_to_host_f32::<BE>(a, offset, &mut af, n);
+    gbrapf32_to_rgba_f32_row::<HOST_NATIVE_BE>(
+      &gf[..n],
+      &bf[..n],
+      &rf[..n],
+      &af[..n],
+      &mut rgba_out[offset * 4..],
+      n,
+      use_simd,
+    );
+    offset += n;
+  }
+}
+
 // ---- Gbrapf16 accessor impl block ----------------------------------------
 
 impl<'a, R, const BE: bool> MixedSinker<'a, Gbrapf16<BE>, R> {
@@ -778,14 +823,31 @@ impl<'a, R, const BE: bool> MixedSinker<'a, Gbrapf16<BE>, R> {
   }
 }
 
-impl<const BE: bool> Gbrapf16Sink<BE> for MixedSinker<'_, Gbrapf16<BE>> {}
+// The half-float planar-GBR+alpha sink is generic over the resampler `R`.
+// The `gbr` feature pulls the area-resample engine in (the #146 cascade),
+// so `Gbrapf16` needs no engine fence. There is no `AreaStream<f16>`, so
+// its non-identity plan widens the G/B/R/A f16 planes to host-native f32,
+// scatters them into a source-width packed `R, G, B, A` f32 row, and bins
+// all four channels in float on the shared 4-channel `AreaStream<f32>`. Per
+// finalized output row the dedicated alpha-aware emit resolves the straight
+// color, de-interleaves it into G/B/R/A `half::f16` planes (**rounding**
+// each element), and runs the exact direct `gbrapf16_*` / `gbrpf16_*`
+// kernels — so every output is byte-identical to a direct `Gbrapf16`
+// conversion of the f32 block-mean rounded to f16.
+impl<R, const BE: bool> Gbrapf16Sink<BE> for MixedSinker<'_, Gbrapf16<BE>, R> {}
 
-impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrapf16<BE>> {
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Gbrapf16<BE>, R> {
   type Input<'r> = Gbrapf16Row<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgba_stream_f32.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
+    Ok(())
   }
 
   fn process(&mut self, row: Gbrapf16Row<'_>) -> Result<(), Self::Error> {
@@ -831,6 +893,68 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrapf16<BE>> {
       return Err(MixedSinkerError::RowIndexOutOfRange(
         RowIndexOutOfRange::new(idx, h),
       ));
+    }
+
+    // Non-identity plan: widen the f16 G/B/R/A planes to host-native f32,
+    // scatter into a source-width packed `R, G, B, A` f32 row, and bin all
+    // four channels in float. The dedicated alpha-aware emit resolves the
+    // straight color, de-interleaves into G/B/R/A f16 planes (rounding via
+    // `from_f32`), and runs the exact direct `gbrapf16_*` / `gbrpf16_*`
+    // kernels, so every output stays byte-identical to a direct `Gbrapf16`
+    // conversion of the f32 block-mean rounded to f16.
+    if let Some(plan) = self.plan.as_ref() {
+      let alpha_mode = self.alpha_mode;
+      let g_in = row.g();
+      let b_in = row.b();
+      let r_in = row.r();
+      let a_in = row.a();
+      let Self {
+        rgb,
+        rgb_u16,
+        rgb_f32,
+        rgba_f32,
+        rgb_f16,
+        rgba_f16,
+        rgba,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgba_scratch_f32,
+        rgba_color_scratch_f32,
+        rgba_plane_scratch_f16,
+        rgba_stream_f32,
+        resample_outputs,
+        frozen_alpha_mode,
+        ..
+      } = self;
+      check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
+      return packed_rgba_f16_resample(
+        rgba_stream_f32,
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        rgb_u16,
+        rgba_u16,
+        luma_u16,
+        rgb_f32,
+        rgba_f32,
+        rgb_f16,
+        rgba_f16,
+        hsv,
+        rgba_scratch_f32,
+        rgba_color_scratch_f32,
+        rgba_plane_scratch_f16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        alpha_mode,
+        GBR_F16_LUMA_MATRIX,
+        GBR_F16_FULL_RANGE,
+        |dst| scatter_gbrapf16_to_packed_rgba_f32::<BE>(g_in, b_in, r_in, a_in, dst, w, use_simd),
+      );
     }
 
     let g_in = row.g();

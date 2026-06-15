@@ -34,12 +34,12 @@
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
-  rgba_u16_plane_row_slice,
+  RowShapeMismatch, RowSlice, check_dimensions_match, check_frozen_alpha_mode,
+  rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
 use super::{
-  packed_rgb_f32_resample_preflight, packed_rgb_f32_resample_stream, planar_gbr_f32_resample_emit,
-  source_rgb_f32_scratch,
+  packed_rgb_f32_resample_preflight, packed_rgb_f32_resample_stream, packed_rgba_f32_resample,
+  planar_gbr_f32_resample_emit, source_rgb_f32_scratch,
 };
 use crate::{
   ColorMatrix, PixelSink,
@@ -701,14 +701,33 @@ impl<'a, R, const BE: bool> MixedSinker<'a, Gbrapf32<BE>, R> {
   }
 }
 
-impl<const BE: bool> Gbrapf32Sink<BE> for MixedSinker<'_, Gbrapf32<BE>> {}
+// The float planar-GBR+alpha sink is generic over the resampler `R`. The
+// `gbr` feature pulls the area-resample engine in (the #146 cascade), so
+// `Gbrapf32` needs no engine fence — its non-identity plan scatters the
+// G/B/R/A planes into a source-width packed `R, G, B, A` f32 row and bins
+// all four channels in float on a dedicated 4-channel `AreaStream<f32>`,
+// so resampled alpha is a real area mean (not forced opaque) and — under
+// `Premultiplied` — color is binned premultiplied. Per finalized output
+// row the resolved straight color de-interleaves into G/B/R/A planes and
+// the exact direct `gbrapf32_*` / `gbrpf32_*` kernels run, so every output
+// is byte-identical to a direct `Gbrapf32` conversion of the binned frame.
+impl<R, const BE: bool> Gbrapf32Sink<BE> for MixedSinker<'_, Gbrapf32<BE>, R> {}
 
-impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrapf32<BE>> {
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Gbrapf32<BE>, R> {
   type Input<'r> = Gbrapf32Row<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream_f32.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_stream_f32.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
+    Ok(())
   }
 
   fn process(&mut self, row: Gbrapf32Row<'_>) -> Result<(), Self::Error> {
@@ -754,6 +773,72 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Gbrapf32<BE>> {
       return Err(MixedSinkerError::RowIndexOutOfRange(
         RowIndexOutOfRange::new(idx, h),
       ));
+    }
+
+    // Non-identity plan: scatter the G/B/R/A planes into a source-width
+    // packed `R, G, B, A` f32 row and bin all four channels in float. The
+    // dedicated alpha-aware tail resolves the straight color per output row
+    // and runs the exact direct `gbrapf32_*` / `gbrpf32_*` kernels, so every
+    // output stays byte-identical to a direct `Gbrapf32` conversion of the
+    // binned frame. `gbrapf32_to_rgba_f32_row::<BE>` decodes the source wire
+    // bytes to host-native f32, so the binned row is host-native and the
+    // emit kernels run `::<HOST_NATIVE_BE>`.
+    if let Some(plan) = self.plan.as_ref() {
+      let alpha_mode = self.alpha_mode;
+      let g_in = row.g();
+      let b_in = row.b();
+      let r_in = row.r();
+      let a_in = row.a();
+      let Self {
+        rgb,
+        rgb_u16,
+        rgb_f32,
+        rgba_f32,
+        rgb_f16,
+        rgba_f16,
+        rgba,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgba_scratch_f32,
+        rgba_color_scratch_f32,
+        rgba_plane_scratch_f32,
+        rgba_stream_f32,
+        resample_outputs,
+        frozen_alpha_mode,
+        ..
+      } = self;
+      // The alpha mode is snapshotted at begin_frame; reject a mid-frame
+      // change before any binning so a flip can neither mix modes nor escape
+      // the freeze (mirrors the integer alpha tails).
+      check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
+      return packed_rgba_f32_resample(
+        rgba_stream_f32,
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        rgb_u16,
+        rgba_u16,
+        luma_u16,
+        rgb_f32,
+        rgba_f32,
+        rgb_f16,
+        rgba_f16,
+        hsv,
+        rgba_scratch_f32,
+        rgba_color_scratch_f32,
+        rgba_plane_scratch_f32,
+        w,
+        plan,
+        idx,
+        use_simd,
+        alpha_mode,
+        GBR_FLOAT_LUMA_MATRIX,
+        GBR_FLOAT_FULL_RANGE,
+        |dst| gbrapf32_to_rgba_f32_row::<BE>(g_in, b_in, r_in, a_in, dst, w, use_simd),
+      );
     }
 
     let g_in = row.g();
