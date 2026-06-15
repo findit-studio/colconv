@@ -60,7 +60,10 @@ pub(super) fn solid_ayuv64_frame(
 
 /// Converts separate Y / U / V / A planes (16-bit, full-width 4:4:4) into a
 /// packed AYUV64 u16 stream. u16 slot order per pixel: `[A, Y, U, V]`.
-#[cfg(all(test, feature = "std"))]
+///
+/// Gated on `yuva`: the cross-format oracle below feeds the planar
+/// `Yuva444p16` source, absent in a `yuv-444-packed`-solo build.
+#[cfg(all(test, feature = "std", feature = "yuva"))]
 fn pack_yuva444p16_to_ayuv64(
   y: &[u16],
   u: &[u16],
@@ -576,9 +579,11 @@ fn ayuv64_hsv_buffer_too_short_returns_error() {
 }
 
 // ---- 21: Planar parity with Yuva444p16 (headline cross-format oracle) -----
-
+//
+// Gated on `yuva` so a `yuv-444-packed`-solo `--tests` build (which lacks
+// the planar `Yuva444p16` frame / walker) still compiles.
 #[test]
-#[cfg(all(test, feature = "std"))]
+#[cfg(all(test, feature = "std", feature = "yuva"))]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
