@@ -98,6 +98,7 @@ pub(crate) use scalar::expand_rgb_u16_to_rgba_u16_row;
   any(
     feature = "rgb",
     feature = "gbr",
+    feature = "gray",
     feature = "yuv-444-packed",
     feature = "y2xx",
     feature = "v210"

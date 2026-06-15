@@ -646,8 +646,12 @@ macro_rules! impl_gbrap_high_bit {
           // 3-channel route), so a flip can neither reroute nor mix modes.
           check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
           if rgba.is_some() || rgba_u16.is_some() || alpha_mode.is_premultiplied() {
-            return packed_rgba_u16_resample::<BITS, true>(
+            return packed_rgba_u16_resample::<BITS, true, false>(
               rgba_stream_u16,
+              // No native-Y luma stream: `GbrapN` luma_u16 is native-precision
+              // color-derived (`NATIVE_LUMA16 = true`, `NATIVE_Y_LUMA = false`),
+              // so the Y stream / scratch / de-interleave are inert.
+              &mut None,
               resample_outputs,
               rgb,
               rgba,
@@ -660,6 +664,7 @@ macro_rules! impl_gbrap_high_bit {
               rgba_color_scratch_u16,
               rgb_scratch,
               rgb_scratch_u16,
+              &mut std::vec::Vec::new(),
               w,
               plan,
               idx,
@@ -670,6 +675,7 @@ macro_rules! impl_gbrap_high_bit {
               |dst| {
                 gbra_to_rgba_u16_high_bit_row::<BITS, BE>(g_in, b_in, r_in, a_in, dst, w, use_simd)
               },
+              |_| {},
             );
           }
           // Straight rgb-only (alpha dropped): scatter the native-depth

@@ -176,6 +176,10 @@ mod resample_xv36;
 mod resample_xyz12;
 #[cfg(feature = "y2xx")]
 mod resample_y2xx;
+#[cfg(feature = "gray")]
+mod resample_ya16;
+#[cfg(feature = "gray")]
+mod resample_ya8;
 #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
 mod resample_yuv410_440p;
 #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
@@ -223,6 +227,7 @@ mod yuva;
 // `v210`-solo `--tests` build would otherwise see it as dead.
 #[cfg(any(
   feature = "gbr",
+  feature = "gray",
   feature = "y2xx",
   feature = "yuv-444-packed",
   feature = "yuv-planar",
@@ -239,6 +244,7 @@ pub(super) fn pseudo_random_u16_low_n_bits(buf: &mut [u16], seed: u32, bits: u32
 
 #[cfg(any(
   feature = "gbr",
+  feature = "gray",
   feature = "rgb",
   feature = "v210",
   feature = "yuv-444-packed",

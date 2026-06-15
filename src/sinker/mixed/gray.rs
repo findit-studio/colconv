@@ -34,7 +34,8 @@
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, check_dimensions_match, frozen_outputs_check, rgb_row_buf_or_scratch,
+  RowShapeMismatch, RowSlice, check_dimensions_match, check_frozen_alpha_mode,
+  frozen_outputs_check, packed_rgba_resample, packed_rgba_u16_resample, rgb_row_buf_or_scratch,
   rgba_plane_row_slice, rgba_u16_plane_row_slice, source_luma_u16_scratch,
 };
 use crate::{
@@ -1954,14 +1955,27 @@ impl<'a, R> MixedSinker<'a, Ya8, R> {
   }
 }
 
-impl Ya8Sink for MixedSinker<'_, Ya8> {}
+impl<R> Ya8Sink for MixedSinker<'_, Ya8, R> {}
 
-impl PixelSink for MixedSinker<'_, Ya8> {
+impl<R> PixelSink for MixedSinker<'_, Ya8, R> {
   type Input<'r> = Ya8Row<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    // New frame: restart the 4-channel RGBA color stream and the
+    // independent native-Y luma stream (both lazily created in `process`)
+    // and re-arm the alpha-mode snapshot, mirroring the alpha-aware
+    // packed-RGBA / Gbrap sinks.
+    if let Some(stream) = self.rgba_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
+    Ok(())
   }
 
   fn process(&mut self, row: Ya8Row<'_>) -> Result<(), Self::Error> {
@@ -1983,6 +1997,78 @@ impl PixelSink for MixedSinker<'_, Ya8> {
       return Err(MixedSinkerError::RowIndexOutOfRange(
         RowIndexOutOfRange::new(idx, h),
       ));
+    }
+
+    // Non-identity plan: `Ya8` is gray+alpha. The direct `Ya8 -> rgba`
+    // conversion is `R = G = B = Y`, `A = α`, so binning the decoded RGBA
+    // yields `(binY, binY, binY, binA)` — byte-identical to binning Y once
+    // and duplicating. Decode each packed `[Y, A]` row into the canonical
+    // source-width `R, G, B, A` row (`ya8_to_rgba_row`) and feed the same
+    // 4-channel packed-RGBA tail the `Rgba` / `Gbrap` sources take, so
+    // resampled alpha is a real area mean and — under
+    // `AlphaMode::Premultiplied` — color is binned premultiplied.
+    // `NATIVE_Y_LUMA = true`: the direct `Ya8` `luma` / `luma_u16` are the
+    // native Y byte and its zero-extension (no matrix, no range), and
+    // `R = Y`, so the tail takes both from the binned color's R channel —
+    // byte-exact for every matrix and both ranges (a limited-range
+    // `rgb_to_luma*` would mis-map a valid `full_range = false` gray).
+    // rgb_u16 / rgba_u16 zero-extend the binned color.
+    if self.plan.is_some() {
+      let alpha_mode = self.alpha_mode;
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      let Self {
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgba_scratch,
+        rgb_scratch,
+        luma_scratch,
+        plan,
+        rgba_stream,
+        luma_stream,
+        resample_outputs,
+        frozen_alpha_mode,
+        ..
+      } = self;
+      let plan = plan.as_ref().expect("plan.is_some() checked above");
+      // Snapshotted at begin_frame; reject a mid-frame change before the
+      // single binning route runs.
+      check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
+      // `NATIVE_Y_LUMA = true`: luma / luma_u16 are an independent native-Y
+      // area bin (`luma_stream` fed the de-interleaved Y plane via
+      // `ya8_to_luma_row` — the exact Y bytes the direct path emits), NOT
+      // derived from the alpha/range-affected color. Byte-exact for every
+      // matrix, both ranges, AND every alpha mode (under premultiplied the
+      // color collapses to `mean(Y*A)/mean(A)`, but native Y is `mean(Y)`).
+      return packed_rgba_resample::<true>(
+        rgba_stream,
+        luma_stream,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgba_scratch,
+        rgb_scratch,
+        luma_scratch,
+        w,
+        plan,
+        idx,
+        use_simd,
+        alpha_mode,
+        matrix,
+        full_range,
+        |dst| ya8_to_rgba_row(packed, dst, w, use_simd),
+        |dst| ya8_to_luma_row(packed, dst, w, use_simd),
+      );
     }
 
     let one_plane_start = idx * w;
@@ -2176,14 +2262,27 @@ impl<'a, R, const BE: bool> MixedSinker<'a, Ya16<BE>, R> {
   }
 }
 
-impl<const BE: bool> Ya16Sink<BE> for MixedSinker<'_, Ya16<BE>> {}
+impl<R, const BE: bool> Ya16Sink<BE> for MixedSinker<'_, Ya16<BE>, R> {}
 
-impl<const BE: bool> PixelSink for MixedSinker<'_, Ya16<BE>> {
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Ya16<BE>, R> {
   type Input<'r> = Ya16Row<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    // New frame: restart the 4-channel u16 RGBA color stream and the
+    // independent native-Y u16 luma stream (both lazily created in
+    // `process`) and re-arm the alpha-mode snapshot, mirroring the high-bit
+    // packed-RGBA / Gbrap16 sinks.
+    if let Some(stream) = self.rgba_stream_u16.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_stream_u16.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
+    Ok(())
   }
 
   fn process(&mut self, row: Ya16Row<'_>) -> Result<(), Self::Error> {
@@ -2205,6 +2304,75 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Ya16<BE>> {
       return Err(MixedSinkerError::RowIndexOutOfRange(
         RowIndexOutOfRange::new(idx, h),
       ));
+    }
+
+    // Non-identity plan: `Ya16` is gray+alpha. As with `Ya8`, the direct
+    // `Ya16 -> rgba` conversion is `R = G = B = Y`, `A = α`. Decode each
+    // packed `[Y, A]` u16 row into the canonical host-native source-width
+    // `R, G, B, A` u16 row (`ya16_to_rgba_u16_row::<BE>`) and feed the same
+    // 4-channel high-bit packed-RGBA tail the `Rgba64` / `Gbrap16` sources
+    // take at `SRC_BITS = 16`, so resampled alpha is a real native area
+    // mean. `NATIVE_Y_LUMA = true`: luma / luma_u16 are an independent
+    // native-Y area bin (`luma_stream_u16` fed the de-interleaved
+    // host-native Y plane via `ya16_to_luma_u16_row::<BE>` — the exact Y
+    // the direct path emits), NOT derived from the alpha/range-affected
+    // color. Byte-exact for every matrix (unlike `rgb_to_luma_u16_native_row`,
+    // which drifts for matrices whose Q15 weights do not sum to exactly
+    // 32768, e.g. SMPTE-240M), every range, AND every alpha mode (under
+    // premultiplied the color collapses to `mean(Y*A)/mean(A)`, but native
+    // Y is `mean(Y)`).
+    if self.plan.is_some() {
+      let alpha_mode = self.alpha_mode;
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      let Self {
+        rgb,
+        rgb_u16,
+        rgba,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch,
+        rgb_scratch_u16,
+        rgba_scratch_u16,
+        rgba_color_scratch_u16,
+        luma_scratch_u16,
+        rgba_stream_u16,
+        luma_stream_u16,
+        resample_outputs,
+        frozen_alpha_mode,
+        plan,
+        ..
+      } = self;
+      let plan = plan.as_ref().expect("plan.is_some() checked above");
+      check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
+      return packed_rgba_u16_resample::<16, false, true>(
+        rgba_stream_u16,
+        luma_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgba_scratch_u16,
+        rgba_color_scratch_u16,
+        rgb_scratch,
+        rgb_scratch_u16,
+        luma_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        alpha_mode,
+        matrix,
+        full_range,
+        |dst| ya16_to_rgba_u16_row::<BE>(packed, dst, w, use_simd),
+        |dst| ya16_to_luma_u16_row::<BE>(packed, dst, w, use_simd),
+      );
     }
 
     let one_plane_start = idx * w;
