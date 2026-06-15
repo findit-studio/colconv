@@ -693,3 +693,66 @@ fn yuva444p_resample_simd_matches_scalar() {
   };
   assert_eq!(run(true), run(false), "Yuva444p resample SIMD != scalar");
 }
+
+#[test]
+fn yuva444p_direct_hsv_scratch_alloc_failure_writes_nothing() {
+  // Recoverable-allocation failure-path regression: on the direct
+  // (identity) path, `with_luma` + `with_luma_u16` + `with_hsv` with NO rgb
+  // plane attached routes HSV through the growing rgb scratch. The fallible
+  // scratch grow is preflighted at the TOP of the row body, BEFORE any
+  // caller-output write. If the grow refuses (simulated via the
+  // `arm_rgb_scratch_alloc_failure` failpoint) the row must return
+  // `AllocationFailed` and leave every caller buffer UNTOUCHED — proving no
+  // partial write. With the OLD ordering (luma_u16 written before the
+  // preflight) the luma_u16 sentinel would be clobbered and this test fails.
+  const SENT8: u8 = 0xAB;
+  const SENT16: u16 = 0xABCD;
+  let (y, u, v, a) = planes(0x7E57);
+  let mut luma = std::vec![SENT8; SRC * SRC];
+  let mut lu16 = std::vec![SENT16; SRC * SRC];
+  let mut hh = std::vec![SENT8; SRC * SRC];
+  let mut ss = std::vec![SENT8; SRC * SRC];
+  let mut vv = std::vec![SENT8; SRC * SRC];
+  let mut sink = MixedSinker::<Yuva444p>::new(SRC, SRC)
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_luma_u16(&mut lu16)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
+  sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+  super::super::arm_rgb_scratch_alloc_failure();
+  let err = sink
+    .process(Yuva444pRow::new(
+      &y[..SRC],
+      &u[..SRC],
+      &v[..SRC],
+      &a[..SRC],
+      0,
+      M,
+      FR,
+    ))
+    .unwrap_err();
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "scratch alloc refusal not surfaced as AllocationFailed: {err:?}"
+  );
+  drop(sink);
+  assert!(
+    luma.iter().all(|&b| b == SENT8),
+    "luma partially written before failed scratch preflight"
+  );
+  assert!(
+    lu16.iter().all(|&b| b == SENT16),
+    "luma_u16 partially written before failed scratch preflight"
+  );
+  assert!(
+    hh.iter().all(|&b| b == SENT8)
+      && ss.iter().all(|&b| b == SENT8)
+      && vv.iter().all(|&b| b == SENT8),
+    "hsv partially written before failed scratch preflight"
+  );
+}
