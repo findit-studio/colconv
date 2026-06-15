@@ -1,12 +1,13 @@
 //! 8-bit planar YUV `MixedSinker` impls: Yuv410p / Yuv420p / Yuv422p / Yuv444p / Yuv440p.
 
 use super::{
-  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match, frozen_outputs_check,
-  rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  GeometryOverflow, HsvFrameMut, InsufficientBuffer, MixedSinker, MixedSinkerError,
+  RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
+  frozen_outputs_check, planar_resample::planar_dual_resample, rgb_row_buf_or_scratch,
+  rgba_plane_row_slice,
 };
 use crate::{
-  PixelSink,
+  ColorMatrix, PixelSink,
   resample::{AreaStream, OutOfSequenceRow, PlanGeometry, ResampleError, ResamplePlan, try_zeroed},
   row::*,
   source::*,
@@ -205,7 +206,12 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
           luma_u16,
           hsv,
           rgb_scratch,
-          &row,
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          row.matrix(),
+          row.full_range(),
+          idx,
           w,
           h,
           use_simd,
@@ -222,7 +228,12 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
         luma_u16,
         hsv,
         rgb_scratch,
-        &row,
+        row.y(),
+        row.u_half(),
+        row.v_half(),
+        row.matrix(),
+        row.full_range(),
+        idx,
         w,
         use_simd,
       );
@@ -405,7 +416,7 @@ impl NativeYuv420 {
     })
   }
 
-  fn reset(&mut self) {
+  pub(super) fn reset(&mut self) {
     self.y.reset();
     if let Some(chroma) = self.chroma.as_mut() {
       chroma.u.reset();
@@ -443,8 +454,16 @@ impl NativeYuv420 {
 /// [`NativeYuv420`]. Phasing mirrors the row-stage tier — frozen
 /// configuration, join creation, sequencing, color scratch sizing,
 /// then the feeds, with nothing fallible after the first feed.
+///
+/// Takes the Y plane and the **separate** half-width U / V planes
+/// (rather than a `Yuv420pRow`) so the 4:2:0 semi-planar family
+/// ([`Nv12`](crate::source::Nv12) / [`Nv21`](crate::source::Nv21)) can
+/// reuse it verbatim after de-interleaving its interleaved chroma plane
+/// into U / V scratch — every 4:2:0 source then bins Y + U + V through
+/// the same per-plane join, byte-identical to a `Yuv420p` conversion of
+/// the pre-binned planes.
 #[allow(clippy::too_many_arguments)]
-fn yuv420p_process_native(
+pub(super) fn yuv420p_process_native(
   plan: &ResamplePlan,
   native_420: &mut Option<NativeYuv420>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
@@ -454,13 +473,17 @@ fn yuv420p_process_native(
   luma_u16: &mut Option<&mut [u16]>,
   hsv: &mut Option<HsvFrameMut<'_>>,
   rgb_scratch: &mut std::vec::Vec<u8>,
-  row: &Yuv420pRow<'_>,
+  y_row: &[u8],
+  u_half: &[u8],
+  v_half: &[u8],
+  matrix: ColorMatrix,
+  full_range: bool,
+  idx: usize,
   w: usize,
   h: usize,
   use_simd: bool,
 ) -> Result<(), MixedSinkerError> {
   let ow = plan.out_w();
-  let idx = row.row();
   let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
 
   frozen_outputs_check(
@@ -526,13 +549,13 @@ fn yuv420p_process_native(
     staged,
     next_emit,
   } = join;
-  y.feed_row(idx, row.y(), use_simd, |oy, out_row| {
+  y.feed_row(idx, y_row, use_simd, |oy, out_row| {
     let slot = oy & 1;
     y_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
     staged[0][slot] = true;
   })?;
   if let Some(c) = chroma.as_mut()
-    && idx % 2 == 0
+    && idx.is_multiple_of(2)
   {
     let cidx = idx / 2;
     let NativeChroma {
@@ -541,12 +564,12 @@ fn yuv420p_process_native(
       u_stage,
       v_stage,
     } = c;
-    u.feed_row(cidx, row.u_half(), use_simd, |oy, out_row| {
+    u.feed_row(cidx, u_half, use_simd, |oy, out_row| {
       let slot = oy & 1;
       u_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
       staged[1][slot] = true;
     })?;
-    v.feed_row(cidx, row.v_half(), use_simd, |oy, out_row| {
+    v.feed_row(cidx, v_half, use_simd, |oy, out_row| {
       let slot = oy & 1;
       v_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
       staged[2][slot] = true;
@@ -564,13 +587,13 @@ fn yuv420p_process_native(
       break;
     }
     let oy = *next_emit;
-    let y_row = &y_stage[slot * ow..slot * ow + ow];
+    let y_out = &y_stage[slot * ow..slot * ow + ow];
 
     if let Some(buf) = luma.as_deref_mut() {
-      buf[oy * ow..(oy + 1) * ow].copy_from_slice(y_row);
+      buf[oy * ow..(oy + 1) * ow].copy_from_slice(y_out);
     }
     if let Some(buf) = luma_u16.as_deref_mut() {
-      for (dst, &src) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(y_row) {
+      for (dst, &src) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(y_out) {
         *dst = src as u16;
       }
     }
@@ -579,14 +602,7 @@ fn yuv420p_process_native(
       let v_row = &c.v_stage[slot * ow..slot * ow + ow];
       let out_rgb = &mut rgb_scratch[..ow * 3];
       yuv_444_to_rgb_row(
-        y_row,
-        u_row,
-        v_row,
-        out_rgb,
-        ow,
-        row.matrix(),
-        row.full_range(),
-        use_simd,
+        y_out, u_row, v_row, out_rgb, ow, matrix, full_range, use_simd,
       );
       if let Some(buf) = rgb.as_deref_mut() {
         buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_rgb);
@@ -614,8 +630,11 @@ fn yuv420p_process_native(
   Ok(())
 }
 
+/// Row-stage tier for the 4:2:0 planar family (the `with_native(false)`
+/// path). Takes the Y plane and the **separate** half-width U / V planes
+/// so the 4:2:0 semi-planar family reuses it after de-interleave.
 #[allow(clippy::too_many_arguments)]
-fn yuv420p_process_resampled(
+pub(super) fn yuv420p_process_resampled(
   plan: &ResamplePlan,
   rgb_stream: &mut Option<AreaStream<u8>>,
   luma_stream: &mut Option<AreaStream<u8>>,
@@ -626,12 +645,16 @@ fn yuv420p_process_resampled(
   luma_u16: &mut Option<&mut [u16]>,
   hsv: &mut Option<HsvFrameMut<'_>>,
   rgb_scratch: &mut std::vec::Vec<u8>,
-  row: &Yuv420pRow<'_>,
+  y_row: &[u8],
+  u_half: &[u8],
+  v_half: &[u8],
+  matrix: ColorMatrix,
+  full_range: bool,
+  idx: usize,
   w: usize,
   use_simd: bool,
 ) -> Result<(), MixedSinkerError> {
   let ow = plan.out_w();
-  let idx = row.row();
   let need_luma = luma.is_some() || luma_u16.is_some();
   let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
 
@@ -726,150 +749,8 @@ fn yuv420p_process_resampled(
     }
     let scratch = &mut rgb_scratch[..row_bytes];
     yuv_420_to_rgb_row(
-      row.y(),
-      row.u_half(),
-      row.v_half(),
-      scratch,
-      w,
-      row.matrix(),
-      row.full_range(),
-      use_simd,
+      y_row, u_half, v_half, scratch, w, matrix, full_range, use_simd,
     );
-    Some(scratch)
-  } else {
-    None
-  };
-
-  if need_luma {
-    let stream = luma_stream.as_mut().expect("created in the preflight");
-    stream.feed_row(idx, row.y(), use_simd, |oy, out_row| {
-      if let Some(buf) = luma.as_deref_mut() {
-        buf[oy * ow..(oy + 1) * ow].copy_from_slice(out_row);
-      }
-      if let Some(buf) = luma_u16.as_deref_mut() {
-        for (dst, &src) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(out_row) {
-          *dst = src as u16;
-        }
-      }
-    })?;
-  }
-
-  if let Some(scratch) = color_row {
-    let stream = rgb_stream.as_mut().expect("created in the preflight");
-    stream.feed_row(idx, scratch, use_simd, |oy, out_row| {
-      if let Some(buf) = rgb.as_deref_mut() {
-        buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_row);
-      }
-      if let Some(hsv) = hsv.as_mut() {
-        let (h, s, v) = hsv.hsv();
-        rgb_to_hsv_row(
-          out_row,
-          &mut h[oy * ow..(oy + 1) * ow],
-          &mut s[oy * ow..(oy + 1) * ow],
-          &mut v[oy * ow..(oy + 1) * ow],
-          ow,
-          use_simd,
-        );
-      }
-      if let Some(buf) = rgba.as_deref_mut() {
-        expand_rgb_to_rgba_row(out_row, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
-      }
-    })?;
-  }
-
-  Ok(())
-}
-
-/// Row-stage fused downscale shared by the planar formats with no
-/// native tier (Yuv411p / Yuv422p / Yuv444p). Mirrors the Yuv420p
-/// row-stage path: **luma / luma_u16 area-resample the Y plane
-/// directly** (a 1-channel stream over `y_row`, the YUV luma
-/// contract — luma is *not* re-derived from converted RGB), while RGB
-/// / RGBA / HSV bin a converted source-width RGB row (the 3-channel
-/// stream). `convert_rgb` fills the source-width scratch with RGB
-/// using the format's own conversion kernel, and runs only when a
-/// colour output is attached. Atomic preflight: every fallible step
-/// (freeze, stream creation, sequence check, scratch growth +
-/// conversion) precedes the first feed, so a failure mutates no
-/// caller output.
-#[allow(clippy::too_many_arguments)]
-fn planar_dual_resample(
-  luma_stream: &mut Option<AreaStream<u8>>,
-  rgb_stream: &mut Option<AreaStream<u8>>,
-  resample_outputs: &mut Option<super::FrozenOutputs>,
-  rgb: &mut Option<&mut [u8]>,
-  rgba: &mut Option<&mut [u8]>,
-  luma: &mut Option<&mut [u8]>,
-  luma_u16: &mut Option<&mut [u16]>,
-  hsv: &mut Option<HsvFrameMut<'_>>,
-  rgb_scratch: &mut std::vec::Vec<u8>,
-  y_row: &[u8],
-  w: usize,
-  plan: &ResamplePlan,
-  idx: usize,
-  use_simd: bool,
-  convert_rgb: impl FnOnce(&mut [u8]),
-) -> Result<(), MixedSinkerError> {
-  let ow = plan.out_w();
-  let need_luma = luma.is_some() || luma_u16.is_some();
-  let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
-
-  frozen_outputs_check(
-    resample_outputs,
-    luma,
-    luma_u16,
-    rgb,
-    rgba,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    hsv,
-    &None,
-    idx,
-  )?;
-  // Sequence-check before allocating (mirrors the packed-RGB helpers):
-  // a fresh stream expects row 0, so an out-of-sequence first row is
-  // rejected before any output-width buffer is created, and
-  // AllocationFailed never masks OutOfSequenceRow. A no-output call
-  // (neither luma nor color) has no stream to sequence and stays a
-  // no-op regardless of the row index.
-  let expected = if need_luma {
-    luma_stream.as_ref().map_or(0, |stream| stream.next_y())
-  } else if need_color {
-    rgb_stream.as_ref().map_or(0, |stream| stream.next_y())
-  } else {
-    idx
-  };
-  if expected != idx {
-    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
-      OutOfSequenceRow::new(expected, idx),
-    )));
-  }
-  if need_luma && luma_stream.is_none() {
-    *luma_stream = Some(AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      1,
-    )?);
-  }
-  if need_color && rgb_stream.is_none() {
-    *rgb_stream = Some(AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?);
-  }
-  let color_row = if need_color {
-    let scratch = super::source_rgb_scratch(rgb_scratch, w, plan)?;
-    convert_rgb(scratch);
     Some(scratch)
   } else {
     None
