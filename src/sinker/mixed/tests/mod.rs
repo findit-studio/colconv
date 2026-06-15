@@ -152,6 +152,12 @@ mod resample_rgbf32;
 mod resample_semi_planar;
 #[cfg(feature = "yuv-packed")]
 mod resample_uyyvyy411;
+#[cfg(feature = "yuv-444-packed")]
+mod resample_v30x;
+#[cfg(feature = "yuv-444-packed")]
+mod resample_v410;
+#[cfg(feature = "yuv-444-packed")]
+mod resample_xv36;
 #[cfg(feature = "xyz")]
 mod resample_xyz12;
 #[cfg(all(feature = "yuv-planar", feature = "rgb"))]

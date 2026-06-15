@@ -42,8 +42,8 @@
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
-  rgba_u16_plane_row_slice,
+  RowShapeMismatch, RowSlice, check_dimensions_match, packed_yuv444_triple_resample,
+  rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
 use crate::{
   PixelSink,
@@ -146,14 +146,26 @@ impl<'a, R> MixedSinker<'a, V30X, R> {
   }
 }
 
-impl V30XSink for MixedSinker<'_, V30X> {}
+impl<R> V30XSink for MixedSinker<'_, V30X, R> {}
 
-impl PixelSink for MixedSinker<'_, V30X> {
+impl<R> PixelSink for MixedSinker<'_, V30X, R> {
   type Input<'r> = V30XRow<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     check_dimensions_match(self.width, self.height, width, height)?;
+    // New frame: restart the row-stage streams (lazily created in
+    // `process`) and drop the frozen output set.
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgb_stream_u16.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_stream_u16.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
     Ok(())
   }
 
@@ -189,8 +201,52 @@ impl PixelSink for MixedSinker<'_, V30X> {
       luma_u16,
       hsv,
       rgb_scratch,
+      rgb_scratch_u16,
+      luma_scratch_u16,
+      plan,
+      rgb_stream,
+      rgb_stream_u16,
+      luma_stream_u16,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: feed the shared three-stream tail — u8 colour
+    // bins a converted u8 RGB row, u16 colour bins a converted native-u16
+    // RGB row, and luma bins the de-interleaved native Y. Freeze +
+    // sequence-check before staging, so a no-output sink stays a no-op and
+    // an out-of-sequence row is rejected without allocating.
+    if let Some(plan) = plan.as_ref() {
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      let packed = row.packed();
+      return packed_yuv444_triple_resample::<BITS>(
+        rgb_stream,
+        rgb_stream_u16,
+        luma_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch,
+        rgb_scratch_u16,
+        luma_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        matrix,
+        full_range,
+        |scratch| v30x_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd),
+        |scratch| v30x_to_rgb_u16_row(packed, scratch, w, matrix, full_range, use_simd),
+        |scratch| v30x_to_luma_u16_row(packed, scratch, w, use_simd),
+      );
+    }
+
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
     let packed = row.packed();
