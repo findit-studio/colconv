@@ -297,6 +297,10 @@ fn xv36_with_simd_false_matches_with_simd_true() {
 /// (MSB-aligned at 12-bit, low 4 bits zero).
 /// Yuv444p12 stores 12-bit values low-bit-packed (high 4 bits zero).
 /// XV36 stores them MSB-aligned (low 4 bits zero). Convert via `<< 4`.
+///
+/// Gated on `yuv-planar`: the cross-format oracle below feeds the planar
+/// `Yuv444p12` source, absent in a `yuv-444-packed`-solo build.
+#[cfg(feature = "yuv-planar")]
 fn pack_yuv444p12_to_xv36(
   y_plane: &[u16],
   u_plane: &[u16],
@@ -319,8 +323,11 @@ fn pack_yuv444p12_to_xv36(
   packed
 }
 
+// Cross-format oracle vs the planar `Yuv444p12` source — gated on
+// `yuv-planar` so a `yuv-444-packed`-solo `--tests` build (which lacks the
+// planar frame / walker) still compiles.
 #[test]
-#[cfg(all(test, feature = "std"))]
+#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"

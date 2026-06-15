@@ -288,6 +288,10 @@ fn v30x_with_simd_false_matches_with_simd_true() {
 /// V30X word stream layout: bits[31:22] = V, bits[21:12] = Y, bits[11:2] = U,
 /// bits[1:0] = 0 (padding at low end).
 /// Yuv444p10 stores 10-bit values as low-bit-packed u16 (high 6 bits zero).
+///
+/// Gated on `yuv-planar`: the cross-format oracle below feeds the planar
+/// `Yuv444p10` source, absent in a `yuv-444-packed`-solo build.
+#[cfg(feature = "yuv-planar")]
 fn pack_yuv444p10_to_v30x(
   y_plane: &[u16],
   u_plane: &[u16],
@@ -307,8 +311,10 @@ fn pack_yuv444p10_to_v30x(
   packed
 }
 
+// Cross-format oracle vs the planar `Yuv444p10` source — gated on
+// `yuv-planar` so a `yuv-444-packed`-solo `--tests` build still compiles.
 #[test]
-#[cfg(all(test, feature = "std"))]
+#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
