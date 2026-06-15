@@ -1418,33 +1418,55 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "v210"
   ))]
   rgb_stream_u16: Option<crate::resample::AreaStream<u16>>,
-  /// Row-stage **4-channel** area stream for packed straight/premult
-  /// RGBA sources (`Rgba` / `Bgra` / `Argb` / `Abgr`) and the planar
-  /// GBR+alpha family (`Gbrap`, decoded to the same canonical RGBA row).
+  /// Row-stage **4-channel** `u8` area stream for the alpha-aware u8 color
+  /// of packed straight/premult RGBA sources (`Rgba` / `Bgra` / `Argb` /
+  /// `Abgr`), the planar GBR+alpha family (`Gbrap`, decoded to the same
+  /// canonical RGBA row), gray+alpha (`Ya8`), and the packed YUVA family
+  /// (`Vuya`, and `Ayuv64`'s u8 color group — the converted u8 RGBA row).
   /// Bins the staged canonical `R, G, B, A` row so resampled alpha is a
   /// real area mean (not forced opaque) and — under
   /// [`AlphaMode::Premultiplied`] — color is binned premultiplied.
-  /// Lazily created in `process`, reset in `begin_frame`. Gated to `rgb`
-  /// / `gbr`; the 3-channel [`Self::rgb_stream`] still serves the rgb-only
-  /// straight path with no regression.
-  #[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+  /// Lazily created in `process`, reset in `begin_frame`. Gated to `rgb` /
+  /// `gbr` / `gray` / `yuv-444-packed`; the 3-channel [`Self::rgb_stream`]
+  /// still serves the rgb-only straight path with no regression.
+  #[cfg(any(
+    feature = "rgb",
+    feature = "gbr",
+    feature = "gray",
+    feature = "yuv-444-packed"
+  ))]
   rgba_stream: Option<crate::resample::AreaStream<u8>>,
-  /// Row-stage **4-channel** `u16` area stream for the high-bit packed
-  /// RGBA sources (`Rgba64` / `Bgra64`) and the high-bit planar GBR+alpha
-  /// family (`Gbrap10` … `Gbrap16`, decoded to the same canonical RGBA
-  /// row). Bins the staged canonical `R, G, B, A` row at native depth;
-  /// the native-depth `rgba_u16` output copies it, the u8 / narrowed
-  /// outputs derive via `>> (SRC_BITS - 8)`. Lazily created in `process`,
-  /// reset in `begin_frame`. Gated to `rgb` / `gbr`.
-  #[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+  /// Row-stage **4-channel** `u16` area stream for the native-depth u16
+  /// color of the high-bit packed RGBA sources (`Rgba64` / `Bgra64`), the
+  /// high-bit planar GBR+alpha family (`Gbrap10` … `Gbrap16`), gray+alpha
+  /// (`Ya16`), and the packed YUVA `Ayuv64` (its independent u16 color
+  /// group — the converted native u16 RGBA row). Bins the staged canonical
+  /// `R, G, B, A` row at native depth; the native-depth `rgba_u16` output
+  /// copies it (the RGB-source narrowed outputs derive via
+  /// `>> (SRC_BITS - 8)`, but `Ayuv64` instead bins its u8 color
+  /// independently in [`Self::rgba_stream`]). Lazily created in `process`,
+  /// reset in `begin_frame`. Gated to `rgb` / `gbr` / `gray` /
+  /// `yuv-444-packed`.
+  #[cfg(any(
+    feature = "rgb",
+    feature = "gbr",
+    feature = "gray",
+    feature = "yuv-444-packed"
+  ))]
   rgba_stream_u16: Option<crate::resample::AreaStream<u16>>,
   /// Alpha mode frozen at a resampled frame's first row. A mid-frame
   /// [`Self::set_alpha_mode`] change is then rejected before any stream
   /// is fed, since a stream mixing straight and premultiplied rows would
   /// match neither all-straight nor all-premultiplied output. `None`
   /// between frames; re-armed on each frame's first resampled row (so a
-  /// stale value never leaks across frames). Gated to `rgb` / `gbr`.
-  #[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+  /// stale value never leaks across frames). Gated to `rgb` / `gbr` /
+  /// `gray` / `yuv-444-packed`.
+  #[cfg(any(
+    feature = "rgb",
+    feature = "gbr",
+    feature = "gray",
+    feature = "yuv-444-packed"
+  ))]
   frozen_alpha_mode: Option<AlphaMode>,
   /// Row-stage area stream for packed-float-RGB sources (`f32`
   /// elements binned in float). Lazily created in `process`, reset in
@@ -1640,33 +1662,52 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "v210"
   ))]
   rgb_scratch_u16: Vec<u16>,
-  /// Source-width canonical `R, G, B, A` `u8` staging for the packed
-  /// straight/premult RGBA resample tail: each source row is converted
-  /// to canonical RGBA (`Rgba` identity, `Bgra` swap, `Argb` / `Abgr`
-  /// rotate α to slot 3; `Gbrap` de-interleaves its G/B/R/A planes) here
-  /// — and, under [`AlphaMode::Premultiplied`], premultiplied in place —
+  /// Source-width canonical `R, G, B, A` `u8` staging for the alpha-aware
+  /// u8-color resample tails: each source row is converted to canonical
+  /// RGBA (`Rgba` identity, `Bgra` swap, `Argb` / `Abgr` rotate α to slot
+  /// 3; `Gbrap` de-interleaves its G/B/R/A planes; `Ya8` replicates Y;
+  /// `Vuya` / `Ayuv64` run the u8 `YUV→RGB` kernel with source α) here —
+  /// and, under [`AlphaMode::Premultiplied`], premultiplied in place —
   /// before feeding the 4-channel [`Self::rgba_stream`]. Lazily grown to
-  /// `4 * width` `u8`; empty otherwise. Gated to `rgb` / `gbr`.
-  #[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+  /// `4 * width` `u8`; empty otherwise. Gated to `rgb` / `gbr` / `gray` /
+  /// `yuv-444-packed`.
+  #[cfg(any(
+    feature = "rgb",
+    feature = "gbr",
+    feature = "gray",
+    feature = "yuv-444-packed"
+  ))]
   rgba_scratch: Vec<u8>,
-  /// Source-width canonical `R, G, B, A` host-native `u16` staging for
-  /// the high-bit packed RGBA resample tail (`Rgba64` / `Bgra64`) and the
-  /// high-bit planar GBR+alpha family (`Gbrap10` … `Gbrap16`): the wire
-  /// row converts to host-native u16 RGBA here (and is premultiplied
-  /// in place under [`AlphaMode::Premultiplied`]) before feeding the
-  /// 4-channel [`Self::rgba_stream_u16`]. Lazily grown to `4 * width`
-  /// `u16`; empty otherwise. Gated to `rgb` / `gbr`.
-  #[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+  /// Source-width canonical `R, G, B, A` host-native `u16` staging for the
+  /// alpha-aware native-u16-color resample tails (`Rgba64` / `Bgra64`, the
+  /// high-bit planar GBR+alpha family `Gbrap10` … `Gbrap16`, `Ya16`, and
+  /// the packed YUVA `Ayuv64`'s independent u16 color group): the wire row
+  /// converts to host-native u16 RGBA here (and is premultiplied in place
+  /// under [`AlphaMode::Premultiplied`]) before feeding the 4-channel
+  /// [`Self::rgba_stream_u16`]. Lazily grown to `4 * width` `u16`; empty
+  /// otherwise. Gated to `rgb` / `gbr` / `gray` / `yuv-444-packed`.
+  #[cfg(any(
+    feature = "rgb",
+    feature = "gbr",
+    feature = "gray",
+    feature = "yuv-444-packed"
+  ))]
   rgba_scratch_u16: Vec<u16>,
   /// Out-width host-native straight `R, G, B, A` `u16` staging for the
-  /// high-bit packed RGBA resample tail: per finalized output row the
-  /// binned native RGBA is resolved to its straight form here (a copy in
+  /// native-u16-color resample tails: per finalized output row the binned
+  /// native RGBA is resolved to its straight form here (a copy in
   /// [`AlphaMode::Straight`], an un-premultiply in
-  /// [`AlphaMode::Premultiplied`]), then every native and narrowed
-  /// output derives from this single straight row. Lazily grown to
-  /// `4 * out_width` `u16`; empty for an output-less sink. Gated to
-  /// `rgb` / `gbr`.
-  #[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+  /// [`AlphaMode::Premultiplied`]), then every output derives from this
+  /// single straight row (the high-bit packed RGBA tail's narrowed u8
+  /// outputs and `Ayuv64`'s u16 color group's rgb_u16 / rgba_u16). Lazily
+  /// grown to `4 * out_width` `u16`; empty for an output-less sink. Gated
+  /// to `rgb` / `gbr` / `gray` / `yuv-444-packed`.
+  #[cfg(any(
+    feature = "rgb",
+    feature = "gbr",
+    feature = "gray",
+    feature = "yuv-444-packed"
+  ))]
   rgba_color_scratch_u16: Vec<u16>,
   /// Source-width host-native `u16` luma staging for the
   /// [`Gray16`](crate::source::Gray16) resample path: the wire `Gray16`
@@ -2208,11 +2249,26 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "v210"
       ))]
       rgb_stream_u16: None,
-      #[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+      #[cfg(any(
+        feature = "rgb",
+        feature = "gbr",
+        feature = "gray",
+        feature = "yuv-444-packed"
+      ))]
       rgba_stream: None,
-      #[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+      #[cfg(any(
+        feature = "rgb",
+        feature = "gbr",
+        feature = "gray",
+        feature = "yuv-444-packed"
+      ))]
       rgba_stream_u16: None,
-      #[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+      #[cfg(any(
+        feature = "rgb",
+        feature = "gbr",
+        feature = "gray",
+        feature = "yuv-444-packed"
+      ))]
       frozen_alpha_mode: None,
       #[cfg(any(
         all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
@@ -2301,11 +2357,26 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "v210"
       ))]
       rgb_scratch_u16: Vec::new(),
-      #[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+      #[cfg(any(
+        feature = "rgb",
+        feature = "gbr",
+        feature = "gray",
+        feature = "yuv-444-packed"
+      ))]
       rgba_scratch: Vec::new(),
-      #[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+      #[cfg(any(
+        feature = "rgb",
+        feature = "gbr",
+        feature = "gray",
+        feature = "yuv-444-packed"
+      ))]
       rgba_scratch_u16: Vec::new(),
-      #[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+      #[cfg(any(
+        feature = "rgb",
+        feature = "gbr",
+        feature = "gray",
+        feature = "yuv-444-packed"
+      ))]
       rgba_color_scratch_u16: Vec::new(),
       #[cfg(any(
         feature = "gray",
@@ -3961,7 +4032,12 @@ pub(super) fn packed_rgb_u16_resample_emit<const SRC_BITS: u32, const NATIVE_LUM
 /// straight/premult RGBA resample tail. Grows `scratch` to `4 * width`
 /// `u8` under the planner's recoverable-allocation contract. Mirrors
 /// [`source_rgb_scratch`] for the 4-channel RGBA row.
-#[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+#[cfg(any(
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "yuv-444-packed"
+))]
 pub(super) fn source_rgba_scratch<'s>(
   scratch: &'s mut Vec<u8>,
   width: usize,
@@ -3995,7 +4071,12 @@ pub(super) fn source_rgba_scratch<'s>(
 /// `u16` analogue of [`source_rgba_scratch`] — source-width canonical
 /// `R, G, B, A` host-native `u16` staging for the high-bit packed RGBA
 /// resample tail. Grows `scratch` to `4 * width` `u16`.
-#[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+#[cfg(any(
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "yuv-444-packed"
+))]
 pub(super) fn source_rgba_u16_scratch<'s>(
   scratch: &'s mut Vec<u16>,
   width: usize,
@@ -4031,7 +4112,12 @@ pub(super) fn source_rgba_u16_scratch<'s>(
 /// integer op the [`AlphaMode::Premultiplied`] oracle mirrors, so the
 /// binned-then-un-premultiplied output is byte-exact. `MAX` is `255` for
 /// the u8 path and the source's native max for the u16 path.
-#[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+#[cfg(any(
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "yuv-444-packed"
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn premultiply_rgba_row_in_place<T>(row: &mut [T], width: usize, max: u32)
 where
@@ -4053,7 +4139,12 @@ where
 /// value: `round(pm * MAX / α)` clamped to `MAX`, or `0` when `α == 0`
 /// (a fully-transparent binned pixel exposes no color, so it cannot
 /// bleed). The exact integer inverse of [`premultiply_rgba_row_in_place`].
-#[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+#[cfg(any(
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "yuv-444-packed"
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn unpremultiply_channel(pm: u32, a: u32, max: u32) -> u32 {
   // `checked_div` yields `None` exactly when `α == 0`, which maps to a
@@ -4065,7 +4156,12 @@ fn unpremultiply_channel(pm: u32, a: u32, max: u32) -> u32 {
 /// Un-premultiplies one binned canonical `R, G, B, A` row into the
 /// caller's straight-RGBA destination (α copied through). Applied per
 /// finalized output row when binning premultiplied.
-#[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+#[cfg(any(
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "yuv-444-packed"
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn unpremultiply_binned_rgba_into<T>(binned: &[T], dst: &mut [T], width: usize, max: u32)
 where
@@ -4088,7 +4184,12 @@ where
 /// Un-premultiplies one binned canonical `R, G, B, A` row into a
 /// straight **RGB** destination (α dropped) — the packed RGB the
 /// luma / hsv kernels consume in premultiplied mode.
-#[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+#[cfg(any(
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "yuv-444-packed"
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn unpremultiply_binned_rgb_into<T>(binned: &[T], dst: &mut [T], width: usize, max: u32)
 where
@@ -4109,7 +4210,12 @@ where
 
 /// Drops α from one canonical `R, G, B, A` row into a packed `R, G, B`
 /// destination — the straight-mode RGB the luma / hsv kernels consume.
-#[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+#[cfg(any(
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "yuv-444-packed"
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn drop_alpha_rgba_to_rgb_row<T: Copy>(rgba: &[T], dst: &mut [T], width: usize) {
   for (out_px, in_px) in dst[..width * 3]
@@ -4129,7 +4235,12 @@ fn drop_alpha_rgba_to_rgb_row<T: Copy>(rgba: &[T], dst: &mut [T], width: usize) 
 /// rows since it is taken at the frame boundary, not the first row.
 /// (`frozen` is `None` only before the first `begin_frame`, a contract
 /// violation, which is likewise rejected.)
-#[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
+#[cfg(any(
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "yuv-444-packed"
+))]
 pub(super) fn check_frozen_alpha_mode(
   frozen: Option<AlphaMode>,
   current: AlphaMode,
@@ -4967,6 +5078,320 @@ pub(super) fn packed_yuv444_triple_resample<const SRC_BITS: u32>(
       if let Some(buf) = luma.as_deref_mut() {
         for (dst, &src) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(binned_y) {
           *dst = (src >> (SRC_BITS - 8)) as u8;
+        }
+      }
+    })?;
+  }
+
+  Ok(())
+}
+
+/// Row-stage fused downscale for the **packed 4:4:4 YUV-with-alpha**
+/// family (`Vuya` 8-bit and `Ayuv64` 16-bit) — the alpha-aware analogue
+/// of [`packed_yuv444_triple_resample`]. Packed YUVA is the most
+/// demanding alpha family: it must reproduce a direct convert-then-bin
+/// for **four** outputs that each round independently, so this routes up
+/// to **four** independent area binnings rather than reusing the
+/// packed-RGBA tails (whose u8 outputs are a `>> (SRC_BITS - 8)`
+/// narrowing of the u16 bin — correct for an RGB source, but **wrong**
+/// for YUV, whose u8 and u16 `YUV→RGB` kernels round and scale
+/// independently). The four binnings:
+///
+/// 1. **u8 colour (rgb / rgba / hsv):** `convert_rgba_u8` stages the
+///    direct u8 `YUV→RGB` row **with real source alpha** as a canonical
+///    source-width `R, G, B, A` u8 row (`*_to_rgba_row`); the 4-channel
+///    [`AreaStream<u8>`](crate::resample::AreaStream) (`rgba_stream`)
+///    bins all four channels so resampled alpha is a real area mean.
+///    Per finalized output row the binned RGBA resolves to its straight
+///    form (a copy in [`AlphaMode::Straight`], an un-premultiply in
+///    [`AlphaMode::Premultiplied`]) and emits rgba; rgb / hsv drop alpha.
+/// 2. **u16 colour (rgb_u16 / rgba_u16):** `convert_rgba_u16` stages the
+///    **independent** native-depth u16 `YUV→RGB` row with source alpha
+///    (`*_to_rgba_u16_row`); the 4-channel [`AreaStream<u16>`]
+///    (`rgba_stream_u16`) bins at native depth and emits rgba_u16 /
+///    rgb_u16 from its own straight resolve — never a narrowing of (1).
+/// 3. **luma (luma / luma_u16):** `deinterleave_y` stages the native Y
+///    plane into a source-width u16 scratch; a 1-channel
+///    [`AreaStream<u16>`] (`luma_stream_u16`) bins it at native depth.
+///    Luma is **native Y**, NOT derived from either colour stream —
+///    byte-exact to the direct `*_to_luma*` kernels for every matrix,
+///    both ranges, AND every alpha mode. Under
+///    [`AlphaMode::Premultiplied`] each colour stream collapses to
+///    `mean(Y·A)/mean(A)`, but native Y stays `mean(Y)`; deriving luma
+///    from colour would be wrong (the bug the `Ya` family fixed —
+///    [`packed_rgba_resample`]'s `NATIVE_Y_LUMA`). luma_u16 is the
+///    host-native binned Y; luma is `binned_Y >> (SRC_BITS - 8)` (an
+///    8-bit `Vuya` is `>> 0`, a zero-extension; `Ayuv64` is `>> 8`).
+///
+/// `SRC_BITS` is the source's native Y / colour depth (`8` for `Vuya`,
+/// `16` for `Ayuv64`): it governs the luma narrowing shift and the u16
+/// premultiply / un-premultiply maximum `(1 << SRC_BITS) - 1` (so an
+/// 8-bit source never builds the u16 colour stream — `Vuya` exposes no
+/// u16 outputs, leaving `need_colour_u16` always false). The u8 colour
+/// stream's premultiply maximum is always `255`.
+///
+/// This is an internal `pub(super)` tail, kept separate from
+/// [`packed_yuv444_triple_resample`] so the no-alpha 4:4:4 callers
+/// (`V30X` / `V410` / `Xv36`, and `Vuyx` whose padding byte forces α
+/// opaque) stay byte-identical, and from the packed-RGBA tails so the
+/// independent u8/u16 YUV colour rounding is preserved. The alpha
+/// arithmetic reuses the shared [`premultiply_rgba_row_in_place`] /
+/// [`unpremultiply_binned_rgba_into`] / [`unpremultiply_binned_rgb_into`]
+/// helpers, so straight / premultiplied semantics are byte-identical to
+/// the packed-RGBA family.
+///
+/// Atomic preflight (mirrors [`packed_yuv444_triple_resample`]): a
+/// no-output call returns before any freeze; a single
+/// [`frozen_outputs_check`] runs, then a single sequence check on
+/// whichever stream is fed every row (all active streams advance in
+/// lockstep) **before any allocation** — an out-of-sequence first row is
+/// rejected before the freeze (storing no snapshot to poison a retry),
+/// and on a later row the freeze runs first (a mid-frame output change
+/// trips `ResampleOutputsChanged` rather than being masked by a
+/// freshly-attached stream's row-0 mismatch). Every stream and every
+/// (distinct, non-aliasing) scratch is created after the sequence check
+/// and before the first feed, so a failure mutates no caller output. The
+/// alpha mode is snapshotted at `begin_frame` and checked by the caller
+/// (via [`check_frozen_alpha_mode`]) before this tail runs.
+#[cfg(feature = "yuv-444-packed")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn packed_yuva444_resample<const SRC_BITS: u32>(
+  rgba_stream: &mut Option<crate::resample::AreaStream<u8>>,
+  rgba_stream_u16: &mut Option<crate::resample::AreaStream<u16>>,
+  luma_stream_u16: &mut Option<crate::resample::AreaStream<u16>>,
+  resample_outputs: &mut Option<FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  rgb_u16: &mut Option<&mut [u16]>,
+  rgba_u16: &mut Option<&mut [u16]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgba_scratch: &mut Vec<u8>,
+  rgb_drop_scratch: &mut Vec<u8>,
+  rgba_scratch_u16: &mut Vec<u16>,
+  color_scratch_u16: &mut Vec<u16>,
+  luma_scratch_u16: &mut Vec<u16>,
+  w: usize,
+  plan: &ResamplePlan,
+  idx: usize,
+  use_simd: bool,
+  alpha_mode: AlphaMode,
+  convert_rgba_u8: impl FnOnce(&mut [u8]),
+  convert_rgba_u16: impl FnOnce(&mut [u16]),
+  deinterleave_y: impl FnOnce(&mut [u16]),
+) -> Result<(), MixedSinkerError> {
+  const {
+    assert!(
+      SRC_BITS >= 8 && SRC_BITS <= 16,
+      "SRC_BITS must be in [8, 16] for packed YUVA 4:4:4"
+    )
+  };
+  // `1 << 16` does not overflow u32; governs the u16 premultiply rounding
+  // and the un-premultiply clamp. The u8 colour stream always uses 255.
+  let max_u16: u32 = (1u32 << SRC_BITS) - 1;
+  let ow = plan.out_w();
+  let premult = alpha_mode.is_premultiplied();
+  let need_colour_u8 = rgb.is_some() || rgba.is_some() || hsv.is_some();
+  let need_colour_u16 = rgb_u16.is_some() || rgba_u16.is_some();
+  let need_luma = luma.is_some() || luma_u16.is_some();
+
+  // Single sequence check before any allocation, on whichever stream is
+  // fed every row (all active streams advance in lockstep against the
+  // frozen output set). A no-output call has no stream to sequence and
+  // stays a no-op regardless of the row index.
+  let expected = if need_colour_u8 {
+    rgba_stream.as_ref().map_or(0, |s| s.next_y())
+  } else if need_colour_u16 {
+    rgba_stream_u16.as_ref().map_or(0, |s| s.next_y())
+  } else if need_luma {
+    luma_stream_u16.as_ref().map_or(0, |s| s.next_y())
+  } else {
+    return Ok(());
+  };
+  // First row: reject an out-of-sequence row before the freeze so a
+  // rejected first row stores no snapshot that would poison a retry. On a
+  // later row the freeze runs first (below).
+  if resample_outputs.is_none() && expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    hsv,
+    &None,
+    idx,
+  )?;
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+
+  // The u8 colour stream's rgb / hsv outputs need a packed RGB row (the
+  // per-mode binned colour with α dropped), sized to the out-width RGB
+  // row only when one of those is attached so an rgba-only sink never
+  // grows it.
+  let need_rgb_drop = rgb.is_some() || hsv.is_some();
+
+  // Create the streams (post-sequence-check), each running the full
+  // output grid against its own source grid. The colour streams carry 4
+  // interleaved channels, the luma stream 1.
+  if need_colour_u8 && rgba_stream.is_none() {
+    *rgba_stream = Some(crate::resample::AreaStream::new(
+      plan.h(),
+      plan.v(),
+      plan.src_w(),
+      plan.src_h(),
+      4,
+    )?);
+  }
+  if need_colour_u16 && rgba_stream_u16.is_none() {
+    *rgba_stream_u16 = Some(crate::resample::AreaStream::new(
+      plan.h(),
+      plan.v(),
+      plan.src_w(),
+      plan.src_h(),
+      4,
+    )?);
+  }
+  if need_luma && luma_stream_u16.is_none() {
+    *luma_stream_u16 = Some(crate::resample::AreaStream::new(
+      plan.h(),
+      plan.v(),
+      plan.src_w(),
+      plan.src_h(),
+      1,
+    )?);
+  }
+
+  // Stage every source-width row and grow every out-width resolve scratch
+  // before the first feed (all fallible growths precede it, keeping the
+  // call atomic). The five scratches are distinct fields and never alias.
+  let rgb_drop: &mut [u8] = if need_rgb_drop {
+    source_rgb_scratch(rgb_drop_scratch, ow, plan)?
+  } else {
+    &mut []
+  };
+  let colour_u16: &mut [u16] = if need_colour_u16 {
+    source_rgba_u16_scratch(color_scratch_u16, ow, plan)?
+  } else {
+    &mut []
+  };
+  let src_rgba_u8 = if need_colour_u8 {
+    let scratch = source_rgba_scratch(rgba_scratch, w, plan)?;
+    convert_rgba_u8(scratch);
+    if premult {
+      premultiply_rgba_row_in_place::<u8>(scratch, w, 255);
+    }
+    Some(scratch)
+  } else {
+    None
+  };
+  let src_rgba_u16 = if need_colour_u16 {
+    let scratch = source_rgba_u16_scratch(rgba_scratch_u16, w, plan)?;
+    convert_rgba_u16(scratch);
+    if premult {
+      premultiply_rgba_row_in_place::<u16>(scratch, w, max_u16);
+    }
+    Some(scratch)
+  } else {
+    None
+  };
+  let y_row = if need_luma {
+    let scratch = source_luma_u16_scratch(luma_scratch_u16, w, plan)?;
+    deinterleave_y(scratch);
+    Some(scratch)
+  } else {
+    None
+  };
+
+  // Binning 1 — u8 colour. Resolve the per-mode straight RGBA per output
+  // row, then emit rgba (straight RGBA), rgb / hsv (straight RGB). luma is
+  // native Y (binning 3), so it is never derived here.
+  if let Some(scratch) = src_rgba_u8 {
+    let stream = rgba_stream.as_mut().expect("created in the preflight");
+    stream.feed_row(idx, scratch, use_simd, |oy, binned| {
+      if let Some(buf) = rgba.as_deref_mut() {
+        let dst = &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow];
+        if premult {
+          unpremultiply_binned_rgba_into::<u8>(binned, dst, ow, 255);
+        } else {
+          dst.copy_from_slice(binned);
+        }
+      }
+      if need_rgb_drop {
+        let nrow = &mut rgb_drop[..3 * ow];
+        if premult {
+          unpremultiply_binned_rgb_into::<u8>(binned, nrow, ow, 255);
+        } else {
+          drop_alpha_rgba_to_rgb_row(binned, nrow, ow);
+        }
+        if let Some(buf) = rgb.as_deref_mut() {
+          buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(nrow);
+        }
+        if let Some(hsv) = hsv.as_mut() {
+          let (h, s, v) = hsv.hsv();
+          crate::row::rgb_to_hsv_row(
+            nrow,
+            &mut h[oy * ow..(oy + 1) * ow],
+            &mut s[oy * ow..(oy + 1) * ow],
+            &mut v[oy * ow..(oy + 1) * ow],
+            ow,
+            use_simd,
+          );
+        }
+      }
+    })?;
+  }
+
+  // Binning 2 — u16 colour at native depth, INDEPENDENT of binning 1.
+  // Resolve the per-mode straight native RGBA per output row, then emit
+  // rgba_u16 (straight) and rgb_u16 (drop α).
+  if let Some(scratch) = src_rgba_u16 {
+    let stream = rgba_stream_u16.as_mut().expect("created in the preflight");
+    stream.feed_row(idx, scratch, use_simd, |oy, binned| {
+      let colour = &mut colour_u16[..4 * ow];
+      if premult {
+        unpremultiply_binned_rgba_into::<u16>(binned, colour, ow, max_u16);
+      } else {
+        colour.copy_from_slice(binned);
+      }
+      if let Some(buf) = rgba_u16.as_deref_mut() {
+        buf[oy * 4 * ow..(oy + 1) * 4 * ow].copy_from_slice(colour);
+      }
+      if let Some(buf) = rgb_u16.as_deref_mut() {
+        let dst = &mut buf[oy * 3 * ow..(oy + 1) * 3 * ow];
+        drop_alpha_rgba_to_rgb_row(colour, dst, ow);
+      }
+    })?;
+  }
+
+  // Binning 3 — native Y through the 1-channel u16 luma stream. The
+  // binned row is host-native; luma_u16 is its pass-through, luma the
+  // `>> (SRC_BITS - 8)` narrowing (`>> 0` for an 8-bit source). Alpha- and
+  // range-independent by construction.
+  if let Some(y_row) = y_row {
+    let stream = luma_stream_u16.as_mut().expect("created in the preflight");
+    stream.feed_row(idx, y_row, use_simd, |oy, binned_y| {
+      if let Some(buf) = luma_u16.as_deref_mut() {
+        buf[oy * ow..(oy + 1) * ow].copy_from_slice(binned_y);
+      }
+      if let Some(buf) = luma.as_deref_mut() {
+        for (dst, &y) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(binned_y) {
+          *dst = (y >> (SRC_BITS - 8)) as u8;
         }
       }
     })?;

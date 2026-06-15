@@ -21,7 +21,8 @@
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  RowShapeMismatch, RowSlice, check_dimensions_match, packed_yuv444_triple_resample,
+  rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
 use crate::{
   PixelSink,
@@ -93,18 +94,33 @@ impl<'a, R> MixedSinker<'a, Vuyx, R> {
   }
 }
 
-impl VuyxSink for MixedSinker<'_, Vuyx> {}
+impl<R> VuyxSink for MixedSinker<'_, Vuyx, R> {}
 
-impl PixelSink for MixedSinker<'_, Vuyx> {
+impl<R> PixelSink for MixedSinker<'_, Vuyx, R> {
   type Input<'r> = VuyxRow<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     check_dimensions_match(self.width, self.height, width, height)?;
+    // New frame: restart the row-stage streams (lazily created in
+    // `process`) and drop the frozen output set. `Vuyx` exposes no u16
+    // colour outputs, so its u16 colour stream is never created; resetting
+    // it unconditionally is a harmless no-op.
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgb_stream_u16.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_stream_u16.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
     Ok(())
   }
 
   fn process(&mut self, row: VuyxRow<'_>) -> Result<(), Self::Error> {
+    const BITS: u32 = 8;
     let w = self.width;
     let h = self.height;
     let idx = row.row();
@@ -128,6 +144,64 @@ impl PixelSink for MixedSinker<'_, Vuyx> {
       return Err(MixedSinkerError::RowIndexOutOfRange(
         RowIndexOutOfRange::new(idx, self.height),
       ));
+    }
+
+    // Non-identity plan: `Vuyx` has NO alpha (the X byte is padding,
+    // forced opaque), so it routes exactly like the no-alpha packed 4:4:4
+    // YUV siblings (`V30X` / `V410` / `Xv36`) through the three-stream tail
+    // — u8 colour bins the converted u8 RGB row, native Y bins the
+    // de-interleaved Y plane (the colour outputs force α opaque, the
+    // padding byte is never read). `Vuyx` exposes no u16 colour outputs, so
+    // the u16 colour binning is never active (`rgb_u16` / `rgba_u16` stay
+    // `None`); its `convert_rgb_u16` closure is therefore never invoked.
+    if let Some(plan) = self.plan.as_ref() {
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      let packed = row.packed();
+      let Self {
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch,
+        rgb_scratch_u16,
+        luma_scratch_u16,
+        rgb_stream,
+        rgb_stream_u16,
+        luma_stream_u16,
+        resample_outputs,
+        ..
+      } = self;
+      return packed_yuv444_triple_resample::<BITS>(
+        rgb_stream,
+        rgb_stream_u16,
+        luma_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch,
+        rgb_scratch_u16,
+        luma_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        matrix,
+        full_range,
+        |scratch| vuyx_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd),
+        // `Vuyx` has no u16 colour outputs, so `need_u16_color` is always
+        // false in the tail and this closure is never called.
+        |_scratch: &mut [u16]| {},
+        |scratch| vuyx_to_luma_u16_row(packed, scratch, w, use_simd),
+      );
     }
 
     let Self {

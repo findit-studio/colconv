@@ -110,6 +110,8 @@ mod planar_gbr_float;
 mod planar_gbr_high_bit;
 #[cfg(feature = "yuv-planar")]
 mod planar_other_8bit_9bit;
+#[cfg(feature = "yuv-444-packed")]
+mod resample_ayuv64;
 #[cfg(feature = "bayer")]
 mod resample_bayer8;
 #[cfg(feature = "rgb")]
@@ -170,6 +172,10 @@ mod resample_v210;
 mod resample_v30x;
 #[cfg(feature = "yuv-444-packed")]
 mod resample_v410;
+#[cfg(feature = "yuv-444-packed")]
+mod resample_vuya;
+#[cfg(feature = "yuv-444-packed")]
+mod resample_vuyx;
 #[cfg(feature = "yuv-444-packed")]
 mod resample_xv36;
 #[cfg(feature = "xyz")]

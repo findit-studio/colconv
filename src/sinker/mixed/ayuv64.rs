@@ -45,8 +45,8 @@
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
-  rgba_u16_plane_row_slice,
+  RowShapeMismatch, RowSlice, check_dimensions_match, check_frozen_alpha_mode,
+  packed_yuva444_resample, rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
 use crate::{
   PixelSink,
@@ -188,18 +188,34 @@ impl<'a, R, const BE: bool> MixedSinker<'a, Ayuv64<BE>, R> {
   }
 }
 
-impl<const BE: bool> Ayuv64Sink<BE> for MixedSinker<'_, Ayuv64<BE>> {}
+impl<R, const BE: bool> Ayuv64Sink<BE> for MixedSinker<'_, Ayuv64<BE>, R> {}
 
-impl<const BE: bool> PixelSink for MixedSinker<'_, Ayuv64<BE>> {
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Ayuv64<BE>, R> {
   type Input<'r> = Ayuv64Row<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     check_dimensions_match(self.width, self.height, width, height)?;
+    // New frame: restart the 4-channel u8 + u16 RGBA colour streams and the
+    // independent native-Y u16 luma stream (all lazily created in
+    // `process`) and re-arm the alpha-mode snapshot, mirroring the
+    // alpha-aware packed-RGBA / `Ya` sinks.
+    if let Some(stream) = self.rgba_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_stream_u16.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_stream_u16.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
   }
 
   fn process(&mut self, row: Ayuv64Row<'_>) -> Result<(), Self::Error> {
+    const BITS: u32 = 16;
     let w = self.width;
     let h = self.height;
     let idx = row.row();
@@ -223,6 +239,78 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Ayuv64<BE>> {
       return Err(MixedSinkerError::RowIndexOutOfRange(
         RowIndexOutOfRange::new(idx, self.height),
       ));
+    }
+
+    // Non-identity plan: `Ayuv64` is packed 4:4:4 YUV **with real 16-bit
+    // source alpha** (the A u16 of each `[A, Y, U, V]` quadruple) and the
+    // most demanding alpha family — it must reproduce four independently
+    // rounding outputs. Route through the packed-YUVA tail at
+    // `SRC_BITS = 16`, which carries THREE independent binnings:
+    // - u8 colour bins `ayuv64_to_rgba_row` (u8 `YUV→RGB`, α `>> 8`) → rgb
+    //   / rgba / hsv;
+    // - u16 colour bins the INDEPENDENT `ayuv64_to_rgba_u16_row` (native
+    //   `YUV→RGB`, α direct) → rgb_u16 / rgba_u16 — never a narrowing of the
+    //   u8 bin (the u8 and u16 `YUV→RGB` kernels round and scale
+    //   independently);
+    // - native Y bins `ayuv64_to_luma_u16_row` (Y from slot 1) → luma_u16
+    //   (native) / luma (`>> 8`), alpha- and range-independent.
+    // Both colour streams bin premultiplied under `AlphaMode::Premultiplied`
+    // (each at its own depth max) and un-premultiply per output row. `BE`
+    // is propagated from the parent `Ayuv64Frame<'_, BE>` to each kernel.
+    if self.plan.is_some() {
+      let alpha_mode = self.alpha_mode;
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      let packed = row.packed();
+      let Self {
+        rgb,
+        rgb_u16,
+        rgba,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgba_scratch,
+        rgb_scratch,
+        rgba_scratch_u16,
+        rgba_color_scratch_u16,
+        luma_scratch_u16,
+        plan,
+        rgba_stream,
+        rgba_stream_u16,
+        luma_stream_u16,
+        resample_outputs,
+        frozen_alpha_mode,
+        ..
+      } = self;
+      let plan = plan.as_ref().expect("plan.is_some() checked above");
+      check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
+      return packed_yuva444_resample::<BITS>(
+        rgba_stream,
+        rgba_stream_u16,
+        luma_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgba_scratch,
+        rgb_scratch,
+        rgba_scratch_u16,
+        rgba_color_scratch_u16,
+        luma_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        alpha_mode,
+        |dst| ayuv64_to_rgba_row(packed, dst, w, matrix, full_range, use_simd, BE),
+        |dst| ayuv64_to_rgba_u16_row(packed, dst, w, matrix, full_range, use_simd, BE),
+        |dst| ayuv64_to_luma_u16_row(packed, dst, w, use_simd, BE),
+      );
     }
 
     let Self {
