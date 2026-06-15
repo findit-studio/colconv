@@ -39,7 +39,10 @@ pub(super) fn solid_vuya_frame(width: u32, height: u32, v: u8, u: u8, y: u8, a: 
 
 /// Converts separate Y / U / V / A planes (8-bit, full-width 4:4:4) into a
 /// packed VUYA byte stream. Byte order per pixel: `[V, U, Y, A]`.
-#[cfg(all(test, feature = "std"))]
+///
+/// Gated on `yuva`: the cross-format oracle below feeds the planar
+/// `Yuva444p` source, absent in a `yuv-444-packed`-solo build.
+#[cfg(all(test, feature = "std", feature = "yuva"))]
 fn pack_yuva444p_to_vuya(
   y: &[u8],
   u: &[u8],
@@ -334,9 +337,11 @@ fn vuya_hsv_buffer_too_short_returns_error() {
 }
 
 // ---- 13: Planar parity with Yuva444p (headline cross-format oracle) -------
-
+//
+// Gated on `yuva` so a `yuv-444-packed`-solo `--tests` build (which lacks
+// the planar `Yuva444p` frame / walker) still compiles.
 #[test]
-#[cfg(all(test, feature = "std"))]
+#[cfg(all(test, feature = "std", feature = "yuva"))]
 #[cfg_attr(
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"

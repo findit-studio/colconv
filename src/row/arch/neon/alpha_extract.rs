@@ -393,7 +393,11 @@ mod tests {
     }
   }
 
+  // The `copy_alpha_plane_*` kernels are gated `any(gbr, yuva)` (the planar
+  // GBR+alpha / planar YUVA scatter paths); gate their parity tests the same
+  // so a `yuv-444-packed`-solo `--tests` build still compiles.
   #[test]
+  #[cfg(any(feature = "gbr", feature = "yuva"))]
   #[cfg_attr(
     miri,
     ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -412,6 +416,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(any(feature = "gbr", feature = "yuva"))]
   #[cfg_attr(
     miri,
     ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -435,6 +440,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(any(feature = "gbr", feature = "yuva"))]
   #[cfg_attr(
     miri,
     ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
@@ -457,6 +463,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(any(feature = "gbr", feature = "yuva"))]
   #[cfg_attr(
     miri,
     ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
