@@ -130,6 +130,8 @@ mod resample_gray16;
 mod resample_gray8;
 #[cfg(feature = "gray")]
 mod resample_grayf32;
+#[cfg(feature = "rgb-legacy")]
+mod resample_legacy_rgb;
 #[cfg(feature = "mono")]
 mod resample_mono;
 #[cfg(feature = "rgb")]

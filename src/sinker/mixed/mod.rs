@@ -1485,6 +1485,27 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// `width` `u8`; empty otherwise. Gated to `yuv-packed`.
   #[cfg(feature = "yuv-packed")]
   luma_scratch: Vec<u8>,
+  /// Source-width **native-channel** `u8` staging for the legacy 16-bit
+  /// packed-RGB ([`Rgb565`](crate::source::Rgb565) and family) resample
+  /// path: each packed source row is unpacked to its 3 **native** R/G/B
+  /// channels (5/6/5, 5/5/5 or 4/4/4 values, each `<= 63`, NOT expanded
+  /// to 8-bit) here before feeding the shared u8 [`Self::rgb_stream`], so
+  /// the area mean is taken at native depth. Lazily grown to `3 * width`
+  /// `u8`; empty otherwise. Gated to `rgb-legacy`.
+  #[cfg(feature = "rgb-legacy")]
+  legacy_rgb_native_scratch: Vec<u8>,
+  /// Out-width **re-packed source-format** `u8` staging for the legacy
+  /// 16-bit packed-RGB resample tail. Per finalized output row the binned
+  /// native R/G/B channels are re-packed back into the source's packed
+  /// `u16` word (LE bytes, `2 * out_width`) here, then the **exact**
+  /// direct `*_to_*` kernels run over it — so every output is
+  /// byte-identical to a direct conversion of the area-downscaled
+  /// source-format frame. The integer twin of the `gbr` family's
+  /// [`Self::rgb_plane_scratch_f32`] de-interleave staging. Lazily grown
+  /// to `2 * out_width` `u8`; empty for a no-output sink. Gated to
+  /// `rgb-legacy`.
+  #[cfg(feature = "rgb-legacy")]
+  legacy_rgb_packed_scratch: Vec<u8>,
   /// Source-width `u16` RGB staging for high-bit packed-RGB resampling:
   /// the wire row converts here before feeding [`Self::rgb_stream_u16`].
   /// Lazily grown to `3 * width` `u16`; empty otherwise. Gated to `rgb`
@@ -2035,6 +2056,10 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       rgb_scratch: Vec::new(),
       #[cfg(feature = "yuv-packed")]
       luma_scratch: Vec::new(),
+      #[cfg(feature = "rgb-legacy")]
+      legacy_rgb_native_scratch: Vec::new(),
+      #[cfg(feature = "rgb-legacy")]
+      legacy_rgb_packed_scratch: Vec::new(),
       #[cfg(any(feature = "rgb", feature = "gbr"))]
       rgb_scratch_u16: Vec::new(),
       #[cfg(feature = "gray")]
@@ -2231,11 +2256,31 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       feature = "gbr",
       feature = "gray",
       feature = "yuv-packed",
+      feature = "rgb-legacy",
       all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb"))
     )
   ))]
   pub(crate) fn rgb_scratch_capacity(&self) -> usize {
     self.rgb_scratch.capacity()
+  }
+
+  /// Capacity of the legacy 16-bit packed-RGB source-row native-channel
+  /// staging scratch — a white-box probe for the resample ordering tests
+  /// (a rejected row must not have grown the scratch). Gated on
+  /// `rgb-legacy` + `std` like the tests that consume it.
+  #[cfg(all(test, feature = "rgb-legacy", feature = "std"))]
+  pub(crate) fn legacy_rgb_native_scratch_capacity(&self) -> usize {
+    self.legacy_rgb_native_scratch.capacity()
+  }
+
+  /// Capacity of the legacy 16-bit packed-RGB re-packed-source-row
+  /// staging scratch — a white-box probe for the resample tests (a
+  /// native-`u16`-only sink, which copies the binned row at native depth,
+  /// must still size it because the re-pack feeds the `rgb_u16` kernel;
+  /// a no-output sink must not). Gated on `rgb-legacy` + `std`.
+  #[cfg(all(test, feature = "rgb-legacy", feature = "std"))]
+  pub(crate) fn legacy_rgb_packed_scratch_capacity(&self) -> usize {
+    self.legacy_rgb_packed_scratch.capacity()
   }
 
   /// Whether the high-bit packed-RGB `u16` area stream has been
@@ -2333,9 +2378,14 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   /// Whether the 3-channel packed-RGB `u8` area stream has been created
   /// — a white-box probe for the packed-YUV-4:2:2 resample ordering
   /// tests (an out-of-sequence first row must be rejected before the
-  /// stream is allocated). Gated on `yuv-packed` and `std` like the
-  /// tests that consume it.
-  #[cfg(all(test, feature = "std", feature = "yuv-packed"))]
+  /// stream is allocated). Gated on `std` + `any(yuv-packed, rgb-legacy)`
+  /// — the packed-YUV-4:2:2 and legacy packed-RGB resample ordering tests
+  /// both consume it, and both routes share `rgb_stream`.
+  #[cfg(all(
+    test,
+    feature = "std",
+    any(feature = "yuv-packed", feature = "rgb-legacy")
+  ))]
   pub(crate) fn rgb_stream_allocated(&self) -> bool {
     self.rgb_stream.is_some()
   }
@@ -3103,9 +3153,25 @@ pub(super) fn packed_rgb_resample_preflight(
 /// sequencing — run **before** a converting format stages its source
 /// row, so an out-of-sequence row is rejected without the scratch
 /// allocation/conversion (matching the `Rgb24` / YUV ordering).
-#[cfg(any(feature = "rgb", feature = "gbr", feature = "bayer"))]
+///
+/// `rgb-legacy` reuses this u8 stream to bin its **native** R/G/B
+/// channels (5/6/5, 5/5/5 or 4/4/4 values — each fits in a `u8`); the
+/// per-format emit re-packs the binned native channels and runs the
+/// direct kernels, so the RGB888 [`packed_rgb_resample_emit`] is not
+/// shared with that family.
+#[cfg(any(
+  feature = "rgb",
+  feature = "gbr",
+  feature = "bayer",
+  feature = "rgb-legacy"
+))]
 #[cfg_attr(
-  not(any(feature = "rgb", feature = "gbr", feature = "bayer")),
+  not(any(
+    feature = "rgb",
+    feature = "gbr",
+    feature = "bayer",
+    feature = "rgb-legacy"
+  )),
   allow(dead_code)
 )]
 pub(super) fn packed_rgb_resample_stream<'s>(
@@ -3241,7 +3307,12 @@ pub(super) fn source_rgb_u16_scratch<'s>(
 /// whether any output is attached. Mirrors
 /// [`packed_rgb_resample_preflight`], extended with the native-depth
 /// `rgb_u16` / `rgba_u16` / `luma_u16` channels.
-#[cfg(any(feature = "rgb", feature = "gbr"))]
+///
+/// The legacy 16-bit packed-RGB family (`rgb-legacy`) shares this
+/// freeze: its output set is exactly `rgb` / `rgba` / `rgb_u16` /
+/// `rgba_u16` / `luma` / `luma_u16` / `hsv`, the same one the high-bit
+/// path freezes.
+#[cfg(any(feature = "rgb", feature = "gbr", feature = "rgb-legacy"))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgb_u16_resample_preflight(
   resample_outputs: &mut Option<FrozenOutputs>,
