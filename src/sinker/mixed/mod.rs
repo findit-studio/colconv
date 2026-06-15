@@ -1237,6 +1237,66 @@ pub enum RowSlice {
   Bgra64Packed,
 }
 
+/// How a packed-alpha source's color channels relate to its alpha when
+/// the frame is **area-resampled** — the only place the distinction is
+/// observable, because area-binning averages color and alpha together.
+///
+/// In [`Self::Straight`] (a.k.a. *unassociated* / *non-premultiplied*)
+/// alpha, the RGB triple stores the surface's own color and α is an
+/// independent coverage term; averaging the channels independently is
+/// correct. In [`Self::Premultiplied`] (a.k.a. *associated*) alpha, RGB
+/// has already been multiplied by α, so a correct area-average must bin
+/// the premultiplied channels and un-premultiply afterwards — averaging
+/// straight RGB of a premultiplied source would let fully-transparent
+/// pixels (whose stored RGB is arbitrary) bleed into the result.
+///
+/// Every packed-RGBA source format colconv ships today is straight (see
+/// [`DefaultAlphaMode`]); the mode only matters on the resample path and
+/// is a no-op for the direct (identity-plan) conversions, which copy
+/// alpha through untouched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, IsVariant)]
+pub enum AlphaMode {
+  /// Unassociated alpha: RGB is the surface color, α an independent
+  /// coverage term. Channels area-average independently.
+  #[default]
+  Straight,
+  /// Associated alpha: RGB is already premultiplied by α. The resample
+  /// path bins the premultiplied channels and un-premultiplies per
+  /// finalized output row.
+  Premultiplied,
+}
+
+impl AlphaMode {
+  /// Returns the lowercase string name of the mode (`"straight"` /
+  /// `"premultiplied"`), matching the variant's conventional spelling.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::Straight => "straight",
+      Self::Premultiplied => "premultiplied",
+    }
+  }
+}
+
+/// Per-format default [`AlphaMode`], consulted by [`MixedSinker::new`]
+/// to seed the sink's alpha mode before any
+/// [`MixedSinker::with_alpha_mode`] override.
+///
+/// The blanket impl below makes every [`SourceFormat`] default to
+/// [`AlphaMode::Straight`] — true of every packed-RGBA source colconv
+/// ships today (`Rgba` / `Bgra` / `Argb` / `Abgr` / `Rgba64` /
+/// `Bgra64`). A future source format whose wire alpha is associated
+/// would carry its premultiplied default here (replacing the blanket
+/// with per-format impls), so callers get correct area-resampling
+/// without having to pass [`MixedSinker::with_alpha_mode`] by hand.
+pub trait DefaultAlphaMode: SourceFormat {
+  /// The alpha interpretation a freshly built [`MixedSinker`] over this
+  /// format starts in.
+  const DEFAULT_ALPHA_MODE: AlphaMode = AlphaMode::Straight;
+}
+
+impl<F: SourceFormat> DefaultAlphaMode for F {}
+
 /// A sink that writes any subset of `{RGB, Luma, HSV}` into
 /// caller-provided buffers.
 ///
@@ -1358,6 +1418,31 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "v210"
   ))]
   rgb_stream_u16: Option<crate::resample::AreaStream<u16>>,
+  /// Row-stage **4-channel** area stream for packed straight/premult
+  /// RGBA sources (`Rgba` / `Bgra` / `Argb` / `Abgr`). Bins the staged
+  /// canonical `R, G, B, A` row so resampled alpha is a real area mean
+  /// (not forced opaque) and — under [`AlphaMode::Premultiplied`] —
+  /// color is binned premultiplied. Lazily created in `process`, reset
+  /// in `begin_frame`. Gated to `rgb`; the 3-channel [`Self::rgb_stream`]
+  /// still serves the rgb-only straight path with no regression.
+  #[cfg(feature = "rgb")]
+  rgba_stream: Option<crate::resample::AreaStream<u8>>,
+  /// Row-stage **4-channel** `u16` area stream for the high-bit packed
+  /// RGBA sources (`Rgba64` / `Bgra64`). Bins the staged canonical
+  /// `R, G, B, A` row at native 16-bit depth; the native-depth
+  /// `rgba_u16` output copies it, the u8 / narrowed outputs derive via
+  /// `>> 8`. Lazily created in `process`, reset in `begin_frame`. Gated
+  /// to `rgb`.
+  #[cfg(feature = "rgb")]
+  rgba_stream_u16: Option<crate::resample::AreaStream<u16>>,
+  /// Alpha mode frozen at a resampled frame's first row. A mid-frame
+  /// [`Self::set_alpha_mode`] change is then rejected before any stream
+  /// is fed, since a stream mixing straight and premultiplied rows would
+  /// match neither all-straight nor all-premultiplied output. `None`
+  /// between frames; re-armed on each frame's first resampled row (so a
+  /// stale value never leaks across frames). Gated to `rgb`.
+  #[cfg(feature = "rgb")]
+  frozen_alpha_mode: Option<AlphaMode>,
   /// Row-stage area stream for packed-float-RGB sources (`f32`
   /// elements binned in float). Lazily created in `process`, reset in
   /// `begin_frame`. The `rgb-float` family needs the engine fenced in
@@ -1537,6 +1622,33 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "v210"
   ))]
   rgb_scratch_u16: Vec<u16>,
+  /// Source-width canonical `R, G, B, A` `u8` staging for the packed
+  /// straight/premult RGBA resample tail: each source row is converted
+  /// to canonical RGBA (`Rgba` identity, `Bgra` swap, `Argb` / `Abgr`
+  /// rotate α to slot 3) here — and, under [`AlphaMode::Premultiplied`],
+  /// premultiplied in place — before feeding the 4-channel
+  /// [`Self::rgba_stream`]. Lazily grown to `4 * width` `u8`; empty
+  /// otherwise. Gated to `rgb`.
+  #[cfg(feature = "rgb")]
+  rgba_scratch: Vec<u8>,
+  /// Source-width canonical `R, G, B, A` host-native `u16` staging for
+  /// the high-bit packed RGBA resample tail (`Rgba64` / `Bgra64`): the
+  /// wire row converts to host-native u16 RGBA here (and is premultiplied
+  /// in place under [`AlphaMode::Premultiplied`]) before feeding the
+  /// 4-channel [`Self::rgba_stream_u16`]. Lazily grown to `4 * width`
+  /// `u16`; empty otherwise. Gated to `rgb`.
+  #[cfg(feature = "rgb")]
+  rgba_scratch_u16: Vec<u16>,
+  /// Out-width host-native straight `R, G, B, A` `u16` staging for the
+  /// high-bit packed RGBA resample tail: per finalized output row the
+  /// binned native RGBA is resolved to its straight form here (a copy in
+  /// [`AlphaMode::Straight`], an un-premultiply in
+  /// [`AlphaMode::Premultiplied`]), then every native and narrowed
+  /// output derives from this single straight row. Lazily grown to
+  /// `4 * out_width` `u16`; empty for an output-less sink. Gated to
+  /// `rgb`.
+  #[cfg(feature = "rgb")]
+  rgba_color_scratch_u16: Vec<u16>,
   /// Source-width host-native `u16` luma staging for the
   /// [`Gray16`](crate::source::Gray16) resample path: the wire `Gray16`
   /// row converts here (source wire `BE` → host-native u16, the same
@@ -1622,6 +1734,14 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// to `true`; benchmarks flip this with [`Self::with_simd`] /
   /// [`Self::set_simd`] to A/B test scalar vs SIMD on the same frame.
   simd: bool,
+  /// How the source's packed alpha relates to its color when the frame
+  /// is area-resampled. Seeded from `F::DEFAULT_ALPHA_MODE`
+  /// ([`DefaultAlphaMode`]) at construction; overridden per call by
+  /// [`Self::with_alpha_mode`] / [`Self::set_alpha_mode`], the
+  /// [`Self::with_simd`] flag pattern. Only the packed-RGBA resample
+  /// tail consults it; every direct (identity-plan) path and every
+  /// non-RGBA source ignores it.
+  alpha_mode: AlphaMode,
   /// Q8 fixed-point luma coefficients `(cr, cg, cb)` such that
   /// `luma = ((cr * R + cg * G + cb * B + 128) >> 8) as u8`. Only
   /// consulted by source impls that *derive* luma from RGB
@@ -2027,6 +2147,12 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "v210"
       ))]
       rgb_stream_u16: None,
+      #[cfg(feature = "rgb")]
+      rgba_stream: None,
+      #[cfg(feature = "rgb")]
+      rgba_stream_u16: None,
+      #[cfg(feature = "rgb")]
+      frozen_alpha_mode: None,
       #[cfg(any(
         all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
         feature = "gbr"
@@ -2111,6 +2237,12 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "v210"
       ))]
       rgb_scratch_u16: Vec::new(),
+      #[cfg(feature = "rgb")]
+      rgba_scratch: Vec::new(),
+      #[cfg(feature = "rgb")]
+      rgba_scratch_u16: Vec::new(),
+      #[cfg(feature = "rgb")]
+      rgba_color_scratch_u16: Vec::new(),
       #[cfg(any(
         feature = "gray",
         feature = "yuv-444-packed",
@@ -2134,6 +2266,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       #[cfg(feature = "xyz")]
       xyz_scratch_f32: Vec::new(),
       simd: true,
+      alpha_mode: F::DEFAULT_ALPHA_MODE,
       // BT.709 by default — matches the implicit weights every
       // YUV→RGB→luma pipeline uses, and is the most common Bayer
       // CCM target. Per-format impls (`MixedSinker<Bayer>` etc.)
@@ -2595,6 +2728,40 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn with_simd(mut self, simd: bool) -> Self {
     self.set_simd(simd);
+    self
+  }
+
+  /// Returns how the source's packed alpha is interpreted when the
+  /// frame is area-resampled. See [`Self::with_alpha_mode`].
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn alpha_mode(&self) -> AlphaMode {
+    self.alpha_mode
+  }
+
+  /// Sets the alpha interpretation in place. See
+  /// [`Self::with_alpha_mode`] for the consuming builder variant.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn set_alpha_mode(&mut self, mode: AlphaMode) -> &mut Self {
+    self.alpha_mode = mode;
+    self
+  }
+
+  /// Sets how the source's packed alpha relates to its color channels
+  /// when the frame is **area-resampled**, overriding the per-format
+  /// default ([`DefaultAlphaMode`], [`AlphaMode::Straight`] for every
+  /// packed-RGBA source colconv ships). Mirrors the [`Self::with_simd`]
+  /// builder pattern.
+  ///
+  /// [`AlphaMode::Premultiplied`] makes the packed-RGBA resample tail
+  /// bin premultiplied color and un-premultiply per finalized output
+  /// row, so fully-transparent pixels never bleed their stored color
+  /// into a downscaled result. The mode is a no-op for the direct
+  /// (identity-plan) conversions — which copy alpha through untouched —
+  /// and for every non-RGBA source. See [`Self::set_alpha_mode`] for
+  /// the in-place variant.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn with_alpha_mode(mut self, mode: AlphaMode) -> Self {
+    self.set_alpha_mode(mode);
     self
   }
 
@@ -3663,6 +3830,556 @@ pub(super) fn packed_rgb_u16_resample_emit<const SRC_BITS: u32, const NATIVE_LUM
         );
       }
       if !NATIVE_LUMA16 && let Some(buf) = luma_u16.as_deref_mut() {
+        crate::row::rgb_to_luma_u16_row(
+          nrow,
+          &mut buf[oy * ow..(oy + 1) * ow],
+          ow,
+          matrix,
+          full_range,
+          use_simd,
+        );
+      }
+      if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
+        crate::row::rgb_to_hsv_row(
+          nrow,
+          &mut h[oy * ow..(oy + 1) * ow],
+          &mut s[oy * ow..(oy + 1) * ow],
+          &mut v[oy * ow..(oy + 1) * ow],
+          ow,
+          use_simd,
+        );
+      }
+    }
+  })?;
+  Ok(())
+}
+
+/// Source-width canonical `R, G, B, A` `u8` staging for the packed
+/// straight/premult RGBA resample tail. Grows `scratch` to `4 * width`
+/// `u8` under the planner's recoverable-allocation contract. Mirrors
+/// [`source_rgb_scratch`] for the 4-channel RGBA row.
+#[cfg(feature = "rgb")]
+pub(super) fn source_rgba_scratch<'s>(
+  scratch: &'s mut Vec<u8>,
+  width: usize,
+  plan: &ResamplePlan,
+) -> Result<&'s mut [u8], MixedSinkerError> {
+  let row = width
+    .checked_mul(4)
+    .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+      width,
+      plan.src_h(),
+      4,
+    )))?;
+  if scratch.len() < row {
+    scratch
+      .try_reserve_exact(row - scratch.len())
+      .map_err(|_| {
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?;
+    scratch.resize(row, 0);
+  }
+  Ok(&mut scratch[..row])
+}
+
+/// `u16` analogue of [`source_rgba_scratch`] — source-width canonical
+/// `R, G, B, A` host-native `u16` staging for the high-bit packed RGBA
+/// resample tail. Grows `scratch` to `4 * width` `u16`.
+#[cfg(feature = "rgb")]
+pub(super) fn source_rgba_u16_scratch<'s>(
+  scratch: &'s mut Vec<u16>,
+  width: usize,
+  plan: &ResamplePlan,
+) -> Result<&'s mut [u16], MixedSinkerError> {
+  let row = width
+    .checked_mul(4)
+    .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+      width,
+      plan.src_h(),
+      4,
+    )))?;
+  if scratch.len() < row {
+    scratch
+      .try_reserve_exact(row - scratch.len())
+      .map_err(|_| {
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?;
+    scratch.resize(row, 0);
+  }
+  Ok(&mut scratch[..row])
+}
+
+/// Premultiplies one canonical `R, G, B, A` row in place: each color
+/// channel becomes `round(c * α / MAX)`; α is left unchanged. The exact
+/// integer op the [`AlphaMode::Premultiplied`] oracle mirrors, so the
+/// binned-then-un-premultiplied output is byte-exact. `MAX` is `255` for
+/// the u8 path and the source's native max for the u16 path.
+#[cfg(feature = "rgb")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn premultiply_rgba_row_in_place<T>(row: &mut [T], width: usize, max: u32)
+where
+  T: Copy + TryFrom<u32> + Into<u32>,
+{
+  let half = max / 2;
+  for px in row[..width * 4].chunks_exact_mut(4) {
+    let a: u32 = px[3].into();
+    for c in &mut px[..3] {
+      let v: u32 = (*c).into();
+      let pm = (v * a + half) / max;
+      // `pm <= max` (since `v, a <= max`), so the cast back never fails.
+      *c = T::try_from(pm).unwrap_or_else(|_| unreachable!("premultiplied value <= max"));
+    }
+  }
+}
+
+/// Un-premultiplied straight color channel for one premultiplied binned
+/// value: `round(pm * MAX / α)` clamped to `MAX`, or `0` when `α == 0`
+/// (a fully-transparent binned pixel exposes no color, so it cannot
+/// bleed). The exact integer inverse of [`premultiply_rgba_row_in_place`].
+#[cfg(feature = "rgb")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn unpremultiply_channel(pm: u32, a: u32, max: u32) -> u32 {
+  // `checked_div` yields `None` exactly when `α == 0`, which maps to a
+  // zero straight channel (a fully-transparent binned pixel exposes no
+  // color); otherwise round-half-up and clamp to `max`.
+  (pm * max + a / 2).checked_div(a).map_or(0, |q| q.min(max))
+}
+
+/// Un-premultiplies one binned canonical `R, G, B, A` row into the
+/// caller's straight-RGBA destination (α copied through). Applied per
+/// finalized output row when binning premultiplied.
+#[cfg(feature = "rgb")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn unpremultiply_binned_rgba_into<T>(binned: &[T], dst: &mut [T], width: usize, max: u32)
+where
+  T: Copy + TryFrom<u32> + Into<u32>,
+{
+  for (out_px, in_px) in dst[..width * 4]
+    .chunks_exact_mut(4)
+    .zip(binned[..width * 4].chunks_exact(4))
+  {
+    let a: u32 = in_px[3].into();
+    for c in 0..3 {
+      let straight = unpremultiply_channel(in_px[c].into(), a, max);
+      out_px[c] =
+        T::try_from(straight).unwrap_or_else(|_| unreachable!("un-premultiplied value <= max"));
+    }
+    out_px[3] = in_px[3];
+  }
+}
+
+/// Un-premultiplies one binned canonical `R, G, B, A` row into a
+/// straight **RGB** destination (α dropped) — the packed RGB the
+/// luma / hsv kernels consume in premultiplied mode.
+#[cfg(feature = "rgb")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn unpremultiply_binned_rgb_into<T>(binned: &[T], dst: &mut [T], width: usize, max: u32)
+where
+  T: Copy + TryFrom<u32> + Into<u32>,
+{
+  for (out_px, in_px) in dst[..width * 3]
+    .chunks_exact_mut(3)
+    .zip(binned[..width * 4].chunks_exact(4))
+  {
+    let a: u32 = in_px[3].into();
+    for c in 0..3 {
+      let straight = unpremultiply_channel(in_px[c].into(), a, max);
+      out_px[c] =
+        T::try_from(straight).unwrap_or_else(|_| unreachable!("un-premultiplied value <= max"));
+    }
+  }
+}
+
+/// Drops α from one canonical `R, G, B, A` row into a packed `R, G, B`
+/// destination — the straight-mode RGB the luma / hsv kernels consume.
+#[cfg(feature = "rgb")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn drop_alpha_rgba_to_rgb_row<T: Copy>(rgba: &[T], dst: &mut [T], width: usize) {
+  for (out_px, in_px) in dst[..width * 3]
+    .chunks_exact_mut(3)
+    .zip(rgba[..width * 4].chunks_exact(4))
+  {
+    out_px.copy_from_slice(&in_px[..3]);
+  }
+}
+
+/// Rejects a mid-frame [`AlphaMode`] change for a resampled packed-RGBA
+/// frame. The mode is snapshotted in `begin_frame` (`frozen` is the mode
+/// at frame start); the resample route and binning use it, so each sink
+/// calls this **before** route selection in `process` and a later
+/// differing live mode trips `ResampleOutputsChanged` — no row is fed
+/// under a changed mode, and the snapshot is immune to out-of-sequence
+/// rows since it is taken at the frame boundary, not the first row.
+/// (`frozen` is `None` only before the first `begin_frame`, a contract
+/// violation, which is likewise rejected.)
+#[cfg(feature = "rgb")]
+pub(super) fn check_frozen_alpha_mode(
+  frozen: Option<AlphaMode>,
+  current: AlphaMode,
+  idx: usize,
+) -> Result<(), MixedSinkerError> {
+  if frozen != Some(current) {
+    return Err(MixedSinkerError::ResampleOutputsChanged(
+      ResampleOutputsChanged::new(idx),
+    ));
+  }
+  Ok(())
+}
+
+/// Row-stage fused downscale for the packed straight/premultiplied RGBA
+/// 8-bit family (`Rgba` / `Bgra` / `Argb` / `Abgr`) — the alpha-aware
+/// 4-channel analogue of the 3-channel [`packed_rgb_resample_emit`]
+/// path. `convert_rgba` stages the source row as a canonical
+/// source-width `R, G, B, A` u8 row (identity / swap / α-rotate per
+/// format); this tail bins all four channels so resampled alpha is a
+/// real area mean (the forced-opaque-`0xFF` bug the 3-channel path hit),
+/// then per finalized output row emits rgba (the binned row),
+/// rgb (drop α), luma / luma_u16 / hsv (from the binned RGB).
+///
+/// Under [`AlphaMode::Premultiplied`] the staged row is premultiplied
+/// in place before binning and un-premultiplied per output row, so the
+/// color outputs are alpha-weighted and transparent pixels never bleed.
+///
+/// Atomic preflight with conditional ordering: a no-output call returns
+/// before any freeze; an out-of-sequence FIRST row is rejected before
+/// the freeze (so a rejected row stores no snapshot to poison a retry);
+/// on a later row the freeze runs first (so a mid-frame output change
+/// trips `ResampleOutputsChanged` rather than being masked by a
+/// freshly-attached stream's row-0 mismatch). The stream and scratch are
+/// created only after the sequence check, all before the single feed, so
+/// a failure mutates no caller output.
+#[cfg(feature = "rgb")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn packed_rgba_resample(
+  rgba_stream: &mut Option<crate::resample::AreaStream<u8>>,
+  resample_outputs: &mut Option<FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgba_scratch: &mut Vec<u8>,
+  rgb_drop_scratch: &mut Vec<u8>,
+  w: usize,
+  plan: &ResamplePlan,
+  idx: usize,
+  use_simd: bool,
+  alpha_mode: AlphaMode,
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  convert_rgba: impl FnOnce(&mut [u8]),
+) -> Result<(), MixedSinkerError> {
+  let ow = plan.out_w();
+  let need_any =
+    rgb.is_some() || rgba.is_some() || luma.is_some() || luma_u16.is_some() || hsv.is_some();
+  // No-output call: nothing to sequence, stays a no-op (no freeze, no
+  // allocation) regardless of the row index.
+  if !need_any {
+    return Ok(());
+  }
+  let expected = rgba_stream.as_ref().map_or(0, |s| s.next_y());
+  let first_row = resample_outputs.is_none();
+  // First row: reject an out-of-sequence row before the freeze so a
+  // rejected first row stores no snapshot that would poison a retry.
+  if first_row && expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    hsv,
+    &None,
+    idx,
+  )?;
+  // Later row: a mid-frame output change is reported above; an
+  // out-of-sequence later row is rejected here.
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  let premult = alpha_mode.is_premultiplied();
+  // The luma / luma_u16 / hsv outputs (and rgb) need a packed RGB row.
+  // It is the per-mode binned color with α dropped — sized to the
+  // out-width RGB row only when one of those is attached, so an
+  // rgba-only sink neither grows it nor risks its allocation failure.
+  let need_rgb_drop = rgb.is_some() || luma.is_some() || luma_u16.is_some() || hsv.is_some();
+  if rgba_stream.is_none() {
+    *rgba_stream = Some(crate::resample::AreaStream::new(
+      plan.h(),
+      plan.v(),
+      plan.src_w(),
+      plan.src_h(),
+      4,
+    )?);
+  }
+  let rgb_drop: &mut [u8] = if need_rgb_drop {
+    source_rgb_scratch(rgb_drop_scratch, ow, plan)?
+  } else {
+    &mut []
+  };
+  let src_rgba = source_rgba_scratch(rgba_scratch, w, plan)?;
+  convert_rgba(src_rgba);
+  if premult {
+    premultiply_rgba_row_in_place::<u8>(src_rgba, w, 255);
+  }
+  let stream = rgba_stream.as_mut().expect("created above");
+  stream.feed_row(idx, src_rgba, use_simd, |oy, binned| {
+    // RGBA output is the per-mode straight color: straight mode copies
+    // the binned row; premult mode un-premultiplies it into the dst.
+    if let Some(buf) = rgba.as_deref_mut() {
+      let dst = &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow];
+      if premult {
+        unpremultiply_binned_rgba_into::<u8>(binned, dst, ow, 255);
+      } else {
+        dst.copy_from_slice(binned);
+      }
+    }
+    if need_rgb_drop {
+      let nrow = &mut rgb_drop[..3 * ow];
+      if premult {
+        unpremultiply_binned_rgb_into::<u8>(binned, nrow, ow, 255);
+      } else {
+        drop_alpha_rgba_to_rgb_row(binned, nrow, ow);
+      }
+      if let Some(buf) = rgb.as_deref_mut() {
+        buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(nrow);
+      }
+      if let Some(buf) = luma.as_deref_mut() {
+        crate::row::rgb_to_luma_row(
+          nrow,
+          &mut buf[oy * ow..(oy + 1) * ow],
+          ow,
+          matrix,
+          full_range,
+          use_simd,
+        );
+      }
+      if let Some(buf) = luma_u16.as_deref_mut() {
+        crate::row::rgb_to_luma_u16_row(
+          nrow,
+          &mut buf[oy * ow..(oy + 1) * ow],
+          ow,
+          matrix,
+          full_range,
+          use_simd,
+        );
+      }
+      if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
+        crate::row::rgb_to_hsv_row(
+          nrow,
+          &mut h[oy * ow..(oy + 1) * ow],
+          &mut s[oy * ow..(oy + 1) * ow],
+          &mut v[oy * ow..(oy + 1) * ow],
+          ow,
+          use_simd,
+        );
+      }
+    }
+  })?;
+  Ok(())
+}
+
+/// Row-stage fused downscale for the high-bit packed straight/premult
+/// RGBA family (`Rgba64` / `Bgra64`) — the alpha-aware 4-channel
+/// analogue of the 3-channel [`packed_rgb_u16_resample_emit`] path.
+/// `convert_rgba` stages the wire row as a canonical host-native
+/// source-width `R, G, B, A` u16 row (the format's `*_to_rgba_u16`
+/// kernel, source wire `BE`); this tail bins all four channels at native
+/// 16-bit depth so resampled alpha is a real area mean (not the
+/// forced-opaque-`0xFFFF` the 3-channel u16 path emitted), then per
+/// finalized output row resolves the binned native RGBA to its straight
+/// form (a copy in straight mode, an un-premultiply in premult mode) and
+/// emits: rgba_u16 / rgb_u16 at native depth, and rgba / rgb / luma /
+/// luma_u16 / hsv from a single `>> 8` narrowing — the source-of-truth
+/// ordering the 3-channel u16 path uses.
+///
+/// `MAX` is the source's native maximum (`65535` for the full-16-bit
+/// `Rgba64` / `Bgra64`), governing both the premultiply rounding and the
+/// un-premultiply clamp.
+///
+/// Same atomic conditional-ordering preflight as [`packed_rgba_resample`]:
+/// a no-output call returns before any freeze; an out-of-sequence first
+/// row is rejected before the freeze; a later-row output change trips
+/// `ResampleOutputsChanged`; the stream and every scratch are created
+/// after the sequence check and before the single feed.
+#[cfg(feature = "rgb")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn packed_rgba_u16_resample(
+  rgba_stream_u16: &mut Option<crate::resample::AreaStream<u16>>,
+  resample_outputs: &mut Option<FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  rgb_u16: &mut Option<&mut [u16]>,
+  rgba_u16: &mut Option<&mut [u16]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgba_scratch_u16: &mut Vec<u16>,
+  color_scratch_u16: &mut Vec<u16>,
+  narrow_scratch: &mut Vec<u8>,
+  max: u32,
+  w: usize,
+  plan: &ResamplePlan,
+  idx: usize,
+  use_simd: bool,
+  alpha_mode: AlphaMode,
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  convert_rgba_u16: impl FnOnce(&mut [u16]),
+) -> Result<(), MixedSinkerError> {
+  let ow = plan.out_w();
+  let need_any = rgb.is_some()
+    || rgba.is_some()
+    || rgb_u16.is_some()
+    || rgba_u16.is_some()
+    || luma.is_some()
+    || luma_u16.is_some()
+    || hsv.is_some();
+  if !need_any {
+    return Ok(());
+  }
+  let expected = rgba_stream_u16.as_ref().map_or(0, |s| s.next_y());
+  let first_row = resample_outputs.is_none();
+  if first_row && expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    hsv,
+    &None,
+    idx,
+  )?;
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  // The u8 / narrowed outputs (incl. luma_u16, which these full-range
+  // u16 sources derive from narrowed RGB at 8-bit precision — the same
+  // source-of-truth the 3-channel u16 path's non-native-luma branch
+  // uses) come from a `>> 8` narrowing of the straight RGB. A
+  // native-u16-only sink (rgb_u16 / rgba_u16 only) never touches it, so
+  // the out-width u8 RGB scratch is sized — and its allocation failure
+  // risked — only when one of those outputs is attached.
+  let need_narrow =
+    rgb.is_some() || rgba.is_some() || luma.is_some() || luma_u16.is_some() || hsv.is_some();
+  if rgba_stream_u16.is_none() {
+    *rgba_stream_u16 = Some(crate::resample::AreaStream::new(
+      plan.h(),
+      plan.v(),
+      plan.src_w(),
+      plan.src_h(),
+      4,
+    )?);
+  }
+  // Out-width straight RGBA color row (resolved per output row). Always
+  // sized when any output is attached, so every native and narrowed
+  // output reads one canonical straight row.
+  let color = source_rgba_u16_scratch(color_scratch_u16, ow, plan)?;
+  let narrow: &mut [u8] = if need_narrow {
+    source_rgb_scratch(narrow_scratch, ow, plan)?
+  } else {
+    &mut []
+  };
+  let premult = alpha_mode.is_premultiplied();
+  let src_rgba = source_rgba_u16_scratch(rgba_scratch_u16, w, plan)?;
+  convert_rgba_u16(src_rgba);
+  if premult {
+    premultiply_rgba_row_in_place::<u16>(src_rgba, w, max);
+  }
+  let stream = rgba_stream_u16.as_mut().expect("created above");
+  stream.feed_row(idx, src_rgba, use_simd, |oy, binned| {
+    // Resolve the per-mode straight native RGBA once.
+    let color = &mut color[..4 * ow];
+    if premult {
+      unpremultiply_binned_rgba_into::<u16>(binned, color, ow, max);
+    } else {
+      color.copy_from_slice(binned);
+    }
+    // Native-depth u16 outputs copy from the straight color row.
+    if let Some(buf) = rgba_u16.as_deref_mut() {
+      buf[oy * 4 * ow..(oy + 1) * 4 * ow].copy_from_slice(color);
+    }
+    if let Some(buf) = rgb_u16.as_deref_mut() {
+      let dst = &mut buf[oy * 3 * ow..(oy + 1) * 3 * ow];
+      drop_alpha_rgba_to_rgb_row(color, dst, ow);
+    }
+    if need_narrow {
+      let nrow = &mut narrow[..3 * ow];
+      for (d, px) in nrow.chunks_exact_mut(3).zip(color.chunks_exact(4)) {
+        d[0] = (px[0] >> 8) as u8;
+        d[1] = (px[1] >> 8) as u8;
+        d[2] = (px[2] >> 8) as u8;
+      }
+      if let Some(buf) = rgb.as_deref_mut() {
+        buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(nrow);
+      }
+      if let Some(buf) = rgba.as_deref_mut() {
+        // Narrow all four straight channels (α `>> 8` too) into the dst.
+        let dst = &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow];
+        for (d, px) in dst.chunks_exact_mut(4).zip(color.chunks_exact(4)) {
+          d[0] = (px[0] >> 8) as u8;
+          d[1] = (px[1] >> 8) as u8;
+          d[2] = (px[2] >> 8) as u8;
+          d[3] = (px[3] >> 8) as u8;
+        }
+      }
+      if let Some(buf) = luma.as_deref_mut() {
+        crate::row::rgb_to_luma_row(
+          nrow,
+          &mut buf[oy * ow..(oy + 1) * ow],
+          ow,
+          matrix,
+          full_range,
+          use_simd,
+        );
+      }
+      // luma_u16: 8-bit-precision Y' derived from the narrowed straight
+      // RGB and zero-extended — byte-identical to the direct full-range
+      // u16 path's `luma_u16` (which narrows to u8 before luma).
+      if let Some(buf) = luma_u16.as_deref_mut() {
         crate::row::rgb_to_luma_u16_row(
           nrow,
           &mut buf[oy * ow..(oy + 1) * ow],
