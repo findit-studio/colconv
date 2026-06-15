@@ -206,6 +206,7 @@ fn yuv420p16_rgba_u16_only_native_depth_gray_with_opaque_alpha() {
 
 // ---- P016 --------------------------------------------------------------
 
+#[cfg(feature = "yuv-semi-planar")]
 fn solid_p016_frame(width: u32, height: u32, y: u16, u: u16, v: u16) -> (Vec<u16>, Vec<u16>) {
   let w = width as usize;
   let h = height as usize;
@@ -217,6 +218,7 @@ fn solid_p016_frame(width: u32, height: u32, y: u16, u: u16, v: u16) -> (Vec<u16
   (y_plane, uv)
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -237,6 +239,7 @@ fn p016_rgb_u8_only_gray_is_gray() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -259,6 +262,7 @@ fn p016_rgb_u16_only_native_depth_gray() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -281,6 +285,7 @@ fn p016_rgb_u8_and_u16_both_populated() {
   assert!(rgb_u16.iter().all(|&c| c == 65535));
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -299,6 +304,7 @@ fn p016_luma_downshifts_to_8bit() {
   assert!(luma.iter().all(|&l| l == 128));
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -333,6 +339,7 @@ fn p016_matches_yuv420p16_mixed_sinker() {
   assert_eq!(rgb_yuv, rgb_p016);
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -347,6 +354,7 @@ fn p016_rgb_u16_too_short_returns_err() {
   assert!(matches!(err, MixedSinkerError::InsufficientRgbU16Buffer(_)));
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(
   miri,

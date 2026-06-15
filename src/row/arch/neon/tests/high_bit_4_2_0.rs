@@ -1,4 +1,8 @@
-use super::{super::*, p_n_packed_plane, p010_uv_interleave, p16_plane_neon, planar_n_plane};
+use super::{super::*, p16_plane_neon, planar_n_plane};
+// Semi-planar (`p_n`) plane builders — used only by the
+// `yuv-semi-planar`-gated equivalence helpers / tests below.
+#[cfg(feature = "yuv-semi-planar")]
+use super::{p_n_packed_plane, p010_uv_interleave};
 
 // ---- yuv420p10 scalar-equivalence -----------------------------------
 
@@ -320,6 +324,7 @@ fn neon_p10_matches_scalar_on_out_of_range_samples() {
 
 // ---- P010 NEON scalar-equivalence --------------------------------------
 
+#[cfg(feature = "yuv-semi-planar")]
 /// P010 test samples: 10‑bit values shifted into the high 10 bits
 /// (`value << 6`). Deterministic pseudo‑random generator keyed by
 /// index × seed so U, V, Y vectors are mutually distinct.
@@ -329,6 +334,7 @@ fn p010_plane(n: usize, seed: usize) -> std::vec::Vec<u16> {
     .collect()
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p010_u8_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p010_plane(width, 37);
   let u_plane = p010_plane(width / 2, 53);
@@ -354,6 +360,7 @@ fn check_p010_u8_equivalence(width: usize, matrix: ColorMatrix, full_range: bool
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p010_u16_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p010_plane(width, 37);
   let u_plane = p010_plane(width / 2, 53);
@@ -379,6 +386,7 @@ fn check_p010_u16_equivalence(width: usize, matrix: ColorMatrix, full_range: boo
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p010_u8_matches_scalar_all_matrices_16() {
@@ -396,6 +404,7 @@ fn neon_p010_u8_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p010_u16_matches_scalar_all_matrices_16() {
@@ -413,6 +422,7 @@ fn neon_p010_u16_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p010_matches_scalar_odd_tail_widths() {
@@ -422,6 +432,7 @@ fn neon_p010_matches_scalar_odd_tail_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p010_matches_scalar_1920() {
@@ -429,6 +440,7 @@ fn neon_p010_matches_scalar_1920() {
   check_p010_u16_equivalence(1920, ColorMatrix::Bt2020Ncl, false);
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 /// Adversarial regression: mispacked input — `yuv420p10le` values
 /// (10 bits in low 10) accidentally handed to the P010 kernel, or
 /// arbitrary bit corruption — must still produce bit‑identical
@@ -551,6 +563,7 @@ fn check_planar_u16_neon_equivalence_n<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_pn_u8_neon_equivalence_n<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -569,6 +582,7 @@ fn check_pn_u8_neon_equivalence_n<const BITS: u32>(
   assert_eq!(rgb_scalar, rgb_neon, "NEON Pn {BITS}-bit → u8 diverges");
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_pn_u16_neon_equivalence_n<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -601,7 +615,9 @@ fn neon_p12_matches_scalar_all_matrices() {
     for full in [true, false] {
       check_planar_u8_neon_equivalence_n::<12>(16, m, full);
       check_planar_u16_neon_equivalence_n::<12>(16, m, full);
+      #[cfg(feature = "yuv-semi-planar")]
       check_pn_u8_neon_equivalence_n::<12>(16, m, full);
+      #[cfg(feature = "yuv-semi-planar")]
       check_pn_u16_neon_equivalence_n::<12>(16, m, full);
     }
   }
@@ -631,7 +647,9 @@ fn neon_p12_matches_scalar_tail_widths() {
   for w in [18usize, 30, 34, 1922] {
     check_planar_u8_neon_equivalence_n::<12>(w, ColorMatrix::Bt601, false);
     check_planar_u16_neon_equivalence_n::<12>(w, ColorMatrix::Bt709, true);
+    #[cfg(feature = "yuv-semi-planar")]
     check_pn_u8_neon_equivalence_n::<12>(w, ColorMatrix::Bt601, false);
+    #[cfg(feature = "yuv-semi-planar")]
     check_pn_u16_neon_equivalence_n::<12>(w, ColorMatrix::Bt2020Ncl, false);
   }
 }
@@ -680,6 +698,7 @@ fn check_planar_u8_neon_rgba_equivalence_n<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_pn_u8_neon_rgba_equivalence_n<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -732,6 +751,7 @@ fn neon_yuv420p_n_rgba_matches_scalar_tail_and_1920() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_pn_rgba_matches_scalar_all_bits() {
@@ -750,6 +770,7 @@ fn neon_pn_rgba_matches_scalar_all_bits() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_pn_rgba_matches_scalar_tail_and_1920() {
@@ -775,6 +796,7 @@ fn check_yuv420p16_u8_neon_rgba_equivalence(width: usize, matrix: ColorMatrix, f
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p016_u8_neon_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p16_plane_neon(width, 37);
   let u = p16_plane_neon(width / 2, 53);
@@ -812,6 +834,7 @@ fn neon_yuv420p16_rgba_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p016_rgba_matches_scalar_all_matrices() {

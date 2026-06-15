@@ -226,7 +226,8 @@ pub(crate) fn rgb_to_luma_u16_row(
     feature = "gray",
     feature = "yuv-444-packed",
     feature = "y2xx",
-    feature = "v210"
+    feature = "v210",
+    feature = "yuv-planar"
   ),
 ))]
 #[cfg_attr(not(tarpaulin), inline(always))]

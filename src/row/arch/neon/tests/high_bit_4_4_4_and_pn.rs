@@ -1,7 +1,8 @@
-use super::{
-  super::*, high_bit_plane, interleave_uv, p_n_packed_plane, p010_uv_interleave, p16_plane_neon,
-  planar_n_plane,
-};
+use super::{super::*, p16_plane_neon, planar_n_plane};
+// Semi-planar (`p_n` / `p_n_444`) plane / UV-interleave builders — used
+// only by the `yuv-semi-planar`-gated equivalence helpers / tests below.
+#[cfg(feature = "yuv-semi-planar")]
+use super::{high_bit_plane, interleave_uv, p_n_packed_plane, p010_uv_interleave};
 
 // ---- High-bit 4:2:0 native-depth `u16` RGBA equivalence (Ship 8 Tranche 5b) ----
 //
@@ -47,6 +48,7 @@ fn check_planar_u16_neon_rgba_equivalence_n<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_pn_u16_neon_rgba_equivalence_n<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -99,6 +101,7 @@ fn neon_yuv420p_n_rgba_u16_matches_scalar_tail_and_1920() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_pn_rgba_u16_matches_scalar_all_bits() {
@@ -117,6 +120,7 @@ fn neon_pn_rgba_u16_matches_scalar_all_bits() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_pn_rgba_u16_matches_scalar_tail_and_1920() {
@@ -150,6 +154,7 @@ fn check_yuv420p16_u16_neon_rgba_equivalence(width: usize, matrix: ColorMatrix, 
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p016_u16_neon_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p16_plane_neon(width, 37);
   let u = p16_plane_neon(width / 2, 53);
@@ -187,6 +192,7 @@ fn neon_yuv420p16_rgba_u16_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p016_rgba_u16_matches_scalar_all_matrices() {
@@ -413,6 +419,7 @@ fn neon_yuv444p16_matches_scalar_widths() {
 
 // ---- Pn 4:4:4 (P410 / P412 / P416) NEON equivalence -----------------
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p_n_444_u8_neon_equivalence<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -434,6 +441,7 @@ fn check_p_n_444_u8_neon_equivalence<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p_n_444_u16_neon_equivalence<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -462,6 +470,7 @@ fn check_p_n_444_u16_neon_equivalence<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p_n_444_16_u8_neon_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p16_plane_neon(width, 37);
   let u = p16_plane_neon(width, 53);
@@ -479,6 +488,7 @@ fn check_p_n_444_16_u8_neon_equivalence(width: usize, matrix: ColorMatrix, full_
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p_n_444_16_u16_neon_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p16_plane_neon(width, 37);
   let u = p16_plane_neon(width, 53);
@@ -496,6 +506,7 @@ fn check_p_n_444_16_u16_neon_equivalence(width: usize, matrix: ColorMatrix, full
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p410_matches_scalar_all_matrices() {
@@ -514,6 +525,7 @@ fn neon_p410_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p412_matches_scalar_all_matrices() {
@@ -525,6 +537,7 @@ fn neon_p412_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p410_p412_matches_scalar_tail_widths() {
@@ -537,6 +550,7 @@ fn neon_p410_p412_matches_scalar_tail_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p416_matches_scalar_all_matrices() {
@@ -555,6 +569,7 @@ fn neon_p416_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p416_matches_scalar_tail_widths() {
@@ -599,6 +614,7 @@ fn check_yuv444p_n_u8_neon_rgba_equivalence<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_pn_444_u8_neon_rgba_equivalence<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -636,6 +652,7 @@ fn check_yuv444p16_u8_neon_rgba_equivalence(width: usize, matrix: ColorMatrix, f
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p_n_444_16_u8_neon_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p16_plane_neon(width, 37);
   let u = p16_plane_neon(width, 53);
@@ -684,6 +701,7 @@ fn neon_yuv444p_n_rgba_matches_scalar_tail_and_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_pn_444_rgba_matches_scalar_all_bits() {
@@ -702,6 +720,7 @@ fn neon_pn_444_rgba_matches_scalar_all_bits() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_pn_444_rgba_matches_scalar_tail_and_widths() {
@@ -731,6 +750,7 @@ fn neon_yuv444p16_rgba_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuva")]
 fn check_yuv444p16_u8_neon_rgba_with_alpha_src_equivalence(
   width: usize,
   matrix: ColorMatrix,
@@ -771,6 +791,7 @@ fn check_yuv444p16_u8_neon_rgba_with_alpha_src_equivalence(
   );
 }
 
+#[cfg(feature = "yuva")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuva444p16_rgba_matches_scalar_all_matrices() {
@@ -788,6 +809,7 @@ fn neon_yuva444p16_rgba_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuva")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuva444p16_rgba_matches_scalar_widths_and_alpha() {
@@ -799,6 +821,7 @@ fn neon_yuva444p16_rgba_matches_scalar_widths_and_alpha() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p416_rgba_matches_scalar_all_matrices() {
