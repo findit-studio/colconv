@@ -152,6 +152,8 @@ mod resample_rgbf32;
 mod resample_semi_planar;
 #[cfg(feature = "yuv-packed")]
 mod resample_uyyvyy411;
+#[cfg(feature = "v210")]
+mod resample_v210;
 #[cfg(feature = "yuv-444-packed")]
 mod resample_v30x;
 #[cfg(feature = "yuv-444-packed")]
@@ -203,9 +205,12 @@ mod yuv420p_8bit;
 #[cfg(feature = "yuva")]
 mod yuva;
 
+// `v210` is intentionally absent: V210 only consumes this helper inside
+// its `yuv-planar`-gated planar-parity oracles (in `v210.rs` /
+// `resample_v210.rs`), so the `yuv-planar` arm already covers it and a
+// `v210`-solo `--tests` build would otherwise see it as dead.
 #[cfg(any(
   feature = "gbr",
-  feature = "v210",
   feature = "y2xx",
   feature = "yuv-444-packed",
   feature = "yuv-planar",
