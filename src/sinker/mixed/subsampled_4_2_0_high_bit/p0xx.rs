@@ -1,6 +1,7 @@
 use super::super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match, rgb_row_buf_or_scratch,
+  RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
+  packed_yuv422_triple_resample, reset_high_bit_yuv_streams, rgb_row_buf_or_scratch,
   rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
 use crate::{PixelSink, row::*, source::*};
@@ -83,9 +84,9 @@ impl<'a, R, const BE: bool> MixedSinker<'a, P010<BE>, R> {
   }
 }
 
-impl<const BE: bool> P010Sink<BE> for MixedSinker<'_, P010<BE>> {}
+impl<R, const BE: bool> P010Sink<BE> for MixedSinker<'_, P010<BE>, R> {}
 
-impl<const BE: bool> PixelSink for MixedSinker<'_, P010<BE>> {
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, P010<BE>, R> {
   type Input<'r> = P010Row<'r>;
   type Error = MixedSinkerError;
 
@@ -95,7 +96,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P010<BE>> {
         self.width,
       )));
     }
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    reset_high_bit_yuv_streams(self);
+    Ok(())
   }
 
   fn process(&mut self, row: P010Row<'_>) -> Result<(), Self::Error> {
@@ -142,8 +145,64 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P010<BE>> {
       luma,
       hsv,
       rgb_scratch,
+      rgb_scratch_u16,
+      luma_scratch_u16,
+      rgb_stream,
+      rgb_stream_u16,
+      luma_stream_u16,
+      resample_outputs,
+      plan,
       ..
     } = self;
+
+    // Non-identity plan: feed the shared high-bit 4:2:2 triple-resample
+    // tail (u8 color, independent native-u16 color, native Y). P010 is
+    // semi-planar 4:2:0: the interleaved half-width UV plane is
+    // de-interleaved + horizontally upsampled in-register by the
+    // `p010_to_rgb*` row kernels, and 4:2:0's vertical chroma sharing is
+    // resolved by the walker (each luma row gets its shared `uv_half`), so
+    // the per-row chroma contract matches 4:2:2's and the same tail binds.
+    // The Y de-pack closure shifts each high-bit-packed sample right by
+    // `16 - BITS` so the binned native Y is the logical value (matching
+    // the low-packed planar Yuv420p10 luma contract): `luma = binned_Y >>
+    // (BITS - 8)`. P010 exposes no `luma_u16`, so it is `&mut None`.
+    if let Some(plan) = plan.as_ref() {
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      let (y, uv_half) = (row.y(), row.uv_half());
+      return packed_yuv422_triple_resample::<BITS>(
+        luma_stream_u16,
+        rgb_stream,
+        rgb_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        &mut None,
+        hsv,
+        luma_scratch_u16,
+        rgb_scratch,
+        rgb_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        matrix,
+        full_range,
+        |scratch| {
+          for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
+            let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+            *dst = logical >> (16 - BITS);
+          }
+        },
+        |scratch| p010_to_rgb_row_endian(y, uv_half, scratch, w, matrix, full_range, use_simd, BE),
+        |scratch| {
+          p010_to_rgb_u16_row_endian(y, uv_half, scratch, w, matrix, full_range, use_simd, BE)
+        },
+      );
+    }
 
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
@@ -351,9 +410,9 @@ impl<'a, R, const BE: bool> MixedSinker<'a, P012<BE>, R> {
   }
 }
 
-impl<const BE: bool> P012Sink<BE> for MixedSinker<'_, P012<BE>> {}
+impl<R, const BE: bool> P012Sink<BE> for MixedSinker<'_, P012<BE>, R> {}
 
-impl<const BE: bool> PixelSink for MixedSinker<'_, P012<BE>> {
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, P012<BE>, R> {
   type Input<'r> = P012Row<'r>;
   type Error = MixedSinkerError;
 
@@ -363,7 +422,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P012<BE>> {
         self.width,
       )));
     }
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    reset_high_bit_yuv_streams(self);
+    Ok(())
   }
 
   fn process(&mut self, row: P012Row<'_>) -> Result<(), Self::Error> {
@@ -409,8 +470,56 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P012<BE>> {
       luma,
       hsv,
       rgb_scratch,
+      rgb_scratch_u16,
+      luma_scratch_u16,
+      rgb_stream,
+      rgb_stream_u16,
+      luma_stream_u16,
+      resample_outputs,
+      plan,
       ..
     } = self;
+
+    // Non-identity plan: feed the shared high-bit 4:2:2 triple-resample
+    // tail. See the P010 impl for the full rationale — P012 is identical
+    // bar the 12-bit kernel family and the `16 - BITS` Y de-pack shift.
+    if let Some(plan) = plan.as_ref() {
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      let (y, uv_half) = (row.y(), row.uv_half());
+      return packed_yuv422_triple_resample::<BITS>(
+        luma_stream_u16,
+        rgb_stream,
+        rgb_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        &mut None,
+        hsv,
+        luma_scratch_u16,
+        rgb_scratch,
+        rgb_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        matrix,
+        full_range,
+        |scratch| {
+          for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
+            let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+            *dst = logical >> (16 - BITS);
+          }
+        },
+        |scratch| p012_to_rgb_row_endian(y, uv_half, scratch, w, matrix, full_range, use_simd, BE),
+        |scratch| {
+          p012_to_rgb_u16_row_endian(y, uv_half, scratch, w, matrix, full_range, use_simd, BE)
+        },
+      );
+    }
 
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
@@ -615,9 +724,9 @@ impl<'a, R, const BE: bool> MixedSinker<'a, P016<BE>, R> {
   }
 }
 
-impl<const BE: bool> P016Sink<BE> for MixedSinker<'_, P016<BE>> {}
+impl<R, const BE: bool> P016Sink<BE> for MixedSinker<'_, P016<BE>, R> {}
 
-impl<const BE: bool> PixelSink for MixedSinker<'_, P016<BE>> {
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, P016<BE>, R> {
   type Input<'r> = P016Row<'r>;
   type Error = MixedSinkerError;
 
@@ -627,7 +736,9 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P016<BE>> {
         self.width,
       )));
     }
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    reset_high_bit_yuv_streams(self);
+    Ok(())
   }
 
   fn process(&mut self, row: P016Row<'_>) -> Result<(), Self::Error> {
@@ -673,8 +784,58 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, P016<BE>> {
       luma,
       hsv,
       rgb_scratch,
+      rgb_scratch_u16,
+      luma_scratch_u16,
+      rgb_stream,
+      rgb_stream_u16,
+      luma_stream_u16,
+      resample_outputs,
+      plan,
       ..
     } = self;
+
+    // Non-identity plan: feed the shared high-bit 4:2:2 triple-resample
+    // tail. See the P010 impl for the full rationale. At 16 bits the Y
+    // de-pack shift `>> (16 - BITS)` is `>> 0` (the 16-bit sample already
+    // is the logical value), and the 16-bit kernel family is dedicated
+    // (i32/i64 chroma, no Q15 downshift).
+    if let Some(plan) = plan.as_ref() {
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      let (y, uv_half) = (row.y(), row.uv_half());
+      return packed_yuv422_triple_resample::<BITS>(
+        luma_stream_u16,
+        rgb_stream,
+        rgb_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        &mut None,
+        hsv,
+        luma_scratch_u16,
+        rgb_scratch,
+        rgb_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        matrix,
+        full_range,
+        |scratch| {
+          for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
+            let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+            *dst = logical >> (16 - BITS);
+          }
+        },
+        |scratch| p016_to_rgb_row_endian(y, uv_half, scratch, w, matrix, full_range, use_simd, BE),
+        |scratch| {
+          p016_to_rgb_u16_row_endian(y, uv_half, scratch, w, matrix, full_range, use_simd, BE)
+        },
+      );
+    }
 
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
