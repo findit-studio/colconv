@@ -28,8 +28,8 @@
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
-  rgba_u16_plane_row_slice,
+  RowShapeMismatch, RowSlice, check_dimensions_match, check_frozen_alpha_mode,
+  packed_yuva444_resample, rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
 use crate::{PixelSink, row::*, source::*};
 
@@ -58,16 +58,54 @@ impl<'a, R> MixedSinker<'a, Yuva444p, R> {
     self.rgba = Some(buf);
     Ok(self)
   }
+
+  /// Attaches a **`u16`** luma output buffer. The 8-bit Y plane is
+  /// zero-extended to u16 (`out[x] = Y_byte as u16`). Length in u16
+  /// **elements** (`width x height`).
+  ///
+  /// Returns `Err(InsufficientLumaU16Buffer)` if `buf.len() < width x height`,
+  /// or `Err(GeometryOverflow)` on 32-bit targets.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_pixels()?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
 }
 
-impl Yuva444pSink for MixedSinker<'_, Yuva444p> {}
+impl<R> Yuva444pSink for MixedSinker<'_, Yuva444p, R> {}
 
-impl PixelSink for MixedSinker<'_, Yuva444p> {
+impl<R> PixelSink for MixedSinker<'_, Yuva444p, R> {
   type Input<'r> = Yuva444pRow<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    // New frame: restart the 4-channel u8 RGBA colour stream and the
+    // independent native-Y u16 luma stream (both lazily created in
+    // `process`) and re-arm the alpha-mode snapshot, mirroring the
+    // alpha-aware packed-YUVA (`Vuya`) sink. The 8-bit `Yuva444p` exposes
+    // no u16 colour outputs, so its u16 RGBA stream is never created.
+    if let Some(stream) = self.rgba_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_stream_u16.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
+    Ok(())
   }
 
   fn process(&mut self, row: Yuva444pRow<'_>) -> Result<(), Self::Error> {
@@ -114,10 +152,85 @@ impl PixelSink for MixedSinker<'_, Yuva444p> {
       ));
     }
 
+    // Non-identity plan: `Yuva444p` is 8-bit planar 4:4:4 YUV **with a
+    // real full-resolution source alpha plane** (no chroma subsampling —
+    // every pixel carries its own U / V). Route through the packed-YUVA
+    // tail at `SRC_BITS = 8`: the u8 colour stream bins the converted u8
+    // RGBA row (`yuva444p_to_rgba_row` — full-width chroma, real source α,
+    // NOT forced opaque), the native-Y luma stream bins the (zero-extended)
+    // Y plane directly so luma / luma_u16 are the area-downscaled native Y,
+    // alpha- and range-independent. The 8-bit `Yuva444p` exposes no u16
+    // colour outputs, so the tail's u16 colour binning is never active and
+    // its `convert_rgba_u16` closure is never invoked.
+    if self.plan.is_some() {
+      let alpha_mode = self.alpha_mode;
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      let y = row.y();
+      let u = row.u();
+      let v = row.v();
+      let a = row.a();
+      let Self {
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgba_scratch,
+        rgb_scratch,
+        rgba_scratch_u16,
+        rgba_color_scratch_u16,
+        luma_scratch_u16,
+        plan,
+        rgba_stream,
+        rgba_stream_u16,
+        luma_stream_u16,
+        resample_outputs,
+        frozen_alpha_mode,
+        ..
+      } = self;
+      let plan = plan.as_ref().expect("plan.is_some() checked above");
+      check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
+      return packed_yuva444_resample::<8>(
+        rgba_stream,
+        rgba_stream_u16,
+        luma_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgba_scratch,
+        rgb_scratch,
+        rgba_scratch_u16,
+        rgba_color_scratch_u16,
+        luma_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        alpha_mode,
+        |dst| yuva444p_to_rgba_row(y, u, v, a, dst, w, matrix, full_range, use_simd),
+        // `Yuva444p` has no u16 colour outputs, so this closure is never called.
+        |_dst: &mut [u16]| {},
+        |dst| {
+          for (d, &s) in dst.iter_mut().zip(y) {
+            *d = s as u16;
+          }
+        },
+      );
+    }
+
     let Self {
       rgb,
       rgba,
       luma,
+      luma_u16,
       hsv,
       rgb_scratch,
       ..
@@ -128,6 +241,16 @@ impl PixelSink for MixedSinker<'_, Yuva444p> {
     // Luma — Y plane is already u8.
     if let Some(luma) = luma.as_deref_mut() {
       luma[one_plane_start..one_plane_end].copy_from_slice(&row.y()[..w]);
+    }
+
+    // Luma u16 — zero-extend the Y plane (`out[x] = Y_byte as u16`).
+    if let Some(luma_u16) = luma_u16.as_deref_mut() {
+      for (d, &s) in luma_u16[one_plane_start..one_plane_end]
+        .iter_mut()
+        .zip(&row.y()[..w])
+      {
+        *d = s as u16;
+      }
     }
 
     let want_rgb = rgb.is_some();
