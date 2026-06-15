@@ -192,6 +192,12 @@ mod resample_yuv410_440p;
 mod resample_yuv411p;
 #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
 mod resample_yuv422_444p;
+#[cfg(feature = "yuva")]
+mod resample_yuva420p;
+#[cfg(feature = "yuva")]
+mod resample_yuva422p;
+#[cfg(feature = "yuva")]
+mod resample_yuva444p;
 #[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
 #[cfg(feature = "yuv-planar")]
