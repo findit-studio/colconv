@@ -1475,6 +1475,16 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "yuva",
   ))]
   rgb_scratch: Vec<u8>,
+  /// Source-width `u8` luma staging for the **packed YUV 4:2:2**
+  /// resample path: the interleaved Y bytes are de-interleaved here (via
+  /// the format's own `*_to_luma_row` kernel — the exact Y→luma
+  /// derivation the direct path uses) before feeding the single-channel
+  /// [`Self::luma_stream`]. The packed colour stream simultaneously
+  /// stages its RGB row in [`Self::rgb_scratch`], so the Y row needs its
+  /// own buffer rather than sharing that scratch. Lazily grown to
+  /// `width` `u8`; empty otherwise. Gated to `yuv-packed`.
+  #[cfg(feature = "yuv-packed")]
+  luma_scratch: Vec<u8>,
   /// Source-width `u16` RGB staging for high-bit packed-RGB resampling:
   /// the wire row converts here before feeding [`Self::rgb_stream_u16`].
   /// Lazily grown to `3 * width` `u16`; empty otherwise. Gated to `rgb`
@@ -2023,6 +2033,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "yuva",
       ))]
       rgb_scratch: Vec::new(),
+      #[cfg(feature = "yuv-packed")]
+      luma_scratch: Vec::new(),
       #[cfg(any(feature = "rgb", feature = "gbr"))]
       rgb_scratch_u16: Vec::new(),
       #[cfg(feature = "gray")]
@@ -2218,6 +2230,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       feature = "bayer",
       feature = "gbr",
       feature = "gray",
+      feature = "yuv-packed",
       all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb"))
     )
   ))]
@@ -2303,13 +2316,37 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   }
 
   /// Whether the single-channel luma `u8` area stream has been created
-  /// — a white-box probe for the [`Gray8`](crate::source::Gray8) and
-  /// `mono` resample ordering tests (an out-of-sequence first row must
-  /// be rejected before the stream is allocated). Gated on `gray`/`mono`
-  /// and `std` like the tests that consume it.
-  #[cfg(all(test, feature = "std", any(feature = "gray", feature = "mono")))]
+  /// — a white-box probe for the [`Gray8`](crate::source::Gray8),
+  /// `mono`, and packed-YUV-4:2:2 resample ordering tests (an
+  /// out-of-sequence first row must be rejected before the stream is
+  /// allocated). Gated on `gray`/`mono`/`yuv-packed` and `std` like the
+  /// tests that consume it.
+  #[cfg(all(
+    test,
+    feature = "std",
+    any(feature = "gray", feature = "mono", feature = "yuv-packed")
+  ))]
   pub(crate) fn luma_stream_allocated(&self) -> bool {
     self.luma_stream.is_some()
+  }
+
+  /// Whether the 3-channel packed-RGB `u8` area stream has been created
+  /// — a white-box probe for the packed-YUV-4:2:2 resample ordering
+  /// tests (an out-of-sequence first row must be rejected before the
+  /// stream is allocated). Gated on `yuv-packed` and `std` like the
+  /// tests that consume it.
+  #[cfg(all(test, feature = "std", feature = "yuv-packed"))]
+  pub(crate) fn rgb_stream_allocated(&self) -> bool {
+    self.rgb_stream.is_some()
+  }
+
+  /// Capacity of the packed-YUV-4:2:2 source-row Y de-interleave staging
+  /// scratch — a white-box probe for the resample ordering tests (a
+  /// rejected row must not have grown the scratch). Gated on
+  /// `yuv-packed` and `std` like the tests that consume it.
+  #[cfg(all(test, feature = "std", feature = "yuv-packed"))]
+  pub(crate) fn luma_scratch_capacity(&self) -> usize {
+    self.luma_scratch.capacity()
   }
 
   /// Whether the single-channel **u16** luma area stream has been
@@ -2979,10 +3016,11 @@ pub(super) fn source_rgb_scratch<'s>(
 /// of reallocating; refusal surfaces as `AllocationFailed` in the
 /// preflight phase, not an abort in infallible growth).
 ///
-/// The staging point for `mono` resampling: each 1-bit source row is
-/// expanded to source-width 0/255 luma here before feeding the
-/// single-channel area stream.
-#[cfg(feature = "mono")]
+/// The staging point for `mono` resampling (each 1-bit source row is
+/// expanded to source-width 0/255 luma here) and for **packed YUV
+/// 4:2:2** resampling (the interleaved Y bytes are de-interleaved here)
+/// before feeding the single-channel area stream.
+#[cfg(any(feature = "mono", feature = "yuv-packed"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn source_luma_scratch<'s>(
   scratch: &'s mut Vec<u8>,

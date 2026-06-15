@@ -134,6 +134,8 @@ mod resample_grayf32;
 mod resample_mono;
 #[cfg(feature = "rgb")]
 mod resample_packed_rgb_10bit;
+#[cfg(feature = "yuv-packed")]
+mod resample_packed_yuv_8bit;
 #[cfg(feature = "rgb")]
 mod resample_padding_byte;
 #[cfg(feature = "rgb")]
