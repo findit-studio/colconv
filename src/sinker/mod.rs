@@ -21,8 +21,8 @@ pub mod mixed;
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub use mixed::{
-  CustomLumaCoefficients, DimensionMismatch, GeometryOverflow, InsufficientBuffer,
-  InsufficientHsvPlane, LumaChannel, LumaCoefficients, LumaCoefficientsError, MixedSinker,
-  MixedSinkerError, ResampleOutputsChanged, RowIndexOutOfRange, RowShapeMismatch, WidthAlignment,
-  WidthAlignmentRequirement,
+  AlphaMode, CustomLumaCoefficients, DefaultAlphaMode, DimensionMismatch, GeometryOverflow,
+  InsufficientBuffer, InsufficientHsvPlane, LumaChannel, LumaCoefficients, LumaCoefficientsError,
+  MixedSinker, MixedSinkerError, ResampleOutputsChanged, RowIndexOutOfRange, RowShapeMismatch,
+  WidthAlignment, WidthAlignmentRequirement,
 };

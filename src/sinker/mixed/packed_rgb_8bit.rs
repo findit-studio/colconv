@@ -50,8 +50,9 @@
 
 use super::{
   InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange, RowShapeMismatch,
-  RowSlice, check_dimensions_match, packed_rgb_resample_emit, packed_rgb_resample_preflight,
-  packed_rgb_resample_stream, rgb_row_buf_or_scratch, rgba_plane_row_slice, source_rgb_scratch,
+  RowSlice, check_dimensions_match, check_frozen_alpha_mode, packed_rgb_resample_emit,
+  packed_rgb_resample_preflight, packed_rgb_resample_stream, packed_rgba_resample,
+  rgb_row_buf_or_scratch, rgba_plane_row_slice, source_rgb_scratch,
 };
 use crate::{
   PixelSink,
@@ -103,6 +104,7 @@ impl<R> PixelSink for MixedSinker<'_, Rgb24, R> {
       stream.reset();
     }
     self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
   }
 
@@ -250,6 +252,7 @@ impl<R> PixelSink for MixedSinker<'_, Bgr24, R> {
       stream.reset();
     }
     self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
   }
 
@@ -398,14 +401,23 @@ impl<'a, R> MixedSinker<'a, Rgba, R> {
   }
 }
 
-impl RgbaSink for MixedSinker<'_, Rgba> {}
+impl<R> RgbaSink for MixedSinker<'_, Rgba, R> {}
 
-impl PixelSink for MixedSinker<'_, Rgba> {
+impl<R> PixelSink for MixedSinker<'_, Rgba, R> {
   type Input<'r> = RgbaRow<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
+    Ok(())
   }
 
   fn process(&mut self, row: RgbaRow<'_>) -> Result<(), Self::Error> {
@@ -434,8 +446,69 @@ impl PixelSink for MixedSinker<'_, Rgba> {
       luma,
       hsv,
       rgb_scratch,
+      rgba_scratch,
+      plan,
+      rgb_stream,
+      rgba_stream,
+      resample_outputs,
+      alpha_mode,
+      frozen_alpha_mode,
       ..
     } = self;
+    let alpha_mode = *alpha_mode;
+
+    // Non-identity plan. Route the alpha-aware 4-channel tail when the
+    // resampled alpha would otherwise be dropped (rgba attached) or the
+    // color must be alpha-weighted (premultiplied mode); otherwise the
+    // rgb-only straight outputs keep the 3-channel RGB path unchanged.
+    if let Some(plan) = plan.as_ref() {
+      // The alpha mode is snapshotted at begin_frame; reject a mid-frame
+      // change here, before route selection (it picks the 4-channel vs
+      // 3-channel route), so a flip can neither reroute nor mix modes.
+      check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
+      if rgba.is_some() || alpha_mode.is_premultiplied() {
+        return packed_rgba_resample(
+          rgba_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          &mut None,
+          hsv,
+          rgba_scratch,
+          rgb_scratch,
+          w,
+          plan,
+          idx,
+          use_simd,
+          alpha_mode,
+          row.matrix(),
+          row.full_range(),
+          |dst| dst.copy_from_slice(row.rgba()),
+        );
+      }
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, &None, hsv, idx)? {
+        return Ok(());
+      }
+      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+      let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+      rgba_to_rgb_row(row.rgba(), scratch, w, use_simd);
+      return packed_rgb_resample_emit(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        &mut None,
+        hsv,
+        scratch,
+        row.matrix(),
+        row.full_range(),
+        idx,
+        use_simd,
+      );
+    }
+
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
     let rgba_in = row.rgba();
@@ -518,14 +591,23 @@ impl<'a, R> MixedSinker<'a, Bgra, R> {
   }
 }
 
-impl BgraSink for MixedSinker<'_, Bgra> {}
+impl<R> BgraSink for MixedSinker<'_, Bgra, R> {}
 
-impl PixelSink for MixedSinker<'_, Bgra> {
+impl<R> PixelSink for MixedSinker<'_, Bgra, R> {
   type Input<'r> = BgraRow<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
+    Ok(())
   }
 
   fn process(&mut self, row: BgraRow<'_>) -> Result<(), Self::Error> {
@@ -554,8 +636,68 @@ impl PixelSink for MixedSinker<'_, Bgra> {
       luma,
       hsv,
       rgb_scratch,
+      rgba_scratch,
+      plan,
+      rgb_stream,
+      rgba_stream,
+      resample_outputs,
+      alpha_mode,
+      frozen_alpha_mode,
       ..
     } = self;
+    let alpha_mode = *alpha_mode;
+
+    // Non-identity plan — see the `Rgba` impl for the 4-channel-vs-3
+    // routing rationale. Bgra stages canonical RGBA via `bgra_to_rgba_row`
+    // (swap R↔B, α pass-through) and drop-alpha RGB via `bgra_to_rgb_row`.
+    if let Some(plan) = plan.as_ref() {
+      // The alpha mode is snapshotted at begin_frame; reject a mid-frame
+      // change here, before route selection (it picks the 4-channel vs
+      // 3-channel route), so a flip can neither reroute nor mix modes.
+      check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
+      if rgba.is_some() || alpha_mode.is_premultiplied() {
+        return packed_rgba_resample(
+          rgba_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          &mut None,
+          hsv,
+          rgba_scratch,
+          rgb_scratch,
+          w,
+          plan,
+          idx,
+          use_simd,
+          alpha_mode,
+          row.matrix(),
+          row.full_range(),
+          |dst| bgra_to_rgba_row(row.bgra(), dst, w, use_simd),
+        );
+      }
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, &None, hsv, idx)? {
+        return Ok(());
+      }
+      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+      let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+      bgra_to_rgb_row(row.bgra(), scratch, w, use_simd);
+      return packed_rgb_resample_emit(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        &mut None,
+        hsv,
+        scratch,
+        row.matrix(),
+        row.full_range(),
+        idx,
+        use_simd,
+      );
+    }
+
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
     let bgra_in = row.bgra();
@@ -638,14 +780,23 @@ impl<'a, R> MixedSinker<'a, Argb, R> {
   }
 }
 
-impl ArgbSink for MixedSinker<'_, Argb> {}
+impl<R> ArgbSink for MixedSinker<'_, Argb, R> {}
 
-impl PixelSink for MixedSinker<'_, Argb> {
+impl<R> PixelSink for MixedSinker<'_, Argb, R> {
   type Input<'r> = ArgbRow<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
+    Ok(())
   }
 
   fn process(&mut self, row: ArgbRow<'_>) -> Result<(), Self::Error> {
@@ -674,8 +825,68 @@ impl PixelSink for MixedSinker<'_, Argb> {
       luma,
       hsv,
       rgb_scratch,
+      rgba_scratch,
+      plan,
+      rgb_stream,
+      rgba_stream,
+      resample_outputs,
+      alpha_mode,
+      frozen_alpha_mode,
       ..
     } = self;
+    let alpha_mode = *alpha_mode;
+
+    // Non-identity plan — see the `Rgba` impl. Argb stages canonical
+    // RGBA via `argb_to_rgba_row` (rotate leading α to slot 3) and
+    // drop-alpha RGB via `argb_to_rgb_row`.
+    if let Some(plan) = plan.as_ref() {
+      // The alpha mode is snapshotted at begin_frame; reject a mid-frame
+      // change here, before route selection (it picks the 4-channel vs
+      // 3-channel route), so a flip can neither reroute nor mix modes.
+      check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
+      if rgba.is_some() || alpha_mode.is_premultiplied() {
+        return packed_rgba_resample(
+          rgba_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          &mut None,
+          hsv,
+          rgba_scratch,
+          rgb_scratch,
+          w,
+          plan,
+          idx,
+          use_simd,
+          alpha_mode,
+          row.matrix(),
+          row.full_range(),
+          |dst| argb_to_rgba_row(row.argb(), dst, w, use_simd),
+        );
+      }
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, &None, hsv, idx)? {
+        return Ok(());
+      }
+      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+      let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+      argb_to_rgb_row(row.argb(), scratch, w, use_simd);
+      return packed_rgb_resample_emit(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        &mut None,
+        hsv,
+        scratch,
+        row.matrix(),
+        row.full_range(),
+        idx,
+        use_simd,
+      );
+    }
+
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
     let argb_in = row.argb();
@@ -758,14 +969,23 @@ impl<'a, R> MixedSinker<'a, Abgr, R> {
   }
 }
 
-impl AbgrSink for MixedSinker<'_, Abgr> {}
+impl<R> AbgrSink for MixedSinker<'_, Abgr, R> {}
 
-impl PixelSink for MixedSinker<'_, Abgr> {
+impl<R> PixelSink for MixedSinker<'_, Abgr, R> {
   type Input<'r> = AbgrRow<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
+    Ok(())
   }
 
   fn process(&mut self, row: AbgrRow<'_>) -> Result<(), Self::Error> {
@@ -794,8 +1014,68 @@ impl PixelSink for MixedSinker<'_, Abgr> {
       luma,
       hsv,
       rgb_scratch,
+      rgba_scratch,
+      plan,
+      rgb_stream,
+      rgba_stream,
+      resample_outputs,
+      alpha_mode,
+      frozen_alpha_mode,
       ..
     } = self;
+    let alpha_mode = *alpha_mode;
+
+    // Non-identity plan — see the `Rgba` impl. Abgr stages canonical
+    // RGBA via `abgr_to_rgba_row` (full byte reverse) and drop-alpha RGB
+    // via `abgr_to_rgb_row`.
+    if let Some(plan) = plan.as_ref() {
+      // The alpha mode is snapshotted at begin_frame; reject a mid-frame
+      // change here, before route selection (it picks the 4-channel vs
+      // 3-channel route), so a flip can neither reroute nor mix modes.
+      check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
+      if rgba.is_some() || alpha_mode.is_premultiplied() {
+        return packed_rgba_resample(
+          rgba_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          &mut None,
+          hsv,
+          rgba_scratch,
+          rgb_scratch,
+          w,
+          plan,
+          idx,
+          use_simd,
+          alpha_mode,
+          row.matrix(),
+          row.full_range(),
+          |dst| abgr_to_rgba_row(row.abgr(), dst, w, use_simd),
+        );
+      }
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, &None, hsv, idx)? {
+        return Ok(());
+      }
+      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+      let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+      abgr_to_rgb_row(row.abgr(), scratch, w, use_simd);
+      return packed_rgb_resample_emit(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        &mut None,
+        hsv,
+        scratch,
+        row.matrix(),
+        row.full_range(),
+        idx,
+        use_simd,
+      );
+    }
+
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
     let abgr_in = row.abgr();
@@ -890,6 +1170,7 @@ impl<R> PixelSink for MixedSinker<'_, Xrgb, R> {
       stream.reset();
     }
     self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
   }
 
@@ -1045,6 +1326,7 @@ impl<R> PixelSink for MixedSinker<'_, Rgbx, R> {
       stream.reset();
     }
     self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
   }
 
@@ -1198,6 +1480,7 @@ impl<R> PixelSink for MixedSinker<'_, Xbgr, R> {
       stream.reset();
     }
     self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
   }
 
@@ -1352,6 +1635,7 @@ impl<R> PixelSink for MixedSinker<'_, Bgrx, R> {
       stream.reset();
     }
     self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
   }
 

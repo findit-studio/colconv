@@ -30,9 +30,10 @@
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, check_dimensions_match, packed_rgb_u16_resample_emit,
-  packed_rgb_u16_resample_preflight, packed_rgb_u16_resample_stream, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice, rgba_u16_plane_row_slice, source_rgb_u16_scratch,
+  RowShapeMismatch, RowSlice, check_dimensions_match, check_frozen_alpha_mode,
+  packed_rgb_u16_resample_emit, packed_rgb_u16_resample_preflight, packed_rgb_u16_resample_stream,
+  packed_rgba_u16_resample, rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  source_rgb_u16_scratch,
 };
 use crate::{
   PixelSink,
@@ -156,6 +157,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgb48<BE>, R> {
       stream.reset();
     }
     self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
   }
 
@@ -422,6 +424,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Bgr48<BE>, R> {
       stream.reset();
     }
     self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
   }
 
@@ -686,14 +689,23 @@ impl<'a, R, const BE: bool> MixedSinker<'a, Rgba64<BE>, R> {
   }
 }
 
-impl<const BE: bool> Rgba64Sink<BE> for MixedSinker<'_, Rgba64<BE>> {}
+impl<R, const BE: bool> Rgba64Sink<BE> for MixedSinker<'_, Rgba64<BE>, R> {}
 
-impl<const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>> {
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>, R> {
   type Input<'r> = Rgba64Row<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream_u16.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_stream_u16.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
+    Ok(())
   }
 
   fn process(&mut self, row: Rgba64Row<'_>) -> Result<(), Self::Error> {
@@ -719,6 +731,102 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>> {
       return Err(MixedSinkerError::RowIndexOutOfRange(
         RowIndexOutOfRange::new(idx, self.height),
       ));
+    }
+
+    // Non-identity plan. Route the alpha-aware 4-channel u16 tail when
+    // resampled alpha would be dropped (rgba / rgba_u16 attached) or the
+    // color must be alpha-weighted (premultiplied); otherwise the
+    // rgb-only straight outputs keep the 3-channel u16 RGB path. Rgba64
+    // stages canonical host-native RGBA via `rgba64_to_rgba_u16_row_endian`
+    // (identity, α pass-through) and drop-alpha RGB via
+    // `rgba64_to_rgb_u16_row_endian`.
+    if self.plan.is_some() {
+      let alpha_mode = self.alpha_mode;
+      let in64 = row.rgba64();
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      let Self {
+        rgb,
+        rgb_u16,
+        rgba,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch,
+        rgb_scratch_u16,
+        rgba_scratch_u16,
+        rgba_color_scratch_u16,
+        rgb_stream_u16,
+        rgba_stream_u16,
+        resample_outputs,
+        frozen_alpha_mode,
+        plan,
+        ..
+      } = self;
+      let plan = plan.as_ref().expect("plan.is_some() checked above");
+      // The alpha mode is snapshotted at begin_frame; reject a mid-frame
+      // change here, before route selection (it picks the 4-channel vs
+      // 3-channel route), so a flip can neither reroute nor mix modes.
+      check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
+      if rgba.is_some() || rgba_u16.is_some() || alpha_mode.is_premultiplied() {
+        return packed_rgba_u16_resample(
+          rgba_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          luma_u16,
+          hsv,
+          rgba_scratch_u16,
+          rgba_color_scratch_u16,
+          rgb_scratch,
+          u16::MAX as u32,
+          w,
+          plan,
+          idx,
+          use_simd,
+          alpha_mode,
+          matrix,
+          full_range,
+          |dst| crate::row::rgba64_to_rgba_u16_row_endian::<BE>(in64, dst, w, use_simd),
+        );
+      }
+      if !packed_rgb_u16_resample_preflight(
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        rgb_u16,
+        rgba_u16,
+        luma_u16,
+        hsv,
+        idx,
+      )? {
+        return Ok(());
+      }
+      let stream = packed_rgb_u16_resample_stream(rgb_stream_u16, plan, idx)?;
+      let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
+      crate::row::rgba64_to_rgb_u16_row_endian::<BE>(in64, src_u16, w, use_simd);
+      return packed_rgb_u16_resample_emit::<16, false>(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        rgb_u16,
+        rgba_u16,
+        luma_u16,
+        hsv,
+        src_u16,
+        rgb_scratch,
+        matrix,
+        full_range,
+        idx,
+        use_simd,
+      );
     }
 
     let Self {
@@ -966,14 +1074,23 @@ impl<'a, R, const BE: bool> MixedSinker<'a, Bgra64<BE>, R> {
   }
 }
 
-impl<const BE: bool> Bgra64Sink<BE> for MixedSinker<'_, Bgra64<BE>> {}
+impl<R, const BE: bool> Bgra64Sink<BE> for MixedSinker<'_, Bgra64<BE>, R> {}
 
-impl<const BE: bool> PixelSink for MixedSinker<'_, Bgra64<BE>> {
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Bgra64<BE>, R> {
   type Input<'r> = Bgra64Row<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream_u16.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_stream_u16.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
+    Ok(())
   }
 
   fn process(&mut self, row: Bgra64Row<'_>) -> Result<(), Self::Error> {
@@ -999,6 +1116,99 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Bgra64<BE>> {
       return Err(MixedSinkerError::RowIndexOutOfRange(
         RowIndexOutOfRange::new(idx, self.height),
       ));
+    }
+
+    // Non-identity plan — see the `Rgba64` impl for the routing
+    // rationale. Bgra64 stages canonical host-native RGBA via
+    // `bgra64_to_rgba_u16_row_endian` (swap R↔B, α pass-through) and
+    // drop-alpha RGB via `bgra64_to_rgb_u16_row_endian`.
+    if self.plan.is_some() {
+      let alpha_mode = self.alpha_mode;
+      let in64 = row.bgra64();
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      let Self {
+        rgb,
+        rgb_u16,
+        rgba,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch,
+        rgb_scratch_u16,
+        rgba_scratch_u16,
+        rgba_color_scratch_u16,
+        rgb_stream_u16,
+        rgba_stream_u16,
+        resample_outputs,
+        frozen_alpha_mode,
+        plan,
+        ..
+      } = self;
+      let plan = plan.as_ref().expect("plan.is_some() checked above");
+      // The alpha mode is snapshotted at begin_frame; reject a mid-frame
+      // change here, before route selection (it picks the 4-channel vs
+      // 3-channel route), so a flip can neither reroute nor mix modes.
+      check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
+      if rgba.is_some() || rgba_u16.is_some() || alpha_mode.is_premultiplied() {
+        return packed_rgba_u16_resample(
+          rgba_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          luma_u16,
+          hsv,
+          rgba_scratch_u16,
+          rgba_color_scratch_u16,
+          rgb_scratch,
+          u16::MAX as u32,
+          w,
+          plan,
+          idx,
+          use_simd,
+          alpha_mode,
+          matrix,
+          full_range,
+          |dst| crate::row::bgra64_to_rgba_u16_row_endian::<BE>(in64, dst, w, use_simd),
+        );
+      }
+      if !packed_rgb_u16_resample_preflight(
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        rgb_u16,
+        rgba_u16,
+        luma_u16,
+        hsv,
+        idx,
+      )? {
+        return Ok(());
+      }
+      let stream = packed_rgb_u16_resample_stream(rgb_stream_u16, plan, idx)?;
+      let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
+      crate::row::bgra64_to_rgb_u16_row_endian::<BE>(in64, src_u16, w, use_simd);
+      return packed_rgb_u16_resample_emit::<16, false>(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        rgb_u16,
+        rgba_u16,
+        luma_u16,
+        hsv,
+        src_u16,
+        rgb_scratch,
+        matrix,
+        full_range,
+        idx,
+        use_simd,
+      );
     }
 
     let Self {
