@@ -144,6 +144,15 @@ mod resample_grayf32;
 mod resample_legacy_rgb;
 #[cfg(feature = "mono")]
 mod resample_mono;
+// The high-bit semi-planar P-format sinks live under the
+// `yuv-planar`-gated `subsampled_4_*_high_bit` parent modules with a
+// `yuv-semi-planar`-gated inner module, so they require BOTH features.
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+mod resample_p0xx_high_bit;
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+mod resample_p2xx_high_bit;
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+mod resample_p4xx_high_bit;
 #[cfg(feature = "rgb")]
 mod resample_packed_rgb_10bit;
 #[cfg(feature = "rgb")]
