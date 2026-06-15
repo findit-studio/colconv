@@ -148,6 +148,8 @@ mod resample_rgbf16;
 mod resample_rgbf32;
 #[cfg(all(feature = "yuv-semi-planar", feature = "rgb"))]
 mod resample_semi_planar;
+#[cfg(feature = "yuv-packed")]
+mod resample_uyyvyy411;
 #[cfg(feature = "xyz")]
 mod resample_xyz12;
 #[cfg(all(feature = "yuv-planar", feature = "rgb"))]

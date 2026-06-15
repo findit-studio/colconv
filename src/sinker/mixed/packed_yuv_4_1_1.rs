@@ -26,8 +26,8 @@
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice,
+  RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
+  planar_resample::packed_yuv_dual_resample, rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
 use crate::{
   PixelSink,
@@ -85,9 +85,9 @@ impl<'a, R> MixedSinker<'a, Uyyvyy411, R> {
   }
 }
 
-impl Uyyvyy411Sink for MixedSinker<'_, Uyyvyy411> {}
+impl<R> Uyyvyy411Sink for MixedSinker<'_, Uyyvyy411, R> {}
 
-impl PixelSink for MixedSinker<'_, Uyyvyy411> {
+impl<R> PixelSink for MixedSinker<'_, Uyyvyy411, R> {
   type Input<'r> = Uyyvyy411Row<'r>;
   type Error = MixedSinkerError;
 
@@ -98,6 +98,15 @@ impl PixelSink for MixedSinker<'_, Uyyvyy411> {
         WidthAlignment::multiple_of_four(self.width),
       ));
     }
+    // New frame: restart the row-stage resample streams and re-freeze
+    // the output set so a reused sink starts each frame clean.
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
     Ok(())
   }
 
@@ -143,8 +152,50 @@ impl PixelSink for MixedSinker<'_, Uyyvyy411> {
       luma_u16,
       hsv,
       rgb_scratch,
+      luma_scratch,
+      plan,
+      rgb_stream,
+      luma_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: row-stage fused downscale. De-interleave the Y
+    // bytes out of the packed plane for luma (the YUV luma contract —
+    // luma area-resamples Y, never RGB-derived luma); for colour,
+    // convert the packed row to a source-width RGB row with the same
+    // fused `uyyvyy411_to_rgb_row` kernel the identity path uses (chroma
+    // de-interleave + 4:1:1 horizontal upsample in registers), then bin
+    // it. RGB therefore equals an `Rgb24` area-resample of the
+    // identity-converted frame.
+    if let Some(plan) = plan.as_ref() {
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      let packed = row.uyyvyy();
+      return packed_yuv_dual_resample(
+        luma_stream,
+        rgb_stream,
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        luma_scratch,
+        rgb_scratch,
+        w,
+        plan,
+        idx,
+        use_simd,
+        |scratch| {
+          uyyvyy411_to_luma_row(packed, scratch, w, use_simd);
+        },
+        |scratch| {
+          uyyvyy411_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd);
+        },
+      );
+    }
+
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
     let packed = row.uyyvyy();

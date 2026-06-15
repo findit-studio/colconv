@@ -4991,9 +4991,15 @@ mod planar_gbr_float;
 #[cfg(feature = "gbr")]
 mod planar_gbr_high_bit;
 /// Format-agnostic planar-YUV resample helpers (the 4:2:0 native /
-/// row-stage join and the shared row-stage path), reused by both the
-/// 8-bit planar family and the semi-planar family.
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+/// row-stage join and the shared row-stage path), reused by the 8-bit
+/// planar family, the semi-planar family, and the packed YUV family
+/// (which de-interleaves Y into a scratch first via
+/// [`planar_resample::packed_yuv_dual_resample`]).
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed"
+))]
 mod planar_resample;
 #[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
