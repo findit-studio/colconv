@@ -1,4 +1,8 @@
-use super::{super::*, high_bit_plane, interleave_uv, p16_plane_neon, planar_n_plane};
+use super::{super::*, p16_plane_neon, planar_n_plane};
+// Semi-planar (`p_n_444`) plane / UV-interleave builders — used only by
+// the `yuv-semi-planar`-gated 4:4:4 semi-planar equivalence helpers below.
+#[cfg(feature = "yuv-semi-planar")]
+use super::{high_bit_plane, interleave_uv};
 
 // ---- YUVA 4:4:4 u8 RGBA equivalence (Ship 8b‑1b) --------------------
 //
@@ -406,6 +410,7 @@ fn check_yuv444p_n_u16_neon_rgba_equivalence<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_pn_444_u16_neon_rgba_equivalence<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -458,6 +463,7 @@ fn check_yuv444p16_u16_neon_rgba_equivalence(width: usize, matrix: ColorMatrix, 
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p_n_444_16_u16_neon_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p16_plane_neon(width, 37);
   let u = p16_plane_neon(width, 53);
@@ -506,6 +512,7 @@ fn neon_yuv444p_n_rgba_u16_matches_scalar_tail_and_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_pn_444_rgba_u16_matches_scalar_all_bits() {
@@ -524,6 +531,7 @@ fn neon_pn_444_rgba_u16_matches_scalar_all_bits() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_pn_444_rgba_u16_matches_scalar_tail_and_widths() {
@@ -621,6 +629,7 @@ fn neon_yuva444p16_rgba_u16_matches_scalar_widths_and_alpha() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p416_rgba_u16_matches_scalar_all_matrices() {

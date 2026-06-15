@@ -339,6 +339,7 @@ fn yuv420p10_rgba_u16_too_short_returns_err() {
 // Semi-planar 10-bit, high-bit-packed (samples in high 10 of each
 // u16). Mirrors the Yuv420p10 test shape but with UV interleaved.
 
+#[cfg(feature = "yuv-semi-planar")]
 fn solid_p010_frame(
   width: u32,
   height: u32,
@@ -358,6 +359,7 @@ fn solid_p010_frame(
   (y, uv)
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -379,6 +381,7 @@ fn p010_rgb_u8_only_gray_is_gray() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -407,6 +410,7 @@ fn p010_rgb_u16_only_native_depth_gray() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -431,6 +435,7 @@ fn p010_rgb_u8_and_u16_both_populated() {
   assert!(rgb_u16.iter().all(|&c| c == 1023));
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -451,6 +456,7 @@ fn p010_luma_downshifts_to_8bit() {
   assert!(luma.iter().all(|&l| l == 128));
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -485,6 +491,7 @@ fn p010_matches_yuv420p10_mixed_sinker_with_shifted_samples() {
   assert_eq!(rgb_yuv, rgb_p010);
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -499,6 +506,7 @@ fn p010_rgb_u16_too_short_returns_err() {
   assert!(matches!(err, MixedSinkerError::InsufficientRgbU16Buffer(_)));
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -536,6 +544,7 @@ fn p010_with_simd_false_matches_with_simd_true() {
 
 // ---- P010 RGBA (Ship 8 Tranche 5b) ------------------------------------
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 #[cfg_attr(
   miri,
