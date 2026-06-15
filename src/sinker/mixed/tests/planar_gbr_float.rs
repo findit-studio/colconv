@@ -54,6 +54,8 @@ fn patterned_alpha_f32(width: usize, height: usize, seed: u8) -> Vec<f32> {
 
 /// Build packed Rgbf32 data from the same (r, g, b) values as
 /// `patterned_gbrpf32_planes`, so the two frames contain identical RGB data.
+/// Consumed only by the `rgb-float`-gated `Rgbf32` parity test.
+#[cfg(feature = "rgb-float")]
 fn patterned_rgbf32_packed(width: usize, height: usize, vals: &[f32]) -> Vec<f32> {
   let n = width * height;
   let mut buf = std::vec![0.0f32; n * 3];
@@ -69,6 +71,10 @@ fn patterned_rgbf32_packed(width: usize, height: usize, vals: &[f32]) -> Vec<f32
 
 /// Gbrpf32 and Rgbf32 with the same per-pixel RGB values produce byte-identical
 /// u8 RGB output.
+// Cross-references the `rgb-float`-only `Rgbf32` source for a parity
+// oracle, so it only compiles when `rgb-float` is also enabled (a
+// `gbr`-solo build has no `Rgbf32Frame` / `rgbf32_to`).
+#[cfg(feature = "rgb-float")]
 #[test]
 #[cfg_attr(
   miri,
@@ -112,6 +118,10 @@ fn gbrpf32_rgb_matches_rgbf32_rgb() {
 
 /// Gbrpf16 and Rgbf16 with the same per-pixel values produce byte-identical
 /// u8 RGB output.
+// Cross-references the `rgb-float`-only `Rgbf16` source for a parity
+// oracle — `rgb-float`-gated for the same reason as
+// `gbrpf32_rgb_matches_rgbf32_rgb`.
+#[cfg(feature = "rgb-float")]
 #[test]
 #[cfg_attr(
   miri,

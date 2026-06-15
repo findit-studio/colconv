@@ -19,16 +19,24 @@
 //! - `with_hsv` — derived from staged RGB via `rgb_to_hsv_row`
 //!   (existing kernel — no new HSV variant).
 //!
-//! **Fused area-resample** (`with_resampler`): `Gbrp` is generic over
-//! `R: Resampler`. On a non-identity plan it scatters its G/B/R planes
-//! into the source-width packed-RGB scratch and feeds the shared
-//! 3-channel packed-RGB resample tail
+//! **Fused area-resample** (`with_resampler`): both `Gbrp` and `Gbrap`
+//! are generic over `R: Resampler`. On a non-identity plan `Gbrp`
+//! scatters its G/B/R planes into the source-width packed-RGB scratch and
+//! feeds the shared 3-channel packed-RGB resample tail
 //! ([`packed_rgb_resample_preflight`](super::packed_rgb_resample_preflight)
 //! / `_stream` / `_emit`) — the same path the `Bgr24` / padding-byte
 //! sources take, so every output (rgb, rgba, luma, luma_u16, hsv)
 //! derives from the binned RGB and matches a direct conversion of the
-//! pre-binned frame. `Gbrap` stays pinned to `NoopResampler`:
-//! alpha-aware area resampling is a separate later item.
+//! pre-binned frame. `Gbrap` is **alpha-aware**: it de-interleaves its
+//! G/B/R/A planes into the canonical source-width `R, G, B, A` row
+//! (`gbra_to_rgba_row`) and feeds the 4-channel packed RGBA tail
+//! ([`packed_rgba_resample`](super::packed_rgba_resample)) the
+//! `Rgba` / `Bgra` / `Argb` / `Abgr` sources take, so resampled alpha is
+//! a real area mean (not forced opaque) and — under
+//! [`AlphaMode::Premultiplied`](super::AlphaMode::Premultiplied) — the
+//! color is binned premultiplied. The per-format default is straight
+//! alpha; a straight rgb-only sink (alpha dropped) keeps the 3-channel
+//! path with no regression.
 //!
 //! 8-bit planar GBR has no `u16` output flavour — `with_rgb_u16` /
 //! `with_rgba_u16` are not declared on these source impls (they'd be
@@ -38,8 +46,9 @@
 
 use super::{
   InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange, RowShapeMismatch,
-  RowSlice, check_dimensions_match, packed_rgb_resample_emit, packed_rgb_resample_preflight,
-  packed_rgb_resample_stream, rgb_row_buf_or_scratch, rgba_plane_row_slice, source_rgb_scratch,
+  RowSlice, check_dimensions_match, check_frozen_alpha_mode, packed_rgb_resample_emit,
+  packed_rgb_resample_preflight, packed_rgb_resample_stream, packed_rgba_resample,
+  rgb_row_buf_or_scratch, rgba_plane_row_slice, source_rgb_scratch,
 };
 use crate::{
   PixelSink,
@@ -335,14 +344,23 @@ impl<'a, R> MixedSinker<'a, Gbrap, R> {
   }
 }
 
-impl GbrapSink for MixedSinker<'_, Gbrap> {}
+impl<R> GbrapSink for MixedSinker<'_, Gbrap, R> {}
 
-impl PixelSink for MixedSinker<'_, Gbrap> {
+impl<R> PixelSink for MixedSinker<'_, Gbrap, R> {
   type Input<'r> = GbrapRow<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    self.frozen_alpha_mode = Some(self.alpha_mode);
+    Ok(())
   }
 
   fn process(&mut self, row: GbrapRow<'_>) -> Result<(), Self::Error> {
@@ -396,14 +414,81 @@ impl PixelSink for MixedSinker<'_, Gbrap> {
       luma_u16,
       hsv,
       rgb_scratch,
+      rgba_scratch,
+      plan,
+      rgb_stream,
+      rgba_stream,
+      resample_outputs,
+      alpha_mode,
+      frozen_alpha_mode,
       ..
     } = self;
+    let alpha_mode = *alpha_mode;
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
     let g_in = row.g();
     let b_in = row.b();
     let r_in = row.r();
     let a_in = row.a();
+
+    // Non-identity plan. Route the alpha-aware 4-channel tail when the
+    // resampled alpha would otherwise be dropped (rgba attached) or the
+    // color must be alpha-weighted (premultiplied mode); otherwise the
+    // rgb-only straight outputs keep the 3-channel RGB path. `Gbrap`
+    // de-interleaves its G/B/R/A planes into the same canonical
+    // source-width RGBA row the packed sources stage (`gbra_to_rgba_row`),
+    // then feeds the shared tail — so resampled alpha is a real area mean
+    // and luma derives from the binned RGB (GBR->luma == RGB->luma).
+    if let Some(plan) = plan.as_ref() {
+      // The alpha mode is snapshotted at begin_frame; reject a mid-frame
+      // change here, before route selection (it picks the 4-channel vs
+      // 3-channel route), so a flip can neither reroute nor mix modes.
+      check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
+      if rgba.is_some() || alpha_mode.is_premultiplied() {
+        return packed_rgba_resample(
+          rgba_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          rgba_scratch,
+          rgb_scratch,
+          w,
+          plan,
+          idx,
+          use_simd,
+          alpha_mode,
+          row.matrix(),
+          row.full_range(),
+          |dst| gbra_to_rgba_row(g_in, b_in, r_in, a_in, dst, w, use_simd),
+        );
+      }
+      // Straight rgb-only (alpha dropped): stage drop-alpha RGB via the
+      // 3-plane `gbr_to_rgb_row` and feed the 3-channel tail (luma_u16
+      // included, for parity with the direct path).
+      if !packed_rgb_resample_preflight(resample_outputs, rgb, rgba, luma, luma_u16, hsv, idx)? {
+        return Ok(());
+      }
+      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+      let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+      gbr_to_rgb_row(g_in, b_in, r_in, scratch, w, use_simd);
+      return packed_rgb_resample_emit(
+        stream,
+        plan,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        scratch,
+        row.matrix(),
+        row.full_range(),
+        idx,
+        use_simd,
+      );
+    }
 
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();

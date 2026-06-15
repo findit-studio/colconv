@@ -330,6 +330,10 @@ mod tests {
   // Cover both 8-px and 16-px main loops + tail.
   const WIDTHS: &[usize] = &[1, 7, 8, 9, 15, 16, 17, 23, 24, 31, 32, 33, 128, 130];
 
+  // The `*_at_0` / `*_at_3` packed-alpha kernels under test are
+  // `yuv-444-packed`-gated (AYUV64); gate the SIMD-vs-scalar parity test
+  // to match, so a build without that feature does not reference them.
+  #[cfg(feature = "yuv-444-packed")]
   #[test]
   #[cfg_attr(
     miri,
@@ -351,6 +355,7 @@ mod tests {
     }
   }
 
+  #[cfg(feature = "yuv-444-packed")]
   #[test]
   #[cfg_attr(
     miri,
@@ -369,6 +374,7 @@ mod tests {
     }
   }
 
+  #[cfg(feature = "yuv-444-packed")]
   #[test]
   #[cfg_attr(
     miri,

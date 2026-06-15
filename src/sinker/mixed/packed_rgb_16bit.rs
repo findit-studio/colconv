@@ -770,7 +770,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>, R> {
       // 3-channel route), so a flip can neither reroute nor mix modes.
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
       if rgba.is_some() || rgba_u16.is_some() || alpha_mode.is_premultiplied() {
-        return packed_rgba_u16_resample(
+        return packed_rgba_u16_resample::<16, false>(
           rgba_stream_u16,
           resample_outputs,
           rgb,
@@ -783,7 +783,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>, R> {
           rgba_scratch_u16,
           rgba_color_scratch_u16,
           rgb_scratch,
-          u16::MAX as u32,
+          rgb_scratch_u16,
           w,
           plan,
           idx,
@@ -1152,7 +1152,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Bgra64<BE>, R> {
       // 3-channel route), so a flip can neither reroute nor mix modes.
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
       if rgba.is_some() || rgba_u16.is_some() || alpha_mode.is_premultiplied() {
-        return packed_rgba_u16_resample(
+        return packed_rgba_u16_resample::<16, false>(
           rgba_stream_u16,
           resample_outputs,
           rgb,
@@ -1165,7 +1165,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Bgra64<BE>, R> {
           rgba_scratch_u16,
           rgba_color_scratch_u16,
           rgb_scratch,
-          u16::MAX as u32,
+          rgb_scratch_u16,
           w,
           plan,
           idx,
