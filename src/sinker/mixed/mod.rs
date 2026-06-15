@@ -1439,8 +1439,11 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// Whether resampled processing may take the native decimation tier
   /// (bin native planes, convert once at output resolution). Defaults
   /// to `true`; benchmarks and differential tests flip it to force the
-  /// row-stage tier — the [`Self::with_simd`] pattern. Gated like the
-  /// engine; widens per routed family.
+  /// row-stage tier — the [`Self::with_simd`] pattern. The native tier
+  /// exists only for the 8-bit planar 4:2:0
+  /// ([`Yuv420p`](crate::source::Yuv420p)); every other routed family
+  /// (including the semi-planar formats) always takes the row-stage
+  /// tier and ignores this flag.
   #[cfg(feature = "yuv-planar")]
   native: bool,
   /// Native-tier join state for the 4:2:0 planar family; lazily
@@ -4949,6 +4952,11 @@ mod planar_gbr_f16;
 mod planar_gbr_float;
 #[cfg(feature = "gbr")]
 mod planar_gbr_high_bit;
+/// Format-agnostic planar-YUV resample helpers (the 4:2:0 native /
+/// row-stage join and the shared row-stage path), reused by both the
+/// 8-bit planar family and the semi-planar family.
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+mod planar_resample;
 #[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
 #[cfg(feature = "yuv-planar")]

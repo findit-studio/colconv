@@ -1,9 +1,21 @@
 //! 8-bit semi-planar YUV `MixedSinker` impls: Nv12 / Nv16 / Nv21 / Nv24 / Nv42.
+//!
+//! On a non-identity plan every member routes through the shared
+//! row-stage planar resample ([`super::planar_resample::planar_dual_resample`]):
+//! the Y plane area-resamples directly for luma (the YUV luma contract),
+//! while RGB / RGBA / HSV bin a source-width RGB row converted with the
+//! format's own fused `nv*_to_rgb_row` kernel (chroma de-interleave +
+//! upsample happen in registers inside that kernel, exactly as on the
+//! identity path). RGB therefore equals an `Rgb24` area-resample of the
+//! identity-converted frame — byte-identical to the matching
+//! [`Yuv420p`] (row-stage) / [`Yuv422p`] / [`Yuv444p`] resample of the
+//! de-interleaved planes. The 4:2:0 native decimation tier is a
+//! planar-only optimization and does not apply here.
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice,
+  RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
+  planar_resample::planar_dual_resample, rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
 use crate::{PixelSink, row::*, source::*};
 
@@ -68,9 +80,9 @@ impl<'a, R> MixedSinker<'a, Nv12, R> {
   }
 }
 
-impl Nv12Sink for MixedSinker<'_, Nv12> {}
+impl<R> Nv12Sink for MixedSinker<'_, Nv12, R> {}
 
-impl PixelSink for MixedSinker<'_, Nv12> {
+impl<R> PixelSink for MixedSinker<'_, Nv12, R> {
   type Input<'r> = Nv12Row<'r>;
   type Error = MixedSinkerError;
 
@@ -84,7 +96,17 @@ impl PixelSink for MixedSinker<'_, Nv12> {
         self.width,
       )));
     }
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    // New frame: restart the row-stage resample streams so a reused sink
+    // starts each frame clean.
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: Nv12Row<'_>) -> Result<(), Self::Error> {
@@ -129,8 +151,50 @@ impl PixelSink for MixedSinker<'_, Nv12> {
       luma_u16,
       hsv,
       rgb_scratch,
+      plan,
+      rgb_stream,
+      luma_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: row-stage fused downscale. Bin the Y plane for
+    // luma directly (the YUV luma contract); for colour, convert the
+    // interleaved source row to RGB with the same fused `nv12_to_rgb_row`
+    // kernel the identity path uses, then bin the RGB row. RGB therefore
+    // equals an `Rgb24` area-resample of the identity-converted frame —
+    // byte-identical to the `Yuv420p` row-stage twin.
+    if let Some(plan) = plan.as_ref() {
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      return planar_dual_resample(
+        luma_stream,
+        rgb_stream,
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch,
+        row.y(),
+        w,
+        plan,
+        idx,
+        use_simd,
+        |scratch| {
+          nv12_to_rgb_row(
+            row.y(),
+            row.uv_half(),
+            scratch,
+            w,
+            matrix,
+            full_range,
+            use_simd,
+          );
+        },
+      );
+    }
 
     // Single-plane row ranges are guaranteed to fit; RGB / RGBA
     // ranges use checked arithmetic (see the Yuv420p impl above for
@@ -280,9 +344,9 @@ impl<'a, R> MixedSinker<'a, Nv16, R> {
   }
 }
 
-impl Nv16Sink for MixedSinker<'_, Nv16> {}
+impl<R> Nv16Sink for MixedSinker<'_, Nv16, R> {}
 
-impl PixelSink for MixedSinker<'_, Nv16> {
+impl<R> PixelSink for MixedSinker<'_, Nv16, R> {
   type Input<'r> = Nv16Row<'r>;
   type Error = MixedSinkerError;
 
@@ -292,7 +356,15 @@ impl PixelSink for MixedSinker<'_, Nv16> {
         self.width,
       )));
     }
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: Nv16Row<'_>) -> Result<(), Self::Error> {
@@ -335,8 +407,40 @@ impl PixelSink for MixedSinker<'_, Nv16> {
       luma_u16,
       hsv,
       rgb_scratch,
+      plan,
+      rgb_stream,
+      luma_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: row-stage fused downscale (matches the Yuv422p
+    // twin). Bin Y for luma; for colour, convert the interleaved source
+    // row to RGB with the fused `nv12_to_rgb_row` kernel the identity
+    // path reuses for 4:2:2 (one chroma row per Y row), then bin it.
+    if let Some(plan) = plan.as_ref() {
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      return planar_dual_resample(
+        luma_stream,
+        rgb_stream,
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch,
+        row.y(),
+        w,
+        plan,
+        idx,
+        use_simd,
+        |scratch| {
+          nv12_to_rgb_row(row.y(), row.uv(), scratch, w, matrix, full_range, use_simd);
+        },
+      );
+    }
 
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
@@ -482,9 +586,9 @@ impl<'a, R> MixedSinker<'a, Nv21, R> {
   }
 }
 
-impl Nv21Sink for MixedSinker<'_, Nv21> {}
+impl<R> Nv21Sink for MixedSinker<'_, Nv21, R> {}
 
-impl PixelSink for MixedSinker<'_, Nv21> {
+impl<R> PixelSink for MixedSinker<'_, Nv21, R> {
   type Input<'r> = Nv21Row<'r>;
   type Error = MixedSinkerError;
 
@@ -494,7 +598,15 @@ impl PixelSink for MixedSinker<'_, Nv21> {
         self.width,
       )));
     }
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: Nv21Row<'_>) -> Result<(), Self::Error> {
@@ -538,8 +650,48 @@ impl PixelSink for MixedSinker<'_, Nv21> {
       luma_u16,
       hsv,
       rgb_scratch,
+      plan,
+      rgb_stream,
+      luma_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: row-stage fused downscale (matches the Yuv420p
+    // row-stage twin). Bin Y for luma; for colour, convert the
+    // interleaved VU source row to RGB with the fused `nv21_to_rgb_row`
+    // kernel the identity path uses, then bin the RGB row.
+    if let Some(plan) = plan.as_ref() {
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      return planar_dual_resample(
+        luma_stream,
+        rgb_stream,
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch,
+        row.y(),
+        w,
+        plan,
+        idx,
+        use_simd,
+        |scratch| {
+          nv21_to_rgb_row(
+            row.y(),
+            row.vu_half(),
+            scratch,
+            w,
+            matrix,
+            full_range,
+            use_simd,
+          );
+        },
+      );
+    }
 
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
@@ -685,14 +837,22 @@ impl<'a, R> MixedSinker<'a, Nv24, R> {
   }
 }
 
-impl Nv24Sink for MixedSinker<'_, Nv24> {}
+impl<R> Nv24Sink for MixedSinker<'_, Nv24, R> {}
 
-impl PixelSink for MixedSinker<'_, Nv24> {
+impl<R> PixelSink for MixedSinker<'_, Nv24, R> {
   type Input<'r> = Nv24Row<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: Nv24Row<'_>) -> Result<(), Self::Error> {
@@ -738,8 +898,40 @@ impl PixelSink for MixedSinker<'_, Nv24> {
       luma_u16,
       hsv,
       rgb_scratch,
+      plan,
+      rgb_stream,
+      luma_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: row-stage fused downscale (matches the Yuv444p
+    // twin). Bin Y for luma; for colour, convert the interleaved
+    // full-width UV source row to RGB with the fused `nv24_to_rgb_row`
+    // kernel the identity path uses, then bin the RGB row.
+    if let Some(plan) = plan.as_ref() {
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      return planar_dual_resample(
+        luma_stream,
+        rgb_stream,
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch,
+        row.y(),
+        w,
+        plan,
+        idx,
+        use_simd,
+        |scratch| {
+          nv24_to_rgb_row(row.y(), row.uv(), scratch, w, matrix, full_range, use_simd);
+        },
+      );
+    }
 
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
@@ -884,14 +1076,22 @@ impl<'a, R> MixedSinker<'a, Nv42, R> {
   }
 }
 
-impl Nv42Sink for MixedSinker<'_, Nv42> {}
+impl<R> Nv42Sink for MixedSinker<'_, Nv42, R> {}
 
-impl PixelSink for MixedSinker<'_, Nv42> {
+impl<R> PixelSink for MixedSinker<'_, Nv42, R> {
   type Input<'r> = Nv42Row<'r>;
   type Error = MixedSinkerError;
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_stream.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
   }
 
   fn process(&mut self, row: Nv42Row<'_>) -> Result<(), Self::Error> {
@@ -934,8 +1134,39 @@ impl PixelSink for MixedSinker<'_, Nv42> {
       luma_u16,
       hsv,
       rgb_scratch,
+      plan,
+      rgb_stream,
+      luma_stream,
+      resample_outputs,
       ..
     } = self;
+
+    // Non-identity plan: row-stage fused downscale (matches the Yuv444p
+    // twin). Convert the interleaved VU source row to RGB with the fused
+    // `nv42_to_rgb_row` kernel the identity path uses, then bin it.
+    if let Some(plan) = plan.as_ref() {
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      return planar_dual_resample(
+        luma_stream,
+        rgb_stream,
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch,
+        row.y(),
+        w,
+        plan,
+        idx,
+        use_simd,
+        |scratch| {
+          nv42_to_rgb_row(row.y(), row.vu(), scratch, w, matrix, full_range, use_simd);
+        },
+      );
+    }
 
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
