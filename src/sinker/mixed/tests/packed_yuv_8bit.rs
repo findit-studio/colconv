@@ -610,8 +610,10 @@ fn yuyv422_uv_swap_matches_yvyu422_rgb_output() {
 // (half-width U/V, full-height). Re-packing planar samples into a
 // packed-format buffer must produce identical RGB — proves the
 // packed kernels match the well-validated planar kernels modulo
-// byte permutation.
+// byte permutation. Gated to `yuv-planar`: the oracle drives the
+// planar `Yuv422p` sink, which is absent in a packed-only build.
 
+#[cfg(feature = "yuv-planar")]
 fn pack_yuv422p_to_yuyv422(y: &[u8], u: &[u8], v: &[u8], w: usize, h: usize) -> Vec<u8> {
   let cw = w / 2;
   let mut out = std::vec![0u8; 2 * w * h];
@@ -627,6 +629,7 @@ fn pack_yuv422p_to_yuyv422(y: &[u8], u: &[u8], v: &[u8], w: usize, h: usize) -> 
   out
 }
 
+#[cfg(feature = "yuv-planar")]
 fn pack_yuv422p_to_uyvy422(y: &[u8], u: &[u8], v: &[u8], w: usize, h: usize) -> Vec<u8> {
   let cw = w / 2;
   let mut out = std::vec![0u8; 2 * w * h];
@@ -642,6 +645,7 @@ fn pack_yuv422p_to_uyvy422(y: &[u8], u: &[u8], v: &[u8], w: usize, h: usize) -> 
   out
 }
 
+#[cfg(feature = "yuv-planar")]
 fn pack_yuv422p_to_yvyu422(y: &[u8], u: &[u8], v: &[u8], w: usize, h: usize) -> Vec<u8> {
   let cw = w / 2;
   let mut out = std::vec![0u8; 2 * w * h];
@@ -657,6 +661,7 @@ fn pack_yuv422p_to_yvyu422(y: &[u8], u: &[u8], v: &[u8], w: usize, h: usize) -> 
   out
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -699,6 +704,7 @@ fn yuyv422_reconstructed_from_yuv422p_matches_yuv422p_to_rgb() {
   assert_eq!(rgb_planar, rgb_packed);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -741,6 +747,7 @@ fn uyvy422_reconstructed_from_yuv422p_matches_yuv422p_to_rgb() {
   assert_eq!(rgb_planar, rgb_packed);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,

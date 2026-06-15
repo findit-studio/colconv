@@ -26,6 +26,10 @@ use crate::{
 /// (freeze, stream creation, sequence check, scratch growth +
 /// conversion) precedes the first feed, so a failure mutates no
 /// caller output.
+#[cfg_attr(
+  not(any(feature = "yuv-planar", feature = "yuv-semi-planar")),
+  allow(dead_code)
+)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn planar_dual_resample(
   luma_stream: &mut Option<AreaStream<u8>>,
@@ -110,6 +114,164 @@ pub(super) fn planar_dual_resample(
   };
 
   if need_luma {
+    let stream = luma_stream.as_mut().expect("created in the preflight");
+    stream.feed_row(idx, y_row, use_simd, |oy, out_row| {
+      if let Some(buf) = luma.as_deref_mut() {
+        buf[oy * ow..(oy + 1) * ow].copy_from_slice(out_row);
+      }
+      if let Some(buf) = luma_u16.as_deref_mut() {
+        for (dst, &src) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(out_row) {
+          *dst = src as u16;
+        }
+      }
+    })?;
+  }
+
+  if let Some(scratch) = color_row {
+    let stream = rgb_stream.as_mut().expect("created in the preflight");
+    stream.feed_row(idx, scratch, use_simd, |oy, out_row| {
+      if let Some(buf) = rgb.as_deref_mut() {
+        buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_row);
+      }
+      if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
+        rgb_to_hsv_row(
+          out_row,
+          &mut h[oy * ow..(oy + 1) * ow],
+          &mut s[oy * ow..(oy + 1) * ow],
+          &mut v[oy * ow..(oy + 1) * ow],
+          ow,
+          use_simd,
+        );
+      }
+      if let Some(buf) = rgba.as_deref_mut() {
+        expand_rgb_to_rgba_row(out_row, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
+      }
+    })?;
+  }
+
+  Ok(())
+}
+
+/// Row-stage fused downscale for the **packed** YUV formats whose Y
+/// samples are interleaved in the source plane (packed 4:1:1 —
+/// [`Uyyvyy411`](crate::source::Uyyvyy411)). The planar twin
+/// [`planar_dual_resample`] takes a ready source-width Y plane; here Y
+/// must first be de-interleaved out of the packed plane, so this helper
+/// owns a **second** scratch (`luma_scratch`, distinct from the colour
+/// `rgb_scratch`) and the caller supplies a `convert_luma` closure that
+/// fills it (the format's own `*_to_luma_row` kernel — the YUV luma
+/// contract, *not* RGB-derived luma). Colour binning is identical to
+/// the planar twin: `convert_rgb` fills the colour scratch with a
+/// source-width RGB row via the format's fused `*_to_rgb_row` kernel
+/// (chroma de-interleave + horizontal upsample in registers) and the
+/// 3-channel stream bins it, so RGB equals an `Rgb24` area-resample of
+/// the identity-converted frame.
+///
+/// Atomic preflight (matching [`planar_dual_resample`]): the output set
+/// is frozen, then stream sequencing is checked, **both before any
+/// allocation** — so a no-output sink stays a no-op, an out-of-sequence
+/// row is rejected without staging a buffer, and `AllocationFailed`
+/// can never mask `OutOfSequenceRow`. Only then are the (separate) luma
+/// and colour scratches grown via the recoverable-allocation helpers
+/// and their conversions run, before the first feed; a failure at any
+/// step mutates no caller output.
+#[cfg(feature = "yuv-packed")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn packed_yuv_dual_resample(
+  luma_stream: &mut Option<AreaStream<u8>>,
+  rgb_stream: &mut Option<AreaStream<u8>>,
+  resample_outputs: &mut Option<super::FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  luma_scratch: &mut std::vec::Vec<u8>,
+  rgb_scratch: &mut std::vec::Vec<u8>,
+  w: usize,
+  plan: &ResamplePlan,
+  idx: usize,
+  use_simd: bool,
+  convert_luma: impl FnOnce(&mut [u8]),
+  convert_rgb: impl FnOnce(&mut [u8]),
+) -> Result<(), MixedSinkerError> {
+  let ow = plan.out_w();
+  let need_luma = luma.is_some() || luma_u16.is_some();
+  let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
+
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    hsv,
+    &None,
+    idx,
+  )?;
+  // Sequence-check before allocating (mirrors the planar twin): a
+  // fresh stream expects row 0, so an out-of-sequence first row is
+  // rejected before any output-width or scratch buffer is created, and
+  // AllocationFailed never masks OutOfSequenceRow. A no-output call has
+  // no stream to sequence and stays a no-op regardless of the index.
+  let expected = if need_luma {
+    luma_stream.as_ref().map_or(0, |stream| stream.next_y())
+  } else if need_color {
+    rgb_stream.as_ref().map_or(0, |stream| stream.next_y())
+  } else {
+    idx
+  };
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  if need_luma && luma_stream.is_none() {
+    *luma_stream = Some(AreaStream::new(
+      plan.h(),
+      plan.v(),
+      plan.src_w(),
+      plan.src_h(),
+      1,
+    )?);
+  }
+  if need_color && rgb_stream.is_none() {
+    *rgb_stream = Some(AreaStream::new(
+      plan.h(),
+      plan.v(),
+      plan.src_w(),
+      plan.src_h(),
+      3,
+    )?);
+  }
+  // Stage both source-width scratches (each via its own recoverable
+  // grow) and run the conversions before any feed, keeping the call
+  // atomic. The luma scratch is the de-interleaved Y plane; the colour
+  // scratch is the source-width RGB row.
+  let luma_row = if need_luma {
+    let scratch = super::source_luma_scratch(luma_scratch, w, plan)?;
+    convert_luma(scratch);
+    Some(scratch)
+  } else {
+    None
+  };
+  let color_row = if need_color {
+    let scratch = super::source_rgb_scratch(rgb_scratch, w, plan)?;
+    convert_rgb(scratch);
+    Some(scratch)
+  } else {
+    None
+  };
+
+  if let Some(y_row) = luma_row {
     let stream = luma_stream.as_mut().expect("created in the preflight");
     stream.feed_row(idx, y_row, use_simd, |oy, out_row| {
       if let Some(buf) = luma.as_deref_mut() {
