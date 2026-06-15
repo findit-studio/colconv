@@ -259,7 +259,7 @@ impl AxisSpans {
   /// (for even `src_full` this is the uniform chroma-grid weighting
   /// with numerator and denominator doubled, which round-half-up
   /// preserves exactly).
-  #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
+  #[cfg_attr(not(feature = "yuv-planar"), allow(dead_code))]
   fn area_halved(src_full: usize, out: usize) -> Result<Self, AxisError> {
     let src64 = src_full as u64;
     let out64 = out as u64;

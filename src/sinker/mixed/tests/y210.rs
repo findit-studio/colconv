@@ -270,6 +270,7 @@ fn y210_luma_u16_buffer_too_short_returns_err() {
 /// Y210 layout — each row is `width x 2` u16 elements laid out as
 /// `(Y₀, U, Y₁, V)` quadruples with each sample MSB-aligned (active 10
 /// bits in bits[15:6]). Width must be even.
+#[cfg(any(feature = "yuv-planar", feature = "v210"))]
 fn pack_yuv422p10_to_y210(
   y: &[u16],
   u: &[u16],
@@ -291,6 +292,9 @@ fn pack_yuv422p10_to_y210(
   out
 }
 
+// Oracle compares against the planar `Yuv422p10` source, so this case
+// only builds when that family is present.
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -333,6 +337,9 @@ fn y210_reconstructed_from_yuv422p10_matches_yuv422p10_to_rgb() {
   assert_eq!(rgb_planar, rgb_packed);
 }
 
+// Cross-checks against the V210 packing via the v210 test helpers, so
+// this case only builds when the v210 family is present.
+#[cfg(feature = "v210")]
 #[test]
 #[cfg_attr(
   miri,

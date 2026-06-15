@@ -37,8 +37,9 @@
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
+  packed_yuv422_triple_resample, rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  rgba_u16_plane_row_slice,
 };
 use crate::{
   PixelSink,
@@ -141,9 +142,9 @@ impl<'a, R, const BE: bool> MixedSinker<'a, Y212<BE>, R> {
   }
 }
 
-impl<const BE: bool> Y212Sink<BE> for MixedSinker<'_, Y212<BE>> {}
+impl<R, const BE: bool> Y212Sink<BE> for MixedSinker<'_, Y212<BE>, R> {}
 
-impl<const BE: bool> PixelSink for MixedSinker<'_, Y212<BE>> {
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Y212<BE>, R> {
   type Input<'r> = Y212Row<'r>;
   type Error = MixedSinkerError;
 
@@ -154,6 +155,20 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Y212<BE>> {
         self.width,
       )));
     }
+    // New frame: restart the three row-stage streams (lazily created in
+    // `process`, so a direct-`process` caller that skips `begin_frame`
+    // still gets a correctly initialized first frame) and drop the frozen
+    // output set.
+    if let Some(stream) = self.luma_stream_u16.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgb_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgb_stream_u16.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
     Ok(())
   }
 
@@ -198,11 +213,54 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Y212<BE>> {
       luma_u16,
       hsv,
       rgb_scratch,
+      rgb_scratch_u16,
+      luma_scratch_u16,
+      rgb_stream,
+      rgb_stream_u16,
+      luma_stream_u16,
+      resample_outputs,
+      plan,
       ..
     } = self;
+    let packed = row.packed();
+
+    // Non-identity plan: feed the three native-precision binnings (u8
+    // colour, native u16 colour, native Y) through the shared high-bit
+    // packed 4:2:2 triple-resample tail. Freeze + sequence-check before
+    // staging, so a no-output sink stays a no-op and an out-of-sequence
+    // row is rejected without allocating.
+    if let Some(plan) = plan.as_ref() {
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      return packed_yuv422_triple_resample::<BITS>(
+        luma_stream_u16,
+        rgb_stream,
+        rgb_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        luma_scratch_u16,
+        rgb_scratch,
+        rgb_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        matrix,
+        full_range,
+        |scratch| y212_to_luma_u16_row_endian(packed, scratch, w, use_simd, BE),
+        |scratch| y212_to_rgb_row_endian(packed, scratch, w, matrix, full_range, use_simd, BE),
+        |scratch| y212_to_rgb_u16_row_endian(packed, scratch, w, matrix, full_range, use_simd, BE),
+      );
+    }
+
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
-    let packed = row.packed();
 
     // Luma u8 — extract 8-bit Y bytes from the Y212 plane via the
     // dedicated kernel (downshifts MSB-aligned 12→8 inline).
