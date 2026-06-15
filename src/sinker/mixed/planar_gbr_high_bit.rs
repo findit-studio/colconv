@@ -60,14 +60,26 @@
 //! every output. (`Rgb48` / `Bgr48` keep the tail's narrowed `luma_u16`,
 //! which matches their own narrowed direct path.)
 //!
-//! `GbrapN` stays pinned to `NoopResampler`: alpha-aware area resampling
-//! (the source α must be area-averaged, not expand-stubbed) is a later item.
+//! The `GbrapN` sinkers are likewise generic over `R: Resampler`. On a
+//! non-identity plan each de-interleaves its native-depth G/B/R/A planes
+//! into a canonical host-native `R, G, B, A` u16 row
+//! (`gbra_to_rgba_u16_high_bit_row`) and feeds the **alpha-aware**
+//! 4-channel high-bit packed RGBA tail
+//! ([`packed_rgba_u16_resample`](super::packed_rgba_u16_resample)) at
+//! `BITS` — the `u16` analog of the 8-bit `Gbrap` routing and the same
+//! tail `Rgba64` / `Bgra64` take. Resampled alpha is a real native area
+//! mean (not expand-stubbed), and under
+//! [`AlphaMode::Premultiplied`](super::AlphaMode::Premultiplied) the color
+//! is binned premultiplied and un-premultiplied per output row. The
+//! per-format default is straight alpha. A straight rgb-only sink (alpha
+//! dropped) keeps the 3-channel u16 RGB path with no regression.
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, check_dimensions_match, packed_rgb_u16_resample_emit,
-  packed_rgb_u16_resample_preflight, packed_rgb_u16_resample_stream, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice, rgba_u16_plane_row_slice, source_rgb_u16_scratch,
+  RowShapeMismatch, RowSlice, check_dimensions_match, check_frozen_alpha_mode,
+  packed_rgb_u16_resample_emit, packed_rgb_u16_resample_preflight, packed_rgb_u16_resample_stream,
+  packed_rgba_u16_resample, rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  source_rgb_u16_scratch,
 };
 use crate::{
   PixelSink,
@@ -526,14 +538,26 @@ macro_rules! impl_gbrap_high_bit {
       }
     }
 
-    impl<const BE: bool> crate::source::$sink<BE> for MixedSinker<'_, crate::source::$marker<BE>> {}
+    impl<R, const BE: bool> crate::source::$sink<BE>
+      for MixedSinker<'_, crate::source::$marker<BE>, R>
+    {
+    }
 
-    impl<const BE: bool> PixelSink for MixedSinker<'_, crate::source::$marker<BE>> {
+    impl<R, const BE: bool> PixelSink for MixedSinker<'_, crate::source::$marker<BE>, R> {
       type Input<'r> = crate::source::$row<'r>;
       type Error = MixedSinkerError;
 
       fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
-        check_dimensions_match(self.width, self.height, width, height)
+        check_dimensions_match(self.width, self.height, width, height)?;
+        if let Some(stream) = self.rgb_stream_u16.as_mut() {
+          stream.reset();
+        }
+        if let Some(stream) = self.rgba_stream_u16.as_mut() {
+          stream.reset();
+        }
+        self.resample_outputs = None;
+        self.frozen_alpha_mode = Some(self.alpha_mode);
+        Ok(())
       }
 
       fn process(&mut self, row: crate::source::$row<'_>) -> Result<(), Self::Error> {
@@ -579,6 +603,112 @@ macro_rules! impl_gbrap_high_bit {
           return Err(MixedSinkerError::RowIndexOutOfRange(
             RowIndexOutOfRange::new(idx, h),
           ));
+        }
+
+        // Non-identity plan. Route the alpha-aware 4-channel u16 tail when
+        // resampled alpha would be dropped (rgba / rgba_u16 attached) or the
+        // color must be alpha-weighted (premultiplied); otherwise the
+        // rgb-only straight outputs keep the 3-channel u16 RGB path.
+        // `GbrapN` de-interleaves its native-depth G/B/R/A planes into the
+        // canonical host-native RGBA row (`gbra_to_rgba_u16_high_bit_row`)
+        // the high-bit packed RGBA tail bins at `BITS`, so resampled alpha
+        // is a real native area mean and luma derives from the binned RGB.
+        if self.plan.is_some() {
+          let alpha_mode = self.alpha_mode;
+          let matrix = row.matrix();
+          let full_range = row.full_range();
+          let g_in = row.g();
+          let b_in = row.b();
+          let r_in = row.r();
+          let a_in = row.a();
+          let Self {
+            rgb,
+            rgb_u16,
+            rgba,
+            rgba_u16,
+            luma,
+            luma_u16,
+            hsv,
+            rgb_scratch,
+            rgb_scratch_u16,
+            rgba_scratch_u16,
+            rgba_color_scratch_u16,
+            rgb_stream_u16,
+            rgba_stream_u16,
+            resample_outputs,
+            frozen_alpha_mode,
+            plan,
+            ..
+          } = self;
+          let plan = plan.as_ref().expect("plan.is_some() checked above");
+          // The alpha mode is snapshotted at begin_frame; reject a mid-frame
+          // change here, before route selection (it picks the 4-channel vs
+          // 3-channel route), so a flip can neither reroute nor mix modes.
+          check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
+          if rgba.is_some() || rgba_u16.is_some() || alpha_mode.is_premultiplied() {
+            return packed_rgba_u16_resample::<BITS, true>(
+              rgba_stream_u16,
+              resample_outputs,
+              rgb,
+              rgba,
+              rgb_u16,
+              rgba_u16,
+              luma,
+              luma_u16,
+              hsv,
+              rgba_scratch_u16,
+              rgba_color_scratch_u16,
+              rgb_scratch,
+              rgb_scratch_u16,
+              w,
+              plan,
+              idx,
+              use_simd,
+              alpha_mode,
+              matrix,
+              full_range,
+              |dst| {
+                gbra_to_rgba_u16_high_bit_row::<BITS, BE>(g_in, b_in, r_in, a_in, dst, w, use_simd)
+              },
+            );
+          }
+          // Straight rgb-only (alpha dropped): scatter the native-depth
+          // G/B/R planes into the source-width packed u16 RGB row and feed
+          // the 3-channel high-bit tail (luma_u16 at native precision —
+          // `NATIVE_LUMA16 = true` — for parity with the direct path).
+          if !packed_rgb_u16_resample_preflight(
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            rgb_u16,
+            rgba_u16,
+            luma_u16,
+            hsv,
+            idx,
+          )? {
+            return Ok(());
+          }
+          let stream = packed_rgb_u16_resample_stream(rgb_stream_u16, plan, idx)?;
+          let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
+          gbr_to_rgb_u16_high_bit_row::<BITS, BE>(g_in, b_in, r_in, src_u16, w, use_simd);
+          return packed_rgb_u16_resample_emit::<BITS, true>(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            rgb_u16,
+            rgba_u16,
+            luma_u16,
+            hsv,
+            src_u16,
+            rgb_scratch,
+            matrix,
+            full_range,
+            idx,
+            use_simd,
+          );
         }
 
         let Self {

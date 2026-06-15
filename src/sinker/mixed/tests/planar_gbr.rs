@@ -93,6 +93,10 @@ fn gbrp_with_rgba_appends_opaque_alpha() {
   }
 }
 
+// Cross-references the `rgb`-only `Rgb24` source for a parity oracle, so
+// it only compiles when `rgb` is also enabled (a `gbr`-solo build has no
+// `Rgb24Frame` / `rgb24_to`).
+#[cfg(feature = "rgb")]
 #[test]
 #[cfg_attr(
   miri,
@@ -330,6 +334,9 @@ fn gbrap_with_rgb_and_with_rgba_strategy_a_plus_matches_independent() {
   assert_eq!(rgba_combo, rgba_ref, "RGBA mismatch combo vs independent");
 }
 
+// Cross-references the `rgb`-only `Rgb24` source for a parity oracle —
+// `rgb`-gated for the same reason as `gbrp_planar_parity_with_rgb24`.
+#[cfg(feature = "rgb")]
 #[test]
 #[cfg_attr(
   miri,
