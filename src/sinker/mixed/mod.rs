@@ -1347,14 +1347,15 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// elements binned at native depth). Lazily created in `process`,
   /// reset in `begin_frame`. Gated to `rgb` (high-bit packed RGB),
   /// `gbr` (high-bit planar GBR scatters into the same u16 tail), and
-  /// `yuv-444-packed` / `y2xx` (the high-bit packed YUV color groups bin
-  /// their converted native-u16 RGB row here); widens as high-bit
-  /// families wire in.
+  /// `yuv-444-packed` / `y2xx` / `v210` (the high-bit packed YUV color
+  /// groups bin their converted native-u16 RGB row here); widens as
+  /// high-bit families wire in.
   #[cfg(any(
     feature = "rgb",
     feature = "gbr",
     feature = "yuv-444-packed",
-    feature = "y2xx"
+    feature = "y2xx",
+    feature = "v210"
   ))]
   rgb_stream_u16: Option<crate::resample::AreaStream<u16>>,
   /// Row-stage area stream for packed-float-RGB sources (`f32`
@@ -1408,12 +1409,17 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// by the [`Gray16`](crate::source::Gray16) source, whose luma plane
   /// is a native `u16` and so bins at u16 precision (the `u8`
   /// [`Self::luma_stream`] would lose the low byte), and by the high-bit
-  /// packed YUV families (`yuv-444-packed` / `y2xx`), which bin their
-  /// native Y here so resampled luma stays the area-downscaled Y at
+  /// packed YUV families (`yuv-444-packed` / `y2xx` / `v210`), which bin
+  /// their native Y here so resampled luma stays the area-downscaled Y at
   /// native depth. Lazily created in `process`, reset in `begin_frame`.
-  /// Gated to `gray` / `yuv-444-packed` / `y2xx`; widens as u16 luma
-  /// families wire in.
-  #[cfg(any(feature = "gray", feature = "yuv-444-packed", feature = "y2xx"))]
+  /// Gated to `gray` / `yuv-444-packed` / `y2xx` / `v210`; widens as u16
+  /// luma families wire in.
+  #[cfg(any(
+    feature = "gray",
+    feature = "yuv-444-packed",
+    feature = "y2xx",
+    feature = "v210"
+  ))]
   luma_stream_u16: Option<crate::resample::AreaStream<u16>>,
   /// Row-stage area stream for single-plane **f32** luma binning. Used
   /// by the [`Grayf32`](crate::source::Grayf32) source, whose luma plane
@@ -1521,13 +1527,14 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// Lazily grown to `3 * width` `u16`; empty otherwise. Gated to `rgb`
   /// (high-bit packed RGB), `gbr` (high-bit planar GBR scatters its
   /// G/B/R planes here before the same u16 tail), and the high-bit packed
-  /// YUV color groups (`yuv-444-packed` / `y2xx`) stage their native-u16
-  /// RGB row here.
+  /// YUV color groups (`yuv-444-packed` / `y2xx` / `v210`) stage their
+  /// native-u16 RGB row here.
   #[cfg(any(
     feature = "rgb",
     feature = "gbr",
     feature = "yuv-444-packed",
-    feature = "y2xx"
+    feature = "y2xx",
+    feature = "v210"
   ))]
   rgb_scratch_u16: Vec<u16>,
   /// Source-width host-native `u16` luma staging for the
@@ -1535,11 +1542,16 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// row converts here (source wire `BE` → host-native u16, the same
   /// kernel the direct `luma_u16` path uses) before feeding
   /// [`Self::luma_stream_u16`]. The high-bit packed YUV families
-  /// (`yuv-444-packed` / `y2xx`) reuse it to stage their de-interleaved
-  /// native Y row before the same u16 luma stream. Lazily grown to
-  /// `width` `u16`; empty otherwise. Gated to `gray` / `yuv-444-packed` /
-  /// `y2xx`.
-  #[cfg(any(feature = "gray", feature = "yuv-444-packed", feature = "y2xx"))]
+  /// (`yuv-444-packed` / `y2xx` / `v210`) reuse it to stage their
+  /// de-interleaved native Y row before the same u16 luma stream. Lazily
+  /// grown to `width` `u16`; empty otherwise. Gated to `gray` /
+  /// `yuv-444-packed` / `y2xx` / `v210`.
+  #[cfg(any(
+    feature = "gray",
+    feature = "yuv-444-packed",
+    feature = "y2xx",
+    feature = "v210"
+  ))]
   luma_scratch_u16: Vec<u16>,
   /// Source-width host-native `f32` luma staging for the
   /// [`Grayf32`](crate::source::Grayf32) resample path: the wire
@@ -2011,7 +2023,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "rgb",
         feature = "gbr",
         feature = "yuv-444-packed",
-        feature = "y2xx"
+        feature = "y2xx",
+        feature = "v210"
       ))]
       rgb_stream_u16: None,
       #[cfg(any(
@@ -2037,7 +2050,12 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "rgb-legacy"
       ))]
       luma_stream: None,
-      #[cfg(any(feature = "gray", feature = "yuv-444-packed", feature = "y2xx"))]
+      #[cfg(any(
+        feature = "gray",
+        feature = "yuv-444-packed",
+        feature = "y2xx",
+        feature = "v210"
+      ))]
       luma_stream_u16: None,
       #[cfg(feature = "gray")]
       luma_stream_f32: None,
@@ -2089,10 +2107,16 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "rgb",
         feature = "gbr",
         feature = "yuv-444-packed",
-        feature = "y2xx"
+        feature = "y2xx",
+        feature = "v210"
       ))]
       rgb_scratch_u16: Vec::new(),
-      #[cfg(any(feature = "gray", feature = "yuv-444-packed", feature = "y2xx"))]
+      #[cfg(any(
+        feature = "gray",
+        feature = "yuv-444-packed",
+        feature = "y2xx",
+        feature = "v210"
+      ))]
       luma_scratch_u16: Vec::new(),
       #[cfg(feature = "gray")]
       luma_scratch_f32: Vec::new(),
@@ -2319,11 +2343,16 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   /// out-of-sequence first row must be rejected before the stream is
   /// allocated). Gated on `std` + the families that bin into the u16
   /// tail (`rgb` high-bit packed RGB, `yuv-444-packed` high-bit packed
-  /// 4:4:4 YUV color group).
+  /// 4:4:4 YUV color group, `y2xx` / `v210` high-bit packed 4:2:2 YUV).
   #[cfg(all(
     test,
     feature = "std",
-    any(feature = "rgb", feature = "yuv-444-packed", feature = "y2xx")
+    any(
+      feature = "rgb",
+      feature = "yuv-444-packed",
+      feature = "y2xx",
+      feature = "v210"
+    )
   ))]
   pub(crate) fn rgb_stream_u16_allocated(&self) -> bool {
     self.rgb_stream_u16.is_some()
@@ -2414,11 +2443,11 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
 
   /// Whether the 3-channel packed-RGB `u8` area stream has been created
   /// — a white-box probe for the packed-YUV-4:2:2, high-bit packed 4:4:4
-  /// YUV, and legacy packed-RGB resample ordering tests (an
+  /// / 4:2:2 YUV, and legacy packed-RGB resample ordering tests (an
   /// out-of-sequence first row must be rejected before the stream is
-  /// allocated). Gated on `std` + `any(yuv-packed, yuv-444-packed,
-  /// rgb-legacy)` — those routes all bin their converted u8 RGB through
-  /// the shared `rgb_stream`.
+  /// allocated). Gated on `std` + `any(yuv-packed, yuv-444-packed, y2xx,
+  /// v210, rgb-legacy)` — those routes all bin their converted u8 RGB
+  /// through the shared `rgb_stream`.
   #[cfg(all(
     test,
     feature = "std",
@@ -2426,6 +2455,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       feature = "yuv-packed",
       feature = "yuv-444-packed",
       feature = "y2xx",
+      feature = "v210",
       feature = "rgb-legacy"
     )
   ))]
@@ -2463,14 +2493,20 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   /// Whether the single-channel **u16** luma area stream has been
   /// created — a white-box probe for the
   /// [`Gray16`](crate::source::Gray16) and high-bit packed 4:4:4 YUV
-  /// (`yuv-444-packed`) resample ordering tests (an out-of-sequence
-  /// first row must be rejected before the stream is allocated). Gated
-  /// on `gray` / `yuv-444-packed` and `std` like the tests that consume
-  /// it.
+  /// (`yuv-444-packed`) / high-bit packed 4:2:2 YUV (`y2xx` / `v210`)
+  /// resample ordering tests (an out-of-sequence first row must be
+  /// rejected before the stream is allocated). Gated on `gray` /
+  /// `yuv-444-packed` / `y2xx` / `v210` and `std` like the tests that
+  /// consume it.
   #[cfg(all(
     test,
     feature = "std",
-    any(feature = "gray", feature = "yuv-444-packed", feature = "y2xx")
+    any(
+      feature = "gray",
+      feature = "yuv-444-packed",
+      feature = "y2xx",
+      feature = "v210"
+    )
   ))]
   pub(crate) fn luma_stream_u16_allocated(&self) -> bool {
     self.luma_stream_u16.is_some()
@@ -3169,11 +3205,16 @@ pub(super) fn source_luma_scratch<'s>(
 ///
 /// The staging point for the [`Gray16`](crate::source::Gray16) resample
 /// path (the wire row converts to host-native u16 luma here) and for the
-/// high-bit packed YUV families (`yuv-444-packed` / `y2xx`), whose native
-/// Y is de-interleaved here (each format's own `*_to_luma_u16_row`
-/// kernel) before feeding the single-channel u16 luma stream. The u16
-/// twin of [`source_luma_scratch`].
-#[cfg(any(feature = "gray", feature = "yuv-444-packed", feature = "y2xx"))]
+/// high-bit packed YUV families (`yuv-444-packed` / `y2xx` / `v210`),
+/// whose native Y is de-interleaved here (each format's own
+/// `*_to_luma_u16_row` kernel) before feeding the single-channel u16 luma
+/// stream. The u16 twin of [`source_luma_scratch`].
+#[cfg(any(
+  feature = "gray",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210"
+))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn source_luma_u16_scratch<'s>(
   scratch: &'s mut Vec<u16>,
@@ -3312,14 +3353,16 @@ pub(super) fn packed_rgb_resample_stream<'s>(
   feature = "rgb",
   feature = "gbr",
   feature = "yuv-444-packed",
-  feature = "y2xx"
+  feature = "y2xx",
+  feature = "v210"
 ))]
 #[cfg_attr(
   not(any(
     feature = "rgb",
     feature = "gbr",
     feature = "yuv-444-packed",
-    feature = "y2xx"
+    feature = "y2xx",
+    feature = "v210"
   )),
   allow(dead_code)
 )]
@@ -3391,7 +3434,8 @@ pub(super) fn packed_rgb_resample_emit(
   feature = "rgb",
   feature = "gbr",
   feature = "yuv-444-packed",
-  feature = "y2xx"
+  feature = "y2xx",
+  feature = "v210"
 ))]
 pub(super) fn source_rgb_u16_scratch<'s>(
   scratch: &'s mut Vec<u16>,
@@ -3526,7 +3570,8 @@ pub(super) fn packed_rgb_u16_resample_stream<'s>(
   feature = "rgb",
   feature = "gbr",
   feature = "yuv-444-packed",
-  feature = "y2xx"
+  feature = "y2xx",
+  feature = "v210"
 ))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgb_u16_resample_emit<const SRC_BITS: u32, const NATIVE_LUMA16: bool>(
@@ -3880,8 +3925,9 @@ pub(super) fn packed_yuv444_triple_resample<const SRC_BITS: u32>(
 }
 
 /// Row-stage fused downscale for the **high-bit packed 4:2:2 YUV**
-/// family (`Y210` / `Y212` / `Y216`) — the 4:2:2 analogue of the high-bit
-/// 4:4:4 route, with **three** independent native-precision binnings.
+/// family (`Y210` / `Y212` / `Y216`, plus the exotic 10-bit `V210` word
+/// packing) — the 4:2:2 analogue of the high-bit 4:4:4 route, with
+/// **three** independent native-precision binnings.
 ///
 /// High-bit packed YUV needs three binnings because the u8 and u16
 /// YUV→RGB kernels (`range_params_n::<BITS, 8>` vs `::<BITS, BITS>`)
@@ -3914,7 +3960,7 @@ pub(super) fn packed_yuv444_triple_resample<const SRC_BITS: u32>(
 /// distinct, non-aliasing scratches grow and the three source rows stage
 /// — all before the first feed, so a failure mutates no caller output. A
 /// no-output call is a true no-op regardless of the row index.
-#[cfg(feature = "y2xx")]
+#[cfg(any(feature = "y2xx", feature = "v210"))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_yuv422_triple_resample<const SRC_BITS: u32>(
   luma_stream_u16: &mut Option<crate::resample::AreaStream<u16>>,

@@ -99,7 +99,8 @@ pub(crate) use scalar::expand_rgb_u16_to_rgba_u16_row;
     feature = "rgb",
     feature = "gbr",
     feature = "yuv-444-packed",
-    feature = "y2xx"
+    feature = "y2xx",
+    feature = "v210"
   ),
 ))]
 pub(crate) use scalar::rgb_to_luma_u16_native_row;
