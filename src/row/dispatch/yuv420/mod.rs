@@ -19,12 +19,19 @@ pub(super) mod p010;
 pub(super) mod p012;
 #[cfg(feature = "yuv-semi-planar")]
 pub(super) mod p016;
+#[cfg(feature = "yuv-planar")]
 pub(super) mod yuv420p10;
+#[cfg(feature = "yuv-planar")]
 pub(super) mod yuv420p12;
+#[cfg(feature = "yuv-planar")]
 pub(super) mod yuv420p14;
+#[cfg(feature = "yuv-planar")]
 pub(super) mod yuv420p16;
+#[cfg(feature = "yuv-planar")]
 pub(super) mod yuv420p9;
+#[cfg(feature = "yuv-planar")]
 pub(super) mod yuv_410;
+#[cfg(feature = "yuv-planar")]
 pub(super) mod yuv_420;
 
 #[cfg(feature = "yuv-semi-planar")]
@@ -33,10 +40,17 @@ pub use p010::*;
 pub use p012::*;
 #[cfg(feature = "yuv-semi-planar")]
 pub use p016::*;
+#[cfg(feature = "yuv-planar")]
 pub use yuv_410::*;
+#[cfg(feature = "yuv-planar")]
 pub use yuv_420::*;
+#[cfg(feature = "yuv-planar")]
 pub use yuv420p9::*;
+#[cfg(feature = "yuv-planar")]
 pub use yuv420p10::*;
+#[cfg(feature = "yuv-planar")]
 pub use yuv420p12::*;
+#[cfg(feature = "yuv-planar")]
 pub use yuv420p14::*;
+#[cfg(feature = "yuv-planar")]
 pub use yuv420p16::*;

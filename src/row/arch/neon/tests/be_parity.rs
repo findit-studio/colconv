@@ -15,7 +15,11 @@
 
 use crate::row::neon_available;
 
-use super::{super::*, p16_plane_neon, planar_n_plane};
+use super::{super::*, p16_plane_neon};
+// Planar high-bit plane builder — used only by the `yuv-planar`-gated
+// planar BE-parity tests below.
+#[cfg(feature = "yuv-planar")]
+use super::planar_n_plane;
 // Semi-planar (`p_n` / `p_n_444`) BE-parity helpers — used only by the
 // `yuv-semi-planar`-gated tests below.
 #[cfg(feature = "yuv-semi-planar")]
@@ -43,6 +47,7 @@ fn as_be_u16_buf(buf: &[u16]) -> std::vec::Vec<u16> {
 
 // ---- yuv_420p_n (planar 4:2:0 high-bit) -----------------------------
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuv_420p10_be_parity_u8() {
@@ -89,6 +94,7 @@ fn neon_yuv_420p10_be_parity_u8() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuv_420p10_be_parity_u16() {
@@ -133,6 +139,7 @@ fn neon_yuv_420p10_be_parity_u16() {
 
 // ---- yuv_444p_n (planar 4:4:4 high-bit) -----------------------------
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuv_444p12_be_parity_u8() {
@@ -177,6 +184,7 @@ fn neon_yuv_444p12_be_parity_u8() {
 
 // ---- yuv_*p16 (16-bit planar) ----------------------------------------
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuv_420p16_be_parity_u8() {
@@ -219,6 +227,7 @@ fn neon_yuv_420p16_be_parity_u8() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuv_444p16_be_parity_u16() {

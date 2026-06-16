@@ -5,15 +5,21 @@
 //! `kernel::<BE = true>(swapped_input)` produces byte-identical output
 //! to `kernel::<BE = false>(original_input)`.
 
-use super::{
-  super::*, high_bit_plane_wasm, interleave_uv_wasm, p_n_packed_plane, p010_uv_interleave,
-  p16_plane_wasm, planar_n_plane,
-};
+use super::{super::*, p16_plane_wasm};
+// Planar high-bit plane builder — used only by the `yuv-planar`-gated
+// planar BE-parity tests below.
+#[cfg(feature = "yuv-planar")]
+use super::planar_n_plane;
+// Semi-planar (`p_n` / `p_n_444`) BE-parity helpers — used only by the
+// `yuv-semi-planar`-gated tests below.
+#[cfg(feature = "yuv-semi-planar")]
+use super::{high_bit_plane_wasm, interleave_uv_wasm, p_n_packed_plane, p010_uv_interleave};
 
 fn byteswap_u16_buf(buf: &[u16]) -> std::vec::Vec<u16> {
   buf.iter().map(|x| x.swap_bytes()).collect()
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv_420p10_be_parity_u8() {
   let width = 32;
@@ -41,6 +47,7 @@ fn simd128_yuv_420p10_be_parity_u8() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv_420p10_be_parity_u16() {
   let width = 32;
@@ -76,6 +83,7 @@ fn simd128_yuv_420p10_be_parity_u16() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv_444p12_be_parity_u8() {
   let width = 32;
@@ -103,6 +111,7 @@ fn simd128_yuv_444p12_be_parity_u8() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv_420p16_be_parity_u8() {
   let width = 32;
@@ -130,6 +139,7 @@ fn simd128_yuv_420p16_be_parity_u8() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv_444p16_be_parity_u16() {
   let width = 32;
@@ -157,6 +167,7 @@ fn simd128_yuv_444p16_be_parity_u16() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_p010_be_parity_u8() {
   let width = 32;
@@ -176,6 +187,7 @@ fn simd128_p010_be_parity_u8() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_p410_be_parity_u8() {
   let width = 32;
@@ -195,6 +207,7 @@ fn simd128_p410_be_parity_u8() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_p016_be_parity_u8() {
   let width = 32;
@@ -214,6 +227,7 @@ fn simd128_p016_be_parity_u8() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_p416_be_parity_u16() {
   let width = 16;

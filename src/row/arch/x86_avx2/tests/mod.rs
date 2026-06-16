@@ -50,7 +50,7 @@ mod yuva;
 
 // ---- Shared test helpers (used across submodule tests) -------------
 
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg(feature = "yuv-semi-planar")]
 pub(super) fn p010_uv_interleave(u: &[u16], v: &[u16]) -> std::vec::Vec<u16> {
   let pairs = u.len();
   debug_assert_eq!(u.len(), v.len());
@@ -62,7 +62,11 @@ pub(super) fn p010_uv_interleave(u: &[u16], v: &[u16]) -> std::vec::Vec<u16> {
   out
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar", feature = "yuva",))]
+// Planar high-bit plane builder — consumed by the planar (`yuv-planar`)
+// and planar-α (`yuva`) NEON equivalence tests; the semi-planar suites
+// build their own packed planes, so `yuv-semi-planar` alone does not need
+// it.
+#[cfg(any(feature = "yuv-planar", feature = "yuva"))]
 pub(super) fn planar_n_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
   let mask = (1u32 << BITS) - 1;
   (0..n)
@@ -70,7 +74,7 @@ pub(super) fn planar_n_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec
     .collect()
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg(feature = "yuv-semi-planar")]
 pub(super) fn p_n_packed_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
   let mask = (1u32 << BITS) - 1;
   let shift = 16 - BITS;
@@ -86,7 +90,11 @@ pub(super) fn p16_plane_avx2(n: usize, seed: usize) -> std::vec::Vec<u16> {
     .collect()
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar", feature = "yuva",))]
+// High-bit packed plane builder — consumed by the semi-planar P-format
+// suites and, unlike the NEON `yuva` tests, also by the AVX2 `yuva` 4:4:4
+// high-bit equivalence tests (which reuse the packed plane builder rather
+// than rolling their own), so `yuva` is in the gate.
+#[cfg(any(feature = "yuv-semi-planar", feature = "yuva"))]
 pub(super) fn high_bit_plane_avx2<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
   let mask = ((1u32 << BITS) - 1) as u16;
   let shift = 16 - BITS;
@@ -95,7 +103,9 @@ pub(super) fn high_bit_plane_avx2<const BITS: u32>(n: usize, seed: usize) -> std
     .collect()
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar", feature = "yuva",))]
+// UV interleave builder — like `high_bit_plane_avx2`, used by both the
+// semi-planar P-format suites and the AVX2 `yuva` 4:4:4 high-bit tests.
+#[cfg(any(feature = "yuv-semi-planar", feature = "yuva"))]
 pub(super) fn interleave_uv_avx2(u_full: &[u16], v_full: &[u16]) -> std::vec::Vec<u16> {
   debug_assert_eq!(u_full.len(), v_full.len());
   let mut out = std::vec::Vec::with_capacity(u_full.len() * 2);

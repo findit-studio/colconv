@@ -5,15 +5,21 @@
 //! `kernel::<BE = true>(swapped_input)` produces byte-identical output
 //! to `kernel::<BE = false>(original_input)`.
 
-use super::{
-  super::*, high_bit_plane_avx2, interleave_uv_avx2, p_n_packed_plane, p010_uv_interleave,
-  p16_plane_avx2, planar_n_plane,
-};
+use super::{super::*, p16_plane_avx2};
+// Planar high-bit plane builder — used only by the `yuv-planar`-gated
+// planar BE-parity tests below.
+#[cfg(feature = "yuv-planar")]
+use super::planar_n_plane;
+// Semi-planar (`p_n` / `p_n_444`) BE-parity helpers — used only by the
+// `yuv-semi-planar`-gated tests below.
+#[cfg(feature = "yuv-semi-planar")]
+use super::{high_bit_plane_avx2, interleave_uv_avx2, p_n_packed_plane, p010_uv_interleave};
 
 fn byteswap_u16_buf(buf: &[u16]) -> std::vec::Vec<u16> {
   buf.iter().map(|x| x.swap_bytes()).collect()
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn avx2_yuv_420p10_be_parity_u8() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -44,6 +50,7 @@ fn avx2_yuv_420p10_be_parity_u8() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn avx2_yuv_420p10_be_parity_u16() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -82,6 +89,7 @@ fn avx2_yuv_420p10_be_parity_u16() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn avx2_yuv_444p12_be_parity_u8() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -112,6 +120,7 @@ fn avx2_yuv_444p12_be_parity_u8() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn avx2_yuv_420p16_be_parity_u8() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -142,6 +151,7 @@ fn avx2_yuv_420p16_be_parity_u8() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn avx2_yuv_444p16_be_parity_u16() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -172,6 +182,7 @@ fn avx2_yuv_444p16_be_parity_u16() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn avx2_p010_be_parity_u8() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -194,6 +205,7 @@ fn avx2_p010_be_parity_u8() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn avx2_p410_be_parity_u8() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -216,6 +228,7 @@ fn avx2_p410_be_parity_u8() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn avx2_p016_be_parity_u8() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -238,6 +251,7 @@ fn avx2_p016_be_parity_u8() {
   assert_eq!(out_le, out_be);
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn avx2_p416_be_parity_u16() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -267,6 +281,7 @@ fn avx2_p416_be_parity_u16() {
 // through to scalar for BE input. Widths below cross the 32-pixel SIMD
 // boundary.
 
+#[cfg(feature = "rgb")]
 fn x2_packed_input(width: usize, seed: u32) -> std::vec::Vec<u8> {
   let mut state = seed;
   let mut out = std::vec::Vec::with_capacity(width * 4);
@@ -277,6 +292,7 @@ fn x2_packed_input(width: usize, seed: u32) -> std::vec::Vec<u8> {
   out
 }
 
+#[cfg(feature = "rgb")]
 #[test]
 fn avx2_x2rgb10_to_rgb_be_matches_scalar() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -297,6 +313,7 @@ fn avx2_x2rgb10_to_rgb_be_matches_scalar() {
   }
 }
 
+#[cfg(feature = "rgb")]
 #[test]
 fn avx2_x2rgb10_to_rgba_be_matches_scalar() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -317,6 +334,7 @@ fn avx2_x2rgb10_to_rgba_be_matches_scalar() {
   }
 }
 
+#[cfg(feature = "rgb")]
 #[test]
 fn avx2_x2rgb10_to_rgb_u16_be_matches_scalar() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -337,6 +355,7 @@ fn avx2_x2rgb10_to_rgb_u16_be_matches_scalar() {
   }
 }
 
+#[cfg(feature = "rgb")]
 #[test]
 fn avx2_x2bgr10_to_rgb_be_matches_scalar() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -357,6 +376,7 @@ fn avx2_x2bgr10_to_rgb_be_matches_scalar() {
   }
 }
 
+#[cfg(feature = "rgb")]
 #[test]
 fn avx2_x2bgr10_to_rgba_be_matches_scalar() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -377,6 +397,7 @@ fn avx2_x2bgr10_to_rgba_be_matches_scalar() {
   }
 }
 
+#[cfg(feature = "rgb")]
 #[test]
 fn avx2_x2bgr10_to_rgb_u16_be_matches_scalar() {
   if !std::arch::is_x86_feature_detected!("avx2") {

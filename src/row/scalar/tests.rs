@@ -762,7 +762,7 @@ fn p010_rgb_limited_range_endpoints() {
   assert_eq!((rgb[9], rgb[10], rgb[11]), (255, 255, 255));
 }
 
-#[cfg(feature = "yuv-semi-planar")]
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[test]
 fn p010_matches_yuv420p10_when_shifted() {
   // Handing the same logical samples to P010 (high-packed) and

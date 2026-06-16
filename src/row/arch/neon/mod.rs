@@ -107,12 +107,11 @@ mod planar_gbr_float;
 mod planar_gbr_high_bit;
 #[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
-// The Pn 4:2:0 (P010/P012/P016) NEON kernels are consumed only by
-// `dispatch::yuv420::p{010,012,016}`, which is gated by
-// `feature = "yuv-semi-planar"` but lives under the
-// `feature = "yuv-planar"`-gated `dispatch::yuv420` parent — so this
-// kernel compiles only when *both* features are on.
-#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+// The Pn 4:2:0 (P010/P012/P016) NEON kernels are consumed by
+// `dispatch::yuv420::p{010,012,016}` — semi-planar P-formats. A single
+// `yuv-semi-planar` gate keeps them reachable in a `yuv-semi-planar`-solo
+// build (their scalar tails are widened to the same union).
+#[cfg(feature = "yuv-semi-planar")]
 mod subsampled_high_bit_pn_4_2_0;
 // The Pn 4:4:4 NEON kernels are reachable from `dispatch::pn`
 // (yuv-semi-planar only) as well as from `dispatch::yuv444::p{410,412,416}`
@@ -181,7 +180,7 @@ pub(crate) use planar_gbr_float::*;
 pub(crate) use planar_gbr_high_bit::*;
 #[cfg(feature = "yuv-semi-planar")]
 pub(crate) use semi_planar_8bit::*;
-#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg(feature = "yuv-semi-planar")]
 pub(crate) use subsampled_high_bit_pn_4_2_0::*;
 #[cfg(feature = "yuv-semi-planar")]
 pub(crate) use subsampled_high_bit_pn_4_4_4::*;

@@ -148,10 +148,11 @@ mod planar_gbr_float;
 mod planar_gbr_high_bit;
 #[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
-// See NEON mod.rs for the dual-gate rationale on the 4:2:0 kernels.
-// 4:4:4 kernels need only `yuv-semi-planar` because `dispatch::pn`
-// (yuv-semi-planar-gated, no yuv-planar dependency) also consumes them.
-#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+// Both the 4:2:0 (P010/P012/P016) and 4:4:4 (P410/P412/P416) kernels
+// are semi-planar P-formats consumed by `dispatch::yuv420::p{010,012,016}`
+// and `dispatch::pn` respectively, so a single `yuv-semi-planar` gate
+// keeps each reachable in a `yuv-semi-planar`-solo build.
+#[cfg(feature = "yuv-semi-planar")]
 mod subsampled_high_bit_pn_4_2_0;
 #[cfg(feature = "yuv-semi-planar")]
 mod subsampled_high_bit_pn_4_4_4;
@@ -219,7 +220,7 @@ pub(crate) use planar_gbr_float::*;
 pub(crate) use planar_gbr_high_bit::*;
 #[cfg(feature = "yuv-semi-planar")]
 pub(crate) use semi_planar_8bit::*;
-#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg(feature = "yuv-semi-planar")]
 pub(crate) use subsampled_high_bit_pn_4_2_0::*;
 #[cfg(feature = "yuv-semi-planar")]
 pub(crate) use subsampled_high_bit_pn_4_4_4::*;

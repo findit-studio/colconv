@@ -227,7 +227,10 @@ mod resample_yuva444p_high_bit;
 mod semi_planar_8bit;
 #[cfg(feature = "yuv-planar")]
 mod subsampled_4_2_0_high_bit;
-#[cfg(feature = "yuv-semi-planar")]
+// Exercises the high-bit semi-planar P-format `MixedSinker` impls, which
+// build on the planar high-bit sink infrastructure, and cross-checks them
+// against the planar oracles — so it needs both families compiled.
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 mod subsampled_high_bit_pn;
 #[cfg(feature = "v210")]
 mod v210;

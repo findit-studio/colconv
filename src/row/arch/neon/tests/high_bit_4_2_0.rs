@@ -1,4 +1,8 @@
-use super::{super::*, p16_plane_neon, planar_n_plane};
+use super::{super::*, p16_plane_neon};
+// Planar high-bit plane builder — used only by the `yuv-planar`-gated
+// planar-vs-NEON equivalence helpers below.
+#[cfg(feature = "yuv-planar")]
+use super::planar_n_plane;
 // Semi-planar (`p_n`) plane builders — used only by the
 // `yuv-semi-planar`-gated equivalence helpers / tests below.
 #[cfg(feature = "yuv-semi-planar")]
@@ -9,12 +13,14 @@ use super::{p_n_packed_plane, p010_uv_interleave};
 /// Deterministic pseudo‑random `u16` samples in `[0, 1023]` — the
 /// 10‑bit range. Upper 6 bits always zero, so the generator matches
 /// real `yuv420p10le` bit patterns.
+#[cfg(feature = "yuv-planar")]
 fn p10_plane(n: usize, seed: usize) -> std::vec::Vec<u16> {
   (0..n)
     .map(|i| ((i * seed + seed * 3) & 0x3FF) as u16)
     .collect()
 }
 
+#[cfg(feature = "yuv-planar")]
 fn check_p10_u8_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p10_plane(width, 37);
   let u = p10_plane(width / 2, 53);
@@ -48,6 +54,7 @@ fn check_p10_u8_equivalence(width: usize, matrix: ColorMatrix, full_range: bool)
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 fn check_p10_u16_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p10_plane(width, 37);
   let u = p10_plane(width / 2, 53);
@@ -81,6 +88,7 @@ fn check_p10_u16_equivalence(width: usize, matrix: ColorMatrix, full_range: bool
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p10_u8_matches_scalar_all_matrices_16() {
@@ -98,6 +106,7 @@ fn neon_p10_u8_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p10_u16_matches_scalar_all_matrices_16() {
@@ -115,6 +124,7 @@ fn neon_p10_u16_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p10_matches_scalar_odd_tail_widths() {
@@ -124,6 +134,7 @@ fn neon_p10_matches_scalar_odd_tail_widths() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p10_matches_scalar_1920() {
@@ -137,6 +148,7 @@ fn neon_p10_matches_scalar_1920() {
 // the BITS=9 4:2:0 SIMD path against scalar — Yuv420p9 / Yuv422p9
 // both dispatch into the same `yuv_420p_n_to_rgb_*<9>` kernels.
 
+#[cfg(feature = "yuv-planar")]
 fn p_n_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
   let mask = ((1u32 << BITS) - 1) as u16;
   (0..n)
@@ -144,6 +156,7 @@ fn p_n_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
     .collect()
 }
 
+#[cfg(feature = "yuv-planar")]
 fn check_p_n_u8_equivalence<const BITS: u32>(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p_n_plane::<BITS>(width, 37);
   let u = p_n_plane::<BITS>(width / 2, 53);
@@ -169,6 +182,7 @@ fn check_p_n_u8_equivalence<const BITS: u32>(width: usize, matrix: ColorMatrix, 
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 fn check_p_n_u16_equivalence<const BITS: u32>(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p_n_plane::<BITS>(width, 37);
   let u = p_n_plane::<BITS>(width / 2, 53);
@@ -194,6 +208,7 @@ fn check_p_n_u16_equivalence<const BITS: u32>(width: usize, matrix: ColorMatrix,
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuv420p9_matches_scalar_all_matrices_and_ranges() {
@@ -212,6 +227,7 @@ fn neon_yuv420p9_matches_scalar_all_matrices_and_ranges() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuv420p9_matches_scalar_tail_and_large_widths() {
@@ -239,6 +255,7 @@ fn neon_yuv420p9_matches_scalar_tail_and_large_widths() {
 ///
 /// Each variant runs through every color matrix × range × both
 /// output paths (u8 + native‑depth u16) and asserts byte equality.
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p10_matches_scalar_on_out_of_range_samples() {
@@ -510,6 +527,7 @@ fn neon_p010_matches_scalar_on_mispacked_input() {
 
 // ---- Generic BITS equivalence (12/14-bit coverage) ------------------
 
+#[cfg(feature = "yuv-planar")]
 fn check_planar_u8_neon_equivalence_n<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -535,6 +553,7 @@ fn check_planar_u8_neon_equivalence_n<const BITS: u32>(
   assert_eq!(rgb_scalar, rgb_neon, "NEON planar {BITS}-bit → u8 diverges");
 }
 
+#[cfg(feature = "yuv-planar")]
 fn check_planar_u16_neon_equivalence_n<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -613,7 +632,9 @@ fn neon_p12_matches_scalar_all_matrices() {
     ColorMatrix::YCgCo,
   ] {
     for full in [true, false] {
+      #[cfg(feature = "yuv-planar")]
       check_planar_u8_neon_equivalence_n::<12>(16, m, full);
+      #[cfg(feature = "yuv-planar")]
       check_planar_u16_neon_equivalence_n::<12>(16, m, full);
       #[cfg(feature = "yuv-semi-planar")]
       check_pn_u8_neon_equivalence_n::<12>(16, m, full);
@@ -623,6 +644,7 @@ fn neon_p12_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p14_matches_scalar_all_matrices() {
@@ -645,7 +667,9 @@ fn neon_p14_matches_scalar_all_matrices() {
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p12_matches_scalar_tail_widths() {
   for w in [18usize, 30, 34, 1922] {
+    #[cfg(feature = "yuv-planar")]
     check_planar_u8_neon_equivalence_n::<12>(w, ColorMatrix::Bt601, false);
+    #[cfg(feature = "yuv-planar")]
     check_planar_u16_neon_equivalence_n::<12>(w, ColorMatrix::Bt709, true);
     #[cfg(feature = "yuv-semi-planar")]
     check_pn_u8_neon_equivalence_n::<12>(w, ColorMatrix::Bt601, false);
@@ -654,6 +678,7 @@ fn neon_p12_matches_scalar_tail_widths() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_p14_matches_scalar_tail_widths() {
@@ -670,6 +695,7 @@ fn neon_p14_matches_scalar_tail_widths() {
 // SIMD RGBA path produces byte-identical output to the scalar RGBA
 // reference, which already encodes the alpha = 0xFF contract.
 
+#[cfg(feature = "yuv-planar")]
 fn check_planar_u8_neon_rgba_equivalence_n<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -720,6 +746,7 @@ fn check_pn_u8_neon_rgba_equivalence_n<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuv420p_n_rgba_matches_scalar_all_bits() {
@@ -740,6 +767,7 @@ fn neon_yuv420p_n_rgba_matches_scalar_all_bits() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuv420p_n_rgba_matches_scalar_tail_and_1920() {
@@ -780,6 +808,7 @@ fn neon_pn_rgba_matches_scalar_tail_and_1920() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv420p16_u8_neon_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p16_plane_neon(width, 37);
   let u = p16_plane_neon(width / 2, 53);
@@ -814,6 +843,7 @@ fn check_p016_u8_neon_rgba_equivalence(width: usize, matrix: ColorMatrix, full_r
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "NEON SIMD intrinsics unsupported by Miri")]
 fn neon_yuv420p16_rgba_matches_scalar_all_matrices() {

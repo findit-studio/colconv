@@ -240,9 +240,15 @@ pub use dispatch::{v30x::*, v410::*, vuya::*, vuyx::*, xv36::*};
 #[cfg(feature = "y2xx")]
 #[cfg_attr(docsrs, doc(cfg(feature = "y2xx")))]
 pub use dispatch::{y210::*, y212::*, y216::*};
+// `yuv420` carries both the planar 4:2:0 dispatchers and the
+// semi-planar P010/P012/P016 dispatchers, so it re-exports under the
+// union; the glob only carries whichever family's items are compiled.
+// `yuv444` is planar-only.
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+pub use dispatch::yuv420::*;
 #[cfg(feature = "yuv-planar")]
 #[cfg_attr(docsrs, doc(cfg(feature = "yuv-planar")))]
-pub use dispatch::{yuv420::*, yuv444::*};
+pub use dispatch::yuv444::*;
 // luma + HSV variants take an extra rgb_scratch parameter
 #[cfg(feature = "rgb")]
 #[allow(unused_imports)]
@@ -324,6 +330,7 @@ pub(crate) fn rgb_row_bytes(width: usize) -> usize {
   feature = "yuva",
 ))]
 #[cfg_attr(not(tarpaulin), inline(always))]
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
 pub(crate) fn rgba_row_bytes(width: usize) -> usize {
   match width.checked_mul(4) {
     Some(n) => n,
@@ -359,6 +366,7 @@ pub(crate) fn rgba_row_bytes(width: usize) -> usize {
   feature = "yuva",
 ))]
 #[cfg_attr(not(tarpaulin), inline(always))]
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
 pub(crate) fn rgb_row_elems(width: usize) -> usize {
   match width.checked_mul(3) {
     Some(n) => n,
@@ -389,6 +397,7 @@ pub(crate) fn rgb_row_elems(width: usize) -> usize {
   feature = "yuva",
 ))]
 #[cfg_attr(not(tarpaulin), inline(always))]
+#[cfg_attr(not(feature = "std"), allow(dead_code))]
 pub(crate) fn rgba_row_elems(width: usize) -> usize {
   match width.checked_mul(4) {
     Some(n) => n,

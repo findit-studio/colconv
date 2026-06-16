@@ -50,7 +50,7 @@ mod yuva;
 
 // ---- Shared test helpers (used across submodule tests) -------------
 
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg(feature = "yuv-semi-planar")]
 pub(super) fn p010_uv_interleave(u: &[u16], v: &[u16]) -> std::vec::Vec<u16> {
   let pairs = u.len();
   debug_assert_eq!(u.len(), v.len());
@@ -62,7 +62,11 @@ pub(super) fn p010_uv_interleave(u: &[u16], v: &[u16]) -> std::vec::Vec<u16> {
   out
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar", feature = "yuva",))]
+// Planar high-bit plane builder — consumed by the planar (`yuv-planar`)
+// and planar-α (`yuva`) SSE4.1 equivalence tests; the semi-planar suites
+// build their own packed planes, so `yuv-semi-planar` alone does not need
+// it.
+#[cfg(any(feature = "yuv-planar", feature = "yuva"))]
 pub(super) fn planar_n_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
   let mask = (1u32 << BITS) - 1;
   (0..n)
@@ -70,7 +74,7 @@ pub(super) fn planar_n_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec
     .collect()
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg(feature = "yuv-semi-planar")]
 pub(super) fn p_n_packed_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
   let mask = (1u32 << BITS) - 1;
   let shift = 16 - BITS;
@@ -86,7 +90,10 @@ pub(super) fn p16_plane(n: usize, seed: usize) -> std::vec::Vec<u16> {
     .collect()
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar", feature = "yuva",))]
+// Packed high-bit (P410/P412) plane builder — consumed by the semi-planar
+// Pn 4:4:4 equivalence tests and by the `yuva` 4:4:4 RGBA tests, so it is
+// gated on either feature.
+#[cfg(any(feature = "yuv-semi-planar", feature = "yuva"))]
 pub(super) fn high_bit_plane_sse41<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
   let mask = ((1u32 << BITS) - 1) as u16;
   let shift = 16 - BITS;
@@ -95,7 +102,10 @@ pub(super) fn high_bit_plane_sse41<const BITS: u32>(n: usize, seed: usize) -> st
     .collect()
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar", feature = "yuva",))]
+// UV-interleave builder for the packed 4:4:4 (P4xx) layout — consumed by
+// the semi-planar Pn 4:4:4 equivalence tests and by the `yuva` 4:4:4 RGBA
+// tests, so it is gated on either feature.
+#[cfg(any(feature = "yuv-semi-planar", feature = "yuva"))]
 pub(super) fn interleave_uv_sse41(u_full: &[u16], v_full: &[u16]) -> std::vec::Vec<u16> {
   debug_assert_eq!(u_full.len(), v_full.len());
   let mut out = std::vec::Vec::with_capacity(u_full.len() * 2);

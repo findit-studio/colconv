@@ -77,7 +77,11 @@ pub(super) fn p010_uv_interleave(u: &[u16], v: &[u16]) -> std::vec::Vec<u16> {
   out
 }
 
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar", feature = "yuva",))]
+// Planar high-bit plane builder — consumed by the planar (`yuv-planar`)
+// and planar-α (`yuva`) NEON equivalence tests; the semi-planar suites
+// build their own packed planes, so `yuv-semi-planar` alone does not need
+// it.
+#[cfg(any(feature = "yuv-planar", feature = "yuva"))]
 pub(super) fn planar_n_plane<const BITS: u32>(n: usize, seed: usize) -> std::vec::Vec<u16> {
   let mask = (1u32 << BITS) - 1;
   (0..n)
