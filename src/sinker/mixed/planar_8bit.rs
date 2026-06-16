@@ -450,6 +450,104 @@ impl NativeYuv420 {
   }
 }
 
+/// The COMPLETE pre-feed rejection preflight shared by the native 4:2:0
+/// path and its semi-planar reuse: the no-output short-circuit, the
+/// first-row out-of-sequence check, the frozen-output check, AND the
+/// post-freeze sequence check — every rejection [`yuv420p_process_native`]
+/// performs before its first fallible allocation (the join build / chroma
+/// reserve / feed). All four run BEFORE any fallible allocation so a
+/// rejected row leaves no state change (the crate's preflight-atomicity /
+/// recoverable-allocation contract).
+/// Returns `Ok(false)` for a no-output call (the caller should no-op),
+/// `Ok(true)` to proceed into the join, `Err(OutOfSequenceRow)` for a
+/// rejected out-of-sequence first row, or `Err(ResampleOutputsChanged)`
+/// for a mid-frame output-set change.
+///
+/// The semi-planar wrapper runs this FIRST, before reserving / filling its
+/// U / V de-interleave scratch, so NO rejection case — no-output, OOS
+/// first row, OR mid-frame output change — can reach a wrapper allocation
+/// (which under allocation pressure would surface AllocationFailed instead
+/// of the deterministic typed error). `yuv420p_process_native` re-runs it
+/// in place of its inline block; the double-run is idempotent (the freeze
+/// stores on the first output-bearing row, the second run is a matching
+/// check, and the OOS-first-row branch is `is_none()`-guarded so it is
+/// skipped once frozen).
+///
+/// A no-output call has nothing to sequence and stays a no-op regardless
+/// of the row index — returned before the freeze, the Y-stream sequence
+/// check, and the join allocation so it stores no frozen-output snapshot
+/// that a later attach-then-retry would trip on. The Y stream is bound to
+/// has-output here, not always fed: a no-output row must not advance it
+/// (otherwise the snapshot taken on the first output-bearing row of a
+/// retry mismatches the rejected no-output row's frozen-as-absent set).
+///
+/// The native 4:2:0 path bins the Y plane on every output-bearing row
+/// (luma is implicit), so the Y stream is the canonical per-row sequence
+/// counter. The conditional ordering is load-bearing: on the first row of
+/// a frame nothing is frozen yet, so the out-of-sequence row is rejected
+/// here — BEFORE the freeze — so a rejected first row stores no snapshot
+/// that would poison a retry. A later row runs the freeze (the frozen
+/// check below) first, so a mid-frame output-set change is reported as
+/// ResampleOutputsChanged rather than masked by the join being rebuilt at
+/// row 0; the post-freeze sequence check then rejects an out-of-sequence
+/// later row (including the failure-retry case where the join was never
+/// built, so `expected == 0`) before the caller's fallible allocation.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn yuv420p_native_preflight(
+  native_420: &Option<NativeYuv420>,
+  resample_outputs: &mut Option<super::FrozenOutputs>,
+  rgb: &Option<&mut [u8]>,
+  rgba: &Option<&mut [u8]>,
+  luma: &Option<&mut [u8]>,
+  luma_u16: &Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  idx: usize,
+  need_luma: bool,
+  need_color: bool,
+) -> Result<bool, MixedSinkerError> {
+  if !need_luma && !need_color {
+    return Ok(false);
+  }
+  let expected = native_420.as_ref().map_or(0, |join| join.y.next_y());
+  if resample_outputs.is_none() && expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    hsv,
+    &None,
+    idx,
+  )?;
+  // Post-freeze sequence check: once `resample_outputs` is frozen the
+  // pre-freeze first-row branch above is skipped, so an out-of-sequence
+  // row whose outputs match the frozen set (the failure-retry case —
+  // `native_420` may be `None`, leaving `expected == 0`) must be rejected
+  // here, BEFORE the caller's fallible chroma / de-interleave allocation,
+  // rather than only at the join's own `check_sequence`. The freeze does
+  // not advance the Y stream, so `expected` is unchanged; running this
+  // after the frozen check preserves error precedence (a row that is both
+  // output-changed and out-of-sequence reports ResampleOutputsChanged).
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  Ok(true)
+}
+
 /// Native-tier path for [`MixedSinker<Yuv420p, R>`]: see
 /// [`NativeYuv420`]. Phasing mirrors the row-stage tier — frozen
 /// configuration, join creation, sequencing, color scratch sizing,
@@ -487,50 +585,31 @@ pub(super) fn yuv420p_process_native(
   let need_luma = luma.is_some() || luma_u16.is_some();
   let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
 
-  // No-output call: nothing is attached, so there is nothing to sequence
-  // and stays a no-op regardless of the row index — returned before the
-  // freeze, the Y-stream sequence check, and the join allocation so it
-  // stores no frozen-output snapshot that a later attach-then-retry would
-  // trip on. The Y stream is bound to has-output here, not always fed: a
-  // no-output row must not advance it (otherwise the snapshot taken on the
-  // first output-bearing row of a retry mismatches the rejected no-output
-  // row's frozen-as-absent set). Mirrors the resampled twin
-  // (`yuv420p_process_resampled`) and every other multi-stream preflight.
-  if !need_luma && !need_color {
-    return Ok(());
-  }
-
-  // The native 4:2:0 path bins the Y plane on every output-bearing row
-  // (luma is implicit), so the Y stream is the canonical per-row sequence
-  // counter. On the first row of a frame nothing is frozen yet, so reject
-  // an out-of-sequence row here — before the freeze — so a rejected first
-  // row stores no snapshot that would poison a retry. A later row runs the
-  // freeze first (below), so a mid-frame output-set change is reported as
-  // ResampleOutputsChanged rather than masked by the join being rebuilt at
-  // row 0.
-  let expected = native_420.as_ref().map_or(0, |join| join.y.next_y());
-  if resample_outputs.is_none() && expected != idx {
-    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
-      OutOfSequenceRow::new(expected, idx),
-    )));
-  }
-  frozen_outputs_check(
+  // Complete pre-feed rejection preflight — no-output short-circuit,
+  // first-row out-of-sequence rejection, the frozen-output check, AND the
+  // post-freeze sequence check, all ahead of any fallible allocation (see
+  // [`yuv420p_native_preflight`]). Extracted in full so the semi-planar
+  // caller can run this identical gate BEFORE it reserves and fills its
+  // U / V de-interleave scratch — otherwise a rejected row (out-of-sequence
+  // first OR later row, or a mid-frame output change) would grow sink state
+  // under allocation pressure and surface AllocationFailed instead of the
+  // deterministic typed error. `Ok(false)` is the no-output no-op; the
+  // `check_sequence` below is now redundant but kept (it stays
+  // behavior-identical for in-sequence rows).
+  if !yuv420p_native_preflight(
+    native_420,
     resample_outputs,
-    luma,
-    luma_u16,
     rgb,
     rgba,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
-    &None,
+    luma,
+    luma_u16,
     hsv,
-    &None,
     idx,
-  )?;
+    need_luma,
+    need_color,
+  )? {
+    return Ok(());
+  }
   // The join's chroma half is fixed at creation; if the frame's color
   // capability differs (outputs attached since the previous frame —
   // the frozen check pins them WITHIN a frame, not across frames),

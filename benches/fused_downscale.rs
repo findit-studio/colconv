@@ -14,11 +14,11 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 
 use colconv::{
-  ColorMatrix, PixelSink,
-  frame::{Rgb24Frame, Yuv420pFrame},
+  ColorMatrix,
+  frame::{Nv12Frame, Nv21Frame, Rgb24Frame, Yuv420pFrame},
   resample::AreaResampler,
   sinker::MixedSinker,
-  source::{Rgb24, Yuv420p, rgb24_to, yuv420p_to},
+  source::{Nv12, Nv21, Rgb24, Yuv420p, nv12_to, nv21_to, rgb24_to, yuv420p_to},
 };
 
 const SRC_W: usize = 1920;
@@ -41,6 +41,19 @@ fn bench(c: &mut Criterion) {
   fill_pseudo_random(&mut y, 0x1111);
   fill_pseudo_random(&mut u, 0x2222);
   fill_pseudo_random(&mut v, 0x3333);
+
+  // Interleaved chroma planes for the semi-planar twins (same logical
+  // chroma as the planar U / V above): NV12 is `U V U V …`, NV21 swaps
+  // to `V U V U …`. The semi-planar native tier de-interleaves these
+  // back into U / V scratch and bins through the same 4:2:0 join.
+  let mut uv_nv12 = std::vec![0u8; SRC_W * SRC_H / 2];
+  let mut uv_nv21 = std::vec![0u8; SRC_W * SRC_H / 2];
+  for (i, (&uu, &vv)) in u.iter().zip(v.iter()).enumerate() {
+    uv_nv12[i * 2] = uu;
+    uv_nv12[i * 2 + 1] = vv;
+    uv_nv21[i * 2] = vv;
+    uv_nv21[i * 2 + 1] = uu;
+  }
 
   let mut group = c.benchmark_group("fused_downscale_1080p_to_336x189");
   group.sample_size(20);
@@ -80,6 +93,71 @@ fn bench(c: &mut Criterion) {
         .with_hsv(&mut h, &mut s, &mut vv)
         .unwrap();
         yuv420p_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+        black_box(&rgb);
+      });
+    });
+  }
+
+  // Semi-planar (NV12 / NV21) native vs row-stage — the P2 fast tier
+  // de-interleaves the interleaved chroma row into U / V scratch and
+  // bins through the same 4:2:0 join as the planar twin.
+  for (name, native) in [
+    ("nv12_rgb_hsv_native", true),
+    ("nv12_rgb_hsv_rowstage", false),
+  ] {
+    group.bench_function(name, |b| {
+      b.iter(|| {
+        let src = Nv12Frame::new(
+          &y,
+          &uv_nv12,
+          SRC_W as u32,
+          SRC_H as u32,
+          SRC_W as u32,
+          SRC_W as u32,
+        );
+        let mut sink = MixedSinker::<Nv12, AreaResampler>::with_resampler(
+          SRC_W,
+          SRC_H,
+          AreaResampler::to(OUT_W, OUT_H),
+        )
+        .unwrap()
+        .with_native(native)
+        .with_rgb(&mut rgb)
+        .unwrap()
+        .with_hsv(&mut h, &mut s, &mut vv)
+        .unwrap();
+        nv12_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+        black_box(&rgb);
+      });
+    });
+  }
+
+  for (name, native) in [
+    ("nv21_rgb_hsv_native", true),
+    ("nv21_rgb_hsv_rowstage", false),
+  ] {
+    group.bench_function(name, |b| {
+      b.iter(|| {
+        let src = Nv21Frame::new(
+          &y,
+          &uv_nv21,
+          SRC_W as u32,
+          SRC_H as u32,
+          SRC_W as u32,
+          SRC_W as u32,
+        );
+        let mut sink = MixedSinker::<Nv21, AreaResampler>::with_resampler(
+          SRC_W,
+          SRC_H,
+          AreaResampler::to(OUT_W, OUT_H),
+        )
+        .unwrap()
+        .with_native(native)
+        .with_rgb(&mut rgb)
+        .unwrap()
+        .with_hsv(&mut h, &mut s, &mut vv)
+        .unwrap();
+        nv21_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
         black_box(&rgb);
       });
     });

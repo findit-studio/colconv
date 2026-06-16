@@ -1,13 +1,13 @@
 //! Fused-downscale coverage for the 8-bit semi-planar YUV family
-//! (NV12 / NV21 / NV16 / NV24 / NV42) — routed through the shared
-//! row-stage planar resample. Each member bins the Y plane directly for
-//! luma (the YUV luma contract) and bins a source-width RGB row
-//! converted with the format's own fused `nv*_to_rgb_row` kernel for
-//! colour. So RGB equals an `Rgb24` resample of the identity-converted
-//! frame, luma equals the area-downscaled Y plane (not RGB-derived),
-//! and — where the planar twin exists — every output is byte-identical
-//! to the [`Yuv420p`] / [`Yuv422p`] / [`Yuv444p`] resample of the
-//! de-interleaved planes.
+//! (NV12 / NV21 / NV16 / NV24 / NV42). Each member bins the Y plane
+//! directly for luma (the YUV luma contract). For colour the 4:2:0
+//! members (NV12 / NV21) default to the native bin-then-convert tier
+//! (see the `native_tier` module below); the convert-then-bin row-stage
+//! contract — RGB equals an `Rgb24` resample of the identity-converted
+//! frame, byte-identical to the [`Yuv420p`] / [`Yuv422p`] / [`Yuv444p`]
+//! row-stage resample of the de-interleaved planes — is exercised under
+//! `with_native(false)`. The 4:2:2 / 4:4:4 members (NV16 / NV24 / NV42)
+//! have no native tier and always take the row-stage path.
 
 use crate::{
   ColorMatrix, PixelSink,
@@ -62,7 +62,7 @@ fn rgb24_rgb_reference(converted: &[u8]) -> Vec<u8> {
 /// A deterministic Y ramp over the `SRC` grid.
 fn y_ramp() -> Vec<u8> {
   (0..SRC * SRC)
-    .map(|i| 40 + (i as u8).wrapping_mul(2))
+    .map(|i| 40u8.wrapping_add((i as u8).wrapping_mul(2)))
     .collect()
 }
 
@@ -116,9 +116,11 @@ fn nv12_resample_rgb_matches_rgb24_of_converted_frame() {
   let mut rgb = vec![0u8; OUT * OUT * 3];
   {
     let frame = Nv12Frame::new(&y, &uv, SRC as u32, SRC as u32, SRC as u32, SRC as u32);
-    let mut sink =
-      MixedSinker::<Nv12, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+    let mut sink = MixedSinker::<Nv12, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        // The convert-then-bin RGB contract is the ROW-STAGE tier; the
+        // native default averages in the YUV domain (see `native_tier`).
+        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap();
     nv12_to(&frame, true, ColorMatrix::Bt601, &mut sink).unwrap();
@@ -404,9 +406,11 @@ fn nv21_resample_rgb_matches_rgb24_of_converted_frame() {
   let mut rgb = vec![0u8; OUT * OUT * 3];
   {
     let frame = Nv21Frame::new(&y, &vu, SRC as u32, SRC as u32, SRC as u32, SRC as u32);
-    let mut sink =
-      MixedSinker::<Nv21, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+    let mut sink = MixedSinker::<Nv21, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        // Convert-then-bin is the row-stage tier (native default differs
+        // by conversion-order rounding — covered in `native_tier`).
+        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap();
     nv21_to(&frame, true, ColorMatrix::Bt601, &mut sink).unwrap();
@@ -708,8 +712,9 @@ mod twin_parity {
   use crate::source::{Yuv420p, Yuv444p, yuv420p_to, yuv444p_to};
   use mediaframe::frame::{Yuv420pFrame, Yuv444pFrame};
 
-  /// NV12 resample must be byte-identical to a Yuv420p resample of the
-  /// de-interleaved planes, for every output.
+  /// NV12 row-stage resample must be byte-identical to a Yuv420p
+  /// row-stage resample of the de-interleaved planes, for every output.
+  /// (The native-tier twin parity lives in the `native_tier` module.)
   #[test]
   #[cfg_attr(
     miri,
@@ -725,9 +730,12 @@ mod twin_parity {
     let mut nv_luma = vec![0u8; OUT * OUT];
     {
       let frame = Nv12Frame::new(&y, &uv, SRC as u32, SRC as u32, SRC as u32, SRC as u32);
-      let mut sink =
-        MixedSinker::<Nv12, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+      let mut sink = MixedSinker::<Nv12, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
           .unwrap()
+          // Both sides on the row-stage tier so the comparison is the
+          // RGB-domain convert-then-bin contract (native-vs-native parity
+          // is covered separately in `native_tier`).
+          .with_native(false)
           .with_rgb(&mut nv_rgb)
           .unwrap()
           .with_luma(&mut nv_luma)
@@ -797,5 +805,852 @@ mod twin_parity {
       yuv444p_to(&frame, true, ColorMatrix::Bt601, &mut sink).unwrap();
     }
     assert_eq!(nv_rgb, p_rgb, "nv24 rgb == yuv444p rgb");
+  }
+}
+
+// =========================================================================
+// Native fast-tier (P2 bin-then-convert) for NV12 / NV21 — gated on the
+// planar family, whose 4:2:0 join the semi-planar native path reuses.
+//
+// The bar is: (a) BYTE-IDENTICAL to a `Yuv420p` NATIVE conversion of the
+// de-interleaved planes (the de-interleave-then-reuse claim); (b) within
+// rounding tolerance of the semi-planar ROW-STAGE tier on in-gamut content
+// (the conversion-order caveat the planar tiers carry); (c) EXACT (full-res
+// conversion) on constant planes; plus the chroma-row, odd/tail-width, and
+// recoverable-allocation / atomicity contracts.
+// =========================================================================
+
+#[cfg(feature = "yuv-planar")]
+mod native_tier {
+  use super::*;
+  use crate::source::{Yuv420p, yuv420p_to};
+  use mediaframe::frame::Yuv420pFrame;
+
+  /// A wider textured fixture (12x10 luma, 6x5 chroma) so the native and
+  /// row-stage tiers exercise real conversion math at several geometries.
+  /// Values stay interior to the limited-range gamut: near the clamp
+  /// boundary the two tiers diverge by more than rounding (the documented
+  /// out-of-gamut caveat), which would mask a genuine regression.
+  fn textured(w: usize, h: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let cw = w / 2;
+    let ch = h.div_ceil(2);
+    let y: Vec<u8> = (0..w * h).map(|i| 60 + (i % 64) as u8).collect();
+    let u: Vec<u8> = (0..cw * ch).map(|i| 110 + (i % 24) as u8).collect();
+    let v: Vec<u8> = (0..cw * ch).map(|i| 120 + (i % 24) as u8).collect();
+    (y, u, v)
+  }
+
+  /// `(rgb, rgba, luma, luma_u16, hsv_h, hsv_s, hsv_v)` of one NV12 native
+  /// or row-stage downscale of the interleaved frame.
+  type Outs = (
+    Vec<u8>,
+    Vec<u8>,
+    Vec<u8>,
+    Vec<u16>,
+    Vec<u8>,
+    Vec<u8>,
+    Vec<u8>,
+  );
+
+  #[allow(clippy::too_many_arguments)]
+  fn run_nv12(
+    y: &[u8],
+    uv: &[u8],
+    w: usize,
+    h: usize,
+    ow: usize,
+    oh: usize,
+    full_range: bool,
+    matrix: ColorMatrix,
+    native: bool,
+  ) -> Outs {
+    let n = ow * oh;
+    let mut rgb = vec![0u8; n * 3];
+    let mut rgba = vec![0u8; n * 4];
+    let mut luma = vec![0u8; n];
+    let mut luma_u16 = vec![0u16; n];
+    let (mut hh, mut ss, mut vv) = (vec![0u8; n], vec![0u8; n], vec![0u8; n]);
+    {
+      let frame = Nv12Frame::new(y, uv, w as u32, h as u32, w as u32, w as u32);
+      let mut sink =
+        MixedSinker::<Nv12, AreaResampler>::with_resampler(w, h, AreaResampler::to(ow, oh))
+          .unwrap()
+          .with_native(native)
+          .with_rgb(&mut rgb)
+          .unwrap()
+          .with_rgba(&mut rgba)
+          .unwrap()
+          .with_luma(&mut luma)
+          .unwrap()
+          .with_luma_u16(&mut luma_u16)
+          .unwrap()
+          .with_hsv(&mut hh, &mut ss, &mut vv)
+          .unwrap();
+      nv12_to(&frame, full_range, matrix, &mut sink).unwrap();
+    }
+    (rgb, rgba, luma, luma_u16, hh, ss, vv)
+  }
+
+  /// `with_native(true)` must be the builder default for the semi-planar
+  /// family, just as for the planar twin.
+  #[test]
+  fn native_is_default_on() {
+    let sink =
+      MixedSinker::<Nv12, AreaResampler>::with_resampler(8, 8, AreaResampler::to(4, 4)).unwrap();
+    assert!(sink.native(), "with_native must default to true");
+    assert!(
+      !sink.with_native(false).native(),
+      "with_native(false) must disable the tier"
+    );
+  }
+
+  /// (a) The strongest check: NV12 native is byte-identical to a Yuv420p
+  /// NATIVE conversion of the de-interleaved planes, for every output.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv12_native_equals_yuv420p_native_on_deinterleaved_planes() {
+    for (w, h, ow, oh) in [
+      (8usize, 8usize, 4usize, 4usize),
+      (12, 10, 5, 4),
+      (12, 10, 7, 6),
+      (8, 9, 3, 4),
+    ] {
+      let (u, v) = {
+        let cw = w / 2;
+        let ch = h.div_ceil(2);
+        let mut u = vec![0u8; cw * ch];
+        let mut v = vec![0u8; cw * ch];
+        for (i, p) in u.iter_mut().enumerate() {
+          *p = 70 + ((i % cw) as u8).wrapping_mul(5);
+        }
+        for (i, p) in v.iter_mut().enumerate() {
+          *p = 200u8.wrapping_sub(((i % cw) as u8).wrapping_mul(4));
+        }
+        (u, v)
+      };
+      let y: Vec<u8> = (0..w * h)
+        .map(|i| 40u8.wrapping_add((i as u8).wrapping_mul(2)))
+        .collect();
+      let uv = interleave(&u, &v, false);
+      let cw = (w / 2) as u32;
+
+      let nv = run_nv12(&y, &uv, w, h, ow, oh, true, ColorMatrix::Bt601, true);
+
+      let n = ow * oh;
+      let mut p_rgb = vec![0u8; n * 3];
+      let mut p_luma = vec![0u8; n];
+      {
+        let frame = Yuv420pFrame::new(&y, &u, &v, w as u32, h as u32, w as u32, cw, cw);
+        let mut sink =
+          MixedSinker::<Yuv420p, AreaResampler>::with_resampler(w, h, AreaResampler::to(ow, oh))
+            .unwrap()
+            .with_native(true)
+            .with_rgb(&mut p_rgb)
+            .unwrap()
+            .with_luma(&mut p_luma)
+            .unwrap();
+        yuv420p_to(&frame, true, ColorMatrix::Bt601, &mut sink).unwrap();
+      }
+      assert_eq!(
+        nv.0, p_rgb,
+        "nv12 native rgb == yuv420p native rgb ({w}x{h}->{ow}x{oh})"
+      );
+      assert_eq!(
+        nv.2, p_luma,
+        "nv12 native luma == yuv420p native luma ({w}x{h}->{ow}x{oh})"
+      );
+    }
+  }
+
+  /// NV21 native (VU order) de-interleaves to the SAME logical U / V, so
+  /// it too must equal the Yuv420p native conversion of those planes.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv21_native_equals_yuv420p_native_on_deinterleaved_planes() {
+    let (w, h, ow, oh) = (12, 10, 5, 4);
+    let (u, v) = uv_planes(w / 2, h / 2);
+    let y: Vec<u8> = (0..w * h)
+      .map(|i| 40u8.wrapping_add((i as u8).wrapping_mul(2)))
+      .collect();
+    let vu = interleave(&u, &v, true);
+    let cw = (w / 2) as u32;
+
+    let n = ow * oh;
+    let mut nv_rgb = vec![0u8; n * 3];
+    {
+      let frame = Nv21Frame::new(&y, &vu, w as u32, h as u32, w as u32, w as u32);
+      let mut sink =
+        MixedSinker::<Nv21, AreaResampler>::with_resampler(w, h, AreaResampler::to(ow, oh))
+          .unwrap()
+          .with_native(true)
+          .with_rgb(&mut nv_rgb)
+          .unwrap();
+      nv21_to(&frame, true, ColorMatrix::Bt601, &mut sink).unwrap();
+    }
+    let mut p_rgb = vec![0u8; n * 3];
+    {
+      let frame = Yuv420pFrame::new(&y, &u, &v, w as u32, h as u32, w as u32, cw, cw);
+      let mut sink =
+        MixedSinker::<Yuv420p, AreaResampler>::with_resampler(w, h, AreaResampler::to(ow, oh))
+          .unwrap()
+          .with_native(true)
+          .with_rgb(&mut p_rgb)
+          .unwrap();
+      yuv420p_to(&frame, true, ColorMatrix::Bt601, &mut sink).unwrap();
+    }
+    assert_eq!(nv_rgb, p_rgb, "nv21 native rgb == yuv420p native rgb");
+  }
+
+  /// (b) Native vs row-stage: luma is bit-identical (both bin the same Y
+  /// plane), and in-gamut colour diverges only by per-pixel rounding /
+  /// clamping inside the affine conversion. Bound matches the planar twin
+  /// (`native_and_row_stage_color_within_tolerance`) because NV12 equals
+  /// Yuv420p on BOTH tiers, so the cross-tier delta is identical. Swept
+  /// over matrices and the limited/full range flag.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv12_native_within_tolerance_of_row_stage() {
+    let (w, h) = (12, 10);
+    let (yp, up, vp) = textured(w, h);
+    let uv = interleave(&up, &vp, false);
+    for (ow, oh) in [(6, 5), (4, 4), (7, 6), (5, 3)] {
+      for full_range in [false, true] {
+        for matrix in [
+          ColorMatrix::Bt601,
+          ColorMatrix::Bt709,
+          ColorMatrix::Bt2020Ncl,
+        ] {
+          let native = run_nv12(&yp, &uv, w, h, ow, oh, full_range, matrix, true);
+          let row = run_nv12(&yp, &uv, w, h, ow, oh, full_range, matrix, false);
+          assert_eq!(
+            native.2, row.2,
+            "luma bit-identical {ow}x{oh} fr={full_range} {matrix:?}"
+          );
+          assert_eq!(
+            native.3, row.3,
+            "luma_u16 bit-identical {ow}x{oh} fr={full_range} {matrix:?}"
+          );
+          for (name, a, b) in [
+            ("rgb", &native.0, &row.0),
+            ("rgba", &native.1, &row.1),
+            ("hsv-v", &native.6, &row.6),
+          ] {
+            for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+              assert!(
+                x.abs_diff(*y) <= 3,
+                "{name} {ow}x{oh} fr={full_range} {matrix:?} idx {i}: native {x} vs row {y}"
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /// (c) Constant planes bin exactly on both grids, so native reproduces
+  /// the full-resolution conversion EXACTLY (the true 0-LSB case) — the
+  /// cv2 INTER_AREA analogue of the planar `native_solid_frame_exact`.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv12_native_solid_frame_exact() {
+    let (w, h) = (8, 8);
+    let yp = vec![120u8; w * h];
+    let up = vec![90u8; (w / 2) * (h / 2)];
+    let vp = vec![170u8; (w / 2) * (h / 2)];
+    let uv = interleave(&up, &vp, false);
+
+    let mut full_rgb = vec![0u8; w * h * 3];
+    {
+      let frame = Nv12Frame::new(&yp, &uv, w as u32, h as u32, w as u32, w as u32);
+      let mut sink = MixedSinker::<Nv12>::new(w, h)
+        .with_rgb(&mut full_rgb)
+        .unwrap();
+      nv12_to(&frame, false, ColorMatrix::Bt709, &mut sink).unwrap();
+    }
+    let out = run_nv12(&yp, &uv, w, h, 4, 4, false, ColorMatrix::Bt709, true);
+    for px in out.0.chunks_exact(3) {
+      assert_eq!(
+        (px[0], px[1], px[2]),
+        (full_rgb[0], full_rgb[1], full_rgb[2]),
+        "native solid rgb == full-res conversion"
+      );
+    }
+    assert!(out.2.iter().all(|&l| l == 120), "native solid luma == Y");
+  }
+
+  /// Native and row-stage agree even when only luma is attached (the
+  /// chroma stream is absent — the join must never touch the empty U / V
+  /// scratch). Exercises the luma-only native fast path.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv12_native_luma_only_matches_row_stage() {
+    let (w, h) = (12, 10);
+    let (yp, up, vp) = textured(w, h);
+    let uv = interleave(&up, &vp, false);
+    let run = |native: bool| {
+      let mut luma = vec![0u8; 6 * 5];
+      let frame = Nv12Frame::new(&yp, &uv, w as u32, h as u32, w as u32, w as u32);
+      let mut sink =
+        MixedSinker::<Nv12, AreaResampler>::with_resampler(w, h, AreaResampler::to(6, 5))
+          .unwrap()
+          .with_native(native)
+          .with_luma(&mut luma)
+          .unwrap();
+      nv12_to(&frame, false, ColorMatrix::Bt709, &mut sink).unwrap();
+      luma
+    };
+    assert_eq!(run(true), run(false), "luma-only native == row-stage");
+  }
+
+  /// A rejected out-of-sequence FIRST row on the native tier must store no
+  /// frozen-output snapshot, so retrying row 0 after attaching a NEW output
+  /// succeeds (the join's preflight, reused verbatim). Also proves the
+  /// de-interleave touched no caller output on the rejected call.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv12_native_rejected_first_row_does_not_poison_retry() {
+    let (w, h) = (8, 8);
+    let y = y_ramp_for(w, h);
+    let (u, v) = uv_planes(w / 2, h / 2);
+    let uv = interleave(&u, &v, false);
+    let mut luma = vec![0u8; 4 * 4];
+    let mut sink =
+      MixedSinker::<Nv12, AreaResampler>::with_resampler(w, h, AreaResampler::to(4, 4))
+        .unwrap()
+        .with_native(true)
+        .with_luma(&mut luma)
+        .unwrap();
+    let err = sink
+      .process(Nv12Row::new(
+        &y[3 * w..4 * w],
+        &uv[w..2 * w],
+        3,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .unwrap_err();
+    assert!(matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(_))
+    ));
+    let mut rgb = vec![0u8; 4 * 4 * 3];
+    sink.set_rgb(&mut rgb).unwrap();
+    sink
+      .process(Nv12Row::new(
+        &y[0..w],
+        &uv[0..w],
+        0,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .expect("row 0 must succeed after a rejected out-of-sequence first row");
+  }
+
+  /// An out-of-sequence ODD first row with COLOUR attached and no
+  /// `begin_frame` (so the U / V scratch is still empty): the de-interleave
+  /// is skipped on odd rows, so the join must receive empty chroma slices
+  /// and reject the row rather than the slice indexing past the empty
+  /// scratch. Regression guard for the no-panic contract on direct callers.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv12_native_color_odd_first_row_rejected_without_panic() {
+    let (w, h) = (8, 8);
+    let y = y_ramp_for(w, h);
+    let (u, v) = uv_planes(w / 2, h / 2);
+    let uv = interleave(&u, &v, false);
+    let mut rgb = vec![0u8; 4 * 4 * 3];
+    let mut sink =
+      MixedSinker::<Nv12, AreaResampler>::with_resampler(w, h, AreaResampler::to(4, 4))
+        .unwrap()
+        .with_native(true)
+        .with_rgb(&mut rgb)
+        .unwrap();
+    let err = sink
+      .process(Nv12Row::new(
+        &y[w..2 * w],
+        &uv[w..2 * w],
+        1,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .unwrap_err();
+    assert!(matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(_))
+    ));
+    assert!(
+      rgb.iter().all(|&b| b == 0),
+      "rejected row touched no output"
+    );
+  }
+
+  /// An out-of-sequence EVEN (chroma-bearing) first row with COLOUR
+  /// attached must be rejected by the join's first-row preflight BEFORE the
+  /// U / V de-interleave scratch is reserved — so under allocation pressure
+  /// it returns the deterministic `OutOfSequenceRow`, never
+  /// `AllocationFailed`, and grows no sink state (the preflight-atomicity /
+  /// recoverable-allocation contract). The de-interleave alloc failpoint is
+  /// armed on the reserve that an even colour row WOULD reach: with the
+  /// wrapper ordered correctly the preflight fires first and the failpoint
+  /// is never consumed; with the de-interleave ordered ahead of the
+  /// preflight (the bug) the armed reserve refuses and the call surfaces
+  /// `AllocationFailed` instead — which this test forbids. (A plain
+  /// capacity check would pass even with the bug, since the reserve
+  /// succeeds under normal allocation and `OutOfSequenceRow` is still
+  /// returned afterwards — hence forcing the failure.)
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv12_native_color_even_first_row_rejected_before_scratch_alloc() {
+    let (w, h) = (8, 8);
+    let y = y_ramp_for(w, h);
+    let (u, v) = uv_planes(w / 2, h / 2);
+    let uv = interleave(&u, &v, false);
+    let mut rgb = vec![0u8; 4 * 4 * 3];
+    let mut sink =
+      MixedSinker::<Nv12, AreaResampler>::with_resampler(w, h, AreaResampler::to(4, 4))
+        .unwrap()
+        .with_native(true)
+        .with_rgb(&mut rgb)
+        .unwrap();
+    // Feed an EVEN out-of-sequence first row (idx 2; the join expects 0)
+    // with colour attached, so the chroma-bearing de-interleave path is
+    // live. No `begin_frame`, so the U / V scratch starts empty and the
+    // reserve below WOULD run — but only if the preflight let it.
+    crate::sinker::mixed::semi_planar_8bit::arm_deinterleave_alloc_failure();
+    let err = sink
+      .process(Nv12Row::new(
+        &y[2 * w..3 * w],
+        &uv[w..2 * w],
+        2,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .unwrap_err();
+    assert!(
+      matches!(
+        err,
+        MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(_))
+      ),
+      "even colour first row must reject as OutOfSequenceRow before the \
+       de-interleave scratch alloc, got {err:?}"
+    );
+    assert!(
+      rgb.iter().all(|&b| b == 0),
+      "rejected even colour first row touched no output"
+    );
+    // The failpoint is single-shot (take-on-read). It must NOT have been
+    // consumed: the preflight rejected the row before the reserve, so the
+    // next chroma-bearing reserve is the first to see it. Prove that by
+    // running a valid frame and asserting it now refuses with the still-set
+    // flag — confirming the rejected row never reached the reserve.
+    let mut rgb2 = vec![0u8; 4 * 4 * 3];
+    let mut sink2 =
+      MixedSinker::<Nv12, AreaResampler>::with_resampler(w, h, AreaResampler::to(4, 4))
+        .unwrap()
+        .with_native(true)
+        .with_rgb(&mut rgb2)
+        .unwrap();
+    let err2 = sink2
+      .process(Nv12Row::new(
+        &y[0..w],
+        &uv[0..w],
+        0,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .unwrap_err();
+    assert!(
+      matches!(
+        err2,
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+      ),
+      "armed failpoint must still be live (unconsumed by the rejected \
+       row) and fire on the first in-sequence even colour reserve, got {err2:?}"
+    );
+  }
+
+  /// A mid-frame output-set change on a chroma-bearing even row must be
+  /// rejected by the wrapper's FULL preflight (the frozen-output check)
+  /// BEFORE the U / V de-interleave scratch is reserved — so under
+  /// allocation pressure it returns the deterministic
+  /// `ResampleOutputsChanged`, never `AllocationFailed`, and grows no sink
+  /// state. A luma-only first frame (rows 0, 1 — no colour) freezes a
+  /// luma-only output set; RGB is then attached and an even row 2 is fed
+  /// with colour, so the chroma-bearing de-interleave path is live. With
+  /// the wrapper running only the partial preflight (or the de-interleave
+  /// ordered ahead of the frozen check) the armed reserve refuses and the
+  /// call surfaces `AllocationFailed` — which this test forbids. (The
+  /// failpoint is forced because a plain capacity check would succeed under
+  /// normal allocation and `ResampleOutputsChanged` would still follow,
+  /// masking the ordering bug.)
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv12_native_frozen_mid_frame_change_rejected_before_scratch_alloc() {
+    let (w, h) = (8, 8);
+    let y = y_ramp_for(w, h);
+    let (u, v) = uv_planes(w / 2, h / 2);
+    let uv = interleave(&u, &v, false);
+    let mut luma = vec![0u8; 4 * 4];
+    let mut rgb = vec![0u8; 4 * 4 * 3];
+    let mut sink =
+      MixedSinker::<Nv12, AreaResampler>::with_resampler(w, h, AreaResampler::to(4, 4))
+        .unwrap()
+        .with_native(true)
+        .with_luma(&mut luma)
+        .unwrap();
+    // Luma-only first frame: rows 0 and 1 freeze a luma-only output set
+    // (no colour, so no de-interleave runs yet).
+    for r in 0..2 {
+      sink
+        .process(Nv12Row::new(
+          &y[r * w..(r + 1) * w],
+          &uv[r * w..(r + 1) * w],
+          r,
+          ColorMatrix::Bt601,
+          true,
+        ))
+        .expect("luma-only rows freeze a luma-only output set");
+    }
+    // Attach RGB mid-frame, changing the output set. Arm the de-interleave
+    // failpoint on the reserve the chroma-bearing even row WOULD reach:
+    // with the full preflight first the frozen check fires and the
+    // failpoint is never consumed; with the de-interleave ahead of the
+    // frozen check (the bug) the armed reserve refuses as AllocationFailed.
+    sink.set_rgb(&mut rgb).unwrap();
+    crate::sinker::mixed::semi_planar_8bit::arm_deinterleave_alloc_failure();
+    let err = sink
+      .process(Nv12Row::new(
+        &y[2 * w..3 * w],
+        &uv[2 * w..3 * w],
+        2,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .unwrap_err();
+    assert!(
+      matches!(err, MixedSinkerError::ResampleOutputsChanged(_)),
+      "mid-frame output change on an even colour row must reject as \
+       ResampleOutputsChanged before the de-interleave scratch alloc, got {err:?}"
+    );
+    assert!(
+      rgb.iter().all(|&b| b == 0),
+      "rejected mid-frame-change row touched no colour output"
+    );
+    // The failpoint is single-shot (take-on-read). It must NOT have been
+    // consumed: the frozen check rejected the row before the reserve, so
+    // the next chroma-bearing reserve is the first to see it. Prove that by
+    // running a fresh in-sequence even colour row and asserting it now
+    // refuses with the still-set flag — confirming the rejected row never
+    // reached the reserve.
+    let mut rgb2 = vec![0u8; 4 * 4 * 3];
+    let mut sink2 =
+      MixedSinker::<Nv12, AreaResampler>::with_resampler(w, h, AreaResampler::to(4, 4))
+        .unwrap()
+        .with_native(true)
+        .with_rgb(&mut rgb2)
+        .unwrap();
+    let err2 = sink2
+      .process(Nv12Row::new(
+        &y[0..w],
+        &uv[0..w],
+        0,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .unwrap_err();
+    assert!(
+      matches!(
+        err2,
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+      ),
+      "armed failpoint must still be live (unconsumed by the rejected \
+       mid-frame-change row) and fire on the first in-sequence even colour \
+       reserve, got {err2:?}"
+    );
+  }
+
+  /// The fourth (post-freeze) rejection point: after a RECOVERABLE
+  /// de-interleave allocation failure on a chroma-bearing even row 0
+  /// leaves `resample_outputs` frozen but the planar join unbuilt
+  /// (`native_420 == None`, since the join is created inside
+  /// `yuv420p_process_native` AFTER the de-interleave), a later
+  /// OUT-OF-SEQUENCE even row must still reject as the deterministic
+  /// `OutOfSequenceRow`, never `AllocationFailed`. The pre-freeze first-row
+  /// branch is skipped here (outputs are already frozen), so only the
+  /// preflight's post-freeze sequence check stands between the
+  /// out-of-sequence row and the wrapper's fallible de-interleave reserve;
+  /// without it the re-armed failpoint would fire first and surface
+  /// `AllocationFailed`. The re-arm is proven unconsumed by a subsequent
+  /// in-sequence even colour row that DOES fire it.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv12_native_oos_after_recoverable_dealloc_failure_rejected_before_scratch_alloc() {
+    let (w, h) = (8, 8);
+    let y = y_ramp_for(w, h);
+    let (u, v) = uv_planes(w / 2, h / 2);
+    let uv = interleave(&u, &v, false);
+    let mut rgb = vec![0u8; 4 * 4 * 3];
+    let mut sink =
+      MixedSinker::<Nv12, AreaResampler>::with_resampler(w, h, AreaResampler::to(4, 4))
+        .unwrap()
+        .with_native(true)
+        .with_rgb(&mut rgb)
+        .unwrap();
+    // Step 1 — a RECOVERABLE de-interleave failure on the in-sequence even
+    // colour row 0. The full preflight clears (freezing the RGB output set),
+    // then the armed de-interleave reserve refuses: AllocationFailed. This
+    // leaves `resample_outputs = Some` (frozen) but `native_420 = None` (the
+    // join is built inside the delegate, which the de-interleave failure
+    // short-circuits before reaching) — the exact poisoned-but-recoverable
+    // state the post-freeze check must defend.
+    crate::sinker::mixed::semi_planar_8bit::arm_deinterleave_alloc_failure();
+    let err0 = sink
+      .process(Nv12Row::new(
+        &y[0..w],
+        &uv[0..w],
+        0,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .unwrap_err();
+    assert!(
+      matches!(
+        err0,
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+      ),
+      "the recoverable de-interleave failure on even row 0 must surface \
+       AllocationFailed (freezing outputs, leaving the join unbuilt), got {err0:?}"
+    );
+    // (`rgb` stays borrowed by `sink` across step 2; the no-output contract
+    // on a rejected row is already covered by the two tests above — this
+    // test isolates the OutOfSequenceRow-vs-AllocationFailed precedence and
+    // the failpoint's survival. The final buffer is checked after step 2.)
+    // Step 2 — RE-ARM the failpoint, then feed an OUT-OF-SEQUENCE even row
+    // (idx 2; the unbuilt join still expects 0) with colour. The pre-freeze
+    // first-row branch is skipped (outputs frozen in step 1), so the
+    // preflight's POST-FREEZE sequence check is the sole gate; it must
+    // reject as OutOfSequenceRow BEFORE the wrapper reaches the (re-armed)
+    // de-interleave reserve.
+    crate::sinker::mixed::semi_planar_8bit::arm_deinterleave_alloc_failure();
+    let err2 = sink
+      .process(Nv12Row::new(
+        &y[2 * w..3 * w],
+        &uv[2 * w..3 * w],
+        2,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .unwrap_err();
+    assert!(
+      matches!(
+        err2,
+        MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(_))
+      ),
+      "an out-of-sequence even row after a recoverable de-interleave failure \
+       must reject as OutOfSequenceRow (the post-freeze sequence check), never \
+       AllocationFailed, got {err2:?}"
+    );
+    // Neither the recoverable-failure row 0 nor the rejected out-of-sequence
+    // row touched the colour output (`sink` is done with `rgb` here).
+    assert!(
+      rgb.iter().all(|&b| b == 0),
+      "neither the recoverable-failure nor the out-of-sequence row touched \
+       the colour output"
+    );
+    // Step 3 — the failpoint armed in step 2 must NOT have been consumed:
+    // the post-freeze check rejected the out-of-sequence row before the
+    // de-interleave reserve. Prove it by feeding an in-sequence even colour
+    // row 0 (a fresh sink, same frozen RGB shape) — the still-armed flag
+    // fires on the FIRST reserve it reaches, confirming step 2 never did.
+    let mut rgb2 = vec![0u8; 4 * 4 * 3];
+    let mut sink2 =
+      MixedSinker::<Nv12, AreaResampler>::with_resampler(w, h, AreaResampler::to(4, 4))
+        .unwrap()
+        .with_native(true)
+        .with_rgb(&mut rgb2)
+        .unwrap();
+    let err3 = sink2
+      .process(Nv12Row::new(
+        &y[0..w],
+        &uv[0..w],
+        0,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .unwrap_err();
+    assert!(
+      matches!(
+        err3,
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+      ),
+      "the failpoint re-armed in step 2 must still be live (the rejected \
+       out-of-sequence row never reached the reserve) and fire on the first \
+       in-sequence even colour reserve, got {err3:?}"
+    );
+  }
+
+  /// A no-output native call must be a no-op `Ok` regardless of row index
+  /// (no freeze, no Y feed, no de-interleave alloc), so a later row 0 after
+  /// attaching an output succeeds — the join's no-output short-circuit.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv12_native_no_output_row_does_not_poison_retry() {
+    let (w, h) = (8, 8);
+    let y = y_ramp_for(w, h);
+    let (u, v) = uv_planes(w / 2, h / 2);
+    let uv = interleave(&u, &v, false);
+    let mut sink =
+      MixedSinker::<Nv12, AreaResampler>::with_resampler(w, h, AreaResampler::to(4, 4))
+        .unwrap()
+        .with_native(true);
+    sink
+      .process(Nv12Row::new(
+        &y[0..w],
+        &uv[0..w],
+        0,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .expect("a no-output native row must be a no-op Ok");
+    let mut luma = vec![0u8; 4 * 4];
+    sink.set_luma(&mut luma).unwrap();
+    sink
+      .process(Nv12Row::new(
+        &y[0..w],
+        &uv[0..w],
+        0,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .expect("row 0 must succeed after a no-output native call");
+  }
+
+  /// Swapping an output buffer mid-frame on the native tier desyncs the
+  /// frozen-output set and must be rejected atomically (no caller mutation).
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv12_native_mid_frame_output_change_rejected() {
+    let (w, h) = (8, 8);
+    let y = y_ramp_for(w, h);
+    let (u, v) = uv_planes(w / 2, h / 2);
+    let uv = interleave(&u, &v, false);
+    let mut luma = vec![0u8; 4 * 4];
+    let mut luma2 = vec![0u8; 4 * 4];
+    let mut sink =
+      MixedSinker::<Nv12, AreaResampler>::with_resampler(w, h, AreaResampler::to(4, 4))
+        .unwrap()
+        .with_native(true)
+        .with_luma(&mut luma)
+        .unwrap();
+    sink
+      .process(Nv12Row::new(
+        &y[0..w],
+        &uv[0..w],
+        0,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .unwrap();
+    sink.set_luma(&mut luma2).unwrap();
+    let err = sink
+      .process(Nv12Row::new(
+        &y[w..2 * w],
+        &uv[w..2 * w],
+        1,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .unwrap_err();
+    assert!(matches!(err, MixedSinkerError::ResampleOutputsChanged(_)));
+    assert!(luma2.iter().all(|&l| l == 0), "swapped buffer untouched");
+  }
+
+  /// Native survives a frame restart on a reused sink: `begin_frame` resets
+  /// the join, so a second frame downscales its own planes correctly.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv12_native_reuses_join_across_frames() {
+    let (w, h) = (8, 8);
+    let y1 = y_ramp_for(w, h);
+    let mut y2 = y1.clone();
+    for p in y2.iter_mut() {
+      *p = 255 - *p;
+    }
+    let (u, v) = uv_planes(w / 2, h / 2);
+    let uv = interleave(&u, &v, false);
+    let mut luma = vec![0u8; 4 * 4];
+    {
+      let mut sink =
+        MixedSinker::<Nv12, AreaResampler>::with_resampler(w, h, AreaResampler::to(4, 4))
+          .unwrap()
+          .with_native(true)
+          .with_luma(&mut luma)
+          .unwrap();
+      let f1 = Nv12Frame::new(&y1, &uv, w as u32, h as u32, w as u32, w as u32);
+      let f2 = Nv12Frame::new(&y2, &uv, w as u32, h as u32, w as u32, w as u32);
+      nv12_to(&f1, true, ColorMatrix::Bt601, &mut sink).unwrap();
+      nv12_to(&f2, true, ColorMatrix::Bt601, &mut sink).unwrap();
+    }
+    // Frame 2's luma must area-downscale frame 2's Y (2x2 block mean).
+    let mut expect = vec![0u8; 4 * 4];
+    for oy in 0..4 {
+      for ox in 0..4 {
+        let mut s = 0u32;
+        for dy in 0..2 {
+          for dx in 0..2 {
+            s += y2[(oy * 2 + dy) * w + ox * 2 + dx] as u32;
+          }
+        }
+        expect[oy * 4 + ox] = ((s + 2) / 4) as u8;
+      }
+    }
+    assert_eq!(luma, expect, "frame 2 native luma == area-downscaled Y2");
+  }
+
+  /// A deterministic Y ramp over a `w`x`h` grid (the fixed-`SRC` `y_ramp`
+  /// helper above only covers the 8x8 module geometry).
+  fn y_ramp_for(w: usize, h: usize) -> Vec<u8> {
+    (0..w * h)
+      .map(|i| 40u8.wrapping_add((i as u8).wrapping_mul(2)))
+      .collect()
   }
 }
