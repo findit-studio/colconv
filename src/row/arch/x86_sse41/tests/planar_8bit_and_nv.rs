@@ -1,5 +1,6 @@
 use super::super::*;
 
+#[cfg(feature = "yuv-planar")]
 fn check_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let u: std::vec::Vec<u8> = (0..width / 2)
@@ -29,6 +30,7 @@ fn check_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_matches_scalar_all_matrices_16() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -48,6 +50,7 @@ fn sse41_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_matches_scalar_width_32() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -58,6 +61,7 @@ fn sse41_matches_scalar_width_32() {
   check_equivalence(32, ColorMatrix::YCgCo, true);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_matches_scalar_width_1920() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -66,6 +70,7 @@ fn sse41_matches_scalar_width_1920() {
   check_equivalence(1920, ColorMatrix::Bt709, false);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_matches_scalar_odd_tail_widths() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -86,6 +91,7 @@ fn sse41_matches_scalar_odd_tail_widths() {
 // splat corruption that an AVX2- or AVX-512-routed test would
 // miss.
 
+#[cfg(feature = "yuv-planar")]
 fn check_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let u: std::vec::Vec<u8> = (0..width / 2)
@@ -117,6 +123,7 @@ fn check_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_rgba_matches_scalar_all_matrices_16() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -136,6 +143,7 @@ fn sse41_rgba_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_rgba_matches_scalar_width_32() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -146,6 +154,7 @@ fn sse41_rgba_matches_scalar_width_32() {
   check_rgba_equivalence(32, ColorMatrix::YCgCo, true);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_rgba_matches_scalar_width_1920() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -154,6 +163,7 @@ fn sse41_rgba_matches_scalar_width_1920() {
   check_rgba_equivalence(1920, ColorMatrix::Bt709, false);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_rgba_matches_scalar_odd_tail_widths() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -166,6 +176,7 @@ fn sse41_rgba_matches_scalar_odd_tail_widths() {
 
 // ---- nv12_to_rgb_row equivalence ------------------------------------
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv12_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let uv: std::vec::Vec<u8> = (0..width / 2)
@@ -192,6 +203,7 @@ fn check_nv12_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   }
 }
 
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 fn check_nv12_matches_yuv420p(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let u: std::vec::Vec<u8> = (0..width / 2)
@@ -214,6 +226,7 @@ fn check_nv12_matches_yuv420p(width: usize, matrix: ColorMatrix, full_range: boo
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn sse41_nv12_matches_scalar_all_matrices_16() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -233,6 +246,7 @@ fn sse41_nv12_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn sse41_nv12_matches_scalar_widths() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -243,6 +257,7 @@ fn sse41_nv12_matches_scalar_widths() {
   }
 }
 
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[test]
 fn sse41_nv12_matches_yuv420p() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -256,6 +271,7 @@ fn sse41_nv12_matches_yuv420p() {
 
 // ---- nv24_to_rgb_row / nv42_to_rgb_row equivalence ------------------
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv24_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let uv: std::vec::Vec<u8> = (0..width)
@@ -279,6 +295,7 @@ fn check_nv24_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv42_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let vu: std::vec::Vec<u8> = (0..width)
@@ -297,6 +314,7 @@ fn check_nv42_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn sse41_nv24_matches_scalar_all_matrices_16() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -316,6 +334,7 @@ fn sse41_nv24_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn sse41_nv24_matches_scalar_widths() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -327,6 +346,7 @@ fn sse41_nv24_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn sse41_nv42_matches_scalar_all_matrices_16() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -346,6 +366,7 @@ fn sse41_nv42_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn sse41_nv42_matches_scalar_widths() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -358,6 +379,7 @@ fn sse41_nv42_matches_scalar_widths() {
 
 // ---- nv24_to_rgba_row / nv42_to_rgba_row equivalence ----------------
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv24_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let uv: std::vec::Vec<u8> = (0..width)
@@ -386,6 +408,7 @@ fn check_nv24_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bo
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv42_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let vu: std::vec::Vec<u8> = (0..width)
@@ -414,6 +437,7 @@ fn check_nv42_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bo
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn sse41_nv24_rgba_matches_scalar_all_matrices_16() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -433,6 +457,7 @@ fn sse41_nv24_rgba_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn sse41_nv24_rgba_matches_scalar_widths() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -443,6 +468,7 @@ fn sse41_nv24_rgba_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn sse41_nv42_rgba_matches_scalar_all_matrices_16() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -462,6 +488,7 @@ fn sse41_nv42_rgba_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn sse41_nv42_rgba_matches_scalar_widths() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -474,6 +501,7 @@ fn sse41_nv42_rgba_matches_scalar_widths() {
 
 // ---- yuv_444_to_rgb_row equivalence ---------------------------------
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv_444_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let u: std::vec::Vec<u8> = (0..width).map(|i| ((i * 53 + 23) & 0xFF) as u8).collect();
@@ -491,6 +519,7 @@ fn check_yuv_444_equivalence(width: usize, matrix: ColorMatrix, full_range: bool
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_yuv_444_matches_scalar_all_matrices_16() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -510,6 +539,7 @@ fn sse41_yuv_444_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_yuv_444_matches_scalar_widths() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -523,6 +553,7 @@ fn sse41_yuv_444_matches_scalar_widths() {
 
 // ---- yuv_444_to_rgba_row equivalence --------------------------------
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv_444_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let u: std::vec::Vec<u8> = (0..width).map(|i| ((i * 53 + 23) & 0xFF) as u8).collect();
@@ -550,6 +581,7 @@ fn check_yuv_444_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range:
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_yuv_444_rgba_matches_scalar_all_matrices_16() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -569,6 +601,7 @@ fn sse41_yuv_444_rgba_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_yuv_444_rgba_matches_scalar_widths() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -579,6 +612,7 @@ fn sse41_yuv_444_rgba_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "yuva")]
 fn check_yuv_444_rgba_with_alpha_src_equivalence(
   width: usize,
   matrix: ColorMatrix,
@@ -622,6 +656,7 @@ fn check_yuv_444_rgba_with_alpha_src_equivalence(
   );
 }
 
+#[cfg(feature = "yuva")]
 #[test]
 fn sse41_yuva444p_rgba_matches_scalar_all_matrices() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -641,6 +676,7 @@ fn sse41_yuva444p_rgba_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuva")]
 #[test]
 fn sse41_yuva444p_rgba_matches_scalar_widths_and_alpha() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -656,6 +692,7 @@ fn sse41_yuva444p_rgba_matches_scalar_widths_and_alpha() {
 
 // ---- yuv_444p_n<BITS> + yuv_444p16 equivalence ----------------------
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv_444p_n_equivalence<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -708,6 +745,7 @@ fn check_yuv_444p_n_equivalence<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_yuv_444p9_matches_scalar_all_matrices() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -720,6 +758,7 @@ fn sse41_yuv_444p9_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_yuv_444p10_matches_scalar_all_matrices() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -739,6 +778,7 @@ fn sse41_yuv_444p10_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_yuv_444p12_matches_scalar_all_matrices() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -751,6 +791,7 @@ fn sse41_yuv_444p12_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_yuv_444p14_matches_scalar_all_matrices() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -763,6 +804,7 @@ fn sse41_yuv_444p14_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_yuv_444p_n_matches_scalar_widths() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -773,6 +815,7 @@ fn sse41_yuv_444p_n_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv_444p16_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u16> = (0..width).map(|i| (i * 2027 + 11) as u16).collect();
   let u: std::vec::Vec<u16> = (0..width).map(|i| (i * 2671 + 23) as u16).collect();
@@ -806,6 +849,7 @@ fn check_yuv_444p16_equivalence(width: usize, matrix: ColorMatrix, full_range: b
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_yuv_444p16_matches_scalar_all_matrices() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -825,6 +869,7 @@ fn sse41_yuv_444p16_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn sse41_yuv_444p16_matches_scalar_widths() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -838,6 +883,7 @@ fn sse41_yuv_444p16_matches_scalar_widths() {
 
 // ---- bgr_rgb_swap_row equivalence -----------------------------------
 
+#[cfg(feature = "rgb")]
 fn check_swap_equivalence(width: usize) {
   let input: std::vec::Vec<u8> = (0..width * 3)
     .map(|i| ((i * 17 + 41) & 0xFF) as u8)
@@ -852,6 +898,7 @@ fn check_swap_equivalence(width: usize) {
   assert_eq!(out_scalar, out_sse41, "SSE4.1 swap diverges from scalar");
 }
 
+#[cfg(feature = "rgb")]
 #[test]
 fn sse41_swap_matches_scalar() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -864,6 +911,7 @@ fn sse41_swap_matches_scalar() {
 
 // ---- nv21_to_rgb_row equivalence ------------------------------------
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv21_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let vu: std::vec::Vec<u8> = (0..width / 2)
@@ -882,6 +930,7 @@ fn check_nv21_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv21_matches_nv12_swapped(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let uv: std::vec::Vec<u8> = (0..width / 2)
@@ -905,6 +954,7 @@ fn check_nv21_matches_nv12_swapped(width: usize, matrix: ColorMatrix, full_range
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn nv21_sse41_matches_scalar_all_matrices_16() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -924,6 +974,7 @@ fn nv21_sse41_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn nv21_sse41_matches_scalar_widths() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -934,6 +985,7 @@ fn nv21_sse41_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn nv21_sse41_matches_nv12_swapped() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -947,6 +999,7 @@ fn nv21_sse41_matches_nv12_swapped() {
 
 // ---- nv12_to_rgba_row / nv21_to_rgba_row equivalence ----------------
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv12_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let uv: std::vec::Vec<u8> = (0..width / 2)
@@ -975,6 +1028,7 @@ fn check_nv12_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bo
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv21_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let vu: std::vec::Vec<u8> = (0..width / 2)
@@ -1003,6 +1057,7 @@ fn check_nv21_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bo
   }
 }
 
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 fn check_nv12_rgba_matches_yuv420p_rgba(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let u: std::vec::Vec<u8> = (0..width / 2)
@@ -1025,6 +1080,7 @@ fn check_nv12_rgba_matches_yuv420p_rgba(width: usize, matrix: ColorMatrix, full_
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn nv12_sse41_rgba_matches_scalar_all_matrices_16() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -1044,6 +1100,7 @@ fn nv12_sse41_rgba_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn nv12_sse41_rgba_matches_scalar_widths() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -1054,6 +1111,7 @@ fn nv12_sse41_rgba_matches_scalar_widths() {
   }
 }
 
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[test]
 fn nv12_sse41_rgba_matches_yuv420p_rgba_sse41() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -1065,6 +1123,7 @@ fn nv12_sse41_rgba_matches_yuv420p_rgba_sse41() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn nv21_sse41_rgba_matches_scalar_all_matrices_16() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -1084,6 +1143,7 @@ fn nv21_sse41_rgba_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn nv21_sse41_rgba_matches_scalar_widths() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -1100,6 +1160,7 @@ fn nv21_sse41_rgba_matches_scalar_widths() {
 // kernel, just 4× chroma duplication via two-pass `_mm_unpack*_epi16`
 // cascade instead of a single unpack. Width must be a multiple of 4.
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv_410_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let cw = width / 4;
@@ -1126,6 +1187,7 @@ fn check_yuv_410_equivalence(width: usize, matrix: ColorMatrix, full_range: bool
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv_410_sse41_matches_scalar_all_matrices_16() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -1145,6 +1207,7 @@ fn yuv_410_sse41_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv_410_sse41_matches_scalar_widths() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -1158,6 +1221,7 @@ fn yuv_410_sse41_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv_410_sse41_matches_scalar_bt2020() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -1169,6 +1233,7 @@ fn yuv_410_sse41_matches_scalar_bt2020() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv_410_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let cw = width / 4;
@@ -1200,6 +1265,7 @@ fn check_yuv_410_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range:
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv_410_sse41_rgba_matches_scalar_widths() {
   if !std::arch::is_x86_feature_detected!("sse4.1") {
@@ -1217,6 +1283,7 @@ fn yuv_410_sse41_rgba_matches_scalar_widths() {
 // so the SSE4.1 1→4 chroma upsample is exercised regardless of what
 // tier the dispatcher would pick on the current runner.
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv411_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   // FFmpeg `AV_PIX_FMT_YUV411P`: chroma row = `width.div_ceil(4)`.
   assert!(width > 0);
@@ -1249,6 +1316,7 @@ fn check_yuv411_equivalence(width: usize, matrix: ColorMatrix, full_range: bool)
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "SSE4.1 SIMD intrinsics unsupported by Miri")]
 fn sse41_yuv411_matches_scalar_all_matrices_16() {
@@ -1270,6 +1338,7 @@ fn sse41_yuv411_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "SSE4.1 SIMD intrinsics unsupported by Miri")]
 fn sse41_yuv411_matches_scalar_tail_widths() {
@@ -1283,6 +1352,7 @@ fn sse41_yuv411_matches_scalar_tail_widths() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "SSE4.1 SIMD intrinsics unsupported by Miri")]
 fn sse41_yuv411_matches_scalar_width_1920() {
@@ -1292,6 +1362,7 @@ fn sse41_yuv411_matches_scalar_width_1920() {
   check_yuv411_equivalence(1920, ColorMatrix::Bt709, false);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "SSE4.1 SIMD intrinsics unsupported by Miri")]
 fn sse41_yuv411_matches_scalar_non_4_aligned_widths() {
@@ -1308,6 +1379,7 @@ fn sse41_yuv411_matches_scalar_non_4_aligned_widths() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "SSE4.1 SIMD intrinsics unsupported by Miri")]
 fn sse41_yuv411_rgba_matches_scalar_non_4_aligned_widths() {
@@ -1319,6 +1391,7 @@ fn sse41_yuv411_rgba_matches_scalar_non_4_aligned_widths() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv411_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   assert!(width > 0);
   let chroma_w = width.div_ceil(4);
@@ -1343,6 +1416,7 @@ fn check_yuv411_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: 
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "SSE4.1 SIMD intrinsics unsupported by Miri")]
 fn sse41_yuv411_rgba_matches_scalar_widths() {

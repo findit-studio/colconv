@@ -1,7 +1,12 @@
-use super::{
-  super::*, high_bit_plane_avx2, interleave_uv_avx2, p_n_packed_plane, p010_uv_interleave,
-  p16_plane_avx2, planar_n_plane,
-};
+use super::{super::*, p16_plane_avx2};
+// Planar high-bit plane builder — used only by the `yuv-planar`-gated
+// planar-vs-NEON equivalence helpers below.
+#[cfg(feature = "yuv-planar")]
+use super::planar_n_plane;
+// Semi-planar (`p_n` / `p_n_444`) plane / UV-interleave builders — used
+// only by the `yuv-semi-planar`-gated equivalence helpers / tests below.
+#[cfg(feature = "yuv-semi-planar")]
+use super::{high_bit_plane_avx2, interleave_uv_avx2, p_n_packed_plane, p010_uv_interleave};
 
 // ---- High-bit 4:2:0 RGBA equivalence (Ship 8 Tranche 5a) ----------
 //
@@ -10,6 +15,7 @@ use super::{
 // SIMD RGBA path produces byte-identical output to the scalar RGBA
 // reference.
 
+#[cfg(feature = "yuv-planar")]
 fn check_planar_u8_avx2_rgba_equivalence_n<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -38,6 +44,7 @@ fn check_planar_u8_avx2_rgba_equivalence_n<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_pn_u8_avx2_rgba_equivalence_n<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -59,6 +66,7 @@ fn check_pn_u8_avx2_rgba_equivalence_n<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv420p16_u8_avx2_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p16_plane_avx2(width, 37);
   let u = p16_plane_avx2(width / 2, 53);
@@ -75,6 +83,7 @@ fn check_yuv420p16_u8_avx2_rgba_equivalence(width: usize, matrix: ColorMatrix, f
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p16_u8_avx2_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p16_plane_avx2(width, 37);
   let u = p16_plane_avx2(width / 2, 53);
@@ -92,6 +101,7 @@ fn check_p16_u8_avx2_rgba_equivalence(width: usize, matrix: ColorMatrix, full_ra
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn avx2_yuv420p_n_rgba_matches_scalar_all_bits() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -114,6 +124,7 @@ fn avx2_yuv420p_n_rgba_matches_scalar_all_bits() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn avx2_yuv420p_n_rgba_matches_scalar_tail_and_1920() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -127,6 +138,7 @@ fn avx2_yuv420p_n_rgba_matches_scalar_tail_and_1920() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn avx2_pn_rgba_matches_scalar_all_bits() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -147,6 +159,7 @@ fn avx2_pn_rgba_matches_scalar_all_bits() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn avx2_pn_rgba_matches_scalar_tail_and_1920() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -158,6 +171,7 @@ fn avx2_pn_rgba_matches_scalar_tail_and_1920() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn avx2_yuv420p16_rgba_matches_scalar_all_matrices() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -180,6 +194,7 @@ fn avx2_yuv420p16_rgba_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn avx2_p016_rgba_matches_scalar_all_matrices() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -204,6 +219,7 @@ fn avx2_p016_rgba_matches_scalar_all_matrices() {
 
 // ---- High-bit 4:2:0 native-depth `u16` RGBA equivalence (Ship 8 Tranche 5b) ----
 
+#[cfg(feature = "yuv-planar")]
 fn check_planar_u16_avx2_rgba_equivalence_n<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -240,6 +256,7 @@ fn check_planar_u16_avx2_rgba_equivalence_n<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_pn_u16_avx2_rgba_equivalence_n<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -261,6 +278,7 @@ fn check_pn_u16_avx2_rgba_equivalence_n<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv420p16_u16_avx2_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p16_plane_avx2(width, 37);
   let u = p16_plane_avx2(width / 2, 53);
@@ -285,6 +303,7 @@ fn check_yuv420p16_u16_avx2_rgba_equivalence(width: usize, matrix: ColorMatrix, 
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p16_u16_avx2_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p16_plane_avx2(width, 37);
   let u = p16_plane_avx2(width / 2, 53);
@@ -302,6 +321,7 @@ fn check_p16_u16_avx2_rgba_equivalence(width: usize, matrix: ColorMatrix, full_r
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn avx2_yuv420p_n_rgba_u16_matches_scalar_all_bits() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -324,6 +344,7 @@ fn avx2_yuv420p_n_rgba_u16_matches_scalar_all_bits() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn avx2_yuv420p_n_rgba_u16_matches_scalar_tail_and_1920() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -337,6 +358,7 @@ fn avx2_yuv420p_n_rgba_u16_matches_scalar_tail_and_1920() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn avx2_pn_rgba_u16_matches_scalar_all_bits() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -357,6 +379,7 @@ fn avx2_pn_rgba_u16_matches_scalar_all_bits() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn avx2_pn_rgba_u16_matches_scalar_tail_and_1920() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -368,6 +391,7 @@ fn avx2_pn_rgba_u16_matches_scalar_tail_and_1920() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn avx2_yuv420p16_rgba_u16_matches_scalar_all_matrices() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -390,6 +414,7 @@ fn avx2_yuv420p16_rgba_u16_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn avx2_p016_rgba_u16_matches_scalar_all_matrices() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -414,6 +439,7 @@ fn avx2_p016_rgba_u16_matches_scalar_all_matrices() {
 
 // ---- Pn 4:4:4 (P410 / P412 / P416) AVX2 equivalence -----------------
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p_n_444_u8_avx2_equivalence<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -438,6 +464,7 @@ fn check_p_n_444_u8_avx2_equivalence<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p_n_444_u16_avx2_equivalence<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -469,6 +496,7 @@ fn check_p_n_444_u16_avx2_equivalence<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p_n_444_16_u8_avx2_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   if !std::arch::is_x86_feature_detected!("avx2") {
     return;
@@ -489,6 +517,7 @@ fn check_p_n_444_16_u8_avx2_equivalence(width: usize, matrix: ColorMatrix, full_
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p_n_444_16_u16_avx2_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   if !std::arch::is_x86_feature_detected!("avx2") {
     return;
@@ -509,6 +538,7 @@ fn check_p_n_444_16_u16_avx2_equivalence(width: usize, matrix: ColorMatrix, full
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn avx2_p410_matches_scalar_all_matrices() {
   for m in [
@@ -526,6 +556,7 @@ fn avx2_p410_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn avx2_p412_matches_scalar_all_matrices() {
   for m in [ColorMatrix::Bt709, ColorMatrix::Bt2020Ncl] {
@@ -536,6 +567,7 @@ fn avx2_p412_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn avx2_p410_p412_matches_scalar_tail_widths() {
   for w in [1usize, 3, 17, 31, 33, 47, 63, 65, 1920, 1921] {
@@ -545,6 +577,7 @@ fn avx2_p410_p412_matches_scalar_tail_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn avx2_p416_matches_scalar_all_matrices() {
   for m in [
@@ -562,6 +595,7 @@ fn avx2_p416_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn avx2_p416_matches_scalar_tail_widths() {
   for w in [1usize, 3, 15, 17, 31, 33, 47, 63, 65, 1920, 1921] {
@@ -579,6 +613,7 @@ fn avx2_p416_matches_scalar_tail_widths() {
 // `is_x86_feature_detected!("avx2")` to stay clean under
 // sanitizer/Miri/non-feature-flagged CI runners.
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv444p_n_u8_avx2_rgba_equivalence<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -607,6 +642,7 @@ fn check_yuv444p_n_u8_avx2_rgba_equivalence<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_pn_444_u8_avx2_rgba_equivalence<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -628,6 +664,7 @@ fn check_pn_444_u8_avx2_rgba_equivalence<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv444p16_u8_avx2_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p16_plane_avx2(width, 37);
   let u = p16_plane_avx2(width, 53);
@@ -644,6 +681,7 @@ fn check_yuv444p16_u8_avx2_rgba_equivalence(width: usize, matrix: ColorMatrix, f
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p_n_444_16_u8_avx2_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p16_plane_avx2(width, 37);
   let u = p16_plane_avx2(width, 53);
@@ -661,6 +699,7 @@ fn check_p_n_444_16_u8_avx2_rgba_equivalence(width: usize, matrix: ColorMatrix, 
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn avx2_yuv444p_n_rgba_matches_scalar_all_bits() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -683,6 +722,7 @@ fn avx2_yuv444p_n_rgba_matches_scalar_all_bits() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn avx2_yuv444p_n_rgba_matches_scalar_tail_and_widths() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -696,6 +736,7 @@ fn avx2_yuv444p_n_rgba_matches_scalar_tail_and_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn avx2_pn_444_rgba_matches_scalar_all_bits() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -716,6 +757,7 @@ fn avx2_pn_444_rgba_matches_scalar_all_bits() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn avx2_pn_444_rgba_matches_scalar_tail_and_widths() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -727,6 +769,7 @@ fn avx2_pn_444_rgba_matches_scalar_tail_and_widths() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn avx2_yuv444p16_rgba_matches_scalar_all_matrices() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -749,6 +792,7 @@ fn avx2_yuv444p16_rgba_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuva")]
 fn check_yuv444p16_u8_avx2_rgba_with_alpha_src_equivalence(
   width: usize,
   matrix: ColorMatrix,
@@ -789,6 +833,7 @@ fn check_yuv444p16_u8_avx2_rgba_with_alpha_src_equivalence(
   );
 }
 
+#[cfg(feature = "yuva")]
 #[test]
 fn avx2_yuva444p16_rgba_matches_scalar_all_matrices() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -808,6 +853,7 @@ fn avx2_yuva444p16_rgba_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuva")]
 #[test]
 fn avx2_yuva444p16_rgba_matches_scalar_widths_and_alpha() {
   if !std::arch::is_x86_feature_detected!("avx2") {
@@ -821,6 +867,7 @@ fn avx2_yuva444p16_rgba_matches_scalar_widths_and_alpha() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn avx2_p416_rgba_matches_scalar_all_matrices() {
   if !std::arch::is_x86_feature_detected!("avx2") {

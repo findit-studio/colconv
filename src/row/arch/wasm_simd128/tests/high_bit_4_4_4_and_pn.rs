@@ -1,7 +1,12 @@
-use super::{
-  super::*, high_bit_plane_wasm, interleave_uv_wasm, p_n_packed_plane, p010_uv_interleave,
-  p16_plane_wasm, planar_n_plane,
-};
+use super::{super::*, p16_plane_wasm};
+// Planar high-bit plane builder — used only by the `yuv-planar`-gated
+// planar-vs-simd128 equivalence helpers below.
+#[cfg(feature = "yuv-planar")]
+use super::planar_n_plane;
+// Semi-planar (`p_n` / `p_n_444`) plane / UV-interleave builders — used
+// only by the `yuv-semi-planar`-gated equivalence helpers / tests below.
+#[cfg(feature = "yuv-semi-planar")]
+use super::{high_bit_plane_wasm, interleave_uv_wasm, p_n_packed_plane, p010_uv_interleave};
 
 // ---- High-bit 4:2:0 RGBA equivalence (Ship 8 Tranche 5a) ----------
 //
@@ -10,6 +15,7 @@ use super::{
 // SIMD RGBA path produces byte-identical output to the scalar RGBA
 // reference.
 
+#[cfg(feature = "yuv-planar")]
 fn check_planar_u8_simd128_rgba_equivalence_n<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -38,6 +44,7 @@ fn check_planar_u8_simd128_rgba_equivalence_n<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_pn_u8_simd128_rgba_equivalence_n<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -59,6 +66,7 @@ fn check_pn_u8_simd128_rgba_equivalence_n<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv420p16_u8_simd128_rgba_equivalence(
   width: usize,
   matrix: ColorMatrix,
@@ -79,6 +87,7 @@ fn check_yuv420p16_u8_simd128_rgba_equivalence(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p16_u8_simd128_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p16_plane_wasm(width, 37);
   let u = p16_plane_wasm(width / 2, 53);
@@ -96,6 +105,7 @@ fn check_p16_u8_simd128_rgba_equivalence(width: usize, matrix: ColorMatrix, full
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv420p_n_rgba_matches_scalar_all_bits() {
   for m in [
@@ -115,6 +125,7 @@ fn simd128_yuv420p_n_rgba_matches_scalar_all_bits() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv420p_n_rgba_matches_scalar_tail_and_1920() {
   for w in [18usize, 30, 34, 1920, 1922] {
@@ -125,6 +136,7 @@ fn simd128_yuv420p_n_rgba_matches_scalar_tail_and_1920() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_pn_rgba_matches_scalar_all_bits() {
   for m in [
@@ -142,6 +154,7 @@ fn simd128_pn_rgba_matches_scalar_all_bits() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_pn_rgba_matches_scalar_tail_and_1920() {
   for w in [18usize, 30, 34, 1920, 1922] {
@@ -150,6 +163,7 @@ fn simd128_pn_rgba_matches_scalar_tail_and_1920() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv420p16_rgba_matches_scalar_all_matrices() {
   for m in [
@@ -169,6 +183,7 @@ fn simd128_yuv420p16_rgba_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_p016_rgba_matches_scalar_all_matrices() {
   for m in [
@@ -190,6 +205,7 @@ fn simd128_p016_rgba_matches_scalar_all_matrices() {
 
 // ---- High-bit 4:2:0 native-depth `u16` RGBA equivalence (Ship 8 Tranche 5b) ----
 
+#[cfg(feature = "yuv-planar")]
 fn check_planar_u16_simd128_rgba_equivalence_n<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -226,6 +242,7 @@ fn check_planar_u16_simd128_rgba_equivalence_n<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_pn_u16_simd128_rgba_equivalence_n<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -247,6 +264,7 @@ fn check_pn_u16_simd128_rgba_equivalence_n<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv420p16_u16_simd128_rgba_equivalence(
   width: usize,
   matrix: ColorMatrix,
@@ -275,6 +293,7 @@ fn check_yuv420p16_u16_simd128_rgba_equivalence(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p16_u16_simd128_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p16_plane_wasm(width, 37);
   let u = p16_plane_wasm(width / 2, 53);
@@ -292,6 +311,7 @@ fn check_p16_u16_simd128_rgba_equivalence(width: usize, matrix: ColorMatrix, ful
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv420p_n_rgba_u16_matches_scalar_all_bits() {
   for m in [
@@ -311,6 +331,7 @@ fn simd128_yuv420p_n_rgba_u16_matches_scalar_all_bits() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv420p_n_rgba_u16_matches_scalar_tail_and_1920() {
   for w in [18usize, 30, 34, 1920, 1922] {
@@ -321,6 +342,7 @@ fn simd128_yuv420p_n_rgba_u16_matches_scalar_tail_and_1920() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_pn_rgba_u16_matches_scalar_all_bits() {
   for m in [
@@ -338,6 +360,7 @@ fn simd128_pn_rgba_u16_matches_scalar_all_bits() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_pn_rgba_u16_matches_scalar_tail_and_1920() {
   for w in [18usize, 30, 34, 1920, 1922] {
@@ -346,6 +369,7 @@ fn simd128_pn_rgba_u16_matches_scalar_tail_and_1920() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv420p16_rgba_u16_matches_scalar_all_matrices() {
   for m in [
@@ -365,6 +389,7 @@ fn simd128_yuv420p16_rgba_u16_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_p016_rgba_u16_matches_scalar_all_matrices() {
   for m in [
@@ -386,6 +411,7 @@ fn simd128_p016_rgba_u16_matches_scalar_all_matrices() {
 
 // ---- Pn 4:4:4 (P410 / P412 / P416) wasm simd128 equivalence ---------
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p_n_444_u8_simd128_equivalence<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -407,6 +433,7 @@ fn check_p_n_444_u8_simd128_equivalence<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p_n_444_u16_simd128_equivalence<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -435,6 +462,7 @@ fn check_p_n_444_u16_simd128_equivalence<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p_n_444_16_u8_simd128_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p16_plane_wasm(width, 37);
   let u = p16_plane_wasm(width, 53);
@@ -452,6 +480,7 @@ fn check_p_n_444_16_u8_simd128_equivalence(width: usize, matrix: ColorMatrix, fu
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p_n_444_16_u16_simd128_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y = p16_plane_wasm(width, 37);
   let u = p16_plane_wasm(width, 53);
@@ -469,6 +498,7 @@ fn check_p_n_444_16_u16_simd128_equivalence(width: usize, matrix: ColorMatrix, f
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_p410_matches_scalar_all_matrices() {
   for m in [
@@ -486,6 +516,7 @@ fn simd128_p410_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_p412_matches_scalar_all_matrices() {
   for m in [ColorMatrix::Bt709, ColorMatrix::Bt2020Ncl] {
@@ -496,6 +527,7 @@ fn simd128_p412_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_p410_p412_matches_scalar_tail_widths() {
   for w in [1usize, 3, 7, 15, 17, 31, 33, 1920, 1921] {
@@ -505,6 +537,7 @@ fn simd128_p410_p412_matches_scalar_tail_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_p416_matches_scalar_all_matrices() {
   for m in [
@@ -522,6 +555,7 @@ fn simd128_p416_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_p416_matches_scalar_tail_widths() {
   for w in [1usize, 3, 7, 8, 9, 15, 16, 17, 31, 33, 1920, 1921] {
@@ -539,6 +573,7 @@ fn simd128_p416_matches_scalar_tail_widths() {
 // these on `target_feature = "simd128"`, so no per-test feature guard
 // is needed.)
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv444p_n_u8_simd128_rgba_equivalence<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -567,6 +602,7 @@ fn check_yuv444p_n_u8_simd128_rgba_equivalence<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_pn_444_u8_simd128_rgba_equivalence<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -588,6 +624,7 @@ fn check_pn_444_u8_simd128_rgba_equivalence<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv444p16_u8_simd128_rgba_equivalence(
   width: usize,
   matrix: ColorMatrix,
@@ -608,6 +645,7 @@ fn check_yuv444p16_u8_simd128_rgba_equivalence(
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_p_n_444_16_u8_simd128_rgba_equivalence(
   width: usize,
   matrix: ColorMatrix,
@@ -629,6 +667,7 @@ fn check_p_n_444_16_u8_simd128_rgba_equivalence(
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv444p_n_rgba_matches_scalar_all_bits() {
   for m in [
@@ -648,6 +687,7 @@ fn simd128_yuv444p_n_rgba_matches_scalar_all_bits() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv444p_n_rgba_matches_scalar_tail_and_widths() {
   for w in [17usize, 31, 47, 63, 1920, 1922] {
@@ -658,6 +698,7 @@ fn simd128_yuv444p_n_rgba_matches_scalar_tail_and_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_pn_444_rgba_matches_scalar_all_bits() {
   for m in [
@@ -675,6 +716,7 @@ fn simd128_pn_444_rgba_matches_scalar_all_bits() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_pn_444_rgba_matches_scalar_tail_and_widths() {
   for w in [17usize, 31, 47, 63, 1920, 1922] {
@@ -683,6 +725,7 @@ fn simd128_pn_444_rgba_matches_scalar_tail_and_widths() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv444p16_rgba_matches_scalar_all_matrices() {
   for m in [
@@ -702,6 +745,7 @@ fn simd128_yuv444p16_rgba_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuva")]
 fn check_yuv444p16_u8_simd128_rgba_with_alpha_src_equivalence(
   width: usize,
   matrix: ColorMatrix,
@@ -742,6 +786,7 @@ fn check_yuv444p16_u8_simd128_rgba_with_alpha_src_equivalence(
   );
 }
 
+#[cfg(feature = "yuva")]
 #[test]
 fn simd128_yuva444p16_rgba_matches_scalar_all_matrices() {
   for m in [
@@ -758,6 +803,7 @@ fn simd128_yuva444p16_rgba_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuva")]
 #[test]
 fn simd128_yuva444p16_rgba_matches_scalar_widths_and_alpha() {
   for w in [16usize, 17, 31, 47, 63, 1920, 1922] {
@@ -768,6 +814,7 @@ fn simd128_yuva444p16_rgba_matches_scalar_widths_and_alpha() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_p416_rgba_matches_scalar_all_matrices() {
   for m in [

@@ -1,5 +1,6 @@
 use super::super::*;
 
+#[cfg(feature = "yuv-planar")]
 fn check_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let u: std::vec::Vec<u8> = (0..width / 2)
@@ -19,6 +20,7 @@ fn check_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   assert_eq!(rgb_scalar, rgb_wasm, "simd128 diverges from scalar");
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_matches_scalar_all_matrices_16() {
   for m in [
@@ -35,6 +37,7 @@ fn simd128_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_matches_scalar_tail_widths() {
   for w in [18usize, 30, 34, 1922] {
@@ -48,6 +51,7 @@ fn simd128_matches_scalar_tail_widths() {
 // dispatcher so the wasm `write_rgba_16` swizzle (4-mask + 4
 // store) is exercised on every wasm32+simd128 target.
 
+#[cfg(feature = "yuv-planar")]
 fn check_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let u: std::vec::Vec<u8> = (0..width / 2)
@@ -79,6 +83,7 @@ fn check_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_rgba_matches_scalar_all_matrices_16() {
   for m in [
@@ -95,6 +100,7 @@ fn simd128_rgba_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_rgba_matches_scalar_tail_widths() {
   for w in [18usize, 30, 34, 1922] {
@@ -104,6 +110,7 @@ fn simd128_rgba_matches_scalar_tail_widths() {
 
 // ---- nv12_to_rgb_row equivalence ------------------------------------
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv12_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let uv: std::vec::Vec<u8> = (0..width / 2)
@@ -119,6 +126,7 @@ fn check_nv12_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   assert_eq!(rgb_scalar, rgb_wasm, "simd128 NV12 ≠ scalar");
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_nv12_matches_scalar_all_matrices_16() {
   for m in [
@@ -135,6 +143,7 @@ fn simd128_nv12_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_nv12_matches_scalar_widths() {
   for w in [32usize, 1920, 18, 30, 34, 1922] {
@@ -144,6 +153,7 @@ fn simd128_nv12_matches_scalar_widths() {
 
 // ---- nv24_to_rgb_row / nv42_to_rgb_row equivalence ------------------
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv24_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let uv: std::vec::Vec<u8> = (0..width)
@@ -162,6 +172,7 @@ fn check_nv24_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv42_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let vu: std::vec::Vec<u8> = (0..width)
@@ -180,6 +191,7 @@ fn check_nv42_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_nv24_matches_scalar_all_matrices_16() {
   for m in [
@@ -196,6 +208,7 @@ fn simd128_nv24_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_nv24_matches_scalar_widths() {
   for w in [1usize, 3, 15, 17, 32, 33, 1920, 1921] {
@@ -203,6 +216,7 @@ fn simd128_nv24_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_nv42_matches_scalar_all_matrices_16() {
   for m in [
@@ -219,6 +233,7 @@ fn simd128_nv42_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_nv42_matches_scalar_widths() {
   for w in [1usize, 3, 15, 17, 32, 33, 1920, 1921] {
@@ -228,6 +243,7 @@ fn simd128_nv42_matches_scalar_widths() {
 
 // ---- nv24_to_rgba_row / nv42_to_rgba_row equivalence ----------------
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv24_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let uv: std::vec::Vec<u8> = (0..width)
@@ -256,6 +272,7 @@ fn check_nv24_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bo
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv42_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let vu: std::vec::Vec<u8> = (0..width)
@@ -284,6 +301,7 @@ fn check_nv42_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bo
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_nv24_rgba_matches_scalar_all_matrices_16() {
   for m in [
@@ -300,6 +318,7 @@ fn simd128_nv24_rgba_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_nv24_rgba_matches_scalar_widths() {
   for w in [1usize, 3, 15, 17, 32, 33, 1920, 1921] {
@@ -307,6 +326,7 @@ fn simd128_nv24_rgba_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_nv42_rgba_matches_scalar_all_matrices_16() {
   for m in [
@@ -323,6 +343,7 @@ fn simd128_nv42_rgba_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn simd128_nv42_rgba_matches_scalar_widths() {
   for w in [1usize, 3, 15, 17, 32, 33, 1920, 1921] {
@@ -332,6 +353,7 @@ fn simd128_nv42_rgba_matches_scalar_widths() {
 
 // ---- yuv_444_to_rgb_row equivalence ---------------------------------
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv_444_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let u: std::vec::Vec<u8> = (0..width).map(|i| ((i * 53 + 23) & 0xFF) as u8).collect();
@@ -349,6 +371,7 @@ fn check_yuv_444_equivalence(width: usize, matrix: ColorMatrix, full_range: bool
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv_444_matches_scalar_all_matrices_16() {
   for m in [
@@ -365,6 +388,7 @@ fn simd128_yuv_444_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv_444_matches_scalar_widths() {
   // Odd widths validate the 4:4:4 no-parity contract.
@@ -375,6 +399,7 @@ fn simd128_yuv_444_matches_scalar_widths() {
 
 // ---- yuv_444_to_rgba_row equivalence --------------------------------
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv_444_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let u: std::vec::Vec<u8> = (0..width).map(|i| ((i * 53 + 23) & 0xFF) as u8).collect();
@@ -402,6 +427,7 @@ fn check_yuv_444_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range:
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv_444_rgba_matches_scalar_all_matrices_16() {
   for m in [
@@ -418,6 +444,7 @@ fn simd128_yuv_444_rgba_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv_444_rgba_matches_scalar_widths() {
   for w in [1usize, 3, 15, 17, 32, 33, 1920, 1921] {
@@ -425,6 +452,7 @@ fn simd128_yuv_444_rgba_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "yuva")]
 fn check_yuv_444_rgba_with_alpha_src_equivalence(
   width: usize,
   matrix: ColorMatrix,
@@ -468,6 +496,7 @@ fn check_yuv_444_rgba_with_alpha_src_equivalence(
   );
 }
 
+#[cfg(feature = "yuva")]
 #[test]
 fn simd128_yuva444p_rgba_matches_scalar_all_matrices() {
   for m in [
@@ -484,6 +513,7 @@ fn simd128_yuva444p_rgba_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuva")]
 #[test]
 fn simd128_yuva444p_rgba_matches_scalar_widths_and_alpha() {
   for w in [16usize, 17, 31, 47, 1920, 1922] {
@@ -496,6 +526,7 @@ fn simd128_yuva444p_rgba_matches_scalar_widths_and_alpha() {
 
 // ---- yuv_444p_n<BITS> + yuv_444p16 equivalence ----------------------
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv_444p_n_equivalence<const BITS: u32>(
   width: usize,
   matrix: ColorMatrix,
@@ -548,6 +579,7 @@ fn check_yuv_444p_n_equivalence<const BITS: u32>(
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv_444p9_matches_scalar_all_matrices() {
   for m in [ColorMatrix::Bt709, ColorMatrix::Bt2020Ncl] {
@@ -557,6 +589,7 @@ fn simd128_yuv_444p9_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv_444p10_matches_scalar_all_matrices() {
   for m in [
@@ -573,6 +606,7 @@ fn simd128_yuv_444p10_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv_444p12_matches_scalar_all_matrices() {
   for m in [ColorMatrix::Bt709, ColorMatrix::Bt2020Ncl] {
@@ -582,6 +616,7 @@ fn simd128_yuv_444p12_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv_444p14_matches_scalar_all_matrices() {
   for m in [ColorMatrix::Bt709, ColorMatrix::Bt2020Ncl] {
@@ -591,6 +626,7 @@ fn simd128_yuv_444p14_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv_444p_n_matches_scalar_widths() {
   for w in [1usize, 3, 15, 17, 32, 33, 1920, 1921] {
@@ -598,6 +634,7 @@ fn simd128_yuv_444p_n_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv_444p16_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u16> = (0..width).map(|i| (i * 2027 + 11) as u16).collect();
   let u: std::vec::Vec<u16> = (0..width).map(|i| (i * 2671 + 23) as u16).collect();
@@ -614,6 +651,7 @@ fn check_yuv_444p16_equivalence(width: usize, matrix: ColorMatrix, full_range: b
   // against beyond the direct passthrough.
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv_444p16_matches_scalar_all_matrices() {
   for m in [
@@ -630,6 +668,7 @@ fn simd128_yuv_444p16_matches_scalar_all_matrices() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn simd128_yuv_444p16_matches_scalar_widths() {
   for w in [1usize, 3, 15, 17, 32, 33, 1920, 1921] {
@@ -639,6 +678,7 @@ fn simd128_yuv_444p16_matches_scalar_widths() {
 
 // ---- bgr_rgb_swap_row equivalence -----------------------------------
 
+#[cfg(feature = "rgb")]
 fn check_swap_equivalence(width: usize) {
   let input: std::vec::Vec<u8> = (0..width * 3)
     .map(|i| ((i * 17 + 41) & 0xFF) as u8)
@@ -653,6 +693,7 @@ fn check_swap_equivalence(width: usize) {
   assert_eq!(out_scalar, out_wasm, "simd128 swap diverges from scalar");
 }
 
+#[cfg(feature = "rgb")]
 #[test]
 fn simd128_swap_matches_scalar() {
   for w in [1usize, 15, 16, 17, 31, 32, 1920, 1921] {
@@ -662,6 +703,7 @@ fn simd128_swap_matches_scalar() {
 
 // ---- nv21_to_rgb_row equivalence ------------------------------------
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv21_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let vu: std::vec::Vec<u8> = (0..width / 2)
@@ -680,6 +722,7 @@ fn check_nv21_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv21_matches_nv12_swapped(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let uv: std::vec::Vec<u8> = (0..width / 2)
@@ -703,6 +746,7 @@ fn check_nv21_matches_nv12_swapped(width: usize, matrix: ColorMatrix, full_range
   );
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn nv21_wasm_matches_scalar_all_matrices_16() {
   for m in [
@@ -719,6 +763,7 @@ fn nv21_wasm_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn nv21_wasm_matches_scalar_widths() {
   for w in [32usize, 1920, 18, 30, 34, 1922] {
@@ -726,6 +771,7 @@ fn nv21_wasm_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn nv21_wasm_matches_nv12_swapped() {
   for w in [16usize, 30, 64, 1920] {
@@ -736,6 +782,7 @@ fn nv21_wasm_matches_nv12_swapped() {
 
 // ---- nv12_to_rgba_row / nv21_to_rgba_row equivalence ----------------
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv12_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let uv: std::vec::Vec<u8> = (0..width / 2)
@@ -764,6 +811,7 @@ fn check_nv12_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bo
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 fn check_nv21_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let vu: std::vec::Vec<u8> = (0..width / 2)
@@ -792,6 +840,7 @@ fn check_nv21_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bo
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn nv12_wasm_rgba_matches_scalar_all_matrices_16() {
   for m in [
@@ -808,6 +857,7 @@ fn nv12_wasm_rgba_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn nv12_wasm_rgba_matches_scalar_widths() {
   for w in [18usize, 30, 34, 1920, 1922] {
@@ -815,6 +865,7 @@ fn nv12_wasm_rgba_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn nv21_wasm_rgba_matches_scalar_all_matrices_16() {
   for m in [
@@ -831,6 +882,7 @@ fn nv21_wasm_rgba_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-semi-planar")]
 #[test]
 fn nv21_wasm_rgba_matches_scalar_widths() {
   for w in [18usize, 30, 34, 1920, 1922] {
@@ -844,6 +896,7 @@ fn nv21_wasm_rgba_matches_scalar_widths() {
 // 4× chroma fan-out via two `i8x16_shuffle` calls per channel with
 // compile-time byte-index masks. Width must be a multiple of 4.
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv_410_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let cw = width / 4;
@@ -863,6 +916,7 @@ fn check_yuv_410_equivalence(width: usize, matrix: ColorMatrix, full_range: bool
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv_410_simd128_matches_scalar_all_matrices_16() {
   for m in [
@@ -879,6 +933,7 @@ fn yuv_410_simd128_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv_410_simd128_matches_scalar_widths() {
   // Cover: pure-scalar (< 16), one SIMD iter (16), SIMD + tail (20, 28),
@@ -889,6 +944,7 @@ fn yuv_410_simd128_matches_scalar_widths() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv_410_simd128_matches_scalar_bt2020() {
   for &w in &[16usize, 20, 64, 1920] {
@@ -897,6 +953,7 @@ fn yuv_410_simd128_matches_scalar_bt2020() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv_410_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   let y: std::vec::Vec<u8> = (0..width).map(|i| ((i * 37 + 11) & 0xFF) as u8).collect();
   let cw = width / 4;
@@ -920,6 +977,7 @@ fn check_yuv_410_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range:
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv_410_simd128_rgba_matches_scalar_widths() {
   for &w in &[4usize, 8, 16, 20, 32, 64, 128] {
@@ -935,6 +993,7 @@ fn yuv_410_simd128_rgba_matches_scalar_widths() {
 // regardless of what tier the dispatcher would pick on the current
 // runner.
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv411_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   // FFmpeg `AV_PIX_FMT_YUV411P`: chroma row = `width.div_ceil(4)`.
   assert!(width > 0);
@@ -967,6 +1026,7 @@ fn check_yuv411_equivalence(width: usize, matrix: ColorMatrix, full_range: bool)
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "wasm SIMD intrinsics unsupported by Miri")]
 fn wasm_yuv411_matches_scalar_all_matrices_16() {
@@ -985,6 +1045,7 @@ fn wasm_yuv411_matches_scalar_all_matrices_16() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "wasm SIMD intrinsics unsupported by Miri")]
 fn wasm_yuv411_matches_scalar_tail_widths() {
@@ -995,12 +1056,14 @@ fn wasm_yuv411_matches_scalar_tail_widths() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "wasm SIMD intrinsics unsupported by Miri")]
 fn wasm_yuv411_matches_scalar_width_1920() {
   check_yuv411_equivalence(1920, ColorMatrix::Bt709, false);
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "wasm SIMD intrinsics unsupported by Miri")]
 fn wasm_yuv411_matches_scalar_non_4_aligned_widths() {
@@ -1014,6 +1077,7 @@ fn wasm_yuv411_matches_scalar_non_4_aligned_widths() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "wasm SIMD intrinsics unsupported by Miri")]
 fn wasm_yuv411_rgba_matches_scalar_non_4_aligned_widths() {
@@ -1022,6 +1086,7 @@ fn wasm_yuv411_rgba_matches_scalar_non_4_aligned_widths() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 fn check_yuv411_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: bool) {
   assert!(width > 0);
   let chroma_w = width.div_ceil(4);
@@ -1046,6 +1111,7 @@ fn check_yuv411_rgba_equivalence(width: usize, matrix: ColorMatrix, full_range: 
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(miri, ignore = "wasm SIMD intrinsics unsupported by Miri")]
 fn wasm_yuv411_rgba_matches_scalar_widths() {

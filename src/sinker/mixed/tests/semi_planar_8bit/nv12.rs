@@ -126,6 +126,7 @@ fn nv12_with_simd_false_matches_with_simd_true() {
 // the fallible API these surface as
 // `Err(MixedSinkerError::Insufficient*Buffer)` / `InsufficientHsvPlane`.
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -143,6 +144,7 @@ fn attach_short_rgb_returns_err() {
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -160,6 +162,7 @@ fn attach_short_luma_returns_err() {
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -183,6 +186,7 @@ fn attach_short_hsv_returns_err() {
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -212,6 +216,7 @@ fn taller_frame_returns_err_before_any_row_written() {
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -267,6 +272,7 @@ fn nv12_width_mismatch_returns_err() {
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -319,6 +325,7 @@ fn nv12_shorter_frame_returns_err_before_any_row_written() {
 
 /// Sanity check that an Infallible sink (compile-time proof of
 /// no-error) compiles and runs. Mirrors the trait-docs pattern.
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -356,6 +363,7 @@ fn infallible_sink_compiles_and_runs() {
 // must return a specific error variant, not panic — verified here
 // by constructing rows manually and calling `process`.
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -406,6 +414,7 @@ fn nv12_odd_width_sink_returns_err_at_begin_frame() {
   );
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -580,6 +589,7 @@ fn nv12_rgba_simd_matches_scalar_with_random_yuv() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,

@@ -5,6 +5,10 @@
 //! `solid_yuv420p_frame` — into this module so the per-format
 //! submodules can pick them up via their own `use super::*;`.
 
+// The planar `solid_yuv420p_frame` oracle is only reachable when the
+// planar family is compiled; the NV submodules use it for cross-format
+// parity tests gated the same way.
+#[cfg(feature = "yuv-planar")]
 #[allow(unused_imports)]
 pub(super) use super::yuv420p_8bit::solid_yuv420p_frame;
 #[allow(unused_imports)]

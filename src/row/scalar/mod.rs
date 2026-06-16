@@ -105,12 +105,11 @@ mod rgb_expand;
 mod semi_planar_8bit;
 // `subsampled_high_bit_pn` provides the scalar reference kernels for
 // both the 4:2:0 (P010 / P012 / P016) and 4:4:4 (P410 / P412 / P416)
-// families. The 4:4:4 helpers are consumed by `dispatch::pn`
-// (yuv-semi-planar-gated, no yuv-planar dep), so a single
-// `yuv-semi-planar` gate keeps them reachable. The 4:2:0 helpers are
-// flagged unused under yuv-semi-planar alone (their dispatchers live
-// under the yuv-planar-gated `dispatch::yuv420` parent) — see the
-// per-fn cfg in `subsampled_high_bit_pn.rs` itself.
+// families. All are semi-planar P-formats, so a single
+// `yuv-semi-planar` module gate keeps the whole file reachable; the
+// per-fn `any(yuv-planar, yuv-semi-planar)` gates on the 4:2:0 helpers
+// also let them serve the `yuv-planar` planar oracles that compare
+// against them.
 #[cfg(feature = "yuv-semi-planar")]
 mod subsampled_high_bit_pn;
 #[cfg(feature = "v210")]
@@ -259,12 +258,13 @@ pub(crate) use ya8::*;
 pub(crate) use ya16::*;
 #[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_8bit::*;
-// The file is compiled whenever either family is on, but its public
-// items are gated more tightly: `yuv_{420,444}p16_to_*` need
-// `yuv-planar`, and `p16_to_*` needs both `yuv-planar` and
-// `yuv-semi-planar`. So the re-export only carries items when
-// `yuv-planar` is enabled.
-#[cfg(feature = "yuv-planar")]
+// The file is compiled whenever either family is on. Its public items
+// are gated per-family: `yuv_{420,444}p16_to_*` need `yuv-planar`,
+// while the P016 semi-planar `p16_to_*` kernels need `yuv-semi-planar`.
+// Re-export under the same union so a `yuv-semi-planar`-solo build
+// still reaches the `p16_to_*` glob (the planar items simply don't
+// exist there, so the glob carries only what is compiled).
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 pub(crate) use yuv_planar_16bit::*;
 #[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_high_bit::*;

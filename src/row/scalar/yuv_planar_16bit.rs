@@ -1,9 +1,10 @@
 // `super::*` brings in shared scalar helpers (`Coefficients`,
-// `q15_chroma*`, `chroma_bias`, …). Every function in this file is
-// cfg-gated on `yuv-planar` or `all(yuv-planar, yuv-semi-planar)`, so
-// under `yuv-semi-planar` alone the file body collapses and these
-// imports become unused.
-#[cfg(feature = "yuv-planar")]
+// `q15_chroma*`, `chroma_bias`, …). The planar 16-bit kernels are
+// `yuv-planar`-gated; the P016 semi-planar kernels are
+// `yuv-semi-planar`-gated. Either family pulls in the shared helpers,
+// so the import follows the same union as the module gate in
+// `scalar::mod`.
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 use super::{load_u16, *};
 
 // ---- 16-bit YUV 4:2:0 → RGB (parallel kernel family) -------------------
@@ -701,7 +702,7 @@ pub(crate) fn yuv_444p16_to_rgb_or_rgba_u16_row<
 ///   `rgb_out.len() >= 3 * width`.
 ///
 /// Thin wrapper over [`p16_to_rgb_or_rgba_row`] with `ALPHA = false`.
-#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg(feature = "yuv-semi-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn p16_to_rgb_row<const BE: bool>(
   y: &[u16],
@@ -723,7 +724,7 @@ pub(crate) fn p16_to_rgb_row<const BE: bool>(
 // Scalar prep for Ship 8 Tranche 5a: the public dispatcher
 // `row::p016_to_rgba_row` lands in the follow-up SIMD/dispatcher PR.
 // Until then this thin wrapper has no caller.
-#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg(feature = "yuv-semi-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn p16_to_rgba_row<const BE: bool>(
   y: &[u16],
@@ -738,7 +739,7 @@ pub(crate) fn p16_to_rgba_row<const BE: bool>(
 
 /// Shared P016 → 8-bit RGB / RGBA kernel. `ALPHA = false` emits 3 bpp;
 /// `ALPHA = true` emits 4 bpp with constant `0xFF` alpha.
-#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg(feature = "yuv-semi-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn p16_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   y: &[u16],
@@ -795,7 +796,7 @@ pub(crate) fn p16_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
 /// runs in i64 (same reasoning as [`yuv_420p16_to_rgb_u16_row`]).
 ///
 /// Thin wrapper over [`p16_to_rgb_or_rgba_u16_row`] with `ALPHA = false`.
-#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg(feature = "yuv-semi-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn p16_to_rgb_u16_row<const BE: bool>(
   y: &[u16],
@@ -816,7 +817,7 @@ pub(crate) fn p16_to_rgb_u16_row<const BE: bool>(
 // Scalar prep for Ship 8 Tranche 5b: the public dispatcher
 // `row::p016_to_rgba_u16_row` lands in the follow-up SIMD/dispatcher
 // PR. Until then this thin wrapper has no caller.
-#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg(feature = "yuv-semi-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn p16_to_rgba_u16_row<const BE: bool>(
   y: &[u16],
@@ -834,7 +835,7 @@ pub(crate) fn p16_to_rgba_u16_row<const BE: bool>(
 /// alpha.
 ///
 /// Uses i64 chroma multiply (same rationale as [`yuv_420p16_to_rgb_or_rgba_u16_row`]).
-#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg(feature = "yuv-semi-planar")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
   y: &[u16],

@@ -1,21 +1,36 @@
-use super::{
-  super::{
-    packed_yuv_8bit::{solid_uyvy422_frame, solid_yuyv422_frame, solid_yvyu422_frame},
-    planar_other_8bit_9bit::{solid_yuv422p_frame, solid_yuv440p_frame, solid_yuv444p_frame},
-    v30x::solid_v30x_frame,
-    v210::solid_v210_frame,
-    v410::solid_v410_frame,
-    vuyx::solid_vuyx_frame,
-    xv36::solid_xv36_frame,
-    y210::solid_y210_frame,
-    y212::solid_y212_frame,
-    y216::solid_y216_frame,
-  },
-  nv12::solid_nv12_frame,
-  nv16::solid_nv16_frame,
-  nv21::solid_nv21_frame,
-  *,
+// Cross-family fixture oracles for the `strategy_a_*_for_all_wired_families`
+// tests below — each lives in its own per-family-gated module, so this
+// import (and those two tests) only compiles when every wired family is on.
+#[cfg(all(
+  feature = "yuv-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "v210",
+  feature = "y2xx",
+))]
+use super::super::{
+  packed_yuv_8bit::{solid_uyvy422_frame, solid_yuyv422_frame, solid_yvyu422_frame},
+  planar_other_8bit_9bit::{solid_yuv422p_frame, solid_yuv440p_frame, solid_yuv444p_frame},
+  v30x::solid_v30x_frame,
+  v210::solid_v210_frame,
+  v410::solid_v410_frame,
+  vuyx::solid_vuyx_frame,
+  xv36::solid_xv36_frame,
+  y210::solid_y210_frame,
+  y212::solid_y212_frame,
+  y216::solid_y216_frame,
 };
+// `solid_nv{12,16,21}_frame` feed the cross-family `strategy_a_*` tests
+// only, so they ride the same all-wired-families gate as the import above.
+use super::*;
+#[cfg(all(
+  feature = "yuv-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "v210",
+  feature = "y2xx",
+))]
+use super::{nv12::solid_nv12_frame, nv16::solid_nv16_frame, nv21::solid_nv21_frame};
 
 // ---- NV24 MixedSinker ---------------------------------------------------
 //
@@ -514,6 +529,13 @@ fn nv42_rgba_simd_matches_scalar_with_random_yuv() {
 // the same gray input and asserts every RGBA sample equals the RGB
 // sample with alpha = 0xFF — proving the fan-out shape never
 // diverges from the kernel output.
+#[cfg(all(
+  feature = "yuv-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "v210",
+  feature = "y2xx",
+))]
 #[test]
 #[cfg_attr(
   miri,
@@ -844,6 +866,13 @@ fn strategy_a_rgb_and_rgba_byte_identical_for_all_wired_families() {
 // this with Y210 / Y212 / Y216 / Yuv420p10 etc. Initially V210 is the
 // only entry — it is the first packed-source u16 sinker family wired
 // in Ship 11a.
+#[cfg(all(
+  feature = "yuv-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "v210",
+  feature = "y2xx",
+))]
 #[test]
 #[cfg_attr(
   miri,

@@ -109,7 +109,11 @@ pub(super) mod ya16;
 pub(super) mod ya8;
 #[cfg(feature = "yuv-planar")]
 pub(super) mod yuv411p;
-#[cfg(feature = "yuv-planar")]
+// `yuv420` hosts both the planar 4:2:0 dispatchers (`yuv-planar`) and
+// the semi-planar P010/P012/P016 dispatchers (`yuv-semi-planar`); the
+// per-submodule gates inside `yuv420/mod` keep each family separable,
+// so the parent compiles whenever either family is on.
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 pub(super) mod yuv420;
 #[cfg(feature = "yuv-planar")]
 pub(super) mod yuv444;
