@@ -230,6 +230,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, X2Rgb10<BE>, R> {
         rgba_u16,
         luma_u16,
         hsv,
+        rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
         idx,
       )? {
         return Ok(());
@@ -517,6 +518,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, X2Bgr10<BE>, R> {
         rgba_u16,
         luma_u16,
         hsv,
+        rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
         idx,
       )? {
         return Ok(());

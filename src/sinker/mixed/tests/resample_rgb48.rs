@@ -336,3 +336,40 @@ fn rgb48_out_of_sequence_first_row_rejected_before_allocation() {
     "scratch grown for a rejected row"
   );
 }
+
+#[test]
+fn rgb48_rejected_first_row_does_not_poison_output_retry() {
+  // A rejected out-of-sequence FIRST row must store no frozen-output
+  // snapshot (the split high-bit packed-RGB preflight rejects the OOS
+  // first row before its freeze), so retrying row 0 after attaching a new
+  // output succeeds instead of tripping ResampleOutputsChanged.
+  let host = packed_frame_u16();
+  let wire = as_le_u16(&host);
+  let mut rgb_u16 = vec![0u16; OUT * OUT * 3];
+  let mut sink =
+    MixedSinker::<Rgb48, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+      .unwrap()
+      .with_rgb_u16(&mut rgb_u16)
+      .unwrap();
+  sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+  let err = sink
+    .process(Rgb48Row::new(
+      &wire[3 * SRC * 3..4 * SRC * 3],
+      3,
+      ColorMatrix::Bt709,
+      true,
+    ))
+    .unwrap_err();
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(_))
+    ),
+    "expected OutOfSequenceRow, got {err:?}"
+  );
+  let mut luma = vec![0u8; OUT * OUT];
+  sink.set_luma(&mut luma).unwrap();
+  sink
+    .process(Rgb48Row::new(&wire[..SRC * 3], 0, ColorMatrix::Bt709, true))
+    .expect("row 0 must succeed after a rejected out-of-sequence first row");
+}

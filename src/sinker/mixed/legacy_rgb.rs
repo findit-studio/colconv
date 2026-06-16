@@ -449,6 +449,10 @@ macro_rules! impl_legacy_rgb_sinker {
             rgba_u16,
             luma_u16,
             hsv,
+            // Legacy 16-bit RGB bins its native 5/6/5 channels through the
+            // u8 `packed_rgb_resample_stream`, so the sequence counter is
+            // that u8 stream's (the row index is element-type-agnostic).
+            rgb_stream.as_ref().map_or(0, |s| s.next_y()),
             idx,
           )? {
             return Ok(());

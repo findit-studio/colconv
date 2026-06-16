@@ -301,6 +301,51 @@ fn nv12_resample_out_of_order_row_rejected() {
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
+fn nv12_rejected_first_row_does_not_poison_output_retry() {
+  // A rejected out-of-sequence FIRST row must store no frozen-output
+  // snapshot, so retrying row 0 after attaching a NEW output succeeds
+  // instead of tripping ResampleOutputsChanged (the shared
+  // `planar_dual_resample` semi-planar path).
+  let y = y_ramp();
+  let (u, v) = uv_planes(SRC / 2, SRC / 2);
+  let uv = interleave(&u, &v, false);
+  let mut luma = vec![0u8; OUT * OUT];
+  let mut sink =
+    MixedSinker::<Nv12, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap();
+  let err = sink
+    .process(Nv12Row::new(
+      &y[3 * SRC..4 * SRC],
+      &uv[SRC..2 * SRC],
+      3,
+      ColorMatrix::Bt601,
+      true,
+    ))
+    .unwrap_err();
+  assert!(matches!(
+    err,
+    MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(_))
+  ));
+  let mut rgb = vec![0u8; OUT * OUT * 3];
+  sink.set_rgb(&mut rgb).unwrap();
+  sink
+    .process(Nv12Row::new(
+      &y[0..SRC],
+      &uv[0..SRC],
+      0,
+      ColorMatrix::Bt601,
+      true,
+    ))
+    .expect("row 0 must succeed after a rejected out-of-sequence first row");
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
 fn nv12_resample_mid_frame_output_change_rejected() {
   let y = y_ramp();
   let (u, v) = uv_planes(SRC / 2, SRC / 2);

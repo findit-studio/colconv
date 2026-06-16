@@ -3665,13 +3665,24 @@ pub(super) fn source_luma_u16_scratch<'s>(
 /// source-row conversion and the stream so a sink with no attached
 /// outputs stays the documented legal no-op (it neither allocates nor
 /// enforces sequencing) while a mid-frame output-set change is still
-/// caught. Mirrors the YUV resample path's freeze-then-conditional
-/// ordering.
+/// caught.
+///
+/// `stream_next_y` is the companion [`packed_rgb_resample_stream`]'s row
+/// counter (`rgb_stream.next_y()`, or 0 when not yet created). It lets the
+/// freeze enforce the conditional-ordering contract the single-function
+/// resample tails use ([`packed_rgba_resample`]): a no-output call returns
+/// before the freeze, and an out-of-sequence FIRST row (nothing frozen
+/// yet) is rejected before the freeze, so a rejected first row stores no
+/// snapshot that would poison a retry. A later row's sequence check stays
+/// in the companion `*_stream` (after the freeze), so a mid-frame
+/// output-set change trips `ResampleOutputsChanged` rather than being
+/// masked by a freshly-attached stream's row-0 sequence mismatch.
 #[cfg(any(feature = "rgb", feature = "gbr", feature = "bayer"))]
 #[cfg_attr(
   not(any(feature = "rgb", feature = "gbr", feature = "bayer")),
   allow(dead_code)
 )]
+#[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgb_resample_preflight(
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &Option<&mut [u8]>,
@@ -3679,8 +3690,19 @@ pub(super) fn packed_rgb_resample_preflight(
   luma: &Option<&mut [u8]>,
   luma_u16: &Option<&mut [u16]>,
   hsv: &mut Option<HsvFrameMut<'_>>,
+  stream_next_y: usize,
   idx: usize,
 ) -> Result<bool, MixedSinkerError> {
+  let has_output =
+    rgb.is_some() || rgba.is_some() || luma.is_some() || luma_u16.is_some() || hsv.is_some();
+  if !has_output {
+    return Ok(false);
+  }
+  if resample_outputs.is_none() && stream_next_y != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(stream_next_y, idx),
+    )));
+  }
   frozen_outputs_check(
     resample_outputs,
     luma,
@@ -3698,7 +3720,7 @@ pub(super) fn packed_rgb_resample_preflight(
     &None,
     idx,
   )?;
-  Ok(rgb.is_some() || rgba.is_some() || luma.is_some() || luma_u16.is_some() || hsv.is_some())
+  Ok(true)
 }
 
 /// Fused downscale for [`MixedSinker<Rgb24, R>`]: the packed source
@@ -3895,13 +3917,16 @@ pub(super) fn source_rgb_u16_scratch<'s>(
 /// Freezes the output configuration for a resampled high-bit
 /// packed-RGB frame — the full u8 **and** u16 output set — and reports
 /// whether any output is attached. Mirrors
-/// [`packed_rgb_resample_preflight`], extended with the native-depth
+/// [`packed_rgb_resample_preflight`] (including its conditional ordering —
+/// see there for `stream_next_y`), extended with the native-depth
 /// `rgb_u16` / `rgba_u16` / `luma_u16` channels.
 ///
 /// The legacy 16-bit packed-RGB family (`rgb-legacy`) shares this
 /// freeze: its output set is exactly `rgb` / `rgba` / `rgb_u16` /
 /// `rgba_u16` / `luma` / `luma_u16` / `hsv`, the same one the high-bit
-/// path freezes.
+/// path freezes. (It bins its native 5/6/5 channels through the u8
+/// [`packed_rgb_resample_stream`], so its `stream_next_y` is that u8
+/// stream's counter — element type is irrelevant to the row index.)
 #[cfg(any(feature = "rgb", feature = "gbr", feature = "rgb-legacy"))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgb_u16_resample_preflight(
@@ -3913,8 +3938,24 @@ pub(super) fn packed_rgb_u16_resample_preflight(
   rgba_u16: &Option<&mut [u16]>,
   luma_u16: &Option<&mut [u16]>,
   hsv: &mut Option<HsvFrameMut<'_>>,
+  stream_next_y: usize,
   idx: usize,
 ) -> Result<bool, MixedSinkerError> {
+  let has_output = rgb.is_some()
+    || rgba.is_some()
+    || luma.is_some()
+    || rgb_u16.is_some()
+    || rgba_u16.is_some()
+    || luma_u16.is_some()
+    || hsv.is_some();
+  if !has_output {
+    return Ok(false);
+  }
+  if resample_outputs.is_none() && stream_next_y != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(stream_next_y, idx),
+    )));
+  }
   frozen_outputs_check(
     resample_outputs,
     luma,
@@ -3932,15 +3973,7 @@ pub(super) fn packed_rgb_u16_resample_preflight(
     &None,
     idx,
   )?;
-  Ok(
-    rgb.is_some()
-      || rgba.is_some()
-      || luma.is_some()
-      || rgb_u16.is_some()
-      || rgba_u16.is_some()
-      || luma_u16.is_some()
-      || hsv.is_some(),
-  )
+  Ok(true)
 }
 
 /// Lazily creates the 3-channel `u16` area stream and checks strict row
@@ -6145,8 +6178,32 @@ pub(super) fn packed_rgb_f32_resample_preflight(
   rgb_f16: &Option<&mut [half::f16]>,
   rgba_f16: &Option<&mut [half::f16]>,
   hsv: &mut Option<HsvFrameMut<'_>>,
+  stream_next_y: usize,
   idx: usize,
 ) -> Result<bool, MixedSinkerError> {
+  // Conditional ordering — see `packed_rgb_resample_preflight` for the
+  // `stream_next_y` rationale (no-output and out-of-sequence-first-row
+  // rejection both precede the freeze; later-row sequencing stays in the
+  // companion `packed_rgb_f32_resample_stream`).
+  let has_output = rgb.is_some()
+    || rgba.is_some()
+    || luma.is_some()
+    || rgb_u16.is_some()
+    || rgba_u16.is_some()
+    || luma_u16.is_some()
+    || rgb_f32.is_some()
+    || rgba_f32.is_some()
+    || rgb_f16.is_some()
+    || rgba_f16.is_some()
+    || hsv.is_some();
+  if !has_output {
+    return Ok(false);
+  }
+  if resample_outputs.is_none() && stream_next_y != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(stream_next_y, idx),
+    )));
+  }
   frozen_outputs_check(
     resample_outputs,
     luma,
@@ -6164,19 +6221,7 @@ pub(super) fn packed_rgb_f32_resample_preflight(
     &None,
     idx,
   )?;
-  Ok(
-    rgb.is_some()
-      || rgba.is_some()
-      || luma.is_some()
-      || rgb_u16.is_some()
-      || rgba_u16.is_some()
-      || luma_u16.is_some()
-      || rgb_f32.is_some()
-      || rgba_f32.is_some()
-      || rgb_f16.is_some()
-      || rgba_f16.is_some()
-      || hsv.is_some(),
-  )
+  Ok(true)
 }
 
 /// Lazily creates the 3-channel `f32` area stream and checks strict row
@@ -8001,8 +8046,32 @@ pub(super) fn xyz12_resample_preflight(
   rgb_f16: &Option<&mut [half::f16]>,
   rgba_f16: &Option<&mut [half::f16]>,
   hsv: &mut Option<HsvFrameMut<'_>>,
+  stream_next_y: usize,
   idx: usize,
 ) -> Result<bool, MixedSinkerError> {
+  // Conditional ordering — see `packed_rgb_resample_preflight` for the
+  // `stream_next_y` rationale (no-output and out-of-sequence-first-row
+  // rejection both precede the freeze; later-row sequencing stays in the
+  // companion `xyz12_resample_stream`).
+  let has_output = rgb.is_some()
+    || rgba.is_some()
+    || luma.is_some()
+    || luma_u16.is_some()
+    || rgb_u16.is_some()
+    || rgba_u16.is_some()
+    || rgb_f32.is_some()
+    || xyz_f32.is_some()
+    || rgb_f16.is_some()
+    || rgba_f16.is_some()
+    || hsv.is_some();
+  if !has_output {
+    return Ok(false);
+  }
+  if resample_outputs.is_none() && stream_next_y != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(stream_next_y, idx),
+    )));
+  }
   frozen_outputs_check(
     resample_outputs,
     luma,
@@ -8020,19 +8089,7 @@ pub(super) fn xyz12_resample_preflight(
     &None,
     idx,
   )?;
-  Ok(
-    rgb.is_some()
-      || rgba.is_some()
-      || luma.is_some()
-      || luma_u16.is_some()
-      || rgb_u16.is_some()
-      || rgba_u16.is_some()
-      || rgb_f32.is_some()
-      || xyz_f32.is_some()
-      || rgb_f16.is_some()
-      || rgba_f16.is_some()
-      || hsv.is_some(),
-  )
+  Ok(true)
 }
 
 /// Lazily creates the 3-channel linear-XYZ `f32` area stream and checks

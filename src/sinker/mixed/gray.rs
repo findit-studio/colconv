@@ -308,6 +308,25 @@ fn gray8_process_resampled(
   // alongside RGBA (HSV-only and RGBA-only take dedicated fast paths).
   let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
 
+  // No-output call: nothing to sequence, stays a no-op (no freeze, no
+  // allocation) regardless of the row index — and, critically, stores no
+  // frozen-output snapshot that a later attach-then-retry would trip on.
+  let any_output = luma.is_some() || luma_u16.is_some() || want_rgb || want_rgba || want_hsv;
+  if !any_output {
+    return Ok(());
+  }
+  // Sequence-check before the freeze (single luma stream — it advances
+  // every row regardless of which outputs are attached, so a mid-frame
+  // attach never spins a fresh row-0 stream): an out-of-sequence row is
+  // rejected before the freeze, so a rejected row stores no snapshot that
+  // would poison a retry, and before any allocation, so AllocationFailed
+  // never masks OutOfSequenceRow.
+  let expected = luma_stream.as_ref().map_or(0, |stream| stream.next_y());
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
   frozen_outputs_check(
     resample_outputs,
     luma,
@@ -325,21 +344,6 @@ fn gray8_process_resampled(
     &None,
     idx,
   )?;
-  // Sequence-check before allocating (mirrors the planar helpers): a
-  // fresh stream expects row 0, so an out-of-sequence first row is
-  // rejected before the stream or any scratch is created, and
-  // AllocationFailed never masks OutOfSequenceRow. A no-output call has
-  // no stream to sequence and stays a no-op regardless of the row index.
-  let expected = luma_stream.as_ref().map_or(0, |stream| stream.next_y());
-  let any_output = luma.is_some() || luma_u16.is_some() || want_rgb || want_rgba || want_hsv;
-  if any_output && expected != idx {
-    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
-      OutOfSequenceRow::new(expected, idx),
-    )));
-  }
-  if !any_output {
-    return Ok(());
-  }
   if luma_stream.is_none() {
     *luma_stream = Some(AreaStream::new(
       plan.h(),
@@ -1112,6 +1116,31 @@ fn gray16_process_resampled<const BE: bool>(
   // the resample path needs no RGB scratch.
   let need_rgb_kernel = want_rgb;
 
+  // No-output call: nothing to sequence, stays a no-op (no freeze, no
+  // allocation) regardless of the row index — and stores no frozen-output
+  // snapshot that a later attach-then-retry would trip on.
+  let any_output = luma.is_some()
+    || luma_u16.is_some()
+    || want_rgb
+    || want_rgb_u16
+    || want_rgba
+    || want_rgba_u16
+    || want_hsv;
+  if !any_output {
+    return Ok(());
+  }
+  // Sequence-check before the freeze (single luma stream — it advances
+  // every row regardless of which outputs are attached, so a mid-frame
+  // attach never spins a fresh row-0 stream): an out-of-sequence row is
+  // rejected before the freeze, so a rejected row stores no snapshot that
+  // would poison a retry, and before any allocation, so AllocationFailed
+  // never masks OutOfSequenceRow.
+  let expected = luma_stream_u16.as_ref().map_or(0, |stream| stream.next_y());
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
   frozen_outputs_check(
     resample_outputs,
     luma,
@@ -1129,28 +1158,6 @@ fn gray16_process_resampled<const BE: bool>(
     &None,
     idx,
   )?;
-  // Sequence-check before allocating (mirrors the Gray8 / planar
-  // helpers): a fresh stream expects row 0, so an out-of-sequence first
-  // row is rejected before the stream or the source-luma staging is
-  // created, and AllocationFailed never masks OutOfSequenceRow. A
-  // no-output call has no stream to sequence and stays a no-op regardless
-  // of the row index.
-  let expected = luma_stream_u16.as_ref().map_or(0, |stream| stream.next_y());
-  let any_output = luma.is_some()
-    || luma_u16.is_some()
-    || want_rgb
-    || want_rgb_u16
-    || want_rgba
-    || want_rgba_u16
-    || want_hsv;
-  if any_output && expected != idx {
-    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
-      OutOfSequenceRow::new(expected, idx),
-    )));
-  }
-  if !any_output {
-    return Ok(());
-  }
   // Recoverable source-width host-native u16 luma staging, allocated
   // before any caller-buffer write.
   let src_luma = source_luma_u16_scratch(luma_scratch_u16, w, plan)?;
@@ -1674,6 +1681,33 @@ fn grayf32_process_resampled<const BE: bool>(
   // the resample path needs no RGB scratch.
   let need_rgb_kernel = want_rgb;
 
+  // No-output call: nothing to sequence, stays a no-op (no freeze, no
+  // allocation) regardless of the row index — and stores no frozen-output
+  // snapshot that a later attach-then-retry would trip on.
+  let any_output = luma.is_some()
+    || luma_u16.is_some()
+    || luma_f32.is_some()
+    || rgb_f32.is_some()
+    || want_rgb
+    || want_rgb_u16
+    || want_rgba
+    || want_rgba_u16
+    || want_hsv;
+  if !any_output {
+    return Ok(());
+  }
+  // Sequence-check before the freeze (single luma stream — it advances
+  // every row regardless of which outputs are attached, so a mid-frame
+  // attach never spins a fresh row-0 stream): an out-of-sequence row is
+  // rejected before the freeze, so a rejected row stores no snapshot that
+  // would poison a retry, and before any allocation, so AllocationFailed
+  // never masks OutOfSequenceRow.
+  let expected = luma_stream_f32.as_ref().map_or(0, |stream| stream.next_y());
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
   frozen_outputs_check(
     resample_outputs,
     luma,
@@ -1691,30 +1725,6 @@ fn grayf32_process_resampled<const BE: bool>(
     luma_f32,
     idx,
   )?;
-  // Sequence-check before allocating (mirrors the Gray8 / Gray16
-  // helpers): a fresh stream expects row 0, so an out-of-sequence first
-  // row is rejected before the stream or the source-luma staging is
-  // created, and AllocationFailed never masks OutOfSequenceRow. A
-  // no-output call has no stream to sequence and stays a no-op regardless
-  // of the row index.
-  let expected = luma_stream_f32.as_ref().map_or(0, |stream| stream.next_y());
-  let any_output = luma.is_some()
-    || luma_u16.is_some()
-    || luma_f32.is_some()
-    || rgb_f32.is_some()
-    || want_rgb
-    || want_rgb_u16
-    || want_rgba
-    || want_rgba_u16
-    || want_hsv;
-  if any_output && expected != idx {
-    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
-      OutOfSequenceRow::new(expected, idx),
-    )));
-  }
-  if !any_output {
-    return Ok(());
-  }
   // Recoverable source-width host-native f32 luma staging, allocated
   // before any caller-buffer write.
   if luma_scratch_f32.len() < w {

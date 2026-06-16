@@ -216,6 +216,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgb48<BE>, R> {
         rgba_u16,
         luma_u16,
         hsv,
+        rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
         idx,
       )? {
         return Ok(());
@@ -482,6 +483,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Bgr48<BE>, R> {
         rgba_u16,
         luma_u16,
         hsv,
+        rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
         idx,
       )? {
         return Ok(());
@@ -809,6 +811,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>, R> {
         rgba_u16,
         luma_u16,
         hsv,
+        rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
         idx,
       )? {
         return Ok(());
@@ -1197,6 +1200,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Bgra64<BE>, R> {
         rgba_u16,
         luma_u16,
         hsv,
+        rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
         idx,
       )? {
         return Ok(());

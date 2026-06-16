@@ -462,3 +462,47 @@ fn uyyvyy411_resample_rejects_changed_output_set_midframe() {
     "got {err:?}"
   );
 }
+
+#[test]
+fn uyyvyy411_rejected_first_row_does_not_poison_output_retry() {
+  // A rejected out-of-sequence FIRST row must store no frozen-output
+  // snapshot, so retrying row 0 after attaching a NEW output succeeds
+  // instead of tripping ResampleOutputsChanged.
+  let packed = ramp_frame();
+  let row_bytes = SRC_W * 3 / 2;
+  let mut luma = std::vec![0u8; OUT_W * OUT_H];
+  let mut sink = MixedSinker::<Uyyvyy411, AreaResampler>::with_resampler(
+    SRC_W,
+    SRC_H,
+    AreaResampler::to(OUT_W, OUT_H),
+  )
+  .unwrap()
+  .with_luma(&mut luma)
+  .unwrap();
+  sink.begin_frame(SRC_W as u32, SRC_H as u32).unwrap();
+  let err = sink
+    .process(Uyyvyy411Row::new(
+      &packed[row_bytes * 3..row_bytes * 4],
+      3,
+      ColorMatrix::Bt601,
+      true,
+    ))
+    .unwrap_err();
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(_))
+    ),
+    "expected OutOfSequenceRow, got {err:?}"
+  );
+  let mut rgb = std::vec![0u8; OUT_W * OUT_H * 3];
+  sink.set_rgb(&mut rgb).unwrap();
+  sink
+    .process(Uyyvyy411Row::new(
+      &packed[0..row_bytes],
+      0,
+      ColorMatrix::Bt601,
+      true,
+    ))
+    .expect("row 0 must succeed after a rejected out-of-sequence first row");
+}

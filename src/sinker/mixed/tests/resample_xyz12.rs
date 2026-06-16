@@ -33,18 +33,22 @@ use crate::{
 };
 
 // NOTE on the missing direct-row out-of-sequence / mid-frame-output-
-// change tests: those require injecting a hand-built `Xyz12Row` at a
-// non-sequential index via `sink.process(...)` (the pattern the
-// `resample_rgbf32` / `resample_rgb48` tests use). `Xyz12Row::new` is
-// `pub(crate)` in the upstream `mediaframe` crate, so colconv cannot
-// construct one — there is no public Row constructor or `From` impl.
-// The sequence-check (`xyz12_resample_stream`) and the frozen-output
-// snapshot (`xyz12_resample_preflight` -> `frozen_outputs_check`) are
-// the *same* shared helpers exercised bit-for-bit by those packed-RGB
-// tests, so the ordering logic is covered; only the xyz-specific
-// driver to feed a bad order is inexpressible here. `begin_frame`'s
-// stream reset is covered by `xyz12_begin_frame_resets_stream_between_
-// frames`.
+// change / rejected-first-row-poison tests: those require injecting a
+// hand-built `Xyz12Row` at a non-sequential index via
+// `sink.process(...)` (the pattern the `resample_rgbf32` /
+// `resample_rgb48` tests use). `Xyz12Row::new` is `pub(crate)` in the
+// upstream `mediaframe` crate, so colconv cannot construct one — there
+// is no public Row constructor or `From` impl. The sequence-check
+// (`xyz12_resample_stream`) and the conditional-ordered frozen-output
+// snapshot (`xyz12_resample_preflight` -> `frozen_outputs_check`,
+// including the first-row out-of-sequence rejection that runs *before*
+// the freeze so a rejected first row stores no snapshot that would
+// poison a retry) are the *same* shared helpers exercised bit-for-bit
+// by the `resample_rgbf32` `..._rejected_first_row_does_not_poison_
+// output_retry` test, so the ordering logic is covered; only the
+// xyz-specific driver to feed a bad order is inexpressible here.
+// `begin_frame`'s stream reset is covered by
+// `xyz12_begin_frame_resets_stream_between_frames`.
 
 const SRC: usize = 8;
 const OUT: usize = 4;
