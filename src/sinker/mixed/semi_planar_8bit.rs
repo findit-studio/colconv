@@ -19,6 +19,204 @@ use super::{
 };
 use crate::{PixelSink, row::*, source::*};
 
+#[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+use super::{HsvFrameMut, planar_8bit::yuv420p_process_native};
+#[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+use crate::{
+  ColorMatrix,
+  resample::{PlanGeometry, ResampleError, ResamplePlan},
+};
+
+// Test-only allocation failpoint for the U / V de-interleave scratch grow
+// in `semi_planar_process_native`. When armed, the next chroma-bearing
+// reserve returns the crate's recoverable `AllocationFailed` WITHOUT
+// growing — letting the atomicity regression test prove the first-row
+// out-of-sequence preflight runs BEFORE this fallible grow (so a rejected
+// even-colour first row returns OutOfSequenceRow, never AllocationFailed).
+// `Cell<bool>` is plenty (single-threaded, take-on-read). Strictly
+// test-only — the non-test build is byte-identical (this hook compiles
+// away entirely).
+#[cfg(all(
+  test,
+  feature = "std",
+  feature = "yuv-semi-planar",
+  feature = "yuv-planar"
+))]
+std::thread_local! {
+  static FORCE_DEINTERLEAVE_ALLOC_FAILURE: core::cell::Cell<bool> =
+    const { core::cell::Cell::new(false) };
+}
+
+/// Arms the de-interleave scratch allocation failpoint for the **next**
+/// chroma-bearing native semi-planar row on the current thread. The flag
+/// is consumed (take-on-read) by that reserve, so it fires exactly once
+/// and cannot leak into a later test. Test-only.
+#[cfg(all(
+  test,
+  feature = "std",
+  feature = "yuv-semi-planar",
+  feature = "yuv-planar"
+))]
+pub(super) fn arm_deinterleave_alloc_failure() {
+  FORCE_DEINTERLEAVE_ALLOC_FAILURE.with(|f| f.set(true));
+}
+
+/// Native fast-tier 4:2:0 decimator for the semi-planar family
+/// ([`Nv12`](crate::source::Nv12) / [`Nv21`](crate::source::Nv21)): bins
+/// the native Y / U / V planes straight to the output grid and converts
+/// once per output row at output resolution. Reuses the planar twin's
+/// join verbatim ([`yuv420p_process_native`]) after de-interleaving the
+/// interleaved chroma row into the sink's U / V scratch — so every output
+/// is byte-identical to a [`Yuv420p`](crate::source::Yuv420p) native
+/// conversion of the de-interleaved planes, and within ±1 LSB of the
+/// semi-planar row-stage tier (the conversion-order rounding caveat the
+/// planar tiers already carry).
+///
+/// `chroma_uv` is the interleaved chroma half-row; `swap_uv = false`
+/// reads `U0 V0 U1 V1 …` (NV12), `swap_uv = true` reads `V0 U0 …`
+/// (NV21). The chroma row is consumed only on even source rows; the
+/// caller passes the full interleaved row regardless and this splits it.
+///
+/// The U / V scratch is reserved (fallibly) before the call into the
+/// planar join, and the de-interleave writes only into that private
+/// scratch — so the recoverable-allocation / atomicity contract the join
+/// enforces (no caller-output write before the preflight completes) holds
+/// across the de-interleave too.
+#[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+#[allow(clippy::too_many_arguments)]
+fn semi_planar_process_native(
+  plan: &ResamplePlan,
+  native_420: &mut Option<super::planar_8bit::NativeYuv420>,
+  u_scratch: &mut std::vec::Vec<u8>,
+  v_scratch: &mut std::vec::Vec<u8>,
+  resample_outputs: &mut Option<super::FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgb_scratch: &mut std::vec::Vec<u8>,
+  y_row: &[u8],
+  chroma_uv: &[u8],
+  swap_uv: bool,
+  matrix: ColorMatrix,
+  full_range: bool,
+  idx: usize,
+  w: usize,
+  h: usize,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  let need_luma = luma.is_some() || luma_u16.is_some();
+  let need_color = rgb.is_some() || rgba.is_some() || hsv.is_some();
+  let cw = w / 2;
+
+  // Run the join's COMPLETE pre-feed rejection preflight FIRST — no-output
+  // short-circuit, first-row out-of-sequence check, AND the frozen-output
+  // (mid-frame output-set change) check — before touching the U / V
+  // de-interleave scratch. The de-interleave reserve below is fallible and
+  // grows sink state; deferring it until the full preflight clears keeps
+  // EVERY rejection case (out-of-sequence first colour row OR mid-frame
+  // output change) returning its deterministic typed error
+  // (OutOfSequenceRow / ResampleOutputsChanged), never AllocationFailed
+  // under allocation pressure, and leaves the scratch untouched — the
+  // crate's preflight-atomicity contract. `Ok(false)` is the no-output
+  // no-op: return without reserving. `yuv420p_process_native` re-runs this
+  // identical preflight harmlessly (the freeze stores on the first
+  // output-bearing row, the second run is a matching check), keeping a
+  // single source of truth.
+  if !super::planar_8bit::yuv420p_native_preflight(
+    native_420,
+    resample_outputs,
+    rgb,
+    rgba,
+    luma,
+    luma_u16,
+    hsv,
+    idx,
+    need_luma,
+    need_color,
+  )? {
+    return Ok(());
+  }
+
+  // De-interleave the chroma half-row into the U / V scratch — only on
+  // chroma-bearing rows (even source index) when colour is wanted, which
+  // is exactly where the planar join reads chroma and nowhere else. The
+  // split writes only this private scratch, so no caller output is touched
+  // until the join's own preflight (re-run inside the call below) clears.
+  // On odd / luma-only / no-colour rows the join never reads chroma, so the
+  // scratch is left as-is and the join gets empty U / V slices — which also
+  // keeps a direct caller's out-of-sequence odd first row (no
+  // `begin_frame`, empty scratch) from indexing past the scratch before the
+  // join rejects it.
+  let chroma_row = need_color && idx.is_multiple_of(2);
+  if chroma_row {
+    for scratch in [&mut *u_scratch, &mut *v_scratch] {
+      if scratch.len() < cw {
+        // Test-only failpoint: simulate a recoverable allocator refusal of
+        // the de-interleave scratch grow WITHOUT exhausting memory, so the
+        // regression test can prove the first-row preflight already
+        // rejected an out-of-sequence colour row (returning
+        // OutOfSequenceRow) before this fallible grow is ever reached. With
+        // the preflight ordered AFTER this grow (the bug) an armed failure
+        // would surface as AllocationFailed instead.
+        #[cfg(all(
+          test,
+          feature = "std",
+          feature = "yuv-semi-planar",
+          feature = "yuv-planar"
+        ))]
+        if FORCE_DEINTERLEAVE_ALLOC_FAILURE.with(|f| f.take()) {
+          return Err(MixedSinkerError::Resample(ResampleError::AllocationFailed(
+            PlanGeometry::new(w, h, plan.out_w(), plan.out_h()),
+          )));
+        }
+        scratch.try_reserve_exact(cw - scratch.len()).map_err(|_| {
+          MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+            w,
+            h,
+            plan.out_w(),
+            plan.out_h(),
+          )))
+        })?;
+        scratch.resize(cw, 0);
+      }
+    }
+    // NV12 chroma is `U V U V …` (U at even byte), NV21 is `V U V U …`.
+    let (u_off, v_off) = if swap_uv { (1, 0) } else { (0, 1) };
+    for (i, pair) in chroma_uv.chunks_exact(2).enumerate() {
+      u_scratch[i] = pair[u_off];
+      v_scratch[i] = pair[v_off];
+    }
+  }
+
+  let (u_half, v_half): (&[u8], &[u8]) = if chroma_row {
+    (&u_scratch[..cw], &v_scratch[..cw])
+  } else {
+    (&[], &[])
+  };
+  yuv420p_process_native(
+    plan,
+    native_420,
+    resample_outputs,
+    rgb,
+    rgba,
+    luma,
+    luma_u16,
+    hsv,
+    rgb_scratch,
+    y_row,
+    u_half,
+    v_half,
+    matrix,
+    full_range,
+    idx,
+    w,
+    h,
+    use_simd,
+  )
+}
+
 // ---- Nv12 impl ----------------------------------------------------------
 
 impl<'a, R> MixedSinker<'a, Nv12, R> {
@@ -105,6 +303,10 @@ impl<R> PixelSink for MixedSinker<'_, Nv12, R> {
     if let Some(stream) = self.luma_stream.as_mut() {
       stream.reset();
     }
+    #[cfg(feature = "yuv-planar")]
+    if let Some(native) = self.native_420.as_mut() {
+      native.reset();
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -155,10 +357,22 @@ impl<R> PixelSink for MixedSinker<'_, Nv12, R> {
       rgb_stream,
       luma_stream,
       resample_outputs,
+      #[cfg(feature = "yuv-planar")]
+      native,
+      #[cfg(feature = "yuv-planar")]
+      native_420,
+      #[cfg(feature = "yuv-planar")]
+      semi_planar_u_half,
+      #[cfg(feature = "yuv-planar")]
+      semi_planar_v_half,
       ..
     } = self;
 
-    // Non-identity plan: row-stage fused downscale. Bin the Y plane for
+    // Non-identity plan. When the native tier is enabled (and the planar
+    // join it reuses is compiled in), bin the native Y / U / V planes at
+    // output resolution and convert once per output row, de-interleaving
+    // the NV12 chroma row into U / V scratch first. Otherwise (or under
+    // `with_native(false)`) take the row-stage tier: bin the Y plane for
     // luma directly (the YUV luma contract); for colour, convert the
     // interleaved source row to RGB with the same fused `nv12_to_rgb_row`
     // kernel the identity path uses, then bin the RGB row. RGB therefore
@@ -167,6 +381,31 @@ impl<R> PixelSink for MixedSinker<'_, Nv12, R> {
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
+      #[cfg(feature = "yuv-planar")]
+      if *native {
+        return semi_planar_process_native(
+          plan,
+          native_420,
+          semi_planar_u_half,
+          semi_planar_v_half,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          rgb_scratch,
+          row.y(),
+          row.uv_half(),
+          false,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          use_simd,
+        );
+      }
       return planar_dual_resample(
         luma_stream,
         rgb_stream,
@@ -605,6 +844,10 @@ impl<R> PixelSink for MixedSinker<'_, Nv21, R> {
     if let Some(stream) = self.luma_stream.as_mut() {
       stream.reset();
     }
+    #[cfg(feature = "yuv-planar")]
+    if let Some(native) = self.native_420.as_mut() {
+      native.reset();
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -654,16 +897,53 @@ impl<R> PixelSink for MixedSinker<'_, Nv21, R> {
       rgb_stream,
       luma_stream,
       resample_outputs,
+      #[cfg(feature = "yuv-planar")]
+      native,
+      #[cfg(feature = "yuv-planar")]
+      native_420,
+      #[cfg(feature = "yuv-planar")]
+      semi_planar_u_half,
+      #[cfg(feature = "yuv-planar")]
+      semi_planar_v_half,
       ..
     } = self;
 
-    // Non-identity plan: row-stage fused downscale (matches the Yuv420p
-    // row-stage twin). Bin Y for luma; for colour, convert the
-    // interleaved VU source row to RGB with the fused `nv21_to_rgb_row`
-    // kernel the identity path uses, then bin the RGB row.
+    // Non-identity plan. When the native tier is enabled (and the planar
+    // join it reuses is compiled in), bin the native Y / U / V planes at
+    // output resolution and convert once per output row, de-interleaving
+    // the NV21 VU chroma row into U / V scratch first. Otherwise (or under
+    // `with_native(false)`) take the row-stage tier (matches the Yuv420p
+    // row-stage twin): bin Y for luma; for colour, convert the interleaved
+    // VU source row to RGB with the fused `nv21_to_rgb_row` kernel the
+    // identity path uses, then bin the RGB row.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
+      #[cfg(feature = "yuv-planar")]
+      if *native {
+        return semi_planar_process_native(
+          plan,
+          native_420,
+          semi_planar_u_half,
+          semi_planar_v_half,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          rgb_scratch,
+          row.y(),
+          row.vu_half(),
+          true,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          use_simd,
+        );
+      }
       return planar_dual_resample(
         luma_stream,
         rgb_stream,

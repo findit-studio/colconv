@@ -1601,6 +1601,21 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// created in `process`, reset in `begin_frame`.
   #[cfg(feature = "yuv-planar")]
   native_420: Option<planar_8bit::NativeYuv420>,
+  /// Half-width U / V de-interleave staging for the native 4:2:0
+  /// decimation tier of the **semi-planar** family
+  /// ([`Nv12`](crate::source::Nv12) / [`Nv21`](crate::source::Nv21)):
+  /// the interleaved chroma row splits into these two `width / 2`
+  /// scratch planes so [`planar_8bit::yuv420p_process_native`] bins
+  /// Y + U + V through the same per-plane join the planar twin uses.
+  /// Lazily grown to `width / 2` `u8` each on the first chroma-bearing
+  /// native row; empty otherwise. Gated to the intersection — the
+  /// native tier reuses the planar join, so it only exists when
+  /// `yuv-planar` is also compiled.
+  #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+  semi_planar_u_half: Vec<u8>,
+  /// V-plane twin of [`Self::semi_planar_u_half`].
+  #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+  semi_planar_v_half: Vec<u8>,
   /// Lazily grown to `3 * width` bytes when HSV is requested without a
   /// user RGB buffer. Empty otherwise.
   ///
@@ -2356,6 +2371,10 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       native: true,
       #[cfg(feature = "yuv-planar")]
       native_420: None,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      semi_planar_u_half: Vec::new(),
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      semi_planar_v_half: Vec::new(),
       #[cfg(any(
         feature = "bayer",
         feature = "gbr",
