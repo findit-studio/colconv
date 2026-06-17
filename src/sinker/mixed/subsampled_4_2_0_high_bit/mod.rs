@@ -10,3 +10,10 @@ mod yuv420p;
 #[cfg(all(test, feature = "std", feature = "yuv-planar"))]
 pub(crate) use native::arm_native_u16_alloc_failure;
 pub(crate) use native::{NativeYuv420U16, yuv420p16_process_native};
+#[cfg(all(
+  test,
+  feature = "std",
+  feature = "yuv-semi-planar",
+  feature = "yuv-planar"
+))]
+pub(crate) use p0xx::arm_p0xx_alloc_failure;

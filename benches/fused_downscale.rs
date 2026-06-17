@@ -15,11 +15,12 @@ use std::hint::black_box;
 
 use colconv::{
   ColorMatrix,
-  frame::{Nv12Frame, Nv21Frame, Rgb24Frame, Yuv420p16LeFrame, Yuv420pFrame},
+  frame::{Nv12Frame, Nv21Frame, P010LeFrame, Rgb24Frame, Yuv420p16LeFrame, Yuv420pFrame},
   resample::AreaResampler,
   sinker::MixedSinker,
   source::{
-    Nv12, Nv21, Rgb24, Yuv420p, Yuv420p16, nv12_to, nv21_to, rgb24_to, yuv420p_to, yuv420p16_to,
+    Nv12, Nv21, P010, Rgb24, Yuv420p, Yuv420p16, nv12_to, nv21_to, p010_to, rgb24_to, yuv420p_to,
+    yuv420p16_to,
   },
 };
 
@@ -247,6 +248,54 @@ fn bench(c: &mut Criterion) {
         .unwrap();
         yuv420p16_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
         black_box(&rgb);
+      });
+    });
+  }
+
+  // High-bit SEMI-planar 4:2:0 (P010 LE) native vs row-stage — the P2
+  // u16 fast tier for the high-bit semi-planar P-format family. The native
+  // wrapper de-interleaves + DE-PACKS the high-bit-packed Y and interleaved
+  // UV into host-native LOGICAL u16 scratch, then reuses the planar high-bit
+  // join. P010 packs the 10-bit logical value in the HIGH 10 bits
+  // (`logical << 6`); build a packed Y plane and interleaved UV plane from
+  // the 8-bit pseudo-random source (`logical = byte << 2` → packed
+  // `byte << 8`). The per-row triple de-pack is the cost the bench measures
+  // against the row-stage tier (the hard bench-gate).
+  let mut y_p010 = std::vec![0u16; SRC_W * SRC_H];
+  let mut uv_p010 = std::vec![0u16; SRC_W * SRC_H / 2];
+  for (d, &s) in y_p010.iter_mut().zip(y.iter()) {
+    *d = (s as u16) << 8;
+  }
+  for (i, (&uu, &vv)) in u.iter().zip(v.iter()).enumerate() {
+    uv_p010[i * 2] = (uu as u16) << 8;
+    uv_p010[i * 2 + 1] = (vv as u16) << 8;
+  }
+
+  for (name, native) in [
+    ("p010_rgb_u16_native", true),
+    ("p010_rgb_u16_rowstage", false),
+  ] {
+    group.bench_function(name, |b| {
+      b.iter(|| {
+        let src = P010LeFrame::new(
+          &y_p010,
+          &uv_p010,
+          SRC_W as u32,
+          SRC_H as u32,
+          SRC_W as u32,
+          SRC_W as u32,
+        );
+        let mut sink = MixedSinker::<P010, AreaResampler>::with_resampler(
+          SRC_W,
+          SRC_H,
+          AreaResampler::to(OUT_W, OUT_H),
+        )
+        .unwrap()
+        .with_native(native)
+        .with_rgb_u16(&mut rgb_u16)
+        .unwrap();
+        p010_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+        black_box(&rgb_u16);
       });
     });
   }

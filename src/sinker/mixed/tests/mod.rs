@@ -150,6 +150,8 @@ mod resample_mono;
 #[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 mod resample_p0xx_high_bit;
 #[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+mod resample_p0xx_high_bit_native;
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 mod resample_p2xx_high_bit;
 #[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 mod resample_p4xx_high_bit;
