@@ -1415,11 +1415,14 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Grayf32<BE>, R> {
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     check_dimensions_match(self.width, self.height, width, height)?;
-    // New frame: restart the f32 luma stream (lazily created in
+    // New frame: restart the f32 luma stream(s) (lazily created in
     // `process`) and clear the frozen output snapshot, mirroring the
     // Gray8 / Gray16 paths so a reused resampling sink re-sequences from
     // row 0.
     if let Some(stream) = self.luma_stream_f32.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_filter_stream_f32.as_mut() {
       stream.reset();
     }
     self.resample_outputs = None;
@@ -1459,6 +1462,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Grayf32<BE>, R> {
       rgb_scratch,
       plan,
       luma_stream_f32,
+      luma_filter_stream_f32,
       luma_scratch_f32,
       resample_outputs,
       ..
@@ -1466,13 +1470,14 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Grayf32<BE>, R> {
 
     // Non-identity plan: Grayf32 *is* an f32 luma plane, so the wire row
     // converts to a source-width host-native f32 luma plane (the same
-    // kernel the direct `luma_f32` path uses), a single 1-channel
-    // `AreaStream<f32>` bins it at f32 precision, then every attached
-    // output derives from each finalized binned f32 luma row exactly as
-    // the direct path does below. Row-stage only.
+    // kernel the direct `luma_f32` path uses), a single 1-channel f32
+    // stream bins it at f32 precision, then every attached output derives
+    // from each finalized binned f32 luma row exactly as the direct path
+    // does below. The span kind picks the engine (area or filter).
     if let Some(plan) = plan.as_ref() {
       return grayf32_process_resampled::<BE>(
         luma_stream_f32,
+        luma_filter_stream_f32,
         luma_scratch_f32,
         resample_outputs,
         rgb,
@@ -1646,6 +1651,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Grayf32<BE>, R> {
 #[allow(clippy::too_many_arguments)]
 fn grayf32_process_resampled<const BE: bool>(
   luma_stream_f32: &mut Option<AreaStream<f32>>,
+  luma_filter_stream_f32: &mut Option<crate::resample::FilterStream<f32>>,
   luma_scratch_f32: &mut std::vec::Vec<f32>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
@@ -1696,13 +1702,17 @@ fn grayf32_process_resampled<const BE: bool>(
   if !any_output {
     return Ok(());
   }
-  // Sequence-check before the freeze (single luma stream — it advances
-  // every row regardless of which outputs are attached, so a mid-frame
-  // attach never spins a fresh row-0 stream): an out-of-sequence row is
-  // rejected before the freeze, so a rejected row stores no snapshot that
-  // would poison a retry, and before any allocation, so AllocationFailed
-  // never masks OutOfSequenceRow.
-  let expected = luma_stream_f32.as_ref().map_or(0, |stream| stream.next_y());
+  // Sequence-check before the freeze (single luma stream per kind — it
+  // advances every row regardless of which outputs are attached, so a
+  // mid-frame attach never spins a fresh row-0 stream): an out-of-sequence
+  // row is rejected before the freeze, so a rejected row stores no
+  // snapshot that would poison a retry, and before any allocation, so
+  // AllocationFailed never masks OutOfSequenceRow. The span kind selects
+  // which engine's stream advances.
+  let expected = match plan.kind() {
+    crate::resample::SpanKind::Area => luma_stream_f32.as_ref().map_or(0, |s| s.next_y()),
+    crate::resample::SpanKind::Filter => luma_filter_stream_f32.as_ref().map_or(0, |s| s.next_y()),
+  };
   if expected != idx {
     return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
       OutOfSequenceRow::new(expected, idx),
@@ -1742,22 +1752,15 @@ fn grayf32_process_resampled<const BE: bool>(
       })?;
     luma_scratch_f32.resize(w, 0.0);
   }
-  if luma_stream_f32.is_none() {
-    *luma_stream_f32 = Some(AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      1,
-    )?);
-  }
   // Convert the wire Grayf32 row to host-native f32 luma — the source
   // wire `::<BE>`, the same kernel the direct `luma_f32` path uses.
   let src_luma = &mut luma_scratch_f32[..w];
   grayf32_to_luma_f32_row::<BE>(y_row, src_luma, w, use_simd);
 
-  let stream = luma_stream_f32.as_mut().expect("created in the preflight");
-  stream.feed_row(idx, src_luma, use_simd, |oy, binned_y| {
+  // The per-output fan-out is identical for both engines, so build it once
+  // as a reusable `FnMut` and feed it to whichever stream the span kind
+  // selects (`&mut F` is itself `FnMut`); only one engine runs per frame.
+  let mut emit = |oy: usize, binned_y: &[f32]| {
     // luma f32 — host-native pass-through of the binned f32 luma.
     if let Some(buf) = luma_f32.as_deref_mut() {
       grayf32_to_luma_f32_row::<HOST_NATIVE_BE>(
@@ -1880,7 +1883,45 @@ fn grayf32_process_resampled<const BE: bool>(
     if let Some(buf) = rgba.as_deref_mut() {
       expand_rgb_to_rgba_row(rgb_row, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
     }
-  })?;
+  };
+
+  // Create + feed the kind-appropriate single-channel f32 stream. The
+  // stream creation runs after the freeze + sequence check + staging,
+  // matching the area-only ordering.
+  match plan.kind() {
+    crate::resample::SpanKind::Area => {
+      if luma_stream_f32.is_none() {
+        *luma_stream_f32 = Some(AreaStream::new(
+          plan.h(),
+          plan.v(),
+          plan.src_w(),
+          plan.src_h(),
+          1,
+        )?);
+      }
+      let stream = luma_stream_f32.as_mut().expect("created above");
+      stream.feed_row(idx, src_luma, use_simd, &mut emit)?;
+    }
+    crate::resample::SpanKind::Filter => {
+      if luma_filter_stream_f32.is_none() {
+        let fh = plan
+          .filter_h()
+          .expect("filter plan carries horizontal windows");
+        let fv = plan
+          .filter_v()
+          .expect("filter plan carries vertical windows");
+        *luma_filter_stream_f32 = Some(crate::resample::FilterStream::new(
+          fh,
+          fv,
+          plan.src_w(),
+          plan.src_h(),
+          1,
+        )?);
+      }
+      let stream = luma_filter_stream_f32.as_mut().expect("created above");
+      stream.feed_row(idx, src_luma, use_simd, &mut emit)?;
+    }
+  }
 
   Ok(())
 }

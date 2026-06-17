@@ -1233,3 +1233,273 @@ fn h_pass_f32_simd_matches_scalar_with_non_finite_padding() {
     }
   }
 }
+
+// ---- PIL (Pillow) filter-resampler parity ---------------------------------
+//
+// The scalar separable filter resampler must reproduce Pillow's
+// `Image.resize` within +-1 LSB (u8 / u16) or a small float tolerance
+// (f32, PIL `F`-mode unclamped). Sources are synthesized identically to
+// `ci/gen_pil_goldens.py` (the same LCG + per-mode shaping), so the
+// checked-in fixture carries only PIL's outputs. Coefficients are f64 and
+// the accumulation is f64, so the divergence vs PIL's integer fixed-point
+// stays inside one LSB — getting the half-pixel center convention exactly
+// right (mirrored from PIL `precompute_coeffs`) is what makes that hold.
+
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
+))]
+mod pil_parity {
+  use super::super::pil_goldens;
+  use super::super::{CatmullRom, FilterKernel, FilteredResampler, Lanczos3, Resampler, Triangle};
+  use super::super::{FilterStream, SpanKind};
+
+  /// The raw LCG byte stream — the shared source primitive (matches
+  /// `ci/gen_pil_goldens.py::lcg_bytes`).
+  fn lcg_bytes(n: usize, seed: u32) -> std::vec::Vec<u8> {
+    let mut state = seed;
+    let mut out = std::vec![0u8; n];
+    for b in &mut out {
+      state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+      *b = (state >> 8) as u8;
+    }
+    out
+  }
+
+  /// u8 source (`L` / `RGB`): the LCG bytes verbatim.
+  fn source_u8(sw: usize, sh: usize, channels: usize, seed: u32) -> std::vec::Vec<u8> {
+    lcg_bytes(sw * sh * channels, seed)
+  }
+
+  /// u16 source (`I;16`): `(v << 8) | roll(v, 1)`, the numpy-roll shaping
+  /// the generator uses to put signal in the low byte.
+  fn source_u16(sw: usize, sh: usize, seed: u32) -> std::vec::Vec<u16> {
+    let raw = lcg_bytes(sw * sh, seed);
+    let n = raw.len();
+    (0..n)
+      .map(|i| {
+        let v = u16::from(raw[i]);
+        let rolled = u16::from(raw[(i + n - 1) % n]);
+        (v << 8) | rolled
+      })
+      .collect()
+  }
+
+  /// f32 source (`F`): `raw + raw / 256.0`.
+  fn source_f32(sw: usize, sh: usize, seed: u32) -> std::vec::Vec<f32> {
+    lcg_bytes(sw * sh, seed)
+      .into_iter()
+      .map(|b| b as f32 + b as f32 / 256.0)
+      .collect()
+  }
+
+  /// Runs the filter stream for `kernel` over `src` (channels-interleaved,
+  /// source width, rows in order) and returns the `ow*oh*channels` output.
+  fn run<S, K>(
+    kernel: K,
+    src: &[S],
+    sw: usize,
+    sh: usize,
+    ow: usize,
+    oh: usize,
+    channels: usize,
+  ) -> std::vec::Vec<S>
+  where
+    S: super::super::FilterSample,
+    K: FilterKernel,
+  {
+    let plan = FilteredResampler::new(ow, oh, kernel)
+      .plan(sw, sh)
+      .expect("valid downscale")
+      .expect("non-identity");
+    assert_eq!(plan.kind(), SpanKind::Filter);
+    let fh = plan.filter_h().expect("filter plan carries h windows");
+    let fv = plan.filter_v().expect("filter plan carries v windows");
+    let mut stream = FilterStream::<S>::new(fh, fv, sw, sh, channels).expect("realistic geometry");
+    let mut out = std::vec![S::default(); ow * oh * channels];
+    for y in 0..sh {
+      let row = &src[y * sw * channels..(y + 1) * sw * channels];
+      stream
+        .feed_row(y, row, false, |oy, finalized| {
+          out[oy * ow * channels..(oy + 1) * ow * channels].copy_from_slice(finalized);
+        })
+        .expect("rows in order");
+    }
+    out
+  }
+
+  /// Asserts every output of `ours` is within `tol` of `golden`, folding
+  /// the worst integer diff into `worst`.
+  fn assert_u_within(
+    ours: &[u8],
+    golden: &[u8],
+    tol: u8,
+    worst: &mut u8,
+    ctx: core::fmt::Arguments<'_>,
+  ) {
+    assert_eq!(ours.len(), golden.len(), "{ctx} length");
+    for (i, (a, b)) in ours.iter().zip(golden.iter()).enumerate() {
+      let d = a.abs_diff(*b);
+      *worst = (*worst).max(d);
+      assert!(d <= tol, "{ctx} idx {i}: ours {a} vs pil {b}");
+    }
+  }
+
+  #[test]
+  fn u8_matches_pil_within_one_lsb() {
+    let mut worst = 0u8;
+    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::TRIANGLE_U8 {
+      let src = source_u8(sw, sh, ch, seed);
+      let ours = run(Triangle, &src, sw, sh, ow, oh, ch);
+      assert_u_within(
+        &ours,
+        golden,
+        1,
+        &mut worst,
+        std::format_args!("Triangle {sw}x{sh}->{ow}x{oh} c{ch}"),
+      );
+    }
+    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::CATMULLROM_U8 {
+      let src = source_u8(sw, sh, ch, seed);
+      let ours = run(CatmullRom, &src, sw, sh, ow, oh, ch);
+      assert_u_within(
+        &ours,
+        golden,
+        1,
+        &mut worst,
+        std::format_args!("CatmullRom {sw}x{sh}->{ow}x{oh} c{ch}"),
+      );
+    }
+    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::LANCZOS3_U8 {
+      let src = source_u8(sw, sh, ch, seed);
+      let ours = run(Lanczos3, &src, sw, sh, ow, oh, ch);
+      assert_u_within(
+        &ours,
+        golden,
+        1,
+        &mut worst,
+        std::format_args!("Lanczos3 {sw}x{sh}->{ow}x{oh} c{ch}"),
+      );
+    }
+    std::eprintln!("PIL u8 parity: max abs diff = {worst}");
+  }
+
+  /// u16 analogue of [`assert_u_within`].
+  fn assert_u16_within(
+    ours: &[u16],
+    golden: &[u16],
+    tol: u16,
+    worst: &mut u16,
+    ctx: core::fmt::Arguments<'_>,
+  ) {
+    assert_eq!(ours.len(), golden.len(), "{ctx} length");
+    for (i, (a, b)) in ours.iter().zip(golden.iter()).enumerate() {
+      let d = a.abs_diff(*b);
+      *worst = (*worst).max(d);
+      assert!(d <= tol, "{ctx} idx {i}: ours {a} vs pil {b}");
+    }
+  }
+
+  #[test]
+  fn u16_matches_pil_within_one_lsb() {
+    let mut worst = 0u16;
+    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::TRIANGLE_U16 {
+      let src = source_u16(sw, sh, seed);
+      let ours = run(Triangle, &src, sw, sh, ow, oh, ch);
+      assert_u16_within(
+        &ours,
+        golden,
+        1,
+        &mut worst,
+        std::format_args!("Triangle {sw}x{sh}->{ow}x{oh}"),
+      );
+    }
+    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::CATMULLROM_U16 {
+      let src = source_u16(sw, sh, seed);
+      let ours = run(CatmullRom, &src, sw, sh, ow, oh, ch);
+      assert_u16_within(
+        &ours,
+        golden,
+        1,
+        &mut worst,
+        std::format_args!("CatmullRom {sw}x{sh}->{ow}x{oh}"),
+      );
+    }
+    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::LANCZOS3_U16 {
+      let src = source_u16(sw, sh, seed);
+      let ours = run(Lanczos3, &src, sw, sh, ow, oh, ch);
+      assert_u16_within(
+        &ours,
+        golden,
+        1,
+        &mut worst,
+        std::format_args!("Lanczos3 {sw}x{sh}->{ow}x{oh}"),
+      );
+    }
+    std::eprintln!("PIL u16 parity: max abs diff = {worst}");
+  }
+
+  /// f32 closeness — PIL `F`-mode is unclamped and reorders the taps vs our
+  /// f64 accumulation, so parity is a small relative+absolute tolerance.
+  fn assert_f32_within(
+    ours: &[f32],
+    golden: &[f32],
+    worst: &mut f32,
+    ctx: core::fmt::Arguments<'_>,
+  ) {
+    assert_eq!(ours.len(), golden.len(), "{ctx} length");
+    for (i, (a, b)) in ours.iter().zip(golden.iter()).enumerate() {
+      let d = (a - b).abs();
+      *worst = worst.max(d);
+      let tol = 1e-3 * a.abs().max(b.abs()) + 1e-2;
+      assert!(d <= tol, "{ctx} idx {i}: ours {a} vs pil {b} (d {d})");
+    }
+  }
+
+  #[test]
+  fn f32_matches_pil_within_tolerance() {
+    let mut worst = 0.0f32;
+    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::TRIANGLE_F32 {
+      let src = source_f32(sw, sh, seed);
+      let ours = run(Triangle, &src, sw, sh, ow, oh, ch);
+      assert_f32_within(
+        &ours,
+        golden,
+        &mut worst,
+        std::format_args!("Triangle {sw}x{sh}->{ow}x{oh}"),
+      );
+    }
+    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::CATMULLROM_F32 {
+      let src = source_f32(sw, sh, seed);
+      let ours = run(CatmullRom, &src, sw, sh, ow, oh, ch);
+      assert_f32_within(
+        &ours,
+        golden,
+        &mut worst,
+        std::format_args!("CatmullRom {sw}x{sh}->{ow}x{oh}"),
+      );
+    }
+    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::LANCZOS3_F32 {
+      let src = source_f32(sw, sh, seed);
+      let ours = run(Lanczos3, &src, sw, sh, ow, oh, ch);
+      assert_f32_within(
+        &ours,
+        golden,
+        &mut worst,
+        std::format_args!("Lanczos3 {sw}x{sh}->{ow}x{oh}"),
+      );
+    }
+    std::eprintln!("PIL f32 parity: max abs diff = {worst}");
+  }
+}

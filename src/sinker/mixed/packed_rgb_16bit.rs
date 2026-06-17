@@ -31,9 +31,9 @@
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
   RowShapeMismatch, RowSlice, check_dimensions_match, check_frozen_alpha_mode,
-  packed_rgb_u16_resample_emit, packed_rgb_u16_resample_preflight, packed_rgb_u16_resample_stream,
-  packed_rgba_u16_resample, rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
-  source_rgb_u16_scratch,
+  packed_rgb_u16_filter_stream, packed_rgb_u16_resample_emit, packed_rgb_u16_resample_preflight,
+  packed_rgb_u16_resample_stream, packed_rgba_u16_resample, rgb_row_buf_or_scratch,
+  rgba_plane_row_slice, rgba_u16_plane_row_slice, source_rgb_u16_scratch,
 };
 use crate::{
   PixelSink,
@@ -156,6 +156,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgb48<BE>, R> {
     if let Some(stream) = self.rgb_stream_u16.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream_u16.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
@@ -197,6 +200,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgb48<BE>, R> {
       rgb_scratch,
       rgb_scratch_u16,
       rgb_stream_u16,
+      rgb_filter_stream_u16,
       resample_outputs,
       plan,
       ..
@@ -205,8 +209,16 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgb48<BE>, R> {
     // Non-identity plan: convert the wire row to source-width host u16
     // RGB, bin it at native 16-bit depth, then derive every attached
     // output from each finalized output row (native-depth u16 outputs
-    // copy the binned row; u8 / luma_u16 outputs narrow it `>> 8`).
+    // copy the binned row; u8 / luma_u16 outputs narrow it `>> 8`). The
+    // span kind picks the engine — integer area or signed-coefficient
+    // filter (both bin the same staged native-u16 row).
     if let Some(plan) = plan.as_ref() {
+      let stream_next_y = match plan.kind() {
+        crate::resample::SpanKind::Area => rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
+        crate::resample::SpanKind::Filter => {
+          rgb_filter_stream_u16.as_ref().map_or(0, |s| s.next_y())
+        }
+      };
       if !packed_rgb_u16_resample_preflight(
         resample_outputs,
         rgb,
@@ -216,31 +228,60 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgb48<BE>, R> {
         rgba_u16,
         luma_u16,
         hsv,
-        rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
+        stream_next_y,
         idx,
       )? {
         return Ok(());
       }
-      let stream = packed_rgb_u16_resample_stream(rgb_stream_u16, plan, idx)?;
-      let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
-      rgb48_to_rgb_u16_row_endian::<BE>(row.rgb48(), src_u16, w, use_simd);
-      return packed_rgb_u16_resample_emit::<16, false>(
-        stream,
-        plan,
-        rgb,
-        rgba,
-        luma,
-        rgb_u16,
-        rgba_u16,
-        luma_u16,
-        hsv,
-        src_u16,
-        rgb_scratch,
-        row.matrix(),
-        row.full_range(),
-        idx,
-        use_simd,
-      );
+      // Create + sequence-check the kind-appropriate stream BEFORE the
+      // source-width staging, so a later out-of-sequence row is rejected
+      // without the conversion (mirrors the area-only ordering).
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => {
+          let stream = packed_rgb_u16_resample_stream(rgb_stream_u16, plan, idx)?;
+          let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
+          rgb48_to_rgb_u16_row_endian::<BE>(row.rgb48(), src_u16, w, use_simd);
+          packed_rgb_u16_resample_emit::<16, false>(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            rgb_u16,
+            rgba_u16,
+            luma_u16,
+            hsv,
+            src_u16,
+            rgb_scratch,
+            row.matrix(),
+            row.full_range(),
+            idx,
+            use_simd,
+          )
+        }
+        crate::resample::SpanKind::Filter => {
+          let stream = packed_rgb_u16_filter_stream(rgb_filter_stream_u16, plan, idx)?;
+          let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
+          rgb48_to_rgb_u16_row_endian::<BE>(row.rgb48(), src_u16, w, use_simd);
+          packed_rgb_u16_resample_emit::<16, false>(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            rgb_u16,
+            rgba_u16,
+            luma_u16,
+            hsv,
+            src_u16,
+            rgb_scratch,
+            row.matrix(),
+            row.full_range(),
+            idx,
+            use_simd,
+          )
+        }
+      };
     }
 
     let ps = idx * w;
