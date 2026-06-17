@@ -15,10 +15,12 @@ use std::hint::black_box;
 
 use colconv::{
   ColorMatrix,
-  frame::{Nv12Frame, Nv21Frame, Rgb24Frame, Yuv420pFrame},
+  frame::{Nv12Frame, Nv21Frame, Rgb24Frame, Yuv420p16LeFrame, Yuv420pFrame},
   resample::AreaResampler,
   sinker::MixedSinker,
-  source::{Nv12, Nv21, Rgb24, Yuv420p, nv12_to, nv21_to, rgb24_to, yuv420p_to},
+  source::{
+    Nv12, Nv21, Rgb24, Yuv420p, Yuv420p16, nv12_to, nv21_to, rgb24_to, yuv420p_to, yuv420p16_to,
+  },
 };
 
 const SRC_W: usize = 1920;
@@ -158,6 +160,92 @@ fn bench(c: &mut Criterion) {
         .with_hsv(&mut h, &mut s, &mut vv)
         .unwrap();
         nv21_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+        black_box(&rgb);
+      });
+    });
+  }
+
+  // High-bit planar 4:2:0 (Yuv420p16 LE) native vs row-stage — the P2
+  // u16 fast tier. Two output flavors: the native-depth u16 colour path
+  // (`with_rgb_u16`, which exercises the independent u16 4:4:4 kernel) and
+  // the u8 colour + HSV path (the u16-input → u8-output 4:4:4 kernel). The
+  // 16-bit Y plane is the low-packed `u16` codes the kernels actually
+  // consume; reuse the 8-bit pseudo-random bytes widened to `u16`.
+  let mut y16 = std::vec![0u16; SRC_W * SRC_H];
+  let mut u16p = std::vec![0u16; SRC_W * SRC_H / 4];
+  let mut v16p = std::vec![0u16; SRC_W * SRC_H / 4];
+  for (d, &s) in y16.iter_mut().zip(y.iter()) {
+    *d = ((s as u16) << 8) | s as u16;
+  }
+  for (d, &s) in u16p.iter_mut().zip(u.iter()) {
+    *d = ((s as u16) << 8) | s as u16;
+  }
+  for (d, &s) in v16p.iter_mut().zip(v.iter()) {
+    *d = ((s as u16) << 8) | s as u16;
+  }
+  let mut rgb_u16 = std::vec![0u16; n * 3];
+
+  for (name, native) in [
+    ("yuv420p16_rgb_u16_native", true),
+    ("yuv420p16_rgb_u16_rowstage", false),
+  ] {
+    group.bench_function(name, |b| {
+      b.iter(|| {
+        let src = Yuv420p16LeFrame::try_new(
+          &y16,
+          &u16p,
+          &v16p,
+          SRC_W as u32,
+          SRC_H as u32,
+          SRC_W as u32,
+          (SRC_W / 2) as u32,
+          (SRC_W / 2) as u32,
+        )
+        .unwrap();
+        let mut sink = MixedSinker::<Yuv420p16, AreaResampler>::with_resampler(
+          SRC_W,
+          SRC_H,
+          AreaResampler::to(OUT_W, OUT_H),
+        )
+        .unwrap()
+        .with_native(native)
+        .with_rgb_u16(&mut rgb_u16)
+        .unwrap();
+        yuv420p16_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+        black_box(&rgb_u16);
+      });
+    });
+  }
+
+  for (name, native) in [
+    ("yuv420p16_rgb_hsv_native", true),
+    ("yuv420p16_rgb_hsv_rowstage", false),
+  ] {
+    group.bench_function(name, |b| {
+      b.iter(|| {
+        let src = Yuv420p16LeFrame::try_new(
+          &y16,
+          &u16p,
+          &v16p,
+          SRC_W as u32,
+          SRC_H as u32,
+          SRC_W as u32,
+          (SRC_W / 2) as u32,
+          (SRC_W / 2) as u32,
+        )
+        .unwrap();
+        let mut sink = MixedSinker::<Yuv420p16, AreaResampler>::with_resampler(
+          SRC_W,
+          SRC_H,
+          AreaResampler::to(OUT_W, OUT_H),
+        )
+        .unwrap()
+        .with_native(native)
+        .with_rgb(&mut rgb)
+        .unwrap()
+        .with_hsv(&mut h, &mut s, &mut vv)
+        .unwrap();
+        yuv420p16_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
         black_box(&rgb);
       });
     });

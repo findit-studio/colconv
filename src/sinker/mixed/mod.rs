@@ -1591,16 +1591,23 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// (bin native planes, convert once at output resolution). Defaults
   /// to `true`; benchmarks and differential tests flip it to force the
   /// row-stage tier — the [`Self::with_simd`] pattern. The native tier
-  /// exists only for the 8-bit planar 4:2:0
-  /// ([`Yuv420p`](crate::source::Yuv420p)); every other routed family
-  /// (including the semi-planar formats) always takes the row-stage
-  /// tier and ignores this flag.
+  /// exists for the 8-bit planar 4:2:0
+  /// ([`Yuv420p`](crate::source::Yuv420p)), the 8-bit semi-planar 4:2:0
+  /// ([`Nv12`](crate::source::Nv12) / [`Nv21`](crate::source::Nv21)),
+  /// and the high-bit planar 4:2:0 family
+  /// ([`Yuv420p10`](crate::source::Yuv420p10) /12/14/16); every other
+  /// routed family always takes the row-stage tier and ignores this flag.
   #[cfg(feature = "yuv-planar")]
   native: bool,
   /// Native-tier join state for the 4:2:0 planar family; lazily
   /// created in `process`, reset in `begin_frame`.
   #[cfg(feature = "yuv-planar")]
   native_420: Option<planar_8bit::NativeYuv420>,
+  /// Native-tier join state for the HIGH-BIT planar 4:2:0 family
+  /// (`Yuv420p10/12/14/16`) — the `u16` twin of [`Self::native_420`].
+  /// Lazily created in `process`, reset in `begin_frame`.
+  #[cfg(feature = "yuv-planar")]
+  native_420_u16: Option<subsampled_4_2_0_high_bit::NativeYuv420U16>,
   /// Half-width U / V de-interleave staging for the native 4:2:0
   /// decimation tier of the **semi-planar** family
   /// ([`Nv12`](crate::source::Nv12) / [`Nv21`](crate::source::Nv21)):
@@ -2371,6 +2378,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       native: true,
       #[cfg(feature = "yuv-planar")]
       native_420: None,
+      #[cfg(feature = "yuv-planar")]
+      native_420_u16: None,
       #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
       semi_planar_u_half: Vec::new(),
       #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
@@ -5230,6 +5239,12 @@ pub(super) fn reset_high_bit_yuv_streams<F: SourceFormat, R>(sink: &mut MixedSin
   }
   if let Some(stream) = sink.luma_stream_u16.as_mut() {
     stream.reset();
+  }
+  // The high-bit planar 4:2:0 native join (when present) shares the
+  // frame-restart contract: restart its plane streams for the new frame.
+  #[cfg(feature = "yuv-planar")]
+  if let Some(join) = sink.native_420_u16.as_mut() {
+    join.reset();
   }
   sink.resample_outputs = None;
 }

@@ -279,7 +279,11 @@ pub(crate) use dispatch::planar_gbr_float::*;
 // `yuv_444p_n_u16_dispatcher_rejects_width_times_3_overflow` below —
 // the dispatch submodule keeps it as `pub(crate)`, so glob `pub use`
 // doesn't pick it up. Gated on the same cfg the test uses to avoid
-// `unused_imports` on builds that don't compile the test.
+// `unused_imports` on builds that don't compile the test. (The planar
+// 4:2:0 high-bit native fast tier converts its output-width binned rows
+// through the per-format `yuv444pN_to_rgb_*_row_endian` wrappers — which
+// the glob `pub use dispatch::yuv444::*` above already re-exports — so it
+// does not need this generic kernel widened.)
 #[cfg(all(
   test,
   feature = "std",
