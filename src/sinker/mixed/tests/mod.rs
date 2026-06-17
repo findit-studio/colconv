@@ -203,6 +203,8 @@ mod resample_yuv410_440p;
 mod resample_yuv411p;
 #[cfg(feature = "yuv-planar")]
 mod resample_yuv420p_high_bit;
+#[cfg(feature = "yuv-planar")]
+mod resample_yuv420p_high_bit_native;
 #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
 mod resample_yuv422_444p;
 #[cfg(feature = "yuv-planar")]

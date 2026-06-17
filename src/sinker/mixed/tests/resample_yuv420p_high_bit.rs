@@ -5,9 +5,14 @@
 //! the vertical chroma sharing is resolved by the walker, which hands each
 //! luma row its vertically-shared `u_half` / `v_half`).
 //!
-//! These route through [`packed_yuv422_triple_resample`] (the same tail the
-//! packed high-bit 4:2:2 family uses — 4:2:0 and 4:2:2 share the per-row
-//! chroma contract), with **three** independent native-precision binnings:
+//! These are the ROW-STAGE tier's byte-exact INTER_AREA parity suite, so
+//! every sink pins `with_native(false)` (the native fast tier is the
+//! default and is NOT byte-identical to convert-then-bin — its own
+//! tolerance / atomicity coverage lives in
+//! `resample_yuv420p_high_bit_native`). They route through
+//! [`packed_yuv422_triple_resample`] (the same tail the packed high-bit
+//! 4:2:2 family uses — 4:2:0 and 4:2:2 share the per-row chroma contract),
+//! with **three** independent native-precision binnings:
 //! - **u8 colour (rgb / rgba / hsv)** bins a converted source-width u8 RGB
 //!   row (`yuv420pN_to_rgb_row_endian`).
 //! - **u16 colour (rgb_u16 / rgba_u16)** bins an *independent* converted
@@ -202,6 +207,7 @@ macro_rules! yuv420p_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut rgb)
           .unwrap();
           $walker(&frame(&y, &u, &v), FR, M, &mut sink).unwrap();
@@ -224,6 +230,7 @@ macro_rules! yuv420p_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb_u16(&mut rgb)
           .unwrap();
           $walker(&frame(&y, &u, &v), FR, M, &mut sink).unwrap();
@@ -251,6 +258,7 @@ macro_rules! yuv420p_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut rgb_u8)
           .unwrap()
           .with_rgb_u16(&mut rgb_u16)
@@ -314,6 +322,7 @@ macro_rules! yuv420p_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_luma(&mut luma)
           .unwrap();
           $walker(&frame(&y, &u, &v), FR, M, &mut sink).unwrap();
@@ -348,6 +357,7 @@ macro_rules! yuv420p_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut rgb)
           .unwrap()
           .with_rgba(&mut rgba)
@@ -400,6 +410,7 @@ macro_rules! yuv420p_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut rgb)
           .unwrap()
           .with_rgba(&mut rgba)
@@ -462,6 +473,7 @@ macro_rules! yuv420p_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut le_rgb)
           .unwrap()
           .with_rgb_u16(&mut le_rgb_u16)
@@ -481,6 +493,7 @@ macro_rules! yuv420p_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut be_rgb)
           .unwrap()
           .with_rgb_u16(&mut be_rgb_u16)
@@ -549,6 +562,7 @@ macro_rules! yuv420p_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut rgb)
           .unwrap()
           .with_rgb_u16(&mut rgb_u16)
@@ -589,6 +603,7 @@ macro_rules! yuv420p_high_bit_resample_suite {
             AreaResampler::to(SRC, SRC),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut via_area)
           .unwrap();
           $walker(&frame(&y, &u, &v), FR, M, &mut sink).unwrap();
@@ -639,6 +654,7 @@ macro_rules! yuv420p_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb_u16(&mut rgb_u16)
           .unwrap()
           .with_luma(&mut luma)

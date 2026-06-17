@@ -4,6 +4,7 @@ use super::super::{
   packed_yuv422_triple_resample, reset_high_bit_yuv_streams, rgb_row_buf_or_scratch,
   rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
+use super::yuv420p16_process_native;
 use crate::{PixelSink, row::*, source::*};
 
 // ---- Yuv420p9 impl -----------------------------------------------------
@@ -390,6 +391,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p10<BE>, R> {
     Ok(())
   }
 
+  #[allow(clippy::too_many_lines)]
   fn process(&mut self, row: Yuv420p10Row<'_>) -> Result<(), Self::Error> {
     // Bit depth is fixed by the format (10) — declared as a const so
     // the downshift for u8 luma stays obvious at the call site.
@@ -451,11 +453,17 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p10<BE>, R> {
       luma_stream_u16,
       resample_outputs,
       plan,
+      native,
+      native_420_u16,
       ..
     } = self;
 
-    // Non-identity plan: feed the shared high-bit 4:2:2 triple-resample
-    // tail (u8 color, independent native-u16 color, native Y). The half-
+    // Non-identity plan: the native tier bins the host-native Y / U / V
+    // planes at output resolution and converts ONCE per output row at
+    // output width (4:4:4 kernels); the row-stage tier
+    // ([`packed_yuv422_triple_resample`]) converts each source row at
+    // source width then area-streams it (u8 color, independent native-u16
+    // color, native Y). `with_native(false)` forces the latter. The half-
     // width U / V planes are horizontally upsampled in-register by the
     // shared 4:2:0 row kernels — 4:2:0's vertical chroma sharing is
     // already resolved by the walker, which hands this luma row its
@@ -467,6 +475,30 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p10<BE>, R> {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
+      if *native {
+        return yuv420p16_process_native::<BITS, BE>(
+          plan,
+          native_420_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          y,
+          u_half,
+          v_half,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          use_simd,
+        );
+      }
       return packed_yuv422_triple_resample::<BITS>(
         luma_stream_u16,
         rgb_stream,
@@ -736,6 +768,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p12<BE>, R> {
     Ok(())
   }
 
+  #[allow(clippy::too_many_lines)]
   fn process(&mut self, row: Yuv420p12Row<'_>) -> Result<(), Self::Error> {
     // Bit depth is fixed by the format (12) — declared as a const so
     // the downshift for u8 luma stays obvious at the call site.
@@ -794,22 +827,43 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p12<BE>, R> {
       luma_stream_u16,
       resample_outputs,
       plan,
+      native,
+      native_420_u16,
       ..
     } = self;
 
-    // Non-identity plan: feed the shared high-bit 4:2:2 triple-resample
-    // tail (u8 color, independent native-u16 color, native Y). The half-
-    // width U / V planes are horizontally upsampled in-register by the
-    // shared 4:2:0 row kernels — 4:2:0's vertical chroma sharing is
-    // already resolved by the walker, which hands this luma row its
-    // (vertically-shared) `u_half` / `v_half`, so the per-row chroma
-    // contract is identical to 4:2:2's and the same tail binds. Yuv420p
-    // exposes no `luma_u16` output, so it is `&mut None` and only `luma`
-    // (binned native Y `>> (BITS - 8)`) is emitted.
+    // Non-identity plan: native tier (bin native planes, convert once at
+    // output width via 4:4:4 kernels) vs row-stage tier (convert each
+    // source row then bin); `with_native(false)` forces the latter. See
+    // the Yuv420p10 impl for the full chroma-contract rationale.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
+      if *native {
+        return yuv420p16_process_native::<BITS, BE>(
+          plan,
+          native_420_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          y,
+          u_half,
+          v_half,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          use_simd,
+        );
+      }
       return packed_yuv422_triple_resample::<BITS>(
         luma_stream_u16,
         rgb_stream,
@@ -1065,6 +1119,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p14<BE>, R> {
     Ok(())
   }
 
+  #[allow(clippy::too_many_lines)]
   fn process(&mut self, row: Yuv420p14Row<'_>) -> Result<(), Self::Error> {
     const BITS: u32 = 14;
 
@@ -1121,22 +1176,43 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p14<BE>, R> {
       luma_stream_u16,
       resample_outputs,
       plan,
+      native,
+      native_420_u16,
       ..
     } = self;
 
-    // Non-identity plan: feed the shared high-bit 4:2:2 triple-resample
-    // tail (u8 color, independent native-u16 color, native Y). The half-
-    // width U / V planes are horizontally upsampled in-register by the
-    // shared 4:2:0 row kernels — 4:2:0's vertical chroma sharing is
-    // already resolved by the walker, which hands this luma row its
-    // (vertically-shared) `u_half` / `v_half`, so the per-row chroma
-    // contract is identical to 4:2:2's and the same tail binds. Yuv420p
-    // exposes no `luma_u16` output, so it is `&mut None` and only `luma`
-    // (binned native Y `>> (BITS - 8)`) is emitted.
+    // Non-identity plan: native tier (bin native planes, convert once at
+    // output width via 4:4:4 kernels) vs row-stage tier (convert each
+    // source row then bin); `with_native(false)` forces the latter. See
+    // the Yuv420p10 impl for the full chroma-contract rationale.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
+      if *native {
+        return yuv420p16_process_native::<BITS, BE>(
+          plan,
+          native_420_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          y,
+          u_half,
+          v_half,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          use_simd,
+        );
+      }
       return packed_yuv422_triple_resample::<BITS>(
         luma_stream_u16,
         rgb_stream,
@@ -1390,6 +1466,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p16<BE>, R> {
     Ok(())
   }
 
+  #[allow(clippy::too_many_lines)]
   fn process(&mut self, row: Yuv420p16Row<'_>) -> Result<(), Self::Error> {
     // Luma downshift is `>> 8` — top 8 bits of the 16-bit Y value.
     const BITS: u32 = 16;
@@ -1447,22 +1524,44 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p16<BE>, R> {
       luma_stream_u16,
       resample_outputs,
       plan,
+      native,
+      native_420_u16,
       ..
     } = self;
 
-    // Non-identity plan: feed the shared high-bit 4:2:2 triple-resample
-    // tail (u8 color, independent native-u16 color, native Y). The half-
-    // width U / V planes are horizontally upsampled in-register by the
-    // shared 4:2:0 row kernels — 4:2:0's vertical chroma sharing is
-    // already resolved by the walker, which hands this luma row its
-    // (vertically-shared) `u_half` / `v_half`, so the per-row chroma
-    // contract is identical to 4:2:2's and the same tail binds. Yuv420p
-    // exposes no `luma_u16` output, so it is `&mut None` and only `luma`
-    // (binned native Y `>> (BITS - 8)`) is emitted.
+    // Non-identity plan: native tier (bin native planes, convert once at
+    // output width via 4:4:4 kernels — the dedicated 16-bit i64-chroma
+    // family for BITS = 16) vs row-stage tier (convert each source row
+    // then bin); `with_native(false)` forces the latter. See the Yuv420p10
+    // impl for the full chroma-contract rationale.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
+      if *native {
+        return yuv420p16_process_native::<BITS, BE>(
+          plan,
+          native_420_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          y,
+          u_half,
+          v_half,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          use_simd,
+        );
+      }
       return packed_yuv422_triple_resample::<BITS>(
         luma_stream_u16,
         rgb_stream,

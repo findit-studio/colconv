@@ -505,10 +505,60 @@ pub(super) fn yuv420p_native_preflight(
   need_luma: bool,
   need_color: bool,
 ) -> Result<bool, MixedSinkerError> {
+  // The 8-bit planar / semi-planar join has no native-depth u16 colour
+  // outputs, so `rgb_u16` / `rgba_u16` are frozen as absent.
+  native_preflight_core(
+    native_420.as_ref().map_or(0, |join| join.y.next_y()),
+    resample_outputs,
+    rgb,
+    rgba,
+    &None,
+    &None,
+    luma,
+    luma_u16,
+    hsv,
+    idx,
+    need_luma,
+    need_color,
+  )
+}
+
+/// The COMPLETE 4-point pre-feed rejection logic shared by the 8-bit
+/// ([`yuv420p_native_preflight`]) and the high-bit
+/// ([`crate::sinker::mixed::subsampled_4_2_0_high_bit::yuv420p16_native_preflight`])
+/// native 4:2:0 fast tiers: the no-output short-circuit, the first-row
+/// pre-freeze out-of-sequence check, [`frozen_outputs_check`], AND the
+/// post-freeze sequence check — every rejection point a native path must
+/// run before its first fallible allocation. The join-typed expected-row
+/// computation (`join.y.next_y()`) lives in the thin per-element wrappers;
+/// each passes its already-computed `expected` here so this body stays
+/// element-agnostic (the u8 join carries [`NativeYuv420`], the u16 join
+/// `NativeYuv420U16`).
+///
+/// Returns `Ok(false)` for a no-output call (caller no-ops), `Ok(true)`
+/// to proceed into the join, `Err(OutOfSequenceRow)` for a rejected
+/// out-of-sequence first OR post-freeze row, or
+/// `Err(ResampleOutputsChanged)` for a mid-frame output-set change. The
+/// conditional ordering is load-bearing — see [`yuv420p_native_preflight`]
+/// and the crate's preflight-atomicity contract.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn native_preflight_core(
+  expected: usize,
+  resample_outputs: &mut Option<super::FrozenOutputs>,
+  rgb: &Option<&mut [u8]>,
+  rgba: &Option<&mut [u8]>,
+  rgb_u16: &Option<&mut [u16]>,
+  rgba_u16: &Option<&mut [u16]>,
+  luma: &Option<&mut [u8]>,
+  luma_u16: &Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  idx: usize,
+  need_luma: bool,
+  need_color: bool,
+) -> Result<bool, MixedSinkerError> {
   if !need_luma && !need_color {
     return Ok(false);
   }
-  let expected = native_420.as_ref().map_or(0, |join| join.y.next_y());
   if resample_outputs.is_none() && expected != idx {
     return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
       OutOfSequenceRow::new(expected, idx),
@@ -520,8 +570,8 @@ pub(super) fn yuv420p_native_preflight(
     luma_u16,
     rgb,
     rgba,
-    &None,
-    &None,
+    rgb_u16,
+    rgba_u16,
     &None,
     &None,
     &None,
@@ -533,12 +583,12 @@ pub(super) fn yuv420p_native_preflight(
   )?;
   // Post-freeze sequence check: once `resample_outputs` is frozen the
   // pre-freeze first-row branch above is skipped, so an out-of-sequence
-  // row whose outputs match the frozen set (the failure-retry case —
-  // `native_420` may be `None`, leaving `expected == 0`) must be rejected
-  // here, BEFORE the caller's fallible chroma / de-interleave allocation,
-  // rather than only at the join's own `check_sequence`. The freeze does
-  // not advance the Y stream, so `expected` is unchanged; running this
-  // after the frozen check preserves error precedence (a row that is both
+  // row whose outputs match the frozen set (the failure-retry case — the
+  // join may be `None`, leaving `expected == 0`) must be rejected here,
+  // BEFORE the caller's fallible chroma / de-interleave allocation, rather
+  // than only at the join's own `check_sequence`. The freeze does not
+  // advance the Y stream, so `expected` is unchanged; running this after
+  // the frozen check preserves error precedence (a row that is both
   // output-changed and out-of-sequence reports ResampleOutputsChanged).
   if expected != idx {
     return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
