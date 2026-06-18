@@ -31,8 +31,8 @@
 use super::{
   InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange, RowShapeMismatch,
   RowSlice, check_dimensions_match, rgb_row_buf_or_scratch, rgba_plane_row_slice,
-  rgba_u16_plane_row_slice, source_xyz_f32_scratch, xyz12_resample_emit, xyz12_resample_preflight,
-  xyz12_resample_stream,
+  rgba_u16_plane_row_slice, source_xyz_f32_scratch, xyz12_resample_emit, xyz12_resample_filter,
+  xyz12_resample_preflight, xyz12_resample_stream,
 };
 use crate::{
   PixelSink,
@@ -226,11 +226,13 @@ impl<'a, R, const BE: bool> MixedSinker<'a, Xyz12<BE>, R> {
 
 // `Xyz12` is in the engine gate (the `#145`/`#146` cascade widened the
 // shared `AreaStream` / `FrozenOutputs` cfg to `xyz`), so the streaming
-// engine, the linear-XYZ `f32` area stream, and its staging scratch are
-// always compiled in whenever this `xyz`-gated module is. No engine
-// fence is needed: the sink accepts any resampler `R`, takes the direct
-// conversion under the identity plan, and routes a non-identity plan
-// through the linear-light area tail (`xyz12_resample_*`).
+// engine, the linear-XYZ `f32` area + filter streams, and the staging
+// scratch are always compiled in whenever this `xyz`-gated module is. No
+// engine fence is needed: the sink accepts any resampler `R`, takes the
+// direct conversion under the identity plan, and routes a non-identity
+// plan through the linear-light tail — the area engine for an `Area`
+// plan, the separable filter engine for a `Filter` plan
+// (`xyz12_resample_*`).
 
 impl<R, const BE: bool> Xyz12Sink<BE> for MixedSinker<'_, Xyz12<BE>, R> {}
 
@@ -420,6 +422,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Xyz12<BE>, R> {
     if let Some(stream) = self.xyz_stream_f32.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.xyz_filter_stream_f32.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -460,6 +465,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Xyz12<BE>, R> {
       rgb_scratch,
       xyz_scratch_f32,
       xyz_stream_f32,
+      xyz_filter_stream_f32,
       resample_outputs,
       plan,
       ..
@@ -473,6 +479,20 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Xyz12<BE>, R> {
     // matrix (+ gamma/clamp/narrow) to it — the matrix commutes with the
     // bin because both are linear, so `M . mean(xyz) == mean(M . xyz)`.
     if let Some(plan) = plan.as_ref() {
+      // The span kind picks the engine — linear-light float area or
+      // signed-coefficient filter. Both bin the SAME staged linear-XYZ
+      // f32 row (inverse-OETF only, pre-matrix) and feed the SAME emit;
+      // the matrix + gamma + narrow run per finalized output row. The
+      // `rgb_f32` / `xyz_f32` outputs stay full-range (HDR > 1 and
+      // out-of-gamut negatives preserved) and the integer / f16 outputs
+      // clamp `[0, 1]` in their own narrows, so a filter overshoot needs
+      // no native-depth clamp.
+      let stream_next_y = match plan.kind() {
+        crate::resample::SpanKind::Area => xyz_stream_f32.as_ref().map_or(0, |s| s.next_y()),
+        crate::resample::SpanKind::Filter => {
+          xyz_filter_stream_f32.as_ref().map_or(0, |s| s.next_y())
+        }
+      };
       if !xyz12_resample_preflight(
         resample_outputs,
         rgb,
@@ -486,35 +506,68 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Xyz12<BE>, R> {
         rgb_f16,
         rgba_f16,
         hsv,
-        xyz_stream_f32.as_ref().map_or(0, |s| s.next_y()),
+        stream_next_y,
         idx,
       )? {
         return Ok(());
       }
-      let stream = xyz12_resample_stream(xyz_stream_f32, plan, idx)?;
-      let src_xyz = source_xyz_f32_scratch(xyz_scratch_f32, w, plan)?;
-      xyz12_to_xyz_f32_row::<BE>(row.xyz(), src_xyz, w, use_simd);
-      return xyz12_resample_emit(
-        stream,
-        plan,
-        rgb,
-        rgba,
-        luma,
-        luma_u16,
-        rgb_u16,
-        rgba_u16,
-        rgb_f32,
-        xyz_f32,
-        rgb_f16,
-        rgba_f16,
-        hsv,
-        src_xyz,
-        rgb_scratch,
-        target_gamut,
-        luma_q15,
-        idx,
-        use_simd,
-      );
+      // Create + sequence-check the kind-appropriate stream BEFORE the
+      // source-width staging, so a later out-of-sequence row is rejected
+      // without the conversion (reject-before-staging atomicity).
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => {
+          let stream = xyz12_resample_stream(xyz_stream_f32, plan, idx)?;
+          let src_xyz = source_xyz_f32_scratch(xyz_scratch_f32, w, plan)?;
+          xyz12_to_xyz_f32_row::<BE>(row.xyz(), src_xyz, w, use_simd);
+          xyz12_resample_emit(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            luma_u16,
+            rgb_u16,
+            rgba_u16,
+            rgb_f32,
+            xyz_f32,
+            rgb_f16,
+            rgba_f16,
+            hsv,
+            src_xyz,
+            rgb_scratch,
+            target_gamut,
+            luma_q15,
+            idx,
+            use_simd,
+          )
+        }
+        crate::resample::SpanKind::Filter => {
+          let stream = xyz12_resample_filter(xyz_filter_stream_f32, plan, idx)?;
+          let src_xyz = source_xyz_f32_scratch(xyz_scratch_f32, w, plan)?;
+          xyz12_to_xyz_f32_row::<BE>(row.xyz(), src_xyz, w, use_simd);
+          xyz12_resample_emit(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            luma_u16,
+            rgb_u16,
+            rgba_u16,
+            rgb_f32,
+            xyz_f32,
+            rgb_f16,
+            rgba_f16,
+            hsv,
+            src_xyz,
+            rgb_scratch,
+            target_gamut,
+            luma_q15,
+            idx,
+            use_simd,
+          )
+        }
+      };
     }
 
     self.xyz12_process_direct(row, use_simd)

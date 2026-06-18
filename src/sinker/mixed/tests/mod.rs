@@ -199,6 +199,8 @@ mod resample_vuyx;
 mod resample_xv36;
 #[cfg(feature = "xyz")]
 mod resample_xyz12;
+#[cfg(feature = "xyz")]
+mod resample_xyz12_filter;
 #[cfg(feature = "y2xx")]
 mod resample_y2xx;
 #[cfg(feature = "gray")]
