@@ -46,9 +46,9 @@
 
 use super::{
   InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange, RowShapeMismatch,
-  RowSlice, check_dimensions_match, check_frozen_alpha_mode, packed_rgb_resample_emit,
-  packed_rgb_resample_preflight, packed_rgb_resample_stream, packed_rgba_resample,
-  rgb_row_buf_or_scratch, rgba_plane_row_slice, source_rgb_scratch,
+  RowSlice, check_dimensions_match, check_frozen_alpha_mode, packed_rgb_filter_stream,
+  packed_rgb_resample_emit, packed_rgb_resample_preflight, packed_rgb_resample_stream,
+  packed_rgba_resample, rgb_row_buf_or_scratch, rgba_plane_row_slice, source_rgb_scratch,
 };
 use crate::{
   PixelSink,
@@ -119,6 +119,9 @@ impl<R> PixelSink for MixedSinker<'_, Gbrp, R> {
     if let Some(stream) = self.rgb_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -170,6 +173,7 @@ impl<R> PixelSink for MixedSinker<'_, Gbrp, R> {
       rgb_scratch,
       plan,
       rgb_stream,
+      rgb_filter_stream,
       resample_outputs,
       ..
     } = self;
@@ -186,8 +190,14 @@ impl<R> PixelSink for MixedSinker<'_, Gbrp, R> {
     // G/B/R planes into the source-width packed-RGB scratch and feed the
     // shared packed-RGB resample tail. luma_u16 derives through the same
     // tail, mirroring the direct path below for parity (RGBA alpha is
-    // forced to 0xFF — the 3-plane source has no alpha).
+    // forced to 0xFF — the 3-plane source has no alpha). The plan's span
+    // kind picks the engine — the integer area stream or the signed-
+    // coefficient filter stream — both feed the one shared emit.
     if let Some(plan) = plan.as_ref() {
+      let stream_next_y = match plan.kind() {
+        crate::resample::SpanKind::Area => rgb_stream.as_ref().map_or(0, |s| s.next_y()),
+        crate::resample::SpanKind::Filter => rgb_filter_stream.as_ref().map_or(0, |s| s.next_y()),
+      };
       if !packed_rgb_resample_preflight(
         resample_outputs,
         rgb,
@@ -195,28 +205,55 @@ impl<R> PixelSink for MixedSinker<'_, Gbrp, R> {
         luma,
         luma_u16,
         hsv,
-        rgb_stream.as_ref().map_or(0, |s| s.next_y()),
+        stream_next_y,
         idx,
       )? {
         return Ok(());
       }
-      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
-      let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
-      gbr_to_rgb_row(g_in, b_in, r_in, scratch, w, use_simd);
-      return packed_rgb_resample_emit(
-        stream,
-        plan,
-        rgb,
-        rgba,
-        luma,
-        luma_u16,
-        hsv,
-        scratch,
-        row.matrix(),
-        row.full_range(),
-        idx,
-        use_simd,
-      );
+      // Build the per-kind stream first (it re-checks sequencing and
+      // raises `OutOfSequenceRow` before any allocation), then scatter
+      // into the source-width scratch — so a rejected row never grows the
+      // scratch nor runs the interleave.
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => {
+          let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+          let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+          gbr_to_rgb_row(g_in, b_in, r_in, scratch, w, use_simd);
+          packed_rgb_resample_emit(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            luma_u16,
+            hsv,
+            scratch,
+            row.matrix(),
+            row.full_range(),
+            idx,
+            use_simd,
+          )
+        }
+        crate::resample::SpanKind::Filter => {
+          let stream = packed_rgb_filter_stream(rgb_filter_stream, plan, idx)?;
+          let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+          gbr_to_rgb_row(g_in, b_in, r_in, scratch, w, use_simd);
+          packed_rgb_resample_emit(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            luma_u16,
+            hsv,
+            scratch,
+            row.matrix(),
+            row.full_range(),
+            idx,
+            use_simd,
+          )
+        }
+      };
     }
 
     // ---- Output mode resolution (Strategy A) -------------------------
