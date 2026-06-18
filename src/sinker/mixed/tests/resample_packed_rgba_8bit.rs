@@ -10,7 +10,10 @@
 
 use crate::{
   ColorMatrix, PixelSink,
-  resample::{AreaResampler, ResampleError},
+  resample::{
+    AreaResampler, CatmullRom, FilterStream, FilteredResampler, Lanczos3, ResampleError, Resampler,
+    Triangle,
+  },
   sinker::{AlphaMode, MixedSinker, MixedSinkerError},
   source::{
     Abgr, AbgrRow, Argb, ArgbRow, Bgra, BgraRow, Rgba, RgbaRow, abgr_to, argb_to, bgra_to, rgba_to,
@@ -86,6 +89,73 @@ fn drop_alpha(rgba: &[u8]) -> Vec<u8> {
     o.copy_from_slice(&i[..3]);
   }
   rgb
+}
+
+/// Single-channel byte-exact filter resample of channel `c` of a
+/// canonical `R, G, B, A` plane, via the merged engine's `FilterStream`
+/// (channels = 1). This is the per-channel PIL oracle: the u8 filter is
+/// byte-exact versus Pillow per channel (proven by the engine's
+/// `u8_matches_pil`), and PIL resizes RGBA by filtering each channel
+/// independently with **no premultiplication** — so a 4-channel RGBA
+/// filter resample's channel `c` must equal this single-plane filter.
+#[allow(clippy::too_many_arguments)]
+fn channel_plane_filter<K: crate::resample::FilterKernel>(
+  kernel: K,
+  canonical: &[u8],
+  c: usize,
+  sw: usize,
+  sh: usize,
+  ow: usize,
+  oh: usize,
+  use_simd: bool,
+) -> Vec<u8> {
+  let mut plane = std::vec![0u8; sw * sh];
+  for (dst, px) in plane.iter_mut().zip(canonical.chunks_exact(4)) {
+    *dst = px[c];
+  }
+  let plan = FilteredResampler::new(ow, oh, kernel)
+    .plan(sw, sh)
+    .expect("valid filter plan")
+    .expect("non-identity");
+  let fh = plan.filter_h().expect("h windows");
+  let fv = plan.filter_v().expect("v windows");
+  let mut stream = FilterStream::<u8>::new(fh, fv, sw, sh, 1).expect("geometry");
+  let mut out = std::vec![0u8; ow * oh];
+  for y in 0..sh {
+    stream
+      .feed_row(y, &plane[y * sw..(y + 1) * sw], use_simd, |oy, fin| {
+        out[oy * ow..(oy + 1) * ow].copy_from_slice(fin);
+      })
+      .expect("rows in order");
+  }
+  out
+}
+
+/// Asserts a 4-channel RGBA filter resample (interleaved `R, G, B, A`)
+/// equals the per-channel single-plane filter of the canonical source —
+/// i.e. each of R/G/B/A independently matches the byte-exact engine.
+#[allow(clippy::too_many_arguments)]
+fn assert_rgba_is_per_channel_filter<K: crate::resample::FilterKernel + Copy>(
+  kernel: K,
+  resampled_rgba: &[u8],
+  canonical: &[u8],
+  sw: usize,
+  sh: usize,
+  ow: usize,
+  oh: usize,
+  ctx: &str,
+) {
+  for c in 0..4 {
+    let plane = channel_plane_filter(kernel, canonical, c, sw, sh, ow, oh, true);
+    for (i, &p) in plane.iter().enumerate() {
+      assert_eq!(
+        resampled_rgba[i * 4 + c],
+        p,
+        "{ctx} channel {c} px {i}: rgba {} vs per-plane filter {p}",
+        resampled_rgba[i * 4 + c],
+      );
+    }
+  }
 }
 
 macro_rules! rgba8_resample_suite {
@@ -721,6 +791,141 @@ macro_rules! rgba8_resample_suite {
           matches!(err, MixedSinkerError::ResampleOutputsChanged(_)),
           "expected ResampleOutputsChanged after OOS first row + route-switch, got {err:?}"
         );
+      }
+
+      /// Runs a real-alpha filter resample (rgba attached) and asserts each
+      /// of R/G/B/A equals the byte-exact single-plane filter — proving the
+      /// 4-channel filter is PIL-byte-exact and channel-independent (no
+      /// premultiplication). Swept over Triangle/CatmullRom/Lanczos3 for a
+      /// downscale and an enlarge.
+      fn filter_rgba_per_channel<K: crate::resample::FilterKernel + Copy>(
+        kernel: K,
+        sw: usize,
+        sh: usize,
+        ow: usize,
+        oh: usize,
+        seed: u32,
+        ctx: &str,
+      ) {
+        let canonical = {
+          let mut buf = std::vec![0u8; sw * sh * 4];
+          crate::sinker::mixed::tests::pseudo_random_u8(&mut buf, seed);
+          buf
+        };
+        let pix = encode(&canonical);
+        let src = $frame::try_new(&pix, sw as u32, sh as u32, (sw * 4) as u32).unwrap();
+        let mut rgba = std::vec![0u8; ow * oh * 4];
+        {
+          let mut sink = MixedSinker::<$marker, FilteredResampler<K>>::with_resampler(
+            sw,
+            sh,
+            FilteredResampler::new(ow, oh, kernel),
+          )
+          .unwrap()
+          .with_rgba(&mut rgba)
+          .unwrap();
+          $walk(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+        }
+        assert_rgba_is_per_channel_filter(kernel, &rgba, &canonical, sw, sh, ow, oh, ctx);
+      }
+
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn filter_real_alpha_is_byte_exact_per_channel_downscale() {
+        let s = stringify!($modname).len() as u32;
+        filter_rgba_per_channel(Triangle, 8, 8, 4, 4, 0xF11A ^ s, "Triangle 8x8->4x4");
+        filter_rgba_per_channel(CatmullRom, 8, 8, 4, 4, 0xF22B ^ s, "CatmullRom 8x8->4x4");
+        filter_rgba_per_channel(Lanczos3, 8, 8, 4, 4, 0xF33C ^ s, "Lanczos3 8x8->4x4");
+      }
+
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn filter_real_alpha_is_byte_exact_per_channel_upscale() {
+        let s = stringify!($modname).len() as u32;
+        filter_rgba_per_channel(Triangle, 4, 4, 8, 8, 0xE11A ^ s, "Triangle 4x4->8x8");
+        filter_rgba_per_channel(CatmullRom, 4, 4, 8, 8, 0xE22B ^ s, "CatmullRom 4x4->8x8");
+        filter_rgba_per_channel(Lanczos3, 4, 4, 8, 8, 0xE33C ^ s, "Lanczos3 4x4->8x8");
+      }
+
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn filter_real_alpha_rgb_is_drop_alpha_of_filtered_rgba() {
+        // With both rgb and rgba attached under a filter plan, rgb must be
+        // the alpha-dropped filtered RGBA (the same color the rgba output
+        // carries) — proving the drop-alpha derivation rides the 4-channel
+        // filter, not a separately-filtered RGB.
+        let s = stringify!($modname).len() as u32;
+        let canonical = {
+          let mut buf = std::vec![0u8; 8 * 8 * 4];
+          crate::sinker::mixed::tests::pseudo_random_u8(&mut buf, 0xD0DA ^ s);
+          buf
+        };
+        let pix = encode(&canonical);
+        let src = $frame::try_new(&pix, 8, 8, 32).unwrap();
+        let mut rgba = std::vec![0u8; 4 * 4 * 4];
+        let mut rgb = std::vec![0u8; 4 * 4 * 3];
+        {
+          let mut sink = MixedSinker::<$marker, FilteredResampler<Triangle>>::with_resampler(
+            8,
+            8,
+            FilteredResampler::new(4, 4, Triangle),
+          )
+          .unwrap()
+          .with_rgba(&mut rgba)
+          .unwrap()
+          .with_rgb(&mut rgb)
+          .unwrap();
+          $walk(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+        }
+        assert_eq!(rgb, drop_alpha(&rgba), "rgb is drop-alpha of filtered rgba");
+      }
+
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn filter_plan_is_accepted_not_unsupported() {
+        // Regression: the 4-channel filter fence is gone — a filter plan on
+        // a real-alpha packed-RGBA source is accepted (rgba attached routes
+        // the 4-channel filter; rgb-only routes the 3-channel filter).
+        let pix = packed_frame(0xC0DE ^ stringify!($modname).len() as u32);
+        let src = $frame::try_new(&pix, SRC as u32, SRC as u32, (SRC * 4) as u32).unwrap();
+        let mut rgba = std::vec![0u8; OUT * OUT * 4];
+        {
+          let mut sink = MixedSinker::<$marker, FilteredResampler<Triangle>>::with_resampler(
+            SRC,
+            SRC,
+            FilteredResampler::new(OUT, OUT, Triangle),
+          )
+          .unwrap()
+          .with_rgba(&mut rgba)
+          .unwrap();
+          $walk(&src, true, ColorMatrix::Bt709, &mut sink)
+            .expect("a filter plan must be accepted for real-alpha packed RGBA");
+        }
+        let mut rgb = std::vec![0u8; OUT * OUT * 3];
+        {
+          let mut sink = MixedSinker::<$marker, FilteredResampler<Triangle>>::with_resampler(
+            SRC,
+            SRC,
+            FilteredResampler::new(OUT, OUT, Triangle),
+          )
+          .unwrap()
+          .with_rgb(&mut rgb)
+          .unwrap();
+          $walk(&src, true, ColorMatrix::Bt709, &mut sink)
+            .expect("a filter plan must be accepted for an rgb-only sink too");
+        }
       }
     }
   };
