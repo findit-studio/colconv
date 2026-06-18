@@ -673,3 +673,463 @@ gbrap_high_bit_resample_suite!(
   gbrp16_to,
   16
 );
+
+// ---- Filter-resample routing (Tier 10b -> separable filter engine) ------
+//
+// Straight-alpha `GbrapN` de-interleaves its native-depth G/B/R/A planes
+// into the canonical host-native `R, G, B, A` u16 row and runs the SAME
+// shared 4-channel high-bit packed-RGBA filter tail
+// (`packed_rgba_u16_filter_resample::<BITS, true>`, the native-luma_u16 mode)
+// the straight `Rgba64` source runs (it takes `<16, false>`, the narrowed
+// luma_u16 mode) — so a `GbrapN` filter `rgba_u16` is byte-identical to the
+// `Rgba64`
+// filter `rgba_u16` of the same logical pixels, AFTER the reference is
+// clamped to the native max `(1 << BITS) - 1` (the 16-bit `Rgba64` oracle
+// does not clamp a signed-kernel overshoot to a sub-16-bit ceiling; the
+// `GbrapN` tail does — a no-op for `Gbrap16`). PIL filters R, G, B, A
+// independently with no premultiplication, so the filter path is reached
+// only for straight alpha.
+
+/// `Gbrap10` filter coverage: a feature-independent acceptance test (also
+/// guards `gbr`-solo), the native-range + no-wrap overshoot contract for the
+/// sub-16-bit clamp, and the `Rgba64`-parity oracle (gated on `rgb`).
+mod gbrap10_filter {
+  use super::*;
+  use crate::resample::FilteredResampler;
+
+  const BITS: u32 = 10;
+  const NATIVE_MAX: u16 = (1 << BITS) - 1; // 1023
+  const SHIFT: u32 = BITS - 8;
+
+  fn le_frame<'a>(
+    g: &'a [u16],
+    b: &'a [u16],
+    r: &'a [u16],
+    a: &'a [u16],
+    w: usize,
+    h: usize,
+  ) -> crate::frame::Gbrap10LeFrame<'a> {
+    crate::frame::Gbrap10LeFrame::try_new(
+      g, b, r, a, w as u32, h as u32, w as u32, w as u32, w as u32, w as u32,
+    )
+    .unwrap()
+  }
+
+  /// A `GbrapN` filter plan must be accepted and produce a real (non-
+  /// sentinel) output — no `Rgba64` reference, so this also guards the
+  /// `gbr`-solo build where the rgb-gated oracle below compiles out.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn filter_plan_is_accepted() {
+    use crate::resample::Triangle;
+    let host = canonical_frame::<BITS>(0x7A1C);
+    let (g, b, r, a) = planes_from_canonical(&host, SRC * SRC);
+    let (gw, bw, rw, aw) = (
+      as_wire(&g, false),
+      as_wire(&b, false),
+      as_wire(&r, false),
+      as_wire(&a, false),
+    );
+    let src = le_frame(&gw, &bw, &rw, &aw, SRC, SRC);
+
+    let mut rgba_u16 = std::vec![0xABCDu16; OUT * OUT * 4];
+    {
+      let mut sink =
+        MixedSinker::<crate::source::Gbrap10<false>, FilteredResampler<Triangle>>::with_resampler(
+          SRC,
+          SRC,
+          FilteredResampler::new(OUT, OUT, Triangle),
+        )
+        .unwrap()
+        .with_rgba_u16(&mut rgba_u16)
+        .unwrap();
+      crate::source::gbrap10_to(&src, true, MATRIX, &mut sink)
+        .expect("GbrapN filter plan must be accepted (routed)");
+    }
+    assert!(
+      rgba_u16.iter().any(|&v| v != 0xABCD),
+      "routed filter plan must write the rgba_u16 buffer"
+    );
+  }
+
+  /// A sharp `0 -> native-max` horizontal step, uniform vertically, all
+  /// three colour channels equal and a fully-opaque alpha. A signed kernel
+  /// enlarging this overshoots above `NATIVE_MAX` on the high side.
+  fn step_edge(w: usize, h: usize) -> Vec<u16> {
+    let mut buf = std::vec![0u16; w * h * 4];
+    for (i, px) in buf.chunks_exact_mut(4).enumerate() {
+      let x = i % w;
+      let v = if x >= w / 2 { NATIVE_MAX } else { 0 };
+      px.copy_from_slice(&[v, v, v, NATIVE_MAX]);
+    }
+    buf
+  }
+
+  /// Native-range clamp + no-wrap contract for the sub-16-bit filter. A
+  /// `CatmullRom` / `Lanczos3` negative lobe overshoots a near-max edge, so
+  /// a finalized sample can exceed `1023` even though the `FilterStream`
+  /// clamps only to the full u16 range. For `Gbrap10` that overshoot must
+  /// clip to `1023` before any output is derived: native `rgba_u16` stays
+  /// `<= 1023`, and the narrowed `rgba` u8 at a ceiling pixel is `1023 >> 2
+  /// = 255`, never the wrapped small value an un-clamped overshoot makes.
+  fn assert_clamped_and_narrowed<K>(name: &str, kernel: K)
+  where
+    K: crate::resample::FilterKernel + Copy,
+  {
+    const SW: usize = 4;
+    const SD: usize = 7;
+    let host = step_edge(SW, SW);
+    let (g, b, r, a) = planes_from_canonical(&host, SW * SW);
+    let (gw, bw, rw, aw) = (
+      as_wire(&g, false),
+      as_wire(&b, false),
+      as_wire(&r, false),
+      as_wire(&a, false),
+    );
+    let src = le_frame(&gw, &bw, &rw, &aw, SW, SW);
+
+    let mut rgba_u16 = std::vec![0u16; SD * SD * 4];
+    let mut rgba_u8 = std::vec![0u8; SD * SD * 4];
+    {
+      let mut sink =
+        MixedSinker::<crate::source::Gbrap10<false>, FilteredResampler<K>>::with_resampler(
+          SW,
+          SW,
+          FilteredResampler::new(SD, SD, kernel),
+        )
+        .unwrap()
+        .with_rgba_u16(&mut rgba_u16)
+        .unwrap()
+        .with_rgba(&mut rgba_u8)
+        .unwrap();
+      crate::source::gbrap10_to(&src, true, MATRIX, &mut sink).unwrap();
+    }
+
+    // (a) Every native sample (alpha included) is within the 10-bit range.
+    assert!(
+      rgba_u16.iter().all(|&v| v <= NATIVE_MAX),
+      "{name}: rgba_u16 must stay <= {NATIVE_MAX}; max was {}",
+      rgba_u16.iter().copied().max().unwrap()
+    );
+    // The step overshoots, so a clipped-high (== ceiling) edge must exist —
+    // else the test is not exercising the overshoot it claims to.
+    assert!(
+      rgba_u16.contains(&NATIVE_MAX),
+      "{name}: expected a clipped-high (== {NATIVE_MAX}) edge in rgba_u16"
+    );
+    // (b) Each narrowed u8 is the `>> 2` of the clamped native sample, so a
+    // ceiling pixel narrows to 255 — never a wrap (`1062 >> 2 = 265 as u8 =
+    // 9`).
+    for (&hi, &lo) in rgba_u16.iter().zip(rgba_u8.iter()) {
+      assert_eq!(
+        lo,
+        (hi >> SHIFT) as u8,
+        "{name}: u8 must be the narrowing of the clamped native sample"
+      );
+      if hi == NATIVE_MAX {
+        assert_eq!(
+          lo, 255,
+          "{name}: clipped-high edge must narrow to 255, not a wrap"
+        );
+      }
+    }
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn catmullrom_overshoot_is_clamped_to_native_max() {
+    use crate::resample::CatmullRom;
+    assert_clamped_and_narrowed("catmullrom", CatmullRom);
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn lanczos3_overshoot_is_clamped_to_native_max() {
+    use crate::resample::Lanczos3;
+    assert_clamped_and_narrowed("lanczos3", Lanczos3);
+  }
+}
+
+/// Native-depth `luma_u16` contract for the 4-channel `GbrapN` filter tail:
+/// attaching an alpha output (so the sink routes through the 4-channel
+/// `packed_rgba_u16_filter_resample` rather than the 3-channel emit) must NOT
+/// downgrade `luma_u16` from native precision to the narrowed 0..255
+/// flavor. The oracle is the area path's own "native, full parity" rule
+/// (`straight_all_outputs_derive_from_binned_color`): `luma_u16` equals a
+/// direct `GbrpN` conversion of the drop-alpha binned RGB — applied here to
+/// the FILTER's binned frame (its `rgba_u16` output). Feature-independent (no
+/// `Rgba64`), so it also guards the `gbr`-solo build.
+mod filter_native_luma_u16 {
+  use super::*;
+  use crate::resample::{CatmullRom, FilteredResampler, Lanczos3, Triangle};
+
+  macro_rules! gbrap_filter_native_luma_tests {
+    ($mod:ident, $marker:ident, $le:ident, $walk:ident, $bits:literal) => {
+      mod $mod {
+        use super::*;
+
+        const BITS: u32 = $bits;
+        const SHIFT: u32 = BITS - 8;
+
+        /// Run the `GbrapN` FILTER sink with both `rgba_u16` AND `luma_u16`
+        /// attached (the alpha output forces the 4-channel tail), returning
+        /// `(rgba_u16, luma_u16)`.
+        fn filter_rgba_and_luma_u16<K>(
+          canonical: &[u16],
+          ow: usize,
+          oh: usize,
+          kernel: K,
+        ) -> (std::vec::Vec<u16>, std::vec::Vec<u16>)
+        where
+          K: crate::resample::FilterKernel,
+        {
+          let (g, b, r, a) = planes_from_canonical(canonical, SRC * SRC);
+          let (gw, bw, rw, aw) = (
+            as_wire(&g, false),
+            as_wire(&b, false),
+            as_wire(&r, false),
+            as_wire(&a, false),
+          );
+          let src = crate::frame::$le::try_new(
+            &gw, &bw, &rw, &aw, SRC as u32, SRC as u32, SRC as u32, SRC as u32, SRC as u32,
+            SRC as u32,
+          )
+          .unwrap();
+          let mut rgba_u16 = std::vec![0u16; ow * oh * 4];
+          let mut luma_u16 = std::vec![0u16; ow * oh];
+          {
+            let mut sink =
+              MixedSinker::<crate::source::$marker<false>, FilteredResampler<K>>::with_resampler(
+                SRC,
+                SRC,
+                FilteredResampler::new(ow, oh, kernel),
+              )
+              .unwrap()
+              .with_rgba_u16(&mut rgba_u16)
+              .unwrap()
+              .with_luma_u16(&mut luma_u16)
+              .unwrap();
+            crate::source::$walk(&src, true, MATRIX, &mut sink).unwrap();
+          }
+          (rgba_u16, luma_u16)
+        }
+
+        fn assert_native_luma_u16<K>(kernel: K, ow: usize, oh: usize, seed: u32, ctx: &str)
+        where
+          K: crate::resample::FilterKernel + Copy,
+        {
+          let canonical = canonical_frame::<BITS>(seed);
+          let (rgba_u16, filter_luma_u16) = filter_rgba_and_luma_u16(&canonical, ow, oh, kernel);
+
+          // Native-depth oracle: the exact `rgb_to_luma_u16_native_row` the
+          // area / direct paths run on the binned drop-alpha RGB — applied
+          // here to the FILTER's own `rgba_u16` output. (The filter already
+          // clamps `rgba_u16` to the native max, so the oracle input is
+          // in-range.) This is the value the area path's
+          // `straight_all_outputs_derive_from_binned_color` asserts as
+          // "native, full parity".
+          let binned_rgb = drop_alpha_u16(&rgba_u16);
+          let mut native_ref = std::vec![0u16; ow * oh];
+          crate::row::rgb_to_luma_u16_native_row(
+            &binned_rgb,
+            &mut native_ref,
+            ow * oh,
+            MATRIX,
+            true,
+            BITS,
+          );
+
+          assert_eq!(
+            filter_luma_u16, native_ref,
+            "{ctx}: filter luma_u16 must be NATIVE depth (rgb_to_luma_u16_native_row of the binned RGB), not narrowed"
+          );
+
+          // Discrimination guard: the narrowed flavor (the pre-fix bug) is the
+          // 8-bit Y' of the `>> SHIFT` RGB, zero-extended via
+          // `rgb_to_luma_u16_row`. Assert it genuinely differs from the native
+          // oracle, so this test would FAIL on the pre-fix narrowed path.
+          let narrowed_rgb: std::vec::Vec<u8> =
+            binned_rgb.iter().map(|&v| (v >> SHIFT) as u8).collect();
+          let mut narrowed_luma = std::vec![0u16; ow * oh];
+          crate::row::rgb_to_luma_u16_row(
+            &narrowed_rgb,
+            &mut narrowed_luma,
+            ow * oh,
+            MATRIX,
+            true,
+            true,
+          );
+          assert_ne!(
+            native_ref, narrowed_luma,
+            "{ctx}: oracle is non-discriminating (native == narrowed); pick a frame that differs"
+          );
+        }
+
+        #[test]
+        #[cfg_attr(
+          miri,
+          ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+        )]
+        fn filter_luma_u16_is_native_depth() {
+          let s = stringify!($mod).len() as u32;
+          assert_native_luma_u16(Triangle, OUT, OUT, 0xC11A ^ s, "triangle");
+          assert_native_luma_u16(CatmullRom, OUT, OUT, 0xC22B ^ s, "catmullrom");
+          assert_native_luma_u16(Lanczos3, OUT, OUT, 0xC33C ^ s, "lanczos3");
+        }
+      }
+    };
+  }
+
+  gbrap_filter_native_luma_tests!(gbrap10, Gbrap10, Gbrap10LeFrame, gbrap10_to, 10);
+  gbrap_filter_native_luma_tests!(gbrap12, Gbrap12, Gbrap12LeFrame, gbrap12_to, 12);
+  gbrap_filter_native_luma_tests!(gbrap14, Gbrap14, Gbrap14LeFrame, gbrap14_to, 14);
+  gbrap_filter_native_luma_tests!(gbrap16, Gbrap16, Gbrap16LeFrame, gbrap16_to, 16);
+}
+
+/// `Rgba64`-parity oracle for both `Gbrap10` (sub-16-bit, native clamp
+/// applied to the reference) and `Gbrap16` (full 16-bit, clamp a no-op): a
+/// `GbrapN` filter `rgba_u16` is byte-identical to the `Rgba64` filter
+/// `rgba_u16` of the same logical pixels. Gated on `rgb` (the oracle
+/// source); the `gbr`-solo build relies on the acceptance test above.
+#[cfg(feature = "rgb")]
+mod filter_parity {
+  use super::*;
+  use crate::resample::{CatmullRom, FilteredResampler, Lanczos3, Triangle};
+
+  /// Run the `Rgba64` filter sink over a canonical host-native `R, G, B, A`
+  /// plane at `ow x oh`, returning native `rgba_u16`. Clamped to `native_max`
+  /// per channel so a signed-kernel overshoot matches the sub-16-bit `GbrapN`
+  /// tail (no-op when `native_max == u16::MAX`).
+  fn rgba64_filter_rgba_u16<K>(
+    canonical: &[u16],
+    sw: usize,
+    sh: usize,
+    ow: usize,
+    oh: usize,
+    kernel: K,
+    native_max: u16,
+  ) -> Vec<u16>
+  where
+    K: crate::resample::FilterKernel,
+  {
+    let wire = as_wire(canonical, false);
+    let src = crate::frame::Rgba64Frame::new(&wire, sw as u32, sh as u32, (sw * 4) as u32);
+    let mut out = std::vec![0u16; ow * oh * 4];
+    {
+      let mut sink =
+        MixedSinker::<crate::source::Rgba64<false>, FilteredResampler<K>>::with_resampler(
+          sw,
+          sh,
+          FilteredResampler::new(ow, oh, kernel),
+        )
+        .unwrap()
+        .with_rgba_u16(&mut out)
+        .unwrap();
+      crate::source::rgba64_to(&src, true, MATRIX, &mut sink).unwrap();
+    }
+    for v in &mut out {
+      *v = (*v).min(native_max);
+    }
+    out
+  }
+
+  macro_rules! gbrap_filter_parity_tests {
+    ($mod:ident, $marker:ident, $walker:ident, $le:ident, $bits:literal) => {
+      mod $mod {
+        use super::*;
+
+        const BITS: u32 = $bits;
+        const NATIVE_MAX: u16 = ((1u32 << BITS) - 1) as u16;
+
+        /// Run the `GbrapN` filter sink over a canonical `R, G, B, A` plane
+        /// (scattered to G/B/R/A planes) at `ow x oh`, returning native
+        /// `rgba_u16` — the value compared against the `Rgba64` oracle.
+        fn gbrap_filter_rgba_u16<K>(
+          canonical: &[u16],
+          sw: usize,
+          sh: usize,
+          ow: usize,
+          oh: usize,
+          kernel: K,
+        ) -> Vec<u16>
+        where
+          K: crate::resample::FilterKernel,
+        {
+          let (g, b, r, a) = planes_from_canonical(canonical, sw * sh);
+          let (gw, bw, rw, aw) = (
+            as_wire(&g, false),
+            as_wire(&b, false),
+            as_wire(&r, false),
+            as_wire(&a, false),
+          );
+          let src = crate::frame::$le::try_new(
+            &gw, &bw, &rw, &aw, sw as u32, sh as u32, sw as u32, sw as u32, sw as u32, sw as u32,
+          )
+          .unwrap();
+          let mut out = std::vec![0u16; ow * oh * 4];
+          {
+            let mut sink =
+              MixedSinker::<crate::source::$marker<false>, FilteredResampler<K>>::with_resampler(
+                sw,
+                sh,
+                FilteredResampler::new(ow, oh, kernel),
+              )
+              .unwrap()
+              .with_rgba_u16(&mut out)
+              .unwrap();
+            crate::source::$walker(&src, true, MATRIX, &mut sink).unwrap();
+          }
+          out
+        }
+
+        fn assert_matches<K>(kernel: K, ow: usize, oh: usize, seed: u32, ctx: &str)
+        where
+          K: crate::resample::FilterKernel + Copy,
+        {
+          let canonical = canonical_frame::<BITS>(seed);
+          let got = gbrap_filter_rgba_u16(&canonical, SRC, SRC, ow, oh, kernel);
+          let want = rgba64_filter_rgba_u16(&canonical, SRC, SRC, ow, oh, kernel, NATIVE_MAX);
+          assert_eq!(got, want, "{ctx}: rgba_u16 vs Rgba64 filter oracle");
+        }
+
+        #[test]
+        #[cfg_attr(
+          miri,
+          ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+        )]
+        fn downscale_filter_rgba_u16_matches_rgba64() {
+          let s = stringify!($mod).len() as u32;
+          assert_matches(Triangle, OUT, OUT, 0xF11A ^ s, "triangle/down");
+          assert_matches(CatmullRom, OUT, OUT, 0xF22B ^ s, "catmullrom/down");
+          assert_matches(Lanczos3, OUT, OUT, 0xF33C ^ s, "lanczos3/down");
+        }
+
+        #[test]
+        #[cfg_attr(
+          miri,
+          ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+        )]
+        fn upscale_filter_rgba_u16_matches_rgba64() {
+          // 8 -> 7 enlarge — exercises the filter engine's grow path.
+          const UP: usize = 7;
+          let s = stringify!($mod).len() as u32;
+          assert_matches(Triangle, UP, UP, 0xE11A ^ s, "triangle/up");
+          assert_matches(CatmullRom, UP, UP, 0xE22B ^ s, "catmullrom/up");
+          assert_matches(Lanczos3, UP, UP, 0xE33C ^ s, "lanczos3/up");
+        }
+      }
+    };
+  }
+
+  gbrap_filter_parity_tests!(gbrap10, Gbrap10, gbrap10_to, Gbrap10LeFrame, 10);
+  gbrap_filter_parity_tests!(gbrap16, Gbrap16, gbrap16_to, Gbrap16LeFrame, 16);
+}

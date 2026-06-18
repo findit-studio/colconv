@@ -504,3 +504,158 @@ fn accepts_alpha_mode_change_across_frames() {
 // re-arm above is the part observable through the walker; the mid-frame
 // rejections are covered by the shared-tail packed-RGBA suites (mirroring
 // the `resample_gbrp` suite's same documented split).
+
+// ---- Filter-resample routing (Tier 10 -> separable filter engine) -------
+//
+// Straight-alpha `Gbrap` scatters its G/B/R/A planes into the canonical
+// `R, G, B, A` row and runs the SAME shared 4-channel packed-RGBA filter
+// tail (`packed_rgba_filter_resample`) the straight `Rgba` source runs —
+// so a `Gbrap` filter resample MUST be byte-identical to the equivalent
+// `Rgba` filter resample of the same pixels (rgba, rgb, luma, luma_u16
+// alike). That equivalence is the oracle: it pins the scatter + the filter
+// routing in one shot, for an enlarge and a reduce across all three kernels.
+// PIL filters R, G, B, A independently with no premultiplication, so the
+// filter path is reached only for straight alpha.
+
+/// `Gbrap` exposes a u16 luma output that the packed-RGBA `Rgba` source
+/// does not, so the per-channel u16-luma oracle is the u8-luma zero-extend.
+#[cfg(feature = "rgb")]
+fn luma_u8_to_u16(luma: &[u8]) -> Vec<u16> {
+  luma.iter().map(|&v| v as u16).collect()
+}
+
+/// Resample the same canonical RGBA pixels through a `Gbrap` filter sink
+/// and the equivalent straight `Rgba` filter sink, asserting rgba / rgb /
+/// luma are byte-identical and `Gbrap`'s u16 luma is the zero-extend of the
+/// shared u8 luma. Generic over the kernel; covers any `out_w x out_h`.
+#[cfg(feature = "rgb")]
+fn assert_gbrap_filter_matches_rgba<K>(kernel: K, out_w: usize, out_h: usize, label: &str)
+where
+  K: crate::resample::FilterKernel + Copy,
+{
+  use crate::source::{Rgba, rgba_to};
+  use mediaframe::frame::RgbaFrame;
+
+  let canonical = canonical_frame(0xA15F ^ (out_w as u32) ^ ((out_h as u32) << 8));
+  let (g, b, r, a) = planes_from_canonical(&canonical, SRC * SRC);
+  let gbrap_src = gbrap_frame(&g, &b, &r, &a, SRC, SRC);
+  let rgba_src = RgbaFrame::new(&canonical, SRC as u32, SRC as u32, (SRC * 4) as u32);
+
+  let n = out_w * out_h;
+  let (mut rgba_a, mut rgb_a, mut luma_a, mut luma_u16_a) = (
+    std::vec![0u8; n * 4],
+    std::vec![0u8; n * 3],
+    std::vec![0u8; n],
+    std::vec![0u16; n],
+  );
+  {
+    let mut sink = MixedSinker::<Gbrap, crate::resample::FilteredResampler<K>>::with_resampler(
+      SRC,
+      SRC,
+      crate::resample::FilteredResampler::new(out_w, out_h, kernel),
+    )
+    .unwrap()
+    .with_rgba(&mut rgba_a)
+    .unwrap()
+    .with_rgb(&mut rgb_a)
+    .unwrap()
+    .with_luma(&mut luma_a)
+    .unwrap()
+    .with_luma_u16(&mut luma_u16_a)
+    .unwrap();
+    gbrap_to(&gbrap_src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+
+  let (mut rgba_b, mut rgb_b, mut luma_b) = (
+    std::vec![0u8; n * 4],
+    std::vec![0u8; n * 3],
+    std::vec![0u8; n],
+  );
+  {
+    let mut sink = MixedSinker::<Rgba, crate::resample::FilteredResampler<K>>::with_resampler(
+      SRC,
+      SRC,
+      crate::resample::FilteredResampler::new(out_w, out_h, kernel),
+    )
+    .unwrap()
+    .with_rgba(&mut rgba_b)
+    .unwrap()
+    .with_rgb(&mut rgb_b)
+    .unwrap()
+    .with_luma(&mut luma_b)
+    .unwrap();
+    rgba_to(&rgba_src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+
+  assert_eq!(rgba_a, rgba_b, "{label}: rgba (real alpha filtered)");
+  assert_eq!(rgb_a, rgb_b, "{label}: rgb (alpha-dropped)");
+  assert_eq!(luma_a, luma_b, "{label}: luma");
+  assert_eq!(
+    luma_u16_a,
+    luma_u8_to_u16(&luma_b),
+    "{label}: luma_u16 is the zero-extend of the shared u8 luma"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+#[cfg(feature = "rgb")]
+fn gbrap_filter_downscale_matches_rgba() {
+  use crate::resample::{CatmullRom, Lanczos3, Triangle};
+  assert_gbrap_filter_matches_rgba(Triangle, OUT, OUT, "triangle/down");
+  assert_gbrap_filter_matches_rgba(CatmullRom, OUT, OUT, "catmullrom/down");
+  assert_gbrap_filter_matches_rgba(Lanczos3, OUT, OUT, "lanczos3/down");
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+#[cfg(feature = "rgb")]
+fn gbrap_filter_upscale_matches_rgba() {
+  use crate::resample::{CatmullRom, Lanczos3, Triangle};
+  // 8 -> 7 enlarge — exercises the filter engine's grow path.
+  const UP: usize = 7;
+  assert_gbrap_filter_matches_rgba(Triangle, UP, UP, "triangle/up");
+  assert_gbrap_filter_matches_rgba(CatmullRom, UP, UP, "catmullrom/up");
+  assert_gbrap_filter_matches_rgba(Lanczos3, UP, UP, "lanczos3/up");
+}
+
+/// A `Gbrap` filter plan must be accepted and produce a real (non-sentinel)
+/// output — feature-independent (no `Rgba` reference), so this also guards
+/// the `gbr`-solo build, where the rgb-gated oracle tests above compile out.
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn gbrap_filter_plan_is_accepted() {
+  use crate::resample::{FilteredResampler, Triangle};
+  // Vary alpha so the 4-channel filter path (rgba attached) is exercised.
+  let mut canonical = canonical_frame(0x7A1C);
+  for (i, px) in canonical.chunks_exact_mut(4).enumerate() {
+    px[3] = (i as u8).wrapping_mul(5);
+  }
+  let (g, b, r, a) = planes_from_canonical(&canonical, SRC * SRC);
+  let src = gbrap_frame(&g, &b, &r, &a, SRC, SRC);
+
+  let mut rgba = std::vec![0xABu8; OUT * OUT * 4];
+  let mut sink = MixedSinker::<Gbrap, FilteredResampler<Triangle>>::with_resampler(
+    SRC,
+    SRC,
+    FilteredResampler::new(OUT, OUT, Triangle),
+  )
+  .unwrap()
+  .with_rgba(&mut rgba)
+  .unwrap();
+  gbrap_to(&src, true, ColorMatrix::Bt709, &mut sink)
+    .expect("Gbrap filter plan must be accepted (routed)");
+  assert!(
+    rgba.iter().any(|&px| px != 0xAB),
+    "routed filter plan must write the rgba buffer"
+  );
+}
