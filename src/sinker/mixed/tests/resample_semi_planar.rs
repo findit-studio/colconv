@@ -14,8 +14,8 @@ use crate::{
   resample::{AreaResampler, ResampleError},
   sinker::{MixedSinker, MixedSinkerError},
   source::{
-    Nv12, Nv12Row, Nv16, Nv21, Nv24, Nv42, Rgb24, nv12_to, nv16_to, nv21_to, nv24_to, nv42_to,
-    rgb24_to,
+    Nv12, Nv12Row, Nv16, Nv21, Nv21Row, Nv24, Nv42, Rgb24, nv12_to, nv16_to, nv21_to, nv24_to,
+    nv42_to, rgb24_to,
   },
 };
 use mediaframe::frame::{Nv12Frame, Nv16Frame, Nv21Frame, Nv24Frame, Nv42Frame, Rgb24Frame};
@@ -1652,5 +1652,396 @@ mod native_tier {
     (0..w * h)
       .map(|i| 40u8.wrapping_add((i as u8).wrapping_mul(2)))
       .collect()
+  }
+
+  // ---- frozen native-vs-row-stage route (issue #186) --------------------
+  //
+  // NV12 / NV21 share the planar twin's native join via
+  // `semi_planar_process_native`; the row-stage tier is
+  // `planar_dual_resample`. The two carry independent, in-order, once-only
+  // stream state, so a mid-frame `set_native` flip must reject as the
+  // deterministic `NativeRouteChanged` — CHECKED before and frozen after
+  // dispatch, both gated on whether the call bears output (the P0xx
+  // template).
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv12_native_to_rowstage_route_flip_mid_frame_rejected() {
+    let y = y_ramp();
+    let (u, v) = uv_planes(SRC / 2, SRC / 2);
+    let uv = interleave(&u, &v, false);
+    let mut luma = vec![0u8; OUT * OUT];
+    let mut sink =
+      MixedSinker::<Nv12, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_native(true)
+        .with_luma(&mut luma)
+        .unwrap();
+    sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+    // Row 0 freezes the route = native.
+    sink
+      .process(Nv12Row::new(
+        &y[0..SRC],
+        &uv[0..SRC],
+        0,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .expect("native row 0 freezes the route and succeeds");
+    // Flip to the row-stage tier and feed the next in-sequence row.
+    sink.set_native(false);
+    let err = sink
+      .process(Nv12Row::new(
+        &y[SRC..2 * SRC],
+        &uv[0..SRC],
+        1,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .unwrap_err();
+    assert!(
+      matches!(err, MixedSinkerError::NativeRouteChanged(_)),
+      "a native -> row-stage mid-frame route flip must reject as \
+       NativeRouteChanged, got {err:?}"
+    );
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv12_rowstage_to_native_route_flip_mid_frame_rejected() {
+    let y = y_ramp();
+    let (u, v) = uv_planes(SRC / 2, SRC / 2);
+    let uv = interleave(&u, &v, false);
+    let mut luma = vec![0u8; OUT * OUT];
+    let mut sink =
+      MixedSinker::<Nv12, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_native(false)
+        .with_luma(&mut luma)
+        .unwrap();
+    sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+    // Row 0 freezes the route = row-stage.
+    sink
+      .process(Nv12Row::new(
+        &y[0..SRC],
+        &uv[0..SRC],
+        0,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .expect("row-stage row 0 freezes the route and succeeds");
+    // Flip to the native tier and feed the next in-sequence row.
+    sink.set_native(true);
+    let err = sink
+      .process(Nv12Row::new(
+        &y[SRC..2 * SRC],
+        &uv[0..SRC],
+        1,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .unwrap_err();
+    assert!(
+      matches!(err, MixedSinkerError::NativeRouteChanged(_)),
+      "a row-stage -> native mid-frame route flip must reject as \
+       NativeRouteChanged, got {err:?}"
+    );
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv21_native_to_rowstage_route_flip_mid_frame_rejected() {
+    // The NV21 VU-order twin must guard identically.
+    let y = y_ramp();
+    let (u, v) = uv_planes(SRC / 2, SRC / 2);
+    let vu = interleave(&u, &v, true);
+    let mut luma = vec![0u8; OUT * OUT];
+    let mut sink =
+      MixedSinker::<Nv21, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_native(true)
+        .with_luma(&mut luma)
+        .unwrap();
+    sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+    sink
+      .process(Nv21Row::new(
+        &y[0..SRC],
+        &vu[0..SRC],
+        0,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .expect("native row 0 freezes the route and succeeds");
+    sink.set_native(false);
+    let err = sink
+      .process(Nv21Row::new(
+        &y[SRC..2 * SRC],
+        &vu[0..SRC],
+        1,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .unwrap_err();
+    assert!(
+      matches!(err, MixedSinkerError::NativeRouteChanged(_)),
+      "nv21: a native -> row-stage mid-frame route flip must reject as \
+       NativeRouteChanged, got {err:?}"
+    );
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv21_rowstage_to_native_route_flip_mid_frame_rejected() {
+    // The NV21 VU-order twin must guard identically in the other direction.
+    let y = y_ramp();
+    let (u, v) = uv_planes(SRC / 2, SRC / 2);
+    let vu = interleave(&u, &v, true);
+    let mut luma = vec![0u8; OUT * OUT];
+    let mut sink =
+      MixedSinker::<Nv21, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_native(false)
+        .with_luma(&mut luma)
+        .unwrap();
+    sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+    // Row 0 freezes the route = row-stage.
+    sink
+      .process(Nv21Row::new(
+        &y[0..SRC],
+        &vu[0..SRC],
+        0,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .expect("row-stage row 0 freezes the route and succeeds");
+    // Flip to the native tier and feed the next in-sequence row.
+    sink.set_native(true);
+    let err = sink
+      .process(Nv21Row::new(
+        &y[SRC..2 * SRC],
+        &vu[0..SRC],
+        1,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .unwrap_err();
+    assert!(
+      matches!(err, MixedSinkerError::NativeRouteChanged(_)),
+      "nv21: a row-stage -> native mid-frame route flip must reject as \
+       NativeRouteChanged, got {err:?}"
+    );
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv21_route_constant_succeeds_and_resets_across_frames() {
+    // The NV21 twin: a constant-route frame runs to completion, and the
+    // per-frame reset (in `begin_frame`) lets the NEXT frame pick the
+    // OTHER tier.
+    let y = y_ramp();
+    let (u, v) = uv_planes(SRC / 2, SRC / 2);
+    let vu = interleave(&u, &v, true);
+    let mut luma = vec![0u8; OUT * OUT];
+    let mut sink =
+      MixedSinker::<Nv21, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_native(true)
+        .with_luma(&mut luma)
+        .unwrap();
+    let frame = Nv21Frame::new(&y, &vu, SRC as u32, SRC as u32, SRC as u32, SRC as u32);
+    // Frame 1: native, route constant across every row — no false rejection.
+    nv21_to(&frame, true, ColorMatrix::Bt601, &mut sink).unwrap();
+    // Frame 2: flip to row-stage for the WHOLE frame. The walker's
+    // `begin_frame` cleared the frozen route, so this is allowed.
+    sink.set_native(false);
+    nv21_to(&frame, true, ColorMatrix::Bt601, &mut sink)
+      .expect("a new frame may pick the other tier; the route reset per frame");
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv21_no_output_call_after_frozen_route_is_a_noop() {
+    // The NV21 twin: a NO-OUTPUT call after an output-bearing row froze the
+    // route must be a TRUE no-op — route-invisible — even when `set_native`
+    // is FLIPPED: it returns `Ok` (not `NativeRouteChanged`) and leaves the
+    // frozen route untouched (both the CHECK and the SET gate on
+    // `need_output`). No public API detaches an output, so we set
+    // `frozen_native_route` directly to the value an accepted output-bearing
+    // native first row stores (`Some(true)` = native), the same white-box
+    // reach the atomicity tests use.
+    let y = y_ramp();
+    let (u, v) = uv_planes(SRC / 2, SRC / 2);
+    let vu = interleave(&u, &v, true);
+    let mut sink =
+      MixedSinker::<Nv21, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_native(true);
+    sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+    sink.frozen_native_route = Some(true);
+    // No-output row (no outputs -> `need_output` false), route flipped to
+    // row-stage. The CHECK is skipped, so this is a true no-op.
+    sink.set_native(false);
+    sink
+      .process(Nv21Row::new(
+        &y[0..SRC],
+        &vu[0..SRC],
+        0,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .expect("a no-output call after a frozen route must be a true no-op, not NativeRouteChanged");
+    assert_eq!(
+      sink.frozen_native_route,
+      Some(true),
+      "a no-output call must leave the frozen route unchanged"
+    );
+    // The route is STILL native and consumed no stream state: an
+    // output-bearing native row 0 succeeds...
+    let mut luma = vec![0u8; OUT * OUT];
+    sink.set_native(true);
+    sink.set_luma(&mut luma).unwrap();
+    sink
+      .process(Nv21Row::new(
+        &y[0..SRC],
+        &vu[0..SRC],
+        0,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .expect("an output-bearing row under the original native route succeeds");
+    // ...while an output-bearing flip to the OTHER route now rejects.
+    sink.set_native(false);
+    let err = sink
+      .process(Nv21Row::new(
+        &y[SRC..2 * SRC],
+        &vu[0..SRC],
+        1,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .unwrap_err();
+    assert!(
+      matches!(err, MixedSinkerError::NativeRouteChanged(_)),
+      "nv21: an output-bearing flip after the frozen route stayed native \
+       must reject as NativeRouteChanged, got {err:?}"
+    );
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv12_route_constant_succeeds_and_resets_across_frames() {
+    // A constant-route frame runs to completion, and the per-frame reset
+    // (in `begin_frame`) lets the NEXT frame pick the OTHER tier.
+    let y = y_ramp();
+    let (u, v) = uv_planes(SRC / 2, SRC / 2);
+    let uv = interleave(&u, &v, false);
+    let mut luma = vec![0u8; OUT * OUT];
+    let mut sink =
+      MixedSinker::<Nv12, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_native(true)
+        .with_luma(&mut luma)
+        .unwrap();
+    let frame = Nv12Frame::new(&y, &uv, SRC as u32, SRC as u32, SRC as u32, SRC as u32);
+    // Frame 1: native, route constant across every row — no false rejection.
+    nv12_to(&frame, true, ColorMatrix::Bt601, &mut sink).unwrap();
+    // Frame 2: flip to row-stage for the WHOLE frame. The walker's
+    // `begin_frame` cleared the frozen route, so this is allowed.
+    sink.set_native(false);
+    nv12_to(&frame, true, ColorMatrix::Bt601, &mut sink)
+      .expect("a new frame may pick the other tier; the route reset per frame");
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv12_no_output_call_after_frozen_route_is_a_noop() {
+    // A NO-OUTPUT call after an output-bearing row froze the route must be
+    // a TRUE no-op — route-invisible — even when `set_native` is FLIPPED:
+    // it returns `Ok` (not `NativeRouteChanged`) and leaves the frozen
+    // route untouched (both the CHECK and the SET gate on `need_output`).
+    // No public API detaches an output, so we set `frozen_native_route`
+    // directly to the value an accepted output-bearing native first row
+    // stores (`Some(true)` = native), the same white-box reach the
+    // atomicity tests use.
+    let y = y_ramp();
+    let (u, v) = uv_planes(SRC / 2, SRC / 2);
+    let uv = interleave(&u, &v, false);
+    let mut sink =
+      MixedSinker::<Nv12, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_native(true);
+    sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+    sink.frozen_native_route = Some(true);
+    // No-output row (no outputs -> `need_output` false), route flipped to
+    // row-stage. The CHECK is skipped, so this is a true no-op.
+    sink.set_native(false);
+    sink
+      .process(Nv12Row::new(
+        &y[0..SRC],
+        &uv[0..SRC],
+        0,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .expect("a no-output call after a frozen route must be a true no-op, not NativeRouteChanged");
+    assert_eq!(
+      sink.frozen_native_route,
+      Some(true),
+      "a no-output call must leave the frozen route unchanged"
+    );
+    // The route is STILL native and consumed no stream state: an
+    // output-bearing native row 0 succeeds...
+    let mut luma = vec![0u8; OUT * OUT];
+    sink.set_native(true);
+    sink.set_luma(&mut luma).unwrap();
+    sink
+      .process(Nv12Row::new(
+        &y[0..SRC],
+        &uv[0..SRC],
+        0,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .expect("an output-bearing row under the original native route succeeds");
+    // ...while an output-bearing flip to the OTHER route now rejects.
+    sink.set_native(false);
+    let err = sink
+      .process(Nv12Row::new(
+        &y[SRC..2 * SRC],
+        &uv[0..SRC],
+        1,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .unwrap_err();
+    assert!(
+      matches!(err, MixedSinkerError::NativeRouteChanged(_)),
+      "an output-bearing flip after the frozen route stayed native must \
+       reject as NativeRouteChanged, got {err:?}"
+    );
   }
 }

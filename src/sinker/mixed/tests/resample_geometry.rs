@@ -904,3 +904,159 @@ fn identity_area_full_pipeline_matches_new_sink() {
 
   assert_eq!(direct, via_area);
 }
+
+// ---- frozen native-vs-row-stage route (issue #186) ----------------------
+//
+// The 8-bit planar 4:2:0 native (`yuv420p_process_native`) and row-stage
+// (`yuv420p_process_resampled`) tiers carry independent, in-order,
+// once-only stream state, so a mid-frame `set_native` flip must reject as
+// the deterministic `NativeRouteChanged` rather than silently mix the two
+// streams. The route is CHECKED before and frozen after dispatch, both
+// gated on whether the call bears output — mirroring the P0xx template.
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn native_to_rowstage_route_flip_mid_frame_rejected() {
+  use crate::source::Yuv420pRow;
+  let y = [50u8; SRC];
+  let u = [128u8; SRC / 2];
+  let v = [128u8; SRC / 2];
+  let mut luma = vec![0u8; OUT * OUT];
+  let mut sink = downscaled().with_native(true).with_luma(&mut luma).unwrap();
+  sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+  // Row 0 freezes the route = native.
+  sink
+    .process(Yuv420pRow::new(&y, &u, &v, 0, ColorMatrix::Bt601, true))
+    .expect("native row 0 freezes the route and succeeds");
+  // Flip to the row-stage tier and feed the next in-sequence row.
+  sink.set_native(false);
+  let err = sink
+    .process(Yuv420pRow::new(&y, &u, &v, 1, ColorMatrix::Bt601, true))
+    .unwrap_err();
+  assert!(
+    matches!(err, MixedSinkerError::NativeRouteChanged(_)),
+    "a native -> row-stage mid-frame route flip must reject as \
+     NativeRouteChanged, got {err:?}"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn rowstage_to_native_route_flip_mid_frame_rejected() {
+  use crate::source::Yuv420pRow;
+  let y = [50u8; SRC];
+  let u = [128u8; SRC / 2];
+  let v = [128u8; SRC / 2];
+  let mut luma = vec![0u8; OUT * OUT];
+  let mut sink = downscaled()
+    .with_native(false)
+    .with_luma(&mut luma)
+    .unwrap();
+  sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+  // Row 0 freezes the route = row-stage.
+  sink
+    .process(Yuv420pRow::new(&y, &u, &v, 0, ColorMatrix::Bt601, true))
+    .expect("row-stage row 0 freezes the route and succeeds");
+  // Flip to the native tier and feed the next in-sequence row.
+  sink.set_native(true);
+  let err = sink
+    .process(Yuv420pRow::new(&y, &u, &v, 1, ColorMatrix::Bt601, true))
+    .unwrap_err();
+  assert!(
+    matches!(err, MixedSinkerError::NativeRouteChanged(_)),
+    "a row-stage -> native mid-frame route flip must reject as \
+     NativeRouteChanged, got {err:?}"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn route_constant_succeeds_and_resets_across_frames() {
+  // A frame whose route stays constant runs to completion, and the
+  // per-frame reset (in `begin_frame`) lets the NEXT frame pick the OTHER
+  // tier — the route guard is reset, not sticky across frames.
+  let (yp, up, vp) = gradient_frame_planes();
+  let src = Yuv420pFrame::new(&yp, &up, &vp, 8, 8, 8, 4, 4);
+  let mut luma = vec![0u8; OUT * OUT];
+  let mut sink = downscaled().with_native(true).with_luma(&mut luma).unwrap();
+  // Frame 1: native, route constant across every row — no false rejection.
+  yuv420p_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
+  // Frame 2: flip to row-stage for the WHOLE frame. `begin_frame` (driven
+  // by the walker) cleared the frozen route, so this is allowed.
+  sink.set_native(false);
+  yuv420p_to(&src, true, ColorMatrix::Bt601, &mut sink)
+    .expect("a new frame may pick the other tier; the route reset per frame");
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn no_output_call_after_frozen_route_is_a_noop() {
+  use crate::source::Yuv420pRow;
+  // A NO-OUTPUT call arriving AFTER an output-bearing row froze the route
+  // must be a TRUE no-op — route-invisible — even when its `set_native` is
+  // FLIPPED relative to the frozen route: it must return `Ok` (not
+  // `NativeRouteChanged`) and leave the frozen route untouched. The route
+  // CHECK and the SET both gate on `need_output`. With the CHECK's
+  // `need_output` gate removed the ungated CHECK sees `frozen(native) !=
+  // row-stage` and wrongly rejects.
+  //
+  // There is no public API to DETACH an output (buffers only transition
+  // `None -> Some`), so we build the faithful equivalent by setting the
+  // per-sink `frozen_native_route` field directly to the value an accepted
+  // output-bearing native first row stores (`Some(true)` = native), then
+  // issuing the flipped no-output call — the same white-box reach the
+  // atomicity tests use.
+  let y = [50u8; SRC];
+  let u = [128u8; SRC / 2];
+  let v = [128u8; SRC / 2];
+  let mut sink = downscaled().with_native(true);
+  sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+  // Freeze the route to native exactly as an accepted output-bearing native
+  // first row does (the SET site stores `Some(true)`).
+  sink.frozen_native_route = Some(true);
+  // A NO-OUTPUT row (no outputs attached -> `need_output` false) with the
+  // route FLIPPED to row-stage. Gated on `need_output`, the CHECK is
+  // skipped, so this is a true no-op (Ok); a no-output call is
+  // route-invisible.
+  sink.set_native(false);
+  sink
+    .process(Yuv420pRow::new(&y, &u, &v, 0, ColorMatrix::Bt601, true))
+    .expect("a no-output call after a frozen route must be a true no-op, not NativeRouteChanged");
+  assert_eq!(
+    sink.frozen_native_route,
+    Some(true),
+    "a no-output call must leave the frozen route unchanged"
+  );
+  // Proof the route is STILL frozen to native and the no-output call
+  // consumed no stream state: an OUTPUT-bearing row 0 under the original
+  // native route is in-sequence and succeeds...
+  let mut luma = vec![0u8; OUT * OUT];
+  sink.set_native(true);
+  sink.set_luma(&mut luma).unwrap();
+  sink
+    .process(Yuv420pRow::new(&y, &u, &v, 0, ColorMatrix::Bt601, true))
+    .expect("an output-bearing row under the original native route succeeds");
+  // ...while an OUTPUT-bearing flip to the OTHER route now rejects,
+  // confirming the frozen route stayed native.
+  sink.set_native(false);
+  let err = sink
+    .process(Yuv420pRow::new(&y, &u, &v, 1, ColorMatrix::Bt601, true))
+    .unwrap_err();
+  assert!(
+    matches!(err, MixedSinkerError::NativeRouteChanged(_)),
+    "an output-bearing flip after the frozen route stayed native must \
+     reject as NativeRouteChanged, got {err:?}"
+  );
+}

@@ -807,6 +807,167 @@ macro_rules! yuv420p_high_bit_native_suite {
            the first in-sequence colour reserve, got {err3:?}"
         );
       }
+
+      // ---- frozen native-vs-row-stage route (issue #186) ----------------
+
+      /// Flipping `set_native(true) -> false` mid-frame must reject as the
+      /// deterministic `NativeRouteChanged` BEFORE either tier consumes the
+      /// row — the high-bit planar 4:2:0 twin of the P0xx guard.
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn native_to_rowstage_route_flip_mid_frame_rejected() {
+        let (y, u, v) = ramp();
+        let mut luma = vec![0u8; OUT * OUT];
+        let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
+          SRC,
+          SRC,
+          AreaResampler::to(OUT, OUT),
+        )
+        .unwrap()
+        .with_native(true)
+        .with_luma(&mut luma)
+        .unwrap();
+        sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+        // Row 0 freezes the route = native.
+        sink
+          .process($row::new(&y[..SRC], &u[..CW], &v[..CW], 0, M, FR))
+          .expect("native row 0 freezes the route and succeeds");
+        // Flip to the row-stage tier and feed the next in-sequence row.
+        sink.set_native(false);
+        let err = sink
+          .process($row::new(&y[SRC..2 * SRC], &u[..CW], &v[..CW], 1, M, FR))
+          .unwrap_err();
+        assert!(
+          matches!(err, MixedSinkerError::NativeRouteChanged(_)),
+          "a native -> row-stage mid-frame route flip must reject as \
+           NativeRouteChanged, got {err:?}"
+        );
+      }
+
+      /// The reverse flip `set_native(false) -> true` mid-frame must reject
+      /// identically — the guard catches BOTH directions.
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn rowstage_to_native_route_flip_mid_frame_rejected() {
+        let (y, u, v) = ramp();
+        let mut luma = vec![0u8; OUT * OUT];
+        let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
+          SRC,
+          SRC,
+          AreaResampler::to(OUT, OUT),
+        )
+        .unwrap()
+        .with_native(false)
+        .with_luma(&mut luma)
+        .unwrap();
+        sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+        // Row 0 freezes the route = row-stage.
+        sink
+          .process($row::new(&y[..SRC], &u[..CW], &v[..CW], 0, M, FR))
+          .expect("row-stage row 0 freezes the route and succeeds");
+        sink.set_native(true);
+        let err = sink
+          .process($row::new(&y[SRC..2 * SRC], &u[..CW], &v[..CW], 1, M, FR))
+          .unwrap_err();
+        assert!(
+          matches!(err, MixedSinkerError::NativeRouteChanged(_)),
+          "a row-stage -> native mid-frame route flip must reject as \
+           NativeRouteChanged, got {err:?}"
+        );
+      }
+
+      /// A constant-route frame runs to completion, and the per-frame reset
+      /// (via `reset_high_bit_yuv_streams` in `begin_frame`) lets the NEXT
+      /// frame pick the OTHER tier — the route guard is reset, not sticky.
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn route_constant_succeeds_and_resets_across_frames() {
+        let (y, u, v) = ramp();
+        let (yl, ul, vl) = (as_le(&y), as_le(&u), as_le(&v));
+        let mut luma = vec![0u8; OUT * OUT];
+        let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
+          SRC,
+          SRC,
+          AreaResampler::to(OUT, OUT),
+        )
+        .unwrap()
+        .with_native(true)
+        .with_luma(&mut luma)
+        .unwrap();
+        // Frame 1: native, route constant across every row.
+        $walker(&frame(&yl, &ul, &vl), FR, M, &mut sink).unwrap();
+        // Frame 2: flip to row-stage for the WHOLE frame after begin_frame.
+        sink.set_native(false);
+        $walker(&frame(&yl, &ul, &vl), FR, M, &mut sink)
+          .expect("a new frame may pick the other tier; the route reset per frame");
+      }
+
+      /// A NO-OUTPUT call AFTER an output-bearing row froze the route must be
+      /// a TRUE no-op — route-invisible — even with `set_native` FLIPPED: it
+      /// returns `Ok` (not `NativeRouteChanged`) and leaves the frozen route
+      /// untouched (both the CHECK and the SET gate on `need_output`). No
+      /// public API detaches an output, so we set `frozen_native_route`
+      /// directly to the value an accepted output-bearing native first row
+      /// stores (`Some(true)` = native) — the same white-box reach the
+      /// atomicity tests use.
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn no_output_call_after_frozen_route_is_a_noop() {
+        let (y, u, v) = ramp();
+        let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
+          SRC,
+          SRC,
+          AreaResampler::to(OUT, OUT),
+        )
+        .unwrap()
+        .with_native(true);
+        sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+        sink.frozen_native_route = Some(true);
+        // No-output row (no outputs -> `need_output` false), route flipped to
+        // row-stage. The CHECK is skipped, so this is a true no-op.
+        sink.set_native(false);
+        sink
+          .process($row::new(&y[..SRC], &u[..CW], &v[..CW], 0, M, FR))
+          .expect(
+            "a no-output call after a frozen route must be a true no-op, not \
+             NativeRouteChanged",
+          );
+        assert_eq!(
+          sink.frozen_native_route,
+          Some(true),
+          "a no-output call must leave the frozen route unchanged",
+        );
+        // The route is STILL native and consumed no stream state: an
+        // output-bearing native row 0 succeeds...
+        let mut luma = vec![0u8; OUT * OUT];
+        sink.set_native(true);
+        sink.set_luma(&mut luma).unwrap();
+        sink
+          .process($row::new(&y[..SRC], &u[..CW], &v[..CW], 0, M, FR))
+          .expect("an output-bearing row under the original native route succeeds");
+        // ...while an output-bearing flip to the OTHER route now rejects.
+        sink.set_native(false);
+        let err = sink
+          .process($row::new(&y[SRC..2 * SRC], &u[..CW], &v[..CW], 1, M, FR))
+          .unwrap_err();
+        assert!(
+          matches!(err, MixedSinkerError::NativeRouteChanged(_)),
+          "an output-bearing flip after the frozen route stayed native must \
+           reject as NativeRouteChanged, got {err:?}"
+        );
+      }
     }
   };
 }
