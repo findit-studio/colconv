@@ -927,7 +927,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>, R> {
             );
           }
           if rgba.is_some() || rgba_u16.is_some() {
-            return packed_rgba_u16_filter_resample::<16>(
+            return packed_rgba_u16_filter_resample::<16, false>(
               rgba_filter_stream_u16,
               resample_outputs,
               rgb,
@@ -1421,7 +1421,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Bgra64<BE>, R> {
             );
           }
           if rgba.is_some() || rgba_u16.is_some() {
-            return packed_rgba_u16_filter_resample::<16>(
+            return packed_rgba_u16_filter_resample::<16, false>(
               rgba_filter_stream_u16,
               resample_outputs,
               rgb,

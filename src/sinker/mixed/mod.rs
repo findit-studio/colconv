@@ -1537,20 +1537,18 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   ))]
   rgb_stream_f32: Option<crate::resample::AreaStream<f32>>,
   /// Row-stage **filter** stream for packed-float-RGB sources
-  /// ([`Rgbf32`](crate::source::Rgbf32), and the float planar GBR sources
-  /// `Gbrpf32` / `Gbrpf16` which scatter into the same packed `f32` RGB
-  /// row) — the [`SpanKind::Filter`](crate::resample::SpanKind) twin of
+  /// ([`Rgbf32`](crate::source::Rgbf32)) — the
+  /// [`SpanKind::Filter`](crate::resample::SpanKind) twin of
   /// [`Self::rgb_stream_f32`]. Lazily created in `process`, reset in
   /// `begin_frame`. Fed when the plan kind is `Filter`; bins at f32
-  /// precision and emits unclamped (full-range float, PIL `F`-mode). Gated
-  /// exactly like [`Self::rgb_stream_f32`]: the `rgb-float` family needs the
-  /// engine fenced in (`FilterStream` is gated to `yuv-planar` / `rgb`,
-  /// which `rgb-float` does not imply); `gbr` already pulls the engine via
-  /// the #146 cascade.
-  #[cfg(any(
-    all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
-    feature = "gbr"
-  ))]
+  /// precision and emits unclamped (full-range float, PIL `F`-mode). Gated to
+  /// the packed-float-RGB consumers (`rgb-float`, with the engine fenced in:
+  /// `FilterStream` is gated to `yuv-planar` / `rgb`, which `rgb-float` does
+  /// not imply): unlike the area [`Self::rgb_stream_f32`] this filter stream
+  /// has no `gbr` consumer yet — the float planar GBR sources `Gbrpf32` /
+  /// `Gbrpf16` route only their area path, so the `gbr` arm lands with their
+  /// filter routing.
+  #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
   rgb_filter_stream_f32: Option<crate::resample::FilterStream<f32>>,
   /// Row-stage **4-channel** `f32` area stream for the float planar
   /// GBR+alpha family ([`Gbrapf32`](crate::source::Gbrapf32) /
@@ -1659,8 +1657,11 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// channels bin through one 4-channel filter and a resampled RGBA frame
   /// is byte-exact versus PIL's RGBA resize. Lazily created in `process`,
   /// reset in `begin_frame`. Padding-alpha sources keep the 3-channel
-  /// [`Self::rgb_filter_stream`] (the X byte is never filtered).
-  #[cfg(feature = "rgb")]
+  /// [`Self::rgb_filter_stream`] (the X byte is never filtered). Gated to
+  /// `any(rgb, gbr)`: the 8-bit planar GBR+alpha source [`Gbrap`] also
+  /// scatters its G/B/R/A planes into the canonical packed RGBA row and
+  /// filters through this 4-channel stream.
+  #[cfg(any(feature = "rgb", feature = "gbr"))]
   rgba_filter_stream: Option<crate::resample::FilterStream<u8>>,
   /// Row-stage **filter** stream for the high-bit packed-RGB `u16` color
   /// group ([`Rgb48`](crate::source::Rgb48), and the high-bit planar GBR
@@ -1678,11 +1679,12 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// independently with no premultiplication, so the four interleaved native
   /// u16 channels bin through one 4-channel filter and a resampled RGBA frame
   /// is byte-exact (per channel) versus the merged engine. Lazily created in
-  /// `process`, reset in `begin_frame`. Gated to `rgb`: `Rgba64` / `Bgra64`
-  /// are the only high-bit packed RGBA `u16` sources (the `Gbrap*` filter path
-  /// uses the 3-channel u16 filter), so unlike the area
-  /// [`Self::rgba_stream_u16`] this filter stream has no non-`rgb` consumer.
-  #[cfg(feature = "rgb")]
+  /// `process`, reset in `begin_frame`. Gated to `any(rgb, gbr)`: besides
+  /// `Rgba64` / `Bgra64`, the high-bit planar GBR+alpha family (`Gbrap10`…
+  /// `Gbrap16`) de-interleaves its native-depth G/B/R/A planes into the same
+  /// canonical packed RGBA u16 row and filters through this 4-channel stream
+  /// (the native-max clamp keyed by the source `BITS`).
+  #[cfg(any(feature = "rgb", feature = "gbr"))]
   rgba_filter_stream_u16: Option<crate::resample::FilterStream<u16>>,
   /// Row-stage **filter** stream for single-plane `f32` luma binning
   /// ([`Grayf32`](crate::source::Grayf32)) — the filter twin of
@@ -2496,10 +2498,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "gbr"
       ))]
       rgb_stream_f32: None,
-      #[cfg(any(
-        all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
-        feature = "gbr"
-      ))]
+      #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
       rgb_filter_stream_f32: None,
       #[cfg(feature = "gbr")]
       rgba_stream_f32: None,
@@ -2536,11 +2535,11 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       luma_stream_f32: None,
       #[cfg(any(feature = "rgb", feature = "gbr"))]
       rgb_filter_stream: None,
-      #[cfg(feature = "rgb")]
+      #[cfg(any(feature = "rgb", feature = "gbr"))]
       rgba_filter_stream: None,
       #[cfg(any(feature = "rgb", feature = "gbr"))]
       rgb_filter_stream_u16: None,
-      #[cfg(feature = "rgb")]
+      #[cfg(any(feature = "rgb", feature = "gbr"))]
       rgba_filter_stream_u16: None,
       #[cfg(feature = "gray")]
       luma_filter_stream_f32: None,
@@ -4160,7 +4159,11 @@ pub(super) fn packed_rgb_filter_stream<'s>(
 /// premultiplied route — a packed-RGBA source under premultiplied alpha
 /// stays on the area path (which un-premultiplies); the filter path is
 /// reached only for straight alpha.
-#[cfg(feature = "rgb")]
+///
+/// Gated to `any(rgb, gbr)`: the 8-bit planar GBR+alpha `Gbrap` source
+/// (straight alpha) scatters its G/B/R/A planes into the canonical packed
+/// RGBA row via the same `convert_rgba` closure and shares this filter tail.
+#[cfg(any(feature = "rgb", feature = "gbr"))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgba_filter_resample(
   rgba_filter_stream: &mut Option<crate::resample::FilterStream<u8>>,
@@ -4168,6 +4171,7 @@ pub(super) fn packed_rgba_filter_resample(
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
   luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
   hsv: &mut Option<HsvFrameMut<'_>>,
   rgba_scratch: &mut Vec<u8>,
   rgb_drop_scratch: &mut Vec<u8>,
@@ -4180,7 +4184,8 @@ pub(super) fn packed_rgba_filter_resample(
   convert_rgba: impl FnOnce(&mut [u8]),
 ) -> Result<(), MixedSinkerError> {
   let ow = plan.out_w();
-  let need_any = rgb.is_some() || rgba.is_some() || luma.is_some() || hsv.is_some();
+  let need_any =
+    rgb.is_some() || rgba.is_some() || luma.is_some() || luma_u16.is_some() || hsv.is_some();
   // No-output call: nothing to sequence, stays a no-op (no freeze, no
   // allocation) regardless of the row index.
   if !need_any {
@@ -4198,7 +4203,7 @@ pub(super) fn packed_rgba_filter_resample(
   frozen_outputs_check(
     resample_outputs,
     luma,
-    &None,
+    luma_u16,
     rgb,
     rgba,
     &None,
@@ -4219,10 +4224,10 @@ pub(super) fn packed_rgba_filter_resample(
       crate::resample::OutOfSequenceRow::new(expected, idx),
     )));
   }
-  // The rgb / hsv / luma outputs need an alpha-dropped RGB row, sized to the
-  // out-width RGB row only when one of those is attached, so an rgba-only
-  // sink neither grows it nor risks its allocation failure.
-  let need_rgb_drop = rgb.is_some() || hsv.is_some() || luma.is_some();
+  // The rgb / hsv / luma / luma_u16 outputs need an alpha-dropped RGB row,
+  // sized to the out-width RGB row only when one of those is attached, so an
+  // rgba-only sink neither grows it nor risks its allocation failure.
+  let need_rgb_drop = rgb.is_some() || hsv.is_some() || luma.is_some() || luma_u16.is_some();
   if rgba_filter_stream.is_none() {
     let (fh, fv) = (
       plan
@@ -4269,6 +4274,20 @@ pub(super) fn packed_rgba_filter_resample(
           use_simd,
         );
       }
+      // luma_u16 derives from the same alpha-dropped binned RGB (the u8-RGB →
+      // u16-luma kernel) — byte-identical to the area 4-channel path. Only
+      // `Gbrap` exposes a u16 luma through this u8 4-channel filter; the
+      // packed-RGBA u8 sources leave it `None`.
+      if let Some(buf) = luma_u16.as_deref_mut() {
+        crate::row::rgb_to_luma_u16_row(
+          nrow,
+          &mut buf[oy * ow..(oy + 1) * ow],
+          ow,
+          matrix,
+          full_range,
+          use_simd,
+        );
+      }
       if let Some(hsv) = hsv.as_mut() {
         let (h, s, v) = hsv.hsv();
         crate::row::rgb_to_hsv_row(
@@ -4300,10 +4319,19 @@ pub(super) fn packed_rgba_filter_resample(
 ///
 /// Attached outputs derive from each finalized RGBA row: `rgba_u16` copies it
 /// and `rgb_u16` drops alpha, both at native depth; `rgba` / `rgb` / `luma` /
-/// `luma_u16` / `hsv` come from a single `>> (SRC_BITS - 8)` narrowing of the
-/// alpha-dropped RGB — the source-of-truth ordering the 3-channel u16 path
-/// uses. These sources are chromatic (no native luma plane), so luma is
-/// color-derived from the resampled RGB.
+/// `hsv` come from a single `>> (SRC_BITS - 8)` narrowing of the alpha-dropped
+/// RGB — the source-of-truth ordering the 3-channel u16 path uses. These
+/// sources are chromatic (no native luma plane), so luma is color-derived from
+/// the resampled RGB.
+///
+/// `NATIVE_LUMA16` selects the `luma_u16` flavor, mirroring the 3-channel u16
+/// emit and the area 4-channel path: when `true` (`GbrapN`) luma_u16 is the
+/// full native-depth Y' from the clamped alpha-dropped native RGB
+/// (`rgb_to_luma_u16_native_row` keyed on `SRC_BITS`), byte-identical to a
+/// direct `GbrapN` conversion and to the area path; when `false` (`Rgba64` /
+/// `Bgra64`) it is the 8-bit-precision Y' from the narrowed RGB, zero-extended,
+/// matching those formats' direct and area paths. Merely attaching an alpha
+/// output therefore no longer downgrades `GbrapN` luma_u16 to 0..255.
 ///
 /// `SRC_BITS` is the source's active bit depth — `16` for the full-16-bit
 /// `Rgba64` / `Bgra64`. A signed kernel (CatmullRom / Lanczos3) overshoots a
@@ -4324,16 +4352,15 @@ pub(super) fn packed_rgba_filter_resample(
 /// on the area path (which un-premultiplies); the filter path is reached only
 /// for straight alpha.
 ///
-/// Gated to `rgb` (the filter twin of [`Self::rgba_filter_stream`]): the only
-/// high-bit packed RGBA `u16` sources are `Rgba64` / `Bgra64`. The high-bit
-/// planar GBR+alpha family (`Gbrap*`) routes a filter plan through the
-/// 3-channel u16 filter (forced-opaque alpha), and `gray` (`Ya16`) /
-/// `yuv-444-packed` (`Ayuv64`) expose no u16 RGBA filter path — so unlike the
-/// area [`packed_rgba_u16_resample`] this filter tail has no non-`rgb`
-/// consumer.
-#[cfg(feature = "rgb")]
+/// Gated to `any(rgb, gbr)` (the filter twin of
+/// [`Self::rgba_filter_stream`]): besides the full-16-bit `Rgba64` / `Bgra64`,
+/// the high-bit planar GBR+alpha family (`Gbrap10`…`Gbrap16`, straight alpha)
+/// de-interleaves its native-depth G/B/R/A planes into the same canonical
+/// packed RGBA u16 row via `convert_rgba_u16` and shares this 4-channel tail,
+/// with the `SRC_BITS` native-max clamp keyed by its source depth.
+#[cfg(any(feature = "rgb", feature = "gbr"))]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn packed_rgba_u16_filter_resample<const SRC_BITS: u32>(
+pub(super) fn packed_rgba_u16_filter_resample<const SRC_BITS: u32, const NATIVE_LUMA16: bool>(
   rgba_filter_stream_u16: &mut Option<crate::resample::FilterStream<u16>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
@@ -4406,13 +4433,26 @@ pub(super) fn packed_rgba_u16_filter_resample<const SRC_BITS: u32>(
       crate::resample::OutOfSequenceRow::new(expected, idx),
     )));
   }
-  // The u8 / luma_u16 outputs derive from a `>> (SRC_BITS - 8)` narrowing of
-  // the alpha-dropped binned RGB; a native-u16-only sink (only rgb_u16 /
-  // rgba_u16) never touches it, so the out-width straight color and u8 narrow
-  // scratches are sized — and their allocation failure risked — only when a
-  // narrowed output is attached.
+  // The u8 / narrowed-luma_u16 outputs derive from a `>> (SRC_BITS - 8)`
+  // narrowing of the alpha-dropped binned RGB; a native-u16-only sink (only
+  // rgb_u16 / rgba_u16) never touches it, so the out-width u8 narrow scratch
+  // is sized — and its allocation failure risked — only when a narrowed
+  // output is attached. Under `NATIVE_LUMA16` (`GbrapN`) luma_u16 is computed
+  // at full native precision from the alpha-dropped native RGB instead, so it
+  // takes the native-luma path below rather than this narrowing.
+  let narrowed_luma_u16 = !NATIVE_LUMA16 && luma_u16.is_some();
   let need_narrow =
-    rgb.is_some() || rgba.is_some() || luma.is_some() || luma_u16.is_some() || hsv.is_some();
+    rgb.is_some() || rgba.is_some() || luma.is_some() || narrowed_luma_u16 || hsv.is_some();
+  // Native-precision luma_u16 (`GbrapN`): drop alpha from the clamped native
+  // binned RGB and run the same `rgb_to_luma_u16_native_row` the area / direct
+  // paths use, so the resampled luma_u16 is byte-identical to a direct GbrapN
+  // conversion of the binned frame. The narrowed `Rgba64` / `Bgra64` callers
+  // leave `NATIVE_LUMA16` false and take the narrowed luma_u16 above.
+  let native_luma = NATIVE_LUMA16 && luma_u16.is_some();
+  // The clamped drop-alpha native u16 RGB row is the single source for both
+  // the u8 narrowing and the native luma, so it is sized whenever either is
+  // requested.
+  let need_native_rgb = need_narrow || native_luma;
   if rgba_filter_stream_u16.is_none() {
     let (fh, fv) = (
       plan
@@ -4430,10 +4470,11 @@ pub(super) fn packed_rgba_u16_filter_resample<const SRC_BITS: u32>(
       4,
     )?);
   }
-  // Out-width drop-alpha native RGB row, resolved per finalized output row;
-  // sized only when a narrowed output is attached (every narrowed output
-  // reads this one canonical native RGB row).
-  let color_rgb: &mut [u16] = if need_narrow {
+  // Out-width clamped drop-alpha native RGB row, resolved per finalized output
+  // row; sized when any narrowed output OR native luma_u16 is attached (every
+  // narrowed output and the native luma read this one canonical native RGB
+  // row).
+  let color_rgb: &mut [u16] = if need_native_rgb {
     source_rgb_u16_scratch(color_scratch_u16, ow, plan)?
   } else {
     &mut []
@@ -4477,9 +4518,11 @@ pub(super) fn packed_rgba_u16_filter_resample<const SRC_BITS: u32>(
         }
       }
     }
-    if need_narrow {
-      // Resolve the clamped drop-alpha native RGB once, then narrow `>>
-      // (SRC_BITS - 8)`; a clipped-high edge narrows to `255`, never a wrap.
+    // Clamped drop-alpha native u16 RGB row — the single canonical source for
+    // both the native luma_u16 and the u8 narrowing. Resolved once whenever
+    // either is requested; a clipped-high edge is clamped to the native max
+    // here so a sub-16-bit signed-kernel overshoot never wraps downstream.
+    if need_native_rgb {
       let rgb_row = &mut color_rgb[..3 * ow];
       for (out_px, in_px) in rgb_row.chunks_exact_mut(3).zip(binned.chunks_exact(4)) {
         if SRC_BITS < 16 {
@@ -4490,6 +4533,27 @@ pub(super) fn packed_rgba_u16_filter_resample<const SRC_BITS: u32>(
           out_px.copy_from_slice(&in_px[..3]);
         }
       }
+    }
+    // Native-precision luma_u16 (`GbrapN`): run the same
+    // `rgb_to_luma_u16_native_row` the area / direct paths use on the clamped
+    // native RGB, so the resampled luma_u16 is byte-identical to a direct
+    // GbrapN conversion of the binned frame (full native depth, not the
+    // narrowed 0..255 flavor). It clamps each channel to the native max
+    // internally, a no-op since `color_rgb` is already clamped above.
+    if native_luma && let Some(buf) = luma_u16.as_deref_mut() {
+      crate::row::rgb_to_luma_u16_native_row(
+        &color_rgb[..3 * ow],
+        &mut buf[oy * ow..(oy + 1) * ow],
+        ow,
+        matrix,
+        full_range,
+        SRC_BITS,
+      );
+    }
+    if need_narrow {
+      // Narrow the clamped drop-alpha native RGB `>> (SRC_BITS - 8)`; a
+      // clipped-high edge narrows to `255`, never a wrap.
+      let rgb_row = &color_rgb[..3 * ow];
       let nrow = &mut narrow[..3 * ow];
       for (d, &s) in nrow.iter_mut().zip(rgb_row.iter()) {
         *d = (s >> (SRC_BITS - 8)) as u8;
@@ -4528,7 +4592,11 @@ pub(super) fn packed_rgba_u16_filter_resample<const SRC_BITS: u32>(
           use_simd,
         );
       }
-      if let Some(buf) = luma_u16.as_deref_mut() {
+      // Narrowed luma_u16 (`Rgba64` / `Bgra64`): 8-bit-precision Y' from the
+      // narrowed RGB, zero-extended — byte-identical to those formats' direct
+      // path. Skipped under `NATIVE_LUMA16` (`GbrapN`), where luma_u16 came
+      // from the native path above.
+      if narrowed_luma_u16 && let Some(buf) = luma_u16.as_deref_mut() {
         crate::row::rgb_to_luma_u16_row(
           nrow,
           &mut buf[oy * ow..(oy + 1) * ow],
@@ -7084,11 +7152,11 @@ pub(super) fn packed_rgb_f32_resample_stream<'s>(
 /// sequence-check precedes allocation so a rejected first row creates no
 /// output buffers, and the built stream feeds the **same**
 /// [`packed_rgb_f32_resample_emit`] the area path uses (both are generic
-/// over [`RowResampler`](crate::resample::RowResampler)).
-#[cfg(any(
-  all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
-  feature = "gbr"
-))]
+/// over [`RowResampler`](crate::resample::RowResampler)). Gated to the
+/// packed-float-RGB consumers (`rgb-float`, engine fenced in): the float
+/// planar GBR sources route only their area path, so the `gbr` arm lands
+/// with their filter routing.
+#[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
 pub(super) fn packed_rgb_f32_filter<'s>(
   rgb_filter_stream_f32: &'s mut Option<crate::resample::FilterStream<f32>>,
   plan: &ResamplePlan,

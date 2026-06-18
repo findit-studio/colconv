@@ -630,6 +630,8 @@ impl<R> PixelSink for MixedSinker<'_, Rgba, R> {
               rgb,
               rgba,
               luma,
+              // 8-bit packed RGBA sources expose no u16 luma output.
+              &mut None,
               hsv,
               rgba_scratch,
               rgb_scratch,
@@ -926,6 +928,8 @@ impl<R> PixelSink for MixedSinker<'_, Bgra, R> {
               rgb,
               rgba,
               luma,
+              // 8-bit packed RGBA sources expose no u16 luma output.
+              &mut None,
               hsv,
               rgba_scratch,
               rgb_scratch,
@@ -1221,6 +1225,8 @@ impl<R> PixelSink for MixedSinker<'_, Argb, R> {
               rgb,
               rgba,
               luma,
+              // 8-bit packed RGBA sources expose no u16 luma output.
+              &mut None,
               hsv,
               rgba_scratch,
               rgb_scratch,
@@ -1516,6 +1522,8 @@ impl<R> PixelSink for MixedSinker<'_, Abgr, R> {
               rgb,
               rgba,
               luma,
+              // 8-bit packed RGBA sources expose no u16 luma output.
+              &mut None,
               hsv,
               rgba_scratch,
               rgb_scratch,
