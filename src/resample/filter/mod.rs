@@ -54,30 +54,49 @@ pub(crate) fn arm_filter_axis_alloc_failure() {
   FORCE_FILTER_AXIS_ALLOC_FAILURE.with(|f| f.set(true));
 }
 
-/// Whether any output window over an `in_size -> out_size` axis under this
-/// `scale` / `support` would degenerate to zero taps — the geometry-only
-/// (no-allocation) twin of the per-output window math in
-/// [`FilterAxis::build`]. A sub-ULP positive support survives build's
-/// finite / `> 0` / `<= in_size` checks yet can round
-/// `floor(center - support)` and `ceil(center + support)` to the same
-/// integer when `center` is integral, leaving `xmin == xmax` and an empty
-/// window that covers no source sample. `build` runs this BEFORE sizing any
-/// plan table so such a kernel is rejected ([`ResampleError::InvalidFilterSupport`])
-/// ahead of allocation, and the window fill loop relies on its guarantee
-/// (`n > 0`) to keep the overlap sweep's `lo <= j` invariant.
+/// `next_up(x)` — the next representable `f64` above a finite, positive `x`,
+/// by incrementing its bit pattern (finite positives are monotone in their
+/// `u64` representation). Used only to size one ULP via subtraction; never
+/// called on `NaN`, infinities, or non-positive values (the caller guards
+/// `center > 0` and finite).
 #[cfg_attr(not(tarpaulin), inline(always))]
-fn first_zero_tap_window(scale: f64, support: f64, in_size: usize, out_size: usize) -> bool {
-  for xx in 0..out_size {
-    let center = (xx as f64 + 0.5) * scale;
-    let lo = floor_f64(center - support);
-    let xmin = if lo < 0.0 { 0 } else { lo as usize };
-    let hi = ceil_f64(center + support);
-    let xmax = (hi as usize).min(in_size);
-    if xmax == xmin {
-      return true;
-    }
-  }
-  false
+fn next_up_f64(x: f64) -> f64 {
+  f64::from_bits(x.to_bits() + 1)
+}
+
+/// Whether the scaled `support` is below the `f64` grid spacing at the output
+/// extent — the `O(1)`, no-allocation predicate by which [`FilterAxis::build`]
+/// rejects a support too small to be faithfully evaluated at this geometry.
+///
+/// A window degenerates to zero taps (`xmin == xmax`) only where `support` is
+/// small enough that `center - support == center` (and `center + support ==
+/// center`) in `f64` — i.e. where `support` falls below the spacing (ULP) at
+/// that center. The projected centers are `(xx + 0.5) * scale` for
+/// `xx in 0..out_size`, all in `(0, c_max]` with `c_max = (out_size - 0.5) *
+/// scale` the largest. ULP grows with the binade, so `c_max` carries the
+/// **largest** ULP of any center: `ULP_above(c) <= ULP_above(c_max)` for every
+/// center `c`. Hence if `support >= ULP_above(c_max)` then `support >=
+/// ULP_above(c)` at *every* center, so `center + support` rounds strictly above
+/// `center` and `center - support` strictly below — `support` is absorbed
+/// *nowhere*, no window degenerates, and `build` proceeds with no per-output
+/// scan. Only when `support < ULP_above(c_max)` is absorption (hence a zero
+/// tap) even possible; such a support cannot resolve across the output extent,
+/// so `build` rejects it as [`ResampleError::InvalidFilterSupport`].
+///
+/// The ULP is sized by the actual `f64` subtraction `next_up(c_max) - c_max`
+/// (not a hand-derived constant), so the comparison is exact. `c_max` is finite
+/// and positive here (`scale > 0`, `out_size >= 1`), guarding [`next_up_f64`].
+///
+/// Comparing against the ULP *magnitude* — rather than absorption at the single
+/// point `c_max` (`c_max - support == c_max`) — is what makes this sound: a
+/// cleaner intermediate center (e.g. an exact integer) sharing `c_max`'s ULP
+/// can absorb a `support` that `c_max`'s own low mantissa bits would keep
+/// distinct, so testing one specific center could miss a real zero tap.
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn support_absorbable_at_max_center(scale: f64, support: f64, out_size: usize) -> bool {
+  let c_max = (out_size as f64 - 0.5) * scale;
+  let ulp = next_up_f64(c_max) - c_max;
+  support < ulp
 }
 
 /// `f64` `floor` portable across `std` and `no_std + alloc` builds,
@@ -318,13 +337,53 @@ impl FilterAxis {
     // `[0, in_size)`, no window exceeds `in_size` samples.
     let geometry = || PlanGeometry::new(in_size, 1, out_size, 1);
 
-    // No-allocation dry pass over the output window geometry: a sub-ULP
-    // support can survive the validation above yet collapse a window to
-    // zero taps (see `first_zero_tap_window`). Reject such a kernel here,
-    // BEFORE sizing any plan table, so an invalid support never allocates —
-    // and so the fill loop's `n > 0` (hence the overlap sweep's `lo <= j`)
-    // is guaranteed.
-    if first_zero_tap_window(scale, support, in_size, out_size) {
+    // Overflow / capacity preflight, BEFORE any scan or allocation: reject an
+    // `out_size` whose plan tables could never be allocated arithmetically.
+    // `offsets` is the largest table at `out_size + 1` usizes; if even its
+    // byte size overflows `usize` or exceeds the `isize::MAX` allocation cap,
+    // no reservation could succeed, so fail fast here. This catches a hostile
+    // `out_size == usize::MAX` in `O(1)` — without it the geometry validation
+    // below could scan an astronomical index range first.
+    let offsets_len = out_size
+      .checked_add(1)
+      .ok_or_else(|| ResampleError::Overflow(geometry()))?;
+    // The byte size of the largest table; its representability is the gate,
+    // the value itself is unused beyond rejecting an unallocatable geometry.
+    offsets_len
+      .checked_mul(core::mem::size_of::<usize>())
+      .filter(|&b| b <= isize::MAX as usize)
+      .ok_or_else(|| ResampleError::Overflow(geometry()))?;
+
+    // Geometry validation against zero-tap windows, in `O(1)` — no per-output
+    // scan. A sub-ULP support survives the finite / `> 0` / `<= in_size` checks
+    // above yet collapses a window to zero taps where it falls below the `f64`
+    // grid spacing at that center; the largest center `c_max` carries the
+    // coarsest spacing, so a support below `c_max`'s ULP cannot be faithfully
+    // evaluated across the output extent and is invalid for this geometry.
+    // Reject it here, BEFORE sizing any plan table, so an invalid support never
+    // allocates and the fill loop's `n > 0` (hence the overlap sweep's
+    // `lo <= j`) is guaranteed. When the support is NOT absorbable even at
+    // `c_max`, no window can degenerate, so we proceed; a hostile huge
+    // `out_size` then fails fast at the bounded table reservation below.
+    if support_absorbable_at_max_center(scale, support, out_size) {
+      return Err(ResampleError::InvalidFilterSupport(
+        InvalidFilterSupport::new(support_unit, in_size),
+      ));
+    }
+
+    // Endpoint guard for the right-edge clamp. `scale` is the rounded f64
+    // `in_size / out_size`, so the last center `((out_size - 1) + 0.5) * scale`
+    // can round just past `in_size`; then `floor(center - support)` can exceed
+    // the `min(in_size, .)`-clamped `xmax`, inverting the window. The last
+    // output carries the largest center — with absorption ruled out above, the
+    // only window the right clamp can invert — so validating it with the exact
+    // fill-loop math proves every window is non-empty, in O(1) and before any
+    // reservation.
+    let last_center = ((out_size - 1) as f64 + 0.5) * scale;
+    let last_lo = floor_f64(last_center - support);
+    let last_xmin = if last_lo < 0.0 { 0 } else { last_lo as usize };
+    let last_xmax = (ceil_f64(last_center + support) as usize).min(in_size);
+    if last_xmax <= last_xmin {
       return Err(ResampleError::InvalidFilterSupport(
         InvalidFilterSupport::new(support_unit, in_size),
       ));
@@ -332,8 +391,8 @@ impl FilterAxis {
 
     let mut starts = Vec::new();
     // The first plan-table reservation consults the test-only failpoint
-    // (after the dry pass, so a zero-tap kernel is rejected before it can
-    // fire). On the non-test build the whole branch compiles away.
+    // (after the O(1) support validation, so a sub-grid support is rejected
+    // before it can fire). On the non-test build the whole branch compiles away.
     #[cfg(all(test, feature = "std"))]
     if FORCE_FILTER_AXIS_ALLOC_FAILURE.with(|f| f.take()) {
       return Err(ResampleError::AllocationFailed(geometry()));
@@ -345,9 +404,6 @@ impl FilterAxis {
     ksize
       .try_reserve_exact(out_size)
       .map_err(|_| ResampleError::AllocationFailed(geometry()))?;
-    let offsets_len = out_size
-      .checked_add(1)
-      .ok_or_else(|| ResampleError::Overflow(geometry()))?;
     let mut offsets = Vec::new();
     offsets
       .try_reserve_exact(offsets_len)
@@ -366,10 +422,14 @@ impl FilterAxis {
       // `hi` is positive here (center > 0, support > 0), so the cast is
       // lossless before the min clamp to the exclusive source bound.
       let xmax = (hi as usize).min(in_size);
-      let n = xmax - xmin;
-      // The dry pass above rejected any zero-tap window, so every window
-      // here covers at least one source sample.
-      debug_assert!(n > 0);
+      // The support + endpoint validation above guarantees `xmax > xmin`;
+      // `checked_sub` keeps that a recoverable error rather than an underflow
+      // if hostile f64 rounding ever evaded those O(1) predicates.
+      let Some(n) = xmax.checked_sub(xmin).filter(|&n| n > 0) else {
+        return Err(ResampleError::InvalidFilterSupport(
+          InvalidFilterSupport::new(support_unit, in_size),
+        ));
+      };
 
       // Grow the coeff arena one window at a time under the recoverable
       // contract; `n <= in_size` so each reservation is bounded.
@@ -407,8 +467,8 @@ impl FilterAxis {
     // sweep linear. This is the tight ring capacity for the V axis.
     //
     // The `lo < j` guard bounds the lower pointer: window `j` is always open
-    // at its own start (every window has `ksize >= 1` — zero-tap windows are
-    // rejected by the dry pass before this point), so `lo` never needs to
+    // at its own start (every window has `ksize >= 1` — a sub-grid support
+    // that would degenerate a window is rejected up front), so `lo` never needs to
     // pass `j`. The guard makes the sweep robust even if that invariant were
     // ever weakened, so `lo` can never index past `starts`.
     let mut max_overlap = 0usize;

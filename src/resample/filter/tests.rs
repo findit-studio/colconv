@@ -225,6 +225,44 @@ fn valid_support_hits_armed_alloc_failpoint() {
 }
 
 #[test]
+#[cfg(target_pointer_width = "64")]
+fn huge_out_size_fails_fast_without_scan() {
+  // Hostile-metadata DoS guard. `build` validates the zero-tap geometry in
+  // O(1) (no per-output scan), so every adversarial axis below returns a
+  // recoverable error immediately; a regression that reintroduced an
+  // `O(out_size)` scan would hang here (the test would never complete) rather
+  // than fail an assertion. (The huge values are 64-bit only — on a 32-bit
+  // `usize` no axis is large enough for a normal support to fall sub-grid.)
+
+  // (a) Identity axis at `usize::MAX`: the overflow preflight rejects it
+  // (`out_size + 1` overflows `usize`) before any allocation.
+  assert!(matches!(
+    FilterAxis::build(usize::MAX, usize::MAX, &Triangle).unwrap_err(),
+    ResampleError::Overflow(_) | ResampleError::AllocationFailed(_)
+  ));
+
+  // (b) The case the bounded validation closes: an identity axis whose extent
+  // (`1 << 54`) gives the largest center a ULP (4.0) exceeding Triangle's
+  // support (1.0). The support is sub-grid at the output extent, so it is
+  // rejected as `InvalidFilterSupport` in O(1) — a per-output scan would have
+  // ground through ~1.8e16 iterations here.
+  assert!(matches!(
+    FilterAxis::build(1usize << 54, 1usize << 54, &Triangle).unwrap_err(),
+    ResampleError::InvalidFilterSupport(_)
+  ));
+
+  // (c) Right-edge clamp: near-2:1 huge dims where the rounded f64 `scale`
+  // nudges the last center past `in_size`, so `floor(center - support)` would
+  // exceed the clamped `xmax` and invert the window. The endpoint guard rejects
+  // it in O(1) before any reservation; an unchecked `xmax - xmin` would
+  // underflow (panic in debug, wrap in release) at the last window instead.
+  assert!(matches!(
+    FilterAxis::build(36028797018962971, 18014398509481485, &CatmullRom).unwrap_err(),
+    ResampleError::InvalidFilterSupport(_)
+  ));
+}
+
+#[test]
 fn max_overlap_bounds_the_ring() {
   // The accumulator-ring capacity (max window overlap) must cover every
   // window open at a given source row. Cross-check the stored value
