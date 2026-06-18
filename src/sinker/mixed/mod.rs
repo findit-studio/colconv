@@ -1617,7 +1617,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// in `process`, reset in `begin_frame`. The first format routed through
   /// the filter engine in this stage; the gate widens with the area
   /// engine as more packed-RGB sources wire in.
-  #[cfg(feature = "rgb")]
+  #[cfg(any(feature = "rgb", feature = "gbr"))]
   rgb_filter_stream: Option<crate::resample::FilterStream<u8>>,
   /// Row-stage **filter** stream for the 8-bit packed-RGBA `u8` color
   /// group ([`Rgba`](crate::source::Rgba) and the leading-/trailing-alpha
@@ -2481,7 +2481,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       luma_stream_u16: None,
       #[cfg(feature = "gray")]
       luma_stream_f32: None,
-      #[cfg(feature = "rgb")]
+      #[cfg(any(feature = "rgb", feature = "gbr"))]
       rgb_filter_stream: None,
       #[cfg(feature = "rgb")]
       rgba_filter_stream: None,
@@ -4048,7 +4048,7 @@ pub(super) fn packed_rgb_resample_emit(
 /// [`packed_rgb_resample_stream`]. Sequence-check precedes allocation so a
 /// rejected first row creates no output-width buffers and
 /// `AllocationFailed` never masks `OutOfSequenceRow`.
-#[cfg(feature = "rgb")]
+#[cfg(any(feature = "rgb", feature = "gbr"))]
 pub(super) fn packed_rgb_filter_stream<'s>(
   rgb_filter_stream: &'s mut Option<crate::resample::FilterStream<u8>>,
   plan: &ResamplePlan,
