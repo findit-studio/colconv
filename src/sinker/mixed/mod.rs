@@ -1619,6 +1619,18 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// engine as more packed-RGB sources wire in.
   #[cfg(feature = "rgb")]
   rgb_filter_stream: Option<crate::resample::FilterStream<u8>>,
+  /// Row-stage **filter** stream for the 8-bit packed-RGBA `u8` color
+  /// group ([`Rgba`](crate::source::Rgba) and the leading-/trailing-alpha
+  /// reorderings) — the 4-channel, signed-coefficient twin of
+  /// [`Self::rgb_filter_stream`], fed when a real-alpha packed-RGBA source
+  /// takes a `Filter` plan. PIL resizes RGBA by filtering R, G, B, A
+  /// independently with no premultiplication, so the four interleaved
+  /// channels bin through one 4-channel filter and a resampled RGBA frame
+  /// is byte-exact versus PIL's RGBA resize. Lazily created in `process`,
+  /// reset in `begin_frame`. Padding-alpha sources keep the 3-channel
+  /// [`Self::rgb_filter_stream`] (the X byte is never filtered).
+  #[cfg(feature = "rgb")]
+  rgba_filter_stream: Option<crate::resample::FilterStream<u8>>,
   /// Row-stage **filter** stream for the high-bit packed-RGB `u16` color
   /// group ([`Rgb48`](crate::source::Rgb48)) — the filter twin of
   /// [`Self::rgb_stream_u16`]. Lazily created in `process`, reset in
@@ -2470,6 +2482,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       luma_stream_f32: None,
       #[cfg(feature = "rgb")]
       rgb_filter_stream: None,
+      #[cfg(feature = "rgb")]
+      rgba_filter_stream: None,
       #[cfg(feature = "rgb")]
       rgb_filter_stream_u16: None,
       #[cfg(feature = "gray")]
@@ -4066,6 +4080,153 @@ pub(super) fn packed_rgb_filter_stream<'s>(
     )?),
   };
   Ok(stream)
+}
+
+/// Separable-filter fused resize for the **real-alpha** 8-bit packed-RGBA
+/// sources ([`Rgba`](crate::source::Rgba) and the channel reorderings):
+/// the `Filter`-plan twin of the area [`packed_rgba_resample`]. PIL resizes
+/// RGBA by filtering R, G, B, A **independently with no premultiplication**,
+/// so the source row is staged as one canonical source-width `R, G, B, A`
+/// u8 row (`convert_rgba`) and fed to a single 4-channel
+/// [`FilterStream`](crate::resample::FilterStream); each finalized output row
+/// is the resampled RGBA. Because the u8 filter is byte-exact per channel,
+/// the resampled RGBA frame is byte-exact versus PIL's RGBA resize.
+///
+/// Attached outputs derive from each finalized RGBA row: `rgba` copies it,
+/// and `rgb` / `luma` / `hsv` come from the alpha-dropped RGB. These sources
+/// are genuinely chromatic (no native luma plane), so luma is color-derived
+/// from the resampled RGB.
+///
+/// Sequence-check precedes every allocation (the 4-channel stream creation
+/// runs after the no-output and out-of-sequence rejections), keeping the
+/// call atomic: a rejected first row stores no frozen-output snapshot and
+/// `AllocationFailed` never masks `OutOfSequenceRow`. There is no
+/// premultiplied route — a packed-RGBA source under premultiplied alpha
+/// stays on the area path (which un-premultiplies); the filter path is
+/// reached only for straight alpha.
+#[cfg(feature = "rgb")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn packed_rgba_filter_resample(
+  rgba_filter_stream: &mut Option<crate::resample::FilterStream<u8>>,
+  resample_outputs: &mut Option<FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgba_scratch: &mut Vec<u8>,
+  rgb_drop_scratch: &mut Vec<u8>,
+  w: usize,
+  plan: &ResamplePlan,
+  idx: usize,
+  use_simd: bool,
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  convert_rgba: impl FnOnce(&mut [u8]),
+) -> Result<(), MixedSinkerError> {
+  let ow = plan.out_w();
+  let need_any = rgb.is_some() || rgba.is_some() || luma.is_some() || hsv.is_some();
+  // No-output call: nothing to sequence, stays a no-op (no freeze, no
+  // allocation) regardless of the row index.
+  if !need_any {
+    return Ok(());
+  }
+  let expected = rgba_filter_stream.as_ref().map_or(0, |s| s.next_y());
+  let first_row = resample_outputs.is_none();
+  // First row: reject an out-of-sequence row before the freeze so a
+  // rejected first row stores no snapshot that would poison a retry.
+  if first_row && expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    &None,
+    rgb,
+    rgba,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    hsv,
+    &None,
+    idx,
+  )?;
+  // Later row: a mid-frame output change is reported above; an
+  // out-of-sequence later row is rejected here.
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  // The rgb / hsv / luma outputs need an alpha-dropped RGB row, sized to the
+  // out-width RGB row only when one of those is attached, so an rgba-only
+  // sink neither grows it nor risks its allocation failure.
+  let need_rgb_drop = rgb.is_some() || hsv.is_some() || luma.is_some();
+  if rgba_filter_stream.is_none() {
+    let (fh, fv) = (
+      plan
+        .filter_h()
+        .expect("filter plan carries horizontal windows"),
+      plan
+        .filter_v()
+        .expect("filter plan carries vertical windows"),
+    );
+    *rgba_filter_stream = Some(crate::resample::FilterStream::new(
+      fh,
+      fv,
+      plan.src_w(),
+      plan.src_h(),
+      4,
+    )?);
+  }
+  let rgb_drop: &mut [u8] = if need_rgb_drop {
+    source_rgb_scratch(rgb_drop_scratch, ow, plan)?
+  } else {
+    &mut []
+  };
+  let src_rgba = source_rgba_scratch(rgba_scratch, w, plan)?;
+  convert_rgba(src_rgba);
+  let stream = rgba_filter_stream.as_mut().expect("created above");
+  stream.feed_row(idx, src_rgba, use_simd, |oy, finalized| {
+    // Straight-alpha RGBA output — the finalized 4-channel filter row.
+    if let Some(buf) = rgba.as_deref_mut() {
+      buf[oy * 4 * ow..(oy + 1) * 4 * ow].copy_from_slice(finalized);
+    }
+    if need_rgb_drop {
+      let nrow = &mut rgb_drop[..3 * ow];
+      drop_alpha_rgba_to_rgb_row(finalized, nrow, ow);
+      if let Some(buf) = rgb.as_deref_mut() {
+        buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(nrow);
+      }
+      if let Some(buf) = luma.as_deref_mut() {
+        crate::row::rgb_to_luma_row(
+          nrow,
+          &mut buf[oy * ow..(oy + 1) * ow],
+          ow,
+          matrix,
+          full_range,
+          use_simd,
+        );
+      }
+      if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
+        crate::row::rgb_to_hsv_row(
+          nrow,
+          &mut h[oy * ow..(oy + 1) * ow],
+          &mut s[oy * ow..(oy + 1) * ow],
+          &mut v[oy * ow..(oy + 1) * ow],
+          ow,
+          use_simd,
+        );
+      }
+    }
+  })?;
+  Ok(())
 }
 
 /// Source-width `u16` RGB staging for high-bit packed-RGB resampling:

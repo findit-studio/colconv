@@ -52,7 +52,8 @@ use super::{
   InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange, RowShapeMismatch,
   RowSlice, check_dimensions_match, check_frozen_alpha_mode, packed_rgb_filter_stream,
   packed_rgb_resample_emit, packed_rgb_resample_preflight, packed_rgb_resample_stream,
-  packed_rgba_resample, rgb_row_buf_or_scratch, rgba_plane_row_slice, source_rgb_scratch,
+  packed_rgba_filter_resample, packed_rgba_resample, rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  source_rgb_scratch,
 };
 use crate::{
   PixelSink,
@@ -290,6 +291,9 @@ impl<R> PixelSink for MixedSinker<'_, Bgr24, R> {
     if let Some(stream) = self.rgb_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
@@ -463,6 +467,12 @@ impl<R> PixelSink for MixedSinker<'_, Rgba, R> {
     if let Some(stream) = self.rgba_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
@@ -498,6 +508,8 @@ impl<R> PixelSink for MixedSinker<'_, Rgba, R> {
       plan,
       rgb_stream,
       rgba_stream,
+      rgb_filter_stream,
+      rgba_filter_stream,
       resample_outputs,
       alpha_mode,
       frozen_alpha_mode,
@@ -508,71 +520,159 @@ impl<R> PixelSink for MixedSinker<'_, Rgba, R> {
     // Non-identity plan. Route the alpha-aware 4-channel tail when the
     // resampled alpha would otherwise be dropped (rgba attached) or the
     // color must be alpha-weighted (premultiplied mode); otherwise the
-    // rgb-only straight outputs keep the 3-channel RGB path unchanged.
+    // rgb-only straight outputs keep the 3-channel RGB path unchanged. The
+    // span kind picks the engine: the integer area stream or the
+    // signed-coefficient filter stream (PIL parity, straight alpha only).
     if let Some(plan) = plan.as_ref() {
       // The alpha mode is snapshotted at begin_frame; reject a mid-frame
       // change here, before route selection (it picks the 4-channel vs
       // 3-channel route), so a flip can neither reroute nor mix modes.
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
-      if rgba.is_some() || alpha_mode.is_premultiplied() {
-        return packed_rgba_resample::<false>(
-          rgba_stream,
-          // No native-Y luma stream: these packed-RGBA sources are
-          // chromatic, so luma is color-derived (`NATIVE_Y_LUMA = false`)
-          // and the Y stream / scratch / de-interleave are inert.
-          &mut None,
-          resample_outputs,
-          rgb,
-          rgba,
-          // 8-bit packed RGBA sources expose no u16 RGB outputs.
-          &mut None,
-          &mut None,
-          luma,
-          &mut None,
-          hsv,
-          rgba_scratch,
-          rgb_scratch,
-          &mut std::vec::Vec::new(),
-          w,
-          plan,
-          idx,
-          use_simd,
-          alpha_mode,
-          row.matrix(),
-          row.full_range(),
-          |dst| dst.copy_from_slice(row.rgba()),
-          |_| {},
-        );
+      match plan.kind() {
+        crate::resample::SpanKind::Area => {
+          if rgba.is_some() || alpha_mode.is_premultiplied() {
+            return packed_rgba_resample::<false>(
+              rgba_stream,
+              // No native-Y luma stream: these packed-RGBA sources are
+              // chromatic, so luma is color-derived (`NATIVE_Y_LUMA = false`)
+              // and the Y stream / scratch / de-interleave are inert.
+              &mut None,
+              resample_outputs,
+              rgb,
+              rgba,
+              // 8-bit packed RGBA sources expose no u16 RGB outputs.
+              &mut None,
+              &mut None,
+              luma,
+              &mut None,
+              hsv,
+              rgba_scratch,
+              rgb_scratch,
+              &mut std::vec::Vec::new(),
+              w,
+              plan,
+              idx,
+              use_simd,
+              alpha_mode,
+              row.matrix(),
+              row.full_range(),
+              |dst| dst.copy_from_slice(row.rgba()),
+              |_| {},
+            );
+          }
+          if !packed_rgb_resample_preflight(
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            &None,
+            hsv,
+            rgb_stream.as_ref().map_or(0, |s| s.next_y()),
+            idx,
+          )? {
+            return Ok(());
+          }
+          let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+          let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+          rgba_to_rgb_row(row.rgba(), scratch, w, use_simd);
+          return packed_rgb_resample_emit(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            &mut None,
+            hsv,
+            scratch,
+            row.matrix(),
+            row.full_range(),
+            idx,
+            use_simd,
+          );
+        }
+        crate::resample::SpanKind::Filter => {
+          // Premultiplied alpha has no filter analogue (the filter engine
+          // cannot un-premultiply); surface the typed `UnsupportedFilter`
+          // via the area tail's reject rather than emit straight-filtered
+          // premultiplied color. Straight alpha: filter all four channels
+          // independently (PIL RGBA semantics) when alpha survives, else
+          // the 3-channel filter for rgb-only outputs.
+          if alpha_mode.is_premultiplied() {
+            return packed_rgba_resample::<false>(
+              rgba_stream,
+              &mut None,
+              resample_outputs,
+              rgb,
+              rgba,
+              &mut None,
+              &mut None,
+              luma,
+              &mut None,
+              hsv,
+              rgba_scratch,
+              rgb_scratch,
+              &mut std::vec::Vec::new(),
+              w,
+              plan,
+              idx,
+              use_simd,
+              alpha_mode,
+              row.matrix(),
+              row.full_range(),
+              |dst| dst.copy_from_slice(row.rgba()),
+              |_| {},
+            );
+          }
+          if rgba.is_some() {
+            return packed_rgba_filter_resample(
+              rgba_filter_stream,
+              resample_outputs,
+              rgb,
+              rgba,
+              luma,
+              hsv,
+              rgba_scratch,
+              rgb_scratch,
+              w,
+              plan,
+              idx,
+              use_simd,
+              row.matrix(),
+              row.full_range(),
+              |dst| dst.copy_from_slice(row.rgba()),
+            );
+          }
+          if !packed_rgb_resample_preflight(
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            &None,
+            hsv,
+            rgb_filter_stream.as_ref().map_or(0, |s| s.next_y()),
+            idx,
+          )? {
+            return Ok(());
+          }
+          let stream = packed_rgb_filter_stream(rgb_filter_stream, plan, idx)?;
+          let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+          rgba_to_rgb_row(row.rgba(), scratch, w, use_simd);
+          return packed_rgb_resample_emit(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            &mut None,
+            hsv,
+            scratch,
+            row.matrix(),
+            row.full_range(),
+            idx,
+            use_simd,
+          );
+        }
       }
-      if !packed_rgb_resample_preflight(
-        resample_outputs,
-        rgb,
-        rgba,
-        luma,
-        &None,
-        hsv,
-        rgb_stream.as_ref().map_or(0, |s| s.next_y()),
-        idx,
-      )? {
-        return Ok(());
-      }
-      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
-      let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
-      rgba_to_rgb_row(row.rgba(), scratch, w, use_simd);
-      return packed_rgb_resample_emit(
-        stream,
-        plan,
-        rgb,
-        rgba,
-        luma,
-        &mut None,
-        hsv,
-        scratch,
-        row.matrix(),
-        row.full_range(),
-        idx,
-        use_simd,
-      );
     }
 
     let one_plane_start = idx * w;
@@ -671,6 +771,12 @@ impl<R> PixelSink for MixedSinker<'_, Bgra, R> {
     if let Some(stream) = self.rgba_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
@@ -706,6 +812,8 @@ impl<R> PixelSink for MixedSinker<'_, Bgra, R> {
       plan,
       rgb_stream,
       rgba_stream,
+      rgb_filter_stream,
+      rgba_filter_stream,
       resample_outputs,
       alpha_mode,
       frozen_alpha_mode,
@@ -714,72 +822,153 @@ impl<R> PixelSink for MixedSinker<'_, Bgra, R> {
     let alpha_mode = *alpha_mode;
 
     // Non-identity plan — see the `Rgba` impl for the 4-channel-vs-3
-    // routing rationale. Bgra stages canonical RGBA via `bgra_to_rgba_row`
-    // (swap R↔B, α pass-through) and drop-alpha RGB via `bgra_to_rgb_row`.
+    // routing rationale and the area-vs-filter engine split. Bgra stages
+    // canonical RGBA via `bgra_to_rgba_row` (swap R↔B, α pass-through) and
+    // drop-alpha RGB via `bgra_to_rgb_row`.
     if let Some(plan) = plan.as_ref() {
       // The alpha mode is snapshotted at begin_frame; reject a mid-frame
       // change here, before route selection (it picks the 4-channel vs
       // 3-channel route), so a flip can neither reroute nor mix modes.
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
-      if rgba.is_some() || alpha_mode.is_premultiplied() {
-        return packed_rgba_resample::<false>(
-          rgba_stream,
-          // No native-Y luma stream: these packed-RGBA sources are
-          // chromatic, so luma is color-derived (`NATIVE_Y_LUMA = false`)
-          // and the Y stream / scratch / de-interleave are inert.
-          &mut None,
-          resample_outputs,
-          rgb,
-          rgba,
-          // 8-bit packed RGBA sources expose no u16 RGB outputs.
-          &mut None,
-          &mut None,
-          luma,
-          &mut None,
-          hsv,
-          rgba_scratch,
-          rgb_scratch,
-          &mut std::vec::Vec::new(),
-          w,
-          plan,
-          idx,
-          use_simd,
-          alpha_mode,
-          row.matrix(),
-          row.full_range(),
-          |dst| bgra_to_rgba_row(row.bgra(), dst, w, use_simd),
-          |_| {},
-        );
+      match plan.kind() {
+        crate::resample::SpanKind::Area => {
+          if rgba.is_some() || alpha_mode.is_premultiplied() {
+            return packed_rgba_resample::<false>(
+              rgba_stream,
+              // No native-Y luma stream: these packed-RGBA sources are
+              // chromatic, so luma is color-derived (`NATIVE_Y_LUMA = false`)
+              // and the Y stream / scratch / de-interleave are inert.
+              &mut None,
+              resample_outputs,
+              rgb,
+              rgba,
+              // 8-bit packed RGBA sources expose no u16 RGB outputs.
+              &mut None,
+              &mut None,
+              luma,
+              &mut None,
+              hsv,
+              rgba_scratch,
+              rgb_scratch,
+              &mut std::vec::Vec::new(),
+              w,
+              plan,
+              idx,
+              use_simd,
+              alpha_mode,
+              row.matrix(),
+              row.full_range(),
+              |dst| bgra_to_rgba_row(row.bgra(), dst, w, use_simd),
+              |_| {},
+            );
+          }
+          if !packed_rgb_resample_preflight(
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            &None,
+            hsv,
+            rgb_stream.as_ref().map_or(0, |s| s.next_y()),
+            idx,
+          )? {
+            return Ok(());
+          }
+          let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+          let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+          bgra_to_rgb_row(row.bgra(), scratch, w, use_simd);
+          return packed_rgb_resample_emit(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            &mut None,
+            hsv,
+            scratch,
+            row.matrix(),
+            row.full_range(),
+            idx,
+            use_simd,
+          );
+        }
+        crate::resample::SpanKind::Filter => {
+          if alpha_mode.is_premultiplied() {
+            return packed_rgba_resample::<false>(
+              rgba_stream,
+              &mut None,
+              resample_outputs,
+              rgb,
+              rgba,
+              &mut None,
+              &mut None,
+              luma,
+              &mut None,
+              hsv,
+              rgba_scratch,
+              rgb_scratch,
+              &mut std::vec::Vec::new(),
+              w,
+              plan,
+              idx,
+              use_simd,
+              alpha_mode,
+              row.matrix(),
+              row.full_range(),
+              |dst| bgra_to_rgba_row(row.bgra(), dst, w, use_simd),
+              |_| {},
+            );
+          }
+          if rgba.is_some() {
+            return packed_rgba_filter_resample(
+              rgba_filter_stream,
+              resample_outputs,
+              rgb,
+              rgba,
+              luma,
+              hsv,
+              rgba_scratch,
+              rgb_scratch,
+              w,
+              plan,
+              idx,
+              use_simd,
+              row.matrix(),
+              row.full_range(),
+              |dst| bgra_to_rgba_row(row.bgra(), dst, w, use_simd),
+            );
+          }
+          if !packed_rgb_resample_preflight(
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            &None,
+            hsv,
+            rgb_filter_stream.as_ref().map_or(0, |s| s.next_y()),
+            idx,
+          )? {
+            return Ok(());
+          }
+          let stream = packed_rgb_filter_stream(rgb_filter_stream, plan, idx)?;
+          let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+          bgra_to_rgb_row(row.bgra(), scratch, w, use_simd);
+          return packed_rgb_resample_emit(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            &mut None,
+            hsv,
+            scratch,
+            row.matrix(),
+            row.full_range(),
+            idx,
+            use_simd,
+          );
+        }
       }
-      if !packed_rgb_resample_preflight(
-        resample_outputs,
-        rgb,
-        rgba,
-        luma,
-        &None,
-        hsv,
-        rgb_stream.as_ref().map_or(0, |s| s.next_y()),
-        idx,
-      )? {
-        return Ok(());
-      }
-      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
-      let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
-      bgra_to_rgb_row(row.bgra(), scratch, w, use_simd);
-      return packed_rgb_resample_emit(
-        stream,
-        plan,
-        rgb,
-        rgba,
-        luma,
-        &mut None,
-        hsv,
-        scratch,
-        row.matrix(),
-        row.full_range(),
-        idx,
-        use_simd,
-      );
     }
 
     let one_plane_start = idx * w;
@@ -878,6 +1067,12 @@ impl<R> PixelSink for MixedSinker<'_, Argb, R> {
     if let Some(stream) = self.rgba_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
@@ -913,6 +1108,8 @@ impl<R> PixelSink for MixedSinker<'_, Argb, R> {
       plan,
       rgb_stream,
       rgba_stream,
+      rgb_filter_stream,
+      rgba_filter_stream,
       resample_outputs,
       alpha_mode,
       frozen_alpha_mode,
@@ -928,65 +1125,145 @@ impl<R> PixelSink for MixedSinker<'_, Argb, R> {
       // change here, before route selection (it picks the 4-channel vs
       // 3-channel route), so a flip can neither reroute nor mix modes.
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
-      if rgba.is_some() || alpha_mode.is_premultiplied() {
-        return packed_rgba_resample::<false>(
-          rgba_stream,
-          // No native-Y luma stream: these packed-RGBA sources are
-          // chromatic, so luma is color-derived (`NATIVE_Y_LUMA = false`)
-          // and the Y stream / scratch / de-interleave are inert.
-          &mut None,
-          resample_outputs,
-          rgb,
-          rgba,
-          // 8-bit packed RGBA sources expose no u16 RGB outputs.
-          &mut None,
-          &mut None,
-          luma,
-          &mut None,
-          hsv,
-          rgba_scratch,
-          rgb_scratch,
-          &mut std::vec::Vec::new(),
-          w,
-          plan,
-          idx,
-          use_simd,
-          alpha_mode,
-          row.matrix(),
-          row.full_range(),
-          |dst| argb_to_rgba_row(row.argb(), dst, w, use_simd),
-          |_| {},
-        );
+      match plan.kind() {
+        crate::resample::SpanKind::Area => {
+          if rgba.is_some() || alpha_mode.is_premultiplied() {
+            return packed_rgba_resample::<false>(
+              rgba_stream,
+              // No native-Y luma stream: these packed-RGBA sources are
+              // chromatic, so luma is color-derived (`NATIVE_Y_LUMA = false`)
+              // and the Y stream / scratch / de-interleave are inert.
+              &mut None,
+              resample_outputs,
+              rgb,
+              rgba,
+              // 8-bit packed RGBA sources expose no u16 RGB outputs.
+              &mut None,
+              &mut None,
+              luma,
+              &mut None,
+              hsv,
+              rgba_scratch,
+              rgb_scratch,
+              &mut std::vec::Vec::new(),
+              w,
+              plan,
+              idx,
+              use_simd,
+              alpha_mode,
+              row.matrix(),
+              row.full_range(),
+              |dst| argb_to_rgba_row(row.argb(), dst, w, use_simd),
+              |_| {},
+            );
+          }
+          if !packed_rgb_resample_preflight(
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            &None,
+            hsv,
+            rgb_stream.as_ref().map_or(0, |s| s.next_y()),
+            idx,
+          )? {
+            return Ok(());
+          }
+          let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+          let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+          argb_to_rgb_row(row.argb(), scratch, w, use_simd);
+          return packed_rgb_resample_emit(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            &mut None,
+            hsv,
+            scratch,
+            row.matrix(),
+            row.full_range(),
+            idx,
+            use_simd,
+          );
+        }
+        crate::resample::SpanKind::Filter => {
+          if alpha_mode.is_premultiplied() {
+            return packed_rgba_resample::<false>(
+              rgba_stream,
+              &mut None,
+              resample_outputs,
+              rgb,
+              rgba,
+              &mut None,
+              &mut None,
+              luma,
+              &mut None,
+              hsv,
+              rgba_scratch,
+              rgb_scratch,
+              &mut std::vec::Vec::new(),
+              w,
+              plan,
+              idx,
+              use_simd,
+              alpha_mode,
+              row.matrix(),
+              row.full_range(),
+              |dst| argb_to_rgba_row(row.argb(), dst, w, use_simd),
+              |_| {},
+            );
+          }
+          if rgba.is_some() {
+            return packed_rgba_filter_resample(
+              rgba_filter_stream,
+              resample_outputs,
+              rgb,
+              rgba,
+              luma,
+              hsv,
+              rgba_scratch,
+              rgb_scratch,
+              w,
+              plan,
+              idx,
+              use_simd,
+              row.matrix(),
+              row.full_range(),
+              |dst| argb_to_rgba_row(row.argb(), dst, w, use_simd),
+            );
+          }
+          if !packed_rgb_resample_preflight(
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            &None,
+            hsv,
+            rgb_filter_stream.as_ref().map_or(0, |s| s.next_y()),
+            idx,
+          )? {
+            return Ok(());
+          }
+          let stream = packed_rgb_filter_stream(rgb_filter_stream, plan, idx)?;
+          let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+          argb_to_rgb_row(row.argb(), scratch, w, use_simd);
+          return packed_rgb_resample_emit(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            &mut None,
+            hsv,
+            scratch,
+            row.matrix(),
+            row.full_range(),
+            idx,
+            use_simd,
+          );
+        }
       }
-      if !packed_rgb_resample_preflight(
-        resample_outputs,
-        rgb,
-        rgba,
-        luma,
-        &None,
-        hsv,
-        rgb_stream.as_ref().map_or(0, |s| s.next_y()),
-        idx,
-      )? {
-        return Ok(());
-      }
-      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
-      let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
-      argb_to_rgb_row(row.argb(), scratch, w, use_simd);
-      return packed_rgb_resample_emit(
-        stream,
-        plan,
-        rgb,
-        rgba,
-        luma,
-        &mut None,
-        hsv,
-        scratch,
-        row.matrix(),
-        row.full_range(),
-        idx,
-        use_simd,
-      );
     }
 
     let one_plane_start = idx * w;
@@ -1085,6 +1362,12 @@ impl<R> PixelSink for MixedSinker<'_, Abgr, R> {
     if let Some(stream) = self.rgba_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
@@ -1120,6 +1403,8 @@ impl<R> PixelSink for MixedSinker<'_, Abgr, R> {
       plan,
       rgb_stream,
       rgba_stream,
+      rgb_filter_stream,
+      rgba_filter_stream,
       resample_outputs,
       alpha_mode,
       frozen_alpha_mode,
@@ -1135,65 +1420,145 @@ impl<R> PixelSink for MixedSinker<'_, Abgr, R> {
       // change here, before route selection (it picks the 4-channel vs
       // 3-channel route), so a flip can neither reroute nor mix modes.
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
-      if rgba.is_some() || alpha_mode.is_premultiplied() {
-        return packed_rgba_resample::<false>(
-          rgba_stream,
-          // No native-Y luma stream: these packed-RGBA sources are
-          // chromatic, so luma is color-derived (`NATIVE_Y_LUMA = false`)
-          // and the Y stream / scratch / de-interleave are inert.
-          &mut None,
-          resample_outputs,
-          rgb,
-          rgba,
-          // 8-bit packed RGBA sources expose no u16 RGB outputs.
-          &mut None,
-          &mut None,
-          luma,
-          &mut None,
-          hsv,
-          rgba_scratch,
-          rgb_scratch,
-          &mut std::vec::Vec::new(),
-          w,
-          plan,
-          idx,
-          use_simd,
-          alpha_mode,
-          row.matrix(),
-          row.full_range(),
-          |dst| abgr_to_rgba_row(row.abgr(), dst, w, use_simd),
-          |_| {},
-        );
+      match plan.kind() {
+        crate::resample::SpanKind::Area => {
+          if rgba.is_some() || alpha_mode.is_premultiplied() {
+            return packed_rgba_resample::<false>(
+              rgba_stream,
+              // No native-Y luma stream: these packed-RGBA sources are
+              // chromatic, so luma is color-derived (`NATIVE_Y_LUMA = false`)
+              // and the Y stream / scratch / de-interleave are inert.
+              &mut None,
+              resample_outputs,
+              rgb,
+              rgba,
+              // 8-bit packed RGBA sources expose no u16 RGB outputs.
+              &mut None,
+              &mut None,
+              luma,
+              &mut None,
+              hsv,
+              rgba_scratch,
+              rgb_scratch,
+              &mut std::vec::Vec::new(),
+              w,
+              plan,
+              idx,
+              use_simd,
+              alpha_mode,
+              row.matrix(),
+              row.full_range(),
+              |dst| abgr_to_rgba_row(row.abgr(), dst, w, use_simd),
+              |_| {},
+            );
+          }
+          if !packed_rgb_resample_preflight(
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            &None,
+            hsv,
+            rgb_stream.as_ref().map_or(0, |s| s.next_y()),
+            idx,
+          )? {
+            return Ok(());
+          }
+          let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+          let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+          abgr_to_rgb_row(row.abgr(), scratch, w, use_simd);
+          return packed_rgb_resample_emit(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            &mut None,
+            hsv,
+            scratch,
+            row.matrix(),
+            row.full_range(),
+            idx,
+            use_simd,
+          );
+        }
+        crate::resample::SpanKind::Filter => {
+          if alpha_mode.is_premultiplied() {
+            return packed_rgba_resample::<false>(
+              rgba_stream,
+              &mut None,
+              resample_outputs,
+              rgb,
+              rgba,
+              &mut None,
+              &mut None,
+              luma,
+              &mut None,
+              hsv,
+              rgba_scratch,
+              rgb_scratch,
+              &mut std::vec::Vec::new(),
+              w,
+              plan,
+              idx,
+              use_simd,
+              alpha_mode,
+              row.matrix(),
+              row.full_range(),
+              |dst| abgr_to_rgba_row(row.abgr(), dst, w, use_simd),
+              |_| {},
+            );
+          }
+          if rgba.is_some() {
+            return packed_rgba_filter_resample(
+              rgba_filter_stream,
+              resample_outputs,
+              rgb,
+              rgba,
+              luma,
+              hsv,
+              rgba_scratch,
+              rgb_scratch,
+              w,
+              plan,
+              idx,
+              use_simd,
+              row.matrix(),
+              row.full_range(),
+              |dst| abgr_to_rgba_row(row.abgr(), dst, w, use_simd),
+            );
+          }
+          if !packed_rgb_resample_preflight(
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            &None,
+            hsv,
+            rgb_filter_stream.as_ref().map_or(0, |s| s.next_y()),
+            idx,
+          )? {
+            return Ok(());
+          }
+          let stream = packed_rgb_filter_stream(rgb_filter_stream, plan, idx)?;
+          let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+          abgr_to_rgb_row(row.abgr(), scratch, w, use_simd);
+          return packed_rgb_resample_emit(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            &mut None,
+            hsv,
+            scratch,
+            row.matrix(),
+            row.full_range(),
+            idx,
+            use_simd,
+          );
+        }
       }
-      if !packed_rgb_resample_preflight(
-        resample_outputs,
-        rgb,
-        rgba,
-        luma,
-        &None,
-        hsv,
-        rgb_stream.as_ref().map_or(0, |s| s.next_y()),
-        idx,
-      )? {
-        return Ok(());
-      }
-      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
-      let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
-      abgr_to_rgb_row(row.abgr(), scratch, w, use_simd);
-      return packed_rgb_resample_emit(
-        stream,
-        plan,
-        rgb,
-        rgba,
-        luma,
-        &mut None,
-        hsv,
-        scratch,
-        row.matrix(),
-        row.full_range(),
-        idx,
-        use_simd,
-      );
     }
 
     let one_plane_start = idx * w;
@@ -1289,6 +1654,9 @@ impl<R> PixelSink for MixedSinker<'_, Xrgb, R> {
     if let Some(stream) = self.rgb_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
@@ -1322,6 +1690,7 @@ impl<R> PixelSink for MixedSinker<'_, Xrgb, R> {
       rgb_scratch,
       plan,
       rgb_stream,
+      rgb_filter_stream,
       resample_outputs,
       ..
     } = self;
@@ -1329,8 +1698,17 @@ impl<R> PixelSink for MixedSinker<'_, Xrgb, R> {
     // Non-identity plan: drop the padding byte to canonical RGB at
     // source width in the shared scratch, then feed the shared
     // packed-RGB resample tail (RGBA output gets 0xFF alpha, the
-    // padding-byte contract).
+    // padding-byte contract). The X byte is padding, never a filtered
+    // channel — the 3 real RGB channels resample (area or filter per the
+    // plan kind) and X is reset to 0xFF on output, the same as the area
+    // path treats it.
     if let Some(plan) = plan.as_ref() {
+      let (stream_next_y, is_filter) = match plan.kind() {
+        crate::resample::SpanKind::Area => (rgb_stream.as_ref().map_or(0, |s| s.next_y()), false),
+        crate::resample::SpanKind::Filter => {
+          (rgb_filter_stream.as_ref().map_or(0, |s| s.next_y()), true)
+        }
+      };
       if !packed_rgb_resample_preflight(
         resample_outputs,
         rgb,
@@ -1338,10 +1716,32 @@ impl<R> PixelSink for MixedSinker<'_, Xrgb, R> {
         luma,
         &None,
         hsv,
-        rgb_stream.as_ref().map_or(0, |s| s.next_y()),
+        stream_next_y,
         idx,
       )? {
         return Ok(());
+      }
+      // Create the per-kind stream (sequence-check before its allocation)
+      // BEFORE staging the source-width scratch, so a rejected first row
+      // grows nothing and `AllocationFailed` never masks `OutOfSequenceRow`.
+      if is_filter {
+        let stream = packed_rgb_filter_stream(rgb_filter_stream, plan, idx)?;
+        let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+        argb_to_rgb_row(row.xrgb(), scratch, w, use_simd);
+        return packed_rgb_resample_emit(
+          stream,
+          plan,
+          rgb,
+          rgba,
+          luma,
+          &mut None,
+          hsv,
+          scratch,
+          row.matrix(),
+          row.full_range(),
+          idx,
+          use_simd,
+        );
       }
       let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
       let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
@@ -1454,6 +1854,9 @@ impl<R> PixelSink for MixedSinker<'_, Rgbx, R> {
     if let Some(stream) = self.rgb_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
@@ -1487,6 +1890,7 @@ impl<R> PixelSink for MixedSinker<'_, Rgbx, R> {
       rgb_scratch,
       plan,
       rgb_stream,
+      rgb_filter_stream,
       resample_outputs,
       ..
     } = self;
@@ -1494,8 +1898,16 @@ impl<R> PixelSink for MixedSinker<'_, Rgbx, R> {
     // Non-identity plan: drop the padding byte to canonical RGB at
     // source width in the shared scratch, then feed the shared
     // packed-RGB resample tail (RGBA output gets 0xFF alpha, the
-    // padding-byte contract).
+    // padding-byte contract). The X byte is padding, never a filtered
+    // channel — the 3 real RGB channels resample (area or filter per the
+    // plan kind) and X is reset to 0xFF on output.
     if let Some(plan) = plan.as_ref() {
+      let (stream_next_y, is_filter) = match plan.kind() {
+        crate::resample::SpanKind::Area => (rgb_stream.as_ref().map_or(0, |s| s.next_y()), false),
+        crate::resample::SpanKind::Filter => {
+          (rgb_filter_stream.as_ref().map_or(0, |s| s.next_y()), true)
+        }
+      };
       if !packed_rgb_resample_preflight(
         resample_outputs,
         rgb,
@@ -1503,10 +1915,32 @@ impl<R> PixelSink for MixedSinker<'_, Rgbx, R> {
         luma,
         &None,
         hsv,
-        rgb_stream.as_ref().map_or(0, |s| s.next_y()),
+        stream_next_y,
         idx,
       )? {
         return Ok(());
+      }
+      // Create the per-kind stream (sequence-check before its allocation)
+      // BEFORE staging the source-width scratch, so a rejected first row
+      // grows nothing and `AllocationFailed` never masks `OutOfSequenceRow`.
+      if is_filter {
+        let stream = packed_rgb_filter_stream(rgb_filter_stream, plan, idx)?;
+        let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+        rgba_to_rgb_row(row.rgbx(), scratch, w, use_simd);
+        return packed_rgb_resample_emit(
+          stream,
+          plan,
+          rgb,
+          rgba,
+          luma,
+          &mut None,
+          hsv,
+          scratch,
+          row.matrix(),
+          row.full_range(),
+          idx,
+          use_simd,
+        );
       }
       let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
       let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
@@ -1617,6 +2051,9 @@ impl<R> PixelSink for MixedSinker<'_, Xbgr, R> {
     if let Some(stream) = self.rgb_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
@@ -1650,6 +2087,7 @@ impl<R> PixelSink for MixedSinker<'_, Xbgr, R> {
       rgb_scratch,
       plan,
       rgb_stream,
+      rgb_filter_stream,
       resample_outputs,
       ..
     } = self;
@@ -1657,8 +2095,16 @@ impl<R> PixelSink for MixedSinker<'_, Xbgr, R> {
     // Non-identity plan: drop the padding byte to canonical RGB at
     // source width in the shared scratch, then feed the shared
     // packed-RGB resample tail (RGBA output gets 0xFF alpha, the
-    // padding-byte contract).
+    // padding-byte contract). The X byte is padding, never a filtered
+    // channel — the 3 real RGB channels resample (area or filter per the
+    // plan kind) and X is reset to 0xFF on output.
     if let Some(plan) = plan.as_ref() {
+      let (stream_next_y, is_filter) = match plan.kind() {
+        crate::resample::SpanKind::Area => (rgb_stream.as_ref().map_or(0, |s| s.next_y()), false),
+        crate::resample::SpanKind::Filter => {
+          (rgb_filter_stream.as_ref().map_or(0, |s| s.next_y()), true)
+        }
+      };
       if !packed_rgb_resample_preflight(
         resample_outputs,
         rgb,
@@ -1666,10 +2112,32 @@ impl<R> PixelSink for MixedSinker<'_, Xbgr, R> {
         luma,
         &None,
         hsv,
-        rgb_stream.as_ref().map_or(0, |s| s.next_y()),
+        stream_next_y,
         idx,
       )? {
         return Ok(());
+      }
+      // Create the per-kind stream (sequence-check before its allocation)
+      // BEFORE staging the source-width scratch, so a rejected first row
+      // grows nothing and `AllocationFailed` never masks `OutOfSequenceRow`.
+      if is_filter {
+        let stream = packed_rgb_filter_stream(rgb_filter_stream, plan, idx)?;
+        let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+        abgr_to_rgb_row(row.xbgr(), scratch, w, use_simd);
+        return packed_rgb_resample_emit(
+          stream,
+          plan,
+          rgb,
+          rgba,
+          luma,
+          &mut None,
+          hsv,
+          scratch,
+          row.matrix(),
+          row.full_range(),
+          idx,
+          use_simd,
+        );
       }
       let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
       let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
@@ -1781,6 +2249,9 @@ impl<R> PixelSink for MixedSinker<'_, Bgrx, R> {
     if let Some(stream) = self.rgb_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
@@ -1814,6 +2285,7 @@ impl<R> PixelSink for MixedSinker<'_, Bgrx, R> {
       rgb_scratch,
       plan,
       rgb_stream,
+      rgb_filter_stream,
       resample_outputs,
       ..
     } = self;
@@ -1821,8 +2293,16 @@ impl<R> PixelSink for MixedSinker<'_, Bgrx, R> {
     // Non-identity plan: drop the padding byte to canonical RGB at
     // source width in the shared scratch, then feed the shared
     // packed-RGB resample tail (RGBA output gets 0xFF alpha, the
-    // padding-byte contract).
+    // padding-byte contract). The X byte is padding, never a filtered
+    // channel — the 3 real RGB channels resample (area or filter per the
+    // plan kind) and X is reset to 0xFF on output.
     if let Some(plan) = plan.as_ref() {
+      let (stream_next_y, is_filter) = match plan.kind() {
+        crate::resample::SpanKind::Area => (rgb_stream.as_ref().map_or(0, |s| s.next_y()), false),
+        crate::resample::SpanKind::Filter => {
+          (rgb_filter_stream.as_ref().map_or(0, |s| s.next_y()), true)
+        }
+      };
       if !packed_rgb_resample_preflight(
         resample_outputs,
         rgb,
@@ -1830,10 +2310,32 @@ impl<R> PixelSink for MixedSinker<'_, Bgrx, R> {
         luma,
         &None,
         hsv,
-        rgb_stream.as_ref().map_or(0, |s| s.next_y()),
+        stream_next_y,
         idx,
       )? {
         return Ok(());
+      }
+      // Create the per-kind stream (sequence-check before its allocation)
+      // BEFORE staging the source-width scratch, so a rejected first row
+      // grows nothing and `AllocationFailed` never masks `OutOfSequenceRow`.
+      if is_filter {
+        let stream = packed_rgb_filter_stream(rgb_filter_stream, plan, idx)?;
+        let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+        bgra_to_rgb_row(row.bgrx(), scratch, w, use_simd);
+        return packed_rgb_resample_emit(
+          stream,
+          plan,
+          rgb,
+          rgba,
+          luma,
+          &mut None,
+          hsv,
+          scratch,
+          row.matrix(),
+          row.full_range(),
+          idx,
+          use_simd,
+        );
       }
       let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
       let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
