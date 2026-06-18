@@ -57,6 +57,14 @@ GEOMS = [
     ("5x4_to_13x11", 5, 4, 13, 11, 0x7373),
     ("8x8_to_20x6", 8, 8, 20, 6, 0x7474),
     ("16x12_to_40x30", 16, 12, 40, 30, 0x7575),
+    # Narrow-source enlarge: a source dim below the kernel support (Lanczos3
+    # is 3) clamps the window to the whole source and normalizes over it, the
+    # same as PIL. Exercises the 1- and 2-tap clamped windows the build now
+    # admits (a support wider than the source is no longer rejected).
+    ("1x1_to_7x7", 1, 1, 7, 7, 0x8181),
+    ("2x2_to_5x5", 2, 2, 5, 5, 0x8282),
+    ("1x4_to_6x9", 1, 4, 6, 9, 0x8383),
+    ("2x8_to_6x3", 2, 8, 6, 3, 0x8484),
 ]
 
 # (mode label, PIL mode, channels, element rust type, numpy dtype).

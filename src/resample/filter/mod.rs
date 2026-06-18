@@ -369,12 +369,15 @@ impl FilterAxis {
   ) -> Result<Self, ResampleError> {
     debug_assert!(in_size > 0 && out_size > 0);
     let support_unit = kernel.support();
-    // A hostile `support` cannot size an unsafe window: reject anything
-    // non-finite, non-positive, or large enough that `ceil(support)`
-    // would not fit a sane window bound. `in_size` is the natural cap —
-    // no window can be wider than the source — so a support past it is
-    // both pointless and a red flag.
-    if !support_unit.is_finite() || support_unit <= 0.0 || support_unit > in_size as f64 {
+    // A hostile `support` cannot size an unsafe window: reject only the
+    // genuinely degenerate cases — non-finite or non-positive. A support
+    // wider than the source is NOT rejected: that is the ordinary
+    // narrow-source enlarge case (e.g. a `1x1 -> 7x7` Lanczos upscale), where
+    // every window clamps to `[0, in_size)` and normalizes over the available
+    // samples exactly as PIL does. The clamp bounds each window to at most
+    // `in_size` samples regardless of the support's magnitude, so no finite
+    // support can size an unbounded window.
+    if !support_unit.is_finite() || support_unit <= 0.0 {
       return Err(ResampleError::InvalidFilterSupport(
         InvalidFilterSupport::new(support_unit, in_size),
       ));
@@ -383,9 +386,9 @@ impl FilterAxis {
     let scale = in_size as f64 / out_size as f64;
     let filterscale = if scale < 1.0 { 1.0 } else { scale };
     let support = support_unit * filterscale;
-    // Window width is bounded by `2*support + 2` (the floor/ceil span);
-    // with `support <= in_size * filterscale` and the clamp to
-    // `[0, in_size)`, no window exceeds `in_size` samples.
+    // The clamp to `[0, in_size)` bounds every window to at most `in_size`
+    // samples, whatever the support — so a wide support on a narrow source
+    // collapses to the available samples rather than overrunning.
     let geometry = || PlanGeometry::new(in_size, 1, out_size, 1);
 
     // Overflow / capacity preflight, BEFORE any scan or allocation: reject an
