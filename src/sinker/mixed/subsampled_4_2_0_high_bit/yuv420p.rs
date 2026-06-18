@@ -1,8 +1,8 @@
 use super::super::{
-  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match, deinterleave_y_high_bit,
-  packed_yuv422_triple_resample, reset_high_bit_yuv_streams, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, NativeRouteChanged,
+  RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
+  deinterleave_y_high_bit, packed_yuv422_triple_resample, reset_high_bit_yuv_streams,
+  rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
 use super::yuv420p16_process_native;
 use crate::{PixelSink, row::*, source::*};
@@ -455,6 +455,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p10<BE>, R> {
       plan,
       native,
       native_420_u16,
+      frozen_native_route,
       ..
     } = self;
 
@@ -475,8 +476,44 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p10<BE>, R> {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
+      // Whether this call carries any output — the EXACT set both tiers'
+      // preflight tests (`need_luma || need_color` =
+      // `luma || rgb || rgba || hsv || rgb_u16 || rgba_u16`). The route
+      // freezes only on an output-bearing row a tier ACCEPTS; a no-output
+      // call consumes no stream state, so it must not freeze.
+      let need_output = luma.is_some()
+        || rgb.is_some()
+        || rgba.is_some()
+        || hsv.is_some()
+        || rgb_u16.is_some()
+        || rgba_u16.is_some();
+      // Reject a mid-frame native/row-stage route flip BEFORE either tier's
+      // dispatch. The two tiers carry independent, in-order, once-only
+      // stream state, so splitting a frame across them yields a
+      // mixed/partial frame rather than a deterministic rejection. The route
+      // is both CHECKED here and frozen below (the SET) ONLY on an
+      // output-bearing row a tier ACCEPTS — both gate on `need_output`. A
+      // no-output call therefore neither checks nor freezes the route: it is
+      // a true no-op, route-invisible regardless of row index. A
+      // preflight-rejected (out-of-sequence / frozen) output-bearing call
+      // returns Err before the SET, so it leaves `frozen_native_route`
+      // untouched and a later same-or-other-route retry is not falsely
+      // rejected.
+      if need_output
+        && let Some(frozen) = *frozen_native_route
+        && frozen != *native
+      {
+        return Err(MixedSinkerError::NativeRouteChanged(
+          NativeRouteChanged::new(idx),
+        ));
+      }
       if *native {
-        return yuv420p16_process_native::<BITS, BE>(
+        // Dispatch first; freeze the route to native ONLY after the call
+        // returns Ok on an output-bearing row. A no-output call returns
+        // Ok(()) with `need_output` false (no freeze); an out-of-sequence /
+        // frozen row returns Err via `?` (no freeze) — so only an accepted
+        // output-bearing row commits the route.
+        yuv420p16_process_native::<BITS, BE>(
           plan,
           native_420_u16,
           resample_outputs,
@@ -497,9 +534,17 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p10<BE>, R> {
           w,
           h,
           use_simd,
-        );
+        )?;
+        if frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(true);
+        }
+        return Ok(());
       }
-      return packed_yuv422_triple_resample::<BITS>(
+      // Row-stage tail. Same CHECK-before / SET-after split: dispatch, then
+      // freeze the route to row-stage only when the call accepts an
+      // output-bearing row (a no-output call returns Ok with `need_output`
+      // false; an out-of-sequence / frozen row returns Err via `?`).
+      packed_yuv422_triple_resample::<BITS>(
         luma_stream_u16,
         rgb_stream,
         rgb_stream_u16,
@@ -531,7 +576,11 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p10<BE>, R> {
             y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
           )
         },
-      );
+      )?;
+      if frozen_native_route.is_none() && need_output {
+        *frozen_native_route = Some(false);
+      }
+      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -829,6 +878,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p12<BE>, R> {
       plan,
       native,
       native_420_u16,
+      frozen_native_route,
       ..
     } = self;
 
@@ -840,8 +890,44 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p12<BE>, R> {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
+      // Whether this call carries any output — the EXACT set both tiers'
+      // preflight tests (`need_luma || need_color` =
+      // `luma || rgb || rgba || hsv || rgb_u16 || rgba_u16`). The route
+      // freezes only on an output-bearing row a tier ACCEPTS; a no-output
+      // call consumes no stream state, so it must not freeze.
+      let need_output = luma.is_some()
+        || rgb.is_some()
+        || rgba.is_some()
+        || hsv.is_some()
+        || rgb_u16.is_some()
+        || rgba_u16.is_some();
+      // Reject a mid-frame native/row-stage route flip BEFORE either tier's
+      // dispatch. The two tiers carry independent, in-order, once-only
+      // stream state, so splitting a frame across them yields a
+      // mixed/partial frame rather than a deterministic rejection. The route
+      // is both CHECKED here and frozen below (the SET) ONLY on an
+      // output-bearing row a tier ACCEPTS — both gate on `need_output`. A
+      // no-output call therefore neither checks nor freezes the route: it is
+      // a true no-op, route-invisible regardless of row index. A
+      // preflight-rejected (out-of-sequence / frozen) output-bearing call
+      // returns Err before the SET, so it leaves `frozen_native_route`
+      // untouched and a later same-or-other-route retry is not falsely
+      // rejected.
+      if need_output
+        && let Some(frozen) = *frozen_native_route
+        && frozen != *native
+      {
+        return Err(MixedSinkerError::NativeRouteChanged(
+          NativeRouteChanged::new(idx),
+        ));
+      }
       if *native {
-        return yuv420p16_process_native::<BITS, BE>(
+        // Dispatch first; freeze the route to native ONLY after the call
+        // returns Ok on an output-bearing row. A no-output call returns
+        // Ok(()) with `need_output` false (no freeze); an out-of-sequence /
+        // frozen row returns Err via `?` (no freeze) — so only an accepted
+        // output-bearing row commits the route.
+        yuv420p16_process_native::<BITS, BE>(
           plan,
           native_420_u16,
           resample_outputs,
@@ -862,9 +948,17 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p12<BE>, R> {
           w,
           h,
           use_simd,
-        );
+        )?;
+        if frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(true);
+        }
+        return Ok(());
       }
-      return packed_yuv422_triple_resample::<BITS>(
+      // Row-stage tail. Same CHECK-before / SET-after split: dispatch, then
+      // freeze the route to row-stage only when the call accepts an
+      // output-bearing row (a no-output call returns Ok with `need_output`
+      // false; an out-of-sequence / frozen row returns Err via `?`).
+      packed_yuv422_triple_resample::<BITS>(
         luma_stream_u16,
         rgb_stream,
         rgb_stream_u16,
@@ -896,7 +990,11 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p12<BE>, R> {
             y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
           )
         },
-      );
+      )?;
+      if frozen_native_route.is_none() && need_output {
+        *frozen_native_route = Some(false);
+      }
+      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -1178,6 +1276,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p14<BE>, R> {
       plan,
       native,
       native_420_u16,
+      frozen_native_route,
       ..
     } = self;
 
@@ -1189,8 +1288,44 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p14<BE>, R> {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
+      // Whether this call carries any output — the EXACT set both tiers'
+      // preflight tests (`need_luma || need_color` =
+      // `luma || rgb || rgba || hsv || rgb_u16 || rgba_u16`). The route
+      // freezes only on an output-bearing row a tier ACCEPTS; a no-output
+      // call consumes no stream state, so it must not freeze.
+      let need_output = luma.is_some()
+        || rgb.is_some()
+        || rgba.is_some()
+        || hsv.is_some()
+        || rgb_u16.is_some()
+        || rgba_u16.is_some();
+      // Reject a mid-frame native/row-stage route flip BEFORE either tier's
+      // dispatch. The two tiers carry independent, in-order, once-only
+      // stream state, so splitting a frame across them yields a
+      // mixed/partial frame rather than a deterministic rejection. The route
+      // is both CHECKED here and frozen below (the SET) ONLY on an
+      // output-bearing row a tier ACCEPTS — both gate on `need_output`. A
+      // no-output call therefore neither checks nor freezes the route: it is
+      // a true no-op, route-invisible regardless of row index. A
+      // preflight-rejected (out-of-sequence / frozen) output-bearing call
+      // returns Err before the SET, so it leaves `frozen_native_route`
+      // untouched and a later same-or-other-route retry is not falsely
+      // rejected.
+      if need_output
+        && let Some(frozen) = *frozen_native_route
+        && frozen != *native
+      {
+        return Err(MixedSinkerError::NativeRouteChanged(
+          NativeRouteChanged::new(idx),
+        ));
+      }
       if *native {
-        return yuv420p16_process_native::<BITS, BE>(
+        // Dispatch first; freeze the route to native ONLY after the call
+        // returns Ok on an output-bearing row. A no-output call returns
+        // Ok(()) with `need_output` false (no freeze); an out-of-sequence /
+        // frozen row returns Err via `?` (no freeze) — so only an accepted
+        // output-bearing row commits the route.
+        yuv420p16_process_native::<BITS, BE>(
           plan,
           native_420_u16,
           resample_outputs,
@@ -1211,9 +1346,17 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p14<BE>, R> {
           w,
           h,
           use_simd,
-        );
+        )?;
+        if frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(true);
+        }
+        return Ok(());
       }
-      return packed_yuv422_triple_resample::<BITS>(
+      // Row-stage tail. Same CHECK-before / SET-after split: dispatch, then
+      // freeze the route to row-stage only when the call accepts an
+      // output-bearing row (a no-output call returns Ok with `need_output`
+      // false; an out-of-sequence / frozen row returns Err via `?`).
+      packed_yuv422_triple_resample::<BITS>(
         luma_stream_u16,
         rgb_stream,
         rgb_stream_u16,
@@ -1245,7 +1388,11 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p14<BE>, R> {
             y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
           )
         },
-      );
+      )?;
+      if frozen_native_route.is_none() && need_output {
+        *frozen_native_route = Some(false);
+      }
+      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -1526,6 +1673,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p16<BE>, R> {
       plan,
       native,
       native_420_u16,
+      frozen_native_route,
       ..
     } = self;
 
@@ -1538,8 +1686,44 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p16<BE>, R> {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
+      // Whether this call carries any output — the EXACT set both tiers'
+      // preflight tests (`need_luma || need_color` =
+      // `luma || rgb || rgba || hsv || rgb_u16 || rgba_u16`). The route
+      // freezes only on an output-bearing row a tier ACCEPTS; a no-output
+      // call consumes no stream state, so it must not freeze.
+      let need_output = luma.is_some()
+        || rgb.is_some()
+        || rgba.is_some()
+        || hsv.is_some()
+        || rgb_u16.is_some()
+        || rgba_u16.is_some();
+      // Reject a mid-frame native/row-stage route flip BEFORE either tier's
+      // dispatch. The two tiers carry independent, in-order, once-only
+      // stream state, so splitting a frame across them yields a
+      // mixed/partial frame rather than a deterministic rejection. The route
+      // is both CHECKED here and frozen below (the SET) ONLY on an
+      // output-bearing row a tier ACCEPTS — both gate on `need_output`. A
+      // no-output call therefore neither checks nor freezes the route: it is
+      // a true no-op, route-invisible regardless of row index. A
+      // preflight-rejected (out-of-sequence / frozen) output-bearing call
+      // returns Err before the SET, so it leaves `frozen_native_route`
+      // untouched and a later same-or-other-route retry is not falsely
+      // rejected.
+      if need_output
+        && let Some(frozen) = *frozen_native_route
+        && frozen != *native
+      {
+        return Err(MixedSinkerError::NativeRouteChanged(
+          NativeRouteChanged::new(idx),
+        ));
+      }
       if *native {
-        return yuv420p16_process_native::<BITS, BE>(
+        // Dispatch first; freeze the route to native ONLY after the call
+        // returns Ok on an output-bearing row. A no-output call returns
+        // Ok(()) with `need_output` false (no freeze); an out-of-sequence /
+        // frozen row returns Err via `?` (no freeze) — so only an accepted
+        // output-bearing row commits the route.
+        yuv420p16_process_native::<BITS, BE>(
           plan,
           native_420_u16,
           resample_outputs,
@@ -1560,9 +1744,17 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p16<BE>, R> {
           w,
           h,
           use_simd,
-        );
+        )?;
+        if frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(true);
+        }
+        return Ok(());
       }
-      return packed_yuv422_triple_resample::<BITS>(
+      // Row-stage tail. Same CHECK-before / SET-after split: dispatch, then
+      // freeze the route to row-stage only when the call accepts an
+      // output-bearing row (a no-output call returns Ok with `need_output`
+      // false; an out-of-sequence / frozen row returns Err via `?`).
+      packed_yuv422_triple_resample::<BITS>(
         luma_stream_u16,
         rgb_stream,
         rgb_stream_u16,
@@ -1594,7 +1786,11 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p16<BE>, R> {
             y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
           )
         },
-      );
+      )?;
+      if frozen_native_route.is_none() && need_output {
+        *frozen_native_route = Some(false);
+      }
+      return Ok(());
     }
 
     let one_plane_start = idx * w;

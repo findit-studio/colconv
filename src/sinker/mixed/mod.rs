@@ -777,8 +777,10 @@ pub enum MixedSinkerError {
   /// the *other* tier's fresh streams, splitting one frame across two
   /// incompatible state machines. The offending `process` call fails
   /// before either tier consumes the row; re-select the tier and call
-  /// [`PixelSink::begin_frame`] to restart the frame. (Issue #186 tracks
-  /// extending this guard to the other native families.)
+  /// [`PixelSink::begin_frame`] to restart the frame. Enforced by every
+  /// native 4:2:0 family: the 8-bit / high-bit planar (Yuv420p /
+  /// Yuv420p10/12/14/16) and 8-bit / high-bit semi-planar (Nv12 / Nv21 /
+  /// P010/P012/P016) tiers.
   #[error(
     "MixedSinker resample route (native vs row-stage) changed mid-frame at \
      source row {}; restart the frame via begin_frame",
@@ -1691,15 +1693,20 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
   p0xx_v_half: Vec<u16>,
   /// The native / row-stage route chosen on the first resampled row of a
-  /// frame; a mid-frame change is rejected (issue #186 tracks extending
-  /// this to the other native families). The two tiers carry
+  /// frame; a mid-frame change is rejected. The two tiers carry
   /// independent, in-order stream state, so flipping
   /// [`Self::set_native`] mid-frame would split one frame across two
-  /// incompatible state machines. Reset to `None` per frame in
-  /// `reset_high_bit_yuv_streams`; gated to the intersection where
-  /// `native` is meaningful for this family (a yuv-semi-planar-solo
-  /// build can't enable the native tier, so no guard is needed).
-  #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+  /// incompatible state machines. Shared by every native 4:2:0 family
+  /// the guard covers — the 8-bit planar (Yuv420p) and high-bit planar
+  /// (Yuv420p10/12/14/16) tiers (both `yuv-planar`), the 8-bit
+  /// semi-planar (Nv12/Nv21) tier, and the high-bit semi-planar P-format
+  /// (P010/P012/P016) tier (both additionally `yuv-semi-planar`, a subset
+  /// of `yuv-planar`). Reset to `None` per frame: via
+  /// `reset_high_bit_yuv_streams` for the high-bit families and inline in
+  /// the 8-bit families' `begin_frame`. Gated to `yuv-planar`, the union
+  /// where the native tier exists (a yuv-semi-planar-solo build can't
+  /// enable the native tier, so no guard is needed there).
+  #[cfg(feature = "yuv-planar")]
   frozen_native_route: Option<bool>,
   /// Lazily grown to `3 * width` bytes when HSV is requested without a
   /// user RGB buffer. Empty otherwise.
@@ -2468,7 +2475,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       p0xx_u_half: Vec::new(),
       #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
       p0xx_v_half: Vec::new(),
-      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      #[cfg(feature = "yuv-planar")]
       frozen_native_route: None,
       #[cfg(any(
         feature = "bayer",
@@ -5333,12 +5340,9 @@ pub(super) fn reset_high_bit_yuv_streams<F: SourceFormat, R>(sink: &mut MixedSin
     join.reset();
   }
   // Clear the per-frame frozen native/row-stage route so the next frame
-  // may pick either tier (the P0xx dispatch re-freezes it on its first
+  // may pick either tier (the dispatch re-freezes it on its first
   // resampled row); a mid-frame flip within a frame stays rejected.
-  #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
-  {
-    sink.frozen_native_route = None;
-  }
+  sink.frozen_native_route = None;
   sink.resample_outputs = None;
 }
 
