@@ -21,9 +21,8 @@
 //! window unsafe: [`FilterAxis::build`] validates [`FilterKernel::support`]
 //! is finite, strictly positive, and bounded before sizing any window.
 //!
-//! Downscale only in this stage; upscaling is rejected
-//! ([`ResampleError::UpscaleUnsupported`]). SIMD backends and the upscale
-//! direction land in later increments — this is the scalar foundation.
+//! Downscale, upscale, and mixed per-axis ratios are all supported, on the
+//! scalar path and every SIMD backend.
 
 use std::vec::Vec;
 

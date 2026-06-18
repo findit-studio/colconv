@@ -146,16 +146,16 @@ impl Resampler for AreaResampler {
   }
 }
 
-/// Separable **windowed-filter** downscale strategy — the Pillow (PIL)
+/// Separable **windowed-filter** resampling strategy — the Pillow (PIL)
 /// `Image.resize` convention, reproduced within +-1 LSB. Plans signed
 /// reconstruction-filter coefficients on both axes under the kernel `K`:
 /// [`Triangle`] (PIL `BILINEAR`), [`CatmullRom`] (PIL `BICUBIC`), or
 /// [`Lanczos3`] (PIL `LANCZOS`), or a custom [`FilterKernel`].
 ///
-/// Requesting the source geometry plans the identity (`Ok(None)`);
-/// upscaling on either axis is rejected in this stage (a later increment
-/// drops that guard). The kernel is plain data — construct via
-/// [`Self::new`].
+/// Downscales, upscales, and mixed per-axis ratios are all supported (PIL
+/// widens the support when reducing and keeps it native when enlarging).
+/// Requesting the source geometry plans the identity (`Ok(None)`). The
+/// kernel is plain data — construct via [`Self::new`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FilteredResampler<K: FilterKernel> {
   out_w: usize,
@@ -202,14 +202,13 @@ impl<K: FilterKernel> Resampler for FilteredResampler<K> {
         ZeroOutputDimension::new(self.out_w, self.out_h),
       ));
     }
-    if self.out_w > src_w || self.out_h > src_h {
-      return Err(ResampleError::UpscaleUnsupported(UpscaleUnsupported::new(
-        src_w, src_h, self.out_w, self.out_h,
-      )));
-    }
     if self.out_w == src_w && self.out_h == src_h {
       return Ok(None);
     }
+    // Upscale, downscale, or a mixed per-axis ratio: the filter engine plans
+    // each axis independently (PIL's `precompute_coeffs` widens the support on
+    // a downscaling axis and leaves it native when enlarging), so no axis-
+    // direction guard is needed here.
     ResamplePlan::filter(src_w, src_h, self.out_w, self.out_h, &self.kernel).map(Some)
   }
 }

@@ -1589,7 +1589,57 @@ mod pil_parity {
   }
 
   #[test]
-  fn u8_matches_pil_within_one_lsb() {
+  fn filter_upscale_constant_stays_constant() {
+    // out > in on both axes. Each output window's coefficients sum to 1 (PIL
+    // normalization), so a constant source reconstructs to that same constant
+    // at every output pixel, edges included — even through the negative lobes
+    // of CatmullRom and Lanczos3. Exercises the whole upscale path: the plan
+    // builds (the absorption + endpoint guards must not reject scale < 1), the
+    // H/V passes run, and the stream accumulates into many simultaneously open
+    // outputs and flushes the trailing ones after the final source row (an
+    // unflushed output would stay at the zero default and break the constant).
+    for ch in [1usize, 3] {
+      let src = std::vec![123u8; 3 * 3 * ch];
+      for (name, out) in [
+        ("Triangle", run(Triangle, &src, 3, 3, 7, 7, ch)),
+        ("CatmullRom", run(CatmullRom, &src, 3, 3, 7, 7, ch)),
+        ("Lanczos3", run(Lanczos3, &src, 3, 3, 7, 7, ch)),
+      ] {
+        assert_eq!(out.len(), 7 * 7 * ch, "{name}: upscaled output length");
+        assert!(
+          out.iter().all(|&v| v == 123),
+          "{name}: constant {ch}-channel upscale must stay constant, got {out:?}"
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn filter_upscale_plan_builds_filter_spans() {
+    // The downscale-only guard is gone: an upscale on either axis (here width
+    // up 8->16, height down 8->4 — a mixed plan) plans the filter, neither an
+    // error nor the identity.
+    let plan = FilteredResampler::new(16, 4, Triangle)
+      .plan(8, 8)
+      .expect("upscale width must plan")
+      .expect("non-identity");
+    assert_eq!(plan.kind(), SpanKind::Filter);
+    assert_eq!(plan.out_dims(), (16, 4));
+  }
+
+  /// Per-geometry u8 PIL tolerance. The integer two-pass path uses f32
+  /// coefficients (not PIL's fixed-point), so each pass's `clip8` round can
+  /// shift a half-way sample by up to 1 LSB. Downscale stays within 1 LSB in
+  /// practice (kept as a tight regression tripwire); an enlarging or mixed
+  /// ratio spreads the intermediate over more output samples and the two
+  /// passes can compound to 2 LSB. Byte-exact parity would need PIL's
+  /// fixed-point integer arithmetic (see issue #190).
+  fn pil_u8_tol(sw: usize, sh: usize, ow: usize, oh: usize) -> u8 {
+    if ow <= sw && oh <= sh { 1 } else { 2 }
+  }
+
+  #[test]
+  fn u8_matches_pil() {
     let mut worst = 0u8;
     for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::TRIANGLE_U8 {
       let src = source_u8(sw, sh, ch, seed);
@@ -1597,7 +1647,7 @@ mod pil_parity {
       assert_u_within(
         &ours,
         golden,
-        1,
+        pil_u8_tol(sw, sh, ow, oh),
         &mut worst,
         std::format_args!("Triangle {sw}x{sh}->{ow}x{oh} c{ch}"),
       );
@@ -1608,7 +1658,7 @@ mod pil_parity {
       assert_u_within(
         &ours,
         golden,
-        1,
+        pil_u8_tol(sw, sh, ow, oh),
         &mut worst,
         std::format_args!("CatmullRom {sw}x{sh}->{ow}x{oh} c{ch}"),
       );
@@ -1619,7 +1669,7 @@ mod pil_parity {
       assert_u_within(
         &ours,
         golden,
-        1,
+        pil_u8_tol(sw, sh, ow, oh),
         &mut worst,
         std::format_args!("Lanczos3 {sw}x{sh}->{ow}x{oh} c{ch}"),
       );
@@ -1747,7 +1797,7 @@ mod pil_parity {
   // reorder error never widens the Pillow gap past one LSB.
 
   #[test]
-  fn u8_matches_pil_within_one_lsb_simd() {
+  fn u8_matches_pil_simd() {
     let mut worst = 0u8;
     for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::TRIANGLE_U8 {
       let src = source_u8(sw, sh, ch, seed);
@@ -1755,7 +1805,7 @@ mod pil_parity {
       assert_u_within(
         &ours,
         golden,
-        1,
+        pil_u8_tol(sw, sh, ow, oh),
         &mut worst,
         std::format_args!("Triangle SIMD {sw}x{sh}->{ow}x{oh} c{ch}"),
       );
@@ -1766,7 +1816,7 @@ mod pil_parity {
       assert_u_within(
         &ours,
         golden,
-        1,
+        pil_u8_tol(sw, sh, ow, oh),
         &mut worst,
         std::format_args!("CatmullRom SIMD {sw}x{sh}->{ow}x{oh} c{ch}"),
       );
@@ -1777,7 +1827,7 @@ mod pil_parity {
       assert_u_within(
         &ours,
         golden,
-        1,
+        pil_u8_tol(sw, sh, ow, oh),
         &mut worst,
         std::format_args!("Lanczos3 SIMD {sw}x{sh}->{ow}x{oh} c{ch}"),
       );
