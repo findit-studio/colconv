@@ -196,6 +196,8 @@ mod resample_v410_v30x_filter;
 #[cfg(feature = "yuv-444-packed")]
 mod resample_vuya;
 #[cfg(feature = "yuv-444-packed")]
+mod resample_vuya_vuyx_filter;
+#[cfg(feature = "yuv-444-packed")]
 mod resample_vuyx;
 #[cfg(feature = "yuv-444-packed")]
 mod resample_xv36;
