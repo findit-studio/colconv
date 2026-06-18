@@ -1574,6 +1574,21 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// `xyz`), so no separate engine feature is required.
   #[cfg(feature = "xyz")]
   xyz_stream_f32: Option<crate::resample::AreaStream<f32>>,
+  /// Row-stage **filter** stream for the packed-CIE-XYZ-12-bit source
+  /// ([`Xyz12`](crate::source::Xyz12)) — the
+  /// [`SpanKind::Filter`](crate::resample::SpanKind) twin of
+  /// [`Self::xyz_stream_f32`]. Bins the staged **linear XYZ** `f32` row
+  /// (post-OETF, pre-matrix) with signed filter coefficients, then the
+  /// per-finalized-row matrix + gamma + narrow run exactly as on the area
+  /// path. Lazily created in `process`, reset in `begin_frame`. Gated to
+  /// `xyz` to match [`Self::xyz_stream_f32`]: the shared engine gate
+  /// already compiles [`FilterStream`] in for `xyz`. There is no
+  /// native-depth clamp on the filter output — the integer / f16 outputs
+  /// clamp `[0, 1]` in their own narrows and the `rgb_f32` / `xyz_f32`
+  /// outputs are full-range by design (HDR > 1 and out-of-gamut negatives
+  /// preserved), so a signed-coefficient overshoot cannot wrap them.
+  #[cfg(feature = "xyz")]
+  xyz_filter_stream_f32: Option<crate::resample::FilterStream<f32>>,
   /// Row-stage area stream for single-plane luma binning. Used by the
   /// planar YUV family (Y-plane luma), the [`Gray8`](crate::source::Gray8)
   /// source (Gray *is* a luma plane), and `mono` (bin the expanded
@@ -2490,6 +2505,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       rgba_stream_f32: None,
       #[cfg(feature = "xyz")]
       xyz_stream_f32: None,
+      #[cfg(feature = "xyz")]
+      xyz_filter_stream_f32: None,
       #[cfg(any(
         feature = "yuv-planar",
         feature = "rgb",
@@ -8963,8 +8980,10 @@ pub(super) fn xyz12_resample_stream<'s>(
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::AreaStream<f32>, MixedSinkerError> {
-  // Area-only (Xyz12 is not routed to the filter path): reject a filter
-  // plan before building the area stream.
+  // The caller routes a `Filter` plan to `xyz12_resample_filter`, so this
+  // area builder only ever sees an `Area` plan; the guard stays as a
+  // defensive reject in case a future caller forgets to branch on
+  // `plan.kind()`.
   if plan.kind().is_filter() {
     return Err(plan.unsupported_filter().into());
   }
@@ -8991,9 +9010,56 @@ pub(super) fn xyz12_resample_stream<'s>(
   Ok(stream)
 }
 
+/// Lazily creates the 3-channel linear-XYZ `f32` **filter** stream and
+/// checks strict row sequencing — the
+/// [`SpanKind::Filter`](crate::resample::SpanKind) twin of
+/// [`xyz12_resample_stream`], mirroring [`packed_rgb_f32_filter`] for the
+/// `Xyz12` linear-XYZ element path. The sequence-check precedes
+/// allocation so a rejected first row creates no output buffers, and the
+/// built stream feeds the **same** [`xyz12_resample_emit`] the area path
+/// uses (both are generic over [`RowResampler`](crate::resample::RowResampler)).
+#[cfg(feature = "xyz")]
+pub(super) fn xyz12_resample_filter<'s>(
+  xyz_filter_stream_f32: &'s mut Option<crate::resample::FilterStream<f32>>,
+  plan: &ResamplePlan,
+  idx: usize,
+) -> Result<&'s mut crate::resample::FilterStream<f32>, MixedSinkerError> {
+  let expected = xyz_filter_stream_f32
+    .as_ref()
+    .map_or(0, |stream| stream.next_y());
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  let (fh, fv) = (
+    plan
+      .filter_h()
+      .expect("filter plan carries horizontal windows"),
+    plan
+      .filter_v()
+      .expect("filter plan carries vertical windows"),
+  );
+  let stream = match xyz_filter_stream_f32 {
+    Some(stream) => stream,
+    None => xyz_filter_stream_f32.insert(crate::resample::FilterStream::new(
+      fh,
+      fv,
+      plan.src_w(),
+      plan.src_h(),
+      3,
+    )?),
+  };
+  Ok(stream)
+}
+
 /// Feeds the prepared source-width **linear-XYZ** `f32` row into the
 /// (already sequence-checked) stream and derives every attached output
-/// from each finalized binned linear-XYZ output row.
+/// from each finalized binned linear-XYZ output row. The stream is the
+/// kind-appropriate engine — area ([`xyz12_resample_stream`]) or filter
+/// ([`xyz12_resample_filter`]) — picked by the caller from the plan's
+/// [`SpanKind`](crate::resample::SpanKind); both bin the same staged
+/// linear-XYZ `f32` row and run the identical per-output derivation.
 ///
 /// `xyz_f32` copies the binned linear XYZ verbatim. Every other output
 /// applies the direct DCP path's math to the binned XYZ: the gamut
@@ -9013,7 +9079,7 @@ pub(super) fn xyz12_resample_stream<'s>(
 #[cfg(feature = "xyz")]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn xyz12_resample_emit(
-  stream: &mut crate::resample::AreaStream<f32>,
+  stream: &mut impl crate::resample::RowResampler<f32>,
   plan: &ResamplePlan,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
