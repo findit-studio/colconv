@@ -1541,14 +1541,18 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// [`SpanKind::Filter`](crate::resample::SpanKind) twin of
   /// [`Self::rgb_stream_f32`]. Lazily created in `process`, reset in
   /// `begin_frame`. Fed when the plan kind is `Filter`; bins at f32
-  /// precision and emits unclamped (full-range float, PIL `F`-mode). Gated to
-  /// the packed-float-RGB consumers (`rgb-float`, with the engine fenced in:
-  /// `FilterStream` is gated to `yuv-planar` / `rgb`, which `rgb-float` does
-  /// not imply): unlike the area [`Self::rgb_stream_f32`] this filter stream
-  /// has no `gbr` consumer yet — the float planar GBR sources `Gbrpf32` /
-  /// `Gbrpf16` route only their area path, so the `gbr` arm lands with their
-  /// filter routing.
-  #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
+  /// precision and emits unclamped (full-range float, PIL `F`-mode). Gated
+  /// like [`Self::rgb_stream_f32`]: the packed-float-RGB consumers
+  /// (`rgb-float`, with the engine fenced in: `FilterStream` is gated to
+  /// `yuv-planar` / `rgb`, which `rgb-float` does not imply) AND `gbr` — the
+  /// float planar GBR sources `Gbrpf32` / `Gbrpf16` scatter their G/B/R
+  /// planes into the same packed `f32` RGB row and filter through this
+  /// stream (the `gbr` build already carries the engine via the #146
+  /// cascade).
+  #[cfg(any(
+    all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
+    feature = "gbr"
+  ))]
   rgb_filter_stream_f32: Option<crate::resample::FilterStream<f32>>,
   /// Row-stage **4-channel** `f32` area stream for the float planar
   /// GBR+alpha family ([`Gbrapf32`](crate::source::Gbrapf32) /
@@ -1562,6 +1566,28 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// [`Self::rgb_stream_f32`] still serves the rgb-only straight float path.
   #[cfg(feature = "gbr")]
   rgba_stream_f32: Option<crate::resample::AreaStream<f32>>,
+  /// Row-stage **4-channel** `f32` **filter** stream for the float planar
+  /// GBR+alpha family ([`Gbrapf32`](crate::source::Gbrapf32) /
+  /// [`Gbrapf16`](crate::source::Gbrapf16), the latter widened f16 ->
+  /// host-native f32) — the [`SpanKind::Filter`](crate::resample::SpanKind)
+  /// twin of [`Self::rgba_stream_f32`] and the 4-channel analogue of
+  /// [`Self::rgb_filter_stream_f32`]. PIL filters R, G, B, A independently
+  /// with no premultiplication, so the staged canonical `R, G, B, A` f32 row
+  /// bins through one 4-channel [`FilterStream<f32>`](crate::resample::FilterStream)
+  /// and resampled alpha is a real filtered channel (never forced opaque).
+  /// Lazily created in `process`, reset in `begin_frame`. There is no
+  /// premultiplied filter analogue (the filter engine cannot un-premultiply),
+  /// so a premultiplied frame stays on the area [`Self::rgba_stream_f32`];
+  /// the filter stream is reached only for straight alpha. GBR-only (there is
+  /// no packed-float RGBA source), gated to `gbr` to match
+  /// [`Self::rgba_stream_f32`]; the engine is already pulled in for `gbr` via
+  /// the #146 cascade. The float `rgb_f32` / `rgba_f32` outputs are
+  /// full-range by design (HDR > 1 and negatives preserved), so there is no
+  /// native-depth clamp on the filter output — the integer / f16 outputs
+  /// clamp `[0, 1]` in their own narrows, so a signed-coefficient overshoot
+  /// cannot wrap them.
+  #[cfg(feature = "gbr")]
+  rgba_filter_stream_f32: Option<crate::resample::FilterStream<f32>>,
   /// Row-stage area stream for the packed-CIE-XYZ-12-bit source
   /// ([`Xyz12`](crate::source::Xyz12)). The wire row converts to
   /// **linear XYZ** `f32` (post-OETF, pre-matrix) and bins in float so
@@ -2518,10 +2544,15 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "gbr"
       ))]
       rgb_stream_f32: None,
-      #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
+      #[cfg(any(
+        all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
+        feature = "gbr"
+      ))]
       rgb_filter_stream_f32: None,
       #[cfg(feature = "gbr")]
       rgba_stream_f32: None,
+      #[cfg(feature = "gbr")]
+      rgba_filter_stream_f32: None,
       #[cfg(feature = "xyz")]
       xyz_stream_f32: None,
       #[cfg(feature = "xyz")]
@@ -2948,6 +2979,26 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   #[cfg(all(test, feature = "gbr", feature = "std"))]
   pub(crate) fn rgba_stream_f32_allocated(&self) -> bool {
     self.rgba_stream_f32.is_some()
+  }
+
+  /// Whether the **3-channel** packed-`f32` **filter** stream has been
+  /// created — a white-box probe for the float planar GBR filter resample
+  /// tests (a no-output sink must not allocate it). Gated on `gbr` + `std`
+  /// like the tests that consume it (the `rgb-float` consumers have their own
+  /// coverage; the `gbr` arm widens the gate here so the probe is available
+  /// in a `gbr`-only build).
+  #[cfg(all(test, feature = "gbr", feature = "std"))]
+  pub(crate) fn rgb_filter_stream_f32_allocated(&self) -> bool {
+    self.rgb_filter_stream_f32.is_some()
+  }
+
+  /// Whether the **4-channel** float planar GBR+alpha `f32` **filter** stream
+  /// has been created — a white-box probe for the filter resample tests (a
+  /// no-output sink must not allocate it). Gated on `gbr` + `std` like the
+  /// tests that consume it.
+  #[cfg(all(test, feature = "gbr", feature = "std"))]
+  pub(crate) fn rgba_filter_stream_f32_allocated(&self) -> bool {
+    self.rgba_filter_stream_f32.is_some()
   }
 
   /// Capacity of the float planar-GBR G/B/R plane scratch — a white-box
@@ -7470,11 +7521,15 @@ pub(super) fn packed_rgb_f32_resample_stream<'s>(
 /// sequence-check precedes allocation so a rejected first row creates no
 /// output buffers, and the built stream feeds the **same**
 /// [`packed_rgb_f32_resample_emit`] the area path uses (both are generic
-/// over [`RowResampler`](crate::resample::RowResampler)). Gated to the
-/// packed-float-RGB consumers (`rgb-float`, engine fenced in): the float
-/// planar GBR sources route only their area path, so the `gbr` arm lands
-/// with their filter routing.
-#[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
+/// over [`RowResampler`](crate::resample::RowResampler)). Gated like
+/// [`packed_rgb_f32_resample_stream`]: the packed-float-RGB consumers
+/// (`rgb-float`, engine fenced in) AND `gbr` — the float planar GBR sources
+/// scatter their G/B/R planes into the same packed `f32` RGB row and filter
+/// through this stream.
+#[cfg(any(
+  all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
+  feature = "gbr"
+))]
 pub(super) fn packed_rgb_f32_filter<'s>(
   rgb_filter_stream_f32: &'s mut Option<crate::resample::FilterStream<f32>>,
   plan: &ResamplePlan,
@@ -7898,8 +7953,10 @@ pub(super) fn packed_rgb_f16_resample_emit(
 
 /// Feeds the prepared source-width packed `R, G, B` `f32` row (the
 /// [`Gbrpf32`](crate::source::Gbrpf32) planes scattered into RGB order)
-/// into the float area stream and derives every attached output from
-/// each finalized output row. The `rgb-float` ([`Rgbf32`]) tail's
+/// into the prepared float stream — area or signed-coefficient filter,
+/// both [`RowResampler<f32>`](crate::resample::RowResampler) — and derives
+/// every attached output from each finalized output row. The `rgb-float`
+/// ([`Rgbf32`]) tail's
 /// per-row `rgbf32_*` clamp/scale kernels are not compiled in a `gbr`
 /// build, so this tail de-interleaves each binned packed row back into
 /// G/B/R planes once and runs the **exact direct `gbrpf32_*` kernels** —
@@ -7920,7 +7977,7 @@ pub(super) fn packed_rgb_f16_resample_emit(
 #[cfg(feature = "gbr")]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn planar_gbr_f32_resample_emit(
-  stream: &mut crate::resample::AreaStream<f32>,
+  stream: &mut impl crate::resample::RowResampler<f32>,
   plan: &ResamplePlan,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -8106,11 +8163,13 @@ pub(super) fn planar_gbr_f32_resample_emit(
 
 /// Feeds the prepared source-width packed `R, G, B` `f32` row (the
 /// [`Gbrpf16`](crate::source::Gbrpf16) planes widened f16 -> host-native
-/// f32 and scattered into RGB order) into the float area stream and
-/// derives every attached output from each finalized output row.
+/// f32 and scattered into RGB order) into the prepared float stream — area
+/// or signed-coefficient filter, both
+/// [`RowResampler<f32>`](crate::resample::RowResampler) — and derives every
+/// attached output from each finalized output row.
 ///
-/// There is no `AreaStream<f16>`, so binning runs in `f32` for
-/// precision. Per finalized output row this tail de-interleaves the
+/// There is no `AreaStream<f16>` / `FilterStream<f16>`, so binning runs in
+/// `f32` for precision. Per finalized output row this tail de-interleaves the
 /// binned packed row into `f32` G/B/R planes
 /// ([`rgb_plane_f32_scratch`]), **rounds each element to `half::f16`**
 /// (`half::f16::from_f32`) into the f16 planes ([`rgb_plane_f16_scratch`]:
@@ -8142,7 +8201,7 @@ pub(super) fn planar_gbr_f32_resample_emit(
 #[cfg(feature = "gbr")]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn planar_gbr_f16_resample_emit(
-  stream: &mut crate::resample::AreaStream<f32>,
+  stream: &mut impl crate::resample::RowResampler<f32>,
   plan: &ResamplePlan,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -8648,18 +8707,14 @@ pub(super) fn packed_rgba_f32_resample(
   full_range: bool,
   convert_rgba: impl FnOnce(&mut [f32]),
 ) -> Result<(), MixedSinkerError> {
-  // Area-only sink (Gbrapf32 is not routed to the filter path): reject a
-  // filter plan before any work.
+  // The area path handles area plans only. A premultiplied filter plan is
+  // routed here by the caller (the filter engine cannot un-premultiply), so a
+  // filter plan reaching this tail surfaces the typed `UnsupportedFilter`
+  // before any work — matching the integer 4-channel area tail. Straight
+  // filter plans take the dedicated `packed_rgba_f32_filter_resample`.
   if plan.kind().is_filter() {
     return Err(plan.unsupported_filter().into());
   }
-  // The binned planes hold host-native f32 (the scatter decoded the source
-  // to host order before binning). The `gbrpf32_*` / `gbrapf32_*` kernels
-  // take a wire-endian const and byte-swap when it differs from the host, so
-  // pass the host's own endianness to make every plane load a no-op;
-  // otherwise a big-endian target would corrupt every output.
-  const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
-  let ow = plan.out_w();
   let need_any = rgb.is_some()
     || rgba.is_some()
     || luma.is_some()
@@ -8727,6 +8782,82 @@ pub(super) fn packed_rgba_f32_resample(
       4,
     )?);
   }
+  let stream = rgba_stream_f32.as_mut().expect("created above");
+  packed_rgba_f32_emit(
+    stream,
+    rgb,
+    rgba,
+    luma,
+    rgb_u16,
+    rgba_u16,
+    luma_u16,
+    rgb_f32,
+    rgba_f32,
+    rgb_f16,
+    rgba_f16,
+    hsv,
+    rgba_scratch,
+    color_scratch,
+    plane_scratch,
+    w,
+    plan,
+    idx,
+    use_simd,
+    premult,
+    need_planes,
+    matrix,
+    full_range,
+    convert_rgba,
+  )
+}
+
+/// Shared per-output emit for the 4-channel float planar GBR+alpha tail —
+/// the body both [`packed_rgba_f32_resample`] (area) and
+/// [`packed_rgba_f32_filter_resample`] (filter) run after creating their
+/// kind-appropriate [`RowResampler<f32>`](crate::resample::RowResampler).
+/// Stages the canonical source-width `R, G, B, A` `f32` row (`convert_rgba`),
+/// premultiplies it in place when `premult` (area-only; the filter path is
+/// straight-only and passes `premult = false`), feeds it once, and per
+/// finalized output row resolves the straight color and de-interleaves it
+/// into G/B/R/A planes to run the exact direct `gbrapf32_*` (RGBA) /
+/// `gbrpf32_*` (RGB / luma / hsv, α dropped) kernels — so every output is
+/// byte-identical between the area and filter paths' shared derivation.
+///
+/// The binned row is host-native f32 (the scatter decoded the source to host
+/// order), so the emit kernels run `::<HOST_NATIVE_BE>`. `need_planes`
+/// (computed identically by both callers) gates the plane scratch sizing and
+/// the de-interleave, so an `rgba_f32`-only sink copies the resolved straight
+/// row directly and sizes no plane scratch.
+#[cfg(feature = "gbr")]
+#[allow(clippy::too_many_arguments)]
+fn packed_rgba_f32_emit(
+  stream: &mut impl crate::resample::RowResampler<f32>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  rgb_u16: &mut Option<&mut [u16]>,
+  rgba_u16: &mut Option<&mut [u16]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  rgb_f32: &mut Option<&mut [f32]>,
+  rgba_f32: &mut Option<&mut [f32]>,
+  rgb_f16: &mut Option<&mut [half::f16]>,
+  rgba_f16: &mut Option<&mut [half::f16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgba_scratch: &mut Vec<f32>,
+  color_scratch: &mut Vec<f32>,
+  plane_scratch: &mut Vec<f32>,
+  w: usize,
+  plan: &ResamplePlan,
+  idx: usize,
+  use_simd: bool,
+  premult: bool,
+  need_planes: bool,
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  convert_rgba: impl FnOnce(&mut [f32]),
+) -> Result<(), MixedSinkerError> {
+  const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+  let ow = plan.out_w();
   // Resolved straight RGBA color row (per output row); always sized when any
   // output is attached so every output reads one canonical straight row.
   let color = out_rgba_f32_scratch(color_scratch, ow, plan)?;
@@ -8740,7 +8871,6 @@ pub(super) fn packed_rgba_f32_resample(
   if premult {
     premultiply_rgba_f32_row_in_place(src_rgba, w);
   }
-  let stream = rgba_stream_f32.as_mut().expect("created above");
   stream.feed_row(idx, src_rgba, use_simd, |oy, binned| {
     // Resolve the per-mode straight RGBA once (copy for straight,
     // un-premultiply for premult), then derive every output from it.
@@ -8899,6 +9029,174 @@ pub(super) fn packed_rgba_f32_resample(
   Ok(())
 }
 
+/// Separable-filter fused resize for the float planar GBR+alpha family
+/// ([`Gbrapf32`](crate::source::Gbrapf32)) — the
+/// [`SpanKind::Filter`](crate::resample::SpanKind) twin of the area
+/// [`packed_rgba_f32_resample`], and the 4-channel float analogue of the
+/// 3-channel filter path. PIL filters R, G, B, A **independently with no
+/// premultiplication**, so the staged canonical `R, G, B, A` `f32` row bins
+/// through one 4-channel [`FilterStream<f32>`](crate::resample::FilterStream)
+/// and resampled alpha is a real filtered channel (never forced opaque).
+/// Each finalized output row then resolves the straight color and runs the
+/// exact direct `gbrapf32_*` / `gbrpf32_*` kernels through the shared
+/// [`packed_rgba_f32_emit`], so every output is byte-identical to the area
+/// path's derivation of the same binned color.
+///
+/// There is **no native-depth clamp**: `f32` is full-range, so the lossless
+/// `rgb_f32` / `rgba_f32` outputs preserve a signed-coefficient overshoot
+/// (HDR > 1 and negatives) by design, exactly as the area path and `Rgbf32`
+/// do, while the integer / f16 outputs clamp `[0, 1]` in their own narrows —
+/// so an overshoot cannot wrap them. (Contrast the high-bit u16 filter tail,
+/// which clamps to the native max before any narrow.)
+///
+/// There is **no premultiplied route** — the filter engine cannot
+/// un-premultiply, so a premultiplied frame stays on the area
+/// [`packed_rgba_f32_resample`] (which un-premultiplies); this tail is reached
+/// only for straight alpha and passes `premult = false`.
+///
+/// Sequence-check precedes every allocation (the 4-channel stream creation
+/// runs after the no-output and out-of-sequence rejections), keeping the call
+/// atomic: a rejected first row stores no frozen-output snapshot and
+/// `AllocationFailed` never masks `OutOfSequenceRow` — identical to
+/// [`packed_rgba_u16_filter_resample`]. The alpha-mode freeze itself is
+/// checked by the caller's [`check_frozen_alpha_mode`] before route selection.
+#[cfg(feature = "gbr")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn packed_rgba_f32_filter_resample(
+  rgba_filter_stream_f32: &mut Option<crate::resample::FilterStream<f32>>,
+  resample_outputs: &mut Option<FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  rgb_u16: &mut Option<&mut [u16]>,
+  rgba_u16: &mut Option<&mut [u16]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  rgb_f32: &mut Option<&mut [f32]>,
+  rgba_f32: &mut Option<&mut [f32]>,
+  rgb_f16: &mut Option<&mut [half::f16]>,
+  rgba_f16: &mut Option<&mut [half::f16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgba_scratch: &mut Vec<f32>,
+  color_scratch: &mut Vec<f32>,
+  plane_scratch: &mut Vec<f32>,
+  w: usize,
+  plan: &ResamplePlan,
+  idx: usize,
+  use_simd: bool,
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  convert_rgba: impl FnOnce(&mut [f32]),
+) -> Result<(), MixedSinkerError> {
+  let need_any = rgb.is_some()
+    || rgba.is_some()
+    || luma.is_some()
+    || rgb_u16.is_some()
+    || rgba_u16.is_some()
+    || luma_u16.is_some()
+    || rgb_f32.is_some()
+    || rgba_f32.is_some()
+    || rgb_f16.is_some()
+    || rgba_f16.is_some()
+    || hsv.is_some();
+  // No-output call: nothing to sequence, stays a no-op (no freeze, no
+  // allocation) regardless of the row index.
+  if !need_any {
+    return Ok(());
+  }
+  let expected = rgba_filter_stream_f32.as_ref().map_or(0, |s| s.next_y());
+  let first_row = resample_outputs.is_none();
+  // First row: reject an out-of-sequence row before the freeze so a rejected
+  // first row stores no snapshot that would poison a retry.
+  if first_row && expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    rgb_f32,
+    rgba_f32,
+    &None,
+    rgb_f16,
+    rgba_f16,
+    hsv,
+    &None,
+    idx,
+  )?;
+  // Later row: a mid-frame output change is reported above; an out-of-sequence
+  // later row is rejected here.
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  // Every output but `rgba_f32` reads the de-interleaved G/B/R/A planes
+  // (computed identically to the area path); an `rgba_f32`-only sink copies
+  // the resolved straight row directly and sizes no plane scratch.
+  let need_planes = rgb.is_some()
+    || rgba.is_some()
+    || luma.is_some()
+    || rgb_u16.is_some()
+    || rgba_u16.is_some()
+    || luma_u16.is_some()
+    || rgb_f16.is_some()
+    || rgba_f16.is_some()
+    || hsv.is_some();
+  if rgba_filter_stream_f32.is_none() {
+    let (fh, fv) = (
+      plan
+        .filter_h()
+        .expect("filter plan carries horizontal windows"),
+      plan
+        .filter_v()
+        .expect("filter plan carries vertical windows"),
+    );
+    *rgba_filter_stream_f32 = Some(crate::resample::FilterStream::new(
+      fh,
+      fv,
+      plan.src_w(),
+      plan.src_h(),
+      4,
+    )?);
+  }
+  let stream = rgba_filter_stream_f32.as_mut().expect("created above");
+  // Straight alpha only (no premult route): bin → resolve (a verbatim copy) →
+  // derive every output, sharing the area path's per-output emit so the two
+  // paths' derivations cannot drift.
+  packed_rgba_f32_emit(
+    stream,
+    rgb,
+    rgba,
+    luma,
+    rgb_u16,
+    rgba_u16,
+    luma_u16,
+    rgb_f32,
+    rgba_f32,
+    rgb_f16,
+    rgba_f16,
+    hsv,
+    rgba_scratch,
+    color_scratch,
+    plane_scratch,
+    w,
+    plan,
+    idx,
+    use_simd,
+    false,
+    need_planes,
+    matrix,
+    full_range,
+    convert_rgba,
+  )
+}
+
 /// Row-stage fused downscale for the half-float planar GBR+alpha family
 /// ([`Gbrapf16`](crate::source::Gbrapf16)) — the alpha-aware 4-channel
 /// analogue of the 3-channel [`planar_gbr_f16_resample_emit`]. `convert_rgba`
@@ -8944,26 +9242,14 @@ pub(super) fn packed_rgba_f16_resample(
   full_range: bool,
   convert_rgba: impl FnOnce(&mut [f32]),
 ) -> Result<(), MixedSinkerError> {
-  // Area-only sink (Gbrapf16 is not routed to the filter path): reject a
-  // filter plan before any work.
+  // The area path handles area plans only. A premultiplied filter plan is
+  // routed here by the caller (the filter engine cannot un-premultiply), so a
+  // filter plan reaching this tail surfaces the typed `UnsupportedFilter`
+  // before any work. Straight filter plans take the dedicated
+  // `packed_rgba_f16_filter_resample`.
   if plan.kind().is_filter() {
     return Err(plan.unsupported_filter().into());
   }
-  use crate::row::scalar::planar_gbr_f16::widen_f16_be_to_host_f32;
-
-  // The rounded f16 planes (and the f32 they widen back to) hold host-native
-  // data — the binned row was decoded to host order during scatter, then
-  // rounded with `from_f32`, which yields host-native `half::f16`. The
-  // `gbrpf16_*` / `gbrapf16_*` kernels (and the widen-back `gbrpf32_*` /
-  // `gbrapf32_*`) take a wire-endian const and byte-swap when it differs
-  // from the host, so pass the host's own endianness to make every load a
-  // no-op; otherwise a big-endian target would corrupt every output.
-  const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
-  // Chunk size for the f16 -> f32 widen-back of the rounded planes, matching
-  // the dispatch layer's widening chunk so the f32 staging is stack-resident.
-  const WIDEN_CHUNK: usize = 64;
-
-  let ow = plan.out_w();
   let need_any = rgb.is_some()
     || rgba.is_some()
     || luma.is_some()
@@ -9009,8 +9295,7 @@ pub(super) fn packed_rgba_f16_resample(
   }
   let premult = alpha_mode.is_premultiplied();
   // Every output derives from the rounded f16 planes (even rgb_f32 / rgba_f32,
-  // because the direct `Gbrapf16` path widens its f16 source to f32). The
-  // predicate gates both the plane sizing and the de-interleave/round below.
+  // because the direct `Gbrapf16` path widens its f16 source to f32).
   let need_planes = need_any;
   if rgba_stream_f32.is_none() {
     *rgba_stream_f32 = Some(crate::resample::AreaStream::new(
@@ -9021,6 +9306,91 @@ pub(super) fn packed_rgba_f16_resample(
       4,
     )?);
   }
+  let stream = rgba_stream_f32.as_mut().expect("created above");
+  packed_rgba_f16_emit(
+    stream,
+    rgb,
+    rgba,
+    luma,
+    rgb_u16,
+    rgba_u16,
+    luma_u16,
+    rgb_f32,
+    rgba_f32,
+    rgb_f16,
+    rgba_f16,
+    hsv,
+    rgba_scratch,
+    color_scratch,
+    plane_scratch_f16,
+    w,
+    plan,
+    idx,
+    use_simd,
+    premult,
+    need_planes,
+    matrix,
+    full_range,
+    convert_rgba,
+  )
+}
+
+/// Shared per-output emit for the half-float planar GBR+alpha tail — the body
+/// both [`packed_rgba_f16_resample`] (area) and
+/// [`packed_rgba_f16_filter_resample`] (filter) run after creating their
+/// kind-appropriate [`RowResampler<f32>`](crate::resample::RowResampler).
+/// There is no `AreaStream<f16>` / `FilterStream<f16>`, so binning runs in
+/// `f32`; per finalized output row this resolves the straight color,
+/// de-interleaves it into G/B/R/A `half::f16` planes **rounding** each element,
+/// and runs the exact direct `gbrapf16_*` / `gbrpf16_*` kernels (the f32-derived
+/// outputs widen the **rounded** f16 planes back to f32, exactly as the direct
+/// `Gbrapf16` path widens its f16 source) — so every output is byte-identical
+/// between the area and filter paths and to a direct `Gbrapf16` conversion of
+/// the f32 block-mean rounded to f16. The area path passes `premult` from the
+/// frame's alpha mode; the filter path is straight-only and passes `false`.
+#[cfg(feature = "gbr")]
+#[allow(clippy::too_many_arguments)]
+fn packed_rgba_f16_emit(
+  stream: &mut impl crate::resample::RowResampler<f32>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  rgb_u16: &mut Option<&mut [u16]>,
+  rgba_u16: &mut Option<&mut [u16]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  rgb_f32: &mut Option<&mut [f32]>,
+  rgba_f32: &mut Option<&mut [f32]>,
+  rgb_f16: &mut Option<&mut [half::f16]>,
+  rgba_f16: &mut Option<&mut [half::f16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgba_scratch: &mut Vec<f32>,
+  color_scratch: &mut Vec<f32>,
+  plane_scratch_f16: &mut Vec<half::f16>,
+  w: usize,
+  plan: &ResamplePlan,
+  idx: usize,
+  use_simd: bool,
+  premult: bool,
+  need_planes: bool,
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  convert_rgba: impl FnOnce(&mut [f32]),
+) -> Result<(), MixedSinkerError> {
+  use crate::row::scalar::planar_gbr_f16::widen_f16_be_to_host_f32;
+
+  // The rounded f16 planes (and the f32 they widen back to) hold host-native
+  // data — the binned row was decoded to host order during scatter, then
+  // rounded with `from_f32`, which yields host-native `half::f16`. The
+  // `gbrpf16_*` / `gbrapf16_*` kernels (and the widen-back `gbrpf32_*` /
+  // `gbrapf32_*`) take a wire-endian const and byte-swap when it differs
+  // from the host, so pass the host's own endianness to make every load a
+  // no-op; otherwise a big-endian target would corrupt every output.
+  const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+  // Chunk size for the f16 -> f32 widen-back of the rounded planes, matching
+  // the dispatch layer's widening chunk so the f32 staging is stack-resident.
+  const WIDEN_CHUNK: usize = 64;
+
+  let ow = plan.out_w();
   let color = out_rgba_f32_scratch(color_scratch, ow, plan)?;
   let planes_f16: &mut [half::f16] = if need_planes {
     rgba_plane_f16_scratch(plane_scratch_f16, ow, plan)?
@@ -9032,7 +9402,6 @@ pub(super) fn packed_rgba_f16_resample(
   if premult {
     premultiply_rgba_f32_row_in_place(src_rgba, w);
   }
-  let stream = rgba_stream_f32.as_mut().expect("created above");
   stream.feed_row(idx, src_rgba, use_simd, |oy, binned| {
     if need_planes {
       // Resolve the per-mode straight RGBA, then de-interleave it into the
@@ -9233,6 +9602,150 @@ pub(super) fn packed_rgba_f16_resample(
     }
   })?;
   Ok(())
+}
+
+/// Separable-filter fused resize for the half-float planar GBR+alpha family
+/// ([`Gbrapf16`](crate::source::Gbrapf16)) — the
+/// [`SpanKind::Filter`](crate::resample::SpanKind) twin of the area
+/// [`packed_rgba_f16_resample`]. `convert_rgba` widens the G/B/R/A f16 planes
+/// to host-native f32 and stages a canonical source-width packed `R, G, B, A`
+/// f32 row; PIL filters the four channels independently (no premultiplication),
+/// so they bin through one 4-channel
+/// [`FilterStream<f32>`](crate::resample::FilterStream) (there is no
+/// `FilterStream<f16>`) and resampled alpha is a real filtered channel. Each
+/// finalized output row resolves the straight color, rounds the de-interleaved
+/// G/B/R/A planes to `half::f16`, and runs the exact direct `gbrapf16_*` /
+/// `gbrpf16_*` kernels through the shared [`packed_rgba_f16_emit`] — so every
+/// output is byte-identical to the area path's derivation of the same binned
+/// color rounded to f16.
+///
+/// No native-depth clamp (the f16 narrows clamp `[0, 1]`; the `rgb_f32` /
+/// `rgba_f32` outputs are the lossless widen of the rounded f16, full-range by
+/// design) and no premultiplied route (a premultiplied frame stays on the area
+/// [`packed_rgba_f16_resample`]; this tail is reached only for straight alpha,
+/// passing `premult = false`). The atomic conditional-ordering preflight is
+/// identical to [`packed_rgba_f32_filter_resample`].
+#[cfg(feature = "gbr")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn packed_rgba_f16_filter_resample(
+  rgba_filter_stream_f32: &mut Option<crate::resample::FilterStream<f32>>,
+  resample_outputs: &mut Option<FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  rgb_u16: &mut Option<&mut [u16]>,
+  rgba_u16: &mut Option<&mut [u16]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  rgb_f32: &mut Option<&mut [f32]>,
+  rgba_f32: &mut Option<&mut [f32]>,
+  rgb_f16: &mut Option<&mut [half::f16]>,
+  rgba_f16: &mut Option<&mut [half::f16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgba_scratch: &mut Vec<f32>,
+  color_scratch: &mut Vec<f32>,
+  plane_scratch_f16: &mut Vec<half::f16>,
+  w: usize,
+  plan: &ResamplePlan,
+  idx: usize,
+  use_simd: bool,
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  convert_rgba: impl FnOnce(&mut [f32]),
+) -> Result<(), MixedSinkerError> {
+  let need_any = rgb.is_some()
+    || rgba.is_some()
+    || luma.is_some()
+    || rgb_u16.is_some()
+    || rgba_u16.is_some()
+    || luma_u16.is_some()
+    || rgb_f32.is_some()
+    || rgba_f32.is_some()
+    || rgb_f16.is_some()
+    || rgba_f16.is_some()
+    || hsv.is_some();
+  // No-output call: nothing to sequence, stays a no-op (no freeze, no
+  // allocation) regardless of the row index.
+  if !need_any {
+    return Ok(());
+  }
+  let expected = rgba_filter_stream_f32.as_ref().map_or(0, |s| s.next_y());
+  let first_row = resample_outputs.is_none();
+  if first_row && expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    rgb_f32,
+    rgba_f32,
+    &None,
+    rgb_f16,
+    rgba_f16,
+    hsv,
+    &None,
+    idx,
+  )?;
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  // Every output derives from the rounded f16 planes (even rgb_f32 / rgba_f32,
+  // because the direct `Gbrapf16` path widens its f16 source to f32).
+  let need_planes = need_any;
+  if rgba_filter_stream_f32.is_none() {
+    let (fh, fv) = (
+      plan
+        .filter_h()
+        .expect("filter plan carries horizontal windows"),
+      plan
+        .filter_v()
+        .expect("filter plan carries vertical windows"),
+    );
+    *rgba_filter_stream_f32 = Some(crate::resample::FilterStream::new(
+      fh,
+      fv,
+      plan.src_w(),
+      plan.src_h(),
+      4,
+    )?);
+  }
+  let stream = rgba_filter_stream_f32.as_mut().expect("created above");
+  // Straight alpha only (no premult route): the shared f16 emit bins in f32,
+  // resolves a verbatim straight copy, rounds to f16, and derives every output.
+  packed_rgba_f16_emit(
+    stream,
+    rgb,
+    rgba,
+    luma,
+    rgb_u16,
+    rgba_u16,
+    luma_u16,
+    rgb_f32,
+    rgba_f32,
+    rgb_f16,
+    rgba_f16,
+    hsv,
+    rgba_scratch,
+    color_scratch,
+    plane_scratch_f16,
+    w,
+    plan,
+    idx,
+    use_simd,
+    false,
+    need_planes,
+    matrix,
+    full_range,
+    convert_rgba,
+  )
 }
 
 // ---- Xyz12 (linear-light area mean) resample tail ----------------------
