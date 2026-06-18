@@ -161,6 +161,8 @@ mod resample_packed_rgb_10bit;
 mod resample_packed_rgba_16bit;
 #[cfg(feature = "rgb")]
 mod resample_packed_rgba_8bit;
+#[cfg(feature = "rgb")]
+mod resample_packed_rgba_u16;
 #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
 mod resample_packed_rgbf32;
 #[cfg(feature = "yuv-packed")]
