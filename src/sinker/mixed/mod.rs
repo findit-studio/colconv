@@ -1684,14 +1684,19 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// semi-planar YUV family — `Nv12` / `Nv16` / `Nv21` / `Nv24` / `Nv42`
   /// convert their de-interleaved chroma into the same source-width u8 RGB
   /// row and filter it here, the filter twin of their area
-  /// [`Self::rgb_stream`] use).
+  /// [`Self::rgb_stream`] use; `yuv-packed` joins for the 8-bit packed YUV
+  /// 4:2:2 colour group — `Yuyv422` / `Uyvy422` / `Yvyu422` — and the 8-bit
+  /// packed YUV 4:1:1 `Uyyvyy411`, whose `*_to_rgb_row` kernels
+  /// de-interleave + horizontally upsample the chroma to a u8 RGB row
+  /// before this RGB-space filter).
   #[cfg(any(
     feature = "rgb",
     feature = "gbr",
     feature = "yuv-444-packed",
     feature = "y2xx",
     feature = "yuv-planar",
-    feature = "yuv-semi-planar"
+    feature = "yuv-semi-planar",
+    feature = "yuv-packed"
   ))]
   rgb_filter_stream: Option<crate::resample::FilterStream<u8>>,
   /// Row-stage **filter** stream for the 8-bit packed-RGBA `u8` color
@@ -1765,7 +1770,11 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// `yuv-semi-planar` (the 8-bit semi-planar family `Nv12` / `Nv16` /
   /// `Nv21` / `Nv24` / `Nv42` bins its native Y here too); widens as more
   /// 8-bit native-Y filter families wire in.
-  #[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+  #[cfg(any(
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar",
+    feature = "yuv-packed"
+  ))]
   luma_filter_stream: Option<crate::resample::FilterStream<u8>>,
   /// Row-stage **filter** stream for single-plane `f32` luma binning
   /// ([`Grayf32`](crate::source::Grayf32)) — the filter twin of
@@ -2638,7 +2647,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "yuv-444-packed",
         feature = "y2xx",
         feature = "yuv-planar",
-        feature = "yuv-semi-planar"
+        feature = "yuv-semi-planar",
+        feature = "yuv-packed"
       ))]
       rgb_filter_stream: None,
       #[cfg(any(feature = "rgb", feature = "gbr", feature = "yuv-444-packed"))]
@@ -2652,7 +2662,11 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       rgb_filter_stream_u16: None,
       #[cfg(any(feature = "rgb", feature = "gbr", feature = "yuv-444-packed"))]
       rgba_filter_stream_u16: None,
-      #[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+      #[cfg(any(
+        feature = "yuv-planar",
+        feature = "yuv-semi-planar",
+        feature = "yuv-packed"
+      ))]
       luma_filter_stream: None,
       #[cfg(feature = "gray")]
       luma_filter_stream_f32: None,
@@ -3149,6 +3163,25 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   ))]
   pub(crate) fn rgb_stream_allocated(&self) -> bool {
     self.rgb_stream.is_some()
+  }
+
+  /// Whether the 3-channel packed-RGB `u8` **filter** stream has been
+  /// created — a white-box probe for the 8-bit packed-YUV filter resample
+  /// ordering tests (a no-output sink and an out-of-sequence first row must
+  /// not allocate it). Gated on `std` + `yuv-packed` like the tests that
+  /// consume it.
+  #[cfg(all(test, feature = "std", feature = "yuv-packed"))]
+  pub(crate) fn rgb_filter_stream_allocated(&self) -> bool {
+    self.rgb_filter_stream.is_some()
+  }
+
+  /// Whether the single-channel native-Y `u8` **filter** stream has been
+  /// created — the filter twin of [`Self::luma_stream_allocated`], a
+  /// white-box probe for the 8-bit packed-YUV filter resample ordering tests.
+  /// Gated on `std` + `yuv-packed` like the tests that consume it.
+  #[cfg(all(test, feature = "std", feature = "yuv-packed"))]
+  pub(crate) fn luma_filter_stream_allocated(&self) -> bool {
+    self.luma_filter_stream.is_some()
   }
 
   /// Capacity of the packed-YUV-4:2:2 source-row Y de-interleave staging

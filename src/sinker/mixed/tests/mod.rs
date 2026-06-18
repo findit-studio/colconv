@@ -177,6 +177,8 @@ mod resample_packed_rgbf16;
 mod resample_packed_rgbf32;
 #[cfg(feature = "yuv-packed")]
 mod resample_packed_yuv_8bit;
+#[cfg(feature = "yuv-packed")]
+mod resample_packed_yuv_8bit_filter;
 #[cfg(feature = "rgb")]
 mod resample_padding_byte;
 #[cfg(feature = "mono")]
