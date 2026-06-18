@@ -1536,6 +1536,22 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "gbr"
   ))]
   rgb_stream_f32: Option<crate::resample::AreaStream<f32>>,
+  /// Row-stage **filter** stream for packed-float-RGB sources
+  /// ([`Rgbf32`](crate::source::Rgbf32), and the float planar GBR sources
+  /// `Gbrpf32` / `Gbrpf16` which scatter into the same packed `f32` RGB
+  /// row) — the [`SpanKind::Filter`](crate::resample::SpanKind) twin of
+  /// [`Self::rgb_stream_f32`]. Lazily created in `process`, reset in
+  /// `begin_frame`. Fed when the plan kind is `Filter`; bins at f32
+  /// precision and emits unclamped (full-range float, PIL `F`-mode). Gated
+  /// exactly like [`Self::rgb_stream_f32`]: the `rgb-float` family needs the
+  /// engine fenced in (`FilterStream` is gated to `yuv-planar` / `rgb`,
+  /// which `rgb-float` does not imply); `gbr` already pulls the engine via
+  /// the #146 cascade.
+  #[cfg(any(
+    all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
+    feature = "gbr"
+  ))]
+  rgb_filter_stream_f32: Option<crate::resample::FilterStream<f32>>,
   /// Row-stage **4-channel** `f32` area stream for the float planar
   /// GBR+alpha family ([`Gbrapf32`](crate::source::Gbrapf32) /
   /// [`Gbrapf16`](crate::source::Gbrapf16), the latter widened f16 ->
@@ -2450,6 +2466,11 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "gbr"
       ))]
       rgb_stream_f32: None,
+      #[cfg(any(
+        all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
+        feature = "gbr"
+      ))]
+      rgb_filter_stream_f32: None,
       #[cfg(feature = "gbr")]
       rgba_stream_f32: None,
       #[cfg(feature = "xyz")]
@@ -6752,6 +6773,53 @@ pub(super) fn packed_rgb_f32_resample_stream<'s>(
   Ok(stream)
 }
 
+/// Lazily creates and sequence-checks the 3-channel `f32` **filter**
+/// stream for a packed-float-RGB filter plan — the
+/// [`SpanKind::Filter`](crate::resample::SpanKind) twin of
+/// [`packed_rgb_f32_resample_stream`], mirroring
+/// [`packed_rgb_u16_filter_stream`] for the float element path. The
+/// sequence-check precedes allocation so a rejected first row creates no
+/// output buffers, and the built stream feeds the **same**
+/// [`packed_rgb_f32_resample_emit`] the area path uses (both are generic
+/// over [`RowResampler`](crate::resample::RowResampler)).
+#[cfg(any(
+  all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
+  feature = "gbr"
+))]
+pub(super) fn packed_rgb_f32_filter<'s>(
+  rgb_filter_stream_f32: &'s mut Option<crate::resample::FilterStream<f32>>,
+  plan: &ResamplePlan,
+  idx: usize,
+) -> Result<&'s mut crate::resample::FilterStream<f32>, MixedSinkerError> {
+  let expected = rgb_filter_stream_f32
+    .as_ref()
+    .map_or(0, |stream| stream.next_y());
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  let (fh, fv) = (
+    plan
+      .filter_h()
+      .expect("filter plan carries horizontal windows"),
+    plan
+      .filter_v()
+      .expect("filter plan carries vertical windows"),
+  );
+  let stream = match rgb_filter_stream_f32 {
+    Some(stream) => stream,
+    None => rgb_filter_stream_f32.insert(crate::resample::FilterStream::new(
+      fh,
+      fv,
+      plan.src_w(),
+      plan.src_h(),
+      3,
+    )?),
+  };
+  Ok(stream)
+}
+
 /// Feeds the prepared source-width `f32` RGB row into the (already
 /// sequence-checked) stream and derives every attached output from each
 /// finalized output row. Binning runs in float; the `rgb_f32` output
@@ -6767,7 +6835,7 @@ pub(super) fn packed_rgb_f32_resample_stream<'s>(
 #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgb_f32_resample_emit(
-  stream: &mut crate::resample::AreaStream<f32>,
+  stream: &mut impl crate::resample::RowResampler<f32>,
   plan: &ResamplePlan,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
