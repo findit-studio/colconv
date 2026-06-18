@@ -3918,6 +3918,12 @@ pub(super) fn packed_rgb_resample_stream<'s>(
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::AreaStream<u8>, MixedSinkerError> {
+  // Area-only sink: a filter plan would feed empty area spans (silent
+  // zero-output). Routed RGB reaches this only from the Area arm of its
+  // `plan.kind()` match, so this never trips for a routed format.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   // Sequence-check before allocating: a fresh stream expects row 0, so
   // an out-of-sequence first row is rejected without creating the
   // output-width buffers — keeping freeze, then sequence-check, then
@@ -4178,6 +4184,12 @@ pub(super) fn packed_rgb_u16_resample_stream<'s>(
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::AreaStream<u16>, MixedSinkerError> {
+  // Area-only: reject a filter plan before building the area stream
+  // (Rgb48 reaches this only from its Area arm — see
+  // packed_rgb_resample_stream).
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   // Sequence-check before allocating (see packed_rgb_resample_stream):
   // an out-of-sequence first row is rejected without creating the u16
   // output-width buffers, so AllocationFailed never masks
@@ -4690,6 +4702,11 @@ pub(super) fn packed_rgba_resample<const NATIVE_Y_LUMA: bool>(
   convert_rgba: impl FnOnce(&mut [u8]),
   deinterleave_y: impl FnOnce(&mut [u8]),
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink: reject a filter plan before any work (these packed
+  // RGBA / YA families are not routed to the filter path).
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   let ow = plan.out_w();
   let need_any = rgb.is_some()
     || rgba.is_some()
@@ -4949,6 +4966,11 @@ pub(super) fn pal8_rgba_resample(
   luma_coeffs_q8: (u32, u32, u32),
   convert_rgba: impl FnOnce(&mut [u8]),
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink (Pal8 is not routed to the filter path): reject a
+  // filter plan before any work.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   let ow = plan.out_w();
   let need_any = rgb.is_some()
     || rgba.is_some()
@@ -5185,6 +5207,11 @@ pub(super) fn packed_rgba_u16_resample<
   convert_rgba_u16: impl FnOnce(&mut [u16]),
   deinterleave_y: impl FnOnce(&mut [u16]),
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink (high-bit packed RGBA is not routed to the filter
+  // path): reject a filter plan before any work.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   const {
     assert!(
       SRC_BITS > 8 && SRC_BITS <= 16,
@@ -5541,6 +5568,11 @@ pub(super) fn packed_yuv444_triple_resample<const SRC_BITS: u32>(
   convert_rgb_u16: impl FnOnce(&mut [u16]),
   deinterleave_y: impl FnOnce(&mut [u16]),
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink (high-bit packed YUV 4:4:4 is not routed to the filter
+  // path): reject a filter plan before any work.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   const {
     assert!(
       SRC_BITS >= 8 && SRC_BITS <= 16,
@@ -5807,6 +5839,11 @@ pub(super) fn packed_yuva444_resample<const SRC_BITS: u32>(
   convert_rgba_u16: impl FnOnce(&mut [u16]),
   deinterleave_y: impl FnOnce(&mut [u16]),
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink (packed YUVA 4:4:4 is not routed to the filter path):
+  // reject a filter plan before any work.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   const {
     assert!(
       SRC_BITS >= 8 && SRC_BITS <= 16,
@@ -6111,6 +6148,11 @@ pub(super) fn packed_yuv422_triple_resample<const SRC_BITS: u32>(
   convert_rgb_u8: impl FnOnce(&mut [u8]),
   convert_rgb_u16: impl FnOnce(&mut [u16]),
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink (high-bit packed YUV 4:2:2 is not routed to the filter
+  // path): reject a filter plan before any work.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   const {
     assert!(
       SRC_BITS > 8 && SRC_BITS <= 16,
@@ -6479,6 +6521,11 @@ pub(super) fn packed_rgb_f32_resample_stream<'s>(
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::AreaStream<f32>, MixedSinkerError> {
+  // Area-only (Rgbf32 / packed-RGBA f32 are not routed to the filter
+  // path): reject a filter plan before building the area stream.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   // Sequence-check before allocating (see packed_rgb_u16_resample_stream):
   // an out-of-sequence first row is rejected without creating the f32
   // output-width buffers, so AllocationFailed never masks
@@ -7636,6 +7683,11 @@ pub(super) fn packed_rgba_f32_resample(
   full_range: bool,
   convert_rgba: impl FnOnce(&mut [f32]),
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink (Gbrapf32 is not routed to the filter path): reject a
+  // filter plan before any work.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   // The binned planes hold host-native f32 (the scatter decoded the source
   // to host order before binning). The `gbrpf32_*` / `gbrapf32_*` kernels
   // take a wire-endian const and byte-swap when it differs from the host, so
@@ -7927,6 +7979,11 @@ pub(super) fn packed_rgba_f16_resample(
   full_range: bool,
   convert_rgba: impl FnOnce(&mut [f32]),
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink (Gbrapf16 is not routed to the filter path): reject a
+  // filter plan before any work.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   use crate::row::scalar::planar_gbr_f16::widen_f16_be_to_host_f32;
 
   // The rounded f16 planes (and the f32 they widen back to) hold host-native
@@ -8344,6 +8401,11 @@ pub(super) fn xyz12_resample_stream<'s>(
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::AreaStream<f32>, MixedSinkerError> {
+  // Area-only (Xyz12 is not routed to the filter path): reject a filter
+  // plan before building the area stream.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   // Sequence-check before allocating (see packed_rgb_f32_resample_stream):
   // an out-of-sequence first row is rejected without creating the f32
   // output-width buffers, so AllocationFailed never masks

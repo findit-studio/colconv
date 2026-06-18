@@ -123,6 +123,11 @@ struct NativeChromaU16 {
 
 impl NativeYuv420U16 {
   fn new(plan: &ResamplePlan, w: usize, h: usize, need_color: bool) -> Result<Self, ResampleError> {
+    // The native high-bit 4:2:0 join is integer area-only; reject a filter
+    // plan before building any plane's area stream.
+    if plan.kind().is_filter() {
+      return Err(plan.unsupported_filter());
+    }
     let y = AreaStream::new(plan.h(), plan.v(), w, h, 1)?;
     let alloc =
       |_| ResampleError::AllocationFailed(PlanGeometry::new(w, h, plan.out_w(), plan.out_h()));

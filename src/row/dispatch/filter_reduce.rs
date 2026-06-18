@@ -33,26 +33,37 @@ use crate::row::simd128_available;
 #[cfg(target_arch = "x86_64")]
 use crate::row::{avx2_available, avx512_available, sse41_available};
 
-/// Plan-time SIMD staging for the filter H-pass: the span starts, a
-/// zero-padded `f32` copy of the signed coefficient arena (every span
-/// padded to a multiple of 8 so kernels run pure wide loads, the zero
-/// lanes annihilating samples past a span's last coefficient), and the
-/// furthest source cell any real span touches (a padded span may overhang
-/// the row by up to 7 cells; kernels stage those final chunks through
-/// stack copies).
+/// Plan-time SIMD staging for the filter H-pass: the span starts, the
+/// per-span **real tap count** (so a kernel masks only the trailing
+/// padding lanes, never a real in-window zero coefficient), a zero-padded
+/// `f32` copy of the signed coefficient arena (every span padded to a
+/// multiple of 8 so kernels run pure wide loads), and the furthest source
+/// cell any real span touches (a padded span may overhang the row by up to
+/// 7 cells; kernels stage those final chunks through stack copies).
 ///
 /// Invalid states are unrepresentable: the fields are private and only
 /// [`Self::build`] populates them, so a value existing proves per-span
-/// 8-multiple padding, monotonic offsets, and an accurate `max_reach` —
-/// the dispatcher then needs only O(1) binds per row (shape vs the plan,
-/// reach vs the row) before entering an unsafe kernel.
+/// 8-multiple padding, monotonic offsets, a `ksize` matching each span's
+/// real length, and an accurate `max_reach` — the dispatcher then needs
+/// only O(1) binds per row (shape vs the plan, reach vs the row) before
+/// entering an unsafe kernel.
 ///
 /// The signed twin of [`PaddedSpans`](super::area_reduce::PaddedSpans):
 /// `f32` coefficients carry any value, so there is no `u16` weight bound
-/// to screen — only the geometry and allocation guards remain.
+/// to screen — only the geometry and allocation guards remain. Unlike the
+/// integer arena it also keeps `ksize`: an integer span's padding zeros
+/// always annihilate (the samples are finite), but a signed-filter span
+/// over `f32` input can carry a non-finite sample under a **real** zero
+/// coefficient, where `0.0 * NaN == NaN` must survive exactly as the
+/// scalar reference computes it — so the kernels distinguish a padding
+/// lane (mask to `+0.0`) from a real zero-coefficient lane (multiply as
+/// is) by lane index against `ksize`.
 #[derive(Debug)]
 pub(crate) struct FilterPaddedSpans {
   starts: Vec<usize>,
+  /// Real (unpadded) tap count per span — the lane boundary the kernels
+  /// mask beyond. `ksize[j] == offsets[j + 1] - offsets[j]`.
+  ksize: Vec<usize>,
   coeffs: Vec<f32>,
   off: Vec<usize>,
   max_reach: usize,
@@ -82,9 +93,11 @@ impl FilterPaddedSpans {
     let mut cf = Vec::new();
     let mut off = Vec::new();
     let mut starts_own = Vec::new();
+    let mut ksize = Vec::new();
     if cf.try_reserve_exact(total).is_err()
       || off.try_reserve_exact(out + 1).is_err()
       || starts_own.try_reserve_exact(out).is_err()
+      || ksize.try_reserve_exact(out).is_err()
     {
       return None;
     }
@@ -92,12 +105,14 @@ impl FilterPaddedSpans {
     off.push(0);
     for j in 0..out {
       let span = &coeffs[offsets[j]..offsets[j + 1]];
+      ksize.push(span.len());
       cf.extend_from_slice(span);
       cf.resize(cf.len() + (span.len().div_ceil(8) * 8 - span.len()), 0.0);
       off.push(cf.len());
     }
     Some(Self {
       starts: starts_own,
+      ksize,
       coeffs: cf,
       off,
       max_reach,
@@ -117,18 +132,36 @@ impl FilterPaddedSpans {
 /// completed the [`FilterPaddedSpans`] construction-proof binds first.
 pub(crate) trait FilterSimdElem: FilterElem + Copy + Default {
   /// 1-channel H-pass into `h_tmp` via the highest available SIMD tier.
+  /// `ksize[j]` is span `j`'s real tap count, so a kernel masks only the
+  /// trailing padding lanes — a real in-window zero coefficient still
+  /// multiplies its (possibly non-finite) sample exactly as scalar does.
   ///
   /// # Safety
   ///
   /// The arena binds to this call (shape + reach proven by the caller).
-  unsafe fn h_c1(row: &[Self], starts: &[usize], coeffs: &[f32], off: &[usize], h_tmp: &mut [f64]);
+  unsafe fn h_c1(
+    row: &[Self],
+    starts: &[usize],
+    ksize: &[usize],
+    coeffs: &[f32],
+    off: &[usize],
+    h_tmp: &mut [f64],
+  );
 
   /// 3-channel H-pass into `h_tmp` via the highest available SIMD tier.
+  /// See [`Self::h_c1`] for the `ksize` padding-mask contract.
   ///
   /// # Safety
   ///
   /// The arena binds to this call (shape + reach proven by the caller).
-  unsafe fn h_c3(row: &[Self], starts: &[usize], coeffs: &[f32], off: &[usize], h_tmp: &mut [f64]);
+  unsafe fn h_c3(
+    row: &[Self],
+    starts: &[usize],
+    ksize: &[usize],
+    coeffs: &[f32],
+    off: &[usize],
+    h_tmp: &mut [f64],
+  );
 }
 
 /// Generates a `FilterSimdElem` impl whose `h_c1`/`h_c3` bodies are the
@@ -142,6 +175,7 @@ macro_rules! impl_filter_simd_elem {
       unsafe fn h_c1(
         row: &[$elem],
         starts: &[usize],
+        ksize: &[usize],
         coeffs: &[f32],
         off: &[usize],
         h_tmp: &mut [f64],
@@ -150,36 +184,39 @@ macro_rules! impl_filter_simd_elem {
           target_arch = "aarch64" => {
             if neon_available() {
               // SAFETY: NEON available; arena bound by the caller.
-              unsafe { arch::neon::filter_reduce::$c1(row, starts, coeffs, off, h_tmp); }
+              unsafe { arch::neon::filter_reduce::$c1(row, starts, ksize, coeffs, off, h_tmp); }
               return;
             }
           },
           target_arch = "x86_64" => {
             if avx512_available() {
               // SAFETY: AVX-512F+BW verified; arena bound by the caller.
-              unsafe { arch::x86_avx512::filter_reduce::$c1(row, starts, coeffs, off, h_tmp); }
+              unsafe { arch::x86_avx512::filter_reduce::$c1(row, starts, ksize, coeffs, off, h_tmp); }
               return;
             }
             if avx2_available() {
               // SAFETY: AVX2 verified; arena bound by the caller.
-              unsafe { arch::x86_avx2::filter_reduce::$c1(row, starts, coeffs, off, h_tmp); }
+              unsafe { arch::x86_avx2::filter_reduce::$c1(row, starts, ksize, coeffs, off, h_tmp); }
               return;
             }
             if sse41_available() {
               // SAFETY: SSE4.1 verified; arena bound by the caller.
-              unsafe { arch::x86_sse41::filter_reduce::$c1(row, starts, coeffs, off, h_tmp); }
+              unsafe { arch::x86_sse41::filter_reduce::$c1(row, starts, ksize, coeffs, off, h_tmp); }
               return;
             }
           },
           target_arch = "wasm32" => {
             if simd128_available() {
               // SAFETY: simd128 enabled; arena bound by the caller.
-              unsafe { arch::wasm_simd128::filter_reduce::$c1(row, starts, coeffs, off, h_tmp); }
+              unsafe { arch::wasm_simd128::filter_reduce::$c1(row, starts, ksize, coeffs, off, h_tmp); }
               return;
             }
           },
           _ => {}
         }
+        // The scalar reference iterates only the real `offsets` span, so it
+        // needs no padding-mask boundary; `ksize` is unused on this path.
+        let _ = ksize;
         scalar::filter_h_reduce_row_c1(row, starts, off, coeffs, h_tmp);
       }
 
@@ -187,6 +224,7 @@ macro_rules! impl_filter_simd_elem {
       unsafe fn h_c3(
         row: &[$elem],
         starts: &[usize],
+        ksize: &[usize],
         coeffs: &[f32],
         off: &[usize],
         h_tmp: &mut [f64],
@@ -195,36 +233,37 @@ macro_rules! impl_filter_simd_elem {
           target_arch = "aarch64" => {
             if neon_available() {
               // SAFETY: NEON available; arena bound by the caller.
-              unsafe { arch::neon::filter_reduce::$c3(row, starts, coeffs, off, h_tmp); }
+              unsafe { arch::neon::filter_reduce::$c3(row, starts, ksize, coeffs, off, h_tmp); }
               return;
             }
           },
           target_arch = "x86_64" => {
             if avx512_available() {
               // SAFETY: AVX-512F+BW verified; arena bound by the caller.
-              unsafe { arch::x86_avx512::filter_reduce::$c3(row, starts, coeffs, off, h_tmp); }
+              unsafe { arch::x86_avx512::filter_reduce::$c3(row, starts, ksize, coeffs, off, h_tmp); }
               return;
             }
             if avx2_available() {
               // SAFETY: AVX2 verified; arena bound by the caller.
-              unsafe { arch::x86_avx2::filter_reduce::$c3(row, starts, coeffs, off, h_tmp); }
+              unsafe { arch::x86_avx2::filter_reduce::$c3(row, starts, ksize, coeffs, off, h_tmp); }
               return;
             }
             if sse41_available() {
               // SAFETY: SSE4.1 verified; arena bound by the caller.
-              unsafe { arch::x86_sse41::filter_reduce::$c3(row, starts, coeffs, off, h_tmp); }
+              unsafe { arch::x86_sse41::filter_reduce::$c3(row, starts, ksize, coeffs, off, h_tmp); }
               return;
             }
           },
           target_arch = "wasm32" => {
             if simd128_available() {
               // SAFETY: simd128 enabled; arena bound by the caller.
-              unsafe { arch::wasm_simd128::filter_reduce::$c3(row, starts, coeffs, off, h_tmp); }
+              unsafe { arch::wasm_simd128::filter_reduce::$c3(row, starts, ksize, coeffs, off, h_tmp); }
               return;
             }
           },
           _ => {}
         }
+        let _ = ksize;
         scalar::filter_h_reduce_row_c3(row, starts, off, coeffs, h_tmp);
       }
     }
@@ -276,7 +315,10 @@ pub(crate) fn filter_h_reduce_row<S: FilterSimdElem>(
     // and every real span inside the row (so kernel index arithmetic
     // cannot wrap; the padded overhang past a span's last coefficient
     // stages through guarded stack copies).
-    assert!(p.starts.len() == out, "padded arena shape");
+    assert!(
+      p.starts.len() == out && p.ksize.len() == out,
+      "padded arena shape"
+    );
     assert!(
       p.off.len() == out + 1 && p.off[out] <= p.coeffs.len(),
       "padded arena layout"
@@ -288,10 +330,10 @@ pub(crate) fn filter_h_reduce_row<S: FilterSimdElem>(
     if channels == 1 {
       // SAFETY: the binds above complete the arena's construction proof
       // for this row; the kernel reads only proven spans.
-      unsafe { S::h_c1(row, &p.starts, &p.coeffs, &p.off, h_tmp) };
+      unsafe { S::h_c1(row, &p.starts, &p.ksize, &p.coeffs, &p.off, h_tmp) };
     } else {
       // SAFETY: as above, 3-channel variant.
-      unsafe { S::h_c3(row, &p.starts, &p.coeffs, &p.off, h_tmp) };
+      unsafe { S::h_c3(row, &p.starts, &p.ksize, &p.coeffs, &p.off, h_tmp) };
     }
     return;
   }

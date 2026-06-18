@@ -300,6 +300,12 @@ fn gray8_process_resampled(
   use_simd: bool,
   full_range: bool,
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink (Gray8 is not routed to the filter path — only Grayf32
+  // is): reject a filter plan before any work, so the plan's empty area
+  // spans never reach an area stream.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   let ow = plan.out_w();
   let want_rgb = rgb.is_some();
   let want_rgba = rgba.is_some();
@@ -1101,6 +1107,12 @@ fn gray16_process_resampled<const BE: bool>(
   use_simd: bool,
   full_range: bool,
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink (Gray16 is not routed to the filter path — only
+  // Grayf32 is): reject a filter plan before any work, so the plan's empty
+  // area spans never reach an area stream.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   // The binned u16 luma row is host-native; the direct kernels recover
   // an already-host-native sample with `::<HOST_NATIVE_BE>` (a no-op
   // swap), matching the direct path's `::<BE>` applied to a wire sample.

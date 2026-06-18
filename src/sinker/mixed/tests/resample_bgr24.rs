@@ -6,7 +6,7 @@
 
 use crate::{
   ColorMatrix, PixelSink,
-  resample::{AreaResampler, ResampleError},
+  resample::{AreaResampler, FilteredResampler, ResampleError, Triangle},
   sinker::{MixedSinker, MixedSinkerError},
   source::{Bgr24, Bgr24Row, Rgb24, bgr24_to, rgb24_to},
 };
@@ -203,6 +203,41 @@ fn bgr24_resample_rejects_out_of_sequence_before_staging() {
     sink.rgb_scratch_capacity(),
     0,
     "out-of-sequence row must not stage into the scratch"
+  );
+}
+
+#[test]
+fn bgr24_filter_plan_rejected_with_typed_error() {
+  // Bgr24 is NOT routed to the filter path (only Rgb24 / Rgb48 / Grayf32
+  // are). A FilteredResampler plan must be REJECTED with the typed
+  // UnsupportedFilter error at the first processed row — never silently
+  // feed the plan's empty area spans to an area stream (which emits no
+  // output and leaves the attached buffer stale).
+  let buf = packed_bgr_frame();
+  let src = Bgr24Frame::try_new(&buf, SRC as u32, SRC as u32, (SRC * 3) as u32).unwrap();
+
+  let mut rgb = vec![0xABu8; OUT * OUT * 3];
+  let mut sink = MixedSinker::<Bgr24, FilteredResampler<Triangle>>::with_resampler(
+    SRC,
+    SRC,
+    FilteredResampler::new(OUT, OUT, Triangle),
+  )
+  .unwrap()
+  .with_rgb(&mut rgb)
+  .unwrap();
+  let err = bgr24_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap_err();
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::UnsupportedFilter(_))
+    ),
+    "Bgr24 filter plan must reject with UnsupportedFilter, got {err:?}"
+  );
+  // The output buffer is untouched — the rejection happened before any
+  // emit, so the sentinel survives (no silent stale-output bug).
+  assert!(
+    rgb.iter().all(|&b| b == 0xAB),
+    "rejected filter plan must not write the output buffer"
   );
 }
 

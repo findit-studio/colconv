@@ -203,12 +203,25 @@ unsafe fn widen_coeffs(c: &[f32]) -> __m512d {
 }
 
 /// Accumulates 8 widened samples against 8 widened coefficients (mul+add),
-/// zeroing sample lanes whose coefficient lane is zero (arena padding) so
-/// `0.0 * NaN` cannot poison the span. Register-only.
+/// every lane real — so a real zero coefficient multiplies its (possibly
+/// non-finite) sample as is, matching the scalar reference. Register-only.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
-fn mac8(acc: __m512d, s: __m512d, c: __m512d) -> __m512d {
-  let keep = _mm512_cmp_pd_mask::<_CMP_NEQ_OQ>(c, _mm512_setzero_pd());
+fn mac8_full(acc: __m512d, s: __m512d, c: __m512d) -> __m512d {
+  _mm512_add_pd(acc, _mm512_mul_pd(s, c))
+}
+
+/// As [`mac8_full`] for a span's trailing partial chunk: keeps the low
+/// `real_in_chunk` sample lanes (the real taps) and zeroes the rest (arena
+/// padding) so a non-finite out-of-window sample cannot poison the span
+/// through `0.0 * NaN`. A real zero coefficient sits in a kept lane, so it
+/// multiplies its sample exactly as scalar does. `real_in_chunk` is in
+/// `1..=7` (full chunks take [`mac8_full`]), so `1 << real_in_chunk` never
+/// overflows the `__mmask8`. Register-only.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+fn mac8_masked(acc: __m512d, s: __m512d, c: __m512d, real_in_chunk: usize) -> __m512d {
+  let keep: __mmask8 = (1u8 << real_in_chunk) - 1;
   let sf = _mm512_maskz_mov_pd(keep, s);
   _mm512_add_pd(acc, _mm512_mul_pd(sf, c))
 }
@@ -265,22 +278,27 @@ unsafe fn load8_staged_c3<S: Avx512Elem>(row: &[S], cell: usize, ch: usize) -> _
 unsafe fn h_reduce_c1<S: Avx512Elem>(
   row: &[S],
   starts: &[usize],
+  ksize: &[usize],
   coeffs: &[f32],
   coff: &[usize],
   h_tmp: &mut [f64],
 ) {
   for (j, &start) in starts.iter().enumerate() {
     let span = &coeffs[coff[j]..coff[j + 1]];
+    let real = ksize[j];
     // SAFETY: each chunk loads in-bounds or stages the row end; coeffs
     // from the 8-multiple arena slice.
     unsafe {
       let mut acc = _mm512_setzero_pd();
       for (ci, chunk) in span.chunks_exact(8).enumerate() {
-        acc = mac8(
-          acc,
-          load8_staged_c1(row, start + ci * 8),
-          widen_coeffs(chunk),
-        );
+        let s = load8_staged_c1(row, start + ci * 8);
+        let c = widen_coeffs(chunk);
+        let real_in_chunk = real.saturating_sub(ci * 8).min(8);
+        acc = if real_in_chunk == 8 {
+          mac8_full(acc, s, c)
+        } else {
+          mac8_masked(acc, s, c, real_in_chunk)
+        };
       }
       h_tmp[j] = _mm512_reduce_add_pd(acc);
     }
@@ -292,12 +310,14 @@ unsafe fn h_reduce_c1<S: Avx512Elem>(
 unsafe fn h_reduce_c3<S: Avx512Elem>(
   row: &[S],
   starts: &[usize],
+  ksize: &[usize],
   coeffs: &[f32],
   coff: &[usize],
   h_tmp: &mut [f64],
 ) {
   for (j, &start) in starts.iter().enumerate() {
     let span = &coeffs[coff[j]..coff[j + 1]];
+    let real = ksize[j];
     // SAFETY: each group loads in-bounds or stages the row end; coeffs
     // from the 8-multiple arena slice.
     unsafe {
@@ -307,9 +327,16 @@ unsafe fn h_reduce_c3<S: Avx512Elem>(
       for (ci, chunk) in span.chunks_exact(8).enumerate() {
         let cell = start + ci * 8;
         let c = widen_coeffs(chunk);
-        acc0 = mac8(acc0, load8_staged_c3(row, cell, 0), c);
-        acc1 = mac8(acc1, load8_staged_c3(row, cell, 1), c);
-        acc2 = mac8(acc2, load8_staged_c3(row, cell, 2), c);
+        let real_in_chunk = real.saturating_sub(ci * 8).min(8);
+        if real_in_chunk == 8 {
+          acc0 = mac8_full(acc0, load8_staged_c3(row, cell, 0), c);
+          acc1 = mac8_full(acc1, load8_staged_c3(row, cell, 1), c);
+          acc2 = mac8_full(acc2, load8_staged_c3(row, cell, 2), c);
+        } else {
+          acc0 = mac8_masked(acc0, load8_staged_c3(row, cell, 0), c, real_in_chunk);
+          acc1 = mac8_masked(acc1, load8_staged_c3(row, cell, 1), c, real_in_chunk);
+          acc2 = mac8_masked(acc2, load8_staged_c3(row, cell, 2), c, real_in_chunk);
+        }
       }
       h_tmp[j * 3] = _mm512_reduce_add_pd(acc0);
       h_tmp[j * 3 + 1] = _mm512_reduce_add_pd(acc1);
@@ -333,12 +360,13 @@ macro_rules! avx512_h_entry {
     pub(crate) unsafe fn $c1(
       row: &[$elem],
       starts: &[usize],
+      ksize: &[usize],
       coeffs: &[f32],
       coff: &[usize],
       h_tmp: &mut [f64],
     ) {
       // SAFETY: forwarded under the caller's arena guarantees.
-      unsafe { h_reduce_c1::<$elem>(row, starts, coeffs, coff, h_tmp) }
+      unsafe { h_reduce_c1::<$elem>(row, starts, ksize, coeffs, coff, h_tmp) }
     }
 
     #[doc = $doc]
@@ -352,12 +380,13 @@ macro_rules! avx512_h_entry {
     pub(crate) unsafe fn $c3(
       row: &[$elem],
       starts: &[usize],
+      ksize: &[usize],
       coeffs: &[f32],
       coff: &[usize],
       h_tmp: &mut [f64],
     ) {
       // SAFETY: forwarded under the caller's arena guarantees.
-      unsafe { h_reduce_c3::<$elem>(row, starts, coeffs, coff, h_tmp) }
+      unsafe { h_reduce_c3::<$elem>(row, starts, ksize, coeffs, coff, h_tmp) }
     }
   };
 }

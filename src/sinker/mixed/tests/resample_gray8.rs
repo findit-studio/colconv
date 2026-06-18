@@ -9,7 +9,7 @@
 
 use crate::{
   ColorMatrix, PixelSink,
-  resample::{AreaResampler, ResampleError},
+  resample::{AreaResampler, FilteredResampler, ResampleError, Triangle},
   sinker::{MixedSinker, MixedSinkerError},
   source::{Gray8, Gray8Row, gray8_to},
 };
@@ -409,5 +409,38 @@ fn gray8_resample_rejects_mid_frame_output_change() {
   assert!(
     luma.iter().all(|&b| b == 0),
     "rejected row mutated the new output"
+  );
+}
+
+#[test]
+fn gray8_filter_plan_rejected_with_typed_error() {
+  // Gray8 is NOT routed to the filter path (only Grayf32 is among the gray
+  // formats). A FilteredResampler plan must be REJECTED with the typed
+  // UnsupportedFilter error at the first processed row rather than feed the
+  // plan's empty area spans to the luma area stream (which would emit no
+  // output and leave the attached buffer stale).
+  let plane = ramp();
+  let src = gray8_frame(&plane);
+
+  let mut luma = vec![0x5Au8; OUT * OUT];
+  let mut sink = MixedSinker::<Gray8, FilteredResampler<Triangle>>::with_resampler(
+    SRC,
+    SRC,
+    FilteredResampler::new(OUT, OUT, Triangle),
+  )
+  .unwrap()
+  .with_luma(&mut luma)
+  .unwrap();
+  let err = gray8_to(&src, FR, M, &mut sink).unwrap_err();
+  assert!(
+    matches!(
+      err,
+      MixedSinkerError::Resample(ResampleError::UnsupportedFilter(_))
+    ),
+    "Gray8 filter plan must reject with UnsupportedFilter, got {err:?}"
+  );
+  assert!(
+    luma.iter().all(|&b| b == 0x5A),
+    "rejected filter plan must not write the output buffer"
   );
 }

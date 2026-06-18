@@ -435,6 +435,12 @@ pub(super) struct NativeChroma {
 
 impl NativeYuv420 {
   fn new(plan: &ResamplePlan, w: usize, h: usize, need_color: bool) -> Result<Self, ResampleError> {
+    // The native 4:2:0 join is integer area-only; a filter plan reaches it
+    // when a FilteredResampler is attached with the native tier enabled, so
+    // reject it before building any plane's area stream.
+    if plan.kind().is_filter() {
+      return Err(plan.unsupported_filter());
+    }
     let y = AreaStream::new(plan.h(), plan.v(), w, h, 1)?;
     let alloc =
       |_| ResampleError::AllocationFailed(PlanGeometry::new(w, h, plan.out_w(), plan.out_h()));
@@ -860,6 +866,11 @@ pub(super) fn yuv420p_process_resampled(
   w: usize,
   use_simd: bool,
 ) -> Result<(), MixedSinkerError> {
+  // Row-stage 4:2:0 tail is integer area-only: reject a filter plan before
+  // any work, so the plan's empty area spans never reach an area stream.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   let ow = plan.out_w();
   let need_luma = luma.is_some() || luma_u16.is_some();
   let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();

@@ -100,6 +100,26 @@ pub(crate) fn filter_h_reduce_row_c3<S: FilterElem>(
   }
 }
 
+/// Per-lane keep mask for the trailing 8-lane chunk of a padded span:
+/// lane `k` is all-ones bits (`f64::from_bits(!0)`) when it is a **real**
+/// tap (`k < real`) and `+0.0` when it is arena padding (`k >= real`).
+/// The SIMD kernels AND this onto their sample lanes so a padding lane is
+/// forced to `+0.0` (annihilating its `0.0` coefficient even for a
+/// non-finite sample), while a real lane — **including a real zero
+/// coefficient** — keeps its sample so `0.0 * NaN == NaN` survives exactly
+/// as this reference computes it. Only the last chunk of a span is ever
+/// partial (`real` in `1..=7`); full chunks skip the mask entirely.
+#[cfg_attr(not(any(feature = "rgb", feature = "gray")), allow(dead_code))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn padding_keep_mask8(real: usize) -> [f64; 8] {
+  let mut m = [0.0f64; 8];
+  for (k, lane) in m.iter_mut().enumerate() {
+    // `(k < real) as u64` is 1/0; negating spreads it to all-ones / zero.
+    *lane = f64::from_bits((u64::from(k < real)).wrapping_neg());
+  }
+  m
+}
+
 /// V-pass AXPY: `acc[i] += w * h_tmp[i]` over the H-reduced (and
 /// quantized) row, in `f64`. `w` is one signed `f32` vertical
 /// coefficient. Element-wise — no reordering — so every backend matches

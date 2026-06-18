@@ -298,6 +298,19 @@ impl FilterAxis {
       let xmax = (hi as usize).min(in_size);
       let n = xmax - xmin;
 
+      // A sub-ULP positive support survives the `> 0` check above yet can
+      // round `floor(center - support)` and `ceil(center + support)` to the
+      // same integer when `center` is integral, leaving `xmin == xmax` and
+      // an empty window. Such a kernel covers no source sample, so it cannot
+      // reconstruct this output: reject it as an invalid support (before any
+      // further allocation) rather than emit a zero-tap window, which would
+      // also break the overlap sweep's `lo <= j` invariant below.
+      if n == 0 {
+        return Err(ResampleError::InvalidFilterSupport(
+          InvalidFilterSupport::new(support_unit, in_size),
+        ));
+      }
+
       // Grow the coeff arena one window at a time under the recoverable
       // contract; `n <= in_size` so each reservation is bounded.
       coeffs
@@ -332,10 +345,16 @@ impl FilterAxis {
     // are exactly those `i <= j` whose exclusive end `starts[i]+ksize[i]`
     // is still `> starts[j]`. Advancing `lo` past closed windows makes the
     // sweep linear. This is the tight ring capacity for the V axis.
+    //
+    // The `lo < j` guard bounds the lower pointer: window `j` is always open
+    // at its own start (every window has `ksize >= 1` — zero-tap windows are
+    // rejected above), so `lo` never needs to pass `j`. The guard makes the
+    // sweep robust even if that invariant were ever weakened, so `lo` can
+    // never index past `starts`.
     let mut max_overlap = 0usize;
     let mut lo = 0usize;
     for j in 0..starts.len() {
-      while starts[lo] + ksize[lo] <= starts[j] {
+      while lo < j && starts[lo] + ksize[lo] <= starts[j] {
         lo += 1;
       }
       let open = j - lo + 1;

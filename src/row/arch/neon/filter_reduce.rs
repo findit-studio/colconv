@@ -24,6 +24,8 @@
 #[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
+use crate::row::scalar::filter_reduce::padding_keep_mask8;
+
 /// Eight source samples widened to four `f64` lane-pairs
 /// `(lanes 0-1, 2-3, 4-5, 6-7)`.
 type F64x8 = (float64x2_t, float64x2_t, float64x2_t, float64x2_t);
@@ -224,34 +226,65 @@ unsafe fn widen_coeffs(c: &[f32]) -> F64x8 {
 }
 
 /// Accumulates eight widened samples against four widened coefficient
-/// pairs into a running `f64` lane-pair. Each sample lane is zeroed where
-/// its coefficient is zero (arena padding) before the multiply, so a
-/// non-finite sample in a direct-loaded padding lane cannot poison the
-/// span through `0.0 * NaN`. A separate multiply then add (not fma): the
-/// per-lane product is exact in `f64`, so the two forms agree and the
-/// H-pass tolerance comes only from the cross-lane sum order.
+/// pairs into a running `f64` lane-pair, every lane real. A separate
+/// multiply then add (not fma): the per-lane product is exact in `f64`,
+/// so the two forms agree and the H-pass tolerance comes only from the
+/// cross-lane sum order. A real **zero** coefficient multiplies its
+/// (possibly non-finite) sample as is, matching the scalar reference's
+/// `0.0 * NaN == NaN` — only a padding lane (handled by [`mac8_masked`])
+/// is forced to `+0.0`.
 ///
 /// # Safety
 ///
 /// NEON available.
 #[inline]
 #[target_feature(enable = "neon")]
-unsafe fn mac8(acc: float64x2_t, s: F64x8, c: F64x8) -> float64x2_t {
-  let a = vaddq_f64(acc, vmulq_f64(mask_pad(s.0, c.0), c.0));
-  let a = vaddq_f64(a, vmulq_f64(mask_pad(s.1, c.1), c.1));
-  let a = vaddq_f64(a, vmulq_f64(mask_pad(s.2, c.2), c.2));
-  vaddq_f64(a, vmulq_f64(mask_pad(s.3, c.3), c.3))
+unsafe fn mac8_full(acc: float64x2_t, s: F64x8, c: F64x8) -> float64x2_t {
+  let a = vaddq_f64(acc, vmulq_f64(s.0, c.0));
+  let a = vaddq_f64(a, vmulq_f64(s.1, c.1));
+  let a = vaddq_f64(a, vmulq_f64(s.2, c.2));
+  vaddq_f64(a, vmulq_f64(s.3, c.3))
 }
 
-/// Zeroes the `f64` sample lanes whose coefficient lane is zero — the
-/// arena's padding lanes — so a non-finite padding sample times the zero
-/// coefficient yields `+0.0`, not NaN.
+/// As [`mac8_full`] for a span's trailing partial chunk: `keep` is the
+/// per-lane padding mask ([`padding_keep_mask8`]) — real lanes pass their
+/// sample through (so a real zero coefficient still annihilates exactly as
+/// scalar), padding lanes are cleared to `+0.0` so a non-finite
+/// out-of-window sample cannot poison the span through `0.0 * NaN`.
+///
+/// # Safety
+///
+/// NEON available.
 #[inline]
 #[target_feature(enable = "neon")]
-fn mask_pad(sf: float64x2_t, cf: float64x2_t) -> float64x2_t {
-  // sf AND NOT(cf == 0): keep where the coefficient is nonzero, clear to
-  // +0.0 where it is zero.
-  vreinterpretq_f64_u64(vbicq_u64(vreinterpretq_u64_f64(sf), vceqzq_f64(cf)))
+unsafe fn mac8_masked(acc: float64x2_t, s: F64x8, c: F64x8, keep: &[f64; 8]) -> float64x2_t {
+  // SAFETY: `keep` is a fixed 8-element array; the four pair loads are in
+  // bounds.
+  unsafe {
+    let k0 = vld1q_f64(keep.as_ptr());
+    let k1 = vld1q_f64(keep.as_ptr().add(2));
+    let k2 = vld1q_f64(keep.as_ptr().add(4));
+    let k3 = vld1q_f64(keep.as_ptr().add(6));
+    let m0 = mask_lane(s.0, k0);
+    let m1 = mask_lane(s.1, k1);
+    let m2 = mask_lane(s.2, k2);
+    let m3 = mask_lane(s.3, k3);
+    let a = vaddq_f64(acc, vmulq_f64(m0, c.0));
+    let a = vaddq_f64(a, vmulq_f64(m1, c.1));
+    let a = vaddq_f64(a, vmulq_f64(m2, c.2));
+    vaddq_f64(a, vmulq_f64(m3, c.3))
+  }
+}
+
+/// Bitwise-ANDs a sample lane-pair with a keep-mask lane-pair (all-ones to
+/// keep, `+0.0` to clear).
+#[inline]
+#[target_feature(enable = "neon")]
+fn mask_lane(sf: float64x2_t, keep: float64x2_t) -> float64x2_t {
+  vreinterpretq_f64_u64(vandq_u64(
+    vreinterpretq_u64_f64(sf),
+    vreinterpretq_u64_f64(keep),
+  ))
 }
 
 /// Filter H-pass (1 channel): `h_tmp[j] = Σ coeffs[k] * row[start_j + k]`
@@ -268,12 +301,14 @@ fn mask_pad(sf: float64x2_t, cf: float64x2_t) -> float64x2_t {
 unsafe fn h_reduce_c1<S: NeonElem>(
   row: &[S],
   starts: &[usize],
+  ksize: &[usize],
   coeffs: &[f32],
   coff: &[usize],
   h_tmp: &mut [f64],
 ) {
   for (j, &start) in starts.iter().enumerate() {
     let span = &coeffs[coff[j]..coff[j + 1]];
+    let real = ksize[j];
     // SAFETY: each 8-sample load is either fully in-bounds or staged
     // through a zero-filled stack copy; coefficient loads come from the
     // 8-multiple arena slice.
@@ -281,7 +316,14 @@ unsafe fn h_reduce_c1<S: NeonElem>(
       let mut acc = vdupq_n_f64(0.0);
       for (ci, chunk) in span.chunks_exact(8).enumerate() {
         let base = start + ci * 8;
-        acc = mac8(acc, load8_staged_c1(row, base), widen_coeffs(chunk));
+        let s = load8_staged_c1(row, base);
+        let c = widen_coeffs(chunk);
+        let real_in_chunk = real.saturating_sub(ci * 8).min(8);
+        acc = if real_in_chunk == 8 {
+          mac8_full(acc, s, c)
+        } else {
+          mac8_masked(acc, s, c, &padding_keep_mask8(real_in_chunk))
+        };
       }
       h_tmp[j] = vaddvq_f64(acc);
     }
@@ -301,12 +343,14 @@ unsafe fn h_reduce_c1<S: NeonElem>(
 unsafe fn h_reduce_c3<S: NeonElem>(
   row: &[S],
   starts: &[usize],
+  ksize: &[usize],
   coeffs: &[f32],
   coff: &[usize],
   h_tmp: &mut [f64],
 ) {
   for (j, &start) in starts.iter().enumerate() {
     let span = &coeffs[coff[j]..coff[j + 1]];
+    let real = ksize[j];
     // SAFETY: each 8-pixel group deinterleaves fully in-bounds or stages
     // through a zero-filled 24-sample copy; coefficients come from the
     // 8-multiple arena slice.
@@ -317,9 +361,17 @@ unsafe fn h_reduce_c3<S: NeonElem>(
       for (ci, chunk) in span.chunks_exact(8).enumerate() {
         let cell = start + ci * 8;
         let c = widen_coeffs(chunk);
-        acc0 = mac8(acc0, load8_staged_c3(row, cell, 0), c);
-        acc1 = mac8(acc1, load8_staged_c3(row, cell, 1), c);
-        acc2 = mac8(acc2, load8_staged_c3(row, cell, 2), c);
+        let real_in_chunk = real.saturating_sub(ci * 8).min(8);
+        if real_in_chunk == 8 {
+          acc0 = mac8_full(acc0, load8_staged_c3(row, cell, 0), c);
+          acc1 = mac8_full(acc1, load8_staged_c3(row, cell, 1), c);
+          acc2 = mac8_full(acc2, load8_staged_c3(row, cell, 2), c);
+        } else {
+          let keep = padding_keep_mask8(real_in_chunk);
+          acc0 = mac8_masked(acc0, load8_staged_c3(row, cell, 0), c, &keep);
+          acc1 = mac8_masked(acc1, load8_staged_c3(row, cell, 1), c, &keep);
+          acc2 = mac8_masked(acc2, load8_staged_c3(row, cell, 2), c, &keep);
+        }
       }
       h_tmp[j * 3] = vaddvq_f64(acc0);
       h_tmp[j * 3 + 1] = vaddvq_f64(acc1);
@@ -346,13 +398,14 @@ macro_rules! neon_h_entry {
     pub(crate) unsafe fn $c1(
       row: &[$elem],
       starts: &[usize],
+      ksize: &[usize],
       coeffs: &[f32],
       coff: &[usize],
       h_tmp: &mut [f64],
     ) {
       // SAFETY: forwarded to the generic c1 kernel under the caller's
       // arena guarantees.
-      unsafe { h_reduce_c1::<$elem>(row, starts, coeffs, coff, h_tmp) }
+      unsafe { h_reduce_c1::<$elem>(row, starts, ksize, coeffs, coff, h_tmp) }
     }
 
     #[doc = $doc]
@@ -365,13 +418,14 @@ macro_rules! neon_h_entry {
     pub(crate) unsafe fn $c3(
       row: &[$elem],
       starts: &[usize],
+      ksize: &[usize],
       coeffs: &[f32],
       coff: &[usize],
       h_tmp: &mut [f64],
     ) {
       // SAFETY: forwarded to the generic c3 kernel under the caller's
       // arena guarantees.
-      unsafe { h_reduce_c3::<$elem>(row, starts, coeffs, coff, h_tmp) }
+      unsafe { h_reduce_c3::<$elem>(row, starts, ksize, coeffs, coff, h_tmp) }
     }
   };
 }

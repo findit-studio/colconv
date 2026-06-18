@@ -14,6 +14,9 @@ fn build_proves_padding_and_reach() {
   assert_eq!(p.coeffs.len(), 24);
   assert_eq!(p.max_reach, 13);
   assert_eq!(p.starts, std::vec![0, 4]);
+  // The real tap count per span — the lane boundary the kernels mask
+  // beyond (a 4-tap and a 9-tap span).
+  assert_eq!(p.ksize, std::vec![4, 9]);
   assert_eq!(&p.coeffs[..4], [1.0, 1.0, 1.0, 1.0]);
   // The padding lanes are exactly +0.0, so they annihilate their sample.
   assert_eq!(&p.coeffs[4..8], [0.0, 0.0, 0.0, 0.0]);
@@ -245,4 +248,162 @@ fn v_pass_simd_matches_scalar_bit_exact() {
       assert_eq!(a_simd, a_scalar, "V-pass diverged: n={n} w={w}");
     }
   }
+}
+
+// ---- f32 non-finite samples under REAL zero coefficients ------------------
+//
+// The arena pads every span to an 8-multiple with zero coefficients, so the
+// kernels run pure wide loads. The mask must neutralize only those PADDING
+// lanes — not a REAL zero coefficient the plan legitimately produced (a
+// normalized window can carry an exact 0.0 tap). With f32 input the scalar
+// reference computes `0.0 * NaN == NaN` for such a tap; masking the sample
+// to 0 there would yield a finite value, breaking scalar-vs-SIMD parity for
+// non-finite inputs. These tests place NaN / ±inf samples directly under
+// real zero coefficients and assert the SIMD H-pass matches scalar
+// bit-for-bit (both NaN, or equal bits).
+
+/// `true` iff `a` and `b` agree on finiteness AND value: both NaN, or both
+/// the same infinity, or both finite within a tight tolerance. The crux is
+/// the **NaN/inf propagation** — a masked-away real zero coefficient would
+/// turn a scalar NaN into a finite SIMD value, which this rejects — while
+/// finite lanes keep the H-pass's reorder tolerance (the tap-sum order
+/// differs, so finite sums are not bit-identical).
+fn same_finiteness_f64(a: f64, b: f64) -> bool {
+  if a.is_nan() || b.is_nan() {
+    return a.is_nan() && b.is_nan();
+  }
+  if a.is_infinite() || b.is_infinite() {
+    // Same sign of infinity (an inf result must survive as the same inf).
+    return a == b;
+  }
+  let tol = 1e-9 * a.abs().max(b.abs()).max(1.0);
+  (a - b).abs() <= tol
+}
+
+/// Runs the SIMD and scalar H-pass over the given span set + row, asserting
+/// every output lane agrees on finiteness and value (see
+/// [`same_finiteness_f64`]). `channels` is 1 or 3.
+fn assert_h_parity_f32(
+  channels: usize,
+  starts: &[usize],
+  offsets: &[usize],
+  coeffs: &[f32],
+  row: &[f32],
+  out: usize,
+) {
+  let p = arena(starts, offsets, coeffs);
+  let mut h_simd = std::vec![0.0f64; out * channels];
+  let mut h_scalar = std::vec![0.0f64; out * channels];
+  filter_h_reduce_row(
+    row,
+    channels,
+    starts,
+    offsets,
+    coeffs,
+    Some(&p),
+    &mut h_simd,
+    true,
+  );
+  filter_h_reduce_row(
+    row,
+    channels,
+    starts,
+    offsets,
+    coeffs,
+    Some(&p),
+    &mut h_scalar,
+    false,
+  );
+  for (i, (&s, &d)) in h_scalar.iter().zip(h_simd.iter()).enumerate() {
+    assert!(
+      same_finiteness_f64(s, d),
+      "non-finite parity lane {i}: scalar {s} ({:#018x}) simd {d} ({:#018x})",
+      s.to_bits(),
+      d.to_bits()
+    );
+  }
+}
+
+#[test]
+fn f32_real_zero_coeff_over_nonfinite_matches_scalar_c1() {
+  // Window of 4 real taps with TWO interior real zero coefficients; the
+  // source samples under them are NaN and +inf. Scalar yields NaN (the zero
+  // times a non-finite); the fixed SIMD must too (it must NOT mask a real
+  // zero-coeff lane). The single span pads to 8 lanes, so lanes 4..8 (the
+  // padding) load real row samples 4..8 here — kept finite so the padding
+  // mask's job (zeroing them) is unambiguous.
+  let starts = [0usize];
+  let offsets = [0usize, 4];
+  let coeffs = [0.5f32, 0.0, 0.0, 0.5];
+  let row = [1.0f32, f32::NAN, f32::INFINITY, 2.0, 3.0, 4.0, 5.0, 6.0];
+  assert_h_parity_f32(1, &starts, &offsets, &coeffs, &row, 1);
+}
+
+#[test]
+fn f32_real_zero_coeff_over_neg_inf_and_padding_nonfinite_c1() {
+  // Two windows: the first puts a real zero coefficient over -inf (scalar
+  // and SIMD must both go NaN); the second is a finite window whose PADDING
+  // lanes (past its 3 real taps) overlap a NaN / +inf just past the window —
+  // those the mask MUST neutralize, so this window stays finite and equal.
+  let starts = [0usize, 8];
+  let offsets = [0usize, 4, 7];
+  // Window 0: [0.5, 0.0, 0.25, 0.25] — real zero at tap 1 (over row[1]).
+  // Window 1: [0.3, 0.3, 0.4] — 3 real taps (over row[8..11]), pads to 8 so
+  // padding lanes cover row[11..16].
+  let coeffs = [0.5f32, 0.0, 0.25, 0.25, 0.3, 0.3, 0.4];
+  let row = [
+    10.0f32,
+    f32::NEG_INFINITY, // under window 0's real zero coeff -> poisons (NaN)
+    1.0,
+    2.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    8.0,           // window 1 real tap 0
+    9.0,           // window 1 real tap 1
+    1.5,           // window 1 real tap 2 (finite — window 1's result stays finite)
+    f32::NAN,      // window 1 padding lane (index 3, past its 3 real taps)
+    f32::INFINITY, // window 1 padding lane
+    0.0,
+    0.0,
+    0.0,
+  ];
+  assert_h_parity_f32(1, &starts, &offsets, &coeffs, &row, 2);
+}
+
+#[test]
+fn f32_real_zero_coeff_over_nonfinite_matches_scalar_c3() {
+  // 3-channel interleaved: the shared window has a real zero coefficient at
+  // tap 1; pixel 1's three channels are NaN / +inf / -inf, so each channel's
+  // dot product poisons to NaN under scalar — the SIMD c3 kernel must agree.
+  let starts = [0usize];
+  let offsets = [0usize, 3];
+  let coeffs = [0.5f32, 0.0, 0.5];
+  // 8 pixels x 3 channels; pixel 1 (the zero-coeff tap) is non-finite.
+  let mut row = std::vec![0.0f32; 8 * 3];
+  for (px, chunk) in row.chunks_exact_mut(3).enumerate() {
+    chunk[0] = px as f32 + 1.0;
+    chunk[1] = px as f32 + 1.5;
+    chunk[2] = px as f32 + 2.0;
+  }
+  row[3] = f32::NAN; // pixel 1, channel 0
+  row[4] = f32::INFINITY; // pixel 1, channel 1
+  row[5] = f32::NEG_INFINITY; // pixel 1, channel 2
+  assert_h_parity_f32(3, &starts, &offsets, &coeffs, &row, 1);
+}
+
+#[test]
+fn f32_real_zero_coeff_multichunk_matches_scalar_c1() {
+  // A wide window (>8 real taps) so the real zero coefficient lands in a
+  // FULL (non-trailing) chunk — exercising the unmasked full-chunk path —
+  // plus a trailing partial chunk. The non-finite sample under the real zero
+  // must still poison to NaN under both paths.
+  let starts = [0usize];
+  let offsets = [0usize, 11];
+  // 11 taps: a real zero at index 5 (inside the first full 8-lane chunk).
+  let coeffs = [0.1f32, 0.1, 0.1, 0.1, 0.1, 0.0, 0.1, 0.1, 0.1, 0.1, 0.1];
+  let mut row = std::vec![1.0f32; 16];
+  row[5] = f32::INFINITY; // under the real zero coeff in the full chunk
+  assert_h_parity_f32(1, &starts, &offsets, &coeffs, &row, 1);
 }

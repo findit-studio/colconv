@@ -147,6 +147,36 @@ fn invalid_support_rejected() {
 }
 
 #[test]
+fn tiny_positive_support_rejected_not_panic() {
+  // A sub-ULP positive support passes the `> 0` / finite / `<= in_size`
+  // checks, but for an integral projected center `floor(center - support)`
+  // and `ceil(center + support)` round to the same integer (the offset is
+  // absorbed below the center's ULP), leaving a zero-tap window. The old
+  // build emitted that empty window and the overlap sweep then advanced its
+  // lower pointer past `starts`, panicking. It must now reject with
+  // `InvalidFilterSupport` instead.
+  struct TinySupport;
+  impl FilterKernel for TinySupport {
+    fn support(&self) -> f64 {
+      // Smaller than the ULP of the integral centers a 2:1 downscale
+      // produces (center 1.0, 3.0, …), so `center ± support` collapses
+      // back onto `center`.
+      1e-20
+    }
+    fn weight(&self, _x: f64) -> f64 {
+      1.0
+    }
+  }
+  // scale == 2 makes every projected center `(xx + 0.5) * 2` an odd
+  // integer, so the very first window already degenerates to zero taps.
+  let err = FilterAxis::build(202, 101, &TinySupport).unwrap_err();
+  assert!(
+    matches!(err, ResampleError::InvalidFilterSupport(_)),
+    "tiny support must reject, got {err:?}"
+  );
+}
+
+#[test]
 fn max_overlap_bounds_the_ring() {
   // The accumulator-ring capacity (max window overlap) must cover every
   // window open at a given source row. Cross-check the stored value

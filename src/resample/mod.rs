@@ -631,6 +631,20 @@ impl ResamplePlan {
     self.kind
   }
 
+  /// [`ResampleError::UnsupportedFilter`] carrying this plan's geometry —
+  /// returned by an area-only format's resample tail when handed a
+  /// [`SpanKind::Filter`] plan, so the empty area spans never reach an
+  /// area stream. The area helpers are shared across formats, so the guard
+  /// lives at each plan-consumption point that builds an area stream.
+  // Idle in feature combos that compile no plan-consuming sink.
+  #[allow(dead_code)]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) const fn unsupported_filter(&self) -> ResampleError {
+    ResampleError::UnsupportedFilter(PlanGeometry::new(
+      self.src_w, self.src_h, self.out_w, self.out_h,
+    ))
+  }
+
   /// Horizontal filter windows — `Some` iff [`Self::kind`] is
   /// [`SpanKind::Filter`]. Consumed by the filter streaming engine.
   #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
@@ -1461,6 +1475,22 @@ pub enum ResampleError {
     .0.support(), .0.in_size()
   )]
   InvalidFilterSupport(InvalidFilterSupport),
+
+  /// A [`SpanKind::Filter`] plan (from a
+  /// [`FilteredResampler`]) was handed to a source format whose
+  /// streaming sink only implements the integer area engine. Only
+  /// `Rgb24` / `Rgb48` / `Grayf32` route the filter path in this
+  /// release; every other format rejects a filter plan here rather
+  /// than feeding the plan's empty area spans to its area stream
+  /// (which would emit no output rows and leave attached outputs
+  /// stale). Surfaces at the first processed row, before any output
+  /// buffer is written.
+  #[error(
+    "filter resampling is unsupported for this source format (output {}x{} from source {}x{}); \
+     route it through Rgb24, Rgb48, or Grayf32",
+    .0.out_w(), .0.out_h(), .0.src_w(), .0.src_h()
+  )]
+  UnsupportedFilter(PlanGeometry),
 }
 
 #[cfg(all(

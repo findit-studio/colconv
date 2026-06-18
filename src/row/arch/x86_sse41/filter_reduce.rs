@@ -23,6 +23,8 @@
 #[cfg_attr(miri, allow(unused_imports))]
 use core::arch::x86_64::*;
 
+use crate::row::scalar::filter_reduce::padding_keep_mask8;
+
 /// Eight source samples widened to four `f64` pairs.
 type F64x8 = (__m128d, __m128d, __m128d, __m128d);
 
@@ -237,24 +239,50 @@ unsafe fn widen_coeffs(c: &[f32]) -> F64x8 {
   unsafe { widen_ps8(_mm_loadu_ps(c.as_ptr()), _mm_loadu_ps(c.as_ptr().add(4))) }
 }
 
-/// Zeroes the `f64` sample lanes whose coefficient lane is zero (arena
-/// padding) — `0.0 * NaN` would otherwise poison the span. Register-only.
+/// Bitwise-ANDs a sample lane-pair with a keep-mask lane-pair (all-ones to
+/// keep a real lane, `+0.0` to clear a padding lane). Register-only.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-fn mask_pd(sf: __m128d, cf: __m128d) -> __m128d {
-  _mm_and_pd(sf, _mm_cmpneq_pd(cf, _mm_setzero_pd()))
+fn mask_lane(sf: __m128d, keep: __m128d) -> __m128d {
+  _mm_and_pd(sf, keep)
 }
 
 /// Accumulates 8 widened samples against 4 widened coefficient pairs into
-/// a running `f64` pair (mul+add; the product is exact in `f64`).
-/// Register-only.
+/// a running `f64` pair (mul+add; the product is exact in `f64`), every
+/// lane real — so a real zero coefficient multiplies its (possibly
+/// non-finite) sample as is, matching the scalar reference. Register-only.
 #[inline]
 #[target_feature(enable = "sse4.1")]
-fn mac8(acc: __m128d, s: F64x8, c: F64x8) -> __m128d {
-  let a = _mm_add_pd(acc, _mm_mul_pd(mask_pd(s.0, c.0), c.0));
-  let a = _mm_add_pd(a, _mm_mul_pd(mask_pd(s.1, c.1), c.1));
-  let a = _mm_add_pd(a, _mm_mul_pd(mask_pd(s.2, c.2), c.2));
-  _mm_add_pd(a, _mm_mul_pd(mask_pd(s.3, c.3), c.3))
+fn mac8_full(acc: __m128d, s: F64x8, c: F64x8) -> __m128d {
+  let a = _mm_add_pd(acc, _mm_mul_pd(s.0, c.0));
+  let a = _mm_add_pd(a, _mm_mul_pd(s.1, c.1));
+  let a = _mm_add_pd(a, _mm_mul_pd(s.2, c.2));
+  _mm_add_pd(a, _mm_mul_pd(s.3, c.3))
+}
+
+/// As [`mac8_full`] for a span's trailing partial chunk: `keep` is the
+/// per-lane padding mask ([`padding_keep_mask8`]) — padding lanes are
+/// cleared to `+0.0` so a non-finite out-of-window sample cannot poison
+/// the span through `0.0 * NaN`, while real lanes (including a real zero
+/// coefficient) pass through.
+///
+/// # Safety
+///
+/// SSE4.1 available; `keep` is a fixed 8-element array.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+unsafe fn mac8_masked(acc: __m128d, s: F64x8, c: F64x8, keep: &[f64; 8]) -> __m128d {
+  // SAFETY: the four pair loads stay within the 8-element `keep`.
+  unsafe {
+    let k0 = _mm_loadu_pd(keep.as_ptr());
+    let k1 = _mm_loadu_pd(keep.as_ptr().add(2));
+    let k2 = _mm_loadu_pd(keep.as_ptr().add(4));
+    let k3 = _mm_loadu_pd(keep.as_ptr().add(6));
+    let a = _mm_add_pd(acc, _mm_mul_pd(mask_lane(s.0, k0), c.0));
+    let a = _mm_add_pd(a, _mm_mul_pd(mask_lane(s.1, k1), c.1));
+    let a = _mm_add_pd(a, _mm_mul_pd(mask_lane(s.2, k2), c.2));
+    _mm_add_pd(a, _mm_mul_pd(mask_lane(s.3, k3), c.3))
+  }
 }
 
 /// Sums the two `f64` lanes. Register-only.
@@ -315,22 +343,27 @@ unsafe fn load8_staged_c3<S: Sse41Elem>(row: &[S], cell: usize, ch: usize) -> F6
 unsafe fn h_reduce_c1<S: Sse41Elem>(
   row: &[S],
   starts: &[usize],
+  ksize: &[usize],
   coeffs: &[f32],
   coff: &[usize],
   h_tmp: &mut [f64],
 ) {
   for (j, &start) in starts.iter().enumerate() {
     let span = &coeffs[coff[j]..coff[j + 1]];
+    let real = ksize[j];
     // SAFETY: each chunk loads in-bounds or stages the row end; coeffs
     // come from the 8-multiple arena slice.
     unsafe {
       let mut acc = _mm_setzero_pd();
       for (ci, chunk) in span.chunks_exact(8).enumerate() {
-        acc = mac8(
-          acc,
-          load8_staged_c1(row, start + ci * 8),
-          widen_coeffs(chunk),
-        );
+        let s = load8_staged_c1(row, start + ci * 8);
+        let c = widen_coeffs(chunk);
+        let real_in_chunk = real.saturating_sub(ci * 8).min(8);
+        acc = if real_in_chunk == 8 {
+          mac8_full(acc, s, c)
+        } else {
+          mac8_masked(acc, s, c, &padding_keep_mask8(real_in_chunk))
+        };
       }
       h_tmp[j] = hsum_pd(acc);
     }
@@ -342,12 +375,14 @@ unsafe fn h_reduce_c1<S: Sse41Elem>(
 unsafe fn h_reduce_c3<S: Sse41Elem>(
   row: &[S],
   starts: &[usize],
+  ksize: &[usize],
   coeffs: &[f32],
   coff: &[usize],
   h_tmp: &mut [f64],
 ) {
   for (j, &start) in starts.iter().enumerate() {
     let span = &coeffs[coff[j]..coff[j + 1]];
+    let real = ksize[j];
     // SAFETY: each group loads in-bounds or stages the row end; coeffs
     // come from the 8-multiple arena slice.
     unsafe {
@@ -357,9 +392,17 @@ unsafe fn h_reduce_c3<S: Sse41Elem>(
       for (ci, chunk) in span.chunks_exact(8).enumerate() {
         let cell = start + ci * 8;
         let c = widen_coeffs(chunk);
-        acc0 = mac8(acc0, load8_staged_c3(row, cell, 0), c);
-        acc1 = mac8(acc1, load8_staged_c3(row, cell, 1), c);
-        acc2 = mac8(acc2, load8_staged_c3(row, cell, 2), c);
+        let real_in_chunk = real.saturating_sub(ci * 8).min(8);
+        if real_in_chunk == 8 {
+          acc0 = mac8_full(acc0, load8_staged_c3(row, cell, 0), c);
+          acc1 = mac8_full(acc1, load8_staged_c3(row, cell, 1), c);
+          acc2 = mac8_full(acc2, load8_staged_c3(row, cell, 2), c);
+        } else {
+          let keep = padding_keep_mask8(real_in_chunk);
+          acc0 = mac8_masked(acc0, load8_staged_c3(row, cell, 0), c, &keep);
+          acc1 = mac8_masked(acc1, load8_staged_c3(row, cell, 1), c, &keep);
+          acc2 = mac8_masked(acc2, load8_staged_c3(row, cell, 2), c, &keep);
+        }
       }
       h_tmp[j * 3] = hsum_pd(acc0);
       h_tmp[j * 3 + 1] = hsum_pd(acc1);
@@ -382,12 +425,13 @@ macro_rules! sse_h_entry {
     pub(crate) unsafe fn $c1(
       row: &[$elem],
       starts: &[usize],
+      ksize: &[usize],
       coeffs: &[f32],
       coff: &[usize],
       h_tmp: &mut [f64],
     ) {
       // SAFETY: forwarded under the caller's arena guarantees.
-      unsafe { h_reduce_c1::<$elem>(row, starts, coeffs, coff, h_tmp) }
+      unsafe { h_reduce_c1::<$elem>(row, starts, ksize, coeffs, coff, h_tmp) }
     }
 
     #[doc = $doc]
@@ -400,12 +444,13 @@ macro_rules! sse_h_entry {
     pub(crate) unsafe fn $c3(
       row: &[$elem],
       starts: &[usize],
+      ksize: &[usize],
       coeffs: &[f32],
       coff: &[usize],
       h_tmp: &mut [f64],
     ) {
       // SAFETY: forwarded under the caller's arena guarantees.
-      unsafe { h_reduce_c3::<$elem>(row, starts, coeffs, coff, h_tmp) }
+      unsafe { h_reduce_c3::<$elem>(row, starts, ksize, coeffs, coff, h_tmp) }
     }
   };
 }

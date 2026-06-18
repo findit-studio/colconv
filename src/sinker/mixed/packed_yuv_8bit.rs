@@ -112,6 +112,12 @@ fn packed_yuv422_dual_resample(
   deinterleave_y: impl FnOnce(&mut [u8]),
   convert_rgb: impl FnOnce(&mut [u8]),
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink (packed YUV 4:2:2 8-bit is not routed to the filter
+  // path): reject a filter plan before any work, so the plan's empty area
+  // spans never reach an area stream.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   let ow = plan.out_w();
   let need_luma = luma.is_some() || luma_u16.is_some();
   let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
