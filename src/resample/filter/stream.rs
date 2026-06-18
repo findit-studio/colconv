@@ -8,9 +8,12 @@
 //!
 //! - **Signed weights.** Coefficients are floating-point and may be
 //!   negative (Catmull-Rom, Lanczos), so accumulation is in floating
-//!   point, not exact integer. `f64` accumulators carry every element
-//!   type — the products are exact and the +-1-LSB PIL parity budget
-//!   absorbs the single narrowing at finalize.
+//!   point, not exact integer. `f64` accumulators carry every element type
+//!   and the products are exact. The `u8` stream resamples on PIL's 8bpc
+//!   fixed-point coefficient grid ([`FilterSample::coeffs`] selects
+//!   `coeffs_q8`), so its scalar finalize is **byte-exact** with Pillow;
+//!   `u16` / `f32` use the full-precision coefficients and land inside the
+//!   +-1-LSB PIL parity budget at the single narrowing.
 //!
 //! - **More than two pending output rows.** A box span touches a source
 //!   cell at most twice, so [`AreaStream`](super::super::AreaStream)
@@ -39,6 +42,25 @@ use super::FilterAxis;
 /// [`crate::row::FilterSimdElem`] supplies the per-element kernel
 /// selection the H-pass dispatcher routes through.
 pub(crate) trait FilterSample: crate::row::FilterSimdElem {
+  /// Selects this element's H/V coefficient set from a [`FilterAxis`].
+  /// `u8` returns PIL's 8bpc fixed-point (`PRECISION_BITS = 22`) snapped
+  /// set, so both passes' `clip8` quantize byte-for-byte with Pillow's
+  /// integer pipeline; `u16` and `f32` return the full-precision float set
+  /// (their 32bpc parity is already inside budget and must not move). The
+  /// two sets share `starts` / `offsets`, so every consumer (scalar
+  /// H-pass, the SIMD staging arena, and the V-pass span) slices a window
+  /// identically out of whichever set this returns.
+  fn coeffs(axis: &FilterAxis) -> &[f32];
+
+  /// `(first source sample, window)` for output index `j` from this
+  /// element's coefficient set — the V-pass twin of [`Self::coeffs`].
+  /// Defaults to the full-precision [`FilterAxis::span`] (`u16` / `f32`);
+  /// `u8` overrides to the 8bpc fixed-point [`FilterAxis::span_q8`].
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn v_span(axis: &FilterAxis, j: usize) -> (usize, &[f32]) {
+    axis.span(j)
+  }
+
   /// Runtime-dispatched H-pass of one source `row` into `h_tmp` (the raw
   /// `f64` dot products, `out_w * channels` wide). Routes to the highest
   /// available SIMD tier when `use_simd` and `padded` permit, else the
@@ -54,7 +76,14 @@ pub(crate) trait FilterSample: crate::row::FilterSimdElem {
     use_simd: bool,
   ) {
     crate::row::filter_h_reduce_row(
-      row, channels, &h.starts, &h.offsets, &h.coeffs, padded, h_tmp, use_simd,
+      row,
+      channels,
+      &h.starts,
+      &h.offsets,
+      Self::coeffs(h),
+      padded,
+      h_tmp,
+      use_simd,
     );
   }
 
@@ -87,6 +116,17 @@ pub(crate) trait FilterSample: crate::row::FilterSimdElem {
 
 impl FilterSample for u8 {
   #[cfg_attr(not(tarpaulin), inline(always))]
+  fn coeffs(axis: &FilterAxis) -> &[f32] {
+    // PIL's 8bpc resize is fixed-point: read the `PRECISION_BITS = 22`
+    // snapped set so `f64`-accumulating `K_i/2^22 * pixel_i` reproduces
+    // PIL's `ss/2^22`, byte-exact through both passes' `clip8`.
+    &axis.coeffs_q8
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn v_span(axis: &FilterAxis, j: usize) -> (usize, &[f32]) {
+    axis.span_q8(j)
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
   fn quantize_intermediate(acc: f64) -> f64 {
     // PIL `clip8` on the u8 H-pass image: round-half-up, clamp to 0..=255.
     floor_f64_local(acc + 0.5).clamp(0.0, 255.0)
@@ -98,6 +138,12 @@ impl FilterSample for u8 {
 }
 
 impl FilterSample for u16 {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn coeffs(axis: &FilterAxis) -> &[f32] {
+    // PIL 32bpc `I` resampler uses double coefficients; the full-precision
+    // `f32` set already matches within one LSB and must not move.
+    &axis.coeffs
+  }
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn quantize_intermediate(acc: f64) -> f64 {
     // PIL 32bpc `I` resampler: the H-pass intermediate is rounded to a
@@ -112,6 +158,12 @@ impl FilterSample for u16 {
 }
 
 impl FilterSample for f32 {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn coeffs(axis: &FilterAxis) -> &[f32] {
+    // PIL 32bpc `F` resampler uses double coefficients; the full-precision
+    // `f32` set already matches within f32 precision and must not move.
+    &axis.coeffs
+  }
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn quantize_intermediate(acc: f64) -> f64 {
     // PIL 32bpc `F` resampler: the intermediate is `f32`. Narrow to f32
@@ -226,8 +278,11 @@ impl<S: FilterSample> FilterStream<S> {
     let v = v.try_clone()?;
     // The arena is an optional accelerator: a refused allocation (or an
     // unrepresentable padded length) leaves `None`, routing the H-pass to
-    // the scalar reference rather than failing stream creation.
-    let h_padded = crate::row::FilterPaddedSpans::build(&h.starts, &h.offsets, &h.coeffs);
+    // the scalar reference rather than failing stream creation. It stages
+    // this element's coefficient set ([`FilterSample::coeffs`]) — the `u8`
+    // SIMD H-pass thus consumes the same 8bpc fixed-point coefficients its
+    // scalar path does, so both stay byte-exact with PIL.
+    let h_padded = crate::row::FilterPaddedSpans::build(&h.starts, &h.offsets, S::coeffs(&h));
     Ok(Self {
       h,
       v,
@@ -329,7 +384,7 @@ impl<S: FilterSample> FilterStream<S> {
     // the first window that has not started yet.
     let mut oy = self.cur_out;
     while oy < out_h {
-      let (vstart, vcoeffs) = self.v.span(oy);
+      let (vstart, vcoeffs) = S::v_span(&self.v, oy);
       if vstart > y {
         // This and every later window starts after `y`; none open yet.
         break;
@@ -351,7 +406,7 @@ impl<S: FilterSample> FilterStream<S> {
     // Emit every output row whose last vertical tap is this `y`. They
     // finish in `cur_out` order; stop at the first row still open.
     while self.cur_out < out_h {
-      let (vstart, vcoeffs) = self.v.span(self.cur_out);
+      let (vstart, vcoeffs) = S::v_span(&self.v, self.cur_out);
       let last = vstart + vcoeffs.len();
       // The window has not started, or has taps beyond `y` yet to arrive.
       if vstart > y || last == 0 || last - 1 != y {

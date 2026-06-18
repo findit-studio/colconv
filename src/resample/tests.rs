@@ -1447,13 +1447,17 @@ mod filter_simd_parity {
 // ---- PIL (Pillow) filter-resampler parity ---------------------------------
 //
 // The scalar separable filter resampler must reproduce Pillow's
-// `Image.resize` within +-1 LSB (u8 / u16) or a small float tolerance
-// (f32, PIL `F`-mode unclamped). Sources are synthesized identically to
-// `ci/gen_pil_goldens.py` (the same LCG + per-mode shaping), so the
-// checked-in fixture carries only PIL's outputs. Coefficients are f64 and
-// the accumulation is f64, so the divergence vs PIL's integer fixed-point
-// stays inside one LSB — getting the half-pixel center convention exactly
-// right (mirrored from PIL `precompute_coeffs`) is what makes that hold.
+// `Image.resize` **byte-exact** for u8, within +-1 LSB for u16, and within
+// a small float tolerance for f32 (PIL `F`-mode unclamped). Sources are
+// synthesized identically to `ci/gen_pil_goldens.py` (the same LCG +
+// per-mode shaping), so the checked-in fixture carries only PIL's outputs.
+// The u8 stream resamples on PIL's 8bpc fixed-point coefficient grid
+// (`PRECISION_BITS = 22`) and accumulates in f64, so its `ss/2^22` and both
+// passes' `clip8` finalize match Pillow bit-for-bit; u16 / f32 keep the
+// full-precision coefficients (PIL's 32bpc paths use double coefficients,
+// which f32 already matches within budget). Getting the half-pixel center
+// convention exactly right (mirrored from PIL `precompute_coeffs`) is what
+// makes all three hold.
 
 #[cfg(any(
   feature = "yuv-planar",
@@ -1627,16 +1631,13 @@ mod pil_parity {
     assert_eq!(plan.out_dims(), (16, 4));
   }
 
-  /// Per-geometry u8 PIL tolerance. The integer two-pass path uses f32
-  /// coefficients (not PIL's fixed-point), so each pass's `clip8` round can
-  /// shift a half-way sample by up to 1 LSB. Downscale stays within 1 LSB in
-  /// practice (kept as a tight regression tripwire); an enlarging or mixed
-  /// ratio spreads the intermediate over more output samples and the two
-  /// passes can compound to 2 LSB. Byte-exact parity would need PIL's
-  /// fixed-point integer arithmetic (see issue #190).
-  fn pil_u8_tol(sw: usize, sh: usize, ow: usize, oh: usize) -> u8 {
-    if ow <= sw && oh <= sh { 1 } else { 2 }
-  }
+  /// Byte-exact u8 PIL tolerance. The u8 stream resamples on PIL's 8bpc
+  /// fixed-point coefficient grid (`PRECISION_BITS = 22`), so its `f64`
+  /// accumulation reproduces PIL's integer `ss/2^22` and both passes'
+  /// `clip8` finalize match Pillow bit-for-bit — on downscale, enlarge, and
+  /// mixed ratios alike. All three kernels reach 0; this is the regression
+  /// floor.
+  const PIL_U8_TOL: u8 = 0;
 
   #[test]
   fn u8_matches_pil() {
@@ -1647,7 +1648,7 @@ mod pil_parity {
       assert_u_within(
         &ours,
         golden,
-        pil_u8_tol(sw, sh, ow, oh),
+        PIL_U8_TOL,
         &mut worst,
         std::format_args!("Triangle {sw}x{sh}->{ow}x{oh} c{ch}"),
       );
@@ -1658,7 +1659,7 @@ mod pil_parity {
       assert_u_within(
         &ours,
         golden,
-        pil_u8_tol(sw, sh, ow, oh),
+        PIL_U8_TOL,
         &mut worst,
         std::format_args!("CatmullRom {sw}x{sh}->{ow}x{oh} c{ch}"),
       );
@@ -1669,7 +1670,7 @@ mod pil_parity {
       assert_u_within(
         &ours,
         golden,
-        pil_u8_tol(sw, sh, ow, oh),
+        PIL_U8_TOL,
         &mut worst,
         std::format_args!("Lanczos3 {sw}x{sh}->{ow}x{oh} c{ch}"),
       );
@@ -1805,7 +1806,7 @@ mod pil_parity {
       assert_u_within(
         &ours,
         golden,
-        pil_u8_tol(sw, sh, ow, oh),
+        PIL_U8_TOL,
         &mut worst,
         std::format_args!("Triangle SIMD {sw}x{sh}->{ow}x{oh} c{ch}"),
       );
@@ -1816,7 +1817,7 @@ mod pil_parity {
       assert_u_within(
         &ours,
         golden,
-        pil_u8_tol(sw, sh, ow, oh),
+        PIL_U8_TOL,
         &mut worst,
         std::format_args!("CatmullRom SIMD {sw}x{sh}->{ow}x{oh} c{ch}"),
       );
@@ -1827,7 +1828,7 @@ mod pil_parity {
       assert_u_within(
         &ours,
         golden,
-        pil_u8_tol(sw, sh, ow, oh),
+        PIL_U8_TOL,
         &mut worst,
         std::format_args!("Lanczos3 SIMD {sw}x{sh}->{ow}x{oh} c{ch}"),
       );
