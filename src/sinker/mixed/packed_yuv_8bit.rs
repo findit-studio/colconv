@@ -61,7 +61,9 @@ use super::{
 };
 use crate::{
   PixelSink,
-  resample::{AreaStream, OutOfSequenceRow, ResampleError, ResamplePlan},
+  resample::{
+    AreaStream, FilterStream, OutOfSequenceRow, ResampleError, ResamplePlan, RowResampler, SpanKind,
+  },
   row::{
     expand_rgb_to_rgba_row, rgb_to_hsv_row, uyvy422_to_luma_row, uyvy422_to_luma_u16_row,
     uyvy422_to_rgb_row, uyvy422_to_rgba_row, yuyv422_to_luma_row, yuyv422_to_luma_u16_row,
@@ -74,11 +76,121 @@ use crate::{
   },
 };
 
-/// Row-stage fused downscale shared by the three packed YUV 4:2:2
-/// formats. Mirrors the planar YUV dual-stream path: **luma / luma_u16
-/// area-resample the de-interleaved Y bytes directly** (the YUV luma
-/// contract — luma is *not* re-derived from converted RGB), while RGB /
-/// RGBA / HSV bin a converted source-width RGB row.
+/// Shared stage-then-feed tail for the 8-bit packed-YUV dual-stream
+/// resample, used by both [`packed_yuv422_dual_resample`] (area) and
+/// [`packed_yuv422_dual_filter_resample`] (filter). The two paths differ
+/// only in the resampler kind built by the caller — the convert-then-bin
+/// staging and per-output emit are identical, so they live here behind the
+/// [`RowResampler<u8>`] trait (which both
+/// [`AreaStream<u8>`](crate::resample::AreaStream) and
+/// [`FilterStream<u8>`](crate::resample::FilterStream) implement). Keeping
+/// the emit byte-identical between the arms is what makes the filter output
+/// equal the equivalent RGB filter of the converted pixels, and match the
+/// area output up to the kernel weights.
+///
+/// `deinterleave_y` fills a source-width scratch with the Y samples pulled
+/// from the packed row (the format's own `*_to_luma_row` kernel) and runs
+/// only when a luma output is attached; `convert_rgb` fills a source-width
+/// RGB scratch from the packed row (the format's own `*_to_rgb_row` kernel,
+/// which de-interleaves + horizontally upsamples the chroma) and runs only
+/// when a colour output is attached. The two scratches are distinct fields
+/// and never alias.
+///
+/// No native-depth clamp: these are 8-bit sources, so the source's native
+/// range *is* the full `u8` range and the stream's own finalize keeps every
+/// binned sample in range (`AreaStream` averages within `[0, 255]`;
+/// `FilterStream<u8>`'s `clip8` clamps a signed-kernel overshoot to
+/// `[0, 255]`). Both streams are created by the caller post-sequence-check;
+/// staging runs every fallible growth + conversion before the first feed so
+/// a failure mutates no caller output.
+#[cfg(feature = "yuv-packed")]
+#[allow(clippy::too_many_arguments)]
+fn packed_yuv422_dual_feed_emit<LS, CS>(
+  luma_stream: Option<&mut LS>,
+  rgb_stream: Option<&mut CS>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  luma_scratch: &mut std::vec::Vec<u8>,
+  rgb_scratch: &mut std::vec::Vec<u8>,
+  w: usize,
+  plan: &ResamplePlan,
+  idx: usize,
+  use_simd: bool,
+  deinterleave_y: impl FnOnce(&mut [u8]),
+  convert_rgb: impl FnOnce(&mut [u8]),
+) -> Result<(), MixedSinkerError>
+where
+  LS: RowResampler<u8>,
+  CS: RowResampler<u8>,
+{
+  let ow = plan.out_w();
+  // Stage the source-width rows (both fallible growths run before the
+  // feeds, keeping the call atomic). The Y row uses its own scratch so
+  // it does not collide with the colour stream's RGB scratch.
+  let luma_row = if luma_stream.is_some() {
+    let scratch = source_luma_scratch(luma_scratch, w, plan)?;
+    deinterleave_y(scratch);
+    Some(scratch)
+  } else {
+    None
+  };
+  let color_row = if rgb_stream.is_some() {
+    let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
+    convert_rgb(scratch);
+    Some(scratch)
+  } else {
+    None
+  };
+
+  if let Some(y_row) = luma_row {
+    let stream = luma_stream.expect("staged only when present");
+    stream.feed_row(idx, y_row, use_simd, |oy, out_row| {
+      if let Some(buf) = luma.as_deref_mut() {
+        buf[oy * ow..(oy + 1) * ow].copy_from_slice(out_row);
+      }
+      if let Some(buf) = luma_u16.as_deref_mut() {
+        for (dst, &src) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(out_row) {
+          *dst = src as u16;
+        }
+      }
+    })?;
+  }
+
+  if let Some(scratch) = color_row {
+    let stream = rgb_stream.expect("staged only when present");
+    stream.feed_row(idx, scratch, use_simd, |oy, out_row| {
+      if let Some(buf) = rgb.as_deref_mut() {
+        buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_row);
+      }
+      if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
+        rgb_to_hsv_row(
+          out_row,
+          &mut h[oy * ow..(oy + 1) * ow],
+          &mut s[oy * ow..(oy + 1) * ow],
+          &mut v[oy * ow..(oy + 1) * ow],
+          ow,
+          use_simd,
+        );
+      }
+      if let Some(buf) = rgba.as_deref_mut() {
+        expand_rgb_to_rgba_row(out_row, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
+      }
+    })?;
+  }
+
+  Ok(())
+}
+
+/// Row-stage **area** fused downscale shared by the three packed YUV 4:2:2
+/// formats and (for its filter twin) the packed YUV 4:1:1 `Uyyvyy411`.
+/// Mirrors the planar YUV dual-stream path: **luma / luma_u16 area-resample
+/// the de-interleaved Y bytes directly** (the YUV luma contract — luma is
+/// *not* re-derived from converted RGB), while RGB / RGBA / HSV bin a
+/// converted source-width RGB row.
 ///
 /// `deinterleave_y` fills a source-width scratch with the Y samples
 /// pulled from the packed row (the format's own `*_to_luma_row`
@@ -93,6 +205,7 @@ use crate::{
 /// before any allocation, so an out-of-sequence row is rejected without
 /// allocating and `AllocationFailed` never masks `OutOfSequenceRow`; a
 /// no-output call is a true no-op regardless of the row index.
+#[cfg(feature = "yuv-packed")]
 #[allow(clippy::too_many_arguments)]
 fn packed_yuv422_dual_resample(
   luma_stream: &mut Option<AreaStream<u8>>,
@@ -112,13 +225,6 @@ fn packed_yuv422_dual_resample(
   deinterleave_y: impl FnOnce(&mut [u8]),
   convert_rgb: impl FnOnce(&mut [u8]),
 ) -> Result<(), MixedSinkerError> {
-  // Area-only sink (packed YUV 4:2:2 8-bit is not routed to the filter
-  // path): reject a filter plan before any work, so the plan's empty area
-  // spans never reach an area stream.
-  if plan.kind().is_filter() {
-    return Err(plan.unsupported_filter().into());
-  }
-  let ow = plan.out_w();
   let need_luma = luma.is_some() || luma_u16.is_some();
   let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
 
@@ -185,62 +291,148 @@ fn packed_yuv422_dual_resample(
       3,
     )?);
   }
-  // Stage the source-width rows (both fallible growths run before the
-  // feeds, keeping the call atomic). The Y row uses its own scratch so
-  // it does not collide with the colour stream's RGB scratch.
-  let luma_row = if need_luma {
-    let scratch = source_luma_scratch(luma_scratch, w, plan)?;
-    deinterleave_y(scratch);
-    Some(scratch)
-  } else {
-    None
-  };
-  let color_row = if need_color {
-    let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
-    convert_rgb(scratch);
-    Some(scratch)
-  } else {
-    None
-  };
 
-  if let Some(y_row) = luma_row {
-    let stream = luma_stream.as_mut().expect("created in the preflight");
-    stream.feed_row(idx, y_row, use_simd, |oy, out_row| {
-      if let Some(buf) = luma.as_deref_mut() {
-        buf[oy * ow..(oy + 1) * ow].copy_from_slice(out_row);
-      }
-      if let Some(buf) = luma_u16.as_deref_mut() {
-        for (dst, &src) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(out_row) {
-          *dst = src as u16;
-        }
-      }
-    })?;
+  packed_yuv422_dual_feed_emit(
+    luma_stream.as_mut(),
+    rgb_stream.as_mut(),
+    rgb,
+    rgba,
+    luma,
+    luma_u16,
+    hsv,
+    luma_scratch,
+    rgb_scratch,
+    w,
+    plan,
+    idx,
+    use_simd,
+    deinterleave_y,
+    convert_rgb,
+  )
+}
+
+/// Row-stage **separable-filter** fused resample — the
+/// [`SpanKind::Filter`](crate::resample::SpanKind) twin of
+/// [`packed_yuv422_dual_resample`], shared by the three packed YUV 4:2:2
+/// formats and the packed YUV 4:1:1 `Uyyvyy411` (their convert closures
+/// have the same shape — de-interleave Y for luma, convert the packed row
+/// to a source-width RGB row for colour). Luma stays **native Y**: the
+/// de-interleaved Y bytes feed a 1-channel
+/// [`FilterStream<u8>`](crate::resample::FilterStream)
+/// (`luma_filter_stream`), so luma is byte-exact to the direct `*_to_luma*`
+/// kernels' filter resample, never colour-derived. Colour feeds the
+/// 3-channel [`FilterStream<u8>`](crate::resample::FilterStream)
+/// (`rgb_filter_stream`), so `rgb` / `rgba` / `hsv` equal the equivalent
+/// `Rgb24` filter of the converted pixels.
+///
+/// No native-depth clamp: 8-bit source, so the stream's `clip8` (a
+/// signed-kernel overshoot clamped to `[0, 255]`) already keeps every
+/// sample in the native range — the colour and luma emit are identical to
+/// the area path's.
+///
+/// Atomic preflight mirrors [`packed_yuv422_dual_resample`]: a no-output
+/// call returns before the freeze; a single [`frozen_outputs_check`] runs,
+/// then a single sequence check on whichever stream is fed every row, both
+/// **before any allocation** — an out-of-sequence first row is rejected
+/// before the freeze (storing no snapshot to poison a retry), and on a
+/// later row the freeze runs first (a mid-frame output change trips
+/// `ResampleOutputsChanged`). Both streams are created after the sequence
+/// check, then the shared staging + feed runs.
+#[cfg(feature = "yuv-packed")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn packed_yuv422_dual_filter_resample(
+  luma_filter_stream: &mut Option<FilterStream<u8>>,
+  rgb_filter_stream: &mut Option<FilterStream<u8>>,
+  resample_outputs: &mut Option<FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  luma_scratch: &mut std::vec::Vec<u8>,
+  rgb_scratch: &mut std::vec::Vec<u8>,
+  w: usize,
+  plan: &ResamplePlan,
+  idx: usize,
+  use_simd: bool,
+  deinterleave_y: impl FnOnce(&mut [u8]),
+  convert_rgb: impl FnOnce(&mut [u8]),
+) -> Result<(), MixedSinkerError> {
+  let need_luma = luma.is_some() || luma_u16.is_some();
+  let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
+
+  let (fh, fv) = (
+    plan
+      .filter_h()
+      .expect("filter plan carries horizontal windows"),
+    plan
+      .filter_v()
+      .expect("filter plan carries vertical windows"),
+  );
+
+  // Single sequence check before any allocation, on whichever attached
+  // stream is fed every row (all attached streams advance in lockstep). A
+  // no-output call has no stream to sequence and stays a no-op.
+  let expected = if need_luma {
+    luma_filter_stream.as_ref().map_or(0, |s| s.next_y())
+  } else if need_color {
+    rgb_filter_stream.as_ref().map_or(0, |s| s.next_y())
+  } else {
+    return Ok(());
+  };
+  // First row: reject an out-of-sequence row BEFORE the freeze, so a
+  // rejected first row stores no snapshot that would poison a retry.
+  if resample_outputs.is_none() && expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    hsv,
+    &None,
+    idx,
+  )?;
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  if need_luma && luma_filter_stream.is_none() {
+    *luma_filter_stream = Some(FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 1)?);
+  }
+  if need_color && rgb_filter_stream.is_none() {
+    *rgb_filter_stream = Some(FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 3)?);
   }
 
-  if let Some(scratch) = color_row {
-    let stream = rgb_stream.as_mut().expect("created in the preflight");
-    stream.feed_row(idx, scratch, use_simd, |oy, out_row| {
-      if let Some(buf) = rgb.as_deref_mut() {
-        buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_row);
-      }
-      if let Some(hsv) = hsv.as_mut() {
-        let (h, s, v) = hsv.hsv();
-        rgb_to_hsv_row(
-          out_row,
-          &mut h[oy * ow..(oy + 1) * ow],
-          &mut s[oy * ow..(oy + 1) * ow],
-          &mut v[oy * ow..(oy + 1) * ow],
-          ow,
-          use_simd,
-        );
-      }
-      if let Some(buf) = rgba.as_deref_mut() {
-        expand_rgb_to_rgba_row(out_row, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
-      }
-    })?;
-  }
-
-  Ok(())
+  packed_yuv422_dual_feed_emit(
+    luma_filter_stream.as_mut(),
+    rgb_filter_stream.as_mut(),
+    rgb,
+    rgba,
+    luma,
+    luma_u16,
+    hsv,
+    luma_scratch,
+    rgb_scratch,
+    w,
+    plan,
+    idx,
+    use_simd,
+    deinterleave_y,
+    convert_rgb,
+  )
 }
 
 // ---- Yuyv422 impl ------------------------------------------------------
@@ -315,6 +507,12 @@ impl<R> PixelSink for MixedSinker<'_, Yuyv422, R> {
     if let Some(stream) = self.luma_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -359,6 +557,8 @@ impl<R> PixelSink for MixedSinker<'_, Yuyv422, R> {
       plan,
       rgb_stream,
       luma_stream,
+      rgb_filter_stream,
+      luma_filter_stream,
       resample_outputs,
       ..
     } = self;
@@ -366,30 +566,53 @@ impl<R> PixelSink for MixedSinker<'_, Yuyv422, R> {
 
     // Non-identity plan: feed the shared packed-YUV dual-stream tail —
     // luma de-interleaves the Y bytes and bins them; colour converts the
-    // packed row to RGB and bins that. Freeze + sequence-check before
-    // staging, so a no-output sink stays a no-op and an out-of-sequence
-    // row is rejected without allocating.
+    // packed row to RGB and bins that. The span kind picks the engine —
+    // area binning or signed-coefficient filter (both stage the same
+    // de-interleaved Y / converted RGB and share the emit, so filter colour
+    // equals the RGB filter of the converted pixels and luma stays native
+    // Y). Freeze + sequence-check before staging, so a no-output sink stays
+    // a no-op and an out-of-sequence row is rejected without allocating.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
-      return packed_yuv422_dual_resample(
-        luma_stream,
-        rgb_stream,
-        resample_outputs,
-        rgb,
-        rgba,
-        luma,
-        luma_u16,
-        hsv,
-        luma_scratch,
-        rgb_scratch,
-        w,
-        plan,
-        idx,
-        use_simd,
-        |scratch| yuyv422_to_luma_row(packed, scratch, w, use_simd),
-        |scratch| yuyv422_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd),
-      );
+      return match plan.kind() {
+        SpanKind::Area => packed_yuv422_dual_resample(
+          luma_stream,
+          rgb_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          luma_scratch,
+          rgb_scratch,
+          w,
+          plan,
+          idx,
+          use_simd,
+          |scratch| yuyv422_to_luma_row(packed, scratch, w, use_simd),
+          |scratch| yuyv422_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd),
+        ),
+        SpanKind::Filter => packed_yuv422_dual_filter_resample(
+          luma_filter_stream,
+          rgb_filter_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          luma_scratch,
+          rgb_scratch,
+          w,
+          plan,
+          idx,
+          use_simd,
+          |scratch| yuyv422_to_luma_row(packed, scratch, w, use_simd),
+          |scratch| yuyv422_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd),
+        ),
+      };
     }
 
     let one_plane_start = idx * w;
@@ -542,6 +765,12 @@ impl<R> PixelSink for MixedSinker<'_, Uyvy422, R> {
     if let Some(stream) = self.luma_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -586,6 +815,8 @@ impl<R> PixelSink for MixedSinker<'_, Uyvy422, R> {
       plan,
       rgb_stream,
       luma_stream,
+      rgb_filter_stream,
+      luma_filter_stream,
       resample_outputs,
       ..
     } = self;
@@ -594,24 +825,44 @@ impl<R> PixelSink for MixedSinker<'_, Uyvy422, R> {
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
-      return packed_yuv422_dual_resample(
-        luma_stream,
-        rgb_stream,
-        resample_outputs,
-        rgb,
-        rgba,
-        luma,
-        luma_u16,
-        hsv,
-        luma_scratch,
-        rgb_scratch,
-        w,
-        plan,
-        idx,
-        use_simd,
-        |scratch| uyvy422_to_luma_row(packed, scratch, w, use_simd),
-        |scratch| uyvy422_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd),
-      );
+      return match plan.kind() {
+        SpanKind::Area => packed_yuv422_dual_resample(
+          luma_stream,
+          rgb_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          luma_scratch,
+          rgb_scratch,
+          w,
+          plan,
+          idx,
+          use_simd,
+          |scratch| uyvy422_to_luma_row(packed, scratch, w, use_simd),
+          |scratch| uyvy422_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd),
+        ),
+        SpanKind::Filter => packed_yuv422_dual_filter_resample(
+          luma_filter_stream,
+          rgb_filter_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          luma_scratch,
+          rgb_scratch,
+          w,
+          plan,
+          idx,
+          use_simd,
+          |scratch| uyvy422_to_luma_row(packed, scratch, w, use_simd),
+          |scratch| uyvy422_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd),
+        ),
+      };
     }
 
     let one_plane_start = idx * w;
@@ -757,6 +1008,12 @@ impl<R> PixelSink for MixedSinker<'_, Yvyu422, R> {
     if let Some(stream) = self.luma_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -801,6 +1058,8 @@ impl<R> PixelSink for MixedSinker<'_, Yvyu422, R> {
       plan,
       rgb_stream,
       luma_stream,
+      rgb_filter_stream,
+      luma_filter_stream,
       resample_outputs,
       ..
     } = self;
@@ -809,24 +1068,44 @@ impl<R> PixelSink for MixedSinker<'_, Yvyu422, R> {
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
-      return packed_yuv422_dual_resample(
-        luma_stream,
-        rgb_stream,
-        resample_outputs,
-        rgb,
-        rgba,
-        luma,
-        luma_u16,
-        hsv,
-        luma_scratch,
-        rgb_scratch,
-        w,
-        plan,
-        idx,
-        use_simd,
-        |scratch| yvyu422_to_luma_row(packed, scratch, w, use_simd),
-        |scratch| yvyu422_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd),
-      );
+      return match plan.kind() {
+        SpanKind::Area => packed_yuv422_dual_resample(
+          luma_stream,
+          rgb_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          luma_scratch,
+          rgb_scratch,
+          w,
+          plan,
+          idx,
+          use_simd,
+          |scratch| yvyu422_to_luma_row(packed, scratch, w, use_simd),
+          |scratch| yvyu422_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd),
+        ),
+        SpanKind::Filter => packed_yuv422_dual_filter_resample(
+          luma_filter_stream,
+          rgb_filter_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          luma_scratch,
+          rgb_scratch,
+          w,
+          plan,
+          idx,
+          use_simd,
+          |scratch| yvyu422_to_luma_row(packed, scratch, w, use_simd),
+          |scratch| yvyu422_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd),
+        ),
+      };
     }
 
     let one_plane_start = idx * w;
