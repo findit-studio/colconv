@@ -36,8 +36,9 @@
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, check_dimensions_match, packed_yuv444_triple_resample,
-  rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  RowShapeMismatch, RowSlice, check_dimensions_match, packed_yuv444_triple_filter_resample,
+  packed_yuv444_triple_resample, rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  rgba_u16_plane_row_slice,
 };
 use crate::{
   PixelSink,
@@ -159,6 +160,15 @@ impl<const BE: bool, R> PixelSink for MixedSinker<'_, V410<BE>, R> {
     if let Some(stream) = self.luma_stream_u16.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgb_filter_stream_u16.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_filter_stream_u16.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -201,43 +211,77 @@ impl<const BE: bool, R> PixelSink for MixedSinker<'_, V410<BE>, R> {
       rgb_stream,
       rgb_stream_u16,
       luma_stream_u16,
+      rgb_filter_stream,
+      rgb_filter_stream_u16,
+      luma_filter_stream_u16,
       resample_outputs,
       ..
     } = self;
 
     // Non-identity plan: feed the shared three-stream tail. `BE` from the
-    // marker selects the source decode wire for every conversion. Freeze +
-    // sequence-check before staging, so a no-output sink stays a no-op and
-    // an out-of-sequence row is rejected without allocating.
+    // marker selects the source decode wire for every conversion. The span
+    // kind picks the engine — area binning or signed-coefficient filter
+    // (both convert the YUV to RGB with the same closures and resample in
+    // RGB space, so filter colour equals the RGB filter of the converted
+    // pixels and matches area up to the kernel). Freeze + sequence-check
+    // before staging, so a no-output sink stays a no-op and an
+    // out-of-sequence row is rejected without allocating.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let packed = row.packed();
-      return packed_yuv444_triple_resample::<BITS>(
-        rgb_stream,
-        rgb_stream_u16,
-        luma_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        luma_u16,
-        hsv,
-        rgb_scratch,
-        rgb_scratch_u16,
-        luma_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        matrix,
-        full_range,
-        |scratch| v410_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd, BE),
-        |scratch| v410_to_rgb_u16_row(packed, scratch, w, matrix, full_range, use_simd, BE),
-        |scratch| v410_to_luma_u16_row(packed, scratch, w, use_simd, BE),
-      );
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => packed_yuv444_triple_resample::<BITS>(
+          rgb_stream,
+          rgb_stream_u16,
+          luma_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          luma_u16,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          luma_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| v410_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd, BE),
+          |scratch| v410_to_rgb_u16_row(packed, scratch, w, matrix, full_range, use_simd, BE),
+          |scratch| v410_to_luma_u16_row(packed, scratch, w, use_simd, BE),
+        ),
+        crate::resample::SpanKind::Filter => packed_yuv444_triple_filter_resample::<BITS>(
+          rgb_filter_stream,
+          rgb_filter_stream_u16,
+          luma_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          luma_u16,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          luma_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| v410_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd, BE),
+          |scratch| v410_to_rgb_u16_row(packed, scratch, w, matrix, full_range, use_simd, BE),
+          |scratch| v410_to_luma_u16_row(packed, scratch, w, use_simd, BE),
+        ),
+      };
     }
 
     let one_plane_start = idx * w;

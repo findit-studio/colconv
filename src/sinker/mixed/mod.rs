@@ -1645,8 +1645,11 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// [`SpanKind`](crate::resample::SpanKind) is `Filter`. Lazily created
   /// in `process`, reset in `begin_frame`. The first format routed through
   /// the filter engine in this stage; the gate widens with the area
-  /// engine as more packed-RGB sources wire in.
-  #[cfg(any(feature = "rgb", feature = "gbr"))]
+  /// engine as more packed-RGB sources wire in (`yuv-444-packed` joins for
+  /// the high-bit packed YUV 4:4:4 colour group — `V410` / `V30X` convert
+  /// their YUV to a u8 RGB row and filter it here, the filter twin of the
+  /// area [`Self::rgb_stream`]).
+  #[cfg(any(feature = "rgb", feature = "gbr", feature = "yuv-444-packed"))]
   rgb_filter_stream: Option<crate::resample::FilterStream<u8>>,
   /// Row-stage **filter** stream for the 8-bit packed-RGBA `u8` color
   /// group ([`Rgba`](crate::source::Rgba) and the leading-/trailing-alpha
@@ -1666,9 +1669,14 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// Row-stage **filter** stream for the high-bit packed-RGB `u16` color
   /// group ([`Rgb48`](crate::source::Rgb48), and the high-bit planar GBR
   /// sources `Gbrp9`…`Gbrp16` which scatter into the same packed `u16` RGB
-  /// row) — the filter twin of [`Self::rgb_stream_u16`]. Lazily created in
-  /// `process`, reset in `begin_frame`. Fed when the plan kind is `Filter`.
-  #[cfg(any(feature = "rgb", feature = "gbr"))]
+  /// row, and the high-bit packed YUV 4:4:4 colour group `V410` / `V30X`
+  /// which convert their YUV to a native-depth u16 RGB row) — the filter
+  /// twin of [`Self::rgb_stream_u16`]. Lazily created in `process`, reset
+  /// in `begin_frame`. Fed when the plan kind is `Filter`. The
+  /// [`packed_rgb_u16_resample_emit`] tail clamps a signed-kernel overshoot
+  /// to the source's native max `(1 << SRC_BITS) - 1` for a sub-16-bit
+  /// source (`V410` / `V30X` are 10-bit), matching the in-range area path.
+  #[cfg(any(feature = "rgb", feature = "gbr", feature = "yuv-444-packed"))]
   rgb_filter_stream_u16: Option<crate::resample::FilterStream<u16>>,
   /// Row-stage **filter** stream for the high-bit packed-RGBA `u16` color
   /// group ([`Rgba64`](crate::source::Rgba64) /
@@ -1693,6 +1701,18 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// precision and emits unclamped (PIL `F`-mode).
   #[cfg(feature = "gray")]
   luma_filter_stream_f32: Option<crate::resample::FilterStream<f32>>,
+  /// Row-stage **filter** stream for single-plane **`u16`** native-Y luma
+  /// resampling — the [`SpanKind::Filter`](crate::resample::SpanKind) twin
+  /// of [`Self::luma_stream_u16`] for the high-bit packed YUV 4:4:4 colour
+  /// group (`V410` / `V30X`). On a `Filter` plan the native Y is
+  /// de-interleaved into a source-width `u16` scratch and resampled here at
+  /// native depth, so luma stays **native Y** (never colour-derived) —
+  /// byte-exact to the direct `*_to_luma*` kernels' filter resample, the
+  /// filter analogue of the area path's native-Y bin. Lazily created in
+  /// `process`, reset in `begin_frame`. Gated to `yuv-444-packed`; widens
+  /// as more native-Y filter families wire in.
+  #[cfg(feature = "yuv-444-packed")]
+  luma_filter_stream_u16: Option<crate::resample::FilterStream<u16>>,
   /// Output configuration frozen at a resampled frame's first
   /// processed row; `None` between frames. Captures presence AND
   /// attachment identity (pointer/length) of every output the emit
@@ -2533,16 +2553,18 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       luma_stream_u16: None,
       #[cfg(feature = "gray")]
       luma_stream_f32: None,
-      #[cfg(any(feature = "rgb", feature = "gbr"))]
+      #[cfg(any(feature = "rgb", feature = "gbr", feature = "yuv-444-packed"))]
       rgb_filter_stream: None,
       #[cfg(any(feature = "rgb", feature = "gbr"))]
       rgba_filter_stream: None,
-      #[cfg(any(feature = "rgb", feature = "gbr"))]
+      #[cfg(any(feature = "rgb", feature = "gbr", feature = "yuv-444-packed"))]
       rgb_filter_stream_u16: None,
       #[cfg(any(feature = "rgb", feature = "gbr"))]
       rgba_filter_stream_u16: None,
       #[cfg(feature = "gray")]
       luma_filter_stream_f32: None,
+      #[cfg(feature = "yuv-444-packed")]
+      luma_filter_stream_u16: None,
       #[cfg(any(
         feature = "yuv-planar",
         feature = "rgb",
@@ -6163,8 +6185,10 @@ pub(super) fn packed_yuv444_triple_resample<const SRC_BITS: u32>(
   convert_rgb_u16: impl FnOnce(&mut [u16]),
   deinterleave_y: impl FnOnce(&mut [u16]),
 ) -> Result<(), MixedSinkerError> {
-  // Area-only sink (high-bit packed YUV 4:4:4 is not routed to the filter
-  // path): reject a filter plan before any work.
+  // Area entry: a `Filter` plan is dispatched by the caller to
+  // [`packed_yuv444_triple_filter_resample`] (V410 / V30X) or rejected
+  // there (the not-yet-routed 4:4:4 callers), so reject a filter plan
+  // that reaches this area body before any work.
   if plan.kind().is_filter() {
     return Err(plan.unsupported_filter().into());
   }
@@ -6174,7 +6198,6 @@ pub(super) fn packed_yuv444_triple_resample<const SRC_BITS: u32>(
       "SRC_BITS must be in [8, 16]"
     )
   };
-  let ow = plan.out_w();
   let need_luma = luma.is_some() || luma_u16.is_some();
   let need_u8_color = rgb.is_some() || rgba.is_some() || hsv.is_some();
   let need_u16_color = rgb_u16.is_some() || rgba_u16.is_some();
@@ -6262,24 +6285,102 @@ pub(super) fn packed_yuv444_triple_resample<const SRC_BITS: u32>(
     )?);
   }
 
+  // Stage + feed + emit. Shared with the filter path
+  // ([`packed_yuv444_triple_filter_resample`]) so the area and filter
+  // arms run the identical convert-then-resample tail (the only
+  // difference is the stream kind built above).
+  packed_yuv444_triple_feed_emit::<_, _, _, SRC_BITS>(
+    rgb_stream.as_mut(),
+    rgb_stream_u16.as_mut(),
+    luma_stream_u16.as_mut(),
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    luma,
+    luma_u16,
+    hsv,
+    rgb_scratch,
+    rgb_scratch_u16,
+    luma_scratch_u16,
+    w,
+    plan,
+    idx,
+    use_simd,
+    matrix,
+    full_range,
+    convert_rgb_u8,
+    convert_rgb_u16,
+    deinterleave_y,
+  )
+}
+
+/// Shared stage-then-feed tail for the packed 4:4:4 YUV (no-alpha)
+/// family, used by both [`packed_yuv444_triple_resample`] (area) and
+/// [`packed_yuv444_triple_filter_resample`] (filter). The two paths
+/// differ only in the resampler kind built by the caller — the
+/// convert-then-resample staging and per-output emit are identical, so
+/// they live here behind the [`RowResampler`](crate::resample::RowResampler)
+/// trait (which both [`AreaStream`](crate::resample::AreaStream) and
+/// [`FilterStream`](crate::resample::FilterStream) implement). Keeping
+/// the emit byte-identical between the arms is what makes the filter
+/// output match the area output up to the kernel weights.
+///
+/// Each stream is `Some` exactly when its output group is attached (the
+/// caller created it post-sequence-check). Staging runs every fallible
+/// source-width growth before the first feed so a failure mutates no
+/// caller output; the three scratches are distinct fields and never
+/// alias.
+#[cfg(any(feature = "yuv-444-packed", feature = "yuv-planar"))]
+#[allow(clippy::too_many_arguments)]
+fn packed_yuv444_triple_feed_emit<U8S, U16S, Y16S, const SRC_BITS: u32>(
+  rgb_stream: Option<&mut U8S>,
+  rgb_stream_u16: Option<&mut U16S>,
+  luma_stream_u16: Option<&mut Y16S>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  rgb_u16: &mut Option<&mut [u16]>,
+  rgba_u16: &mut Option<&mut [u16]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgb_scratch: &mut Vec<u8>,
+  rgb_scratch_u16: &mut Vec<u16>,
+  luma_scratch_u16: &mut Vec<u16>,
+  w: usize,
+  plan: &ResamplePlan,
+  idx: usize,
+  use_simd: bool,
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  convert_rgb_u8: impl FnOnce(&mut [u8]),
+  convert_rgb_u16: impl FnOnce(&mut [u16]),
+  deinterleave_y: impl FnOnce(&mut [u16]),
+) -> Result<(), MixedSinkerError>
+where
+  U8S: crate::resample::RowResampler<u8>,
+  U16S: crate::resample::RowResampler<u16>,
+  Y16S: crate::resample::RowResampler<u16>,
+{
+  let ow = plan.out_w();
   // Stage every source-width row (all fallible growths run before the
   // first feed, keeping the call atomic). The three scratches are
   // distinct fields and never alias.
-  let u8_color_row = if need_u8_color {
+  let u8_color_row = if rgb_stream.is_some() {
     let scratch = source_rgb_scratch(rgb_scratch, w, plan)?;
     convert_rgb_u8(scratch);
     Some(scratch)
   } else {
     None
   };
-  let u16_color_row = if need_u16_color {
+  let u16_color_row = if rgb_stream_u16.is_some() {
     let scratch = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
     convert_rgb_u16(scratch);
     Some(scratch)
   } else {
     None
   };
-  let y_row = if need_luma {
+  let y_row = if luma_stream_u16.is_some() {
     let scratch = source_luma_u16_scratch(luma_scratch_u16, w, plan)?;
     deinterleave_y(scratch);
     Some(scratch)
@@ -6294,14 +6395,14 @@ pub(super) fn packed_yuv444_triple_resample<const SRC_BITS: u32>(
   // already consumed by the u8 feed above, is passed as the unused
   // placeholder).
   if let Some(scratch) = u8_color_row {
-    let stream = rgb_stream.as_mut().expect("created in the preflight");
+    let stream = rgb_stream.expect("staged only when present");
     packed_rgb_resample_emit(
       stream, plan, rgb, rgba, &mut None, &mut None, hsv, scratch, matrix, full_range, idx,
       use_simd,
     )?;
   }
   if let Some(scratch) = u16_color_row {
-    let stream = rgb_stream_u16.as_mut().expect("created in the preflight");
+    let stream = rgb_stream_u16.expect("staged only when present");
     packed_rgb_u16_resample_emit::<SRC_BITS, false>(
       stream,
       plan,
@@ -6321,22 +6422,239 @@ pub(super) fn packed_yuv444_triple_resample<const SRC_BITS: u32>(
     )?;
   }
   if let Some(scratch) = y_row {
-    let stream = luma_stream_u16.as_mut().expect("created in the preflight");
+    let stream = luma_stream_u16.expect("staged only when present");
+    // A signed filter kernel (CatmullRom / Lanczos3) overshoots a legal
+    // edge, so a finalized binned native-Y sample can exceed the source's
+    // native max `(1 << SRC_BITS) - 1` even though the `FilterStream`
+    // clamps it to the full `u16` range. The de-interleaved native-Y luma
+    // bypasses the colour path's `packed_rgb_u16_resample_emit` clamp, so
+    // we clip here — the luma twin of that helper's `native_max` clamp.
+    // Without it the native-depth `luma_u16` would publish a value above
+    // the documented `[0, (1 << SRC_BITS) - 1]` range, and the u8 luma
+    // narrowing (`>> (SRC_BITS - 8)`) would wrap a clipped-high Y edge to a
+    // small value instead of `255`. For `SRC_BITS == 16` the native max is
+    // the u16 max, so this is a value no-op; the area path never
+    // overshoots, so it is a no-op there too.
+    let native_max: u16 = ((1u32 << SRC_BITS) - 1) as u16;
     stream.feed_row(idx, scratch, use_simd, |oy, binned_y| {
-      // luma_u16: host-native pass-through of the binned native Y.
+      // luma_u16: host-native pass-through of the binned native Y, clamped
+      // to the native max for a sub-16-bit source.
       if let Some(buf) = luma_u16.as_deref_mut() {
-        buf[oy * ow..(oy + 1) * ow].copy_from_slice(binned_y);
+        let out = &mut buf[oy * ow..(oy + 1) * ow];
+        if SRC_BITS < 16 {
+          for (dst, &src) in out.iter_mut().zip(binned_y) {
+            *dst = src.min(native_max);
+          }
+        } else {
+          out.copy_from_slice(binned_y);
+        }
       }
-      // luma: narrow the binned native Y to u8 (`>> (SRC_BITS - 8)`).
+      // luma: narrow the binned native Y to u8 (`>> (SRC_BITS - 8)`),
+      // clamping to the native max first so a sub-16-bit overshoot clips to
+      // `255` instead of wrapping.
       if let Some(buf) = luma.as_deref_mut() {
-        for (dst, &src) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(binned_y) {
-          *dst = (src >> (SRC_BITS - 8)) as u8;
+        if SRC_BITS < 16 {
+          for (dst, &src) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(binned_y) {
+            *dst = (src.min(native_max) >> (SRC_BITS - 8)) as u8;
+          }
+        } else {
+          for (dst, &src) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(binned_y) {
+            *dst = (src >> (SRC_BITS - 8)) as u8;
+          }
         }
       }
     })?;
   }
 
   Ok(())
+}
+
+/// Separable-filter fused resize for the **packed 4:4:4 YUV (no-alpha)**
+/// family — the [`SpanKind::Filter`](crate::resample::SpanKind) twin of
+/// [`packed_yuv444_triple_resample`]. It mirrors the area path exactly:
+/// the YUV is first converted to RGB by the **same** `convert_rgb_u8` /
+/// `convert_rgb_u16` closures, then the RGB is resampled — only the
+/// resampler kind differs (signed-coefficient [`FilterStream`] instead
+/// of [`AreaStream`]). The staged RGB feeds the same emit
+/// ([`packed_yuv444_triple_feed_emit`]), so the resampled colour output
+/// equals the equivalent packed-RGB filter resample of the converted
+/// pixels, and (because the area path converts-then-bins the same RGB)
+/// matches the area output up to the kernel weights.
+///
+/// Luma is the native Y filter-resampled (the filter twin of the area
+/// path's native-Y bin): `deinterleave_y` stages the native Y into a
+/// source-width `u16` scratch and a 1-channel
+/// [`FilterStream<u16>`](crate::resample::FilterStream)
+/// (`luma_filter_stream_u16`) resamples it at native depth — luma is
+/// taken from Y, never colour-derived, so it stays byte-exact to the
+/// direct `*_to_luma*` kernels' filter resample. `luma_u16` is the
+/// host-native resampled Y; `luma` is `resampled_y >> (SRC_BITS - 8)`.
+///
+/// Both the colour `u16` outputs and the native-Y luma carry the source's
+/// native depth (`SRC_BITS`, `10` for `V410` / `V30X`, low-bit-packed
+/// `[0, (1 << SRC_BITS) - 1]`): a signed kernel (CatmullRom / Lanczos3)
+/// can overshoot a legal edge. For colour, [`packed_rgb_u16_resample_emit`]
+/// clamps every resampled sample to the native max before any `u16` copy /
+/// RGBA expansion / u8 narrowing (the same `SRC_BITS < 16` clamp the
+/// high-bit GBR / planar filter routes use). The de-interleaved native-Y
+/// luma bypasses that colour helper, so [`packed_yuv444_triple_feed_emit`]
+/// applies the matching clamp to the binned Y before the `luma_u16` copy
+/// and the u8 narrowing — keeping `luma_u16 <= (1 << SRC_BITS) - 1` and a
+/// clipped-high Y edge mapping to `255` rather than wrapping. Both clamps
+/// match the in-range area path's output exactly.
+///
+/// Atomic preflight (mirrors [`packed_yuv444_triple_resample`]): a single
+/// [`frozen_outputs_check`] over the full output set, then a single
+/// sequence check on whichever stream is fed every row **before any
+/// allocation** (an out-of-sequence first row is rejected before the
+/// freeze, storing no snapshot to poison a retry; on a later row the
+/// freeze runs first so a mid-frame output change trips
+/// `ResampleOutputsChanged`), then every stream and source-width scratch
+/// is created before the first feed — so a failure mutates no caller
+/// output. A no-output call has no stream to sequence and stays a no-op.
+#[cfg(feature = "yuv-444-packed")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn packed_yuv444_triple_filter_resample<const SRC_BITS: u32>(
+  rgb_filter_stream: &mut Option<crate::resample::FilterStream<u8>>,
+  rgb_filter_stream_u16: &mut Option<crate::resample::FilterStream<u16>>,
+  luma_filter_stream_u16: &mut Option<crate::resample::FilterStream<u16>>,
+  resample_outputs: &mut Option<FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  rgb_u16: &mut Option<&mut [u16]>,
+  rgba_u16: &mut Option<&mut [u16]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgb_scratch: &mut Vec<u8>,
+  rgb_scratch_u16: &mut Vec<u16>,
+  luma_scratch_u16: &mut Vec<u16>,
+  w: usize,
+  plan: &ResamplePlan,
+  idx: usize,
+  use_simd: bool,
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  convert_rgb_u8: impl FnOnce(&mut [u8]),
+  convert_rgb_u16: impl FnOnce(&mut [u16]),
+  deinterleave_y: impl FnOnce(&mut [u16]),
+) -> Result<(), MixedSinkerError> {
+  const {
+    assert!(
+      SRC_BITS >= 8 && SRC_BITS <= 16,
+      "SRC_BITS must be in [8, 16]"
+    )
+  };
+  let need_luma = luma.is_some() || luma_u16.is_some();
+  let need_u8_color = rgb.is_some() || rgba.is_some() || hsv.is_some();
+  let need_u16_color = rgb_u16.is_some() || rgba_u16.is_some();
+
+  let (fh, fv) = (
+    plan
+      .filter_h()
+      .expect("filter plan carries horizontal windows"),
+    plan
+      .filter_v()
+      .expect("filter plan carries vertical windows"),
+  );
+
+  // Single sequence check before any allocation, on whichever attached
+  // stream is fed every row (all attached streams advance in lockstep).
+  let expected = if need_luma {
+    luma_filter_stream_u16.as_ref().map_or(0, |s| s.next_y())
+  } else if need_u8_color {
+    rgb_filter_stream.as_ref().map_or(0, |s| s.next_y())
+  } else if need_u16_color {
+    rgb_filter_stream_u16.as_ref().map_or(0, |s| s.next_y())
+  } else {
+    return Ok(());
+  };
+  // First row: reject an out-of-sequence row before the freeze so a
+  // rejected first row stores no snapshot that would poison a retry.
+  if resample_outputs.is_none() && expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    hsv,
+    &None,
+    idx,
+  )?;
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+
+  // Create the filter streams (post-sequence-check). Each plane runs the
+  // full output grid against its own source grid; the colour streams
+  // carry 3 interleaved channels, the luma stream 1.
+  if need_u8_color && rgb_filter_stream.is_none() {
+    *rgb_filter_stream = Some(crate::resample::FilterStream::new(
+      fh,
+      fv,
+      plan.src_w(),
+      plan.src_h(),
+      3,
+    )?);
+  }
+  if need_u16_color && rgb_filter_stream_u16.is_none() {
+    *rgb_filter_stream_u16 = Some(crate::resample::FilterStream::new(
+      fh,
+      fv,
+      plan.src_w(),
+      plan.src_h(),
+      3,
+    )?);
+  }
+  if need_luma && luma_filter_stream_u16.is_none() {
+    *luma_filter_stream_u16 = Some(crate::resample::FilterStream::new(
+      fh,
+      fv,
+      plan.src_w(),
+      plan.src_h(),
+      1,
+    )?);
+  }
+
+  packed_yuv444_triple_feed_emit::<_, _, _, SRC_BITS>(
+    rgb_filter_stream.as_mut(),
+    rgb_filter_stream_u16.as_mut(),
+    luma_filter_stream_u16.as_mut(),
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    luma,
+    luma_u16,
+    hsv,
+    rgb_scratch,
+    rgb_scratch_u16,
+    luma_scratch_u16,
+    w,
+    plan,
+    idx,
+    use_simd,
+    matrix,
+    full_range,
+    convert_rgb_u8,
+    convert_rgb_u16,
+    deinterleave_y,
+  )
 }
 
 /// Row-stage fused downscale for the **packed 4:4:4 YUV-with-alpha**
