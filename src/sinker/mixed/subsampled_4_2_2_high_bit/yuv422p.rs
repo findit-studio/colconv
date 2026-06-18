@@ -1,8 +1,8 @@
 use super::super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
   RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match, deinterleave_y_high_bit,
-  packed_yuv422_triple_resample, reset_high_bit_yuv_streams, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  packed_yuv422_triple_filter_resample, packed_yuv422_triple_resample, reset_high_bit_yuv_streams,
+  rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
 use crate::{PixelSink, row::*, source::*};
 
@@ -418,6 +418,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p10<BE>, R> {
       rgb_stream,
       rgb_stream_u16,
       luma_stream_u16,
+      rgb_filter_stream,
+      rgb_filter_stream_u16,
+      luma_filter_stream_u16,
       resample_outputs,
       plan,
       ..
@@ -429,44 +432,84 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p10<BE>, R> {
     // shared 4:2:0 row kernels (4:2:0 and 4:2:2 have the identical per-row
     // chroma contract). Yuv422p exposes no `luma_u16` output, so it is
     // `&mut None` and only `luma` (binned native Y `>> (BITS - 8)`) is
-    // emitted.
+    // emitted. The span kind picks the engine: area binning, or the
+    // signed-coefficient filter twin (both convert the YUV to RGB with the
+    // same closures and resample in RGB space, so filter colour equals the
+    // RGB filter of the converted pixels and matches area up to the kernel).
+    // The filter tail clamps every sub-16-bit colour sample AND the native Y
+    // to `(1 << BITS) - 1` before publishing.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
-      return packed_yuv422_triple_resample::<BITS>(
-        luma_stream_u16,
-        rgb_stream,
-        rgb_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        &mut None,
-        hsv,
-        luma_scratch_u16,
-        rgb_scratch,
-        rgb_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        matrix,
-        full_range,
-        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
-        |scratch| {
-          yuv420p10_to_rgb_row_endian(
-            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-          )
-        },
-        |scratch| {
-          yuv420p10_to_rgb_u16_row_endian(
-            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-          )
-        },
-      );
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => packed_yuv422_triple_resample::<BITS>(
+          luma_stream_u16,
+          rgb_stream,
+          rgb_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          luma_scratch_u16,
+          rgb_scratch,
+          rgb_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| {
+            yuv420p10_to_rgb_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+          |scratch| {
+            yuv420p10_to_rgb_u16_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+        ),
+        crate::resample::SpanKind::Filter => packed_yuv422_triple_filter_resample::<BITS>(
+          luma_filter_stream_u16,
+          rgb_filter_stream,
+          rgb_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          luma_scratch_u16,
+          rgb_scratch,
+          rgb_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| {
+            yuv420p10_to_rgb_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+          |scratch| {
+            yuv420p10_to_rgb_u16_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+        ),
+      };
     }
 
     let one_plane_start = idx * w;
@@ -732,6 +775,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>, R> {
       rgb_stream,
       rgb_stream_u16,
       luma_stream_u16,
+      rgb_filter_stream,
+      rgb_filter_stream_u16,
+      luma_filter_stream_u16,
       resample_outputs,
       plan,
       ..
@@ -743,44 +789,82 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>, R> {
     // shared 4:2:0 row kernels (4:2:0 and 4:2:2 have the identical per-row
     // chroma contract). Yuv422p exposes no `luma_u16` output, so it is
     // `&mut None` and only `luma` (binned native Y `>> (BITS - 8)`) is
-    // emitted.
+    // emitted. The span kind picks the engine (area bin or signed-coefficient
+    // filter twin) — see the Yuv422p10 impl for the full rationale; the
+    // filter tail clamps every sub-16-bit colour sample AND the native Y to
+    // `(1 << BITS) - 1`.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
-      return packed_yuv422_triple_resample::<BITS>(
-        luma_stream_u16,
-        rgb_stream,
-        rgb_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        &mut None,
-        hsv,
-        luma_scratch_u16,
-        rgb_scratch,
-        rgb_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        matrix,
-        full_range,
-        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
-        |scratch| {
-          yuv420p12_to_rgb_row_endian(
-            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-          )
-        },
-        |scratch| {
-          yuv420p12_to_rgb_u16_row_endian(
-            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-          )
-        },
-      );
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => packed_yuv422_triple_resample::<BITS>(
+          luma_stream_u16,
+          rgb_stream,
+          rgb_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          luma_scratch_u16,
+          rgb_scratch,
+          rgb_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| {
+            yuv420p12_to_rgb_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+          |scratch| {
+            yuv420p12_to_rgb_u16_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+        ),
+        crate::resample::SpanKind::Filter => packed_yuv422_triple_filter_resample::<BITS>(
+          luma_filter_stream_u16,
+          rgb_filter_stream,
+          rgb_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          luma_scratch_u16,
+          rgb_scratch,
+          rgb_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| {
+            yuv420p12_to_rgb_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+          |scratch| {
+            yuv420p12_to_rgb_u16_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+        ),
+      };
     }
 
     let one_plane_start = idx * w;
@@ -1046,6 +1130,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>, R> {
       rgb_stream,
       rgb_stream_u16,
       luma_stream_u16,
+      rgb_filter_stream,
+      rgb_filter_stream_u16,
+      luma_filter_stream_u16,
       resample_outputs,
       plan,
       ..
@@ -1057,44 +1144,82 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>, R> {
     // shared 4:2:0 row kernels (4:2:0 and 4:2:2 have the identical per-row
     // chroma contract). Yuv422p exposes no `luma_u16` output, so it is
     // `&mut None` and only `luma` (binned native Y `>> (BITS - 8)`) is
-    // emitted.
+    // emitted. The span kind picks the engine (area bin or signed-coefficient
+    // filter twin) — see the Yuv422p10 impl for the full rationale; the
+    // filter tail clamps every sub-16-bit colour sample AND the native Y to
+    // `(1 << BITS) - 1`.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
-      return packed_yuv422_triple_resample::<BITS>(
-        luma_stream_u16,
-        rgb_stream,
-        rgb_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        &mut None,
-        hsv,
-        luma_scratch_u16,
-        rgb_scratch,
-        rgb_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        matrix,
-        full_range,
-        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
-        |scratch| {
-          yuv420p14_to_rgb_row_endian(
-            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-          )
-        },
-        |scratch| {
-          yuv420p14_to_rgb_u16_row_endian(
-            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-          )
-        },
-      );
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => packed_yuv422_triple_resample::<BITS>(
+          luma_stream_u16,
+          rgb_stream,
+          rgb_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          luma_scratch_u16,
+          rgb_scratch,
+          rgb_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| {
+            yuv420p14_to_rgb_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+          |scratch| {
+            yuv420p14_to_rgb_u16_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+        ),
+        crate::resample::SpanKind::Filter => packed_yuv422_triple_filter_resample::<BITS>(
+          luma_filter_stream_u16,
+          rgb_filter_stream,
+          rgb_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          luma_scratch_u16,
+          rgb_scratch,
+          rgb_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| {
+            yuv420p14_to_rgb_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+          |scratch| {
+            yuv420p14_to_rgb_u16_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+        ),
+      };
     }
 
     let one_plane_start = idx * w;
@@ -1367,6 +1492,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p16<BE>, R> {
       rgb_stream,
       rgb_stream_u16,
       luma_stream_u16,
+      rgb_filter_stream,
+      rgb_filter_stream_u16,
+      luma_filter_stream_u16,
       resample_outputs,
       plan,
       ..
@@ -1378,44 +1506,82 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p16<BE>, R> {
     // shared 4:2:0 row kernels (4:2:0 and 4:2:2 have the identical per-row
     // chroma contract). Yuv422p exposes no `luma_u16` output, so it is
     // `&mut None` and only `luma` (binned native Y `>> (BITS - 8)`) is
-    // emitted.
+    // emitted. The span kind picks the engine (area bin or signed-coefficient
+    // filter twin) — see the Yuv422p10 impl for the full rationale. At
+    // `BITS = 16` the native max is the u16 max, so the filter tail's
+    // sub-16-bit clamp is a value no-op.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
-      return packed_yuv422_triple_resample::<BITS>(
-        luma_stream_u16,
-        rgb_stream,
-        rgb_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        &mut None,
-        hsv,
-        luma_scratch_u16,
-        rgb_scratch,
-        rgb_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        matrix,
-        full_range,
-        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
-        |scratch| {
-          yuv420p16_to_rgb_row_endian(
-            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-          )
-        },
-        |scratch| {
-          yuv420p16_to_rgb_u16_row_endian(
-            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-          )
-        },
-      );
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => packed_yuv422_triple_resample::<BITS>(
+          luma_stream_u16,
+          rgb_stream,
+          rgb_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          luma_scratch_u16,
+          rgb_scratch,
+          rgb_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| {
+            yuv420p16_to_rgb_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+          |scratch| {
+            yuv420p16_to_rgb_u16_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+        ),
+        crate::resample::SpanKind::Filter => packed_yuv422_triple_filter_resample::<BITS>(
+          luma_filter_stream_u16,
+          rgb_filter_stream,
+          rgb_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          luma_scratch_u16,
+          rgb_scratch,
+          rgb_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| {
+            yuv420p16_to_rgb_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+          |scratch| {
+            yuv420p16_to_rgb_u16_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+        ),
+      };
     }
 
     let one_plane_start = idx * w;

@@ -1,8 +1,9 @@
 use super::super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, NativeRouteChanged,
   RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
-  deinterleave_y_high_bit, packed_yuv422_triple_resample, reset_high_bit_yuv_streams,
-  rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  deinterleave_y_high_bit, packed_yuv422_triple_filter_resample, packed_yuv422_triple_resample,
+  reset_high_bit_yuv_streams, rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  rgba_u16_plane_row_slice,
 };
 use super::yuv420p16_process_native;
 use crate::{PixelSink, row::*, source::*};
@@ -451,6 +452,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p10<BE>, R> {
       rgb_stream,
       rgb_stream_u16,
       luma_stream_u16,
+      rgb_filter_stream,
+      rgb_filter_stream_u16,
+      luma_filter_stream_u16,
       resample_outputs,
       plan,
       native,
@@ -476,6 +480,51 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p10<BE>, R> {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
+      // A `Filter` plan routes to the filter resampler BEFORE the
+      // native/row-stage route machinery: the native fast tier is an
+      // area-specific optimization that never sees a filter plan, and the
+      // per-sink plan kind is fixed at construction, so a filter sink bypasses
+      // the `frozen_native_route` interaction entirely. It converts the
+      // separate Y/U/V planes to a source-width u8 + native-u16 RGB row (the
+      // SAME closures the row-stage tier uses) and filter-resamples them plus
+      // the native Y — the filter twin of the row-stage tier. The shared tail
+      // clamps every sub-16-bit colour sample AND the native Y to
+      // `(1 << BITS) - 1`. Yuv420p exposes no `luma_u16`, so it is `&mut None`.
+      if plan.kind().is_filter() {
+        return packed_yuv422_triple_filter_resample::<BITS>(
+          luma_filter_stream_u16,
+          rgb_filter_stream,
+          rgb_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          luma_scratch_u16,
+          rgb_scratch,
+          rgb_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| {
+            yuv420p10_to_rgb_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+          |scratch| {
+            yuv420p10_to_rgb_u16_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+        );
+      }
       // Whether this call carries any output — the EXACT set both tiers'
       // preflight tests (`need_luma || need_color` =
       // `luma || rgb || rgba || hsv || rgb_u16 || rgba_u16`). The route
@@ -874,6 +923,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p12<BE>, R> {
       rgb_stream,
       rgb_stream_u16,
       luma_stream_u16,
+      rgb_filter_stream,
+      rgb_filter_stream_u16,
+      luma_filter_stream_u16,
       resample_outputs,
       plan,
       native,
@@ -890,6 +942,51 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p12<BE>, R> {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
+      // A `Filter` plan routes to the filter resampler BEFORE the
+      // native/row-stage route machinery: the native fast tier is an
+      // area-specific optimization that never sees a filter plan, and the
+      // per-sink plan kind is fixed at construction, so a filter sink bypasses
+      // the `frozen_native_route` interaction entirely. It converts the
+      // separate Y/U/V planes to a source-width u8 + native-u16 RGB row (the
+      // SAME closures the row-stage tier uses) and filter-resamples them plus
+      // the native Y — the filter twin of the row-stage tier. The shared tail
+      // clamps every sub-16-bit colour sample AND the native Y to
+      // `(1 << BITS) - 1`. Yuv420p exposes no `luma_u16`, so it is `&mut None`.
+      if plan.kind().is_filter() {
+        return packed_yuv422_triple_filter_resample::<BITS>(
+          luma_filter_stream_u16,
+          rgb_filter_stream,
+          rgb_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          luma_scratch_u16,
+          rgb_scratch,
+          rgb_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| {
+            yuv420p12_to_rgb_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+          |scratch| {
+            yuv420p12_to_rgb_u16_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+        );
+      }
       // Whether this call carries any output — the EXACT set both tiers'
       // preflight tests (`need_luma || need_color` =
       // `luma || rgb || rgba || hsv || rgb_u16 || rgba_u16`). The route
@@ -1272,6 +1369,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p14<BE>, R> {
       rgb_stream,
       rgb_stream_u16,
       luma_stream_u16,
+      rgb_filter_stream,
+      rgb_filter_stream_u16,
+      luma_filter_stream_u16,
       resample_outputs,
       plan,
       native,
@@ -1288,6 +1388,51 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p14<BE>, R> {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
+      // A `Filter` plan routes to the filter resampler BEFORE the
+      // native/row-stage route machinery: the native fast tier is an
+      // area-specific optimization that never sees a filter plan, and the
+      // per-sink plan kind is fixed at construction, so a filter sink bypasses
+      // the `frozen_native_route` interaction entirely. It converts the
+      // separate Y/U/V planes to a source-width u8 + native-u16 RGB row (the
+      // SAME closures the row-stage tier uses) and filter-resamples them plus
+      // the native Y — the filter twin of the row-stage tier. The shared tail
+      // clamps every sub-16-bit colour sample AND the native Y to
+      // `(1 << BITS) - 1`. Yuv420p exposes no `luma_u16`, so it is `&mut None`.
+      if plan.kind().is_filter() {
+        return packed_yuv422_triple_filter_resample::<BITS>(
+          luma_filter_stream_u16,
+          rgb_filter_stream,
+          rgb_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          luma_scratch_u16,
+          rgb_scratch,
+          rgb_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| {
+            yuv420p14_to_rgb_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+          |scratch| {
+            yuv420p14_to_rgb_u16_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+        );
+      }
       // Whether this call carries any output — the EXACT set both tiers'
       // preflight tests (`need_luma || need_color` =
       // `luma || rgb || rgba || hsv || rgb_u16 || rgba_u16`). The route
@@ -1669,6 +1814,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p16<BE>, R> {
       rgb_stream,
       rgb_stream_u16,
       luma_stream_u16,
+      rgb_filter_stream,
+      rgb_filter_stream_u16,
+      luma_filter_stream_u16,
       resample_outputs,
       plan,
       native,
@@ -1686,6 +1834,51 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p16<BE>, R> {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
+      // A `Filter` plan routes to the filter resampler BEFORE the
+      // native/row-stage route machinery: the native fast tier is an
+      // area-specific optimization that never sees a filter plan, and the
+      // per-sink plan kind is fixed at construction, so a filter sink bypasses
+      // the `frozen_native_route` interaction entirely. It converts the
+      // separate Y/U/V planes to a source-width u8 + native-u16 RGB row (the
+      // SAME closures the row-stage tier uses) and filter-resamples them plus
+      // the native Y — the filter twin of the row-stage tier. The shared tail
+      // clamps every sub-16-bit colour sample AND the native Y to
+      // `(1 << BITS) - 1`. Yuv420p exposes no `luma_u16`, so it is `&mut None`.
+      if plan.kind().is_filter() {
+        return packed_yuv422_triple_filter_resample::<BITS>(
+          luma_filter_stream_u16,
+          rgb_filter_stream,
+          rgb_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          luma_scratch_u16,
+          rgb_scratch,
+          rgb_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| {
+            yuv420p16_to_rgb_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+          |scratch| {
+            yuv420p16_to_rgb_u16_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+        );
+      }
       // Whether this call carries any output — the EXACT set both tiers'
       // preflight tests (`need_luma || need_color` =
       // `luma || rgb || rgba || hsv || rgb_u16 || rgba_u16`). The route

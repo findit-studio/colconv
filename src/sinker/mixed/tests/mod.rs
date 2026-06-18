@@ -243,6 +243,8 @@ mod resample_yuv440p_high_bit;
 mod resample_yuv444p_high_bit;
 #[cfg(feature = "yuv-planar")]
 mod resample_yuv_planar_8bit_filter;
+#[cfg(feature = "yuv-planar")]
+mod resample_yuv_planar_high_bit_filter;
 #[cfg(feature = "yuva")]
 mod resample_yuva420p;
 #[cfg(feature = "yuva")]
