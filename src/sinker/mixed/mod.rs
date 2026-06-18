@@ -6997,10 +6997,15 @@ pub(super) fn rgb_packed_f16_scratch<'s>(
 
 /// Feeds the prepared source-width packed `R, G, B` `f32` row (the
 /// [`Rgbf16`](crate::source::Rgbf16) wire widened f16 -> host-native f32)
-/// into the float area stream and derives every attached output from each
-/// finalized output row.
+/// into the f32 stream and derives every attached output from each
+/// finalized output row. `stream` is generic over
+/// [`RowResampler<f32>`](crate::resample::RowResampler), so the **same**
+/// emit serves both the float area path ([`AreaStream<f32>`]) and the
+/// signed-coefficient filter path ([`FilterStream<f32>`]) — the span kind
+/// is chosen at the call site; the round-then-`rgbf16_*` tail is identical.
 ///
-/// There is no `AreaStream<f16>`, so binning runs in `f32` for precision.
+/// There is no `AreaStream<f16>`/`FilterStream<f16>`, so binning runs in
+/// `f32` for precision.
 /// Per finalized output row this tail **rounds the binned packed `f32` row
 /// to `half::f16`** ([`rgb_packed_f16_scratch`]) and runs the **exact
 /// direct `rgbf16_*` kernels** over that packed f16 row. The result is
@@ -7032,7 +7037,7 @@ pub(super) fn rgb_packed_f16_scratch<'s>(
 #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgb_f16_resample_emit(
-  stream: &mut crate::resample::AreaStream<f32>,
+  stream: &mut impl crate::resample::RowResampler<f32>,
   plan: &ResamplePlan,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
