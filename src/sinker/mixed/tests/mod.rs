@@ -215,6 +215,8 @@ mod resample_xyz12;
 mod resample_xyz12_filter;
 #[cfg(feature = "y2xx")]
 mod resample_y2xx;
+#[cfg(feature = "y2xx")]
+mod resample_y2xx_filter;
 #[cfg(feature = "gray")]
 mod resample_ya16;
 #[cfg(feature = "gray")]
