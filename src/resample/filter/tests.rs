@@ -124,8 +124,10 @@ fn axis_center_convention_matches_pil_first_output() {
 
 #[test]
 fn invalid_support_rejected() {
-  // A hostile kernel cannot size an unsafe window: non-finite, zero, and
-  // over-extent supports are all rejected before any allocation.
+  // A hostile kernel cannot size an unsafe window: only non-finite and
+  // non-positive supports are rejected before any allocation. A support
+  // wider than the source is NOT rejected (see
+  // `support_wider_than_source_builds`).
   struct Bad(f64);
   impl FilterKernel for Bad {
     fn support(&self) -> f64 {
@@ -135,15 +137,38 @@ fn invalid_support_rejected() {
       1.0
     }
   }
-  for bad in [f64::NAN, f64::INFINITY, 0.0, -1.0, 1e9] {
+  for bad in [f64::NAN, f64::INFINITY, 0.0, -1.0] {
     let err = FilterAxis::build(16, 4, &Bad(bad)).unwrap_err();
     assert!(
       matches!(err, ResampleError::InvalidFilterSupport(_)),
       "support {bad} should reject, got {err:?}"
     );
   }
-  // A finite in-bounds support builds fine.
+  // A finite positive support builds fine.
   assert!(FilterAxis::build(16, 4, &Bad(2.0)).is_ok());
+}
+
+#[test]
+fn support_wider_than_source_builds() {
+  // A support wider than the source (Lanczos3's 3 over a 1- or 2-wide axis,
+  // CatmullRom's 2 over a 2-wide axis) is the ordinary narrow-source enlarge
+  // case: the window clamps to `[0, in_size)` and normalizes over the
+  // available samples, exactly as PIL does. It must build, not reject.
+  assert!(FilterAxis::build(1, 7, &Lanczos3).is_ok());
+  assert!(FilterAxis::build(2, 5, &Lanczos3).is_ok());
+  assert!(FilterAxis::build(2, 9, &CatmullRom).is_ok());
+  // A huge finite support clamps to the source the same way (at most
+  // `in_size` taps), rather than overrunning.
+  struct Wide;
+  impl FilterKernel for Wide {
+    fn support(&self) -> f64 {
+      1e9
+    }
+    fn weight(&self, _x: f64) -> f64 {
+      1.0
+    }
+  }
+  assert!(FilterAxis::build(8, 32, &Wide).is_ok());
 }
 
 #[test]

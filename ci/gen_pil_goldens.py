@@ -13,7 +13,7 @@ Kernel <-> PIL resample filter mapping (the crate's `FilterKernel`s):
     CatmullRom <-> BICUBIC
     Lanczos3   <-> LANCZOS
 
-Only DOWNSCALE cases (integer + fractional ratios). Modes:
+Downscale, upscale, and mixed-ratio cases. Modes:
     L     -> u8  gray (1 channel)
     RGB   -> u8  (3 channels)
     I;16  -> u16 gray (1 channel)
@@ -38,9 +38,11 @@ KERNELS = [
     ("LANCZOS", "Lanczos3"),
 ]
 
-# (label, src_w, src_h, out_w, out_h, lcg seed). Integer + fractional
-# ratios, a couple of aspect-changing 1080p-ish downscales, and tiny grids
-# that stress the clamped edge windows.
+# (label, src_w, src_h, out_w, out_h, lcg seed). Downscale (integer +
+# fractional ratios, aspect-changing 1080p-ish reductions, tiny clamped-edge
+# grids) followed by enlarge + mixed-ratio cases. Enlarge source dims are
+# >= 3 so Lanczos3's support (3) never exceeds the source (the build rejects
+# a support wider than the source).
 GEOMS = [
     ("8x8_to_4x4", 8, 8, 4, 4, 0x1111),
     ("8x8_to_3x3", 8, 8, 3, 3, 0x1212),
@@ -49,6 +51,20 @@ GEOMS = [
     ("200x117_to_67x41", 200, 117, 67, 41, 0x4444),
     ("1920x1080_to_640x360", 1920, 1080, 640, 360, 0x5555),
     ("1000x1000_to_333x333", 1000, 1000, 333, 333, 0x6666),
+    ("3x3_to_7x7", 3, 3, 7, 7, 0x7171),
+    ("4x4_to_8x8", 4, 4, 8, 8, 0x7272),
+    ("6x6_to_9x9", 6, 6, 9, 9, 0x7676),
+    ("5x4_to_13x11", 5, 4, 13, 11, 0x7373),
+    ("8x8_to_20x6", 8, 8, 20, 6, 0x7474),
+    ("16x12_to_40x30", 16, 12, 40, 30, 0x7575),
+    # Narrow-source enlarge: a source dim below the kernel support (Lanczos3
+    # is 3) clamps the window to the whole source and normalizes over it, the
+    # same as PIL. Exercises the 1- and 2-tap clamped windows the build now
+    # admits (a support wider than the source is no longer rejected).
+    ("1x1_to_7x7", 1, 1, 7, 7, 0x8181),
+    ("2x2_to_5x5", 2, 2, 5, 5, 0x8282),
+    ("1x4_to_6x9", 1, 4, 6, 9, 0x8383),
+    ("2x8_to_6x3", 2, 8, 6, 3, 0x8484),
 ]
 
 # (mode label, PIL mode, channels, element rust type, numpy dtype).
@@ -108,7 +124,7 @@ def main() -> None:
         "//! `ci/gen_pil_goldens.py`; do not edit by hand. Sources are",
         "//! synthesized in the tests with the same LCG, so only PIL's",
         "//! outputs live here. Kernel map: Triangle<->BILINEAR,",
-        "//! CatmullRom<->BICUBIC, Lanczos3<->LANCZOS. Downscale only.",
+        "//! CatmullRom<->BICUBIC, Lanczos3<->LANCZOS.",
         "",
         "#![allow(clippy::unreadable_literal, clippy::excessive_precision)]",
         "",

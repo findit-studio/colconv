@@ -8,8 +8,11 @@
 //! drawn from a [`FilterKernel`], normalized so the run sums to one. This
 //! is the Pillow (PIL) `Image.resize` convention — [`Triangle`] matches
 //! PIL `BILINEAR`, [`CatmullRom`] matches PIL `BICUBIC`, and [`Lanczos3`]
-//! matches PIL `LANCZOS` — reproduced here within +-1 LSB using `f64`
-//! coefficients rather than PIL's integer fixed-point.
+//! matches PIL `LANCZOS`. The `u8` output path reproduces PIL **byte-exact**
+//! by resampling on PIL's 8bpc fixed-point coefficient grid (`coeffs_q8`,
+//! [`PRECISION_BITS`] = 22); the 32bpc `u16` / `f32` paths use the
+//! full-precision `f32` coefficients, matching PIL's double-coefficient
+//! resampler within +-1 LSB (`u16`) or `f32` precision.
 //!
 //! The half-pixel sampling convention ([`FilterAxis::build`]) mirrors
 //! PIL's `precompute_coeffs` exactly: that center/support arithmetic is
@@ -21,9 +24,8 @@
 //! window unsafe: [`FilterAxis::build`] validates [`FilterKernel::support`]
 //! is finite, strictly positive, and bounded before sizing any window.
 //!
-//! Downscale only in this stage; upscaling is rejected
-//! ([`ResampleError::UpscaleUnsupported`]). SIMD backends and the upscale
-//! direction land in later increments — this is the scalar foundation.
+//! Downscale, upscale, and mixed per-axis ratios are all supported, on the
+//! scalar path and every SIMD backend.
 
 use std::vec::Vec;
 
@@ -125,6 +127,23 @@ fn ceil_f64(x: f64) -> f64 {
   #[cfg(all(not(feature = "std"), feature = "alloc"))]
   {
     libm::ceil(x)
+  }
+}
+
+/// `f64` `round` (round-half-away-from-zero) portable across `std` and
+/// `no_std + alloc` builds. See [`floor_f64`]. Snaps a normalized weight to
+/// PIL's fixed-point grid in [`FilterAxis::build`]; `f64::round` is
+/// round-half-away-from-zero, matching PIL's `int(0.5 + x)` for `x >= 0` and
+/// `int(-0.5 + x)` for `x < 0`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn round_f64(x: f64) -> f64 {
+  #[cfg(feature = "std")]
+  {
+    f64::round(x)
+  }
+  #[cfg(all(not(feature = "std"), feature = "alloc"))]
+  {
+    libm::round(x)
   }
 }
 
@@ -264,21 +283,43 @@ impl FilterKernel for Lanczos3 {
 /// by `starts[j]` and the prefix `offsets`. Coefficients are `f32`
 /// (normalized in `f64`, then narrowed) — the +-1-LSB parity budget
 /// absorbs the narrowing.
+///
+/// A parallel `coeffs_q8` holds the same windows snapped to PIL's 8bpc
+/// fixed-point grid ([`PRECISION_BITS`] = 22): the `u8` stream reads it for
+/// **byte-exact** Pillow parity (see [`FilterAxis::build`]), while `u16`
+/// and `f32` keep the full-precision float set. The two sets share
+/// `starts` / `offsets`, so a window slices identically out of either.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct FilterAxis {
   /// First contributing source sample per output index.
   starts: Vec<usize>,
-  /// Prefix offsets into `coeffs`; `out_len() + 1` entries. Window `j`'s
-  /// length is `offsets[j+1] - offsets[j]`.
+  /// Prefix offsets into `coeffs` / `coeffs_q8`; `out_len() + 1` entries.
+  /// Window `j`'s length is `offsets[j+1] - offsets[j]`.
   offsets: Vec<usize>,
-  /// Concatenated per-window normalized weights.
+  /// Concatenated per-window normalized weights (full `f32` precision).
   coeffs: Vec<f32>,
+  /// Concatenated per-window weights snapped to PIL's 8bpc fixed-point
+  /// grid: `round_half_away(w_norm * 2^PRECISION_BITS) / 2^PRECISION_BITS`,
+  /// exactly representable in `f32` (`PRECISION_BITS <= 23`). The `u8`
+  /// stream reads this set so both passes' `clip8` quantize identically to
+  /// PIL's integer pipeline. Snapped from the full-precision `f64`
+  /// normalized weight — never from the narrowed `coeffs` entry, whose
+  /// `f32` cast would reintroduce an off-by-one in the snap.
+  coeffs_q8: Vec<f32>,
   /// Maximum number of windows that contain any single source index — the
   /// peak count of output rows whose vertical window is open at one source
   /// row. Sizes [`FilterStream`]'s accumulator ring so no two open rows
   /// alias the same slot. (Vertical use only; harmless for the H axis.)
   max_overlap: usize,
 }
+
+/// PIL's 8bpc fixed-point coefficient scale exponent (`ImagingResample.c`
+/// `PRECISION_BITS`): an 8bpc coefficient is `round(coeff * 2^PRECISION_BITS)`
+/// as an integer, the pass accumulates those integers, and finalizes with
+/// `(ss + 2^(PRECISION_BITS-1)) >> PRECISION_BITS`. `coeffs_q8` snaps to this
+/// grid so the `u8` stream's `f64` arithmetic reproduces that pipeline
+/// byte-for-byte. `22 <= 23` mantissa bits, so `K / 2^22` is exact in `f32`.
+const PRECISION_BITS: u32 = 22;
 
 impl FilterAxis {
   /// Builds the signed-coefficient spans for one `in_size -> out_size`
@@ -302,6 +343,16 @@ impl FilterAxis {
   /// clamping to `[0, in_size)`, so edge windows (clipped on one side)
   /// still sum to one — preserving average brightness.
   ///
+  /// Alongside the full-precision `f32` set, each window is also snapped to
+  /// PIL's 8bpc fixed-point grid into `coeffs_q8`: the un-normalized `f64`
+  /// weights are retained for the window, and once the window sum `inv =
+  /// 1/ww` is known each normalized weight `w_norm = w_f64 * inv` becomes
+  /// `round_half_away(w_norm * 2^PRECISION_BITS) / 2^PRECISION_BITS`. The
+  /// snap is taken from the full-precision `f64` weight — not the narrowed
+  /// `coeffs` entry — so the `u8` stream's `f64` accumulation of
+  /// `K_i/2^22 * pixel_i` equals PIL's `ss/2^22`, and its `clip8` finalize
+  /// equals PIL's `(ss + 2^21) >> 22` clipped, byte-for-byte on both passes.
+  ///
   /// # Errors
   ///
   /// - [`ResampleError::InvalidFilterSupport`] if `kernel.support()` is
@@ -318,12 +369,15 @@ impl FilterAxis {
   ) -> Result<Self, ResampleError> {
     debug_assert!(in_size > 0 && out_size > 0);
     let support_unit = kernel.support();
-    // A hostile `support` cannot size an unsafe window: reject anything
-    // non-finite, non-positive, or large enough that `ceil(support)`
-    // would not fit a sane window bound. `in_size` is the natural cap —
-    // no window can be wider than the source — so a support past it is
-    // both pointless and a red flag.
-    if !support_unit.is_finite() || support_unit <= 0.0 || support_unit > in_size as f64 {
+    // A hostile `support` cannot size an unsafe window: reject only the
+    // genuinely degenerate cases — non-finite or non-positive. A support
+    // wider than the source is NOT rejected: that is the ordinary
+    // narrow-source enlarge case (e.g. a `1x1 -> 7x7` Lanczos upscale), where
+    // every window clamps to `[0, in_size)` and normalizes over the available
+    // samples exactly as PIL does. The clamp bounds each window to at most
+    // `in_size` samples regardless of the support's magnitude, so no finite
+    // support can size an unbounded window.
+    if !support_unit.is_finite() || support_unit <= 0.0 {
       return Err(ResampleError::InvalidFilterSupport(
         InvalidFilterSupport::new(support_unit, in_size),
       ));
@@ -332,9 +386,9 @@ impl FilterAxis {
     let scale = in_size as f64 / out_size as f64;
     let filterscale = if scale < 1.0 { 1.0 } else { scale };
     let support = support_unit * filterscale;
-    // Window width is bounded by `2*support + 2` (the floor/ceil span);
-    // with `support <= in_size * filterscale` and the clamp to
-    // `[0, in_size)`, no window exceeds `in_size` samples.
+    // The clamp to `[0, in_size)` bounds every window to at most `in_size`
+    // samples, whatever the support — so a wide support on a narrow source
+    // collapses to the available samples rather than overrunning.
     let geometry = || PlanGeometry::new(in_size, 1, out_size, 1);
 
     // Overflow / capacity preflight, BEFORE any scan or allocation: reject an
@@ -409,7 +463,22 @@ impl FilterAxis {
       .try_reserve_exact(offsets_len)
       .map_err(|_| ResampleError::AllocationFailed(geometry()))?;
     let mut coeffs: Vec<f32> = Vec::new();
+    // Parallel 8bpc fixed-point set (`u8` stream): same windows snapped to
+    // PIL's `PRECISION_BITS` grid. Grown per window in lockstep with
+    // `coeffs`, so it shares `starts` / `offsets`.
+    let mut coeffs_q8: Vec<f32> = Vec::new();
+    // Scratch holding one window's un-normalized `f64` weights, reused
+    // across outputs (cleared, capacity retained). The `q8` snap reads
+    // these full-precision weights — not the narrowed `coeffs` entries —
+    // so the fixed-point grid lands on PIL's exact integer.
+    let mut w_f64: Vec<f64> = Vec::new();
     offsets.push(0);
+    // `2^PRECISION_BITS`: the `f64` snap scale and the exact `f32` divisor.
+    // `22 <= 23` mantissa bits, so `2^22` is exact in `f32` and `K / 2^22`
+    // (any integer `K` in range) is exactly representable — no rounding the
+    // snapped coefficient introduces.
+    let q8_scale_f64 = f64::from(1u32 << PRECISION_BITS);
+    let q8_scale_f32 = (1u32 << PRECISION_BITS) as f32;
 
     for xx in 0..out_size {
       let center = (xx as f64 + 0.5) * scale;
@@ -431,9 +500,18 @@ impl FilterAxis {
         ));
       };
 
-      // Grow the coeff arena one window at a time under the recoverable
-      // contract; `n <= in_size` so each reservation is bounded.
+      // Grow both coeff arenas (and the scratch) one window at a time under
+      // the recoverable contract; `n <= in_size` so each reservation is
+      // bounded. `w_f64` is cleared first, so the reserve is a no-op once
+      // its capacity has grown to the widest window seen.
       coeffs
+        .try_reserve(n)
+        .map_err(|_| ResampleError::AllocationFailed(geometry()))?;
+      coeffs_q8
+        .try_reserve(n)
+        .map_err(|_| ResampleError::AllocationFailed(geometry()))?;
+      w_f64.clear();
+      w_f64
         .try_reserve(n)
         .map_err(|_| ResampleError::AllocationFailed(geometry()))?;
       let mut ww = 0.0f64;
@@ -442,17 +520,26 @@ impl FilterAxis {
         let x = (xmin + k) as f64 + 0.5 - center;
         let w = kernel.weight(x / filterscale);
         coeffs.push(w as f32);
+        w_f64.push(w);
         ww += w;
       }
       // PIL normalizes by the window sum; it is positive for every kernel
       // here (the central lobe dominates the negative tails). Guard the
       // degenerate `ww == 0` so a pathological custom kernel cannot divide
       // by zero — leave the window unnormalized rather than emit NaNs.
+      let inv = if ww != 0.0 { 1.0 / ww } else { 1.0 };
       if ww != 0.0 {
-        let inv = 1.0 / ww;
         for c in &mut coeffs[base..base + n] {
           *c = (f64::from(*c) * inv) as f32;
         }
+      }
+      // 8bpc fixed-point snap from the full-precision normalized weight:
+      // `K = round_half_away(w_norm * 2^PRECISION_BITS)`, coefficient
+      // `K / 2^PRECISION_BITS` (exact in `f32`). When `ww == 0` the window
+      // is left unnormalized (`inv == 1`), mirroring the float set.
+      for &w in &w_f64 {
+        let k = round_f64(w * inv * q8_scale_f64);
+        coeffs_q8.push((k as f32) / q8_scale_f32);
       }
 
       starts.push(xmin);
@@ -487,6 +574,7 @@ impl FilterAxis {
       starts,
       offsets,
       coeffs,
+      coeffs_q8,
       max_overlap,
     })
   }
@@ -508,14 +596,27 @@ impl FilterAxis {
     self.max_overlap
   }
 
-  /// `(first source sample, normalized window)` for output index `j`;
-  /// `j` must be below [`Self::out_len`].
+  /// `(first source sample, full-precision window)` for output index `j`;
+  /// `j` must be below [`Self::out_len`]. Read by the `u16` / `f32` V-pass.
   #[cfg_attr(not(any(feature = "rgb", feature = "gray")), allow(dead_code))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub(crate) fn span(&self, j: usize) -> (usize, &[f32]) {
     (
       self.starts[j],
       &self.coeffs[self.offsets[j]..self.offsets[j + 1]],
+    )
+  }
+
+  /// `(first source sample, 8bpc fixed-point window)` for output index `j`;
+  /// `j` must be below [`Self::out_len`]. Read by the `u8` V-pass so its
+  /// finalize quantizes byte-for-byte with PIL. Shares `starts` / `offsets`
+  /// with [`Self::span`], differing only in the snapped coefficient values.
+  #[cfg_attr(not(any(feature = "rgb", feature = "gray")), allow(dead_code))]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) fn span_q8(&self, j: usize) -> (usize, &[f32]) {
+    (
+      self.starts[j],
+      &self.coeffs_q8[self.offsets[j]..self.offsets[j + 1]],
     )
   }
 
@@ -535,6 +636,7 @@ impl FilterAxis {
       starts: copy(&self.starts)?,
       offsets: copy(&self.offsets)?,
       coeffs: copy(&self.coeffs)?,
+      coeffs_q8: copy(&self.coeffs_q8)?,
       max_overlap: self.max_overlap,
     })
   }
