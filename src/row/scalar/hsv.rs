@@ -245,11 +245,16 @@ pub(crate) fn rgb_to_luma_u16_native_row(
   let (k_r, k_g, k_b) = (k_r as i64, k_g as i64, k_b as i64);
   const RND: i64 = 1 << 14;
   let native_max = ((1u32 << bits) - 1) as i64;
+  // The binned RGB this consumes can carry a signed-filter overshoot
+  // above the native max (the `FilterStream` only clamps to the full u16
+  // range), so each channel is clamped to `[0, native_max]` before the
+  // luma sum — the documented "clamp source samples to native range, then
+  // derive" semantics. A no-op for the in-range area / direct callers.
   if full_range {
     for x in 0..width {
-      let r = rgb[x * 3] as i64;
-      let g = rgb[x * 3 + 1] as i64;
-      let b = rgb[x * 3 + 2] as i64;
+      let r = (rgb[x * 3] as i64).min(native_max);
+      let g = (rgb[x * 3 + 1] as i64).min(native_max);
+      let b = (rgb[x * 3 + 2] as i64).min(native_max);
       let y = (k_r * r + k_g * g + k_b * b + RND) >> 15;
       luma_out[x] = y.clamp(0, native_max) as u16;
     }
@@ -258,9 +263,9 @@ pub(crate) fn rgb_to_luma_u16_native_row(
     let range = 219i64 << (bits - 8);
     let y_max = 235i64 << (bits - 8);
     for x in 0..width {
-      let r = rgb[x * 3] as i64;
-      let g = rgb[x * 3 + 1] as i64;
-      let b = rgb[x * 3 + 2] as i64;
+      let r = (rgb[x * 3] as i64).min(native_max);
+      let g = (rgb[x * 3 + 1] as i64).min(native_max);
+      let b = (rgb[x * 3 + 2] as i64).min(native_max);
       let y_full = (k_r * r + k_g * g + k_b * b + RND) >> 15;
       let y_full_clamped = y_full.clamp(0, native_max);
       let y_lim = y_off + (y_full_clamped * range + native_max / 2) / native_max;

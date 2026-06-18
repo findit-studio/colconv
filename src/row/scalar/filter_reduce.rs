@@ -17,8 +17,10 @@
 //! summing exactly the real taps. The V-pass is element-wise over the
 //! already-`f64` `h_tmp`, so it has a single form shared by every element.
 
-#![cfg_attr(not(feature = "std"), allow(dead_code))]
-#![cfg_attr(not(any(feature = "rgb", feature = "gray")), allow(dead_code))]
+#![cfg_attr(
+  any(not(feature = "std"), not(any(feature = "rgb", feature = "gray"))),
+  allow(dead_code)
+)]
 
 /// One element type the filter H-pass widens to its `f64` accumulation
 /// domain. The integer variants widen losslessly; `f32` widens exactly.
