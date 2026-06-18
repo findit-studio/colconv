@@ -32,8 +32,8 @@ use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
   RowShapeMismatch, RowSlice, check_dimensions_match, check_frozen_alpha_mode,
   packed_rgb_u16_filter_stream, packed_rgb_u16_resample_emit, packed_rgb_u16_resample_preflight,
-  packed_rgb_u16_resample_stream, packed_rgba_u16_resample, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice, rgba_u16_plane_row_slice, source_rgb_u16_scratch,
+  packed_rgb_u16_resample_stream, packed_rgba_u16_filter_resample, packed_rgba_u16_resample,
+  rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice, source_rgb_u16_scratch,
 };
 use crate::{
   PixelSink,
@@ -746,6 +746,12 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>, R> {
     if let Some(stream) = self.rgba_stream_u16.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream_u16.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_filter_stream_u16.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
@@ -802,6 +808,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>, R> {
         rgba_color_scratch_u16,
         rgb_stream_u16,
         rgba_stream_u16,
+        rgb_filter_stream_u16,
+        rgba_filter_stream_u16,
         resample_outputs,
         frozen_alpha_mode,
         plan,
@@ -810,73 +818,173 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba64<BE>, R> {
       let plan = plan.as_ref().expect("plan.is_some() checked above");
       // The alpha mode is snapshotted at begin_frame; reject a mid-frame
       // change here, before route selection (it picks the 4-channel vs
-      // 3-channel route), so a flip can neither reroute nor mix modes.
+      // 3-channel route), so a flip can neither reroute nor mix modes. The
+      // span kind then picks the engine: the integer area stream or the
+      // signed-coefficient filter stream (PIL parity, straight alpha only).
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
-      if rgba.is_some() || rgba_u16.is_some() || alpha_mode.is_premultiplied() {
-        return packed_rgba_u16_resample::<16, false, false>(
-          rgba_stream_u16,
-          // No native-Y luma stream: `Rgba64` / `Bgra64` are chromatic, so
-          // luma is color-derived (`NATIVE_Y_LUMA = false`) and the Y stream
-          // / scratch / de-interleave are inert placeholders.
-          &mut None,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          luma_u16,
-          hsv,
-          rgba_scratch_u16,
-          rgba_color_scratch_u16,
-          rgb_scratch,
-          rgb_scratch_u16,
-          &mut std::vec::Vec::new(),
-          w,
-          plan,
-          idx,
-          use_simd,
-          alpha_mode,
-          matrix,
-          full_range,
-          |dst| crate::row::rgba64_to_rgba_u16_row_endian::<BE>(in64, dst, w, use_simd),
-          |_| {},
-        );
+      match plan.kind() {
+        crate::resample::SpanKind::Area => {
+          if rgba.is_some() || rgba_u16.is_some() || alpha_mode.is_premultiplied() {
+            return packed_rgba_u16_resample::<16, false, false>(
+              rgba_stream_u16,
+              // No native-Y luma stream: `Rgba64` / `Bgra64` are chromatic, so
+              // luma is color-derived (`NATIVE_Y_LUMA = false`) and the Y
+              // stream / scratch / de-interleave are inert placeholders.
+              &mut None,
+              resample_outputs,
+              rgb,
+              rgba,
+              rgb_u16,
+              rgba_u16,
+              luma,
+              luma_u16,
+              hsv,
+              rgba_scratch_u16,
+              rgba_color_scratch_u16,
+              rgb_scratch,
+              rgb_scratch_u16,
+              &mut std::vec::Vec::new(),
+              w,
+              plan,
+              idx,
+              use_simd,
+              alpha_mode,
+              matrix,
+              full_range,
+              |dst| crate::row::rgba64_to_rgba_u16_row_endian::<BE>(in64, dst, w, use_simd),
+              |_| {},
+            );
+          }
+          if !packed_rgb_u16_resample_preflight(
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            rgb_u16,
+            rgba_u16,
+            luma_u16,
+            hsv,
+            rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
+            idx,
+          )? {
+            return Ok(());
+          }
+          let stream = packed_rgb_u16_resample_stream(rgb_stream_u16, plan, idx)?;
+          let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
+          crate::row::rgba64_to_rgb_u16_row_endian::<BE>(in64, src_u16, w, use_simd);
+          return packed_rgb_u16_resample_emit::<16, false>(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            rgb_u16,
+            rgba_u16,
+            luma_u16,
+            hsv,
+            src_u16,
+            rgb_scratch,
+            matrix,
+            full_range,
+            idx,
+            use_simd,
+          );
+        }
+        crate::resample::SpanKind::Filter => {
+          // Premultiplied alpha has no filter analogue (the filter engine
+          // cannot un-premultiply, so it cannot derive a straight color);
+          // surface the typed `UnsupportedFilter` via the area tail's reject
+          // rather than emit straight-filtered premultiplied color. Straight
+          // alpha: filter all four native u16 channels independently (PIL RGBA
+          // semantics) when alpha survives, else the 3-channel u16 filter for
+          // rgb-only outputs (forced-opaque alpha, like the direct path).
+          if alpha_mode.is_premultiplied() {
+            return packed_rgba_u16_resample::<16, false, false>(
+              rgba_stream_u16,
+              &mut None,
+              resample_outputs,
+              rgb,
+              rgba,
+              rgb_u16,
+              rgba_u16,
+              luma,
+              luma_u16,
+              hsv,
+              rgba_scratch_u16,
+              rgba_color_scratch_u16,
+              rgb_scratch,
+              rgb_scratch_u16,
+              &mut std::vec::Vec::new(),
+              w,
+              plan,
+              idx,
+              use_simd,
+              alpha_mode,
+              matrix,
+              full_range,
+              |dst| crate::row::rgba64_to_rgba_u16_row_endian::<BE>(in64, dst, w, use_simd),
+              |_| {},
+            );
+          }
+          if rgba.is_some() || rgba_u16.is_some() {
+            return packed_rgba_u16_filter_resample::<16>(
+              rgba_filter_stream_u16,
+              resample_outputs,
+              rgb,
+              rgba,
+              rgb_u16,
+              rgba_u16,
+              luma,
+              luma_u16,
+              hsv,
+              rgba_scratch_u16,
+              rgba_color_scratch_u16,
+              rgb_scratch,
+              w,
+              plan,
+              idx,
+              use_simd,
+              matrix,
+              full_range,
+              |dst| crate::row::rgba64_to_rgba_u16_row_endian::<BE>(in64, dst, w, use_simd),
+            );
+          }
+          if !packed_rgb_u16_resample_preflight(
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            rgb_u16,
+            rgba_u16,
+            luma_u16,
+            hsv,
+            rgb_filter_stream_u16.as_ref().map_or(0, |s| s.next_y()),
+            idx,
+          )? {
+            return Ok(());
+          }
+          let stream = packed_rgb_u16_filter_stream(rgb_filter_stream_u16, plan, idx)?;
+          let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
+          crate::row::rgba64_to_rgb_u16_row_endian::<BE>(in64, src_u16, w, use_simd);
+          return packed_rgb_u16_resample_emit::<16, false>(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            rgb_u16,
+            rgba_u16,
+            luma_u16,
+            hsv,
+            src_u16,
+            rgb_scratch,
+            matrix,
+            full_range,
+            idx,
+            use_simd,
+          );
+        }
       }
-      if !packed_rgb_u16_resample_preflight(
-        resample_outputs,
-        rgb,
-        rgba,
-        luma,
-        rgb_u16,
-        rgba_u16,
-        luma_u16,
-        hsv,
-        rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
-        idx,
-      )? {
-        return Ok(());
-      }
-      let stream = packed_rgb_u16_resample_stream(rgb_stream_u16, plan, idx)?;
-      let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
-      crate::row::rgba64_to_rgb_u16_row_endian::<BE>(in64, src_u16, w, use_simd);
-      return packed_rgb_u16_resample_emit::<16, false>(
-        stream,
-        plan,
-        rgb,
-        rgba,
-        luma,
-        rgb_u16,
-        rgba_u16,
-        luma_u16,
-        hsv,
-        src_u16,
-        rgb_scratch,
-        matrix,
-        full_range,
-        idx,
-        use_simd,
-      );
     }
 
     let Self {
@@ -1138,6 +1246,12 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Bgra64<BE>, R> {
     if let Some(stream) = self.rgba_stream_u16.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream_u16.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_filter_stream_u16.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
@@ -1191,6 +1305,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Bgra64<BE>, R> {
         rgba_color_scratch_u16,
         rgb_stream_u16,
         rgba_stream_u16,
+        rgb_filter_stream_u16,
+        rgba_filter_stream_u16,
         resample_outputs,
         frozen_alpha_mode,
         plan,
@@ -1199,73 +1315,170 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Bgra64<BE>, R> {
       let plan = plan.as_ref().expect("plan.is_some() checked above");
       // The alpha mode is snapshotted at begin_frame; reject a mid-frame
       // change here, before route selection (it picks the 4-channel vs
-      // 3-channel route), so a flip can neither reroute nor mix modes.
+      // 3-channel route), so a flip can neither reroute nor mix modes. The
+      // span kind then picks the engine — see the `Rgba64` impl for the
+      // routing rationale.
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
-      if rgba.is_some() || rgba_u16.is_some() || alpha_mode.is_premultiplied() {
-        return packed_rgba_u16_resample::<16, false, false>(
-          rgba_stream_u16,
-          // No native-Y luma stream: `Rgba64` / `Bgra64` are chromatic, so
-          // luma is color-derived (`NATIVE_Y_LUMA = false`) and the Y stream
-          // / scratch / de-interleave are inert placeholders.
-          &mut None,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          luma_u16,
-          hsv,
-          rgba_scratch_u16,
-          rgba_color_scratch_u16,
-          rgb_scratch,
-          rgb_scratch_u16,
-          &mut std::vec::Vec::new(),
-          w,
-          plan,
-          idx,
-          use_simd,
-          alpha_mode,
-          matrix,
-          full_range,
-          |dst| crate::row::bgra64_to_rgba_u16_row_endian::<BE>(in64, dst, w, use_simd),
-          |_| {},
-        );
+      match plan.kind() {
+        crate::resample::SpanKind::Area => {
+          if rgba.is_some() || rgba_u16.is_some() || alpha_mode.is_premultiplied() {
+            return packed_rgba_u16_resample::<16, false, false>(
+              rgba_stream_u16,
+              // No native-Y luma stream: `Rgba64` / `Bgra64` are chromatic, so
+              // luma is color-derived (`NATIVE_Y_LUMA = false`) and the Y
+              // stream / scratch / de-interleave are inert placeholders.
+              &mut None,
+              resample_outputs,
+              rgb,
+              rgba,
+              rgb_u16,
+              rgba_u16,
+              luma,
+              luma_u16,
+              hsv,
+              rgba_scratch_u16,
+              rgba_color_scratch_u16,
+              rgb_scratch,
+              rgb_scratch_u16,
+              &mut std::vec::Vec::new(),
+              w,
+              plan,
+              idx,
+              use_simd,
+              alpha_mode,
+              matrix,
+              full_range,
+              |dst| crate::row::bgra64_to_rgba_u16_row_endian::<BE>(in64, dst, w, use_simd),
+              |_| {},
+            );
+          }
+          if !packed_rgb_u16_resample_preflight(
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            rgb_u16,
+            rgba_u16,
+            luma_u16,
+            hsv,
+            rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
+            idx,
+          )? {
+            return Ok(());
+          }
+          let stream = packed_rgb_u16_resample_stream(rgb_stream_u16, plan, idx)?;
+          let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
+          crate::row::bgra64_to_rgb_u16_row_endian::<BE>(in64, src_u16, w, use_simd);
+          return packed_rgb_u16_resample_emit::<16, false>(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            rgb_u16,
+            rgba_u16,
+            luma_u16,
+            hsv,
+            src_u16,
+            rgb_scratch,
+            matrix,
+            full_range,
+            idx,
+            use_simd,
+          );
+        }
+        crate::resample::SpanKind::Filter => {
+          // Premultiplied: no filter analogue — surface `UnsupportedFilter`
+          // via the area tail's reject. Straight: filter all four native u16
+          // channels independently when alpha survives, else the 3-channel
+          // u16 filter for rgb-only outputs. See the `Rgba64` impl.
+          if alpha_mode.is_premultiplied() {
+            return packed_rgba_u16_resample::<16, false, false>(
+              rgba_stream_u16,
+              &mut None,
+              resample_outputs,
+              rgb,
+              rgba,
+              rgb_u16,
+              rgba_u16,
+              luma,
+              luma_u16,
+              hsv,
+              rgba_scratch_u16,
+              rgba_color_scratch_u16,
+              rgb_scratch,
+              rgb_scratch_u16,
+              &mut std::vec::Vec::new(),
+              w,
+              plan,
+              idx,
+              use_simd,
+              alpha_mode,
+              matrix,
+              full_range,
+              |dst| crate::row::bgra64_to_rgba_u16_row_endian::<BE>(in64, dst, w, use_simd),
+              |_| {},
+            );
+          }
+          if rgba.is_some() || rgba_u16.is_some() {
+            return packed_rgba_u16_filter_resample::<16>(
+              rgba_filter_stream_u16,
+              resample_outputs,
+              rgb,
+              rgba,
+              rgb_u16,
+              rgba_u16,
+              luma,
+              luma_u16,
+              hsv,
+              rgba_scratch_u16,
+              rgba_color_scratch_u16,
+              rgb_scratch,
+              w,
+              plan,
+              idx,
+              use_simd,
+              matrix,
+              full_range,
+              |dst| crate::row::bgra64_to_rgba_u16_row_endian::<BE>(in64, dst, w, use_simd),
+            );
+          }
+          if !packed_rgb_u16_resample_preflight(
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            rgb_u16,
+            rgba_u16,
+            luma_u16,
+            hsv,
+            rgb_filter_stream_u16.as_ref().map_or(0, |s| s.next_y()),
+            idx,
+          )? {
+            return Ok(());
+          }
+          let stream = packed_rgb_u16_filter_stream(rgb_filter_stream_u16, plan, idx)?;
+          let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
+          crate::row::bgra64_to_rgb_u16_row_endian::<BE>(in64, src_u16, w, use_simd);
+          return packed_rgb_u16_resample_emit::<16, false>(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            rgb_u16,
+            rgba_u16,
+            luma_u16,
+            hsv,
+            src_u16,
+            rgb_scratch,
+            matrix,
+            full_range,
+            idx,
+            use_simd,
+          );
+        }
       }
-      if !packed_rgb_u16_resample_preflight(
-        resample_outputs,
-        rgb,
-        rgba,
-        luma,
-        rgb_u16,
-        rgba_u16,
-        luma_u16,
-        hsv,
-        rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
-        idx,
-      )? {
-        return Ok(());
-      }
-      let stream = packed_rgb_u16_resample_stream(rgb_stream_u16, plan, idx)?;
-      let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
-      crate::row::bgra64_to_rgb_u16_row_endian::<BE>(in64, src_u16, w, use_simd);
-      return packed_rgb_u16_resample_emit::<16, false>(
-        stream,
-        plan,
-        rgb,
-        rgba,
-        luma,
-        rgb_u16,
-        rgba_u16,
-        luma_u16,
-        hsv,
-        src_u16,
-        rgb_scratch,
-        matrix,
-        full_range,
-        idx,
-        use_simd,
-      );
     }
 
     let Self {
