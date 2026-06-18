@@ -31,12 +31,41 @@ use super::super::{OutOfSequenceRow, PlanGeometry, ResampleError};
 use super::FilterAxis;
 
 /// The sample element a [`FilterStream`] resamples. Abstracts the element
-/// width and the per-type finalize (clamp-and-round for the integer
-/// streams, identity for `f32`). Both passes accumulate in `f64`, so
-/// there is a single accumulator type shared by every element.
-pub(crate) trait FilterSample: Copy + Default {
-  /// Promote a source sample to the `f64` accumulation domain.
-  fn to_acc(self) -> f64;
+/// width, the per-type finalize (clamp-and-round for the integer streams,
+/// identity for `f32`), and the per-type SIMD H-pass dispatch (a `u8` /
+/// `u16` / `f32` row widens to the shared `f64` accumulation domain
+/// differently). Both passes accumulate in `f64`, so there is a single
+/// accumulator type shared by every element; the supertrait
+/// [`crate::row::FilterSimdElem`] supplies the per-element kernel
+/// selection the H-pass dispatcher routes through.
+pub(crate) trait FilterSample: crate::row::FilterSimdElem {
+  /// Runtime-dispatched H-pass of one source `row` into `h_tmp` (the raw
+  /// `f64` dot products, `out_w * channels` wide). Routes to the highest
+  /// available SIMD tier when `use_simd` and `padded` permit, else the
+  /// scalar reference. The signed twin of
+  /// [`AreaSample::h_reduce`](super::super::AreaSample::h_reduce).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn h_reduce(
+    row: &[Self],
+    channels: usize,
+    h: &FilterAxis,
+    padded: Option<&crate::row::FilterPaddedSpans>,
+    h_tmp: &mut [f64],
+    use_simd: bool,
+  ) {
+    crate::row::filter_h_reduce_row(
+      row, channels, &h.starts, &h.offsets, &h.coeffs, padded, h_tmp, use_simd,
+    );
+  }
+
+  /// Runtime-dispatched V-pass AXPY `acc[i] += w * h_tmp[i]` in `f64`,
+  /// element-wise (mul+add), so it stays bit-equal to the scalar reference
+  /// for every backend.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn v_accumulate(acc: &mut [f64], h_tmp: &[f64], w: f32, use_simd: bool) {
+    crate::row::filter_v_accumulate(acc, h_tmp, w, use_simd);
+  }
+
   /// Quantize one horizontal-pass accumulator to the intermediate PIL
   /// would store between its two passes, **kept in the `f64` domain** so
   /// the vertical pass reads it directly. This is the crux of matching
@@ -58,10 +87,6 @@ pub(crate) trait FilterSample: Copy + Default {
 
 impl FilterSample for u8 {
   #[cfg_attr(not(tarpaulin), inline(always))]
-  fn to_acc(self) -> f64 {
-    f64::from(self)
-  }
-  #[cfg_attr(not(tarpaulin), inline(always))]
   fn quantize_intermediate(acc: f64) -> f64 {
     // PIL `clip8` on the u8 H-pass image: round-half-up, clamp to 0..=255.
     floor_f64_local(acc + 0.5).clamp(0.0, 255.0)
@@ -73,10 +98,6 @@ impl FilterSample for u8 {
 }
 
 impl FilterSample for u16 {
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  fn to_acc(self) -> f64 {
-    f64::from(self)
-  }
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn quantize_intermediate(acc: f64) -> f64 {
     // PIL 32bpc `I` resampler: the H-pass intermediate is rounded to a
@@ -91,10 +112,6 @@ impl FilterSample for u16 {
 }
 
 impl FilterSample for f32 {
-  #[cfg_attr(not(tarpaulin), inline(always))]
-  fn to_acc(self) -> f64 {
-    f64::from(self)
-  }
   #[cfg_attr(not(tarpaulin), inline(always))]
   fn quantize_intermediate(acc: f64) -> f64 {
     // PIL 32bpc `F` resampler: the intermediate is `f32`. Narrow to f32
@@ -157,6 +174,10 @@ pub(crate) struct FilterStream<S: FilterSample> {
   /// f64. Output row `oy` uses slot `oy % ring_cap`; a slot is zeroed as
   /// its row is emitted, ready for the next row that maps to it.
   ring: Vec<f64>,
+  /// Plan-time SIMD staging for the H-pass
+  /// ([`crate::row::FilterPaddedSpans`]); `None` routes the dispatcher to
+  /// the scalar reference. Built once from the horizontal windows.
+  h_padded: Option<crate::row::FilterPaddedSpans>,
   /// Number of accumulator rows in [`Self::ring`] — the maximum count of
   /// vertical windows that can overlap one source row, so an open output
   /// row never aliases another still-open one.
@@ -203,6 +224,10 @@ impl<S: FilterSample> FilterStream<S> {
     let alloc = |_| ResampleError::AllocationFailed(geometry());
     let h = h.try_clone()?;
     let v = v.try_clone()?;
+    // The arena is an optional accelerator: a refused allocation (or an
+    // unrepresentable padded length) leaves `None`, routing the H-pass to
+    // the scalar reference rather than failing stream creation.
+    let h_padded = crate::row::FilterPaddedSpans::build(&h.starts, &h.offsets, &h.coeffs);
     Ok(Self {
       h,
       v,
@@ -211,6 +236,7 @@ impl<S: FilterSample> FilterStream<S> {
       h_tmp: try_zeroed_f64(row_len).map_err(alloc)?,
       ring: try_zeroed_f64(ring_len).map_err(alloc)?,
       ring_cap,
+      h_padded,
       out_tmp: try_zeroed::<S>(row_len).map_err(alloc)?,
       cur_out: 0,
       next_y: 0,
@@ -238,19 +264,25 @@ impl<S: FilterSample> FilterStream<S> {
   /// representation** ([`FilterSample::quantize_intermediate`]). This is
   /// PIL's horizontal-into-intermediate-image step; the vertical pass then
   /// reconstructs from this quantized intermediate.
-  fn h_reduce(&mut self, row: &[S]) {
-    let c = self.channels;
-    let ow = self.h.out_len();
-    for ox in 0..ow {
-      let (start, coeffs) = self.h.span(ox);
-      let out_base = ox * c;
-      for ch in 0..c {
-        let mut acc = 0.0f64;
-        for (k, &w) in coeffs.iter().enumerate() {
-          acc += f64::from(w) * row[(start + k) * c + ch].to_acc();
-        }
-        self.h_tmp[out_base + ch] = S::quantize_intermediate(acc);
-      }
+  ///
+  /// The signed-weighted sum runs through the runtime SIMD dispatcher
+  /// ([`FilterSample::h_reduce`]) — which leaves the **raw `f64` dot
+  /// product** in `h_tmp`, matching the scalar reference within the float
+  /// tolerance — then this pass quantizes each in place. Because the
+  /// integer dispatchers are not bit-exact, the quantized intermediate may
+  /// land `±1` LSB of the scalar path, which the engine's PIL parity budget
+  /// absorbs.
+  fn h_reduce(&mut self, row: &[S], use_simd: bool) {
+    S::h_reduce(
+      row,
+      self.channels,
+      &self.h,
+      self.h_padded.as_ref(),
+      &mut self.h_tmp,
+      use_simd,
+    );
+    for t in &mut self.h_tmp {
+      *t = S::quantize_intermediate(*t);
     }
   }
 
@@ -259,9 +291,11 @@ impl<S: FilterSample> FilterStream<S> {
   /// source row completes. Rows beyond the plan's coverage are accepted
   /// and ignored.
   ///
-  /// `_use_simd` is accepted for signature parity with
-  /// [`AreaStream::feed_row`](super::super::AreaStream::feed_row) (so the
-  /// sink tails thread the same flag); this scalar stage ignores it.
+  /// `use_simd` selects the SIMD H-pass when the host backend and the
+  /// staging arena permit; the V-pass is element-wise (mul+add) and so is
+  /// bit-equal to scalar on every backend. The flag threads through from
+  /// [`AreaStream::feed_row`](super::super::AreaStream::feed_row)'s shared
+  /// signature.
   ///
   /// # Errors
   ///
@@ -272,7 +306,7 @@ impl<S: FilterSample> FilterStream<S> {
     &mut self,
     y: usize,
     row: &[S],
-    _use_simd: bool,
+    use_simd: bool,
     mut emit: impl FnMut(usize, &[S]),
   ) -> Result<(), ResampleError> {
     if y != self.next_y {
@@ -287,7 +321,7 @@ impl<S: FilterSample> FilterStream<S> {
       return Ok(());
     }
 
-    self.h_reduce(row);
+    self.h_reduce(row, use_simd);
 
     // Distribute the staged H-row into every open output accumulator
     // whose vertical window contains `y`. Windows start at non-decreasing
@@ -310,10 +344,7 @@ impl<S: FilterSample> FilterStream<S> {
       };
       let slot = (oy % self.ring_cap) * self.row_len;
       let acc_row = &mut self.ring[slot..slot + self.row_len];
-      let wf = f64::from(w);
-      for (a, &h) in acc_row.iter_mut().zip(self.h_tmp.iter()) {
-        *a += wf * h;
-      }
+      S::v_accumulate(acc_row, &self.h_tmp, w, use_simd);
       oy += 1;
     }
 

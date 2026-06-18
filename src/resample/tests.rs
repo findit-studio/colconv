@@ -1234,6 +1234,216 @@ fn h_pass_f32_simd_matches_scalar_with_non_finite_padding() {
   }
 }
 
+// ---- Filter SIMD-vs-scalar stream parity ----------------------------------
+//
+// End-to-end differential: feeding identical rows to a scalar-path
+// `FilterStream` (`use_simd = false`) and a SIMD-path one (`use_simd =
+// true`) must yield emitted output rows that agree — bit-for-bit through the
+// `f32`-narrowing finalize for the float stream, within `±1` for the integer
+// streams (the SIMD H-pass reorders the `f64` tap sum, which can flip the
+// half-rounded intermediate by one LSB). This drives the whole engine — H
+// dispatch, the ring V-pass, and finalize — through the host's selected
+// backend, complementing the dispatcher-level h_tmp differential in
+// `row::dispatch::filter_reduce`.
+
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
+))]
+mod filter_simd_parity {
+  use super::super::{CatmullRom, FilterKernel, FilteredResampler, Lanczos3, Resampler, Triangle};
+  use super::super::{FilterSample, FilterStream, SpanKind};
+
+  /// Deterministic LCG byte stream (matches the resample suite's source).
+  fn lcg(n: usize, seed: u32) -> std::vec::Vec<u8> {
+    let mut state = seed;
+    let mut out = std::vec![0u8; n];
+    for b in &mut out {
+      state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+      *b = (state >> 8) as u8;
+    }
+    out
+  }
+
+  /// Streams `src` through a fresh [`FilterStream`] under `use_simd`,
+  /// returning the `ow*oh*channels` output. The plan must be a filter plan.
+  #[allow(clippy::too_many_arguments)]
+  fn stream<S, K>(
+    kernel: K,
+    src: &[S],
+    sw: usize,
+    sh: usize,
+    ow: usize,
+    oh: usize,
+    channels: usize,
+    use_simd: bool,
+  ) -> std::vec::Vec<S>
+  where
+    S: FilterSample,
+    K: FilterKernel,
+  {
+    let plan = FilteredResampler::new(ow, oh, kernel)
+      .plan(sw, sh)
+      .expect("valid downscale")
+      .expect("non-identity");
+    assert_eq!(plan.kind(), SpanKind::Filter);
+    let fh = plan.filter_h().expect("h windows");
+    let fv = plan.filter_v().expect("v windows");
+    let mut s = FilterStream::<S>::new(fh, fv, sw, sh, channels).expect("geometry");
+    let mut out = std::vec![S::default(); ow * oh * channels];
+    for y in 0..sh {
+      let row = &src[y * sw * channels..(y + 1) * sw * channels];
+      s.feed_row(y, row, use_simd, |oy, fin| {
+        out[oy * ow * channels..(oy + 1) * ow * channels].copy_from_slice(fin);
+      })
+      .expect("rows in order");
+    }
+    out
+  }
+
+  /// (sw, sh, ow, oh): downscales spanning single-chunk windows with tails
+  /// (Triangle/CatmullRom: 4-8 taps), wide multi-chunk windows (Lanczos3 on
+  /// a heavy downscale: 12+ taps), and the row-end staging boundary.
+  fn geoms() -> &'static [(usize, usize, usize, usize)] {
+    if cfg!(miri) {
+      &[(16, 12, 5, 4), (12, 12, 4, 3)]
+    } else {
+      &[
+        (64, 48, 17, 13),
+        (200, 60, 41, 19),
+        (128, 96, 8, 7),
+        (96, 17, 31, 6),
+        (300, 200, 100, 67),
+      ]
+    }
+  }
+
+  #[test]
+  fn u8_simd_matches_scalar_within_one_lsb() {
+    let mut worst = 0u8;
+    for &(sw, sh, ow, oh) in geoms() {
+      for ch in [1usize, 3] {
+        for (ki, kernel) in [0u8, 1, 2].into_iter().enumerate() {
+          let src = lcg(sw * sh * ch, (sw * 7 + sh * 3 + ow + ch + ki) as u32 + 1);
+          let (a, b) = match kernel {
+            0 => (
+              stream(Triangle, &src, sw, sh, ow, oh, ch, false),
+              stream(Triangle, &src, sw, sh, ow, oh, ch, true),
+            ),
+            1 => (
+              stream(CatmullRom, &src, sw, sh, ow, oh, ch, false),
+              stream(CatmullRom, &src, sw, sh, ow, oh, ch, true),
+            ),
+            _ => (
+              stream(Lanczos3, &src, sw, sh, ow, oh, ch, false),
+              stream(Lanczos3, &src, sw, sh, ow, oh, ch, true),
+            ),
+          };
+          assert_eq!(a.len(), b.len());
+          for (i, (&s, &d)) in a.iter().zip(b.iter()).enumerate() {
+            let diff = s.abs_diff(d);
+            worst = worst.max(diff);
+            assert!(
+              diff <= 1,
+              "u8 k{kernel} {sw}x{sh}->{ow}x{oh} c{ch} [{i}]: scalar {s} simd {d}"
+            );
+          }
+        }
+      }
+    }
+    std::eprintln!("filter u8 SIMD-vs-scalar: max abs diff = {worst}");
+  }
+
+  #[test]
+  fn u16_simd_matches_scalar_within_one_lsb() {
+    let mut worst = 0u16;
+    for &(sw, sh, ow, oh) in geoms() {
+      for ch in [1usize, 3] {
+        for kernel in [0u8, 1, 2] {
+          let raw = lcg(sw * sh * ch, (sw * 5 + sh * 11 + ow + ch) as u32 + 7);
+          let src: std::vec::Vec<u16> = raw
+            .iter()
+            .map(|&v| (u16::from(v) << 8) | u16::from(v))
+            .collect();
+          let (a, b) = match kernel {
+            0 => (
+              stream(Triangle, &src, sw, sh, ow, oh, ch, false),
+              stream(Triangle, &src, sw, sh, ow, oh, ch, true),
+            ),
+            1 => (
+              stream(CatmullRom, &src, sw, sh, ow, oh, ch, false),
+              stream(CatmullRom, &src, sw, sh, ow, oh, ch, true),
+            ),
+            _ => (
+              stream(Lanczos3, &src, sw, sh, ow, oh, ch, false),
+              stream(Lanczos3, &src, sw, sh, ow, oh, ch, true),
+            ),
+          };
+          for (i, (&s, &d)) in a.iter().zip(b.iter()).enumerate() {
+            let diff = s.abs_diff(d);
+            worst = worst.max(diff);
+            assert!(
+              diff <= 1,
+              "u16 k{kernel} {sw}x{sh}->{ow}x{oh} c{ch} [{i}]: scalar {s} simd {d}"
+            );
+          }
+        }
+      }
+    }
+    std::eprintln!("filter u16 SIMD-vs-scalar: max abs diff = {worst}");
+  }
+
+  #[test]
+  fn f32_simd_matches_scalar_within_tolerance() {
+    let mut worst = 0.0f32;
+    for &(sw, sh, ow, oh) in geoms() {
+      for ch in [1usize, 3] {
+        for kernel in [0u8, 1, 2] {
+          let src: std::vec::Vec<f32> = lcg(sw * sh * ch, (sw * 13 + sh * 5 + ow + ch) as u32 + 3)
+            .into_iter()
+            .map(|b| f32::from(b) + f32::from(b) / 256.0)
+            .collect();
+          let (a, b) = match kernel {
+            0 => (
+              stream(Triangle, &src, sw, sh, ow, oh, ch, false),
+              stream(Triangle, &src, sw, sh, ow, oh, ch, true),
+            ),
+            1 => (
+              stream(CatmullRom, &src, sw, sh, ow, oh, ch, false),
+              stream(CatmullRom, &src, sw, sh, ow, oh, ch, true),
+            ),
+            _ => (
+              stream(Lanczos3, &src, sw, sh, ow, oh, ch, false),
+              stream(Lanczos3, &src, sw, sh, ow, oh, ch, true),
+            ),
+          };
+          for (i, (&s, &d)) in a.iter().zip(b.iter()).enumerate() {
+            let diff = (s - d).abs();
+            worst = worst.max(diff);
+            let tol = 1e-4 * s.abs().max(d.abs()) + 1e-2;
+            assert!(
+              diff <= tol,
+              "f32 k{kernel} {sw}x{sh}->{ow}x{oh} c{ch} [{i}]: scalar {s} simd {d}"
+            );
+          }
+        }
+      }
+    }
+    std::eprintln!("filter f32 SIMD-vs-scalar: max abs diff = {worst}");
+  }
+}
+
 // ---- PIL (Pillow) filter-resampler parity ---------------------------------
 //
 // The scalar separable filter resampler must reproduce Pillow's
@@ -1306,7 +1516,10 @@ mod pil_parity {
 
   /// Runs the filter stream for `kernel` over `src` (channels-interleaved,
   /// source width, rows in order) and returns the `ow*oh*channels` output.
-  fn run<S, K>(
+  /// `use_simd` selects the SIMD H-pass tier (when the host backend permits)
+  /// vs the scalar reference — both must land inside the PIL parity budget.
+  #[allow(clippy::too_many_arguments)]
+  fn run_with<S, K>(
     kernel: K,
     src: &[S],
     sw: usize,
@@ -1314,6 +1527,7 @@ mod pil_parity {
     ow: usize,
     oh: usize,
     channels: usize,
+    use_simd: bool,
   ) -> std::vec::Vec<S>
   where
     S: super::super::FilterSample,
@@ -1331,12 +1545,30 @@ mod pil_parity {
     for y in 0..sh {
       let row = &src[y * sw * channels..(y + 1) * sw * channels];
       stream
-        .feed_row(y, row, false, |oy, finalized| {
+        .feed_row(y, row, use_simd, |oy, finalized| {
           out[oy * ow * channels..(oy + 1) * ow * channels].copy_from_slice(finalized);
         })
         .expect("rows in order");
     }
     out
+  }
+
+  /// Scalar-path convenience wrapper over [`run_with`] — the historical
+  /// `run` signature the per-kernel golden tests call.
+  fn run<S, K>(
+    kernel: K,
+    src: &[S],
+    sw: usize,
+    sh: usize,
+    ow: usize,
+    oh: usize,
+    channels: usize,
+  ) -> std::vec::Vec<S>
+  where
+    S: super::super::FilterSample,
+    K: FilterKernel,
+  {
+    run_with(kernel, src, sw, sh, ow, oh, channels, false)
   }
 
   /// Asserts every output of `ours` is within `tol` of `golden`, folding
@@ -1501,5 +1733,130 @@ mod pil_parity {
       );
     }
     std::eprintln!("PIL f32 parity: max abs diff = {worst}");
+  }
+
+  // ---- PIL parity with the SIMD H-pass active ----------------------------
+  //
+  // The three tests above drive the scalar reference (`use_simd = false`).
+  // These re-run the same Pillow goldens with `use_simd = true`, so the host
+  // backend's SIMD H-pass kernels (NEON / SSE4.1 / AVX2 / AVX-512 / wasm,
+  // whichever the runtime selects) must themselves land inside the same
+  // `±1`-LSB (u8 / u16) or small-float (f32) budget — not merely match the
+  // scalar path. The integer kernels are not bit-identical to scalar (their
+  // tap sum reorders in `f64`), so this is the load-bearing check that the
+  // reorder error never widens the Pillow gap past one LSB.
+
+  #[test]
+  fn u8_matches_pil_within_one_lsb_simd() {
+    let mut worst = 0u8;
+    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::TRIANGLE_U8 {
+      let src = source_u8(sw, sh, ch, seed);
+      let ours = run_with(Triangle, &src, sw, sh, ow, oh, ch, true);
+      assert_u_within(
+        &ours,
+        golden,
+        1,
+        &mut worst,
+        std::format_args!("Triangle SIMD {sw}x{sh}->{ow}x{oh} c{ch}"),
+      );
+    }
+    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::CATMULLROM_U8 {
+      let src = source_u8(sw, sh, ch, seed);
+      let ours = run_with(CatmullRom, &src, sw, sh, ow, oh, ch, true);
+      assert_u_within(
+        &ours,
+        golden,
+        1,
+        &mut worst,
+        std::format_args!("CatmullRom SIMD {sw}x{sh}->{ow}x{oh} c{ch}"),
+      );
+    }
+    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::LANCZOS3_U8 {
+      let src = source_u8(sw, sh, ch, seed);
+      let ours = run_with(Lanczos3, &src, sw, sh, ow, oh, ch, true);
+      assert_u_within(
+        &ours,
+        golden,
+        1,
+        &mut worst,
+        std::format_args!("Lanczos3 SIMD {sw}x{sh}->{ow}x{oh} c{ch}"),
+      );
+    }
+    std::eprintln!("PIL u8 parity (SIMD): max abs diff = {worst}");
+  }
+
+  #[test]
+  fn u16_matches_pil_within_one_lsb_simd() {
+    let mut worst = 0u16;
+    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::TRIANGLE_U16 {
+      let src = source_u16(sw, sh, seed);
+      let ours = run_with(Triangle, &src, sw, sh, ow, oh, ch, true);
+      assert_u16_within(
+        &ours,
+        golden,
+        1,
+        &mut worst,
+        std::format_args!("Triangle SIMD {sw}x{sh}->{ow}x{oh}"),
+      );
+    }
+    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::CATMULLROM_U16 {
+      let src = source_u16(sw, sh, seed);
+      let ours = run_with(CatmullRom, &src, sw, sh, ow, oh, ch, true);
+      assert_u16_within(
+        &ours,
+        golden,
+        1,
+        &mut worst,
+        std::format_args!("CatmullRom SIMD {sw}x{sh}->{ow}x{oh}"),
+      );
+    }
+    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::LANCZOS3_U16 {
+      let src = source_u16(sw, sh, seed);
+      let ours = run_with(Lanczos3, &src, sw, sh, ow, oh, ch, true);
+      assert_u16_within(
+        &ours,
+        golden,
+        1,
+        &mut worst,
+        std::format_args!("Lanczos3 SIMD {sw}x{sh}->{ow}x{oh}"),
+      );
+    }
+    std::eprintln!("PIL u16 parity (SIMD): max abs diff = {worst}");
+  }
+
+  #[test]
+  fn f32_matches_pil_within_tolerance_simd() {
+    let mut worst = 0.0f32;
+    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::TRIANGLE_F32 {
+      let src = source_f32(sw, sh, seed);
+      let ours = run_with(Triangle, &src, sw, sh, ow, oh, ch, true);
+      assert_f32_within(
+        &ours,
+        golden,
+        &mut worst,
+        std::format_args!("Triangle SIMD {sw}x{sh}->{ow}x{oh}"),
+      );
+    }
+    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::CATMULLROM_F32 {
+      let src = source_f32(sw, sh, seed);
+      let ours = run_with(CatmullRom, &src, sw, sh, ow, oh, ch, true);
+      assert_f32_within(
+        &ours,
+        golden,
+        &mut worst,
+        std::format_args!("CatmullRom SIMD {sw}x{sh}->{ow}x{oh}"),
+      );
+    }
+    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::LANCZOS3_F32 {
+      let src = source_f32(sw, sh, seed);
+      let ours = run_with(Lanczos3, &src, sw, sh, ow, oh, ch, true);
+      assert_f32_within(
+        &ours,
+        golden,
+        &mut worst,
+        std::format_args!("Lanczos3 SIMD {sw}x{sh}->{ow}x{oh}"),
+      );
+    }
+    std::eprintln!("PIL f32 parity (SIMD): max abs diff = {worst}");
   }
 }

@@ -37,6 +37,27 @@ pub(super) mod area_reduce;
 pub(super) mod ayuv64;
 #[cfg(feature = "bayer")]
 pub(super) mod bayer;
+// Consumer: the separable filter resampler (`crate::resample::filter`),
+// the signed twin of `area_reduce`; same 14-feature engine cascade.
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(
+    feature = "yuv-planar",
+    feature = "rgb",
+    feature = "gbr",
+    feature = "gray",
+    feature = "xyz",
+    feature = "bayer",
+    feature = "mono",
+    feature = "yuv-semi-planar",
+    feature = "yuv-packed",
+    feature = "yuv-444-packed",
+    feature = "y2xx",
+    feature = "v210",
+    feature = "rgb-legacy"
+  )
+))]
+pub(super) mod filter_reduce;
 #[cfg(feature = "gray")]
 pub(super) mod gray;
 #[cfg(feature = "gray")]
