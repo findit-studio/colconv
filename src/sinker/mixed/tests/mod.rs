@@ -125,13 +125,21 @@ mod resample_gbrap_high_bit;
 #[cfg(feature = "gbr")]
 mod resample_gbrapf16;
 #[cfg(feature = "gbr")]
+mod resample_gbrapf16_filter;
+#[cfg(feature = "gbr")]
 mod resample_gbrapf32;
+#[cfg(feature = "gbr")]
+mod resample_gbrapf32_filter;
 #[cfg(feature = "gbr")]
 mod resample_gbrp;
 #[cfg(feature = "gbr")]
 mod resample_gbrpf16;
 #[cfg(feature = "gbr")]
+mod resample_gbrpf16_filter;
+#[cfg(feature = "gbr")]
 mod resample_gbrpf32;
+#[cfg(feature = "gbr")]
+mod resample_gbrpf32_filter;
 #[cfg(feature = "yuv-planar")]
 mod resample_geometry;
 #[cfg(feature = "gray")]
