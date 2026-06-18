@@ -3,7 +3,8 @@
 use super::{
   GeometryOverflow, HsvFrameMut, InsufficientBuffer, MixedSinker, MixedSinkerError,
   NativeRouteChanged, RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment,
-  check_dimensions_match, frozen_outputs_check, planar_resample::planar_dual_resample,
+  check_dimensions_match, frozen_outputs_check,
+  planar_resample::{planar_dual_filter_resample, planar_dual_resample},
   rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
 use crate::{
@@ -114,6 +115,12 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
     if let Some(stream) = self.luma_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_filter_stream.as_mut() {
+      stream.reset();
+    }
     if let Some(native) = self.native_420.as_mut() {
       native.reset();
     }
@@ -187,6 +194,8 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
       plan,
       rgb_stream,
       luma_stream,
+      rgb_filter_stream,
+      luma_filter_stream,
       resample_outputs,
       native,
       native_420,
@@ -199,6 +208,46 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
     // row-stage tier converts this source row at source width, then
     // area-streams it. `with_native(false)` forces the latter.
     if let Some(plan) = plan.as_ref() {
+      // A `Filter` plan routes to the filter resampler, which converts the
+      // separate Y/U/V planes to a source-width RGB row (the same
+      // `yuv_420_to_rgb_row` kernel the row-stage tier uses) and
+      // filter-resamples it plus the native Y. The native fast tier is an
+      // area-specific optimization, so it never sees a filter plan; the
+      // per-sink plan kind is fixed at construction, so a filter sink
+      // bypasses the native/row-stage route machinery entirely (no
+      // `frozen_native_route` interaction).
+      if plan.kind().is_filter() {
+        let matrix = row.matrix();
+        let full_range = row.full_range();
+        return planar_dual_filter_resample(
+          luma_filter_stream,
+          rgb_filter_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          rgb_scratch,
+          row.y(),
+          w,
+          plan,
+          idx,
+          use_simd,
+          |scratch| {
+            yuv_420_to_rgb_row(
+              row.y(),
+              row.u_half(),
+              row.v_half(),
+              scratch,
+              w,
+              matrix,
+              full_range,
+              use_simd,
+            );
+          },
+        );
+      }
       // Whether this call carries any output — the EXACT set both tiers'
       // preflight tests (`need_luma || need_color` =
       // `luma || luma_u16 || rgb || rgba || hsv`). The route freezes only
@@ -1115,6 +1164,12 @@ impl<R> PixelSink for MixedSinker<'_, Yuv410p, R> {
     if let Some(stream) = self.luma_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -1171,6 +1226,8 @@ impl<R> PixelSink for MixedSinker<'_, Yuv410p, R> {
       plan,
       rgb_stream,
       luma_stream,
+      rgb_filter_stream,
+      luma_filter_stream,
       resample_outputs,
       ..
     } = self;
@@ -1179,41 +1236,63 @@ impl<R> PixelSink for MixedSinker<'_, Yuv410p, R> {
     // source width in the shared scratch (the same `yuv_410_to_rgb_row`
     // kernel the identity path uses — 4:1:0's 1→4 chroma upsample), then
     // feed the shared planar resample tail. Row-stage only — converting
-    // each source row to RGB and binning is the whole job. Freeze the
-    // output set and check stream sequencing before staging, so a
-    // no-output sink stays a no-op and an out-of-sequence row is
-    // rejected without allocating.
+    // each source row to RGB and binning is the whole job. The `Area` arm
+    // bins the converted RGB / native Y; the `Filter` arm filter-resamples
+    // them through the merged engine (the same convert-then-resample tail).
+    // Both freeze the output set and check stream sequencing before
+    // staging, so a no-output sink stays a no-op and an out-of-sequence row
+    // is rejected without allocating.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
-      return planar_dual_resample(
-        luma_stream,
-        rgb_stream,
-        resample_outputs,
-        rgb,
-        rgba,
-        luma,
-        luma_u16,
-        hsv,
-        rgb_scratch,
-        row.y(),
-        w,
-        plan,
-        idx,
-        use_simd,
-        |scratch| {
-          yuv_410_to_rgb_row(
-            row.y(),
-            row.u_quarter(),
-            row.v_quarter(),
-            scratch,
-            w,
-            matrix,
-            full_range,
-            use_simd,
-          );
-        },
-      );
+      let convert_rgb = |scratch: &mut [u8]| {
+        yuv_410_to_rgb_row(
+          row.y(),
+          row.u_quarter(),
+          row.v_quarter(),
+          scratch,
+          w,
+          matrix,
+          full_range,
+          use_simd,
+        );
+      };
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => planar_dual_resample(
+          luma_stream,
+          rgb_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          rgb_scratch,
+          row.y(),
+          w,
+          plan,
+          idx,
+          use_simd,
+          convert_rgb,
+        ),
+        crate::resample::SpanKind::Filter => planar_dual_filter_resample(
+          luma_filter_stream,
+          rgb_filter_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          rgb_scratch,
+          row.y(),
+          w,
+          plan,
+          idx,
+          use_simd,
+          convert_rgb,
+        ),
+      };
     }
 
     let one_plane_start = idx * w;
@@ -1381,6 +1460,12 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
     if let Some(stream) = self.luma_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -1434,6 +1519,8 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
       plan,
       rgb_stream,
       luma_stream,
+      rgb_filter_stream,
+      luma_filter_stream,
       resample_outputs,
       ..
     } = self;
@@ -1442,40 +1529,63 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
     // source width in the shared scratch (same 4:2:0 per-row dispatcher
     // 4:2:2 reuses on its identity path), then feed the shared planar
     // resample tail. Row-stage only — converting each source row to RGB
-    // and binning is the whole job. Freeze the output set and check
-    // stream sequencing before staging, so a no-output sink stays a
-    // no-op and an out-of-sequence row is rejected without allocating.
+    // and binning is the whole job. The `Area` arm bins the converted RGB
+    // / native Y; the `Filter` arm filter-resamples them through the merged
+    // engine (the same convert-then-resample tail). Both freeze the output
+    // set and check stream sequencing before staging, so a no-output sink
+    // stays a no-op and an out-of-sequence row is rejected without
+    // allocating.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
-      return planar_dual_resample(
-        luma_stream,
-        rgb_stream,
-        resample_outputs,
-        rgb,
-        rgba,
-        luma,
-        luma_u16,
-        hsv,
-        rgb_scratch,
-        row.y(),
-        w,
-        plan,
-        idx,
-        use_simd,
-        |scratch| {
-          yuv_420_to_rgb_row(
-            row.y(),
-            row.u_half(),
-            row.v_half(),
-            scratch,
-            w,
-            matrix,
-            full_range,
-            use_simd,
-          );
-        },
-      );
+      let convert_rgb = |scratch: &mut [u8]| {
+        yuv_420_to_rgb_row(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          scratch,
+          w,
+          matrix,
+          full_range,
+          use_simd,
+        );
+      };
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => planar_dual_resample(
+          luma_stream,
+          rgb_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          rgb_scratch,
+          row.y(),
+          w,
+          plan,
+          idx,
+          use_simd,
+          convert_rgb,
+        ),
+        crate::resample::SpanKind::Filter => planar_dual_filter_resample(
+          luma_filter_stream,
+          rgb_filter_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          rgb_scratch,
+          row.y(),
+          w,
+          plan,
+          idx,
+          use_simd,
+          convert_rgb,
+        ),
+      };
     }
 
     let one_plane_start = idx * w;
@@ -1639,6 +1749,12 @@ impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
     if let Some(stream) = self.luma_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -1689,6 +1805,8 @@ impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
       plan,
       rgb_stream,
       luma_stream,
+      rgb_filter_stream,
+      luma_filter_stream,
       resample_outputs,
       ..
     } = self;
@@ -1697,40 +1815,62 @@ impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
     // source width in the shared scratch (the same 4:4:4 kernel the
     // identity path uses), then feed the shared planar resample tail.
     // Row-stage only — converting each source row to RGB and binning is
-    // the whole job. Freeze the output set and check stream sequencing
-    // before staging, so a no-output sink stays a no-op and an
-    // out-of-sequence row is rejected without allocating.
+    // the whole job. The `Area` arm bins the converted RGB / native Y; the
+    // `Filter` arm filter-resamples them through the merged engine (the
+    // same convert-then-resample tail). Both freeze the output set and
+    // check stream sequencing before staging, so a no-output sink stays a
+    // no-op and an out-of-sequence row is rejected without allocating.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
-      return planar_dual_resample(
-        luma_stream,
-        rgb_stream,
-        resample_outputs,
-        rgb,
-        rgba,
-        luma,
-        luma_u16,
-        hsv,
-        rgb_scratch,
-        row.y(),
-        w,
-        plan,
-        idx,
-        use_simd,
-        |scratch| {
-          yuv_444_to_rgb_row(
-            row.y(),
-            row.u(),
-            row.v(),
-            scratch,
-            w,
-            matrix,
-            full_range,
-            use_simd,
-          );
-        },
-      );
+      let convert_rgb = |scratch: &mut [u8]| {
+        yuv_444_to_rgb_row(
+          row.y(),
+          row.u(),
+          row.v(),
+          scratch,
+          w,
+          matrix,
+          full_range,
+          use_simd,
+        );
+      };
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => planar_dual_resample(
+          luma_stream,
+          rgb_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          rgb_scratch,
+          row.y(),
+          w,
+          plan,
+          idx,
+          use_simd,
+          convert_rgb,
+        ),
+        crate::resample::SpanKind::Filter => planar_dual_filter_resample(
+          luma_filter_stream,
+          rgb_filter_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          rgb_scratch,
+          row.y(),
+          w,
+          plan,
+          idx,
+          use_simd,
+          convert_rgb,
+        ),
+      };
     }
 
     let one_plane_start = idx * w;
@@ -1890,6 +2030,12 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
     if let Some(stream) = self.luma_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -1940,6 +2086,8 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
       plan,
       rgb_stream,
       luma_stream,
+      rgb_filter_stream,
+      luma_filter_stream,
       resample_outputs,
       ..
     } = self;
@@ -1949,40 +2097,63 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
     // kernel the identity path uses — 4:4:0's per-row math is identical
     // to 4:4:4, full-width chroma), then feed the shared planar resample
     // tail. Row-stage only — converting each source row to RGB and
-    // binning is the whole job. Freeze the output set and check stream
-    // sequencing before staging, so a no-output sink stays a no-op and
-    // an out-of-sequence row is rejected without allocating.
+    // binning is the whole job. The `Area` arm bins the converted RGB /
+    // native Y; the `Filter` arm filter-resamples them through the merged
+    // engine (the same convert-then-resample tail). Both freeze the output
+    // set and check stream sequencing before staging, so a no-output sink
+    // stays a no-op and an out-of-sequence row is rejected without
+    // allocating.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
-      return planar_dual_resample(
-        luma_stream,
-        rgb_stream,
-        resample_outputs,
-        rgb,
-        rgba,
-        luma,
-        luma_u16,
-        hsv,
-        rgb_scratch,
-        row.y(),
-        w,
-        plan,
-        idx,
-        use_simd,
-        |scratch| {
-          yuv_444_to_rgb_row(
-            row.y(),
-            row.u(),
-            row.v(),
-            scratch,
-            w,
-            matrix,
-            full_range,
-            use_simd,
-          );
-        },
-      );
+      let convert_rgb = |scratch: &mut [u8]| {
+        yuv_444_to_rgb_row(
+          row.y(),
+          row.u(),
+          row.v(),
+          scratch,
+          w,
+          matrix,
+          full_range,
+          use_simd,
+        );
+      };
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => planar_dual_resample(
+          luma_stream,
+          rgb_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          rgb_scratch,
+          row.y(),
+          w,
+          plan,
+          idx,
+          use_simd,
+          convert_rgb,
+        ),
+        crate::resample::SpanKind::Filter => planar_dual_filter_resample(
+          luma_filter_stream,
+          rgb_filter_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          rgb_scratch,
+          row.y(),
+          w,
+          plan,
+          idx,
+          use_simd,
+          convert_rgb,
+        ),
+      };
     }
 
     let one_plane_start = idx * w;

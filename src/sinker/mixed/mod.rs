@@ -1676,12 +1676,17 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// their YUV to a u8 RGB row and filter it here, the filter twin of the
   /// area [`Self::rgb_stream`]; `y2xx` joins for the high-bit packed YUV
   /// 4:2:2 colour group — `Y210` / `Y212` / `Y216`, whose 4:2:2 chroma the
-  /// convert closures upsample before this RGB-space filter).
+  /// convert closures upsample before this RGB-space filter; `yuv-planar`
+  /// joins for the 8-bit planar YUV family — `Yuv410p` / `Yuv420p` /
+  /// `Yuv422p` / `Yuv444p` / `Yuv440p` convert their separate Y/U/V planes
+  /// to a source-width u8 RGB row and filter it here, matching the area
+  /// [`Self::rgb_stream`] gate).
   #[cfg(any(
     feature = "rgb",
     feature = "gbr",
     feature = "yuv-444-packed",
-    feature = "y2xx"
+    feature = "y2xx",
+    feature = "yuv-planar"
   ))]
   rgb_filter_stream: Option<crate::resample::FilterStream<u8>>,
   /// Row-stage **filter** stream for the 8-bit packed-RGBA `u8` color
@@ -1740,6 +1745,21 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// unused).
   #[cfg(any(feature = "rgb", feature = "gbr", feature = "yuv-444-packed"))]
   rgba_filter_stream_u16: Option<crate::resample::FilterStream<u16>>,
+  /// Row-stage **filter** stream for single-plane `u8` native-Y luma
+  /// resampling — the [`SpanKind::Filter`](crate::resample::SpanKind) twin
+  /// of [`Self::luma_stream`] for the 8-bit planar YUV family (`Yuv410p` /
+  /// `Yuv420p` / `Yuv422p` / `Yuv444p` / `Yuv440p`). On a `Filter` plan the
+  /// Y plane is filter-resampled here as a 1-channel `u8` stream, so luma
+  /// stays **native Y** (never colour-derived) — byte-exact to the direct
+  /// Y-plane copy's filter resample, the filter analogue of the area path's
+  /// native-Y bin ([`planar_dual_resample`](planar_resample::planar_dual_resample)).
+  /// These sources are 8-bit, so no native-depth clamp is needed (the
+  /// stream finalizes to the full `u8` range, which *is* the native range);
+  /// `luma_u16` zero-extends each resampled Y byte. Lazily created in
+  /// `process`, reset in `begin_frame`. Gated to `yuv-planar`; widens as
+  /// more 8-bit native-Y filter families wire in.
+  #[cfg(feature = "yuv-planar")]
+  luma_filter_stream: Option<crate::resample::FilterStream<u8>>,
   /// Row-stage **filter** stream for single-plane `f32` luma binning
   /// ([`Grayf32`](crate::source::Grayf32)) — the filter twin of
   /// [`Self::luma_stream_f32`]. Lazily created in `process`, reset in
@@ -2609,7 +2629,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "rgb",
         feature = "gbr",
         feature = "yuv-444-packed",
-        feature = "y2xx"
+        feature = "y2xx",
+        feature = "yuv-planar"
       ))]
       rgb_filter_stream: None,
       #[cfg(any(feature = "rgb", feature = "gbr", feature = "yuv-444-packed"))]
@@ -2623,6 +2644,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       rgb_filter_stream_u16: None,
       #[cfg(any(feature = "rgb", feature = "gbr", feature = "yuv-444-packed"))]
       rgba_filter_stream_u16: None,
+      #[cfg(feature = "yuv-planar")]
+      luma_filter_stream: None,
       #[cfg(feature = "gray")]
       luma_filter_stream_f32: None,
       #[cfg(any(feature = "yuv-444-packed", feature = "y2xx"))]
