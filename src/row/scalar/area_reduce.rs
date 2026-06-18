@@ -3,8 +3,13 @@
 //! (`u32` sums bounded by `src * 255`) makes every backend's results
 //! bit-identical to this one.
 
-#![cfg_attr(not(feature = "std"), allow(dead_code))]
-#![cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
+#![cfg_attr(
+  any(
+    not(feature = "std"),
+    not(any(feature = "yuv-planar", feature = "rgb"))
+  ),
+  allow(dead_code)
+)]
 
 /// `h_tmp[j * channels + ch] = Σ weights[k] * row[(start_j + i) * channels + ch]`
 /// for each output span `j` described by `(starts, offsets, weights)`.

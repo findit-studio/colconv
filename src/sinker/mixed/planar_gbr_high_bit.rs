@@ -77,9 +77,9 @@
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
   RowShapeMismatch, RowSlice, check_dimensions_match, check_frozen_alpha_mode,
-  packed_rgb_u16_resample_emit, packed_rgb_u16_resample_preflight, packed_rgb_u16_resample_stream,
-  packed_rgba_u16_resample, rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
-  source_rgb_u16_scratch,
+  packed_rgb_u16_filter_stream, packed_rgb_u16_resample_emit, packed_rgb_u16_resample_preflight,
+  packed_rgb_u16_resample_stream, packed_rgba_u16_resample, rgb_row_buf_or_scratch,
+  rgba_plane_row_slice, rgba_u16_plane_row_slice, source_rgb_u16_scratch,
 };
 use crate::{
   PixelSink,
@@ -209,6 +209,9 @@ macro_rules! impl_gbrp_high_bit {
         if let Some(stream) = self.rgb_stream_u16.as_mut() {
           stream.reset();
         }
+        if let Some(stream) = self.rgb_filter_stream_u16.as_mut() {
+          stream.reset();
+        }
         self.resample_outputs = None;
         Ok(())
       }
@@ -253,14 +256,16 @@ macro_rules! impl_gbrp_high_bit {
         // Non-identity plan: scatter the native-depth G/B/R planes into a
         // source-width packed u16 RGB row and feed the shared high-bit
         // packed-RGB resample tail (parameterized by BITS) — the u16 analog
-        // of the 8-bit `Gbrp` routing. Binning runs at native depth; rgb_u16
+        // of the `Rgb48` routing. Binning runs at native depth; rgb_u16
         // / rgba_u16 copy the binned row, u8 / hsv derive from its
         // `>> (BITS - 8)` narrowing, and luma_u16 is computed at native
         // precision from the binned RGB (the packed twin of the direct
-        // path's `gbr_to_luma_u16_high_bit_row`). Freeze
-        // the output set and sequence-check before staging so a no-output
-        // sink stays a no-op and an out-of-sequence row is rejected without
-        // the allocation.
+        // path's `gbr_to_luma_u16_high_bit_row`). The plan's span kind picks
+        // the engine — the integer area stream or the signed-coefficient
+        // filter stream — both binning the same staged native-u16 row.
+        // Freeze the output set and sequence-check before staging so a
+        // no-output sink stays a no-op and an out-of-sequence row is rejected
+        // without the allocation.
         if let Some(plan) = self.plan.as_ref() {
           let Self {
             rgb,
@@ -273,9 +278,16 @@ macro_rules! impl_gbrp_high_bit {
             rgb_scratch,
             rgb_scratch_u16,
             rgb_stream_u16,
+            rgb_filter_stream_u16,
             resample_outputs,
             ..
           } = self;
+          let stream_next_y = match plan.kind() {
+            crate::resample::SpanKind::Area => rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
+            crate::resample::SpanKind::Filter => {
+              rgb_filter_stream_u16.as_ref().map_or(0, |s| s.next_y())
+            }
+          };
           if !packed_rgb_u16_resample_preflight(
             resample_outputs,
             rgb,
@@ -285,31 +297,74 @@ macro_rules! impl_gbrp_high_bit {
             rgba_u16,
             luma_u16,
             hsv,
-            rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
+            stream_next_y,
             idx,
           )? {
             return Ok(());
           }
-          let stream = packed_rgb_u16_resample_stream(rgb_stream_u16, plan, idx)?;
-          let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
-          gbr_to_rgb_u16_high_bit_row::<BITS, BE>(row.g(), row.b(), row.r(), src_u16, w, use_simd);
-          return packed_rgb_u16_resample_emit::<BITS, true>(
-            stream,
-            plan,
-            rgb,
-            rgba,
-            luma,
-            rgb_u16,
-            rgba_u16,
-            luma_u16,
-            hsv,
-            src_u16,
-            rgb_scratch,
-            row.matrix(),
-            row.full_range(),
-            idx,
-            use_simd,
-          );
+          // Create + sequence-check the kind-appropriate stream BEFORE the
+          // source-width staging, so a later out-of-sequence row is rejected
+          // without the scatter (mirrors the area-only ordering).
+          return match plan.kind() {
+            crate::resample::SpanKind::Area => {
+              let stream = packed_rgb_u16_resample_stream(rgb_stream_u16, plan, idx)?;
+              let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
+              gbr_to_rgb_u16_high_bit_row::<BITS, BE>(
+                row.g(),
+                row.b(),
+                row.r(),
+                src_u16,
+                w,
+                use_simd,
+              );
+              packed_rgb_u16_resample_emit::<BITS, true>(
+                stream,
+                plan,
+                rgb,
+                rgba,
+                luma,
+                rgb_u16,
+                rgba_u16,
+                luma_u16,
+                hsv,
+                src_u16,
+                rgb_scratch,
+                row.matrix(),
+                row.full_range(),
+                idx,
+                use_simd,
+              )
+            }
+            crate::resample::SpanKind::Filter => {
+              let stream = packed_rgb_u16_filter_stream(rgb_filter_stream_u16, plan, idx)?;
+              let src_u16 = source_rgb_u16_scratch(rgb_scratch_u16, w, plan)?;
+              gbr_to_rgb_u16_high_bit_row::<BITS, BE>(
+                row.g(),
+                row.b(),
+                row.r(),
+                src_u16,
+                w,
+                use_simd,
+              );
+              packed_rgb_u16_resample_emit::<BITS, true>(
+                stream,
+                plan,
+                rgb,
+                rgba,
+                luma,
+                rgb_u16,
+                rgba_u16,
+                luma_u16,
+                hsv,
+                src_u16,
+                rgb_scratch,
+                row.matrix(),
+                row.full_range(),
+                idx,
+                use_simd,
+              )
+            }
+          };
         }
 
         let Self {

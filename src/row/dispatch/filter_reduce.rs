@@ -13,8 +13,10 @@
 //! (the integer streams within `±1` LSB of Pillow). The V-pass is
 //! element-wise (mul+add) and stays bit-equal to the scalar reference.
 
-#![cfg_attr(not(feature = "std"), allow(dead_code))]
-#![cfg_attr(not(any(feature = "rgb", feature = "gray")), allow(dead_code))]
+#![cfg_attr(
+  any(not(feature = "std"), not(any(feature = "rgb", feature = "gray"))),
+  allow(dead_code)
+)]
 
 #[cfg(any(
   target_arch = "aarch64",

@@ -1632,10 +1632,11 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   #[cfg(feature = "rgb")]
   rgba_filter_stream: Option<crate::resample::FilterStream<u8>>,
   /// Row-stage **filter** stream for the high-bit packed-RGB `u16` color
-  /// group ([`Rgb48`](crate::source::Rgb48)) — the filter twin of
-  /// [`Self::rgb_stream_u16`]. Lazily created in `process`, reset in
-  /// `begin_frame`. Fed when the plan kind is `Filter`.
-  #[cfg(feature = "rgb")]
+  /// group ([`Rgb48`](crate::source::Rgb48), and the high-bit planar GBR
+  /// sources `Gbrp9`…`Gbrp16` which scatter into the same packed `u16` RGB
+  /// row) — the filter twin of [`Self::rgb_stream_u16`]. Lazily created in
+  /// `process`, reset in `begin_frame`. Fed when the plan kind is `Filter`.
+  #[cfg(any(feature = "rgb", feature = "gbr"))]
   rgb_filter_stream_u16: Option<crate::resample::FilterStream<u16>>,
   /// Row-stage **filter** stream for single-plane `f32` luma binning
   /// ([`Grayf32`](crate::source::Grayf32)) — the filter twin of
@@ -2484,7 +2485,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       rgb_filter_stream: None,
       #[cfg(feature = "rgb")]
       rgba_filter_stream: None,
-      #[cfg(feature = "rgb")]
+      #[cfg(any(feature = "rgb", feature = "gbr"))]
       rgb_filter_stream_u16: None,
       #[cfg(feature = "gray")]
       luma_filter_stream_f32: None,
@@ -4379,7 +4380,7 @@ pub(super) fn packed_rgb_u16_resample_stream<'s>(
 /// [`SpanKind::Filter`](crate::resample::SpanKind) twin of
 /// [`packed_rgb_u16_resample_stream`]. Sequence-check precedes allocation
 /// so a rejected first row creates no output buffers.
-#[cfg(feature = "rgb")]
+#[cfg(any(feature = "rgb", feature = "gbr"))]
 pub(super) fn packed_rgb_u16_filter_stream<'s>(
   rgb_filter_stream_u16: &'s mut Option<crate::resample::FilterStream<u16>>,
   plan: &ResamplePlan,
@@ -4478,23 +4479,55 @@ pub(super) fn packed_rgb_u16_resample_emit<const SRC_BITS: u32, const NATIVE_LUM
   } else {
     &mut []
   };
+  // A signed filter kernel (CatmullRom / Lanczos3) overshoots a legal
+  // edge, so a finalized `binned` sample can exceed the source's native
+  // max `(1 << SRC_BITS) - 1` even though the `FilterStream` clamps it to
+  // the full `u16` range. For a sub-16-bit source that overshoot is
+  // out-of-contract: the native-depth u16 outputs would publish a value
+  // above the documented range, and the u8 narrowing (`>> (SRC_BITS - 8)`)
+  // would wrap a clipped-high edge to a small value instead of `255`. So
+  // for `SRC_BITS < 16` every binned sample is clamped to the native max
+  // before any u16 copy, RGBA expansion, native luma, or u8 narrowing.
+  // For `SRC_BITS == 16` the native max is the u16 max, so this is a
+  // no-op (`Rgb48` / `Bgr48` are unaffected); the area path never
+  // overshoots, so it is a value no-op there too.
+  let native_max: u16 = ((1u32 << SRC_BITS) - 1) as u16;
   stream.feed_row(idx, src_u16, use_simd, |oy, binned| {
-    // Native-depth u16 outputs copy the binned row directly.
+    // Native-depth u16 outputs copy the binned row (clamped to the native
+    // max for a sub-16-bit source).
     if let Some(buf) = rgb_u16.as_deref_mut() {
-      buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(binned);
+      let out = &mut buf[oy * 3 * ow..(oy + 1) * 3 * ow];
+      if SRC_BITS < 16 {
+        for (d, &s) in out.iter_mut().zip(binned.iter()) {
+          *d = s.min(native_max);
+        }
+      } else {
+        out.copy_from_slice(binned);
+      }
     }
     if let Some(buf) = rgba_u16.as_deref_mut() {
-      crate::row::expand_rgb_u16_to_rgba_u16_row::<SRC_BITS>(
-        binned,
-        &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow],
-        ow,
-      );
+      let out = &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow];
+      if SRC_BITS < 16 {
+        // Clamping twin of `expand_rgb_u16_to_rgba_u16_row` (opaque alpha
+        // is the native max, which equals its `(1 << BITS) - 1`).
+        for (rgba_px, rgb_px) in out.chunks_exact_mut(4).zip(binned.chunks_exact(3)) {
+          rgba_px[0] = rgb_px[0].min(native_max);
+          rgba_px[1] = rgb_px[1].min(native_max);
+          rgba_px[2] = rgb_px[2].min(native_max);
+          rgba_px[3] = native_max;
+        }
+      } else {
+        crate::row::expand_rgb_u16_to_rgba_u16_row::<SRC_BITS>(binned, out, ow);
+      }
     }
     // Native-precision `luma_u16`: derive directly from the native-depth
     // binned RGB, byte-identical to the direct
     // `gbr_to_luma_u16_high_bit_row` path. Only the high-bit-GBR callers
     // set `NATIVE_LUMA16`; the `Rgb48` / `Bgr48` callers leave it false
     // and take the narrowed `luma_u16` in the `need_narrow` block below.
+    // `rgb_to_luma_u16_native_row` clamps each input channel to the
+    // native max internally, so a filter overshoot is clipped before the
+    // luma sum (a no-op for the in-range area / direct callers).
     if NATIVE_LUMA16 && let Some(buf) = luma_u16.as_deref_mut() {
       crate::row::rgb_to_luma_u16_native_row(
         binned,
@@ -4507,8 +4540,17 @@ pub(super) fn packed_rgb_u16_resample_emit<const SRC_BITS: u32, const NATIVE_LUM
     }
     if need_narrow {
       let nrow = &mut narrow[..3 * ow];
-      for (d, &s) in nrow.iter_mut().zip(binned.iter()) {
-        *d = (s >> (SRC_BITS - 8)) as u8;
+      // Clamp to the native max before the narrowing shift so a sub-16-bit
+      // filter overshoot clips to `255` instead of wrapping (no-op for
+      // 16-bit and for the in-range area path).
+      if SRC_BITS < 16 {
+        for (d, &s) in nrow.iter_mut().zip(binned.iter()) {
+          *d = (s.min(native_max) >> (SRC_BITS - 8)) as u8;
+        }
+      } else {
+        for (d, &s) in nrow.iter_mut().zip(binned.iter()) {
+          *d = (s >> (SRC_BITS - 8)) as u8;
+        }
       }
       if let Some(buf) = rgb.as_deref_mut() {
         buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(nrow);
