@@ -29,6 +29,57 @@ use std::vec::Vec;
 
 use super::{PlanGeometry, ResampleError};
 
+// Test-only allocation failpoint for the first `FilterAxis` plan-table
+// reservation (`starts`) in `FilterAxis::build`. Armed, that reservation
+// returns the crate's recoverable `AllocationFailed` WITHOUT reserving —
+// and is consulted only AFTER the no-allocation zero-tap dry pass — so the
+// regression tests can prove an invalid sub-ULP support is rejected
+// (`InvalidFilterSupport`) BEFORE any plan table is sized, while a valid
+// kernel still reaches and trips the armed failpoint (`AllocationFailed`).
+// `Cell<bool>` is plenty (single-threaded, take-on-read). Strictly
+// test-only — the non-test build compiles this away entirely. Mirrors the
+// `#178` failpoint convention (`FORCE_*_ALLOC_FAILURE` / `arm_*`).
+#[cfg(all(test, feature = "std"))]
+std::thread_local! {
+  static FORCE_FILTER_AXIS_ALLOC_FAILURE: core::cell::Cell<bool> =
+    const { core::cell::Cell::new(false) };
+}
+
+/// Arms the `FilterAxis` plan-table allocation failpoint for the **next**
+/// [`FilterAxis::build`] on the current thread. The flag is consumed
+/// (take-on-read) by that build's first table reservation, so it fires
+/// exactly once and cannot leak into a later test. Test-only.
+#[cfg(all(test, feature = "std"))]
+pub(crate) fn arm_filter_axis_alloc_failure() {
+  FORCE_FILTER_AXIS_ALLOC_FAILURE.with(|f| f.set(true));
+}
+
+/// Whether any output window over an `in_size -> out_size` axis under this
+/// `scale` / `support` would degenerate to zero taps — the geometry-only
+/// (no-allocation) twin of the per-output window math in
+/// [`FilterAxis::build`]. A sub-ULP positive support survives build's
+/// finite / `> 0` / `<= in_size` checks yet can round
+/// `floor(center - support)` and `ceil(center + support)` to the same
+/// integer when `center` is integral, leaving `xmin == xmax` and an empty
+/// window that covers no source sample. `build` runs this BEFORE sizing any
+/// plan table so such a kernel is rejected ([`ResampleError::InvalidFilterSupport`])
+/// ahead of allocation, and the window fill loop relies on its guarantee
+/// (`n > 0`) to keep the overlap sweep's `lo <= j` invariant.
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn first_zero_tap_window(scale: f64, support: f64, in_size: usize, out_size: usize) -> bool {
+  for xx in 0..out_size {
+    let center = (xx as f64 + 0.5) * scale;
+    let lo = floor_f64(center - support);
+    let xmin = if lo < 0.0 { 0 } else { lo as usize };
+    let hi = ceil_f64(center + support);
+    let xmax = (hi as usize).min(in_size);
+    if xmax == xmin {
+      return true;
+    }
+  }
+  false
+}
+
 /// `f64` `floor` portable across `std` and `no_std + alloc` builds,
 /// mirroring the crate's `powf32` float-math gating: `std` uses the
 /// inherent method, `no_std` opts into `libm` (gated by `alloc`).
@@ -267,7 +318,26 @@ impl FilterAxis {
     // `[0, in_size)`, no window exceeds `in_size` samples.
     let geometry = || PlanGeometry::new(in_size, 1, out_size, 1);
 
+    // No-allocation dry pass over the output window geometry: a sub-ULP
+    // support can survive the validation above yet collapse a window to
+    // zero taps (see `first_zero_tap_window`). Reject such a kernel here,
+    // BEFORE sizing any plan table, so an invalid support never allocates —
+    // and so the fill loop's `n > 0` (hence the overlap sweep's `lo <= j`)
+    // is guaranteed.
+    if first_zero_tap_window(scale, support, in_size, out_size) {
+      return Err(ResampleError::InvalidFilterSupport(
+        InvalidFilterSupport::new(support_unit, in_size),
+      ));
+    }
+
     let mut starts = Vec::new();
+    // The first plan-table reservation consults the test-only failpoint
+    // (after the dry pass, so a zero-tap kernel is rejected before it can
+    // fire). On the non-test build the whole branch compiles away.
+    #[cfg(all(test, feature = "std"))]
+    if FORCE_FILTER_AXIS_ALLOC_FAILURE.with(|f| f.take()) {
+      return Err(ResampleError::AllocationFailed(geometry()));
+    }
     starts
       .try_reserve_exact(out_size)
       .map_err(|_| ResampleError::AllocationFailed(geometry()))?;
@@ -297,19 +367,9 @@ impl FilterAxis {
       // lossless before the min clamp to the exclusive source bound.
       let xmax = (hi as usize).min(in_size);
       let n = xmax - xmin;
-
-      // A sub-ULP positive support survives the `> 0` check above yet can
-      // round `floor(center - support)` and `ceil(center + support)` to the
-      // same integer when `center` is integral, leaving `xmin == xmax` and
-      // an empty window. Such a kernel covers no source sample, so it cannot
-      // reconstruct this output: reject it as an invalid support (before any
-      // further allocation) rather than emit a zero-tap window, which would
-      // also break the overlap sweep's `lo <= j` invariant below.
-      if n == 0 {
-        return Err(ResampleError::InvalidFilterSupport(
-          InvalidFilterSupport::new(support_unit, in_size),
-        ));
-      }
+      // The dry pass above rejected any zero-tap window, so every window
+      // here covers at least one source sample.
+      debug_assert!(n > 0);
 
       // Grow the coeff arena one window at a time under the recoverable
       // contract; `n <= in_size` so each reservation is bounded.
@@ -348,9 +408,9 @@ impl FilterAxis {
     //
     // The `lo < j` guard bounds the lower pointer: window `j` is always open
     // at its own start (every window has `ksize >= 1` — zero-tap windows are
-    // rejected above), so `lo` never needs to pass `j`. The guard makes the
-    // sweep robust even if that invariant were ever weakened, so `lo` can
-    // never index past `starts`.
+    // rejected by the dry pass before this point), so `lo` never needs to
+    // pass `j`. The guard makes the sweep robust even if that invariant were
+    // ever weakened, so `lo` can never index past `starts`.
     let mut max_overlap = 0usize;
     let mut lo = 0usize;
     for j in 0..starts.len() {

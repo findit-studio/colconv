@@ -177,6 +177,54 @@ fn tiny_positive_support_rejected_not_panic() {
 }
 
 #[test]
+fn zero_tap_support_rejected_before_allocation() {
+  // Hardening contract: an invalid (zero-tap) support is rejected by the
+  // no-allocation dry pass BEFORE any plan table is sized. Arm the
+  // first-table-reservation failpoint, then build a sub-ULP-support kernel
+  // whose first integral center degenerates to an empty window. If the dry
+  // pass runs first the error is `InvalidFilterSupport`; were the
+  // reservation reached first it would be the armed `AllocationFailed`.
+  struct TinySupport;
+  impl FilterKernel for TinySupport {
+    fn support(&self) -> f64 {
+      1e-20
+    }
+    fn weight(&self, _x: f64) -> f64 {
+      1.0
+    }
+  }
+  arm_filter_axis_alloc_failure();
+  let err = FilterAxis::build(202, 101, &TinySupport).unwrap_err();
+  assert!(
+    matches!(err, ResampleError::InvalidFilterSupport(_)),
+    "zero-tap support must be rejected before allocation, got {err:?}"
+  );
+  // The dry pass returned before the failpoint check, so the flag is still
+  // armed; consume it with a valid build (which now trips and reports the
+  // armed `AllocationFailed`) so it cannot leak into a later test on this
+  // thread — and incidentally re-confirming the failpoint was never reached
+  // on the rejected build above.
+  let drained = FilterAxis::build(16, 4, &Triangle).unwrap_err();
+  assert!(
+    matches!(drained, ResampleError::AllocationFailed(_)),
+    "the still-armed failpoint must trip on the next valid build, got {drained:?}"
+  );
+}
+
+#[test]
+fn valid_support_hits_armed_alloc_failpoint() {
+  // The failpoint is real and reachable for a VALID kernel: a normal
+  // Triangle 2:1 downscale passes the dry pass, so it reaches the armed
+  // first-table reservation and surfaces the recoverable `AllocationFailed`.
+  arm_filter_axis_alloc_failure();
+  let err = FilterAxis::build(16, 8, &Triangle).unwrap_err();
+  assert!(
+    matches!(err, ResampleError::AllocationFailed(_)),
+    "a valid kernel must reach the armed table reservation, got {err:?}"
+  );
+}
+
+#[test]
 fn max_overlap_bounds_the_ring() {
   // The accumulator-ring capacity (max window overlap) must cover every
   // window open at a given source row. Cross-check the stored value
