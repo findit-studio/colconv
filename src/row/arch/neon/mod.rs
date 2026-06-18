@@ -80,6 +80,25 @@ pub(crate) mod area_reduce;
 #[cfg(feature = "yuv-444-packed")]
 mod ayuv64;
 pub(crate) mod endian;
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(
+    feature = "yuv-planar",
+    feature = "rgb",
+    feature = "gbr",
+    feature = "gray",
+    feature = "xyz",
+    feature = "bayer",
+    feature = "mono",
+    feature = "yuv-semi-planar",
+    feature = "yuv-packed",
+    feature = "yuv-444-packed",
+    feature = "y2xx",
+    feature = "v210",
+    feature = "rgb-legacy"
+  )
+))]
+pub(crate) mod filter_reduce;
 #[cfg(feature = "gray")]
 mod gray;
 mod hsv;

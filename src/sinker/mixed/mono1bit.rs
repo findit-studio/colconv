@@ -57,6 +57,12 @@ fn mono_luma_resample(
   use_simd: bool,
   expand_luma: impl FnOnce(&mut [u8]),
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink (Mono1bit is not routed to the filter path): reject a
+  // filter plan before any work, so the plan's empty area spans never
+  // reach an area stream.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   let ow = plan.out_w();
   let any_output = luma.is_some()
     || luma_u16.is_some()

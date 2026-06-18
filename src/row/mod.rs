@@ -142,6 +142,29 @@ pub(crate) use dispatch::area_reduce::{
   PaddedSpans, area_h_reduce_row, area_h_reduce_row_f32, area_h_reduce_row_u16, area_v_accumulate,
   area_v_accumulate_f32, area_v_accumulate_u16,
 };
+// Separable filter H/V passes; consumed by `crate::resample::filter`'s
+// `FilterStream` (the signed twin of `AreaStream`).
+#[cfg(all(
+  any(feature = "std", feature = "alloc"),
+  any(
+    feature = "yuv-planar",
+    feature = "rgb",
+    feature = "gbr",
+    feature = "gray",
+    feature = "xyz",
+    feature = "bayer",
+    feature = "mono",
+    feature = "yuv-semi-planar",
+    feature = "yuv-packed",
+    feature = "yuv-444-packed",
+    feature = "y2xx",
+    feature = "v210",
+    feature = "rgb-legacy"
+  )
+))]
+pub(crate) use dispatch::filter_reduce::{
+  FilterPaddedSpans, FilterSimdElem, filter_h_reduce_row, filter_v_accumulate,
+};
 // `y_plane_to_luma_u16_row` is consumed by every source family that exposes
 // a luma plane to the MixedSinker.
 #[cfg(all(

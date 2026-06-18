@@ -598,7 +598,10 @@ impl NativeRouteChanged {
 /// variants were renamed to `Insufficient*Buffer` / `InsufficientHsvPlane`
 /// and their payload structs renamed from `BufferTooShort` /
 /// `HsvPlaneTooShort` to `InsufficientBuffer` / `InsufficientHsvPlane`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, IsVariant, TryUnwrap, Unwrap, Error)]
+// No `Eq`: the wrapped `ResampleError` carries an `f64` (the filter
+// kernel support in `InvalidFilterSupport`), so it is `PartialEq` only.
+// Nothing requires `Eq` on this type.
+#[derive(Debug, Clone, Copy, PartialEq, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum MixedSinkerError {
   /// The frame handed to the walker does not match the dimensions
@@ -1607,6 +1610,28 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// widens as f32 luma families wire in.
   #[cfg(feature = "gray")]
   luma_stream_f32: Option<crate::resample::AreaStream<f32>>,
+  /// Row-stage **filter** stream for the packed-RGB `u8` color group
+  /// ([`Rgb24`](crate::source::Rgb24)) — the signed-coefficient
+  /// (PIL-parity) twin of [`Self::rgb_stream`], fed when the plan's
+  /// [`SpanKind`](crate::resample::SpanKind) is `Filter`. Lazily created
+  /// in `process`, reset in `begin_frame`. The first format routed through
+  /// the filter engine in this stage; the gate widens with the area
+  /// engine as more packed-RGB sources wire in.
+  #[cfg(feature = "rgb")]
+  rgb_filter_stream: Option<crate::resample::FilterStream<u8>>,
+  /// Row-stage **filter** stream for the high-bit packed-RGB `u16` color
+  /// group ([`Rgb48`](crate::source::Rgb48)) — the filter twin of
+  /// [`Self::rgb_stream_u16`]. Lazily created in `process`, reset in
+  /// `begin_frame`. Fed when the plan kind is `Filter`.
+  #[cfg(feature = "rgb")]
+  rgb_filter_stream_u16: Option<crate::resample::FilterStream<u16>>,
+  /// Row-stage **filter** stream for single-plane `f32` luma binning
+  /// ([`Grayf32`](crate::source::Grayf32)) — the filter twin of
+  /// [`Self::luma_stream_f32`]. Lazily created in `process`, reset in
+  /// `begin_frame`. Fed when the plan kind is `Filter`; bins at f32
+  /// precision and emits unclamped (PIL `F`-mode).
+  #[cfg(feature = "gray")]
+  luma_filter_stream_f32: Option<crate::resample::FilterStream<f32>>,
   /// Output configuration frozen at a resampled frame's first
   /// processed row; `None` between frames. Captures presence AND
   /// attachment identity (pointer/length) of every output the emit
@@ -2443,6 +2468,12 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       luma_stream_u16: None,
       #[cfg(feature = "gray")]
       luma_stream_f32: None,
+      #[cfg(feature = "rgb")]
+      rgb_filter_stream: None,
+      #[cfg(feature = "rgb")]
+      rgb_filter_stream_u16: None,
+      #[cfg(feature = "gray")]
+      luma_filter_stream_f32: None,
       #[cfg(any(
         feature = "yuv-planar",
         feature = "rgb",
@@ -3887,6 +3918,12 @@ pub(super) fn packed_rgb_resample_stream<'s>(
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::AreaStream<u8>, MixedSinkerError> {
+  // Area-only sink: a filter plan would feed empty area spans (silent
+  // zero-output). Routed RGB reaches this only from the Area arm of its
+  // `plan.kind()` match, so this never trips for a routed format.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   // Sequence-check before allocating: a fresh stream expects row 0, so
   // an out-of-sequence first row is rejected without creating the
   // output-width buffers — keeping freeze, then sequence-check, then
@@ -3934,7 +3971,7 @@ pub(super) fn packed_rgb_resample_stream<'s>(
 )]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgb_resample_emit(
-  stream: &mut crate::resample::AreaStream<u8>,
+  stream: &mut impl crate::resample::RowResampler<u8>,
   plan: &ResamplePlan,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -3989,6 +4026,46 @@ pub(super) fn packed_rgb_resample_emit(
   })?;
 
   Ok(())
+}
+
+/// Lazily creates and sequence-checks the 3-channel `u8` **filter**
+/// stream for a packed-RGB filter plan — the [`SpanKind::Filter`] twin of
+/// [`packed_rgb_resample_stream`]. Sequence-check precedes allocation so a
+/// rejected first row creates no output-width buffers and
+/// `AllocationFailed` never masks `OutOfSequenceRow`.
+#[cfg(feature = "rgb")]
+pub(super) fn packed_rgb_filter_stream<'s>(
+  rgb_filter_stream: &'s mut Option<crate::resample::FilterStream<u8>>,
+  plan: &ResamplePlan,
+  idx: usize,
+) -> Result<&'s mut crate::resample::FilterStream<u8>, MixedSinkerError> {
+  let expected = rgb_filter_stream
+    .as_ref()
+    .map_or(0, |stream| stream.next_y());
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  let (fh, fv) = (
+    plan
+      .filter_h()
+      .expect("filter plan carries horizontal windows"),
+    plan
+      .filter_v()
+      .expect("filter plan carries vertical windows"),
+  );
+  let stream = match rgb_filter_stream {
+    Some(stream) => stream,
+    None => rgb_filter_stream.insert(crate::resample::FilterStream::new(
+      fh,
+      fv,
+      plan.src_w(),
+      plan.src_h(),
+      3,
+    )?),
+  };
+  Ok(stream)
 }
 
 /// Source-width `u16` RGB staging for high-bit packed-RGB resampling:
@@ -4107,6 +4184,12 @@ pub(super) fn packed_rgb_u16_resample_stream<'s>(
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::AreaStream<u16>, MixedSinkerError> {
+  // Area-only: reject a filter plan before building the area stream
+  // (Rgb48 reaches this only from its Area arm — see
+  // packed_rgb_resample_stream).
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   // Sequence-check before allocating (see packed_rgb_resample_stream):
   // an out-of-sequence first row is rejected without creating the u16
   // output-width buffers, so AllocationFailed never masks
@@ -4122,6 +4205,46 @@ pub(super) fn packed_rgb_u16_resample_stream<'s>(
     None => rgb_stream_u16.insert(crate::resample::AreaStream::new(
       plan.h(),
       plan.v(),
+      plan.src_w(),
+      plan.src_h(),
+      3,
+    )?),
+  };
+  Ok(stream)
+}
+
+/// Lazily creates and sequence-checks the 3-channel `u16` **filter**
+/// stream for a high-bit packed-RGB filter plan — the
+/// [`SpanKind::Filter`](crate::resample::SpanKind) twin of
+/// [`packed_rgb_u16_resample_stream`]. Sequence-check precedes allocation
+/// so a rejected first row creates no output buffers.
+#[cfg(feature = "rgb")]
+pub(super) fn packed_rgb_u16_filter_stream<'s>(
+  rgb_filter_stream_u16: &'s mut Option<crate::resample::FilterStream<u16>>,
+  plan: &ResamplePlan,
+  idx: usize,
+) -> Result<&'s mut crate::resample::FilterStream<u16>, MixedSinkerError> {
+  let expected = rgb_filter_stream_u16
+    .as_ref()
+    .map_or(0, |stream| stream.next_y());
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  let (fh, fv) = (
+    plan
+      .filter_h()
+      .expect("filter plan carries horizontal windows"),
+    plan
+      .filter_v()
+      .expect("filter plan carries vertical windows"),
+  );
+  let stream = match rgb_filter_stream_u16 {
+    Some(stream) => stream,
+    None => rgb_filter_stream_u16.insert(crate::resample::FilterStream::new(
+      fh,
+      fv,
       plan.src_w(),
       plan.src_h(),
       3,
@@ -4155,7 +4278,7 @@ pub(super) fn packed_rgb_u16_resample_stream<'s>(
 ))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgb_u16_resample_emit<const SRC_BITS: u32, const NATIVE_LUMA16: bool>(
-  stream: &mut crate::resample::AreaStream<u16>,
+  stream: &mut impl crate::resample::RowResampler<u16>,
   plan: &ResamplePlan,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -4579,6 +4702,11 @@ pub(super) fn packed_rgba_resample<const NATIVE_Y_LUMA: bool>(
   convert_rgba: impl FnOnce(&mut [u8]),
   deinterleave_y: impl FnOnce(&mut [u8]),
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink: reject a filter plan before any work (these packed
+  // RGBA / YA families are not routed to the filter path).
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   let ow = plan.out_w();
   let need_any = rgb.is_some()
     || rgba.is_some()
@@ -4838,6 +4966,11 @@ pub(super) fn pal8_rgba_resample(
   luma_coeffs_q8: (u32, u32, u32),
   convert_rgba: impl FnOnce(&mut [u8]),
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink (Pal8 is not routed to the filter path): reject a
+  // filter plan before any work.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   let ow = plan.out_w();
   let need_any = rgb.is_some()
     || rgba.is_some()
@@ -5074,6 +5207,11 @@ pub(super) fn packed_rgba_u16_resample<
   convert_rgba_u16: impl FnOnce(&mut [u16]),
   deinterleave_y: impl FnOnce(&mut [u16]),
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink (high-bit packed RGBA is not routed to the filter
+  // path): reject a filter plan before any work.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   const {
     assert!(
       SRC_BITS > 8 && SRC_BITS <= 16,
@@ -5430,6 +5568,11 @@ pub(super) fn packed_yuv444_triple_resample<const SRC_BITS: u32>(
   convert_rgb_u16: impl FnOnce(&mut [u16]),
   deinterleave_y: impl FnOnce(&mut [u16]),
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink (high-bit packed YUV 4:4:4 is not routed to the filter
+  // path): reject a filter plan before any work.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   const {
     assert!(
       SRC_BITS >= 8 && SRC_BITS <= 16,
@@ -5696,6 +5839,11 @@ pub(super) fn packed_yuva444_resample<const SRC_BITS: u32>(
   convert_rgba_u16: impl FnOnce(&mut [u16]),
   deinterleave_y: impl FnOnce(&mut [u16]),
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink (packed YUVA 4:4:4 is not routed to the filter path):
+  // reject a filter plan before any work.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   const {
     assert!(
       SRC_BITS >= 8 && SRC_BITS <= 16,
@@ -6000,6 +6148,11 @@ pub(super) fn packed_yuv422_triple_resample<const SRC_BITS: u32>(
   convert_rgb_u8: impl FnOnce(&mut [u8]),
   convert_rgb_u16: impl FnOnce(&mut [u16]),
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink (high-bit packed YUV 4:2:2 is not routed to the filter
+  // path): reject a filter plan before any work.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   const {
     assert!(
       SRC_BITS > 8 && SRC_BITS <= 16,
@@ -6368,6 +6521,11 @@ pub(super) fn packed_rgb_f32_resample_stream<'s>(
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::AreaStream<f32>, MixedSinkerError> {
+  // Area-only (Rgbf32 / packed-RGBA f32 are not routed to the filter
+  // path): reject a filter plan before building the area stream.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   // Sequence-check before allocating (see packed_rgb_u16_resample_stream):
   // an out-of-sequence first row is rejected without creating the f32
   // output-width buffers, so AllocationFailed never masks
@@ -7525,6 +7683,11 @@ pub(super) fn packed_rgba_f32_resample(
   full_range: bool,
   convert_rgba: impl FnOnce(&mut [f32]),
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink (Gbrapf32 is not routed to the filter path): reject a
+  // filter plan before any work.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   // The binned planes hold host-native f32 (the scatter decoded the source
   // to host order before binning). The `gbrpf32_*` / `gbrapf32_*` kernels
   // take a wire-endian const and byte-swap when it differs from the host, so
@@ -7816,6 +7979,11 @@ pub(super) fn packed_rgba_f16_resample(
   full_range: bool,
   convert_rgba: impl FnOnce(&mut [f32]),
 ) -> Result<(), MixedSinkerError> {
+  // Area-only sink (Gbrapf16 is not routed to the filter path): reject a
+  // filter plan before any work.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   use crate::row::scalar::planar_gbr_f16::widen_f16_be_to_host_f32;
 
   // The rounded f16 planes (and the f32 they widen back to) hold host-native
@@ -8233,6 +8401,11 @@ pub(super) fn xyz12_resample_stream<'s>(
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::AreaStream<f32>, MixedSinkerError> {
+  // Area-only (Xyz12 is not routed to the filter path): reject a filter
+  // plan before building the area stream.
+  if plan.kind().is_filter() {
+    return Err(plan.unsupported_filter().into());
+  }
   // Sequence-check before allocating (see packed_rgb_f32_resample_stream):
   // an out-of-sequence first row is rejected without creating the f32
   // output-width buffers, so AllocationFailed never masks

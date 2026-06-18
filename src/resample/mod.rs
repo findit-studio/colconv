@@ -30,6 +30,31 @@ use std::vec::Vec;
 use derive_more::{IsVariant, TryUnwrap, Unwrap};
 use thiserror::Error;
 
+mod filter;
+use filter::FilterAxis;
+pub use filter::{CatmullRom, FilterKernel, InvalidFilterSupport, Lanczos3, Triangle};
+// Re-exported for the sinker's `*_filter_stream` fields and tails, the
+// filter twin of the `AreaStream` / `AreaSample` pair. Compiled wherever
+// the `stream` submodule is (the 14-feature engine cascade); only the
+// routed families (`rgb` / `gray` in this stage) actually reference it.
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
+))]
+#[cfg_attr(not(any(feature = "rgb", feature = "gray")), allow(unused_imports))]
+pub(crate) use filter::{FilterSample, FilterStream};
+
 /// Decides a [`MixedSinker`](crate::sinker::MixedSinker)'s output
 /// geometry from its source geometry, once, at construction.
 ///
@@ -121,6 +146,74 @@ impl Resampler for AreaResampler {
   }
 }
 
+/// Separable **windowed-filter** downscale strategy — the Pillow (PIL)
+/// `Image.resize` convention, reproduced within +-1 LSB. Plans signed
+/// reconstruction-filter coefficients on both axes under the kernel `K`:
+/// [`Triangle`] (PIL `BILINEAR`), [`CatmullRom`] (PIL `BICUBIC`), or
+/// [`Lanczos3`] (PIL `LANCZOS`), or a custom [`FilterKernel`].
+///
+/// Requesting the source geometry plans the identity (`Ok(None)`);
+/// upscaling on either axis is rejected in this stage (a later increment
+/// drops that guard). The kernel is plain data — construct via
+/// [`Self::new`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FilteredResampler<K: FilterKernel> {
+  out_w: usize,
+  out_h: usize,
+  kernel: K,
+}
+
+impl<K: FilterKernel> FilteredResampler<K> {
+  /// Strategy producing an `out_w x out_h` output frame under `kernel`.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn new(out_w: usize, out_h: usize, kernel: K) -> Self {
+    Self {
+      out_w,
+      out_h,
+      kernel,
+    }
+  }
+
+  /// Requested output width.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn out_w(&self) -> usize {
+    self.out_w
+  }
+
+  /// Requested output height.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn out_h(&self) -> usize {
+    self.out_h
+  }
+
+  /// The reconstruction-filter kernel.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn kernel(&self) -> &K {
+    &self.kernel
+  }
+}
+
+impl<K: FilterKernel> sealed::Sealed for FilteredResampler<K> {}
+
+impl<K: FilterKernel> Resampler for FilteredResampler<K> {
+  fn plan(&self, src_w: usize, src_h: usize) -> Result<Option<ResamplePlan>, ResampleError> {
+    if self.out_w == 0 || self.out_h == 0 {
+      return Err(ResampleError::ZeroOutputDimension(
+        ZeroOutputDimension::new(self.out_w, self.out_h),
+      ));
+    }
+    if self.out_w > src_w || self.out_h > src_h {
+      return Err(ResampleError::UpscaleUnsupported(UpscaleUnsupported::new(
+        src_w, src_h, self.out_w, self.out_h,
+      )));
+    }
+    if self.out_w == src_w && self.out_h == src_h {
+      return Ok(None);
+    }
+    ResamplePlan::filter(src_w, src_h, self.out_w, self.out_h, &self.kernel).map(Some)
+  }
+}
+
 /// Zero-filled buffer via fallible reservation: `resize` after an
 /// exact reserve cannot reallocate, so refusal is the only failure
 /// and it surfaces as the error instead of aborting.
@@ -196,6 +289,18 @@ impl AxisSpans {
     // and keeps a representable count (e.g. usize::MAX source, one
     // output) from being misreported as overflow.
     (src - gcd(src, out)).checked_add(out)
+  }
+
+  /// Empty placeholder spans — carried by a [`SpanKind::Filter`]
+  /// [`ResamplePlan`] in the area-span fields the filter path never reads.
+  /// Allocation-free (`Vec::new`).
+  #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
+  fn empty() -> Self {
+    Self {
+      starts: Vec::new(),
+      offsets: Vec::new(),
+      weights: Vec::new(),
+    }
   }
 
   /// Builds the exact area spans for one `src -> out` axis.
@@ -355,18 +460,55 @@ impl AxisSpans {
   }
 }
 
+/// Which streaming engine a [`ResamplePlan`] drives: the integer
+/// box-coverage [`Area`](SpanKind::Area) engine, or the
+/// signed-coefficient [`Filter`](SpanKind::Filter) engine. A sinker's
+/// resample tail matches on [`ResamplePlan::kind`] to feed the right
+/// stream — the two engines never share a span arena.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IsVariant)]
+pub enum SpanKind {
+  /// Exact integer area (box-coverage) spans — see [`AreaResampler`].
+  Area,
+  /// Signed windowed-filter coefficients — see
+  /// [`FilteredResampler`](crate::resample::FilteredResampler).
+  Filter,
+}
+
+impl SpanKind {
+  /// Lowercase identifier for diagnostics.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn as_str(&self) -> &'static str {
+    match self {
+      Self::Area => "area",
+      Self::Filter => "filter",
+    }
+  }
+}
+
 /// Output-geometry product of [`Resampler::plan`], built once at
-/// sinker construction. Carries the per-axis area spans the streaming
-/// engine consumes; the source dimensions double as the spans'
-/// normalization denominators.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// sinker construction. Carries the per-axis spans the streaming engine
+/// consumes; for [`SpanKind::Area`] the source dimensions double as the
+/// spans' normalization denominators.
+///
+/// The area spans `h`/`v` are always present (an [`AreaResampler`] plan,
+/// the native-tier chroma grids); a [`SpanKind::Filter`] plan additionally
+/// carries the signed [`FilterAxis`] windows in `filter_h`/`filter_v` and
+/// leaves the area spans empty (the area path never reads them — the
+/// sink branches on [`Self::kind`] first). `PartialEq` only (the filter
+/// coefficients are `f32`, hence no `Eq`).
+#[derive(Debug, Clone, PartialEq)]
 pub struct ResamplePlan {
   src_w: usize,
   src_h: usize,
   out_w: usize,
   out_h: usize,
+  kind: SpanKind,
   h: AxisSpans,
   v: AxisSpans,
+  /// Horizontal filter windows; `Some` iff `kind == Filter`.
+  filter_h: Option<FilterAxis>,
+  /// Vertical filter windows; `Some` iff `kind == Filter`.
+  filter_v: Option<FilterAxis>,
 }
 
 impl ResamplePlan {
@@ -396,8 +538,40 @@ impl ResamplePlan {
       src_h,
       out_w,
       out_h,
+      kind: SpanKind::Area,
       h,
       v,
+      filter_h: None,
+      filter_v: None,
+    })
+  }
+
+  /// Builds a signed-coefficient **filter** plan for `src -> out` under
+  /// `kernel`. The strategy ([`FilteredResampler`]) has already validated
+  /// zero, upscale, and identity geometry. The area spans are left empty
+  /// (this plan's [`Self::kind`] is [`SpanKind::Filter`], so they are
+  /// never read); the per-axis windows live in `filter_h`/`filter_v`.
+  pub(crate) fn filter(
+    src_w: usize,
+    src_h: usize,
+    out_w: usize,
+    out_h: usize,
+    kernel: &dyn FilterKernel,
+  ) -> Result<Self, ResampleError> {
+    // Sequential on purpose: the second axis is not built when the first
+    // has already failed (and a hostile-support rejection short-circuits).
+    let filter_h = FilterAxis::build(src_w, out_w, kernel)?;
+    let filter_v = FilterAxis::build(src_h, out_h, kernel)?;
+    Ok(Self {
+      src_w,
+      src_h,
+      out_w,
+      out_h,
+      kind: SpanKind::Filter,
+      h: AxisSpans::empty(),
+      v: AxisSpans::empty(),
+      filter_h: Some(filter_h),
+      filter_v: Some(filter_v),
     })
   }
 
@@ -429,8 +603,11 @@ impl ResamplePlan {
       src_h: luma_h,
       out_w,
       out_h,
+      kind: SpanKind::Area,
       h,
       v,
+      filter_h: None,
+      filter_v: None,
     })
   }
 
@@ -446,6 +623,42 @@ impl ResamplePlan {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn src_h(&self) -> usize {
     self.src_h
+  }
+
+  /// Which streaming engine this plan drives.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn kind(&self) -> SpanKind {
+    self.kind
+  }
+
+  /// [`ResampleError::UnsupportedFilter`] carrying this plan's geometry —
+  /// returned by an area-only format's resample tail when handed a
+  /// [`SpanKind::Filter`] plan, so the empty area spans never reach an
+  /// area stream. The area helpers are shared across formats, so the guard
+  /// lives at each plan-consumption point that builds an area stream.
+  // Idle in feature combos that compile no plan-consuming sink.
+  #[allow(dead_code)]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) const fn unsupported_filter(&self) -> ResampleError {
+    ResampleError::UnsupportedFilter(PlanGeometry::new(
+      self.src_w, self.src_h, self.out_w, self.out_h,
+    ))
+  }
+
+  /// Horizontal filter windows — `Some` iff [`Self::kind`] is
+  /// [`SpanKind::Filter`]. Consumed by the filter streaming engine.
+  #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) fn filter_h(&self) -> Option<&FilterAxis> {
+    self.filter_h.as_ref()
+  }
+
+  /// Vertical filter windows — `Some` iff [`Self::kind`] is
+  /// [`SpanKind::Filter`]. Consumed by the filter streaming engine.
+  #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) fn filter_v(&self) -> Option<&FilterAxis> {
+    self.filter_v.as_ref()
   }
 
   /// Horizontal-axis spans.
@@ -1023,6 +1236,96 @@ impl<S: AreaSample> AreaStream<S> {
   }
 }
 
+/// The streaming-engine surface a resample sink tail drives, shared by the
+/// integer [`AreaStream`] and the signed [`FilterStream`] so one emit
+/// helper feeds either: the sink branches on [`ResamplePlan::kind`] to
+/// pick the concrete stream, then drives it through this trait. The sink's
+/// per-kind sequencing reads `next_y` on the concrete stream; this trait
+/// only abstracts the shared `feed_row` fan-out.
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
+))]
+pub(crate) trait RowResampler<S> {
+  /// Feeds source row `y`, invoking `emit(out_y, finalized_row)` per
+  /// completed output row. Errors with [`ResampleError::OutOfSequenceRow`]
+  /// on a non-sequential row, leaving the stream untouched.
+  fn feed_row<F: FnMut(usize, &[S])>(
+    &mut self,
+    y: usize,
+    row: &[S],
+    use_simd: bool,
+    emit: F,
+  ) -> Result<(), ResampleError>;
+}
+
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
+))]
+impl<S: AreaSample> RowResampler<S> for AreaStream<S> {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn feed_row<F: FnMut(usize, &[S])>(
+    &mut self,
+    y: usize,
+    row: &[S],
+    use_simd: bool,
+    emit: F,
+  ) -> Result<(), ResampleError> {
+    AreaStream::feed_row(self, y, row, use_simd, emit)
+  }
+}
+
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
+))]
+impl<S: FilterSample> RowResampler<S> for FilterStream<S> {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn feed_row<F: FnMut(usize, &[S])>(
+    &mut self,
+    y: usize,
+    row: &[S],
+    use_simd: bool,
+    emit: F,
+  ) -> Result<(), ResampleError> {
+    FilterStream::feed_row(self, y, row, use_simd, emit)
+  }
+}
+
 /// Row-sequencing payload for [`ResampleError::OutOfSequenceRow`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OutOfSequenceRow {
@@ -1111,7 +1414,10 @@ impl PlanGeometry {
 /// The plan-validation variants surface before the sinker exists and
 /// before any output buffer attaches; the sequencing variant leaves
 /// the stream untouched. All are recoverable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, IsVariant, TryUnwrap, Unwrap, Error)]
+// No `Eq`: `InvalidFilterSupport` carries an `f64` support value (for
+// diagnostics), and `f64` is not `Eq`. `PartialEq` covers every existing
+// `assert_eq!` on this type; nothing requires `Eq`.
+#[derive(Debug, Clone, Copy, PartialEq, IsVariant, TryUnwrap, Unwrap, Error)]
 #[non_exhaustive]
 pub enum ResampleError {
   /// The requested output geometry exceeds the source geometry on at
@@ -1159,6 +1465,32 @@ pub enum ResampleError {
     .0.got(), .0.expected()
   )]
   OutOfSequenceRow(OutOfSequenceRow),
+
+  /// A [`FilterKernel`]'s reported support radius was not finite,
+  /// not strictly positive, or too large to size a window safely — a
+  /// custom kernel cannot make the reconstruction window unsafe; it is
+  /// rejected at plan build before any allocation.
+  #[error(
+    "filter kernel support {} is invalid for source extent {} (must be finite, > 0, and bounded)",
+    .0.support(), .0.in_size()
+  )]
+  InvalidFilterSupport(InvalidFilterSupport),
+
+  /// A [`SpanKind::Filter`] plan (from a
+  /// [`FilteredResampler`]) was handed to a source format whose
+  /// streaming sink only implements the integer area engine. Only
+  /// `Rgb24` / `Rgb48` / `Grayf32` route the filter path in this
+  /// release; every other format rejects a filter plan here rather
+  /// than feeding the plan's empty area spans to its area stream
+  /// (which would emit no output rows and leave attached outputs
+  /// stale). Surfaces at the first processed row, before any output
+  /// buffer is written.
+  #[error(
+    "filter resampling is unsupported for this source format (output {}x{} from source {}x{}); \
+     route it through Rgb24, Rgb48, or Grayf32",
+    .0.out_w(), .0.out_h(), .0.src_w(), .0.src_h()
+  )]
+  UnsupportedFilter(PlanGeometry),
 }
 
 #[cfg(all(
@@ -1181,5 +1513,25 @@ pub enum ResampleError {
   )
 ))]
 mod cv2_goldens;
+#[cfg(all(
+  test,
+  feature = "std",
+  any(
+    feature = "yuv-planar",
+    feature = "rgb",
+    feature = "gbr",
+    feature = "gray",
+    feature = "xyz",
+    feature = "bayer",
+    feature = "mono",
+    feature = "yuv-semi-planar",
+    feature = "yuv-packed",
+    feature = "yuv-444-packed",
+    feature = "y2xx",
+    feature = "v210",
+    feature = "rgb-legacy"
+  )
+))]
+mod pil_goldens;
 #[cfg(all(test, feature = "std"))]
 mod tests;

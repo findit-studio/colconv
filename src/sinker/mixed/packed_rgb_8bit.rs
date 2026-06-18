@@ -50,9 +50,9 @@
 
 use super::{
   InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange, RowShapeMismatch,
-  RowSlice, check_dimensions_match, check_frozen_alpha_mode, packed_rgb_resample_emit,
-  packed_rgb_resample_preflight, packed_rgb_resample_stream, packed_rgba_resample,
-  rgb_row_buf_or_scratch, rgba_plane_row_slice, source_rgb_scratch,
+  RowSlice, check_dimensions_match, check_frozen_alpha_mode, packed_rgb_filter_stream,
+  packed_rgb_resample_emit, packed_rgb_resample_preflight, packed_rgb_resample_stream,
+  packed_rgba_resample, rgb_row_buf_or_scratch, rgba_plane_row_slice, source_rgb_scratch,
 };
 use crate::{
   PixelSink,
@@ -103,6 +103,9 @@ impl<R> PixelSink for MixedSinker<'_, Rgb24, R> {
     if let Some(stream) = self.rgb_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.rgb_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
@@ -136,16 +139,22 @@ impl<R> PixelSink for MixedSinker<'_, Rgb24, R> {
       rgb_scratch: _,
       plan,
       rgb_stream,
+      rgb_filter_stream,
       resample_outputs,
       ..
     } = self;
 
     // Non-identity plan: the source row IS interleaved RGB, so the
-    // fused path feeds it to the area stream directly — there is no
+    // fused path feeds it to the resample stream directly — there is no
     // conversion step, making the native and row-stage tiers one and
     // the same for this family. Luma / HSV / RGBA derive from each
-    // finalized output row.
+    // finalized output row. The plan's span kind picks the engine — the
+    // integer area stream or the signed-coefficient filter stream.
     if let Some(plan) = plan.as_ref() {
+      let stream_next_y = match plan.kind() {
+        crate::resample::SpanKind::Area => rgb_stream.as_ref().map_or(0, |s| s.next_y()),
+        crate::resample::SpanKind::Filter => rgb_filter_stream.as_ref().map_or(0, |s| s.next_y()),
+      };
       if !packed_rgb_resample_preflight(
         resample_outputs,
         rgb,
@@ -153,26 +162,47 @@ impl<R> PixelSink for MixedSinker<'_, Rgb24, R> {
         luma,
         &None,
         hsv,
-        rgb_stream.as_ref().map_or(0, |s| s.next_y()),
+        stream_next_y,
         idx,
       )? {
         return Ok(());
       }
-      let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
-      return packed_rgb_resample_emit(
-        stream,
-        plan,
-        rgb,
-        rgba,
-        luma,
-        &mut None,
-        hsv,
-        row.rgb(),
-        row.matrix(),
-        row.full_range(),
-        idx,
-        use_simd,
-      );
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => {
+          let stream = packed_rgb_resample_stream(rgb_stream, plan, idx)?;
+          packed_rgb_resample_emit(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            &mut None,
+            hsv,
+            row.rgb(),
+            row.matrix(),
+            row.full_range(),
+            idx,
+            use_simd,
+          )
+        }
+        crate::resample::SpanKind::Filter => {
+          let stream = packed_rgb_filter_stream(rgb_filter_stream, plan, idx)?;
+          packed_rgb_resample_emit(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            &mut None,
+            hsv,
+            row.rgb(),
+            row.matrix(),
+            row.full_range(),
+            idx,
+            use_simd,
+          )
+        }
+      };
     }
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
