@@ -1680,13 +1680,18 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// joins for the 8-bit planar YUV family — `Yuv410p` / `Yuv420p` /
   /// `Yuv422p` / `Yuv444p` / `Yuv440p` convert their separate Y/U/V planes
   /// to a source-width u8 RGB row and filter it here, matching the area
-  /// [`Self::rgb_stream`] gate).
+  /// [`Self::rgb_stream`] gate; `yuv-semi-planar` joins for the 8-bit
+  /// semi-planar YUV family — `Nv12` / `Nv16` / `Nv21` / `Nv24` / `Nv42`
+  /// convert their de-interleaved chroma into the same source-width u8 RGB
+  /// row and filter it here, the filter twin of their area
+  /// [`Self::rgb_stream`] use).
   #[cfg(any(
     feature = "rgb",
     feature = "gbr",
     feature = "yuv-444-packed",
     feature = "y2xx",
-    feature = "yuv-planar"
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar"
   ))]
   rgb_filter_stream: Option<crate::resample::FilterStream<u8>>,
   /// Row-stage **filter** stream for the 8-bit packed-RGBA `u8` color
@@ -1756,9 +1761,11 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// These sources are 8-bit, so no native-depth clamp is needed (the
   /// stream finalizes to the full `u8` range, which *is* the native range);
   /// `luma_u16` zero-extends each resampled Y byte. Lazily created in
-  /// `process`, reset in `begin_frame`. Gated to `yuv-planar`; widens as
-  /// more 8-bit native-Y filter families wire in.
-  #[cfg(feature = "yuv-planar")]
+  /// `process`, reset in `begin_frame`. Gated to `yuv-planar` /
+  /// `yuv-semi-planar` (the 8-bit semi-planar family `Nv12` / `Nv16` /
+  /// `Nv21` / `Nv24` / `Nv42` bins its native Y here too); widens as more
+  /// 8-bit native-Y filter families wire in.
+  #[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
   luma_filter_stream: Option<crate::resample::FilterStream<u8>>,
   /// Row-stage **filter** stream for single-plane `f32` luma binning
   /// ([`Grayf32`](crate::source::Grayf32)) — the filter twin of
@@ -2630,7 +2637,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "gbr",
         feature = "yuv-444-packed",
         feature = "y2xx",
-        feature = "yuv-planar"
+        feature = "yuv-planar",
+        feature = "yuv-semi-planar"
       ))]
       rgb_filter_stream: None,
       #[cfg(any(feature = "rgb", feature = "gbr", feature = "yuv-444-packed"))]
@@ -2644,7 +2652,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       rgb_filter_stream_u16: None,
       #[cfg(any(feature = "rgb", feature = "gbr", feature = "yuv-444-packed"))]
       rgba_filter_stream_u16: None,
-      #[cfg(feature = "yuv-planar")]
+      #[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
       luma_filter_stream: None,
       #[cfg(feature = "gray")]
       luma_filter_stream_f32: None,

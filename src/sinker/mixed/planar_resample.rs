@@ -267,7 +267,7 @@ where
 /// stream and the source-width scratch is created before the first feed —
 /// so a failure mutates no caller output. A no-output call has no stream to
 /// sequence and stays a no-op.
-#[cfg(feature = "yuv-planar")]
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn planar_dual_filter_resample(
   luma_filter_stream: &mut Option<crate::resample::FilterStream<u8>>,
