@@ -190,6 +190,10 @@ mod resample_packed_rgbf32;
 mod resample_packed_yuv_8bit;
 #[cfg(feature = "yuv-packed")]
 mod resample_packed_yuv_8bit_filter;
+// The native fast tier reuses the planar non-4:2:0 join, so it (and these
+// twin-parity / oracle suites) only exist when `yuv-planar` is also compiled.
+#[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+mod resample_packed_yuv_8bit_native;
 #[cfg(feature = "rgb")]
 mod resample_padding_byte;
 #[cfg(feature = "mono")]
