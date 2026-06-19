@@ -1727,12 +1727,17 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// [`packed_rgb_u16_resample_emit`] tail clamps a signed-kernel overshoot
   /// to the source's native max `(1 << SRC_BITS) - 1` for a sub-16-bit
   /// source (`V410` / `V30X` / `Y210` are 10-bit, `Y212` 12-bit), matching
-  /// the in-range area path.
+  /// the in-range area path. `yuv-planar` joins for the high-bit planar YUV
+  /// family (`Yuv4{2,4}{0,2,4}p{10,12,14,16}`), which converts its separate
+  /// Y/U/V planes to a native-depth u16 RGB row and filters it here — the
+  /// filter twin of its area [`Self::rgb_stream_u16`] use, with the same
+  /// `SRC_BITS` native-max clamp keyed by its source depth.
   #[cfg(any(
     feature = "rgb",
     feature = "gbr",
     feature = "yuv-444-packed",
-    feature = "y2xx"
+    feature = "y2xx",
+    feature = "yuv-planar"
   ))]
   rgb_filter_stream_u16: Option<crate::resample::FilterStream<u16>>,
   /// Row-stage **filter** stream for the high-bit packed-RGBA `u16` color
@@ -1793,8 +1798,12 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// byte-exact to the direct `*_to_luma*` kernels' filter resample, the
   /// filter analogue of the area path's native-Y bin. Lazily created in
   /// `process`, reset in `begin_frame`. Gated to `any(yuv-444-packed,
-  /// y2xx)`; widens as more native-Y filter families wire in.
-  #[cfg(any(feature = "yuv-444-packed", feature = "y2xx"))]
+  /// y2xx, yuv-planar)` — the high-bit planar YUV family
+  /// (`Yuv4{2,4}{0,2,4}p{10,12,14,16}`) de-interleaves its native Y plane
+  /// into a source-width `u16` scratch and resamples it here, the filter
+  /// twin of its area native-Y bin (with the same sub-16-bit native-max
+  /// clamp); widens as more native-Y filter families wire in.
+  #[cfg(any(feature = "yuv-444-packed", feature = "y2xx", feature = "yuv-planar"))]
   luma_filter_stream_u16: Option<crate::resample::FilterStream<u16>>,
   /// Output configuration frozen at a resampled frame's first
   /// processed row; `None` between frames. Captures presence AND
@@ -2657,7 +2666,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "rgb",
         feature = "gbr",
         feature = "yuv-444-packed",
-        feature = "y2xx"
+        feature = "y2xx",
+        feature = "yuv-planar"
       ))]
       rgb_filter_stream_u16: None,
       #[cfg(any(feature = "rgb", feature = "gbr", feature = "yuv-444-packed"))]
@@ -2670,7 +2680,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       luma_filter_stream: None,
       #[cfg(feature = "gray")]
       luma_filter_stream_f32: None,
-      #[cfg(any(feature = "yuv-444-packed", feature = "y2xx"))]
+      #[cfg(any(feature = "yuv-444-packed", feature = "y2xx", feature = "yuv-planar"))]
       luma_filter_stream_u16: None,
       #[cfg(any(
         feature = "yuv-planar",
@@ -6234,6 +6244,18 @@ pub(super) fn reset_high_bit_yuv_streams<F: SourceFormat, R>(sink: &mut MixedSin
   if let Some(stream) = sink.luma_stream_u16.as_mut() {
     stream.reset();
   }
+  // The filter trio (lazily created when a `Filter` plan drives the sink)
+  // shares the same per-frame restart as the area trio above; whichever
+  // route the plan kind picks, its streams restart for the new frame.
+  if let Some(stream) = sink.rgb_filter_stream.as_mut() {
+    stream.reset();
+  }
+  if let Some(stream) = sink.rgb_filter_stream_u16.as_mut() {
+    stream.reset();
+  }
+  if let Some(stream) = sink.luma_filter_stream_u16.as_mut() {
+    stream.reset();
+  }
   // The high-bit planar 4:2:0 native join (when present) shares the
   // frame-restart contract: restart its plane streams for the new frame.
   #[cfg(feature = "yuv-planar")]
@@ -6658,7 +6680,7 @@ where
 /// `ResampleOutputsChanged`), then every stream and source-width scratch
 /// is created before the first feed — so a failure mutates no caller
 /// output. A no-output call has no stream to sequence and stays a no-op.
-#[cfg(feature = "yuv-444-packed")]
+#[cfg(any(feature = "yuv-444-packed", feature = "yuv-planar"))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_yuv444_triple_filter_resample<const SRC_BITS: u32>(
   rgb_filter_stream: &mut Option<crate::resample::FilterStream<u8>>,
@@ -7752,7 +7774,7 @@ pub(super) fn packed_yuv422_triple_resample<const SRC_BITS: u32>(
 /// every stream and source-width scratch is created before the first feed —
 /// so a failure mutates no caller output. A no-output call has no stream to
 /// sequence and stays a no-op.
-#[cfg(feature = "y2xx")]
+#[cfg(any(feature = "y2xx", feature = "yuv-planar"))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_yuv422_triple_filter_resample<const SRC_BITS: u32>(
   luma_filter_stream_u16: &mut Option<crate::resample::FilterStream<u16>>,
