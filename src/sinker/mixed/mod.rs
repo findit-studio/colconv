@@ -7849,11 +7849,15 @@ pub(super) fn packed_yuva444_filter_resample<const SRC_BITS: u32, const NATIVE_L
 }
 
 /// Resets the packed-YUVA area streams (`rgba_stream`, `rgba_stream_u16`,
-/// `luma_stream_u16`) and clears the frozen output / alpha-mode snapshots
-/// at the start of a new frame for an alpha-aware planar / packed YUVA
-/// sink. The alpha-mode snapshot is re-armed to the sink's current mode so
-/// a per-frame `set_alpha_mode` change is accepted (and a mid-frame change
-/// is rejected by [`check_frozen_alpha_mode`]).
+/// `luma_stream_u16`) AND the filter streams (`rgba_filter_stream`,
+/// `rgba_filter_stream_u16`, `luma_filter_stream_u16`) and clears the frozen
+/// output / alpha-mode snapshots at the start of a new frame for an
+/// alpha-aware high-bit planar YUVA sink. Both stream kinds are reset because
+/// the plan kind picks which is fed (`Area` bins, `Filter` filters), so a
+/// frame switching kind reuses the same fields; the unused kind's streams stay
+/// `None` and the resets no-op. The alpha-mode snapshot is re-armed to the
+/// sink's current mode so a per-frame `set_alpha_mode` change is accepted (and
+/// a mid-frame change is rejected by [`check_frozen_alpha_mode`]).
 #[cfg(feature = "yuva")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn reset_high_bit_yuva_streams<F: SourceFormat, R>(sink: &mut MixedSinker<'_, F, R>) {
@@ -7864,6 +7868,15 @@ pub(super) fn reset_high_bit_yuva_streams<F: SourceFormat, R>(sink: &mut MixedSi
     stream.reset();
   }
   if let Some(stream) = sink.luma_stream_u16.as_mut() {
+    stream.reset();
+  }
+  if let Some(stream) = sink.rgba_filter_stream.as_mut() {
+    stream.reset();
+  }
+  if let Some(stream) = sink.rgba_filter_stream_u16.as_mut() {
+    stream.reset();
+  }
+  if let Some(stream) = sink.luma_filter_stream_u16.as_mut() {
     stream.reset();
   }
   sink.resample_outputs = None;

@@ -1257,16 +1257,19 @@ fn yuva422p_high_bit_process<
 
 // ---- Shared high-bit YUVA 4:2:2 resample-routing body -----------------
 //
-// The non-identity (downscale) plan branch for the 9 / 10 / 12 / 16-bit
-// YUVA 4:2:2 sinks — the 4:2:2 sibling of the 4:2:0 routing helper. Per-row
-// chroma is half-width (identical to 4:2:0), so the same half-chroma
-// `_to_rgba` / `_to_rgba_u16` kernels apply; the 4:2:0-vs-4:2:2 difference
-// (vertical chroma index `r / 2` vs `r`) is owned by the walker. Routes
-// through the shared packed-YUVA tail with THREE independent binnings: u8
-// colour, the **independent** native u16 colour (never a narrowing of the
+// The non-identity plan branch for the 9 / 10 / 12 / 16-bit YUVA 4:2:2
+// sinks — the 4:2:2 sibling of the 4:2:0 routing helper. Per-row chroma is
+// half-width (identical to 4:2:0), so the same half-chroma `_to_rgba` /
+// `_to_rgba_u16` kernels apply; the 4:2:0-vs-4:2:2 difference (vertical
+// chroma index `r / 2` vs `r`) is owned by the walker. The `Area` arm routes
+// through the shared packed-YUVA area tail with THREE independent binnings:
+// u8 colour, the **independent** native u16 colour (never a narrowing of the
 // u8 bin), and the **low-packed** native-Y luma (`deinterleave_y_high_bit`,
 // raw host-native copy — planar YUVA Y is low-packed, so luma is
 // `binned_Y >> (BITS - 8)`, NOT the semi-planar `>> (16 - BITS)` de-pack).
+// The `Filter` arm routes the SAME converted RGBA / native-Y through the
+// signed-coefficient filter tail (`NATIVE_LUMA_U8 = false`, the u16-luma
+// branch — native Y is u16), straight alpha only.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn yuva422p_high_bit_resample<const BITS: u32, const BE: bool>(
@@ -1369,44 +1372,138 @@ fn yuva422p_high_bit_resample<const BITS: u32, const BE: bool>(
     rgba_stream,
     rgba_stream_u16,
     luma_stream_u16,
+    rgba_filter_stream,
+    rgba_filter_stream_u16,
+    luma_filter_stream_u16,
     resample_outputs,
     frozen_alpha_mode,
     ..
   } = sinker;
   let plan = plan.as_ref().expect("plan.is_some() checked by the caller");
   check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
-  packed_yuva444_resample::<BITS>(
-    rgba_stream,
-    rgba_stream_u16,
-    luma_stream_u16,
-    resample_outputs,
-    rgb,
-    rgba,
-    rgb_u16,
-    rgba_u16,
-    luma,
-    luma_u16,
-    hsv,
-    rgba_scratch,
-    rgb_scratch,
-    rgba_scratch_u16,
-    rgba_color_scratch_u16,
-    luma_scratch_u16,
-    w,
-    plan,
-    idx,
-    use_simd,
-    alpha_mode,
-    |dst| {
-      rgba_dispatch(
-        y_row, u_half_row, v_half_row, a_row, dst, w, matrix, full_range, use_simd, BE,
+  // The span kind picks the engine (mirrors the 8-bit `Yuva422p` and packed
+  // `Vuya`): `Area` bins (the alpha-aware tail — premultiplied colour binned
+  // premultiplied then un-premultiplied) at native precision; `Filter` runs
+  // the signed-coefficient filter on the same converted RGBA (straight alpha
+  // only). The high-bit native Y is genuinely `u16`, so the filter route uses
+  // `NATIVE_LUMA_U8 = false` — the same u16-luma branch `Vuya` / `Vuyx` use:
+  // luma rides the `u16` filter stream over the de-interleaved native Y. The
+  // filter tail clamps every sub-16-bit colour AND native-Y overshoot to the
+  // source's native max `(1 << BITS) - 1` (a value no-op at `BITS = 16`),
+  // matching the in-range area path. A premultiplied `Filter` plan has no
+  // analogue (the engine cannot un-premultiply), so it is routed to the area
+  // tail, which surfaces the typed `UnsupportedFilter`.
+  match plan.kind() {
+    crate::resample::SpanKind::Area => packed_yuva444_resample::<BITS>(
+      rgba_stream,
+      rgba_stream_u16,
+      luma_stream_u16,
+      resample_outputs,
+      rgb,
+      rgba,
+      rgb_u16,
+      rgba_u16,
+      luma,
+      luma_u16,
+      hsv,
+      rgba_scratch,
+      rgb_scratch,
+      rgba_scratch_u16,
+      rgba_color_scratch_u16,
+      luma_scratch_u16,
+      w,
+      plan,
+      idx,
+      use_simd,
+      alpha_mode,
+      |dst| {
+        rgba_dispatch(
+          y_row, u_half_row, v_half_row, a_row, dst, w, matrix, full_range, use_simd, BE,
+        )
+      },
+      |dst| {
+        rgba_u16_dispatch(
+          y_row, u_half_row, v_half_row, a_row, dst, w, matrix, full_range, use_simd, BE,
+        )
+      },
+      |dst| deinterleave_y_high_bit::<BE>(y_row, dst, w),
+    ),
+    crate::resample::SpanKind::Filter if alpha_mode.is_premultiplied() => {
+      // Premultiplied + filter has no analogue: route to the area tail with
+      // the filter plan so it returns the typed `UnsupportedFilter`.
+      packed_yuva444_resample::<BITS>(
+        rgba_stream,
+        rgba_stream_u16,
+        luma_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        luma_u16,
+        hsv,
+        rgba_scratch,
+        rgb_scratch,
+        rgba_scratch_u16,
+        rgba_color_scratch_u16,
+        luma_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        alpha_mode,
+        |dst| {
+          rgba_dispatch(
+            y_row, u_half_row, v_half_row, a_row, dst, w, matrix, full_range, use_simd, BE,
+          )
+        },
+        |dst| {
+          rgba_u16_dispatch(
+            y_row, u_half_row, v_half_row, a_row, dst, w, matrix, full_range, use_simd, BE,
+          )
+        },
+        |dst| deinterleave_y_high_bit::<BE>(y_row, dst, w),
       )
-    },
-    |dst| {
-      rgba_u16_dispatch(
-        y_row, u_half_row, v_half_row, a_row, dst, w, matrix, full_range, use_simd, BE,
-      )
-    },
-    |dst| deinterleave_y_high_bit::<BE>(y_row, dst, w),
-  )
+    }
+    crate::resample::SpanKind::Filter => packed_yuva444_filter_resample::<BITS, false>(
+      rgba_filter_stream,
+      rgba_filter_stream_u16,
+      // High-bit planar YUVA never uses the u8 native-Y luma stream
+      // (`NATIVE_LUMA_U8 = false`); pass an inert slot.
+      &mut None,
+      luma_filter_stream_u16,
+      resample_outputs,
+      rgb,
+      rgba,
+      rgb_u16,
+      rgba_u16,
+      luma,
+      luma_u16,
+      hsv,
+      rgba_scratch,
+      rgb_scratch,
+      rgba_scratch_u16,
+      rgba_color_scratch_u16,
+      luma_scratch_u16,
+      w,
+      plan,
+      idx,
+      use_simd,
+      // Luma rides `deinterleave_y` + the u16 stream (native Y is u16), so the
+      // u8-luma input is unused.
+      &[],
+      |dst| {
+        rgba_dispatch(
+          y_row, u_half_row, v_half_row, a_row, dst, w, matrix, full_range, use_simd, BE,
+        )
+      },
+      |dst| {
+        rgba_u16_dispatch(
+          y_row, u_half_row, v_half_row, a_row, dst, w, matrix, full_range, use_simd, BE,
+        )
+      },
+      |dst| deinterleave_y_high_bit::<BE>(y_row, dst, w),
+    ),
+  }
 }
