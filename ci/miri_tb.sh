@@ -47,4 +47,29 @@ case "$TARGET" in
     ;;
 esac
 
-cargo miri test --lib --tests --target "$TARGET"
+# Full address reuse alone is still not enough to fit the whole lib test
+# binary in one i686 process, so split the i686 lib run into four disjoint,
+# exhaustive test-filter passes — each a fresh process with its own 4 GB
+# address space. The partition (verified exhaustive + non-overlapping over
+# the full test list):
+#   1) everything outside `sinker::`
+#   2) `sinker::` minus the `resample_*` test modules
+#   3) the `resample_y*` modules (yuv / yuva / y2xx / ya)
+#   4) the remaining `resample_*` modules
+# Each test runs in exactly one pass, so coverage is identical to the single
+# run; `set -e` propagates any failure. 64-bit cells run the binary in one
+# pass (`--tests` is a no-op here — there are no integration test targets).
+case "$TARGET" in
+  i686-*)
+    cargo miri test --lib --target "$TARGET" -- --skip sinker::
+    cargo miri test --lib --target "$TARGET" -- \
+      sinker:: --skip sinker::mixed::tests::resample_
+    cargo miri test --lib --target "$TARGET" -- \
+      sinker::mixed::tests::resample_y
+    cargo miri test --lib --target "$TARGET" -- \
+      sinker::mixed::tests::resample_ --skip sinker::mixed::tests::resample_y
+    ;;
+  *)
+    cargo miri test --lib --tests --target "$TARGET"
+    ;;
+esac
