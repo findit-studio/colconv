@@ -1918,6 +1918,14 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// created in `process`, reset in `begin_frame`.
   #[cfg(feature = "yuv-planar")]
   native_420: Option<planar_8bit::NativeYuv420>,
+  /// Native-tier join state for the non-4:2:0 8-bit planar families
+  /// (`Yuv422p` / `Yuv444p` / `Yuv440p`) — the sibling of
+  /// [`Self::native_420`] for chroma layouts that are not half-resolution
+  /// in both axes. A given sink instantiates exactly one planar family, so
+  /// one field is shared across the three impls; lazily created in
+  /// `process`, reset in `begin_frame`.
+  #[cfg(feature = "yuv-planar")]
+  native_planar: Option<planar_8bit::NativePlanarYuv>,
   /// Native-tier join state for the HIGH-BIT planar 4:2:0 family
   /// (`Yuv420p10/12/14/16`) — the `u16` twin of [`Self::native_420`].
   /// Lazily created in `process`, reset in `begin_frame`.
@@ -2804,6 +2812,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       native: true,
       #[cfg(feature = "yuv-planar")]
       native_420: None,
+      #[cfg(feature = "yuv-planar")]
+      native_planar: None,
       #[cfg(feature = "yuv-planar")]
       native_420_u16: None,
       #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]

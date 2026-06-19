@@ -97,9 +97,13 @@ fn yuv422p_resample_rgb_matches_rgb24_of_converted_frame() {
   }
   let mut rgb = vec![0u8; OUT * OUT * 3];
   {
+    // Pin the row-stage tier: this oracle is convert-then-bin (the default
+    // tier is now the bin-then-convert native fast tier, covered for parity
+    // in `resample_yuv_planar_8bit_native`).
     let mut sink =
       MixedSinker::<Yuv422p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap();
     yuv422p_to(
@@ -227,9 +231,13 @@ fn yuv444p_resample_rgb_matches_rgb24_of_converted_frame() {
   }
   let mut rgb = vec![0u8; OUT * OUT * 3];
   {
+    // Pin the row-stage tier: this oracle is convert-then-bin (the default
+    // tier is now the bin-then-convert native fast tier, covered for parity
+    // in `resample_yuv_planar_8bit_native`).
     let mut sink =
       MixedSinker::<Yuv444p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap();
     yuv444p_to(
