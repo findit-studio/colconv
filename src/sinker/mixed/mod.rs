@@ -1785,13 +1785,17 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// `Nv21` / `Nv24` / `Nv42` bins its native Y here too) / `yuv-packed`
   /// (packed 4:2:2/4:1:1) / `mono` (the 1-bit bilevel `Monoblack` /
   /// `Monowhite` filter-resample the expanded 0/255 luma through this
-  /// single-channel stream — full-range `u8`, so no native-depth clamp);
-  /// widens as more 8-bit native-Y filter families wire in.
+  /// single-channel stream — full-range `u8`, so no native-depth clamp) /
+  /// `gray` (the 8-bit single-channel [`Gray8`](crate::source::Gray8) *is*
+  /// a luma plane — its Y is filter-resampled here directly, full-range
+  /// `u8`, no native-depth clamp); widens as more 8-bit native-Y filter
+  /// families wire in.
   #[cfg(any(
     feature = "yuv-planar",
     feature = "yuv-semi-planar",
     feature = "yuv-packed",
-    feature = "mono"
+    feature = "mono",
+    feature = "gray"
   ))]
   luma_filter_stream: Option<crate::resample::FilterStream<u8>>,
   /// Row-stage **filter** stream for single-plane `f32` luma binning
@@ -1815,8 +1819,16 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// (`Yuv4{2,4}{0,2,4}p{10,12,14,16}`) de-interleaves its native Y plane
   /// into a source-width `u16` scratch and resamples it here, the filter
   /// twin of its area native-Y bin (with the same sub-16-bit native-max
-  /// clamp); widens as more native-Y filter families wire in.
-  #[cfg(any(feature = "yuv-444-packed", feature = "y2xx", feature = "yuv-planar"))]
+  /// clamp). `gray` joins for the high-bit single-channel
+  /// [`Gray16`](crate::source::Gray16) (full 16-bit, native max == u16 max,
+  /// so the `FilterStream`'s `0..=65535` clamp *is* the native clamp — no
+  /// extra clamp needed); widens as more native-Y filter families wire in.
+  #[cfg(any(
+    feature = "yuv-444-packed",
+    feature = "y2xx",
+    feature = "yuv-planar",
+    feature = "gray"
+  ))]
   luma_filter_stream_u16: Option<crate::resample::FilterStream<u16>>,
   /// Output configuration frozen at a resampled frame's first
   /// processed row; `None` between frames. Captures presence AND
@@ -2694,12 +2706,18 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "yuv-planar",
         feature = "yuv-semi-planar",
         feature = "yuv-packed",
-        feature = "mono"
+        feature = "mono",
+        feature = "gray"
       ))]
       luma_filter_stream: None,
       #[cfg(feature = "gray")]
       luma_filter_stream_f32: None,
-      #[cfg(any(feature = "yuv-444-packed", feature = "y2xx", feature = "yuv-planar"))]
+      #[cfg(any(
+        feature = "yuv-444-packed",
+        feature = "y2xx",
+        feature = "yuv-planar",
+        feature = "gray"
+      ))]
       luma_filter_stream_u16: None,
       #[cfg(any(
         feature = "yuv-planar",

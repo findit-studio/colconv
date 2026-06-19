@@ -578,3 +578,310 @@ fn gray16_resample_rejects_mid_frame_output_change() {
     "rejected row mutated the new output"
   );
 }
+
+// ---- Filter-plan routing ----------------------------------------------------
+//
+// Gray16 *is* a u16 luma plane: the area path converts the wire row to a
+// host-native u16 luma plane and bins it through a 1-channel `AreaStream<u16>`;
+// the filter path converts identically and resamples that plane through the
+// signed-coefficient single-channel `FilterStream<u16>` (the filter twin of the
+// bin). Gray16 is full 16-bit (native max == u16 max), so the `FilterStream`'s
+// `0..=65535` clamp *is* the native clamp — no extra clamp. So the filter
+// `luma_u16` must equal a single-channel `FilterStream<u16>` resample of the
+// host-native source Y plane **value for value**, and every derived output
+// (luma >> 8 / rgb / rgba / rgb_u16 / rgba_u16 / hsv) follows from that
+// resampled luma exactly as the area path derives from its binned luma.
+
+use crate::resample::{
+  CatmullRom, FilterKernel, FilterStream, FilteredResampler, Lanczos3, Resampler, Triangle,
+};
+
+/// A larger, full-u16-wide grid than the 2:1 area fixture so a downscale
+/// (`FW`->`FOUT_DOWN`) and an upscale (`FOUT_DOWN`->`FUP`) both run real,
+/// non-trivial windows.
+const FW: usize = 8;
+const FH: usize = 8;
+const FOUT_DOWN: usize = 4;
+const FUP: usize = 7;
+
+/// A host-native u16 Y ramp with a hard mid-column edge per row (plus two
+/// textured interior rows) so filter windows straddling the edge produce real
+/// intermediate values, exercising the low byte the u16 stream must preserve.
+fn filter_ramp() -> Vec<u16> {
+  let mut y = vec![0u16; FW * FH];
+  for row in 0..FH {
+    for col in 0..FW {
+      y[row * FW + col] = if col < FW / 2 { 0x1234 } else { 0xC0DE };
+    }
+  }
+  for col in 0..FW {
+    y[4 * FW + col] = (col * 8000) as u16;
+    y[5 * FW + col] = (60000 - col * 8000) as u16;
+  }
+  y
+}
+
+/// Single-channel filter resample of a host-native u16 luma plane via the
+/// merged engine's [`FilterStream<u16>`] (channels = 1) — the Gray16 luma
+/// oracle. Full 16-bit, so the engine's `0..=65535` clamp is the native clamp.
+fn native_luma_filter<K: FilterKernel>(
+  kernel: K,
+  luma_plane: &[u16],
+  sw: usize,
+  sh: usize,
+  ow: usize,
+  oh: usize,
+) -> Vec<u16> {
+  let plan = FilteredResampler::new(ow, oh, kernel)
+    .plan(sw, sh)
+    .expect("valid filter plan")
+    .expect("non-identity");
+  let fh = plan.filter_h().expect("h windows");
+  let fv = plan.filter_v().expect("v windows");
+  let mut stream = FilterStream::<u16>::new(fh, fv, sw, sh, 1).expect("geometry");
+  let mut out = vec![0u16; ow * oh];
+  for row in 0..sh {
+    stream
+      .feed_row(
+        row,
+        &luma_plane[row * sw..(row + 1) * sw],
+        true,
+        |oy, fin| {
+          out[oy * ow..(oy + 1) * ow].copy_from_slice(fin);
+        },
+      )
+      .expect("rows in order");
+  }
+  out
+}
+
+/// Every resampled output a Gray16 filter equivalence asserts on.
+struct Gray16FilterOutputs {
+  luma: Vec<u8>,
+  luma_u16: Vec<u16>,
+  rgb: Vec<u8>,
+  rgba: Vec<u8>,
+  rgb_u16: Vec<u16>,
+  rgba_u16: Vec<u16>,
+  hp: Vec<u8>,
+  sp: Vec<u8>,
+  vp: Vec<u8>,
+}
+
+/// Run a `Gray16` filter sink over the LE-encoded `filter_ramp()` at `ow x oh`
+/// under `kernel`, attaching every output the equivalence asserts on.
+fn gray16_filter_outputs<K: FilterKernel + Copy>(
+  ow: usize,
+  oh: usize,
+  kernel: K,
+) -> Gray16FilterOutputs {
+  let plane = filter_ramp();
+  let pix = as_le_u16(&plane);
+  let src = Gray16Frame::new(&pix, FW as u32, FH as u32, FW as u32);
+  let mut o = Gray16FilterOutputs {
+    luma: vec![0u8; ow * oh],
+    luma_u16: vec![0u16; ow * oh],
+    rgb: vec![0u8; ow * oh * 3],
+    rgba: vec![0u8; ow * oh * 4],
+    rgb_u16: vec![0u16; ow * oh * 3],
+    rgba_u16: vec![0u16; ow * oh * 4],
+    hp: vec![0u8; ow * oh],
+    sp: vec![0u8; ow * oh],
+    vp: vec![0u8; ow * oh],
+  };
+  {
+    let mut sink = MixedSinker::<Gray16, FilteredResampler<K>>::with_resampler(
+      FW,
+      FH,
+      FilteredResampler::new(ow, oh, kernel),
+    )
+    .unwrap()
+    .with_luma(&mut o.luma)
+    .unwrap()
+    .with_luma_u16(&mut o.luma_u16)
+    .unwrap()
+    .with_rgb(&mut o.rgb)
+    .unwrap()
+    .with_rgba(&mut o.rgba)
+    .unwrap()
+    .with_rgb_u16(&mut o.rgb_u16)
+    .unwrap()
+    .with_rgba_u16(&mut o.rgba_u16)
+    .unwrap()
+    .with_hsv(&mut o.hp, &mut o.sp, &mut o.vp)
+    .unwrap();
+    gray16_to(&src, FR, M, &mut sink).unwrap();
+  }
+  o
+}
+
+/// Asserts a `Gray16` filter resample's every output is derived from the
+/// single-channel native-luma oracle exactly as the area emit derives from its
+/// binned luma, and returns the max per-sample `luma_u16` diff (exactly 0 —
+/// same engine, full 16-bit so the engine clamp is the native clamp).
+fn assert_gray16_filter_matches_oracle<K: FilterKernel + Copy>(
+  kernel: K,
+  ow: usize,
+  oh: usize,
+  ctx: &str,
+) -> u16 {
+  let plane = filter_ramp();
+  let got = gray16_filter_outputs(ow, oh, kernel);
+  let y_ref = native_luma_filter(kernel, &plane, FW, FH, ow, oh);
+
+  let mut max_diff = 0u16;
+  for (i, (&g, &w)) in got.luma_u16.iter().zip(y_ref.iter()).enumerate() {
+    max_diff = max_diff.max(g.abs_diff(w));
+    assert_eq!(
+      g, w,
+      "{ctx} luma_u16[{i}]: {g} vs single-channel native-luma filter {w}"
+    );
+  }
+  // Every derived output mirrors the area emit applied to the resampled luma:
+  // the reference is the direct Gray16 sink run over the resampled-Y frame
+  // (re-encoded LE, the host-native u16 plane recovered by the loader).
+  let ref_pix = as_le_u16(&y_ref);
+  let mut ref_luma = vec![0u8; ow * oh];
+  let mut ref_luma_u16 = vec![0u16; ow * oh];
+  let mut ref_rgb = vec![0u8; ow * oh * 3];
+  let mut ref_rgba = vec![0u8; ow * oh * 4];
+  let mut ref_rgb_u16 = vec![0u16; ow * oh * 3];
+  let mut ref_rgba_u16 = vec![0u16; ow * oh * 4];
+  let mut ref_h = vec![0u8; ow * oh];
+  let mut ref_s = vec![0u8; ow * oh];
+  let mut ref_v = vec![0u8; ow * oh];
+  {
+    let binned = Gray16Frame::new(&ref_pix, ow as u32, oh as u32, ow as u32);
+    let mut sink = MixedSinker::<Gray16>::new(ow, oh)
+      .with_luma(&mut ref_luma)
+      .unwrap()
+      .with_luma_u16(&mut ref_luma_u16)
+      .unwrap()
+      .with_rgb(&mut ref_rgb)
+      .unwrap()
+      .with_rgba(&mut ref_rgba)
+      .unwrap()
+      .with_rgb_u16(&mut ref_rgb_u16)
+      .unwrap()
+      .with_rgba_u16(&mut ref_rgba_u16)
+      .unwrap()
+      .with_hsv(&mut ref_h, &mut ref_s, &mut ref_v)
+      .unwrap();
+    gray16_to(&binned, FR, M, &mut sink).unwrap();
+  }
+  assert_eq!(got.luma, ref_luma, "{ctx} luma (>> 8)");
+  assert_eq!(got.rgb, ref_rgb, "{ctx} rgb");
+  assert_eq!(got.rgba, ref_rgba, "{ctx} rgba");
+  assert_eq!(got.rgb_u16, ref_rgb_u16, "{ctx} rgb_u16");
+  assert_eq!(got.rgba_u16, ref_rgba_u16, "{ctx} rgba_u16");
+  assert_eq!(got.hp, ref_h, "{ctx} hsv H");
+  assert_eq!(got.sp, ref_s, "{ctx} hsv S");
+  assert_eq!(got.vp, ref_v, "{ctx} hsv V");
+  max_diff
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn gray16_filter_luma_is_single_channel_native_luma() {
+  // Downscale 8->4 and upscale 4->7 under all three kernels; luma_u16 is the
+  // single-channel `FilterStream<u16>` resample of the host-native source Y.
+  for (ow, oh, tag) in [(FOUT_DOWN, FOUT_DOWN, "down"), (FUP, FUP, "up")] {
+    assert_eq!(
+      assert_gray16_filter_matches_oracle(Triangle, ow, oh, &format!("gray16 triangle {tag}")),
+      0,
+      "triangle {tag} luma_u16 diff must be 0"
+    );
+    assert_eq!(
+      assert_gray16_filter_matches_oracle(CatmullRom, ow, oh, &format!("gray16 catmullrom {tag}")),
+      0,
+      "catmullrom {tag} luma_u16 diff must be 0"
+    );
+    assert_eq!(
+      assert_gray16_filter_matches_oracle(Lanczos3, ow, oh, &format!("gray16 lanczos3 {tag}")),
+      0,
+      "lanczos3 {tag} luma_u16 diff must be 0"
+    );
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn gray16_filter_plan_is_accepted() {
+  // A FilteredResampler plan is now ACCEPTED (Gray16 is routed to the filter
+  // path) — it must NOT return UnsupportedFilter, and it must write the output.
+  let plane = filter_ramp();
+  let pix = as_le_u16(&plane);
+  let src = Gray16Frame::new(&pix, FW as u32, FH as u32, FW as u32);
+  let mut luma_u16 = vec![0xA5A5u16; FOUT_DOWN * FOUT_DOWN];
+  {
+    let mut sink = MixedSinker::<Gray16, FilteredResampler<Triangle>>::with_resampler(
+      FW,
+      FH,
+      FilteredResampler::new(FOUT_DOWN, FOUT_DOWN, Triangle),
+    )
+    .unwrap()
+    .with_luma_u16(&mut luma_u16)
+    .unwrap();
+    gray16_to(&src, FR, M, &mut sink).expect("filter plan must be accepted");
+  }
+  let y_ref = native_luma_filter(Triangle, &plane, FW, FH, FOUT_DOWN, FOUT_DOWN);
+  assert_eq!(
+    luma_u16, y_ref,
+    "accepted filter luma_u16 = single-channel oracle"
+  );
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn gray16_filter_le_be_parity() {
+  // The binned u16 luma is host-native; the derive kernels must use
+  // `HOST_NATIVE_BE`, not `<false>`. The LE-vs-BE wire encodings of the same
+  // logical plane must produce identical filter output on either host.
+  let plane = filter_ramp();
+  let pix_le = as_le_u16(&plane);
+  let pix_be = as_be_u16(&plane);
+
+  let mut le_luma_u16 = vec![0u16; FOUT_DOWN * FOUT_DOWN];
+  let mut le_rgb_u16 = vec![0u16; FOUT_DOWN * FOUT_DOWN * 3];
+  {
+    let frame = Gray16Frame::new(&pix_le, FW as u32, FH as u32, FW as u32);
+    let mut sink = MixedSinker::<Gray16, FilteredResampler<Triangle>>::with_resampler(
+      FW,
+      FH,
+      FilteredResampler::new(FOUT_DOWN, FOUT_DOWN, Triangle),
+    )
+    .unwrap()
+    .with_luma_u16(&mut le_luma_u16)
+    .unwrap()
+    .with_rgb_u16(&mut le_rgb_u16)
+    .unwrap();
+    gray16_to(&frame, FR, M, &mut sink).unwrap();
+  }
+  let mut be_luma_u16 = vec![0u16; FOUT_DOWN * FOUT_DOWN];
+  let mut be_rgb_u16 = vec![0u16; FOUT_DOWN * FOUT_DOWN * 3];
+  {
+    let frame = Gray16Frame::<true>::new(&pix_be, FW as u32, FH as u32, FW as u32);
+    let mut sink = MixedSinker::<Gray16<true>, FilteredResampler<Triangle>>::with_resampler(
+      FW,
+      FH,
+      FilteredResampler::new(FOUT_DOWN, FOUT_DOWN, Triangle),
+    )
+    .unwrap()
+    .with_luma_u16(&mut be_luma_u16)
+    .unwrap()
+    .with_rgb_u16(&mut be_rgb_u16)
+    .unwrap();
+    gray16_to_endian::<_, true>(&frame, FR, M, &mut sink).unwrap();
+  }
+  assert_eq!(le_luma_u16, be_luma_u16, "filter luma_u16 LE/BE diverge");
+  assert_eq!(le_rgb_u16, be_rgb_u16, "filter rgb_u16 LE/BE diverge");
+}
