@@ -397,6 +397,35 @@ macro_rules! yuv420p_high_bit_native_suite {
         );
       }
 
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn native_luma_clamps_overrange_y() {
+        // A binned Y above the native max must SATURATE through the
+        // `>> (BITS - 8)` narrowing, never wrap modulo 256 (the sub-16-bit
+        // luma clamp). Chroma stays legal.
+        let (_, u, v) = ramp();
+        let ovr = ((1u32 << $bits).min(0xFFFF)) as u16;
+        let y = vec![ovr; SRC * SRC];
+        let (_, _, n_luma) = native_run(&y, &u, &v);
+        let y_ref = block_mean_2x2_u16(&y);
+        let luma_ref: Vec<u8> = y_ref
+          .iter()
+          .map(|&c| (c.min(MASK) >> ($bits - 8)) as u8)
+          .collect();
+        assert_eq!(
+          n_luma, luma_ref,
+          "overrange binned Y must clamp to native-max before narrowing, not wrap"
+        );
+        let sat = (MASK >> ($bits - 8)) as u8;
+        assert!(
+          n_luma.iter().all(|&l| l == sat),
+          "all overrange luma must saturate to {sat}"
+        );
+      }
+
       /// Crafted VARYING illegal-chroma fixture: extreme alternating chroma
       /// (full-scale vs zero) over a super-black→super-white Y ramp, so
       /// many 2x2 blocks straddle the RGB clamp. Here native

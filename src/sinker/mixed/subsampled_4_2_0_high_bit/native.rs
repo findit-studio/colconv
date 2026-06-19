@@ -478,8 +478,12 @@ pub(crate) fn yuv420p16_process_native<const BITS: u32, const BE: bool>(
     let y_out = &y_stage[slot * ow..slot * ow + ow];
 
     if let Some(buf) = luma.as_deref_mut() {
+      // Clamp to the native max before narrowing: an overrange binned Y (from
+      // out-of-gamut input whose high bits exceed BITS) must saturate, not
+      // wrap modulo 256 — the row-stage luma path narrows the clamped u16.
+      let native_max: u16 = ((1u32 << BITS) - 1) as u16;
       for (dst, &src) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(y_out) {
-        *dst = (src >> (BITS - 8)) as u8;
+        *dst = (src.min(native_max) >> (BITS - 8)) as u8;
       }
     }
 

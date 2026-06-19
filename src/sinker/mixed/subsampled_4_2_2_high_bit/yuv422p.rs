@@ -1,10 +1,11 @@
 use super::super::{
-  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match, deinterleave_y_high_bit,
-  packed_yuv422_triple_filter_resample, packed_yuv422_triple_resample, reset_high_bit_yuv_streams,
-  rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, NativeRouteChanged,
+  RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
+  deinterleave_y_high_bit, packed_yuv422_triple_filter_resample, packed_yuv422_triple_resample,
+  reset_high_bit_yuv_streams, rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  rgba_u16_plane_row_slice, yuv_planar16_process_native,
 };
-use crate::{PixelSink, row::*, source::*};
+use crate::{PixelSink, resample::ResamplePlan, row::*, source::*};
 
 // ---- Yuv422p9 impl -----------------------------------------------------
 //
@@ -423,60 +424,34 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p10<BE>, R> {
       luma_filter_stream_u16,
       resample_outputs,
       plan,
+      native,
+      native_planar_u16,
+      frozen_native_route,
       ..
     } = self;
 
-    // Non-identity plan: feed the shared high-bit 4:2:2 triple-resample
-    // tail (u8 color, independent native-u16 color, native Y). The half-
-    // width U / V planes are horizontally upsampled in-register by the
+    // Non-identity plan. A `Filter` plan routes to the signed-coefficient
+    // filter twin of the row-stage tier BEFORE the native/row-stage route
+    // machinery (the native fast tier is an area-specific optimization that
+    // never sees a filter plan). For an `Area` plan the native tier bins the
+    // host-native Y / U / V planes at output resolution and converts ONCE per
+    // output row at output width (4:4:4 kernels); the row-stage tier
+    // ([`packed_yuv422_triple_resample`]) converts each source row at source
+    // width then bins (u8 color, independent native-u16 color, native Y).
+    // `with_native(false)` forces the latter; the route is frozen per frame.
+    // The half-width U / V planes are horizontally upsampled in-register by the
     // shared 4:2:0 row kernels (4:2:0 and 4:2:2 have the identical per-row
-    // chroma contract). Yuv422p exposes no `luma_u16` output, so it is
-    // `&mut None` and only `luma` (binned native Y `>> (BITS - 8)`) is
-    // emitted. The span kind picks the engine: area binning, or the
-    // signed-coefficient filter twin (both convert the YUV to RGB with the
-    // same closures and resample in RGB space, so filter colour equals the
-    // RGB filter of the converted pixels and matches area up to the kernel).
-    // The filter tail clamps every sub-16-bit colour sample AND the native Y
-    // to `(1 << BITS) - 1` before publishing.
+    // chroma contract) for the row-stage / filter tails. Yuv422p exposes no
+    // `luma_u16` output, so it is `&mut None` and only `luma` (binned native Y
+    // `>> (BITS - 8)`) is emitted. The filter tail clamps every sub-16-bit
+    // colour sample AND the native Y to `(1 << BITS) - 1`; the native tier's
+    // colour clamp lives in its convert kernels.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
-      return match plan.kind() {
-        crate::resample::SpanKind::Area => packed_yuv422_triple_resample::<BITS>(
-          luma_stream_u16,
-          rgb_stream,
-          rgb_stream_u16,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          &mut None,
-          hsv,
-          luma_scratch_u16,
-          rgb_scratch,
-          rgb_scratch_u16,
-          w,
-          plan,
-          idx,
-          use_simd,
-          matrix,
-          full_range,
-          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
-          |scratch| {
-            yuv420p10_to_rgb_row_endian(
-              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-            )
-          },
-          |scratch| {
-            yuv420p10_to_rgb_u16_row_endian(
-              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-            )
-          },
-        ),
-        crate::resample::SpanKind::Filter => packed_yuv422_triple_filter_resample::<BITS>(
+      if plan.kind().is_filter() {
+        return packed_yuv422_triple_filter_resample::<BITS>(
           luma_filter_stream_u16,
           rgb_filter_stream,
           rgb_filter_stream_u16,
@@ -508,8 +483,95 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p10<BE>, R> {
               y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
             )
           },
-        ),
-      };
+        );
+      }
+      // Native / row-stage route split — see the high-bit 4:2:0 Yuv420p impl
+      // for the CHECK-before / SET-after `frozen_native_route` contract.
+      let need_output = luma.is_some()
+        || rgb.is_some()
+        || rgba.is_some()
+        || hsv.is_some()
+        || rgb_u16.is_some()
+        || rgba_u16.is_some();
+      if need_output
+        && let Some(frozen) = *frozen_native_route
+        && frozen != *native
+      {
+        return Err(MixedSinkerError::NativeRouteChanged(
+          NativeRouteChanged::new(idx),
+        ));
+      }
+      if *native {
+        // 4:2:2: chroma `w/2 x h` — half width, full height; a chroma row per
+        // Y row (`chroma_vsub = 1`, `chroma_w = w/2`), chroma plan a plain
+        // `area`.
+        yuv_planar16_process_native::<BITS, BE>(
+          plan,
+          native_planar_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          y,
+          u_half,
+          v_half,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          1,
+          w / 2,
+          || ResamplePlan::area(w / 2, h, plan.out_w(), plan.out_h()),
+          use_simd,
+        )?;
+        if frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(true);
+        }
+        return Ok(());
+      }
+      packed_yuv422_triple_resample::<BITS>(
+        luma_stream_u16,
+        rgb_stream,
+        rgb_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        &mut None,
+        hsv,
+        luma_scratch_u16,
+        rgb_scratch,
+        rgb_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        matrix,
+        full_range,
+        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+        |scratch| {
+          yuv420p10_to_rgb_row_endian(
+            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+          )
+        },
+        |scratch| {
+          yuv420p10_to_rgb_u16_row_endian(
+            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+          )
+        },
+      )?;
+      if frozen_native_route.is_none() && need_output {
+        *frozen_native_route = Some(false);
+      }
+      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -780,6 +842,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>, R> {
       luma_filter_stream_u16,
       resample_outputs,
       plan,
+      native,
+      native_planar_u16,
+      frozen_native_route,
       ..
     } = self;
 
@@ -797,41 +862,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>, R> {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
-      return match plan.kind() {
-        crate::resample::SpanKind::Area => packed_yuv422_triple_resample::<BITS>(
-          luma_stream_u16,
-          rgb_stream,
-          rgb_stream_u16,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          &mut None,
-          hsv,
-          luma_scratch_u16,
-          rgb_scratch,
-          rgb_scratch_u16,
-          w,
-          plan,
-          idx,
-          use_simd,
-          matrix,
-          full_range,
-          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
-          |scratch| {
-            yuv420p12_to_rgb_row_endian(
-              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-            )
-          },
-          |scratch| {
-            yuv420p12_to_rgb_u16_row_endian(
-              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-            )
-          },
-        ),
-        crate::resample::SpanKind::Filter => packed_yuv422_triple_filter_resample::<BITS>(
+      if plan.kind().is_filter() {
+        return packed_yuv422_triple_filter_resample::<BITS>(
           luma_filter_stream_u16,
           rgb_filter_stream,
           rgb_filter_stream_u16,
@@ -863,8 +895,95 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>, R> {
               y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
             )
           },
-        ),
-      };
+        );
+      }
+      // Native / row-stage route split — see the high-bit 4:2:0 Yuv420p impl
+      // for the CHECK-before / SET-after `frozen_native_route` contract.
+      let need_output = luma.is_some()
+        || rgb.is_some()
+        || rgba.is_some()
+        || hsv.is_some()
+        || rgb_u16.is_some()
+        || rgba_u16.is_some();
+      if need_output
+        && let Some(frozen) = *frozen_native_route
+        && frozen != *native
+      {
+        return Err(MixedSinkerError::NativeRouteChanged(
+          NativeRouteChanged::new(idx),
+        ));
+      }
+      if *native {
+        // 4:2:2: chroma `w/2 x h` — half width, full height; a chroma row per
+        // Y row (`chroma_vsub = 1`, `chroma_w = w/2`), chroma plan a plain
+        // `area`.
+        yuv_planar16_process_native::<BITS, BE>(
+          plan,
+          native_planar_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          y,
+          u_half,
+          v_half,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          1,
+          w / 2,
+          || ResamplePlan::area(w / 2, h, plan.out_w(), plan.out_h()),
+          use_simd,
+        )?;
+        if frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(true);
+        }
+        return Ok(());
+      }
+      packed_yuv422_triple_resample::<BITS>(
+        luma_stream_u16,
+        rgb_stream,
+        rgb_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        &mut None,
+        hsv,
+        luma_scratch_u16,
+        rgb_scratch,
+        rgb_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        matrix,
+        full_range,
+        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+        |scratch| {
+          yuv420p12_to_rgb_row_endian(
+            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+          )
+        },
+        |scratch| {
+          yuv420p12_to_rgb_u16_row_endian(
+            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+          )
+        },
+      )?;
+      if frozen_native_route.is_none() && need_output {
+        *frozen_native_route = Some(false);
+      }
+      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -1135,6 +1254,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>, R> {
       luma_filter_stream_u16,
       resample_outputs,
       plan,
+      native,
+      native_planar_u16,
+      frozen_native_route,
       ..
     } = self;
 
@@ -1152,41 +1274,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>, R> {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
-      return match plan.kind() {
-        crate::resample::SpanKind::Area => packed_yuv422_triple_resample::<BITS>(
-          luma_stream_u16,
-          rgb_stream,
-          rgb_stream_u16,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          &mut None,
-          hsv,
-          luma_scratch_u16,
-          rgb_scratch,
-          rgb_scratch_u16,
-          w,
-          plan,
-          idx,
-          use_simd,
-          matrix,
-          full_range,
-          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
-          |scratch| {
-            yuv420p14_to_rgb_row_endian(
-              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-            )
-          },
-          |scratch| {
-            yuv420p14_to_rgb_u16_row_endian(
-              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-            )
-          },
-        ),
-        crate::resample::SpanKind::Filter => packed_yuv422_triple_filter_resample::<BITS>(
+      if plan.kind().is_filter() {
+        return packed_yuv422_triple_filter_resample::<BITS>(
           luma_filter_stream_u16,
           rgb_filter_stream,
           rgb_filter_stream_u16,
@@ -1218,8 +1307,95 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>, R> {
               y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
             )
           },
-        ),
-      };
+        );
+      }
+      // Native / row-stage route split — see the high-bit 4:2:0 Yuv420p impl
+      // for the CHECK-before / SET-after `frozen_native_route` contract.
+      let need_output = luma.is_some()
+        || rgb.is_some()
+        || rgba.is_some()
+        || hsv.is_some()
+        || rgb_u16.is_some()
+        || rgba_u16.is_some();
+      if need_output
+        && let Some(frozen) = *frozen_native_route
+        && frozen != *native
+      {
+        return Err(MixedSinkerError::NativeRouteChanged(
+          NativeRouteChanged::new(idx),
+        ));
+      }
+      if *native {
+        // 4:2:2: chroma `w/2 x h` — half width, full height; a chroma row per
+        // Y row (`chroma_vsub = 1`, `chroma_w = w/2`), chroma plan a plain
+        // `area`.
+        yuv_planar16_process_native::<BITS, BE>(
+          plan,
+          native_planar_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          y,
+          u_half,
+          v_half,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          1,
+          w / 2,
+          || ResamplePlan::area(w / 2, h, plan.out_w(), plan.out_h()),
+          use_simd,
+        )?;
+        if frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(true);
+        }
+        return Ok(());
+      }
+      packed_yuv422_triple_resample::<BITS>(
+        luma_stream_u16,
+        rgb_stream,
+        rgb_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        &mut None,
+        hsv,
+        luma_scratch_u16,
+        rgb_scratch,
+        rgb_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        matrix,
+        full_range,
+        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+        |scratch| {
+          yuv420p14_to_rgb_row_endian(
+            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+          )
+        },
+        |scratch| {
+          yuv420p14_to_rgb_u16_row_endian(
+            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+          )
+        },
+      )?;
+      if frozen_native_route.is_none() && need_output {
+        *frozen_native_route = Some(false);
+      }
+      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -1497,6 +1673,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p16<BE>, R> {
       luma_filter_stream_u16,
       resample_outputs,
       plan,
+      native,
+      native_planar_u16,
+      frozen_native_route,
       ..
     } = self;
 
@@ -1514,41 +1693,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p16<BE>, R> {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
-      return match plan.kind() {
-        crate::resample::SpanKind::Area => packed_yuv422_triple_resample::<BITS>(
-          luma_stream_u16,
-          rgb_stream,
-          rgb_stream_u16,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          &mut None,
-          hsv,
-          luma_scratch_u16,
-          rgb_scratch,
-          rgb_scratch_u16,
-          w,
-          plan,
-          idx,
-          use_simd,
-          matrix,
-          full_range,
-          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
-          |scratch| {
-            yuv420p16_to_rgb_row_endian(
-              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-            )
-          },
-          |scratch| {
-            yuv420p16_to_rgb_u16_row_endian(
-              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-            )
-          },
-        ),
-        crate::resample::SpanKind::Filter => packed_yuv422_triple_filter_resample::<BITS>(
+      if plan.kind().is_filter() {
+        return packed_yuv422_triple_filter_resample::<BITS>(
           luma_filter_stream_u16,
           rgb_filter_stream,
           rgb_filter_stream_u16,
@@ -1580,8 +1726,95 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p16<BE>, R> {
               y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
             )
           },
-        ),
-      };
+        );
+      }
+      // Native / row-stage route split — see the high-bit 4:2:0 Yuv420p impl
+      // for the CHECK-before / SET-after `frozen_native_route` contract.
+      let need_output = luma.is_some()
+        || rgb.is_some()
+        || rgba.is_some()
+        || hsv.is_some()
+        || rgb_u16.is_some()
+        || rgba_u16.is_some();
+      if need_output
+        && let Some(frozen) = *frozen_native_route
+        && frozen != *native
+      {
+        return Err(MixedSinkerError::NativeRouteChanged(
+          NativeRouteChanged::new(idx),
+        ));
+      }
+      if *native {
+        // 4:2:2: chroma `w/2 x h` — half width, full height; a chroma row per
+        // Y row (`chroma_vsub = 1`, `chroma_w = w/2`), chroma plan a plain
+        // `area`.
+        yuv_planar16_process_native::<BITS, BE>(
+          plan,
+          native_planar_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          y,
+          u_half,
+          v_half,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          1,
+          w / 2,
+          || ResamplePlan::area(w / 2, h, plan.out_w(), plan.out_h()),
+          use_simd,
+        )?;
+        if frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(true);
+        }
+        return Ok(());
+      }
+      packed_yuv422_triple_resample::<BITS>(
+        luma_stream_u16,
+        rgb_stream,
+        rgb_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        &mut None,
+        hsv,
+        luma_scratch_u16,
+        rgb_scratch,
+        rgb_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        matrix,
+        full_range,
+        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+        |scratch| {
+          yuv420p16_to_rgb_row_endian(
+            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+          )
+        },
+        |scratch| {
+          yuv420p16_to_rgb_u16_row_endian(
+            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+          )
+        },
+      )?;
+      if frozen_native_route.is_none() && need_output {
+        *frozen_native_route = Some(false);
+      }
+      return Ok(());
     }
 
     let one_plane_start = idx * w;

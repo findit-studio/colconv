@@ -1931,6 +1931,14 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// Lazily created in `process`, reset in `begin_frame`.
   #[cfg(feature = "yuv-planar")]
   native_420_u16: Option<subsampled_4_2_0_high_bit::NativeYuv420U16>,
+  /// Native-tier join state for the HIGH-BIT non-4:2:0 planar families
+  /// (`Yuv422p10/12/14/16` / `Yuv444p10/12/14/16` / `Yuv440p10/12`) — the
+  /// `u16` twin of [`Self::native_planar`] and the non-4:2:0 sibling of
+  /// [`Self::native_420_u16`]. A given sink instantiates exactly one planar
+  /// family, so one field is shared across the three impls; lazily created in
+  /// `process`, reset in `begin_frame`.
+  #[cfg(feature = "yuv-planar")]
+  native_planar_u16: Option<planar_high_bit_native::NativePlanarYuvU16>,
   /// Half-width U / V de-interleave staging for the native 4:2:0
   /// decimation tier of the **semi-planar** family
   /// ([`Nv12`](crate::source::Nv12) / [`Nv21`](crate::source::Nv21)):
@@ -2816,6 +2824,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       native_planar: None,
       #[cfg(feature = "yuv-planar")]
       native_420_u16: None,
+      #[cfg(feature = "yuv-planar")]
+      native_planar_u16: None,
       #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
       semi_planar_u_half: Vec::new(),
       #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
@@ -6599,6 +6609,12 @@ pub(super) fn reset_high_bit_yuv_streams<F: SourceFormat, R>(sink: &mut MixedSin
   // the row-stage tail, so there is no route to clear there).
   #[cfg(feature = "yuv-planar")]
   if let Some(join) = sink.native_420_u16.as_mut() {
+    join.reset();
+  }
+  // The high-bit non-4:2:0 planar native join (when present) shares the
+  // frame-restart contract too — restart its plane streams for the new frame.
+  #[cfg(feature = "yuv-planar")]
+  if let Some(join) = sink.native_planar_u16.as_mut() {
     join.reset();
   }
   // Clear the per-frame frozen native/row-stage route so the next frame
@@ -11533,6 +11549,20 @@ mod packed_yuv_8bit;
 mod pal8;
 #[cfg(feature = "yuv-planar")]
 mod planar_8bit;
+#[cfg(feature = "yuv-planar")]
+mod planar_high_bit_native;
+// Bring the high-bit non-4:2:0 planar native join + entry point (and its
+// test-only alloc failpoint) into the `mixed` scope so the three per-format
+// high-bit sinks — `subsampled_4_2_2_high_bit::{yuv422p, yuv440p}` and
+// `subsampled_4_4_4_high_bit::yuv444p`, which span two parent modules —
+// reach them by the same `super::super::{..}` path they use for the shared
+// row-stage tails (`packed_yuv4*_triple_resample`).
+#[cfg(feature = "yuv-planar")]
+use planar_high_bit_native::yuv_planar16_process_native;
+#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
+pub(crate) use planar_high_bit_native::{
+  arm_planar_hb_native_alloc_failure, arm_planar_hb_native_chroma_failure,
+};
 #[cfg(feature = "gbr")]
 mod planar_gbr_8bit;
 #[cfg(feature = "gbr")]
