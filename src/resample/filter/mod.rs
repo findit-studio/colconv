@@ -272,6 +272,48 @@ impl FilterKernel for Lanczos3 {
   }
 }
 
+/// The Mitchell-Netravali cubic (`B = C = 1/3`) — the high-quality general
+/// cubic recommended by Mitchell & Netravali (1988) as the best subjective
+/// trade-off between blurring and ringing. Support 2, with a small negative
+/// outer lobe on `1 <= |x| < 2`. Not a PIL filter (PIL exposes no Mitchell);
+/// validated against the closed-form Mitchell-Netravali weights.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Mitchell;
+
+impl Mitchell {
+  /// Mitchell-Netravali `B` (blur) parameter; `1/3` is the recommended value.
+  const B: f64 = 1.0 / 3.0;
+  /// Mitchell-Netravali `C` (ring) parameter; `1/3` is the recommended value.
+  const C: f64 = 1.0 / 3.0;
+}
+
+impl FilterKernel for Mitchell {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn support(&self) -> f64 {
+    2.0
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn weight(&self, x: f64) -> f64 {
+    // Mitchell-Netravali piecewise cubic (the standard form, divided by 6):
+    //   |x| < 1:       (12 - 9B - 6C)|x|^3 + (-18 + 12B + 6C)|x|^2 + (6 - 2B)
+    //   1 <= |x| < 2:  (-B - 6C)|x|^3 + (6B + 30C)|x|^2 + (-12B - 48C)|x|
+    //                  + (8B + 24C)
+    // At B = C = 1/3 this is 8/9 at x = 0, 1/18 at |x| = 1, 0 at |x| = 2.
+    let (b, c) = (Self::B, Self::C);
+    let t = x.abs();
+    if t < 1.0 {
+      (((12.0 - 9.0 * b - 6.0 * c) * t + (-18.0 + 12.0 * b + 6.0 * c)) * t * t + (6.0 - 2.0 * b))
+        / 6.0
+    } else if t < 2.0 {
+      ((((-b - 6.0 * c) * t + (6.0 * b + 30.0 * c)) * t + (-12.0 * b - 48.0 * c)) * t
+        + (8.0 * b + 24.0 * c))
+        / 6.0
+    } else {
+      0.0
+    }
+  }
+}
+
 /// Per-axis signed-coefficient spans of a filter
 /// [`ResamplePlan`](super::ResamplePlan): for each output index, the first
 /// contributing source sample plus the normalized (row-sums-to-one)
