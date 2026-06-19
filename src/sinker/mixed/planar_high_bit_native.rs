@@ -300,8 +300,15 @@ impl NativePlanarYuvU16 {
 /// into the frozen-output check. The high-bit non-4:2:0 planar family exposes
 /// no `luma_u16` output, so it is frozen as absent. See `native_preflight_core`
 /// for the 4-point rejection logic and its ordering contract.
+///
+/// `pub(crate)` so the high-bit **semi-planar** non-4:2:0 P-format wrapper
+/// (`subsampled_4_2_2_high_bit::p2xx` / `subsampled_4_4_4_high_bit::p4xx`),
+/// which reuses [`yuv_planar16_process_native`] after de-interleaving + de-packing
+/// the packed UV plane, can run this COMPLETE pre-feed preflight ahead of its own
+/// fallible de-pack scratch grow — exactly as the 8-bit semi-planar non-4:2:0
+/// wrapper runs `native_planar_preflight`.
 #[allow(clippy::too_many_arguments)]
-fn native_planar_hb_preflight(
+pub(crate) fn native_planar_hb_preflight(
   join: &Option<NativePlanarYuvU16>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &Option<&mut [u8]>,

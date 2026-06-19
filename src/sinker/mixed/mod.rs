@@ -11567,6 +11567,16 @@ mod planar_high_bit_native;
 // row-stage tails (`packed_yuv4*_triple_resample`).
 #[cfg(feature = "yuv-planar")]
 use planar_high_bit_native::yuv_planar16_process_native;
+// The high-bit semi-planar non-4:2:0 P-format native wrappers
+// (`subsampled_4_2_2_high_bit::p2xx` / `subsampled_4_4_4_high_bit::p4xx`) reuse
+// the planar join + its pre-feed preflight after de-interleaving + de-packing
+// the packed UV plane — the `u16` twin of the 8-bit semi-planar non-4:2:0
+// reuse. Bring the join type + preflight into the `mixed` scope so those
+// sinks reach them by the same `super::super::{..}` path they use for the
+// shared row-stage tails. Gated to the intersection (the native tier reuses a
+// yuv-planar fn, so it only exists when yuv-planar is also compiled).
+#[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+use planar_high_bit_native::{NativePlanarYuvU16, native_planar_hb_preflight};
 #[cfg(all(test, feature = "std", feature = "yuv-planar"))]
 pub(crate) use planar_high_bit_native::{
   arm_planar_hb_native_alloc_failure, arm_planar_hb_native_chroma_failure,

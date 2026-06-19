@@ -6,3 +6,11 @@
 mod p4xx;
 #[cfg(feature = "yuv-planar")]
 mod yuv444p;
+
+#[cfg(all(
+  test,
+  feature = "std",
+  feature = "yuv-semi-planar",
+  feature = "yuv-planar"
+))]
+pub(crate) use p4xx::arm_p4xx_alloc_failure;

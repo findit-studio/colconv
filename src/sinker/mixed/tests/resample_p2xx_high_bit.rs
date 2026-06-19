@@ -204,6 +204,7 @@ macro_rules! p2xx_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut rgb)
           .unwrap();
           $walker(&frame(&y, &uv), FR, M, &mut sink).unwrap();
@@ -226,6 +227,7 @@ macro_rules! p2xx_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb_u16(&mut rgb)
           .unwrap();
           $walker(&frame(&y, &uv), FR, M, &mut sink).unwrap();
@@ -252,6 +254,7 @@ macro_rules! p2xx_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut rgb_u8)
           .unwrap()
           .with_rgb_u16(&mut rgb_u16)
@@ -285,6 +288,7 @@ macro_rules! p2xx_high_bit_resample_suite {
               AreaResampler::to(OUT, OUT),
             )
             .unwrap()
+            .with_native(false)
             .with_luma(&mut luma)
             .unwrap();
             $walker(&frame(&y, &uv), full_range, M, &mut sink).unwrap();
@@ -312,6 +316,7 @@ macro_rules! p2xx_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_luma(&mut luma)
           .unwrap();
           $walker(&frame(&y, &uv), FR, M, &mut sink).unwrap();
@@ -346,6 +351,7 @@ macro_rules! p2xx_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut rgb)
           .unwrap()
           .with_rgba(&mut rgba)
@@ -398,6 +404,7 @@ macro_rules! p2xx_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut rgb)
           .unwrap()
           .with_rgba(&mut rgba)
@@ -460,6 +467,7 @@ macro_rules! p2xx_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut le_rgb)
           .unwrap()
           .with_rgb_u16(&mut le_rgb_u16)
@@ -479,6 +487,7 @@ macro_rules! p2xx_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut be_rgb)
           .unwrap()
           .with_rgb_u16(&mut be_rgb_u16)
@@ -511,6 +520,7 @@ macro_rules! p2xx_high_bit_resample_suite {
               AreaResampler::to(OUT, OUT),
             )
             .unwrap()
+            .with_native(false)
             .with_simd(simd)
             .with_rgb(&mut rgb)
             .unwrap()
@@ -547,6 +557,7 @@ macro_rules! p2xx_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut rgb)
           .unwrap()
           .with_rgb_u16(&mut rgb_u16)
@@ -587,6 +598,7 @@ macro_rules! p2xx_high_bit_resample_suite {
             AreaResampler::to(SRC, SRC),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut via_area)
           .unwrap();
           $walker(&frame(&y, &uv), FR, M, &mut sink).unwrap();
@@ -640,6 +652,7 @@ macro_rules! p2xx_high_bit_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb_u16(&mut rgb_u16)
           .unwrap()
           .with_luma(&mut luma)
@@ -665,6 +678,7 @@ macro_rules! p2xx_high_bit_resample_suite {
           AreaResampler::to(OUT, OUT),
         )
         .unwrap()
+        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap()
         .with_rgb_u16(&mut rgb_u16)
@@ -714,6 +728,7 @@ macro_rules! p2xx_high_bit_resample_suite {
           AreaResampler::to(OUT, OUT),
         )
         .unwrap()
+        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap();
         sink.begin_frame(SRC as u32, SRC as u32).unwrap();

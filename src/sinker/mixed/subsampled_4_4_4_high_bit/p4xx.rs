@@ -6,6 +6,264 @@ use super::super::{
 };
 use crate::{PixelSink, row::*, source::*};
 
+// `NativeRouteChanged` is raised only by the native fast tier's route-flip
+// guard, which exists only when the reused planar join is compiled in.
+#[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+use super::super::{
+  FrozenOutputs, HsvFrameMut, NativePlanarYuvU16, NativeRouteChanged, native_planar_hb_preflight,
+  yuv_planar16_process_native,
+};
+#[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+use crate::{
+  ColorMatrix,
+  resample::{PlanGeometry, ResampleError, ResamplePlan},
+};
+
+// The native fast tier de-interleaves + DE-PACKS each wire plane into
+// wrapper-owned host-native LOGICAL u16 scratch BEFORE handing it to the
+// planar delegate, so the delegate's own `from_le` / `from_be` decode must be
+// a no-op load on every host: pass `BE = HOST_NATIVE_BE` (= `from_ne`).
+// Passing the source wire `BE` here would byte-swap the already-native scratch
+// on a big-endian target. Mirrors the 4:2:0 high-bit semi-planar `p0xx`.
+#[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
+// Test-only allocation failpoint for the wrapper-owned Y / U / V de-pack
+// scratch grow in `p4xx_process_native`. Armed, the FIRST (Y) scratch grow of
+// an output-bearing row returns the crate's recoverable `AllocationFailed`
+// WITHOUT growing — so the atomicity regressions can prove the join's pre-feed
+// preflight runs BEFORE this fallible grow. Mirrors the 4:2:0 high-bit
+// semi-planar `FORCE_P0XX_ALLOC_FAILURE`. Strictly test-only.
+#[cfg(all(
+  test,
+  feature = "std",
+  feature = "yuv-semi-planar",
+  feature = "yuv-planar"
+))]
+std::thread_local! {
+  static FORCE_P4XX_ALLOC_FAILURE: core::cell::Cell<bool> =
+    const { core::cell::Cell::new(false) };
+}
+
+/// Arms the wrapper de-pack scratch allocation failpoint for the **next**
+/// output-bearing high-bit semi-planar 4:4:4 native row on the current thread.
+/// The flag is consumed (take-on-read) by the first fallible scratch grow that
+/// row reaches, so it fires exactly once and cannot leak into a later test.
+/// Test-only.
+#[cfg(all(
+  test,
+  feature = "std",
+  feature = "yuv-semi-planar",
+  feature = "yuv-planar"
+))]
+pub(crate) fn arm_p4xx_alloc_failure() {
+  FORCE_P4XX_ALLOC_FAILURE.with(|f| f.set(true));
+}
+
+/// Grows a wrapper-owned de-pack scratch to `len` `u16` under the planner's
+/// recoverable-allocation contract, optionally firing the test-only failpoint
+/// (`fail = true` only on the FIRST grow of an output-bearing row). Runs after
+/// the join's preflight clears, so a rejected row never reaches it.
+#[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn grow_depack_scratch(
+  scratch: &mut std::vec::Vec<u16>,
+  len: usize,
+  fail: bool,
+  w: usize,
+  h: usize,
+  plan: &ResamplePlan,
+) -> Result<(), MixedSinkerError> {
+  // `fail` is consumed by the caller; on the non-test build it is `false` and
+  // the whole branch compiles away.
+  let _ = fail;
+  if scratch.len() < len {
+    #[cfg(all(
+      test,
+      feature = "std",
+      feature = "yuv-semi-planar",
+      feature = "yuv-planar"
+    ))]
+    if fail && FORCE_P4XX_ALLOC_FAILURE.with(|f| f.take()) {
+      return Err(MixedSinkerError::Resample(ResampleError::AllocationFailed(
+        PlanGeometry::new(w, h, plan.out_w(), plan.out_h()),
+      )));
+    }
+    scratch
+      .try_reserve_exact(len - scratch.len())
+      .map_err(|_| {
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+          w,
+          h,
+          plan.out_w(),
+          plan.out_h(),
+        )))
+      })?;
+    scratch.resize(len, 0);
+  }
+  Ok(())
+}
+
+/// Native fast-tier decimator for the **high-bit semi-planar 4:4:4** P-format
+/// family ([`P410`](crate::source::P410) / [`P412`](crate::source::P412) /
+/// [`P416`](crate::source::P416)): bins the native Y / U / V planes straight to
+/// the output grid and converts once per output row at output resolution. The
+/// 4:4:4 sibling of the 4:2:0 high-bit semi-planar `p0xx_process_native` and
+/// the `u16` twin of the 8-bit semi-planar non-4:2:0
+/// `semi_planar_process_native_non420`, reusing the high-bit non-4:2:0 PLANAR
+/// join verbatim ([`yuv_planar16_process_native`]) after de-interleaving +
+/// DE-PACKING the wire row into wrapper-owned host-native LOGICAL u16 scratch.
+///
+/// THE SEAM: [`yuv_planar16_process_native`] wire-decodes its `y_row` / `u_row`
+/// / `v_row` input (`from_le` / `from_be`) but applies **no** high-bit shift —
+/// it treats them as **low-packed LOGICAL** u16. P-format Y is HIGH-BIT-PACKED
+/// (`logical << (16 - BITS)`) and the UV plane is INTERLEAVED + high-packed. So
+/// this wrapper must, per row, decode the wire AND de-pack (`>> (16 - BITS)`)
+/// the Y, and de-interleave (`U,V` order — every P-format is UV-order, no VU
+/// variant) + de-pack EACH of U and V, into host-native logical scratch — then
+/// delegate with `BE = HOST_NATIVE_BE` so the delegate's internal decode is a
+/// no-op load on every host. The de-pack hits Y AND U AND V; at `BITS = 16` the
+/// shift is `>> 0` (a harmless no-op — the 10/12 tests guard the live shift).
+///
+/// 4:4:4 layout: the chroma plane is full-resolution (`chroma_w = w`, vertical
+/// cadence `chroma_vsub = 1`), so a chroma row feeds EVERY colour Y row and the
+/// chroma de-pack runs at full width. The packed UV row is `2 * w` u16 (`w`
+/// interleaved pairs). The delegate builds its chroma grid against the same
+/// output geometry via the `build_chroma_plan` closure.
+///
+/// Atomicity + lazy chroma mirror the 4:2:2 `p2xx_process_native`: the join's
+/// COMPLETE pre-feed preflight runs FIRST (deterministic typed rejection, never
+/// `AllocationFailed`); a luma-only sink skips the chroma de-interleave/scratch.
+#[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+#[allow(clippy::too_many_arguments)]
+fn p4xx_process_native<const BITS: u32, const BE: bool>(
+  plan: &ResamplePlan,
+  native_planar_u16: &mut Option<NativePlanarYuvU16>,
+  y_scratch: &mut std::vec::Vec<u16>,
+  u_scratch: &mut std::vec::Vec<u16>,
+  v_scratch: &mut std::vec::Vec<u16>,
+  resample_outputs: &mut Option<FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  rgb_u16: &mut Option<&mut [u16]>,
+  rgba_u16: &mut Option<&mut [u16]>,
+  luma: &mut Option<&mut [u8]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgb_scratch: &mut std::vec::Vec<u8>,
+  rgb_scratch_u16: &mut std::vec::Vec<u16>,
+  y_row: &[u16],
+  uv_full: &[u16],
+  matrix: ColorMatrix,
+  full_range: bool,
+  idx: usize,
+  w: usize,
+  h: usize,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  const {
+    assert!(
+      BITS > 8 && BITS <= 16,
+      "BITS must be in (8, 16] for high-bit semi-planar 4:4:4 P-format"
+    )
+  };
+  let need_luma = luma.is_some();
+  let need_color =
+    rgb.is_some() || rgba.is_some() || hsv.is_some() || rgb_u16.is_some() || rgba_u16.is_some();
+  // 4:4:4 chroma is full-resolution: `chroma_w = w`, a chroma row per Y row.
+  let cw = w;
+
+  // Run the planar join's COMPLETE pre-feed rejection preflight FIRST — BEFORE
+  // any fallible scratch grow below — so every rejection returns its
+  // deterministic typed error and leaves the wrapper scratch untouched. The
+  // delegate re-runs this identical preflight harmlessly.
+  if !native_planar_hb_preflight(
+    native_planar_u16,
+    resample_outputs,
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    luma,
+    hsv,
+    idx,
+    need_luma,
+    need_color,
+  )? {
+    return Ok(());
+  }
+
+  // Grow the wrapper de-pack scratch under the planner's recoverable contract —
+  // Y always, U / V only on a colour row (4:4:4: every Y row is a chroma row
+  // when colour is wanted). All grows precede the infallible de-pack and the
+  // delegate call. The failpoint fires on the FIRST (Y) grow only.
+  grow_depack_scratch(y_scratch, w, true, w, h, plan)?;
+  if need_color {
+    grow_depack_scratch(u_scratch, cw, false, w, h, plan)?;
+    grow_depack_scratch(v_scratch, cw, false, w, h, plan)?;
+  }
+
+  // De-pack the wire planes into host-native LOGICAL scratch. Decode the wire
+  // endianness, then shift the active high `BITS` down to the low `BITS`
+  // (`>> (16 - BITS)`; `>> 0` at BITS = 16). Everything past here is infallible.
+  for (d, &s) in y_scratch[..w].iter_mut().zip(y_row.iter()) {
+    let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+    *d = logical >> (16 - BITS);
+  }
+  if need_color {
+    // P-format chroma is interleaved `U,V,U,V…` (U at even element); each of U
+    // and V is independently high-bit-packed and must be de-packed. 4:4:4 is
+    // full-width: `w` interleaved pairs (`2 * w` u16).
+    for (i, pair) in uv_full.chunks_exact(2).enumerate() {
+      let u = if BE {
+        u16::from_be(pair[0])
+      } else {
+        u16::from_le(pair[0])
+      };
+      let v = if BE {
+        u16::from_be(pair[1])
+      } else {
+        u16::from_le(pair[1])
+      };
+      u_scratch[i] = u >> (16 - BITS);
+      v_scratch[i] = v >> (16 - BITS);
+    }
+  }
+
+  // Delegate to the planar high-bit non-4:2:0 join with `BE = HOST_NATIVE_BE`
+  // at the 4:4:4 chroma geometry (`chroma_vsub = 1`, `chroma_w = w`). Empty
+  // U / V on luma-only rows (the join reads chroma only under colour).
+  let (u_plane, v_plane): (&[u16], &[u16]) = if need_color {
+    (&u_scratch[..cw], &v_scratch[..cw])
+  } else {
+    (&[], &[])
+  };
+  yuv_planar16_process_native::<BITS, HOST_NATIVE_BE>(
+    plan,
+    native_planar_u16,
+    resample_outputs,
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    luma,
+    hsv,
+    rgb_scratch,
+    rgb_scratch_u16,
+    &y_scratch[..w],
+    u_plane,
+    v_plane,
+    matrix,
+    full_range,
+    idx,
+    w,
+    h,
+    1,
+    cw,
+    || ResamplePlan::area(cw, h, plan.out_w(), plan.out_h()),
+    use_simd,
+  )
+}
+
 // ---- P410 impl ----------------------------------------------------------
 //
 // 4:4:4 high-bit-packed semi-planar (10-bit). Full-width interleaved
@@ -134,60 +392,42 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P410<BE>, R> {
       luma_filter_stream_u16,
       resample_outputs,
       plan,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      native,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      native_planar_u16,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      p0xx_y_half,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      p0xx_u_half,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      p0xx_v_half,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      frozen_native_route,
       ..
     } = self;
 
-    // Non-identity plan: feed the shared high-bit 4:4:4 triple-resample
-    // tail (u8 color, independent native-u16 color, native Y), area or
-    // filter per the span kind (both convert the YUV to RGB with the same
-    // closures and resample in RGB space). P410 is semi-planar 4:4:4: the
-    // full-width interleaved UV plane (`2 * w` u16) is de-interleaved
-    // per-pixel (no chroma upsample) by the `p410_to_rgb*` kernels. The Y
-    // de-pack shift `>> (16 - BITS)` yields the logical native Y;
-    // `luma = binned_Y >> (BITS - 8)`. P410 exposes no `luma_u16`, so it is
-    // `&mut None`. The filter tail clamps a signed-kernel overshoot to the
-    // native max for this sub-16-bit source (both colour and native-Y
-    // luma), matching the in-range area path.
+    // Non-identity plan: a `Filter` plan routes to the shared high-bit 4:4:4
+    // signed-coefficient filter tail (no native fast tier), so it branches
+    // FIRST. An `Area` plan routes native-or-row-stage: when the native tier
+    // is enabled (and the planar join it reuses is compiled in), bin the
+    // native Y / U / V planes at output resolution and convert once per output
+    // row, de-interleaving + de-packing the P410 chroma + Y into wrapper-owned
+    // logical scratch first; otherwise (or under `with_native(false)`) feed
+    // the shared area triple-resample tail. P410 is semi-planar 4:4:4: the
+    // full-width interleaved UV plane (`2 * w` u16) is de-interleaved per-pixel
+    // (no chroma upsample) by the `p410_to_rgb*` kernels. The Y de-pack shift
+    // `>> (16 - BITS)` yields the logical native Y; `luma = binned_Y >>
+    // (BITS - 8)`. P410 exposes no `luma_u16`, so it is `&mut None`. The filter
+    // tail clamps a signed-kernel overshoot to the native max for this
+    // sub-16-bit source (both colour and native-Y luma), matching the in-range
+    // area path.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, uv_full) = (row.y(), row.uv_full());
-      return match plan.kind() {
-        crate::resample::SpanKind::Area => packed_yuv444_triple_resample::<BITS>(
-          rgb_stream,
-          rgb_stream_u16,
-          luma_stream_u16,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          &mut None,
-          hsv,
-          rgb_scratch,
-          rgb_scratch_u16,
-          luma_scratch_u16,
-          w,
-          plan,
-          idx,
-          use_simd,
-          matrix,
-          full_range,
-          |scratch| {
-            p410_to_rgb_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
-          },
-          |scratch| {
-            p410_to_rgb_u16_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
-          },
-          |scratch| {
-            for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
-              let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
-              *dst = logical >> (16 - BITS);
-            }
-          },
-        ),
-        crate::resample::SpanKind::Filter => packed_yuv444_triple_filter_resample::<BITS>(
+      if plan.kind().is_filter() {
+        return packed_yuv444_triple_filter_resample::<BITS>(
           rgb_filter_stream,
           rgb_filter_stream_u16,
           luma_filter_stream_u16,
@@ -220,8 +460,97 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P410<BE>, R> {
               *dst = logical >> (16 - BITS);
             }
           },
-        ),
-      };
+        );
+      }
+      // Whether this call carries any output — the EXACT set the tier
+      // preflight tests. The route freezes only on an output-bearing row a
+      // tier ACCEPTS.
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      let need_output = luma.is_some()
+        || rgb.is_some()
+        || rgba.is_some()
+        || rgb_u16.is_some()
+        || rgba_u16.is_some()
+        || hsv.is_some();
+      // Reject a mid-frame native/row-stage route flip BEFORE either tier's
+      // dispatch (mirrors the 4:2:0 high-bit semi-planar `p0xx`).
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      if need_output
+        && let Some(frozen) = *frozen_native_route
+        && frozen != *native
+      {
+        return Err(MixedSinkerError::NativeRouteChanged(
+          NativeRouteChanged::new(idx),
+        ));
+      }
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      if *native {
+        p4xx_process_native::<BITS, BE>(
+          plan,
+          native_planar_u16,
+          p0xx_y_half,
+          p0xx_u_half,
+          p0xx_v_half,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          y,
+          uv_full,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          use_simd,
+        )?;
+        if frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(true);
+        }
+        return Ok(());
+      }
+      packed_yuv444_triple_resample::<BITS>(
+        rgb_stream,
+        rgb_stream_u16,
+        luma_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        &mut None,
+        hsv,
+        rgb_scratch,
+        rgb_scratch_u16,
+        luma_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        matrix,
+        full_range,
+        |scratch| p410_to_rgb_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE),
+        |scratch| {
+          p410_to_rgb_u16_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
+        },
+        |scratch| {
+          for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
+            let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+            *dst = logical >> (16 - BITS);
+          }
+        },
+      )?;
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      if frozen_native_route.is_none() && need_output {
+        *frozen_native_route = Some(false);
+      }
+      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -471,53 +800,31 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P412<BE>, R> {
       luma_filter_stream_u16,
       resample_outputs,
       plan,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      native,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      native_planar_u16,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      p0xx_y_half,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      p0xx_u_half,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      p0xx_v_half,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      frozen_native_route,
       ..
     } = self;
 
-    // Non-identity plan: feed the shared high-bit 4:4:4 triple-resample
-    // tail, area or filter per the span kind. See the P410 impl for the
-    // full rationale — P412 is identical bar the 12-bit kernel family
+    // Non-identity plan: filter branches first (no native fast tier); an area
+    // plan routes native-or-row-stage. See the P410 impl for the full
+    // rationale — P412 is identical bar the 12-bit kernel family
     // (`p412_to_rgb*`).
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, uv_full) = (row.y(), row.uv_full());
-      return match plan.kind() {
-        crate::resample::SpanKind::Area => packed_yuv444_triple_resample::<BITS>(
-          rgb_stream,
-          rgb_stream_u16,
-          luma_stream_u16,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          &mut None,
-          hsv,
-          rgb_scratch,
-          rgb_scratch_u16,
-          luma_scratch_u16,
-          w,
-          plan,
-          idx,
-          use_simd,
-          matrix,
-          full_range,
-          |scratch| {
-            p412_to_rgb_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
-          },
-          |scratch| {
-            p412_to_rgb_u16_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
-          },
-          |scratch| {
-            for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
-              let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
-              *dst = logical >> (16 - BITS);
-            }
-          },
-        ),
-        crate::resample::SpanKind::Filter => packed_yuv444_triple_filter_resample::<BITS>(
+      if plan.kind().is_filter() {
+        return packed_yuv444_triple_filter_resample::<BITS>(
           rgb_filter_stream,
           rgb_filter_stream_u16,
           luma_filter_stream_u16,
@@ -550,8 +857,92 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P412<BE>, R> {
               *dst = logical >> (16 - BITS);
             }
           },
-        ),
-      };
+        );
+      }
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      let need_output = luma.is_some()
+        || rgb.is_some()
+        || rgba.is_some()
+        || rgb_u16.is_some()
+        || rgba_u16.is_some()
+        || hsv.is_some();
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      if need_output
+        && let Some(frozen) = *frozen_native_route
+        && frozen != *native
+      {
+        return Err(MixedSinkerError::NativeRouteChanged(
+          NativeRouteChanged::new(idx),
+        ));
+      }
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      if *native {
+        p4xx_process_native::<BITS, BE>(
+          plan,
+          native_planar_u16,
+          p0xx_y_half,
+          p0xx_u_half,
+          p0xx_v_half,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          y,
+          uv_full,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          use_simd,
+        )?;
+        if frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(true);
+        }
+        return Ok(());
+      }
+      packed_yuv444_triple_resample::<BITS>(
+        rgb_stream,
+        rgb_stream_u16,
+        luma_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        &mut None,
+        hsv,
+        rgb_scratch,
+        rgb_scratch_u16,
+        luma_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        matrix,
+        full_range,
+        |scratch| p412_to_rgb_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE),
+        |scratch| {
+          p412_to_rgb_u16_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
+        },
+        |scratch| {
+          for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
+            let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+            *dst = logical >> (16 - BITS);
+          }
+        },
+      )?;
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      if frozen_native_route.is_none() && need_output {
+        *frozen_native_route = Some(false);
+      }
+      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -805,55 +1196,32 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P416<BE>, R> {
       luma_filter_stream_u16,
       resample_outputs,
       plan,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      native,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      native_planar_u16,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      p0xx_y_half,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      p0xx_u_half,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      p0xx_v_half,
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      frozen_native_route,
       ..
     } = self;
 
-    // Non-identity plan: feed the shared high-bit 4:4:4 triple-resample
-    // tail, area or filter per the span kind. See the P410 impl for the
-    // full rationale. At 16 bits the Y de-pack shift `>> (16 - BITS)` is
-    // `>> 0`, and the dedicated 16-bit kernel family (`p416_to_rgb*`) is
-    // used; the native max is `u16::MAX`, so the filter tail's clamp is a
-    // value no-op.
+    // Non-identity plan: filter branches first (no native fast tier); an area
+    // plan routes native-or-row-stage. See the P410 impl for the full
+    // rationale. At 16 bits the Y de-pack shift `>> (16 - BITS)` is `>> 0`, and
+    // the dedicated 16-bit kernel family (`p416_to_rgb*`) is used; the native
+    // max is `u16::MAX`, so the native-depth clamp is a value no-op.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, uv_full) = (row.y(), row.uv_full());
-      return match plan.kind() {
-        crate::resample::SpanKind::Area => packed_yuv444_triple_resample::<BITS>(
-          rgb_stream,
-          rgb_stream_u16,
-          luma_stream_u16,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          &mut None,
-          hsv,
-          rgb_scratch,
-          rgb_scratch_u16,
-          luma_scratch_u16,
-          w,
-          plan,
-          idx,
-          use_simd,
-          matrix,
-          full_range,
-          |scratch| {
-            p416_to_rgb_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
-          },
-          |scratch| {
-            p416_to_rgb_u16_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
-          },
-          |scratch| {
-            for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
-              let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
-              *dst = logical >> (16 - BITS);
-            }
-          },
-        ),
-        crate::resample::SpanKind::Filter => packed_yuv444_triple_filter_resample::<BITS>(
+      if plan.kind().is_filter() {
+        return packed_yuv444_triple_filter_resample::<BITS>(
           rgb_filter_stream,
           rgb_filter_stream_u16,
           luma_filter_stream_u16,
@@ -886,8 +1254,92 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P416<BE>, R> {
               *dst = logical >> (16 - BITS);
             }
           },
-        ),
-      };
+        );
+      }
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      let need_output = luma.is_some()
+        || rgb.is_some()
+        || rgba.is_some()
+        || rgb_u16.is_some()
+        || rgba_u16.is_some()
+        || hsv.is_some();
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      if need_output
+        && let Some(frozen) = *frozen_native_route
+        && frozen != *native
+      {
+        return Err(MixedSinkerError::NativeRouteChanged(
+          NativeRouteChanged::new(idx),
+        ));
+      }
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      if *native {
+        p4xx_process_native::<BITS, BE>(
+          plan,
+          native_planar_u16,
+          p0xx_y_half,
+          p0xx_u_half,
+          p0xx_v_half,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          y,
+          uv_full,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          use_simd,
+        )?;
+        if frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(true);
+        }
+        return Ok(());
+      }
+      packed_yuv444_triple_resample::<BITS>(
+        rgb_stream,
+        rgb_stream_u16,
+        luma_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        &mut None,
+        hsv,
+        rgb_scratch,
+        rgb_scratch_u16,
+        luma_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        matrix,
+        full_range,
+        |scratch| p416_to_rgb_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE),
+        |scratch| {
+          p416_to_rgb_u16_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
+        },
+        |scratch| {
+          for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
+            let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+            *dst = logical >> (16 - BITS);
+          }
+        },
+      )?;
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      if frozen_native_route.is_none() && need_output {
+        *frozen_native_route = Some(false);
+      }
+      return Ok(());
     }
 
     let one_plane_start = idx * w;
