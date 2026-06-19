@@ -154,16 +154,19 @@ mod resample_grayf32;
 mod resample_legacy_rgb;
 #[cfg(feature = "mono")]
 mod resample_mono;
-// The high-bit semi-planar P-format sinks live under the
-// `yuv-planar`-gated `subsampled_4_*_high_bit` parent modules with a
-// `yuv-semi-planar`-gated inner module, so they require BOTH features.
-#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+// The high-bit semi-planar P-format sinks live under `yuv-semi-planar`
+// (the `subsampled_4_*_high_bit` parents now compile under either family);
+// these area + filter suites pin `with_native(false)` and oracle the
+// P-format sink directly, so they run under yuv-semi-planar-solo.
+#[cfg(feature = "yuv-semi-planar")]
 mod resample_p0xx_high_bit;
+// The native fast tier reuses the planar high-bit join, so the native
+// suite needs BOTH families.
 #[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 mod resample_p0xx_high_bit_native;
-#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg(feature = "yuv-semi-planar")]
 mod resample_p2xx_high_bit;
-#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg(feature = "yuv-semi-planar")]
 mod resample_p4xx_high_bit;
 #[cfg(feature = "rgb")]
 mod resample_packed_rgb_10bit;
@@ -199,7 +202,9 @@ mod resample_rgbf32;
 mod resample_semi_planar;
 #[cfg(feature = "yuv-semi-planar")]
 mod resample_semi_planar_8bit_filter;
-#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+// Pure P-format filter coverage (`rgb` oracles gated inside); runs under
+// yuv-semi-planar-solo.
+#[cfg(feature = "yuv-semi-planar")]
 mod resample_subsampled_high_bit_p_filter;
 #[cfg(feature = "yuv-packed")]
 mod resample_uyyvyy411;
@@ -275,10 +280,11 @@ mod resample_yuva_planar_high_bit_filter;
 mod semi_planar_8bit;
 #[cfg(feature = "yuv-planar")]
 mod subsampled_4_2_0_high_bit;
-// Exercises the high-bit semi-planar P-format `MixedSinker` impls, which
-// build on the planar high-bit sink infrastructure, and cross-checks them
-// against the planar oracles — so it needs both families compiled.
-#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+// Exercises the high-bit semi-planar P-format `MixedSinker` impls (the
+// P210/P410 sanity + walker-SIMD suites run under yuv-semi-planar-solo);
+// the planar Yuv4*p cross-check tests + their frame helper are gated on
+// `yuv-planar` inside.
+#[cfg(feature = "yuv-semi-planar")]
 mod subsampled_high_bit_pn;
 #[cfg(feature = "v210")]
 mod v210;

@@ -84,8 +84,10 @@ pub(crate) fn expand_rgb_to_rgba_row(rgb: &[u8], rgba_out: &mut [u8], width: usi
 // allow lets this prep PR ship the foundation without the eventual call
 // site.
 //
-// Same consumer set as `expand_rgb_to_rgba_row` minus the families that
-// don't emit u16 RGB (`yuv-packed`, `yuv-semi-planar`).
+// Same consumer set as `expand_rgb_to_rgba_row` minus the family that
+// doesn't emit u16 RGB (`yuv-packed`). `yuv-semi-planar` is included for
+// the high-bit P-format sinks (P010/…) which, unlike the 8-bit NV
+// family, do emit u16 RGB; the 8-bit NV sinks never reach this.
 #[cfg(all(
   any(feature = "std", feature = "alloc"),
   any(
@@ -96,6 +98,7 @@ pub(crate) fn expand_rgb_to_rgba_row(rgb: &[u8], rgba_out: &mut [u8], width: usi
     feature = "y2xx",
     feature = "yuv-444-packed",
     feature = "yuv-planar",
+    feature = "yuv-semi-planar",
     feature = "yuva",
   ),
 ))]

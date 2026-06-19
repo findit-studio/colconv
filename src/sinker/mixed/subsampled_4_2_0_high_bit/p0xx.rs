@@ -1,13 +1,15 @@
 use super::super::{
-  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, NativeRouteChanged,
-  RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
+  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
+  RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
   packed_yuv422_triple_filter_resample, packed_yuv422_triple_resample, reset_high_bit_yuv_streams,
   rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
 use crate::{PixelSink, row::*, source::*};
 
+// `NativeRouteChanged` is raised only by the native fast tier's route-flip
+// guard, which exists only when the reused planar join is compiled in.
 #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
-use super::super::{FrozenOutputs, HsvFrameMut};
+use super::super::{FrozenOutputs, HsvFrameMut, NativeRouteChanged};
 #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
 use super::native::{NativeYuv420U16, yuv420p16_native_preflight, yuv420p16_process_native};
 #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
