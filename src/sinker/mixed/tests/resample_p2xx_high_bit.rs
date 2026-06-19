@@ -21,11 +21,11 @@
 //! the de-packed logical Y plane then narrows.
 
 use crate::{
-  ColorMatrix,
+  ColorMatrix, PixelSink,
+  frame::*,
   resample::{AreaResampler, ResampleError},
   sinker::{MixedSinker, MixedSinkerError},
 };
-use crate::{PixelSink, frame::*};
 
 const SRC: usize = 8;
 const CW: usize = SRC / 2;

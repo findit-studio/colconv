@@ -19,13 +19,11 @@
 
 use crate::{
   PixelSink,
+  frame::BayerFrame,
+  raw::{BayerDemosaic, BayerPattern, BayerRow, ColorCorrectionMatrix, WhiteBalance, bayer_to},
   resample::{AreaResampler, ResampleError},
   sinker::{MixedSinker, MixedSinkerError},
   source::Bayer,
-};
-use crate::{
-  frame::BayerFrame,
-  raw::{BayerDemosaic, BayerPattern, BayerRow, ColorCorrectionMatrix, WhiteBalance, bayer_to},
 };
 
 const SRC: usize = 8;

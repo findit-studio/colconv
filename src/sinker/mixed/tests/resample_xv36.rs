@@ -10,14 +10,11 @@
 //! suite additionally pins LE/BE parity (scalar + SIMD).
 
 use crate::{
-  ColorMatrix,
+  ColorMatrix, PixelSink,
+  frame::{Xv36BeFrame, Xv36Frame, Xv36LeFrame},
   resample::{AreaResampler, ResampleError},
   sinker::{MixedSinker, MixedSinkerError},
   source::{Xv36, Xv36Row, xv36_to, xv36_to_endian},
-};
-use crate::{
-  PixelSink,
-  frame::{Xv36BeFrame, Xv36Frame, Xv36LeFrame},
 };
 
 use super::{as_be_u16, as_le_u16};

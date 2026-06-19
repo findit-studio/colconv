@@ -1,11 +1,13 @@
-use super::super::{
-  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, NativeRouteChanged,
-  RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
-  deinterleave_y_high_bit, packed_yuv422_triple_filter_resample, packed_yuv422_triple_resample,
-  reset_high_bit_yuv_streams, rgb_row_buf_or_scratch, rgba_plane_row_slice,
-  rgba_u16_plane_row_slice,
+use super::{
+  super::{
+    GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, NativeRouteChanged,
+    RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
+    deinterleave_y_high_bit, packed_yuv422_triple_filter_resample, packed_yuv422_triple_resample,
+    reset_high_bit_yuv_streams, rgb_row_buf_or_scratch, rgba_plane_row_slice,
+    rgba_u16_plane_row_slice,
+  },
+  yuv420p16_process_native,
 };
-use super::yuv420p16_process_native;
 use crate::{PixelSink, row::*, source::*};
 
 // ---- Yuv420p9 impl -----------------------------------------------------

@@ -28,8 +28,7 @@ use crate::row::arch;
 use crate::row::neon_available;
 use std::vec::Vec;
 
-use crate::row::scalar::filter_reduce as scalar;
-use crate::row::scalar::filter_reduce::FilterElem;
+use crate::row::scalar::{filter_reduce as scalar, filter_reduce::FilterElem};
 #[cfg(target_arch = "wasm32")]
 use crate::row::simd128_available;
 #[cfg(target_arch = "x86_64")]

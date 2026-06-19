@@ -1262,8 +1262,10 @@ fn h_pass_f32_simd_matches_scalar_with_non_finite_padding() {
   feature = "rgb-legacy"
 ))]
 mod filter_simd_parity {
-  use super::super::{CatmullRom, FilterKernel, FilteredResampler, Lanczos3, Resampler, Triangle};
-  use super::super::{FilterSample, FilterStream, SpanKind};
+  use super::super::{
+    CatmullRom, FilterKernel, FilterSample, FilterStream, FilteredResampler, Lanczos3, Resampler,
+    SpanKind, Triangle,
+  };
 
   /// Deterministic LCG byte stream (matches the resample suite's source).
   fn lcg(n: usize, seed: u32) -> std::vec::Vec<u8> {
@@ -1475,9 +1477,10 @@ mod filter_simd_parity {
   feature = "rgb-legacy"
 ))]
 mod pil_parity {
-  use super::super::pil_goldens;
-  use super::super::{CatmullRom, FilterKernel, FilteredResampler, Lanczos3, Resampler, Triangle};
-  use super::super::{FilterStream, SpanKind};
+  use super::super::{
+    CatmullRom, FilterKernel, FilterStream, FilteredResampler, Lanczos3, Resampler, SpanKind,
+    Triangle, pil_goldens,
+  };
 
   /// The raw LCG byte stream — the shared source primitive (matches
   /// `ci/gen_pil_goldens.py::lcg_bytes`).

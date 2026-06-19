@@ -11253,10 +11253,10 @@ pub(super) fn xyz12_resample_emit(
   idx: usize,
   use_simd: bool,
 ) -> Result<(), MixedSinkerError> {
-  use crate::row::scalar::xyz12::{
-    matmul3_xyz_rgb, narrow_unit_to_u8, narrow_unit_to_u16, oetf_srgb,
+  use crate::row::scalar::{
+    xyz12::{matmul3_xyz_rgb, narrow_unit_to_u8, narrow_unit_to_u16, oetf_srgb},
+    xyz12_constants::xyz_to_rgb_matrix,
   };
-  use crate::row::scalar::xyz12_constants::xyz_to_rgb_matrix;
   let ow = plan.out_w();
   let m = xyz_to_rgb_matrix(target_gamut);
   let one_f16 = half::f16::from_f32(1.0);

@@ -20,17 +20,14 @@
 //!   RGB-derived luma would diverge.
 
 use crate::{
-  ColorMatrix,
+  ColorMatrix, PixelSink,
+  frame::{Uyvy422Frame, Yuyv422Frame, Yvyu422Frame},
   resample::{AreaResampler, ResampleError},
   sinker::{MixedSinker, MixedSinkerError},
   source::{
     Uyvy422, Uyvy422Row, Yuyv422, Yuyv422Row, Yvyu422, Yvyu422Row, uyvy422_to, yuyv422_to,
     yvyu422_to,
   },
-};
-use crate::{
-  PixelSink,
-  frame::{Uyvy422Frame, Yuyv422Frame, Yvyu422Frame},
 };
 
 const SRC: usize = 8;

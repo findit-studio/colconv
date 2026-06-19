@@ -427,8 +427,10 @@ fn yuva422p_identity_plan_matches_direct() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn yuva422p_fractional_ratio_rgba_matches_oracle() {
-  use crate::frame::RgbaFrame;
-  use crate::source::{Rgba, rgba_to};
+  use crate::{
+    frame::RgbaFrame,
+    source::{Rgba, rgba_to},
+  };
   const S: usize = 6;
   const O: usize = 4;
   let cw = S / 2;

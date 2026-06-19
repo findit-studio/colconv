@@ -22,12 +22,12 @@
 //! `expand_rgb_u16_to_rgba_u16_row` helpers.
 
 use crate::{
-  ColorMatrix,
+  ColorMatrix, PixelSink,
+  frame::V30XFrame,
   resample::{AreaResampler, ResampleError},
   sinker::{MixedSinker, MixedSinkerError},
   source::{V30X, V30XRow, v30x_to},
 };
-use crate::{PixelSink, frame::V30XFrame};
 
 const SRC: usize = 8;
 const OUT: usize = 4;

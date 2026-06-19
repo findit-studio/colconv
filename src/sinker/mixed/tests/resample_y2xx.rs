@@ -22,11 +22,11 @@
 //! conversion.
 
 use crate::{
-  ColorMatrix,
+  ColorMatrix, PixelSink,
+  frame::Y2xxFrame,
   resample::{AreaResampler, ResampleError},
   sinker::{MixedSinker, MixedSinkerError},
 };
-use crate::{PixelSink, frame::Y2xxFrame};
 
 const SRC: usize = 8;
 const OUT: usize = 4;
