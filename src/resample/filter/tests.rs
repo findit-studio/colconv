@@ -85,6 +85,49 @@ fn lanczos3_profile() {
 }
 
 #[test]
+fn mitchell_profile() {
+  let k = Mitchell;
+  assert_eq!(k.support(), 2.0);
+  // Mitchell is non-interpolating: nonzero at the unit sample (8/9 at the
+  // center, 1/18 at |x| = 1), unlike the interpolating Catmull-Rom cubic.
+  assert!((k.weight(0.0) - 8.0 / 9.0).abs() < 1e-12);
+  assert!((k.weight(1.0) - 1.0 / 18.0).abs() < 1e-12);
+  assert!((k.weight(-1.0) - 1.0 / 18.0).abs() < 1e-12);
+  assert_eq!(k.weight(2.0), 0.0);
+  assert_eq!(k.weight(2.5), 0.0);
+  // Known interior value and the negative outer (ring) lobe.
+  assert!((k.weight(0.5) - 77.0 / 144.0).abs() < 1e-12);
+  let w15 = k.weight(1.5);
+  assert!(w15 < 0.0, "outer lobe must be negative, got {w15}");
+  assert!((w15 - (-5.0 / 144.0)).abs() < 1e-12, "got {w15}");
+  // Symmetric.
+  assert_eq!(k.weight(1.5), k.weight(-1.5));
+  assert!(max_weight_dev(&k, 2.5, |x| k.weight(-x)) < 1e-15);
+  // Parity with the closed-form Mitchell-Netravali weights (B = C = 1/3),
+  // evaluated as an explicit (non-Horner) polynomial so a factoring slip
+  // in the kernel would show up here.
+  let reference = |x: f64| {
+    let t = x.abs();
+    let (b, c) = (1.0 / 3.0_f64, 1.0 / 3.0_f64);
+    if t < 1.0 {
+      ((12.0 - 9.0 * b - 6.0 * c) * t.powi(3)
+        + (-18.0 + 12.0 * b + 6.0 * c) * t.powi(2)
+        + (6.0 - 2.0 * b))
+        / 6.0
+    } else if t < 2.0 {
+      ((-b - 6.0 * c) * t.powi(3)
+        + (6.0 * b + 30.0 * c) * t.powi(2)
+        + (-12.0 * b - 48.0 * c) * t
+        + (8.0 * b + 24.0 * c))
+        / 6.0
+    } else {
+      0.0
+    }
+  };
+  assert!(max_weight_dev(&k, 2.5, reference) < 1e-12);
+}
+
+#[test]
 fn axis_windows_normalize_to_one() {
   // Every output window must sum to ~1 (PIL renormalizes after clamping),
   // so average brightness is preserved including at the clipped edges.
@@ -92,6 +135,7 @@ fn axis_windows_normalize_to_one() {
     &Triangle as &dyn FilterKernel,
     &CatmullRom as &dyn FilterKernel,
     &Lanczos3 as &dyn FilterKernel,
+    &Mitchell as &dyn FilterKernel,
   ] {
     for &(in_size, out_size) in &[(8usize, 3usize), (64, 17), (1920, 640), (1000, 333)] {
       let axis = FilterAxis::build(in_size, out_size, k).expect("valid downscale");
@@ -296,6 +340,7 @@ fn max_overlap_bounds_the_ring() {
     &Triangle as &dyn FilterKernel,
     &CatmullRom as &dyn FilterKernel,
     &Lanczos3 as &dyn FilterKernel,
+    &Mitchell as &dyn FilterKernel,
   ] {
     for &(in_size, out_size) in &[(64usize, 17usize), (200, 41), (1920, 360)] {
       let axis = FilterAxis::build(in_size, out_size, k).unwrap();
