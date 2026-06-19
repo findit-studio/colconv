@@ -1782,12 +1782,16 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// `luma_u16` zero-extends each resampled Y byte. Lazily created in
   /// `process`, reset in `begin_frame`. Gated to `yuv-planar` /
   /// `yuv-semi-planar` (the 8-bit semi-planar family `Nv12` / `Nv16` /
-  /// `Nv21` / `Nv24` / `Nv42` bins its native Y here too); widens as more
-  /// 8-bit native-Y filter families wire in.
+  /// `Nv21` / `Nv24` / `Nv42` bins its native Y here too) / `yuv-packed`
+  /// (packed 4:2:2/4:1:1) / `mono` (the 1-bit bilevel `Monoblack` /
+  /// `Monowhite` filter-resample the expanded 0/255 luma through this
+  /// single-channel stream — full-range `u8`, so no native-depth clamp);
+  /// widens as more 8-bit native-Y filter families wire in.
   #[cfg(any(
     feature = "yuv-planar",
     feature = "yuv-semi-planar",
-    feature = "yuv-packed"
+    feature = "yuv-packed",
+    feature = "mono"
   ))]
   luma_filter_stream: Option<crate::resample::FilterStream<u8>>,
   /// Row-stage **filter** stream for single-plane `f32` luma binning
@@ -2689,7 +2693,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       #[cfg(any(
         feature = "yuv-planar",
         feature = "yuv-semi-planar",
-        feature = "yuv-packed"
+        feature = "yuv-packed",
+        feature = "mono"
       ))]
       luma_filter_stream: None,
       #[cfg(feature = "gray")]
@@ -3210,9 +3215,10 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
 
   /// Whether the single-channel native-Y `u8` **filter** stream has been
   /// created — the filter twin of [`Self::luma_stream_allocated`], a
-  /// white-box probe for the 8-bit packed-YUV filter resample ordering tests.
-  /// Gated on `std` + `yuv-packed` like the tests that consume it.
-  #[cfg(all(test, feature = "std", feature = "yuv-packed"))]
+  /// white-box probe for the 8-bit packed-YUV and `mono` filter resample
+  /// ordering tests. Gated on `std` + `mono`/`yuv-packed` like the tests
+  /// that consume it.
+  #[cfg(all(test, feature = "std", any(feature = "mono", feature = "yuv-packed")))]
   pub(crate) fn luma_filter_stream_allocated(&self) -> bool {
     self.luma_filter_stream.is_some()
   }
