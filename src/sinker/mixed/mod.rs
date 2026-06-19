@@ -11555,6 +11555,8 @@ mod packed_yuv_8bit;
 mod pal8;
 #[cfg(feature = "yuv-planar")]
 mod planar_8bit;
+#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
+pub(crate) use planar_8bit::arm_planar_native_chroma_failure;
 #[cfg(feature = "yuv-planar")]
 mod planar_high_bit_native;
 // Bring the high-bit non-4:2:0 planar native join + entry point (and its
