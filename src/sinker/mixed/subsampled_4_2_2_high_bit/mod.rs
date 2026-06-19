@@ -8,3 +8,11 @@ mod p2xx;
 mod yuv422p;
 #[cfg(feature = "yuv-planar")]
 mod yuv440p;
+
+#[cfg(all(
+  test,
+  feature = "std",
+  feature = "yuv-semi-planar",
+  feature = "yuv-planar"
+))]
+pub(crate) use p2xx::arm_p2xx_alloc_failure;

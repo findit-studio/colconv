@@ -166,8 +166,14 @@ mod resample_p0xx_high_bit;
 mod resample_p0xx_high_bit_native;
 #[cfg(feature = "yuv-semi-planar")]
 mod resample_p2xx_high_bit;
+// The native fast tier reuses the planar high-bit join, so the native
+// suite needs BOTH families.
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+mod resample_p2xx_high_bit_native;
 #[cfg(feature = "yuv-semi-planar")]
 mod resample_p4xx_high_bit;
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+mod resample_p4xx_high_bit_native;
 #[cfg(feature = "rgb")]
 mod resample_packed_rgb_10bit;
 #[cfg(feature = "rgb")]
