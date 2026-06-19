@@ -311,6 +311,8 @@ mod resample_yuva444p_high_bit;
 mod resample_yuva_planar_8bit_filter;
 #[cfg(feature = "yuva")]
 mod resample_yuva_planar_high_bit_filter;
+#[cfg(feature = "yuva")]
+mod rfc238_poc;
 #[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
 #[cfg(feature = "yuv-planar")]

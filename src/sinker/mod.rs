@@ -19,6 +19,8 @@
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub mod mixed;
 
+#[cfg(all(any(feature = "std", feature = "alloc"), feature = "yuva"))]
+pub use mixed::rfc238_poc::{AveragingDomain, TransferFunction};
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub use mixed::{
   AlphaMode, CustomLumaCoefficients, DefaultAlphaMode, DimensionMismatch, GeometryOverflow,

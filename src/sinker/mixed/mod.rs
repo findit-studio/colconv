@@ -2397,6 +2397,21 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// tail consults it; every direct (identity-plan) path and every
   /// non-RGBA source ignores it.
   alpha_mode: AlphaMode,
+  /// Opt-in RFC #238 averaging-domain override for the vertical-slice
+  /// proof-of-concept. `None` (the default) preserves the historical
+  /// per-format resample behaviour exactly; `Some(domain)` is honoured
+  /// only by the `Yuva420p` sink, which splices its area resample at the
+  /// pipeline stage the domain names. See
+  /// [`Self::with_averaging_domain`] and [`rfc238_poc`].
+  #[cfg(feature = "yuva")]
+  averaging_domain: Option<rfc238_poc::AveragingDomain>,
+  /// Per-frame source buffer for the RFC #238 PoC `Yuva420p` path: when
+  /// an averaging domain is set, `process` accumulates the source planes
+  /// here and runs the staged pipeline once the frame completes. `None`
+  /// outside the PoC path. (Frame buffering is a PoC simplification — the
+  /// production pipeline would stream; see [`rfc238_poc`].)
+  #[cfg(feature = "yuva")]
+  rfc238_poc_frame: Option<rfc238_poc::PocFrameBuffer>,
   /// Q8 fixed-point luma coefficients `(cr, cg, cb)` such that
   /// `luma = ((cr * R + cg * G + cb * B + 128) >> 8) as u8`. Only
   /// consulted by source impls that *derive* luma from RGB
@@ -3094,6 +3109,10 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       xyz_scratch_f32: Vec::new(),
       simd: true,
       alpha_mode: F::DEFAULT_ALPHA_MODE,
+      #[cfg(feature = "yuva")]
+      averaging_domain: None,
+      #[cfg(feature = "yuva")]
+      rfc238_poc_frame: None,
       // BT.709 by default — matches the implicit weights every
       // YUV→RGB→luma pipeline uses, and is the most common Bayer
       // CCM target. Per-format impls (`MixedSinker<Bayer>` etc.)
@@ -3665,6 +3684,42 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn with_alpha_mode(mut self, mode: AlphaMode) -> Self {
     self.set_alpha_mode(mode);
+    self
+  }
+
+  /// Returns the opt-in RFC #238 averaging domain, or `None` when the
+  /// sink runs its historical per-format resample. See
+  /// [`Self::with_averaging_domain`].
+  #[cfg(feature = "yuva")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn averaging_domain(&self) -> Option<rfc238_poc::AveragingDomain> {
+    self.averaging_domain
+  }
+
+  /// In-place variant of [`Self::with_averaging_domain`].
+  #[cfg(feature = "yuva")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn set_averaging_domain(&mut self, domain: rfc238_poc::AveragingDomain) -> &mut Self {
+    self.averaging_domain = Some(domain);
+    self
+  }
+
+  /// **RFC #238 vertical-slice proof-of-concept (opt-in).** Selects the
+  /// [`AveragingDomain`](rfc238_poc::AveragingDomain) the area resample
+  /// averages in, splicing the staged pipeline at the domain's
+  /// earliest-valid stage. The default (unset) preserves the historical
+  /// per-format behaviour byte-for-byte, so this never disturbs an
+  /// existing caller.
+  ///
+  /// Only the `Yuva420p` sink honours the override today (the PoC's
+  /// single wired format); every other sink accepts it and ignores it.
+  /// See the [`rfc238_poc`] module for the per-domain splice points and
+  /// the standing PoC limitations (sRGB stand-in transfer function;
+  /// frame-buffered rather than streamed).
+  #[cfg(feature = "yuva")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn with_averaging_domain(mut self, domain: rfc238_poc::AveragingDomain) -> Self {
+    self.set_averaging_domain(domain);
     self
   }
 
@@ -12723,6 +12778,9 @@ mod semi_planar_8bit;
 // keep the two families separable, so the parent compiles whenever
 // either family is on. Mirrors how `row::dispatch::yuv420` /
 // `row::dispatch::pn` host the matching row layer.
+/// RFC #238 staged-resampling-pipeline vertical-slice proof-of-concept.
+#[cfg(feature = "yuva")]
+pub mod rfc238_poc;
 #[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 mod subsampled_4_2_0_high_bit;
 #[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]

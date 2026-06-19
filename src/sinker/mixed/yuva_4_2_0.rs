@@ -16,11 +16,11 @@
 //!   silently accept a buffer and never write it.
 
 use super::{
-  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match, check_frozen_alpha_mode,
-  deinterleave_y_high_bit, packed_yuva444_filter_resample, packed_yuva444_resample,
-  reset_high_bit_yuva_streams, rgb_row_buf_or_scratch, rgba_plane_row_slice,
-  rgba_u16_plane_row_slice,
+  AlphaMode, GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError,
+  RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
+  check_frozen_alpha_mode, deinterleave_y_high_bit, packed_yuva444_filter_resample,
+  packed_yuva444_resample, reset_high_bit_yuva_streams, rgb_row_buf_or_scratch,
+  rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
 use crate::{PixelSink, row::*, source::*};
 
@@ -108,8 +108,24 @@ impl<R> PixelSink for MixedSinker<'_, Yuva420p, R> {
     if let Some(stream) = self.luma_filter_stream.as_mut() {
       stream.reset();
     }
+    // RFC #238 PoC: drop the previous frame's source-plane accumulator so
+    // a re-used sink starts each frame clean.
+    self.rfc238_poc_frame = None;
     self.resample_outputs = None;
-    self.frozen_alpha_mode = Some(self.alpha_mode);
+    // The Premultiplied averaging domain implies premultiplied alpha
+    // regardless of the sink's own mode; freeze the EFFECTIVE mode so its
+    // route to the premult tail is self-consistent (and the anchor holds
+    // without the caller also setting `with_alpha_mode(Premultiplied)`).
+    self.frozen_alpha_mode = Some(
+      if matches!(
+        self.averaging_domain,
+        Some(super::rfc238_poc::AveragingDomain::Premultiplied)
+      ) {
+        AlphaMode::Premultiplied
+      } else {
+        self.alpha_mode
+      },
+    );
     Ok(())
   }
 
@@ -183,7 +199,60 @@ impl<R> PixelSink for MixedSinker<'_, Yuva420p, R> {
     // routed to the area tail, which surfaces the typed `UnsupportedFilter`
     // rather than emitting straight-filtered premultiplied colour.
     if self.plan.is_some() {
-      let alpha_mode = self.alpha_mode;
+      // ---- RFC #238 PoC (opt-in) ----------------------------------
+      // An averaging domain splices the resample at the domain's stage.
+      // Encoded / Linear route to the staged PoC pipeline; Premultiplied
+      // forces the alpha mode and falls through to the EXISTING premult
+      // area tail (the byte-identity anchor: the same code the default
+      // `AlphaMode::Premultiplied` path runs). Unset (`None`) leaves
+      // every byte of the historical behaviour untouched.
+      let domain = self.averaging_domain;
+      if let Some(domain) = domain
+        && matches!(
+          domain,
+          super::rfc238_poc::AveragingDomain::Encoded | super::rfc238_poc::AveragingDomain::Linear
+        )
+      {
+        let matrix = row.matrix();
+        let full_range = row.full_range();
+        let y = row.y();
+        let u_half = row.u_half();
+        let v_half = row.v_half();
+        let a = row.a();
+        let Self {
+          rgba,
+          plan,
+          rfc238_poc_frame,
+          ..
+        } = self;
+        let plan = plan.as_ref().expect("plan.is_some() checked above");
+        return super::rfc238_poc::yuva420p_poc_resample(
+          domain,
+          rfc238_poc_frame,
+          rgba,
+          plan,
+          y,
+          u_half,
+          v_half,
+          a,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          use_simd,
+        );
+      }
+      // Premultiplied domain → existing premult tail (anchor); any other
+      // (unset) → the sink's own alpha mode.
+      let alpha_mode = if matches!(
+        domain,
+        Some(super::rfc238_poc::AveragingDomain::Premultiplied)
+      ) {
+        AlphaMode::Premultiplied
+      } else {
+        self.alpha_mode
+      };
       let matrix = row.matrix();
       let full_range = row.full_range();
       let y = row.y();
