@@ -613,6 +613,42 @@ impl ResamplePlan {
     })
   }
 
+  /// Builds the 4:4:0 chroma plan for the native tier: horizontal spans
+  /// over the FULL frame width (4:4:0 chroma is full-width), vertical spans
+  /// over the LUMA height with paired cells ([`AxisSpans::area_halved`]) so
+  /// an odd trailing luma row weights its chroma row by half — the same
+  /// luma-domain vertical weighting as 4:2:0, only the horizontal axis is
+  /// not subsampled. The stored source dims are `(frame_w, luma_h)`.
+  #[cfg(feature = "yuv-planar")]
+  pub(crate) fn area_chroma_440(
+    frame_w: usize,
+    luma_h: usize,
+    out_w: usize,
+    out_h: usize,
+  ) -> Result<Self, ResampleError> {
+    let fail = |e: AxisError| match e {
+      AxisError::Overflow => {
+        ResampleError::Overflow(PlanGeometry::new(frame_w, luma_h, out_w, out_h))
+      }
+      AxisError::Alloc => {
+        ResampleError::AllocationFailed(PlanGeometry::new(frame_w, luma_h, out_w, out_h))
+      }
+    };
+    let h = AxisSpans::area(frame_w, out_w).map_err(fail)?;
+    let v = AxisSpans::area_halved(luma_h, out_h).map_err(fail)?;
+    Ok(Self {
+      src_w: frame_w,
+      src_h: luma_h,
+      out_w,
+      out_h,
+      kind: SpanKind::Area,
+      h,
+      v,
+      filter_h: None,
+      filter_v: None,
+    })
+  }
+
   /// Source width in pixels — the horizontal spans' normalization
   /// denominator.
   #[cfg_attr(not(tarpaulin), inline(always))]

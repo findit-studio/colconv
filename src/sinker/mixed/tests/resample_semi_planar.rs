@@ -761,7 +761,12 @@ mod twin_parity {
   }
 
   /// NV24 resample must be byte-identical to a Yuv444p resample of the
-  /// de-interleaved planes.
+  /// de-interleaved planes. Both sides pin the row-stage tier: NV24 is
+  /// semi-planar 4:4:4 (always row-stage — the native tier is 4:2:0 only),
+  /// while Yuv444p now defaults to its native fast tier, so the planar twin
+  /// must be forced onto row-stage for the convert-then-bin contract to
+  /// match. (Yuv444p native-vs-bin-then-convert parity is covered in
+  /// `resample_yuv_planar_8bit_native`.)
   #[test]
   #[cfg_attr(
     miri,
@@ -785,6 +790,7 @@ mod twin_parity {
       let mut sink =
         MixedSinker::<Nv24, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut nv_rgb)
           .unwrap();
       nv24_to(&frame, true, ColorMatrix::Bt601, &mut sink).unwrap();
@@ -800,6 +806,7 @@ mod twin_parity {
         AreaResampler::to(OUT, OUT),
       )
       .unwrap()
+      .with_native(false)
       .with_rgb(&mut p_rgb)
       .unwrap();
       yuv444p_to(&frame, true, ColorMatrix::Bt601, &mut sink).unwrap();
