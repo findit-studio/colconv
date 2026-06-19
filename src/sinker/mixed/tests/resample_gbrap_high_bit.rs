@@ -24,7 +24,11 @@
 //! `check_frozen_alpha_mode` / `packed_rgba_u16_resample` functions.
 
 use super::*;
-use crate::{ColorMatrix, resample::AreaResampler, sinker::AlphaMode, sinker::MixedSinker};
+use crate::{
+  ColorMatrix,
+  resample::AreaResampler,
+  sinker::{AlphaMode, MixedSinker},
+};
 
 const SRC: usize = 8;
 const OUT: usize = 4;

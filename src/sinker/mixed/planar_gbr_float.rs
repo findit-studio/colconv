@@ -35,12 +35,9 @@
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
   RowShapeMismatch, RowSlice, check_dimensions_match, check_frozen_alpha_mode,
-  rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
-};
-use super::{
   packed_rgb_f32_filter, packed_rgb_f32_resample_preflight, packed_rgb_f32_resample_stream,
   packed_rgba_f32_filter_resample, packed_rgba_f32_resample, planar_gbr_f32_resample_emit,
-  source_rgb_f32_scratch,
+  rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice, source_rgb_f32_scratch,
 };
 use crate::{
   ColorMatrix, PixelSink,

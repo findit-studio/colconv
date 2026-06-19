@@ -176,8 +176,10 @@ macro_rules! yuva422p_high_bit_resample_suite {
   ) => {
     mod $mod {
       use super::*;
-      use crate::frame::{$frame_be, $frame_le};
-      use crate::source::{$marker, $row, $walker, $walker_be};
+      use crate::{
+        frame::{$frame_be, $frame_le},
+        source::{$marker, $row, $walker, $walker_be},
+      };
 
       const MASK: u16 = ((1u32 << $bits) - 1) as u16;
       const MAXV: u32 = (1u32 << $bits) - 1;

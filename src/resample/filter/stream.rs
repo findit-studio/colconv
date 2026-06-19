@@ -30,8 +30,10 @@
 
 use std::vec::Vec;
 
-use super::super::{OutOfSequenceRow, PlanGeometry, ResampleError};
-use super::FilterAxis;
+use super::{
+  super::{OutOfSequenceRow, PlanGeometry, ResampleError},
+  FilterAxis,
+};
 
 /// The sample element a [`FilterStream`] resamples. Abstracts the element
 /// width, the per-type finalize (clamp-and-round for the integer streams,

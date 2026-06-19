@@ -37,9 +37,9 @@
 //! native-Y / overshoot / filter-plan-accepted contracts are
 //! feature-independent.
 
-use crate::frame::*;
 use crate::{
   ColorMatrix,
+  frame::*,
   resample::{
     CatmullRom, FilterKernel, FilterStream, FilteredResampler, Lanczos3, Resampler, Triangle,
   },

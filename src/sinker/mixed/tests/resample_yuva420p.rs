@@ -451,8 +451,10 @@ fn yuva420p_fractional_ratio_rgba_matches_oracle() {
   // coverage weights. Build the oracle from the resampler's own RGB engine
   // fed the direct full-res RGBA (color from `Yuva420p` → RGBA, then a
   // straight `Rgba`-grid area bin) — the convert-then-bin spec.
-  use crate::frame::RgbaFrame;
-  use crate::source::{Rgba, rgba_to};
+  use crate::{
+    frame::RgbaFrame,
+    source::{Rgba, rgba_to},
+  };
   const S: usize = 6;
   const O: usize = 4;
   let cw = S / 2;

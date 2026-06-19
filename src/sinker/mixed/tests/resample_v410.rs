@@ -10,14 +10,11 @@
 //! logical frame must produce byte-identical resampled output.
 
 use crate::{
-  ColorMatrix,
+  ColorMatrix, PixelSink,
+  frame::{V410BeFrame, V410Frame, V410LeFrame},
   resample::{AreaResampler, ResampleError},
   sinker::{MixedSinker, MixedSinkerError},
   source::{V410, V410Row, v410_to, v410_to_endian},
-};
-use crate::{
-  PixelSink,
-  frame::{V410BeFrame, V410Frame, V410LeFrame},
 };
 
 use super::{as_be_u32, as_le_u32};

@@ -34,7 +34,13 @@ jobs:
     steps:
     - uses: actions/checkout@v6
     - name: Install Rust
-      run: rustup update stable && rustup default stable && rustup component add rustfmt
+      # rustfmt.toml uses nightly-only options (imports_granularity), so the
+      # format check runs under nightly. Pin a dated nightly so the gate is
+      # reproducible: an unpinned `nightly` could change rustfmt's behavior
+      # (new import churn) or temporarily ship without the rustfmt component,
+      # failing a PR with no repo change. Bump this date deliberately and
+      # re-run `cargo +nightly-<date> fmt --all` when you do.
+      run: rustup toolchain install nightly-2026-06-10 --component rustfmt && rustup default nightly-2026-06-10
     - name: Check formatting
       run: cargo fmt --all -- --check
 
