@@ -40,6 +40,179 @@ use crate::{
   source::{Uyyvyy411, Uyyvyy411Row, Uyyvyy411Sink},
 };
 
+#[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+use super::{
+  FrozenOutputs, HsvFrameMut, NativeRouteChanged,
+  planar_8bit::{NativePlanarYuv, native_planar_preflight, yuv_planar_process_native},
+};
+#[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+use crate::{
+  ColorMatrix,
+  resample::{PlanGeometry, ResampleError, ResamplePlan},
+};
+
+/// Native fast-tier decimator for the 8-bit PACKED 4:1:1 YUV format
+/// ([`Uyyvyy411`](crate::source::Uyyvyy411) — `AV_PIX_FMT_UYYVYY411`, DV
+/// legacy; `U Y Y V Y Y` per 6-byte / 4-pixel block, one `(U, V)` chroma pair
+/// shared by FOUR luma samples). The 4:1:1 analog of the PACKED 4:2:2 native
+/// wrapper ([`super::packed_yuv_8bit`]'s `packed_yuv422_process_native`): the
+/// chroma is subsampled 4:1 HORIZONTALLY (and 1:1 vertically), so it differs
+/// from 4:2:2 only in the de-pack stride and the chroma width (`w / 4` vs
+/// `w / 2`).
+///
+/// De-PACKS the fully-interleaved source row into the sink's separate
+/// Y (`w`) / U (`w / 4`) / V (`w / 4`) scratch planes at the fixed byte offsets
+/// (`U0 @ 0, Y0 @ 1, Y1 @ 2, V0 @ 3, Y2 @ 4, Y3 @ 5` per 6-byte group — the
+/// same layout the row-stage de-pack reads), then reuses the planar twin's
+/// non-4:2:0 join verbatim ([`yuv_planar_process_native`]) at
+/// [`Yuv411p`](crate::source::Yuv411p) geometry (chroma `w / 4 x h`,
+/// `chroma_vsub = 1`, chroma plan a plain [`ResamplePlan::area`] over the
+/// `w / 4`-wide source chroma — exactly as the 4:2:2 wrapper uses `area` over
+/// `w / 2`). So every output is byte-identical to a
+/// [`Yuv411p`](crate::source::Yuv411p) native conversion of those de-packed
+/// planes (there is no Yuv411p native tier — Yuv411p is row-stage only — so the
+/// guard is an independent bin-then-convert oracle + native-within-tolerance of
+/// the packed row-stage tier; the conversion-order rounding caveat the planar
+/// tiers already carry). Luma is bit-identical (both bin the same native Y).
+///
+/// Like the 4:2:2 wrapper the chroma cadence is one row per Y row
+/// (`chroma_vsub = 1`), so the U / V de-pack runs on EVERY colour row; on
+/// luma-only / no-colour rows only Y is de-packed and the join gets empty
+/// U / V slices, so a luma-only sink never plans or allocates chroma state (the
+/// lazy-chroma contract [`NativePlanarYuv::new`] upholds under `need_color`).
+///
+/// 8-bit source, so no native-depth clamp is needed (the source's native range
+/// is the full `u8` range and the join's averaging keeps every sample in
+/// range).
+///
+/// Atomicity mirrors the 4:2:2 wrapper: the join's COMPLETE pre-feed rejection
+/// preflight runs FIRST (via [`native_planar_preflight`]), before the fallible
+/// Y / U / V scratch grow, so a rejected row returns its deterministic typed
+/// error (`OutOfSequenceRow` / `ResampleOutputsChanged`), never
+/// `AllocationFailed`, and grows no sink state; the de-pack writes only the
+/// private scratch, so no caller output is touched until the join's own
+/// preflight (re-run inside the delegate) clears.
+#[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+#[allow(clippy::too_many_arguments)]
+fn packed_yuv411_process_native(
+  plan: &ResamplePlan,
+  native_planar: &mut Option<NativePlanarYuv>,
+  y_scratch: &mut std::vec::Vec<u8>,
+  u_scratch: &mut std::vec::Vec<u8>,
+  v_scratch: &mut std::vec::Vec<u8>,
+  resample_outputs: &mut Option<FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgb_scratch: &mut std::vec::Vec<u8>,
+  packed: &[u8],
+  matrix: ColorMatrix,
+  full_range: bool,
+  idx: usize,
+  w: usize,
+  h: usize,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  let need_luma = luma.is_some() || luma_u16.is_some();
+  let need_color = rgb.is_some() || rgba.is_some() || hsv.is_some();
+  let cw = w / 4;
+
+  // Run the join's COMPLETE pre-feed rejection preflight FIRST — before the
+  // fallible Y / U / V de-pack scratch grow — so EVERY rejection case
+  // (out-of-sequence first row OR mid-frame output change) returns its
+  // deterministic typed error, never AllocationFailed under allocation
+  // pressure, and leaves the scratch untouched (the crate's preflight-atomicity
+  // contract). `Ok(false)` is the no-output no-op: return without reserving.
+  // `yuv_planar_process_native` re-runs this identical preflight harmlessly,
+  // keeping a single source of truth.
+  if !native_planar_preflight(
+    native_planar,
+    resample_outputs,
+    rgb,
+    rgba,
+    luma,
+    luma_u16,
+    hsv,
+    idx,
+    need_luma,
+    need_color,
+  )? {
+    return Ok(());
+  }
+
+  // De-pack the interleaved row into the private Y / U / V scratch. Y is always
+  // de-packed (the join bins Y for both luma and colour); U / V are de-packed
+  // only on a colour row (chroma_vsub == 1: a chroma row per Y row). The
+  // de-pack writes only this private scratch, so no caller output is touched
+  // until the join's own preflight (re-run inside the delegate below) clears.
+  // On luma-only / no-colour rows the join never reads chroma, so the scratch
+  // is left as-is and the join gets empty U / V slices — keeping a luma-only
+  // sink from planning or allocating chroma state. Each 6-byte group
+  // (`U0 Y0 Y1 V0 Y2 Y3`) carries four luma (bytes 1, 2, 4, 5) and one chroma
+  // pair (U @ 0, V @ 3).
+  let grow = |scratch: &mut std::vec::Vec<u8>, len: usize| -> Result<(), MixedSinkerError> {
+    if scratch.len() < len {
+      scratch
+        .try_reserve_exact(len - scratch.len())
+        .map_err(|_| {
+          MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+            w,
+            h,
+            plan.out_w(),
+            plan.out_h(),
+          )))
+        })?;
+      scratch.resize(len, 0);
+    }
+    Ok(())
+  };
+  grow(y_scratch, w)?;
+  for (i, group) in packed.chunks_exact(6).enumerate() {
+    y_scratch[i * 4] = group[1];
+    y_scratch[i * 4 + 1] = group[2];
+    y_scratch[i * 4 + 2] = group[4];
+    y_scratch[i * 4 + 3] = group[5];
+  }
+  if need_color {
+    grow(u_scratch, cw)?;
+    grow(v_scratch, cw)?;
+    for (i, group) in packed.chunks_exact(6).enumerate() {
+      u_scratch[i] = group[0];
+      v_scratch[i] = group[3];
+    }
+  }
+
+  let (u_plane, v_plane): (&[u8], &[u8]) = if need_color {
+    (&u_scratch[..cw], &v_scratch[..cw])
+  } else {
+    (&[], &[])
+  };
+  yuv_planar_process_native(
+    plan,
+    native_planar,
+    resample_outputs,
+    rgb,
+    rgba,
+    luma,
+    luma_u16,
+    hsv,
+    rgb_scratch,
+    &y_scratch[..w],
+    u_plane,
+    v_plane,
+    matrix,
+    full_range,
+    idx,
+    w,
+    h,
+    1,
+    || ResamplePlan::area(cw, h, plan.out_w(), plan.out_h()),
+    use_simd,
+  )
+}
+
 impl<'a, R> MixedSinker<'a, Uyyvyy411, R> {
   /// Attaches a packed **8-bit** RGBA output buffer. Alpha is filled
   /// with constant `0xFF` (the source has no alpha channel).
@@ -114,6 +287,19 @@ impl<R> PixelSink for MixedSinker<'_, Uyyvyy411, R> {
     if let Some(stream) = self.luma_filter_stream.as_mut() {
       stream.reset();
     }
+    // New frame: restart the native join and clear the per-frame frozen
+    // native/row-stage route so the next frame may pick either tier; a
+    // mid-frame flip stays rejected. Gated to the native tier's feature
+    // intersection (the planar join the native tier reuses is compiled only
+    // under `yuv-planar`).
+    #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+    if let Some(native) = self.native_planar.as_mut() {
+      native.reset();
+    }
+    #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+    {
+      self.frozen_native_route = None;
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -167,6 +353,18 @@ impl<R> PixelSink for MixedSinker<'_, Uyyvyy411, R> {
       rgb_filter_stream,
       luma_filter_stream,
       resample_outputs,
+      #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+      native,
+      #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+      native_planar,
+      #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+      packed_yuv_y_full,
+      #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+      packed_yuv_u_half,
+      #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+      packed_yuv_v_half,
+      #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+      frozen_native_route,
       ..
     } = self;
 
@@ -186,30 +384,13 @@ impl<R> PixelSink for MixedSinker<'_, Uyyvyy411, R> {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let packed = row.uyyvyy();
-      return match plan.kind() {
-        SpanKind::Area => packed_yuv_dual_resample(
-          luma_stream,
-          rgb_stream,
-          resample_outputs,
-          rgb,
-          rgba,
-          luma,
-          luma_u16,
-          hsv,
-          luma_scratch,
-          rgb_scratch,
-          w,
-          plan,
-          idx,
-          use_simd,
-          |scratch| {
-            uyyvyy411_to_luma_row(packed, scratch, w, use_simd);
-          },
-          |scratch| {
-            uyyvyy411_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd);
-          },
-        ),
-        SpanKind::Filter => packed_yuv422_dual_filter_resample(
+      // A `Filter` plan routes to the filter resampler (the native fast tier is
+      // area-only and never sees a filter plan; the per-sink plan kind is fixed
+      // at construction, so a filter sink bypasses the native/row-stage route
+      // machinery entirely). Branched FIRST, before the native-route guard
+      // below.
+      if let SpanKind::Filter = plan.kind() {
+        return packed_yuv422_dual_filter_resample(
           luma_filter_stream,
           rgb_filter_stream,
           resample_outputs,
@@ -230,8 +411,96 @@ impl<R> PixelSink for MixedSinker<'_, Uyyvyy411, R> {
           |scratch| {
             uyyvyy411_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd);
           },
-        ),
-      };
+        );
+      }
+      // Area plan. When the native tier is enabled (and the planar join it
+      // reuses is compiled in), de-pack the interleaved row into Y / U / V
+      // scratch and bin those planes at output resolution, converting once per
+      // output row at output width (4:1:1: Y at bytes 1,2,4,5 / U at 0 / V at 3
+      // per 6-byte group, chroma `w / 4` wide). Otherwise (or under
+      // `with_native(false)`) take the row-stage tier: bin the de-interleaved Y
+      // for luma, convert the packed row to a source-width RGB row and bin that.
+      #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+      {
+        // Whether this call bears any output — the EXACT set both tiers'
+        // preflight tests. The route freezes only on an output-bearing row a
+        // tier ACCEPTS; a no-output call must not freeze (route-invisible).
+        let need_output =
+          luma.is_some() || luma_u16.is_some() || rgb.is_some() || rgba.is_some() || hsv.is_some();
+        // Reject a mid-frame native/row-stage route flip BEFORE either tier's
+        // dispatch (the #186 CHECK-before / SET-after template).
+        if need_output
+          && let Some(frozen) = *frozen_native_route
+          && frozen != *native
+        {
+          return Err(MixedSinkerError::NativeRouteChanged(
+            NativeRouteChanged::new(idx),
+          ));
+        }
+        if *native {
+          // Dispatch first; freeze the route to native ONLY after the call
+          // returns Ok on an output-bearing row.
+          packed_yuv411_process_native(
+            plan,
+            native_planar,
+            packed_yuv_y_full,
+            packed_yuv_u_half,
+            packed_yuv_v_half,
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            luma_u16,
+            hsv,
+            rgb_scratch,
+            packed,
+            matrix,
+            full_range,
+            idx,
+            w,
+            h,
+            use_simd,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(true);
+          }
+          return Ok(());
+        }
+      }
+      // Row-stage tail (the only route under a `yuv-packed`-solo build).
+      // Dispatch, then under the native tier freeze the route to row-stage only
+      // when the call accepts an output-bearing row.
+      packed_yuv_dual_resample(
+        luma_stream,
+        rgb_stream,
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        luma_scratch,
+        rgb_scratch,
+        w,
+        plan,
+        idx,
+        use_simd,
+        |scratch| {
+          uyyvyy411_to_luma_row(packed, scratch, w, use_simd);
+        },
+        |scratch| {
+          uyyvyy411_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd);
+        },
+      )?;
+      #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+      {
+        let need_output =
+          luma.is_some() || luma_u16.is_some() || rgb.is_some() || rgba.is_some() || hsv.is_some();
+        if frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(false);
+        }
+      }
+      return Ok(());
     }
 
     let one_plane_start = idx * w;

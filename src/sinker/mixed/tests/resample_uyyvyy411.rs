@@ -31,6 +31,22 @@ const SRC_H: usize = 8;
 const OUT_W: usize = 4;
 const OUT_H: usize = 4;
 
+/// Pins the ROW-STAGE tier (`.with_native(false)`) where the native tier exists
+/// (it is gated on `yuv-planar`); otherwise the identity, so these tests — which
+/// assert the convert-then-bin RGB SEMANTICS (an `Rgb24` area-resample of the
+/// identity conversion, not the native average-in-YUV) — compile + run in a
+/// `yuv-packed`-solo build too (there is no native tier there; row-stage is the
+/// only path). The native tier's own oracle/parity coverage lives in
+/// [`resample_uyyvyy411_native`](super::resample_uyyvyy411_native).
+#[cfg(feature = "yuv-planar")]
+fn force_row_stage<R>(s: MixedSinker<'_, Uyyvyy411, R>) -> MixedSinker<'_, Uyyvyy411, R> {
+  s.with_native(false)
+}
+#[cfg(not(feature = "yuv-planar"))]
+fn force_row_stage<R>(s: MixedSinker<'_, Uyyvyy411, R>) -> MixedSinker<'_, Uyyvyy411, R> {
+  s
+}
+
 /// Builds a UYYVYY411 packed plane from per-pixel Y and per-block (U, V)
 /// closures. Layout per 6-byte / 4-pixel block: `U0, Y0, Y1, V0, Y2, Y3`
 /// (4:1:1 — one chroma pair per 4 luma). Stride equals `width * 3 / 2`
@@ -155,12 +171,14 @@ fn uyyvyy411_resample_rgb_matches_binned_direct_conversion() {
 
   let mut rgb_a = std::vec![0u8; OUT_W * OUT_H * 3];
   {
-    let mut sink = MixedSinker::<Uyyvyy411, AreaResampler>::with_resampler(
-      SRC_W,
-      SRC_H,
-      AreaResampler::to(OUT_W, OUT_H),
+    let mut sink = force_row_stage(
+      MixedSinker::<Uyyvyy411, AreaResampler>::with_resampler(
+        SRC_W,
+        SRC_H,
+        AreaResampler::to(OUT_W, OUT_H),
+      )
+      .unwrap(),
     )
-    .unwrap()
     .with_rgb(&mut rgb_a)
     .unwrap();
     uyyvyy411_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
@@ -258,12 +276,14 @@ fn uyyvyy411_resample_all_outputs_combo() {
   let mut ss = std::vec![0u8; OUT_W * OUT_H];
   let mut vv = std::vec![0u8; OUT_W * OUT_H];
   {
-    let mut sink = MixedSinker::<Uyyvyy411, AreaResampler>::with_resampler(
-      SRC_W,
-      SRC_H,
-      AreaResampler::to(OUT_W, OUT_H),
+    let mut sink = force_row_stage(
+      MixedSinker::<Uyyvyy411, AreaResampler>::with_resampler(
+        SRC_W,
+        SRC_H,
+        AreaResampler::to(OUT_W, OUT_H),
+      )
+      .unwrap(),
     )
-    .unwrap()
     .with_rgb(&mut rgb)
     .unwrap()
     .with_rgba(&mut rgba)
@@ -366,12 +386,14 @@ fn uyyvyy411_resample_reuses_streams_across_frames() {
     std::vec![0u8; OUT_W * OUT_H * 3],
   );
   {
-    let mut sink = MixedSinker::<Uyyvyy411, AreaResampler>::with_resampler(
-      SRC_W,
-      SRC_H,
-      AreaResampler::to(OUT_W, OUT_H),
+    let mut sink = force_row_stage(
+      MixedSinker::<Uyyvyy411, AreaResampler>::with_resampler(
+        SRC_W,
+        SRC_H,
+        AreaResampler::to(OUT_W, OUT_H),
+      )
+      .unwrap(),
     )
-    .unwrap()
     .with_luma(&mut luma)
     .unwrap()
     .with_rgb(&mut rgb)
