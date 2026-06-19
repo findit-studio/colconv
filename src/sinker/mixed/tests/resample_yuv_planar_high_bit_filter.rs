@@ -608,6 +608,7 @@ macro_rules! planar_hb_filter_suite {
 }
 
 // 4:2:0 (half-width, half-height chroma).
+planar_hb_filter_suite!(yuv420p9, Yuv420p9LeFrame, Yuv420p9, yuv420p9_to, 9, 2, 2,);
 planar_hb_filter_suite!(
   yuv420p10,
   Yuv420p10LeFrame,
@@ -646,6 +647,7 @@ planar_hb_filter_suite!(
 );
 
 // 4:2:2 (half-width, full-height chroma).
+planar_hb_filter_suite!(yuv422p9, Yuv422p9LeFrame, Yuv422p9, yuv422p9_to, 9, 2, 1,);
 planar_hb_filter_suite!(
   yuv422p10,
   Yuv422p10LeFrame,
@@ -684,6 +686,7 @@ planar_hb_filter_suite!(
 );
 
 // 4:4:4 (full-width, full-height chroma).
+planar_hb_filter_suite!(yuv444p9, Yuv444p9LeFrame, Yuv444p9, yuv444p9_to, 9, 1, 1,);
 planar_hb_filter_suite!(
   yuv444p10,
   Yuv444p10LeFrame,

@@ -8309,18 +8309,24 @@ pub(super) fn packed_yuv422_triple_resample<const SRC_BITS: u32>(
     None
   };
 
-  // Binning 3 — native Y through the 1-channel u16 luma stream. The
-  // binned row is host-native; luma_u16 is its pass-through, luma the
-  // `>> (SRC_BITS - 8)` narrowing.
+  // Binning 3 — native Y through the 1-channel u16 luma stream. A finalized
+  // binned native-Y sample can exceed the source's native max on a clipped-high
+  // edge, so clamp to `(1 << SRC_BITS) - 1` before the `luma_u16` pass-through
+  // and the `>> (SRC_BITS - 8)` u8 narrowing (the luma twin of the colour
+  // tail's native_max clamp; without it the narrow would wrap a clipped-high Y
+  // to a low value). Mirrors `packed_yuv444_triple_feed_emit`.
   if let Some(y_row) = luma_row {
+    let native_max: u16 = ((1u32 << SRC_BITS) - 1) as u16;
     let stream = luma_stream_u16.as_mut().expect("created in the preflight");
     stream.feed_row(idx, y_row, use_simd, |oy, binned_y| {
       if let Some(buf) = luma_u16.as_deref_mut() {
-        buf[oy * ow..(oy + 1) * ow].copy_from_slice(binned_y);
+        for (dst, &y) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(binned_y) {
+          *dst = y.min(native_max);
+        }
       }
       if let Some(buf) = luma.as_deref_mut() {
         for (dst, &y) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(binned_y) {
-          *dst = (y >> (SRC_BITS - 8)) as u8;
+          *dst = (y.min(native_max) >> (SRC_BITS - 8)) as u8;
         }
       }
     })?;

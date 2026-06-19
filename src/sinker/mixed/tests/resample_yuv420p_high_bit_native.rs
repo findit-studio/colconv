@@ -426,6 +426,35 @@ macro_rules! yuv420p_high_bit_native_suite {
         );
       }
 
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn rowstage_luma_clamps_overrange_y() {
+        // Same clamp on the ROW-STAGE (with_native(false)) path: the shared
+        // packed_yuv422_triple_resample luma emitter must clamp the binned Y to
+        // native-max before the `>> (BITS - 8)` narrow, never wrap.
+        let (_, u, v) = ramp();
+        let ovr = ((1u32 << $bits).min(0xFFFF)) as u16;
+        let y = vec![ovr; SRC * SRC];
+        let (_, _, r_luma) = rowstage_run(&y, &u, &v);
+        let y_ref = block_mean_2x2_u16(&y);
+        let luma_ref: Vec<u8> = y_ref
+          .iter()
+          .map(|&c| (c.min(MASK) >> ($bits - 8)) as u8)
+          .collect();
+        assert_eq!(
+          r_luma, luma_ref,
+          "row-stage overrange luma must clamp to native-max before narrowing, not wrap"
+        );
+        let sat = (MASK >> ($bits - 8)) as u8;
+        assert!(
+          r_luma.iter().all(|&l| l == sat),
+          "all row-stage overrange luma must saturate to {sat}"
+        );
+      }
+
       /// Crafted VARYING illegal-chroma fixture: extreme alternating chroma
       /// (full-scale vs zero) over a super-black→super-white Y ramp, so
       /// many 2x2 blocks straddle the RGB clamp. Here native
@@ -1001,6 +1030,16 @@ macro_rules! yuv420p_high_bit_native_suite {
   };
 }
 
+yuv420p_high_bit_native_suite!(
+  yuv420p9,
+  Yuv420p9LeFrame,
+  Yuv420p9BeFrame,
+  Yuv420p9,
+  Yuv420p9Row,
+  yuv420p9_to,
+  yuv420p9_to_endian,
+  9,
+);
 yuv420p_high_bit_native_suite!(
   yuv420p10,
   Yuv420p10LeFrame,

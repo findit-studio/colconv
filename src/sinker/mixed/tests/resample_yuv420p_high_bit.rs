@@ -763,6 +763,16 @@ macro_rules! yuv420p_high_bit_resample_suite {
 }
 
 yuv420p_high_bit_resample_suite!(
+  yuv420p9,
+  Yuv420p9LeFrame,
+  Yuv420p9BeFrame,
+  Yuv420p9,
+  Yuv420p9Row,
+  yuv420p9_to,
+  yuv420p9_to_endian,
+  9,
+);
+yuv420p_high_bit_resample_suite!(
   yuv420p10,
   Yuv420p10LeFrame,
   Yuv420p10BeFrame,

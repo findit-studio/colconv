@@ -51,8 +51,8 @@ use crate::{
   resample::{AreaResampler, ResampleError},
   sinker::{MixedSinker, MixedSinkerError},
   source::{
-    Yuv444p10, Yuv444p12, Yuv444p14, Yuv444p16, yuv444p10_to, yuv444p12_to, yuv444p14_to,
-    yuv444p16_to,
+    Yuv444p9, Yuv444p10, Yuv444p12, Yuv444p14, Yuv444p16, yuv444p9_to, yuv444p10_to, yuv444p12_to,
+    yuv444p14_to, yuv444p16_to,
   },
 };
 
@@ -418,6 +418,33 @@ macro_rules! yuv_planar_hb_native_suite {
         miri,
         ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
       )]
+      fn rowstage_luma_clamps_overrange_y() {
+        // Same clamp on the ROW-STAGE (with_native(false)) path: the shared
+        // triple_resample luma emitter must clamp the binned Y to native-max
+        // before the `>> (BITS - 8)` narrow, never wrap. Same oracle as native.
+        let (y, u, v) = overrange_luma();
+        let (_, _, r_luma) = run(&y, &u, &v, false);
+        let yb = bin_to_out(&y, SRC, SRC);
+        let expect: Vec<u8> = yb
+          .iter()
+          .map(|&by| (by.min(MASK) >> ($bits - 8)) as u8)
+          .collect();
+        assert_eq!(
+          r_luma, expect,
+          "row-stage overrange luma must clamp to native-max before narrowing, not wrap"
+        );
+        let sat = (MASK >> ($bits - 8)) as u8;
+        assert!(
+          r_luma.iter().all(|&l| l == sat),
+          "all row-stage overrange luma must saturate to {sat}"
+        );
+      }
+
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
       fn native_luma_matches_inter_area_oracle() {
         // cv2 INTER_AREA parity for luma: the per-axis area bin of the native Y
         // plane, narrowed (luma derives from Y, never from RGB).
@@ -679,6 +706,22 @@ macro_rules! yuv_planar_hb_native_suite {
 
 // 4:2:2: chroma `w/2 x h` — half width, full height.
 yuv_planar_hb_native_suite!(
+  yuv422p9,
+  Yuv422p9,
+  Yuv422p9LeFrame,
+  Yuv422p9BeFrame,
+  Yuv422p9Row,
+  yuv422p9_to,
+  yuv422p9_to_endian,
+  Yuv444p9,
+  Yuv444p9LeFrame,
+  yuv444p9_to,
+  SRC / 2,
+  SRC,
+  1,
+  9,
+);
+yuv_planar_hb_native_suite!(
   yuv422p10,
   Yuv422p10,
   Yuv422p10LeFrame,
@@ -744,6 +787,22 @@ yuv_planar_hb_native_suite!(
 );
 
 // 4:4:4: chroma `w x h` — identical to Y.
+yuv_planar_hb_native_suite!(
+  yuv444p9,
+  Yuv444p9,
+  Yuv444p9LeFrame,
+  Yuv444p9BeFrame,
+  Yuv444p9Row,
+  yuv444p9_to,
+  yuv444p9_to_endian,
+  Yuv444p9,
+  Yuv444p9LeFrame,
+  yuv444p9_to,
+  SRC,
+  SRC,
+  1,
+  9,
+);
 yuv_planar_hb_native_suite!(
   yuv444p10,
   Yuv444p10,

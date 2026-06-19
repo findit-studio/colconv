@@ -38,13 +38,13 @@
 //! output row the staged host-native u16 Y / U / V feed:
 //! - `luma` (u8): `dst = (Y >> (BITS - 8)) as u8`.
 //! - `rgb_u16` / `rgba_u16`: the native-depth 4:4:4 u16 kernel (the generic
-//!   `yuv444pN_to_rgb_u16_row_endian` for BITS ∈ {10, 12, 14}, the dedicated
+//!   `yuv444pN_to_rgb_u16_row_endian` for BITS ∈ {9, 10, 12, 14}, the dedicated
 //!   `yuv444p16_to_rgb_u16_row_endian` for BITS = 16) — its OWN i32/i64 kernel,
 //!   never a narrowing of the u8 colour — then expand to rgba_u16.
 //! - `rgb` / `rgba` / `hsv` (u8): the u16-INPUT → u8-OUTPUT 4:4:4 kernel (the
 //!   SAME one the row-stage 4:4:4 high-bit path uses), then fan to rgba / hsv.
 //!
-//! ★ THE NATIVE-DEPTH CLAMP. For sub-16-bit BITS (10/12/14) every colour
+//! ★ THE NATIVE-DEPTH CLAMP. For sub-16-bit BITS (9/10/12/14) every colour
 //! sample is clamped to `(1 << BITS) - 1` — done INSIDE the convert kernels
 //! (`yuv_444p_n_to_rgb_or_rgba_u16_row` masks the inputs `& (1<<BITS)-1` and
 //! clamps each output to `(1<<BITS)-1`; the i64 BITS=16 kernel covers the full
@@ -73,9 +73,10 @@ use crate::{
   resample::{AreaStream, PlanGeometry, ResampleError, ResamplePlan, try_zeroed},
   row::{
     expand_rgb_to_rgba_row, expand_rgb_u16_to_rgba_u16_row, rgb_to_hsv_row,
-    yuv444p10_to_rgb_row_endian, yuv444p10_to_rgb_u16_row_endian, yuv444p12_to_rgb_row_endian,
-    yuv444p12_to_rgb_u16_row_endian, yuv444p14_to_rgb_row_endian, yuv444p14_to_rgb_u16_row_endian,
-    yuv444p16_to_rgb_row_endian, yuv444p16_to_rgb_u16_row_endian,
+    yuv444p9_to_rgb_row_endian, yuv444p9_to_rgb_u16_row_endian, yuv444p10_to_rgb_row_endian,
+    yuv444p10_to_rgb_u16_row_endian, yuv444p12_to_rgb_row_endian, yuv444p12_to_rgb_u16_row_endian,
+    yuv444p14_to_rgb_row_endian, yuv444p14_to_rgb_u16_row_endian, yuv444p16_to_rgb_row_endian,
+    yuv444p16_to_rgb_u16_row_endian,
   },
 };
 
@@ -366,8 +367,8 @@ fn grow_src_scratch(
 }
 
 /// Native-tier path for the high-bit non-4:2:0 planar families. Const-generic
-/// over `BITS` (one body, the live call sites 10 / 12 / 14 / 16) and `BE` (the
-/// source wire endianness). `chroma_vsub` is the format's vertical chroma
+/// over `BITS` (one body, the live call sites 9 / 10 / 12 / 14 / 16) and `BE`
+/// (the source wire endianness). `chroma_vsub` is the format's vertical chroma
 /// cadence (1 for 4:2:2 / 4:4:4, 2 for 4:4:0), `chroma_w` its source-row width
 /// (`w/2` for 4:2:2, `w` for 4:4:4 / 4:4:0), and `build_chroma_plan` builds its
 /// chroma grid against the same output geometry; all three are supplied by the
@@ -659,7 +660,7 @@ pub(crate) fn yuv_planar16_process_native<const BITS: u32, const BE: bool>(
 /// u16-output 4:4:4 conversion at output width — the staged Y / U / V are
 /// host-native, so `big_endian = HOST_NATIVE_BE`. Dispatches on `BITS` to the
 /// per-format wrapper, which pins the generic 4:4:4 u16 kernel to a supported
-/// `BITS` (10/12/14 → the `i32` `yuv_444p_n_to_rgb_u16_row` family; 16 → the
+/// `BITS` (9/10/12/14 → the `i32` `yuv_444p_n_to_rgb_u16_row` family; 16 → the
 /// dedicated `i64`-chroma `yuv444p16_to_rgb_u16_row`).
 ///
 /// A runtime `if BITS == 16 { dedicated } else { generic::<BITS> }` will not
@@ -681,6 +682,17 @@ fn emit_rgb_u16<const BITS: u32>(
   use_simd: bool,
 ) {
   match BITS {
+    9 => yuv444p9_to_rgb_u16_row_endian(
+      y,
+      u,
+      v,
+      rgb_out,
+      width,
+      matrix,
+      full_range,
+      use_simd,
+      HOST_NATIVE_BE,
+    ),
     10 => yuv444p10_to_rgb_u16_row_endian(
       y,
       u,
@@ -725,7 +737,7 @@ fn emit_rgb_u16<const BITS: u32>(
       use_simd,
       HOST_NATIVE_BE,
     ),
-    _ => unreachable!("BITS pinned to 10/12/14/16 by the call sites"),
+    _ => unreachable!("BITS pinned to 9/10/12/14/16 by the call sites"),
   }
 }
 
@@ -745,6 +757,17 @@ fn emit_rgb_u8<const BITS: u32>(
   use_simd: bool,
 ) {
   match BITS {
+    9 => yuv444p9_to_rgb_row_endian(
+      y,
+      u,
+      v,
+      rgb_out,
+      width,
+      matrix,
+      full_range,
+      use_simd,
+      HOST_NATIVE_BE,
+    ),
     10 => yuv444p10_to_rgb_row_endian(
       y,
       u,
@@ -789,6 +812,6 @@ fn emit_rgb_u8<const BITS: u32>(
       use_simd,
       HOST_NATIVE_BE,
     ),
-    _ => unreachable!("BITS pinned to 10/12/14/16 by the call sites"),
+    _ => unreachable!("BITS pinned to 9/10/12/14/16 by the call sites"),
   }
 }
