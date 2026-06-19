@@ -1,8 +1,8 @@
 use super::super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, NativeRouteChanged,
   RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
-  packed_yuv422_triple_resample, reset_high_bit_yuv_streams, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  packed_yuv422_triple_filter_resample, packed_yuv422_triple_resample, reset_high_bit_yuv_streams,
+  rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
 use crate::{PixelSink, row::*, source::*};
 
@@ -410,6 +410,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P010<BE>, R> {
       rgb_stream,
       rgb_stream_u16,
       luma_stream_u16,
+      rgb_filter_stream,
+      rgb_filter_stream_u16,
+      luma_filter_stream_u16,
       resample_outputs,
       plan,
       #[cfg(feature = "yuv-planar")]
@@ -447,6 +450,51 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P010<BE>, R> {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, uv_half) = (row.y(), row.uv_half());
+
+      // FILTER FIRST. A `Filter` plan routes to the signed-coefficient
+      // filter resampler (the same `p010_to_rgb*` convert closures the area
+      // path uses, then resampled in RGB space) — and there is NO native
+      // fast tier for the filter path, so it must branch BEFORE the
+      // native-route machinery (`frozen_native_route` / `*native`) below,
+      // which is area-only. The filter tail clamps a signed-kernel
+      // overshoot to the native max for this sub-16-bit source (both colour
+      // and native-Y luma), matching the in-range area path.
+      if plan.kind().is_filter() {
+        return packed_yuv422_triple_filter_resample::<BITS>(
+          luma_filter_stream_u16,
+          rgb_filter_stream,
+          rgb_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          luma_scratch_u16,
+          rgb_scratch,
+          rgb_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| {
+            for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
+              let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+              *dst = logical >> (16 - BITS);
+            }
+          },
+          |scratch| {
+            p010_to_rgb_row_endian(y, uv_half, scratch, w, matrix, full_range, use_simd, BE)
+          },
+          |scratch| {
+            p010_to_rgb_u16_row_endian(y, uv_half, scratch, w, matrix, full_range, use_simd, BE)
+          },
+        );
+      }
       // Whether this call carries any output — the EXACT set the tier
       // preflight (`yuv420p16_native_preflight`'s `need_luma || need_color`)
       // tests. The route freezes only on an output-bearing row a tier
@@ -833,6 +881,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P012<BE>, R> {
       rgb_stream,
       rgb_stream_u16,
       luma_stream_u16,
+      rgb_filter_stream,
+      rgb_filter_stream_u16,
+      luma_filter_stream_u16,
       resample_outputs,
       plan,
       #[cfg(feature = "yuv-planar")]
@@ -860,6 +911,47 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P012<BE>, R> {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, uv_half) = (row.y(), row.uv_half());
+
+      // FILTER FIRST — the filter path has no native fast tier, so it must
+      // branch before the area-only native-route machinery below. See the
+      // P010 impl for the full rationale; P012 differs only in the 12-bit
+      // kernel family.
+      if plan.kind().is_filter() {
+        return packed_yuv422_triple_filter_resample::<BITS>(
+          luma_filter_stream_u16,
+          rgb_filter_stream,
+          rgb_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          luma_scratch_u16,
+          rgb_scratch,
+          rgb_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| {
+            for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
+              let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+              *dst = logical >> (16 - BITS);
+            }
+          },
+          |scratch| {
+            p012_to_rgb_row_endian(y, uv_half, scratch, w, matrix, full_range, use_simd, BE)
+          },
+          |scratch| {
+            p012_to_rgb_u16_row_endian(y, uv_half, scratch, w, matrix, full_range, use_simd, BE)
+          },
+        );
+      }
       // Whether this call carries any output — the EXACT set the tier
       // preflight (`yuv420p16_native_preflight`'s `need_luma || need_color`)
       // tests. The route freezes only on an output-bearing row a tier
@@ -1243,6 +1335,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P016<BE>, R> {
       rgb_stream,
       rgb_stream_u16,
       luma_stream_u16,
+      rgb_filter_stream,
+      rgb_filter_stream_u16,
+      luma_filter_stream_u16,
       resample_outputs,
       plan,
       #[cfg(feature = "yuv-planar")]
@@ -1271,6 +1366,47 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P016<BE>, R> {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, uv_half) = (row.y(), row.uv_half());
+
+      // FILTER FIRST — the filter path has no native fast tier, so it must
+      // branch before the area-only native-route machinery below. See the
+      // P010 impl for the full rationale. At 16 bits the native max is
+      // `u16::MAX`, so the filter tail's clamp is a value no-op.
+      if plan.kind().is_filter() {
+        return packed_yuv422_triple_filter_resample::<BITS>(
+          luma_filter_stream_u16,
+          rgb_filter_stream,
+          rgb_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          luma_scratch_u16,
+          rgb_scratch,
+          rgb_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| {
+            for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
+              let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+              *dst = logical >> (16 - BITS);
+            }
+          },
+          |scratch| {
+            p016_to_rgb_row_endian(y, uv_half, scratch, w, matrix, full_range, use_simd, BE)
+          },
+          |scratch| {
+            p016_to_rgb_u16_row_endian(y, uv_half, scratch, w, matrix, full_range, use_simd, BE)
+          },
+        );
+      }
       // Whether this call carries any output — the EXACT set the tier
       // preflight (`yuv420p16_native_preflight`'s `need_luma || need_color`)
       // tests. The route freezes only on an output-bearing row a tier

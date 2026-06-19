@@ -195,6 +195,8 @@ mod resample_rgbf32;
 mod resample_semi_planar;
 #[cfg(feature = "yuv-semi-planar")]
 mod resample_semi_planar_8bit_filter;
+#[cfg(all(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+mod resample_subsampled_high_bit_p_filter;
 #[cfg(feature = "yuv-packed")]
 mod resample_uyyvyy411;
 #[cfg(feature = "v210")]
