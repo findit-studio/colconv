@@ -128,6 +128,69 @@ fn mitchell_profile() {
 }
 
 #[test]
+fn opencv_cubic_profile() {
+  let k = OpenCvCubic;
+  assert_eq!(k.support(), 2.0);
+  // Interpolating Keys cubic: 1 at the center, 0 at the unit sample.
+  assert_eq!(k.weight(0.0), 1.0);
+  assert!(k.weight(1.0).abs() < 1e-12);
+  assert!(k.weight(-1.0).abs() < 1e-12);
+  assert_eq!(k.weight(2.0), 0.0);
+  assert_eq!(k.weight(2.5), 0.0);
+  // Deeper negative outer lobe than Catmull-Rom (a = -0.75 vs -0.5):
+  // at |x| = 1.5 the Keys cubic gives a * 0.125 = -0.09375.
+  let w15 = k.weight(1.5);
+  assert!(w15 < 0.0, "outer lobe must be negative, got {w15}");
+  assert!((w15 - (-0.09375)).abs() < 1e-12, "got {w15}");
+  assert_eq!(k.weight(1.5), k.weight(-1.5));
+  assert!(max_weight_dev(&k, 2.5, |x| k.weight(-x)) < 1e-15);
+  // Parity with the closed-form Keys cubic at a = -0.75 (explicit powi
+  // form, so a Horner slip in the kernel would show up here).
+  let reference = |x: f64| {
+    let a = -0.75_f64;
+    let t = x.abs();
+    if t < 1.0 {
+      (a + 2.0) * t.powi(3) - (a + 3.0) * t.powi(2) + 1.0
+    } else if t < 2.0 {
+      a * t.powi(3) - 5.0 * a * t.powi(2) + 8.0 * a * t - 4.0 * a
+    } else {
+      0.0
+    }
+  };
+  assert!(max_weight_dev(&k, 2.5, reference) < 1e-12);
+}
+
+#[test]
+fn lanczos4_profile() {
+  let k = Lanczos4;
+  assert_eq!(k.support(), 4.0);
+  assert_eq!(k.weight(0.0), 1.0);
+  // sinc zeros at nonzero integers within support.
+  for n in 1..4 {
+    assert!(k.weight(n as f64).abs() < 1e-12, "zero at {n}");
+    assert!(k.weight(-(n as f64)).abs() < 1e-12, "zero at -{n}");
+  }
+  assert_eq!(k.weight(4.0), 0.0);
+  assert_eq!(k.weight(4.5), 0.0);
+  // Reference windowed sinc (a = 4), symmetric and matching a direct eval.
+  let reference = |x: f64| {
+    let s = |t: f64| {
+      if t == 0.0 {
+        1.0
+      } else {
+        (core::f64::consts::PI * t).sin() / (core::f64::consts::PI * t)
+      }
+    };
+    if x > -4.0 && x < 4.0 {
+      s(x) * s(x / 4.0)
+    } else {
+      0.0
+    }
+  };
+  assert!(max_weight_dev(&k, 4.5, reference) < 1e-12);
+}
+
+#[test]
 fn axis_windows_normalize_to_one() {
   // Every output window must sum to ~1 (PIL renormalizes after clamping),
   // so average brightness is preserved including at the clipped edges.
@@ -136,6 +199,8 @@ fn axis_windows_normalize_to_one() {
     &CatmullRom as &dyn FilterKernel,
     &Lanczos3 as &dyn FilterKernel,
     &Mitchell as &dyn FilterKernel,
+    &OpenCvCubic as &dyn FilterKernel,
+    &Lanczos4 as &dyn FilterKernel,
   ] {
     for &(in_size, out_size) in &[(8usize, 3usize), (64, 17), (1920, 640), (1000, 333)] {
       let axis = FilterAxis::build(in_size, out_size, k).expect("valid downscale");
@@ -341,6 +406,8 @@ fn max_overlap_bounds_the_ring() {
     &CatmullRom as &dyn FilterKernel,
     &Lanczos3 as &dyn FilterKernel,
     &Mitchell as &dyn FilterKernel,
+    &OpenCvCubic as &dyn FilterKernel,
+    &Lanczos4 as &dyn FilterKernel,
   ] {
     for &(in_size, out_size) in &[(64usize, 17usize), (200, 41), (1920, 360)] {
       let axis = FilterAxis::build(in_size, out_size, k).unwrap();
