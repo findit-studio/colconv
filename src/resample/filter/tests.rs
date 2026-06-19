@@ -190,6 +190,83 @@ fn lanczos4_profile() {
   assert!(max_weight_dev(&k, 4.5, reference) < 1e-12);
 }
 
+#[test]
+fn swscale_bicubic_profile() {
+  let k = SwscaleBicubic;
+  assert_eq!(k.support(), 2.0);
+  // Interpolating Keys cubic: 1 at the center, 0 at the unit sample and the
+  // support boundary.
+  assert_eq!(k.weight(0.0), 1.0);
+  assert!(k.weight(1.0).abs() < 1e-12);
+  assert!(k.weight(-1.0).abs() < 1e-12);
+  assert_eq!(k.weight(2.0), 0.0);
+  assert_eq!(k.weight(2.5), 0.0);
+  // Negative outer lobe on (1, 2): the Keys a = -0.6 cubic at |x| = 1.5 is
+  // a * 0.125 = -0.075 (shallower than cv2's a = -0.75 -> -0.09375, deeper
+  // than PIL's a = -0.5 -> -0.0625).
+  let w15 = k.weight(1.5);
+  assert!(w15 < 0.0, "outer lobe must be negative, got {w15}");
+  assert!((w15 - (-0.075)).abs() < 1e-12, "got {w15}");
+  // Inner segment at |x| = 0.5: 1.4*0.125 - 2.4*0.25 + 1 = 0.575.
+  assert!((k.weight(0.5) - 0.575).abs() < 1e-12);
+  assert_eq!(k.weight(1.5), k.weight(-1.5));
+  assert!(max_weight_dev(&k, 2.5, |x| k.weight(-x)) < 1e-15);
+  // Parity with the closed-form Keys cubic at a = -0.6 (explicit powi form,
+  // so a Horner slip in the kernel would show up here).
+  let reference = |x: f64| {
+    let a = -0.6_f64;
+    let t = x.abs();
+    if t < 1.0 {
+      (a + 2.0) * t.powi(3) - (a + 3.0) * t.powi(2) + 1.0
+    } else if t < 2.0 {
+      a * t.powi(3) - 5.0 * a * t.powi(2) + 8.0 * a * t - 4.0 * a
+    } else {
+      0.0
+    }
+  };
+  assert!(max_weight_dev(&k, 2.5, reference) < 1e-12);
+}
+
+#[test]
+fn gaussian_profile() {
+  let k = Gaussian;
+  assert_eq!(k.support(), 3.0);
+  // Peak is 2^0 = 1 at the center.
+  assert_eq!(k.weight(0.0), 1.0);
+  // Truncated to the half-open [-3, 3): zero at and past the support.
+  assert_eq!(k.weight(3.0), 0.0);
+  assert_eq!(k.weight(-3.0), 0.0);
+  assert_eq!(k.weight(3.5), 0.0);
+  // The Gaussian is NOT interpolating and NOT a partition of unity (the
+  // engine renormalizes each window — `axis_windows_normalize_to_one`
+  // covers that), so it is nonzero at the nonzero integers.
+  assert!(k.weight(1.0) > 0.0);
+  assert!(k.weight(2.0) > 0.0);
+  // Symmetric across the dense grid.
+  assert!(max_weight_dev(&k, 3.5, |x| k.weight(-x)) < 1e-15);
+  // Strictly monotonically decreasing on [0, 3) — a Gaussian shape, no
+  // lobes or ripples.
+  let mut prev = f64::INFINITY;
+  for i in 0..300 {
+    let x = i as f64 / 100.0;
+    let v = k.weight(x);
+    assert!(v < prev, "must decrease at x = {x}: {v} !< {prev}");
+    prev = v;
+  }
+  // Parity with the closed-form swscale Gauss shape 2^(-3 x^2), evaluated
+  // with `exp` (a different transcendental than the kernel's `exp2`), so a
+  // wrong base or parameter in the kernel would show up here. The tolerance
+  // absorbs f64 rounding across the two evaluation paths.
+  let reference = |x: f64| {
+    if x.abs() < 3.0 {
+      (-3.0 * x * x * core::f64::consts::LN_2).exp()
+    } else {
+      0.0
+    }
+  };
+  assert!(max_weight_dev(&k, 3.5, reference) < 1e-12);
+}
+
 /// Sum of a kernel's taps at unit-spaced offsets around `x` — the partition
 /// of unity an interpolating kernel must satisfy (`== 1`) to preserve DC.
 fn tap_sum(k: &dyn FilterKernel, x: f64) -> f64 {
@@ -351,6 +428,104 @@ fn spline_matches_zimg_golden_fixtures() {
 }
 
 #[test]
+fn ffmpeg_kernels_match_golden_fixtures() {
+  // Independent exactness oracle for the two FFmpeg/swscale kernels. These
+  // (x, weight) pairs were computed OUTSIDE the production Horner / `exp2`
+  // code paths — by exact rational arithmetic over the Keys a = -0.6 cubic
+  // (Python `fractions.Fraction`, cast to f64) for `SwscaleBicubic`, and by
+  // the defining identity `2^(-3 x^2)` at points where the exponent is exact
+  // for `Gaussian`. A transcription slip in a kernel coefficient or the
+  // Gauss parameter (which the closed-form references in the per-kernel
+  // profile tests evaluate, but in the same family of expression) shows up
+  // here against literal numbers. The tolerance only absorbs f64 rounding.
+
+  // SwscaleBicubic, Keys a = -0.6. Inner segment (|x| < 1):
+  //   1.4|x|^3 - 2.4|x|^2 + 1; outer (1 <= |x| < 2): -0.6|x|^3 + 3|x|^2
+  //   - 4.8|x| + 2.4. Exact rationals: e.g. weight(1/4) = 279/320,
+  //   weight(1/2) = 23/40, weight(3/4) = 77/320, weight(5/4) = -27/320,
+  //   weight(3/2) = -3/40, weight(7/4) = -9/320.
+  let bicubic: &[(f64, f64)] = &[
+    (0.25, 0.871875),
+    (0.5, 0.575),
+    (0.75, 0.240625),
+    (1.25, -0.084375),
+    (1.5, -0.075),
+    (1.75, -0.028125),
+  ];
+  // Gaussian 2^(-3 x^2) at points with an exact (or near-exact) f64
+  // exponent: weight(0.5) = 2^(-0.75), weight(1) = 2^(-3) = 0.125,
+  // weight(1.5) = 2^(-6.75), weight(2) = 2^(-12) = 1/4096. The 2^(-0.75)
+  // and 2^(-6.75) literals are the correctly-rounded f64 values of those
+  // powers (verified against an independent base-2 exponential).
+  let gaussian: &[(f64, f64)] = &[
+    (0.5, 0.5946035575013605),
+    (1.0, 0.125),
+    (1.5, 0.009290680585958758),
+    (2.0, 0.000244140625),
+  ];
+  for &(x, want) in bicubic {
+    assert!(
+      (SwscaleBicubic.weight(x) - want).abs() < 1e-12,
+      "SwscaleBicubic({x})"
+    );
+    assert!(
+      (SwscaleBicubic.weight(-x) - want).abs() < 1e-12,
+      "SwscaleBicubic(-{x})"
+    );
+  }
+  for &(x, want) in gaussian {
+    assert!((Gaussian.weight(x) - want).abs() < 1e-12, "Gaussian({x})");
+    assert!((Gaussian.weight(-x) - want).abs() < 1e-12, "Gaussian(-{x})");
+  }
+}
+
+#[test]
+fn gaussian_softens_a_scale_one_axis() {
+  // A non-interpolating kernel does NOT pass a scale-1 axis through: under the
+  // PIL half-pixel center convention a 1:1 axis evaluates the kernel at
+  // integer offsets, so an interior output window is `weight(0)` at the
+  // center and `weight(±1)` at the neighbours. For the Gaussian those
+  // neighbours are nonzero (it softens the axis); for an interpolating kernel
+  // they are zero (a bit-exact passthrough). This pins the documented
+  // behaviour — a Gaussian resize of one axis also filters the other — and
+  // proves it is accepted, not a bug.
+  let n = 8;
+  let g = FilterAxis::build(n, n, &Gaussian).expect("1:1 Gaussian axis");
+  let c = FilterAxis::build(n, n, &CatmullRom).expect("1:1 CatmullRom axis");
+  // Interior output (away from the clamped edges) for each.
+  let j = 4;
+  let (g_start, g_win) = g.span(j);
+  let (c_start, c_win) = c.span(j);
+  // CatmullRom (interpolating): one tap ~1, the rest ~0 — passthrough.
+  let c_peak = c_win.iter().map(|&w| f64::from(w)).fold(0.0_f64, f64::max);
+  assert!(
+    c_peak > 0.99,
+    "CatmullRom 1:1 axis is ~passthrough (peak {c_peak})"
+  );
+  // Gaussian: the peak tap is well below 1 and at least one neighbour carries
+  // real weight — the axis is softened, not passed through.
+  let g_peak = g_win.iter().map(|&w| f64::from(w)).fold(0.0_f64, f64::max);
+  assert!(
+    g_peak < 0.95,
+    "Gaussian 1:1 axis is softened (peak {g_peak})"
+  );
+  let g_neighbours: f64 = g_win.iter().map(|&w| f64::from(w)).sum::<f64>() - g_peak;
+  assert!(
+    g_neighbours > 0.05,
+    "Gaussian 1:1 axis spreads weight to neighbours ({g_neighbours})"
+  );
+  // Both windows still renormalize to 1 (brightness preserved).
+  for (label, win) in [("gaussian", g_win), ("catmullrom", c_win)] {
+    let sum: f64 = win.iter().map(|&w| f64::from(w)).sum();
+    assert!(
+      (sum - 1.0).abs() < 1e-4,
+      "{label} 1:1 window sums to 1 ({sum})"
+    );
+  }
+  let _ = (g_start, c_start);
+}
+
+#[test]
 fn axis_windows_normalize_to_one() {
   // Every output window must sum to ~1 (PIL renormalizes after clamping),
   // so average brightness is preserved including at the clipped edges.
@@ -361,6 +536,8 @@ fn axis_windows_normalize_to_one() {
     &Mitchell as &dyn FilterKernel,
     &OpenCvCubic as &dyn FilterKernel,
     &Lanczos4 as &dyn FilterKernel,
+    &SwscaleBicubic as &dyn FilterKernel,
+    &Gaussian as &dyn FilterKernel,
     &Spline16 as &dyn FilterKernel,
     &Spline36 as &dyn FilterKernel,
     &Spline64 as &dyn FilterKernel,
@@ -571,6 +748,8 @@ fn max_overlap_bounds_the_ring() {
     &Mitchell as &dyn FilterKernel,
     &OpenCvCubic as &dyn FilterKernel,
     &Lanczos4 as &dyn FilterKernel,
+    &SwscaleBicubic as &dyn FilterKernel,
+    &Gaussian as &dyn FilterKernel,
     &Spline16 as &dyn FilterKernel,
     &Spline36 as &dyn FilterKernel,
     &Spline64 as &dyn FilterKernel,
