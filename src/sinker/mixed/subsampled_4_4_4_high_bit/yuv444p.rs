@@ -221,6 +221,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p9<BE>, R> {
           rgb_u16,
           rgba_u16,
           luma,
+          // The high-bit planar 4:4:4 family exposes no `luma_u16` output.
+          &mut None,
           hsv,
           rgb_scratch,
           rgb_scratch_u16,
@@ -616,6 +618,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p10<BE>, R> {
           rgb_u16,
           rgba_u16,
           luma,
+          // The high-bit planar 4:4:4 family exposes no `luma_u16` output.
+          &mut None,
           hsv,
           rgb_scratch,
           rgb_scratch_u16,
@@ -1009,6 +1013,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p12<BE>, R> {
           rgb_u16,
           rgba_u16,
           luma,
+          // The high-bit planar 4:4:4 family exposes no `luma_u16` output.
+          &mut None,
           hsv,
           rgb_scratch,
           rgb_scratch_u16,
@@ -1402,6 +1408,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p14<BE>, R> {
           rgb_u16,
           rgba_u16,
           luma,
+          // The high-bit planar 4:4:4 family exposes no `luma_u16` output.
+          &mut None,
           hsv,
           rgb_scratch,
           rgb_scratch_u16,
@@ -1796,6 +1804,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p16<BE>, R> {
           rgb_u16,
           rgba_u16,
           luma,
+          // The high-bit planar 4:4:4 family exposes no `luma_u16` output.
+          &mut None,
           hsv,
           rgb_scratch,
           rgb_scratch_u16,

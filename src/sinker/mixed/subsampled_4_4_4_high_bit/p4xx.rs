@@ -184,6 +184,8 @@ fn p4xx_process_native<const BITS: u32, const BE: bool>(
     rgb_u16,
     rgba_u16,
     luma,
+    // The high-bit semi-planar 4:4:4 P-format exposes no `luma_u16` output.
+    &None,
     hsv,
     idx,
     need_luma,
@@ -246,6 +248,8 @@ fn p4xx_process_native<const BITS: u32, const BE: bool>(
     rgb_u16,
     rgba_u16,
     luma,
+    // The high-bit semi-planar 4:4:4 P-format exposes no `luma_u16` output.
+    &mut None,
     hsv,
     rgb_scratch,
     rgb_scratch_u16,

@@ -242,6 +242,11 @@ mod resample_xyz12_filter;
 mod resample_y2xx;
 #[cfg(feature = "y2xx")]
 mod resample_y2xx_filter;
+// The native fast tier reuses the high-bit non-4:2:0 planar join, so the native
+// suite (and its twin-parity / oracle suites) only exists when `yuv-planar` is
+// also compiled.
+#[cfg(all(feature = "y2xx", feature = "yuv-planar"))]
+mod resample_y2xx_native;
 #[cfg(feature = "gray")]
 mod resample_ya16;
 #[cfg(feature = "gray")]

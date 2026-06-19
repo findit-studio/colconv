@@ -225,6 +225,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv440p10<BE>, R> {
           rgb_u16,
           rgba_u16,
           luma,
+          // The high-bit planar 4:4:0 family exposes no `luma_u16` output.
+          &mut None,
           hsv,
           rgb_scratch,
           rgb_scratch_u16,
@@ -623,6 +625,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv440p12<BE>, R> {
           rgb_u16,
           rgba_u16,
           luma,
+          // The high-bit planar 4:4:0 family exposes no `luma_u16` output.
+          &mut None,
           hsv,
           rgb_scratch,
           rgb_scratch_u16,
