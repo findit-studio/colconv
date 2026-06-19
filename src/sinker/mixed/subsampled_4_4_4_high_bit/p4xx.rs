@@ -1,8 +1,8 @@
 use super::super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, check_dimensions_match, packed_yuv444_triple_resample,
-  reset_high_bit_yuv_streams, rgb_row_buf_or_scratch, rgba_plane_row_slice,
-  rgba_u16_plane_row_slice,
+  RowShapeMismatch, RowSlice, check_dimensions_match, packed_yuv444_triple_filter_resample,
+  packed_yuv444_triple_resample, reset_high_bit_yuv_streams, rgb_row_buf_or_scratch,
+  rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
 use crate::{PixelSink, row::*, source::*};
 
@@ -129,54 +129,99 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P410<BE>, R> {
       rgb_stream,
       rgb_stream_u16,
       luma_stream_u16,
+      rgb_filter_stream,
+      rgb_filter_stream_u16,
+      luma_filter_stream_u16,
       resample_outputs,
       plan,
       ..
     } = self;
 
     // Non-identity plan: feed the shared high-bit 4:4:4 triple-resample
-    // tail (u8 color, independent native-u16 color, native Y). P410 is
-    // semi-planar 4:4:4: the full-width interleaved UV plane (`2 * w` u16)
-    // is de-interleaved per-pixel (no chroma upsample) by the
-    // `p410_to_rgb*` kernels. The Y de-pack shift `>> (16 - BITS)` yields
-    // the logical native Y; `luma = binned_Y >> (BITS - 8)`. P410 exposes
-    // no `luma_u16`, so it is `&mut None`.
+    // tail (u8 color, independent native-u16 color, native Y), area or
+    // filter per the span kind (both convert the YUV to RGB with the same
+    // closures and resample in RGB space). P410 is semi-planar 4:4:4: the
+    // full-width interleaved UV plane (`2 * w` u16) is de-interleaved
+    // per-pixel (no chroma upsample) by the `p410_to_rgb*` kernels. The Y
+    // de-pack shift `>> (16 - BITS)` yields the logical native Y;
+    // `luma = binned_Y >> (BITS - 8)`. P410 exposes no `luma_u16`, so it is
+    // `&mut None`. The filter tail clamps a signed-kernel overshoot to the
+    // native max for this sub-16-bit source (both colour and native-Y
+    // luma), matching the in-range area path.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, uv_full) = (row.y(), row.uv_full());
-      return packed_yuv444_triple_resample::<BITS>(
-        rgb_stream,
-        rgb_stream_u16,
-        luma_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        &mut None,
-        hsv,
-        rgb_scratch,
-        rgb_scratch_u16,
-        luma_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        matrix,
-        full_range,
-        |scratch| p410_to_rgb_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE),
-        |scratch| {
-          p410_to_rgb_u16_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
-        },
-        |scratch| {
-          for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
-            let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
-            *dst = logical >> (16 - BITS);
-          }
-        },
-      );
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => packed_yuv444_triple_resample::<BITS>(
+          rgb_stream,
+          rgb_stream_u16,
+          luma_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          luma_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| {
+            p410_to_rgb_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
+          },
+          |scratch| {
+            p410_to_rgb_u16_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
+          },
+          |scratch| {
+            for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
+              let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+              *dst = logical >> (16 - BITS);
+            }
+          },
+        ),
+        crate::resample::SpanKind::Filter => packed_yuv444_triple_filter_resample::<BITS>(
+          rgb_filter_stream,
+          rgb_filter_stream_u16,
+          luma_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          luma_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| {
+            p410_to_rgb_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
+          },
+          |scratch| {
+            p410_to_rgb_u16_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
+          },
+          |scratch| {
+            for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
+              let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+              *dst = logical >> (16 - BITS);
+            }
+          },
+        ),
+      };
     }
 
     let one_plane_start = idx * w;
@@ -421,50 +466,92 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P412<BE>, R> {
       rgb_stream,
       rgb_stream_u16,
       luma_stream_u16,
+      rgb_filter_stream,
+      rgb_filter_stream_u16,
+      luma_filter_stream_u16,
       resample_outputs,
       plan,
       ..
     } = self;
 
     // Non-identity plan: feed the shared high-bit 4:4:4 triple-resample
-    // tail. See the P410 impl for the full rationale — P412 is identical
-    // bar the 12-bit kernel family (`p412_to_rgb*`).
+    // tail, area or filter per the span kind. See the P410 impl for the
+    // full rationale — P412 is identical bar the 12-bit kernel family
+    // (`p412_to_rgb*`).
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, uv_full) = (row.y(), row.uv_full());
-      return packed_yuv444_triple_resample::<BITS>(
-        rgb_stream,
-        rgb_stream_u16,
-        luma_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        &mut None,
-        hsv,
-        rgb_scratch,
-        rgb_scratch_u16,
-        luma_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        matrix,
-        full_range,
-        |scratch| p412_to_rgb_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE),
-        |scratch| {
-          p412_to_rgb_u16_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
-        },
-        |scratch| {
-          for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
-            let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
-            *dst = logical >> (16 - BITS);
-          }
-        },
-      );
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => packed_yuv444_triple_resample::<BITS>(
+          rgb_stream,
+          rgb_stream_u16,
+          luma_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          luma_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| {
+            p412_to_rgb_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
+          },
+          |scratch| {
+            p412_to_rgb_u16_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
+          },
+          |scratch| {
+            for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
+              let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+              *dst = logical >> (16 - BITS);
+            }
+          },
+        ),
+        crate::resample::SpanKind::Filter => packed_yuv444_triple_filter_resample::<BITS>(
+          rgb_filter_stream,
+          rgb_filter_stream_u16,
+          luma_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          luma_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| {
+            p412_to_rgb_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
+          },
+          |scratch| {
+            p412_to_rgb_u16_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
+          },
+          |scratch| {
+            for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
+              let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+              *dst = logical >> (16 - BITS);
+            }
+          },
+        ),
+      };
     }
 
     let one_plane_start = idx * w;
@@ -713,51 +800,94 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P416<BE>, R> {
       rgb_stream,
       rgb_stream_u16,
       luma_stream_u16,
+      rgb_filter_stream,
+      rgb_filter_stream_u16,
+      luma_filter_stream_u16,
       resample_outputs,
       plan,
       ..
     } = self;
 
     // Non-identity plan: feed the shared high-bit 4:4:4 triple-resample
-    // tail. See the P410 impl for the full rationale. At 16 bits the Y
-    // de-pack shift `>> (16 - BITS)` is `>> 0`, and the dedicated 16-bit
-    // kernel family (`p416_to_rgb*`) is used.
+    // tail, area or filter per the span kind. See the P410 impl for the
+    // full rationale. At 16 bits the Y de-pack shift `>> (16 - BITS)` is
+    // `>> 0`, and the dedicated 16-bit kernel family (`p416_to_rgb*`) is
+    // used; the native max is `u16::MAX`, so the filter tail's clamp is a
+    // value no-op.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let (y, uv_full) = (row.y(), row.uv_full());
-      return packed_yuv444_triple_resample::<BITS>(
-        rgb_stream,
-        rgb_stream_u16,
-        luma_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        &mut None,
-        hsv,
-        rgb_scratch,
-        rgb_scratch_u16,
-        luma_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        matrix,
-        full_range,
-        |scratch| p416_to_rgb_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE),
-        |scratch| {
-          p416_to_rgb_u16_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
-        },
-        |scratch| {
-          for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
-            let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
-            *dst = logical >> (16 - BITS);
-          }
-        },
-      );
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => packed_yuv444_triple_resample::<BITS>(
+          rgb_stream,
+          rgb_stream_u16,
+          luma_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          luma_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| {
+            p416_to_rgb_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
+          },
+          |scratch| {
+            p416_to_rgb_u16_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
+          },
+          |scratch| {
+            for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
+              let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+              *dst = logical >> (16 - BITS);
+            }
+          },
+        ),
+        crate::resample::SpanKind::Filter => packed_yuv444_triple_filter_resample::<BITS>(
+          rgb_filter_stream,
+          rgb_filter_stream_u16,
+          luma_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          luma_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| {
+            p416_to_rgb_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
+          },
+          |scratch| {
+            p416_to_rgb_u16_row_endian(y, uv_full, scratch, w, matrix, full_range, use_simd, BE)
+          },
+          |scratch| {
+            for (dst, &s) in scratch[..w].iter_mut().zip(y.iter()) {
+              let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
+              *dst = logical >> (16 - BITS);
+            }
+          },
+        ),
+      };
     }
 
     let one_plane_start = idx * w;
