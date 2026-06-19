@@ -29,8 +29,9 @@
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
   RowShapeMismatch, RowSlice, check_dimensions_match, check_frozen_alpha_mode,
-  deinterleave_y_high_bit, packed_yuva444_resample, reset_high_bit_yuva_streams,
-  rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
+  deinterleave_y_high_bit, packed_yuva444_filter_resample, packed_yuva444_resample,
+  reset_high_bit_yuva_streams, rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  rgba_u16_plane_row_slice,
 };
 use crate::{PixelSink, row::*, source::*};
 
@@ -94,14 +95,23 @@ impl<R> PixelSink for MixedSinker<'_, Yuva444p, R> {
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     check_dimensions_match(self.width, self.height, width, height)?;
     // New frame: restart the 4-channel u8 RGBA colour stream and the
-    // independent native-Y u16 luma stream (both lazily created in
-    // `process`) and re-arm the alpha-mode snapshot, mirroring the
-    // alpha-aware packed-YUVA (`Vuya`) sink. The 8-bit `Yuva444p` exposes
-    // no u16 colour outputs, so its u16 RGBA stream is never created.
+    // native-Y luma stream (both lazily created in `process`) and re-arm the
+    // alpha-mode snapshot, mirroring the alpha-aware packed-YUVA (`Vuya`)
+    // sink. The luma stream kind depends on the plan: the area path bins the
+    // native Y at u16 (`luma_stream_u16`), the filter path resamples the
+    // contiguous native Y at u8 (`luma_filter_stream`, parity with the
+    // no-alpha `Yuv444p`). The 8-bit `Yuva444p` exposes no u16 colour
+    // outputs, so its u16 RGBA streams are never created.
     if let Some(stream) = self.rgba_stream.as_mut() {
       stream.reset();
     }
     if let Some(stream) = self.luma_stream_u16.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_filter_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_filter_stream.as_mut() {
       stream.reset();
     }
     self.resample_outputs = None;
@@ -156,13 +166,21 @@ impl<R> PixelSink for MixedSinker<'_, Yuva444p, R> {
     // Non-identity plan: `Yuva444p` is 8-bit planar 4:4:4 YUV **with a
     // real full-resolution source alpha plane** (no chroma subsampling —
     // every pixel carries its own U / V). Route through the packed-YUVA
-    // tail at `SRC_BITS = 8`: the u8 colour stream bins the converted u8
-    // RGBA row (`yuva444p_to_rgba_row` — full-width chroma, real source α,
-    // NOT forced opaque), the native-Y luma stream bins the (zero-extended)
-    // Y plane directly so luma / luma_u16 are the area-downscaled native Y,
-    // alpha- and range-independent. The 8-bit `Yuva444p` exposes no u16
-    // colour outputs, so the tail's u16 colour binning is never active and
-    // its `convert_rgba_u16` closure is never invoked.
+    // tail at `SRC_BITS = 8`: the u8 colour stream resamples the converted
+    // u8 RGBA row (`yuva444p_to_rgba_row` — full-width chroma, real source
+    // α, NOT forced opaque), the native-Y luma stream resamples the
+    // (zero-extended) Y plane directly so luma / luma_u16 are the
+    // downscaled native Y, alpha- and range-independent. The 8-bit
+    // `Yuva444p` exposes no u16 colour outputs, so the tail's u16 colour
+    // resampling is never active and its `convert_rgba_u16` closure is never
+    // invoked.
+    //
+    // The span kind picks the engine (mirrors `Yuva420p`): `Area` bins (the
+    // alpha-aware tail — premultiplied colour binned premultiplied then
+    // un-premultiplied); `Filter` runs the signed-coefficient filter on the
+    // same converted RGBA (straight alpha only). A premultiplied `Filter`
+    // plan is routed to the area tail so it surfaces the typed
+    // `UnsupportedFilter` rather than straight-filtering premultiplied colour.
     if self.plan.is_some() {
       let alpha_mode = self.alpha_mode;
       let matrix = row.matrix();
@@ -188,43 +206,115 @@ impl<R> PixelSink for MixedSinker<'_, Yuva444p, R> {
         rgba_stream,
         rgba_stream_u16,
         luma_stream_u16,
+        rgba_filter_stream,
+        rgba_filter_stream_u16,
+        luma_filter_stream,
+        luma_filter_stream_u16,
         resample_outputs,
         frozen_alpha_mode,
         ..
       } = self;
       let plan = plan.as_ref().expect("plan.is_some() checked above");
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
-      return packed_yuva444_resample::<8>(
-        rgba_stream,
-        rgba_stream_u16,
-        luma_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        luma_u16,
-        hsv,
-        rgba_scratch,
-        rgb_scratch,
-        rgba_scratch_u16,
-        rgba_color_scratch_u16,
-        luma_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        alpha_mode,
-        |dst| yuva444p_to_rgba_row(y, u, v, a, dst, w, matrix, full_range, use_simd),
-        // `Yuva444p` has no u16 colour outputs, so this closure is never called.
-        |_dst: &mut [u16]| {},
-        |dst| {
-          for (d, &s) in dst.iter_mut().zip(y) {
-            *d = s as u16;
-          }
-        },
-      );
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => packed_yuva444_resample::<8>(
+          rgba_stream,
+          rgba_stream_u16,
+          luma_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          luma_u16,
+          hsv,
+          rgba_scratch,
+          rgb_scratch,
+          rgba_scratch_u16,
+          rgba_color_scratch_u16,
+          luma_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          alpha_mode,
+          |dst| yuva444p_to_rgba_row(y, u, v, a, dst, w, matrix, full_range, use_simd),
+          // `Yuva444p` has no u16 colour outputs, so this closure is never called.
+          |_dst: &mut [u16]| {},
+          |dst| {
+            for (d, &s) in dst.iter_mut().zip(y) {
+              *d = s as u16;
+            }
+          },
+        ),
+        crate::resample::SpanKind::Filter if alpha_mode.is_premultiplied() => {
+          // Premultiplied + filter has no analogue: route to the area tail
+          // with the filter plan so it returns the typed `UnsupportedFilter`.
+          packed_yuva444_resample::<8>(
+            rgba_stream,
+            rgba_stream_u16,
+            luma_stream_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            luma_u16,
+            hsv,
+            rgba_scratch,
+            rgb_scratch,
+            rgba_scratch_u16,
+            rgba_color_scratch_u16,
+            luma_scratch_u16,
+            w,
+            plan,
+            idx,
+            use_simd,
+            alpha_mode,
+            |dst| yuva444p_to_rgba_row(y, u, v, a, dst, w, matrix, full_range, use_simd),
+            |_dst: &mut [u16]| {},
+            |dst| {
+              for (d, &s) in dst.iter_mut().zip(y) {
+                *d = s as u16;
+              }
+            },
+          )
+        }
+        crate::resample::SpanKind::Filter => packed_yuva444_filter_resample::<8, true>(
+          rgba_filter_stream,
+          rgba_filter_stream_u16,
+          luma_filter_stream,
+          luma_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          luma_u16,
+          hsv,
+          rgba_scratch,
+          rgb_scratch,
+          rgba_scratch_u16,
+          rgba_color_scratch_u16,
+          luma_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          // 8-bit native-Y luma rides the u8 stream (parity with `Yuv444p`):
+          // the contiguous Y plane is fed directly.
+          y,
+          |dst| yuva444p_to_rgba_row(y, u, v, a, dst, w, matrix, full_range, use_simd),
+          // `Yuva444p` has no u16 colour outputs, so this closure is never called.
+          |_dst: &mut [u16]| {},
+          // u8-luma path: the u16 luma stream is detached, so this is never
+          // called.
+          |_dst: &mut [u16]| {},
+        ),
+      };
     }
 
     let Self {
