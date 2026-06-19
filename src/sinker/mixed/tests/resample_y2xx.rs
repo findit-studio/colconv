@@ -216,6 +216,7 @@ macro_rules! y2xx_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut rgb)
           .unwrap();
           $walker(&frame(&packed), FR, M, &mut sink).unwrap();
@@ -238,6 +239,7 @@ macro_rules! y2xx_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb_u16(&mut rgb)
           .unwrap();
           $walker(&frame(&packed), FR, M, &mut sink).unwrap();
@@ -260,6 +262,7 @@ macro_rules! y2xx_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_luma(&mut luma)
           .unwrap()
           .with_luma_u16(&mut luma_u16)
@@ -301,6 +304,7 @@ macro_rules! y2xx_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut rgb)
           .unwrap()
           .with_rgba(&mut rgba)
@@ -348,6 +352,7 @@ macro_rules! y2xx_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_luma_u16(&mut luma_u16)
           .unwrap();
           $walker(&frame(&packed), FR, M, &mut sink).unwrap();
@@ -388,6 +393,7 @@ macro_rules! y2xx_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut rgb)
           .unwrap()
           .with_rgba(&mut rgba)
@@ -457,6 +463,7 @@ macro_rules! y2xx_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut le_rgb)
           .unwrap()
           .with_rgb_u16(&mut le_rgb_u16)
@@ -476,6 +483,7 @@ macro_rules! y2xx_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut be_rgb)
           .unwrap()
           .with_rgb_u16(&mut be_rgb_u16)
@@ -512,6 +520,7 @@ macro_rules! y2xx_resample_suite {
             AreaResampler::to(SRC, SRC),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut via_area)
           .unwrap();
           $walker(&frame(&packed), FR, M, &mut sink).unwrap();
@@ -527,7 +536,9 @@ macro_rules! y2xx_resample_suite {
           SRC,
           AreaResampler::to(OUT, OUT),
         )
-        .unwrap();
+        .unwrap()
+        .with_native(false)
+        .with_native(false);
         $walker(&frame(&packed), FR, M, &mut sink).unwrap();
         assert!(
           !sink.luma_stream_u16_allocated(),
@@ -566,6 +577,7 @@ macro_rules! y2xx_resample_suite {
             AreaResampler::to(OUT, OUT),
           )
           .unwrap()
+          .with_native(false)
           .with_rgb(&mut rgb)
           .unwrap()
           .with_rgb_u16(&mut rgb_u16)
@@ -593,6 +605,7 @@ macro_rules! y2xx_resample_suite {
           AreaResampler::to(OUT, OUT),
         )
         .unwrap()
+        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap()
         .with_rgb_u16(&mut rgb_u16)
@@ -636,6 +649,7 @@ macro_rules! y2xx_resample_suite {
           AreaResampler::to(OUT, OUT),
         )
         .unwrap()
+        .with_native(false)
         .with_luma_u16(&mut luma_u16)
         .unwrap();
         sink.begin_frame(SRC as u32, SRC as u32).unwrap();
@@ -669,6 +683,7 @@ macro_rules! y2xx_resample_suite {
           AreaResampler::to(OUT, OUT),
         )
         .unwrap()
+        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap();
         sink.begin_frame(SRC as u32, SRC as u32).unwrap();
@@ -707,6 +722,7 @@ macro_rules! y2xx_resample_suite {
           AreaResampler::to(OUT, OUT),
         )
         .unwrap()
+        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap();
         sink.begin_frame(SRC as u32, SRC as u32).unwrap();

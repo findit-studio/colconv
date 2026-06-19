@@ -50,10 +50,14 @@
 //! clamps each output to `(1<<BITS)-1`; the i64 BITS=16 kernel covers the full
 //! u16 range). The binned Y / U / V are area means of in-range host-native
 //! samples, so they stay in range; the native-Y `luma` output is `>> (BITS-8)`
-//! into u8, always in range. There is no separate native-depth `luma_u16`
-//! output for this family. The bin-then-convert test oracle MUST run the SAME
-//! clamping kernels (via an identity-resolution high-bit 4:4:4 sink) so the
-//! comparison is clamp-for-clamp exact, never against an unclamped value.
+//! into u8, always in range. The optional native-depth `luma_u16` output is the
+//! binned Y clamped to `(1 << BITS) - 1` (host-native u16, NOT narrowed) — the
+//! formats with no `luma_u16` channel (planar / semi-planar) pass `&mut None`;
+//! the packed Y2xx family threads its real buffer so attaching `luma_u16` no
+//! longer falls the pipeline back to the row-stage tier. The bin-then-convert
+//! test oracle MUST run the SAME clamping kernels (via an identity-resolution
+//! high-bit 4:4:4 sink) so the comparison is clamp-for-clamp exact, never
+//! against an unclamped value.
 //!
 //! The staged Y / U / V are HOST-NATIVE (the wire row is de-interleaved to
 //! host-native u16 via [`deinterleave_y_high_bit`](super::deinterleave_y_high_bit)
@@ -297,9 +301,12 @@ impl NativePlanarYuvU16 {
 /// [`native_preflight_core`](super::planar_8bit::native_preflight_core) for
 /// the [`NativePlanarYuvU16`] join — supplies the u16-join-typed expected row
 /// and threads the native-depth u16 colour outputs (`rgb_u16` / `rgba_u16`)
-/// into the frozen-output check. The high-bit non-4:2:0 planar family exposes
-/// no `luma_u16` output, so it is frozen as absent. See `native_preflight_core`
-/// for the 4-point rejection logic and its ordering contract.
+/// plus the optional native-depth `luma_u16` into the frozen-output check. The
+/// planar / semi-planar families expose no `luma_u16` channel and pass `&None`;
+/// the packed Y2xx family threads its real buffer so a mid-frame `luma_u16`
+/// attach is classified by the frozen-output check (`ResampleOutputsChanged`),
+/// not the route guard. See `native_preflight_core` for the 4-point rejection
+/// logic and its ordering contract.
 ///
 /// `pub(crate)` so the high-bit **semi-planar** non-4:2:0 P-format wrapper
 /// (`subsampled_4_2_2_high_bit::p2xx` / `subsampled_4_4_4_high_bit::p4xx`),
@@ -316,6 +323,7 @@ pub(crate) fn native_planar_hb_preflight(
   rgb_u16: &Option<&mut [u16]>,
   rgba_u16: &Option<&mut [u16]>,
   luma: &Option<&mut [u8]>,
+  luma_u16: &Option<&mut [u16]>,
   hsv: &mut Option<HsvFrameMut<'_>>,
   idx: usize,
   need_luma: bool,
@@ -329,8 +337,7 @@ pub(crate) fn native_planar_hb_preflight(
     rgb_u16,
     rgba_u16,
     luma,
-    // The high-bit non-4:2:0 planar family exposes no `luma_u16` output.
-    &None,
+    luma_u16,
     hsv,
     idx,
     need_luma,
@@ -394,6 +401,7 @@ pub(crate) fn yuv_planar16_process_native<const BITS: u32, const BE: bool>(
   rgb_u16: &mut Option<&mut [u16]>,
   rgba_u16: &mut Option<&mut [u16]>,
   luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
   hsv: &mut Option<HsvFrameMut<'_>>,
   rgb_scratch: &mut std::vec::Vec<u8>,
   rgb_scratch_u16: &mut std::vec::Vec<u16>,
@@ -417,7 +425,7 @@ pub(crate) fn yuv_planar16_process_native<const BITS: u32, const BE: bool>(
     )
   };
   let ow = plan.out_w();
-  let need_luma = luma.is_some();
+  let need_luma = luma.is_some() || luma_u16.is_some();
   let need_color_u8 = rgb.is_some() || rgba.is_some() || hsv.is_some();
   let need_color_u16 = rgb_u16.is_some() || rgba_u16.is_some();
   let need_color = need_color_u8 || need_color_u16;
@@ -437,6 +445,7 @@ pub(crate) fn yuv_planar16_process_native<const BITS: u32, const BE: bool>(
     rgb_u16,
     rgba_u16,
     luma,
+    luma_u16,
     hsv,
     idx,
     need_luma,
@@ -596,13 +605,25 @@ pub(crate) fn yuv_planar16_process_native<const BITS: u32, const BE: bool>(
     let oy = *next_emit;
     let y_out = &y_stage[slot * ow..slot * ow + ow];
 
-    if let Some(buf) = luma.as_deref_mut() {
-      // Clamp to the native max before narrowing: an overrange binned Y (from
-      // out-of-gamut input whose high bits exceed BITS) must saturate, not
-      // wrap modulo 256 — the row-stage luma path narrows the clamped u16.
+    if need_luma {
+      // Clamp to the native max before EITHER luma emit: an overrange binned Y
+      // (from out-of-gamut input whose high bits exceed BITS) must saturate, not
+      // wrap — the row-stage luma path narrows / passes through the clamped u16.
       let native_max: u16 = ((1u32 << BITS) - 1) as u16;
-      for (dst, &src) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(y_out) {
-        *dst = (src.min(native_max) >> (BITS - 8)) as u8;
+      // u8 luma: the clamped binned Y narrowed `>> (BITS - 8)`.
+      if let Some(buf) = luma.as_deref_mut() {
+        for (dst, &src) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(y_out) {
+          *dst = (src.min(native_max) >> (BITS - 8)) as u8;
+        }
+      }
+      // Native-depth luma_u16: the SAME clamped binned Y, host-native u16, NOT
+      // narrowed — keeping `luma_u16 <= (1 << BITS) - 1` (the native-depth
+      // contract). The packed Y2xx family threads its real buffer here; the
+      // planar / semi-planar families pass `&mut None` and skip this.
+      if let Some(buf) = luma_u16.as_deref_mut() {
+        for (dst, &src) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(y_out) {
+          *dst = src.min(native_max);
+        }
       }
     }
 
