@@ -34,7 +34,7 @@ mod filter;
 use filter::FilterAxis;
 pub use filter::{
   CatmullRom, FilterKernel, InvalidFilterSupport, Lanczos3, Lanczos4, Mitchell, OpenCvCubic,
-  Triangle,
+  Spline16, Spline36, Spline64, Triangle,
 };
 // Re-exported for the sinker's `*_filter_stream` fields and tails, the
 // filter twin of the `AreaStream` / `AreaSample` pair. Compiled wherever
