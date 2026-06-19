@@ -161,6 +161,21 @@ fn sin_f64(x: f64) -> f64 {
   }
 }
 
+/// `f64` `exp2` (base-2 exponential, `2^x`) portable across `std` and
+/// `no_std + alloc` builds. See [`floor_f64`]. Only the [`Gaussian`] kernel
+/// needs it.
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn exp2_f64(x: f64) -> f64 {
+  #[cfg(feature = "std")]
+  {
+    f64::exp2(x)
+  }
+  #[cfg(all(not(feature = "std"), feature = "alloc"))]
+  {
+    libm::exp2(x)
+  }
+}
+
 /// A separable reconstruction-filter kernel: its `support` radius and its
 /// `weight` profile. The window for an output sample spans the source
 /// samples within `support` (scaled by the downscale ratio) of the
@@ -350,6 +365,51 @@ impl FilterKernel for OpenCvCubic {
   }
 }
 
+/// FFmpeg `swscale` `SWS_BICUBIC` (the default scaler) — the Keys cubic
+/// with `a = -0.6`, equivalently the Mitchell-Netravali cubic with
+/// `B = 0`, `C = 0.6`. Support 2, the same two-segment piecewise-cubic
+/// profile as [`CatmullRom`]/[`OpenCvCubic`], between their `a` values:
+/// shallower outer lobe than `cv2`'s `a = -0.75` ([`OpenCvCubic`]),
+/// deeper than PIL's `a = -0.5` ([`CatmullRom`]). The kernel weights match
+/// swscale's default bicubic coefficient table; exact pixel parity
+/// additionally depends on swscale's own coordinate/scaling pipeline.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SwscaleBicubic;
+
+impl SwscaleBicubic {
+  /// Keys parameter — `-0.6` reproduces swscale's default `SWS_BICUBIC`.
+  /// Equivalent to the Mitchell-Netravali `B = 0`, `C = 0.6` form swscale
+  /// builds its coefficients from: for `|x| < 1` that table is
+  /// `((12 - 9B - 6C)|x|^3 + (-18 + 12B + 6C)|x|^2 + (6 - 2B)) / 6`, which
+  /// at `B = 0`, `C = 0.6` is `1.4|x|^3 - 2.4|x|^2 + 1` — exactly the Keys
+  /// `a = -0.6` inner segment `(a+2)|x|^3 - (a+3)|x|^2 + 1`.
+  const A: f64 = -0.6;
+}
+
+impl FilterKernel for SwscaleBicubic {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn support(&self) -> f64 {
+    2.0
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn weight(&self, x: f64) -> f64 {
+    // Keys cubic (same form as `CatmullRom`/`OpenCvCubic`, `a = -0.6`):
+    // `(a+2)|x|^3 - (a+3)|x|^2 + 1` for |x| < 1   (= 1.4|x|^3 - 2.4|x|^2 + 1);
+    // `a|x|^3 - 5a|x|^2 + 8a|x| - 4a` for 1 <= |x| < 2
+    //                              (= -0.6|x|^3 + 3|x|^2 - 4.8|x| + 2.4);
+    // 0 beyond.
+    let a = Self::A;
+    let t = x.abs();
+    if t < 1.0 {
+      ((a + 2.0) * t - (a + 3.0)) * t * t + 1.0
+    } else if t < 2.0 {
+      (((t - 5.0) * t + 8.0) * t - 4.0) * a
+    } else {
+      0.0
+    }
+  }
+}
+
 /// OpenCV `INTER_LANCZOS4` — the Lanczos filter with `a = 4` (an 8-tap
 /// window, vs the 6-tap `a = 3` of [`Lanczos3`]/PIL `LANCZOS`). Support 4;
 /// `weight(x) = sinc(x) * sinc(x / 4)` for `|x| < 4`, zero beyond. The
@@ -382,6 +442,61 @@ impl FilterKernel for Lanczos4 {
   fn weight(&self, x: f64) -> f64 {
     if x > -4.0 && x < 4.0 {
       Self::sinc(x) * Self::sinc(x / 4.0)
+    } else {
+      0.0
+    }
+  }
+}
+
+/// FFmpeg `swscale` `SWS_GAUSS` — the Gaussian filter `weight(x) =
+/// 2^(-p * x^2)` with `p = 3` (swscale's default Gauss parameter). It has a
+/// rounded passband with no ringing (no negative lobes, no zero crossings),
+/// so unlike the cubic and Lanczos kernels it is **not interpolating** —
+/// `weight` is nonzero at every nonzero integer — and is not a partition of
+/// unity, but [`FilterAxis::build`] renormalizes every window so each output
+/// still sums to one (preserving average brightness).
+///
+/// A Gaussian never reaches zero, so its support is a **truncation** choice.
+/// swscale itself does not use a fixed support — it sizes the filter
+/// dynamically from the scaling ratio — so this is a fixed-support
+/// realization of the swscale Gauss *shape* (`exp2(-p d^2)`, `p = 3`), not
+/// byte-exact to any particular swscale output size. The radius is fixed at
+/// 3: at `|x| = 3` the weight is `2^(-27) ~ 7.5e-9`, far below `f32`
+/// precision, so the truncation is numerically negligible (and the window
+/// renormalization absorbs it regardless).
+///
+/// Because it is non-interpolating, a resize that changes only **one** axis
+/// still convolves the other (scale-1) axis with the kernel — `weight(±1)`
+/// is nonzero, so an unscaled axis is softened rather than passed through
+/// untouched. This is inherent to every non-interpolating separable kernel
+/// (e.g. [`Mitchell`]) and matches swscale, which likewise applies its filter
+/// per axis; an interpolating kernel ([`CatmullRom`], the splines) instead
+/// reproduces a scale-1 axis exactly because its integer taps are zero. Pick
+/// an interpolating kernel if a per-axis resize must leave the other axis
+/// bit-exact.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Gaussian;
+
+impl Gaussian {
+  /// swscale's default Gauss exponent parameter `p` in `2^(-p * x^2)`.
+  const P: f64 = 3.0;
+  /// Fixed truncation radius — see the type docs. At `|x| = 3` the weight
+  /// is `2^(-P * 9) = 2^(-27)`, negligible at `f32` precision.
+  const SUPPORT: f64 = 3.0;
+}
+
+impl FilterKernel for Gaussian {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn support(&self) -> f64 {
+    Self::SUPPORT
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn weight(&self, x: f64) -> f64 {
+    // swscale Gauss shape `2^(-p x^2)`, truncated to the half-open
+    // `[-3, 3)` (the same boundary convention as the windowed-sinc
+    // kernels). `exp2_f64` keeps the `no_std + alloc` build portable.
+    if x.abs() < Self::SUPPORT {
+      exp2_f64(-Self::P * x * x)
     } else {
       0.0
     }
