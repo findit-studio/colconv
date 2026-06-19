@@ -1977,6 +1977,30 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// twin of [`Self::p0xx_u_half`].
   #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
   p0xx_v_half: Vec<u16>,
+  /// De-pack staging for the native fast tier of the **packed** 8-bit
+  /// 4:2:2 YUV family ([`Yuyv422`](crate::source::Yuyv422) /
+  /// [`Uyvy422`](crate::source::Uyvy422) / [`Yvyu422`](crate::source::Yvyu422)).
+  /// Each format carries one fully-interleaved plane (`Y U Y V …` etc., two
+  /// bytes per pixel); the native wrapper de-packs each packed row into
+  /// these separate Y (`width`) / U (`width / 2`) / V (`width / 2`)
+  /// scratch planes at the per-format byte offsets, then the reused planar
+  /// 8-bit join ([`planar_8bit::yuv_planar_process_native`]) bins Y + U + V
+  /// at `Yuv422p` geometry. `packed_yuv_y_full` grows to `width` on every
+  /// native row; `packed_yuv_u_half` / `packed_yuv_v_half` grow to
+  /// `width / 2` each only on a colour native row; empty otherwise. Gated
+  /// to the intersection — the native tier reuses a yuv-planar fn, so it
+  /// only exists when `yuv-planar` is also compiled (a `yuv-packed`-solo
+  /// build takes the row-stage tail).
+  #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+  packed_yuv_y_full: Vec<u8>,
+  /// U-plane de-pack scratch for the native packed 4:2:2 tier; twin of
+  /// [`Self::packed_yuv_y_full`] at chroma width (`width / 2`).
+  #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+  packed_yuv_u_half: Vec<u8>,
+  /// V-plane de-pack scratch for the native packed 4:2:2 tier; twin of
+  /// [`Self::packed_yuv_u_half`].
+  #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+  packed_yuv_v_half: Vec<u8>,
   /// The native / row-stage route chosen on the first resampled row of a
   /// frame; a mid-frame change is rejected. The two tiers carry
   /// independent, in-order stream state, so flipping
@@ -2836,6 +2860,12 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       p0xx_u_half: Vec::new(),
       #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
       p0xx_v_half: Vec::new(),
+      #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+      packed_yuv_y_full: Vec::new(),
+      #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+      packed_yuv_u_half: Vec::new(),
+      #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+      packed_yuv_v_half: Vec::new(),
       #[cfg(feature = "yuv-planar")]
       frozen_native_route: None,
       #[cfg(any(
