@@ -283,7 +283,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuva420p, R> {
             },
           )
         }
-        crate::resample::SpanKind::Filter => packed_yuva444_filter_resample::<8, true>(
+        crate::resample::SpanKind::Filter => packed_yuva444_filter_resample::<8, true, false>(
           rgba_filter_stream,
           rgba_filter_stream_u16,
           luma_filter_stream,
@@ -306,14 +306,17 @@ impl<R> PixelSink for MixedSinker<'_, Yuva420p, R> {
           idx,
           use_simd,
           // 8-bit native-Y luma rides the u8 stream (parity with `Yuv420p`):
-          // the contiguous Y plane is fed directly.
+          // the contiguous Y plane is fed directly, so no de-interleave scratch.
           y,
+          None,
           |dst| yuva420p_to_rgba_row(y, u_half, v_half, a, dst, w, matrix, full_range, use_simd),
           // `Yuva420p` has no u16 colour outputs, so this closure is never called.
           |_dst: &mut [u16]| {},
           // u8-luma path: the u16 luma stream is detached, so this is never
           // called.
           |_dst: &mut [u16]| {},
+          // Contiguous Y plane fed directly, so this u8 de-interleave is unused.
+          |_dst: &mut [u8]| {},
         ),
       };
     }
@@ -1339,7 +1342,7 @@ fn yuva420p_high_bit_resample<const BITS: u32, const BE: bool>(
         |dst| deinterleave_y_high_bit::<BE>(y_row, dst, w),
       )
     }
-    crate::resample::SpanKind::Filter => packed_yuva444_filter_resample::<BITS, false>(
+    crate::resample::SpanKind::Filter => packed_yuva444_filter_resample::<BITS, false, false>(
       rgba_filter_stream,
       rgba_filter_stream_u16,
       // High-bit planar YUVA never uses the u8 native-Y luma stream
@@ -1366,6 +1369,7 @@ fn yuva420p_high_bit_resample<const BITS: u32, const BE: bool>(
       // Luma rides `deinterleave_y` + the u16 stream (native Y is u16), so the
       // u8-luma input is unused.
       &[],
+      None,
       |dst| {
         rgba_dispatch(
           y_row, u_half_row, v_half_row, a_row, dst, w, matrix, full_range, use_simd, BE,
@@ -1377,6 +1381,7 @@ fn yuva420p_high_bit_resample<const BITS: u32, const BE: bool>(
         )
       },
       |dst| deinterleave_y_high_bit::<BE>(y_row, dst, w),
+      |_dst: &mut [u8]| {},
     ),
   }
 }

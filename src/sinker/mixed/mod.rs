@@ -1722,12 +1722,18 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// `Yuva444p`), which converts its Y/U/V/A planes to a canonical u8
   /// `R, G, B, A` row and filters through this same 4-channel stream (the
   /// filter twin of its area [`Self::rgba_stream`] use); luma stays native Y.
+  /// `gray` joins for the 8-bit packed gray+alpha source `Ya8`, a degenerate
+  /// YUVA (`R = G = B = Y`, neutral chroma, real straight alpha): it decodes
+  /// each `[Y, A]` row into the canonical u8 RGBA via `ya8_to_rgba_row` and
+  /// filters through this same 4-channel stream, with native-Y luma on the
+  /// `u8` [`Self::luma_filter_stream`] (parity with `Gray8`).
   #[cfg(any(
     feature = "rgb",
     feature = "gbr",
     feature = "yuv-444-packed",
     feature = "mono",
-    feature = "yuva"
+    feature = "yuva",
+    feature = "gray"
   ))]
   rgba_filter_stream: Option<crate::resample::FilterStream<u8>>,
   /// Row-stage **filter** stream for the high-bit packed-RGB `u16` color
@@ -1774,12 +1780,19 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// unused). `yuva` joins for the 8-bit planar YUVA family (`Yuva420p` /
   /// `Yuva422p` / `Yuva444p`), which routes through the same 4:4:4 filter
   /// tail; those sources expose no u16 colour outputs either, so they leave
-  /// this stream unused too.
+  /// this stream unused too. `gray` joins for the high-bit packed gray+alpha
+  /// source `Ya16` (a degenerate YUVA, `R = G = B = Y`, real straight alpha):
+  /// it decodes each `[Y, A]` u16 row into the canonical host-native u16 RGBA
+  /// via `ya16_to_rgba_u16_row` and filters its native-depth colour through
+  /// this 4-channel stream (full 16-bit, so the `FilterStream`'s `0..=65535`
+  /// clamp is the native clamp), with native-Y luma on the `u16`
+  /// [`Self::luma_filter_stream_u16`] (parity with `Gray16`).
   #[cfg(any(
     feature = "rgb",
     feature = "gbr",
     feature = "yuv-444-packed",
-    feature = "yuva"
+    feature = "yuva",
+    feature = "gray"
   ))]
   rgba_filter_stream_u16: Option<crate::resample::FilterStream<u16>>,
   /// Row-stage **filter** stream for single-plane `u8` native-Y luma
@@ -2708,7 +2721,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "gbr",
         feature = "yuv-444-packed",
         feature = "mono",
-        feature = "yuva"
+        feature = "yuva",
+        feature = "gray"
       ))]
       rgba_filter_stream: None,
       #[cfg(any(
@@ -2723,7 +2737,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "rgb",
         feature = "gbr",
         feature = "yuv-444-packed",
-        feature = "yuva"
+        feature = "yuva",
+        feature = "gray"
       ))]
       rgba_filter_stream_u16: None,
       #[cfg(any(
@@ -4056,7 +4071,9 @@ pub(super) fn source_rgb_scratch<'s>(
   feature = "yuv-packed",
   feature = "gray",
   feature = "rgb",
-  feature = "gbr"
+  feature = "gbr",
+  feature = "yuv-444-packed",
+  feature = "yuva"
 ))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn source_luma_scratch<'s>(
@@ -7126,9 +7143,21 @@ pub(super) fn packed_yuv444_triple_filter_resample<const SRC_BITS: u32>(
 /// instead of wrapping. The area path never overshoots, so the clamp is a
 /// value no-op there; at `SRC_BITS == 16` the native max is the element max,
 /// so it is a no-op for `Ayuv64` too.
-#[cfg(any(feature = "yuv-444-packed", feature = "yuva"))]
+///
+/// `ZEXT_U16_COLOR` (the packed 8-bit `Ya8` gray+alpha filter caller only):
+/// when set, the u16 colour outputs are NOT an independent native-u16 binning
+/// — the caller passes no u16 colour stream (`rgba_stream_u16 == None`, so
+/// binning 2 below never runs and no native-u16 colour scratch is sized) and
+/// the u8 colour binning (binning 1) emits `rgb_u16` / `rgba_u16` as the
+/// straight binned u8 colour zero-extended (`s as u16`). This is correct only
+/// for an 8-bit source, whose native-depth colour IS the u8 colour widened
+/// (`rgba_u16 == rgba as u16`), matching the area path's contract. Every
+/// other caller passes `false` and keeps the independent native-u16 binning
+/// byte-for-byte. Straight alpha only on this path (the `Ya8` filter caller
+/// never premultiplies).
+#[cfg(any(feature = "yuv-444-packed", feature = "yuva", feature = "gray"))]
 #[allow(clippy::too_many_arguments)]
-fn packed_yuva444_feed_emit<C8S, C16S, Y16S, const SRC_BITS: u32>(
+fn packed_yuva444_feed_emit<C8S, C16S, Y16S, const SRC_BITS: u32, const ZEXT_U16_COLOR: bool>(
   rgba_stream: Option<&mut C8S>,
   rgba_stream_u16: Option<&mut C16S>,
   luma_stream_u16: Option<&mut Y16S>,
@@ -7166,10 +7195,25 @@ where
   let ow = plan.out_w();
   let need_colour_u8 = rgba_stream.is_some();
   let need_colour_u16 = rgba_stream_u16.is_some();
-  // The u8 colour stream's rgb / hsv outputs need a packed RGB row (the
-  // per-mode binned colour with α dropped), sized to the out-width RGB row
-  // only when one of those is attached so an rgba-only sink never grows it.
-  let need_rgb_drop = rgb.is_some() || hsv.is_some();
+  // `ZEXT_U16_COLOR` (the packed 8-bit `Ya8` gray+alpha caller): the u16
+  // colour outputs are the zero-extension of the binned u8 colour (the
+  // source is 8-bit, so its native-depth colour is the u8 colour widened —
+  // `rgba_u16 == rgba as u16`, exactly the area path's contract), NOT an
+  // independent native-u16 binning. So the caller passes no u16 colour
+  // stream (`rgba_stream_u16 == None`, `need_colour_u16 == false`: binning 2
+  // below never runs, no native-u16 scratch is sized) and the u8 binning
+  // emits the widened u16 outputs inline. Every other caller passes
+  // `false` and keeps the independent native-u16 binning byte-for-byte.
+  let zext_u16 = ZEXT_U16_COLOR && (rgb_u16.is_some() || rgba_u16.is_some());
+  debug_assert!(
+    !ZEXT_U16_COLOR || !need_colour_u16,
+    "ZEXT_U16_COLOR derives the u16 colour from the u8 binning, so no u16 colour stream is fed"
+  );
+  // The u8 colour stream's rgb / hsv outputs (and, under `ZEXT_U16_COLOR`,
+  // rgb_u16) need a packed RGB row (the per-mode binned colour with α
+  // dropped), sized to the out-width RGB row only when one of those is
+  // attached so an rgba-only sink never grows it.
+  let need_rgb_drop = rgb.is_some() || hsv.is_some() || (zext_u16 && rgb_u16.is_some());
 
   // Stage every source-width row and grow every out-width resolve scratch
   // before the first feed (all fallible growths precede it, keeping the
@@ -7228,6 +7272,15 @@ where
           dst.copy_from_slice(binned);
         }
       }
+      // `ZEXT_U16_COLOR`: rgba_u16 is the straight binned u8 RGBA
+      // zero-extended (`s as u16`), matching the area path's degenerate-YUVA
+      // u16 contract. Straight alpha only (this caller never premultiplies).
+      if zext_u16 && let Some(buf) = rgba_u16.as_deref_mut() {
+        let dst = &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow];
+        for (d, &s) in dst.iter_mut().zip(binned.iter()) {
+          *d = s as u16;
+        }
+      }
       if need_rgb_drop {
         let nrow = &mut rgb_drop[..3 * ow];
         if premult {
@@ -7237,6 +7290,14 @@ where
         }
         if let Some(buf) = rgb.as_deref_mut() {
           buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(nrow);
+        }
+        // `ZEXT_U16_COLOR`: rgb_u16 zero-extends the straight binned u8 RGB
+        // (α dropped) — the same `nrow` the u8 rgb / hsv use.
+        if zext_u16 && let Some(buf) = rgb_u16.as_deref_mut() {
+          let dst = &mut buf[oy * 3 * ow..(oy + 1) * 3 * ow];
+          for (d, &s) in dst.iter_mut().zip(nrow.iter()) {
+            *d = s as u16;
+          }
         }
         if let Some(hsv) = hsv.as_mut() {
           let (h, s, v) = hsv.hsv();
@@ -7509,8 +7570,11 @@ pub(super) fn packed_yuva444_resample<const SRC_BITS: u32>(
   // ([`packed_yuva444_filter_resample`]) so the area and filter arms run
   // the identical convert-then-resolve-then-emit tail (the only difference
   // is the stream kind built above). The native-max clamp inside is a value
-  // no-op for the area path (area binning never overshoots).
-  packed_yuva444_feed_emit::<_, _, _, SRC_BITS>(
+  // no-op for the area path (area binning never overshoots). The area path
+  // keeps the independent native-u16 binning (`ZEXT_U16_COLOR = false`): a
+  // genuine 16-bit packed YUVA (`Ayuv64`) needs it, and `Ya8`'s area path
+  // already zero-extends via [`packed_rgba_resample`], not this tail.
+  packed_yuva444_feed_emit::<_, _, _, SRC_BITS, false>(
     rgba_stream.as_mut(),
     rgba_stream_u16.as_mut(),
     luma_stream_u16.as_mut(),
@@ -7547,9 +7611,10 @@ pub(super) fn packed_yuva444_resample<const SRC_BITS: u32>(
 /// differs (signed-coefficient [`FilterStream`] instead of [`AreaStream`]).
 /// The staged RGBA feeds the same emit ([`packed_yuva444_feed_emit`]), so
 /// each resampled colour output equals the equivalent packed-RGBA filter
-/// resample of the converted pixels (`rgba` == the 8-bit `Rgba` filter,
-/// `rgba_u16` == the `Rgba64` filter clamped to the native max), and matches
-/// the area output up to the kernel weights.
+/// resample of the converted pixels (`rgba` == the 8-bit `Rgba` filter; on
+/// the independent-u16 path `rgba_u16` == the `Rgba64` filter clamped to the
+/// native max, on the `ZEXT_U16_COLOR` path `rgba_u16` == `rgba as u16` — see
+/// the const below), and matches the area output up to the kernel weights.
 ///
 /// **Straight alpha only.** PIL filters R, G, B, A independently with no
 /// premultiplication; a premultiplied packed YUVA source stays on the area
@@ -7600,6 +7665,32 @@ pub(super) fn packed_yuva444_resample<const SRC_BITS: u32>(
 /// is exercised only by the native-Y luma there; both clamps match the
 /// in-range area path exactly.)
 ///
+/// The const `ZEXT_U16_COLOR` selects how the u16 colour outputs
+/// (`rgb_u16` / `rgba_u16`) are derived:
+///
+/// - **`false` (every genuine-native-u16 caller — `Vuya` / `Vuyx` expose no
+///   u16 colour, and the high-bit `Ayuv64` / `Ya16` are truly 16-bit):** the
+///   shared emit bins an **independent** native-u16 colour stream
+///   (`convert_rgba_u16` → `rgba_filter_stream_u16`), so `rgba_u16` is the
+///   native-u16 filter, clamped to the native max — never a widening of the
+///   u8 colour. `Ya16` keeps this: it is genuinely 16-bit, so its native u16
+///   colour IS the native u16 filter (matching its area path).
+/// - **`true` (the packed 8-bit `Ya8` gray+alpha caller only):** `Ya8` is an
+///   8-bit source, so its native-depth colour is the binned **u8** colour
+///   zero-extended — `rgba_u16 == rgba as u16`, `rgb_u16 == rgb as u16`,
+///   byte-for-byte the contract `Ya8`'s area path
+///   ([`packed_rgba_resample`]) emits (it likewise zero-extends the binned
+///   u8, never an independent native-u16 bin). So **no** independent u16
+///   colour stream is created or fed (`need_colour_u16` is forced false; the
+///   `convert_rgba_u16` closure is dead and no native-u16 colour scratch is
+///   sized) — the u8 colour binning emits the widened u16 outputs inline.
+///   This makes the `Ya8` **filter** u16 colour byte-identical to its **area**
+///   u16 colour, and to `rgba as u16`, closing a filter-vs-area /
+///   u8-vs-u16 contract split (the independent u16 filter could differ from
+///   `rgba as u16` by up to 1 LSB near a signed-kernel overshoot, since the
+///   u8 and u16 streams clamp their H-pass intermediates differently). The
+///   const-asserts `SRC_BITS == 8`; only valid for an 8-bit source.
+///
 /// Atomic preflight (mirrors [`packed_yuva444_resample`]): a no-output call
 /// returns before any freeze; a single [`frozen_outputs_check`] over the
 /// full output set, then a single sequence check on whichever stream is fed
@@ -7608,9 +7699,21 @@ pub(super) fn packed_yuva444_resample<const SRC_BITS: u32>(
 /// later row the freeze runs first so a mid-frame output change trips
 /// `ResampleOutputsChanged`), then every stream and source-width scratch is
 /// created before the first feed — so a failure mutates no caller output.
-#[cfg(any(feature = "yuv-444-packed", feature = "yuva"))]
+///
+/// The `NATIVE_LUMA_U8` u8-luma path takes its native Y either from the
+/// caller's contiguous plane (`y_row_u8` non-empty — the planar YUVA callers,
+/// whose Y plane is already contiguous, zero copy) or, when `y_row_u8` is
+/// empty (the **packed** `Ya8` gray+alpha caller, whose Y is interleaved in
+/// `[Y, A]`), by de-interleaving into the caller's `y_u8_scratch` via
+/// `deinterleave_y_u8` — staged after the sequence check, so the staging
+/// allocation cannot mask an out-of-sequence first row.
+#[cfg(any(feature = "yuv-444-packed", feature = "yuva", feature = "gray"))]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn packed_yuva444_filter_resample<const SRC_BITS: u32, const NATIVE_LUMA_U8: bool>(
+pub(super) fn packed_yuva444_filter_resample<
+  const SRC_BITS: u32,
+  const NATIVE_LUMA_U8: bool,
+  const ZEXT_U16_COLOR: bool,
+>(
   rgba_filter_stream: &mut Option<crate::resample::FilterStream<u8>>,
   rgba_filter_stream_u16: &mut Option<crate::resample::FilterStream<u16>>,
   luma_filter_stream: &mut Option<crate::resample::FilterStream<u8>>,
@@ -7633,13 +7736,26 @@ pub(super) fn packed_yuva444_filter_resample<const SRC_BITS: u32, const NATIVE_L
   idx: usize,
   use_simd: bool,
   // The contiguous native-Y plane fed to the `u8` luma stream when
-  // `NATIVE_LUMA_U8` is set (the 8-bit planar YUVA callers). Ignored
-  // otherwise (the packed callers have no contiguous Y plane and route luma
-  // through `deinterleave_y` + the `u16` stream instead).
+  // `NATIVE_LUMA_U8` is set and the source has one (the 8-bit planar YUVA
+  // callers — zero copy). Empty for the packed `Ya8` caller (whose Y is
+  // interleaved): the u8-luma path then de-interleaves into `y_u8_scratch`
+  // via `deinterleave_y_u8` instead. Ignored entirely on the `u16`-luma path
+  // (`NATIVE_LUMA_U8 = false`, the packed `Vuya` / `Vuyx` / `Ya16` callers),
+  // which routes luma through `deinterleave_y` + the `u16` stream.
   y_row_u8: &[u8],
+  // Source-width `u8` staging for the packed `NATIVE_LUMA_U8` caller's native
+  // Y (`Ya8`): used only when `y_row_u8` is empty, sized and filled after the
+  // sequence check. `None` for every caller with a contiguous `y_row_u8` or
+  // on the `u16`-luma path.
+  y_u8_scratch: Option<&mut Vec<u8>>,
   convert_rgba_u8: impl FnOnce(&mut [u8]),
   convert_rgba_u16: impl FnOnce(&mut [u16]),
   deinterleave_y: impl FnOnce(&mut [u16]),
+  // De-interleaves the packed source's native Y into `y_u8_scratch` for the
+  // `NATIVE_LUMA_U8` u8-luma path when `y_row_u8` is empty (`Ya8`). A no-op
+  // for every caller that supplies a contiguous `y_row_u8` or rides the
+  // `u16`-luma stream.
+  deinterleave_y_u8: impl FnOnce(&mut [u8]),
 ) -> Result<(), MixedSinkerError> {
   const {
     assert!(
@@ -7653,8 +7769,23 @@ pub(super) fn packed_yuva444_filter_resample<const SRC_BITS: u32, const NATIVE_L
       "NATIVE_LUMA_U8 (the u8 native-Y luma stream) is only valid for an 8-bit source"
     )
   };
-  let need_colour_u8 = rgb.is_some() || rgba.is_some() || hsv.is_some();
-  let need_colour_u16 = rgb_u16.is_some() || rgba_u16.is_some();
+  const {
+    assert!(
+      !ZEXT_U16_COLOR || SRC_BITS == 8,
+      "ZEXT_U16_COLOR (u16 colour = zero-extended u8 colour) is only valid for an 8-bit source"
+    )
+  };
+  // `ZEXT_U16_COLOR` (the packed 8-bit `Ya8` gray+alpha caller): the source
+  // is 8-bit, so its native-depth colour is the binned u8 colour
+  // zero-extended (`rgba_u16 == rgba as u16`) — matching the area path's
+  // contract exactly — NOT an independent native-u16 binning. So the u16
+  // colour outputs ride the u8 colour stream (the u8 binning emits them
+  // widened inline in the shared emit) and the independent native-u16 stream
+  // is never created or fed. Every other caller has `ZEXT_U16_COLOR == false`
+  // and keeps the independent native-u16 binning byte-for-byte.
+  let zext_u16_color = ZEXT_U16_COLOR && (rgb_u16.is_some() || rgba_u16.is_some());
+  let need_colour_u8 = rgb.is_some() || rgba.is_some() || hsv.is_some() || zext_u16_color;
+  let need_colour_u16 = (rgb_u16.is_some() || rgba_u16.is_some()) && !ZEXT_U16_COLOR;
   let need_luma = luma.is_some() || luma_u16.is_some();
 
   let (fh, fv) = (
@@ -7760,6 +7891,27 @@ pub(super) fn packed_yuva444_filter_resample<const SRC_BITS: u32, const NATIVE_L
     }
   }
 
+  // Resolve the `NATIVE_LUMA_U8` native-Y source in the preflight (before any
+  // feed, so its allocation stays in the atomic preflight): the caller's
+  // contiguous plane when supplied (planar YUVA, zero copy), else the packed
+  // `Ya8` caller's interleaved Y de-interleaved into `y_u8_scratch`. Held and
+  // fed after the colour emit below.
+  let native_y_u8: Option<&[u8]> = if NATIVE_LUMA_U8 && need_luma {
+    if y_row_u8.is_empty() {
+      let scratch = source_luma_scratch(
+        y_u8_scratch.expect("packed NATIVE_LUMA_U8 caller supplies a u8 Y scratch"),
+        w,
+        plan,
+      )?;
+      deinterleave_y_u8(scratch);
+      Some(&scratch[..w])
+    } else {
+      Some(&y_row_u8[..w])
+    }
+  } else {
+    None
+  };
+
   // Stage + feed + emit the colour outputs. Straight alpha only
   // (`premult = false`); shared with the area path so the
   // convert-then-resolve-then-emit tail is identical (the only difference is
@@ -7769,7 +7921,7 @@ pub(super) fn packed_yuva444_filter_resample<const SRC_BITS: u32, const NATIVE_L
   // the `u8` stream; for the packed path the shared emit owns the `u16` luma
   // binning.
   if NATIVE_LUMA_U8 {
-    packed_yuva444_feed_emit::<_, _, crate::resample::FilterStream<u16>, SRC_BITS>(
+    packed_yuva444_feed_emit::<_, _, crate::resample::FilterStream<u16>, SRC_BITS, ZEXT_U16_COLOR>(
       rgba_filter_stream.as_mut(),
       rgba_filter_stream_u16.as_mut(),
       None,
@@ -7795,19 +7947,20 @@ pub(super) fn packed_yuva444_filter_resample<const SRC_BITS: u32, const NATIVE_L
       deinterleave_y,
     )?;
 
-    // Native-Y luma on the `u8` stream — the contiguous Y plane is fed
-    // directly (no scratch / no `deinterleave_y`), so the only fallible step
-    // was the stream creation above, keeping the call atomic. The emit
-    // mirrors the merged no-alpha planar YUV path exactly: `luma` copies each
-    // finalized `u8` Y row, `luma_u16` zero-extends it. An 8-bit `u8` stream
-    // finalizes to the full `u8` range — the native range — so no clamp is
-    // needed (unlike the `u16` luma path's native-max clip).
-    if need_luma {
+    // Native-Y luma on the `u8` stream — the Y row resolved in the preflight
+    // (the caller's contiguous plane, or the de-interleaved packed Y) is fed
+    // here, so the only fallible step was the stream creation + scratch sizing
+    // above, keeping the call atomic. The emit mirrors the merged no-alpha
+    // planar YUV path exactly: `luma` copies each finalized `u8` Y row,
+    // `luma_u16` zero-extends it. An 8-bit `u8` stream finalizes to the full
+    // `u8` range — the native range — so no clamp is needed (unlike the `u16`
+    // luma path's native-max clip).
+    if let Some(y_src) = native_y_u8 {
       let stream = luma_filter_stream
         .as_mut()
         .expect("created in the preflight when need_luma");
       let ow = plan.out_w();
-      stream.feed_row(idx, &y_row_u8[..w], use_simd, |oy, out_row| {
+      stream.feed_row(idx, y_src, use_simd, |oy, out_row| {
         if let Some(buf) = luma.as_deref_mut() {
           buf[oy * ow..(oy + 1) * ow].copy_from_slice(out_row);
         }
@@ -7820,7 +7973,7 @@ pub(super) fn packed_yuva444_filter_resample<const SRC_BITS: u32, const NATIVE_L
     }
     Ok(())
   } else {
-    packed_yuva444_feed_emit::<_, _, _, SRC_BITS>(
+    packed_yuva444_feed_emit::<_, _, _, SRC_BITS, ZEXT_U16_COLOR>(
       rgba_filter_stream.as_mut(),
       rgba_filter_stream_u16.as_mut(),
       luma_filter_stream_u16.as_mut(),

@@ -277,7 +277,7 @@ impl<R> PixelSink for MixedSinker<'_, Vuya, R> {
             |dst| vuya_to_luma_u16_row(packed, dst, w, use_simd),
           )
         }
-        crate::resample::SpanKind::Filter => packed_yuva444_filter_resample::<BITS, false>(
+        crate::resample::SpanKind::Filter => packed_yuva444_filter_resample::<BITS, false, false>(
           rgba_filter_stream,
           rgba_filter_stream_u16,
           // Packed `Vuya` never uses the u8 native-Y luma stream
@@ -302,13 +302,16 @@ impl<R> PixelSink for MixedSinker<'_, Vuya, R> {
           idx,
           use_simd,
           // Packed `Vuya` routes luma through `deinterleave_y` + the u16
-          // stream (no contiguous native-Y plane), so the u8-luma input is
-          // unused.
+          // stream (no contiguous native-Y plane), so the u8-luma input and
+          // its de-interleave scratch are unused.
           &[],
+          None,
           |dst| vuya_to_rgba_row(packed, dst, w, matrix, full_range, use_simd),
           // `Vuya` has no u16 colour outputs, so this closure is never called.
           |_dst: &mut [u16]| {},
           |dst| vuya_to_luma_u16_row(packed, dst, w, use_simd),
+          // u16-luma path, so this u8 de-interleave is never called.
+          |_dst: &mut [u8]| {},
         ),
       };
     }
