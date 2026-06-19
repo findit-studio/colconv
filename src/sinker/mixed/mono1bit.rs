@@ -7,11 +7,22 @@
 //! Y to R=G=B (alpha forced opaque), `with_luma` copies it,
 //! `with_luma_u16` zero-extends it, and `with_hsv` emits H=0, S=0, V=Y
 //! (achromatic convention). There is no chroma matrix and no palette, so
-//! the area-resampled path bins the **expanded** luma plane directly via
-//! a single-channel [`AreaStream<u8>`](crate::resample::AreaStream) and
-//! derives every attached output from each finalized binned luma row —
-//! identical to the direct path with the binned mean standing in for the
-//! per-pixel expanded value.
+//! a resampled path expands the bits to a source-width 0/255 luma plane
+//! and resamples that single plane, deriving every attached output from
+//! each finalized resampled luma row — identical to the direct path with
+//! the resampled value standing in for the per-pixel expanded value.
+//!
+//! An **area** plan bins the expanded luma through a single-channel
+//! [`AreaStream<u8>`](crate::resample::AreaStream); a **filter** plan
+//! resamples it through the signed-coefficient single-channel
+//! [`FilterStream<u8>`](crate::resample::FilterStream) (the filter twin of
+//! the bin). Both feed the **same** emit, so the filter output matches the
+//! area output up to the kernel weights. Filtering a bilevel image to
+//! continuous grayscale *is* antialiasing it: a hard 0/255 edge resampled
+//! with a Triangle/Catmull-Rom/Lanczos window becomes a smooth gray ramp.
+//! The expanded luma spans the full `u8` range (0..=255), so no
+//! native-depth clamp applies — the stream's `0..=255` clamp *is* the
+//! native range.
 
 use super::{
   InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange, RowShapeMismatch,
@@ -19,21 +30,34 @@ use super::{
 };
 use crate::{
   PixelSink,
-  resample::{AreaStream, OutOfSequenceRow, ResampleError, ResamplePlan},
+  resample::{
+    AreaStream, FilterStream, OutOfSequenceRow, ResampleError, ResamplePlan, RowResampler,
+  },
   row,
   source::{Monoblack, MonoblackRow, MonoblackSink, Monowhite, MonowhiteRow, MonowhiteSink},
 };
 use mediaframe::source::HsvFrameMut;
 
-/// Fused area-downscale tail shared by Monoblack and Monowhite. The
-/// closure `expand_luma` fills a source-width `u8` scratch with the
-/// expanded 0/255 luma of the current 1-bit source row (the same
-/// `mono*_to_luma_row` kernel the direct path uses); that luma plane is
-/// binned through a single-channel area stream, and every attached
-/// output is derived from each finalized binned luma row — a copy for
-/// luma, a zero-extend for luma_u16, a broadcast to R=G=B for the RGB
-/// outputs (alpha forced opaque), and H=0/S=0/V=Y for HSV — mirroring
-/// the direct mono kernels exactly.
+/// Fused resample tail shared by Monoblack and Monowhite, for both an
+/// **area** and a **filter** plan. The closure `expand_luma` fills a
+/// source-width `u8` scratch with the expanded 0/255 luma of the current
+/// 1-bit source row (the same `mono*_to_luma_row` kernel the direct path
+/// uses); that single luma plane is resampled — binned through the
+/// single-channel [`AreaStream<u8>`] on an area plan, or filtered through
+/// the single-channel [`FilterStream<u8>`] (the filter twin of the bin) on
+/// a filter plan — and every attached output is derived from each
+/// finalized resampled luma row: a copy for luma, a zero-extend for
+/// luma_u16, a broadcast to R=G=B for the RGB outputs (alpha forced
+/// opaque), and H=0/S=0/V=Y for HSV — mirroring the direct mono kernels
+/// exactly. The expanded luma is full-range `u8` (0..=255), so no
+/// native-depth clamp applies on either path.
+///
+/// The two plans differ only in the resampler kind built here; the
+/// expand-then-resample staging and per-output emit are identical
+/// (factored into [`mono_luma_feed_emit`] behind
+/// [`RowResampler`](crate::resample::RowResampler), which both stream kinds
+/// implement), so the filter output matches the area output up to the
+/// kernel weights and the area path stays bit-identical.
 ///
 /// Atomic preflight: the output set is frozen and stream sequencing
 /// checked **before** any scratch allocation or stream feed, so a
@@ -42,6 +66,7 @@ use mediaframe::source::HsvFrameMut;
 #[allow(clippy::too_many_arguments)]
 fn mono_luma_resample(
   luma_stream: &mut Option<AreaStream<u8>>,
+  luma_filter_stream: &mut Option<FilterStream<u8>>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -57,13 +82,7 @@ fn mono_luma_resample(
   use_simd: bool,
   expand_luma: impl FnOnce(&mut [u8]),
 ) -> Result<(), MixedSinkerError> {
-  // Area-only sink (Mono1bit is not routed to the filter path): reject a
-  // filter plan before any work, so the plan's empty area spans never
-  // reach an area stream.
-  if plan.kind().is_filter() {
-    return Err(plan.unsupported_filter().into());
-  }
-  let ow = plan.out_w();
+  let is_filter = plan.kind().is_filter();
   let any_output = luma.is_some()
     || luma_u16.is_some()
     || rgb.is_some()
@@ -84,8 +103,15 @@ fn mono_luma_resample(
   // attach never spins a fresh row-0 stream): an out-of-sequence row is
   // rejected before the freeze, so a rejected row stores no snapshot that
   // would poison a retry, and before any allocation, so AllocationFailed
-  // never masks OutOfSequenceRow.
-  let expected = luma_stream.as_ref().map_or(0, |stream| stream.next_y());
+  // never masks OutOfSequenceRow. The plan kind is fixed per sink, so only
+  // one of the two streams is ever fed.
+  let expected = if is_filter {
+    luma_filter_stream
+      .as_ref()
+      .map_or(0, |stream| stream.next_y())
+  } else {
+    luma_stream.as_ref().map_or(0, |stream| stream.next_y())
+  };
   if expected != idx {
     return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
       OutOfSequenceRow::new(expected, idx),
@@ -110,23 +136,103 @@ fn mono_luma_resample(
     idx,
   )?;
 
-  if luma_stream.is_none() {
-    *luma_stream = Some(AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      1,
-    )?);
+  // Build the per-kind stream before any scratch staging (raising
+  // OutOfSequenceRow above ran before this allocation). The expanded luma
+  // spans the full `u8` range, so neither stream needs a native-depth
+  // clamp. Stage + feed + emit is shared via [`mono_luma_feed_emit`].
+  if is_filter {
+    let (fh, fv) = (
+      plan
+        .filter_h()
+        .expect("filter plan carries horizontal windows"),
+      plan
+        .filter_v()
+        .expect("filter plan carries vertical windows"),
+    );
+    if luma_filter_stream.is_none() {
+      *luma_filter_stream = Some(FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 1)?);
+    }
+    let stream = luma_filter_stream.as_mut().expect("created above");
+    mono_luma_feed_emit(
+      stream,
+      rgb,
+      rgba,
+      rgb_u16,
+      rgba_u16,
+      luma,
+      luma_u16,
+      hsv,
+      scratch,
+      w,
+      plan,
+      idx,
+      use_simd,
+      expand_luma,
+    )
+  } else {
+    if luma_stream.is_none() {
+      *luma_stream = Some(AreaStream::new(
+        plan.h(),
+        plan.v(),
+        plan.src_w(),
+        plan.src_h(),
+        1,
+      )?);
+    }
+    let stream = luma_stream.as_mut().expect("created above");
+    mono_luma_feed_emit(
+      stream,
+      rgb,
+      rgba,
+      rgb_u16,
+      rgba_u16,
+      luma,
+      luma_u16,
+      hsv,
+      scratch,
+      w,
+      plan,
+      idx,
+      use_simd,
+      expand_luma,
+    )
   }
+}
 
-  // Expand the 1-bit source row to source-width 0/255 luma in the shared
-  // scratch (fallible growth runs before the feed, keeping the call
-  // atomic), then bin it through the single-channel stream.
+/// Shared stage-then-feed tail for the mono resample, used by both the area
+/// and filter arms of [`mono_luma_resample`]. The two paths differ only in
+/// the resampler kind (`stream`), so the expand-then-resample staging and
+/// the per-output emit are identical and live here behind the
+/// [`RowResampler`](crate::resample::RowResampler) trait — keeping the emit
+/// byte-identical between the arms is what makes the filter output match the
+/// area output up to the kernel weights, and the area path bit-identical to
+/// before this routing.
+///
+/// Expands the 1-bit source row to source-width 0/255 luma in the shared
+/// scratch (fallible growth runs before the feed, keeping the call atomic),
+/// then resamples it through the single-channel `stream`, deriving every
+/// attached output from each finalized resampled luma row.
+#[allow(clippy::too_many_arguments)]
+fn mono_luma_feed_emit<S: RowResampler<u8>>(
+  stream: &mut S,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  rgb_u16: &mut Option<&mut [u16]>,
+  rgba_u16: &mut Option<&mut [u16]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  scratch: &mut std::vec::Vec<u8>,
+  w: usize,
+  plan: &ResamplePlan,
+  idx: usize,
+  use_simd: bool,
+  expand_luma: impl FnOnce(&mut [u8]),
+) -> Result<(), MixedSinkerError> {
+  let ow = plan.out_w();
   let luma_row = source_luma_scratch(scratch, w, plan)?;
   expand_luma(luma_row);
 
-  let stream = luma_stream.as_mut().expect("created above");
   stream.feed_row(idx, luma_row, use_simd, |oy, out_row| {
     if let Some(buf) = luma.as_deref_mut() {
       buf[oy * ow..(oy + 1) * ow].copy_from_slice(out_row);
@@ -302,6 +408,9 @@ impl<R> PixelSink for MixedSinker<'_, Monoblack, R> {
     if let Some(stream) = self.luma_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.luma_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -338,6 +447,7 @@ impl<R> PixelSink for MixedSinker<'_, Monoblack, R> {
       hsv,
       plan,
       luma_stream,
+      luma_filter_stream,
       resample_outputs,
       rgb_scratch,
       ..
@@ -345,13 +455,16 @@ impl<R> PixelSink for MixedSinker<'_, Monoblack, R> {
 
     // Non-identity plan: expand the 1-bit source row to source-width
     // 0/255 luma (the same Monoblack→luma kernel the direct path uses),
-    // bin that luma plane, and derive every output from each finalized
-    // binned luma row. The mean is of the EXPANDED luma — expand then
-    // bin, the resample oracle for an achromatic source.
+    // resample that luma plane (area-bin or filter, per the plan kind), and
+    // derive every output from each finalized resampled luma row. The
+    // resample is of the EXPANDED luma — expand then resample, the resample
+    // oracle for an achromatic source; a filter window over the 0/255 edge
+    // is the desired antialiasing (a smooth gray ramp).
     if let Some(plan) = plan.as_ref() {
       let data = row.data();
       return mono_luma_resample(
         luma_stream,
+        luma_filter_stream,
         resample_outputs,
         rgb,
         rgba,
@@ -548,6 +661,9 @@ impl<R> PixelSink for MixedSinker<'_, Monowhite, R> {
     if let Some(stream) = self.luma_stream.as_mut() {
       stream.reset();
     }
+    if let Some(stream) = self.luma_filter_stream.as_mut() {
+      stream.reset();
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -584,17 +700,19 @@ impl<R> PixelSink for MixedSinker<'_, Monowhite, R> {
       hsv,
       plan,
       luma_stream,
+      luma_filter_stream,
       resample_outputs,
       rgb_scratch,
       ..
     } = self;
 
-    // Non-identity plan: same expand-then-bin oracle as Monoblack, with
-    // Monowhite's inverted polarity baked into the luma kernel.
+    // Non-identity plan: same expand-then-resample oracle as Monoblack,
+    // with Monowhite's inverted polarity baked into the luma kernel.
     if let Some(plan) = plan.as_ref() {
       let data = row.data();
       return mono_luma_resample(
         luma_stream,
+        luma_filter_stream,
         resample_outputs,
         rgb,
         rgba,
