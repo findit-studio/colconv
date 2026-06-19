@@ -194,6 +194,12 @@ mod resample_packed_yuv_8bit_filter;
 // twin-parity / oracle suites) only exist when `yuv-planar` is also compiled.
 #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
 mod resample_packed_yuv_8bit_native;
+// Packed 4:4:4 native fast-tier suites (Vuyx 8-bit; V410 / Xv36 high-bit). The
+// native tier reuses the planar join, so it only exists under `yuv-planar` too.
+#[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+mod resample_packed_yuv444_8bit_native;
+#[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+mod resample_packed_yuv444_hb_native;
 #[cfg(feature = "rgb")]
 mod resample_padding_byte;
 #[cfg(feature = "mono")]

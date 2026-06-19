@@ -148,6 +148,7 @@ fn xv36_uniform_gray_downscale_leaves_colour_outputs_unchanged() {
     let mut sink =
       MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap()
         .with_rgba(&mut rgba)
@@ -213,6 +214,7 @@ fn xv36_downscale_rgb_u16_is_native_depth_block_mean() {
     let mut sink =
       MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        .with_native(false)
         .with_rgb_u16(&mut rgb_u16)
         .unwrap();
     xv36_to(&xv36_frame(&packed), FR, M, &mut sink).unwrap();
@@ -240,6 +242,7 @@ fn xv36_downscale_luma_is_native_depth_block_mean_of_y() {
     let mut sink =
       MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        .with_native(false)
         .with_luma(&mut luma)
         .unwrap()
         .with_luma_u16(&mut luma_u16)
@@ -283,6 +286,7 @@ fn xv36_all_outputs_match_their_own_native_depth_block_mean() {
     let mut sink =
       MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap()
         .with_rgba(&mut rgba)
@@ -350,6 +354,7 @@ fn xv36_luma_taken_from_native_y_under_saturated_chroma() {
     let mut sink =
       MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        .with_native(false)
         .with_luma_u16(&mut luma_u16)
         .unwrap();
     xv36_to(&xv36_frame(&packed), FR, M, &mut sink).unwrap();
@@ -382,6 +387,7 @@ fn xv36_resample_le_be_parity() {
       let mut sink =
         MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
           .unwrap()
+          .with_native(false)
           .with_simd(simd)
           .with_rgb(&mut le_rgb)
           .unwrap()
@@ -403,6 +409,7 @@ fn xv36_resample_le_be_parity() {
         AreaResampler::to(OUT, OUT),
       )
       .unwrap()
+      .with_native(false)
       .with_simd(simd)
       .with_rgb(&mut be_rgb)
       .unwrap()
@@ -450,6 +457,7 @@ fn xv36_identity_plan_matches_new_sink() {
     let mut sink =
       MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(SRC, SRC))
         .unwrap()
+        .with_native(false)
         .with_rgb_u16(&mut via_area)
         .unwrap();
     xv36_to(&xv36_frame(&packed), FR, M, &mut sink).unwrap();
@@ -489,6 +497,7 @@ fn xv36_resets_streams_across_frames() {
     let mut sink =
       MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        .with_native(false)
         .with_luma_u16(&mut luma_u16)
         .unwrap()
         .with_rgb_u16(&mut rgb_u16)
@@ -518,6 +527,7 @@ fn xv36_out_of_sequence_first_row_rejected_before_allocation() {
   let mut sink =
     MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
       .unwrap()
+      .with_native(false)
       .with_luma_u16(&mut luma_u16)
       .unwrap()
       .with_rgb(&mut rgb)
@@ -572,6 +582,7 @@ fn xv36_rejects_mid_frame_output_change() {
   let mut sink =
     MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
       .unwrap()
+      .with_native(false)
       .with_rgb_u16(&mut rgb_u16)
       .unwrap();
   sink.begin_frame(SRC as u32, SRC as u32).unwrap();

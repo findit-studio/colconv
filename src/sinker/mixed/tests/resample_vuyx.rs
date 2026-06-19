@@ -132,6 +132,7 @@ fn vuyx_uniform_gray_downscale_leaves_colour_unchanged() {
     let mut sink =
       MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap()
         .with_rgba(&mut rgba)
@@ -171,6 +172,7 @@ fn vuyx_all_outputs_match_their_own_block_mean() {
     let mut sink =
       MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap()
         .with_rgba(&mut rgba)
@@ -233,6 +235,7 @@ fn vuyx_luma_taken_from_native_y_under_saturated_chroma() {
     let mut sink =
       MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        .with_native(false)
         .with_luma(&mut luma)
         .unwrap()
         .with_luma_u16(&mut luma_u16)
@@ -267,6 +270,7 @@ fn vuyx_limited_range_luma_is_native_y_not_rgb_scaled() {
     let mut sink =
       MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        .with_native(false)
         .with_luma(&mut luma)
         .unwrap();
     vuyx_to(&vuyx_frame(&packed), false, M, &mut sink).unwrap();
@@ -299,6 +303,7 @@ fn vuyx_fractional_ratio_matches_direct_then_bin() {
     let mut sink =
       MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(F, F))
         .unwrap()
+        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap();
     vuyx_to(&vuyx_frame(&packed), FR, M, &mut sink).unwrap();
@@ -316,6 +321,7 @@ fn vuyx_fractional_ratio_matches_direct_then_bin() {
       AreaResampler::to(F, F),
     )
     .unwrap()
+    .with_native(false)
     .with_rgb(&mut rgb_ref)
     .unwrap();
     rgb24_to(&rsrc, FR, M, &mut sink).unwrap();
@@ -340,6 +346,7 @@ fn vuyx_identity_plan_matches_direct() {
     let mut sink =
       MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(SRC, SRC))
         .unwrap()
+        .with_native(false)
         .with_rgb(&mut via_area)
         .unwrap();
     vuyx_to(&vuyx_frame(&packed), FR, M, &mut sink).unwrap();
@@ -383,6 +390,7 @@ fn vuyx_resets_streams_across_frames() {
     let mut sink =
       MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        .with_native(false)
         .with_luma_u16(&mut luma_u16)
         .unwrap();
     vuyx_to(&vuyx_frame(&p1), FR, M, &mut sink).unwrap();
@@ -406,6 +414,7 @@ fn vuyx_out_of_sequence_first_row_rejected_before_allocation() {
   let mut sink =
     MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
       .unwrap()
+      .with_native(false)
       .with_rgb(&mut rgb)
       .unwrap()
       .with_luma_u16(&mut luma_u16)
@@ -442,6 +451,7 @@ fn vuyx_rejects_mid_frame_output_change() {
   let mut sink =
     MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
       .unwrap()
+      .with_native(false)
       .with_rgb(&mut rgb)
       .unwrap();
   sink.begin_frame(SRC as u32, SRC as u32).unwrap();
@@ -472,6 +482,7 @@ fn vuyx_resample_simd_matches_scalar() {
     let mut sink =
       MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        .with_native(false)
         .with_simd(simd)
         .with_rgb(&mut rgb)
         .unwrap()
