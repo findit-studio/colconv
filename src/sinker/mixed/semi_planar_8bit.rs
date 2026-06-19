@@ -31,7 +31,12 @@ use super::{
 use crate::{PixelSink, row::*, source::*};
 
 #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
-use super::{HsvFrameMut, NativeRouteChanged, planar_8bit::yuv420p_process_native};
+use super::{
+  HsvFrameMut, NativeRouteChanged,
+  planar_8bit::{
+    NativePlanarYuv, native_planar_preflight, yuv_planar_process_native, yuv420p_process_native,
+  },
+};
 #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
 use crate::{
   ColorMatrix,
@@ -224,6 +229,143 @@ fn semi_planar_process_native(
     idx,
     w,
     h,
+    use_simd,
+  )
+}
+
+/// Native fast-tier decimator for the NON-4:2:0 semi-planar 8-bit family
+/// ([`Nv16`](crate::source::Nv16) 4:2:2 / [`Nv24`](crate::source::Nv24)
+/// 4:4:4 UV / [`Nv42`](crate::source::Nv42) 4:4:4 VU): the non-4:2:0
+/// sibling of [`semi_planar_process_native`]. De-interleaves the packed
+/// chroma row into the sink's U / V scratch, then reuses the planar twin's
+/// non-4:2:0 join verbatim ([`yuv_planar_process_native`]) — so every output
+/// is byte-identical to a [`Yuv422p`](crate::source::Yuv422p) /
+/// [`Yuv444p`](crate::source::Yuv444p) native conversion of those planes,
+/// and within ±1 LSB of the semi-planar row-stage tier (the conversion-order
+/// rounding caveat the planar tiers already carry).
+///
+/// `chroma_w` is the chroma plane width per row (`w / 2` for 4:2:2, `w` for
+/// 4:4:4); the packed chroma row is `2 * chroma_w` bytes. Unlike the 4:2:0
+/// wrapper the chroma cadence is one row per Y row (`chroma_vsub = 1`), so
+/// the de-interleave runs on EVERY colour row. `swap_uv = false` reads
+/// `U0 V0 U1 V1 …` (NV16 / NV24); `swap_uv = true` reads `V0 U0 …` (NV42) —
+/// the SAME swapped-order split the NV21 4:2:0 path uses.
+///
+/// Atomicity mirrors [`semi_planar_process_native`]: the join's COMPLETE
+/// pre-feed rejection preflight runs FIRST (via [`native_planar_preflight`]),
+/// before the fallible U / V scratch grow, so a rejected row returns its
+/// deterministic typed error (`OutOfSequenceRow` / `ResampleOutputsChanged`),
+/// never `AllocationFailed`, and grows no sink state; the de-interleave
+/// writes only the private scratch, so no caller output is touched until the
+/// join's own preflight (re-run inside the delegate) clears.
+#[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+#[allow(clippy::too_many_arguments)]
+fn semi_planar_process_native_non420(
+  plan: &ResamplePlan,
+  native_planar: &mut Option<NativePlanarYuv>,
+  u_scratch: &mut std::vec::Vec<u8>,
+  v_scratch: &mut std::vec::Vec<u8>,
+  resample_outputs: &mut Option<super::FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgb_scratch: &mut std::vec::Vec<u8>,
+  y_row: &[u8],
+  chroma_uv: &[u8],
+  chroma_w: usize,
+  swap_uv: bool,
+  matrix: ColorMatrix,
+  full_range: bool,
+  idx: usize,
+  w: usize,
+  h: usize,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  let need_luma = luma.is_some() || luma_u16.is_some();
+  let need_color = rgb.is_some() || rgba.is_some() || hsv.is_some();
+
+  // Run the join's COMPLETE pre-feed rejection preflight FIRST — before the
+  // U / V de-interleave scratch grow — so EVERY rejection case (out-of-
+  // sequence first colour row OR mid-frame output change) returns its
+  // deterministic typed error, never AllocationFailed under allocation
+  // pressure, and leaves the scratch untouched (the crate's
+  // preflight-atomicity contract). `Ok(false)` is the no-output no-op:
+  // return without reserving. `yuv_planar_process_native` re-runs this
+  // identical preflight harmlessly, keeping a single source of truth.
+  if !native_planar_preflight(
+    native_planar,
+    resample_outputs,
+    rgb,
+    rgba,
+    luma,
+    luma_u16,
+    hsv,
+    idx,
+    need_luma,
+    need_color,
+  )? {
+    return Ok(());
+  }
+
+  // De-interleave the packed chroma row into the U / V scratch on every
+  // colour row (chroma_vsub == 1: a chroma row per Y row, vs the 4:2:0
+  // even-only cadence). The split writes only this private scratch, so no
+  // caller output is touched until the join's own preflight (re-run inside
+  // the delegate below) clears. On luma-only / no-colour rows the join never
+  // reads chroma, so the scratch is left as-is and the join gets empty
+  // U / V slices.
+  if need_color {
+    for scratch in [&mut *u_scratch, &mut *v_scratch] {
+      if scratch.len() < chroma_w {
+        scratch
+          .try_reserve_exact(chroma_w - scratch.len())
+          .map_err(|_| {
+            MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+              w,
+              h,
+              plan.out_w(),
+              plan.out_h(),
+            )))
+          })?;
+        scratch.resize(chroma_w, 0);
+      }
+    }
+    // NV16 / NV24 chroma is `U V U V …` (U at even byte), NV42 is
+    // `V U V U …` — mirror the NV21 swapped-order split.
+    let (u_off, v_off) = if swap_uv { (1, 0) } else { (0, 1) };
+    for (i, pair) in chroma_uv.chunks_exact(2).enumerate() {
+      u_scratch[i] = pair[u_off];
+      v_scratch[i] = pair[v_off];
+    }
+  }
+
+  let (u_plane, v_plane): (&[u8], &[u8]) = if need_color {
+    (&u_scratch[..chroma_w], &v_scratch[..chroma_w])
+  } else {
+    (&[], &[])
+  };
+  yuv_planar_process_native(
+    plan,
+    native_planar,
+    resample_outputs,
+    rgb,
+    rgba,
+    luma,
+    luma_u16,
+    hsv,
+    rgb_scratch,
+    y_row,
+    u_plane,
+    v_plane,
+    matrix,
+    full_range,
+    idx,
+    w,
+    h,
+    1,
+    || ResamplePlan::area(chroma_w, h, plan.out_w(), plan.out_h()),
     use_simd,
   )
 }
@@ -726,6 +868,18 @@ impl<R> PixelSink for MixedSinker<'_, Nv16, R> {
     if let Some(stream) = self.luma_filter_stream.as_mut() {
       stream.reset();
     }
+    #[cfg(feature = "yuv-planar")]
+    if let Some(native) = self.native_planar.as_mut() {
+      native.reset();
+    }
+    // New frame: clear the per-frame frozen native/row-stage route so the
+    // next frame may pick either tier; a mid-frame flip stays rejected.
+    // Gated to the native tier's feature (the planar join the native tier
+    // reuses is compiled only under `yuv-planar`).
+    #[cfg(feature = "yuv-planar")]
+    {
+      self.frozen_native_route = None;
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -776,41 +930,42 @@ impl<R> PixelSink for MixedSinker<'_, Nv16, R> {
       rgb_filter_stream,
       luma_filter_stream,
       resample_outputs,
+      #[cfg(feature = "yuv-planar")]
+      native,
+      #[cfg(feature = "yuv-planar")]
+      native_planar,
+      #[cfg(feature = "yuv-planar")]
+      semi_planar_u_half,
+      #[cfg(feature = "yuv-planar")]
+      semi_planar_v_half,
+      #[cfg(feature = "yuv-planar")]
+      frozen_native_route,
       ..
     } = self;
 
-    // Non-identity plan: fused resize (matches the Yuv422p twin). Bin Y for
-    // luma; for colour, convert the interleaved source row to RGB with the
-    // fused `nv12_to_rgb_row` kernel the identity path reuses for 4:2:2 (one
-    // chroma row per Y row), then resample it. The `Area` arm bins the
-    // converted RGB / native Y; the `Filter` arm filter-resamples them
-    // through the merged engine (the same convert-then-resample tail). NV16
-    // has no native fast tier, so the plan kind is the only branch.
+    // Non-identity plan. A `Filter` plan routes to the filter resampler
+    // (branched first, below). Otherwise, when the native tier is enabled
+    // (and the planar join it reuses is compiled in), bin the native
+    // Y / U / V planes at output resolution and convert once per output row,
+    // de-interleaving the NV16 chroma row into U / V scratch first (4:2:2 ->
+    // chroma `w/2 x h`). Otherwise (or under `with_native(false)`) take the
+    // row-stage tier (matches the Yuv422p twin): bin Y for luma; for colour,
+    // convert the interleaved source row to RGB with the fused
+    // `nv12_to_rgb_row` kernel the identity path reuses for 4:2:2, then bin
+    // the RGB row.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let convert_rgb = |scratch: &mut [u8]| {
         nv12_to_rgb_row(row.y(), row.uv(), scratch, w, matrix, full_range, use_simd);
       };
-      return match plan.kind() {
-        crate::resample::SpanKind::Area => planar_dual_resample(
-          luma_stream,
-          rgb_stream,
-          resample_outputs,
-          rgb,
-          rgba,
-          luma,
-          luma_u16,
-          hsv,
-          rgb_scratch,
-          row.y(),
-          w,
-          plan,
-          idx,
-          use_simd,
-          convert_rgb,
-        ),
-        crate::resample::SpanKind::Filter => planar_dual_filter_resample(
+      // A `Filter` plan routes to the filter resampler. The native fast tier
+      // is area-only and never sees a filter plan; the per-sink plan kind is
+      // fixed at construction, so a filter sink bypasses the native/row-stage
+      // route machinery entirely. Branched FIRST, before the native-route
+      // guard below.
+      if plan.kind().is_filter() {
+        return planar_dual_filter_resample(
           luma_filter_stream,
           rgb_filter_stream,
           resample_outputs,
@@ -826,8 +981,83 @@ impl<R> PixelSink for MixedSinker<'_, Nv16, R> {
           idx,
           use_simd,
           convert_rgb,
-        ),
-      };
+        );
+      }
+      // Whether this call carries any output — the EXACT set both tiers'
+      // preflight tests. The route freezes only on an output-bearing row a
+      // tier ACCEPTS; a no-output call must not freeze.
+      #[cfg(feature = "yuv-planar")]
+      let need_output =
+        luma.is_some() || luma_u16.is_some() || rgb.is_some() || rgba.is_some() || hsv.is_some();
+      // Reject a mid-frame native/row-stage route flip BEFORE either tier's
+      // dispatch (see the Nv12 impl above for the full CHECK-before /
+      // SET-after rationale; both gate on `need_output`).
+      #[cfg(feature = "yuv-planar")]
+      if need_output
+        && let Some(frozen) = *frozen_native_route
+        && frozen != *native
+      {
+        return Err(MixedSinkerError::NativeRouteChanged(
+          NativeRouteChanged::new(idx),
+        ));
+      }
+      #[cfg(feature = "yuv-planar")]
+      if *native {
+        // Dispatch first; freeze the route to native ONLY after the call
+        // returns Ok on an output-bearing row.
+        semi_planar_process_native_non420(
+          plan,
+          native_planar,
+          semi_planar_u_half,
+          semi_planar_v_half,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          rgb_scratch,
+          row.y(),
+          row.uv(),
+          w / 2,
+          false,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          use_simd,
+        )?;
+        if frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(true);
+        }
+        return Ok(());
+      }
+      // Row-stage tail. Same CHECK-before / SET-after split: dispatch, then
+      // freeze the route to row-stage only when the call accepts an
+      // output-bearing row.
+      planar_dual_resample(
+        luma_stream,
+        rgb_stream,
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch,
+        row.y(),
+        w,
+        plan,
+        idx,
+        use_simd,
+        convert_rgb,
+      )?;
+      #[cfg(feature = "yuv-planar")]
+      if frozen_native_route.is_none() && need_output {
+        *frozen_native_route = Some(false);
+      }
+      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -1380,6 +1610,16 @@ impl<R> PixelSink for MixedSinker<'_, Nv24, R> {
     if let Some(stream) = self.luma_filter_stream.as_mut() {
       stream.reset();
     }
+    #[cfg(feature = "yuv-planar")]
+    if let Some(native) = self.native_planar.as_mut() {
+      native.reset();
+    }
+    // New frame: clear the per-frame frozen native/row-stage route (see the
+    // Nv16 impl); gated to the native tier's feature.
+    #[cfg(feature = "yuv-planar")]
+    {
+      self.frozen_native_route = None;
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -1433,41 +1673,40 @@ impl<R> PixelSink for MixedSinker<'_, Nv24, R> {
       rgb_filter_stream,
       luma_filter_stream,
       resample_outputs,
+      #[cfg(feature = "yuv-planar")]
+      native,
+      #[cfg(feature = "yuv-planar")]
+      native_planar,
+      #[cfg(feature = "yuv-planar")]
+      semi_planar_u_half,
+      #[cfg(feature = "yuv-planar")]
+      semi_planar_v_half,
+      #[cfg(feature = "yuv-planar")]
+      frozen_native_route,
       ..
     } = self;
 
-    // Non-identity plan: fused resize (matches the Yuv444p twin). Bin Y for
-    // luma; for colour, convert the interleaved full-width UV source row to
-    // RGB with the fused `nv24_to_rgb_row` kernel the identity path uses,
-    // then resample it. The `Area` arm bins the converted RGB / native Y;
-    // the `Filter` arm filter-resamples them through the merged engine (the
-    // same convert-then-resample tail). NV24 has no native fast tier, so the
-    // plan kind is the only branch.
+    // Non-identity plan. A `Filter` plan routes to the filter resampler
+    // (branched first, below). Otherwise, when the native tier is enabled
+    // (and the planar join it reuses is compiled in), bin the native
+    // Y / U / V planes at output resolution and convert once per output row,
+    // de-interleaving the NV24 full-width UV chroma row into U / V scratch
+    // first (4:4:4 -> chroma `w x h`). Otherwise (or under
+    // `with_native(false)`) take the row-stage tier (matches the Yuv444p
+    // twin): bin Y for luma; for colour, convert the interleaved full-width
+    // UV source row to RGB with the fused `nv24_to_rgb_row` kernel the
+    // identity path uses, then bin the RGB row.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let convert_rgb = |scratch: &mut [u8]| {
         nv24_to_rgb_row(row.y(), row.uv(), scratch, w, matrix, full_range, use_simd);
       };
-      return match plan.kind() {
-        crate::resample::SpanKind::Area => planar_dual_resample(
-          luma_stream,
-          rgb_stream,
-          resample_outputs,
-          rgb,
-          rgba,
-          luma,
-          luma_u16,
-          hsv,
-          rgb_scratch,
-          row.y(),
-          w,
-          plan,
-          idx,
-          use_simd,
-          convert_rgb,
-        ),
-        crate::resample::SpanKind::Filter => planar_dual_filter_resample(
+      // A `Filter` plan routes to the filter resampler; the native fast tier
+      // is area-only (see the Nv16 impl). Branched FIRST, before the
+      // native-route guard below.
+      if plan.kind().is_filter() {
+        return planar_dual_filter_resample(
           luma_filter_stream,
           rgb_filter_stream,
           resample_outputs,
@@ -1483,8 +1722,72 @@ impl<R> PixelSink for MixedSinker<'_, Nv24, R> {
           idx,
           use_simd,
           convert_rgb,
-        ),
-      };
+        );
+      }
+      #[cfg(feature = "yuv-planar")]
+      let need_output =
+        luma.is_some() || luma_u16.is_some() || rgb.is_some() || rgba.is_some() || hsv.is_some();
+      #[cfg(feature = "yuv-planar")]
+      if need_output
+        && let Some(frozen) = *frozen_native_route
+        && frozen != *native
+      {
+        return Err(MixedSinkerError::NativeRouteChanged(
+          NativeRouteChanged::new(idx),
+        ));
+      }
+      #[cfg(feature = "yuv-planar")]
+      if *native {
+        semi_planar_process_native_non420(
+          plan,
+          native_planar,
+          semi_planar_u_half,
+          semi_planar_v_half,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          rgb_scratch,
+          row.y(),
+          row.uv(),
+          w,
+          false,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          use_simd,
+        )?;
+        if frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(true);
+        }
+        return Ok(());
+      }
+      planar_dual_resample(
+        luma_stream,
+        rgb_stream,
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch,
+        row.y(),
+        w,
+        plan,
+        idx,
+        use_simd,
+        convert_rgb,
+      )?;
+      #[cfg(feature = "yuv-planar")]
+      if frozen_native_route.is_none() && need_output {
+        *frozen_native_route = Some(false);
+      }
+      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -1650,6 +1953,16 @@ impl<R> PixelSink for MixedSinker<'_, Nv42, R> {
     if let Some(stream) = self.luma_filter_stream.as_mut() {
       stream.reset();
     }
+    #[cfg(feature = "yuv-planar")]
+    if let Some(native) = self.native_planar.as_mut() {
+      native.reset();
+    }
+    // New frame: clear the per-frame frozen native/row-stage route (see the
+    // Nv16 impl); gated to the native tier's feature.
+    #[cfg(feature = "yuv-planar")]
+    {
+      self.frozen_native_route = None;
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -1700,40 +2013,39 @@ impl<R> PixelSink for MixedSinker<'_, Nv42, R> {
       rgb_filter_stream,
       luma_filter_stream,
       resample_outputs,
+      #[cfg(feature = "yuv-planar")]
+      native,
+      #[cfg(feature = "yuv-planar")]
+      native_planar,
+      #[cfg(feature = "yuv-planar")]
+      semi_planar_u_half,
+      #[cfg(feature = "yuv-planar")]
+      semi_planar_v_half,
+      #[cfg(feature = "yuv-planar")]
+      frozen_native_route,
       ..
     } = self;
 
-    // Non-identity plan: fused resize (matches the Yuv444p twin). Convert
-    // the interleaved VU source row to RGB with the fused `nv42_to_rgb_row`
-    // kernel the identity path uses, then resample it. The `Area` arm bins
-    // the converted RGB / native Y; the `Filter` arm filter-resamples them
-    // through the merged engine (the same convert-then-resample tail). NV42
-    // has no native fast tier, so the plan kind is the only branch.
+    // Non-identity plan. A `Filter` plan routes to the filter resampler
+    // (branched first, below). Otherwise, when the native tier is enabled
+    // (and the planar join it reuses is compiled in), bin the native
+    // Y / U / V planes at output resolution and convert once per output row,
+    // de-interleaving the NV42 full-width VU chroma row into U / V scratch
+    // first with U / V SWAPPED (4:4:4 VU-order -> chroma `w x h`). Otherwise
+    // (or under `with_native(false)`) take the row-stage tier (matches the
+    // Yuv444p twin): convert the interleaved VU source row to RGB with the
+    // fused `nv42_to_rgb_row` kernel the identity path uses, then bin it.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let convert_rgb = |scratch: &mut [u8]| {
         nv42_to_rgb_row(row.y(), row.vu(), scratch, w, matrix, full_range, use_simd);
       };
-      return match plan.kind() {
-        crate::resample::SpanKind::Area => planar_dual_resample(
-          luma_stream,
-          rgb_stream,
-          resample_outputs,
-          rgb,
-          rgba,
-          luma,
-          luma_u16,
-          hsv,
-          rgb_scratch,
-          row.y(),
-          w,
-          plan,
-          idx,
-          use_simd,
-          convert_rgb,
-        ),
-        crate::resample::SpanKind::Filter => planar_dual_filter_resample(
+      // A `Filter` plan routes to the filter resampler; the native fast tier
+      // is area-only (see the Nv16 impl). Branched FIRST, before the
+      // native-route guard below.
+      if plan.kind().is_filter() {
+        return planar_dual_filter_resample(
           luma_filter_stream,
           rgb_filter_stream,
           resample_outputs,
@@ -1749,8 +2061,74 @@ impl<R> PixelSink for MixedSinker<'_, Nv42, R> {
           idx,
           use_simd,
           convert_rgb,
-        ),
-      };
+        );
+      }
+      #[cfg(feature = "yuv-planar")]
+      let need_output =
+        luma.is_some() || luma_u16.is_some() || rgb.is_some() || rgba.is_some() || hsv.is_some();
+      #[cfg(feature = "yuv-planar")]
+      if need_output
+        && let Some(frozen) = *frozen_native_route
+        && frozen != *native
+      {
+        return Err(MixedSinkerError::NativeRouteChanged(
+          NativeRouteChanged::new(idx),
+        ));
+      }
+      #[cfg(feature = "yuv-planar")]
+      if *native {
+        // NV42 chroma is VU-order: de-interleave with U / V swapped
+        // (`swap_uv = true`), mirroring the NV21 4:2:0 path.
+        semi_planar_process_native_non420(
+          plan,
+          native_planar,
+          semi_planar_u_half,
+          semi_planar_v_half,
+          resample_outputs,
+          rgb,
+          rgba,
+          luma,
+          luma_u16,
+          hsv,
+          rgb_scratch,
+          row.y(),
+          row.vu(),
+          w,
+          true,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          use_simd,
+        )?;
+        if frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(true);
+        }
+        return Ok(());
+      }
+      planar_dual_resample(
+        luma_stream,
+        rgb_stream,
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        luma_u16,
+        hsv,
+        rgb_scratch,
+        row.y(),
+        w,
+        plan,
+        idx,
+        use_simd,
+        convert_rgb,
+      )?;
+      #[cfg(feature = "yuv-planar")]
+      if frozen_native_route.is_none() && need_output {
+        *frozen_native_route = Some(false);
+      }
+      return Ok(());
     }
 
     let one_plane_start = idx * w;

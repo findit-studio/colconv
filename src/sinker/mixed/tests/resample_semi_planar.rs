@@ -1,13 +1,14 @@
 //! Fused-downscale coverage for the 8-bit semi-planar YUV family
 //! (NV12 / NV21 / NV16 / NV24 / NV42). Each member bins the Y plane
-//! directly for luma (the YUV luma contract). For colour the 4:2:0
-//! members (NV12 / NV21) default to the native bin-then-convert tier
-//! (see the `native_tier` module below); the convert-then-bin row-stage
-//! contract — RGB equals an `Rgb24` resample of the identity-converted
-//! frame, byte-identical to the [`Yuv420p`] / [`Yuv422p`] / [`Yuv444p`]
-//! row-stage resample of the de-interleaved planes — is exercised under
-//! `with_native(false)`. The 4:2:2 / 4:4:4 members (NV16 / NV24 / NV42)
-//! have no native tier and always take the row-stage path.
+//! directly for luma (the YUV luma contract). For colour every member
+//! defaults to the native bin-then-convert tier (see the `native_tier`
+//! module below) — the 4:2:0 members (NV12 / NV21) via the planar 4:2:0
+//! join, the 4:2:2 / 4:4:4 members (NV16 / NV24 / NV42) via the non-4:2:0
+//! planar join, both on the de-interleaved chroma planes. The
+//! convert-then-bin row-stage contract — RGB equals an `Rgb24` resample of
+//! the identity-converted frame, byte-identical to the [`Yuv420p`] /
+//! [`Yuv422p`] / [`Yuv444p`] row-stage resample of the de-interleaved
+//! planes — is exercised under `with_native(false)`.
 
 use crate::{
   ColorMatrix, PixelSink,
@@ -446,9 +447,11 @@ fn nv16_resample_rgb_matches_rgb24_of_converted_frame() {
   let mut rgb = vec![0u8; OUT * OUT * 3];
   {
     let frame = Nv16Frame::new(&y, &uv, SRC as u32, SRC as u32, SRC as u32, SRC as u32);
-    let mut sink =
-      MixedSinker::<Nv16, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+    let mut sink = MixedSinker::<Nv16, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        // The convert-then-bin RGB contract is the ROW-STAGE tier; the
+        // native default averages in the YUV domain (see `native_tier`).
+        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap();
     nv16_to(&frame, true, ColorMatrix::Bt601, &mut sink).unwrap();
@@ -520,9 +523,11 @@ fn nv24_resample_rgb_matches_rgb24_of_converted_frame() {
       SRC as u32,
       (SRC * 2) as u32,
     );
-    let mut sink =
-      MixedSinker::<Nv24, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+    let mut sink = MixedSinker::<Nv24, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        // The convert-then-bin RGB contract is the ROW-STAGE tier; the
+        // native default averages in the YUV domain (see `native_tier`).
+        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap();
     nv24_to(&frame, true, ColorMatrix::Bt601, &mut sink).unwrap();
@@ -597,9 +602,11 @@ fn nv42_resample_rgb_matches_rgb24_of_converted_frame() {
       SRC as u32,
       (SRC * 2) as u32,
     );
-    let mut sink =
-      MixedSinker::<Nv42, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+    let mut sink = MixedSinker::<Nv42, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        // The convert-then-bin RGB contract is the ROW-STAGE tier; the
+        // native default averages in the YUV domain (see `native_tier`).
+        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap();
     nv42_to(&frame, true, ColorMatrix::Bt601, &mut sink).unwrap();
@@ -760,13 +767,12 @@ mod twin_parity {
     assert_eq!(nv_luma, p_luma, "nv12 luma == yuv420p luma");
   }
 
-  /// NV24 resample must be byte-identical to a Yuv444p resample of the
-  /// de-interleaved planes. Both sides pin the row-stage tier: NV24 is
-  /// semi-planar 4:4:4 (always row-stage — the native tier is 4:2:0 only),
-  /// while Yuv444p now defaults to its native fast tier, so the planar twin
-  /// must be forced onto row-stage for the convert-then-bin contract to
-  /// match. (Yuv444p native-vs-bin-then-convert parity is covered in
-  /// `resample_yuv_planar_8bit_native`.)
+  /// NV24 ROW-STAGE resample must be byte-identical to a Yuv444p row-stage
+  /// resample of the de-interleaved planes. Both sides pin the row-stage
+  /// tier (NV24 and Yuv444p now both default to their native fast tier) so
+  /// the comparison is the RGB-domain convert-then-bin contract. (The NV24
+  /// native-vs-Yuv444p-native parity is covered in the `native_tier`
+  /// module's `nv24_native_equals_yuv444p_native_on_deinterleaved_planes`.)
   #[test]
   #[cfg_attr(
     miri,
@@ -816,15 +822,18 @@ mod twin_parity {
 }
 
 // =========================================================================
-// Native fast-tier (P2 bin-then-convert) for NV12 / NV21 — gated on the
-// planar family, whose 4:2:0 join the semi-planar native path reuses.
+// Native fast-tier (P2 bin-then-convert) for the semi-planar family — gated
+// on the planar family, whose joins the semi-planar native path reuses:
+// NV12 / NV21 via the 4:2:0 join, NV16 / NV24 / NV42 via the non-4:2:0
+// (4:2:2 / 4:4:4) join on the de-interleaved chroma planes.
 //
-// The bar is: (a) BYTE-IDENTICAL to a `Yuv420p` NATIVE conversion of the
-// de-interleaved planes (the de-interleave-then-reuse claim); (b) within
-// rounding tolerance of the semi-planar ROW-STAGE tier on in-gamut content
-// (the conversion-order caveat the planar tiers carry); (c) EXACT (full-res
-// conversion) on constant planes; plus the chroma-row, odd/tail-width, and
-// recoverable-allocation / atomicity contracts.
+// The bar (per member) is: (a) BYTE-IDENTICAL to the matching planar NATIVE
+// conversion of the de-interleaved planes (the de-interleave-then-reuse
+// claim — NV12/NV21 vs Yuv420p, NV16 vs Yuv422p, NV24/NV42 vs Yuv444p);
+// (b) within rounding tolerance of the semi-planar ROW-STAGE tier on in-gamut
+// content (the conversion-order caveat the planar tiers carry); (c) EXACT
+// (full-res conversion) on constant planes; plus the chroma-row,
+// odd/tail-width, and recoverable-allocation / atomicity contracts.
 // =========================================================================
 
 #[cfg(feature = "yuv-planar")]
@@ -2049,6 +2058,560 @@ mod native_tier {
       matches!(err, MixedSinkerError::NativeRouteChanged(_)),
       "an output-bearing flip after the frozen route stayed native must \
        reject as NativeRouteChanged, got {err:?}"
+    );
+  }
+
+  // ---- Non-4:2:0 native fast tier (NV16 4:2:2 / NV24 4:4:4 UV /
+  // NV42 4:4:4 VU) — issue #123 -------------------------------------------
+  //
+  // These reuse the non-4:2:0 planar join (`yuv_planar_process_native`) on
+  // the de-interleaved chroma planes (chroma_vsub == 1: a chroma row per Y
+  // row, vs the 4:2:0 even-only cadence). Same bar as the 4:2:0 members,
+  // re-pointed at the matching planar twin: NV16 vs Yuv422p, NV24 / NV42 vs
+  // Yuv444p; NV42 de-interleaves its VU chroma with U / V swapped.
+
+  use crate::source::{Yuv422p, Yuv444p, yuv422p_to, yuv444p_to};
+  use mediaframe::frame::{Yuv422pFrame, Yuv444pFrame};
+
+  /// Textured U / V planes at chroma width `cw`, FULL chroma height `h`
+  /// (4:2:2 / 4:4:4 have a chroma row per Y row). Interior to the
+  /// limited-range gamut so the two tiers diverge only by rounding.
+  fn uv_full_height(cw: usize, h: usize) -> (Vec<u8>, Vec<u8>) {
+    let u: Vec<u8> = (0..cw * h).map(|i| 110 + (i % 24) as u8).collect();
+    let v: Vec<u8> = (0..cw * h).map(|i| 120 + (i % 24) as u8).collect();
+    (u, v)
+  }
+
+  /// One all-outputs NV16 downscale of the interleaved (UV) frame.
+  #[allow(clippy::too_many_arguments)]
+  fn run_nv16(
+    y: &[u8],
+    uv: &[u8],
+    w: usize,
+    h: usize,
+    ow: usize,
+    oh: usize,
+    full_range: bool,
+    matrix: ColorMatrix,
+    native: bool,
+  ) -> Outs {
+    let n = ow * oh;
+    let mut rgb = vec![0u8; n * 3];
+    let mut rgba = vec![0u8; n * 4];
+    let mut luma = vec![0u8; n];
+    let mut luma_u16 = vec![0u16; n];
+    let (mut hh, mut ss, mut vv) = (vec![0u8; n], vec![0u8; n], vec![0u8; n]);
+    {
+      let frame = Nv16Frame::new(y, uv, w as u32, h as u32, w as u32, w as u32);
+      let mut sink =
+        MixedSinker::<Nv16, AreaResampler>::with_resampler(w, h, AreaResampler::to(ow, oh))
+          .unwrap()
+          .with_native(native)
+          .with_rgb(&mut rgb)
+          .unwrap()
+          .with_rgba(&mut rgba)
+          .unwrap()
+          .with_luma(&mut luma)
+          .unwrap()
+          .with_luma_u16(&mut luma_u16)
+          .unwrap()
+          .with_hsv(&mut hh, &mut ss, &mut vv)
+          .unwrap();
+      nv16_to(&frame, full_range, matrix, &mut sink).unwrap();
+    }
+    (rgb, rgba, luma, luma_u16, hh, ss, vv)
+  }
+
+  /// One all-outputs NV24 downscale of the interleaved (UV) frame.
+  #[allow(clippy::too_many_arguments)]
+  fn run_nv24(
+    y: &[u8],
+    uv: &[u8],
+    w: usize,
+    h: usize,
+    ow: usize,
+    oh: usize,
+    full_range: bool,
+    matrix: ColorMatrix,
+    native: bool,
+  ) -> Outs {
+    let n = ow * oh;
+    let mut rgb = vec![0u8; n * 3];
+    let mut rgba = vec![0u8; n * 4];
+    let mut luma = vec![0u8; n];
+    let mut luma_u16 = vec![0u16; n];
+    let (mut hh, mut ss, mut vv) = (vec![0u8; n], vec![0u8; n], vec![0u8; n]);
+    {
+      let frame = Nv24Frame::new(y, uv, w as u32, h as u32, w as u32, (w * 2) as u32);
+      let mut sink =
+        MixedSinker::<Nv24, AreaResampler>::with_resampler(w, h, AreaResampler::to(ow, oh))
+          .unwrap()
+          .with_native(native)
+          .with_rgb(&mut rgb)
+          .unwrap()
+          .with_rgba(&mut rgba)
+          .unwrap()
+          .with_luma(&mut luma)
+          .unwrap()
+          .with_luma_u16(&mut luma_u16)
+          .unwrap()
+          .with_hsv(&mut hh, &mut ss, &mut vv)
+          .unwrap();
+      nv24_to(&frame, full_range, matrix, &mut sink).unwrap();
+    }
+    (rgb, rgba, luma, luma_u16, hh, ss, vv)
+  }
+
+  /// (a) The strongest check: NV16 native is byte-identical to a Yuv422p
+  /// NATIVE conversion of the de-interleaved planes, for every output, at
+  /// several geometries.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv16_native_equals_yuv422p_native_on_deinterleaved_planes() {
+    for (w, h, ow, oh) in [
+      (8usize, 8usize, 4usize, 4usize),
+      (12, 10, 5, 4),
+      (12, 10, 7, 6),
+    ] {
+      let cw = w / 2;
+      let (u, v) = uv_full_height(cw, h);
+      let y: Vec<u8> = (0..w * h)
+        .map(|i| 40u8.wrapping_add((i as u8).wrapping_mul(2)))
+        .collect();
+      let uv = interleave(&u, &v, false);
+
+      let nv = run_nv16(&y, &uv, w, h, ow, oh, true, ColorMatrix::Bt601, true);
+
+      let n = ow * oh;
+      let mut p_rgb = vec![0u8; n * 3];
+      let mut p_luma = vec![0u8; n];
+      {
+        let frame = Yuv422pFrame::new(
+          &y, &u, &v, w as u32, h as u32, w as u32, cw as u32, cw as u32,
+        );
+        let mut sink =
+          MixedSinker::<Yuv422p, AreaResampler>::with_resampler(w, h, AreaResampler::to(ow, oh))
+            .unwrap()
+            .with_native(true)
+            .with_rgb(&mut p_rgb)
+            .unwrap()
+            .with_luma(&mut p_luma)
+            .unwrap();
+        yuv422p_to(&frame, true, ColorMatrix::Bt601, &mut sink).unwrap();
+      }
+      assert_eq!(
+        nv.0, p_rgb,
+        "nv16 native rgb == yuv422p native rgb ({w}x{h}->{ow}x{oh})"
+      );
+      assert_eq!(
+        nv.2, p_luma,
+        "nv16 native luma == yuv422p native luma ({w}x{h}->{ow}x{oh})"
+      );
+    }
+  }
+
+  /// (a) NV24 native is byte-identical to a Yuv444p NATIVE conversion of the
+  /// de-interleaved planes, for every output.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv24_native_equals_yuv444p_native_on_deinterleaved_planes() {
+    for (w, h, ow, oh) in [
+      (8usize, 8usize, 4usize, 4usize),
+      (12, 10, 5, 4),
+      (12, 10, 7, 6),
+    ] {
+      let (u, v) = uv_full_height(w, h);
+      let y: Vec<u8> = (0..w * h)
+        .map(|i| 40u8.wrapping_add((i as u8).wrapping_mul(2)))
+        .collect();
+      let uv = interleave(&u, &v, false);
+
+      let nv = run_nv24(&y, &uv, w, h, ow, oh, true, ColorMatrix::Bt601, true);
+
+      let n = ow * oh;
+      let mut p_rgb = vec![0u8; n * 3];
+      let mut p_luma = vec![0u8; n];
+      {
+        let frame = Yuv444pFrame::new(&y, &u, &v, w as u32, h as u32, w as u32, w as u32, w as u32);
+        let mut sink =
+          MixedSinker::<Yuv444p, AreaResampler>::with_resampler(w, h, AreaResampler::to(ow, oh))
+            .unwrap()
+            .with_native(true)
+            .with_rgb(&mut p_rgb)
+            .unwrap()
+            .with_luma(&mut p_luma)
+            .unwrap();
+        yuv444p_to(&frame, true, ColorMatrix::Bt601, &mut sink).unwrap();
+      }
+      assert_eq!(
+        nv.0, p_rgb,
+        "nv24 native rgb == yuv444p native rgb ({w}x{h}->{ow}x{oh})"
+      );
+      assert_eq!(
+        nv.2, p_luma,
+        "nv24 native luma == yuv444p native luma ({w}x{h}->{ow}x{oh})"
+      );
+    }
+  }
+
+  /// (a) NV42 native (VU order) de-interleaves to the SAME logical U / V, so
+  /// it too must equal the Yuv444p native conversion of those planes — the
+  /// VU-order regression guard (a wrong swap would map U<->V and diverge).
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv42_native_equals_yuv444p_native_on_deinterleaved_planes() {
+    let (w, h, ow, oh) = (12, 10, 5, 4);
+    let (u, v) = uv_full_height(w, h);
+    let y: Vec<u8> = (0..w * h)
+      .map(|i| 40u8.wrapping_add((i as u8).wrapping_mul(2)))
+      .collect();
+    // VU-order interleave (V before U) — the wire layout NV42 carries.
+    let vu = interleave(&u, &v, true);
+
+    let n = ow * oh;
+    let mut nv_rgb = vec![0u8; n * 3];
+    {
+      let frame = Nv42Frame::new(&y, &vu, w as u32, h as u32, w as u32, (w * 2) as u32);
+      let mut sink =
+        MixedSinker::<Nv42, AreaResampler>::with_resampler(w, h, AreaResampler::to(ow, oh))
+          .unwrap()
+          .with_native(true)
+          .with_rgb(&mut nv_rgb)
+          .unwrap();
+      nv42_to(&frame, true, ColorMatrix::Bt601, &mut sink).unwrap();
+    }
+    let mut p_rgb = vec![0u8; n * 3];
+    {
+      let frame = Yuv444pFrame::new(&y, &u, &v, w as u32, h as u32, w as u32, w as u32, w as u32);
+      let mut sink =
+        MixedSinker::<Yuv444p, AreaResampler>::with_resampler(w, h, AreaResampler::to(ow, oh))
+          .unwrap()
+          .with_native(true)
+          .with_rgb(&mut p_rgb)
+          .unwrap();
+      yuv444p_to(&frame, true, ColorMatrix::Bt601, &mut sink).unwrap();
+    }
+    assert_eq!(
+      nv_rgb, p_rgb,
+      "nv42 native rgb == yuv444p native rgb (VU de-interleaved to the same U/V)"
+    );
+  }
+
+  /// (b) Native vs row-stage: luma is bit-identical (both bin the same Y
+  /// plane), and in-gamut colour diverges only by per-pixel rounding inside
+  /// the affine conversion (bound 3, matching the 4:2:0 sweep). Run for both
+  /// NV16 (4:2:2) and NV24 (4:4:4) across matrices and the range flag.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn non420_native_within_tolerance_of_row_stage() {
+    let (w, h) = (12, 10);
+    let y: Vec<u8> = (0..w * h).map(|i| 60 + (i % 64) as u8).collect();
+    let (u16p, v16p) = uv_full_height(w / 2, h);
+    let uv16 = interleave(&u16p, &v16p, false);
+    let (u24p, v24p) = uv_full_height(w, h);
+    let uv24 = interleave(&u24p, &v24p, false);
+    for (ow, oh) in [(6, 5), (4, 4), (7, 6), (5, 3)] {
+      for full_range in [false, true] {
+        for matrix in [
+          ColorMatrix::Bt601,
+          ColorMatrix::Bt709,
+          ColorMatrix::Bt2020Ncl,
+        ] {
+          for (tag, native, row) in [
+            (
+              "nv16",
+              run_nv16(&y, &uv16, w, h, ow, oh, full_range, matrix, true),
+              run_nv16(&y, &uv16, w, h, ow, oh, full_range, matrix, false),
+            ),
+            (
+              "nv24",
+              run_nv24(&y, &uv24, w, h, ow, oh, full_range, matrix, true),
+              run_nv24(&y, &uv24, w, h, ow, oh, full_range, matrix, false),
+            ),
+          ] {
+            assert_eq!(
+              native.2, row.2,
+              "{tag} luma bit-identical {ow}x{oh} fr={full_range} {matrix:?}"
+            );
+            assert_eq!(
+              native.3, row.3,
+              "{tag} luma_u16 bit-identical {ow}x{oh} fr={full_range} {matrix:?}"
+            );
+            for (name, a, b) in [
+              ("rgb", &native.0, &row.0),
+              ("rgba", &native.1, &row.1),
+              ("hsv-v", &native.6, &row.6),
+            ] {
+              for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+                assert!(
+                  x.abs_diff(*y) <= 3,
+                  "{tag} {name} {ow}x{oh} fr={full_range} {matrix:?} idx {i}: \
+                   native {x} vs row {y}"
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /// (c) Constant planes bin exactly on both grids, so NV16 / NV24 native
+  /// reproduce the full-resolution conversion EXACTLY (the true 0-LSB case).
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn non420_native_solid_frame_exact() {
+    let (w, h) = (8, 8);
+    let yp = vec![120u8; w * h];
+    // NV16: chroma w/2 x h. NV24: chroma w x h. Both constant.
+    let up16 = vec![90u8; (w / 2) * h];
+    let vp16 = vec![170u8; (w / 2) * h];
+    let uv16 = interleave(&up16, &vp16, false);
+    let up24 = vec![90u8; w * h];
+    let vp24 = vec![170u8; w * h];
+    let uv24 = interleave(&up24, &vp24, false);
+
+    // The full-res converted top-left pixel — identical for both subsamplings
+    // since chroma is constant (90, 170) everywhere.
+    let mut full_rgb = vec![0u8; w * h * 3];
+    {
+      let frame = Nv24Frame::new(&yp, &uv24, w as u32, h as u32, w as u32, (w * 2) as u32);
+      let mut sink = MixedSinker::<Nv24>::new(w, h)
+        .with_rgb(&mut full_rgb)
+        .unwrap();
+      nv24_to(&frame, false, ColorMatrix::Bt709, &mut sink).unwrap();
+    }
+    let want = (full_rgb[0], full_rgb[1], full_rgb[2]);
+
+    let nv16 = run_nv16(&yp, &uv16, w, h, 4, 4, false, ColorMatrix::Bt709, true);
+    for px in nv16.0.chunks_exact(3) {
+      assert_eq!(
+        (px[0], px[1], px[2]),
+        want,
+        "nv16 native solid rgb == full-res conversion"
+      );
+    }
+    assert!(
+      nv16.2.iter().all(|&l| l == 120),
+      "nv16 native solid luma == Y"
+    );
+
+    let nv24 = run_nv24(&yp, &uv24, w, h, 4, 4, false, ColorMatrix::Bt709, true);
+    for px in nv24.0.chunks_exact(3) {
+      assert_eq!(
+        (px[0], px[1], px[2]),
+        want,
+        "nv24 native solid rgb == full-res conversion"
+      );
+    }
+    assert!(
+      nv24.2.iter().all(|&l| l == 120),
+      "nv24 native solid luma == Y"
+    );
+  }
+
+  /// `with_native(true)` is the builder default for the non-4:2:0 members
+  /// too (NV16 / NV24 / NV42), just as for the 4:2:0 twins.
+  #[test]
+  fn non420_native_is_default_on() {
+    assert!(
+      MixedSinker::<Nv16, AreaResampler>::with_resampler(8, 8, AreaResampler::to(4, 4))
+        .unwrap()
+        .native(),
+      "nv16 with_native must default to true"
+    );
+    assert!(
+      MixedSinker::<Nv24, AreaResampler>::with_resampler(8, 8, AreaResampler::to(4, 4))
+        .unwrap()
+        .native(),
+      "nv24 with_native must default to true"
+    );
+    assert!(
+      MixedSinker::<Nv42, AreaResampler>::with_resampler(8, 8, AreaResampler::to(4, 4))
+        .unwrap()
+        .native(),
+      "nv42 with_native must default to true"
+    );
+  }
+
+  /// Native and row-stage agree even when only luma is attached (the chroma
+  /// stream is absent — the join must never touch the empty U / V scratch).
+  /// Exercises the luma-only non-4:2:0 native fast path (NV24, chroma w x h).
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv24_native_luma_only_matches_row_stage() {
+    let (w, h) = (12, 10);
+    let y: Vec<u8> = (0..w * h).map(|i| 60 + (i % 64) as u8).collect();
+    let (u, v) = uv_full_height(w, h);
+    let uv = interleave(&u, &v, false);
+    let run = |native: bool| {
+      let mut luma = vec![0u8; 6 * 5];
+      let frame = Nv24Frame::new(&y, &uv, w as u32, h as u32, w as u32, (w * 2) as u32);
+      let mut sink =
+        MixedSinker::<Nv24, AreaResampler>::with_resampler(w, h, AreaResampler::to(6, 5))
+          .unwrap()
+          .with_native(native)
+          .with_luma(&mut luma)
+          .unwrap();
+      nv24_to(&frame, false, ColorMatrix::Bt709, &mut sink).unwrap();
+      luma
+    };
+    assert_eq!(run(true), run(false), "nv24 luma-only native == row-stage");
+  }
+
+  /// The non-4:2:0 members share the planar twin's non-4:2:0 native join via
+  /// `semi_planar_process_native_non420`; the row-stage tier is
+  /// `planar_dual_resample`. A mid-frame `set_native` flip must reject as the
+  /// deterministic `NativeRouteChanged` — CHECKED before and frozen after
+  /// dispatch (the #186 template, here on NV16).
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv16_native_to_rowstage_route_flip_mid_frame_rejected() {
+    let y = y_ramp();
+    let (u, v) = uv_planes(SRC / 2, SRC);
+    let uv = interleave(&u, &v, false);
+    let mut luma = vec![0u8; OUT * OUT];
+    let mut sink =
+      MixedSinker::<Nv16, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_native(true)
+        .with_luma(&mut luma)
+        .unwrap();
+    sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+    // Row 0 freezes the route = native.
+    sink
+      .process(crate::source::Nv16Row::new(
+        &y[0..SRC],
+        &uv[0..SRC],
+        0,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .expect("native row 0 freezes the route and succeeds");
+    sink.set_native(false);
+    let err = sink
+      .process(crate::source::Nv16Row::new(
+        &y[SRC..2 * SRC],
+        &uv[SRC..2 * SRC],
+        1,
+        ColorMatrix::Bt601,
+        true,
+      ))
+      .unwrap_err();
+    assert!(
+      matches!(err, MixedSinkerError::NativeRouteChanged(_)),
+      "nv16: a native -> row-stage mid-frame route flip must reject as \
+       NativeRouteChanged, got {err:?}"
+    );
+  }
+
+  /// NV16 native survives a frame restart on a reused sink: `begin_frame`
+  /// resets the join + the frozen route, so a second frame (the OTHER tier)
+  /// downscales its own planes correctly. Guards the new `native_planar` /
+  /// `frozen_native_route` reset wiring in the NV16 `begin_frame`.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn nv16_native_reuses_join_and_resets_route_across_frames() {
+    let y = y_ramp();
+    let (u, v) = uv_planes(SRC / 2, SRC);
+    let uv = interleave(&u, &v, false);
+    let mut luma = vec![0u8; OUT * OUT];
+    let mut sink =
+      MixedSinker::<Nv16, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_native(true)
+        .with_luma(&mut luma)
+        .unwrap();
+    let frame = Nv16Frame::new(&y, &uv, SRC as u32, SRC as u32, SRC as u32, SRC as u32);
+    // Frame 1: native, route constant across every row — no false rejection.
+    nv16_to(&frame, true, ColorMatrix::Bt601, &mut sink).unwrap();
+    // Frame 2: flip to row-stage for the WHOLE frame; the per-frame reset
+    // (in `begin_frame`) cleared the frozen route, so this is allowed.
+    sink.set_native(false);
+    nv16_to(&frame, true, ColorMatrix::Bt601, &mut sink)
+      .expect("a new frame may pick the other tier; the route reset per frame");
+    assert_eq!(
+      luma,
+      block_mean_2x2(&y),
+      "frame 2 luma == area-downscaled Y"
+    );
+  }
+
+  /// A luma-only non-4:2:0 semi-planar native sink must NOT plan or allocate
+  /// any chroma state — else luma-only Nv16/Nv24/Nv42 resampling depends on an
+  /// unused chroma allocation and can fail under memory pressure before
+  /// producing luma (a regression vs the Y-only row-stage path). Armed with
+  /// the planar-native chroma-planning failpoint (the join is shared with the
+  /// planar twin): a luma-only row leaves it unconsumed (so the run succeeds),
+  /// while a colour row reaches chroma planning and the failpoint fires.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn luma_only_non420_native_skips_chroma_planning() {
+    let y = y_ramp();
+    let (u, v) = uv_planes(SRC / 2, SRC);
+    let uv = interleave(&u, &v, false);
+    let frame = Nv16Frame::new(&y, &uv, SRC as u32, SRC as u32, SRC as u32, SRC as u32);
+
+    crate::sinker::mixed::arm_planar_native_chroma_failure();
+
+    // Luma-only: the armed chroma failpoint is never reached -> Ok.
+    let mut luma = vec![0u8; OUT * OUT];
+    {
+      let mut sink =
+        MixedSinker::<Nv16, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+          .unwrap()
+          .with_native(true)
+          .with_luma(&mut luma)
+          .unwrap();
+      nv16_to(&frame, true, ColorMatrix::Bt601, &mut sink)
+        .expect("luma-only native must not plan chroma");
+    }
+    assert_eq!(
+      luma,
+      block_mean_2x2(&y),
+      "luma-only native == area-downscaled Y"
+    );
+
+    // Colour: the still-armed failpoint fires at chroma planning -> Err. This
+    // both proves the failpoint is wired to chroma planning and consumes the
+    // arm so it cannot leak to another test on this thread.
+    let mut rgb = vec![0u8; OUT * OUT * 3];
+    let mut sink =
+      MixedSinker::<Nv16, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_native(true)
+        .with_rgb(&mut rgb)
+        .unwrap();
+    assert!(
+      nv16_to(&frame, true, ColorMatrix::Bt601, &mut sink).is_err(),
+      "colour native must reach chroma planning (the armed failpoint fires)"
     );
   }
 }

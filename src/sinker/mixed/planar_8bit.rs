@@ -1135,14 +1135,32 @@ struct NativePlanarChroma {
   v_stage: std::vec::Vec<u8>,
 }
 
+#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
+std::thread_local! {
+  static FORCE_PLANAR_NATIVE_CHROMA_FAILURE: core::cell::Cell<bool> =
+    const { core::cell::Cell::new(false) };
+}
+
+/// Arms a failpoint that fires when (and only when) the non-4:2:0 planar
+/// native join PLANS its chroma grid — which happens exactly when colour
+/// output is requested. A luma-only sink must never reach it, so an armed
+/// flag survives a luma-only row unconsumed (the regression assertion) and is
+/// taken by the first colour row. Test-only. Mirrors the high-bit
+/// `arm_planar_hb_native_chroma_failure`.
+#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
+pub(crate) fn arm_planar_native_chroma_failure() {
+  FORCE_PLANAR_NATIVE_CHROMA_FAILURE.with(|f| f.set(true));
+}
+
 impl NativePlanarYuv {
-  /// `chroma_plan` is the format's chroma grid against the SAME output
-  /// geometry as `plan` (the luma plan); `chroma_vsub` its vertical
-  /// cadence. Both are supplied by the per-format caller so this body stays
-  /// layout-agnostic.
+  /// `build_chroma_plan` lazily builds the format's chroma grid against the
+  /// SAME output geometry as `plan` (the luma plan) — invoked ONLY when colour
+  /// is needed, so a luma-only sink never plans or allocates chroma state.
+  /// `chroma_vsub` is its vertical cadence. Both are supplied by the
+  /// per-format caller so this body stays layout-agnostic.
   fn new(
     plan: &ResamplePlan,
-    chroma_plan: &ResamplePlan,
+    build_chroma_plan: impl FnOnce() -> Result<ResamplePlan, ResampleError>,
     chroma_vsub: usize,
     w: usize,
     h: usize,
@@ -1160,6 +1178,16 @@ impl NativePlanarYuv {
       ResampleError::Overflow(PlanGeometry::new(w, h, plan.out_w(), plan.out_h()))
     })?;
     let chroma = if need_color {
+      #[cfg(all(test, feature = "std", feature = "yuv-planar"))]
+      if FORCE_PLANAR_NATIVE_CHROMA_FAILURE.with(|f| f.take()) {
+        return Err(ResampleError::AllocationFailed(PlanGeometry::new(
+          w,
+          h,
+          plan.out_w(),
+          plan.out_h(),
+        )));
+      }
+      let chroma_plan = build_chroma_plan()?;
       Some(NativePlanarChroma {
         u: AreaStream::new(
           chroma_plan.h(),
@@ -1231,7 +1259,7 @@ impl NativePlanarYuv {
 /// [`yuv420p_native_preflight`]; see `native_preflight_core` for the
 /// 4-point rejection logic and its ordering contract.
 #[allow(clippy::too_many_arguments)]
-fn native_planar_preflight(
+pub(super) fn native_planar_preflight(
   join: &Option<NativePlanarYuv>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &Option<&mut [u8]>,
@@ -1329,17 +1357,14 @@ pub(super) fn yuv_planar_process_native(
   }
   let join = match native {
     Some(join) => join,
-    None => {
-      let chroma_plan = build_chroma_plan()?;
-      native.insert(NativePlanarYuv::new(
-        plan,
-        &chroma_plan,
-        chroma_vsub,
-        w,
-        h,
-        need_color,
-      )?)
-    }
+    None => native.insert(NativePlanarYuv::new(
+      plan,
+      build_chroma_plan,
+      chroma_vsub,
+      w,
+      h,
+      need_color,
+    )?),
   };
   join.check_sequence(idx)?;
   if need_color {
