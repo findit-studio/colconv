@@ -1,7 +1,8 @@
-use super::{
-  planar_other_8bit_9bit::{solid_yuv422p_n_frame, solid_yuv440p_n_frame, solid_yuv444p_n_frame},
-  *,
+#[cfg(feature = "yuv-planar")]
+use super::planar_other_8bit_9bit::{
+  solid_yuv422p_n_frame, solid_yuv440p_n_frame, solid_yuv444p_n_frame,
 };
+use super::*;
 
 // ---- P210 / P212 / P216 / P410 / P412 / P416 sanity tests --------------
 
@@ -535,6 +536,7 @@ fn p416_walker_simd_matches_scalar_with_random_chroma() {
 // dedicated kernel), and P210 (semi-planar BITS-generic) — the row
 // layer is exhaustively tested elsewhere.
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -559,6 +561,7 @@ fn yuv422p10_rgba_u8_only_gray_with_opaque_alpha() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -583,6 +586,7 @@ fn yuv422p10_rgba_u16_only_native_depth_gray_with_opaque_alpha() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -620,6 +624,7 @@ fn yuv422p10_with_rgb_and_with_rgba_produce_byte_identical_rgb_bytes() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -658,6 +663,7 @@ fn yuv422p10_with_rgb_u16_and_with_rgba_u16_produce_byte_identical_rgb_elems() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv422p10_rgba_too_short_returns_err() {
   let mut rgba = std::vec![0u8; 10];
@@ -668,6 +674,7 @@ fn yuv422p10_rgba_too_short_returns_err() {
   assert!(matches!(err, MixedSinkerError::InsufficientRgbaBuffer(_)));
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv422p10_rgba_u16_too_short_returns_err() {
   let mut rgba = std::vec![0u16; 10];
@@ -707,6 +714,7 @@ fn p210_rgba_u16_only_native_depth_gray_with_opaque_alpha() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -742,6 +750,7 @@ fn yuv422p16_rgba_u16_only_native_depth_gray_with_opaque_alpha() {
 // row-layer tests + the compile-time guarantee that the sinker builders
 // typecheck.
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -766,6 +775,7 @@ fn yuv444p10_rgba_u8_only_gray_with_opaque_alpha() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -790,6 +800,7 @@ fn yuv444p10_rgba_u16_only_native_depth_gray_with_opaque_alpha() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -826,6 +837,7 @@ fn yuv444p10_with_rgb_and_with_rgba_produce_byte_identical_rgb_bytes() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -864,6 +876,7 @@ fn yuv444p10_with_rgb_u16_and_with_rgba_u16_produce_byte_identical_rgb_elems() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv444p10_rgba_too_short_returns_err() {
   let mut rgba = std::vec![0u8; 10];
@@ -874,6 +887,7 @@ fn yuv444p10_rgba_too_short_returns_err() {
   assert!(matches!(err, MixedSinkerError::InsufficientRgbaBuffer(_)));
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 fn yuv444p10_rgba_u16_too_short_returns_err() {
   let mut rgba = std::vec![0u16; 10];
@@ -912,6 +926,7 @@ fn p410_rgba_u16_only_native_depth_gray_with_opaque_alpha() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,
@@ -937,6 +952,7 @@ fn yuv444p16_rgba_u16_only_native_depth_gray_with_opaque_alpha() {
   }
 }
 
+#[cfg(feature = "yuv-planar")]
 #[test]
 #[cfg_attr(
   miri,

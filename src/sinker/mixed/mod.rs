@@ -1454,17 +1454,19 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// reset in `begin_frame`. Gated to `rgb` (high-bit packed RGB),
   /// `gbr` (high-bit planar GBR scatters into the same u16 tail),
   /// `yuv-444-packed` / `y2xx` / `v210` (the high-bit packed YUV color
-  /// groups bin their converted native-u16 RGB row here), and
+  /// groups bin their converted native-u16 RGB row here),
   /// `yuv-planar` (the high-bit planar YUV 4:4:4 / 4:2:2 color group
-  /// bins its converted native-u16 RGB row here); widens as high-bit
-  /// families wire in.
+  /// bins its converted native-u16 RGB row here), and `yuv-semi-planar`
+  /// (the high-bit semi-planar P-format color group bins its converted
+  /// native-u16 RGB row here); widens as high-bit families wire in.
   #[cfg(any(
     feature = "rgb",
     feature = "gbr",
     feature = "yuv-444-packed",
     feature = "y2xx",
     feature = "v210",
-    feature = "yuv-planar"
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar"
   ))]
   rgb_stream_u16: Option<crate::resample::AreaStream<u16>>,
   /// Row-stage **4-channel** `u8` area stream for the alpha-aware u8 color
@@ -1647,14 +1649,17 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// 10/12/14/16), which bin their native Y here so resampled luma stays
   /// the area-downscaled Y at native depth. Lazily created in `process`,
   /// reset in `begin_frame`. Gated to `gray` / `yuv-444-packed` / `y2xx`
-  /// / `v210` / `yuv-planar`; widens as u16 luma families wire in.
+  /// / `v210` / `yuv-planar` / `yuv-semi-planar` (the high-bit semi-planar
+  /// P-format family bins its de-packed native Y here, then narrows since
+  /// P-formats expose no `luma_u16`); widens as u16 luma families wire in.
   #[cfg(any(
     feature = "gray",
     feature = "yuva",
     feature = "yuv-444-packed",
     feature = "y2xx",
     feature = "v210",
-    feature = "yuv-planar"
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar"
   ))]
   luma_stream_u16: Option<crate::resample::AreaStream<u16>>,
   /// Row-stage area stream for single-plane **f32** luma binning. Used
@@ -1751,13 +1756,16 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// family (`Yuv4{2,4}{0,2,4}p{10,12,14,16}`), which converts its separate
   /// Y/U/V planes to a native-depth u16 RGB row and filters it here — the
   /// filter twin of its area [`Self::rgb_stream_u16`] use, with the same
-  /// `SRC_BITS` native-max clamp keyed by its source depth.
+  /// `SRC_BITS` native-max clamp keyed by its source depth. `yuv-semi-planar`
+  /// joins for the high-bit semi-planar P-format family, the filter twin of
+  /// its area [`Self::rgb_stream_u16`] use.
   #[cfg(any(
     feature = "rgb",
     feature = "gbr",
     feature = "yuv-444-packed",
     feature = "y2xx",
-    feature = "yuv-planar"
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar"
   ))]
   rgb_filter_stream_u16: Option<crate::resample::FilterStream<u16>>,
   /// Row-stage **filter** stream for the high-bit packed-RGBA `u16` color
@@ -1851,14 +1859,17 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// extra clamp needed). The 8-bit planar YUVA family (`Yuva420p` /
   /// `Yuva422p` / `Yuva444p`, `yuva` — which also pulls in `yuv-planar`)
   /// de-interleaves its zero-extended native Y here too (the 8-bit
-  /// native-max clamp is a value no-op for in-range Y); widens as more
-  /// native-Y filter families wire in.
+  /// native-max clamp is a value no-op for in-range Y); the high-bit
+  /// semi-planar P-format family (`yuv-semi-planar`) filter-resamples its
+  /// de-packed native Y here (then narrows, exposing no `luma_u16`);
+  /// widens as more native-Y filter families wire in.
   #[cfg(any(
     feature = "yuv-444-packed",
     feature = "y2xx",
     feature = "yuv-planar",
     feature = "gray",
-    feature = "yuva"
+    feature = "yuva",
+    feature = "yuv-semi-planar"
   ))]
   luma_filter_stream_u16: Option<crate::resample::FilterStream<u16>>,
   /// Output configuration frozen at a resampled frame's first
@@ -1896,8 +1907,12 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// semi-planar 4:2:0 family ([`P010`](crate::source::P010) /
   /// [`P012`](crate::source::P012) / [`P016`](crate::source::P016)); every
   /// other routed family always takes the row-stage tier and ignores this
-  /// flag.
-  #[cfg(feature = "yuv-planar")]
+  /// flag. The native tier itself is compiled only under `yuv-planar` (the
+  /// high-bit P-format tier reuses the planar join), so under a
+  /// yuv-semi-planar-solo build the flag is accepted by the builder but
+  /// never read — the P-format sinks always take the row-stage tail there.
+  #[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+  #[cfg_attr(not(feature = "yuv-planar"), allow(dead_code))]
   native: bool,
   /// Native-tier join state for the 4:2:0 planar family; lazily
   /// created in `process`, reset in `begin_frame`.
@@ -2025,9 +2040,11 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// Lazily grown to `3 * width` `u16`; empty otherwise. Gated to `rgb`
   /// (high-bit packed RGB), `gbr` (high-bit planar GBR scatters its
   /// G/B/R planes here before the same u16 tail), the high-bit packed
-  /// YUV color groups (`yuv-444-packed` / `y2xx` / `v210`), and the
+  /// YUV color groups (`yuv-444-packed` / `y2xx` / `v210`), the
   /// high-bit planar YUV color groups (`yuv-planar`: Yuv444p / Yuv422p
-  /// 10/12/14/16) which stage their converted native-u16 RGB row here.
+  /// 10/12/14/16), and the high-bit semi-planar P-format color groups
+  /// (`yuv-semi-planar`) which stage their converted native-u16 RGB row
+  /// here.
   #[cfg(any(
     feature = "rgb",
     feature = "gbr",
@@ -2035,7 +2052,8 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "yuv-444-packed",
     feature = "y2xx",
     feature = "v210",
-    feature = "yuv-planar"
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar"
   ))]
   rgb_scratch_u16: Vec<u16>,
   /// Source-width canonical `R, G, B, A` `u8` staging for the alpha-aware
@@ -2098,16 +2116,19 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// (`yuv-444-packed` / `y2xx` / `v210`) reuse it to stage their
   /// de-interleaved native Y row before the same u16 luma stream, as do
   /// the high-bit planar YUV families (`yuv-planar`: Yuv444p / Yuv422p
-  /// 10/12/14/16) staging their host-native Y plane. Lazily grown to
-  /// `width` `u16`; empty otherwise. Gated to `gray` / `yuv-444-packed`
-  /// / `y2xx` / `v210` / `yuv-planar`.
+  /// 10/12/14/16) staging their host-native Y plane, as do the high-bit
+  /// semi-planar P-format families (`yuv-semi-planar`) staging their
+  /// de-packed native Y. Lazily grown to `width` `u16`; empty otherwise.
+  /// Gated to `gray` / `yuv-444-packed` / `y2xx` / `v210` / `yuv-planar`
+  /// / `yuv-semi-planar`.
   #[cfg(any(
     feature = "gray",
     feature = "yuva",
     feature = "yuv-444-packed",
     feature = "y2xx",
     feature = "v210",
-    feature = "yuv-planar"
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar"
   ))]
   luma_scratch_u16: Vec<u16>,
   /// Source-width host-native `f32` luma staging for the
@@ -2632,7 +2653,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "yuv-444-packed",
         feature = "y2xx",
         feature = "v210",
-        feature = "yuv-planar"
+        feature = "yuv-planar",
+        feature = "yuv-semi-planar"
       ))]
       rgb_stream_u16: None,
       #[cfg(any(
@@ -2701,7 +2723,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "yuv-444-packed",
         feature = "y2xx",
         feature = "v210",
-        feature = "yuv-planar"
+        feature = "yuv-planar",
+        feature = "yuv-semi-planar"
       ))]
       luma_stream_u16: None,
       #[cfg(feature = "gray")]
@@ -2730,7 +2753,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "gbr",
         feature = "yuv-444-packed",
         feature = "y2xx",
-        feature = "yuv-planar"
+        feature = "yuv-planar",
+        feature = "yuv-semi-planar"
       ))]
       rgb_filter_stream_u16: None,
       #[cfg(any(
@@ -2756,7 +2780,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "y2xx",
         feature = "yuv-planar",
         feature = "gray",
-        feature = "yuva"
+        feature = "yuva",
+        feature = "yuv-semi-planar"
       ))]
       luma_filter_stream_u16: None,
       #[cfg(any(
@@ -2775,7 +2800,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "rgb-legacy"
       ))]
       resample_outputs: None,
-      #[cfg(feature = "yuv-planar")]
+      #[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
       native: true,
       #[cfg(feature = "yuv-planar")]
       native_420: None,
@@ -2824,7 +2849,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "yuv-444-packed",
         feature = "y2xx",
         feature = "v210",
-        feature = "yuv-planar"
+        feature = "yuv-planar",
+        feature = "yuv-semi-planar"
       ))]
       rgb_scratch_u16: Vec::new(),
       #[cfg(any(
@@ -2858,7 +2884,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "yuv-444-packed",
         feature = "y2xx",
         feature = "v210",
-        feature = "yuv-planar"
+        feature = "yuv-planar",
+        feature = "yuv-semi-planar"
       ))]
       luma_scratch_u16: Vec::new(),
       #[cfg(feature = "gray")]
@@ -3110,7 +3137,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       feature = "yuv-444-packed",
       feature = "y2xx",
       feature = "v210",
-      feature = "yuv-planar"
+      feature = "yuv-planar",
+      feature = "yuv-semi-planar"
     )
   ))]
   pub(crate) fn rgb_stream_u16_allocated(&self) -> bool {
@@ -3245,7 +3273,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       feature = "y2xx",
       feature = "v210",
       feature = "rgb-legacy",
-      feature = "yuv-planar"
+      feature = "yuv-planar",
+      feature = "yuv-semi-planar"
     )
   ))]
   pub(crate) fn rgb_stream_allocated(&self) -> bool {
@@ -3315,7 +3344,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   /// high-bit planar YUV (`yuv-planar`) resample ordering tests (an
   /// out-of-sequence first row must be rejected before the stream is
   /// allocated). Gated on `gray` / `yuv-444-packed` / `y2xx` / `v210` /
-  /// `yuv-planar` and `std` like the tests that consume it.
+  /// `yuv-planar` / `yuv-semi-planar` and `std` like the tests that
+  /// consume it.
   #[cfg(all(
     test,
     feature = "std",
@@ -3324,7 +3354,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       feature = "yuv-444-packed",
       feature = "y2xx",
       feature = "v210",
-      feature = "yuv-planar"
+      feature = "yuv-planar",
+      feature = "yuv-semi-planar"
     )
   ))]
   pub(crate) fn luma_stream_u16_allocated(&self) -> bool {
@@ -3359,7 +3390,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
 
   /// Returns `true` iff resampled processing may take the native
   /// decimation tier. See [`Self::with_native`].
-  #[cfg(feature = "yuv-planar")]
+  #[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+  #[cfg_attr(not(feature = "yuv-planar"), allow(dead_code))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn native(&self) -> bool {
     self.native
@@ -3367,7 +3399,7 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
 
   /// Toggles the native decimation tier in place. See
   /// [`Self::with_native`] for the consuming builder variant.
-  #[cfg(feature = "yuv-planar")]
+  #[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn set_native(&mut self, native: bool) -> &mut Self {
     self.native = native;
@@ -3392,7 +3424,11 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   /// Bt2020 limited-range case (both pinned by regression). Pass
   /// `false` for strict RGB-domain `INTER_AREA` semantics at
   /// source-resolution conversion cost.
-  #[cfg(feature = "yuv-planar")]
+  ///
+  /// Under a `yuv-semi-planar`-solo build (no `yuv-planar`) the native
+  /// tier is not compiled, so the high-bit P-format sinks always use the
+  /// row-stage tail; this flag is then accepted but inert.
+  #[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn with_native(mut self, native: bool) -> Self {
     self.set_native(native);
@@ -3821,8 +3857,9 @@ pub(super) fn rgba_plane_row_slice(
 ///
 /// Bayer is RGB-only and packed YUV 4:2:2 / 4:1:1 (`yuv-packed`) emits
 /// u8 only; semi-planar 8-bit NV is also u8-only and never reaches a
-/// u16 RGBA fan-out path, so this helper is unused under those
-/// families.
+/// u16 RGBA fan-out path, so this helper is unused under those families.
+/// `yuv-semi-planar` enables it for the high-bit P-format sinks
+/// (P010/…), which DO fan `u16` RGB out to `u16` RGBA.
 #[cfg(any(
   feature = "gbr",
   feature = "gray",
@@ -3835,6 +3872,7 @@ pub(super) fn rgba_plane_row_slice(
   feature = "y2xx",
   feature = "yuv-444-packed",
   feature = "yuv-planar",
+  feature = "yuv-semi-planar",
   feature = "yuva",
 ))]
 #[cfg_attr(not(tarpaulin), inline(always))]
@@ -4122,7 +4160,8 @@ pub(super) fn source_luma_scratch<'s>(
   feature = "v210",
   feature = "rgb",
   feature = "gbr",
-  feature = "yuv-planar"
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar"
 ))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(super) fn source_luma_u16_scratch<'s>(
@@ -4292,7 +4331,8 @@ pub(super) fn packed_rgb_resample_stream<'s>(
   feature = "yuv-444-packed",
   feature = "y2xx",
   feature = "v210",
-  feature = "yuv-planar"
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar"
 ))]
 #[cfg_attr(
   not(any(
@@ -4301,7 +4341,8 @@ pub(super) fn packed_rgb_resample_stream<'s>(
     feature = "yuv-444-packed",
     feature = "y2xx",
     feature = "v210",
-    feature = "yuv-planar"
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar"
   )),
   allow(dead_code)
 )]
@@ -4901,7 +4942,8 @@ pub(super) fn packed_rgba_u16_filter_resample<const SRC_BITS: u32, const NATIVE_
   feature = "yuv-444-packed",
   feature = "y2xx",
   feature = "v210",
-  feature = "yuv-planar"
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar"
 ))]
 pub(super) fn source_rgb_u16_scratch<'s>(
   scratch: &'s mut Vec<u16>,
@@ -5095,7 +5137,8 @@ pub(super) fn packed_rgb_u16_filter_stream<'s>(
   feature = "yuv-444-packed",
   feature = "y2xx",
   feature = "v210",
-  feature = "yuv-planar"
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar"
 ))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgb_u16_resample_emit<const SRC_BITS: u32, const NATIVE_LUMA16: bool>(
@@ -6508,13 +6551,15 @@ pub(super) fn packed_rgba_u16_resample<
 
 /// Resets the three row-stage area streams (u8 color / native-u16 color
 /// / native-u16 luma) and drops the frozen output set for a new frame —
-/// the high-bit **planar** YUV 4:4:4 / 4:2:2 sinks' `begin_frame` body
-/// (the streams are lazily created in `process`, so a direct-`process`
-/// caller that skips `begin_frame` still gets a correctly initialized
-/// first frame). Mirrors the packed high-bit 4:4:4 / 4:2:2 sinks' inline
-/// resets; factored out only because the planar family has eight
-/// `begin_frame` impls (Yuv444p / Yuv422p × 10/12/14/16).
-#[cfg(feature = "yuv-planar")]
+/// the high-bit **planar** YUV 4:4:4 / 4:2:2 sinks' (`yuv-planar`) and the
+/// high-bit **semi-planar** P-format sinks' (`yuv-semi-planar`)
+/// `begin_frame` body (the streams are lazily created in `process`, so a
+/// direct-`process` caller that skips `begin_frame` still gets a correctly
+/// initialized first frame). Mirrors the packed high-bit 4:4:4 / 4:2:2
+/// sinks' inline resets; factored out because the planar family has eight
+/// `begin_frame` impls (Yuv444p / Yuv422p × 10/12/14/16) plus the nine
+/// P-format impls share it.
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 pub(super) fn reset_high_bit_yuv_streams<F: SourceFormat, R>(sink: &mut MixedSinker<'_, F, R>) {
   if let Some(stream) = sink.rgb_stream.as_mut() {
     stream.reset();
@@ -6539,6 +6584,9 @@ pub(super) fn reset_high_bit_yuv_streams<F: SourceFormat, R>(sink: &mut MixedSin
   }
   // The high-bit planar 4:2:0 native join (when present) shares the
   // frame-restart contract: restart its plane streams for the new frame.
+  // The native join and its route guard exist only under `yuv-planar`
+  // (the native tier's home — a yuv-semi-planar-solo build always takes
+  // the row-stage tail, so there is no route to clear there).
   #[cfg(feature = "yuv-planar")]
   if let Some(join) = sink.native_420_u16.as_mut() {
     join.reset();
@@ -6546,7 +6594,10 @@ pub(super) fn reset_high_bit_yuv_streams<F: SourceFormat, R>(sink: &mut MixedSin
   // Clear the per-frame frozen native/row-stage route so the next frame
   // may pick either tier (the dispatch re-freezes it on its first
   // resampled row); a mid-frame flip within a frame stays rejected.
-  sink.frozen_native_route = None;
+  #[cfg(feature = "yuv-planar")]
+  {
+    sink.frozen_native_route = None;
+  }
   sink.resample_outputs = None;
 }
 
@@ -6607,7 +6658,11 @@ pub(super) fn deinterleave_y_high_bit<const BE: bool>(
 /// and every source-width scratch are created — all before the first
 /// feed — so a failure mutates no caller output. A no-output call has no
 /// stream to sequence and stays a no-op regardless of the row index.
-#[cfg(any(feature = "yuv-444-packed", feature = "yuv-planar"))]
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar"
+))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_yuv444_triple_resample<const SRC_BITS: u32>(
   rgb_stream: &mut Option<crate::resample::AreaStream<u8>>,
@@ -6780,7 +6835,12 @@ pub(super) fn packed_yuv444_triple_resample<const SRC_BITS: u32>(
 /// source-width growth before the first feed so a failure mutates no
 /// caller output; the three scratches are distinct fields and never
 /// alias.
-#[cfg(any(feature = "yuv-444-packed", feature = "yuv-planar", feature = "y2xx"))]
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "y2xx",
+  feature = "yuv-semi-planar"
+))]
 #[allow(clippy::too_many_arguments)]
 fn packed_yuv444_triple_feed_emit<U8S, U16S, Y16S, const SRC_BITS: u32>(
   rgb_stream: Option<&mut U8S>,
@@ -6961,7 +7021,11 @@ where
 /// `ResampleOutputsChanged`), then every stream and source-width scratch
 /// is created before the first feed — so a failure mutates no caller
 /// output. A no-output call has no stream to sequence and stays a no-op.
-#[cfg(any(feature = "yuv-444-packed", feature = "yuv-planar"))]
+#[cfg(any(
+  feature = "yuv-444-packed",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar"
+))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_yuv444_triple_filter_resample<const SRC_BITS: u32>(
   rgb_filter_stream: &mut Option<crate::resample::FilterStream<u8>>,
@@ -8072,7 +8136,12 @@ pub(super) fn reset_high_bit_yuva_streams<F: SourceFormat, R>(sink: &mut MixedSi
 /// distinct, non-aliasing scratches grow and the three source rows stage
 /// — all before the first feed, so a failure mutates no caller output. A
 /// no-output call is a true no-op regardless of the row index.
-#[cfg(any(feature = "y2xx", feature = "v210", feature = "yuv-planar"))]
+#[cfg(any(
+  feature = "y2xx",
+  feature = "v210",
+  feature = "yuv-planar",
+  feature = "yuv-semi-planar"
+))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_yuv422_triple_resample<const SRC_BITS: u32>(
   luma_stream_u16: &mut Option<crate::resample::AreaStream<u16>>,
@@ -8316,7 +8385,7 @@ pub(super) fn packed_yuv422_triple_resample<const SRC_BITS: u32>(
 /// every stream and source-width scratch is created before the first feed —
 /// so a failure mutates no caller output. A no-output call has no stream to
 /// sequence and stays a no-op.
-#[cfg(any(feature = "y2xx", feature = "yuv-planar"))]
+#[cfg(any(feature = "y2xx", feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_yuv422_triple_filter_resample<const SRC_BITS: u32>(
   luma_filter_stream_u16: &mut Option<crate::resample::FilterStream<u16>>,
@@ -11475,11 +11544,17 @@ mod planar_gbr_high_bit;
 mod planar_resample;
 #[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
-#[cfg(feature = "yuv-planar")]
+// Each `subsampled_4_*_high_bit` parent hosts BOTH the high-bit planar
+// `Yuv4*p` sinks (`yuv-planar`) and the high-bit semi-planar P-format
+// sinks (`yuv-semi-planar`); the per-submodule gates inside each `mod`
+// keep the two families separable, so the parent compiles whenever
+// either family is on. Mirrors how `row::dispatch::yuv420` /
+// `row::dispatch::pn` host the matching row layer.
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 mod subsampled_4_2_0_high_bit;
-#[cfg(feature = "yuv-planar")]
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 mod subsampled_4_2_2_high_bit;
-#[cfg(feature = "yuv-planar")]
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 mod subsampled_4_4_4_high_bit;
 #[cfg(feature = "v210")]
 mod v210;

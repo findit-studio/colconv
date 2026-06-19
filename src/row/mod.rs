@@ -79,6 +79,7 @@ pub(crate) use scalar::expand_rgb_to_rgba_row;
     feature = "y2xx",
     feature = "yuv-444-packed",
     feature = "yuv-planar",
+    feature = "yuv-semi-planar",
     feature = "yuva",
   ),
 ))]
@@ -89,9 +90,9 @@ pub(crate) use scalar::expand_rgb_u16_to_rgba_u16_row;
 // set — i.e. the fused high-bit planar GBR path, whose `luma_u16` stays
 // byte-identical to the direct `gbr_to_luma_u16_high_bit_row`. The
 // `Rgb48` / `Bgr48` callers — and the high-bit packed YUV color groups
-// (4:4:4 and 4:2:2) — pass `NATIVE_LUMA16 = false` and never reach it at
-// runtime, but the generic tail still references the symbol, so the
-// re-export is gated on the same `rgb` / `gbr` / `yuv-444-packed` / `y2xx`
+// (4:4:4 and 4:2:2) and the high-bit semi-planar P-format groups — pass
+// `NATIVE_LUMA16 = false` and never reach it at runtime, but the generic
+// tail still references the symbol, so the re-export is gated on the same
 // consumer set as that tail.
 #[cfg(all(
   any(feature = "std", feature = "alloc"),
@@ -102,7 +103,8 @@ pub(crate) use scalar::expand_rgb_u16_to_rgba_u16_row;
     feature = "yuv-444-packed",
     feature = "y2xx",
     feature = "v210",
-    feature = "yuv-planar"
+    feature = "yuv-planar",
+    feature = "yuv-semi-planar"
   ),
 ))]
 pub(crate) use scalar::rgb_to_luma_u16_native_row;
