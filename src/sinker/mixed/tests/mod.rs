@@ -224,6 +224,11 @@ mod resample_semi_planar_8bit_filter;
 mod resample_subsampled_high_bit_p_filter;
 #[cfg(feature = "yuv-packed")]
 mod resample_uyyvyy411;
+// The native fast tier reuses the planar non-4:2:0 join, so the 4:1:1 native
+// suite (its bin-then-convert oracle / route-freeze tests) only exists when
+// `yuv-planar` is also compiled.
+#[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
+mod resample_uyyvyy411_native;
 #[cfg(feature = "v210")]
 mod resample_v210;
 // The native fast tier reuses the high-bit non-4:2:0 planar join, so the V210
