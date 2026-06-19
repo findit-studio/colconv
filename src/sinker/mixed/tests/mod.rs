@@ -262,6 +262,8 @@ mod resample_yuv_planar_8bit_filter;
 mod resample_yuv_planar_8bit_native;
 #[cfg(feature = "yuv-planar")]
 mod resample_yuv_planar_high_bit_filter;
+#[cfg(all(feature = "yuv-planar", feature = "rgb"))]
+mod resample_yuv_planar_high_bit_native;
 #[cfg(feature = "yuva")]
 mod resample_yuva420p;
 #[cfg(feature = "yuva")]
