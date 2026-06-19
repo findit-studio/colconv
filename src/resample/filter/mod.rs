@@ -314,6 +314,80 @@ impl FilterKernel for Mitchell {
   }
 }
 
+/// OpenCV `INTER_CUBIC` — the Keys cubic with `a = -0.75` (the parameter
+/// OpenCV/`cv2` uses, vs the `a = -0.5` of [`CatmullRom`]/PIL `BICUBIC`).
+/// Support 2, the same two-segment piecewise-cubic profile as
+/// [`CatmullRom`] with a deeper negative outer lobe. The kernel weights
+/// match `cv2.resize(..., interpolation=cv2.INTER_CUBIC)`; exact pixel
+/// parity additionally depends on the caller's coordinate convention.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OpenCvCubic;
+
+impl OpenCvCubic {
+  /// Keys parameter — `-0.75` reproduces OpenCV `INTER_CUBIC`.
+  const A: f64 = -0.75;
+}
+
+impl FilterKernel for OpenCvCubic {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn support(&self) -> f64 {
+    2.0
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn weight(&self, x: f64) -> f64 {
+    // Keys cubic (same form as `CatmullRom`, `a = -0.75`):
+    // `(a+2)|x|^3 - (a+3)|x|^2 + 1` for |x| < 1;
+    // `a|x|^3 - 5a|x|^2 + 8a|x| - 4a` for 1 <= |x| < 2; 0 beyond.
+    let a = Self::A;
+    let t = x.abs();
+    if t < 1.0 {
+      ((a + 2.0) * t - (a + 3.0)) * t * t + 1.0
+    } else if t < 2.0 {
+      (((t - 5.0) * t + 8.0) * t - 4.0) * a
+    } else {
+      0.0
+    }
+  }
+}
+
+/// OpenCV `INTER_LANCZOS4` — the Lanczos filter with `a = 4` (an 8-tap
+/// window, vs the 6-tap `a = 3` of [`Lanczos3`]/PIL `LANCZOS`). Support 4;
+/// `weight(x) = sinc(x) * sinc(x / 4)` for `|x| < 4`, zero beyond. The
+/// kernel weights match `cv2.resize(..., interpolation=cv2.INTER_LANCZOS4)`;
+/// exact pixel parity additionally depends on the caller's coordinate
+/// convention.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Lanczos4;
+
+impl Lanczos4 {
+  /// Normalized sinc, `sin(pi t) / (pi t)`, with the removable singularity
+  /// at `t == 0` defined as 1 (the same `sinc_filter` as [`Lanczos3`]).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn sinc(t: f64) -> f64 {
+    if t == 0.0 {
+      1.0
+    } else {
+      let pt = core::f64::consts::PI * t;
+      sin_f64(pt) / pt
+    }
+  }
+}
+
+impl FilterKernel for Lanczos4 {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn support(&self) -> f64 {
+    4.0
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn weight(&self, x: f64) -> f64 {
+    if x > -4.0 && x < 4.0 {
+      Self::sinc(x) * Self::sinc(x / 4.0)
+    } else {
+      0.0
+    }
+  }
+}
+
 /// Per-axis signed-coefficient spans of a filter
 /// [`ResamplePlan`](super::ResamplePlan): for each output index, the first
 /// contributing source sample plus the normalized (row-sums-to-one)

@@ -32,7 +32,10 @@ use thiserror::Error;
 
 mod filter;
 use filter::FilterAxis;
-pub use filter::{CatmullRom, FilterKernel, InvalidFilterSupport, Lanczos3, Mitchell, Triangle};
+pub use filter::{
+  CatmullRom, FilterKernel, InvalidFilterSupport, Lanczos3, Lanczos4, Mitchell, OpenCvCubic,
+  Triangle,
+};
 // Re-exported for the sinker's `*_filter_stream` fields and tails, the
 // filter twin of the `AreaStream` / `AreaSample` pair. Compiled wherever
 // the `stream` submodule is (the 14-feature engine cascade); only the
