@@ -183,6 +183,8 @@ mod resample_packed_yuv_8bit_filter;
 mod resample_padding_byte;
 #[cfg(feature = "mono")]
 mod resample_pal8;
+#[cfg(feature = "mono")]
+mod resample_pal8_filter;
 #[cfg(feature = "rgb")]
 mod resample_rgb24;
 #[cfg(feature = "rgb")]
