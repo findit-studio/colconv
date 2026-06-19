@@ -35,8 +35,9 @@
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
   RowShapeMismatch, RowSlice, check_dimensions_match, check_frozen_alpha_mode,
-  frozen_outputs_check, packed_rgba_resample, packed_rgba_u16_resample, rgb_row_buf_or_scratch,
-  rgba_plane_row_slice, rgba_u16_plane_row_slice, source_luma_u16_scratch,
+  frozen_outputs_check, packed_rgba_resample, packed_rgba_u16_resample,
+  packed_yuva444_filter_resample, rgb_row_buf_or_scratch, rgba_plane_row_slice,
+  rgba_u16_plane_row_slice, source_luma_u16_scratch,
 };
 use crate::{
   PixelSink,
@@ -2454,14 +2455,24 @@ impl<R> PixelSink for MixedSinker<'_, Ya8, R> {
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     check_dimensions_match(self.width, self.height, width, height)?;
-    // New frame: restart the 4-channel RGBA color stream and the
-    // independent native-Y luma stream (both lazily created in `process`)
-    // and re-arm the alpha-mode snapshot, mirroring the alpha-aware
-    // packed-RGBA / Gbrap sinks.
+    // New frame: restart the 4-channel RGBA colour stream and the independent
+    // native-Y luma stream — area or filter kind (all lazily created in
+    // `process`) — and re-arm the alpha-mode snapshot, mirroring the
+    // alpha-aware packed-RGBA / Gbrap / `Vuya` sinks. The filter path also
+    // uses the u16 colour stream (rgb_u16 / rgba_u16 filtered at native depth).
     if let Some(stream) = self.rgba_stream.as_mut() {
       stream.reset();
     }
     if let Some(stream) = self.luma_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_filter_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_filter_stream_u16.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_filter_stream.as_mut() {
       stream.reset();
     }
     self.resample_outputs = None;
@@ -2490,20 +2501,33 @@ impl<R> PixelSink for MixedSinker<'_, Ya8, R> {
       ));
     }
 
-    // Non-identity plan: `Ya8` is gray+alpha. The direct `Ya8 -> rgba`
-    // conversion is `R = G = B = Y`, `A = α`, so binning the decoded RGBA
-    // yields `(binY, binY, binY, binA)` — byte-identical to binning Y once
-    // and duplicating. Decode each packed `[Y, A]` row into the canonical
-    // source-width `R, G, B, A` row (`ya8_to_rgba_row`) and feed the same
-    // 4-channel packed-RGBA tail the `Rgba` / `Gbrap` sources take, so
-    // resampled alpha is a real area mean and — under
-    // `AlphaMode::Premultiplied` — color is binned premultiplied.
-    // `NATIVE_Y_LUMA = true`: the direct `Ya8` `luma` / `luma_u16` are the
-    // native Y byte and its zero-extension (no matrix, no range), and
-    // `R = Y`, so the tail takes both from the binned color's R channel —
-    // byte-exact for every matrix and both ranges (a limited-range
-    // `rgb_to_luma*` would mis-map a valid `full_range = false` gray).
-    // rgb_u16 / rgba_u16 zero-extend the binned color.
+    // Non-identity plan: `Ya8` is gray+alpha — structurally a degenerate
+    // YUVA (`R = G = B = Y`, neutral chroma) plus an independent native-Y
+    // luma. Decode each packed `[Y, A]` row into the canonical source-width
+    // `R, G, B, A` row (`ya8_to_rgba_row`) and resample the four channels,
+    // so binning yields `(binY, binY, binY, binA)` and a real area-mean /
+    // filtered alpha; `luma` / `luma_u16` are an INDEPENDENT native-Y stream
+    // over the de-interleaved Y (`ya8_to_luma_row` — the exact Y bytes the
+    // direct path emits), NOT colour-derived (a limited-range `rgb_to_luma*`
+    // would mis-map a valid `full_range = false` gray, and under
+    // premultiplied the colour collapses to `mean(Y*A)/mean(A)` while native
+    // Y stays `mean(Y)`).
+    //
+    // The span kind picks the engine. `Area` bins through the alpha-aware
+    // packed-RGBA tail (`packed_rgba_resample::<true>`, `NATIVE_Y_LUMA`):
+    // colour is binned premultiplied under `AlphaMode::Premultiplied`, luma
+    // is a native-Y `AreaStream<u8>`, and rgb_u16 / rgba_u16 zero-extend the
+    // binned u8 colour. `Filter` runs the signed-coefficient 4:4:4
+    // packed-YUVA filter tail at `SRC_BITS = 8` with `NATIVE_LUMA_U8`: the
+    // four u8 channels filter independently (PIL straight-alpha RGBA), the
+    // native-depth `[Y, Y, Y, A]` filters through the shared u16 colour
+    // stream for rgb_u16 / rgba_u16 (the degenerate-YUVA twin of `Ayuv64`'s
+    // native u16 colour binning), and native-Y luma rides a `FilterStream<u8>`
+    // (the 8bpc-grid stream `Gray8` uses — so `Ya8` luma is byte-identical to
+    // `Gray8`'s for the same Y).
+    // Premultiplied alpha has no filter analogue (the engine cannot
+    // un-premultiply), so a premultiplied `Filter` plan routes to the area
+    // tail with the filter plan, which surfaces the typed `UnsupportedFilter`.
     if self.plan.is_some() {
       let alpha_mode = self.alpha_mode;
       let matrix = row.matrix();
@@ -2519,47 +2543,125 @@ impl<R> PixelSink for MixedSinker<'_, Ya8, R> {
         rgba_scratch,
         rgb_scratch,
         luma_scratch,
+        rgba_scratch_u16,
+        rgba_color_scratch_u16,
+        luma_scratch_u16,
         plan,
         rgba_stream,
         luma_stream,
+        rgba_filter_stream,
+        rgba_filter_stream_u16,
+        luma_filter_stream,
+        luma_filter_stream_u16,
         resample_outputs,
         frozen_alpha_mode,
         ..
       } = self;
       let plan = plan.as_ref().expect("plan.is_some() checked above");
       // Snapshotted at begin_frame; reject a mid-frame change before the
-      // single binning route runs.
+      // single binning / filtering route runs.
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
-      // `NATIVE_Y_LUMA = true`: luma / luma_u16 are an independent native-Y
-      // area bin (`luma_stream` fed the de-interleaved Y plane via
-      // `ya8_to_luma_row` — the exact Y bytes the direct path emits), NOT
-      // derived from the alpha/range-affected color. Byte-exact for every
-      // matrix, both ranges, AND every alpha mode (under premultiplied the
-      // color collapses to `mean(Y*A)/mean(A)`, but native Y is `mean(Y)`).
-      return packed_rgba_resample::<true>(
-        rgba_stream,
-        luma_stream,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        luma_u16,
-        hsv,
-        rgba_scratch,
-        rgb_scratch,
-        luma_scratch,
-        w,
-        plan,
-        idx,
-        use_simd,
-        alpha_mode,
-        matrix,
-        full_range,
-        |dst| ya8_to_rgba_row(packed, dst, w, use_simd),
-        |dst| ya8_to_luma_row(packed, dst, w, use_simd),
-      );
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => packed_rgba_resample::<true>(
+          rgba_stream,
+          luma_stream,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          luma_u16,
+          hsv,
+          rgba_scratch,
+          rgb_scratch,
+          luma_scratch,
+          w,
+          plan,
+          idx,
+          use_simd,
+          alpha_mode,
+          matrix,
+          full_range,
+          |dst| ya8_to_rgba_row(packed, dst, w, use_simd),
+          |dst| ya8_to_luma_row(packed, dst, w, use_simd),
+        ),
+        crate::resample::SpanKind::Filter if alpha_mode.is_premultiplied() => {
+          // Premultiplied + filter has no analogue: route to the area tail
+          // with the filter plan so it returns the typed `UnsupportedFilter`.
+          packed_rgba_resample::<true>(
+            rgba_stream,
+            luma_stream,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            luma_u16,
+            hsv,
+            rgba_scratch,
+            rgb_scratch,
+            luma_scratch,
+            w,
+            plan,
+            idx,
+            use_simd,
+            alpha_mode,
+            matrix,
+            full_range,
+            |dst| ya8_to_rgba_row(packed, dst, w, use_simd),
+            |dst| ya8_to_luma_row(packed, dst, w, use_simd),
+          )
+        }
+        // `ZEXT_U16_COLOR = true`: `Ya8` is an 8-bit source, so its
+        // native-depth colour is the binned u8 colour zero-extended
+        // (`rgba_u16 == rgba as u16`, `rgb_u16 == rgb as u16`) — byte-for-byte
+        // the area path's contract ([`packed_rgba_resample`], which likewise
+        // zero-extends, never an independent native-u16 bin). The u16 colour
+        // outputs therefore ride the u8 colour stream and the independent
+        // native-u16 stream is never created or fed (the
+        // `convert_rgba_u16` closure below is dead).
+        crate::resample::SpanKind::Filter => packed_yuva444_filter_resample::<8, true, true>(
+          rgba_filter_stream,
+          rgba_filter_stream_u16,
+          luma_filter_stream,
+          luma_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          luma_u16,
+          hsv,
+          rgba_scratch,
+          rgb_scratch,
+          rgba_scratch_u16,
+          rgba_color_scratch_u16,
+          luma_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          // Packed `[Y, A]`: no contiguous Y plane, so the u8-luma path
+          // de-interleaves native Y into `luma_scratch` (via the u8
+          // closure below) rather than feeding a direct plane.
+          &[],
+          Some(luma_scratch),
+          |dst| ya8_to_rgba_row(packed, dst, w, use_simd),
+          // Dead under `ZEXT_U16_COLOR`: the u16 colour is the zero-extended
+          // u8 colour (above), so no independent native-u16 colour stream is
+          // built and this conversion is never invoked.
+          |_dst: &mut [u16]| {},
+          // u8-luma path: the u16 luma stream is detached, so this is never
+          // called.
+          |_dst: &mut [u16]| {},
+          // Native-Y u8 de-interleave (the exact Y bytes the direct
+          // `ya8_to_luma_row` emits) — parity with `Gray8`'s native-Y filter.
+          |dst| ya8_to_luma_row(packed, dst, w, use_simd),
+        ),
+      };
     }
 
     let one_plane_start = idx * w;
@@ -2761,14 +2863,24 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Ya16<BE>, R> {
 
   fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
     check_dimensions_match(self.width, self.height, width, height)?;
-    // New frame: restart the 4-channel u16 RGBA color stream and the
-    // independent native-Y u16 luma stream (both lazily created in
-    // `process`) and re-arm the alpha-mode snapshot, mirroring the high-bit
-    // packed-RGBA / Gbrap16 sinks.
+    // New frame: restart the 4-channel u16 RGBA colour stream and the
+    // independent native-Y u16 luma stream — area or filter kind (all lazily
+    // created in `process`) — and re-arm the alpha-mode snapshot, mirroring
+    // the high-bit packed-RGBA / Gbrap16 / `Vuya` sinks. The filter path also
+    // uses the u8 colour stream (rgb / rgba from the `>> 8` narrowed RGBA).
     if let Some(stream) = self.rgba_stream_u16.as_mut() {
       stream.reset();
     }
     if let Some(stream) = self.luma_stream_u16.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_filter_stream.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_filter_stream_u16.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.luma_filter_stream_u16.as_mut() {
       stream.reset();
     }
     self.resample_outputs = None;
@@ -2797,21 +2909,34 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Ya16<BE>, R> {
       ));
     }
 
-    // Non-identity plan: `Ya16` is gray+alpha. As with `Ya8`, the direct
-    // `Ya16 -> rgba` conversion is `R = G = B = Y`, `A = α`. Decode each
-    // packed `[Y, A]` u16 row into the canonical host-native source-width
-    // `R, G, B, A` u16 row (`ya16_to_rgba_u16_row::<BE>`) and feed the same
-    // 4-channel high-bit packed-RGBA tail the `Rgba64` / `Gbrap16` sources
-    // take at `SRC_BITS = 16`, so resampled alpha is a real native area
-    // mean. `NATIVE_Y_LUMA = true`: luma / luma_u16 are an independent
-    // native-Y area bin (`luma_stream_u16` fed the de-interleaved
-    // host-native Y plane via `ya16_to_luma_u16_row::<BE>` — the exact Y
-    // the direct path emits), NOT derived from the alpha/range-affected
-    // color. Byte-exact for every matrix (unlike `rgb_to_luma_u16_native_row`,
-    // which drifts for matrices whose Q15 weights do not sum to exactly
-    // 32768, e.g. SMPTE-240M), every range, AND every alpha mode (under
-    // premultiplied the color collapses to `mean(Y*A)/mean(A)`, but native
-    // Y is `mean(Y)`).
+    // Non-identity plan: `Ya16` is gray+alpha — the high-bit analogue of
+    // `Ya8`, structurally a degenerate full-16-bit YUVA (`R = G = B = Y`,
+    // neutral chroma, real straight alpha) plus an independent native-Y luma.
+    // The direct `Ya16 -> rgba` conversion is `R = G = B = Y`, `A = α`; decode
+    // each packed `[Y, A]` u16 row into the canonical host-native source-width
+    // `R, G, B, A` u16 row (`ya16_to_rgba_u16_row::<BE>`) and resample the four
+    // channels at native depth so resampled alpha is a real native mean.
+    // luma / luma_u16 are an INDEPENDENT native-Y bin / filter over the
+    // de-interleaved host-native Y (`ya16_to_luma_u16_row::<BE>` — the exact Y
+    // the direct path emits), NOT colour-derived (byte-exact for every matrix,
+    // unlike `rgb_to_luma_u16_native_row` which drifts for matrices whose Q15
+    // weights do not sum to exactly 32768, e.g. SMPTE-240M; every range; AND
+    // every alpha mode — under premultiplied the colour collapses to
+    // `mean(Y*A)/mean(A)`, but native Y stays `mean(Y)`).
+    //
+    // The span kind picks the engine. `Area` bins through the high-bit
+    // packed-RGBA tail (`packed_rgba_u16_resample::<16, false, true>`,
+    // `NATIVE_Y_LUMA`): native u16 colour binned, the u8 colour narrowed from
+    // it, luma a native-Y `AreaStream<u16>`. `Filter` runs the
+    // signed-coefficient 4:4:4 packed-YUVA filter tail at `SRC_BITS = 16` with
+    // `NATIVE_LUMA_U8 = false`: native u16 colour filters through the u16
+    // colour stream (full 16-bit, so the `FilterStream`'s `0..=65535` clamp is
+    // the native clamp), the u8 colour filters the `>> 8` narrowed RGBA, and
+    // native-Y luma rides a `FilterStream<u16>` (the stream `Gray16` uses — so
+    // `Ya16` luma_u16 is byte-identical to `Gray16`'s for the same Y).
+    // Premultiplied alpha has no filter analogue (the engine cannot
+    // un-premultiply), so a premultiplied `Filter` plan routes to the area
+    // tail with the filter plan, which surfaces the typed `UnsupportedFilter`.
     if self.plan.is_some() {
       let alpha_mode = self.alpha_mode;
       let matrix = row.matrix();
@@ -2826,11 +2951,16 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Ya16<BE>, R> {
         hsv,
         rgb_scratch,
         rgb_scratch_u16,
+        rgba_scratch,
         rgba_scratch_u16,
         rgba_color_scratch_u16,
         luma_scratch_u16,
         rgba_stream_u16,
         luma_stream_u16,
+        rgba_filter_stream,
+        rgba_filter_stream_u16,
+        luma_filter_stream,
+        luma_filter_stream_u16,
         resample_outputs,
         frozen_alpha_mode,
         plan,
@@ -2838,32 +2968,99 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Ya16<BE>, R> {
       } = self;
       let plan = plan.as_ref().expect("plan.is_some() checked above");
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
-      return packed_rgba_u16_resample::<16, false, true>(
-        rgba_stream_u16,
-        luma_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        luma_u16,
-        hsv,
-        rgba_scratch_u16,
-        rgba_color_scratch_u16,
-        rgb_scratch,
-        rgb_scratch_u16,
-        luma_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        alpha_mode,
-        matrix,
-        full_range,
-        |dst| ya16_to_rgba_u16_row::<BE>(packed, dst, w, use_simd),
-        |dst| ya16_to_luma_u16_row::<BE>(packed, dst, w, use_simd),
-      );
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => packed_rgba_u16_resample::<16, false, true>(
+          rgba_stream_u16,
+          luma_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          luma_u16,
+          hsv,
+          rgba_scratch_u16,
+          rgba_color_scratch_u16,
+          rgb_scratch,
+          rgb_scratch_u16,
+          luma_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          alpha_mode,
+          matrix,
+          full_range,
+          |dst| ya16_to_rgba_u16_row::<BE>(packed, dst, w, use_simd),
+          |dst| ya16_to_luma_u16_row::<BE>(packed, dst, w, use_simd),
+        ),
+        crate::resample::SpanKind::Filter if alpha_mode.is_premultiplied() => {
+          // Premultiplied + filter has no analogue: route to the area tail
+          // with the filter plan so it returns the typed `UnsupportedFilter`.
+          packed_rgba_u16_resample::<16, false, true>(
+            rgba_stream_u16,
+            luma_stream_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            luma_u16,
+            hsv,
+            rgba_scratch_u16,
+            rgba_color_scratch_u16,
+            rgb_scratch,
+            rgb_scratch_u16,
+            luma_scratch_u16,
+            w,
+            plan,
+            idx,
+            use_simd,
+            alpha_mode,
+            matrix,
+            full_range,
+            |dst| ya16_to_rgba_u16_row::<BE>(packed, dst, w, use_simd),
+            |dst| ya16_to_luma_u16_row::<BE>(packed, dst, w, use_simd),
+          )
+        }
+        crate::resample::SpanKind::Filter => packed_yuva444_filter_resample::<16, false, false>(
+          rgba_filter_stream,
+          rgba_filter_stream_u16,
+          luma_filter_stream,
+          luma_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          luma_u16,
+          hsv,
+          rgba_scratch,
+          rgb_scratch,
+          rgba_scratch_u16,
+          rgba_color_scratch_u16,
+          luma_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          // `<16, false>` rides the u16 luma stream (parity with `Gray16`), so
+          // there is no contiguous u8 Y plane and no u8 de-interleave scratch.
+          &[],
+          None,
+          |dst| ya16_to_rgba_row::<BE>(packed, dst, w, use_simd),
+          |dst| ya16_to_rgba_u16_row::<BE>(packed, dst, w, use_simd),
+          // Native-Y u16 de-interleave (the exact host-native Y the direct
+          // `ya16_to_luma_u16_row` emits) — parity with `Gray16`'s native-Y
+          // filter.
+          |dst| ya16_to_luma_u16_row::<BE>(packed, dst, w, use_simd),
+          // u16-luma path, so this u8 de-interleave is never called.
+          |_dst: &mut [u8]| {},
+        ),
+      };
     }
 
     let one_plane_start = idx * w;
