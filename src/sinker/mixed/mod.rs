@@ -2029,6 +2029,32 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// of [`Self::y2xx_u_half`].
   #[cfg(all(feature = "y2xx", feature = "yuv-planar"))]
   y2xx_v_half: Vec<u16>,
+  /// De-pack staging for the native fast tier of the **exotic 10-bit packed
+  /// 4:2:2** YUV format ([`V210`](crate::source::V210)). V210 packs 12 × 10-bit
+  /// samples per 16-byte word (four 32-bit LE/BE words) = 6 pixels (6 Y + 3 Cb +
+  /// 3 Cr); the native wrapper wire-decodes (`from_le` / `from_be`) and
+  /// bit-extracts each word into these separate host-native LOGICAL Y (`width`)
+  /// / U (`width / 2`) / V (`width / 2`) scratch planes, then the reused HIGH-BIT
+  /// non-4:2:0 planar join
+  /// ([`planar_high_bit_native::yuv_planar16_process_native`]) bins Y + U + V at
+  /// `Yuv422p10` geometry. `v210_y_full` grows to `width` on every native row;
+  /// `v210_u_half` / `v210_v_half` grow to `width / 2` each only on a colour
+  /// native row; empty otherwise. The fixed-`BITS = 10` sibling of
+  /// [`Self::y2xx_y_full`] (the high-bit packed 4:2:2 tier), with the V210 word
+  /// packing in place of the YUYV MSB-aligned u16 words. Gated to the
+  /// intersection — the native tier reuses a yuv-planar fn, so it only exists
+  /// when `yuv-planar` is also compiled (a `v210`-solo build takes the row-stage
+  /// tail).
+  #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+  v210_y_full: Vec<u16>,
+  /// U-plane de-pack scratch for the native V210 tier; twin of
+  /// [`Self::v210_y_full`] at chroma width (`width / 2`).
+  #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+  v210_u_half: Vec<u16>,
+  /// V-plane de-pack scratch for the native V210 tier; twin of
+  /// [`Self::v210_u_half`].
+  #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+  v210_v_half: Vec<u16>,
   /// De-pack staging for the native fast tier of the **8-bit packed 4:4:4**
   /// non-alpha YUV format ([`Vuyx`](crate::source::Vuyx) — bytes `V U Y X`
   /// per pixel, `X` padding). The native wrapper de-packs each packed row
@@ -2953,6 +2979,12 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       y2xx_u_half: Vec::new(),
       #[cfg(all(feature = "y2xx", feature = "yuv-planar"))]
       y2xx_v_half: Vec::new(),
+      #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+      v210_y_full: Vec::new(),
+      #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+      v210_u_half: Vec::new(),
+      #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+      v210_v_half: Vec::new(),
       #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
       packed_444_y_full: Vec::new(),
       #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
@@ -8498,6 +8530,292 @@ fn y2xx_process_native<const BITS: u32, const BE: bool>(
   )
 }
 
+// Test-only allocation failpoint for the wrapper-owned Y / U / V de-pack scratch
+// grow in `v210_process_native`. Armed, the FIRST (Y) scratch grow of an
+// output-bearing row returns the crate's recoverable `AllocationFailed` WITHOUT
+// growing — so the atomicity regressions can prove the join's pre-feed preflight
+// (out-of-sequence / frozen-output) runs BEFORE this fallible grow. Mirrors
+// `FORCE_Y2XX_ALLOC_FAILURE`. Strictly test-only — the non-test build compiles
+// this away entirely.
+#[cfg(all(test, feature = "std", feature = "v210", feature = "yuv-planar"))]
+std::thread_local! {
+  static FORCE_V210_ALLOC_FAILURE: core::cell::Cell<bool> =
+    const { core::cell::Cell::new(false) };
+}
+
+/// Arms the wrapper de-pack scratch allocation failpoint for the **next**
+/// output-bearing V210 native row on the current thread. The flag is consumed
+/// (take-on-read) by the first fallible scratch grow that row reaches, so it
+/// fires exactly once and cannot leak into a later test. Test-only.
+#[cfg(all(test, feature = "std", feature = "v210", feature = "yuv-planar"))]
+pub(crate) fn arm_v210_alloc_failure() {
+  FORCE_V210_ALLOC_FAILURE.with(|f| f.set(true));
+}
+
+/// Grows a wrapper-owned de-pack scratch to `len` `u16` under the planner's
+/// recoverable-allocation contract, optionally firing the test-only failpoint
+/// (`fail = true` only on the FIRST grow of an output-bearing row). Runs after
+/// the join's preflight clears, so a rejected row never reaches it. The V210 twin
+/// of [`grow_y2xx_depack_scratch`].
+#[cfg(all(feature = "v210", feature = "yuv-planar"))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn grow_v210_depack_scratch(
+  scratch: &mut Vec<u16>,
+  len: usize,
+  fail: bool,
+  w: usize,
+  h: usize,
+  plan: &crate::resample::ResamplePlan,
+) -> Result<(), MixedSinkerError> {
+  // `fail` is consumed by the caller; on the non-test build it is `false` and
+  // the whole branch compiles away.
+  let _ = fail;
+  if scratch.len() < len {
+    #[cfg(all(test, feature = "std", feature = "v210", feature = "yuv-planar"))]
+    if fail && FORCE_V210_ALLOC_FAILURE.with(|f| f.take()) {
+      return Err(MixedSinkerError::Resample(
+        crate::resample::ResampleError::AllocationFailed(crate::resample::PlanGeometry::new(
+          w,
+          h,
+          plan.out_w(),
+          plan.out_h(),
+        )),
+      ));
+    }
+    scratch
+      .try_reserve_exact(len - scratch.len())
+      .map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(w, h, plan.out_w(), plan.out_h()),
+        ))
+      })?;
+    scratch.resize(len, 0);
+  }
+  Ok(())
+}
+
+/// Native fast-tier decimator for the **exotic 10-bit packed 4:2:2** YUV format
+/// ([`V210`](crate::source::V210)): bins the native Y / U / V planes straight to
+/// the output grid and converts once per output row at output resolution. The
+/// fixed-`BITS = 10` sibling of the high-bit packed 4:2:2
+/// [`y2xx_process_native`] — same reuse of the high-bit non-4:2:0 PLANAR join
+/// verbatim ([`planar_high_bit_native::yuv_planar16_process_native`]) at the
+/// 4:2:2 chroma geometry (`chroma_w = w / 2`, `chroma_vsub = 1`) — composed with
+/// the V210 word de-pack in place of the Y2xx YUYV de-pack.
+///
+/// THE COMPOSITION, per row: wire-decode (`from_le` / `from_be`) AND bit-extract
+/// the V210 word packing into wrapper-owned host-native LOGICAL u16 scratch, then
+/// delegate with `BE = HOST_NATIVE_BE` so the delegate's own decode is a no-op
+/// load on every host. V210 packs 12 × 10-bit samples per 16-byte word = four
+/// 32-bit LE/BE words = 6 pixels: word 0 `[Cb0, Y0, Cr0]`, word 1 `[Y1, Cb1, Y2]`,
+/// word 2 `[Cr1, Y3, Cb2]`, word 3 `[Y4, Cr2, Y5]` — each sample in the low 10
+/// bits of its lane (`bits[9:0]`, `[19:10]`, `[29:20]`). The de-pack MIRRORS the
+/// row-stage `unpack_v210_word` bit positions EXACTLY, so the binned planes are
+/// the same logical samples the row-stage tier converts. Y is always de-packed
+/// (the join bins Y for both luma and colour); U / V only on a colour row. The
+/// 10-bit fields are `<= 1023 = (1 << 10) - 1` by construction, so the join's
+/// native-depth clamp is a value no-op on encodable input.
+///
+/// Even-width + partial-last-word: the configured width must be even (4:2:2
+/// chroma pair; the caller rejects odd widths as
+/// [`WidthAlignment`](MixedSinkerError::WidthAlignment) before this runs). A width
+/// not divisible by 6 ends on a partial word carrying only 2 or 4 valid pixels
+/// (1 or 2 valid chroma pairs); the de-pack reads every word but writes only the
+/// valid prefix (`y_scratch[..w]`, `u/v_scratch[..w/2]`), matching the row-stage
+/// `tail_pixels` handling — the unused high samples in the partial word are never
+/// binned.
+///
+/// Native-depth clamp + `luma_u16` emit + luma-only lazy chroma all carry through
+/// the reused join: the join clamps `src.min(1023) >> 2` for the u8 `luma`, emits
+/// the SAME clamped binned Y as the native-depth `luma_u16` (host-native u16, not
+/// narrowed), and the colour emit clamps to 1023; under `need_color == false`
+/// only Y is de-packed and the join is handed empty U / V slices, so a luma-only /
+/// `luma_u16`-only sink plans no chroma state. Because the join now emits
+/// `luma_u16`, attaching it routes through this native tier (no row-stage
+/// fallback), keeping the rgb colour semantics native.
+///
+/// Atomicity mirrors [`y2xx_process_native`]: the join's COMPLETE pre-feed
+/// preflight runs FIRST — `Ok(false)` no-op short-circuit, first-row
+/// out-of-sequence, frozen-output — BEFORE any fallible scratch grow, so a
+/// rejected row returns its deterministic typed error
+/// (`OutOfSequenceRow` / `ResampleOutputsChanged`), never `AllocationFailed`, and
+/// touches no caller output. The de-pack into scratch is infallible and happens
+/// only after the preflight clears; the delegate re-runs the identical preflight
+/// (idempotent) and owns the binning + conversion.
+#[cfg(all(feature = "v210", feature = "yuv-planar"))]
+#[allow(clippy::too_many_arguments)]
+fn v210_process_native<const BE: bool>(
+  plan: &crate::resample::ResamplePlan,
+  native_planar_u16: &mut Option<NativePlanarYuvU16>,
+  y_scratch: &mut Vec<u16>,
+  u_scratch: &mut Vec<u16>,
+  v_scratch: &mut Vec<u16>,
+  resample_outputs: &mut Option<FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  rgb_u16: &mut Option<&mut [u16]>,
+  rgba_u16: &mut Option<&mut [u16]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgb_scratch: &mut Vec<u8>,
+  rgb_scratch_u16: &mut Vec<u16>,
+  packed: &[u8],
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  idx: usize,
+  w: usize,
+  h: usize,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  // V210 is fixed at 10-bit; the reused join is const-generic over BITS.
+  const BITS: u32 = 10;
+  let need_luma = luma.is_some() || luma_u16.is_some();
+  let need_color =
+    rgb.is_some() || rgba.is_some() || hsv.is_some() || rgb_u16.is_some() || rgba_u16.is_some();
+  // 4:2:2 chroma is half-width, full-height: `chroma_w = w / 2`, a chroma row per
+  // Y row (`chroma_vsub = 1`).
+  let cw = w / 2;
+
+  // Run the planar join's COMPLETE pre-feed rejection preflight FIRST —
+  // no-output short-circuit, first-row out-of-sequence, AND frozen-output
+  // (mid-frame output change) — BEFORE any fallible scratch grow below, so every
+  // rejection returns its deterministic typed error and leaves the wrapper
+  // scratch untouched (the crate's preflight-atomicity contract). The delegate
+  // re-runs this identical preflight harmlessly.
+  if !native_planar_hb_preflight(
+    native_planar_u16,
+    resample_outputs,
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    luma,
+    luma_u16,
+    hsv,
+    idx,
+    need_luma,
+    need_color,
+  )? {
+    return Ok(());
+  }
+
+  // Grow the wrapper de-pack scratch under the planner's recoverable contract —
+  // Y always, U / V only on a colour row (4:2:2: every Y row is a chroma row when
+  // colour is wanted). All grows precede the infallible de-pack and the delegate
+  // call. The failpoint fires on the FIRST (Y) grow only.
+  grow_v210_depack_scratch(y_scratch, w, true, w, h, plan)?;
+  if need_color {
+    grow_v210_depack_scratch(u_scratch, cw, false, w, h, plan)?;
+    grow_v210_depack_scratch(v_scratch, cw, false, w, h, plan)?;
+  }
+
+  // De-pack the V210 word packing into host-native LOGICAL u16 scratch. Each
+  // 16-byte word is four 32-bit LE/BE lanes carrying three 10-bit samples each:
+  //   word 0 `[Cb0, Y0, Cr0]`  word 1 `[Y1, Cb1, Y2]`
+  //   word 2 `[Cr1, Y3, Cb2]`  word 3 `[Y4, Cr2, Y5]`
+  // (sample in `bits[9:0]` / `[19:10]` / `[29:20]` of its lane) — MIRRORING the
+  // row-stage `unpack_v210_word` exactly. Decode the wire endianness per lane,
+  // then mask `& 0x3FF`. Each full word emits 6 Y + 3 U + 3 V; a final partial
+  // word (width not a multiple of 6) writes only its valid prefix — `take_words`
+  // caps the per-word output index at `w` (Y) / `cw` (U / V), so the unused high
+  // samples are never binned. Y is always de-packed; U / V only on a colour row.
+  // Everything past here is infallible.
+  let load = |word: &[u8], lane: usize| -> u32 {
+    let bytes = [
+      word[lane * 4],
+      word[lane * 4 + 1],
+      word[lane * 4 + 2],
+      word[lane * 4 + 3],
+    ];
+    if BE {
+      u32::from_be_bytes(bytes)
+    } else {
+      u32::from_le_bytes(bytes)
+    }
+  };
+  for (wi, word) in packed.chunks_exact(16).enumerate() {
+    let px = wi * 6;
+    let w0 = load(word, 0);
+    let w1 = load(word, 1);
+    let w2 = load(word, 2);
+    let w3 = load(word, 3);
+    // The six Y samples across the four lanes (`unpack_v210_word` order).
+    let ys = [
+      ((w0 >> 10) & 0x3FF) as u16, // Y0
+      (w1 & 0x3FF) as u16,         // Y1
+      ((w1 >> 20) & 0x3FF) as u16, // Y2
+      ((w2 >> 10) & 0x3FF) as u16, // Y3
+      (w3 & 0x3FF) as u16,         // Y4
+      ((w3 >> 20) & 0x3FF) as u16, // Y5
+    ];
+    for (k, &y) in ys.iter().enumerate() {
+      if px + k < w {
+        y_scratch[px + k] = y;
+      }
+    }
+    if need_color {
+      let cu = px / 2;
+      // Cb0 / Cb1 / Cb2 and Cr0 / Cr1 / Cr2 — one chroma pair per 2-pixel pair.
+      let us = [
+        (w0 & 0x3FF) as u16,         // Cb0
+        ((w1 >> 10) & 0x3FF) as u16, // Cb1
+        ((w2 >> 20) & 0x3FF) as u16, // Cb2
+      ];
+      let vs = [
+        ((w0 >> 20) & 0x3FF) as u16, // Cr0
+        (w2 & 0x3FF) as u16,         // Cr1
+        ((w3 >> 10) & 0x3FF) as u16, // Cr2
+      ];
+      for k in 0..3 {
+        if cu + k < cw {
+          u_scratch[cu + k] = us[k];
+          v_scratch[cu + k] = vs[k];
+        }
+      }
+    }
+  }
+
+  // Delegate to the planar high-bit non-4:2:0 join with `BE = HOST_NATIVE_BE` so
+  // its internal decode is a no-op on the already-native scratch, at the 4:2:2
+  // chroma geometry (`chroma_vsub = 1`, `chroma_w = w / 2`). Empty U / V on
+  // luma-only rows (the join reads chroma only under colour). V210 threads its
+  // real `luma_u16` buffer: the join emits the native-depth `luma_u16` (the
+  // clamped binned Y), so attaching `luma_u16` keeps the native route and rgb
+  // keeps native colour semantics.
+  let (u_plane, v_plane): (&[u16], &[u16]) = if need_color {
+    (&u_scratch[..cw], &v_scratch[..cw])
+  } else {
+    (&[], &[])
+  };
+  planar_high_bit_native::yuv_planar16_process_native::<BITS, HIGH_BIT_HOST_NATIVE_BE>(
+    plan,
+    native_planar_u16,
+    resample_outputs,
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    luma,
+    luma_u16,
+    hsv,
+    rgb_scratch,
+    rgb_scratch_u16,
+    &y_scratch[..w],
+    u_plane,
+    v_plane,
+    matrix,
+    full_range,
+    idx,
+    w,
+    h,
+    1,
+    cw,
+    || crate::resample::ResamplePlan::area(cw, h, plan.out_w(), plan.out_h()),
+    use_simd,
+  )
+}
+
 /// The de-pack writes host-native LOGICAL u16 into the wrapper scratch BEFORE
 /// the planar delegate, so the delegate's own `from_le` / `from_be` decode must
 /// be a no-op load on every host: pass `BE = HOST_NATIVE_BE` (= `from_ne`).
@@ -8505,9 +8823,10 @@ fn y2xx_process_native<const BITS: u32, const BE: bool>(
 /// scratch on a big-endian target. Mirrors the high-bit semi-planar `p2xx`.
 /// Shared by the high-bit packed 4:2:2 (`y2xx`) and 4:4:4 (`yuv-444-packed`
 /// V410 / Xv36) native wrappers — both de-pack to host-native LOGICAL u16
-/// before delegating.
+/// before delegating. The exotic 10-bit packed 4:2:2 `v210` wrapper shares it
+/// (it likewise bit-extracts to host-native LOGICAL u16 before delegating).
 #[cfg(all(
-  any(feature = "y2xx", feature = "yuv-444-packed"),
+  any(feature = "y2xx", feature = "yuv-444-packed", feature = "v210"),
   feature = "yuv-planar"
 ))]
 const HIGH_BIT_HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
@@ -12367,7 +12686,8 @@ use planar_high_bit_native::yuv_planar16_process_native;
   any(
     feature = "yuv-semi-planar",
     feature = "y2xx",
-    feature = "yuv-444-packed"
+    feature = "yuv-444-packed",
+    feature = "v210"
   ),
   feature = "yuv-planar"
 ))]
