@@ -388,6 +388,105 @@ impl FilterKernel for Lanczos4 {
   }
 }
 
+/// Evaluates the cubic `c0 + t*(c1 + t*(c2 + t*c3))` (Horner form) — the
+/// per-segment polynomial of the zimg/Avisynth Spline kernels below.
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn spline_poly3(t: f64, c0: f64, c1: f64, c2: f64, c3: f64) -> f64 {
+  c0 + t * (c1 + t * (c2 + t * c3))
+}
+
+/// zimg / Avisynth **Spline16** — the 2-tap interpolating spline (support 2).
+/// Interpolating (`weight(0) = 1`, zero at every other integer) and a
+/// partition of unity, so it preserves DC; piecewise-cubic and continuous at
+/// the knots (it is not globally `C1`, by construction). Sharper than a
+/// bicubic at this support. The weights match zimg's `Spline16Filter`; exact
+/// pixel parity additionally depends on the caller's coordinate convention.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Spline16;
+
+impl FilterKernel for Spline16 {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn support(&self) -> f64 {
+    2.0
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn weight(&self, x: f64) -> f64 {
+    let t = x.abs();
+    if t < 1.0 {
+      spline_poly3(t, 1.0, -1.0 / 5.0, -9.0 / 5.0, 1.0)
+    } else if t < 2.0 {
+      spline_poly3(t - 1.0, 0.0, -7.0 / 15.0, 4.0 / 5.0, -1.0 / 3.0)
+    } else {
+      0.0
+    }
+  }
+}
+
+/// zimg / Avisynth **Spline36** — the 3-tap interpolating spline (support 3).
+/// Like [`Spline16`] but with a wider support and a third lobe, trading a
+/// little ringing for a flatter passband; a popular high-quality downscaler.
+/// Interpolating + partition of unity. The weights match zimg's
+/// `Spline36Filter`; exact pixel parity also depends on the caller's
+/// coordinate convention.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Spline36;
+
+impl FilterKernel for Spline36 {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn support(&self) -> f64 {
+    3.0
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn weight(&self, x: f64) -> f64 {
+    let t = x.abs();
+    if t < 1.0 {
+      spline_poly3(t, 1.0, -3.0 / 209.0, -453.0 / 209.0, 13.0 / 11.0)
+    } else if t < 2.0 {
+      spline_poly3(t - 1.0, 0.0, -156.0 / 209.0, 270.0 / 209.0, -6.0 / 11.0)
+    } else if t < 3.0 {
+      spline_poly3(t - 2.0, 0.0, 26.0 / 209.0, -45.0 / 209.0, 1.0 / 11.0)
+    } else {
+      0.0
+    }
+  }
+}
+
+/// zimg / Avisynth **Spline64** — the 4-tap interpolating spline (support 4),
+/// the widest of the family: the flattest passband and sharpest cutoff, at
+/// the cost of the most ringing. Interpolating + partition of unity. The
+/// weights match zimg's `Spline64Filter`; exact pixel parity also depends on
+/// the caller's coordinate convention.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Spline64;
+
+impl FilterKernel for Spline64 {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn support(&self) -> f64 {
+    4.0
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn weight(&self, x: f64) -> f64 {
+    let t = x.abs();
+    if t < 1.0 {
+      spline_poly3(t, 1.0, -3.0 / 2911.0, -6387.0 / 2911.0, 49.0 / 41.0)
+    } else if t < 2.0 {
+      spline_poly3(
+        t - 1.0,
+        0.0,
+        -2328.0 / 2911.0,
+        4032.0 / 2911.0,
+        -24.0 / 41.0,
+      )
+    } else if t < 3.0 {
+      spline_poly3(t - 2.0, 0.0, 582.0 / 2911.0, -1008.0 / 2911.0, 6.0 / 41.0)
+    } else if t < 4.0 {
+      spline_poly3(t - 3.0, 0.0, -97.0 / 2911.0, 168.0 / 2911.0, -1.0 / 41.0)
+    } else {
+      0.0
+    }
+  }
+}
+
 /// Per-axis signed-coefficient spans of a filter
 /// [`ResamplePlan`](super::ResamplePlan): for each output index, the first
 /// contributing source sample plus the normalized (row-sums-to-one)

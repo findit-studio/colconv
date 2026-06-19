@@ -190,6 +190,166 @@ fn lanczos4_profile() {
   assert!(max_weight_dev(&k, 4.5, reference) < 1e-12);
 }
 
+/// Sum of a kernel's taps at unit-spaced offsets around `x` — the partition
+/// of unity an interpolating kernel must satisfy (`== 1`) to preserve DC.
+fn tap_sum(k: &dyn FilterKernel, x: f64) -> f64 {
+  let r = k.support().ceil() as i64;
+  let mut s = 0.0;
+  for n in -r..=r {
+    s += k.weight(x - n as f64);
+  }
+  s
+}
+
+#[test]
+fn spline16_profile() {
+  let k = Spline16;
+  assert_eq!(k.support(), 2.0);
+  // Interpolating: 1 at the center, 0 at every other integer + the boundary.
+  assert_eq!(k.weight(0.0), 1.0);
+  assert!(k.weight(1.0).abs() < 1e-12);
+  assert!(k.weight(2.0).abs() < 1e-12);
+  assert_eq!(k.weight(2.5), 0.0);
+  // Symmetric.
+  assert!(max_weight_dev(&k, 2.5, |x| k.weight(-x)) < 1e-15);
+  // C0-continuous at the internal knot (both segments agree at |x| = 1 = 0).
+  assert!((k.weight(0.999_999) - k.weight(1.000_001)).abs() < 1e-4);
+  // Partition of unity (preserves DC) at several fractional offsets.
+  for &x in &[0.0, 0.25, 0.5, 0.5_f64.sqrt(), 0.9] {
+    assert!((tap_sum(&k, x) - 1.0).abs() < 1e-12, "PoU at {x}");
+  }
+  // Closed-form zimg reference (poly3 = c0 + t(c1 + t(c2 + t c3))).
+  let reference = |x: f64| {
+    let p = |t: f64, c: [f64; 4]| c[0] + t * (c[1] + t * (c[2] + t * c[3]));
+    let t = x.abs();
+    if t < 1.0 {
+      p(t, [1.0, -1.0 / 5.0, -9.0 / 5.0, 1.0])
+    } else if t < 2.0 {
+      p(t - 1.0, [0.0, -7.0 / 15.0, 4.0 / 5.0, -1.0 / 3.0])
+    } else {
+      0.0
+    }
+  };
+  assert!(max_weight_dev(&k, 2.5, reference) < 1e-15);
+}
+
+#[test]
+fn spline36_profile() {
+  let k = Spline36;
+  assert_eq!(k.support(), 3.0);
+  assert_eq!(k.weight(0.0), 1.0);
+  for n in 1..=3 {
+    assert!(k.weight(n as f64).abs() < 1e-12, "zero at {n}");
+  }
+  assert_eq!(k.weight(3.5), 0.0);
+  assert!(max_weight_dev(&k, 3.5, |x| k.weight(-x)) < 1e-15);
+  for &x in &[0.0, 0.25, 0.5, 0.7, 0.9] {
+    assert!((tap_sum(&k, x) - 1.0).abs() < 1e-12, "PoU at {x}");
+  }
+  let reference = |x: f64| {
+    let p = |t: f64, c: [f64; 4]| c[0] + t * (c[1] + t * (c[2] + t * c[3]));
+    let t = x.abs();
+    if t < 1.0 {
+      p(t, [1.0, -3.0 / 209.0, -453.0 / 209.0, 13.0 / 11.0])
+    } else if t < 2.0 {
+      p(t - 1.0, [0.0, -156.0 / 209.0, 270.0 / 209.0, -6.0 / 11.0])
+    } else if t < 3.0 {
+      p(t - 2.0, [0.0, 26.0 / 209.0, -45.0 / 209.0, 1.0 / 11.0])
+    } else {
+      0.0
+    }
+  };
+  assert!(max_weight_dev(&k, 3.5, reference) < 1e-15);
+}
+
+#[test]
+fn spline64_profile() {
+  let k = Spline64;
+  assert_eq!(k.support(), 4.0);
+  assert_eq!(k.weight(0.0), 1.0);
+  for n in 1..=4 {
+    assert!(k.weight(n as f64).abs() < 1e-12, "zero at {n}");
+  }
+  assert_eq!(k.weight(4.5), 0.0);
+  assert!(max_weight_dev(&k, 4.5, |x| k.weight(-x)) < 1e-15);
+  for &x in &[0.0, 0.25, 0.5, 0.7, 0.9] {
+    assert!((tap_sum(&k, x) - 1.0).abs() < 1e-12, "PoU at {x}");
+  }
+  let reference = |x: f64| {
+    let p = |t: f64, c: [f64; 4]| c[0] + t * (c[1] + t * (c[2] + t * c[3]));
+    let t = x.abs();
+    if t < 1.0 {
+      p(t, [1.0, -3.0 / 2911.0, -6387.0 / 2911.0, 49.0 / 41.0])
+    } else if t < 2.0 {
+      p(
+        t - 1.0,
+        [0.0, -2328.0 / 2911.0, 4032.0 / 2911.0, -24.0 / 41.0],
+      )
+    } else if t < 3.0 {
+      p(t - 2.0, [0.0, 582.0 / 2911.0, -1008.0 / 2911.0, 6.0 / 41.0])
+    } else if t < 4.0 {
+      p(t - 3.0, [0.0, -97.0 / 2911.0, 168.0 / 2911.0, -1.0 / 41.0])
+    } else {
+      0.0
+    }
+  };
+  assert!(max_weight_dev(&k, 4.5, reference) < 1e-15);
+}
+
+#[test]
+fn spline_matches_zimg_golden_fixtures() {
+  // Independent exactness oracle for the Spline coefficients. These
+  // (x, weight) pairs were computed OUTSIDE this crate by exact rational
+  // arithmetic over zimg's published `Spline{16,36,64}Filter` segment
+  // coefficients (Python `fractions.Fraction`, then cast to `f64`), at
+  // non-knot points in every segment. Because they are literal numbers from
+  // a different tool and evaluation order — not the production Horner form —
+  // a transcription error in a kernel coefficient (which the closed-form
+  // reference in the per-kernel profile tests would copy and miss) shows up
+  // here as a mismatch. The tolerance only absorbs f64 rounding across the
+  // two evaluation orders.
+  let s16: &[(f64, f64)] = &[
+    (0.25, 0.853125),
+    (0.5, 0.575),
+    (0.75, 0.259375),
+    (1.25, -0.071875),
+    (1.5, -0.075),
+    (1.75, -0.040625),
+  ];
+  let s36: &[(f64, f64)] = &[
+    (0.25, 0.8794108851674641),
+    (0.5, 0.5986842105263158),
+    (0.75, 0.26861543062200954),
+    (1.25, -0.11438397129186603),
+    (1.5, -0.11842105263157894),
+    (2.25, 0.019063995215311005),
+    (2.5, 0.019736842105263157),
+    (2.75, 0.010541267942583732),
+  ];
+  let s64: &[(f64, f64)] = &[
+    (0.25, 0.8812854259704569),
+    (0.5, 0.6003521126760564),
+    (1.4, -0.1357389213328753),
+    (2.25, 0.03062736173136379),
+    (2.5, 0.03169014084507042),
+    (3.25, -0.005104560288560632),
+    (3.5, -0.00528169014084507),
+    (3.75, -0.0028179749227069738),
+  ];
+  for &(x, want) in s16 {
+    assert!((Spline16.weight(x) - want).abs() < 1e-12, "Spline16({x})");
+    assert!((Spline16.weight(-x) - want).abs() < 1e-12, "Spline16(-{x})");
+  }
+  for &(x, want) in s36 {
+    assert!((Spline36.weight(x) - want).abs() < 1e-12, "Spline36({x})");
+    assert!((Spline36.weight(-x) - want).abs() < 1e-12, "Spline36(-{x})");
+  }
+  for &(x, want) in s64 {
+    assert!((Spline64.weight(x) - want).abs() < 1e-12, "Spline64({x})");
+    assert!((Spline64.weight(-x) - want).abs() < 1e-12, "Spline64(-{x})");
+  }
+}
+
 #[test]
 fn axis_windows_normalize_to_one() {
   // Every output window must sum to ~1 (PIL renormalizes after clamping),
@@ -201,6 +361,9 @@ fn axis_windows_normalize_to_one() {
     &Mitchell as &dyn FilterKernel,
     &OpenCvCubic as &dyn FilterKernel,
     &Lanczos4 as &dyn FilterKernel,
+    &Spline16 as &dyn FilterKernel,
+    &Spline36 as &dyn FilterKernel,
+    &Spline64 as &dyn FilterKernel,
   ] {
     for &(in_size, out_size) in &[(8usize, 3usize), (64, 17), (1920, 640), (1000, 333)] {
       let axis = FilterAxis::build(in_size, out_size, k).expect("valid downscale");
@@ -408,6 +571,9 @@ fn max_overlap_bounds_the_ring() {
     &Mitchell as &dyn FilterKernel,
     &OpenCvCubic as &dyn FilterKernel,
     &Lanczos4 as &dyn FilterKernel,
+    &Spline16 as &dyn FilterKernel,
+    &Spline36 as &dyn FilterKernel,
+    &Spline64 as &dyn FilterKernel,
   ] {
     for &(in_size, out_size) in &[(64usize, 17usize), (200, 41), (1920, 360)] {
       let axis = FilterAxis::build(in_size, out_size, k).unwrap();
