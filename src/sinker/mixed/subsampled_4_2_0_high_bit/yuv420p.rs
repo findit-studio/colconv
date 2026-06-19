@@ -87,9 +87,9 @@ impl<'a, R, const BE: bool> MixedSinker<'a, Yuv420p9<BE>, R> {
   }
 }
 
-impl<const BE: bool> Yuv420p9Sink<BE> for MixedSinker<'_, Yuv420p9<BE>> {}
+impl<R, const BE: bool> Yuv420p9Sink<BE> for MixedSinker<'_, Yuv420p9<BE>, R> {}
 
-impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv420p9<BE>> {
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p9<BE>, R> {
   type Input<'r> = Yuv420p9Row<'r>;
   type Error = MixedSinkerError;
 
@@ -99,9 +99,12 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv420p9<BE>> {
         self.width,
       )));
     }
-    check_dimensions_match(self.width, self.height, width, height)
+    check_dimensions_match(self.width, self.height, width, height)?;
+    reset_high_bit_yuv_streams(self);
+    Ok(())
   }
 
+  #[allow(clippy::too_many_lines)]
   fn process(&mut self, row: Yuv420p9Row<'_>) -> Result<(), Self::Error> {
     const BITS: u32 = 9;
     let w = self.width;
@@ -150,8 +153,191 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Yuv420p9<BE>> {
       luma,
       hsv,
       rgb_scratch,
+      rgb_scratch_u16,
+      luma_scratch_u16,
+      rgb_stream,
+      rgb_stream_u16,
+      luma_stream_u16,
+      rgb_filter_stream,
+      rgb_filter_stream_u16,
+      luma_filter_stream_u16,
+      resample_outputs,
+      plan,
+      native,
+      native_420_u16,
+      frozen_native_route,
       ..
     } = self;
+
+    // Non-identity plan: the native tier bins the host-native Y / U / V
+    // planes at output resolution and converts ONCE per output row at
+    // output width (4:4:4 kernels); the row-stage tier
+    // ([`packed_yuv422_triple_resample`]) converts each source row at
+    // source width then area-streams it (u8 color, independent native-u16
+    // color, native Y). `with_native(false)` forces the latter. The half-
+    // width U / V planes are horizontally upsampled in-register by the
+    // shared 4:2:0 row kernels — 4:2:0's vertical chroma sharing is
+    // already resolved by the walker, which hands this luma row its
+    // (vertically-shared) `u_half` / `v_half`, so the per-row chroma
+    // contract is identical to 4:2:2's and the same tail binds. Yuv420p
+    // exposes no `luma_u16` output, so it is `&mut None` and only `luma`
+    // (binned native Y `>> (BITS - 8)`) is emitted.
+    if let Some(plan) = plan.as_ref() {
+      let matrix = row.matrix();
+      let full_range = row.full_range();
+      let (y, u_half, v_half) = (row.y(), row.u_half(), row.v_half());
+      // A `Filter` plan routes to the filter resampler BEFORE the
+      // native/row-stage route machinery: the native fast tier is an
+      // area-specific optimization that never sees a filter plan, and the
+      // per-sink plan kind is fixed at construction, so a filter sink bypasses
+      // the `frozen_native_route` interaction entirely. It converts the
+      // separate Y/U/V planes to a source-width u8 + native-u16 RGB row (the
+      // SAME closures the row-stage tier uses) and filter-resamples them plus
+      // the native Y — the filter twin of the row-stage tier. The shared tail
+      // clamps every sub-16-bit colour sample AND the native Y to
+      // `(1 << BITS) - 1`. Yuv420p exposes no `luma_u16`, so it is `&mut None`.
+      if plan.kind().is_filter() {
+        return packed_yuv422_triple_filter_resample::<BITS>(
+          luma_filter_stream_u16,
+          rgb_filter_stream,
+          rgb_filter_stream_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          &mut None,
+          hsv,
+          luma_scratch_u16,
+          rgb_scratch,
+          rgb_scratch_u16,
+          w,
+          plan,
+          idx,
+          use_simd,
+          matrix,
+          full_range,
+          |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          |scratch| {
+            yuv420p9_to_rgb_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+          |scratch| {
+            yuv420p9_to_rgb_u16_row_endian(
+              y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+            )
+          },
+        );
+      }
+      // Whether this call carries any output — the EXACT set both tiers'
+      // preflight tests (`need_luma || need_color` =
+      // `luma || rgb || rgba || hsv || rgb_u16 || rgba_u16`). The route
+      // freezes only on an output-bearing row a tier ACCEPTS; a no-output
+      // call consumes no stream state, so it must not freeze.
+      let need_output = luma.is_some()
+        || rgb.is_some()
+        || rgba.is_some()
+        || hsv.is_some()
+        || rgb_u16.is_some()
+        || rgba_u16.is_some();
+      // Reject a mid-frame native/row-stage route flip BEFORE either tier's
+      // dispatch. The two tiers carry independent, in-order, once-only
+      // stream state, so splitting a frame across them yields a
+      // mixed/partial frame rather than a deterministic rejection. The route
+      // is both CHECKED here and frozen below (the SET) ONLY on an
+      // output-bearing row a tier ACCEPTS — both gate on `need_output`. A
+      // no-output call therefore neither checks nor freezes the route: it is
+      // a true no-op, route-invisible regardless of row index. A
+      // preflight-rejected (out-of-sequence / frozen) output-bearing call
+      // returns Err before the SET, so it leaves `frozen_native_route`
+      // untouched and a later same-or-other-route retry is not falsely
+      // rejected.
+      if need_output
+        && let Some(frozen) = *frozen_native_route
+        && frozen != *native
+      {
+        return Err(MixedSinkerError::NativeRouteChanged(
+          NativeRouteChanged::new(idx),
+        ));
+      }
+      if *native {
+        // Dispatch first; freeze the route to native ONLY after the call
+        // returns Ok on an output-bearing row. A no-output call returns
+        // Ok(()) with `need_output` false (no freeze); an out-of-sequence /
+        // frozen row returns Err via `?` (no freeze) — so only an accepted
+        // output-bearing row commits the route.
+        yuv420p16_process_native::<BITS, BE>(
+          plan,
+          native_420_u16,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          y,
+          u_half,
+          v_half,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          use_simd,
+        )?;
+        if frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(true);
+        }
+        return Ok(());
+      }
+      // Row-stage tail. Same CHECK-before / SET-after split: dispatch, then
+      // freeze the route to row-stage only when the call accepts an
+      // output-bearing row (a no-output call returns Ok with `need_output`
+      // false; an out-of-sequence / frozen row returns Err via `?`).
+      packed_yuv422_triple_resample::<BITS>(
+        luma_stream_u16,
+        rgb_stream,
+        rgb_stream_u16,
+        resample_outputs,
+        rgb,
+        rgba,
+        rgb_u16,
+        rgba_u16,
+        luma,
+        &mut None,
+        hsv,
+        luma_scratch_u16,
+        rgb_scratch,
+        rgb_scratch_u16,
+        w,
+        plan,
+        idx,
+        use_simd,
+        matrix,
+        full_range,
+        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+        |scratch| {
+          yuv420p9_to_rgb_row_endian(
+            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+          )
+        },
+        |scratch| {
+          yuv420p9_to_rgb_u16_row_endian(
+            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+          )
+        },
+      )?;
+      if frozen_native_route.is_none() && need_output {
+        *frozen_native_route = Some(false);
+      }
+      return Ok(());
+    }
+
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
