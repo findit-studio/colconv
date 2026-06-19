@@ -41,6 +41,12 @@ use super::{
   RowShapeMismatch, RowSlice, check_dimensions_match, packed_yuv444_triple_resample,
   rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
+// `NativeRouteChanged` is raised only by the native fast tier's route-flip
+// guard, and `packed_yuv444_hb_process_native` exists only when the reused
+// high-bit planar join is compiled in. Gated to the native tier's feature
+// intersection.
+#[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+use super::{NativeRouteChanged, packed_yuv444_hb_process_native};
 use crate::{
   PixelSink,
   row::{
@@ -163,6 +169,19 @@ impl<const BE: bool, R> PixelSink for MixedSinker<'_, Xv36<BE>, R> {
     if let Some(stream) = self.luma_stream_u16.as_mut() {
       stream.reset();
     }
+    // New frame: restart the native join and clear the per-frame frozen
+    // native/row-stage route so the next frame may pick either tier; a
+    // mid-frame flip stays rejected. Gated to the native tier's feature
+    // intersection (the planar join the native tier reuses is compiled only
+    // under `yuv-planar`).
+    #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+    if let Some(native) = self.native_planar_u16.as_mut() {
+      native.reset();
+    }
+    #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+    {
+      self.frozen_native_route = None;
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -210,6 +229,18 @@ impl<const BE: bool, R> PixelSink for MixedSinker<'_, Xv36<BE>, R> {
       rgb_stream_u16,
       luma_stream_u16,
       resample_outputs,
+      #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+      native,
+      #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+      native_planar_u16,
+      #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+      packed_444_y_full_u16,
+      #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+      packed_444_u_full_u16,
+      #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+      packed_444_v_full_u16,
+      #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+      frozen_native_route,
       ..
     } = self;
 
@@ -221,7 +252,107 @@ impl<const BE: bool, R> PixelSink for MixedSinker<'_, Xv36<BE>, R> {
       let matrix = row.matrix();
       let full_range = row.full_range();
       let packed = row.packed();
-      return packed_yuv444_triple_resample::<BITS>(
+      // Area plan with the native tier enabled (and the planar join it reuses
+      // compiled in): de-pack each MSB-aligned XV36 quad (`>> 4` to drop the 4
+      // padding LSBs) into separate host-native LOGICAL u16 Y / U / V planes
+      // (4:4:4, full-width chroma) and bin those at output resolution,
+      // converting once per output row. Xv36 has no filter-resample path
+      // (`packed_yuv444_triple_resample` rejects a filter plan below), and the
+      // native tier is area-only, so the native branch is gated off a filter
+      // plan. Otherwise (filter plan, or `with_native(false)`) fall to the
+      // row-stage tail. The reused planar join emits the native-depth `luma_u16`
+      // (the clamped binned Y), so attaching `luma_u16` keeps the native route.
+      // The output set is frozen on the first resampled row, so the route stays
+      // stable across a frame and the mid-frame flip guard catches a
+      // `set_native` toggle.
+      #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+      if !plan.kind().is_filter() {
+        let need_output = luma.is_some()
+          || luma_u16.is_some()
+          || rgb.is_some()
+          || rgba.is_some()
+          || rgb_u16.is_some()
+          || rgba_u16.is_some()
+          || hsv.is_some();
+        // Reject a mid-frame native/row-stage route flip BEFORE either tier's
+        // dispatch (the #186 CHECK-before / SET-after template).
+        if need_output
+          && let Some(frozen) = *frozen_native_route
+          && frozen != *native
+        {
+          return Err(MixedSinkerError::NativeRouteChanged(
+            NativeRouteChanged::new(idx),
+          ));
+        }
+        if *native {
+          // Dispatch first; freeze the route to native ONLY after the call
+          // returns Ok on an output-bearing row. XV36 quad `[U, Y, V, A]`:
+          // U at slot 0, Y at slot 1, V at slot 2, A (padding) at slot 3 —
+          // `BE` selects the per-u16 wire decode, then `>> 4` drops the 4 low
+          // MSB-alignment padding bits to the 12-bit LOGICAL value.
+          packed_yuv444_hb_process_native::<BITS>(
+            plan,
+            native_planar_u16,
+            packed_444_y_full_u16,
+            packed_444_u_full_u16,
+            packed_444_v_full_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            luma_u16,
+            hsv,
+            rgb_scratch,
+            rgb_scratch_u16,
+            |y_dst| {
+              for (i, dst) in y_dst.iter_mut().enumerate() {
+                let raw = packed[i * 4 + 1];
+                let logical = if BE {
+                  u16::from_be(raw)
+                } else {
+                  u16::from_le(raw)
+                };
+                *dst = logical >> 4;
+              }
+            },
+            |u_dst, v_dst| {
+              for (i, (u, v)) in u_dst.iter_mut().zip(v_dst.iter_mut()).enumerate() {
+                let u_raw = packed[i * 4];
+                let v_raw = packed[i * 4 + 2];
+                let u_logical = if BE {
+                  u16::from_be(u_raw)
+                } else {
+                  u16::from_le(u_raw)
+                };
+                let v_logical = if BE {
+                  u16::from_be(v_raw)
+                } else {
+                  u16::from_le(v_raw)
+                };
+                *u = u_logical >> 4;
+                *v = v_logical >> 4;
+              }
+            },
+            matrix,
+            full_range,
+            idx,
+            w,
+            h,
+            use_simd,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(true);
+          }
+          return Ok(());
+        }
+      }
+      // Row-stage tail. `packed_yuv444_triple_resample` rejects a filter plan
+      // (Xv36 exposes no filter resampler), and otherwise runs the area
+      // convert-then-bin path. Under the native tier, freeze the route to
+      // row-stage on an accepted output-bearing row.
+      packed_yuv444_triple_resample::<BITS>(
         rgb_stream,
         rgb_stream_u16,
         luma_stream_u16,
@@ -245,7 +376,23 @@ impl<const BE: bool, R> PixelSink for MixedSinker<'_, Xv36<BE>, R> {
         |scratch| xv36_to_rgb_row(packed, scratch, w, matrix, full_range, use_simd, BE),
         |scratch| xv36_to_rgb_u16_row(packed, scratch, w, matrix, full_range, use_simd, BE),
         |scratch| xv36_to_luma_u16_row(packed, scratch, w, use_simd, BE),
-      );
+      )?;
+      #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+      {
+        let need_output = luma.is_some()
+          || luma_u16.is_some()
+          || rgb.is_some()
+          || rgba.is_some()
+          || rgb_u16.is_some()
+          || rgba_u16.is_some()
+          || hsv.is_some();
+        // Only freeze on an ACCEPTED output-bearing row. A filter plan was
+        // rejected above (no route consumed), so guard the freeze off it too.
+        if !plan.kind().is_filter() && frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(false);
+        }
+      }
+      return Ok(());
     }
 
     let one_plane_start = idx * w;

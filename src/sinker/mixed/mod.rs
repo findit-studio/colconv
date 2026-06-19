@@ -2029,6 +2029,59 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// of [`Self::y2xx_u_half`].
   #[cfg(all(feature = "y2xx", feature = "yuv-planar"))]
   y2xx_v_half: Vec<u16>,
+  /// De-pack staging for the native fast tier of the **8-bit packed 4:4:4**
+  /// non-alpha YUV format ([`Vuyx`](crate::source::Vuyx) — bytes `V U Y X`
+  /// per pixel, `X` padding). The native wrapper de-packs each packed row
+  /// into these separate Y / U / V scratch planes — all FULL width (`width`),
+  /// since 4:4:4 has no chroma subsampling — then the reused planar 8-bit join
+  /// ([`planar_8bit::yuv_planar_process_native`]) bins Y + U + V at
+  /// [`Yuv444p`](crate::source::Yuv444p) geometry (`chroma_w = width`,
+  /// `chroma_vsub = 1`). `packed_444_y_full` grows to `width` on every native
+  /// row; `packed_444_u_full` / `packed_444_v_full` grow to `width` each only
+  /// on a colour native row; empty otherwise. The 4:4:4 (full-width chroma)
+  /// analog of [`Self::packed_yuv_y_full`] (the 8-bit packed 4:2:2 tier).
+  /// Gated to the intersection — the native tier reuses a yuv-planar fn, so it
+  /// only exists when `yuv-planar` is also compiled (a `yuv-444-packed`-solo
+  /// build takes the row-stage tail).
+  #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+  packed_444_y_full: Vec<u8>,
+  /// U-plane de-pack scratch for the native 8-bit packed 4:4:4 tier; twin of
+  /// [`Self::packed_444_y_full`] at FULL chroma width (`width`).
+  #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+  packed_444_u_full: Vec<u8>,
+  /// V-plane de-pack scratch for the native 8-bit packed 4:4:4 tier; twin of
+  /// [`Self::packed_444_u_full`].
+  #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+  packed_444_v_full: Vec<u8>,
+  /// De-pack staging for the native fast tier of the **high-bit packed 4:4:4**
+  /// non-alpha YUV formats ([`V410`](crate::source::V410) — one 10-bit
+  /// bit-field-packed u32 word per pixel; [`Xv36`](crate::source::Xv36) — four
+  /// MSB-aligned 12-bit u16 slots `U Y V A` per pixel, `A` padding). Each
+  /// wrapper bit-extracts / de-packs its OWN wire layout into these separate
+  /// host-native LOGICAL u16 Y / U / V scratch planes — all FULL width
+  /// (`width`), since 4:4:4 has no chroma subsampling — then the reused HIGH-BIT
+  /// non-4:2:0 planar join
+  /// ([`planar_high_bit_native::yuv_planar16_process_native`]) bins Y + U + V at
+  /// [`Yuv444p10`](crate::source::Yuv444p10) /
+  /// [`Yuv444p12`](crate::source::Yuv444p12) geometry (`chroma_w = width`,
+  /// `chroma_vsub = 1`). `packed_444_y_full_u16` grows to `width` on every
+  /// native row; `packed_444_u_full_u16` / `packed_444_v_full_u16` grow to
+  /// `width` each only on a colour native row; empty otherwise. A given sink
+  /// instantiates exactly one format, so V410 and Xv36 (both high-bit 4:4:4)
+  /// share these fields. The 4:4:4 (full-width chroma) analog of
+  /// [`Self::y2xx_y_full`] (the high-bit packed 4:2:2 tier). Gated to the
+  /// intersection — the native tier reuses a yuv-planar fn, so it only exists
+  /// when `yuv-planar` is also compiled.
+  #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+  packed_444_y_full_u16: Vec<u16>,
+  /// U-plane de-pack scratch for the native high-bit packed 4:4:4 tier; twin of
+  /// [`Self::packed_444_y_full_u16`] at FULL chroma width (`width`).
+  #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+  packed_444_u_full_u16: Vec<u16>,
+  /// V-plane de-pack scratch for the native high-bit packed 4:4:4 tier; twin of
+  /// [`Self::packed_444_u_full_u16`].
+  #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+  packed_444_v_full_u16: Vec<u16>,
   /// The native / row-stage route chosen on the first resampled row of a
   /// frame; a mid-frame change is rejected. The two tiers carry
   /// independent, in-order stream state, so flipping
@@ -2900,6 +2953,18 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       y2xx_u_half: Vec::new(),
       #[cfg(all(feature = "y2xx", feature = "yuv-planar"))]
       y2xx_v_half: Vec::new(),
+      #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+      packed_444_y_full: Vec::new(),
+      #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+      packed_444_u_full: Vec::new(),
+      #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+      packed_444_v_full: Vec::new(),
+      #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+      packed_444_y_full_u16: Vec::new(),
+      #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+      packed_444_u_full_u16: Vec::new(),
+      #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+      packed_444_v_full_u16: Vec::new(),
       #[cfg(feature = "yuv-planar")]
       frozen_native_route: None,
       #[cfg(any(
@@ -8438,8 +8503,412 @@ fn y2xx_process_native<const BITS: u32, const BE: bool>(
 /// be a no-op load on every host: pass `BE = HOST_NATIVE_BE` (= `from_ne`).
 /// Forwarding the source wire `BE` here would byte-swap the already-native
 /// scratch on a big-endian target. Mirrors the high-bit semi-planar `p2xx`.
-#[cfg(all(feature = "y2xx", feature = "yuv-planar"))]
+/// Shared by the high-bit packed 4:2:2 (`y2xx`) and 4:4:4 (`yuv-444-packed`
+/// V410 / Xv36) native wrappers — both de-pack to host-native LOGICAL u16
+/// before delegating.
+#[cfg(all(
+  any(feature = "y2xx", feature = "yuv-444-packed"),
+  feature = "yuv-planar"
+))]
 const HIGH_BIT_HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
+// Test-only allocation failpoint for the wrapper-owned Y / U / V de-pack
+// scratch grow in the packed 4:4:4 native wrappers (8-bit `packed_vuyx_process_native`
+// and high-bit `packed_yuv444_hb_process_native`). Armed, the FIRST (Y) scratch
+// grow of an output-bearing row returns the crate's recoverable `AllocationFailed`
+// WITHOUT growing — so the atomicity regressions can prove the join's pre-feed
+// preflight (out-of-sequence / frozen-output) runs BEFORE this fallible grow.
+// Mirrors `FORCE_Y2XX_ALLOC_FAILURE`. A given sink runs exactly one element-type
+// grow (u8 for Vuyx, u16 for V410 / Xv36), so the single flag is shared by both
+// `grow_packed_444_*_scratch` helpers. Strictly test-only — the non-test build
+// compiles this away entirely.
+#[cfg(all(
+  test,
+  feature = "std",
+  feature = "yuv-444-packed",
+  feature = "yuv-planar"
+))]
+std::thread_local! {
+  static FORCE_PACKED_444_ALLOC_FAILURE: core::cell::Cell<bool> =
+    const { core::cell::Cell::new(false) };
+}
+
+/// Arms the wrapper de-pack scratch allocation failpoint for the **next**
+/// output-bearing packed 4:4:4 native row on the current thread. The flag is
+/// consumed (take-on-read) by the first fallible scratch grow that row reaches,
+/// so it fires exactly once and cannot leak into a later test. Test-only.
+#[cfg(all(
+  test,
+  feature = "std",
+  feature = "yuv-444-packed",
+  feature = "yuv-planar"
+))]
+pub(crate) fn arm_packed_444_alloc_failure() {
+  FORCE_PACKED_444_ALLOC_FAILURE.with(|f| f.set(true));
+}
+
+/// Grows a wrapper-owned **u8** de-pack scratch (the 8-bit Vuyx tier) to `len`
+/// under the planner's recoverable-allocation contract, optionally firing the
+/// test-only failpoint (`fail = true` only on the FIRST grow of an output-bearing
+/// row). Runs after the join's preflight clears, so a rejected row never reaches
+/// it. The 8-bit packed 4:4:4 twin of `grow_y2xx_depack_scratch`.
+#[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn grow_packed_444_u8_scratch(
+  scratch: &mut Vec<u8>,
+  len: usize,
+  fail: bool,
+  w: usize,
+  h: usize,
+  plan: &crate::resample::ResamplePlan,
+) -> Result<(), MixedSinkerError> {
+  let _ = fail;
+  if scratch.len() < len {
+    #[cfg(all(
+      test,
+      feature = "std",
+      feature = "yuv-444-packed",
+      feature = "yuv-planar"
+    ))]
+    if fail && FORCE_PACKED_444_ALLOC_FAILURE.with(|f| f.take()) {
+      return Err(MixedSinkerError::Resample(
+        crate::resample::ResampleError::AllocationFailed(crate::resample::PlanGeometry::new(
+          w,
+          h,
+          plan.out_w(),
+          plan.out_h(),
+        )),
+      ));
+    }
+    scratch
+      .try_reserve_exact(len - scratch.len())
+      .map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(w, h, plan.out_w(), plan.out_h()),
+        ))
+      })?;
+    scratch.resize(len, 0);
+  }
+  Ok(())
+}
+
+/// Grows a wrapper-owned **u16** de-pack scratch (the high-bit V410 / Xv36 tier)
+/// to `len` under the planner's recoverable-allocation contract, with the same
+/// failpoint + ordering contract as [`grow_packed_444_u8_scratch`]. The high-bit
+/// packed 4:4:4 twin of `grow_y2xx_depack_scratch`.
+#[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn grow_packed_444_u16_scratch(
+  scratch: &mut Vec<u16>,
+  len: usize,
+  fail: bool,
+  w: usize,
+  h: usize,
+  plan: &crate::resample::ResamplePlan,
+) -> Result<(), MixedSinkerError> {
+  let _ = fail;
+  if scratch.len() < len {
+    #[cfg(all(
+      test,
+      feature = "std",
+      feature = "yuv-444-packed",
+      feature = "yuv-planar"
+    ))]
+    if fail && FORCE_PACKED_444_ALLOC_FAILURE.with(|f| f.take()) {
+      return Err(MixedSinkerError::Resample(
+        crate::resample::ResampleError::AllocationFailed(crate::resample::PlanGeometry::new(
+          w,
+          h,
+          plan.out_w(),
+          plan.out_h(),
+        )),
+      ));
+    }
+    scratch
+      .try_reserve_exact(len - scratch.len())
+      .map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(w, h, plan.out_w(), plan.out_h()),
+        ))
+      })?;
+    scratch.resize(len, 0);
+  }
+  Ok(())
+}
+
+/// Native fast-tier decimator for the **8-bit packed 4:4:4** non-alpha YUV
+/// format ([`Vuyx`](crate::source::Vuyx) — bytes `V U Y X` per pixel, `X`
+/// padding): de-PACKS the fully-interleaved source row into the sink's separate
+/// Y / U / V scratch planes, then reuses the planar twin's non-4:2:0 join
+/// verbatim ([`planar_8bit::yuv_planar_process_native`]) at
+/// [`Yuv444p`](crate::source::Yuv444p) geometry. The 4:4:4 (full-width chroma,
+/// `chroma_vsub = 1`) analog of the packed 4:2:2
+/// [`packed_yuv_8bit`]'s `packed_yuv422_process_native`, so every output is
+/// byte-identical to a [`Yuv444p`](crate::source::Yuv444p) native conversion of
+/// those de-packed planes, and within ±1 LSB of the packed row-stage tier. Luma
+/// is bit-identical (both bin the same native Y).
+///
+/// Vuyx packs four bytes per pixel `V U Y X`: V at byte 0, U at byte 1, Y at
+/// byte 2, X (padding) at byte 3 — ignored. There is NO chroma subsampling
+/// (4:4:4), so the de-pack writes FULL-width Y / U / V (`chroma_w = w`) and the
+/// chroma plan is a plain `area(w, h, ..)`. Y is always de-packed (the join bins
+/// Y for both luma and colour); U / V only on a colour row — on luma-only /
+/// no-colour rows the join never reads chroma, the scratch is left as-is and the
+/// join gets empty U / V slices (the lazy-chroma contract).
+///
+/// 8-bit source, so no native-depth clamp is needed (the source's native range
+/// is the full `u8` range and the join's averaging keeps every sample in range).
+///
+/// Atomicity mirrors the packed 4:2:2 wrapper: the join's COMPLETE pre-feed
+/// rejection preflight runs FIRST (via [`planar_8bit::native_planar_preflight`]),
+/// before the fallible Y / U / V scratch grow, so a rejected row returns its
+/// deterministic typed error (`OutOfSequenceRow` / `ResampleOutputsChanged`),
+/// never `AllocationFailed`, and grows no sink state; the de-pack writes only the
+/// private scratch, so no caller output is touched until the join's own preflight
+/// (re-run inside the delegate) clears.
+#[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+#[allow(clippy::too_many_arguments)]
+fn packed_vuyx_process_native(
+  plan: &crate::resample::ResamplePlan,
+  native_planar: &mut Option<planar_8bit::NativePlanarYuv>,
+  y_scratch: &mut Vec<u8>,
+  u_scratch: &mut Vec<u8>,
+  v_scratch: &mut Vec<u8>,
+  resample_outputs: &mut Option<FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgb_scratch: &mut Vec<u8>,
+  packed: &[u8],
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  idx: usize,
+  w: usize,
+  h: usize,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  let need_luma = luma.is_some() || luma_u16.is_some();
+  let need_color = rgb.is_some() || rgba.is_some() || hsv.is_some();
+
+  // Run the join's COMPLETE pre-feed rejection preflight FIRST — before the
+  // fallible Y / U / V de-pack scratch grow — so EVERY rejection case returns
+  // its deterministic typed error, never AllocationFailed under allocation
+  // pressure, and leaves the scratch untouched. `Ok(false)` is the no-output
+  // no-op. The delegate re-runs this identical preflight harmlessly.
+  if !planar_8bit::native_planar_preflight(
+    native_planar,
+    resample_outputs,
+    rgb,
+    rgba,
+    luma,
+    luma_u16,
+    hsv,
+    idx,
+    need_luma,
+    need_color,
+  )? {
+    return Ok(());
+  }
+
+  // De-pack the interleaved `V U Y X` row into the private Y / U / V scratch.
+  // 4:4:4: chroma is full-width (`w`). Y is always de-packed; U / V only on a
+  // colour row. The failpoint fires on the FIRST (Y) grow only.
+  grow_packed_444_u8_scratch(y_scratch, w, true, w, h, plan)?;
+  for (i, group) in packed.chunks_exact(4).enumerate() {
+    y_scratch[i] = group[2];
+  }
+  if need_color {
+    grow_packed_444_u8_scratch(u_scratch, w, false, w, h, plan)?;
+    grow_packed_444_u8_scratch(v_scratch, w, false, w, h, plan)?;
+    for (i, group) in packed.chunks_exact(4).enumerate() {
+      u_scratch[i] = group[1];
+      v_scratch[i] = group[0];
+    }
+  }
+
+  let (u_plane, v_plane): (&[u8], &[u8]) = if need_color {
+    (&u_scratch[..w], &v_scratch[..w])
+  } else {
+    (&[], &[])
+  };
+  planar_8bit::yuv_planar_process_native(
+    plan,
+    native_planar,
+    resample_outputs,
+    rgb,
+    rgba,
+    luma,
+    luma_u16,
+    hsv,
+    rgb_scratch,
+    &y_scratch[..w],
+    u_plane,
+    v_plane,
+    matrix,
+    full_range,
+    idx,
+    w,
+    h,
+    1,
+    || crate::resample::ResamplePlan::area(w, h, plan.out_w(), plan.out_h()),
+    use_simd,
+  )
+}
+
+/// Native fast-tier decimator for the **high-bit packed 4:4:4** non-alpha YUV
+/// formats ([`V410`](crate::source::V410) 10-bit / [`Xv36`](crate::source::Xv36)
+/// 12-bit): de-PACKS each format's OWN wire layout into the sink's separate
+/// host-native LOGICAL u16 Y / U / V scratch planes, then reuses the HIGH-BIT
+/// non-4:2:0 PLANAR join verbatim
+/// ([`planar_high_bit_native::yuv_planar16_process_native`]) at
+/// [`Yuv444p10`](crate::source::Yuv444p10) /
+/// [`Yuv444p12`](crate::source::Yuv444p12) geometry. The 4:4:4 (full-width
+/// chroma, `chroma_vsub = 1`) analog of the high-bit packed 4:2:2
+/// [`y2xx_process_native`].
+///
+/// The de-pack is format-specific (V410 bit-extracts a 10-bit U / Y / V from one
+/// 32-bit LE/BE word; Xv36 reads four MSB-aligned 12-bit u16 slots `U Y V A` and
+/// drops the 4 low padding bits), so it is supplied by the caller as two
+/// closures: `fill_y` de-packs the Y plane (always run, the join bins Y for both
+/// luma and colour), `fill_uv` de-packs the U / V planes (run only on a colour
+/// row). Each writes host-native LOGICAL u16 (a bit-field / MSB extraction is
+/// inherently `<= (1 << BITS) - 1`, so it is already in the native range — the
+/// join's clamp is a value no-op on encodable input). 4:4:4 has no chroma
+/// subsampling, so the de-pack width is `w` and the chroma plan is a plain
+/// `area(w, h, ..)`.
+///
+/// The reused join delegates with `BE = HOST_NATIVE_BE` (= `from_ne`) so its
+/// internal decode is a no-op load on the already-native scratch — forwarding the
+/// source wire `BE` would byte-swap the native value on a big-endian host. The
+/// join now emits BOTH u8 `luma` and the native-depth `luma_u16` (the clamped
+/// binned Y), so attaching `luma_u16` keeps the native route (no row-stage
+/// fallback) — V410 / Xv36 thread their real `luma_u16` buffer. Under
+/// `need_color == false` only Y is de-packed and the join is handed empty U / V
+/// slices, so a luma-only / `luma_u16`-only sink plans no chroma state.
+///
+/// Atomicity mirrors [`y2xx_process_native`]: the join's COMPLETE pre-feed
+/// preflight runs FIRST (via [`planar_high_bit_native::native_planar_hb_preflight`]),
+/// before any fallible scratch grow, so a rejected row returns its deterministic
+/// typed error, never `AllocationFailed`, and touches no caller output. The
+/// de-pack into scratch is infallible and runs only after the preflight clears;
+/// the delegate re-runs the identical preflight (idempotent) and owns the binning
+/// + conversion.
+#[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+#[allow(clippy::too_many_arguments)]
+fn packed_yuv444_hb_process_native<const BITS: u32>(
+  plan: &crate::resample::ResamplePlan,
+  native_planar_u16: &mut Option<NativePlanarYuvU16>,
+  y_scratch: &mut Vec<u16>,
+  u_scratch: &mut Vec<u16>,
+  v_scratch: &mut Vec<u16>,
+  resample_outputs: &mut Option<FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  rgb_u16: &mut Option<&mut [u16]>,
+  rgba_u16: &mut Option<&mut [u16]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgb_scratch: &mut Vec<u8>,
+  rgb_scratch_u16: &mut Vec<u16>,
+  fill_y: impl FnOnce(&mut [u16]),
+  fill_uv: impl FnOnce(&mut [u16], &mut [u16]),
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  idx: usize,
+  w: usize,
+  h: usize,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  const {
+    assert!(
+      BITS > 8 && BITS <= 16,
+      "BITS must be in (8, 16] for high-bit packed 4:4:4 YUV"
+    )
+  };
+  let need_luma = luma.is_some() || luma_u16.is_some();
+  let need_color =
+    rgb.is_some() || rgba.is_some() || hsv.is_some() || rgb_u16.is_some() || rgba_u16.is_some();
+
+  // Run the planar join's COMPLETE pre-feed rejection preflight FIRST — before
+  // any fallible scratch grow below, so every rejection returns its
+  // deterministic typed error and leaves the wrapper scratch untouched. The
+  // delegate re-runs this identical preflight harmlessly.
+  if !native_planar_hb_preflight(
+    native_planar_u16,
+    resample_outputs,
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    luma,
+    luma_u16,
+    hsv,
+    idx,
+    need_luma,
+    need_color,
+  )? {
+    return Ok(());
+  }
+
+  // Grow the wrapper de-pack scratch under the planner's recoverable contract —
+  // Y always, U / V only on a colour row (4:4:4: full-width chroma). All grows
+  // precede the infallible de-pack and the delegate call. The failpoint fires on
+  // the FIRST (Y) grow only.
+  grow_packed_444_u16_scratch(y_scratch, w, true, w, h, plan)?;
+  if need_color {
+    grow_packed_444_u16_scratch(u_scratch, w, false, w, h, plan)?;
+    grow_packed_444_u16_scratch(v_scratch, w, false, w, h, plan)?;
+  }
+
+  // De-pack the wire layout into host-native LOGICAL u16 scratch via the
+  // format-specific closures. Y is always de-packed; U / V only on a colour row
+  // (`u_scratch` / `v_scratch` are distinct Vecs, so the two `&mut` borrows do
+  // not alias). Everything past here is infallible.
+  fill_y(&mut y_scratch[..w]);
+  if need_color {
+    fill_uv(&mut u_scratch[..w], &mut v_scratch[..w]);
+  }
+
+  // Delegate to the planar high-bit non-4:2:0 join with `BE = HOST_NATIVE_BE` so
+  // its internal decode is a no-op on the already-native scratch, at the 4:4:4
+  // chroma geometry (`chroma_vsub = 1`, `chroma_w = w`). Empty U / V on luma-only
+  // rows. V410 / Xv36 thread their real `luma_u16` buffer (the join emits the
+  // native-depth `luma_u16`), so attaching it stays on the native route.
+  let (u_plane, v_plane): (&[u16], &[u16]) = if need_color {
+    (&u_scratch[..w], &v_scratch[..w])
+  } else {
+    (&[], &[])
+  };
+  planar_high_bit_native::yuv_planar16_process_native::<BITS, HIGH_BIT_HOST_NATIVE_BE>(
+    plan,
+    native_planar_u16,
+    resample_outputs,
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    luma,
+    luma_u16,
+    hsv,
+    rgb_scratch,
+    rgb_scratch_u16,
+    &y_scratch[..w],
+    u_plane,
+    v_plane,
+    matrix,
+    full_range,
+    idx,
+    w,
+    h,
+    1,
+    w,
+    || crate::resample::ResamplePlan::area(w, h, plan.out_w(), plan.out_h()),
+    use_simd,
+  )
+}
 
 /// Row-stage fused downscale for the **high-bit packed 4:2:2 YUV**
 /// family (`Y210` / `Y212` / `Y216`, plus the exotic 10-bit `V210` word
@@ -11892,9 +12361,14 @@ use planar_high_bit_native::yuv_planar16_process_native;
 // the join type + preflight into the `mixed` scope so those sinks reach them by
 // `super::{..}` / `super::super::{..}`. Gated to the intersection of `yuv-planar`
 // (where the join lives) and any consuming family (`yuv-semi-planar` for the
-// P-format wrappers, `y2xx` for the packed wrapper).
+// P-format wrappers, `y2xx` for the packed 4:2:2 wrapper, `yuv-444-packed` for
+// the packed 4:4:4 V410 / Xv36 wrapper).
 #[cfg(all(
-  any(feature = "yuv-semi-planar", feature = "y2xx"),
+  any(
+    feature = "yuv-semi-planar",
+    feature = "y2xx",
+    feature = "yuv-444-packed"
+  ),
   feature = "yuv-planar"
 ))]
 use planar_high_bit_native::{NativePlanarYuvU16, native_planar_hb_preflight};
