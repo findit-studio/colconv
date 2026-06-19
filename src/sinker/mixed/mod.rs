@@ -1709,12 +1709,21 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// is byte-exact versus PIL's RGBA resize. Lazily created in `process`,
   /// reset in `begin_frame`. Padding-alpha sources keep the 3-channel
   /// [`Self::rgb_filter_stream`] (the X byte is never filtered). Gated to
-  /// `any(rgb, gbr, yuv-444-packed)`: besides the 8-bit planar GBR+alpha
-  /// source [`Gbrap`], the 8-bit packed YUV 4:4:4 sources `Vuya` (real
-  /// source alpha) and `Vuyx` (padding byte forced opaque) convert their
-  /// YUVA to a canonical u8 `R, G, B, A` row and filter through this same
-  /// 4-channel stream.
-  #[cfg(any(feature = "rgb", feature = "gbr", feature = "yuv-444-packed"))]
+  /// `any(rgb, gbr, yuv-444-packed, mono)`: besides the 8-bit planar
+  /// GBR+alpha source [`Gbrap`], the 8-bit packed YUV 4:4:4 sources `Vuya`
+  /// (real source alpha) and `Vuyx` (padding byte forced opaque) convert
+  /// their YUVA to a canonical u8 `R, G, B, A` row and filter through this
+  /// same 4-channel stream, and the 8-bit palette-indexed [`Pal8`] expands
+  /// each index to its palette color (real per-entry straight alpha) and
+  /// filters that canonical RGBA row through this stream too — its non-color
+  /// outputs (luma / u16) keep the direct Q8 / `(v << 8) | v` derivations,
+  /// not the matrix-based ones the chromatic packed-RGBA path uses.
+  #[cfg(any(
+    feature = "rgb",
+    feature = "gbr",
+    feature = "yuv-444-packed",
+    feature = "mono"
+  ))]
   rgba_filter_stream: Option<crate::resample::FilterStream<u8>>,
   /// Row-stage **filter** stream for the high-bit packed-RGB `u16` color
   /// group ([`Rgb48`](crate::source::Rgb48), and the high-bit planar GBR
@@ -2660,7 +2669,12 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
         feature = "yuv-packed"
       ))]
       rgb_filter_stream: None,
-      #[cfg(any(feature = "rgb", feature = "gbr", feature = "yuv-444-packed"))]
+      #[cfg(any(
+        feature = "rgb",
+        feature = "gbr",
+        feature = "yuv-444-packed",
+        feature = "mono"
+      ))]
       rgba_filter_stream: None,
       #[cfg(any(
         feature = "rgb",
@@ -3183,6 +3197,15 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   #[cfg(all(test, feature = "std", feature = "yuv-packed"))]
   pub(crate) fn rgb_filter_stream_allocated(&self) -> bool {
     self.rgb_filter_stream.is_some()
+  }
+
+  /// Whether the 4-channel packed-RGBA `u8` **filter** stream has been
+  /// created — a white-box probe for the `Pal8` filter resample ordering
+  /// tests (a no-output sink must not allocate it). Gated on `std` + `mono`
+  /// like the tests that consume it.
+  #[cfg(all(test, feature = "std", feature = "mono"))]
+  pub(crate) fn rgba_filter_stream_allocated(&self) -> bool {
+    self.rgba_filter_stream.is_some()
   }
 
   /// Whether the single-channel native-Y `u8` **filter** stream has been
@@ -5870,6 +5893,198 @@ pub(super) fn pal8_rgba_resample(
       // luma / luma_u16: Q8 coefficients over the binned straight RGB (the
       // direct Pal8 path's derivation — no matrix, no range). `luma_u16`
       // is the Q8 path's `(y << 8) | y` widening.
+      if let Some(buf) = luma.as_deref_mut() {
+        rgb_row_to_luma_row(nrow, &mut buf[oy * ow..(oy + 1) * ow], luma_coeffs_q8);
+      }
+      if let Some(buf) = luma_u16.as_deref_mut() {
+        rgb_row_to_luma_u16_row(nrow, &mut buf[oy * ow..(oy + 1) * ow], luma_coeffs_q8);
+      }
+      if let Some(hsv) = hsv.as_mut() {
+        let (h, s, v) = hsv.hsv();
+        crate::row::rgb_to_hsv_row(
+          nrow,
+          &mut h[oy * ow..(oy + 1) * ow],
+          &mut s[oy * ow..(oy + 1) * ow],
+          &mut v[oy * ow..(oy + 1) * ow],
+          ow,
+          use_simd,
+        );
+      }
+    }
+  })?;
+  Ok(())
+}
+
+/// Separable-filter fused resize for `Pal8` (8-bit palette-indexed) — the
+/// `Filter`-plan twin of the area [`pal8_rgba_resample`]. Filtering palette
+/// *indices* is meaningless, exactly as averaging them is, so the source row
+/// is first expanded to its palette color (`convert_rgba`, the same
+/// `pal8_to_rgba_row` lookup the area path uses, real per-entry straight
+/// alpha) and THAT canonical source-width `R, G, B, A` u8 row is fed to a
+/// single 4-channel [`FilterStream`](crate::resample::FilterStream). Filtering
+/// the looked-up colors (not the indices) is the convert-then-filter mirror of
+/// the area convert-then-bin, so a resampled frame is byte-identical to a
+/// direct full-res `Pal8` → RGBA conversion followed by the 4-channel
+/// `FilterStream` of that color (the parity goal). Because the u8 filter is
+/// byte-exact per channel, every output channel — alpha included — equals the
+/// single-plane filter of that channel.
+///
+/// `Pal8` carries **real straight alpha** in the palette (never premultiplied),
+/// so all four channels are filtered independently with no premultiplication —
+/// the PIL RGBA convention, identical to the real-alpha packed-RGBA
+/// [`packed_rgba_filter_resample`]. A premultiplied-mode frame has no filter
+/// analogue (the filter engine cannot un-premultiply) and never reaches this
+/// tail: the `Pal8` sink routes it to the area [`pal8_rgba_resample`], whose
+/// `Filter`-plan reject surfaces the typed `UnsupportedFilter`.
+///
+/// The non-color outputs keep the **direct `Pal8` derivations**, matching the
+/// area path exactly (NOT the matrix-based derivations the chromatic
+/// [`packed_rgba_filter_resample`] uses): `rgb` drops alpha; `luma` /
+/// `luma_u16` are the sink's **Q8** [`LumaCoefficients`] over the filtered
+/// straight RGB ([`rgb_row_to_luma_row`] / [`rgb_row_to_luma_u16_row`], no
+/// matrix / range), with `luma_u16` the Q8 path's `(y << 8) | y` full-range
+/// widening; `rgb_u16` / `rgba_u16` widen each filtered 8-bit channel via
+/// `(v << 8) | v` (the direct `pal8_to_*_u16_row` convention), per channel
+/// including alpha. `Pal8` is an 8-bit source so there is no native-depth
+/// clamp — the `FilterStream`'s `0..=255` clamp is exactly the source's
+/// native range, even for a signed-kernel (CatmullRom / Lanczos3) overshoot.
+///
+/// Same atomic conditional-ordering preflight as [`pal8_rgba_resample`]: a
+/// no-output call returns before any freeze; an out-of-sequence first row is
+/// rejected before the freeze (so a rejected row stores no snapshot to poison
+/// a retry); a later-row output change trips `ResampleOutputsChanged`; the
+/// 4-channel stream and both scratches are created after the sequence check and
+/// before the single feed, so a failure mutates no caller output and
+/// `AllocationFailed` never masks `OutOfSequenceRow`.
+#[cfg(feature = "mono")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn pal8_rgba_filter_resample(
+  rgba_filter_stream: &mut Option<crate::resample::FilterStream<u8>>,
+  resample_outputs: &mut Option<FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  rgb_u16: &mut Option<&mut [u16]>,
+  rgba_u16: &mut Option<&mut [u16]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgba_scratch: &mut Vec<u8>,
+  rgb_drop_scratch: &mut Vec<u8>,
+  w: usize,
+  plan: &ResamplePlan,
+  idx: usize,
+  use_simd: bool,
+  luma_coeffs_q8: (u32, u32, u32),
+  convert_rgba: impl FnOnce(&mut [u8]),
+) -> Result<(), MixedSinkerError> {
+  let ow = plan.out_w();
+  let need_any = rgb.is_some()
+    || rgba.is_some()
+    || rgb_u16.is_some()
+    || rgba_u16.is_some()
+    || luma.is_some()
+    || luma_u16.is_some()
+    || hsv.is_some();
+  // No-output call: nothing to sequence, stays a no-op (no freeze, no
+  // allocation) regardless of the row index.
+  if !need_any {
+    return Ok(());
+  }
+  let expected = rgba_filter_stream.as_ref().map_or(0, |s| s.next_y());
+  let first_row = resample_outputs.is_none();
+  // First row: reject an out-of-sequence row before the freeze so a
+  // rejected first row stores no snapshot that would poison a retry.
+  if first_row && expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    rgb,
+    rgba,
+    rgb_u16,
+    rgba_u16,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    hsv,
+    &None,
+    idx,
+  )?;
+  // Later row: a mid-frame output change is reported above; an
+  // out-of-sequence later row is rejected here.
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      crate::resample::OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  // The rgb / rgb_u16 / luma / luma_u16 / hsv outputs need a packed RGB row
+  // (the filtered color with α dropped); sized to the out-width RGB row only
+  // when one of those is attached, so an rgba-only sink neither grows it nor
+  // risks its allocation failure.
+  let need_rgb_drop =
+    rgb.is_some() || rgb_u16.is_some() || luma.is_some() || luma_u16.is_some() || hsv.is_some();
+  if rgba_filter_stream.is_none() {
+    let (fh, fv) = (
+      plan
+        .filter_h()
+        .expect("filter plan carries horizontal windows"),
+      plan
+        .filter_v()
+        .expect("filter plan carries vertical windows"),
+    );
+    *rgba_filter_stream = Some(crate::resample::FilterStream::new(
+      fh,
+      fv,
+      plan.src_w(),
+      plan.src_h(),
+      4,
+    )?);
+  }
+  let rgb_drop: &mut [u8] = if need_rgb_drop {
+    source_rgb_scratch(rgb_drop_scratch, ow, plan)?
+  } else {
+    &mut []
+  };
+  let src_rgba = source_rgba_scratch(rgba_scratch, w, plan)?;
+  convert_rgba(src_rgba);
+  let stream = rgba_filter_stream.as_mut().expect("created above");
+  stream.feed_row(idx, src_rgba, use_simd, |oy, finalized| {
+    // Straight-alpha RGBA output — the finalized 4-channel filter row.
+    if let Some(buf) = rgba.as_deref_mut() {
+      buf[oy * 4 * ow..(oy + 1) * 4 * ow].copy_from_slice(finalized);
+    }
+    // rgba_u16 widens the straight RGBA via `(v << 8) | v` (the direct
+    // `pal8_to_rgba_u16_row` convention), per channel including alpha.
+    if let Some(buf) = rgba_u16.as_deref_mut() {
+      let dst = &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow];
+      for (d, &s) in dst.iter_mut().zip(finalized.iter()) {
+        let s = s as u16;
+        *d = (s << 8) | s;
+      }
+    }
+    if need_rgb_drop {
+      let nrow = &mut rgb_drop[..3 * ow];
+      drop_alpha_rgba_to_rgb_row(finalized, nrow, ow);
+      if let Some(buf) = rgb.as_deref_mut() {
+        buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(nrow);
+      }
+      // rgb_u16 widens the straight RGB via `(v << 8) | v`.
+      if let Some(buf) = rgb_u16.as_deref_mut() {
+        let dst = &mut buf[oy * 3 * ow..(oy + 1) * 3 * ow];
+        for (d, &s) in dst.iter_mut().zip(nrow.iter()) {
+          let s = s as u16;
+          *d = (s << 8) | s;
+        }
+      }
+      // luma / luma_u16: Q8 coefficients over the filtered straight RGB (the
+      // direct Pal8 path's derivation — no matrix, no range). `luma_u16` is
+      // the Q8 path's `(y << 8) | y` widening.
       if let Some(buf) = luma.as_deref_mut() {
         rgb_row_to_luma_row(nrow, &mut buf[oy * ow..(oy + 1) * ow], luma_coeffs_q8);
       }
