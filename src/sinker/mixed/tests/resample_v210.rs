@@ -154,6 +154,23 @@ fn frame(buf: &[u8]) -> V210Frame<'_> {
   V210Frame::new(buf, SRC as u32, SRC as u32, STRIDE)
 }
 
+/// `.with_native(false)` where the native tier exists (it is gated on
+/// `yuv-planar`/`yuv-semi-planar`); otherwise the identity, so the
+/// row-stage tests compile + run in a `v210`-solo build too (there is no
+/// native tier there — row-stage is the only path).
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+fn force_row_stage<R, const BE: bool>(
+  s: MixedSinker<'_, V210<BE>, R>,
+) -> MixedSinker<'_, V210<BE>, R> {
+  s.with_native(false)
+}
+#[cfg(not(any(feature = "yuv-planar", feature = "yuv-semi-planar")))]
+fn force_row_stage<R, const BE: bool>(
+  s: MixedSinker<'_, V210<BE>, R>,
+) -> MixedSinker<'_, V210<BE>, R> {
+  s
+}
+
 // ---- Exact 2x2 block-area means (round-half-up) -----------------------
 
 fn block_mean_2x2_rgb_u8(rgb: &[u8]) -> Vec<u8> {
@@ -248,11 +265,12 @@ fn rgb_u8_matches_area_bin_of_direct() {
   let packed = ramp_packed();
   let mut rgb = std::vec![0u8; OUT * OUT * 3];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<V210, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_rgb(&mut rgb)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_rgb(&mut rgb)
+    .unwrap();
     v210_to(&frame(&packed), FR, M, &mut sink).unwrap();
   }
   assert_eq!(rgb, block_mean_2x2_rgb_u8(&direct_rgb_u8(&packed)));
@@ -267,11 +285,12 @@ fn rgb_u16_is_exact_native_area_mean() {
   let packed = ramp_packed();
   let mut rgb = std::vec![0u16; OUT * OUT * 3];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<V210, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_rgb_u16(&mut rgb)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_rgb_u16(&mut rgb)
+    .unwrap();
     v210_to(&frame(&packed), FR, M, &mut sink).unwrap();
   }
   assert_eq!(rgb, block_mean_2x2_rgb_u16(&direct_rgb_u16(&packed)));
@@ -286,13 +305,14 @@ fn luma_is_native_y_area_mean() {
   let packed = ramp_packed();
   let (mut luma, mut luma_u16) = (std::vec![0u8; OUT * OUT], std::vec![0u16; OUT * OUT]);
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<V210, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_luma(&mut luma)
-        .unwrap()
-        .with_luma_u16(&mut luma_u16)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_luma_u16(&mut luma_u16)
+    .unwrap();
     v210_to(&frame(&packed), FR, M, &mut sink).unwrap();
   }
   let y_ref = block_mean_2x2_u16(&direct_luma_u16(&packed));
@@ -324,17 +344,18 @@ fn uniform_gray_color_unchanged_counterexample() {
   let mut ss = std::vec![0u8; OUT * OUT];
   let mut vv = std::vec![0u8; OUT * OUT];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<V210, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_rgb(&mut rgb)
-        .unwrap()
-        .with_rgba(&mut rgba)
-        .unwrap()
-        .with_rgb_u16(&mut rgb_u16)
-        .unwrap()
-        .with_hsv(&mut hh, &mut ss, &mut vv)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_rgb(&mut rgb)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_rgb_u16(&mut rgb_u16)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
     v210_to(&frame(&packed), FR, M, &mut sink).unwrap();
   }
   // Every direct full-res pixel is the same gray; the resampled pixels
@@ -368,11 +389,12 @@ fn luma_from_native_y_under_saturated_chroma() {
   let packed = saturated_packed(y);
   let mut luma_u16 = std::vec![0u16; OUT * OUT];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<V210, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_luma_u16(&mut luma_u16)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_luma_u16(&mut luma_u16)
+    .unwrap();
     v210_to(&frame(&packed), FR, M, &mut sink).unwrap();
   }
   assert!(
@@ -404,23 +426,24 @@ fn all_outputs_combo() {
   let mut ss = std::vec![0u8; OUT * OUT];
   let mut vv = std::vec![0u8; OUT * OUT];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<V210, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_rgb(&mut rgb)
-        .unwrap()
-        .with_rgba(&mut rgba)
-        .unwrap()
-        .with_rgb_u16(&mut rgb_u16)
-        .unwrap()
-        .with_rgba_u16(&mut rgba_u16)
-        .unwrap()
-        .with_luma(&mut luma)
-        .unwrap()
-        .with_luma_u16(&mut luma_u16)
-        .unwrap()
-        .with_hsv(&mut hh, &mut ss, &mut vv)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_rgb(&mut rgb)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_rgb_u16(&mut rgb_u16)
+    .unwrap()
+    .with_rgba_u16(&mut rgba_u16)
+    .unwrap()
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_luma_u16(&mut luma_u16)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
     v210_to(&frame(&packed), FR, M, &mut sink).unwrap();
   }
   assert_eq!(rgb, rgb_u8_ref, "all-outputs rgb");
@@ -466,13 +489,14 @@ fn with_rgb_equals_with_rgba() {
   let mut rgb = std::vec![0u8; OUT * OUT * 3];
   let mut rgba = std::vec![0u8; OUT * OUT * 4];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<V210, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_rgb(&mut rgb)
-        .unwrap()
-        .with_rgba(&mut rgba)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_rgb(&mut rgb)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap();
     v210_to(&frame(&packed), FR, M, &mut sink).unwrap();
   }
   assert_eq!(rgb, rgb_ref, "with_rgb plane");
@@ -509,24 +533,26 @@ fn simd_matches_scalar_across_widths() {
     let mut luma16_simd = std::vec![0u16; ow * oh];
     let mut luma16_scalar = std::vec![0u16; ow * oh];
     {
-      let mut sink =
+      let mut sink = force_row_stage(
         MixedSinker::<V210, AreaResampler>::with_resampler(sw, 4, AreaResampler::to(ow, oh))
-          .unwrap()
-          .with_rgb(&mut rgb_simd)
-          .unwrap()
-          .with_luma_u16(&mut luma16_simd)
-          .unwrap();
+          .unwrap(),
+      )
+      .with_rgb(&mut rgb_simd)
+      .unwrap()
+      .with_luma_u16(&mut luma16_simd)
+      .unwrap();
       v210_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
     }
     {
-      let mut sink =
+      let mut sink = force_row_stage(
         MixedSinker::<V210, AreaResampler>::with_resampler(sw, 4, AreaResampler::to(ow, oh))
-          .unwrap()
-          .with_simd(false)
-          .with_rgb(&mut rgb_scalar)
-          .unwrap()
-          .with_luma_u16(&mut luma16_scalar)
-          .unwrap();
+          .unwrap(),
+      )
+      .with_simd(false)
+      .with_rgb(&mut rgb_scalar)
+      .unwrap()
+      .with_luma_u16(&mut luma16_scalar)
+      .unwrap();
       v210_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
     }
     assert_eq!(
@@ -559,15 +585,16 @@ fn le_be_outputs_identical() {
   let mut le_rgb_u16 = std::vec![0u16; OUT * OUT * 3];
   let mut le_luma_u16 = std::vec![0u16; OUT * OUT];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<V210, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_rgb(&mut le_rgb)
-        .unwrap()
-        .with_rgb_u16(&mut le_rgb_u16)
-        .unwrap()
-        .with_luma_u16(&mut le_luma_u16)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_rgb(&mut le_rgb)
+    .unwrap()
+    .with_rgb_u16(&mut le_rgb_u16)
+    .unwrap()
+    .with_luma_u16(&mut le_luma_u16)
+    .unwrap();
     v210_to(&frame(&packed_le), FR, M, &mut sink).unwrap();
   }
 
@@ -576,12 +603,14 @@ fn le_be_outputs_identical() {
   let mut be_luma_u16 = std::vec![0u16; OUT * OUT];
   {
     let be_frame = V210BeFrame::try_new(&packed_be, SRC as u32, SRC as u32, STRIDE).unwrap();
-    let mut sink = MixedSinker::<V210<true>, AreaResampler>::with_resampler(
-      SRC,
-      SRC,
-      AreaResampler::to(OUT, OUT),
+    let mut sink = force_row_stage(
+      MixedSinker::<V210<true>, AreaResampler>::with_resampler(
+        SRC,
+        SRC,
+        AreaResampler::to(OUT, OUT),
+      )
+      .unwrap(),
     )
-    .unwrap()
     .with_rgb(&mut be_rgb)
     .unwrap()
     .with_rgb_u16(&mut be_rgb_u16)
@@ -614,11 +643,12 @@ fn identity_plan_matches_new_sink() {
   }
   let mut via_area = std::vec![0u8; SRC * SRC * 3];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<V210, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(SRC, SRC))
-        .unwrap()
-        .with_rgb(&mut via_area)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_rgb(&mut via_area)
+    .unwrap();
     v210_to(&frame(&packed), FR, M, &mut sink).unwrap();
   }
   assert_eq!(direct, via_area, "identity plan must match the direct sink");
@@ -627,9 +657,10 @@ fn identity_plan_matches_new_sink() {
 #[test]
 fn no_outputs_is_a_no_op() {
   let packed = ramp_packed();
-  let mut sink =
+  let mut sink = force_row_stage(
     MixedSinker::<V210, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-      .unwrap();
+      .unwrap(),
+  );
   v210_to(&frame(&packed), FR, M, &mut sink).unwrap();
   assert!(
     !sink.luma_stream_u16_allocated(),
@@ -674,15 +705,16 @@ fn resets_streams_across_frames() {
   let mut rgb_u16 = std::vec![0u16; OUT * OUT * 3];
   let mut luma_u16 = std::vec![0u16; OUT * OUT];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<V210, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_rgb(&mut rgb)
-        .unwrap()
-        .with_rgb_u16(&mut rgb_u16)
-        .unwrap()
-        .with_luma_u16(&mut luma_u16)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_rgb(&mut rgb)
+    .unwrap()
+    .with_rgb_u16(&mut rgb_u16)
+    .unwrap()
+    .with_luma_u16(&mut luma_u16)
+    .unwrap();
     v210_to(&frame(&p1), FR, M, &mut sink).unwrap();
     v210_to(&frame(&p2), FR, M, &mut sink).unwrap();
   }
@@ -705,15 +737,16 @@ fn out_of_sequence_first_row_rejected_before_allocation() {
   let mut rgb = std::vec![0u8; OUT * OUT * 3];
   let mut rgb_u16 = std::vec![0u16; OUT * OUT * 3];
   let mut luma_u16 = std::vec![0u16; OUT * OUT];
-  let mut sink =
+  let mut sink = force_row_stage(
     MixedSinker::<V210, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-      .unwrap()
-      .with_rgb(&mut rgb)
-      .unwrap()
-      .with_rgb_u16(&mut rgb_u16)
-      .unwrap()
-      .with_luma_u16(&mut luma_u16)
-      .unwrap();
+      .unwrap(),
+  )
+  .with_rgb(&mut rgb)
+  .unwrap()
+  .with_rgb_u16(&mut rgb_u16)
+  .unwrap()
+  .with_luma_u16(&mut luma_u16)
+  .unwrap();
   sink.begin_frame(SRC as u32, SRC as u32).unwrap();
   let err = sink
     .process(V210Row::new(row_slice(&packed, 3), 3, M, FR))
@@ -747,11 +780,12 @@ fn out_of_sequence_first_row_rejected_before_allocation() {
 fn rejects_mid_frame_out_of_sequence() {
   let packed = ramp_packed();
   let mut luma_u16 = std::vec![0u16; OUT * OUT];
-  let mut sink =
+  let mut sink = force_row_stage(
     MixedSinker::<V210, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-      .unwrap()
-      .with_luma_u16(&mut luma_u16)
-      .unwrap();
+      .unwrap(),
+  )
+  .with_luma_u16(&mut luma_u16)
+  .unwrap();
   sink.begin_frame(SRC as u32, SRC as u32).unwrap();
   sink
     .process(V210Row::new(row_slice(&packed, 0), 0, M, FR))
@@ -777,11 +811,12 @@ fn rejects_mid_frame_output_change() {
   let packed = ramp_packed();
   let mut rgb = std::vec![0u8; OUT * OUT * 3];
   let mut luma_u16 = std::vec![0u16; OUT * OUT];
-  let mut sink =
+  let mut sink = force_row_stage(
     MixedSinker::<V210, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-      .unwrap()
-      .with_rgb(&mut rgb)
-      .unwrap();
+      .unwrap(),
+  )
+  .with_rgb(&mut rgb)
+  .unwrap();
   sink.begin_frame(SRC as u32, SRC as u32).unwrap();
   sink
     .process(V210Row::new(row_slice(&packed, 0), 0, M, FR))
@@ -812,11 +847,12 @@ fn rejected_first_row_does_not_poison_output_retry() {
   // snapshot the rejected row should never have committed.
   let packed = ramp_packed();
   let mut rgb = std::vec![0u8; OUT * OUT * 3];
-  let mut sink =
+  let mut sink = force_row_stage(
     MixedSinker::<V210, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-      .unwrap()
-      .with_rgb(&mut rgb)
-      .unwrap();
+      .unwrap(),
+  )
+  .with_rgb(&mut rgb)
+  .unwrap();
   sink.begin_frame(SRC as u32, SRC as u32).unwrap();
   let err = sink
     .process(V210Row::new(row_slice(&packed, 3), 3, M, FR))
@@ -879,11 +915,12 @@ fn rgb_matches_area_bin_of_direct_yuv422p10() {
   // V210 resampled RGB for the same samples.
   let mut rgb_packed = std::vec![0u8; OUT * OUT * 3];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<V210, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_rgb(&mut rgb_packed)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_rgb(&mut rgb_packed)
+    .unwrap();
     v210_to(&v210, false, ColorMatrix::Bt709, &mut sink).unwrap();
   }
   assert_eq!(

@@ -41,6 +41,11 @@ use super::{
   packed_yuv422_triple_resample, rgb_row_buf_or_scratch, rgba_plane_row_slice,
   rgba_u16_plane_row_slice,
 };
+// `NativeRouteChanged` is raised only by the native fast tier's route-flip
+// guard, and `v210_process_native` exists only when the reused high-bit planar
+// join is compiled in. Gated to the native tier's feature intersection.
+#[cfg(all(feature = "v210", feature = "yuv-planar"))]
+use super::{NativeRouteChanged, v210_process_native};
 use crate::{
   PixelSink,
   row::{
@@ -168,6 +173,19 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, V210<BE>, R> {
     if let Some(stream) = self.rgb_stream_u16.as_mut() {
       stream.reset();
     }
+    // New frame: restart the native join and clear the per-frame frozen
+    // native/row-stage route so the next frame may pick either tier; a
+    // mid-frame flip stays rejected. Gated to the native tier's feature
+    // intersection (the planar join the native tier reuses is compiled only
+    // under `yuv-planar`).
+    #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+    if let Some(native) = self.native_planar_u16.as_mut() {
+      native.reset();
+    }
+    #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+    {
+      self.frozen_native_route = None;
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -219,20 +237,114 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, V210<BE>, R> {
       luma_stream_u16,
       resample_outputs,
       plan,
+      #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+      native,
+      #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+      native_planar_u16,
+      #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+      v210_y_full,
+      #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+      v210_u_half,
+      #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+      v210_v_half,
+      #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+      frozen_native_route,
       ..
     } = self;
     let packed = row.v210();
 
-    // Non-identity plan: feed the three native-precision binnings (u8
-    // colour, native u16 colour, native Y) through the shared high-bit
-    // packed 4:2:2 triple-resample tail. Freeze + sequence-check before
-    // staging, so a no-output sink stays a no-op and an out-of-sequence
-    // row is rejected without allocating. V210 reuses the y2xx route at
-    // `BITS = 10` with its own word-packing decode closures.
+    // Non-identity plan. V210 is area-only at the row stage (no filter route),
+    // so a `Filter` plan falls straight through to `packed_yuv422_triple_resample`,
+    // which rejects it as `unsupported_filter` before any work. For an `Area`
+    // plan: when the native tier is enabled (and the planar join it reuses is
+    // compiled in), bin the native Y / U / V planes at output resolution and
+    // convert once per output row, de-packing the V210 word packing into
+    // wrapper-owned logical scratch first; otherwise (under `with_native(false)`,
+    // or a `v210`-solo build where the planar join is absent) feed the shared
+    // area triple-resample tail, which bins the three native-precision
+    // conversions (u8 colour, native u16 colour, native Y) directly. The reused
+    // planar join now emits the native-depth `luma_u16` (the clamped binned Y),
+    // so attaching `luma_u16` no longer forces row-stage — the route depends only
+    // on `with_native`. The output set is frozen on the first resampled row, so
+    // the native/row-stage route stays stable across a frame and the mid-frame
+    // flip guard catches a `set_native` toggle.
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
-      return packed_yuv422_triple_resample::<BITS>(
+      // Whether this call carries any output a tier ACCEPTS — the EXACT set the
+      // tier preflight tests. The route freezes only on an output-bearing row a
+      // tier accepts; a no-output call consumes no stream state, so it must not
+      // freeze. (Only consulted when the native tier is compiled in; a filter
+      // plan never reaches here — it falls through to the row-stage reject.)
+      #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+      let need_output = !plan.kind().is_filter()
+        && (luma.is_some()
+          || luma_u16.is_some()
+          || rgb.is_some()
+          || rgba.is_some()
+          || rgb_u16.is_some()
+          || rgba_u16.is_some()
+          || hsv.is_some());
+      // The reused high-bit non-4:2:0 planar join now emits BOTH the u8 `luma`
+      // and the native-depth `luma_u16` (the clamped binned Y), so the native
+      // tier serves every output set V210 exposes; route to native purely on
+      // `with_native`, for an `Area` plan only (the native tier is area-only).
+      // The output-set freeze keeps this invariant across a frame.
+      #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+      let take_native = *native && !plan.kind().is_filter();
+      // Reject a mid-frame native/row-stage route flip BEFORE either tier's
+      // dispatch (the two tiers carry independent, in-order, once-only stream
+      // state). CHECKED here and frozen below ONLY on an output-bearing row a
+      // tier ACCEPTS — both gate on `need_output`. (Mirrors the high-bit packed
+      // 4:2:2 `y2xx`.)
+      #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+      if need_output
+        && let Some(frozen) = *frozen_native_route
+        && frozen != take_native
+      {
+        return Err(MixedSinkerError::NativeRouteChanged(
+          NativeRouteChanged::new(idx),
+        ));
+      }
+      #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+      if take_native {
+        // Dispatch first; freeze the route to native ONLY after the call
+        // returns Ok on an output-bearing row.
+        v210_process_native::<BE>(
+          plan,
+          native_planar_u16,
+          v210_y_full,
+          v210_u_half,
+          v210_v_half,
+          resample_outputs,
+          rgb,
+          rgba,
+          rgb_u16,
+          rgba_u16,
+          luma,
+          luma_u16,
+          hsv,
+          rgb_scratch,
+          rgb_scratch_u16,
+          packed,
+          matrix,
+          full_range,
+          idx,
+          w,
+          h,
+          use_simd,
+        )?;
+        if frozen_native_route.is_none() && need_output {
+          *frozen_native_route = Some(true);
+        }
+        return Ok(());
+      }
+      // Row-stage area tail (the route under `with_native(false)`, the only
+      // route under a `v210`-solo build where the planar join is absent, and the
+      // path a `Filter` plan takes to be rejected as `unsupported_filter`). Same
+      // CHECK-before / SET-after split. V210 reuses the y2xx route at `BITS = 10`
+      // with its own word-packing decode closures.
+      packed_yuv422_triple_resample::<BITS>(
         luma_stream_u16,
         rgb_stream,
         rgb_stream_u16,
@@ -256,7 +368,12 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, V210<BE>, R> {
         |scratch| v210_to_luma_u16_row_endian(packed, scratch, w, use_simd, BE),
         |scratch| v210_to_rgb_row_endian(packed, scratch, w, matrix, full_range, use_simd, BE),
         |scratch| v210_to_rgb_u16_row_endian(packed, scratch, w, matrix, full_range, use_simd, BE),
-      );
+      )?;
+      #[cfg(all(feature = "v210", feature = "yuv-planar"))]
+      if frozen_native_route.is_none() && need_output {
+        *frozen_native_route = Some(false);
+      }
+      return Ok(());
     }
 
     let one_plane_start = idx * w;
