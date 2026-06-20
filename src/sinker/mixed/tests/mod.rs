@@ -304,6 +304,8 @@ mod resample_yuva420p;
 #[cfg(feature = "yuva")]
 mod resample_yuva420p_high_bit;
 #[cfg(feature = "yuva")]
+mod resample_yuva420p_native;
+#[cfg(feature = "yuva")]
 mod resample_yuva422p;
 #[cfg(feature = "yuva")]
 mod resample_yuva422p_high_bit;

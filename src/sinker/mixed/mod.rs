@@ -2010,6 +2010,21 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// created in `process`, reset in `begin_frame`.
   #[cfg(feature = "yuv-planar")]
   native_420: Option<planar_8bit::NativeYuv420>,
+  /// Native-tier join state for the **straight-alpha** 4:2:0 planar source
+  /// `Yuva420p` (RFC #238 Phase 5 / the #235 alpha resolution) — the
+  /// alpha-bearing sibling of [`Self::native_420`]: it embeds the no-alpha
+  /// 4:2:0 join for Y / U / V and adds a luma-grid α [`AreaStream`] whose
+  /// binned α is substituted into the RGBA output. Taken ONLY under
+  /// [`AlphaMode::Straight`] (premultiplied stays on the packed-YUVA area
+  /// tail); lazily created in `process`, reset in `begin_frame`.
+  ///
+  /// Boxed: the join embeds the full no-alpha 4:2:0 join plus an α stream
+  /// (>1 KiB), so storing it inline would enlarge every `MixedSinker` — held
+  /// on the stack across the crate — by that much; the box keeps the field a
+  /// single pointer and the heap allocation only happens on the first native
+  /// straight-alpha row.
+  #[cfg(feature = "yuva")]
+  native_yuva_420: Option<std::boxed::Box<planar_8bit::NativeYuva420>>,
   /// Native-tier join state for the non-4:2:0 8-bit planar families
   /// (`Yuv422p` / `Yuv444p` / `Yuv440p`) — the sibling of
   /// [`Self::native_420`] for chroma layouts that are not half-resolution
@@ -3082,6 +3097,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       native: true,
       #[cfg(feature = "yuv-planar")]
       native_420: None,
+      #[cfg(feature = "yuva")]
+      native_yuva_420: None,
       #[cfg(feature = "yuv-planar")]
       native_planar: None,
       #[cfg(feature = "yuv-planar")]

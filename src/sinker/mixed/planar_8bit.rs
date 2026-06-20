@@ -1242,6 +1242,409 @@ pub(super) fn yuv420p_process_resampled(
   Ok(())
 }
 
+// ---- Native fast tier: STRAIGHT-alpha 4:2:0 planar (Yuva420p) -----------
+//
+// Gated on `yuva` (which implies `yuv-planar`): this join, its α helper, and
+// its entry point reference the alpha helpers (`row::alpha_extract`, `try_box`)
+// that exist only under `yuva`, and their sole consumer is the `yuva`-gated
+// `Yuva420p` sink. Without the gate a `yuv-planar`-without-`yuva` build pulls
+// these items in but not their `yuva` dependencies, so it fails to compile.
+
+/// Native decimation join for the **straight-alpha** 4:2:0 planar source
+/// `Yuva420p` (the RFC #238 Phase 5 / #235 alpha resolution) — the
+/// alpha-bearing sibling of [`NativeYuv420`].
+///
+/// The native campaign excluded every alpha format because PREMULTIPLIED
+/// alpha is bin-then-convert-incompatible (colour has been scaled by α, so
+/// a correct average must convert-at-source, premultiply, bin, then
+/// un-premultiply late). STRAIGHT alpha is the exception: colour and α are
+/// independent, so binning the native Y / U / V / A codes independently and
+/// converting Y / U / V → RGB once per output pixel — with the binned α
+/// attached straight — reproduces a `Yuva444p` convert of the pre-binned
+/// planes. That is exactly what this join does:
+/// - Y / U / V stream and stage exactly as [`NativeYuv420`] (so the rgb /
+///   luma / hsv outputs are byte-identical to the no-alpha native tier),
+///   embedded here verbatim so the proven 4:2:0 join is reused, not forked.
+/// - α streams on the **luma grid** (α is full-resolution in `Yuva420p`,
+///   like Y) through its own [`AreaStream<u8>`], staged into a parallel
+///   two-slot ring. Per finalized output row the colour RGBA is emitted
+///   opaque (the [`NativeYuv420`] path) and the binned α is then scattered
+///   into its α slot via [`copy_alpha_plane_u8`](crate::row::alpha_extract::copy_alpha_plane_u8).
+///
+/// PREMULTIPLIED `Yuva420p` never reaches here — it is routed to the
+/// existing packed-YUVA area tail
+/// ([`packed_yuva444_resample`](super::packed_yuva444_resample)) BYTE-IDENTICALLY,
+/// gated by `AlphaMode::Straight` at the sink.
+#[cfg(feature = "yuva")]
+pub(super) struct NativeYuva420 {
+  /// The embedded no-alpha 4:2:0 join — Y / U / V binning, staging, and the
+  /// rgb / rgba(opaque) / luma / hsv emit, reused verbatim.
+  inner: NativeYuv420,
+  /// Straight α plane, binned on the LUMA grid (full-resolution in
+  /// `Yuva420p`). Present only when a colour output that carries α (rgba)
+  /// is attached — a luma / rgb / hsv-only sink drops α, so it never bins
+  /// the α plane (the documented fast path).
+  alpha: Option<NativeAlpha>,
+}
+
+/// Luma-grid α stream and staging of [`NativeYuva420`].
+#[cfg(feature = "yuva")]
+struct NativeAlpha {
+  a: AreaStream<u8>,
+  /// Two-slot staging ring, `out_w` per slot (slot = `out_y & 1`), parallel
+  /// to the embedded [`NativeYuv420`]'s Y / U / V slots.
+  a_stage: std::vec::Vec<u8>,
+  /// `staged[slot]` — whether this slot holds a finalized α output row.
+  staged: [bool; 2],
+}
+
+#[cfg(feature = "yuva")]
+impl NativeYuva420 {
+  /// `need_alpha` is true exactly when an α-carrying colour output (rgba) is
+  /// attached AND the alpha mode is straight; the caller resolves it. The
+  /// embedded [`NativeYuv420`] is built with `need_color` for the Y / U / V
+  /// chroma half (rgb / rgba / hsv all need chroma); α rides its own stream.
+  fn new(
+    plan: &ResamplePlan,
+    w: usize,
+    h: usize,
+    need_color: bool,
+    need_alpha: bool,
+  ) -> Result<Self, ResampleError> {
+    let inner = NativeYuv420::new(plan, w, h, need_color)?;
+    let alpha = if need_alpha {
+      // Two-slot staging ring (`slot = out_y & 1`), `2 * out_w` like the
+      // embedded Y / U / V stages, so an output row may lead its sibling by
+      // one slot without clobbering it.
+      let stage_len = plan.out_w().checked_mul(2).ok_or_else(|| {
+        ResampleError::Overflow(PlanGeometry::new(w, h, plan.out_w(), plan.out_h()))
+      })?;
+      let alloc =
+        |_| ResampleError::AllocationFailed(PlanGeometry::new(w, h, plan.out_w(), plan.out_h()));
+      Some(NativeAlpha {
+        // α bins on the luma grid (`w x h`), same plan as Y.
+        a: AreaStream::new(plan.h(), plan.v(), w, h, 1)?,
+        a_stage: try_zeroed(stage_len).map_err(alloc)?,
+        staged: [false; 2],
+      })
+    } else {
+      None
+    };
+    Ok(Self { inner, alpha })
+  }
+
+  pub(super) fn reset(&mut self) {
+    self.inner.reset();
+    if let Some(alpha) = self.alpha.as_mut() {
+      alpha.a.reset();
+      alpha.staged = [false; 2];
+    }
+  }
+}
+
+#[cfg(all(test, feature = "std", feature = "yuva"))]
+std::thread_local! {
+  static FORCE_YUVA420P_NATIVE_BOX_FAILURE: core::cell::Cell<bool> =
+    const { core::cell::Cell::new(false) };
+}
+
+/// Arms a single-shot failpoint that makes the first [`try_box`] of the
+/// straight-alpha 4:2:0 native join refuse, exactly as a host OOM would.
+/// Used to prove the outer box allocation is recoverable (typed
+/// `AllocationFailed`, not an abort) and transactional (the `native` field is
+/// left `None`, so the call is retryable). Test-only.
+#[cfg(all(test, feature = "std", feature = "yuva"))]
+pub(crate) fn arm_yuva420p_native_box_failure() {
+  FORCE_YUVA420P_NATIVE_BOX_FAILURE.with(|f| f.set(true));
+}
+
+/// Recoverable heap-box of a sized value: the stable analogue of the
+/// nightly-only `Box::try_new`. The single backing allocation is taken
+/// through a one-element [`Vec`] reservation
+/// ([`try_reserve_exact`](Vec::try_reserve_exact)) so an allocator refusal
+/// surfaces as `Err(TryReserveError)` instead of aborting the process the way
+/// `Box::new` does. `into_boxed_slice` then hands back the exact-capacity
+/// allocation with no copy; reinterpreting that single-element `Box<[T]>` as
+/// `Box<T>` is the layout no-op below.
+#[cfg(feature = "yuva")]
+fn try_box<T>(value: T) -> Result<std::boxed::Box<T>, std::collections::TryReserveError> {
+  #[cfg(all(test, feature = "std"))]
+  if FORCE_YUVA420P_NATIVE_BOX_FAILURE.with(|f| f.take()) {
+    // Reproduce the exact error `try_reserve_exact` yields on refusal so the
+    // failpoint is indistinguishable from a real OOM.
+    let mut probe = std::vec::Vec::<T>::new();
+    probe.try_reserve_exact(usize::MAX)?;
+  }
+  let mut backing = std::vec::Vec::with_capacity(0);
+  backing.try_reserve_exact(1)?;
+  backing.push(value);
+  // `backing` now holds exactly one initialized element at capacity one, so
+  // `into_boxed_slice` returns that same allocation without reallocating.
+  let boxed_slice: std::boxed::Box<[T]> = backing.into_boxed_slice();
+  // SAFETY: `boxed_slice` owns a single element. `Box<[T; 1]>`, `Box<[T]>`
+  // (over one element), and `Box<T>` all point at one `T` with identical size
+  // and alignment, so reinterpreting the raw pointer transfers ownership of
+  // the same allocation unchanged. The `Box` is rebuilt from the same pointer
+  // exactly once, so the allocation is neither leaked nor double-freed.
+  Ok(unsafe { std::boxed::Box::from_raw(std::boxed::Box::into_raw(boxed_slice).cast::<T>()) })
+}
+
+/// Native-tier path for the **straight-alpha** [`MixedSinker<Yuva420p, R>`]:
+/// see [`NativeYuva420`]. Mirrors [`yuv420p_process_native`] for the
+/// Y / U / V → rgb / luma / hsv outputs and the opaque RGBA fan-out, and
+/// additionally bins the straight α plane on the luma grid and substitutes
+/// it into the RGBA α slot.
+///
+/// Atomicity (the Phase 2 lesson, applied from the start): the α stream's
+/// sequence is checked and its [`AreaStream`] / staging buffers are
+/// allocated in the SAME fallible-before-feed phase as the embedded
+/// Y / U / V join, so a rejected row (out-of-sequence, mid-frame output
+/// change, or an allocation refusal) mutates no caller output and the frame
+/// stays retryable. The α feed only runs after every fallible step, in
+/// lockstep with the Y feed (same `idx`, same plan).
+///
+/// `AlphaMode` is frozen at `begin_frame` and checked by the caller (via
+/// [`check_frozen_alpha_mode`](super::check_frozen_alpha_mode)) BEFORE this
+/// runs, and the sink only routes here under `AlphaMode::Straight`, so a
+/// mid-frame flip to Premultiplied is rejected before any native feed.
+#[cfg(feature = "yuva")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn yuva420p_process_native(
+  plan: &ResamplePlan,
+  native: &mut Option<std::boxed::Box<NativeYuva420>>,
+  resample_outputs: &mut Option<super::FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgb_scratch: &mut std::vec::Vec<u8>,
+  y_row: &[u8],
+  u_half: &[u8],
+  v_half: &[u8],
+  a_row: &[u8],
+  matrix: ColorMatrix,
+  full_range: bool,
+  idx: usize,
+  w: usize,
+  h: usize,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  let ow = plan.out_w();
+  let need_luma = luma.is_some() || luma_u16.is_some();
+  let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
+  // α is materialised only into the RGBA output (rgb / luma / hsv drop it).
+  let need_alpha = rgba.is_some();
+
+  // Complete pre-feed rejection preflight — no-output short-circuit,
+  // first-row out-of-sequence rejection, the frozen-output check, AND the
+  // post-freeze sequence check, all ahead of any fallible allocation (the
+  // same gate the no-alpha 4:2:0 native tier runs). `Ok(false)` is the
+  // no-output no-op. The Y-stream expected row is read from the embedded
+  // join; the α stream advances in lockstep with Y (same grid), so the Y
+  // sequence governs both.
+  if !native_preflight_core(
+    native.as_ref().map_or(0, |n| n.inner.y.next_y()),
+    resample_outputs,
+    rgb,
+    rgba,
+    &None,
+    &None,
+    luma,
+    luma_u16,
+    hsv,
+    idx,
+    need_luma,
+    need_color,
+  )? {
+    return Ok(());
+  }
+  // The join's chroma / α halves are fixed at creation; if the frame's
+  // colour-or-alpha capability differs (outputs attached since the previous
+  // frame — the frozen check pins them WITHIN a frame, not across frames),
+  // rebuild it rather than silently skip or needlessly read α / chroma.
+  if native
+    .as_ref()
+    .is_some_and(|n| n.inner.chroma.is_some() != need_color || n.alpha.is_some() != need_alpha)
+  {
+    *native = None;
+  }
+  let join = match native {
+    Some(join) => join.as_mut(),
+    None => {
+      // Build the join (its inner Y / U / V / α streams allocate recoverably)
+      // and box it recoverably (`try_box`, not `Box::new` — the latter aborts
+      // on OOM). Both fallible steps run BEFORE `native.insert`, so a refusal
+      // at either returns `Err` with `native` still `None` — the field is left
+      // empty, no caller output is touched, and the next row retries the
+      // allocation from scratch (the first-row-transactional contract).
+      let join = NativeYuva420::new(plan, w, h, need_color, need_alpha)?;
+      let boxed = try_box(join).map_err(|_| {
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+          w,
+          h,
+          plan.out_w(),
+          plan.out_h(),
+        )))
+      })?;
+      native.insert(boxed).as_mut()
+    }
+  };
+  join.inner.check_sequence(idx)?;
+  if let Some(alpha) = join.alpha.as_ref()
+    && alpha.a.next_y() != idx
+  {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(alpha.a.next_y(), idx),
+    )));
+  }
+  if need_color {
+    let row_bytes =
+      ow.checked_mul(3)
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          ow,
+          plan.out_h(),
+          3,
+        )))?;
+    if rgb_scratch.len() < row_bytes {
+      rgb_scratch
+        .try_reserve_exact(row_bytes - rgb_scratch.len())
+        .map_err(|_| {
+          MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+            w,
+            h,
+            plan.out_w(),
+            plan.out_h(),
+          )))
+        })?;
+      rgb_scratch.resize(row_bytes, 0);
+    }
+  }
+
+  // Feed the planes; everything past this point is infallible. Feed α FIRST
+  // (into its staging ring) so its finalized rows are present when the
+  // Y / U / V drain emits the matching output rows below.
+  if let Some(alpha) = join.alpha.as_mut() {
+    let NativeAlpha { a, a_stage, staged } = alpha;
+    a.feed_row(idx, a_row, use_simd, |oy, out_row| {
+      let slot = oy & 1;
+      a_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
+      staged[slot] = true;
+    })?;
+  }
+
+  // Feed Y / U / V through the embedded join and emit. The embedded
+  // `NativeYuv420` drains rgb / rgba(opaque) / luma / hsv; we re-bind its
+  // fields here (rather than calling `yuv420p_process_native`, whose RGBA
+  // emit is opaque-only) so the RGBA α slot can be overwritten with the
+  // binned α inside the SAME drain — keeping the colour and α outputs
+  // finalized together, byte-identical to the no-alpha native tier except
+  // for the α channel. `alpha` is destructured alongside `inner` (disjoint
+  // fields) so the drain can read the staged α without re-borrowing `join`.
+  let NativeYuva420 { inner, alpha } = join;
+  let NativeYuv420 {
+    y,
+    y_stage,
+    chroma,
+    staged,
+    next_emit,
+  } = inner;
+  y.feed_row(idx, y_row, use_simd, |oy, out_row| {
+    let slot = oy & 1;
+    y_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
+    staged[0][slot] = true;
+  })?;
+  if let Some(c) = chroma.as_mut()
+    && idx.is_multiple_of(2)
+  {
+    let cidx = idx / 2;
+    let NativeChroma {
+      u,
+      v,
+      u_stage,
+      v_stage,
+    } = c;
+    u.feed_row(cidx, u_half, use_simd, |oy, out_row| {
+      let slot = oy & 1;
+      u_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
+      staged[1][slot] = true;
+    })?;
+    v.feed_row(cidx, v_half, use_simd, |oy, out_row| {
+      let slot = oy & 1;
+      v_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
+      staged[2][slot] = true;
+    })?;
+  }
+
+  // Drain every output row whose participating planes are staged. Mirrors
+  // the no-alpha `yuv420p_process_native` drain, plus the binned-α
+  // substitution into the RGBA α slot. The α slot (when attached) advances
+  // in lockstep with Y, so an output row whose Y is staged also has its α
+  // staged.
+  while *next_emit < plan.out_h() {
+    let slot = *next_emit & 1;
+    let chroma_ready = match chroma.as_ref() {
+      Some(_) => staged[1][slot] && staged[2][slot],
+      None => true,
+    };
+    if !(staged[0][slot] && chroma_ready) {
+      break;
+    }
+    let oy = *next_emit;
+    let y_out = &y_stage[slot * ow..slot * ow + ow];
+
+    if let Some(buf) = luma.as_deref_mut() {
+      buf[oy * ow..(oy + 1) * ow].copy_from_slice(y_out);
+    }
+    if let Some(buf) = luma_u16.as_deref_mut() {
+      for (dst, &src) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(y_out) {
+        *dst = src as u16;
+      }
+    }
+    if let Some(c) = chroma.as_ref() {
+      let u_row = &c.u_stage[slot * ow..slot * ow + ow];
+      let v_row = &c.v_stage[slot * ow..slot * ow + ow];
+      let out_rgb = &mut rgb_scratch[..ow * 3];
+      yuv_444_to_rgb_row(
+        y_out, u_row, v_row, out_rgb, ow, matrix, full_range, use_simd,
+      );
+      if let Some(buf) = rgb.as_deref_mut() {
+        buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_rgb);
+      }
+      if let Some(hsv) = hsv.as_mut() {
+        let (hp, sp, vp) = hsv.hsv();
+        rgb_to_hsv_row(
+          out_rgb,
+          &mut hp[oy * ow..(oy + 1) * ow],
+          &mut sp[oy * ow..(oy + 1) * ow],
+          &mut vp[oy * ow..(oy + 1) * ow],
+          ow,
+          use_simd,
+        );
+      }
+      if let Some(buf) = rgba.as_deref_mut() {
+        let rgba_row = &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow];
+        // Fan the binned RGB to RGBA (opaque α), then overwrite the α slot
+        // with the independently-binned straight α — the #235 straight-alpha
+        // resolution: RGB from the YUV convert, α from the native α bin.
+        expand_rgb_to_rgba_row(out_rgb, rgba_row, ow);
+        if let Some(alpha) = alpha.as_ref() {
+          let a_out = &alpha.a_stage[slot * ow..slot * ow + ow];
+          crate::row::alpha_extract::copy_alpha_plane_u8(a_out, rgba_row, ow, use_simd);
+        }
+      }
+    }
+    staged[0][slot] = false;
+    staged[1][slot] = false;
+    staged[2][slot] = false;
+    if let Some(alpha) = alpha.as_mut() {
+      alpha.staged[slot] = false;
+    }
+    *next_emit += 1;
+  }
+  Ok(())
+}
+
 // ---- Native fast tier: 4:2:2 / 4:4:4 / 4:4:0 planar 8-bit ---------------
 
 /// Native decimation join for the non-4:2:0 8-bit planar families

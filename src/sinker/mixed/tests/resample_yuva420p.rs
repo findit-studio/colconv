@@ -173,9 +173,14 @@ fn yuva420p_straight_rgba_is_block_mean_of_direct() {
   let (y, u, v, a) = planes(0x51A1);
   let mut rgba = std::vec![0u8; OUT * OUT * 4];
   {
+    // `with_native(false)`: this oracle is the RGB-domain (convert-then-bin)
+    // block mean, which is the row-stage tier. The default native tier bins
+    // YUV codes (a different in-gamut result) and is covered by
+    // `resample_yuva420p_native`.
     let mut sink =
       MixedSinker::<Yuva420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        .with_native(false)
         .with_rgba(&mut rgba)
         .unwrap();
     yuva420p_to(&frame(&y, &u, &v, &a), FR, M, &mut sink).unwrap();
@@ -204,9 +209,14 @@ fn yuva420p_straight_all_outputs_derive_correctly() {
   let mut s = std::vec![0u8; OUT * OUT];
   let mut v_hsv = std::vec![0u8; OUT * OUT];
   {
+    // `with_native(false)`: the oracles below are the RGB-domain
+    // (convert-then-bin) block mean / HSV-of-binned-RGB — the row-stage tier.
+    // The default native tier (YUV-codes bin) is covered by
+    // `resample_yuva420p_native`.
     let mut sink =
       MixedSinker::<Yuva420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap()
         .with_rgba(&mut rgba)
@@ -473,9 +483,13 @@ fn yuva420p_fractional_ratio_rgba_matches_oracle() {
 
   let mut rgba = std::vec![0u8; O * O * 4];
   {
+    // `with_native(false)`: the oracle is a straight `Rgba` (RGB-domain) area
+    // bin of the direct full-res RGBA — the row-stage tier's convert-then-bin
+    // spec. The native YUV-codes tier is covered by `resample_yuva420p_native`.
     let mut sink =
       MixedSinker::<Yuva420p, AreaResampler>::with_resampler(S, S, AreaResampler::to(O, O))
         .unwrap()
+        .with_native(false)
         .with_rgba(&mut rgba)
         .unwrap();
     yuva420p_to(&src, FR, M, &mut sink).unwrap();
@@ -551,9 +565,13 @@ fn yuva420p_cross_frame_reset_reuses_streams() {
   let (y, u, v, a) = planes(0x5151);
   let mut rgba = std::vec![0u8; OUT * OUT * 4];
   {
+    // `with_native(false)`: this oracle is the RGB-domain block mean
+    // (row-stage tier). The native tier's own cross-frame reset is covered by
+    // `resample_yuva420p_native::straight_native_cross_frame_reset_reuses_streams`.
     let mut sink =
       MixedSinker::<Yuva420p, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
         .unwrap()
+        .with_native(false)
         .with_rgba(&mut rgba)
         .unwrap();
     yuva420p_to(&frame(&y, &u, &v, &a), FR, M, &mut sink).unwrap();
