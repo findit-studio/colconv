@@ -102,6 +102,83 @@ pub(crate) fn filter_h_reduce_row_c3<S: FilterElem>(
   }
 }
 
+/// Scalar H-pass over the **padded** SIMD arena (`starts` / `ksize` /
+/// padded `coeffs` / padded `off`) — the dispatch fallback taken when a
+/// SIMD arch is compiled in (so the arena exists) but no SIMD tier is
+/// available at runtime (`colconv_force_scalar`, or a CPU lacking the
+/// feature). It sums only span `j`'s `ksize[j]` **real** taps, so it never
+/// reads the padding lanes that overhang the row — the overhang the absent
+/// SIMD kernel would otherwise have staged through guarded stack copies.
+/// The trailing padding coefficients are zero, so the real-tap sum is the
+/// exact value [`filter_h_reduce_row_c1`] computes from the unpadded span.
+#[cfg_attr(
+  not(all(
+    any(feature = "rgb", feature = "gray"),
+    any(
+      target_arch = "aarch64",
+      target_arch = "x86_64",
+      target_arch = "wasm32"
+    )
+  )),
+  allow(dead_code)
+)]
+pub(crate) fn filter_h_reduce_row_padded_c1<S: FilterElem>(
+  row: &[S],
+  starts: &[usize],
+  ksize: &[usize],
+  coeffs: &[f32],
+  off: &[usize],
+  h_tmp: &mut [f64],
+) {
+  for (j, &start) in starts.iter().enumerate() {
+    let span = &coeffs[off[j]..off[j] + ksize[j]];
+    let mut acc = 0.0f64;
+    for (k, &w) in span.iter().enumerate() {
+      acc += f64::from(w) * row[start + k].widen();
+    }
+    h_tmp[j] = acc;
+  }
+}
+
+/// 3-channel twin of [`filter_h_reduce_row_padded_c1`].
+#[cfg_attr(
+  not(all(
+    any(feature = "rgb", feature = "gray"),
+    any(
+      target_arch = "aarch64",
+      target_arch = "x86_64",
+      target_arch = "wasm32"
+    )
+  )),
+  allow(dead_code)
+)]
+pub(crate) fn filter_h_reduce_row_padded_c3<S: FilterElem>(
+  row: &[S],
+  starts: &[usize],
+  ksize: &[usize],
+  coeffs: &[f32],
+  off: &[usize],
+  h_tmp: &mut [f64],
+) {
+  for (j, &start) in starts.iter().enumerate() {
+    let span = &coeffs[off[j]..off[j] + ksize[j]];
+    let base = j * 3;
+    let mut acc0 = 0.0f64;
+    let mut acc1 = 0.0f64;
+    let mut acc2 = 0.0f64;
+    for (k, &w) in span.iter().enumerate() {
+      let wf = f64::from(w);
+      let cell = (start + k) * 3;
+      acc0 += wf * row[cell].widen();
+      acc1 += wf * row[cell + 1].widen();
+      acc2 += wf * row[cell + 2].widen();
+    }
+    h_tmp[base] = acc0;
+    h_tmp[base + 1] = acc1;
+    h_tmp[base + 2] = acc2;
+  }
+}
+
 /// Per-lane keep mask for the trailing 8-lane chunk of a padded span:
 /// lane `k` is all-ones bits (`f64::from_bits(!0)`) when it is a **real**
 /// tap (`k < real`) and `+0.0` when it is arena padding (`k >= real`).
@@ -111,7 +188,27 @@ pub(crate) fn filter_h_reduce_row_c3<S: FilterElem>(
 /// coefficient** — keeps its sample so `0.0 * NaN == NaN` survives exactly
 /// as this reference computes it. Only the last chunk of a span is ever
 /// partial (`real` in `1..=7`); full chunks skip the mask entirely.
-#[cfg_attr(not(any(feature = "rgb", feature = "gray")), allow(dead_code))]
+//
+// Unlike its siblings in this module, the mask is consumed *only* by the
+// SIMD filter kernels (`arch::{neon, x86_sse41, x86_avx2, x86_avx512,
+// wasm_simd128}`) — the scalar reference path computes the dot product
+// directly and never needs it. Those modules compile only on aarch64 /
+// x86_64 / wasm32, so on any other target (e.g. the big-endian
+// s390x / powerpc64 miri jobs, or riscv64) the function is genuinely
+// unreachable and would trip `-D warnings` dead_code. Gate the
+// `allow(dead_code)` on "no consuming SIMD arch is compiled" (in addition
+// to the resampler-engine feature gate that already applied off rgb/gray).
+#[cfg_attr(
+  not(all(
+    any(feature = "rgb", feature = "gray"),
+    any(
+      target_arch = "aarch64",
+      target_arch = "x86_64",
+      target_arch = "wasm32"
+    )
+  )),
+  allow(dead_code)
+)]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn padding_keep_mask8(real: usize) -> [f64; 8] {
   let mut m = [0.0f64; 8];

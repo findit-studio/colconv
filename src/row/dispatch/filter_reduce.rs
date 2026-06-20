@@ -215,10 +215,16 @@ macro_rules! impl_filter_simd_elem {
           },
           _ => {}
         }
-        // The scalar reference iterates only the real `offsets` span, so it
-        // needs no padding-mask boundary; `ksize` is unused on this path.
-        let _ = ksize;
-        scalar::filter_h_reduce_row_c1(row, starts, off, coeffs, h_tmp);
+        // No SIMD tier ran (none available — e.g. `colconv_force_scalar`, or
+        // a CPU lacking the feature). Fall back on the scalar reference, but
+        // over the PADDED arena bounded by `ksize`: the real-span reference
+        // (`filter_h_reduce_row_c1`) takes raw `offsets`, whereas here only
+        // the padded `off` / `coeffs` are in scope, and iterating a padded
+        // span's full (8-multiple) length would read the padding lanes that
+        // overhang the row — the overhang a real kernel stages through stack
+        // copies. `ksize` bounds the sum to the real taps (padding coeffs are
+        // zero, so the result is identical to the unpadded reference).
+        scalar::filter_h_reduce_row_padded_c1(row, starts, ksize, coeffs, off, h_tmp);
       }
 
       #[cfg_attr(not(tarpaulin), inline(always))]
@@ -264,8 +270,9 @@ macro_rules! impl_filter_simd_elem {
           },
           _ => {}
         }
-        let _ = ksize;
-        scalar::filter_h_reduce_row_c3(row, starts, off, coeffs, h_tmp);
+        // See `h_c1`: bound the padded-arena scalar fallback to `ksize` real
+        // taps so the absent SIMD kernel's row overhang is never read.
+        scalar::filter_h_reduce_row_padded_c3(row, starts, ksize, coeffs, off, h_tmp);
       }
     }
   };
