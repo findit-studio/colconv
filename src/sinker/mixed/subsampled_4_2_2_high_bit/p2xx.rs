@@ -16,7 +16,10 @@ use super::super::{
 #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
 use crate::{
   ColorMatrix,
-  resample::{PlanGeometry, ResampleError, ResamplePlan},
+  resample::{
+    AveragingDomain, InsertionContext, InsertionPoint, PlanGeometry, ResampleError, ResamplePlan,
+    select_insertion_point,
+  },
 };
 
 // The native fast tier de-interleaves + DE-PACKS each wire plane into
@@ -515,17 +518,32 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P210<BE>, R> {
       // state). CHECKED here and frozen below ONLY on an output-bearing row a
       // tier ACCEPTS — both gate on `need_output`. (Mirrors the 4:2:0 high-bit
       // semi-planar `p0xx`.)
+      // The RFC #238 splice stage. A filter plan already returned above, so
+      // `area_plan` is true and the selector reproduces the former `*native`
+      // boolean bit-for-bit (`cfg!` is true wherever this block compiles).
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      let take_native = matches!(
+        select_insertion_point(
+          AveragingDomain::Encoded,
+          InsertionContext {
+            native_eligible: cfg!(all(feature = "yuv-semi-planar", feature = "yuv-planar")),
+            with_native: *native,
+            area_plan: true,
+          },
+        ),
+        InsertionPoint::NativeCodes
+      );
       #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
       if need_output
         && let Some(frozen) = *frozen_native_route
-        && frozen != *native
+        && frozen != take_native
       {
         return Err(MixedSinkerError::NativeRouteChanged(
           NativeRouteChanged::new(idx),
         ));
       }
       #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
-      if *native {
+      if take_native {
         // Dispatch first; freeze the route to native ONLY after the call
         // returns Ok on an output-bearing row.
         p2xx_process_native::<BITS, BE>(
@@ -931,17 +949,32 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P212<BE>, R> {
         || rgb_u16.is_some()
         || rgba_u16.is_some()
         || hsv.is_some();
+      // The RFC #238 splice stage. A filter plan already returned above, so
+      // `area_plan` is true and the selector reproduces the former `*native`
+      // boolean bit-for-bit (`cfg!` is true wherever this block compiles).
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      let take_native = matches!(
+        select_insertion_point(
+          AveragingDomain::Encoded,
+          InsertionContext {
+            native_eligible: cfg!(all(feature = "yuv-semi-planar", feature = "yuv-planar")),
+            with_native: *native,
+            area_plan: true,
+          },
+        ),
+        InsertionPoint::NativeCodes
+      );
       #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
       if need_output
         && let Some(frozen) = *frozen_native_route
-        && frozen != *native
+        && frozen != take_native
       {
         return Err(MixedSinkerError::NativeRouteChanged(
           NativeRouteChanged::new(idx),
         ));
       }
       #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
-      if *native {
+      if take_native {
         p2xx_process_native::<BITS, BE>(
           plan,
           native_planar_u16,
@@ -1345,17 +1378,32 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P216<BE>, R> {
         || rgb_u16.is_some()
         || rgba_u16.is_some()
         || hsv.is_some();
+      // The RFC #238 splice stage. A filter plan already returned above, so
+      // `area_plan` is true and the selector reproduces the former `*native`
+      // boolean bit-for-bit (`cfg!` is true wherever this block compiles).
+      #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+      let take_native = matches!(
+        select_insertion_point(
+          AveragingDomain::Encoded,
+          InsertionContext {
+            native_eligible: cfg!(all(feature = "yuv-semi-planar", feature = "yuv-planar")),
+            with_native: *native,
+            area_plan: true,
+          },
+        ),
+        InsertionPoint::NativeCodes
+      );
       #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
       if need_output
         && let Some(frozen) = *frozen_native_route
-        && frozen != *native
+        && frozen != take_native
       {
         return Err(MixedSinkerError::NativeRouteChanged(
           NativeRouteChanged::new(idx),
         ));
       }
       #[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
-      if *native {
+      if take_native {
         p2xx_process_native::<BITS, BE>(
           plan,
           native_planar_u16,

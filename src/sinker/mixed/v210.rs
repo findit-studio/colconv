@@ -46,6 +46,11 @@ use super::{
 // join is compiled in. Gated to the native tier's feature intersection.
 #[cfg(all(feature = "v210", feature = "yuv-planar"))]
 use super::{NativeRouteChanged, v210_process_native};
+// The RFC #238 insertion-point selector decides the native-vs-row-stage
+// splice; it is only consulted inside the native tier's `cfg`, so its
+// import shares that intersection.
+#[cfg(all(feature = "v210", feature = "yuv-planar"))]
+use crate::resample::{AveragingDomain, InsertionContext, InsertionPoint, select_insertion_point};
 use crate::{
   PixelSink,
   row::{
@@ -289,9 +294,22 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, V210<BE>, R> {
       // and the native-depth `luma_u16` (the clamped binned Y), so the native
       // tier serves every output set V210 exposes; route to native purely on
       // `with_native`, for an `Area` plan only (the native tier is area-only).
-      // The output-set freeze keeps this invariant across a frame.
+      // The output-set freeze keeps this invariant across a frame. The
+      // splice stage is the RFC #238 selector's; folding the area-only guard
+      // into `area_plan` reproduces the former `*native && !is_filter`
+      // boolean bit-for-bit (`cfg!` is true wherever this block compiles).
       #[cfg(all(feature = "v210", feature = "yuv-planar"))]
-      let take_native = *native && !plan.kind().is_filter();
+      let take_native = matches!(
+        select_insertion_point(
+          AveragingDomain::Encoded,
+          InsertionContext {
+            native_eligible: cfg!(all(feature = "v210", feature = "yuv-planar")),
+            with_native: *native,
+            area_plan: !plan.kind().is_filter(),
+          },
+        ),
+        InsertionPoint::NativeCodes
+      );
       // Reject a mid-frame native/row-stage route flip BEFORE either tier's
       // dispatch (the two tiers carry independent, in-order, once-only stream
       // state). CHECKED here and frozen below ONLY on an output-bearing row a
