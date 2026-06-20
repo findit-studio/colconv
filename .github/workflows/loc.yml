@@ -42,11 +42,21 @@ jobs:
           tokeit --lang rust
       - name: Upload total loc to GitHub Gist
         # Secret-dependent: GIST_PAT is not exposed to pull_request runs
-        # and the badge gist should only track main anyway.
-        if: github.event_name != 'pull_request'
+        # and the badge gist should only track main anyway. Also skip when the
+        # secret is unset (forks / repos without the badge gist configured) so
+        # the workflow stays green — the count above already ran.
+        #
+        # GIST_PAT is scoped to THIS step only (step-level `env`), not the job,
+        # so it is never exposed to the earlier `cargo install` / build steps.
+        # `secrets.*` is not allowed in a step `if:` but step-level `env.*` is,
+        # so an unset GIST_PAT skips the upload (which would otherwise hard-fail
+        # with "Input required and not supplied: github-token").
+        if: github.event_name != 'pull_request' && env.GIST_PAT != ''
+        env:
+          GIST_PAT: ${{ secrets.GIST_PAT }}
         uses: actions/github-script@v9
         with:
-          github-token: ${{ secrets.GIST_PAT }}
+          github-token: ${{ env.GIST_PAT }}
           script: |
             const fs = require('fs');
             const output = fs.readFileSync('tokeit.json', 'utf8');

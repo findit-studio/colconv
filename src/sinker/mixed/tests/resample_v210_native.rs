@@ -990,6 +990,33 @@ fn oos_after_recoverable_alloc_failure_rejected_before_scratch_alloc() {
     rgb_u16.iter().all(|&b| b == 0),
     "neither the recoverable-failure nor the out-of-sequence row touched the colour output"
   );
+  // Drain the failpoint re-armed above: the out-of-sequence row rejected
+  // BEFORE reaching the scratch grow, so the flag is still live. A fresh
+  // in-sequence colour reserve fires it — both proving the re-arm survived
+  // the OOS preflight AND leaving the thread-local failpoint disarmed so it
+  // can never bleed into a later test. (`arm_*` failpoints are thread-local;
+  // the native cargo runner gives each test its own thread, but the
+  // wasm32-wasip1 harness runs every test on the one main thread, so a flag
+  // left armed here would spuriously fail the next test that reaches a V210
+  // scratch grow.) Mirrors the `resample_y2xx_native` sibling's drain.
+  let mut rgb_u16b = std::vec![0u16; OUT * OUT * 3];
+  let mut sink2 =
+    MixedSinker::<V210, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+      .unwrap()
+      .with_native(true)
+      .with_rgb_u16(&mut rgb_u16b)
+      .unwrap();
+  let err3 = sink2
+    .process(V210Row::new(row_slice(&packed, 0), 0, M, FR))
+    .unwrap_err();
+  assert!(
+    matches!(
+      err3,
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+    ),
+    "the failpoint re-armed in step 2 must still be live and fire on the first \
+     in-sequence colour reserve, got {err3:?}"
+  );
 }
 
 // ---- frozen native-vs-row-stage route ---------------------------------
