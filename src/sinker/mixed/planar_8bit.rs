@@ -22,6 +22,11 @@ use crate::{
 /// area downscale at the native codes.
 const YUV420P_NATIVE_ELIGIBLE: bool = true;
 
+/// `Yuv422p` / `Yuv444p` / `Yuv440p` ship the non-4:2:0 native planar fast
+/// tier ([`yuv_planar_process_native`]), so each is statically eligible to
+/// splice an [`AveragingDomain::Encoded`] area downscale at the native codes.
+const YUV_PLANAR_8BIT_NATIVE_ELIGIBLE: bool = true;
+
 // ---- Yuv420p impl --------------------------------------------------------
 
 impl<'a, R> MixedSinker<'a, Yuv420p, R> {
@@ -2026,57 +2031,73 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
           NativeRouteChanged::new(idx),
         ));
       }
-      if *native {
-        // 4:2:2: chroma `w/2 x h` — half width, full height; a chroma row
-        // per Y row (`chroma_vsub = 1`), chroma plan a plain `area`.
-        yuv_planar_process_native(
-          plan,
-          native_planar,
-          resample_outputs,
-          rgb,
-          rgba,
-          luma,
-          luma_u16,
-          hsv,
-          rgb_scratch,
-          row.y(),
-          row.u_half(),
-          row.v_half(),
-          matrix,
-          full_range,
-          idx,
-          w,
-          h,
-          1,
-          || ResamplePlan::area(w / 2, h, plan.out_w(), plan.out_h()),
-          use_simd,
-        )?;
-        if frozen_native_route.is_none() && need_output {
-          *frozen_native_route = Some(true);
+      // RFC #238 splice-stage selection — see the Yuv420p impl for the
+      // selector contract; reproduces the former `if *native` boolean
+      // bit-for-bit (a filter plan already returned above, so `area_plan` is
+      // always true here).
+      let insertion = select_insertion_point(
+        AveragingDomain::Encoded,
+        InsertionContext {
+          native_eligible: YUV_PLANAR_8BIT_NATIVE_ELIGIBLE,
+          with_native: *native,
+          area_plan: true,
+        },
+      );
+      match insertion {
+        InsertionPoint::NativeCodes => {
+          // 4:2:2: chroma `w/2 x h` — half width, full height; a chroma row
+          // per Y row (`chroma_vsub = 1`), chroma plan a plain `area`.
+          yuv_planar_process_native(
+            plan,
+            native_planar,
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            luma_u16,
+            hsv,
+            rgb_scratch,
+            row.y(),
+            row.u_half(),
+            row.v_half(),
+            matrix,
+            full_range,
+            idx,
+            w,
+            h,
+            1,
+            || ResamplePlan::area(w / 2, h, plan.out_w(), plan.out_h()),
+            use_simd,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(true);
+          }
+          return Ok(());
         }
-        return Ok(());
+        InsertionPoint::EncodedOutput => {
+          planar_dual_resample(
+            luma_stream,
+            rgb_stream,
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            luma_u16,
+            hsv,
+            rgb_scratch,
+            row.y(),
+            w,
+            plan,
+            idx,
+            use_simd,
+            convert_rgb,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(false);
+          }
+          return Ok(());
+        }
       }
-      planar_dual_resample(
-        luma_stream,
-        rgb_stream,
-        resample_outputs,
-        rgb,
-        rgba,
-        luma,
-        luma_u16,
-        hsv,
-        rgb_scratch,
-        row.y(),
-        w,
-        plan,
-        idx,
-        use_simd,
-        convert_rgb,
-      )?;
-      if frozen_native_route.is_none() && need_output {
-        *frozen_native_route = Some(false);
-      }
-      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -2363,57 +2384,73 @@ impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
           NativeRouteChanged::new(idx),
         ));
       }
-      if *native {
-        // 4:4:4: chroma `w x h` — identical to Y; a chroma row per Y row
-        // (`chroma_vsub = 1`), chroma plan equals the luma plan.
-        yuv_planar_process_native(
-          plan,
-          native_planar,
-          resample_outputs,
-          rgb,
-          rgba,
-          luma,
-          luma_u16,
-          hsv,
-          rgb_scratch,
-          row.y(),
-          row.u(),
-          row.v(),
-          matrix,
-          full_range,
-          idx,
-          w,
-          h,
-          1,
-          || ResamplePlan::area(w, h, plan.out_w(), plan.out_h()),
-          use_simd,
-        )?;
-        if frozen_native_route.is_none() && need_output {
-          *frozen_native_route = Some(true);
+      // RFC #238 splice-stage selection — see the Yuv420p impl for the
+      // selector contract; reproduces the former `if *native` boolean
+      // bit-for-bit (a filter plan already returned above, so `area_plan` is
+      // always true here).
+      let insertion = select_insertion_point(
+        AveragingDomain::Encoded,
+        InsertionContext {
+          native_eligible: YUV_PLANAR_8BIT_NATIVE_ELIGIBLE,
+          with_native: *native,
+          area_plan: true,
+        },
+      );
+      match insertion {
+        InsertionPoint::NativeCodes => {
+          // 4:4:4: chroma `w x h` — identical to Y; a chroma row per Y row
+          // (`chroma_vsub = 1`), chroma plan equals the luma plan.
+          yuv_planar_process_native(
+            plan,
+            native_planar,
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            luma_u16,
+            hsv,
+            rgb_scratch,
+            row.y(),
+            row.u(),
+            row.v(),
+            matrix,
+            full_range,
+            idx,
+            w,
+            h,
+            1,
+            || ResamplePlan::area(w, h, plan.out_w(), plan.out_h()),
+            use_simd,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(true);
+          }
+          return Ok(());
         }
-        return Ok(());
+        InsertionPoint::EncodedOutput => {
+          planar_dual_resample(
+            luma_stream,
+            rgb_stream,
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            luma_u16,
+            hsv,
+            rgb_scratch,
+            row.y(),
+            w,
+            plan,
+            idx,
+            use_simd,
+            convert_rgb,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(false);
+          }
+          return Ok(());
+        }
       }
-      planar_dual_resample(
-        luma_stream,
-        rgb_stream,
-        resample_outputs,
-        rgb,
-        rgba,
-        luma,
-        luma_u16,
-        hsv,
-        rgb_scratch,
-        row.y(),
-        w,
-        plan,
-        idx,
-        use_simd,
-        convert_rgb,
-      )?;
-      if frozen_native_route.is_none() && need_output {
-        *frozen_native_route = Some(false);
-      }
-      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -2698,58 +2735,74 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
           NativeRouteChanged::new(idx),
         ));
       }
-      if *native {
-        // 4:4:0: chroma `w x h/2` — full width, half height; a chroma row
-        // per TWO Y rows (`chroma_vsub = 2`, like 4:2:0 vertically), chroma
-        // plan full-width horizontal + luma-domain `area_halved` vertical.
-        yuv_planar_process_native(
-          plan,
-          native_planar,
-          resample_outputs,
-          rgb,
-          rgba,
-          luma,
-          luma_u16,
-          hsv,
-          rgb_scratch,
-          row.y(),
-          row.u(),
-          row.v(),
-          matrix,
-          full_range,
-          idx,
-          w,
-          h,
-          2,
-          || ResamplePlan::area_chroma_440(w, h, plan.out_w(), plan.out_h()),
-          use_simd,
-        )?;
-        if frozen_native_route.is_none() && need_output {
-          *frozen_native_route = Some(true);
+      // RFC #238 splice-stage selection — see the Yuv420p impl for the
+      // selector contract; reproduces the former `if *native` boolean
+      // bit-for-bit (a filter plan already returned above, so `area_plan` is
+      // always true here).
+      let insertion = select_insertion_point(
+        AveragingDomain::Encoded,
+        InsertionContext {
+          native_eligible: YUV_PLANAR_8BIT_NATIVE_ELIGIBLE,
+          with_native: *native,
+          area_plan: true,
+        },
+      );
+      match insertion {
+        InsertionPoint::NativeCodes => {
+          // 4:4:0: chroma `w x h/2` — full width, half height; a chroma row
+          // per TWO Y rows (`chroma_vsub = 2`, like 4:2:0 vertically), chroma
+          // plan full-width horizontal + luma-domain `area_halved` vertical.
+          yuv_planar_process_native(
+            plan,
+            native_planar,
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            luma_u16,
+            hsv,
+            rgb_scratch,
+            row.y(),
+            row.u(),
+            row.v(),
+            matrix,
+            full_range,
+            idx,
+            w,
+            h,
+            2,
+            || ResamplePlan::area_chroma_440(w, h, plan.out_w(), plan.out_h()),
+            use_simd,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(true);
+          }
+          return Ok(());
         }
-        return Ok(());
+        InsertionPoint::EncodedOutput => {
+          planar_dual_resample(
+            luma_stream,
+            rgb_stream,
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            luma_u16,
+            hsv,
+            rgb_scratch,
+            row.y(),
+            w,
+            plan,
+            idx,
+            use_simd,
+            convert_rgb,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(false);
+          }
+          return Ok(());
+        }
       }
-      planar_dual_resample(
-        luma_stream,
-        rgb_stream,
-        resample_outputs,
-        rgb,
-        rgba,
-        luma,
-        luma_u16,
-        hsv,
-        rgb_scratch,
-        row.y(),
-        w,
-        plan,
-        idx,
-        use_simd,
-        convert_rgb,
-      )?;
-      if frozen_native_route.is_none() && need_output {
-        *frozen_native_route = Some(false);
-      }
-      return Ok(());
     }
 
     let one_plane_start = idx * w;

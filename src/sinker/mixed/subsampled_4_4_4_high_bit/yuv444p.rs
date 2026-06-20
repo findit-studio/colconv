@@ -5,7 +5,20 @@ use super::super::{
   rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
   yuv_planar16_process_native,
 };
-use crate::{PixelSink, resample::ResamplePlan, row::*, source::*};
+use crate::{
+  PixelSink,
+  resample::{
+    AveragingDomain, InsertionContext, InsertionPoint, ResamplePlan, select_insertion_point,
+  },
+  row::*,
+  source::*,
+};
+
+/// The high-bit 4:4:4 planar formats (`Yuv444p9` … `Yuv444p16`) ship the
+/// non-4:2:0 native planar fast tier ([`yuv_planar16_process_native`]), so
+/// each is statically eligible to splice an [`AveragingDomain::Encoded`] area
+/// downscale at the native codes.
+const YUV444P_HIGH_BIT_NATIVE_ELIGIBLE: bool = true;
 
 // ---- Yuv444p9 impl -----------------------------------------------------
 
@@ -208,73 +221,91 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p9<BE>, R> {
           NativeRouteChanged::new(idx),
         ));
       }
-      if *native {
-        // 4:4:4: chroma `w x h` — identical to Y; a chroma row per Y row
-        // (`chroma_vsub = 1`, `chroma_w = w`), chroma plan equals the luma
-        // plan.
-        yuv_planar16_process_native::<BITS, BE>(
-          plan,
-          native_planar_u16,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          // The high-bit planar 4:4:4 family exposes no `luma_u16` output.
-          &mut None,
-          hsv,
-          rgb_scratch,
-          rgb_scratch_u16,
-          y,
-          u,
-          v,
-          matrix,
-          full_range,
-          idx,
-          w,
-          h,
-          1,
-          w,
-          || ResamplePlan::area(w, h, plan.out_w(), plan.out_h()),
-          use_simd,
-        )?;
-        if frozen_native_route.is_none() && need_output {
-          *frozen_native_route = Some(true);
-        }
-        return Ok(());
-      }
-      packed_yuv444_triple_resample::<BITS>(
-        rgb_stream,
-        rgb_stream_u16,
-        luma_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        &mut None,
-        hsv,
-        rgb_scratch,
-        rgb_scratch_u16,
-        luma_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        matrix,
-        full_range,
-        |scratch| yuv444p9_to_rgb_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE),
-        |scratch| {
-          yuv444p9_to_rgb_u16_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
+      // RFC #238 splice-stage selection — see the Yuv420p impl for the
+      // selector contract; reproduces the former `if *native` boolean
+      // bit-for-bit (a filter plan already returned above, so `area_plan` is
+      // always true here).
+      let insertion = select_insertion_point(
+        AveragingDomain::Encoded,
+        InsertionContext {
+          native_eligible: YUV444P_HIGH_BIT_NATIVE_ELIGIBLE,
+          with_native: *native,
+          area_plan: true,
         },
-        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
-      )?;
-      if frozen_native_route.is_none() && need_output {
-        *frozen_native_route = Some(false);
+      );
+      match insertion {
+        InsertionPoint::NativeCodes => {
+          // 4:4:4: chroma `w x h` — identical to Y; a chroma row per Y row
+          // (`chroma_vsub = 1`, `chroma_w = w`), chroma plan equals the luma
+          // plan.
+          yuv_planar16_process_native::<BITS, BE>(
+            plan,
+            native_planar_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            // The high-bit planar 4:4:4 family exposes no `luma_u16` output.
+            &mut None,
+            hsv,
+            rgb_scratch,
+            rgb_scratch_u16,
+            y,
+            u,
+            v,
+            matrix,
+            full_range,
+            idx,
+            w,
+            h,
+            1,
+            w,
+            || ResamplePlan::area(w, h, plan.out_w(), plan.out_h()),
+            use_simd,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(true);
+          }
+          return Ok(());
+        }
+        InsertionPoint::EncodedOutput => {
+          packed_yuv444_triple_resample::<BITS>(
+            rgb_stream,
+            rgb_stream_u16,
+            luma_stream_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            &mut None,
+            hsv,
+            rgb_scratch,
+            rgb_scratch_u16,
+            luma_scratch_u16,
+            w,
+            plan,
+            idx,
+            use_simd,
+            matrix,
+            full_range,
+            |scratch| {
+              yuv444p9_to_rgb_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
+            },
+            |scratch| {
+              yuv444p9_to_rgb_u16_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
+            },
+            |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(false);
+          }
+          return Ok(());
+        }
       }
-      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -605,75 +636,91 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p10<BE>, R> {
           NativeRouteChanged::new(idx),
         ));
       }
-      if *native {
-        // 4:4:4: chroma `w x h` — identical to Y; a chroma row per Y row
-        // (`chroma_vsub = 1`, `chroma_w = w`), chroma plan equals the luma
-        // plan.
-        yuv_planar16_process_native::<BITS, BE>(
-          plan,
-          native_planar_u16,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          // The high-bit planar 4:4:4 family exposes no `luma_u16` output.
-          &mut None,
-          hsv,
-          rgb_scratch,
-          rgb_scratch_u16,
-          y,
-          u,
-          v,
-          matrix,
-          full_range,
-          idx,
-          w,
-          h,
-          1,
-          w,
-          || ResamplePlan::area(w, h, plan.out_w(), plan.out_h()),
-          use_simd,
-        )?;
-        if frozen_native_route.is_none() && need_output {
-          *frozen_native_route = Some(true);
+      // RFC #238 splice-stage selection — see the Yuv420p impl for the
+      // selector contract; reproduces the former `if *native` boolean
+      // bit-for-bit (a filter plan already returned above, so `area_plan` is
+      // always true here).
+      let insertion = select_insertion_point(
+        AveragingDomain::Encoded,
+        InsertionContext {
+          native_eligible: YUV444P_HIGH_BIT_NATIVE_ELIGIBLE,
+          with_native: *native,
+          area_plan: true,
+        },
+      );
+      match insertion {
+        InsertionPoint::NativeCodes => {
+          // 4:4:4: chroma `w x h` — identical to Y; a chroma row per Y row
+          // (`chroma_vsub = 1`, `chroma_w = w`), chroma plan equals the luma
+          // plan.
+          yuv_planar16_process_native::<BITS, BE>(
+            plan,
+            native_planar_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            // The high-bit planar 4:4:4 family exposes no `luma_u16` output.
+            &mut None,
+            hsv,
+            rgb_scratch,
+            rgb_scratch_u16,
+            y,
+            u,
+            v,
+            matrix,
+            full_range,
+            idx,
+            w,
+            h,
+            1,
+            w,
+            || ResamplePlan::area(w, h, plan.out_w(), plan.out_h()),
+            use_simd,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(true);
+          }
+          return Ok(());
         }
-        return Ok(());
+        InsertionPoint::EncodedOutput => {
+          packed_yuv444_triple_resample::<BITS>(
+            rgb_stream,
+            rgb_stream_u16,
+            luma_stream_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            &mut None,
+            hsv,
+            rgb_scratch,
+            rgb_scratch_u16,
+            luma_scratch_u16,
+            w,
+            plan,
+            idx,
+            use_simd,
+            matrix,
+            full_range,
+            |scratch| {
+              yuv444p10_to_rgb_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
+            },
+            |scratch| {
+              yuv444p10_to_rgb_u16_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
+            },
+            |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(false);
+          }
+          return Ok(());
+        }
       }
-      packed_yuv444_triple_resample::<BITS>(
-        rgb_stream,
-        rgb_stream_u16,
-        luma_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        &mut None,
-        hsv,
-        rgb_scratch,
-        rgb_scratch_u16,
-        luma_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        matrix,
-        full_range,
-        |scratch| {
-          yuv444p10_to_rgb_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
-        },
-        |scratch| {
-          yuv444p10_to_rgb_u16_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
-        },
-        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
-      )?;
-      if frozen_native_route.is_none() && need_output {
-        *frozen_native_route = Some(false);
-      }
-      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -1000,75 +1047,91 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p12<BE>, R> {
           NativeRouteChanged::new(idx),
         ));
       }
-      if *native {
-        // 4:4:4: chroma `w x h` — identical to Y; a chroma row per Y row
-        // (`chroma_vsub = 1`, `chroma_w = w`), chroma plan equals the luma
-        // plan.
-        yuv_planar16_process_native::<BITS, BE>(
-          plan,
-          native_planar_u16,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          // The high-bit planar 4:4:4 family exposes no `luma_u16` output.
-          &mut None,
-          hsv,
-          rgb_scratch,
-          rgb_scratch_u16,
-          y,
-          u,
-          v,
-          matrix,
-          full_range,
-          idx,
-          w,
-          h,
-          1,
-          w,
-          || ResamplePlan::area(w, h, plan.out_w(), plan.out_h()),
-          use_simd,
-        )?;
-        if frozen_native_route.is_none() && need_output {
-          *frozen_native_route = Some(true);
+      // RFC #238 splice-stage selection — see the Yuv420p impl for the
+      // selector contract; reproduces the former `if *native` boolean
+      // bit-for-bit (a filter plan already returned above, so `area_plan` is
+      // always true here).
+      let insertion = select_insertion_point(
+        AveragingDomain::Encoded,
+        InsertionContext {
+          native_eligible: YUV444P_HIGH_BIT_NATIVE_ELIGIBLE,
+          with_native: *native,
+          area_plan: true,
+        },
+      );
+      match insertion {
+        InsertionPoint::NativeCodes => {
+          // 4:4:4: chroma `w x h` — identical to Y; a chroma row per Y row
+          // (`chroma_vsub = 1`, `chroma_w = w`), chroma plan equals the luma
+          // plan.
+          yuv_planar16_process_native::<BITS, BE>(
+            plan,
+            native_planar_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            // The high-bit planar 4:4:4 family exposes no `luma_u16` output.
+            &mut None,
+            hsv,
+            rgb_scratch,
+            rgb_scratch_u16,
+            y,
+            u,
+            v,
+            matrix,
+            full_range,
+            idx,
+            w,
+            h,
+            1,
+            w,
+            || ResamplePlan::area(w, h, plan.out_w(), plan.out_h()),
+            use_simd,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(true);
+          }
+          return Ok(());
         }
-        return Ok(());
+        InsertionPoint::EncodedOutput => {
+          packed_yuv444_triple_resample::<BITS>(
+            rgb_stream,
+            rgb_stream_u16,
+            luma_stream_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            &mut None,
+            hsv,
+            rgb_scratch,
+            rgb_scratch_u16,
+            luma_scratch_u16,
+            w,
+            plan,
+            idx,
+            use_simd,
+            matrix,
+            full_range,
+            |scratch| {
+              yuv444p12_to_rgb_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
+            },
+            |scratch| {
+              yuv444p12_to_rgb_u16_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
+            },
+            |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(false);
+          }
+          return Ok(());
+        }
       }
-      packed_yuv444_triple_resample::<BITS>(
-        rgb_stream,
-        rgb_stream_u16,
-        luma_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        &mut None,
-        hsv,
-        rgb_scratch,
-        rgb_scratch_u16,
-        luma_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        matrix,
-        full_range,
-        |scratch| {
-          yuv444p12_to_rgb_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
-        },
-        |scratch| {
-          yuv444p12_to_rgb_u16_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
-        },
-        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
-      )?;
-      if frozen_native_route.is_none() && need_output {
-        *frozen_native_route = Some(false);
-      }
-      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -1395,75 +1458,91 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p14<BE>, R> {
           NativeRouteChanged::new(idx),
         ));
       }
-      if *native {
-        // 4:4:4: chroma `w x h` — identical to Y; a chroma row per Y row
-        // (`chroma_vsub = 1`, `chroma_w = w`), chroma plan equals the luma
-        // plan.
-        yuv_planar16_process_native::<BITS, BE>(
-          plan,
-          native_planar_u16,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          // The high-bit planar 4:4:4 family exposes no `luma_u16` output.
-          &mut None,
-          hsv,
-          rgb_scratch,
-          rgb_scratch_u16,
-          y,
-          u,
-          v,
-          matrix,
-          full_range,
-          idx,
-          w,
-          h,
-          1,
-          w,
-          || ResamplePlan::area(w, h, plan.out_w(), plan.out_h()),
-          use_simd,
-        )?;
-        if frozen_native_route.is_none() && need_output {
-          *frozen_native_route = Some(true);
+      // RFC #238 splice-stage selection — see the Yuv420p impl for the
+      // selector contract; reproduces the former `if *native` boolean
+      // bit-for-bit (a filter plan already returned above, so `area_plan` is
+      // always true here).
+      let insertion = select_insertion_point(
+        AveragingDomain::Encoded,
+        InsertionContext {
+          native_eligible: YUV444P_HIGH_BIT_NATIVE_ELIGIBLE,
+          with_native: *native,
+          area_plan: true,
+        },
+      );
+      match insertion {
+        InsertionPoint::NativeCodes => {
+          // 4:4:4: chroma `w x h` — identical to Y; a chroma row per Y row
+          // (`chroma_vsub = 1`, `chroma_w = w`), chroma plan equals the luma
+          // plan.
+          yuv_planar16_process_native::<BITS, BE>(
+            plan,
+            native_planar_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            // The high-bit planar 4:4:4 family exposes no `luma_u16` output.
+            &mut None,
+            hsv,
+            rgb_scratch,
+            rgb_scratch_u16,
+            y,
+            u,
+            v,
+            matrix,
+            full_range,
+            idx,
+            w,
+            h,
+            1,
+            w,
+            || ResamplePlan::area(w, h, plan.out_w(), plan.out_h()),
+            use_simd,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(true);
+          }
+          return Ok(());
         }
-        return Ok(());
+        InsertionPoint::EncodedOutput => {
+          packed_yuv444_triple_resample::<BITS>(
+            rgb_stream,
+            rgb_stream_u16,
+            luma_stream_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            &mut None,
+            hsv,
+            rgb_scratch,
+            rgb_scratch_u16,
+            luma_scratch_u16,
+            w,
+            plan,
+            idx,
+            use_simd,
+            matrix,
+            full_range,
+            |scratch| {
+              yuv444p14_to_rgb_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
+            },
+            |scratch| {
+              yuv444p14_to_rgb_u16_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
+            },
+            |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(false);
+          }
+          return Ok(());
+        }
       }
-      packed_yuv444_triple_resample::<BITS>(
-        rgb_stream,
-        rgb_stream_u16,
-        luma_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        &mut None,
-        hsv,
-        rgb_scratch,
-        rgb_scratch_u16,
-        luma_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        matrix,
-        full_range,
-        |scratch| {
-          yuv444p14_to_rgb_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
-        },
-        |scratch| {
-          yuv444p14_to_rgb_u16_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
-        },
-        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
-      )?;
-      if frozen_native_route.is_none() && need_output {
-        *frozen_native_route = Some(false);
-      }
-      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -1791,75 +1870,91 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p16<BE>, R> {
           NativeRouteChanged::new(idx),
         ));
       }
-      if *native {
-        // 4:4:4: chroma `w x h` — identical to Y; a chroma row per Y row
-        // (`chroma_vsub = 1`, `chroma_w = w`), chroma plan equals the luma
-        // plan.
-        yuv_planar16_process_native::<BITS, BE>(
-          plan,
-          native_planar_u16,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          // The high-bit planar 4:4:4 family exposes no `luma_u16` output.
-          &mut None,
-          hsv,
-          rgb_scratch,
-          rgb_scratch_u16,
-          y,
-          u,
-          v,
-          matrix,
-          full_range,
-          idx,
-          w,
-          h,
-          1,
-          w,
-          || ResamplePlan::area(w, h, plan.out_w(), plan.out_h()),
-          use_simd,
-        )?;
-        if frozen_native_route.is_none() && need_output {
-          *frozen_native_route = Some(true);
+      // RFC #238 splice-stage selection — see the Yuv420p impl for the
+      // selector contract; reproduces the former `if *native` boolean
+      // bit-for-bit (a filter plan already returned above, so `area_plan` is
+      // always true here).
+      let insertion = select_insertion_point(
+        AveragingDomain::Encoded,
+        InsertionContext {
+          native_eligible: YUV444P_HIGH_BIT_NATIVE_ELIGIBLE,
+          with_native: *native,
+          area_plan: true,
+        },
+      );
+      match insertion {
+        InsertionPoint::NativeCodes => {
+          // 4:4:4: chroma `w x h` — identical to Y; a chroma row per Y row
+          // (`chroma_vsub = 1`, `chroma_w = w`), chroma plan equals the luma
+          // plan.
+          yuv_planar16_process_native::<BITS, BE>(
+            plan,
+            native_planar_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            // The high-bit planar 4:4:4 family exposes no `luma_u16` output.
+            &mut None,
+            hsv,
+            rgb_scratch,
+            rgb_scratch_u16,
+            y,
+            u,
+            v,
+            matrix,
+            full_range,
+            idx,
+            w,
+            h,
+            1,
+            w,
+            || ResamplePlan::area(w, h, plan.out_w(), plan.out_h()),
+            use_simd,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(true);
+          }
+          return Ok(());
         }
-        return Ok(());
+        InsertionPoint::EncodedOutput => {
+          packed_yuv444_triple_resample::<BITS>(
+            rgb_stream,
+            rgb_stream_u16,
+            luma_stream_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            &mut None,
+            hsv,
+            rgb_scratch,
+            rgb_scratch_u16,
+            luma_scratch_u16,
+            w,
+            plan,
+            idx,
+            use_simd,
+            matrix,
+            full_range,
+            |scratch| {
+              yuv444p16_to_rgb_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
+            },
+            |scratch| {
+              yuv444p16_to_rgb_u16_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
+            },
+            |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(false);
+          }
+          return Ok(());
+        }
       }
-      packed_yuv444_triple_resample::<BITS>(
-        rgb_stream,
-        rgb_stream_u16,
-        luma_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        &mut None,
-        hsv,
-        rgb_scratch,
-        rgb_scratch_u16,
-        luma_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        matrix,
-        full_range,
-        |scratch| {
-          yuv444p16_to_rgb_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
-        },
-        |scratch| {
-          yuv444p16_to_rgb_u16_row_endian(y, u, v, scratch, w, matrix, full_range, use_simd, BE)
-        },
-        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
-      )?;
-      if frozen_native_route.is_none() && need_output {
-        *frozen_native_route = Some(false);
-      }
-      return Ok(());
     }
 
     let one_plane_start = idx * w;

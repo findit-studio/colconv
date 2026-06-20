@@ -88,6 +88,35 @@ fn selector_reproduces_old_take_native_decision_exhaustively() {
 }
 
 #[test]
+fn phase1_rollout_native_eligible_formats_reproduce_if_native_boolean() {
+  // RFC #238 Phase 1 routed every native-bearing format (8-bit + high-bit
+  // planar 4:2:0 / 4:2:2 / 4:4:4 / 4:4:0) onto this selector with a
+  // `*_NATIVE_ELIGIBLE = true` const, replacing an inline
+  // `if *native { native } else { row-stage }` on an area plan (a filter plan
+  // already returned before the dispatch, so the routed call sites always
+  // pass `area_plan: true`). The re-expression is byte-identical iff, for
+  // those `native_eligible: true, area_plan: true` call sites, the selector
+  // returns `NativeCodes` EXACTLY when the old `*native` boolean was true —
+  // i.e. it equals `with_native`. This pins that Phase 1 contract directly,
+  // distinct from the generic Yuv420p oracle above.
+  for with_native in [false, true] {
+    let ctx = InsertionContext {
+      native_eligible: true,
+      with_native,
+      area_plan: true,
+    };
+    let got = select_insertion_point(AveragingDomain::Encoded, ctx);
+    let expected_native = with_native; // the former `if *native` branch
+    assert_eq!(
+      got == InsertionPoint::NativeCodes,
+      expected_native,
+      "Phase 1 splice mismatch: native_eligible=true area_plan=true \
+       with_native={with_native} must map NativeCodes<=>with_native",
+    );
+  }
+}
+
+#[test]
 fn encoded_area_native_eligible_with_native_selects_native_codes() {
   // The one combination that must splice at the native codes — the
   // affine-format, area-downscale, native-enabled-and-eligible case.

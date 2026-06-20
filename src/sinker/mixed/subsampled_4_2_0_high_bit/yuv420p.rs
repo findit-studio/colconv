@@ -8,7 +8,18 @@ use super::{
   },
   yuv420p16_process_native,
 };
-use crate::{PixelSink, row::*, source::*};
+use crate::{
+  PixelSink,
+  resample::{AveragingDomain, InsertionContext, InsertionPoint, select_insertion_point},
+  row::*,
+  source::*,
+};
+
+/// The high-bit 4:2:0 planar formats (`Yuv420p9` … `Yuv420p16`) ship the
+/// native 4:2:0 fast tier ([`yuv420p16_process_native`]), so each is
+/// statically eligible to splice an [`AveragingDomain::Encoded`] area
+/// downscale at the native codes.
+const YUV420P_HIGH_BIT_NATIVE_ELIGIBLE: bool = true;
 
 // ---- Yuv420p9 impl -----------------------------------------------------
 //
@@ -262,80 +273,96 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p9<BE>, R> {
           NativeRouteChanged::new(idx),
         ));
       }
-      if *native {
-        // Dispatch first; freeze the route to native ONLY after the call
-        // returns Ok on an output-bearing row. A no-output call returns
-        // Ok(()) with `need_output` false (no freeze); an out-of-sequence /
-        // frozen row returns Err via `?` (no freeze) — so only an accepted
-        // output-bearing row commits the route.
-        yuv420p16_process_native::<BITS, BE>(
-          plan,
-          native_420_u16,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          hsv,
-          rgb_scratch,
-          rgb_scratch_u16,
-          y,
-          u_half,
-          v_half,
-          matrix,
-          full_range,
-          idx,
-          w,
-          h,
-          use_simd,
-        )?;
-        if frozen_native_route.is_none() && need_output {
-          *frozen_native_route = Some(true);
+      // RFC #238 splice-stage selection — see the Yuv420p impl for the
+      // selector contract; reproduces the former `if *native` boolean
+      // bit-for-bit (a filter plan already returned above, so `area_plan` is
+      // always true here).
+      let insertion = select_insertion_point(
+        AveragingDomain::Encoded,
+        InsertionContext {
+          native_eligible: YUV420P_HIGH_BIT_NATIVE_ELIGIBLE,
+          with_native: *native,
+          area_plan: true,
+        },
+      );
+      match insertion {
+        InsertionPoint::NativeCodes => {
+          // Dispatch first; freeze the route to native ONLY after the call
+          // returns Ok on an output-bearing row. A no-output call returns
+          // Ok(()) with `need_output` false (no freeze); an out-of-sequence /
+          // frozen row returns Err via `?` (no freeze) — so only an accepted
+          // output-bearing row commits the route.
+          yuv420p16_process_native::<BITS, BE>(
+            plan,
+            native_420_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            hsv,
+            rgb_scratch,
+            rgb_scratch_u16,
+            y,
+            u_half,
+            v_half,
+            matrix,
+            full_range,
+            idx,
+            w,
+            h,
+            use_simd,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(true);
+          }
+          return Ok(());
         }
-        return Ok(());
+        InsertionPoint::EncodedOutput => {
+          // Row-stage tail. Same CHECK-before / SET-after split: dispatch, then
+          // freeze the route to row-stage only when the call accepts an
+          // output-bearing row (a no-output call returns Ok with `need_output`
+          // false; an out-of-sequence / frozen row returns Err via `?`).
+          packed_yuv422_triple_resample::<BITS>(
+            luma_stream_u16,
+            rgb_stream,
+            rgb_stream_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            &mut None,
+            hsv,
+            luma_scratch_u16,
+            rgb_scratch,
+            rgb_scratch_u16,
+            w,
+            plan,
+            idx,
+            use_simd,
+            matrix,
+            full_range,
+            |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+            |scratch| {
+              yuv420p9_to_rgb_row_endian(
+                y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+              )
+            },
+            |scratch| {
+              yuv420p9_to_rgb_u16_row_endian(
+                y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+              )
+            },
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(false);
+          }
+          return Ok(());
+        }
       }
-      // Row-stage tail. Same CHECK-before / SET-after split: dispatch, then
-      // freeze the route to row-stage only when the call accepts an
-      // output-bearing row (a no-output call returns Ok with `need_output`
-      // false; an out-of-sequence / frozen row returns Err via `?`).
-      packed_yuv422_triple_resample::<BITS>(
-        luma_stream_u16,
-        rgb_stream,
-        rgb_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        &mut None,
-        hsv,
-        luma_scratch_u16,
-        rgb_scratch,
-        rgb_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        matrix,
-        full_range,
-        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
-        |scratch| {
-          yuv420p9_to_rgb_row_endian(
-            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-          )
-        },
-        |scratch| {
-          yuv420p9_to_rgb_u16_row_endian(
-            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-          )
-        },
-      )?;
-      if frozen_native_route.is_none() && need_output {
-        *frozen_native_route = Some(false);
-      }
-      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -744,80 +771,96 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p10<BE>, R> {
           NativeRouteChanged::new(idx),
         ));
       }
-      if *native {
-        // Dispatch first; freeze the route to native ONLY after the call
-        // returns Ok on an output-bearing row. A no-output call returns
-        // Ok(()) with `need_output` false (no freeze); an out-of-sequence /
-        // frozen row returns Err via `?` (no freeze) — so only an accepted
-        // output-bearing row commits the route.
-        yuv420p16_process_native::<BITS, BE>(
-          plan,
-          native_420_u16,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          hsv,
-          rgb_scratch,
-          rgb_scratch_u16,
-          y,
-          u_half,
-          v_half,
-          matrix,
-          full_range,
-          idx,
-          w,
-          h,
-          use_simd,
-        )?;
-        if frozen_native_route.is_none() && need_output {
-          *frozen_native_route = Some(true);
+      // RFC #238 splice-stage selection — see the Yuv420p impl for the
+      // selector contract; reproduces the former `if *native` boolean
+      // bit-for-bit (a filter plan already returned above, so `area_plan` is
+      // always true here).
+      let insertion = select_insertion_point(
+        AveragingDomain::Encoded,
+        InsertionContext {
+          native_eligible: YUV420P_HIGH_BIT_NATIVE_ELIGIBLE,
+          with_native: *native,
+          area_plan: true,
+        },
+      );
+      match insertion {
+        InsertionPoint::NativeCodes => {
+          // Dispatch first; freeze the route to native ONLY after the call
+          // returns Ok on an output-bearing row. A no-output call returns
+          // Ok(()) with `need_output` false (no freeze); an out-of-sequence /
+          // frozen row returns Err via `?` (no freeze) — so only an accepted
+          // output-bearing row commits the route.
+          yuv420p16_process_native::<BITS, BE>(
+            plan,
+            native_420_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            hsv,
+            rgb_scratch,
+            rgb_scratch_u16,
+            y,
+            u_half,
+            v_half,
+            matrix,
+            full_range,
+            idx,
+            w,
+            h,
+            use_simd,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(true);
+          }
+          return Ok(());
         }
-        return Ok(());
+        InsertionPoint::EncodedOutput => {
+          // Row-stage tail. Same CHECK-before / SET-after split: dispatch, then
+          // freeze the route to row-stage only when the call accepts an
+          // output-bearing row (a no-output call returns Ok with `need_output`
+          // false; an out-of-sequence / frozen row returns Err via `?`).
+          packed_yuv422_triple_resample::<BITS>(
+            luma_stream_u16,
+            rgb_stream,
+            rgb_stream_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            &mut None,
+            hsv,
+            luma_scratch_u16,
+            rgb_scratch,
+            rgb_scratch_u16,
+            w,
+            plan,
+            idx,
+            use_simd,
+            matrix,
+            full_range,
+            |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+            |scratch| {
+              yuv420p10_to_rgb_row_endian(
+                y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+              )
+            },
+            |scratch| {
+              yuv420p10_to_rgb_u16_row_endian(
+                y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+              )
+            },
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(false);
+          }
+          return Ok(());
+        }
       }
-      // Row-stage tail. Same CHECK-before / SET-after split: dispatch, then
-      // freeze the route to row-stage only when the call accepts an
-      // output-bearing row (a no-output call returns Ok with `need_output`
-      // false; an out-of-sequence / frozen row returns Err via `?`).
-      packed_yuv422_triple_resample::<BITS>(
-        luma_stream_u16,
-        rgb_stream,
-        rgb_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        &mut None,
-        hsv,
-        luma_scratch_u16,
-        rgb_scratch,
-        rgb_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        matrix,
-        full_range,
-        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
-        |scratch| {
-          yuv420p10_to_rgb_row_endian(
-            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-          )
-        },
-        |scratch| {
-          yuv420p10_to_rgb_u16_row_endian(
-            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-          )
-        },
-      )?;
-      if frozen_native_route.is_none() && need_output {
-        *frozen_native_route = Some(false);
-      }
-      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -1206,80 +1249,96 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p12<BE>, R> {
           NativeRouteChanged::new(idx),
         ));
       }
-      if *native {
-        // Dispatch first; freeze the route to native ONLY after the call
-        // returns Ok on an output-bearing row. A no-output call returns
-        // Ok(()) with `need_output` false (no freeze); an out-of-sequence /
-        // frozen row returns Err via `?` (no freeze) — so only an accepted
-        // output-bearing row commits the route.
-        yuv420p16_process_native::<BITS, BE>(
-          plan,
-          native_420_u16,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          hsv,
-          rgb_scratch,
-          rgb_scratch_u16,
-          y,
-          u_half,
-          v_half,
-          matrix,
-          full_range,
-          idx,
-          w,
-          h,
-          use_simd,
-        )?;
-        if frozen_native_route.is_none() && need_output {
-          *frozen_native_route = Some(true);
+      // RFC #238 splice-stage selection — see the Yuv420p impl for the
+      // selector contract; reproduces the former `if *native` boolean
+      // bit-for-bit (a filter plan already returned above, so `area_plan` is
+      // always true here).
+      let insertion = select_insertion_point(
+        AveragingDomain::Encoded,
+        InsertionContext {
+          native_eligible: YUV420P_HIGH_BIT_NATIVE_ELIGIBLE,
+          with_native: *native,
+          area_plan: true,
+        },
+      );
+      match insertion {
+        InsertionPoint::NativeCodes => {
+          // Dispatch first; freeze the route to native ONLY after the call
+          // returns Ok on an output-bearing row. A no-output call returns
+          // Ok(()) with `need_output` false (no freeze); an out-of-sequence /
+          // frozen row returns Err via `?` (no freeze) — so only an accepted
+          // output-bearing row commits the route.
+          yuv420p16_process_native::<BITS, BE>(
+            plan,
+            native_420_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            hsv,
+            rgb_scratch,
+            rgb_scratch_u16,
+            y,
+            u_half,
+            v_half,
+            matrix,
+            full_range,
+            idx,
+            w,
+            h,
+            use_simd,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(true);
+          }
+          return Ok(());
         }
-        return Ok(());
+        InsertionPoint::EncodedOutput => {
+          // Row-stage tail. Same CHECK-before / SET-after split: dispatch, then
+          // freeze the route to row-stage only when the call accepts an
+          // output-bearing row (a no-output call returns Ok with `need_output`
+          // false; an out-of-sequence / frozen row returns Err via `?`).
+          packed_yuv422_triple_resample::<BITS>(
+            luma_stream_u16,
+            rgb_stream,
+            rgb_stream_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            &mut None,
+            hsv,
+            luma_scratch_u16,
+            rgb_scratch,
+            rgb_scratch_u16,
+            w,
+            plan,
+            idx,
+            use_simd,
+            matrix,
+            full_range,
+            |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+            |scratch| {
+              yuv420p12_to_rgb_row_endian(
+                y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+              )
+            },
+            |scratch| {
+              yuv420p12_to_rgb_u16_row_endian(
+                y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+              )
+            },
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(false);
+          }
+          return Ok(());
+        }
       }
-      // Row-stage tail. Same CHECK-before / SET-after split: dispatch, then
-      // freeze the route to row-stage only when the call accepts an
-      // output-bearing row (a no-output call returns Ok with `need_output`
-      // false; an out-of-sequence / frozen row returns Err via `?`).
-      packed_yuv422_triple_resample::<BITS>(
-        luma_stream_u16,
-        rgb_stream,
-        rgb_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        &mut None,
-        hsv,
-        luma_scratch_u16,
-        rgb_scratch,
-        rgb_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        matrix,
-        full_range,
-        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
-        |scratch| {
-          yuv420p12_to_rgb_row_endian(
-            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-          )
-        },
-        |scratch| {
-          yuv420p12_to_rgb_u16_row_endian(
-            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-          )
-        },
-      )?;
-      if frozen_native_route.is_none() && need_output {
-        *frozen_native_route = Some(false);
-      }
-      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -1652,80 +1711,96 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p14<BE>, R> {
           NativeRouteChanged::new(idx),
         ));
       }
-      if *native {
-        // Dispatch first; freeze the route to native ONLY after the call
-        // returns Ok on an output-bearing row. A no-output call returns
-        // Ok(()) with `need_output` false (no freeze); an out-of-sequence /
-        // frozen row returns Err via `?` (no freeze) — so only an accepted
-        // output-bearing row commits the route.
-        yuv420p16_process_native::<BITS, BE>(
-          plan,
-          native_420_u16,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          hsv,
-          rgb_scratch,
-          rgb_scratch_u16,
-          y,
-          u_half,
-          v_half,
-          matrix,
-          full_range,
-          idx,
-          w,
-          h,
-          use_simd,
-        )?;
-        if frozen_native_route.is_none() && need_output {
-          *frozen_native_route = Some(true);
+      // RFC #238 splice-stage selection — see the Yuv420p impl for the
+      // selector contract; reproduces the former `if *native` boolean
+      // bit-for-bit (a filter plan already returned above, so `area_plan` is
+      // always true here).
+      let insertion = select_insertion_point(
+        AveragingDomain::Encoded,
+        InsertionContext {
+          native_eligible: YUV420P_HIGH_BIT_NATIVE_ELIGIBLE,
+          with_native: *native,
+          area_plan: true,
+        },
+      );
+      match insertion {
+        InsertionPoint::NativeCodes => {
+          // Dispatch first; freeze the route to native ONLY after the call
+          // returns Ok on an output-bearing row. A no-output call returns
+          // Ok(()) with `need_output` false (no freeze); an out-of-sequence /
+          // frozen row returns Err via `?` (no freeze) — so only an accepted
+          // output-bearing row commits the route.
+          yuv420p16_process_native::<BITS, BE>(
+            plan,
+            native_420_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            hsv,
+            rgb_scratch,
+            rgb_scratch_u16,
+            y,
+            u_half,
+            v_half,
+            matrix,
+            full_range,
+            idx,
+            w,
+            h,
+            use_simd,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(true);
+          }
+          return Ok(());
         }
-        return Ok(());
+        InsertionPoint::EncodedOutput => {
+          // Row-stage tail. Same CHECK-before / SET-after split: dispatch, then
+          // freeze the route to row-stage only when the call accepts an
+          // output-bearing row (a no-output call returns Ok with `need_output`
+          // false; an out-of-sequence / frozen row returns Err via `?`).
+          packed_yuv422_triple_resample::<BITS>(
+            luma_stream_u16,
+            rgb_stream,
+            rgb_stream_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            &mut None,
+            hsv,
+            luma_scratch_u16,
+            rgb_scratch,
+            rgb_scratch_u16,
+            w,
+            plan,
+            idx,
+            use_simd,
+            matrix,
+            full_range,
+            |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+            |scratch| {
+              yuv420p14_to_rgb_row_endian(
+                y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+              )
+            },
+            |scratch| {
+              yuv420p14_to_rgb_u16_row_endian(
+                y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+              )
+            },
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(false);
+          }
+          return Ok(());
+        }
       }
-      // Row-stage tail. Same CHECK-before / SET-after split: dispatch, then
-      // freeze the route to row-stage only when the call accepts an
-      // output-bearing row (a no-output call returns Ok with `need_output`
-      // false; an out-of-sequence / frozen row returns Err via `?`).
-      packed_yuv422_triple_resample::<BITS>(
-        luma_stream_u16,
-        rgb_stream,
-        rgb_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        &mut None,
-        hsv,
-        luma_scratch_u16,
-        rgb_scratch,
-        rgb_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        matrix,
-        full_range,
-        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
-        |scratch| {
-          yuv420p14_to_rgb_row_endian(
-            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-          )
-        },
-        |scratch| {
-          yuv420p14_to_rgb_u16_row_endian(
-            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-          )
-        },
-      )?;
-      if frozen_native_route.is_none() && need_output {
-        *frozen_native_route = Some(false);
-      }
-      return Ok(());
     }
 
     let one_plane_start = idx * w;
@@ -2098,80 +2173,96 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv420p16<BE>, R> {
           NativeRouteChanged::new(idx),
         ));
       }
-      if *native {
-        // Dispatch first; freeze the route to native ONLY after the call
-        // returns Ok on an output-bearing row. A no-output call returns
-        // Ok(()) with `need_output` false (no freeze); an out-of-sequence /
-        // frozen row returns Err via `?` (no freeze) — so only an accepted
-        // output-bearing row commits the route.
-        yuv420p16_process_native::<BITS, BE>(
-          plan,
-          native_420_u16,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          hsv,
-          rgb_scratch,
-          rgb_scratch_u16,
-          y,
-          u_half,
-          v_half,
-          matrix,
-          full_range,
-          idx,
-          w,
-          h,
-          use_simd,
-        )?;
-        if frozen_native_route.is_none() && need_output {
-          *frozen_native_route = Some(true);
+      // RFC #238 splice-stage selection — see the Yuv420p impl for the
+      // selector contract; reproduces the former `if *native` boolean
+      // bit-for-bit (a filter plan already returned above, so `area_plan` is
+      // always true here).
+      let insertion = select_insertion_point(
+        AveragingDomain::Encoded,
+        InsertionContext {
+          native_eligible: YUV420P_HIGH_BIT_NATIVE_ELIGIBLE,
+          with_native: *native,
+          area_plan: true,
+        },
+      );
+      match insertion {
+        InsertionPoint::NativeCodes => {
+          // Dispatch first; freeze the route to native ONLY after the call
+          // returns Ok on an output-bearing row. A no-output call returns
+          // Ok(()) with `need_output` false (no freeze); an out-of-sequence /
+          // frozen row returns Err via `?` (no freeze) — so only an accepted
+          // output-bearing row commits the route.
+          yuv420p16_process_native::<BITS, BE>(
+            plan,
+            native_420_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            hsv,
+            rgb_scratch,
+            rgb_scratch_u16,
+            y,
+            u_half,
+            v_half,
+            matrix,
+            full_range,
+            idx,
+            w,
+            h,
+            use_simd,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(true);
+          }
+          return Ok(());
         }
-        return Ok(());
+        InsertionPoint::EncodedOutput => {
+          // Row-stage tail. Same CHECK-before / SET-after split: dispatch, then
+          // freeze the route to row-stage only when the call accepts an
+          // output-bearing row (a no-output call returns Ok with `need_output`
+          // false; an out-of-sequence / frozen row returns Err via `?`).
+          packed_yuv422_triple_resample::<BITS>(
+            luma_stream_u16,
+            rgb_stream,
+            rgb_stream_u16,
+            resample_outputs,
+            rgb,
+            rgba,
+            rgb_u16,
+            rgba_u16,
+            luma,
+            &mut None,
+            hsv,
+            luma_scratch_u16,
+            rgb_scratch,
+            rgb_scratch_u16,
+            w,
+            plan,
+            idx,
+            use_simd,
+            matrix,
+            full_range,
+            |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
+            |scratch| {
+              yuv420p16_to_rgb_row_endian(
+                y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+              )
+            },
+            |scratch| {
+              yuv420p16_to_rgb_u16_row_endian(
+                y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
+              )
+            },
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(false);
+          }
+          return Ok(());
+        }
       }
-      // Row-stage tail. Same CHECK-before / SET-after split: dispatch, then
-      // freeze the route to row-stage only when the call accepts an
-      // output-bearing row (a no-output call returns Ok with `need_output`
-      // false; an out-of-sequence / frozen row returns Err via `?`).
-      packed_yuv422_triple_resample::<BITS>(
-        luma_stream_u16,
-        rgb_stream,
-        rgb_stream_u16,
-        resample_outputs,
-        rgb,
-        rgba,
-        rgb_u16,
-        rgba_u16,
-        luma,
-        &mut None,
-        hsv,
-        luma_scratch_u16,
-        rgb_scratch,
-        rgb_scratch_u16,
-        w,
-        plan,
-        idx,
-        use_simd,
-        matrix,
-        full_range,
-        |scratch| deinterleave_y_high_bit::<BE>(y, scratch, w),
-        |scratch| {
-          yuv420p16_to_rgb_row_endian(
-            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-          )
-        },
-        |scratch| {
-          yuv420p16_to_rgb_u16_row_endian(
-            y, u_half, v_half, scratch, w, matrix, full_range, use_simd, BE,
-          )
-        },
-      )?;
-      if frozen_native_route.is_none() && need_output {
-        *frozen_native_route = Some(false);
-      }
-      return Ok(());
     }
 
     let one_plane_start = idx * w;
