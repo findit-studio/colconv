@@ -26,6 +26,9 @@
 #[cfg(test)]
 mod tests;
 
+mod transfer;
+pub use transfer::TransferFunction;
+
 /// The colour domain an RFC #238 area downscale averages in.
 ///
 /// Each variant names the colour space the box-average is taken in,
@@ -44,9 +47,12 @@ pub enum AveragingDomain {
   #[default]
   Encoded,
   /// Average in **linear light**: decode to RGB, linearise via the
-  /// inverse transfer function, bin the linear RGB, then re-encode per
-  /// output pixel. The physically-correct light-mixing domain. Reserved
-  /// for a later phase.
+  /// inverse transfer function ([`TransferFunction::eotf`]), bin the
+  /// linear RGB, then re-encode ([`TransferFunction::oetf`]) per output
+  /// pixel. The physically-correct light-mixing domain; splices at the
+  /// crate-internal `InsertionPoint::LinearLight` stage. Wired for the
+  /// planar 8-bit YUV family (Yuv420p / Yuv422p / Yuv444p / Yuv440p) as of
+  /// Phase 2.
   Linear,
   /// Average **premultiplied** RGBA: convert at source resolution,
   /// premultiply by α, bin, then un-premultiply per output row. Reserved
@@ -84,6 +90,12 @@ pub(crate) enum InsertionPoint {
   /// source row, then area-stream the encoded output rows. The row-stage
   /// tier (e.g. `yuv420p_process_resampled`).
   EncodedOutput,
+  /// Splice at **linear light**, between the convert and the re-encode:
+  /// decode each source pixel to RGB, linearise via the
+  /// [`TransferFunction`] EOTF, area-stream the linear RGB, then re-encode
+  /// per output pixel via the OETF. The [`AveragingDomain::Linear`] stage
+  /// (e.g. the planar 8-bit YUV linear-light tail).
+  LinearLight,
 }
 
 /// Inputs to [`select_insertion_point`] — the facts that determine which
@@ -120,9 +132,26 @@ pub(crate) struct InsertionContext {
 /// existing `Yuv420p` native-vs-row-stage decision exactly — see
 /// [`crate::sinker::MixedSinker`]'s `Yuv420p` `process` dispatch.
 ///
-/// The [`Linear`] and [`Premultiplied`] domains splice at stages that
-/// land in later phases; until then they fall through to the encoded
-/// output (Phase 0 never constructs them on the splice path).
+/// As of Phase 2 the [`Linear`] domain resolves to the
+/// [linear-light](InsertionPoint::LinearLight) stage (decode → linearise →
+/// bin → re-encode), independent of the native-tier inputs (the linear
+/// average is its own splice, not a native fast-tier variant).
+///
+/// # Premultiplied is rejected upstream, never resolved here
+///
+/// [`Premultiplied`] is a **reserved future-phase** domain with *no valid
+/// insertion point yet*, so the selector deliberately does **not** map it to
+/// any splice — in particular it must not silently resolve to the
+/// [encoded output](InsertionPoint::EncodedOutput), which is a different
+/// domain (`Premultiplied` is not `Encoded`; for the Phase 5 alpha formats
+/// they diverge). Every caller rejects `Premultiplied` with a typed error in
+/// its own exhaustive `match *averaging_domain` *before* reaching this
+/// selector (see `MixedSinker`'s per-format `process` dispatch, which only
+/// ever calls the selector with [`AveragingDomain::Encoded`]). Reaching the
+/// `Premultiplied` arm therefore signals a routing bug — a dispatch that
+/// failed to reject it — so the arm is an [`unreachable!`] rather than a
+/// silent legitimate route. Phase 5 will give `Premultiplied` its real
+/// insertion point and replace the guard.
 ///
 /// [`Linear`]: AveragingDomain::Linear
 /// [`Premultiplied`]: AveragingDomain::Premultiplied
@@ -139,9 +168,17 @@ pub(crate) const fn select_insertion_point(
         InsertionPoint::EncodedOutput
       }
     }
-    // Reserved for later phases; no splice path constructs them in
-    // Phase 0, so they resolve to the encoded output for now.
-    AveragingDomain::Linear | AveragingDomain::Premultiplied => InsertionPoint::EncodedOutput,
+    // The linear-light average is its own splice stage, not a native
+    // fast-tier variant; it ignores the native-tier inputs.
+    AveragingDomain::Linear => InsertionPoint::LinearLight,
+    // Reserved for a later phase with no insertion point yet; callers reject
+    // it before the selector (see the doc above), so reaching here is a
+    // routing bug — NOT a silent downgrade to the encoded output. Phase 5
+    // adds its splice. (`panic!` with a `&'static str`, not `unreachable!`,
+    // because this is a `const fn` and the latter formats its message.)
+    AveragingDomain::Premultiplied => {
+      panic!("Premultiplied is rejected at dispatch; the selector has no splice for it yet")
+    }
   }
 }
 

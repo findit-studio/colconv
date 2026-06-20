@@ -59,7 +59,7 @@ pub use filter::{
 pub(crate) use filter::{FilterSample, FilterStream};
 
 mod strategy;
-pub use strategy::{AveragingDomain, FilterSpec, ResampleStrategy};
+pub use strategy::{AveragingDomain, FilterSpec, ResampleStrategy, TransferFunction};
 // Phase-0-internal: the splice-stage selector consumed by the per-format
 // route dispatch. `InsertionPoint` / its context stay crate-private until
 // later phases widen the splice surface; only `yuv-planar` (the routed
@@ -688,6 +688,36 @@ impl ResamplePlan {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub(crate) const fn unsupported_filter(&self) -> ResampleError {
     ResampleError::UnsupportedFilter(PlanGeometry::new(
+      self.src_w, self.src_h, self.out_w, self.out_h,
+    ))
+  }
+
+  /// [`ResampleError::LinearDomainUnsupported`] carrying this plan's geometry
+  /// — returned by the planar 8-bit YUV dispatch when a sink requests the
+  /// [`AveragingDomain::Linear`] domain on a build without the `rgb` feature,
+  /// so the request fails with a typed error rather than silently falling
+  /// through to the encoded average.
+  // Idle in feature combos that compile the linear tail (`rgb` on) or no
+  // planar 8-bit YUV sink at all.
+  #[allow(dead_code)]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) const fn linear_domain_unsupported(&self) -> ResampleError {
+    ResampleError::LinearDomainUnsupported(PlanGeometry::new(
+      self.src_w, self.src_h, self.out_w, self.out_h,
+    ))
+  }
+
+  /// [`ResampleError::PremultipliedDomainUnsupported`] carrying this plan's
+  /// geometry — returned by the planar 8-bit YUV dispatch when a sink requests
+  /// the [`AveragingDomain::Premultiplied`] domain. Premultiplied weighting is
+  /// only meaningful for a format with an alpha channel; these YUV formats
+  /// carry no alpha, so the request is rejected with a typed error rather than
+  /// silently downgrading to the encoded average.
+  // Idle in feature combos that compile no planar 8-bit YUV sink.
+  #[allow(dead_code)]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) const fn premultiplied_domain_unsupported(&self) -> ResampleError {
+    ResampleError::PremultipliedDomainUnsupported(PlanGeometry::new(
       self.src_w, self.src_h, self.out_w, self.out_h,
     ))
   }
@@ -1538,6 +1568,40 @@ pub enum ResampleError {
     .0.out_w(), .0.out_h(), .0.src_w(), .0.src_h()
   )]
   UnsupportedFilter(PlanGeometry),
+
+  /// The [`AveragingDomain::Linear`] area downscale was requested on a build
+  /// whose feature set omits the RGB decode the linear-light tail needs. The
+  /// domain is settable whenever `yuv-planar` is on (it gates the
+  /// configuration), but the linear-light resample decodes every source pixel
+  /// to RGB and so is only compiled under `rgb`; without it the domain cannot
+  /// be honoured. Rather than silently downgrade to the encoded average
+  /// (resampling in the wrong colour domain behind the caller's back), the sink
+  /// rejects here at the first processed row, before any output buffer is
+  /// written. Enable the `rgb` feature, or leave the domain at
+  /// [`AveragingDomain::Encoded`].
+  #[error(
+    "the Linear averaging domain needs the `rgb` feature for its RGB decode \
+     (output {}x{} from source {}x{}); enable `rgb` or use AveragingDomain::Encoded",
+    .0.out_w(), .0.out_h(), .0.src_w(), .0.src_h()
+  )]
+  LinearDomainUnsupported(PlanGeometry),
+
+  /// The [`AveragingDomain::Premultiplied`] area downscale was requested on a
+  /// format with no alpha channel. Premultiplied weighting scales each colour
+  /// sample by its own alpha before averaging, so it is only meaningful for an
+  /// alpha-bearing format; these YUV formats carry no alpha, making the domain
+  /// a category error here. Rather than silently downgrade to the encoded
+  /// average (resampling in a different domain than the caller asked for
+  /// behind their back), the sink rejects here at the first processed row,
+  /// before any output buffer is written. Use [`AveragingDomain::Encoded`] (or
+  /// [`AveragingDomain::Linear`] under the `rgb` feature) on these formats.
+  #[error(
+    "the Premultiplied averaging domain is unsupported for this format \
+     (output {}x{} from source {}x{}): it has no alpha channel; \
+     use AveragingDomain::Encoded",
+    .0.out_w(), .0.out_h(), .0.src_w(), .0.src_h()
+  )]
+  PremultipliedDomainUnsupported(PlanGeometry),
 }
 
 #[cfg(all(

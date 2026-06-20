@@ -152,6 +152,10 @@ mod resample_gray_n;
 mod resample_grayf32;
 #[cfg(feature = "rgb-legacy")]
 mod resample_legacy_rgb;
+#[cfg(all(feature = "yuv-planar", feature = "rgb"))]
+mod resample_linear_domain;
+#[cfg(all(feature = "yuv-planar", not(feature = "rgb")))]
+mod resample_linear_domain_no_rgb;
 #[cfg(feature = "mono")]
 mod resample_mono;
 // The high-bit semi-planar P-format sinks live under `yuv-semi-planar`
