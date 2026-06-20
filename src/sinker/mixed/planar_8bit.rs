@@ -9,10 +9,18 @@ use super::{
 };
 use crate::{
   ColorMatrix, PixelSink,
-  resample::{AreaStream, OutOfSequenceRow, PlanGeometry, ResampleError, ResamplePlan, try_zeroed},
+  resample::{
+    AreaStream, AveragingDomain, InsertionContext, InsertionPoint, OutOfSequenceRow, PlanGeometry,
+    ResampleError, ResamplePlan, select_insertion_point, try_zeroed,
+  },
   row::*,
   source::*,
 };
+
+/// `Yuv420p` ships the native 4:2:0 fast tier ([`yuv420p_process_native`]),
+/// so it is statically eligible to splice an [`AveragingDomain::Encoded`]
+/// area downscale at the native codes.
+const YUV420P_NATIVE_ELIGIBLE: bool = true;
 
 // ---- Yuv420p impl --------------------------------------------------------
 
@@ -276,65 +284,89 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
           NativeRouteChanged::new(idx),
         ));
       }
-      if *native {
-        // Dispatch first; freeze the route to native ONLY after the call
-        // returns Ok on an output-bearing row. A no-output call returns
-        // Ok(()) with `need_output` false (no freeze); an out-of-sequence /
-        // frozen row returns Err via `?` (no freeze) — so only an accepted
-        // output-bearing row commits the route.
-        yuv420p_process_native(
-          plan,
-          native_420,
-          resample_outputs,
-          rgb,
-          rgba,
-          luma,
-          luma_u16,
-          hsv,
-          rgb_scratch,
-          row.y(),
-          row.u_half(),
-          row.v_half(),
-          row.matrix(),
-          row.full_range(),
-          idx,
-          w,
-          h,
-          use_simd,
-        )?;
-        if frozen_native_route.is_none() && need_output {
-          *frozen_native_route = Some(true);
+      // RFC #238 splice-stage selection. The native-vs-row-stage choice is
+      // re-expressed through the framework selector: for the encoded domain
+      // it returns `NativeCodes` exactly when this format is native-eligible,
+      // the sink enabled the native tier (`*native`), and the plan is an area
+      // downscale (a filter plan already returned above, so `area_plan` is
+      // always true here). That reproduces the former `if *native` boolean
+      // bit-for-bit — the route-freeze and rejection above are unchanged, so
+      // the dispatch stays byte-identical. The native tier is
+      // [`InsertionPoint::NativeCodes`] (bin codes, then convert); the
+      // row-stage tier is [`InsertionPoint::EncodedOutput`] (convert, then
+      // area-stream the output).
+      let insertion = select_insertion_point(
+        AveragingDomain::Encoded,
+        InsertionContext {
+          native_eligible: YUV420P_NATIVE_ELIGIBLE,
+          with_native: *native,
+          area_plan: true,
+        },
+      );
+      match insertion {
+        InsertionPoint::NativeCodes => {
+          // Dispatch first; freeze the route to native ONLY after the call
+          // returns Ok on an output-bearing row. A no-output call returns
+          // Ok(()) with `need_output` false (no freeze); an out-of-sequence /
+          // frozen row returns Err via `?` (no freeze) — so only an accepted
+          // output-bearing row commits the route.
+          yuv420p_process_native(
+            plan,
+            native_420,
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            luma_u16,
+            hsv,
+            rgb_scratch,
+            row.y(),
+            row.u_half(),
+            row.v_half(),
+            row.matrix(),
+            row.full_range(),
+            idx,
+            w,
+            h,
+            use_simd,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(true);
+          }
+          return Ok(());
         }
-        return Ok(());
+        InsertionPoint::EncodedOutput => {
+          // Row-stage tail. Same CHECK-before / SET-after split: dispatch,
+          // then freeze the route to row-stage only when the call accepts an
+          // output-bearing row (a no-output call returns Ok with
+          // `need_output` false; an out-of-sequence / frozen row returns Err
+          // via `?`).
+          yuv420p_process_resampled(
+            plan,
+            rgb_stream,
+            luma_stream,
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            luma_u16,
+            hsv,
+            rgb_scratch,
+            row.y(),
+            row.u_half(),
+            row.v_half(),
+            row.matrix(),
+            row.full_range(),
+            idx,
+            w,
+            use_simd,
+          )?;
+          if frozen_native_route.is_none() && need_output {
+            *frozen_native_route = Some(false);
+          }
+          return Ok(());
+        }
       }
-      // Row-stage tail. Same CHECK-before / SET-after split: dispatch, then
-      // freeze the route to row-stage only when the call accepts an
-      // output-bearing row (a no-output call returns Ok with `need_output`
-      // false; an out-of-sequence / frozen row returns Err via `?`).
-      yuv420p_process_resampled(
-        plan,
-        rgb_stream,
-        luma_stream,
-        resample_outputs,
-        rgb,
-        rgba,
-        luma,
-        luma_u16,
-        hsv,
-        rgb_scratch,
-        row.y(),
-        row.u_half(),
-        row.v_half(),
-        row.matrix(),
-        row.full_range(),
-        idx,
-        w,
-        use_simd,
-      )?;
-      if frozen_native_route.is_none() && need_output {
-        *frozen_native_route = Some(false);
-      }
-      return Ok(());
     }
 
     // Single-plane row ranges are guaranteed not to overflow: `idx <

@@ -58,6 +58,15 @@ pub use filter::{
 #[cfg_attr(not(any(feature = "rgb", feature = "gray")), allow(unused_imports))]
 pub(crate) use filter::{FilterSample, FilterStream};
 
+mod strategy;
+pub use strategy::{AveragingDomain, FilterSpec, ResampleStrategy};
+// Phase-0-internal: the splice-stage selector consumed by the per-format
+// route dispatch. `InsertionPoint` / its context stay crate-private until
+// later phases widen the splice surface; only `yuv-planar` (the routed
+// `Yuv420p`) references them today.
+#[cfg_attr(not(feature = "yuv-planar"), allow(unused_imports))]
+pub(crate) use strategy::{InsertionContext, InsertionPoint, select_insertion_point};
+
 /// Decides a [`MixedSinker`](crate::sinker::MixedSinker)'s output
 /// geometry from its source geometry, once, at construction.
 ///

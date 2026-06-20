@@ -1,0 +1,188 @@
+//! RFC #238 staged-resampling-pipeline framework — Phase 0.
+//!
+//! The RFC models the convert→resample path as a *staged pipeline* and
+//! treats a resample as a **splice** into that pipeline at a chosen
+//! stage. The colour domain an area downscale averages in then falls out
+//! of *where* the splice lands: averaging the native codes before the
+//! convert is a different result from converting first and averaging the
+//! output. This module is the production foundation those splice stages
+//! and the domain choice are expressed through; the design was validated
+//! end-to-end against one format by the held PoC (see the
+//! `AveragingDomain` history note below).
+//!
+//! Phase 0 introduces the framework **types** plus an insertion-point
+//! [`select_insertion_point`] **selector**, and re-expresses the existing
+//! native-vs-row-stage dispatch of `Yuv420p` (4:2:0 planar) through that
+//! selector with **zero behaviour change** — the selector reproduces
+//! today's tier choice bit-for-bit. Only [`AveragingDomain::Encoded`] and
+//! its two splice stages ([`InsertionPoint::NativeCodes`] /
+//! [`InsertionPoint::EncodedOutput`]) are exercised; the [`Linear`] and
+//! [`Premultiplied`] domains, the full per-plane filter spec, and the
+//! support policy are later phases.
+//!
+//! [`Linear`]: AveragingDomain::Linear
+//! [`Premultiplied`]: AveragingDomain::Premultiplied
+
+#[cfg(test)]
+mod tests;
+
+/// The colour domain an RFC #238 area downscale averages in.
+///
+/// Each variant names the colour space the box-average is taken in,
+/// which is equivalently the pipeline stage the resample is spliced at
+/// (see the [module docs](self)). Because a YUV→RGB convert is affine,
+/// the domains land at materially different RGB, so the choice is
+/// observable — that is the reason it is offered.
+///
+/// Phase 0 only exercises [`Self::Encoded`]; [`Self::Linear`] and
+/// [`Self::Premultiplied`] are reserved for later phases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum AveragingDomain {
+  /// Average the **encoded codes** before conversion: bin the native
+  /// (e.g. Y / U / V) samples, then run the convert once per output
+  /// pixel. The fused, libswscale-class semantics and the default.
+  #[default]
+  Encoded,
+  /// Average in **linear light**: decode to RGB, linearise via the
+  /// inverse transfer function, bin the linear RGB, then re-encode per
+  /// output pixel. The physically-correct light-mixing domain. Reserved
+  /// for a later phase.
+  Linear,
+  /// Average **premultiplied** RGBA: convert at source resolution,
+  /// premultiply by α, bin, then un-premultiply per output row. Reserved
+  /// for a later phase.
+  Premultiplied,
+}
+
+impl AveragingDomain {
+  /// Lowercase identifier for the domain (`"encoded"` / `"linear"` /
+  /// `"premultiplied"`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::Encoded => "encoded",
+      Self::Linear => "linear",
+      Self::Premultiplied => "premultiplied",
+    }
+  }
+}
+
+/// A pipeline splice stage — *where* in the convert pipeline an RFC #238
+/// resample is inserted.
+///
+/// Phase 0 enumerates the two stages the [`AveragingDomain::Encoded`]
+/// domain splices at; the linear-light and premultiplied stages arrive
+/// with their domains in later phases. The [`select_insertion_point`]
+/// selector maps a resample's eligibility and plan onto one of these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum InsertionPoint {
+  /// Splice at the **native codes**, before the convert: bin the source
+  /// codes at output resolution, then convert once per output row. The
+  /// native fast tier (e.g. `yuv420p_process_native`).
+  NativeCodes,
+  /// Splice at the **encoded output**, after the convert: convert each
+  /// source row, then area-stream the encoded output rows. The row-stage
+  /// tier (e.g. `yuv420p_process_resampled`).
+  EncodedOutput,
+}
+
+/// Inputs to [`select_insertion_point`] — the facts that determine which
+/// pipeline stage a resample splices at.
+///
+/// These mirror exactly the values today's per-format dispatch already
+/// branches on, so the selector can reproduce the current choice without
+/// any new information: a format's static eligibility for a native tier,
+/// the resample plan's [area-vs-filter](crate::resample::SpanKind) kind,
+/// and the sink's `with_native` request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct InsertionContext {
+  /// Whether this format ships a native fast tier at all. Formats with
+  /// no averageable native path (e.g. palette / Bayer) are never
+  /// eligible and always splice at the output.
+  pub native_eligible: bool,
+  /// Whether the sink was built with the native fast tier enabled
+  /// (`with_native`). `false` forces the output splice.
+  pub with_native: bool,
+  /// Whether the resample plan carries an area (box-coverage) span. The
+  /// native tier is an area-only optimization; a filter plan never
+  /// splices at the native codes.
+  pub area_plan: bool,
+}
+
+/// Selects the pipeline splice stage for a resample, given its
+/// [domain](AveragingDomain) and [context](InsertionContext).
+///
+/// Phase 0 resolves only [`AveragingDomain::Encoded`]: the resample
+/// splices at the [native codes](InsertionPoint::NativeCodes) when the
+/// format is native-eligible, the sink enabled the native tier, and the
+/// plan is an area downscale; otherwise it splices at the
+/// [encoded output](InsertionPoint::EncodedOutput). This reproduces the
+/// existing `Yuv420p` native-vs-row-stage decision exactly — see
+/// [`crate::sinker::MixedSinker`]'s `Yuv420p` `process` dispatch.
+///
+/// The [`Linear`] and [`Premultiplied`] domains splice at stages that
+/// land in later phases; until then they fall through to the encoded
+/// output (Phase 0 never constructs them on the splice path).
+///
+/// [`Linear`]: AveragingDomain::Linear
+/// [`Premultiplied`]: AveragingDomain::Premultiplied
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) const fn select_insertion_point(
+  domain: AveragingDomain,
+  ctx: InsertionContext,
+) -> InsertionPoint {
+  match domain {
+    AveragingDomain::Encoded => {
+      if ctx.native_eligible && ctx.with_native && ctx.area_plan {
+        InsertionPoint::NativeCodes
+      } else {
+        InsertionPoint::EncodedOutput
+      }
+    }
+    // Reserved for later phases; no splice path constructs them in
+    // Phase 0, so they resolve to the encoded output for now.
+    AveragingDomain::Linear | AveragingDomain::Premultiplied => InsertionPoint::EncodedOutput,
+  }
+}
+
+/// An RFC #238 resampling strategy: the [averaging domain](AveragingDomain)
+/// and (in later phases) the filter specification it resamples with.
+///
+/// Phase 0 carries only the domain plus a minimal filter placeholder; the
+/// real per-plane filter spec and support policy are later phases. The
+/// [default](Default) is [`AveragingDomain::Encoded`] with the
+/// [area](FilterSpec::Area) filter — the current behaviour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct ResampleStrategy {
+  domain: AveragingDomain,
+  filter: FilterSpec,
+}
+
+/// Minimal filter placeholder for [`ResampleStrategy`] — Phase 0 scope.
+///
+/// Distinguishes only the box-average area path from a (to be specified)
+/// windowed-filter kernel; the real per-plane kernel parameters and
+/// support policy are later phases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum FilterSpec {
+  /// Exact integer area (box-coverage) averaging — the Phase 0 default.
+  #[default]
+  Area,
+  /// A windowed-filter resample. The concrete kernel spec is a later
+  /// phase; this variant only reserves the distinction.
+  Kernel,
+}
+
+impl ResampleStrategy {
+  /// The averaging domain this strategy resamples in.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn domain(&self) -> AveragingDomain {
+    self.domain
+  }
+
+  /// The filter specification this strategy resamples with.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn filter(&self) -> FilterSpec {
+    self.filter
+  }
+}
