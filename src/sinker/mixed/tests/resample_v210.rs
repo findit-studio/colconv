@@ -154,23 +154,6 @@ fn frame(buf: &[u8]) -> V210Frame<'_> {
   V210Frame::new(buf, SRC as u32, SRC as u32, STRIDE)
 }
 
-/// `.with_native(false)` where the native tier exists (it is gated on
-/// `yuv-planar`/`yuv-semi-planar`); otherwise the identity, so the
-/// row-stage tests compile + run in a `v210`-solo build too (there is no
-/// native tier there — row-stage is the only path).
-#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
-fn force_row_stage<R, const BE: bool>(
-  s: MixedSinker<'_, V210<BE>, R>,
-) -> MixedSinker<'_, V210<BE>, R> {
-  s.with_native(false)
-}
-#[cfg(not(any(feature = "yuv-planar", feature = "yuv-semi-planar")))]
-fn force_row_stage<R, const BE: bool>(
-  s: MixedSinker<'_, V210<BE>, R>,
-) -> MixedSinker<'_, V210<BE>, R> {
-  s
-}
-
 // ---- Exact 2x2 block-area means (round-half-up) -----------------------
 
 fn block_mean_2x2_rgb_u8(rgb: &[u8]) -> Vec<u8> {

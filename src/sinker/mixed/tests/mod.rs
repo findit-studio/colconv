@@ -434,3 +434,49 @@ pub(super) fn as_le_u32(v: u32) -> u32 {
 pub(super) fn as_be_u32(v: u32) -> u32 {
   u32::from_ne_bytes(v.to_be_bytes())
 }
+
+// Pins the **row-stage** tier where the native decimator exists, and is
+// the identity otherwise. [`MixedSinker::with_native`] is gated on
+// `any(yuv-planar, yuv-semi-planar)` (the native tier needs the planar
+// join), so a packed-format sink built SOLO — its own feature without
+// either planar feature — has no `with_native` method at all. The
+// packed-format resample oracles assert the row-stage convert-then-bin
+// SEMANTICS exactly, so they must pin the row-stage tier whenever it is
+// togglable; under a packed-solo build there is no native tier, so the
+// row-stage tail is already the only path and the identity is correct.
+//
+// The two arms mirror `with_native`'s gate EXACTLY: the `with_native`
+// arm fires for every build where the method is compiled (so the pin is
+// never silently skipped while a native tier is reachable), and the
+// identity arm only for the genuinely native-free packed-solo builds.
+// The outer gate is the union of the consuming packed families so the
+// helper is not dead code in a planar-only build (where no consumer
+// module compiles).
+#[cfg(all(
+  any(feature = "yuv-planar", feature = "yuv-semi-planar"),
+  any(
+    feature = "v210",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-packed"
+  )
+))]
+pub(super) fn force_row_stage<F: mediaframe::SourceFormat, R>(
+  sink: MixedSinker<'_, F, R>,
+) -> MixedSinker<'_, F, R> {
+  sink.with_native(false)
+}
+#[cfg(all(
+  not(any(feature = "yuv-planar", feature = "yuv-semi-planar")),
+  any(
+    feature = "v210",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-packed"
+  )
+))]
+pub(super) fn force_row_stage<F: mediaframe::SourceFormat, R>(
+  sink: MixedSinker<'_, F, R>,
+) -> MixedSinker<'_, F, R> {
+  sink
+}

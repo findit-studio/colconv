@@ -24,6 +24,8 @@ use crate::{
   source::{Vuyx, VuyxRow, vuyx_to},
 };
 
+use super::force_row_stage;
+
 const SRC: usize = 8;
 const OUT: usize = 4;
 const M: ColorMatrix = ColorMatrix::Bt601;
@@ -129,16 +131,16 @@ fn vuyx_uniform_gray_downscale_leaves_colour_unchanged() {
   let mut ss = std::vec![0u8; OUT * OUT];
   let mut vv = std::vec![0u8; OUT * OUT];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_native(false)
-        .with_rgb(&mut rgb)
-        .unwrap()
-        .with_rgba(&mut rgba)
-        .unwrap()
-        .with_hsv(&mut hh, &mut ss, &mut vv)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_rgb(&mut rgb)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
     vuyx_to(&vuyx_frame(&packed), FR, M, &mut sink).unwrap();
   }
   let gray_px = &full_rgb[..3];
@@ -169,20 +171,20 @@ fn vuyx_all_outputs_match_their_own_block_mean() {
   let mut ss = std::vec![0u8; OUT * OUT];
   let mut vv = std::vec![0u8; OUT * OUT];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_native(false)
-        .with_rgb(&mut rgb)
-        .unwrap()
-        .with_rgba(&mut rgba)
-        .unwrap()
-        .with_luma(&mut luma)
-        .unwrap()
-        .with_luma_u16(&mut luma_u16)
-        .unwrap()
-        .with_hsv(&mut hh, &mut ss, &mut vv)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_rgb(&mut rgb)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_luma_u16(&mut luma_u16)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
     vuyx_to(&vuyx_frame(&packed), FR, M, &mut sink).unwrap();
   }
 
@@ -232,14 +234,14 @@ fn vuyx_luma_taken_from_native_y_under_saturated_chroma() {
   let mut luma = std::vec![0u8; OUT * OUT];
   let mut luma_u16 = std::vec![0u16; OUT * OUT];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_native(false)
-        .with_luma(&mut luma)
-        .unwrap()
-        .with_luma_u16(&mut luma_u16)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_luma_u16(&mut luma_u16)
+    .unwrap();
     vuyx_to(&vuyx_frame(&packed), FR, M, &mut sink).unwrap();
   }
   assert!(
@@ -267,12 +269,12 @@ fn vuyx_limited_range_luma_is_native_y_not_rgb_scaled() {
   let packed = pack_vuyx(&v, &u, &y);
   let mut luma = std::vec![0u8; OUT * OUT];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_native(false)
-        .with_luma(&mut luma)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_luma(&mut luma)
+    .unwrap();
     vuyx_to(&vuyx_frame(&packed), false, M, &mut sink).unwrap();
   }
   assert!(
@@ -300,12 +302,12 @@ fn vuyx_fractional_ratio_matches_direct_then_bin() {
 
   let mut rgb = std::vec![0u8; F * F * 3];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(F, F))
-        .unwrap()
-        .with_native(false)
-        .with_rgb(&mut rgb)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_rgb(&mut rgb)
+    .unwrap();
     vuyx_to(&vuyx_frame(&packed), FR, M, &mut sink).unwrap();
   }
   // Reference: feed the direct full-res RGB through the packed-RGB path at
@@ -315,13 +317,14 @@ fn vuyx_fractional_ratio_matches_direct_then_bin() {
   {
     use crate::{frame::Rgb24Frame, source::rgb24_to};
     let rsrc = Rgb24Frame::try_new(&full_rgb, SRC as u32, SRC as u32, (SRC * 3) as u32).unwrap();
-    let mut sink = MixedSinker::<crate::source::Rgb24, AreaResampler>::with_resampler(
-      SRC,
-      SRC,
-      AreaResampler::to(F, F),
+    let mut sink = force_row_stage(
+      MixedSinker::<crate::source::Rgb24, AreaResampler>::with_resampler(
+        SRC,
+        SRC,
+        AreaResampler::to(F, F),
+      )
+      .unwrap(),
     )
-    .unwrap()
-    .with_native(false)
     .with_rgb(&mut rgb_ref)
     .unwrap();
     rgb24_to(&rsrc, FR, M, &mut sink).unwrap();
@@ -343,12 +346,12 @@ fn vuyx_identity_plan_matches_direct() {
   let direct = direct_rgb_u8(&packed);
   let mut via_area = std::vec![0u8; SRC * SRC * 3];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(SRC, SRC))
-        .unwrap()
-        .with_native(false)
-        .with_rgb(&mut via_area)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_rgb(&mut via_area)
+    .unwrap();
     vuyx_to(&vuyx_frame(&packed), FR, M, &mut sink).unwrap();
   }
   assert_eq!(direct, via_area, "identity plan must match the direct sink");
@@ -387,12 +390,12 @@ fn vuyx_resets_streams_across_frames() {
   let p2 = pack_vuyx(&v, &u, &y2);
   let mut luma_u16 = std::vec![0u16; OUT * OUT];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_native(false)
-        .with_luma_u16(&mut luma_u16)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_luma_u16(&mut luma_u16)
+    .unwrap();
     vuyx_to(&vuyx_frame(&p1), FR, M, &mut sink).unwrap();
     vuyx_to(&vuyx_frame(&p2), FR, M, &mut sink).unwrap();
   }
@@ -411,14 +414,14 @@ fn vuyx_out_of_sequence_first_row_rejected_before_allocation() {
   let row3 = &packed[3 * SRC * 4..4 * SRC * 4];
   let mut rgb = std::vec![0u8; OUT * OUT * 3];
   let mut luma_u16 = std::vec![0u16; OUT * OUT];
-  let mut sink =
+  let mut sink = force_row_stage(
     MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-      .unwrap()
-      .with_native(false)
-      .with_rgb(&mut rgb)
-      .unwrap()
-      .with_luma_u16(&mut luma_u16)
-      .unwrap();
+      .unwrap(),
+  )
+  .with_rgb(&mut rgb)
+  .unwrap()
+  .with_luma_u16(&mut luma_u16)
+  .unwrap();
   sink.begin_frame(SRC as u32, SRC as u32).unwrap();
   let err = sink.process(VuyxRow::new(row3, 3, M, FR)).unwrap_err();
   assert!(
@@ -448,12 +451,12 @@ fn vuyx_rejects_mid_frame_output_change() {
   let packed = pack_vuyx(&v, &u, &y);
   let mut rgb = std::vec![0u8; OUT * OUT * 3];
   let mut luma_u16 = std::vec![0u16; OUT * OUT];
-  let mut sink =
+  let mut sink = force_row_stage(
     MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-      .unwrap()
-      .with_native(false)
-      .with_rgb(&mut rgb)
-      .unwrap();
+      .unwrap(),
+  )
+  .with_rgb(&mut rgb)
+  .unwrap();
   sink.begin_frame(SRC as u32, SRC as u32).unwrap();
   sink
     .process(VuyxRow::new(&packed[..SRC * 4], 0, M, FR))
@@ -479,15 +482,15 @@ fn vuyx_resample_simd_matches_scalar() {
   let run = |simd: bool| {
     let mut rgb = std::vec![0u8; OUT * OUT * 3];
     let mut luma_u16 = std::vec![0u16; OUT * OUT];
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<Vuyx, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_native(false)
-        .with_simd(simd)
-        .with_rgb(&mut rgb)
-        .unwrap()
-        .with_luma_u16(&mut luma_u16)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_simd(simd)
+    .with_rgb(&mut rgb)
+    .unwrap()
+    .with_luma_u16(&mut luma_u16)
+    .unwrap();
     vuyx_to(&vuyx_frame(&packed), FR, M, &mut sink).unwrap();
     (rgb, luma_u16)
   };

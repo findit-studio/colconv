@@ -21,6 +21,7 @@
 //! uniform-gray downscale's colour, so the u8 group must bin its own u8
 //! conversion.
 
+use super::force_row_stage;
 use crate::{
   ColorMatrix, PixelSink,
   frame::Y2xxFrame,
@@ -210,13 +211,14 @@ macro_rules! y2xx_resample_suite {
         let packed = ramp_packed();
         let mut rgb = vec![0u8; OUT * OUT * 3];
         {
-          let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
-            SRC,
-            SRC,
-            AreaResampler::to(OUT, OUT),
+          let mut sink = force_row_stage(
+            MixedSinker::<$marker, AreaResampler>::with_resampler(
+              SRC,
+              SRC,
+              AreaResampler::to(OUT, OUT),
+            )
+            .unwrap(),
           )
-          .unwrap()
-          .with_native(false)
           .with_rgb(&mut rgb)
           .unwrap();
           $walker(&frame(&packed), FR, M, &mut sink).unwrap();
@@ -233,13 +235,14 @@ macro_rules! y2xx_resample_suite {
         let packed = ramp_packed();
         let mut rgb = vec![0u16; OUT * OUT * 3];
         {
-          let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
-            SRC,
-            SRC,
-            AreaResampler::to(OUT, OUT),
+          let mut sink = force_row_stage(
+            MixedSinker::<$marker, AreaResampler>::with_resampler(
+              SRC,
+              SRC,
+              AreaResampler::to(OUT, OUT),
+            )
+            .unwrap(),
           )
-          .unwrap()
-          .with_native(false)
           .with_rgb_u16(&mut rgb)
           .unwrap();
           $walker(&frame(&packed), FR, M, &mut sink).unwrap();
@@ -256,13 +259,14 @@ macro_rules! y2xx_resample_suite {
         let packed = ramp_packed();
         let (mut luma, mut luma_u16) = (vec![0u8; OUT * OUT], vec![0u16; OUT * OUT]);
         {
-          let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
-            SRC,
-            SRC,
-            AreaResampler::to(OUT, OUT),
+          let mut sink = force_row_stage(
+            MixedSinker::<$marker, AreaResampler>::with_resampler(
+              SRC,
+              SRC,
+              AreaResampler::to(OUT, OUT),
+            )
+            .unwrap(),
           )
-          .unwrap()
-          .with_native(false)
           .with_luma(&mut luma)
           .unwrap()
           .with_luma_u16(&mut luma_u16)
@@ -298,13 +302,14 @@ macro_rules! y2xx_resample_suite {
         let mut ss = vec![0u8; OUT * OUT];
         let mut vv = vec![0u8; OUT * OUT];
         {
-          let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
-            SRC,
-            SRC,
-            AreaResampler::to(OUT, OUT),
+          let mut sink = force_row_stage(
+            MixedSinker::<$marker, AreaResampler>::with_resampler(
+              SRC,
+              SRC,
+              AreaResampler::to(OUT, OUT),
+            )
+            .unwrap(),
           )
-          .unwrap()
-          .with_native(false)
           .with_rgb(&mut rgb)
           .unwrap()
           .with_rgba(&mut rgba)
@@ -346,13 +351,14 @@ macro_rules! y2xx_resample_suite {
         let packed = saturated_packed(y);
         let mut luma_u16 = vec![0u16; OUT * OUT];
         {
-          let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
-            SRC,
-            SRC,
-            AreaResampler::to(OUT, OUT),
+          let mut sink = force_row_stage(
+            MixedSinker::<$marker, AreaResampler>::with_resampler(
+              SRC,
+              SRC,
+              AreaResampler::to(OUT, OUT),
+            )
+            .unwrap(),
           )
-          .unwrap()
-          .with_native(false)
           .with_luma_u16(&mut luma_u16)
           .unwrap();
           $walker(&frame(&packed), FR, M, &mut sink).unwrap();
@@ -387,13 +393,14 @@ macro_rules! y2xx_resample_suite {
         let mut ss = vec![0u8; OUT * OUT];
         let mut vv = vec![0u8; OUT * OUT];
         {
-          let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
-            SRC,
-            SRC,
-            AreaResampler::to(OUT, OUT),
+          let mut sink = force_row_stage(
+            MixedSinker::<$marker, AreaResampler>::with_resampler(
+              SRC,
+              SRC,
+              AreaResampler::to(OUT, OUT),
+            )
+            .unwrap(),
           )
-          .unwrap()
-          .with_native(false)
           .with_rgb(&mut rgb)
           .unwrap()
           .with_rgba(&mut rgba)
@@ -457,13 +464,14 @@ macro_rules! y2xx_resample_suite {
         let mut le_rgb_u16 = vec![0u16; OUT * OUT * 3];
         let mut le_luma_u16 = vec![0u16; OUT * OUT];
         {
-          let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
-            SRC,
-            SRC,
-            AreaResampler::to(OUT, OUT),
+          let mut sink = force_row_stage(
+            MixedSinker::<$marker, AreaResampler>::with_resampler(
+              SRC,
+              SRC,
+              AreaResampler::to(OUT, OUT),
+            )
+            .unwrap(),
           )
-          .unwrap()
-          .with_native(false)
           .with_rgb(&mut le_rgb)
           .unwrap()
           .with_rgb_u16(&mut le_rgb_u16)
@@ -477,13 +485,14 @@ macro_rules! y2xx_resample_suite {
         let mut be_rgb_u16 = vec![0u16; OUT * OUT * 3];
         let mut be_luma_u16 = vec![0u16; OUT * OUT];
         {
-          let mut sink = MixedSinker::<$marker<true>, AreaResampler>::with_resampler(
-            SRC,
-            SRC,
-            AreaResampler::to(OUT, OUT),
+          let mut sink = force_row_stage(
+            MixedSinker::<$marker<true>, AreaResampler>::with_resampler(
+              SRC,
+              SRC,
+              AreaResampler::to(OUT, OUT),
+            )
+            .unwrap(),
           )
-          .unwrap()
-          .with_native(false)
           .with_rgb(&mut be_rgb)
           .unwrap()
           .with_rgb_u16(&mut be_rgb_u16)
@@ -514,13 +523,14 @@ macro_rules! y2xx_resample_suite {
         }
         let mut via_area = vec![0u8; SRC * SRC * 3];
         {
-          let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
-            SRC,
-            SRC,
-            AreaResampler::to(SRC, SRC),
+          let mut sink = force_row_stage(
+            MixedSinker::<$marker, AreaResampler>::with_resampler(
+              SRC,
+              SRC,
+              AreaResampler::to(SRC, SRC),
+            )
+            .unwrap(),
           )
-          .unwrap()
-          .with_native(false)
           .with_rgb(&mut via_area)
           .unwrap();
           $walker(&frame(&packed), FR, M, &mut sink).unwrap();
@@ -531,14 +541,14 @@ macro_rules! y2xx_resample_suite {
       #[test]
       fn no_outputs_is_a_no_op() {
         let packed = ramp_packed();
-        let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
-          SRC,
-          SRC,
-          AreaResampler::to(OUT, OUT),
-        )
-        .unwrap()
-        .with_native(false)
-        .with_native(false);
+        let mut sink = force_row_stage(
+          MixedSinker::<$marker, AreaResampler>::with_resampler(
+            SRC,
+            SRC,
+            AreaResampler::to(OUT, OUT),
+          )
+          .unwrap(),
+        );
         $walker(&frame(&packed), FR, M, &mut sink).unwrap();
         assert!(
           !sink.luma_stream_u16_allocated(),
@@ -571,13 +581,14 @@ macro_rules! y2xx_resample_suite {
         let mut rgb_u16 = vec![0u16; OUT * OUT * 3];
         let mut luma_u16 = vec![0u16; OUT * OUT];
         {
-          let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
-            SRC,
-            SRC,
-            AreaResampler::to(OUT, OUT),
+          let mut sink = force_row_stage(
+            MixedSinker::<$marker, AreaResampler>::with_resampler(
+              SRC,
+              SRC,
+              AreaResampler::to(OUT, OUT),
+            )
+            .unwrap(),
           )
-          .unwrap()
-          .with_native(false)
           .with_rgb(&mut rgb)
           .unwrap()
           .with_rgb_u16(&mut rgb_u16)
@@ -599,13 +610,14 @@ macro_rules! y2xx_resample_suite {
         let mut rgb = vec![0u8; OUT * OUT * 3];
         let mut rgb_u16 = vec![0u16; OUT * OUT * 3];
         let mut luma_u16 = vec![0u16; OUT * OUT];
-        let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
-          SRC,
-          SRC,
-          AreaResampler::to(OUT, OUT),
+        let mut sink = force_row_stage(
+          MixedSinker::<$marker, AreaResampler>::with_resampler(
+            SRC,
+            SRC,
+            AreaResampler::to(OUT, OUT),
+          )
+          .unwrap(),
         )
-        .unwrap()
-        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap()
         .with_rgb_u16(&mut rgb_u16)
@@ -643,13 +655,14 @@ macro_rules! y2xx_resample_suite {
       fn rejects_mid_frame_out_of_sequence() {
         let packed = ramp_packed();
         let mut luma_u16 = vec![0u16; OUT * OUT];
-        let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
-          SRC,
-          SRC,
-          AreaResampler::to(OUT, OUT),
+        let mut sink = force_row_stage(
+          MixedSinker::<$marker, AreaResampler>::with_resampler(
+            SRC,
+            SRC,
+            AreaResampler::to(OUT, OUT),
+          )
+          .unwrap(),
         )
-        .unwrap()
-        .with_native(false)
         .with_luma_u16(&mut luma_u16)
         .unwrap();
         sink.begin_frame(SRC as u32, SRC as u32).unwrap();
@@ -677,13 +690,14 @@ macro_rules! y2xx_resample_suite {
         let packed = ramp_packed();
         let mut rgb = vec![0u8; OUT * OUT * 3];
         let mut luma_u16 = vec![0u16; OUT * OUT];
-        let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
-          SRC,
-          SRC,
-          AreaResampler::to(OUT, OUT),
+        let mut sink = force_row_stage(
+          MixedSinker::<$marker, AreaResampler>::with_resampler(
+            SRC,
+            SRC,
+            AreaResampler::to(OUT, OUT),
+          )
+          .unwrap(),
         )
-        .unwrap()
-        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap();
         sink.begin_frame(SRC as u32, SRC as u32).unwrap();
@@ -716,13 +730,14 @@ macro_rules! y2xx_resample_suite {
         // snapshot the rejected row should never have committed.
         let packed = ramp_packed();
         let mut rgb = vec![0u8; OUT * OUT * 3];
-        let mut sink = MixedSinker::<$marker, AreaResampler>::with_resampler(
-          SRC,
-          SRC,
-          AreaResampler::to(OUT, OUT),
+        let mut sink = force_row_stage(
+          MixedSinker::<$marker, AreaResampler>::with_resampler(
+            SRC,
+            SRC,
+            AreaResampler::to(OUT, OUT),
+          )
+          .unwrap(),
         )
-        .unwrap()
-        .with_native(false)
         .with_rgb(&mut rgb)
         .unwrap();
         sink.begin_frame(SRC as u32, SRC as u32).unwrap();
