@@ -26,26 +26,12 @@ use crate::{
 };
 use mediaframe::frame::Uyyvyy411Frame;
 
+use super::force_row_stage;
+
 const SRC_W: usize = 8;
 const SRC_H: usize = 8;
 const OUT_W: usize = 4;
 const OUT_H: usize = 4;
-
-/// Pins the ROW-STAGE tier (`.with_native(false)`) where the native tier exists
-/// (it is gated on `yuv-planar`); otherwise the identity, so these tests — which
-/// assert the convert-then-bin RGB SEMANTICS (an `Rgb24` area-resample of the
-/// identity conversion, not the native average-in-YUV) — compile + run in a
-/// `yuv-packed`-solo build too (there is no native tier there; row-stage is the
-/// only path). The native tier's own oracle/parity coverage lives in
-/// [`resample_uyyvyy411_native`](super::resample_uyyvyy411_native).
-#[cfg(feature = "yuv-planar")]
-fn force_row_stage<R>(s: MixedSinker<'_, Uyyvyy411, R>) -> MixedSinker<'_, Uyyvyy411, R> {
-  s.with_native(false)
-}
-#[cfg(not(feature = "yuv-planar"))]
-fn force_row_stage<R>(s: MixedSinker<'_, Uyyvyy411, R>) -> MixedSinker<'_, Uyyvyy411, R> {
-  s
-}
 
 /// Builds a UYYVYY411 packed plane from per-pixel Y and per-block (U, V)
 /// closures. Layout per 6-byte / 4-pixel block: `U0, Y0, Y1, V0, Y2, Y3`

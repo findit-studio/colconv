@@ -30,32 +30,12 @@ use crate::{
   },
 };
 
+use super::force_row_stage;
+
 const SRC: usize = 8;
 const OUT: usize = 4;
 const M: ColorMatrix = ColorMatrix::Bt601;
 const FR: bool = true;
-
-/// Pins the **row-stage** tier when the native packed-YUV 4:2:2 decimator is
-/// compiled in (i.e. `yuv-planar` is also present, the default-on tier),
-/// and is a pass-through under a `yuv-packed`-solo build (where the native
-/// tier — and `with_native` itself — do not exist). The colour oracles below
-/// assert the row-stage convert-then-bin semantics exactly, so they must
-/// route to the row-stage tier regardless of which features are active; the
-/// native tier's own (different) colour semantics are pinned separately in
-/// the `native_tier` module. Luma is bit-identical across tiers, so the
-/// luma-only oracles need no pin.
-#[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
-fn pin_row_stage<S: mediaframe::SourceFormat, R>(
-  sink: MixedSinker<'_, S, R>,
-) -> MixedSinker<'_, S, R> {
-  sink.with_native(false)
-}
-#[cfg(not(all(feature = "yuv-packed", feature = "yuv-planar")))]
-fn pin_row_stage<S: mediaframe::SourceFormat, R>(
-  sink: MixedSinker<'_, S, R>,
-) -> MixedSinker<'_, S, R> {
-  sink
-}
 
 /// Exact 2x2-block area mean (round-half-up) of an `SRC`-grid plane to
 /// the `OUT` grid — the integer-ratio (2:1) area-downscale reference for
@@ -229,10 +209,10 @@ macro_rules! packed_yuv_resample_suite {
           .unwrap();
         $drv(&$mk_frame(&packed), FR, M, &mut sink).unwrap();
       }
-      // Resampled RGB (pinned to the row-stage tier — see `pin_row_stage`).
+      // Resampled RGB (pinned to the row-stage tier — see `force_row_stage`).
       let mut rgb = vec![0u8; OUT * OUT * 3];
       {
-        let mut sink = pin_row_stage(
+        let mut sink = force_row_stage(
           MixedSinker::<$fmt, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
             .unwrap(),
         )
@@ -327,7 +307,7 @@ macro_rules! packed_yuv_resample_suite {
       let mut ss = vec![0u8; OUT * OUT];
       let mut vv = vec![0u8; OUT * OUT];
       {
-        let mut sink = pin_row_stage(
+        let mut sink = force_row_stage(
           MixedSinker::<$fmt, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
             .unwrap(),
         )
@@ -390,7 +370,7 @@ macro_rules! packed_yuv_resample_suite {
       }
       let mut via_area = vec![0u8; SRC * SRC * 3];
       {
-        let mut sink = pin_row_stage(
+        let mut sink = force_row_stage(
           MixedSinker::<$fmt, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(SRC, SRC))
             .unwrap(),
         )

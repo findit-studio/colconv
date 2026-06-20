@@ -17,7 +17,7 @@ use crate::{
   source::{Xv36, Xv36Row, xv36_to, xv36_to_endian},
 };
 
-use super::{as_be_u16, as_le_u16};
+use super::{as_be_u16, as_le_u16, force_row_stage};
 
 const SRC: usize = 8;
 const OUT: usize = 4;
@@ -145,18 +145,18 @@ fn xv36_uniform_gray_downscale_leaves_colour_outputs_unchanged() {
   let mut ss = vec![0u8; OUT * OUT];
   let mut vv = vec![0u8; OUT * OUT];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_native(false)
-        .with_rgb(&mut rgb)
-        .unwrap()
-        .with_rgba(&mut rgba)
-        .unwrap()
-        .with_rgb_u16(&mut rgb_u16)
-        .unwrap()
-        .with_hsv(&mut hh, &mut ss, &mut vv)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_rgb(&mut rgb)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_rgb_u16(&mut rgb_u16)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
     xv36_to(&xv36_frame(&packed), FR, M, &mut sink).unwrap();
   }
 
@@ -211,12 +211,12 @@ fn xv36_downscale_rgb_u16_is_native_depth_block_mean() {
 
   let mut rgb_u16 = vec![0u16; OUT * OUT * 3];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_native(false)
-        .with_rgb_u16(&mut rgb_u16)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_rgb_u16(&mut rgb_u16)
+    .unwrap();
     xv36_to(&xv36_frame(&packed), FR, M, &mut sink).unwrap();
   }
   assert_eq!(
@@ -239,14 +239,14 @@ fn xv36_downscale_luma_is_native_depth_block_mean_of_y() {
   let mut luma = vec![0u8; OUT * OUT];
   let mut luma_u16 = vec![0u16; OUT * OUT];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_native(false)
-        .with_luma(&mut luma)
-        .unwrap()
-        .with_luma_u16(&mut luma_u16)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_luma_u16(&mut luma_u16)
+    .unwrap();
     xv36_to(&xv36_frame(&packed), FR, M, &mut sink).unwrap();
   }
   let y_binned = block_mean_u16(&full_y);
@@ -283,24 +283,24 @@ fn xv36_all_outputs_match_their_own_native_depth_block_mean() {
   let mut ss = vec![0u8; OUT * OUT];
   let mut vv = vec![0u8; OUT * OUT];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_native(false)
-        .with_rgb(&mut rgb)
-        .unwrap()
-        .with_rgba(&mut rgba)
-        .unwrap()
-        .with_rgb_u16(&mut rgb_u16)
-        .unwrap()
-        .with_rgba_u16(&mut rgba_u16)
-        .unwrap()
-        .with_luma(&mut luma)
-        .unwrap()
-        .with_luma_u16(&mut luma_u16)
-        .unwrap()
-        .with_hsv(&mut hh, &mut ss, &mut vv)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_rgb(&mut rgb)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_rgb_u16(&mut rgb_u16)
+    .unwrap()
+    .with_rgba_u16(&mut rgba_u16)
+    .unwrap()
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_luma_u16(&mut luma_u16)
+    .unwrap()
+    .with_hsv(&mut hh, &mut ss, &mut vv)
+    .unwrap();
     xv36_to(&xv36_frame(&packed), FR, M, &mut sink).unwrap();
   }
 
@@ -351,12 +351,12 @@ fn xv36_luma_taken_from_native_y_under_saturated_chroma() {
   let packed = pack_xv36(&u, &y, &v);
   let mut luma_u16 = vec![0u16; OUT * OUT];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_native(false)
-        .with_luma_u16(&mut luma_u16)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_luma_u16(&mut luma_u16)
+    .unwrap();
     xv36_to(&xv36_frame(&packed), FR, M, &mut sink).unwrap();
   }
   assert!(
@@ -384,17 +384,17 @@ fn xv36_resample_le_be_parity() {
     let mut le_luma_u16 = vec![0u16; OUT * OUT];
     {
       let frame = Xv36LeFrame::try_new(&pix_le, SRC as u32, SRC as u32, (SRC * 4) as u32).unwrap();
-      let mut sink =
+      let mut sink = force_row_stage(
         MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-          .unwrap()
-          .with_native(false)
-          .with_simd(simd)
-          .with_rgb(&mut le_rgb)
-          .unwrap()
-          .with_rgb_u16(&mut le_rgb_u16)
-          .unwrap()
-          .with_luma_u16(&mut le_luma_u16)
-          .unwrap();
+          .unwrap(),
+      )
+      .with_simd(simd)
+      .with_rgb(&mut le_rgb)
+      .unwrap()
+      .with_rgb_u16(&mut le_rgb_u16)
+      .unwrap()
+      .with_luma_u16(&mut le_luma_u16)
+      .unwrap();
       xv36_to(&frame, FR, M, &mut sink).unwrap();
     }
 
@@ -403,13 +403,14 @@ fn xv36_resample_le_be_parity() {
     let mut be_luma_u16 = vec![0u16; OUT * OUT];
     {
       let frame = Xv36BeFrame::try_new(&pix_be, SRC as u32, SRC as u32, (SRC * 4) as u32).unwrap();
-      let mut sink = MixedSinker::<Xv36<true>, AreaResampler>::with_resampler(
-        SRC,
-        SRC,
-        AreaResampler::to(OUT, OUT),
+      let mut sink = force_row_stage(
+        MixedSinker::<Xv36<true>, AreaResampler>::with_resampler(
+          SRC,
+          SRC,
+          AreaResampler::to(OUT, OUT),
+        )
+        .unwrap(),
       )
-      .unwrap()
-      .with_native(false)
       .with_simd(simd)
       .with_rgb(&mut be_rgb)
       .unwrap()
@@ -454,12 +455,12 @@ fn xv36_identity_plan_matches_new_sink() {
   }
   let mut via_area = vec![0u16; SRC * SRC * 3];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(SRC, SRC))
-        .unwrap()
-        .with_native(false)
-        .with_rgb_u16(&mut via_area)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_rgb_u16(&mut via_area)
+    .unwrap();
     xv36_to(&xv36_frame(&packed), FR, M, &mut sink).unwrap();
   }
   assert_eq!(direct, via_area, "identity plan must match the direct sink");
@@ -494,14 +495,14 @@ fn xv36_resets_streams_across_frames() {
   let mut luma_u16 = vec![0u16; OUT * OUT];
   let mut rgb_u16 = vec![0u16; OUT * OUT * 3];
   {
-    let mut sink =
+    let mut sink = force_row_stage(
       MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-        .unwrap()
-        .with_native(false)
-        .with_luma_u16(&mut luma_u16)
-        .unwrap()
-        .with_rgb_u16(&mut rgb_u16)
-        .unwrap();
+        .unwrap(),
+    )
+    .with_luma_u16(&mut luma_u16)
+    .unwrap()
+    .with_rgb_u16(&mut rgb_u16)
+    .unwrap();
     xv36_to(&xv36_frame(&p1), FR, M, &mut sink).unwrap();
     xv36_to(&xv36_frame(&p2), FR, M, &mut sink).unwrap();
   }
@@ -524,16 +525,16 @@ fn xv36_out_of_sequence_first_row_rejected_before_allocation() {
   let mut luma_u16 = vec![0u16; OUT * OUT];
   let mut rgb = vec![0u8; OUT * OUT * 3];
   let mut rgb_u16 = vec![0u16; OUT * OUT * 3];
-  let mut sink =
+  let mut sink = force_row_stage(
     MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-      .unwrap()
-      .with_native(false)
-      .with_luma_u16(&mut luma_u16)
-      .unwrap()
-      .with_rgb(&mut rgb)
-      .unwrap()
-      .with_rgb_u16(&mut rgb_u16)
-      .unwrap();
+      .unwrap(),
+  )
+  .with_luma_u16(&mut luma_u16)
+  .unwrap()
+  .with_rgb(&mut rgb)
+  .unwrap()
+  .with_rgb_u16(&mut rgb_u16)
+  .unwrap();
   sink.begin_frame(SRC as u32, SRC as u32).unwrap();
   let err = sink.process(Xv36Row::new(row3, 3, M, FR)).unwrap_err();
   assert!(
@@ -579,12 +580,12 @@ fn xv36_rejects_mid_frame_output_change() {
   let stride = SRC * 4;
   let mut rgb_u16 = vec![0u16; OUT * OUT * 3];
   let mut luma_u16 = vec![0u16; OUT * OUT];
-  let mut sink =
+  let mut sink = force_row_stage(
     MixedSinker::<Xv36, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
-      .unwrap()
-      .with_native(false)
-      .with_rgb_u16(&mut rgb_u16)
-      .unwrap();
+      .unwrap(),
+  )
+  .with_rgb_u16(&mut rgb_u16)
+  .unwrap();
   sink.begin_frame(SRC as u32, SRC as u32).unwrap();
   sink
     .process(Xv36Row::new(&packed[..stride], 0, M, FR))
