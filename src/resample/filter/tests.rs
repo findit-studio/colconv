@@ -267,6 +267,101 @@ fn gaussian_profile() {
   assert!(max_weight_dev(&k, 3.5, reference) < 1e-12);
 }
 
+#[test]
+fn blackman_sinc_profile() {
+  let k = BlackmanSinc;
+  assert_eq!(k.support(), 3.0);
+  // Window at the center is 0.42 + 0.5 + 0.08 = 1, so weight(0) = sinc(0) = 1.
+  assert!((k.weight(0.0) - 1.0).abs() < 1e-12);
+  // Interpolating at the integer nodes within support (the sinc factor is
+  // zero at every nonzero integer), like the Lanczos kernels.
+  for n in 1..3 {
+    assert!(k.weight(n as f64).abs() < 1e-12, "zero at {n}");
+    assert!(k.weight(-(n as f64)).abs() < 1e-12, "zero at -{n}");
+  }
+  // Half-open [-3, 3): zero at and past the support boundary (and the
+  // window itself vanishes there: 0.42 - 0.5 + 0.08 = 0).
+  assert_eq!(k.weight(3.0), 0.0);
+  assert_eq!(k.weight(-3.0), 0.0);
+  assert_eq!(k.weight(3.5), 0.0);
+  // Negative outer lobe, shallower than Lanczos3's: the Blackman window
+  // suppresses the side lobes more than Lanczos's sinc window.
+  let w15 = k.weight(1.5);
+  assert!(w15 < 0.0, "outer lobe must be negative, got {w15}");
+  assert!(
+    w15 > Lanczos3.weight(1.5),
+    "Blackman lobe is shallower than Lanczos3's"
+  );
+  // Symmetric across the dense grid.
+  assert!(max_weight_dev(&k, 3.5, |x| k.weight(-x)) < 1e-15);
+  // Reference windowed sinc (conventional 0.42 / 0.5 / 0.08 Blackman window,
+  // a = 3), evaluated directly (not via the kernel's factored helpers) so a
+  // coefficient or argument slip would show up here.
+  let reference = |x: f64| {
+    let s = |t: f64| {
+      if t == 0.0 {
+        1.0
+      } else {
+        (core::f64::consts::PI * t).sin() / (core::f64::consts::PI * t)
+      }
+    };
+    if x > -3.0 && x < 3.0 {
+      let u = core::f64::consts::PI * x / 3.0;
+      let win = 0.42 + 0.5 * u.cos() + 0.08 * (2.0 * u).cos();
+      s(x) * win
+    } else {
+      0.0
+    }
+  };
+  assert!(max_weight_dev(&k, 3.5, reference) < 1e-12);
+}
+
+#[test]
+fn cubic_b_spline_profile() {
+  let k = CubicBSpline;
+  assert_eq!(k.support(), 2.0);
+  // The smoothing cubic B-spline is NON-interpolating: 2/3 at the center,
+  // 1/6 at the unit sample (unlike the interpolating Catmull-Rom cubic,
+  // which is 1 and 0). It blurs rather than passes samples through.
+  assert!((k.weight(0.0) - 2.0 / 3.0).abs() < 1e-12);
+  assert!((k.weight(1.0) - 1.0 / 6.0).abs() < 1e-12);
+  assert!((k.weight(-1.0) - 1.0 / 6.0).abs() < 1e-12);
+  assert_eq!(k.weight(2.0), 0.0);
+  assert_eq!(k.weight(2.5), 0.0);
+  // Non-negative everywhere (no ringing / no negative lobes), the
+  // signature of the smoothing B-spline.
+  for i in 0..400 {
+    let x = i as f64 / 100.0;
+    assert!(k.weight(x) >= 0.0, "no negative lobe at x = {x}");
+  }
+  // Known interior values: B3(1/2) = 23/48, B3(3/2) = 1/48.
+  assert!((k.weight(0.5) - 23.0 / 48.0).abs() < 1e-12);
+  assert!((k.weight(1.5) - 1.0 / 48.0).abs() < 1e-12);
+  // C2-continuous at the internal knot |x| = 1 (both segments agree at 1/6).
+  assert!((k.weight(0.999_999) - k.weight(1.000_001)).abs() < 1e-4);
+  // Symmetric.
+  assert_eq!(k.weight(1.5), k.weight(-1.5));
+  assert!(max_weight_dev(&k, 2.5, |x| k.weight(-x)) < 1e-15);
+  // Partition of unity (preserves DC) at several fractional offsets — even
+  // though it is non-interpolating, its taps sum to one.
+  for &x in &[0.0, 0.25, 0.5, 0.5_f64.sqrt(), 0.9] {
+    assert!((tap_sum(&k, x) - 1.0).abs() < 1e-12, "PoU at {x}");
+  }
+  // Parity with the closed-form B3 (explicit, non-Horner form), so a
+  // factoring slip in the kernel would show up here.
+  let reference = |x: f64| {
+    let t = x.abs();
+    if t < 1.0 {
+      (4.0 - 6.0 * t.powi(2) + 3.0 * t.powi(3)) / 6.0
+    } else if t < 2.0 {
+      (2.0 - t).powi(3) / 6.0
+    } else {
+      0.0
+    }
+  };
+  assert!(max_weight_dev(&k, 2.5, reference) < 1e-12);
+}
+
 /// Sum of a kernel's taps at unit-spaced offsets around `x` — the partition
 /// of unity an interpolating kernel must satisfy (`== 1`) to preserve DC.
 fn tap_sum(k: &dyn FilterKernel, x: f64) -> f64 {
@@ -480,6 +575,62 @@ fn ffmpeg_kernels_match_golden_fixtures() {
 }
 
 #[test]
+fn phase4_kernels_match_golden_fixtures() {
+  // Independent exactness oracle for the two RFC #238 Phase 4 kernels. These
+  // (x, weight) literals were computed OUTSIDE the production code paths —
+  // the `CubicBSpline` values by exact rational arithmetic over the B3
+  // segment polynomials (Python `fractions.Fraction`, cast to f64), the
+  // `BlackmanSinc` values by a direct (un-factored) evaluation of
+  // `sinc(x) * (0.42 + 0.5 cos(pi x/3) + 0.08 cos(2 pi x/3))`. A
+  // transcription slip in a kernel coefficient (which the closed-form
+  // references in the per-kernel profile tests evaluate, but in the same
+  // family of expression) shows up here against literal numbers; the
+  // tolerance only absorbs f64 rounding across the two evaluation orders.
+
+  // CubicBSpline B3, exact rationals: weight(1/4) = 235/384,
+  // weight(1/2) = 23/48, weight(3/4) = 121/384, weight(5/4) = 9/128,
+  // weight(3/2) = 1/48, weight(7/4) = 1/384.
+  let bspline: &[(f64, f64)] = &[
+    (0.25, 0.6119791666666666),
+    (0.5, 0.4791666666666667),
+    (0.75, 0.3151041666666667),
+    (1.25, 0.0703125),
+    (1.5, 0.020833333333333332),
+    (1.75, 0.0026041666666666665),
+  ];
+  // BlackmanSinc (a = 3) at non-node fractional points (the integer nodes
+  // are sinc zeros, covered by the profile test): direct evaluation of the
+  // windowed sinc.
+  let blackman: &[(f64, f64)] = &[
+    (0.5, 0.5685095429999835),
+    (0.75, 0.23214757965659177),
+    (1.5, -0.0721502408683259),
+    (2.5, 0.003436129515638274),
+    (2.75, 0.0005172005528988453),
+  ];
+  for &(x, want) in bspline {
+    assert!(
+      (CubicBSpline.weight(x) - want).abs() < 1e-12,
+      "CubicBSpline({x})"
+    );
+    assert!(
+      (CubicBSpline.weight(-x) - want).abs() < 1e-12,
+      "CubicBSpline(-{x})"
+    );
+  }
+  for &(x, want) in blackman {
+    assert!(
+      (BlackmanSinc.weight(x) - want).abs() < 1e-12,
+      "BlackmanSinc({x})"
+    );
+    assert!(
+      (BlackmanSinc.weight(-x) - want).abs() < 1e-12,
+      "BlackmanSinc(-{x})"
+    );
+  }
+}
+
+#[test]
 fn gaussian_softens_a_scale_one_axis() {
   // A non-interpolating kernel does NOT pass a scale-1 axis through: under the
   // PIL half-pixel center convention a 1:1 axis evaluates the kernel at
@@ -541,6 +692,8 @@ fn axis_windows_normalize_to_one() {
     &Spline16 as &dyn FilterKernel,
     &Spline36 as &dyn FilterKernel,
     &Spline64 as &dyn FilterKernel,
+    &BlackmanSinc as &dyn FilterKernel,
+    &CubicBSpline as &dyn FilterKernel,
   ] {
     for &(in_size, out_size) in &[(8usize, 3usize), (64, 17), (1920, 640), (1000, 333)] {
       let axis = FilterAxis::build(in_size, out_size, k).expect("valid downscale");
@@ -753,6 +906,8 @@ fn max_overlap_bounds_the_ring() {
     &Spline16 as &dyn FilterKernel,
     &Spline36 as &dyn FilterKernel,
     &Spline64 as &dyn FilterKernel,
+    &BlackmanSinc as &dyn FilterKernel,
+    &CubicBSpline as &dyn FilterKernel,
   ] {
     for &(in_size, out_size) in &[(64usize, 17usize), (200, 41), (1920, 360)] {
       let axis = FilterAxis::build(in_size, out_size, k).unwrap();

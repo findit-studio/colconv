@@ -26,6 +26,21 @@
 //!
 //! Downscale, upscale, and mixed per-axis ratios are all supported, on the
 //! scalar path and every SIMD backend.
+//!
+//! # Support is dynamic — no per-kernel support policy
+//!
+//! A kernel declares only its *intrinsic* truncation radius
+//! ([`FilterKernel::support`], the half-width at unit scale); the engine
+//! supplies the dynamic sizing. [`FilterAxis::build`] computes `scale =
+//! in_size / out_size`, `filterscale = max(scale, 1)`, and widens the
+//! footprint to `support() * filterscale` — so **every** kernel gets
+//! scale-relative anti-alias widening on downscale and its native support on
+//! upscale, for free. An earlier design sketch hypothesized a per-kernel
+//! `SupportPolicy { Intrinsic, Truncated, ScaleRelative }`; it is
+//! unnecessary, because the engine's `filterscale` already applies the
+//! scale-relative policy universally. A new kernel therefore only defines a
+//! finite `support()` (its truncation radius) and a `weight()` profile — it
+//! never selects a sizing policy.
 
 use std::vec::Vec;
 
@@ -148,7 +163,7 @@ fn round_f64(x: f64) -> f64 {
 }
 
 /// `f64` `sin` portable across `std` and `no_std + alloc` builds. See
-/// [`floor_f64`]. Only the Lanczos kernel needs it.
+/// [`floor_f64`]. The Lanczos and windowed-sinc kernels need it.
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn sin_f64(x: f64) -> f64 {
   #[cfg(feature = "std")]
@@ -158,6 +173,20 @@ fn sin_f64(x: f64) -> f64 {
   #[cfg(all(not(feature = "std"), feature = "alloc"))]
   {
     libm::sin(x)
+  }
+}
+
+/// `f64` `cos` portable across `std` and `no_std + alloc` builds. See
+/// [`floor_f64`]. Only the [`BlackmanSinc`] window needs it.
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn cos_f64(x: f64) -> f64 {
+  #[cfg(feature = "std")]
+  {
+    f64::cos(x)
+  }
+  #[cfg(all(not(feature = "std"), feature = "alloc"))]
+  {
+    libm::cos(x)
   }
 }
 
@@ -497,6 +526,121 @@ impl FilterKernel for Gaussian {
     // kernels). `exp2_f64` keeps the `no_std + alloc` build portable.
     if x.abs() < Self::SUPPORT {
       exp2_f64(-Self::P * x * x)
+    } else {
+      0.0
+    }
+  }
+}
+
+/// A **Blackman-windowed sinc** filter with radius `a = 3` — a windowed-sinc
+/// reconstruction kernel distinct from the [`Lanczos3`]/[`Lanczos4`] family
+/// (which window the sinc with a *sinc*). Support 3;
+/// `weight(x) = sinc(x) * w_B(x)` for `|x| < 3`, zero beyond, where the
+/// Blackman window is `w_B(x) = 0.42 + 0.5 cos(pi x / 3) + 0.08 cos(2 pi x /
+/// 3)` over `|x| <= 3` (the conventional `0.42 / 0.5 / 0.08` Blackman
+/// coefficients — not the "exact" `7938/9240/1430` variant). At `x = 0` the
+/// window is `0.42 + 0.5 + 0.08 = 1`, so `weight(0) = 1`; at `|x| = 3` it is
+/// `0.42 - 0.5 + 0.08 = 0`, so the window tapers to zero at the support
+/// boundary.
+///
+/// Like the Lanczos kernels it is interpolating at the integer nodes (the
+/// `sinc(x)` factor is zero at every nonzero integer), but the Blackman
+/// window suppresses the side lobes more aggressively than Lanczos's sinc
+/// window — a shallower outer lobe (`weight(1.5) ~ -0.072` vs Lanczos3's
+/// `~ -0.135`) for less ringing, at a slightly softer passband. This is a
+/// **reference-formula** windowed sinc; it is *not* byte-exact to FFmpeg
+/// swscale's `SWS_SINC` (swscale sizes its sinc dynamically and uses its own
+/// windowing/blur pipeline), which is an explicit non-goal — the bar is
+/// exactness to the cited Blackman-sinc formula, in `f64`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BlackmanSinc;
+
+impl BlackmanSinc {
+  /// Window / support radius `a` — a 6-tap window at unit scale (`a = 3`).
+  const A: f64 = 3.0;
+
+  /// Normalized sinc, `sin(pi t) / (pi t)`, with the removable singularity
+  /// at `t == 0` defined as 1 (the same `sinc_filter` as [`Lanczos3`]).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn sinc(t: f64) -> f64 {
+    if t == 0.0 {
+      1.0
+    } else {
+      let pt = core::f64::consts::PI * t;
+      sin_f64(pt) / pt
+    }
+  }
+
+  /// Conventional Blackman window `0.42 + 0.5 cos(pi x / a) + 0.08 cos(2 pi
+  /// x / a)` on `|x| <= a`; the caller guards the `|x| < a` support, so this
+  /// is only evaluated inside the window.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn window(x: f64) -> f64 {
+    let u = core::f64::consts::PI * x / Self::A;
+    0.42 + 0.5 * cos_f64(u) + 0.08 * cos_f64(2.0 * u)
+  }
+}
+
+impl FilterKernel for BlackmanSinc {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn support(&self) -> f64 {
+    Self::A
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn weight(&self, x: f64) -> f64 {
+    // Windowed sinc on the half-open `[-3, 3)` (the same boundary convention
+    // as the Lanczos and Gauss kernels); the window itself is zero at the
+    // boundary, so the half-open guard is consistent with continuity.
+    if x > -Self::A && x < Self::A {
+      Self::sinc(x) * Self::window(x)
+    } else {
+      0.0
+    }
+  }
+}
+
+/// The **cubic B-spline** basis function `B3` (support 2) — the classic
+/// *smoothing* cubic spline. It is **non-interpolating**: it blurs rather
+/// than passing samples through (`weight(0) = 2/3`, `weight(±1) = 1/6`, so an
+/// interior sample is spread across its neighbours), which makes it distinct
+/// from the *interpolating* cubics ([`CatmullRom`], [`OpenCvCubic`],
+/// [`SwscaleBicubic`]) and from the interpolating zimg [`Spline16`] /
+/// [`Spline36`] / [`Spline64`] (those are different polynomial splines whose
+/// integer taps are zero). It is, however, a **partition of unity** — every
+/// shifted set of taps sums to one — so it preserves DC / average brightness,
+/// and the engine renormalizes each window regardless.
+///
+/// Reference (the uniform cubic B-spline `B3`, the order-4 cardinal
+/// B-spline):
+///
+/// ```text
+/// |x| < 1:       (4 - 6|x|^2 + 3|x|^3) / 6
+/// 1 <= |x| < 2:  (2 - |x|)^3 / 6
+/// else:          0
+/// ```
+///
+/// the smoothing cubic used by many imaging libraries' "cubic B-spline"
+/// option (e.g. the `B = 1`, `C = 0` Mitchell-Netravali point). Validated
+/// against the closed-form `B3` weights, in `f64`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CubicBSpline;
+
+impl FilterKernel for CubicBSpline {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn support(&self) -> f64 {
+    2.0
+  }
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn weight(&self, x: f64) -> f64 {
+    // Uniform cubic B-spline B3, evaluated in Horner form:
+    //   |x| < 1:      (4 - 6 t^2 + 3 t^3) / 6
+    //   1 <= |x| < 2: (2 - t)^3 / 6
+    let t = x.abs();
+    if t < 1.0 {
+      (((3.0 * t - 6.0) * t) * t + 4.0) / 6.0
+    } else if t < 2.0 {
+      let u = 2.0 - t;
+      u * u * u / 6.0
     } else {
       0.0
     }

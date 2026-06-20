@@ -1263,8 +1263,8 @@ fn h_pass_f32_simd_matches_scalar_with_non_finite_padding() {
 ))]
 mod filter_simd_parity {
   use super::super::{
-    CatmullRom, FilterKernel, FilterSample, FilterStream, FilteredResampler, Lanczos3, Resampler,
-    SpanKind, Triangle,
+    BlackmanSinc, CatmullRom, CubicBSpline, FilterKernel, FilterSample, FilterStream,
+    FilteredResampler, Lanczos3, Resampler, SpanKind, Triangle,
   };
 
   /// Deterministic LCG byte stream (matches the resample suite's source).
@@ -1443,6 +1443,77 @@ mod filter_simd_parity {
       }
     }
     std::eprintln!("filter f32 SIMD-vs-scalar: max abs diff = {worst}");
+  }
+
+  #[test]
+  fn phase4_kernels_resample_end_to_end_simd_matches_scalar() {
+    // End-to-end wire-up for the two RFC #238 Phase 4 kernels: each routes
+    // through `FilteredResampler<K>::plan` and the SAME kernel-agnostic
+    // `FilterStream` apply path as the built-in kernels (no new apply code),
+    // so it gets every SIMD backend for free. Resample a frame with each new
+    // kernel on the u8, u16, and f32 streams and assert the SIMD pass matches
+    // the scalar pass within the engine's per-element budget — proving the
+    // all-backend apply path is exercised, not bypassed.
+    for &(sw, sh, ow, oh) in geoms() {
+      for ch in [1usize, 3] {
+        // u8: byte-exact between scalar and SIMD on the q8 grid (+-1 LSB).
+        let src_u8 = lcg(sw * sh * ch, (sw + sh + ow + ch) as u32 + 17);
+        for (a, b) in [
+          (
+            stream(BlackmanSinc, &src_u8, sw, sh, ow, oh, ch, false),
+            stream(BlackmanSinc, &src_u8, sw, sh, ow, oh, ch, true),
+          ),
+          (
+            stream(CubicBSpline, &src_u8, sw, sh, ow, oh, ch, false),
+            stream(CubicBSpline, &src_u8, sw, sh, ow, oh, ch, true),
+          ),
+        ] {
+          assert_eq!(a.len(), ow * oh * ch);
+          for (&s, &d) in a.iter().zip(b.iter()) {
+            assert!(s.abs_diff(d) <= 1, "u8 {sw}x{sh}->{ow}x{oh}: {s} vs {d}");
+          }
+        }
+        // u16: +-1 LSB on the full-precision float coefficients.
+        let src_u16: std::vec::Vec<u16> = src_u8
+          .iter()
+          .map(|&v| (u16::from(v) << 8) | u16::from(v))
+          .collect();
+        for (a, b) in [
+          (
+            stream(BlackmanSinc, &src_u16, sw, sh, ow, oh, ch, false),
+            stream(BlackmanSinc, &src_u16, sw, sh, ow, oh, ch, true),
+          ),
+          (
+            stream(CubicBSpline, &src_u16, sw, sh, ow, oh, ch, false),
+            stream(CubicBSpline, &src_u16, sw, sh, ow, oh, ch, true),
+          ),
+        ] {
+          for (&s, &d) in a.iter().zip(b.iter()) {
+            assert!(s.abs_diff(d) <= 1, "u16 {sw}x{sh}->{ow}x{oh}: {s} vs {d}");
+          }
+        }
+        // f32: within the engine's float tolerance.
+        let src_f32: std::vec::Vec<f32> = src_u8
+          .iter()
+          .map(|&v| f32::from(v) + f32::from(v) / 256.0)
+          .collect();
+        for (a, b) in [
+          (
+            stream(BlackmanSinc, &src_f32, sw, sh, ow, oh, ch, false),
+            stream(BlackmanSinc, &src_f32, sw, sh, ow, oh, ch, true),
+          ),
+          (
+            stream(CubicBSpline, &src_f32, sw, sh, ow, oh, ch, false),
+            stream(CubicBSpline, &src_f32, sw, sh, ow, oh, ch, true),
+          ),
+        ] {
+          for (&s, &d) in a.iter().zip(b.iter()) {
+            let tol = 1e-4 * s.abs().max(d.abs()) + 1e-2;
+            assert!((s - d).abs() <= tol, "f32 {sw}x{sh}->{ow}x{oh}: {s} vs {d}");
+          }
+        }
+      }
+    }
   }
 }
 
