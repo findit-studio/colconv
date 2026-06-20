@@ -161,6 +161,12 @@ jobs:
     - name: Install cargo-hack
       run: cargo install cargo-hack
     - name: Run test
+      # An 8 MiB minimum thread stack keeps the test runner's worker threads
+      # clear of a stack overflow on the constrained Windows (~1 MiB default)
+      # thread stack — a defence-in-depth guard alongside the bounded
+      # `MixedSinker` inline size (see `mixed_sinker_inline_size_stays_small`).
+      env:
+        RUST_MIN_STACK: 8388608
       run: cargo hack test --feature-powerset --group-features yuv-planar,yuv-semi-planar,yuva,yuv-packed,yuv-444-packed,y2xx,v210,rgb,rgb-float,rgb-legacy,gbr,gray,bayer,xyz,mono,frame
 
   # Run the x86_64 test suite under Intel SDE with Ice Lake (`-icx`)
@@ -207,7 +213,14 @@ jobs:
         # does not add the extracted directory to `PATH`, so `sde64`
         # isn't on PATH directly. Resolve the full path via shell
         # expansion before handing it to cargo as the runner.
+        #
+        # `RUST_MIN_STACK` gives the test worker threads an 8 MiB stack — the
+        # SDE thread default is tighter than the 8 MiB main-thread budget, so
+        # this guards against a stack overflow (defence-in-depth alongside the
+        # bounded `MixedSinker` inline size).
         shell: bash
+        env:
+          RUST_MIN_STACK: 8388608
         run: |
           export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER="$SDE_PATH/sde64 -icx --"
           cargo test --all-features

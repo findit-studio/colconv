@@ -221,8 +221,8 @@ where
 #[cfg(feature = "yuv-packed")]
 #[allow(clippy::too_many_arguments)]
 fn packed_yuv422_dual_resample(
-  luma_stream: &mut Option<AreaStream<u8>>,
-  rgb_stream: &mut Option<AreaStream<u8>>,
+  luma_stream: &mut Option<std::boxed::Box<AreaStream<u8>>>,
+  rgb_stream: &mut Option<std::boxed::Box<AreaStream<u8>>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -287,22 +287,34 @@ fn packed_yuv422_dual_resample(
     )));
   }
   if need_luma && luma_stream.is_none() {
-    *luma_stream = Some(AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      1,
-    )?);
+    *luma_stream = Some({
+      let stream = AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 1)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   if need_color && rgb_stream.is_none() {
-    *rgb_stream = Some(AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?);
+    *rgb_stream = Some({
+      let stream = AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
 
   packed_yuv422_dual_feed_emit(
@@ -354,8 +366,8 @@ fn packed_yuv422_dual_resample(
 #[cfg(feature = "yuv-packed")]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_yuv422_dual_filter_resample(
-  luma_filter_stream: &mut Option<FilterStream<u8>>,
-  rgb_filter_stream: &mut Option<FilterStream<u8>>,
+  luma_filter_stream: &mut Option<std::boxed::Box<FilterStream<u8>>>,
+  rgb_filter_stream: &mut Option<std::boxed::Box<FilterStream<u8>>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -426,10 +438,34 @@ pub(super) fn packed_yuv422_dual_filter_resample(
     )));
   }
   if need_luma && luma_filter_stream.is_none() {
-    *luma_filter_stream = Some(FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 1)?);
+    *luma_filter_stream = Some({
+      let stream = FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 1)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   if need_color && rgb_filter_stream.is_none() {
-    *rgb_filter_stream = Some(FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 3)?);
+    *rgb_filter_stream = Some({
+      let stream = FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
 
   packed_yuv422_dual_feed_emit(
@@ -491,7 +527,7 @@ pub(super) fn packed_yuv422_dual_filter_resample(
 #[allow(clippy::too_many_arguments)]
 fn packed_yuv422_process_native(
   plan: &ResamplePlan,
-  native_planar: &mut Option<NativePlanarYuv>,
+  native_planar: &mut Option<std::boxed::Box<NativePlanarYuv>>,
   y_scratch: &mut std::vec::Vec<u8>,
   u_scratch: &mut std::vec::Vec<u8>,
   v_scratch: &mut std::vec::Vec<u8>,

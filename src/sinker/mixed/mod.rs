@@ -1540,7 +1540,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "rgb-legacy"
   ))]
   #[cfg_attr(not(any(feature = "yuv-planar", feature = "rgb")), allow(dead_code))]
-  rgb_stream: Option<crate::resample::AreaStream<u8>>,
+  rgb_stream: Option<std::boxed::Box<crate::resample::AreaStream<u8>>>,
   /// Row-stage area stream for high-bit packed-RGB sources (`u16`
   /// elements binned at native depth). Lazily created in `process`,
   /// reset in `begin_frame`. Gated to `rgb` (high-bit packed RGB),
@@ -1560,7 +1560,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "yuv-planar",
     feature = "yuv-semi-planar"
   ))]
-  rgb_stream_u16: Option<crate::resample::AreaStream<u16>>,
+  rgb_stream_u16: Option<std::boxed::Box<crate::resample::AreaStream<u16>>>,
   /// Row-stage **4-channel** `u8` area stream for the alpha-aware u8 color
   /// of packed straight/premult RGBA sources (`Rgba` / `Bgra` / `Argb` /
   /// `Abgr`), the planar GBR+alpha family (`Gbrap`, decoded to the same
@@ -1582,7 +1582,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "yuva",
     feature = "yuv-444-packed"
   ))]
-  rgba_stream: Option<crate::resample::AreaStream<u8>>,
+  rgba_stream: Option<std::boxed::Box<crate::resample::AreaStream<u8>>>,
   /// Row-stage **4-channel** `u16` area stream for the native-depth u16
   /// color of the high-bit packed RGBA sources (`Rgba64` / `Bgra64`), the
   /// high-bit planar GBR+alpha family (`Gbrap10` … `Gbrap16`), gray+alpha
@@ -1601,7 +1601,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "yuva",
     feature = "yuv-444-packed"
   ))]
-  rgba_stream_u16: Option<crate::resample::AreaStream<u16>>,
+  rgba_stream_u16: Option<std::boxed::Box<crate::resample::AreaStream<u16>>>,
   /// Alpha mode frozen at a resampled frame's first row. A mid-frame
   /// [`Self::set_alpha_mode`] change is then rejected before any stream
   /// is fed, since a stream mixing straight and premultiplied rows would
@@ -1629,7 +1629,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
     feature = "gbr"
   ))]
-  rgb_stream_f32: Option<crate::resample::AreaStream<f32>>,
+  rgb_stream_f32: Option<std::boxed::Box<crate::resample::AreaStream<f32>>>,
   /// Row-stage **filter** stream for packed-float-RGB sources
   /// ([`Rgbf32`](crate::source::Rgbf32)) — the
   /// [`SpanKind::Filter`](crate::resample::SpanKind) twin of
@@ -1647,7 +1647,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")),
     feature = "gbr"
   ))]
-  rgb_filter_stream_f32: Option<crate::resample::FilterStream<f32>>,
+  rgb_filter_stream_f32: Option<std::boxed::Box<crate::resample::FilterStream<f32>>>,
   /// Row-stage **4-channel** `f32` area stream for the float planar
   /// GBR+alpha family ([`Gbrapf32`](crate::source::Gbrapf32) /
   /// [`Gbrapf16`](crate::source::Gbrapf16), the latter widened f16 ->
@@ -1659,7 +1659,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// carries the engine via the #146 cascade); the 3-channel
   /// [`Self::rgb_stream_f32`] still serves the rgb-only straight float path.
   #[cfg(feature = "gbr")]
-  rgba_stream_f32: Option<crate::resample::AreaStream<f32>>,
+  rgba_stream_f32: Option<std::boxed::Box<crate::resample::AreaStream<f32>>>,
   /// Row-stage **4-channel** `f32` **filter** stream for the float planar
   /// GBR+alpha family ([`Gbrapf32`](crate::source::Gbrapf32) /
   /// [`Gbrapf16`](crate::source::Gbrapf16), the latter widened f16 ->
@@ -1681,7 +1681,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// clamp `[0, 1]` in their own narrows, so a signed-coefficient overshoot
   /// cannot wrap them.
   #[cfg(feature = "gbr")]
-  rgba_filter_stream_f32: Option<crate::resample::FilterStream<f32>>,
+  rgba_filter_stream_f32: Option<std::boxed::Box<crate::resample::FilterStream<f32>>>,
   /// Row-stage area stream for the packed-CIE-XYZ-12-bit source
   /// ([`Xyz12`](crate::source::Xyz12)). The wire row converts to
   /// **linear XYZ** `f32` (post-OETF, pre-matrix) and bins in float so
@@ -1691,7 +1691,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// [`AreaStream`] gate (the `#145`/`#146` cascade widened it to
   /// `xyz`), so no separate engine feature is required.
   #[cfg(feature = "xyz")]
-  xyz_stream_f32: Option<crate::resample::AreaStream<f32>>,
+  xyz_stream_f32: Option<std::boxed::Box<crate::resample::AreaStream<f32>>>,
   /// Row-stage **filter** stream for the packed-CIE-XYZ-12-bit source
   /// ([`Xyz12`](crate::source::Xyz12)) — the
   /// [`SpanKind::Filter`](crate::resample::SpanKind) twin of
@@ -1706,7 +1706,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// outputs are full-range by design (HDR > 1 and out-of-gamut negatives
   /// preserved), so a signed-coefficient overshoot cannot wrap them.
   #[cfg(feature = "xyz")]
-  xyz_filter_stream_f32: Option<crate::resample::FilterStream<f32>>,
+  xyz_filter_stream_f32: Option<std::boxed::Box<crate::resample::FilterStream<f32>>>,
   /// Row-stage area stream for single-plane luma binning. Used by the
   /// planar YUV family (Y-plane luma), the [`Gray8`](crate::source::Gray8)
   /// source (Gray *is* a luma plane), and `mono` (bin the expanded
@@ -1731,7 +1731,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     not(any(feature = "yuv-planar", feature = "gray", feature = "mono")),
     allow(dead_code)
   )]
-  luma_stream: Option<crate::resample::AreaStream<u8>>,
+  luma_stream: Option<std::boxed::Box<crate::resample::AreaStream<u8>>>,
   /// Row-stage area stream for single-plane **u16** luma binning. Used
   /// by the [`Gray16`](crate::source::Gray16) source, whose luma plane
   /// is a native `u16` and so bins at u16 precision (the `u8`
@@ -1753,7 +1753,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "yuv-planar",
     feature = "yuv-semi-planar"
   ))]
-  luma_stream_u16: Option<crate::resample::AreaStream<u16>>,
+  luma_stream_u16: Option<std::boxed::Box<crate::resample::AreaStream<u16>>>,
   /// Row-stage area stream for single-plane **f32** luma binning. Used
   /// by the [`Grayf32`](crate::source::Grayf32) source, whose luma plane
   /// is a native `f32` and so bins at f32 precision (the `u8` / `u16`
@@ -1761,7 +1761,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// created in `process`, reset in `begin_frame`. Gated to `gray`;
   /// widens as f32 luma families wire in.
   #[cfg(feature = "gray")]
-  luma_stream_f32: Option<crate::resample::AreaStream<f32>>,
+  luma_stream_f32: Option<std::boxed::Box<crate::resample::AreaStream<f32>>>,
   /// Row-stage **filter** stream for the packed-RGB `u8` color group
   /// ([`Rgb24`](crate::source::Rgb24)) — the signed-coefficient
   /// (PIL-parity) twin of [`Self::rgb_stream`], fed when the plan's
@@ -1795,7 +1795,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "yuv-semi-planar",
     feature = "yuv-packed"
   ))]
-  rgb_filter_stream: Option<crate::resample::FilterStream<u8>>,
+  rgb_filter_stream: Option<std::boxed::Box<crate::resample::FilterStream<u8>>>,
   /// Row-stage **filter** stream for the 8-bit packed-RGBA `u8` color
   /// group ([`Rgba`](crate::source::Rgba) and the leading-/trailing-alpha
   /// reorderings) — the 4-channel, signed-coefficient twin of
@@ -1832,7 +1832,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "yuva",
     feature = "gray"
   ))]
-  rgba_filter_stream: Option<crate::resample::FilterStream<u8>>,
+  rgba_filter_stream: Option<std::boxed::Box<crate::resample::FilterStream<u8>>>,
   /// Row-stage **filter** stream for the high-bit packed-RGB `u16` color
   /// group ([`Rgb48`](crate::source::Rgb48), and the high-bit planar GBR
   /// sources `Gbrp9`…`Gbrp16` which scatter into the same packed `u16` RGB
@@ -1859,7 +1859,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "yuv-planar",
     feature = "yuv-semi-planar"
   ))]
-  rgb_filter_stream_u16: Option<crate::resample::FilterStream<u16>>,
+  rgb_filter_stream_u16: Option<std::boxed::Box<crate::resample::FilterStream<u16>>>,
   /// Row-stage **filter** stream for the high-bit packed-RGBA `u16` color
   /// group ([`Rgba64`](crate::source::Rgba64) /
   /// [`Bgra64`](crate::source::Bgra64)) — the 4-channel, signed-coefficient
@@ -1894,7 +1894,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "yuva",
     feature = "gray"
   ))]
-  rgba_filter_stream_u16: Option<crate::resample::FilterStream<u16>>,
+  rgba_filter_stream_u16: Option<std::boxed::Box<crate::resample::FilterStream<u16>>>,
   /// Row-stage **filter** stream for single-plane `u8` native-Y luma
   /// resampling — the [`SpanKind::Filter`](crate::resample::SpanKind) twin
   /// of [`Self::luma_stream`] for the 8-bit planar YUV family (`Yuv410p` /
@@ -1923,14 +1923,14 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "mono",
     feature = "gray"
   ))]
-  luma_filter_stream: Option<crate::resample::FilterStream<u8>>,
+  luma_filter_stream: Option<std::boxed::Box<crate::resample::FilterStream<u8>>>,
   /// Row-stage **filter** stream for single-plane `f32` luma binning
   /// ([`Grayf32`](crate::source::Grayf32)) — the filter twin of
   /// [`Self::luma_stream_f32`]. Lazily created in `process`, reset in
   /// `begin_frame`. Fed when the plan kind is `Filter`; bins at f32
   /// precision and emits unclamped (PIL `F`-mode).
   #[cfg(feature = "gray")]
-  luma_filter_stream_f32: Option<crate::resample::FilterStream<f32>>,
+  luma_filter_stream_f32: Option<std::boxed::Box<crate::resample::FilterStream<f32>>>,
   /// Row-stage **filter** stream for single-plane **`u16`** native-Y luma
   /// resampling — the [`SpanKind::Filter`](crate::resample::SpanKind) twin
   /// of [`Self::luma_stream_u16`] for the high-bit packed YUV 4:4:4 colour
@@ -1963,7 +1963,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
     feature = "yuva",
     feature = "yuv-semi-planar"
   ))]
-  luma_filter_stream_u16: Option<crate::resample::FilterStream<u16>>,
+  luma_filter_stream_u16: Option<std::boxed::Box<crate::resample::FilterStream<u16>>>,
   /// Output configuration frozen at a resampled frame's first
   /// processed row; `None` between frames. Captures presence AND
   /// attachment identity (pointer/length) of every output the emit
@@ -2008,8 +2008,13 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   native: bool,
   /// Native-tier join state for the 4:2:0 planar family; lazily
   /// created in `process`, reset in `begin_frame`.
+  ///
+  /// Boxed so the `MixedSinker` — constructed as a stack local across the
+  /// crate's tests and callers — holds only a pointer for this >1 KiB join;
+  /// the heap allocation still happens lazily on the first native row, so the
+  /// recoverable-allocation contract is unchanged.
   #[cfg(feature = "yuv-planar")]
-  native_420: Option<planar_8bit::NativeYuv420>,
+  native_420: Option<std::boxed::Box<planar_8bit::NativeYuv420>>,
   /// Native-tier join state for the **straight-alpha** 4:2:0 planar source
   /// `Yuva420p` (RFC #238 Phase 5 / the #235 alpha resolution) — the
   /// alpha-bearing sibling of [`Self::native_420`]: it embeds the no-alpha
@@ -2044,12 +2049,12 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// one field is shared across the three impls; lazily created in
   /// `process`, reset in `begin_frame`.
   #[cfg(feature = "yuv-planar")]
-  native_planar: Option<planar_8bit::NativePlanarYuv>,
+  native_planar: Option<std::boxed::Box<planar_8bit::NativePlanarYuv>>,
   /// Native-tier join state for the HIGH-BIT planar 4:2:0 family
   /// (`Yuv420p10/12/14/16`) — the `u16` twin of [`Self::native_420`].
   /// Lazily created in `process`, reset in `begin_frame`.
   #[cfg(feature = "yuv-planar")]
-  native_420_u16: Option<subsampled_4_2_0_high_bit::NativeYuv420U16>,
+  native_420_u16: Option<std::boxed::Box<subsampled_4_2_0_high_bit::NativeYuv420U16>>,
   /// Native-tier join state for the HIGH-BIT non-4:2:0 planar families
   /// (`Yuv422p10/12/14/16` / `Yuv444p10/12/14/16` / `Yuv440p10/12`) — the
   /// `u16` twin of [`Self::native_planar`] and the non-4:2:0 sibling of
@@ -2057,7 +2062,7 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// family, so one field is shared across the three impls; lazily created in
   /// `process`, reset in `begin_frame`.
   #[cfg(feature = "yuv-planar")]
-  native_planar_u16: Option<planar_high_bit_native::NativePlanarYuvU16>,
+  native_planar_u16: Option<std::boxed::Box<planar_high_bit_native::NativePlanarYuvU16>>,
   /// Half-width U / V de-interleave staging for the native 4:2:0
   /// decimation tier of the **semi-planar** family
   /// ([`Nv12`](crate::source::Nv12) / [`Nv21`](crate::source::Nv21)):
@@ -4719,7 +4724,7 @@ pub(super) fn packed_rgb_resample_preflight(
   allow(dead_code)
 )]
 pub(super) fn packed_rgb_resample_stream<'s>(
-  rgb_stream: &'s mut Option<crate::resample::AreaStream<u8>>,
+  rgb_stream: &'s mut Option<std::boxed::Box<crate::resample::AreaStream<u8>>>,
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::AreaStream<u8>, MixedSinkerError> {
@@ -4741,13 +4746,20 @@ pub(super) fn packed_rgb_resample_stream<'s>(
   }
   let stream = match rgb_stream {
     Some(stream) => stream,
-    None => rgb_stream.insert(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?),
+    None => rgb_stream.insert({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    }),
   };
   Ok(stream)
 }
@@ -4842,7 +4854,7 @@ pub(super) fn packed_rgb_resample_emit(
 /// `AllocationFailed` never masks `OutOfSequenceRow`.
 #[cfg(any(feature = "rgb", feature = "gbr"))]
 pub(super) fn packed_rgb_filter_stream<'s>(
-  rgb_filter_stream: &'s mut Option<crate::resample::FilterStream<u8>>,
+  rgb_filter_stream: &'s mut Option<std::boxed::Box<crate::resample::FilterStream<u8>>>,
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::FilterStream<u8>, MixedSinkerError> {
@@ -4868,13 +4880,19 @@ pub(super) fn packed_rgb_filter_stream<'s>(
   );
   let stream = match rgb_filter_stream {
     Some(stream) => stream,
-    None => rgb_filter_stream.insert(crate::resample::FilterStream::new(
-      fh,
-      fv,
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?),
+    None => rgb_filter_stream.insert({
+      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    }),
   };
   Ok(stream)
 }
@@ -4908,7 +4926,7 @@ pub(super) fn packed_rgb_filter_stream<'s>(
 #[cfg(any(feature = "rgb", feature = "gbr"))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgba_filter_resample(
-  rgba_filter_stream: &mut Option<crate::resample::FilterStream<u8>>,
+  rgba_filter_stream: &mut Option<std::boxed::Box<crate::resample::FilterStream<u8>>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -4982,13 +5000,19 @@ pub(super) fn packed_rgba_filter_resample(
         .filter_v()
         .expect("filter plan carries vertical windows"),
     );
-    *rgba_filter_stream = Some(crate::resample::FilterStream::new(
-      fh,
-      fv,
-      plan.src_w(),
-      plan.src_h(),
-      4,
-    )?);
+    *rgba_filter_stream = Some({
+      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 4)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   let rgb_drop: &mut [u8] = if need_rgb_drop {
     source_rgb_scratch(rgb_drop_scratch, ow, plan)?
@@ -5106,7 +5130,7 @@ pub(super) fn packed_rgba_filter_resample(
 #[cfg(any(feature = "rgb", feature = "gbr"))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgba_u16_filter_resample<const SRC_BITS: u32, const NATIVE_LUMA16: bool>(
-  rgba_filter_stream_u16: &mut Option<crate::resample::FilterStream<u16>>,
+  rgba_filter_stream_u16: &mut Option<std::boxed::Box<crate::resample::FilterStream<u16>>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -5210,13 +5234,19 @@ pub(super) fn packed_rgba_u16_filter_resample<const SRC_BITS: u32, const NATIVE_
         .filter_v()
         .expect("filter plan carries vertical windows"),
     );
-    *rgba_filter_stream_u16 = Some(crate::resample::FilterStream::new(
-      fh,
-      fv,
-      plan.src_w(),
-      plan.src_h(),
-      4,
-    )?);
+    *rgba_filter_stream_u16 = Some({
+      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 4)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   // Out-width clamped drop-alpha native RGB row, resolved per finalized output
   // row; sized when any narrowed output OR native luma_u16 is attached (every
@@ -5483,7 +5513,7 @@ pub(super) fn packed_rgb_u16_resample_preflight(
 /// [`packed_rgb_resample_stream`] for the 16-bit element path.
 #[cfg(any(feature = "rgb", feature = "gbr"))]
 pub(super) fn packed_rgb_u16_resample_stream<'s>(
-  rgb_stream_u16: &'s mut Option<crate::resample::AreaStream<u16>>,
+  rgb_stream_u16: &'s mut Option<std::boxed::Box<crate::resample::AreaStream<u16>>>,
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::AreaStream<u16>, MixedSinkerError> {
@@ -5505,13 +5535,20 @@ pub(super) fn packed_rgb_u16_resample_stream<'s>(
   }
   let stream = match rgb_stream_u16 {
     Some(stream) => stream,
-    None => rgb_stream_u16.insert(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?),
+    None => rgb_stream_u16.insert({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    }),
   };
   Ok(stream)
 }
@@ -5523,7 +5560,7 @@ pub(super) fn packed_rgb_u16_resample_stream<'s>(
 /// so a rejected first row creates no output buffers.
 #[cfg(any(feature = "rgb", feature = "gbr"))]
 pub(super) fn packed_rgb_u16_filter_stream<'s>(
-  rgb_filter_stream_u16: &'s mut Option<crate::resample::FilterStream<u16>>,
+  rgb_filter_stream_u16: &'s mut Option<std::boxed::Box<crate::resample::FilterStream<u16>>>,
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::FilterStream<u16>, MixedSinkerError> {
@@ -5548,13 +5585,19 @@ pub(super) fn packed_rgb_u16_filter_stream<'s>(
   );
   let stream = match rgb_filter_stream_u16 {
     Some(stream) => stream,
-    None => rgb_filter_stream_u16.insert(crate::resample::FilterStream::new(
-      fh,
-      fv,
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?),
+    None => rgb_filter_stream_u16.insert({
+      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    }),
   };
   Ok(stream)
 }
@@ -6027,8 +6070,8 @@ pub(super) fn check_frozen_alpha_mode(
 #[cfg(any(feature = "rgb", feature = "gbr", feature = "gray"))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgba_resample<const NATIVE_Y_LUMA: bool>(
-  rgba_stream: &mut Option<crate::resample::AreaStream<u8>>,
-  y_luma_stream: &mut Option<crate::resample::AreaStream<u8>>,
+  rgba_stream: &mut Option<std::boxed::Box<crate::resample::AreaStream<u8>>>,
+  y_luma_stream: &mut Option<std::boxed::Box<crate::resample::AreaStream<u8>>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -6119,25 +6162,39 @@ pub(super) fn packed_rgba_resample<const NATIVE_Y_LUMA: bool>(
     || hsv.is_some()
     || (!NATIVE_Y_LUMA && (luma.is_some() || luma_u16.is_some()));
   if rgba_stream.is_none() {
-    *rgba_stream = Some(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      4,
-    )?);
+    *rgba_stream = Some({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 4)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   // Native-Y luma stream (`Ya8`): a 1-channel area bin of the native Y
   // plane, created in lockstep with the color stream so both advance
   // together (the color stream's sequence check governs both).
   if need_y_luma && y_luma_stream.is_none() {
-    *y_luma_stream = Some(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      1,
-    )?);
+    *y_luma_stream = Some({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 1)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   let rgb_drop: &mut [u8] = if need_rgb_drop {
     source_rgb_scratch(rgb_drop_scratch, ow, plan)?
@@ -6295,7 +6352,7 @@ pub(super) fn packed_rgba_resample<const NATIVE_Y_LUMA: bool>(
 #[cfg(feature = "mono")]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn pal8_rgba_resample(
-  rgba_stream: &mut Option<crate::resample::AreaStream<u8>>,
+  rgba_stream: &mut Option<std::boxed::Box<crate::resample::AreaStream<u8>>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -6373,13 +6430,20 @@ pub(super) fn pal8_rgba_resample(
   let need_rgb_drop =
     rgb.is_some() || rgb_u16.is_some() || luma.is_some() || luma_u16.is_some() || hsv.is_some();
   if rgba_stream.is_none() {
-    *rgba_stream = Some(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      4,
-    )?);
+    *rgba_stream = Some({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 4)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   let rgb_drop: &mut [u8] = if need_rgb_drop {
     source_rgb_scratch(rgb_drop_scratch, ow, plan)?
@@ -6511,7 +6575,7 @@ pub(super) fn pal8_rgba_resample(
 #[cfg(feature = "mono")]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn pal8_rgba_filter_resample(
-  rgba_filter_stream: &mut Option<crate::resample::FilterStream<u8>>,
+  rgba_filter_stream: &mut Option<std::boxed::Box<crate::resample::FilterStream<u8>>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -6593,13 +6657,19 @@ pub(super) fn pal8_rgba_filter_resample(
         .filter_v()
         .expect("filter plan carries vertical windows"),
     );
-    *rgba_filter_stream = Some(crate::resample::FilterStream::new(
-      fh,
-      fv,
-      plan.src_w(),
-      plan.src_h(),
-      4,
-    )?);
+    *rgba_filter_stream = Some({
+      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 4)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   let rgb_drop: &mut [u8] = if need_rgb_drop {
     source_rgb_scratch(rgb_drop_scratch, ow, plan)?
@@ -6725,8 +6795,8 @@ pub(super) fn packed_rgba_u16_resample<
   const NATIVE_LUMA16: bool,
   const NATIVE_Y_LUMA: bool,
 >(
-  rgba_stream_u16: &mut Option<crate::resample::AreaStream<u16>>,
-  y_luma_stream_u16: &mut Option<crate::resample::AreaStream<u16>>,
+  rgba_stream_u16: &mut Option<std::boxed::Box<crate::resample::AreaStream<u16>>>,
+  y_luma_stream_u16: &mut Option<std::boxed::Box<crate::resample::AreaStream<u16>>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -6834,25 +6904,39 @@ pub(super) fn packed_rgba_u16_resample<
   // frame. Sized only when that output is actually requested.
   let native_luma = NATIVE_LUMA16 && luma_u16.is_some();
   if rgba_stream_u16.is_none() {
-    *rgba_stream_u16 = Some(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      4,
-    )?);
+    *rgba_stream_u16 = Some({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 4)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   // Native-Y luma stream (`Ya16`): a 1-channel native-depth area bin of the
   // native Y plane, created in lockstep with the color stream so both
   // advance together (the color stream's sequence check governs both).
   if need_y_luma && y_luma_stream_u16.is_none() {
-    *y_luma_stream_u16 = Some(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      1,
-    )?);
+    *y_luma_stream_u16 = Some({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 1)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   // Out-width straight RGBA color row (resolved per output row). Always
   // sized when any output is attached, so every native and narrowed
@@ -7119,9 +7203,9 @@ pub(super) fn deinterleave_y_high_bit<const BE: bool>(
 ))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_yuv444_triple_resample<const SRC_BITS: u32>(
-  rgb_stream: &mut Option<crate::resample::AreaStream<u8>>,
-  rgb_stream_u16: &mut Option<crate::resample::AreaStream<u16>>,
-  luma_stream_u16: &mut Option<crate::resample::AreaStream<u16>>,
+  rgb_stream: &mut Option<std::boxed::Box<crate::resample::AreaStream<u8>>>,
+  rgb_stream_u16: &mut Option<std::boxed::Box<crate::resample::AreaStream<u16>>>,
+  luma_stream_u16: &mut Option<std::boxed::Box<crate::resample::AreaStream<u16>>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -7216,31 +7300,52 @@ pub(super) fn packed_yuv444_triple_resample<const SRC_BITS: u32>(
   // `plan.src_h()`); the colour streams carry 3 interleaved channels, the
   // luma stream 1.
   if need_u8_color && rgb_stream.is_none() {
-    *rgb_stream = Some(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?);
+    *rgb_stream = Some({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   if need_u16_color && rgb_stream_u16.is_none() {
-    *rgb_stream_u16 = Some(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?);
+    *rgb_stream_u16 = Some({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   if need_luma && luma_stream_u16.is_none() {
-    *luma_stream_u16 = Some(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      1,
-    )?);
+    *luma_stream_u16 = Some({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 1)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
 
   // Stage + feed + emit. Shared with the filter path
@@ -7482,9 +7587,9 @@ where
 ))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_yuv444_triple_filter_resample<const SRC_BITS: u32>(
-  rgb_filter_stream: &mut Option<crate::resample::FilterStream<u8>>,
-  rgb_filter_stream_u16: &mut Option<crate::resample::FilterStream<u16>>,
-  luma_filter_stream_u16: &mut Option<crate::resample::FilterStream<u16>>,
+  rgb_filter_stream: &mut Option<std::boxed::Box<crate::resample::FilterStream<u8>>>,
+  rgb_filter_stream_u16: &mut Option<std::boxed::Box<crate::resample::FilterStream<u16>>>,
+  luma_filter_stream_u16: &mut Option<std::boxed::Box<crate::resample::FilterStream<u16>>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -7574,31 +7679,49 @@ pub(super) fn packed_yuv444_triple_filter_resample<const SRC_BITS: u32>(
   // full output grid against its own source grid; the colour streams
   // carry 3 interleaved channels, the luma stream 1.
   if need_u8_color && rgb_filter_stream.is_none() {
-    *rgb_filter_stream = Some(crate::resample::FilterStream::new(
-      fh,
-      fv,
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?);
+    *rgb_filter_stream = Some({
+      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   if need_u16_color && rgb_filter_stream_u16.is_none() {
-    *rgb_filter_stream_u16 = Some(crate::resample::FilterStream::new(
-      fh,
-      fv,
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?);
+    *rgb_filter_stream_u16 = Some({
+      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   if need_luma && luma_filter_stream_u16.is_none() {
-    *luma_filter_stream_u16 = Some(crate::resample::FilterStream::new(
-      fh,
-      fv,
-      plan.src_w(),
-      plan.src_h(),
-      1,
-    )?);
+    *luma_filter_stream_u16 = Some({
+      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 1)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
 
   packed_yuv444_triple_feed_emit::<_, _, _, SRC_BITS>(
@@ -7971,9 +8094,9 @@ where
 #[cfg(any(feature = "yuv-444-packed", feature = "yuva"))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_yuva444_resample<const SRC_BITS: u32>(
-  rgba_stream: &mut Option<crate::resample::AreaStream<u8>>,
-  rgba_stream_u16: &mut Option<crate::resample::AreaStream<u16>>,
-  luma_stream_u16: &mut Option<crate::resample::AreaStream<u16>>,
+  rgba_stream: &mut Option<std::boxed::Box<crate::resample::AreaStream<u8>>>,
+  rgba_stream_u16: &mut Option<std::boxed::Box<crate::resample::AreaStream<u16>>>,
+  luma_stream_u16: &mut Option<std::boxed::Box<crate::resample::AreaStream<u16>>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -8060,31 +8183,52 @@ pub(super) fn packed_yuva444_resample<const SRC_BITS: u32>(
   // output grid against its own source grid. The colour streams carry 4
   // interleaved channels, the luma stream 1.
   if need_colour_u8 && rgba_stream.is_none() {
-    *rgba_stream = Some(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      4,
-    )?);
+    *rgba_stream = Some({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 4)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   if need_colour_u16 && rgba_stream_u16.is_none() {
-    *rgba_stream_u16 = Some(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      4,
-    )?);
+    *rgba_stream_u16 = Some({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 4)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   if need_luma && luma_stream_u16.is_none() {
-    *luma_stream_u16 = Some(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      1,
-    )?);
+    *luma_stream_u16 = Some({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 1)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
 
   // Stage + feed + emit. Shared with the filter path
@@ -8235,10 +8379,10 @@ pub(super) fn packed_yuva444_filter_resample<
   const NATIVE_LUMA_U8: bool,
   const ZEXT_U16_COLOR: bool,
 >(
-  rgba_filter_stream: &mut Option<crate::resample::FilterStream<u8>>,
-  rgba_filter_stream_u16: &mut Option<crate::resample::FilterStream<u16>>,
-  luma_filter_stream: &mut Option<crate::resample::FilterStream<u8>>,
-  luma_filter_stream_u16: &mut Option<crate::resample::FilterStream<u16>>,
+  rgba_filter_stream: &mut Option<std::boxed::Box<crate::resample::FilterStream<u8>>>,
+  rgba_filter_stream_u16: &mut Option<std::boxed::Box<crate::resample::FilterStream<u16>>>,
+  luma_filter_stream: &mut Option<std::boxed::Box<crate::resample::FilterStream<u8>>>,
+  luma_filter_stream_u16: &mut Option<std::boxed::Box<crate::resample::FilterStream<u16>>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -8377,42 +8521,66 @@ pub(super) fn packed_yuva444_filter_resample<
   // plane — identical to the merged no-alpha planar YUV formats; for the
   // packed path it is a `u16` stream over the de-interleaved native Y.
   if need_colour_u8 && rgba_filter_stream.is_none() {
-    *rgba_filter_stream = Some(crate::resample::FilterStream::new(
-      fh,
-      fv,
-      plan.src_w(),
-      plan.src_h(),
-      4,
-    )?);
+    *rgba_filter_stream = Some({
+      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 4)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   if need_colour_u16 && rgba_filter_stream_u16.is_none() {
-    *rgba_filter_stream_u16 = Some(crate::resample::FilterStream::new(
-      fh,
-      fv,
-      plan.src_w(),
-      plan.src_h(),
-      4,
-    )?);
+    *rgba_filter_stream_u16 = Some({
+      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 4)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   if need_luma {
     if NATIVE_LUMA_U8 {
       if luma_filter_stream.is_none() {
-        *luma_filter_stream = Some(crate::resample::FilterStream::new(
-          fh,
-          fv,
-          plan.src_w(),
-          plan.src_h(),
-          1,
-        )?);
+        *luma_filter_stream = Some({
+          let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 1)?;
+          crate::resample::try_box(stream).map_err(|_| {
+            MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+              crate::resample::PlanGeometry::new(
+                plan.src_w(),
+                plan.src_h(),
+                plan.out_w(),
+                plan.out_h(),
+              ),
+            ))
+          })?
+        });
       }
     } else if luma_filter_stream_u16.is_none() {
-      *luma_filter_stream_u16 = Some(crate::resample::FilterStream::new(
-        fh,
-        fv,
-        plan.src_w(),
-        plan.src_h(),
-        1,
-      )?);
+      *luma_filter_stream_u16 = Some({
+        let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 1)?;
+        crate::resample::try_box(stream).map_err(|_| {
+          MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+            crate::resample::PlanGeometry::new(
+              plan.src_w(),
+              plan.src_h(),
+              plan.out_w(),
+              plan.out_h(),
+            ),
+          ))
+        })?
+      });
     }
   }
 
@@ -8674,7 +8842,7 @@ fn grow_y2xx_depack_scratch(
 #[allow(clippy::too_many_arguments)]
 fn y2xx_process_native<const BITS: u32, const BE: bool>(
   plan: &crate::resample::ResamplePlan,
-  native_planar_u16: &mut Option<NativePlanarYuvU16>,
+  native_planar_u16: &mut Option<std::boxed::Box<NativePlanarYuvU16>>,
   y_scratch: &mut Vec<u16>,
   u_scratch: &mut Vec<u16>,
   v_scratch: &mut Vec<u16>,
@@ -8920,7 +9088,7 @@ fn grow_v210_depack_scratch(
 #[allow(clippy::too_many_arguments)]
 fn v210_process_native<const BE: bool>(
   plan: &crate::resample::ResamplePlan,
-  native_planar_u16: &mut Option<NativePlanarYuvU16>,
+  native_planar_u16: &mut Option<std::boxed::Box<NativePlanarYuvU16>>,
   y_scratch: &mut Vec<u16>,
   u_scratch: &mut Vec<u16>,
   v_scratch: &mut Vec<u16>,
@@ -9263,7 +9431,7 @@ fn grow_packed_444_u16_scratch(
 #[allow(clippy::too_many_arguments)]
 fn packed_vuyx_process_native(
   plan: &crate::resample::ResamplePlan,
-  native_planar: &mut Option<planar_8bit::NativePlanarYuv>,
+  native_planar: &mut Option<std::boxed::Box<planar_8bit::NativePlanarYuv>>,
   y_scratch: &mut Vec<u8>,
   u_scratch: &mut Vec<u8>,
   v_scratch: &mut Vec<u8>,
@@ -9392,7 +9560,7 @@ fn packed_vuyx_process_native(
 #[allow(clippy::too_many_arguments)]
 fn packed_yuv444_hb_process_native<const BITS: u32>(
   plan: &crate::resample::ResamplePlan,
-  native_planar_u16: &mut Option<NativePlanarYuvU16>,
+  native_planar_u16: &mut Option<std::boxed::Box<NativePlanarYuvU16>>,
   y_scratch: &mut Vec<u16>,
   u_scratch: &mut Vec<u16>,
   v_scratch: &mut Vec<u16>,
@@ -9547,9 +9715,9 @@ fn packed_yuv444_hb_process_native<const BITS: u32>(
 ))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_yuv422_triple_resample<const SRC_BITS: u32>(
-  luma_stream_u16: &mut Option<crate::resample::AreaStream<u16>>,
-  rgb_stream: &mut Option<crate::resample::AreaStream<u8>>,
-  rgb_stream_u16: &mut Option<crate::resample::AreaStream<u16>>,
+  luma_stream_u16: &mut Option<std::boxed::Box<crate::resample::AreaStream<u16>>>,
+  rgb_stream: &mut Option<std::boxed::Box<crate::resample::AreaStream<u8>>>,
+  rgb_stream_u16: &mut Option<std::boxed::Box<crate::resample::AreaStream<u16>>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -9635,31 +9803,52 @@ pub(super) fn packed_yuv422_triple_resample<const SRC_BITS: u32>(
     )));
   }
   if need_luma && luma_stream_u16.is_none() {
-    *luma_stream_u16 = Some(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      1,
-    )?);
+    *luma_stream_u16 = Some({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 1)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   if need_color_u8 && rgb_stream.is_none() {
-    *rgb_stream = Some(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?);
+    *rgb_stream = Some({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   if need_color_u16 && rgb_stream_u16.is_none() {
-    *rgb_stream_u16 = Some(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?);
+    *rgb_stream_u16 = Some({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   // Stage the three source-width rows into their own distinct,
   // non-aliasing scratches (all fallible growths precede the feeds,
@@ -9797,9 +9986,9 @@ pub(super) fn packed_yuv422_triple_resample<const SRC_BITS: u32>(
 #[cfg(any(feature = "y2xx", feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_yuv422_triple_filter_resample<const SRC_BITS: u32>(
-  luma_filter_stream_u16: &mut Option<crate::resample::FilterStream<u16>>,
-  rgb_filter_stream: &mut Option<crate::resample::FilterStream<u8>>,
-  rgb_filter_stream_u16: &mut Option<crate::resample::FilterStream<u16>>,
+  luma_filter_stream_u16: &mut Option<std::boxed::Box<crate::resample::FilterStream<u16>>>,
+  rgb_filter_stream: &mut Option<std::boxed::Box<crate::resample::FilterStream<u8>>>,
+  rgb_filter_stream_u16: &mut Option<std::boxed::Box<crate::resample::FilterStream<u16>>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -9889,31 +10078,49 @@ pub(super) fn packed_yuv422_triple_filter_resample<const SRC_BITS: u32>(
   // full output grid against its own source grid; the colour streams carry
   // 3 interleaved channels, the luma stream 1.
   if need_luma && luma_filter_stream_u16.is_none() {
-    *luma_filter_stream_u16 = Some(crate::resample::FilterStream::new(
-      fh,
-      fv,
-      plan.src_w(),
-      plan.src_h(),
-      1,
-    )?);
+    *luma_filter_stream_u16 = Some({
+      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 1)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   if need_color_u8 && rgb_filter_stream.is_none() {
-    *rgb_filter_stream = Some(crate::resample::FilterStream::new(
-      fh,
-      fv,
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?);
+    *rgb_filter_stream = Some({
+      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   if need_color_u16 && rgb_filter_stream_u16.is_none() {
-    *rgb_filter_stream_u16 = Some(crate::resample::FilterStream::new(
-      fh,
-      fv,
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?);
+    *rgb_filter_stream_u16 = Some({
+      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
 
   // Shared convert-then-resample tail (the 4:4:4 feed_emit, generic over
@@ -10148,7 +10355,7 @@ pub(super) fn packed_rgb_f32_resample_preflight(
   feature = "gbr"
 ))]
 pub(super) fn packed_rgb_f32_resample_stream<'s>(
-  rgb_stream_f32: &'s mut Option<crate::resample::AreaStream<f32>>,
+  rgb_stream_f32: &'s mut Option<std::boxed::Box<crate::resample::AreaStream<f32>>>,
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::AreaStream<f32>, MixedSinkerError> {
@@ -10169,13 +10376,20 @@ pub(super) fn packed_rgb_f32_resample_stream<'s>(
   }
   let stream = match rgb_stream_f32 {
     Some(stream) => stream,
-    None => rgb_stream_f32.insert(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?),
+    None => rgb_stream_f32.insert({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    }),
   };
   Ok(stream)
 }
@@ -10198,7 +10412,7 @@ pub(super) fn packed_rgb_f32_resample_stream<'s>(
   feature = "gbr"
 ))]
 pub(super) fn packed_rgb_f32_filter<'s>(
-  rgb_filter_stream_f32: &'s mut Option<crate::resample::FilterStream<f32>>,
+  rgb_filter_stream_f32: &'s mut Option<std::boxed::Box<crate::resample::FilterStream<f32>>>,
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::FilterStream<f32>, MixedSinkerError> {
@@ -10223,13 +10437,19 @@ pub(super) fn packed_rgb_f32_filter<'s>(
   );
   let stream = match rgb_filter_stream_f32 {
     Some(stream) => stream,
-    None => rgb_filter_stream_f32.insert(crate::resample::FilterStream::new(
-      fh,
-      fv,
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?),
+    None => rgb_filter_stream_f32.insert({
+      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    }),
   };
   Ok(stream)
 }
@@ -11352,7 +11572,7 @@ fn resolve_straight_rgba_f32_into(binned: &[f32], dst: &mut [f32], width: usize,
 #[cfg(feature = "gbr")]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgba_f32_resample(
-  rgba_stream_f32: &mut Option<crate::resample::AreaStream<f32>>,
+  rgba_stream_f32: &mut Option<std::boxed::Box<crate::resample::AreaStream<f32>>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -11444,13 +11664,20 @@ pub(super) fn packed_rgba_f32_resample(
     || rgba_f16.is_some()
     || hsv.is_some();
   if rgba_stream_f32.is_none() {
-    *rgba_stream_f32 = Some(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      4,
-    )?);
+    *rgba_stream_f32 = Some({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 4)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   let stream = rgba_stream_f32.as_mut().expect("created above");
   packed_rgba_f32_emit(
@@ -11733,7 +11960,7 @@ fn packed_rgba_f32_emit(
 #[cfg(feature = "gbr")]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgba_f32_filter_resample(
-  rgba_filter_stream_f32: &mut Option<crate::resample::FilterStream<f32>>,
+  rgba_filter_stream_f32: &mut Option<std::boxed::Box<crate::resample::FilterStream<f32>>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -11830,13 +12057,19 @@ pub(super) fn packed_rgba_f32_filter_resample(
         .filter_v()
         .expect("filter plan carries vertical windows"),
     );
-    *rgba_filter_stream_f32 = Some(crate::resample::FilterStream::new(
-      fh,
-      fv,
-      plan.src_w(),
-      plan.src_h(),
-      4,
-    )?);
+    *rgba_filter_stream_f32 = Some({
+      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 4)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   let stream = rgba_filter_stream_f32.as_mut().expect("created above");
   // Straight alpha only (no premult route): bin → resolve (a verbatim copy) →
@@ -11890,7 +12123,7 @@ pub(super) fn packed_rgba_f32_filter_resample(
 #[cfg(feature = "gbr")]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgba_f16_resample(
-  rgba_stream_f32: &mut Option<crate::resample::AreaStream<f32>>,
+  rgba_stream_f32: &mut Option<std::boxed::Box<crate::resample::AreaStream<f32>>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -11971,13 +12204,20 @@ pub(super) fn packed_rgba_f16_resample(
   // because the direct `Gbrapf16` path widens its f16 source to f32).
   let need_planes = need_any;
   if rgba_stream_f32.is_none() {
-    *rgba_stream_f32 = Some(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      4,
-    )?);
+    *rgba_stream_f32 = Some({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 4)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   let stream = rgba_stream_f32.as_mut().expect("created above");
   packed_rgba_f16_emit(
@@ -12301,7 +12541,7 @@ fn packed_rgba_f16_emit(
 #[cfg(feature = "gbr")]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_rgba_f16_filter_resample(
-  rgba_filter_stream_f32: &mut Option<crate::resample::FilterStream<f32>>,
+  rgba_filter_stream_f32: &mut Option<std::boxed::Box<crate::resample::FilterStream<f32>>>,
   resample_outputs: &mut Option<FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -12385,13 +12625,19 @@ pub(super) fn packed_rgba_f16_filter_resample(
         .filter_v()
         .expect("filter plan carries vertical windows"),
     );
-    *rgba_filter_stream_f32 = Some(crate::resample::FilterStream::new(
-      fh,
-      fv,
-      plan.src_w(),
-      plan.src_h(),
-      4,
-    )?);
+    *rgba_filter_stream_f32 = Some({
+      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 4)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   let stream = rgba_filter_stream_f32.as_mut().expect("created above");
   // Straight alpha only (no premult route): the shared f16 emit bins in f32,
@@ -12551,7 +12797,7 @@ pub(super) fn xyz12_resample_preflight(
 /// [`packed_rgb_f32_resample_stream`] for the `Xyz12` path.
 #[cfg(feature = "xyz")]
 pub(super) fn xyz12_resample_stream<'s>(
-  xyz_stream_f32: &'s mut Option<crate::resample::AreaStream<f32>>,
+  xyz_stream_f32: &'s mut Option<std::boxed::Box<crate::resample::AreaStream<f32>>>,
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::AreaStream<f32>, MixedSinkerError> {
@@ -12574,13 +12820,20 @@ pub(super) fn xyz12_resample_stream<'s>(
   }
   let stream = match xyz_stream_f32 {
     Some(stream) => stream,
-    None => xyz_stream_f32.insert(crate::resample::AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?),
+    None => xyz_stream_f32.insert({
+      let stream =
+        crate::resample::AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    }),
   };
   Ok(stream)
 }
@@ -12595,7 +12848,7 @@ pub(super) fn xyz12_resample_stream<'s>(
 /// uses (both are generic over [`RowResampler`](crate::resample::RowResampler)).
 #[cfg(feature = "xyz")]
 pub(super) fn xyz12_resample_filter<'s>(
-  xyz_filter_stream_f32: &'s mut Option<crate::resample::FilterStream<f32>>,
+  xyz_filter_stream_f32: &'s mut Option<std::boxed::Box<crate::resample::FilterStream<f32>>>,
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::FilterStream<f32>, MixedSinkerError> {
@@ -12620,13 +12873,19 @@ pub(super) fn xyz12_resample_filter<'s>(
   );
   let stream = match xyz_filter_stream_f32 {
     Some(stream) => stream,
-    None => xyz_filter_stream_f32.insert(crate::resample::FilterStream::new(
-      fh,
-      fv,
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?),
+    None => xyz_filter_stream_f32.insert({
+      let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    }),
   };
   Ok(stream)
 }
@@ -13071,5 +13330,35 @@ mod api_smoke_tests {
     let msg = format!("{err}");
     assert!(msg.contains("100"));
     assert!(msg.contains("50"));
+  }
+
+  /// `MixedSinker` is routinely constructed as a stack local (tests, the
+  /// crate's own callers), so its inline footprint must stay small enough to
+  /// fit a constrained thread stack — the Windows (~1 MiB) and SDE-AVX-512
+  /// test threads overflowed once the per-format scratch, the native-tier
+  /// joins, and the per-plane area / filter streams accumulated inline. The
+  /// large sub-structures (every lazily-created stream, every native join) are
+  /// held behind a `Box`, so only a pointer sits inline; this ceiling fails the
+  /// test if a future field reintroduces the bloat. The threshold sits well
+  /// above the current size (a few KiB) yet far below any plausible thread
+  /// stack budget.
+  #[cfg(feature = "yuv-planar")]
+  #[test]
+  fn mixed_sinker_inline_size_stays_small() {
+    use crate::{resample::AreaResampler, source::Yuv420p};
+    // The largest practical monomorphization — a resampling Yuv420p sink with
+    // every output and every native / filter join reachable.
+    let area = core::mem::size_of::<MixedSinker<'_, Yuv420p, AreaResampler>>();
+    let noop = core::mem::size_of::<MixedSinker<'_, Yuv420p>>();
+    assert!(
+      area < 16384,
+      "MixedSinker<Yuv420p, AreaResampler> inline size {area} exceeds the 16 KiB \
+       stack-footprint ceiling; box the largest new field(s) (mirror the existing \
+       Option<Box<…>> stream / native-join fields)",
+    );
+    assert!(
+      noop < 16384,
+      "MixedSinker<Yuv420p, NoopResampler> inline size {noop} exceeds the 16 KiB ceiling",
+    );
   }
 }

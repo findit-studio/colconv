@@ -40,7 +40,7 @@
 use super::super::{GeometryOverflow, HsvFrameMut, MixedSinkerError, deinterleave_y_high_bit};
 use crate::{
   ColorMatrix,
-  resample::{AreaStream, PlanGeometry, ResampleError, ResamplePlan, try_zeroed},
+  resample::{AreaStream, PlanGeometry, ResampleError, ResamplePlan, try_box, try_zeroed},
   row::{
     expand_rgb_to_rgba_row, expand_rgb_u16_to_rgba_u16_row, rgb_to_hsv_row,
     yuv444p9_to_rgb_row_endian, yuv444p9_to_rgb_u16_row_endian, yuv444p10_to_rgb_row_endian,
@@ -211,7 +211,7 @@ impl NativeYuv420U16 {
 /// the 4-point rejection logic and its ordering contract.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn yuv420p16_native_preflight(
-  native_420_u16: &Option<NativeYuv420U16>,
+  native_420_u16: &Option<std::boxed::Box<NativeYuv420U16>>,
   resample_outputs: &mut Option<super::super::FrozenOutputs>,
   rgb: &Option<&mut [u8]>,
   rgba: &Option<&mut [u8]>,
@@ -224,7 +224,7 @@ pub(crate) fn yuv420p16_native_preflight(
   need_color: bool,
 ) -> Result<bool, MixedSinkerError> {
   super::super::planar_8bit::native_preflight_core(
-    native_420_u16.as_ref().map_or(0, NativeYuv420U16::next_y),
+    native_420_u16.as_ref().map_or(0, |j| j.next_y()),
     resample_outputs,
     rgb,
     rgba,
@@ -284,7 +284,7 @@ fn grow_src_scratch(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn yuv420p16_process_native<const BITS: u32, const BE: bool>(
   plan: &ResamplePlan,
-  native_420_u16: &mut Option<NativeYuv420U16>,
+  native_420_u16: &mut Option<std::boxed::Box<NativeYuv420U16>>,
   resample_outputs: &mut Option<super::super::FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -350,7 +350,23 @@ pub(crate) fn yuv420p16_process_native<const BITS: u32, const BE: bool>(
   }
   let join = match native_420_u16 {
     Some(join) => join,
-    None => native_420_u16.insert(NativeYuv420U16::new(plan, w, h, need_color)?),
+    None => {
+      // Build the join (its de-interleave / stage scratch allocates recoverably)
+      // and box it recoverably (`try_box`, not `Box::new` — the latter aborts on
+      // OOM). Both fallible steps run BEFORE `native_420_u16.insert`, so a
+      // refusal at either returns `Err` with the field still `None` — no caller
+      // output is touched and the next row retries (first-row-transactional).
+      let join = NativeYuv420U16::new(plan, w, h, need_color)?;
+      let boxed = try_box(join).map_err(|_| {
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+          w,
+          h,
+          plan.out_w(),
+          plan.out_h(),
+        )))
+      })?;
+      native_420_u16.insert(boxed)
+    }
   };
   join.check_sequence(idx)?;
 
@@ -435,7 +451,7 @@ pub(crate) fn yuv420p16_process_native<const BITS: u32, const BE: bool>(
     chroma,
     staged,
     next_emit,
-  } = join;
+  } = &mut **join;
   y.feed_row(idx, &y_src[..w], use_simd, |oy, out_row| {
     let slot = oy & 1;
     y_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);

@@ -31,7 +31,7 @@
 
 use crate::{
   ColorMatrix, PixelSink,
-  resample::{Bicublin, FilterStream, ResampleError, SwscaleBicubic, Triangle},
+  resample::{AreaResampler, Bicublin, FilterStream, ResampleError, SwscaleBicubic, Triangle},
   sinker::{MixedSinker, MixedSinkerError},
   source::{Yuv420p, Yuv420pRow, Yuv422p, yuv420p_to, yuv422p_to},
 };
@@ -545,7 +545,7 @@ fn bicublin_box_alloc_failure_is_recoverable() {
       .with_rgb(&mut rgb)
       .unwrap();
     sink.begin_frame(SW as u32, SH as u32).unwrap();
-    crate::sinker::mixed::planar_8bit::arm_native_box_failure();
+    crate::resample::arm_box_failure();
     let err = sink
       .process(Yuv420pRow::new(
         yr(0),
@@ -588,5 +588,85 @@ fn bicublin_box_alloc_failure_is_recoverable() {
   assert_eq!(
     rgb2, want_rgb,
     "the recovered frame equals the per-plane oracle (box-alloc refusal was recoverable)"
+  );
+}
+
+/// The directly-boxed per-plane `*_stream` fields take the same recoverable
+/// `try_box` path as the native joins: a box-alloc refusal on the first row of
+/// the row-stage area route (`Yuv420p` + `AreaResampler`, native tier off, so
+/// `planar_dual_resample` boxes the `luma_stream` / `rgb_stream` fields) must
+/// surface the typed `AllocationFailed` (NOT abort) with the output untouched
+/// and the field left `None` (the first-row-transactional contract), so a fresh
+/// frame after the single-shot failpoint resamples cleanly.
+#[test]
+#[cfg(feature = "std")]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn area_stream_box_alloc_failure_is_recoverable() {
+  const SW: usize = 8;
+  const SH: usize = 8;
+  const OW: usize = 4;
+  const OH: usize = 4;
+  let (y, u, v) = ramp_420(SW, SH);
+  let cw = SW / 2;
+  let yr = |i: usize| &y[i * SW..(i + 1) * SW];
+
+  // Scope 1: arm the single-shot box-alloc failpoint, then feed row 0. The
+  // boxed-stream refusal must surface AllocationFailed (not abort), with the
+  // output untouched and the stream field left None (retryable).
+  let mut rgb = vec![0u8; OW * OH * 3];
+  {
+    let mut sink =
+      MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SW, SH, AreaResampler::to(OW, OH))
+        .unwrap()
+        .with_native(false)
+        .with_rgb(&mut rgb)
+        .unwrap();
+    sink.begin_frame(SW as u32, SH as u32).unwrap();
+    crate::resample::arm_box_failure();
+    let err = sink
+      .process(Yuv420pRow::new(
+        yr(0),
+        chroma_row(&u, cw, 0),
+        chroma_row(&v, cw, 0),
+        0,
+        M,
+        FR,
+      ))
+      .unwrap_err();
+    assert!(
+      matches!(
+        err,
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
+      ),
+      "first-row stream box-alloc refusal must surface AllocationFailed (not abort), got {err:?}"
+    );
+  }
+  assert!(
+    rgb.iter().all(|&b| b == 0),
+    "a box-alloc-refused first row must not touch the output"
+  );
+
+  // Scope 2: a fresh frame after the single-shot failpoint is consumed must
+  // resample cleanly — the refusal was recoverable, not a one-way poison (the
+  // stream field is left None, so it allocates afresh on the next frame).
+  let mut rgb2 = vec![0u8; OW * OH * 3];
+  {
+    let cw_u = (SW / 2) as u32;
+    let src = Yuv420pFrame::new(&y, &u, &v, SW as u32, SH as u32, SW as u32, cw_u, cw_u);
+    let mut sink =
+      MixedSinker::<Yuv420p, AreaResampler>::with_resampler(SW, SH, AreaResampler::to(OW, OH))
+        .unwrap()
+        .with_native(false)
+        .with_rgb(&mut rgb2)
+        .unwrap();
+    yuv420p_to(&src, FR, M, &mut sink)
+      .expect("a fresh frame after the consumed failpoint resamples cleanly");
+  }
+  assert!(
+    rgb2.iter().any(|&b| b != 0),
+    "the recovered frame produced real output (box-alloc refusal was recoverable)"
   );
 }

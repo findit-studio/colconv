@@ -1631,6 +1631,111 @@ impl<S: FilterSample> RowResampler<S> for FilterStream<S> {
   }
 }
 
+// The `MixedSinker` holds its lazily-created area / filter streams behind a
+// `Box` to keep its inline stack footprint small (the streams own several
+// `Vec`s plus the span geometry). Forwarding the trait through the box lets the
+// generic row-stage helpers take `&mut Box<Stream>` with no per-call deref.
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
+))]
+impl<S, R: RowResampler<S> + ?Sized> RowResampler<S> for std::boxed::Box<R> {
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  fn feed_row<F: FnMut(usize, &[S])>(
+    &mut self,
+    y: usize,
+    row: &[S],
+    use_simd: bool,
+    emit: F,
+  ) -> Result<(), ResampleError> {
+    (**self).feed_row(y, row, use_simd, emit)
+  }
+}
+
+// Single-shot box-allocation failpoint for the recoverably-boxed native joins
+// (the straight-alpha `Yuva420p` tier and the `Yuv420p` BICUBLIN tier). Gated
+// on `yuv-planar` (which `yuva` implies) because those are its only arming
+// tests; `try_box` itself is gated wider (every boxed-stream consumer) but only
+// consults the failpoint under this same gate.
+#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
+std::thread_local! {
+  static FORCE_BOX_FAILURE: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
+/// Arms a single-shot failpoint that makes the next [`try_box`] refuse, exactly
+/// as a host OOM would. Used to prove the outer box allocation is recoverable
+/// (typed `AllocationFailed`, not an abort) and transactional (the join field
+/// is left `None`, so the call is retryable). Shared by the straight-alpha
+/// `Yuva420p` and the BICUBLIN box tests. Test-only.
+#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
+pub(crate) fn arm_box_failure() {
+  FORCE_BOX_FAILURE.with(|f| f.set(true));
+}
+
+/// Recoverable heap-box of a sized value: the stable analogue of the
+/// nightly-only `Box::try_new`. The single backing allocation is taken
+/// through a one-element [`Vec`] reservation
+/// ([`try_reserve_exact`](Vec::try_reserve_exact)) so an allocator refusal
+/// surfaces as `Err(TryReserveError)` instead of aborting the process the way
+/// `Box::new` does. `into_boxed_slice` then hands back the exact-capacity
+/// allocation with no copy; reinterpreting that single-element `Box<[T]>` as
+/// `Box<T>` is the layout no-op below.
+///
+/// Shared by every lazily-boxed `MixedSinker` field — the per-plane area /
+/// filter streams and the native-tier decimator joins — so a box-alloc refusal
+/// surfaces the same recoverable `AllocationFailed` the inner stream / join
+/// build already does. Gated like the blanket `Box<R>` impl above (the union of
+/// every family whose sink boxes a stream).
+#[cfg(any(
+  feature = "yuv-planar",
+  feature = "rgb",
+  feature = "gbr",
+  feature = "gray",
+  feature = "xyz",
+  feature = "bayer",
+  feature = "mono",
+  feature = "yuv-semi-planar",
+  feature = "yuv-packed",
+  feature = "yuv-444-packed",
+  feature = "y2xx",
+  feature = "v210",
+  feature = "rgb-legacy"
+))]
+pub(crate) fn try_box<T>(
+  value: T,
+) -> Result<std::boxed::Box<T>, std::collections::TryReserveError> {
+  #[cfg(all(test, feature = "std", feature = "yuv-planar"))]
+  if FORCE_BOX_FAILURE.with(|f| f.take()) {
+    // Reproduce the exact error `try_reserve_exact` yields on refusal so the
+    // failpoint is indistinguishable from a real OOM.
+    let mut probe = std::vec::Vec::<T>::new();
+    probe.try_reserve_exact(usize::MAX)?;
+  }
+  let mut backing = std::vec::Vec::with_capacity(0);
+  backing.try_reserve_exact(1)?;
+  backing.push(value);
+  // `backing` now holds exactly one initialized element at capacity one, so
+  // `into_boxed_slice` returns that same allocation without reallocating.
+  let boxed_slice: std::boxed::Box<[T]> = backing.into_boxed_slice();
+  // SAFETY: `boxed_slice` owns a single element. `Box<[T; 1]>`, `Box<[T]>`
+  // (over one element), and `Box<T>` all point at one `T` with identical size
+  // and alignment, so reinterpreting the raw pointer transfers ownership of
+  // the same allocation unchanged. The `Box` is rebuilt from the same pointer
+  // exactly once, so the allocation is neither leaked nor double-freed.
+  Ok(unsafe { std::boxed::Box::from_raw(std::boxed::Box::into_raw(boxed_slice).cast::<T>()) })
+}
+
 /// Row-sequencing payload for [`ResampleError::OutOfSequenceRow`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OutOfSequenceRow {
