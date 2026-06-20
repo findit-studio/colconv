@@ -29,6 +29,11 @@ use super::{
 // planar join is compiled in. Gated to the native tier's feature intersection.
 #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
 use super::{NativeRouteChanged, packed_vuyx_process_native};
+// The RFC #238 insertion-point selector decides the native-vs-row-stage
+// splice; consulted only inside the native tier's `cfg`, so its import
+// shares that intersection.
+#[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+use crate::resample::{AveragingDomain, InsertionContext, InsertionPoint, select_insertion_point};
 use crate::{
   PixelSink,
   row::{
@@ -286,17 +291,31 @@ impl<R> PixelSink for MixedSinker<'_, Vuyx, R> {
       {
         let need_output =
           luma.is_some() || luma_u16.is_some() || rgb.is_some() || rgba.is_some() || hsv.is_some();
+        // The RFC #238 splice stage. A filter plan already returned above, so
+        // `area_plan` is true and the selector reproduces the former `*native`
+        // boolean bit-for-bit (`cfg!` is true wherever this block compiles).
+        let take_native = matches!(
+          select_insertion_point(
+            AveragingDomain::Encoded,
+            InsertionContext {
+              native_eligible: cfg!(all(feature = "yuv-444-packed", feature = "yuv-planar")),
+              with_native: *native,
+              area_plan: true,
+            },
+          ),
+          InsertionPoint::NativeCodes
+        );
         // Reject a mid-frame native/row-stage route flip BEFORE either tier's
         // dispatch (the #186 CHECK-before / SET-after template).
         if need_output
           && let Some(frozen) = *frozen_native_route
-          && frozen != *native
+          && frozen != take_native
         {
           return Err(MixedSinkerError::NativeRouteChanged(
             NativeRouteChanged::new(idx),
           ));
         }
-        if *native {
+        if take_native {
           // Dispatch first; freeze the route to native ONLY after the call
           // returns Ok on an output-bearing row.
           packed_vuyx_process_native(

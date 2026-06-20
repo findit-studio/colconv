@@ -47,6 +47,11 @@ use super::{
 // intersection.
 #[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
 use super::{NativeRouteChanged, packed_yuv444_hb_process_native};
+// The RFC #238 insertion-point selector decides the native-vs-row-stage
+// splice; consulted only inside the native tier's `cfg`, so its import
+// shares that intersection.
+#[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+use crate::resample::{AveragingDomain, InsertionContext, InsertionPoint, select_insertion_point};
 use crate::{
   PixelSink,
   row::{
@@ -274,17 +279,32 @@ impl<const BE: bool, R> PixelSink for MixedSinker<'_, Xv36<BE>, R> {
           || rgb_u16.is_some()
           || rgba_u16.is_some()
           || hsv.is_some();
+        // The RFC #238 splice stage. This arm is the area branch (the
+        // enclosing guard already excluded a filter plan), so `area_plan` is
+        // true and the selector reproduces the former `*native` boolean
+        // bit-for-bit (`cfg!` is true wherever this block compiles).
+        let take_native = matches!(
+          select_insertion_point(
+            AveragingDomain::Encoded,
+            InsertionContext {
+              native_eligible: cfg!(all(feature = "yuv-444-packed", feature = "yuv-planar")),
+              with_native: *native,
+              area_plan: true,
+            },
+          ),
+          InsertionPoint::NativeCodes
+        );
         // Reject a mid-frame native/row-stage route flip BEFORE either tier's
         // dispatch (the #186 CHECK-before / SET-after template).
         if need_output
           && let Some(frozen) = *frozen_native_route
-          && frozen != *native
+          && frozen != take_native
         {
           return Err(MixedSinkerError::NativeRouteChanged(
             NativeRouteChanged::new(idx),
           ));
         }
-        if *native {
+        if take_native {
           // Dispatch first; freeze the route to native ONLY after the call
           // returns Ok on an output-bearing row. XV36 quad `[U, Y, V, A]`:
           // U at slot 0, Y at slot 1, V at slot 2, A (padding) at slot 3 —

@@ -82,7 +82,12 @@ use super::{
   planar_8bit::{NativePlanarYuv, native_planar_preflight, yuv_planar_process_native},
 };
 #[cfg(all(feature = "yuv-packed", feature = "yuv-planar"))]
-use crate::{ColorMatrix, resample::PlanGeometry};
+use crate::{
+  ColorMatrix,
+  resample::{
+    AveragingDomain, InsertionContext, InsertionPoint, PlanGeometry, select_insertion_point,
+  },
+};
 
 /// Shared stage-then-feed tail for the 8-bit packed-YUV dual-stream
 /// resample, used by both [`packed_yuv422_dual_resample`] (area) and
@@ -804,17 +809,31 @@ impl<R> PixelSink for MixedSinker<'_, Yuyv422, R> {
         // tier ACCEPTS; a no-output call must not freeze (route-invisible).
         let need_output =
           luma.is_some() || luma_u16.is_some() || rgb.is_some() || rgba.is_some() || hsv.is_some();
+        // The RFC #238 splice stage. A filter plan already returned above, so
+        // `area_plan` is true and the selector reproduces the former `*native`
+        // boolean bit-for-bit (`cfg!` is true wherever this block compiles).
+        let take_native = matches!(
+          select_insertion_point(
+            AveragingDomain::Encoded,
+            InsertionContext {
+              native_eligible: cfg!(all(feature = "yuv-packed", feature = "yuv-planar")),
+              with_native: *native,
+              area_plan: true,
+            },
+          ),
+          InsertionPoint::NativeCodes
+        );
         // Reject a mid-frame native/row-stage route flip BEFORE either tier's
         // dispatch (the #186 CHECK-before / SET-after template).
         if need_output
           && let Some(frozen) = *frozen_native_route
-          && frozen != *native
+          && frozen != take_native
         {
           return Err(MixedSinkerError::NativeRouteChanged(
             NativeRouteChanged::new(idx),
           ));
         }
-        if *native {
+        if take_native {
           // Dispatch first; freeze the route to native ONLY after the call
           // returns Ok on an output-bearing row.
           packed_yuv422_process_native(
@@ -1137,15 +1156,29 @@ impl<R> PixelSink for MixedSinker<'_, Uyvy422, R> {
       {
         let need_output =
           luma.is_some() || luma_u16.is_some() || rgb.is_some() || rgba.is_some() || hsv.is_some();
+        // The RFC #238 splice stage. A filter plan already returned above, so
+        // `area_plan` is true and the selector reproduces the former `*native`
+        // boolean bit-for-bit (`cfg!` is true wherever this block compiles).
+        let take_native = matches!(
+          select_insertion_point(
+            AveragingDomain::Encoded,
+            InsertionContext {
+              native_eligible: cfg!(all(feature = "yuv-packed", feature = "yuv-planar")),
+              with_native: *native,
+              area_plan: true,
+            },
+          ),
+          InsertionPoint::NativeCodes
+        );
         if need_output
           && let Some(frozen) = *frozen_native_route
-          && frozen != *native
+          && frozen != take_native
         {
           return Err(MixedSinkerError::NativeRouteChanged(
             NativeRouteChanged::new(idx),
           ));
         }
-        if *native {
+        if take_native {
           packed_yuv422_process_native(
             plan,
             native_planar,
@@ -1456,15 +1489,29 @@ impl<R> PixelSink for MixedSinker<'_, Yvyu422, R> {
       {
         let need_output =
           luma.is_some() || luma_u16.is_some() || rgb.is_some() || rgba.is_some() || hsv.is_some();
+        // The RFC #238 splice stage. A filter plan already returned above, so
+        // `area_plan` is true and the selector reproduces the former `*native`
+        // boolean bit-for-bit (`cfg!` is true wherever this block compiles).
+        let take_native = matches!(
+          select_insertion_point(
+            AveragingDomain::Encoded,
+            InsertionContext {
+              native_eligible: cfg!(all(feature = "yuv-packed", feature = "yuv-planar")),
+              with_native: *native,
+              area_plan: true,
+            },
+          ),
+          InsertionPoint::NativeCodes
+        );
         if need_output
           && let Some(frozen) = *frozen_native_route
-          && frozen != *native
+          && frozen != take_native
         {
           return Err(MixedSinkerError::NativeRouteChanged(
             NativeRouteChanged::new(idx),
           ));
         }
-        if *native {
+        if take_native {
           packed_yuv422_process_native(
             plan,
             native_planar,
