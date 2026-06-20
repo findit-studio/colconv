@@ -225,6 +225,96 @@ impl<K: FilterKernel> Resampler for FilteredResampler<K> {
   }
 }
 
+/// FFmpeg `swscale` **`SWS_BICUBLIN`** — the concrete per-plane reconstruction
+/// filter that resamples the **luma** plane with a cubic kernel
+/// ([`SwscaleBicubic`], swscale's default `a = -0.6` bicubic) and the
+/// **chroma** planes with a linear kernel ([`Triangle`], the bilinear tent).
+///
+/// This is fundamentally different from a single-kernel [`FilteredResampler`]:
+/// that path converts the (chroma-upsampled) YUV to RGB and applies one kernel
+/// to the RGB, so it cannot express a luma-vs-chroma kernel split. BICUBLIN
+/// filters the three planes **separately in YUV-plane space** — Y at luma
+/// resolution with the cubic, U / V at chroma resolution with the linear — and
+/// converts the filtered planes to RGB at the output grid. It is the filter
+/// twin of the native area tier (which *bins* the planes, then converts).
+///
+/// Wired for [`Yuv420p`](crate::source::Yuv420p) (4:2:0): the chroma planes are
+/// half-width, ceil-half-height, so the chroma windows are planned over
+/// `(src_w / 2) x ceil(src_h / 2)`. Upscale, downscale, and mixed ratios are
+/// all supported (each plane's axes plan independently). There is **no**
+/// same-size identity short-circuit (unlike the single-kernel strategies):
+/// even at an unchanged luma size the half-resolution chroma plane must be
+/// upsampled with the linear kernel — so a BICUBLIN plan is always built and
+/// always carries all four per-plane windows. Constructed with no parameters
+/// — the two kernels are fixed by the swscale BICUBLIN definition.
+#[cfg(feature = "yuv-planar")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Bicublin {
+  out_w: usize,
+  out_h: usize,
+}
+
+#[cfg(feature = "yuv-planar")]
+impl Bicublin {
+  /// Strategy producing an `out_w x out_h` output frame under the swscale
+  /// BICUBLIN per-plane kernels (cubic luma, linear chroma).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn to(out_w: usize, out_h: usize) -> Self {
+    Self { out_w, out_h }
+  }
+
+  /// Requested output width.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn out_w(&self) -> usize {
+    self.out_w
+  }
+
+  /// Requested output height.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn out_h(&self) -> usize {
+    self.out_h
+  }
+}
+
+#[cfg(feature = "yuv-planar")]
+impl sealed::Sealed for Bicublin {}
+
+#[cfg(feature = "yuv-planar")]
+impl Resampler for Bicublin {
+  fn plan(&self, src_w: usize, src_h: usize) -> Result<Option<ResamplePlan>, ResampleError> {
+    if self.out_w == 0 || self.out_h == 0 {
+      return Err(ResampleError::ZeroOutputDimension(
+        ZeroOutputDimension::new(self.out_w, self.out_h),
+      ));
+    }
+    // No same-size identity short-circuit (unlike the single-kernel
+    // strategies): even when the LUMA size is unchanged (`out == src`), the
+    // 4:2:0 chroma plane is half-resolution and so must be UPSAMPLED to the
+    // output grid with the linear kernel — a real convolution, not a
+    // pass-through. The luma plane is likewise a same-size cubic convolution
+    // (not the identity for a non-box kernel). So a BICUBLIN plan is built and
+    // applied on all four axes regardless of `in == out`; `FilterAxis::build`
+    // evaluates a same-size axis as the convolution it is.
+    //
+    // 4:2:0 chroma grid: half width, ceil-half height. The chroma plane is
+    // filtered as its own `chroma_w x chroma_h -> out` image (swscale's
+    // per-plane behaviour), so the windows are planned at that resolution.
+    let chroma_w = src_w / 2;
+    let chroma_h = src_h.div_ceil(2);
+    ResamplePlan::bicublin(
+      src_w,
+      src_h,
+      chroma_w,
+      chroma_h,
+      self.out_w,
+      self.out_h,
+      &SwscaleBicubic,
+      &Triangle,
+    )
+    .map(Some)
+  }
+}
+
 /// Zero-filled buffer via fallible reservation: `resize` after an
 /// exact reserve cannot reallocate, so refusal is the only failure
 /// and it surfaces as the error instead of aborting.
@@ -516,10 +606,23 @@ pub struct ResamplePlan {
   kind: SpanKind,
   h: AxisSpans,
   v: AxisSpans,
-  /// Horizontal filter windows; `Some` iff `kind == Filter`.
+  /// Horizontal filter windows; `Some` iff `kind == Filter`. For a BICUBLIN
+  /// plan ([`Self::bicublin`]) this carries the **luma** plane's horizontal
+  /// windows (the cubic kernel at luma resolution).
   filter_h: Option<FilterAxis>,
-  /// Vertical filter windows; `Some` iff `kind == Filter`.
+  /// Vertical filter windows; `Some` iff `kind == Filter`. For a BICUBLIN
+  /// plan this carries the **luma** plane's vertical windows.
   filter_v: Option<FilterAxis>,
+  /// Horizontal **chroma**-plane filter windows — `Some` only for a BICUBLIN
+  /// plan ([`Self::bicublin`]), where the chroma plane is filtered at its own
+  /// `chroma_w -> out_w` resolution with a second (linear) kernel. `None` for
+  /// every single-kernel [`Self::filter`] / area plan, so those plans are
+  /// byte-identical to before BICUBLIN existed and the existing filter path
+  /// never reads them.
+  filter_h_chroma: Option<FilterAxis>,
+  /// Vertical **chroma**-plane filter windows — the `chroma_h -> out_h`
+  /// twin of [`Self::filter_h_chroma`]. `Some` only for a BICUBLIN plan.
+  filter_v_chroma: Option<FilterAxis>,
 }
 
 impl ResamplePlan {
@@ -554,6 +657,8 @@ impl ResamplePlan {
       v,
       filter_h: None,
       filter_v: None,
+      filter_h_chroma: None,
+      filter_v_chroma: None,
     })
   }
 
@@ -583,6 +688,66 @@ impl ResamplePlan {
       v: AxisSpans::empty(),
       filter_h: Some(filter_h),
       filter_v: Some(filter_v),
+      filter_h_chroma: None,
+      filter_v_chroma: None,
+    })
+  }
+
+  /// Builds a **BICUBLIN** plan: swscale's per-plane filter, where the luma
+  /// plane is filtered with `luma_kernel` (the cubic) and the chroma planes
+  /// with `chroma_kernel` (the linear / tent), each at its own native
+  /// resolution into the shared output grid.
+  ///
+  /// The luma windows (`src_w x src_h -> out_w x out_h`) land in
+  /// `filter_h`/`filter_v`, the chroma windows
+  /// (`chroma_w x chroma_h -> out_w x out_h`) in
+  /// `filter_h_chroma`/`filter_v_chroma`. The plan's [`Self::kind`] is
+  /// [`SpanKind::Filter`] so every area-only consumer's existing filter guard
+  /// rejects it unchanged; only the `Yuv420p` BICUBLIN route reads the chroma
+  /// windows ([`Self::is_bicublin`]). Both kernels are evaluated into
+  /// coefficients here, once, at plan time.
+  ///
+  /// All four axes are built sequentially under the recoverable-allocation
+  /// contract — a hostile-support rejection on any axis short-circuits before
+  /// the next is sized, so an invalid kernel never allocates past the failing
+  /// axis.
+  ///
+  /// # Errors
+  ///
+  /// As [`Self::filter`], for any of the four axes:
+  /// [`ResampleError::InvalidFilterSupport`] / [`ResampleError::Overflow`] /
+  /// [`ResampleError::AllocationFailed`].
+  #[cfg(feature = "yuv-planar")]
+  #[allow(clippy::too_many_arguments)]
+  pub(crate) fn bicublin(
+    src_w: usize,
+    src_h: usize,
+    chroma_w: usize,
+    chroma_h: usize,
+    out_w: usize,
+    out_h: usize,
+    luma_kernel: &dyn FilterKernel,
+    chroma_kernel: &dyn FilterKernel,
+  ) -> Result<Self, ResampleError> {
+    // Sequential on purpose (matching [`Self::filter`]): a failing axis
+    // short-circuits before the next is built, so a hostile support never
+    // sizes a later axis's table.
+    let filter_h = FilterAxis::build(src_w, out_w, luma_kernel)?;
+    let filter_v = FilterAxis::build(src_h, out_h, luma_kernel)?;
+    let filter_h_chroma = FilterAxis::build(chroma_w, out_w, chroma_kernel)?;
+    let filter_v_chroma = FilterAxis::build(chroma_h, out_h, chroma_kernel)?;
+    Ok(Self {
+      src_w,
+      src_h,
+      out_w,
+      out_h,
+      kind: SpanKind::Filter,
+      h: AxisSpans::empty(),
+      v: AxisSpans::empty(),
+      filter_h: Some(filter_h),
+      filter_v: Some(filter_v),
+      filter_h_chroma: Some(filter_h_chroma),
+      filter_v_chroma: Some(filter_v_chroma),
     })
   }
 
@@ -619,6 +784,8 @@ impl ResamplePlan {
       v,
       filter_h: None,
       filter_v: None,
+      filter_h_chroma: None,
+      filter_v_chroma: None,
     })
   }
 
@@ -655,6 +822,8 @@ impl ResamplePlan {
       v,
       filter_h: None,
       filter_v: None,
+      filter_h_chroma: None,
+      filter_v_chroma: None,
     })
   }
 
@@ -736,6 +905,65 @@ impl ResamplePlan {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub(crate) fn filter_v(&self) -> Option<&FilterAxis> {
     self.filter_v.as_ref()
+  }
+
+  /// Horizontal **chroma**-plane filter windows — `Some` only for a BICUBLIN
+  /// plan ([`Self::bicublin`]), `None` otherwise (including a single-kernel
+  /// [`Self::filter`] plan). Read by the `Yuv420p` BICUBLIN route to filter
+  /// the U / V planes with the chroma (linear) kernel.
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) fn filter_h_chroma(&self) -> Option<&FilterAxis> {
+    self.filter_h_chroma.as_ref()
+  }
+
+  /// Vertical **chroma**-plane filter windows — the twin of
+  /// [`Self::filter_h_chroma`]. `Some` only for a BICUBLIN plan.
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) fn filter_v_chroma(&self) -> Option<&FilterAxis> {
+    self.filter_v_chroma.as_ref()
+  }
+
+  /// Whether this is a **BICUBLIN** per-plane filter plan ([`Self::bicublin`])
+  /// — a [`SpanKind::Filter`] plan that *also* carries the chroma-plane
+  /// windows. A single-kernel [`Self::filter`] plan reports `false` (it has no
+  /// chroma windows), so the `Yuv420p` dispatch routes BICUBLIN to the
+  /// per-plane path and leaves every other filter plan on the unchanged
+  /// single-kernel path.
+  ///
+  /// Always compiled (the backing `filter_h_chroma` field is not feature-gated)
+  /// so [`Self::ensure_single_kernel_filter`] can fence a BICUBLIN plan out of
+  /// every single-kernel consumer regardless of which families a build enables.
+  // Idle in feature combos that compile no filter consumer.
+  #[allow(dead_code)]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) const fn is_bicublin(&self) -> bool {
+    self.filter_h_chroma.is_some()
+  }
+
+  /// Fences a **BICUBLIN** plan out of a single-kernel filter consumer:
+  /// `Err(`[`ResampleError::UnsupportedFilter`]`)` if this is a BICUBLIN plan
+  /// ([`Self::is_bicublin`]), `Ok(())` otherwise.
+  ///
+  /// A BICUBLIN plan keeps [`Self::kind`] `==` [`SpanKind::Filter`] (no
+  /// dedicated span-kind variant), and it carries a SECOND (chroma) window set
+  /// that only the `Yuv420p` BICUBLIN route reads. Every OTHER filter consumer
+  /// builds a SINGLE-kernel [`FilterStream`] from the luma windows
+  /// ([`Self::filter_h`]/[`Self::filter_v`]) and would silently ignore the
+  /// chroma windows — filtering all planes with the luma cubic kernel — which
+  /// is wrong output. So each single-kernel filter consumer calls this at the
+  /// top of its filter path: the `Yuv420p` per-plane route is the ONLY consumer
+  /// that may accept a BICUBLIN plan; every other rejects it with the typed
+  /// error rather than mis-filtering it.
+  // Idle in feature combos that compile no filter consumer.
+  #[allow(dead_code)]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub(crate) fn ensure_single_kernel_filter(&self) -> Result<(), ResampleError> {
+    if self.is_bicublin() {
+      return Err(self.unsupported_filter());
+    }
+    Ok(())
   }
 
   /// Horizontal-axis spans.

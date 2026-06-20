@@ -695,7 +695,7 @@ fn straight_native_box_alloc_failure_recoverable() {
         .with_rgba(&mut rgba)
         .unwrap();
     sink.begin_frame(SRC as u32, SRC as u32).unwrap();
-    crate::sinker::mixed::planar_8bit::arm_yuva420p_native_box_failure();
+    crate::sinker::mixed::planar_8bit::arm_native_box_failure();
     let err = sink
       .process(Yuva420pRow::new(
         &y[..SRC],
