@@ -1,9 +1,9 @@
 //! 8-bit planar YUV `MixedSinker` impls: Yuv410p / Yuv420p / Yuv422p / Yuv444p / Yuv440p.
 
 use super::{
-  GeometryOverflow, HsvFrameMut, InsufficientBuffer, MixedSinker, MixedSinkerError,
-  NativeRouteChanged, RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment,
-  check_dimensions_match, frozen_outputs_check,
+  AveragingDomainChanged, GeometryOverflow, HsvFrameMut, InsufficientBuffer, MixedSinker,
+  MixedSinkerError, NativeRouteChanged, RowIndexOutOfRange, RowShapeMismatch, RowSlice,
+  WidthAlignment, check_dimensions_match, frozen_outputs_check,
   planar_resample::{planar_dual_filter_resample, planar_dual_resample},
   rgb_row_buf_or_scratch, rgba_plane_row_slice,
 };
@@ -16,6 +16,12 @@ use crate::{
   row::*,
   source::*,
 };
+// The RFC #238 linear-light tail + its caller-configurable transfer curve
+// drive the `rgb`-gated `AveragingDomain::Linear` dispatch only.
+#[cfg(feature = "rgb")]
+use super::linear_light;
+#[cfg(feature = "rgb")]
+use crate::resample::TransferFunction;
 
 /// `Yuv420p` ships the native 4:2:0 fast tier ([`yuv420p_process_native`]),
 /// so it is statically eligible to splice an [`AveragingDomain::Encoded`]
@@ -137,10 +143,18 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
     if let Some(native) = self.native_420.as_mut() {
       native.reset();
     }
-    // New frame: clear the per-frame frozen native/row-stage route so the
-    // next frame may pick either tier; a mid-frame flip stays rejected.
+    // New frame: clear the per-frame frozen native/row-stage route and
+    // averaging domain so the next frame may pick either tier / any domain; a
+    // mid-frame flip stays rejected.
     self.frozen_native_route = None;
+    self.frozen_domain = None;
     self.resample_outputs = None;
+    // New frame: drop the RFC #238 linear-light accumulator (if any) so the
+    // next frame re-seeds it from row 0.
+    #[cfg(feature = "rgb")]
+    {
+      self.linear_light_frame = None;
+    }
     Ok(())
   }
 
@@ -213,6 +227,12 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
       native,
       native_420,
       frozen_native_route,
+      frozen_domain,
+      averaging_domain,
+      #[cfg(feature = "rgb")]
+      linear_light_frame,
+      #[cfg(feature = "rgb")]
+      transfer_function,
       ..
     } = self;
 
@@ -221,6 +241,110 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
     // row-stage tier converts this source row at source width, then
     // area-streams it. `with_native(false)` forces the latter.
     if let Some(plan) = plan.as_ref() {
+      // RFC #238 Phase 2 — single always-compiled choke point for the averaging
+      // domain, BEFORE any filter / native / row-stage branching, so a
+      // non-encoded sink can NEVER fall through to the Encoded path under ANY
+      // feature combination. The match is EXHAUSTIVE with no wildcard arm: a
+      // future `AveragingDomain` variant fails to compile here until it is
+      // explicitly handled, so the silent-fallback class is structurally
+      // impossible rather than merely audited. The `Encoded` arm is empty —
+      // control continues into the encoded dispatch below; `Linear` and
+      // `Premultiplied` both return.
+      //
+      // `need_output` — whether this call carries any output — is the EXACT set
+      // both tiers' preflight tests (`need_luma || need_color` =
+      // `luma || luma_u16 || rgb || rgba || hsv`); it gates BOTH the domain
+      // freeze here and the native/row-stage route freeze below, so a no-output
+      // call (which consumes no stream state) freezes neither.
+      let need_output =
+        luma.is_some() || luma_u16.is_some() || rgb.is_some() || rgba.is_some() || hsv.is_some();
+      // CHECK the averaging-domain freeze BEFORE the choke-point match (so the
+      // freeze guards the domain choice itself), parallel to the frozen native
+      // route. This is CHECK-ONLY — the matching SET happens AFTER the selected
+      // path ACCEPTS an output-bearing row (mirroring `frozen_native_route`'s
+      // timing below), never before dispatch. Committing the freeze before the
+      // row is accepted would poison a retry: a row the selected path rejects
+      // (an unsupported domain / filter plan, an out-of-sequence or
+      // output-changed row, an alloc failure) must leave `frozen_domain`
+      // UNCHANGED so the caller can correct the config and retry the SAME row.
+      // A no-output row neither checks nor sets (a true route-invisible no-op).
+      if need_output
+        && let Some(frozen) = *frozen_domain
+        && frozen != *averaging_domain
+      {
+        return Err(MixedSinkerError::AveragingDomainChanged(
+          AveragingDomainChanged::new(idx),
+        ));
+      }
+      match *averaging_domain {
+        AveragingDomain::Encoded => {}
+        // `with_averaging_domain` is gated on `yuv-planar` alone, but the
+        // linear-light tail decodes to RGB and so compiles only under `rgb`.
+        // Under `rgb` it runs the linear tail (which itself rejects a filter
+        // plan with the typed `UnsupportedFilter` — the Linear domain is
+        // area-only); without `rgb` it returns the typed
+        // `LinearDomainUnsupported` rather than silently downgrading to the
+        // encoded average.
+        AveragingDomain::Linear => {
+          #[cfg(feature = "rgb")]
+          {
+            let matrix = row.matrix();
+            let full_range = row.full_range();
+            let tf = transfer_function.unwrap_or_else(|| TransferFunction::for_matrix(matrix));
+            // Dispatch first; commit the domain freeze to Linear ONLY when the
+            // tail ACCEPTS an output-bearing row. `linear_light_resample`
+            // returns Ok(()) without consuming for a no-output call and Err for
+            // a filter / out-of-sequence / output-changed / alloc reject, so
+            // `r.is_ok() && need_output` is exactly an accepted output-bearing
+            // row — a rejected row leaves `frozen_domain` unset so a
+            // corrected-domain retry of the SAME row is not falsely rejected.
+            let r = linear_light::linear_light_resample(
+              linear_light_frame,
+              resample_outputs,
+              rgb,
+              rgba,
+              luma,
+              luma_u16,
+              hsv,
+              rgb_scratch,
+              tf,
+              plan,
+              row.y(),
+              idx,
+              w,
+              h,
+              use_simd,
+              |_idx, dst| {
+                yuv_420_to_rgb_row(
+                  row.y(),
+                  row.u_half(),
+                  row.v_half(),
+                  dst,
+                  w,
+                  matrix,
+                  full_range,
+                  use_simd,
+                );
+              },
+            );
+            if r.is_ok() && need_output && frozen_domain.is_none() {
+              *frozen_domain = Some(AveragingDomain::Linear);
+            }
+            return r;
+          }
+          #[cfg(not(feature = "rgb"))]
+          {
+            return Err(plan.linear_domain_unsupported().into());
+          }
+        }
+        // `Yuv420p` has no alpha plane, so premultiplied weighting is a category
+        // error here — reject with a typed error rather than silently running
+        // the encoded average. Phase 5 wires Premultiplied for actual alpha
+        // formats; on these non-alpha formats rejecting is correct.
+        AveragingDomain::Premultiplied => {
+          return Err(plan.premultiplied_domain_unsupported().into());
+        }
+      }
       // A `Filter` plan routes to the filter resampler, which converts the
       // separate Y/U/V planes to a source-width RGB row (the same
       // `yuv_420_to_rgb_row` kernel the row-stage tier uses) and
@@ -261,13 +385,6 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
           },
         );
       }
-      // Whether this call carries any output — the EXACT set both tiers'
-      // preflight tests (`need_luma || need_color` =
-      // `luma || luma_u16 || rgb || rgba || hsv`). The route freezes only
-      // on an output-bearing row a tier ACCEPTS; a no-output call consumes
-      // no stream state, so it must not freeze.
-      let need_output =
-        luma.is_some() || luma_u16.is_some() || rgb.is_some() || rgba.is_some() || hsv.is_some();
       // Reject a mid-frame native/row-stage route flip BEFORE either tier's
       // dispatch. The two tiers carry independent, in-order, once-only
       // stream state, so splitting a frame across them yields a
@@ -338,6 +455,11 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
           if frozen_native_route.is_none() && need_output {
             *frozen_native_route = Some(true);
           }
+          // Encoded domain committed alongside the route, on the same accepted
+          // output-bearing row (the `?` above already returned any reject).
+          if frozen_domain.is_none() && need_output {
+            *frozen_domain = Some(AveragingDomain::Encoded);
+          }
           return Ok(());
         }
         InsertionPoint::EncodedOutput => {
@@ -369,7 +491,18 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
           if frozen_native_route.is_none() && need_output {
             *frozen_native_route = Some(false);
           }
+          // Encoded domain committed alongside the route, on the same accepted
+          // output-bearing row (the `?` above already returned any reject).
+          if frozen_domain.is_none() && need_output {
+            *frozen_domain = Some(AveragingDomain::Encoded);
+          }
           return Ok(());
+        }
+        // The encoded domain only resolves to the native-codes or
+        // encoded-output splice; the linear-light splice is reached via the
+        // sink's Linear averaging domain, dispatched before this match.
+        InsertionPoint::LinearLight => {
+          unreachable!("encoded domain never selects the linear-light splice")
         }
       }
     }
@@ -1915,7 +2048,13 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
       native.reset();
     }
     self.frozen_native_route = None;
+    self.frozen_domain = None;
     self.resample_outputs = None;
+    // New frame: drop the RFC #238 linear-light accumulator (if any).
+    #[cfg(feature = "rgb")]
+    {
+      self.linear_light_frame = None;
+    }
     Ok(())
   }
 
@@ -1974,6 +2113,12 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
       native,
       native_planar,
       frozen_native_route,
+      frozen_domain,
+      averaging_domain,
+      #[cfg(feature = "rgb")]
+      linear_light_frame,
+      #[cfg(feature = "rgb")]
+      transfer_function,
       ..
     } = self;
 
@@ -2000,6 +2145,81 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
           use_simd,
         );
       };
+      // RFC #238 Phase 2 — single always-compiled choke point for the averaging
+      // domain, BEFORE any filter / native / row-stage branching, so a
+      // non-encoded sink never falls through to the Encoded path under any
+      // feature combination. The match is EXHAUSTIVE with no wildcard arm: a
+      // future `AveragingDomain` variant fails to compile until handled here.
+      // The `Encoded` arm is empty (control continues into the encoded dispatch
+      // below); `Linear` and `Premultiplied` return. See the Yuv420p impl.
+      //
+      // `need_output` gates BOTH the averaging-domain freeze here and the
+      // native/row-stage route freeze below. The domain freeze is CHECK-ONLY
+      // here — the matching SET happens AFTER the selected path accepts an
+      // output-bearing row (mirroring `frozen_native_route` below), never
+      // before dispatch, so a rejected row leaves the freeze unchanged and a
+      // corrected-domain retry of the SAME row is not falsely rejected. See the
+      // Yuv420p impl for the full CHECK-before / SET-after rationale.
+      let need_output =
+        luma.is_some() || luma_u16.is_some() || rgb.is_some() || rgba.is_some() || hsv.is_some();
+      if need_output
+        && let Some(frozen) = *frozen_domain
+        && frozen != *averaging_domain
+      {
+        return Err(MixedSinkerError::AveragingDomainChanged(
+          AveragingDomainChanged::new(idx),
+        ));
+      }
+      match *averaging_domain {
+        AveragingDomain::Encoded => {}
+        // Under `rgb` it runs the linear tail (which itself rejects a filter
+        // plan); without `rgb` it returns the typed `LinearDomainUnsupported`.
+        AveragingDomain::Linear => {
+          #[cfg(feature = "rgb")]
+          {
+            let tf = transfer_function.unwrap_or_else(|| TransferFunction::for_matrix(matrix));
+            // Dispatch first; commit the domain freeze to Linear ONLY when the
+            // tail accepts an output-bearing row (`r.is_ok() && need_output`).
+            // A no-output call returns Ok without consuming; a filter /
+            // out-of-sequence / output-changed / alloc reject returns Err — so
+            // a rejected row leaves `frozen_domain` unset for a corrected retry.
+            // See the Yuv420p impl.
+            let r = linear_light::linear_light_resample(
+              linear_light_frame,
+              resample_outputs,
+              rgb,
+              rgba,
+              luma,
+              luma_u16,
+              hsv,
+              rgb_scratch,
+              tf,
+              plan,
+              row.y(),
+              idx,
+              w,
+              h,
+              use_simd,
+              |_idx, dst| convert_rgb(dst),
+            );
+            if r.is_ok() && need_output && frozen_domain.is_none() {
+              *frozen_domain = Some(AveragingDomain::Linear);
+            }
+            return r;
+          }
+          #[cfg(not(feature = "rgb"))]
+          {
+            return Err(plan.linear_domain_unsupported().into());
+          }
+        }
+        // This format has no alpha plane, so premultiplied weighting is a
+        // category error — reject with a typed error rather than silently
+        // running the encoded average. Phase 5 wires Premultiplied for alpha
+        // formats; on these non-alpha formats rejecting is correct.
+        AveragingDomain::Premultiplied => {
+          return Err(plan.premultiplied_domain_unsupported().into());
+        }
+      }
       if plan.kind().is_filter() {
         return planar_dual_filter_resample(
           luma_filter_stream,
@@ -2020,9 +2240,8 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
         );
       }
       // Native / row-stage route split — see the Yuv420p impl for the
-      // CHECK-before / SET-after `frozen_native_route` contract.
-      let need_output =
-        luma.is_some() || luma_u16.is_some() || rgb.is_some() || rgba.is_some() || hsv.is_some();
+      // CHECK-before / SET-after `frozen_native_route` contract. Reuses the
+      // `need_output` computed for the domain freeze above.
       if need_output
         && let Some(frozen) = *frozen_native_route
         && frozen != *native
@@ -2072,6 +2291,11 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
           if frozen_native_route.is_none() && need_output {
             *frozen_native_route = Some(true);
           }
+          // Encoded domain committed alongside the route, on the same accepted
+          // output-bearing row (the `?` above already returned any reject).
+          if frozen_domain.is_none() && need_output {
+            *frozen_domain = Some(AveragingDomain::Encoded);
+          }
           return Ok(());
         }
         InsertionPoint::EncodedOutput => {
@@ -2095,7 +2319,18 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
           if frozen_native_route.is_none() && need_output {
             *frozen_native_route = Some(false);
           }
+          // Encoded domain committed alongside the route, on the same accepted
+          // output-bearing row (the `?` above already returned any reject).
+          if frozen_domain.is_none() && need_output {
+            *frozen_domain = Some(AveragingDomain::Encoded);
+          }
           return Ok(());
+        }
+        // The encoded domain only resolves to the native-codes or
+        // encoded-output splice; the linear-light splice is reached via the
+        // sink's Linear averaging domain, dispatched before this match.
+        InsertionPoint::LinearLight => {
+          unreachable!("encoded domain never selects the linear-light splice")
         }
       }
     }
@@ -2271,7 +2506,13 @@ impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
       native.reset();
     }
     self.frozen_native_route = None;
+    self.frozen_domain = None;
     self.resample_outputs = None;
+    // New frame: drop the RFC #238 linear-light accumulator (if any).
+    #[cfg(feature = "rgb")]
+    {
+      self.linear_light_frame = None;
+    }
     Ok(())
   }
 
@@ -2327,6 +2568,12 @@ impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
       native,
       native_planar,
       frozen_native_route,
+      frozen_domain,
+      averaging_domain,
+      #[cfg(feature = "rgb")]
+      linear_light_frame,
+      #[cfg(feature = "rgb")]
+      transfer_function,
       ..
     } = self;
 
@@ -2353,6 +2600,81 @@ impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
           use_simd,
         );
       };
+      // RFC #238 Phase 2 — single always-compiled choke point for the averaging
+      // domain, BEFORE any filter / native / row-stage branching, so a
+      // non-encoded sink never falls through to the Encoded path under any
+      // feature combination. The match is EXHAUSTIVE with no wildcard arm: a
+      // future `AveragingDomain` variant fails to compile until handled here.
+      // The `Encoded` arm is empty (control continues into the encoded dispatch
+      // below); `Linear` and `Premultiplied` return. See the Yuv420p impl.
+      //
+      // `need_output` gates BOTH the averaging-domain freeze here and the
+      // native/row-stage route freeze below. The domain freeze is CHECK-ONLY
+      // here — the matching SET happens AFTER the selected path accepts an
+      // output-bearing row (mirroring `frozen_native_route` below), never
+      // before dispatch, so a rejected row leaves the freeze unchanged and a
+      // corrected-domain retry of the SAME row is not falsely rejected. See the
+      // Yuv420p impl for the full CHECK-before / SET-after rationale.
+      let need_output =
+        luma.is_some() || luma_u16.is_some() || rgb.is_some() || rgba.is_some() || hsv.is_some();
+      if need_output
+        && let Some(frozen) = *frozen_domain
+        && frozen != *averaging_domain
+      {
+        return Err(MixedSinkerError::AveragingDomainChanged(
+          AveragingDomainChanged::new(idx),
+        ));
+      }
+      match *averaging_domain {
+        AveragingDomain::Encoded => {}
+        // Under `rgb` it runs the linear tail (which itself rejects a filter
+        // plan); without `rgb` it returns the typed `LinearDomainUnsupported`.
+        AveragingDomain::Linear => {
+          #[cfg(feature = "rgb")]
+          {
+            let tf = transfer_function.unwrap_or_else(|| TransferFunction::for_matrix(matrix));
+            // Dispatch first; commit the domain freeze to Linear ONLY when the
+            // tail accepts an output-bearing row (`r.is_ok() && need_output`).
+            // A no-output call returns Ok without consuming; a filter /
+            // out-of-sequence / output-changed / alloc reject returns Err — so
+            // a rejected row leaves `frozen_domain` unset for a corrected retry.
+            // See the Yuv420p impl.
+            let r = linear_light::linear_light_resample(
+              linear_light_frame,
+              resample_outputs,
+              rgb,
+              rgba,
+              luma,
+              luma_u16,
+              hsv,
+              rgb_scratch,
+              tf,
+              plan,
+              row.y(),
+              idx,
+              w,
+              h,
+              use_simd,
+              |_idx, dst| convert_rgb(dst),
+            );
+            if r.is_ok() && need_output && frozen_domain.is_none() {
+              *frozen_domain = Some(AveragingDomain::Linear);
+            }
+            return r;
+          }
+          #[cfg(not(feature = "rgb"))]
+          {
+            return Err(plan.linear_domain_unsupported().into());
+          }
+        }
+        // This format has no alpha plane, so premultiplied weighting is a
+        // category error — reject with a typed error rather than silently
+        // running the encoded average. Phase 5 wires Premultiplied for alpha
+        // formats; on these non-alpha formats rejecting is correct.
+        AveragingDomain::Premultiplied => {
+          return Err(plan.premultiplied_domain_unsupported().into());
+        }
+      }
       if plan.kind().is_filter() {
         return planar_dual_filter_resample(
           luma_filter_stream,
@@ -2373,9 +2695,8 @@ impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
         );
       }
       // Native / row-stage route split — see the Yuv420p impl for the
-      // CHECK-before / SET-after `frozen_native_route` contract.
-      let need_output =
-        luma.is_some() || luma_u16.is_some() || rgb.is_some() || rgba.is_some() || hsv.is_some();
+      // CHECK-before / SET-after `frozen_native_route` contract. Reuses the
+      // `need_output` computed for the domain freeze above.
       if need_output
         && let Some(frozen) = *frozen_native_route
         && frozen != *native
@@ -2425,6 +2746,11 @@ impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
           if frozen_native_route.is_none() && need_output {
             *frozen_native_route = Some(true);
           }
+          // Encoded domain committed alongside the route, on the same accepted
+          // output-bearing row (the `?` above already returned any reject).
+          if frozen_domain.is_none() && need_output {
+            *frozen_domain = Some(AveragingDomain::Encoded);
+          }
           return Ok(());
         }
         InsertionPoint::EncodedOutput => {
@@ -2448,7 +2774,18 @@ impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
           if frozen_native_route.is_none() && need_output {
             *frozen_native_route = Some(false);
           }
+          // Encoded domain committed alongside the route, on the same accepted
+          // output-bearing row (the `?` above already returned any reject).
+          if frozen_domain.is_none() && need_output {
+            *frozen_domain = Some(AveragingDomain::Encoded);
+          }
           return Ok(());
+        }
+        // The encoded domain only resolves to the native-codes or
+        // encoded-output splice; the linear-light splice is reached via the
+        // sink's Linear averaging domain, dispatched before this match.
+        InsertionPoint::LinearLight => {
+          unreachable!("encoded domain never selects the linear-light splice")
         }
       }
     }
@@ -2620,7 +2957,13 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
       native.reset();
     }
     self.frozen_native_route = None;
+    self.frozen_domain = None;
     self.resample_outputs = None;
+    // New frame: drop the RFC #238 linear-light accumulator (if any).
+    #[cfg(feature = "rgb")]
+    {
+      self.linear_light_frame = None;
+    }
     Ok(())
   }
 
@@ -2676,6 +3019,12 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
       native,
       native_planar,
       frozen_native_route,
+      frozen_domain,
+      averaging_domain,
+      #[cfg(feature = "rgb")]
+      linear_light_frame,
+      #[cfg(feature = "rgb")]
+      transfer_function,
       ..
     } = self;
 
@@ -2704,6 +3053,81 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
           use_simd,
         );
       };
+      // RFC #238 Phase 2 — single always-compiled choke point for the averaging
+      // domain, BEFORE any filter / native / row-stage branching, so a
+      // non-encoded sink never falls through to the Encoded path under any
+      // feature combination. The match is EXHAUSTIVE with no wildcard arm: a
+      // future `AveragingDomain` variant fails to compile until handled here.
+      // The `Encoded` arm is empty (control continues into the encoded dispatch
+      // below); `Linear` and `Premultiplied` return. See the Yuv420p impl.
+      //
+      // `need_output` gates BOTH the averaging-domain freeze here and the
+      // native/row-stage route freeze below. The domain freeze is CHECK-ONLY
+      // here — the matching SET happens AFTER the selected path accepts an
+      // output-bearing row (mirroring `frozen_native_route` below), never
+      // before dispatch, so a rejected row leaves the freeze unchanged and a
+      // corrected-domain retry of the SAME row is not falsely rejected. See the
+      // Yuv420p impl for the full CHECK-before / SET-after rationale.
+      let need_output =
+        luma.is_some() || luma_u16.is_some() || rgb.is_some() || rgba.is_some() || hsv.is_some();
+      if need_output
+        && let Some(frozen) = *frozen_domain
+        && frozen != *averaging_domain
+      {
+        return Err(MixedSinkerError::AveragingDomainChanged(
+          AveragingDomainChanged::new(idx),
+        ));
+      }
+      match *averaging_domain {
+        AveragingDomain::Encoded => {}
+        // Under `rgb` it runs the linear tail (which itself rejects a filter
+        // plan); without `rgb` it returns the typed `LinearDomainUnsupported`.
+        AveragingDomain::Linear => {
+          #[cfg(feature = "rgb")]
+          {
+            let tf = transfer_function.unwrap_or_else(|| TransferFunction::for_matrix(matrix));
+            // Dispatch first; commit the domain freeze to Linear ONLY when the
+            // tail accepts an output-bearing row (`r.is_ok() && need_output`).
+            // A no-output call returns Ok without consuming; a filter /
+            // out-of-sequence / output-changed / alloc reject returns Err — so
+            // a rejected row leaves `frozen_domain` unset for a corrected retry.
+            // See the Yuv420p impl.
+            let r = linear_light::linear_light_resample(
+              linear_light_frame,
+              resample_outputs,
+              rgb,
+              rgba,
+              luma,
+              luma_u16,
+              hsv,
+              rgb_scratch,
+              tf,
+              plan,
+              row.y(),
+              idx,
+              w,
+              h,
+              use_simd,
+              |_idx, dst| convert_rgb(dst),
+            );
+            if r.is_ok() && need_output && frozen_domain.is_none() {
+              *frozen_domain = Some(AveragingDomain::Linear);
+            }
+            return r;
+          }
+          #[cfg(not(feature = "rgb"))]
+          {
+            return Err(plan.linear_domain_unsupported().into());
+          }
+        }
+        // This format has no alpha plane, so premultiplied weighting is a
+        // category error — reject with a typed error rather than silently
+        // running the encoded average. Phase 5 wires Premultiplied for alpha
+        // formats; on these non-alpha formats rejecting is correct.
+        AveragingDomain::Premultiplied => {
+          return Err(plan.premultiplied_domain_unsupported().into());
+        }
+      }
       if plan.kind().is_filter() {
         return planar_dual_filter_resample(
           luma_filter_stream,
@@ -2724,9 +3148,8 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
         );
       }
       // Native / row-stage route split — see the Yuv420p impl for the
-      // CHECK-before / SET-after `frozen_native_route` contract.
-      let need_output =
-        luma.is_some() || luma_u16.is_some() || rgb.is_some() || rgba.is_some() || hsv.is_some();
+      // CHECK-before / SET-after `frozen_native_route` contract. Reuses the
+      // `need_output` computed for the domain freeze above.
       if need_output
         && let Some(frozen) = *frozen_native_route
         && frozen != *native
@@ -2777,6 +3200,11 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
           if frozen_native_route.is_none() && need_output {
             *frozen_native_route = Some(true);
           }
+          // Encoded domain committed alongside the route, on the same accepted
+          // output-bearing row (the `?` above already returned any reject).
+          if frozen_domain.is_none() && need_output {
+            *frozen_domain = Some(AveragingDomain::Encoded);
+          }
           return Ok(());
         }
         InsertionPoint::EncodedOutput => {
@@ -2800,7 +3228,18 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
           if frozen_native_route.is_none() && need_output {
             *frozen_native_route = Some(false);
           }
+          // Encoded domain committed alongside the route, on the same accepted
+          // output-bearing row (the `?` above already returned any reject).
+          if frozen_domain.is_none() && need_output {
+            *frozen_domain = Some(AveragingDomain::Encoded);
+          }
           return Ok(());
+        }
+        // The encoded domain only resolves to the native-codes or
+        // encoded-output splice; the linear-light splice is reached via the
+        // sink's Linear averaging domain, dispatched before this match.
+        InsertionPoint::LinearLight => {
+          unreachable!("encoded domain never selects the linear-light splice")
         }
       }
     }

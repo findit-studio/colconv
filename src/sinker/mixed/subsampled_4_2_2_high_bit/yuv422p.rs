@@ -329,6 +329,12 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p9<BE>, R> {
           }
           return Ok(());
         }
+        // The encoded domain only resolves to the native-codes or
+        // encoded-output splice; the linear-light splice is reached via the
+        // sink's Linear averaging domain, dispatched before this match.
+        InsertionPoint::LinearLight => {
+          unreachable!("encoded domain never selects the linear-light splice")
+        }
       }
     }
 
@@ -774,6 +780,12 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p10<BE>, R> {
           }
           return Ok(());
         }
+        // The encoded domain only resolves to the native-codes or
+        // encoded-output splice; the linear-light splice is reached via the
+        // sink's Linear averaging domain, dispatched before this match.
+        InsertionPoint::LinearLight => {
+          unreachable!("encoded domain never selects the linear-light splice")
+        }
       }
     }
 
@@ -1204,6 +1216,12 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p12<BE>, R> {
           }
           return Ok(());
         }
+        // The encoded domain only resolves to the native-codes or
+        // encoded-output splice; the linear-light splice is reached via the
+        // sink's Linear averaging domain, dispatched before this match.
+        InsertionPoint::LinearLight => {
+          unreachable!("encoded domain never selects the linear-light splice")
+        }
       }
     }
 
@@ -1633,6 +1651,12 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p14<BE>, R> {
             *frozen_native_route = Some(false);
           }
           return Ok(());
+        }
+        // The encoded domain only resolves to the native-codes or
+        // encoded-output splice; the linear-light splice is reached via the
+        // sink's Linear averaging domain, dispatched before this match.
+        InsertionPoint::LinearLight => {
+          unreachable!("encoded domain never selects the linear-light splice")
         }
       }
     }
@@ -2070,6 +2094,12 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv422p16<BE>, R> {
             *frozen_native_route = Some(false);
           }
           return Ok(());
+        }
+        // The encoded domain only resolves to the native-codes or
+        // encoded-output splice; the linear-light splice is reached via the
+        // sink's Linear averaging domain, dispatched before this match.
+        InsertionPoint::LinearLight => {
+          unreachable!("encoded domain never selects the linear-light splice")
         }
       }
     }

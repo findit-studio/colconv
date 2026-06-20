@@ -114,6 +114,11 @@ use crate::{
   SourceFormat,
   resample::{NoopResampler, ResampleError, ResamplePlan, Resampler},
 };
+// The RFC #238 averaging-domain selector + caller-configurable transfer
+// curve drive the `yuv-planar`-only linear-light path; the fields and
+// builders are gated to that family.
+#[cfg(feature = "yuv-planar")]
+use crate::resample::{AveragingDomain, TransferFunction};
 // PixelSink is referenced only via intra-doc links (`[`PixelSink::*`]`)
 // in this file; the rustc lint can't see those uses, so silence it.
 #[allow(unused_imports)]
@@ -587,6 +592,54 @@ impl NativeRouteChanged {
   }
 }
 
+/// Mid-frame [`AveragingDomain::Linear`] transfer-function change payload
+/// for [`MixedSinkerError::TransferFunctionChanged`].
+///
+/// [`AveragingDomain::Linear`]: crate::resample::AveragingDomain::Linear
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransferFunctionChanged {
+  /// Source row whose `process` call observed the changed transfer function.
+  row: usize,
+}
+
+impl TransferFunctionChanged {
+  /// Constructs a new `TransferFunctionChanged` payload.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn new(row: usize) -> Self {
+    Self { row }
+  }
+
+  /// Source row whose `process` call observed the changed transfer function.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn row(&self) -> usize {
+    self.row
+  }
+}
+
+/// Mid-frame [`AveragingDomain`] change payload for
+/// [`MixedSinkerError::AveragingDomainChanged`].
+///
+/// [`AveragingDomain`]: crate::resample::AveragingDomain
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AveragingDomainChanged {
+  /// Source row whose `process` call observed the changed averaging domain.
+  row: usize,
+}
+
+impl AveragingDomainChanged {
+  /// Constructs a new `AveragingDomainChanged` payload.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn new(row: usize) -> Self {
+    Self { row }
+  }
+
+  /// Source row whose `process` call observed the changed averaging domain.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn row(&self) -> usize {
+    self.row
+  }
+}
+
 /// Errors returned by [`MixedSinker`] configuration and per-frame
 /// preflight.
 ///
@@ -790,6 +843,45 @@ pub enum MixedSinkerError {
     .0.row()
   )]
   NativeRouteChanged(NativeRouteChanged),
+
+  /// The [`AveragingDomain::Linear`] transfer function changed mid-frame.
+  ///
+  /// The linear-light tail buffers each source row linearised under the
+  /// transfer function resolved on the first output-bearing row; a later
+  /// row resolving a different transfer (a caller flipping
+  /// [`MixedSinker::with_transfer_function`] or the source `ColorMatrix`
+  /// mid-frame) would bin rows linearised under inconsistent curves. The
+  /// offending `process` call fails before the row is consumed; restore the
+  /// transfer and call [`PixelSink::begin_frame`] to restart the frame.
+  ///
+  /// [`AveragingDomain::Linear`]: crate::resample::AveragingDomain::Linear
+  #[error(
+    "MixedSinker Linear transfer function changed mid-frame at source row \
+     {}; restart the frame via begin_frame",
+    .0.row()
+  )]
+  TransferFunctionChanged(TransferFunctionChanged),
+
+  /// The [`AveragingDomain`] chosen on the first output-bearing resampled row
+  /// is frozen for the frame, alongside the output set, the native-vs-row-stage
+  /// route, and (for [`AveragingDomain::Linear`]) the transfer function: the
+  /// domain selects the pipeline stage the area average is spliced at, so a
+  /// caller flipping [`MixedSinker::set_averaging_domain`] mid-frame (between
+  /// `process` rows, without [`PixelSink::begin_frame`]) would split one frame
+  /// across two incompatible averaging stages. The offending `process` call
+  /// fails before any stream consumes the row or writes caller output; restore
+  /// the domain and call [`PixelSink::begin_frame`] to restart the frame. The
+  /// freeze is enforced by the planar 8-bit YUV family (Yuv420p / Yuv422p /
+  /// Yuv444p / Yuv440p), the formats whose dispatch reads the configured domain.
+  ///
+  /// [`AveragingDomain`]: crate::resample::AveragingDomain
+  /// [`AveragingDomain::Linear`]: crate::resample::AveragingDomain::Linear
+  #[error(
+    "MixedSinker averaging domain changed mid-frame at source row \
+     {}; restart the frame via begin_frame",
+    .0.row()
+  )]
+  AveragingDomainChanged(AveragingDomainChanged),
 }
 
 /// Identifies which slice of a multi‑plane source row mismatched in
@@ -2124,6 +2216,21 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// enable the native tier, so no guard is needed there).
   #[cfg(feature = "yuv-planar")]
   frozen_native_route: Option<bool>,
+  /// The [`AveragingDomain`] captured on the first output-bearing resampled row
+  /// of a frame; a mid-frame change is rejected. The domain selects the pipeline
+  /// stage the area average is spliced at (encoded codes vs linear light vs
+  /// premultiplied), so flipping [`Self::set_averaging_domain`] mid-frame would
+  /// split one frame across two incompatible averaging stages. Completes the
+  /// per-frame freeze family (output set, native route, transfer, domain). Reset
+  /// to `None` per frame in the planar 8-bit families' `begin_frame` (the only
+  /// formats whose dispatch reads the configured domain). Gated to `yuv-planar`,
+  /// where that dispatch — and so the only reader of this field — lives; the
+  /// high-bit / semi-planar / packed dispatches splice `AveragingDomain::Encoded`
+  /// as a literal and never consult it.
+  ///
+  /// [`AveragingDomain`]: crate::resample::AveragingDomain
+  #[cfg(feature = "yuv-planar")]
+  frozen_domain: Option<crate::resample::AveragingDomain>,
   /// Lazily grown to `3 * width` bytes when HSV is requested without a
   /// user RGB buffer. Empty otherwise.
   ///
@@ -2397,6 +2504,30 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// tail consults it; every direct (identity-plan) path and every
   /// non-RGBA source ignores it.
   alpha_mode: AlphaMode,
+  /// The RFC #238 averaging domain an area downscale resamples in.
+  /// Defaults to [`AveragingDomain::Encoded`] (the gamma-encoded /
+  /// libswscale-class average — bit-identical to the pre-RFC behaviour).
+  /// [`AveragingDomain::Linear`], set via [`Self::with_averaging_domain`],
+  /// opts into the physically-correct linear-light average for the planar
+  /// 8-bit YUV family (the only family wired in Phase 2); every other
+  /// format ignores it and stays on the encoded path.
+  #[cfg(feature = "yuv-planar")]
+  averaging_domain: AveragingDomain,
+  /// Optional caller override for the [`AveragingDomain::Linear`] transfer
+  /// curve. `None` (the default) derives the curve from the sink's
+  /// [`ColorMatrix`](crate::ColorMatrix) via [`TransferFunction::for_matrix`]; `Some(tf)` pins
+  /// `tf` regardless of the matrix. Consulted only on the linear-light
+  /// path; the encoded path never reads it. See
+  /// [`Self::with_transfer_function`].
+  #[cfg(feature = "yuv-planar")]
+  transfer_function: Option<TransferFunction>,
+  /// Per-frame accumulator for the RFC #238 [`AveragingDomain::Linear`]
+  /// linear-light tail (planar 8-bit YUV family). Lazily created on the
+  /// first output-bearing row of a linear-domain frame; reset to `None` per
+  /// `begin_frame`. Present only when the linear path is wired
+  /// (`yuv-planar` + `rgb`).
+  #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
+  linear_light_frame: Option<linear_light::LinearLightFrame>,
   /// Q8 fixed-point luma coefficients `(cr, cg, cb)` such that
   /// `luma = ((cr * R + cg * G + cb * B + 128) >> 8) as u8`. Only
   /// consulted by source impls that *derive* luma from RGB
@@ -2999,6 +3130,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       packed_444_v_full_u16: Vec::new(),
       #[cfg(feature = "yuv-planar")]
       frozen_native_route: None,
+      #[cfg(feature = "yuv-planar")]
+      frozen_domain: None,
       #[cfg(any(
         feature = "bayer",
         feature = "gbr",
@@ -3094,6 +3227,12 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       xyz_scratch_f32: Vec::new(),
       simd: true,
       alpha_mode: F::DEFAULT_ALPHA_MODE,
+      #[cfg(feature = "yuv-planar")]
+      averaging_domain: AveragingDomain::Encoded,
+      #[cfg(feature = "yuv-planar")]
+      transfer_function: None,
+      #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
+      linear_light_frame: None,
       // BT.709 by default — matches the implicit weights every
       // YUV→RGB→luma pipeline uses, and is the most common Bayer
       // CCM target. Per-format impls (`MixedSinker<Bayer>` etc.)
@@ -3665,6 +3804,85 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn with_alpha_mode(mut self, mode: AlphaMode) -> Self {
     self.set_alpha_mode(mode);
+    self
+  }
+
+  /// Returns the RFC #238 [averaging domain](AveragingDomain) an area
+  /// downscale resamples in. See [`Self::with_averaging_domain`].
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn averaging_domain(&self) -> AveragingDomain {
+    self.averaging_domain
+  }
+
+  /// Sets the averaging domain in place. See
+  /// [`Self::with_averaging_domain`] for the consuming builder variant.
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn set_averaging_domain(&mut self, domain: AveragingDomain) -> &mut Self {
+    self.averaging_domain = domain;
+    self
+  }
+
+  /// Selects the colour domain an area downscale averages in, overriding
+  /// the default [`AveragingDomain::Encoded`]. Mirrors the
+  /// [`Self::with_simd`] builder pattern.
+  ///
+  /// [`AveragingDomain::Linear`] opts the **planar 8-bit YUV** family
+  /// (`Yuv420p` / `Yuv422p` / `Yuv444p` / `Yuv440p`) into a
+  /// physically-correct linear-light downscale: each source pixel is
+  /// decoded to RGB, lifted to linear light by the
+  /// [`TransferFunction`] EOTF, box-averaged, and re-encoded by the OETF.
+  /// Because the YUV→RGB convert is affine (no transfer), this lands at a
+  /// materially different RGB than the default encoded average — the
+  /// quality-vs-default trade the domain offers. The transfer curve is
+  /// resolved from the sink's [`ColorMatrix`](crate::ColorMatrix) unless overridden with
+  /// [`Self::with_transfer_function`].
+  ///
+  /// The domain is a no-op for every other format and for the direct
+  /// (identity-plan) conversions; [`AveragingDomain::Encoded`] keeps the
+  /// bit-identical pre-RFC behaviour. See [`Self::set_averaging_domain`]
+  /// for the in-place variant.
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn with_averaging_domain(mut self, domain: AveragingDomain) -> Self {
+    self.set_averaging_domain(domain);
+    self
+  }
+
+  /// Returns the caller's [`TransferFunction`] override, or `None` when the
+  /// linear-light transfer is derived from the [`ColorMatrix`](crate::ColorMatrix). See
+  /// [`Self::with_transfer_function`].
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn transfer_function(&self) -> Option<TransferFunction> {
+    self.transfer_function
+  }
+
+  /// Sets the transfer-function override in place. See
+  /// [`Self::with_transfer_function`] for the consuming builder variant.
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn set_transfer_function(&mut self, tf: TransferFunction) -> &mut Self {
+    self.transfer_function = Some(tf);
+    self
+  }
+
+  /// Pins the [`TransferFunction`] the [`AveragingDomain::Linear`] path
+  /// linearises and re-encodes through, overriding the per-`ColorMatrix`
+  /// default ([`TransferFunction::for_matrix`]: the [`ColorMatrix::Rgb`](crate::ColorMatrix::Rgb)
+  /// identity → [`TransferFunction::Srgb`], every YCbCr video matrix →
+  /// [`TransferFunction::Bt1886`]).
+  ///
+  /// Use this when the source's transfer characteristics are known out of
+  /// band (colconv's YUV row stage carries the matrix but not the
+  /// transfer). The override is consulted only on the linear-light path;
+  /// the encoded and direct paths ignore it. See
+  /// [`Self::set_transfer_function`] for the in-place variant.
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn with_transfer_function(mut self, tf: TransferFunction) -> Self {
+    self.set_transfer_function(tf);
     self
   }
 
@@ -6778,12 +6996,14 @@ pub(super) fn reset_high_bit_yuv_streams<F: SourceFormat, R>(sink: &mut MixedSin
   if let Some(join) = sink.native_planar_u16.as_mut() {
     join.reset();
   }
-  // Clear the per-frame frozen native/row-stage route so the next frame
-  // may pick either tier (the dispatch re-freezes it on its first
-  // resampled row); a mid-frame flip within a frame stays rejected.
+  // Clear the per-frame frozen native/row-stage route and averaging domain so
+  // the next frame may pick either tier / any domain (the dispatch re-freezes
+  // each on its first resampled row); a mid-frame flip within a frame stays
+  // rejected.
   #[cfg(feature = "yuv-planar")]
   {
     sink.frozen_native_route = None;
+    sink.frozen_domain = None;
   }
   sink.resample_outputs = None;
 }
@@ -12660,6 +12880,11 @@ mod pal8;
 mod planar_8bit;
 #[cfg(all(test, feature = "std", feature = "yuv-planar"))]
 pub(crate) use planar_8bit::arm_planar_native_chroma_failure;
+// RFC #238 Phase 2 — the linear-light averaging path for the planar 8-bit
+// YUV family. Produces RGB/RGBA, so it needs both `yuv-planar` (the source
+// formats) and `rgb` (the output kernels).
+#[cfg(all(feature = "yuv-planar", feature = "rgb"))]
+mod linear_light;
 #[cfg(feature = "yuv-planar")]
 mod planar_high_bit_native;
 // Bring the high-bit non-4:2:0 planar native join + entry point (and its

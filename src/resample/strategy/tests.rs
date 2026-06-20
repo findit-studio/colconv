@@ -180,21 +180,43 @@ fn ineligible_format_never_splices_at_native_codes() {
 }
 
 #[test]
-fn reserved_domains_resolve_to_encoded_output() {
-  // Phase 0 never constructs Linear / Premultiplied on a splice path, but
-  // the selector is total: they resolve to the encoded output until their
-  // own phases land.
-  for domain in [AveragingDomain::Linear, AveragingDomain::Premultiplied] {
-    let ctx = InsertionContext {
-      native_eligible: true,
-      with_native: true,
-      area_plan: true,
-    };
-    assert_eq!(
-      select_insertion_point(domain, ctx),
-      InsertionPoint::EncodedOutput,
-    );
+fn linear_domain_resolves_to_linear_light() {
+  // RFC #238 Phase 2: the Linear domain splices at the linear-light stage,
+  // independent of the native-tier inputs (the linear average is its own
+  // splice, not a native fast-tier variant).
+  for native_eligible in [false, true] {
+    for with_native in [false, true] {
+      for area_plan in [false, true] {
+        let ctx = InsertionContext {
+          native_eligible,
+          with_native,
+          area_plan,
+        };
+        assert_eq!(
+          select_insertion_point(AveragingDomain::Linear, ctx),
+          InsertionPoint::LinearLight,
+          "Linear must splice at LinearLight regardless of native inputs",
+        );
+      }
+    }
   }
+}
+
+#[test]
+#[should_panic(expected = "Premultiplied is rejected at dispatch")]
+fn premultiplied_domain_has_no_splice_and_is_unreachable() {
+  // Premultiplied is a reserved future-phase domain with no valid insertion
+  // point yet. The selector must NOT silently resolve it to the encoded
+  // output (a different domain) — every caller rejects it before the
+  // selector, so reaching this arm is a routing bug. Asserting the panic
+  // (rather than a returned splice) pins the honesty contract: there is no
+  // legitimate Premultiplied→Encoded route here.
+  let ctx = InsertionContext {
+    native_eligible: true,
+    with_native: true,
+    area_plan: true,
+  };
+  let _ = select_insertion_point(AveragingDomain::Premultiplied, ctx);
 }
 
 #[test]
@@ -209,4 +231,123 @@ fn resample_strategy_default_is_encoded_area() {
   let strat = ResampleStrategy::default();
   assert_eq!(strat.domain(), AveragingDomain::Encoded);
   assert_eq!(strat.filter(), FilterSpec::Area);
+}
+
+#[test]
+fn transfer_function_default_is_bt1886() {
+  assert_eq!(TransferFunction::default(), TransferFunction::Bt1886);
+}
+
+#[test]
+fn transfer_function_as_str_round_trips_variants() {
+  assert_eq!(TransferFunction::LinearPassthrough.as_str(), "linear");
+  assert_eq!(TransferFunction::Srgb.as_str(), "srgb");
+  assert_eq!(TransferFunction::Bt1886.as_str(), "bt1886");
+  assert_eq!(TransferFunction::Gamma22.as_str(), "gamma22");
+}
+
+#[test]
+fn transfer_function_eotf_oetf_are_inverses() {
+  // EOTF∘OETF and OETF∘EOTF round-trip to the identity within f32 epsilon
+  // across the unit interval — the property the Linear domain relies on to
+  // stay close to the encoded path when chroma is flat.
+  for tf in [
+    TransferFunction::LinearPassthrough,
+    TransferFunction::Srgb,
+    TransferFunction::Bt1886,
+    TransferFunction::Gamma22,
+  ] {
+    for i in 0..=256 {
+      let c = i as f32 / 256.0;
+      let round = tf.oetf(tf.eotf(c));
+      assert!(
+        (round - c).abs() <= 2e-4,
+        "{}: oetf(eotf({c})) = {round}, want {c}",
+        tf.as_str(),
+      );
+      let round2 = tf.eotf(tf.oetf(c));
+      assert!(
+        (round2 - c).abs() <= 2e-4,
+        "{}: eotf(oetf({c})) = {round2}, want {c}",
+        tf.as_str(),
+      );
+    }
+  }
+}
+
+#[test]
+fn transfer_function_endpoints_are_fixed() {
+  // 0 and 1 map to themselves under every curve (the gamut endpoints must
+  // not drift).
+  for tf in [
+    TransferFunction::LinearPassthrough,
+    TransferFunction::Srgb,
+    TransferFunction::Bt1886,
+    TransferFunction::Gamma22,
+  ] {
+    assert!(tf.eotf(0.0).abs() <= 1e-6, "{}: eotf(0)", tf.as_str());
+    assert!(
+      (tf.eotf(1.0) - 1.0).abs() <= 1e-6,
+      "{}: eotf(1)",
+      tf.as_str()
+    );
+    assert!(tf.oetf(0.0).abs() <= 1e-6, "{}: oetf(0)", tf.as_str());
+    assert!(
+      (tf.oetf(1.0) - 1.0).abs() <= 1e-6,
+      "{}: oetf(1)",
+      tf.as_str()
+    );
+  }
+}
+
+#[test]
+fn transfer_function_curves_are_distinct() {
+  // A mid-tone linearises differently under each curve, so the caller's
+  // choice is observable (the property `transfer_function_caller_override`
+  // exercises end-to-end).
+  let c = 0.5_f32;
+  let srgb = TransferFunction::Srgb.eotf(c);
+  let bt1886 = TransferFunction::Bt1886.eotf(c);
+  let g22 = TransferFunction::Gamma22.eotf(c);
+  let lin = TransferFunction::LinearPassthrough.eotf(c);
+  assert!((srgb - bt1886).abs() > 1e-3, "sRGB vs BT.1886 must differ");
+  assert!(
+    (bt1886 - g22).abs() > 1e-3,
+    "BT.1886 vs gamma2.2 must differ"
+  );
+  assert!(
+    (lin - bt1886).abs() > 1e-3,
+    "passthrough vs BT.1886 must differ"
+  );
+}
+
+#[test]
+fn transfer_function_for_matrix_default_mapping() {
+  use crate::ColorMatrix;
+  // The sRGB identity (GBR) pairs with the sRGB curve.
+  assert_eq!(
+    TransferFunction::for_matrix(ColorMatrix::Rgb),
+    TransferFunction::Srgb,
+  );
+  // Every YCbCr video matrix resolves to the BT.1886 display EOTF.
+  for matrix in [
+    ColorMatrix::Bt601,
+    ColorMatrix::Bt709,
+    ColorMatrix::Bt2020Ncl,
+    ColorMatrix::Bt2020Cl,
+    ColorMatrix::Smpte170M,
+    ColorMatrix::Smpte240m,
+    ColorMatrix::Fcc,
+    ColorMatrix::Bt470Bg,
+    ColorMatrix::YCgCo,
+    ColorMatrix::Unspecified,
+    ColorMatrix::Unknown(99),
+  ] {
+    assert_eq!(
+      TransferFunction::for_matrix(matrix),
+      TransferFunction::Bt1886,
+      "{} must resolve to BT.1886",
+      matrix.as_str(),
+    );
+  }
 }
