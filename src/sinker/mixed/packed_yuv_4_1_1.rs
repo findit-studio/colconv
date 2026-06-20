@@ -99,7 +99,7 @@ use crate::{
 #[allow(clippy::too_many_arguments)]
 fn packed_yuv411_process_native(
   plan: &ResamplePlan,
-  native_planar: &mut Option<NativePlanarYuv>,
+  native_planar: &mut Option<std::boxed::Box<NativePlanarYuv>>,
   y_scratch: &mut std::vec::Vec<u8>,
   u_scratch: &mut std::vec::Vec<u8>,
   v_scratch: &mut std::vec::Vec<u8>,

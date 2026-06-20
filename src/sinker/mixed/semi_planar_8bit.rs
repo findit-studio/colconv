@@ -105,7 +105,7 @@ pub(super) fn arm_deinterleave_alloc_failure() {
 #[allow(clippy::too_many_arguments)]
 fn semi_planar_process_native(
   plan: &ResamplePlan,
-  native_420: &mut Option<super::planar_8bit::NativeYuv420>,
+  native_420: &mut Option<std::boxed::Box<super::planar_8bit::NativeYuv420>>,
   u_scratch: &mut std::vec::Vec<u8>,
   v_scratch: &mut std::vec::Vec<u8>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
@@ -265,7 +265,7 @@ fn semi_planar_process_native(
 #[allow(clippy::too_many_arguments)]
 fn semi_planar_process_native_non420(
   plan: &ResamplePlan,
-  native_planar: &mut Option<NativePlanarYuv>,
+  native_planar: &mut Option<std::boxed::Box<NativePlanarYuv>>,
   u_scratch: &mut std::vec::Vec<u8>,
   v_scratch: &mut std::vec::Vec<u8>,
   resample_outputs: &mut Option<super::FrozenOutputs>,

@@ -65,8 +65,8 @@ use mediaframe::source::HsvFrameMut;
 /// legal no-op.
 #[allow(clippy::too_many_arguments)]
 fn mono_luma_resample(
-  luma_stream: &mut Option<AreaStream<u8>>,
-  luma_filter_stream: &mut Option<FilterStream<u8>>,
+  luma_stream: &mut Option<std::boxed::Box<AreaStream<u8>>>,
+  luma_filter_stream: &mut Option<std::boxed::Box<FilterStream<u8>>>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -154,7 +154,19 @@ fn mono_luma_resample(
         .expect("filter plan carries vertical windows"),
     );
     if luma_filter_stream.is_none() {
-      *luma_filter_stream = Some(FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 1)?);
+      *luma_filter_stream = Some({
+        let stream = FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 1)?;
+        crate::resample::try_box(stream).map_err(|_| {
+          MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+            crate::resample::PlanGeometry::new(
+              plan.src_w(),
+              plan.src_h(),
+              plan.out_w(),
+              plan.out_h(),
+            ),
+          ))
+        })?
+      });
     }
     let stream = luma_filter_stream.as_mut().expect("created above");
     mono_luma_feed_emit(
@@ -175,13 +187,19 @@ fn mono_luma_resample(
     )
   } else {
     if luma_stream.is_none() {
-      *luma_stream = Some(AreaStream::new(
-        plan.h(),
-        plan.v(),
-        plan.src_w(),
-        plan.src_h(),
-        1,
-      )?);
+      *luma_stream = Some({
+        let stream = AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 1)?;
+        crate::resample::try_box(stream).map_err(|_| {
+          MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+            crate::resample::PlanGeometry::new(
+              plan.src_w(),
+              plan.src_h(),
+              plan.out_w(),
+              plan.out_h(),
+            ),
+          ))
+        })?
+      });
     }
     let stream = luma_stream.as_mut().expect("created above");
     mono_luma_feed_emit(

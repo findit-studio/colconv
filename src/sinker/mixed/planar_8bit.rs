@@ -802,7 +802,7 @@ impl NativeYuv420 {
 /// built, so `expected == 0`) before the caller's fallible allocation.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn yuv420p_native_preflight(
-  native_420: &Option<NativeYuv420>,
+  native_420: &Option<std::boxed::Box<NativeYuv420>>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &Option<&mut [u8]>,
   rgba: &Option<&mut [u8]>,
@@ -921,7 +921,7 @@ pub(super) fn native_preflight_core(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn yuv420p_process_native(
   plan: &ResamplePlan,
-  native_420: &mut Option<NativeYuv420>,
+  native_420: &mut Option<std::boxed::Box<NativeYuv420>>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -980,7 +980,24 @@ pub(super) fn yuv420p_process_native(
   }
   let join = match native_420 {
     Some(join) => join,
-    None => native_420.insert(NativeYuv420::new(plan, w, h, need_color)?),
+    None => {
+      // Build the join (its U / V de-interleave scratch allocates recoverably)
+      // and box it recoverably (`try_box`, not `Box::new` — the latter aborts
+      // on OOM). Both fallible steps run BEFORE `native_420.insert`, so a
+      // refusal at either returns `Err` with the field still `None` — no caller
+      // output is touched and the next row retries (the first-row-transactional
+      // contract).
+      let join = NativeYuv420::new(plan, w, h, need_color)?;
+      let boxed = crate::resample::try_box(join).map_err(|_| {
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+          w,
+          h,
+          plan.out_w(),
+          plan.out_h(),
+        )))
+      })?;
+      native_420.insert(boxed)
+    }
   };
   join.check_sequence(idx)?;
   if need_color {
@@ -1013,7 +1030,7 @@ pub(super) fn yuv420p_process_native(
     chroma,
     staged,
     next_emit,
-  } = join;
+  } = &mut **join;
   y.feed_row(idx, y_row, use_simd, |oy, out_row| {
     let slot = oy & 1;
     y_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
@@ -1323,7 +1340,7 @@ pub(super) fn bicublin_yuv420p_resample(
       // is touched and the next row retries from scratch (the
       // first-row-transactional contract).
       let join = BicublinYuv420::new(plan, w, h, need_color)?;
-      let boxed = try_box(join).map_err(|_| {
+      let boxed = crate::resample::try_box(join).map_err(|_| {
         MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
           w,
           h,
@@ -1484,8 +1501,8 @@ fn yuv420p_native_preflight_bicublin(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn yuv420p_process_resampled(
   plan: &ResamplePlan,
-  rgb_stream: &mut Option<AreaStream<u8>>,
-  luma_stream: &mut Option<AreaStream<u8>>,
+  rgb_stream: &mut Option<std::boxed::Box<AreaStream<u8>>>,
+  luma_stream: &mut Option<std::boxed::Box<AreaStream<u8>>>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -1561,22 +1578,34 @@ pub(super) fn yuv420p_process_resampled(
     )));
   }
   if need_luma && luma_stream.is_none() {
-    *luma_stream = Some(AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      1,
-    )?);
+    *luma_stream = Some({
+      let stream = AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 1)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   if need_color && rgb_stream.is_none() {
-    *rgb_stream = Some(AreaStream::new(
-      plan.h(),
-      plan.v(),
-      plan.src_w(),
-      plan.src_h(),
-      3,
-    )?);
+    *rgb_stream = Some({
+      let stream = AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 3)?;
+      crate::resample::try_box(stream).map_err(|_| {
+        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+          crate::resample::PlanGeometry::new(
+            plan.src_w(),
+            plan.src_h(),
+            plan.out_w(),
+            plan.out_h(),
+          ),
+        ))
+      })?
+    });
   }
   // (3) Color-group preparation is also fallible (scratch sizing) and
   // scratch-mutating, so it runs before the luma feed too. The user
@@ -1662,8 +1691,8 @@ pub(super) fn yuv420p_process_resampled(
 // ---- Native fast tier: STRAIGHT-alpha 4:2:0 planar (Yuva420p) -----------
 //
 // Gated on `yuva` (which implies `yuv-planar`): this join, its α helper, and
-// its entry point reference the alpha helpers (`row::alpha_extract`, `try_box`)
-// that exist only under `yuva`, and their sole consumer is the `yuva`-gated
+// its entry point reference the alpha helpers (`row::alpha_extract`) that exist
+// only under `yuva`, and their sole consumer is the `yuva`-gated
 // `Yuva420p` sink. Without the gate a `yuv-planar`-without-`yuva` build pulls
 // these items in but not their `yuva` dependencies, so it fails to compile.
 
@@ -1759,61 +1788,6 @@ impl NativeYuva420 {
   }
 }
 
-// Shared single-shot box-allocation failpoint for the recoverably-boxed native
-// joins (the straight-alpha `Yuva420p` tier and the `Yuv420p` BICUBLIN tier).
-// Gated on `yuv-planar` (which `yuva` implies) so both consumers can arm it.
-#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
-std::thread_local! {
-  static FORCE_NATIVE_BOX_FAILURE: core::cell::Cell<bool> =
-    const { core::cell::Cell::new(false) };
-}
-
-/// Arms a single-shot failpoint that makes the next [`try_box`] of a native
-/// join refuse, exactly as a host OOM would. Used to prove the outer box
-/// allocation is recoverable (typed `AllocationFailed`, not an abort) and
-/// transactional (the join field is left `None`, so the call is retryable).
-/// Shared by the straight-alpha `Yuva420p` and the BICUBLIN box tests.
-/// Test-only.
-#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
-pub(crate) fn arm_native_box_failure() {
-  FORCE_NATIVE_BOX_FAILURE.with(|f| f.set(true));
-}
-
-/// Recoverable heap-box of a sized value: the stable analogue of the
-/// nightly-only `Box::try_new`. The single backing allocation is taken
-/// through a one-element [`Vec`] reservation
-/// ([`try_reserve_exact`](Vec::try_reserve_exact)) so an allocator refusal
-/// surfaces as `Err(TryReserveError)` instead of aborting the process the way
-/// `Box::new` does. `into_boxed_slice` then hands back the exact-capacity
-/// allocation with no copy; reinterpreting that single-element `Box<[T]>` as
-/// `Box<T>` is the layout no-op below.
-///
-/// Shared by the straight-alpha `Yuva420p` native join and the `Yuv420p`
-/// BICUBLIN join (both boxed lazily), so it is gated on `yuv-planar` rather
-/// than `yuva`.
-#[cfg(feature = "yuv-planar")]
-fn try_box<T>(value: T) -> Result<std::boxed::Box<T>, std::collections::TryReserveError> {
-  #[cfg(all(test, feature = "std"))]
-  if FORCE_NATIVE_BOX_FAILURE.with(|f| f.take()) {
-    // Reproduce the exact error `try_reserve_exact` yields on refusal so the
-    // failpoint is indistinguishable from a real OOM.
-    let mut probe = std::vec::Vec::<T>::new();
-    probe.try_reserve_exact(usize::MAX)?;
-  }
-  let mut backing = std::vec::Vec::with_capacity(0);
-  backing.try_reserve_exact(1)?;
-  backing.push(value);
-  // `backing` now holds exactly one initialized element at capacity one, so
-  // `into_boxed_slice` returns that same allocation without reallocating.
-  let boxed_slice: std::boxed::Box<[T]> = backing.into_boxed_slice();
-  // SAFETY: `boxed_slice` owns a single element. `Box<[T; 1]>`, `Box<[T]>`
-  // (over one element), and `Box<T>` all point at one `T` with identical size
-  // and alignment, so reinterpreting the raw pointer transfers ownership of
-  // the same allocation unchanged. The `Box` is rebuilt from the same pointer
-  // exactly once, so the allocation is neither leaked nor double-freed.
-  Ok(unsafe { std::boxed::Box::from_raw(std::boxed::Box::into_raw(boxed_slice).cast::<T>()) })
-}
-
 /// Native-tier path for the **straight-alpha** [`MixedSinker<Yuva420p, R>`]:
 /// see [`NativeYuva420`]. Mirrors [`yuv420p_process_native`] for the
 /// Y / U / V → rgb / luma / hsv outputs and the opaque RGBA fan-out, and
@@ -1904,7 +1878,7 @@ pub(super) fn yuva420p_process_native(
       // empty, no caller output is touched, and the next row retries the
       // allocation from scratch (the first-row-transactional contract).
       let join = NativeYuva420::new(plan, w, h, need_color, need_alpha)?;
-      let boxed = try_box(join).map_err(|_| {
+      let boxed = crate::resample::try_box(join).map_err(|_| {
         MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
           w,
           h,
@@ -2258,7 +2232,7 @@ impl NativePlanarYuv {
 /// 4-point rejection logic and its ordering contract.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn native_planar_preflight(
-  join: &Option<NativePlanarYuv>,
+  join: &Option<std::boxed::Box<NativePlanarYuv>>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &Option<&mut [u8]>,
   rgba: &Option<&mut [u8]>,
@@ -2302,7 +2276,7 @@ pub(super) fn native_planar_preflight(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn yuv_planar_process_native(
   plan: &ResamplePlan,
-  native: &mut Option<NativePlanarYuv>,
+  native: &mut Option<std::boxed::Box<NativePlanarYuv>>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -2355,14 +2329,23 @@ pub(super) fn yuv_planar_process_native(
   }
   let join = match native {
     Some(join) => join,
-    None => native.insert(NativePlanarYuv::new(
-      plan,
-      build_chroma_plan,
-      chroma_vsub,
-      w,
-      h,
-      need_color,
-    )?),
+    None => {
+      // Build the join (its de-interleave scratch allocates recoverably) and box
+      // it recoverably (`try_box`, not `Box::new` — the latter aborts on OOM).
+      // Both fallible steps run BEFORE `native.insert`, so a refusal at either
+      // returns `Err` with the field still `None` — no caller output is touched
+      // and the next row retries (the first-row-transactional contract).
+      let join = NativePlanarYuv::new(plan, build_chroma_plan, chroma_vsub, w, h, need_color)?;
+      let boxed = crate::resample::try_box(join).map_err(|_| {
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+          w,
+          h,
+          plan.out_w(),
+          plan.out_h(),
+        )))
+      })?;
+      native.insert(boxed)
+    }
   };
   join.check_sequence(idx)?;
   if need_color {
@@ -2396,7 +2379,7 @@ pub(super) fn yuv_planar_process_native(
     chroma_vsub,
     staged,
     next_emit,
-  } = join;
+  } = &mut **join;
   y.feed_row(idx, y_row, use_simd, |oy, out_row| {
     let slot = oy & 1;
     y_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);

@@ -74,7 +74,7 @@ use super::{
 };
 use crate::{
   ColorMatrix,
-  resample::{AreaStream, PlanGeometry, ResampleError, ResamplePlan, try_zeroed},
+  resample::{AreaStream, PlanGeometry, ResampleError, ResamplePlan, try_box, try_zeroed},
   row::{
     expand_rgb_to_rgba_row, expand_rgb_u16_to_rgba_u16_row, rgb_to_hsv_row,
     yuv444p9_to_rgb_row_endian, yuv444p9_to_rgb_u16_row_endian, yuv444p10_to_rgb_row_endian,
@@ -316,7 +316,7 @@ impl NativePlanarYuvU16 {
 /// wrapper runs `native_planar_preflight`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn native_planar_hb_preflight(
-  join: &Option<NativePlanarYuvU16>,
+  join: &Option<std::boxed::Box<NativePlanarYuvU16>>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &Option<&mut [u8]>,
   rgba: &Option<&mut [u8]>,
@@ -330,7 +330,7 @@ pub(crate) fn native_planar_hb_preflight(
   need_color: bool,
 ) -> Result<bool, MixedSinkerError> {
   native_preflight_core(
-    join.as_ref().map_or(0, NativePlanarYuvU16::next_y),
+    join.as_ref().map_or(0, |j| j.next_y()),
     resample_outputs,
     rgb,
     rgba,
@@ -394,7 +394,7 @@ fn grow_src_scratch(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn yuv_planar16_process_native<const BITS: u32, const BE: bool>(
   plan: &ResamplePlan,
-  native: &mut Option<NativePlanarYuvU16>,
+  native: &mut Option<std::boxed::Box<NativePlanarYuvU16>>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -465,15 +465,31 @@ pub(crate) fn yuv_planar16_process_native<const BITS: u32, const BE: bool>(
   }
   let join = match native {
     Some(join) => join,
-    None => native.insert(NativePlanarYuvU16::new(
-      plan,
-      build_chroma_plan,
-      chroma_vsub,
-      chroma_w,
-      w,
-      h,
-      need_color,
-    )?),
+    None => {
+      // Build the join (its de-interleave scratch allocates recoverably) and box
+      // it recoverably (`try_box`, not `Box::new` — the latter aborts on OOM).
+      // Both fallible steps run BEFORE `native.insert`, so a refusal at either
+      // returns `Err` with the field still `None` — no caller output is touched
+      // and the next row retries (the first-row-transactional contract).
+      let join = NativePlanarYuvU16::new(
+        plan,
+        build_chroma_plan,
+        chroma_vsub,
+        chroma_w,
+        w,
+        h,
+        need_color,
+      )?;
+      let boxed = try_box(join).map_err(|_| {
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+          w,
+          h,
+          plan.out_w(),
+          plan.out_h(),
+        )))
+      })?;
+      native.insert(boxed)
+    }
   };
   join.check_sequence(idx)?;
 
@@ -561,7 +577,7 @@ pub(crate) fn yuv_planar16_process_native<const BITS: u32, const BE: bool>(
     chroma_vsub,
     staged,
     next_emit,
-  } = join;
+  } = &mut **join;
   y.feed_row(idx, &y_src[..w], use_simd, |oy, out_row| {
     let slot = oy & 1;
     y_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);

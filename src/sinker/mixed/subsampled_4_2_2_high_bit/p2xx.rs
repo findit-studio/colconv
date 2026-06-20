@@ -153,7 +153,7 @@ fn grow_depack_scratch(
 #[allow(clippy::too_many_arguments)]
 fn p2xx_process_native<const BITS: u32, const BE: bool>(
   plan: &ResamplePlan,
-  native_planar_u16: &mut Option<NativePlanarYuvU16>,
+  native_planar_u16: &mut Option<std::boxed::Box<NativePlanarYuvU16>>,
   y_scratch: &mut std::vec::Vec<u16>,
   u_scratch: &mut std::vec::Vec<u16>,
   v_scratch: &mut std::vec::Vec<u16>,

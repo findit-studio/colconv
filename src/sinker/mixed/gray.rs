@@ -297,8 +297,8 @@ impl<R> PixelSink for MixedSinker<'_, Gray8, R> {
 /// caller output.
 #[allow(clippy::too_many_arguments)]
 fn gray8_process_resampled(
-  luma_stream: &mut Option<AreaStream<u8>>,
-  luma_filter_stream: &mut Option<crate::resample::FilterStream<u8>>,
+  luma_stream: &mut Option<std::boxed::Box<AreaStream<u8>>>,
+  luma_filter_stream: &mut Option<std::boxed::Box<crate::resample::FilterStream<u8>>>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -482,13 +482,19 @@ fn gray8_process_resampled(
   match plan.kind() {
     crate::resample::SpanKind::Area => {
       if luma_stream.is_none() {
-        *luma_stream = Some(AreaStream::new(
-          plan.h(),
-          plan.v(),
-          plan.src_w(),
-          plan.src_h(),
-          1,
-        )?);
+        *luma_stream = Some({
+          let stream = AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 1)?;
+          crate::resample::try_box(stream).map_err(|_| {
+            MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+              crate::resample::PlanGeometry::new(
+                plan.src_w(),
+                plan.src_h(),
+                plan.out_w(),
+                plan.out_h(),
+              ),
+            ))
+          })?
+        });
       }
       let stream = luma_stream.as_mut().expect("created above");
       stream.feed_row(idx, y_row, use_simd, &mut emit)?;
@@ -501,13 +507,19 @@ fn gray8_process_resampled(
         let fv = plan
           .filter_v()
           .expect("filter plan carries vertical windows");
-        *luma_filter_stream = Some(crate::resample::FilterStream::new(
-          fh,
-          fv,
-          plan.src_w(),
-          plan.src_h(),
-          1,
-        )?);
+        *luma_filter_stream = Some({
+          let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 1)?;
+          crate::resample::try_box(stream).map_err(|_| {
+            MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+              crate::resample::PlanGeometry::new(
+                plan.src_w(),
+                plan.src_h(),
+                plan.out_w(),
+                plan.out_h(),
+              ),
+            ))
+          })?
+        });
       }
       let stream = luma_filter_stream.as_mut().expect("created above");
       stream.feed_row(idx, y_row, use_simd, &mut emit)?;
@@ -901,8 +913,8 @@ impl_gray_n_sinker!(Gray14, Gray14Row, Gray14Sink, 14);
 /// no caller output.
 #[allow(clippy::too_many_arguments)]
 fn gray_n_process_resampled<'a, const BITS: u32, const BE: bool>(
-  luma_stream_u16: &mut Option<AreaStream<u16>>,
-  luma_filter_stream_u16: &mut Option<crate::resample::FilterStream<u16>>,
+  luma_stream_u16: &mut Option<std::boxed::Box<AreaStream<u16>>>,
+  luma_filter_stream_u16: &mut Option<std::boxed::Box<crate::resample::FilterStream<u16>>>,
   luma_scratch_u16: &mut std::vec::Vec<u16>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &mut Option<&'a mut [u8]>,
@@ -1146,13 +1158,19 @@ fn gray_n_process_resampled<'a, const BITS: u32, const BE: bool>(
   match plan.kind() {
     crate::resample::SpanKind::Area => {
       if luma_stream_u16.is_none() {
-        *luma_stream_u16 = Some(AreaStream::new(
-          plan.h(),
-          plan.v(),
-          plan.src_w(),
-          plan.src_h(),
-          1,
-        )?);
+        *luma_stream_u16 = Some({
+          let stream = AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 1)?;
+          crate::resample::try_box(stream).map_err(|_| {
+            MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+              crate::resample::PlanGeometry::new(
+                plan.src_w(),
+                plan.src_h(),
+                plan.out_w(),
+                plan.out_h(),
+              ),
+            ))
+          })?
+        });
       }
       let stream = luma_stream_u16.as_mut().expect("created above");
       stream.feed_row(idx, src_luma, use_simd, &mut emit)?;
@@ -1165,13 +1183,19 @@ fn gray_n_process_resampled<'a, const BITS: u32, const BE: bool>(
         let fv = plan
           .filter_v()
           .expect("filter plan carries vertical windows");
-        *luma_filter_stream_u16 = Some(crate::resample::FilterStream::new(
-          fh,
-          fv,
-          plan.src_w(),
-          plan.src_h(),
-          1,
-        )?);
+        *luma_filter_stream_u16 = Some({
+          let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 1)?;
+          crate::resample::try_box(stream).map_err(|_| {
+            MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+              crate::resample::PlanGeometry::new(
+                plan.src_w(),
+                plan.src_h(),
+                plan.out_w(),
+                plan.out_h(),
+              ),
+            ))
+          })?
+        });
       }
       let stream = luma_filter_stream_u16.as_mut().expect("created above");
       stream.feed_row(idx, src_luma, use_simd, &mut emit)?;
@@ -1494,8 +1518,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Gray16<BE>, R> {
 /// caller output.
 #[allow(clippy::too_many_arguments)]
 fn gray16_process_resampled<const BE: bool>(
-  luma_stream_u16: &mut Option<AreaStream<u16>>,
-  luma_filter_stream_u16: &mut Option<crate::resample::FilterStream<u16>>,
+  luma_stream_u16: &mut Option<std::boxed::Box<AreaStream<u16>>>,
+  luma_filter_stream_u16: &mut Option<std::boxed::Box<crate::resample::FilterStream<u16>>>,
   luma_scratch_u16: &mut std::vec::Vec<u16>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
@@ -1706,13 +1730,19 @@ fn gray16_process_resampled<const BE: bool>(
   match plan.kind() {
     crate::resample::SpanKind::Area => {
       if luma_stream_u16.is_none() {
-        *luma_stream_u16 = Some(AreaStream::new(
-          plan.h(),
-          plan.v(),
-          plan.src_w(),
-          plan.src_h(),
-          1,
-        )?);
+        *luma_stream_u16 = Some({
+          let stream = AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 1)?;
+          crate::resample::try_box(stream).map_err(|_| {
+            MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+              crate::resample::PlanGeometry::new(
+                plan.src_w(),
+                plan.src_h(),
+                plan.out_w(),
+                plan.out_h(),
+              ),
+            ))
+          })?
+        });
       }
       let stream = luma_stream_u16.as_mut().expect("created above");
       stream.feed_row(idx, src_luma, use_simd, &mut emit)?;
@@ -1725,13 +1755,19 @@ fn gray16_process_resampled<const BE: bool>(
         let fv = plan
           .filter_v()
           .expect("filter plan carries vertical windows");
-        *luma_filter_stream_u16 = Some(crate::resample::FilterStream::new(
-          fh,
-          fv,
-          plan.src_w(),
-          plan.src_h(),
-          1,
-        )?);
+        *luma_filter_stream_u16 = Some({
+          let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 1)?;
+          crate::resample::try_box(stream).map_err(|_| {
+            MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+              crate::resample::PlanGeometry::new(
+                plan.src_w(),
+                plan.src_h(),
+                plan.out_w(),
+                plan.out_h(),
+              ),
+            ))
+          })?
+        });
       }
       let stream = luma_filter_stream_u16.as_mut().expect("created above");
       stream.feed_row(idx, src_luma, use_simd, &mut emit)?;
@@ -2103,8 +2139,8 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Grayf32<BE>, R> {
 /// caller output.
 #[allow(clippy::too_many_arguments)]
 fn grayf32_process_resampled<const BE: bool>(
-  luma_stream_f32: &mut Option<AreaStream<f32>>,
-  luma_filter_stream_f32: &mut Option<crate::resample::FilterStream<f32>>,
+  luma_stream_f32: &mut Option<std::boxed::Box<AreaStream<f32>>>,
+  luma_filter_stream_f32: &mut Option<std::boxed::Box<crate::resample::FilterStream<f32>>>,
   luma_scratch_f32: &mut std::vec::Vec<f32>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
@@ -2348,13 +2384,19 @@ fn grayf32_process_resampled<const BE: bool>(
   match plan.kind() {
     crate::resample::SpanKind::Area => {
       if luma_stream_f32.is_none() {
-        *luma_stream_f32 = Some(AreaStream::new(
-          plan.h(),
-          plan.v(),
-          plan.src_w(),
-          plan.src_h(),
-          1,
-        )?);
+        *luma_stream_f32 = Some({
+          let stream = AreaStream::new(plan.h(), plan.v(), plan.src_w(), plan.src_h(), 1)?;
+          crate::resample::try_box(stream).map_err(|_| {
+            MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+              crate::resample::PlanGeometry::new(
+                plan.src_w(),
+                plan.src_h(),
+                plan.out_w(),
+                plan.out_h(),
+              ),
+            ))
+          })?
+        });
       }
       let stream = luma_stream_f32.as_mut().expect("created above");
       stream.feed_row(idx, src_luma, use_simd, &mut emit)?;
@@ -2367,13 +2409,19 @@ fn grayf32_process_resampled<const BE: bool>(
         let fv = plan
           .filter_v()
           .expect("filter plan carries vertical windows");
-        *luma_filter_stream_f32 = Some(crate::resample::FilterStream::new(
-          fh,
-          fv,
-          plan.src_w(),
-          plan.src_h(),
-          1,
-        )?);
+        *luma_filter_stream_f32 = Some({
+          let stream = crate::resample::FilterStream::new(fh, fv, plan.src_w(), plan.src_h(), 1)?;
+          crate::resample::try_box(stream).map_err(|_| {
+            MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+              crate::resample::PlanGeometry::new(
+                plan.src_w(),
+                plan.src_h(),
+                plan.out_w(),
+                plan.out_h(),
+              ),
+            ))
+          })?
+        });
       }
       let stream = luma_filter_stream_f32.as_mut().expect("created above");
       stream.feed_row(idx, src_luma, use_simd, &mut emit)?;
