@@ -10,8 +10,8 @@ use super::{
 use crate::{
   ColorMatrix, PixelSink,
   resample::{
-    AreaStream, AveragingDomain, InsertionContext, InsertionPoint, OutOfSequenceRow, PlanGeometry,
-    ResampleError, ResamplePlan, select_insertion_point, try_zeroed,
+    AreaStream, AveragingDomain, FilterStream, InsertionContext, InsertionPoint, OutOfSequenceRow,
+    PlanGeometry, ResampleError, ResamplePlan, select_insertion_point, try_zeroed,
   },
   row::*,
   source::*,
@@ -143,6 +143,9 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
     if let Some(native) = self.native_420.as_mut() {
       native.reset();
     }
+    if let Some(bicublin) = self.bicublin_420.as_mut() {
+      bicublin.reset();
+    }
     // New frame: clear the per-frame frozen native/row-stage route and
     // averaging domain so the next frame may pick either tier / any domain; a
     // mid-frame flip stays rejected.
@@ -226,6 +229,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
       resample_outputs,
       native,
       native_420,
+      bicublin_420,
       frozen_native_route,
       frozen_domain,
       averaging_domain,
@@ -356,6 +360,36 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
       if plan.kind().is_filter() {
         let matrix = row.matrix();
         let full_range = row.full_range();
+        // A BICUBLIN plan ([`Bicublin`](crate::resample::Bicublin)) carries a
+        // SECOND (chroma) window set, so it cannot route through the
+        // single-kernel `planar_dual_filter_resample` (which filters one
+        // converted RGB row). It instead filters the Y / U / V planes
+        // SEPARATELY in plane space (cubic luma, linear chroma) and converts
+        // the filtered planes — the filter twin of the native area tier. The
+        // existing single-kernel filter path below is reached only when this
+        // is NOT a bicublin plan, so it stays byte-unchanged.
+        if plan.is_bicublin() {
+          return bicublin_yuv420p_resample(
+            plan,
+            bicublin_420,
+            resample_outputs,
+            rgb,
+            rgba,
+            luma,
+            luma_u16,
+            hsv,
+            rgb_scratch,
+            row.y(),
+            row.u_half(),
+            row.v_half(),
+            matrix,
+            full_range,
+            idx,
+            w,
+            h,
+            use_simd,
+          );
+        }
         return planar_dual_filter_resample(
           luma_filter_stream,
           rgb_filter_stream,
@@ -1061,6 +1095,389 @@ pub(super) fn yuv420p_process_native(
   Ok(())
 }
 
+/// BICUBLIN per-plane filter join for 4:2:0 — the signed-coefficient twin of
+/// [`NativeYuv420`]. Y streams on the frame grid through the **cubic** luma
+/// filter, U and V on the chroma grid (half width, ceil-half height) through
+/// the **linear** chroma filter, every plane resampled to FULL output
+/// resolution. Each plane's in-order emissions land in a full-output-plane
+/// buffer; the moment all participating planes have emitted an output row it
+/// is converted through the 4:4:4 kernel at output width.
+///
+/// Unlike the area join, a filter window is wide, so a plane can lead another
+/// by **more than one** output row (the cubic luma vertical filter and the
+/// linear chroma vertical filter complete output rows at different cadences
+/// relative to the interleaved source feed). A fixed two-slot ring cannot
+/// absorb that, so each plane lands in its own full-output-resolution buffer
+/// and a per-plane "rows emitted" cursor tracks how far each has progressed;
+/// output rows are converted up to the minimum cursor across the participating
+/// planes. The buffers are output-proportional (caller geometry), reserved
+/// fallibly at join creation.
+pub(super) struct BicublinYuv420 {
+  /// Luma plane filter stream (cubic kernel), `src_w x src_h -> out`.
+  y: FilterStream<u8>,
+  /// Full-output-resolution landing buffer for the filtered Y, `out_w x
+  /// out_h`. Always present — colour reads it for the convert and luma copies
+  /// from it.
+  y_plane: std::vec::Vec<u8>,
+  /// Output rows the Y stream has emitted so far (the stream emits in order,
+  /// so this is a dense `0..` count).
+  y_emitted: usize,
+  /// Chroma half of the join — absent for luma-only sinks (which never touch
+  /// the chroma planes). Frame-constant by the frozen-output contract.
+  chroma: Option<BicublinChroma>,
+  /// Next output row to convert / emit.
+  next_emit: usize,
+}
+
+/// Chroma-grid filter streams and landing buffers of [`BicublinYuv420`].
+struct BicublinChroma {
+  /// U plane filter stream (linear kernel), `chroma_w x chroma_h -> out`.
+  u: FilterStream<u8>,
+  /// V plane filter stream (linear kernel), `chroma_w x chroma_h -> out`.
+  v: FilterStream<u8>,
+  u_plane: std::vec::Vec<u8>,
+  v_plane: std::vec::Vec<u8>,
+  /// Output rows the U / V streams have emitted so far (both advance in
+  /// lockstep — same geometry, same chroma feed — but tracked independently so
+  /// a future asymmetry cannot silently desync the drain).
+  u_emitted: usize,
+  v_emitted: usize,
+}
+
+impl BicublinYuv420 {
+  /// Builds the per-plane BICUBLIN join from a [`ResamplePlan::is_bicublin`]
+  /// plan: the luma stream from the cubic windows
+  /// ([`ResamplePlan::filter_h`]/[`ResamplePlan::filter_v`]) over the frame
+  /// grid, and (when colour is attached) the U / V streams from the linear
+  /// chroma windows
+  /// ([`ResamplePlan::filter_h_chroma`]/[`ResamplePlan::filter_v_chroma`])
+  /// over the chroma grid. Each plane lands in a full-output-resolution
+  /// buffer.
+  fn new(plan: &ResamplePlan, w: usize, h: usize, need_color: bool) -> Result<Self, ResampleError> {
+    let (fh, fv) = (
+      plan
+        .filter_h()
+        .expect("bicublin plan carries luma horizontal windows"),
+      plan
+        .filter_v()
+        .expect("bicublin plan carries luma vertical windows"),
+    );
+    let y = FilterStream::<u8>::new(fh, fv, w, h, 1)?;
+    let alloc =
+      |_| ResampleError::AllocationFailed(PlanGeometry::new(w, h, plan.out_w(), plan.out_h()));
+    let plane_len = plan.out_w().checked_mul(plan.out_h()).ok_or_else(|| {
+      ResampleError::Overflow(PlanGeometry::new(w, h, plan.out_w(), plan.out_h()))
+    })?;
+    let chroma = if need_color {
+      let (fhc, fvc) = (
+        plan
+          .filter_h_chroma()
+          .expect("bicublin plan carries chroma horizontal windows"),
+        plan
+          .filter_v_chroma()
+          .expect("bicublin plan carries chroma vertical windows"),
+      );
+      // 4:2:0 chroma grid: half width, ceil-half height (matches the plan's
+      // chroma window source dims).
+      let (cw, ch) = (w / 2, h.div_ceil(2));
+      Some(BicublinChroma {
+        u: FilterStream::<u8>::new(fhc, fvc, cw, ch, 1)?,
+        v: FilterStream::<u8>::new(fhc, fvc, cw, ch, 1)?,
+        u_plane: try_zeroed(plane_len).map_err(alloc)?,
+        v_plane: try_zeroed(plane_len).map_err(alloc)?,
+        u_emitted: 0,
+        v_emitted: 0,
+      })
+    } else {
+      None
+    };
+    Ok(Self {
+      y,
+      y_plane: try_zeroed(plane_len).map_err(alloc)?,
+      y_emitted: 0,
+      chroma,
+      next_emit: 0,
+    })
+  }
+
+  pub(super) fn reset(&mut self) {
+    self.y.reset();
+    self.y_emitted = 0;
+    if let Some(chroma) = self.chroma.as_mut() {
+      chroma.u.reset();
+      chroma.v.reset();
+      chroma.u_emitted = 0;
+      chroma.v_emitted = 0;
+    }
+    self.next_emit = 0;
+  }
+
+  /// Sequencing preflight across all three plane streams — checked before any
+  /// plane is fed so a violating call mutates nothing. Chroma rows advance
+  /// once per source-row pair, so their expected counter is the ceiling half
+  /// of the source row. Mirrors [`NativeYuv420::check_sequence`].
+  fn check_sequence(&self, idx: usize) -> Result<(), MixedSinkerError> {
+    if self.y.next_y() != idx {
+      return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+        OutOfSequenceRow::new(self.y.next_y(), idx),
+      )));
+    }
+    if let Some(chroma) = self.chroma.as_ref() {
+      let chroma_expected = idx.div_ceil(2);
+      for stream in [&chroma.u, &chroma.v] {
+        if stream.next_y() != chroma_expected {
+          return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+            OutOfSequenceRow::new(stream.next_y().saturating_mul(2), idx),
+          )));
+        }
+      }
+    }
+    Ok(())
+  }
+}
+
+/// BICUBLIN per-plane filter path for [`MixedSinker<Yuv420p, R>`]: filters
+/// the Y plane with the cubic luma kernel and the U / V planes with the linear
+/// chroma kernel — each in YUV-plane space at its own resolution — then
+/// converts the filtered planes to RGB at output resolution through the 4:4:4
+/// kernel (the **same** convert the native area tier
+/// [`yuv420p_process_native`] runs on its binned planes). It is the filter
+/// analog of that area tier; the only differences are the signed-coefficient
+/// [`FilterStream`]s in place of the integer [`AreaStream`]s and the
+/// full-output-plane landing in place of the two-slot ring (a filter window is
+/// wide, so a plane can lead by more than one output row).
+///
+/// Atomic preflight, mirroring [`yuv420p_process_native`] /
+/// [`planar_dual_filter_resample`]: the complete pre-feed rejection
+/// ([`yuv420p_native_preflight`] — no-output short-circuit, first-row
+/// out-of-sequence, frozen-output, post-freeze sequence) runs before any
+/// fallible allocation, then the join build, the [`Self::check_sequence`]
+/// across all three streams, and the colour scratch growth all precede the
+/// first `feed_row`. So a rejected or failed row mutates no caller output and
+/// returns the deterministic typed error (never `AllocationFailed`-on-abort),
+/// and a corrected retry of the SAME row is accepted. Luma is the native Y
+/// filter-resampled (the YUV luma contract — never colour-derived); these are
+/// 8-bit sources, so the `u8` stream finalises to the full `u8` range, which
+/// IS the native range (no sub-16-bit clamp).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn bicublin_yuv420p_resample(
+  plan: &ResamplePlan,
+  bicublin_420: &mut Option<std::boxed::Box<BicublinYuv420>>,
+  resample_outputs: &mut Option<super::FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgb_scratch: &mut std::vec::Vec<u8>,
+  y_row: &[u8],
+  u_half: &[u8],
+  v_half: &[u8],
+  matrix: ColorMatrix,
+  full_range: bool,
+  idx: usize,
+  w: usize,
+  h: usize,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  let ow = plan.out_w();
+  let need_luma = luma.is_some() || luma_u16.is_some();
+  let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
+
+  // Complete pre-feed rejection preflight ahead of any fallible allocation
+  // (no-output short-circuit, first-row out-of-sequence, frozen-output, AND
+  // post-freeze sequence) — the SAME gate the native tier runs, keyed on the
+  // Y stream's `next_y` (luma is implicit on every output-bearing row). A
+  // rejected row therefore allocates nothing and a no-output call is a true
+  // route-invisible no-op.
+  if !yuv420p_native_preflight_bicublin(
+    bicublin_420,
+    resample_outputs,
+    rgb,
+    rgba,
+    luma,
+    luma_u16,
+    hsv,
+    idx,
+    need_luma,
+    need_color,
+  )? {
+    return Ok(());
+  }
+  // The join's chroma half is fixed at creation; if the frame's colour
+  // capability differs (outputs attached since the previous frame — the frozen
+  // check pins them WITHIN a frame, not across frames), rebuild it.
+  if bicublin_420
+    .as_ref()
+    .is_some_and(|join| join.chroma.is_some() != need_color)
+  {
+    *bicublin_420 = None;
+  }
+  let join = match bicublin_420 {
+    Some(join) => join.as_mut(),
+    None => {
+      // Build the join (its Y / U / V filter streams allocate recoverably) and
+      // box it recoverably (`try_box`, not `Box::new` — the latter aborts on
+      // OOM). Both fallible steps run BEFORE `bicublin_420.insert`, so a refusal
+      // at either returns `Err` with the field still `None` — no caller output
+      // is touched and the next row retries from scratch (the
+      // first-row-transactional contract).
+      let join = BicublinYuv420::new(plan, w, h, need_color)?;
+      let boxed = try_box(join).map_err(|_| {
+        MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+          w,
+          h,
+          plan.out_w(),
+          plan.out_h(),
+        )))
+      })?;
+      bicublin_420.insert(boxed).as_mut()
+    }
+  };
+  join.check_sequence(idx)?;
+  if need_color {
+    let row_bytes =
+      ow.checked_mul(3)
+        .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
+          ow,
+          plan.out_h(),
+          3,
+        )))?;
+    if rgb_scratch.len() < row_bytes {
+      rgb_scratch
+        .try_reserve_exact(row_bytes - rgb_scratch.len())
+        .map_err(|_| {
+          MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+            w,
+            h,
+            plan.out_w(),
+            plan.out_h(),
+          )))
+        })?;
+      rgb_scratch.resize(row_bytes, 0);
+    }
+  }
+
+  // Feed the planes; everything past this point is infallible. Each stream
+  // lands every emitted output row in its full-output-resolution plane buffer
+  // and advances that plane's emitted cursor.
+  let BicublinYuv420 {
+    y,
+    y_plane,
+    y_emitted,
+    chroma,
+    next_emit,
+  } = join;
+  y.feed_row(idx, y_row, use_simd, |oy, out_row| {
+    y_plane[oy * ow..oy * ow + ow].copy_from_slice(out_row);
+    *y_emitted = oy + 1;
+  })?;
+  if let Some(c) = chroma.as_mut()
+    && idx.is_multiple_of(2)
+  {
+    let cidx = idx / 2;
+    let BicublinChroma {
+      u,
+      v,
+      u_plane,
+      v_plane,
+      u_emitted,
+      v_emitted,
+    } = c;
+    u.feed_row(cidx, u_half, use_simd, |oy, out_row| {
+      u_plane[oy * ow..oy * ow + ow].copy_from_slice(out_row);
+      *u_emitted = oy + 1;
+    })?;
+    v.feed_row(cidx, v_half, use_simd, |oy, out_row| {
+      v_plane[oy * ow..oy * ow + ow].copy_from_slice(out_row);
+      *v_emitted = oy + 1;
+    })?;
+  }
+
+  // Convert every output row all participating planes have now emitted — up to
+  // the minimum emitted cursor across Y (and U / V when colour is attached).
+  let ready = match chroma.as_ref() {
+    Some(c) => (*y_emitted).min(c.u_emitted).min(c.v_emitted),
+    None => *y_emitted,
+  };
+  while *next_emit < ready {
+    let oy = *next_emit;
+    let y_out = &y_plane[oy * ow..oy * ow + ow];
+
+    if let Some(buf) = luma.as_deref_mut() {
+      buf[oy * ow..(oy + 1) * ow].copy_from_slice(y_out);
+    }
+    if let Some(buf) = luma_u16.as_deref_mut() {
+      for (dst, &src) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(y_out) {
+        *dst = src as u16;
+      }
+    }
+    if let Some(c) = chroma.as_ref() {
+      let u_out = &c.u_plane[oy * ow..oy * ow + ow];
+      let v_out = &c.v_plane[oy * ow..oy * ow + ow];
+      let out_rgb = &mut rgb_scratch[..ow * 3];
+      yuv_444_to_rgb_row(
+        y_out, u_out, v_out, out_rgb, ow, matrix, full_range, use_simd,
+      );
+      if let Some(buf) = rgb.as_deref_mut() {
+        buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_rgb);
+      }
+      if let Some(hsv) = hsv.as_mut() {
+        let (hp, sp, vp) = hsv.hsv();
+        rgb_to_hsv_row(
+          out_rgb,
+          &mut hp[oy * ow..(oy + 1) * ow],
+          &mut sp[oy * ow..(oy + 1) * ow],
+          &mut vp[oy * ow..(oy + 1) * ow],
+          ow,
+          use_simd,
+        );
+      }
+      if let Some(buf) = rgba.as_deref_mut() {
+        expand_rgb_to_rgba_row(out_rgb, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
+      }
+    }
+    *next_emit += 1;
+  }
+  Ok(())
+}
+
+/// BICUBLIN preflight — the per-plane filter twin of
+/// [`yuv420p_native_preflight`], keyed on the BICUBLIN join's Y stream
+/// `next_y` (the canonical per-row counter; luma is implicit on every
+/// output-bearing row). Runs [`native_preflight_core`] so the no-output
+/// short-circuit, first-row out-of-sequence, frozen-output, and post-freeze
+/// sequence checks all precede any fallible allocation, exactly as the native
+/// tier does.
+#[allow(clippy::too_many_arguments)]
+fn yuv420p_native_preflight_bicublin(
+  bicublin_420: &Option<std::boxed::Box<BicublinYuv420>>,
+  resample_outputs: &mut Option<super::FrozenOutputs>,
+  rgb: &Option<&mut [u8]>,
+  rgba: &Option<&mut [u8]>,
+  luma: &Option<&mut [u8]>,
+  luma_u16: &Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  idx: usize,
+  need_luma: bool,
+  need_color: bool,
+) -> Result<bool, MixedSinkerError> {
+  native_preflight_core(
+    bicublin_420.as_ref().map_or(0, |join| join.y.next_y()),
+    resample_outputs,
+    rgb,
+    rgba,
+    &None,
+    &None,
+    luma,
+    luma_u16,
+    hsv,
+    idx,
+    need_luma,
+    need_color,
+  )
+}
+
 /// Row-stage tier for the 4:2:0 planar family (the `with_native(false)`
 /// path). Takes the Y plane and the **separate** half-width U / V planes
 /// so the 4:2:0 semi-planar family reuses it after de-interleave.
@@ -1342,20 +1759,24 @@ impl NativeYuva420 {
   }
 }
 
-#[cfg(all(test, feature = "std", feature = "yuva"))]
+// Shared single-shot box-allocation failpoint for the recoverably-boxed native
+// joins (the straight-alpha `Yuva420p` tier and the `Yuv420p` BICUBLIN tier).
+// Gated on `yuv-planar` (which `yuva` implies) so both consumers can arm it.
+#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
 std::thread_local! {
-  static FORCE_YUVA420P_NATIVE_BOX_FAILURE: core::cell::Cell<bool> =
+  static FORCE_NATIVE_BOX_FAILURE: core::cell::Cell<bool> =
     const { core::cell::Cell::new(false) };
 }
 
-/// Arms a single-shot failpoint that makes the first [`try_box`] of the
-/// straight-alpha 4:2:0 native join refuse, exactly as a host OOM would.
-/// Used to prove the outer box allocation is recoverable (typed
-/// `AllocationFailed`, not an abort) and transactional (the `native` field is
-/// left `None`, so the call is retryable). Test-only.
-#[cfg(all(test, feature = "std", feature = "yuva"))]
-pub(crate) fn arm_yuva420p_native_box_failure() {
-  FORCE_YUVA420P_NATIVE_BOX_FAILURE.with(|f| f.set(true));
+/// Arms a single-shot failpoint that makes the next [`try_box`] of a native
+/// join refuse, exactly as a host OOM would. Used to prove the outer box
+/// allocation is recoverable (typed `AllocationFailed`, not an abort) and
+/// transactional (the join field is left `None`, so the call is retryable).
+/// Shared by the straight-alpha `Yuva420p` and the BICUBLIN box tests.
+/// Test-only.
+#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
+pub(crate) fn arm_native_box_failure() {
+  FORCE_NATIVE_BOX_FAILURE.with(|f| f.set(true));
 }
 
 /// Recoverable heap-box of a sized value: the stable analogue of the
@@ -1366,10 +1787,14 @@ pub(crate) fn arm_yuva420p_native_box_failure() {
 /// `Box::new` does. `into_boxed_slice` then hands back the exact-capacity
 /// allocation with no copy; reinterpreting that single-element `Box<[T]>` as
 /// `Box<T>` is the layout no-op below.
-#[cfg(feature = "yuva")]
+///
+/// Shared by the straight-alpha `Yuva420p` native join and the `Yuv420p`
+/// BICUBLIN join (both boxed lazily), so it is gated on `yuv-planar` rather
+/// than `yuva`.
+#[cfg(feature = "yuv-planar")]
 fn try_box<T>(value: T) -> Result<std::boxed::Box<T>, std::collections::TryReserveError> {
   #[cfg(all(test, feature = "std"))]
-  if FORCE_YUVA420P_NATIVE_BOX_FAILURE.with(|f| f.take()) {
+  if FORCE_NATIVE_BOX_FAILURE.with(|f| f.take()) {
     // Reproduce the exact error `try_reserve_exact` yields on refusal so the
     // failpoint is indistinguishable from a real OOM.
     let mut probe = std::vec::Vec::<T>::new();

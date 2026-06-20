@@ -371,6 +371,9 @@ pub(super) fn packed_yuv422_dual_filter_resample(
   deinterleave_y: impl FnOnce(&mut [u8]),
   convert_rgb: impl FnOnce(&mut [u8]),
 ) -> Result<(), MixedSinkerError> {
+  // Single-kernel filter tail — reject a BICUBLIN plan (its chroma windows are
+  // read only by the `Yuv420p` per-plane route) before any state change.
+  plan.ensure_single_kernel_filter()?;
   let need_luma = luma.is_some() || luma_u16.is_some();
   let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
 

@@ -286,6 +286,13 @@ pub(super) fn planar_dual_filter_resample(
   use_simd: bool,
   convert_rgb: impl FnOnce(&mut [u8]),
 ) -> Result<(), MixedSinkerError> {
+  // This single-kernel tail filters ONE converted RGB row; a BICUBLIN plan
+  // ([`Bicublin`](crate::resample::Bicublin)) carries a second (chroma) window
+  // set that only the `Yuv420p` per-plane route reads, so reject it here rather
+  // than silently filtering every plane with the luma kernel. Every non-4:2:0
+  // planar / semi-planar format routes its filter dispatch through this tail,
+  // so the one guard fences the whole family.
+  plan.ensure_single_kernel_filter()?;
   let need_luma = luma.is_some() || luma_u16.is_some();
   let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
 

@@ -2025,6 +2025,18 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// straight-alpha row.
   #[cfg(feature = "yuva")]
   native_yuva_420: Option<std::boxed::Box<planar_8bit::NativeYuva420>>,
+  /// BICUBLIN per-plane filter join for the 4:2:0 planar family — the
+  /// signed-coefficient twin of [`Self::native_420`]. Holds the three
+  /// [`FilterStream`](crate::resample::FilterStream)s (Y with the cubic
+  /// luma kernel, U / V with the linear chroma kernel) and the per-plane
+  /// landing buffers; lazily created in `process` on a BICUBLIN plan,
+  /// reset in `begin_frame`. Only a [`Bicublin`](crate::resample::Bicublin)
+  /// plan populates it. **Boxed** — the three filter streams make this the
+  /// largest single join, so keeping it behind a pointer holds the already
+  /// large `MixedSinker` stack footprint down (the join is heap-allocated
+  /// lazily anyway).
+  #[cfg(feature = "yuv-planar")]
+  bicublin_420: Option<std::boxed::Box<planar_8bit::BicublinYuv420>>,
   /// Native-tier join state for the non-4:2:0 8-bit planar families
   /// (`Yuv422p` / `Yuv444p` / `Yuv440p`) — the sibling of
   /// [`Self::native_420`] for chroma layouts that are not half-resolution
@@ -3099,6 +3111,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       native_420: None,
       #[cfg(feature = "yuva")]
       native_yuva_420: None,
+      #[cfg(feature = "yuv-planar")]
+      bicublin_420: None,
       #[cfg(feature = "yuv-planar")]
       native_planar: None,
       #[cfg(feature = "yuv-planar")]
@@ -4832,6 +4846,10 @@ pub(super) fn packed_rgb_filter_stream<'s>(
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::FilterStream<u8>, MixedSinkerError> {
+  // Single-kernel stream — a BICUBLIN plan's chroma windows are read only by
+  // the `Yuv420p` per-plane route, so reject it here rather than filter every
+  // channel with the luma kernel.
+  plan.ensure_single_kernel_filter()?;
   let expected = rgb_filter_stream
     .as_ref()
     .map_or(0, |stream| stream.next_y());
@@ -4907,6 +4925,9 @@ pub(super) fn packed_rgba_filter_resample(
   full_range: bool,
   convert_rgba: impl FnOnce(&mut [u8]),
 ) -> Result<(), MixedSinkerError> {
+  // Single-kernel filter tail — reject a BICUBLIN plan (its chroma windows are
+  // read only by the `Yuv420p` per-plane route) before any state change.
+  plan.ensure_single_kernel_filter()?;
   let ow = plan.out_w();
   let need_any =
     rgb.is_some() || rgba.is_some() || luma.is_some() || luma_u16.is_some() || hsv.is_some();
@@ -5111,6 +5132,9 @@ pub(super) fn packed_rgba_u16_filter_resample<const SRC_BITS: u32, const NATIVE_
       "SRC_BITS must be in (8, 16] for the high-bit packed RGBA filter tail"
     )
   };
+  // Single-kernel filter tail — reject a BICUBLIN plan (its chroma windows are
+  // read only by the `Yuv420p` per-plane route) before any state change.
+  plan.ensure_single_kernel_filter()?;
   let ow = plan.out_w();
   let need_any = rgb.is_some()
     || rgba.is_some()
@@ -5503,6 +5527,9 @@ pub(super) fn packed_rgb_u16_filter_stream<'s>(
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::FilterStream<u16>, MixedSinkerError> {
+  // Single-kernel stream — reject a BICUBLIN plan (its chroma windows are read
+  // only by the `Yuv420p` per-plane route) rather than mis-filter all channels.
+  plan.ensure_single_kernel_filter()?;
   let expected = rgb_filter_stream_u16
     .as_ref()
     .map_or(0, |stream| stream.next_y());
@@ -6502,6 +6529,9 @@ pub(super) fn pal8_rgba_filter_resample(
   luma_coeffs_q8: (u32, u32, u32),
   convert_rgba: impl FnOnce(&mut [u8]),
 ) -> Result<(), MixedSinkerError> {
+  // Single-kernel filter tail — reject a BICUBLIN plan (its chroma windows are
+  // read only by the `Yuv420p` per-plane route) before any state change.
+  plan.ensure_single_kernel_filter()?;
   let ow = plan.out_w();
   let need_any = rgb.is_some()
     || rgba.is_some()
@@ -7482,6 +7512,9 @@ pub(super) fn packed_yuv444_triple_filter_resample<const SRC_BITS: u32>(
       "SRC_BITS must be in [8, 16]"
     )
   };
+  // Single-kernel filter tail — reject a BICUBLIN plan (its chroma windows are
+  // read only by the `Yuv420p` per-plane route) before any state change.
+  plan.ensure_single_kernel_filter()?;
   let need_luma = luma.is_some() || luma_u16.is_some();
   let need_u8_color = rgb.is_some() || rgba.is_some() || hsv.is_some();
   let need_u16_color = rgb_u16.is_some() || rgba_u16.is_some();
@@ -8271,6 +8304,10 @@ pub(super) fn packed_yuva444_filter_resample<
   // widened inline in the shared emit) and the independent native-u16 stream
   // is never created or fed. Every other caller has `ZEXT_U16_COLOR == false`
   // and keeps the independent native-u16 binning byte-for-byte.
+  // Single-kernel filter tail — reject a BICUBLIN plan (its chroma windows are
+  // read only by the `Yuv420p` per-plane route) before any state change. A
+  // `Yuva420p` sink can carry a `Bicublin` resampler, so this fence is live.
+  plan.ensure_single_kernel_filter()?;
   let zext_u16_color = ZEXT_U16_COLOR && (rgb_u16.is_some() || rgba_u16.is_some());
   let need_colour_u8 = rgb.is_some() || rgba.is_some() || hsv.is_some() || zext_u16_color;
   let need_colour_u16 = (rgb_u16.is_some() || rgba_u16.is_some()) && !ZEXT_U16_COLOR;
@@ -9790,6 +9827,9 @@ pub(super) fn packed_yuv422_triple_filter_resample<const SRC_BITS: u32>(
       "SRC_BITS must be in (8, 16] for high-bit packed 4:2:2 YUV"
     )
   };
+  // Single-kernel filter tail — reject a BICUBLIN plan (its chroma windows are
+  // read only by the `Yuv420p` per-plane route) before any state change.
+  plan.ensure_single_kernel_filter()?;
   let need_luma = luma.is_some() || luma_u16.is_some();
   let need_color_u8 = rgb.is_some() || rgba.is_some() || hsv.is_some();
   let need_color_u16 = rgb_u16.is_some() || rgba_u16.is_some();
@@ -10162,6 +10202,9 @@ pub(super) fn packed_rgb_f32_filter<'s>(
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::FilterStream<f32>, MixedSinkerError> {
+  // Single-kernel stream — reject a BICUBLIN plan (its chroma windows are read
+  // only by the `Yuv420p` per-plane route) rather than mis-filter all channels.
+  plan.ensure_single_kernel_filter()?;
   let expected = rgb_filter_stream_f32
     .as_ref()
     .map_or(0, |stream| stream.next_y());
@@ -11714,6 +11757,9 @@ pub(super) fn packed_rgba_f32_filter_resample(
   full_range: bool,
   convert_rgba: impl FnOnce(&mut [f32]),
 ) -> Result<(), MixedSinkerError> {
+  // Single-kernel filter tail — reject a BICUBLIN plan (its chroma windows are
+  // read only by the `Yuv420p` per-plane route) before any state change.
+  plan.ensure_single_kernel_filter()?;
   let need_any = rgb.is_some()
     || rgba.is_some()
     || luma.is_some()
@@ -12279,6 +12325,9 @@ pub(super) fn packed_rgba_f16_filter_resample(
   full_range: bool,
   convert_rgba: impl FnOnce(&mut [f32]),
 ) -> Result<(), MixedSinkerError> {
+  // Single-kernel filter tail — reject a BICUBLIN plan (its chroma windows are
+  // read only by the `Yuv420p` per-plane route) before any state change.
+  plan.ensure_single_kernel_filter()?;
   let need_any = rgb.is_some()
     || rgba.is_some()
     || luma.is_some()
@@ -12550,6 +12599,9 @@ pub(super) fn xyz12_resample_filter<'s>(
   plan: &ResamplePlan,
   idx: usize,
 ) -> Result<&'s mut crate::resample::FilterStream<f32>, MixedSinkerError> {
+  // Single-kernel stream — reject a BICUBLIN plan (its chroma windows are read
+  // only by the `Yuv420p` per-plane route) rather than mis-filter all channels.
+  plan.ensure_single_kernel_filter()?;
   let expected = xyz_filter_stream_f32
     .as_ref()
     .map_or(0, |stream| stream.next_y());

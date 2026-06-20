@@ -82,6 +82,10 @@ fn mono_luma_resample(
   use_simd: bool,
   expand_luma: impl FnOnce(&mut [u8]),
 ) -> Result<(), MixedSinkerError> {
+  // Single-kernel filter tail — reject a BICUBLIN plan (its chroma windows are
+  // read only by the `Yuv420p` per-plane route) before any state change. The
+  // mono luma stream is single-kernel, so a bicublin plan would mis-filter.
+  plan.ensure_single_kernel_filter()?;
   let is_filter = plan.kind().is_filter();
   let any_output = luma.is_some()
     || luma_u16.is_some()

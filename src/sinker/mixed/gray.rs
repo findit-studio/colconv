@@ -312,6 +312,10 @@ fn gray8_process_resampled(
   use_simd: bool,
   full_range: bool,
 ) -> Result<(), MixedSinkerError> {
+  // Single-kernel filter tail — reject a BICUBLIN plan (its chroma windows are
+  // read only by the `Yuv420p` per-plane route) before any state change. The
+  // gray luma stream is single-kernel, so a bicublin plan would mis-filter.
+  plan.ensure_single_kernel_filter()?;
   let ow = plan.out_w();
   let want_rgb = rgb.is_some();
   let want_rgba = rgba.is_some();
@@ -916,6 +920,10 @@ fn gray_n_process_resampled<'a, const BITS: u32, const BE: bool>(
   full_range: bool,
 ) -> Result<(), MixedSinkerError> {
   const { assert!(BITS < 16, "GrayN carries fewer than 16 active bits") };
+  // Single-kernel filter tail — reject a BICUBLIN plan (its chroma windows are
+  // read only by the `Yuv420p` per-plane route) before any state change. The
+  // gray luma stream is single-kernel, so a bicublin plan would mis-filter.
+  plan.ensure_single_kernel_filter()?;
   // The resampled u16 luma row is host-native; the direct kernels recover
   // an already-host-native sample with `::<HOST_NATIVE_BE>` (a no-op swap),
   // matching the direct path's `::<BE>` applied to a wire sample.
@@ -1511,6 +1519,10 @@ fn gray16_process_resampled<const BE: bool>(
   // kernel's overshoot is already clipped by the `FilterStream`'s
   // `0..=65535` clamp — no extra native-depth clamp is needed.
   const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+  // Single-kernel filter tail — reject a BICUBLIN plan (its chroma windows are
+  // read only by the `Yuv420p` per-plane route) before any state change. The
+  // gray luma stream is single-kernel, so a bicublin plan would mis-filter.
+  plan.ensure_single_kernel_filter()?;
   let ow = plan.out_w();
   let want_rgb = rgb.is_some();
   let want_rgb_u16 = rgb_u16.is_some();
@@ -2117,6 +2129,10 @@ fn grayf32_process_resampled<const BE: bool>(
   // `::<BE>` applied to a wire sample. Passing `::<false>` here would
   // byte-swap every binned sample on a big-endian host.
   const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+  // Single-kernel filter tail — reject a BICUBLIN plan (its chroma windows are
+  // read only by the `Yuv420p` per-plane route) before any state change. The
+  // gray luma stream is single-kernel, so a bicublin plan would mis-filter.
+  plan.ensure_single_kernel_filter()?;
   let ow = plan.out_w();
   let want_rgb = rgb.is_some();
   let want_rgb_u16 = rgb_u16.is_some();
