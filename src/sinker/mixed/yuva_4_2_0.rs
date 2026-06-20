@@ -16,13 +16,25 @@
 //!   silently accept a buffer and never write it.
 
 use super::{
-  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
-  RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match, check_frozen_alpha_mode,
-  deinterleave_y_high_bit, packed_yuva444_filter_resample, packed_yuva444_resample,
-  reset_high_bit_yuva_streams, rgb_row_buf_or_scratch, rgba_plane_row_slice,
-  rgba_u16_plane_row_slice,
+  GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, NativeRouteChanged,
+  RowIndexOutOfRange, RowShapeMismatch, RowSlice, WidthAlignment, check_dimensions_match,
+  check_frozen_alpha_mode, deinterleave_y_high_bit, packed_yuva444_filter_resample,
+  packed_yuva444_resample, planar_8bit::yuva420p_process_native, reset_high_bit_yuva_streams,
+  rgb_row_buf_or_scratch, rgba_plane_row_slice, rgba_u16_plane_row_slice,
 };
-use crate::{PixelSink, row::*, source::*};
+use crate::{
+  PixelSink,
+  resample::{AveragingDomain, InsertionContext, InsertionPoint, select_insertion_point},
+  row::*,
+  source::*,
+};
+
+/// `Yuva420p` ships the RFC #238 Phase 5 STRAIGHT-alpha native fast tier
+/// ([`yuva420p_process_native`]), so it is statically eligible to splice an
+/// area downscale at the native Y / U / V / A codes — but ONLY under
+/// [`AlphaMode::Straight`](super::AlphaMode::Straight). Premultiplied alpha
+/// is bin-then-convert-incompatible and stays on the packed-YUVA area tail.
+const YUVA420P_STRAIGHT_NATIVE_ELIGIBLE: bool = true;
 
 // ---- Yuva420p impl (8-bit) ---------------------------------------------
 
@@ -108,6 +120,16 @@ impl<R> PixelSink for MixedSinker<'_, Yuva420p, R> {
     if let Some(stream) = self.luma_filter_stream.as_mut() {
       stream.reset();
     }
+    // Restart the RFC #238 Phase 5 straight-alpha native join (Y / U / V + α
+    // streams), lazily created in `process`, so the next frame reuses it.
+    if let Some(native) = self.native_yuva_420.as_mut() {
+      native.reset();
+    }
+    // Clear the per-frame native/row-stage route freeze so the next frame may
+    // pick either tier (the dispatch re-freezes on its first output-bearing
+    // resampled row); a flip WITHIN a frame stays rejected. Mirrors the
+    // high-bit families' `reset_high_bit_yuv_streams`.
+    self.frozen_native_route = None;
     self.resample_outputs = None;
     self.frozen_alpha_mode = Some(self.alpha_mode);
     Ok(())
@@ -213,42 +235,155 @@ impl<R> PixelSink for MixedSinker<'_, Yuva420p, R> {
         luma_filter_stream_u16,
         resample_outputs,
         frozen_alpha_mode,
+        native,
+        native_yuva_420,
+        frozen_native_route,
         ..
       } = self;
       let plan = plan.as_ref().expect("plan.is_some() checked above");
       check_frozen_alpha_mode(*frozen_alpha_mode, alpha_mode, idx)?;
       return match plan.kind() {
-        crate::resample::SpanKind::Area => packed_yuva444_resample::<8>(
-          rgba_stream,
-          rgba_stream_u16,
-          luma_stream_u16,
-          resample_outputs,
-          rgb,
-          rgba,
-          rgb_u16,
-          rgba_u16,
-          luma,
-          luma_u16,
-          hsv,
-          rgba_scratch,
-          rgb_scratch,
-          rgba_scratch_u16,
-          rgba_color_scratch_u16,
-          luma_scratch_u16,
-          w,
-          plan,
-          idx,
-          use_simd,
-          alpha_mode,
-          |dst| yuva420p_to_rgba_row(y, u_half, v_half, a, dst, w, matrix, full_range, use_simd),
-          // `Yuva420p` has no u16 colour outputs, so this closure is never called.
-          |_dst: &mut [u16]| {},
-          |dst| {
-            for (d, &s) in dst.iter_mut().zip(y) {
-              *d = s as u16;
+        crate::resample::SpanKind::Area => {
+          // RFC #238 Phase 5 splice-stage selection for the area downscale.
+          // STRAIGHT alpha is the #235 native resolution: bin Y / U / V / A
+          // codes, convert once, attach the binned α → straight RGBA. The
+          // framework selector reproduces the native-vs-row-stage choice — it
+          // returns `NativeCodes` exactly when this format is straight-native
+          // eligible, the sink enabled the native tier, AND the alpha mode is
+          // straight (a premultiplied frame must convert-at-source then
+          // premultiply then bin then un-premultiply late, so it is NOT
+          // native-eligible and keeps the packed-YUVA area tail BYTE-IDENTICAL).
+          // `area_plan` is always true on this arm (the filter plan is handled
+          // by the arms below).
+          let insertion = select_insertion_point(
+            AveragingDomain::Encoded,
+            InsertionContext {
+              native_eligible: YUVA420P_STRAIGHT_NATIVE_ELIGIBLE && !alpha_mode.is_premultiplied(),
+              with_native: *native,
+              area_plan: true,
+            },
+          );
+          // Whether this call carries any output — the EXACT set both tiers'
+          // no-output short-circuit tests (`need_color || need_luma` =
+          // `rgb || rgba || hsv || luma || luma_u16`; the 8-bit `Yuva420p`
+          // exposes no u16 colour, so those fields are always `None`). The
+          // route freezes only on an output-bearing row a tier ACCEPTS; a
+          // no-output call consumes no stream state, so it must not freeze.
+          let need_output = rgb.is_some()
+            || rgba.is_some()
+            || hsv.is_some()
+            || luma.is_some()
+            || luma_u16.is_some();
+          let take_native = matches!(insertion, InsertionPoint::NativeCodes);
+          // Reject a mid-frame native/row-stage route flip (a caller toggling
+          // `set_native` between rows — native row 0, row-stage row 1)
+          // BEFORE either tier's dispatch: the two tiers carry independent,
+          // in-order, once-only stream state, so splitting a frame across them
+          // would yield a mixed/partial frame rather than a deterministic
+          // rejection. CHECKED here and frozen below (the SET), both gated on
+          // `need_output`, so a no-output call is route-invisible. A
+          // preflight-rejected output-bearing call returns Err before the SET,
+          // leaving `frozen_native_route` untouched so a later retry on the
+          // same (or other) route is not falsely rejected.
+          if need_output
+            && let Some(frozen) = *frozen_native_route
+            && frozen != take_native
+          {
+            return Err(MixedSinkerError::NativeRouteChanged(
+              NativeRouteChanged::new(idx),
+            ));
+          }
+          match insertion {
+            // Straight-alpha native tier. The AlphaMode freeze
+            // (`check_frozen_alpha_mode` above) plus the inherited native
+            // preflight (out-of-sequence / frozen-output / alloc, all before
+            // any feed) keep the call atomic. Dispatch first; freeze the route
+            // to native ONLY after the call returns Ok on an output-bearing
+            // row — a no-output call returns Ok(()) with `need_output` false
+            // (no freeze); an out-of-sequence / frozen / alloc-refused row
+            // returns Err via `?` (no freeze), so only an accepted
+            // output-bearing row commits the route (the Phase 2 set-after-accept
+            // lesson — never freeze before the row is accepted).
+            InsertionPoint::NativeCodes => {
+              yuva420p_process_native(
+                plan,
+                native_yuva_420,
+                resample_outputs,
+                rgb,
+                rgba,
+                luma,
+                luma_u16,
+                hsv,
+                rgb_scratch,
+                y,
+                u_half,
+                v_half,
+                a,
+                matrix,
+                full_range,
+                idx,
+                w,
+                h,
+                use_simd,
+              )?;
+              if frozen_native_route.is_none() && need_output {
+                *frozen_native_route = Some(true);
+              }
+              Ok(())
             }
-          },
-        ),
+            // Row-stage tier (the `with_native(false)` path, and EVERY
+            // premultiplied frame): convert each source row to RGBA then bin —
+            // the packed-YUVA area tail. Premultiplied colour is binned
+            // premultiplied then un-premultiplied, byte-identical to today.
+            // Same CHECK-before / SET-after split: freeze to row-stage only
+            // when the call accepts an output-bearing row.
+            InsertionPoint::EncodedOutput => {
+              packed_yuva444_resample::<8>(
+                rgba_stream,
+                rgba_stream_u16,
+                luma_stream_u16,
+                resample_outputs,
+                rgb,
+                rgba,
+                rgb_u16,
+                rgba_u16,
+                luma,
+                luma_u16,
+                hsv,
+                rgba_scratch,
+                rgb_scratch,
+                rgba_scratch_u16,
+                rgba_color_scratch_u16,
+                luma_scratch_u16,
+                w,
+                plan,
+                idx,
+                use_simd,
+                alpha_mode,
+                |dst| {
+                  yuva420p_to_rgba_row(y, u_half, v_half, a, dst, w, matrix, full_range, use_simd)
+                },
+                // `Yuva420p` has no u16 colour outputs, so this is never called.
+                |_dst: &mut [u16]| {},
+                |dst| {
+                  for (d, &s) in dst.iter_mut().zip(y) {
+                    *d = s as u16;
+                  }
+                },
+              )?;
+              if frozen_native_route.is_none() && need_output {
+                *frozen_native_route = Some(false);
+              }
+              Ok(())
+            }
+            // The encoded domain only resolves to native-codes / encoded-output;
+            // the linear-light splice is reached via the Linear averaging domain,
+            // which this 4:2:0 YUVA sink does not expose.
+            InsertionPoint::LinearLight => {
+              unreachable!("Yuva420p area downscale never selects the linear-light splice")
+            }
+          }
+        }
         crate::resample::SpanKind::Filter if alpha_mode.is_premultiplied() => {
           // Premultiplied + filter has no analogue: route to the area tail
           // with the filter plan so it returns the typed `UnsupportedFilter`.
