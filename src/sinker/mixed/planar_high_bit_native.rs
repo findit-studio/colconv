@@ -102,8 +102,11 @@ std::thread_local! {
 /// The flag is consumed (take-on-read) by the first fallible source-scratch
 /// grow that row reaches, so it fires exactly once and cannot leak into a
 /// later test. Test-only — mirrors `arm_native_u16_alloc_failure` for the
-/// 4:2:0 high-bit planar native tier.
-#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
+/// 4:2:0 high-bit planar native tier. Only the high-bit planar native suite
+/// arms it, and that suite is gated on `rgb` (its colour oracle), so the
+/// setter is dead in a `yuv-planar`-without-`rgb` build even though the
+/// thread-local it sets is read by the (always-`yuv-planar`) native join.
+#[cfg(all(test, feature = "std", feature = "yuv-planar", feature = "rgb"))]
 pub(crate) fn arm_planar_hb_native_alloc_failure() {
   FORCE_PLANAR_HB_NATIVE_ALLOC_FAILURE.with(|f| f.set(true));
 }
@@ -119,7 +122,24 @@ std::thread_local! {
 /// luma-only sink must never reach it, so an armed flag survives a luma-only
 /// row unconsumed (the regression assertion) and is taken by the first colour
 /// row. Test-only.
-#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
+///
+/// Only the high-bit non-4:2:0 native suites that own a colour oracle arm it —
+/// V210 / Y2xx / P2xx / P4xx / packed-4:4:4 (each pulling in `yuv-planar` for
+/// the join) plus the `rgb`-gated planar high-bit native suite — so the setter
+/// is dead in a `yuv-planar`-without-any-consumer build even though the
+/// thread-local it sets is read by the (always-`yuv-planar`) native join.
+#[cfg(all(
+  test,
+  feature = "std",
+  feature = "yuv-planar",
+  any(
+    feature = "rgb",
+    feature = "v210",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-semi-planar"
+  )
+))]
 pub(crate) fn arm_planar_hb_native_chroma_failure() {
   FORCE_PLANAR_HB_NATIVE_CHROMA_FAILURE.with(|f| f.set(true));
 }

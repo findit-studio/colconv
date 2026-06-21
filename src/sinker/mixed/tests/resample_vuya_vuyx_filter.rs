@@ -96,6 +96,9 @@ trait Yuva444Filter {
   /// Direct full-res u8 RGBA conversion of `packed` (`w x h`) — the exact
   /// canonical source-width RGBA the filter path resamples, so it is the
   /// `Rgba` oracle's input. (`Vuya` passes source α; `Vuyx` forces `0xFF`.)
+  /// Only the `rgb`-gated equivalence module consumes it, so it is dead in a
+  /// `yuv-444-packed`-without-`rgb` build.
+  #[cfg_attr(not(feature = "rgb"), allow(dead_code))]
   fn direct_rgba_u8(packed: &[u8], w: usize, h: usize) -> Vec<u8>;
 
   /// Direct full-res native Y of `packed` (`w x h`) — the exact de-interleaved

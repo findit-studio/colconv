@@ -90,6 +90,9 @@ fn native_y_filter<K: FilterKernel>(
 
 /// Every resampled output a filter equivalence asserts on.
 struct FilterOutputs {
+  /// Only the `rgb`-gated equivalence module reads the u8 colour output,
+  /// so it is dead in a `y2xx`-without-`rgb` build.
+  #[cfg_attr(not(feature = "rgb"), allow(dead_code))]
   rgb: Vec<u8>,
   rgb_u16: Vec<u16>,
   rgba_u16: Vec<u16>,

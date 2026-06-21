@@ -119,12 +119,16 @@ trait Yuv444Filter {
 
   /// Direct full-res native-u16 RGB conversion of `packed` (`w x h`) —
   /// the exact source-width u16 RGB the filter path bins, so it is the
-  /// `Rgb48` oracle's input.
+  /// `Rgb48` oracle's input. Only the `rgb`-gated equivalence module
+  /// consumes it, so it is dead in a `yuv-444-packed`-without-`rgb` build.
+  #[cfg_attr(not(feature = "rgb"), allow(dead_code))]
   fn direct_rgb_u16(packed: &[u32], w: usize, h: usize) -> Vec<u16>;
 
   /// Direct full-res u8 RGB conversion of `packed` (`w x h`) — the exact
   /// source-width u8 RGB the filter path bins, so it is the `Rgb24`
-  /// oracle's input.
+  /// oracle's input. Only the `rgb`-gated equivalence module consumes it,
+  /// so it is dead in a `yuv-444-packed`-without-`rgb` build.
+  #[cfg_attr(not(feature = "rgb"), allow(dead_code))]
   fn direct_rgb_u8(packed: &[u32], w: usize, h: usize) -> Vec<u8>;
 
   /// Direct full-res native Y of `packed` (`w x h`) — the exact
@@ -135,6 +139,9 @@ trait Yuv444Filter {
 
 /// Every resampled output a filter equivalence asserts on.
 struct FilterOutputs {
+  /// Only the `rgb`-gated equivalence module reads the u8 colour output,
+  /// so it is dead in a `yuv-444-packed`-without-`rgb` build.
+  #[cfg_attr(not(feature = "rgb"), allow(dead_code))]
   rgb: Vec<u8>,
   rgb_u16: Vec<u16>,
   rgba_u16: Vec<u16>,

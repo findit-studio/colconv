@@ -42,6 +42,9 @@ const FR: bool = true;
 /// Every resampled output a filter equivalence asserts on.
 struct FilterOutputs {
   rgb: Vec<u8>,
+  /// Only the `rgb`-gated equivalence module reads the RGBA colour output,
+  /// so it is dead in a `yuv-semi-planar`-without-`rgb` build.
+  #[cfg_attr(not(feature = "rgb"), allow(dead_code))]
   rgba: Vec<u8>,
   luma: Vec<u8>,
   luma_u16: Vec<u16>,
@@ -78,7 +81,9 @@ trait SemiPlanarYuvFilter {
 
   /// Direct full-res u8 RGB conversion of the planes (`w x h`) — the exact
   /// source-width u8 RGB the filter path bins, so it is the `Rgb24`
-  /// oracle's input.
+  /// oracle's input. Only the `rgb`-gated equivalence module consumes it, so
+  /// it is dead in a `yuv-semi-planar`-without-`rgb` build.
+  #[cfg_attr(not(feature = "rgb"), allow(dead_code))]
   fn direct_rgb_u8(y: &[u8], uv: &[u8], w: usize, h: usize) -> Vec<u8>;
 }
 
