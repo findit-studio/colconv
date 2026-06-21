@@ -289,6 +289,33 @@ fn mask_lane(sf: float64x2_t, keep: float64x2_t) -> float64x2_t {
   ))
 }
 
+/// Horizontal add of a `float64x2_t` — `lane0 + lane1`.
+///
+/// Miri does not shim the `llvm.aarch64.neon.faddv.f64` foreign function
+/// behind `vaddvq_f64`, so under Miri this stores the two lanes and sums
+/// them in the same lane order (`vst1q_f64` is shimmed). The result is the
+/// exact `f64` sum of the two lanes either way, so the real SIMD build is
+/// byte-identical to the original `vaddvq_f64`.
+///
+/// # Safety
+///
+/// NEON must be available (baseline on aarch64).
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn vaddvq_f64_compat(v: float64x2_t) -> f64 {
+  #[cfg(not(miri))]
+  {
+    vaddvq_f64(v)
+  }
+  #[cfg(miri)]
+  {
+    let mut a = [0f64; 2];
+    // SAFETY: `a` holds two `f64`; `vst1q_f64` writes exactly two lanes.
+    unsafe { vst1q_f64(a.as_mut_ptr(), v) };
+    a[0] + a[1]
+  }
+}
+
 /// Filter H-pass (1 channel): `h_tmp[j] = Σ coeffs[k] * row[start_j + k]`
 /// in `f64` over the signed `f32` coefficient arena.
 ///
@@ -327,7 +354,7 @@ unsafe fn h_reduce_c1<S: NeonElem>(
           mac8_masked(acc, s, c, &padding_keep_mask8(real_in_chunk))
         };
       }
-      h_tmp[j] = vaddvq_f64(acc);
+      h_tmp[j] = vaddvq_f64_compat(acc);
     }
   }
 }
@@ -375,9 +402,9 @@ unsafe fn h_reduce_c3<S: NeonElem>(
           acc2 = mac8_masked(acc2, load8_staged_c3(row, cell, 2), c, &keep);
         }
       }
-      h_tmp[j * 3] = vaddvq_f64(acc0);
-      h_tmp[j * 3 + 1] = vaddvq_f64(acc1);
-      h_tmp[j * 3 + 2] = vaddvq_f64(acc2);
+      h_tmp[j * 3] = vaddvq_f64_compat(acc0);
+      h_tmp[j * 3 + 1] = vaddvq_f64_compat(acc1);
+      h_tmp[j * 3 + 2] = vaddvq_f64_compat(acc2);
     }
   }
 }

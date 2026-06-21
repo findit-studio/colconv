@@ -268,6 +268,12 @@ fn gaussian_profile() {
 }
 
 #[test]
+// Pure-math kernel-coefficient assertions exercising no `unsafe` (the whole
+// `filter` module is `unsafe`-free), so Miri adds no UB-checking value here.
+// Under Miri the soft-float `cos`/`sin` differ from hardware by ~1 ULP, which
+// breaks the `< 1e-15` symmetry check on the Blackman window; the math is
+// hardware-validated by this same test off Miri, so ignore it under Miri.
+#[cfg_attr(miri, ignore = "soft-float cos/sin ~1 ULP off; pure math, no unsafe")]
 fn blackman_sinc_profile() {
   let k = BlackmanSinc;
   assert_eq!(k.support(), 3.0);
@@ -677,6 +683,14 @@ fn gaussian_softens_a_scale_one_axis() {
 }
 
 #[test]
+// Builds 1920- and 1000-wide `FilterAxis` plans for all 13 kernels — pure
+// safe `Vec` planning + slice sums, no `unsafe`, so Miri checks nothing here
+// but spends ~170 s in the interpreter (it would push the CI job past its
+// timeout). The geometry is exercised off Miri by this same test.
+#[cfg_attr(
+  miri,
+  ignore = "wide-axis planning is pure math (no unsafe) + far too slow under Miri"
+)]
 fn axis_windows_normalize_to_one() {
   // Every output window must sum to ~1 (PIL renormalizes after clamping),
   // so average brightness is preserved including at the clipped edges.
@@ -890,6 +904,14 @@ fn huge_out_size_fails_fast_without_scan() {
 }
 
 #[test]
+// Brute-force overlap count: an O(in_size x out_size) double loop (in_size up
+// to 1920) over all 13 kernels, all pure safe slice indexing with no `unsafe`.
+// Under Miri's interpreter it does not finish within 10 min, so it would hang
+// the CI job; the bound is verified off Miri by this same test.
+#[cfg_attr(
+  miri,
+  ignore = "brute-force overlap sweep is pure math (no unsafe) + hangs under Miri"
+)]
 fn max_overlap_bounds_the_ring() {
   // The accumulator-ring capacity (max window overlap) must cover every
   // window open at a given source row. Cross-check the stored value

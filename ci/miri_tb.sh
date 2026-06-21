@@ -8,6 +8,20 @@ fi
 
 TARGET="$1"
 
+# Optional 2nd arg: a space-separated set of format features to run this miri
+# pass against (a "feature group"). When given, the lib is built with
+# `--no-default-features --features "std <group>"` so each container compiles
+# and checks only a subset of the format kernels — smaller binary, lower peak
+# memory, shorter run, so each shard fits the CI timeout (and the 4 GB i686
+# address space). When omitted, the full default-features suite runs (the
+# unsharded targets keep their existing single-pass coverage).
+FEATURE_GROUP="${2:-}"
+if [ -n "$FEATURE_GROUP" ]; then
+  FEATURE_ARGS=(--no-default-features --features "std $FEATURE_GROUP")
+else
+  FEATURE_ARGS=()
+fi
+
 # Install cross-compilation toolchain on Linux
 if [ "$(uname)" = "Linux" ]; then
   case "$TARGET" in
@@ -57,19 +71,22 @@ esac
 #   3) the `resample_y*` modules (yuv / yuva / y2xx / ya)
 #   4) the remaining `resample_*` modules
 # Each test runs in exactly one pass, so coverage is identical to the single
-# run; `set -e` propagates any failure. 64-bit cells run the binary in one
-# pass (`--tests` is a no-op here — there are no integration test targets).
+# run; `set -e` propagates any failure. This test-name partition COMPOSES with
+# the optional feature group: with a group set, each pass only runs the tests
+# that belong to that group AND fall in that name range, all within the smaller
+# per-group binary. 64-bit cells run the binary in one pass (`--tests` is a
+# no-op here — there are no integration test targets).
 case "$TARGET" in
   i686-*)
-    cargo miri test --lib --target "$TARGET" -- --skip sinker::
-    cargo miri test --lib --target "$TARGET" -- \
+    cargo miri test --lib "${FEATURE_ARGS[@]}" --target "$TARGET" -- --skip sinker::
+    cargo miri test --lib "${FEATURE_ARGS[@]}" --target "$TARGET" -- \
       sinker:: --skip sinker::mixed::tests::resample_
-    cargo miri test --lib --target "$TARGET" -- \
+    cargo miri test --lib "${FEATURE_ARGS[@]}" --target "$TARGET" -- \
       sinker::mixed::tests::resample_y
-    cargo miri test --lib --target "$TARGET" -- \
+    cargo miri test --lib "${FEATURE_ARGS[@]}" --target "$TARGET" -- \
       sinker::mixed::tests::resample_ --skip sinker::mixed::tests::resample_y
     ;;
   *)
-    cargo miri test --lib --tests --target "$TARGET"
+    cargo miri test --lib --tests "${FEATURE_ARGS[@]}" --target "$TARGET"
     ;;
 esac
