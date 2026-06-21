@@ -59,7 +59,7 @@ pub use filter::{
 pub(crate) use filter::{FilterSample, FilterStream};
 
 mod strategy;
-pub use strategy::{AveragingDomain, FilterSpec, ResampleStrategy, TransferFunction};
+pub use strategy::{AveragingDomain, FilterSpec, LinearMode, ResampleStrategy, TransferFunction};
 // Phase-0-internal: the splice-stage selector consumed by the per-format
 // route dispatch. `InsertionPoint` / its context stay crate-private until
 // later phases widen the splice surface; only `yuv-planar` (the routed

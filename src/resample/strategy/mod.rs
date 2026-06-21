@@ -73,6 +73,59 @@ impl AveragingDomain {
   }
 }
 
+/// How the [`AveragingDomain::Linear`] tail decodes `YUV→RGB` before it
+/// lifts the result to linear light — the *referent* of the linear-light
+/// average (RFC #238 #244).
+///
+/// Both modes share the rest of the linear pipeline (decode → EOTF → area
+/// bin → OETF → clamp at output); they differ only in *which* `YUV→RGB`
+/// decode fills the buffer the EOTF lifts:
+///
+/// - [`Self::DisplayReferred`] (the **default**) decodes through the
+///   production Q15 `yuv_*_to_rgb_row` kernel, which **clamps and quantizes**
+///   the result to 8-bit `[0, 255]` before the EOTF. The average is then
+///   *display-referred*: it mixes the converted in-gamut 8-bit RGB in linear
+///   light (a gamma-correct resize). Out-of-gamut excursions — super-black /
+///   super-white luma, or chroma that drives a channel past the `[0, 1]`
+///   cube — are discarded at the convert clamp.
+/// - [`Self::SceneReferred`] decodes the **same affine matrix** in unclamped
+///   `f32`, preserving those out-of-gamut excursions, lifts *that* to linear
+///   light via the EOTF (whose odd-symmetric extrapolation handles
+///   out-of-`[0, 1]` inputs), averages in linear light, and clamps **only**
+///   at the re-encoded output. This is the physically faithful average for
+///   content with super-black / super-white or saturated chroma.
+///
+/// The two coincide (modulo `f32` rounding) on content that stays in gamut
+/// through the decode — they diverge exactly where the 8-bit convert clamp
+/// would otherwise have thrown information away.
+///
+/// The mode is consulted only on the [`AveragingDomain::Linear`] path of the
+/// planar 8-bit YUV family; the encoded and direct paths ignore it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum LinearMode {
+  /// Decode through the clamped/quantized 8-bit convert, then average the
+  /// in-gamut display-referred RGB in linear light. The default; the
+  /// behaviour RFC #238 Phase 2 shipped.
+  #[default]
+  DisplayReferred,
+  /// Decode the same affine matrix in unclamped `f32` (preserving
+  /// out-of-gamut excursions), average in linear light, clamp only at the
+  /// output. The scene-referred upgrade (RFC #238 #244).
+  SceneReferred,
+}
+
+impl LinearMode {
+  /// Lowercase identifier for the mode
+  /// (`"display-referred"` / `"scene-referred"`).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::DisplayReferred => "display-referred",
+      Self::SceneReferred => "scene-referred",
+    }
+  }
+}
+
 /// A pipeline splice stage — *where* in the convert pipeline an RFC #238
 /// resample is inserted.
 ///

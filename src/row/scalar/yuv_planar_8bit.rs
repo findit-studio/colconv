@@ -477,6 +477,162 @@ pub(crate) fn yuv_444_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: boo
   }
 }
 
+// ---- Unclamped real-valued YUV → RGB decode (RFC #238 #244) ----------
+//
+// The scene-referred [`AveragingDomain::Linear`] decode. These mirror the
+// Q15 `yuv_*_to_rgb_row` kernels above EXACTLY — same `Coefficients`, same
+// `range_params_n::<8, 8>` offsets/scales — but evaluate the affine matrix
+// in real-valued `f32` and DO NOT clamp or round. Each Q15 fixed-point
+// coefficient is converted to its real value (`q15 as f32 / 32768.0`), so
+// the matrix math is the same as the production decode; the ONLY difference
+// is the absent intermediate Q15 rounding and the absent final clamp+round
+// to `[0, 255]`. The result is RGB normalized to a `[0, 1]` scale (the
+// 8-bit code value divided by 255) that MAY fall below 0 or above 1 where
+// the source YUV is out of gamut — exactly the excursions the clamped
+// display-referred decode discards. The linear-light tail lifts this through
+// the EOTF (whose odd-symmetric extrapolation handles the out-of-`[0, 1]`
+// case) and clamps only at the re-encoded output.
+
+/// Q15 → real scale: `1 / 32768`. Multiplying a Q15 fixed-point integer by
+/// this yields the real coefficient the production decode approximates, so
+/// the unclamped decode below is numerically the same matrix as the Q15
+/// kernel, just real-valued and unclamped.
+///
+/// Gated like its only consumer: the scene-referred linear-light resample
+/// tail, which needs the resample / sink path (`std` or `alloc`) and `rgb`
+/// output. Without that path (e.g. the direct-convert-only `frame` config),
+/// these decoders have no caller, so they must not compile.
+#[cfg(all(feature = "rgb", any(feature = "std", feature = "alloc")))]
+const Q15_TO_REAL: f32 = 1.0 / 32768.0;
+
+/// Real-valued, unclamped `YUV 4:2:0 → normalized RGB` decode — the
+/// scene-referred twin of [`yuv_420_to_rgb_row`]. Chroma is half-width
+/// (nearest-neighbor 1→2 upsampled in registers, as the Q15 sibling does);
+/// this same kernel also serves 4:2:2 (half-width chroma, full height), the
+/// way the Q15 `yuv_420_to_rgb_row` does in the 4:2:2 row stage.
+///
+/// `out` receives `3 * width` interleaved `R, G, B` `f32` values on a
+/// `[0, 1]` scale (the real code value / 255), unclamped — out-of-gamut
+/// channels fall outside `[0, 1]`.
+///
+/// # Panics (debug builds)
+///
+/// - `width` must be even.
+/// - `y.len() >= width`, `u_half.len() >= width / 2`,
+///   `v_half.len() >= width / 2`, `out.len() >= 3 * width`.
+#[cfg(all(feature = "rgb", any(feature = "std", feature = "alloc")))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn yuv_420_to_rgb_f32_unclamped_row(
+  y: &[u8],
+  u_half: &[u8],
+  v_half: &[u8],
+  out: &mut [f32],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u_half.len() >= width / 2, "u_half row too short");
+  debug_assert!(v_half.len() >= width / 2, "v_half row too short");
+  debug_assert!(out.len() >= width * 3, "out row too short");
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<8, 8>(full_range);
+  // The SAME building blocks as the Q15 kernel, lifted to real values.
+  let y_off_f = y_off as f32;
+  let y_scale_f = y_scale as f32 * Q15_TO_REAL;
+  let c_scale_f = c_scale as f32 * Q15_TO_REAL;
+  let r_u = coeffs.r_u() as f32 * Q15_TO_REAL;
+  let r_v = coeffs.r_v() as f32 * Q15_TO_REAL;
+  let g_u = coeffs.g_u() as f32 * Q15_TO_REAL;
+  let g_v = coeffs.g_v() as f32 * Q15_TO_REAL;
+  let b_u = coeffs.b_u() as f32 * Q15_TO_REAL;
+  let b_v = coeffs.b_v() as f32 * Q15_TO_REAL;
+
+  let mut x = 0;
+  while x < width {
+    let c_idx = x / 2;
+    // `u_d` / `v_d` are the real chroma deltas (U - 128) * c_scale, NOT
+    // re-quantized — the Q15 path rounds these to integers; the unclamped
+    // path keeps them real.
+    let u_d = (u_half[c_idx] as f32 - 128.0) * c_scale_f;
+    let v_d = (v_half[c_idx] as f32 - 128.0) * c_scale_f;
+    let r_chroma = r_u * u_d + r_v * v_d;
+    let g_chroma = g_u * u_d + g_v * v_d;
+    let b_chroma = b_u * u_d + b_v * v_d;
+
+    // Both pixels share the chroma sample; only Y differs. No clamp, no
+    // round — the normalized `/ 255` value may leave `[0, 1]`.
+    let y0 = (y[x] as f32 - y_off_f) * y_scale_f;
+    out[x * 3] = (y0 + r_chroma) / 255.0;
+    out[x * 3 + 1] = (y0 + g_chroma) / 255.0;
+    out[x * 3 + 2] = (y0 + b_chroma) / 255.0;
+
+    let y1 = (y[x + 1] as f32 - y_off_f) * y_scale_f;
+    out[(x + 1) * 3] = (y1 + r_chroma) / 255.0;
+    out[(x + 1) * 3 + 1] = (y1 + g_chroma) / 255.0;
+    out[(x + 1) * 3 + 2] = (y1 + b_chroma) / 255.0;
+
+    x += 2;
+  }
+}
+
+/// Real-valued, unclamped `YUV 4:4:4 → normalized RGB` decode — the
+/// scene-referred twin of [`yuv_444_to_rgb_row`]. One UV pair per pixel (no
+/// subsampling); also serves 4:4:0 (the way the Q15 `yuv_444_to_rgb_row`
+/// does in the 4:4:0 row stage, the chroma row duplicated across two Y
+/// rows by the walker).
+///
+/// `out` receives `3 * width` interleaved `R, G, B` `f32` values on a
+/// `[0, 1]` scale (the real code value / 255), unclamped.
+///
+/// # Panics (debug builds)
+///
+/// - `y.len() >= width`, `u.len() >= width`, `v.len() >= width`,
+///   `out.len() >= 3 * width`.
+#[cfg(all(feature = "rgb", any(feature = "std", feature = "alloc")))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn yuv_444_to_rgb_f32_unclamped_row(
+  y: &[u8],
+  u: &[u8],
+  v: &[u8],
+  out: &mut [f32],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u.len() >= width, "u row too short");
+  debug_assert!(v.len() >= width, "v row too short");
+  debug_assert!(out.len() >= width * 3, "out row too short");
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<8, 8>(full_range);
+  let y_off_f = y_off as f32;
+  let y_scale_f = y_scale as f32 * Q15_TO_REAL;
+  let c_scale_f = c_scale as f32 * Q15_TO_REAL;
+  let r_u = coeffs.r_u() as f32 * Q15_TO_REAL;
+  let r_v = coeffs.r_v() as f32 * Q15_TO_REAL;
+  let g_u = coeffs.g_u() as f32 * Q15_TO_REAL;
+  let g_v = coeffs.g_v() as f32 * Q15_TO_REAL;
+  let b_u = coeffs.b_u() as f32 * Q15_TO_REAL;
+  let b_v = coeffs.b_v() as f32 * Q15_TO_REAL;
+
+  for x in 0..width {
+    let u_d = (u[x] as f32 - 128.0) * c_scale_f;
+    let v_d = (v[x] as f32 - 128.0) * c_scale_f;
+    let r_chroma = r_u * u_d + r_v * v_d;
+    let g_chroma = g_u * u_d + g_v * v_d;
+    let b_chroma = b_u * u_d + b_v * v_d;
+
+    let y0 = (y[x] as f32 - y_off_f) * y_scale_f;
+    out[x * 3] = (y0 + r_chroma) / 255.0;
+    out[x * 3 + 1] = (y0 + g_chroma) / 255.0;
+    out[x * 3 + 2] = (y0 + b_chroma) / 255.0;
+  }
+}
+
 // ---- YUV 4:1:1 → RGB / RGBA (fused: 1→4 chroma upsample) -------------
 
 /// Converts one row of 4:1:1 YUV — Y at full width, U/V at

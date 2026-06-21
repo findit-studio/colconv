@@ -20,28 +20,37 @@
 //! [`TransferFunction`] is the sink's caller override, else the
 //! per-[`ColorMatrix`] default.
 //!
-//! # What "linear" means here (display-referred, not scene-linear)
+//! # What "linear" means here: display-referred vs scene-referred
 //!
-//! The decode kernel is the production `yuv_*_to_rgb_row` family, whose Q15
-//! convert **clamps and quantizes** the result to 8-bit `[0, 255]` BEFORE
-//! this tail sees it. So the average is taken over the *display-referred*
-//! converted 8-bit RGB lifted to linear light — a gamma-correct resize of
-//! the in-gamut RGB — NOT a scene-linear average of the unclamped affine
-//! decode. Out-of-gamut YUV excursions (super-black / super-white, or
-//! chroma that drives a channel past the cube) are clipped at the convert,
-//! so values that would average back into gamut are lost. This is a
-//! deliberate, low-risk reuse of the byte-exact convert kernels (the
-//! oracle decodes through the same clamped path, so it validates exactly
-//! this contract); a scene-linear upgrade that taps the unclamped affine
-//! decode is tracked as RFC #238 follow-up work, since it requires a
-//! real-valued matrix that does not reuse the Q15 fixed-point kernels.
+//! Which `YUV→RGB` decode fills the buffer the EOTF lifts is selected by the
+//! sink's [`LinearMode`] (RFC #238 #244) — the only mode-dependent step:
 //!
-//! Because the linearised input is the clamped 8-bit RGB mapped to
-//! `[0, 1]`, it is never negative, so the odd-symmetric negative-side
-//! extrapolation of [`TransferFunction::eotf`] / [`oetf`] is dormant on
-//! this path. That extrapolation is retained in [`TransferFunction`]
-//! deliberately — it is public API with a documented out-of-`[0, 1]`
-//! contract that a future scene-linear (unclamped) consumer will exercise.
+//! - [`LinearMode::DisplayReferred`] (the default) decodes through the
+//!   production `yuv_*_to_rgb_row` family, whose Q15 convert **clamps and
+//!   quantizes** the result to 8-bit `[0, 255]` BEFORE this tail sees it. So
+//!   the average is taken over the *display-referred* converted 8-bit RGB
+//!   lifted to linear light — a gamma-correct resize of the in-gamut RGB.
+//!   Out-of-gamut YUV excursions (super-black / super-white, or chroma that
+//!   drives a channel past the cube) are clipped at the convert, so values
+//!   that would average back into gamut are lost. The clamped 8-bit RGB
+//!   mapped to `[0, 1]` is never negative, so the odd-symmetric negative-side
+//!   extrapolation of [`TransferFunction::eotf`] / [`oetf`] is dormant on this
+//!   path.
+//! - [`LinearMode::SceneReferred`] decodes the **same affine matrix** — the
+//!   same `Coefficients` and `range_params_n::<8, 8>` the Q15 kernel uses —
+//!   in unclamped real-valued `f32` (`yuv_*_to_rgb_f32_unclamped_row`),
+//!   differing from the display decode ONLY by the absent intermediate Q15
+//!   rounding and the absent final clamp+round. The out-of-gamut excursions
+//!   are preserved (a channel may go `< 0` or `> 1`), lifted to linear light
+//!   by the SAME EOTF — whose odd-symmetric extrapolation, retained in
+//!   [`TransferFunction`] as public API for exactly this consumer, now
+//!   activates — averaged in linear light, and clamped **only** at the
+//!   re-encoded output. The two modes coincide (modulo `f32` rounding) on
+//!   content that stays in gamut through the decode.
+//!
+//! [`LinearMode`]: crate::resample::LinearMode
+//! [`LinearMode::DisplayReferred`]: crate::resample::LinearMode::DisplayReferred
+//! [`LinearMode::SceneReferred`]: crate::resample::LinearMode::SceneReferred
 //!
 //! # Frame-buffered
 //!
@@ -59,11 +68,11 @@
 //! [`oetf`]: crate::resample::TransferFunction::oetf
 
 use super::{
-  FrozenOutputs, GeometryOverflow, HsvFrameMut, MixedSinkerError, ResampleOutputsChanged,
-  TransferFunctionChanged,
+  FrozenOutputs, GeometryOverflow, HsvFrameMut, LinearModeChanged, MixedSinkerError,
+  ResampleOutputsChanged, TransferFunctionChanged,
 };
 use crate::{
-  resample::{AreaStream, ResamplePlan, TransferFunction, try_zeroed},
+  resample::{AreaStream, LinearMode, ResamplePlan, TransferFunction, try_zeroed},
   row::{expand_rgb_to_rgba_row, rgb_row_bytes, rgb_to_hsv_row, y_plane_to_luma_u16_row},
 };
 
@@ -174,6 +183,13 @@ pub(super) struct LinearLightFrame {
   /// curve, so a later row resolving a different transfer is rejected (a
   /// mid-frame flip would bin rows linearised under inconsistent curves).
   frozen_transfer: TransferFunction,
+  /// The [`LinearMode`] resolved on the first output-bearing row, frozen for
+  /// the life of the frame alongside `frozen_transfer`. The mode selects which
+  /// `YUV→RGB` decode (display-referred Q15-clamped vs scene-referred
+  /// unclamped `f32`) fills the buffer the EOTF lifts, so a later row resolving
+  /// a different mode is rejected (a mid-frame flip would bin display- and
+  /// scene-decoded rows in the same frame).
+  frozen_linear_mode: LinearMode,
 }
 
 impl LinearLightFrame {
@@ -200,6 +216,7 @@ impl LinearLightFrame {
     out_h: usize,
     want_luma: bool,
     frozen_transfer: TransferFunction,
+    frozen_linear_mode: LinearMode,
   ) -> Result<Self, MixedSinkerError> {
     let overflow = || MixedSinkerError::GeometryOverflow(GeometryOverflow::new(src_w, src_h, 3));
     let alloc_failed = || {
@@ -221,6 +238,7 @@ impl LinearLightFrame {
       src_w,
       src_h,
       frozen_transfer,
+      frozen_linear_mode,
     })
   }
 }
@@ -228,13 +246,27 @@ impl LinearLightFrame {
 /// Runs the [`AveragingDomain::Linear`](crate::resample::AveragingDomain::Linear)
 /// linear-light resample for one source row of a planar 8-bit YUV frame.
 ///
-/// `decode_rgb_row(idx, dst)` converts source row `idx` to a source-width
-/// **encoded** RGB row (`3 * w` bytes) — the format supplies its own
-/// `yuv_*_to_rgb_row` kernel. This function then lifts that row to linear
-/// light through `tf`'s EOTF into the frame buffer; on the final row it
-/// area-bins the linear RGB through [`AreaStream<f32>`], re-encodes through
-/// `tf`'s OETF, and writes the RGB / RGBA / luma outputs at output
-/// geometry.
+/// The decode that fills the per-row encoded RGB depends on `mode` (RFC #238
+/// #244), the only mode-dependent step — the rest of the pipeline (EOTF →
+/// area bin → OETF → clamp) is shared:
+///
+/// - [`LinearMode::DisplayReferred`] (the default): `decode_rgb_row(idx, dst)`
+///   converts source row `idx` to a source-width **encoded 8-bit** RGB row
+///   (`3 * w` bytes) via the format's production `yuv_*_to_rgb_row` kernel
+///   (which clamps + quantizes to `[0, 255]`), and each byte is normalized
+///   `byte / 255.0` before the EOTF. **Byte-identical to RFC #238 Phase 2.**
+/// - [`LinearMode::SceneReferred`]: `decode_unclamped_f32(idx, dst)` decodes
+///   the SAME affine matrix in unclamped `f32` into `scene_scratch` (`3 * w`
+///   `f32`, a `[0, 1]` scale that MAY leave `[0, 1]` where the source is out
+///   of gamut), and that value feeds the EOTF directly — preserving the
+///   out-of-gamut excursions the clamped decode discards.
+///
+/// Either decode is then lifted to linear light through `tf`'s EOTF (whose
+/// odd-symmetric extrapolation handles out-of-`[0, 1]` scene-referred inputs)
+/// into the frame buffer; on the final row it area-bins the linear RGB
+/// through [`AreaStream<f32>`], re-encodes through `tf`'s OETF, and **clamps**
+/// the result to the output range, writing the RGB / RGBA / luma outputs at
+/// output geometry.
 ///
 /// Full state atomicity and strict row sequencing mirror the encoded
 /// row-stage tail. Every fallible step — the filter-plan reject, the
@@ -254,7 +286,8 @@ impl LinearLightFrame {
 /// failure leaves `*resample_outputs` `None` alongside `*frame`, fully retryable
 /// with a changed output attachment. A failure on the row that *would* create the
 /// frame therefore leaves `*frame` AND `*resample_outputs` `None` (no
-/// `frozen_transfer`, no frozen output set, no `next_y == 0`), and a failure on a
+/// `frozen_transfer`, no `frozen_linear_mode`, no frozen output set, no
+/// `next_y == 0`), and a failure on a
 /// later row leaves the already-committed frame with its `next_y` unadvanced and
 /// this row's slot unwritten. Either way the same sink retries the row cleanly (no
 /// `begin_frame`) once the pressure clears — with a *corrected* transfer / matrix
@@ -283,7 +316,9 @@ pub(super) fn linear_light_resample(
   luma_u16: &mut Option<&mut [u16]>,
   hsv: &mut Option<HsvFrameMut<'_>>,
   rgb_scratch: &mut std::vec::Vec<u8>,
+  scene_scratch: &mut std::vec::Vec<f32>,
   tf: TransferFunction,
+  mode: LinearMode,
   plan: &ResamplePlan,
   y_row: &[u8],
   idx: usize,
@@ -291,6 +326,7 @@ pub(super) fn linear_light_resample(
   h: usize,
   use_simd: bool,
   mut decode_rgb_row: impl FnMut(usize, &mut [u8]),
+  mut decode_unclamped_f32: impl FnMut(usize, &mut [f32]),
 ) -> Result<(), MixedSinkerError> {
   // Whether this call carries any output — the same set the encoded tiers'
   // preflight uses. A no-output call consumes no frame state and must not
@@ -384,6 +420,22 @@ pub(super) fn linear_light_resample(
     ));
   }
 
+  // Mid-frame `LinearMode` change → typed rejection BEFORE any state mutation,
+  // mirroring the `frozen_transfer` freeze directly above. The mode is captured
+  // when the frame is created (first output-bearing row) and selects which
+  // decode (display-referred Q15-clamped vs scene-referred unclamped `f32`)
+  // fills the buffer the EOTF lifts; every buffered row is already decoded
+  // under it, so a later row resolving a different mode would bin display- and
+  // scene-decoded rows in one frame. The frame is `None` again after the final
+  // row consumes it (and `begin_frame` clears it), so the freeze is per-frame.
+  if let Some(b) = frame.as_ref()
+    && b.frozen_linear_mode != mode
+  {
+    return Err(MixedSinkerError::LinearModeChanged(LinearModeChanged::new(
+      idx,
+    )));
+  }
+
   let want_luma = luma.is_some() || luma_u16.is_some();
 
   // State-atomicity contract (stronger than reject-before-emit): EVERY fallible
@@ -414,6 +466,7 @@ pub(super) fn linear_light_resample(
       plan.out_h(),
       want_luma,
       tf,
+      mode,
     )?)
   } else {
     None
@@ -423,8 +476,9 @@ pub(super) fn linear_light_resample(
   // persistent state), so it is part of this fallible phase. A refusal here on
   // the first output-bearing row must leave `*frame` `None` (the frame above is
   // still only a local), so the failpoint fires before the scratch reserve and
-  // therefore before the `*frame` commit.
-  let rgb_bytes = rgb_row_bytes(w);
+  // therefore before the `*frame` commit. Both modes reserve a source-width
+  // scratch under the same failpoint and the same recoverable contract; only
+  // the element type and the decode differ (`u8` clamped vs `f32` unclamped).
   if take_linear_scratch_failure() {
     return Err(MixedSinkerError::Resample(
       crate::resample::ResampleError::AllocationFailed(crate::resample::PlanGeometry::new(
@@ -435,18 +489,38 @@ pub(super) fn linear_light_resample(
       )),
     ));
   }
-  if rgb_scratch.len() < rgb_bytes {
-    rgb_scratch
-      .try_reserve(rgb_bytes - rgb_scratch.len())
-      .map_err(|_| {
-        MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
-          crate::resample::PlanGeometry::new(w, h, plan.out_w(), plan.out_h()),
-        ))
-      })?;
-    rgb_scratch.resize(rgb_bytes, 0);
+  let scratch_alloc_failed = || {
+    MixedSinkerError::Resample(crate::resample::ResampleError::AllocationFailed(
+      crate::resample::PlanGeometry::new(w, h, plan.out_w(), plan.out_h()),
+    ))
+  };
+  match mode {
+    // Display-referred: decode the clamped 8-bit RGB into the `u8` scratch.
+    // This branch is BYTE-IDENTICAL to RFC #238 Phase 2 (same reserve, same
+    // decode, same `byte / 255.0` lift below).
+    LinearMode::DisplayReferred => {
+      let rgb_bytes = rgb_row_bytes(w);
+      if rgb_scratch.len() < rgb_bytes {
+        rgb_scratch
+          .try_reserve(rgb_bytes - rgb_scratch.len())
+          .map_err(|_| scratch_alloc_failed())?;
+        rgb_scratch.resize(rgb_bytes, 0);
+      }
+      decode_rgb_row(idx, &mut rgb_scratch[..rgb_bytes]);
+    }
+    // Scene-referred: decode the SAME affine matrix unclamped into the `f32`
+    // scratch — out-of-gamut excursions preserved, no clamp / round.
+    LinearMode::SceneReferred => {
+      let n = w * 3;
+      if scene_scratch.len() < n {
+        scene_scratch
+          .try_reserve(n - scene_scratch.len())
+          .map_err(|_| scratch_alloc_failed())?;
+        scene_scratch.resize(n, 0.0);
+      }
+      decode_unclamped_f32(idx, &mut scene_scratch[..n]);
+    }
   }
-  let enc_row = &mut rgb_scratch[..rgb_bytes];
-  decode_rgb_row(idx, enc_row);
 
   // On the final row, pre-build the entire bin tail — the f32 bin stream, the
   // `binned` accumulator, the (optional) luma u8 bin stream, AND the `enc_out`
@@ -516,13 +590,27 @@ pub(super) fn linear_light_resample(
     .as_mut()
     .expect("frame committed above (or pre-existing)");
 
-  // Linearise this source row's decoded RGB into the frame buffer at `idx`
-  // (display-referred — the decode clamped + quantized to `[0, 255]`; see the
-  // module header) and advance `next_y`. Both run only now that every fallible
-  // step above has succeeded.
+  // Linearise this source row's decoded RGB into the frame buffer at `idx` and
+  // advance `next_y`. Both run only now that every fallible step above has
+  // succeeded. The EOTF is the SAME for both modes — only the normalized
+  // encoded value it lifts differs:
+  //  - display-referred: the clamped 8-bit code / 255 (in `[0, 1]`);
+  //  - scene-referred: the unclamped real decode (a `[0, 1]` scale that MAY
+  //    leave `[0, 1]`; the EOTF's odd-symmetric extrapolation handles it).
   let lin = &mut buf.linear_rgb[idx * w * 3..(idx + 1) * w * 3];
-  for (l, &e) in lin.iter_mut().zip(enc_row[..w * 3].iter()) {
-    *l = tf.eotf(e as f32 / 255.0);
+  match mode {
+    LinearMode::DisplayReferred => {
+      let enc_row = &rgb_scratch[..w * 3];
+      for (l, &e) in lin.iter_mut().zip(enc_row.iter()) {
+        *l = tf.eotf(e as f32 / 255.0);
+      }
+    }
+    LinearMode::SceneReferred => {
+      let enc_row = &scene_scratch[..w * 3];
+      for (l, &e) in lin.iter_mut().zip(enc_row.iter()) {
+        *l = tf.eotf(e);
+      }
+    }
   }
   if want_luma {
     buf.y_plane[idx * w..(idx + 1) * w].copy_from_slice(&y_row[..w]);
