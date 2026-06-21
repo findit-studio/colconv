@@ -41,6 +41,7 @@
 #[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
+use super::miri_compat::*;
 use crate::row::scalar;
 
 // Internal helpers.
@@ -116,9 +117,9 @@ pub(crate) unsafe fn rgb565_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: us
       let r5 = vandq_u16(vshrq_n_u16::<11>(px), mask5);
       let g6 = vandq_u16(vshrq_n_u16::<5>(px), mask6);
       let b5 = vandq_u16(px, mask5);
-      let r_u8 = vqmovn_u16(expand5(r5));
-      let g_u8 = vqmovn_u16(expand6(g6));
-      let b_u8 = vqmovn_u16(expand5(b5));
+      let r_u8 = vqmovn_u16_compat(expand5(r5));
+      let g_u8 = vqmovn_u16_compat(expand6(g6));
+      let b_u8 = vqmovn_u16_compat(expand5(b5));
       vst3_u8(
         rgb_out.as_mut_ptr().add(x * 3),
         uint8x8x3_t(r_u8, g_u8, b_u8),
@@ -153,9 +154,9 @@ pub(crate) unsafe fn rgb565_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: 
       let r5 = vandq_u16(vshrq_n_u16::<11>(px), mask5);
       let g6 = vandq_u16(vshrq_n_u16::<5>(px), mask6);
       let b5 = vandq_u16(px, mask5);
-      let r_u8 = vqmovn_u16(expand5(r5));
-      let g_u8 = vqmovn_u16(expand6(g6));
-      let b_u8 = vqmovn_u16(expand5(b5));
+      let r_u8 = vqmovn_u16_compat(expand5(r5));
+      let g_u8 = vqmovn_u16_compat(expand6(g6));
+      let b_u8 = vqmovn_u16_compat(expand5(b5));
       vst4_u8(
         rgba_out.as_mut_ptr().add(x * 4),
         uint8x8x4_t(r_u8, g_u8, b_u8, alpha),
@@ -263,9 +264,9 @@ pub(crate) unsafe fn bgr565_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: us
       let b5 = vandq_u16(vshrq_n_u16::<11>(px), mask5);
       let g6 = vandq_u16(vshrq_n_u16::<5>(px), mask6);
       let r5 = vandq_u16(px, mask5);
-      let r_u8 = vqmovn_u16(expand5(r5));
-      let g_u8 = vqmovn_u16(expand6(g6));
-      let b_u8 = vqmovn_u16(expand5(b5));
+      let r_u8 = vqmovn_u16_compat(expand5(r5));
+      let g_u8 = vqmovn_u16_compat(expand6(g6));
+      let b_u8 = vqmovn_u16_compat(expand5(b5));
       vst3_u8(
         rgb_out.as_mut_ptr().add(x * 3),
         uint8x8x3_t(r_u8, g_u8, b_u8),
@@ -300,9 +301,9 @@ pub(crate) unsafe fn bgr565_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: 
       let b5 = vandq_u16(vshrq_n_u16::<11>(px), mask5);
       let g6 = vandq_u16(vshrq_n_u16::<5>(px), mask6);
       let r5 = vandq_u16(px, mask5);
-      let r_u8 = vqmovn_u16(expand5(r5));
-      let g_u8 = vqmovn_u16(expand6(g6));
-      let b_u8 = vqmovn_u16(expand5(b5));
+      let r_u8 = vqmovn_u16_compat(expand5(r5));
+      let g_u8 = vqmovn_u16_compat(expand6(g6));
+      let b_u8 = vqmovn_u16_compat(expand5(b5));
       vst4_u8(
         rgba_out.as_mut_ptr().add(x * 4),
         uint8x8x4_t(r_u8, g_u8, b_u8, alpha),
@@ -409,9 +410,9 @@ pub(crate) unsafe fn rgb555_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: us
       let r5 = vandq_u16(vshrq_n_u16::<10>(px), mask5);
       let g5 = vandq_u16(vshrq_n_u16::<5>(px), mask5);
       let b5 = vandq_u16(px, mask5);
-      let r_u8 = vqmovn_u16(expand5(r5));
-      let g_u8 = vqmovn_u16(expand5(g5));
-      let b_u8 = vqmovn_u16(expand5(b5));
+      let r_u8 = vqmovn_u16_compat(expand5(r5));
+      let g_u8 = vqmovn_u16_compat(expand5(g5));
+      let b_u8 = vqmovn_u16_compat(expand5(b5));
       vst3_u8(
         rgb_out.as_mut_ptr().add(x * 3),
         uint8x8x3_t(r_u8, g_u8, b_u8),
@@ -445,9 +446,9 @@ pub(crate) unsafe fn rgb555_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: 
       let r5 = vandq_u16(vshrq_n_u16::<10>(px), mask5);
       let g5 = vandq_u16(vshrq_n_u16::<5>(px), mask5);
       let b5 = vandq_u16(px, mask5);
-      let r_u8 = vqmovn_u16(expand5(r5));
-      let g_u8 = vqmovn_u16(expand5(g5));
-      let b_u8 = vqmovn_u16(expand5(b5));
+      let r_u8 = vqmovn_u16_compat(expand5(r5));
+      let g_u8 = vqmovn_u16_compat(expand5(g5));
+      let b_u8 = vqmovn_u16_compat(expand5(b5));
       vst4_u8(
         rgba_out.as_mut_ptr().add(x * 4),
         uint8x8x4_t(r_u8, g_u8, b_u8, alpha),
@@ -552,9 +553,9 @@ pub(crate) unsafe fn bgr555_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: us
       let b5 = vandq_u16(vshrq_n_u16::<10>(px), mask5);
       let g5 = vandq_u16(vshrq_n_u16::<5>(px), mask5);
       let r5 = vandq_u16(px, mask5);
-      let r_u8 = vqmovn_u16(expand5(r5));
-      let g_u8 = vqmovn_u16(expand5(g5));
-      let b_u8 = vqmovn_u16(expand5(b5));
+      let r_u8 = vqmovn_u16_compat(expand5(r5));
+      let g_u8 = vqmovn_u16_compat(expand5(g5));
+      let b_u8 = vqmovn_u16_compat(expand5(b5));
       vst3_u8(
         rgb_out.as_mut_ptr().add(x * 3),
         uint8x8x3_t(r_u8, g_u8, b_u8),
@@ -588,9 +589,9 @@ pub(crate) unsafe fn bgr555_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: 
       let b5 = vandq_u16(vshrq_n_u16::<10>(px), mask5);
       let g5 = vandq_u16(vshrq_n_u16::<5>(px), mask5);
       let r5 = vandq_u16(px, mask5);
-      let r_u8 = vqmovn_u16(expand5(r5));
-      let g_u8 = vqmovn_u16(expand5(g5));
-      let b_u8 = vqmovn_u16(expand5(b5));
+      let r_u8 = vqmovn_u16_compat(expand5(r5));
+      let g_u8 = vqmovn_u16_compat(expand5(g5));
+      let b_u8 = vqmovn_u16_compat(expand5(b5));
       vst4_u8(
         rgba_out.as_mut_ptr().add(x * 4),
         uint8x8x4_t(r_u8, g_u8, b_u8, alpha),
@@ -695,9 +696,9 @@ pub(crate) unsafe fn rgb444_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: us
       let r4 = vandq_u16(vshrq_n_u16::<8>(px), mask4);
       let g4 = vandq_u16(vshrq_n_u16::<4>(px), mask4);
       let b4 = vandq_u16(px, mask4);
-      let r_u8 = vqmovn_u16(expand4(r4));
-      let g_u8 = vqmovn_u16(expand4(g4));
-      let b_u8 = vqmovn_u16(expand4(b4));
+      let r_u8 = vqmovn_u16_compat(expand4(r4));
+      let g_u8 = vqmovn_u16_compat(expand4(g4));
+      let b_u8 = vqmovn_u16_compat(expand4(b4));
       vst3_u8(
         rgb_out.as_mut_ptr().add(x * 3),
         uint8x8x3_t(r_u8, g_u8, b_u8),
@@ -731,9 +732,9 @@ pub(crate) unsafe fn rgb444_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: 
       let r4 = vandq_u16(vshrq_n_u16::<8>(px), mask4);
       let g4 = vandq_u16(vshrq_n_u16::<4>(px), mask4);
       let b4 = vandq_u16(px, mask4);
-      let r_u8 = vqmovn_u16(expand4(r4));
-      let g_u8 = vqmovn_u16(expand4(g4));
-      let b_u8 = vqmovn_u16(expand4(b4));
+      let r_u8 = vqmovn_u16_compat(expand4(r4));
+      let g_u8 = vqmovn_u16_compat(expand4(g4));
+      let b_u8 = vqmovn_u16_compat(expand4(b4));
       vst4_u8(
         rgba_out.as_mut_ptr().add(x * 4),
         uint8x8x4_t(r_u8, g_u8, b_u8, alpha),
@@ -838,9 +839,9 @@ pub(crate) unsafe fn bgr444_to_rgb_row(src: &[u8], rgb_out: &mut [u8], width: us
       let b4 = vandq_u16(vshrq_n_u16::<8>(px), mask4);
       let g4 = vandq_u16(vshrq_n_u16::<4>(px), mask4);
       let r4 = vandq_u16(px, mask4);
-      let r_u8 = vqmovn_u16(expand4(r4));
-      let g_u8 = vqmovn_u16(expand4(g4));
-      let b_u8 = vqmovn_u16(expand4(b4));
+      let r_u8 = vqmovn_u16_compat(expand4(r4));
+      let g_u8 = vqmovn_u16_compat(expand4(g4));
+      let b_u8 = vqmovn_u16_compat(expand4(b4));
       vst3_u8(
         rgb_out.as_mut_ptr().add(x * 3),
         uint8x8x3_t(r_u8, g_u8, b_u8),
@@ -874,9 +875,9 @@ pub(crate) unsafe fn bgr444_to_rgba_row(src: &[u8], rgba_out: &mut [u8], width: 
       let b4 = vandq_u16(vshrq_n_u16::<8>(px), mask4);
       let g4 = vandq_u16(vshrq_n_u16::<4>(px), mask4);
       let r4 = vandq_u16(px, mask4);
-      let r_u8 = vqmovn_u16(expand4(r4));
-      let g_u8 = vqmovn_u16(expand4(g4));
-      let b_u8 = vqmovn_u16(expand4(b4));
+      let r_u8 = vqmovn_u16_compat(expand4(r4));
+      let g_u8 = vqmovn_u16_compat(expand4(g4));
+      let b_u8 = vqmovn_u16_compat(expand4(b4));
       vst4_u8(
         rgba_out.as_mut_ptr().add(x * 4),
         uint8x8x4_t(r_u8, g_u8, b_u8, alpha),

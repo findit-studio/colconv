@@ -1,7 +1,7 @@
 #[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
-use super::endian::load_endian_u32x4;
+use super::{endian::load_endian_u32x4, miri_compat::*};
 use crate::row::scalar;
 
 // ===== BGR ↔ RGB byte swap ==============================================
@@ -470,7 +470,7 @@ unsafe fn x2_extract_10bit_u8_lane(pix: uint32x4_t, shift: i32) -> uint16x4_t {
       _ => unreachable!(),
     };
     let mask = vdupq_n_u32(0xFF);
-    vqmovn_u32(vandq_u32(shifted, mask))
+    vqmovn_u32_compat(vandq_u32(shifted, mask))
   }
 }
 
@@ -486,7 +486,7 @@ unsafe fn x2_extract_10bit_u16_lane(pix: uint32x4_t, shift: i32) -> uint16x4_t {
       _ => unreachable!(),
     };
     let mask = vdupq_n_u32(0x3FF);
-    vqmovn_u32(vandq_u32(shifted, mask))
+    vqmovn_u32_compat(vandq_u32(shifted, mask))
   }
 }
 
@@ -543,9 +543,9 @@ pub(crate) unsafe fn x2rgb10_to_rgb_row<const BE: bool>(
         x2_extract_10bit_u8_lane(p3, 2),
       );
 
-      let r = vcombine_u8(vqmovn_u16(r_lo), vqmovn_u16(r_hi));
-      let g = vcombine_u8(vqmovn_u16(g_lo), vqmovn_u16(g_hi));
-      let b = vcombine_u8(vqmovn_u16(b_lo), vqmovn_u16(b_hi));
+      let r = vcombine_u8(vqmovn_u16_compat(r_lo), vqmovn_u16_compat(r_hi));
+      let g = vcombine_u8(vqmovn_u16_compat(g_lo), vqmovn_u16_compat(g_hi));
+      let b = vcombine_u8(vqmovn_u16_compat(b_lo), vqmovn_u16_compat(b_hi));
 
       let rgb = uint8x16x3_t(r, g, b);
       vst3q_u8(rgb_out.as_mut_ptr().add(x * 3), rgb);
@@ -614,9 +614,9 @@ pub(crate) unsafe fn x2rgb10_to_rgba_row<const BE: bool>(
         x2_extract_10bit_u8_lane(p3, 2),
       );
 
-      let r = vcombine_u8(vqmovn_u16(r_lo), vqmovn_u16(r_hi));
-      let g = vcombine_u8(vqmovn_u16(g_lo), vqmovn_u16(g_hi));
-      let b = vcombine_u8(vqmovn_u16(b_lo), vqmovn_u16(b_hi));
+      let r = vcombine_u8(vqmovn_u16_compat(r_lo), vqmovn_u16_compat(r_hi));
+      let g = vcombine_u8(vqmovn_u16_compat(g_lo), vqmovn_u16_compat(g_hi));
+      let b = vcombine_u8(vqmovn_u16_compat(b_lo), vqmovn_u16_compat(b_hi));
 
       let rgba = uint8x16x4_t(r, g, b, alpha);
       vst4q_u8(rgba_out.as_mut_ptr().add(x * 4), rgba);
@@ -732,9 +732,9 @@ pub(crate) unsafe fn x2bgr10_to_rgb_row<const BE: bool>(
         x2_extract_10bit_u8_lane(p3, 22),
       );
 
-      let r = vcombine_u8(vqmovn_u16(r_lo), vqmovn_u16(r_hi));
-      let g = vcombine_u8(vqmovn_u16(g_lo), vqmovn_u16(g_hi));
-      let b = vcombine_u8(vqmovn_u16(b_lo), vqmovn_u16(b_hi));
+      let r = vcombine_u8(vqmovn_u16_compat(r_lo), vqmovn_u16_compat(r_hi));
+      let g = vcombine_u8(vqmovn_u16_compat(g_lo), vqmovn_u16_compat(g_hi));
+      let b = vcombine_u8(vqmovn_u16_compat(b_lo), vqmovn_u16_compat(b_hi));
 
       let rgb = uint8x16x3_t(r, g, b);
       vst3q_u8(rgb_out.as_mut_ptr().add(x * 3), rgb);
@@ -796,9 +796,9 @@ pub(crate) unsafe fn x2bgr10_to_rgba_row<const BE: bool>(
         x2_extract_10bit_u8_lane(p3, 22),
       );
 
-      let r = vcombine_u8(vqmovn_u16(r_lo), vqmovn_u16(r_hi));
-      let g = vcombine_u8(vqmovn_u16(g_lo), vqmovn_u16(g_hi));
-      let b = vcombine_u8(vqmovn_u16(b_lo), vqmovn_u16(b_hi));
+      let r = vcombine_u8(vqmovn_u16_compat(r_lo), vqmovn_u16_compat(r_hi));
+      let g = vcombine_u8(vqmovn_u16_compat(g_lo), vqmovn_u16_compat(g_hi));
+      let b = vcombine_u8(vqmovn_u16_compat(b_lo), vqmovn_u16_compat(b_hi));
 
       let rgba = uint8x16x4_t(r, g, b, alpha);
       vst4q_u8(rgba_out.as_mut_ptr().add(x * 4), rgba);

@@ -247,16 +247,16 @@ unsafe fn yuv422_packed_to_rgb_or_rgba_row<
       let y_scaled_hi = scale_y(y_hi, y_off_v, y_scale_v, rnd_v);
 
       let b_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, b_dup_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, b_dup_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, b_dup_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, b_dup_hi)),
       );
       let g_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, g_dup_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, g_dup_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, g_dup_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, g_dup_hi)),
       );
       let r_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, r_dup_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, r_dup_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, r_dup_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, r_dup_hi)),
       );
 
       if ALPHA {

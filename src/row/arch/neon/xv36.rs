@@ -119,9 +119,9 @@ pub(crate) unsafe fn xv36_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
       let y_scaled = scale_y(y_i16, y_off_v, y_scale_v, rnd_v);
 
       // Saturate-add Y + chroma, narrow to u8 with saturation.
-      let r_u8 = vqmovun_s16(vqaddq_s16(y_scaled, r_chroma));
-      let g_u8 = vqmovun_s16(vqaddq_s16(y_scaled, g_chroma));
-      let b_u8 = vqmovun_s16(vqaddq_s16(y_scaled, b_chroma));
+      let r_u8 = vqmovun_s16_compat(vqaddq_s16(y_scaled, r_chroma));
+      let g_u8 = vqmovun_s16_compat(vqaddq_s16(y_scaled, g_chroma));
+      let b_u8 = vqmovun_s16_compat(vqaddq_s16(y_scaled, b_chroma));
 
       // Store 8 pixels.
       let off = x * bpp;

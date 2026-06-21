@@ -213,9 +213,9 @@ pub(crate) unsafe fn y2xx_n_to_rgb_or_rgba_row<
         let y_scaled = scale_y(y_i16, y_off_v, y_scale_v, rnd_v);
 
         // u8 narrow with saturation. 8 valid lanes per channel.
-        let r_u8 = vqmovun_s16(vqaddq_s16(y_scaled, r_dup));
-        let g_u8 = vqmovun_s16(vqaddq_s16(y_scaled, g_dup));
-        let b_u8 = vqmovun_s16(vqaddq_s16(y_scaled, b_dup));
+        let r_u8 = vqmovun_s16_compat(vqaddq_s16(y_scaled, r_dup));
+        let g_u8 = vqmovun_s16_compat(vqaddq_s16(y_scaled, g_dup));
+        let b_u8 = vqmovun_s16_compat(vqaddq_s16(y_scaled, b_dup));
 
         if ALPHA {
           let alpha = vdup_n_u8(0xFF);

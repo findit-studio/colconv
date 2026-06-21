@@ -55,6 +55,7 @@
 #[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
+use super::miri_compat::*;
 use crate::{
   DcpTargetGamut,
   row::scalar::{
@@ -248,13 +249,13 @@ unsafe fn clamp_scale_to_u16x4(v: float32x4_t, scale: float32x4_t) -> uint16x4_t
   unsafe {
     let zero = vdupq_n_f32(0.0);
     let one = vdupq_n_f32(1.0);
-    let clamped = vminq_f32(vmaxq_f32(v, zero), one);
+    let clamped = vminq_f32_compat(vmaxq_f32_compat(v, zero), one);
     // Add 0.5 then truncate (round-half-up) to match scalar's
     // `(c * scale + 0.5) as u8/u16`.
     let half = vdupq_n_f32(0.5);
     let scaled = vaddq_f32(vmulq_f32(clamped, scale), half);
     let as_u32 = vcvtq_u32_f32(scaled); // truncation
-    vqmovn_u32(as_u32)
+    vqmovn_u32_compat(as_u32)
   }
 }
 
@@ -298,9 +299,9 @@ pub(crate) unsafe fn xyz12_to_rgb_row<const BE: bool>(
         let r_u16 = clamp_scale_to_u16x4(r_oetf, scale);
         let g_u16 = clamp_scale_to_u16x4(g_oetf, scale);
         let b_u16 = clamp_scale_to_u16x4(b_oetf, scale);
-        let r_u8 = vqmovn_u16(vcombine_u16(r_u16, r_u16));
-        let g_u8 = vqmovn_u16(vcombine_u16(g_u16, g_u16));
-        let b_u8 = vqmovn_u16(vcombine_u16(b_u16, b_u16));
+        let r_u8 = vqmovn_u16_compat(vcombine_u16(r_u16, r_u16));
+        let g_u8 = vqmovn_u16_compat(vcombine_u16(g_u16, g_u16));
+        let b_u8 = vqmovn_u16_compat(vcombine_u16(b_u16, b_u16));
         // vst3_u8 writes 24 bytes interleaved; we need 12 bytes (4 pixels).
         // vst3_u8 takes u8x8x3 — use the low half of each combined vector
         // and write only the first 12 bytes via a stack staging array.
@@ -355,9 +356,9 @@ pub(crate) unsafe fn xyz12_to_rgba_row<const BE: bool>(
         let r_u16 = clamp_scale_to_u16x4(r_oetf, scale);
         let g_u16 = clamp_scale_to_u16x4(g_oetf, scale);
         let b_u16 = clamp_scale_to_u16x4(b_oetf, scale);
-        let r_u8 = vqmovn_u16(vcombine_u16(r_u16, r_u16));
-        let g_u8 = vqmovn_u16(vcombine_u16(g_u16, g_u16));
-        let b_u8 = vqmovn_u16(vcombine_u16(b_u16, b_u16));
+        let r_u8 = vqmovn_u16_compat(vcombine_u16(r_u16, r_u16));
+        let g_u8 = vqmovn_u16_compat(vcombine_u16(g_u16, g_u16));
+        let b_u8 = vqmovn_u16_compat(vcombine_u16(b_u16, b_u16));
         let mut tmp = [0u8; 32];
         vst4_u8(tmp.as_mut_ptr(), uint8x8x4_t(r_u8, g_u8, b_u8, alpha));
         rgba_out
@@ -592,9 +593,9 @@ pub(crate) unsafe fn xyz12_to_rgb_f16_row<const BE: bool>(
         // Clamp [0, 1] then narrow to f16 per lane.
         let zero = vdupq_n_f32(0.0);
         let one = vdupq_n_f32(1.0);
-        let r_clamp = vminq_f32(vmaxq_f32(r_oetf, zero), one);
-        let g_clamp = vminq_f32(vmaxq_f32(g_oetf, zero), one);
-        let b_clamp = vminq_f32(vmaxq_f32(b_oetf, zero), one);
+        let r_clamp = vminq_f32_compat(vmaxq_f32_compat(r_oetf, zero), one);
+        let g_clamp = vminq_f32_compat(vmaxq_f32_compat(g_oetf, zero), one);
+        let b_clamp = vminq_f32_compat(vmaxq_f32_compat(b_oetf, zero), one);
         let mut rb = [0.0_f32; LANES];
         let mut gb = [0.0_f32; LANES];
         let mut bb = [0.0_f32; LANES];
@@ -651,9 +652,9 @@ pub(crate) unsafe fn xyz12_to_rgba_f16_row<const BE: bool>(
         let b_oetf = oetf_srgb_scalar4(b_lin);
         let zero = vdupq_n_f32(0.0);
         let one = vdupq_n_f32(1.0);
-        let r_clamp = vminq_f32(vmaxq_f32(r_oetf, zero), one);
-        let g_clamp = vminq_f32(vmaxq_f32(g_oetf, zero), one);
-        let b_clamp = vminq_f32(vmaxq_f32(b_oetf, zero), one);
+        let r_clamp = vminq_f32_compat(vmaxq_f32_compat(r_oetf, zero), one);
+        let g_clamp = vminq_f32_compat(vmaxq_f32_compat(g_oetf, zero), one);
+        let b_clamp = vminq_f32_compat(vmaxq_f32_compat(b_oetf, zero), one);
         let mut rb = [0.0_f32; LANES];
         let mut gb = [0.0_f32; LANES];
         let mut bb = [0.0_f32; LANES];

@@ -231,16 +231,16 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_row<
       let y_scaled_hi = scale_y_u16_to_i16(y_vec_hi, y_off_v, y_scale_v, rnd_v);
 
       let r_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, r_dup_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, r_dup_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, r_dup_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, r_dup_hi)),
       );
       let g_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, g_dup_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, g_dup_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, g_dup_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, g_dup_hi)),
       );
       let b_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, b_dup_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, b_dup_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, b_dup_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, b_dup_hi)),
       );
 
       if ALPHA {
@@ -255,7 +255,7 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_row<
           let a_hi_raw = endian::load_endian_u16x8::<BE>(a_ptr.add(x + 8) as *const u8);
           let a_lo_u16 = vshrq_n_u16::<8>(a_lo_raw);
           let a_hi_u16 = vshrq_n_u16::<8>(a_hi_raw);
-          vcombine_u8(vqmovn_u16(a_lo_u16), vqmovn_u16(a_hi_u16))
+          vcombine_u8(vqmovn_u16_compat(a_lo_u16), vqmovn_u16_compat(a_hi_u16))
         } else {
           alpha_u8
         };
@@ -519,28 +519,28 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_u16_row<
 
       // Add Y + chroma; vqmovun_s32 saturates i32→u16 (clamps to [0, 65535]).
       let r_lo_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_lo_0, r_cd_lo0)),
-        vqmovun_s32(vaddq_s32(ys_lo_1, r_cd_lo1)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo_0, r_cd_lo0)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo_1, r_cd_lo1)),
       );
       let r_hi_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_hi_0, r_cd_hi0)),
-        vqmovun_s32(vaddq_s32(ys_hi_1, r_cd_hi1)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi_0, r_cd_hi0)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi_1, r_cd_hi1)),
       );
       let g_lo_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_lo_0, g_cd_lo0)),
-        vqmovun_s32(vaddq_s32(ys_lo_1, g_cd_lo1)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo_0, g_cd_lo0)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo_1, g_cd_lo1)),
       );
       let g_hi_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_hi_0, g_cd_hi0)),
-        vqmovun_s32(vaddq_s32(ys_hi_1, g_cd_hi1)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi_0, g_cd_hi0)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi_1, g_cd_hi1)),
       );
       let b_lo_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_lo_0, b_cd_lo0)),
-        vqmovun_s32(vaddq_s32(ys_lo_1, b_cd_lo1)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo_0, b_cd_lo0)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo_1, b_cd_lo1)),
       );
       let b_hi_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_hi_0, b_cd_hi0)),
-        vqmovun_s32(vaddq_s32(ys_hi_1, b_cd_hi1)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi_0, b_cd_hi0)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi_1, b_cd_hi1)),
       );
 
       if ALPHA {
@@ -826,16 +826,16 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_row<
       let y_scaled_hi = scale_y_u16_to_i16(y_vec_hi, y_off_v, y_scale_v, rnd_v);
 
       let r_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, r_chroma_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, r_chroma_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, r_chroma_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, r_chroma_hi)),
       );
       let g_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, g_chroma_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, g_chroma_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, g_chroma_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, g_chroma_hi)),
       );
       let b_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, b_chroma_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, b_chroma_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, b_chroma_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, b_chroma_hi)),
       );
 
       if ALPHA {
@@ -849,7 +849,7 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_row<
           let a_hi_raw = endian::load_endian_u16x8::<BE>(a_ptr.add(x + 8) as *const u8);
           let a_lo_u16 = vshrq_n_u16::<8>(a_lo_raw);
           let a_hi_u16 = vshrq_n_u16::<8>(a_hi_raw);
-          vcombine_u8(vqmovn_u16(a_lo_u16), vqmovn_u16(a_hi_u16))
+          vcombine_u8(vqmovn_u16_compat(a_lo_u16), vqmovn_u16_compat(a_hi_u16))
         } else {
           alpha_u8
         };
@@ -1098,16 +1098,16 @@ pub(crate) unsafe fn yuv_444p16_to_rgb_or_rgba_u16_row<
       let ys_hi = scale_y_u16_i64(y_hi_i32, y_off_v, y_scale_d, rnd64);
 
       let r_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_lo, r_ch_lo)),
-        vqmovun_s32(vaddq_s32(ys_hi, r_ch_hi)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo, r_ch_lo)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi, r_ch_hi)),
       );
       let g_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_lo, g_ch_lo)),
-        vqmovun_s32(vaddq_s32(ys_hi, g_ch_hi)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo, g_ch_lo)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi, g_ch_hi)),
       );
       let b_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_lo, b_ch_lo)),
-        vqmovun_s32(vaddq_s32(ys_hi, b_ch_hi)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo, b_ch_lo)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi, b_ch_hi)),
       );
 
       if ALPHA {

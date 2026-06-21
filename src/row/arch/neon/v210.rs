@@ -205,9 +205,9 @@ pub(crate) unsafe fn v210_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
 
       // u8 narrow with saturation. Only the low 8 lanes matter; we
       // store 6 of them per channel.
-      let r_u8 = vqmovun_s16(vqaddq_s16(y_scaled, r_dup));
-      let g_u8 = vqmovun_s16(vqaddq_s16(y_scaled, g_dup));
-      let b_u8 = vqmovun_s16(vqaddq_s16(y_scaled, b_dup));
+      let r_u8 = vqmovun_s16_compat(vqaddq_s16(y_scaled, r_dup));
+      let g_u8 = vqmovun_s16_compat(vqaddq_s16(y_scaled, g_dup));
+      let b_u8 = vqmovun_s16_compat(vqaddq_s16(y_scaled, b_dup));
 
       // 6-pixel partial store: write into a stack buffer via
       // `vst3_u8` / `vst4_u8` (8-pixel stores) then memcpy the
@@ -387,7 +387,7 @@ pub(crate) unsafe fn v210_to_luma_row<const BE: bool>(
     for w in 0..full_words {
       let (y_vec, _, _) = unpack_v210_word_neon::<BE>(packed.as_ptr().add(w * 16));
       // Downshift 10-bit Y by 2 → 8-bit, narrow to u8x8.
-      let y_u8 = vqmovn_u16(vshrq_n_u16::<2>(y_vec));
+      let y_u8 = vqmovn_u16_compat(vshrq_n_u16::<2>(y_vec));
       // Store 6 of the 8 lanes: stack buffer + copy_from_slice.
       let mut tmp = [0u8; 8];
       vst1_u8(tmp.as_mut_ptr(), y_u8);

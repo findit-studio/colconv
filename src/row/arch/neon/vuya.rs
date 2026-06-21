@@ -142,16 +142,16 @@ pub(crate) unsafe fn vuya_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC:
       // Saturate-add Y + chroma per channel, narrow both halves to u8,
       // then combine into a uint8x16_t.
       let r_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, r_chroma_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, r_chroma_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, r_chroma_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, r_chroma_hi)),
       );
       let g_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, g_chroma_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, g_chroma_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, g_chroma_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, g_chroma_hi)),
       );
       let b_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, b_chroma_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, b_chroma_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, b_chroma_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, b_chroma_hi)),
       );
 
       // Store 16 pixels.

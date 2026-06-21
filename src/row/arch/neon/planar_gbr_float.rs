@@ -23,6 +23,7 @@
 #[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
+use super::miri_compat::*;
 use crate::{
   ColorMatrix,
   row::{
@@ -47,7 +48,7 @@ const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 /// Clamp a `float32x4_t` to `[0.0, 1.0]`.
 #[inline(always)]
 unsafe fn clamp01(v: float32x4_t, zero: float32x4_t, one: float32x4_t) -> float32x4_t {
-  unsafe { vminq_f32(vmaxq_f32(v, zero), one) }
+  unsafe { vminq_f32_compat(vmaxq_f32_compat(v, zero), one) }
 }
 
 /// Load 4 f32 values with optional BE byte-swap via `load_endian_u32x4`.
@@ -69,7 +70,7 @@ unsafe fn scale_round_u32(v: float32x4_t, scale: float32x4_t, half: float32x4_t)
 /// Narrow `uint32x4_t` → `uint16x4_t` → `uint8x8_t` (first 4 bytes valid).
 #[inline(always)]
 unsafe fn narrow_to_u8(v: uint32x4_t) -> uint8x8_t {
-  unsafe { vqmovn_u16(vcombine_u16(vqmovn_u32(v), vdup_n_u16(0))) }
+  unsafe { vqmovn_u16_compat(vcombine_u16(vqmovn_u32_compat(v), vdup_n_u16(0))) }
 }
 
 // ---- Gbrpf32 → u8 RGB -------------------------------------------------------
@@ -209,9 +210,9 @@ pub(crate) unsafe fn gbrpf32_to_rgb_u16_row<const BE: bool>(
       let gv = clamp01(load_f32x4::<BE>(g.as_ptr(), x), zero, one);
       let bv = clamp01(load_f32x4::<BE>(b.as_ptr(), x), zero, one);
       let rv = clamp01(load_f32x4::<BE>(r.as_ptr(), x), zero, one);
-      let gu = vqmovn_u32(scale_round_u32(gv, scale, half));
-      let bu = vqmovn_u32(scale_round_u32(bv, scale, half));
-      let ru = vqmovn_u32(scale_round_u32(rv, scale, half));
+      let gu = vqmovn_u32_compat(scale_round_u32(gv, scale, half));
+      let bu = vqmovn_u32_compat(scale_round_u32(bv, scale, half));
+      let ru = vqmovn_u32_compat(scale_round_u32(rv, scale, half));
       // vst3_u16 writes 24 bytes; 24 are valid (4 pixels x 3 x 2 bytes).
       vst3_u16(out.as_mut_ptr().add(x * 3), uint16x4x3_t(ru, gu, bu));
       x += 4;
@@ -257,9 +258,9 @@ pub(crate) unsafe fn gbrpf32_to_rgba_u16_row<const BE: bool>(
       let gv = clamp01(load_f32x4::<BE>(g.as_ptr(), x), zero, one);
       let bv = clamp01(load_f32x4::<BE>(b.as_ptr(), x), zero, one);
       let rv = clamp01(load_f32x4::<BE>(r.as_ptr(), x), zero, one);
-      let gu = vqmovn_u32(scale_round_u32(gv, scale, half));
-      let bu = vqmovn_u32(scale_round_u32(bv, scale, half));
-      let ru = vqmovn_u32(scale_round_u32(rv, scale, half));
+      let gu = vqmovn_u32_compat(scale_round_u32(gv, scale, half));
+      let bu = vqmovn_u32_compat(scale_round_u32(bv, scale, half));
+      let ru = vqmovn_u32_compat(scale_round_u32(rv, scale, half));
       // vst4_u16 writes 32 bytes; 32 are valid (4 pixels x 4 x 2 bytes).
       vst4_u16(out.as_mut_ptr().add(x * 4), uint16x4x4_t(ru, gu, bu, alpha));
       x += 4;
@@ -728,10 +729,10 @@ pub(crate) unsafe fn gbrapf32_to_rgba_u16_row<const BE: bool>(
       let bv = clamp01(load_f32x4::<BE>(b.as_ptr(), x), zero, one);
       let rv = clamp01(load_f32x4::<BE>(r.as_ptr(), x), zero, one);
       let av = clamp01(load_f32x4::<BE>(a.as_ptr(), x), zero, one);
-      let gu = vqmovn_u32(scale_round_u32(gv, scale, half));
-      let bu = vqmovn_u32(scale_round_u32(bv, scale, half));
-      let ru = vqmovn_u32(scale_round_u32(rv, scale, half));
-      let au = vqmovn_u32(scale_round_u32(av, scale, half));
+      let gu = vqmovn_u32_compat(scale_round_u32(gv, scale, half));
+      let bu = vqmovn_u32_compat(scale_round_u32(bv, scale, half));
+      let ru = vqmovn_u32_compat(scale_round_u32(rv, scale, half));
+      let au = vqmovn_u32_compat(scale_round_u32(av, scale, half));
       vst4_u16(out.as_mut_ptr().add(x * 4), uint16x4x4_t(ru, gu, bu, au));
       x += 4;
     }
@@ -1047,9 +1048,9 @@ pub(crate) unsafe fn gbrpf16_to_rgb_u16_row_fp16<const BE: bool>(
       let gc = clamp01(gv, zero, one);
       let bc = clamp01(bv, zero, one);
       let rc = clamp01(rv, zero, one);
-      let gu = vqmovn_u32(scale_round_u32(gc, scale, half_v));
-      let bu = vqmovn_u32(scale_round_u32(bc, scale, half_v));
-      let ru = vqmovn_u32(scale_round_u32(rc, scale, half_v));
+      let gu = vqmovn_u32_compat(scale_round_u32(gc, scale, half_v));
+      let bu = vqmovn_u32_compat(scale_round_u32(bc, scale, half_v));
+      let ru = vqmovn_u32_compat(scale_round_u32(rc, scale, half_v));
       vst3_u16(out.as_mut_ptr().add(x * 3), uint16x4x3_t(ru, gu, bu));
       x += 4;
     }
@@ -1119,9 +1120,9 @@ pub(crate) unsafe fn gbrpf16_to_rgba_u16_row_fp16<const BE: bool>(
       let gc = clamp01(gv, zero, one);
       let bc = clamp01(bv, zero, one);
       let rc = clamp01(rv, zero, one);
-      let gu = vqmovn_u32(scale_round_u32(gc, scale, half_v));
-      let bu = vqmovn_u32(scale_round_u32(bc, scale, half_v));
-      let ru = vqmovn_u32(scale_round_u32(rc, scale, half_v));
+      let gu = vqmovn_u32_compat(scale_round_u32(gc, scale, half_v));
+      let bu = vqmovn_u32_compat(scale_round_u32(bc, scale, half_v));
+      let ru = vqmovn_u32_compat(scale_round_u32(rc, scale, half_v));
       vst4_u16(out.as_mut_ptr().add(x * 4), uint16x4x4_t(ru, gu, bu, alpha));
       x += 4;
     }
@@ -1659,10 +1660,10 @@ pub(crate) unsafe fn gbrapf16_to_rgba_u16_row_fp16<const BE: bool>(
       let bc = clamp01(bv, zero, one);
       let rc = clamp01(rv, zero, one);
       let ac = clamp01(av, zero, one);
-      let gu = vqmovn_u32(scale_round_u32(gc, scale, half_v));
-      let bu = vqmovn_u32(scale_round_u32(bc, scale, half_v));
-      let ru = vqmovn_u32(scale_round_u32(rc, scale, half_v));
-      let au = vqmovn_u32(scale_round_u32(ac, scale, half_v));
+      let gu = vqmovn_u32_compat(scale_round_u32(gc, scale, half_v));
+      let bu = vqmovn_u32_compat(scale_round_u32(bc, scale, half_v));
+      let ru = vqmovn_u32_compat(scale_round_u32(rc, scale, half_v));
+      let au = vqmovn_u32_compat(scale_round_u32(ac, scale, half_v));
       vst4_u16(out.as_mut_ptr().add(x * 4), uint16x4x4_t(ru, gu, bu, au));
       x += 4;
     }

@@ -123,9 +123,9 @@ pub(crate) unsafe fn v410_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
       let y_scaled = scale_y(y_i16x8, y_off_v, y_scale_v, rnd_v);
 
       // Saturate-add and narrow to u8. Only low 4 lanes are valid.
-      let r_u8 = vqmovun_s16(vqaddq_s16(y_scaled, r_chroma));
-      let g_u8 = vqmovun_s16(vqaddq_s16(y_scaled, g_chroma));
-      let b_u8 = vqmovun_s16(vqaddq_s16(y_scaled, b_chroma));
+      let r_u8 = vqmovun_s16_compat(vqaddq_s16(y_scaled, r_chroma));
+      let g_u8 = vqmovun_s16_compat(vqaddq_s16(y_scaled, g_chroma));
+      let b_u8 = vqmovun_s16_compat(vqaddq_s16(y_scaled, b_chroma));
 
       // 4-pixel partial store via stack buffer.
       if ALPHA {

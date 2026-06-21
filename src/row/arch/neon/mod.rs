@@ -54,6 +54,19 @@ use core::arch::aarch64::*;
 #[allow(unused_imports)]
 pub(super) use crate::{ColorMatrix, row::scalar};
 
+// `cfg(miri)` fallbacks for the specialized NEON intrinsics Miri cannot
+// execute (horizontal reduce, float→int convert, saturating narrow).
+// Declared unconditionally because the always-compiled `hsv` kernel
+// uses them; every NEON kernel reaches the helpers through this
+// re-export. Production (`not(miri)`) is byte-identical to the raw
+// intrinsics.
+pub(crate) mod miri_compat;
+// Re-exported for the `use super::*` kernels; feature subsets whose
+// kernels reach the helpers through an explicit `use super::miri_compat::*`
+// (or use none of these intrinsics) leave this glob unconsumed.
+#[allow(unused_imports)]
+pub(super) use miri_compat::*;
+
 // Consumers: source families with a source-α channel (`gbr` Gbrap,
 // `yuv-444-packed` AYUV64, `yuva` planar α).
 #[cfg(any(feature = "gbr", feature = "yuv-444-packed", feature = "yuva"))]
@@ -247,7 +260,7 @@ pub(crate) use yuv_planar_high_bit::*;
 ))]
 #[inline(always)]
 pub(super) fn clamp_u16_max(v: int16x8_t, zero_v: int16x8_t, max_v: int16x8_t) -> uint16x8_t {
-  unsafe { vreinterpretq_u16_s16(vminq_s16(vmaxq_s16(v, zero_v), max_v)) }
+  unsafe { vreinterpretq_u16_s16(vminq_s16_compat(vmaxq_s16_compat(v, zero_v), max_v)) }
 }
 
 // The helpers below wrap NEON register‑only intrinsics (shifts, adds,
@@ -310,7 +323,7 @@ pub(super) fn chroma_i16x8(
       vaddq_s32(vmulq_s32(cu, u_d_hi), vmulq_s32(cv, v_d_hi)),
       rnd,
     ));
-    vcombine_s16(vqmovn_s32(lo), vqmovn_s32(hi))
+    vcombine_s16(vqmovn_s32_compat(lo), vqmovn_s32_compat(hi))
   }
 }
 
@@ -341,7 +354,7 @@ pub(super) fn scale_y(
       vmulq_s32(vmovl_s16(vget_high_s16(shifted)), y_scale_v),
       rnd,
     ));
-    vcombine_s16(vqmovn_s32(lo), vqmovn_s32(hi))
+    vcombine_s16(vqmovn_s32_compat(lo), vqmovn_s32_compat(hi))
   }
 }
 
@@ -377,7 +390,7 @@ pub(super) fn scale_y_u16_to_i16(
       vmulq_s32(vsubq_s32(hi, y_off_v), y_scale_v),
       rnd_v,
     ));
-    vcombine_s16(vqmovn_s32(lo_s), vqmovn_s32(hi_s))
+    vcombine_s16(vqmovn_s32_compat(lo_s), vqmovn_s32_compat(hi_s))
   }
 }
 

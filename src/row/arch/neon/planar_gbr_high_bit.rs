@@ -25,7 +25,7 @@ use core::arch::aarch64::*;
 
 use crate::row::scalar;
 
-use super::endian::load_endian_u16x8;
+use super::{endian::load_endian_u16x8, miri_compat::*};
 
 // ---- u8 output, 3-channel (RGB) -----------------------------------------
 
@@ -70,9 +70,9 @@ pub(crate) unsafe fn gbr_to_rgb_high_bit_row<const BITS: u32, const BE: bool>(
       let r_v = vandq_u16(r_raw, mask_v);
 
       // Right-shift each 8-pixel vector by BITS-8, then narrow to u8x8.
-      let r_sh = vqmovn_u16(vshlq_u16(r_v, shr));
-      let g_sh = vqmovn_u16(vshlq_u16(g_v, shr));
-      let b_sh = vqmovn_u16(vshlq_u16(b_v, shr));
+      let r_sh = vqmovn_u16_compat(vshlq_u16(r_v, shr));
+      let g_sh = vqmovn_u16_compat(vshlq_u16(g_v, shr));
+      let b_sh = vqmovn_u16_compat(vshlq_u16(b_v, shr));
 
       // Direct 8-pixel interleaved store via vst3_u8: 24 bytes written
       // straight to the output. This replaces the previous
@@ -140,9 +140,9 @@ pub(crate) unsafe fn gbr_to_rgba_opaque_high_bit_row<const BITS: u32, const BE: 
       let b_v = vandq_u16(b_raw, mask_v);
       let r_v = vandq_u16(r_raw, mask_v);
 
-      let r_sh = vqmovn_u16(vshlq_u16(r_v, shr));
-      let g_sh = vqmovn_u16(vshlq_u16(g_v, shr));
-      let b_sh = vqmovn_u16(vshlq_u16(b_v, shr));
+      let r_sh = vqmovn_u16_compat(vshlq_u16(r_v, shr));
+      let g_sh = vqmovn_u16_compat(vshlq_u16(g_v, shr));
+      let b_sh = vqmovn_u16_compat(vshlq_u16(b_v, shr));
 
       // Direct 8-pixel interleaved store via vst4_u8: 32 bytes written
       // straight to the output (replaces the prior vst4q_u8 + 64-byte
@@ -211,10 +211,10 @@ pub(crate) unsafe fn gbra_to_rgba_high_bit_row<const BITS: u32, const BE: bool>(
       let r_v = vandq_u16(r_raw, mask_v);
       let a_v = vandq_u16(a_raw, mask_v);
 
-      let r_sh = vqmovn_u16(vshlq_u16(r_v, shr));
-      let g_sh = vqmovn_u16(vshlq_u16(g_v, shr));
-      let b_sh = vqmovn_u16(vshlq_u16(b_v, shr));
-      let a_sh = vqmovn_u16(vshlq_u16(a_v, shr));
+      let r_sh = vqmovn_u16_compat(vshlq_u16(r_v, shr));
+      let g_sh = vqmovn_u16_compat(vshlq_u16(g_v, shr));
+      let b_sh = vqmovn_u16_compat(vshlq_u16(b_v, shr));
+      let a_sh = vqmovn_u16_compat(vshlq_u16(a_v, shr));
 
       // Direct 8-pixel interleaved store via vst4_u8: 32 bytes written
       // straight to the output (replaces the prior vst4q_u8 + 64-byte

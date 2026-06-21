@@ -1,6 +1,7 @@
 #[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
+use super::miri_compat::*;
 use crate::{ColorMatrix, row::scalar};
 
 // ===== RGB → HSV =========================================================
@@ -141,8 +142,8 @@ fn hsv_group(
 
     // V = max(b, g, r); min = min(b, g, r); delta = V - min.
     // vmaxq_f32 / vminq_f32 are NaN‑tolerant, matching f32::max / f32::min.
-    let v = vmaxq_f32(vmaxq_f32(b, g), r);
-    let min_bgr = vminq_f32(vminq_f32(b, g), r);
+    let v = vmaxq_f32_compat(vmaxq_f32_compat(b, g), r);
+    let min_bgr = vminq_f32_compat(vminq_f32_compat(b, g), r);
     let delta = vsubq_f32(v, min_bgr);
 
     // S = if v == 0 { 0 } else { 255 * delta / v }.
@@ -184,12 +185,12 @@ fn hsv_group(
     //   v_quant = (v + 0.5).clamp(0, 255)
     // clamp → vminq(vmaxq(v, lo), hi). Inputs are all finite so NaN
     // handling is irrelevant here.
-    let h_quant = vminq_f32(
-      vmaxq_f32(vaddq_f32(vmulq_f32(hue, half), half), zero),
+    let h_quant = vminq_f32_compat(
+      vmaxq_f32_compat(vaddq_f32(vmulq_f32(hue, half), half), zero),
       one_seventy_nine,
     );
-    let s_quant = vminq_f32(vmaxq_f32(vaddq_f32(s, half), zero), two_fifty_five);
-    let v_quant = vminq_f32(vmaxq_f32(vaddq_f32(v, half), zero), two_fifty_five);
+    let s_quant = vminq_f32_compat(vmaxq_f32_compat(vaddq_f32(s, half), zero), two_fifty_five);
+    let v_quant = vminq_f32_compat(vmaxq_f32_compat(vaddq_f32(v, half), zero), two_fifty_five);
 
     (h_quant, s_quant, v_quant)
   }
@@ -329,26 +330,26 @@ pub(crate) unsafe fn rgb_to_luma_row(
       // Saturate‑narrow to i16x8 (clamps negatives → 0 and >32767 → 32767;
       // both extremes are well outside our [0,255] expected range and
       // can only occur when coefficient sums round slightly above 1.0).
-      let y_lo_i16 = vcombine_s16(vqmovn_s32(y0), vqmovn_s32(y1));
-      let y_hi_i16 = vcombine_s16(vqmovn_s32(y2), vqmovn_s32(y3));
+      let y_lo_i16 = vcombine_s16(vqmovn_s32_compat(y0), vqmovn_s32_compat(y1));
+      let y_hi_i16 = vcombine_s16(vqmovn_s32_compat(y2), vqmovn_s32_compat(y3));
 
       let y_u8 = if full_range {
         // Saturate‑narrow i16x8x2 → u8x16 ([0,255] clamp).
-        vcombine_u8(vqmovun_s16(y_lo_i16), vqmovun_s16(y_hi_i16))
+        vcombine_u8(vqmovun_s16_compat(y_lo_i16), vqmovun_s16_compat(y_hi_i16))
       } else {
         // Limited‑range post‑scale: clamp Y_full to [0,255] first
         // (matches the scalar's `y_full_clamped` step), then apply the
         // 28142/32768 Q15 multiply and add 16. Re‑use Q15 widening
         // multiply via vmull_s16.
-        let y_clamp_u8_lo = vqmovun_s16(y_lo_i16);
-        let y_clamp_u8_hi = vqmovun_s16(y_hi_i16);
+        let y_clamp_u8_lo = vqmovun_s16_compat(y_lo_i16);
+        let y_clamp_u8_hi = vqmovun_s16_compat(y_hi_i16);
         // Re‑widen u8 → i16 (always non‑negative, so signed and
         // unsigned widen produce the same bit pattern).
         let yc_lo_i16 = vreinterpretq_s16_u16(vmovl_u8(y_clamp_u8_lo));
         let yc_hi_i16 = vreinterpretq_s16_u16(vmovl_u8(y_clamp_u8_hi));
         let y_lim_lo = limited_range_scale(yc_lo_i16, lim_scale_v, lim_off_v, rnd_v);
         let y_lim_hi = limited_range_scale(yc_hi_i16, lim_scale_v, lim_off_v, rnd_v);
-        vcombine_u8(vqmovun_s16(y_lim_lo), vqmovun_s16(y_lim_hi))
+        vcombine_u8(vqmovun_s16_compat(y_lim_lo), vqmovun_s16_compat(y_lim_hi))
       };
 
       vst1q_u8(luma_out.as_mut_ptr().add(x), y_u8);
@@ -403,7 +404,7 @@ fn limited_range_scale(
     let hi = vmull_s16(vget_high_s16(yc), scale);
     let lo = vshrq_n_s32::<15>(vaddq_s32(lo, rnd));
     let hi = vshrq_n_s32::<15>(vaddq_s32(hi, rnd));
-    let scaled_i16 = vcombine_s16(vqmovn_s32(lo), vqmovn_s32(hi));
+    let scaled_i16 = vcombine_s16(vqmovn_s32_compat(lo), vqmovn_s32_compat(hi));
     vaddq_s16(scaled_i16, off)
   }
 }
