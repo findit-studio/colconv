@@ -303,24 +303,62 @@ jobs:
         run: bash ci/sanitizer.sh
 
   miri-tb:
-    name: miri-tb-${{ matrix.target }}
+    name: miri-tb-${{ matrix.target }}${{ matrix.feature-group && format(' [{0}]', matrix.feature-group) || '' }}
     strategy:
+      fail-fast: false
       matrix:
+        # Targets that fit the whole default-features suite in one miri process
+        # run it unsharded (no feature-group). The two memory/speed-constrained
+        # targets — 32-bit i686 (4 GB shared address space) and aarch64-darwin
+        # (soft-float interpreter, where the full suite is too slow for the job
+        # timeout) — are split across an exhaustive set of disjoint feature
+        # groups, each its own container compiling only a subset of the format
+        # kernels. The four groups partition every format feature in Cargo.toml
+        # (yuva pulls in yuv-planar via its own feature edge, so it is grouped
+        # with the planar family).
+        #
+        # Coverage note: because each sharded container compiles only its own
+        # group, code paths gated on features from two different groups (e.g.
+        # yuv-planar + rgb) are not exercised under miri on i686/aarch64-darwin.
+        # Those cross-feature paths are covered by the five unsharded targets,
+        # which build the whole default-features suite in one process; the
+        # sharded pair deliberately trades that cross-group coverage for fitting
+        # the 4 GB / soft-float interpreter limits.
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
           - os: ubuntu-latest
-            target: i686-unknown-linux-gnu
-          - os: ubuntu-latest
             target: powerpc64-unknown-linux-gnu
           - os: ubuntu-latest
             target: s390x-unknown-linux-gnu
           - os: ubuntu-latest
             target: riscv64gc-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: i686-unknown-linux-gnu
+            feature-group: yuv-planar yuv-semi-planar yuva
+          - os: ubuntu-latest
+            target: i686-unknown-linux-gnu
+            feature-group: yuv-packed yuv-444-packed y2xx v210
+          - os: ubuntu-latest
+            target: i686-unknown-linux-gnu
+            feature-group: rgb rgb-float gbr gray rgb-legacy
+          - os: ubuntu-latest
+            target: i686-unknown-linux-gnu
+            feature-group: xyz bayer mono
           - os: macos-latest
             target: aarch64-apple-darwin
+            feature-group: yuv-planar yuv-semi-planar yuva
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            feature-group: yuv-packed yuv-444-packed y2xx v210
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            feature-group: rgb rgb-float gbr gray rgb-legacy
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            feature-group: xyz bayer mono
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -336,27 +374,51 @@ jobs:
             ${{ runner.os }}-miri-
       - name: Miri
         run: |
-          bash ci/miri_tb.sh "${{ matrix.target }}"
+          bash ci/miri_tb.sh "${{ matrix.target }}" "${{ matrix.feature-group }}"
 
   miri-sb:
-    name: miri-sb-${{ matrix.target }}
+    name: miri-sb-${{ matrix.target }}${{ matrix.feature-group && format(' [{0}]', matrix.feature-group) || '' }}
     strategy:
+      fail-fast: false
       matrix:
+        # See miri-tb for the sharding rationale: unsharded targets run the
+        # whole default-features suite in one process; i686 and aarch64-darwin
+        # are split across the same four disjoint, exhaustive feature groups.
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
           - os: ubuntu-latest
-            target: i686-unknown-linux-gnu
-          - os: ubuntu-latest
             target: powerpc64-unknown-linux-gnu
           - os: ubuntu-latest
             target: s390x-unknown-linux-gnu
           - os: ubuntu-latest
             target: riscv64gc-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: i686-unknown-linux-gnu
+            feature-group: yuv-planar yuv-semi-planar yuva
+          - os: ubuntu-latest
+            target: i686-unknown-linux-gnu
+            feature-group: yuv-packed yuv-444-packed y2xx v210
+          - os: ubuntu-latest
+            target: i686-unknown-linux-gnu
+            feature-group: rgb rgb-float gbr gray rgb-legacy
+          - os: ubuntu-latest
+            target: i686-unknown-linux-gnu
+            feature-group: xyz bayer mono
           - os: macos-latest
             target: aarch64-apple-darwin
+            feature-group: yuv-planar yuv-semi-planar yuva
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            feature-group: yuv-packed yuv-444-packed y2xx v210
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            feature-group: rgb rgb-float gbr gray rgb-legacy
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            feature-group: xyz bayer mono
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -372,4 +434,4 @@ jobs:
             ${{ runner.os }}-miri-
       - name: Miri
         run: |
-          bash ci/miri_sb.sh "${{ matrix.target }}"
+          bash ci/miri_sb.sh "${{ matrix.target }}" "${{ matrix.feature-group }}"

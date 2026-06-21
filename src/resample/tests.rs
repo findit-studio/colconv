@@ -1592,6 +1592,37 @@ mod pil_parity {
       .collect()
   }
 
+  /// Source pixel count above which a PIL golden case is skipped under Miri.
+  /// The large fixtures (up to `1920x1080`) resample hundreds of source rows
+  /// through the real stream — and the SIMD variants drive every tap through
+  /// Miri's NEON intrinsic shims — which runs for many minutes apiece under
+  /// the interpreter and would push the job past its timeout. The small kept
+  /// cases (the largest is the `16x12` upscale; everything else is `8x8` or
+  /// tinier) still exercise the full apply path: chunked vs row-end-staged
+  /// spans, the SIMD vs scalar H-pass tiers (hence the NEON `vaddvq` fallback),
+  /// the multi-output accumulator ring, the upscale direction, and both channel
+  /// counts — so Miri's UB checking is unchanged; the larger cases run on every
+  /// native lane. No effect off Miri (the filter passes everything).
+  const MIRI_MAX_SRC_PX: usize = 1_500;
+
+  /// `(src_w, src_h)` of a PIL golden tuple, for the Miri size filter.
+  trait GoldenDims {
+    fn src_px(&self) -> usize;
+  }
+  impl<T: 'static> GoldenDims for (usize, usize, usize, usize, usize, u32, &'static [T]) {
+    fn src_px(&self) -> usize {
+      self.0 * self.1
+    }
+  }
+
+  /// The golden cases to actually run: every case off Miri, and only the
+  /// cases at or below [`MIRI_MAX_SRC_PX`] source pixels under Miri.
+  fn miri_subset<G: GoldenDims>(all: &'static [G]) -> impl Iterator<Item = &'static G> {
+    all
+      .iter()
+      .filter(|g| !cfg!(miri) || g.src_px() <= MIRI_MAX_SRC_PX)
+  }
+
   /// Runs the filter stream for `kernel` over `src` (channels-interleaved,
   /// source width, rows in order) and returns the `ow*oh*channels` output.
   /// `use_simd` selects the SIMD H-pass tier (when the host backend permits)
@@ -1716,7 +1747,7 @@ mod pil_parity {
   #[test]
   fn u8_matches_pil() {
     let mut worst = 0u8;
-    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::TRIANGLE_U8 {
+    for &(sw, sh, ow, oh, ch, seed, golden) in miri_subset(pil_goldens::TRIANGLE_U8) {
       let src = source_u8(sw, sh, ch, seed);
       let ours = run(Triangle, &src, sw, sh, ow, oh, ch);
       assert_u_within(
@@ -1727,7 +1758,7 @@ mod pil_parity {
         std::format_args!("Triangle {sw}x{sh}->{ow}x{oh} c{ch}"),
       );
     }
-    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::CATMULLROM_U8 {
+    for &(sw, sh, ow, oh, ch, seed, golden) in miri_subset(pil_goldens::CATMULLROM_U8) {
       let src = source_u8(sw, sh, ch, seed);
       let ours = run(CatmullRom, &src, sw, sh, ow, oh, ch);
       assert_u_within(
@@ -1738,7 +1769,7 @@ mod pil_parity {
         std::format_args!("CatmullRom {sw}x{sh}->{ow}x{oh} c{ch}"),
       );
     }
-    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::LANCZOS3_U8 {
+    for &(sw, sh, ow, oh, ch, seed, golden) in miri_subset(pil_goldens::LANCZOS3_U8) {
       let src = source_u8(sw, sh, ch, seed);
       let ours = run(Lanczos3, &src, sw, sh, ow, oh, ch);
       assert_u_within(
@@ -1771,7 +1802,7 @@ mod pil_parity {
   #[test]
   fn u16_matches_pil_within_one_lsb() {
     let mut worst = 0u16;
-    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::TRIANGLE_U16 {
+    for &(sw, sh, ow, oh, ch, seed, golden) in miri_subset(pil_goldens::TRIANGLE_U16) {
       let src = source_u16(sw, sh, seed);
       let ours = run(Triangle, &src, sw, sh, ow, oh, ch);
       assert_u16_within(
@@ -1782,7 +1813,7 @@ mod pil_parity {
         std::format_args!("Triangle {sw}x{sh}->{ow}x{oh}"),
       );
     }
-    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::CATMULLROM_U16 {
+    for &(sw, sh, ow, oh, ch, seed, golden) in miri_subset(pil_goldens::CATMULLROM_U16) {
       let src = source_u16(sw, sh, seed);
       let ours = run(CatmullRom, &src, sw, sh, ow, oh, ch);
       assert_u16_within(
@@ -1793,7 +1824,7 @@ mod pil_parity {
         std::format_args!("CatmullRom {sw}x{sh}->{ow}x{oh}"),
       );
     }
-    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::LANCZOS3_U16 {
+    for &(sw, sh, ow, oh, ch, seed, golden) in miri_subset(pil_goldens::LANCZOS3_U16) {
       let src = source_u16(sw, sh, seed);
       let ours = run(Lanczos3, &src, sw, sh, ow, oh, ch);
       assert_u16_within(
@@ -1827,7 +1858,7 @@ mod pil_parity {
   #[test]
   fn f32_matches_pil_within_tolerance() {
     let mut worst = 0.0f32;
-    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::TRIANGLE_F32 {
+    for &(sw, sh, ow, oh, ch, seed, golden) in miri_subset(pil_goldens::TRIANGLE_F32) {
       let src = source_f32(sw, sh, seed);
       let ours = run(Triangle, &src, sw, sh, ow, oh, ch);
       assert_f32_within(
@@ -1837,7 +1868,7 @@ mod pil_parity {
         std::format_args!("Triangle {sw}x{sh}->{ow}x{oh}"),
       );
     }
-    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::CATMULLROM_F32 {
+    for &(sw, sh, ow, oh, ch, seed, golden) in miri_subset(pil_goldens::CATMULLROM_F32) {
       let src = source_f32(sw, sh, seed);
       let ours = run(CatmullRom, &src, sw, sh, ow, oh, ch);
       assert_f32_within(
@@ -1847,7 +1878,7 @@ mod pil_parity {
         std::format_args!("CatmullRom {sw}x{sh}->{ow}x{oh}"),
       );
     }
-    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::LANCZOS3_F32 {
+    for &(sw, sh, ow, oh, ch, seed, golden) in miri_subset(pil_goldens::LANCZOS3_F32) {
       let src = source_f32(sw, sh, seed);
       let ours = run(Lanczos3, &src, sw, sh, ow, oh, ch);
       assert_f32_within(
@@ -1874,7 +1905,7 @@ mod pil_parity {
   #[test]
   fn u8_matches_pil_simd() {
     let mut worst = 0u8;
-    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::TRIANGLE_U8 {
+    for &(sw, sh, ow, oh, ch, seed, golden) in miri_subset(pil_goldens::TRIANGLE_U8) {
       let src = source_u8(sw, sh, ch, seed);
       let ours = run_with(Triangle, &src, sw, sh, ow, oh, ch, true);
       assert_u_within(
@@ -1885,7 +1916,7 @@ mod pil_parity {
         std::format_args!("Triangle SIMD {sw}x{sh}->{ow}x{oh} c{ch}"),
       );
     }
-    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::CATMULLROM_U8 {
+    for &(sw, sh, ow, oh, ch, seed, golden) in miri_subset(pil_goldens::CATMULLROM_U8) {
       let src = source_u8(sw, sh, ch, seed);
       let ours = run_with(CatmullRom, &src, sw, sh, ow, oh, ch, true);
       assert_u_within(
@@ -1896,7 +1927,7 @@ mod pil_parity {
         std::format_args!("CatmullRom SIMD {sw}x{sh}->{ow}x{oh} c{ch}"),
       );
     }
-    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::LANCZOS3_U8 {
+    for &(sw, sh, ow, oh, ch, seed, golden) in miri_subset(pil_goldens::LANCZOS3_U8) {
       let src = source_u8(sw, sh, ch, seed);
       let ours = run_with(Lanczos3, &src, sw, sh, ow, oh, ch, true);
       assert_u_within(
@@ -1913,7 +1944,7 @@ mod pil_parity {
   #[test]
   fn u16_matches_pil_within_one_lsb_simd() {
     let mut worst = 0u16;
-    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::TRIANGLE_U16 {
+    for &(sw, sh, ow, oh, ch, seed, golden) in miri_subset(pil_goldens::TRIANGLE_U16) {
       let src = source_u16(sw, sh, seed);
       let ours = run_with(Triangle, &src, sw, sh, ow, oh, ch, true);
       assert_u16_within(
@@ -1924,7 +1955,7 @@ mod pil_parity {
         std::format_args!("Triangle SIMD {sw}x{sh}->{ow}x{oh}"),
       );
     }
-    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::CATMULLROM_U16 {
+    for &(sw, sh, ow, oh, ch, seed, golden) in miri_subset(pil_goldens::CATMULLROM_U16) {
       let src = source_u16(sw, sh, seed);
       let ours = run_with(CatmullRom, &src, sw, sh, ow, oh, ch, true);
       assert_u16_within(
@@ -1935,7 +1966,7 @@ mod pil_parity {
         std::format_args!("CatmullRom SIMD {sw}x{sh}->{ow}x{oh}"),
       );
     }
-    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::LANCZOS3_U16 {
+    for &(sw, sh, ow, oh, ch, seed, golden) in miri_subset(pil_goldens::LANCZOS3_U16) {
       let src = source_u16(sw, sh, seed);
       let ours = run_with(Lanczos3, &src, sw, sh, ow, oh, ch, true);
       assert_u16_within(
@@ -1952,7 +1983,7 @@ mod pil_parity {
   #[test]
   fn f32_matches_pil_within_tolerance_simd() {
     let mut worst = 0.0f32;
-    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::TRIANGLE_F32 {
+    for &(sw, sh, ow, oh, ch, seed, golden) in miri_subset(pil_goldens::TRIANGLE_F32) {
       let src = source_f32(sw, sh, seed);
       let ours = run_with(Triangle, &src, sw, sh, ow, oh, ch, true);
       assert_f32_within(
@@ -1962,7 +1993,7 @@ mod pil_parity {
         std::format_args!("Triangle SIMD {sw}x{sh}->{ow}x{oh}"),
       );
     }
-    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::CATMULLROM_F32 {
+    for &(sw, sh, ow, oh, ch, seed, golden) in miri_subset(pil_goldens::CATMULLROM_F32) {
       let src = source_f32(sw, sh, seed);
       let ours = run_with(CatmullRom, &src, sw, sh, ow, oh, ch, true);
       assert_f32_within(
@@ -1972,7 +2003,7 @@ mod pil_parity {
         std::format_args!("CatmullRom SIMD {sw}x{sh}->{ow}x{oh}"),
       );
     }
-    for &(sw, sh, ow, oh, ch, seed, golden) in pil_goldens::LANCZOS3_F32 {
+    for &(sw, sh, ow, oh, ch, seed, golden) in miri_subset(pil_goldens::LANCZOS3_F32) {
       let src = source_f32(sw, sh, seed);
       let ours = run_with(Lanczos3, &src, sw, sh, ow, oh, ch, true);
       assert_f32_within(
