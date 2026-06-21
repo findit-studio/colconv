@@ -114,7 +114,9 @@ trait Yuva8Filter {
 
   /// Direct full-res u8 RGBA conversion of the planes (`w x h` luma) — the
   /// exact canonical source-width RGBA the filter path resamples, so it is the
-  /// `Rgba` oracle's input (real source α from the alpha plane).
+  /// `Rgba` oracle's input (real source α from the alpha plane). Only the
+  /// `rgb`-gated equivalence module consumes it, so it is gated to `rgb`.
+  #[cfg(feature = "rgb")]
   fn direct_rgba_u8(y: &[u8], u: &[u8], v: &[u8], a: &[u8], w: usize, h: usize) -> Vec<u8>;
 
   /// Filter `(luma, luma_u16)` of the **no-alpha** sibling YUV format
@@ -200,6 +202,7 @@ impl Yuva8Filter for Yuva420pF {
     }
   }
 
+  #[cfg(feature = "rgb")]
   fn direct_rgba_u8(y: &[u8], u: &[u8], v: &[u8], a: &[u8], w: usize, h: usize) -> Vec<u8> {
     let (cw, _ch) = Self::chroma_dims(w, h);
     let src = Yuva420pFrame::try_new(
@@ -299,6 +302,7 @@ impl Yuva8Filter for Yuva422pF {
     }
   }
 
+  #[cfg(feature = "rgb")]
   fn direct_rgba_u8(y: &[u8], u: &[u8], v: &[u8], a: &[u8], w: usize, h: usize) -> Vec<u8> {
     let (cw, _ch) = Self::chroma_dims(w, h);
     let src = Yuva422pFrame::try_new(
@@ -397,6 +401,7 @@ impl Yuva8Filter for Yuva444pF {
     }
   }
 
+  #[cfg(feature = "rgb")]
   fn direct_rgba_u8(y: &[u8], u: &[u8], v: &[u8], a: &[u8], w: usize, h: usize) -> Vec<u8> {
     let src = Yuva444pFrame::try_new(
       y, u, v, a, w as u32, h as u32, w as u32, w as u32, w as u32, w as u32,

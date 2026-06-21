@@ -732,6 +732,7 @@ fn p416_dispatch_be_le_parity() {
 // `_endian(LE_buf, false)` and `_endian(BE_buf, true)` for both
 // `use_simd = true` and `use_simd = false`.
 
+#[cfg(feature = "yuva")]
 #[test]
 #[cfg_attr(
   miri,
@@ -817,6 +818,7 @@ fn yuva420p10_dispatch_be_le_parity_simd_and_scalar() {
   }
 }
 
+#[cfg(feature = "yuva")]
 #[test]
 #[cfg_attr(
   miri,
@@ -899,6 +901,7 @@ fn yuva444p10_dispatch_be_le_parity_simd_and_scalar() {
   }
 }
 
+#[cfg(feature = "yuva")]
 #[test]
 #[cfg_attr(
   miri,
@@ -974,6 +977,7 @@ fn yuva420p16_dispatch_be_le_parity() {
   }
 }
 
+#[cfg(feature = "yuva")]
 #[test]
 #[cfg_attr(
   miri,
