@@ -234,7 +234,11 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
       frozen_domain,
       averaging_domain,
       #[cfg(feature = "rgb")]
+      linear_mode,
+      #[cfg(feature = "rgb")]
       linear_light_frame,
+      #[cfg(feature = "rgb")]
+      linear_scene_scratch,
       #[cfg(feature = "rgb")]
       transfer_function,
       ..
@@ -311,7 +315,9 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
               luma_u16,
               hsv,
               rgb_scratch,
+              linear_scene_scratch,
               tf,
+              *linear_mode,
               plan,
               row.y(),
               idx,
@@ -328,6 +334,20 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
                   matrix,
                   full_range,
                   use_simd,
+                );
+              },
+              |_idx, dst| {
+                // Scene-referred: the SAME affine matrix, real-valued and
+                // unclamped (the 4:2:0 horizontal chroma upsample, as the
+                // Q15 `yuv_420_to_rgb_row` above does).
+                crate::row::scalar::yuv_420_to_rgb_f32_unclamped_row(
+                  row.y(),
+                  row.u_half(),
+                  row.v_half(),
+                  dst,
+                  w,
+                  matrix,
+                  full_range,
                 );
               },
             );
@@ -2927,7 +2947,11 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
       frozen_domain,
       averaging_domain,
       #[cfg(feature = "rgb")]
+      linear_mode,
+      #[cfg(feature = "rgb")]
       linear_light_frame,
+      #[cfg(feature = "rgb")]
+      linear_scene_scratch,
       #[cfg(feature = "rgb")]
       transfer_function,
       ..
@@ -2954,6 +2978,22 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
           matrix,
           full_range,
           use_simd,
+        );
+      };
+      // The scene-referred ([`LinearMode::SceneReferred`]) twin of
+      // `convert_rgb`: the SAME affine matrix, real-valued and unclamped (4:2:2
+      // reuses the 4:2:0 horizontal chroma upsample, as `convert_rgb` reuses
+      // `yuv_420_to_rgb_row`). Consumed only by the `rgb`-gated Linear arm.
+      #[cfg(feature = "rgb")]
+      let convert_rgb_unclamped = |dst: &mut [f32]| {
+        crate::row::scalar::yuv_420_to_rgb_f32_unclamped_row(
+          row.y(),
+          row.u_half(),
+          row.v_half(),
+          dst,
+          w,
+          matrix,
+          full_range,
         );
       };
       // RFC #238 Phase 2 — single always-compiled choke point for the averaging
@@ -3004,7 +3044,9 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
               luma_u16,
               hsv,
               rgb_scratch,
+              linear_scene_scratch,
               tf,
+              *linear_mode,
               plan,
               row.y(),
               idx,
@@ -3012,6 +3054,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
               h,
               use_simd,
               |_idx, dst| convert_rgb(dst),
+              |_idx, dst| convert_rgb_unclamped(dst),
             );
             if r.is_ok() && need_output && frozen_domain.is_none() {
               *frozen_domain = Some(AveragingDomain::Linear);
@@ -3382,7 +3425,11 @@ impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
       frozen_domain,
       averaging_domain,
       #[cfg(feature = "rgb")]
+      linear_mode,
+      #[cfg(feature = "rgb")]
       linear_light_frame,
+      #[cfg(feature = "rgb")]
+      linear_scene_scratch,
       #[cfg(feature = "rgb")]
       transfer_function,
       ..
@@ -3409,6 +3456,21 @@ impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
           matrix,
           full_range,
           use_simd,
+        );
+      };
+      // The scene-referred ([`LinearMode::SceneReferred`]) twin of
+      // `convert_rgb`: the SAME affine matrix, real-valued and unclamped.
+      // Consumed only by the `rgb`-gated Linear arm.
+      #[cfg(feature = "rgb")]
+      let convert_rgb_unclamped = |dst: &mut [f32]| {
+        crate::row::scalar::yuv_444_to_rgb_f32_unclamped_row(
+          row.y(),
+          row.u(),
+          row.v(),
+          dst,
+          w,
+          matrix,
+          full_range,
         );
       };
       // RFC #238 Phase 2 — single always-compiled choke point for the averaging
@@ -3459,7 +3521,9 @@ impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
               luma_u16,
               hsv,
               rgb_scratch,
+              linear_scene_scratch,
               tf,
+              *linear_mode,
               plan,
               row.y(),
               idx,
@@ -3467,6 +3531,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
               h,
               use_simd,
               |_idx, dst| convert_rgb(dst),
+              |_idx, dst| convert_rgb_unclamped(dst),
             );
             if r.is_ok() && need_output && frozen_domain.is_none() {
               *frozen_domain = Some(AveragingDomain::Linear);
@@ -3833,7 +3898,11 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
       frozen_domain,
       averaging_domain,
       #[cfg(feature = "rgb")]
+      linear_mode,
+      #[cfg(feature = "rgb")]
       linear_light_frame,
+      #[cfg(feature = "rgb")]
+      linear_scene_scratch,
       #[cfg(feature = "rgb")]
       transfer_function,
       ..
@@ -3862,6 +3931,21 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
           matrix,
           full_range,
           use_simd,
+        );
+      };
+      // The scene-referred ([`LinearMode::SceneReferred`]) twin of
+      // `convert_rgb`: the SAME affine matrix, real-valued and unclamped.
+      // Consumed only by the `rgb`-gated Linear arm.
+      #[cfg(feature = "rgb")]
+      let convert_rgb_unclamped = |dst: &mut [f32]| {
+        crate::row::scalar::yuv_444_to_rgb_f32_unclamped_row(
+          row.y(),
+          row.u(),
+          row.v(),
+          dst,
+          w,
+          matrix,
+          full_range,
         );
       };
       // RFC #238 Phase 2 — single always-compiled choke point for the averaging
@@ -3912,7 +3996,9 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
               luma_u16,
               hsv,
               rgb_scratch,
+              linear_scene_scratch,
               tf,
+              *linear_mode,
               plan,
               row.y(),
               idx,
@@ -3920,6 +4006,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
               h,
               use_simd,
               |_idx, dst| convert_rgb(dst),
+              |_idx, dst| convert_rgb_unclamped(dst),
             );
             if r.is_ok() && need_output && frozen_domain.is_none() {
               *frozen_domain = Some(AveragingDomain::Linear);

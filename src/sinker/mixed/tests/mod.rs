@@ -158,6 +158,8 @@ mod resample_linear_domain;
 mod resample_linear_domain_no_rgb;
 #[cfg(feature = "mono")]
 mod resample_mono;
+#[cfg(all(feature = "yuv-planar", feature = "rgb"))]
+mod resample_scene_linear_domain;
 // The high-bit semi-planar P-format sinks live under `yuv-semi-planar`
 // (the `subsampled_4_*_high_bit` parents now compile under either family);
 // these area + filter suites pin `with_native(false)` and oracle the

@@ -118,7 +118,7 @@ use crate::{
 // curve drive the `yuv-planar`-only linear-light path; the fields and
 // builders are gated to that family.
 #[cfg(feature = "yuv-planar")]
-use crate::resample::{AveragingDomain, TransferFunction};
+use crate::resample::{AveragingDomain, LinearMode, TransferFunction};
 // PixelSink is referenced only via intra-doc links (`[`PixelSink::*`]`)
 // in this file; the rustc lint can't see those uses, so silence it.
 #[allow(unused_imports)]
@@ -616,6 +616,31 @@ impl TransferFunctionChanged {
   }
 }
 
+/// Mid-frame [`AveragingDomain::Linear`] [`LinearMode`] change payload for
+/// [`MixedSinkerError::LinearModeChanged`].
+///
+/// [`AveragingDomain::Linear`]: crate::resample::AveragingDomain::Linear
+/// [`LinearMode`]: crate::resample::LinearMode
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinearModeChanged {
+  /// Source row whose `process` call observed the changed linear mode.
+  row: usize,
+}
+
+impl LinearModeChanged {
+  /// Constructs a new `LinearModeChanged` payload.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn new(row: usize) -> Self {
+    Self { row }
+  }
+
+  /// Source row whose `process` call observed the changed linear mode.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn row(&self) -> usize {
+    self.row
+  }
+}
+
 /// Mid-frame [`AveragingDomain`] change payload for
 /// [`MixedSinkerError::AveragingDomainChanged`].
 ///
@@ -862,10 +887,32 @@ pub enum MixedSinkerError {
   )]
   TransferFunctionChanged(TransferFunctionChanged),
 
+  /// The [`AveragingDomain::Linear`] [`LinearMode`] changed mid-frame.
+  ///
+  /// The linear-light tail picks the `YUV→RGB` decode — display-referred
+  /// (Q15-clamped) or scene-referred (unclamped `f32`) — from the
+  /// [`LinearMode`] resolved on the first output-bearing row and buffers every
+  /// source row decoded under it; a later row resolving a different mode (a
+  /// caller flipping [`MixedSinker::with_linear_mode`] / [`MixedSinker::set_linear_mode`]
+  /// mid-frame) would bin rows decoded under inconsistent referents, mixing
+  /// display- and scene-decoded rows in one frame. The offending `process` call
+  /// fails before the row is consumed; restore the mode and call
+  /// [`PixelSink::begin_frame`] to restart the frame.
+  ///
+  /// [`AveragingDomain::Linear`]: crate::resample::AveragingDomain::Linear
+  /// [`LinearMode`]: crate::resample::LinearMode
+  #[error(
+    "MixedSinker Linear mode changed mid-frame at source row \
+     {}; restart the frame via begin_frame",
+    .0.row()
+  )]
+  LinearModeChanged(LinearModeChanged),
+
   /// The [`AveragingDomain`] chosen on the first output-bearing resampled row
   /// is frozen for the frame, alongside the output set, the native-vs-row-stage
-  /// route, and (for [`AveragingDomain::Linear`]) the transfer function: the
-  /// domain selects the pipeline stage the area average is spliced at, so a
+  /// route, and (for [`AveragingDomain::Linear`]) the transfer function and the
+  /// [`LinearMode`]: the domain selects the pipeline stage the area average is
+  /// spliced at, so a
   /// caller flipping [`MixedSinker::set_averaging_domain`] mid-frame (between
   /// `process` rows, without [`PixelSink::begin_frame`]) would split one frame
   /// across two incompatible averaging stages. The offending `process` call
@@ -2560,6 +2607,24 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// (`yuv-planar` + `rgb`).
   #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
   linear_light_frame: Option<linear_light::LinearLightFrame>,
+  /// How the [`AveragingDomain::Linear`] tail decodes `YUV→RGB` before the
+  /// EOTF (RFC #238 #244). [`LinearMode::DisplayReferred`] (the default)
+  /// decodes through the clamped Q15 kernel; [`LinearMode::SceneReferred`]
+  /// decodes the same affine matrix in unclamped `f32`, preserving
+  /// out-of-gamut excursions, and clamps only at the re-encoded output.
+  /// Consulted only on the linear-light path; the encoded and direct paths
+  /// ignore it. Set via [`Self::with_linear_mode`].
+  #[cfg(feature = "yuv-planar")]
+  linear_mode: LinearMode,
+  /// Source-width unclamped normalized `f32` RGB staging for the
+  /// scene-referred ([`LinearMode::SceneReferred`]) linear-light decode: the
+  /// unclamped affine `YUV→RGB` decode writes here (`[0, 1]`-scale, may leave
+  /// `[0, 1]`) before the tail lifts it through the EOTF. Lazily grown to
+  /// `3 * width` `f32`; empty otherwise (the display-referred path uses the
+  /// `u8` [`Self::rgb_scratch`] instead). Present only when the linear path
+  /// is wired (`yuv-planar` + `rgb`).
+  #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
+  linear_scene_scratch: Vec<f32>,
   /// Q8 fixed-point luma coefficients `(cr, cg, cb)` such that
   /// `luma = ((cr * R + cg * G + cb * B + 128) >> 8) as u8`. Only
   /// consulted by source impls that *derive* luma from RGB
@@ -3267,8 +3332,12 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       averaging_domain: AveragingDomain::Encoded,
       #[cfg(feature = "yuv-planar")]
       transfer_function: None,
+      #[cfg(feature = "yuv-planar")]
+      linear_mode: LinearMode::DisplayReferred,
       #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
       linear_light_frame: None,
+      #[cfg(all(feature = "yuv-planar", feature = "rgb"))]
+      linear_scene_scratch: Vec::new(),
       // BT.709 by default — matches the implicit weights every
       // YUV→RGB→luma pipeline uses, and is the most common Bayer
       // CCM target. Per-format impls (`MixedSinker<Bayer>` etc.)
@@ -3919,6 +3988,50 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn with_transfer_function(mut self, tf: TransferFunction) -> Self {
     self.set_transfer_function(tf);
+    self
+  }
+
+  /// Returns how the [`AveragingDomain::Linear`] tail decodes `YUV→RGB`
+  /// before the EOTF. See [`Self::with_linear_mode`].
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn linear_mode(&self) -> LinearMode {
+    self.linear_mode
+  }
+
+  /// Sets the [`LinearMode`] in place. See [`Self::with_linear_mode`] for the
+  /// consuming builder variant.
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn set_linear_mode(&mut self, mode: LinearMode) -> &mut Self {
+    self.linear_mode = mode;
+    self
+  }
+
+  /// Selects whether the [`AveragingDomain::Linear`] average is
+  /// **display-referred** (the default) or **scene-referred** (RFC #238
+  /// #244), overriding the default [`LinearMode::DisplayReferred`].
+  ///
+  /// [`LinearMode::DisplayReferred`] decodes `YUV→RGB` through the production
+  /// Q15 kernel, which clamps and quantizes to 8-bit `[0, 255]` before the
+  /// EOTF, then averages the in-gamut RGB in linear light — a gamma-correct
+  /// resize that discards out-of-gamut excursions.
+  /// [`LinearMode::SceneReferred`] decodes the **same affine matrix** in
+  /// unclamped `f32`, preserving super-black / super-white and saturated-chroma
+  /// excursions, lifts that to linear light, averages, and clamps **only** at
+  /// the re-encoded output — the physically faithful average for out-of-gamut
+  /// content. The two coincide (modulo `f32` rounding) on content that stays in
+  /// gamut through the decode.
+  ///
+  /// The mode is consulted only on the [`AveragingDomain::Linear`] path of the
+  /// planar 8-bit YUV family (`Yuv420p` / `Yuv422p` / `Yuv444p` / `Yuv440p`);
+  /// the encoded and direct paths ignore it, so it is a no-op unless
+  /// [`Self::with_averaging_domain`]`(`[`AveragingDomain::Linear`]`)` is also
+  /// set. See [`Self::set_linear_mode`] for the in-place variant.
+  #[cfg(feature = "yuv-planar")]
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn with_linear_mode(mut self, mode: LinearMode) -> Self {
+    self.set_linear_mode(mode);
     self
   }
 

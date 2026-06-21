@@ -27,13 +27,23 @@ use crate::resample::{PlanGeometry, ResampleError};
 #[test]
 fn new_builds_for_representable_dims() {
   for want_luma in [false, true] {
-    let frame = LinearLightFrame::new(8, 8, 4, 4, want_luma, TransferFunction::Srgb)
-      .expect("8x8 frame must allocate");
+    let frame = LinearLightFrame::new(
+      8,
+      8,
+      4,
+      4,
+      want_luma,
+      TransferFunction::Srgb,
+      LinearMode::SceneReferred,
+    )
+    .expect("8x8 frame must allocate");
     assert_eq!(frame.linear_rgb.len(), 8 * 8 * 3);
     assert_eq!(frame.y_plane.len(), if want_luma { 8 * 8 } else { 0 });
     assert_eq!(frame.next_y, 0);
     assert_eq!(frame.src_w, 8);
     assert_eq!(frame.src_h, 8);
+    assert_eq!(frame.frozen_transfer, TransferFunction::Srgb);
+    assert_eq!(frame.frozen_linear_mode, LinearMode::SceneReferred);
   }
 }
 
@@ -44,8 +54,16 @@ fn new_builds_for_representable_dims() {
 fn new_overflowing_luma_product_is_geometry_overflow() {
   // `usize::MAX * 2` overflows the very first `checked_mul` (the `luma`
   // product), before the `* 3` step or any allocation.
-  let err = LinearLightFrame::new(usize::MAX, 2, 4, 4, false, TransferFunction::Srgb)
-    .expect_err("usize::MAX x 2 must overflow the luma product");
+  let err = LinearLightFrame::new(
+    usize::MAX,
+    2,
+    4,
+    4,
+    false,
+    TransferFunction::Srgb,
+    LinearMode::DisplayReferred,
+  )
+  .expect_err("usize::MAX x 2 must overflow the luma product");
   assert!(
     matches!(err, MixedSinkerError::GeometryOverflow(_)),
     "overflowing luma product must be GeometryOverflow (a size overflow is not \
@@ -60,8 +78,16 @@ fn new_overflowing_rgb_product_is_geometry_overflow() {
   // Choose dims whose product fits usize but whose `* 3` does not:
   // `(usize::MAX / 2) * 1` fits, and `* 3` overflows.
   let luma = usize::MAX / 2;
-  let err = LinearLightFrame::new(luma, 1, 4, 4, false, TransferFunction::Srgb)
-    .expect_err("(usize::MAX / 2) x 3 must overflow the RGB product");
+  let err = LinearLightFrame::new(
+    luma,
+    1,
+    4,
+    4,
+    false,
+    TransferFunction::Srgb,
+    LinearMode::DisplayReferred,
+  )
+  .expect_err("(usize::MAX / 2) x 3 must overflow the RGB product");
   assert!(
     matches!(err, MixedSinkerError::GeometryOverflow(_)),
     "overflowing RGB product must be GeometryOverflow, got {err:?}",
@@ -73,8 +99,16 @@ fn new_overflowing_rgb_product_is_geometry_overflow() {
 /// never reached because the `checked_mul` short-circuits first.
 #[test]
 fn new_overflow_with_luma_requested_is_geometry_overflow() {
-  let err = LinearLightFrame::new(usize::MAX, 2, 4, 4, true, TransferFunction::Srgb)
-    .expect_err("usize::MAX x 2 must overflow even with want_luma");
+  let err = LinearLightFrame::new(
+    usize::MAX,
+    2,
+    4,
+    4,
+    true,
+    TransferFunction::Srgb,
+    LinearMode::DisplayReferred,
+  )
+  .expect_err("usize::MAX x 2 must overflow even with want_luma");
   assert!(
     matches!(err, MixedSinkerError::GeometryOverflow(_)),
     "overflow with want_luma must still be GeometryOverflow, got {err:?}",
