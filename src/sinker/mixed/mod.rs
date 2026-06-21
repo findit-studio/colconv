@@ -13319,7 +13319,22 @@ mod packed_yuv_8bit;
 mod pal8;
 #[cfg(feature = "yuv-planar")]
 mod planar_8bit;
-#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
+// The chroma failpoint is armed only by the non-4:2:0 native suites that own a
+// colour oracle, and each reuses the planar join so each also pulls in
+// `yuv-planar`: the packed-8-bit / packed-4:4:4 / 4:1:1 natives, plus the
+// semi-planar 8-bit suite's `yuv-planar`-gated `native_tier` (its colour oracle
+// adds `rgb`). So its re-export is dead in a `yuv-planar`-without-any-consumer
+// build (and a `yuv-planar`-less build has no `planar_8bit` module to import).
+#[cfg(all(
+  test,
+  feature = "std",
+  feature = "yuv-planar",
+  any(
+    feature = "yuv-packed",
+    feature = "yuv-444-packed",
+    all(feature = "yuv-semi-planar", feature = "rgb")
+  )
+))]
 pub(crate) use planar_8bit::arm_planar_native_chroma_failure;
 // RFC #238 Phase 2 — the linear-light averaging path for the planar 8-bit
 // YUV family. Produces RGB/RGBA, so it needs both `yuv-planar` (the source
@@ -13358,10 +13373,29 @@ use planar_high_bit_native::yuv_planar16_process_native;
   feature = "yuv-planar"
 ))]
 use planar_high_bit_native::{NativePlanarYuvU16, native_planar_hb_preflight};
-#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
-pub(crate) use planar_high_bit_native::{
-  arm_planar_hb_native_alloc_failure, arm_planar_hb_native_chroma_failure,
-};
+// The source-scratch alloc failpoint is armed only by the high-bit planar
+// native suite, which is gated on `rgb` (its colour oracle), so its re-export
+// is dead in a `yuv-planar`-without-`rgb` build.
+#[cfg(all(test, feature = "std", feature = "yuv-planar", feature = "rgb"))]
+pub(crate) use planar_high_bit_native::arm_planar_hb_native_alloc_failure;
+// The chroma failpoint is armed only by the high-bit non-4:2:0 native suites
+// that own a colour oracle (V210 / Y2xx / P2xx / P4xx / packed-4:4:4, each
+// pulling in `yuv-planar` for the join, plus the `rgb`-gated planar high-bit
+// native suite), so its re-export is dead in a `yuv-planar`-without-any-consumer
+// build.
+#[cfg(all(
+  test,
+  feature = "std",
+  feature = "yuv-planar",
+  any(
+    feature = "rgb",
+    feature = "v210",
+    feature = "y2xx",
+    feature = "yuv-444-packed",
+    feature = "yuv-semi-planar"
+  )
+))]
+pub(crate) use planar_high_bit_native::arm_planar_hb_native_chroma_failure;
 #[cfg(feature = "gbr")]
 mod planar_gbr_8bit;
 #[cfg(feature = "gbr")]

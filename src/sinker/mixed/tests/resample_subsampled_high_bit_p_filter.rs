@@ -151,6 +151,9 @@ fn rgb24_filter_rgb<K: FilterKernel>(
 /// Every resampled output a P-format filter equivalence asserts on (no
 /// `luma_u16` — the P-formats do not expose it).
 struct FilterOutputs {
+  /// Only the `rgb`-gated equivalence module reads the u8 colour output,
+  /// so it is dead in a `yuv-semi-planar`-without-`rgb` build.
+  #[cfg_attr(not(feature = "rgb"), allow(dead_code))]
   rgb: Vec<u8>,
   rgb_u16: Vec<u16>,
   rgba_u16: Vec<u16>,

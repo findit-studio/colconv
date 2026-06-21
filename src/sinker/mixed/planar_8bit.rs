@@ -2139,7 +2139,23 @@ std::thread_local! {
 /// flag survives a luma-only row unconsumed (the regression assertion) and is
 /// taken by the first colour row. Test-only. Mirrors the high-bit
 /// `arm_planar_hb_native_chroma_failure`.
-#[cfg(all(test, feature = "std", feature = "yuv-planar"))]
+///
+/// Only the non-4:2:0 native suites that own a colour oracle arm it, and each
+/// reuses the planar join so each also pulls in `yuv-planar`: the packed-8-bit /
+/// packed-4:4:4 / 4:1:1 natives, plus the semi-planar 8-bit suite's
+/// `yuv-planar`-gated `native_tier` (its colour oracle adds `rgb`). So the
+/// setter is dead in a `yuv-planar`-without-any-consumer build even though the
+/// thread-local it sets is read by the (always-`yuv-planar`) native join.
+#[cfg(all(
+  test,
+  feature = "std",
+  feature = "yuv-planar",
+  any(
+    feature = "yuv-packed",
+    feature = "yuv-444-packed",
+    all(feature = "yuv-semi-planar", feature = "rgb")
+  )
+))]
 pub(crate) fn arm_planar_native_chroma_failure() {
   FORCE_PLANAR_NATIVE_CHROMA_FAILURE.with(|f| f.set(true));
 }
