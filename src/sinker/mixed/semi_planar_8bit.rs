@@ -69,12 +69,16 @@ std::thread_local! {
 /// Arms the de-interleave scratch allocation failpoint for the **next**
 /// chroma-bearing native semi-planar row on the current thread. The flag
 /// is consumed (take-on-read) by that reserve, so it fires exactly once
-/// and cannot leak into a later test. Test-only.
+/// and cannot leak into a later test. Test-only. The sole caller is the
+/// native-tier atomicity coverage in `tests/resample_semi_planar.rs`, which
+/// is `rgb`-gated (it drives colour rows); the thread-local and its
+/// production take-on-read stay broad.
 #[cfg(all(
   test,
   feature = "std",
   feature = "yuv-semi-planar",
-  feature = "yuv-planar"
+  feature = "yuv-planar",
+  feature = "rgb"
 ))]
 pub(super) fn arm_deinterleave_alloc_failure() {
   FORCE_DEINTERLEAVE_ALLOC_FAILURE.with(|f| f.set(true));

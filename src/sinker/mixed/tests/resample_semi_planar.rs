@@ -15,10 +15,14 @@ use crate::{
   resample::{AreaResampler, ResampleError},
   sinker::{MixedSinker, MixedSinkerError},
   source::{
-    Nv12, Nv12Row, Nv16, Nv21, Nv21Row, Nv24, Nv42, Rgb24, nv12_to, nv16_to, nv21_to, nv24_to,
-    nv42_to, rgb24_to,
+    Nv12, Nv12Row, Nv16, Nv21, Nv24, Nv42, Rgb24, nv12_to, nv16_to, nv21_to, nv24_to, nv42_to,
+    rgb24_to,
   },
 };
+// `Nv21Row` is consumed only by the native-tier 4:2:0 coverage (NV21 shares the
+// planar 4:2:0 join), which is itself `yuv-planar`-gated.
+#[cfg(feature = "yuv-planar")]
+use crate::source::Nv21Row;
 use mediaframe::frame::{Nv12Frame, Nv16Frame, Nv21Frame, Nv24Frame, Nv42Frame, Rgb24Frame};
 
 const SRC: usize = 8;
