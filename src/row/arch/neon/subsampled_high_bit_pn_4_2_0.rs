@@ -208,16 +208,16 @@ pub(crate) unsafe fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool, 
       let y_scaled_hi = scale_y(y_hi, y_off_v, y_scale_v, rnd_v);
 
       let b_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, b_dup_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, b_dup_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, b_dup_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, b_dup_hi)),
       );
       let g_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, g_dup_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, g_dup_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, g_dup_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, g_dup_hi)),
       );
       let r_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, r_dup_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, r_dup_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, r_dup_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, r_dup_hi)),
       );
 
       if ALPHA {
@@ -589,16 +589,16 @@ pub(crate) unsafe fn p16_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
       let y_scaled_hi = scale_y_u16_to_i16(y_vec_hi, y_off_v, y_scale_v, rnd_v);
 
       let r_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, r_dup_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, r_dup_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, r_dup_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, r_dup_hi)),
       );
       let g_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, g_dup_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, g_dup_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, g_dup_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, g_dup_hi)),
       );
       let b_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, b_dup_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, b_dup_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, b_dup_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, b_dup_hi)),
       );
 
       if ALPHA {
@@ -778,28 +778,28 @@ pub(crate) unsafe fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const BE: boo
       let ys_hi_1 = scale_y_u16_i64(y_hi_1, y_off_v, y_scale_d, rnd64);
 
       let r_lo_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_lo_0, r_cd_lo0)),
-        vqmovun_s32(vaddq_s32(ys_lo_1, r_cd_lo1)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo_0, r_cd_lo0)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo_1, r_cd_lo1)),
       );
       let r_hi_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_hi_0, r_cd_hi0)),
-        vqmovun_s32(vaddq_s32(ys_hi_1, r_cd_hi1)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi_0, r_cd_hi0)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi_1, r_cd_hi1)),
       );
       let g_lo_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_lo_0, g_cd_lo0)),
-        vqmovun_s32(vaddq_s32(ys_lo_1, g_cd_lo1)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo_0, g_cd_lo0)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo_1, g_cd_lo1)),
       );
       let g_hi_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_hi_0, g_cd_hi0)),
-        vqmovun_s32(vaddq_s32(ys_hi_1, g_cd_hi1)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi_0, g_cd_hi0)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi_1, g_cd_hi1)),
       );
       let b_lo_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_lo_0, b_cd_lo0)),
-        vqmovun_s32(vaddq_s32(ys_lo_1, b_cd_lo1)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo_0, b_cd_lo0)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo_1, b_cd_lo1)),
       );
       let b_hi_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_hi_0, b_cd_hi0)),
-        vqmovun_s32(vaddq_s32(ys_hi_1, b_cd_hi1)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi_0, b_cd_hi0)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi_1, b_cd_hi1)),
       );
 
       if ALPHA {

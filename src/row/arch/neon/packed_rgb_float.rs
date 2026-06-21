@@ -24,7 +24,7 @@
 #[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
-use super::{endian::load_endian_u32x4, scalar};
+use super::{endian::load_endian_u32x4, miri_compat::*, scalar};
 
 /// Load 4 `f32` lanes from `ptr` in endian-aware fashion.
 /// `BE = false` → host-native load (identical to `vld1q_f32`).
@@ -77,19 +77,19 @@ pub(crate) unsafe fn rgbf32_to_rgb_row<const BE: bool>(
       let v1 = load_f32x4::<BE>(rgb_in.as_ptr().add(lane + 4));
       let v2 = load_f32x4::<BE>(rgb_in.as_ptr().add(lane + 8));
 
-      let s0 = vmulq_f32(vminq_f32(vmaxq_f32(v0, zero), one), scale);
-      let s1 = vmulq_f32(vminq_f32(vmaxq_f32(v1, zero), one), scale);
-      let s2 = vmulq_f32(vminq_f32(vmaxq_f32(v2, zero), one), scale);
+      let s0 = vmulq_f32(vminq_f32_compat(vmaxq_f32_compat(v0, zero), one), scale);
+      let s1 = vmulq_f32(vminq_f32_compat(vmaxq_f32_compat(v1, zero), one), scale);
+      let s2 = vmulq_f32(vminq_f32_compat(vmaxq_f32_compat(v2, zero), one), scale);
 
-      let u0 = vqmovn_u32(vcvtnq_u32_f32(s0));
-      let u1 = vqmovn_u32(vcvtnq_u32_f32(s1));
-      let u2 = vqmovn_u32(vcvtnq_u32_f32(s2));
+      let u0 = vqmovn_u32_compat(vcvtnq_u32_f32_compat(s0));
+      let u1 = vqmovn_u32_compat(vcvtnq_u32_f32_compat(s1));
+      let u2 = vqmovn_u32_compat(vcvtnq_u32_f32_compat(s2));
 
       // Narrow each u16x4 to u8x4 via vqmovn_u16(vcombine_u16(x, x))
       // and emit 12 bytes via three 4-byte stores.
-      let b0 = vqmovn_u16(vcombine_u16(u0, u0));
-      let b1 = vqmovn_u16(vcombine_u16(u1, u1));
-      let b2 = vqmovn_u16(vcombine_u16(u2, u2));
+      let b0 = vqmovn_u16_compat(vcombine_u16(u0, u0));
+      let b1 = vqmovn_u16_compat(vcombine_u16(u1, u1));
+      let b2 = vqmovn_u16_compat(vcombine_u16(u2, u2));
 
       let mut tmp = [0u8; 8];
       vst1_u8(tmp.as_mut_ptr(), b0);
@@ -190,25 +190,25 @@ pub(crate) unsafe fn rgbf32_to_rgba_row<const BE: bool>(
           )
         };
 
-        let r_clamped = vmulq_f32(vminq_f32(vmaxq_f32(r_v, zero), one), scale);
-        let g_clamped = vmulq_f32(vminq_f32(vmaxq_f32(g_v, zero), one), scale);
-        let b_clamped = vmulq_f32(vminq_f32(vmaxq_f32(b_v, zero), one), scale);
+        let r_clamped = vmulq_f32(vminq_f32_compat(vmaxq_f32_compat(r_v, zero), one), scale);
+        let g_clamped = vmulq_f32(vminq_f32_compat(vmaxq_f32_compat(g_v, zero), one), scale);
+        let b_clamped = vmulq_f32(vminq_f32_compat(vmaxq_f32_compat(b_v, zero), one), scale);
 
-        let r_u32 = vcvtnq_u32_f32(r_clamped);
-        let g_u32 = vcvtnq_u32_f32(g_clamped);
-        let b_u32 = vcvtnq_u32_f32(b_clamped);
+        let r_u32 = vcvtnq_u32_f32_compat(r_clamped);
+        let g_u32 = vcvtnq_u32_f32_compat(g_clamped);
+        let b_u32 = vcvtnq_u32_f32_compat(b_clamped);
 
         // Narrow u32x4 → u8x4, store directly into the per-channel
         // staging arrays. Each sub block contributes 4 bytes.
-        let r_u16 = vqmovn_u32(r_u32);
-        let g_u16 = vqmovn_u32(g_u32);
-        let b_u16 = vqmovn_u32(b_u32);
+        let r_u16 = vqmovn_u32_compat(r_u32);
+        let g_u16 = vqmovn_u32_compat(g_u32);
+        let b_u16 = vqmovn_u32_compat(b_u32);
         // vqmovn produces a 4-element u16 vector; combine with itself
         // to make 8, narrow with vqmovn_u16, then write 4 bytes from
         // the low half.
-        let r_u8 = vqmovn_u16(vcombine_u16(r_u16, r_u16));
-        let g_u8 = vqmovn_u16(vcombine_u16(g_u16, g_u16));
-        let b_u8 = vqmovn_u16(vcombine_u16(b_u16, b_u16));
+        let r_u8 = vqmovn_u16_compat(vcombine_u16(r_u16, r_u16));
+        let g_u8 = vqmovn_u16_compat(vcombine_u16(g_u16, g_u16));
+        let b_u8 = vqmovn_u16_compat(vcombine_u16(b_u16, b_u16));
         let mut tmp = [0u8; 8];
         vst1_u8(tmp.as_mut_ptr(), r_u8);
         r_bytes[sub * 4..sub * 4 + 4].copy_from_slice(&tmp[..4]);
@@ -266,12 +266,12 @@ pub(crate) unsafe fn rgbf32_to_rgb_u16_row<const BE: bool>(
       let v1 = load_f32x4::<BE>(rgb_in.as_ptr().add(lane + 4));
       let v2 = load_f32x4::<BE>(rgb_in.as_ptr().add(lane + 8));
 
-      let s0 = vmulq_f32(vminq_f32(vmaxq_f32(v0, zero), one), scale);
-      let s1 = vmulq_f32(vminq_f32(vmaxq_f32(v1, zero), one), scale);
-      let s2 = vmulq_f32(vminq_f32(vmaxq_f32(v2, zero), one), scale);
-      let u0 = vqmovn_u32(vcvtnq_u32_f32(s0));
-      let u1 = vqmovn_u32(vcvtnq_u32_f32(s1));
-      let u2 = vqmovn_u32(vcvtnq_u32_f32(s2));
+      let s0 = vmulq_f32(vminq_f32_compat(vmaxq_f32_compat(v0, zero), one), scale);
+      let s1 = vmulq_f32(vminq_f32_compat(vmaxq_f32_compat(v1, zero), one), scale);
+      let s2 = vmulq_f32(vminq_f32_compat(vmaxq_f32_compat(v2, zero), one), scale);
+      let u0 = vqmovn_u32_compat(vcvtnq_u32_f32_compat(s0));
+      let u1 = vqmovn_u32_compat(vcvtnq_u32_f32_compat(s1));
+      let u2 = vqmovn_u32_compat(vcvtnq_u32_f32_compat(s2));
 
       vst1_u16(rgb_out.as_mut_ptr().add(lane), u0);
       vst1_u16(rgb_out.as_mut_ptr().add(lane + 4), u1);
@@ -357,12 +357,12 @@ pub(crate) unsafe fn rgbf32_to_rgba_u16_row<const BE: bool>(
           )
         };
 
-        let r_s = vmulq_f32(vminq_f32(vmaxq_f32(r_v, zero), one), scale);
-        let g_s = vmulq_f32(vminq_f32(vmaxq_f32(g_v, zero), one), scale);
-        let b_s = vmulq_f32(vminq_f32(vmaxq_f32(b_v, zero), one), scale);
-        let r_u = vqmovn_u32(vcvtnq_u32_f32(r_s));
-        let g_u = vqmovn_u32(vcvtnq_u32_f32(g_s));
-        let b_u = vqmovn_u32(vcvtnq_u32_f32(b_s));
+        let r_s = vmulq_f32(vminq_f32_compat(vmaxq_f32_compat(r_v, zero), one), scale);
+        let g_s = vmulq_f32(vminq_f32_compat(vmaxq_f32_compat(g_v, zero), one), scale);
+        let b_s = vmulq_f32(vminq_f32_compat(vmaxq_f32_compat(b_v, zero), one), scale);
+        let r_u = vqmovn_u32_compat(vcvtnq_u32_f32_compat(r_s));
+        let g_u = vqmovn_u32_compat(vcvtnq_u32_f32_compat(g_s));
+        let b_u = vqmovn_u32_compat(vcvtnq_u32_f32_compat(b_s));
         vst1_u16(r_h.as_mut_ptr().add(sub * 4), r_u);
         vst1_u16(g_h.as_mut_ptr().add(sub * 4), g_u);
         vst1_u16(b_h.as_mut_ptr().add(sub * 4), b_u);

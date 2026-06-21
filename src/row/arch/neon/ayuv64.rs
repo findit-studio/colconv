@@ -163,16 +163,16 @@ pub(crate) unsafe fn ayuv64_to_rgb_or_rgba_row<
       // Saturate-add Y + chroma per channel; narrow both halves to u8;
       // combine halves into uint8x16_t.
       let r_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, r_chroma_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, r_chroma_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, r_chroma_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, r_chroma_hi)),
       );
       let g_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, g_chroma_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, g_chroma_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, g_chroma_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, g_chroma_hi)),
       );
       let b_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, b_chroma_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, b_chroma_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, b_chroma_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, b_chroma_hi)),
       );
 
       // Store 16 pixels.
@@ -368,28 +368,28 @@ pub(crate) unsafe fn ayuv64_to_rgb_u16_or_rgba_u16_row<
       // Y + chroma; vqmovun_s32 saturates i32 → u16 (clamps [0, 65535]).
       // vcombine_u16(A, B) packs two u16x4 into one u16x8.
       let r_lo_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_lo_0, r_ch_lo0)),
-        vqmovun_s32(vaddq_s32(ys_lo_1, r_ch_lo1)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo_0, r_ch_lo0)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo_1, r_ch_lo1)),
       );
       let g_lo_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_lo_0, g_ch_lo0)),
-        vqmovun_s32(vaddq_s32(ys_lo_1, g_ch_lo1)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo_0, g_ch_lo0)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo_1, g_ch_lo1)),
       );
       let b_lo_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_lo_0, b_ch_lo0)),
-        vqmovun_s32(vaddq_s32(ys_lo_1, b_ch_lo1)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo_0, b_ch_lo0)),
+        vqmovun_s32_compat(vaddq_s32(ys_lo_1, b_ch_lo1)),
       );
       let r_hi_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_hi_0, r_ch_hi0)),
-        vqmovun_s32(vaddq_s32(ys_hi_1, r_ch_hi1)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi_0, r_ch_hi0)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi_1, r_ch_hi1)),
       );
       let g_hi_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_hi_0, g_ch_hi0)),
-        vqmovun_s32(vaddq_s32(ys_hi_1, g_ch_hi1)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi_0, g_ch_hi0)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi_1, g_ch_hi1)),
       );
       let b_hi_u16 = vcombine_u16(
-        vqmovun_s32(vaddq_s32(ys_hi_0, b_ch_hi0)),
-        vqmovun_s32(vaddq_s32(ys_hi_1, b_ch_hi1)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi_0, b_ch_hi0)),
+        vqmovun_s32_compat(vaddq_s32(ys_hi_1, b_ch_hi1)),
       );
 
       // Store 16 pixels. Each vst4q_u16 / vst3q_u16 writes 8 pixels.

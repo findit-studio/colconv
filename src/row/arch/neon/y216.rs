@@ -167,12 +167,12 @@ pub(crate) unsafe fn y216_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
         let y_hi_scaled = scale_y_u16_to_i16(pair_hi.0, y_off_v, y_scale_v, rnd_v);
 
         // Saturating add; narrow to u8x8.
-        let r_lo_u8 = vqmovun_s16(vqaddq_s16(y_lo_scaled, r_dup_lo));
-        let g_lo_u8 = vqmovun_s16(vqaddq_s16(y_lo_scaled, g_dup_lo));
-        let b_lo_u8 = vqmovun_s16(vqaddq_s16(y_lo_scaled, b_dup_lo));
-        let r_hi_u8 = vqmovun_s16(vqaddq_s16(y_hi_scaled, r_dup_hi));
-        let g_hi_u8 = vqmovun_s16(vqaddq_s16(y_hi_scaled, g_dup_hi));
-        let b_hi_u8 = vqmovun_s16(vqaddq_s16(y_hi_scaled, b_dup_hi));
+        let r_lo_u8 = vqmovun_s16_compat(vqaddq_s16(y_lo_scaled, r_dup_lo));
+        let g_lo_u8 = vqmovun_s16_compat(vqaddq_s16(y_lo_scaled, g_dup_lo));
+        let b_lo_u8 = vqmovun_s16_compat(vqaddq_s16(y_lo_scaled, b_dup_lo));
+        let r_hi_u8 = vqmovun_s16_compat(vqaddq_s16(y_hi_scaled, r_dup_hi));
+        let g_hi_u8 = vqmovun_s16_compat(vqaddq_s16(y_hi_scaled, g_dup_hi));
+        let b_hi_u8 = vqmovun_s16_compat(vqaddq_s16(y_hi_scaled, b_dup_hi));
 
         if ALPHA {
           let alpha = vdup_n_u8(0xFF);
@@ -379,29 +379,29 @@ pub(crate) unsafe fn y216_to_rgb_u16_or_rgba_u16_row<const ALPHA: bool, const BE
         //
         // vcombine_u16(A, B) packs two u16x4 into one u16x8.
         let r_lo_u16 = vcombine_u16(
-          vqmovun_s32(vaddq_s32(ys_lo_0, r_cd_lo0)),
-          vqmovun_s32(vaddq_s32(ys_lo_1, r_cd_lo1)),
+          vqmovun_s32_compat(vaddq_s32(ys_lo_0, r_cd_lo0)),
+          vqmovun_s32_compat(vaddq_s32(ys_lo_1, r_cd_lo1)),
         );
         let g_lo_u16 = vcombine_u16(
-          vqmovun_s32(vaddq_s32(ys_lo_0, g_cd_lo0)),
-          vqmovun_s32(vaddq_s32(ys_lo_1, g_cd_lo1)),
+          vqmovun_s32_compat(vaddq_s32(ys_lo_0, g_cd_lo0)),
+          vqmovun_s32_compat(vaddq_s32(ys_lo_1, g_cd_lo1)),
         );
         let b_lo_u16 = vcombine_u16(
-          vqmovun_s32(vaddq_s32(ys_lo_0, b_cd_lo0)),
-          vqmovun_s32(vaddq_s32(ys_lo_1, b_cd_lo1)),
+          vqmovun_s32_compat(vaddq_s32(ys_lo_0, b_cd_lo0)),
+          vqmovun_s32_compat(vaddq_s32(ys_lo_1, b_cd_lo1)),
         );
         // hi group (Y8..Y15)
         let r_hi_u16 = vcombine_u16(
-          vqmovun_s32(vaddq_s32(ys_hi_0, r_cd_hi0)),
-          vqmovun_s32(vaddq_s32(ys_hi_1, r_cd_hi1)),
+          vqmovun_s32_compat(vaddq_s32(ys_hi_0, r_cd_hi0)),
+          vqmovun_s32_compat(vaddq_s32(ys_hi_1, r_cd_hi1)),
         );
         let g_hi_u16 = vcombine_u16(
-          vqmovun_s32(vaddq_s32(ys_hi_0, g_cd_hi0)),
-          vqmovun_s32(vaddq_s32(ys_hi_1, g_cd_hi1)),
+          vqmovun_s32_compat(vaddq_s32(ys_hi_0, g_cd_hi0)),
+          vqmovun_s32_compat(vaddq_s32(ys_hi_1, g_cd_hi1)),
         );
         let b_hi_u16 = vcombine_u16(
-          vqmovun_s32(vaddq_s32(ys_hi_0, b_cd_hi0)),
-          vqmovun_s32(vaddq_s32(ys_hi_1, b_cd_hi1)),
+          vqmovun_s32_compat(vaddq_s32(ys_hi_0, b_cd_hi0)),
+          vqmovun_s32_compat(vaddq_s32(ys_hi_1, b_cd_hi1)),
         );
 
         // Each u16x8 covers 8 pixels.  Two stores per format (lo + hi).

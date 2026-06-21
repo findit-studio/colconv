@@ -35,10 +35,15 @@
 use crate::{
   PixelSink,
   frame::Pal8Frame,
-  resample::{FilterKernel, FilteredResampler, ResampleError},
+  resample::{FilteredResampler, ResampleError},
   sinker::{AlphaMode, MixedSinker, MixedSinkerError},
   source::{Pal8, Pal8Row, pal8_to},
 };
+// `FilterKernel` bounds only the `rgb`-gated equivalence/oracle helpers; the
+// feature-independent regressions (plan-accepted / no-output / premult-reject /
+// sequencing) use concrete kernels, so a no-`rgb` build leaves it unused.
+#[cfg(feature = "rgb")]
+use crate::resample::FilterKernel;
 
 const SRC: usize = 8;
 
@@ -76,7 +81,9 @@ fn index_plane(n: usize, seed: u32) -> Vec<u8> {
 
 /// Full-resolution canonical RGBA of the source — a DIRECT (identity) `Pal8`
 /// conversion (palette lookup, `[B, G, R, A]` -> `[R, G, B, A]`). The oracle
-/// filters this.
+/// filters this. Only the `rgb`-gated equivalence suite consumes it (the
+/// packed-RGBA oracle it feeds lives under `rgb`).
+#[cfg(feature = "rgb")]
 fn direct_rgba(indices: &[u8], palette: &[[u8; 4]; 256], w: usize, h: usize) -> Vec<u8> {
   let frame = Pal8Frame::new(indices, palette, w as u32, h as u32, w as u32);
   let mut rgba = std::vec![0u8; w * h * 4];

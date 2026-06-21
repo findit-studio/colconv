@@ -225,12 +225,12 @@ unsafe fn uyyvyy411_to_rgb_or_rgba_row<const ALPHA: bool>(
       let b2 = vqaddq_s16(ys2, b_dup_3);
       let b3 = vqaddq_s16(ys3, b_dup_4);
 
-      let r_lo16 = vcombine_u8(vqmovun_s16(r0), vqmovun_s16(r1));
-      let r_hi16 = vcombine_u8(vqmovun_s16(r2), vqmovun_s16(r3));
-      let g_lo16 = vcombine_u8(vqmovun_s16(g0), vqmovun_s16(g1));
-      let g_hi16 = vcombine_u8(vqmovun_s16(g2), vqmovun_s16(g3));
-      let b_lo16 = vcombine_u8(vqmovun_s16(b0), vqmovun_s16(b1));
-      let b_hi16 = vcombine_u8(vqmovun_s16(b2), vqmovun_s16(b3));
+      let r_lo16 = vcombine_u8(vqmovun_s16_compat(r0), vqmovun_s16_compat(r1));
+      let r_hi16 = vcombine_u8(vqmovun_s16_compat(r2), vqmovun_s16_compat(r3));
+      let g_lo16 = vcombine_u8(vqmovun_s16_compat(g0), vqmovun_s16_compat(g1));
+      let g_hi16 = vcombine_u8(vqmovun_s16_compat(g2), vqmovun_s16_compat(g3));
+      let b_lo16 = vcombine_u8(vqmovun_s16_compat(b0), vqmovun_s16_compat(b1));
+      let b_hi16 = vcombine_u8(vqmovun_s16_compat(b2), vqmovun_s16_compat(b3));
 
       if ALPHA {
         let rgba_lo = uint8x16x4_t(r_lo16, g_lo16, b_lo16, alpha_u8);

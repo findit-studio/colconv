@@ -16,6 +16,7 @@
 #[cfg_attr(miri, allow(unused_imports))]
 use core::arch::aarch64::*;
 
+use super::miri_compat::*;
 use crate::row::{
   arch::neon::endian::{load_endian_u16x8, load_endian_u32x4},
   scalar::{bits_mask, gray as scalar},
@@ -760,11 +761,11 @@ pub(crate) unsafe fn grayf32_to_rgb_row<const BE: bool>(
       let y1 = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
         y_plane.as_ptr().cast::<u8>().add((x + 4) * 4),
       ));
-      let c0 = vmulq_f32(vmaxq_f32(vminq_f32(y0, one), zero), scale);
-      let c1 = vmulq_f32(vmaxq_f32(vminq_f32(y1, one), zero), scale);
+      let c0 = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(y0, one), zero), scale);
+      let c1 = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(y1, one), zero), scale);
       // vcvtaq_u32_f32: round-to-nearest-even, no FPCR manipulation needed.
-      let u0 = vcvtaq_u32_f32(c0);
-      let u1 = vcvtaq_u32_f32(c1);
+      let u0 = vcvtaq_u32_f32_compat(c0);
+      let u1 = vcvtaq_u32_f32_compat(c1);
       let n0 = vmovn_u32(u0); // u32x4 → u16x4
       let n1 = vmovn_u32(u1);
       let n8 = vmovn_u16(vcombine_u16(n0, n1)); // u16x8 → u8x8
@@ -805,10 +806,10 @@ pub(crate) unsafe fn grayf32_to_rgba_row<const BE: bool>(
       let y1 = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
         y_plane.as_ptr().cast::<u8>().add((x + 4) * 4),
       ));
-      let c0 = vmulq_f32(vmaxq_f32(vminq_f32(y0, one), zero), scale);
-      let c1 = vmulq_f32(vmaxq_f32(vminq_f32(y1, one), zero), scale);
-      let u0 = vcvtaq_u32_f32(c0);
-      let u1 = vcvtaq_u32_f32(c1);
+      let c0 = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(y0, one), zero), scale);
+      let c1 = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(y1, one), zero), scale);
+      let u0 = vcvtaq_u32_f32_compat(c0);
+      let u1 = vcvtaq_u32_f32_compat(c1);
       let n8 = vmovn_u16(vcombine_u16(vmovn_u32(u0), vmovn_u32(u1)));
       let rgba = uint8x8x4_t(n8, n8, n8, alpha);
       vst4_u8(out.as_mut_ptr().add(x * 4), rgba);
@@ -843,9 +844,9 @@ pub(crate) unsafe fn grayf32_to_rgb_u16_row<const BE: bool>(
       let y = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
         y_plane.as_ptr().cast::<u8>().add(x * 4),
       ));
-      let c = vmulq_f32(vmaxq_f32(vminq_f32(y, one), zero), scale);
-      let u32v = vcvtaq_u32_f32(c);
-      let u16v = vqmovn_u32(u32v); // saturating narrow to u16
+      let c = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(y, one), zero), scale);
+      let u32v = vcvtaq_u32_f32_compat(c);
+      let u16v = vqmovn_u32_compat(u32v); // saturating narrow to u16
       let rgb = uint16x4x3_t(u16v, u16v, u16v);
       vst3_u16(out.as_mut_ptr().add(x * 3), rgb);
       x += 4;
@@ -880,8 +881,8 @@ pub(crate) unsafe fn grayf32_to_rgba_u16_row<const BE: bool>(
       let y = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
         y_plane.as_ptr().cast::<u8>().add(x * 4),
       ));
-      let c = vmulq_f32(vmaxq_f32(vminq_f32(y, one), zero), scale);
-      let u16v = vqmovn_u32(vcvtaq_u32_f32(c));
+      let c = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(y, one), zero), scale);
+      let u16v = vqmovn_u32_compat(vcvtaq_u32_f32_compat(c));
       let rgba = uint16x4x4_t(u16v, u16v, u16v, alpha);
       vst4_u16(out.as_mut_ptr().add(x * 4), rgba);
       x += 4;
@@ -953,11 +954,11 @@ pub(crate) unsafe fn grayf32_to_luma_row<const BE: bool>(
       let y1 = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
         y_plane.as_ptr().cast::<u8>().add((x + 4) * 4),
       ));
-      let c0 = vmulq_f32(vmaxq_f32(vminq_f32(y0, one), zero), scale);
-      let c1 = vmulq_f32(vmaxq_f32(vminq_f32(y1, one), zero), scale);
+      let c0 = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(y0, one), zero), scale);
+      let c1 = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(y1, one), zero), scale);
       let n8 = vmovn_u16(vcombine_u16(
-        vmovn_u32(vcvtaq_u32_f32(c0)),
-        vmovn_u32(vcvtaq_u32_f32(c1)),
+        vmovn_u32(vcvtaq_u32_f32_compat(c0)),
+        vmovn_u32(vcvtaq_u32_f32_compat(c1)),
       ));
       vst1_u8(out.as_mut_ptr().add(x), n8);
       x += 8;
@@ -991,8 +992,8 @@ pub(crate) unsafe fn grayf32_to_luma_u16_row<const BE: bool>(
       let y = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
         y_plane.as_ptr().cast::<u8>().add(x * 4),
       ));
-      let c = vmulq_f32(vmaxq_f32(vminq_f32(y, one), zero), scale);
-      let u16v = vqmovn_u32(vcvtaq_u32_f32(c));
+      let c = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(y, one), zero), scale);
+      let u16v = vqmovn_u32_compat(vcvtaq_u32_f32_compat(c));
       vst1_u16(out.as_mut_ptr().add(x), u16v);
       x += 4;
     }
@@ -1060,11 +1061,11 @@ pub(crate) unsafe fn grayf32_to_hsv_row<const BE: bool>(
       let y1 = vreinterpretq_f32_u32(load_endian_u32x4::<BE>(
         y_plane.as_ptr().cast::<u8>().add((x + 4) * 4),
       ));
-      let c0 = vmulq_f32(vmaxq_f32(vminq_f32(y0, one), zero_f), scale);
-      let c1 = vmulq_f32(vmaxq_f32(vminq_f32(y1, one), zero_f), scale);
+      let c0 = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(y0, one), zero_f), scale);
+      let c1 = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(y1, one), zero_f), scale);
       let v8 = vmovn_u16(vcombine_u16(
-        vmovn_u32(vcvtaq_u32_f32(c0)),
-        vmovn_u32(vcvtaq_u32_f32(c1)),
+        vmovn_u32(vcvtaq_u32_f32_compat(c0)),
+        vmovn_u32(vcvtaq_u32_f32_compat(c1)),
       ));
       vst1_u8(h_out.as_mut_ptr().add(x), zero_u8);
       vst1_u8(s_out.as_mut_ptr().add(x), zero_u8);

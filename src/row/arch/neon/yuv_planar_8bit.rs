@@ -236,16 +236,16 @@ unsafe fn yuv_420_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
 
       // B, G, R = saturating_add(Y, chroma); saturate‑narrow to u8.
       let b_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, b_dup_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, b_dup_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, b_dup_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, b_dup_hi)),
       );
       let g_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, g_dup_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, g_dup_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, g_dup_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, g_dup_hi)),
       );
       let r_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, r_dup_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, r_dup_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, r_dup_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, r_dup_hi)),
       );
 
       if ALPHA {
@@ -501,9 +501,9 @@ unsafe fn yuv_410_to_rgb_or_rgba_row<const ALPHA: bool>(
         rnd_v,
       ));
       // Saturate-narrow each i32x4 to i16x4.
-      let r_i16x4 = vqmovn_s32(r_i32);
-      let g_i16x4 = vqmovn_s32(g_i32);
-      let b_i16x4 = vqmovn_s32(b_i32);
+      let r_i16x4 = vqmovn_s32_compat(r_i32);
+      let g_i16x4 = vqmovn_s32_compat(g_i32);
+      let b_i16x4 = vqmovn_s32_compat(b_i32);
 
       // Duplicate each chroma lane 4x to cover 16 Y lanes:
       //   chroma  = [c0, c1, c2, c3]                       (i16x4)
@@ -543,16 +543,16 @@ unsafe fn yuv_410_to_rgb_or_rgba_row<const ALPHA: bool>(
 
       // Saturating add per channel, then saturate-narrow to u8.
       let r_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, r_dup_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, r_dup_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, r_dup_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, r_dup_hi)),
       );
       let g_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, g_dup_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, g_dup_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, g_dup_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, g_dup_hi)),
       );
       let b_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, b_dup_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, b_dup_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, b_dup_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, b_dup_hi)),
       );
 
       if ALPHA {
@@ -790,16 +790,16 @@ unsafe fn yuv_444_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
       let y_scaled_hi = scale_y(y_hi, y_off_v, y_scale_v, rnd_v);
 
       let b_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, b_chroma_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, b_chroma_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, b_chroma_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, b_chroma_hi)),
       );
       let g_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, g_chroma_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, g_chroma_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, g_chroma_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, g_chroma_hi)),
       );
       let r_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, r_chroma_lo)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, r_chroma_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, r_chroma_lo)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, r_chroma_hi)),
       );
 
       if ALPHA {
@@ -1045,9 +1045,9 @@ unsafe fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
       // unused). `vqmovn_s32` saturates i32 → i16, then `vcombine_s16`
       // pairs it with arbitrary garbage in the high half — we never
       // touch those lanes.
-      let r_low4 = vqmovn_s32(r_i32);
-      let g_low4 = vqmovn_s32(g_i32);
-      let b_low4 = vqmovn_s32(b_i32);
+      let r_low4 = vqmovn_s32_compat(r_i32);
+      let g_low4 = vqmovn_s32_compat(g_i32);
+      let b_low4 = vqmovn_s32_compat(b_i32);
 
       // 1→4 nearest-neighbor upsample. Stage 1: duplicate each of the
       // 4 lanes once via `vzip1_s16(x, x)` over an i16x4 — produces
@@ -1081,16 +1081,16 @@ unsafe fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
       let y_scaled_hi = scale_y(y_hi, y_off_v, y_scale_v, rnd_v);
 
       let b_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, b_x2)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, b_x2_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, b_x2)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, b_x2_hi)),
       );
       let g_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, g_x2)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, g_x2_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, g_x2)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, g_x2_hi)),
       );
       let r_u8 = vcombine_u8(
-        vqmovun_s16(vqaddq_s16(y_scaled_lo, r_x2)),
-        vqmovun_s16(vqaddq_s16(y_scaled_hi, r_x2_hi)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_lo, r_x2)),
+        vqmovun_s16_compat(vqaddq_s16(y_scaled_hi, r_x2_hi)),
       );
 
       if ALPHA {
