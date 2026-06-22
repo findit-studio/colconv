@@ -263,6 +263,23 @@ fn max_diff(a: &[u8], b: &[u8]) -> u32 {
     .unwrap_or(0)
 }
 
+/// Max **circular** per-element diff between two OpenCV hue planes (`H` is in
+/// `[0, 180)`, so it wraps: `0` and `179` are 1 apart, not 179). Used to bound
+/// the x86 SIMD HSV kernel's documented `+/-1` LSB against the scalar oracle
+/// without a spurious failure when a near-red hue straddles the wrap.
+#[cfg(feature = "rgb")]
+fn max_hue_diff(a: &[u8], b: &[u8]) -> u32 {
+  assert_eq!(a.len(), b.len(), "length mismatch");
+  a.iter()
+    .zip(b.iter())
+    .map(|(&x, &y)| {
+      let d = (x as i32 - y as i32).unsigned_abs();
+      d.min(180 - d)
+    })
+    .max()
+    .unwrap_or(0)
+}
+
 // ---- Per-channel RGBA equivalence vs the packed-RGBA filter oracle ---------
 
 /// `Pal8` filter RGBA (R, G, B, A each) == the `Rgba` source's filter resample
@@ -346,8 +363,17 @@ fn filter_all_outputs_derive_from_filtered_color() {
       let (h_ref, s_ref, v_ref) = direct_hsv_of_filtered(&filtered);
       assert_eq!(luma, luma_ref, "{label}: luma (Q8 BT.709 of filtered RGB)");
       assert_eq!(lu16, lu16_ref, "{label}: luma_u16 ((y<<8)|y)");
-      assert_eq!(h, h_ref, "{label}: hsv H");
-      assert_eq!(s, s_ref, "{label}: hsv S");
+      // H and S divide by `delta` / `v`; the x86 SIMD HSV kernel
+      // (`x86_common::rgb_to_hsv_16_pixels`) computes those reciprocals with
+      // `_mm_rcp_ps` + one Newton-Raphson step, which is documented to land
+      // within +/-1 LSB of the scalar reference. Under the SSE4.1-only tier
+      // that approximation can differ from the scalar oracle by 1 in a lane,
+      // so H and S are checked within that tolerance. V is `max(r,g,b)` (no
+      // division) and stays exact. H is OpenCV `[0, 180)` and wraps, so it is
+      // compared with a circular distance (a near-red 1-LSB drift is `0` vs
+      // `179`, a circular distance of 1, not 179).
+      assert!(max_hue_diff(&h, &h_ref) <= 1, "{label}: hsv H within 1 LSB");
+      assert!(max_diff(&s, &s_ref) <= 1, "{label}: hsv S within 1 LSB");
       assert_eq!(v, v_ref, "{label}: hsv V");
     }
   }
