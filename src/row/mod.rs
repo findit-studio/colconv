@@ -757,7 +757,16 @@ mod overflow_tests {
 
   #[cfg(target_pointer_width = "32")]
   use super::*;
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(
+    target_pointer_width = "32",
+    any(
+      feature = "yuv-planar",
+      feature = "yuv-semi-planar",
+      feature = "yuv-packed",
+      feature = "v210",
+      feature = "y2xx"
+    )
+  ))]
   use crate::ColorMatrix;
 
   /// The smallest even width greater than `usize::MAX / 3`, so
@@ -773,7 +782,7 @@ mod overflow_tests {
     candidate + (candidate & 1)
   };
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "yuv-planar"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn yuv_420_dispatcher_rejects_width_times_3_overflow() {
@@ -793,7 +802,7 @@ mod overflow_tests {
     );
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "yuv-planar"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn yuv_444_dispatcher_rejects_width_times_3_overflow() {
@@ -813,7 +822,7 @@ mod overflow_tests {
     );
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "yuv-semi-planar"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn nv12_dispatcher_rejects_width_times_3_overflow() {
@@ -842,7 +851,7 @@ mod overflow_tests {
     rgb_to_hsv_row(&rgb, &mut h, &mut s, &mut v, OVERFLOW_WIDTH, false);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "rgb"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn bgr_to_rgb_dispatcher_rejects_width_times_3_overflow() {
@@ -860,7 +869,7 @@ mod overflow_tests {
   // buffer to unsafe SIMD. Each public entry point gets a regression
   // so a future drop of either guard surfaces independently.
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gbr"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gbr_to_rgb_dispatcher_rejects_width_times_3_overflow() {
@@ -871,7 +880,7 @@ mod overflow_tests {
     gbr_to_rgb_row(&g, &b, &r, &mut rgb, OVERFLOW_WIDTH, false);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gbr"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gbr_to_rgba_opaque_dispatcher_rejects_width_times_4_overflow() {
@@ -882,7 +891,7 @@ mod overflow_tests {
     gbr_to_rgba_opaque_row(&g, &b, &r, &mut rgba, OVERFLOW_WIDTH, false);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gbr"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gbra_to_rgba_dispatcher_rejects_width_times_4_overflow() {
@@ -904,7 +913,7 @@ mod overflow_tests {
   // it doesn't perform a width x N multiply — output length is `width`
   // exactly, so there is no wrapping path to guard.
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gbr"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gbr_to_rgb_high_bit_dispatcher_rejects_width_times_3_overflow() {
@@ -915,7 +924,7 @@ mod overflow_tests {
     gbr_to_rgb_high_bit_row::<10, false>(&g, &b, &r, &mut rgb, OVERFLOW_WIDTH, false);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gbr"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gbr_to_rgb_u16_high_bit_dispatcher_rejects_width_times_3_overflow() {
@@ -926,7 +935,7 @@ mod overflow_tests {
     gbr_to_rgb_u16_high_bit_row::<10, false>(&g, &b, &r, &mut rgb, OVERFLOW_WIDTH, false);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gbr"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gbr_to_rgba_opaque_high_bit_dispatcher_rejects_width_times_4_overflow() {
@@ -937,7 +946,7 @@ mod overflow_tests {
     gbr_to_rgba_opaque_high_bit_row::<10, false>(&g, &b, &r, &mut rgba, OVERFLOW_WIDTH, false);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gbr"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gbr_to_rgba_opaque_u16_high_bit_dispatcher_rejects_width_times_4_overflow() {
@@ -948,7 +957,7 @@ mod overflow_tests {
     gbr_to_rgba_opaque_u16_high_bit_row::<10, false>(&g, &b, &r, &mut rgba, OVERFLOW_WIDTH, false);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gbr"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gbra_to_rgba_high_bit_dispatcher_rejects_width_times_4_overflow() {
@@ -960,7 +969,7 @@ mod overflow_tests {
     gbra_to_rgba_high_bit_row::<10, false>(&g, &b, &r, &a, &mut rgba, OVERFLOW_WIDTH, false);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gbr"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gbra_to_rgba_u16_high_bit_dispatcher_rejects_width_times_4_overflow() {
@@ -983,7 +992,7 @@ mod overflow_tests {
   // (RGB) and *4 (RGBA) paths so a future regression on any one of
   // them surfaces independently.
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gray"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gray8_to_rgb_dispatcher_rejects_width_times_3_overflow() {
@@ -992,7 +1001,7 @@ mod overflow_tests {
     gray8_to_rgb_row(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gray"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gray8_to_rgba_dispatcher_rejects_width_times_4_overflow() {
@@ -1001,7 +1010,7 @@ mod overflow_tests {
     gray8_to_rgba_row(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gray"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gray_n_to_rgb_dispatcher_rejects_width_times_3_overflow() {
@@ -1010,7 +1019,7 @@ mod overflow_tests {
     gray_n_to_rgb_row::<10, false>(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gray"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gray_n_to_rgba_dispatcher_rejects_width_times_4_overflow() {
@@ -1019,7 +1028,7 @@ mod overflow_tests {
     gray_n_to_rgba_row::<10, false>(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gray"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gray_n_to_rgb_u16_dispatcher_rejects_width_times_3_overflow() {
@@ -1028,7 +1037,7 @@ mod overflow_tests {
     gray_n_to_rgb_u16_row::<10, false>(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gray"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gray_n_to_rgba_u16_dispatcher_rejects_width_times_4_overflow() {
@@ -1037,7 +1046,7 @@ mod overflow_tests {
     gray_n_to_rgba_u16_row::<10, false>(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gray"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gray16_to_rgb_dispatcher_rejects_width_times_3_overflow() {
@@ -1046,7 +1055,7 @@ mod overflow_tests {
     gray16_to_rgb_row::<false>(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gray"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gray16_to_rgba_dispatcher_rejects_width_times_4_overflow() {
@@ -1055,7 +1064,7 @@ mod overflow_tests {
     gray16_to_rgba_row::<false>(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gray"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gray16_to_rgb_u16_dispatcher_rejects_width_times_3_overflow() {
@@ -1064,7 +1073,7 @@ mod overflow_tests {
     gray16_to_rgb_u16_row::<false>(&y, &mut rgb, OVERFLOW_WIDTH, false, true);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "gray"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn gray16_to_rgba_u16_dispatcher_rejects_width_times_4_overflow() {
@@ -1073,7 +1082,7 @@ mod overflow_tests {
     gray16_to_rgba_u16_row::<false>(&y, &mut rgba, OVERFLOW_WIDTH, false, true);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "yuv-planar"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn yuv_444p_n_u16_dispatcher_rejects_width_times_3_overflow() {
@@ -1093,7 +1102,7 @@ mod overflow_tests {
     );
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "yuv-planar"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn yuv444p16_u16_dispatcher_rejects_width_times_3_overflow() {
@@ -1129,13 +1138,16 @@ mod overflow_tests {
   /// `usize::MAX / 2 == 2^31 - 1` is odd, so `+ 1` produces an
   /// even value (`2^31`); the `+ (candidate & 1)` is a parity
   /// safety on hypothetical platforms where this differs.
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(
+    target_pointer_width = "32",
+    any(feature = "yuv-packed", feature = "y2xx")
+  ))]
   const OVERFLOW_WIDTH_TIMES_2: usize = {
     let candidate = (usize::MAX / 2) + 1;
     candidate + (candidate & 1)
   };
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "yuv-packed"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn yuyv422_dispatcher_rejects_width_times_2_overflow() {
@@ -1151,7 +1163,7 @@ mod overflow_tests {
     );
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "yuv-packed"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn uyvy422_dispatcher_rejects_width_times_2_overflow() {
@@ -1167,7 +1179,7 @@ mod overflow_tests {
     );
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "yuv-packed"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn yvyu422_dispatcher_rejects_width_times_2_overflow() {
@@ -1183,7 +1195,7 @@ mod overflow_tests {
     );
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "yuv-packed"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn yuyv422_luma_dispatcher_rejects_width_times_2_overflow() {
@@ -1192,7 +1204,7 @@ mod overflow_tests {
     yuyv422_to_luma_row(&p, &mut luma, OVERFLOW_WIDTH_TIMES_2, false);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "yuv-packed"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn uyvy422_luma_dispatcher_rejects_width_times_2_overflow() {
@@ -1201,7 +1213,7 @@ mod overflow_tests {
     uyvy422_to_luma_row(&p, &mut luma, OVERFLOW_WIDTH_TIMES_2, false);
   }
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "yuv-packed"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn yvyu422_luma_dispatcher_rejects_width_times_2_overflow() {
@@ -1218,7 +1230,7 @@ mod overflow_tests {
   // multiplication to a small value, pass the input-side `assert!`
   // with an undersized slice, and reach unsafe SIMD loads.
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "v210"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn v210_dispatcher_rejects_words_times_16_overflow() {
@@ -1236,7 +1248,7 @@ mod overflow_tests {
   // could overflow `width * 2` to a small value, pass the input-side
   // `assert!` with an undersized slice, and reach unsafe SIMD loads.
 
-  #[cfg(target_pointer_width = "32")]
+  #[cfg(all(target_pointer_width = "32", feature = "y2xx"))]
   #[test]
   #[should_panic(expected = "overflows usize")]
   fn y210_dispatcher_rejects_width_times_2_overflow() {

@@ -254,7 +254,13 @@ fn simd128_p416_be_parity_u16() {
 // through to scalar for BE input. Width sweeps below cross the SIMD body
 // boundary (16 px / iter for `_to_rgb`, 4 px / iter for `_to_rgba`,
 // 8 px / iter for `_to_rgb_u16`).
+//
+// The X2RGB10 / X2BGR10 kernels (SIMD and scalar) live in the `rgb`
+// family, so these parity tests are gated on `rgb`: a feature shard that
+// selects this module (`yuv-planar` / `yuv-semi-planar`) without `rgb`
+// still compiles.
 
+#[cfg(feature = "rgb")]
 fn x2_packed_input(width: usize, seed: u32) -> std::vec::Vec<u8> {
   let mut state = seed;
   let mut out = std::vec::Vec::with_capacity(width * 4);
@@ -265,6 +271,7 @@ fn x2_packed_input(width: usize, seed: u32) -> std::vec::Vec<u8> {
   out
 }
 
+#[cfg(feature = "rgb")]
 #[test]
 fn simd128_x2rgb10_to_rgb_be_matches_scalar() {
   for w in [1usize, 7, 15, 16, 17, 31, 32, 33, 1920, 1921] {
@@ -282,6 +289,7 @@ fn simd128_x2rgb10_to_rgb_be_matches_scalar() {
   }
 }
 
+#[cfg(feature = "rgb")]
 #[test]
 fn simd128_x2rgb10_to_rgba_be_matches_scalar() {
   for w in [1usize, 3, 4, 5, 7, 15, 16, 17, 31, 32, 33, 1920, 1921] {
@@ -299,6 +307,7 @@ fn simd128_x2rgb10_to_rgba_be_matches_scalar() {
   }
 }
 
+#[cfg(feature = "rgb")]
 #[test]
 fn simd128_x2rgb10_to_rgb_u16_be_matches_scalar() {
   for w in [1usize, 7, 8, 9, 15, 16, 17, 31, 32, 33, 1920, 1921] {
@@ -316,6 +325,7 @@ fn simd128_x2rgb10_to_rgb_u16_be_matches_scalar() {
   }
 }
 
+#[cfg(feature = "rgb")]
 #[test]
 fn simd128_x2bgr10_to_rgb_be_matches_scalar() {
   for w in [1usize, 7, 15, 16, 17, 31, 32, 33, 1920, 1921] {
@@ -333,6 +343,7 @@ fn simd128_x2bgr10_to_rgb_be_matches_scalar() {
   }
 }
 
+#[cfg(feature = "rgb")]
 #[test]
 fn simd128_x2bgr10_to_rgba_be_matches_scalar() {
   for w in [1usize, 3, 4, 5, 7, 15, 16, 17, 31, 32, 33, 1920, 1921] {
@@ -350,6 +361,7 @@ fn simd128_x2bgr10_to_rgba_be_matches_scalar() {
   }
 }
 
+#[cfg(feature = "rgb")]
 #[test]
 fn simd128_x2bgr10_to_rgb_u16_be_matches_scalar() {
   for w in [1usize, 7, 8, 9, 15, 16, 17, 31, 32, 33, 1920, 1921] {
