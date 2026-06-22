@@ -445,7 +445,20 @@ pub(crate) unsafe fn copy_alpha_plane_u16<const BITS: u32>(
 }
 
 // Tests.
-#[cfg(all(test, feature = "std"))]
+//
+// The α-extract helpers exercised here are feature-gated to their owning
+// source families: the `copy_alpha_packed_*` trio is `yuv-444-packed`-only
+// (VUYA / AYUV64 α extraction), and the `copy_alpha_plane_*` trio belongs
+// to the planar-α families (`gbr` / `yuva`). Each parity test is gated to
+// the feature(s) under which both its SIMD helper and the scalar reference
+// exist, so a feature shard that selects an α-source family but not the
+// matching helper feature still compiles. The module guard is the union of
+// those buckets so the shared fixtures below are never dead code.
+#[cfg(all(
+  test,
+  feature = "std",
+  any(feature = "yuv-444-packed", feature = "gbr", feature = "yuva")
+))]
 mod tests {
   use crate::row::scalar::alpha_extract as scalar;
 
@@ -475,6 +488,7 @@ mod tests {
     miri,
     ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
   )]
+  #[cfg(feature = "yuv-444-packed")]
   fn sse41_copy_alpha_packed_u8x4_at_3_matches_scalar_widths() {
     if !std::arch::is_x86_feature_detected!("sse4.1") {
       return;
@@ -496,6 +510,7 @@ mod tests {
     miri,
     ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
   )]
+  #[cfg(feature = "yuv-444-packed")]
   fn sse41_copy_alpha_packed_u16x4_to_u8_at_0_matches_scalar_widths() {
     if !std::arch::is_x86_feature_detected!("sse4.1") {
       return;
@@ -517,6 +532,7 @@ mod tests {
     miri,
     ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
   )]
+  #[cfg(feature = "yuv-444-packed")]
   fn sse41_copy_alpha_packed_u16x4_at_0_matches_scalar_widths() {
     if !std::arch::is_x86_feature_detected!("sse4.1") {
       return;
@@ -538,6 +554,7 @@ mod tests {
     miri,
     ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
   )]
+  #[cfg(any(feature = "gbr", feature = "yuva"))]
   fn sse41_copy_alpha_plane_u8_matches_scalar_widths() {
     if !std::arch::is_x86_feature_detected!("sse4.1") {
       return;
@@ -559,6 +576,7 @@ mod tests {
     miri,
     ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
   )]
+  #[cfg(any(feature = "gbr", feature = "yuva"))]
   fn sse41_copy_alpha_plane_u16_to_u8_matches_scalar_widths_bits10() {
     if !std::arch::is_x86_feature_detected!("sse4.1") {
       return;
@@ -584,6 +602,7 @@ mod tests {
     miri,
     ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
   )]
+  #[cfg(any(feature = "gbr", feature = "yuva"))]
   fn sse41_copy_alpha_plane_u16_to_u8_matches_scalar_widths_bits12() {
     if !std::arch::is_x86_feature_detected!("sse4.1") {
       return;
@@ -609,6 +628,7 @@ mod tests {
     miri,
     ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
   )]
+  #[cfg(any(feature = "gbr", feature = "yuva"))]
   fn sse41_copy_alpha_plane_u16_matches_scalar_widths() {
     if !std::arch::is_x86_feature_detected!("sse4.1") {
       return;
