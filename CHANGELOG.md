@@ -8,6 +8,8 @@ breaking changes bump the `x` in `0.x.y`.
 
 ## Unreleased
 
+## 0.2.0 — 2026-06-23
+
 ### Added
 
 - SIMD acceleration for the fused-downscale engine (NEON, SSE4.1,

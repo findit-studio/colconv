@@ -5,10 +5,10 @@
 
 SIMD-dispatched color-conversion kernels covering the FFmpeg `AVPixelFormat` space, with a Sink-based API so consumers pick which derived outputs (RGB / Luma / HSV / custom) they want without paying for the ones they don't.
 
-[<img alt="github" src="https://img.shields.io/badge/github-Findit--AI/colconv-8da0cb?style=for-the-badge&logo=Github" height="22">][Github-url]
+[<img alt="github" src="https://img.shields.io/badge/github-findit--studio/colconv-8da0cb?style=for-the-badge&logo=Github" height="22">][Github-url]
 <img alt="LoC" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2Fal8n%2F327b2a8aef9003246e45c6e47fe63937%2Fraw%2Fcolconv" height="22">
-[<img alt="Build" src="https://img.shields.io/github/actions/workflow/status/Findit-AI/colconv/ci.yml?logo=Github-Actions&style=for-the-badge" height="22">][CI-url]
-[<img alt="codecov" src="https://img.shields.io/codecov/c/gh/Findit-AI/colconv?style=for-the-badge&logo=codecov" height="22">][codecov-url]
+[<img alt="Build" src="https://img.shields.io/github/actions/workflow/status/findit-studio/colconv/ci.yml?logo=Github-Actions&style=for-the-badge" height="22">][CI-url]
+[<img alt="codecov" src="https://img.shields.io/codecov/c/gh/findit-studio/colconv?style=for-the-badge&logo=codecov" height="22">][codecov-url]
 
 [<img alt="docs.rs" src="https://img.shields.io/badge/docs.rs-colconv-66c2a5?style=for-the-badge&labelColor=555555&logo=data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAwIDUxMiA1MTIiPjxwYXRoIGZpbGw9IiNmNWY1ZjUiIGQ9Ik00ODguNiAyNTAuMkwzOTIgMjE0VjEwNS41YzAtMTUtOS4zLTI4LjQtMjMuNC0zMy43bC0xMDAtMzcuNWMtOC4xLTMuMS0xNy4xLTMuMS0yNS4zIDBsLTEwMCAzNy41Yy0xNC4xIDUuMy0yMy40IDE4LjctMjMuNCAzMy43VjIxNGwtOTYuNiAzNi4yQzkuMyAyNTUuNSAwIDI2OC45IDAgMjgzLjlWMzk0YzAgMTMuNiA3LjcgMjYuMSAxOS45IDMyLjJsMTAwIDUwYzEwLjEgNS4xIDIyLjEgNS4xIDMyLjIgMGwxMDMuOS01MiAxMDMuOSA1MmMxMC4xIDUuMSAyMi4xIDUuMSAzMi4yIDBsMTAwLTUwYzEyLjItNi4xIDE5LjktMTguNiAxOS45LTMyLjJWMjgzLjljMC0xNS05LjMtMjguNC0yMy40LTMzLjd6TTM1OCAyMTQuOGwtODUgMzEuOXYtNjguMmw4NS0zN3Y3My4zek0xNTQgMTA0LjFsMTAyLTM4LjIgMTAyIDM4LjJ2LjZsLTEwMiA0MS40LTEwMi00MS40di0uNnptODQgMjkxLjFsLTg1IDQyLjV2LTc5LjFsODUtMzguOHY3NS40em0wLTExMmwtMTAyIDQxLjQtMTAyLTQxLjR2LS42bDEwMi0zOC4yIDEwMiAzOC4ydi42em0yNDAgMTEybC04NSA0Mi41di03OS4xbDg1LTM4Ljh2NzUuNHptMC0xMTJsLTEwMiA0MS40LTEwMi00MS40di0uNmwxMDItMzguMiAxMDIgMzguMnYuNnoiPjwvcGF0aD48L3N2Zz4K" height="20">][doc-url]
 [<img alt="crates.io" src="https://img.shields.io/crates/v/colconv?style=for-the-badge&logo=data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iaXNvLTg4NTktMSI/Pg0KPCEtLSBHZW5lcmF0b3I6IEFkb2JlIElsbHVzdHJhdG9yIDE5LjAuMCwgU1ZHIEV4cG9ydCBQbHVnLUluIC4gU1ZHIFZlcnNpb246IDYuMDAgQnVpbGQgMCkgIC0tPg0KPHN2ZyB2ZXJzaW9uPSIxLjEiIGlkPSJMYXllcl8xIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB4PSIwcHgiIHk9IjBweCINCgkgdmlld0JveD0iMCAwIDUxMiA1MTIiIHhtbDpzcGFjZT0icHJlc2VydmUiPg0KPGc+DQoJPGc+DQoJCTxwYXRoIGQ9Ik0yNTYsMEwzMS41MjgsMTEyLjIzNnYyODcuNTI4TDI1Niw1MTJsMjI0LjQ3Mi0xMTIuMjM2VjExMi4yMzZMMjU2LDB6IE0yMzQuMjc3LDQ1Mi41NjRMNzQuOTc0LDM3Mi45MTNWMTYwLjgxDQoJCQlsMTU5LjMwMyw3OS42NTFWNDUyLjU2NHogTTEwMS44MjYsMTI1LjY2MkwyNTYsNDguNTc2bDE1NC4xNzQsNzcuMDg3TDI1NiwyMDIuNzQ5TDEwMS44MjYsMTI1LjY2MnogTTQzNy4wMjYsMzcyLjkxMw0KCQkJbC0xNTkuMzAzLDc5LjY1MVYyNDAuNDYxbDE1OS4zMDMtNzkuNjUxVjM3Mi45MTN6IiBmaWxsPSIjRkZGIi8+DQoJPC9nPg0KPC9nPg0KPGc+DQo8L2c+DQo8Zz4NCjwvZz4NCjxnPg0KPC9nPg0KPGc+DQo8L2c+DQo8Zz4NCjwvZz4NCjxnPg0KPC9nPg0KPGc+DQo8L2c+DQo8Zz4NCjwvZz4NCjxnPg0KPC9nPg0KPGc+DQo8L2c+DQo8Zz4NCjwvZz4NCjxnPg0KPC9nPg0KPGc+DQo8L2c+DQo8Zz4NCjwvZz4NCjxnPg0KPC9nPg0KPC9zdmc+DQo=" height="22">][crates-url]
@@ -37,12 +37,53 @@ video pipelines:
   packed, Y-series, V210, RGB 8/10/16/F16/F32, GBR, Gray, XYZ, Bayer,
   PAL8 / Mono). Pair colconv with [mediaframe][mediaframe-url] for the
   pixel-data + `SourceFormat` traits the kernels are generic over.
+- **Fused resampling** — downscale *while* converting in a single pass:
+  a resampler splices into the convert pipeline at the earliest stage
+  that realizes its averaging domain, so the frame is binned once and
+  converted once. Box-coverage (`cv2.INTER_AREA`), separable filter
+  kernels (PIL-byte-exact for `u8`), and swscale `BICUBLIN` are all
+  available, with optional gamma-correct (linear-light) and
+  scene-referred averaging. See [Resampling](#resampling).
+
+## Resampling
+
+When a sink is configured with a resampler (instead of the default
+`NoopResampler`), colconv plans the resample once and **fuses it into the
+convert walk** — the source is binned/filtered and converted to the chosen
+outputs in one pass, never materializing an intermediate full-resolution
+frame. Resampling requires the `alloc` (or `std`) tier.
+
+Pick a resampler by the convention you calibrate against:
+
+| resampler | convention | notes |
+|---|---|---|
+| `NoopResampler` | — | identity (the default) |
+| `AreaResampler` | `cv2.INTER_AREA` | exact integer box-coverage spans, fractional ratios; downscale-only |
+| `FilteredResampler<K>` | PIL `Image.resize` | separable kernel `K`; the `u8` path is **byte-exact** to Pillow |
+| `Bicublin` | swscale `BICUBLIN` | cubic luma + bilinear chroma |
+
+Filter kernels (`K: FilterKernel`): `Triangle` (PIL `BILINEAR`),
+`CatmullRom` (PIL `BICUBIC`), `Lanczos3` (PIL `LANCZOS`), `Lanczos4`,
+`Mitchell`, `CubicBSpline`, `Gaussian`, `BlackmanSinc`, `Spline16` /
+`Spline36` / `Spline64`, `OpenCvCubic` (`cv2.INTER_CUBIC`), and
+`SwscaleBicubic`.
+
+The **averaging domain** controls *where* in the pipeline the binning
+happens, trading speed for colorimetric correctness:
+
+- `AveragingDomain::Encoded` (default) — average in the encoded (gamma)
+  space, the cv2/swscale convention; fastest.
+- `AveragingDomain::Linear` — decode to linear light, average, re-encode
+  (gamma-correct resize). The transfer function is caller-configurable
+  (`TransferFunction::{Srgb, Bt1886, Gamma22, …}`, defaulting per the
+  source's color matrix), and `LinearMode::SceneReferred` averages an
+  unclamped-`f32` decode to preserve out-of-gamut excursions.
 
 ## Installation
 
 ```toml
 [dependencies]
-colconv = "0.1"
+colconv = "0.2"
 ```
 
 ## Feature flags
@@ -87,12 +128,12 @@ later (GPL-3.0-or-later).
 See [LICENSE](LICENSE) for the full text, or
 <https://www.gnu.org/licenses/gpl-3.0.html>.
 
-Copyright (C) 2026 Findit Studio.
+Copyright (C) 2026 FinDIT Studio authors.
 
-[Github-url]: https://github.com/Findit-AI/colconv/
-[CI-url]: https://github.com/Findit-AI/colconv/actions/workflows/ci.yml
+[Github-url]: https://github.com/findit-studio/colconv/
+[CI-url]: https://github.com/findit-studio/colconv/actions/workflows/ci.yml
 [doc-url]: https://docs.rs/colconv
 [crates-url]: https://crates.io/crates/colconv
-[codecov-url]: https://app.codecov.io/gh/Findit-AI/colconv/
-[zh-cn-url]: https://github.com/Findit-AI/colconv/tree/main/README-zh_CN.md
+[codecov-url]: https://app.codecov.io/gh/findit-studio/colconv/
+[zh-cn-url]: https://github.com/findit-studio/colconv/tree/main/README-zh_CN.md
 [mediaframe-url]: https://crates.io/crates/mediaframe
