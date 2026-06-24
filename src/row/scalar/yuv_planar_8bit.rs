@@ -796,3 +796,286 @@ pub(crate) fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
     }
   }
 }
+
+// ---- Planar 8-bit YUV → HSV (direct: no RGB scratch) -----------------
+//
+// The display-referred twins of the `yuv_*_to_rgb_row` kernels above,
+// fused with the OpenCV HSV quantizer. Each shares the EXACT per-pixel
+// Q15 decode (`Coefficients::for_matrix` + `range_params_n::<8, 8>` +
+// the same chroma-upsampling shape) as its `_to_rgb` sibling, then feeds
+// the decoded `(r, g, b)` straight into [`rgb_to_hsv_pixel`] and scatters
+// to the H/S/V planes — never materializing a packed-RGB row. They are
+// therefore byte-identical to `rgb_to_hsv_row(yuv_*_to_rgb_row(...))` but
+// allocate no RGB intermediate. Used by the planar 8-bit sink's
+// HSV-without-RGB path; the SIMD backends mirror them via a small
+// reused-chunk RGB scratch (the chunk filler IS the existing SIMD RGB
+// kernel) plus the SIMD `rgb_to_hsv_row` on the chunk.
+
+/// YUV 4:2:0 planar → planar HSV bytes (OpenCV `cv2.COLOR_RGB2HSV`
+/// encoding: `H ∈ [0, 179]`, `S, V ∈ [0, 255]`). Chroma is half-width,
+/// nearest-neighbor 1→2 upsampled per pixel pair exactly as
+/// [`yuv_420_to_rgb_row`]. Also serves 4:2:2 (half-width chroma, full
+/// height — the same per-row shape).
+///
+/// # Panics (debug builds)
+///
+/// - `width` must be even.
+/// - `y.len() >= width`, `u_half.len() >= width / 2`,
+///   `v_half.len() >= width / 2`, and each of `h_out` / `s_out` /
+///   `v_out` `>= width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn yuv_420_to_hsv_row(
+  y: &[u8],
+  u_half: &[u8],
+  v_half: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u_half.len() >= width / 2, "u_half row too short");
+  debug_assert!(v_half.len() >= width / 2, "v_half row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<8, 8>(full_range);
+  const RND: i32 = 1 << 14;
+
+  let mut x = 0;
+  while x < width {
+    let c_idx = x / 2;
+    let u_d = ((u_half[c_idx] as i32 - 128) * c_scale + RND) >> 15;
+    let v_d = ((v_half[c_idx] as i32 - 128) * c_scale + RND) >> 15;
+    let r_chroma = (coeffs.r_u() * u_d + coeffs.r_v() * v_d + RND) >> 15;
+    let g_chroma = (coeffs.g_u() * u_d + coeffs.g_v() * v_d + RND) >> 15;
+    let b_chroma = (coeffs.b_u() * u_d + coeffs.b_v() * v_d + RND) >> 15;
+
+    let y0 = ((y[x] as i32 - y_off) * y_scale + RND) >> 15;
+    let (h0, s0, v0) = rgb_to_hsv_pixel(
+      clamp_u8(y0 + r_chroma) as i32,
+      clamp_u8(y0 + g_chroma) as i32,
+      clamp_u8(y0 + b_chroma) as i32,
+    );
+    h_out[x] = h0;
+    s_out[x] = s0;
+    v_out[x] = v0;
+
+    let y1 = ((y[x + 1] as i32 - y_off) * y_scale + RND) >> 15;
+    let (h1, s1, v1) = rgb_to_hsv_pixel(
+      clamp_u8(y1 + r_chroma) as i32,
+      clamp_u8(y1 + g_chroma) as i32,
+      clamp_u8(y1 + b_chroma) as i32,
+    );
+    h_out[x + 1] = h1;
+    s_out[x + 1] = s1;
+    v_out[x + 1] = v1;
+
+    x += 2;
+  }
+}
+
+/// YUV 4:4:4 planar → planar HSV bytes. One UV pair per pixel (no
+/// subsampling), exactly as [`yuv_444_to_rgb_row`]. Also serves 4:4:0
+/// (the chroma row duplicated across two Y rows by the walker — the
+/// per-row shape is identical to 4:4:4).
+///
+/// # Panics (debug builds)
+///
+/// - `y.len() >= width`, `u.len() >= width`, `v.len() >= width`, and
+///   each of `h_out` / `s_out` / `v_out` `>= width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn yuv_444_to_hsv_row(
+  y: &[u8],
+  u: &[u8],
+  v: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u.len() >= width, "u row too short");
+  debug_assert!(v.len() >= width, "v row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<8, 8>(full_range);
+  const RND: i32 = 1 << 14;
+
+  for x in 0..width {
+    let u_d = ((u[x] as i32 - 128) * c_scale + RND) >> 15;
+    let v_d = ((v[x] as i32 - 128) * c_scale + RND) >> 15;
+    let r_chroma = (coeffs.r_u() * u_d + coeffs.r_v() * v_d + RND) >> 15;
+    let g_chroma = (coeffs.g_u() * u_d + coeffs.g_v() * v_d + RND) >> 15;
+    let b_chroma = (coeffs.b_u() * u_d + coeffs.b_v() * v_d + RND) >> 15;
+
+    let y0 = ((y[x] as i32 - y_off) * y_scale + RND) >> 15;
+    let (h, s, vv) = rgb_to_hsv_pixel(
+      clamp_u8(y0 + r_chroma) as i32,
+      clamp_u8(y0 + g_chroma) as i32,
+      clamp_u8(y0 + b_chroma) as i32,
+    );
+    h_out[x] = h;
+    s_out[x] = s;
+    v_out[x] = vv;
+  }
+}
+
+/// YUV 4:1:0 planar → planar HSV bytes. Quarter-width chroma, each
+/// sample duplicated across four adjacent Y columns exactly as
+/// [`yuv_410_to_rgb_row`].
+///
+/// # Panics (debug builds)
+///
+/// - `width` must be a multiple of 4.
+/// - `y.len() >= width`, `u_quarter.len() >= width / 4`,
+///   `v_quarter.len() >= width / 4`, and each of `h_out` / `s_out` /
+///   `v_out` `>= width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn yuv_410_to_hsv_row(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(width & 3, 0, "YUV 4:1:0 requires width % 4 == 0");
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u_quarter.len() >= width / 4, "u_quarter row too short");
+  debug_assert!(v_quarter.len() >= width / 4, "v_quarter row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<8, 8>(full_range);
+  const RND: i32 = 1 << 14;
+
+  let mut x = 0;
+  while x < width {
+    let c_idx = x / 4;
+    let u_d = ((u_quarter[c_idx] as i32 - 128) * c_scale + RND) >> 15;
+    let v_d = ((v_quarter[c_idx] as i32 - 128) * c_scale + RND) >> 15;
+    let r_chroma = (coeffs.r_u() * u_d + coeffs.r_v() * v_d + RND) >> 15;
+    let g_chroma = (coeffs.g_u() * u_d + coeffs.g_v() * v_d + RND) >> 15;
+    let b_chroma = (coeffs.b_u() * u_d + coeffs.b_v() * v_d + RND) >> 15;
+
+    for k in 0..4 {
+      let yk = ((y[x + k] as i32 - y_off) * y_scale + RND) >> 15;
+      let (h, s, vv) = rgb_to_hsv_pixel(
+        clamp_u8(yk + r_chroma) as i32,
+        clamp_u8(yk + g_chroma) as i32,
+        clamp_u8(yk + b_chroma) as i32,
+      );
+      h_out[x + k] = h;
+      s_out[x + k] = s;
+      v_out[x + k] = vv;
+    }
+
+    x += 4;
+  }
+}
+
+/// YUV 4:1:1 planar → planar HSV bytes. Quarter-width chroma, each
+/// sample covering four Y columns, with FFmpeg-compatible arbitrary
+/// widths (a trailing 1..3-pixel partial chroma group reuses the final
+/// chroma sample) — the exact shape of [`yuv_411_to_rgb_row`].
+///
+/// # Panics (debug builds)
+///
+/// - `y.len() >= width`, `u_quarter.len() >= width.div_ceil(4)`,
+///   `v_quarter.len() >= width.div_ceil(4)`, and each of `h_out` /
+///   `s_out` / `v_out` `>= width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn yuv_411_to_hsv_row(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(
+    u_quarter.len() >= width.div_ceil(4),
+    "u_quarter row too short"
+  );
+  debug_assert!(
+    v_quarter.len() >= width.div_ceil(4),
+    "v_quarter row too short"
+  );
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<8, 8>(full_range);
+  const RND: i32 = 1 << 14;
+
+  // One closure for the per-pixel decode + HSV scatter, shared by the
+  // aligned body and the trailing partial group below.
+  let mut emit = |x: usize, r_chroma: i32, g_chroma: i32, b_chroma: i32| {
+    let yk = ((y[x] as i32 - y_off) * y_scale + RND) >> 15;
+    let (h, s, vv) = rgb_to_hsv_pixel(
+      clamp_u8(yk + r_chroma) as i32,
+      clamp_u8(yk + g_chroma) as i32,
+      clamp_u8(yk + b_chroma) as i32,
+    );
+    h_out[x] = h;
+    s_out[x] = s;
+    v_out[x] = vv;
+  };
+
+  let body_end = width & !3;
+  let mut x = 0;
+  while x < body_end {
+    let c_idx = x / 4;
+    let u_d = ((u_quarter[c_idx] as i32 - 128) * c_scale + RND) >> 15;
+    let v_d = ((v_quarter[c_idx] as i32 - 128) * c_scale + RND) >> 15;
+    let r_chroma = (coeffs.r_u() * u_d + coeffs.r_v() * v_d + RND) >> 15;
+    let g_chroma = (coeffs.g_u() * u_d + coeffs.g_v() * v_d + RND) >> 15;
+    let b_chroma = (coeffs.b_u() * u_d + coeffs.b_v() * v_d + RND) >> 15;
+    let mut k = 0;
+    while k < 4 {
+      emit(x + k, r_chroma, g_chroma, b_chroma);
+      k += 1;
+    }
+    x += 4;
+  }
+
+  // Trailing 1..3-pixel partial chroma group (FFmpeg ceil-shift chroma),
+  // reusing the final chroma sample — same shape as the RGB sibling.
+  if x < width {
+    let c_idx = x / 4;
+    let u_d = ((u_quarter[c_idx] as i32 - 128) * c_scale + RND) >> 15;
+    let v_d = ((v_quarter[c_idx] as i32 - 128) * c_scale + RND) >> 15;
+    let r_chroma = (coeffs.r_u() * u_d + coeffs.r_v() * v_d + RND) >> 15;
+    let g_chroma = (coeffs.g_u() * u_d + coeffs.g_v() * v_d + RND) >> 15;
+    let b_chroma = (coeffs.b_u() * u_d + coeffs.b_v() * v_d + RND) >> 15;
+    while x < width {
+      emit(x, r_chroma, g_chroma, b_chroma);
+      x += 1;
+    }
+  }
+}

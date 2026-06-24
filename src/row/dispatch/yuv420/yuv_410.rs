@@ -204,3 +204,96 @@ pub fn yuv_410_to_rgba_row(
 
   scalar::yuv_410_to_rgba_row(y, u_quarter, v_quarter, rgba_out, width, matrix, full_range);
 }
+
+/// Converts one row of 4:1:0 YUV **directly** to planar HSV bytes
+/// (OpenCV encoding), without materializing a source-width RGB row.
+/// Output is byte-identical to `rgb_to_hsv_row(yuv_410_to_rgb_row(...))`
+/// within the selected tier.
+///
+/// `use_simd = false` forces the scalar reference path. See
+/// `scalar::yuv_410_to_hsv_row` for the semantic specification.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn yuv_410_to_hsv_row(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  assert_eq!(width & 3, 0, "YUV 4:1:0 requires width % 4 == 0");
+  assert!(y.len() >= width, "y row too short");
+  assert!(u_quarter.len() >= width / 4, "u_quarter row too short");
+  assert!(v_quarter.len() >= width / 4, "v_quarter row too short");
+  assert!(h_out.len() >= width, "h_out row too short");
+  assert!(s_out.len() >= width, "s_out row too short");
+  assert!(v_out.len() >= width, "v_out row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified; bounds asserted above.
+          unsafe {
+            arch::neon::yuv_410_to_hsv_row(
+              y, u_quarter, v_quarter, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX‑512BW verified.
+          unsafe {
+            arch::x86_avx512::yuv_410_to_hsv_row(
+              y, u_quarter, v_quarter, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          unsafe {
+            arch::x86_avx2::yuv_410_to_hsv_row(
+              y, u_quarter, v_quarter, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          unsafe {
+            arch::x86_sse41::yuv_410_to_hsv_row(
+              y, u_quarter, v_quarter, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile‑time verified.
+          unsafe {
+            arch::wasm_simd128::yuv_410_to_hsv_row(
+              y, u_quarter, v_quarter, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      _ => {
+        // Targets without a SIMD backend fall through to scalar.
+      }
+    }
+  }
+
+  scalar::yuv_410_to_hsv_row(
+    y, u_quarter, v_quarter, h_out, s_out, v_out, width, matrix, full_range,
+  );
+}

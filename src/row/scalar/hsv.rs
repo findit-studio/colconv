@@ -278,8 +278,12 @@ pub(crate) fn rgb_to_luma_u16_native_row(
 /// Scalar RGB → HSV for a single pixel, using the shared division LUTs.
 /// All arithmetic is integer; the two divisions `s = 255*delta/v` and
 /// `h = 30*diff/delta` become `(operand * table[divisor] + RND) >> 12`.
+///
+/// `pub(crate)` so the direct YUV→HSV kernels (`yuv_420_to_hsv_row`
+/// etc.) can feed their per-pixel decoded `(r, g, b)` straight into the
+/// HSV quantizer without staging an intermediate packed-RGB row.
 #[cfg_attr(not(tarpaulin), inline(always))]
-fn rgb_to_hsv_pixel(r: i32, g: i32, b: i32) -> (u8, u8, u8) {
+pub(crate) fn rgb_to_hsv_pixel(r: i32, g: i32, b: i32) -> (u8, u8, u8) {
   let v = r.max(g.max(b));
   let min = r.min(g.min(b));
   let delta = v - min;

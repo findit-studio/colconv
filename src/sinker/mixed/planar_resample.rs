@@ -7,6 +7,17 @@
 //! planes, the semi-planar formats convert their interleaved chroma row
 //! with the matching `nv*` kernel). Both routes are byte-identical to an
 //! `Rgb24` area-resample of the identity-converted frame.
+//!
+//! NOTE (#263 follow-up): when ONLY `with_hsv()` is attached (no RGB /
+//! RGBA), the colour group here still stages a SOURCE-WIDTH RGB row and
+//! the HSV planes are derived per OUTPUT row off the binned RGB stream —
+//! `colconv`'s direct + native fast tiers go RGB-free for HSV-only, but
+//! the row-stage resample path does not yet. A clean RGB-free
+//! resample+HSV-only (resample the HSV planes, or resample Y/U/V then
+//! convert to HSV per output row) is larger than this PR's scope (the
+//! `RowResampler` stream is keyed on the 3-channel RGB row), so it is
+//! deferred. The HSV output is still correct; only the source-width RGB
+//! scratch allocation remains.
 
 use super::{HsvFrameMut, MixedSinkerError, frozen_outputs_check};
 use crate::{
