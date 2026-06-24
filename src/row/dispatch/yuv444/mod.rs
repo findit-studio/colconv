@@ -188,6 +188,102 @@ pub(crate) fn yuv_444p_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   scalar::yuv_444p_n_to_rgb_u16_row::<BITS, BE>(y, u, v, rgb_out, width, matrix, full_range);
 }
 
+/// YUV 4:4:4 planar 9/10/12/14-bit → planar **HSV** (OpenCV
+/// `cv2.COLOR_RGB2HSV` encoding: `H ∈ [0, 179]`, `S, V ∈ [0, 255]`)
+/// dispatcher. Const generic over `BITS ∈ {9, 10, 12, 14}` and `BE`.
+/// Direct: no source-width RGB row is materialized — the SIMD backends
+/// stage a fixed 64-pixel **8-bit** RGB chunk internally over the
+/// existing `yuv_444p_n_to_rgb_row` kernel + `rgb_to_hsv_row`, so the
+/// output is byte-identical to `rgb_to_hsv_row(yuv_444p_n_to_rgb_row::
+/// <BITS, BE>(...))` within the selected tier (the same 8-bit RGB
+/// intermediate the high-bit→RGB→HSV path uses). Also serves 4:4:0.
+///
+/// Crate-private — see the note on [`yuv_444p_n_to_rgb_row`]; the
+/// 16-bit path is [`yuv444p16_to_hsv_row_endian`]. `use_simd = false`
+/// forces the scalar reference path.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn yuv_444p_n_to_hsv_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  assert!(y.len() >= width, "y row too short");
+  assert!(u.len() >= width, "u row too short");
+  assert!(v.len() >= width, "v row too short");
+  assert!(h_out.len() >= width, "h_out row too short");
+  assert!(s_out.len() >= width, "s_out row too short");
+  assert!(v_out.len() >= width, "v_out row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified.
+          unsafe {
+            arch::neon::yuv_444p_n_to_hsv_row::<BITS, BE>(
+              y, u, v, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX‑512BW verified.
+          unsafe {
+            arch::x86_avx512::yuv_444p_n_to_hsv_row::<BITS, BE>(
+              y, u, v, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          unsafe {
+            arch::x86_avx2::yuv_444p_n_to_hsv_row::<BITS, BE>(
+              y, u, v, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          unsafe {
+            arch::x86_sse41::yuv_444p_n_to_hsv_row::<BITS, BE>(
+              y, u, v, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile‑time verified.
+          unsafe {
+            arch::wasm_simd128::yuv_444p_n_to_hsv_row::<BITS, BE>(
+              y, u, v, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  scalar::yuv_444p_n_to_hsv_row::<BITS, BE>(
+    y, u, v, h_out, s_out, v_out, width, matrix, full_range,
+  );
+}
+
 pub(super) mod yuv444p10;
 pub(super) mod yuv444p12;
 pub(super) mod yuv444p14;

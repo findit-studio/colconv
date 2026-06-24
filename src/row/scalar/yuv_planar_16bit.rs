@@ -887,3 +887,143 @@ pub(crate) fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const BE: bool>(
     x += 2;
   }
 }
+
+// ---- 16-bit planar YUV → HSV (direct: no RGB scratch) ----------------
+//
+// The display-referred twins of the `yuv_*16_to_rgb_row` 8-bit-output
+// kernels, fused with the OpenCV HSV quantizer. Each shares the EXACT
+// per-pixel **8-bit-output** i32 Q15 decode (`range_params_n::<16, 8>`,
+// no AND mask — every u16 is a valid 16-bit sample, same chroma shape)
+// as its `_to_rgb_row` sibling, then feeds the decoded `(r, g, b)`
+// straight into [`rgb_to_hsv_pixel`] and scatters to the H/S/V planes.
+// The HSV output is 8-bit (`H ∈ [0, 179]`, `S, V ∈ [0, 255]`) — the
+// existing 16-bit HSV path is `rgb_to_hsv_row` over the 8-bit
+// `yuv_*16_to_rgb_row` output — so these are byte-identical to
+// `rgb_to_hsv_row(yuv_*16_to_rgb_row::<BE>(...))` with no RGB
+// intermediate.
+
+/// 16-bit YUV 4:2:0 planar → planar HSV bytes (OpenCV encoding:
+/// `H ∈ [0, 179]`, `S, V ∈ [0, 255]`). `BE` selects the source byte
+/// order, exactly like [`yuv_420p16_to_rgb_row`]. Chroma is half-width,
+/// nearest-neighbor 1→2 upsampled. Also serves 4:2:2.
+///
+/// Byte-identical to `rgb_to_hsv_row(yuv_420p16_to_rgb_row::<BE>(...))`.
+///
+/// # Panics (debug builds)
+///
+/// - `width` must be even.
+/// - `y.len() >= width`, `u_half.len() >= width / 2`,
+///   `v_half.len() >= width / 2`, and each of `h_out` / `s_out` /
+///   `v_out` `>= width`.
+#[cfg(feature = "yuv-planar")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn yuv_420p16_to_hsv_row<const BE: bool>(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u_half.len() >= width / 2, "u_half row too short");
+  debug_assert!(v_half.len() >= width / 2, "v_half row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<16, 8>(full_range);
+  let bias = chroma_bias::<16>();
+
+  let mut x = 0;
+  while x < width {
+    let c_idx = x / 2;
+    let u_d = q15_scale(load_u16::<BE>(u_half[c_idx]) as i32 - bias, c_scale);
+    let v_d = q15_scale(load_u16::<BE>(v_half[c_idx]) as i32 - bias, c_scale);
+    let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
+    let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
+    let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
+
+    let y0 = q15_scale(load_u16::<BE>(y[x]) as i32 - y_off, y_scale);
+    let (h0, s0, v0) = rgb_to_hsv_pixel(
+      clamp_u8(y0 + r_chroma) as i32,
+      clamp_u8(y0 + g_chroma) as i32,
+      clamp_u8(y0 + b_chroma) as i32,
+    );
+    h_out[x] = h0;
+    s_out[x] = s0;
+    v_out[x] = v0;
+
+    let y1 = q15_scale(load_u16::<BE>(y[x + 1]) as i32 - y_off, y_scale);
+    let (h1, s1, v1) = rgb_to_hsv_pixel(
+      clamp_u8(y1 + r_chroma) as i32,
+      clamp_u8(y1 + g_chroma) as i32,
+      clamp_u8(y1 + b_chroma) as i32,
+    );
+    h_out[x + 1] = h1;
+    s_out[x + 1] = s1;
+    v_out[x + 1] = v1;
+
+    x += 2;
+  }
+}
+
+/// 16-bit YUV 4:4:4 planar → planar HSV bytes. `BE` selects the source
+/// byte order, exactly like [`yuv_444p16_to_rgb_row`]. One UV pair per
+/// pixel. Also serves 4:4:0.
+///
+/// Byte-identical to `rgb_to_hsv_row(yuv_444p16_to_rgb_row::<BE>(...))`.
+///
+/// # Panics (debug builds)
+///
+/// - `y.len() >= width`, `u.len() >= width`, `v.len() >= width`, and
+///   each of `h_out` / `s_out` / `v_out` `>= width`.
+#[cfg(feature = "yuv-planar")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn yuv_444p16_to_hsv_row<const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u.len() >= width, "u row too short");
+  debug_assert!(v.len() >= width, "v row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<16, 8>(full_range);
+  let bias = chroma_bias::<16>();
+
+  for x in 0..width {
+    let u_d = q15_scale(load_u16::<BE>(u[x]) as i32 - bias, c_scale);
+    let v_d = q15_scale(load_u16::<BE>(v[x]) as i32 - bias, c_scale);
+    let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
+    let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
+    let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
+
+    let y0 = q15_scale(load_u16::<BE>(y[x]) as i32 - y_off, y_scale);
+    let (h, s, vv) = rgb_to_hsv_pixel(
+      clamp_u8(y0 + r_chroma) as i32,
+      clamp_u8(y0 + g_chroma) as i32,
+      clamp_u8(y0 + b_chroma) as i32,
+    );
+    h_out[x] = h;
+    s_out[x] = s;
+    v_out[x] = vv;
+  }
+}

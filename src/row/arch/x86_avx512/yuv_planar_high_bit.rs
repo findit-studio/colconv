@@ -1338,3 +1338,123 @@ pub(crate) unsafe fn yuv_444p_n_to_rgb_or_rgba_u16_row<
     }
   }
 }
+
+// ---- High-bit-depth planar YUV → HSV (staged via a reused 8-bit RGB chunk) ----
+//
+// The AVX-512 twins of the scalar `yuv_*p_n_to_hsv_row` kernels
+// (BITS ∈ {9, 10, 12, 14}). Rather than re-derive an HSV-specific
+// register pipeline, each fills a small fixed reused **8-bit** RGB
+// scratch (one `HSV_CHUNK`-pixel chunk at a time) using the EXISTING
+// AVX-512 high-bit `yuv_*p_n_to_rgb_row::<BITS, BE>` kernel — so the
+// chunk filler IS the production 8-bit RGB kernel — then runs the
+// AVX-512 `rgb_to_hsv_row` on the chunk. This makes the result
+// byte-identical to `rgb_to_hsv_row(yuv_*p_n_to_rgb_row::<BITS,
+// BE>(...))` within the AVX-512 tier (the same 8-bit RGB intermediate
+// the existing high-bit HSV path uses), with no source-width RGB
+// allocation. The scalar tail of each underlying RGB kernel handles
+// widths below the SIMD block, so no separate tail is needed here.
+// `HSV_CHUNK` (64) is a multiple of 4, so every chunk offset lands on a
+// chroma-sample boundary for the 1→2 (4:2:0) upsampling shape.
+
+/// AVX-512: high-bit-depth YUV 4:2:0 planar → planar HSV bytes (OpenCV
+/// encoding), staged via the reused-8-bit-RGB-chunk pattern over the
+/// AVX-512 [`yuv_420p_n_to_rgb_row`] + [`rgb_to_hsv_row`]. Const-generic
+/// over `BITS ∈ {9, 10, 12, 14}` and `BE`. Also serves 4:2:2. Byte-
+/// identical to `rgb_to_hsv_row(yuv_420p_n_to_rgb_row::<BITS, BE>(...))`
+/// within the AVX-512 tier.
+///
+/// # Safety
+///
+/// 1. The AVX-512 feature must be available.
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `u_half.len() >= width / 2`,
+///    `v_half.len() >= width / 2`.
+/// 4. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn yuv_420p_n_to_hsv_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u_half.len() >= width / 2, "u_half row too short");
+  debug_assert!(v_half.len() >= width / 2, "v_half row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: the feature is the caller's obligation; the chunk filler
+  // forwards the per-chunk sub-slices to the AVX-512 high-bit 4:2:0 RGB
+  // kernel under the same contract (its own scalar tail covers small n).
+  unsafe {
+    yuv_to_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      yuv_420p_n_to_rgb_row::<BITS, BE>(
+        &y[offset..],
+        &u_half[offset / 2..],
+        &v_half[offset / 2..],
+        rgb,
+        n,
+        matrix,
+        full_range,
+      );
+    });
+  }
+}
+
+/// AVX-512: high-bit-depth YUV 4:4:4 planar → planar HSV bytes, staged
+/// via the AVX-512 [`yuv_444p_n_to_rgb_row`] + [`rgb_to_hsv_row`].
+/// Const-generic over `BITS ∈ {9, 10, 12, 14}` and `BE`. Also serves
+/// 4:4:0.
+///
+/// # Safety
+///
+/// 1. The AVX-512 feature must be available.
+/// 2. `y.len() >= width`, `u.len() >= width`, `v.len() >= width`.
+/// 3. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn yuv_444p_n_to_hsv_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u.len() >= width, "u row too short");
+  debug_assert!(v.len() >= width, "v row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: the feature is the caller's obligation; the chunk filler
+  // forwards to the AVX-512 high-bit 4:4:4 RGB kernel under the same
+  // contract (its own scalar tail covers small n).
+  unsafe {
+    yuv_to_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      yuv_444p_n_to_rgb_row::<BITS, BE>(
+        &y[offset..],
+        &u[offset..],
+        &v[offset..],
+        rgb,
+        n,
+        matrix,
+        full_range,
+      );
+    });
+  }
+}

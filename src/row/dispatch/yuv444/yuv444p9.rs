@@ -325,3 +325,39 @@ pub fn yuv444p9_to_rgba_u16_row(
     y, u, v, rgba_out, width, matrix, full_range, use_simd, false,
   );
 }
+
+/// Converts one row of **9-bit** YUV 4:4:4 **directly** to planar
+/// HSV bytes (OpenCV `cv2.COLOR_RGB2HSV` encoding: `H ∈ [0, 179]`,
+/// `S, V ∈ [0, 255]`), without materializing a source-width RGB row.
+/// Byte-identical to `rgb_to_hsv_row(yuv444p9_to_rgb_row_endian
+/// (...))` within the selected tier — the SIMD path stages a fixed
+/// 64-pixel 8-bit RGB chunk internally. Also serves 4:4:0.
+///
+/// Thin endian-dispatching wrapper over the BITS-generic
+/// [`super::yuv_444p_n_to_hsv_row`]. `use_simd = false` forces the
+/// scalar reference path.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn yuv444p9_to_hsv_row_endian(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+  big_endian: bool,
+) {
+  if big_endian {
+    super::yuv_444p_n_to_hsv_row::<9, true>(
+      y, u, v, h_out, s_out, v_out, width, matrix, full_range, use_simd,
+    );
+  } else {
+    super::yuv_444p_n_to_hsv_row::<9, false>(
+      y, u, v, h_out, s_out, v_out, width, matrix, full_range, use_simd,
+    );
+  }
+}

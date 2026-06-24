@@ -1158,3 +1158,114 @@ pub(crate) unsafe fn yuv_420p16_to_rgb_or_rgba_u16_row<
     }
   }
 }
+
+// ---- 16-bit planar YUV → HSV (staged via a reused 8-bit RGB chunk) ----
+//
+// The SSE4.1 twins of the scalar `yuv_*16_to_hsv_row` kernels. Same
+// reused-8-bit-RGB-chunk staging as the high-bit (9/10/12/14) HSV
+// kernels, over the SSE4.1 `yuv_*16_to_rgb_row::<BE>` 8-bit kernel +
+// `rgb_to_hsv_row` — byte-identical to
+// `rgb_to_hsv_row(yuv_*16_to_rgb_row::<BE>(...))` within the SSE4.1
+// tier, the same intermediate the existing 16-bit HSV path uses.
+
+/// SSE4.1: 16-bit YUV 4:2:0 planar → planar HSV bytes (OpenCV
+/// encoding), staged via the SSE4.1 [`yuv_420p16_to_rgb_row`] +
+/// [`rgb_to_hsv_row`]. `BE` selects the source byte order. Also serves
+/// 4:2:2.
+///
+/// # Safety
+///
+/// 1. The SSE4.1 feature must be available.
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `u_half.len() >= width / 2`,
+///    `v_half.len() >= width / 2`.
+/// 4. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
+#[cfg(feature = "yuv-planar")]
+#[inline]
+#[target_feature(enable = "sse4.1")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn yuv_420p16_to_hsv_row<const BE: bool>(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u_half.len() >= width / 2, "u_half row too short");
+  debug_assert!(v_half.len() >= width / 2, "v_half row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: the feature is the caller's obligation; the chunk filler
+  // forwards to the SSE4.1 16-bit 4:2:0 RGB kernel under the same
+  // contract (its own scalar tail covers small n).
+  unsafe {
+    yuv_to_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      yuv_420p16_to_rgb_row::<BE>(
+        &y[offset..],
+        &u_half[offset / 2..],
+        &v_half[offset / 2..],
+        rgb,
+        n,
+        matrix,
+        full_range,
+      );
+    });
+  }
+}
+
+/// SSE4.1: 16-bit YUV 4:4:4 planar → planar HSV bytes, staged via the
+/// SSE4.1 [`yuv_444p16_to_rgb_row`] + [`rgb_to_hsv_row`]. `BE` selects
+/// the source byte order. Also serves 4:4:0.
+///
+/// # Safety
+///
+/// 1. The SSE4.1 feature must be available.
+/// 2. `y.len() >= width`, `u.len() >= width`, `v.len() >= width`.
+/// 3. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
+#[cfg(feature = "yuv-planar")]
+#[inline]
+#[target_feature(enable = "sse4.1")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn yuv_444p16_to_hsv_row<const BE: bool>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u.len() >= width, "u row too short");
+  debug_assert!(v.len() >= width, "v row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: the feature is the caller's obligation; the chunk filler
+  // forwards to the SSE4.1 16-bit 4:4:4 RGB kernel under the same
+  // contract (its own scalar tail covers small n).
+  unsafe {
+    yuv_to_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      yuv_444p16_to_rgb_row::<BE>(
+        &y[offset..],
+        &u[offset..],
+        &v[offset..],
+        rgb,
+        n,
+        matrix,
+        full_range,
+      );
+    });
+  }
+}

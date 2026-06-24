@@ -438,3 +438,102 @@ pub fn yuv420p16_to_rgba_u16_row(
     y, u_half, v_half, rgba_out, width, matrix, full_range, use_simd, false,
   );
 }
+
+/// Converts one row of **16-bit** YUV 4:2:0 **directly** to planar HSV
+/// bytes (OpenCV `cv2.COLOR_RGB2HSV` encoding: `H ∈ [0, 179]`,
+/// `S, V ∈ [0, 255]`), without materializing a source-width RGB row.
+/// Byte-identical to `rgb_to_hsv_row(yuv420p16_to_rgb_row_endian(...))`
+/// within the selected tier — the SIMD path stages a fixed 64-pixel
+/// 8-bit RGB chunk internally over the dedicated 16-bit RGB kernel.
+/// Also serves 4:2:2. `use_simd = false` forces the scalar reference
+/// path.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn yuv420p16_to_hsv_row_endian(
+  y: &[u16],
+  u_half: &[u16],
+  v_half: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+  big_endian: bool,
+) {
+  assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
+  assert!(y.len() >= width, "y row too short");
+  assert!(u_half.len() >= width / 2, "u_half row too short");
+  assert!(v_half.len() >= width / 2, "v_half row too short");
+  assert!(h_out.len() >= width, "h_out row too short");
+  assert!(s_out.len() >= width, "s_out row too short");
+  assert!(v_out.len() >= width, "v_out row too short");
+
+  macro_rules! dispatch_be {
+    ($call_le:expr, $call_be:expr) => {
+      if big_endian { $call_be } else { $call_le }
+    };
+  }
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified.
+          dispatch_be!(
+            unsafe { arch::neon::yuv_420p16_to_hsv_row::<false>(y, u_half, v_half, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::neon::yuv_420p16_to_hsv_row::<true>(y, u_half, v_half, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX‑512BW verified.
+          dispatch_be!(
+            unsafe { arch::x86_avx512::yuv_420p16_to_hsv_row::<false>(y, u_half, v_half, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx512::yuv_420p16_to_hsv_row::<true>(y, u_half, v_half, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          dispatch_be!(
+            unsafe { arch::x86_avx2::yuv_420p16_to_hsv_row::<false>(y, u_half, v_half, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx2::yuv_420p16_to_hsv_row::<true>(y, u_half, v_half, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          dispatch_be!(
+            unsafe { arch::x86_sse41::yuv_420p16_to_hsv_row::<false>(y, u_half, v_half, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::x86_sse41::yuv_420p16_to_hsv_row::<true>(y, u_half, v_half, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 compile‑time verified.
+          dispatch_be!(
+            unsafe { arch::wasm_simd128::yuv_420p16_to_hsv_row::<false>(y, u_half, v_half, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::wasm_simd128::yuv_420p16_to_hsv_row::<true>(y, u_half, v_half, h_out, s_out, v_out, width, matrix, full_range); }
+          );
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  dispatch_be!(
+    scalar::yuv_420p16_to_hsv_row::<false>(
+      y, u_half, v_half, h_out, s_out, v_out, width, matrix, full_range
+    ),
+    scalar::yuv_420p16_to_hsv_row::<true>(
+      y, u_half, v_half, h_out, s_out, v_out, width, matrix, full_range
+    )
+  );
+}
