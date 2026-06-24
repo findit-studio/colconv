@@ -723,9 +723,10 @@ impl<R> PixelSink for MixedSinker<'_, Nv12, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
-    // Luma — NV12 luma is the Y plane. Copy verbatim.
+    // Luma — NV12 luma is the Y plane, copied verbatim by the native-Y
+    // kernel (bit-identical to the former inline `copy_from_slice`).
     if let Some(luma) = luma.as_deref_mut() {
-      luma[one_plane_start..one_plane_end].copy_from_slice(&row.y()[..w]);
+      nv_to_luma_row(row.y(), &mut luma[one_plane_start..one_plane_end], w);
     }
 
     // Luma u16 — zero-extend the 8-bit Y plane into u16.
@@ -739,10 +740,32 @@ impl<R> PixelSink for MixedSinker<'_, Nv12, R> {
     }
 
     // Strategy A output mode resolution — see Yuv420p impl above.
+    // HSV-without-RGB-or-RGBA goes through the direct `nv12_to_hsv_row`
+    // kernel (no source-width RGB scratch). When RGB or RGBA is *also*
+    // attached the RGB kernel runs anyway, so HSV derives off that buffer
+    // for free (the cheap path) and `need_rgb_kernel` keeps it alive.
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = want_rgb || want_hsv;
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      nv12_to_hsv_row(
+        row.y(),
+        row.uv_half(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
@@ -1101,7 +1124,7 @@ impl<R> PixelSink for MixedSinker<'_, Nv16, R> {
     let one_plane_end = one_plane_start + w;
 
     if let Some(luma) = luma.as_deref_mut() {
-      luma[one_plane_start..one_plane_end].copy_from_slice(&row.y()[..w]);
+      nv_to_luma_row(row.y(), &mut luma[one_plane_start..one_plane_end], w);
     }
 
     // Luma u16 — zero-extend the 8-bit Y plane into u16.
@@ -1115,12 +1138,32 @@ impl<R> PixelSink for MixedSinker<'_, Nv16, R> {
     }
 
     // Strategy A output mode resolution — see Yuv420p impl above.
-    // Reuses NV12 dispatchers (RGB and RGBA) since 4:2:2's row
-    // contract is identical.
+    // Reuses NV12 dispatchers (RGB, RGBA, and the direct HSV kernel)
+    // since 4:2:2's row contract is identical to 4:2:0's. HSV-only (no
+    // RGB / RGBA) goes direct through `nv12_to_hsv_row` (no source-width
+    // RGB scratch); see the Nv12 impl above for the routing rationale.
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = want_rgb || want_hsv;
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      nv12_to_hsv_row(
+        row.y(),
+        row.uv(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
@@ -1502,7 +1545,7 @@ impl<R> PixelSink for MixedSinker<'_, Nv21, R> {
     let one_plane_end = one_plane_start + w;
 
     if let Some(luma) = luma.as_deref_mut() {
-      luma[one_plane_start..one_plane_end].copy_from_slice(&row.y()[..w]);
+      nv_to_luma_row(row.y(), &mut luma[one_plane_start..one_plane_end], w);
     }
 
     // Luma u16 — zero-extend the 8-bit Y plane into u16.
@@ -1516,10 +1559,30 @@ impl<R> PixelSink for MixedSinker<'_, Nv21, R> {
     }
 
     // Strategy A output mode resolution — see Yuv420p impl above.
+    // HSV-only (no RGB / RGBA) goes direct through `nv21_to_hsv_row`
+    // (no source-width RGB scratch); see the Nv12 impl for the rationale.
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = want_rgb || want_hsv;
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      nv21_to_hsv_row(
+        row.y(),
+        row.vu_half(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
@@ -1861,7 +1924,7 @@ impl<R> PixelSink for MixedSinker<'_, Nv24, R> {
     let one_plane_end = one_plane_start + w;
 
     if let Some(luma) = luma.as_deref_mut() {
-      luma[one_plane_start..one_plane_end].copy_from_slice(&row.y()[..w]);
+      nv_to_luma_row(row.y(), &mut luma[one_plane_start..one_plane_end], w);
     }
 
     // Luma u16 — zero-extend the 8-bit Y plane into u16.
@@ -1874,10 +1937,30 @@ impl<R> PixelSink for MixedSinker<'_, Nv24, R> {
       );
     }
 
+    // HSV-only (no RGB / RGBA) goes direct through `nv24_to_hsv_row`
+    // (no source-width RGB scratch); see the Nv12 impl for the rationale.
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = want_rgb || want_hsv;
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      nv24_to_hsv_row(
+        row.y(),
+        row.uv(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+      return Ok(());
+    }
 
     // Standalone RGBA path: the caller wants only RGBA (no RGB / HSV),
     // so run the dedicated RGBA kernel directly into the output buffer.
@@ -2217,7 +2300,7 @@ impl<R> PixelSink for MixedSinker<'_, Nv42, R> {
     let one_plane_end = one_plane_start + w;
 
     if let Some(luma) = luma.as_deref_mut() {
-      luma[one_plane_start..one_plane_end].copy_from_slice(&row.y()[..w]);
+      nv_to_luma_row(row.y(), &mut luma[one_plane_start..one_plane_end], w);
     }
 
     // Luma u16 — zero-extend the 8-bit Y plane into u16.
@@ -2230,10 +2313,30 @@ impl<R> PixelSink for MixedSinker<'_, Nv42, R> {
       );
     }
 
+    // HSV-only (no RGB / RGBA) goes direct through `nv42_to_hsv_row`
+    // (no source-width RGB scratch); see the Nv12 impl for the rationale.
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = want_rgb || want_hsv;
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      nv42_to_hsv_row(
+        row.y(),
+        row.vu(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();

@@ -634,3 +634,348 @@ pub fn nv42_to_rgba_row(
 
   scalar::nv42_to_rgba_row(y, vu, rgba_out, width, matrix, full_range);
 }
+
+/// Converts one row of NV12 (semi-planar 4:2:0) **directly** to planar
+/// HSV bytes (OpenCV `cv2.COLOR_RGB2HSV` encoding: `H ∈ [0, 179]`,
+/// `S, V ∈ [0, 255]`), without materializing a source-width RGB row.
+/// Output is byte-identical to `rgb_to_hsv_row(nv12_to_rgb_row(...))`
+/// within the selected tier. Also serves NV16 (4:2:2 — identical
+/// per-row chroma shape). See `scalar::nv12_to_hsv_row` for the
+/// reference implementation.
+///
+/// `use_simd = false` forces the scalar reference path.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn nv12_to_hsv_row(
+  y: &[u8],
+  uv_half: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  // Runtime asserts at the dispatcher boundary — see [`nv12_to_rgb_row`]
+  // for rationale. The SIMD kernels stage a fixed 64-pixel RGB chunk
+  // internally (no source-width RGB allocation), so only the source /
+  // output bounds need validating here.
+  assert_eq!(width & 1, 0, "NV12 requires even width");
+  assert!(y.len() >= width, "y row too short");
+  assert!(uv_half.len() >= width, "uv_half row too short");
+  assert!(h_out.len() >= width, "h_out row too short");
+  assert!(s_out.len() >= width, "s_out row too short");
+  assert!(v_out.len() >= width, "v_out row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified. Bounds are the caller's obligation
+          // (asserted above).
+          unsafe {
+            arch::neon::nv12_to_hsv_row(
+              y, uv_half, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX‑512BW verified.
+          unsafe {
+            arch::x86_avx512::nv12_to_hsv_row(
+              y, uv_half, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          unsafe {
+            arch::x86_avx2::nv12_to_hsv_row(
+              y, uv_half, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          unsafe {
+            arch::x86_sse41::nv12_to_hsv_row(
+              y, uv_half, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified at compile time.
+          unsafe {
+            arch::wasm_simd128::nv12_to_hsv_row(
+              y, uv_half, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  scalar::nv12_to_hsv_row(y, uv_half, h_out, s_out, v_out, width, matrix, full_range);
+}
+
+/// Converts one row of NV21 (semi-planar 4:2:0, VU-ordered) **directly**
+/// to planar HSV bytes. Same contract as [`nv12_to_hsv_row`]; only the
+/// chroma byte order differs. Byte-identical to
+/// `rgb_to_hsv_row(nv21_to_rgb_row(...))` within the selected tier.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn nv21_to_hsv_row(
+  y: &[u8],
+  vu_half: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  assert_eq!(width & 1, 0, "NV21 requires even width");
+  assert!(y.len() >= width, "y row too short");
+  assert!(vu_half.len() >= width, "vu_half row too short");
+  assert!(h_out.len() >= width, "h_out row too short");
+  assert!(s_out.len() >= width, "s_out row too short");
+  assert!(v_out.len() >= width, "v_out row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified.
+          unsafe {
+            arch::neon::nv21_to_hsv_row(
+              y, vu_half, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX‑512BW verified.
+          unsafe {
+            arch::x86_avx512::nv21_to_hsv_row(
+              y, vu_half, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          unsafe {
+            arch::x86_avx2::nv21_to_hsv_row(
+              y, vu_half, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          unsafe {
+            arch::x86_sse41::nv21_to_hsv_row(
+              y, vu_half, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified at compile time.
+          unsafe {
+            arch::wasm_simd128::nv21_to_hsv_row(
+              y, vu_half, h_out, s_out, v_out, width, matrix, full_range,
+            );
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  scalar::nv21_to_hsv_row(y, vu_half, h_out, s_out, v_out, width, matrix, full_range);
+}
+
+/// Converts one row of NV24 (semi-planar 4:4:4, UV-ordered) **directly**
+/// to planar HSV bytes, without materializing a source-width RGB row.
+/// Byte-identical to `rgb_to_hsv_row(nv24_to_rgb_row(...))` within the
+/// selected tier. See `scalar::nv24_to_hsv_row` for the reference.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn nv24_to_hsv_row(
+  y: &[u8],
+  uv: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  let uv_min = match width.checked_mul(2) {
+    Some(n) => n,
+    None => panic!("width ({width}) x 2 overflows usize"),
+  };
+  assert!(y.len() >= width, "y row too short");
+  assert!(uv.len() >= uv_min, "uv row too short");
+  assert!(h_out.len() >= width, "h_out row too short");
+  assert!(s_out.len() >= width, "s_out row too short");
+  assert!(v_out.len() >= width, "v_out row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified.
+          unsafe {
+            arch::neon::nv24_to_hsv_row(y, uv, h_out, s_out, v_out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX‑512BW verified.
+          unsafe {
+            arch::x86_avx512::nv24_to_hsv_row(y, uv, h_out, s_out, v_out, width, matrix, full_range);
+          }
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          unsafe {
+            arch::x86_avx2::nv24_to_hsv_row(y, uv, h_out, s_out, v_out, width, matrix, full_range);
+          }
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          unsafe {
+            arch::x86_sse41::nv24_to_hsv_row(y, uv, h_out, s_out, v_out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified at compile time.
+          unsafe {
+            arch::wasm_simd128::nv24_to_hsv_row(y, uv, h_out, s_out, v_out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  scalar::nv24_to_hsv_row(y, uv, h_out, s_out, v_out, width, matrix, full_range);
+}
+
+/// Converts one row of NV42 (semi-planar 4:4:4, VU-ordered) **directly**
+/// to planar HSV bytes. Same contract as [`nv24_to_hsv_row`]; only the
+/// chroma byte order differs. Byte-identical to
+/// `rgb_to_hsv_row(nv42_to_rgb_row(...))` within the selected tier.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn nv42_to_hsv_row(
+  y: &[u8],
+  vu: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  let vu_min = match width.checked_mul(2) {
+    Some(n) => n,
+    None => panic!("width ({width}) x 2 overflows usize"),
+  };
+  assert!(y.len() >= width, "y row too short");
+  assert!(vu.len() >= vu_min, "vu row too short");
+  assert!(h_out.len() >= width, "h_out row too short");
+  assert!(s_out.len() >= width, "s_out row too short");
+  assert!(v_out.len() >= width, "v_out row too short");
+
+  if use_simd {
+    cfg_select! {
+      target_arch = "aarch64" => {
+        if neon_available() {
+          // SAFETY: NEON verified.
+          unsafe {
+            arch::neon::nv42_to_hsv_row(y, vu, h_out, s_out, v_out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      target_arch = "x86_64" => {
+        if avx512_available() {
+          // SAFETY: AVX‑512BW verified.
+          unsafe {
+            arch::x86_avx512::nv42_to_hsv_row(y, vu, h_out, s_out, v_out, width, matrix, full_range);
+          }
+          return;
+        }
+        if avx2_available() {
+          // SAFETY: AVX2 verified.
+          unsafe {
+            arch::x86_avx2::nv42_to_hsv_row(y, vu, h_out, s_out, v_out, width, matrix, full_range);
+          }
+          return;
+        }
+        if sse41_available() {
+          // SAFETY: SSE4.1 verified.
+          unsafe {
+            arch::x86_sse41::nv42_to_hsv_row(y, vu, h_out, s_out, v_out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      target_arch = "wasm32" => {
+        if simd128_available() {
+          // SAFETY: simd128 verified at compile time.
+          unsafe {
+            arch::wasm_simd128::nv42_to_hsv_row(y, vu, h_out, s_out, v_out, width, matrix, full_range);
+          }
+          return;
+        }
+      },
+      _ => {}
+    }
+  }
+
+  scalar::nv42_to_hsv_row(y, vu, h_out, s_out, v_out, width, matrix, full_range);
+}
+
+/// Extracts one row of native luma from a semi-planar NV source: the Y
+/// plane copied verbatim (the NATIVE-Y contract — for every 8-bit NV
+/// format the luma plane *is* the Y plane). A pure `memcpy` with no
+/// per-element decode, so there is no SIMD variant and no `use_simd`
+/// knob; the copy already lowers to the optimal block move. Serves
+/// NV12 / NV16 / NV21 / NV24 / NV42 alike. See `scalar::nv_to_luma_row`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub fn nv_to_luma_row(y: &[u8], luma_out: &mut [u8], width: usize) {
+  assert!(y.len() >= width, "y row too short");
+  assert!(luma_out.len() >= width, "luma_out row too short");
+  scalar::nv_to_luma_row(y, luma_out, width);
+}
