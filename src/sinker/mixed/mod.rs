@@ -7309,6 +7309,13 @@ pub(super) fn deinterleave_y_high_bit<const BE: bool>(
 /// and every source-width scratch are created — all before the first
 /// feed — so a failure mutates no caller output. A no-output call has no
 /// stream to sequence and stays a no-op regardless of the row index.
+///
+/// NOTE (#263 follow-up): HSV-only (no RGB / RGBA) still stages the
+/// source-width u8 RGB row here and derives HSV per OUTPUT row off the
+/// binned RGB stream — the direct + native fast tiers go RGB-free, but
+/// the row-stage resample's `AreaStream` is keyed on the 3-channel RGB
+/// row, so an RGB-free resample+HSV-only is deferred. The HSV output is
+/// still correct; only the source-width RGB scratch remains.
 #[cfg(any(
   feature = "yuv-444-packed",
   feature = "yuv-planar",
@@ -7693,6 +7700,13 @@ where
 /// `ResampleOutputsChanged`), then every stream and source-width scratch
 /// is created before the first feed — so a failure mutates no caller
 /// output. A no-output call has no stream to sequence and stays a no-op.
+///
+/// NOTE (#263 follow-up): HSV-only (no RGB / RGBA) still stages the
+/// source-width u8 RGB row here and derives HSV per OUTPUT row off the
+/// filtered RGB stream — the direct + native fast tiers go RGB-free, but
+/// the row-stage filter resample's stream is keyed on the 3-channel RGB
+/// row, so an RGB-free resample+HSV-only is deferred. The HSV output is
+/// still correct; only the source-width RGB scratch remains.
 #[cfg(any(
   feature = "yuv-444-packed",
   feature = "yuv-planar",
@@ -9820,6 +9834,17 @@ fn packed_yuv444_hb_process_native<const BITS: u32>(
 /// distinct, non-aliasing scratches grow and the three source rows stage
 /// — all before the first feed, so a failure mutates no caller output. A
 /// no-output call is a true no-op regardless of the row index.
+///
+/// NOTE (#263 follow-up): when ONLY `with_hsv()` is attached (no RGB /
+/// RGBA), this row-stage resample path still stages the source-width u8
+/// RGB row (group 1) and derives HSV per OUTPUT row off the binned RGB
+/// stream. The high-bit planar direct + native fast tiers go RGB-free
+/// for HSV-only, but the row-stage resample does not yet — the
+/// `AreaStream` is keyed on the 3-channel RGB row, so an RGB-free
+/// resample+HSV-only (resample the HSV planes, or resample Y/U/V then
+/// convert per output row) is larger than this PR's scope and is
+/// deferred. The HSV output is still correct; only the source-width RGB
+/// scratch allocation remains.
 #[cfg(any(
   feature = "y2xx",
   feature = "v210",
@@ -10096,6 +10121,13 @@ pub(super) fn packed_yuv422_triple_resample<const SRC_BITS: u32>(
 /// every stream and source-width scratch is created before the first feed —
 /// so a failure mutates no caller output. A no-output call has no stream to
 /// sequence and stays a no-op.
+///
+/// NOTE (#263 follow-up): HSV-only (no RGB / RGBA) still stages the
+/// source-width u8 RGB row here and derives HSV per OUTPUT row off the
+/// filtered RGB stream — the direct + native fast tiers go RGB-free, but
+/// the row-stage filter resample's stream is keyed on the 3-channel RGB
+/// row, so an RGB-free resample+HSV-only is deferred. The HSV output is
+/// still correct; only the source-width RGB scratch remains.
 #[cfg(any(feature = "y2xx", feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn packed_yuv422_triple_filter_resample<const SRC_BITS: u32>(

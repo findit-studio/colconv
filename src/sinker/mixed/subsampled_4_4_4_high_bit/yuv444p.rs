@@ -378,7 +378,31 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p9<BE>, R> {
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = rgb.is_some() || want_hsv;
+    // HSV-without-RGB-or-RGBA goes through the direct `yuv444p9_to_hsv_row_endian`
+    // kernel (no source-width RGB scratch — the SIMD path stages a fixed
+    // 8-bit RGB chunk internally). RGB or RGBA also attached keeps the
+    // convert-once-then-derive path alive via `need_rgb_kernel`.
+    let want_hsv_direct = want_hsv && rgb.is_none() && !want_rgba;
+    let need_rgb_kernel = rgb.is_some() || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      yuv444p9_to_hsv_row_endian(
+        row.y(),
+        row.u(),
+        row.v(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
@@ -799,7 +823,31 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p10<BE>, R> {
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = rgb.is_some() || want_hsv;
+    // HSV-without-RGB-or-RGBA goes through the direct `yuv444p10_to_hsv_row_endian`
+    // kernel (no source-width RGB scratch — the SIMD path stages a fixed
+    // 8-bit RGB chunk internally). RGB or RGBA also attached keeps the
+    // convert-once-then-derive path alive via `need_rgb_kernel`.
+    let want_hsv_direct = want_hsv && rgb.is_none() && !want_rgba;
+    let need_rgb_kernel = rgb.is_some() || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      yuv444p10_to_hsv_row_endian(
+        row.y(),
+        row.u(),
+        row.v(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
@@ -1216,7 +1264,31 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p12<BE>, R> {
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = rgb.is_some() || want_hsv;
+    // HSV-without-RGB-or-RGBA goes through the direct `yuv444p12_to_hsv_row_endian`
+    // kernel (no source-width RGB scratch — the SIMD path stages a fixed
+    // 8-bit RGB chunk internally). RGB or RGBA also attached keeps the
+    // convert-once-then-derive path alive via `need_rgb_kernel`.
+    let want_hsv_direct = want_hsv && rgb.is_none() && !want_rgba;
+    let need_rgb_kernel = rgb.is_some() || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      yuv444p12_to_hsv_row_endian(
+        row.y(),
+        row.u(),
+        row.v(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
@@ -1633,7 +1705,31 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p14<BE>, R> {
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = rgb.is_some() || want_hsv;
+    // HSV-without-RGB-or-RGBA goes through the direct `yuv444p14_to_hsv_row_endian`
+    // kernel (no source-width RGB scratch — the SIMD path stages a fixed
+    // 8-bit RGB chunk internally). RGB or RGBA also attached keeps the
+    // convert-once-then-derive path alive via `need_rgb_kernel`.
+    let want_hsv_direct = want_hsv && rgb.is_none() && !want_rgba;
+    let need_rgb_kernel = rgb.is_some() || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      yuv444p14_to_hsv_row_endian(
+        row.y(),
+        row.u(),
+        row.v(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
@@ -2051,7 +2147,31 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuv444p16<BE>, R> {
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = rgb.is_some() || want_hsv;
+    // HSV-without-RGB-or-RGBA goes through the direct `yuv444p16_to_hsv_row_endian`
+    // kernel (no source-width RGB scratch — the SIMD path stages a fixed
+    // 8-bit RGB chunk internally). RGB or RGBA also attached keeps the
+    // convert-once-then-derive path alive via `need_rgb_kernel`.
+    let want_hsv_direct = want_hsv && rgb.is_none() && !want_rgba;
+    let need_rgb_kernel = rgb.is_some() || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      yuv444p16_to_hsv_row_endian(
+        row.y(),
+        row.u(),
+        row.v(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();

@@ -43,10 +43,11 @@ use crate::{
   resample::{AreaStream, PlanGeometry, ResampleError, ResamplePlan, try_box, try_zeroed},
   row::{
     expand_rgb_to_rgba_row, expand_rgb_u16_to_rgba_u16_row, rgb_to_hsv_row,
-    yuv444p9_to_rgb_row_endian, yuv444p9_to_rgb_u16_row_endian, yuv444p10_to_rgb_row_endian,
-    yuv444p10_to_rgb_u16_row_endian, yuv444p12_to_rgb_row_endian, yuv444p12_to_rgb_u16_row_endian,
-    yuv444p14_to_rgb_row_endian, yuv444p14_to_rgb_u16_row_endian, yuv444p16_to_rgb_row_endian,
-    yuv444p16_to_rgb_u16_row_endian,
+    yuv444p9_to_hsv_row_endian, yuv444p9_to_rgb_row_endian, yuv444p9_to_rgb_u16_row_endian,
+    yuv444p10_to_hsv_row_endian, yuv444p10_to_rgb_row_endian, yuv444p10_to_rgb_u16_row_endian,
+    yuv444p12_to_hsv_row_endian, yuv444p12_to_rgb_row_endian, yuv444p12_to_rgb_u16_row_endian,
+    yuv444p14_to_hsv_row_endian, yuv444p14_to_rgb_row_endian, yuv444p14_to_rgb_u16_row_endian,
+    yuv444p16_to_hsv_row_endian, yuv444p16_to_rgb_row_endian, yuv444p16_to_rgb_u16_row_endian,
   },
 };
 
@@ -315,6 +316,13 @@ pub(crate) fn yuv420p16_process_native<const BITS: u32, const BE: bool>(
   let need_color_u8 = rgb.is_some() || rgba.is_some() || hsv.is_some();
   let need_color_u16 = rgb_u16.is_some() || rgba_u16.is_some();
   let need_color = need_color_u8 || need_color_u16;
+  // HSV-without-RGB-or-RGBA emits HSV straight from the binned
+  // output-width host-native Y/U/V via `yuv444p{BITS}_to_hsv_row_endian`
+  // (the binned chroma is full-width at output resolution → the 4:4:4
+  // kernel family) — no output-width u8 RGB scratch is staged. Any u8
+  // RGB / RGBA output (or any u16 colour) keeps the convert-once-then-
+  // derive path. The u16 colour scratch is independent and unaffected.
+  let want_hsv_direct = hsv.is_some() && rgb.is_none() && rgba.is_none();
 
   // Complete pre-feed rejection preflight (no-output short-circuit,
   // first-row out-of-sequence, frozen-output, post-freeze sequence) ahead
@@ -372,8 +380,10 @@ pub(crate) fn yuv420p16_process_native<const BITS: u32, const BE: bool>(
 
   // Colour OUTPUT scratch at output width (one binned row converts here
   // before fanning to the caller buffers). Both grows are fallible and
-  // precede the first feed, keeping the call atomic.
-  if need_color_u8 {
+  // precede the first feed, keeping the call atomic. The u8 RGB scratch
+  // is skipped entirely for the HSV-direct case — the emit loop converts
+  // the binned Y/U/V straight to HSV.
+  if need_color_u8 && !want_hsv_direct {
     let row_bytes =
       ow.checked_mul(3)
         .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
@@ -532,26 +542,46 @@ pub(crate) fn yuv420p16_process_native<const BITS: u32, const BE: bool>(
       // the row-stage 4:4:4 high-bit path uses), independent of the u16
       // colour above.
       if need_color_u8 {
-        let out_rgb = &mut rgb_scratch[..ow * 3];
-        emit_rgb_u8::<BITS>(
-          y_out, u_row, v_row, out_rgb, ow, matrix, full_range, use_simd,
-        );
-        if let Some(buf) = rgb.as_deref_mut() {
-          buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_rgb);
-        }
-        if let Some(hsv) = hsv.as_mut() {
+        if want_hsv_direct {
+          // RGB-free: convert the binned output-width host-native Y/U/V
+          // straight to HSV via the 4:4:4 HSV kernel (the binned chroma
+          // is full-width), no output-width RGB scratch.
+          let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
           let (hp, sp, vp) = hsv.hsv();
-          rgb_to_hsv_row(
-            out_rgb,
+          emit_hsv_u8::<BITS>(
+            y_out,
+            u_row,
+            v_row,
             &mut hp[oy * ow..(oy + 1) * ow],
             &mut sp[oy * ow..(oy + 1) * ow],
             &mut vp[oy * ow..(oy + 1) * ow],
             ow,
+            matrix,
+            full_range,
             use_simd,
           );
-        }
-        if let Some(buf) = rgba.as_deref_mut() {
-          expand_rgb_to_rgba_row(out_rgb, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
+        } else {
+          let out_rgb = &mut rgb_scratch[..ow * 3];
+          emit_rgb_u8::<BITS>(
+            y_out, u_row, v_row, out_rgb, ow, matrix, full_range, use_simd,
+          );
+          if let Some(buf) = rgb.as_deref_mut() {
+            buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_rgb);
+          }
+          if let Some(hsv) = hsv.as_mut() {
+            let (hp, sp, vp) = hsv.hsv();
+            rgb_to_hsv_row(
+              out_rgb,
+              &mut hp[oy * ow..(oy + 1) * ow],
+              &mut sp[oy * ow..(oy + 1) * ow],
+              &mut vp[oy * ow..(oy + 1) * ow],
+              ow,
+              use_simd,
+            );
+          }
+          if let Some(buf) = rgba.as_deref_mut() {
+            expand_rgb_to_rgba_row(out_rgb, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
+          }
         }
       }
     }
@@ -713,6 +743,95 @@ fn emit_rgb_u8<const BITS: u32>(
       u,
       v,
       rgb_out,
+      width,
+      matrix,
+      full_range,
+      use_simd,
+      HOST_NATIVE_BE,
+    ),
+    _ => unreachable!("BITS pinned to 9/10/12/14/16 by the call sites"),
+  }
+}
+
+/// Direct u16-INPUT → **u8 HSV**-OUTPUT 4:4:4 conversion at output width
+/// for the HSV-without-RGB native fast tier — the staged Y / U / V are
+/// host-native, so `big_endian = HOST_NATIVE_BE`. The same kernel family
+/// as [`emit_rgb_u8`], fused with the HSV quantizer (no output-width RGB
+/// scratch). Dispatches on `BITS` to the per-format
+/// `yuv444p{BITS}_to_hsv_row_endian` wrapper.
+#[allow(clippy::too_many_arguments)]
+fn emit_hsv_u8<const BITS: u32>(
+  y: &[u16],
+  u: &[u16],
+  v: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+  use_simd: bool,
+) {
+  match BITS {
+    9 => yuv444p9_to_hsv_row_endian(
+      y,
+      u,
+      v,
+      h_out,
+      s_out,
+      v_out,
+      width,
+      matrix,
+      full_range,
+      use_simd,
+      HOST_NATIVE_BE,
+    ),
+    10 => yuv444p10_to_hsv_row_endian(
+      y,
+      u,
+      v,
+      h_out,
+      s_out,
+      v_out,
+      width,
+      matrix,
+      full_range,
+      use_simd,
+      HOST_NATIVE_BE,
+    ),
+    12 => yuv444p12_to_hsv_row_endian(
+      y,
+      u,
+      v,
+      h_out,
+      s_out,
+      v_out,
+      width,
+      matrix,
+      full_range,
+      use_simd,
+      HOST_NATIVE_BE,
+    ),
+    14 => yuv444p14_to_hsv_row_endian(
+      y,
+      u,
+      v,
+      h_out,
+      s_out,
+      v_out,
+      width,
+      matrix,
+      full_range,
+      use_simd,
+      HOST_NATIVE_BE,
+    ),
+    16 => yuv444p16_to_hsv_row_endian(
+      y,
+      u,
+      v,
+      h_out,
+      s_out,
+      v_out,
       width,
       matrix,
       full_range,

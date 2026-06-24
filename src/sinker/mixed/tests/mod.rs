@@ -359,6 +359,8 @@ mod yuv411p_8bit;
 mod yuv420p_8bit;
 #[cfg(feature = "yuv-planar")]
 mod yuv_planar_hsv_direct;
+#[cfg(feature = "yuv-planar")]
+mod yuv_planar_hsv_direct_high_bit;
 #[cfg(feature = "yuva")]
 mod yuva;
 

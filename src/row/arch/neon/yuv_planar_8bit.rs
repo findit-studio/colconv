@@ -1162,7 +1162,7 @@ unsafe fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
 /// One reused RGB chunk's worth of pixels staged before the HSV pass.
 /// A multiple of 4 so every chunk offset lands on a chroma boundary for
 /// both the 1→2 (4:2:0 / 4:2:2) and 1→4 (4:1:0 / 4:1:1) shapes.
-const HSV_CHUNK: usize = 64;
+pub(crate) const HSV_CHUNK: usize = 64;
 
 /// Shared NEON driver: walks `width` in `HSV_CHUNK`-pixel chunks, fills
 /// a small reused stack RGB scratch via `fill_rgb` (the existing NEON
@@ -1183,7 +1183,7 @@ const HSV_CHUNK: usize = 64;
 /// kernel's safety contract for each chunk. Each of `h_out` / `s_out` /
 /// `v_out` must be `>= width`.
 #[inline]
-unsafe fn yuv_to_hsv_via_rgb_chunks(
+pub(crate) unsafe fn yuv_to_hsv_via_rgb_chunks(
   h_out: &mut [u8],
   s_out: &mut [u8],
   v_out: &mut [u8],
