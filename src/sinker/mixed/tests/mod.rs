@@ -323,6 +323,8 @@ mod resample_yuva_planar_8bit_filter;
 mod resample_yuva_planar_high_bit_filter;
 #[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
+#[cfg(feature = "yuv-semi-planar")]
+mod semi_planar_hsv_direct;
 #[cfg(feature = "yuv-planar")]
 mod subsampled_4_2_0_high_bit;
 // Exercises the high-bit semi-planar P-format `MixedSinker` impls (the
