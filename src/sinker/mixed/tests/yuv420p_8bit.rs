@@ -64,8 +64,10 @@ fn rgb_only_converts_gray_to_gray() {
   miri,
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
-fn hsv_only_allocates_scratch_and_produces_gray_hsv() {
-  // Neutral gray → H=0, S=0, V=~128. No RGB buffer provided.
+fn hsv_only_is_rgb_free_and_produces_gray_hsv() {
+  // Neutral gray → H=0, S=0, V=~128. No RGB/RGBA buffer provided, so the
+  // direct `yuv_420_to_hsv_row` kernel runs and NO RGB scratch is grown
+  // (#263: HSV-without-RGB skips the YUV→RGB intermediate).
   let (yp, up, vp) = solid_yuv420p_frame(16, 8, 128, 128, 128);
   let src = Yuv420pFrame::new(&yp, &up, &vp, 16, 8, 16, 8, 8);
 
@@ -76,7 +78,15 @@ fn hsv_only_allocates_scratch_and_produces_gray_hsv() {
     .with_hsv(&mut h, &mut s, &mut v)
     .unwrap();
   yuv420p_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
+  // Probe the scratch while `sink` is alive, then drop its borrows on
+  // h/s/v before reading them.
+  let scratch_len = sink.rgb_scratch.len();
+  drop(sink);
 
+  assert_eq!(
+    scratch_len, 0,
+    "HSV-only must not allocate the source-width RGB scratch"
+  );
   assert!(h.iter().all(|&b| b == 0));
   assert!(s.iter().all(|&b| b == 0));
   assert!(v.iter().all(|&b| b.abs_diff(128) <= 1));

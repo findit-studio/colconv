@@ -1141,3 +1141,276 @@ unsafe fn yuv_411_to_rgb_or_rgba_row<const ALPHA: bool>(
     }
   }
 }
+
+// ---- Planar 8-bit YUV → HSV (staged via a reused RGB chunk) ----------
+//
+// The SIMD twins of the scalar `yuv_*_to_hsv_row` kernels. Rather than
+// re-derive an HSV-specific register pipeline, each fills a small fixed
+// reused RGB scratch (one `CHUNK`-pixel chunk at a time) using the
+// EXISTING NEON `yuv_*_to_rgb_*` kernel — so the chunk filler IS the
+// production RGB kernel — then runs the NEON `rgb_to_hsv_row` on the
+// chunk. This keeps the per-format SIMD surface tiny (only the chunked
+// driver is new) and makes the result byte-identical to
+// `rgb_to_hsv_row(yuv_*_to_rgb_row(...))` within the NEON tier. The
+// scalar tail of each underlying RGB kernel handles widths below the
+// SIMD block, so no separate tail is needed here.
+//
+// `CHUNK = 64` is a multiple of 4, so every chunk offset lands on a
+// chroma-sample boundary for the 1→2 (4:2:0 / 4:2:2) and 1→4
+// (4:1:0 / 4:1:1) upsampling shapes alike.
+
+/// One reused RGB chunk's worth of pixels staged before the HSV pass.
+/// A multiple of 4 so every chunk offset lands on a chroma boundary for
+/// both the 1→2 (4:2:0 / 4:2:2) and 1→4 (4:1:0 / 4:1:1) shapes.
+const HSV_CHUNK: usize = 64;
+
+/// Shared NEON driver: walks `width` in `HSV_CHUNK`-pixel chunks, fills
+/// a small reused stack RGB scratch via `fill_rgb` (the existing NEON
+/// RGB kernel for the format, passed the chunk `offset` and length `n`),
+/// then runs the NEON [`rgb_to_hsv_row`] on that chunk into the H/S/V
+/// planes. The result is byte-identical to
+/// `rgb_to_hsv_row(yuv_*_to_rgb_row(...))` within the NEON tier, with no
+/// source-width RGB allocation.
+///
+/// `fill_rgb` receives `(offset, n, &mut rgb_chunk)` and must write
+/// `n * 3` packed RGB bytes for the `n` pixels at `offset`. The width
+/// alignment / bounds obligations are the caller's (checked by the
+/// format wrappers' `debug_assert!`s).
+///
+/// # Safety
+///
+/// NEON must be available, and `fill_rgb` must uphold the underlying RGB
+/// kernel's safety contract for each chunk. Each of `h_out` / `s_out` /
+/// `v_out` must be `>= width`.
+#[inline]
+unsafe fn yuv_to_hsv_via_rgb_chunks(
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  mut fill_rgb: impl FnMut(usize, usize, &mut [u8]),
+) {
+  let mut scratch = [0u8; HSV_CHUNK * 3];
+  let mut offset = 0;
+  while offset < width {
+    let n = (width - offset).min(HSV_CHUNK);
+    fill_rgb(offset, n, &mut scratch[..n * 3]);
+    // SAFETY: NEON verified by the wrapper's `#[target_feature]`; the
+    // chunk and the output sub-slices are all length `n`.
+    unsafe {
+      rgb_to_hsv_row(
+        &scratch[..n * 3],
+        &mut h_out[offset..offset + n],
+        &mut s_out[offset..offset + n],
+        &mut v_out[offset..offset + n],
+        n,
+      );
+    }
+    offset += n;
+  }
+}
+
+/// NEON: YUV 4:2:0 planar → planar HSV bytes (OpenCV encoding), staged
+/// via the reused-RGB-chunk pattern over the NEON
+/// [`yuv_420_to_rgb_row`] + [`rgb_to_hsv_row`]. Also serves 4:2:2
+/// (identical per-row chroma shape). Byte-identical to
+/// `rgb_to_hsv_row(yuv_420_to_rgb_row(...))` within the NEON tier.
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `u_half.len() >= width / 2`,
+///    `v_half.len() >= width / 2`.
+/// 4. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
+#[inline]
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn yuv_420_to_hsv_row(
+  y: &[u8],
+  u_half: &[u8],
+  v_half: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(width & 1, 0, "YUV 4:2:0 requires even width");
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u_half.len() >= width / 2, "u_half row too short");
+  debug_assert!(v_half.len() >= width / 2, "v_half row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: NEON verified; the chunk filler forwards the per-chunk
+  // sub-slices to the NEON 4:2:0 RGB kernel under the same contract.
+  unsafe {
+    yuv_to_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      yuv_420_to_rgb_row(
+        &y[offset..],
+        &u_half[offset / 2..],
+        &v_half[offset / 2..],
+        rgb,
+        n,
+        matrix,
+        full_range,
+      );
+    });
+  }
+}
+
+/// NEON: YUV 4:4:4 planar → planar HSV bytes, staged via the NEON
+/// [`yuv_444_to_rgb_row`] + [`rgb_to_hsv_row`]. Also serves 4:4:0.
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `y.len() >= width`, `u.len() >= width`, `v.len() >= width`.
+/// 3. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
+#[inline]
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn yuv_444_to_hsv_row(
+  y: &[u8],
+  u: &[u8],
+  v: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u.len() >= width, "u row too short");
+  debug_assert!(v.len() >= width, "v row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: NEON verified; the chunk filler forwards to the NEON 4:4:4
+  // RGB kernel under the same contract.
+  unsafe {
+    yuv_to_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      yuv_444_to_rgb_row(
+        &y[offset..],
+        &u[offset..],
+        &v[offset..],
+        rgb,
+        n,
+        matrix,
+        full_range,
+      );
+    });
+  }
+}
+
+/// NEON: YUV 4:1:0 planar → planar HSV bytes, staged via the NEON
+/// [`yuv_410_to_rgb_row`] + [`rgb_to_hsv_row`].
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `width % 4 == 0`.
+/// 3. `y.len() >= width`, `u_quarter.len() >= width / 4`,
+///    `v_quarter.len() >= width / 4`.
+/// 4. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
+#[inline]
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn yuv_410_to_hsv_row(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(width & 3, 0, "YUV 4:1:0 requires width % 4 == 0");
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(u_quarter.len() >= width / 4, "u_quarter row too short");
+  debug_assert!(v_quarter.len() >= width / 4, "v_quarter row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: NEON verified; the chunk filler forwards to the NEON 4:1:0
+  // RGB kernel under the same contract.
+  unsafe {
+    yuv_to_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      yuv_410_to_rgb_row(
+        &y[offset..],
+        &u_quarter[offset / 4..],
+        &v_quarter[offset / 4..],
+        rgb,
+        n,
+        matrix,
+        full_range,
+      );
+    });
+  }
+}
+
+/// NEON: YUV 4:1:1 planar → planar HSV bytes, staged via the NEON
+/// [`yuv_411_to_rgb_row`] + [`rgb_to_hsv_row`]. FFmpeg-compatible
+/// arbitrary widths: `HSV_CHUNK` is a multiple of 4 so every chunk but
+/// the last is chroma-aligned; the final chunk's 1..3-pixel partial
+/// group is handled by the underlying RGB kernel's own partial-group
+/// logic.
+///
+/// # Safety
+///
+/// 1. NEON must be available.
+/// 2. `y.len() >= width`, `u_quarter.len() >= width.div_ceil(4)`,
+///    `v_quarter.len() >= width.div_ceil(4)`.
+/// 3. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
+#[inline]
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn yuv_411_to_hsv_row(
+  y: &[u8],
+  u_quarter: &[u8],
+  v_quarter: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(
+    u_quarter.len() >= width.div_ceil(4),
+    "u_quarter row too short"
+  );
+  debug_assert!(
+    v_quarter.len() >= width.div_ceil(4),
+    "v_quarter row too short"
+  );
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: NEON verified; the chunk filler forwards to the NEON 4:1:1
+  // RGB kernel (whose own partial-group logic covers the final chunk's
+  // sub-4 tail) under the same contract.
+  unsafe {
+    yuv_to_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      yuv_411_to_rgb_row(
+        &y[offset..],
+        &u_quarter[offset / 4..],
+        &v_quarter[offset / 4..],
+        rgb,
+        n,
+        matrix,
+        full_range,
+      );
+    });
+  }
+}

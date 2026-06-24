@@ -594,7 +594,30 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = want_rgb || want_hsv;
+    // HSV-without-RGB-or-RGBA goes through the direct `yuv_420_to_hsv_row`
+    // kernel (no source-width RGB scratch). When RGB or RGBA is *also*
+    // attached the RGB kernel runs anyway, so HSV derives off that buffer
+    // for free — the cheap path — and `need_rgb_kernel` keeps it alive.
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      yuv_420_to_hsv_row(
+        row.y(),
+        row.u_half(),
+        row.v_half(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
@@ -962,6 +985,11 @@ pub(super) fn yuv420p_process_native(
   let ow = plan.out_w();
   let need_luma = luma.is_some() || luma_u16.is_some();
   let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
+  // HSV-without-RGB-or-RGBA emits directly from the binned output-width
+  // Y/U/V via `yuv_444_to_hsv_row` — chroma must still be decimated
+  // (`need_color`), but no output-width RGB scratch is staged. RGB or
+  // RGBA attached keeps the convert-once-then-derive path.
+  let want_hsv_direct = hsv.is_some() && rgb.is_none() && rgba.is_none();
 
   // Complete pre-feed rejection preflight — no-output short-circuit,
   // first-row out-of-sequence rejection, the frozen-output check, AND the
@@ -1020,7 +1048,9 @@ pub(super) fn yuv420p_process_native(
     }
   };
   join.check_sequence(idx)?;
-  if need_color {
+  // No output-width RGB scratch for the HSV-direct case — the emit loop
+  // converts the binned Y/U/V straight to HSV.
+  if need_color && !want_hsv_direct {
     let row_bytes =
       ow.checked_mul(3)
         .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
@@ -1102,26 +1132,44 @@ pub(super) fn yuv420p_process_native(
     if let Some(c) = chroma.as_ref() {
       let u_row = &c.u_stage[slot * ow..slot * ow + ow];
       let v_row = &c.v_stage[slot * ow..slot * ow + ow];
-      let out_rgb = &mut rgb_scratch[..ow * 3];
-      yuv_444_to_rgb_row(
-        y_out, u_row, v_row, out_rgb, ow, matrix, full_range, use_simd,
-      );
-      if let Some(buf) = rgb.as_deref_mut() {
-        buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_rgb);
-      }
-      if let Some(hsv) = hsv.as_mut() {
+      if want_hsv_direct {
+        // RGB-free: convert the binned output-width Y/U/V straight to HSV.
+        let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
         let (hp, sp, vp) = hsv.hsv();
-        rgb_to_hsv_row(
-          out_rgb,
+        yuv_444_to_hsv_row(
+          y_out,
+          u_row,
+          v_row,
           &mut hp[oy * ow..(oy + 1) * ow],
           &mut sp[oy * ow..(oy + 1) * ow],
           &mut vp[oy * ow..(oy + 1) * ow],
           ow,
+          matrix,
+          full_range,
           use_simd,
         );
-      }
-      if let Some(buf) = rgba.as_deref_mut() {
-        expand_rgb_to_rgba_row(out_rgb, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
+      } else {
+        let out_rgb = &mut rgb_scratch[..ow * 3];
+        yuv_444_to_rgb_row(
+          y_out, u_row, v_row, out_rgb, ow, matrix, full_range, use_simd,
+        );
+        if let Some(buf) = rgb.as_deref_mut() {
+          buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_rgb);
+        }
+        if let Some(hsv) = hsv.as_mut() {
+          let (hp, sp, vp) = hsv.hsv();
+          rgb_to_hsv_row(
+            out_rgb,
+            &mut hp[oy * ow..(oy + 1) * ow],
+            &mut sp[oy * ow..(oy + 1) * ow],
+            &mut vp[oy * ow..(oy + 1) * ow],
+            ow,
+            use_simd,
+          );
+        }
+        if let Some(buf) = rgba.as_deref_mut() {
+          expand_rgb_to_rgba_row(out_rgb, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
+        }
       }
     }
     staged[0][slot] = false;
@@ -1320,6 +1368,10 @@ pub(super) fn bicublin_yuv420p_resample(
   let ow = plan.out_w();
   let need_luma = luma.is_some() || luma_u16.is_some();
   let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
+  // HSV-without-RGB-or-RGBA emits HSV straight from the filtered
+  // output-width Y/U/V (no output-width RGB scratch); chroma is still
+  // filtered (`need_color`). See [`yuv420p_process_native`].
+  let want_hsv_direct = hsv.is_some() && rgb.is_none() && rgba.is_none();
 
   // Complete pre-feed rejection preflight ahead of any fallible allocation
   // (no-output short-circuit, first-row out-of-sequence, frozen-output, AND
@@ -1372,7 +1424,9 @@ pub(super) fn bicublin_yuv420p_resample(
     }
   };
   join.check_sequence(idx)?;
-  if need_color {
+  // No output-width RGB scratch for the HSV-direct case — the emit loop
+  // converts the binned Y/U/V straight to HSV.
+  if need_color && !want_hsv_direct {
     let row_bytes =
       ow.checked_mul(3)
         .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
@@ -1452,26 +1506,44 @@ pub(super) fn bicublin_yuv420p_resample(
     if let Some(c) = chroma.as_ref() {
       let u_out = &c.u_plane[oy * ow..oy * ow + ow];
       let v_out = &c.v_plane[oy * ow..oy * ow + ow];
-      let out_rgb = &mut rgb_scratch[..ow * 3];
-      yuv_444_to_rgb_row(
-        y_out, u_out, v_out, out_rgb, ow, matrix, full_range, use_simd,
-      );
-      if let Some(buf) = rgb.as_deref_mut() {
-        buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_rgb);
-      }
-      if let Some(hsv) = hsv.as_mut() {
+      if want_hsv_direct {
+        // RGB-free: convert the filtered output-width Y/U/V straight to HSV.
+        let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
         let (hp, sp, vp) = hsv.hsv();
-        rgb_to_hsv_row(
-          out_rgb,
+        yuv_444_to_hsv_row(
+          y_out,
+          u_out,
+          v_out,
           &mut hp[oy * ow..(oy + 1) * ow],
           &mut sp[oy * ow..(oy + 1) * ow],
           &mut vp[oy * ow..(oy + 1) * ow],
           ow,
+          matrix,
+          full_range,
           use_simd,
         );
-      }
-      if let Some(buf) = rgba.as_deref_mut() {
-        expand_rgb_to_rgba_row(out_rgb, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
+      } else {
+        let out_rgb = &mut rgb_scratch[..ow * 3];
+        yuv_444_to_rgb_row(
+          y_out, u_out, v_out, out_rgb, ow, matrix, full_range, use_simd,
+        );
+        if let Some(buf) = rgb.as_deref_mut() {
+          buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_rgb);
+        }
+        if let Some(hsv) = hsv.as_mut() {
+          let (hp, sp, vp) = hsv.hsv();
+          rgb_to_hsv_row(
+            out_rgb,
+            &mut hp[oy * ow..(oy + 1) * ow],
+            &mut sp[oy * ow..(oy + 1) * ow],
+            &mut vp[oy * ow..(oy + 1) * ow],
+            ow,
+            use_simd,
+          );
+        }
+        if let Some(buf) = rgba.as_deref_mut() {
+          expand_rgb_to_rgba_row(out_rgb, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
+        }
       }
     }
     *next_emit += 1;
@@ -1633,6 +1705,16 @@ pub(super) fn yuv420p_process_resampled(
   // the scratch. (The overflow arm is defense in depth: any geometry
   // large enough to wrap w * 3 cannot plan — its span arena alloc is
   // out of reach first.)
+  //
+  // NOTE (#263 follow-up): the HSV-without-RGB case still stages a
+  // SOURCE-WIDTH RGB row here. The direct + native fast tiers go
+  // RGB-free, but the row-stage resample tail bins an RGB stream
+  // (the `AreaStream` is keyed on the 3-channel RGB row) and derives
+  // HSV per OUTPUT row off that stream. Eliminating the RGB scratch
+  // for resample+HSV-only needs a dedicated HSV-plane resample (resample
+  // the HSV planes, or resample Y/U/V then convert per output row) and
+  // is deferred to a follow-up PR to keep this one scoped. `need_color`
+  // therefore still triggers the source-width grow on the resample path.
   let color_row = if need_color {
     let row_bytes =
       w.checked_mul(3)
@@ -2335,6 +2417,10 @@ pub(super) fn yuv_planar_process_native(
   let ow = plan.out_w();
   let need_luma = luma.is_some() || luma_u16.is_some();
   let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
+  // HSV-without-RGB-or-RGBA emits HSV straight from the binned
+  // output-width Y/U/V (no output-width RGB scratch); chroma is still
+  // decimated (`need_color`). See [`yuv420p_process_native`].
+  let want_hsv_direct = hsv.is_some() && rgb.is_none() && rgba.is_none();
 
   // Complete pre-feed rejection preflight ahead of any fallible allocation
   // (no-output short-circuit, first-row out-of-sequence, frozen-output,
@@ -2384,7 +2470,9 @@ pub(super) fn yuv_planar_process_native(
     }
   };
   join.check_sequence(idx)?;
-  if need_color {
+  // No output-width RGB scratch for the HSV-direct case — the emit loop
+  // converts the binned Y/U/V straight to HSV.
+  if need_color && !want_hsv_direct {
     let row_bytes =
       ow.checked_mul(3)
         .ok_or(MixedSinkerError::GeometryOverflow(GeometryOverflow::new(
@@ -2467,26 +2555,44 @@ pub(super) fn yuv_planar_process_native(
     if let Some(c) = chroma.as_ref() {
       let u_out = &c.u_stage[slot * ow..slot * ow + ow];
       let v_out = &c.v_stage[slot * ow..slot * ow + ow];
-      let out_rgb = &mut rgb_scratch[..ow * 3];
-      yuv_444_to_rgb_row(
-        y_out, u_out, v_out, out_rgb, ow, matrix, full_range, use_simd,
-      );
-      if let Some(buf) = rgb.as_deref_mut() {
-        buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_rgb);
-      }
-      if let Some(hsv) = hsv.as_mut() {
+      if want_hsv_direct {
+        // RGB-free: convert the binned output-width Y/U/V straight to HSV.
+        let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
         let (hp, sp, vp) = hsv.hsv();
-        rgb_to_hsv_row(
-          out_rgb,
+        yuv_444_to_hsv_row(
+          y_out,
+          u_out,
+          v_out,
           &mut hp[oy * ow..(oy + 1) * ow],
           &mut sp[oy * ow..(oy + 1) * ow],
           &mut vp[oy * ow..(oy + 1) * ow],
           ow,
+          matrix,
+          full_range,
           use_simd,
         );
-      }
-      if let Some(buf) = rgba.as_deref_mut() {
-        expand_rgb_to_rgba_row(out_rgb, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
+      } else {
+        let out_rgb = &mut rgb_scratch[..ow * 3];
+        yuv_444_to_rgb_row(
+          y_out, u_out, v_out, out_rgb, ow, matrix, full_range, use_simd,
+        );
+        if let Some(buf) = rgb.as_deref_mut() {
+          buf[oy * 3 * ow..(oy + 1) * 3 * ow].copy_from_slice(out_rgb);
+        }
+        if let Some(hsv) = hsv.as_mut() {
+          let (hp, sp, vp) = hsv.hsv();
+          rgb_to_hsv_row(
+            out_rgb,
+            &mut hp[oy * ow..(oy + 1) * ow],
+            &mut sp[oy * ow..(oy + 1) * ow],
+            &mut vp[oy * ow..(oy + 1) * ow],
+            ow,
+            use_simd,
+          );
+        }
+        if let Some(buf) = rgba.as_deref_mut() {
+          expand_rgb_to_rgba_row(out_rgb, &mut buf[oy * 4 * ow..(oy + 1) * 4 * ow], ow);
+        }
       }
     }
     staged[0][slot] = false;
@@ -2742,7 +2848,28 @@ impl<R> PixelSink for MixedSinker<'_, Yuv410p, R> {
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = want_rgb || want_hsv;
+    // HSV-only (no RGB / RGBA) goes direct through `yuv_410_to_hsv_row`
+    // — see the Yuv420p impl for the routing rationale.
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      yuv_410_to_hsv_row(
+        row.y(),
+        row.u_quarter(),
+        row.v_quarter(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
@@ -3228,7 +3355,28 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = want_rgb || want_hsv;
+    // HSV-only (no RGB / RGBA) goes direct through `yuv_420_to_hsv_row`
+    // — see the Yuv420p impl for the routing rationale.
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      yuv_420_to_hsv_row(
+        row.y(),
+        row.u_half(),
+        row.v_half(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
@@ -3703,7 +3851,28 @@ impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = want_rgb || want_hsv;
+    // HSV-only (no RGB / RGBA) goes direct through `yuv_444_to_hsv_row`
+    // — see the Yuv420p impl for the routing rationale.
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      yuv_444_to_hsv_row(
+        row.y(),
+        row.u(),
+        row.v(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
@@ -4181,7 +4350,29 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = want_rgb || want_hsv;
+    // HSV-only (no RGB / RGBA) goes direct through `yuv_444_to_hsv_row`
+    // (4:4:0 reuses the 4:4:4 kernel) — see the Yuv420p impl for the
+    // routing rationale.
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      yuv_444_to_hsv_row(
+        row.y(),
+        row.u(),
+        row.v(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
@@ -4450,7 +4641,28 @@ impl<R> PixelSink for MixedSinker<'_, Yuv411p, R> {
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = want_rgb || want_hsv;
+    // HSV-only (no RGB / RGBA) goes direct through `yuv_411_to_hsv_row`
+    // — see the Yuv420p impl for the routing rationale.
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      yuv_411_to_hsv_row(
+        row.y(),
+        row.u_quarter(),
+        row.v_quarter(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
