@@ -246,3 +246,372 @@ mod xyz12_parity {
     }
   }
 }
+
+// ---- Parity: Bayer 8-bit + Bayer16 ------------------------------------
+
+#[cfg(feature = "bayer")]
+mod bayer_parity {
+  use super::*;
+  use crate::{
+    frame::{
+      Bayer10Frame, Bayer12Frame, Bayer14Frame, Bayer16Frame, BayerDemosaic, BayerFrame,
+      BayerPattern, ColorCorrectionMatrix, WhiteBalance, bayer_to, bayer16_to,
+    },
+    sinker::MixedSinker,
+    source::{Bayer, Bayer10, Bayer12, Bayer14, Bayer16Bit},
+  };
+
+  const W: u32 = 8;
+  const H: u32 = 6;
+
+  /// A column/row-varying `u8` Bayer plane (non-degenerate mosaic).
+  fn ramp8() -> std::vec::Vec<u8> {
+    let mut data = std::vec![0u8; (W * H) as usize];
+    for (i, p) in data.iter_mut().enumerate() {
+      *p = ((i * 17 + 3) % 251) as u8;
+    }
+    data
+  }
+
+  /// A column/row-varying low-packed `u16` Bayer plane for `BITS`.
+  fn ramp16(bits: u32) -> std::vec::Vec<u16> {
+    let max = (1u32 << bits) - 1;
+    let mut data = std::vec![0u16; (W * H) as usize];
+    for (i, p) in data.iter_mut().enumerate() {
+      *p = (((i as u32) * 1103 + 7) % (max + 1)) as u16;
+    }
+    data
+  }
+
+  /// A non-neutral white balance + non-identity CCM, so the fused 3×3
+  /// is exercised (a neutral/identity pair would hide a mis-forwarded
+  /// param).
+  fn nontrivial_opts(pattern: BayerPattern) -> BayerOptions {
+    BayerOptions::new(pattern)
+      .with_demosaic(BayerDemosaic::Bilinear)
+      .with_wb(WhiteBalance::new(1.5, 1.0, 1.75))
+      .with_ccm(ColorCorrectionMatrix::new([
+        [1.2, -0.1, -0.1],
+        [-0.2, 1.3, -0.1],
+        [-0.1, -0.2, 1.4],
+      ]))
+  }
+
+  const PATTERNS: [BayerPattern; 4] = [
+    BayerPattern::Rggb,
+    BayerPattern::Bggr,
+    BayerPattern::Grbg,
+    BayerPattern::Gbrg,
+  ];
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_bayer8_matches_direct() {
+    let plane = ramp8();
+    for pattern in PATTERNS {
+      let opts = nontrivial_opts(pattern);
+      let src = BayerFrame::try_new(&plane, W, H, W).unwrap();
+
+      let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+      let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+      let mut sw = MixedSinker::<Bayer>::new(W as usize, H as usize)
+        .with_rgb(&mut via_walker)
+        .unwrap();
+      <Bayer as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+      let mut sd = MixedSinker::<Bayer>::new(W as usize, H as usize)
+        .with_rgb(&mut via_direct)
+        .unwrap();
+      bayer_to(
+        &src,
+        opts.pattern(),
+        opts.demosaic(),
+        opts.wb(),
+        opts.ccm(),
+        &mut sd,
+      )
+      .unwrap();
+
+      assert_eq!(
+        via_walker, via_direct,
+        "bayer8 parity (pattern {pattern:?})"
+      );
+    }
+  }
+
+  /// Drives the Bayer16 parity for one concrete `BITS` marker `$marker`
+  /// + its `$frame` alias, across all four patterns.
+  macro_rules! bayer16_case {
+    ($name:ident, $marker:ty, $frame:ident, $bits:expr) => {
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn $name() {
+        let plane = ramp16($bits);
+        for pattern in PATTERNS {
+          let opts = nontrivial_opts(pattern);
+          let src = $frame::try_new(&plane, W, H, W).unwrap();
+
+          let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+          let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+          let mut sw = MixedSinker::<$marker>::new(W as usize, H as usize)
+            .with_rgb(&mut via_walker)
+            .unwrap();
+          <$marker as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+          let mut sd = MixedSinker::<$marker>::new(W as usize, H as usize)
+            .with_rgb(&mut via_direct)
+            .unwrap();
+          bayer16_to::<$bits, _>(
+            &src,
+            opts.pattern(),
+            opts.demosaic(),
+            opts.wb(),
+            opts.ccm(),
+            &mut sd,
+          )
+          .unwrap();
+
+          assert_eq!(
+            via_walker, via_direct,
+            "bayer16<{}> parity (pattern {pattern:?})",
+            $bits
+          );
+        }
+      }
+    };
+  }
+
+  bayer16_case!(walk_bayer10_matches_direct, Bayer10, Bayer10Frame, 10);
+  bayer16_case!(walk_bayer12_matches_direct, Bayer12, Bayer12Frame, 12);
+  bayer16_case!(walk_bayer14_matches_direct, Bayer14, Bayer14Frame, 14);
+  bayer16_case!(walk_bayer16_matches_direct, Bayer16Bit, Bayer16Frame, 16);
+}
+
+// ---- Parity: Pal8 (palette is frame-intrinsic; Options = ()) ----------
+
+#[cfg(feature = "mono")]
+mod pal8_parity {
+  use super::*;
+  use crate::{
+    frame::Pal8Frame,
+    sinker::MixedSinker,
+    source::{Pal8, pal8_to},
+  };
+
+  const W: u32 = 8;
+  const H: u32 = 4;
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_pal8_matches_direct() {
+    // A non-degenerate BGRA palette + an index ramp that hits a spread
+    // of entries.
+    let mut palette = [[0u8; 4]; 256];
+    for (i, e) in palette.iter_mut().enumerate() {
+      let i = i as u8;
+      *e = [i, i.wrapping_mul(3), i.wrapping_mul(7), 255];
+    }
+    let mut data = std::vec![0u8; (W * H) as usize];
+    for (i, p) in data.iter_mut().enumerate() {
+      *p = ((i * 29 + 5) % 256) as u8;
+    }
+    let src = Pal8Frame::try_new(&data, &palette, W, H, W).unwrap();
+
+    let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+    let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+    let mut sw = MixedSinker::<Pal8>::new(W as usize, H as usize)
+      .with_rgb(&mut via_walker)
+      .unwrap();
+    // `()` Options — the palette rides on the frame, not the knobs.
+    <Pal8 as Walker<_>>::walk(&src, &(), &mut sw).unwrap();
+
+    let mut sd = MixedSinker::<Pal8>::new(W as usize, H as usize)
+      .with_rgb(&mut via_direct)
+      .unwrap();
+    pal8_to(&src, &mut sd).unwrap();
+
+    assert_eq!(via_walker, via_direct, "pal8 rgb parity");
+  }
+}
+
+// ---- Parity: Monoblack + Monowhite (reuse YuvOptions) -----------------
+
+#[cfg(feature = "mono")]
+mod mono_parity {
+  use super::*;
+  use crate::{
+    PixelSink,
+    frame::{MonoblackFrame, MonowhiteFrame},
+    sinker::MixedSinker,
+    source::{
+      Monoblack, MonoblackRow, MonoblackSink, Monowhite, MonowhiteRow, MonowhiteSink, monoblack_to,
+      monowhite_to,
+    },
+  };
+
+  const W: u32 = 13; // not a byte multiple → exercises the tail bits
+  const H: u32 = 5;
+
+  /// MSB-first 1-bit packed plane, `div_ceil(8)` bytes per row.
+  fn packed_1bpp() -> (std::vec::Vec<u8>, u32) {
+    let stride = W.div_ceil(8);
+    let mut data = std::vec![0u8; (stride * H) as usize];
+    for (i, b) in data.iter_mut().enumerate() {
+      *b = ((i * 53 + 9) % 256) as u8;
+    }
+    (data, stride)
+  }
+
+  const MATRICES: [ColorMatrix; 2] = [ColorMatrix::Bt709, ColorMatrix::Bt601];
+
+  // An instrumented sink recording each row's forwarded `(full_range, matrix)`.
+  // The mono luma path expands bits to 0/255 and ignores that metadata, so a
+  // byte-parity test cannot see a dropped forward — this can.
+  macro_rules! metadata_probe {
+    ($probe:ident, $row:ident, $sink:ident) => {
+      #[derive(Default)]
+      struct $probe {
+        seen: std::vec::Vec<(bool, ColorMatrix)>,
+      }
+      impl PixelSink for $probe {
+        type Input<'r> = $row<'r>;
+        type Error = core::convert::Infallible;
+        fn begin_frame(&mut self, _w: u32, _h: u32) -> Result<(), Self::Error> {
+          Ok(())
+        }
+        fn process(&mut self, row: $row<'_>) -> Result<(), Self::Error> {
+          self.seen.push((row.full_range(), row.matrix()));
+          Ok(())
+        }
+      }
+      impl $sink for $probe {}
+    };
+  }
+  metadata_probe!(MonoblackProbe, MonoblackRow, MonoblackSink);
+  metadata_probe!(MonowhiteProbe, MonowhiteRow, MonowhiteSink);
+
+  /// The luma path discards `full_range`/`matrix`, so byte parity can't prove
+  /// the Walker forwards them; instrument the sink and assert every emitted row
+  /// carries exactly the supplied `YuvOptions` values.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_mono_forwards_full_range_and_matrix() {
+    let (data, stride) = packed_1bpp();
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+
+        let mut bp = MonoblackProbe::default();
+        let src = MonoblackFrame::try_new(&data, W, H, stride).unwrap();
+        <Monoblack as Walker<_>>::walk(&src, &opts, &mut bp).unwrap();
+        assert!(!bp.seen.is_empty(), "monoblack walked at least one row");
+        for &(fr, m) in &bp.seen {
+          assert_eq!(
+            (fr, m),
+            (full_range, matrix),
+            "monoblack forwards full_range/matrix into the row"
+          );
+        }
+
+        let mut wp = MonowhiteProbe::default();
+        let src = MonowhiteFrame::try_new(&data, W, H, stride).unwrap();
+        <Monowhite as Walker<_>>::walk(&src, &opts, &mut wp).unwrap();
+        assert!(!wp.seen.is_empty(), "monowhite walked at least one row");
+        for &(fr, m) in &wp.seen {
+          assert_eq!(
+            (fr, m),
+            (full_range, matrix),
+            "monowhite forwards full_range/matrix into the row"
+          );
+        }
+      }
+    }
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_monoblack_matches_direct() {
+    let (data, stride) = packed_1bpp();
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = MonoblackFrame::try_new(&data, W, H, stride).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H) as usize];
+        let mut via_direct = std::vec![0u8; (W * H) as usize];
+
+        let mut sw = MixedSinker::<Monoblack>::new(W as usize, H as usize)
+          .with_luma(&mut via_walker)
+          .unwrap();
+        <Monoblack as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Monoblack>::new(W as usize, H as usize)
+          .with_luma(&mut via_direct)
+          .unwrap();
+        monoblack_to(&src, opts.full_range(), opts.matrix(), &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "monoblack parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_monowhite_matches_direct() {
+    let (data, stride) = packed_1bpp();
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = MonowhiteFrame::try_new(&data, W, H, stride).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H) as usize];
+        let mut via_direct = std::vec![0u8; (W * H) as usize];
+
+        let mut sw = MixedSinker::<Monowhite>::new(W as usize, H as usize)
+          .with_luma(&mut via_walker)
+          .unwrap();
+        <Monowhite as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Monowhite>::new(W as usize, H as usize)
+          .with_luma(&mut via_direct)
+          .unwrap();
+        monowhite_to(&src, opts.full_range(), opts.matrix(), &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "monowhite parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+}
