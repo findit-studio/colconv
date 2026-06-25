@@ -8,6 +8,55 @@ breaking changes bump the `x` in `0.x.y`.
 
 ## Unreleased
 
+## 0.2.2 — 2026-06-25
+
+### Changed
+
+- The HSV-only **row-stage resample** (8-bit planar YUV) is now RGB-free:
+  when a `MixedSinker` requests `with_hsv()` and no RGB / RGBA output, the
+  row-stage area-resample bins Y / U / V and converts to HSV at output
+  width instead of staging a source-width RGB row — no RGB scratch is
+  allocated, the same RGB-free contract the direct and native fast tiers
+  already honor. **This changes HSV-only row-stage resample output**: it
+  now averages in the **YUV domain** (bit-identical to the native fast
+  tier, which bins the codes then converts) rather than the RGB domain. A
+  sink that also attaches RGB / RGBA keeps the prior RGB-staged path
+  (convert once, derive HSV) unchanged. Covers `Yuv420p` / `Yuv422p` /
+  `Yuv444p` / `Yuv440p` / `Yuv410p` / `Yuv411p`; the chroma-subsampled
+  formats weight partial trailing chroma rows / columns (non-multiple-of-2
+  / -4 dimensions) by their true luma coverage. The filter-resampler twin,
+  the semi-planar, and the high-bit / packed row-stage paths still stage
+  RGB for HSV (output unchanged) — a future follow-up.
+
+## 0.2.1 — 2026-06-25
+
+### Added
+
+- Direct **YUV → HSV** row kernels for every YUV source family, so a
+  `MixedSinker` with `with_hsv()` (and no RGB / RGBA attached) converts
+  straight from YUV to HSV on the direct and native fast tiers — skipping
+  the YUV → RGB intermediate and the source-width RGB scratch it required
+  (`with_luma()` + `with_hsv()` on a YUV source now allocates no RGB
+  buffer). Each fused kernel is bit-identical, per SIMD tier, to the prior
+  `rgb_to_hsv_row(yuv_to_rgb_row(...))` path. Coverage — scalar plus all
+  five SIMD backends (NEON / SSE4.1 / AVX2 / AVX-512 / wasm-simd128) each:
+  - planar 8-bit (4:2:0 / 4:2:2 / 4:4:4 / 4:4:0 / 4:1:0 / 4:1:1);
+  - planar high-bit (9 / 10 / 12 / 14 / 16-bit, little- and big-endian);
+  - semi-planar NV12 / NV16 / NV21 / NV24 / NV42 and high-bit P010 / P012
+    / P016;
+  - packed UYVY / YUYV / YVYU and 4:1:1 (UYYVYY411);
+  - 4:4:4-packed AYUV64 / VUYA / VUYX / XV36;
+  - Y210 / Y212 / Y216;
+  - YUVA 4:2:0 / 4:2:2 / 4:4:4 (reusing the planar kernels — the alpha
+    plane is independent of HSV).
+
+  High-bit sources convert through an 8-bit RGB intermediate, bit-identical
+  to the existing high-bit HSV path (HSV is `H` in `[0, 179]`, `S` / `V` in
+  `[0, 255]`).
+- Standalone `nv*` and `p0xx` native-Y luma row kernels in the row layer
+  (public-API symmetry with the other families); the semi-planar sinks'
+  existing native-Y luma extraction now routes through them.
+
 ## 0.2.0 — 2026-06-23
 
 ### Added
