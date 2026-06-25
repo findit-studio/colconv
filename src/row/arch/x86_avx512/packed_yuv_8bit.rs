@@ -340,6 +340,180 @@ unsafe fn yuv422_packed_to_rgb_or_rgba_row<
   }
 }
 
+// ---- Packed YUV 4:2:2 (8-bit) → HSV (staged via a reused RGB chunk) --
+//
+// The SIMD twins of the scalar `*_to_hsv_row` kernels. Rather than
+// re-derive an HSV-specific register pipeline, each fills a small fixed
+// reused RGB scratch (one `HSV_CHUNK`-pixel chunk at a time) using the
+// EXISTING AVX-512 packed-4:2:2 RGB kernel — so the chunk filler IS the
+// production RGB kernel — then runs this backend's `rgb_to_hsv_row` on
+// the chunk. This keeps the per-format SIMD surface tiny (only the
+// chunked driver is new) and makes the result byte-identical to
+// `rgb_to_hsv_row(*_to_rgb_row(...))` within this tier. The scalar tail
+// of each underlying RGB kernel handles widths below the SIMD block, so
+// no separate tail is needed here.
+//
+// This driver is LOCAL to the packed family (the shared
+// `yuv_to_hsv_via_rgb_chunks` is gated on `yuv-planar`; the packed
+// formats compile under `yuv-packed` alone) and shared by both packed
+// files of this arch — the sibling 4:1:1 module reaches it via
+// `super::packed_yuv_8bit`. `HSV_CHUNK = 64` is even AND a multiple of 4,
+// so every chunk offset lands on a 4:2:2 (4-byte) AND a 4:1:1 (6-byte)
+// block boundary.
+
+/// One reused RGB chunk's worth of pixels staged before the HSV pass.
+pub(super) const HSV_CHUNK: usize = 64;
+
+/// Shared driver: walks `width` in `HSV_CHUNK`-pixel chunks, fills a
+/// small reused stack RGB scratch via `fill_rgb` (the existing RGB kernel
+/// for the format, passed the chunk `offset` and length `n`), then runs
+/// [`rgb_to_hsv_row`] on that chunk into the H/S/V planes. Byte-identical
+/// to `rgb_to_hsv_row(*_to_rgb_row(...))` within this tier, with no
+/// source-width RGB allocation. Shared by the packed 4:2:2 kernels here
+/// and the 4:1:1 kernel in the sibling module.
+///
+/// `fill_rgb` receives `(offset, n, &mut rgb_chunk)` and must write
+/// `n * 3` packed RGB bytes for the `n` pixels at `offset`.
+///
+/// # Safety
+///
+/// The SIMD feature must be available, and `fill_rgb` must uphold the
+/// underlying RGB kernel's safety contract for each chunk. Each of
+/// `h_out` / `s_out` / `v_out` must be `>= width`.
+#[inline]
+pub(super) unsafe fn packed_hsv_via_rgb_chunks(
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  mut fill_rgb: impl FnMut(usize, usize, &mut [u8]),
+) {
+  let mut scratch = [0u8; HSV_CHUNK * 3];
+  let mut offset = 0;
+  while offset < width {
+    let n = (width - offset).min(HSV_CHUNK);
+    fill_rgb(offset, n, &mut scratch[..n * 3]);
+    // SAFETY: SIMD verified by the wrapper's `#[target_feature]`; the
+    // chunk and the output sub-slices are all length `n`.
+    unsafe {
+      rgb_to_hsv_row(
+        &scratch[..n * 3],
+        &mut h_out[offset..offset + n],
+        &mut s_out[offset..offset + n],
+        &mut v_out[offset..offset + n],
+        n,
+      );
+    }
+    offset += n;
+  }
+}
+
+/// AVX-512: YUYV422 (4:2:2) → planar HSV bytes (OpenCV encoding), staged
+/// via the reused-RGB-chunk pattern over this backend's
+/// [`yuyv422_to_rgb_row`] + [`rgb_to_hsv_row`]. Byte-identical to
+/// `rgb_to_hsv_row(yuyv422_to_rgb_row(...))` within this tier.
+///
+/// # Safety
+///
+/// 1. The SIMD feature must be available.
+/// 2. `width & 1 == 0`.
+/// 3. `packed.len() >= 2 * width`.
+/// 4. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn yuyv422_to_hsv_row(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(width & 1, 0, "packed YUV 4:2:2 requires even width");
+  debug_assert!(packed.len() >= width * 2, "packed row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: SIMD verified; the chunk filler forwards the per-chunk
+  // sub-slices to this backend's YUYV422 RGB kernel under the same
+  // contract. The packed byte offset for the chunk at pixel `offset` is
+  // `offset * 2` (2 bytes per pixel).
+  unsafe {
+    packed_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      yuyv422_to_rgb_row(&packed[offset * 2..], rgb, n, matrix, full_range);
+    });
+  }
+}
+
+/// AVX-512: UYVY422 (4:2:2) → planar HSV bytes, staged via this backend's
+/// [`uyvy422_to_rgb_row`] + [`rgb_to_hsv_row`].
+///
+/// # Safety
+///
+/// Same contract as [`yuyv422_to_hsv_row`].
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn uyvy422_to_hsv_row(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(width & 1, 0, "packed YUV 4:2:2 requires even width");
+  debug_assert!(packed.len() >= width * 2, "packed row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: SIMD verified; forwards to this backend's UYVY422 RGB kernel
+  // under the same contract (packed byte offset = `offset * 2`).
+  unsafe {
+    packed_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      uyvy422_to_rgb_row(&packed[offset * 2..], rgb, n, matrix, full_range);
+    });
+  }
+}
+
+/// AVX-512: YVYU422 (4:2:2) → planar HSV bytes, staged via this backend's
+/// [`yvyu422_to_rgb_row`] + [`rgb_to_hsv_row`].
+///
+/// # Safety
+///
+/// Same contract as [`yuyv422_to_hsv_row`].
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn yvyu422_to_hsv_row(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(width & 1, 0, "packed YUV 4:2:2 requires even width");
+  debug_assert!(packed.len() >= width * 2, "packed row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: SIMD verified; forwards to this backend's YVYU422 RGB kernel
+  // under the same contract (packed byte offset = `offset * 2`).
+  unsafe {
+    packed_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      yvyu422_to_rgb_row(&packed[offset * 2..], rgb, n, matrix, full_range);
+    });
+  }
+}
+
 /// AVX‑512 YUYV422 → 8-bit luma extraction.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
