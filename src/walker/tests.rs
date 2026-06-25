@@ -615,3 +615,660 @@ mod mono_parity {
     }
   }
 }
+
+// ---- Parity: uniform YUV families (reuse YuvOptions) ------------------
+//
+// Each test asserts `<Marker as Walker<_>>::walk` is byte-identical to a
+// direct walker call — same `MixedSinker::with_rgb` sink, same walker fn
+// on both sides — across full/limited × Bt709/Bt601. Coverage spans every
+// family plus each const-generic axis: an 8-bit and a high-bit case for
+// planar / semi-planar / YUVA, a packed case, and a Y2xx case.
+//
+// The 8-bit families have no byte-order axis — their walk delegates to
+// the plain `{fmt}_to` and the "direct" side calls the same fn, so
+// byte-identity is structural. The high-bit families are endian-generic:
+// the [`Walker`] impl delegates to the const-generic
+// `{fmt}_to_endian::<_, BE>` (the LE `{fmt}_to` is just its `BE = false`
+// shim), so **both** ends of the matrix are proven — the LE cases below
+// drive the impl at the marker's `<const BE = false>` default against the
+// LE frame alias, and the dedicated BE cases drive `Marker<true>` against
+// the `{Fmt}BeFrame` alias, each compared to a direct
+// `{fmt}_to_endian::<_, BE>` call. The non-degenerate ramps still guard
+// against a mis-forwarded `full_range` / `matrix` (a swapped pair changes
+// the output).
+
+#[cfg(feature = "yuv-planar")]
+mod yuv_planar_parity {
+  use super::*;
+  use crate::sinker::MixedSinker;
+
+  const MATRICES: [ColorMatrix; 2] = [ColorMatrix::Bt709, ColorMatrix::Bt601];
+
+  /// A deterministic, column/row-varying `u8` plane of `n` samples.
+  fn ramp8(n: usize) -> std::vec::Vec<u8> {
+    (0..n).map(|i| ((i * 17 + 3) % 251) as u8).collect()
+  }
+
+  /// A deterministic low-packed `u16` plane of `n` samples bounded to
+  /// `bits` (active bits in the low end, matching the LE wire layout on
+  /// the test host).
+  fn ramp16(n: usize, bits: u32) -> std::vec::Vec<u16> {
+    let max = (1u32 << bits) - 1;
+    (0..n)
+      .map(|i| (((i as u32) * 1103 + 7) & max) as u16)
+      .collect()
+  }
+
+  /// Drives a 3-plane planar YUV family (8-bit or high-bit-LE). `$ramp`
+  /// builds a plane of the right element type; `$try_new` is the frame
+  /// ctor (8-arg `y,u,v,w,h,ys,us,vs`); `$walker` the direct walker fn.
+  macro_rules! planar3_case {
+    (
+      $name:ident, $marker:ty, $try_new:path, $walker:path,
+      ramp = $ramp:expr, cw_div = $cw_div:expr, ch_div = $ch_div:expr,
+    ) => {
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn $name() {
+        const W: u32 = 16;
+        const H: u32 = 4;
+        let cw = (W as usize) / $cw_div;
+        let ch = (H as usize).div_ceil($ch_div);
+        let make = $ramp;
+        let y = make((W * H) as usize);
+        let u = make(cw * ch);
+        let v = make(cw * ch);
+
+        for full_range in [false, true] {
+          for matrix in MATRICES {
+            let opts = YuvOptions::new().maybe_full_range(full_range).with_matrix(matrix);
+            let src = $try_new(&y, &u, &v, W, H, W, cw as u32, cw as u32).unwrap();
+
+            let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+            let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+            let mut sw = MixedSinker::<$marker>::new(W as usize, H as usize)
+              .with_rgb(&mut via_walker)
+              .unwrap();
+            <$marker as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+            let mut sd = MixedSinker::<$marker>::new(W as usize, H as usize)
+              .with_rgb(&mut via_direct)
+              .unwrap();
+            $walker(&src, full_range, matrix, &mut sd).unwrap();
+
+            assert_eq!(
+              via_walker, via_direct,
+              "{} parity (full_range={full_range}, matrix={matrix:?})",
+              stringify!($name)
+            );
+          }
+        }
+      }
+    };
+  }
+
+  // 8-bit: 4:2:0 (half/half chroma).
+  planar3_case!(
+    walk_yuv420p_matches_direct,
+    crate::source::Yuv420p,
+    crate::frame::Yuv420pFrame::try_new,
+    crate::source::yuv420p_to,
+    ramp = ramp8,
+    cw_div = 2,
+    ch_div = 2,
+  );
+  // High-bit-LE: 4:2:2 10-bit (half-width, full-height chroma).
+  planar3_case!(
+    walk_yuv422p10_matches_direct,
+    crate::source::Yuv422p10,
+    crate::frame::Yuv422p10LeFrame::try_new,
+    crate::source::yuv422p10_to,
+    ramp = |n| ramp16(n, 10),
+    cw_div = 2,
+    ch_div = 1,
+  );
+  // High-bit-LE: 4:4:4 16-bit (full chroma; the i64 chroma_sum kernel).
+  planar3_case!(
+    walk_yuv444p16_matches_direct,
+    crate::source::Yuv444p16,
+    crate::frame::Yuv444p16LeFrame::try_new,
+    crate::source::yuv444p16_to,
+    ramp = |n| ramp16(n, 16),
+    cw_div = 1,
+    ch_div = 1,
+  );
+
+  /// BE sibling of [`planar3_case`]: drives the `@const_bits` impl at
+  /// `Marker<true>` against a `{Fmt}BeFrame` and compares to a direct
+  /// `{fmt}_to_endian::<_, true>` call. `$marker` is the BE-pinned marker
+  /// (`Yuv422p10<true>`); `$walker_endian` the const-generic walker.
+  macro_rules! planar3_be_case {
+    (
+      $name:ident, $marker:ty, $try_new:path, $walker_endian:path,
+      ramp = $ramp:expr, cw_div = $cw_div:expr, ch_div = $ch_div:expr,
+    ) => {
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn $name() {
+        const W: u32 = 16;
+        const H: u32 = 4;
+        let cw = (W as usize) / $cw_div;
+        let ch = (H as usize).div_ceil($ch_div);
+        let make = $ramp;
+        let y = make((W * H) as usize);
+        let u = make(cw * ch);
+        let v = make(cw * ch);
+
+        for full_range in [false, true] {
+          for matrix in MATRICES {
+            let opts = YuvOptions::new().maybe_full_range(full_range).with_matrix(matrix);
+            let src = $try_new(&y, &u, &v, W, H, W, cw as u32, cw as u32).unwrap();
+
+            let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+            let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+            let mut sw = MixedSinker::<$marker>::new(W as usize, H as usize)
+              .with_rgb(&mut via_walker)
+              .unwrap();
+            <$marker as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+            let mut sd = MixedSinker::<$marker>::new(W as usize, H as usize)
+              .with_rgb(&mut via_direct)
+              .unwrap();
+            $walker_endian(&src, full_range, matrix, &mut sd).unwrap();
+
+            assert_eq!(
+              via_walker, via_direct,
+              "{} BE parity (full_range={full_range}, matrix={matrix:?})",
+              stringify!($name)
+            );
+          }
+        }
+      }
+    };
+  }
+
+  // High-bit-BE: 4:2:2 10-bit (half-width, full-height chroma).
+  planar3_be_case!(
+    walk_yuv422p10_be_matches_direct,
+    crate::source::Yuv422p10<true>,
+    crate::frame::Yuv422p10BeFrame::try_new,
+    crate::source::yuv422p10_to_endian::<_, true>,
+    ramp = |n| ramp16(n, 10),
+    cw_div = 2,
+    ch_div = 1,
+  );
+}
+
+#[cfg(feature = "yuv-semi-planar")]
+mod yuv_semi_planar_parity {
+  use super::*;
+  use crate::sinker::MixedSinker;
+
+  const MATRICES: [ColorMatrix; 2] = [ColorMatrix::Bt709, ColorMatrix::Bt601];
+
+  fn ramp8(n: usize) -> std::vec::Vec<u8> {
+    (0..n).map(|i| ((i * 23 + 5) % 251) as u8).collect()
+  }
+  fn ramp16(n: usize, bits: u32) -> std::vec::Vec<u16> {
+    let max = (1u32 << bits) - 1;
+    (0..n)
+      .map(|i| (((i as u32) * 1399 + 11) & max) as u16)
+      .collect()
+  }
+
+  /// Drives a semi-planar (Y + interleaved chroma) family. `$try_new`
+  /// is the 6-arg ctor (`y,uv,w,h,ys,uvs`); `chroma_w_factor` is the UV
+  /// row length in elements as a multiple of width; `ch_div` the chroma
+  /// vertical divisor.
+  macro_rules! semi_planar_case {
+    (
+      $name:ident, $marker:ty, $try_new:path, $walker:path,
+      ramp = $ramp:expr, chroma_w_factor = $cwf:expr, ch_div = $ch_div:expr,
+    ) => {
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn $name() {
+        const W: u32 = 16;
+        const H: u32 = 4;
+        let uv_row = ($cwf as usize) * (W as usize);
+        let ch = (H as usize).div_ceil($ch_div);
+        let make = $ramp;
+        let y = make((W * H) as usize);
+        let uv = make(uv_row * ch);
+
+        for full_range in [false, true] {
+          for matrix in MATRICES {
+            let opts = YuvOptions::new().maybe_full_range(full_range).with_matrix(matrix);
+            let src = $try_new(&y, &uv, W, H, W, uv_row as u32).unwrap();
+
+            let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+            let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+            let mut sw = MixedSinker::<$marker>::new(W as usize, H as usize)
+              .with_rgb(&mut via_walker)
+              .unwrap();
+            <$marker as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+            let mut sd = MixedSinker::<$marker>::new(W as usize, H as usize)
+              .with_rgb(&mut via_direct)
+              .unwrap();
+            $walker(&src, full_range, matrix, &mut sd).unwrap();
+
+            assert_eq!(
+              via_walker, via_direct,
+              "{} parity (full_range={full_range}, matrix={matrix:?})",
+              stringify!($name)
+            );
+          }
+        }
+      }
+    };
+  }
+
+  // 8-bit: Nv12 (4:2:0, UV interleaved half-width/half-height).
+  semi_planar_case!(
+    walk_nv12_matches_direct,
+    crate::source::Nv12,
+    crate::frame::Nv12Frame::try_new,
+    crate::source::nv12_to,
+    ramp = ramp8,
+    chroma_w_factor = 1,
+    ch_div = 2,
+  );
+  // High-bit-LE: P010 (4:2:0 10-bit packed u16, MSB-justified).
+  semi_planar_case!(
+    walk_p010_matches_direct,
+    crate::source::P010,
+    crate::frame::P010LeFrame::try_new,
+    crate::source::p010_to,
+    ramp = |n| ramp16(n, 16),
+    chroma_w_factor = 1,
+    ch_div = 2,
+  );
+
+  /// BE sibling of [`semi_planar_case`]: drives the `@const_bits` impl at
+  /// `Marker<true>` against a `{Fmt}BeFrame` and compares to a direct
+  /// `{fmt}_to_endian::<_, true>` call.
+  macro_rules! semi_planar_be_case {
+    (
+      $name:ident, $marker:ty, $try_new:path, $walker_endian:path,
+      ramp = $ramp:expr, chroma_w_factor = $cwf:expr, ch_div = $ch_div:expr,
+    ) => {
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn $name() {
+        const W: u32 = 16;
+        const H: u32 = 4;
+        let uv_row = ($cwf as usize) * (W as usize);
+        let ch = (H as usize).div_ceil($ch_div);
+        let make = $ramp;
+        let y = make((W * H) as usize);
+        let uv = make(uv_row * ch);
+
+        for full_range in [false, true] {
+          for matrix in MATRICES {
+            let opts = YuvOptions::new().maybe_full_range(full_range).with_matrix(matrix);
+            let src = $try_new(&y, &uv, W, H, W, uv_row as u32).unwrap();
+
+            let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+            let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+            let mut sw = MixedSinker::<$marker>::new(W as usize, H as usize)
+              .with_rgb(&mut via_walker)
+              .unwrap();
+            <$marker as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+            let mut sd = MixedSinker::<$marker>::new(W as usize, H as usize)
+              .with_rgb(&mut via_direct)
+              .unwrap();
+            $walker_endian(&src, full_range, matrix, &mut sd).unwrap();
+
+            assert_eq!(
+              via_walker, via_direct,
+              "{} BE parity (full_range={full_range}, matrix={matrix:?})",
+              stringify!($name)
+            );
+          }
+        }
+      }
+    };
+  }
+
+  // High-bit-BE: P010 (4:2:0 10-bit packed u16, MSB-justified).
+  semi_planar_be_case!(
+    walk_p010_be_matches_direct,
+    crate::source::P010<true>,
+    crate::frame::P010BeFrame::try_new,
+    crate::source::p010_to_endian::<_, true>,
+    ramp = |n| ramp16(n, 16),
+    chroma_w_factor = 1,
+    ch_div = 2,
+  );
+}
+
+#[cfg(feature = "yuv-packed")]
+mod yuv_packed_parity {
+  use super::*;
+  use crate::{
+    frame::Yuyv422Frame,
+    sinker::MixedSinker,
+    source::{Yuyv422, yuyv422_to},
+  };
+
+  const MATRICES: [ColorMatrix; 2] = [ColorMatrix::Bt709, ColorMatrix::Bt601];
+
+  /// Packed YUYV 4:2:2 — single buffer, `width * 2` u8 per row.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_yuyv422_matches_direct() {
+    const W: u32 = 16;
+    const H: u32 = 4;
+    let buf: std::vec::Vec<u8> = (0..(W * H * 2) as usize)
+      .map(|i| ((i * 19 + 7) % 251) as u8)
+      .collect();
+
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Yuyv422Frame::try_new(&buf, W, H, W * 2).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut sw = MixedSinker::<Yuyv422>::new(W as usize, H as usize)
+          .with_rgb(&mut via_walker)
+          .unwrap();
+        <Yuyv422 as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Yuyv422>::new(W as usize, H as usize)
+          .with_rgb(&mut via_direct)
+          .unwrap();
+        yuyv422_to(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "yuyv422 parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+}
+
+#[cfg(feature = "y2xx")]
+mod y2xx_parity {
+  use super::*;
+  use crate::{
+    frame::{Y210BeFrame, Y210LeFrame},
+    sinker::MixedSinker,
+    source::{Y210, y210_to, y210_to_endian},
+  };
+
+  const MATRICES: [ColorMatrix; 2] = [ColorMatrix::Bt709, ColorMatrix::Bt601];
+
+  /// MSB-justified 10-bit Y210 wire samples (low 6 bits zero).
+  fn y210_ramp() -> std::vec::Vec<u16> {
+    const W: u32 = 16;
+    const H: u32 = 4;
+    (0..(W * H * 2) as usize)
+      .map(|i| (((i as u32 * 1103 + 7) & 0x03FF) << 6) as u16)
+      .collect()
+  }
+
+  /// Y210 LE — packed 4:2:2 10-bit, single `u16` buffer, `width * 2` per
+  /// row. Drives the `@const_bits` impl at the marker's `<const BE =
+  /// false>` default against the LE `y210_to` wrapper.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_y210_matches_direct() {
+    const W: u32 = 16;
+    const H: u32 = 4;
+    let buf = y210_ramp();
+
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Y210LeFrame::try_new(&buf, W, H, W * 2).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut sw = MixedSinker::<Y210>::new(W as usize, H as usize)
+          .with_rgb(&mut via_walker)
+          .unwrap();
+        <Y210 as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Y210>::new(W as usize, H as usize)
+          .with_rgb(&mut via_direct)
+          .unwrap();
+        y210_to(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "y210 parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
+  /// Y210 BE — drives the `@const_bits` impl at `Y210<true>` against the
+  /// `Y210BeFrame` alias, compared to a direct `y210_to_endian::<_, true>`.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_y210_be_matches_direct() {
+    const W: u32 = 16;
+    const H: u32 = 4;
+    let buf = y210_ramp();
+
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Y210BeFrame::try_new(&buf, W, H, W * 2).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut sw = MixedSinker::<Y210<true>>::new(W as usize, H as usize)
+          .with_rgb(&mut via_walker)
+          .unwrap();
+        <Y210<true> as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Y210<true>>::new(W as usize, H as usize)
+          .with_rgb(&mut via_direct)
+          .unwrap();
+        y210_to_endian::<_, true>(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "y210 BE parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+}
+
+#[cfg(feature = "yuva")]
+mod yuva_parity {
+  use super::*;
+  use crate::sinker::MixedSinker;
+
+  const MATRICES: [ColorMatrix; 2] = [ColorMatrix::Bt709, ColorMatrix::Bt601];
+
+  fn ramp8(n: usize) -> std::vec::Vec<u8> {
+    (0..n).map(|i| ((i * 31 + 9) % 251) as u8).collect()
+  }
+  fn ramp16(n: usize, bits: u32) -> std::vec::Vec<u16> {
+    let max = (1u32 << bits) - 1;
+    (0..n)
+      .map(|i| (((i as u32) * 911 + 13) & max) as u16)
+      .collect()
+  }
+
+  /// Drives a 4-plane planar YUVA family. The alpha plane is read inside
+  /// `{fmt}_to`, never an `Options` knob — so a [`YuvOptions`] is all the
+  /// walk needs, and byte-identity to the direct call proves the alpha
+  /// path is forwarded too. `$try_new` is the 10-arg ctor
+  /// (`y,u,v,a,w,h,ys,us,vs,as`).
+  macro_rules! planar4_case {
+    (
+      $name:ident, $marker:ty, $try_new:path, $walker:path,
+      ramp = $ramp:expr, cw_div = $cw_div:expr, ch_div = $ch_div:expr,
+    ) => {
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn $name() {
+        const W: u32 = 16;
+        const H: u32 = 4;
+        let cw = (W as usize) / $cw_div;
+        let ch = (H as usize).div_ceil($ch_div);
+        let make = $ramp;
+        let y = make((W * H) as usize);
+        let u = make(cw * ch);
+        let v = make(cw * ch);
+        let a = make((W * H) as usize);
+
+        for full_range in [false, true] {
+          for matrix in MATRICES {
+            let opts = YuvOptions::new().maybe_full_range(full_range).with_matrix(matrix);
+            let src = $try_new(&y, &u, &v, &a, W, H, W, cw as u32, cw as u32, W).unwrap();
+
+            let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+            let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+            let mut sw = MixedSinker::<$marker>::new(W as usize, H as usize)
+              .with_rgb(&mut via_walker)
+              .unwrap();
+            <$marker as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+            let mut sd = MixedSinker::<$marker>::new(W as usize, H as usize)
+              .with_rgb(&mut via_direct)
+              .unwrap();
+            $walker(&src, full_range, matrix, &mut sd).unwrap();
+
+            assert_eq!(
+              via_walker, via_direct,
+              "{} parity (full_range={full_range}, matrix={matrix:?})",
+              stringify!($name)
+            );
+          }
+        }
+      }
+    };
+  }
+
+  // 8-bit: Yuva420p (half/half chroma + full-res alpha).
+  planar4_case!(
+    walk_yuva420p_matches_direct,
+    crate::source::Yuva420p,
+    crate::frame::Yuva420pFrame::try_new,
+    crate::source::yuva420p_to,
+    ramp = ramp8,
+    cw_div = 2,
+    ch_div = 2,
+  );
+  // High-bit-LE: Yuva444p12 (full chroma + full-res alpha).
+  planar4_case!(
+    walk_yuva444p12_matches_direct,
+    crate::source::Yuva444p12,
+    crate::frame::Yuva444p12LeFrame::try_new,
+    crate::source::yuva444p12_to,
+    ramp = |n| ramp16(n, 12),
+    cw_div = 1,
+    ch_div = 1,
+  );
+
+  /// BE sibling of [`planar4_case`]: drives the `@const_bits` impl at
+  /// `Marker<true>` against a `{Fmt}BeFrame`, compared to a direct
+  /// `{fmt}_to_endian::<_, true>` call (alpha read inside the walker).
+  macro_rules! planar4_be_case {
+    (
+      $name:ident, $marker:ty, $try_new:path, $walker_endian:path,
+      ramp = $ramp:expr, cw_div = $cw_div:expr, ch_div = $ch_div:expr,
+    ) => {
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn $name() {
+        const W: u32 = 16;
+        const H: u32 = 4;
+        let cw = (W as usize) / $cw_div;
+        let ch = (H as usize).div_ceil($ch_div);
+        let make = $ramp;
+        let y = make((W * H) as usize);
+        let u = make(cw * ch);
+        let v = make(cw * ch);
+        let a = make((W * H) as usize);
+
+        for full_range in [false, true] {
+          for matrix in MATRICES {
+            let opts = YuvOptions::new().maybe_full_range(full_range).with_matrix(matrix);
+            let src = $try_new(&y, &u, &v, &a, W, H, W, cw as u32, cw as u32, W).unwrap();
+
+            let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+            let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+            let mut sw = MixedSinker::<$marker>::new(W as usize, H as usize)
+              .with_rgb(&mut via_walker)
+              .unwrap();
+            <$marker as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+            let mut sd = MixedSinker::<$marker>::new(W as usize, H as usize)
+              .with_rgb(&mut via_direct)
+              .unwrap();
+            $walker_endian(&src, full_range, matrix, &mut sd).unwrap();
+
+            assert_eq!(
+              via_walker, via_direct,
+              "{} BE parity (full_range={full_range}, matrix={matrix:?})",
+              stringify!($name)
+            );
+          }
+        }
+      }
+    };
+  }
+
+  // High-bit-BE: Yuva444p12 (full chroma + full-res alpha).
+  planar4_be_case!(
+    walk_yuva444p12_be_matches_direct,
+    crate::source::Yuva444p12<true>,
+    crate::frame::Yuva444p12BeFrame::try_new,
+    crate::source::yuva444p12_to_endian::<_, true>,
+    ramp = |n| ramp16(n, 12),
+    cw_div = 1,
+    ch_div = 1,
+  );
+}
