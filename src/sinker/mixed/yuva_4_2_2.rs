@@ -340,7 +340,15 @@ impl<R> PixelSink for MixedSinker<'_, Yuva422p, R> {
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = want_rgb || want_hsv;
+    // HSV-without-RGB-or-RGBA goes through the direct `yuv_420_to_hsv_row`
+    // kernel (no source-width RGB scratch — 4:2:2's per-row chroma layout
+    // is identical to 4:2:0, so it reuses the same kernel the RGB
+    // alpha-drop path uses). HSV is colour-only — the source alpha plane
+    // is dropped. RGB or RGBA also attached keeps the
+    // convert-once-then-derive path alive via `need_rgb_kernel` (an RGBA
+    // sink still needs the alpha plane, so it stays on the RGB path).
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
 
     // Acquire the u8 RGB row buffer up front — before any caller-output
     // write below — so an allocator refusal in the HSV-only scratch path
@@ -375,6 +383,26 @@ impl<R> PixelSink for MixedSinker<'_, Yuva422p, R> {
       {
         *d = s as u16;
       }
+    }
+
+    // HSV-only (no RGB / RGBA): convert the source Y/U/V straight to HSV
+    // via the alpha-drop 4:2:0 planar kernel — no source-width RGB scratch.
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      yuv_420_to_hsv_row(
+        row.y(),
+        row.u_half(),
+        row.v_half(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+      return Ok(());
     }
 
     // `need_rgb_kernel` / `rgb_row` were computed and (when needed)
@@ -561,7 +589,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuva422p9<BE>, R> {
         yuva420p9_to_rgba_u16_row_endian,
       );
     }
-    yuva422p_high_bit_process::<9, BE, _, _, _, _, _>(
+    yuva422p_high_bit_process::<9, BE, _, _, _, _, _, _>(
       self,
       row.row(),
       row.y(),
@@ -577,6 +605,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuva422p9<BE>, R> {
       yuv420p9_to_rgb_row_endian,
       yuv420p9_to_rgb_u16_row_endian,
       yuva420p9_to_rgba_row_endian,
+      yuv420p9_to_hsv_row_endian,
       yuva420p9_to_rgba_u16_row_endian,
     )
   }
@@ -703,7 +732,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuva422p10<BE>, R> {
         yuva420p10_to_rgba_u16_row_endian,
       );
     }
-    yuva422p_high_bit_process::<10, BE, _, _, _, _, _>(
+    yuva422p_high_bit_process::<10, BE, _, _, _, _, _, _>(
       self,
       row.row(),
       row.y(),
@@ -719,6 +748,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuva422p10<BE>, R> {
       yuv420p10_to_rgb_row_endian,
       yuv420p10_to_rgb_u16_row_endian,
       yuva420p10_to_rgba_row_endian,
+      yuv420p10_to_hsv_row_endian,
       yuva420p10_to_rgba_u16_row_endian,
     )
   }
@@ -845,7 +875,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuva422p12<BE>, R> {
         yuva420p12_to_rgba_u16_row_endian,
       );
     }
-    yuva422p_high_bit_process::<12, BE, _, _, _, _, _>(
+    yuva422p_high_bit_process::<12, BE, _, _, _, _, _, _>(
       self,
       row.row(),
       row.y(),
@@ -861,6 +891,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuva422p12<BE>, R> {
       yuv420p12_to_rgb_row_endian,
       yuv420p12_to_rgb_u16_row_endian,
       yuva420p12_to_rgba_row_endian,
+      yuv420p12_to_hsv_row_endian,
       yuva420p12_to_rgba_u16_row_endian,
     )
   }
@@ -987,7 +1018,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuva422p16<BE>, R> {
         yuva420p16_to_rgba_u16_row_endian,
       );
     }
-    yuva422p_high_bit_process::<16, BE, _, _, _, _, _>(
+    yuva422p_high_bit_process::<16, BE, _, _, _, _, _, _>(
       self,
       row.row(),
       row.y(),
@@ -1003,6 +1034,7 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Yuva422p16<BE>, R> {
       yuv420p16_to_rgb_row_endian,
       yuv420p16_to_rgb_u16_row_endian,
       yuva420p16_to_rgba_row_endian,
+      yuv420p16_to_hsv_row_endian,
       yuva420p16_to_rgba_u16_row_endian,
     )
   }
@@ -1026,6 +1058,21 @@ fn yuva422p_high_bit_process<
   RgbRowFn: Fn(&[u16], &[u16], &[u16], &mut [u8], usize, crate::ColorMatrix, bool, bool, bool),
   RgbU16RowFn: Fn(&[u16], &[u16], &[u16], &mut [u16], usize, crate::ColorMatrix, bool, bool, bool),
   RgbaRowFn: Fn(&[u16], &[u16], &[u16], &[u16], &mut [u8], usize, crate::ColorMatrix, bool, bool, bool),
+  // The matching alpha-drop YUV→HSV `_endian` kernel — same Y/U/V inputs
+  // as `rgb_dispatch`, three `&mut [u8]` H/S/V outputs.
+  HsvRowFn: Fn(
+    &[u16],
+    &[u16],
+    &[u16],
+    &mut [u8],
+    &mut [u8],
+    &mut [u8],
+    usize,
+    crate::ColorMatrix,
+    bool,
+    bool,
+    bool,
+  ),
 >(
   sinker: &mut MixedSinker<'_, F, R>,
   idx: usize,
@@ -1042,6 +1089,7 @@ fn yuva422p_high_bit_process<
   rgb_dispatch: RgbRowFn,
   rgb_u16_dispatch: RgbU16RowFn,
   rgba_dispatch: RgbaRowFn,
+  hsv_dispatch: HsvRowFn,
   rgba_u16_dispatch: fn(
     &[u16],
     &[u16],
@@ -1117,7 +1165,12 @@ fn yuva422p_high_bit_process<
   let want_rgb = rgb.is_some();
   let want_rgba = rgba.is_some();
   let want_hsv = hsv.is_some();
-  let need_rgb_kernel = want_rgb || want_hsv;
+  // HSV-without-RGB-or-RGBA goes through the direct alpha-drop
+  // `hsv_dispatch` kernel (no source-width RGB scratch). HSV is
+  // colour-only — the source alpha plane is dropped. See
+  // `yuva420p_high_bit_process` for the full routing rationale.
+  let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+  let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
 
   // Acquire the u8 RGB row buffer up front — before any caller-output
   // write below — so an allocator refusal in the HSV-only scratch path
@@ -1215,6 +1268,29 @@ fn yuva422p_high_bit_process<
   // ---- u8 RGB / RGBA / HSV path ----------------------------------
   // `need_rgb_kernel` / `rgb_row` were computed and (when needed)
   // allocated at the top, before any caller-output write.
+  //
+  // HSV-only (no u8 RGB / RGBA): convert the source Y/U/V straight to HSV
+  // via the alpha-drop kernel — no source-width RGB scratch. Any u16
+  // RGB/RGBA outputs already ran above.
+  if want_hsv_direct {
+    let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+    let (h, s, v) = hsv.hsv();
+    hsv_dispatch(
+      y_row,
+      u_half_row,
+      v_half_row,
+      &mut h[one_plane_start..one_plane_end],
+      &mut s[one_plane_start..one_plane_end],
+      &mut v[one_plane_start..one_plane_end],
+      w,
+      matrix,
+      full_range,
+      use_simd,
+      BE,
+    );
+    return Ok(());
+  }
+
   if want_rgba && !need_rgb_kernel {
     let rgba_buf = rgba.as_deref_mut().unwrap();
     let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;

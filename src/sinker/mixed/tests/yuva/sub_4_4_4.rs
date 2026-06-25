@@ -940,12 +940,11 @@ fn yuva444p_with_rgb_alpha_drop_matches_yuv444p() {
   ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
 )]
 fn yuva444p_direct_luma_u16_with_hsv_no_rgb_buffer_writes_both() {
-  // Recoverable-allocation regression: `with_luma_u16` + `with_hsv` with
-  // NO rgb plane attached routes HSV through the growing rgb scratch. The
-  // fallible scratch grow must be preflighted BEFORE luma_u16 is written,
-  // and both outputs must be produced. luma_u16 is the zero-extended Y;
-  // HSV must match the RGB-attached oracle (same kernel; scratch vs caller
-  // buffer is the only difference).
+  // #263 PR 8: `with_luma_u16` + `with_hsv` with NO rgb / rgba plane
+  // attached routes HSV through the direct `yuv_444_to_hsv_row` kernel —
+  // RGB-free (no rgb scratch). Both outputs must be produced: luma_u16 is
+  // the zero-extended Y; HSV must match the RGB-attached oracle (same
+  // kernel — direct vs derived-from-RGB is the only difference).
   let w = 16usize;
   let h = 8usize;
   let mut yp = std::vec![0u8; w * h];
@@ -973,19 +972,19 @@ fn yuva444p_direct_luma_u16_with_hsv_no_rgb_buffer_writes_both() {
       .with_hsv(&mut hh, &mut ss, &mut vv)
       .unwrap();
     yuva444p_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
-    // White-box: the HSV-only scratch was preflighted (grown to one
-    // source-width u8 RGB row) — the fix acquires it before the luma_u16
-    // write.
-    assert!(
-      sink.rgb_scratch_capacity() >= w * 3,
-      "HSV rgb scratch was not grown (preflight missing)"
+    // White-box: the direct HSV path is RGB-free — the rgb scratch is
+    // never grown.
+    assert_eq!(
+      sink.rgb_scratch_capacity(),
+      0,
+      "HSV-only direct path must not allocate the rgb scratch"
     );
   }
   let lu16_ref: std::vec::Vec<u16> = yp.iter().map(|&b| b as u16).collect();
   assert_eq!(lu16, lu16_ref, "no-rgb direct luma_u16 == zero-extended Y");
 
   // Oracle: same source with rgb attached (HSV derives from the caller
-  // buffer instead of scratch) — HSV must be identical.
+  // RGB buffer) — HSV must be identical.
   let mut rgb = std::vec![0u8; w * h * 3];
   let mut oh = std::vec![0u8; w * h];
   let mut os = std::vec![0u8; w * h];
@@ -998,12 +997,12 @@ fn yuva444p_direct_luma_u16_with_hsv_no_rgb_buffer_writes_both() {
       .unwrap();
     yuva444p_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
   }
-  assert_eq!(hh, oh, "scratch-path H == rgb-attached H");
-  assert_eq!(ss, os, "scratch-path S == rgb-attached S");
-  assert_eq!(vv, ov, "scratch-path V == rgb-attached V");
+  assert_eq!(hh, oh, "direct H == rgb-attached H");
+  assert_eq!(ss, os, "direct S == rgb-attached S");
+  assert_eq!(vv, ov, "direct V == rgb-attached V");
   assert!(
     hh.iter().chain(ss.iter()).chain(vv.iter()).any(|&b| b != 0),
-    "HSV scratch path produced no output"
+    "HSV direct path produced no output"
   );
 }
 

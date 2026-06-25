@@ -4464,6 +4464,16 @@ pub(crate) fn arm_rgb_scratch_alloc_failure() {
   FORCE_RGB_SCRATCH_ALLOC_FAILURE.with(|f| f.set(true));
 }
 
+/// Clears the [`arm_rgb_scratch_alloc_failure`] failpoint without firing it.
+/// Needed by RGB-free paths (e.g. the #263 direct YUVA→HSV route) that
+/// deliberately never call [`rgb_row_buf_or_scratch`]: arming proves the path
+/// does not consume the flag, and this disarm prevents an un-consumed flag
+/// from leaking into a later same-thread test. Test-only.
+#[cfg(all(test, feature = "std", feature = "yuva"))]
+pub(crate) fn disarm_rgb_scratch_alloc_failure() {
+  FORCE_RGB_SCRATCH_ALLOC_FAILURE.with(|f| f.set(false));
+}
+
 /// Pick an RGB row buffer for the kernel to write into: caller's RGB
 /// plane slice when attached, or the growing scratch buffer otherwise
 /// (HSV-only callers don't allocate an RGB plane). Returns

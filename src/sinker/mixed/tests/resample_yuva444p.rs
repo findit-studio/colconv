@@ -697,64 +697,67 @@ fn yuva444p_resample_simd_matches_scalar() {
 }
 
 #[test]
-fn yuva444p_direct_hsv_scratch_alloc_failure_writes_nothing() {
-  // Recoverable-allocation failure-path regression: on the direct
-  // (identity) path, `with_luma` + `with_luma_u16` + `with_hsv` with NO rgb
-  // plane attached routes HSV through the growing rgb scratch. The fallible
-  // scratch grow is preflighted at the TOP of the row body, BEFORE any
-  // caller-output write. If the grow refuses (simulated via the
-  // `arm_rgb_scratch_alloc_failure` failpoint) the row must return
-  // `AllocationFailed` and leave every caller buffer UNTOUCHED — proving no
-  // partial write. With the OLD ordering (luma_u16 written before the
-  // preflight) the luma_u16 sentinel would be clobbered and this test fails.
-  const SENT8: u8 = 0xAB;
-  const SENT16: u16 = 0xABCD;
+fn yuva444p_direct_hsv_only_is_rgb_free_and_infallible() {
+  // #263 PR 8: on the direct (identity) path, `with_luma` +
+  // `with_luma_u16` + `with_hsv` with NO rgb / rgba plane attached now
+  // routes HSV through the direct `yuv_444_to_hsv_row` kernel — it does
+  // NOT touch the growing rgb scratch. Proof: arm the rgb-scratch
+  // allocation failpoint (which would surface `AllocationFailed` if the
+  // path still grew the scratch); the row must instead SUCCEED, leave the
+  // scratch unallocated, and write every output. The failpoint is
+  // take-on-read, so disarm it after to avoid leaking into a later
+  // same-thread test.
   let (y, u, v, a) = planes(0x7E57);
-  let mut luma = std::vec![SENT8; SRC * SRC];
-  let mut lu16 = std::vec![SENT16; SRC * SRC];
-  let mut hh = std::vec![SENT8; SRC * SRC];
-  let mut ss = std::vec![SENT8; SRC * SRC];
-  let mut vv = std::vec![SENT8; SRC * SRC];
-  let mut sink = MixedSinker::<Yuva444p>::new(SRC, SRC)
-    .with_luma(&mut luma)
-    .unwrap()
-    .with_luma_u16(&mut lu16)
-    .unwrap()
-    .with_hsv(&mut hh, &mut ss, &mut vv)
-    .unwrap();
-  sink.begin_frame(SRC as u32, SRC as u32).unwrap();
-  super::super::arm_rgb_scratch_alloc_failure();
-  let err = sink
-    .process(Yuva444pRow::new(
-      &y[..SRC],
-      &u[..SRC],
-      &v[..SRC],
-      &a[..SRC],
+  let mut luma = std::vec![0u8; SRC * SRC];
+  let mut lu16 = std::vec![0u16; SRC * SRC];
+  let mut hh = std::vec![0u8; SRC * SRC];
+  let mut ss = std::vec![0u8; SRC * SRC];
+  let mut vv = std::vec![0u8; SRC * SRC];
+  {
+    let mut sink = MixedSinker::<Yuva444p>::new(SRC, SRC)
+      .with_luma(&mut luma)
+      .unwrap()
+      .with_luma_u16(&mut lu16)
+      .unwrap()
+      .with_hsv(&mut hh, &mut ss, &mut vv)
+      .unwrap();
+    sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+    super::super::arm_rgb_scratch_alloc_failure();
+    sink
+      .process(Yuva444pRow::new(
+        &y[..SRC],
+        &u[..SRC],
+        &v[..SRC],
+        &a[..SRC],
+        0,
+        M,
+        FR,
+      ))
+      .expect("HSV-only direct row must be RGB-free (no scratch alloc)");
+    assert_eq!(
+      sink.rgb_scratch_capacity(),
       0,
-      M,
-      FR,
-    ))
-    .unwrap_err();
-  assert!(
-    matches!(
-      err,
-      MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
-    ),
-    "scratch alloc refusal not surfaced as AllocationFailed: {err:?}"
+      "HSV-only direct path must not allocate the rgb scratch"
+    );
+  }
+  super::super::disarm_rgb_scratch_alloc_failure();
+  let lu16_ref: std::vec::Vec<u16> = y[..SRC].iter().map(|&b| b as u16).collect();
+  assert_eq!(
+    &lu16[..SRC],
+    &lu16_ref[..],
+    "direct luma_u16 == zero-extended Y"
   );
-  drop(sink);
-  assert!(
-    luma.iter().all(|&b| b == SENT8),
-    "luma partially written before failed scratch preflight"
+  assert_eq!(&luma[..SRC], &y[..SRC], "direct luma == Y verbatim");
+  // HSV row 0 matches the explicit YUV→RGB→HSV reference (4:4:4 kernel).
+  let mut rgb0 = std::vec![0u8; SRC * 3];
+  crate::row::yuv_444_to_rgb_row(&y[..SRC], &u[..SRC], &v[..SRC], &mut rgb0, SRC, M, FR, true);
+  let (mut rh, mut rs, mut rv) = (
+    std::vec![0u8; SRC],
+    std::vec![0u8; SRC],
+    std::vec![0u8; SRC],
   );
-  assert!(
-    lu16.iter().all(|&b| b == SENT16),
-    "luma_u16 partially written before failed scratch preflight"
-  );
-  assert!(
-    hh.iter().all(|&b| b == SENT8)
-      && ss.iter().all(|&b| b == SENT8)
-      && vv.iter().all(|&b| b == SENT8),
-    "hsv partially written before failed scratch preflight"
-  );
+  crate::row::rgb_to_hsv_row(&rgb0, &mut rh, &mut rs, &mut rv, SRC, true);
+  assert_eq!(&hh[..SRC], &rh[..], "row 0 H");
+  assert_eq!(&ss[..SRC], &rs[..], "row 0 S");
+  assert_eq!(&vv[..SRC], &rv[..], "row 0 V");
 }
