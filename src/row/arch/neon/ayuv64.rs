@@ -598,3 +598,107 @@ pub(crate) unsafe fn ayuv64_to_luma_u16_row<const BE: bool>(
     }
   }
 }
+
+// ---- AYUV64 → HSV (staged via a reused 8-bit RGB chunk) ----------------
+//
+// The NEON twin of the scalar `ayuv64_to_hsv_row` kernel. Rather than
+// re-derive an HSV-specific register pipeline, it fills a small fixed
+// reused **8-bit** RGB scratch (one `HSV_CHUNK`-pixel chunk at a time)
+// using the EXISTING NEON `ayuv64_to_rgb_row::<BE>` kernel of this file
+// — so the chunk filler IS the production 8-bit RGB kernel — then runs
+// the NEON `rgb_to_hsv_row` on the chunk. This makes the result byte-
+// identical to `rgb_to_hsv_row(ayuv64_to_rgb_row::<BE>(...))` within the
+// NEON tier — the same 8-bit RGB intermediate the existing AYUV64 HSV
+// path uses — with no source-width RGB allocation. The scalar tail of
+// the underlying RGB kernel handles widths below the SIMD block, so no
+// separate tail is needed here. Source α (slot 0) is dropped by the RGB
+// kernel; HSV is colour-only.
+//
+// The chunked driver is defined locally (mirroring the semi-planar
+// high-bit `pn_hsv_via_rgb_chunks`) and gated `yuv-444-packed` with the
+// rest of this file. Only `rgb_to_hsv_row` (ungated) is shared.
+
+/// One reused 8-bit RGB chunk's worth of pixels staged before the HSV
+/// pass.
+const HSV_CHUNK: usize = 64;
+
+/// Shared NEON driver: walks `width` in `HSV_CHUNK`-pixel chunks, fills a
+/// small reused stack RGB scratch via `fill_rgb` (the existing NEON RGB
+/// kernel for the format, passed the chunk `offset` and length `n`),
+/// then runs the NEON [`rgb_to_hsv_row`] on that chunk into the H/S/V
+/// planes. Byte-identical to `rgb_to_hsv_row(ayuv64_to_rgb_row(...))`
+/// within the NEON tier, with no source-width RGB allocation.
+///
+/// `fill_rgb` receives `(offset, n, &mut rgb_chunk)` and must write
+/// `n * 3` packed RGB bytes for the `n` pixels at `offset`.
+///
+/// # Safety
+///
+/// NEON must be available, and `fill_rgb` must uphold the underlying RGB
+/// kernel's safety contract for each chunk. Each of `h_out` / `s_out` /
+/// `v_out` must be `>= width`.
+#[inline]
+unsafe fn ayuv64_hsv_via_rgb_chunks(
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  mut fill_rgb: impl FnMut(usize, usize, &mut [u8]),
+) {
+  let mut scratch = [0u8; HSV_CHUNK * 3];
+  let mut offset = 0;
+  while offset < width {
+    let n = (width - offset).min(HSV_CHUNK);
+    fill_rgb(offset, n, &mut scratch[..n * 3]);
+    // SAFETY: NEON verified by the wrapper's `#[target_feature]`; the
+    // chunk and the output sub-slices are all length `n`.
+    unsafe {
+      rgb_to_hsv_row(
+        &scratch[..n * 3],
+        &mut h_out[offset..offset + n],
+        &mut s_out[offset..offset + n],
+        &mut v_out[offset..offset + n],
+        n,
+      );
+    }
+    offset += n;
+  }
+}
+
+/// NEON: AYUV64 (packed 4:4:4, 16-bit) → planar HSV bytes (OpenCV
+/// encoding), staged via the reused-8-bit-RGB-chunk pattern over the
+/// NEON [`ayuv64_to_rgb_row`] + [`rgb_to_hsv_row`]. Const-generic over
+/// `BE`. Byte-identical to `rgb_to_hsv_row(ayuv64_to_rgb_row::<BE>(...))`
+/// within the NEON tier. Source α is dropped (HSV is colour-only).
+///
+/// # Safety
+///
+/// 1. The NEON feature must be available.
+/// 2. `packed.len() >= width * 4`.
+/// 3. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
+#[inline]
+#[target_feature(enable = "neon")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn ayuv64_to_hsv_row<const BE: bool>(
+  packed: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(packed.len() >= width * 4, "packed row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: the feature is the caller's obligation; the chunk filler
+  // forwards the per-chunk sub-slices to the NEON AYUV64 RGB kernel under
+  // the same contract (its own scalar tail covers small n).
+  unsafe {
+    ayuv64_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      ayuv64_to_rgb_row::<BE>(&packed[offset * 4..], rgb, n, matrix, full_range);
+    });
+  }
+}

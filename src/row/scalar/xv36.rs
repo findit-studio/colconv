@@ -83,6 +83,83 @@ pub(crate) fn xv36_to_rgb_or_rgba_row<const ALPHA: bool, const BE: bool>(
   }
 }
 
+// ---- XV36 → HSV (direct: no RGB scratch) -------------------------------
+//
+// The display-referred twin of [`xv36_to_rgb_or_rgba_row`] (`ALPHA =
+// false`), fused with the OpenCV HSV quantizer. It shares the EXACT
+// per-pixel **8-bit-output** Q15 decode (`Coefficients::for_matrix` +
+// `range_params_n::<12, 8>` + the `>> 4` 12-bit de-pack) as its `_to_rgb`
+// sibling, then feeds the decoded `(r, g, b)` straight into
+// [`rgb_to_hsv_pixel`] and scatters to the H/S/V planes — never
+// materializing a packed-RGB row. The HSV output is 8-bit
+// (`H ∈ [0, 179]`, `S, V ∈ [0, 255]`); XV36 is a 12-bit source but its
+// existing HSV path is `rgb_to_hsv_row` applied to the **8-bit**
+// `xv36_to_rgb` output, so the 8-bit intermediate is reproduced here.
+// The A slot (index 3) is padding — read by `extract_xv36` but discarded
+// — and HSV derives from the COLOR (U/Y/V → RGB → HSV) only. Byte-
+// identical to `rgb_to_hsv_row(xv36_to_rgb_or_rgba_row::<false, BE>(...))`,
+// with no RGB allocation.
+
+/// Scalar XV36 → planar HSV bytes (OpenCV `cv2.COLOR_RGB2HSV` encoding:
+/// `H ∈ [0, 179]`, `S, V ∈ [0, 255]`). Const-generic over `BE` (source
+/// byte order), exactly like [`xv36_to_rgb_or_rgba_row`]. 4:4:4 (no
+/// chroma subsampling): one U/Y/V triple per pixel. The padding A slot
+/// is dropped (HSV is colour-only). Byte-identical to
+/// `rgb_to_hsv_row(xv36_to_rgb_or_rgba_row::<false, BE>(...))`.
+///
+/// # Panics (debug builds)
+///
+/// - `packed.len() >= width * 4`.
+/// - each of `h_out` / `s_out` / `v_out` `>= width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn xv36_to_hsv_row<const BE: bool>(
+  packed: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(packed.len() >= width * 4, "packed row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<12, 8>(full_range);
+  let bias = chroma_bias::<12>();
+
+  for x in 0..width {
+    let base = x * 4;
+    let quad = [
+      load_xv36_u16::<BE>(packed[base]),
+      load_xv36_u16::<BE>(packed[base + 1]),
+      load_xv36_u16::<BE>(packed[base + 2]),
+      load_xv36_u16::<BE>(packed[base + 3]),
+    ];
+    // The A slot (index 3) is padding — dropped by `extract_xv36`; HSV
+    // is colour-only.
+    let (u, y, v) = extract_xv36(&quad);
+    let u_d = q15_scale(u - bias, c_scale);
+    let v_d = q15_scale(v - bias, c_scale);
+    let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
+    let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
+    let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
+
+    let y_s = q15_scale(y - y_off, y_scale);
+    let (h, s, vv) = rgb_to_hsv_pixel(
+      clamp_u8(y_s + r_chroma) as i32,
+      clamp_u8(y_s + g_chroma) as i32,
+      clamp_u8(y_s + b_chroma) as i32,
+    );
+    h_out[x] = h;
+    s_out[x] = s;
+    v_out[x] = vv;
+  }
+}
+
 // ---- u16 RGB / RGBA native-depth output --------------------------------
 
 #[cfg_attr(not(tarpaulin), inline(always))]

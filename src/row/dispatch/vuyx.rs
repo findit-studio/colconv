@@ -33,6 +33,13 @@ use crate::{
 /// α channel in the output. See that function for full documentation.
 pub use super::vuya::vuya_to_rgb_row as vuyx_to_rgb_row;
 
+/// Converts one row of VUYX **directly** to planar HSV bytes. Identical
+/// to [`crate::row::vuya_to_hsv_row`] — HSV derives from the V/U/Y colour
+/// bytes only and the padding byte is dropped, so the kernel is
+/// bit-identical regardless of α semantics. See that function for full
+/// documentation.
+pub use super::vuya::vuya_to_hsv_row as vuyx_to_hsv_row;
+
 /// Extracts one row of 8-bit luma from a packed VUYX buffer. Identical to
 /// [`crate::row::vuya_to_luma_row`] — Y is at byte offset 2 of each quadruple
 /// regardless of α semantics. See that function for full documentation.
