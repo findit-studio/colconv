@@ -205,6 +205,23 @@ use crate::{
     rgb565_to,
   },
 };
+// Packed float RGB — already-RGB half/single-precision sources (no chroma
+// matrix). Both are endian-generic over the f16/f32 byte order: marker
+// `Fmt<const BE>` over the trailing-`BE` frame `FmtFrame<'a, BE>` (no
+// leading bit-depth const, same shape as XYZ12 / Rgb48), so they ride the
+// `@const BE` arm and delegate to the const-generic `{fmt}_to_endian::<_,
+// BE>` (the LE `{fmt}_to` is its `BE = false` wrapper). The free walkers
+// still take `(full_range, matrix)` — the RGB-input row threads them to the
+// `with_luma` / `with_hsv` outputs — so each reuses [`YuvOptions`]; the
+// float-RGB outputs (`with_rgb` / `with_rgb_f16` / `…`) ignore them. The
+// `f16` element type rides on `half`, already a `rgb-float` dependency. No
+// tone-mapping / transfer parameter exists: the float-to-integer conversion
+// is a fixed clamp + scale.
+#[cfg(feature = "rgb-float")]
+use crate::{
+  frame::{Rgbf16Frame, Rgbf32Frame},
+  source::{Rgbf16, Rgbf16Sink, Rgbf32, Rgbf32Sink, rgbf16_to_endian, rgbf32_to_endian},
+};
 // Gray — single-luma (`Gray8`/`GrayN`/`Gray16`) and luma+alpha
 // (`Ya8`/`Ya16`) sources. Every gray walker takes `(full_range, matrix)`
 // (the RGB / HSV outputs rescale limited-range luma; `matrix` is carried
@@ -217,13 +234,23 @@ use crate::{
 // `GrayNFrame<'a, BITS, BE>`, so they ride the `@const_bits` arm; each
 // delegates to the const-generic `{fmt}_to_endian::<_, BE>` (the LE
 // `{fmt}_to` is its `BE = false` wrapper), covering LE + BE in one impl.
+//
+// The float-luma `Grayf32` is endian-generic over the f32 byte order:
+// marker `Grayf32<const BE>` over the trailing-`BE` frame `Grayf32Frame<'a,
+// BE>` (no leading bit-depth const), so it rides the `@const BE` arm and
+// delegates to `grayf32_to_endian::<_, BE>`. Its free walker also takes
+// `(full_range, matrix)` — `full_range` selects whether the RGB output
+// rescales the luma — so it reuses [`YuvOptions`] like the integer gray
+// families. (FFmpeg has no `grayf16` source, so the float-luma set is
+// `Grayf32` alone.)
 #[cfg(feature = "gray")]
 use crate::{
-  frame::{Gray8Frame, Gray16Frame, GrayNFrame, Ya8Frame, Ya16Frame},
+  frame::{Gray8Frame, Gray16Frame, GrayNFrame, Grayf32Frame, Ya8Frame, Ya16Frame},
   source::{
     Gray8, Gray8Sink, Gray9, Gray9Sink, Gray10, Gray10Sink, Gray12, Gray12Sink, Gray14, Gray14Sink,
-    Gray16, Gray16Sink, Ya8, Ya8Sink, Ya16, Ya16Sink, gray8_to, gray9_to_endian, gray10_to_endian,
-    gray12_to_endian, gray14_to_endian, gray16_to_endian, ya8_to, ya16_to_endian,
+    Gray16, Gray16Sink, Grayf32, Grayf32Sink, Ya8, Ya8Sink, Ya16, Ya16Sink, gray8_to,
+    gray9_to_endian, gray10_to_endian, gray12_to_endian, gray14_to_endian, gray16_to_endian,
+    grayf32_to_endian, ya8_to, ya16_to_endian,
   },
 };
 // Planar GBR — already-RGB sources (G/B/R planes, no chroma matrix). The
@@ -237,15 +264,31 @@ use crate::{
 // and delegate to the const-generic `{fmt}_to_endian::<_, BE>`, covering
 // LE + BE in one impl. (FFmpeg has no `GBRAP9`, so the planar-GBRA
 // high-bit set starts at 10.)
+//
+// The float GBR families (`Gbrpf16` / `Gbrpf32` single G/B/R, `Gbrapf16` /
+// `Gbrapf32` + alpha) are endian-generic over the f16/f32 byte order:
+// marker `Fmt<const BE>` over the trailing-`BE` frame `FmtFrame<'a, BE>`
+// (no leading bit-depth const), so they ride the `@const BE` arm and
+// delegate to `{fmt}_to_endian::<_, BE>`. **Unlike** the integer GBR
+// families, their free walkers take only `(src, sink)` — they carry **no**
+// `full_range` / `matrix` knobs (the float row is already RGB and ships no
+// conversion metadata), so each uses the unit [`Options`](Walker::Options)
+// `()`. The alpha plane of the `Gbrapf*` frames is read inside the walker
+// (RGBA outputs only), never an `Options` knob.
 #[cfg(feature = "gbr")]
 use crate::{
-  frame::{GbrapFrame, GbrapHighBitFrame, GbrpFrame, GbrpHighBitFrame},
+  frame::{
+    GbrapFrame, GbrapHighBitFrame, Gbrapf16Frame, Gbrapf32Frame, GbrpFrame, GbrpHighBitFrame,
+    Gbrpf16Frame, Gbrpf32Frame,
+  },
   source::{
     Gbrap, Gbrap10, Gbrap10Sink, Gbrap12, Gbrap12Sink, Gbrap14, Gbrap14Sink, Gbrap16, Gbrap16Sink,
-    GbrapSink, Gbrp, Gbrp9, Gbrp9Sink, Gbrp10, Gbrp10Sink, Gbrp12, Gbrp12Sink, Gbrp14, Gbrp14Sink,
-    Gbrp16, Gbrp16Sink, GbrpSink, gbrap_to, gbrap10_to_endian, gbrap12_to_endian,
-    gbrap14_to_endian, gbrap16_to_endian, gbrp_to, gbrp9_to_endian, gbrp10_to_endian,
-    gbrp12_to_endian, gbrp14_to_endian, gbrp16_to_endian,
+    GbrapSink, Gbrapf16, Gbrapf16Sink, Gbrapf32, Gbrapf32Sink, Gbrp, Gbrp9, Gbrp9Sink, Gbrp10,
+    Gbrp10Sink, Gbrp12, Gbrp12Sink, Gbrp14, Gbrp14Sink, Gbrp16, Gbrp16Sink, GbrpSink, Gbrpf16,
+    Gbrpf16Sink, Gbrpf32, Gbrpf32Sink, gbrap_to, gbrap10_to_endian, gbrap12_to_endian,
+    gbrap14_to_endian, gbrap16_to_endian, gbrapf16_to_endian, gbrapf32_to_endian, gbrp_to,
+    gbrp9_to_endian, gbrp10_to_endian, gbrp12_to_endian, gbrp14_to_endian, gbrp16_to_endian,
+    gbrpf16_to_endian, gbrpf32_to_endian,
   },
 };
 
@@ -323,6 +366,7 @@ pub trait Walker<S> {
   feature = "v210",
   feature = "yuva",
   feature = "rgb",
+  feature = "rgb-float",
   feature = "rgb-legacy",
   feature = "gray",
   feature = "gbr",
@@ -1196,6 +1240,23 @@ walker!(@const BE: bool; X2Rgb10<BE>, X2Rgb10Sink, X2Rgb10Frame, YuvOptions,
 walker!(@const BE: bool; X2Bgr10<BE>, X2Bgr10Sink, X2Bgr10Frame, YuvOptions,
   |src, opts, sink| x2bgr10_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
 
+// ---- Packed float RGB (Rgbf16 / Rgbf32; LE + BE via `_to_endian`) ------
+// Half/single-precision packed RGB. Marker `Fmt<const BE>` over the
+// trailing-`BE` frame `FmtFrame<'a, BE>` (no leading bit-depth const), so
+// they ride the `@const BE` arm and delegate to `{fmt}_to_endian::<_, BE>`;
+// one impl covers both LE (`BE = false`) and BE (`BE = true`). The free
+// walkers still take `(full_range, matrix)` (the RGB-input row threads them
+// to `with_luma` / `with_hsv`; the float-RGB outputs ignore them), so each
+// reuses [`YuvOptions`] — byte-identical to a direct walker call.
+#[cfg(feature = "rgb-float")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb-float")))]
+walker!(@const BE: bool; Rgbf16<BE>, Rgbf16Sink, Rgbf16Frame, YuvOptions,
+  |src, opts, sink| rgbf16_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "rgb-float")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb-float")))]
+walker!(@const BE: bool; Rgbf32<BE>, Rgbf32Sink, Rgbf32Frame, YuvOptions,
+  |src, opts, sink| rgbf32_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+
 // ---- Legacy packed RGB (byte-order-fixed LE; plain arm) ----------------
 #[cfg(feature = "rgb-legacy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
@@ -1315,6 +1376,17 @@ walker!(@const BE: bool; Gray16<BE>, Gray16Sink, Gray16Frame, YuvOptions,
 walker!(@const BE: bool; Ya16<BE>, Ya16Sink, Ya16Frame, YuvOptions,
   |src, opts, sink| ya16_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
 
+// ---- Gray, float-luma Grayf32 (BE-generic marker; LE + BE via `_to_endian`)
+// Marker `Grayf32<const BE>` over the trailing-`BE` frame `Grayf32Frame<'a,
+// BE>` (no leading bit-depth const), so it rides the `@const BE` arm (same
+// shape as Gray16) and delegates to `grayf32_to_endian::<_, BE>`. The free
+// walker takes `(full_range, matrix)` — `full_range` selects whether the
+// RGB output rescales the luma — so it reuses [`YuvOptions`].
+#[cfg(feature = "gray")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
+walker!(@const BE: bool; Grayf32<BE>, Grayf32Sink, Grayf32Frame, YuvOptions,
+  |src, opts, sink| grayf32_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+
 // ===== Planar GBR families =============================================
 //
 // Already-RGB sources (G / B / R planes, no chroma matrix). The free
@@ -1380,3 +1452,29 @@ walker!(@const_bits 14, BE; Gbrap14, Gbrap14Sink, GbrapHighBitFrame, YuvOptions,
 #[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
 walker!(@const_bits 16, BE; Gbrap16, Gbrap16Sink, GbrapHighBitFrame, YuvOptions,
   |src, opts, sink| gbrap16_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+
+// ---- Planar GBR, float (Gbrpf16/32, Gbrapf16/32; LE + BE via `_to_endian`)
+// Half/single-precision planar GBR (+ alpha for the `Gbrapf*` pair). Marker
+// `Fmt<const BE>` over the trailing-`BE` frame `FmtFrame<'a, BE>` (no
+// leading bit-depth const), so they ride the `@const BE` arm and delegate
+// to `{fmt}_to_endian::<_, BE>`; one impl covers both LE and BE. **Unlike**
+// the integer GBR families, the float walkers take only `(src, sink)` — no
+// `full_range` / `matrix` knobs — so the [`Options`](Walker::Options) is the
+// unit type `()`. The `Gbrapf*` alpha plane is read inside the walker for
+// the RGBA outputs only, never an `Options` knob.
+#[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
+walker!(@const BE: bool; Gbrpf16<BE>, Gbrpf16Sink, Gbrpf16Frame, (),
+  |src, _opts, sink| gbrpf16_to_endian::<_, BE>(src, sink));
+#[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
+walker!(@const BE: bool; Gbrpf32<BE>, Gbrpf32Sink, Gbrpf32Frame, (),
+  |src, _opts, sink| gbrpf32_to_endian::<_, BE>(src, sink));
+#[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
+walker!(@const BE: bool; Gbrapf16<BE>, Gbrapf16Sink, Gbrapf16Frame, (),
+  |src, _opts, sink| gbrapf16_to_endian::<_, BE>(src, sink));
+#[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
+walker!(@const BE: bool; Gbrapf32<BE>, Gbrapf32Sink, Gbrapf32Frame, (),
+  |src, _opts, sink| gbrapf32_to_endian::<_, BE>(src, sink));
