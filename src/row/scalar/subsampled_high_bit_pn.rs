@@ -631,3 +631,148 @@ pub(crate) fn p_n_444_16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const BE: boo
     }
   }
 }
+
+// ---- High-bit-packed semi-planar 4:2:0 (P010/P012) → HSV (direct) ------
+//
+// The display-referred twin of [`p_n_to_rgb_row`], fused with the OpenCV
+// HSV quantizer. It shares the EXACT per-pixel **8-bit-output** Q15
+// decode (`Coefficients::for_matrix` + `range_params_n::<BITS, 8>` + the
+// `>> (16 - BITS)` high-bit de-pack + the interleaved-UV 1→2 upsampling
+// shape) as its `_to_rgb` sibling, then feeds the decoded `(r, g, b)`
+// straight into [`rgb_to_hsv_pixel`] and scatters to the H/S/V planes —
+// never materializing a packed-RGB row. The HSV output is 8-bit
+// (`H ∈ [0, 179]`, `S, V ∈ [0, 255]`) regardless of source depth,
+// because the existing high-bit HSV path is `rgb_to_hsv_row` applied to
+// the **8-bit** `p_n_to_rgb_row` output. This kernel is therefore
+// byte-identical to `rgb_to_hsv_row(p_n_to_rgb_row::<BITS, BE>(...))`
+// but allocates no RGB intermediate. P016 (BITS = 16) has its own
+// [`p16_to_hsv_row`] (the i32 path would overflow before clamp at 16
+// bits). The SIMD backends mirror this via a small reused 8-bit-RGB
+// chunk filled by the existing SIMD `p_n_to_rgb_row` plus the SIMD
+// `rgb_to_hsv_row`.
+
+/// High-bit-packed semi-planar 4:2:0 (P010/P012) → planar HSV bytes
+/// (OpenCV `cv2.COLOR_RGB2HSV` encoding: `H ∈ [0, 179]`,
+/// `S, V ∈ [0, 255]`). Const-generic over `BITS ∈ {10, 12}` and `BE`
+/// (source byte order), exactly like [`p_n_to_rgb_row`]. Chroma is
+/// half-width interleaved `U, V`, nearest-neighbor 1→2 upsampled per
+/// pixel pair.
+///
+/// Byte-identical to `rgb_to_hsv_row(p_n_to_rgb_row::<BITS, BE>(...))`.
+///
+/// # Panics (debug builds)
+///
+/// - `width` must be even.
+/// - `y.len() >= width`, `uv_half.len() >= width`, and each of
+///   `h_out` / `s_out` / `v_out` `>= width`.
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn p_n_to_hsv_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // Same compile-time guard as `p_n_to_rgb_or_rgba_row`: the i32 8-bit
+  // Q15 pipeline is valid for {10, 12}; 16 lives in `p16_to_hsv_row`.
+  const { assert!(BITS == 10 || BITS == 12) };
+  debug_assert_eq!(width & 1, 0, "semi-planar high-bit requires even width");
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(uv_half.len() >= width, "uv row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<BITS, 8>(full_range);
+  let bias = chroma_bias::<BITS>();
+  let shift = 16 - BITS;
+
+  let mut x = 0;
+  while x < width {
+    let c_idx = x / 2;
+    let u_sample = load_u16::<BE>(uv_half[c_idx * 2]) >> shift;
+    let v_sample = load_u16::<BE>(uv_half[c_idx * 2 + 1]) >> shift;
+    let u_d = q15_scale(u_sample as i32 - bias, c_scale);
+    let v_d = q15_scale(v_sample as i32 - bias, c_scale);
+    let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
+    let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
+    let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
+
+    let y0 = q15_scale((load_u16::<BE>(y[x]) >> shift) as i32 - y_off, y_scale);
+    let (h0, s0, v0) = rgb_to_hsv_pixel(
+      clamp_u8(y0 + r_chroma) as i32,
+      clamp_u8(y0 + g_chroma) as i32,
+      clamp_u8(y0 + b_chroma) as i32,
+    );
+    h_out[x] = h0;
+    s_out[x] = s0;
+    v_out[x] = v0;
+
+    let y1 = q15_scale((load_u16::<BE>(y[x + 1]) >> shift) as i32 - y_off, y_scale);
+    let (h1, s1, v1) = rgb_to_hsv_pixel(
+      clamp_u8(y1 + r_chroma) as i32,
+      clamp_u8(y1 + g_chroma) as i32,
+      clamp_u8(y1 + b_chroma) as i32,
+    );
+    h_out[x + 1] = h1;
+    s_out[x + 1] = s1;
+    v_out[x + 1] = v1;
+
+    x += 2;
+  }
+}
+
+// ---- High-bit-packed semi-planar P-format → native luma ---------------
+//
+// For the high-bit semi-planar P-format family the luma plane is the Y
+// plane **range-reduced to 8 bits** — NOT a verbatim copy (unlike 8-bit
+// NV). P010/P012/P016 all store their active value in the **high**
+// `BITS` of each wire `u16`, so the top byte (`>> 8`) is the
+// range-expanded 8-bit luma for every member: for P010 (`value << 6`)
+// the de-pack-then-downshift `(value >> (16 - 10)) >> (10 - 8)`
+// collapses to `>> 8`; for P012 (`value << 4`) `(>> 4) >> 4` collapses
+// to `>> 8`; for P016 (`>> 0`) `>> 8` is the top byte directly. So a
+// single `(logical >> 8) as u8` serves the whole family, matching the
+// `y2xx_n_to_luma_row` (`extract BITS-bit value, then >> (BITS - 8)`)
+// contract and bit-for-bit reproducing the sink's former inline native-Y
+// luma loop. The P-format sink exposes no `luma_u16` output (it is
+// always `&mut None`), so there is no u16 luma variant. Y is a
+// contiguous plane here — like
+// [`y_plane_to_luma_u16_row`](super::y_plane_to_luma_u16::y_plane_to_luma_u16_row),
+// a trivial per-element shift with no SIMD (the auto-vectorizer handles
+// it); only the packed-Y families (Y2xx, V210, …) need a SIMD luma
+// deinterleave.
+
+/// High-bit-packed semi-planar P-format (P010/P012/P016) → 8-bit native
+/// luma: the Y plane's high byte. Const-generic over `BE` (source byte
+/// order). Each wire `u16` is normalized to host-native, then
+/// `>> 8` extracts the range-reduced 8-bit luma. Bit-identical to the
+/// P-format sink's former inline native-Y loop and to
+/// `y2xx_n_to_luma_row::<BITS, BE>` (the `>> (16 - BITS)` de-pack and
+/// the `>> (BITS - 8)` downshift compose to `>> 8` for any
+/// `BITS ∈ {10, 12, 16}`). `BITS` is accepted for API symmetry with the
+/// RGB / HSV kernels; the result does not depend on it.
+///
+/// # Panics (debug builds)
+///
+/// - `y.len() >= width` and `luma_out.len() >= width`.
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn p_n_to_luma_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  luma_out: &mut [u8],
+  width: usize,
+) {
+  const { assert!(BITS == 10 || BITS == 12 || BITS == 16) };
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(luma_out.len() >= width, "luma_out row too short");
+  for (d, &s) in luma_out[..width].iter_mut().zip(y[..width].iter()) {
+    *d = (load_u16::<BE>(s) >> 8) as u8;
+  }
+}

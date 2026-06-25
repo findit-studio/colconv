@@ -820,3 +820,157 @@ pub(crate) unsafe fn p16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const BE: boo
     }
   }
 }
+
+// ---- High-bit semi-planar P-format → HSV (staged via a reused 8-bit RGB chunk) ----
+//
+// The AVX‑512 twins of the scalar `p_n_to_hsv_row` / `p16_to_hsv_row`
+// kernels. Rather than re-derive an HSV-specific register pipeline, each
+// fills a small fixed reused **8-bit** RGB scratch (one `HSV_CHUNK`-pixel
+// chunk at a time) using the EXISTING AVX‑512 `p_n_to_rgb_row::<BITS,
+// BE>` / `p16_to_rgb_row::<BE>` kernel of this file — so the chunk filler
+// IS the production 8-bit RGB kernel — then runs the AVX‑512
+// `rgb_to_hsv_row` on the chunk. This makes the result byte-identical to
+// `rgb_to_hsv_row(p_n_to_rgb_row::<BITS, BE>(...))` (and the P016
+// analogue) within the AVX‑512 tier — the same 8-bit RGB intermediate
+// the existing high-bit HSV path uses — with no source-width RGB
+// allocation. The scalar tail of each underlying RGB kernel handles
+// widths below the SIMD block, so no separate tail is needed here.
+// `HSV_CHUNK` (64) is a multiple of 2, so every chunk offset lands on a
+// chroma-sample boundary for the 1→2 (4:2:0) interleaved-UV shape (`uv`
+// byte offset = pixel offset).
+//
+// The chunked driver is defined locally (mirroring the semi-planar 8-bit
+// `nv_to_hsv_via_rgb_chunks`) rather than reusing the planar
+// `yuv_to_hsv_via_rgb_chunks`, because this file compiles under
+// `yuv-semi-planar` alone while the planar driver lives behind the
+// `yuv-planar` gate. Only `rgb_to_hsv_row` (ungated) is shared.
+
+/// One reused 8-bit RGB chunk's worth of pixels staged before the HSV
+/// pass.
+const HSV_CHUNK: usize = 64;
+
+/// Shared AVX‑512 driver: walks `width` in `HSV_CHUNK`-pixel chunks,
+/// fills a small reused stack RGB scratch via `fill_rgb` (the existing
+/// AVX‑512 RGB kernel for the format, passed the chunk `offset` and
+/// length `n`), then runs the AVX‑512 [`rgb_to_hsv_row`] on that chunk
+/// into the H/S/V planes. Byte-identical to
+/// `rgb_to_hsv_row(p*_to_rgb_row(...))` within the AVX‑512 tier, with no
+/// source-width RGB allocation.
+///
+/// `fill_rgb` receives `(offset, n, &mut rgb_chunk)` and must write
+/// `n * 3` packed RGB bytes for the `n` pixels at `offset`.
+///
+/// # Safety
+///
+/// AVX‑512BW must be available, and `fill_rgb` must uphold the underlying
+/// RGB kernel's safety contract for each chunk. Each of `h_out` /
+/// `s_out` / `v_out` must be `>= width`.
+#[inline]
+unsafe fn pn_hsv_via_rgb_chunks(
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  mut fill_rgb: impl FnMut(usize, usize, &mut [u8]),
+) {
+  let mut scratch = [0u8; HSV_CHUNK * 3];
+  let mut offset = 0;
+  while offset < width {
+    let n = (width - offset).min(HSV_CHUNK);
+    fill_rgb(offset, n, &mut scratch[..n * 3]);
+    // SAFETY: AVX‑512 verified by the wrapper's `#[target_feature]`; the
+    // chunk and the output sub-slices are all length `n`.
+    unsafe {
+      rgb_to_hsv_row(
+        &scratch[..n * 3],
+        &mut h_out[offset..offset + n],
+        &mut s_out[offset..offset + n],
+        &mut v_out[offset..offset + n],
+        n,
+      );
+    }
+    offset += n;
+  }
+}
+
+/// AVX‑512: high-bit-packed semi-planar 4:2:0 (P010/P012) → planar HSV
+/// bytes (OpenCV encoding), staged via the reused-8-bit-RGB-chunk
+/// pattern over the AVX‑512 [`p_n_to_rgb_row`] + [`rgb_to_hsv_row`].
+/// Const-generic over `BITS ∈ {10, 12}` and `BE`. Byte-identical to
+/// `rgb_to_hsv_row(p_n_to_rgb_row::<BITS, BE>(...))` within the AVX‑512
+/// tier.
+///
+/// # Safety
+///
+/// 1. The AVX‑512BW feature must be available.
+/// 2. `width & 1 == 0`.
+/// 3. `y.len() >= width`, `uv_half.len() >= width`.
+/// 4. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn p_n_to_hsv_row<const BITS: u32, const BE: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(width & 1, 0, "semi-planar high-bit requires even width");
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(uv_half.len() >= width, "uv row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: the feature is the caller's obligation; the chunk filler
+  // forwards the per-chunk sub-slices to the AVX‑512 high-bit 4:2:0 RGB
+  // kernel under the same contract (its own scalar tail covers small n).
+  unsafe {
+    pn_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      p_n_to_rgb_row::<BITS, BE>(&y[offset..], &uv_half[offset..], rgb, n, matrix, full_range);
+    });
+  }
+}
+
+/// AVX‑512: P016 (semi-planar 4:2:0, 16-bit) → planar HSV bytes (OpenCV
+/// encoding), staged via the AVX‑512 [`p16_to_rgb_row`] +
+/// [`rgb_to_hsv_row`]. `BE` selects the source byte order. Byte-
+/// identical to `rgb_to_hsv_row(p16_to_rgb_row::<BE>(...))` within the
+/// AVX‑512 tier.
+///
+/// # Safety
+///
+/// Same contract as [`p_n_to_hsv_row`].
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn p16_to_hsv_row<const BE: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(width & 1, 0, "semi-planar 4:2:0 requires even width");
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(uv_half.len() >= width, "uv row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: the feature is the caller's obligation; the chunk filler
+  // forwards to the AVX‑512 P016 RGB kernel under the same contract (its
+  // own scalar tail covers small n).
+  unsafe {
+    pn_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      p16_to_rgb_row::<BE>(&y[offset..], &uv_half[offset..], rgb, n, matrix, full_range);
+    });
+  }
+}
