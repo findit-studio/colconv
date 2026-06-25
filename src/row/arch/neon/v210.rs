@@ -16,7 +16,7 @@
 //! by `scalar::v210_to_*` on the unconsumed 16-byte tail. Width must
 //! still be even (4:2:2 chroma pair).
 
-#[cfg_attr(miri, allow(unused_imports))]
+#[allow(unused_imports)]
 use core::arch::aarch64::*;
 
 use super::{endian::load_endian_u32x4, *};

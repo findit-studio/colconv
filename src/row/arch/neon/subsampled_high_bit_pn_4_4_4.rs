@@ -1,4 +1,4 @@
-#[cfg_attr(miri, allow(unused_imports))]
+#[allow(unused_imports)]
 use core::arch::aarch64::*;
 
 use crate::{ColorMatrix, row::scalar};
