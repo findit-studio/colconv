@@ -333,6 +333,8 @@ mod subsampled_4_2_0_high_bit;
 // `yuv-planar` inside.
 #[cfg(feature = "yuv-semi-planar")]
 mod subsampled_high_bit_pn;
+#[cfg(feature = "yuv-semi-planar")]
+mod subsampled_high_bit_pn_hsv_direct;
 #[cfg(feature = "v210")]
 mod v210;
 #[cfg(feature = "yuv-444-packed")]

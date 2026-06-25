@@ -635,20 +635,13 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P010<BE>, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
-    // Luma: P010 samples are high-bit-packed (`value << 6`). Taking
-    // the high byte via `>> 8` gives the top 8 bits of the 10-bit
-    // value — functionally equivalent to
-    // `(value >> 2)` for the yuv420p10 path.
+    // Luma: P010 samples are high-bit-packed (`value << 6`). Taking the
+    // high byte via `>> 8` gives the top 8 bits of the 10-bit value —
+    // functionally equivalent to `(value >> 2)` for the yuv420p10 path.
+    // Routed through the native-Y kernel (bit-identical to the former
+    // inline `>> 8` loop, including the BE-wire normalization).
     if let Some(luma) = luma.as_deref_mut() {
-      let dst = &mut luma[one_plane_start..one_plane_end];
-      for (d, &s) in dst.iter_mut().zip(row.y().iter()) {
-        // Normalize BE-encoded wire bytes to host-native before the
-        // luma downshift — without this, a valid BE P010 sample like
-        // mid-gray `0x8000` would be read as `0x0080` on a LE host
-        // and the `>> 8` would write 0 instead of 128.
-        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
-        *d = (logical >> 8) as u8;
-      }
+      p010_to_luma_row_endian(row.y(), &mut luma[one_plane_start..one_plane_end], w, BE);
     }
 
     // ===== u16 RGB / RGBA path (Strategy A) — see Yuv420p10 for rationale.
@@ -700,10 +693,35 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P010<BE>, R> {
     }
 
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
+    // HSV-without-RGB-or-RGBA goes through the direct `p010_to_hsv_row`
+    // kernel (no source-width RGB scratch). When RGB or RGBA is *also*
+    // attached the RGB kernel runs anyway, so HSV derives off that buffer
+    // for free (the cheap path) and `need_rgb_kernel` keeps it alive.
+    // (Resample row-stage HSV-only is a #263 follow-up — see the row-
+    // stage block above; HSV stays correct via the convert-once path.)
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = want_rgb || want_hsv;
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      p010_to_hsv_row_endian(
+        row.y(),
+        row.uv_half(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
@@ -1107,20 +1125,14 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P012<BE>, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
-    // Luma: P012 samples are high‑bit‑packed (`value << 4`). Taking
-    // the high byte via `>> 8` gives the top 8 bits of the 12‑bit
-    // value — identical accessor to P010 (both put active bits in the
-    // high `BITS` positions of the `u16`).
+    // Luma: P012 samples are high‑bit‑packed (`value << 4`). Taking the
+    // high byte via `>> 8` gives the top 8 bits of the 12‑bit value —
+    // identical accessor to P010 (both put active bits in the high
+    // `BITS` positions of the `u16`). Routed through the native-Y kernel
+    // (bit-identical to the former inline `>> 8` loop, including the
+    // BE-wire normalization).
     if let Some(luma) = luma.as_deref_mut() {
-      let dst = &mut luma[one_plane_start..one_plane_end];
-      for (d, &s) in dst.iter_mut().zip(row.y().iter()) {
-        // Normalize BE-encoded wire bytes to host-native before the
-        // luma downshift — without this, a valid BE P012 sample like
-        // mid-gray `0x8000` would be read as `0x0080` on a LE host
-        // and the `>> 8` would write 0 instead of 128.
-        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
-        *d = (logical >> 8) as u8;
-      }
+      p012_to_luma_row_endian(row.y(), &mut luma[one_plane_start..one_plane_end], w, BE);
     }
 
     // ===== u16 RGB / RGBA path (Strategy A) — see Yuv420p10 for rationale.
@@ -1172,10 +1184,32 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P012<BE>, R> {
     }
 
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
+    // HSV-only (no RGB / RGBA) goes direct through `p012_to_hsv_row` (no
+    // source-width RGB scratch); see the P010 impl for the routing
+    // rationale and the #263 row-stage deferral.
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = want_rgb || want_hsv;
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      p012_to_hsv_row_endian(
+        row.y(),
+        row.uv_half(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
@@ -1577,17 +1611,11 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P016<BE>, R> {
     let one_plane_start = idx * w;
     let one_plane_end = one_plane_start + w;
 
-    // Luma: 16‑bit Y value >> 8 is the top byte.
+    // Luma: 16‑bit Y value >> 8 is the top byte. Routed through the
+    // native-Y kernel (bit-identical to the former inline `>> 8` loop,
+    // including the BE-wire normalization).
     if let Some(luma) = luma.as_deref_mut() {
-      let dst = &mut luma[one_plane_start..one_plane_end];
-      for (d, &s) in dst.iter_mut().zip(row.y().iter()) {
-        // Normalize BE-encoded wire bytes to host-native before the
-        // luma downshift — without this, a valid BE P016 sample like
-        // mid-gray `0x8000` would be read as `0x0080` on a LE host
-        // and the `>> 8` would write 0 instead of 128.
-        let logical = if BE { u16::from_be(s) } else { u16::from_le(s) };
-        *d = (logical >> 8) as u8;
-      }
+      p016_to_luma_row_endian(row.y(), &mut luma[one_plane_start..one_plane_end], w, BE);
     }
 
     // ===== u16 RGB / RGBA path (Strategy A) — see Yuv420p10 for rationale.
@@ -1637,10 +1665,32 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, P016<BE>, R> {
     }
 
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
+    // HSV-only (no RGB / RGBA) goes direct through `p016_to_hsv_row` (no
+    // source-width RGB scratch); see the P010 impl for the routing
+    // rationale and the #263 row-stage deferral.
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = want_rgb || want_hsv;
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      p016_to_hsv_row_endian(
+        row.y(),
+        row.uv_half(),
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      return Ok(());
+    }
 
     if want_rgba && !need_rgb_kernel {
       let rgba_buf = rgba.as_deref_mut().unwrap();
