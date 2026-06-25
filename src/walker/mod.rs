@@ -166,6 +166,49 @@ use crate::{
     rgb565_to,
   },
 };
+// Gray — single-luma (`Gray8`/`GrayN`/`Gray16`) and luma+alpha
+// (`Ya8`/`Ya16`) sources. Every gray walker takes `(full_range, matrix)`
+// (the RGB / HSV outputs rescale limited-range luma; `matrix` is carried
+// but unused by the chroma-free gray kernels), so they all reuse
+// [`YuvOptions`]. `Gray8` / `Ya8` ride the plain arm. `Gray16` / `Ya16`
+// are endian-generic over the trailing-`BE` frames `Gray16Frame<'a, BE>`
+// / `Ya16Frame<'a, BE>` (no leading bit-depth const), so they ride the
+// `@const BE` arm (same shape as XYZ12 / Rgb48). The high-bit
+// `GrayN` (9/10/12/14) carry the depth as a leading const on the shared
+// `GrayNFrame<'a, BITS, BE>`, so they ride the `@const_bits` arm; each
+// delegates to the const-generic `{fmt}_to_endian::<_, BE>` (the LE
+// `{fmt}_to` is its `BE = false` wrapper), covering LE + BE in one impl.
+#[cfg(feature = "gray")]
+use crate::{
+  frame::{Gray8Frame, Gray16Frame, GrayNFrame, Ya8Frame, Ya16Frame},
+  source::{
+    Gray8, Gray8Sink, Gray9, Gray9Sink, Gray10, Gray10Sink, Gray12, Gray12Sink, Gray14, Gray14Sink,
+    Gray16, Gray16Sink, Ya8, Ya8Sink, Ya16, Ya16Sink, gray8_to, gray9_to_endian, gray10_to_endian,
+    gray12_to_endian, gray14_to_endian, gray16_to_endian, ya8_to, ya16_to_endian,
+  },
+};
+// Planar GBR — already-RGB sources (G/B/R planes, no chroma matrix). The
+// free walkers still take `(full_range, matrix)` (the RGB-input row
+// threads them to the `with_luma` / `with_hsv` outputs; the `with_rgb`
+// output ignores them), so every GBR family reuses [`YuvOptions`].
+// 8-bit `Gbrp` / `Gbrap` ride the plain arm. The high-bit
+// `Gbrp{9,10,12,14,16}` / `Gbrap{10,12,14,16}` carry the depth as a
+// leading const on the shared `GbrpHighBitFrame<'a, BITS, BE>` /
+// `GbrapHighBitFrame<'a, BITS, BE>`, so they ride the `@const_bits` arm
+// and delegate to the const-generic `{fmt}_to_endian::<_, BE>`, covering
+// LE + BE in one impl. (FFmpeg has no `GBRAP9`, so the planar-GBRA
+// high-bit set starts at 10.)
+#[cfg(feature = "gbr")]
+use crate::{
+  frame::{GbrapFrame, GbrapHighBitFrame, GbrpFrame, GbrpHighBitFrame},
+  source::{
+    Gbrap, Gbrap10, Gbrap10Sink, Gbrap12, Gbrap12Sink, Gbrap14, Gbrap14Sink, Gbrap16, Gbrap16Sink,
+    GbrapSink, Gbrp, Gbrp9, Gbrp9Sink, Gbrp10, Gbrp10Sink, Gbrp12, Gbrp12Sink, Gbrp14, Gbrp14Sink,
+    Gbrp16, Gbrp16Sink, GbrpSink, gbrap_to, gbrap10_to_endian, gbrap12_to_endian,
+    gbrap14_to_endian, gbrap16_to_endian, gbrp_to, gbrp9_to_endian, gbrp10_to_endian,
+    gbrp12_to_endian, gbrp14_to_endian, gbrp16_to_endian,
+  },
+};
 
 /// A uniform entry point over a source format's frame walker.
 ///
@@ -240,6 +283,8 @@ pub trait Walker<S> {
   feature = "yuva",
   feature = "rgb",
   feature = "rgb-legacy",
+  feature = "gray",
+  feature = "gbr",
 ))]
 macro_rules! walker {
   ($marker:ty, $sink:path, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
@@ -1090,3 +1135,132 @@ walker!(
   YuvOptions,
   |src, opts, sink| bgr444_to(src, opts.full_range(), opts.matrix(), sink)
 );
+
+// ===== Gray families ===================================================
+//
+// Single-luma (`Gray8` / `GrayN` / `Gray16`) and luma+alpha
+// (`Ya8` / `Ya16`) sources. The free walkers take `(full_range, matrix)`:
+// `full_range` selects whether the RGB / HSV outputs rescale limited-range
+// luma; `matrix` is carried through but unused by the chroma-free gray
+// kernels. So every gray family reuses [`YuvOptions`], forwarding both —
+// byte-identical to a direct walker call. The module stays additive: the
+// existing walkers, sinks, and kernels are untouched.
+
+// ---- Gray, 8-bit (plain arm; no byte-order axis) -----------------------
+#[cfg(feature = "gray")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
+walker!(
+  Gray8,
+  Gray8Sink,
+  Gray8Frame,
+  YuvOptions,
+  |src, opts, sink| gray8_to(src, opts.full_range(), opts.matrix(), sink)
+);
+#[cfg(feature = "gray")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
+walker!(
+  Ya8,
+  Ya8Sink,
+  Ya8Frame,
+  YuvOptions,
+  |src, opts, sink| ya8_to(src, opts.full_range(), opts.matrix(), sink)
+);
+
+// ---- Gray, high-bit GrayN (BE-generic marker; LE + BE via `_to_endian`) -
+// Marker `GrayN<const BE>` over the shared `GrayNFrame<'a, BITS, BE>` (the
+// depth is a leading const), so these ride the `@const_bits` arm.
+#[cfg(feature = "gray")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
+walker!(@const_bits 9, BE; Gray9, Gray9Sink, GrayNFrame, YuvOptions,
+  |src, opts, sink| gray9_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "gray")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
+walker!(@const_bits 10, BE; Gray10, Gray10Sink, GrayNFrame, YuvOptions,
+  |src, opts, sink| gray10_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "gray")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
+walker!(@const_bits 12, BE; Gray12, Gray12Sink, GrayNFrame, YuvOptions,
+  |src, opts, sink| gray12_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "gray")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
+walker!(@const_bits 14, BE; Gray14, Gray14Sink, GrayNFrame, YuvOptions,
+  |src, opts, sink| gray14_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+
+// ---- Gray, 16-bit + Ya16 (BE-generic marker; LE + BE via `_to_endian`) -
+// Marker `Fmt<const BE>` over the trailing-`BE` frame `FmtFrame<'a, BE>`
+// (no leading bit-depth const), so these ride the `@const BE` arm (same
+// shape as XYZ12 / Rgb48) and delegate to `{fmt}_to_endian::<_, BE>`.
+#[cfg(feature = "gray")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
+walker!(@const BE: bool; Gray16<BE>, Gray16Sink, Gray16Frame, YuvOptions,
+  |src, opts, sink| gray16_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "gray")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
+walker!(@const BE: bool; Ya16<BE>, Ya16Sink, Ya16Frame, YuvOptions,
+  |src, opts, sink| ya16_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+
+// ===== Planar GBR families =============================================
+//
+// Already-RGB sources (G / B / R planes, no chroma matrix). The free
+// walkers still take `(full_range, matrix)` because the RGB-input row
+// threads them to the `with_luma` / `with_hsv` outputs (the `with_rgb`
+// output ignores them), so every GBR family reuses [`YuvOptions`] and
+// forwards both, byte-identical to a direct walker call. The module stays
+// additive: the existing walkers, sinks, and kernels are untouched.
+
+// ---- Planar GBR, 8-bit (plain arm; no byte-order axis) -----------------
+#[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
+walker!(Gbrp, GbrpSink, GbrpFrame, YuvOptions, |src, opts, sink| {
+  gbrp_to(src, opts.full_range(), opts.matrix(), sink)
+});
+#[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
+walker!(
+  Gbrap,
+  GbrapSink,
+  GbrapFrame,
+  YuvOptions,
+  |src, opts, sink| gbrap_to(src, opts.full_range(), opts.matrix(), sink)
+);
+
+// ---- Planar GBR, high-bit (BE-generic marker; LE + BE via `_to_endian`) -
+// Marker `Fmt<const BE>` over the shared `GbrpHighBitFrame<'a, BITS, BE>`
+// / `GbrapHighBitFrame<'a, BITS, BE>` (the depth is a leading const), so
+// these ride the `@const_bits` arm.
+#[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
+walker!(@const_bits 9, BE; Gbrp9, Gbrp9Sink, GbrpHighBitFrame, YuvOptions,
+  |src, opts, sink| gbrp9_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
+walker!(@const_bits 10, BE; Gbrp10, Gbrp10Sink, GbrpHighBitFrame, YuvOptions,
+  |src, opts, sink| gbrp10_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
+walker!(@const_bits 12, BE; Gbrp12, Gbrp12Sink, GbrpHighBitFrame, YuvOptions,
+  |src, opts, sink| gbrp12_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
+walker!(@const_bits 14, BE; Gbrp14, Gbrp14Sink, GbrpHighBitFrame, YuvOptions,
+  |src, opts, sink| gbrp14_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
+walker!(@const_bits 16, BE; Gbrp16, Gbrp16Sink, GbrpHighBitFrame, YuvOptions,
+  |src, opts, sink| gbrp16_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
+walker!(@const_bits 10, BE; Gbrap10, Gbrap10Sink, GbrapHighBitFrame, YuvOptions,
+  |src, opts, sink| gbrap10_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
+walker!(@const_bits 12, BE; Gbrap12, Gbrap12Sink, GbrapHighBitFrame, YuvOptions,
+  |src, opts, sink| gbrap12_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
+walker!(@const_bits 14, BE; Gbrap14, Gbrap14Sink, GbrapHighBitFrame, YuvOptions,
+  |src, opts, sink| gbrap14_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
+walker!(@const_bits 16, BE; Gbrap16, Gbrap16Sink, GbrapHighBitFrame, YuvOptions,
+  |src, opts, sink| gbrap16_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
