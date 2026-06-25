@@ -456,21 +456,23 @@ impl AxisSpans {
     })
   }
 
-  /// Builds spans for a 4:2:0-style vertically paired axis: cell `c`
-  /// is the pair of full-grid rows `[2c, 2c + 2)` clipped to
-  /// `src_full`, so an odd trailing row forms a half-width tail cell
-  /// weighted by its true coverage. Weights live on the `x out` grid
-  /// against the FULL-resolution axis — every span sums to
-  /// `src_full`, which is therefore the normalization denominator
-  /// (for even `src_full` this is the uniform chroma-grid weighting
-  /// with numerator and denominator doubled, which round-half-up
-  /// preserves exactly).
+  /// Builds spans for a vertically subsampled axis at ratio `factor`
+  /// (`2` for 4:2:0 / 4:4:0, `4` for 4:1:0): cell `c` is the group of
+  /// full-grid rows `[factor*c, factor*c + factor)` clipped to
+  /// `src_full`, so a partial trailing group of `1..factor` rows forms a
+  /// short tail cell weighted by its true luma coverage. Weights live on
+  /// the `x out` grid against the FULL-resolution axis — every span sums
+  /// to `src_full`, which is therefore the normalization denominator (for
+  /// `src_full` an exact multiple of `factor` this is the uniform
+  /// chroma-grid weighting with numerator and denominator scaled by
+  /// `factor`, which round-half-up preserves exactly).
   #[cfg_attr(not(feature = "yuv-planar"), allow(dead_code))]
-  fn area_halved(src_full: usize, out: usize) -> Result<Self, AxisError> {
+  fn area_subsampled(src_full: usize, out: usize, factor: usize) -> Result<Self, AxisError> {
     let src64 = src_full as u64;
     let out64 = out as u64;
+    let f = factor as u64;
     src64.checked_mul(out64).ok_or(AxisError::Overflow)?;
-    let cells = src_full.div_ceil(2);
+    let cells = src_full.div_ceil(factor);
     // Upper bound; the exact reservation below never reallocates.
     let taps = Self::area_taps(src_full, out).ok_or(AxisError::Overflow)?;
     let offsets_len = out.checked_add(1).ok_or(AxisError::Overflow)?;
@@ -490,13 +492,13 @@ impl AxisSpans {
     for j in 0..out64 {
       let lo = j * src64;
       let hi = lo + src64;
-      // First full-grid row touched, mapped to its pair cell.
-      let start = ((lo / out64) / 2) as usize;
+      // First full-grid row touched, mapped to its subsample cell.
+      let start = ((lo / out64) / f) as usize;
       starts.push(start);
       let mut c = start as u64;
       loop {
-        let cell_lo = (2 * c) * out64;
-        let cell_hi = ((2 * c + 2).min(src64)) * out64;
+        let cell_lo = (f * c) * out64;
+        let cell_hi = ((f * c + f).min(src64)) * out64;
         if cell_lo >= hi {
           break;
         }
@@ -517,6 +519,12 @@ impl AxisSpans {
       offsets,
       weights,
     })
+  }
+
+  /// 4:2:0 / 4:4:0 vertical pairing — [`Self::area_subsampled`] at factor 2.
+  #[cfg_attr(not(feature = "yuv-planar"), allow(dead_code))]
+  fn area_halved(src_full: usize, out: usize) -> Result<Self, AxisError> {
+    Self::area_subsampled(src_full, out, 2)
   }
 
   /// Number of output samples on this axis.
@@ -815,6 +823,86 @@ impl ResamplePlan {
     Ok(Self {
       src_w: frame_w,
       src_h: luma_h,
+      out_w,
+      out_h,
+      kind: SpanKind::Area,
+      h,
+      v,
+      filter_h: None,
+      filter_v: None,
+      filter_h_chroma: None,
+      filter_v_chroma: None,
+    })
+  }
+
+  /// Builds the 4:1:0 chroma plan for the row-stage HSV-only resample:
+  /// horizontal spans over the (uniform, exact — 4:1:0 width is a multiple
+  /// of 4) quarter-width chroma, vertical spans over the LUMA height with
+  /// quartered cells ([`AxisSpans::area_subsampled`] at factor 4) so a
+  /// partial trailing group of `1..=3` luma rows weights its chroma row by
+  /// its true coverage — the same luma-domain vertical weighting as 4:2:0
+  /// ([`Self::area_chroma_420`]), only quartered. The stored source dims
+  /// are `(chroma_w, luma_h)`.
+  #[cfg(feature = "yuv-planar")]
+  pub(crate) fn area_chroma_410(
+    chroma_w: usize,
+    luma_h: usize,
+    out_w: usize,
+    out_h: usize,
+  ) -> Result<Self, ResampleError> {
+    let fail = |e: AxisError| match e {
+      AxisError::Overflow => {
+        ResampleError::Overflow(PlanGeometry::new(chroma_w, luma_h, out_w, out_h))
+      }
+      AxisError::Alloc => {
+        ResampleError::AllocationFailed(PlanGeometry::new(chroma_w, luma_h, out_w, out_h))
+      }
+    };
+    let h = AxisSpans::area(chroma_w, out_w).map_err(fail)?;
+    let v = AxisSpans::area_subsampled(luma_h, out_h, 4).map_err(fail)?;
+    Ok(Self {
+      src_w: chroma_w,
+      src_h: luma_h,
+      out_w,
+      out_h,
+      kind: SpanKind::Area,
+      h,
+      v,
+      filter_h: None,
+      filter_v: None,
+      filter_h_chroma: None,
+      filter_v_chroma: None,
+    })
+  }
+
+  /// Builds the 4:1:1 chroma plan for the row-stage HSV-only resample:
+  /// horizontal spans over the LUMA width with quartered cells
+  /// ([`AxisSpans::area_subsampled`] at factor 4) so a partial trailing
+  /// group of `1..=3` luma columns weights its chroma sample by its true
+  /// coverage (4:1:1 width may be non-multiple-of-4 — the last chroma
+  /// sample is shared by the trailing `1..=3` luma columns), vertical spans
+  /// over the FULL frame height (4:1:1 chroma is full-height). The stored
+  /// source dims are `(luma_w, frame_h)`.
+  #[cfg(feature = "yuv-planar")]
+  pub(crate) fn area_chroma_411(
+    luma_w: usize,
+    frame_h: usize,
+    out_w: usize,
+    out_h: usize,
+  ) -> Result<Self, ResampleError> {
+    let fail = |e: AxisError| match e {
+      AxisError::Overflow => {
+        ResampleError::Overflow(PlanGeometry::new(luma_w, frame_h, out_w, out_h))
+      }
+      AxisError::Alloc => {
+        ResampleError::AllocationFailed(PlanGeometry::new(luma_w, frame_h, out_w, out_h))
+      }
+    };
+    let h = AxisSpans::area_subsampled(luma_w, out_w, 4).map_err(fail)?;
+    let v = AxisSpans::area(frame_h, out_h).map_err(fail)?;
+    Ok(Self {
+      src_w: luma_w,
+      src_h: frame_h,
       out_w,
       out_h,
       kind: SpanKind::Area,

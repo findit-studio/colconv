@@ -2097,6 +2097,22 @@ pub struct MixedSinker<'a, F: SourceFormat, R = NoopResampler> {
   /// `process`, reset in `begin_frame`.
   #[cfg(feature = "yuv-planar")]
   native_planar: Option<std::boxed::Box<planar_8bit::NativePlanarYuv>>,
+  /// RGB-free YUV-domain HSV-only **area** join for the planar ROW-STAGE
+  /// resample (#263 follow-up): when ONLY `with_hsv()` is attached (no RGB /
+  /// RGBA), the row-stage path bins Y / U / V on their own grids straight to
+  /// output resolution and converts each output row through
+  /// `yuv_444_to_hsv_row` — RGB-free, and bit-identical to the native fast
+  /// tier's HSV-only output. Used by the planar 8-bit families (`Yuv420p` /
+  /// `Yuv410p` / `Yuv411p` / `Yuv422p` / `Yuv444p` / `Yuv440p`). The 8-bit
+  /// semi-planar family (`Nv12` etc.), whose chroma arrives interleaved and
+  /// whose 4:2:0 / 4:4:0 chroma-plan builders are `yuv-planar`-gated, keeps
+  /// the RGB-staged HSV-only row-stage for now (a documented follow-up), so
+  /// this field is `yuv-planar`-gated. Lazily created in `process` on an
+  /// HSV-only row-stage row, reset in `begin_frame`. Boxed to keep the
+  /// (large) `MixedSinker` stack footprint down; the heap allocation happens
+  /// lazily on the first such row.
+  #[cfg(feature = "yuv-planar")]
+  hsv_planar: Option<std::boxed::Box<planar_resample::HsvDirectPlanarYuv>>,
   /// Native-tier join state for the HIGH-BIT planar 4:2:0 family
   /// (`Yuv420p10/12/14/16`) — the `u16` twin of [`Self::native_420`].
   /// Lazily created in `process`, reset in `begin_frame`.
@@ -3185,6 +3201,8 @@ impl<F: SourceFormat, R> MixedSinker<'_, F, R> {
       bicublin_420: None,
       #[cfg(feature = "yuv-planar")]
       native_planar: None,
+      #[cfg(feature = "yuv-planar")]
+      hsv_planar: None,
       #[cfg(feature = "yuv-planar")]
       native_420_u16: None,
       #[cfg(feature = "yuv-planar")]

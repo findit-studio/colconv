@@ -8,22 +8,366 @@
 //! with the matching `nv*` kernel). Both routes are byte-identical to an
 //! `Rgb24` area-resample of the identity-converted frame.
 //!
-//! NOTE (#263 follow-up): when ONLY `with_hsv()` is attached (no RGB /
-//! RGBA), the colour group here still stages a SOURCE-WIDTH RGB row and
-//! the HSV planes are derived per OUTPUT row off the binned RGB stream —
-//! `colconv`'s direct + native fast tiers go RGB-free for HSV-only, but
-//! the row-stage resample path does not yet. A clean RGB-free
-//! resample+HSV-only (resample the HSV planes, or resample Y/U/V then
-//! convert to HSV per output row) is larger than this PR's scope (the
-//! `RowResampler` stream is keyed on the 3-channel RGB row), so it is
-//! deferred. The HSV output is still correct; only the source-width RGB
-//! scratch allocation remains.
+//! #263 follow-up — RGB-free YUV-domain HSV-only **area** resample: when
+//! ONLY `with_hsv()` is attached (no RGB / RGBA) and the plan is an area
+//! plan, [`planar_dual_resample`] no longer stages a source-width RGB row.
+//! Instead [`HsvDirectPlanarYuv`] bins Y / U / V on their own grids (Y on
+//! the luma grid, U / V decimated per the format's chroma subsampling)
+//! straight to OUTPUT resolution, then converts each finalized output row
+//! through [`yuv_444_to_hsv_row`] at output width — exactly the native fast
+//! tier's HSV-only path
+//! ([`yuv_planar_process_native`](super::planar_8bit::yuv_planar_process_native)).
+//! The binning and the conversion kernel are therefore identical to the
+//! native tier, so the row-stage HSV-only output is **bit-identical** to
+//! the native tier's HSV-only output for the same (format, area-resample) —
+//! a deliberate behaviour change from the former RGB-domain averaging (the
+//! HSV planes used to derive off the binned RGB row). When RGB or RGBA is
+//! ALSO attached the cheap RGB-staged path is unchanged (it bins one RGB
+//! row and derives HSV off it). The 3-stream lockstep mirrors
+//! [`NativePlanarYuv`](super::planar_8bit::NativePlanarYuv) verbatim — Y and
+//! the two chroma streams finalising the same output row through a two-slot
+//! ring.
+//!
+//! SCOPE: this RGB-free HSV-only area path is wired for the **planar** 8-bit
+//! families ([`super::planar_8bit`], `yuv-planar`-gated — the join's chroma
+//! plans use the `yuv-planar`-gated `area_chroma_*` builders). Two cases stay
+//! RGB-staged for now (correct, but not yet RGB-free), each a documented
+//! follow-up:
+//!
+//! - The **filter** twin ([`planar_dual_filter_resample`]): a filter window
+//!   leads by more than one output row, so a filter HSV-direct join needs the
+//!   full-output-plane buffers + per-plane cursors the
+//!   [`BicublinYuv420`](super::planar_8bit::BicublinYuv420) join uses (not the
+//!   area join's two-slot ring) — a materially different stream shape.
+//! - The **semi-planar** family (`Nv12` etc.) row-stage, which reaches
+//!   [`planar_dual_resample`] with interleaved chroma: it would need a
+//!   per-row de-interleave into U / V scratch at each call site plus the
+//!   `yuv-planar`-gated 4:2:0 / 4:4:0 chroma-plan builders under
+//!   `yuv-semi-planar`.
 
 use super::{HsvFrameMut, MixedSinkerError, frozen_outputs_check};
+// `ColorMatrix`, `PlanGeometry`, and `try_zeroed` back the `yuv-planar`-only
+// RGB-free HSV-only area join below; the rest serve the always-present
+// (`yuv-planar` / `yuv-semi-planar`) RGB-staged dual-resample helpers.
+#[cfg(feature = "yuv-planar")]
+use crate::{
+  ColorMatrix,
+  resample::{PlanGeometry, try_zeroed},
+};
 use crate::{
   resample::{AreaStream, OutOfSequenceRow, ResampleError, ResamplePlan, RowResampler},
   row::*,
 };
+
+/// RGB-free YUV-domain HSV-only **area** join for the shared planar /
+/// semi-planar row-stage resample — the colour twin of the native fast
+/// tier's HSV-only path, structurally a near-verbatim copy of
+/// [`NativePlanarYuv`](super::planar_8bit::NativePlanarYuv). Y streams on
+/// the frame grid; U and V on the chroma grid (their per-plane denominators
+/// supplied by the caller's chroma plan, fed once per `chroma_vsub` source
+/// rows), every plane binned to FULL output resolution. Each plane's
+/// in-order emissions land in a `chroma_vsub`-slot ring
+/// (`slot = out_y % chroma_vsub`); the moment all three planes hold an
+/// output row it finalises through [`yuv_444_to_hsv_row`] at output width —
+/// so no alignment constraint ever applies to the output geometry and the
+/// result is bit-identical to the native tier's HSV-only output for the same
+/// area-resample. When the chroma grid is upsampled vertically (a
+/// height-preserving downscale of a `chroma_vsub`-subsampled plane), one
+/// chroma feed finalises up to `chroma_vsub` output rows before the matching
+/// luma rows arrive, so the ring holds `chroma_vsub` rows (4 for 4:1:0); the
+/// lockstep formats (`chroma_vsub == 1`) never lead at all.
+///
+/// HSV-only by construction: it is built ONLY when `with_hsv()` is the sole
+/// colour output, so it never carries an RGB stream or source-width RGB
+/// scratch — the structural RGB-free guarantee.
+#[cfg(feature = "yuv-planar")]
+pub(super) struct HsvDirectPlanarYuv {
+  y: AreaStream<u8>,
+  /// Staging ring, `chroma_vsub * out_w` (slot = `out_y % chroma_vsub`).
+  y_stage: std::vec::Vec<u8>,
+  u: AreaStream<u8>,
+  v: AreaStream<u8>,
+  u_stage: std::vec::Vec<u8>,
+  v_stage: std::vec::Vec<u8>,
+  /// Vertical chroma subsample factor: 1 for 4:2:2 / 4:4:4 / 4:1:1, 2 for
+  /// 4:2:0 / 4:4:0, 4 for 4:1:0. The chroma streams are fed when
+  /// `idx % chroma_vsub == 0` at `cidx = idx / chroma_vsub`, and the
+  /// sequence check expects `next_y() == idx.div_ceil(chroma_vsub)`.
+  chroma_vsub: usize,
+  /// `staged[plane][slot]` — plane 0 = Y, 1 = U, 2 = V; the low `chroma_vsub`
+  /// slots are live (4 = the 4:1:0 maximum).
+  staged: [[bool; 4]; 3],
+  /// Next output row to finalise.
+  next_emit: usize,
+}
+
+#[cfg(feature = "yuv-planar")]
+impl HsvDirectPlanarYuv {
+  /// `build_chroma_plan` builds the format's chroma grid against the SAME
+  /// output geometry as `plan` (the luma plan); `chroma_vsub` is its
+  /// vertical cadence. Both are supplied by the per-format caller so this
+  /// body stays layout-agnostic — exactly the
+  /// [`NativePlanarYuv::new`](super::planar_8bit::NativePlanarYuv) contract,
+  /// minus the luma-only fast path (this join exists only to serve colour).
+  fn new(
+    plan: &ResamplePlan,
+    build_chroma_plan: impl FnOnce() -> Result<ResamplePlan, ResampleError>,
+    chroma_vsub: usize,
+    w: usize,
+    h: usize,
+  ) -> Result<Self, ResampleError> {
+    // Area-only join; a filter plan never reaches it (the filter twin keeps
+    // its RGB-staged HSV path), but guard for parity with the native join.
+    if plan.kind().is_filter() {
+      return Err(plan.unsupported_filter());
+    }
+    let alloc =
+      |_| ResampleError::AllocationFailed(PlanGeometry::new(w, h, plan.out_w(), plan.out_h()));
+    let stage_len = plan.out_w().checked_mul(chroma_vsub).ok_or_else(|| {
+      ResampleError::Overflow(PlanGeometry::new(w, h, plan.out_w(), plan.out_h()))
+    })?;
+    let chroma_plan = build_chroma_plan()?;
+    Ok(Self {
+      y: AreaStream::new(plan.h(), plan.v(), w, h, 1)?,
+      y_stage: try_zeroed(stage_len).map_err(alloc)?,
+      u: AreaStream::new(
+        chroma_plan.h(),
+        chroma_plan.v(),
+        chroma_plan.src_w(),
+        chroma_plan.src_h(),
+        1,
+      )?,
+      v: AreaStream::new(
+        chroma_plan.h(),
+        chroma_plan.v(),
+        chroma_plan.src_w(),
+        chroma_plan.src_h(),
+        1,
+      )?,
+      u_stage: try_zeroed(stage_len).map_err(alloc)?,
+      v_stage: try_zeroed(stage_len).map_err(alloc)?,
+      chroma_vsub,
+      staged: [[false; 4]; 3],
+      next_emit: 0,
+    })
+  }
+
+  pub(super) fn reset(&mut self) {
+    self.y.reset();
+    self.u.reset();
+    self.v.reset();
+    self.staged = [[false; 4]; 3];
+    self.next_emit = 0;
+  }
+
+  /// Sequencing preflight across all three plane streams — checked before
+  /// any plane is fed so a violating call mutates nothing (the same
+  /// contract as [`NativePlanarYuv::check_sequence`](super::planar_8bit::NativePlanarYuv)).
+  fn check_sequence(&self, idx: usize) -> Result<(), MixedSinkerError> {
+    if self.y.next_y() != idx {
+      return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+        OutOfSequenceRow::new(self.y.next_y(), idx),
+      )));
+    }
+    let chroma_expected = idx.div_ceil(self.chroma_vsub);
+    for stream in [&self.u, &self.v] {
+      if stream.next_y() != chroma_expected {
+        return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+          OutOfSequenceRow::new(stream.next_y().saturating_mul(self.chroma_vsub), idx),
+        )));
+      }
+    }
+    Ok(())
+  }
+}
+
+/// Drives the RGB-free YUV-domain HSV-only area resample: feeds Y / U / V
+/// into [`HsvDirectPlanarYuv`] and drains every output row whose three
+/// planes are staged, emitting luma (the binned Y, the YUV luma contract)
+/// and HSV (through [`yuv_444_to_hsv_row`] at output width) — reproducing
+/// the native tier's HSV-only emit
+/// ([`yuv_planar_process_native`](super::planar_8bit::yuv_planar_process_native)).
+/// Like the native tier, luma derives from the SAME binned Y as the HSV
+/// conversion (Y is binned once), so a luma + HSV-only sink stays a single
+/// 3-stream join rather than re-binning Y. The join is built (its three
+/// area streams + ring scratch allocate recoverably) BEFORE the first feed,
+/// so a failure mutates no caller output; the sequence check runs first so
+/// an out-of-sequence row is rejected without consuming any stream.
+/// Everything past the first feed is infallible.
+#[cfg(feature = "yuv-planar")]
+#[allow(clippy::too_many_arguments)]
+fn hsv_direct_feed_emit(
+  join: &mut HsvDirectPlanarYuv,
+  hsv: &mut HsvFrameMut<'_>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  y_row: &[u8],
+  u_row: &[u8],
+  v_row: &[u8],
+  matrix: ColorMatrix,
+  full_range: bool,
+  plan: &ResamplePlan,
+  idx: usize,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  let ow = plan.out_w();
+  join.check_sequence(idx)?;
+  let HsvDirectPlanarYuv {
+    y,
+    y_stage,
+    u,
+    v,
+    u_stage,
+    v_stage,
+    chroma_vsub,
+    staged,
+    next_emit,
+  } = join;
+  let cv = *chroma_vsub;
+  y.feed_row(idx, y_row, use_simd, |oy, out_row| {
+    let slot = oy % cv;
+    y_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
+    staged[0][slot] = true;
+  })?;
+  if idx.is_multiple_of(cv) {
+    let cidx = idx / cv;
+    u.feed_row(cidx, u_row, use_simd, |oy, out_row| {
+      let slot = oy % cv;
+      u_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
+      staged[1][slot] = true;
+    })?;
+    v.feed_row(cidx, v_row, use_simd, |oy, out_row| {
+      let slot = oy % cv;
+      v_stage[slot * ow..slot * ow + ow].copy_from_slice(out_row);
+      staged[2][slot] = true;
+    })?;
+  }
+
+  let (hp, sp, vp) = hsv.hsv();
+  while *next_emit < plan.out_h() {
+    let slot = *next_emit % cv;
+    if !(staged[0][slot] && staged[1][slot] && staged[2][slot]) {
+      break;
+    }
+    let oy = *next_emit;
+    let y_out = &y_stage[slot * ow..slot * ow + ow];
+    if let Some(buf) = luma.as_deref_mut() {
+      buf[oy * ow..(oy + 1) * ow].copy_from_slice(y_out);
+    }
+    if let Some(buf) = luma_u16.as_deref_mut() {
+      for (dst, &src) in buf[oy * ow..(oy + 1) * ow].iter_mut().zip(y_out) {
+        *dst = src as u16;
+      }
+    }
+    yuv_444_to_hsv_row(
+      y_out,
+      &u_stage[slot * ow..slot * ow + ow],
+      &v_stage[slot * ow..slot * ow + ow],
+      &mut hp[oy * ow..(oy + 1) * ow],
+      &mut sp[oy * ow..(oy + 1) * ow],
+      &mut vp[oy * ow..(oy + 1) * ow],
+      ow,
+      matrix,
+      full_range,
+      use_simd,
+    );
+    staged[0][slot] = false;
+    staged[1][slot] = false;
+    staged[2][slot] = false;
+    *next_emit += 1;
+  }
+  Ok(())
+}
+
+/// The RGB-free YUV-domain HSV-only area path: the complete atomic
+/// preflight + the 3-stream feed/drain. Phasing mirrors
+/// [`planar_dual_resample`]'s RGB-staged preflight (and the native tier's
+/// [`yuv_planar_process_native`](super::planar_8bit::yuv_planar_process_native)):
+///
+/// 1. The HSV join's Y stream is the canonical per-row sequence counter
+///    (Y is binned on every output-bearing row). On the FIRST row nothing
+///    is frozen yet, so an out-of-sequence row is rejected BEFORE the
+///    freeze — a rejected first row stores no snapshot to poison a retry.
+/// 2. [`frozen_outputs_check`] freezes / verifies the output set (HSV +
+///    optional luma); on a later row this runs first so a mid-frame output
+///    change surfaces as `ResampleOutputsChanged` rather than being masked
+///    by a freshly-built join's row-0 sequence mismatch.
+/// 3. A post-freeze sequence check rejects an out-of-sequence later row
+///    (including the failure-retry case where the join was never built, so
+///    `expected == 0`) BEFORE the fallible join allocation.
+/// 4. The join is built (its three area streams + ring scratch allocate
+///    recoverably) and boxed recoverably, BOTH before any feed — so a
+///    refusal leaves the field `None` and no caller output is touched.
+///
+/// A no-output call cannot reach here (`want_hsv_direct` implies HSV is
+/// attached). The result is byte-identical to the native tier's HSV-only
+/// output for the same area-resample.
+#[cfg(feature = "yuv-planar")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn hsv_direct_resample(
+  hsv_planar: &mut Option<std::boxed::Box<HsvDirectPlanarYuv>>,
+  resample_outputs: &mut Option<super::FrozenOutputs>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  y_row: &[u8],
+  u_row: &[u8],
+  v_row: &[u8],
+  matrix: ColorMatrix,
+  full_range: bool,
+  chroma_vsub: usize,
+  build_chroma_plan: impl FnOnce() -> Result<ResamplePlan, ResampleError>,
+  w: usize,
+  plan: &ResamplePlan,
+  idx: usize,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  let expected = hsv_planar.as_ref().map_or(0, |join| join.y.next_y());
+  if resample_outputs.is_none() && expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  frozen_outputs_check(
+    resample_outputs,
+    luma,
+    luma_u16,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    &None,
+    hsv,
+    &None,
+    idx,
+  )?;
+  if expected != idx {
+    return Err(MixedSinkerError::Resample(ResampleError::OutOfSequenceRow(
+      OutOfSequenceRow::new(expected, idx),
+    )));
+  }
+  if hsv_planar.is_none() {
+    let join = HsvDirectPlanarYuv::new(plan, build_chroma_plan, chroma_vsub, w, plan.src_h())?;
+    let boxed = crate::resample::try_box(join).map_err(|_| {
+      MixedSinkerError::Resample(ResampleError::AllocationFailed(PlanGeometry::new(
+        plan.src_w(),
+        plan.src_h(),
+        plan.out_w(),
+        plan.out_h(),
+      )))
+    })?;
+    *hsv_planar = Some(boxed);
+  }
+  let join = hsv_planar.as_mut().expect("created in the preflight");
+  let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+  hsv_direct_feed_emit(
+    join, hsv, luma, luma_u16, y_row, u_row, v_row, matrix, full_range, plan, idx, use_simd,
+  )
+}
 
 /// Row-stage fused downscale shared by the planar formats with no
 /// native tier (Yuv411p / Yuv422p / Yuv444p). Mirrors the Yuv420p
@@ -37,6 +381,17 @@ use crate::{
 /// (freeze, stream creation, sequence check, scratch growth +
 /// conversion) precedes the first feed, so a failure mutates no
 /// caller output.
+///
+/// #263 follow-up — **HSV-only** (no RGB / RGBA) is handled by the caller
+/// BEFORE this helper: the planar dispatch sites call
+/// [`hsv_direct_resample`] directly (binning Y / U / V on their own grids,
+/// RGB-free) for an HSV-only area plan and reach `planar_dual_resample` only
+/// for RGB / RGBA (with or without HSV — those keep the cheap RGB-staged
+/// HSV). The semi-planar callers, whose chroma arrives interleaved and whose
+/// 4:2:0 / 4:4:0 chroma-plan builders are `yuv-planar`-gated, keep the
+/// RGB-staged HSV here unchanged (their RGB-free HSV-only resample is a
+/// documented follow-up). So whenever `hsv` is set here, RGB or RGBA is also
+/// set and the RGB-staged colour path runs.
 #[cfg_attr(
   not(any(feature = "yuv-planar", feature = "yuv-semi-planar")),
   allow(dead_code)
