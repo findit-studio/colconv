@@ -896,16 +896,16 @@ macro_rules! yuva422p_high_bit_resample_suite {
         ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
       )]
       fn direct_luma_u16_with_hsv_no_rgb_buffer_writes_both() {
-        // Recoverable-allocation regression: on the direct (NoopResampler)
-        // path, `with_luma_u16` + `with_hsv` with NO rgb plane attached
-        // routes HSV through the growing rgb scratch. The fallible scratch
-        // grow must be preflighted BEFORE luma_u16 is written, and both
-        // outputs must be produced. luma_u16 is the native logical Y; HSV
-        // must match the RGB-attached oracle (same kernel, scratch vs
-        // caller buffer is the only difference).
+        // #263 PR 8: on the direct (NoopResampler) path, `with_luma_u16` +
+        // `with_hsv` with NO rgb / rgba plane attached routes HSV through
+        // the matching direct `yuv*p*_to_hsv_row_endian` kernel (4:2:2
+        // reuses the half-chroma 4:2:0 kernel) — RGB-free (no rgb scratch).
+        // Both outputs must be produced: luma_u16 is the native logical Y;
+        // HSV must match the RGB-attached oracle (same kernel — direct vs
+        // derived-from-RGB is the only difference).
         let (y, u, v, a) = planes(0x7E57);
 
-        // No-rgb scratch path: luma_u16 + hsv only.
+        // RGB-free path: luma_u16 + hsv only.
         let mut lu16 = vec![0u16; SRC * SRC];
         let mut hh = vec![0u8; SRC * SRC];
         let mut ss = vec![0u8; SRC * SRC];
@@ -917,18 +917,18 @@ macro_rules! yuva422p_high_bit_resample_suite {
             .with_hsv(&mut hh, &mut ss, &mut vv)
             .unwrap();
           $walker(&frame(&y, &u, &v, &a), FR, M, &mut sink).unwrap();
-          // White-box: the HSV-only scratch was preflighted (grown to one
-          // source-width u8 RGB row) — the fix acquires it before the
-          // luma_u16 write.
-          assert!(
-            sink.rgb_scratch_capacity() >= SRC * 3,
-            "HSV rgb scratch was not grown (preflight missing)"
+          // White-box: the direct HSV path is RGB-free — the rgb scratch
+          // is never grown.
+          assert_eq!(
+            sink.rgb_scratch_capacity(),
+            0,
+            "HSV-only direct path must not allocate the rgb scratch"
           );
         }
         assert_eq!(lu16, y, "no-rgb direct luma_u16 == native logical Y");
 
         // Oracle: same source with rgb attached (HSV derives from the
-        // caller buffer instead of scratch) — HSV must be identical.
+        // caller RGB buffer) — HSV must be identical.
         let mut rgb = vec![0u8; SRC * SRC * 3];
         let mut oh = vec![0u8; SRC * SRC];
         let mut os = vec![0u8; SRC * SRC];
@@ -941,76 +941,103 @@ macro_rules! yuva422p_high_bit_resample_suite {
             .unwrap();
           $walker(&frame(&y, &u, &v, &a), FR, M, &mut sink).unwrap();
         }
-        assert_eq!(hh, oh, "scratch-path H == rgb-attached H");
-        assert_eq!(ss, os, "scratch-path S == rgb-attached S");
-        assert_eq!(vv, ov, "scratch-path V == rgb-attached V");
-        // The scratch path actually ran a real conversion (not all-zero).
+        assert_eq!(hh, oh, "direct H == rgb-attached H");
+        assert_eq!(ss, os, "direct S == rgb-attached S");
+        assert_eq!(vv, ov, "direct V == rgb-attached V");
+        // The direct path actually ran a real conversion (not all-zero).
         assert!(
           hh.iter().chain(ss.iter()).chain(vv.iter()).any(|&b| b != 0),
-          "HSV scratch path produced no output"
+          "HSV direct path produced no output"
         );
       }
 
       #[test]
-      fn direct_hsv_scratch_alloc_failure_writes_nothing() {
-        // Failure-path counterpart to the test above: when the HSV-only rgb
-        // scratch grow REFUSES (simulated via the
-        // `arm_rgb_scratch_alloc_failure` failpoint), the direct row must
-        // return `AllocationFailed` and leave EVERY caller buffer untouched.
-        // The scratch preflight is at the TOP of the row body, before any
-        // caller-output write, so no partial write can escape. With the OLD
-        // ordering (luma_u16 / luma written before the preflight) the
-        // sentinel would be clobbered and this test fails.
-        const SENT8: u8 = 0xAB;
-        const SENT16: u16 = 0xABCD;
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn direct_hsv_only_is_rgb_free_and_infallible() {
+        // #263 PR 8: the direct HSV-only path (`with_luma` +
+        // `with_luma_u16` + `with_hsv`, NO rgb / rgba plane) now routes HSV
+        // through the matching direct `yuv*p*_to_hsv_row_endian` kernel —
+        // RGB-free (no rgb scratch). Proof: arm the rgb-scratch allocation
+        // failpoint (which would surface `AllocationFailed` if the path
+        // still grew the scratch); the row must instead SUCCEED, leave the
+        // scratch unallocated, and write every output. The failpoint is
+        // take-on-read, so disarm it after to avoid leaking into a later
+        // same-thread test.
         let (y, u, v, a) = planes(0x7E57);
-        let mut luma = vec![SENT8; SRC * SRC];
-        let mut lu16 = vec![SENT16; SRC * SRC];
-        let mut hh = vec![SENT8; SRC * SRC];
-        let mut ss = vec![SENT8; SRC * SRC];
-        let mut vv = vec![SENT8; SRC * SRC];
-        let mut sink = MixedSinker::<$marker>::new(SRC, SRC)
-          .with_luma(&mut luma)
-          .unwrap()
-          .with_luma_u16(&mut lu16)
-          .unwrap()
-          .with_hsv(&mut hh, &mut ss, &mut vv)
-          .unwrap();
-        sink.begin_frame(SRC as u32, SRC as u32).unwrap();
-        super::super::super::arm_rgb_scratch_alloc_failure();
-        let err = sink
-          .process($row::new(
-            &y[..SRC],
-            &u[..CW],
-            &v[..CW],
-            &a[..SRC],
+        let mut luma = vec![0u8; SRC * SRC];
+        let mut lu16 = vec![0u16; SRC * SRC];
+        let mut hh = vec![0u8; SRC * SRC];
+        let mut ss = vec![0u8; SRC * SRC];
+        let mut vv = vec![0u8; SRC * SRC];
+        {
+          let mut sink = MixedSinker::<$marker>::new(SRC, SRC)
+            .with_luma(&mut luma)
+            .unwrap()
+            .with_luma_u16(&mut lu16)
+            .unwrap()
+            .with_hsv(&mut hh, &mut ss, &mut vv)
+            .unwrap();
+          sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+          super::super::super::arm_rgb_scratch_alloc_failure();
+          sink
+            .process($row::new(
+              &y[..SRC],
+              &u[..CW],
+              &v[..CW],
+              &a[..SRC],
+              0,
+              M,
+              FR,
+            ))
+            .expect("HSV-only direct row must be RGB-free (no scratch alloc)");
+          assert_eq!(
+            sink.rgb_scratch_capacity(),
             0,
-            M,
-            FR,
-          ))
-          .unwrap_err();
-        assert!(
-          matches!(
-            err,
-            MixedSinkerError::Resample(ResampleError::AllocationFailed(_))
-          ),
-          "scratch alloc refusal not surfaced as AllocationFailed: {err:?}"
+            "HSV-only direct path must not allocate the rgb scratch"
+          );
+        }
+        super::super::super::disarm_rgb_scratch_alloc_failure();
+        let lu16_ref: Vec<u16> = y[..SRC].to_vec();
+        assert_eq!(
+          &lu16[..SRC],
+          &lu16_ref[..],
+          "direct luma_u16 == native logical Y"
         );
-        drop(sink);
-        assert!(
-          luma.iter().all(|&b| b == SENT8),
-          "luma partially written before failed scratch preflight"
+        let luma_ref: Vec<u8> = y[..SRC].iter().map(|&p| (p >> ($bits - 8)) as u8).collect();
+        assert_eq!(
+          &luma[..SRC],
+          &luma_ref[..],
+          "direct luma == Y >> (BITS - 8)"
         );
-        assert!(
-          lu16.iter().all(|&b| b == SENT16),
-          "luma_u16 partially written before failed scratch preflight"
-        );
-        assert!(
-          hh.iter().all(|&b| b == SENT8)
-            && ss.iter().all(|&b| b == SENT8)
-            && vv.iter().all(|&b| b == SENT8),
-          "hsv partially written before failed scratch preflight"
-        );
+        let mut rgb = vec![0u8; SRC * SRC * 3];
+        let mut oh = vec![0u8; SRC * SRC];
+        let mut os = vec![0u8; SRC * SRC];
+        let mut ov = vec![0u8; SRC * SRC];
+        {
+          let mut sink = MixedSinker::<$marker>::new(SRC, SRC)
+            .with_rgb(&mut rgb)
+            .unwrap()
+            .with_hsv(&mut oh, &mut os, &mut ov)
+            .unwrap();
+          sink.begin_frame(SRC as u32, SRC as u32).unwrap();
+          sink
+            .process($row::new(
+              &y[..SRC],
+              &u[..CW],
+              &v[..CW],
+              &a[..SRC],
+              0,
+              M,
+              FR,
+            ))
+            .unwrap();
+        }
+        assert_eq!(&hh[..SRC], &oh[..SRC], "direct H == rgb-attached H");
+        assert_eq!(&ss[..SRC], &os[..SRC], "direct S == rgb-attached S");
+        assert_eq!(&vv[..SRC], &ov[..SRC], "direct V == rgb-attached V");
       }
     }
   };

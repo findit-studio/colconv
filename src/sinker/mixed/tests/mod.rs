@@ -373,6 +373,8 @@ mod yuv_planar_hsv_direct;
 mod yuv_planar_hsv_direct_high_bit;
 #[cfg(feature = "yuva")]
 mod yuva;
+#[cfg(feature = "yuva")]
+mod yuva_hsv_direct;
 
 // `v210` is intentionally absent: V210 only consumes this helper inside
 // its `yuv-planar`-gated planar-parity oracles (in `v210.rs` /
