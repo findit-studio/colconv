@@ -146,6 +146,10 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
     if let Some(bicublin) = self.bicublin_420.as_mut() {
       bicublin.reset();
     }
+    // New frame: restart the RGB-free HSV-only row-stage join (#263 follow-up).
+    if let Some(hsv) = self.hsv_planar.as_mut() {
+      hsv.reset();
+    }
     // New frame: clear the per-frame frozen native/row-stage route and
     // averaging domain so the next frame may pick either tier / any domain; a
     // mid-frame flip stays rejected.
@@ -229,6 +233,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
       resample_outputs,
       native,
       native_420,
+      hsv_planar,
       bicublin_420,
       frozen_native_route,
       frozen_domain,
@@ -526,6 +531,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
             plan,
             rgb_stream,
             luma_stream,
+            hsv_planar,
             resample_outputs,
             rgb,
             rgba,
@@ -540,6 +546,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv420p, R> {
             row.full_range(),
             idx,
             w,
+            h,
             use_simd,
           )?;
           if frozen_native_route.is_none() && need_output {
@@ -1590,11 +1597,21 @@ fn yuv420p_native_preflight_bicublin(
 /// Row-stage tier for the 4:2:0 planar family (the `with_native(false)`
 /// path). Takes the Y plane and the **separate** half-width U / V planes
 /// so the 4:2:0 semi-planar family reuses it after de-interleave.
+///
+/// #263 follow-up — **HSV-only** (no RGB / RGBA): instead of staging a
+/// source-width RGB row, Y / U / V are binned on their own grids via the
+/// shared [`HsvDirectPlanarYuv`](super::planar_resample::HsvDirectPlanarYuv)
+/// join (4:2:0 chroma: half-width, ceil-half-height, `chroma_vsub = 2`) and
+/// each output row is converted through `yuv_444_to_hsv_row` at output width
+/// — RGB-free, and bit-identical to the native fast tier
+/// ([`yuv420p_process_native`]). Luma (if also attached) derives from the
+/// SAME binned Y.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn yuv420p_process_resampled(
   plan: &ResamplePlan,
   rgb_stream: &mut Option<std::boxed::Box<AreaStream<u8>>>,
   luma_stream: &mut Option<std::boxed::Box<AreaStream<u8>>>,
+  hsv_planar: &mut Option<std::boxed::Box<super::planar_resample::HsvDirectPlanarYuv>>,
   resample_outputs: &mut Option<super::FrozenOutputs>,
   rgb: &mut Option<&mut [u8]>,
   rgba: &mut Option<&mut [u8]>,
@@ -1609,6 +1626,7 @@ pub(super) fn yuv420p_process_resampled(
   full_range: bool,
   idx: usize,
   w: usize,
+  h: usize,
   use_simd: bool,
 ) -> Result<(), MixedSinkerError> {
   // Row-stage 4:2:0 tail is integer area-only: reject a filter plan before
@@ -1619,6 +1637,32 @@ pub(super) fn yuv420p_process_resampled(
   let ow = plan.out_w();
   let need_luma = luma.is_some() || luma_u16.is_some();
   let need_color = rgb.is_some() || hsv.is_some() || rgba.is_some();
+  // HSV-only (no RGB / RGBA): bin Y / U / V and convert per output row,
+  // RGB-free — bit-identical to the native fast tier. RGB or RGBA attached
+  // keeps the cheap RGB-staged path below. 4:2:0 chroma is half-width,
+  // ceil-half-height (`chroma_vsub = 2`); the chroma plan weights an odd
+  // trailing luma row by half (luma-domain vertical), exactly as the native
+  // tier's `area_chroma_420`.
+  if hsv.is_some() && rgb.is_none() && rgba.is_none() {
+    return super::planar_resample::hsv_direct_resample(
+      hsv_planar,
+      resample_outputs,
+      luma,
+      luma_u16,
+      hsv,
+      y_row,
+      u_half,
+      v_half,
+      matrix,
+      full_range,
+      2,
+      || ResamplePlan::area_chroma_420(w / 2, h, plan.out_w(), plan.out_h()),
+      w,
+      plan,
+      idx,
+      use_simd,
+    );
+  }
 
   // Atomic preflight: every fallible step runs before any stream is
   // fed, so a failed call mutates no caller output and the frame can
@@ -2701,6 +2745,10 @@ impl<R> PixelSink for MixedSinker<'_, Yuv410p, R> {
     if let Some(stream) = self.luma_filter_stream.as_mut() {
       stream.reset();
     }
+    // New frame: restart the RGB-free HSV-only row-stage join (#263 follow-up).
+    if let Some(hsv) = self.hsv_planar.as_mut() {
+      hsv.reset();
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -2759,6 +2807,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv410p, R> {
       luma_stream,
       rgb_filter_stream,
       luma_filter_stream,
+      hsv_planar,
       resample_outputs,
       ..
     } = self;
@@ -2788,6 +2837,31 @@ impl<R> PixelSink for MixedSinker<'_, Yuv410p, R> {
           use_simd,
         );
       };
+      // HSV-only (no RGB / RGBA) area plan: bin Y / U / V and convert per
+      // output row, RGB-free. 4:1:0 chroma is quarter-width AND
+      // quarter-height (`chroma_vsub = 4`). Bit-identical to a YUV-domain
+      // bin-then-convert reference. A filter plan keeps the RGB-staged HSV
+      // (filter twin), and RGB / RGBA attached keeps the RGB-staged path.
+      if plan.kind().is_area() && hsv.is_some() && rgb.is_none() && rgba.is_none() {
+        return super::planar_resample::hsv_direct_resample(
+          hsv_planar,
+          resample_outputs,
+          luma,
+          luma_u16,
+          hsv,
+          row.y(),
+          row.u_quarter(),
+          row.v_quarter(),
+          matrix,
+          full_range,
+          4,
+          || ResamplePlan::area_chroma_410(w / 4, h, plan.out_w(), plan.out_h()),
+          w,
+          plan,
+          idx,
+          use_simd,
+        );
+      }
       return match plan.kind() {
         crate::resample::SpanKind::Area => planar_dual_resample(
           luma_stream,
@@ -3021,6 +3095,10 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
     if let Some(native) = self.native_planar.as_mut() {
       native.reset();
     }
+    // New frame: restart the RGB-free HSV-only row-stage join (#263 follow-up).
+    if let Some(hsv) = self.hsv_planar.as_mut() {
+      hsv.reset();
+    }
     self.frozen_native_route = None;
     self.frozen_domain = None;
     self.resample_outputs = None;
@@ -3086,6 +3164,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
       resample_outputs,
       native,
       native_planar,
+      hsv_planar,
       frozen_native_route,
       frozen_domain,
       averaging_domain,
@@ -3296,23 +3375,49 @@ impl<R> PixelSink for MixedSinker<'_, Yuv422p, R> {
           return Ok(());
         }
         InsertionPoint::EncodedOutput => {
-          planar_dual_resample(
-            luma_stream,
-            rgb_stream,
-            resample_outputs,
-            rgb,
-            rgba,
-            luma,
-            luma_u16,
-            hsv,
-            rgb_scratch,
-            row.y(),
-            w,
-            plan,
-            idx,
-            use_simd,
-            convert_rgb,
-          )?;
+          // HSV-only (no RGB / RGBA): bin Y / U / V and convert per output
+          // row, RGB-free — bit-identical to the native fast tier. 4:2:2
+          // chroma is half-width, full height (`chroma_vsub = 1`); the
+          // chroma plan matches the native tier's. Still the ROW-STAGE route
+          // (`frozen_native_route = false`).
+          if hsv.is_some() && rgb.is_none() && rgba.is_none() {
+            super::planar_resample::hsv_direct_resample(
+              hsv_planar,
+              resample_outputs,
+              luma,
+              luma_u16,
+              hsv,
+              row.y(),
+              row.u_half(),
+              row.v_half(),
+              matrix,
+              full_range,
+              1,
+              || ResamplePlan::area(w / 2, h, plan.out_w(), plan.out_h()),
+              w,
+              plan,
+              idx,
+              use_simd,
+            )?;
+          } else {
+            planar_dual_resample(
+              luma_stream,
+              rgb_stream,
+              resample_outputs,
+              rgb,
+              rgba,
+              luma,
+              luma_u16,
+              hsv,
+              rgb_scratch,
+              row.y(),
+              w,
+              plan,
+              idx,
+              use_simd,
+              convert_rgb,
+            )?;
+          }
           if frozen_native_route.is_none() && need_output {
             *frozen_native_route = Some(false);
           }
@@ -3523,6 +3628,10 @@ impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
     if let Some(native) = self.native_planar.as_mut() {
       native.reset();
     }
+    // New frame: restart the RGB-free HSV-only row-stage join (#263 follow-up).
+    if let Some(hsv) = self.hsv_planar.as_mut() {
+      hsv.reset();
+    }
     self.frozen_native_route = None;
     self.frozen_domain = None;
     self.resample_outputs = None;
@@ -3585,6 +3694,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
       resample_outputs,
       native,
       native_planar,
+      hsv_planar,
       frozen_native_route,
       frozen_domain,
       averaging_domain,
@@ -3794,23 +3904,48 @@ impl<R> PixelSink for MixedSinker<'_, Yuv444p, R> {
           return Ok(());
         }
         InsertionPoint::EncodedOutput => {
-          planar_dual_resample(
-            luma_stream,
-            rgb_stream,
-            resample_outputs,
-            rgb,
-            rgba,
-            luma,
-            luma_u16,
-            hsv,
-            rgb_scratch,
-            row.y(),
-            w,
-            plan,
-            idx,
-            use_simd,
-            convert_rgb,
-          )?;
+          // HSV-only (no RGB / RGBA): bin Y / U / V and convert per output
+          // row, RGB-free — bit-identical to the native fast tier. 4:4:4
+          // chroma is full-width, full height (`chroma_vsub = 1`); the chroma
+          // plan matches the native tier's. Still the ROW-STAGE route.
+          if hsv.is_some() && rgb.is_none() && rgba.is_none() {
+            super::planar_resample::hsv_direct_resample(
+              hsv_planar,
+              resample_outputs,
+              luma,
+              luma_u16,
+              hsv,
+              row.y(),
+              row.u(),
+              row.v(),
+              matrix,
+              full_range,
+              1,
+              || ResamplePlan::area(w, h, plan.out_w(), plan.out_h()),
+              w,
+              plan,
+              idx,
+              use_simd,
+            )?;
+          } else {
+            planar_dual_resample(
+              luma_stream,
+              rgb_stream,
+              resample_outputs,
+              rgb,
+              rgba,
+              luma,
+              luma_u16,
+              hsv,
+              rgb_scratch,
+              row.y(),
+              w,
+              plan,
+              idx,
+              use_simd,
+              convert_rgb,
+            )?;
+          }
           if frozen_native_route.is_none() && need_output {
             *frozen_native_route = Some(false);
           }
@@ -4017,6 +4152,10 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
     if let Some(native) = self.native_planar.as_mut() {
       native.reset();
     }
+    // New frame: restart the RGB-free HSV-only row-stage join (#263 follow-up).
+    if let Some(hsv) = self.hsv_planar.as_mut() {
+      hsv.reset();
+    }
     self.frozen_native_route = None;
     self.frozen_domain = None;
     self.resample_outputs = None;
@@ -4079,6 +4218,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
       resample_outputs,
       native,
       native_planar,
+      hsv_planar,
       frozen_native_route,
       frozen_domain,
       averaging_domain,
@@ -4291,23 +4431,49 @@ impl<R> PixelSink for MixedSinker<'_, Yuv440p, R> {
           return Ok(());
         }
         InsertionPoint::EncodedOutput => {
-          planar_dual_resample(
-            luma_stream,
-            rgb_stream,
-            resample_outputs,
-            rgb,
-            rgba,
-            luma,
-            luma_u16,
-            hsv,
-            rgb_scratch,
-            row.y(),
-            w,
-            plan,
-            idx,
-            use_simd,
-            convert_rgb,
-          )?;
+          // HSV-only (no RGB / RGBA): bin Y / U / V and convert per output
+          // row, RGB-free — bit-identical to the native fast tier. 4:4:0
+          // chroma is full-width, half height (`chroma_vsub = 2`); the chroma
+          // plan matches the native tier's `area_chroma_440` (luma-domain
+          // vertical weighting). Still the ROW-STAGE route.
+          if hsv.is_some() && rgb.is_none() && rgba.is_none() {
+            super::planar_resample::hsv_direct_resample(
+              hsv_planar,
+              resample_outputs,
+              luma,
+              luma_u16,
+              hsv,
+              row.y(),
+              row.u(),
+              row.v(),
+              matrix,
+              full_range,
+              2,
+              || ResamplePlan::area_chroma_440(w, h, plan.out_w(), plan.out_h()),
+              w,
+              plan,
+              idx,
+              use_simd,
+            )?;
+          } else {
+            planar_dual_resample(
+              luma_stream,
+              rgb_stream,
+              resample_outputs,
+              rgb,
+              rgba,
+              luma,
+              luma_u16,
+              hsv,
+              rgb_scratch,
+              row.y(),
+              w,
+              plan,
+              idx,
+              use_simd,
+              convert_rgb,
+            )?;
+          }
           if frozen_native_route.is_none() && need_output {
             *frozen_native_route = Some(false);
           }
@@ -4516,6 +4682,10 @@ impl<R> PixelSink for MixedSinker<'_, Yuv411p, R> {
     if let Some(stream) = self.luma_stream.as_mut() {
       stream.reset();
     }
+    // New frame: restart the RGB-free HSV-only row-stage join (#263 follow-up).
+    if let Some(hsv) = self.hsv_planar.as_mut() {
+      hsv.reset();
+    }
     self.resample_outputs = None;
     Ok(())
   }
@@ -4571,6 +4741,7 @@ impl<R> PixelSink for MixedSinker<'_, Yuv411p, R> {
       plan,
       rgb_stream,
       luma_stream,
+      hsv_planar,
       resample_outputs,
       ..
     } = self;
@@ -4586,6 +4757,30 @@ impl<R> PixelSink for MixedSinker<'_, Yuv411p, R> {
     if let Some(plan) = plan.as_ref() {
       let matrix = row.matrix();
       let full_range = row.full_range();
+      // HSV-only (no RGB / RGBA): bin Y / U / V and convert per output row,
+      // RGB-free. 4:1:1 chroma is quarter-width (`chroma_w = ceil(w/4)`),
+      // full height (`chroma_vsub = 1`). Bit-identical to a YUV-domain
+      // bin-then-convert reference.
+      if plan.kind().is_area() && hsv.is_some() && rgb.is_none() && rgba.is_none() {
+        return super::planar_resample::hsv_direct_resample(
+          hsv_planar,
+          resample_outputs,
+          luma,
+          luma_u16,
+          hsv,
+          row.y(),
+          row.u_quarter(),
+          row.v_quarter(),
+          matrix,
+          full_range,
+          1,
+          || ResamplePlan::area_chroma_411(w, h, plan.out_w(), plan.out_h()),
+          w,
+          plan,
+          idx,
+          use_simd,
+        );
+      }
       return planar_dual_resample(
         luma_stream,
         rgb_stream,
