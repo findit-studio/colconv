@@ -142,6 +142,81 @@ pub(crate) fn ayuv64_to_rgba_row<const BE: bool>(
   ayuv64_to_rgb_or_rgba_row::<true, true, BE>(packed, rgba_out, width, matrix, full_range);
 }
 
+// ---- AYUV64 → HSV (direct: no RGB scratch) -----------------------------
+//
+// The display-referred twin of [`ayuv64_to_rgb_row`], fused with the
+// OpenCV HSV quantizer. It shares the EXACT per-pixel **8-bit-output**
+// Q15 decode (`Coefficients::for_matrix` + `range_params_n::<16, 8>` +
+// the slot-1/2/3 Y/U/V extraction) as its `_to_rgb` sibling, then feeds
+// the decoded `(r, g, b)` straight into [`rgb_to_hsv_pixel`] and
+// scatters to the H/S/V planes — never materializing a packed-RGB row.
+// The HSV output is 8-bit (`H ∈ [0, 179]`, `S, V ∈ [0, 255]`); AYUV64 is
+// a 16-bit source but its existing HSV path is `rgb_to_hsv_row` applied
+// to the **8-bit** `ayuv64_to_rgb_row` output, so the 8-bit intermediate
+// is reproduced here. The source α (slot 0) is independent of HSV — HSV
+// derives from the COLOR (Y/U/V → RGB → HSV) only — so it is read and
+// dropped exactly as the RGB path drops it. Byte-identical to
+// `rgb_to_hsv_row(ayuv64_to_rgb_row::<BE>(...))`, with no RGB allocation.
+
+/// Scalar AYUV64 → planar HSV bytes (OpenCV `cv2.COLOR_RGB2HSV`
+/// encoding: `H ∈ [0, 179]`, `S, V ∈ [0, 255]`). Const-generic over
+/// `BE` (source byte order), exactly like [`ayuv64_to_rgb_row`]. 4:4:4
+/// (no chroma subsampling): one U/Y/V triple per pixel. Source α is
+/// dropped (HSV is colour-only). Byte-identical to
+/// `rgb_to_hsv_row(ayuv64_to_rgb_row::<BE>(...))`.
+///
+/// # Panics (debug builds)
+///
+/// - `packed.len() >= width * 4`.
+/// - each of `h_out` / `s_out` / `v_out` `>= width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn ayuv64_to_hsv_row<const BE: bool>(
+  packed: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(packed.len() >= width * 4, "packed row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<16, 8>(full_range);
+  let bias = chroma_bias::<16>();
+
+  for x in 0..width {
+    let pix_off = x * 4;
+    let quad = [
+      load_ayuv64_u16::<BE>(packed[pix_off]),
+      load_ayuv64_u16::<BE>(packed[pix_off + 1]),
+      load_ayuv64_u16::<BE>(packed[pix_off + 2]),
+      load_ayuv64_u16::<BE>(packed[pix_off + 3]),
+    ];
+    // Source α (slot 0) is intentionally discarded — HSV is colour-only.
+    let (u, y, v, _a) = extract_ayuv64(&quad);
+    let u_d = q15_scale(u - bias, c_scale);
+    let v_d = q15_scale(v - bias, c_scale);
+    let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
+    let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
+    let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
+
+    let y_s = q15_scale(y - y_off, y_scale);
+    let (h, s, vv) = rgb_to_hsv_pixel(
+      clamp_u8(y_s + r_chroma) as i32,
+      clamp_u8(y_s + g_chroma) as i32,
+      clamp_u8(y_s + b_chroma) as i32,
+    );
+    h_out[x] = h;
+    s_out[x] = s;
+    v_out[x] = vv;
+  }
+}
+
 // ---- u16 output (i64 chroma) -------------------------------------------
 
 /// Shared scalar kernel for AYUV64 → packed **RGB u16** (`ALPHA = false,

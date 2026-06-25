@@ -51,8 +51,8 @@ use super::{
 use crate::{
   PixelSink,
   row::{
-    ayuv64_to_luma_row, ayuv64_to_luma_u16_row, ayuv64_to_rgb_row, ayuv64_to_rgb_u16_row,
-    ayuv64_to_rgba_row, ayuv64_to_rgba_u16_row, expand_rgb_to_rgba_row,
+    ayuv64_to_hsv_row, ayuv64_to_luma_row, ayuv64_to_luma_u16_row, ayuv64_to_rgb_row,
+    ayuv64_to_rgb_u16_row, ayuv64_to_rgba_row, ayuv64_to_rgba_u16_row, expand_rgb_to_rgba_row,
     expand_rgb_u16_to_rgba_u16_row, rgb_to_hsv_row,
   },
   source::{Ayuv64, Ayuv64Row, Ayuv64Sink},
@@ -356,11 +356,40 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Ayuv64<BE>, R> {
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_rgb_kernel = want_rgb || want_hsv;
 
     // ===== u16 RGB / RGBA path =====
     let want_rgb_u16 = rgb_u16.is_some();
     let want_rgba_u16 = rgba_u16.is_some();
+
+    // HSV-without-any-RGB/RGBA (u8 or u16) goes through the direct
+    // `ayuv64_to_hsv_row` kernel — no source-width RGB scratch (the SIMD
+    // path stages a fixed 64-pixel 8-bit RGB chunk internally). When any
+    // RGB/RGBA output is also attached, HSV derives off the converted u8
+    // RGB row for free via the convert-once path, so `need_rgb_kernel`
+    // keeps that kernel alive. (Unlike the planar 4:4:4 sink, this sink
+    // runs its u16 RGB/RGBA paths AFTER the u8 block, so the HSV-direct
+    // early return must also exclude pending u16 work.) Resample
+    // row-stage HSV-only is a #263 follow-up — HSV stays correct via the
+    // convert-once path.
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba && !want_rgb_u16 && !want_rgba_u16;
+    let need_rgb_kernel = want_rgb || (want_hsv && !want_hsv_direct);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h, s, v) = hsv.hsv();
+      ayuv64_to_hsv_row(
+        packed,
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      return Ok(());
+    }
 
     // Standalone RGBA u8 fast path — spec § 7.2: when only RGBA u8 (no
     // RGB, no HSV) is requested AND no u16 work is needed, run the

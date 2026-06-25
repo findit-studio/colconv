@@ -363,6 +363,8 @@ mod yuv410p_8bit;
 mod yuv411p_8bit;
 #[cfg(feature = "yuv-planar")]
 mod yuv420p_8bit;
+#[cfg(feature = "yuv-444-packed")]
+mod yuv_444_packed_hsv_direct;
 #[cfg(feature = "yuv-planar")]
 mod yuv_planar_hsv_direct;
 #[cfg(feature = "yuv-planar")]
