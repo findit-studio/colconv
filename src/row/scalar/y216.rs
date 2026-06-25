@@ -162,6 +162,95 @@ pub(crate) fn y216_to_luma_u16_row<const BE: bool>(packed: &[u16], out: &mut [u1
   }
 }
 
+// ---- Y216 (BITS=16) → HSV (direct: no RGB scratch) -------------------
+//
+// The display-referred twin of [`y216_to_rgb_or_rgba_row`], fused with
+// the OpenCV HSV quantizer. It shares the EXACT per-pixel **8-bit-output**
+// Q15 decode (`Coefficients::for_matrix` + `range_params_n::<16, 8>` +
+// the i32 chroma path + the packed 4:2:2 `Y₀, U, Y₁, V` extraction, no
+// shift) as the RGB-u8 sibling, then feeds the decoded `(r, g, b)`
+// straight into [`rgb_to_hsv_pixel`] and scatters to the H/S/V planes —
+// never materializing a packed-RGB row. Byte-identical to
+// `rgb_to_hsv_row(y216_to_rgb_or_rgba_row::<false, BE>(...))` (the 8-bit
+// RGB-u8 path uses i32 chroma, so this HSV kernel does too — only the
+// native-depth u16 RGB path needs i64). The SIMD backends mirror this via
+// a small reused 8-bit-RGB chunk filled by the existing SIMD
+// `y216_to_rgb_or_rgba_row` plus the SIMD `rgb_to_hsv_row`.
+
+/// Y216 (BITS=16) → planar HSV bytes (OpenCV `cv2.COLOR_RGB2HSV`
+/// encoding: `H ∈ [0, 179]`, `S, V ∈ [0, 255]`). `BE` selects the source
+/// byte order. Chroma is half-width packed `U, V`, nearest-neighbor 1→2
+/// upsampled per pixel pair.
+///
+/// Byte-identical to `rgb_to_hsv_row(y216_to_rgb_or_rgba_row::<false,
+/// BE>(...))`.
+///
+/// # Panics
+///
+/// - `width` must be even.
+/// - `packed.len() >= width * 2` (one u16 quadruple per chroma pair).
+/// - Each of `h_out` / `s_out` / `v_out` `>= width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn y216_to_hsv_row<const BE: bool>(
+  packed: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // assert! (not debug_assert!) — bounds gate `unsafe load_endian_u16`
+  // reads below; release-mode check prevents UB on bad inputs.
+  assert!(width.is_multiple_of(2), "Y216 requires even width");
+  assert!(packed.len() >= width * 2, "packed row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<16, 8>(full_range);
+  let bias = chroma_bias::<16>();
+
+  let pairs = width / 2;
+  let base = packed.as_ptr().cast::<u8>();
+  for p in 0..pairs {
+    let off4 = p * 4 * 2;
+    // No right-shift: BITS=16 means samples are already full-width.
+    let y0 = unsafe { load_endian_u16::<BE>(base.add(off4)) } as i32;
+    let u = unsafe { load_endian_u16::<BE>(base.add(off4 + 2)) } as i32;
+    let y1 = unsafe { load_endian_u16::<BE>(base.add(off4 + 4)) } as i32;
+    let v = unsafe { load_endian_u16::<BE>(base.add(off4 + 6)) } as i32;
+
+    let u_d = q15_scale(u - bias, c_scale);
+    let v_d = q15_scale(v - bias, c_scale);
+    let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
+    let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
+    let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
+
+    let y0_s = q15_scale(y0 - y_off, y_scale);
+    let (h0, s0, v0) = rgb_to_hsv_pixel(
+      clamp_u8(y0_s + r_chroma) as i32,
+      clamp_u8(y0_s + g_chroma) as i32,
+      clamp_u8(y0_s + b_chroma) as i32,
+    );
+    h_out[p * 2] = h0;
+    s_out[p * 2] = s0;
+    v_out[p * 2] = v0;
+
+    let y1_s = q15_scale(y1 - y_off, y_scale);
+    let (h1, s1, v1) = rgb_to_hsv_pixel(
+      clamp_u8(y1_s + r_chroma) as i32,
+      clamp_u8(y1_s + g_chroma) as i32,
+      clamp_u8(y1_s + b_chroma) as i32,
+    );
+    h_out[p * 2 + 1] = h1;
+    s_out[p * 2 + 1] = s1;
+    v_out[p * 2 + 1] = v1;
+  }
+}
+
 #[cfg(all(test, feature = "std"))]
 mod tests {
   use super::*;

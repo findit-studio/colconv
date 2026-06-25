@@ -54,7 +54,7 @@ use crate::resample::{AveragingDomain, InsertionContext, InsertionPoint, select_
 use crate::{
   PixelSink,
   row::{
-    expand_rgb_to_rgba_row, expand_rgb_u16_to_rgba_u16_row, rgb_to_hsv_row,
+    expand_rgb_to_rgba_row, expand_rgb_u16_to_rgba_u16_row, rgb_to_hsv_row, y212_to_hsv_row_endian,
     y212_to_luma_row_endian, y212_to_luma_u16_row_endian, y212_to_rgb_row_endian,
     y212_to_rgb_u16_row_endian, y212_to_rgba_row_endian, y212_to_rgba_u16_row_endian,
   },
@@ -506,10 +506,32 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Y212<BE>, R> {
     }
 
     // ===== u8 RGB / RGBA / HSV path (Strategy A) =====
+    // HSV-without-RGB-or-RGBA goes through the direct `y212_to_hsv_row_endian`
+    // kernel (no source-width RGB scratch). When RGB or RGBA is *also*
+    // attached the RGB kernel runs anyway, so HSV derives off that buffer for
+    // free (the cheap path) and `need_u8_rgb_kernel` keeps it alive.
     let want_rgb = rgb.is_some();
     let want_rgba = rgba.is_some();
     let want_hsv = hsv.is_some();
-    let need_u8_rgb_kernel = want_rgb || want_hsv;
+    let want_hsv_direct = want_hsv && !want_rgb && !want_rgba;
+    let need_u8_rgb_kernel = want_rgb || (want_hsv && want_rgba);
+
+    if want_hsv_direct {
+      let hsv = hsv.as_mut().expect("want_hsv_direct implies hsv attached");
+      let (h_out, s_out, v_out) = hsv.hsv();
+      y212_to_hsv_row_endian(
+        packed,
+        &mut h_out[one_plane_start..one_plane_end],
+        &mut s_out[one_plane_start..one_plane_end],
+        &mut v_out[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+        BE,
+      );
+      return Ok(());
+    }
 
     // Standalone u8 RGBA fast path — no RGB / HSV requested. Run the
     // dedicated RGBA kernel directly into the output buffer; avoids

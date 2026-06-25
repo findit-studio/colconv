@@ -559,3 +559,54 @@ pub(crate) unsafe fn y216_to_luma_u16_row<const BE: bool>(
     }
   }
 }
+
+// ---- Y216 (8-bit) → HSV (staged via a reused 8-bit RGB chunk) --------
+//
+// The SIMD twin of the scalar `y216_to_hsv_row` kernel. Fills a small
+// reused 8-bit RGB scratch (one chunk at a time) via the EXISTING SIMD
+// Y216 RGB-u8 kernel, then runs the SIMD `rgb_to_hsv_row` on the chunk —
+// byte-identical to `rgb_to_hsv_row(y216_to_rgb_or_rgba_row::<false,
+// BE>(...))` within this tier. Reuses the family-local
+// `super::y2xx::y2xx_hsv_via_rgb_chunks` driver (the shared yuv-planar
+// driver is unavailable under `y2xx` alone).
+
+/// SIMD: Y216 (BITS=16) → planar HSV bytes (OpenCV encoding), staged via
+/// the reused-8-bit-RGB-chunk pattern over the SIMD
+/// [`y216_to_rgb_or_rgba_row`] + [`rgb_to_hsv_row`]. `BE` selects the
+/// source byte order. Byte-identical to
+/// `rgb_to_hsv_row(y216_to_rgb_or_rgba_row::<false, BE>(...))` within this
+/// tier.
+///
+/// # Safety
+///
+/// 1. The relevant SIMD feature must be available.
+/// 2. `width % 2 == 0`.
+/// 3. `packed.len() >= width * 2`.
+/// 4. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn y216_to_hsv_row<const BE: bool>(
+  packed: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert!(width.is_multiple_of(2), "Y216 requires even width");
+  debug_assert!(packed.len() >= width * 2, "packed row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: feature verified; the chunk filler forwards to the SIMD Y216
+  // RGB-u8 kernel under the same contract (its own scalar tail covers small
+  // n). Packed byte offset = `offset * 2` u16.
+  unsafe {
+    super::y2xx::y2xx_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      y216_to_rgb_or_rgba_row::<false, BE>(&packed[offset * 2..], rgb, n, matrix, full_range);
+    });
+  }
+}
