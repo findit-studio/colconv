@@ -1115,6 +1115,326 @@ mod y2xx_parity {
   }
 }
 
+// ---- Parity: packed YUV 4:4:4 families (reuse YuvOptions) -------------
+//
+// Packed 4:4:4 sources. Each test asserts `<Marker as Walker<_>>::walk` is
+// byte-identical to a direct walker call into the same
+// `MixedSinker::with_rgb` sink, across full/limited × Bt709/Bt601. The
+// packed YUV → RGB output is matrix-weighted + full_range-scaled, so
+// `with_rgb` genuinely exercises the `(full_range, matrix)` forwarding (a
+// swapped pair changes the output). Coverage spans both topologies: the
+// plain arm (8-bit Vuya / Vuyx, LE-only 10-bit V30X) and the `@const BE`
+// arm (V410 10-bit, Xv36 12-bit, Ayuv64 16-bit + α) — for the latter,
+// BOTH LE and BE, since the impl delegates to the const-generic
+// `{fmt}_to_endian` (the LE `{fmt}_to` is its `BE = false` shim).
+
+#[cfg(feature = "yuv-444-packed")]
+mod yuv_444_packed_parity {
+  use super::*;
+  use crate::sinker::MixedSinker;
+
+  const W: u32 = 16;
+  const H: u32 = 4;
+  const MATRICES: [ColorMatrix; 2] = [ColorMatrix::Bt709, ColorMatrix::Bt601];
+
+  /// A deterministic, column/row-varying `u8` buffer of `n` bytes.
+  fn ramp8(n: usize) -> std::vec::Vec<u8> {
+    (0..n).map(|i| ((i * 19 + 7) % 251) as u8).collect()
+  }
+
+  /// A deterministic `u16` buffer of `n` samples (full 16-bit range).
+  fn ramp16(n: usize) -> std::vec::Vec<u16> {
+    (0..n).map(|i| ((i * 1103 + 7) & 0xFFFF) as u16).collect()
+  }
+
+  /// A deterministic `u32` buffer of `n` words (full 32-bit range).
+  fn ramp32(n: usize) -> std::vec::Vec<u32> {
+    (0..n)
+      .map(|i| (i as u32).wrapping_mul(2654435761).wrapping_add(7))
+      .collect()
+  }
+
+  /// Drives a plain-arm packed 4:4:4 family (no byte-order axis). `$ramp`
+  /// builds the single packed buffer of `row_elems * H` elements;
+  /// `$try_new` is the 4-arg ctor (`packed, w, h, stride`); `$walker` the
+  /// direct walker fn; `$row_elems` the per-row element count.
+  macro_rules! packed444 {
+    ($name:ident, $marker:ty, $try_new:path, $walker:path, $ramp:expr, $row_elems:expr) => {
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn $name() {
+        let row_elems = $row_elems as usize;
+        let buf = ($ramp)(row_elems * H as usize);
+        for full_range in [false, true] {
+          for matrix in MATRICES {
+            let opts = YuvOptions::new()
+              .maybe_full_range(full_range)
+              .with_matrix(matrix);
+            let src = $try_new(&buf, W, H, row_elems as u32).unwrap();
+
+            let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+            let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+            let mut sw = MixedSinker::<$marker>::new(W as usize, H as usize)
+              .with_rgb(&mut via_walker)
+              .unwrap();
+            <$marker as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+            let mut sd = MixedSinker::<$marker>::new(W as usize, H as usize)
+              .with_rgb(&mut via_direct)
+              .unwrap();
+            $walker(&src, full_range, matrix, &mut sd).unwrap();
+
+            assert_eq!(
+              via_walker, via_direct,
+              "{} parity (full_range={full_range}, matrix={matrix:?})",
+              stringify!($name)
+            );
+          }
+        }
+      }
+    };
+  }
+
+  // Plain arm: Vuya (8-bit, V/U/Y/A; `width * 4` bytes per row).
+  packed444!(
+    walk_vuya_matches_direct,
+    crate::source::Vuya,
+    crate::frame::VuyaFrame::try_new,
+    crate::source::vuya_to,
+    ramp8,
+    W * 4
+  );
+  // Plain arm: Vuyx (8-bit, α padding; `width * 4` bytes per row).
+  packed444!(
+    walk_vuyx_matches_direct,
+    crate::source::Vuyx,
+    crate::frame::VuyxFrame::try_new,
+    crate::source::vuyx_to,
+    ramp8,
+    W * 4
+  );
+  // Plain arm: V30X (10-bit, one u32 word per pixel; `width` u32 per row).
+  packed444!(
+    walk_v30x_matches_direct,
+    crate::source::V30X,
+    crate::frame::V30XFrame::try_new,
+    crate::source::v30x_to,
+    ramp32,
+    W
+  );
+
+  /// `@const BE` sibling: drives the LE impl at the marker's `<const BE =
+  /// false>` default against the `{Fmt}LeFrame` + LE `{fmt}_to` wrapper,
+  /// and (in the `_be` test) the BE impl at `Marker<true>` against the
+  /// `{Fmt}BeFrame` + a direct `{fmt}_to_endian::<_, true>` call.
+  macro_rules! packed444_be {
+    (
+      $name:ident, $marker:ty, $try_new:path, $walker:path,
+      $ramp:expr, $row_elems:expr
+    ) => {
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn $name() {
+        let row_elems = $row_elems as usize;
+        let buf = ($ramp)(row_elems * H as usize);
+        for full_range in [false, true] {
+          for matrix in MATRICES {
+            let opts = YuvOptions::new()
+              .maybe_full_range(full_range)
+              .with_matrix(matrix);
+            let src = $try_new(&buf, W, H, row_elems as u32).unwrap();
+
+            let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+            let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+            let mut sw = MixedSinker::<$marker>::new(W as usize, H as usize)
+              .with_rgb(&mut via_walker)
+              .unwrap();
+            <$marker as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+            let mut sd = MixedSinker::<$marker>::new(W as usize, H as usize)
+              .with_rgb(&mut via_direct)
+              .unwrap();
+            $walker(&src, full_range, matrix, &mut sd).unwrap();
+
+            assert_eq!(
+              via_walker, via_direct,
+              "{} parity (full_range={full_range}, matrix={matrix:?})",
+              stringify!($name)
+            );
+          }
+        }
+      }
+    };
+  }
+
+  // `@const BE` arm — V410 (10-bit, one u32 per pixel), LE + BE.
+  packed444_be!(
+    walk_v410_le_matches_direct,
+    crate::source::V410,
+    crate::frame::V410LeFrame::try_new,
+    crate::source::v410_to,
+    ramp32,
+    W
+  );
+  packed444_be!(
+    walk_v410_be_matches_direct,
+    crate::source::V410<true>,
+    crate::frame::V410BeFrame::try_new,
+    crate::source::v410_to_endian::<_, true>,
+    ramp32,
+    W
+  );
+  // `@const BE` arm — Xv36 (12-bit, U/Y/V/A u16 quadruple), LE + BE.
+  packed444_be!(
+    walk_xv36_le_matches_direct,
+    crate::source::Xv36,
+    crate::frame::Xv36LeFrame::try_new,
+    crate::source::xv36_to,
+    ramp16,
+    W * 4
+  );
+  packed444_be!(
+    walk_xv36_be_matches_direct,
+    crate::source::Xv36<true>,
+    crate::frame::Xv36BeFrame::try_new,
+    crate::source::xv36_to_endian::<_, true>,
+    ramp16,
+    W * 4
+  );
+  // `@const BE` arm — Ayuv64 (16-bit + source α, A/Y/U/V u16 quad), LE + BE.
+  packed444_be!(
+    walk_ayuv64_le_matches_direct,
+    crate::source::Ayuv64,
+    crate::frame::Ayuv64LeFrame::try_new,
+    crate::source::ayuv64_to,
+    ramp16,
+    W * 4
+  );
+  packed444_be!(
+    walk_ayuv64_be_matches_direct,
+    crate::source::Ayuv64<true>,
+    crate::frame::Ayuv64BeFrame::try_new,
+    crate::source::ayuv64_to_endian::<_, true>,
+    ramp16,
+    W * 4
+  );
+}
+
+// ---- Parity: packed YUV 4:2:2 10-bit V210 (reuse YuvOptions) ----------
+//
+// V210 packs 6 pixels per 16-byte block. Endian-generic: the `@const BE`
+// impl delegates to the const-generic `v210_to_endian::<_, BE>` (the LE
+// `v210_to` is its `BE = false` shim), so both halves of the matrix are
+// proven — the LE case drives the impl at the marker's `<const BE =
+// false>` default against the `V210LeFrame` alias, and the BE case drives
+// `V210<true>` against `V210BeFrame`. The packed YUV → RGB output is
+// matrix-weighted + full_range-scaled, so `with_rgb` exercises the
+// `(full_range, matrix)` forwarding across full/limited × Bt709/Bt601.
+
+#[cfg(feature = "v210")]
+mod v210_parity {
+  use super::*;
+  use crate::{
+    frame::{V210BeFrame, V210LeFrame},
+    sinker::MixedSinker,
+    source::{V210, v210_to, v210_to_endian},
+  };
+
+  // `width = 12` is a multiple of 6 (whole v210 blocks); stride is the
+  // per-row byte count `(width / 6) * 16`.
+  const W: u32 = 12;
+  const H: u32 = 4;
+  const STRIDE: u32 = W.div_ceil(6) * 16;
+  const MATRICES: [ColorMatrix; 2] = [ColorMatrix::Bt709, ColorMatrix::Bt601];
+
+  /// A deterministic, column/row-varying `u8` v210 buffer.
+  fn ramp(n: usize) -> std::vec::Vec<u8> {
+    (0..n).map(|i| ((i * 19 + 7) % 251) as u8).collect()
+  }
+
+  /// V210 LE — drives the `@const BE` impl at the marker's `<const BE =
+  /// false>` default against the LE `v210_to` wrapper.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_v210_le_matches_direct() {
+    let buf = ramp((STRIDE * H) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = V210LeFrame::try_new(&buf, W, H, STRIDE).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut sw = MixedSinker::<V210>::new(W as usize, H as usize)
+          .with_rgb(&mut via_walker)
+          .unwrap();
+        <V210 as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<V210>::new(W as usize, H as usize)
+          .with_rgb(&mut via_direct)
+          .unwrap();
+        v210_to(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "v210 LE parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
+  /// V210 BE — drives the `@const BE` impl at `V210<true>` against the
+  /// `V210BeFrame` alias, compared to a direct `v210_to_endian::<_, true>`.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_v210_be_matches_direct() {
+    let buf = ramp((STRIDE * H) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = V210BeFrame::try_new(&buf, W, H, STRIDE).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut sw = MixedSinker::<V210<true>>::new(W as usize, H as usize)
+          .with_rgb(&mut via_walker)
+          .unwrap();
+        <V210<true> as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<V210<true>>::new(W as usize, H as usize)
+          .with_rgb(&mut via_direct)
+          .unwrap();
+        v210_to_endian::<_, true>(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "v210 BE parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+}
+
 #[cfg(feature = "yuva")]
 mod yuva_parity {
   use super::*;
@@ -1423,6 +1743,109 @@ mod rgb_parity {
       }
     }
   }
+}
+
+// ---- Parity: packed 10-bit 2-10-10-10 RGB (X2Rgb10 / X2Bgr10) ---------
+//
+// These are already-RGB sources, so `X2*10 → RGB` is an option-ignoring
+// permute: a dropped or swapped `(full_range, matrix)` forward would not
+// show in a `with_rgb` output. `X2*10 → luma` is matrix-weighted +
+// full_range-scaled, so luma parity *does* catch it (exactly as the GBR
+// families are tested). Each test asserts `<Marker as Walker<_>>::walk` is
+// byte-identical to a direct walker call into the same
+// `MixedSinker::with_luma` sink, across full/limited × Bt709/Bt601. Both
+// families are endian-generic (`@const BE` arm): the LE case drives the
+// impl at the marker's `<const BE = false>` default against the
+// `{Fmt}LeFrame` + LE `{fmt}_to` wrapper, and the BE case drives
+// `Marker<true>` against `{Fmt}BeFrame` + a direct
+// `{fmt}_to_endian::<_, true>` call, so both halves of the impl are proven.
+
+#[cfg(feature = "rgb")]
+mod x2_packed_rgb_parity {
+  use super::*;
+  use crate::sinker::MixedSinker;
+
+  const W: u32 = 8;
+  const H: u32 = 4;
+  const MATRICES: [ColorMatrix; 2] = [ColorMatrix::Bt709, ColorMatrix::Bt601];
+
+  /// A deterministic, column/row-varying `u8` X2*10 buffer — `width * 4`
+  /// bytes per row (one u32 word per pixel).
+  fn ramp(n: usize) -> std::vec::Vec<u8> {
+    (0..n).map(|i| ((i * 19 + 7) % 251) as u8).collect()
+  }
+
+  /// Drives one endianness of an X2*10 family against a luma sink.
+  /// `$try_new` is the 4-arg ctor (`packed, w, h, stride`); `$walker` the
+  /// direct walker fn (the LE wrapper or `{fmt}_to_endian::<_, true>`).
+  macro_rules! x2_luma_case {
+    ($name:ident, $marker:ty, $try_new:path, $walker:path, $label:literal) => {
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn $name() {
+        let buf = ramp((W * 4 * H) as usize);
+        for full_range in [false, true] {
+          for matrix in MATRICES {
+            let opts = YuvOptions::new()
+              .maybe_full_range(full_range)
+              .with_matrix(matrix);
+            let src = $try_new(&buf, W, H, W * 4).unwrap();
+
+            let mut via_walker = std::vec![0u8; (W * H) as usize];
+            let mut via_direct = std::vec![0u8; (W * H) as usize];
+
+            let mut sw = MixedSinker::<$marker>::new(W as usize, H as usize)
+              .with_luma(&mut via_walker)
+              .unwrap();
+            <$marker as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+            let mut sd = MixedSinker::<$marker>::new(W as usize, H as usize)
+              .with_luma(&mut via_direct)
+              .unwrap();
+            $walker(&src, full_range, matrix, &mut sd).unwrap();
+
+            assert_eq!(
+              via_walker, via_direct,
+              concat!($label, " luma parity (full_range={}, matrix={:?})"),
+              full_range, matrix
+            );
+          }
+        }
+      }
+    };
+  }
+
+  x2_luma_case!(
+    walk_x2rgb10_le_matches_direct,
+    crate::source::X2Rgb10,
+    crate::frame::X2Rgb10LeFrame::try_new,
+    crate::source::x2rgb10_to,
+    "x2rgb10 LE"
+  );
+  x2_luma_case!(
+    walk_x2rgb10_be_matches_direct,
+    crate::source::X2Rgb10<true>,
+    crate::frame::X2Rgb10BeFrame::try_new,
+    crate::source::x2rgb10_to_endian::<_, true>,
+    "x2rgb10 BE"
+  );
+  x2_luma_case!(
+    walk_x2bgr10_le_matches_direct,
+    crate::source::X2Bgr10,
+    crate::frame::X2Bgr10LeFrame::try_new,
+    crate::source::x2bgr10_to,
+    "x2bgr10 LE"
+  );
+  x2_luma_case!(
+    walk_x2bgr10_be_matches_direct,
+    crate::source::X2Bgr10<true>,
+    crate::frame::X2Bgr10BeFrame::try_new,
+    crate::source::x2bgr10_to_endian::<_, true>,
+    "x2bgr10 BE"
+  );
 }
 
 #[cfg(feature = "rgb-legacy")]
