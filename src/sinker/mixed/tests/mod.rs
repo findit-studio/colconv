@@ -357,6 +357,8 @@ mod y210;
 mod y212;
 #[cfg(feature = "y2xx")]
 mod y216;
+#[cfg(feature = "y2xx")]
+mod y2xx_hsv_direct;
 #[cfg(feature = "yuv-planar")]
 mod yuv410p_8bit;
 #[cfg(feature = "yuv-planar")]

@@ -253,6 +253,105 @@ pub(crate) fn y2xx_n_to_luma_u16_row<const BITS: u32, const BE: bool>(
   }
 }
 
+// ---- Y2xx (BITS ∈ {10, 12}) → HSV (direct: no RGB scratch) ------------
+//
+// The display-referred twin of [`y2xx_n_to_rgb_or_rgba_row`], fused with
+// the OpenCV HSV quantizer. It shares the EXACT per-pixel **8-bit-output**
+// Q15 decode (`Coefficients::for_matrix` + `range_params_n::<BITS, 8>` +
+// the `>> (16 - BITS)` MSB-aligned de-pack + the packed 4:2:2 `Y₀, U, Y₁,
+// V` extraction) as its `_to_rgb` sibling, then feeds the decoded
+// `(r, g, b)` straight into [`rgb_to_hsv_pixel`] and scatters to the
+// H/S/V planes — never materializing a packed-RGB row. The HSV output is
+// 8-bit (`H ∈ [0, 179]`, `S, V ∈ [0, 255]`) regardless of source depth,
+// because the existing Y2xx HSV path is `rgb_to_hsv_row` applied to the
+// **8-bit** `y2xx_to_rgb` output. This kernel is therefore byte-identical
+// to `rgb_to_hsv_row(y2xx_n_to_rgb_or_rgba_row::<BITS, false, BE>(...))`
+// but allocates no RGB intermediate. Y216 (BITS = 16) has its own
+// [`y216_to_hsv_row`] (parallel to its i32 RGB-u8 path). The SIMD
+// backends mirror this via a small reused 8-bit-RGB chunk filled by the
+// existing SIMD `y2xx_n_to_rgb_or_rgba_row` plus the SIMD
+// `rgb_to_hsv_row`.
+
+/// Y2xx (`BITS ∈ {10, 12}`) → planar HSV bytes (OpenCV
+/// `cv2.COLOR_RGB2HSV` encoding: `H ∈ [0, 179]`, `S, V ∈ [0, 255]`).
+/// Const-generic over `BITS ∈ {10, 12}` and `BE` (source byte order),
+/// exactly like [`y2xx_n_to_rgb_or_rgba_row`]. Chroma is half-width
+/// packed `U, V`, nearest-neighbor 1→2 upsampled per pixel pair.
+///
+/// Byte-identical to
+/// `rgb_to_hsv_row(y2xx_n_to_rgb_or_rgba_row::<BITS, false, BE>(...))`.
+///
+/// # Panics
+///
+/// - `width` must be even.
+/// - `packed.len() >= width * 2` (one u16 quadruple per chroma pair).
+/// - Each of `h_out` / `s_out` / `v_out` `>= width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn y2xx_n_to_hsv_row<const BITS: u32, const BE: bool>(
+  packed: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  const {
+    assert!(
+      BITS == 10 || BITS == 12,
+      "y2xx_n_to_hsv requires BITS in {{10, 12}}"
+    );
+  }
+  // assert! (not debug_assert!) — bounds gate `unsafe load_endian_u16`
+  // reads below; release-mode check prevents UB on bad inputs.
+  assert!(width.is_multiple_of(2), "Y2xx requires even width");
+  assert!(packed.len() >= width * 2, "packed row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<BITS, 8>(full_range);
+  let bias = chroma_bias::<BITS>();
+
+  let pairs = width / 2;
+  let base = packed.as_ptr().cast::<u8>();
+  for p in 0..pairs {
+    let off4 = p * 4 * 2;
+    let y0 = rshift_bits::<BITS>(unsafe { load_endian_u16::<BE>(base.add(off4)) }) as i32;
+    let u = rshift_bits::<BITS>(unsafe { load_endian_u16::<BE>(base.add(off4 + 2)) }) as i32;
+    let y1 = rshift_bits::<BITS>(unsafe { load_endian_u16::<BE>(base.add(off4 + 4)) }) as i32;
+    let v = rshift_bits::<BITS>(unsafe { load_endian_u16::<BE>(base.add(off4 + 6)) }) as i32;
+
+    let u_d = q15_scale(u - bias, c_scale);
+    let v_d = q15_scale(v - bias, c_scale);
+    let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
+    let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
+    let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
+
+    let y0_s = q15_scale(y0 - y_off, y_scale);
+    let (h0, s0, v0) = rgb_to_hsv_pixel(
+      clamp_u8(y0_s + r_chroma) as i32,
+      clamp_u8(y0_s + g_chroma) as i32,
+      clamp_u8(y0_s + b_chroma) as i32,
+    );
+    h_out[p * 2] = h0;
+    s_out[p * 2] = s0;
+    v_out[p * 2] = v0;
+
+    let y1_s = q15_scale(y1 - y_off, y_scale);
+    let (h1, s1, v1) = rgb_to_hsv_pixel(
+      clamp_u8(y1_s + r_chroma) as i32,
+      clamp_u8(y1_s + g_chroma) as i32,
+      clamp_u8(y1_s + b_chroma) as i32,
+    );
+    h_out[p * 2 + 1] = h1;
+    s_out[p * 2 + 1] = s1;
+    v_out[p * 2 + 1] = v1;
+  }
+}
+
 // ---- Public Y210 (BITS=10) wrappers ------------------------------------
 //
 // Ship 11b instantiates BITS=10 only. Ship 11c will add the parallel
@@ -302,6 +401,22 @@ pub(crate) fn y210_to_luma_u16_row<const BE: bool>(
   y2xx_n_to_luma_u16_row::<10, BE>(packed, luma_out, width);
 }
 
+/// Public Y210 → planar HSV wrapper.
+/// `BE = true` selects big-endian wire decoding.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn y210_to_hsv_row<const BE: bool>(
+  packed: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  y2xx_n_to_hsv_row::<10, BE>(packed, h_out, s_out, v_out, width, matrix, full_range);
+}
+
 // ---- Public Y212 (BITS=12) wrappers ------------------------------------
 //
 // Ship 11c monomorphizes the `y2xx_n_*` template at BITS=12. No new
@@ -349,6 +464,22 @@ pub(crate) fn y212_to_luma_u16_row<const BE: bool>(
   width: usize,
 ) {
   y2xx_n_to_luma_u16_row::<12, BE>(packed, luma_out, width);
+}
+
+/// Public Y212 → planar HSV wrapper.
+/// `BE = true` selects big-endian wire decoding.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn y212_to_hsv_row<const BE: bool>(
+  packed: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  y2xx_n_to_hsv_row::<12, BE>(packed, h_out, s_out, v_out, width, matrix, full_range);
 }
 
 #[cfg(all(test, feature = "std"))]

@@ -560,3 +560,124 @@ pub(crate) unsafe fn y2xx_n_to_luma_u16_row<const BITS: u32, const BE: bool>(
     }
   }
 }
+
+// ---- Y2xx (8-bit) → HSV (staged via a reused 8-bit RGB chunk) --------
+//
+// The SIMD twins of the scalar `y2xx_n_to_hsv_row` / `y216_to_hsv_row`
+// kernels. Rather than re-derive an HSV-specific register pipeline, each
+// fills a small fixed reused **8-bit** RGB scratch (one `HSV_CHUNK`-pixel
+// chunk at a time) using the EXISTING SIMD Y2xx RGB kernel — so the chunk
+// filler IS the production 8-bit RGB kernel — then runs the SIMD
+// `rgb_to_hsv_row` on the chunk. This makes the result byte-identical to
+// `rgb_to_hsv_row(y2xx_n_to_rgb_or_rgba_row::<BITS, false, BE>(...))` (and
+// the Y216 analogue) within this tier — the same 8-bit RGB intermediate
+// the existing Y2xx HSV path uses — with no source-width RGB allocation.
+// The scalar tail of each underlying RGB kernel handles widths below the
+// SIMD block, so no separate tail is needed here. `HSV_CHUNK` (64) is a
+// multiple of 2, so every chunk offset lands on a 4:2:2 chroma pair
+// boundary; the packed byte offset for the chunk at pixel `offset` is
+// `offset * 2` (2 u16 = one Y + one chroma per pixel).
+//
+// This driver is LOCAL to the Y2xx family (the shared
+// `yuv_to_hsv_via_rgb_chunks` is gated on `yuv-planar`; the Y2xx formats
+// compile under `y2xx` alone) and shared by both Y2xx files of this arch —
+// the sibling Y216 module reaches it via `super::y2xx`. Only the ungated
+// `rgb_to_hsv_row` is shared from outside the family.
+
+/// One reused 8-bit RGB chunk's worth of pixels staged before the HSV
+/// pass. Module-private (only the family-local driver below uses it); the
+/// sibling Y216 module reaches the driver, not this constant.
+const HSV_CHUNK: usize = 64;
+
+/// Shared SIMD driver: walks `width` in `HSV_CHUNK`-pixel chunks, fills a
+/// small reused stack RGB scratch via `fill_rgb` (the existing SIMD 8-bit
+/// RGB kernel for the format, passed the chunk `offset` and length `n`),
+/// then runs the SIMD [`rgb_to_hsv_row`] on that chunk into the H/S/V
+/// planes. Byte-identical to `rgb_to_hsv_row(*_to_rgb_row(...))` within
+/// this tier, with no source-width RGB allocation. Shared by the Y210/Y212
+/// kernels here and the Y216 kernel in the sibling module.
+///
+/// `fill_rgb` receives `(offset, n, &mut rgb_chunk)` and must write
+/// `n * 3` packed RGB bytes for the `n` pixels at `offset`.
+///
+/// # Safety
+///
+/// The relevant SIMD feature must be available, and `fill_rgb` must uphold
+/// the underlying RGB kernel's safety contract for each chunk. Each of
+/// `h_out` / `s_out` / `v_out` must be `>= width`.
+#[inline]
+pub(super) unsafe fn y2xx_hsv_via_rgb_chunks(
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  mut fill_rgb: impl FnMut(usize, usize, &mut [u8]),
+) {
+  let mut scratch = [0u8; HSV_CHUNK * 3];
+  let mut offset = 0;
+  while offset < width {
+    let n = (width - offset).min(HSV_CHUNK);
+    fill_rgb(offset, n, &mut scratch[..n * 3]);
+    // SAFETY: the feature is verified by the wrapper's `#[target_feature]`;
+    // the chunk and the output sub-slices are all length `n`.
+    unsafe {
+      rgb_to_hsv_row(
+        &scratch[..n * 3],
+        &mut h_out[offset..offset + n],
+        &mut s_out[offset..offset + n],
+        &mut v_out[offset..offset + n],
+        n,
+      );
+    }
+    offset += n;
+  }
+}
+
+/// SIMD: Y2xx (`BITS ∈ {10, 12}`) → planar HSV bytes (OpenCV encoding),
+/// staged via the reused-8-bit-RGB-chunk pattern over the SIMD
+/// [`y2xx_n_to_rgb_or_rgba_row`] + [`rgb_to_hsv_row`]. Const-generic over
+/// `BITS ∈ {10, 12}` and `BE`. Byte-identical to
+/// `rgb_to_hsv_row(y2xx_n_to_rgb_or_rgba_row::<BITS, false, BE>(...))`
+/// within this tier.
+///
+/// # Safety
+///
+/// 1. The relevant SIMD feature must be available.
+/// 2. `width % 2 == 0`.
+/// 3. `packed.len() >= width * 2`.
+/// 4. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
+/// 5. `BITS` ∈ `{10, 12}`.
+#[inline]
+#[target_feature(enable = "simd128")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn y2xx_n_to_hsv_row<const BITS: u32, const BE: bool>(
+  packed: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  const { assert!(BITS == 10 || BITS == 12) };
+  debug_assert!(width.is_multiple_of(2), "Y2xx requires even width");
+  debug_assert!(packed.len() >= width * 2, "packed row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: feature verified; the chunk filler forwards the per-chunk
+  // sub-slices to the SIMD Y2xx RGB kernel under the same contract (its own
+  // scalar tail covers small n). Packed byte offset = `offset * 2` u16.
+  unsafe {
+    y2xx_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
+      y2xx_n_to_rgb_or_rgba_row::<BITS, false, BE>(
+        &packed[offset * 2..],
+        rgb,
+        n,
+        matrix,
+        full_range,
+      );
+    });
+  }
+}
