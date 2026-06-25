@@ -106,6 +106,39 @@ use crate::{
     Y210, Y210Sink, Y212, Y212Sink, Y216, Y216Sink, y210_to_endian, y212_to_endian, y216_to_endian,
   },
 };
+// Packed YUV 4:4:4. Two topologies: the byte-order-fixed 8-bit `Vuya` /
+// `Vuyx` and the LE-only 10-bit `V30X` ride the plain arm (frames
+// `VuyaFrame<'_>` / `VuyxFrame<'_>` / `V30XFrame<'_>`, walker
+// `{fmt}_to(src, full_range, matrix, sink)`); the endian-generic `V410`
+// (10-bit; FFmpeg `Y410`/`XV30` are the same wire format), `Xv36`
+// (12-bit), and `Ayuv64` (16-bit + source alpha) ride the `@const BE`
+// arm — marker `Fmt<const BE>` over the trailing-`BE` frame
+// `FmtFrame<'a, BE>` (no leading bit-depth const, same shape as XYZ12 /
+// Rgb48), delegating to the const-generic `{fmt}_to_endian::<_, BE>` (the
+// LE `{fmt}_to` is its `BE = false` wrapper). The packed YUV→RGB outputs
+// are matrix-weighted + full_range-scaled, so every family reuses
+// [`YuvOptions`]; the alpha plane of `Ayuv64` is read inside the walker
+// (RGBA outputs only), never an `Options` knob.
+#[cfg(feature = "yuv-444-packed")]
+use crate::{
+  frame::{Ayuv64Frame, V30XFrame, V410Frame, VuyaFrame, VuyxFrame, Xv36Frame},
+  source::{
+    Ayuv64, Ayuv64Sink, V30X, V30XSink, V410, V410Sink, Vuya, VuyaSink, Vuyx, VuyxSink, Xv36,
+    Xv36Sink, ayuv64_to_endian, v30x_to, v410_to_endian, vuya_to, vuyx_to, xv36_to_endian,
+  },
+};
+// Packed YUV 4:2:2 10-bit `V210` (6 pixels per 16-byte block) —
+// endian-generic marker (`V210<const BE>`) over the trailing-`BE` frame
+// `V210Frame<'a, BE>` (no leading bit-depth const), so it rides the
+// `@const BE` arm and delegates to the const-generic
+// `v210_to_endian::<_, BE>` (the LE `v210_to` is its `BE = false`
+// wrapper). Matrix-weighted + full_range-scaled, so it reuses
+// [`YuvOptions`].
+#[cfg(feature = "v210")]
+use crate::{
+  frame::V210Frame,
+  source::{V210, V210Sink, v210_to_endian},
+};
 // Planar YUVA — uniform `(full_range, matrix)` sources; the alpha plane
 // is read inside the walker from the frame (never an `Options` knob), so
 // they reuse `YuvOptions`. 8-bit `Yuva*pFrame` on the plain arm; the
@@ -139,19 +172,25 @@ use crate::{
 // `(full_range, matrix)` — the RGB-input row carries them for the
 // `with_luma` / `with_hsv` outputs — so every RGB family reuses
 // [`YuvOptions`]; the RGB-only outputs (`with_rgb`/`with_rgba`/`…`)
-// ignore them.
+// ignore them. The 10-bit 2-10-10-10 packed families (`X2Rgb10` /
+// `X2Bgr10`) are a distinct word-packed topology: endian-generic marker
+// `Fmt<const BE>` over the trailing-`BE` frame `FmtFrame<'a, BE>` (no
+// leading bit-depth const), so they ride the `@const BE` arm and delegate
+// to `{fmt}_to_endian::<_, BE>`.
 #[cfg(feature = "rgb")]
 use crate::{
   frame::{
     AbgrFrame, ArgbFrame, Bgr24Frame, Bgr48Frame, Bgra64Frame, BgraFrame, BgrxFrame, Rgb24Frame,
-    Rgb48Frame, Rgba64Frame, RgbaFrame, RgbxFrame, XbgrFrame, XrgbFrame,
+    Rgb48Frame, Rgba64Frame, RgbaFrame, RgbxFrame, X2Bgr10Frame, X2Rgb10Frame, XbgrFrame,
+    XrgbFrame,
   },
   source::{
     Abgr, AbgrSink, Argb, ArgbSink, Bgr24, Bgr24Sink, Bgr48, Bgr48Sink, Bgra, Bgra64, Bgra64Sink,
     BgraSink, Bgrx, BgrxSink, Rgb24, Rgb24Sink, Rgb48, Rgb48Sink, Rgba, Rgba64, Rgba64Sink,
-    RgbaSink, Rgbx, RgbxSink, Xbgr, XbgrSink, Xrgb, XrgbSink, abgr_to, argb_to, bgr24_to,
-    bgr48_to_endian, bgra_to, bgra64_to_endian, bgrx_to, rgb24_to, rgb48_to_endian, rgba_to,
-    rgba64_to_endian, rgbx_to, xbgr_to, xrgb_to,
+    RgbaSink, Rgbx, RgbxSink, X2Bgr10, X2Bgr10Sink, X2Rgb10, X2Rgb10Sink, Xbgr, XbgrSink, Xrgb,
+    XrgbSink, abgr_to, argb_to, bgr24_to, bgr48_to_endian, bgra_to, bgra64_to_endian, bgrx_to,
+    rgb24_to, rgb48_to_endian, rgba_to, rgba64_to_endian, rgbx_to, x2bgr10_to_endian,
+    x2rgb10_to_endian, xbgr_to, xrgb_to,
   },
 };
 // Legacy packed RGB (5/5/6/5/5/5/4/4/4-bit, `AV_PIX_FMT_*565/555/444LE`).
@@ -279,7 +318,9 @@ pub trait Walker<S> {
   feature = "yuv-planar",
   feature = "yuv-semi-planar",
   feature = "yuv-packed",
+  feature = "yuv-444-packed",
   feature = "y2xx",
+  feature = "v210",
   feature = "yuva",
   feature = "rgb",
   feature = "rgb-legacy",
@@ -908,6 +949,66 @@ walker!(@const_bits 12, BE; Y212, Y212Sink, Y2xxFrame, YuvOptions,
 walker!(@const_bits 16, BE; Y216, Y216Sink, Y2xxFrame, YuvOptions,
   |src, opts, sink| y216_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
 
+// ===== Packed YUV 4:4:4 families =======================================
+//
+// Single-buffer packed 4:4:4 sources. Their packed YUV → RGB outputs are
+// matrix-weighted + full_range-scaled, so every family reuses
+// [`YuvOptions`]; the `Vuya` / `Ayuv64` source alpha is read inside the
+// walker for the RGBA outputs only, never an `Options` knob. The module
+// stays additive: the existing walkers, sinks, and kernels are untouched.
+
+// ---- Packed YUV 4:4:4, byte-order-fixed (plain arm) --------------------
+// 8-bit `Vuya` (real source α) / `Vuyx` (α padding) and LE-only 10-bit
+// `V30X` carry no byte-order axis, so they ride the plain arm and forward
+// to their uniform `{fmt}_to(src, full_range, matrix, sink)` walker.
+#[cfg(feature = "yuv-444-packed")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
+walker!(Vuya, VuyaSink, VuyaFrame, YuvOptions, |src, opts, sink| {
+  vuya_to(src, opts.full_range(), opts.matrix(), sink)
+});
+#[cfg(feature = "yuv-444-packed")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
+walker!(Vuyx, VuyxSink, VuyxFrame, YuvOptions, |src, opts, sink| {
+  vuyx_to(src, opts.full_range(), opts.matrix(), sink)
+});
+#[cfg(feature = "yuv-444-packed")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
+walker!(V30X, V30XSink, V30XFrame, YuvOptions, |src, opts, sink| {
+  v30x_to(src, opts.full_range(), opts.matrix(), sink)
+});
+
+// ---- Packed YUV 4:4:4, endian-generic (`@const BE` arm; LE + BE) -------
+// Marker `Fmt<const BE>` over the trailing-`BE` frame `FmtFrame<'a, BE>`
+// (no leading bit-depth const, same shape as XYZ12 / Rgb48), delegating
+// to `{fmt}_to_endian::<_, BE>`; one impl covers LE (`BE = false`) and BE
+// (`BE = true`). `V410` is the 10-bit format (FFmpeg `Y410` / `XV30` name
+// the same wire layout); `Xv36` is 12-bit; `Ayuv64` is 16-bit + source α.
+#[cfg(feature = "yuv-444-packed")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
+walker!(@const BE: bool; V410<BE>, V410Sink, V410Frame, YuvOptions,
+  |src, opts, sink| v410_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "yuv-444-packed")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
+walker!(@const BE: bool; Xv36<BE>, Xv36Sink, Xv36Frame, YuvOptions,
+  |src, opts, sink| xv36_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "yuv-444-packed")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
+walker!(@const BE: bool; Ayuv64<BE>, Ayuv64Sink, Ayuv64Frame, YuvOptions,
+  |src, opts, sink| ayuv64_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+
+// ===== Packed YUV 4:2:2 10-bit `V210` ==================================
+//
+// 6 pixels per 16-byte block. Endian-generic marker `V210<const BE>` over
+// the trailing-`BE` frame `V210Frame<'a, BE>` (no leading bit-depth
+// const), so it rides the `@const BE` arm and delegates to the
+// const-generic `v210_to_endian::<_, BE>` (the LE `v210_to` is its
+// `BE = false` wrapper). Matrix-weighted + full_range-scaled, so it
+// reuses [`YuvOptions`].
+#[cfg(feature = "v210")]
+#[cfg_attr(docsrs, doc(cfg(feature = "v210")))]
+walker!(@const BE: bool; V210<BE>, V210Sink, V210Frame, YuvOptions,
+  |src, opts, sink| v210_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+
 // ---- Planar YUVA, 8-bit (alpha read inside `{fmt}_to`, not an Option) --
 #[cfg(feature = "yuva")]
 #[cfg_attr(docsrs, doc(cfg(feature = "yuva")))]
@@ -1079,6 +1180,21 @@ walker!(@const BE: bool; Rgba64<BE>, Rgba64Sink, Rgba64Frame, YuvOptions,
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
 walker!(@const BE: bool; Bgra64<BE>, Bgra64Sink, Bgra64Frame, YuvOptions,
   |src, opts, sink| bgra64_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+
+// ---- Packed RGB, 10-bit 2-10-10-10 (BE-generic marker; LE + BE) --------
+// `X2Rgb10` / `X2Bgr10` pack one pixel per 32-bit word
+// (`(MSB) 2X | 10 | 10 | 10 (LSB)`, the 2 leading bits padding). Marker
+// `Fmt<const BE>` over the trailing-`BE` frame `FmtFrame<'a, BE>` (no
+// leading bit-depth const), so they ride the `@const BE` arm and delegate
+// to `{fmt}_to_endian::<_, BE>`; one impl covers both LE and BE.
+#[cfg(feature = "rgb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
+walker!(@const BE: bool; X2Rgb10<BE>, X2Rgb10Sink, X2Rgb10Frame, YuvOptions,
+  |src, opts, sink| x2rgb10_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "rgb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
+walker!(@const BE: bool; X2Bgr10<BE>, X2Bgr10Sink, X2Bgr10Frame, YuvOptions,
+  |src, opts, sink| x2bgr10_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
 
 // ---- Legacy packed RGB (byte-order-fixed LE; plain arm) ----------------
 #[cfg(feature = "rgb-legacy")]
