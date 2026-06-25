@@ -22,9 +22,6 @@
 //!
 //! `width % 16` remaining pixels fall through to `scalar::vuya_to_rgb_or_rgba_row`.
 
-#[allow(unused_imports)]
-use core::arch::aarch64::*;
-
 use super::*;
 use crate::{ColorMatrix, row::scalar};
 

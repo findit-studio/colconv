@@ -37,7 +37,7 @@
 // YUV-class or `rgb` source families is enabled. Under feature subsets
 // where no NEON kernel needs these intrinsics (e.g. bayer-only,
 // gbr-only, gray-only, …), this import would otherwise be flagged
-// unused. Submodules carry their own `use core::arch::aarch64::*;`.
+// unused. Submodules reach these intrinsics through `use super::*`.
 #[cfg(any(
   feature = "rgb",
   feature = "v210",

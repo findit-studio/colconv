@@ -32,9 +32,6 @@
 //! `width % 16` remaining pixels fall through to the scalar
 //! `ayuv64_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC, BE>` (or u16 version).
 
-#[allow(unused_imports)]
-use core::arch::aarch64::*;
-
 use super::*;
 use crate::{ColorMatrix, row::scalar};
 

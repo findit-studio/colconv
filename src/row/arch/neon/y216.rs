@@ -24,9 +24,6 @@
 //! `yuv_420p16_to_rgb_or_rgba_u16_row`). No load-time right-shift or
 //! mask — BITS=16 samples are already full-range u16.
 
-#[allow(unused_imports)]
-use core::arch::aarch64::*;
-
 use super::*;
 use crate::{ColorMatrix, row::scalar};
 

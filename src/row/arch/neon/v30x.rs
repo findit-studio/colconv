@@ -22,9 +22,6 @@
 //!
 //! `width % 4` remaining pixels fall through to `scalar::v30x_*`.
 
-#[allow(unused_imports)]
-use core::arch::aarch64::*;
-
 use super::*;
 use crate::{ColorMatrix, row::scalar};
 

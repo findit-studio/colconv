@@ -1,6 +1,3 @@
-#[allow(unused_imports)]
-use core::arch::aarch64::*;
-
 use crate::{ColorMatrix, row::scalar};
 
 use super::*;

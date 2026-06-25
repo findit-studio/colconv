@@ -26,9 +26,6 @@
 //!
 //! `width % 8` remaining pixels fall through to `scalar::xv36_*`.
 
-#[allow(unused_imports)]
-use core::arch::aarch64::*;
-
 use super::*;
 use crate::{ColorMatrix, row::scalar};
 
