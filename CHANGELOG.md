@@ -61,8 +61,8 @@ breaking changes bump the `x` in `0.x.y`.
 
 ### Added
 
-- SIMD acceleration for the fused-downscale engine (NEON, SSE4.1,
-  wasm-simd128): the area H-pass consumes a plan-time zero-padded u16
+- SIMD acceleration for the fused-downscale engine (NEON, SSE4.1, AVX2,
+  AVX-512, wasm-simd128): the area H-pass consumes a plan-time zero-padded u16
   weight arena — each span padded to a multiple of 8, so the kernels
   run pure wide loads with zero lanes annihilating samples past the
   last tap — and the V-pass AXPY widens through exact u64 lanes. Both
@@ -71,9 +71,11 @@ breaking changes bump the `x` in `0.x.y`.
   u16-fallback geometries) and route through the sinkers' existing
   `with_simd` switch. Gate numbers (1080p -> 336x189, Apple Silicon):
   native rgb+hsv 3.7ms -> 2.1ms, row-stage rgb+hsv 5.6ms -> 2.5ms,
-  luma-only 1.9ms -> 0.95ms, fused `Rgb24` 4.5ms -> 1.6ms. x86
-  dispatches at the SSE4.1 tier deliberately: spans chunk in 8 taps,
-  so 128 bits is the kernel's natural width.
+  luma-only 1.9ms -> 0.95ms, fused `Rgb24` 4.5ms -> 1.6ms. On x86 the
+  highest available tier wins (AVX-512 -> AVX2 -> SSE4.1); the wider
+  tiers widen within a span (16 / 32 taps per step) and outpace SSE4.1
+  past 16-tap spans (16x-plus downscales), falling to the shared
+  128-bit step below that.
 - `MixedSinker` gains a resampling-strategy type parameter
   (`R = NoopResampler`) and a `with_resampler(width, height, resampler)`
   constructor: the strategy's plan fixes the sinker's **output

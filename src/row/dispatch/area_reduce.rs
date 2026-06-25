@@ -109,10 +109,11 @@ impl PaddedSpans {
 /// other than 1 and 3, and `use_simd == false` — routes to the scalar
 /// reference, which every backend matches bit-for-bit.
 ///
-/// x86 dispatches at the SSE4.1 tier only: spans chunk in 8 taps, so
-/// 128 bits is the kernel's natural width. AVX2/AVX-512 tiers would
-/// pay only on 16-tap-plus spans (16x-plus downscale factors) and are
-/// deferred until profiling demands them.
+/// On x86 the highest available tier wins (AVX-512 → AVX2 → SSE4.1),
+/// every tier bit-identical on the shared 8-tap-padded arena. The wider
+/// tiers widen within a span (16 / 32 taps per step), so they outpace
+/// SSE4.1 only past 16-tap spans (16x-plus downscales); narrower spans
+/// fall to the same 128-bit step inside each kernel.
 ///
 /// # Panics
 ///
