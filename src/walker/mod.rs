@@ -23,11 +23,25 @@
 #[cfg(all(test, feature = "std"))]
 mod tests;
 
-#[cfg(feature = "xyz")]
-use crate::frame::Xyz12Frame;
-#[cfg(feature = "xyz")]
-use crate::source::{Xyz12, Xyz12Sink, xyz12_to};
 use crate::{ColorMatrix, DcpTargetGamut, PixelSink};
+#[cfg(feature = "xyz")]
+use crate::{
+  frame::Xyz12Frame,
+  source::{Xyz12, Xyz12Sink, xyz12_to},
+};
+#[cfg(feature = "bayer")]
+use crate::{
+  frame::{BayerFrame, BayerFrame16, BayerSink, BayerSink16, bayer_to, bayer16_to},
+  source::{Bayer, Bayer16},
+};
+#[cfg(feature = "mono")]
+use crate::{
+  frame::{MonoblackFrame, MonowhiteFrame, Pal8Frame},
+  source::{
+    Monoblack, MonoblackSink, Monowhite, MonowhiteSink, Pal8, Pal8Sink, monoblack_to, monowhite_to,
+    pal8_to,
+  },
+};
 
 /// A uniform entry point over a source format's frame walker.
 ///
@@ -54,6 +68,64 @@ pub trait Walker<S> {
   fn walk(src: &Self::Frame<'_>, opts: &Self::Options, sink: &mut S) -> Result<(), S::Error>
   where
     S: PixelSink;
+}
+
+/// Generates a [`Walker`] impl for one source marker, forwarding
+/// [`walk`](Walker::walk) to that format's free `{fmt}_to` walker fn.
+///
+/// `$marker` is the foreign `crate::source::*` ZST, `$sink` the marker's
+/// [`PixelSink`] subtrait (the single per-impl bound the `{fmt}_to` fn
+/// requires — the trait's method-scoped `where S: PixelSink` is implied
+/// by it), `$frame` the per-format frame borrow's base type (the macro
+/// appends the GAT lifetime), `$opts` the [`Options`](Walker::Options)
+/// value type, and the closure-shaped tail names the `src` / `opts` /
+/// `sink` bindings the `$body` expression delegates with.
+///
+/// The second arm carries a leading `@const $c: $cty;` for the
+/// const-generic source families (the XYZ12 `BE` byte-order bool, the
+/// Bayer16 `BITS` depth): it threads the const through the impl header,
+/// the marker, the sink bound, and the frame's generic list. (The `@`
+/// sentinel avoids the `<const …>` matcher mis-parse —
+/// rust-lang/rust#143874.)
+// Gated to the union of the source families it generates impls for —
+// otherwise a build with none of them active (e.g. `--features yuva`)
+// sees the macro as dead and `-D unused-macros` rejects it.
+#[cfg(any(feature = "xyz", feature = "bayer", feature = "mono"))]
+macro_rules! walker {
+  ($marker:ty, $sink:path, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
+    impl<S> Walker<S> for $marker
+    where
+      S: $sink,
+    {
+      type Frame<'a> = $frame<'a>;
+      type Options = $opts;
+
+      #[inline(always)]
+      fn walk($s: &Self::Frame<'_>, $o: &Self::Options, $k: &mut S) -> Result<(), S::Error>
+      where
+        S: PixelSink,
+      {
+        $body
+      }
+    }
+  };
+  (@const $c:ident: $cty:ty; $marker:ty, $sink:ident, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
+    impl<const $c: $cty, S> Walker<S> for $marker
+    where
+      S: $sink<$c>,
+    {
+      type Frame<'a> = $frame<'a, $c>;
+      type Options = $opts;
+
+      #[inline(always)]
+      fn walk($s: &Self::Frame<'_>, $o: &Self::Options, $k: &mut S) -> Result<(), S::Error>
+      where
+        S: PixelSink,
+      {
+        $body
+      }
+    }
+  };
 }
 
 /// Conversion options for the XYZ12 ([`Xyz12`]) source — the target RGB
@@ -267,25 +339,77 @@ impl BayerOptions {
   }
 }
 
-// `Walker` is colconv's local trait and `Xyz12<BE>` is mediaframe's
-// foreign marker, so this impl is allowed under the orphan rule. The
-// single per-impl `where S: Xyz12Sink<BE>` is the bound `xyz12_to`
-// requires; the trait's method-scoped `where S: PixelSink` is implied
-// by it (`Xyz12Sink<BE>: PixelSink`).
+// Every impl below pairs colconv's local [`Walker`] trait with a
+// foreign `crate::source::*` marker, so each satisfies the orphan rule
+// (local trait, foreign type). The single per-impl `where S: …Sink`
+// bound is the one its `{fmt}_to` fn requires; the trait's
+// method-scoped `where S: PixelSink` is implied by it (every `…Sink`
+// supertraits `PixelSink`).
+
+// XYZ12 — the target RGB gamut its inverse-OETF + 3×3 matrix decodes
+// into rides on the [`Xyz12Options`]; `BE` is the wire byte order.
 #[cfg(feature = "xyz")]
 #[cfg_attr(docsrs, doc(cfg(feature = "xyz")))]
-impl<const BE: bool, S> Walker<S> for Xyz12<BE>
-where
-  S: Xyz12Sink<BE>,
-{
-  type Frame<'a> = Xyz12Frame<'a, BE>;
-  type Options = Xyz12Options;
+walker!(@const BE: bool; Xyz12<BE>, Xyz12Sink, Xyz12Frame, Xyz12Options,
+  |src, opts, sink| xyz12_to::<BE, _>(src, opts.target_gamut(), sink));
 
-  #[inline(always)]
-  fn walk(src: &Self::Frame<'_>, opts: &Self::Options, sink: &mut S) -> Result<(), S::Error>
-  where
-    S: PixelSink,
-  {
-    xyz12_to::<BE, _>(src, opts.target_gamut(), sink)
-  }
-}
+// Bayer (8-bit) — the mosaic pattern, demosaic, white balance, and
+// colour-correction matrix all ride on the [`BayerOptions`].
+#[cfg(feature = "bayer")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bayer")))]
+walker!(
+  Bayer,
+  BayerSink,
+  BayerFrame,
+  BayerOptions,
+  |src, opts, sink| bayer_to(
+    src,
+    opts.pattern(),
+    opts.demosaic(),
+    opts.wb(),
+    opts.ccm(),
+    sink
+  )
+);
+
+// Bayer16 (10/12/14/16-bit) — same parameter bundle as 8-bit Bayer, so
+// it reuses [`BayerOptions`]; `BITS` is the active sample depth.
+#[cfg(feature = "bayer")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bayer")))]
+walker!(@const BITS: u32; Bayer16<BITS>, BayerSink16, BayerFrame16, BayerOptions,
+  |src, opts, sink| bayer16_to::<BITS, _>(src, opts.pattern(), opts.demosaic(), opts.wb(), opts.ccm(), sink));
+
+// Pal8 — the BGRA palette is frame-intrinsic (carried by the
+// [`Pal8Frame`], not the caller), so there are no conversion knobs and
+// [`Options`](Walker::Options) is the unit type.
+#[cfg(feature = "mono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "mono")))]
+walker!(Pal8, Pal8Sink, Pal8Frame, (), |src, _opts, sink| pal8_to(
+  src, sink
+));
+
+// Monoblack — 1-bit-per-pixel, bit 0 → black. Its `full_range` /
+// `matrix` knobs match the YUV shape, so it reuses [`YuvOptions`]
+// (`YuvOptions::matrix()` is the same `mediaframe::color::Matrix` the
+// `monoblack_to` walker takes).
+#[cfg(feature = "mono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "mono")))]
+walker!(
+  Monoblack,
+  MonoblackSink,
+  MonoblackFrame,
+  YuvOptions,
+  |src, opts, sink| monoblack_to(src, opts.full_range(), opts.matrix(), sink)
+);
+
+// Monowhite — inverted-polarity sibling of Monoblack (bit 0 → white);
+// same `full_range` / `matrix` knobs, so it reuses [`YuvOptions`] too.
+#[cfg(feature = "mono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "mono")))]
+walker!(
+  Monowhite,
+  MonowhiteSink,
+  MonowhiteFrame,
+  YuvOptions,
+  |src, opts, sink| monowhite_to(src, opts.full_range(), opts.matrix(), sink)
+);
