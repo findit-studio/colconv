@@ -2433,3 +2433,600 @@ mod gbr_parity {
     }
   }
 }
+
+// ---- Parity: packed float RGB (Rgbf16 / Rgbf32; reuse YuvOptions) ------
+//
+// These are already-RGB float sources, so `Rgbf* → RGB` is an
+// option-ignoring clamp+scale: a dropped or swapped `(full_range, matrix)`
+// forward would not show in a `with_rgb` output. `Rgbf* → luma` weights
+// R/G/B through the matrix and scales by `full_range`, so luma parity does
+// catch it (exactly as the GBR / X2*10 families are tested). Each test
+// asserts `<Marker as Walker<_>>::walk` is byte-identical to a direct walker
+// call into the same `MixedSinker::with_luma` sink, across full/limited ×
+// Bt709/Bt601. Both families are endian-generic (`@const BE` arm): the LE
+// case drives the impl at the marker's `<const BE = false>` default against
+// the `{Fmt}LeFrame` + LE `{fmt}_to` wrapper, and the BE case drives
+// `Marker<true>` against `{Fmt}BeFrame` + a direct `{fmt}_to_endian::<_,
+// true>` call, so both halves of the impl are proven. Inputs are finite,
+// in-range half/single-precision values so the integer output is
+// well-defined (both sides run the same kernel, so byte-identity holds
+// regardless, but finite inputs keep the fixture honest).
+
+#[cfg(feature = "rgb-float")]
+mod rgbf_parity {
+  use super::*;
+  use crate::{
+    frame::{Rgbf16BeFrame, Rgbf16Frame, Rgbf32BeFrame, Rgbf32Frame},
+    sinker::MixedSinker,
+    source::{Rgbf16, Rgbf32, rgbf16_to, rgbf16_to_endian, rgbf32_to, rgbf32_to_endian},
+  };
+
+  const W: u32 = 8;
+  const H: u32 = 4;
+  const MATRICES: [ColorMatrix; 2] = [ColorMatrix::Bt709, ColorMatrix::Bt601];
+
+  /// Deterministic finite `f32` ramp in `[0, 1]` of `n` packed R/G/B
+  /// samples (no NaN/inf — the integer output stays well-defined).
+  fn ramp_f32(n: usize) -> std::vec::Vec<f32> {
+    (0..n)
+      .map(|i| ((i * 37 + 11) % 257) as f32 / 256.0)
+      .collect()
+  }
+
+  /// Same ramp narrowed to `half::f16` (IEEE-754 round-to-nearest-even).
+  fn ramp_f16(n: usize) -> std::vec::Vec<half::f16> {
+    ramp_f32(n).into_iter().map(half::f16::from_f32).collect()
+  }
+
+  /// Rgbf16 LE — `@const BE` arm at the marker's `<const BE = false>`
+  /// default against the LE `rgbf16_to` wrapper. `width * 3` `f16` per row.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_rgbf16_le_matches_direct() {
+    let buf = ramp_f16((W * H * 3) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Rgbf16Frame::try_new(&buf, W, H, W * 3).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H) as usize];
+        let mut via_direct = std::vec![0u8; (W * H) as usize];
+
+        let mut sw = MixedSinker::<Rgbf16>::new(W as usize, H as usize)
+          .with_luma(&mut via_walker)
+          .unwrap();
+        <Rgbf16 as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Rgbf16>::new(W as usize, H as usize)
+          .with_luma(&mut via_direct)
+          .unwrap();
+        rgbf16_to(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "rgbf16 LE luma parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
+  /// Rgbf16 BE — drives the `@const BE` impl at `Rgbf16<true>` against the
+  /// `Rgbf16BeFrame` alias, compared to a direct `rgbf16_to_endian::<_,
+  /// true>`.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_rgbf16_be_matches_direct() {
+    let buf = ramp_f16((W * H * 3) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Rgbf16BeFrame::try_new(&buf, W, H, W * 3).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H) as usize];
+        let mut via_direct = std::vec![0u8; (W * H) as usize];
+
+        let mut sw = MixedSinker::<Rgbf16<true>>::new(W as usize, H as usize)
+          .with_luma(&mut via_walker)
+          .unwrap();
+        <Rgbf16<true> as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Rgbf16<true>>::new(W as usize, H as usize)
+          .with_luma(&mut via_direct)
+          .unwrap();
+        rgbf16_to_endian::<_, true>(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "rgbf16 BE luma parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
+  /// Rgbf32 LE — `@const BE` arm at the marker's `<const BE = false>`
+  /// default against the LE `rgbf32_to` wrapper. `width * 3` `f32` per row.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_rgbf32_le_matches_direct() {
+    let buf = ramp_f32((W * H * 3) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Rgbf32Frame::try_new(&buf, W, H, W * 3).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H) as usize];
+        let mut via_direct = std::vec![0u8; (W * H) as usize];
+
+        let mut sw = MixedSinker::<Rgbf32>::new(W as usize, H as usize)
+          .with_luma(&mut via_walker)
+          .unwrap();
+        <Rgbf32 as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Rgbf32>::new(W as usize, H as usize)
+          .with_luma(&mut via_direct)
+          .unwrap();
+        rgbf32_to(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "rgbf32 LE luma parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
+  /// Rgbf32 BE — drives the `@const BE` impl at `Rgbf32<true>` against the
+  /// `Rgbf32BeFrame` alias, compared to a direct `rgbf32_to_endian::<_,
+  /// true>`.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_rgbf32_be_matches_direct() {
+    let buf = ramp_f32((W * H * 3) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Rgbf32BeFrame::try_new(&buf, W, H, W * 3).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H) as usize];
+        let mut via_direct = std::vec![0u8; (W * H) as usize];
+
+        let mut sw = MixedSinker::<Rgbf32<true>>::new(W as usize, H as usize)
+          .with_luma(&mut via_walker)
+          .unwrap();
+        <Rgbf32<true> as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Rgbf32<true>>::new(W as usize, H as usize)
+          .with_luma(&mut via_direct)
+          .unwrap();
+        rgbf32_to_endian::<_, true>(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "rgbf32 BE luma parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
+  /// The `with_rgb` corner too (clamp+scale to u8), so the full-channel
+  /// output path is exercised alongside the forwarding-sensitive luma
+  /// tests. Drives Rgbf32 LE at the marker default against `rgbf32_to`.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_rgbf32_rgb_matches_direct() {
+    let buf = ramp_f32((W * H * 3) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Rgbf32Frame::try_new(&buf, W, H, W * 3).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut sw = MixedSinker::<Rgbf32>::new(W as usize, H as usize)
+          .with_rgb(&mut via_walker)
+          .unwrap();
+        <Rgbf32 as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Rgbf32>::new(W as usize, H as usize)
+          .with_rgb(&mut via_direct)
+          .unwrap();
+        rgbf32_to(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "rgbf32 rgb parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+}
+
+// ---- Parity: float-luma Grayf32 (reuse YuvOptions) --------------------
+//
+// A gray source carries no chroma matrix, but the free `grayf32_to` /
+// `grayf32_to_endian` walkers take `(full_range, matrix)`: the RGB output
+// rescales limited-range luma (so `full_range` is genuinely exercised by
+// `with_rgb`), while `matrix` is carried through but unused by the
+// chroma-free gray kernel. Each test asserts `<Marker as Walker<_>>::walk`
+// is byte-identical to a direct walker call into the same
+// `MixedSinker::with_rgb` sink, across full/limited × Bt709/Bt601. Grayf32
+// is endian-generic (`@const BE` arm): the LE case drives the impl at the
+// marker's `<const BE = false>` default against the LE `grayf32_to` wrapper,
+// and the BE case drives `Grayf32<true>` against `Grayf32BeFrame` + a direct
+// `grayf32_to_endian::<_, true>`, so both halves of the impl are proven.
+
+#[cfg(feature = "gray")]
+mod grayf32_parity {
+  use super::*;
+  use crate::{
+    PixelSink,
+    frame::{Grayf32BeFrame, Grayf32Frame},
+    sinker::MixedSinker,
+    source::{Grayf32, Grayf32Row, Grayf32Sink, grayf32_to, grayf32_to_endian},
+  };
+
+  const W: u32 = 16;
+  const H: u32 = 4;
+  const MATRICES: [ColorMatrix; 2] = [ColorMatrix::Bt709, ColorMatrix::Bt601];
+
+  /// Deterministic finite `f32` luma ramp in `[0, 1]` of `n` samples.
+  fn ramp_f32(n: usize) -> std::vec::Vec<f32> {
+    (0..n)
+      .map(|i| ((i * 23 + 7) % 257) as f32 / 256.0)
+      .collect()
+  }
+
+  /// An instrumented sink recording each row's forwarded `(full_range,
+  /// matrix)`. The Grayf32 → RGB path clamps the f32 luma directly and never
+  /// consumes those fields, so byte parity can't see a dropped forward — this
+  /// can. `Grayf32Sink<BE>` is endian-parameterised, so the probe blanket-impls
+  /// it for every `BE`.
+  #[derive(Default)]
+  struct Grayf32Probe {
+    seen: std::vec::Vec<(bool, ColorMatrix)>,
+  }
+  impl PixelSink for Grayf32Probe {
+    type Input<'r> = Grayf32Row<'r>;
+    type Error = core::convert::Infallible;
+    fn begin_frame(&mut self, _w: u32, _h: u32) -> Result<(), Self::Error> {
+      Ok(())
+    }
+    fn process(&mut self, row: Grayf32Row<'_>) -> Result<(), Self::Error> {
+      self.seen.push((row.full_range(), row.matrix()));
+      Ok(())
+    }
+  }
+  impl<const BE: bool> Grayf32Sink<BE> for Grayf32Probe {}
+
+  /// Grayf32 → RGB clamps the f32 luma directly and discards `full_range` /
+  /// `matrix` (carried on the row for sinks that observe them), so the RGB
+  /// parity below can't prove the Walker forwards them. Instrument the sink and
+  /// assert every emitted row carries exactly the supplied `YuvOptions`, for
+  /// both the LE default and the BE marker.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_grayf32_forwards_full_range_and_matrix() {
+    let y = ramp_f32((W * H) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+
+        let src = Grayf32Frame::try_new(&y, W, H, W).unwrap();
+        let mut le = Grayf32Probe::default();
+        <Grayf32 as Walker<_>>::walk(&src, &opts, &mut le).unwrap();
+        assert!(!le.seen.is_empty(), "grayf32 LE walked at least one row");
+        for &(fr, m) in &le.seen {
+          assert_eq!(
+            (fr, m),
+            (full_range, matrix),
+            "grayf32 LE forwards full_range/matrix into the row"
+          );
+        }
+
+        let src = Grayf32BeFrame::try_new(&y, W, H, W).unwrap();
+        let mut be = Grayf32Probe::default();
+        <Grayf32<true> as Walker<_>>::walk(&src, &opts, &mut be).unwrap();
+        assert!(!be.seen.is_empty(), "grayf32 BE walked at least one row");
+        for &(fr, m) in &be.seen {
+          assert_eq!(
+            (fr, m),
+            (full_range, matrix),
+            "grayf32 BE forwards full_range/matrix into the row"
+          );
+        }
+      }
+    }
+  }
+
+  /// Grayf32 LE — `@const BE` arm at the marker's `<const BE = false>`
+  /// default against the LE `grayf32_to` wrapper. `width` `f32` per row.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_grayf32_le_matches_direct() {
+    let y = ramp_f32((W * H) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Grayf32Frame::try_new(&y, W, H, W).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut sw = MixedSinker::<Grayf32>::new(W as usize, H as usize)
+          .with_rgb(&mut via_walker)
+          .unwrap();
+        <Grayf32 as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Grayf32>::new(W as usize, H as usize)
+          .with_rgb(&mut via_direct)
+          .unwrap();
+        grayf32_to(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "grayf32 LE parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
+  /// Grayf32 BE — drives the `@const BE` impl at `Grayf32<true>` against the
+  /// `Grayf32BeFrame` alias, compared to a direct `grayf32_to_endian::<_,
+  /// true>`.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_grayf32_be_matches_direct() {
+    let y = ramp_f32((W * H) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Grayf32BeFrame::try_new(&y, W, H, W).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut sw = MixedSinker::<Grayf32<true>>::new(W as usize, H as usize)
+          .with_rgb(&mut via_walker)
+          .unwrap();
+        <Grayf32<true> as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Grayf32<true>>::new(W as usize, H as usize)
+          .with_rgb(&mut via_direct)
+          .unwrap();
+        grayf32_to_endian::<_, true>(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "grayf32 BE parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+}
+
+// ---- Parity: planar float GBR (Gbrpf16/32, Gbrapf16/32; Options = ()) --
+//
+// The float GBR walkers take only `(src, sink)` — they carry **no**
+// `full_range` / `matrix` knobs — so the [`Walker`] [`Options`] is the unit
+// type `()` and there is nothing to forward: byte-identity to a direct call
+// into the same sink fully proves the wiring. Each test asserts
+// `<Marker as Walker<_>>::walk` (with `&()` opts) is byte-identical to the
+// direct `{fmt}_to` / `{fmt}_to_endian` call into the same
+// `MixedSinker::with_rgb` sink. Both endians of each endian-generic family
+// are proven: the LE case drives the impl at the marker's `<const BE =
+// false>` default against the `{Fmt}LeFrame` + LE `{fmt}_to` wrapper, and
+// the BE case drives `Marker<true>` against `{Fmt}BeFrame` + a direct
+// `{fmt}_to_endian::<_, true>`. Coverage spans both topologies (single
+// G/B/R `Gbrpf*` and + alpha `Gbrapf*`) at both precisions (f16 / f32).
+
+#[cfg(feature = "gbr")]
+mod gbr_float_parity {
+  use super::*;
+  use crate::sinker::MixedSinker;
+
+  const W: u32 = 16;
+  const H: u32 = 4;
+
+  /// Three deterministic finite `f32` G/B/R planes in `[0, 1]`.
+  fn planes_f32() -> (std::vec::Vec<f32>, std::vec::Vec<f32>, std::vec::Vec<f32>) {
+    let n = (W * H) as usize;
+    let g = (0..n)
+      .map(|i| ((i * 17 + 3) % 257) as f32 / 256.0)
+      .collect();
+    let b = (0..n)
+      .map(|i| ((i * 23 + 5) % 257) as f32 / 256.0)
+      .collect();
+    let r = (0..n)
+      .map(|i| ((i * 31 + 9) % 257) as f32 / 256.0)
+      .collect();
+    (g, b, r)
+  }
+
+  /// Narrows an `f32` plane to `half::f16` (IEEE-754 round-to-nearest-even).
+  fn to_f16(p: &[f32]) -> std::vec::Vec<half::f16> {
+    p.iter().copied().map(half::f16::from_f32).collect()
+  }
+
+  /// Drives a 3-plane float GBR family (`Gbrpf16` / `Gbrpf32`). `$elem` is
+  /// the plane element type ctor closure; `$try_new` the 8-arg frame ctor
+  /// (`g,b,r,w,h,gs,bs,rs`); `$walker` the direct walker fn (the LE wrapper
+  /// or `{fmt}_to_endian::<_, true>`); `$marker` the (possibly BE-pinned)
+  /// marker.
+  macro_rules! gbrp_float_case {
+    ($name:ident, $marker:ty, $try_new:path, $walker:path, $mk:expr) => {
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn $name() {
+        let (g, b, r) = planes_f32();
+        let mk = $mk;
+        let (g, b, r) = (mk(&g), mk(&b), mk(&r));
+        let src = $try_new(&g, &b, &r, W, H, W, W, W).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut sw = MixedSinker::<$marker>::new(W as usize, H as usize)
+          .with_rgb(&mut via_walker)
+          .unwrap();
+        // `()` Options — the float GBR walker takes no full_range/matrix.
+        <$marker as Walker<_>>::walk(&src, &(), &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<$marker>::new(W as usize, H as usize)
+          .with_rgb(&mut via_direct)
+          .unwrap();
+        $walker(&src, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "{} rgb parity",
+          stringify!($name)
+        );
+      }
+    };
+  }
+
+  /// Drives a 4-plane float GBRA family (`Gbrapf16` / `Gbrapf32`). Same as
+  /// [`gbrp_float_case`] but the frame ctor is 10-arg
+  /// (`g,b,r,a,w,h,gs,bs,rs,as`) and the alpha plane is read inside the
+  /// walker.
+  macro_rules! gbrap_float_case {
+    ($name:ident, $marker:ty, $try_new:path, $walker:path, $mk:expr) => {
+      #[test]
+      #[cfg_attr(
+        miri,
+        ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+      )]
+      fn $name() {
+        let (g, b, r) = planes_f32();
+        let a: std::vec::Vec<f32> = (0..(W * H) as usize)
+          .map(|i| ((i * 13 + 1) % 257) as f32 / 256.0)
+          .collect();
+        let mk = $mk;
+        let (g, b, r, a) = (mk(&g), mk(&b), mk(&r), mk(&a));
+        let src = $try_new(&g, &b, &r, &a, W, H, W, W, W, W).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut sw = MixedSinker::<$marker>::new(W as usize, H as usize)
+          .with_rgb(&mut via_walker)
+          .unwrap();
+        <$marker as Walker<_>>::walk(&src, &(), &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<$marker>::new(W as usize, H as usize)
+          .with_rgb(&mut via_direct)
+          .unwrap();
+        $walker(&src, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "{} rgb parity",
+          stringify!($name)
+        );
+      }
+    };
+  }
+
+  // f16 (narrowing closure); f32 (identity copy closure).
+  gbrp_float_case!(
+    walk_gbrpf16_le_matches_direct,
+    crate::source::Gbrpf16,
+    crate::frame::Gbrpf16LeFrame::try_new,
+    crate::source::gbrpf16_to,
+    |p: &[f32]| to_f16(p)
+  );
+  gbrp_float_case!(
+    walk_gbrpf16_be_matches_direct,
+    crate::source::Gbrpf16<true>,
+    crate::frame::Gbrpf16BeFrame::try_new,
+    crate::source::gbrpf16_to_endian::<_, true>,
+    |p: &[f32]| to_f16(p)
+  );
+  gbrp_float_case!(
+    walk_gbrpf32_le_matches_direct,
+    crate::source::Gbrpf32,
+    crate::frame::Gbrpf32LeFrame::try_new,
+    crate::source::gbrpf32_to,
+    |p: &[f32]| p.to_vec()
+  );
+  gbrp_float_case!(
+    walk_gbrpf32_be_matches_direct,
+    crate::source::Gbrpf32<true>,
+    crate::frame::Gbrpf32BeFrame::try_new,
+    crate::source::gbrpf32_to_endian::<_, true>,
+    |p: &[f32]| p.to_vec()
+  );
+
+  gbrap_float_case!(
+    walk_gbrapf16_le_matches_direct,
+    crate::source::Gbrapf16,
+    crate::frame::Gbrapf16LeFrame::try_new,
+    crate::source::gbrapf16_to,
+    |p: &[f32]| to_f16(p)
+  );
+  gbrap_float_case!(
+    walk_gbrapf16_be_matches_direct,
+    crate::source::Gbrapf16<true>,
+    crate::frame::Gbrapf16BeFrame::try_new,
+    crate::source::gbrapf16_to_endian::<_, true>,
+    |p: &[f32]| to_f16(p)
+  );
+  gbrap_float_case!(
+    walk_gbrapf32_le_matches_direct,
+    crate::source::Gbrapf32,
+    crate::frame::Gbrapf32LeFrame::try_new,
+    crate::source::gbrapf32_to,
+    |p: &[f32]| p.to_vec()
+  );
+  gbrap_float_case!(
+    walk_gbrapf32_be_matches_direct,
+    crate::source::Gbrapf32<true>,
+    crate::frame::Gbrapf32BeFrame::try_new,
+    crate::source::gbrapf32_to_endian::<_, true>,
+    |p: &[f32]| p.to_vec()
+  );
+}
