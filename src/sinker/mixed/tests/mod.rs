@@ -98,6 +98,8 @@ mod packed_rgb_float;
 mod packed_yuv_4_1_1;
 #[cfg(feature = "yuv-packed")]
 mod packed_yuv_8bit;
+#[cfg(feature = "yuv-packed")]
+mod packed_yuv_hsv_direct;
 #[cfg(feature = "mono")]
 mod pal8;
 #[cfg(feature = "yuv-planar")]

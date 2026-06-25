@@ -239,6 +239,67 @@ unsafe fn uyyvyy411_to_rgb_or_rgba_row<const ALPHA: bool>(
   }
 }
 
+// ---- Packed YUV 4:1:1 (8-bit) → HSV (staged via a reused RGB chunk) --
+//
+// The SIMD twin of the scalar `uyyvyy411_to_hsv_row` kernel. Reuses the
+// LOCAL packed-family driver `packed_hsv_via_rgb_chunks` (defined in the
+// sibling `packed_yuv_8bit` module) to fill a small reused RGB scratch
+// via the EXISTING SSE4.1 `uyyvyy411_to_rgb_row` kernel, then runs this
+// backend's `rgb_to_hsv_row` on the chunk. Byte-identical to
+// `rgb_to_hsv_row(uyyvyy411_to_rgb_row(...))` within this tier with no
+// source-width RGB allocation. `HSV_CHUNK` is a multiple of 4, so every
+// chunk offset lands on a 6-byte / 4-pixel block boundary.
+
+/// SSE4.1: UYYVYY411 (4:1:1) → planar HSV bytes (OpenCV encoding),
+/// staged via the reused-RGB-chunk pattern over this backend's
+/// [`uyyvyy411_to_rgb_row`] + `rgb_to_hsv_row`. Byte-identical to
+/// `rgb_to_hsv_row(uyyvyy411_to_rgb_row(...))` within this tier.
+///
+/// # Safety
+///
+/// 1. The SIMD feature must be available.
+/// 2. `width & 3 == 0`.
+/// 3. `packed.len() >= width * 3 / 2`.
+/// 4. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn uyyvyy411_to_hsv_row(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(
+    width & 3,
+    0,
+    "packed YUV 4:1:1 requires width multiple of 4"
+  );
+  debug_assert!(packed.len() >= width * 3 / 2, "packed row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // SAFETY: SIMD verified; the shared chunk driver forwards the per-chunk
+  // sub-slices to this backend's UYYVYY411 RGB kernel under the same
+  // contract. The packed byte offset for the chunk at pixel `offset` (a
+  // multiple of 4) is `offset * 3 / 2` (6 bytes per 4-pixel block).
+  unsafe {
+    super::packed_yuv_8bit::packed_hsv_via_rgb_chunks(
+      h_out,
+      s_out,
+      v_out,
+      width,
+      |offset, n, rgb| {
+        uyyvyy411_to_rgb_row(&packed[offset * 3 / 2..], rgb, n, matrix, full_range);
+      },
+    );
+  }
+}
+
 /// SSE4.1 UYYVYY411 → 8-bit luma extraction. Y bytes live at offsets
 /// 1, 2, 4, 5 of each 6-byte block. 16 px / iter.
 ///

@@ -174,6 +174,146 @@ pub(crate) fn yvyu422_to_rgba_row(
   yuv422_packed_to_rgb_or_rgba_row::<true, true>(packed, rgba_out, width, matrix, full_range, true);
 }
 
+// ---- Packed YUV 4:2:2 (8-bit) → HSV (direct: no RGB scratch) ----------
+//
+// The display-referred twins of the `*_to_rgb_row` kernels above, fused
+// with the OpenCV HSV quantizer. Each shares the EXACT per-pixel Q15
+// decode (`Coefficients::for_matrix` + `range_params_n::<8, 8>` + the
+// same `Y_LSB` / `SWAP_UV` byte-position selection) as its `_to_rgb`
+// sibling, then feeds the decoded `(r, g, b)` straight into
+// [`rgb_to_hsv_pixel`] and scatters to the H/S/V planes — never
+// materializing a packed-RGB row. They are therefore byte-identical to
+// `rgb_to_hsv_row(*_to_rgb_row(...))` but allocate no RGB intermediate.
+// Used by the packed 4:2:2 sink's HSV-without-RGB path; the SIMD
+// backends mirror them via a small reused-chunk RGB scratch (the chunk
+// filler IS the existing SIMD RGB kernel) plus the SIMD `rgb_to_hsv_row`.
+
+/// Generic packed YUV 4:2:2 → planar HSV row kernel (OpenCV
+/// `cv2.COLOR_RGB2HSV` encoding: `H ∈ [0, 179]`, `S, V ∈ [0, 255]`).
+/// Three formats share this template via the `Y_LSB` / `SWAP_UV` const
+/// generics — the same byte-position selection as
+/// [`yuv422_packed_to_rgb_or_rgba_row`]. Byte-identical to
+/// `rgb_to_hsv_row(yuv422_packed_to_rgb_or_rgba_row::<Y_LSB, SWAP_UV>(...))`.
+///
+/// `packed.len() >= 2 * width`. `width` must be even. Each of `h_out` /
+/// `s_out` / `v_out` `>= width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn yuv422_packed_to_hsv_row<const Y_LSB: bool, const SWAP_UV: bool>(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  debug_assert_eq!(width & 1, 0, "packed YUV 4:2:2 requires even width");
+  debug_assert!(packed.len() >= width * 2, "packed row too short");
+  debug_assert!(h_out.len() >= width, "h_out row too short");
+  debug_assert!(s_out.len() >= width, "s_out row too short");
+  debug_assert!(v_out.len() >= width, "v_out row too short");
+
+  // Byte positions inside each 4-byte (2-pixel) block — identical
+  // selection to the `_to_rgb` kernel.
+  let (y0_idx, y1_idx, c0_idx, c1_idx) = if Y_LSB { (0, 2, 1, 3) } else { (1, 3, 0, 2) };
+  let (u_idx, v_idx) = if SWAP_UV {
+    (c1_idx, c0_idx)
+  } else {
+    (c0_idx, c1_idx)
+  };
+
+  let coeffs = Coefficients::for_matrix(matrix);
+  let (y_off, y_scale, c_scale) = range_params_n::<8, 8>(full_range);
+  const RND: i32 = 1 << 14;
+
+  let mut x = 0;
+  while x < width {
+    let block = (x / 2) * 4;
+    let y0 = packed[block + y0_idx] as i32;
+    let y1 = packed[block + y1_idx] as i32;
+    let u = packed[block + u_idx] as i32;
+    let v = packed[block + v_idx] as i32;
+
+    let u_d = ((u - 128) * c_scale + RND) >> 15;
+    let v_d = ((v - 128) * c_scale + RND) >> 15;
+    let r_chroma = (coeffs.r_u() * u_d + coeffs.r_v() * v_d + RND) >> 15;
+    let g_chroma = (coeffs.g_u() * u_d + coeffs.g_v() * v_d + RND) >> 15;
+    let b_chroma = (coeffs.b_u() * u_d + coeffs.b_v() * v_d + RND) >> 15;
+
+    let y0_s = ((y0 - y_off) * y_scale + RND) >> 15;
+    let (h0, s0, v0) = rgb_to_hsv_pixel(
+      clamp_u8(y0_s + r_chroma) as i32,
+      clamp_u8(y0_s + g_chroma) as i32,
+      clamp_u8(y0_s + b_chroma) as i32,
+    );
+    h_out[x] = h0;
+    s_out[x] = s0;
+    v_out[x] = v0;
+
+    let y1_s = ((y1 - y_off) * y_scale + RND) >> 15;
+    let (h1, s1, v1) = rgb_to_hsv_pixel(
+      clamp_u8(y1_s + r_chroma) as i32,
+      clamp_u8(y1_s + g_chroma) as i32,
+      clamp_u8(y1_s + b_chroma) as i32,
+    );
+    h_out[x + 1] = h1;
+    s_out[x + 1] = s1;
+    v_out[x + 1] = v1;
+
+    x += 2;
+  }
+}
+
+/// Scalar YUYV422 → planar HSV. Byte order `Y0, U0, Y1, V0` per 4-byte /
+/// 2-pixel block. Byte-identical to `rgb_to_hsv_row(yuyv422_to_rgb_row(...))`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn yuyv422_to_hsv_row(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  yuv422_packed_to_hsv_row::<true, false>(packed, h_out, s_out, v_out, width, matrix, full_range);
+}
+
+/// Scalar UYVY422 → planar HSV. Byte order `U0, Y0, V0, Y1` per 4-byte /
+/// 2-pixel block. Byte-identical to `rgb_to_hsv_row(uyvy422_to_rgb_row(...))`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn uyvy422_to_hsv_row(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  yuv422_packed_to_hsv_row::<false, false>(packed, h_out, s_out, v_out, width, matrix, full_range);
+}
+
+/// Scalar YVYU422 → planar HSV. Byte order `Y0, V0, Y1, U0` per 4-byte /
+/// 2-pixel block (UV swapped relative to YUYV). Byte-identical to
+/// `rgb_to_hsv_row(yvyu422_to_rgb_row(...))`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn yvyu422_to_hsv_row(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  yuv422_packed_to_hsv_row::<true, true>(packed, h_out, s_out, v_out, width, matrix, full_range);
+}
+
 /// Copies the Y bytes from a packed YUV 4:2:2 row directly into a
 /// `width`-byte luma plane. Avoids the YUV→RGB pipeline entirely
 /// when only luma is needed.
