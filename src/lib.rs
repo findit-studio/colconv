@@ -260,6 +260,11 @@ pub mod raw;
 pub mod resample;
 pub mod row;
 pub mod sinker;
+pub mod walker;
+
+#[cfg(feature = "bayer")]
+pub use walker::BayerOptions;
+pub use walker::{Walker, Xyz12Options, YuvOptions};
 
 #[cfg(feature = "yuv-444-packed")]
 pub use frame::{Ayuv64Frame, Ayuv64FrameError};
