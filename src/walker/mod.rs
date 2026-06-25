@@ -128,6 +128,44 @@ use crate::{
     yuva444p10_to_endian, yuva444p12_to_endian, yuva444p14_to_endian, yuva444p16_to_endian,
   },
 };
+// Packed RGB — already-RGB sources (no chroma matrix). The 8-bit packed
+// families (`Rgb24`/`Bgr24`/`Rgba`/…/`Bgrx`) ride the plain arm; the
+// 16-bit families (`Rgb48`/`Bgr48`/`Rgba64`/`Bgra64`) are endian-generic
+// — marker `Rgb48<const BE>` over the trailing-`BE` frame
+// `Rgb48Frame<'a, BE>` (no leading bit-depth const), so they ride the
+// `@const BE` arm and delegate to the const-generic
+// `{fmt}_to_endian::<_, BE>` (the LE `{fmt}_to` is its `BE = false`
+// wrapper). The free `{fmt}_to` / `{fmt}_to_endian` walkers still take
+// `(full_range, matrix)` — the RGB-input row carries them for the
+// `with_luma` / `with_hsv` outputs — so every RGB family reuses
+// [`YuvOptions`]; the RGB-only outputs (`with_rgb`/`with_rgba`/`…`)
+// ignore them.
+#[cfg(feature = "rgb")]
+use crate::{
+  frame::{
+    AbgrFrame, ArgbFrame, Bgr24Frame, Bgr48Frame, Bgra64Frame, BgraFrame, BgrxFrame, Rgb24Frame,
+    Rgb48Frame, Rgba64Frame, RgbaFrame, RgbxFrame, XbgrFrame, XrgbFrame,
+  },
+  source::{
+    Abgr, AbgrSink, Argb, ArgbSink, Bgr24, Bgr24Sink, Bgr48, Bgr48Sink, Bgra, Bgra64, Bgra64Sink,
+    BgraSink, Bgrx, BgrxSink, Rgb24, Rgb24Sink, Rgb48, Rgb48Sink, Rgba, Rgba64, Rgba64Sink,
+    RgbaSink, Rgbx, RgbxSink, Xbgr, XbgrSink, Xrgb, XrgbSink, abgr_to, argb_to, bgr24_to,
+    bgr48_to_endian, bgra_to, bgra64_to_endian, bgrx_to, rgb24_to, rgb48_to_endian, rgba_to,
+    rgba64_to_endian, rgbx_to, xbgr_to, xrgb_to,
+  },
+};
+// Legacy packed RGB (5/5/6/5/5/5/4/4/4-bit, `AV_PIX_FMT_*565/555/444LE`).
+// Byte-order-fixed LE (no `_to_endian` walker), so they ride the plain
+// arm exactly like the 8-bit packed families and reuse [`YuvOptions`].
+#[cfg(feature = "rgb-legacy")]
+use crate::{
+  frame::{Bgr444Frame, Bgr555Frame, Bgr565Frame, Rgb444Frame, Rgb555Frame, Rgb565Frame},
+  source::{
+    Bgr444, Bgr444Sink, Bgr555, Bgr555Sink, Bgr565, Bgr565Sink, Rgb444, Rgb444Sink, Rgb555,
+    Rgb555Sink, Rgb565, Rgb565Sink, bgr444_to, bgr555_to, bgr565_to, rgb444_to, rgb555_to,
+    rgb565_to,
+  },
+};
 
 /// A uniform entry point over a source format's frame walker.
 ///
@@ -200,6 +238,8 @@ pub trait Walker<S> {
   feature = "yuv-packed",
   feature = "y2xx",
   feature = "yuva",
+  feature = "rgb",
+  feature = "rgb-legacy",
 ))]
 macro_rules! walker {
   ($marker:ty, $sink:path, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
@@ -901,3 +941,152 @@ walker!(@const_bits 14, BE; Yuva444p14, Yuva444p14Sink, Yuva444pFrame16, YuvOpti
 #[cfg_attr(docsrs, doc(cfg(feature = "yuva")))]
 walker!(@const_bits 16, BE; Yuva444p16, Yuva444p16Sink, Yuva444pFrame16, YuvOptions,
   |src, opts, sink| yuva444p16_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+
+// ===== Packed RGB families =============================================
+//
+// These sources are *already RGB* — there is no chroma matrix. The
+// underlying `{fmt}_to` / `{fmt}_to_endian` walkers nonetheless take
+// `(full_range, matrix)` because the RGB-input row carries them through
+// to the `with_luma` / `with_hsv` outputs (the `with_rgb` / `with_rgba`
+// / `with_rgb_u16` outputs ignore them). So every RGB family reuses
+// [`YuvOptions`] and forwards `opts.full_range()` / `opts.matrix()`,
+// byte-identical to a direct walker call. The module stays additive: the
+// existing walkers, sinks, and kernels are untouched.
+
+// ---- Packed RGB, 8-bit (plain arm; no byte-order axis) -----------------
+#[cfg(feature = "rgb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
+walker!(
+  Rgb24,
+  Rgb24Sink,
+  Rgb24Frame,
+  YuvOptions,
+  |src, opts, sink| rgb24_to(src, opts.full_range(), opts.matrix(), sink)
+);
+#[cfg(feature = "rgb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
+walker!(
+  Bgr24,
+  Bgr24Sink,
+  Bgr24Frame,
+  YuvOptions,
+  |src, opts, sink| bgr24_to(src, opts.full_range(), opts.matrix(), sink)
+);
+#[cfg(feature = "rgb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
+walker!(Rgba, RgbaSink, RgbaFrame, YuvOptions, |src, opts, sink| {
+  rgba_to(src, opts.full_range(), opts.matrix(), sink)
+});
+#[cfg(feature = "rgb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
+walker!(Bgra, BgraSink, BgraFrame, YuvOptions, |src, opts, sink| {
+  bgra_to(src, opts.full_range(), opts.matrix(), sink)
+});
+#[cfg(feature = "rgb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
+walker!(Argb, ArgbSink, ArgbFrame, YuvOptions, |src, opts, sink| {
+  argb_to(src, opts.full_range(), opts.matrix(), sink)
+});
+#[cfg(feature = "rgb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
+walker!(Abgr, AbgrSink, AbgrFrame, YuvOptions, |src, opts, sink| {
+  abgr_to(src, opts.full_range(), opts.matrix(), sink)
+});
+#[cfg(feature = "rgb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
+walker!(Xrgb, XrgbSink, XrgbFrame, YuvOptions, |src, opts, sink| {
+  xrgb_to(src, opts.full_range(), opts.matrix(), sink)
+});
+#[cfg(feature = "rgb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
+walker!(Rgbx, RgbxSink, RgbxFrame, YuvOptions, |src, opts, sink| {
+  rgbx_to(src, opts.full_range(), opts.matrix(), sink)
+});
+#[cfg(feature = "rgb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
+walker!(Xbgr, XbgrSink, XbgrFrame, YuvOptions, |src, opts, sink| {
+  xbgr_to(src, opts.full_range(), opts.matrix(), sink)
+});
+#[cfg(feature = "rgb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
+walker!(Bgrx, BgrxSink, BgrxFrame, YuvOptions, |src, opts, sink| {
+  bgrx_to(src, opts.full_range(), opts.matrix(), sink)
+});
+
+// ---- Packed RGB, 16-bit (BE-generic marker; LE + BE via `_to_endian`) --
+// Marker `Fmt<const BE>` over the trailing-`BE` frame `FmtFrame<'a, BE>`
+// (no leading bit-depth const), so these ride the `@const BE` arm (same
+// shape as XYZ12) and delegate to `{fmt}_to_endian::<_, BE>`; one impl
+// covers both LE (`BE = false`) and BE (`BE = true`).
+#[cfg(feature = "rgb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
+walker!(@const BE: bool; Rgb48<BE>, Rgb48Sink, Rgb48Frame, YuvOptions,
+  |src, opts, sink| rgb48_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "rgb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
+walker!(@const BE: bool; Bgr48<BE>, Bgr48Sink, Bgr48Frame, YuvOptions,
+  |src, opts, sink| bgr48_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "rgb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
+walker!(@const BE: bool; Rgba64<BE>, Rgba64Sink, Rgba64Frame, YuvOptions,
+  |src, opts, sink| rgba64_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "rgb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
+walker!(@const BE: bool; Bgra64<BE>, Bgra64Sink, Bgra64Frame, YuvOptions,
+  |src, opts, sink| bgra64_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+
+// ---- Legacy packed RGB (byte-order-fixed LE; plain arm) ----------------
+#[cfg(feature = "rgb-legacy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
+walker!(
+  Rgb565,
+  Rgb565Sink,
+  Rgb565Frame,
+  YuvOptions,
+  |src, opts, sink| rgb565_to(src, opts.full_range(), opts.matrix(), sink)
+);
+#[cfg(feature = "rgb-legacy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
+walker!(
+  Bgr565,
+  Bgr565Sink,
+  Bgr565Frame,
+  YuvOptions,
+  |src, opts, sink| bgr565_to(src, opts.full_range(), opts.matrix(), sink)
+);
+#[cfg(feature = "rgb-legacy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
+walker!(
+  Rgb555,
+  Rgb555Sink,
+  Rgb555Frame,
+  YuvOptions,
+  |src, opts, sink| rgb555_to(src, opts.full_range(), opts.matrix(), sink)
+);
+#[cfg(feature = "rgb-legacy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
+walker!(
+  Bgr555,
+  Bgr555Sink,
+  Bgr555Frame,
+  YuvOptions,
+  |src, opts, sink| bgr555_to(src, opts.full_range(), opts.matrix(), sink)
+);
+#[cfg(feature = "rgb-legacy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
+walker!(
+  Rgb444,
+  Rgb444Sink,
+  Rgb444Frame,
+  YuvOptions,
+  |src, opts, sink| rgb444_to(src, opts.full_range(), opts.matrix(), sink)
+);
+#[cfg(feature = "rgb-legacy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb-legacy")))]
+walker!(
+  Bgr444,
+  Bgr444Sink,
+  Bgr444Frame,
+  YuvOptions,
+  |src, opts, sink| bgr444_to(src, opts.full_range(), opts.matrix(), sink)
+);
