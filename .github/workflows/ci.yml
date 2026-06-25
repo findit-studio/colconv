@@ -89,7 +89,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Cache cargo build and registry
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -117,7 +117,7 @@ jobs:
     steps:
     - uses: actions/checkout@v7
     - name: Cache cargo build and registry
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: |
           ~/.cargo/registry
@@ -146,7 +146,7 @@ jobs:
     steps:
     - uses: actions/checkout@v7
     - name: Cache cargo build and registry
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: |
           ~/.cargo/registry
@@ -186,7 +186,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Cache cargo build and registry
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -243,7 +243,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Cache cargo build and registry
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -286,7 +286,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Cache cargo build and registry
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -363,7 +363,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Cache cargo build and registry
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -423,7 +423,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Cache cargo build and registry
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
