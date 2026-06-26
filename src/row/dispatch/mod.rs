@@ -74,6 +74,8 @@ pub(super) mod nv;
 pub(super) mod nv20;
 #[cfg(feature = "rgb")]
 pub(super) mod packed_rgb_16bit;
+#[cfg(feature = "rgb")]
+pub(super) mod packed_rgb_32bit;
 #[cfg(feature = "yuv-packed")]
 pub(super) mod packed_yuv411;
 #[cfg(feature = "yuv-packed")]

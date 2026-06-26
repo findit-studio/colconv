@@ -1612,9 +1612,9 @@ mod yuva_parity {
 mod rgb_parity {
   use super::*;
   use crate::{
-    frame::{Rgb24Frame, Rgb48BeFrame, Rgb48Frame},
+    frame::{Rgb24Frame, Rgb48BeFrame, Rgb48Frame, Rgb96BeFrame, Rgb96Frame},
     sinker::MixedSinker,
-    source::{Rgb24, Rgb48, rgb24_to, rgb48_to, rgb48_to_endian},
+    source::{Rgb24, Rgb48, Rgb96, rgb24_to, rgb48_to, rgb48_to_endian, rgb96_to, rgb96_to_endian},
   };
 
   const W: u32 = 8;
@@ -1629,6 +1629,13 @@ mod rgb_parity {
   /// A deterministic `u16` plane of `n` samples (full 16-bit range).
   fn ramp16(n: usize) -> std::vec::Vec<u16> {
     (0..n).map(|i| ((i * 1103 + 7) & 0xFFFF) as u16).collect()
+  }
+
+  /// A deterministic `u32` plane of `n` samples (full 32-bit range).
+  fn ramp32(n: usize) -> std::vec::Vec<u32> {
+    (0..n)
+      .map(|i| (i as u32).wrapping_mul(0x0193_3C7F).wrapping_add(0x1357))
+      .collect()
   }
 
   /// 8-bit packed Rgb24 — plain arm, `width * 3` u8 per row.
@@ -1739,6 +1746,83 @@ mod rgb_parity {
         assert_eq!(
           via_walker, via_direct,
           "rgb48 BE parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
+  /// 32-bit packed Rgb96 LE — `@const BE` arm at the `<const BE = false>`
+  /// default against the LE `rgb96_to` wrapper. `width * 3` u32 per row.
+  /// Uses a `with_luma` sink so a dropped `(full_range, matrix)` forward
+  /// would diverge (luma is matrix-weighted + full-range-scaled).
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_rgb96_le_matches_direct() {
+    let buf = ramp32((W * H * 3) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Rgb96Frame::try_new(&buf, W, H, W * 3).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H) as usize];
+        let mut via_direct = std::vec![0u8; (W * H) as usize];
+
+        let mut sw = MixedSinker::<Rgb96>::new(W as usize, H as usize)
+          .with_luma(&mut via_walker)
+          .unwrap();
+        <Rgb96 as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Rgb96>::new(W as usize, H as usize)
+          .with_luma(&mut via_direct)
+          .unwrap();
+        rgb96_to(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "rgb96 LE parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
+  /// 32-bit packed Rgb96 BE — drives the `@const BE` impl at `Rgb96<true>`
+  /// against the `Rgb96BeFrame` alias, compared to a direct
+  /// `rgb96_to_endian::<_, true>` call.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_rgb96_be_matches_direct() {
+    let buf = ramp32((W * H * 3) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Rgb96BeFrame::try_new(&buf, W, H, W * 3).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H) as usize];
+        let mut via_direct = std::vec![0u8; (W * H) as usize];
+
+        let mut sw = MixedSinker::<Rgb96<true>>::new(W as usize, H as usize)
+          .with_luma(&mut via_walker)
+          .unwrap();
+        <Rgb96<true> as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Rgb96<true>>::new(W as usize, H as usize)
+          .with_luma(&mut via_direct)
+          .unwrap();
+        rgb96_to_endian::<_, true>(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "rgb96 BE parity (full_range={full_range}, matrix={matrix:?})"
         );
       }
     }

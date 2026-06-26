@@ -89,6 +89,8 @@ mod packed_rgb_10bit;
 #[cfg(feature = "rgb")]
 mod packed_rgb_16bit;
 #[cfg(feature = "rgb")]
+mod packed_rgb_32bit;
+#[cfg(feature = "rgb")]
 mod packed_rgb_8bit;
 #[cfg(feature = "rgb-float")]
 mod packed_rgb_f16;
@@ -194,6 +196,8 @@ mod resample_p4xx_high_bit;
 mod resample_p4xx_high_bit_native;
 #[cfg(feature = "rgb")]
 mod resample_packed_rgb_10bit;
+#[cfg(feature = "rgb")]
+mod resample_packed_rgb_32bit;
 #[cfg(feature = "rgb")]
 mod resample_packed_rgba_16bit;
 #[cfg(feature = "rgb")]

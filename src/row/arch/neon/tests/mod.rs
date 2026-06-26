@@ -26,6 +26,8 @@ mod mono1bit;
 mod packed_rgb;
 #[cfg(feature = "rgb")]
 mod packed_rgb_16bit;
+#[cfg(feature = "rgb")]
+mod packed_rgb_32bit;
 #[cfg(feature = "rgb-float")]
 mod packed_rgb_float;
 #[cfg(feature = "yuv-packed")]
