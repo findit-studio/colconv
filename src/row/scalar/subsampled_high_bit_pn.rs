@@ -1,5 +1,27 @@
 use super::{load_u16, *};
 
+/// Extracts the `BITS`-bit logical sample from one wire `u16` for the
+/// semi-planar P-format / NV20 family.
+///
+/// `LOW_PACKED = false` (P010/P012/P210/P212 — high-bit-packed) shifts
+/// the active high `BITS` down by `16 - BITS`; `LOW_PACKED = true` (NV20
+/// — low-bit-packed) masks the active low `BITS` (`& ((1 << BITS) - 1)`).
+/// `value` must already be host-native (apply [`load_u16`] first). Both
+/// `BITS` and `LOW_PACKED` are const, so the branch folds and the unused
+/// path is eliminated per monomorphization. Mispacked input has the
+/// wrong bits discarded (the deliberate, SIMD-matching failure mode) —
+/// e.g. a high-bit-packed buffer handed to the low-packed path keeps only
+/// its zero low bits.
+#[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
+#[cfg_attr(not(tarpaulin), inline(always))]
+const fn depack_pn<const BITS: u32, const LOW_PACKED: bool>(value: u16) -> u16 {
+  if LOW_PACKED {
+    value & ((1u16 << BITS) - 1)
+  } else {
+    value >> (16 - BITS)
+  }
+}
+
 // ---- P010 (semi-planar 10-bit, high-bit-packed) → RGB ------------------
 
 /// Converts one row of P010 (semi‑planar 4:2:0 with UV interleaved,
@@ -32,7 +54,7 @@ pub(crate) fn p_n_to_rgb_row<const BITS: u32, const BE: bool>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p_n_to_rgb_or_rgba_row::<BITS, false, BE>(y, uv_half, rgb_out, width, matrix, full_range);
+  p_n_to_rgb_or_rgba_row::<BITS, false, BE, false>(y, uv_half, rgb_out, width, matrix, full_range);
 }
 
 /// Converts one row of high‑bit‑packed semi‑planar 4:2:0 (P010/P012)
@@ -57,7 +79,42 @@ pub(crate) fn p_n_to_rgba_row<const BITS: u32, const BE: bool>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p_n_to_rgb_or_rgba_row::<BITS, true, BE>(y, uv_half, rgba_out, width, matrix, full_range);
+  p_n_to_rgb_or_rgba_row::<BITS, true, BE, false>(y, uv_half, rgba_out, width, matrix, full_range);
+}
+
+/// NV20 (semi-planar 4:2:2, 10-bit, **low-bit-packed**) → packed
+/// **8-bit** RGB. The low-bit twin of [`p_n_to_rgb_row`]: identical Q15
+/// pipeline and interleaved-UV shape, but each `u16` is de-packed via
+/// `& 0x03FF` (active bits in the **low** 10) instead of `>> 6`. Pinned
+/// to `BITS = 10` (the only NV20 depth). Thin wrapper over
+/// [`p_n_to_rgb_or_rgba_row`] with `LOW_PACKED = true`.
+#[cfg(feature = "yuv-semi-planar")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn nv20_to_rgb_row<const BE: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  p_n_to_rgb_or_rgba_row::<10, false, BE, true>(y, uv_half, rgb_out, width, matrix, full_range);
+}
+
+/// NV20 → packed **8-bit** **RGBA** (`R, G, B, 0xFF`). The low-bit twin
+/// of [`p_n_to_rgba_row`]. Thin wrapper over [`p_n_to_rgb_or_rgba_row`]
+/// with `LOW_PACKED = true`.
+#[cfg(feature = "yuv-semi-planar")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn nv20_to_rgba_row<const BE: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  p_n_to_rgb_or_rgba_row::<10, true, BE, true>(y, uv_half, rgba_out, width, matrix, full_range);
 }
 
 /// Shared kernel for [`p_n_to_rgb_row`] (`ALPHA = false`, 3 bpp store)
@@ -71,7 +128,12 @@ pub(crate) fn p_n_to_rgba_row<const BITS: u32, const BE: bool>(
 ///   `out.len() >= width * if ALPHA { 4 } else { 3 }`.
 #[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool, const BE: bool>(
+pub(crate) fn p_n_to_rgb_or_rgba_row<
+  const BITS: u32,
+  const ALPHA: bool,
+  const BE: bool,
+  const LOW_PACKED: bool,
+>(
   y: &[u16],
   uv_half: &[u16],
   out: &mut [u8],
@@ -97,21 +159,20 @@ pub(crate) fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool, const B
   let coeffs = Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = range_params_n::<BITS, 8>(full_range);
   let bias = chroma_bias::<BITS>();
-  let shift = 16 - BITS;
 
-  // Each `u16` load is converted to its `BITS`-bit sample with
-  // `>> (16 - BITS)` — 6 for P010, 4 for P012. The BE byte-swap is
-  // applied first (on the raw wire format), then the shift extracts the
-  // active upper bits: `load_u16::<BE>(sample) >> (16 - BITS)`. If
-  // low-packed input (`yuv420p10le`, `yuv420p12le`) is handed to this
-  // kernel by mistake, the shift discards the active low bits rather than
-  // recovering the intended value. No hot-path cost: one swap + one shift
-  // per load.
+  // Each `u16` load is converted to its `BITS`-bit sample via
+  // [`depack_pn`]: `>> (16 - BITS)` for the high-bit-packed P-formats
+  // (6 for P010/P210, 4 for P012/P212), or `& ((1 << BITS) - 1)` for the
+  // low-bit-packed NV20 (`LOW_PACKED = true`). The BE byte-swap is applied
+  // first (on the raw wire format), then the de-pack extracts the active
+  // bits. If mispacked input is handed to the kernel, the wrong bits are
+  // discarded rather than recovering the intended value (matching every
+  // SIMD backend). No hot-path cost: one swap + one shift-or-mask per load.
   let mut x = 0;
   while x < width {
     let c_idx = x / 2;
-    let u_sample = load_u16::<BE>(uv_half[c_idx * 2]) >> shift;
-    let v_sample = load_u16::<BE>(uv_half[c_idx * 2 + 1]) >> shift;
+    let u_sample = depack_pn::<BITS, LOW_PACKED>(load_u16::<BE>(uv_half[c_idx * 2]));
+    let v_sample = depack_pn::<BITS, LOW_PACKED>(load_u16::<BE>(uv_half[c_idx * 2 + 1]));
     let u_d = q15_scale(u_sample as i32 - bias, c_scale);
     let v_d = q15_scale(v_sample as i32 - bias, c_scale);
 
@@ -119,7 +180,10 @@ pub(crate) fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool, const B
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale((load_u16::<BE>(y[x]) >> shift) as i32 - y_off, y_scale);
+    let y0 = q15_scale(
+      depack_pn::<BITS, LOW_PACKED>(load_u16::<BE>(y[x])) as i32 - y_off,
+      y_scale,
+    );
     out[x * bpp] = clamp_u8(y0 + r_chroma);
     out[x * bpp + 1] = clamp_u8(y0 + g_chroma);
     out[x * bpp + 2] = clamp_u8(y0 + b_chroma);
@@ -127,7 +191,10 @@ pub(crate) fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool, const B
       out[x * bpp + 3] = 0xFF;
     }
 
-    let y1 = q15_scale((load_u16::<BE>(y[x + 1]) >> shift) as i32 - y_off, y_scale);
+    let y1 = q15_scale(
+      depack_pn::<BITS, LOW_PACKED>(load_u16::<BE>(y[x + 1])) as i32 - y_off,
+      y_scale,
+    );
     out[(x + 1) * bpp] = clamp_u8(y1 + r_chroma);
     out[(x + 1) * bpp + 1] = clamp_u8(y1 + g_chroma);
     out[(x + 1) * bpp + 2] = clamp_u8(y1 + b_chroma);
@@ -169,7 +236,9 @@ pub(crate) fn p_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p_n_to_rgb_or_rgba_u16_row::<BITS, false, BE>(y, uv_half, rgb_out, width, matrix, full_range);
+  p_n_to_rgb_or_rgba_u16_row::<BITS, false, BE, false>(
+    y, uv_half, rgb_out, width, matrix, full_range,
+  );
 }
 
 /// Converts one row of high‑bit‑packed semi‑planar 4:2:0 (P010/P012)
@@ -194,7 +263,42 @@ pub(crate) fn p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   matrix: ColorMatrix,
   full_range: bool,
 ) {
-  p_n_to_rgb_or_rgba_u16_row::<BITS, true, BE>(y, uv_half, rgba_out, width, matrix, full_range);
+  p_n_to_rgb_or_rgba_u16_row::<BITS, true, BE, false>(
+    y, uv_half, rgba_out, width, matrix, full_range,
+  );
+}
+
+/// NV20 → **native-depth `u16`** packed RGB — low-bit-packed output
+/// (`[0, 1023]`). The low-bit twin of [`p_n_to_rgb_u16_row`]. Thin
+/// wrapper over [`p_n_to_rgb_or_rgba_u16_row`] with `LOW_PACKED = true`.
+#[cfg(feature = "yuv-semi-planar")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn nv20_to_rgb_u16_row<const BE: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  p_n_to_rgb_or_rgba_u16_row::<10, false, BE, true>(y, uv_half, rgb_out, width, matrix, full_range);
+}
+
+/// NV20 → **native-depth `u16`** packed **RGBA** — low-bit-packed
+/// output; alpha element is `1023`. The low-bit twin of
+/// [`p_n_to_rgba_u16_row`]. Thin wrapper over
+/// [`p_n_to_rgb_or_rgba_u16_row`] with `LOW_PACKED = true`.
+#[cfg(feature = "yuv-semi-planar")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn nv20_to_rgba_u16_row<const BE: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  p_n_to_rgb_or_rgba_u16_row::<10, true, BE, true>(y, uv_half, rgba_out, width, matrix, full_range);
 }
 
 /// Shared kernel for [`p_n_to_rgb_u16_row`] (`ALPHA = false`, 3 bpp
@@ -208,7 +312,12 @@ pub(crate) fn p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
 ///   `out.len() >= width * if ALPHA { 4 } else { 3 }` (`u16` elements).
 #[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
-pub(crate) fn p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool, const BE: bool>(
+pub(crate) fn p_n_to_rgb_or_rgba_u16_row<
+  const BITS: u32,
+  const ALPHA: bool,
+  const BE: bool,
+  const LOW_PACKED: bool,
+>(
   y: &[u16],
   uv_half: &[u16],
   out: &mut [u16],
@@ -232,14 +341,13 @@ pub(crate) fn p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool, con
   let (y_off, y_scale, c_scale) = range_params_n::<BITS, BITS>(full_range);
   let bias = chroma_bias::<BITS>();
   let out_max: i32 = (1i32 << BITS) - 1;
-  let shift = 16 - BITS;
   let alpha_max: u16 = out_max as u16;
 
   let mut x = 0;
   while x < width {
     let c_idx = x / 2;
-    let u_sample = load_u16::<BE>(uv_half[c_idx * 2]) >> shift;
-    let v_sample = load_u16::<BE>(uv_half[c_idx * 2 + 1]) >> shift;
+    let u_sample = depack_pn::<BITS, LOW_PACKED>(load_u16::<BE>(uv_half[c_idx * 2]));
+    let v_sample = depack_pn::<BITS, LOW_PACKED>(load_u16::<BE>(uv_half[c_idx * 2 + 1]));
     let u_d = q15_scale(u_sample as i32 - bias, c_scale);
     let v_d = q15_scale(v_sample as i32 - bias, c_scale);
 
@@ -247,7 +355,10 @@ pub(crate) fn p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool, con
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale((load_u16::<BE>(y[x]) >> shift) as i32 - y_off, y_scale);
+    let y0 = q15_scale(
+      depack_pn::<BITS, LOW_PACKED>(load_u16::<BE>(y[x])) as i32 - y_off,
+      y_scale,
+    );
     out[x * bpp] = (y0 + r_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 1] = (y0 + g_chroma).clamp(0, out_max) as u16;
     out[x * bpp + 2] = (y0 + b_chroma).clamp(0, out_max) as u16;
@@ -255,7 +366,10 @@ pub(crate) fn p_n_to_rgb_or_rgba_u16_row<const BITS: u32, const ALPHA: bool, con
       out[x * bpp + 3] = alpha_max;
     }
 
-    let y1 = q15_scale((load_u16::<BE>(y[x + 1]) >> shift) as i32 - y_off, y_scale);
+    let y1 = q15_scale(
+      depack_pn::<BITS, LOW_PACKED>(load_u16::<BE>(y[x + 1])) as i32 - y_off,
+      y_scale,
+    );
     out[(x + 1) * bpp] = (y1 + r_chroma).clamp(0, out_max) as u16;
     out[(x + 1) * bpp + 1] = (y1 + g_chroma).clamp(0, out_max) as u16;
     out[(x + 1) * bpp + 2] = (y1 + b_chroma).clamp(0, out_max) as u16;
@@ -668,7 +782,7 @@ pub(crate) fn p_n_444_16_to_rgb_or_rgba_u16_row<const ALPHA: bool, const BE: boo
 #[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn p_n_to_hsv_row<const BITS: u32, const BE: bool>(
+pub(crate) fn p_n_to_hsv_row<const BITS: u32, const BE: bool, const LOW_PACKED: bool>(
   y: &[u16],
   uv_half: &[u16],
   h_out: &mut [u8],
@@ -691,20 +805,22 @@ pub(crate) fn p_n_to_hsv_row<const BITS: u32, const BE: bool>(
   let coeffs = Coefficients::for_matrix(matrix);
   let (y_off, y_scale, c_scale) = range_params_n::<BITS, 8>(full_range);
   let bias = chroma_bias::<BITS>();
-  let shift = 16 - BITS;
 
   let mut x = 0;
   while x < width {
     let c_idx = x / 2;
-    let u_sample = load_u16::<BE>(uv_half[c_idx * 2]) >> shift;
-    let v_sample = load_u16::<BE>(uv_half[c_idx * 2 + 1]) >> shift;
+    let u_sample = depack_pn::<BITS, LOW_PACKED>(load_u16::<BE>(uv_half[c_idx * 2]));
+    let v_sample = depack_pn::<BITS, LOW_PACKED>(load_u16::<BE>(uv_half[c_idx * 2 + 1]));
     let u_d = q15_scale(u_sample as i32 - bias, c_scale);
     let v_d = q15_scale(v_sample as i32 - bias, c_scale);
     let r_chroma = q15_chroma(coeffs.r_u(), u_d, coeffs.r_v(), v_d);
     let g_chroma = q15_chroma(coeffs.g_u(), u_d, coeffs.g_v(), v_d);
     let b_chroma = q15_chroma(coeffs.b_u(), u_d, coeffs.b_v(), v_d);
 
-    let y0 = q15_scale((load_u16::<BE>(y[x]) >> shift) as i32 - y_off, y_scale);
+    let y0 = q15_scale(
+      depack_pn::<BITS, LOW_PACKED>(load_u16::<BE>(y[x])) as i32 - y_off,
+      y_scale,
+    );
     let (h0, s0, v0) = rgb_to_hsv_pixel(
       clamp_u8(y0 + r_chroma) as i32,
       clamp_u8(y0 + g_chroma) as i32,
@@ -714,7 +830,10 @@ pub(crate) fn p_n_to_hsv_row<const BITS: u32, const BE: bool>(
     s_out[x] = s0;
     v_out[x] = v0;
 
-    let y1 = q15_scale((load_u16::<BE>(y[x + 1]) >> shift) as i32 - y_off, y_scale);
+    let y1 = q15_scale(
+      depack_pn::<BITS, LOW_PACKED>(load_u16::<BE>(y[x + 1])) as i32 - y_off,
+      y_scale,
+    );
     let (h1, s1, v1) = rgb_to_hsv_pixel(
       clamp_u8(y1 + r_chroma) as i32,
       clamp_u8(y1 + g_chroma) as i32,
@@ -726,6 +845,27 @@ pub(crate) fn p_n_to_hsv_row<const BITS: u32, const BE: bool>(
 
     x += 2;
   }
+}
+
+/// NV20 (semi-planar 4:2:2, 10-bit, **low-bit-packed**) → planar HSV
+/// bytes (OpenCV encoding). The low-bit twin of [`p_n_to_hsv_row`]
+/// (`LOW_PACKED = true`, `BITS = 10`). Byte-identical to
+/// `rgb_to_hsv_row(nv20_to_rgb_row::<BE>(...))`. Thin wrapper over
+/// [`p_n_to_hsv_row`] with `LOW_PACKED = true`.
+#[cfg(feature = "yuv-semi-planar")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn nv20_to_hsv_row<const BE: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  p_n_to_hsv_row::<10, BE, true>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range);
 }
 
 // ---- High-bit-packed semi-planar P-format → native luma ---------------
@@ -774,5 +914,29 @@ pub(crate) fn p_n_to_luma_row<const BITS: u32, const BE: bool>(
   debug_assert!(luma_out.len() >= width, "luma_out row too short");
   for (d, &s) in luma_out[..width].iter_mut().zip(y[..width].iter()) {
     *d = (load_u16::<BE>(s) >> 8) as u8;
+  }
+}
+
+/// NV20 (semi-planar 4:2:2, 10-bit, **low-bit-packed**) → 8-bit native
+/// luma: the de-packed Y range-reduced to 8 bits. The low-bit twin of
+/// [`p_n_to_luma_row`] — because NV20's active bits live in the **low**
+/// 10, the high-byte (`>> 8`) shortcut does NOT apply; the de-pack
+/// (`& 0x03FF`) followed by the `(BITS - 8)`-bit downshift is
+/// `(logical & 0x03FF) >> 2`. Bit-identical to
+/// `y2xx_n_to_luma_row::<10, BE>` and to the `binned_Y >> (BITS - 8)`
+/// luma contract the NV20 sink's resample tiers use. Const-generic over
+/// `BE` (source byte order). Y is a contiguous plane, so no SIMD variant
+/// (the auto-vectorizer handles the per-element mask + shift).
+///
+/// # Panics (debug builds)
+///
+/// - `y.len() >= width` and `luma_out.len() >= width`.
+#[cfg(feature = "yuv-semi-planar")]
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn nv20_to_luma_row<const BE: bool>(y: &[u16], luma_out: &mut [u8], width: usize) {
+  debug_assert!(y.len() >= width, "y row too short");
+  debug_assert!(luma_out.len() >= width, "luma_out row too short");
+  for (d, &s) in luma_out[..width].iter_mut().zip(y[..width].iter()) {
+    *d = (depack_pn::<10, true>(load_u16::<BE>(s)) >> 2) as u8;
   }
 }

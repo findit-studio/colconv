@@ -7,6 +7,33 @@ use super::*;
 /// targets (always `false` on `x86_64` / `i686` in practice).
 const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
 
+/// De-packs a host-native `__m256i` of wire u16 samples to the `BITS`-bit
+/// active value: a `_mm256_srl_epi16` right shift by `16 - BITS` (count in
+/// the low 64b of `shr_count`) for the high-bit-packed P-formats
+/// (`LOW_PACKED = false`), or a low-mask `_mm256_and_si256(v, low_mask)`
+/// for low-bit-packed NV20 (`LOW_PACKED = true`). The AVX2 twin of the
+/// scalar `depack_pn`. `LOW_PACKED` is const, so the unused branch is
+/// eliminated; byte-identical to the scalar de-pack per lane.
+///
+/// # Safety
+///
+/// AVX2 must be available on the current CPU.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn depack_u16x16<const LOW_PACKED: bool>(
+  v: __m256i,
+  shr_count: __m128i,
+  low_mask: __m256i,
+) -> __m256i {
+  unsafe {
+    if LOW_PACKED {
+      _mm256_and_si256(v, low_mask)
+    } else {
+      _mm256_srl_epi16(v, shr_count)
+    }
+  }
+}
+
 /// Byte-swap every u16 lane of `v` in-register when the source (wire)
 /// endian differs from the host's native u16 byte order.
 ///
@@ -67,7 +94,9 @@ pub(crate) unsafe fn p_n_to_rgb_row<const BITS: u32, const BE: bool>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    p_n_to_rgb_or_rgba_row::<BITS, false, BE>(y, uv_half, rgb_out, width, matrix, full_range);
+    p_n_to_rgb_or_rgba_row::<BITS, false, BE, false>(
+      y, uv_half, rgb_out, width, matrix, full_range,
+    );
   }
 }
 
@@ -87,7 +116,54 @@ pub(crate) unsafe fn p_n_to_rgba_row<const BITS: u32, const BE: bool>(
 ) {
   // SAFETY: caller obligations forwarded to the shared impl.
   unsafe {
-    p_n_to_rgb_or_rgba_row::<BITS, true, BE>(y, uv_half, rgba_out, width, matrix, full_range);
+    p_n_to_rgb_or_rgba_row::<BITS, true, BE, false>(
+      y, uv_half, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// AVX2 NV20 (low-bit-packed 4:2:2, 10-bit) → packed **8-bit** RGB.
+/// Low-bit twin of [`p_n_to_rgb_row`] (`LOW_PACKED = true`, `BITS = 10`).
+/// Byte-identical to [`scalar::nv20_to_rgb_row::<BE>`].
+///
+/// # Safety
+///
+/// Same as [`p_n_to_rgb_row`].
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn nv20_to_rgb_row<const BE: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_to_rgb_or_rgba_row::<10, false, BE, true>(y, uv_half, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// AVX2 NV20 → packed **8-bit RGBA** (`R, G, B, 0xFF`). Low-bit twin of
+/// [`p_n_to_rgba_row`]. Byte-identical to [`scalar::nv20_to_rgba_row::<BE>`].
+///
+/// # Safety
+///
+/// Same as [`p_n_to_rgba_row`].
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn nv20_to_rgba_row<const BE: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: caller obligations forwarded to the shared impl.
+  unsafe {
+    p_n_to_rgb_or_rgba_row::<10, true, BE, true>(y, uv_half, rgba_out, width, matrix, full_range);
   }
 }
 
@@ -103,7 +179,12 @@ pub(crate) unsafe fn p_n_to_rgba_row<const BITS: u32, const BE: bool>(
 /// 4. `BITS` ∈ `{10, 12}`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool, const BE: bool>(
+pub(crate) unsafe fn p_n_to_rgb_or_rgba_row<
+  const BITS: u32,
+  const ALPHA: bool,
+  const BE: bool,
+  const LOW_PACKED: bool,
+>(
   y: &[u16],
   uv_half: &[u16],
   out: &mut [u8],
@@ -130,8 +211,10 @@ pub(crate) unsafe fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool, 
     let y_scale_v = _mm256_set1_epi32(y_scale);
     let c_scale_v = _mm256_set1_epi32(c_scale);
     let bias_v = _mm256_set1_epi16(bias as i16);
-    // High-bit-packed samples: shift right by `16 - BITS`.
+    // High-bit-packed: `_mm256_srl_epi16` by `16 - BITS`; low-bit-packed
+    // NV20: the `low_mask`. One path is dead per monomorphization.
     let shr_count = _mm_cvtsi32_si128((16 - BITS) as i32);
+    let low_mask = _mm256_set1_epi16(((1u32 << BITS) - 1) as i16);
     let cru = _mm256_set1_epi32(coeffs.r_u());
     let crv = _mm256_set1_epi32(coeffs.r_v());
     let cgu = _mm256_set1_epi32(coeffs.g_u());
@@ -142,24 +225,26 @@ pub(crate) unsafe fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool, 
 
     let mut x = 0usize;
     while x + 32 <= width {
-      // 32 Y = two u16x16 loads, shifted right by `16 - BITS`. BE
-      // input is byte-swapped via `load_endian_u16x16::<BE>` for Y,
-      // and via `byteswap_u16x16::<BE>` after deinterleave for UV.
-      let y_low_i16 = _mm256_srl_epi16(
+      // 32 Y = two u16x16 loads, de-packed (shift or mask). BE input is
+      // byte-swapped via `load_endian_u16x16::<BE>` for Y, and via
+      // `byteswap_u16x16::<BE>` after deinterleave for UV.
+      let y_low_i16 = depack_u16x16::<LOW_PACKED>(
         endian::load_endian_u16x16::<BE>(y.as_ptr().add(x) as *const u8),
         shr_count,
+        low_mask,
       );
-      let y_high_i16 = _mm256_srl_epi16(
+      let y_high_i16 = depack_u16x16::<LOW_PACKED>(
         endian::load_endian_u16x16::<BE>(y.as_ptr().add(x + 16) as *const u8),
         shr_count,
+        low_mask,
       );
 
-      // 32 UV (16 pairs) — deinterleave + byte-swap (for BE) + shift.
+      // 32 UV (16 pairs) — deinterleave + byte-swap (for BE) + de-pack.
       let (u_vec, v_vec) = deinterleave_uv_u16_avx2(uv_half.as_ptr().add(x));
       let u_vec = byteswap_u16x16::<BE>(u_vec);
       let v_vec = byteswap_u16x16::<BE>(v_vec);
-      let u_vec = _mm256_srl_epi16(u_vec, shr_count);
-      let v_vec = _mm256_srl_epi16(v_vec, shr_count);
+      let u_vec = depack_u16x16::<LOW_PACKED>(u_vec, shr_count, low_mask);
+      let v_vec = depack_u16x16::<LOW_PACKED>(v_vec, shr_count, low_mask);
 
       let u_i16 = _mm256_sub_epi16(u_vec, bias_v);
       let v_i16 = _mm256_sub_epi16(v_vec, bias_v);
@@ -222,11 +307,10 @@ pub(crate) unsafe fn p_n_to_rgb_or_rgba_row<const BITS: u32, const ALPHA: bool, 
       let tail_uv = &uv_half[x..width];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      if ALPHA {
-        scalar::p_n_to_rgba_row::<BITS, BE>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
-      } else {
-        scalar::p_n_to_rgb_row::<BITS, BE>(tail_y, tail_uv, tail_out, tail_w, matrix, full_range);
-      }
+      // Route the scalar tail through the same `LOW_PACKED` de-pack.
+      scalar::p_n_to_rgb_or_rgba_row::<BITS, ALPHA, BE, LOW_PACKED>(
+        tail_y, tail_uv, tail_out, tail_w, matrix, full_range,
+      );
     }
   }
 }
@@ -257,7 +341,9 @@ pub(crate) unsafe fn p_n_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   full_range: bool,
 ) {
   unsafe {
-    p_n_to_rgb_or_rgba_u16_row::<BITS, false, BE>(y, uv_half, rgb_out, width, matrix, full_range);
+    p_n_to_rgb_or_rgba_u16_row::<BITS, false, BE, false>(
+      y, uv_half, rgb_out, width, matrix, full_range,
+    );
   }
 }
 
@@ -279,7 +365,57 @@ pub(crate) unsafe fn p_n_to_rgba_u16_row<const BITS: u32, const BE: bool>(
   full_range: bool,
 ) {
   unsafe {
-    p_n_to_rgb_or_rgba_u16_row::<BITS, true, BE>(y, uv_half, rgba_out, width, matrix, full_range);
+    p_n_to_rgb_or_rgba_u16_row::<BITS, true, BE, false>(
+      y, uv_half, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// AVX2 NV20 → packed **native-depth `u16`** RGB (low-bit-packed,
+/// `[0, 1023]`). Low-bit twin of [`p_n_to_rgb_u16_row`]. Byte-identical
+/// to [`scalar::nv20_to_rgb_u16_row::<BE>`].
+///
+/// # Safety
+///
+/// Same as [`p_n_to_rgb_u16_row`].
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn nv20_to_rgb_u16_row<const BE: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  rgb_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    p_n_to_rgb_or_rgba_u16_row::<10, false, BE, true>(
+      y, uv_half, rgb_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// AVX2 NV20 → packed **native-depth `u16` RGBA** (low-bit-packed;
+/// alpha `1023`). Low-bit twin of [`p_n_to_rgba_u16_row`].
+/// Byte-identical to [`scalar::nv20_to_rgba_u16_row::<BE>`].
+///
+/// # Safety
+///
+/// Same as [`p_n_to_rgba_u16_row`].
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn nv20_to_rgba_u16_row<const BE: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  rgba_out: &mut [u16],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    p_n_to_rgb_or_rgba_u16_row::<10, true, BE, true>(
+      y, uv_half, rgba_out, width, matrix, full_range,
+    );
   }
 }
 
@@ -302,6 +438,7 @@ pub(crate) unsafe fn p_n_to_rgb_or_rgba_u16_row<
   const BITS: u32,
   const ALPHA: bool,
   const BE: bool,
+  const LOW_PACKED: bool,
 >(
   y: &[u16],
   uv_half: &[u16],
@@ -332,8 +469,10 @@ pub(crate) unsafe fn p_n_to_rgb_or_rgba_u16_row<
     let bias_v = _mm256_set1_epi16(bias as i16);
     let max_v = _mm256_set1_epi16(out_max);
     let zero_v = _mm256_set1_epi16(0);
-    // High-bit-packed samples: shift right by `16 - BITS`.
+    // High-bit-packed: `_mm256_srl_epi16` by `16 - BITS`; low-bit-packed
+    // NV20: the `low_mask`. One path is dead per monomorphization.
     let shr_count = _mm_cvtsi32_si128((16 - BITS) as i32);
+    let low_mask = _mm256_set1_epi16(((1u32 << BITS) - 1) as i16);
     let cru = _mm256_set1_epi32(coeffs.r_u());
     let crv = _mm256_set1_epi32(coeffs.r_v());
     let cgu = _mm256_set1_epi32(coeffs.g_u());
@@ -346,19 +485,21 @@ pub(crate) unsafe fn p_n_to_rgb_or_rgba_u16_row<
     while x + 32 <= width {
       // BE input is byte-swapped via `load_endian_u16x16::<BE>` for Y,
       // and via `byteswap_u16x16::<BE>` after deinterleave for UV.
-      let y_low_i16 = _mm256_srl_epi16(
+      let y_low_i16 = depack_u16x16::<LOW_PACKED>(
         endian::load_endian_u16x16::<BE>(y.as_ptr().add(x) as *const u8),
         shr_count,
+        low_mask,
       );
-      let y_high_i16 = _mm256_srl_epi16(
+      let y_high_i16 = depack_u16x16::<LOW_PACKED>(
         endian::load_endian_u16x16::<BE>(y.as_ptr().add(x + 16) as *const u8),
         shr_count,
+        low_mask,
       );
       let (u_vec, v_vec) = deinterleave_uv_u16_avx2(uv_half.as_ptr().add(x));
       let u_vec = byteswap_u16x16::<BE>(u_vec);
       let v_vec = byteswap_u16x16::<BE>(v_vec);
-      let u_vec = _mm256_srl_epi16(u_vec, shr_count);
-      let v_vec = _mm256_srl_epi16(v_vec, shr_count);
+      let u_vec = depack_u16x16::<LOW_PACKED>(u_vec, shr_count, low_mask);
+      let v_vec = depack_u16x16::<LOW_PACKED>(v_vec, shr_count, low_mask);
 
       let u_i16 = _mm256_sub_epi16(u_vec, bias_v);
       let v_i16 = _mm256_sub_epi16(v_vec, bias_v);
@@ -469,15 +610,10 @@ pub(crate) unsafe fn p_n_to_rgb_or_rgba_u16_row<
       let tail_uv = &uv_half[x..width];
       let tail_out = &mut out[x * bpp..width * bpp];
       let tail_w = width - x;
-      if ALPHA {
-        scalar::p_n_to_rgba_u16_row::<BITS, BE>(
-          tail_y, tail_uv, tail_out, tail_w, matrix, full_range,
-        );
-      } else {
-        scalar::p_n_to_rgb_u16_row::<BITS, BE>(
-          tail_y, tail_uv, tail_out, tail_w, matrix, full_range,
-        );
-      }
+      // Route the scalar tail through the same `LOW_PACKED` de-pack.
+      scalar::p_n_to_rgb_or_rgba_u16_row::<BITS, ALPHA, BE, LOW_PACKED>(
+        tail_y, tail_uv, tail_out, tail_w, matrix, full_range,
+      );
     }
   }
 }
@@ -953,7 +1089,7 @@ unsafe fn pn_hsv_via_rgb_chunks(
 #[inline]
 #[target_feature(enable = "avx2")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn p_n_to_hsv_row<const BITS: u32, const BE: bool>(
+pub(crate) unsafe fn p_n_to_hsv_row<const BITS: u32, const BE: bool, const LOW_PACKED: bool>(
   y: &[u16],
   uv_half: &[u16],
   h_out: &mut [u8],
@@ -973,10 +1109,44 @@ pub(crate) unsafe fn p_n_to_hsv_row<const BITS: u32, const BE: bool>(
   // SAFETY: the feature is the caller's obligation; the chunk filler
   // forwards the per-chunk sub-slices to the AVX2 high-bit 4:2:0 RGB
   // kernel under the same contract (its own scalar tail covers small n).
+  // The same `LOW_PACKED` de-pack threads through the shared RGB kernel.
   unsafe {
     pn_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
-      p_n_to_rgb_row::<BITS, BE>(&y[offset..], &uv_half[offset..], rgb, n, matrix, full_range);
+      p_n_to_rgb_or_rgba_row::<BITS, false, BE, LOW_PACKED>(
+        &y[offset..],
+        &uv_half[offset..],
+        rgb,
+        n,
+        matrix,
+        full_range,
+      );
     });
+  }
+}
+
+/// AVX2 NV20 → planar HSV bytes (OpenCV encoding), the low-bit twin of
+/// [`p_n_to_hsv_row`] (`LOW_PACKED = true`, `BITS = 10`). Byte-identical
+/// to `rgb_to_hsv_row(nv20_to_rgb_row::<BE>(...))` within the AVX2 tier.
+///
+/// # Safety
+///
+/// Same contract as [`p_n_to_hsv_row`].
+#[inline]
+#[target_feature(enable = "avx2")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn nv20_to_hsv_row<const BE: bool>(
+  y: &[u16],
+  uv_half: &[u16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  // SAFETY: forwarded to the shared AVX2 HSV kernel with `LOW_PACKED = true`.
+  unsafe {
+    p_n_to_hsv_row::<10, BE, true>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range);
   }
 }
 

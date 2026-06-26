@@ -269,6 +269,13 @@ mod resample_y2xx_filter;
 // The native fast tier reuses the high-bit non-4:2:0 planar join, so the native
 // suite (and its twin-parity / oracle suites) only exists when `yuv-planar` is
 // also compiled.
+#[cfg(feature = "yuv-semi-planar")]
+mod nv20;
+// NV20's native fast tier reuses the high-bit non-4:2:0 planar join (like the
+// P2xx native suite), and the cross-packing equivalence pins the native tier
+// against P210, so the resample suite needs BOTH families.
+#[cfg(all(feature = "yuv-semi-planar", feature = "yuv-planar"))]
+mod resample_nv20;
 #[cfg(all(feature = "y2xx", feature = "yuv-planar"))]
 mod resample_y2xx_native;
 #[cfg(feature = "gray")]

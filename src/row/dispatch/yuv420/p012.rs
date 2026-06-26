@@ -440,7 +440,7 @@ pub fn p012_to_rgba_u16_row(
 /// without materializing a source-width RGB row. Byte-identical to
 /// `rgb_to_hsv_row(p012_to_rgb_row_endian(...))` within the selected
 /// tier — the SIMD path stages a fixed 64-pixel 8-bit RGB chunk
-/// internally. See `scalar::p_n_to_hsv_row::<12, false>` for the
+/// internally. See `scalar::p_n_to_hsv_row::<12, false, false>` for the
 /// reference. `use_simd = false` forces the scalar reference path.
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
@@ -475,8 +475,8 @@ pub fn p012_to_hsv_row_endian(
         if neon_available() {
           // SAFETY: NEON verified.
           dispatch_be!(
-            unsafe { arch::neon::p_n_to_hsv_row::<12, false>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); },
-            unsafe { arch::neon::p_n_to_hsv_row::<12, true>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); }
+            unsafe { arch::neon::p_n_to_hsv_row::<12, false, false>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::neon::p_n_to_hsv_row::<12, true, false>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); }
           );
           return;
         }
@@ -485,24 +485,24 @@ pub fn p012_to_hsv_row_endian(
         if avx512_available() {
           // SAFETY: AVX‑512BW verified.
           dispatch_be!(
-            unsafe { arch::x86_avx512::p_n_to_hsv_row::<12, false>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); },
-            unsafe { arch::x86_avx512::p_n_to_hsv_row::<12, true>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); }
+            unsafe { arch::x86_avx512::p_n_to_hsv_row::<12, false, false>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx512::p_n_to_hsv_row::<12, true, false>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); }
           );
           return;
         }
         if avx2_available() {
           // SAFETY: AVX2 verified.
           dispatch_be!(
-            unsafe { arch::x86_avx2::p_n_to_hsv_row::<12, false>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); },
-            unsafe { arch::x86_avx2::p_n_to_hsv_row::<12, true>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); }
+            unsafe { arch::x86_avx2::p_n_to_hsv_row::<12, false, false>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::x86_avx2::p_n_to_hsv_row::<12, true, false>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); }
           );
           return;
         }
         if sse41_available() {
           // SAFETY: SSE4.1 verified.
           dispatch_be!(
-            unsafe { arch::x86_sse41::p_n_to_hsv_row::<12, false>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); },
-            unsafe { arch::x86_sse41::p_n_to_hsv_row::<12, true>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); }
+            unsafe { arch::x86_sse41::p_n_to_hsv_row::<12, false, false>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::x86_sse41::p_n_to_hsv_row::<12, true, false>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); }
           );
           return;
         }
@@ -511,8 +511,8 @@ pub fn p012_to_hsv_row_endian(
         if simd128_available() {
           // SAFETY: simd128 compile‑time verified.
           dispatch_be!(
-            unsafe { arch::wasm_simd128::p_n_to_hsv_row::<12, false>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); },
-            unsafe { arch::wasm_simd128::p_n_to_hsv_row::<12, true>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); }
+            unsafe { arch::wasm_simd128::p_n_to_hsv_row::<12, false, false>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); },
+            unsafe { arch::wasm_simd128::p_n_to_hsv_row::<12, true, false>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range); }
           );
           return;
         }
@@ -522,8 +522,12 @@ pub fn p012_to_hsv_row_endian(
   }
 
   dispatch_be!(
-    scalar::p_n_to_hsv_row::<12, false>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range),
-    scalar::p_n_to_hsv_row::<12, true>(y, uv_half, h_out, s_out, v_out, width, matrix, full_range)
+    scalar::p_n_to_hsv_row::<12, false, false>(
+      y, uv_half, h_out, s_out, v_out, width, matrix, full_range
+    ),
+    scalar::p_n_to_hsv_row::<12, true, false>(
+      y, uv_half, h_out, s_out, v_out, width, matrix, full_range
+    )
   );
 }
 
