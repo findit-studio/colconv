@@ -151,6 +151,8 @@ mod resample_gray8;
 #[cfg(feature = "gray")]
 mod resample_gray_n;
 #[cfg(feature = "gray")]
+mod resample_grayf16;
+#[cfg(feature = "gray")]
 mod resample_grayf32;
 #[cfg(feature = "rgb-legacy")]
 mod resample_legacy_rgb;

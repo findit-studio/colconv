@@ -18,7 +18,7 @@
 use core::arch::x86_64::*;
 
 use crate::row::{
-  arch::x86_avx2::endian::{load_endian_u16x16, load_endian_u32x8},
+  arch::x86_avx2::endian::{load_endian_u16x8, load_endian_u16x16, load_endian_u32x8},
   scalar::{bits_mask, gray as scalar},
 };
 
@@ -1398,6 +1398,238 @@ pub(crate) unsafe fn ya16_to_hsv_row<const BE: bool>(
   if x < width {
     scalar::ya16_to_hsv_row::<BE>(
       &packed[x * 2..width * 2],
+      &mut h_out[x..width],
+      &mut s_out[x..width],
+      &mut v_out[x..width],
+      width - x,
+    );
+  }
+}
+
+// ---- Grayf16 ----------------------------------------------------------------
+//
+// Strategy: widen a chunk of `half::f16` luma to `f32` into a stack buffer with
+// F16C (`_mm256_cvtph_ps`), then delegate to the existing AVX2 `grayf32`
+// downstream kernels with `HOST_NATIVE_BE` (the widened buffer is host-native).
+// The half-float twin of the `grayf32` AVX2 kernels; the f16 reading mirrors
+// the Rgbf16 AVX2 path (`load_endian_u16x8` + `_mm256_cvtph_ps`).
+
+/// `BE` value that makes the `grayf32` row kernels treat their input as
+/// host-native (no-op swap) after the F16C widen produced host-native f32.
+const GRAYF16_HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+
+/// Widen 8 x f16 (16 bytes at `ptr`) to `out[0..8]` (host-native f32).
+/// For `BE = true` the f16 bits are byte-swapped before widening.
+///
+/// # Safety
+/// AVX2 + F16C must be available. `ptr` valid for 16 bytes; `out` for 8 f32.
+#[inline]
+#[target_feature(enable = "avx2,f16c")]
+unsafe fn widen_f16x8_avx2_buf<const BE: bool>(ptr: *const half::f16, out: *mut f32) {
+  unsafe {
+    let m = _mm256_cvtph_ps(load_endian_u16x8::<BE>(ptr.cast::<u8>()));
+    _mm256_storeu_ps(out, m);
+  }
+}
+
+/// AVX2 `grayf16_to_rgb_row`: widen f16 → f32, clamp [0,1] x 255 → u8, broadcast.
+/// # Safety
+/// AVX2 + F16C must be available. `y_plane.len() >= width`. `out.len() >= width * 3`.
+#[inline]
+#[target_feature(enable = "avx2,f16c")]
+pub(crate) unsafe fn grayf16_to_rgb_row<const BE: bool>(
+  y_plane: &[half::f16],
+  out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::grayf16 as scalar;
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 3);
+  let mut x = 0usize;
+  while x + 8 <= width {
+    let mut buf = [0.0f32; 8];
+    unsafe {
+      widen_f16x8_avx2_buf::<BE>(y_plane.as_ptr().add(x), buf.as_mut_ptr());
+      grayf32_to_rgb_row::<GRAYF16_HOST_NATIVE_BE>(&buf, &mut out[x * 3..(x + 8) * 3], 8);
+    }
+    x += 8;
+  }
+  if x < width {
+    scalar::grayf16_to_rgb_row::<BE>(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
+  }
+}
+
+/// AVX2 `grayf16_to_rgba_row`: widen f16 → f32, clamp [0,1] x 255, broadcast, α=0xFF.
+/// # Safety
+/// AVX2 + F16C must be available. `y_plane.len() >= width`. `out.len() >= width * 4`.
+#[inline]
+#[target_feature(enable = "avx2,f16c")]
+pub(crate) unsafe fn grayf16_to_rgba_row<const BE: bool>(
+  y_plane: &[half::f16],
+  out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::grayf16 as scalar;
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 4);
+  let mut x = 0usize;
+  while x + 8 <= width {
+    let mut buf = [0.0f32; 8];
+    unsafe {
+      widen_f16x8_avx2_buf::<BE>(y_plane.as_ptr().add(x), buf.as_mut_ptr());
+      grayf32_to_rgba_row::<GRAYF16_HOST_NATIVE_BE>(&buf, &mut out[x * 4..(x + 8) * 4], 8);
+    }
+    x += 8;
+  }
+  if x < width {
+    scalar::grayf16_to_rgba_row::<BE>(&y_plane[x..width], &mut out[x * 4..width * 4], width - x);
+  }
+}
+
+/// AVX2 `grayf16_to_rgb_u16_row`: widen f16 → f32, clamp [0,1] x 65535 → u16, broadcast.
+/// # Safety
+/// AVX2 + F16C must be available. `y_plane.len() >= width`. `out.len() >= width * 3`.
+#[inline]
+#[target_feature(enable = "avx2,f16c")]
+pub(crate) unsafe fn grayf16_to_rgb_u16_row<const BE: bool>(
+  y_plane: &[half::f16],
+  out: &mut [u16],
+  width: usize,
+) {
+  use crate::row::scalar::grayf16 as scalar;
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 3);
+  let mut x = 0usize;
+  while x + 8 <= width {
+    let mut buf = [0.0f32; 8];
+    unsafe {
+      widen_f16x8_avx2_buf::<BE>(y_plane.as_ptr().add(x), buf.as_mut_ptr());
+      grayf32_to_rgb_u16_row::<GRAYF16_HOST_NATIVE_BE>(&buf, &mut out[x * 3..(x + 8) * 3], 8);
+    }
+    x += 8;
+  }
+  if x < width {
+    scalar::grayf16_to_rgb_u16_row::<BE>(&y_plane[x..width], &mut out[x * 3..width * 3], width - x);
+  }
+}
+
+/// AVX2 `grayf16_to_rgba_u16_row`: widen f16 → f32, clamp [0,1] x 65535, broadcast, α=0xFFFF.
+/// # Safety
+/// AVX2 + F16C must be available. `y_plane.len() >= width`. `out.len() >= width * 4`.
+#[inline]
+#[target_feature(enable = "avx2,f16c")]
+pub(crate) unsafe fn grayf16_to_rgba_u16_row<const BE: bool>(
+  y_plane: &[half::f16],
+  out: &mut [u16],
+  width: usize,
+) {
+  use crate::row::scalar::grayf16 as scalar;
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 4);
+  let mut x = 0usize;
+  while x + 8 <= width {
+    let mut buf = [0.0f32; 8];
+    unsafe {
+      widen_f16x8_avx2_buf::<BE>(y_plane.as_ptr().add(x), buf.as_mut_ptr());
+      grayf32_to_rgba_u16_row::<GRAYF16_HOST_NATIVE_BE>(&buf, &mut out[x * 4..(x + 8) * 4], 8);
+    }
+    x += 8;
+  }
+  if x < width {
+    scalar::grayf16_to_rgba_u16_row::<BE>(
+      &y_plane[x..width],
+      &mut out[x * 4..width * 4],
+      width - x,
+    );
+  }
+}
+
+/// AVX2 `grayf16_to_luma_row`: widen f16 → f32, clamp [0,1] x 255 → u8 luma.
+/// # Safety
+/// AVX2 + F16C must be available. `y_plane.len() >= width`. `out.len() >= width`.
+#[inline]
+#[target_feature(enable = "avx2,f16c")]
+pub(crate) unsafe fn grayf16_to_luma_row<const BE: bool>(
+  y_plane: &[half::f16],
+  out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::grayf16 as scalar;
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width);
+  let mut x = 0usize;
+  while x + 8 <= width {
+    let mut buf = [0.0f32; 8];
+    unsafe {
+      widen_f16x8_avx2_buf::<BE>(y_plane.as_ptr().add(x), buf.as_mut_ptr());
+      grayf32_to_luma_row::<GRAYF16_HOST_NATIVE_BE>(&buf, &mut out[x..x + 8], 8);
+    }
+    x += 8;
+  }
+  if x < width {
+    scalar::grayf16_to_luma_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
+  }
+}
+
+/// AVX2 `grayf16_to_luma_u16_row`: widen f16 → f32, clamp [0,1] x 65535 → u16 luma.
+/// # Safety
+/// AVX2 + F16C must be available. `y_plane.len() >= width`. `out.len() >= width`.
+#[inline]
+#[target_feature(enable = "avx2,f16c")]
+pub(crate) unsafe fn grayf16_to_luma_u16_row<const BE: bool>(
+  y_plane: &[half::f16],
+  out: &mut [u16],
+  width: usize,
+) {
+  use crate::row::scalar::grayf16 as scalar;
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width);
+  let mut x = 0usize;
+  while x + 8 <= width {
+    let mut buf = [0.0f32; 8];
+    unsafe {
+      widen_f16x8_avx2_buf::<BE>(y_plane.as_ptr().add(x), buf.as_mut_ptr());
+      grayf32_to_luma_u16_row::<GRAYF16_HOST_NATIVE_BE>(&buf, &mut out[x..x + 8], 8);
+    }
+    x += 8;
+  }
+  if x < width {
+    scalar::grayf16_to_luma_u16_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
+  }
+}
+
+/// AVX2 `grayf16_to_hsv_row`: H=0, S=0, V = clamp(widen(Y),0,1) x 255.
+/// # Safety
+/// AVX2 + F16C must be available. `y_plane.len() >= width`; H/S/V out `>= width`.
+#[inline]
+#[target_feature(enable = "avx2,f16c")]
+pub(crate) unsafe fn grayf16_to_hsv_row<const BE: bool>(
+  y_plane: &[half::f16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::grayf16 as scalar;
+  debug_assert!(y_plane.len() >= width);
+  let mut x = 0usize;
+  while x + 8 <= width {
+    let mut buf = [0.0f32; 8];
+    unsafe {
+      widen_f16x8_avx2_buf::<BE>(y_plane.as_ptr().add(x), buf.as_mut_ptr());
+      grayf32_to_hsv_row::<GRAYF16_HOST_NATIVE_BE>(
+        &buf,
+        &mut h_out[x..x + 8],
+        &mut s_out[x..x + 8],
+        &mut v_out[x..x + 8],
+        8,
+      );
+    }
+    x += 8;
+  }
+  if x < width {
+    scalar::grayf16_to_hsv_row::<BE>(
+      &y_plane[x..width],
       &mut h_out[x..width],
       &mut s_out[x..width],
       &mut v_out[x..width],

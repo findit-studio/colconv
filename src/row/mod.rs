@@ -300,7 +300,9 @@ pub(crate) use dispatch::packed_rgb_16bit::{
 // Gray dispatchers are pub(crate) — sinker code uses them via crate::row::gray*_row.
 #[cfg(all(feature = "gray", any(feature = "std", feature = "alloc")))]
 pub(crate) use dispatch::gray::*;
-// Grayf32 / Ya8 / Ya16 dispatchers — pub(crate) for sinker use.
+// Grayf16 / Grayf32 / Ya8 / Ya16 dispatchers — pub(crate) for sinker use.
+#[cfg(all(feature = "gray", any(feature = "std", feature = "alloc")))]
+pub(crate) use dispatch::grayf16::*;
 #[cfg(all(feature = "gray", any(feature = "std", feature = "alloc")))]
 pub(crate) use dispatch::grayf32::*;
 #[cfg(all(feature = "gray", any(feature = "std", feature = "alloc")))]
@@ -643,13 +645,13 @@ pub(crate) const fn neon_available() -> bool {
 /// The Rgbf16 NEON dispatchers gate on `neon_available() &&
 /// fp16_available()` and fall back to scalar when this returns false.
 ///
-/// Consumers: `rgb-float` (`dispatch::rgb_f16_ops`) and `gbr`
-/// (`dispatch::planar_gbr_float`). Other source-format families do
-/// not consume the FP16 helpers, so the cfg matches them exactly.
+/// Consumers: `rgb-float` (`dispatch::rgb_f16_ops`), `gbr`
+/// (`dispatch::planar_gbr_float`), and `gray` (`dispatch::grayf16`).
+/// The cfg matches those families exactly.
 #[cfg(all(
   target_arch = "aarch64",
   feature = "std",
-  any(feature = "gbr", feature = "rgb-float"),
+  any(feature = "gbr", feature = "rgb-float", feature = "gray"),
 ))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn fp16_available() -> bool {
@@ -663,7 +665,7 @@ pub(crate) fn fp16_available() -> bool {
 #[cfg(all(
   target_arch = "aarch64",
   not(feature = "std"),
-  any(feature = "gbr", feature = "rgb-float"),
+  any(feature = "gbr", feature = "rgb-float", feature = "gray"),
 ))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) const fn fp16_available() -> bool {
@@ -722,14 +724,14 @@ pub(crate) const fn avx512_available() -> bool {
   !cfg!(colconv_force_scalar) && !cfg!(colconv_disable_avx512) && cfg!(target_feature = "avx512bw")
 }
 
-/// F16C availability on x86_64. Used by the `Rgbf16` dispatcher to gate the
+/// F16C availability on x86_64. Used by the `Rgbf16` and `Grayf16` dispatchers to gate the
 /// hardware-accelerated f16→f32 widening path. F16C is checked *in addition*
 /// to the SIMD tier (AVX-512 / AVX2 / SSE4.1) because it is an independent
 /// feature bit that can be absent even on AVX2 machines.
 #[cfg(all(
   target_arch = "x86_64",
   feature = "std",
-  any(feature = "rgb-float", feature = "gbr"),
+  any(feature = "rgb-float", feature = "gbr", feature = "gray"),
 ))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn f16c_available() -> bool {
@@ -743,7 +745,7 @@ pub(crate) fn f16c_available() -> bool {
 #[cfg(all(
   target_arch = "x86_64",
   not(feature = "std"),
-  any(feature = "rgb-float", feature = "gbr"),
+  any(feature = "rgb-float", feature = "gbr", feature = "gray"),
 ))]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) const fn f16c_available() -> bool {

@@ -61,6 +61,8 @@ pub(super) mod filter_reduce;
 #[cfg(feature = "gray")]
 pub(super) mod gray;
 #[cfg(feature = "gray")]
+pub(super) mod grayf16;
+#[cfg(feature = "gray")]
 pub(super) mod grayf32;
 #[cfg(feature = "rgb-legacy")]
 pub(super) mod legacy_rgb;

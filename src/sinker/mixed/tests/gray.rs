@@ -1,13 +1,25 @@
 use crate::{
   ColorMatrix,
-  frame::{Gray8Frame, Gray16Frame, GrayNFrame, Grayf32Frame, Ya8Frame, Ya16Frame},
+  frame::{Gray8Frame, Gray16Frame, GrayNFrame, Grayf16Frame, Grayf32Frame, Ya8Frame, Ya16Frame},
   sinker::MixedSinker,
   source::{
     gray8_to, gray9_to, gray9_to_endian, gray10_to, gray10_to_endian, gray12_to, gray12_to_endian,
-    gray14_to, gray14_to_endian, gray16_to, gray16_to_endian, grayf32_to, grayf32_to_endian,
-    ya8_to, ya16_to, ya16_to_endian,
+    gray14_to, gray14_to_endian, gray16_to, gray16_to_endian, grayf16_to, grayf16_to_endian,
+    grayf32_to, grayf32_to_endian, ya8_to, ya16_to, ya16_to_endian,
   },
 };
+use half::f16;
+
+/// Re-encode a host-native f16 slice as LE-encoded byte storage. The
+/// `Grayf16Frame` plane contract is FFmpeg `grayf16le` — f16 bit patterns
+/// whose underlying bytes are little-endian; the sinker applies `u16::from_le`
+/// (via `<BE = false>`) to recover host-native f16 (no-op on LE, swap on BE).
+fn as_le_f16(host: &[f16]) -> std::vec::Vec<f16> {
+  host
+    .iter()
+    .map(|v| f16::from_bits(u16::from_ne_bytes(v.to_bits().to_le_bytes())))
+    .collect()
+}
 
 /// Re-encode a host-native u16 slice as LE-encoded byte storage. Sink kernels
 /// recover the intended logical values via `u16::from_le` on both LE (no-op)
@@ -702,6 +714,216 @@ fn grayf32_sinker_le_encoded_frame_decodes_correctly() {
     assert_eq!(rgb_f32_out[x * 3 + 1], y, "pixel {x} G diverges");
     assert_eq!(rgb_f32_out[x * 3 + 2], y, "pixel {x} B diverges");
   }
+}
+
+// ---- Grayf16 integration tests ----------------------------------------------
+
+#[test]
+fn grayf16_with_luma_f32_widens() {
+  // NaN, out-of-range, and normal f16 values all widen to f32 unchanged.
+  let intended: std::vec::Vec<f16> = std::vec![
+    f16::from_f32(0.0),
+    f16::from_f32(0.25),
+    f16::from_f32(0.5),
+    f16::from_f32(0.75),
+    f16::from_f32(1.0),
+    f16::from_f32(1.5),
+    f16::from_f32(-0.5),
+    f16::NAN,
+  ];
+  let plane = as_le_f16(&intended);
+  let frame = Grayf16Frame::new(&plane, 8, 1, 8);
+  let mut out = std::vec![0.0f32; 8];
+  let mut sink = MixedSinker::<crate::source::Grayf16>::new(8, 1)
+    .with_luma_f32(&mut out)
+    .unwrap();
+  grayf16_to(&frame, FR, M, &mut sink).unwrap();
+  for (i, (&a, &b)) in intended.iter().zip(out.iter()).enumerate() {
+    if a.is_nan() {
+      assert!(b.is_nan(), "pixel {i}: expected NaN");
+    } else {
+      assert_eq!(a.to_f32(), b, "pixel {i}");
+    }
+  }
+}
+
+#[test]
+fn grayf16_with_rgb_f32_replicates_losslessly() {
+  let intended: std::vec::Vec<f16> = std::vec![
+    f16::from_f32(0.25),
+    f16::from_f32(0.75),
+    f16::from_f32(1.5),
+    f16::from_f32(-0.5),
+  ];
+  let plane = as_le_f16(&intended);
+  let frame = Grayf16Frame::new(&plane, 4, 1, 4);
+  let mut out = std::vec![0.0f32; 4 * 3];
+  let mut sink = MixedSinker::<crate::source::Grayf16>::new(4, 1)
+    .with_rgb_f32(&mut out)
+    .unwrap();
+  grayf16_to(&frame, FR, M, &mut sink).unwrap();
+  for (x, &y) in intended.iter().enumerate() {
+    let yf = y.to_f32();
+    assert_eq!(out[x * 3], yf, "pixel {x} R");
+    assert_eq!(out[x * 3 + 1], yf, "pixel {x} G");
+    assert_eq!(out[x * 3 + 2], yf, "pixel {x} B");
+  }
+}
+
+#[test]
+fn grayf16_with_rgb_saturates() {
+  // -0.5 → 0, 0.5 → 128, 1.0 → 255, 1.5 → 255
+  let intended: std::vec::Vec<f16> = std::vec![
+    f16::from_f32(-0.5),
+    f16::from_f32(0.0),
+    f16::from_f32(0.5),
+    f16::from_f32(1.0),
+    f16::from_f32(1.5),
+  ];
+  let plane = as_le_f16(&intended);
+  let frame = Grayf16Frame::new(&plane, 5, 1, 5);
+  let mut rgb = std::vec![0u8; 5 * 3];
+  let mut sink = MixedSinker::<crate::source::Grayf16>::new(5, 1)
+    .with_rgb(&mut rgb)
+    .unwrap();
+  grayf16_to(&frame, FR, M, &mut sink).unwrap();
+  assert_eq!(&rgb[0..3], &[0, 0, 0]); // -0.5 clamps to 0
+  assert_eq!(&rgb[3..6], &[0, 0, 0]); // 0.0
+  assert_eq!(&rgb[6..9], &[128, 128, 128]); // 0.5 x 255 + 0.5 = 128
+  assert_eq!(&rgb[9..12], &[255, 255, 255]); // 1.0
+  assert_eq!(&rgb[12..15], &[255, 255, 255]); // 1.5 clamps to 255
+}
+
+#[test]
+fn grayf16_with_hsv_h0_s0_v_saturated() {
+  let intended: std::vec::Vec<f16> =
+    std::vec![f16::from_f32(0.0), f16::from_f32(0.5), f16::from_f32(1.0)];
+  let plane = as_le_f16(&intended);
+  let frame = Grayf16Frame::new(&plane, 3, 1, 3);
+  let mut h = std::vec![0xFFu8; 3];
+  let mut s = std::vec![0xFFu8; 3];
+  let mut v = std::vec![0u8; 3];
+  let mut sink = MixedSinker::<crate::source::Grayf16>::new(3, 1)
+    .with_hsv(&mut h, &mut s, &mut v)
+    .unwrap();
+  grayf16_to(&frame, FR, M, &mut sink).unwrap();
+  assert_eq!(h, [0, 0, 0]);
+  assert_eq!(s, [0, 0, 0]);
+  assert_eq!(v, [0, 128, 255]);
+}
+
+#[test]
+fn grayf16_with_luma_u16_and_rgb_u16() {
+  // 1x1 frame: Y = 0.5 → luma_u16 = 32768, rgb_u16 = [32768; 3]
+  let intended = std::vec![f16::from_f32(0.5)];
+  let plane = as_le_f16(&intended);
+  let frame = Grayf16Frame::new(&plane, 1, 1, 1);
+  let mut lu16 = std::vec![0u16; 1];
+  let mut rgb_u16 = std::vec![0u16; 3];
+  let mut sink = MixedSinker::<crate::source::Grayf16>::new(1, 1)
+    .with_luma_u16(&mut lu16)
+    .unwrap()
+    .with_rgb_u16(&mut rgb_u16)
+    .unwrap();
+  grayf16_to(&frame, FR, M, &mut sink).unwrap();
+  // (0.5 * 65535 + 0.5) as u16 = 32768
+  assert_eq!(lu16[0], 32768);
+  assert_eq!(rgb_u16, [32768, 32768, 32768]);
+}
+
+#[test]
+fn grayf16_with_rgba_alpha_opaque() {
+  let intended = std::vec![f16::from_f32(1.0), f16::from_f32(0.0)];
+  let plane = as_le_f16(&intended);
+  let frame = Grayf16Frame::new(&plane, 2, 1, 2);
+  let mut rgba = std::vec![0u8; 2 * 4];
+  let mut sink = MixedSinker::<crate::source::Grayf16>::new(2, 1)
+    .with_rgba(&mut rgba)
+    .unwrap();
+  grayf16_to(&frame, FR, M, &mut sink).unwrap();
+  assert_eq!(&rgba[0..4], &[255, 255, 255, 0xFF]);
+  assert_eq!(&rgba[4..8], &[0, 0, 0, 0xFF]);
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn grayf16_width_128_and_130_smoke() {
+  for &w in &[128usize, 130usize] {
+    let intended: std::vec::Vec<f16> = (0..w).map(|i| f16::from_f32(i as f32 / w as f32)).collect();
+    let plane = as_le_f16(&intended);
+    let frame = Grayf16Frame::new(&plane, w as u32, 1, w as u32);
+    let mut rgb = std::vec![0u8; w * 3];
+    let mut luma_f32 = std::vec![0.0f32; w];
+    let mut sink = MixedSinker::<crate::source::Grayf16>::new(w, 1)
+      .with_rgb(&mut rgb)
+      .unwrap()
+      .with_luma_f32(&mut luma_f32)
+      .unwrap();
+    grayf16_to(&frame, FR, M, &mut sink).unwrap();
+    assert_eq!(rgb[0], 0, "w={w} first R");
+    assert_eq!(luma_f32[0], 0.0, "w={w} first luma_f32");
+    assert!(luma_f32[w - 1] > 0.9, "w={w} last luma_f32");
+  }
+}
+
+/// BE/LE parity at the sinker layer: a single host-native `intended` fixture is
+/// materialised as LE-encoded bytes (fed to `grayf16_to` = `BE = false`) and
+/// BE-encoded bytes (fed to `grayf16_to_endian::<_, true>`); both must decode
+/// to the same host-native widened f32 luma.
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn grayf16_sinker_be_le_parity() {
+  use crate::source::Grayf16;
+  let w = 16usize;
+  let h = 4usize;
+  let intended: std::vec::Vec<f16> = (0..w * h)
+    .map(|i| match i % 4 {
+      0 => f16::from_f32(0.5),
+      1 => f16::from_f32(1.5),
+      2 => f16::from_f32(-0.25),
+      _ => f16::from_f32(0.125),
+    })
+    .collect();
+
+  let le_plane = as_le_f16(&intended);
+  let be_plane: std::vec::Vec<f16> = intended
+    .iter()
+    .map(|v| f16::from_bits(u16::from_ne_bytes(v.to_bits().to_be_bytes())))
+    .collect();
+
+  let mut out_le = std::vec![0.0f32; w * h];
+  {
+    let le_frame = Grayf16Frame::new(&le_plane, w as u32, h as u32, w as u32);
+    let mut sink = MixedSinker::<Grayf16>::new(w, h)
+      .with_luma_f32(&mut out_le)
+      .unwrap();
+    grayf16_to(&le_frame, FR, M, &mut sink).unwrap();
+  }
+
+  let mut out_be = std::vec![0.0f32; w * h];
+  {
+    let be_frame = crate::frame::Grayf16Frame::<true>::new(&be_plane, w as u32, h as u32, w as u32);
+    let mut sink = MixedSinker::<crate::source::Grayf16<true>>::new(w, h)
+      .with_luma_f32(&mut out_be)
+      .unwrap();
+    grayf16_to_endian::<_, true>(&be_frame, FR, M, &mut sink).unwrap();
+  }
+
+  let expected: std::vec::Vec<f32> = intended.iter().map(|v| v.to_f32()).collect();
+  assert_eq!(
+    out_le, expected,
+    "LE sinker decode must widen to host-native"
+  );
+  assert_eq!(
+    out_be, expected,
+    "BE sinker decode must widen to host-native"
+  );
 }
 
 // ---- Ya8 integration tests --------------------------------------------------
