@@ -61,20 +61,21 @@ use crate::{
 #[cfg(feature = "yuva")]
 use crate::{
   frame::{
-    Yuva420p9BeFrame, Yuva420p9LeFrame, Yuva420p10BeFrame, Yuva420p10LeFrame, Yuva420p16BeFrame,
-    Yuva420p16LeFrame, Yuva422p9BeFrame, Yuva422p9LeFrame, Yuva422p10BeFrame, Yuva422p10LeFrame,
-    Yuva422p12BeFrame, Yuva422p12LeFrame, Yuva422p16BeFrame, Yuva422p16LeFrame, Yuva444p9BeFrame,
-    Yuva444p9LeFrame, Yuva444p10BeFrame, Yuva444p10LeFrame, Yuva444p12BeFrame, Yuva444p12LeFrame,
-    Yuva444p14BeFrame, Yuva444p14LeFrame, Yuva444p16BeFrame, Yuva444p16LeFrame,
+    Yuva420p9BeFrame, Yuva420p9LeFrame, Yuva420p10BeFrame, Yuva420p10LeFrame, Yuva420p12BeFrame,
+    Yuva420p12LeFrame, Yuva420p16BeFrame, Yuva420p16LeFrame, Yuva422p9BeFrame, Yuva422p9LeFrame,
+    Yuva422p10BeFrame, Yuva422p10LeFrame, Yuva422p12BeFrame, Yuva422p12LeFrame, Yuva422p16BeFrame,
+    Yuva422p16LeFrame, Yuva444p9BeFrame, Yuva444p9LeFrame, Yuva444p10BeFrame, Yuva444p10LeFrame,
+    Yuva444p12BeFrame, Yuva444p12LeFrame, Yuva444p14BeFrame, Yuva444p14LeFrame, Yuva444p16BeFrame,
+    Yuva444p16LeFrame,
   },
   source::{
-    Yuva420p9, Yuva420p10, Yuva420p16, Yuva422p9, Yuva422p10, Yuva422p12, Yuva422p16, Yuva444p9,
-    Yuva444p10, Yuva444p12, Yuva444p14, Yuva444p16, yuva420p9_to, yuva420p9_to_endian,
-    yuva420p10_to, yuva420p10_to_endian, yuva420p16_to, yuva420p16_to_endian, yuva422p9_to,
-    yuva422p9_to_endian, yuva422p10_to, yuva422p10_to_endian, yuva422p12_to, yuva422p12_to_endian,
-    yuva422p16_to, yuva422p16_to_endian, yuva444p9_to, yuva444p9_to_endian, yuva444p10_to,
-    yuva444p10_to_endian, yuva444p12_to, yuva444p12_to_endian, yuva444p14_to, yuva444p14_to_endian,
-    yuva444p16_to, yuva444p16_to_endian,
+    Yuva420p9, Yuva420p10, Yuva420p12, Yuva420p16, Yuva422p9, Yuva422p10, Yuva422p12, Yuva422p16,
+    Yuva444p9, Yuva444p10, Yuva444p12, Yuva444p14, Yuva444p16, yuva420p9_to, yuva420p9_to_endian,
+    yuva420p10_to, yuva420p10_to_endian, yuva420p12_to, yuva420p12_to_endian, yuva420p16_to,
+    yuva420p16_to_endian, yuva422p9_to, yuva422p9_to_endian, yuva422p10_to, yuva422p10_to_endian,
+    yuva422p12_to, yuva422p12_to_endian, yuva422p16_to, yuva422p16_to_endian, yuva444p9_to,
+    yuva444p9_to_endian, yuva444p10_to, yuva444p10_to_endian, yuva444p12_to, yuva444p12_to_endian,
+    yuva444p14_to, yuva444p14_to_endian, yuva444p16_to, yuva444p16_to_endian,
   },
 };
 
@@ -404,6 +405,12 @@ planar4_be_roundtrip_test!(
   frame_le = Yuva420p10LeFrame, frame_be = Yuva420p10BeFrame,
   marker_le = Yuva420p10, marker_be = Yuva420p10<true>, walker = yuva420p10_to, walker_endian = yuva420p10_to_endian,
   max_value = 0x03FF, chroma_w_div = 2, chroma_h_div = 2,
+);
+planar4_be_roundtrip_test!(
+  yuva420p12_le_be_roundtrip_byte_identical,
+  frame_le = Yuva420p12LeFrame, frame_be = Yuva420p12BeFrame,
+  marker_le = Yuva420p12, marker_be = Yuva420p12<true>, walker = yuva420p12_to, walker_endian = yuva420p12_to_endian,
+  max_value = 0x0FFF, chroma_w_div = 2, chroma_h_div = 2,
 );
 planar4_be_roundtrip_test!(
   yuva420p16_le_be_roundtrip_byte_identical,

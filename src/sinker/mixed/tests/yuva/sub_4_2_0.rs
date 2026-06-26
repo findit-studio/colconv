@@ -544,6 +544,303 @@ fn yuva420p10_with_rgb_and_with_rgba_combine() {
   }
 }
 
+// ---- Yuva420p12 ----------------------------------------------------
+
+fn solid_yuva420p12_frame(
+  width: u32,
+  height: u32,
+  y: u16,
+  u: u16,
+  v: u16,
+  a: u16,
+) -> (Vec<u16>, Vec<u16>, Vec<u16>, Vec<u16>) {
+  let w = width as usize;
+  let h = height as usize;
+  let cw = w / 2;
+  let ch = h / 2;
+  (
+    std::vec![y; w * h],
+    std::vec![u; cw * ch],
+    std::vec![v; cw * ch],
+    std::vec![a; w * h],
+  )
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva420p12_rgba_u8_with_source_alpha_passes_through() {
+  // 12-bit mid-gray (Y=U=V=2048), mid-alpha A=1024 → u8 alpha = 1024 >> 4 = 64.
+  let (yp, up, vp, ap) = solid_yuva420p12_frame(16, 8, 2048, 2048, 2048, 1024);
+  let src = Yuva420p12Frame::try_new(&yp, &up, &vp, &ap, 16, 8, 16, 8, 8, 16).unwrap();
+
+  let mut rgba = std::vec![0u8; 16 * 8 * 4];
+  let mut sink = MixedSinker::<Yuva420p12>::new(16, 8)
+    .with_rgba(&mut rgba)
+    .unwrap();
+  yuva420p12_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
+
+  for px in rgba.chunks(4) {
+    assert!(px[0].abs_diff(128) <= 1, "got {px:?}");
+    assert_eq!(px[3], 64);
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva420p12_rgba_u16_native_depth() {
+  let (yp, up, vp, ap) = solid_yuva420p12_frame(16, 8, 2048, 2048, 2048, 1024);
+  let src = Yuva420p12Frame::try_new(&yp, &up, &vp, &ap, 16, 8, 16, 8, 8, 16).unwrap();
+
+  let mut rgba = std::vec![0u16; 16 * 8 * 4];
+  let mut sink = MixedSinker::<Yuva420p12>::new(16, 8)
+    .with_rgba_u16(&mut rgba)
+    .unwrap();
+  yuva420p12_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
+
+  for px in rgba.chunks(4) {
+    assert_eq!(px[3], 1024);
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva420p12_rgba_fully_opaque_max() {
+  let (yp, up, vp, ap) = solid_yuva420p12_frame(16, 8, 2048, 2048, 2048, 4095);
+  let src = Yuva420p12Frame::try_new(&yp, &up, &vp, &ap, 16, 8, 16, 8, 8, 16).unwrap();
+
+  let mut rgba_u8 = std::vec![0u8; 16 * 8 * 4];
+  let mut s_u8 = MixedSinker::<Yuva420p12>::new(16, 8)
+    .with_rgba(&mut rgba_u8)
+    .unwrap();
+  yuva420p12_to(&src, true, ColorMatrix::Bt601, &mut s_u8).unwrap();
+  for px in rgba_u8.chunks(4) {
+    assert_eq!(px[3], 0xFF);
+  }
+
+  let mut rgba_u16 = std::vec![0u16; 16 * 8 * 4];
+  let mut s_u16 = MixedSinker::<Yuva420p12>::new(16, 8)
+    .with_rgba_u16(&mut rgba_u16)
+    .unwrap();
+  yuva420p12_to(&src, true, ColorMatrix::Bt601, &mut s_u16).unwrap();
+  for px in rgba_u16.chunks(4) {
+    assert_eq!(px[3], 4095);
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva420p12_rgba_zero_alpha() {
+  let (yp, up, vp, ap) = solid_yuva420p12_frame(16, 8, 2048, 2048, 2048, 0);
+  let src = Yuva420p12Frame::try_new(&yp, &up, &vp, &ap, 16, 8, 16, 8, 8, 16).unwrap();
+
+  let mut rgba = std::vec![0xFFu8; 16 * 8 * 4];
+  let mut sink = MixedSinker::<Yuva420p12>::new(16, 8)
+    .with_rgba(&mut rgba)
+    .unwrap();
+  yuva420p12_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
+  for px in rgba.chunks(4) {
+    assert_eq!(px[3], 0);
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva420p12_rgba_overrange_alpha_masked() {
+  // alpha = 0xFFFF: low 12 bits = 0xFFF (4095). u8: 4095 >> 4 = 255.
+  let (yp, up, vp, ap) = solid_yuva420p12_frame(16, 8, 2048, 2048, 2048, 0xFFFF);
+  let src = Yuva420p12Frame::try_new(&yp, &up, &vp, &ap, 16, 8, 16, 8, 8, 16).unwrap();
+
+  let mut rgba_u16 = std::vec![0u16; 16 * 8 * 4];
+  let mut sink = MixedSinker::<Yuva420p12>::new(16, 8)
+    .with_rgba_u16(&mut rgba_u16)
+    .unwrap();
+  yuva420p12_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
+  for px in rgba_u16.chunks(4) {
+    assert_eq!(px[3], 4095, "0xFFFF & 0xFFF = 4095");
+  }
+}
+
+#[test]
+fn yuva420p12_rgba_buf_too_short_returns_err() {
+  let mut rgba = std::vec![0u8; 10];
+  let err = MixedSinker::<Yuva420p12>::new(16, 8)
+    .with_rgba(&mut rgba)
+    .err()
+    .expect("expected InsufficientRgbaBuffer");
+  assert!(matches!(err, MixedSinkerError::InsufficientRgbaBuffer(_)));
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva420p12_with_rgb_alpha_drop_matches_yuv420p12() {
+  let (yp_a, up_a, vp_a, ap) = solid_yuva420p12_frame(16, 8, 2400, 1600, 2800, 1024);
+
+  let yuv = Yuv420p12Frame::new(&yp_a, &up_a, &vp_a, 16, 8, 16, 8, 8);
+  let yuva = Yuva420p12Frame::try_new(&yp_a, &up_a, &vp_a, &ap, 16, 8, 16, 8, 8, 16).unwrap();
+
+  let mut rgb_yuv = std::vec![0u8; 16 * 8 * 3];
+  let mut s_yuv = MixedSinker::<Yuv420p12>::new(16, 8)
+    .with_rgb(&mut rgb_yuv)
+    .unwrap();
+  yuv420p12_to(&yuv, true, ColorMatrix::Bt709, &mut s_yuv).unwrap();
+
+  let mut rgb_yuva = std::vec![0u8; 16 * 8 * 3];
+  let mut s_yuva = MixedSinker::<Yuva420p12>::new(16, 8)
+    .with_rgb(&mut rgb_yuva)
+    .unwrap();
+  yuva420p12_to(&yuva, true, ColorMatrix::Bt709, &mut s_yuva).unwrap();
+
+  assert_eq!(rgb_yuv, rgb_yuva);
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva420p12_with_rgb_and_with_rgba_combine() {
+  let (yp, up, vp, ap) = solid_yuva420p12_frame(16, 8, 2400, 1600, 2800, 2048);
+  let src = Yuva420p12Frame::try_new(&yp, &up, &vp, &ap, 16, 8, 16, 8, 8, 16).unwrap();
+
+  let mut rgb = std::vec![0u8; 16 * 8 * 3];
+  let mut rgba = std::vec![0u8; 16 * 8 * 4];
+  let mut sink = MixedSinker::<Yuva420p12>::new(16, 8)
+    .with_rgb(&mut rgb)
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap();
+  yuva420p12_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+
+  for (rgb_px, rgba_px) in rgb.chunks(3).zip(rgba.chunks(4)) {
+    assert_eq!(rgb_px[0], rgba_px[0]);
+    assert_eq!(rgb_px[1], rgba_px[1]);
+    assert_eq!(rgb_px[2], rgba_px[2]);
+    assert_eq!(rgba_px[3], 128, "(2048 >> 4) = 128");
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn yuva420p12_overrange_y_masked_and_consistent() {
+  use crate::resample::{AreaResampler, CatmullRom, FilteredResampler};
+  // `Yuva420p12Frame::try_new` is geometry-only, so Y = 0x1000 (4096, one
+  // above the 12-bit max 4095) is accepted. It must be treated as its
+  // 12-bit-masked value (0x1000 & 0xFFF = 0) so `luma` / `luma_u16` stay in
+  // range and consistent with the masked Y the RGBA kernels decode from the
+  // same row. A frame with Y = 0 is the oracle across the direct, area, and
+  // filter paths (only Y is over-range — U / V / A stay in range so masking
+  // isolates the native-Y luma path).
+  let (yo, uo, vo, ao) = solid_yuva420p12_frame(16, 8, 0x1000, 2048, 2048, 2048);
+  let (ym, um, vm, am) = solid_yuva420p12_frame(16, 8, 0x0000, 2048, 2048, 2048);
+
+  // ---- direct (identity) path ----
+  let direct = |y: &[u16], u: &[u16], v: &[u16], a: &[u16]| {
+    let src = Yuva420p12Frame::try_new(y, u, v, a, 16, 8, 16, 8, 8, 16).unwrap();
+    let mut rgba = std::vec![0u8; 16 * 8 * 4];
+    let mut luma = std::vec![0u8; 16 * 8];
+    let mut luma_u16 = std::vec![0u16; 16 * 8];
+    let mut sink = MixedSinker::<Yuva420p12>::new(16, 8)
+      .with_rgba(&mut rgba)
+      .unwrap()
+      .with_luma(&mut luma)
+      .unwrap()
+      .with_luma_u16(&mut luma_u16)
+      .unwrap();
+    yuva420p12_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
+    (rgba, luma, luma_u16)
+  };
+  let (rgba_o, luma_o, lu16_o) = direct(&yo, &uo, &vo, &ao);
+  let (rgba_m, luma_m, lu16_m) = direct(&ym, &um, &vm, &am);
+  assert!(
+    lu16_o.iter().all(|&p| p <= 4095),
+    "direct luma_u16 masked to 12-bit range"
+  );
+  assert!(lu16_o.iter().all(|&p| p == 0), "0x1000 & 0xFFF == 0");
+  assert_eq!(lu16_o, lu16_m, "direct luma_u16: over-range Y == masked Y");
+  assert_eq!(luma_o, luma_m, "direct luma: over-range Y == masked Y");
+  assert_eq!(rgba_o, rgba_m, "direct rgba: over-range Y == masked Y");
+
+  // ---- area downscale (resample luma stream) ----
+  let area = |y: &[u16], u: &[u16], v: &[u16], a: &[u16]| {
+    let src = Yuva420p12Frame::try_new(y, u, v, a, 16, 8, 16, 8, 8, 16).unwrap();
+    let mut rgba = std::vec![0u8; 8 * 4 * 4];
+    let mut luma = std::vec![0u8; 8 * 4];
+    let mut luma_u16 = std::vec![0u16; 8 * 4];
+    let mut sink =
+      MixedSinker::<Yuva420p12, AreaResampler>::with_resampler(16, 8, AreaResampler::to(8, 4))
+        .unwrap()
+        .with_rgba(&mut rgba)
+        .unwrap()
+        .with_luma(&mut luma)
+        .unwrap()
+        .with_luma_u16(&mut luma_u16)
+        .unwrap();
+    yuva420p12_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
+    (rgba, luma, luma_u16)
+  };
+  let (rgba_o, luma_o, lu16_o) = area(&yo, &uo, &vo, &ao);
+  let (rgba_m, luma_m, lu16_m) = area(&ym, &um, &vm, &am);
+  assert!(
+    lu16_o.iter().all(|&p| p <= 4095),
+    "area luma_u16 masked to 12-bit range"
+  );
+  assert_eq!(lu16_o, lu16_m, "area luma_u16: over-range Y == masked Y");
+  assert_eq!(luma_o, luma_m, "area luma: over-range Y == masked Y");
+  assert_eq!(rgba_o, rgba_m, "area rgba: over-range Y == masked Y");
+
+  // ---- filter downscale (CatmullRom; straight-alpha filter luma stream) ----
+  let filter = |y: &[u16], u: &[u16], v: &[u16], a: &[u16]| {
+    let src = Yuva420p12Frame::try_new(y, u, v, a, 16, 8, 16, 8, 8, 16).unwrap();
+    let mut rgba = std::vec![0u8; 8 * 4 * 4];
+    let mut luma = std::vec![0u8; 8 * 4];
+    let mut luma_u16 = std::vec![0u16; 8 * 4];
+    let mut sink = MixedSinker::<Yuva420p12, FilteredResampler<CatmullRom>>::with_resampler(
+      16,
+      8,
+      FilteredResampler::new(8, 4, CatmullRom),
+    )
+    .unwrap()
+    .with_rgba(&mut rgba)
+    .unwrap()
+    .with_luma(&mut luma)
+    .unwrap()
+    .with_luma_u16(&mut luma_u16)
+    .unwrap();
+    yuva420p12_to(&src, true, ColorMatrix::Bt601, &mut sink).unwrap();
+    (rgba, luma, luma_u16)
+  };
+  let (rgba_o, luma_o, lu16_o) = filter(&yo, &uo, &vo, &ao);
+  let (rgba_m, luma_m, lu16_m) = filter(&ym, &um, &vm, &am);
+  assert!(
+    lu16_o.iter().all(|&p| p <= 4095),
+    "filter luma_u16 masked to 12-bit range"
+  );
+  assert_eq!(lu16_o, lu16_m, "filter luma_u16: over-range Y == masked Y");
+  assert_eq!(luma_o, luma_m, "filter luma: over-range Y == masked Y");
+  assert_eq!(rgba_o, rgba_m, "filter rgba: over-range Y == masked Y");
+}
+
 // ---- Yuva420p16 (Ship 8b‑2a) ---------------------------------------
 
 fn solid_yuva420p16_frame(

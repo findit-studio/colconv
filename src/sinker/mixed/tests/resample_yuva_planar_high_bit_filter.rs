@@ -666,6 +666,15 @@ planar_yuva_hb_filter_suite!(
   2,
 );
 planar_yuva_hb_filter_suite!(
+  yuva420p12,
+  Yuva420p12LeFrame,
+  Yuva420p12,
+  yuva420p12_to,
+  12,
+  2,
+  2,
+);
+planar_yuva_hb_filter_suite!(
   yuva420p16,
   Yuva420p16LeFrame,
   Yuva420p16,

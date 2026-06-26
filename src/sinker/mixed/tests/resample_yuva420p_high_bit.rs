@@ -1070,6 +1070,16 @@ yuva420p_high_bit_resample_suite!(
   10,
 );
 yuva420p_high_bit_resample_suite!(
+  yuva420p12,
+  Yuva420p12LeFrame,
+  Yuva420p12BeFrame,
+  Yuva420p12,
+  Yuva420p12Row,
+  yuva420p12_to,
+  yuva420p12_to_endian,
+  12,
+);
+yuva420p_high_bit_resample_suite!(
   yuva420p16,
   Yuva420p16LeFrame,
   Yuva420p16BeFrame,
