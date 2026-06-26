@@ -294,18 +294,18 @@ use crate::{
 #[cfg(feature = "gbr")]
 use crate::{
   frame::{
-    GbrapFrame, GbrapHighBitFrame, Gbrapf16Frame, Gbrapf32Frame, GbrpFrame, GbrpHighBitFrame,
-    GbrpMsbFrame, Gbrpf16Frame, Gbrpf32Frame,
+    Gbrap32Frame, GbrapFrame, GbrapHighBitFrame, Gbrapf16Frame, Gbrapf32Frame, GbrpFrame,
+    GbrpHighBitFrame, GbrpMsbFrame, Gbrpf16Frame, Gbrpf32Frame,
   },
   source::{
     Gbrap, Gbrap10, Gbrap10Sink, Gbrap12, Gbrap12Sink, Gbrap14, Gbrap14Sink, Gbrap16, Gbrap16Sink,
-    GbrapSink, Gbrapf16, Gbrapf16Sink, Gbrapf32, Gbrapf32Sink, Gbrp, Gbrp9, Gbrp9Sink, Gbrp10,
-    Gbrp10Msb, Gbrp10MsbSink, Gbrp10Sink, Gbrp12, Gbrp12Msb, Gbrp12MsbSink, Gbrp12Sink, Gbrp14,
-    Gbrp14Sink, Gbrp16, Gbrp16Sink, GbrpSink, Gbrpf16, Gbrpf16Sink, Gbrpf32, Gbrpf32Sink, gbrap_to,
-    gbrap10_to_endian, gbrap12_to_endian, gbrap14_to_endian, gbrap16_to_endian, gbrapf16_to_endian,
-    gbrapf32_to_endian, gbrp_to, gbrp9_to_endian, gbrp10_msb_to_endian, gbrp10_to_endian,
-    gbrp12_msb_to_endian, gbrp12_to_endian, gbrp14_to_endian, gbrp16_to_endian, gbrpf16_to_endian,
-    gbrpf32_to_endian,
+    Gbrap32, Gbrap32Sink, GbrapSink, Gbrapf16, Gbrapf16Sink, Gbrapf32, Gbrapf32Sink, Gbrp, Gbrp9,
+    Gbrp9Sink, Gbrp10, Gbrp10Msb, Gbrp10MsbSink, Gbrp10Sink, Gbrp12, Gbrp12Msb, Gbrp12MsbSink,
+    Gbrp12Sink, Gbrp14, Gbrp14Sink, Gbrp16, Gbrp16Sink, GbrpSink, Gbrpf16, Gbrpf16Sink, Gbrpf32,
+    Gbrpf32Sink, gbrap_to, gbrap10_to_endian, gbrap12_to_endian, gbrap14_to_endian,
+    gbrap16_to_endian, gbrap32_to_endian, gbrapf16_to_endian, gbrapf32_to_endian, gbrp_to,
+    gbrp9_to_endian, gbrp10_msb_to_endian, gbrp10_to_endian, gbrp12_msb_to_endian,
+    gbrp12_to_endian, gbrp14_to_endian, gbrp16_to_endian, gbrpf16_to_endian, gbrpf32_to_endian,
   },
 };
 
@@ -1609,6 +1609,16 @@ walker!(@const_bits 14, BE; Gbrap14, Gbrap14Sink, GbrapHighBitFrame, YuvOptions,
 #[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
 walker!(@const_bits 16, BE; Gbrap16, Gbrap16Sink, GbrapHighBitFrame, YuvOptions,
   |src, opts, sink| gbrap16_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+
+// `Gbrap32` (four `u32` G/B/R/A planes, real alpha) is the full-bit `u32`
+// twin of `Gbrap16`. Unlike the bit-depth-parameterized `GbrapN` markers, its
+// frame `Gbrap32Frame<'a, BE>` carries only the trailing `BE` const (no
+// leading bit-depth), so it rides the `@const BE` arm and delegates to
+// `gbrap32_to_endian::<_, BE>` (same shape as `Rgba128` / `Gray32`).
+#[cfg(feature = "gbr")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gbr")))]
+walker!(@const BE: bool; Gbrap32<BE>, Gbrap32Sink, Gbrap32Frame, YuvOptions,
+  |src, opts, sink| gbrap32_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
 
 // ---- Planar GBR, MSB-aligned high-bit (BE-generic marker; LE + BE) -----
 // MSB-aligned twins of `Gbrp10` / `Gbrp12` — the sample is in the high

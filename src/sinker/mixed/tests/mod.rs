@@ -113,6 +113,8 @@ mod phase4_yuv_hb_be_roundtrip;
 #[cfg(feature = "gbr")]
 mod planar_gbr;
 #[cfg(feature = "gbr")]
+mod planar_gbr_32bit;
+#[cfg(feature = "gbr")]
 mod planar_gbr_float;
 #[cfg(feature = "gbr")]
 mod planar_gbr_high_bit;
@@ -128,6 +130,8 @@ mod resample_bayer8;
 mod resample_bgr24;
 #[cfg(feature = "gbr")]
 mod resample_gbr_high_bit;
+#[cfg(feature = "gbr")]
+mod resample_gbrap_32bit;
 #[cfg(feature = "gbr")]
 mod resample_gbrap_8bit;
 #[cfg(feature = "gbr")]

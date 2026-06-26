@@ -120,6 +120,8 @@ pub(crate) mod pal8;
 #[cfg(feature = "gbr")]
 mod planar_gbr;
 #[cfg(feature = "gbr")]
+pub(crate) mod planar_gbr_32bit;
+#[cfg(feature = "gbr")]
 pub(crate) mod planar_gbr_f16;
 #[cfg(feature = "gbr")]
 pub(crate) mod planar_gbr_float;
@@ -238,6 +240,8 @@ pub(crate) use packed_yuv_4_1_1::*;
 pub(crate) use packed_yuv_8bit::*;
 #[cfg(feature = "gbr")]
 pub(crate) use planar_gbr::*;
+#[cfg(feature = "gbr")]
+pub(crate) use planar_gbr_32bit::*;
 #[cfg(feature = "gbr")]
 #[allow(unused_imports)]
 pub(crate) use planar_gbr_f16::*;

@@ -85,6 +85,8 @@ pub(super) mod pal8;
 #[cfg(feature = "gbr")]
 pub(super) mod planar_gbr;
 #[cfg(feature = "gbr")]
+pub(super) mod planar_gbr_32bit;
+#[cfg(feature = "gbr")]
 pub(super) mod planar_gbr_float;
 #[cfg(feature = "gbr")]
 pub(super) mod planar_gbr_high_bit;
