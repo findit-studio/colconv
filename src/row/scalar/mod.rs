@@ -169,6 +169,10 @@ pub(crate) mod y_plane_to_luma_u16;
 pub(crate) mod ya16;
 #[cfg(feature = "gray")]
 pub(crate) mod ya8;
+#[cfg(feature = "gray")]
+pub(crate) mod yaf16;
+#[cfg(feature = "gray")]
+pub(crate) mod yaf32;
 // yuv_planar_16bit also contains the P016 semi-planar 4:2:0 / P216
 // semi-planar 4:2:2 / P416 semi-planar 4:4:4 16-bit kernels (`p16_to_rgb*_row`),
 // so compile whenever either `yuv-planar` or `yuv-semi-planar` is enabled.
@@ -290,6 +294,12 @@ pub(crate) use ya8::*;
 #[cfg(feature = "gray")]
 #[allow(unused_imports)]
 pub(crate) use ya16::*;
+#[cfg(feature = "gray")]
+#[allow(unused_imports)]
+pub(crate) use yaf16::*;
+#[cfg(feature = "gray")]
+#[allow(unused_imports)]
+pub(crate) use yaf32::*;
 #[cfg(feature = "yuv-planar")]
 pub(crate) use yuv_planar_8bit::*;
 // The file is compiled whenever either family is on. Its public items

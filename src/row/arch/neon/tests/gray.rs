@@ -687,3 +687,114 @@ fn neon_ya16_be_parity_hsv() {
     assert_eq!(sv_be, sv_le, "V width={w}");
   }
 }
+
+// ---- Yaf32 parity tests -----------------------------------------------------
+//
+// Packed `[Y, A]` f32 source (2 * width elements). NEON SIMD vs scalar across
+// the width set (including the < 8 and unaligned tails). `prng_f32` fills the
+// whole packed plane so both Y and A span `[-0.1, 1.2]` and exercise clamping.
+
+#[test]
+#[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+fn neon_yaf32_to_rgb_matches_scalar() {
+  use crate::row::scalar::yaf32 as sf;
+  for &w in WIDTHS {
+    let mut packed = std::vec![0.0f32; w * 2];
+    prng_f32(&mut packed, 0xFA32_0001);
+    let mut simd = std::vec![0u8; w * 3];
+    let mut scal = std::vec![0u8; w * 3];
+    unsafe { yaf32_to_rgb_row::<false>(&packed, &mut simd, w) };
+    sf::yaf32_to_rgb_row::<false>(&packed, &mut scal, w);
+    assert_eq!(simd, scal, "width={w}");
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+fn neon_yaf32_to_rgba_matches_scalar() {
+  use crate::row::scalar::yaf32 as sf;
+  for &w in WIDTHS {
+    let mut packed = std::vec![0.0f32; w * 2];
+    prng_f32(&mut packed, 0xFA32_0002);
+    let mut simd = std::vec![0u8; w * 4];
+    let mut scal = std::vec![0u8; w * 4];
+    unsafe { yaf32_to_rgba_row::<false>(&packed, &mut simd, w) };
+    sf::yaf32_to_rgba_row::<false>(&packed, &mut scal, w);
+    assert_eq!(simd, scal, "width={w}");
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+fn neon_yaf32_to_rgb_u16_matches_scalar() {
+  use crate::row::scalar::yaf32 as sf;
+  for &w in WIDTHS {
+    let mut packed = std::vec![0.0f32; w * 2];
+    prng_f32(&mut packed, 0xFA32_0003);
+    let mut simd = std::vec![0u16; w * 3];
+    let mut scal = std::vec![0u16; w * 3];
+    unsafe { yaf32_to_rgb_u16_row::<false>(&packed, &mut simd, w) };
+    sf::yaf32_to_rgb_u16_row::<false>(&packed, &mut scal, w);
+    assert_eq!(simd, scal, "width={w}");
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+fn neon_yaf32_to_rgba_u16_matches_scalar() {
+  use crate::row::scalar::yaf32 as sf;
+  for &w in WIDTHS {
+    let mut packed = std::vec![0.0f32; w * 2];
+    prng_f32(&mut packed, 0xFA32_0004);
+    let mut simd = std::vec![0u16; w * 4];
+    let mut scal = std::vec![0u16; w * 4];
+    unsafe { yaf32_to_rgba_u16_row::<false>(&packed, &mut simd, w) };
+    sf::yaf32_to_rgba_u16_row::<false>(&packed, &mut scal, w);
+    assert_eq!(simd, scal, "width={w}");
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+fn neon_yaf32_to_luma_matches_scalar() {
+  use crate::row::scalar::yaf32 as sf;
+  for &w in WIDTHS {
+    let mut packed = std::vec![0.0f32; w * 2];
+    prng_f32(&mut packed, 0xFA32_0005);
+    let mut simd = std::vec![0u8; w];
+    let mut scal = std::vec![0u8; w];
+    unsafe { yaf32_to_luma_row::<false>(&packed, &mut simd, w) };
+    sf::yaf32_to_luma_row::<false>(&packed, &mut scal, w);
+    assert_eq!(simd, scal, "width={w}");
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+fn neon_yaf32_to_luma_u16_matches_scalar() {
+  use crate::row::scalar::yaf32 as sf;
+  for &w in WIDTHS {
+    let mut packed = std::vec![0.0f32; w * 2];
+    prng_f32(&mut packed, 0xFA32_0006);
+    let mut simd = std::vec![0u16; w];
+    let mut scal = std::vec![0u16; w];
+    unsafe { yaf32_to_luma_u16_row::<false>(&packed, &mut simd, w) };
+    sf::yaf32_to_luma_u16_row::<false>(&packed, &mut scal, w);
+    assert_eq!(simd, scal, "width={w}");
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+fn neon_yaf32_to_hsv_matches_scalar() {
+  use crate::row::scalar::yaf32 as sf;
+  for &w in WIDTHS {
+    let mut packed = std::vec![0.0f32; w * 2];
+    prng_f32(&mut packed, 0xFA32_0007);
+    let (mut sh, mut ss, mut sv) = (std::vec![0u8; w], std::vec![0u8; w], std::vec![0u8; w]);
+    let (mut ch, mut cs, mut cv) = (std::vec![0u8; w], std::vec![0u8; w], std::vec![0u8; w]);
+    unsafe { yaf32_to_hsv_row::<false>(&packed, &mut sh, &mut ss, &mut sv, w) };
+    sf::yaf32_to_hsv_row::<false>(&packed, &mut ch, &mut cs, &mut cv, w);
+    assert_eq!((sh, ss, sv), (ch, cs, cv), "width={w}");
+  }
+}

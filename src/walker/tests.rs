@@ -3522,3 +3522,156 @@ mod gbr_float_parity {
     |p: &[f32]| p.to_vec()
   );
 }
+
+// ---- Parity: float-luma + alpha Yaf16 / Yaf32 (reuse YuvOptions) ------------
+//
+// The gray+alpha twins of the Grayf16 / Grayf32 walker parity tests: each free
+// `yaf{16,32}_to` / `_to_endian` walker takes `(full_range, matrix)` (carried
+// but unused by the chroma-free gray+alpha kernels). The `rgba` output exercises
+// the Y broadcast and the real source alpha through the walker dispatch, and the
+// BE case drives `Fmt<true>` against the `FmtBeFrame` alias.
+
+#[cfg(feature = "gray")]
+mod yaf_parity {
+  use super::*;
+  use crate::{
+    frame::{Yaf16BeFrame, Yaf16Frame, Yaf32BeFrame, Yaf32Frame},
+    sinker::MixedSinker,
+    source::{Yaf16, Yaf32, yaf16_to, yaf16_to_endian, yaf32_to, yaf32_to_endian},
+  };
+  use half::f16;
+
+  const W: u32 = 16;
+  const H: u32 = 4;
+  const MATRICES: [ColorMatrix; 2] = [ColorMatrix::Bt709, ColorMatrix::Bt601];
+
+  /// Deterministic finite packed `[Y, A]` f32 ramp (`W*H*2` elements).
+  fn ramp_f32_packed(n: usize) -> std::vec::Vec<f32> {
+    (0..n)
+      .map(|i| ((i * 17 + 3) % 211) as f32 / 210.0)
+      .collect()
+  }
+
+  /// Deterministic finite packed `[Y, A]` f16 ramp.
+  fn ramp_f16_packed(n: usize) -> std::vec::Vec<f16> {
+    (0..n)
+      .map(|i| f16::from_f32(((i * 23 + 7) % 257) as f32 / 256.0))
+      .collect()
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_yaf32_le_matches_direct() {
+    let packed = ramp_f32_packed((W * H * 2) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Yaf32Frame::try_new(&packed, W, H, W * 2).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H * 4) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 4) as usize];
+
+        let mut sw = MixedSinker::<Yaf32>::new(W as usize, H as usize)
+          .with_rgba(&mut via_walker)
+          .unwrap();
+        <Yaf32 as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Yaf32>::new(W as usize, H as usize)
+          .with_rgba(&mut via_direct)
+          .unwrap();
+        yaf32_to(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(via_walker, via_direct, "yaf32 LE parity");
+      }
+    }
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_yaf32_be_matches_direct() {
+    let packed = ramp_f32_packed((W * H * 2) as usize);
+    let opts = YuvOptions::new();
+    let src = Yaf32BeFrame::try_new(&packed, W, H, W * 2).unwrap();
+
+    let mut via_walker = std::vec![0u8; (W * H * 4) as usize];
+    let mut via_direct = std::vec![0u8; (W * H * 4) as usize];
+
+    let mut sw = MixedSinker::<Yaf32<true>>::new(W as usize, H as usize)
+      .with_rgba(&mut via_walker)
+      .unwrap();
+    <Yaf32<true> as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+    let mut sd = MixedSinker::<Yaf32<true>>::new(W as usize, H as usize)
+      .with_rgba(&mut via_direct)
+      .unwrap();
+    yaf32_to_endian::<_, true>(&src, opts.full_range(), opts.matrix(), &mut sd).unwrap();
+
+    assert_eq!(via_walker, via_direct, "yaf32 BE parity");
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_yaf16_le_matches_direct() {
+    let packed = ramp_f16_packed((W * H * 2) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Yaf16Frame::try_new(&packed, W, H, W * 2).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H * 4) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 4) as usize];
+
+        let mut sw = MixedSinker::<Yaf16>::new(W as usize, H as usize)
+          .with_rgba(&mut via_walker)
+          .unwrap();
+        <Yaf16 as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Yaf16>::new(W as usize, H as usize)
+          .with_rgba(&mut via_direct)
+          .unwrap();
+        yaf16_to(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(via_walker, via_direct, "yaf16 LE parity");
+      }
+    }
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_yaf16_be_matches_direct() {
+    let packed = ramp_f16_packed((W * H * 2) as usize);
+    let opts = YuvOptions::new();
+    let src = Yaf16BeFrame::try_new(&packed, W, H, W * 2).unwrap();
+
+    let mut via_walker = std::vec![0u8; (W * H * 4) as usize];
+    let mut via_direct = std::vec![0u8; (W * H * 4) as usize];
+
+    let mut sw = MixedSinker::<Yaf16<true>>::new(W as usize, H as usize)
+      .with_rgba(&mut via_walker)
+      .unwrap();
+    <Yaf16<true> as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+    let mut sd = MixedSinker::<Yaf16<true>>::new(W as usize, H as usize)
+      .with_rgba(&mut via_direct)
+      .unwrap();
+    yaf16_to_endian::<_, true>(&src, opts.full_range(), opts.matrix(), &mut sd).unwrap();
+
+    assert_eq!(via_walker, via_direct, "yaf16 BE parity");
+  }
+}

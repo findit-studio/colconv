@@ -1847,3 +1847,563 @@ pub(crate) unsafe fn grayf16_to_hsv_row<const BE: bool>(
     );
   }
 }
+
+// ---- Yaf32 -------------------------------------------------------------------
+//
+// Packed `[Y, A]` f32 source: deinterleave each pixel pair with `vld2q_f32`
+// (Y in lane group `.0`, A in `.1`), then apply the exact `grayf32` clamp /
+// scale / round math to Y (broadcast R=G=B) and, for RGBA outputs, to A. Like
+// the `ya16` NEON path, the host-native `vld2q_f32` load is only correct when
+// the source byte order matches the host, so a foreign byte order
+// (`BE != HOST_NATIVE_BE`) falls through to scalar.
+
+/// NEON `yaf32_to_rgb_row`: deinterleave `[Y,A]` f32, clamp Y [0,1] x 255 → u8,
+/// broadcast R=G=B; α dropped.
+///
+/// # Safety
+/// NEON must be available. `packed.len() >= width * 2`. `out.len() >= width * 3`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yaf32_to_rgb_row<const BE: bool>(
+  packed: &[f32],
+  out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::yaf32 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 3);
+  if BE != HOST_NATIVE_BE {
+    return scalar::yaf32_to_rgb_row::<BE>(packed, out, width);
+  }
+  let scale = vdupq_n_f32(255.0);
+  let zero = vdupq_n_f32(0.0);
+  let one = vdupq_n_f32(1.0);
+  let mut x = 0usize;
+  unsafe {
+    while x + 8 <= width {
+      let ya0 = vld2q_f32(packed.as_ptr().add(x * 2));
+      let ya1 = vld2q_f32(packed.as_ptr().add((x + 4) * 2));
+      let c0 = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(ya0.0, one), zero), scale);
+      let c1 = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(ya1.0, one), zero), scale);
+      let n8 = vmovn_u16(vcombine_u16(
+        vmovn_u32(vcvtaq_u32_f32_compat(c0)),
+        vmovn_u32(vcvtaq_u32_f32_compat(c1)),
+      ));
+      let rgb = uint8x8x3_t(n8, n8, n8);
+      vst3_u8(out.as_mut_ptr().add(x * 3), rgb);
+      x += 8;
+    }
+  }
+  if x < width {
+    scalar::yaf32_to_rgb_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut out[x * 3..width * 3],
+      width - x,
+    );
+  }
+}
+
+/// NEON `yaf32_to_rgba_row`: clamp Y [0,1] x 255 → u8 broadcast, α = clamp(A) x 255.
+///
+/// # Safety
+/// NEON must be available. `packed.len() >= width * 2`. `out.len() >= width * 4`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yaf32_to_rgba_row<const BE: bool>(
+  packed: &[f32],
+  out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::yaf32 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 4);
+  if BE != HOST_NATIVE_BE {
+    return scalar::yaf32_to_rgba_row::<BE>(packed, out, width);
+  }
+  let scale = vdupq_n_f32(255.0);
+  let zero = vdupq_n_f32(0.0);
+  let one = vdupq_n_f32(1.0);
+  let mut x = 0usize;
+  unsafe {
+    while x + 8 <= width {
+      let ya0 = vld2q_f32(packed.as_ptr().add(x * 2));
+      let ya1 = vld2q_f32(packed.as_ptr().add((x + 4) * 2));
+      let cy0 = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(ya0.0, one), zero), scale);
+      let cy1 = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(ya1.0, one), zero), scale);
+      let ca0 = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(ya0.1, one), zero), scale);
+      let ca1 = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(ya1.1, one), zero), scale);
+      let y8 = vmovn_u16(vcombine_u16(
+        vmovn_u32(vcvtaq_u32_f32_compat(cy0)),
+        vmovn_u32(vcvtaq_u32_f32_compat(cy1)),
+      ));
+      let a8 = vmovn_u16(vcombine_u16(
+        vmovn_u32(vcvtaq_u32_f32_compat(ca0)),
+        vmovn_u32(vcvtaq_u32_f32_compat(ca1)),
+      ));
+      let rgba = uint8x8x4_t(y8, y8, y8, a8);
+      vst4_u8(out.as_mut_ptr().add(x * 4), rgba);
+      x += 8;
+    }
+  }
+  if x < width {
+    scalar::yaf32_to_rgba_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut out[x * 4..width * 4],
+      width - x,
+    );
+  }
+}
+
+/// NEON `yaf32_to_rgb_u16_row`: clamp Y [0,1] x 65535 → u16, broadcast R=G=B.
+///
+/// # Safety
+/// NEON must be available. `packed.len() >= width * 2`. `out.len() >= width * 3`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yaf32_to_rgb_u16_row<const BE: bool>(
+  packed: &[f32],
+  out: &mut [u16],
+  width: usize,
+) {
+  use crate::row::scalar::yaf32 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 3);
+  if BE != HOST_NATIVE_BE {
+    return scalar::yaf32_to_rgb_u16_row::<BE>(packed, out, width);
+  }
+  let scale = vdupq_n_f32(65535.0);
+  let zero = vdupq_n_f32(0.0);
+  let one = vdupq_n_f32(1.0);
+  let mut x = 0usize;
+  unsafe {
+    while x + 4 <= width {
+      let ya = vld2q_f32(packed.as_ptr().add(x * 2));
+      let c = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(ya.0, one), zero), scale);
+      let u16v = vqmovn_u32_compat(vcvtaq_u32_f32_compat(c));
+      let rgb = uint16x4x3_t(u16v, u16v, u16v);
+      vst3_u16(out.as_mut_ptr().add(x * 3), rgb);
+      x += 4;
+    }
+  }
+  if x < width {
+    scalar::yaf32_to_rgb_u16_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut out[x * 3..width * 3],
+      width - x,
+    );
+  }
+}
+
+/// NEON `yaf32_to_rgba_u16_row`: clamp Y [0,1] x 65535 → u16 broadcast, α = clamp(A) x 65535.
+///
+/// # Safety
+/// NEON must be available. `packed.len() >= width * 2`. `out.len() >= width * 4`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yaf32_to_rgba_u16_row<const BE: bool>(
+  packed: &[f32],
+  out: &mut [u16],
+  width: usize,
+) {
+  use crate::row::scalar::yaf32 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 4);
+  if BE != HOST_NATIVE_BE {
+    return scalar::yaf32_to_rgba_u16_row::<BE>(packed, out, width);
+  }
+  let scale = vdupq_n_f32(65535.0);
+  let zero = vdupq_n_f32(0.0);
+  let one = vdupq_n_f32(1.0);
+  let mut x = 0usize;
+  unsafe {
+    while x + 4 <= width {
+      let ya = vld2q_f32(packed.as_ptr().add(x * 2));
+      let cy = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(ya.0, one), zero), scale);
+      let ca = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(ya.1, one), zero), scale);
+      let y16 = vqmovn_u32_compat(vcvtaq_u32_f32_compat(cy));
+      let a16 = vqmovn_u32_compat(vcvtaq_u32_f32_compat(ca));
+      let rgba = uint16x4x4_t(y16, y16, y16, a16);
+      vst4_u16(out.as_mut_ptr().add(x * 4), rgba);
+      x += 4;
+    }
+  }
+  if x < width {
+    scalar::yaf32_to_rgba_u16_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut out[x * 4..width * 4],
+      width - x,
+    );
+  }
+}
+
+/// NEON `yaf32_to_luma_row`: clamp Y [0,1] x 255 → u8 luma.
+///
+/// # Safety
+/// NEON must be available. `packed.len() >= width * 2`. `out.len() >= width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yaf32_to_luma_row<const BE: bool>(
+  packed: &[f32],
+  out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::yaf32 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width);
+  if BE != HOST_NATIVE_BE {
+    return scalar::yaf32_to_luma_row::<BE>(packed, out, width);
+  }
+  let scale = vdupq_n_f32(255.0);
+  let zero = vdupq_n_f32(0.0);
+  let one = vdupq_n_f32(1.0);
+  let mut x = 0usize;
+  unsafe {
+    while x + 8 <= width {
+      let ya0 = vld2q_f32(packed.as_ptr().add(x * 2));
+      let ya1 = vld2q_f32(packed.as_ptr().add((x + 4) * 2));
+      let c0 = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(ya0.0, one), zero), scale);
+      let c1 = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(ya1.0, one), zero), scale);
+      let n8 = vmovn_u16(vcombine_u16(
+        vmovn_u32(vcvtaq_u32_f32_compat(c0)),
+        vmovn_u32(vcvtaq_u32_f32_compat(c1)),
+      ));
+      vst1_u8(out.as_mut_ptr().add(x), n8);
+      x += 8;
+    }
+  }
+  if x < width {
+    scalar::yaf32_to_luma_row::<BE>(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+  }
+}
+
+/// NEON `yaf32_to_luma_u16_row`: clamp Y [0,1] x 65535 → u16 luma.
+///
+/// # Safety
+/// NEON must be available. `packed.len() >= width * 2`. `out.len() >= width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yaf32_to_luma_u16_row<const BE: bool>(
+  packed: &[f32],
+  out: &mut [u16],
+  width: usize,
+) {
+  use crate::row::scalar::yaf32 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width);
+  if BE != HOST_NATIVE_BE {
+    return scalar::yaf32_to_luma_u16_row::<BE>(packed, out, width);
+  }
+  let scale = vdupq_n_f32(65535.0);
+  let zero = vdupq_n_f32(0.0);
+  let one = vdupq_n_f32(1.0);
+  let mut x = 0usize;
+  unsafe {
+    while x + 4 <= width {
+      let ya = vld2q_f32(packed.as_ptr().add(x * 2));
+      let c = vmulq_f32(vmaxq_f32_compat(vminq_f32_compat(ya.0, one), zero), scale);
+      let u16v = vqmovn_u32_compat(vcvtaq_u32_f32_compat(c));
+      vst1_u16(out.as_mut_ptr().add(x), u16v);
+      x += 4;
+    }
+  }
+  if x < width {
+    scalar::yaf32_to_luma_u16_row::<BE>(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+  }
+}
+
+/// NEON `yaf32_to_hsv_row`: H=0, S=0, V = clamp(Y,0,1) x 255. α dropped.
+///
+/// # Safety
+/// NEON must be available. `packed.len() >= width * 2`; H/S/V out `>= width`.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn yaf32_to_hsv_row<const BE: bool>(
+  packed: &[f32],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::yaf32 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  if BE != HOST_NATIVE_BE {
+    return scalar::yaf32_to_hsv_row::<BE>(packed, h_out, s_out, v_out, width);
+  }
+  let scale = vdupq_n_f32(255.0);
+  let zero_f = vdupq_n_f32(0.0);
+  let one = vdupq_n_f32(1.0);
+  let zero_u8 = vdup_n_u8(0);
+  let mut x = 0usize;
+  unsafe {
+    while x + 8 <= width {
+      let ya0 = vld2q_f32(packed.as_ptr().add(x * 2));
+      let ya1 = vld2q_f32(packed.as_ptr().add((x + 4) * 2));
+      let c0 = vmulq_f32(
+        vmaxq_f32_compat(vminq_f32_compat(ya0.0, one), zero_f),
+        scale,
+      );
+      let c1 = vmulq_f32(
+        vmaxq_f32_compat(vminq_f32_compat(ya1.0, one), zero_f),
+        scale,
+      );
+      let v8 = vmovn_u16(vcombine_u16(
+        vmovn_u32(vcvtaq_u32_f32_compat(c0)),
+        vmovn_u32(vcvtaq_u32_f32_compat(c1)),
+      ));
+      vst1_u8(h_out.as_mut_ptr().add(x), zero_u8);
+      vst1_u8(s_out.as_mut_ptr().add(x), zero_u8);
+      vst1_u8(v_out.as_mut_ptr().add(x), v8);
+      x += 8;
+    }
+  }
+  if x < width {
+    scalar::yaf32_to_hsv_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut h_out[x..width],
+      &mut s_out[x..width],
+      &mut v_out[x..width],
+      width - x,
+    );
+  }
+}
+
+// ---- Yaf16 -------------------------------------------------------------------
+//
+// Widen each 8-pixel chunk of packed `[Y, A]` f16 (16 f16) to a host-native f32
+// stack buffer with the NEON FCVT (`widen_f16x8_neon`), then delegate to the
+// `yaf32` NEON kernels with `HOST_NATIVE_BE` (the widened buffer is already
+// host-native, so the `yaf32` deinterleave guard always takes the SIMD body).
+// The half-float twin of the `yaf32` NEON kernels; the f16 reading mirrors the
+// `grayf16` NEON path.
+
+/// NEON `yaf16_to_rgb_row`: widen `[Y,A]` f16 → f32, clamp Y [0,1] x 255 → u8, broadcast.
+///
+/// # Safety
+/// NEON + fp16 must be available. `packed.len() >= width * 2`. `out.len() >= width * 3`.
+#[inline]
+#[target_feature(enable = "neon,fp16")]
+pub(crate) unsafe fn yaf16_to_rgb_row<const BE: bool>(
+  packed: &[half::f16],
+  out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::yaf16 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 3);
+  let mut x = 0usize;
+  while x + 8 <= width {
+    let mut buf = [0.0f32; 16];
+    unsafe {
+      widen_f16x8_neon::<BE>(packed.as_ptr().add(x * 2), buf.as_mut_ptr());
+      widen_f16x8_neon::<BE>(packed.as_ptr().add(x * 2 + 8), buf.as_mut_ptr().add(8));
+      yaf32_to_rgb_row::<HOST_NATIVE_BE>(&buf, out.get_unchecked_mut(x * 3..(x + 8) * 3), 8);
+    }
+    x += 8;
+  }
+  if x < width {
+    scalar::yaf16_to_rgb_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut out[x * 3..width * 3],
+      width - x,
+    );
+  }
+}
+
+/// NEON `yaf16_to_rgba_row`: widen `[Y,A]` f16 → f32, clamp Y x 255 broadcast, α = clamp(A) x 255.
+///
+/// # Safety
+/// NEON + fp16 must be available. `packed.len() >= width * 2`. `out.len() >= width * 4`.
+#[inline]
+#[target_feature(enable = "neon,fp16")]
+pub(crate) unsafe fn yaf16_to_rgba_row<const BE: bool>(
+  packed: &[half::f16],
+  out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::yaf16 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 4);
+  let mut x = 0usize;
+  while x + 8 <= width {
+    let mut buf = [0.0f32; 16];
+    unsafe {
+      widen_f16x8_neon::<BE>(packed.as_ptr().add(x * 2), buf.as_mut_ptr());
+      widen_f16x8_neon::<BE>(packed.as_ptr().add(x * 2 + 8), buf.as_mut_ptr().add(8));
+      yaf32_to_rgba_row::<HOST_NATIVE_BE>(&buf, out.get_unchecked_mut(x * 4..(x + 8) * 4), 8);
+    }
+    x += 8;
+  }
+  if x < width {
+    scalar::yaf16_to_rgba_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut out[x * 4..width * 4],
+      width - x,
+    );
+  }
+}
+
+/// NEON `yaf16_to_rgb_u16_row`: widen `[Y,A]` f16 → f32, clamp Y [0,1] x 65535 → u16, broadcast.
+///
+/// # Safety
+/// NEON + fp16 must be available. `packed.len() >= width * 2`. `out.len() >= width * 3`.
+#[inline]
+#[target_feature(enable = "neon,fp16")]
+pub(crate) unsafe fn yaf16_to_rgb_u16_row<const BE: bool>(
+  packed: &[half::f16],
+  out: &mut [u16],
+  width: usize,
+) {
+  use crate::row::scalar::yaf16 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 3);
+  let mut x = 0usize;
+  while x + 8 <= width {
+    let mut buf = [0.0f32; 16];
+    unsafe {
+      widen_f16x8_neon::<BE>(packed.as_ptr().add(x * 2), buf.as_mut_ptr());
+      widen_f16x8_neon::<BE>(packed.as_ptr().add(x * 2 + 8), buf.as_mut_ptr().add(8));
+      yaf32_to_rgb_u16_row::<HOST_NATIVE_BE>(&buf, out.get_unchecked_mut(x * 3..(x + 8) * 3), 8);
+    }
+    x += 8;
+  }
+  if x < width {
+    scalar::yaf16_to_rgb_u16_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut out[x * 3..width * 3],
+      width - x,
+    );
+  }
+}
+
+/// NEON `yaf16_to_rgba_u16_row`: widen `[Y,A]` f16 → f32, clamp Y x 65535 broadcast, α = clamp(A) x 65535.
+///
+/// # Safety
+/// NEON + fp16 must be available. `packed.len() >= width * 2`. `out.len() >= width * 4`.
+#[inline]
+#[target_feature(enable = "neon,fp16")]
+pub(crate) unsafe fn yaf16_to_rgba_u16_row<const BE: bool>(
+  packed: &[half::f16],
+  out: &mut [u16],
+  width: usize,
+) {
+  use crate::row::scalar::yaf16 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width * 4);
+  let mut x = 0usize;
+  while x + 8 <= width {
+    let mut buf = [0.0f32; 16];
+    unsafe {
+      widen_f16x8_neon::<BE>(packed.as_ptr().add(x * 2), buf.as_mut_ptr());
+      widen_f16x8_neon::<BE>(packed.as_ptr().add(x * 2 + 8), buf.as_mut_ptr().add(8));
+      yaf32_to_rgba_u16_row::<HOST_NATIVE_BE>(&buf, out.get_unchecked_mut(x * 4..(x + 8) * 4), 8);
+    }
+    x += 8;
+  }
+  if x < width {
+    scalar::yaf16_to_rgba_u16_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut out[x * 4..width * 4],
+      width - x,
+    );
+  }
+}
+
+/// NEON `yaf16_to_luma_row`: widen `[Y,A]` f16 → f32, clamp Y [0,1] x 255 → u8 luma.
+///
+/// # Safety
+/// NEON + fp16 must be available. `packed.len() >= width * 2`. `out.len() >= width`.
+#[inline]
+#[target_feature(enable = "neon,fp16")]
+pub(crate) unsafe fn yaf16_to_luma_row<const BE: bool>(
+  packed: &[half::f16],
+  out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::yaf16 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width);
+  let mut x = 0usize;
+  while x + 8 <= width {
+    let mut buf = [0.0f32; 16];
+    unsafe {
+      widen_f16x8_neon::<BE>(packed.as_ptr().add(x * 2), buf.as_mut_ptr());
+      widen_f16x8_neon::<BE>(packed.as_ptr().add(x * 2 + 8), buf.as_mut_ptr().add(8));
+      yaf32_to_luma_row::<HOST_NATIVE_BE>(&buf, out.get_unchecked_mut(x..x + 8), 8);
+    }
+    x += 8;
+  }
+  if x < width {
+    scalar::yaf16_to_luma_row::<BE>(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+  }
+}
+
+/// NEON `yaf16_to_luma_u16_row`: widen `[Y,A]` f16 → f32, clamp Y [0,1] x 65535 → u16 luma.
+///
+/// # Safety
+/// NEON + fp16 must be available. `packed.len() >= width * 2`. `out.len() >= width`.
+#[inline]
+#[target_feature(enable = "neon,fp16")]
+pub(crate) unsafe fn yaf16_to_luma_u16_row<const BE: bool>(
+  packed: &[half::f16],
+  out: &mut [u16],
+  width: usize,
+) {
+  use crate::row::scalar::yaf16 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  debug_assert!(out.len() >= width);
+  let mut x = 0usize;
+  while x + 8 <= width {
+    let mut buf = [0.0f32; 16];
+    unsafe {
+      widen_f16x8_neon::<BE>(packed.as_ptr().add(x * 2), buf.as_mut_ptr());
+      widen_f16x8_neon::<BE>(packed.as_ptr().add(x * 2 + 8), buf.as_mut_ptr().add(8));
+      yaf32_to_luma_u16_row::<HOST_NATIVE_BE>(&buf, out.get_unchecked_mut(x..x + 8), 8);
+    }
+    x += 8;
+  }
+  if x < width {
+    scalar::yaf16_to_luma_u16_row::<BE>(&packed[x * 2..width * 2], &mut out[x..width], width - x);
+  }
+}
+
+/// NEON `yaf16_to_hsv_row`: widen `[Y,A]` f16 → f32, H=0, S=0, V = clamp(Y,0,1) x 255. α dropped.
+///
+/// # Safety
+/// NEON + fp16 must be available. `packed.len() >= width * 2`; H/S/V out `>= width`.
+#[inline]
+#[target_feature(enable = "neon,fp16")]
+pub(crate) unsafe fn yaf16_to_hsv_row<const BE: bool>(
+  packed: &[half::f16],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+) {
+  use crate::row::scalar::yaf16 as scalar;
+  debug_assert!(packed.len() >= width * 2);
+  let mut x = 0usize;
+  while x + 8 <= width {
+    let mut buf = [0.0f32; 16];
+    unsafe {
+      widen_f16x8_neon::<BE>(packed.as_ptr().add(x * 2), buf.as_mut_ptr());
+      widen_f16x8_neon::<BE>(packed.as_ptr().add(x * 2 + 8), buf.as_mut_ptr().add(8));
+      yaf32_to_hsv_row::<HOST_NATIVE_BE>(
+        &buf,
+        h_out.get_unchecked_mut(x..x + 8),
+        s_out.get_unchecked_mut(x..x + 8),
+        v_out.get_unchecked_mut(x..x + 8),
+        8,
+      );
+    }
+    x += 8;
+  }
+  if x < width {
+    scalar::yaf16_to_hsv_row::<BE>(
+      &packed[x * 2..width * 2],
+      &mut h_out[x..width],
+      &mut s_out[x..width],
+      &mut v_out[x..width],
+      width - x,
+    );
+  }
+}

@@ -309,6 +309,10 @@ pub(crate) use dispatch::grayf32::*;
 pub(crate) use dispatch::ya8::*;
 #[cfg(all(feature = "gray", any(feature = "std", feature = "alloc")))]
 pub(crate) use dispatch::ya16::*;
+#[cfg(all(feature = "gray", any(feature = "std", feature = "alloc")))]
+pub(crate) use dispatch::yaf16::*;
+#[cfg(all(feature = "gray", any(feature = "std", feature = "alloc")))]
+pub(crate) use dispatch::yaf32::*;
 // Planar GBR float dispatchers — pub(crate) for sinker use (MixedSinker<Gbrpf32> etc.).
 #[cfg(all(feature = "gbr", any(feature = "std", feature = "alloc")))]
 pub(crate) use dispatch::planar_gbr_float::*;
@@ -449,9 +453,10 @@ pub(crate) fn rgba_row_elems(width: usize) -> usize {
 
 /// Element count of one packed YA (luma + alpha) row (`width x 2`)
 /// with overflow checking. Same purpose as [`rgb_row_bytes`] for the
-/// 2-element `[Y, A, ...]` interleaved layout used by Ya8 (`&[u8]`)
-/// and Ya16 (`&[u16]`) packed inputs — both index `width x 2`
-/// elements regardless of element width, so this helper covers both.
+/// 2-element `[Y, A, ...]` interleaved layout used by Ya8 (`&[u8]`),
+/// Ya16 (`&[u16]`), Yaf16 (`&[half::f16]`) and Yaf32 (`&[f32]`) packed
+/// inputs — all index `width x 2` elements regardless of element width,
+/// so this helper covers them all.
 #[cfg(feature = "gray")]
 #[cfg_attr(not(tarpaulin), inline(always))]
 pub(crate) fn ya_row_elems(width: usize) -> usize {
