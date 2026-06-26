@@ -22,6 +22,19 @@
 //! depth — identical to the 16-bit packed-RGB family. The `>> 16` staging plus
 //! the engine's `>> 8` u8 derivation reproduce the direct path's `>> 24` u8
 //! narrow.
+//!
+//! ### Precision (`full_range = false`) — issue #289
+//!
+//! Because the wire u32 is narrowed `>> 16` **before** binning, a downscaled
+//! output is the area/filter mean of the *narrowed* samples — within 1 LSB of
+//! an exact u32-domain mean (most visible for `full_range = false`). Every
+//! **direct** (identity-plan) conversion is exact and byte-identical, and
+//! full-range downscale is unaffected by the limited-range scaling. This u32
+//! family deliberately ACCEPTS the ≤1-LSB limited-range resample rather than
+//! building new u32 resample infrastructure; the exact 0-ULP fix (a `u128`
+//! area tier + a `u32` filter tier) is tracked in issue #289. The current
+//! narrow-first behaviour is pinned by the `full_range = false` resample tests
+//! (area + filter, LE + BE) in `tests/resample_packed_rgb_32bit.rs`.
 
 use super::{
   GeometryOverflow, InsufficientBuffer, MixedSinker, MixedSinkerError, RowIndexOutOfRange,
@@ -201,7 +214,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgb96<BE>, R> {
     // copy the binned row; u8 / luma_u16 outputs narrow it `>> 8`, reproducing
     // the direct path's `>> 24`). The span kind picks the engine — integer
     // area or signed-coefficient filter (both bin the same staged native-u16
-    // row).
+    // row). Narrowing `>> 16` before binning makes a `full_range = false`
+    // downscale within 1 LSB of an exact u32-domain mean (direct conversion is
+    // exact); the u32 family accepts this — 0-ULP fix tracked in issue #289.
     if let Some(plan) = plan.as_ref() {
       let stream_next_y = match plan.kind() {
         crate::resample::SpanKind::Area => rgb_stream_u16.as_ref().map_or(0, |s| s.next_y()),
@@ -497,7 +512,9 @@ impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgba128<BE>, R> {
     // outputs keep the 3-channel u16 RGB path. Rgba128 stages canonical
     // host-native RGBA via `rgba128_to_rgba_u16_row_endian` (all four channels
     // narrowed `>> 16`, α pass-through) and drop-alpha RGB via
-    // `rgba128_to_rgb_u16_row_endian`.
+    // `rgba128_to_rgb_u16_row_endian`. Narrowing `>> 16` before binning makes a
+    // `full_range = false` downscale within 1 LSB of an exact u32-domain mean
+    // (direct conversion is exact); accepted — 0-ULP fix tracked in issue #289.
     if self.plan.is_some() {
       let alpha_mode = self.alpha_mode;
       let in128 = row.rgba128();

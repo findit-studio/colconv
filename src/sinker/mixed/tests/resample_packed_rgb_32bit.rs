@@ -272,3 +272,212 @@ fn rgba128_identity_plan_matches_new_sink() {
   }
   assert_eq!(direct, via_area);
 }
+
+// ---- full_range = false resample behavior pins (issue #289) -----------------
+// These PIN the current narrow-first (u32 `>> 16` before binning) resample
+// output — within 1 LSB of an exact u32-domain mean, NOT parity vs a direct
+// u32-domain oracle. A single host-native fixture is re-encoded LE / BE so both
+// endian arms decode the same logical values and must produce the identical
+// pinned output (area: mean-of-narrowed; filter: a captured golden).
+
+use crate::resample::{FilteredResampler, Triangle};
+use mediaframe::frame::{Rgb96BeFrame, Rgba128BeFrame};
+
+const FRP: usize = 4; // source side
+const FRO: usize = 2; // output side
+
+fn as_be_u32(host: &[u32]) -> Vec<u32> {
+  host
+    .iter()
+    .map(|v| u32::from_ne_bytes(v.to_be_bytes()))
+    .collect()
+}
+
+/// Nonzero low-16-bit u32 RGB ramp so the `>> 16` staging narrow is lossy.
+fn frp_rgb96() -> Vec<u32> {
+  (0..FRP * FRP * 3)
+    .map(|i| (i as u32).wrapping_mul(0x0123_4567).wrapping_add(0xABCD))
+    .collect()
+}
+/// Nonzero low-16-bit u32 RGBA ramp.
+fn frp_rgba128() -> Vec<u32> {
+  (0..FRP * FRP * 4)
+    .map(|i| (i as u32).wrapping_mul(0x0123_4567).wrapping_add(0xBEEF))
+    .collect()
+}
+
+fn frp_block_mean(staged: &[u16], ox: usize, oy: usize, c: usize, ch: usize) -> u16 {
+  let mut acc = 0u64;
+  for dy in 0..2 {
+    for dx in 0..2 {
+      acc += staged[((oy * 2 + dy) * FRP + ox * 2 + dx) * ch + c] as u64;
+    }
+  }
+  ((acc + 2) / 4) as u16
+}
+
+#[test]
+fn rgb96_fr_false_area_rgb_u16_pins_mean_of_narrowed() {
+  let intended = frp_rgb96();
+  let staged: Vec<u16> = intended.iter().map(|&v| (v >> 16) as u16).collect();
+  let mut expected = vec![0u16; FRO * FRO * 3];
+  for oy in 0..FRO {
+    for ox in 0..FRO {
+      for c in 0..3 {
+        expected[(oy * FRO + ox) * 3 + c] = frp_block_mean(&staged, ox, oy, c, 3);
+      }
+    }
+  }
+  // LE arm
+  let le = as_le_u32(&intended);
+  let mut out_le = vec![0u16; FRO * FRO * 3];
+  {
+    let src = Rgb96Frame::new(&le, FRP as u32, FRP as u32, (FRP * 3) as u32);
+    let mut sink =
+      MixedSinker::<Rgb96, AreaResampler>::with_resampler(FRP, FRP, AreaResampler::to(FRO, FRO))
+        .unwrap()
+        .with_rgb_u16(&mut out_le)
+        .unwrap();
+    rgb96_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+  // BE arm
+  let be = as_be_u32(&intended);
+  let mut out_be = vec![0u16; FRO * FRO * 3];
+  {
+    let src = Rgb96BeFrame::new(&be, FRP as u32, FRP as u32, (FRP * 3) as u32);
+    let mut sink = MixedSinker::<Rgb96<true>, AreaResampler>::with_resampler(
+      FRP,
+      FRP,
+      AreaResampler::to(FRO, FRO),
+    )
+    .unwrap()
+    .with_rgb_u16(&mut out_be)
+    .unwrap();
+    crate::source::rgb96_to_endian::<_, true>(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+  assert_eq!(out_le, expected, "Rgb96 FR=false area rgb_u16 LE");
+  assert_eq!(out_be, expected, "Rgb96 FR=false area rgb_u16 BE");
+}
+
+#[test]
+fn rgba128_fr_false_area_rgba_u16_pins_mean_of_narrowed() {
+  let intended = frp_rgba128();
+  let staged: Vec<u16> = intended.iter().map(|&v| (v >> 16) as u16).collect();
+  let mut expected = vec![0u16; FRO * FRO * 4];
+  for oy in 0..FRO {
+    for ox in 0..FRO {
+      for c in 0..4 {
+        expected[(oy * FRO + ox) * 4 + c] = frp_block_mean(&staged, ox, oy, c, 4);
+      }
+    }
+  }
+  let le = as_le_u32(&intended);
+  let mut out_le = vec![0u16; FRO * FRO * 4];
+  {
+    let src = Rgba128Frame::new(&le, FRP as u32, FRP as u32, (FRP * 4) as u32);
+    let mut sink =
+      MixedSinker::<Rgba128, AreaResampler>::with_resampler(FRP, FRP, AreaResampler::to(FRO, FRO))
+        .unwrap()
+        .with_rgba_u16(&mut out_le)
+        .unwrap();
+    rgba128_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+  let be = as_be_u32(&intended);
+  let mut out_be = vec![0u16; FRO * FRO * 4];
+  {
+    let src = Rgba128BeFrame::new(&be, FRP as u32, FRP as u32, (FRP * 4) as u32);
+    let mut sink = MixedSinker::<Rgba128<true>, AreaResampler>::with_resampler(
+      FRP,
+      FRP,
+      AreaResampler::to(FRO, FRO),
+    )
+    .unwrap()
+    .with_rgba_u16(&mut out_be)
+    .unwrap();
+    crate::source::rgba128_to_endian::<_, true>(&src, false, ColorMatrix::Bt709, &mut sink)
+      .unwrap();
+  }
+  assert_eq!(out_le, expected, "Rgba128 FR=false area rgba_u16 LE");
+  assert_eq!(out_be, expected, "Rgba128 FR=false area rgba_u16 BE");
+}
+
+#[test]
+fn rgb96_fr_false_filter_rgb_u16_pins_current_output() {
+  // Golden captured from the current narrow-first Triangle filter — pins the
+  // ≤1-LSB behavior, not a u32-domain oracle (issue #289).
+  let golden: [u16; FRO * FRO * 3] = [
+    3121, 3412, 3703, 4494, 4785, 5077, 8613, 8905, 9196, 9987, 10278, 10569,
+  ];
+  let intended = frp_rgb96();
+  let le = as_le_u32(&intended);
+  let mut out_le = vec![0u16; FRO * FRO * 3];
+  {
+    let src = Rgb96Frame::new(&le, FRP as u32, FRP as u32, (FRP * 3) as u32);
+    let mut sink = MixedSinker::<Rgb96, FilteredResampler<Triangle>>::with_resampler(
+      FRP,
+      FRP,
+      FilteredResampler::new(FRO, FRO, Triangle),
+    )
+    .unwrap()
+    .with_rgb_u16(&mut out_le)
+    .unwrap();
+    rgb96_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+  let be = as_be_u32(&intended);
+  let mut out_be = vec![0u16; FRO * FRO * 3];
+  {
+    let src = Rgb96BeFrame::new(&be, FRP as u32, FRP as u32, (FRP * 3) as u32);
+    let mut sink = MixedSinker::<Rgb96<true>, FilteredResampler<Triangle>>::with_resampler(
+      FRP,
+      FRP,
+      FilteredResampler::new(FRO, FRO, Triangle),
+    )
+    .unwrap()
+    .with_rgb_u16(&mut out_be)
+    .unwrap();
+    crate::source::rgb96_to_endian::<_, true>(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+  assert_eq!(out_le, golden, "Rgb96 FR=false filter rgb_u16 LE");
+  assert_eq!(out_be, golden, "Rgb96 FR=false filter rgb_u16 BE");
+}
+
+#[test]
+fn rgba128_fr_false_filter_rgba_u16_pins_current_output() {
+  // Golden captured from the current narrow-first Triangle filter (issue #289).
+  let golden: [u16; FRO * FRO * 4] = [
+    4161, 4453, 4744, 5035, 5992, 6284, 6575, 6866, 11484, 11776, 12067, 12358, 13315, 13607,
+    13898, 14189,
+  ];
+  let intended = frp_rgba128();
+  let le = as_le_u32(&intended);
+  let mut out_le = vec![0u16; FRO * FRO * 4];
+  {
+    let src = Rgba128Frame::new(&le, FRP as u32, FRP as u32, (FRP * 4) as u32);
+    let mut sink = MixedSinker::<Rgba128, FilteredResampler<Triangle>>::with_resampler(
+      FRP,
+      FRP,
+      FilteredResampler::new(FRO, FRO, Triangle),
+    )
+    .unwrap()
+    .with_rgba_u16(&mut out_le)
+    .unwrap();
+    rgba128_to(&src, false, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+  let be = as_be_u32(&intended);
+  let mut out_be = vec![0u16; FRO * FRO * 4];
+  {
+    let src = Rgba128BeFrame::new(&be, FRP as u32, FRP as u32, (FRP * 4) as u32);
+    let mut sink = MixedSinker::<Rgba128<true>, FilteredResampler<Triangle>>::with_resampler(
+      FRP,
+      FRP,
+      FilteredResampler::new(FRO, FRO, Triangle),
+    )
+    .unwrap()
+    .with_rgba_u16(&mut out_be)
+    .unwrap();
+    crate::source::rgba128_to_endian::<_, true>(&src, false, ColorMatrix::Bt709, &mut sink)
+      .unwrap();
+  }
+  assert_eq!(out_le, golden, "Rgba128 FR=false filter rgba_u16 LE");
+  assert_eq!(out_be, golden, "Rgba128 FR=false filter rgba_u16 BE");
+}
