@@ -687,3 +687,331 @@ fn custom_luma_coefficients_at_max_does_not_overflow_kernel() {
     );
   }
 }
+
+// ---- Bayer16 big-endian (BE) tests --------------------------------------
+//
+// `Bayer16<BITS, true>` (the `Bayer{10,12,14}Be` / `Bayer16BitBe`
+// aliases) reads BE-encoded `u16` plane samples; the kernel byte-swaps
+// each sample before the demosaic, so a BE plane carrying the *same
+// logical samples* as an LE plane must produce *identical* RGB. These
+// tests build the BE plane host-independently (`to_be_bytes` →
+// `from_ne_bytes`) so they assert real byte-order handling on both
+// little- and big-endian hosts, and pin that the LE path is unchanged.
+
+/// Reinterpret a logical low-packed `u16` as the `u16` element a BE
+/// wire plane would store: serialize big-endian, then read back in the
+/// host's native order. On an LE host this yields the byte-swapped
+/// value; on a BE host it is the identity. Host-independent by
+/// construction — mirrors the y216 / p2xx BE test convention.
+fn be_wire_u16(logical: u16) -> u16 {
+  u16::from_ne_bytes(logical.to_be_bytes())
+}
+
+/// LE-wire twin of [`be_wire_u16`]: serialize little-endian, then read
+/// back in the host's native order. On an LE host it is the identity;
+/// on a BE host it byte-swaps. Encoding the LE-oracle plane through
+/// this makes the oracle host-independent — the `from_le` wire decode
+/// inside the LE frame recovers the original logical samples on every
+/// host, instead of mis-reading a host-native plane as LE.
+fn le_wire_u16(logical: u16) -> u16 {
+  u16::from_ne_bytes(logical.to_le_bytes())
+}
+
+/// Build a 12-bit low-packed Bayer plane for an arbitrary `pattern`,
+/// placing `r` at R sites, `b` at B sites, and `g` at both G sites.
+fn solid_pattern12(
+  pattern: crate::raw::BayerPattern,
+  width: u32,
+  height: u32,
+  r: u16,
+  g: u16,
+  b: u16,
+) -> std::vec::Vec<u16> {
+  use crate::raw::BayerPattern::*;
+  // (R-site, B-site) parities — must match the kernel's `pattern_phases`.
+  let (r_par, b_par) = match pattern {
+    Rggb => ((0usize, 0usize), (1usize, 1usize)),
+    Bggr => ((1, 1), (0, 0)),
+    Grbg => ((0, 1), (1, 0)),
+    Gbrg => ((1, 0), (0, 1)),
+    _ => unreachable!("invalid BayerPattern"),
+  };
+  let w = width as usize;
+  let h = height as usize;
+  let mut data = std::vec![0u16; w * h];
+  for y in 0..h {
+    for x in 0..w {
+      let par = (y & 1, x & 1);
+      data[y * w + x] = if par == r_par {
+        r
+      } else if par == b_par {
+        b
+      } else {
+        g
+      };
+    }
+  }
+  data
+}
+
+/// LE 12-bit RGB (u8 out) for the given logical plane, via the
+/// `Bayer16<12, false>` path. The oracle the BE output must match.
+fn le12_rgb_u8(
+  pattern: crate::raw::BayerPattern,
+  w: u32,
+  h: u32,
+  plane: &[u16],
+) -> std::vec::Vec<u8> {
+  use crate::{
+    frame::Bayer12Frame,
+    raw::{BayerDemosaic, ColorCorrectionMatrix, WhiteBalance, bayer16_to},
+  };
+  let frame = Bayer12Frame::try_new(plane, w, h, w).unwrap();
+  let mut rgb = std::vec![0u8; (w * h * 3) as usize];
+  let mut sinker = MixedSinker::<Bayer16<12>>::new(w as usize, h as usize)
+    .with_rgb(&mut rgb)
+    .unwrap();
+  bayer16_to::<12, _>(
+    &frame,
+    pattern,
+    BayerDemosaic::Bilinear,
+    WhiteBalance::neutral(),
+    ColorCorrectionMatrix::identity(),
+    &mut sinker,
+  )
+  .unwrap();
+  rgb
+}
+
+/// A BE 12-bit plane carrying the same logical samples as its LE twin
+/// produces byte-identical RGB (u8 out), for every Bayer pattern. The
+/// byte-swap is load-bearing: an asymmetric `g` (`0x0ABC`, whose bytes
+/// differ) would demosaic to a wildly different value if the kernel
+/// skipped the swap.
+#[test]
+fn bayer16_be_matches_le_u8_all_patterns() {
+  use crate::{
+    frame::Bayer12BeFrame,
+    raw::{BayerDemosaic, BayerPattern, ColorCorrectionMatrix, WhiteBalance, bayer16_to_endian},
+  };
+  let (w, h) = (8u32, 6u32);
+  // Asymmetric logical samples so the byte order is observable.
+  let (r, g, b) = (0x0FFFu16, 0x0ABCu16, 0x0123u16);
+  for pattern in [
+    BayerPattern::Rggb,
+    BayerPattern::Bggr,
+    BayerPattern::Grbg,
+    BayerPattern::Gbrg,
+  ] {
+    // Build the logical samples once, then derive both wire planes from
+    // them: the LE oracle via `le_wire_u16`, the BE input via
+    // `be_wire_u16`. Both decode back to `logical` on any host.
+    let logical = solid_pattern12(pattern, w, h, r, g, b);
+    let le_plane: std::vec::Vec<u16> = logical.iter().map(|&v| le_wire_u16(v)).collect();
+    let expected = le12_rgb_u8(pattern, w, h, &le_plane);
+
+    let be_plane: std::vec::Vec<u16> = logical.iter().map(|&v| be_wire_u16(v)).collect();
+    let frame = Bayer12BeFrame::try_new(&be_plane, w, h, w).unwrap();
+    let mut rgb = std::vec![0u8; (w * h * 3) as usize];
+    let mut sinker = MixedSinker::<Bayer16<12, true>>::new(w as usize, h as usize)
+      .with_rgb(&mut rgb)
+      .unwrap();
+    bayer16_to_endian::<12, true, _>(
+      &frame,
+      pattern,
+      BayerDemosaic::Bilinear,
+      WhiteBalance::neutral(),
+      ColorCorrectionMatrix::identity(),
+      &mut sinker,
+    )
+    .unwrap();
+    assert_eq!(rgb, expected, "BE/LE RGB mismatch for pattern {pattern:?}");
+  }
+}
+
+/// Same parity check for the native-depth `u16` output path.
+#[test]
+fn bayer16_be_matches_le_u16_output() {
+  use crate::{
+    frame::{Bayer12BeFrame, Bayer12Frame},
+    raw::{
+      BayerDemosaic, BayerPattern, ColorCorrectionMatrix, WhiteBalance, bayer16_to,
+      bayer16_to_endian,
+    },
+  };
+  let (w, h) = (8u32, 6u32);
+  let (r, g, b) = (0x0FFFu16, 0x0ABCu16, 0x0123u16);
+  // Shared logical samples; both wire planes derive from them.
+  let logical = solid_pattern12(BayerPattern::Rggb, w, h, r, g, b);
+  let le_plane: std::vec::Vec<u16> = logical.iter().map(|&v| le_wire_u16(v)).collect();
+
+  // LE oracle (u16 out).
+  let le_frame = Bayer12Frame::try_new(&le_plane, w, h, w).unwrap();
+  let mut le_rgb = std::vec![0u16; (w * h * 3) as usize];
+  let mut le_sinker = MixedSinker::<Bayer16<12>>::new(w as usize, h as usize)
+    .with_rgb_u16(&mut le_rgb)
+    .unwrap();
+  bayer16_to::<12, _>(
+    &le_frame,
+    BayerPattern::Rggb,
+    BayerDemosaic::Bilinear,
+    WhiteBalance::neutral(),
+    ColorCorrectionMatrix::identity(),
+    &mut le_sinker,
+  )
+  .unwrap();
+
+  // BE under test (u16 out) — output is host-native, only the input
+  // wire order differs.
+  let be_plane: std::vec::Vec<u16> = logical.iter().map(|&v| be_wire_u16(v)).collect();
+  let be_frame = Bayer12BeFrame::try_new(&be_plane, w, h, w).unwrap();
+  let mut be_rgb = std::vec![0u16; (w * h * 3) as usize];
+  let mut be_sinker = MixedSinker::<Bayer16<12, true>>::new(w as usize, h as usize)
+    .with_rgb_u16(&mut be_rgb)
+    .unwrap();
+  bayer16_to_endian::<12, true, _>(
+    &be_frame,
+    BayerPattern::Rggb,
+    BayerDemosaic::Bilinear,
+    WhiteBalance::neutral(),
+    ColorCorrectionMatrix::identity(),
+    &mut be_sinker,
+  )
+  .unwrap();
+
+  assert_eq!(be_rgb, le_rgb, "BE/LE u16 RGB mismatch");
+}
+
+/// Proves the byte-swap actually fires: feeding the *BE-encoded* bytes
+/// through the LE marker (the wrong byte order) yields different output
+/// than the correct BE path, given asymmetric samples. If the BE path
+/// silently read host-native (no swap), the two would coincide.
+#[test]
+fn bayer16_be_byte_swap_is_load_bearing() {
+  use crate::{
+    frame::{Bayer12BeFrame, Bayer12Frame},
+    raw::{
+      BayerDemosaic, BayerPattern, ColorCorrectionMatrix, WhiteBalance, bayer16_to,
+      bayer16_to_endian,
+    },
+  };
+  let (w, h) = (8u32, 6u32);
+  // Logical samples bounded to `< 0x10` so that the *same raw BE bytes*
+  // read back through the LE marker (i.e. `logical << 8`) also stay
+  // inside the 12-bit low-packed range — both frame constructors must
+  // accept the plane for the comparison to be meaningful.
+  let (r, g, b) = (0x00Fu16, 0x00Au16, 0x003u16);
+
+  // Shared logical samples; the BE plane derives from them host-
+  // independently. The "wrong" reading below reinterprets the *same*
+  // BE bytes through the LE marker — so it must stay the be_plane, not
+  // an le_wire-encoded oracle, for the divergence to be meaningful.
+  let logical = solid_pattern12(BayerPattern::Rggb, w, h, r, g, b);
+
+  // Correct BE path.
+  let be_plane: std::vec::Vec<u16> = logical.iter().map(|&v| be_wire_u16(v)).collect();
+  let be_frame = Bayer12BeFrame::try_new(&be_plane, w, h, w).unwrap();
+  let mut be_rgb = std::vec![0u8; (w * h * 3) as usize];
+  let mut be_sinker = MixedSinker::<Bayer16<12, true>>::new(w as usize, h as usize)
+    .with_rgb(&mut be_rgb)
+    .unwrap();
+  bayer16_to_endian::<12, true, _>(
+    &be_frame,
+    BayerPattern::Rggb,
+    BayerDemosaic::Bilinear,
+    WhiteBalance::neutral(),
+    ColorCorrectionMatrix::identity(),
+    &mut be_sinker,
+  )
+  .unwrap();
+
+  // Same raw bytes, but interpreted by the LE marker (wrong order).
+  // Each sample reads as `v << 8` (bounded < 4096 by `v < 0x10`), so
+  // the plane is still low-packed-valid but numerically different.
+  let wrong_frame = Bayer12Frame::try_new(&be_plane, w, h, w).unwrap();
+  let mut wrong_rgb = std::vec![0u8; (w * h * 3) as usize];
+  let mut wrong_sinker = MixedSinker::<Bayer16<12>>::new(w as usize, h as usize)
+    .with_rgb(&mut wrong_rgb)
+    .unwrap();
+  bayer16_to::<12, _>(
+    &wrong_frame,
+    BayerPattern::Rggb,
+    BayerDemosaic::Bilinear,
+    WhiteBalance::neutral(),
+    ColorCorrectionMatrix::identity(),
+    &mut wrong_sinker,
+  )
+  .unwrap();
+
+  assert_ne!(
+    be_rgb, wrong_rgb,
+    "BE byte-swap not applied: BE path coincides with the wrong-endian LE reading"
+  );
+}
+
+/// Per-depth BE round-trip: 10 / 14 / 16-bit BE planes each match their
+/// LE twin (u8 out). Exercises the `BITS`-generic monomorphization of
+/// the BE kernel across every depth, not just 12-bit.
+#[test]
+fn bayer16_be_matches_le_per_depth() {
+  use crate::{
+    frame::{
+      Bayer10BeFrame, Bayer10Frame, Bayer14BeFrame, Bayer14Frame, Bayer16BeFrame, Bayer16Frame,
+    },
+    raw::{
+      BayerDemosaic, BayerPattern, ColorCorrectionMatrix, WhiteBalance, bayer16_to,
+      bayer16_to_endian,
+    },
+  };
+  let (w, h) = (8u32, 6u32);
+
+  macro_rules! depth_case {
+    ($bits:literal, $le_frame:ident, $be_frame:ident, $r:expr, $g:expr, $b:expr) => {{
+      // Build the logical samples once (reuse the 12-bit pattern helper
+      // shape; the values are within range for this depth), then derive
+      // both wire planes from them so the comparison holds on any host.
+      let logical = solid_pattern12(BayerPattern::Rggb, w, h, $r, $g, $b);
+      let le_plane: std::vec::Vec<u16> = logical.iter().map(|&v| le_wire_u16(v)).collect();
+
+      let le_frame = $le_frame::try_new(&le_plane, w, h, w).unwrap();
+      let mut le_rgb = std::vec![0u8; (w * h * 3) as usize];
+      let mut le_sinker =
+        MixedSinker::<Bayer16<$bits, false>>::new(w as usize, h as usize)
+          .with_rgb(&mut le_rgb)
+          .unwrap();
+      bayer16_to::<$bits, _>(
+        &le_frame,
+        BayerPattern::Rggb,
+        BayerDemosaic::Bilinear,
+        WhiteBalance::neutral(),
+        ColorCorrectionMatrix::identity(),
+        &mut le_sinker,
+      )
+      .unwrap();
+
+      let be_plane: std::vec::Vec<u16> = logical.iter().map(|&v| be_wire_u16(v)).collect();
+      let be_frame = $be_frame::try_new(&be_plane, w, h, w).unwrap();
+      let mut be_rgb = std::vec![0u8; (w * h * 3) as usize];
+      let mut be_sinker =
+        MixedSinker::<Bayer16<$bits, true>>::new(w as usize, h as usize)
+          .with_rgb(&mut be_rgb)
+          .unwrap();
+      bayer16_to_endian::<$bits, true, _>(
+        &be_frame,
+        BayerPattern::Rggb,
+        BayerDemosaic::Bilinear,
+        WhiteBalance::neutral(),
+        ColorCorrectionMatrix::identity(),
+        &mut be_sinker,
+      )
+      .unwrap();
+
+      assert_eq!(be_rgb, le_rgb, "BE/LE mismatch at {} bits", $bits);
+    }};
+  }
+
+  // 10-bit: max 1023; 14-bit: max 16383; 16-bit: full u16.
+  depth_case!(10, Bayer10Frame, Bayer10BeFrame, 0x03FF, 0x02AB, 0x0123);
+  depth_case!(14, Bayer14Frame, Bayer14BeFrame, 0x3FFF, 0x2ABC, 0x1234);
+  depth_case!(16, Bayer16Frame, Bayer16BeFrame, 0xFFFF, 0xABCD, 0x1234);
+}

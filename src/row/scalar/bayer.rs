@@ -56,6 +56,21 @@ pub(crate) fn bayer_to_rgb_row(
   }
 }
 
+/// Normalizes one low-packed Bayer `u16` sample from its wire byte
+/// order to host-native, applying a byte-swap for the BE wire format
+/// (`BE = true`) and a no-op for LE (`BE = false`).
+///
+/// Uses target-endian-aware `u16::from_be` / `u16::from_le` — each is
+/// a no-op when the source byte order already matches the host CPU, so
+/// the helper produces correct samples on both little- and big-endian
+/// hosts (e.g. s390x). Mirrors `load_xv36_u16` / `load_ayuv64_u16` and
+/// the `super::load_endian_u16` contract, operating on an already-
+/// loaded `u16` (Bayer planes are `&[u16]`, read via safe indexing).
+#[cfg_attr(not(tarpaulin), inline(always))]
+fn load_bayer16_u16<const BE: bool>(v: u16) -> u16 {
+  if BE { u16::from_be(v) } else { u16::from_le(v) }
+}
+
 #[cfg_attr(not(tarpaulin), inline(always))]
 fn clamp_u8_round(v: f32) -> u8 {
   if v <= 0.0 {
@@ -162,16 +177,23 @@ where
 
 /// 10/12/14/16-bit Bayer → packed `u8` RGB.
 ///
-/// `above` / `mid` / `below` are **low-packed** `u16` row slices —
-/// every sample must satisfy `value < (1 << BITS)`, with the high
-/// `16 - BITS` bits zero. The
+/// `above` / `mid` / `below` are **low-packed** `u16` row slices in
+/// the wire byte order selected by `BE` (`false` = little-endian, the
+/// default spelling; `true` = big-endian) — every sample's *logical*
+/// value (after byte-order normalization) must satisfy
+/// `value < (1 << BITS)`, with the high `16 - BITS` bits zero. The
 /// [`crate::frame::BayerFrame16::try_new`] constructor validates
-/// this contract on every active sample, so callers using
-/// [`crate::raw::bayer16_to`] are guaranteed in-range input. Direct
-/// row-API callers passing raw `&[u16]` slices are responsible for
-/// the same contract; out-of-range samples violate it but the
+/// this contract on every active sample (normalizing the wire byte
+/// order first), so callers using [`crate::raw::bayer16_to`] /
+/// [`crate::frame::bayer16_to_endian`] are guaranteed in-range input.
+/// Direct row-API callers passing raw `&[u16]` slices are responsible
+/// for the same contract; out-of-range samples violate it but the
 /// kernel is sound (no panic, no UB) — it produces saturated
 /// output and contaminates demosaic neighbor averages.
+///
+/// `BE` only changes the byte order of the raw `u16` reads
+/// (via [`load_bayer16_u16`]); the demosaic / white-balance / CCM
+/// math is byte-order-independent.
 ///
 /// `m` is the unscaled `CCM · diag(wb)`; this kernel bakes the
 /// input→u8 rescale (`255 / ((1 << BITS) - 1)`) into output values
@@ -179,7 +201,7 @@ where
 ///
 /// Output: `3 * mid.len()` `u8` packed `R, G, B`.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn bayer16_to_rgb_row<const BITS: u32>(
+pub(crate) fn bayer16_to_rgb_row<const BITS: u32, const BE: bool>(
   above: &[u16],
   mid: &[u16],
   below: &[u16],
@@ -195,11 +217,12 @@ pub(crate) fn bayer16_to_rgb_row<const BITS: u32>(
   debug_assert_eq!(below.len(), w);
   debug_assert!(rgb_out.len() >= 3 * w);
   // Sample-range contract: caller guarantees every sample is
-  // `< (1 << BITS)` (low-packed convention). For walker callers
-  // this is upheld by `BayerFrame16::try_new` (which validates
-  // every active sample at construction); direct row-API callers
-  // accept the contract — out-of-range samples produce
-  // defined-but-saturated output, no panic, no UB.
+  // `< (1 << BITS)` (low-packed convention, after byte-order
+  // normalization). For walker callers this is upheld by
+  // `BayerFrame16::try_new` (which validates every active sample at
+  // construction); direct row-API callers accept the contract —
+  // out-of-range samples produce defined-but-saturated output, no
+  // panic, no UB.
 
   let (r_par, b_par) = pattern_phases(pattern);
   let rp = (row_parity & 1) as usize;
@@ -210,9 +233,9 @@ pub(crate) fn bayer16_to_rgb_row<const BITS: u32>(
   for x in 0..w {
     let cp = x & 1;
     let (r, g, b) = bilinear_demosaic_at(w, x, rp, cp, r_par, b_par, |sel, i| match sel {
-      BayerRowSel::Above => above[i] as f32,
-      BayerRowSel::Mid => mid[i] as f32,
-      BayerRowSel::Below => below[i] as f32,
+      BayerRowSel::Above => load_bayer16_u16::<BE>(above[i]) as f32,
+      BayerRowSel::Mid => load_bayer16_u16::<BE>(mid[i]) as f32,
+      BayerRowSel::Below => load_bayer16_u16::<BE>(below[i]) as f32,
     });
     let r_out = (m[0][0] * r + m[0][1] * g + m[0][2] * b) * out_scale;
     let g_out = (m[1][0] * r + m[1][1] * g + m[1][2] * b) * out_scale;
@@ -225,16 +248,20 @@ pub(crate) fn bayer16_to_rgb_row<const BITS: u32>(
 
 /// 10/12/14/16-bit Bayer → packed `u16` RGB (low-packed at `BITS`).
 ///
-/// `above` / `mid` / `below` are **low-packed** `u16` row slices —
-/// every sample must satisfy `value < (1 << BITS)`. Output range
-/// is `[0, (1 << BITS) - 1]` per channel; since input and output
-/// share the same scale, the matmul result feeds `clamp_u16_round`
-/// directly with no extra rescale. Out-of-range samples violate
-/// the contract — see [`bayer16_to_rgb_row`] for the details.
+/// `above` / `mid` / `below` are **low-packed** `u16` row slices in
+/// the wire byte order selected by `BE` (`false` = little-endian;
+/// `true` = big-endian) — every sample's *logical* value (after
+/// byte-order normalization) must satisfy `value < (1 << BITS)`.
+/// Output range is `[0, (1 << BITS) - 1]` per channel; since input
+/// and output share the same scale, the matmul result feeds
+/// `clamp_u16_round` directly with no extra rescale. The `u16`
+/// **output** is always host-native (the `BE` parameter governs the
+/// **input** wire order only). Out-of-range samples violate the
+/// contract — see [`bayer16_to_rgb_row`] for the details.
 ///
 /// Output: `3 * mid.len()` `u16` packed `R, G, B`.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn bayer16_to_rgb_u16_row<const BITS: u32>(
+pub(crate) fn bayer16_to_rgb_u16_row<const BITS: u32, const BE: bool>(
   above: &[u16],
   mid: &[u16],
   below: &[u16],
@@ -249,7 +276,7 @@ pub(crate) fn bayer16_to_rgb_u16_row<const BITS: u32>(
   debug_assert_eq!(above.len(), w);
   debug_assert_eq!(below.len(), w);
   debug_assert!(rgb_out.len() >= 3 * w);
-  // Same sample-range contract as `bayer16_to_rgb_row<BITS>`; for
+  // Same sample-range contract as `bayer16_to_rgb_row<BITS, BE>`; for
   // walker callers the contract is upheld by
   // `BayerFrame16::try_new` (which validates every active sample
   // at construction); direct row-API callers accept the contract
@@ -264,9 +291,9 @@ pub(crate) fn bayer16_to_rgb_u16_row<const BITS: u32>(
   for x in 0..w {
     let cp = x & 1;
     let (r, g, b) = bilinear_demosaic_at(w, x, rp, cp, r_par, b_par, |sel, i| match sel {
-      BayerRowSel::Above => above[i] as f32,
-      BayerRowSel::Mid => mid[i] as f32,
-      BayerRowSel::Below => below[i] as f32,
+      BayerRowSel::Above => load_bayer16_u16::<BE>(above[i]) as f32,
+      BayerRowSel::Mid => load_bayer16_u16::<BE>(mid[i]) as f32,
+      BayerRowSel::Below => load_bayer16_u16::<BE>(below[i]) as f32,
     });
     let r_out = m[0][0] * r + m[0][1] * g + m[0][2] * b;
     let g_out = m[1][0] * r + m[1][1] * g + m[1][2] * b;

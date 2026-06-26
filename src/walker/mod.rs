@@ -31,7 +31,7 @@ use crate::{
 };
 #[cfg(feature = "bayer")]
 use crate::{
-  frame::{BayerFrame, BayerFrame16, BayerSink, BayerSink16, bayer_to, bayer16_to},
+  frame::{BayerFrame, BayerFrame16, BayerSink, BayerSink16, bayer_to, bayer16_to_endian},
   source::{Bayer, Bayer16},
 };
 #[cfg(feature = "mono")]
@@ -337,9 +337,8 @@ pub trait Walker<S> {
 /// The `@const $c: $cty;` arm handles the source families whose marker
 /// carries a *single* const parameter that is also the last item in the
 /// frame's generic list (the XYZ12 `BE` byte-order bool over
-/// `Xyz12Frame<'a, BE>`, the Bayer16 `BITS` depth over
-/// `BayerFrame16<'a, BITS>`): it threads the const through the impl
-/// header, the marker, the sink bound, and the frame's generic list.
+/// `Xyz12Frame<'a, BE>`): it threads the const through the impl header,
+/// the marker, the sink bound, and the frame's generic list.
 ///
 /// The `@const_bits $bits, BE;` arm handles the high-bit YUV / YUVA /
 /// Y2xx families. Their marker is endian-generic (`Yuv420p10<const BE>`,
@@ -352,6 +351,16 @@ pub trait Walker<S> {
 /// `{fmt}_to_endian::<S, BE>` (the public `{fmt}_to` is just its
 /// `BE = false` wrapper), so a single impl covers **both** the LE
 /// (`BE = false`) and BE (`BE = true`) high-bit sources.
+///
+/// The `@const2 $bits: $bty, $be: $bety;` arm handles Bayer16, whose
+/// marker carries *two* generic consts — the depth `BITS` (kept generic
+/// over {10, 12, 14, 16}, so it cannot use the literal-bit-depth
+/// `@const_bits` arm) and the wire byte order `BE`. Both consts thread
+/// through the impl header, the marker (`Bayer16<BITS, BE>`), the sink
+/// bound (`BayerSink16<BITS, BE>`), and the frame's generic list
+/// (`BayerFrame16<'a, BITS, BE>`). The walk delegates to the
+/// fully-generic `bayer16_to_endian::<BITS, BE, _>`, so one impl serves
+/// every depth in both byte orders.
 ///
 /// (The `@` sentinel avoids the `<const …>` matcher mis-parse —
 /// rust-lang/rust#143874.)
@@ -420,6 +429,31 @@ macro_rules! walker {
     impl<const $be: bool, S> Walker<S> for $marker<$be>
     where
       S: $sink<$be>,
+    {
+      type Frame<'a> = $frame<'a, $bits, $be>;
+      type Options = $opts;
+
+      #[inline(always)]
+      fn walk($s: &Self::Frame<'_>, $o: &Self::Options, $k: &mut S) -> Result<(), S::Error>
+      where
+        S: PixelSink,
+      {
+        $body
+      }
+    }
+  };
+  // Bayer16: *two* generic consts — the depth `BITS` (kept generic over
+  // {10, 12, 14, 16}, unlike the `@const_bits` arm which bakes a single
+  // bit depth into the marker name) and the wire byte order `BE`. The
+  // marker (`Bayer16<BITS, BE>`), the sink bound (`BayerSink16<BITS, BE>`),
+  // and the frame (`BayerFrame16<'a, BITS, BE>`) all carry both consts;
+  // the `$body` delegates to the const-generic `bayer16_to_endian`, so the
+  // one impl serves all four depths in both LE (`BE = false`) and BE
+  // (`BE = true`).
+  (@const2 $bits:ident: $bty:ty, $be:ident: $bety:ty; $marker:ident, $sink:ident, $frame:ident, $opts:ty, |$s:ident, $o:ident, $k:ident| $body:expr) => {
+    impl<const $bits: $bty, const $be: $bety, S> Walker<S> for $marker<$bits, $be>
+    where
+      S: $sink<$bits, $be>,
     {
       type Frame<'a> = $frame<'a, $bits, $be>;
       type Options = $opts;
@@ -679,12 +713,20 @@ walker!(
   )
 );
 
-// Bayer16 (10/12/14/16-bit) — same parameter bundle as 8-bit Bayer, so
-// it reuses [`BayerOptions`]; `BITS` is the active sample depth.
+// Bayer16 (10/12/14/16-bit, LE or BE) — same parameter bundle as 8-bit
+// Bayer, so it reuses [`BayerOptions`]; `BITS` is the active sample depth
+// and `BE` the plane's wire byte order (`false` = LE, `true` = BE). The
+// `BE = false` default keeps the single-generic `Bayer16<BITS>` spelling
+// (and the `Bayer{10,12,14}` / `Bayer16Bit` LE aliases) walkable, while
+// the `Bayer{10,12,14}Be` / `Bayer16BitBe` aliases route through the same
+// impl with `BE = true`. Delegates to the byte-order-generic
+// [`bayer16_to_endian`](crate::frame::bayer16_to_endian) (the public
+// `bayer16_to` is its `BE = false` wrapper), mirroring how the Y2xx family
+// threads `BE` from `Y2xxFrame<'_, BITS, BE>` into `Y216Sink<BE>`.
 #[cfg(feature = "bayer")]
 #[cfg_attr(docsrs, doc(cfg(feature = "bayer")))]
-walker!(@const BITS: u32; Bayer16<BITS>, BayerSink16, BayerFrame16, BayerOptions,
-  |src, opts, sink| bayer16_to::<BITS, _>(src, opts.pattern(), opts.demosaic(), opts.wb(), opts.ccm(), sink));
+walker!(@const2 BITS: u32, BE: bool; Bayer16, BayerSink16, BayerFrame16, BayerOptions,
+  |src, opts, sink| bayer16_to_endian::<BITS, BE, _>(src, opts.pattern(), opts.demosaic(), opts.wb(), opts.ccm(), sink));
 
 // Pal8 — the BGRA palette is frame-intrinsic (carried by the
 // [`Pal8Frame`], not the caller), so there are no conversion knobs and

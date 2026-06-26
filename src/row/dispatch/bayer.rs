@@ -64,15 +64,17 @@ pub fn bayer_to_rgb_row(
 }
 
 /// Converts one row of a 10/12/14/16-bit **low-packed** Bayer
-/// plane to packed `u8` RGB.
+/// plane to packed `u8` RGB, reading the source `u16` samples in the
+/// wire byte order selected by `BE`.
 ///
 /// `BITS` ∈ {10, 12, 14, 16}; samples are low-packed `u16` (active
-/// values in the low `BITS` bits, range `[0, (1 << BITS) - 1]`).
-/// Direct row-API callers are responsible for upholding the
-/// low-packed contract; samples whose value exceeds
-/// `(1 << BITS) - 1` produce defined-but-saturated output (no
-/// panic, no UB). The walker
-/// [`crate::raw::bayer16_to`] never sees out-of-range input
+/// values in the low `BITS` bits, range `[0, (1 << BITS) - 1]`) in
+/// the wire byte order selected by `BE` (`false` = little-endian;
+/// `true` = big-endian). Direct row-API callers are responsible for
+/// upholding the low-packed contract; samples whose *logical* value
+/// (after byte-order normalization) exceeds `(1 << BITS) - 1` produce
+/// defined-but-saturated output (no panic, no UB). The walker
+/// [`crate::frame::bayer16_to_endian`] never sees out-of-range input
 /// because [`crate::frame::BayerFrame16::try_new`] validates every
 /// active sample at frame-construction time.
 ///
@@ -85,7 +87,7 @@ pub fn bayer_to_rgb_row(
 /// [`bayer_to_rgb_row`] for the deferred-SIMD note).
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub fn bayer16_to_rgb_row<const BITS: u32>(
+pub fn bayer16_to_rgb_row_endian<const BITS: u32, const BE: bool>(
   above: &[u16],
   mid: &[u16],
   below: &[u16],
@@ -99,7 +101,7 @@ pub fn bayer16_to_rgb_row<const BITS: u32>(
   const {
     assert!(
       BITS == 10 || BITS == 12 || BITS == 14 || BITS == 16,
-      "bayer16_to_rgb_row: BITS must be 10, 12, 14, or 16"
+      "bayer16_to_rgb_row_endian: BITS must be 10, 12, 14, or 16"
     )
   };
   let width = mid.len();
@@ -109,29 +111,64 @@ pub fn bayer16_to_rgb_row<const BITS: u32>(
   assert!(rgb_out.len() >= rgb_min, "rgb_out row too short");
   assert_color_transform_well_formed(m);
 
-  scalar::bayer16_to_rgb_row::<BITS>(above, mid, below, row_parity, pattern, demosaic, m, rgb_out);
+  scalar::bayer16_to_rgb_row::<BITS, BE>(
+    above, mid, below, row_parity, pattern, demosaic, m, rgb_out,
+  );
+}
+
+/// LE-only wrapper around [`bayer16_to_rgb_row_endian`]; preserves the
+/// pre-endian-aware single-const public signature so existing
+/// little-endian callers (`bayer16_to_rgb_row::<BITS>(...)`) compile
+/// unchanged. Equivalent to `bayer16_to_rgb_row_endian::<BITS, false>(...)`.
+///
+/// Rust forbids defaults on function-position const-generic parameters,
+/// so an explicit-turbofish caller written before the endian extension
+/// (`bayer16_to_rgb_row::<12>(...)`) would otherwise fail to compile if
+/// `BE` were appended in place. This thin LE wrapper preserves source
+/// compatibility for those call sites; BE-aware callers use
+/// [`bayer16_to_rgb_row_endian`] directly. Mirrors the
+/// `bayer16_to` → `bayer16_to_endian` pairing in `mediaframe`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn bayer16_to_rgb_row<const BITS: u32>(
+  above: &[u16],
+  mid: &[u16],
+  below: &[u16],
+  row_parity: u32,
+  pattern: crate::raw::BayerPattern,
+  demosaic: crate::raw::BayerDemosaic,
+  m: &[[f32; 3]; 3],
+  rgb_out: &mut [u8],
+  use_simd: bool,
+) {
+  bayer16_to_rgb_row_endian::<BITS, false>(
+    above, mid, below, row_parity, pattern, demosaic, m, rgb_out, use_simd,
+  );
 }
 
 /// Converts one row of a 10/12/14/16-bit **low-packed** Bayer
-/// plane to packed `u16` RGB (also low-packed at `BITS`).
+/// plane to packed `u16` RGB (also low-packed at `BITS`), reading the
+/// source `u16` samples in the wire byte order selected by `BE`.
 ///
 /// `BITS` ∈ {10, 12, 14, 16}. Input and output share the same
 /// low-packed range `[0, (1 << BITS) - 1]` per channel — no
-/// rescale, just clamp. `above` / `mid` / `below` must all be the
-/// same length; `rgb_out` must have at least `3 * mid.len()` `u16`
-/// elements.
+/// rescale, just clamp. The `u16` **input** is read in the wire byte
+/// order selected by `BE` (`false` = little-endian; `true` =
+/// big-endian); the `u16` **output** is always host-native.
+/// `above` / `mid` / `below` must all be the same length; `rgb_out`
+/// must have at least `3 * mid.len()` `u16` elements.
 ///
 /// Direct row-API callers are responsible for upholding the
 /// low-packed contract — see [`bayer16_to_rgb_row`] for the
 /// full rationale on the safe path
-/// ([`crate::frame::BayerFrame16::try_new`] + [`crate::raw::bayer16_to`])
+/// ([`crate::frame::BayerFrame16::try_new`] + [`crate::frame::bayer16_to_endian`])
 /// vs. the direct row API.
 ///
 /// **`use_simd` is currently a no-op** (see
 /// [`bayer_to_rgb_row`] for the deferred-SIMD note).
 #[cfg_attr(not(tarpaulin), inline(always))]
 #[allow(clippy::too_many_arguments)]
-pub fn bayer16_to_rgb_u16_row<const BITS: u32>(
+pub fn bayer16_to_rgb_u16_row_endian<const BITS: u32, const BE: bool>(
   above: &[u16],
   mid: &[u16],
   below: &[u16],
@@ -145,7 +182,7 @@ pub fn bayer16_to_rgb_u16_row<const BITS: u32>(
   const {
     assert!(
       BITS == 10 || BITS == 12 || BITS == 14 || BITS == 16,
-      "bayer16_to_rgb_u16_row: BITS must be 10, 12, 14, or 16"
+      "bayer16_to_rgb_u16_row_endian: BITS must be 10, 12, 14, or 16"
     )
   };
   let width = mid.len();
@@ -155,7 +192,34 @@ pub fn bayer16_to_rgb_u16_row<const BITS: u32>(
   assert!(rgb_out.len() >= rgb_min, "rgb_out row too short");
   assert_color_transform_well_formed(m);
 
-  scalar::bayer16_to_rgb_u16_row::<BITS>(
+  scalar::bayer16_to_rgb_u16_row::<BITS, BE>(
     above, mid, below, row_parity, pattern, demosaic, m, rgb_out,
+  );
+}
+
+/// LE-only wrapper around [`bayer16_to_rgb_u16_row_endian`]; preserves
+/// the pre-endian-aware single-const public signature so existing
+/// little-endian callers (`bayer16_to_rgb_u16_row::<BITS>(...)`)
+/// compile unchanged. Equivalent to
+/// `bayer16_to_rgb_u16_row_endian::<BITS, false>(...)`.
+///
+/// See [`bayer16_to_rgb_row`] for the source-compatibility rationale
+/// (function-position const generics cannot carry a default, so the
+/// LE entry point is kept as a thin single-const wrapper).
+#[cfg_attr(not(tarpaulin), inline(always))]
+#[allow(clippy::too_many_arguments)]
+pub fn bayer16_to_rgb_u16_row<const BITS: u32>(
+  above: &[u16],
+  mid: &[u16],
+  below: &[u16],
+  row_parity: u32,
+  pattern: crate::raw::BayerPattern,
+  demosaic: crate::raw::BayerDemosaic,
+  m: &[[f32; 3]; 3],
+  rgb_out: &mut [u16],
+  use_simd: bool,
+) {
+  bayer16_to_rgb_u16_row_endian::<BITS, false>(
+    above, mid, below, row_parity, pattern, demosaic, m, rgb_out, use_simd,
   );
 }

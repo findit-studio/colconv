@@ -23,13 +23,20 @@
 
 // The Bayer16 marker family now lives in mediaframe::source. Re-export
 // everything so downstream code that uses `colconv::raw::Bayer16<BITS>`,
-// `colconv::raw::Bayer10`, etc. keeps compiling unchanged.
+// `colconv::raw::Bayer10`, etc. keeps compiling unchanged. The
+// big-endian set (`Bayer*Be` markers, `Bayer*BeFrame` aliases, and the
+// byte-order-generic `bayer16_to_endian` walker) is exported alongside
+// the little-endian set so BE callers reach it from the same umbrella —
+// `bayer16_to` stays the `BE = false` convenience wrapper.
 pub use mediaframe::{
   frame::{
-    Bayer10Frame, Bayer12Frame, Bayer14Frame, Bayer16Frame, BayerFrame16Error, BayerRow16,
-    BayerSink16, bayer16_to,
+    Bayer10BeFrame, Bayer10Frame, Bayer12BeFrame, Bayer12Frame, Bayer14BeFrame, Bayer14Frame,
+    Bayer16BeFrame, Bayer16Frame, BayerFrame16Error, BayerRow16, BayerSink16, bayer16_to,
+    bayer16_to_endian,
   },
-  source::{Bayer10, Bayer12, Bayer14, Bayer16, Bayer16Bit},
+  source::{
+    Bayer10, Bayer10Be, Bayer12, Bayer12Be, Bayer14, Bayer14Be, Bayer16, Bayer16Bit, Bayer16BitBe,
+  },
 };
 
 #[cfg(all(test, feature = "std"))]
