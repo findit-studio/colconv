@@ -106,6 +106,8 @@ mod planar_gbr;
 mod planar_gbr_float;
 #[cfg(feature = "gbr")]
 mod planar_gbr_high_bit;
+#[cfg(feature = "gbr")]
+mod planar_gbr_msb;
 #[cfg(feature = "yuv-semi-planar")]
 mod semi_planar_8bit;
 // Both the 4:2:0 (P010/P012/P016) and 4:4:4 (P410/P412/P416) kernels
@@ -176,6 +178,8 @@ pub(crate) use planar_gbr::*;
 pub(crate) use planar_gbr_float::*;
 #[cfg(feature = "gbr")]
 pub(crate) use planar_gbr_high_bit::*;
+#[cfg(feature = "gbr")]
+pub(crate) use planar_gbr_msb::*;
 #[cfg(feature = "yuv-semi-planar")]
 pub(crate) use semi_planar_8bit::*;
 #[cfg(feature = "yuv-semi-planar")]

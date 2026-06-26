@@ -2432,6 +2432,164 @@ mod gbr_parity {
       }
     }
   }
+
+  /// MSB-align low-packed `u16` samples into the high `bits` of each element.
+  fn msb_align(p: &[u16], bits: u32) -> std::vec::Vec<u16> {
+    p.iter().map(|&s| s << (16 - bits)).collect()
+  }
+
+  /// Gbrp10Msb LE — MSB-aligned high-bit planar GBR (sample in high 10 bits).
+  /// Drives the `@const_bits` impl at `<const BE = false>` against the LE
+  /// `gbrp10_msb_to` wrapper.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_gbrp10_msb_le_matches_direct() {
+    use crate::{
+      frame::Gbrp10MsbLeFrame,
+      source::{Gbrp10Msb, gbrp10_msb_to},
+    };
+    let (g, b, r) = planes16(10);
+    let (g, b, r) = (msb_align(&g, 10), msb_align(&b, 10), msb_align(&r, 10));
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Gbrp10MsbLeFrame::new(&g, &b, &r, W, H, W, W, W);
+
+        let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut sw = MixedSinker::<Gbrp10Msb>::new(W as usize, H as usize)
+          .with_rgb(&mut via_walker)
+          .unwrap();
+        <Gbrp10Msb as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Gbrp10Msb>::new(W as usize, H as usize)
+          .with_rgb(&mut via_direct)
+          .unwrap();
+        gbrp10_msb_to(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "gbrp10msb LE parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
+  /// Gbrp12Msb BE — drives the `@const_bits` impl at `Gbrp12Msb<true>` against
+  /// the `Gbrp12MsbBeFrame` alias, compared to a direct
+  /// `gbrp12_msb_to_endian::<_, true>`.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_gbrp12_msb_be_matches_direct() {
+    use crate::{
+      frame::Gbrp12MsbBeFrame,
+      source::{Gbrp12Msb, gbrp12_msb_to_endian},
+    };
+    let (g, b, r) = planes16(12);
+    let (g, b, r) = (msb_align(&g, 12), msb_align(&b, 12), msb_align(&r, 12));
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Gbrp12MsbBeFrame::new(&g, &b, &r, W, H, W, W, W);
+
+        let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut sw = MixedSinker::<Gbrp12Msb<true>>::new(W as usize, H as usize)
+          .with_rgb(&mut via_walker)
+          .unwrap();
+        <Gbrp12Msb<true> as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Gbrp12Msb<true>>::new(W as usize, H as usize)
+          .with_rgb(&mut via_direct)
+          .unwrap();
+        gbrp12_msb_to_endian::<_, true>(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "gbrp12msb BE parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
+  /// Like `walk_gbr_forwards_full_range_and_matrix_via_luma` but for the MSB
+  /// markers: GBR → luma weights G/B/R through the matrix and scales by
+  /// `full_range`, so luma parity proves the Walker forwards both knobs into
+  /// `gbrp{10,12}_msb_to_endian`. Covers both endians of each MSB depth.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_gbr_msb_forwards_full_range_and_matrix_via_luma() {
+    use crate::{
+      frame::{Gbrp10MsbLeFrame, Gbrp12MsbBeFrame},
+      source::{Gbrp10Msb, Gbrp12Msb, gbrp10_msb_to, gbrp12_msb_to_endian},
+    };
+    let (g10, b10, r10) = planes16(10);
+    let (g10, b10, r10) = (
+      msb_align(&g10, 10),
+      msb_align(&b10, 10),
+      msb_align(&r10, 10),
+    );
+    let (g12, b12, r12) = planes16(12);
+    let (g12, b12, r12) = (
+      msb_align(&g12, 12),
+      msb_align(&b12, 12),
+      msb_align(&r12, 12),
+    );
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+
+        let src = Gbrp10MsbLeFrame::new(&g10, &b10, &r10, W, H, W, W, W);
+        let mut vw = std::vec![0u16; (W * H) as usize];
+        let mut vd = std::vec![0u16; (W * H) as usize];
+        let mut sw = MixedSinker::<Gbrp10Msb>::new(W as usize, H as usize)
+          .with_luma_u16(&mut vw)
+          .unwrap();
+        <Gbrp10Msb as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+        let mut sd = MixedSinker::<Gbrp10Msb>::new(W as usize, H as usize)
+          .with_luma_u16(&mut vd)
+          .unwrap();
+        gbrp10_msb_to(&src, full_range, matrix, &mut sd).unwrap();
+        assert_eq!(
+          vw, vd,
+          "gbrp10msb LE luma parity (full_range={full_range}, matrix={matrix:?})"
+        );
+
+        let src = Gbrp12MsbBeFrame::new(&g12, &b12, &r12, W, H, W, W, W);
+        let mut vw = std::vec![0u16; (W * H) as usize];
+        let mut vd = std::vec![0u16; (W * H) as usize];
+        let mut sw = MixedSinker::<Gbrp12Msb<true>>::new(W as usize, H as usize)
+          .with_luma_u16(&mut vw)
+          .unwrap();
+        <Gbrp12Msb<true> as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+        let mut sd = MixedSinker::<Gbrp12Msb<true>>::new(W as usize, H as usize)
+          .with_luma_u16(&mut vd)
+          .unwrap();
+        gbrp12_msb_to_endian::<_, true>(&src, full_range, matrix, &mut sd).unwrap();
+        assert_eq!(
+          vw, vd,
+          "gbrp12msb BE luma parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
 }
 
 // ---- Parity: packed float RGB (Rgbf16 / Rgbf32; reuse YuvOptions) ------

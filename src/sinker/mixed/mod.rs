@@ -14086,6 +14086,8 @@ mod planar_gbr_f16;
 mod planar_gbr_float;
 #[cfg(feature = "gbr")]
 mod planar_gbr_high_bit;
+#[cfg(feature = "gbr")]
+mod planar_gbr_msb;
 /// Format-agnostic planar-YUV resample helpers (the 4:2:0 native /
 /// row-stage join and the shared row-stage path), reused by the 8-bit
 /// planar family, the semi-planar family, and the packed YUV family
