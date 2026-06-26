@@ -94,6 +94,8 @@ mod mono1bit;
 mod packed_rgb;
 #[cfg(feature = "rgb")]
 mod packed_rgb_16bit;
+#[cfg(feature = "rgb")]
+mod packed_rgb_32bit;
 #[cfg(feature = "rgb-float")]
 mod packed_rgb_float;
 #[cfg(feature = "yuv-packed")]
@@ -166,6 +168,9 @@ pub(crate) use packed_rgb::*;
 #[cfg(feature = "rgb")]
 #[allow(unused_imports)]
 pub(crate) use packed_rgb_16bit::*;
+#[cfg(feature = "rgb")]
+#[allow(unused_imports)]
+pub(crate) use packed_rgb_32bit::*;
 #[cfg(feature = "rgb-float")]
 pub(crate) use packed_rgb_float::*;
 #[cfg(feature = "yuv-packed")]

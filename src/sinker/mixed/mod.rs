@@ -1451,6 +1451,10 @@ pub enum RowSlice {
   /// [`Rgba64Packed`](Self::Rgba64Packed); alpha at slot 3 is real).
   #[display("BGRA64 packed")]
   Bgra64Packed,
+  /// Packed `R, G, B` row of an [`Rgb96`](crate::source::Rgb96) source —
+  /// `width * 3` u32 elements (each channel 32 bits, R, G, B order).
+  #[display("RGB96 packed")]
+  Rgb96Packed,
 }
 
 /// How a packed-alpha source's color channels relate to its alpha when
@@ -14028,6 +14032,8 @@ mod mono1bit;
 mod packed_rgb_10bit;
 #[cfg(feature = "rgb")]
 mod packed_rgb_16bit;
+#[cfg(feature = "rgb")]
+mod packed_rgb_32bit;
 #[cfg(feature = "rgb")]
 mod packed_rgb_8bit;
 #[cfg(feature = "rgb-float")]

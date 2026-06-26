@@ -1,0 +1,220 @@
+use super::*;
+use crate::{
+  frame::{Rgb96BeFrame, Rgb96Frame},
+  sinker::mixed::MixedSinker,
+  source::{Rgb96, rgb96_to},
+};
+
+/// Re-encode a host-native u32 slice as LE-encoded byte storage. Sink kernels
+/// recover the intended logical values via `u32::from_le` on both LE (no-op)
+/// and BE (byte-swap) hosts.
+fn as_le_u32(host: &[u32]) -> std::vec::Vec<u32> {
+  host
+    .iter()
+    .map(|v| u32::from_ne_bytes(v.to_le_bytes()))
+    .collect()
+}
+
+/// Mirror of [`as_le_u32`] for the BE-encoded source path.
+fn as_be_u32(host: &[u32]) -> std::vec::Vec<u32> {
+  host
+    .iter()
+    .map(|v| u32::from_ne_bytes(v.to_be_bytes()))
+    .collect()
+}
+
+// ---- Rgb96 -----------------------------------------------------------------
+
+#[test]
+fn rgb96_with_rgb_u16_narrows_16() {
+  // Each 32-bit channel narrowed >> 16.
+  let src = as_le_u32(&[0x1234_5678, 0x5678_9ABC, 0x9ABC_DEF0]);
+  let frame = Rgb96Frame::new(&src, 1, 1, 3);
+  let mut out = vec![0u16; 3];
+  let mut sinker = MixedSinker::<Rgb96>::new(1, 1)
+    .with_rgb_u16(&mut out)
+    .unwrap();
+  rgb96_to(&frame, true, ColorMatrix::Bt709, &mut sinker).unwrap();
+  assert_eq!(out, vec![0x1234u16, 0x5678, 0x9ABC]);
+}
+
+#[test]
+fn rgb96_with_rgb_narrows_24() {
+  // Each 32-bit channel narrowed >> 24.
+  let src = as_le_u32(&[0xFF00_0000, 0x8000_0000, 0x0100_0000]);
+  let frame = Rgb96Frame::new(&src, 1, 1, 3);
+  let mut out = vec![0u8; 3];
+  let mut sinker = MixedSinker::<Rgb96>::new(1, 1).with_rgb(&mut out).unwrap();
+  rgb96_to(&frame, true, ColorMatrix::Bt709, &mut sinker).unwrap();
+  assert_eq!(out, vec![0xFFu8, 0x80, 0x01]);
+}
+
+#[test]
+fn rgb96_with_rgba_forces_0xff() {
+  let src = as_le_u32(&[0xFFFF_FFFF, 0x8000_0000, 0x0000_0000]);
+  let frame = Rgb96Frame::new(&src, 1, 1, 3);
+  let mut out = vec![0u8; 4];
+  let mut sinker = MixedSinker::<Rgb96>::new(1, 1).with_rgba(&mut out).unwrap();
+  rgb96_to(&frame, true, ColorMatrix::Bt709, &mut sinker).unwrap();
+  assert_eq!(out[3], 0xFF); // alpha forced to opaque
+  assert_eq!(out[0], 0xFF);
+}
+
+#[test]
+fn rgb96_with_rgba_u16_forces_0xffff() {
+  let src = as_le_u32(&[0x1000_0000, 0x2000_0000, 0x3000_0000]);
+  let frame = Rgb96Frame::new(&src, 1, 1, 3);
+  let mut out = vec![0u16; 4];
+  let mut sinker = MixedSinker::<Rgb96>::new(1, 1)
+    .with_rgba_u16(&mut out)
+    .unwrap();
+  rgb96_to(&frame, true, ColorMatrix::Bt709, &mut sinker).unwrap();
+  assert_eq!(out[0], 0x1000);
+  assert_eq!(out[3], 0xFFFF);
+}
+
+#[test]
+fn rgb96_with_rgb_u16_and_rgba_u16_both_correct() {
+  let intended: [u32; 6] = [
+    0x1234_0000,
+    0x5678_0000,
+    0x9ABC_0000,
+    0xDEF0_0000,
+    0x1357_0000,
+    0x2468_0000,
+  ];
+  let src = as_le_u32(&intended);
+  let frame = Rgb96Frame::new(&src, 2, 1, 6);
+  let mut rgb_u16 = vec![0u16; 6];
+  let mut rgba_u16 = vec![0u16; 8];
+  let mut sinker = MixedSinker::<Rgb96>::new(2, 1)
+    .with_rgb_u16(&mut rgb_u16)
+    .unwrap()
+    .with_rgba_u16(&mut rgba_u16)
+    .unwrap();
+  rgb96_to(&frame, true, ColorMatrix::Bt709, &mut sinker).unwrap();
+  assert_eq!(
+    rgb_u16,
+    vec![0x1234u16, 0x5678, 0x9ABC, 0xDEF0, 0x1357, 0x2468]
+  );
+  assert_eq!(rgba_u16[3], 0xFFFF);
+  assert_eq!(rgba_u16[7], 0xFFFF);
+}
+
+#[test]
+fn rgb96_with_luma_non_zero_for_nonzero_input() {
+  let src = as_le_u32(&[0x8000_0000, 0x8000_0000, 0x8000_0000]);
+  let frame = Rgb96Frame::new(&src, 1, 1, 3);
+  let mut luma = vec![0u8; 1];
+  let mut sinker = MixedSinker::<Rgb96>::new(1, 1)
+    .with_luma(&mut luma)
+    .unwrap();
+  rgb96_to(&frame, true, ColorMatrix::Bt709, &mut sinker).unwrap();
+  assert_ne!(luma[0], 0);
+}
+
+#[test]
+fn rgb96_with_luma_u16_non_zero_for_nonzero_input() {
+  let src = as_le_u32(&[0x8000_0000, 0x8000_0000, 0x8000_0000]);
+  let frame = Rgb96Frame::new(&src, 1, 1, 3);
+  let mut luma_u16 = vec![0u16; 1];
+  let mut sinker = MixedSinker::<Rgb96>::new(1, 1)
+    .with_luma_u16(&mut luma_u16)
+    .unwrap();
+  rgb96_to(&frame, true, ColorMatrix::Bt709, &mut sinker).unwrap();
+  assert_ne!(luma_u16[0], 0);
+}
+
+#[test]
+fn rgb96_with_hsv_value_tracks_max_channel() {
+  // Pure red at full intensity → HSV value (V) channel is max (255).
+  let src = as_le_u32(&[0xFFFF_FFFF, 0x0000_0000, 0x0000_0000]);
+  let frame = Rgb96Frame::new(&src, 1, 1, 3);
+  let mut h = vec![0u8; 1];
+  let mut s = vec![0u8; 1];
+  let mut v = vec![0u8; 1];
+  let mut sinker = MixedSinker::<Rgb96>::new(1, 1)
+    .with_hsv(&mut h, &mut s, &mut v)
+    .unwrap();
+  rgb96_to(&frame, true, ColorMatrix::Bt709, &mut sinker).unwrap();
+  assert_eq!(v[0], 0xFF, "value tracks max channel");
+  assert_eq!(s[0], 0xFF, "fully saturated");
+}
+
+#[test]
+fn rgb96_simd_matches_scalar() {
+  // width=19: SIMD path (if available) vs forced scalar path, all outputs.
+  let w: usize = 19;
+  let src: Vec<u32> = (0..w * 3)
+    .map(|i| (i as u32).wrapping_mul(0x0100_1001))
+    .collect();
+  let frame = Rgb96Frame::new(&src, w as u32, 1, w as u32 * 3);
+  let mut rgb_simd = vec![0u8; w * 3];
+  let mut rgba_simd = vec![0u8; w * 4];
+  let mut rgb_u16_simd = vec![0u16; w * 3];
+  let mut rgba_u16_simd = vec![0u16; w * 4];
+  let mut s1 = MixedSinker::<Rgb96>::new(w, 1)
+    .with_rgb(&mut rgb_simd)
+    .unwrap()
+    .with_rgba(&mut rgba_simd)
+    .unwrap()
+    .with_rgb_u16(&mut rgb_u16_simd)
+    .unwrap()
+    .with_rgba_u16(&mut rgba_u16_simd)
+    .unwrap();
+  rgb96_to(&frame, true, ColorMatrix::Bt709, &mut s1).unwrap();
+
+  let mut rgb_scalar = vec![0u8; w * 3];
+  let mut rgba_scalar = vec![0u8; w * 4];
+  let mut rgb_u16_scalar = vec![0u16; w * 3];
+  let mut rgba_u16_scalar = vec![0u16; w * 4];
+  let mut s2 = MixedSinker::<Rgb96>::new(w, 1)
+    .with_rgb(&mut rgb_scalar)
+    .unwrap()
+    .with_rgba(&mut rgba_scalar)
+    .unwrap()
+    .with_rgb_u16(&mut rgb_u16_scalar)
+    .unwrap()
+    .with_rgba_u16(&mut rgba_u16_scalar)
+    .unwrap();
+  s2.set_simd(false);
+  rgb96_to(&frame, true, ColorMatrix::Bt709, &mut s2).unwrap();
+
+  assert_eq!(rgb_simd, rgb_scalar, "rgb");
+  assert_eq!(rgba_simd, rgba_scalar, "rgba");
+  assert_eq!(rgb_u16_simd, rgb_u16_scalar, "rgb_u16");
+  assert_eq!(rgba_u16_simd, rgba_u16_scalar, "rgba_u16");
+}
+
+#[test]
+fn rgb96_be_le_decode_agree() {
+  // A single host-native `intended` fixture re-encoded LE / BE must decode to
+  // the same host-native u16 RGB through the matching-endian frame + walker.
+  let intended: [u32; 6] = [
+    0x1234_5678,
+    0x5678_9ABC,
+    0x9ABC_DEF0,
+    0x0011_2233,
+    0x4455_6677,
+    0x8899_AABB,
+  ];
+  let src_le = as_le_u32(&intended);
+  let src_be = as_be_u32(&intended);
+  let le_frame = Rgb96Frame::new(&src_le, 2, 1, 6);
+  let be_frame = Rgb96BeFrame::new(&src_be, 2, 1, 6);
+  let mut out_le = vec![0u16; 6];
+  let mut out_be = vec![0u16; 6];
+  let mut s_le = MixedSinker::<Rgb96>::new(2, 1)
+    .with_rgb_u16(&mut out_le)
+    .unwrap();
+  rgb96_to(&le_frame, true, ColorMatrix::Bt709, &mut s_le).unwrap();
+  let mut s_be = MixedSinker::<Rgb96<true>>::new(2, 1)
+    .with_rgb_u16(&mut out_be)
+    .unwrap();
+  crate::source::rgb96_to_endian::<_, true>(&be_frame, true, ColorMatrix::Bt709, &mut s_be)
+    .unwrap();
+  let expected: Vec<u16> = intended.iter().map(|&v| (v >> 16) as u16).collect();
+  assert_eq!(out_le, expected, "LE decode");
+  assert_eq!(out_be, expected, "BE decode");
+  assert_eq!(out_le, out_be, "BE and LE agree");
+}

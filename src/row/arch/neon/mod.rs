@@ -123,6 +123,8 @@ pub(crate) mod mono1bit;
 mod packed_rgb;
 #[cfg(feature = "rgb")]
 mod packed_rgb_16bit;
+#[cfg(feature = "rgb")]
+mod packed_rgb_32bit;
 #[cfg(feature = "rgb-float")]
 mod packed_rgb_float;
 #[cfg(feature = "yuv-packed")]
@@ -202,6 +204,9 @@ pub(crate) use packed_rgb::*;
 #[cfg(feature = "rgb")]
 #[allow(unused_imports)]
 pub(crate) use packed_rgb_16bit::*;
+#[cfg(feature = "rgb")]
+#[allow(unused_imports)]
+pub(crate) use packed_rgb_32bit::*;
 #[cfg(feature = "rgb-float")]
 pub(crate) use packed_rgb_float::*;
 #[cfg(feature = "yuv-packed")]
@@ -526,9 +531,10 @@ pub(super) unsafe fn bswap_u16x8_if_be<const BE: bool>(v: uint16x8_t) -> uint16x
 /// Same `BE != HOST_NATIVE_BE` gate as [`bswap_u16x8_if_be`] — see that
 /// helper for the truth table.
 ///
-/// Used by the V410 kernel after `vld1q_u32` to correct u32 words loaded
-/// from a wire-encoded buffer.
-#[cfg(feature = "yuv-444-packed")]
+/// Used by the V410 kernel after `vld1q_u32` and by the packed 32-bit RGB
+/// (Rgb96 / Rgba128) kernels after `vld3q_u32` / `vld4q_u32` to correct u32
+/// words loaded from a wire-encoded buffer.
+#[cfg(any(feature = "rgb", feature = "yuv-444-packed"))]
 #[inline(always)]
 pub(super) unsafe fn bswap_u32x4_if_be<const BE: bool>(v: uint32x4_t) -> uint32x4_t {
   if BE != HOST_NATIVE_BE {
