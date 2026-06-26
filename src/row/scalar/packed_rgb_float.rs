@@ -437,3 +437,387 @@ pub(crate) fn rgbf16_to_rgb_f16_row<const BE: bool>(
     });
   }
 }
+
+// ---- Tier 9 — Rgbaf32 scalar row kernels (4-channel, real alpha) -------
+//
+// The alpha-bearing twin of the `rgbf32_to_*_row` kernels above. Input is
+// packed `R, G, B, A` `f32` (`4 * width` elements). Two output families:
+//   - **drop-alpha** (`*_to_rgb*`): emit `R, G, B` only, alpha discarded.
+//   - **real-alpha** (`*_to_rgba*`): emit `R, G, B, A`, the source alpha
+//     clamped + scaled exactly like a colour channel (integer outputs) or
+//     passed through losslessly (float outputs).
+// Every per-element conversion reuses the same `f32_to_u8_clamped` /
+// `f32_to_u16_clamped` / `load_f32` helpers, so an `Rgbaf32` output is
+// byte-identical to the `Rgbf32` output of its `R, G, B` for the dropped-
+// alpha paths.
+
+/// Converts packed `R, G, B, A` `f32` input to packed `R, G, B` `u8`
+/// output, **dropping** the source alpha. Each colour `f32` is clamped to
+/// `[0, 1]` and scaled by 255.
+///
+/// When `BE = true` the input `f32` values are big-endian encoded.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `rgba_in.len() < 4 * width` or
+/// `rgb_out.len() < 3 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbaf32_to_rgb_row<const BE: bool>(
+  rgba_in: &[f32],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(rgba_in.len() >= width * 4, "rgbaf32 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+  for x in 0..width {
+    let s = x * 4;
+    let d = x * 3;
+    rgb_out[d] = f32_to_u8_clamped(load_f32::<BE>(rgba_in, s));
+    rgb_out[d + 1] = f32_to_u8_clamped(load_f32::<BE>(rgba_in, s + 1));
+    rgb_out[d + 2] = f32_to_u8_clamped(load_f32::<BE>(rgba_in, s + 2));
+  }
+}
+
+/// Converts packed `R, G, B, A` `f32` input to packed `R, G, B, A` `u8`
+/// output with **real** alpha — every channel (alpha included) is clamped
+/// to `[0, 1]` and scaled by 255. Purely elementwise over `4 * width`.
+///
+/// When `BE = true` the input `f32` values are big-endian encoded.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `rgba_in.len() < 4 * width` or
+/// `rgba_out.len() < 4 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbaf32_to_rgba_row<const BE: bool>(
+  rgba_in: &[f32],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(rgba_in.len() >= width * 4, "rgbaf32 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+  for (i, dst) in rgba_out[..width * 4].iter_mut().enumerate() {
+    *dst = f32_to_u8_clamped(load_f32::<BE>(rgba_in, i));
+  }
+}
+
+/// Converts packed `R, G, B, A` `f32` input to packed `R, G, B` `u16`
+/// output, dropping alpha. Each colour `f32` is clamped to `[0, 1]` and
+/// scaled by 65535.
+///
+/// When `BE = true` the input `f32` values are big-endian encoded.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `rgba_in.len() < 4 * width` or
+/// `rgb_out.len() < 3 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbaf32_to_rgb_u16_row<const BE: bool>(
+  rgba_in: &[f32],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(rgba_in.len() >= width * 4, "rgbaf32 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+  for x in 0..width {
+    let s = x * 4;
+    let d = x * 3;
+    rgb_out[d] = f32_to_u16_clamped(load_f32::<BE>(rgba_in, s));
+    rgb_out[d + 1] = f32_to_u16_clamped(load_f32::<BE>(rgba_in, s + 1));
+    rgb_out[d + 2] = f32_to_u16_clamped(load_f32::<BE>(rgba_in, s + 2));
+  }
+}
+
+/// Converts packed `R, G, B, A` `f32` input to packed `R, G, B, A` `u16`
+/// output with real alpha — every channel clamped to `[0, 1]` and scaled
+/// by 65535. Purely elementwise over `4 * width`.
+///
+/// When `BE = true` the input `f32` values are big-endian encoded.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `rgba_in.len() < 4 * width` or
+/// `rgba_out.len() < 4 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbaf32_to_rgba_u16_row<const BE: bool>(
+  rgba_in: &[f32],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(rgba_in.len() >= width * 4, "rgbaf32 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+  for (i, dst) in rgba_out[..width * 4].iter_mut().enumerate() {
+    *dst = f32_to_u16_clamped(load_f32::<BE>(rgba_in, i));
+  }
+}
+
+/// **Lossless** float drop-alpha: copies the packed `R, G, B` channels of
+/// the `f32` RGBA row into a packed `R, G, B` `f32` output (alpha dropped).
+/// HDR values (> 1.0) and negatives are preserved bit-exact.
+///
+/// When `BE = true` the input is byte-swapped (big-endian → host-native).
+///
+/// # Panics
+///
+/// Panics (any build profile) if `rgba_in.len() < 4 * width` or
+/// `rgb_out.len() < 3 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbaf32_to_rgb_f32_row<const BE: bool>(
+  rgba_in: &[f32],
+  rgb_out: &mut [f32],
+  width: usize,
+) {
+  debug_assert!(rgba_in.len() >= width * 4, "rgbaf32 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_f32_out row too short");
+  for x in 0..width {
+    let s = x * 4;
+    let d = x * 3;
+    rgb_out[d] = load_f32::<BE>(rgba_in, s);
+    rgb_out[d + 1] = load_f32::<BE>(rgba_in, s + 1);
+    rgb_out[d + 2] = load_f32::<BE>(rgba_in, s + 2);
+  }
+}
+
+/// **Lossless** float pass-through: copies the packed `R, G, B, A` `f32`
+/// row into the output buffer (4 channels, alpha included) without
+/// conversion. HDR values and negatives are preserved bit-exact.
+///
+/// When `BE = true` the input is byte-swapped (big-endian → host-native)
+/// so the output is always host-native `f32`.
+///
+/// # Panics
+///
+/// Panics (any build profile) if `rgba_in.len() < 4 * width` or
+/// `rgba_out.len() < 4 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbaf32_to_rgba_f32_row<const BE: bool>(
+  rgba_in: &[f32],
+  rgba_out: &mut [f32],
+  width: usize,
+) {
+  debug_assert!(rgba_in.len() >= width * 4, "rgbaf32 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_f32_out row too short");
+  // Fast path: encoded byte order matches host-native — pure memcpy
+  // (mirrors `rgbf32_to_rgb_f32_row`; the const branch is DCE'd).
+  const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+  if BE == HOST_NATIVE_BE {
+    rgba_out[..width * 4].copy_from_slice(&rgba_in[..width * 4]);
+    return;
+  }
+  for (dst, src) in rgba_out[..width * 4]
+    .iter_mut()
+    .zip(rgba_in[..width * 4].iter())
+  {
+    let bits = src.to_bits();
+    *dst = f32::from_bits(if BE {
+      u32::from_be(bits)
+    } else {
+      u32::from_le(bits)
+    });
+  }
+}
+
+// ---- Tier 9 — Rgbaf16 scalar row kernels (4-channel, real alpha) -------
+//
+// The half-precision twin of the `rgbaf32_*` kernels: each `half::f16`
+// element is widened to `f32` on the fly (drop-alpha / integer / widen
+// paths) or copied bit-exact (the `_f16_*` lossless paths). Input is
+// packed `R, G, B, A` `half::f16` (`4 * width` elements).
+
+/// Packed `R, G, B, A` `f16` → packed `R, G, B` `u8` (drop alpha).
+///
+/// When `BE = true` the input `half::f16` values are big-endian encoded.
+///
+/// # Panics
+///
+/// Panics if `rgba_in.len() < 4 * width` or `rgb_out.len() < 3 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbaf16_to_rgb_row<const BE: bool>(
+  rgba_in: &[half::f16],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(rgba_in.len() >= width * 4, "rgbaf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+  for x in 0..width {
+    let s = x * 4;
+    let d = x * 3;
+    rgb_out[d] = f32_to_u8_clamped(load_f16::<BE>(rgba_in, s).to_f32());
+    rgb_out[d + 1] = f32_to_u8_clamped(load_f16::<BE>(rgba_in, s + 1).to_f32());
+    rgb_out[d + 2] = f32_to_u8_clamped(load_f16::<BE>(rgba_in, s + 2).to_f32());
+  }
+}
+
+/// Packed `R, G, B, A` `f16` → packed `R, G, B, A` `u8` (real alpha,
+/// elementwise clamp + scale by 255).
+///
+/// When `BE = true` the input `half::f16` values are big-endian encoded.
+///
+/// # Panics
+///
+/// Panics if `rgba_in.len() < 4 * width` or `rgba_out.len() < 4 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbaf16_to_rgba_row<const BE: bool>(
+  rgba_in: &[half::f16],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(rgba_in.len() >= width * 4, "rgbaf16 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+  for (i, dst) in rgba_out[..width * 4].iter_mut().enumerate() {
+    *dst = f32_to_u8_clamped(load_f16::<BE>(rgba_in, i).to_f32());
+  }
+}
+
+/// Packed `R, G, B, A` `f16` → packed `R, G, B` `u16` (drop alpha).
+///
+/// When `BE = true` the input `half::f16` values are big-endian encoded.
+///
+/// # Panics
+///
+/// Panics if `rgba_in.len() < 4 * width` or `rgb_out.len() < 3 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbaf16_to_rgb_u16_row<const BE: bool>(
+  rgba_in: &[half::f16],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(rgba_in.len() >= width * 4, "rgbaf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+  for x in 0..width {
+    let s = x * 4;
+    let d = x * 3;
+    rgb_out[d] = f32_to_u16_clamped(load_f16::<BE>(rgba_in, s).to_f32());
+    rgb_out[d + 1] = f32_to_u16_clamped(load_f16::<BE>(rgba_in, s + 1).to_f32());
+    rgb_out[d + 2] = f32_to_u16_clamped(load_f16::<BE>(rgba_in, s + 2).to_f32());
+  }
+}
+
+/// Packed `R, G, B, A` `f16` → packed `R, G, B, A` `u16` (real alpha,
+/// elementwise clamp + scale by 65535).
+///
+/// When `BE = true` the input `half::f16` values are big-endian encoded.
+///
+/// # Panics
+///
+/// Panics if `rgba_in.len() < 4 * width` or `rgba_out.len() < 4 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbaf16_to_rgba_u16_row<const BE: bool>(
+  rgba_in: &[half::f16],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(rgba_in.len() >= width * 4, "rgbaf16 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+  for (i, dst) in rgba_out[..width * 4].iter_mut().enumerate() {
+    *dst = f32_to_u16_clamped(load_f16::<BE>(rgba_in, i).to_f32());
+  }
+}
+
+/// Widening drop-alpha: packed `R, G, B, A` `f16` → packed `R, G, B` `f32`
+/// (alpha dropped). HDR values and negatives preserved through the widen.
+///
+/// When `BE = true` the input `half::f16` values are big-endian encoded.
+///
+/// # Panics
+///
+/// Panics if `rgba_in.len() < 4 * width` or `rgb_out.len() < 3 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbaf16_to_rgb_f32_row<const BE: bool>(
+  rgba_in: &[half::f16],
+  rgb_out: &mut [f32],
+  width: usize,
+) {
+  debug_assert!(rgba_in.len() >= width * 4, "rgbaf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_f32_out row too short");
+  for x in 0..width {
+    let s = x * 4;
+    let d = x * 3;
+    rgb_out[d] = load_f16::<BE>(rgba_in, s).to_f32();
+    rgb_out[d + 1] = load_f16::<BE>(rgba_in, s + 1).to_f32();
+    rgb_out[d + 2] = load_f16::<BE>(rgba_in, s + 2).to_f32();
+  }
+}
+
+/// Widening pass-through: packed `R, G, B, A` `f16` → packed `R, G, B, A`
+/// `f32` (4 channels, alpha widened too). HDR and negatives preserved.
+///
+/// When `BE = true` the input `half::f16` values are big-endian encoded.
+///
+/// # Panics
+///
+/// Panics if `rgba_in.len() < 4 * width` or `rgba_out.len() < 4 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbaf16_to_rgba_f32_row<const BE: bool>(
+  rgba_in: &[half::f16],
+  rgba_out: &mut [f32],
+  width: usize,
+) {
+  debug_assert!(rgba_in.len() >= width * 4, "rgbaf16 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_f32_out row too short");
+  for (i, dst) in rgba_out[..width * 4].iter_mut().enumerate() {
+    *dst = load_f16::<BE>(rgba_in, i).to_f32();
+  }
+}
+
+/// **Lossless** drop-alpha: packed `R, G, B, A` `f16` → packed `R, G, B`
+/// `f16` (alpha dropped, no conversion). Source bit-patterns preserved.
+///
+/// When `BE = true` the input values are byte-swapped to host-native on
+/// output.
+///
+/// # Panics
+///
+/// Panics if `rgba_in.len() < 4 * width` or `rgb_out.len() < 3 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbaf16_to_rgb_f16_row<const BE: bool>(
+  rgba_in: &[half::f16],
+  rgb_out: &mut [half::f16],
+  width: usize,
+) {
+  debug_assert!(rgba_in.len() >= width * 4, "rgbaf16 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_f16_out row too short");
+  for x in 0..width {
+    let s = x * 4;
+    let d = x * 3;
+    rgb_out[d] = load_f16::<BE>(rgba_in, s);
+    rgb_out[d + 1] = load_f16::<BE>(rgba_in, s + 1);
+    rgb_out[d + 2] = load_f16::<BE>(rgba_in, s + 2);
+  }
+}
+
+/// **Lossless** pass-through: packed `R, G, B, A` `f16` → packed
+/// `R, G, B, A` `f16` (4 channels) without conversion. Source bit-patterns
+/// preserved bit-exact.
+///
+/// When `BE = true` the input values are byte-swapped to host-native on
+/// output.
+///
+/// # Panics
+///
+/// Panics if `rgba_in.len() < 4 * width` or `rgba_out.len() < 4 * width`.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgbaf16_to_rgba_f16_row<const BE: bool>(
+  rgba_in: &[half::f16],
+  rgba_out: &mut [half::f16],
+  width: usize,
+) {
+  debug_assert!(rgba_in.len() >= width * 4, "rgbaf16 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_f16_out row too short");
+  const HOST_NATIVE_BE: bool = cfg!(target_endian = "big");
+  if BE == HOST_NATIVE_BE {
+    rgba_out[..width * 4].copy_from_slice(&rgba_in[..width * 4]);
+    return;
+  }
+  for (dst, src) in rgba_out[..width * 4]
+    .iter_mut()
+    .zip(rgba_in[..width * 4].iter())
+  {
+    let bits = src.to_bits();
+    *dst = half::f16::from_bits(if BE {
+      u16::from_be(bits)
+    } else {
+      u16::from_le(bits)
+    });
+  }
+}

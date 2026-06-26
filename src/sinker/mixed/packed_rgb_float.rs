@@ -493,3 +493,473 @@ impl<const BE: bool> PixelSink for MixedSinker<'_, Rgbf32<BE>> {
     self.rgbf32_process_direct(row, use_simd)
   }
 }
+
+// ---- Rgbaf32 impl (packed float RGBA — real source alpha) --------------
+//
+// The alpha-bearing twin of the [`Rgbf32`] sinker. Each pixel is
+// `4 x f32` (linear `R, G, B, A`). Output paths mirror `Rgbf32` exactly,
+// extended with the real source alpha:
+// - `with_rgb` — clamp `[0, 1]` x 255 → packed `R, G, B` u8 (alpha dropped).
+// - `with_rgba` — same RGB conversion + the source alpha (clamp x 255).
+// - `with_rgb_u16` / `with_rgba_u16` — clamp x 65535 (full-range scaling;
+//   alpha real for the RGBA form).
+// - `with_rgb_f32` — lossless RGB pass-through (alpha dropped).
+// - `with_rgba_f32` — lossless 4-channel pass-through (alpha preserved).
+// - `with_luma` / `with_luma_u16` / `with_hsv` — staged through a u8 RGB
+//   scratch row (alpha ignored), matching `Rgbf32`.
+
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+use super::{
+  packed_rgba_f32_filter, packed_rgba_f32_resample_emit, packed_rgba_f32_resample_stream,
+  source_rgba_f32_scratch,
+};
+use crate::{
+  row::{
+    rgbaf32_to_rgb_f32_row, rgbaf32_to_rgb_row, rgbaf32_to_rgb_u16_row, rgbaf32_to_rgba_f32_row,
+    rgbaf32_to_rgba_row, rgbaf32_to_rgba_u16_row,
+  },
+  source::{Rgbaf32, Rgbaf32Row, Rgbaf32Sink},
+};
+
+impl<'a, R, const BE: bool> MixedSinker<'a, Rgbaf32<BE>, R> {
+  /// Attaches a packed **8-bit** RGBA output buffer. Colour channels are
+  /// clamped to `[0, 1]` and scaled by 255; alpha is the **source** alpha,
+  /// also clamped to `[0, 1]` and scaled by 255 (real per-pixel alpha).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgba(mut self, buf: &'a mut [u8]) -> Result<Self, MixedSinkerError> {
+    self.set_rgba(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgba`](Self::with_rgba).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgba(&mut self, buf: &'a mut [u8]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_elems(4)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::InsufficientRgbaBuffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
+    }
+    self.rgba = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a `u16` RGB output buffer (`width x height x 3` elements).
+  /// Each colour `f32` is clamped to `[0, 1]` and **scaled to the full u16
+  /// range** (x65535); alpha dropped. See the [`Rgbf32`] `with_rgb_u16`
+  /// divergence note vs integer-source families.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgb_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_rgb_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgb_u16`](Self::with_rgb_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgb_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_elems(3)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::InsufficientRgbU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
+    }
+    self.rgb_u16 = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a `u16` RGBA output buffer. Same `[0, 1]` x 65535 full-range
+  /// scaling as [`with_rgb_u16`](Self::with_rgb_u16); alpha is the real
+  /// source alpha (clamp x 65535).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgba_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_rgba_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgba_u16`](Self::with_rgba_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgba_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_elems(4)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::InsufficientRgbaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
+    }
+    self.rgba_u16 = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a **`u16`** luma output buffer. Y' is computed at u8
+  /// precision and zero-extended to `u16` (alpha ignored).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_luma_u16(mut self, buf: &'a mut [u16]) -> Result<Self, MixedSinkerError> {
+    self.set_luma_u16(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_luma_u16`](Self::with_luma_u16).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_luma_u16(&mut self, buf: &'a mut [u16]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_pixels()?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::InsufficientLumaU16Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
+    }
+    self.luma_u16 = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a packed f32 RGB output buffer. Lossless pass-through of the
+  /// `R, G, B` channels (alpha dropped) — HDR values > 1.0 and negatives
+  /// preserved bit-exact.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgb_f32(mut self, buf: &'a mut [f32]) -> Result<Self, MixedSinkerError> {
+    self.set_rgb_f32(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgb_f32`](Self::with_rgb_f32).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgb_f32(&mut self, buf: &'a mut [f32]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_elems(3)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::InsufficientRgbF32Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
+    }
+    self.rgb_f32 = Some(buf);
+    Ok(self)
+  }
+
+  /// Attaches a packed f32 RGBA output buffer. **Lossless** 4-channel
+  /// pass-through including the source alpha — HDR values > 1.0, negatives,
+  /// NaN, and Inf are preserved bit-exact.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn with_rgba_f32(mut self, buf: &'a mut [f32]) -> Result<Self, MixedSinkerError> {
+    self.set_rgba_f32(buf)?;
+    Ok(self)
+  }
+  /// In-place variant of [`with_rgba_f32`](Self::with_rgba_f32).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub fn set_rgba_f32(&mut self, buf: &'a mut [f32]) -> Result<&mut Self, MixedSinkerError> {
+    let expected = self.frame_elems(4)?;
+    if buf.len() < expected {
+      return Err(MixedSinkerError::InsufficientRgbaF32Buffer(
+        InsufficientBuffer::new(expected, buf.len()),
+      ));
+    }
+    self.rgba_f32 = Some(buf);
+    Ok(self)
+  }
+
+  /// Runs the identity (no-resample) output derivation for one source row
+  /// over every attached output buffer — the parity oracle the
+  /// area/filter-resample tail must reproduce for an identity plan.
+  fn rgbaf32_process_direct(
+    &mut self,
+    row: Rgbaf32Row<'_>,
+    use_simd: bool,
+  ) -> Result<(), MixedSinkerError> {
+    let w = self.width;
+    let h = self.height;
+    let idx = row.row();
+
+    let Self {
+      rgb,
+      rgb_u16,
+      rgb_f32,
+      rgba,
+      rgba_u16,
+      rgba_f32,
+      luma,
+      luma_u16,
+      hsv,
+      rgb_scratch,
+      ..
+    } = self;
+    let one_plane_start = idx * w;
+    let one_plane_end = one_plane_start + w;
+    let rgba_in = row.rgba();
+
+    // Lossless 4-channel f32 pass-through — emit first (independent).
+    if let Some(buf) = rgba_f32.as_deref_mut() {
+      let start = one_plane_start * 4;
+      let end = one_plane_end * 4;
+      rgbaf32_to_rgba_f32_row::<BE>(rgba_in, &mut buf[start..end], w, use_simd);
+    }
+
+    // Lossless RGB f32 pass-through (alpha dropped).
+    if let Some(buf) = rgb_f32.as_deref_mut() {
+      let start = one_plane_start * 3;
+      let end = one_plane_end * 3;
+      rgbaf32_to_rgb_f32_row::<BE>(rgba_in, &mut buf[start..end], w, use_simd);
+    }
+
+    // u16 RGB output (drop alpha) — direct float→u16 conversion.
+    if let Some(buf) = rgb_u16.as_deref_mut() {
+      let start = one_plane_start * 3;
+      let end = one_plane_end * 3;
+      rgbaf32_to_rgb_u16_row::<BE>(rgba_in, &mut buf[start..end], w, use_simd);
+    }
+
+    // u16 RGBA output (real alpha) — direct float→u16 conversion.
+    if let Some(buf) = rgba_u16.as_deref_mut() {
+      let rgba_row = rgba_u16_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
+      rgbaf32_to_rgba_u16_row::<BE>(rgba_in, rgba_row, w, use_simd);
+    }
+
+    // u8 RGBA standalone fast path — direct float→u8 when no RGB / luma /
+    // HSV consumer needs the staged u8 RGB row.
+    let want_rgba_u8 = rgba.is_some();
+    let want_rgb_u8 = rgb.is_some();
+    let want_luma_u8 = luma.is_some();
+    let want_luma_u16 = luma_u16.is_some();
+    let want_hsv = hsv.is_some();
+    let need_u8_rgb = want_rgb_u8 || want_luma_u8 || want_luma_u16 || want_hsv;
+
+    if want_rgba_u8 && !need_u8_rgb {
+      let rgba_buf = rgba.as_deref_mut().unwrap();
+      let rgba_row = rgba_plane_row_slice(rgba_buf, one_plane_start, one_plane_end, w, h)?;
+      rgbaf32_to_rgba_row::<BE>(rgba_in, rgba_row, w, use_simd);
+      return Ok(());
+    }
+
+    if !need_u8_rgb && !want_rgba_u8 {
+      return Ok(());
+    }
+
+    // Stage the u8 RGB scratch row once (alpha dropped). When the user
+    // requested an RGB output buffer it doubles as the shared u8 RGB row.
+    let rgb_row = rgb_row_buf_or_scratch(
+      rgb.as_deref_mut(),
+      rgb_scratch,
+      one_plane_start,
+      one_plane_end,
+      w,
+      h,
+    )?;
+    rgbaf32_to_rgb_row::<BE>(rgba_in, rgb_row, w, use_simd);
+
+    if let Some(luma) = luma.as_deref_mut() {
+      rgb_to_luma_row(
+        rgb_row,
+        &mut luma[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+    }
+
+    if let Some(luma_buf) = luma_u16.as_deref_mut() {
+      rgb_to_luma_u16_row(
+        rgb_row,
+        &mut luma_buf[one_plane_start..one_plane_end],
+        w,
+        row.matrix(),
+        row.full_range(),
+        use_simd,
+      );
+    }
+
+    if let Some(hsv) = hsv.as_mut() {
+      let (h, s, v) = hsv.hsv();
+      rgb_to_hsv_row(
+        rgb_row,
+        &mut h[one_plane_start..one_plane_end],
+        &mut s[one_plane_start..one_plane_end],
+        &mut v[one_plane_start..one_plane_end],
+        w,
+        use_simd,
+      );
+    }
+
+    // u8 RGBA output (combined with RGB/luma/HSV path) — direct from the
+    // float source so the real source alpha lands in slot 3.
+    if let Some(buf) = rgba.as_deref_mut() {
+      let rgba_row = rgba_plane_row_slice(buf, one_plane_start, one_plane_end, w, h)?;
+      rgbaf32_to_rgba_row::<BE>(rgba_in, rgba_row, w, use_simd);
+    }
+
+    Ok(())
+  }
+}
+
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+impl<R, const BE: bool> Rgbaf32Sink<BE> for MixedSinker<'_, Rgbaf32<BE>, R> {}
+
+#[cfg(any(feature = "yuv-planar", feature = "rgb"))]
+impl<R, const BE: bool> PixelSink for MixedSinker<'_, Rgbaf32<BE>, R> {
+  type Input<'r> = Rgbaf32Row<'r>;
+  type Error = MixedSinkerError;
+
+  fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
+    check_dimensions_match(self.width, self.height, width, height)?;
+    if let Some(stream) = self.rgba_stream_f32.as_mut() {
+      stream.reset();
+    }
+    if let Some(stream) = self.rgba_filter_stream_f32.as_mut() {
+      stream.reset();
+    }
+    self.resample_outputs = None;
+    Ok(())
+  }
+
+  fn process(&mut self, row: Rgbaf32Row<'_>) -> Result<(), Self::Error> {
+    let w = self.width;
+    let idx = row.row();
+    let use_simd = self.simd;
+
+    if row.rgba().len() != w * 4 {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::RgbaF32Packed,
+        idx,
+        w * 4,
+        row.rgba().len(),
+      )));
+    }
+    if idx >= self.height {
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, self.height),
+      ));
+    }
+
+    let Self {
+      rgb,
+      rgb_u16,
+      rgb_f32,
+      rgba,
+      rgba_u16,
+      rgba_f32,
+      luma,
+      luma_u16,
+      hsv,
+      rgb_scratch,
+      rgba_scratch_f32,
+      rgba_stream_f32,
+      rgba_filter_stream_f32,
+      resample_outputs,
+      plan,
+      ..
+    } = self;
+
+    // Non-identity plan: convert the wire row to source-width host-native
+    // packed RGBA f32 (lossless), bin all four channels (straight alpha),
+    // then derive every attached output from each finalized output row via
+    // the exact direct `rgbaf32_*` kernels. The span kind picks the engine
+    // — float area or signed-coefficient filter. f32 is full-range, so
+    // there is no native-depth clamp on the filter output.
+    if let Some(plan) = plan.as_ref() {
+      let stream_next_y = match plan.kind() {
+        crate::resample::SpanKind::Area => rgba_stream_f32.as_ref().map_or(0, |s| s.next_y()),
+        crate::resample::SpanKind::Filter => {
+          rgba_filter_stream_f32.as_ref().map_or(0, |s| s.next_y())
+        }
+      };
+      if !packed_rgb_f32_resample_preflight(
+        resample_outputs,
+        rgb,
+        rgba,
+        luma,
+        rgb_u16,
+        rgba_u16,
+        luma_u16,
+        rgb_f32,
+        rgba_f32,
+        &None,
+        &None,
+        hsv,
+        stream_next_y,
+        idx,
+      )? {
+        return Ok(());
+      }
+      return match plan.kind() {
+        crate::resample::SpanKind::Area => {
+          let stream = packed_rgba_f32_resample_stream(rgba_stream_f32, plan, idx)?;
+          let src_rgba = source_rgba_f32_scratch(rgba_scratch_f32, w, plan)?;
+          crate::row::rgbaf32_to_rgba_f32_row::<BE>(row.rgba(), src_rgba, w, use_simd);
+          packed_rgba_f32_resample_emit(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            rgb_u16,
+            rgba_u16,
+            luma_u16,
+            rgb_f32,
+            rgba_f32,
+            hsv,
+            src_rgba,
+            rgb_scratch,
+            row.matrix(),
+            row.full_range(),
+            idx,
+            use_simd,
+          )
+        }
+        crate::resample::SpanKind::Filter => {
+          let stream = packed_rgba_f32_filter(rgba_filter_stream_f32, plan, idx)?;
+          let src_rgba = source_rgba_f32_scratch(rgba_scratch_f32, w, plan)?;
+          crate::row::rgbaf32_to_rgba_f32_row::<BE>(row.rgba(), src_rgba, w, use_simd);
+          packed_rgba_f32_resample_emit(
+            stream,
+            plan,
+            rgb,
+            rgba,
+            luma,
+            rgb_u16,
+            rgba_u16,
+            luma_u16,
+            rgb_f32,
+            rgba_f32,
+            hsv,
+            src_rgba,
+            rgb_scratch,
+            row.matrix(),
+            row.full_range(),
+            idx,
+            use_simd,
+          )
+        }
+      };
+    }
+
+    self.rgbaf32_process_direct(row, use_simd)
+  }
+}
+
+/// Identity-only fence for engine-absent builds (see the [`Rgbf32`] note).
+#[cfg(not(any(feature = "yuv-planar", feature = "rgb")))]
+impl<const BE: bool> Rgbaf32Sink<BE> for MixedSinker<'_, Rgbaf32<BE>> {}
+
+/// See the [`Rgbaf32Sink`] fence note above: identity-only sink for
+/// engine-absent builds, pinned to `NoopResampler`.
+#[cfg(not(any(feature = "yuv-planar", feature = "rgb")))]
+impl<const BE: bool> PixelSink for MixedSinker<'_, Rgbaf32<BE>> {
+  type Input<'r> = Rgbaf32Row<'r>;
+  type Error = MixedSinkerError;
+
+  fn begin_frame(&mut self, width: u32, height: u32) -> Result<(), Self::Error> {
+    check_dimensions_match(self.width, self.height, width, height)
+  }
+
+  fn process(&mut self, row: Rgbaf32Row<'_>) -> Result<(), Self::Error> {
+    let w = self.width;
+    let idx = row.row();
+    let use_simd = self.simd;
+
+    if row.rgba().len() != w * 4 {
+      return Err(MixedSinkerError::RowShapeMismatch(RowShapeMismatch::new(
+        RowSlice::RgbaF32Packed,
+        idx,
+        w * 4,
+        row.rgba().len(),
+      )));
+    }
+    if idx >= self.height {
+      return Err(MixedSinkerError::RowIndexOutOfRange(
+        RowIndexOutOfRange::new(idx, self.height),
+      ));
+    }
+
+    self.rgbaf32_process_direct(row, use_simd)
+  }
+}

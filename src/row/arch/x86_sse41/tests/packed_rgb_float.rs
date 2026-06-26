@@ -688,3 +688,122 @@ fn sse41_rgbf16_to_rgb_f16_be_is_byteswap() {
     );
   }
 }
+
+// ---- Tier 9 Rgbaf32 / Rgbaf16 SIMD-vs-scalar parity (4-channel) --------
+
+/// `4 * width` pseudo-random f32 RGBA samples (HDR / ties / negatives).
+fn rgbaf_f32(width: usize) -> std::vec::Vec<f32> {
+  let src = pseudo_random_rgbf32(width * 2);
+  src[..width * 4].to_vec()
+}
+fn rgbaf_f16(width: usize) -> std::vec::Vec<half::f16> {
+  rgbaf_f32(width)
+    .iter()
+    .map(|&v| half::f16::from_f32(v))
+    .collect()
+}
+
+const RGBA_WIDTHS: [usize; 12] = [1, 2, 3, 4, 5, 7, 8, 15, 16, 17, 33, 1921];
+
+#[test]
+fn sse41_rgbaf32_matches_scalar_all_outputs() {
+  if !std::arch::is_x86_feature_detected!("sse4.1") {
+    return;
+  }
+  for w in RGBA_WIDTHS {
+    let input = as_le_rgbf32(&rgbaf_f32(w));
+    let mut a = std::vec![0u8; w * 3];
+    let mut b = std::vec![0u8; w * 3];
+    scalar::rgbaf32_to_rgb_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf32_to_rgb_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgb w{w}");
+    let mut a = std::vec![0u8; w * 4];
+    let mut b = std::vec![0u8; w * 4];
+    scalar::rgbaf32_to_rgba_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf32_to_rgba_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgba w{w}");
+    let mut a = std::vec![0u16; w * 3];
+    let mut b = std::vec![0u16; w * 3];
+    scalar::rgbaf32_to_rgb_u16_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf32_to_rgb_u16_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgb_u16 w{w}");
+    let mut a = std::vec![0u16; w * 4];
+    let mut b = std::vec![0u16; w * 4];
+    scalar::rgbaf32_to_rgba_u16_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf32_to_rgba_u16_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgba_u16 w{w}");
+    let mut a = std::vec![0.0f32; w * 3];
+    let mut b = std::vec![0.0f32; w * 3];
+    scalar::rgbaf32_to_rgb_f32_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf32_to_rgb_f32_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgb_f32 w{w}");
+    let mut a = std::vec![0.0f32; w * 4];
+    let mut b = std::vec![0.0f32; w * 4];
+    scalar::rgbaf32_to_rgba_f32_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf32_to_rgba_f32_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgba_f32 w{w}");
+  }
+}
+
+#[test]
+fn sse41_rgbaf16_matches_scalar_all_outputs() {
+  if !std::arch::is_x86_feature_detected!("sse4.1") || !std::arch::is_x86_feature_detected!("f16c")
+  {
+    return;
+  }
+  for w in RGBA_WIDTHS {
+    let input = as_le_rgbf16(&rgbaf_f16(w));
+    let mut a = std::vec![0u8; w * 3];
+    let mut b = std::vec![0u8; w * 3];
+    scalar::rgbaf16_to_rgb_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf16_to_rgb_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgb w{w}");
+    let mut a = std::vec![0u8; w * 4];
+    let mut b = std::vec![0u8; w * 4];
+    scalar::rgbaf16_to_rgba_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf16_to_rgba_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgba w{w}");
+    let mut a = std::vec![0u16; w * 3];
+    let mut b = std::vec![0u16; w * 3];
+    scalar::rgbaf16_to_rgb_u16_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf16_to_rgb_u16_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgb_u16 w{w}");
+    let mut a = std::vec![0u16; w * 4];
+    let mut b = std::vec![0u16; w * 4];
+    scalar::rgbaf16_to_rgba_u16_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf16_to_rgba_u16_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgba_u16 w{w}");
+    let mut a = std::vec![0.0f32; w * 3];
+    let mut b = std::vec![0.0f32; w * 3];
+    scalar::rgbaf16_to_rgb_f32_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf16_to_rgb_f32_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgb_f32 w{w}");
+    let mut a = std::vec![0.0f32; w * 4];
+    let mut b = std::vec![0.0f32; w * 4];
+    scalar::rgbaf16_to_rgba_f32_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf16_to_rgba_f32_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgba_f32 w{w}");
+  }
+}
+
+#[test]
+fn sse41_rgbaf16_f16_passthrough_matches_scalar() {
+  if !std::arch::is_x86_feature_detected!("sse4.1") {
+    return;
+  }
+  for w in RGBA_WIDTHS {
+    let host = rgbaf_f16(w);
+    let input = as_le_rgbf16(&host);
+    let mut a = std::vec![half::f16::ZERO; w * 3];
+    let mut b = std::vec![half::f16::ZERO; w * 3];
+    scalar::rgbaf16_to_rgb_f16_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf16_to_rgb_f16_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgb_f16 w{w}");
+    let mut a = std::vec![half::f16::ZERO; w * 4];
+    let mut b = std::vec![half::f16::ZERO; w * 4];
+    scalar::rgbaf16_to_rgba_f16_row::<false>(&input, &mut a, w);
+    unsafe { rgbaf16_to_rgba_f16_row::<false>(&input, &mut b, w) };
+    assert_eq!(a, b, "rgba_f16 w{w}");
+    assert_eq!(b, host[..w * 4], "rgba_f16 lossless w{w}");
+  }
+}

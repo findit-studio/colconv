@@ -94,6 +94,10 @@ mod packed_rgb_8bit;
 mod packed_rgb_f16;
 #[cfg(feature = "rgb-float")]
 mod packed_rgb_float;
+#[cfg(feature = "rgb-float")]
+mod packed_rgba_f16;
+#[cfg(feature = "rgb-float")]
+mod packed_rgba_float;
 #[cfg(feature = "yuv-packed")]
 mod packed_yuv_4_1_1;
 #[cfg(feature = "yuv-packed")]
@@ -220,6 +224,10 @@ mod resample_pal8_filter;
 mod resample_rgb24;
 #[cfg(feature = "rgb")]
 mod resample_rgb48;
+#[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
+mod resample_rgbaf16;
+#[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
+mod resample_rgbaf32;
 #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]
 mod resample_rgbf16;
 #[cfg(all(feature = "rgb-float", any(feature = "yuv-planar", feature = "rgb")))]

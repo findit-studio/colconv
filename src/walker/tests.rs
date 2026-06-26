@@ -2667,6 +2667,173 @@ mod rgbf_parity {
   }
 }
 
+// ---- Parity: packed float RGBA (Rgbaf16 / Rgbaf32; reuse YuvOptions) ---
+//
+// The alpha-bearing twins. Luma parity catches a dropped/swapped
+// `(full_range, matrix)` forward exactly as for `Rgbf*`; an extra `with_rgba`
+// test exercises the real-alpha output path through the walker. Both ride the
+// `@const BE` arm, so the LE case drives the `<const BE = false>` default and
+// the BE case drives `Marker<true>` against the `*BeFrame` alias.
+
+#[cfg(feature = "rgb-float")]
+mod rgbaf_parity {
+  use super::*;
+  use crate::{
+    frame::{Rgbaf16BeFrame, Rgbaf16Frame, Rgbaf32BeFrame, Rgbaf32Frame},
+    sinker::MixedSinker,
+    source::{Rgbaf16, Rgbaf32, rgbaf16_to, rgbaf16_to_endian, rgbaf32_to, rgbaf32_to_endian},
+  };
+
+  const W: u32 = 8;
+  const H: u32 = 4;
+  const MATRICES: [ColorMatrix; 2] = [ColorMatrix::Bt709, ColorMatrix::Bt601];
+
+  fn ramp_f32(n: usize) -> std::vec::Vec<f32> {
+    (0..n)
+      .map(|i| ((i * 37 + 11) % 257) as f32 / 256.0)
+      .collect()
+  }
+  fn ramp_f16(n: usize) -> std::vec::Vec<half::f16> {
+    ramp_f32(n).into_iter().map(half::f16::from_f32).collect()
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_rgbaf16_le_matches_direct() {
+    let buf = ramp_f16((W * H * 4) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Rgbaf16Frame::try_new(&buf, W, H, W * 4).unwrap();
+        let mut via_walker = std::vec![0u8; (W * H) as usize];
+        let mut via_direct = std::vec![0u8; (W * H) as usize];
+        let mut sw = MixedSinker::<Rgbaf16>::new(W as usize, H as usize)
+          .with_luma(&mut via_walker)
+          .unwrap();
+        <Rgbaf16 as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+        let mut sd = MixedSinker::<Rgbaf16>::new(W as usize, H as usize)
+          .with_luma(&mut via_direct)
+          .unwrap();
+        rgbaf16_to(&src, full_range, matrix, &mut sd).unwrap();
+        assert_eq!(via_walker, via_direct, "rgbaf16 LE luma parity");
+      }
+    }
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_rgbaf16_be_matches_direct() {
+    let buf = ramp_f16((W * H * 4) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Rgbaf16BeFrame::try_new(&buf, W, H, W * 4).unwrap();
+        let mut via_walker = std::vec![0u8; (W * H) as usize];
+        let mut via_direct = std::vec![0u8; (W * H) as usize];
+        let mut sw = MixedSinker::<Rgbaf16<true>>::new(W as usize, H as usize)
+          .with_luma(&mut via_walker)
+          .unwrap();
+        <Rgbaf16<true> as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+        let mut sd = MixedSinker::<Rgbaf16<true>>::new(W as usize, H as usize)
+          .with_luma(&mut via_direct)
+          .unwrap();
+        rgbaf16_to_endian::<_, true>(&src, full_range, matrix, &mut sd).unwrap();
+        assert_eq!(via_walker, via_direct, "rgbaf16 BE luma parity");
+      }
+    }
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_rgbaf32_le_matches_direct() {
+    let buf = ramp_f32((W * H * 4) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Rgbaf32Frame::try_new(&buf, W, H, W * 4).unwrap();
+        let mut via_walker = std::vec![0u8; (W * H) as usize];
+        let mut via_direct = std::vec![0u8; (W * H) as usize];
+        let mut sw = MixedSinker::<Rgbaf32>::new(W as usize, H as usize)
+          .with_luma(&mut via_walker)
+          .unwrap();
+        <Rgbaf32 as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+        let mut sd = MixedSinker::<Rgbaf32>::new(W as usize, H as usize)
+          .with_luma(&mut via_direct)
+          .unwrap();
+        rgbaf32_to(&src, full_range, matrix, &mut sd).unwrap();
+        assert_eq!(via_walker, via_direct, "rgbaf32 LE luma parity");
+      }
+    }
+  }
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_rgbaf32_be_matches_direct() {
+    let buf = ramp_f32((W * H * 4) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Rgbaf32BeFrame::try_new(&buf, W, H, W * 4).unwrap();
+        let mut via_walker = std::vec![0u8; (W * H) as usize];
+        let mut via_direct = std::vec![0u8; (W * H) as usize];
+        let mut sw = MixedSinker::<Rgbaf32<true>>::new(W as usize, H as usize)
+          .with_luma(&mut via_walker)
+          .unwrap();
+        <Rgbaf32<true> as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+        let mut sd = MixedSinker::<Rgbaf32<true>>::new(W as usize, H as usize)
+          .with_luma(&mut via_direct)
+          .unwrap();
+        rgbaf32_to_endian::<_, true>(&src, full_range, matrix, &mut sd).unwrap();
+        assert_eq!(via_walker, via_direct, "rgbaf32 BE luma parity");
+      }
+    }
+  }
+
+  /// The real-alpha `with_rgba` output through the walker (exercises the
+  /// source alpha channel end-to-end).
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_rgbaf32_rgba_matches_direct() {
+    let buf = ramp_f32((W * H * 4) as usize);
+    let opts = YuvOptions::new();
+    let src = Rgbaf32Frame::try_new(&buf, W, H, W * 4).unwrap();
+    let mut via_walker = std::vec![0u8; (W * H * 4) as usize];
+    let mut via_direct = std::vec![0u8; (W * H * 4) as usize];
+    let mut sw = MixedSinker::<Rgbaf32>::new(W as usize, H as usize)
+      .with_rgba(&mut via_walker)
+      .unwrap();
+    <Rgbaf32 as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+    let mut sd = MixedSinker::<Rgbaf32>::new(W as usize, H as usize)
+      .with_rgba(&mut via_direct)
+      .unwrap();
+    rgbaf32_to(&src, opts.full_range(), opts.matrix(), &mut sd).unwrap();
+    assert_eq!(via_walker, via_direct, "rgbaf32 rgba parity");
+  }
+}
+
 // ---- Parity: float-luma Grayf32 (reuse YuvOptions) --------------------
 //
 // A gray source carries no chroma matrix, but the free `grayf32_to` /
