@@ -143,6 +143,8 @@ mod v410;
 mod vuya;
 #[cfg(feature = "yuv-444-packed")]
 mod xv36;
+#[cfg(feature = "yuv-444-packed")]
+mod xv48;
 #[cfg(all(feature = "xyz", any(feature = "std", feature = "alloc")))]
 pub(crate) mod xyz12;
 #[cfg(all(feature = "xyz", any(feature = "std", feature = "alloc")))]
@@ -263,6 +265,8 @@ pub(crate) use v410::*;
 pub(crate) use vuya::*;
 #[cfg(feature = "yuv-444-packed")]
 pub(crate) use xv36::*;
+#[cfg(feature = "yuv-444-packed")]
+pub(crate) use xv48::*;
 // `xyz12` and `xyz12_constants` are crate-internal modules; consumers (dispatcher
 // + SIMD tails) reach in via `crate::row::scalar::xyz12::xyz12_to_rgb_row::<BE>`
 // rather than a glob re-export, so the constants table and helpers stay

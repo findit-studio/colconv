@@ -124,10 +124,11 @@ use crate::{
 // (RGBA outputs only), never an `Options` knob.
 #[cfg(feature = "yuv-444-packed")]
 use crate::{
-  frame::{Ayuv64Frame, V30XFrame, V410Frame, VuyaFrame, VuyxFrame, Xv36Frame},
+  frame::{Ayuv64Frame, V30XFrame, V410Frame, VuyaFrame, VuyxFrame, Xv36Frame, Xv48Frame},
   source::{
     Ayuv64, Ayuv64Sink, V30X, V30XSink, V410, V410Sink, Vuya, VuyaSink, Vuyx, VuyxSink, Xv36,
-    Xv36Sink, ayuv64_to_endian, v30x_to, v410_to_endian, vuya_to, vuyx_to, xv36_to_endian,
+    Xv36Sink, Xv48, Xv48Sink, ayuv64_to_endian, v30x_to, v410_to_endian, vuya_to, vuyx_to,
+    xv36_to_endian, xv48_to_endian,
   },
 };
 // Packed YUV 4:2:2 10-bit `V210` (6 pixels per 16-byte block) —
@@ -1045,7 +1046,8 @@ walker!(V30X, V30XSink, V30XFrame, YuvOptions, |src, opts, sink| {
 // (no leading bit-depth const, same shape as XYZ12 / Rgb48), delegating
 // to `{fmt}_to_endian::<_, BE>`; one impl covers LE (`BE = false`) and BE
 // (`BE = true`). `V410` is the 10-bit format (FFmpeg `Y410` / `XV30` name
-// the same wire layout); `Xv36` is 12-bit; `Ayuv64` is 16-bit + source α.
+// the same wire layout); `Xv36` is 12-bit; `Xv48` is its full-16-bit
+// sibling (X slot padding); `Ayuv64` is 16-bit + source α.
 #[cfg(feature = "yuv-444-packed")]
 #[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
 walker!(@const BE: bool; V410<BE>, V410Sink, V410Frame, YuvOptions,
@@ -1054,6 +1056,10 @@ walker!(@const BE: bool; V410<BE>, V410Sink, V410Frame, YuvOptions,
 #[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
 walker!(@const BE: bool; Xv36<BE>, Xv36Sink, Xv36Frame, YuvOptions,
   |src, opts, sink| xv36_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+#[cfg(feature = "yuv-444-packed")]
+#[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
+walker!(@const BE: bool; Xv48<BE>, Xv48Sink, Xv48Frame, YuvOptions,
+  |src, opts, sink| xv48_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
 #[cfg(feature = "yuv-444-packed")]
 #[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
 walker!(@const BE: bool; Ayuv64<BE>, Ayuv64Sink, Ayuv64Frame, YuvOptions,

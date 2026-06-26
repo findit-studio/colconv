@@ -185,6 +185,8 @@ mod v410;
 mod vuya;
 #[cfg(feature = "yuv-444-packed")]
 mod xv36;
+#[cfg(feature = "yuv-444-packed")]
+mod xv48;
 #[cfg(all(feature = "xyz", any(feature = "std", feature = "alloc")))]
 pub(crate) mod xyz12;
 #[cfg(feature = "y2xx")]
@@ -253,6 +255,8 @@ pub(crate) use v410::*;
 pub(crate) use vuya::*;
 #[cfg(feature = "yuv-444-packed")]
 pub(crate) use xv36::*;
+#[cfg(feature = "yuv-444-packed")]
+pub(crate) use xv48::*;
 #[cfg(any(
   feature = "gray",
   feature = "yuv-planar",

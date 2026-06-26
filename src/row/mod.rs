@@ -264,7 +264,7 @@ pub use dispatch::yuv411p::*;
 pub use dispatch::yuva::*;
 #[cfg(feature = "yuv-444-packed")]
 #[cfg_attr(docsrs, doc(cfg(feature = "yuv-444-packed")))]
-pub use dispatch::{v30x::*, v410::*, vuya::*, vuyx::*, xv36::*};
+pub use dispatch::{v30x::*, v410::*, vuya::*, vuyx::*, xv36::*, xv48::*};
 #[cfg(feature = "y2xx")]
 #[cfg_attr(docsrs, doc(cfg(feature = "y2xx")))]
 pub use dispatch::{y210::*, y212::*, y216::*};

@@ -109,6 +109,8 @@ pub(super) mod vuya;
 pub(super) mod vuyx;
 #[cfg(feature = "yuv-444-packed")]
 pub(super) mod xv36;
+#[cfg(feature = "yuv-444-packed")]
+pub(super) mod xv48;
 #[cfg(all(feature = "xyz", any(feature = "std", feature = "alloc")))]
 pub(super) mod xyz12;
 #[cfg(feature = "y2xx")]

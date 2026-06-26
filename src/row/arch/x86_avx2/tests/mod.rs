@@ -39,6 +39,8 @@ mod v410;
 mod vuya;
 #[cfg(feature = "yuv-444-packed")]
 mod xv36;
+#[cfg(feature = "yuv-444-packed")]
+mod xv48;
 #[cfg(all(feature = "xyz", any(feature = "std", feature = "alloc")))]
 mod xyz12;
 #[cfg(feature = "y2xx")]
