@@ -493,6 +493,196 @@ pub(crate) unsafe fn gray16_to_hsv_row<const BE: bool>(
   }
 }
 
+// ---- Gray32 -----------------------------------------------------------------
+//
+// Full-bit integer twin of Gray16, widened u16 → u32. As with Gray16, the
+// packed-RGB(A) paths fall back to scalar; luma / luma_u16 / hsv get simd128
+// bodies processing 8 px per iter (two u32x4 loads). The u32 narrows reuse the
+// `load_endian_u32x4` loader the grayf32 path established: `u32x4_shr` then
+// `u16x8_narrow_i32x4` lands the native u16 sample (`>> 16`), and a further
+// `u8x16_narrow_i16x8` lands the u8 sample (`>> 24`).
+
+/// wasm-simd128 `gray32_to_rgb_row`: `>> 24` → broadcast (scalar fallback).
+///
+/// # Safety
+/// simd128 must be enabled.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn gray32_to_rgb_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 3);
+  scalar::gray32_to_rgb_row::<BE>(y_plane, out, width, full_range);
+}
+
+/// wasm-simd128 `gray32_to_rgba_row`: `>> 24` → RGBA u8 (scalar fallback).
+///
+/// # Safety
+/// simd128 must be enabled.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn gray32_to_rgba_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 4);
+  scalar::gray32_to_rgba_row::<BE>(y_plane, out, width, full_range);
+}
+
+/// wasm-simd128 `gray32_to_rgb_u16_row`: `>> 16` → RGB u16 (scalar fallback).
+///
+/// # Safety
+/// simd128 must be enabled.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn gray32_to_rgb_u16_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u16],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 3);
+  scalar::gray32_to_rgb_u16_row::<BE>(y_plane, out, width, full_range);
+}
+
+/// wasm-simd128 `gray32_to_rgba_u16_row`: `>> 16` → RGBA u16 (scalar fallback).
+///
+/// # Safety
+/// simd128 must be enabled.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn gray32_to_rgba_u16_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u16],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 4);
+  scalar::gray32_to_rgba_u16_row::<BE>(y_plane, out, width, full_range);
+}
+
+/// wasm-simd128 `gray32_to_luma_row`: `>> 24`, narrow u32 → u8. 8 pixels/iter.
+///
+/// Luma outputs always pass Y through without `full_range` rescaling.
+///
+/// # Safety
+/// simd128 must be enabled. `y_plane.len() >= width`. `out.len() >= width`.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn gray32_to_luma_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width);
+  let mut x = 0usize;
+  unsafe {
+    let zero = i64x2(0, 0);
+    while x + 8 <= width {
+      let lo = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let hi = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add((x + 4) * 4));
+      let u16v = u16x8_narrow_i32x4(u32x4_shr(lo, 24), u32x4_shr(hi, 24));
+      let narrowed = u8x16_narrow_i16x8(u16v, zero);
+      let val = i64x2_extract_lane::<0>(narrowed) as u64;
+      out[x..x + 8].copy_from_slice(&val.to_le_bytes());
+      x += 8;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_luma_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
+  }
+}
+
+/// wasm-simd128 `gray32_to_luma_u16_row`: `>> 16`, narrow u32 → u16. 8 pixels/iter.
+///
+/// Luma outputs always pass Y through without `full_range` rescaling.
+///
+/// # Safety
+/// simd128 must be enabled. `y_plane.len() >= width`. `out.len() >= width`.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn gray32_to_luma_u16_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width);
+  let mut x = 0usize;
+  unsafe {
+    while x + 8 <= width {
+      let lo = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let hi = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add((x + 4) * 4));
+      let u16v = u16x8_narrow_i32x4(u32x4_shr(lo, 16), u32x4_shr(hi, 16));
+      v128_store(out.as_mut_ptr().add(x).cast(), u16v);
+      x += 8;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_luma_u16_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
+  }
+}
+
+/// wasm-simd128 `gray32_to_hsv_row`: `>> 24`, H=0, S=0, V=Y8. 8 pixels/iter.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling
+/// applied to V channel).
+///
+/// # Safety
+/// simd128 must be enabled. All slices have length >= width.
+#[inline]
+#[target_feature(enable = "simd128")]
+pub(crate) unsafe fn gray32_to_hsv_row<const BE: bool>(
+  y_plane: &[u32],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  if !full_range {
+    return scalar::gray32_to_hsv_row::<BE>(y_plane, h_out, s_out, v_out, width, full_range);
+  }
+  let mut x = 0usize;
+  unsafe {
+    let zero = i64x2(0, 0);
+    while x + 8 <= width {
+      let lo = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let hi = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add((x + 4) * 4));
+      let u16v = u16x8_narrow_i32x4(u32x4_shr(lo, 24), u32x4_shr(hi, 24));
+      let narrowed = u8x16_narrow_i16x8(u16v, zero);
+      let val = i64x2_extract_lane::<0>(narrowed) as u64;
+      let bytes = val.to_le_bytes();
+      h_out[x..x + 8].fill(0);
+      s_out[x..x + 8].fill(0);
+      v_out[x..x + 8].copy_from_slice(&bytes);
+      x += 8;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_hsv_row::<BE>(
+      &y_plane[x..width],
+      &mut h_out[x..width],
+      &mut s_out[x..width],
+      &mut v_out[x..width],
+      width - x,
+      true,
+    );
+  }
+}
+
 // ---- Grayf32 ----------------------------------------------------------------
 
 /// wasm-simd128 `grayf32_to_rgb_row`: delegates to scalar.

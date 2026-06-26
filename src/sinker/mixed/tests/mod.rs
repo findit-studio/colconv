@@ -153,6 +153,8 @@ mod resample_geometry;
 #[cfg(feature = "gray")]
 mod resample_gray16;
 #[cfg(feature = "gray")]
+mod resample_gray32;
+#[cfg(feature = "gray")]
 mod resample_gray8;
 #[cfg(feature = "gray")]
 mod resample_gray_n;

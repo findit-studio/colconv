@@ -148,6 +148,38 @@ fn limited_16_to_full_u16(y: u16) -> u16 {
   limited_n_to_full_u16::<16>(y)
 }
 
+/// Rescales a limited-range 32-bit luma value to full-range u8.
+///
+/// Limited-range 32-bit: black = `16 << 24`, range = `219 << 24`. The
+/// `(y - black) * 255` product reaches `~9.4 x 10^11` (well past `i32`), so
+/// the math runs in `i64`.
+#[inline(always)]
+fn limited_32_to_full_u8(y: u32) -> u8 {
+  let black = 16i64 << 24;
+  let range = 219i64 << 24;
+  let y = y as i64;
+  let rescaled = (y - black) * 255 + range / 2;
+  let result = rescaled / range;
+  result.clamp(0, 255) as u8
+}
+
+/// Rescales a limited-range 32-bit luma value to full-range u16 (native
+/// output depth — `Gray32`'s widest broadcast is `u16`).
+///
+/// Limited-range 32-bit: black = `16 << 24`, range = `219 << 24`,
+/// `max_native = 65535`. The `(y - black) * max_native` product reaches
+/// `~2.4 x 10^14`, far past `i32`, so the math runs in `i64`.
+#[inline(always)]
+fn limited_32_to_full_u16(y: u32) -> u16 {
+  let black = 16i64 << 24;
+  let range = 219i64 << 24;
+  let max_native = 65535i64;
+  let y = y as i64;
+  let rescaled = (y - black) * max_native + range / 2;
+  let result = rescaled / range;
+  result.clamp(0, max_native) as u16
+}
+
 // ---- Gray8 ------------------------------------------------------------------
 
 /// Broadcasts each `u8` gray sample to packed RGB (`R = G = B = Y`).
@@ -609,6 +641,203 @@ pub(crate) fn gray16_to_hsv_row<const BE: bool>(
       (raw >> 8) as u8
     } else {
       limited_16_to_full_u8(raw)
+    };
+  }
+}
+
+// ---- Gray32 (u32, all 32 bits active) ---------------------------------------
+//
+// Full-bit integer twin of Gray16, widened u16 → u32. The widest output
+// broadcast colconv emits is u16, so the depth narrows are `>> 24` (u8) and
+// `>> 16` (native u16); luma_u16 / native carry the `>> 16` sample. The
+// limited-range rescale operates on the raw u32 sample (black = 16 << 24,
+// range = 219 << 24) in i64.
+
+/// Gray32 → packed RGB u8. Downshifts `>> 24` to u8, broadcasts.
+///
+/// When `BE = true`, each u32 sample is byte-swapped before processing.
+/// When `full_range = false`, limited-range Y (black = `16 << 24`) is
+/// rescaled to [0, 255] before broadcast.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn gray32_to_rgb_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width, "y_plane too short");
+  debug_assert!(out.len() >= width * 3, "out too short");
+  for (x, &raw) in y_plane[..width].iter().enumerate() {
+    let raw = if BE {
+      u32::from_be(raw)
+    } else {
+      u32::from_le(raw)
+    };
+    let y8 = if full_range {
+      (raw >> 24) as u8
+    } else {
+      limited_32_to_full_u8(raw)
+    };
+    broadcast_u8_to_rgb(y8, out, x);
+  }
+}
+
+/// Gray32 → packed RGBA u8. Downshifts `>> 24`, broadcasts, α = 0xFF.
+///
+/// When `BE = true`, each u32 sample is byte-swapped before processing.
+/// When `full_range = false`, limited-range Y is rescaled to [0, 255].
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn gray32_to_rgba_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width, "y_plane too short");
+  debug_assert!(out.len() >= width * 4, "out too short");
+  for (x, &raw) in y_plane[..width].iter().enumerate() {
+    let raw = if BE {
+      u32::from_be(raw)
+    } else {
+      u32::from_le(raw)
+    };
+    let y8 = if full_range {
+      (raw >> 24) as u8
+    } else {
+      limited_32_to_full_u8(raw)
+    };
+    broadcast_u8_to_rgba(y8, out, x);
+  }
+}
+
+/// Gray32 → packed u16 RGB. Downshifts `>> 16` to native u16, broadcasts.
+///
+/// When `BE = true`, each u32 sample is byte-swapped before processing.
+/// When `full_range = false`, limited-range Y is rescaled to [0, 65535].
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn gray32_to_rgb_u16_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u16],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width, "y_plane too short");
+  debug_assert!(out.len() >= width * 3, "out too short");
+  for (x, &raw) in y_plane[..width].iter().enumerate() {
+    let raw = if BE {
+      u32::from_be(raw)
+    } else {
+      u32::from_le(raw)
+    };
+    let y_out = if full_range {
+      (raw >> 16) as u16
+    } else {
+      limited_32_to_full_u16(raw)
+    };
+    broadcast_u16_to_rgb(y_out, out, x);
+  }
+}
+
+/// Gray32 → packed u16 RGBA. Downshifts `>> 16`, broadcasts, α = 0xFFFF.
+///
+/// When `BE = true`, each u32 sample is byte-swapped before processing.
+/// When `full_range = false`, limited-range Y is rescaled to [0, 65535].
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn gray32_to_rgba_u16_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u16],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width, "y_plane too short");
+  debug_assert!(out.len() >= width * 4, "out too short");
+  for (x, &raw) in y_plane[..width].iter().enumerate() {
+    let raw = if BE {
+      u32::from_be(raw)
+    } else {
+      u32::from_le(raw)
+    };
+    let y_out = if full_range {
+      (raw >> 16) as u16
+    } else {
+      limited_32_to_full_u16(raw)
+    };
+    broadcast_u16_to_rgba(y_out, 0xFFFF, out, x);
+  }
+}
+
+/// Gray32 → luma u8. Downshifts `>> 24`.
+///
+/// When `BE = true`, each u32 sample is byte-swapped before processing.
+/// Always passes raw Y through without `full_range` rescaling —
+/// the caller is explicitly requesting the source luma plane as-is.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn gray32_to_luma_row<const BE: bool>(y_plane: &[u32], out: &mut [u8], width: usize) {
+  debug_assert!(y_plane.len() >= width, "y_plane too short");
+  debug_assert!(out.len() >= width, "out too short");
+  for (out_byte, &raw) in out[..width].iter_mut().zip(y_plane[..width].iter()) {
+    let raw = if BE {
+      u32::from_be(raw)
+    } else {
+      u32::from_le(raw)
+    };
+    *out_byte = (raw >> 24) as u8;
+  }
+}
+
+/// Gray32 → luma u16. Downshifts `>> 16` to native u16.
+///
+/// When `BE = true`, each u32 sample is byte-swapped before processing.
+/// Always passes raw Y through without `full_range` rescaling —
+/// the caller is explicitly requesting the source luma plane as-is.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn gray32_to_luma_u16_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(y_plane.len() >= width, "y_plane too short");
+  debug_assert!(out.len() >= width, "out too short");
+  for (o, &raw) in out[..width].iter_mut().zip(y_plane[..width].iter()) {
+    let raw = if BE {
+      u32::from_be(raw)
+    } else {
+      u32::from_le(raw)
+    };
+    *o = (raw >> 16) as u16;
+  }
+}
+
+/// Gray32 → HSV u8. `>> 24` to u8, H=0 S=0 V=Y8.
+///
+/// When `BE = true`, each u32 sample is byte-swapped before processing.
+/// When `full_range = false`, the V channel uses the rescaled luma value.
+/// See [`gray8_to_hsv_row`] for the S=0 convention.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn gray32_to_hsv_row<const BE: bool>(
+  y_plane: &[u32],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width, "y_plane too short");
+  debug_assert!(h_out.len() >= width, "H out too short");
+  debug_assert!(s_out.len() >= width, "S out too short");
+  debug_assert!(v_out.len() >= width, "V out too short");
+  for (x, &raw) in y_plane[..width].iter().enumerate() {
+    let raw = if BE {
+      u32::from_be(raw)
+    } else {
+      u32::from_le(raw)
+    };
+    h_out[x] = 0;
+    s_out[x] = 0;
+    v_out[x] = if full_range {
+      (raw >> 24) as u8
+    } else {
+      limited_32_to_full_u8(raw)
     };
   }
 }
