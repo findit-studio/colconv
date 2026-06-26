@@ -1941,6 +1941,13 @@ mod gray_parity {
       .collect()
   }
 
+  /// A deterministic, full-range `u32` plane of `n` samples.
+  fn ramp32(n: usize) -> std::vec::Vec<u32> {
+    (0..n)
+      .map(|i| (i as u32).wrapping_mul(2_654_435_761) ^ 0x55AA_33CC)
+      .collect()
+  }
+
   /// Gray8 — single `u8` luma plane, `width` u8 per row. Plain arm.
   #[test]
   #[cfg_attr(
@@ -2182,6 +2189,88 @@ mod gray_parity {
         assert_eq!(
           via_walker, via_direct,
           "gray16 BE parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
+  /// Gray32 LE — the full-bit integer twin of Gray16 on the `@const BE` arm at
+  /// the `<const BE = false>` default against the LE `gray32_to` wrapper.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_gray32_le_matches_direct() {
+    use crate::{
+      frame::Gray32LeFrame,
+      source::{Gray32, gray32_to},
+    };
+    let y = ramp32((W * H) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Gray32LeFrame::try_new(&y, W, H, W).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut sw = MixedSinker::<Gray32>::new(W as usize, H as usize)
+          .with_rgb(&mut via_walker)
+          .unwrap();
+        <Gray32 as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Gray32>::new(W as usize, H as usize)
+          .with_rgb(&mut via_direct)
+          .unwrap();
+        gray32_to(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "gray32 LE parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
+  /// Gray32 BE — drives the `@const BE` impl at `Gray32<true>` against the
+  /// `Gray32BeFrame` alias, compared to a direct `gray32_to_endian::<_, true>`.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_gray32_be_matches_direct() {
+    use crate::{
+      frame::Gray32BeFrame,
+      source::{Gray32, gray32_to_endian},
+    };
+    let y = ramp32((W * H) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Gray32BeFrame::try_new(&y, W, H, W).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut sw = MixedSinker::<Gray32<true>>::new(W as usize, H as usize)
+          .with_rgb(&mut via_walker)
+          .unwrap();
+        <Gray32<true> as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Gray32<true>>::new(W as usize, H as usize)
+          .with_rgb(&mut via_direct)
+          .unwrap();
+        gray32_to_endian::<_, true>(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "gray32 BE parity (full_range={full_range}, matrix={matrix:?})"
         );
       }
     }

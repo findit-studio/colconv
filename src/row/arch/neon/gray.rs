@@ -731,6 +731,294 @@ pub(crate) unsafe fn gray16_to_hsv_row<const BE: bool>(
   }
 }
 
+// ---- Gray32 ------------------------------------------------------------------
+//
+// Full-bit integer twin of Gray16, widened u16 → u32. Reuses the
+// `load_endian_u32x4` loader the grayf32 path established; the new work is the
+// u32 → u8 (`>> 24`) and u32 → u16 (`>> 16`) narrows: `vshrq_n_u32::<16>` +
+// `vmovn_u32` lands the native u16 sample (`>> 16`), and a further
+// `vshrn_n_u16::<8>` on the packed u16x8 lands the u8 sample (`>> 24`). The
+// u8 paths fold two u32x4 loads into one u8x8 store; the u16 paths run one
+// u32x4 load per 4-px block. `full_range = false` falls back to scalar.
+
+/// NEON `gray32_to_rgb_row`: `>> 24` → broadcast → packed RGB u8.
+///
+/// Block size 8 px (two u32x4 loads, vst3_u8 interleave store).
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
+///
+/// # Safety
+/// NEON must be available.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn gray32_to_rgb_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 3);
+  if !full_range {
+    return scalar::gray32_to_rgb_row::<BE>(y_plane, out, width, full_range);
+  }
+  let mut x = 0usize;
+  unsafe {
+    while x + 8 <= width {
+      let lo = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let hi = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add((x + 4) * 4));
+      let lo16 = vmovn_u32(vshrq_n_u32::<16>(lo));
+      let hi16 = vmovn_u32(vshrq_n_u32::<16>(hi));
+      let y8 = vshrn_n_u16::<8>(vcombine_u16(lo16, hi16));
+      let rgb = uint8x8x3_t(y8, y8, y8);
+      vst3_u8(out.as_mut_ptr().add(x * 3), rgb);
+      x += 8;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_rgb_row::<BE>(
+      &y_plane[x..width],
+      &mut out[x * 3..width * 3],
+      width - x,
+      true,
+    );
+  }
+}
+
+/// NEON `gray32_to_rgba_row`: `>> 24` → broadcast → packed RGBA u8, α=0xFF.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
+///
+/// # Safety
+/// NEON must be available.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn gray32_to_rgba_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 4);
+  if !full_range {
+    return scalar::gray32_to_rgba_row::<BE>(y_plane, out, width, full_range);
+  }
+  let mut x = 0usize;
+  unsafe {
+    let alpha = vdup_n_u8(0xFF);
+    while x + 8 <= width {
+      let lo = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let hi = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add((x + 4) * 4));
+      let lo16 = vmovn_u32(vshrq_n_u32::<16>(lo));
+      let hi16 = vmovn_u32(vshrq_n_u32::<16>(hi));
+      let y8 = vshrn_n_u16::<8>(vcombine_u16(lo16, hi16));
+      let rgba = uint8x8x4_t(y8, y8, y8, alpha);
+      vst4_u8(out.as_mut_ptr().add(x * 4), rgba);
+      x += 8;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_rgba_row::<BE>(
+      &y_plane[x..width],
+      &mut out[x * 4..width * 4],
+      width - x,
+      true,
+    );
+  }
+}
+
+/// NEON `gray32_to_rgb_u16_row`: `>> 16` → broadcast → packed RGB u16.
+///
+/// Block size 4 px (one u32x4 load, vst3_u16 interleave store).
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
+///
+/// # Safety
+/// NEON must be available.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn gray32_to_rgb_u16_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u16],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 3);
+  if !full_range {
+    return scalar::gray32_to_rgb_u16_row::<BE>(y_plane, out, width, full_range);
+  }
+  let mut x = 0usize;
+  unsafe {
+    while x + 4 <= width {
+      let raw = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let y16 = vmovn_u32(vshrq_n_u32::<16>(raw));
+      let rgb = uint16x4x3_t(y16, y16, y16);
+      vst3_u16(out.as_mut_ptr().add(x * 3), rgb);
+      x += 4;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_rgb_u16_row::<BE>(
+      &y_plane[x..width],
+      &mut out[x * 3..width * 3],
+      width - x,
+      true,
+    );
+  }
+}
+
+/// NEON `gray32_to_rgba_u16_row`: `>> 16` → broadcast → packed RGBA u16, α=0xFFFF.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling).
+///
+/// # Safety
+/// NEON must be available.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn gray32_to_rgba_u16_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u16],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 4);
+  if !full_range {
+    return scalar::gray32_to_rgba_u16_row::<BE>(y_plane, out, width, full_range);
+  }
+  let mut x = 0usize;
+  unsafe {
+    let alpha = vdup_n_u16(0xFFFF);
+    while x + 4 <= width {
+      let raw = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let y16 = vmovn_u32(vshrq_n_u32::<16>(raw));
+      let rgba = uint16x4x4_t(y16, y16, y16, alpha);
+      vst4_u16(out.as_mut_ptr().add(x * 4), rgba);
+      x += 4;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_rgba_u16_row::<BE>(
+      &y_plane[x..width],
+      &mut out[x * 4..width * 4],
+      width - x,
+      true,
+    );
+  }
+}
+
+/// NEON `gray32_to_luma_row`: `>> 24` → u8.
+///
+/// Luma outputs always pass Y through without `full_range` rescaling.
+///
+/// # Safety
+/// NEON must be available.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn gray32_to_luma_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width);
+  let mut x = 0usize;
+  unsafe {
+    while x + 8 <= width {
+      let lo = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let hi = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add((x + 4) * 4));
+      let lo16 = vmovn_u32(vshrq_n_u32::<16>(lo));
+      let hi16 = vmovn_u32(vshrq_n_u32::<16>(hi));
+      let y8 = vshrn_n_u16::<8>(vcombine_u16(lo16, hi16));
+      vst1_u8(out.as_mut_ptr().add(x), y8);
+      x += 8;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_luma_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
+  }
+}
+
+/// NEON `gray32_to_luma_u16_row`: `>> 16` → u16.
+///
+/// Luma outputs always pass Y through without `full_range` rescaling.
+///
+/// # Safety
+/// NEON must be available.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn gray32_to_luma_u16_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width);
+  let mut x = 0usize;
+  unsafe {
+    while x + 4 <= width {
+      let raw = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let y16 = vmovn_u32(vshrq_n_u32::<16>(raw));
+      vst1_u16(out.as_mut_ptr().add(x), y16);
+      x += 4;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_luma_u16_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
+  }
+}
+
+/// NEON `gray32_to_hsv_row`: `>> 24` → H=0, S=0, V=Y8.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling
+/// applied to V channel).
+///
+/// # Safety
+/// NEON must be available.
+#[inline]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn gray32_to_hsv_row<const BE: bool>(
+  y_plane: &[u32],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(h_out.len() >= width);
+  debug_assert!(s_out.len() >= width);
+  debug_assert!(v_out.len() >= width);
+  if !full_range {
+    return scalar::gray32_to_hsv_row::<BE>(y_plane, h_out, s_out, v_out, width, full_range);
+  }
+  let mut x = 0usize;
+  unsafe {
+    let zero = vdup_n_u8(0);
+    while x + 8 <= width {
+      let lo = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let hi = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add((x + 4) * 4));
+      let lo16 = vmovn_u32(vshrq_n_u32::<16>(lo));
+      let hi16 = vmovn_u32(vshrq_n_u32::<16>(hi));
+      let y8 = vshrn_n_u16::<8>(vcombine_u16(lo16, hi16));
+      vst1_u8(h_out.as_mut_ptr().add(x), zero);
+      vst1_u8(s_out.as_mut_ptr().add(x), zero);
+      vst1_u8(v_out.as_mut_ptr().add(x), y8);
+      x += 8;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_hsv_row::<BE>(
+      &y_plane[x..width],
+      &mut h_out[x..width],
+      &mut s_out[x..width],
+      &mut v_out[x..width],
+      width - x,
+      true,
+    );
+  }
+}
+
 // ---- Grayf32 -----------------------------------------------------------------
 
 /// NEON `grayf32_to_rgb_row`: clamp [0,1] x 255 → u8, broadcast Y → R=G=B.

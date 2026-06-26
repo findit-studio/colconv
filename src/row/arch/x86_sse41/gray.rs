@@ -522,6 +522,208 @@ pub(crate) unsafe fn gray16_to_hsv_row<const BE: bool>(
   }
 }
 
+// ---- Gray32 ----------------------------------------------------------------
+//
+// Full-bit integer twin of Gray16, widened u16 → u32. As with Gray16, the
+// packed-RGB(A) paths lack a cheap SSE4.1 3-/4-channel interleave store, so
+// they fall back to scalar; the luma / luma_u16 / hsv paths get SSE bodies.
+// The u32 narrows reuse the `load_endian_u32x4` loader the grayf32 path
+// established: `_mm_srli_epi32::<24>` + `_mm_packus_epi32` + `_mm_packus_epi16`
+// lands the u8 sample (`>> 24`); `_mm_srli_epi32::<16>` + `_mm_packus_epi32`
+// lands the native u16 sample (`>> 16`).
+
+/// SSE4.1 `gray32_to_rgb_row`: `>> 24` → broadcast (scalar fallback).
+///
+/// # Safety
+/// SSE4.1 must be available.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn gray32_to_rgb_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 3);
+  scalar::gray32_to_rgb_row::<BE>(y_plane, out, width, full_range);
+}
+
+/// SSE4.1 `gray32_to_rgba_row`: `>> 24` → RGBA u8 (scalar fallback).
+///
+/// # Safety
+/// SSE4.1 must be available.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn gray32_to_rgba_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 4);
+  scalar::gray32_to_rgba_row::<BE>(y_plane, out, width, full_range);
+}
+
+/// SSE4.1 `gray32_to_rgb_u16_row`: `>> 16` → RGB u16 (scalar fallback).
+///
+/// # Safety
+/// SSE4.1 must be available.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn gray32_to_rgb_u16_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u16],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 3);
+  scalar::gray32_to_rgb_u16_row::<BE>(y_plane, out, width, full_range);
+}
+
+/// SSE4.1 `gray32_to_rgba_u16_row`: `>> 16` → RGBA u16 (scalar fallback).
+///
+/// # Safety
+/// SSE4.1 must be available.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn gray32_to_rgba_u16_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u16],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 4);
+  scalar::gray32_to_rgba_u16_row::<BE>(y_plane, out, width, full_range);
+}
+
+/// SSE4.1 `gray32_to_luma_row`: `>> 24`, pack u32 → u8, store.
+///
+/// Luma outputs always pass Y through without `full_range` rescaling.
+///
+/// # Safety
+/// SSE4.1 must be available.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn gray32_to_luma_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width);
+  let mut x = 0usize;
+  unsafe {
+    let zero = _mm_setzero_si128();
+    while x + 8 <= width {
+      let lo = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let hi = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add((x + 4) * 4));
+      let lo_s = _mm_srli_epi32(lo, 24);
+      let hi_s = _mm_srli_epi32(hi, 24);
+      let packed16 = _mm_packus_epi32(lo_s, hi_s);
+      let packed8 = _mm_packus_epi16(packed16, zero);
+      let val = _mm_cvtsi128_si64(packed8) as u64;
+      out[x..x + 8].copy_from_slice(&val.to_le_bytes());
+      x += 8;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_luma_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
+  }
+}
+
+/// SSE4.1 `gray32_to_luma_u16_row`: `>> 16`, pack u32 → u16, store.
+///
+/// Luma outputs always pass Y through without `full_range` rescaling.
+///
+/// # Safety
+/// SSE4.1 must be available.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn gray32_to_luma_u16_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width);
+  let mut x = 0usize;
+  unsafe {
+    while x + 8 <= width {
+      let lo = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let hi = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add((x + 4) * 4));
+      let lo_s = _mm_srli_epi32(lo, 16);
+      let hi_s = _mm_srli_epi32(hi, 16);
+      let packed = _mm_packus_epi32(lo_s, hi_s);
+      _mm_storeu_si128(out.as_mut_ptr().add(x).cast(), packed);
+      x += 8;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_luma_u16_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
+  }
+}
+
+/// SSE4.1 `gray32_to_hsv_row`: `>> 24`, H=0, S=0, V=Y8.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling
+/// applied to V channel).
+///
+/// # Safety
+/// SSE4.1 must be available.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn gray32_to_hsv_row<const BE: bool>(
+  y_plane: &[u32],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  if !full_range {
+    return scalar::gray32_to_hsv_row::<BE>(y_plane, h_out, s_out, v_out, width, full_range);
+  }
+  let mut x = 0usize;
+  unsafe {
+    let zero = _mm_setzero_si128();
+    while x + 8 <= width {
+      let lo = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let hi = load_endian_u32x4::<BE>(y_plane.as_ptr().cast::<u8>().add((x + 4) * 4));
+      let lo_s = _mm_srli_epi32(lo, 24);
+      let hi_s = _mm_srli_epi32(hi, 24);
+      let packed16 = _mm_packus_epi32(lo_s, hi_s);
+      let packed8 = _mm_packus_epi16(packed16, zero);
+      let val = _mm_cvtsi128_si64(packed8) as u64;
+      h_out[x..x + 8].fill(0);
+      s_out[x..x + 8].fill(0);
+      v_out[x..x + 8].copy_from_slice(&val.to_le_bytes());
+      x += 8;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_hsv_row::<BE>(
+      &y_plane[x..width],
+      &mut h_out[x..width],
+      &mut s_out[x..width],
+      &mut v_out[x..width],
+      width - x,
+      true,
+    );
+  }
+}
+
 // ---- Grayf32 ----------------------------------------------------------------
 
 /// SSE4.1 `grayf32_to_rgb_row`: clamp [0,1] × 255 → u8, broadcast Y → R=G=B.

@@ -529,6 +529,210 @@ pub(crate) unsafe fn gray16_to_hsv_row<const BE: bool>(
   }
 }
 
+// ---- Gray32 -----------------------------------------------------------------
+//
+// Full-bit integer twin of Gray16, widened u16 → u32. As with Gray16, the
+// packed-RGB(A) paths fall back to scalar (no cheap interleave store); luma /
+// luma_u16 / hsv get AVX2 bodies. The u32 narrows reuse the
+// `load_endian_u32x8` loader the grayf32 path established and process 8 px per
+// iter. `_mm256_srli_epi32::<16/24>` then `_mm256_packus_epi32` packs within
+// each 128-bit lane (interleaving the two halves), so a
+// `_mm256_permute4x64_epi64::<0x08>` regathers the 8 valid u16 into the low
+// 128 bits (`>> 16` native u16); a further `_mm_packus_epi16` lands the u8
+// sample (`>> 24`).
+
+/// AVX2 `gray32_to_rgb_row`: `>> 24` → broadcast (scalar fallback).
+///
+/// # Safety
+/// AVX2 must be available.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn gray32_to_rgb_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 3);
+  scalar::gray32_to_rgb_row::<BE>(y_plane, out, width, full_range);
+}
+
+/// AVX2 `gray32_to_rgba_row`: `>> 24` → RGBA u8 (scalar fallback).
+///
+/// # Safety
+/// AVX2 must be available.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn gray32_to_rgba_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 4);
+  scalar::gray32_to_rgba_row::<BE>(y_plane, out, width, full_range);
+}
+
+/// AVX2 `gray32_to_rgb_u16_row`: `>> 16` → RGB u16 (scalar fallback).
+///
+/// # Safety
+/// AVX2 must be available.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn gray32_to_rgb_u16_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u16],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 3);
+  scalar::gray32_to_rgb_u16_row::<BE>(y_plane, out, width, full_range);
+}
+
+/// AVX2 `gray32_to_rgba_u16_row`: `>> 16` → RGBA u16 (scalar fallback).
+///
+/// # Safety
+/// AVX2 must be available.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn gray32_to_rgba_u16_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u16],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 4);
+  scalar::gray32_to_rgba_u16_row::<BE>(y_plane, out, width, full_range);
+}
+
+/// AVX2 `gray32_to_luma_row`: `>> 24`, pack u32 → u8. 8 pixels/iter.
+///
+/// Luma outputs always pass Y through without `full_range` rescaling.
+///
+/// # Safety
+/// AVX2 must be available. `y_plane.len() >= width`. `out.len() >= width`.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn gray32_to_luma_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width);
+  let mut x = 0usize;
+  unsafe {
+    let zero = _mm_setzero_si128();
+    while x + 8 <= width {
+      let raw = load_endian_u32x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let shifted = _mm256_srli_epi32(raw, 24);
+      let packed16 = _mm256_packus_epi32(shifted, shifted);
+      let gathered = _mm256_permute4x64_epi64::<0x08>(packed16);
+      let lo16 = _mm256_castsi256_si128(gathered);
+      let packed8 = _mm_packus_epi16(lo16, zero);
+      let val = _mm_cvtsi128_si64(packed8) as u64;
+      out[x..x + 8].copy_from_slice(&val.to_le_bytes());
+      x += 8;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_luma_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
+  }
+}
+
+/// AVX2 `gray32_to_luma_u16_row`: `>> 16`, pack u32 → u16. 8 pixels/iter.
+///
+/// Luma outputs always pass Y through without `full_range` rescaling.
+///
+/// # Safety
+/// AVX2 must be available. `y_plane.len() >= width`. `out.len() >= width`.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn gray32_to_luma_u16_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width);
+  let mut x = 0usize;
+  unsafe {
+    while x + 8 <= width {
+      let raw = load_endian_u32x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let shifted = _mm256_srli_epi32(raw, 16);
+      let packed = _mm256_packus_epi32(shifted, shifted);
+      let gathered = _mm256_permute4x64_epi64::<0x08>(packed);
+      let lo = _mm256_castsi256_si128(gathered);
+      _mm_storeu_si128(out.as_mut_ptr().add(x).cast(), lo);
+      x += 8;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_luma_u16_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
+  }
+}
+
+/// AVX2 `gray32_to_hsv_row`: `>> 24`, H=0, S=0, V=Y8. 8 pixels/iter.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling
+/// applied to V channel).
+///
+/// # Safety
+/// AVX2 must be available. All slices have length >= width.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn gray32_to_hsv_row<const BE: bool>(
+  y_plane: &[u32],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  if !full_range {
+    return scalar::gray32_to_hsv_row::<BE>(y_plane, h_out, s_out, v_out, width, full_range);
+  }
+  let mut x = 0usize;
+  unsafe {
+    let zero = _mm_setzero_si128();
+    while x + 8 <= width {
+      let raw = load_endian_u32x8::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let shifted = _mm256_srli_epi32(raw, 24);
+      let packed16 = _mm256_packus_epi32(shifted, shifted);
+      let gathered = _mm256_permute4x64_epi64::<0x08>(packed16);
+      let lo16 = _mm256_castsi256_si128(gathered);
+      let packed8 = _mm_packus_epi16(lo16, zero);
+      let val = _mm_cvtsi128_si64(packed8) as u64;
+      h_out[x..x + 8].fill(0);
+      s_out[x..x + 8].fill(0);
+      v_out[x..x + 8].copy_from_slice(&val.to_le_bytes());
+      x += 8;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_hsv_row::<BE>(
+      &y_plane[x..width],
+      &mut h_out[x..width],
+      &mut s_out[x..width],
+      &mut v_out[x..width],
+      width - x,
+      true,
+    );
+  }
+}
+
 // ---- Grayf32 ----------------------------------------------------------------
 
 /// AVX2 `grayf32_to_rgb_row`: clamp [0,1] x 255 → u8, broadcast Y → R=G=B.

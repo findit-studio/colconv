@@ -256,15 +256,15 @@ use crate::{
 #[cfg(feature = "gray")]
 use crate::{
   frame::{
-    Gray8Frame, Gray16Frame, GrayNFrame, Grayf16Frame, Grayf32Frame, Ya8Frame, Ya16Frame,
-    Yaf16Frame, Yaf32Frame,
+    Gray8Frame, Gray16Frame, Gray32Frame, GrayNFrame, Grayf16Frame, Grayf32Frame, Ya8Frame,
+    Ya16Frame, Yaf16Frame, Yaf32Frame,
   },
   source::{
     Gray8, Gray8Sink, Gray9, Gray9Sink, Gray10, Gray10Sink, Gray12, Gray12Sink, Gray14, Gray14Sink,
-    Gray16, Gray16Sink, Grayf16, Grayf16Sink, Grayf32, Grayf32Sink, Ya8, Ya8Sink, Ya16, Ya16Sink,
-    Yaf16, Yaf16Sink, Yaf32, Yaf32Sink, gray8_to, gray9_to_endian, gray10_to_endian,
-    gray12_to_endian, gray14_to_endian, gray16_to_endian, grayf16_to_endian, grayf32_to_endian,
-    ya8_to, ya16_to_endian, yaf16_to_endian, yaf32_to_endian,
+    Gray16, Gray16Sink, Gray32, Gray32Sink, Grayf16, Grayf16Sink, Grayf32, Grayf32Sink, Ya8,
+    Ya8Sink, Ya16, Ya16Sink, Yaf16, Yaf16Sink, Yaf32, Yaf32Sink, gray8_to, gray9_to_endian,
+    gray10_to_endian, gray12_to_endian, gray14_to_endian, gray16_to_endian, gray32_to_endian,
+    grayf16_to_endian, grayf32_to_endian, ya8_to, ya16_to_endian, yaf16_to_endian, yaf32_to_endian,
   },
 };
 // Planar GBR — already-RGB sources (G/B/R planes, no chroma matrix). The
@@ -1481,6 +1481,12 @@ walker!(@const_bits 14, BE; Gray14, Gray14Sink, GrayNFrame, YuvOptions,
 #[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
 walker!(@const BE: bool; Gray16<BE>, Gray16Sink, Gray16Frame, YuvOptions,
   |src, opts, sink| gray16_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+// `Gray32` is the full-bit integer twin of `Gray16` (one `u32` luma plane);
+// same `@const BE` arm, delegating to `gray32_to_endian::<_, BE>`.
+#[cfg(feature = "gray")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
+walker!(@const BE: bool; Gray32<BE>, Gray32Sink, Gray32Frame, YuvOptions,
+  |src, opts, sink| gray32_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
 #[cfg(feature = "gray")]
 #[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
 walker!(@const BE: bool; Ya16<BE>, Ya16Sink, Ya16Frame, YuvOptions,

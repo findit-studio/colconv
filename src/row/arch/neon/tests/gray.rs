@@ -18,6 +18,13 @@ fn prng16(out: &mut [u16], seed: u32) {
     *o = u16::from_le_bytes([buf[i * 2], buf[i * 2 + 1]]);
   }
 }
+fn prng32(out: &mut [u32], seed: u32) {
+  let mut buf = std::vec![0u8; out.len() * 4];
+  prng(&mut buf, seed);
+  for (i, o) in out.iter_mut().enumerate() {
+    *o = u32::from_le_bytes([buf[i * 4], buf[i * 4 + 1], buf[i * 4 + 2], buf[i * 4 + 3]]);
+  }
+}
 
 #[test]
 #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
@@ -122,6 +129,148 @@ fn neon_gray16_limited_range_matches_scalar() {
     unsafe { gray16_to_rgb_row::<false>(&plane, &mut simd, w, false) };
     scalar::gray16_to_rgb_row::<false>(&plane, &mut scal, w, false);
     assert_eq!(simd, scal, "width={w} limited-range");
+  }
+}
+
+// ---- Gray32 parity tests ----------------------------------------------------
+//
+// Each kernel is exercised LE (`<false>`) and BE (`<true>`) against scalar at
+// the full WIDTHS sweep so the 8-px (u8) and 4-px (u16) blocks plus the scalar
+// tail all get covered; the BE arm pins the SIMD byte-swap against scalar.
+
+macro_rules! neon_gray32_parity {
+  ($name:ident, $kern:ident, $chans:expr, $fr:expr) => {
+    #[test]
+    #[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+    fn $name() {
+      for &w in WIDTHS {
+        let mut plane = std::vec![0u32; w];
+        prng32(&mut plane, 0x9E37_79B9);
+        let mut simd = std::vec![0u8; w * $chans];
+        let mut scal = std::vec![0u8; w * $chans];
+        unsafe { $kern::<false>(&plane, &mut simd, w, $fr) };
+        scalar::$kern::<false>(&plane, &mut scal, w, $fr);
+        assert_eq!(simd, scal, "LE width={w}");
+        let mut simd_be = std::vec![0u8; w * $chans];
+        let mut scal_be = std::vec![0u8; w * $chans];
+        unsafe { $kern::<true>(&plane, &mut simd_be, w, $fr) };
+        scalar::$kern::<true>(&plane, &mut scal_be, w, $fr);
+        assert_eq!(simd_be, scal_be, "BE width={w}");
+      }
+    }
+  };
+}
+
+neon_gray32_parity!(
+  neon_gray32_to_rgb_matches_scalar,
+  gray32_to_rgb_row,
+  3,
+  true
+);
+neon_gray32_parity!(
+  neon_gray32_to_rgba_matches_scalar,
+  gray32_to_rgba_row,
+  4,
+  true
+);
+neon_gray32_parity!(
+  neon_gray32_to_rgb_limited_matches_scalar,
+  gray32_to_rgb_row,
+  3,
+  false
+);
+
+#[test]
+#[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+fn neon_gray32_to_rgb_u16_matches_scalar() {
+  for &w in WIDTHS {
+    let mut plane = std::vec![0u32; w];
+    prng32(&mut plane, 0xABCD_1234);
+    for &fr in &[true, false] {
+      let mut simd = std::vec![0u16; w * 3];
+      let mut scal = std::vec![0u16; w * 3];
+      unsafe { gray32_to_rgb_u16_row::<false>(&plane, &mut simd, w, fr) };
+      scalar::gray32_to_rgb_u16_row::<false>(&plane, &mut scal, w, fr);
+      assert_eq!(simd, scal, "LE width={w} fr={fr}");
+      let mut simd_be = std::vec![0u16; w * 3];
+      let mut scal_be = std::vec![0u16; w * 3];
+      unsafe { gray32_to_rgb_u16_row::<true>(&plane, &mut simd_be, w, fr) };
+      scalar::gray32_to_rgb_u16_row::<true>(&plane, &mut scal_be, w, fr);
+      assert_eq!(simd_be, scal_be, "BE width={w} fr={fr}");
+    }
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+fn neon_gray32_to_rgba_u16_matches_scalar() {
+  for &w in WIDTHS {
+    let mut plane = std::vec![0u32; w];
+    prng32(&mut plane, 0x5555_AAAA);
+    let mut simd = std::vec![0u16; w * 4];
+    let mut scal = std::vec![0u16; w * 4];
+    unsafe { gray32_to_rgba_u16_row::<false>(&plane, &mut simd, w, true) };
+    scalar::gray32_to_rgba_u16_row::<false>(&plane, &mut scal, w, true);
+    assert_eq!(simd, scal, "LE width={w}");
+    let mut simd_be = std::vec![0u16; w * 4];
+    let mut scal_be = std::vec![0u16; w * 4];
+    unsafe { gray32_to_rgba_u16_row::<true>(&plane, &mut simd_be, w, true) };
+    scalar::gray32_to_rgba_u16_row::<true>(&plane, &mut scal_be, w, true);
+    assert_eq!(simd_be, scal_be, "BE width={w}");
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+fn neon_gray32_to_luma_matches_scalar() {
+  for &w in WIDTHS {
+    let mut plane = std::vec![0u32; w];
+    prng32(&mut plane, 0x0F0F_F0F0);
+    let mut simd = std::vec![0u8; w];
+    let mut scal = std::vec![0u8; w];
+    unsafe { gray32_to_luma_row::<false>(&plane, &mut simd, w) };
+    scalar::gray32_to_luma_row::<false>(&plane, &mut scal, w);
+    assert_eq!(simd, scal, "LE width={w}");
+    let mut simd_be = std::vec![0u8; w];
+    let mut scal_be = std::vec![0u8; w];
+    unsafe { gray32_to_luma_row::<true>(&plane, &mut simd_be, w) };
+    scalar::gray32_to_luma_row::<true>(&plane, &mut scal_be, w);
+    assert_eq!(simd_be, scal_be, "BE width={w}");
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+fn neon_gray32_to_luma_u16_matches_scalar() {
+  for &w in WIDTHS {
+    let mut plane = std::vec![0u32; w];
+    prng32(&mut plane, 0x2468_ACE0);
+    let mut simd = std::vec![0u16; w];
+    let mut scal = std::vec![0u16; w];
+    unsafe { gray32_to_luma_u16_row::<false>(&plane, &mut simd, w) };
+    scalar::gray32_to_luma_u16_row::<false>(&plane, &mut scal, w);
+    assert_eq!(simd, scal, "LE width={w}");
+    let mut simd_be = std::vec![0u16; w];
+    let mut scal_be = std::vec![0u16; w];
+    unsafe { gray32_to_luma_u16_row::<true>(&plane, &mut simd_be, w) };
+    scalar::gray32_to_luma_u16_row::<true>(&plane, &mut scal_be, w);
+    assert_eq!(simd_be, scal_be, "BE width={w}");
+  }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "SIMD intrinsics unsupported by Miri")]
+fn neon_gray32_to_hsv_matches_scalar() {
+  for &w in WIDTHS {
+    let mut plane = std::vec![0u32; w];
+    prng32(&mut plane, 0xFEED_FACE);
+    for &fr in &[true, false] {
+      let (mut hs, mut ss, mut vs) = (std::vec![0u8; w], std::vec![0u8; w], std::vec![0u8; w]);
+      let (mut hc, mut sc, mut vc) = (std::vec![0u8; w], std::vec![0u8; w], std::vec![0u8; w]);
+      unsafe { gray32_to_hsv_row::<false>(&plane, &mut hs, &mut ss, &mut vs, w, fr) };
+      scalar::gray32_to_hsv_row::<false>(&plane, &mut hc, &mut sc, &mut vc, w, fr);
+      assert_eq!((&hs, &ss, &vs), (&hc, &sc, &vc), "LE width={w} fr={fr}");
+    }
   }
 }
 

@@ -1,11 +1,14 @@
 use crate::{
   ColorMatrix,
-  frame::{Gray8Frame, Gray16Frame, GrayNFrame, Grayf16Frame, Grayf32Frame, Ya8Frame, Ya16Frame},
+  frame::{
+    Gray8Frame, Gray16Frame, Gray32Frame, GrayNFrame, Grayf16Frame, Grayf32Frame, Ya8Frame,
+    Ya16Frame,
+  },
   sinker::MixedSinker,
   source::{
     gray8_to, gray9_to, gray9_to_endian, gray10_to, gray10_to_endian, gray12_to, gray12_to_endian,
-    gray14_to, gray14_to_endian, gray16_to, gray16_to_endian, grayf16_to, grayf16_to_endian,
-    grayf32_to, grayf32_to_endian, ya8_to, ya16_to, ya16_to_endian,
+    gray14_to, gray14_to_endian, gray16_to, gray16_to_endian, gray32_to, gray32_to_endian,
+    grayf16_to, grayf16_to_endian, grayf32_to, grayf32_to_endian, ya8_to, ya16_to, ya16_to_endian,
   },
 };
 use half::f16;
@@ -56,6 +59,24 @@ fn make_gray10_frame(data: &[u16], w: u32, h: u32) -> GrayNFrame<'_, 10> {
 }
 fn make_gray16_frame(data: &[u16], w: u32, h: u32) -> Gray16Frame<'_> {
   Gray16Frame::new(data, w, h, w)
+}
+/// Re-encode a host-native u32 slice as LE-encoded byte storage. Sink kernels
+/// recover the intended logical values via `u32::from_le` on both LE (no-op)
+/// and BE (byte-swap) hosts.
+fn as_le_u32(host: &[u32]) -> std::vec::Vec<u32> {
+  host
+    .iter()
+    .map(|v| u32::from_ne_bytes(v.to_le_bytes()))
+    .collect()
+}
+fn as_be_u32(host: &[u32]) -> std::vec::Vec<u32> {
+  host
+    .iter()
+    .map(|v| u32::from_ne_bytes(v.to_be_bytes()))
+    .collect()
+}
+fn make_gray32_frame(data: &[u32], w: u32, h: u32) -> Gray32Frame<'_> {
+  Gray32Frame::new(data, w, h, w)
 }
 
 #[test]
@@ -1625,4 +1646,138 @@ fn ya16_le_be_roundtrip_byte_identical() {
       })
       .collect(),
   }
+}
+
+// ---- Gray32 (u32 luma; u8 = >> 24, native u16 = >> 16) ---------------------
+
+#[test]
+fn gray32_with_rgb_shifts_to_u8() {
+  // raw >> 24 broadcast.
+  let plane = as_le_u32(&[0x8000_0000, 0xFFFF_FFFF, 0x0000_0000, 0x0100_0000]);
+  let frame = make_gray32_frame(&plane, 4, 1);
+  let mut rgb = std::vec![0u8; 12];
+  let mut sink = MixedSinker::<crate::source::Gray32>::new(4, 1)
+    .with_rgb(&mut rgb)
+    .unwrap();
+  gray32_to(&frame, FR, M, &mut sink).unwrap();
+  assert_eq!(rgb[0..3], [0x80, 0x80, 0x80]);
+  assert_eq!(rgb[3..6], [0xFF, 0xFF, 0xFF]);
+  assert_eq!(rgb[6..9], [0x00, 0x00, 0x00]);
+  assert_eq!(rgb[9..12], [0x01, 0x01, 0x01]);
+}
+
+#[test]
+fn gray32_with_rgba_alpha_is_0xff() {
+  let plane = as_le_u32(&[0xC000_0000u32; 4]);
+  let frame = make_gray32_frame(&plane, 4, 1);
+  let mut rgba = std::vec![0u8; 16];
+  let mut sink = MixedSinker::<crate::source::Gray32>::new(4, 1)
+    .with_rgba(&mut rgba)
+    .unwrap();
+  gray32_to(&frame, FR, M, &mut sink).unwrap();
+  for i in 0..4 {
+    assert_eq!(
+      rgba[i * 4..i * 4 + 4],
+      [0xC0, 0xC0, 0xC0, 0xFF],
+      "pixel {i}"
+    );
+  }
+}
+
+#[test]
+fn gray32_with_rgb_u16_shifts_to_native() {
+  // raw >> 16 broadcast.
+  let plane = as_le_u32(&[0x8000_0000, 0x1234_5678, 0xFFFF_FFFF, 0x0000_0000]);
+  let frame = make_gray32_frame(&plane, 4, 1);
+  let mut rgb = std::vec![0u16; 12];
+  let mut sink = MixedSinker::<crate::source::Gray32>::new(4, 1)
+    .with_rgb_u16(&mut rgb)
+    .unwrap();
+  gray32_to(&frame, FR, M, &mut sink).unwrap();
+  assert_eq!(rgb[0..3], [0x8000, 0x8000, 0x8000]);
+  assert_eq!(rgb[3..6], [0x1234, 0x1234, 0x1234]);
+  assert_eq!(rgb[6..9], [0xFFFF, 0xFFFF, 0xFFFF]);
+  assert_eq!(rgb[9..12], [0x0000, 0x0000, 0x0000]);
+}
+
+#[test]
+fn gray32_with_rgba_u16_alpha_is_0xffff() {
+  let plane = as_le_u32(&[0x1234_5678u32; 4]);
+  let frame = make_gray32_frame(&plane, 4, 1);
+  let mut rgba_u16 = std::vec![0u16; 16];
+  let mut sink = MixedSinker::<crate::source::Gray32>::new(4, 1)
+    .with_rgba_u16(&mut rgba_u16)
+    .unwrap();
+  gray32_to(&frame, FR, M, &mut sink).unwrap();
+  for i in 0..4 {
+    assert_eq!(rgba_u16[i * 4 + 3], 0xFFFF, "pixel {i} alpha");
+    assert_eq!(rgba_u16[i * 4], 0x1234, "pixel {i} R");
+  }
+}
+
+#[test]
+fn gray32_with_luma_shifts_to_u8() {
+  let plane = as_le_u32(&[0, 0x4000_0000, 0x8000_0000, 0xFFFF_FFFF]);
+  let frame = make_gray32_frame(&plane, 4, 1);
+  let mut luma = std::vec![0u8; 4];
+  let mut sink = MixedSinker::<crate::source::Gray32>::new(4, 1)
+    .with_luma(&mut luma)
+    .unwrap();
+  gray32_to(&frame, FR, M, &mut sink).unwrap();
+  assert_eq!(luma, [0x00, 0x40, 0x80, 0xFF]);
+}
+
+#[test]
+fn gray32_with_luma_u16_shifts_to_native() {
+  let intended: Vec<u32> = (0u32..16).map(|x| x << 24 | x << 12).collect();
+  let plane = as_le_u32(&intended);
+  let frame = make_gray32_frame(&plane, 4, 4);
+  let mut lu16 = std::vec![0u16; 16];
+  let mut sink = MixedSinker::<crate::source::Gray32>::new(4, 4)
+    .with_luma_u16(&mut lu16)
+    .unwrap();
+  gray32_to(&frame, FR, M, &mut sink).unwrap();
+  let expect: Vec<u16> = intended.iter().map(|&v| (v >> 16) as u16).collect();
+  assert_eq!(lu16, expect);
+}
+
+#[test]
+fn gray32_with_hsv_h0_s0_v_shift24() {
+  let plane = as_le_u32(&[0x8000_0000u32, 0x4000_0000u32]);
+  let frame = make_gray32_frame(&plane, 2, 1);
+  let mut h = std::vec![0xFFu8; 2];
+  let mut s = std::vec![0xFFu8; 2];
+  let mut v = std::vec![0u8; 2];
+  let mut sink = MixedSinker::<crate::source::Gray32>::new(2, 1)
+    .with_hsv(&mut h, &mut s, &mut v)
+    .unwrap();
+  gray32_to(&frame, FR, M, &mut sink).unwrap();
+  assert_eq!(h, [0, 0], "H must be 0");
+  assert_eq!(s, [0, 0], "S must be 0");
+  assert_eq!(v, [0x80, 0x40], "V = Y >> 24");
+}
+
+#[test]
+fn gray32_be_endian_matches_le() {
+  // BE-encoded bytes decoded by the `<BE = true>` kernel must equal the same
+  // logical values decoded by the LE kernel.
+  let intended = [0x8012_3456u32, 0x00FF_8800, 0xDEAD_BEEF, 0x1357_9BDF];
+  let le_plane = as_le_u32(&intended);
+  let be_plane = as_be_u32(&intended);
+  let le_frame = make_gray32_frame(&le_plane, 4, 1);
+  let be_frame = Gray32Frame::<true>::new(&be_plane, 4, 1, 4);
+
+  let mut rgb_le = std::vec![0u8; 12];
+  let mut sink_le = MixedSinker::<crate::source::Gray32>::new(4, 1)
+    .with_rgb(&mut rgb_le)
+    .unwrap();
+  gray32_to(&le_frame, FR, M, &mut sink_le).unwrap();
+
+  let mut rgb_be = std::vec![0u8; 12];
+  let mut sink_be = MixedSinker::<crate::source::Gray32<true>>::new(4, 1)
+    .with_rgb(&mut rgb_be)
+    .unwrap();
+  gray32_to_endian::<_, true>(&be_frame, FR, M, &mut sink_be).unwrap();
+
+  assert_eq!(rgb_le, rgb_be, "BE and LE Gray32 RGB must match");
 }

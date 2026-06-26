@@ -503,6 +503,196 @@ pub(crate) unsafe fn gray16_to_hsv_row<const BE: bool>(
   }
 }
 
+// ---- Gray32 -----------------------------------------------------------------
+//
+// Full-bit integer twin of Gray16, widened u16 → u32. As with Gray16, the
+// packed-RGB(A) paths fall back to scalar; luma / luma_u16 / hsv get AVX-512
+// bodies processing 16 px per iter. The u32 narrows reuse the
+// `load_endian_u32x16` loader the grayf32 path established: `_mm512_srli_epi32`
+// then `_mm512_cvtepi32_epi16` lands the native u16 sample (`>> 16`) with no
+// lane-cross fixup, and `_mm512_cvtepi32_epi8` lands the u8 sample (`>> 24`).
+
+/// AVX-512 `gray32_to_rgb_row`: `>> 24` → broadcast (scalar fallback).
+///
+/// # Safety
+/// AVX-512F+BW must be available.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn gray32_to_rgb_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 3);
+  scalar::gray32_to_rgb_row::<BE>(y_plane, out, width, full_range);
+}
+
+/// AVX-512 `gray32_to_rgba_row`: `>> 24` → RGBA u8 (scalar fallback).
+///
+/// # Safety
+/// AVX-512F+BW must be available.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn gray32_to_rgba_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 4);
+  scalar::gray32_to_rgba_row::<BE>(y_plane, out, width, full_range);
+}
+
+/// AVX-512 `gray32_to_rgb_u16_row`: `>> 16` → RGB u16 (scalar fallback).
+///
+/// # Safety
+/// AVX-512F+BW must be available.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn gray32_to_rgb_u16_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u16],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 3);
+  scalar::gray32_to_rgb_u16_row::<BE>(y_plane, out, width, full_range);
+}
+
+/// AVX-512 `gray32_to_rgba_u16_row`: `>> 16` → RGBA u16 (scalar fallback).
+///
+/// # Safety
+/// AVX-512F+BW must be available.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn gray32_to_rgba_u16_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u16],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width * 4);
+  scalar::gray32_to_rgba_u16_row::<BE>(y_plane, out, width, full_range);
+}
+
+/// AVX-512 `gray32_to_luma_row`: `>> 24`, narrow u32 → u8. 16 pixels/iter.
+///
+/// Luma outputs always pass Y through without `full_range` rescaling.
+///
+/// # Safety
+/// AVX-512F+BW must be available. `y_plane.len() >= width`. `out.len() >= width`.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn gray32_to_luma_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width);
+  let mut x = 0usize;
+  unsafe {
+    while x + 16 <= width {
+      let raw = load_endian_u32x16::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let shifted = _mm512_srli_epi32(raw, 24);
+      let packed = _mm512_cvtepi32_epi8(shifted);
+      _mm_storeu_si128(out.as_mut_ptr().add(x).cast(), packed);
+      x += 16;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_luma_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
+  }
+}
+
+/// AVX-512 `gray32_to_luma_u16_row`: `>> 16`, narrow u32 → u16. 16 pixels/iter.
+///
+/// Luma outputs always pass Y through without `full_range` rescaling.
+///
+/// # Safety
+/// AVX-512F+BW must be available. `y_plane.len() >= width`. `out.len() >= width`.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn gray32_to_luma_u16_row<const BE: bool>(
+  y_plane: &[u32],
+  out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(y_plane.len() >= width);
+  debug_assert!(out.len() >= width);
+  let mut x = 0usize;
+  unsafe {
+    while x + 16 <= width {
+      let raw = load_endian_u32x16::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let shifted = _mm512_srli_epi32(raw, 16);
+      let packed = _mm512_cvtepi32_epi16(shifted);
+      _mm256_storeu_si256(out.as_mut_ptr().add(x).cast(), packed);
+      x += 16;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_luma_u16_row::<BE>(&y_plane[x..width], &mut out[x..width], width - x);
+  }
+}
+
+/// AVX-512 `gray32_to_hsv_row`: `>> 24`, H=0, S=0, V=Y8. 16 pixels/iter.
+///
+/// For `full_range = false`, falls back to scalar (limited-range rescaling
+/// applied to V channel).
+///
+/// # Safety
+/// AVX-512F+BW must be available. All slices have length >= width.
+#[allow(dead_code)]
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw")]
+pub(crate) unsafe fn gray32_to_hsv_row<const BE: bool>(
+  y_plane: &[u32],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  full_range: bool,
+) {
+  debug_assert!(y_plane.len() >= width);
+  if !full_range {
+    return scalar::gray32_to_hsv_row::<BE>(y_plane, h_out, s_out, v_out, width, full_range);
+  }
+  let mut x = 0usize;
+  unsafe {
+    let zero128 = _mm_setzero_si128();
+    while x + 16 <= width {
+      let raw = load_endian_u32x16::<BE>(y_plane.as_ptr().cast::<u8>().add(x * 4));
+      let shifted = _mm512_srli_epi32(raw, 24);
+      let packed = _mm512_cvtepi32_epi8(shifted);
+      _mm_storeu_si128(h_out.as_mut_ptr().add(x).cast(), zero128);
+      _mm_storeu_si128(s_out.as_mut_ptr().add(x).cast(), zero128);
+      _mm_storeu_si128(v_out.as_mut_ptr().add(x).cast(), packed);
+      x += 16;
+    }
+  }
+  if x < width {
+    scalar::gray32_to_hsv_row::<BE>(
+      &y_plane[x..width],
+      &mut h_out[x..width],
+      &mut s_out[x..width],
+      &mut v_out[x..width],
+      width - x,
+      true,
+    );
+  }
+}
+
 // ---- Grayf32 ----------------------------------------------------------------
 
 /// AVX-512 `grayf32_to_rgb_row`: clamp [0,1] x 255 → u8, broadcast Y → R=G=B.

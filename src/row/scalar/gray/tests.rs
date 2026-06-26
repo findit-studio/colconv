@@ -31,6 +31,22 @@ fn as_be_u16(intended: &[u16]) -> std::vec::Vec<u16> {
     .collect()
 }
 
+fn as_le_u32(intended: &[u32]) -> std::vec::Vec<u32> {
+  let bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_le_bytes()).collect();
+  bytes
+    .chunks_exact(4)
+    .map(|b| u32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
+    .collect()
+}
+
+fn as_be_u32(intended: &[u32]) -> std::vec::Vec<u32> {
+  let bytes: std::vec::Vec<u8> = intended.iter().flat_map(|v| v.to_be_bytes()).collect();
+  bytes
+    .chunks_exact(4)
+    .map(|b| u32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
+    .collect()
+}
+
 #[test]
 fn gray8_to_rgb_broadcasts() {
   let y = [0u8, 128, 255];
@@ -536,6 +552,195 @@ fn gray16_be_parity_luma_u16() {
   assert_eq!(
     out_le, out_be,
     "BE and LE gray16 luma_u16 outputs must match"
+  );
+  assert_eq!(out_le[0], 0x1234);
+}
+
+// ---- Gray32 high-bit-scale tests -------------------------------------------
+//
+// Full-bit u32 twin of Gray16: u8 = raw >> 24, native u16 = raw >> 16. The
+// limited-range rescale runs in i64 (black = 16 << 24, range = 219 << 24).
+
+#[test]
+fn gray32_to_rgb_downshifts_24() {
+  let y = as_le_u32(&[0, 0x8000_0000, 0xFFFF_FFFF]);
+  let mut out = std::vec![0u8; 9];
+  gray32_to_rgb_row::<false>(&y, &mut out, 3, true);
+  assert_eq!(&out[0..3], &[0, 0, 0]);
+  assert_eq!(&out[3..6], &[0x80, 0x80, 0x80]);
+  assert_eq!(&out[6..9], &[0xFF, 0xFF, 0xFF]);
+}
+
+#[test]
+fn gray32_to_rgba_opaque() {
+  let y = as_le_u32(&[0xC000_0000u32]);
+  let mut out = std::vec![0u8; 4];
+  gray32_to_rgba_row::<false>(&y, &mut out, 1, true);
+  assert_eq!(&out[0..4], &[0xC0, 0xC0, 0xC0, 0xFF]);
+}
+
+#[test]
+fn gray32_to_rgb_u16_downshifts_16() {
+  // raw >> 16: 0x8000_0000 → 0x8000 = 32768; 0xFFFF_FFFF → 0xFFFF.
+  let y = as_le_u32(&[0, 0x8000_0000, 0xFFFF_FFFF]);
+  let mut out = std::vec![0u16; 9];
+  gray32_to_rgb_u16_row::<false>(&y, &mut out, 3, true);
+  assert_eq!(&out[0..3], &[0, 0, 0]);
+  assert_eq!(&out[3..6], &[0x8000, 0x8000, 0x8000]);
+  assert_eq!(&out[6..9], &[0xFFFF, 0xFFFF, 0xFFFF]);
+}
+
+#[test]
+fn gray32_to_rgba_u16_opaque() {
+  let y = as_le_u32(&[0x1234_5678u32]);
+  let mut out = std::vec![0u16; 4];
+  gray32_to_rgba_u16_row::<false>(&y, &mut out, 1, true);
+  // raw >> 16 = 0x1234.
+  assert_eq!(&out[0..4], &[0x1234, 0x1234, 0x1234, 0xFFFF]);
+}
+
+#[test]
+fn gray32_to_luma_downshifts_24() {
+  let y = as_le_u32(&[0, 0x4000_0000, 0xFFFF_FFFF]);
+  let mut out = std::vec![0u8; 3];
+  gray32_to_luma_row::<false>(&y, &mut out, 3);
+  assert_eq!(out.as_slice(), &[0, 0x40, 0xFF]);
+}
+
+#[test]
+fn gray32_to_luma_u16_downshifts_16() {
+  let y = as_le_u32(&[0, 0x1234_5678, 0xFFFF_FFFF]);
+  let mut out = std::vec![0u16; 3];
+  gray32_to_luma_u16_row::<false>(&y, &mut out, 3);
+  assert_eq!(out.as_slice(), &[0, 0x1234, 0xFFFF]);
+}
+
+#[test]
+fn gray32_to_hsv_h0_s0() {
+  let y = as_le_u32(&[0x8000_0000u32]); // >> 24 = 128
+  let mut h = std::vec![0xFFu8; 1];
+  let mut s = std::vec![0xFFu8; 1];
+  let mut v = std::vec![0u8; 1];
+  gray32_to_hsv_row::<false>(&y, &mut h, &mut s, &mut v, 1, true);
+  assert_eq!(h[0], 0);
+  assert_eq!(s[0], 0);
+  assert_eq!(v[0], 128);
+}
+
+// ---- Gray32 limited-range tests (i64 rescale) ------------------------------
+
+#[test]
+fn gray32_limited_range_black() {
+  // 32-bit black = 16 << 24 = 0x1000_0000.
+  let y = as_le_u32(&[16u32 << 24]);
+  let mut out = std::vec![0u8; 3];
+  gray32_to_rgb_row::<false>(&y, &mut out, 1, false);
+  assert_eq!(&out[0..3], &[0, 0, 0]);
+}
+
+#[test]
+fn gray32_limited_range_white() {
+  // 32-bit white = 235 << 24.
+  let y = as_le_u32(&[235u32 << 24]);
+  let mut out = std::vec![0u8; 3];
+  gray32_to_rgb_row::<false>(&y, &mut out, 1, false);
+  assert_eq!(&out[0..3], &[255, 255, 255]);
+}
+
+#[test]
+fn gray32_limited_range_midpoint() {
+  // 32-bit mid: 125 << 24 → approx 127.
+  let y = as_le_u32(&[125u32 << 24]);
+  let mut out = std::vec![0u8; 3];
+  gray32_to_rgb_row::<false>(&y, &mut out, 1, false);
+  assert!(
+    out[0] >= 126 && out[0] <= 128,
+    "expected ~127 got {}",
+    out[0]
+  );
+}
+
+#[test]
+fn gray32_to_rgb_u16_limited_range_black_white_overflow() {
+  // The native u16 limited rescale `(y - black) * 65535` reaches ~2.4e14 —
+  // far past i32 — so the math runs in i64. Exercise black / white / over-white.
+  let y = as_le_u32(&[16u32 << 24, 235u32 << 24, 0xFFFF_FFFF]);
+  let mut out = std::vec![0u16; 9];
+  gray32_to_rgb_u16_row::<false>(&y, &mut out, 3, false);
+  assert_eq!(&out[0..3], &[0, 0, 0]);
+  assert_eq!(&out[3..6], &[65535, 65535, 65535]);
+  // Over-white clamps to max_native = 65535.
+  assert_eq!(&out[6..9], &[65535, 65535, 65535]);
+}
+
+#[test]
+fn gray32_limited_range_hsv() {
+  let y = as_le_u32(&[16u32 << 24, 235u32 << 24]);
+  let mut h = std::vec![0xFFu8; 2];
+  let mut s = std::vec![0xFFu8; 2];
+  let mut v = std::vec![0u8; 2];
+  gray32_to_hsv_row::<false>(&y, &mut h, &mut s, &mut v, 2, false);
+  assert_eq!(h.as_slice(), &[0, 0]);
+  assert_eq!(s.as_slice(), &[0, 0]);
+  assert_eq!(v.as_slice(), &[0, 255]);
+}
+
+// ---- Gray32 BE parity tests ------------------------------------------------
+
+#[test]
+fn gray32_be_parity_rgb() {
+  let intended: std::vec::Vec<u32> = std::vec![0x8012_3456u32];
+  let le_in = as_le_u32(&intended);
+  let be_in = as_be_u32(&intended);
+  let mut out_le = std::vec![0u8; 3];
+  let mut out_be = std::vec![0u8; 3];
+  gray32_to_rgb_row::<false>(&le_in, &mut out_le, 1, true);
+  gray32_to_rgb_row::<true>(&be_in, &mut out_be, 1, true);
+  assert_eq!(out_le, out_be, "BE and LE gray32 rgb outputs must match");
+  assert_eq!(&out_le[..], &[0x80, 0x80, 0x80]);
+}
+
+#[test]
+fn gray32_be_parity_rgb_u16() {
+  let intended: std::vec::Vec<u32> = std::vec![0x1234_5678u32];
+  let le_in = as_le_u32(&intended);
+  let be_in = as_be_u32(&intended);
+  let mut out_le = std::vec![0u16; 3];
+  let mut out_be = std::vec![0u16; 3];
+  gray32_to_rgb_u16_row::<false>(&le_in, &mut out_le, 1, true);
+  gray32_to_rgb_u16_row::<true>(&be_in, &mut out_be, 1, true);
+  assert_eq!(
+    out_le, out_be,
+    "BE and LE gray32 rgb_u16 outputs must match"
+  );
+  assert_eq!(&out_le[..], &[0x1234, 0x1234, 0x1234]);
+}
+
+#[test]
+fn gray32_be_parity_luma() {
+  let intended: std::vec::Vec<u32> = std::vec![0x4000_0000u32];
+  let le_in = as_le_u32(&intended);
+  let be_in = as_be_u32(&intended);
+  let mut out_le = std::vec![0u8; 1];
+  let mut out_be = std::vec![0u8; 1];
+  gray32_to_luma_row::<false>(&le_in, &mut out_le, 1);
+  gray32_to_luma_row::<true>(&be_in, &mut out_be, 1);
+  assert_eq!(out_le, out_be, "BE and LE gray32 luma outputs must match");
+  assert_eq!(out_le[0], 0x40);
+}
+
+#[test]
+fn gray32_be_parity_luma_u16() {
+  let intended: std::vec::Vec<u32> = std::vec![0x1234_5678u32];
+  let le_in = as_le_u32(&intended);
+  let be_in = as_be_u32(&intended);
+  let mut out_le = std::vec![0u16; 1];
+  let mut out_be = std::vec![0u16; 1];
+  gray32_to_luma_u16_row::<false>(&le_in, &mut out_le, 1);
+  gray32_to_luma_u16_row::<true>(&be_in, &mut out_be, 1);
+  assert_eq!(
+    out_le, out_be,
+    "BE and LE gray32 luma_u16 outputs must match"
   );
   assert_eq!(out_le[0], 0x1234);
 }
