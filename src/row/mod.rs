@@ -257,6 +257,9 @@ pub use dispatch::packed_rgb_16bit::{
 pub use dispatch::packed_rgb_32bit::{
   rgb96_to_rgb_row, rgb96_to_rgb_row_endian, rgb96_to_rgb_u16_row, rgb96_to_rgb_u16_row_endian,
   rgb96_to_rgba_row, rgb96_to_rgba_row_endian, rgb96_to_rgba_u16_row, rgb96_to_rgba_u16_row_endian,
+  rgba128_to_rgb_row, rgba128_to_rgb_row_endian, rgba128_to_rgb_u16_row,
+  rgba128_to_rgb_u16_row_endian, rgba128_to_rgba_row, rgba128_to_rgba_row_endian,
+  rgba128_to_rgba_u16_row, rgba128_to_rgba_u16_row_endian,
 };
 pub use dispatch::rgb_ops::*;
 #[cfg(feature = "v210")]
@@ -307,7 +310,9 @@ pub(crate) use dispatch::packed_rgb_16bit::{
 #[allow(unused_imports)]
 pub(crate) use dispatch::packed_rgb_32bit::{
   rgb96_to_hsv_row, rgb96_to_hsv_row_endian, rgb96_to_luma_row, rgb96_to_luma_row_endian,
-  rgb96_to_luma_u16_row, rgb96_to_luma_u16_row_endian,
+  rgb96_to_luma_u16_row, rgb96_to_luma_u16_row_endian, rgba128_to_hsv_row,
+  rgba128_to_hsv_row_endian, rgba128_to_luma_row, rgba128_to_luma_row_endian,
+  rgba128_to_luma_u16_row, rgba128_to_luma_u16_row_endian,
 };
 // Gray dispatchers are pub(crate) — sinker code uses them via crate::row::gray*_row.
 #[cfg(all(feature = "gray", any(feature = "std", feature = "alloc")))]

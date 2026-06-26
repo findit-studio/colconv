@@ -189,16 +189,17 @@ use crate::{
 use crate::{
   frame::{
     AbgrFrame, ArgbFrame, Bgr24Frame, Bgr48Frame, Bgra64Frame, BgraFrame, BgrxFrame, Rgb24Frame,
-    Rgb48Frame, Rgb96Frame, Rgba64Frame, RgbaFrame, RgbxFrame, X2Bgr10Frame, X2Rgb10Frame,
-    XbgrFrame, XrgbFrame,
+    Rgb48Frame, Rgb96Frame, Rgba64Frame, Rgba128Frame, RgbaFrame, RgbxFrame, X2Bgr10Frame,
+    X2Rgb10Frame, XbgrFrame, XrgbFrame,
   },
   source::{
     Abgr, AbgrSink, Argb, ArgbSink, Bgr24, Bgr24Sink, Bgr48, Bgr48Sink, Bgra, Bgra64, Bgra64Sink,
     BgraSink, Bgrx, BgrxSink, Rgb24, Rgb24Sink, Rgb48, Rgb48Sink, Rgb96, Rgb96Sink, Rgba, Rgba64,
-    Rgba64Sink, RgbaSink, Rgbx, RgbxSink, X2Bgr10, X2Bgr10Sink, X2Rgb10, X2Rgb10Sink, Xbgr,
-    XbgrSink, Xrgb, XrgbSink, abgr_to, argb_to, bgr24_to, bgr48_to_endian, bgra_to,
-    bgra64_to_endian, bgrx_to, rgb24_to, rgb48_to_endian, rgb96_to_endian, rgba_to,
-    rgba64_to_endian, rgbx_to, x2bgr10_to_endian, x2rgb10_to_endian, xbgr_to, xrgb_to,
+    Rgba64Sink, Rgba128, Rgba128Sink, RgbaSink, Rgbx, RgbxSink, X2Bgr10, X2Bgr10Sink, X2Rgb10,
+    X2Rgb10Sink, Xbgr, XbgrSink, Xrgb, XrgbSink, abgr_to, argb_to, bgr24_to, bgr48_to_endian,
+    bgra_to, bgra64_to_endian, bgrx_to, rgb24_to, rgb48_to_endian, rgb96_to_endian, rgba_to,
+    rgba64_to_endian, rgba128_to_endian, rgbx_to, x2bgr10_to_endian, x2rgb10_to_endian, xbgr_to,
+    xrgb_to,
   },
 };
 // Legacy packed RGB (5/5/6/5/5/5/4/4/4-bit, `AV_PIX_FMT_*565/555/444LE`).
@@ -1331,6 +1332,11 @@ walker!(@const BE: bool; Bgra64<BE>, Bgra64Sink, Bgra64Frame, YuvOptions,
 #[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
 walker!(@const BE: bool; Rgb96<BE>, Rgb96Sink, Rgb96Frame, YuvOptions,
   |src, opts, sink| rgb96_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
+// `Rgba128` (`R, G, B, A`, real alpha) is the full-bit `u32` twin of `Rgba64`.
+#[cfg(feature = "rgb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rgb")))]
+walker!(@const BE: bool; Rgba128<BE>, Rgba128Sink, Rgba128Frame, YuvOptions,
+  |src, opts, sink| rgba128_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
 
 // ---- Packed RGB, 10-bit 2-10-10-10 (BE-generic marker; LE + BE) --------
 // `X2Rgb10` / `X2Bgr10` pack one pixel per 32-bit word

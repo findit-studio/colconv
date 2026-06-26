@@ -21,6 +21,9 @@
 //! | Rgb96    | 3                  | R, G, B       |
 //! | Rgba128  | 4                  | R, G, B, A    |
 //!
+//! The Rgba128 alpha is real and is passed through (depth-converted) by the
+//! `*_to_rgba*` outputs; the `*_to_rgb*` outputs drop it.
+//!
 //! # Depth-conversion convention
 //!
 //! - u32 → u8:  `(v >> 24) as u8`  (high-byte extraction).
@@ -130,6 +133,101 @@ pub(crate) fn rgb96_to_rgba_u16_row<const BE: bool>(
     rgba_u16_out[dst + 1] = (load_u32::<BE>(rgb96[src + 1]) >> 16) as u16;
     rgba_u16_out[dst + 2] = (load_u32::<BE>(rgb96[src + 2]) >> 16) as u16;
     rgba_u16_out[dst + 3] = 0xFFFF;
+  }
+}
+
+// ---- Rgba128 family (4 u32 elements per pixel: R, G, B, A) ------------------
+
+/// Rgba128 → packed u8 RGB: drop alpha, narrow each R/G/B channel via `>> 24`.
+///
+/// When `BE = true` each u32 element is byte-swapped on load.
+///
+/// Input stride: `width * 4` u32 elements, output: `width * 3` bytes.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgba128_to_rgb_row<const BE: bool>(
+  rgba128: &[u32],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(rgba128.len() >= width * 4, "rgba128 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+  for x in 0..width {
+    let src = x * 4;
+    let dst = x * 3;
+    rgb_out[dst] = (load_u32::<BE>(rgba128[src]) >> 24) as u8;
+    rgb_out[dst + 1] = (load_u32::<BE>(rgba128[src + 1]) >> 24) as u8;
+    rgb_out[dst + 2] = (load_u32::<BE>(rgba128[src + 2]) >> 24) as u8;
+  }
+}
+
+/// Rgba128 → packed u16 RGB: drop alpha, narrow each R/G/B channel via `>> 16`.
+///
+/// When `BE = true` each u32 element is byte-swapped on load.
+///
+/// Input stride: `width * 4` u32 elements, output: `width * 3` u16 elements.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgba128_to_rgb_u16_row<const BE: bool>(
+  rgba128: &[u32],
+  rgb_u16_out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(rgba128.len() >= width * 4, "rgba128 row too short");
+  debug_assert!(rgb_u16_out.len() >= width * 3, "rgb_u16_out row too short");
+  for x in 0..width {
+    let src = x * 4;
+    let dst = x * 3;
+    rgb_u16_out[dst] = (load_u32::<BE>(rgba128[src]) >> 16) as u16;
+    rgb_u16_out[dst + 1] = (load_u32::<BE>(rgba128[src + 1]) >> 16) as u16;
+    rgb_u16_out[dst + 2] = (load_u32::<BE>(rgba128[src + 2]) >> 16) as u16;
+  }
+}
+
+/// Rgba128 → packed u8 RGBA: narrow all 4 channels via `>> 24` (source alpha
+/// passes through).
+///
+/// When `BE = true` each u32 element is byte-swapped on load.
+///
+/// Input and output stride: `width * 4` elements.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgba128_to_rgba_row<const BE: bool>(
+  rgba128: &[u32],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(rgba128.len() >= width * 4, "rgba128 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+  for x in 0..width {
+    let i = x * 4;
+    rgba_out[i] = (load_u32::<BE>(rgba128[i]) >> 24) as u8;
+    rgba_out[i + 1] = (load_u32::<BE>(rgba128[i + 1]) >> 24) as u8;
+    rgba_out[i + 2] = (load_u32::<BE>(rgba128[i + 2]) >> 24) as u8;
+    rgba_out[i + 3] = (load_u32::<BE>(rgba128[i + 3]) >> 24) as u8;
+  }
+}
+
+/// Rgba128 → packed u16 RGBA: narrow all 4 channels via `>> 16` (source alpha
+/// passes through).
+///
+/// When `BE = true` each u32 element is byte-swapped on load.
+///
+/// Input and output stride: `width * 4` u32 / u16 elements.
+#[cfg_attr(not(tarpaulin), inline(always))]
+pub(crate) fn rgba128_to_rgba_u16_row<const BE: bool>(
+  rgba128: &[u32],
+  rgba_u16_out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(rgba128.len() >= width * 4, "rgba128 row too short");
+  debug_assert!(
+    rgba_u16_out.len() >= width * 4,
+    "rgba_u16_out row too short"
+  );
+  for x in 0..width {
+    let i = x * 4;
+    rgba_u16_out[i] = (load_u32::<BE>(rgba128[i]) >> 16) as u16;
+    rgba_u16_out[i + 1] = (load_u32::<BE>(rgba128[i + 1]) >> 16) as u16;
+    rgba_u16_out[i + 2] = (load_u32::<BE>(rgba128[i + 2]) >> 16) as u16;
+    rgba_u16_out[i + 3] = (load_u32::<BE>(rgba128[i + 3]) >> 16) as u16;
   }
 }
 

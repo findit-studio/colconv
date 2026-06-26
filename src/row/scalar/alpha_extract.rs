@@ -139,6 +139,65 @@ pub(crate) fn copy_alpha_packed_u16x4_at_3<const BE: bool>(
   }
 }
 
+/// Rgba128 → u8 RGBA: copy α from slot 3 of each 4-element u32 pixel tuple
+/// into `rgba_out[3 + 4*n]` (u8) with `>> 24` depth conversion.
+///
+/// Rgba128 layout per pixel: `[R(32), G(32), B(32), A(32)]` — α is at slot 3.
+/// Used in Strategy A+: after `expand_rgb_to_rgba_row` fills the RGBA buffer
+/// with a forced-opaque alpha, this helper overwrites only the α slot with the
+/// real source alpha, depth-converted to u8.
+///
+/// `BE` selects the **byte order** of the encoded source `packed` plane
+/// (`false` = LE on disk/wire, e.g. `AV_PIX_FMT_RGBA128LE`; `true` = BE). Each
+/// raw u32 is normalised to host-native order via `u32::from_le` /
+/// `u32::from_be` before the `>> 24` depth conversion.
+#[cfg(feature = "rgb")]
+#[allow(dead_code)] // wired in the Rgba128 sinker impl
+pub(crate) fn copy_alpha_packed_u32x4_to_u8_at_3<const BE: bool>(
+  packed: &[u32],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 4, "packed too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out too short");
+  for n in 0..width {
+    let raw = if BE {
+      u32::from_be(packed[n * 4 + 3])
+    } else {
+      u32::from_le(packed[n * 4 + 3])
+    };
+    rgba_out[n * 4 + 3] = (raw >> 24) as u8;
+  }
+}
+
+/// Rgba128 → u16 RGBA: copy α from slot 3 of each 4-element u32 pixel tuple
+/// into `rgba_u16_out[3 + 4*n]` (u16) with `>> 16` depth conversion.
+///
+/// Used in Strategy A+ on the u16 path: after `expand_rgb_u16_to_rgba_u16_row`
+/// fills the RGBA buffer, this helper overwrites only the α slot with the real
+/// source alpha narrowed to native 16-bit depth.
+///
+/// `BE` selects the **byte order** of the encoded source `packed` plane.
+/// See [`copy_alpha_packed_u32x4_to_u8_at_3`] for the full rationale.
+#[cfg(feature = "rgb")]
+#[allow(dead_code)] // wired in the Rgba128 sinker impl
+pub(crate) fn copy_alpha_packed_u32x4_to_u16_at_3<const BE: bool>(
+  packed: &[u32],
+  rgba_u16_out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(packed.len() >= width * 4, "packed too short");
+  debug_assert!(rgba_u16_out.len() >= width * 4, "rgba_u16_out too short");
+  for n in 0..width {
+    let raw = if BE {
+      u32::from_be(packed[n * 4 + 3])
+    } else {
+      u32::from_le(packed[n * 4 + 3])
+    };
+    rgba_u16_out[n * 4 + 3] = (raw >> 16) as u16;
+  }
+}
+
 /// Yuva420p / 422p / 444p u8 → u8 RGBA: scatter α plane into
 /// `rgba_out[3 + 4*n]`. Consumed by Yuva planar (`yuva`) and Gbrap
 /// (`gbr`) source families.

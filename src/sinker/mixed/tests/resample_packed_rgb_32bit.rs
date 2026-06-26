@@ -9,9 +9,9 @@ use crate::{
   ColorMatrix,
   resample::AreaResampler,
   sinker::MixedSinker,
-  source::{Rgb48, Rgb96, rgb48_to, rgb96_to},
+  source::{Rgb48, Rgb96, Rgba128, rgb48_to, rgb96_to, rgba128_to},
 };
-use mediaframe::frame::{Rgb48Frame, Rgb96Frame};
+use mediaframe::frame::{Rgb48Frame, Rgb96Frame, Rgba128Frame};
 
 const SRC: usize = 8;
 const OUT: usize = 4;
@@ -187,6 +187,88 @@ fn rgb96_identity_plan_matches_new_sink() {
         .with_rgb_u16(&mut via_area)
         .unwrap();
     rgb96_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+  assert_eq!(direct, via_area);
+}
+
+// ---- Rgba128 (alpha-aware area resample) ------------------------------------
+
+/// Full-range u32 RGBA ramps with real per-pixel alpha.
+fn packed_rgba_frame_u32() -> Vec<u32> {
+  let mut buf = vec![0u32; SRC * SRC * 4];
+  for (i, px) in buf.chunks_exact_mut(4).enumerate() {
+    px[0] = 0x2000_0000 + (i as u32) * 0x0123_4567;
+    px[1] = 0xC000_0000u32.wrapping_sub((i as u32) * 0x0098_7654);
+    px[2] = 0x1000_0000 + ((i % 8) as u32) * 0x0555_5555;
+    px[3] = 0x3000_0000 + (i as u32) * 0x0222_2222;
+  }
+  buf
+}
+
+/// The host-native u16 RGBA the sinker stages: each u32 narrowed `>> 16`.
+fn staged_rgba_u16(host: &[u32]) -> Vec<u16> {
+  host.iter().map(|&v| (v >> 16) as u16).collect()
+}
+
+/// Exact 2x2 block mean over the staged u16 RGBA (4 channels per pixel).
+fn expected_block_mean_rgba_u16(staged: &[u16], ox: usize, oy: usize, c: usize) -> u16 {
+  let mut acc = 0u64;
+  for dy in 0..2 {
+    for dx in 0..2 {
+      acc += staged[((oy * 2 + dy) * SRC + ox * 2 + dx) * 4 + c] as u64;
+    }
+  }
+  ((acc + 2) / 4) as u16
+}
+
+#[test]
+fn rgba128_downscale_rgba_u16_is_exact_area_mean_incl_alpha() {
+  let host = packed_rgba_frame_u32();
+  let staged = staged_rgba_u16(&host);
+  let src = Rgba128Frame::new(&host, SRC as u32, SRC as u32, (SRC * 4) as u32);
+
+  let mut rgba_u16 = vec![0u16; OUT * OUT * 4];
+  {
+    let mut sink =
+      MixedSinker::<Rgba128, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(OUT, OUT))
+        .unwrap()
+        .with_rgba_u16(&mut rgba_u16)
+        .unwrap();
+    rgba128_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+  for oy in 0..OUT {
+    for ox in 0..OUT {
+      for c in 0..4 {
+        assert_eq!(
+          rgba_u16[(oy * OUT + ox) * 4 + c],
+          expected_block_mean_rgba_u16(&staged, ox, oy, c),
+          "({ox},{oy}) c{c} (alpha is c3)"
+        );
+      }
+    }
+  }
+}
+
+#[test]
+fn rgba128_identity_plan_matches_new_sink() {
+  let host = packed_rgba_frame_u32();
+  let src = Rgba128Frame::new(&host, SRC as u32, SRC as u32, (SRC * 4) as u32);
+
+  let mut direct = vec![0u16; SRC * SRC * 4];
+  {
+    let mut sink = MixedSinker::<Rgba128>::new(SRC, SRC)
+      .with_rgba_u16(&mut direct)
+      .unwrap();
+    rgba128_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
+  }
+  let mut via_area = vec![0u16; SRC * SRC * 4];
+  {
+    let mut sink =
+      MixedSinker::<Rgba128, AreaResampler>::with_resampler(SRC, SRC, AreaResampler::to(SRC, SRC))
+        .unwrap()
+        .with_rgba_u16(&mut via_area)
+        .unwrap();
+    rgba128_to(&src, true, ColorMatrix::Bt709, &mut sink).unwrap();
   }
   assert_eq!(direct, via_area);
 }

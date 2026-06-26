@@ -140,3 +140,57 @@ fn rgb96_to_rgb_u16_be_parity_with_swapped_buffer() {
   assert_eq!(out_be, expected, "BE path must match scalar reference");
   assert_eq!(out_le, out_be, "BE and LE outputs must agree");
 }
+
+// ---- Rgba128 -------------------------------------------------------------
+
+/// Rgba128 → u8 RGB drops alpha and narrows R/G/B `>> 24`.
+#[test]
+fn rgba128_to_rgb_drops_alpha() {
+  let src = as_le_u32(&[0x1100_0000, 0x2200_0000, 0x3300_0000, 0x4400_0000]);
+  let mut out = [0u8; 3];
+  rgba128_to_rgb_row::<false>(&src, &mut out, 1);
+  assert_eq!(out, [0x11, 0x22, 0x33], "alpha dropped, R/G/B narrowed");
+}
+
+/// Rgba128 → u8 RGBA passes alpha through, narrowed `>> 24`.
+#[test]
+fn rgba128_to_rgba_passes_alpha() {
+  let src = as_le_u32(&[0x1100_0000, 0x2200_0000, 0x3300_0000, 0x4400_0000]);
+  let mut out = [0u8; 4];
+  rgba128_to_rgba_row::<false>(&src, &mut out, 1);
+  assert_eq!(out, [0x11, 0x22, 0x33, 0x44], "source alpha passes through");
+}
+
+/// Rgba128 → u16 RGBA passes alpha through, narrowed `>> 16`.
+#[test]
+fn rgba128_to_rgba_u16_passes_alpha() {
+  let src = as_le_u32(&[0x1122_0000, 0x3344_0000, 0x5566_0000, 0x7788_0000]);
+  let mut out = [0u16; 4];
+  rgba128_to_rgba_u16_row::<false>(&src, &mut out, 1);
+  assert_eq!(out, [0x1122, 0x3344, 0x5566, 0x7788]);
+}
+
+/// Rgba128 → u16 RGB drops alpha, narrows R/G/B `>> 16`.
+#[test]
+fn rgba128_to_rgb_u16_drops_alpha() {
+  let src = as_le_u32(&[0x1122_0000, 0x3344_0000, 0x5566_0000, 0x7788_0000]);
+  let mut out = [0u16; 3];
+  rgba128_to_rgb_u16_row::<false>(&src, &mut out, 1);
+  assert_eq!(out, [0x1122, 0x3344, 0x5566]);
+}
+
+/// BE parity for Rgba128 → u8 RGBA (alpha pass-through).
+#[test]
+fn rgba128_to_rgba_be_parity_with_swapped_buffer() {
+  let intended: std::vec::Vec<u32> = std::vec![0x1234_5678, 0x5678_9ABC, 0x9ABC_DEF0, 0x0011_2233];
+  let src_le = as_le_u32(&intended);
+  let src_be = as_be_u32(&intended);
+  let mut out_le = std::vec![0u8; 4];
+  let mut out_be = std::vec![0u8; 4];
+  rgba128_to_rgba_row::<false>(&src_le, &mut out_le, 1);
+  rgba128_to_rgba_row::<true>(&src_be, &mut out_be, 1);
+  let expected: std::vec::Vec<u8> = intended.iter().map(|&v| (v >> 24) as u8).collect();
+  assert_eq!(out_le, expected, "LE path must match scalar reference");
+  assert_eq!(out_be, expected, "BE path must match scalar reference");
+  assert_eq!(out_le, out_be, "BE and LE outputs must agree");
+}

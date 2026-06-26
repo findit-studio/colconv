@@ -319,3 +319,238 @@ pub(crate) unsafe fn sse41_rgb96_to_rgba_u16_row<const BE: bool>(
     }
   }
 }
+
+// ---- Rgba128 deinterleave (4 u32 per pixel, 4 loads per 4 px) ---------------
+
+/// Deinterleave 4 pixels of stride-4 u32 (Rgba128 layout) from four 128-bit
+/// registers `v_n = [Rn, Gn, Bn, An]` into four `u32x4` channel lane vectors
+/// `(R, G, B, A)` via the SSE2 `unpacklo/hi` 4x4 transpose ladder.
+///
+/// # Safety
+///
+/// Caller must have verified SSE4.1 availability.
+#[inline(always)]
+unsafe fn deinterleave_rgba128_4px(
+  v0: __m128i,
+  v1: __m128i,
+  v2: __m128i,
+  v3: __m128i,
+) -> (__m128i, __m128i, __m128i, __m128i) {
+  unsafe {
+    let t0 = _mm_unpacklo_epi32(v0, v1); // [R0, R1, G0, G1]
+    let t1 = _mm_unpackhi_epi32(v0, v1); // [B0, B1, A0, A1]
+    let t2 = _mm_unpacklo_epi32(v2, v3); // [R2, R3, G2, G3]
+    let t3 = _mm_unpackhi_epi32(v2, v3); // [B2, B3, A2, A3]
+    let r = _mm_unpacklo_epi64(t0, t2); // [R0, R1, R2, R3]
+    let g = _mm_unpackhi_epi64(t0, t2); // [G0, G1, G2, G3]
+    let b = _mm_unpacklo_epi64(t1, t3); // [B0, B1, B2, B3]
+    let a = _mm_unpackhi_epi64(t1, t3); // [A0, A1, A2, A3]
+    (r, g, b, a)
+  }
+}
+
+/// Loads, byte-swaps, and deinterleaves 4 pixels of Rgba128 into `(R, G, B, A)`
+/// `u32x4` lane vectors.
+///
+/// # Safety
+///
+/// `ptr` must point to at least 16 readable u32; SSE4.1 must be available.
+#[inline(always)]
+unsafe fn load_deint_rgba128_4px<const BE: bool>(
+  ptr: *const u32,
+) -> (__m128i, __m128i, __m128i, __m128i) {
+  unsafe {
+    let v0 = byteswap32_if_be::<BE>(_mm_loadu_si128(ptr.cast()));
+    let v1 = byteswap32_if_be::<BE>(_mm_loadu_si128(ptr.add(4).cast()));
+    let v2 = byteswap32_if_be::<BE>(_mm_loadu_si128(ptr.add(8).cast()));
+    let v3 = byteswap32_if_be::<BE>(_mm_loadu_si128(ptr.add(12).cast()));
+    deinterleave_rgba128_4px(v0, v1, v2, v3)
+  }
+}
+
+// Rgba128 (R, G, B, A — 4 u32 elements per pixel).
+
+/// SSE4.1 Rgba128 → packed u8 RGB. 8 pixels per SIMD iteration. Alpha discarded.
+///
+/// # Safety
+///
+/// 1. SSE4.1 must be available.
+/// 2. `rgba128.len() >= width * 4`.
+/// 3. `rgb_out.len() >= width * 3`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn sse41_rgba128_to_rgb_row<const BE: bool>(
+  rgba128: &[u32],
+  rgb_out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(rgba128.len() >= width * 4, "rgba128 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+
+  unsafe {
+    let zero = _mm_setzero_si128();
+    let mut x = 0usize;
+    while x + 8 <= width {
+      let p = rgba128.as_ptr().add(x * 4);
+      let (r0, g0, b0, _) = load_deint_rgba128_4px::<BE>(p);
+      let (r1, g1, b1, _) = load_deint_rgba128_4px::<BE>(p.add(16));
+      let r = pack_u32x4_quad_to_u8x16(
+        _mm_srli_epi32::<24>(r0),
+        _mm_srli_epi32::<24>(r1),
+        zero,
+        zero,
+      );
+      let g = pack_u32x4_quad_to_u8x16(
+        _mm_srli_epi32::<24>(g0),
+        _mm_srli_epi32::<24>(g1),
+        zero,
+        zero,
+      );
+      let b = pack_u32x4_quad_to_u8x16(
+        _mm_srli_epi32::<24>(b0),
+        _mm_srli_epi32::<24>(b1),
+        zero,
+        zero,
+      );
+      let mut tmp = [0u8; 48];
+      write_rgb_16(r, g, b, tmp.as_mut_ptr());
+      core::ptr::copy_nonoverlapping(tmp.as_ptr(), rgb_out.as_mut_ptr().add(x * 3), 24);
+      x += 8;
+    }
+    if x < width {
+      scalar::rgba128_to_rgb_row::<BE>(&rgba128[x * 4..], &mut rgb_out[x * 3..], width - x);
+    }
+  }
+}
+
+/// SSE4.1 Rgba128 → packed u8 RGBA. 8 pixels per SIMD iteration. Source alpha
+/// passes through (narrowed `>> 24`).
+///
+/// # Safety
+///
+/// 1. SSE4.1 must be available.
+/// 2. `rgba128.len() >= width * 4`.
+/// 3. `rgba_out.len() >= width * 4`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn sse41_rgba128_to_rgba_row<const BE: bool>(
+  rgba128: &[u32],
+  rgba_out: &mut [u8],
+  width: usize,
+) {
+  debug_assert!(rgba128.len() >= width * 4, "rgba128 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  unsafe {
+    let zero = _mm_setzero_si128();
+    let mut x = 0usize;
+    while x + 8 <= width {
+      let p = rgba128.as_ptr().add(x * 4);
+      let (r0, g0, b0, a0) = load_deint_rgba128_4px::<BE>(p);
+      let (r1, g1, b1, a1) = load_deint_rgba128_4px::<BE>(p.add(16));
+      let r = pack_u32x4_quad_to_u8x16(
+        _mm_srli_epi32::<24>(r0),
+        _mm_srli_epi32::<24>(r1),
+        zero,
+        zero,
+      );
+      let g = pack_u32x4_quad_to_u8x16(
+        _mm_srli_epi32::<24>(g0),
+        _mm_srli_epi32::<24>(g1),
+        zero,
+        zero,
+      );
+      let b = pack_u32x4_quad_to_u8x16(
+        _mm_srli_epi32::<24>(b0),
+        _mm_srli_epi32::<24>(b1),
+        zero,
+        zero,
+      );
+      let a = pack_u32x4_quad_to_u8x16(
+        _mm_srli_epi32::<24>(a0),
+        _mm_srli_epi32::<24>(a1),
+        zero,
+        zero,
+      );
+      let mut tmp = [0u8; 64];
+      write_rgba_16(r, g, b, a, tmp.as_mut_ptr());
+      core::ptr::copy_nonoverlapping(tmp.as_ptr(), rgba_out.as_mut_ptr().add(x * 4), 32);
+      x += 8;
+    }
+    if x < width {
+      scalar::rgba128_to_rgba_row::<BE>(&rgba128[x * 4..], &mut rgba_out[x * 4..], width - x);
+    }
+  }
+}
+
+/// SSE4.1 Rgba128 → native-depth u16 RGB. 8 pixels per SIMD iteration. Alpha discarded.
+///
+/// # Safety
+///
+/// 1. SSE4.1 must be available.
+/// 2. `rgba128.len() >= width * 4`.
+/// 3. `rgb_out.len() >= width * 3`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn sse41_rgba128_to_rgb_u16_row<const BE: bool>(
+  rgba128: &[u32],
+  rgb_out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(rgba128.len() >= width * 4, "rgba128 row too short");
+  debug_assert!(rgb_out.len() >= width * 3, "rgb_out row too short");
+
+  unsafe {
+    let mut x = 0usize;
+    while x + 8 <= width {
+      let p = rgba128.as_ptr().add(x * 4);
+      let (r0, g0, b0, _) = load_deint_rgba128_4px::<BE>(p);
+      let (r1, g1, b1, _) = load_deint_rgba128_4px::<BE>(p.add(16));
+      let r = _mm_packus_epi32(_mm_srli_epi32::<16>(r0), _mm_srli_epi32::<16>(r1));
+      let g = _mm_packus_epi32(_mm_srli_epi32::<16>(g0), _mm_srli_epi32::<16>(g1));
+      let b = _mm_packus_epi32(_mm_srli_epi32::<16>(b0), _mm_srli_epi32::<16>(b1));
+      write_rgb_u16_8(r, g, b, rgb_out.as_mut_ptr().add(x * 3));
+      x += 8;
+    }
+    if x < width {
+      scalar::rgba128_to_rgb_u16_row::<BE>(&rgba128[x * 4..], &mut rgb_out[x * 3..], width - x);
+    }
+  }
+}
+
+/// SSE4.1 Rgba128 → native-depth u16 RGBA. 8 pixels per SIMD iteration. Source
+/// alpha passes through (narrowed `>> 16`).
+///
+/// # Safety
+///
+/// 1. SSE4.1 must be available.
+/// 2. `rgba128.len() >= width * 4`.
+/// 3. `rgba_out.len() >= width * 4`.
+#[inline]
+#[target_feature(enable = "sse4.1")]
+pub(crate) unsafe fn sse41_rgba128_to_rgba_u16_row<const BE: bool>(
+  rgba128: &[u32],
+  rgba_out: &mut [u16],
+  width: usize,
+) {
+  debug_assert!(rgba128.len() >= width * 4, "rgba128 row too short");
+  debug_assert!(rgba_out.len() >= width * 4, "rgba_out row too short");
+
+  unsafe {
+    let mut x = 0usize;
+    while x + 8 <= width {
+      let p = rgba128.as_ptr().add(x * 4);
+      let (r0, g0, b0, a0) = load_deint_rgba128_4px::<BE>(p);
+      let (r1, g1, b1, a1) = load_deint_rgba128_4px::<BE>(p.add(16));
+      let r = _mm_packus_epi32(_mm_srli_epi32::<16>(r0), _mm_srli_epi32::<16>(r1));
+      let g = _mm_packus_epi32(_mm_srli_epi32::<16>(g0), _mm_srli_epi32::<16>(g1));
+      let b = _mm_packus_epi32(_mm_srli_epi32::<16>(b0), _mm_srli_epi32::<16>(b1));
+      let a = _mm_packus_epi32(_mm_srli_epi32::<16>(a0), _mm_srli_epi32::<16>(a1));
+      write_rgba_u16_8(r, g, b, a, rgba_out.as_mut_ptr().add(x * 4));
+      x += 8;
+    }
+    if x < width {
+      scalar::rgba128_to_rgba_u16_row::<BE>(&rgba128[x * 4..], &mut rgba_out[x * 4..], width - x);
+    }
+  }
+}

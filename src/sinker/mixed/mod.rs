@@ -1455,6 +1455,10 @@ pub enum RowSlice {
   /// `width * 3` u32 elements (each channel 32 bits, R, G, B order).
   #[display("RGB96 packed")]
   Rgb96Packed,
+  /// Packed `R, G, B, A` row of an [`Rgba128`](crate::source::Rgba128) source —
+  /// `width * 4` u32 elements (each channel 32 bits; alpha at slot 3 is real).
+  #[display("RGBA128 packed")]
+  Rgba128Packed,
 }
 
 /// How a packed-alpha source's color channels relate to its alpha when
