@@ -1348,6 +1348,12 @@ pub enum RowSlice {
   /// row length: `4 * width` `u16` elements (= `8 * width` bytes).
   #[display("XV36 packed")]
   Xv36Packed,
+  /// Packed `xv48` row of an `Xv48` source — Tier 5 16-bit 4:4:4
+  /// packed format (full-depth sibling of XV36). Four `u16` elements per
+  /// pixel (one per channel); row length: `4 * width` `u16` elements
+  /// (= `8 * width` bytes).
+  #[display("XV48 packed")]
+  Xv48Packed,
   /// Packed `vuya` row of a `Vuya` source — Tier 5 8-bit 4:4:4
   /// packed format. Four bytes per pixel in V/U/Y/A order; row
   /// length: `4 * width` bytes.
@@ -13501,6 +13507,8 @@ mod vuya;
 mod vuyx;
 #[cfg(feature = "yuv-444-packed")]
 mod xv36;
+#[cfg(feature = "yuv-444-packed")]
+mod xv48;
 #[cfg(feature = "xyz")]
 mod xyz12;
 #[cfg(feature = "y2xx")]

@@ -258,6 +258,8 @@ mod resample_vuya_vuyx_filter;
 mod resample_vuyx;
 #[cfg(feature = "yuv-444-packed")]
 mod resample_xv36;
+#[cfg(feature = "yuv-444-packed")]
+mod resample_xv48;
 #[cfg(feature = "xyz")]
 mod resample_xyz12;
 #[cfg(feature = "xyz")]
@@ -358,6 +360,8 @@ mod vuya;
 mod vuyx;
 #[cfg(feature = "yuv-444-packed")]
 mod xv36;
+#[cfg(feature = "yuv-444-packed")]
+mod xv48;
 #[cfg(feature = "xyz")]
 mod xyz12;
 #[cfg(feature = "y2xx")]
