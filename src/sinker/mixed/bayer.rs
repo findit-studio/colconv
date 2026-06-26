@@ -231,9 +231,9 @@ impl<R> PixelSink for MixedSinker<'_, Bayer, R> {
   }
 }
 
-// ---- Bayer16<BITS> impl --------------------------------------------------
+// ---- Bayer16<BITS, BE> impl ----------------------------------------------
 
-impl<'a, R, const BITS: u32> MixedSinker<'a, Bayer16<BITS>, R> {
+impl<'a, R, const BITS: u32, const BE: bool> MixedSinker<'a, Bayer16<BITS, BE>, R> {
   /// Attaches a packed **`u16`** RGB output buffer.
   ///
   /// Length is measured in `u16` **elements** (not bytes): minimum
@@ -290,9 +290,9 @@ impl<'a, R, const BITS: u32> MixedSinker<'a, Bayer16<BITS>, R> {
   }
 }
 
-impl<const BITS: u32> BayerSink16<BITS> for MixedSinker<'_, Bayer16<BITS>> {}
+impl<const BITS: u32, const BE: bool> BayerSink16<BITS, BE> for MixedSinker<'_, Bayer16<BITS, BE>> {}
 
-impl<const BITS: u32> PixelSink for MixedSinker<'_, Bayer16<BITS>> {
+impl<const BITS: u32, const BE: bool> PixelSink for MixedSinker<'_, Bayer16<BITS, BE>> {
   type Input<'r> = BayerRow16<'r, BITS>;
   type Error = MixedSinkerError;
 
@@ -365,7 +365,7 @@ impl<const BITS: u32> PixelSink for MixedSinker<'_, Bayer16<BITS>> {
             w, h, 3,
           )))?;
       let rgb_plane_start = one_plane_start * 3;
-      bayer16_to_rgb_u16_row::<BITS>(
+      bayer16_to_rgb_u16_row_endian::<BITS, BE>(
         row.above(),
         row.mid(),
         row.below(),
@@ -396,7 +396,7 @@ impl<const BITS: u32> PixelSink for MixedSinker<'_, Bayer16<BITS>> {
       h,
     )?;
 
-    bayer16_to_rgb_row::<BITS>(
+    bayer16_to_rgb_row_endian::<BITS, BE>(
       row.above(),
       row.mid(),
       row.below(),

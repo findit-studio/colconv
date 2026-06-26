@@ -51,6 +51,8 @@ fn bench(c: &mut Criterion) {
       group.bench_with_input(BenchmarkId::new(label, w), &w, |b, &_w| {
         b.iter(|| {
           // BITS = 12 — representative of the 10/12/14/16 family.
+          // LE wire order — the historical bench path uses the
+          // single-const LE public dispatcher.
           bayer16_to_rgb_row::<12>(
             black_box(&above),
             black_box(&mid),

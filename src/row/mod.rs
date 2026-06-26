@@ -1603,4 +1603,84 @@ mod bayer_dispatcher_tests {
       "in-range 12-bit white expected to map to 255; got {rgb:?}"
     );
   }
+
+  /// Source-compatibility lock for the public little-endian Bayer16
+  /// dispatchers: both `bayer16_to_rgb_row` and
+  /// `bayer16_to_rgb_u16_row` must keep accepting the original
+  /// **single-const** turbofish `::<BITS>` (the pre-endian public
+  /// arity). Appending `BE` to those names in place would have broken
+  /// every existing `::<BITS>` caller; the LE wrappers forward to the
+  /// `_endian` variants with `BE = false` so this stays a compile-time
+  /// guarantee. The body also pins that each LE wrapper produces output
+  /// byte-identical to its `_endian::<BITS, false>` counterpart.
+  #[test]
+  fn bayer16_le_dispatchers_accept_single_const_turbofish() {
+    let above = [1234u16; 4];
+    let mid = [2345u16; 4];
+    let below = [3210u16; 4];
+    let m = ident();
+
+    // u8 path: single-const `::<12>` (LE wrapper) vs `_endian::<12, false>`.
+    let mut rgb_wrapper = [0u8; 12];
+    let mut rgb_endian = [0u8; 12];
+    bayer16_to_rgb_row::<12>(
+      &above,
+      &mid,
+      &below,
+      0,
+      BayerPattern::Rggb,
+      BayerDemosaic::Bilinear,
+      &m,
+      &mut rgb_wrapper,
+      false,
+    );
+    bayer16_to_rgb_row_endian::<12, false>(
+      &above,
+      &mid,
+      &below,
+      0,
+      BayerPattern::Rggb,
+      BayerDemosaic::Bilinear,
+      &m,
+      &mut rgb_endian,
+      false,
+    );
+    assert_eq!(
+      rgb_wrapper, rgb_endian,
+      "LE wrapper must equal _endian::<_, false> (u8 RGB)"
+    );
+
+    // u16 path: single-const `::<10>` (LE wrapper) vs `_endian::<10, false>`.
+    let above10 = [123u16; 4];
+    let mid10 = [456u16; 4];
+    let below10 = [321u16; 4];
+    let mut rgb16_wrapper = [0u16; 12];
+    let mut rgb16_endian = [0u16; 12];
+    bayer16_to_rgb_u16_row::<10>(
+      &above10,
+      &mid10,
+      &below10,
+      0,
+      BayerPattern::Rggb,
+      BayerDemosaic::Bilinear,
+      &m,
+      &mut rgb16_wrapper,
+      false,
+    );
+    bayer16_to_rgb_u16_row_endian::<10, false>(
+      &above10,
+      &mid10,
+      &below10,
+      0,
+      BayerPattern::Rggb,
+      BayerDemosaic::Bilinear,
+      &m,
+      &mut rgb16_endian,
+      false,
+    );
+    assert_eq!(
+      rgb16_wrapper, rgb16_endian,
+      "LE wrapper must equal _endian::<_, false> (u16 RGB)"
+    );
+  }
 }
