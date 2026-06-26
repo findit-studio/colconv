@@ -108,68 +108,87 @@ use crate::{ColorMatrix, row::scalar};
 ///
 /// `ptr` must point to at least 128 readable bytes (32 VUYA quadruples).
 /// Caller's `target_feature` must include AVX2.
+/// Build a per-lane gather mask for one channel at byte offset `OFF`
+/// within each 4-byte pixel (`OFF, OFF+4, OFF+8, OFF+12` into the low 4
+/// bytes of each 128-bit lane; `-1` zeroes the rest). The const offset
+/// makes the mask a compile-time constant.
 #[inline]
 #[target_feature(enable = "avx2")]
-unsafe fn deinterleave_vuya_avx2(ptr: *const u8) -> (__m256i, __m256i, __m256i, __m256i) {
-  // SAFETY: caller obligation — `ptr` has 128 bytes readable; AVX2 is
-  // available.
+unsafe fn chan_mask_avx2<const OFF: usize>() -> __m256i {
+  let o = OFF as i8;
+  _mm256_setr_epi8(
+    o,
+    o + 4,
+    o + 8,
+    o + 12,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1, // low lane
+    o,
+    o + 4,
+    o + 8,
+    o + 12,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1, // high lane
+  )
+}
+
+/// Offset-parameterized AVX2 deinterleave of 32 four-byte pixels into
+/// `(v_vec, u_vec, y_vec, a_vec)` (each `__m256i` of 32 natural-order
+/// channel bytes). The four byte offsets select which source byte feeds
+/// each channel, so the single routine serves every channel re-ordering
+/// (VUYA/VUYX `0,1,2,3`; AYUV `3,2,1,0`; UYVA `2,0,1,3`).
+///
+/// # Safety
+///
+/// `ptr` must point to at least 128 readable bytes (32 pixels). AVX2 must
+/// be available.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn deinterleave_packed444_avx2<
+  const V_OFF: usize,
+  const U_OFF: usize,
+  const Y_OFF: usize,
+  const A_OFF: usize,
+>(
+  ptr: *const u8,
+) -> (__m256i, __m256i, __m256i, __m256i) {
+  // SAFETY: caller obligation — `ptr` has 128 bytes readable; AVX2 available.
   unsafe {
-    // Load 4 × __m256i contiguously (32 pixels × 4 channels × u8 = 128 bytes).
-    //
-    // Each load covers 8 contiguous pixels:
-    //   raw_c0 lo=P0..3   hi=P4..7
-    //   raw_c1 lo=P8..11  hi=P12..15
-    //   raw_c2 lo=P16..19 hi=P20..23
-    //   raw_c3 lo=P24..27 hi=P28..31
     let raw_c0 = _mm256_loadu_si256(ptr.cast());
     let raw_c1 = _mm256_loadu_si256(ptr.add(32).cast());
     let raw_c2 = _mm256_loadu_si256(ptr.add(64).cast());
     let raw_c3 = _mm256_loadu_si256(ptr.add(96).cast());
 
-    // Reshape via cross-lane permute so each register holds the layout
-    // the per-128-bit-lane cascade below expects:
-    //   raw0 lo=P0..3   hi=P16..19   (lo halves of c0 and c2)
-    //   raw1 lo=P4..7   hi=P20..23   (hi halves of c0 and c2)
-    //   raw2 lo=P8..11  hi=P24..27   (lo halves of c1 and c3)
-    //   raw3 lo=P12..15 hi=P28..31   (hi halves of c1 and c3)
-    //
-    // `_mm256_permute2x128_si256::<imm>` selects 128-bit halves: imm=0x20
-    // picks src1 lo + src2 lo; imm=0x31 picks src1 hi + src2 hi.
     let raw0 = _mm256_permute2x128_si256::<0x20>(raw_c0, raw_c2);
     let raw1 = _mm256_permute2x128_si256::<0x31>(raw_c0, raw_c2);
     let raw2 = _mm256_permute2x128_si256::<0x20>(raw_c1, raw_c3);
     let raw3 = _mm256_permute2x128_si256::<0x31>(raw_c1, raw_c3);
 
-    // Shuffle masks: replicate the per-lane VUYA byte gather across both
-    // 128-bit halves. Within each 16-byte lane, gather bytes at the
-    // channel's offsets (V at 0/4/8/12; U at 1/5/9/13; Y at 2/6/10/14;
-    // A at 3/7/11/15) into the low 4 bytes; -1 zeroes the upper 12.
-    let v_mask = _mm256_setr_epi8(
-      0, 4, 8, 12, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // low lane
-      0, 4, 8, 12, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // high lane
-    );
-    let u_mask = _mm256_setr_epi8(
-      1, 5, 9, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // low lane
-      1, 5, 9, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // high lane
-    );
-    let y_mask = _mm256_setr_epi8(
-      2, 6, 10, 14, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // low lane
-      2, 6, 10, 14, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // high lane
-    );
-    let a_mask = _mm256_setr_epi8(
-      3, 7, 11, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // low lane
-      3, 7, 11, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // high lane
-    );
+    let v_mask = chan_mask_avx2::<V_OFF>();
+    let u_mask = chan_mask_avx2::<U_OFF>();
+    let y_mask = chan_mask_avx2::<Y_OFF>();
+    let a_mask = chan_mask_avx2::<A_OFF>();
 
-    // Apply masks: each result has 4 valid bytes in the low 4 lanes of
-    // each 128-bit half, with 12 zero bytes filling the upper 12 of
-    // each half.
-    //
-    // For V (analogous for U/Y/A):
-    //   v0: lo=[V0,V1,V2,V3, 0..]  hi=[V16,V17,V18,V19, 0..]
-    //   v1: lo=[V4..V7, 0..]       hi=[V20..V23, 0..]
-    //   v2: lo=[V8..V11, 0..]      hi=[V24..V27, 0..]
-    //   v3: lo=[V12..V15, 0..]     hi=[V28..V31, 0..]
     let v0 = _mm256_shuffle_epi8(raw0, v_mask);
     let v1 = _mm256_shuffle_epi8(raw1, v_mask);
     let v2 = _mm256_shuffle_epi8(raw2, v_mask);
@@ -190,15 +209,6 @@ unsafe fn deinterleave_vuya_avx2(ptr: *const u8) -> (__m256i, __m256i, __m256i, 
     let a2 = _mm256_shuffle_epi8(raw2, a_mask);
     let a3 = _mm256_shuffle_epi8(raw3, a_mask);
 
-    // Step 1: combine 4-byte chunks via per-lane unpacklo_epi32.
-    // `_mm256_unpacklo_epi32(a, b)` per 128-bit lane interleaves the
-    // low two i32 chunks of each operand:
-    //   v_01 lo = [V0V1V2V3 (i32 from v0 lo), V4V5V6V7 (i32 from v1 lo),
-    //              0, 0]
-    //          = bytes [V0..V7, 0..0]
-    //   v_01 hi = bytes [V16..V23, 0..0]
-    //   v_23 lo = bytes [V8..V15, 0..0]
-    //   v_23 hi = bytes [V24..V31, 0..0]
     let v_01 = _mm256_unpacklo_epi32(v0, v1);
     let v_23 = _mm256_unpacklo_epi32(v2, v3);
     let u_01 = _mm256_unpacklo_epi32(u0, u1);
@@ -208,16 +218,6 @@ unsafe fn deinterleave_vuya_avx2(ptr: *const u8) -> (__m256i, __m256i, __m256i, 
     let a_01 = _mm256_unpacklo_epi32(a0, a1);
     let a_23 = _mm256_unpacklo_epi32(a2, a3);
 
-    // Step 2: combine the two 8-byte halves into a full 16-byte channel
-    // chunk per 128-bit lane via per-lane unpacklo_epi64. Result has
-    // 16 bytes of natural-order channel samples per lane:
-    //   v_vec lo = [V0..V15]
-    //   v_vec hi = [V16..V31]
-    // i.e. lane n of v_vec is V from pixel n.
-    //
-    // No `_mm256_permute4x64_epi64` lane fixup is needed because the
-    // cross-lane reshape at the start placed pixels 0..15 in the lo
-    // 128-bit lane and 16..31 in the hi 128-bit lane of each register.
     let v_vec = _mm256_unpacklo_epi64(v_01, v_23);
     let u_vec = _mm256_unpacklo_epi64(u_01, u_23);
     let y_vec = _mm256_unpacklo_epi64(y_01, y_23);
@@ -250,7 +250,14 @@ unsafe fn deinterleave_vuya_avx2(ptr: *const u8) -> (__m256i, __m256i, __m256i, 
 /// 3. `out.len() >= width * (if ALPHA { 4 } else { 3 })`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn vuya_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
+pub(crate) unsafe fn packed444_to_rgb_or_rgba_row<
+  const ALPHA: bool,
+  const ALPHA_SRC: bool,
+  const V_OFF: usize,
+  const U_OFF: usize,
+  const Y_OFF: usize,
+  const A_OFF: usize,
+>(
   packed: &[u8],
   out: &mut [u8],
   width: usize,
@@ -281,14 +288,15 @@ pub(crate) unsafe fn vuya_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC:
     let cgv = _mm256_set1_epi32(coeffs.g_v());
     let cbu = _mm256_set1_epi32(coeffs.b_u());
     let cbv = _mm256_set1_epi32(coeffs.b_v());
-    // 0xFF for VUYX forced-opaque path.
+    // 0xFF for the forced-opaque path.
     let alpha_u8 = _mm256_set1_epi8(-1i8);
 
     let mut x = 0usize;
     while x + 32 <= width {
-      // Deinterleave 32 VUYA quadruples → V, U, Y, A as u8x32 in
-      // natural pixel order.
-      let (v_u8, u_u8, y_u8, a_u8) = deinterleave_vuya_avx2(packed.as_ptr().add(x * 4));
+      // Deinterleave 32 quadruples → V, U, Y, A as u8x32 in natural pixel
+      // order per the format's byte offsets.
+      let (v_u8, u_u8, y_u8, a_u8) =
+        deinterleave_packed444_avx2::<V_OFF, U_OFF, Y_OFF, A_OFF>(packed.as_ptr().add(x * 4));
 
       // Zero-extend each channel to two i16x16 halves (low 16 bytes →
       // pixels 0..15, high 16 bytes → pixels 16..31).
@@ -391,7 +399,7 @@ pub(crate) unsafe fn vuya_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC:
 
     // Scalar tail — remaining < 32 pixels.
     if x < width {
-      scalar::vuya_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC>(
+      scalar::packed444_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC, V_OFF, U_OFF, Y_OFF, A_OFF>(
         &packed[x * 4..],
         &mut out[x * bpp..],
         width - x,
@@ -399,6 +407,28 @@ pub(crate) unsafe fn vuya_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC:
         full_range,
       );
     }
+  }
+}
+
+/// VUYA / VUYX byte order (`V=0,U=1,Y=2,A=3`) over the offset-generic AVX2
+/// kernel.
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_rgb_or_rgba_row`].
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn vuya_to_rgb_or_rgba_row<const ALPHA: bool, const ALPHA_SRC: bool>(
+  packed: &[u8],
+  out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    packed444_to_rgb_or_rgba_row::<ALPHA, ALPHA_SRC, 0, 1, 2, 3>(
+      packed, out, width, matrix, full_range,
+    );
   }
 }
 
@@ -471,7 +501,11 @@ pub(crate) unsafe fn vuyx_to_rgba_row(
 /// 3. `luma_out.len() >= width`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn vuya_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize) {
+pub(crate) unsafe fn packed444_to_luma_row<const Y_OFF: usize>(
+  packed: &[u8],
+  luma_out: &mut [u8],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4, "packed row too short");
   debug_assert!(luma_out.len() >= width, "luma row too short");
 
@@ -479,20 +513,32 @@ pub(crate) unsafe fn vuya_to_luma_row(packed: &[u8], luma_out: &mut [u8], width:
   unsafe {
     let mut x = 0usize;
     while x + 32 <= width {
-      // Reuse the full 4-channel deinterleave and discard V/U/A. The
-      // compiler lifts the dead shuffles; keeping the same code path
-      // gives the lane-order regression test the strongest possible
-      // coverage: any deinterleave bug in the V/U/Y path manifests
-      // identically here.
-      let (_v, _u, y_vec, _a) = deinterleave_vuya_avx2(packed.as_ptr().add(x * 4));
+      // Reuse the full 4-channel deinterleave and keep only Y (at `Y_OFF`).
+      // The compiler lifts the dead shuffles; keeping the same code path
+      // gives the lane-order regression test the strongest coverage.
+      let (_v, _u, y_vec, _a) =
+        deinterleave_packed444_avx2::<0, 1, Y_OFF, 3>(packed.as_ptr().add(x * 4));
       _mm256_storeu_si256(luma_out.as_mut_ptr().add(x).cast(), y_vec);
       x += 32;
     }
 
     // Scalar tail — remaining < 32 pixels.
     if x < width {
-      scalar::vuya_to_luma_row(&packed[x * 4..], &mut luma_out[x..], width - x);
+      scalar::packed444_to_luma_row::<Y_OFF>(&packed[x * 4..], &mut luma_out[x..], width - x);
     }
+  }
+}
+
+/// VUYA / VUYX u8 luma (Y at offset 2) over [`packed444_to_luma_row`].
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_luma_row`].
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn vuya_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize) {
+  unsafe {
+    packed444_to_luma_row::<2>(packed, luma_out, width);
   }
 }
 
@@ -515,7 +561,11 @@ pub(crate) unsafe fn vuya_to_luma_row(packed: &[u8], luma_out: &mut [u8], width:
 #[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn vuya_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+pub(crate) unsafe fn packed444_to_luma_u16_row<const Y_OFF: usize>(
+  packed: &[u8],
+  out: &mut [u16],
+  width: usize,
+) {
   debug_assert!(packed.len() >= width * 4, "packed row too short");
   debug_assert!(out.len() >= width, "out too short");
 
@@ -523,8 +573,9 @@ pub(crate) unsafe fn vuya_to_luma_u16_row(packed: &[u8], out: &mut [u16], width:
   unsafe {
     let mut x = 0usize;
     while x + 32 <= width {
-      // Deinterleave 32 VUYA quadruples; channel 2 = Y (u8x32 in natural order).
-      let (_v, _u, y_u8, _a) = deinterleave_vuya_avx2(packed.as_ptr().add(x * 4));
+      // Deinterleave 32 quadruples; keep only Y (at `Y_OFF`), u8x32 natural.
+      let (_v, _u, y_u8, _a) =
+        deinterleave_packed444_avx2::<0, 1, Y_OFF, 3>(packed.as_ptr().add(x * 4));
 
       // Widen low 16 Y bytes → u16x16 (pixels 0-15).
       let lo_u16 = _mm256_cvtepu8_epi16(_mm256_castsi256_si128(y_u8));
@@ -538,8 +589,22 @@ pub(crate) unsafe fn vuya_to_luma_u16_row(packed: &[u8], out: &mut [u16], width:
 
     // Scalar tail — remaining < 32 pixels.
     if x < width {
-      scalar::vuya_to_luma_u16_row(&packed[x * 4..], &mut out[x..], width - x);
+      scalar::packed444_to_luma_u16_row::<Y_OFF>(&packed[x * 4..], &mut out[x..], width - x);
     }
+  }
+}
+
+/// VUYA u16 luma (Y at offset 2) over [`packed444_to_luma_u16_row`].
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_luma_u16_row`].
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn vuya_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  unsafe {
+    packed444_to_luma_u16_row::<2>(packed, out, width);
   }
 }
 
@@ -642,7 +707,11 @@ unsafe fn vuya_hsv_via_rgb_chunks(
 /// 3. `h_out.len()`, `s_out.len()`, `v_out.len()` `>= width`.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn vuya_to_hsv_row(
+pub(crate) unsafe fn packed444_to_hsv_row<
+  const V_OFF: usize,
+  const U_OFF: usize,
+  const Y_OFF: usize,
+>(
   packed: &[u8],
   h_out: &mut [u8],
   s_out: &mut [u8],
@@ -657,11 +726,328 @@ pub(crate) unsafe fn vuya_to_hsv_row(
   debug_assert!(v_out.len() >= width, "v_out row too short");
 
   // SAFETY: the feature is the caller's obligation; the chunk filler
-  // forwards the per-chunk sub-slices to the SIMD VUYA RGB kernel
-  // under the same contract (its own scalar tail covers small n).
+  // forwards the per-chunk sub-slices to the offset-generic AVX2 RGB kernel
+  // (3-bpp / no alpha) under the same contract. `A_OFF` is unused in the RGB
+  // path; reuse `Y_OFF` as the dummy 4th offset.
   unsafe {
     vuya_hsv_via_rgb_chunks(h_out, s_out, v_out, width, |offset, n, rgb| {
-      vuya_to_rgb_row(&packed[offset * 4..], rgb, n, matrix, full_range);
+      packed444_to_rgb_or_rgba_row::<false, false, V_OFF, U_OFF, Y_OFF, Y_OFF>(
+        &packed[offset * 4..],
+        rgb,
+        n,
+        matrix,
+        full_range,
+      );
     });
+  }
+}
+
+/// VUYA / VUYX HSV (`V=0,U=1,Y=2`) over [`packed444_to_hsv_row`].
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_hsv_row`].
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn vuya_to_hsv_row(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    packed444_to_hsv_row::<0, 1, 2>(packed, h_out, s_out, v_out, width, matrix, full_range);
+  }
+}
+
+// ---- AYUV / UYVA AVX2 wrappers ----------------------------------------
+
+/// AVX2 AYUV (`A=0,Y=1,U=2,V=3`) → packed RGB.
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_rgb_or_rgba_row`].
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn ayuv_to_rgb_row(
+  packed: &[u8],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    packed444_to_rgb_or_rgba_row::<false, false, 3, 2, 1, 0>(
+      packed, rgb_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// AVX2 AYUV → packed RGBA (source α at offset 0).
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_rgb_or_rgba_row`].
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn ayuv_to_rgba_row(
+  packed: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    packed444_to_rgb_or_rgba_row::<true, true, 3, 2, 1, 0>(
+      packed, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// AVX2 AYUV → planar HSV bytes.
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_hsv_row`].
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn ayuv_to_hsv_row(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    packed444_to_hsv_row::<3, 2, 1>(packed, h_out, s_out, v_out, width, matrix, full_range);
+  }
+}
+
+/// AVX2 AYUV → u8 luma (Y at offset 1).
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_luma_row`].
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn ayuv_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize) {
+  unsafe {
+    packed444_to_luma_row::<1>(packed, luma_out, width);
+  }
+}
+
+/// AVX2 AYUV → u16 luma (Y at offset 1).
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_luma_u16_row`].
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn ayuv_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  unsafe {
+    packed444_to_luma_u16_row::<1>(packed, out, width);
+  }
+}
+
+/// AVX2 UYVA (`U=0,Y=1,V=2,A=3`) → packed RGB.
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_rgb_or_rgba_row`].
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn uyva_to_rgb_row(
+  packed: &[u8],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    packed444_to_rgb_or_rgba_row::<false, false, 2, 0, 1, 3>(
+      packed, rgb_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// AVX2 UYVA → packed RGBA (source α at offset 3).
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_rgb_or_rgba_row`].
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn uyva_to_rgba_row(
+  packed: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    packed444_to_rgb_or_rgba_row::<true, true, 2, 0, 1, 3>(
+      packed, rgba_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// AVX2 UYVA → planar HSV bytes.
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_hsv_row`].
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn uyva_to_hsv_row(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    packed444_to_hsv_row::<2, 0, 1>(packed, h_out, s_out, v_out, width, matrix, full_range);
+  }
+}
+
+/// AVX2 UYVA → u8 luma (Y at offset 1).
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_luma_row`].
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn uyva_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize) {
+  unsafe {
+    packed444_to_luma_row::<1>(packed, luma_out, width);
+  }
+}
+
+/// AVX2 UYVA → u16 luma (Y at offset 1).
+///
+/// # Safety
+///
+/// Same contract as [`packed444_to_luma_u16_row`].
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn uyva_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  unsafe {
+    packed444_to_luma_u16_row::<1>(packed, out, width);
+  }
+}
+
+// ---- VYU444 (V=0, Y=1, U=2; 3 bytes per pixel, no alpha) AVX2 ----------
+//
+// VYU444 is a 24bpp (3-byte) format. A 3-byte de-interleave does not tile
+// onto 256-bit lanes (the 3-byte stride is co-prime with the 32-byte lane
+// width), so — exactly like the AVX2 RGB-input HSV / luma kernels, which
+// reuse the 16-pixel SSE-width `x86_common::deinterleave_rgb_16` /
+// `rgb_to_hsv_16_pixels` helpers — the AVX2 VYU444 entry points dispatch
+// to the SSE4.1 16-px 3-byte-de-interleave kernel. AVX2 is a strict
+// superset of SSE4.1, so the call is sound; the de-interleave (the
+// throughput floor for this layout) runs at its natural 128-bit width.
+// Byte-identical to the scalar reference and to the NEON `vld3q_u8` tier.
+
+/// AVX2 VYU444 → packed RGB (via the SSE4.1 16-px 3-byte kernel).
+///
+/// # Safety
+///
+/// `packed.len() >= width * 3`; `rgb_out.len() >= width * 3`. AVX2 (⊇
+/// SSE4.1) must be available.
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn vyu444_to_rgb_row(
+  packed: &[u8],
+  rgb_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    crate::row::arch::x86_sse41::vyu444_to_rgb_row(packed, rgb_out, width, matrix, full_range);
+  }
+}
+
+/// AVX2 VYU444 → packed RGBA (α forced `0xFF`; via the SSE4.1 kernel).
+///
+/// # Safety
+///
+/// `packed.len() >= width * 3`; `rgba_out.len() >= width * 4`. AVX2 (⊇
+/// SSE4.1) must be available.
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn vyu444_to_rgba_row(
+  packed: &[u8],
+  rgba_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    crate::row::arch::x86_sse41::vyu444_to_rgba_row(packed, rgba_out, width, matrix, full_range);
+  }
+}
+
+/// AVX2 VYU444 → planar HSV bytes (via the SSE4.1 kernel).
+///
+/// # Safety
+///
+/// `packed.len() >= width * 3`; each H/S/V plane `>= width`. AVX2 (⊇
+/// SSE4.1) must be available.
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn vyu444_to_hsv_row(
+  packed: &[u8],
+  h_out: &mut [u8],
+  s_out: &mut [u8],
+  v_out: &mut [u8],
+  width: usize,
+  matrix: ColorMatrix,
+  full_range: bool,
+) {
+  unsafe {
+    crate::row::arch::x86_sse41::vyu444_to_hsv_row(
+      packed, h_out, s_out, v_out, width, matrix, full_range,
+    );
+  }
+}
+
+/// AVX2 VYU444 → u8 luma (Y at offset 1, 3-byte stride; via the SSE4.1
+/// kernel).
+///
+/// # Safety
+///
+/// `packed.len() >= width * 3`; `luma_out.len() >= width`. AVX2 (⊇ SSE4.1)
+/// must be available.
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn vyu444_to_luma_row(packed: &[u8], luma_out: &mut [u8], width: usize) {
+  unsafe {
+    crate::row::arch::x86_sse41::vyu444_to_luma_row(packed, luma_out, width);
+  }
+}
+
+/// AVX2 VYU444 → u16 luma (Y at offset 1, 3-byte stride; via the SSE4.1
+/// kernel).
+///
+/// # Safety
+///
+/// `packed.len() >= width * 3`; `out.len() >= width`. AVX2 (⊇ SSE4.1) must
+/// be available.
+#[cfg_attr(not(any(feature = "std", feature = "alloc")), allow(dead_code))]
+#[inline]
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn vyu444_to_luma_u16_row(packed: &[u8], out: &mut [u16], width: usize) {
+  unsafe {
+    crate::row::arch::x86_sse41::vyu444_to_luma_u16_row(packed, out, width);
   }
 }

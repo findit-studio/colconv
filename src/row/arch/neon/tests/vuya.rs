@@ -151,3 +151,208 @@ fn neon_vuya_lane_order_per_pixel_y_and_a() {
   let expected_alpha: std::vec::Vec<u8> = (0..W).map(|n| (n as u8) * 2 + 1).collect();
   assert_eq!(alpha_out, expected_alpha, "neon vuya rgba α reorder bug");
 }
+
+// ---- AYUV / UYVA / VYU444 NEON-vs-scalar parity -------------------------
+//
+// The new formats are byte-for-byte channel re-orderings of VUYA / VUYX
+// (AYUV / UYVA: 4 bytes; VYU444: 3 bytes, no alpha). Each NEON kernel is
+// checked against its scalar reference over a spread of widths (covering
+// the SIMD block boundary at 16) and all colour matrices.
+
+const NEON_MATRICES: [ColorMatrix; 6] = [
+  ColorMatrix::Bt601,
+  ColorMatrix::Bt709,
+  ColorMatrix::Bt2020Ncl,
+  ColorMatrix::Smpte240m,
+  ColorMatrix::Fcc,
+  ColorMatrix::YCgCo,
+];
+const NEON_WIDTHS: [usize; 13] = [1, 2, 3, 7, 8, 15, 16, 17, 31, 32, 33, 64, 1921];
+
+/// Pseudo-random packed stream of `width * bytes_per_pixel` bytes.
+fn pseudo_random(width: usize, bpp: usize, seed: usize) -> std::vec::Vec<u8> {
+  (0..width * bpp)
+    .map(|i| {
+      let s = i.wrapping_mul(seed).wrapping_add(seed.wrapping_mul(3));
+      (s & 0xFF) as u8
+    })
+    .collect()
+}
+
+/// Same-tier HSV reference: stage RGB via `fill_rgb` (the NEON RGB kernel),
+/// then quantize with the NEON [`rgb_to_hsv_row`]. This is the crate's HSV
+/// contract — a fused `{fmt}_to_hsv_row` is byte-identical to
+/// `rgb_to_hsv_row({fmt}_to_rgb_row(...))` *within a tier*, not necessarily
+/// to the fused scalar (the NEON quantizer can differ ±1 LSB from scalar).
+fn neon_hsv_ref(
+  w: usize,
+  _matrix: ColorMatrix,
+  _full_range: bool,
+  fill_rgb: impl FnOnce(&mut [u8]),
+) -> (std::vec::Vec<u8>, std::vec::Vec<u8>, std::vec::Vec<u8>) {
+  let mut rgb = std::vec![0u8; w * 3];
+  fill_rgb(&mut rgb);
+  let (mut h, mut s, mut v) = (std::vec![0u8; w], std::vec![0u8; w], std::vec![0u8; w]);
+  unsafe {
+    rgb_to_hsv_row(&rgb, &mut h, &mut s, &mut v, w);
+  }
+  (h, s, v)
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn neon_ayuv_matches_scalar() {
+  for &w in &NEON_WIDTHS {
+    let p = pseudo_random(w, 4, 0x1234);
+    for &m in &NEON_MATRICES {
+      for &fr in &[false, true] {
+        let mut s = std::vec![0u8; w * 3];
+        let mut k = std::vec![0u8; w * 3];
+        scalar::ayuv_to_rgb_row(&p, &mut s, w, m, fr);
+        unsafe { ayuv_to_rgb_row(&p, &mut k, w, m, fr) };
+        assert_eq!(s, k, "AYUV NEON RGB (w={w}, m={m:?}, fr={fr})");
+        let mut s4 = std::vec![0u8; w * 4];
+        let mut k4 = std::vec![0u8; w * 4];
+        scalar::ayuv_to_rgba_row(&p, &mut s4, w, m, fr);
+        unsafe { ayuv_to_rgba_row(&p, &mut k4, w, m, fr) };
+        assert_eq!(s4, k4, "AYUV NEON RGBA (w={w}, m={m:?}, fr={fr})");
+      }
+    }
+    let mut sl = std::vec![0u8; w];
+    let mut kl = std::vec![0u8; w];
+    scalar::ayuv_to_luma_row(&p, &mut sl, w);
+    unsafe { ayuv_to_luma_row(&p, &mut kl, w) };
+    assert_eq!(sl, kl, "AYUV NEON luma (w={w})");
+    let mut su = std::vec![0u16; w];
+    let mut ku = std::vec![0u16; w];
+    scalar::ayuv_to_luma_u16_row(&p, &mut su, w);
+    unsafe { ayuv_to_luma_u16_row(&p, &mut ku, w) };
+    assert_eq!(su, ku, "AYUV NEON luma_u16 (w={w})");
+    // HSV contract: NEON `{fmt}_to_hsv_row` must equal the same-tier
+    // two-step `rgb_to_hsv_row(NEON {fmt}_to_rgb_row(...))` (NOT the fused
+    // scalar, which can differ by ±1 LSB from the NEON HSV quantizer).
+    let want = neon_hsv_ref(w, ColorMatrix::Bt709, false, |rgb| unsafe {
+      ayuv_to_rgb_row(&p, rgb, w, ColorMatrix::Bt709, false)
+    });
+    let (mut kh, mut ks, mut kv) = (std::vec![0u8; w], std::vec![0u8; w], std::vec![0u8; w]);
+    unsafe { ayuv_to_hsv_row(&p, &mut kh, &mut ks, &mut kv, w, ColorMatrix::Bt709, false) };
+    assert_eq!(want, (kh, ks, kv), "AYUV NEON hsv (w={w})");
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn neon_uyva_matches_scalar() {
+  for &w in &NEON_WIDTHS {
+    let p = pseudo_random(w, 4, 0x55AA);
+    for &m in &NEON_MATRICES {
+      for &fr in &[false, true] {
+        let mut s = std::vec![0u8; w * 3];
+        let mut k = std::vec![0u8; w * 3];
+        scalar::uyva_to_rgb_row(&p, &mut s, w, m, fr);
+        unsafe { uyva_to_rgb_row(&p, &mut k, w, m, fr) };
+        assert_eq!(s, k, "UYVA NEON RGB (w={w}, m={m:?}, fr={fr})");
+        let mut s4 = std::vec![0u8; w * 4];
+        let mut k4 = std::vec![0u8; w * 4];
+        scalar::uyva_to_rgba_row(&p, &mut s4, w, m, fr);
+        unsafe { uyva_to_rgba_row(&p, &mut k4, w, m, fr) };
+        assert_eq!(s4, k4, "UYVA NEON RGBA (w={w}, m={m:?}, fr={fr})");
+      }
+    }
+    let mut sl = std::vec![0u8; w];
+    let mut kl = std::vec![0u8; w];
+    scalar::uyva_to_luma_row(&p, &mut sl, w);
+    unsafe { uyva_to_luma_row(&p, &mut kl, w) };
+    assert_eq!(sl, kl, "UYVA NEON luma (w={w})");
+    let mut su = std::vec![0u16; w];
+    let mut ku = std::vec![0u16; w];
+    scalar::uyva_to_luma_u16_row(&p, &mut su, w);
+    unsafe { uyva_to_luma_u16_row(&p, &mut ku, w) };
+    assert_eq!(su, ku, "UYVA NEON luma_u16 (w={w})");
+    let want = neon_hsv_ref(w, ColorMatrix::Bt2020Ncl, true, |rgb| unsafe {
+      uyva_to_rgb_row(&p, rgb, w, ColorMatrix::Bt2020Ncl, true)
+    });
+    let (mut kh, mut ks, mut kv) = (std::vec![0u8; w], std::vec![0u8; w], std::vec![0u8; w]);
+    unsafe {
+      uyva_to_hsv_row(
+        &p,
+        &mut kh,
+        &mut ks,
+        &mut kv,
+        w,
+        ColorMatrix::Bt2020Ncl,
+        true,
+      )
+    };
+    assert_eq!(want, (kh, ks, kv), "UYVA NEON hsv (w={w})");
+  }
+}
+
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn neon_vyu444_matches_scalar() {
+  for &w in &NEON_WIDTHS {
+    let p = pseudo_random(w, 3, 0xC0DE); // 3 bytes per pixel
+    for &m in &NEON_MATRICES {
+      for &fr in &[false, true] {
+        let mut s = std::vec![0u8; w * 3];
+        let mut k = std::vec![0u8; w * 3];
+        scalar::vyu444_to_rgb_row(&p, &mut s, w, m, fr);
+        unsafe { vyu444_to_rgb_row(&p, &mut k, w, m, fr) };
+        assert_eq!(s, k, "VYU444 NEON RGB (w={w}, m={m:?}, fr={fr})");
+        let mut s4 = std::vec![0u8; w * 4];
+        let mut k4 = std::vec![0u8; w * 4];
+        scalar::vyu444_to_rgba_row(&p, &mut s4, w, m, fr);
+        unsafe { vyu444_to_rgba_row(&p, &mut k4, w, m, fr) };
+        assert_eq!(s4, k4, "VYU444 NEON RGBA (w={w}, m={m:?}, fr={fr})");
+      }
+    }
+    let mut sl = std::vec![0u8; w];
+    let mut kl = std::vec![0u8; w];
+    scalar::vyu444_to_luma_row(&p, &mut sl, w);
+    unsafe { vyu444_to_luma_row(&p, &mut kl, w) };
+    assert_eq!(sl, kl, "VYU444 NEON luma (w={w})");
+    let mut su = std::vec![0u16; w];
+    let mut ku = std::vec![0u16; w];
+    scalar::vyu444_to_luma_u16_row(&p, &mut su, w);
+    unsafe { vyu444_to_luma_u16_row(&p, &mut ku, w) };
+    assert_eq!(su, ku, "VYU444 NEON luma_u16 (w={w})");
+    let want = neon_hsv_ref(w, ColorMatrix::Bt601, false, |rgb| unsafe {
+      vyu444_to_rgb_row(&p, rgb, w, ColorMatrix::Bt601, false)
+    });
+    let (mut kh, mut ks, mut kv) = (std::vec![0u8; w], std::vec![0u8; w], std::vec![0u8; w]);
+    unsafe { vyu444_to_hsv_row(&p, &mut kh, &mut ks, &mut kv, w, ColorMatrix::Bt601, false) };
+    assert_eq!(want, (kh, ks, kv), "VYU444 NEON hsv (w={w})");
+  }
+}
+
+/// Lane-order regression for the 3-byte VYU444 deinterleave: encode the
+/// pixel index in Y so a per-channel swizzle bug surfaces. Neutral V/U
+/// keeps the colour at grey; the luma path reads Y directly.
+#[test]
+#[cfg_attr(
+  miri,
+  ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+)]
+fn neon_vyu444_lane_order_y() {
+  const W: usize = 32;
+  let mut packed = std::vec![0u8; W * 3];
+  for n in 0..W {
+    packed[n * 3] = 128; // V
+    packed[n * 3 + 1] = (n as u8) + 1; // Y = n+1
+    packed[n * 3 + 2] = 128; // U
+  }
+  let mut luma = std::vec![0u8; W];
+  unsafe { vyu444_to_luma_row(&packed, &mut luma, W) };
+  let expected: std::vec::Vec<u8> = (1..=W as u8).collect();
+  assert_eq!(luma, expected, "neon vyu444 luma reorder bug");
+}

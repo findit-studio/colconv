@@ -342,12 +342,16 @@ mod subsampled_4_2_0_high_bit;
 // P210/P410 sanity + walker-SIMD suites run under yuv-semi-planar-solo);
 // the planar Yuv4*p cross-check tests + their frame helper are gated on
 // `yuv-planar` inside.
+#[cfg(feature = "yuv-444-packed")]
+mod ayuv;
 #[cfg(feature = "yuv-planar")]
 mod resample_yuv_planar_hsv_direct;
 #[cfg(feature = "yuv-semi-planar")]
 mod subsampled_high_bit_pn;
 #[cfg(feature = "yuv-semi-planar")]
 mod subsampled_high_bit_pn_hsv_direct;
+#[cfg(feature = "yuv-444-packed")]
+mod uyva;
 #[cfg(feature = "v210")]
 mod v210;
 #[cfg(feature = "yuv-444-packed")]
@@ -358,6 +362,8 @@ mod v410;
 mod vuya;
 #[cfg(feature = "yuv-444-packed")]
 mod vuyx;
+#[cfg(feature = "yuv-444-packed")]
+mod vyu444;
 #[cfg(feature = "yuv-444-packed")]
 mod xv36;
 #[cfg(feature = "yuv-444-packed")]

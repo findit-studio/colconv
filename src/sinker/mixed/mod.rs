@@ -1370,6 +1370,21 @@ pub enum RowSlice {
   /// bytes).
   #[display("AYUV64 packed")]
   Ayuv64Packed,
+  /// Packed `ayuv` row of an `Ayuv` source — 8-bit 4:4:4 packed format.
+  /// Four bytes per pixel in A/Y/U/V order (A is real source alpha);
+  /// row length: `4 * width` bytes.
+  #[display("AYUV packed")]
+  AyuvPacked,
+  /// Packed `uyva` row of a `Uyva` source — 8-bit 4:4:4 packed format.
+  /// Four bytes per pixel in U/Y/V/A order (A is real source alpha);
+  /// row length: `4 * width` bytes.
+  #[display("UYVA packed")]
+  UyvaPacked,
+  /// Packed `vyu444` row of a `Vyu444` source — 8-bit 4:4:4 packed format
+  /// with **no alpha** (24bpp). Three bytes per pixel in V/Y/U order;
+  /// row length: `3 * width` bytes.
+  #[display("VYU444 packed")]
+  Vyu444Packed,
   /// Packed `R, G, B` row of an [`Rgbf32`](crate::source::Rgbf32) source —
   /// Tier 9 32-bit float per channel. Row length: `3 * width` `f32`
   /// elements (= `12 * width` bytes).
@@ -9679,6 +9694,109 @@ fn packed_vuyx_process_native(
   )
 }
 
+/// Native fast-tier decimator for the **8-bit packed 4:4:4** non-alpha YUV
+/// format [`Vyu444`](crate::source::Vyu444) — bytes `V Y U` per pixel, **3
+/// bytes per pixel (24bpp), no alpha**. Identical to
+/// [`packed_vuyx_process_native`] except for the source layout: VYU444 packs
+/// three bytes per pixel `V Y U` (V at byte 0, Y at byte 1, U at byte 2 —
+/// there is no fourth byte), so the de-pack steps the interleaved row in
+/// 3-byte groups (`chunks_exact(3)`) rather than 4. Every other step — the
+/// pre-feed preflight ordering, the lazy-chroma contract, the reuse of the
+/// [`Yuv444p`](crate::source::Yuv444p) planar join at full-width chroma — is
+/// shared verbatim, so each output is byte-identical to a `Yuv444p` native
+/// conversion of the de-packed planes and within ±1 LSB of the packed
+/// row-stage tier. Luma is bit-identical (both bin the same native Y).
+#[cfg(all(feature = "yuv-444-packed", feature = "yuv-planar"))]
+#[allow(clippy::too_many_arguments)]
+fn packed_vyu444_process_native(
+  plan: &crate::resample::ResamplePlan,
+  native_planar: &mut Option<std::boxed::Box<planar_8bit::NativePlanarYuv>>,
+  y_scratch: &mut Vec<u8>,
+  u_scratch: &mut Vec<u8>,
+  v_scratch: &mut Vec<u8>,
+  resample_outputs: &mut Option<FrozenOutputs>,
+  rgb: &mut Option<&mut [u8]>,
+  rgba: &mut Option<&mut [u8]>,
+  luma: &mut Option<&mut [u8]>,
+  luma_u16: &mut Option<&mut [u16]>,
+  hsv: &mut Option<HsvFrameMut<'_>>,
+  rgb_scratch: &mut Vec<u8>,
+  packed: &[u8],
+  matrix: crate::ColorMatrix,
+  full_range: bool,
+  idx: usize,
+  w: usize,
+  h: usize,
+  use_simd: bool,
+) -> Result<(), MixedSinkerError> {
+  let need_luma = luma.is_some() || luma_u16.is_some();
+  let need_color = rgb.is_some() || rgba.is_some() || hsv.is_some();
+
+  // Run the join's COMPLETE pre-feed rejection preflight FIRST — before the
+  // fallible Y / U / V de-pack scratch grow — so EVERY rejection case returns
+  // its deterministic typed error, never AllocationFailed, and leaves the
+  // scratch untouched. The delegate re-runs this identical preflight harmlessly.
+  if !planar_8bit::native_planar_preflight(
+    native_planar,
+    resample_outputs,
+    rgb,
+    rgba,
+    luma,
+    luma_u16,
+    hsv,
+    idx,
+    need_luma,
+    need_color,
+  )? {
+    return Ok(());
+  }
+
+  // De-pack the interleaved `V Y U` row (3 bytes/pixel) into the private
+  // Y / U / V scratch. 4:4:4: chroma is full-width (`w`). Y is always
+  // de-packed; U / V only on a colour row. The failpoint fires on the FIRST
+  // (Y) grow only.
+  grow_packed_444_u8_scratch(y_scratch, w, true, w, h, plan)?;
+  for (i, group) in packed.chunks_exact(3).enumerate() {
+    y_scratch[i] = group[1]; // Y at byte 1
+  }
+  if need_color {
+    grow_packed_444_u8_scratch(u_scratch, w, false, w, h, plan)?;
+    grow_packed_444_u8_scratch(v_scratch, w, false, w, h, plan)?;
+    for (i, group) in packed.chunks_exact(3).enumerate() {
+      u_scratch[i] = group[2]; // U at byte 2
+      v_scratch[i] = group[0]; // V at byte 0
+    }
+  }
+
+  let (u_plane, v_plane): (&[u8], &[u8]) = if need_color {
+    (&u_scratch[..w], &v_scratch[..w])
+  } else {
+    (&[], &[])
+  };
+  planar_8bit::yuv_planar_process_native(
+    plan,
+    native_planar,
+    resample_outputs,
+    rgb,
+    rgba,
+    luma,
+    luma_u16,
+    hsv,
+    rgb_scratch,
+    &y_scratch[..w],
+    u_plane,
+    v_plane,
+    matrix,
+    full_range,
+    idx,
+    w,
+    h,
+    1,
+    || crate::resample::ResamplePlan::area(w, h, plan.out_w(), plan.out_h()),
+    use_simd,
+  )
+}
+
 /// Native fast-tier decimator for the **high-bit packed 4:4:4** non-alpha YUV
 /// formats ([`V410`](crate::source::V410) 10-bit / [`Xv36`](crate::source::Xv36)
 /// 12-bit): de-PACKS each format's OWN wire layout into the sink's separate
@@ -13358,6 +13476,8 @@ pub(super) fn rgb_row_to_luma_u16_row(
 // and `PixelSink` impls live in the child modules below.
 
 #[cfg(feature = "yuv-444-packed")]
+mod ayuv;
+#[cfg(feature = "yuv-444-packed")]
 mod ayuv64;
 #[cfg(feature = "bayer")]
 mod bayer;
@@ -13495,6 +13615,8 @@ mod subsampled_4_2_0_high_bit;
 mod subsampled_4_2_2_high_bit;
 #[cfg(any(feature = "yuv-planar", feature = "yuv-semi-planar"))]
 mod subsampled_4_4_4_high_bit;
+#[cfg(feature = "yuv-444-packed")]
+mod uyva;
 #[cfg(feature = "v210")]
 mod v210;
 #[cfg(feature = "yuv-444-packed")]
@@ -13505,6 +13627,8 @@ mod v410;
 mod vuya;
 #[cfg(feature = "yuv-444-packed")]
 mod vuyx;
+#[cfg(feature = "yuv-444-packed")]
+mod vyu444;
 #[cfg(feature = "yuv-444-packed")]
 mod xv36;
 #[cfg(feature = "yuv-444-packed")]
