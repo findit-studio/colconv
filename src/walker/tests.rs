@@ -2845,6 +2845,173 @@ mod grayf32_parity {
   }
 }
 
+// ---- Parity: float-luma Grayf16 (reuse YuvOptions) --------------------
+//
+// The half-float twin of the Grayf32 parity tests: the free `grayf16_to` /
+// `grayf16_to_endian` walkers take `(full_range, matrix)` (the RGB output
+// rescales limited-range luma; `matrix` is carried but unused by the chroma-
+// free gray kernel). Grayf16 is endian-generic (`@const BE` arm): the LE case
+// drives the marker's `<const BE = false>` default against `grayf16_to`, and
+// the BE case drives `Grayf16<true>` against `Grayf16BeFrame` + a direct
+// `grayf16_to_endian::<_, true>`.
+
+#[cfg(feature = "gray")]
+mod grayf16_parity {
+  use super::*;
+  use crate::{
+    PixelSink,
+    frame::{Grayf16BeFrame, Grayf16Frame},
+    sinker::MixedSinker,
+    source::{Grayf16, Grayf16Row, Grayf16Sink, grayf16_to, grayf16_to_endian},
+  };
+  use half::f16;
+
+  const W: u32 = 16;
+  const H: u32 = 4;
+  const MATRICES: [ColorMatrix; 2] = [ColorMatrix::Bt709, ColorMatrix::Bt601];
+
+  /// Deterministic finite `f16` luma ramp in `[0, 1]` of `n` samples.
+  fn ramp_f16(n: usize) -> std::vec::Vec<f16> {
+    (0..n)
+      .map(|i| f16::from_f32(((i * 23 + 7) % 257) as f32 / 256.0))
+      .collect()
+  }
+
+  /// An instrumented sink recording each row's forwarded `(full_range,
+  /// matrix)`. `Grayf16Sink<BE>` is endian-parameterised, so the probe
+  /// blanket-impls it for every `BE`.
+  #[derive(Default)]
+  struct Grayf16Probe {
+    seen: std::vec::Vec<(bool, ColorMatrix)>,
+  }
+  impl PixelSink for Grayf16Probe {
+    type Input<'r> = Grayf16Row<'r>;
+    type Error = core::convert::Infallible;
+    fn begin_frame(&mut self, _w: u32, _h: u32) -> Result<(), Self::Error> {
+      Ok(())
+    }
+    fn process(&mut self, row: Grayf16Row<'_>) -> Result<(), Self::Error> {
+      self.seen.push((row.full_range(), row.matrix()));
+      Ok(())
+    }
+  }
+  impl<const BE: bool> Grayf16Sink<BE> for Grayf16Probe {}
+
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_grayf16_forwards_full_range_and_matrix() {
+    let y = ramp_f16((W * H) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+
+        let src = Grayf16Frame::try_new(&y, W, H, W).unwrap();
+        let mut le = Grayf16Probe::default();
+        <Grayf16 as Walker<_>>::walk(&src, &opts, &mut le).unwrap();
+        assert!(!le.seen.is_empty(), "grayf16 LE walked at least one row");
+        for &(fr, m) in &le.seen {
+          assert_eq!(
+            (fr, m),
+            (full_range, matrix),
+            "grayf16 LE forwards full_range/matrix into the row"
+          );
+        }
+
+        let src = Grayf16BeFrame::try_new(&y, W, H, W).unwrap();
+        let mut be = Grayf16Probe::default();
+        <Grayf16<true> as Walker<_>>::walk(&src, &opts, &mut be).unwrap();
+        assert!(!be.seen.is_empty(), "grayf16 BE walked at least one row");
+        for &(fr, m) in &be.seen {
+          assert_eq!(
+            (fr, m),
+            (full_range, matrix),
+            "grayf16 BE forwards full_range/matrix into the row"
+          );
+        }
+      }
+    }
+  }
+
+  /// Grayf16 LE — `@const BE` arm at the marker's `<const BE = false>` default
+  /// against the LE `grayf16_to` wrapper.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_grayf16_le_matches_direct() {
+    let y = ramp_f16((W * H) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Grayf16Frame::try_new(&y, W, H, W).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut sw = MixedSinker::<Grayf16>::new(W as usize, H as usize)
+          .with_rgb(&mut via_walker)
+          .unwrap();
+        <Grayf16 as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Grayf16>::new(W as usize, H as usize)
+          .with_rgb(&mut via_direct)
+          .unwrap();
+        grayf16_to(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "grayf16 LE parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+
+  /// Grayf16 BE — drives the `@const BE` impl at `Grayf16<true>` against the
+  /// `Grayf16BeFrame` alias, compared to a direct `grayf16_to_endian::<_, true>`.
+  #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "SIMD-dispatched row kernels use intrinsics unsupported by Miri"
+  )]
+  fn walk_grayf16_be_matches_direct() {
+    let y = ramp_f16((W * H) as usize);
+    for full_range in [false, true] {
+      for matrix in MATRICES {
+        let opts = YuvOptions::new()
+          .maybe_full_range(full_range)
+          .with_matrix(matrix);
+        let src = Grayf16BeFrame::try_new(&y, W, H, W).unwrap();
+
+        let mut via_walker = std::vec![0u8; (W * H * 3) as usize];
+        let mut via_direct = std::vec![0u8; (W * H * 3) as usize];
+
+        let mut sw = MixedSinker::<Grayf16<true>>::new(W as usize, H as usize)
+          .with_rgb(&mut via_walker)
+          .unwrap();
+        <Grayf16<true> as Walker<_>>::walk(&src, &opts, &mut sw).unwrap();
+
+        let mut sd = MixedSinker::<Grayf16<true>>::new(W as usize, H as usize)
+          .with_rgb(&mut via_direct)
+          .unwrap();
+        grayf16_to_endian::<_, true>(&src, full_range, matrix, &mut sd).unwrap();
+
+        assert_eq!(
+          via_walker, via_direct,
+          "grayf16 BE parity (full_range={full_range}, matrix={matrix:?})"
+        );
+      }
+    }
+  }
+}
+
 // ---- Parity: planar float GBR (Gbrpf16/32, Gbrapf16/32; Options = ()) --
 //
 // The float GBR walkers take only `(src, sink)` — they carry **no**

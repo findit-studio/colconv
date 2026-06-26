@@ -95,6 +95,8 @@ pub(crate) mod filter_reduce;
 #[cfg(feature = "gray")]
 pub(crate) mod gray;
 #[cfg(feature = "gray")]
+pub(crate) mod grayf16;
+#[cfg(feature = "gray")]
 pub(crate) mod grayf32;
 mod hsv;
 #[cfg(feature = "rgb-legacy")]
@@ -203,6 +205,9 @@ pub(crate) use legacy_rgb::*;
 #[cfg(feature = "gray")]
 #[allow(unused_imports)]
 pub(crate) use gray::*;
+#[cfg(feature = "gray")]
+#[allow(unused_imports)]
+pub(crate) use grayf16::*;
 #[cfg(feature = "gray")]
 #[allow(unused_imports)]
 pub(crate) use grayf32::*;

@@ -243,22 +243,21 @@ use crate::{
 // delegates to the const-generic `{fmt}_to_endian::<_, BE>` (the LE
 // `{fmt}_to` is its `BE = false` wrapper), covering LE + BE in one impl.
 //
-// The float-luma `Grayf32` is endian-generic over the f32 byte order:
-// marker `Grayf32<const BE>` over the trailing-`BE` frame `Grayf32Frame<'a,
-// BE>` (no leading bit-depth const), so it rides the `@const BE` arm and
-// delegates to `grayf32_to_endian::<_, BE>`. Its free walker also takes
-// `(full_range, matrix)` — `full_range` selects whether the RGB output
-// rescales the luma — so it reuses [`YuvOptions`] like the integer gray
-// families. (FFmpeg has no `grayf16` source, so the float-luma set is
-// `Grayf32` alone.)
+// The float-luma `Grayf16` / `Grayf32` are endian-generic over the f16/f32
+// byte order: marker `Fmt<const BE>` over the trailing-`BE` frame
+// `FmtFrame<'a, BE>` (no leading bit-depth const), so each rides the
+// `@const BE` arm and delegates to `{fmt}_to_endian::<_, BE>`. Their free
+// walkers also take `(full_range, matrix)` — `full_range` selects whether the
+// RGB output rescales the luma — so they reuse [`YuvOptions`] like the integer
+// gray families. (`Grayf16` is the half-float twin of `Grayf32`.)
 #[cfg(feature = "gray")]
 use crate::{
-  frame::{Gray8Frame, Gray16Frame, GrayNFrame, Grayf32Frame, Ya8Frame, Ya16Frame},
+  frame::{Gray8Frame, Gray16Frame, GrayNFrame, Grayf16Frame, Grayf32Frame, Ya8Frame, Ya16Frame},
   source::{
     Gray8, Gray8Sink, Gray9, Gray9Sink, Gray10, Gray10Sink, Gray12, Gray12Sink, Gray14, Gray14Sink,
-    Gray16, Gray16Sink, Grayf32, Grayf32Sink, Ya8, Ya8Sink, Ya16, Ya16Sink, gray8_to,
-    gray9_to_endian, gray10_to_endian, gray12_to_endian, gray14_to_endian, gray16_to_endian,
-    grayf32_to_endian, ya8_to, ya16_to_endian,
+    Gray16, Gray16Sink, Grayf16, Grayf16Sink, Grayf32, Grayf32Sink, Ya8, Ya8Sink, Ya16, Ya16Sink,
+    gray8_to, gray9_to_endian, gray10_to_endian, gray12_to_endian, gray14_to_endian,
+    gray16_to_endian, grayf16_to_endian, grayf32_to_endian, ya8_to, ya16_to_endian,
   },
 };
 // Planar GBR — already-RGB sources (G/B/R planes, no chroma matrix). The
@@ -1466,12 +1465,17 @@ walker!(@const BE: bool; Gray16<BE>, Gray16Sink, Gray16Frame, YuvOptions,
 walker!(@const BE: bool; Ya16<BE>, Ya16Sink, Ya16Frame, YuvOptions,
   |src, opts, sink| ya16_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
 
-// ---- Gray, float-luma Grayf32 (BE-generic marker; LE + BE via `_to_endian`)
-// Marker `Grayf32<const BE>` over the trailing-`BE` frame `Grayf32Frame<'a,
-// BE>` (no leading bit-depth const), so it rides the `@const BE` arm (same
-// shape as Gray16) and delegates to `grayf32_to_endian::<_, BE>`. The free
-// walker takes `(full_range, matrix)` — `full_range` selects whether the
-// RGB output rescales the luma — so it reuses [`YuvOptions`].
+// ---- Gray, float-luma Grayf16 / Grayf32 (BE-generic marker; LE + BE) --------
+// Marker `Fmt<const BE>` over the trailing-`BE` frame `FmtFrame<'a, BE>` (no
+// leading bit-depth const), so each rides the `@const BE` arm (same shape as
+// Gray16) and delegates to `{fmt}_to_endian::<_, BE>`. The free walker takes
+// `(full_range, matrix)` — `full_range` selects whether the RGB output rescales
+// the luma — so it reuses [`YuvOptions`]. `Grayf16` is the half-float twin of
+// `Grayf32`; its outputs widen each `f16` to `f32` before the same conversion.
+#[cfg(feature = "gray")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
+walker!(@const BE: bool; Grayf16<BE>, Grayf16Sink, Grayf16Frame, YuvOptions,
+  |src, opts, sink| grayf16_to_endian::<_, BE>(src, opts.full_range(), opts.matrix(), sink));
 #[cfg(feature = "gray")]
 #[cfg_attr(docsrs, doc(cfg(feature = "gray")))]
 walker!(@const BE: bool; Grayf32<BE>, Grayf32Sink, Grayf32Frame, YuvOptions,
